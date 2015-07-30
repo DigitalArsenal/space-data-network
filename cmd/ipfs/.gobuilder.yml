@@ -1,0 +1,10 @@
+---
+build_matrix:
+  all:
+  windows:
+    build_tags:
+      - nofuse
+artifacts:
+  README.md: dist/README.md
+  LICENSE: dist/LICENSE
+  install.sh: dist/install.sh
