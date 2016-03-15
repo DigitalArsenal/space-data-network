@@ -1,0 +1,12 @@
+# ipfs can generate profiling dump files
+*.cpuprof
+*.memprof
+
+*.swp
+.ipfsconfig
+*.out
+*.test
+*.orig
+*~
+
+.ipfs
