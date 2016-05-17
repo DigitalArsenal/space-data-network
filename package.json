@@ -1,0 +1,79 @@
+{
+  "bugs": {
+    "url": "https://github.com/ipfs/go-ipfs"
+  },
+  "gx": {
+    "dvcsimport": "github.com/ipfs/go-libp2p",
+    "goversion": "1.5.2"
+  },
+  "gxDependencies": [
+    {
+      "hash": "QmaDNZ4QMdBdku1YZWBysufYyoQt1negQGNav6PLYarbY8",
+      "name": "go-log",
+      "version": "1.1.0"
+    },
+    {
+      "hash": "QmVL44QeoQDTYK8RVdpkyja7uYcK3WDNoBNHVLonf9YDtm",
+      "name": "go-libp2p",
+      "version": "3.2.2"
+    },
+    {
+      "author": "whyrusleeping",
+      "hash": "QmbuSYB51KtX8izgab1fSyBgsyMH2hTuCfBtXm77PeXWca",
+      "name": "go-libp2p-secio",
+      "version": "1.0.4"
+    },
+    {
+      "author": "whyrusleeping",
+      "hash": "QmUEUu1CM8bxBJxc3ZLojAi8evhTr4byQogWstABet79oY",
+      "name": "go-libp2p-crypto",
+      "version": "1.0.2"
+    },
+    {
+      "author": "whyrusleeping",
+      "hash": "QmbyvM8zRFDkbFdYyt1MnevUMJ62SiSGbfDFZ3Z8nkrzr4",
+      "name": "go-libp2p-peer",
+      "version": "1.0.6"
+    },
+    {
+      "hash": "QmZy2y8t9zQH2a1b8q2ZSLKp17ATuJoCNxxyMFG5qFExpt",
+      "name": "go-net",
+      "version": "0.0.0"
+    },
+    {
+      "hash": "QmQopLATEYMNg7dVqZRNDfeE2S1yKy8zrRh5xnYiuqeZBn",
+      "name": "goprocess",
+      "version": "0.0.0"
+    },
+    {
+      "hash": "QmYvsG72GsfLgUeSojXArjnU6L4Wmwk7wuAxtNLuyXcc1T",
+      "name": "randbo",
+      "version": "0.0.0"
+    },
+    {
+      "hash": "QmZ4Qi3GaRbjcx28Sme5eMH7RQjGkt8wHxt2a65oLaeFEV",
+      "name": "gogo-protobuf",
+      "version": "0.0.0"
+    },
+    {
+      "hash": "QmdhsRK1EK2fvAz2i2SH5DEfkL6seDuyMYEsxKa9Braim3",
+      "name": "client_golang",
+      "version": "0.0.0"
+    },
+    {
+      "hash": "QmaMGvaTmd613tWZuVjw3ohvdz1Gh1CBJ2fgb96eyp4EfE",
+      "name": "iptb",
+      "version": "1.0.0"
+    },
+    {
+      "hash": "QmYf7ng2hG5XBtJA3tN34DQ2GUN5HNksEw1rLDkmr6vGku",
+      "name": "go-multihash",
+      "version": "0.0.0"
+    }
+  ],
+  "gxVersion": "0.4.0",
+  "language": "go",
+  "license": "MIT",
+  "name": "go-ipfs",
+  "version": "0.4.0"
+}
