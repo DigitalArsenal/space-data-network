@@ -1,0 +1,227 @@
+{
+  "ipfsIsRunning": "IPFS läuft",
+  "ipfsIsStopping": "IPFS wird gestoppt",
+  "ipfsIsStarting": "IPFS startet",
+  "ipfsIsNotRunning": "IPFS läuft nicht",
+  "ipfsHasErrored": "IPFS hat einen Fehler festgestellt",
+  "runningWithGC": "Läuft (Automatische Speicherbereinigung im Gange)",
+  "runningWhileCheckingForUpdate": "Läuft (Prüfe auf Updates)",
+  "start": "Starten",
+  "stop": "Stoppen",
+  "restart": "Neu starten",
+  "about": "Über",
+  "advanced": "Erweitert",
+  "openRepoDir": "Speicher-Verzeichnis öffnen",
+  "openLogsDir": "Protokollverzeichnis öffnen",
+  "openConfigFile": "Konfigurationsdatei öffnen",
+  "viewOnGitHub": "Auf GitHub anschauen…",
+  "helpUsTranslate": "Hilf beim Übersetzten dieser App...",
+  "readReleaseNotes": "Lies die Versionshinweise",
+  "status": "Status",
+  "files": "Dateien",
+  "peers": "Peers",
+  "quit": "Beenden",
+  "versions": "Versionen",
+  "screenshotTaken": "Screenshot aufgenommen",
+  "shareableLinkCopied": "Ein Link zum Teilen wurde zur Zwischenablage hinzugefügt. Klicke hier um den Screenshot zu sehen.",
+  "couldNotTakeScreenshot": "Konnte keinen Screenshot machen",
+  "errorwhileTakingScreenshot": "Beim Aufnehmen des Bildschirmfotos ist ein Fehler aufgetreten.",
+  "clickToOpenLogs": "Klicke hier um die Protokolle zu öffnen.",
+  "ipfsNotRunning": "IPFS läuft nicht",
+  "checkForUpdates": "Auf Updates prüfen…",
+  "checkingForUpdates": "Prüfe nach Updates",
+  "yes": "Ja",
+  "no": "Nein",
+  "close": "Schließen",
+  "ok": "OK",
+  "cancel": "Abbrechen",
+  "enable": "Aktivieren",
+  "reportTheError": "Den Fehler melden",
+  "restartIpfsDesktop": "IPFS Desktop neu starten",
+  "openLogs": "Protokolle öffnen",
+  "takeScreenshot": "Bildschirmfoto aufnehmen",
+  "moveRepositoryLocation": "Speicherort verschieben",
+  "runGarbageCollector": "Speicherbereinigung ausführen",
+  "selectDirectory": "Verzeichnis Auswählen",
+  "customIpfsBinary": "Benutzerdefinierte IPFS-Binärdatei",
+  "setCustomIpfsBinary": "Benutzerdefinierte IPFS-Binärdatei festlegen",
+  "clearCustomIpfsBinary": "Benutzerdefinierte IPFS-Binärdatei löschen",
+  "openCliDocumentation": "CLI-Dokumentation öffnen",
+  "polkitDialog": {
+    "title": "Polkit nicht gefunden",
+    "message": "IPFS kann ohne den polkit agent nicht zu /usr/local/bin/ hinzugefügt werden."
+  },
+  "noPermissionDialog": {
+    "title": "Keine Berechtigung",
+    "message": "IPFS konnte nicht zu /usr/local/bin/ hinzugefügt werden, entweder, weil Du entweder das falsche Passwort eingegeben hast oder die Berechtigung verweigert hast."
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS läuft nicht",
+    "message": "IPFS muss gestartet sein, um diese Aktion auszuführen. Möchtest du den Daemon starten?"
+  },
+  "recoverableErrorDialog": {
+    "title": "Ein Fehler ist aufgetreten",
+    "message": "Ein Fehler ist aufgetreten, der die Ausführung von IPFS Desktop jedoch nicht verhindert. Du kannst Dir entweder die Protokolle selbst anschauen oder den Fehler den Entwicklern melden."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Es kann keine Verbindung zur API hergestellt werden",
+    "message": "IPFS Desktop kann keine Verbindung mit der angegebenen API Adresse herstellen: { addr }."
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "IPFS Desktop wurde gestoppt",
+    "message": "IPFS Desktop wurde aufgrund eines Fehlers angehalten. Du kannst die App neu starten oder den Fehler den Entwicklern melden, hierfür wird ein GitHub Konto benötigt."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Speicherort verschieben",
+    "message": "Wenn der Speicher zu viel Platz auf der Festplatte einnimmt, kannst du ihn an einen anderen Ort verschieben. Beachte aber, dass dieser Ort immer verfügbar sein muss, damit IPFS Desktop korrekt funktioniert.",
+    "action": "Node verschieben und neu starten"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "Speicher erfolgreich verschoben",
+    "message": "Der Speicher wurde erfolgreich nach { location } verschoben und die Konfiguration aktualisiert. Der Daemon wird neu gestartet."
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "Gleiches Verzeichnis ausgewählt",
+    "message": "Das ausgewählte Verzeichnis { location } ist bereits das aktuelle Verzeichnis. Keine Änderungen werden vorgenommen."
+  },
+  "moveRepositoryDirExists": {
+    "title": "Verzeichnis existiert bereits",
+    "message": "Das Verzeichnis { location } existiert bereits. Versuche ein anderes auzuwählen."
+  },
+  "busyPortsDialog": {
+    "title": "Ports sind belegt",
+    "message": "Die Ports { port1 } und { port2 } sind nicht verfügbar. Möchtest du { alt1 } und { alt2 } stattdessen verwenden?",
+    "action": "Nutze die Ports { alt1 } und { alt2 } stattdessen"
+  },
+  "busyPortDialog": {
+    "title": "Port nicht verfügbar",
+    "message": "Der Port { port } ist nicht verfügbar. Möchtest du den Port { alt } stattdessen nutzen?",
+    "action": "Nutze Port { alt } stattdessen."
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Die Ports sind nicht verfügbar",
+    "message": "Kann nicht an eine oder mehrere der API- oder Gateway-Adressen binden, da die Ports beschäftigt sind.",
+    "action": "Konfigurationsdatei öffnen"
+  },
+  "itemsAddedNotification": {
+    "title": "Elemente hinzugefügt",
+    "message": "{ count } Elemente zu deinem IPFS Knoten hinzugefügt. Ein teilbarer Link wurde in deine Zwischenablage kopiert."
+  },
+  "itemAddedNotification": {
+    "title": "Element hinzugefügt",
+    "message": "Element zu deinem IPFS Knoten hinzugefügt. Ein teilbarer Link wurde in deine Zwischenablage kopiert."
+  },
+  "itemsFailedNotification": {
+    "title": "Hinzufügen von Elementen fehlgeschlagen",
+    "message": "Konnte deine Elemente nicht zu deinem Node hinzufügen."
+  },
+  "updateAvailableDialog": {
+    "title": "Update verfügbar",
+    "message": "Eine neue Version ({ version })von IPFS Desktop ist verfügbar. Das Update wird im Hintergrund geladen."
+  },
+  "updateNotAvailableDialog": {
+    "title": "Update nicht verfügbar",
+    "message": "IPFS Desktop ist auf dem neuesten Stand ({ version })."
+  },
+  "updateErrorDialog": {
+    "title": "Update konnte nicht geladen werden",
+    "message": "Es war nicht möglich das Update herunterzuladen. Bitte prüfe deine Internetverbindung und versuche es dann erneut."
+  },
+  "updateDownloadedDialog": {
+    "title": "IPFS Desktop Update",
+    "message": "Ein Update für IPFS Desktop { version } ist verfügbar. Möchtest Du es jetzt installieren?",
+    "later": "Später",
+    "now": "Jetzt installieren"
+  },
+  "updateDownloadedNotification": {
+    "title": "IPFS Desktop Update",
+    "message": "Ein Update für IPFS Desktop { version } ist verfügbar."
+  },
+  "runGarbageCollectorWarning": {
+    "title": "Automatische Speicherbereinigung",
+    "message": "Die Garbage Collection (GC) auszuführen, wird alle nicht im MFS angepinnten Objekte aus deinem Speicher entfernen. Dies kann eine Weile dauern. Möchtest du fortfahren?",
+    "action": "Starten"
+  },
+  "runGarbageCollectorDone": {
+    "title": "Automatische Speicherbereinigung",
+    "message": "Der Garbage Collector ist erfolgreich gelaufen."
+  },
+  "moveRepositoryFailed": {
+    "title": "Speicherort verschieben",
+    "message": "Konnte den Speicher nicht von \"{ currDir }\" nach \"{ newDir }\" verschieben."
+  },
+  "runGarbageCollectorErrored": {
+    "title": "Automatische Speicherbereinigung",
+    "message": "Die Garbage Collection konnte nicht erfolgreich ausgeführt werden."
+  },
+  "launchAtLoginNotSupported": {
+    "title": "Fehler",
+    "message": "Bei Anmeldung ausführen wird auf deiner Plattform nicht unterstützt."
+  },
+  "launchAtLoginFailed": {
+    "title": "Fehler",
+    "message": "Bei Anmeldung ausführen konnte nicht auf deinem Gerät aktiviert werden."
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "Screenshot-Tastaturkürzel aktivieren",
+    "message": "Wenn du dies aktivierst, wird das Tastaturkürzel \"{ accelerator }\" verfügbar sein um Screenshots aufzunehmen, solange IPFS Desktop ausgeführt wird."
+  },
+  "settings": {
+    "settings": "Einstellungen",
+    "preferences": "Einstellungen",
+    "openNodeSettings": "Öffne Node Einstellungen",
+    "appPreferences": "App-Einstellungen",
+    "launchOnStartup": "Beim Login starten",
+    "openWebUIAtLaunch": "Beim Login die Web-UI öffnen",
+    "pubsub": "PubSub aktivieren",
+    "namesysPubsub": "IPNS über PubSub aktivieren",
+    "automaticGC": "Automatische Garbage Collection",
+    "takeScreenshotShortcut": "Globales Screenshot-Tastaturkürzel",
+    "experiments": "Experimente",
+    "npmOnIpfs": "npm in IPFS aktivieren",
+    "monochromeTrayIcon": "Einfarbiges Tray-Icon benutzen"
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "Benutzerdefinierte IPFS-Binärdatei",
+    "message": "Wenn du ein eigenes IPFS einstellst, wird IPFS Desktop nicht länger die gebündelte IPFS version nutzen, sondern die Binärversion nutzen, die du angibst. Möchtest du fortfahren?"
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "Benutzerdefinierte IPFS-Binärdatei",
+    "message": "IPFS Desktop wird die Binärdatei unter { path } nutzen. Dafür muss IPFS jedoch zuerst neu gestartet werden."
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "Benutzerdefinierte IPFS-Binärdatei löschen",
+    "message": "Die Angabe der eigenen IPFS Binärdatei wurde entfernt. Um die gebündelte IPFS-Version zu nutzen, muss IPFS zuerst neu gestartet werden."
+  },
+  "unresponsiveWindowDialog": {
+    "title": "IPFS Desktop reagiert nicht mehr",
+    "message": "Der laufende Betrieb beansprucht mehr Ressourcen als erwartet. Möchtest Du abbrechen und die Oberfläche zwangsweise neu laden?",
+    "forceReload": "Ja, neu laden",
+    "doNothing": "Nichts tun"
+  },
+  "migrationDialog": {
+    "title": "IPFS Desktop Migration",
+    "message": "Einen Moment! IPFS Desktop muss die neuesten Datenspeichermigrationen ausführen:",
+    "closeAndContinue": "Weiter im Hintergrund"
+  },
+  "startupFailedDialog": {
+    "title": "Der IPFS Desktop Start ist fehlgeschlagen",
+    "message": "Der IPFS Knoten hat einen Fehler festgestellt und der Start konnte nicht abgeschlossen werden:"
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "Der IPFS Speicher muss ein Verzeichnis sein",
+    "message": "Der Speicher in „{ path }“ ist ungültig, da er kein Verzeichnis ist.\n\nBevor Du IPFS Desktop erneut startest, benenne bitte den alten Speicher in „.ipfs.backup“ um. Bitte beachte, dass IPFS Desktop dadurch einen neuen Speicher generiert."
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "IPFS Speicher-Konfiguration fehlt",
+    "message": "Der Speicher unter „{ path }“ hat keine „config“-Datei. Die „config“-Datei muss eine gültige JSON-Datei sein.\n\nBevor Du IPFS Desktop erneut startest, repariere bitte die Konfigurationsdatei oder benenne den alten Speicher in „.ipfs.backup“ um. Bitte beachte, dass IPFS Desktop durch das Umbenennen des alten Speichers einen neuen Speicher generiert."
+  },
+  "privateNetworkDialog": {
+    "title": "IPFS Speicher für privates Netzwerk",
+    "message": "Der Speicher unter „{ path }“ gehört zu einem privaten Netzwerk, das von IPFS Desktop nicht unterstützt wird."
+  },
+  "invalidRepositoryDialog": {
+    "title": "Ungültiger IPFS Speicher oder Konfigurationsdatei",
+    "message": "Der Speicher unter „{ path }“ oder seine Konfiguration ist ungültig. Die „config“-Datei muss eine gültige JSON Datei sein.\n\nBevor Du IPFS Desktop erneut startest, repariere bitte die Konfigurationsdatei oder benenne den alten Speicher in „.ipfs.backup“ um. Bitte beachte, dass IPFS Desktop durch das Umbenennen des alten Speichers einen neuen Speicher generiert."
+  }
+}

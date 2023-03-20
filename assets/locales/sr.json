@@ -1,0 +1,227 @@
+{
+  "ipfsIsRunning": "IPFS je Aktivan",
+  "ipfsIsStopping": "IPFS se Zaustavlja",
+  "ipfsIsStarting": "IPFS se Pokreće",
+  "ipfsIsNotRunning": "IPFS nije Aktivan",
+  "ipfsHasErrored": "IPFS ima Grešaka",
+  "runningWithGC": "Pokretanje (GC u toku)",
+  "runningWhileCheckingForUpdate": "Pokretanje (Proveravnje za Ažuriranje)",
+  "start": "Start",
+  "stop": "Stop",
+  "restart": "Restart",
+  "about": "O Nama",
+  "advanced": "Napredno",
+  "openRepoDir": "Otvori Direktorijum Skladišta ",
+  "openLogsDir": "Otvori Direktorijum Logova",
+  "openConfigFile": "Otvori Konfiguracionu Datoteku",
+  "viewOnGitHub": "Vidi na GitHub…",
+  "helpUsTranslate": "Pomozi Prevedi Ovu Aplikaciju...",
+  "readReleaseNotes": "Pročitaj Beleške o Izdavanju",
+  "status": "Status",
+  "files": "Datoteke",
+  "peers": "Povezani",
+  "quit": "Odustani",
+  "versions": "Verzije",
+  "screenshotTaken": "Snimak ekrana uradjen",
+  "shareableLinkCopied": "Deljiva veza kopirana u međuspremnik. Kliknite ovde da biste pogledali snimak ekrana.",
+  "couldNotTakeScreenshot": "Snimak ekrana nije napravljen",
+  "errorwhileTakingScreenshot": "Došlo je do greške prilikom snimanja ekrana.",
+  "clickToOpenLogs": "Kliknite ovde da biste otvorili logove.",
+  "ipfsNotRunning": "IPFS se ne pokreće",
+  "checkForUpdates": "Proveri za Ažuriranja…",
+  "checkingForUpdates": "Proveravanje za Ažuriranja",
+  "yes": "Da",
+  "no": "Ne",
+  "close": "Zatvori",
+  "ok": "OK",
+  "cancel": "Otkaži",
+  "enable": "Omogući",
+  "reportTheError": "Prijavi grešku",
+  "restartIpfsDesktop": "Restartuj IPFS Desktop",
+  "openLogs": "Otvori dnevnike",
+  "takeScreenshot": "Slikaj Ekran",
+  "moveRepositoryLocation": "Pomeri Lokaciju Skladišta",
+  "runGarbageCollector": "Pokrenite Sakupljač Smeća",
+  "selectDirectory": "Izaberi Direktorijum",
+  "customIpfsBinary": "Prilagođeni IPFS Binari",
+  "setCustomIpfsBinary": "Podesi Prilagođeni IPFS Binari",
+  "clearCustomIpfsBinary": "Obriši Prilagodjeni IPFS Binari",
+  "openCliDocumentation": "Otvori CLI Dokumentaciju",
+  "polkitDialog": {
+    "title": "Polkit nije pronađen",
+    "message": "IPFS-ovi se ne mogu dodati u direktorijum /usr/local/bin/ bez polkit agenta."
+  },
+  "noPermissionDialog": {
+    "title": "Nema dozvola",
+    "message": "IPFS se ne može dodati u /usr/local/bin/, zato što ste uneli pogrešnu šifru, ili oduzeli dozvolu."
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS se ne pokreće",
+    "message": "IPFS mora da bude aktivan da bi izveo ovu akciju. Da li želite da pokrenete daemon?"
+  },
+  "recoverableErrorDialog": {
+    "title": "Desila se greška",
+    "message": "Došlo je do greške, ali to ne sprečava izvršenje IPFS-a. Možete sami da pregledate zapise ili da prijavite grešku developerima."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Ne mogđe da se poveže na API",
+    "message": "IPFS Desktop ne može da se poveže sa unetom API adresom: { addr }"
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "IPFS Desktop se ugasio",
+    "message": "IPFS Desktop se isključio zbog greške. Možete ponovo pokrenuti aplikaciju ili prijaviti grešku developerima, što zahteva GitHub nalog."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Pomeri direktorijum",
+    "message": "Ako vaše spremište zauzima previše prostora na glavnom disku, možete ga premestiti na neku drugu lokaciju. Imajte na umu da nova lokacija mora uvek biti dostupna da bi IPFS Desktop ispravno funkcionisao.",
+    "action": "Pomeri i restartuj node"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "Direktorijum pomeren uspešno",
+    "message": "Vaše spremište je uspešno premešteno { location }i vaša konfiguracija je ažurirana. Daemon će se sada ponovo pojrenuti."
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "Izabran je isti direktorijum",
+    "message": "Direktorijum koji ste izabrali je isti kao: { location }. Tako da neće biti nikakvih izmena."
+  },
+  "moveRepositoryDirExists": {
+    "title": "Direktorijum već postoji",
+    "message": "Direktorijum { location } već postoji. Izaberite neki drugi."
+  },
+  "busyPortsDialog": {
+    "title": "Portovi su zauzeti",
+    "message": "Portovi { port1 } i { port2 } nisu dostupni. Da li hoćete da koristite { alt1 } i { alt2 } umesto?",
+    "action": "Koristite portove { alt1 } i { alt2 } umesto"
+  },
+  "busyPortDialog": {
+    "title": "Port je zauzet",
+    "message": "Port { port } nije dostupak. Da li želite da koristite { alt } umesto?",
+    "action": "Koristi port { alt } umesto"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Portovi su zauzeti",
+    "message": "Ne može se povezati za jednu ili više API ili Gateway adresa jer su portovi zauzeti.",
+    "action": "Otvori konfiguracioni fajl"
+  },
+  "itemsAddedNotification": {
+    "title": "Predmeti dodati",
+    "message": "{ count } predmeta dodato u tvoj IPFS node. Deljivi link je kopiran u medjuspremnik."
+  },
+  "itemAddedNotification": {
+    "title": "Predmet dodat",
+    "message": "Predmet dodat u tvoj IPFS node. Deljivi link je kopiran u medjuspremnik."
+  },
+  "itemsFailedNotification": {
+    "title": "Neuspelo dodavanje predmeta",
+    "message": "Predmeti nisu mogli biti dodati na tvoj node."
+  },
+  "updateAvailableDialog": {
+    "title": "Ažuriranje dostupno",
+    "message": "Nova verzija ({ version }) IPFS Desktop-a je dostupna. Preuzimanje će početi u pozadini uskoro."
+  },
+  "updateNotAvailableDialog": {
+    "title": "Ažuriranje nije dostupno",
+    "message": "Imate najnoviju verziju IPFS Desktop-a ({ version })."
+  },
+  "updateErrorDialog": {
+    "title": "Ažuriranje nije moglo biti preuzeto",
+    "message": "Nije bilo moguće preuzeti ažuriranje. Molimo proverite svoju internet konekciju i pokušajte ponovo."
+  },
+  "updateDownloadedDialog": {
+    "title": "IPFS Desktop Ažuriran",
+    "message": "Ažuriranje IPFS Desktop-a { version } je dostupno. Da li želite sada da ga preuzmete?",
+    "later": "Kasnije",
+    "now": "Instaliraj sada"
+  },
+  "updateDownloadedNotification": {
+    "title": "IPFS Desktop Ažuriran",
+    "message": "Ažuriranje IPFS Desktop-a { version } je dostupno. "
+  },
+  "runGarbageCollectorWarning": {
+    "title": "Kolektor đubreta",
+    "message": "Pokretanje sakupljača djubreta (GC) će ukloniti iz tvog direktorijuma sve objekte koji nisu pinovani na tvom MFP. To može malo potrajati. Da li želiš da nastaviš?",
+    "action": "Pokreni"
+  },
+  "runGarbageCollectorDone": {
+    "title": "Kolektor đubreta",
+    "message": "Sakupljač djubreta je radio uspešno."
+  },
+  "moveRepositoryFailed": {
+    "title": "Pomeri direktorijum",
+    "message": "Nirektorijum nije mogao biti pomeren od \"{ currDir }\" do \"{ newDir }\"."
+  },
+  "runGarbageCollectorErrored": {
+    "title": "Kolektor đubreta",
+    "message": "Kolektor djubreta nije izvršen uspešno."
+  },
+  "launchAtLoginNotSupported": {
+    "title": "Greška",
+    "message": "Pokretanje po logovanju nije podržano na vašoj platformi."
+  },
+  "launchAtLoginFailed": {
+    "title": "Greška",
+    "message": "Pokretanje po logovanju je nemoguće na vašoj mašini."
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "Omogući prečicu za slikanje ekrana",
+    "message": "Omogućavajući ovu prečicu \"{ accelerator }\" moćićete da slikate ekran dokle god je IPFS Desktop aktivan."
+  },
+  "settings": {
+    "settings": "Podešavanja",
+    "preferences": "Preference",
+    "openNodeSettings": "Otvori Node podešavanja",
+    "appPreferences": "App Preference",
+    "launchOnStartup": "Pokreni po Logovanju",
+    "openWebUIAtLaunch": "Otvori Web UI pri pokretanju",
+    "pubsub": "Omogući PubSub",
+    "namesysPubsub": "Omogući IPNS preko PubSub",
+    "automaticGC": "Automatsko Sakupljanje Djubreta",
+    "takeScreenshotShortcut": "Globalna Prečica za Snimanje Ekrana",
+    "experiments": "Eksperimenti",
+    "npmOnIpfs": "Omogući npm na IPFS",
+    "monochromeTrayIcon": "Use Monochrome Tray Icon"
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "Custom IPFS binary",
+    "message": "By setting a custom IPFS, IPFS Desktop will no longer use the bundled IPFS version and will use the binary you specify. Do you wish to proceed?"
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "Custom IPFS binary",
+    "message": "IPFS Desktop will start using the binary located at { path }. To start using it, IPFS needs to be restarted first."
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "Clear custom IPFS binary",
+    "message": "The custom IPFS binary was cleared. To start using the bundled IPFS version, IPFS needs to be restarted first."
+  },
+  "unresponsiveWindowDialog": {
+    "title": "IPFS Desktop became unresponsive",
+    "message": "Ongoing operation is taking more resources than expected. Do you wish to abort, and forcefully reload the interface?",
+    "forceReload": "Da, ponovo učitaj",
+    "doNothing": "Ne radi ništa"
+  },
+  "migrationDialog": {
+    "title": "IPFS Desktop Migration",
+    "message": "One moment! IPFS Desktop needs to run the latest data store migrations:",
+    "closeAndContinue": "Continue in the background"
+  },
+  "startupFailedDialog": {
+    "title": "IPFS Desktop Startup Has Failed",
+    "message": "IPFS node has encountered an error and startup could not be completed:"
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "IPFS Repository Must Be a Directory",
+    "message": "The repository at “{ path }” is invalid, as it is not a directory.\n\nBefore starting IPFS Desktop again, please rename the old repository to “.ipfs.backup”. Please note that this will make IPFS Desktop generate a new repository."
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "IPFS Repository Configuration Is Missing",
+    "message": "The repository at “{ path }” does not have a “config” file. The “config” file must be a valid JSON file.\n\nBefore starting IPFS Desktop again, please fix the configuration file or rename the old repository to “.ipfs.backup”. Please note that by renaming the old repository, IPFS Desktop will generate a new repository."
+  },
+  "privateNetworkDialog": {
+    "title": "Private Network IPFS Repository",
+    "message": "The repository at “{ path }” is part of a private network, which is not supported by IPFS Desktop."
+  },
+  "invalidRepositoryDialog": {
+    "title": "Invalid IPFS Repository or Configuration File",
+    "message": "The repository at “{ path }” or its configuration is invalid. The “config” file must be a valid JSON.\n\nBefore starting IPFS Desktop again, please fix the configuration file or rename the old repository to “.ipfs.backup”. Please note that by renaming the old repository, IPFS Desktop will generate a new repository"
+  }
+}

@@ -1,0 +1,227 @@
+{
+  "ipfsIsRunning": "IPFS je spuštěn",
+  "ipfsIsStopping": "IPFS se zastavuje",
+  "ipfsIsStarting": "IPFS startuje",
+  "ipfsIsNotRunning": "IPFS neběží",
+  "ipfsHasErrored": "IPFS zaznamenalo chybu",
+  "runningWithGC": "Běží (Probíhá úklid paměti)",
+  "runningWhileCheckingForUpdate": "Běží (kontrola aktualizací)",
+  "start": "Začít",
+  "stop": "Zastavit",
+  "restart": "Restartovat",
+  "about": "O projektu",
+  "advanced": "Pokročilý",
+  "openRepoDir": "Otevřít adresář úložiště",
+  "openLogsDir": "Otevřít adresář Logů",
+  "openConfigFile": "Otevřít konfigurační soubor",
+  "viewOnGitHub": "Navštívit GitHub projektu...",
+  "helpUsTranslate": "Pomozte s překladem...",
+  "readReleaseNotes": "Přečtěte si poznámky k vydání",
+  "status": "Stav",
+  "files": "Soubory",
+  "peers": "Uzly",
+  "quit": "Konec",
+  "versions": "Verze",
+  "screenshotTaken": "Snímek byl pořízen",
+  "shareableLinkCopied": "Odkaz ke sdílení byl zkopírován do schránky. Klepnutím sem zobrazíte snímek obrazovky.",
+  "couldNotTakeScreenshot": "Snímek obrazovky nelze pořídit",
+  "errorwhileTakingScreenshot": "Při pořizování snímku obrazovky došlo k chybě.",
+  "clickToOpenLogs": "Klepnutím sem otevřete logy.",
+  "ipfsNotRunning": "IPFS neběží",
+  "checkForUpdates": "Zkontrolovat aktulizace ...",
+  "checkingForUpdates": "Kontrola aktualizací",
+  "yes": "Ano",
+  "no": "Ne",
+  "close": "Zavřít",
+  "ok": "OK",
+  "cancel": "Zrušit",
+  "enable": "Povolit",
+  "reportTheError": "Nahlásit chybu",
+  "restartIpfsDesktop": "Restartovat IPFS Desktop",
+  "openLogs": "Otevřít logy",
+  "takeScreenshot": "Udělat snímek obrazovky",
+  "moveRepositoryLocation": "Přesunout umístění repozitáře",
+  "runGarbageCollector": "Spustit sběr odpadu",
+  "selectDirectory": "Vyberat adresář",
+  "customIpfsBinary": "Vlastní IPFS binárka",
+  "setCustomIpfsBinary": "Nastavit vlastní IPFS binárku",
+  "clearCustomIpfsBinary": "Nepoužívat vlastní IPFS binárku",
+  "openCliDocumentation": "Otevřít dokumentaci CLI",
+  "polkitDialog": {
+    "title": "Polkit nebyl nalezen",
+    "message": "IPFS nelze přidat do /usr/local/bin/ bez agenta polkit."
+  },
+  "noPermissionDialog": {
+    "title": "Žádné oprávnění",
+    "message": "IPFS nelze přidat do /usr/local/bin/, buď proto, že jste zadali nesprávné heslo, nebo jste odmítli povolení."
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS neběží",
+    "message": "Pro provedení této akce musí být spuštěn IPFS. Chcete spustit démona?"
+  },
+  "recoverableErrorDialog": {
+    "title": "Nastala chyba",
+    "message": "Došlo k chybě, ale nezabrání to spuštění Desktop IPFS. Můžete si prohlédnout logy pro sebe nebo nahlásit chybu vývojářům."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Nelze se připojit k API",
+    "message": "IPFS Desktop se nemůže připojit k uvedené adrese API: { addr }."
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "Desktop IPFS byl vypnut",
+    "message": "Desktop IPFS se vypnul kvůli chybě. Můžete restartovat aplikaci nebo nahlásit chybu vývojářům, což vyžadují účet na GitHub."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Přesunout úložiště",
+    "message": "Pokud vaše úložiště zabírá příliš mnoho místa na hlavním disku, můžete jej přesunout na jiné místo. Nezapomeňte, že nové umístění musí být vždy dostupné, aby IPFS Desktop fungoval správně.",
+    "action": "Přesunout a restartovat uzel"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "Úložiště bylo úspěšně přesunuto",
+    "message": "Vaše úložiště bylo úspěšně přesunuto do { location } a vaše konfigurace byla aktualizována. Démon se nyní znovu spustí."
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "Byl vybrán stejný adresář",
+    "message": "Zvolený adresář je stejný jako aktuální: { location }. Proto nebudou provedeny žádné změny."
+  },
+  "moveRepositoryDirExists": {
+    "title": "Adresář již existuje",
+    "message": "Adresář { location } již existuje. Zkuste použít jiný."
+  },
+  "busyPortsDialog": {
+    "title": "Porty jsou zaneprázdněny",
+    "message": "Porty { port1 } a{ port2 } nejsou k dispozici. Chcete použít namísto nich { alt1 } a{ alt2 }?",
+    "action": "Použít porty raději { alt1 } a{ alt2 } "
+  },
+  "busyPortDialog": {
+    "title": "Port je zaneprázdněn",
+    "message": "Port { port }není k dispozici. Chcete použít místo něj { alt } ?",
+    "action": "Použít raději { alt } "
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Porty jsou zaneprázdněny",
+    "message": "Nelze navázat na jednu nebo více adres API nebo Gateway, protože jsou porty zaneprázdněny.",
+    "action": "Otevřete konfigurační soubor"
+  },
+  "itemsAddedNotification": {
+    "title": "Položky přidány",
+    "message": "{ count } položek přidaných do uzlu IPFS. Do schránky byl zkopírován sdílený odkaz."
+  },
+  "itemAddedNotification": {
+    "title": "Položka přidána",
+    "message": "Položka přidaná do uzlu IPFS. Do schránky byl zkopírován sdílený odkaz."
+  },
+  "itemsFailedNotification": {
+    "title": "Nepodařilo se přidat položky",
+    "message": "Položky nelze přidat do uzlu."
+  },
+  "updateAvailableDialog": {
+    "title": "Aktualizace je k dispozici",
+    "message": "K dispozici je nová verze ({ version }) IPFS. Stahování začne brzy na pozadí."
+  },
+  "updateNotAvailableDialog": {
+    "title": "Aktualizace není k dispozici",
+    "message": "Jste na nejnovější verzi IFPS Desktop ({ version })."
+  },
+  "updateErrorDialog": {
+    "title": "Aktualizace se nepodařilo stáhnout",
+    "message": "Aktualizaci nebylo možné stáhnout. Zkontrolujte připojení k internetu a akci opakujte."
+  },
+  "updateDownloadedDialog": {
+    "title": "Aktualizace IPFS Desktop",
+    "message": "K dispozici je aktualizace IPFS Desktop { version }. Chcete ji nainstalovat nyní?",
+    "later": "Později",
+    "now": "Nainstalovat nyní"
+  },
+  "updateDownloadedNotification": {
+    "title": "Aktualizace IPFS Desktop",
+    "message": "K dispozici je aktualizace IPFS Desktop { version }."
+  },
+  "runGarbageCollectorWarning": {
+    "title": "Garbage collector",
+    "message": "Spuštění garbage collectoru (GC) odstraní z úložiště všechny objekty, které nejsou připnuté nebo na vašem MFS. Může to chvíli trvat. Přejete si pokračovat?",
+    "action": "Spustit"
+  },
+  "runGarbageCollectorDone": {
+    "title": "Garbage collector",
+    "message": "Garbage collector byl úspěšně spuštěn."
+  },
+  "moveRepositoryFailed": {
+    "title": "Přesunout úložiště",
+    "message": "Nelze přesunout úložiště z \"{ currDir }\" do \"{ newDir }\"."
+  },
+  "runGarbageCollectorErrored": {
+    "title": "Garbage collector",
+    "message": "Spuštění garbage collectoru se nepodařilo úspěšně dokončit."
+  },
+  "launchAtLoginNotSupported": {
+    "title": "Chyba",
+    "message": "Spuštění při přihlášení není na vaší platformě podporováno."
+  },
+  "launchAtLoginFailed": {
+    "title": "Chyba",
+    "message": "Spuštění při přihlášení se na vašem počítači nepodařilo povolit."
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "Povolit zástupce snímku obrazovky",
+    "message": "Pokud tuto funkci povolíte, bude zástupce \"{ accelerator }\" k dispozici pro pořizování snímků obrazovky, dokud je spuštěn systém IPFS Desktop."
+  },
+  "settings": {
+    "settings": "Nastavení",
+    "preferences": "Předvolby",
+    "openNodeSettings": "Otevřít nastavení uzlu",
+    "appPreferences": "Předvolby aplikace",
+    "launchOnStartup": "Spuštění při přihlášení",
+    "openWebUIAtLaunch": "Otevření webového uživatelského rozhraní při spuštění",
+    "pubsub": "Povolit PubSub",
+    "namesysPubsub": "Povolit IPNS přes PubSub",
+    "automaticGC": "Automatický Garbage Collection",
+    "takeScreenshotShortcut": "Globální zkratka snímku obrazovky",
+    "experiments": "Experimenty",
+    "npmOnIpfs": "Povolení npm na IPFS",
+    "monochromeTrayIcon": "Use Monochrome Tray Icon"
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "Vlastní binární soubor IPFS",
+    "message": "Nastavením vlastního systému IPFS přestane služba IPFS Desktop používat dodávanou verzi systému IPFS a použije vámi zadanou binární verzi. Chcete pokračovat?"
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "Vlastní binární soubor IPFS",
+    "message": "IPFS Desktop se spustí pomocí binárního souboru umístěného na { path }. Abyste jej mohli začít používat, je třeba systém IPFS nejprve restartovat."
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "Vymazání vlastních binárních souborů IPFS",
+    "message": "Vlastní binární systém IPFS byl vymazán. Chcete-li začít používat přiloženou verzi systému IPFS, je třeba systém IPFS nejprve restartovat."
+  },
+  "unresponsiveWindowDialog": {
+    "title": "IPFS Desktop přestal reagovat",
+    "message": "Probíhající operace si vyžádá více prostředků, než se očekávalo. Přejete si přerušit a násilně znovu načíst rozhraní?",
+    "forceReload": "Ano, znovu načíst",
+    "doNothing": "Nedělat nic"
+  },
+  "migrationDialog": {
+    "title": "Migrace IPFS Desktop",
+    "message": "Okamžik! IPFS Desktop potřebuje spustit nejnovější migrace datových úložišť:",
+    "closeAndContinue": "Pokračovat na pozadí"
+  },
+  "startupFailedDialog": {
+    "title": "Spuštění IPFS Desktop selhalo",
+    "message": "Uzel IPFS narazil na chybu a spuštění nebylo možné dokončit:"
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "IPFS Repository Must Be a Directory",
+    "message": "The repository at “{ path }” is invalid, as it is not a directory.\n\nBefore starting IPFS Desktop again, please rename the old repository to “.ipfs.backup”. Please note that this will make IPFS Desktop generate a new repository."
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "IPFS Repository Configuration Is Missing",
+    "message": "The repository at “{ path }” does not have a “config” file. The “config” file must be a valid JSON file.\n\nBefore starting IPFS Desktop again, please fix the configuration file or rename the old repository to “.ipfs.backup”. Please note that by renaming the old repository, IPFS Desktop will generate a new repository."
+  },
+  "privateNetworkDialog": {
+    "title": "Private Network IPFS Repository",
+    "message": "The repository at “{ path }” is part of a private network, which is not supported by IPFS Desktop."
+  },
+  "invalidRepositoryDialog": {
+    "title": "Neplatné úložiště IPFS nebo konfigurační soubor",
+    "message": "The repository at “{ path }” or its configuration is invalid. The “config” file must be a valid JSON.\n\nBefore starting IPFS Desktop again, please fix the configuration file or rename the old repository to “.ipfs.backup”. Please note that by renaming the old repository, IPFS Desktop will generate a new repository"
+  }
+}

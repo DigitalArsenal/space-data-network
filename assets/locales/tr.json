@@ -1,0 +1,227 @@
+{
+  "ipfsIsRunning": "IPFS Çalışıyor",
+  "ipfsIsStopping": "IPFS Durduruluyor",
+  "ipfsIsStarting": "IPFS Başlıyor",
+  "ipfsIsNotRunning": "IPFS Çalışmıyor",
+  "ipfsHasErrored": "IPFS'de Hata Oluştu",
+  "runningWithGC": "Çalışıyor (GC devam ediyor)",
+  "runningWhileCheckingForUpdate": "Çalışıyor (Güncelemeler Denetleniyor)",
+  "start": "Başlat",
+  "stop": "Dur",
+  "restart": "Tekrar başlat",
+  "about": "Hakkında",
+  "advanced": "Gelişmiş",
+  "openRepoDir": "Depo Dizinini Aç",
+  "openLogsDir": "Günlük Dizinini Aç",
+  "openConfigFile": "Yapılandırma Dosyasını Aç",
+  "viewOnGitHub": "GitHub'da görüntüleyin…",
+  "helpUsTranslate": "Bu Uygulamayı Çevirmeye Yardım Edin…",
+  "readReleaseNotes": "Sürüm Notlarını Okuyun",
+  "status": "Durum",
+  "files": "Dosyalar",
+  "peers": "Eşler",
+  "quit": "Çık",
+  "versions": "Sürümler",
+  "screenshotTaken": "Ekran görüntüsü alındı",
+  "shareableLinkCopied": "Paylaşılabilir bağlantı panoya kopyalandı. Ekran görüntüsünü görmek için burayı tıklayın.",
+  "couldNotTakeScreenshot": "Ekran görüntüsü alınamadı",
+  "errorwhileTakingScreenshot": "Ekran görüntüsü alınırken bir hata oluştu.",
+  "clickToOpenLogs": "Günlükleri açmak için burayı tıklayın.",
+  "ipfsNotRunning": "IPFS çalışmıyor",
+  "checkForUpdates": "Güncellemeleri kontrol et…",
+  "checkingForUpdates": "Güncellemeler Denetleniyor",
+  "yes": "Evet",
+  "no": "Hayır",
+  "close": "Kapat",
+  "ok": "Tamam",
+  "cancel": "İptal et",
+  "enable": "Etkinleştir",
+  "reportTheError": "Hatayı bildirin",
+  "restartIpfsDesktop": "IPFS Masaüstünü Yeniden Başlatın",
+  "openLogs": "Günlükleri aç",
+  "takeScreenshot": "Ekran görüntüsü al",
+  "moveRepositoryLocation": "Depo Konumunu Taşı",
+  "runGarbageCollector": "Çöp Toplayıcıyı Çalıştır",
+  "selectDirectory": "Dizin Seçin",
+  "customIpfsBinary": "Özel IPFS İkilisi",
+  "setCustomIpfsBinary": "Özel IPFS İkilisini Ayarla",
+  "clearCustomIpfsBinary": "Özel IPFS İkilisini Temizle",
+  "openCliDocumentation": "Açık CLI Dokümantasyonu",
+  "polkitDialog": {
+    "title": "Polkit bulunamadı",
+    "message": "IPFS, polkit aracısı olmadan /usr/local/bin/ dizinine eklenemez."
+  },
+  "noPermissionDialog": {
+    "title": "İzin yok",
+    "message": "Yanlış şifre girdiğiniz veya izniniz reddettiği için IPFS /usr/local/bin/ 'e eklenemedi."
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS çalışmıyor",
+    "message": "Bu eylemi gerçekleştirmek için IPFS'nin çalışıyor olması gerekir. Arka planı başlatmak istiyor musunuz?"
+  },
+  "recoverableErrorDialog": {
+    "title": "Bir hata oluştu",
+    "message": "Bir hata oluştu ancak IPFS Masaüstünün yürütülmesini engellemiyor. Günlükleri kendiniz inceleyebilir veya hatayı geliştiricilere bildirebilirsiniz."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "UPA'ya bağlanılamıyor",
+    "message": "IPFS Masaüstü, sağlanan UPA adresine bağlanamıyor: { addr }."
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "IPFS Masaüstü kapandı",
+    "message": "IPFS Masaüstü bir hata nedeniyle kapandı. Uygulamayı yeniden başlatabilir veya bir GitHub hesabı gerektiren hatayı geliştiricilere bildirebilirsiniz."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Depoyu taşı",
+    "message": "Eğer deponuz ana sürücünüzde çok fazla yer kaplıyorsa, başka bir yere taşıyabilirsiniz. IPFS Masaüstü'nün düzgün çalışması için yeni konumun her zaman mevcut olması gerektiğini unutmayın.",
+    "action": "Düğümü taşı ve yeniden başlat"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "Kod deposu başarıyla taşındı",
+    "message": "Deponuz başarıyla { location } konumuna taşındı ve yapılandırmanız güncellendi. Arka plan programı şimdi yeniden başlayacaktır."
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "Aynı dizin seçildi",
+    "message": "Seçtiğiniz dizin şu anki ile aynı: { location }. Bu nedenle hiçbir değişiklik yapılmayacaktır. "
+  },
+  "moveRepositoryDirExists": {
+    "title": "Dizin zaten var",
+    "message": "{ location } dizini zaten var. Lütfen farklı bir tane kullanmayı deneyin."
+  },
+  "busyPortsDialog": {
+    "title": "Bağlantı noktaları meşgul",
+    "message": "{ port1 } ve { port2 } bağlantı noktaları kullanılamıyor. Bunun yerine { alt1 } ve { alt2 } kullanmak istiyor musunuz?",
+    "action": "Bunun yerine { alt1 } ve { alt2 } bağlantı noktalarını kullanın"
+  },
+  "busyPortDialog": {
+    "title": "Bağlantı noktası meşgul",
+    "message": "{ port } bağlantı noktası mevcut değil. Bunun yerine { alt } kullanmak istiyor musunuz?",
+    "action": "Bunun yerine { alt } bağlantı noktasını kullanın"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Bağlantı noktaları meşgul",
+    "message": "Bağlantı noktaları meşgul olduğu için bir veya daha fazla UPA veya Ağ Geçidi adresine bağlanılamıyor.",
+    "action": "Yapılandırma dosyasını aç"
+  },
+  "itemsAddedNotification": {
+    "title": "Eklenen öğeler",
+    "message": "{ count }öğe IPFS düğümünüze eklendi. Paylaşılabilir bağlantı panonuza kopyalandı."
+  },
+  "itemAddedNotification": {
+    "title": "Öğe eklendi",
+    "message": "Öğe IPFS düğümünüze eklendi. Paylaşılabilir bağlantı panonuza kopyalandı."
+  },
+  "itemsFailedNotification": {
+    "title": "Öğeler eklenemedi",
+    "message": "Öğeleriniz düğümünüze eklenemedi."
+  },
+  "updateAvailableDialog": {
+    "title": "Güncelleme mevcut",
+    "message": "IPFS Desktop’ın yeni bir sürümü ({ version }) mevcut. İndirme işlemi kısa süre sonra arka planda başlayacaktır."
+  },
+  "updateNotAvailableDialog": {
+    "title": "Güncelleme mevcut değil",
+    "message": "IPFS Masaüstünün en son sürümündesiniz ({ version }). "
+  },
+  "updateErrorDialog": {
+    "title": "Güncelleme indirilemedi",
+    "message": "Güncellemeyi indirmek mümkün olmadı. Lütfen internet bağlantınızı kontrol edin ve tekrar deneyin."
+  },
+  "updateDownloadedDialog": {
+    "title": "IPFS Masaüstü Güncellemesi",
+    "message": "IPFS Masaüstü { version } versiyonuna güncelleme mevcuttur. Şimdi yüklemek ister misiniz?",
+    "later": "Daha sonra",
+    "now": "Şimdi yükle"
+  },
+  "updateDownloadedNotification": {
+    "title": "IPFS Masaüstü Güncellemesi",
+    "message": "IPFS Masaüstü { version } versiyonuna güncelleme mevcuttur."
+  },
+  "runGarbageCollectorWarning": {
+    "title": "Çöp toplayıcı",
+    "message": "Çöp toplayıcıyı (GC) çalıştırmak, havuzunuzdan sabitlenmemiş veya MFS'nizde bulunan tüm nesneleri kaldırır. Bu biraz zaman alabilir. Devam etmek istiyor musunuz?",
+    "action": "Çalıştır"
+  },
+  "runGarbageCollectorDone": {
+    "title": "Çöp toplayıcı",
+    "message": "Çöp toplayıcı başarıyla çalıştı."
+  },
+  "moveRepositoryFailed": {
+    "title": "Depoyu taşı",
+    "message": "Kod deposu \"{ currDir }\" konumundan \"{ newDir }\" konumuna taşınamadı."
+  },
+  "runGarbageCollectorErrored": {
+    "title": "Çöp toplayıcı",
+    "message": "Çöp toplayıcı çalıştırması başarıyla tamamlanamadı."
+  },
+  "launchAtLoginNotSupported": {
+    "title": "Hata",
+    "message": "Platformunuzda oturum açma sırasında başlatma desteklenmiyor."
+  },
+  "launchAtLoginFailed": {
+    "title": "Hata",
+    "message": "Makinenizde oturum açma sırasında başlatma etkinleştirilemedi."
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "Ekran görüntüsü kısayolunu etkinleştir",
+    "message": "Bunu etkinleştirdiğinizde, \"{ accelerator }\" kısayolu, IPFS Masaüstü çalıştığı sürece ekran görüntüsü almak için kullanılabilir olacaktır."
+  },
+  "settings": {
+    "settings": "Ayarlar",
+    "preferences": "Tercihler",
+    "openNodeSettings": "Düğüm Ayarlarını Aç",
+    "appPreferences": "Uygulama Tercihleri",
+    "launchOnStartup": "Girişte Başlat",
+    "openWebUIAtLaunch": "Açılışta Web Kullanıcı Arayüzünü Açın",
+    "pubsub": "PubSub'ı etkinleştir",
+    "namesysPubsub": "PubSub üzerinden IPNS'yi etkinleştirin",
+    "automaticGC": "Otomatik Değersiz Veri Toplama",
+    "takeScreenshotShortcut": "Global Ekran Görüntüsü Kısayolu",
+    "experiments": "Deneyler",
+    "npmOnIpfs": "IPFS'de npm'yi etkinleştir",
+    "monochromeTrayIcon": "Use Monochrome Tray Icon"
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "Özel IPFS ikilisi",
+    "message": "Özel bir IPFS ayarladığınızda, IPFS Masaüstü artık birlikte verilen IPFS sürümünü kullanmayacak ve belirttiğiniz ikili dosyayı kullanacaktır. Devam etmek istiyor musunuz?"
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "Özel IPFS ikilisi",
+    "message": " IPFS Masaüstü,{ path } konumunda bulunan ikili dosyayı kullanmaya başlayacaktır. Kullanmaya başlamak için önce IPFS'nin yeniden başlatılması gerekir."
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "Özel IPFS ikilisini temizle",
+    "message": "Özel IPFS ikili dosyası temizlendi. Birlikte verilen IPFS sürümünü kullanmaya başlamak için önce IPFS'nin yeniden başlatılması gerekir."
+  },
+  "unresponsiveWindowDialog": {
+    "title": "IPFS Masaüstü yanıt vermiyor",
+    "message": "Devam eden operasyon beklenenden daha fazla kaynak tüketmekte. İptal etmek ve arayüzü yeniden yüklemeye zorlamak ister misiniz?",
+    "forceReload": "Evet, yeniden yükle",
+    "doNothing": "Hiçbir şey yapma"
+  },
+  "migrationDialog": {
+    "title": "IPFS Masaüstü Geçişi",
+    "message": "Bir dakika! IPFS Masaüstü'nün en yeni veri deposu geçişlerini çalıştırması gerekmektedir:",
+    "closeAndContinue": "Arka planda devam et"
+  },
+  "startupFailedDialog": {
+    "title": "IPFS Masaüstü Başlatması Başarısız Oldu",
+    "message": "IPFS düğümü bir hatayla karşılaştı ve başlatma tamamlanamadı:"
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "IPFS Repository Must Be a Directory",
+    "message": "The repository at “{ path }” is invalid, as it is not a directory.\n\nBefore starting IPFS Desktop again, please rename the old repository to “.ipfs.backup”. Please note that this will make IPFS Desktop generate a new repository."
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "IPFS Repository Configuration Is Missing",
+    "message": "The repository at “{ path }” does not have a “config” file. The “config” file must be a valid JSON file.\n\nBefore starting IPFS Desktop again, please fix the configuration file or rename the old repository to “.ipfs.backup”. Please note that by renaming the old repository, IPFS Desktop will generate a new repository."
+  },
+  "privateNetworkDialog": {
+    "title": "Private Network IPFS Repository",
+    "message": "The repository at “{ path }” is part of a private network, which is not supported by IPFS Desktop."
+  },
+  "invalidRepositoryDialog": {
+    "title": "Geçersiz IPFS Deposu veya Yapılandırma Dosyası",
+    "message": "The repository at “{ path }” or its configuration is invalid. The “config” file must be a valid JSON.\n\nBefore starting IPFS Desktop again, please fix the configuration file or rename the old repository to “.ipfs.backup”. Please note that by renaming the old repository, IPFS Desktop will generate a new repository"
+  }
+}

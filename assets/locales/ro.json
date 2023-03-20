@@ -1,0 +1,227 @@
+{
+  "ipfsIsRunning": "IPFS rulează",
+  "ipfsIsStopping": "IPFS se oprește",
+  "ipfsIsStarting": "IPFS pornește",
+  "ipfsIsNotRunning": "IPFS nu rulează",
+  "ipfsHasErrored": "Eroare IPFS",
+  "runningWithGC": "Rulează (GC în progres)",
+  "runningWhileCheckingForUpdate": "Running (Checking for Updates)",
+  "start": "Start",
+  "stop": "Stop",
+  "restart": "Restart",
+  "about": "Despre",
+  "advanced": "Avansat",
+  "openRepoDir": "Deschide directorul repo-ului",
+  "openLogsDir": "Deschide directorul cu jurnalele",
+  "openConfigFile": "Deschide fișierul de configurare",
+  "viewOnGitHub": "Vezi pe GitHub",
+  "helpUsTranslate": "Ajută la traducerea aplicației",
+  "readReleaseNotes": "Read Release Notes",
+  "status": "Stare",
+  "files": "Fișiere",
+  "peers": "Noduri partenere",
+  "quit": "Ieși",
+  "versions": "Versions",
+  "screenshotTaken": "Captură de ecran făcută",
+  "shareableLinkCopied": "Linkul a fost copiat în clipboard. Fă clic aici pentru a vedea captura de ecran.",
+  "couldNotTakeScreenshot": "Nu am putut face o captură de ecran",
+  "errorwhileTakingScreenshot": "A apărut o eroare la facerea capturii de ecran.",
+  "clickToOpenLogs": "Fă clic aici pentru a deschide jurnalele.",
+  "ipfsNotRunning": "IPFS nu rulează",
+  "checkForUpdates": "Verifică actualizările",
+  "checkingForUpdates": "Checking for Updates",
+  "yes": "Da",
+  "no": "Nu",
+  "close": "Închide",
+  "ok": "Ok",
+  "cancel": "Anulează",
+  "enable": "Activează",
+  "reportTheError": "Reportează această eroare",
+  "restartIpfsDesktop": "Repornește IPFS Desktop",
+  "openLogs": "Deschide jurnalele",
+  "takeScreenshot": "Fă o captură de ecran",
+  "moveRepositoryLocation": "Move Repository Location",
+  "runGarbageCollector": "Run Garbage Collector",
+  "selectDirectory": "Selectează directorul",
+  "customIpfsBinary": "Custom IPFS Binary",
+  "setCustomIpfsBinary": "Set Custom IPFS Binary",
+  "clearCustomIpfsBinary": "Clear Custom IPFS Binary",
+  "openCliDocumentation": "Deschide documentația CLI",
+  "polkitDialog": {
+    "title": "Polkit not found",
+    "message": "IPFS nu poate fi adăugat la directorul /usr/local/bin/ fără un client polkit."
+  },
+  "noPermissionDialog": {
+    "title": "No permission",
+    "message": "IPFS couldn't be added to /usr/local/bin/, either because you entered the wrong password, or you denied permission."
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS nu rulează",
+    "message": "IPFS needs to be running to perform this action. Do you want to start the daemon?"
+  },
+  "recoverableErrorDialog": {
+    "title": "A apărut o eroare",
+    "message": "An error occurred but it does not prevent the execution of IPFS Desktop. You can either inspect the logs for yourself or report the error to the developers."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Cannot connect to API",
+    "message": "IPFS Desktop cannot connect to the API address provided: { addr }."
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "IPFS Desktop has shutdown",
+    "message": "IPFS Desktop has shutdown because of an error. You can restart the app or report the error to the developers, which requires a GitHub account."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Move repository",
+    "message": "If your repository is taking too much space on your main drive, you can move it to some other location. Bear in mind that the new location must always be available in order for IPFS Desktop to work correctly.",
+    "action": "Move and restart node"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "Repository moved successfully",
+    "message": "Your repository was successfully moved to { location } and your configuration was updated. The daemon will now start up again."
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "Same directory selected",
+    "message": "The directory you picked is the same as the current one: { location }. Hence, no changes will be made."
+  },
+  "moveRepositoryDirExists": {
+    "title": " Directory already exists",
+    "message": "The directory { location } already exists. Please try using a different one."
+  },
+  "busyPortsDialog": {
+    "title": "Ports are busy",
+    "message": "The ports { port1 } and { port2 } are not available. Do you want to use { alt1 } and { alt2 } instead?",
+    "action": "Use ports { alt1 } and { alt2 } instead"
+  },
+  "busyPortDialog": {
+    "title": "Port is busy",
+    "message": "The port { port } is not available. Do you want to use { alt } instead?",
+    "action": "Use port { alt } instead"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Ports are busy",
+    "message": "Cannot bind to one or more of the API or Gateway addresses because the ports are busy.",
+    "action": "Open configuration file"
+  },
+  "itemsAddedNotification": {
+    "title": "Items added",
+    "message": "{ count } items added to your IPFS node. A shareable link was copied to your clipboard."
+  },
+  "itemAddedNotification": {
+    "title": "Item added",
+    "message": "Item added to your IPFS node. A shareable link was copied to your clipboard."
+  },
+  "itemsFailedNotification": {
+    "title": "Failed to add items",
+    "message": "Could not add your items to your node."
+  },
+  "updateAvailableDialog": {
+    "title": "Update available",
+    "message": "A new version ({ version }) of IPFS Desktop is available. The download will begin shortly in the background."
+  },
+  "updateNotAvailableDialog": {
+    "title": "Update not available",
+    "message": "You are on the latest version of IPFS Desktop ({ version })."
+  },
+  "updateErrorDialog": {
+    "title": "Could not download update",
+    "message": "It was not possible to download the update. Please check your Internet connection and try again."
+  },
+  "updateDownloadedDialog": {
+    "title": "IPFS Desktop Update",
+    "message": "An update to IPFS Desktop { version } is available. Would you like to install it now?",
+    "later": "Mai târziu",
+    "now": "Instalează acum"
+  },
+  "updateDownloadedNotification": {
+    "title": "IPFS Desktop Update",
+    "message": "An update to IPFS Desktop { version } is available."
+  },
+  "runGarbageCollectorWarning": {
+    "title": "Garbage collector",
+    "message": "Running the garbage collector (GC) will remove from your repository all objects that are not pinned or on your MFS. This may take a while. Do you wish to proceed?",
+    "action": "Run"
+  },
+  "runGarbageCollectorDone": {
+    "title": "Garbage collector",
+    "message": "The garbage collector ran successfully."
+  },
+  "moveRepositoryFailed": {
+    "title": "Move repository",
+    "message": "Could not move the repository from \"{ currDir }\" to \"{ newDir }\"."
+  },
+  "runGarbageCollectorErrored": {
+    "title": "Garbage collector",
+    "message": "The garbage collector run could not be completed successfully."
+  },
+  "launchAtLoginNotSupported": {
+    "title": "Eroare",
+    "message": "Launch at login is not supported on your platform."
+  },
+  "launchAtLoginFailed": {
+    "title": "Eroare",
+    "message": "Launch at login could not be enabled on your machine."
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "Enable screenshot shortcut",
+    "message": "By enabling this, the shortcut \"{ accelerator }\" will be available to take screenshots as long as IPFS Desktop is running."
+  },
+  "settings": {
+    "settings": "Setări",
+    "preferences": "Setări",
+    "openNodeSettings": "Deschide setările nodului",
+    "appPreferences": "Setările aplicației",
+    "launchOnStartup": "Launch at Login",
+    "openWebUIAtLaunch": "Open Web UI at Launch",
+    "pubsub": "Activează PubSub",
+    "namesysPubsub": "Activează IPNS prin PubSub",
+    "automaticGC": "Automatic Garbage Collection",
+    "takeScreenshotShortcut": "Global Screenshot Shortcut",
+    "experiments": "Experimente",
+    "npmOnIpfs": "Activează NPM pe IPFS",
+    "monochromeTrayIcon": "Use Monochrome Tray Icon"
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "Custom IPFS binary",
+    "message": "By setting a custom IPFS, IPFS Desktop will no longer use the bundled IPFS version and will use the binary you specify. Do you wish to proceed?"
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "Custom IPFS binary",
+    "message": "IPFS Desktop will start using the binary located at { path }. To start using it, IPFS needs to be restarted first."
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "Clear custom IPFS binary",
+    "message": "The custom IPFS binary was cleared. To start using the bundled IPFS version, IPFS needs to be restarted first."
+  },
+  "unresponsiveWindowDialog": {
+    "title": "IPFS Desktop nu răspunde",
+    "message": "Ongoing operation is taking more resources than expected. Do you wish to abort, and forcefully reload the interface?",
+    "forceReload": "Da, reîmprospătează",
+    "doNothing": "Nu face nimic"
+  },
+  "migrationDialog": {
+    "title": "Migrație IPFS Desktop",
+    "message": "One moment! IPFS Desktop needs to run the latest data store migrations:",
+    "closeAndContinue": "Continuă în fundal"
+  },
+  "startupFailedDialog": {
+    "title": "Pornirea IPFS Desktop a eșuat",
+    "message": "IPFS node has encountered an error and startup could not be completed:"
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "IPFS Repository Must Be a Directory",
+    "message": "The repository at “{ path }” is invalid, as it is not a directory.\n\nBefore starting IPFS Desktop again, please rename the old repository to “.ipfs.backup”. Please note that this will make IPFS Desktop generate a new repository."
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "IPFS Repository Configuration Is Missing",
+    "message": "The repository at “{ path }” does not have a “config” file. The “config” file must be a valid JSON file.\n\nBefore starting IPFS Desktop again, please fix the configuration file or rename the old repository to “.ipfs.backup”. Please note that by renaming the old repository, IPFS Desktop will generate a new repository."
+  },
+  "privateNetworkDialog": {
+    "title": "Private Network IPFS Repository",
+    "message": "The repository at “{ path }” is part of a private network, which is not supported by IPFS Desktop."
+  },
+  "invalidRepositoryDialog": {
+    "title": "Invalid IPFS Repository or Configuration File",
+    "message": "The repository at “{ path }” or its configuration is invalid. The “config” file must be a valid JSON.\n\nBefore starting IPFS Desktop again, please fix the configuration file or rename the old repository to “.ipfs.backup”. Please note that by renaming the old repository, IPFS Desktop will generate a new repository"
+  }
+}

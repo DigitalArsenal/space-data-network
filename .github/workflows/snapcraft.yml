@@ -1,0 +1,31 @@
+name: snapcraft
+
+on:
+  workflow_dispatch:
+    inputs:
+      manual_name:
+        required: true
+        description: 'Release number to publish (without v prefix)'
+        default: '0.0.0'
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      SNAP_RELEASE_NAME: ${{ github.event.inputs.manual_name || github.event.release.name }}
+    steps:
+      - name: Download .snap artifact
+        uses: dsaltares/fetch-gh-release-asset@0efe227dedb360b09ea0e533795d584b61c461a9 # 0.06
+        with:
+          repo: ipfs/ipfs-desktop
+          version: tags/v${{ env.SNAP_RELEASE_NAME }}
+          file: ipfs-desktop-${{ env.SNAP_RELEASE_NAME }}-linux-amd64.snap
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish to Snapcraft
+        uses: snapcore/action-publish@f1879414dc5500e02a36f3d715bca6ddd438c913 # 1.0.2
+        with:
+          store_login: ${{ secrets.SNAP_STORE_LOGIN }}
+          snap: ipfs-desktop-${{ env.SNAP_RELEASE_NAME }}-linux-amd64.snap
+          release: stable
