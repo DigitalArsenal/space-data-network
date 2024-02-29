@@ -1,5 +1,4 @@
-module github.com/libp2p/go-libp2p/examples/pubsub/chat
-
+module github.com/DigitalArsenal/space-data-network
 go 1.20
 
 require (
@@ -26,6 +25,7 @@ require (
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
+	github.com/google/flatbuffers v23.3.3+incompatible // indirect
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/pprof v0.0.0-20231023181126-ff6d637d2a7b // indirect
 	github.com/google/uuid v1.3.0 // indirect
