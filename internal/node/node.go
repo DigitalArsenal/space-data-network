@@ -4,7 +4,11 @@ package node
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"fmt"
+
+	"github.com/libp2p/go-libp2p/core/crypto"
+
 	"os"
 	"sync"
 
@@ -25,7 +29,21 @@ type Node struct {
 
 // NewNode initializes a new libp2p node with the given configuration.
 func NewNode(ctx context.Context) (*Node, error) {
+	keyStore, err := NewKeyStore()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize key store: %w", err)
+	}
+	pass := os.Getenv("KEYSTORE_PASSWORD")
+	if pass == "" {
+		pass = generatePassword() // From keystore.go
+	}
+	privKey, err := keyStore.GetPrivateKey(pass)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get private key: %w", err)
+	}
+
 	h, err := libp2p.New(
+		libp2p.Identity(privKey),
 		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
 		libp2p.EnableNATService(),
 		libp2p.EnableRelay(),
@@ -38,16 +56,12 @@ func NewNode(ctx context.Context) (*Node, error) {
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 
-	// Initialize the DHT
-	d, err := dht.New(ctx, h)
+	d, err := initDHT(ctx, h)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create DHT: %w", err)
+		return nil, fmt.Errorf("failed to initialize DHT: %w", err)
 	}
 
-	// Output the local peer ID
-	fmt.Println("Local peer ID:", h.ID())
-
-	go discoverPeers(ctx, h)
+	go discoverPeers(ctx, h, d)
 
 	ps, err := pubsub.NewGossipSub(ctx, h)
 	if err != nil {
@@ -101,13 +115,13 @@ func autoRelayPeerSource(ctx context.Context, numPeers int) <-chan peer.AddrInfo
 
 }
 
-func initDHT(ctx context.Context, h host.Host) *dht.IpfsDHT {
+func initDHT(ctx context.Context, h host.Host) (*dht.IpfsDHT, error) {
 	kademliaDHT, err := dht.New(ctx, h)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	if err = kademliaDHT.Bootstrap(ctx); err != nil {
-		panic(err)
+		return nil, err
 	}
 	var wg sync.WaitGroup
 	for _, peerAddr := range dht.DefaultBootstrapPeers {
@@ -122,12 +136,11 @@ func initDHT(ctx context.Context, h host.Host) *dht.IpfsDHT {
 	}
 	wg.Wait()
 
-	return kademliaDHT
+	return kademliaDHT, nil
 }
 
-func discoverPeers(ctx context.Context, h host.Host) {
-	kademliaDHT := initDHT(ctx, h)
-	routingDiscovery := drouting.NewRoutingDiscovery(kademliaDHT)
+func discoverPeers(ctx context.Context, h host.Host, d *dht.IpfsDHT) {
+	routingDiscovery := drouting.NewRoutingDiscovery(d)
 	dutil.Advertise(ctx, routingDiscovery, "space-data-network")
 
 	anyConnected := false
@@ -192,4 +205,22 @@ func printMessagesFrom(ctx context.Context, sub *pubsub.Subscription) {
 		}
 		fmt.Println(m.ReceivedFrom, ": ", string(m.Message.Data))
 	}
+}
+
+// Add a new method to Node to extract the public key
+func (n *Node) PublicKey() (string, error) {
+	pubKey, err := n.Host.ID().ExtractPublicKey()
+	if err != nil {
+		return "", fmt.Errorf("failed to extract public key: %w", err)
+	}
+	if pubKey != nil {
+		return "", fmt.Errorf("public key is nil")
+	}
+	pubKeyBytes, err := crypto.MarshalPublicKey(pubKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal public key: %w", err)
+	}
+
+	return hex.EncodeToString(pubKeyBytes), nil
+
 }

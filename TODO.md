@@ -10,13 +10,9 @@
   - [ ] Use all discovery methods
   - [ ] Use dht and indentity services (in case bootstrap nodes are down / unreachable)
 - [ ] Discovery other nodes in space data network
-  - [ ] Discoverable through bootstrap
-  - [ ] Dial check to see if it supports '/spacedatanetwork/id/1.0.0'
-  - [ ] Store EPM in LevelDB
-- [ ] Protocols
-  - [ ] "exchange:EPM" - Exchange signed Root Profile Message (Entity Profile Message) hash, all other hashes that have been discovered
-  - [ ] "exchange:SCHEMA_MANIFEST" - Exchange standards manifest (which standards and what version are supported).
-  - [ ] "authenticate:peer" - Check to see if peer is on approved PeerList for the network
+  - [ ] Discoverable through 'space-data-network' channel (xpub gen per timestamp?)
+  - [ ] Store EPM in LevelDB for peers
+  - [ ] Exchange EPMs for registered node clients
 - [ ] PubSub
   - [ ] Channels established using "peerid:{schema_id}", e.g. "16Uiu2HAm5zJW5YvLVQqUM5GPJ46p1Tswh3BgTUABhKPdECMG13m7:OMM"
   - [ ] Publish data to IPFS using Space Data Standards raw buffer
