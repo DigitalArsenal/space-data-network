@@ -44,7 +44,7 @@ func Init() {
 	if port, err := strconv.Atoi(webserverPortStr); err == nil {
 		Conf.Webserver.Port = port
 	} else {
-		Conf.Webserver.Port = 4000 // Default port if conversion fails
+		Conf.Webserver.Port = 1969 // Default port if conversion fails
 	}
 
 	// Override datastore settings with environment variables if they exist
