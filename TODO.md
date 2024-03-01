@@ -31,4 +31,9 @@
 - [ ] Identity management
   - [ ] Use SpaceDataStandards.org EPM
   - [ ] Have 'publish to global' option, sent to IPFS
-  
+- [ ] Set up channels per provider
+- [ ] Request management
+  - [ ] Send a request for service (XXX)
+  - [ ] Get a response with new channel name for service (XXX)
+  - [ ] Have node (or node provider) sub to channel
+  - [ ] Send Publish Notification Message or actual data message to channel
