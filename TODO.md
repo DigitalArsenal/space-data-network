@@ -13,6 +13,7 @@
   - [ ] Discoverable through 'space-data-network' channel (xpub gen per timestamp?)
   - [ ] Store EPM in LevelDB for peers
   - [ ] Exchange EPMs for registered node clients
+  - [ ] Have EPMs advertise services (need to modify for this)
 - [ ] PubSub
   - [ ] Channels established using "peerid:{schema_id}", e.g. "16Uiu2HAm5zJW5YvLVQqUM5GPJ46p1Tswh3BgTUABhKPdECMG13m7:OMM"
   - [ ] Publish data to IPFS using Space Data Standards raw buffer
@@ -37,3 +38,9 @@
   - [ ] Get a response with new channel name for service (XXX)
   - [ ] Have node (or node provider) sub to channel
   - [ ] Send Publish Notification Message or actual data message to channel
+
+## Marketing
+
+- [ ] Realtime
+- [ ] Encrypted / Secure
+- [ ] Point to point security (isolated)

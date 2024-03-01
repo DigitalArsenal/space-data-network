@@ -2,5 +2,6 @@
   "watch": ["."],
   "ext": "go",
   "ignore": ["*.test.go", "tmp/*", ".git/*"],
+  "delay": "8000",
   "exec": "go run ./cmd/node/main.go"
 }

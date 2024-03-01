@@ -79,6 +79,10 @@ Ensure the `.env` file is in the same directory as your `docker-compose.yml` or 
 
 ## Deployment
 
+## Development
+
+Install Air for development: `go install github.com/cosmtrek/air@latest`
+
 ## Contributing
 
 Please read [CONTRIBUTING.md](./CONTRIBUTING.md) for details on our code of conduct, and the process for submitting pull requests to us.

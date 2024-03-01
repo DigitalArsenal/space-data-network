@@ -19,6 +19,7 @@ type KeyStore struct {
 }
 
 func NewKeyStore() (*KeyStore, error) {
+	fmt.Println("Initializing keystore")
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -38,6 +39,16 @@ func NewKeyStore() (*KeyStore, error) {
 	}
 
 	return &KeyStore{db: db}, nil
+}
+
+func (ks *KeyStore) Close() error {
+	fmt.Println("closing keystore")
+	if ks.db != nil {
+		if err := ks.db.Close(); err != nil {
+			return fmt.Errorf("failed to close key store: %w", err)
+		}
+	}
+	return nil
 }
 
 func (ks *KeyStore) GetPrivateKey(pass string) (crypto.PrivKey, error) {

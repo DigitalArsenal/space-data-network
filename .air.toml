@@ -1,0 +1,43 @@
+# Root directory to watch for changes
+root = "."
+
+# Temporary directory to store build artifacts
+tmp_dir = "tmp"
+
+[build]
+  # Command to build your application
+  cmd = "go build -o ./tmp/main ./cmd/node/main.go"
+  # Delay before rebuilding after file changes are detected (in milliseconds)
+  delay = 1000
+  # Directories to exclude from watching
+  exclude_dir = ["assets", "tmp", "vendor", "testdata"]
+  # File extensions to include in the watch
+  include_ext = ["go", "tpl", "tmpl", "html"]
+  # Binary file name (located in tmp_dir)
+  bin = "./tmp/main"
+  # Log file for build errors
+  log = "build-errors.log"
+
+[color]
+  # Color settings (use the color names supported by air)
+  main = "magenta"
+  watcher = "cyan"
+  build = "yellow"
+  runner = "green"
+  app = ""
+
+[log]
+  # Whether to log only from the main process
+  main_only = false
+  # Whether to prefix log lines with timestamp
+  time = false
+
+[misc]
+  # Whether to clean up temporary files on exit
+  clean_on_exit = false
+
+[screen]
+  # Whether to clear the screen before rebuilding
+  clear_on_rebuild = false
+  # Whether to keep the scroll position on rebuild
+  keep_scroll = true
