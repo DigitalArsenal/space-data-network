@@ -38,7 +38,7 @@ func main() {
 	}()
 
 	// Example usage of Node after it has been started
-	pubKeyHex, err := node.PublicKey(false)
+	pubKeyHex, err := node.PublicKey()
 	if err != nil {
 		fmt.Printf("Failed to get public key: %v\n", err)
 		return

@@ -182,7 +182,14 @@ func printMessagesFrom(ctx context.Context, sub *pubsub.Subscription) {
 }
 
 // Add a new method to Node to extract the public key
-func (n *Node) PublicKey(marshaled bool) (string, error) {
+func (n *Node) PublicKey(marshaled ...bool) (string, error) {
+
+	// Default marshaled to false
+	useMarshaled := false
+	if len(marshaled) > 0 {
+		useMarshaled = marshaled[0]
+	}
+
 	// Check if the Host is nil
 	if n.Host == nil {
 		return "", fmt.Errorf("host is not initialized")
@@ -197,7 +204,7 @@ func (n *Node) PublicKey(marshaled bool) (string, error) {
 		return "", fmt.Errorf("public key is nil")
 	}
 
-	if marshaled {
+	if useMarshaled {
 		// Marshal the public key to bytes
 		pubKeyBytes, err := crypto.MarshalPublicKey(pubKey)
 		if err != nil {
