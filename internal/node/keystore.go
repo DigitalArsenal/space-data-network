@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	config "github.com/DigitalArsenal/space-data-network/configs"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/syndtr/goleveldb/leveldb"
 	"golang.org/x/crypto/argon2"
@@ -65,6 +66,6 @@ func (ks *KeyStore) GetPrivateKey(pass string) (crypto.PrivKey, error) {
 
 func generatePassword() string {
 	hostname, _ := os.Hostname()
-	input := fmt.Sprintf("%s:%s", os.Getenv("HOME"), hostname)
+	input := fmt.Sprintf("%s:%s", config.Conf.Datastore.Directory, hostname)
 	return hex.EncodeToString(argon2.IDKey([]byte(input), []byte("some_salt"), 1, 64*1024, 4, 32))
 }

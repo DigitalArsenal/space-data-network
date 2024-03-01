@@ -12,6 +12,7 @@ import (
 	"os"
 	"sync"
 
+	config "github.com/DigitalArsenal/space-data-network/configs"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
@@ -33,7 +34,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize key store: %w", err)
 	}
-	pass := os.Getenv("KEYSTORE_PASSWORD")
+	pass := config.Conf.Datastore.Password
 	if pass == "" {
 		pass = generatePassword() // From keystore.go
 	}
