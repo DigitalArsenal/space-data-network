@@ -8,12 +8,11 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/libp2p/go-libp2p/core/crypto"
-
 	"os"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p-core/crypto"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -183,7 +182,7 @@ func printMessagesFrom(ctx context.Context, sub *pubsub.Subscription) {
 }
 
 // Add a new method to Node to extract the public key
-func (n *Node) PublicKey() (string, error) {
+func (n *Node) PublicKey(marshaled ...bool) (string, error) {
 	// Check if the Host is nil
 	if n.Host == nil {
 		return "", fmt.Errorf("host is not initialized")
@@ -198,12 +197,27 @@ func (n *Node) PublicKey() (string, error) {
 		return "", fmt.Errorf("public key is nil")
 	}
 
-	// Marshal the public key to bytes
-	pubKeyBytes, err := crypto.MarshalPublicKey(pubKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal public key: %w", err)
+	// Default marshaled to false
+	useMarshaled := false
+	if len(marshaled) > 0 {
+		useMarshaled = marshaled[0]
 	}
 
-	// Return the public key in hex format
-	return hex.EncodeToString(pubKeyBytes), nil
+	if useMarshaled {
+		// Marshal the public key to bytes
+		pubKeyBytes, err := crypto.MarshalPublicKey(pubKey)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal public key: %w", err)
+		}
+		// Return the marshalled public key in hex format
+		return hex.EncodeToString(pubKeyBytes), nil
+	}
+
+	// Get the raw public key bytes
+	rawBytes, err := pubKey.Raw()
+	if err != nil {
+		return "", fmt.Errorf("failed to extract raw public key: %w", err)
+	}
+	// Return the raw public key in hex format
+	return hex.EncodeToString(rawBytes), nil
 }
