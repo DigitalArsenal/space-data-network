@@ -18,16 +18,41 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
+	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
+	"github.com/tyler-smith/go-bip39"
 )
 
 type Node struct {
-	Host     host.Host
-	DHT      *dht.IpfsDHT
-	KeyStore *KeyStore
+	Host         host.Host
+	DHT          *dht.IpfsDHT
+	KeyStore     *KeyStore
+	wallet       *hdwallet.Wallet
+	EntropyBytes int
 }
 
-// NewNode initializes a new libp2p node with the given configuration.
-func NewNode(ctx context.Context) (*Node, error) {
+func NewNode(ctx context.Context, entropyBytes ...int) (*Node, error) {
+
+	defaultEntropySize := 16
+
+	size := defaultEntropySize
+	if len(entropyBytes) > 0 {
+
+		if len(entropyBytes) > 1 {
+			return nil, fmt.Errorf("only one entropyBytes value should be provided")
+		}
+
+		validEntropySizes := map[int]bool{
+			16: true,
+			20: true,
+			24: true,
+			28: true,
+			32: true,
+		}
+
+		if validEntropySizes[entropyBytes[0]] {
+			size = entropyBytes[0]
+		}
+	}
 
 	keyStore, err := NewKeyStore()
 	if err != nil {
@@ -35,7 +60,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 	}
 
 	// Return a new Node instance
-	return &Node{KeyStore: keyStore}, nil
+	return &Node{KeyStore: keyStore, EntropyBytes: size}, nil
 }
 
 // autoRelayPeerSource returns a function that provides peers for auto-relay.
@@ -68,11 +93,10 @@ func autoRelayPeerSource(ctx context.Context, numPeers int) <-chan peer.AddrInfo
 
 }
 
-// Start begins the node operation, such as connecting to peers and handling connections.
 func (n *Node) Start(ctx context.Context) error {
 	pass := config.Conf.Datastore.Password
 	if pass == "" {
-		pass = generatePassword() // From keystore.go
+		pass = generatePassword()
 	}
 
 	privKey, err := n.KeyStore.GetPrivateKey(pass)
@@ -90,9 +114,14 @@ func (n *Node) Start(ctx context.Context) error {
 			autoRelayPeerSource,
 			autorelay.WithMinInterval(0)),
 	)
+
 	if err != nil {
 		return fmt.Errorf("failed to create libp2p host: %w", err)
 	}
+
+	n.EntropyBytes = 16
+
+	n.SetHDWallet()
 
 	n.DHT, err = initDHT(ctx, n.Host)
 	if err != nil {
@@ -123,8 +152,6 @@ func (n *Node) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop gracefully shuts down the libp2p node.
-// Stop gracefully shuts down the libp2p node and other components.
 func (n *Node) Stop() {
 	fmt.Println("Shutting down node...")
 
@@ -181,21 +208,17 @@ func printMessagesFrom(ctx context.Context, sub *pubsub.Subscription) {
 	}
 }
 
-// Add a new method to Node to extract the public key
 func (n *Node) PublicKey(marshaled ...bool) (string, error) {
 
-	// Default marshaled to false
 	useMarshaled := false
 	if len(marshaled) > 0 {
 		useMarshaled = marshaled[0]
 	}
 
-	// Check if the Host is nil
 	if n.Host == nil {
 		return "", fmt.Errorf("host is not initialized")
 	}
 
-	// Extract public key from the host's ID
 	pubKey, err := n.Host.ID().ExtractPublicKey()
 	if err != nil {
 		return "", fmt.Errorf("failed to extract public key: %w", err)
@@ -205,20 +228,108 @@ func (n *Node) PublicKey(marshaled ...bool) (string, error) {
 	}
 
 	if useMarshaled {
-		// Marshal the public key to bytes
+
 		pubKeyBytes, err := crypto.MarshalPublicKey(pubKey)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal public key: %w", err)
 		}
-		// Return the marshalled public key in hex format
+
 		return hex.EncodeToString(pubKeyBytes), nil
 	}
 
-	// Get the raw public key bytes
 	rawBytes, err := pubKey.Raw()
 	if err != nil {
 		return "", fmt.Errorf("failed to extract raw public key: %w", err)
 	}
-	// Return the raw public key in hex format
+
 	return hex.EncodeToString(rawBytes), nil
+}
+
+func (n *Node) SetHDWallet(rawKey ...[]byte) error {
+	var rawPrivateKeyBytes []byte
+	var err error
+
+	if len(rawKey) > 0 {
+		rawPrivateKeyBytes = rawKey[0]
+	} else {
+		privKey, err := n.PrivateKey()
+		if err != nil {
+			return err
+		}
+
+		rawPrivateKeyBytes, err = privKey.Raw()
+		if err != nil {
+			return fmt.Errorf("failed to get raw private key from node: %v", err)
+		}
+	}
+
+	if len(rawPrivateKeyBytes) < n.EntropyBytes {
+		return fmt.Errorf("not enough bytes in private key for the specified entropy length")
+	}
+
+	mnemonic, err := bip39.NewMnemonic(rawPrivateKeyBytes[:n.EntropyBytes])
+	if err != nil {
+		return fmt.Errorf("failed to generate mnemonic from raw key: %v", err)
+	}
+
+	wallet, err := hdwallet.NewFromMnemonic(mnemonic)
+	if err != nil {
+		return fmt.Errorf("failed to create HD wallet from mnemonic: %v", err)
+	}
+
+	n.wallet = wallet
+
+	path := hdwallet.MustParseDerivationPath("m/44'/60'/0'/0/0")
+
+	// Derive the first account using the path
+	account, err := n.wallet.Derive(path, false)
+	if err != nil {
+		return fmt.Errorf("failed to derive the first account: %v", err)
+	}
+
+	// Get the address of the derived account
+	address := account.Address
+
+	// Print the Ethereum address
+	fmt.Printf("First Ethereum Address: %s\n", address.Hex())
+
+	return nil
+}
+
+func (n *Node) PrivateKey() (*crypto.Secp256k1PrivateKey, error) {
+	if n.Host == nil || n.Host.Peerstore() == nil {
+		return nil, fmt.Errorf("host or peerstore not initialized")
+	}
+
+	privKey := n.Host.Peerstore().PrivKey(n.Host.ID())
+	if privKey == nil {
+		return nil, fmt.Errorf("private key not found in peerstore")
+	}
+
+	secp256k1PrivKey, ok := privKey.(*crypto.Secp256k1PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("private key is not of type *crypto.Secp256k1PrivateKey")
+	}
+
+	rawPrivateKeyBytes, err := secp256k1PrivKey.Raw()
+	if err != nil {
+		fmt.Errorf("failed to get raw private key bytes: %v", err)
+	}
+
+	// Ensure the rawPrivateKeyBytes length is suitable for mnemonic generation
+	// The NewMnemonic function expects entropy of 128-256 bits (16-32 bytes).
+	// We'll use the first 16 bytes for this example.
+	if len(rawPrivateKeyBytes) < 16 {
+		fmt.Errorf("private key bytes insufficient for mnemonic generation")
+	}
+	entropy := rawPrivateKeyBytes[:16]
+
+	mnemonic, err := bip39.NewMnemonic(entropy)
+	if err != nil {
+		fmt.Errorf("failed to generate mnemonic: %v", err)
+	}
+
+	// Print the generated mnemonic
+	fmt.Printf("Generated Mnemonic: %s\n", mnemonic)
+	return secp256k1PrivKey, nil
 }
