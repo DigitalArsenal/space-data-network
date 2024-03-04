@@ -4,7 +4,6 @@ package node
 import (
 	"bufio"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"io"
 
@@ -14,12 +13,10 @@ import (
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
-	"github.com/tyler-smith/go-bip39"
 )
 
 type Node struct {
@@ -206,130 +203,4 @@ func printMessagesFrom(ctx context.Context, sub *pubsub.Subscription) {
 		}
 		fmt.Printf("Message from %s: %s\n", msg.ReceivedFrom, string(msg.Data))
 	}
-}
-
-func (n *Node) PublicKey(marshaled ...bool) (string, error) {
-
-	useMarshaled := false
-	if len(marshaled) > 0 {
-		useMarshaled = marshaled[0]
-	}
-
-	if n.Host == nil {
-		return "", fmt.Errorf("host is not initialized")
-	}
-
-	pubKey, err := n.Host.ID().ExtractPublicKey()
-	if err != nil {
-		return "", fmt.Errorf("failed to extract public key: %w", err)
-	}
-	if pubKey == nil {
-		return "", fmt.Errorf("public key is nil")
-	}
-
-	if useMarshaled {
-
-		pubKeyBytes, err := crypto.MarshalPublicKey(pubKey)
-		if err != nil {
-			return "", fmt.Errorf("failed to marshal public key: %w", err)
-		}
-
-		return hex.EncodeToString(pubKeyBytes), nil
-	}
-
-	rawBytes, err := pubKey.Raw()
-	if err != nil {
-		return "", fmt.Errorf("failed to extract raw public key: %w", err)
-	}
-
-	return hex.EncodeToString(rawBytes), nil
-}
-
-func (n *Node) SetHDWallet(rawKey ...[]byte) error {
-	var rawPrivateKeyBytes []byte
-	var err error
-
-	if len(rawKey) > 0 {
-		rawPrivateKeyBytes = rawKey[0]
-	} else {
-		privKey, err := n.PrivateKey()
-		if err != nil {
-			return err
-		}
-
-		rawPrivateKeyBytes, err = privKey.Raw()
-		if err != nil {
-			return fmt.Errorf("failed to get raw private key from node: %v", err)
-		}
-	}
-
-	if len(rawPrivateKeyBytes) < n.EntropyBytes {
-		return fmt.Errorf("not enough bytes in private key for the specified entropy length")
-	}
-
-	mnemonic, err := bip39.NewMnemonic(rawPrivateKeyBytes[:n.EntropyBytes])
-	if err != nil {
-		return fmt.Errorf("failed to generate mnemonic from raw key: %v", err)
-	}
-
-	wallet, err := hdwallet.NewFromMnemonic(mnemonic)
-	if err != nil {
-		return fmt.Errorf("failed to create HD wallet from mnemonic: %v", err)
-	}
-
-	n.wallet = wallet
-
-	path := hdwallet.MustParseDerivationPath("m/44'/60'/0'/0/0")
-
-	// Derive the first account using the path
-	account, err := n.wallet.Derive(path, false)
-	if err != nil {
-		return fmt.Errorf("failed to derive the first account: %v", err)
-	}
-
-	// Get the address of the derived account
-	address := account.Address
-
-	// Print the Ethereum address
-	fmt.Printf("First Ethereum Address: %s\n", address.Hex())
-
-	return nil
-}
-
-func (n *Node) PrivateKey() (*crypto.Secp256k1PrivateKey, error) {
-	if n.Host == nil || n.Host.Peerstore() == nil {
-		return nil, fmt.Errorf("host or peerstore not initialized")
-	}
-
-	privKey := n.Host.Peerstore().PrivKey(n.Host.ID())
-	if privKey == nil {
-		return nil, fmt.Errorf("private key not found in peerstore")
-	}
-
-	secp256k1PrivKey, ok := privKey.(*crypto.Secp256k1PrivateKey)
-	if !ok {
-		return nil, fmt.Errorf("private key is not of type *crypto.Secp256k1PrivateKey")
-	}
-
-	rawPrivateKeyBytes, err := secp256k1PrivKey.Raw()
-	if err != nil {
-		fmt.Errorf("failed to get raw private key bytes: %v", err)
-	}
-
-	// Ensure the rawPrivateKeyBytes length is suitable for mnemonic generation
-	// The NewMnemonic function expects entropy of 128-256 bits (16-32 bytes).
-	// We'll use the first 16 bytes for this example.
-	if len(rawPrivateKeyBytes) < 16 {
-		fmt.Errorf("private key bytes insufficient for mnemonic generation")
-	}
-	entropy := rawPrivateKeyBytes[:16]
-
-	mnemonic, err := bip39.NewMnemonic(entropy)
-	if err != nil {
-		fmt.Errorf("failed to generate mnemonic: %v", err)
-	}
-
-	// Print the generated mnemonic
-	fmt.Printf("Generated Mnemonic: %s\n", mnemonic)
-	return secp256k1PrivKey, nil
 }
