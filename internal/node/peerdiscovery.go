@@ -34,9 +34,9 @@ func discoverPeers(ctx context.Context, h host.Host, d *dht.IpfsDHT, channelName
 				// fmt.Printf("Failed connecting to %s, error: %s\n", peer.ID, err) // Uncomment if you want to log connection failures
 			} else {
 				fmt.Printf("Connected to: %s\n", peer.ID)
-				for _, addr := range peer.Addrs {
+				/*for _, addr := range peer.Addrs {
 					fmt.Printf("\t%s/p2p/%s\n", addr, peer.ID)
-				}
+				}*/
 
 				// Request PNM from the connected peer
 				if err := protocols.RequestPNM(ctx, h, peer.ID); err != nil {

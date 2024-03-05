@@ -15,31 +15,36 @@ import (
 const IDExchangeProtocol = protocol.ID("/space-data-network/id-exchange/1.0.0")
 
 func SetupPNMExchange(h host.Host) {
+	fmt.Printf("Setting up PNM exchange for local peer %s\n", h.ID())
 	h.SetStreamHandler(IDExchangeProtocol, handlePNMExchange)
 }
 
 func handlePNMExchange(s network.Stream) {
-	fmt.Println("Received a PNM exchange request")
+	peerID := s.Conn().RemotePeer()
 	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
 
 	// Read the message from the stream
 	message, err := rw.ReadString('\n')
 	if err != nil {
 		fmt.Println("Error reading from buffer")
+		s.Close()
 		return
 	}
 
-	fmt.Printf("Received message: %s", message)
+	if message != "ok\n" {
+		fmt.Printf("Received message: %s from %s\n", message, peerID)
+	}
 
-	// Send a response back
-	_, err = rw.WriteString("Received your PNM\n")
+	// Send a response back (either "ok" or a blank string)
+	response := "ok\n" // or response := "\n" for a blank string
+	_, err = rw.WriteString(response)
 	if err != nil {
-		fmt.Println("Error writing to buffer")
+		s.Close()
 		return
 	}
 	err = rw.Flush()
 	if err != nil {
-		fmt.Println("Error flushing buffer")
+		s.Close()
 		return
 	}
 
@@ -56,7 +61,8 @@ func RequestPNM(ctx context.Context, h host.Host, peerID peer.ID) error {
 	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
 
 	// Send "PNM" message
-	_, err = rw.WriteString("PNM\n")
+	message := fmt.Sprintf("PNM %s\n", h.ID())
+	_, err = rw.WriteString(message)
 	if err != nil {
 		return fmt.Errorf("failed to write PNM to stream: %w", err)
 	}
@@ -71,7 +77,10 @@ func RequestPNM(ctx context.Context, h host.Host, peerID peer.ID) error {
 		return fmt.Errorf("failed to read response from stream: %w", err)
 	}
 
-	fmt.Printf("Received response: %s", response)
+	// Avoid printing "ok" response to keep terminal output clean
+	if response != "ok\n" {
+		fmt.Printf("Received response: %s", response)
+	}
 
 	return nil
 }
