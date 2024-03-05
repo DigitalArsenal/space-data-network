@@ -80,6 +80,6 @@ func TestSetHDWalletWithRandomKey(t *testing.T) {
 	address := account.Address.Hex()
 
 	// Check that the mnemonic and address are not what we expect
-	require.NotEqual(t, expectedMnemonic, mnemonic, "Mnemonic should not match the unexpected mnemonic")
-	require.NotEqual(t, expectedAddress, address, "Ethereum address should not match the unexpected address")
+	require.NotEqual(t, expectedMnemonic, mnemonic, "Mnemonic should not match the expected mnemonic for zero key")
+	require.NotEqual(t, expectedAddress, address, "Ethereum address should not match the expected address for zero key")
 }
