@@ -7,29 +7,22 @@ import (
 	"github.com/tyler-smith/go-bip39"
 )
 
-func (n *Node) SetHDWallet(rawKey ...[]byte) error {
-	var rawPrivateKeyBytes []byte
-	var err error
-
-	if len(rawKey) > 0 {
-		rawPrivateKeyBytes = rawKey[0]
-	} else {
-		privKey, err := n.PrivateKey()
-		if err != nil {
-			return err
-		}
-
-		rawPrivateKeyBytes, err = privKey.Raw()
-		if err != nil {
-			return fmt.Errorf("failed to get raw private key from node: %v", err)
-		}
+func (n *Node) SetHDWallet() error {
+	privKey, err := n.PrivateKey()
+	if err != nil {
+		return err
 	}
 
-	if len(rawPrivateKeyBytes) < n.EntropyBytes {
+	rawPrivateKeyBytes, err := privKey.Raw()
+	if err != nil {
+		return fmt.Errorf("failed to get raw private key from node: %v", err)
+	}
+
+	if len(rawPrivateKeyBytes) < n.EntropyLength {
 		return fmt.Errorf("not enough bytes in private key for the specified entropy length")
 	}
 
-	mnemonic, err := bip39.NewMnemonic(rawPrivateKeyBytes[:n.EntropyBytes])
+	mnemonic, err := bip39.NewMnemonic(rawPrivateKeyBytes[:n.EntropyLength])
 	if err != nil {
 		return fmt.Errorf("failed to generate mnemonic from raw key: %v", err)
 	}
@@ -75,7 +68,7 @@ func (n *Node) ExportMnemonic() (string, error) {
 	}
 
 	// Use the appropriate number of bytes from the raw private key for entropy
-	entropy := rawPrivateKeyBytes[:n.EntropyBytes]
+	entropy := rawPrivateKeyBytes[:n.EntropyLength]
 
 	mnemonic, err := bip39.NewMnemonic(entropy)
 	if err != nil {

@@ -3,8 +3,9 @@ package node
 import (
 	"context"
 	"os"
-	"testing"
 	"time"
+
+	"testing"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/stretchr/testify/require"
@@ -19,7 +20,7 @@ func TestMain(m *testing.M) {
 	// Any setup required before the tests run.
 	ctx = context.TODO()
 
-	testNode, err = NewNode(ctx)
+	testNode, err = NewNode(ctx, NodeOptions{RawKey: make([]byte, 16)})
 	if err != nil {
 		panic(err) // panic here is fine because it's before we run any tests
 	}
@@ -39,7 +40,6 @@ func TestNewNode(t *testing.T) {
 	require.NoError(t, err, "NewNode should not return an error")
 	require.NotNil(t, testNode, "NewNode should return a non-nil node instance")
 	require.NotNil(t, testNode.KeyStore, "NewNode should initialize a KeyStore")
-	require.Equal(t, 16, testNode.EntropyBytes, "NewNode should set default EntropyBytes to 16")
 }
 
 func TestStart(t *testing.T) {

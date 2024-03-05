@@ -2,12 +2,8 @@
 package node
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
-
-	"os"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	"github.com/libp2p/go-libp2p"
@@ -19,25 +15,30 @@ import (
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
 
-type Node struct {
-	Host         host.Host
-	DHT          *dht.IpfsDHT
-	KeyStore     *KeyStore
-	wallet       *hdwallet.Wallet
-	EntropyBytes int
+type NodeOptions struct {
+	Mnemonic      string
+	EncryptedJSON string
+	Password      string
+	RawKey        []byte
+	EntropyLength int
 }
 
-func NewNode(ctx context.Context, entropyBytes ...int) (*Node, error) {
+type Node struct {
+	Host          host.Host
+	DHT           *dht.IpfsDHT
+	KeyStore      *KeyStore
+	wallet        *hdwallet.Wallet
+	EntropyLength int
+}
 
-	defaultEntropySize := 16
+func NewNode(ctx context.Context, options ...NodeOptions) (*Node, error) {
+	var nodeOptions NodeOptions
+	if len(options) > 0 {
+		nodeOptions = options[0]
+	}
 
-	size := defaultEntropySize
-	if len(entropyBytes) > 0 {
-
-		if len(entropyBytes) > 1 {
-			return nil, fmt.Errorf("only one entropyBytes value should be provided")
-		}
-
+	var entropyLength int
+	if nodeOptions.EntropyLength > 0 {
 		validEntropySizes := map[int]bool{
 			16: true,
 			20: true,
@@ -46,18 +47,53 @@ func NewNode(ctx context.Context, entropyBytes ...int) (*Node, error) {
 			32: true,
 		}
 
-		if validEntropySizes[entropyBytes[0]] {
-			size = entropyBytes[0]
+		if validEntropySizes[nodeOptions.EntropyLength] {
+			entropyLength = nodeOptions.EntropyLength
+		} else {
+			return nil, fmt.Errorf("invalid entropy length provided")
 		}
+	} else {
+		// Default entropy length
+		entropyLength = 16
 	}
 
-	keyStore, err := NewKeyStore()
+	node := &Node{EntropyLength: entropyLength}
+
+	var err error
+
+	pass := config.Conf.Datastore.Password
+	if pass == "" {
+		pass = generatePassword()
+	}
+
+	node.KeyStore, err = NewKeyStore(pass)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize key store: %w", err)
 	}
 
-	// Return a new Node instance
-	return &Node{KeyStore: keyStore, EntropyBytes: size}, nil
+	privKey, err := node.KeyStore.GetOrGeneratePrivateKey(nodeOptions)
+	if err != nil {
+		return node, fmt.Errorf("failed to get private key: %w", err)
+	}
+
+	node.Host, err = libp2p.New(
+		libp2p.Identity(privKey),
+		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
+		libp2p.EnableNATService(),
+		libp2p.EnableRelay(),
+		libp2p.EnableHolePunching(),
+		libp2p.EnableAutoRelayWithPeerSource(
+			autoRelayPeerSource,
+			autorelay.WithMinInterval(0)),
+	)
+
+	if err != nil {
+		return node, fmt.Errorf("failed to create libp2p host: %w", err)
+	}
+
+	node.SetHDWallet()
+
+	return node, nil
 }
 
 // autoRelayPeerSource returns a function that provides peers for auto-relay.
@@ -91,34 +127,7 @@ func autoRelayPeerSource(ctx context.Context, numPeers int) <-chan peer.AddrInfo
 }
 
 func (n *Node) Start(ctx context.Context) error {
-	pass := config.Conf.Datastore.Password
-	if pass == "" {
-		pass = generatePassword()
-	}
-
-	privKey, err := n.KeyStore.GetPrivateKey(pass)
-	if err != nil {
-		return fmt.Errorf("failed to get private key: %w", err)
-	}
-
-	n.Host, err = libp2p.New(
-		libp2p.Identity(privKey),
-		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
-		libp2p.EnableNATService(),
-		libp2p.EnableRelay(),
-		libp2p.EnableHolePunching(),
-		libp2p.EnableAutoRelayWithPeerSource(
-			autoRelayPeerSource,
-			autorelay.WithMinInterval(0)),
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to create libp2p host: %w", err)
-	}
-
-	n.EntropyBytes = 16
-
-	n.SetHDWallet()
+	var err error
 
 	n.DHT, err = initDHT(ctx, n.Host)
 	if err != nil {
@@ -168,39 +177,4 @@ func (n *Node) Stop() {
 		}
 	}
 	fmt.Println("Node stopped successfully.")
-}
-
-func streamConsoleTo(ctx context.Context, topic *pubsub.Topic) {
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Println("Stopping console stream due to context cancellation.")
-			return
-		default:
-			s, err := reader.ReadString('\n')
-			if err != nil {
-				if err == io.EOF {
-					fmt.Println("EOF received from stdin, stopping console stream.")
-					return
-				}
-				fmt.Printf("Error reading from stdin: %v\n", err)
-				continue
-			}
-			if err := topic.Publish(ctx, []byte(s)); err != nil {
-				fmt.Printf("Publish error: %v\n", err)
-			}
-		}
-	}
-}
-
-func printMessagesFrom(ctx context.Context, sub *pubsub.Subscription) {
-	for {
-		msg, err := sub.Next(ctx)
-		if err != nil {
-			fmt.Printf("Failed to get next message: %v\n", err)
-			return
-		}
-		fmt.Printf("Message from %s: %s\n", msg.ReceivedFrom, string(msg.Data))
-	}
 }
