@@ -37,7 +37,12 @@ func NewKeyStore(password string) (*KeyStore, error) {
 		}
 	}
 
-	dbPath := filepath.Join(keyDir, DatabaseFileName)
+	var dbPath string
+	if config.Conf.Datastore.Directory != "" {
+		dbPath = filepath.Join(config.Conf.Datastore.Directory, DatabaseFileName)
+	} else {
+		dbPath = filepath.Join(keyDir, DatabaseFileName)
+	}
 
 	// Open SQLite database with encryption using SQLCipher
 	db, err := sql.Open("sqlite3", fmt.Sprintf("%s?_pragma_key=%s", dbPath, password))
@@ -143,6 +148,8 @@ func (ks *KeyStore) GetOrGeneratePrivateKey(options NodeOptions) (crypto.PrivKey
 
 func generatePassword() string {
 	hostname, _ := os.Hostname()
-	input := fmt.Sprintf("%s:%s", config.Conf.Datastore.Directory, hostname)
+	homeDir, _ := os.UserHomeDir()
+
+	input := fmt.Sprintf("%s:%s", homeDir, hostname)
 	return hex.EncodeToString(argon2.IDKey([]byte(input), []byte("some_salt"), 1, 64*1024, 4, 32))
 }

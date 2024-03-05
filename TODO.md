@@ -1,18 +1,16 @@
 # TODO
 
 - [ ] Create config system
-  - [ ] Create datastore in encrypted levelDB
-  - [ ] Allow user save / load keys
-  - [ ] Allow user to add public keys of other trusted nodes in address book in datastore
+  - [x] Create datastore in encrypted SQLite DB
+  - [x] Allow user save / load keys
   - [ ] Allow user to save / load config
 - [ ] Create libp2p node, with bootstrap list
-  - [ ] Use all transports (tcp, websockets, etc)
-  - [ ] Use all discovery methods
-  - [ ] Use dht and indentity services (in case bootstrap nodes are down / unreachable)
+  - [x] Use all transports (tcp, websockets, etc)
+  - [x] Use all discovery methods
+  - [x] Use dht and identity services (in case bootstrap nodes are down / unreachable)
 - [ ] Discovery other nodes in space data network
-  - [ ] Discoverable through 'space-data-network' channel (xpub gen per timestamp?)
-  - [ ] Store EPM in LevelDB for peers
-  - [ ] Exchange EPMs for registered node clients
+  - [x] Discoverable through 'space-data-network' channel (xpub gen per timestamp?)
+  - [ ] Exchange EPMs for servers
   - [ ] Have EPMs advertise services (need to modify for this)
 - [ ] PubSub
   - [ ] Channels established using "peerid:{schema_id}", e.g. "16Uiu2HAm5zJW5YvLVQqUM5GPJ46p1Tswh3BgTUABhKPdECMG13m7:OMM"
