@@ -27,10 +27,10 @@ func TestPNMExchange(t *testing.T) {
 	h1 := setupHost(t) // Assuming setupHost is a function that initializes a libp2p host for testing
 	defer h1.Close()
 
-	h2 := setupHost(t) // Same assumption as above
+	h2 := setupHost(t)
 	defer h2.Close()
 
-	protocols.SetupPNMExchange(h1) // Assuming this sets up the necessary protocol handlers on the host
+	protocols.SetupPNMExchange(h1)
 	protocols.SetupPNMExchange(h2)
 
 	h1ConnSub, err := h1.EventBus().Subscribe(new(event.EvtPeerConnectednessChanged), eventbus.BufSize(16))
@@ -64,8 +64,4 @@ func TestPNMExchange(t *testing.T) {
 	err = protocols.RequestPNM(ctx, h1, h2.ID())
 	require.NoError(t, err)
 
-	// Verify that h2 received the "PNM" message
-	// This part depends on the implementation of your protocol handlers.
-	// For example, you could have a variable in the protocol handler that gets set when a PNM message is received.
-	// Alternatively, you could emit an event on the EventBus when a PNM message is received and subscribe to that event here.
 }

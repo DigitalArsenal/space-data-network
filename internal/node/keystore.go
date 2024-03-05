@@ -46,6 +46,16 @@ func NewKeyStore(password string) (*KeyStore, error) {
 		dbPath = filepath.Join(keyDir, DatabaseFileName)
 	}
 
+	// Extract the directory path from the full dbPath
+	dirPath := filepath.Dir(dbPath)
+
+	// Create the directory if it doesn't exist
+	err = os.MkdirAll(dirPath, os.ModePerm) // os.ModePerm is 0777, which makes the directory readable, writable, and executable by all users
+	if err != nil {
+		// Handle the error, perhaps logging it or printing it out
+		fmt.Println("Error creating directory:", err)
+	}
+
 	// Open SQLite database with encryption using SQLCipher
 	db, err := sql.Open("sqlite3", fmt.Sprintf("%s?_pragma_key=%s", dbPath, password))
 	if err != nil {

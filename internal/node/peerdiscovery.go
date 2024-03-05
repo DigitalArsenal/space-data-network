@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/DigitalArsenal/space-data-network/internal/node/protocols"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	dutil "github.com/libp2p/go-libp2p/p2p/discovery/util"
 )
@@ -30,13 +31,18 @@ func discoverPeers(ctx context.Context, h host.Host, d *dht.IpfsDHT, channelName
 			}
 			err := h.Connect(ctx, peer)
 			if err != nil {
-				// Commented out the error printing for connection failure
-				// fmt.Printf("Failed connecting to %s, error: %s\n", peer.ID, err)
+				// fmt.Printf("Failed connecting to %s, error: %s\n", peer.ID, err) // Uncomment if you want to log connection failures
 			} else {
 				fmt.Printf("Connected to: %s\n", peer.ID)
 				for _, addr := range peer.Addrs {
 					fmt.Printf("\t%s/p2p/%s\n", addr, peer.ID)
 				}
+
+				// Request PNM from the connected peer
+				if err := protocols.RequestPNM(ctx, h, peer.ID); err != nil {
+					fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
+				}
+
 				anyConnected = true
 			}
 		}

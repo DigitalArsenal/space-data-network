@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/DigitalArsenal/space-data-network/internal/node/protocols"
+
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -32,6 +34,8 @@ type Node struct {
 }
 
 func NewNode(ctx context.Context, options ...NodeOptions) (*Node, error) {
+	config.Init()
+
 	var nodeOptions NodeOptions
 	if len(options) > 0 {
 		nodeOptions = options[0]
@@ -90,6 +94,12 @@ func NewNode(ctx context.Context, options ...NodeOptions) (*Node, error) {
 	if err != nil {
 		return node, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
+
+	// Print the local PeerID
+	fmt.Printf("Node started with PeerID: %s\n", node.Host.ID())
+
+	// Set up PNM exchange protocol listener
+	protocols.SetupPNMExchange(node.Host)
 
 	node.SetHDWallet()
 
