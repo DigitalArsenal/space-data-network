@@ -265,6 +265,8 @@ github.com/libp2p/go-buffer-pool v0.1.0 h1:oK4mSFcQz7cTQIfqbe4MIj9gLW+mnanjyFtc6
 github.com/libp2p/go-buffer-pool v0.1.0/go.mod h1:N+vh8gMqimBzdKkSMVuydVDq+UV5QTWy5HSiZacSbPg=
 github.com/libp2p/go-cidranger v1.1.0 h1:ewPN8EZ0dd1LSnrtuwd4709PXVcITVeuwbag38yPW7c=
 github.com/libp2p/go-cidranger v1.1.0/go.mod h1:KWZTfSr+r9qEo9OkI9/SIEeAtw+NNoU0dXIXt15Okic=
+github.com/libp2p/go-eventbus v0.3.0 h1:FCHfSpM469NSXipOoX3npAP7bJHSAmUIxj1qe8AtT5k=
+github.com/libp2p/go-eventbus v0.3.0/go.mod h1:d+p2Q4lgRHTBLwOXdzX0hOl8D4hiHHNgcoy1MuomBHU=
 github.com/libp2p/go-flow-metrics v0.1.0 h1:0iPhMI8PskQwzh57jB9WxIuIOQ0r+15PChFGkx3Q3WM=
 github.com/libp2p/go-flow-metrics v0.1.0/go.mod h1:4Xi8MX8wj5aWNDAZttg6UPmc0ZrnFNsMtpsYUClFtro=
 github.com/libp2p/go-libp2p v0.33.0 h1:yTPSr8sJRbfeEYXyeN8VPVSlTlFjtMUwGDRniwaf/xQ=

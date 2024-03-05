@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -20,7 +21,8 @@ const (
 )
 
 type KeyStore struct {
-	db *sql.DB
+	db     *sql.DB
+	dbPath string // Add the dbPath field to store the path to the database
 }
 
 func NewKeyStore(password string) (*KeyStore, error) {
@@ -56,7 +58,7 @@ func NewKeyStore(password string) (*KeyStore, error) {
 		return nil, err
 	}
 
-	return &KeyStore{db: db}, nil
+	return &KeyStore{db: db, dbPath: dbPath}, nil // Set the dbPath when returning the KeyStore instance
 }
 
 func (ks *KeyStore) Close() error {
@@ -152,4 +154,69 @@ func generatePassword() string {
 
 	input := fmt.Sprintf("%s:%s", homeDir, hostname)
 	return hex.EncodeToString(argon2.IDKey([]byte(input), []byte("some_salt"), 1, 64*1024, 4, 32))
+}
+
+// ExportDatabase exports the current database to the specified file path.
+func (ks *KeyStore) ExportDatabase(exportPath string) error {
+	// Ensure the database is not nil
+	if ks.db == nil {
+		return fmt.Errorf("database is not initialized")
+	}
+
+	// Open the current database file
+	sourceFile, err := os.Open(ks.dbPath)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	// Create the export file
+	destinationFile, err := os.Create(exportPath)
+	if err != nil {
+		return err
+	}
+	defer destinationFile.Close()
+
+	// Copy the database file to the export file
+	_, err = io.Copy(destinationFile, sourceFile)
+	return err
+}
+
+// ImportDatabase replaces the current database with the one at the specified file path.
+func (ks *KeyStore) ImportDatabase(importPath string) error {
+	// Ensure the database is closed before replacing the file
+	if ks.db != nil {
+		if err := ks.db.Close(); err != nil {
+			return err
+		}
+	}
+
+	// Replace the current database file with the imported one
+	importedFile, err := os.Open(importPath)
+	if err != nil {
+		return err
+	}
+	defer importedFile.Close()
+
+	// Create a new file or truncate the existing file
+	destinationFile, err := os.Create(ks.dbPath)
+	if err != nil {
+		return err
+	}
+	defer destinationFile.Close()
+
+	// Copy the imported database file to the destination file
+	_, err = io.Copy(destinationFile, importedFile)
+	if err != nil {
+		return err
+	}
+
+	// Re-open the database
+	db, err := sql.Open("sqlite3", ks.dbPath)
+	if err != nil {
+		return err
+	}
+	ks.db = db
+
+	return nil
 }

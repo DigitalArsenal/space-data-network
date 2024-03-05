@@ -9,7 +9,7 @@
   - [x] Use all discovery methods
   - [x] Use dht and identity services (in case bootstrap nodes are down / unreachable)
 - [ ] Discovery other nodes in space data network
-  - [x] Discoverable through 'space-data-network' channel (xpub gen per timestamp?)
+  - [x] Discoverable through 'space-data-network' DHT key
   - [ ] Exchange EPMs for servers
   - [ ] Have EPMs advertise services (need to modify for this)
 - [ ] PubSub
