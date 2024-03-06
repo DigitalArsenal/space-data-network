@@ -26,7 +26,7 @@ type KeyStore struct {
 }
 
 func NewKeyStore(password string) (*KeyStore, error) {
-	fmt.Println("Initializing keystore")
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err

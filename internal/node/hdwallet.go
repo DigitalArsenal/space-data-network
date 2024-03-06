@@ -46,7 +46,7 @@ func (n *Node) SetHDWallet() error {
 	address := account.Address
 
 	// Print the Ethereum address
-	fmt.Printf("First Ethereum Address: %s\n", address.Hex())
+	fmt.Printf("Node Ethereum Address: %s\n", address.Hex())
 
 	return nil
 }

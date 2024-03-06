@@ -13,11 +13,14 @@
   - [ ] Exchange EPMs for servers
   - [ ] Have EPMs advertise services (need to modify for this)
 - [ ] PubSub
-  - [ ] Channels established using "peerid:{schema_id}", e.g. "16Uiu2HAm5zJW5YvLVQqUM5GPJ46p1Tswh3BgTUABhKPdECMG13m7:OMM"
-  - [ ] Publish data to IPFS using Space Data Standards raw buffer
-  - [ ] Digitally sign multiaddr using Ethereum
   - [ ] Multiaddr and ETH digital signature sent over channel using the Publish Notification Message (PNM)
   - [ ] PNM stored as proof of signature in storage adapter
+- [ ] MetaData Node Functionality
+  - [ ] Store in folder (SPACE_DATA_NETWORK_METADATA_FOLDER)
+  - [ ] By Ethereum address in folder, and PNM concatenated flatbuffer by datatype
+- [ ] Direct dial protocol
+  - [ ] Protocol for getting raw messages, send a date range (other query parameters?)
+  - [ ] Additional protocols can be created for services like CA
 - [ ] User Interface
   - [ ] HTTP or libp2p access to node
   - [ ] Takes JSON or Flatbuffer input

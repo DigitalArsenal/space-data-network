@@ -38,12 +38,12 @@ func main() {
 	}()
 
 	// Example usage of Node after it has been started
-	pubKeyHex, err := node.PublicKey()
+	/*(pubKeyHex, err := node.PublicKey()
 	if err != nil {
 		fmt.Printf("Failed to get public key: %v\n", err)
 		return
 	}
-	fmt.Printf("Public Key in hex: %s\n", pubKeyHex)
+	 fmt.Printf("Public Key in hex: %s\n", pubKeyHex)*/
 
 	// Wait here until the context is cancelled (i.e., until node.Stop() is called and completes)
 	<-ctx.Done()

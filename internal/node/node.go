@@ -4,6 +4,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/DigitalArsenal/space-data-network/internal/node/protocols"
 
@@ -95,8 +96,7 @@ func NewNode(ctx context.Context, options ...NodeOptions) (*Node, error) {
 		return node, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 
-	// Print the local PeerID
-	fmt.Printf("Node started with PeerID: %s\n", node.Host.ID())
+	fmt.Printf("Node PeerID: %s\n", node.Host.ID())
 
 	// Set up PNM exchange protocol listener
 	protocols.SetupPNMExchange(node.Host)
@@ -144,7 +144,7 @@ func (n *Node) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize DHT: %w", err)
 	}
 
-	go discoverPeers(ctx, n.Host, n.DHT, "space-data-network")
+	go discoverPeers(ctx, n.Host, n.DHT, "space-data-network", 300*time.Second)
 
 	ps, err := pubsub.NewGossipSub(ctx, n.Host)
 	if err != nil {
