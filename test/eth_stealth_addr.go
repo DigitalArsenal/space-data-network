@@ -82,8 +82,7 @@ func checkStealthAddress(stealthAddress Address, ephemeralPubKey []byte, viewing
 }
 
 func main() {
-	// Example usage
-	// Generate stealth meta-address (this would usually be provided by the recipient)
+	// Generate stealth meta-address
 	spendPrivKey, err := crypto.GenerateKey()
 	if err != nil {
 		log.Fatalf("Failed to generate spending key: %v", err)
@@ -98,12 +97,31 @@ func main() {
 	}
 
 	// Generate stealth address
-	stealthAddr, ephemeralPubKey, viewTag := GenerateStealthAddress(meta)
-	fmt.Printf("Stealth Address: %s\n", stealthAddr.Hex())
-	fmt.Printf("Ephemeral Public Key: %x\n", ephemeralPubKey)
-	fmt.Printf("View Tag: %x\n", viewTag)
+	stealthAddr, ephemeralPubKey, _ := GenerateStealthAddress(meta)
 
-	// Check stealth address (recipient operation)
-	isValid := checkStealthAddress(stealthAddr, ephemeralPubKey, viewPrivKey, &spendPrivKey.PublicKey)
-	fmt.Printf("Is Valid: %t\n", isValid)
+	// Check stealth address with correct parameters
+	if success := checkStealthAddress(stealthAddr, ephemeralPubKey, viewPrivKey, &spendPrivKey.PublicKey); success {
+		fmt.Println("Success: Stealth address is valid")
+		fmt.Printf("Stealth Address: %s\n", stealthAddr.Hex())
+	} else {
+		fmt.Println("Failure: Stealth address is invalid")
+	}
+
+	// Change one character in the stealth address to simulate a failure
+	changedAddr := []byte(stealthAddr.Hex())
+	// For simplicity, let's just change the first character
+	if changedAddr[0] == '0' {
+		changedAddr[0] = '1'
+	} else {
+		changedAddr[0] = '0'
+	}
+	invalidStealthAddr := common.BytesToAddress(changedAddr)
+
+	// Check stealth address with incorrect parameters
+	if success := checkStealthAddress(invalidStealthAddr, ephemeralPubKey, viewPrivKey, &spendPrivKey.PublicKey); !success {
+		fmt.Println("Success: Stealth address is invalid")
+		fmt.Printf("Stealth Address: %s\n", invalidStealthAddr.Hex())
+	} else {
+		fmt.Println("Failure: Stealth address is valid")
+	}
 }

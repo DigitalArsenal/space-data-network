@@ -1,4 +1,4 @@
-package protocols
+package node
 
 import (
 	"bufio"
@@ -13,13 +13,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
-	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
-
-type Node interface {
-	GetHost() host.Host
-	GetWallet() *hdwallet.Wallet
-}
 
 const IDExchangeProtocol = protocol.ID("/space-data-network/id-exchange/1.0.0")
 

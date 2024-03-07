@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/DigitalArsenal/space-data-network/internal/node/protocols"
-
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -107,7 +105,7 @@ func NewNode(ctx context.Context, options ...NodeOptions) (*Node, error) {
 	fmt.Printf("Node PeerID: %s\n", node.Host.ID())
 
 	// Set up PNM exchange protocol listener
-	protocols.SetupPNMExchange(node.Host)
+	SetupPNMExchange(node.Host)
 
 	node.SetHDWallet()
 

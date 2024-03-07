@@ -1,4 +1,4 @@
-package protocols
+package node
 
 import (
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
