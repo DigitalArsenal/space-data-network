@@ -6,7 +6,7 @@ tmp_dir = "tmp"
 
 [build]
   # Command to build your application
-  cmd = "CGO_CFLAGS='-g -O2 -Wno-return-local-addr' go build -o ./tmp/main ./cmd/node/main.go && (test -f ./scripts/post-build && bash ./scripts/post-build || echo 'No post-build script found, skipping')"
+  cmd = "./build.sh"
   # Delay before rebuilding after file changes are detected (in milliseconds)
   delay = 1000
   # Directories to exclude from watching
