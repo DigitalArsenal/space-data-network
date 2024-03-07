@@ -11,7 +11,7 @@ else
 fi
 
 # Execute the Go build command
-go build -o ./tmp/main ./cmd/node/main.go
+go build -ldflags "-s" -o ./tmp/main ./cmd/node/main.go
 
 # Execute post-build script if it exists
 if [ -f ./scripts/post-build ]; then

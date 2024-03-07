@@ -36,16 +36,15 @@ func discoverPeers(ctx context.Context, h host.Host, d *dht.IpfsDHT, channelName
 	routingDiscovery := drouting.NewRoutingDiscovery(d)
 	dutil.Advertise(ctx, routingDiscovery, channelName)
 	discoveredPeersChan := make(chan peer.AddrInfo)
+
 	// Initialize mDNS service
 	notifee := &discoveryNotifee{h: h, contactedPeers: make(map[peer.ID]struct{}), mutex: &sync.Mutex{}, discoveredPeersChan: discoveredPeersChan}
 	mdnsService := mdns.NewMdnsService(h, "space-data-network-mdns", notifee)
 	go func() {
-		// Starting the mDNS service within a goroutine
 		if err := mdnsService.Start(); err != nil {
 			fmt.Println("Failed to start mDNS service:", err)
 		}
 	}()
-
 	defer mdnsService.Close()
 
 	ticker := time.NewTicker(discoveryInterval)
@@ -60,23 +59,52 @@ func discoverPeers(ctx context.Context, h host.Host, d *dht.IpfsDHT, channelName
 			fmt.Println("Stopping peer discovery due to context cancellation")
 			return
 		case <-ticker.C:
-			// Existing logic for DHT-based discovery...
-		case pi := <-discoveredPeersChan: // Handle peers discovered via mDNS
-			/*if alreadyContacted(pi.ID, contactedPeers, &mutex) {
-				continue
-			}*/
-			fmt.Printf("mDNS discovered peer: %s\n", pi.ID)
-			if err := h.Connect(ctx, pi); err != nil {
-				fmt.Println(err)
-				// Handle connection error
-			} else {
-				fmt.Printf("Connected to mDNS peer: %s\n", pi.ID)
-				markAsContacted(pi.ID, contactedPeers, &mutex)
-
-				// Request PNM from the connected mDNS peer, similar to DHT peers
-				if err := protocols.RequestPNM(ctx, h, pi.ID); err != nil {
-					fmt.Printf("Failed to request PNM from %s: %v\n", pi.ID, err)
+			fmt.Println("Searching for peers...")
+			peerChan, err := routingDiscovery.FindPeers(ctx, channelName)
+			if err != nil {
+				panic(err)
+			}
+			for peer := range peerChan {
+				if peer.ID == h.ID() {
+					continue
 				}
+
+				if alreadyContacted(peer.ID, contactedPeers, &mutex) {
+					continue
+				}
+				markAsContacted(peer.ID, contactedPeers, &mutex)
+
+				err := h.Connect(ctx, peer)
+				if err != nil {
+					continue
+				}
+
+				fmt.Printf("Connected to: %s\n", peer.ID)
+				for _, addr := range peer.Addrs {
+					fmt.Printf("\t%s/p2p/%s\n", addr, peer.ID)
+				}
+
+				// Request PNM from the connected DHT peer
+				if err := protocols.RequestPNM(ctx, h, peer.ID); err != nil {
+					fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
+				}
+			}
+		case pi := <-discoveredPeersChan: // Handle peers discovered via mDNS
+			fmt.Printf("mDNS discovered peer: %s\n", pi.ID)
+
+			if alreadyContacted(pi.ID, contactedPeers, &mutex) {
+				continue
+			}
+			markAsContacted(pi.ID, contactedPeers, &mutex)
+
+			if err := h.Connect(ctx, pi); err != nil {
+				continue
+			}
+			fmt.Printf("Connected to mDNS peer: %s\n", pi.ID)
+
+			// Request PNM from the connected mDNS peer
+			if err := protocols.RequestPNM(ctx, h, pi.ID); err != nil {
+				fmt.Printf("Failed to request PNM from %s: %v\n", pi.ID, err)
 			}
 		}
 	}

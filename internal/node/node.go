@@ -34,6 +34,14 @@ type Node struct {
 	EntropyLength int
 }
 
+func (n *Node) GetHost() host.Host {
+	return n.Host
+}
+
+func (n *Node) GetWallet() *hdwallet.Wallet {
+	return n.wallet
+}
+
 func NewNode(ctx context.Context, options ...NodeOptions) (*Node, error) {
 	config.Init()
 

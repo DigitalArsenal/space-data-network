@@ -8,10 +8,12 @@
   - [x] Use all transports (tcp, websockets, etc)
   - [x] Use all discovery methods
   - [x] Use dht and identity services (in case bootstrap nodes are down / unreachable)
-- [ ] Discovery other nodes in space data network
-  - [x] Discoverable through 'space-data-network' DHT key
+- [ ] Discovery other nodes in data network
+  - [x] Discoverable through 'data-network' DHT key
   - [ ] Exchange EPMs for servers
   - [ ] Have EPMs advertise services (need to modify for this)
+  - [ ] Exchange peerID and encryption xpub (control vs comms)
+  - [ ] Node discovery channel for "global" network
 - [ ] PubSub
   - [ ] Multiaddr and ETH digital signature sent over channel using the Publish Notification Message (PNM)
   - [ ] PNM stored as proof of signature in storage adapter
@@ -20,7 +22,8 @@
   - [ ] By Ethereum address in folder, and PNM concatenated flatbuffer by datatype
 - [ ] Direct dial protocol
   - [ ] Protocol for getting raw messages, send a date range (other query parameters?)
-  - [ ] Additional protocols can be created for services like CA
+  - [ ] Peer discovery based on xpub; send a request and receive a peer id xpub, find next PeerID
+  - [ ] Key exchange based on xpub; send a request and receive a peer encryption xpub, find next encryption key
 - [ ] User Interface
   - [ ] HTTP or libp2p access to node
   - [ ] Takes JSON or Flatbuffer input
@@ -39,7 +42,11 @@
   - [ ] Get a response with new channel name for service (XXX)
   - [ ] Have node (or node provider) sub to channel
   - [ ] Send Publish Notification Message or actual data message to channel
-
+- [ ] Custom packaging
+  - [ ] Cut custom executables with config for each customer, with xpub
+- [ ] Versioning
+  - [ ] Expanse-based!
+  
 ## Marketing
 
 - [ ] Realtime
