@@ -4,7 +4,7 @@
   - [x] Create datastore in encrypted SQLite DB
   - [x] Allow user save / load keys
   - [ ] Allow user to save / load config
-- [ ] Create libp2p node, with bootstrap list
+- [x] Create libp2p node, with bootstrap list
   - [x] Use all transports (tcp, websockets, etc)
   - [x] Use all discovery methods
   - [x] Use dht and identity services (in case bootstrap nodes are down / unreachable)

@@ -8,30 +8,45 @@ import (
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	dutil "github.com/libp2p/go-libp2p/p2p/discovery/util"
 )
 
-type discoveryNotifee struct {
-	h                   host.Host
-	contactedPeers      map[peer.ID]struct{}
-	mutex               *sync.Mutex
-	discoveredPeersChan chan peer.AddrInfo // Channel for sending discovered peers
+func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryInterval time.Duration) {
 
-}
+	h := n.Host
+	d := n.DHT
 
-func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
-	if pi.ID == n.h.ID() || alreadyContacted(pi.ID, n.contactedPeers, n.mutex) {
-		return
+	contactedPeers := make(map[peer.ID]struct{})
+	connectedPeers := make(map[peer.ID]struct{})
+	mutex := sync.Mutex{}
+
+	// Create a NotifyBundle and assign event handlers
+	notifiee := &NotifyBundle{
+		ConnectedF: func(_ network.Network, conn network.Conn) {
+			//TODO connect to any peer
+		},
+		DisconnectedF: func(_ network.Network, conn network.Conn) {
+			mutex.Lock()
+			defer mutex.Unlock()
+			peerID := conn.RemotePeer()
+			_, exists := connectedPeers[peerID]
+			if exists {
+				delete(connectedPeers, peerID)
+			}
+		},
 	}
 
-	n.discoveredPeersChan <- pi // Send the discovered peer to the main loop
+	// Register notifiee with the host's network
+	h.Network().Notify(notifiee)
+	defer h.Network().StopNotify(notifiee)
 
-}
+	ticker := time.NewTicker(discoveryInterval)
+	defer ticker.Stop()
 
-func discoverPeers(ctx context.Context, h host.Host, d *dht.IpfsDHT, channelName string, discoveryInterval time.Duration) {
 	routingDiscovery := drouting.NewRoutingDiscovery(d)
 	dutil.Advertise(ctx, routingDiscovery, channelName)
 	discoveredPeersChan := make(chan peer.AddrInfo)
@@ -46,11 +61,8 @@ func discoverPeers(ctx context.Context, h host.Host, d *dht.IpfsDHT, channelName
 	}()
 	defer mdnsService.Close()
 
-	ticker := time.NewTicker(discoveryInterval)
+	ticker = time.NewTicker(discoveryInterval)
 	defer ticker.Stop()
-
-	contactedPeers := make(map[peer.ID]struct{})
-	var mutex sync.Mutex
 
 	for {
 		select {
@@ -78,16 +90,19 @@ func discoverPeers(ctx context.Context, h host.Host, d *dht.IpfsDHT, channelName
 					continue
 				}
 
-				fmt.Printf("Connected to: %s\n", peer.ID)
 				for _, addr := range peer.Addrs {
 					fmt.Printf("\t%s/p2p/%s\n", addr, peer.ID)
 				}
-
+				fmt.Printf("Connected to: %s\n", peer.ID)
 				// Request PNM from the connected DHT peer
 				if err := RequestPNM(ctx, h, peer.ID); err != nil {
 					fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
 				}
+
+				// Add connected peer to connectedPeers map
+				connectedPeers[peer.ID] = struct{}{}
 			}
+
 		case pi := <-discoveredPeersChan: // Handle peers discovered via mDNS
 			fmt.Printf("mDNS discovered peer: %s\n", pi.ID)
 
@@ -105,6 +120,9 @@ func discoverPeers(ctx context.Context, h host.Host, d *dht.IpfsDHT, channelName
 			if err := RequestPNM(ctx, h, pi.ID); err != nil {
 				fmt.Printf("Failed to request PNM from %s: %v\n", pi.ID, err)
 			}
+
+			// Add connected mDNS peer to connectedPeers map
+			connectedPeers[pi.ID] = struct{}{}
 		}
 	}
 }

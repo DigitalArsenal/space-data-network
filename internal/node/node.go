@@ -9,7 +9,6 @@ import (
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
@@ -105,7 +104,7 @@ func NewNode(ctx context.Context, options ...NodeOptions) (*Node, error) {
 	fmt.Printf("Node PeerID: %s\n", node.Host.ID())
 
 	// Set up PNM exchange protocol listener
-	SetupPNMExchange(node.Host)
+	SetupPNMExchange(node)
 
 	node.SetHDWallet()
 
@@ -150,27 +149,27 @@ func (n *Node) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize DHT: %w", err)
 	}
 
-	go discoverPeers(ctx, n.Host, n.DHT, "space-data-network", 300*time.Second)
+	go discoverPeers(ctx, n, "space-data-network", 30*time.Second)
 
-	ps, err := pubsub.NewGossipSub(ctx, n.Host)
+	/*ps, err := pubsub.NewGossipSub(ctx, n.Host)
 	if err != nil {
 		return fmt.Errorf("failed to initialize PubSub: %w", err)
 	}
 
-	topic, err := ps.Join("space-data-network")
-	if err != nil {
-		return fmt.Errorf("failed to join topic 'space-data-network': %w", err)
-	}
+		topic, err := ps.Join("space-data-network")
+		if err != nil {
+			return fmt.Errorf("failed to join topic 'space-data-network': %w", err)
+		}
 
-	go streamConsoleTo(ctx, topic)
+		go streamConsoleTo(ctx, topic)
 
-	sub, err := topic.Subscribe()
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to topic: %w", err)
-	}
+		sub, err := topic.Subscribe()
+		if err != nil {
+			return fmt.Errorf("failed to subscribe to topic: %w", err)
+		}
 
-	go printMessagesFrom(ctx, sub)
-
+		go printMessagesFrom(ctx, sub)
+	*/
 	return nil
 }
 

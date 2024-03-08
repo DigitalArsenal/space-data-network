@@ -17,8 +17,8 @@ import (
 
 const IDExchangeProtocol = protocol.ID("/space-data-network/id-exchange/1.0.0")
 
-func SetupPNMExchange(h host.Host) {
-	h.SetStreamHandler(IDExchangeProtocol, handlePNMExchange)
+func SetupPNMExchange(n *Node) {
+	n.Host.SetStreamHandler(IDExchangeProtocol, handlePNMExchange)
 }
 
 // generatePNM simulates generating a PNMCOLLECTION
@@ -97,7 +97,7 @@ func RequestPNM(ctx context.Context, h host.Host, peerID peer.ID) error {
 	pnm := PNM.GetRootAsPNM(data, 0) // Start at the beginning of the actual FlatBuffer content
 
 	// Access the PNM fields
-	cid := string(pnm.CID_FID())
+	cid := string(pnm.CID())
 	ethSignature := string(pnm.ETH_DIGITAL_SIGNATURE())
 	fmt.Printf("Received PNM from %s\n", peerID)
 	fmt.Printf("with CID: %s\n", cid)

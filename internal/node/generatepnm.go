@@ -15,7 +15,7 @@ func GeneratePNM(builder *flatbuffers.Builder, multiformatAddress, cid, ethDigit
 	// Start the PNM object and set its fields
 	PNM.PNMStart(builder)
 	PNM.PNMAddMULTIFORMAT_ADDRESS(builder, multiformatAddressOffset)
-	PNM.PNMAddCID_FID(builder, cidOffset)
+	PNM.PNMAddCID(builder, cidOffset)
 	PNM.PNMAddETH_DIGITAL_SIGNATURE(builder, ethDigitalSignatureOffset)
 	// Add other fields as needed
 	pnm := PNM.PNMEnd(builder)
