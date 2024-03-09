@@ -1,6 +1,7 @@
 package flatbuffer_utils
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -50,45 +51,35 @@ func SerializePNM(builder *flatbuffers.Builder, pnm flatbuffers.UOffsetT) []byte
 	return builder.FinishedBytes()
 }
 
-// ByteReader is an interface that abstracts the byte reading operation.
-type ByteReader interface {
-	ReadBytes() ([]byte, error)
-}
-
-// ByteSliceReader reads bytes from a byte slice.
-type ByteSliceReader struct {
-	Data []byte
-}
-
-func (r *ByteSliceReader) ReadBytes() ([]byte, error) {
-	return r.Data, nil
-}
-
-// StreamReader reads bytes from a stream.
-type StreamReader struct {
-	Stream io.Reader
-}
-
-func (r *StreamReader) ReadBytes() ([]byte, error) {
+// DeserializePNM deserializes PNM from a ByteReader.
+func DeserializePNM(ctx context.Context, stream io.Reader) (*PNM.PNM, error) {
+	// Create a buffer to hold the size prefix.
 	totalSizeBuf := make([]byte, 4)
-	if _, err := io.ReadFull(r.Stream, totalSizeBuf); err != nil {
+	if _, err := io.ReadFull(stream, totalSizeBuf); err != nil {
 		return nil, fmt.Errorf("failed to read total size prefix: %v", err)
 	}
 	totalSize := binary.LittleEndian.Uint32(totalSizeBuf)
 
-	data := make([]byte, totalSize)
-	if _, err := io.ReadFull(r.Stream, data); err != nil {
-		return nil, fmt.Errorf("failed to read data: %v", err)
-	}
-	return data, nil
-}
+	// Initialize a buffer to hold the incoming data.
+	data := make([]byte, 0, totalSize)
 
-// DeserializePNM deserializes PNM from a ByteReader.
-func DeserializePNM(reader ByteReader) (*PNM.PNM, error) {
-	data, err := reader.ReadBytes()
-	if err != nil {
-		return nil, err
+	// Keep reading data until the buffer is filled to the expected size.
+	for uint32(len(data)) < totalSize {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err() // Context cancellation or deadline exceeded.
+		default:
+			chunkSize := totalSize - uint32(len(data))
+			chunk := make([]byte, chunkSize)
+			n, err := io.ReadFull(stream, chunk)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read PNM data: %v", err)
+			}
+			data = append(data, chunk[:n]...)
+		}
 	}
-	pnm := PNM.GetRootAsPNM(data, 4) // Skip the size prefix and file identifier
+
+	// Use GetRootAsPNM to deserialize the data.
+	pnm := PNM.GetRootAsPNM(data, 0) // The data buffer is ready for deserialization.
 	return pnm, nil
 }

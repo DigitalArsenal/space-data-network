@@ -97,6 +97,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 				// Request PNM from the connected DHT peer
 				if err := RequestPNM(ctx, h, peer.ID); err != nil {
 					fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
+					continue
 				}
 
 				// Add connected peer to connectedPeers map
