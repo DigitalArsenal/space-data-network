@@ -49,24 +49,7 @@ func NewKeyStore(password string, customPaths ...string) (*KeyStore, error) {
 		// If a custom path is provided, use it
 		dbPath = customPaths[0]
 	} else {
-		// Otherwise, use the default logic to determine the path
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-
-		keyDir := filepath.Join(homeDir, KeyDirName)
-		if _, err := os.Stat(keyDir); os.IsNotExist(err) {
-			if err := os.MkdirAll(keyDir, 0700); err != nil {
-				return nil, err
-			}
-		}
-
-		dbPath = filepath.Join(keyDir, DatabaseFileName)
-		// Assuming config is accessible here, if not you might need to pass it or find another way to access it
-		if config.Conf.Datastore.Directory != "" {
-			dbPath = filepath.Join(config.Conf.Datastore.Directory, DatabaseFileName)
-		}
+		dbPath = filepath.Join(config.Conf.Datastore.Directory, DatabaseFileName)
 	}
 
 	// Ensure the directory exists
@@ -301,53 +284,3 @@ func (ks *KeyStore) ImportDatabase(importPath string) error {
 
 	return nil
 }
-
-/*
-func logCurrentSchemaAndData(db *sql.DB) error {
-	// Log the schema
-	tables, err := db.Query("SELECT name FROM sqlite_master WHERE type='table'")
-	if err != nil {
-		return fmt.Errorf("failed to query tables: %v", err)
-	}
-	defer tables.Close()
-
-	log.Println("Current Database Schema:")
-	for tables.Next() {
-		var tableName string
-		if err := tables.Scan(&tableName); err != nil {
-			return fmt.Errorf("failed to scan table name: %v", err)
-		}
-
-		// Log schema for each table
-		log.Printf("Table: %s", tableName)
-		columns, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableName))
-		if err != nil {
-			return fmt.Errorf("failed to query table_info for table %s: %v", tableName, err)
-		}
-		for columns.Next() {
-			var cid int
-			var name string
-			var ctype string
-			var notnull int
-			var dfltValue sql.NullString
-			var pk int
-			if err := columns.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
-				columns.Close()
-				return fmt.Errorf("failed to scan column info for table %s: %v", tableName, err)
-			}
-			log.Printf("  Column: %s, Type: %s, NotNull: %d, Default: %v, PK: %d", name, ctype, notnull, dfltValue, pk)
-		}
-		columns.Close()
-
-		// Log row count for each table as a simple data summary
-		var rowCount int
-		rowErr := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&rowCount)
-		if rowErr != nil {
-			return fmt.Errorf("failed to count rows for table %s: %v", tableName, rowErr)
-		}
-		log.Printf("  Row Count: %d", rowCount)
-	}
-
-	return nil
-}
-*/

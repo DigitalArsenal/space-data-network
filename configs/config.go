@@ -2,7 +2,9 @@ package config
 
 import (
 	"flag"
+	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 )
@@ -54,6 +56,25 @@ func Init() {
 		// Override datastore settings with environment variables if they exist
 		if dir, exists := os.LookupEnv("SPACE_DATA_NETWORK_DATASTORE_DIRECTORY"); exists {
 			Conf.Datastore.Directory = dir
+		} else {
+			// Use the user's home directory if no environment variable or custom path is provided
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				log.Printf("Error getting user home directory: %v", err)
+				return // Early return on error
+			}
+
+			// Set the default directory to a specific folder in the user's home directory
+			defaultDir := filepath.Join(homeDir, ".spacedatanetwork")
+			Conf.Datastore.Directory = defaultDir
+
+			// Ensure the base directory exists
+			if _, err := os.Stat(Conf.Datastore.Directory); os.IsNotExist(err) {
+				if err := os.MkdirAll(Conf.Datastore.Directory, 0700); err != nil {
+					log.Printf("Error creating directory '%s': %v", Conf.Datastore.Directory, err)
+					return // Early return on error
+				}
+			}
 		}
 
 		if password, exists := os.LookupEnv("SPACE_DATA_NETWORK_DATASTORE_PASSWORD"); exists {
