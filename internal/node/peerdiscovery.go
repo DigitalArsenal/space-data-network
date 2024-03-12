@@ -83,7 +83,6 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 				if alreadyContacted(peer.ID, contactedPeers, &mutex) {
 					continue
 				}
-				markAsContacted(peer.ID, contactedPeers, &mutex)
 
 				err := h.Connect(ctx, peer)
 				if err != nil {
@@ -100,8 +99,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 					continue
 				}
 
-				// Add connected peer to connectedPeers map
-				connectedPeers[peer.ID] = struct{}{}
+				markAsContacted(peer.ID, contactedPeers, &mutex)
 			}
 
 		case pi := <-discoveredPeersChan: // Handle peers discovered via mDNS
@@ -110,7 +108,6 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 			if alreadyContacted(pi.ID, contactedPeers, &mutex) {
 				continue
 			}
-			markAsContacted(pi.ID, contactedPeers, &mutex)
 
 			if err := h.Connect(ctx, pi); err != nil {
 				continue
@@ -120,10 +117,10 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 			// Request PNM from the connected mDNS peer
 			if err := RequestPNM(ctx, h, pi.ID); err != nil {
 				fmt.Printf("Failed to request PNM from %s: %v\n", pi.ID, err)
+				continue
 			}
 
-			// Add connected mDNS peer to connectedPeers map
-			connectedPeers[pi.ID] = struct{}{}
+			markAsContacted(pi.ID, contactedPeers, &mutex)
 		}
 	}
 }

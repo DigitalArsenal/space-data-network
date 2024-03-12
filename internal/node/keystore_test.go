@@ -3,50 +3,90 @@ package node
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	config "github.com/DigitalArsenal/space-data-network/configs"
+	_ "github.com/golang-migrate/migrate/v4/database/sqlcipher"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewKeyStore(t *testing.T) {
-	// Use the 'tmp' directory in the project root
-	tmpDir := filepath.Join("..", "..", "tmp", "keystore_test")
+func setupTestDB(t *testing.T) (*KeyStore, func()) {
+	t.Helper()
 
-	// Ensure the tmp directory exists
-	err := os.MkdirAll(tmpDir, 0755)
-	require.NoError(t, err, "Failed to create tmp directory")
-	//defer os.RemoveAll(tmpDir) // Clean up the tmp directory after the test
+	// Create a temporary directory for the test database
+	tmpDir, err := os.MkdirTemp("", "keyStoreTest")
+	require.NoError(t, err)
 
-	// Set the configuration to use the tmp directory
-	config.Conf.Datastore.Directory = tmpDir
-
-	// Continue with the original test setup...
-	testPassword := "testPassword"
-	ks, err := NewKeyStore(testPassword)
-	require.NoError(t, err, "Failed to create KeyStore")
-	defer ks.Close() // Ensure the keystore is closed after the test
-
-	require.NotNil(t, ks, "KeyStore is nil")
-
-	// Verify the database file exists
+	// Override the default database path for testing
 	dbPath := filepath.Join(tmpDir, DatabaseFileName)
-	_, err = os.Stat(dbPath)
-	require.NoError(t, err, "Database file does not exist")
 
-	// Export the database
-	exportPath := filepath.Join(tmpDir, "exported_"+DatabaseFileName)
-	err = ks.ExportDatabase(exportPath)
-	require.NoError(t, err, "Failed to export database")
+	// Initialize a new KeyStore with a dummy password and the custom dbPath
+	keyStore, err := NewKeyStore("dummy_password", dbPath) // Modified to use dbPath
+	require.NoError(t, err)
 
-	// Read the original database file
-	originalDBBytes, err := os.ReadFile(dbPath)
-	require.NoError(t, err, "Failed to read original database file")
+	// Cleanup function to remove the temporary directory
+	cleanup := func() {
+		os.RemoveAll(tmpDir)
+	}
 
-	// Read the exported database file
-	exportedDBBytes, err := os.ReadFile(exportPath)
-	require.NoError(t, err, "Failed to read exported database file")
+	return keyStore, cleanup
+}
 
-	// Compare the original and exported database bytes
-	require.Equal(t, originalDBBytes, exportedDBBytes, "Exported database file does not match the original")
+func TestNewKeyStore(t *testing.T) {
+	keyStore, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	assert.NotNil(t, keyStore)
+}
+
+func TestMigration(t *testing.T) {
+	keyStore, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Apply the initial table creation statements for v1.0
+	for _, stmt := range strings.Split(createTableStatements["v1.0"], ";") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		_, err := keyStore.db.Exec(stmt)
+		require.NoError(t, err)
+	}
+
+	// Manually set the database version to "v1.0"
+	_, err := keyStore.db.Exec("INSERT INTO db_version (version) VALUES ('v1.0')")
+	require.NoError(t, err)
+
+	// Run the migration script to upgrade to v1.1
+	err = initializeDatabase(keyStore.db)
+	require.NoError(t, err)
+
+	// Verify the migration was successful
+	var version string
+	err = keyStore.db.QueryRow("SELECT version FROM db_version").Scan(&version)
+	require.NoError(t, err)
+	assert.Equal(t, "v1.1", version)
+
+	// Check if the new "epms_v1_1" table exists
+	_, err = keyStore.db.Query("SELECT * FROM epms_v1_1")
+	require.NoError(t, err)
+}
+
+func TestGetOrGeneratePrivateKey(t *testing.T) {
+	keyStore, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Test generating a new key
+	privKey, err := keyStore.GetOrGeneratePrivateKey(NodeOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, privKey)
+
+	// Test retrieving the same key again
+	samePrivKey, err := keyStore.GetOrGeneratePrivateKey(NodeOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, samePrivKey)
+
+	// Check if the private key remains the same across calls
+	assert.Equal(t, privKey, samePrivKey)
 }
