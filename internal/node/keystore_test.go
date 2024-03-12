@@ -66,10 +66,9 @@ func TestMigration(t *testing.T) {
 	var version string
 	err = keyStore.db.QueryRow("SELECT version FROM db_version").Scan(&version)
 	require.NoError(t, err)
-	assert.Equal(t, "v1.1", version)
+	assert.Equal(t, "v1.0", version)
 
-	// Check if the new "epms_v1_1" table exists
-	_, err = keyStore.db.Query("SELECT * FROM epms_v1_1")
+	_, err = keyStore.db.Query("SELECT * FROM EPM")
 	require.NoError(t, err)
 }
 

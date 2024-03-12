@@ -20,7 +20,7 @@ const (
 	KeyDirName        = ".spacedatanetwork"
 	DatabaseFileName  = "keys.db"
 	EncryptionKeySize = 32
-	CurrentVersion    = "v1.1"
+	CurrentVersion    = "v1.0"
 )
 
 type TableCreationScripts map[string]string
@@ -29,27 +29,11 @@ type MigrationScripts map[string]string
 var (
 	createTableStatements = TableCreationScripts{
 		"v1.0": `CREATE TABLE IF NOT EXISTS private_keys (id INTEGER PRIMARY KEY, private_key BLOB);
-                 CREATE TABLE IF NOT EXISTS epms (id INTEGER PRIMARY KEY AUTOINCREMENT, public_key TEXT NOT NULL, epm_data BLOB NOT NULL, UNIQUE(public_key));`,
-		"v1.1": `CREATE TABLE IF NOT EXISTS private_keys (id INTEGER PRIMARY KEY, private_key BLOB);
-                 CREATE TABLE IF NOT EXISTS epms_v1_1 (id INTEGER PRIMARY KEY AUTOINCREMENT, DN TEXT NOT NULL, epm_data BLOB NOT NULL, UNIQUE(DN));`,
+                 CREATE TABLE IF NOT EXISTS EPM (id INTEGER PRIMARY KEY AUTOINCREMENT, DN TEXT NOT NULL, EPM_DATA BLOB NOT NULL, UNIQUE(DN));`,
 	}
 
 	migrations = MigrationScripts{
-		"v1.1": `
-            -- Assuming epms to epms_v1_1 migration is needed only if coming from v1.0
-            PRAGMA foreign_keys=off;
-            BEGIN TRANSACTION;
-            -- Rename the old epms table to a temporary name
-            ALTER TABLE epms RENAME TO epms_old_version;
-            -- Create the new structure for the epms table under v1.1
-            CREATE TABLE epms (id INTEGER PRIMARY KEY AUTOINCREMENT, DN TEXT NOT NULL, epm_data BLOB NOT NULL, UNIQUE(DN));
-            -- Copy the data from the old table to the new, assuming DN can directly take the values from public_key
-            INSERT INTO epms (id, DN, epm_data) SELECT id, public_key, epm_data FROM epms_old_version;
-            -- Drop the old table
-            DROP TABLE epms_old_version;
-            COMMIT;
-            PRAGMA foreign_keys=on;
-        `,
+		"v1.0": ``,
 	}
 )
 
@@ -309,7 +293,7 @@ func (ks *KeyStore) ImportDatabase(importPath string) error {
 		return err
 	}
 
-	db, err := sql.Open("sqlite3", ks.dbPath)
+	db, err := sql.Open("sqlite", ks.dbPath)
 	if err != nil {
 		return err
 	}
@@ -318,6 +302,7 @@ func (ks *KeyStore) ImportDatabase(importPath string) error {
 	return nil
 }
 
+/*
 func logCurrentSchemaAndData(db *sql.DB) error {
 	// Log the schema
 	tables, err := db.Query("SELECT name FROM sqlite_master WHERE type='table'")
@@ -365,3 +350,4 @@ func logCurrentSchemaAndData(db *sql.DB) error {
 
 	return nil
 }
+*/
