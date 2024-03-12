@@ -11,6 +11,8 @@
 - [ ] Discovery other nodes in data network
   - [x] Discoverable through 'data-network' DHT key
   - [ ] Exchange EPMs for servers
+    - [ ] Each EPM is placed in the data directory / public key subdirectory / file type, file name is the CID of the EPM
+    - [ ] Once written, digitally sign it and create a PNM, stored in the same way, file name includes EPM CID
   - [ ] Have EPMs advertise services (need to modify for this)
   - [ ] Exchange peerID and encryption xpub (control vs comms)
   - [ ] Node discovery channel for "global" network

@@ -27,6 +27,7 @@ func handlePNMExchange(s network.Stream) {
 	fmt.Println("handlePNMExchange with peer:", peerID)
 
 	// Generate PNM
+	// TODO: Read PNM
 	pnmData := flatbuffer_utils.CreatePNM(
 		"/ip4/127.0.0.1/tcp/4001",
 		"QmTmVtboD4DBn5nXAyH6GkSbjTsG47jxjsXz6KXLzKdW9X",

@@ -18,6 +18,10 @@ tmp_dir = "tmp"
   # Log file for build errors
   log = "build-errors.log"
 
+[cmd]
+# Command to run your binary with the --run flag
+exec = "./tmp/main --run"
+
 [color]
   # Color settings (use the color names supported by air)
   main = "magenta"
