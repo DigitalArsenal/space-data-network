@@ -3,6 +3,7 @@ package node
 import (
 	"fmt"
 
+	"github.com/ethereum/go-ethereum/accounts"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	"github.com/tyler-smith/go-bip39"
 )
@@ -33,22 +34,25 @@ func (n *Node) SetHDWallet() error {
 	}
 
 	n.wallet = wallet
-
-	path := hdwallet.MustParseDerivationPath("m/44'/60'/0'/0/0")
-
-	// Derive the first account using the path
-	account, err := n.wallet.Derive(path, false)
-	if err != nil {
-		return fmt.Errorf("failed to derive the first account: %v", err)
-	}
+	account, _ := n.GetAccount("m/44'/60'/0'/0/0")
 
 	// Get the address of the derived account
 	address := account.Address
-
 	// Print the Ethereum address
 	fmt.Printf("Node Ethereum Address: %s\n", address.Hex())
 
 	return nil
+}
+
+func (n *Node) GetAccount(dPath string) (accounts.Account, error) {
+	path := hdwallet.MustParseDerivationPath(dPath)
+
+	// Derive the first account using the path
+	account, err := n.wallet.Derive(path, true)
+	if err != nil {
+		return accounts.Account{}, fmt.Errorf("failed to derive account: %s %v", dPath, err)
+	}
+	return account, nil
 }
 
 func (n *Node) ExportMnemonic() (string, error) {

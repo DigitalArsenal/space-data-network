@@ -8,9 +8,24 @@ import (
 
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
+	cid "github.com/ipfs/go-cid"
+	multihash "github.com/multiformats/go-multihash"
 )
 
 var PNMFID string = "$PNM"
+
+func GenerateCID(data []byte) (string, error) {
+	// Hash the data to get a multihash
+	hash, err := multihash.Sum(data, multihash.SHA2_256, -1)
+	if err != nil {
+		return "", fmt.Errorf("failed to hash EPM data: %w", err)
+	}
+
+	// Create a CID using the hashed data
+	c := cid.NewCidV1(cid.Raw, hash)
+
+	return c.String(), nil
+}
 
 func CreatePNM(multiformatAddress, cid, ethDigitalSignature string) []byte {
 	builder := flatbuffers.NewBuilder(0)

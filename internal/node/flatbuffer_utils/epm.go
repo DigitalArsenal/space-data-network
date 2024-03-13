@@ -25,8 +25,6 @@ func CreateEPM(
 	alternateNames []string,
 	email string,
 	telephone string,
-	multiformatAddresses []string,
-	// The keys parameter is removed as per your request
 ) []byte {
 	builder := flatbuffers.NewBuilder(0)
 
@@ -45,7 +43,6 @@ func CreateEPM(
 
 	// Create vectors for alternate names and multiformat addresses
 	alternateNamesVec := createStringVector(builder, alternateNames)
-	multiformatAddressesVec := createStringVector(builder, multiformatAddresses)
 
 	// Start the EPM object
 	EPM.EPMStart(builder)
@@ -61,7 +58,6 @@ func CreateEPM(
 	EPM.EPMAddALTERNATE_NAMES(builder, alternateNamesVec)
 	EPM.EPMAddEMAIL(builder, emailOffset)
 	EPM.EPMAddTELEPHONE(builder, telephoneOffset)
-	EPM.EPMAddMULTIFORMAT_ADDRESS(builder, multiformatAddressesVec)
 
 	// Here you would normally add keys, but it's removed as per your request.
 
