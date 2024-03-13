@@ -5,26 +5,94 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
-	cid "github.com/ipfs/go-cid"
-	multihash "github.com/multiformats/go-multihash"
+	files "github.com/ipfs/go-libipfs/files"
+	config "github.com/ipfs/kubo/config"
+	"github.com/ipfs/kubo/core"
+	"github.com/ipfs/kubo/core/coreapi"
+	coreiface "github.com/ipfs/kubo/core/coreiface"
+	"github.com/ipfs/kubo/plugin/loader"
+	"github.com/ipfs/kubo/repo/fsrepo"
 )
 
 var PNMFID string = "$PNM"
 
-func GenerateCID(data []byte) (string, error) {
-	// Hash the data to get a multihash
-	hash, err := multihash.Sum(data, multihash.SHA2_256, -1)
+func setupPlugins(externalPluginsPath string) error {
+	plugins, err := loader.NewPluginLoader(filepath.Join(externalPluginsPath, "plugins"))
 	if err != nil {
-		return "", fmt.Errorf("failed to hash EPM data: %w", err)
+		return fmt.Errorf("error loading plugins: %s", err)
+	}
+	if err := plugins.Initialize(); err != nil {
+		return fmt.Errorf("error initializing plugins: %s", err)
+	}
+	if err := plugins.Inject(); err != nil {
+		return fmt.Errorf("error injecting plugins: %s", err)
+	}
+	return nil
+}
+
+func createTempRepo(_ context.Context) (string, error) {
+	repoPath := os.TempDir()
+
+	cfg, err := config.Init(io.Discard, 2048)
+	if err != nil {
+		return "", err
 	}
 
-	// Create a CID using the hashed data
-	c := cid.NewCidV1(cid.Raw, hash)
+	err = fsrepo.Init(repoPath, cfg)
+	if err != nil {
+		return "", fmt.Errorf("failed to init ephemeral node: %s", err)
+	}
 
-	return c.String(), nil
+	return repoPath, nil
+}
+
+func createNode(ctx context.Context, repoPath string) (coreiface.CoreAPI, error) {
+	repo, err := fsrepo.Open(repoPath)
+	if err != nil {
+		return nil, err
+	}
+
+	node, err := core.NewNode(ctx, &core.BuildCfg{
+		Online: true,
+		Repo:   repo,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return coreapi.NewCoreAPI(node)
+}
+
+func GenerateCID(data []byte) (string, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := setupPlugins(""); err != nil {
+		return "", err
+	}
+
+	repoPath, err := createTempRepo(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	ipfs, err := createNode(ctx, repoPath)
+	if err != nil {
+		return "", err
+	}
+
+	f := files.NewBytesFile(data)
+	cidFile, err := ipfs.Unixfs().Add(ctx, f)
+	if err != nil {
+		return "", fmt.Errorf("could not add data to IPFS: %s", err)
+	}
+
+	return cidFile.String(), nil
 }
 
 func CreatePNM(multiformatAddress, cid, ethDigitalSignature string) []byte {

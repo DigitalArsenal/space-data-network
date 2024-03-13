@@ -105,7 +105,7 @@ func CreateServerEPM() {
 	fmt.Println("CID:", CID)
 	fmt.Println("Ethereum signature:", formattedSignature)
 
-	// Example: ioutil.WriteFile("path/to/epm/file", epmBytes, 0644)
+	os.WriteFile("./test.EPM", epmBytes, 0644)
 }
 
 func readPassword() (string, error) {
