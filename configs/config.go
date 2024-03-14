@@ -21,10 +21,15 @@ type webserverConfig struct {
 	Port int
 }
 
+type keyConfig struct {
+	EntropyLength int
+}
+
 // AppConfig holds the entire application configuration with namespaces
 type AppConfig struct {
 	Datastore datastoreConfig
 	Webserver webserverConfig
+	Key       keyConfig
 }
 
 // Conf is the exported variable that will hold all the configuration settings
@@ -40,6 +45,9 @@ func Init() {
 		// Datastore settings
 		flag.StringVar(&Conf.Datastore.Directory, "datastore.directory", "", "Directory for the datastore")
 		flag.StringVar(&Conf.Datastore.Password, "datastore.password", "", "Password for the datastore encryption")
+
+		// Key settings
+		flag.IntVar(&Conf.Key.EntropyLength, "key.entropyLength", 16, "Entropy length for key generation")
 
 		// Parse command-line flags
 		flag.Parse()
@@ -87,6 +95,15 @@ func Init() {
 		} else {
 			// Default to m/44'/60'/0'/0'/0 if not found
 			Conf.Datastore.EthereumDerivationPath = "m/44'/60'/0'/0'/0"
+		}
+
+		// Check if there's an environment variable for key entropy length
+		if entropyLengthStr, exists := os.LookupEnv("SPACE_DATA_NETWORK_KEY_ENTROPY_LENGTH"); exists {
+			if entropyLength, err := strconv.Atoi(entropyLengthStr); err == nil {
+				Conf.Key.EntropyLength = entropyLength
+			} else {
+				log.Printf("Invalid entropy length from environment, using default: %v", err)
+			}
 		}
 	})
 }

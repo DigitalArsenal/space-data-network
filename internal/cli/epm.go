@@ -83,6 +83,7 @@ func CreateServerEPM() {
 	// Parse comma-separated alternate names and multiformat addresses
 	alternateNames := parseInput(altNamesInput)
 	dnString, _ := readInput(reader, "Enter DN components (e.g., 'CN=John Doe, O=Example Corp, OU=IT Dept, DC=example, DC=com'): ")
+	publicKey, _ := newNode.PublicKey()
 
 	// Call the flatbuffer_utils.CreateEPM with the collected data
 	epmBytes := flatbuffer_utils.CreateEPM(
@@ -123,6 +124,7 @@ func CreateServerEPM() {
 	formattedSignature := fmt.Sprintf("0x%s", signatureHex)
 	fmt.Println("CID:", CID)
 	fmt.Println("Ethereum signature:", formattedSignature)
+	fmt.Println(publicKey)
 
 	//TODO save PNM
 	newNode.KeyStore.SaveEPM(epmBytes)

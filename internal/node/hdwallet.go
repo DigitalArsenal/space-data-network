@@ -20,11 +20,11 @@ func (n *Node) SetHDWallet() error {
 		return fmt.Errorf("failed to get raw private key from node: %v", err)
 	}
 
-	if len(rawPrivateKeyBytes) < n.EntropyLength {
+	if len(rawPrivateKeyBytes) < config.Conf.Key.EntropyLength {
 		return fmt.Errorf("not enough bytes in private key for the specified entropy length")
 	}
 
-	mnemonic, err := bip39.NewMnemonic(rawPrivateKeyBytes[:n.EntropyLength])
+	mnemonic, err := bip39.NewMnemonic(rawPrivateKeyBytes[:config.Conf.Key.EntropyLength])
 	if err != nil {
 		return fmt.Errorf("failed to generate mnemonic from raw key: %v", err)
 	}
@@ -73,7 +73,7 @@ func (n *Node) ExportMnemonic() (string, error) {
 	}
 
 	// Use the appropriate number of bytes from the raw private key for entropy
-	entropy := rawPrivateKeyBytes[:n.EntropyLength]
+	entropy := rawPrivateKeyBytes[:config.Conf.Key.EntropyLength]
 
 	mnemonic, err := bip39.NewMnemonic(entropy)
 	if err != nil {

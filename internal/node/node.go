@@ -21,15 +21,13 @@ type NodeOptions struct {
 	EncryptedJSON string
 	Password      string
 	RawKey        []byte
-	EntropyLength int
 }
 
 type Node struct {
-	Host          host.Host
-	DHT           *dht.IpfsDHT
-	KeyStore      *KeyStore
-	wallet        *hdwallet.Wallet
-	EntropyLength int
+	Host     host.Host
+	DHT      *dht.IpfsDHT
+	KeyStore *KeyStore
+	wallet   *hdwallet.Wallet
 }
 
 func (n *Node) GetHost() host.Host {
@@ -48,8 +46,7 @@ func NewNode(ctx context.Context, options ...NodeOptions) (*Node, error) {
 		nodeOptions = options[0]
 	}
 
-	var entropyLength int
-	if nodeOptions.EntropyLength > 0 {
+	if config.Conf.Key.EntropyLength > 0 {
 		validEntropySizes := map[int]bool{
 			16: true,
 			20: true,
@@ -58,17 +55,12 @@ func NewNode(ctx context.Context, options ...NodeOptions) (*Node, error) {
 			32: true,
 		}
 
-		if validEntropySizes[nodeOptions.EntropyLength] {
-			entropyLength = nodeOptions.EntropyLength
-		} else {
-			return nil, fmt.Errorf("invalid entropy length provided")
+		if !validEntropySizes[config.Conf.Key.EntropyLength] {
+			return nil, fmt.Errorf("invalid entropy length provided in config")
 		}
-	} else {
-		// Default entropy length
-		entropyLength = 16
 	}
 
-	node := &Node{EntropyLength: entropyLength}
+	node := &Node{}
 
 	var err error
 
