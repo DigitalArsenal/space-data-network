@@ -18,6 +18,7 @@ func main() {
 	envDocs := flag.Bool("env-docs", false, "Display environment variable docs")
 	createEPMFlag := flag.Bool("create-server-epm", false, "Create server EPM")
 	outputEPMFlag := flag.Bool("output-server-epm", false, "Output server EPM")
+	outputQRFlag := flag.Bool("qr", false, "Output server EPM as QR code")
 
 	flag.Parse()
 
@@ -47,7 +48,7 @@ func main() {
 	}
 
 	if *outputEPMFlag {
-		cli_epm.ReadServerEPM()
+		cli_epm.ReadServerEPM(*outputQRFlag)
 		return
 	}
 

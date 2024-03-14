@@ -36,7 +36,6 @@ func (n *Node) SetHDWallet() error {
 
 	n.wallet = wallet
 	account, _ := n.GetAccount(config.Conf.Datastore.EthereumDerivationPath)
-	fmt.Println(config.Conf.Datastore.EthereumDerivationPath)
 
 	// Get the address of the derived account
 	address := account.Address

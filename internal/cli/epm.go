@@ -127,14 +127,18 @@ func CreateServerEPM() {
 	//TODO save PNM
 	newNode.KeyStore.SaveEPM(epmBytes)
 }
-func ReadServerEPM() {
 
-	newNode := setupNode()
+func ReadServerEPM(showQR ...bool) {
+	newNode := setupNode() // Assuming setupNode returns an instance of your node
 	vCard := flatbuffer_utils.ConvertTovCard(newNode.KeyStore.LoadEPM())
-	fmt.Println(vCard)
-	generateAndDisplayQRCode(vCard)
 
+	if len(showQR) > 0 && showQR[0] {
+		generateAndDisplayQRCode(vCard)
+	} else {
+		fmt.Println(vCard)
+	}
 }
+
 func generateAndDisplayQRCode(content string) {
 	config := qrterminal.Config{
 		Level:          qrterminal.M,
