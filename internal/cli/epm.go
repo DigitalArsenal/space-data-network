@@ -14,6 +14,7 @@ import (
 	node "github.com/DigitalArsenal/space-data-network/internal/node"
 	flatbuffer_utils "github.com/DigitalArsenal/space-data-network/internal/node/flatbuffer_utils"
 	"github.com/mdp/qrterminal/v3"
+	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
 
 func setupNode() *node.Node {
@@ -115,7 +116,11 @@ func CreateServerEPM() {
 	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
 	CID, _ := flatbuffer_utils.GenerateCID(epmBytes)
 
-	account, _ := newNode.GetAccount(config.Conf.Datastore.EthereumDerivationPath) //0x3835e5C7A36A2cE6A1a9b7cbd2c2276bd5538BdD
+	path := hdwallet.MustParseDerivationPath(config.Conf.Datastore.EthereumHardenedDerivationPath)
+	account, err := newNode.GetWallet().Derive(path, false)
+	if err != nil {
+		fmt.Println("failed to sign CID: %w", err)
+	}
 	sig, err := newNode.GetWallet().SignData(account, "application/octet-stream", []byte(CID))
 	if err != nil {
 		fmt.Println("failed to sign CID: %w", err)

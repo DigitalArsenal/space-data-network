@@ -12,9 +12,9 @@ import (
 var once sync.Once
 
 type datastoreConfig struct {
-	Directory              string
-	Password               string
-	EthereumDerivationPath string
+	Directory                      string
+	Password                       string
+	EthereumHardenedDerivationPath string
 }
 
 type webserverConfig struct {
@@ -22,7 +22,7 @@ type webserverConfig struct {
 }
 
 type keyConfig struct {
-	EntropyLength int
+	EntropyLengthBits int
 }
 
 // AppConfig holds the entire application configuration with namespaces
@@ -45,9 +45,6 @@ func Init() {
 		// Datastore settings
 		flag.StringVar(&Conf.Datastore.Directory, "datastore.directory", "", "Directory for the datastore")
 		flag.StringVar(&Conf.Datastore.Password, "datastore.password", "", "Password for the datastore encryption")
-
-		// Key settings
-		flag.IntVar(&Conf.Key.EntropyLength, "key.entropyLength", 16, "Entropy length for key generation")
 
 		// Parse command-line flags
 		flag.Parse()
@@ -91,19 +88,13 @@ func Init() {
 		}
 
 		if derivationPath, exists := os.LookupEnv("SPACE_DATA_NETWORK_ETHEREUM_DERIVATION_PATH"); exists {
-			Conf.Datastore.EthereumDerivationPath = derivationPath
+			Conf.Datastore.EthereumHardenedDerivationPath = derivationPath
 		} else {
 			// Default to m/44'/60'/0'/0'/0 if not found
-			Conf.Datastore.EthereumDerivationPath = "m/44'/60'/0'/0'/0"
+			Conf.Datastore.EthereumHardenedDerivationPath = "m/44'/60'/0'/0/0'"
 		}
 
-		// Check if there's an environment variable for key entropy length
-		if entropyLengthStr, exists := os.LookupEnv("SPACE_DATA_NETWORK_KEY_ENTROPY_LENGTH"); exists {
-			if entropyLength, err := strconv.Atoi(entropyLengthStr); err == nil {
-				Conf.Key.EntropyLength = entropyLength
-			} else {
-				log.Printf("Invalid entropy length from environment, using default: %v", err)
-			}
-		}
+		Conf.Key.EntropyLengthBits = 256
+
 	})
 }

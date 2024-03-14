@@ -11,8 +11,10 @@ import (
 	"strings"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
+	"github.com/ethereum/go-ethereum/accounts"
 	_ "github.com/glebarez/go-sqlite"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -28,7 +30,7 @@ type MigrationScripts map[string]string
 
 var (
 	createTableStatements = TableCreationScripts{
-		"v1.0": `CREATE TABLE IF NOT EXISTS private_keys (id INTEGER PRIMARY KEY, private_key BLOB);
+		"v1.0": `CREATE TABLE IF NOT EXISTS mnemonics (id INTEGER PRIMARY KEY, mnemonic TEXT NOT NULL);
                  CREATE TABLE IF NOT EXISTS EPM (id INTEGER PRIMARY KEY AUTOINCREMENT, EPM_DATA BLOB NOT NULL);`,
 	}
 
@@ -151,6 +153,7 @@ func (ks *KeyStore) Close() error {
 	return nil
 }
 
+/* TODO ingest keys
 func padTo32Bytes(data []byte) []byte {
 	if len(data) >= 32 {
 		return data[:32]
@@ -159,68 +162,60 @@ func padTo32Bytes(data []byte) []byte {
 	padded := make([]byte, 32)
 	copy(padded, data)
 	return padded
-}
+}*/
 
-func (ks *KeyStore) GetOrGeneratePrivateKey(options NodeOptions) (crypto.PrivKey, error) {
-	if len(options.RawKey) > 0 {
-		var priv crypto.PrivKey
-		var err error
+func (ks *KeyStore) GetOrGeneratePrivateKey() (*hdwallet.Wallet, accounts.Account, crypto.PrivKey, error) {
+	var mnemonic string
+	err := ks.db.QueryRow("SELECT mnemonic FROM mnemonics WHERE id = 1").Scan(&mnemonic)
+	isNewMnemonic := false
 
-		options.RawKey = padTo32Bytes(options.RawKey)
-
-		if len(options.RawKey) == 33 {
-			priv, err = crypto.UnmarshalPrivateKey(options.RawKey)
-		} else if len(options.RawKey) == 32 {
-			priv, err = crypto.UnmarshalSecp256k1PrivateKey(options.RawKey)
-		} else {
-			err = fmt.Errorf("invalid raw key length")
-		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		privKeyBytes, err := crypto.MarshalPrivateKey(priv)
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = ks.db.Exec("DELETE FROM private_keys WHERE id = 1")
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = ks.db.Exec("INSERT INTO private_keys (id, private_key) VALUES (1, ?)", privKeyBytes)
-		if err != nil {
-			return nil, err
-		}
-
-		return priv, nil
-	}
-
-	var privKeyBytes []byte
-	err := ks.db.QueryRow("SELECT private_key FROM private_keys WHERE id = 1").Scan(&privKeyBytes)
 	if err == sql.ErrNoRows {
-		priv, _, err := crypto.GenerateKeyPair(crypto.Secp256k1, 256)
+		// Generate a new mnemonic
+		mnemonic, err = hdwallet.NewMnemonic(config.Conf.Key.EntropyLengthBits) // Adjust entropy if needed
 		if err != nil {
-			return nil, err
+			return nil, accounts.Account{}, nil, err
 		}
-		privKeyBytes, err = crypto.MarshalPrivateKey(priv)
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = ks.db.Exec("INSERT INTO private_keys (id, private_key) VALUES (1, ?)", privKeyBytes)
-		if err != nil {
-			return nil, err
-		}
-
-		return priv, nil
+		isNewMnemonic = true
 	} else if err != nil {
-		return nil, err
+		return nil, accounts.Account{}, nil, err
 	}
 
-	return crypto.UnmarshalPrivateKey(privKeyBytes)
+	// TODO: Encrypt mnemonic before saving to database
+
+	// If it's a new mnemonic, store it in the database
+	if isNewMnemonic {
+		_, err = ks.db.Exec("INSERT INTO mnemonics (id, mnemonic) VALUES (1, ?)", mnemonic)
+		if err != nil {
+			return nil, accounts.Account{}, nil, err
+		}
+	}
+
+	// Create a new HD Wallet from the mnemonic
+	wallet, err := hdwallet.NewFromMnemonic(mnemonic)
+	if err != nil {
+		return nil, accounts.Account{}, nil, err
+	}
+
+	// Derive the account using the specified derivation path from the configuration
+	path := hdwallet.MustParseDerivationPath(config.Conf.Datastore.EthereumHardenedDerivationPath)
+	account, err := wallet.Derive(path, false)
+	if err != nil {
+		return nil, accounts.Account{}, nil, err
+	}
+
+	// Extract the private key for the derived account
+	privKey, err := wallet.PrivateKey(account)
+	if err != nil {
+		return nil, accounts.Account{}, nil, err
+	}
+
+	// Convert the ECDSA private key to libp2p's format
+	libp2pPrivKey, err := crypto.UnmarshalSecp256k1PrivateKey(privKey.D.Bytes())
+	if err != nil {
+		return nil, accounts.Account{}, nil, err
+	}
+
+	return wallet, account, libp2pPrivKey, nil
 }
 
 func (ks *KeyStore) SaveEPM(epmData []byte) error {

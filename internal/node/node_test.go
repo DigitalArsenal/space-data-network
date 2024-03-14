@@ -20,7 +20,7 @@ func TestMain(m *testing.M) {
 	// Any setup required before the tests run.
 	ctx = context.TODO()
 
-	testNode, err = NewNode(ctx, NodeOptions{RawKey: make([]byte, 16)})
+	testNode, err = NewNode(ctx)
 	if err != nil {
 		panic(err) // panic here is fine because it's before we run any tests
 	}
