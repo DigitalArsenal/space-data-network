@@ -112,22 +112,6 @@ func CreatePNM(multiformatAddress, cid, ethDigitalSignature string) []byte {
 	return SerializePNM(builder, pnm)
 }
 
-func GeneratePNMCollection(builder *flatbuffers.Builder, pnms []flatbuffers.UOffsetT) flatbuffers.UOffsetT {
-	// Create a vector of PNMs
-	PNM.PNMCOLLECTIONStartRECORDSVector(builder, len(pnms))
-	for i := len(pnms) - 1; i >= 0; i-- {
-		builder.PrependUOffsetT(pnms[i])
-	}
-	records := builder.EndVector(len(pnms))
-
-	// Start the PNMCOLLECTION object
-	PNM.PNMCOLLECTIONStart(builder)
-	PNM.PNMCOLLECTIONAddRECORDS(builder, records)
-	collection := PNM.PNMCOLLECTIONEnd(builder)
-
-	return collection
-}
-
 // SerializePNM takes a PNM object and serializes it into a byte slice.
 func SerializePNM(builder *flatbuffers.Builder, pnm flatbuffers.UOffsetT) []byte {
 	builder.FinishSizePrefixedWithFileIdentifier(pnm, []byte(PNMFID))
@@ -160,6 +144,10 @@ func DeserializePNM(ctx context.Context, stream io.Reader) (*PNM.PNM, error) {
 			}
 			data = append(data, chunk[:n]...)
 		}
+	}
+	fileID := string(data[4:8])
+	if fileID != PNMFID {
+		return nil, fmt.Errorf("unexpected file identifier: got %s, want %s", fileID, EPMFID)
 	}
 
 	// Use GetRootAsPNM to deserialize the data.

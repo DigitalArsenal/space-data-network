@@ -12,8 +12,9 @@ import (
 var once sync.Once
 
 type datastoreConfig struct {
-	Directory string
-	Password  string
+	Directory              string
+	Password               string
+	EthereumDerivationPath string
 }
 
 type webserverConfig struct {
@@ -79,6 +80,13 @@ func Init() {
 
 		if password, exists := os.LookupEnv("SPACE_DATA_NETWORK_DATASTORE_PASSWORD"); exists {
 			Conf.Datastore.Password = password
+		}
+
+		if derivationPath, exists := os.LookupEnv("SPACE_DATA_NETWORK_ETHEREUM_DERIVATION_PATH"); exists {
+			Conf.Datastore.EthereumDerivationPath = derivationPath
+		} else {
+			// Default to m/44'/60'/0'/0'/0 if not found
+			Conf.Datastore.EthereumDerivationPath = "m/44'/60'/0'/0'/0"
 		}
 	})
 }

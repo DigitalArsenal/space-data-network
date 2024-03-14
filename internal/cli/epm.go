@@ -10,17 +10,15 @@ import (
 	"runtime"
 	"strings"
 
-	node "github.com/DigitalArsenal/space-data-network/internal/node"
-
 	config "github.com/DigitalArsenal/space-data-network/configs"
+	node "github.com/DigitalArsenal/space-data-network/internal/node"
 	flatbuffer_utils "github.com/DigitalArsenal/space-data-network/internal/node/flatbuffer_utils"
+	"github.com/mdp/qrterminal/v3"
 )
 
-func CreateServerEPM() {
+func setupNode() *node.Node {
 
 	clearTerminal()
-
-	reader := bufio.NewReader(os.Stdin)
 
 	// Prompt for KeyStore password
 	fmt.Println("The password is usually set in the environment variable: \n" +
@@ -31,7 +29,7 @@ func CreateServerEPM() {
 	password, err := readPassword()
 	if err != nil {
 		fmt.Printf("Failed to read password: %v\n", err)
-		return
+		return nil
 	}
 
 	// Set the configuration property for KeyStore password
@@ -41,8 +39,15 @@ func CreateServerEPM() {
 	newNode, err := node.NewNode(context.Background())
 	if err != nil {
 		fmt.Printf("Failed to create new node: %v\n", err)
-		return
+		return nil
 	}
+	return newNode
+}
+
+func CreateServerEPM() {
+
+	newNode := setupNode()
+	reader := bufio.NewReader(os.Stdin)
 
 	entityType, _ := readInput(reader, "Are you creating a profile for an Organization or a Person? (O/P): ")
 	isPerson := strings.ToUpper(entityType) == "P"
@@ -53,6 +58,14 @@ func CreateServerEPM() {
 	telephone, _ := readInput(reader, "Enter telephone: ")
 
 	var legalName, familyName, givenName, additionalName, honorificPrefix, honorificSuffix, jobTitle, occupation string
+
+	country, _ := readInput(reader, "Enter country: ")
+	region, _ := readInput(reader, "Enter region/state: ")
+	locality, _ := readInput(reader, "Enter locality/city: ")
+	postalCode, _ := readInput(reader, "Enter postal code: ")
+	street, _ := readInput(reader, "Enter street address: ")
+	poBox, _ := readInput(reader, "Enter post office box number (if any): ")
+
 	if isPerson {
 		// Person-specific fields
 		familyName, _ = readInput(reader, "Enter family name: ")
@@ -85,6 +98,12 @@ func CreateServerEPM() {
 		alternateNames,
 		email,
 		telephone,
+		country,
+		region,
+		locality,
+		postalCode,
+		street,
+		poBox,
 	)
 
 	// Print out the EPM data for confirmation
@@ -95,7 +114,7 @@ func CreateServerEPM() {
 	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
 	CID, _ := flatbuffer_utils.GenerateCID(epmBytes)
 
-	account, _ := newNode.GetAccount("m/44'/60'/0'/0/0")
+	account, _ := newNode.GetAccount(config.Conf.Datastore.EthereumDerivationPath) //0x3835e5C7A36A2cE6A1a9b7cbd2c2276bd5538BdD
 	sig, err := newNode.GetWallet().SignData(account, "application/octet-stream", []byte(CID))
 	if err != nil {
 		fmt.Println("failed to sign CID: %w", err)
@@ -105,7 +124,31 @@ func CreateServerEPM() {
 	fmt.Println("CID:", CID)
 	fmt.Println("Ethereum signature:", formattedSignature)
 
-	os.WriteFile("./test.EPM", epmBytes, 0644)
+	//TODO save PNM
+	newNode.KeyStore.SaveEPM(epmBytes)
+}
+func ReadServerEPM() {
+
+	newNode := setupNode()
+	vCard := flatbuffer_utils.ConvertTovCard(newNode.KeyStore.LoadEPM())
+	fmt.Println(vCard)
+	generateAndDisplayQRCode(vCard)
+
+}
+func generateAndDisplayQRCode(content string) {
+	config := qrterminal.Config{
+		Level:          qrterminal.M,
+		Writer:         os.Stdout,
+		HalfBlocks:     true,
+		BlackChar:      qrterminal.BLACK_BLACK,
+		WhiteBlackChar: qrterminal.WHITE_BLACK,
+		WhiteChar:      qrterminal.WHITE_WHITE,
+		BlackWhiteChar: qrterminal.BLACK_WHITE,
+		QuietZone:      1,
+	}
+
+	fmt.Println("QR code:")
+	qrterminal.GenerateWithConfig(content, config)
 }
 
 func readPassword() (string, error) {

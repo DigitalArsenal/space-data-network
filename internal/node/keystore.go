@@ -29,7 +29,7 @@ type MigrationScripts map[string]string
 var (
 	createTableStatements = TableCreationScripts{
 		"v1.0": `CREATE TABLE IF NOT EXISTS private_keys (id INTEGER PRIMARY KEY, private_key BLOB);
-                 CREATE TABLE IF NOT EXISTS EPM (id INTEGER PRIMARY KEY AUTOINCREMENT, DN TEXT NOT NULL, EPM_DATA BLOB NOT NULL, UNIQUE(DN));`,
+                 CREATE TABLE IF NOT EXISTS EPM (id INTEGER PRIMARY KEY AUTOINCREMENT, EPM_DATA BLOB NOT NULL);`,
 	}
 
 	migrations = MigrationScripts{
@@ -221,6 +221,35 @@ func (ks *KeyStore) GetOrGeneratePrivateKey(options NodeOptions) (crypto.PrivKey
 	}
 
 	return crypto.UnmarshalPrivateKey(privKeyBytes)
+}
+
+func (ks *KeyStore) SaveEPM(epmData []byte) error {
+	_, err := ks.db.Exec("INSERT OR REPLACE INTO EPM (id, epm_data) VALUES (0, ?)", epmData)
+	return err
+}
+
+func (ks *KeyStore) LoadEPM() []byte {
+	var epmData []byte
+	err := ks.db.QueryRow("SELECT epm_data FROM EPM WHERE id = 0").Scan(&epmData)
+	if err != nil {
+		panic(err)
+	}
+	return epmData
+}
+
+func (ks *KeyStore) SavePNM(pnmData []byte, signature []byte) error {
+	_, err := ks.db.Exec("INSERT OR REPLACE INTO PNM (id, pnm_data, signature) VALUES (0, ?, ?)", pnmData, signature)
+	return err
+}
+
+func (ks *KeyStore) LoadPNM() ([]byte, []byte, error) {
+	var pnmData []byte
+	var signature []byte
+	err := ks.db.QueryRow("SELECT pnm_data, signature FROM PNM WHERE id = 0").Scan(&pnmData, &signature)
+	if err != nil {
+		return nil, nil, err
+	}
+	return pnmData, signature, nil
 }
 
 func generatePassword() string {

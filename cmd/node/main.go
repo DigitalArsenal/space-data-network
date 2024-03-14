@@ -15,6 +15,7 @@ import (
 func main() {
 	// CLI flags
 	helpFlag := flag.Bool("help", false, "Display help")
+	envDocs := flag.Bool("env-docs", false, "Display environment variable docs")
 	createEPMFlag := flag.Bool("create-server-epm", false, "Create server EPM")
 	outputEPMFlag := flag.Bool("output-server-epm", false, "Output server EPM")
 
@@ -26,6 +27,19 @@ func main() {
 		return
 	}
 
+	if *envDocs {
+		fmt.Print(`Environment Variables
+
+		- SPACE_DATA_NETWORK_DATASTORE_PASSWORD: Used to access the application's datastore. This is a critical security parameter, and it's recommended to set this in production environments.
+		- SPACE_DATA_NETWORK_DATASTORE_DIRECTORY: Specifies the filesystem path for the secure LevelDB storage. If not set, the application defaults to a directory named .spacedatanetwork in the user's home directory.
+		- SPACE_DATA_NETWORK_WEBSERVER_PORT: Port for the webserver to listen on.
+		- SPACE_DATA_NETWORK_CPUS: Number of CPUs to give to the webserver.
+		- SPACE_DATA_NETWORK_ETHEREUM_DERIVATION_PATH: BIP32 / BIP44 path to use for account. Defaults to: m/44'/60'/0'/0'/0. It's important to set this in environments that interact with the Ethereum blockchain.
+		
+		For more information, see https://spacedatanetwork.com
+			`)
+	}
+
 	// EPM related operations should be checked first and then exit if they are called
 	if *createEPMFlag {
 		cli_epm.CreateServerEPM()
@@ -33,7 +47,7 @@ func main() {
 	}
 
 	if *outputEPMFlag {
-
+		cli_epm.ReadServerEPM()
 		return
 	}
 
@@ -94,8 +108,6 @@ Options:
 	-run                  Run the server node
 	-create-server-epm    Create server Entity Profile Message (EPM)
 	-output-server-epm    Output server Entity Profile Message (EPM)
-
-For more information, see https://spacedatanetwork.com
 	`
 	fmt.Println(usageText)
 }

@@ -3,6 +3,7 @@ package node
 import (
 	"fmt"
 
+	config "github.com/DigitalArsenal/space-data-network/configs"
 	"github.com/ethereum/go-ethereum/accounts"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	"github.com/tyler-smith/go-bip39"
@@ -34,7 +35,8 @@ func (n *Node) SetHDWallet() error {
 	}
 
 	n.wallet = wallet
-	account, _ := n.GetAccount("m/44'/60'/0'/0/0")
+	account, _ := n.GetAccount(config.Conf.Datastore.EthereumDerivationPath)
+	fmt.Println(config.Conf.Datastore.EthereumDerivationPath)
 
 	// Get the address of the derived account
 	address := account.Address

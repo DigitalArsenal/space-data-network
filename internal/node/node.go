@@ -12,6 +12,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
+	noise "github.com/libp2p/go-libp2p/p2p/security/noise"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
 
@@ -95,6 +96,7 @@ func NewNode(ctx context.Context, options ...NodeOptions) (*Node, error) {
 		libp2p.EnableAutoRelayWithPeerSource(
 			autoRelayPeerSource,
 			autorelay.WithMinInterval(0)),
+		libp2p.Security(noise.ID, noise.New),
 	)
 
 	if err != nil {

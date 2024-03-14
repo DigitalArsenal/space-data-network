@@ -18,10 +18,6 @@ func SetupPNMExchange(n *Node) {
 	n.Host.SetStreamHandler(IDExchangeProtocol, handlePNMExchange)
 }
 
-// generatePNM simulates generating a PNMCOLLECTION
-// It creates a new PNM, adds a dummy CID string and a dummy ETH signature,
-// and returns the collection as a binary FlatBuffer
-
 func handlePNMExchange(s network.Stream) {
 	peerID := s.Conn().RemotePeer()
 	fmt.Println("handlePNMExchange with peer:", peerID)
