@@ -164,20 +164,20 @@ func padTo32Bytes(data []byte) []byte {
 	return padded
 }*/
 
-func (ks *KeyStore) GetOrGeneratePrivateKey() (*hdwallet.Wallet, accounts.Account, crypto.PrivKey, error) {
+func (ks *KeyStore) GetOrGeneratePrivateKey() (*hdwallet.Wallet, accounts.Account, accounts.Account, crypto.PrivKey, error) {
 	var mnemonic string
 	err := ks.db.QueryRow("SELECT mnemonic FROM mnemonics WHERE id = 1").Scan(&mnemonic)
 	isNewMnemonic := false
 
 	if err == sql.ErrNoRows {
 		// Generate a new mnemonic
-		mnemonic, err = hdwallet.NewMnemonic(config.Conf.Key.EntropyLengthBits) // Adjust entropy if needed
+		mnemonic, err = hdwallet.NewMnemonic(config.Conf.KeyConfig.EntropyLengthBits) // Adjust entropy if needed
 		if err != nil {
-			return nil, accounts.Account{}, nil, err
+			return nil, accounts.Account{}, accounts.Account{}, nil, err
 		}
 		isNewMnemonic = true
 	} else if err != nil {
-		return nil, accounts.Account{}, nil, err
+		return nil, accounts.Account{}, accounts.Account{}, nil, err
 	}
 
 	// TODO: Encrypt mnemonic before saving to database
@@ -186,36 +186,43 @@ func (ks *KeyStore) GetOrGeneratePrivateKey() (*hdwallet.Wallet, accounts.Accoun
 	if isNewMnemonic {
 		_, err = ks.db.Exec("INSERT INTO mnemonics (id, mnemonic) VALUES (1, ?)", mnemonic)
 		if err != nil {
-			return nil, accounts.Account{}, nil, err
+			return nil, accounts.Account{}, accounts.Account{}, nil, err
 		}
 	}
 
 	// Create a new HD Wallet from the mnemonic
 	wallet, err := hdwallet.NewFromMnemonic(mnemonic)
 	if err != nil {
-		return nil, accounts.Account{}, nil, err
+		return nil, accounts.Account{}, accounts.Account{}, nil, err
 	}
 
 	// Derive the account using the specified derivation path from the configuration
-	path := hdwallet.MustParseDerivationPath(config.Conf.Datastore.EthereumHardenedDerivationPath)
-	account, err := wallet.Derive(path, false)
+	sPath := hdwallet.MustParseDerivationPath(config.Conf.Keys.SigningAccountDerivationPath)
+	signingAccount, err := wallet.Derive(sPath, false)
 	if err != nil {
-		return nil, accounts.Account{}, nil, err
+		return nil, accounts.Account{}, accounts.Account{}, nil, err
+	}
+
+	// Derive the account using the specified derivation path from the configuration
+	ePath := hdwallet.MustParseDerivationPath(config.Conf.Keys.EncryptionAccountDerivationPath)
+	encryptionAccount, err := wallet.Derive(ePath, false)
+	if err != nil {
+		return nil, accounts.Account{}, accounts.Account{}, nil, err
 	}
 
 	// Extract the private key for the derived account
-	privKey, err := wallet.PrivateKey(account)
+	privKey, err := wallet.PrivateKey(signingAccount)
 	if err != nil {
-		return nil, accounts.Account{}, nil, err
+		return nil, accounts.Account{}, accounts.Account{}, nil, err
 	}
 
 	// Convert the ECDSA private key to libp2p's format
 	libp2pPrivKey, err := crypto.UnmarshalSecp256k1PrivateKey(privKey.D.Bytes())
 	if err != nil {
-		return nil, accounts.Account{}, nil, err
+		return nil, accounts.Account{}, accounts.Account{}, nil, err
 	}
 
-	return wallet, account, libp2pPrivKey, nil
+	return wallet, signingAccount, encryptionAccount, libp2pPrivKey, nil
 }
 
 func (ks *KeyStore) SaveEPM(epmData []byte) error {

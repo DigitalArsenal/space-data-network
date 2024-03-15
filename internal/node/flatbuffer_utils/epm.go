@@ -9,7 +9,9 @@ import (
 
 	EPM "github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	"github.com/emersion/go-vcard"
+	"github.com/ethereum/go-ethereum/accounts"
 	flatbuffers "github.com/google/flatbuffers/go"
+	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
 
 var EPMFID string = "$EPM"
@@ -33,8 +35,18 @@ func CreateEPM(
 	postalCode string,
 	street string,
 	poBox string,
+	wallet *hdwallet.Wallet,
+	signingAccount accounts.Account,
+	encryptionAccount accounts.Account,
 ) []byte {
 	builder := flatbuffers.NewBuilder(0)
+
+	spk, _ := wallet.PublicKeyHex(signingAccount)
+	epk, _ := wallet.PublicKeyHex(encryptionAccount)
+
+	// Key accounts
+	signingPublicKeyOffset := builder.CreateString(spk)
+	encryptionPublicKeyOffset := builder.CreateString(epk)
 
 	// Create string offsets for all fields that are of string type
 	dnOffset := builder.CreateString(distinguishedName)
@@ -93,6 +105,26 @@ func CreateEPM(
 	EPM.EPMAddEMAIL(builder, emailOffset)
 	EPM.EPMAddTELEPHONE(builder, telephoneOffset)
 	EPM.EPMAddADDRESS(builder, addressOffset)
+
+	// Start the CryptoKey tables
+	EPM.CryptoKeyStart(builder)
+	EPM.CryptoKeyAddPUBLIC_KEY(builder, signingPublicKeyOffset)
+	EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
+	signingKeyOffset := EPM.CryptoKeyEnd(builder)
+
+	EPM.CryptoKeyStart(builder)
+	EPM.CryptoKeyAddPUBLIC_KEY(builder, encryptionPublicKeyOffset)
+	EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeEncryption)
+	encryptionKeyOffset := EPM.CryptoKeyEnd(builder)
+
+	// Create a vector of the two keys
+	EPM.EPMStartKEYSVector(builder, 2)
+	builder.PrependUOffsetT(encryptionKeyOffset)
+	builder.PrependUOffsetT(signingKeyOffset)
+	keysVecOffset := builder.EndVector(2)
+
+	// Add the keys vector to the EPM table
+	EPM.EPMAddKEYS(builder, keysVecOffset)
 
 	// Finish the EPM table
 	epm := EPM.EPMEnd(builder)
@@ -259,7 +291,26 @@ func ConvertTovCard(binaryEPM []byte) string {
 		}
 	}
 
-	// Implement the logic to add KEYS and MULTIFORMAT_ADDRESS to the card as per your requirements
+	keysLen := epm.KEYSLength() // Get the number of keys
+
+	for i := 0; i < keysLen; i++ {
+		key := new(EPM.CryptoKey)
+		if epm.KEYS(key, i) {
+			keyType := key.KEY_TYPE()
+			keyHex := key.PUBLIC_KEY()
+			if keyHex != nil {
+				var domain string
+				if keyType == EPM.KeyTypeSigning {
+					domain = "signing.digitalarsenal.io"
+				} else if keyType == EPM.KeyTypeEncryption {
+					domain = "encryption.digitalarsenal.io"
+				}
+
+				email := fmt.Sprintf("%s@%s", string(keyHex), domain)
+				card.Add("EMAIL", &vcard.Field{Value: email})
+			}
+		}
+	}
 
 	// Convert the vCard to a string
 	var b strings.Builder

@@ -106,6 +106,9 @@ func CreateServerEPM() {
 		postalCode,
 		street,
 		poBox,
+		newNode.GetWallet(),
+		newNode.GetSigningAccount(),
+		newNode.GetEncryptionAccount(),
 	)
 
 	// Print out the EPM data for confirmation
@@ -116,7 +119,7 @@ func CreateServerEPM() {
 	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
 	CID, _ := flatbuffer_utils.GenerateCID(epmBytes)
 
-	path := hdwallet.MustParseDerivationPath(config.Conf.Datastore.EthereumHardenedDerivationPath)
+	path := hdwallet.MustParseDerivationPath(config.Conf.Keys.SigningAccountDerivationPath)
 	account, err := newNode.GetWallet().Derive(path, false)
 	if err != nil {
 		fmt.Println("failed to sign CID: %w", err)

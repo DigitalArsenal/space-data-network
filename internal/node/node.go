@@ -3,12 +3,10 @@ package node
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"time"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
-	"github.com/btcsuite/btcd/btcec"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -20,11 +18,12 @@ import (
 )
 
 type Node struct {
-	Host     host.Host
-	DHT      *dht.IpfsDHT
-	KeyStore *KeyStore
-	wallet   *hdwallet.Wallet
-	account  accounts.Account
+	Host              host.Host
+	DHT               *dht.IpfsDHT
+	KeyStore          *KeyStore
+	wallet            *hdwallet.Wallet
+	signingAccount    accounts.Account
+	encryptionAccount accounts.Account
 }
 
 func (n *Node) GetHost() host.Host {
@@ -34,45 +33,25 @@ func (n *Node) GetHost() host.Host {
 func (n *Node) GetWallet() *hdwallet.Wallet {
 	return n.wallet
 }
-func getCompressedPublicKeyHex(wallet *hdwallet.Wallet, account accounts.Account) (string, error) {
-	// Retrieve the public key in hex format
-	pubKeyHex, err := wallet.PublicKeyHex(account)
-	if err != nil {
-		return "", err
-	}
 
-	// Decode the hex string to bytes
-	pubKeyBytes, err := hex.DecodeString(pubKeyHex)
-	if err != nil {
-		return "", fmt.Errorf("failed to decode hex string: %v", err)
-	}
-
-	// Prepend the 0x04 prefix for uncompressed public keys
-	pubKeyBytes = append([]byte{0x04}, pubKeyBytes...)
-
-	fmt.Println(pubKeyBytes)
-	// Parse the public key using btcec
-	pubKey, err := btcec.ParsePubKey(pubKeyBytes, btcec.S256())
-	if err != nil {
-		return "", fmt.Errorf("failed to parse public key: %v", err)
-	}
-
-	// Serialize the public key in compressed format
-	compressedPubKey := pubKey.SerializeCompressed()
-
-	// Encode to hex and return
-	return hex.EncodeToString(compressedPubKey), nil
+func (n *Node) GetSigningAccount() accounts.Account {
+	return n.signingAccount
 }
+
+func (n *Node) GetEncryptionAccount() accounts.Account {
+	return n.encryptionAccount
+}
+
 func NewNode(ctx context.Context) (*Node, error) {
 	config.Init()
 
-	if config.Conf.Key.EntropyLengthBits > 0 {
+	if config.Conf.KeyConfig.EntropyLengthBits > 0 {
 		validEntropySizes := map[int]bool{
 			128: true,
 			256: true,
 		}
 
-		if !validEntropySizes[config.Conf.Key.EntropyLengthBits] {
+		if !validEntropySizes[config.Conf.KeyConfig.EntropyLengthBits] {
 			return nil, fmt.Errorf("invalid entropy length provided in config")
 		}
 	}
@@ -91,7 +70,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 		return nil, fmt.Errorf("failed to initialize key store: %w", err)
 	}
 
-	wallet, account, privKey, err := node.KeyStore.GetOrGeneratePrivateKey()
+	wallet, signingAccount, encryptionAccount, privKey, err := node.KeyStore.GetOrGeneratePrivateKey()
 	if err != nil {
 		return node, fmt.Errorf("failed to get private key: %w", err)
 	}
@@ -113,10 +92,15 @@ func NewNode(ctx context.Context) (*Node, error) {
 	}
 
 	node.wallet = wallet
-	node.account = account
+	node.signingAccount = signingAccount
+	node.encryptionAccount = encryptionAccount
 
+	fmt.Println("")
 	fmt.Println("Node PeerID: ", node.Host.ID())
-	fmt.Println("Node Ethereum Address: ", node.account.Address)
+	fmt.Println("Node Signing Ethereum Address: ", node.signingAccount.Address)
+	fmt.Println("Node Encryption Ethereum Address: ", node.encryptionAccount.Address)
+	fmt.Println("")
+
 	// Set up PNM exchange protocol listener
 	SetupPNMExchange(node)
 

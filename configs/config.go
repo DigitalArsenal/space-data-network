@@ -12,9 +12,8 @@ import (
 var once sync.Once
 
 type datastoreConfig struct {
-	Directory                      string
-	Password                       string
-	EthereumHardenedDerivationPath string
+	Directory string
+	Password  string
 }
 
 type webserverConfig struct {
@@ -25,11 +24,17 @@ type keyConfig struct {
 	EntropyLengthBits int
 }
 
+type keys struct {
+	EncryptionAccountDerivationPath string
+	SigningAccountDerivationPath    string
+}
+
 // AppConfig holds the entire application configuration with namespaces
 type AppConfig struct {
 	Datastore datastoreConfig
 	Webserver webserverConfig
-	Key       keyConfig
+	KeyConfig keyConfig
+	Keys      keys
 }
 
 // Conf is the exported variable that will hold all the configuration settings
@@ -87,14 +92,10 @@ func Init() {
 			Conf.Datastore.Password = password
 		}
 
-		if derivationPath, exists := os.LookupEnv("SPACE_DATA_NETWORK_ETHEREUM_DERIVATION_PATH"); exists {
-			Conf.Datastore.EthereumHardenedDerivationPath = derivationPath
-		} else {
-			// Default to m/44'/60'/0'/0'/0 if not found
-			Conf.Datastore.EthereumHardenedDerivationPath = "m/44'/60'/0'/0/0'"
-		}
+		Conf.Keys.SigningAccountDerivationPath = "m/44'/60'/0'/0/0'"
+		Conf.Keys.EncryptionAccountDerivationPath = "m/44'/60'/0'/1/0'"
 
-		Conf.Key.EntropyLengthBits = 256
+		Conf.KeyConfig.EntropyLengthBits = 256
 
 	})
 }
