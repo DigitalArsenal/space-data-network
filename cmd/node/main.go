@@ -77,18 +77,6 @@ func main() {
 	fmt.Println("Node shutdown completed")
 }
 
-func createServerEPM() {
-	// Logic to create a server EPM
-	fmt.Println("Creating server EPM...")
-	// Implement the function that creates the server EPM
-}
-
-func outputServerEPM() {
-	// Logic to output a server EPM
-	fmt.Println("Outputting server EPM...")
-	// Implement the function that outputs the server EPM
-}
-
 func setupGracefulShutdown(_ context.Context, node *nodepkg.Node, cancel context.CancelFunc) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
@@ -109,6 +97,8 @@ Options:
 	-run                  Run the server node
 	-create-server-epm    Create server Entity Profile Message (EPM)
 	-output-server-epm    Output server Entity Profile Message (EPM)
+	-qr                   Output server EPM as QR code
+	-env-docs             Display environment variable docs
 	`
 	fmt.Println(usageText)
 }
