@@ -2,7 +2,6 @@ package node
 
 import (
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -15,7 +14,6 @@ import (
 	_ "github.com/glebarez/go-sqlite"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
-	"golang.org/x/crypto/argon2"
 )
 
 const (
@@ -272,14 +270,6 @@ func (ks *KeyStore) LoadPNM() ([]byte, error) {
 		return nil, fmt.Errorf("could not load PNM data: %v", err)
 	}
 	return pnmData, nil
-}
-
-func generatePassword() string {
-	hostname, _ := os.Hostname()
-	homeDir, _ := os.UserHomeDir()
-
-	input := fmt.Sprintf("%s:%s", homeDir, hostname)
-	return hex.EncodeToString(argon2.IDKey([]byte(input), []byte("some_salt"), 1, 64*1024, 4, 32))
 }
 
 func (ks *KeyStore) ExportDatabase(exportPath string) error {

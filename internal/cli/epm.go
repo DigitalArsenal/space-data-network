@@ -13,6 +13,7 @@ import (
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	node "github.com/DigitalArsenal/space-data-network/internal/node"
 	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
+	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	"github.com/mdp/qrterminal/v3"
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -43,6 +44,11 @@ func CreateServerEPM() {
 
 	newNode := setupNode()
 	reader := bufio.NewReader(os.Stdin)
+
+	vepm, _ := newNode.KeyStore.LoadEPM()
+	epm := EPM.GetRootAsEPM(vepm, 0)
+
+	fmt.Println(string(epm.EMAIL()))
 
 	entityType, _ := readInput(reader, "Are you creating a profile for an Organization or a Person? (O/P): ")
 	isPerson := strings.ToUpper(entityType) == "P"
@@ -133,6 +139,10 @@ func CreateServerEPM() {
 func ReadServerEPM(showQR ...bool) {
 	newNode := setupNode()
 	vepm, _ := newNode.KeyStore.LoadEPM()
+	if len(vepm) == 0 {
+		fmt.Println("EPM not found, run with flag '-create-server-epm' to generate")
+		return
+	}
 	vCard := spacedatastandards_utils.ConvertTovCard(vepm)
 
 	reader := bufio.NewReader(os.Stdin)

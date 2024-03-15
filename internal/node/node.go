@@ -60,12 +60,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 
 	var err error
 
-	pass := config.Conf.Datastore.Password
-	if pass == "" {
-		pass = generatePassword()
-	}
-
-	node.KeyStore, err = NewKeyStore(pass)
+	node.KeyStore, err = NewKeyStore(config.Conf.Datastore.Password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize key store: %w", err)
 	}

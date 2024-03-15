@@ -1,12 +1,16 @@
 package config
 
 import (
+	"encoding/hex"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
+
+	"golang.org/x/crypto/argon2"
 )
 
 var once sync.Once
@@ -90,6 +94,14 @@ func Init() {
 
 		if password, exists := os.LookupEnv("SPACE_DATA_NETWORK_DATASTORE_PASSWORD"); exists {
 			Conf.Datastore.Password = password
+		} else {
+
+			hostname, _ := os.Hostname()
+			homeDir, _ := os.UserHomeDir()
+
+			input := fmt.Sprintf("%s:%s", homeDir, hostname)
+			Conf.Datastore.Password = hex.EncodeToString(argon2.IDKey([]byte(input), []byte("some_salt"), 1, 64*1024, 4, 32))
+
 		}
 
 		Conf.Keys.SigningAccountDerivationPath = "m/44'/60'/0'/0/0'"
