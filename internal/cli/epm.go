@@ -6,22 +6,21 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	node "github.com/DigitalArsenal/space-data-network/internal/node"
 	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
 	"github.com/mdp/qrterminal/v3"
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 func setupNode() *node.Node {
 
 	// Prompt for KeyStore password
-	fmt.Println("The password is usually set in the environment variable: \n" +
-		"\n'SPACE_DATA_NETWORK_DATASTORE_PASSWORD' \n\n" +
-		"and is used to access the application's keystore. \n" +
-		"If not set, the application will use a default password" + "\n ")
-	fmt.Print("KeyStore Password: ")
+	fmt.Print("KeyStore Password (leave blank if none has been set): ")
 	password, err := readPassword()
 	if err != nil {
 		fmt.Printf("Failed to read password: %v\n", err)
@@ -50,7 +49,12 @@ func CreateServerEPM() {
 
 	fmt.Println("Creating a server EPM...")
 
-	email, _ := readInput(reader, "Enter email: ")
+	email, err := enforceValidEmail(reader, "Enter email: ")
+	if err != nil {
+		fmt.Printf("Error reading email: %v\n", err)
+		return
+	}
+
 	telephone, _ := readInput(reader, "Enter telephone: ")
 
 	var legalName, familyName, givenName, additionalName, honorificPrefix, honorificSuffix, jobTitle, occupation string
@@ -78,7 +82,7 @@ func CreateServerEPM() {
 
 	// Parse comma-separated alternate names and multiformat addresses
 	alternateNames := parseInput(altNamesInput)
-	dnString, _ := readInput(reader, "Enter DN components (e.g., 'CN=John Doe, O=Example Corp, OU=IT Dept, DC=example, DC=com'): ")
+	dnString, _ := readInput(reader, "Enter DN (e.g., 'CN=John Doe, O=E Corp, OU=IT, DC=ex, DC=com'): ")
 	publicKey, _ := newNode.PublicKey()
 
 	// Call the spacedatastandards_utils.CreateEPM with the collected data
@@ -127,19 +131,46 @@ func CreateServerEPM() {
 }
 
 func ReadServerEPM(showQR ...bool) {
-	newNode := setupNode() // Assuming setupNode returns an instance of your node
-	vCard := spacedatastandards_utils.ConvertTovCard(newNode.KeyStore.LoadEPM())
+	newNode := setupNode()
+	vepm, _ := newNode.KeyStore.LoadEPM()
+	vCard := spacedatastandards_utils.ConvertTovCard(vepm)
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Enter the path to save the vCard (.vcf), or leave blank to skip: ")
+	vCardPath, _ := reader.ReadString('\n')
+	vCardPath = strings.TrimSpace(vCardPath)
+	if vCardPath != "" {
+		vCardPath = ensureValidPath(vCardPath, "server.vcf")
+		saveToFile(vCardPath, vCard)
+		fmt.Printf("vCard saved to %s\n", vCardPath)
+	}
 
 	if len(showQR) > 0 && showQR[0] {
+		fmt.Println("Enter the path to save the QR code (.png), or leave blank to skip: ")
+		qrPath, _ := reader.ReadString('\n')
+		qrPath = strings.TrimSpace(qrPath)
+		if qrPath != "" {
+			qrPath = ensureValidPath(qrPath, "server_qr.png")
+
+			// Generate and save the QR code to a file
+			err := qrcode.WriteFile(vCard, qrcode.Medium, 256, qrPath)
+			if err != nil {
+				fmt.Printf("Failed to generate QR code: %v\n", err)
+			} else {
+				fmt.Printf("QR code saved to %s\n", qrPath)
+			}
+		}
 		generateAndDisplayQRCode(vCard)
-	} else {
-		fmt.Println(vCard)
 	}
+
+	// Only print the vCard if no path was provided for saving
+	fmt.Println(vCard)
+
 }
 
 func generateAndDisplayQRCode(content string) {
 	config := qrterminal.Config{
-		Level:          qrterminal.M,
+		Level:          qrterminal.L,
 		Writer:         os.Stdout,
 		HalfBlocks:     true,
 		BlackChar:      qrterminal.BLACK_BLACK,
@@ -161,6 +192,7 @@ func readPassword() (string, error) {
 	password := string(bytePassword)
 	return strings.TrimSpace(password), nil
 }
+
 func readInput(reader *bufio.Reader, prompt string) (string, error) {
 	fmt.Print(prompt)
 	input, err := reader.ReadString('\n')
@@ -176,4 +208,62 @@ func parseInput(input string) []string {
 		return []string{}
 	}
 	return strings.Split(input, ",")
+}
+
+// readInputWithDefault prompts the user with a default value
+func readInputWithDefault(reader *bufio.Reader, prompt, defaultValue string) (string, error) {
+	fmt.Printf("%s [%s]: ", prompt, defaultValue)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return defaultValue, nil
+	}
+	return input, nil
+}
+
+// isValidEmail checks if the given string is a valid email
+func isValidEmail(email string) bool {
+	emailRegex := regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$`)
+	return emailRegex.MatchString(email)
+}
+
+// enforceValidEmail keeps prompting the user until a valid email is entered
+func enforceValidEmail(reader *bufio.Reader, prompt string) (string, error) {
+	for {
+		email, err := readInput(reader, prompt)
+		if err != nil {
+			return "", err
+		}
+		if isValidEmail(email) {
+			return email, nil
+		}
+		fmt.Println("Invalid email format. Please enter a valid email.")
+	}
+}
+
+func ensureValidPath(inputPath, defaultName string) string {
+	var currentDir string
+	if !strings.HasPrefix(inputPath, "/") {
+		// Handle relative path
+		currentDir, _ := os.Getwd()
+		inputPath = filepath.Join(currentDir, inputPath)
+	}
+
+	dirPath := filepath.Dir(inputPath)
+	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+		fmt.Printf("Directory %s does not exist, using current directory.\n", dirPath)
+		inputPath = filepath.Join(currentDir, defaultName)
+	}
+
+	return inputPath
+}
+
+func saveToFile(path, content string) {
+	err := os.WriteFile(path, []byte(content), 0644)
+	if err != nil {
+		fmt.Printf("Failed to save file %s: %v\n", path, err)
+	}
 }

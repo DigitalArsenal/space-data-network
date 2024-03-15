@@ -1,6 +1,7 @@
 package spacedatastandards_utils
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -140,12 +141,23 @@ func SerializeEPM(builder *flatbuffers.Builder, epm flatbuffers.UOffsetT) []byte
 	return builder.FinishedBytes()
 }
 
-func DeserializeEPM(ctx context.Context, stream io.Reader) (*EPM.EPM, error) {
+func DeserializeEPM(ctx context.Context, src interface{}) (*EPM.EPM, error) {
+	var stream io.Reader
+	switch s := src.(type) {
+	case io.Reader:
+		stream = s
+	case []byte:
+		stream = bytes.NewReader(s)
+	default:
+		return nil, fmt.Errorf("unsupported source type")
+	}
+
 	totalSizeBuf := make([]byte, 4)
 	if _, err := io.ReadFull(stream, totalSizeBuf); err != nil {
 		return nil, fmt.Errorf("failed to read total size prefix: %v", err)
 	}
 	totalSize := binary.LittleEndian.Uint32(totalSizeBuf)
+
 	data := make([]byte, 0, totalSize)
 	for uint32(len(data)) < totalSize {
 		select {
@@ -153,6 +165,9 @@ func DeserializeEPM(ctx context.Context, stream io.Reader) (*EPM.EPM, error) {
 			return nil, ctx.Err()
 		default:
 			chunkSize := totalSize - uint32(len(data))
+			if chunkSize > 4096 { // Read in chunks to avoid large allocations
+				chunkSize = 4096
+			}
 			chunk := make([]byte, chunkSize)
 			n, err := io.ReadFull(stream, chunk)
 			if err != nil {
@@ -165,8 +180,6 @@ func DeserializeEPM(ctx context.Context, stream io.Reader) (*EPM.EPM, error) {
 	fileID := string(data[4:8])
 	if fileID != EPMFID {
 		return nil, fmt.Errorf("unexpected file identifier: got %s, want %s", fileID, EPMFID)
-	} else {
-		fmt.Println(fileID)
 	}
 
 	epm := EPM.GetRootAsEPM(data, 0)
@@ -174,6 +187,11 @@ func DeserializeEPM(ctx context.Context, stream io.Reader) (*EPM.EPM, error) {
 }
 
 func ConvertTovCard(binaryEPM []byte) string {
+
+	if len(binaryEPM) == 0 {
+		return "EPM not found"
+	}
+
 	epm := EPM.GetRootAsEPM(binaryEPM, 0)
 
 	card := vcard.Card{}

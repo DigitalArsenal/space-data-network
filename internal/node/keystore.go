@@ -227,29 +227,49 @@ func (ks *KeyStore) GetOrGeneratePrivateKey() (*hdwallet.Wallet, accounts.Accoun
 }
 
 func (ks *KeyStore) SaveEPM(epmData []byte) error {
+	if err := ks.checkDatabaseInitialized(); err != nil {
+		return err
+	}
+
 	_, err := ks.db.Exec("INSERT OR REPLACE INTO EPM (id, epm_data) VALUES (0, ?)", epmData)
 	return err
 }
 
-func (ks *KeyStore) LoadEPM() []byte {
+func (ks *KeyStore) LoadEPM() ([]byte, error) {
+	if err := ks.checkDatabaseInitialized(); err != nil {
+		return nil, err
+	}
+
 	var epmData []byte
 	err := ks.db.QueryRow("SELECT epm_data FROM EPM WHERE id = 0").Scan(&epmData)
-	if err != nil {
-		panic(err)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("EPM data not found")
+	} else if err != nil {
+		return nil, fmt.Errorf("could not load EPM data: %v", err)
 	}
-	return epmData
+	return epmData, nil
 }
 
 func (ks *KeyStore) SavePNM(pnmData []byte) error {
-	_, err := ks.db.Exec("INSERT OR REPLACE INTO PNM (id, pnm_data) VALUES (0, ?, ?)", pnmData)
+	if err := ks.checkDatabaseInitialized(); err != nil {
+		return err
+	}
+
+	_, err := ks.db.Exec("INSERT OR REPLACE INTO PNM (id, pnm_data) VALUES (0, ?)", pnmData)
 	return err
 }
 
 func (ks *KeyStore) LoadPNM() ([]byte, error) {
-	var pnmData []byte
-	err := ks.db.QueryRow("SELECT pnm_data, signature FROM PNM WHERE id = 0").Scan(&pnmData)
-	if err != nil {
+	if err := ks.checkDatabaseInitialized(); err != nil {
 		return nil, err
+	}
+
+	var pnmData []byte
+	err := ks.db.QueryRow("SELECT pnm_data FROM PNM WHERE id = 0").Scan(&pnmData)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("PNM data not found")
+	} else if err != nil {
+		return nil, fmt.Errorf("could not load PNM data: %v", err)
 	}
 	return pnmData, nil
 }
@@ -312,6 +332,20 @@ func (ks *KeyStore) ImportDatabase(importPath string) error {
 		return err
 	}
 	ks.db = db
+
+	return nil
+}
+
+func (ks *KeyStore) checkDatabaseInitialized() error {
+	if ks.db == nil {
+		return fmt.Errorf("database is not initialized")
+	}
+
+	var dummy int
+	err := ks.db.QueryRow("SELECT 1").Scan(&dummy)
+	if err != nil {
+		return fmt.Errorf("database is not accessible: %v", err)
+	}
 
 	return nil
 }
