@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	flatbuffer_utils "github.com/DigitalArsenal/space-data-network/internal/node/flatbuffer_utils"
+	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -24,7 +24,7 @@ func handlePNMExchange(s network.Stream) {
 
 	// Generate PNM
 	// TODO: Read PNM
-	pnmData := flatbuffer_utils.CreatePNM(
+	pnmData := spacedatastandards_utils.CreatePNM(
 		"/ip4/127.0.0.1/tcp/4001",
 		"QmTmVtboD4DBn5nXAyH6GkSbjTsG47jxjsXz6KXLzKdW9X",
 		"0x123456789abcdef",
@@ -62,7 +62,7 @@ func RequestPNM(ctx context.Context, h host.Host, peerID peer.ID) error {
 	defer s.Close()
 
 	// Deserialize PNM from the stream.
-	pnm, err := flatbuffer_utils.DeserializePNM(ctx, s)
+	pnm, err := spacedatastandards_utils.DeserializePNM(ctx, s)
 	if err != nil {
 		return fmt.Errorf("failed to deserialize PNM: %v", err)
 	}

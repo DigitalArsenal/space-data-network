@@ -6,21 +6,15 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	node "github.com/DigitalArsenal/space-data-network/internal/node"
-	flatbuffer_utils "github.com/DigitalArsenal/space-data-network/internal/node/flatbuffer_utils"
-	"github.com/ethereum/go-ethereum/accounts"
+	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
 	"github.com/mdp/qrterminal/v3"
-	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
 
 func setupNode() *node.Node {
-
-	clearTerminal()
 
 	// Prompt for KeyStore password
 	fmt.Println("The password is usually set in the environment variable: \n" +
@@ -44,30 +38,6 @@ func setupNode() *node.Node {
 		return nil
 	}
 	return newNode
-}
-
-func printWalletAccountsAndMatch(wallet *hdwallet.Wallet, targetAccount accounts.Account) {
-	// Assuming the wallet can return a list of accounts it manages
-	accounts := wallet.Accounts()
-	fmt.Println(len(accounts))
-	signingAddress := targetAccount.Address.Hex() // Get the hex string of the target account address
-
-	matched := false
-	for _, account := range accounts {
-		address := account.Address.Hex() // Get the hex string of the current account address
-		fmt.Println("Wallet Ethereum Address:", address)
-
-		// Check if the current account address matches the target account address
-		if address == signingAddress {
-			fmt.Println("Match found for address:", address)
-			matched = true
-			break // Optional: Break the loop if a match is found
-		}
-	}
-
-	if !matched {
-		fmt.Println("No matching address found in the wallet for the target account.")
-	}
 }
 
 func CreateServerEPM() {
@@ -111,8 +81,8 @@ func CreateServerEPM() {
 	dnString, _ := readInput(reader, "Enter DN components (e.g., 'CN=John Doe, O=Example Corp, OU=IT Dept, DC=example, DC=com'): ")
 	publicKey, _ := newNode.PublicKey()
 
-	// Call the flatbuffer_utils.CreateEPM with the collected data
-	epmBytes := flatbuffer_utils.CreateEPM(
+	// Call the spacedatastandards_utils.CreateEPM with the collected data
+	epmBytes := spacedatastandards_utils.CreateEPM(
 		dnString,
 		legalName,
 		familyName,
@@ -138,10 +108,7 @@ func CreateServerEPM() {
 
 	// Handle the generated EPM bytes, such as saving them to a file or sending over a network.
 	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
-	CID, _ := flatbuffer_utils.GenerateCID(epmBytes)
-
-	printWalletAccountsAndMatch(newNode.GetWallet(), newNode.GetSigningAccount())
-	printWalletAccountsAndMatch(newNode.GetWallet(), newNode.GetEncryptionAccount())
+	CID, _ := spacedatastandards_utils.GenerateCID(epmBytes)
 
 	sig, err := newNode.GetWallet().SignData(newNode.GetSigningAccount(), "application/octet-stream", []byte(CID))
 	if err != nil {
@@ -153,13 +120,15 @@ func CreateServerEPM() {
 	fmt.Println("Ethereum signature:", formattedSignature)
 	fmt.Println(publicKey)
 
+	pnmBytes := spacedatastandards_utils.CreatePNM("", CID, formattedSignature)
 	//TODO save PNM
 	newNode.KeyStore.SaveEPM(epmBytes)
+	newNode.KeyStore.SavePNM(pnmBytes)
 }
 
 func ReadServerEPM(showQR ...bool) {
 	newNode := setupNode() // Assuming setupNode returns an instance of your node
-	vCard := flatbuffer_utils.ConvertTovCard(newNode.KeyStore.LoadEPM())
+	vCard := spacedatastandards_utils.ConvertTovCard(newNode.KeyStore.LoadEPM())
 
 	if len(showQR) > 0 && showQR[0] {
 		generateAndDisplayQRCode(vCard)
@@ -207,36 +176,4 @@ func parseInput(input string) []string {
 		return []string{}
 	}
 	return strings.Split(input, ",")
-}
-
-func printEPM(isPerson bool, dnString, legalName, email, telephone string, alternateNames []string, familyName, givenName, additionalName, honorificPrefix, honorificSuffix, jobTitle, occupation string) {
-	clearTerminal()
-
-	fmt.Printf("DN: %s\n", dnString)
-	fmt.Printf("Organization Name: %s\n", legalName)
-	fmt.Printf("Email: %s\n", email)
-	fmt.Printf("Telephone: %s\n", telephone)
-	fmt.Printf("Alternate Names: %s\n", strings.Join(alternateNames, ", "))
-
-	if isPerson {
-		fmt.Printf("Family Name: %s\n", familyName)
-		fmt.Printf("Given Name: %s\n", givenName)
-		fmt.Printf("Additional Name: %s\n", additionalName)
-		fmt.Printf("Honorific Prefix: %s\n", honorificPrefix)
-		fmt.Printf("Honorific Suffix: %s\n", honorificSuffix)
-		fmt.Printf("Job Title: %s\n", jobTitle)
-		fmt.Printf("Occupation: %s\n", occupation)
-	}
-}
-
-func clearTerminal() {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.Command("cmd", "/c", "cls")
-	default:
-		cmd = exec.Command("clear")
-	}
-	cmd.Stdout = os.Stdout
-	cmd.Run()
 }

@@ -31,7 +31,8 @@ type MigrationScripts map[string]string
 var (
 	createTableStatements = TableCreationScripts{
 		"v1.0": `CREATE TABLE IF NOT EXISTS mnemonics (id INTEGER PRIMARY KEY, mnemonic TEXT NOT NULL);
-                 CREATE TABLE IF NOT EXISTS EPM (id INTEGER PRIMARY KEY AUTOINCREMENT, EPM_DATA BLOB NOT NULL);`,
+                 CREATE TABLE IF NOT EXISTS EPM (id INTEGER PRIMARY KEY AUTOINCREMENT, EPM_DATA BLOB NOT NULL);
+				 CREATE TABLE IF NOT EXISTS PNM (id INTEGER PRIMARY KEY AUTOINCREMENT, PNM_DATA BLOB NOT NULL);`,
 	}
 
 	migrations = MigrationScripts{
@@ -239,19 +240,18 @@ func (ks *KeyStore) LoadEPM() []byte {
 	return epmData
 }
 
-func (ks *KeyStore) SavePNM(pnmData []byte, signature []byte) error {
-	_, err := ks.db.Exec("INSERT OR REPLACE INTO PNM (id, pnm_data, signature) VALUES (0, ?, ?)", pnmData, signature)
+func (ks *KeyStore) SavePNM(pnmData []byte) error {
+	_, err := ks.db.Exec("INSERT OR REPLACE INTO PNM (id, pnm_data) VALUES (0, ?, ?)", pnmData)
 	return err
 }
 
-func (ks *KeyStore) LoadPNM() ([]byte, []byte, error) {
+func (ks *KeyStore) LoadPNM() ([]byte, error) {
 	var pnmData []byte
-	var signature []byte
-	err := ks.db.QueryRow("SELECT pnm_data, signature FROM PNM WHERE id = 0").Scan(&pnmData, &signature)
+	err := ks.db.QueryRow("SELECT pnm_data, signature FROM PNM WHERE id = 0").Scan(&pnmData)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return pnmData, signature, nil
+	return pnmData, nil
 }
 
 func generatePassword() string {

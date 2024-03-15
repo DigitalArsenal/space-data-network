@@ -1,4 +1,4 @@
-package flatbuffer_utils
+package spacedatastandards_utils
 
 import (
 	"context"
