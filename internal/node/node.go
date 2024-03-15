@@ -100,7 +100,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 	fmt.Println("Node Signing Ethereum Address: ", node.signingAccount.Address)
 	fmt.Println("Node Encryption Ethereum Address: ", node.encryptionAccount.Address)
 	fmt.Println("")
-
+	//wallet.PublicKeyHex(node.signingAccount)
 	// Set up PNM exchange protocol listener
 	SetupPNMExchange(node)
 

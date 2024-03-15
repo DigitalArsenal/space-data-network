@@ -48,6 +48,24 @@ func CreateEPM(
 	signingPublicKeyOffset := builder.CreateString(spk)
 	encryptionPublicKeyOffset := builder.CreateString(epk)
 
+	// Create and end the CryptoKey for the signing key
+	EPM.CryptoKeyStart(builder)
+	EPM.CryptoKeyAddPUBLIC_KEY(builder, signingPublicKeyOffset)
+	EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
+	signingKeyOffset := EPM.CryptoKeyEnd(builder)
+
+	// Create and end the CryptoKey for the encryption key
+	EPM.CryptoKeyStart(builder)
+	EPM.CryptoKeyAddPUBLIC_KEY(builder, encryptionPublicKeyOffset)
+	EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeEncryption)
+	encryptionKeyOffset := EPM.CryptoKeyEnd(builder)
+
+	// Create a vector of the two keys
+	EPM.EPMStartKEYSVector(builder, 2)
+	builder.PrependUOffsetT(encryptionKeyOffset)
+	builder.PrependUOffsetT(signingKeyOffset)
+	keysVectorOffset := builder.EndVector(2)
+
 	// Create string offsets for all fields that are of string type
 	dnOffset := builder.CreateString(distinguishedName)
 	legalNameOffset := builder.CreateString(legalName)
@@ -106,25 +124,8 @@ func CreateEPM(
 	EPM.EPMAddTELEPHONE(builder, telephoneOffset)
 	EPM.EPMAddADDRESS(builder, addressOffset)
 
-	// Start the CryptoKey tables
-	EPM.CryptoKeyStart(builder)
-	EPM.CryptoKeyAddPUBLIC_KEY(builder, signingPublicKeyOffset)
-	EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
-	signingKeyOffset := EPM.CryptoKeyEnd(builder)
-
-	EPM.CryptoKeyStart(builder)
-	EPM.CryptoKeyAddPUBLIC_KEY(builder, encryptionPublicKeyOffset)
-	EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeEncryption)
-	encryptionKeyOffset := EPM.CryptoKeyEnd(builder)
-
-	// Create a vector of the two keys
-	EPM.EPMStartKEYSVector(builder, 2)
-	builder.PrependUOffsetT(encryptionKeyOffset)
-	builder.PrependUOffsetT(signingKeyOffset)
-	keysVecOffset := builder.EndVector(2)
-
 	// Add the keys vector to the EPM table
-	EPM.EPMAddKEYS(builder, keysVecOffset)
+	EPM.EPMAddKEYS(builder, keysVectorOffset)
 
 	// Finish the EPM table
 	epm := EPM.EPMEnd(builder)
@@ -132,21 +133,6 @@ func CreateEPM(
 
 	// Return the byte slice containing the EPM object
 	return builder.FinishedBytes()
-}
-
-// createStringVector is a helper function that creates a vector of strings in the FlatBuffers builder.
-func createStringVector(builder *flatbuffers.Builder, items []string) flatbuffers.UOffsetT {
-	offsets := make([]flatbuffers.UOffsetT, len(items))
-	for i, item := range items {
-		offsets[i] = builder.CreateString(item)
-	}
-
-	builder.StartVector(4, len(items), 4) // Specify the size of each element to be 4 bytes (UOffsetT size)
-	for i := len(offsets) - 1; i >= 0; i-- {
-		builder.PrependUOffsetT(offsets[i])
-	}
-
-	return builder.EndVector(len(items))
 }
 
 func SerializeEPM(builder *flatbuffers.Builder, epm flatbuffers.UOffsetT) []byte {

@@ -77,16 +77,18 @@ func TestGetOrGeneratePrivateKey(t *testing.T) {
 	defer cleanup()
 
 	// Test generating a new key
-	wallet, account, privKey, err := keyStore.GetOrGeneratePrivateKey()
+	wallet, signingAccount, encryptionAccount, privKey, err := keyStore.GetOrGeneratePrivateKey()
 	require.NotNil(t, wallet)
-	require.NotNil(t, account)
+	require.NotNil(t, signingAccount)
+	require.NotNil(t, encryptionAccount)
 	require.NotNil(t, privKey)
 	require.NoError(t, err)
 
 	// Test retrieving the same key again
-	wallet, account, samePrivKey, err := keyStore.GetOrGeneratePrivateKey()
+	wallet, signingAccount, encryptionAccount, samePrivKey, err := keyStore.GetOrGeneratePrivateKey()
 	require.NotNil(t, wallet)
-	require.NotNil(t, account)
+	require.NotNil(t, signingAccount)
+	require.NotNil(t, encryptionAccount)
 	require.NotNil(t, privKey)
 	require.NoError(t, err)
 

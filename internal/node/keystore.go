@@ -198,14 +198,14 @@ func (ks *KeyStore) GetOrGeneratePrivateKey() (*hdwallet.Wallet, accounts.Accoun
 
 	// Derive the account using the specified derivation path from the configuration
 	sPath := hdwallet.MustParseDerivationPath(config.Conf.Keys.SigningAccountDerivationPath)
-	signingAccount, err := wallet.Derive(sPath, false)
+	signingAccount, err := wallet.Derive(sPath, true)
 	if err != nil {
 		return nil, accounts.Account{}, accounts.Account{}, nil, err
 	}
 
 	// Derive the account using the specified derivation path from the configuration
 	ePath := hdwallet.MustParseDerivationPath(config.Conf.Keys.EncryptionAccountDerivationPath)
-	encryptionAccount, err := wallet.Derive(ePath, false)
+	encryptionAccount, err := wallet.Derive(ePath, true)
 	if err != nil {
 		return nil, accounts.Account{}, accounts.Account{}, nil, err
 	}

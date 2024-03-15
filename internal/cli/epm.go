@@ -13,6 +13,7 @@ import (
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	node "github.com/DigitalArsenal/space-data-network/internal/node"
 	flatbuffer_utils "github.com/DigitalArsenal/space-data-network/internal/node/flatbuffer_utils"
+	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/mdp/qrterminal/v3"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
@@ -43,6 +44,30 @@ func setupNode() *node.Node {
 		return nil
 	}
 	return newNode
+}
+
+func printWalletAccountsAndMatch(wallet *hdwallet.Wallet, targetAccount accounts.Account) {
+	// Assuming the wallet can return a list of accounts it manages
+	accounts := wallet.Accounts()
+	fmt.Println(len(accounts))
+	signingAddress := targetAccount.Address.Hex() // Get the hex string of the target account address
+
+	matched := false
+	for _, account := range accounts {
+		address := account.Address.Hex() // Get the hex string of the current account address
+		fmt.Println("Wallet Ethereum Address:", address)
+
+		// Check if the current account address matches the target account address
+		if address == signingAddress {
+			fmt.Println("Match found for address:", address)
+			matched = true
+			break // Optional: Break the loop if a match is found
+		}
+	}
+
+	if !matched {
+		fmt.Println("No matching address found in the wallet for the target account.")
+	}
 }
 
 func CreateServerEPM() {
@@ -111,22 +136,16 @@ func CreateServerEPM() {
 		newNode.GetEncryptionAccount(),
 	)
 
-	// Print out the EPM data for confirmation
-	// Modified printEPM function to conditionally display person-specific fields
-	printEPM(isPerson, dnString, legalName, email, telephone, alternateNames, familyName, givenName, additionalName, honorificPrefix, honorificSuffix, jobTitle, occupation)
-
 	// Handle the generated EPM bytes, such as saving them to a file or sending over a network.
 	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
 	CID, _ := flatbuffer_utils.GenerateCID(epmBytes)
 
-	path := hdwallet.MustParseDerivationPath(config.Conf.Keys.SigningAccountDerivationPath)
-	account, err := newNode.GetWallet().Derive(path, false)
+	printWalletAccountsAndMatch(newNode.GetWallet(), newNode.GetSigningAccount())
+	printWalletAccountsAndMatch(newNode.GetWallet(), newNode.GetEncryptionAccount())
+
+	sig, err := newNode.GetWallet().SignData(newNode.GetSigningAccount(), "application/octet-stream", []byte(CID))
 	if err != nil {
-		fmt.Println("failed to sign CID: %w", err)
-	}
-	sig, err := newNode.GetWallet().SignData(account, "application/octet-stream", []byte(CID))
-	if err != nil {
-		fmt.Println("failed to sign CID: %w", err)
+		fmt.Printf("failed to sign CID: %s\n", err)
 	}
 	signatureHex := hex.EncodeToString(sig)
 	formattedSignature := fmt.Sprintf("0x%s", signatureHex)
