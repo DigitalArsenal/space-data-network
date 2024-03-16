@@ -11,7 +11,7 @@ else
 fi
 
 # Execute the Go build command
-go build -ldflags "-s" -o ./tmp/main ./cmd/node/main.go
+CGO_ENABLED=0 go build -ldflags "-s -w -extldflags '-static'" -o ./tmp/main ./cmd/node/main.go
 
 # Timestamp file path
 TIMESTAMP_FILE="./tmp/last_post_build_run"

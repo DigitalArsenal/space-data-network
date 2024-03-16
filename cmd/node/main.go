@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	cli_epm "github.com/DigitalArsenal/space-data-network/internal/cli"
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
 )
 
@@ -43,12 +42,12 @@ func main() {
 
 	// EPM related operations should be checked first and then exit if they are called
 	if *createEPMFlag {
-		cli_epm.CreateServerEPM()
+		nodepkg.CreateServerEPM()
 		return
 	}
 
 	if *outputEPMFlag {
-		cli_epm.ReadServerEPM(*outputQRFlag)
+		nodepkg.ReadServerEPM(*outputQRFlag)
 		return
 	}
 

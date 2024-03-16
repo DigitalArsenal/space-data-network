@@ -174,6 +174,7 @@ func (ks *KeyStore) GetOrGeneratePrivateKey() (*hdwallet.Wallet, accounts.Accoun
 		if err != nil {
 			return nil, accounts.Account{}, accounts.Account{}, nil, err
 		}
+
 		isNewMnemonic = true
 	} else if err != nil {
 		return nil, accounts.Account{}, accounts.Account{}, nil, err

@@ -1,4 +1,4 @@
-package cli
+package node
 
 import (
 	"bufio"
@@ -8,17 +8,33 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
-	node "github.com/DigitalArsenal/space-data-network/internal/node"
 	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	"github.com/mdp/qrterminal/v3"
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-func setupNode() *node.Node {
+func captureStackTrace() string {
+	var builder strings.Builder
+	pc := make([]uintptr, 10) // Increase the size if necessary
+	n := runtime.Callers(2, pc)
+	frames := runtime.CallersFrames(pc[:n])
+
+	for {
+		frame, more := frames.Next()
+		builder.WriteString(fmt.Sprintf("%s:%d %s\n", frame.File, frame.Line, frame.Function))
+		if !more {
+			break
+		}
+	}
+
+	return builder.String()
+}
+func setupNode() *Node {
 
 	// Prompt for KeyStore password
 	fmt.Print("KeyStore Password (leave blank if none has been set): ")
@@ -32,7 +48,7 @@ func setupNode() *node.Node {
 	config.Conf.Datastore.Password = strings.TrimSpace(password)
 
 	// Create a new node, which will use the updated configuration for its KeyStore
-	newNode, err := node.NewNode(context.Background())
+	newNode, err := NewNode(context.Background())
 	if err != nil {
 		fmt.Printf("Failed to create new node: %v\n", err)
 		return nil
@@ -46,10 +62,11 @@ func CreateServerEPM() {
 	reader := bufio.NewReader(os.Stdin)
 
 	vepm, _ := newNode.KeyStore.LoadEPM()
-	epm := EPM.GetRootAsEPM(vepm, 0)
+	if len(vepm) > 0 {
+		epm := EPM.GetRootAsEPM(vepm, 0)
 
-	fmt.Println(string(epm.EMAIL()))
-
+		fmt.Println(string(epm.EMAIL()))
+	}
 	entityType, _ := readInput(reader, "Are you creating a profile for an Organization or a Person? (O/P): ")
 	isPerson := strings.ToUpper(entityType) == "P"
 
@@ -111,18 +128,20 @@ func CreateServerEPM() {
 		postalCode,
 		street,
 		poBox,
-		newNode.GetWallet(),
-		newNode.GetSigningAccount(),
-		newNode.GetEncryptionAccount(),
+		newNode.wallet,
+		newNode.signingAccount,
+		newNode.encryptionAccount,
 	)
 
 	// Handle the generated EPM bytes, such as saving them to a file or sending over a network.
 	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
 	CID, _ := spacedatastandards_utils.GenerateCID(epmBytes)
 
-	sig, err := newNode.GetWallet().SignData(newNode.GetSigningAccount(), "application/octet-stream", []byte(CID))
+	sig, err := newNode.wallet.SignData(newNode.signingAccount, "application/octet-stream", []byte(CID))
 	if err != nil {
-		fmt.Printf("failed to sign CID: %s\n", err)
+		stackTrace := captureStackTrace()
+		wrappedErr := fmt.Errorf("failed to sign CID: %w\nStack trace:\n%s", err, stackTrace)
+		fmt.Println(wrappedErr)
 	}
 	signatureHex := hex.EncodeToString(sig)
 	formattedSignature := fmt.Sprintf("0x%s", signatureHex)

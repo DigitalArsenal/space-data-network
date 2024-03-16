@@ -6,6 +6,8 @@ compile() {
     GOARCH=$2
     FOLDER=$3
     EXTENSION=$4
+    CC_COMPILER=$5
+    CGO_ENABLED_FLAG=$6
 
     BINARY_NAME="main${EXTENSION}"
     TARGET_FOLDER="./dist/${FOLDER}"
@@ -14,17 +16,25 @@ compile() {
     mkdir -p "${TARGET_FOLDER}"
 
     echo "Compiling for ${GOOS}/${GOARCH}..."
-    CGO_ENABLED=0 GOOS=${GOOS} GOARCH=${GOARCH} go build -ldflags "-s" -o "${TARGET_FOLDER}/${BINARY_NAME}" ./cmd/node/main.go
+    CC=${CC_COMPILER} \
+        CGO_ENABLED=${CGO_ENABLED_FLAG} \
+        GOOS=${GOOS} GOARCH=${GOARCH} \
+        go build -a -tags netgo \
+        -ldflags '-s -w -extldflags "-static"' \
+        -o "${TARGET_FOLDER}/${BINARY_NAME}" ./cmd/node/main.go
 }
 
 # Set CGO_CFLAGS
 export CGO_CFLAGS='-g -O2'
 
-# Compile for each platform
-compile "linux" "amd64" "linux" ""
-compile "windows" "amd64" "win" ".exe"
-compile "darwin" "amd64" "osx_amd64" ""
-compile "darwin" "arm64" "osx_arm" ""
+# Compile for Linux with musl-gcc
+compile "linux" "amd64" "linux" "" "musl-gcc" "1"
+
+# Compile for Windows and macOS using default toolchains
+# Note that static linking is not common on Windows and macOS, especially for macOS due to system library dependencies.
+compile "windows" "amd64" "win" ".exe" "" "0"
+compile "darwin" "amd64" "osx_amd64" "" "" "0"
+compile "darwin" "arm64" "osx_arm" "" "" "0"
 
 echo "Cross-compilation completed. Binaries are in the 'dist' folder."
 

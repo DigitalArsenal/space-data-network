@@ -26,22 +26,6 @@ type Node struct {
 	encryptionAccount accounts.Account
 }
 
-func (n *Node) GetHost() host.Host {
-	return n.Host
-}
-
-func (n *Node) GetWallet() *hdwallet.Wallet {
-	return n.wallet
-}
-
-func (n *Node) GetSigningAccount() accounts.Account {
-	return n.signingAccount
-}
-
-func (n *Node) GetEncryptionAccount() accounts.Account {
-	return n.encryptionAccount
-}
-
 func NewNode(ctx context.Context) (*Node, error) {
 	config.Init()
 
