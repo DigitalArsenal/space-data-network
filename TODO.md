@@ -19,13 +19,6 @@
 - [ ] PubSub
   - [ ] Multiaddr and ETH digital signature sent over channel using the Publish Notification Message (PNM)
   - [ ] PNM stored as proof of signature in storage adapter
-- [ ] MetaData Node Functionality
-  - [ ] Store in folder (SPACE_DATA_NETWORK_METADATA_FOLDER)
-  - [ ] By Ethereum address in folder, and PNM concatenated flatbuffer by datatype
-- [ ] Direct dial protocol
-  - [ ] Protocol for getting raw messages, send a date range (other query parameters?)
-  - [ ] Peer discovery based on xpub; send a request and receive a peer id xpub, find next PeerID
-  - [ ] Key exchange based on xpub; send a request and receive a peer encryption xpub, find next encryption key
 - [ ] User Interface
   - [ ] HTTP or libp2p access to node
   - [ ] Takes JSON or Flatbuffer input
@@ -48,6 +41,7 @@
   - [ ] Cut custom executables with config for each customer, with xpub
 - [ ] Versioning
   - [ ] Expanse-based!
+  - [ ] Use SDS versioning, also for advertising for network, so those that don't update age out
   
 ## Marketing
 

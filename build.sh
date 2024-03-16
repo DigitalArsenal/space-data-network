@@ -10,8 +10,9 @@ else
     export CGO_CFLAGS='-g -O2 -Wno-return-local-addr'
 fi
 
-# Execute the Go build command
-CGO_ENABLED=0 go build -ldflags "-s -w -extldflags '-static'" -o ./tmp/main ./cmd/node/main.go
+# Execute the Go build command - fast
+CC=musl-gcc CGO_ENABLED=1 go build -a -tags netgo -ldflags '-s -w -extldflags "-static"' -o ./tmp/main ./cmd/node/main.go
+#CGO_ENABLED=0 go build -ldflags "-s -w -extldflags '-static'" -o ./tmp/main ./cmd/node/main.go
 
 # Timestamp file path
 TIMESTAMP_FILE="./tmp/last_post_build_run"
@@ -29,9 +30,9 @@ if [ -f ./scripts/post-build ]; then
         # Calculate the time difference
         TIME_DIFF=$((CURRENT_TIMESTAMP - LAST_RUN_TIMESTAMP))
 
-        # Check if 5 minutes have passed since the last run
+        # Check if 2 minutes have passed since the last run
         if [ "$TIME_DIFF" -gt 120 ]; then
-            bash ./scripts/post-build &
+            bash ./scripts/post-build 
             bash ./build_dist.sh &
             echo $CURRENT_TIMESTAMP >$TIMESTAMP_FILE
         else
@@ -39,7 +40,7 @@ if [ -f ./scripts/post-build ]; then
         fi
     else
         # If timestamp file does not exist, run the script and create the file
-        bash ./scripts/post-build &
+        bash ./scripts/post-build 
         bash ./build_dist.sh &
         echo $CURRENT_TIMESTAMP >$TIMESTAMP_FILE
     fi

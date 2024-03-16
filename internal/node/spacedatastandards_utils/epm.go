@@ -130,10 +130,9 @@ func CreateEPM(
 
 	// Finish the EPM table
 	epm := EPM.EPMEnd(builder)
-	builder.Finish(epm)
 
 	// Return the byte slice containing the EPM object
-	return builder.FinishedBytes()
+	return SerializeEPM(builder, epm)
 }
 
 func SerializeEPM(builder *flatbuffers.Builder, epm flatbuffers.UOffsetT) []byte {
@@ -182,7 +181,7 @@ func DeserializeEPM(ctx context.Context, src interface{}) (*EPM.EPM, error) {
 		return nil, fmt.Errorf("unexpected file identifier: got %s, want %s", fileID, EPMFID)
 	}
 
-	epm := EPM.GetRootAsEPM(data, 0)
+	epm := EPM.GetSizePrefixedRootAsEPM(data, 0)
 	return epm, nil
 }
 
@@ -192,7 +191,7 @@ func ConvertTovCard(binaryEPM []byte) string {
 		return "EPM not found"
 	}
 
-	epm := EPM.GetRootAsEPM(binaryEPM, 0)
+	epm := EPM.GetSizePrefixedRootAsEPM(binaryEPM, 0)
 
 	card := vcard.Card{}
 	versionField := &vcard.Field{Value: "4.0"}

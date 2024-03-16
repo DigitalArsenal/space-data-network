@@ -95,7 +95,7 @@ func GenerateCID(data []byte) (string, error) {
 	return cidFile.String(), nil
 }
 
-func CreatePNM(multiformatAddress, cid, ethDigitalSignature string) []byte {
+func CreatePNM(multiformatAddress string, cid string, ethDigitalSignature string) []byte {
 	builder := flatbuffers.NewBuilder(0)
 	multiformatAddressOffset := builder.CreateString(multiformatAddress)
 	cidOffset := builder.CreateString(cid)
@@ -150,7 +150,7 @@ func DeserializePNM(ctx context.Context, stream io.Reader) (*PNM.PNM, error) {
 		return nil, fmt.Errorf("unexpected file identifier: got %s, want %s", fileID, EPMFID)
 	}
 
-	// Use GetRootAsPNM to deserialize the data.
-	pnm := PNM.GetRootAsPNM(data, 0) // The data buffer is ready for deserialization.
+	// Use GetSizePrefixedRootAsPNM to deserialize the data.
+	pnm := PNM.GetSizePrefixedRootAsPNM(data, 0) // The data buffer is ready for deserialization.
 	return pnm, nil
 }

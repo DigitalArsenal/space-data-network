@@ -15,21 +15,15 @@ import (
 const IDExchangeProtocol = protocol.ID("/space-data-network/id-exchange/1.0.0")
 
 func SetupPNMExchange(n *Node) {
-	n.Host.SetStreamHandler(IDExchangeProtocol, handlePNMExchange)
+	n.Host.SetStreamHandler(IDExchangeProtocol, n.handlePNMExchange)
 }
 
-func handlePNMExchange(s network.Stream) {
+func (n *Node) handlePNMExchange(s network.Stream) {
 	peerID := s.Conn().RemotePeer()
 	fmt.Println("handlePNMExchange with peer:", peerID)
 
-	// Generate PNM
-	// TODO: Read PNM
-	pnmData := spacedatastandards_utils.CreatePNM(
-		"/ip4/127.0.0.1/tcp/4001",
-		"QmTmVtboD4DBn5nXAyH6GkSbjTsG47jxjsXz6KXLzKdW9X",
-		"0x123456789abcdef",
-	)
-	fmt.Println(pnmData)
+	pnmData, _ := n.KeyStore.LoadPNM()
+
 	// Create a buffered writer for the stream
 	rw := bufio.NewWriter(s)
 
