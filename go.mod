@@ -7,14 +7,12 @@ toolchain go1.21.6
 require (
 	github.com/emersion/go-vcard v0.0.0-20230815062825-8fda7d206ec9
 	github.com/glebarez/go-sqlite v1.22.0
-	github.com/ipfs/go-libipfs v0.6.0
 	github.com/ipfs/kubo v0.27.0
 	github.com/libp2p/go-libp2p v0.33.0
 	github.com/libp2p/go-libp2p-kad-dht v0.25.1
 	github.com/libp2p/go-libp2p-pubsub v0.10.0
 	github.com/miguelmota/go-ethereum-hdwallet v0.1.2
 	github.com/stretchr/testify v1.8.4
-	github.com/tyler-smith/go-bip39 v1.1.0
 )
 
 require (
@@ -104,6 +102,7 @@ require (
 	github.com/samber/lo v1.39.0 // indirect
 	github.com/supranational/blst v0.3.11 // indirect
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7 // indirect
+	github.com/tyler-smith/go-bip39 v1.1.0 // indirect
 	github.com/ucarion/urlpath v0.0.0-20200424170820-7ccc79b76bbb // indirect
 	github.com/whyrusleeping/base32 v0.0.0-20170828182744-c30ac30633cc // indirect
 	github.com/whyrusleeping/cbor v0.0.0-20171005072247-63513f603b11 // indirect
@@ -163,7 +162,7 @@ require (
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
-	github.com/ipfs/boxo v0.18.0 // indirect
+	github.com/ipfs/boxo v0.18.0
 	github.com/ipfs/go-cid v0.4.1 // indirect
 	github.com/ipfs/go-datastore v0.6.0 // indirect
 	github.com/ipfs/go-log v1.0.5 // indirect
@@ -179,7 +178,6 @@ require (
 	github.com/libp2p/go-cidranger v1.1.0 // indirect
 	github.com/libp2p/go-flow-metrics v0.1.0 // indirect
 	github.com/libp2p/go-libp2p-asn-util v0.4.1 // indirect
-	github.com/libp2p/go-libp2p-core v0.20.1
 	github.com/libp2p/go-libp2p-kbucket v0.6.3 // indirect
 	github.com/libp2p/go-libp2p-record v0.2.0 // indirect
 	github.com/libp2p/go-libp2p-routing-helpers v0.7.3 // indirect

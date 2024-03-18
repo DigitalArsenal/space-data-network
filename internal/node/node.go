@@ -1,4 +1,3 @@
-// node/node.go
 package node
 
 import (
@@ -6,12 +5,14 @@ import (
 	"fmt"
 	"time"
 
-	config "github.com/DigitalArsenal/space-data-network/configs"
+	configs "github.com/DigitalArsenal/space-data-network/configs"
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ipfs/kubo/core"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	noise "github.com/libp2p/go-libp2p/p2p/security/noise"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
@@ -24,27 +25,17 @@ type Node struct {
 	wallet            *hdwallet.Wallet
 	signingAccount    accounts.Account
 	encryptionAccount accounts.Account
+	IPFS              *core.IpfsNode
 }
 
 func NewNode(ctx context.Context) (*Node, error) {
-	config.Init()
-
-	if config.Conf.KeyConfig.EntropyLengthBits > 0 {
-		validEntropySizes := map[int]bool{
-			128: true,
-			256: true,
-		}
-
-		if !validEntropySizes[config.Conf.KeyConfig.EntropyLengthBits] {
-			return nil, fmt.Errorf("invalid entropy length provided in config")
-		}
-	}
+	configs.Init()
 
 	node := &Node{}
 
 	var err error
 
-	node.KeyStore, err = NewKeyStore(config.Conf.Datastore.Password)
+	node.KeyStore, err = NewKeyStore(configs.Conf.Datastore.Password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize key store: %w", err)
 	}
@@ -65,9 +56,21 @@ func NewNode(ctx context.Context) (*Node, error) {
 			autorelay.WithMinInterval(0)),
 		libp2p.Security(noise.ID, noise.New),
 	)
-
 	if err != nil {
 		return node, fmt.Errorf("failed to create libp2p host: %w", err)
+	}
+
+	customHostOption := func(id peer.ID, ps peerstore.Peerstore, options ...libp2p.Option) (host.Host, error) {
+		return node.Host, nil
+	}
+
+	node.IPFS, err = core.NewNode(ctx, &core.BuildCfg{
+		Online:    true,
+		Permanent: true,
+		Host:      customHostOption,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create IPFS node: %w", err)
 	}
 
 	node.wallet = wallet
@@ -80,9 +83,6 @@ func NewNode(ctx context.Context) (*Node, error) {
 	fmt.Println("Node Encryption Ethereum Address: ", node.encryptionAccount.Address)
 	fmt.Println("")
 
-	//wallet.PublicKeyHex(node.signingAccount)
-	// Set up PNM exchange protocol listener
-	SetupPNMExchange(node)
 	CreateDefaultServerEPM(node)
 
 	return node, nil
@@ -120,6 +120,8 @@ func autoRelayPeerSource(ctx context.Context, numPeers int) <-chan peer.AddrInfo
 
 func (n *Node) Start(ctx context.Context) error {
 	var err error
+
+	SetupPNMExchange(n)
 
 	n.DHT, err = initDHT(ctx, n.Host)
 	if err != nil {

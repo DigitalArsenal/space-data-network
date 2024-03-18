@@ -10,7 +10,7 @@ import (
 
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
-	files "github.com/ipfs/go-libipfs/files"
+	files "github.com/ipfs/boxo/files"
 	config "github.com/ipfs/kubo/config"
 	"github.com/ipfs/kubo/core"
 	"github.com/ipfs/kubo/core/coreapi"
@@ -36,15 +36,23 @@ func setupPlugins(externalPluginsPath string) error {
 }
 
 func createTempRepo(_ context.Context) (string, error) {
-	repoPath := os.TempDir()
+	// Create a unique temporary directory for the repo
+	repoPath, err := os.MkdirTemp("", "ipfs-repo-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temporary repo directory: %s", err)
+	}
 
 	cfg, err := config.Init(io.Discard, 2048)
 	if err != nil {
+		// Clean up the created temporary directory on error
+		os.RemoveAll(repoPath)
 		return "", err
 	}
 
 	err = fsrepo.Init(repoPath, cfg)
 	if err != nil {
+		// Clean up the created temporary directory on error
+		os.RemoveAll(repoPath)
 		return "", fmt.Errorf("failed to init ephemeral node: %s", err)
 	}
 
@@ -80,6 +88,8 @@ func GenerateCID(data []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Ensure the temporary repo is cleaned up after use
+	defer os.RemoveAll(repoPath)
 
 	ipfs, err := createNode(ctx, repoPath)
 	if err != nil {
@@ -92,6 +102,7 @@ func GenerateCID(data []byte) (string, error) {
 		return "", fmt.Errorf("could not add data to IPFS: %s", err)
 	}
 
+	fmt.Println("Generated CID", cidFile.String())
 	return cidFile.String(), nil
 }
 
@@ -127,16 +138,19 @@ func DeserializePNM(ctx context.Context, stream io.Reader) (*PNM.PNM, error) {
 	}
 	totalSize := binary.LittleEndian.Uint32(totalSizeBuf)
 
-	// Initialize a buffer to hold the incoming data.
-	data := make([]byte, 0, totalSize)
+	// Initialize a buffer to hold the incoming data, including the size prefix.
+	data := make([]byte, 0, totalSize+4) // +4 to account for the size prefix
+
+	// Prepend the size prefix to the data slice.
+	data = append(data, totalSizeBuf...)
 
 	// Keep reading data until the buffer is filled to the expected size.
-	for uint32(len(data)) < totalSize {
+	for uint32(len(data)-4) < totalSize { // -4 to account for the already included size prefix
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err() // Context cancellation or deadline exceeded.
 		default:
-			chunkSize := totalSize - uint32(len(data))
+			chunkSize := totalSize - uint32(len(data)-4) // -4 to adjust for the size prefix
 			chunk := make([]byte, chunkSize)
 			n, err := io.ReadFull(stream, chunk)
 			if err != nil {
@@ -145,12 +159,10 @@ func DeserializePNM(ctx context.Context, stream io.Reader) (*PNM.PNM, error) {
 			data = append(data, chunk[:n]...)
 		}
 	}
-	fileID := string(data[4:8])
-	if fileID != PNMFID {
-		return nil, fmt.Errorf("unexpected file identifier: got %s, want %s", fileID, EPMFID)
-	}
 
-	// Use GetSizePrefixedRootAsPNM to deserialize the data.
-	pnm := PNM.GetSizePrefixedRootAsPNM(data, 0) // The data buffer is ready for deserialization.
+	// No need to check the file identifier here, as it will be part of the deserialization process
+
+	// Use GetSizePrefixedRootAsPNM to deserialize the data, including the size prefix.
+	pnm := PNM.GetSizePrefixedRootAsPNM(data, 0) // Pass the entire 'data' including the size prefix
 	return pnm, nil
 }

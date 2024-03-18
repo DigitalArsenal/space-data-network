@@ -116,7 +116,27 @@ func CreateDefaultServerEPM(n *Node) {
 	)
 
 	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
-	CID, _ := spacedatastandards_utils.GenerateCID(epmBytes)
+
+	var CID string
+	var err error
+	maxRetries := 3
+
+	for i := 0; i < maxRetries; i++ {
+		CID, err = spacedatastandards_utils.GenerateCID(epmBytes)
+		if err != nil {
+			fmt.Printf("Attempt %d: Failed to generate CID, error: %v\n", i+1, err)
+			continue
+		}
+		if CID != "" {
+			fmt.Println("Print CID from autogenerate:", CID)
+			break
+		}
+		fmt.Printf("Attempt %d: Received blank CID, retrying...\n", i+1)
+	}
+
+	if CID == "" {
+		panic("Failed to generate a valid CID after 3 attempts.")
+	}
 
 	sig, err := n.wallet.SignData(n.signingAccount, "application/octet-stream", []byte(CID))
 	if err != nil {
