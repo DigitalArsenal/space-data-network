@@ -291,7 +291,7 @@ func ReadServerEPM(showQR ...bool) {
 	pnm := PNM.GetSizePrefixedRootAsPNM(pnmBytes, 0)
 
 	fmt.Println("EPM CID: ", string(pnm.CID()))
-	fmt.Println("Ethereum Digital Signature: ", string(pnm.ETH_DIGITAL_SIGNATURE()))
+	fmt.Println("Ethereum Digital Signature: ", string(pnm.SIGNATURE()))
 }
 
 func generateAndDisplayQRCode(content string) {

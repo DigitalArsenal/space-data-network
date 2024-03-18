@@ -6,6 +6,7 @@ import (
 	"time"
 
 	configs "github.com/DigitalArsenal/space-data-network/configs"
+	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ipfs/kubo/core"
 	"github.com/libp2p/go-libp2p"
@@ -120,6 +121,13 @@ func autoRelayPeerSource(ctx context.Context, numPeers int) <-chan peer.AddrInfo
 
 func (n *Node) Start(ctx context.Context) error {
 	var err error
+
+	vepm, _ := n.KeyStore.LoadEPM()
+	if len(vepm) > 0 {
+		epm := EPM.GetSizePrefixedRootAsEPM(vepm, 0)
+
+		fmt.Println(string(epm.EMAIL()))
+	}
 
 	SetupPNMExchange(n)
 

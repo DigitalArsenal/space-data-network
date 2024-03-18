@@ -63,7 +63,7 @@ func RequestPNM(ctx context.Context, h host.Host, peerID peer.ID) error {
 
 	// Access the PNM fields.
 	cid := string(pnm.CID())
-	ethSignature := string(pnm.ETH_DIGITAL_SIGNATURE())
+	ethSignature := string(pnm.SIGNATURE())
 	fmt.Printf("Received PNM from %s\n", peerID)
 	fmt.Printf("with CID: %s\n", cid)
 	fmt.Printf("ETH Signature: %s\n", ethSignature)

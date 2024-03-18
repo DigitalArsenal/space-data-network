@@ -116,7 +116,7 @@ func CreatePNM(multiformatAddress string, cid string, ethDigitalSignature string
 	PNM.PNMStart(builder)
 	PNM.PNMAddMULTIFORMAT_ADDRESS(builder, multiformatAddressOffset)
 	PNM.PNMAddCID(builder, cidOffset)
-	PNM.PNMAddETH_DIGITAL_SIGNATURE(builder, ethDigitalSignatureOffset)
+	PNM.PNMAddSIGNATURE(builder, ethDigitalSignatureOffset)
 	// Add other fields as needed
 	pnm := PNM.PNMEnd(builder)
 

@@ -10,6 +10,7 @@
   - [x] Use dht and identity services (in case bootstrap nodes are down / unreachable)
 - [ ] Discovery other nodes in data network
   - [x] Discoverable through 'data-network' DHT key
+  - [x] Publish time added to PNM, signed by publisher !!!!!!!!!!!!!!
   - [ ] Exchange EPMs for servers
     - [ ] Each EPM is placed in the data directory / public key subdirectory / file type, file name is the CID of the EPM
     - [ ] Once written, digitally sign it and create a PNM, stored in the same way, file name includes EPM CID
