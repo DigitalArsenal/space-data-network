@@ -6,7 +6,6 @@ import (
 	"time"
 
 	configs "github.com/DigitalArsenal/space-data-network/configs"
-	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ipfs/kubo/core"
 	"github.com/libp2p/go-libp2p"
@@ -27,6 +26,36 @@ type Node struct {
 	signingAccount    accounts.Account
 	encryptionAccount accounts.Account
 	IPFS              *core.IpfsNode
+}
+
+// autoRelayPeerSource returns a function that provides peers for auto-relay.
+func autoRelayPeerSource(ctx context.Context, numPeers int) <-chan peer.AddrInfo {
+
+	peerChan := make(chan peer.AddrInfo)
+
+	r := make(chan peer.AddrInfo)
+
+	go func() {
+		defer close(r)
+		for ; numPeers != 0; numPeers-- {
+			select {
+			case v, ok := <-peerChan:
+				if !ok {
+					return
+				}
+				select {
+				case r <- v:
+				case <-ctx.Done():
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return r
+
 }
 
 func NewNode(ctx context.Context) (*Node, error) {
@@ -89,45 +118,31 @@ func NewNode(ctx context.Context) (*Node, error) {
 	return node, nil
 }
 
-// autoRelayPeerSource returns a function that provides peers for auto-relay.
-func autoRelayPeerSource(ctx context.Context, numPeers int) <-chan peer.AddrInfo {
-
-	peerChan := make(chan peer.AddrInfo)
-
-	r := make(chan peer.AddrInfo)
-
-	go func() {
-		defer close(r)
-		for ; numPeers != 0; numPeers-- {
-			select {
-			case v, ok := <-peerChan:
-				if !ok {
-					return
-				}
-				select {
-				case r <- v:
-				case <-ctx.Done():
-					return
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
-	return r
-
-}
-
 func (n *Node) Start(ctx context.Context) error {
 	var err error
 
 	vepm, _ := n.KeyStore.LoadEPM()
-	if len(vepm) > 0 {
+	/*if len(vepm) > 0 {
 		epm := EPM.GetSizePrefixedRootAsEPM(vepm, 0)
 
-		fmt.Println(string(epm.EMAIL()))
-	}
+		keysLen := epm.KEYSLength() // Get the number of keys
+
+		for i := 0; i < keysLen; i++ {
+			key := new(EPM.CryptoKey)
+			if epm.KEYS(key, i) {
+				keyType := key.KEY_TYPE()
+				keyHex := key.PUBLIC_KEY()
+				if keyHex != nil {
+					fmt.Println(keyType, keyHex)
+				}
+			}
+		}
+	}*/
+
+	newCID, _ := n.AddFileFromBytes(ctx, vepm)
+
+	fmt.Println("ADDED CID FOR EPM: ")
+	fmt.Println(newCID)
 
 	SetupPNMExchange(n)
 
