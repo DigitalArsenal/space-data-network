@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,25 +15,10 @@ import (
 	"github.com/ipfs/kubo/core"
 	"github.com/ipfs/kubo/core/coreapi"
 	coreiface "github.com/ipfs/kubo/core/coreiface"
-	"github.com/ipfs/kubo/plugin/loader"
 	"github.com/ipfs/kubo/repo/fsrepo"
 )
 
 var PNMFID string = "$PNM"
-
-func setupPlugins(externalPluginsPath string) error {
-	plugins, err := loader.NewPluginLoader(filepath.Join(externalPluginsPath, "plugins"))
-	if err != nil {
-		return fmt.Errorf("error loading plugins: %s", err)
-	}
-	if err := plugins.Initialize(); err != nil {
-		return fmt.Errorf("error initializing plugins: %s", err)
-	}
-	if err := plugins.Inject(); err != nil {
-		return fmt.Errorf("error injecting plugins: %s", err)
-	}
-	return nil
-}
 
 func createTempRepo(_ context.Context) (string, error) {
 	// Create a unique temporary directory for the repo
@@ -80,10 +64,6 @@ func createNode(ctx context.Context, repoPath string) (coreiface.CoreAPI, error)
 func GenerateCID(data []byte) (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	if err := setupPlugins(""); err != nil {
-		return "", err
-	}
 
 	repoPath, err := createTempRepo(ctx)
 	if err != nil {
