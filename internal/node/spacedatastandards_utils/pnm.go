@@ -2,11 +2,12 @@ package spacedatastandards_utils
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -103,7 +104,7 @@ func GenerateCID(data []byte) (string, error) {
 	}
 
 	fmt.Println("Generated CID", cidFile.String())
-	return cidFile.String(), nil
+	return strings.TrimPrefix(cidFile.String(), "/ipfs/"), nil
 }
 
 func CreatePNM(multiformatAddress string, cid string, ethDigitalSignature string) []byte {
@@ -111,12 +112,16 @@ func CreatePNM(multiformatAddress string, cid string, ethDigitalSignature string
 	multiformatAddressOffset := builder.CreateString(multiformatAddress)
 	cidOffset := builder.CreateString(cid)
 	ethDigitalSignatureOffset := builder.CreateString(ethDigitalSignature)
+	publishTimeStampOffset := builder.CreateString(time.Now().Format(time.RFC3339))
+	signatureTypeOffset := builder.CreateString("ETH")
 
 	// Start the PNM object and set its fields
 	PNM.PNMStart(builder)
 	PNM.PNMAddMULTIFORMAT_ADDRESS(builder, multiformatAddressOffset)
 	PNM.PNMAddCID(builder, cidOffset)
+	PNM.PNMAddPUBLISH_TIMESTAMP(builder, publishTimeStampOffset)
 	PNM.PNMAddSIGNATURE(builder, ethDigitalSignatureOffset)
+	PNM.PNMAddSIGNATURE_TYPE(builder, signatureTypeOffset)
 	// Add other fields as needed
 	pnm := PNM.PNMEnd(builder)
 
@@ -130,39 +135,12 @@ func SerializePNM(builder *flatbuffers.Builder, pnm flatbuffers.UOffsetT) []byte
 }
 
 // DeserializePNM deserializes PNM from a ByteReader.
-func DeserializePNM(ctx context.Context, stream io.Reader) (*PNM.PNM, error) {
-	// Create a buffer to hold the size prefix.
-	totalSizeBuf := make([]byte, 4)
-	if _, err := io.ReadFull(stream, totalSizeBuf); err != nil {
-		return nil, fmt.Errorf("failed to read total size prefix: %v", err)
-	}
-	totalSize := binary.LittleEndian.Uint32(totalSizeBuf)
-
-	// Initialize a buffer to hold the incoming data, including the size prefix.
-	data := make([]byte, 0, totalSize+4) // +4 to account for the size prefix
-
-	// Prepend the size prefix to the data slice.
-	data = append(data, totalSizeBuf...)
-
-	// Keep reading data until the buffer is filled to the expected size.
-	for uint32(len(data)-4) < totalSize { // -4 to account for the already included size prefix
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err() // Context cancellation or deadline exceeded.
-		default:
-			chunkSize := totalSize - uint32(len(data)-4) // -4 to adjust for the size prefix
-			chunk := make([]byte, chunkSize)
-			n, err := io.ReadFull(stream, chunk)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read PNM data: %v", err)
-			}
-			data = append(data, chunk[:n]...)
-		}
+func DeserializePNM(ctx context.Context, src interface{}) (*PNM.PNM, error) {
+	data, err := ReadDataFromSource(ctx, src)
+	if err != nil {
+		return nil, err
 	}
 
-	// No need to check the file identifier here, as it will be part of the deserialization process
-
-	// Use GetSizePrefixedRootAsPNM to deserialize the data, including the size prefix.
-	pnm := PNM.GetSizePrefixedRootAsPNM(data, 0) // Pass the entire 'data' including the size prefix
+	pnm := PNM.GetSizePrefixedRootAsPNM(data, 0)
 	return pnm, nil
 }

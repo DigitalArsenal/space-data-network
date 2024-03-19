@@ -1,11 +1,8 @@
 package spacedatastandards_utils
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"strings"
 
 	EPM "github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
@@ -141,44 +138,9 @@ func SerializeEPM(builder *flatbuffers.Builder, epm flatbuffers.UOffsetT) []byte
 }
 
 func DeserializeEPM(ctx context.Context, src interface{}) (*EPM.EPM, error) {
-	var stream io.Reader
-	switch s := src.(type) {
-	case io.Reader:
-		stream = s
-	case []byte:
-		stream = bytes.NewReader(s)
-	default:
-		return nil, fmt.Errorf("unsupported source type")
-	}
-
-	totalSizeBuf := make([]byte, 4)
-	if _, err := io.ReadFull(stream, totalSizeBuf); err != nil {
-		return nil, fmt.Errorf("failed to read total size prefix: %v", err)
-	}
-	totalSize := binary.LittleEndian.Uint32(totalSizeBuf)
-
-	data := make([]byte, 0, totalSize)
-	for uint32(len(data)) < totalSize {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			chunkSize := totalSize - uint32(len(data))
-			if chunkSize > 4096 { // Read in chunks to avoid large allocations
-				chunkSize = 4096
-			}
-			chunk := make([]byte, chunkSize)
-			n, err := io.ReadFull(stream, chunk)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read EPM data: %v", err)
-			}
-			data = append(data, chunk[:n]...)
-		}
-	}
-
-	fileID := string(data[4:8])
-	if fileID != EPMFID {
-		return nil, fmt.Errorf("unexpected file identifier: got %s, want %s", fileID, EPMFID)
+	data, err := ReadDataFromSource(ctx, src)
+	if err != nil {
+		return nil, err
 	}
 
 	epm := EPM.GetSizePrefixedRootAsEPM(data, 0)

@@ -9,6 +9,7 @@ require (
 	github.com/glebarez/go-sqlite v1.22.0
 	github.com/ipfs/kubo v0.27.0
 	github.com/libp2p/go-libp2p v0.33.0
+	github.com/libp2p/go-libp2p-core v0.3.0
 	github.com/libp2p/go-libp2p-kad-dht v0.25.1
 	github.com/libp2p/go-libp2p-pubsub v0.10.0
 	github.com/miguelmota/go-ethereum-hdwallet v0.1.2
@@ -75,7 +76,9 @@ require (
 	github.com/libp2p/go-doh-resolver v0.4.0 // indirect
 	github.com/libp2p/go-libp2p-pubsub-router v0.6.0 // indirect
 	github.com/libp2p/go-libp2p-xor v0.1.0 // indirect
+	github.com/libp2p/go-openssl v0.1.0 // indirect
 	github.com/libp2p/zeroconf/v2 v2.2.0 // indirect
+	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mmcloughlin/addchain v0.4.0 // indirect
 	github.com/mutecomm/go-sqlcipher/v4 v4.4.0 // indirect
@@ -100,6 +103,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/samber/lo v1.39.0 // indirect
+	github.com/spacemonkeygo/spacelog v0.0.0-20180420211403-2296661a0572 // indirect
 	github.com/supranational/blst v0.3.11 // indirect
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7 // indirect
 	github.com/tyler-smith/go-bip39 v1.1.0 // indirect

@@ -2,18 +2,27 @@ package node
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	configs "github.com/DigitalArsenal/space-data-network/configs"
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ipfs/kubo/config"
 	"github.com/ipfs/kubo/core"
+	"github.com/ipfs/kubo/plugin/loader"
+	"github.com/ipfs/kubo/repo/fsrepo"
 	"github.com/libp2p/go-libp2p"
+	"github.com/libp2p/go-libp2p/core/crypto"
+
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
+
 	noise "github.com/libp2p/go-libp2p/p2p/security/noise"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
@@ -89,15 +98,111 @@ func NewNode(ctx context.Context) (*Node, error) {
 	if err != nil {
 		return node, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
+	fmt.Println("Node PeerID: ", node.Host.ID())
 
 	customHostOption := func(id peer.ID, ps peerstore.Peerstore, options ...libp2p.Option) (host.Host, error) {
 		return node.Host, nil
+	}
+
+	repoPath := filepath.Join(configs.Conf.Datastore.Directory, "ipfs")
+	// Ensure the directory exists
+	if err := os.MkdirAll(repoPath, 0755); err != nil {
+		fmt.Printf("failed to create directory: %v", err)
+	}
+
+	h := node.Host
+	privKeyH := h.Peerstore().PrivKey(h.ID())
+	if privKeyH == nil {
+		panic("private key not found")
+	}
+
+	// Marshal the private key to protobuf
+	privKeyBytes, err := crypto.MarshalPrivateKey(privKeyH)
+	if err != nil {
+		panic(err)
+	}
+
+	// Encode the marshaled private key to a base64 string
+	privKeyBase64 := base64.StdEncoding.EncodeToString(privKeyBytes)
+
+	// Prepare the IPFS config Identity section
+	identity := config.Identity{
+		PeerID:  h.ID().String(), // Use String() method for peer.ID
+		PrivKey: privKeyBase64,   // Use the base64 encoded marshaled private key
+	}
+
+	plugins, err := loader.NewPluginLoader(filepath.Join("", "plugins"))
+	if err != nil {
+		fmt.Errorf("error loading plugins: %s", err)
+	}
+
+	// Load preloaded and external plugins
+	if err := plugins.Initialize(); err != nil {
+		fmt.Errorf("error initializing plugins: %s", err)
+	}
+
+	if err := plugins.Inject(); err != nil {
+		fmt.Errorf("error initializing plugins: %s", err)
+	}
+
+	datastoreSpec := map[string]interface{}{
+		"type": "mount",
+		"mounts": []interface{}{
+			map[string]interface{}{
+				"mountpoint": "/blocks",
+				"type":       "measure",
+				"prefix":     "flatfs.datastore",
+				"child": map[string]interface{}{
+					"type":      "flatfs",
+					"path":      "blocks",
+					"sync":      true,
+					"shardFunc": "/repo/flatfs/shard/v1/next-to-last/2",
+				},
+			},
+			map[string]interface{}{
+				"mountpoint": "/",
+				"type":       "measure",
+				"prefix":     "leveldb.datastore",
+				"child": map[string]interface{}{
+					"type":        "levelds",
+					"path":        "datastore",
+					"compression": "none",
+				},
+			},
+		},
+	}
+
+	datastoreConfig := config.Datastore{
+		StorageMax:         "10GB", // Example, set according to your needs
+		StorageGCWatermark: 90,     // Example, set according to your needs
+		GCPeriod:           "1h",   // Example, set according to your needs
+		Spec:               datastoreSpec,
+		HashOnRead:         false, // Default setting
+		BloomFilterSize:    0,     // Default setting
+	}
+
+	// Use the identity in your IPFS config
+	cfg := &config.Config{
+		Identity:  identity, // Assuming 'identity' is already defined
+		Datastore: datastoreConfig,
+	}
+
+	errx := fsrepo.Init(repoPath, cfg)
+	fmt.Println("REP", repoPath)
+	if errx != nil {
+		fmt.Println("Error Creating Repo: ", errx)
+	}
+
+	repo, err := fsrepo.Open(repoPath)
+	if err != nil {
+		return nil, err
 	}
 
 	node.IPFS, err = core.NewNode(ctx, &core.BuildCfg{
 		Online:    true,
 		Permanent: true,
 		Host:      customHostOption,
+		Repo:      repo,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IPFS node: %w", err)
@@ -106,7 +211,15 @@ func NewNode(ctx context.Context) (*Node, error) {
 	node.wallet = wallet
 	node.signingAccount = signingAccount
 	node.encryptionAccount = encryptionAccount
-
+	repoConfig, err := node.IPFS.Repo.Config()
+	if err != nil {
+		fmt.Printf("Failed to get IPFS repo config: %s\n", err)
+	} else {
+		// The Repo's path is typically not directly exposed in the config,
+		// but the Repo itself knows its path which can be accessed this way
+		repoPath := repoConfig.Datastore.Path
+		fmt.Println("IPFS repo path:", repoPath)
+	}
 	fmt.Println("")
 	fmt.Println("Node PeerID: ", node.Host.ID())
 	fmt.Println("Node Signing Ethereum Address: ", node.signingAccount.Address)
@@ -122,22 +235,6 @@ func (n *Node) Start(ctx context.Context) error {
 	var err error
 
 	vepm, _ := n.KeyStore.LoadEPM()
-	/*if len(vepm) > 0 {
-		epm := EPM.GetSizePrefixedRootAsEPM(vepm, 0)
-
-		keysLen := epm.KEYSLength() // Get the number of keys
-
-		for i := 0; i < keysLen; i++ {
-			key := new(EPM.CryptoKey)
-			if epm.KEYS(key, i) {
-				keyType := key.KEY_TYPE()
-				keyHex := key.PUBLIC_KEY()
-				if keyHex != nil {
-					fmt.Println(keyType, keyHex)
-				}
-			}
-		}
-	}*/
 
 	newCID, _ := n.AddFileFromBytes(ctx, vepm)
 

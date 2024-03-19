@@ -82,5 +82,9 @@ func (n *Node) AddFileFromBytes(ctx context.Context, data []byte) (path.Immutabl
 		return addedFile, fmt.Errorf("failed to add file to IPFS: %w", err)
 	}
 
+	// Pin the added file to ensure it is not garbage collected
+	if err := api.Pin().Add(ctx, addedFile); err != nil {
+		return path.ImmutablePath{}, fmt.Errorf("failed to pin added file: %w", err)
+	}
 	return addedFile, nil
 }
