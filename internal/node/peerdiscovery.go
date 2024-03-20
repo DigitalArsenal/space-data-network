@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -13,16 +14,44 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	dutil "github.com/libp2p/go-libp2p/p2p/discovery/util"
+	"github.com/multiformats/go-multiaddr"
 )
+
+var (
+	contactedPeers = make(map[peer.ID]struct{})
+	connectedPeers = make(map[peer.ID]struct{})
+	mutex          = sync.Mutex{}
+)
+
+// isPublicIP checks if the given IP address is a public one.
+func isPublicIP(ip net.IP) bool {
+	return !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast()
+}
+
+// hasPublicIP checks if any of the multiaddresses contain a public IP address.
+func hasPublicIP(addrs []multiaddr.Multiaddr) bool {
+	for _, addr := range addrs {
+		ip, err := addr.ValueForProtocol(multiaddr.P_IP4)
+		if err == nil {
+			if isPublicIP(net.ParseIP(ip)) {
+				return true
+			}
+		}
+
+		ip, err = addr.ValueForProtocol(multiaddr.P_IP6)
+		if err == nil {
+			if isPublicIP(net.ParseIP(ip)) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryInterval time.Duration) {
 
 	h := n.Host
 	d := n.DHT
-
-	contactedPeers := make(map[peer.ID]struct{})
-	connectedPeers := make(map[peer.ID]struct{})
-	mutex := sync.Mutex{}
 
 	// Create a NotifyBundle and assign event handlers
 	notifiee := &NotifyBundle{
@@ -80,7 +109,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 					continue
 				}
 
-				if alreadyContacted(peer.ID, contactedPeers, &mutex) {
+				if alreadyContacted(peer.ID, &mutex) {
 					continue
 				}
 
@@ -99,13 +128,13 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 					continue
 				}
 
-				markAsContacted(peer.ID, contactedPeers, &mutex)
+				processAndMarkPeer(peer, &mutex, d)
 			}
 
 		case pi := <-discoveredPeersChan: // Handle peers discovered via mDNS
 			fmt.Printf("mDNS discovered peer: %s\n", pi.ID)
 
-			if alreadyContacted(pi.ID, contactedPeers, &mutex) {
+			if alreadyContacted(pi.ID, &mutex) {
 				continue
 			}
 
@@ -120,21 +149,28 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 				continue
 			}
 
-			markAsContacted(pi.ID, contactedPeers, &mutex)
+			processAndMarkPeer(pi, &mutex, d)
 		}
 	}
 }
 
-func alreadyContacted(peerID peer.ID, contactedPeers map[peer.ID]struct{}, mutex *sync.Mutex) bool {
+func alreadyContacted(peerID peer.ID, mutex *sync.Mutex) bool {
 	mutex.Lock()
 	defer mutex.Unlock()
 	_, contacted := contactedPeers[peerID]
 	return contacted
 }
 
-func markAsContacted(peerID peer.ID, contactedPeers map[peer.ID]struct{}, mutex *sync.Mutex) {
+func processAndMarkPeer(peer peer.AddrInfo, mutex *sync.Mutex, dht *dht.IpfsDHT) {
 	mutex.Lock()
 	defer mutex.Unlock()
+
+	peerID := peer.ID
+	// If the peer has already been processed, skip it
+	if _, processed := contactedPeers[peerID]; processed {
+		return
+	}
+
 	contactedPeers[peerID] = struct{}{}
 }
 

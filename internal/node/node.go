@@ -92,7 +92,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 		libp2p.EnableHolePunching(),
 		libp2p.EnableAutoRelayWithPeerSource(
 			autoRelayPeerSource,
-			autorelay.WithMinInterval(0)),
+			autorelay.WithMinInterval(1)),
 		libp2p.Security(noise.ID, noise.New),
 	)
 	if err != nil {
@@ -133,16 +133,16 @@ func NewNode(ctx context.Context) (*Node, error) {
 
 	plugins, err := loader.NewPluginLoader(filepath.Join("", "plugins"))
 	if err != nil {
-		fmt.Errorf("error loading plugins: %s", err)
+		fmt.Printf("error loading plugins: %s", err)
 	}
 
 	// Load preloaded and external plugins
 	if err := plugins.Initialize(); err != nil {
-		fmt.Errorf("error initializing plugins: %s", err)
+		fmt.Printf("error initializing plugins: %s", err)
 	}
 
 	if err := plugins.Inject(); err != nil {
-		fmt.Errorf("error initializing plugins: %s", err)
+		fmt.Printf("error initializing plugins: %s", err)
 	}
 
 	datastoreSpec := map[string]interface{}{
@@ -185,6 +185,9 @@ func NewNode(ctx context.Context) (*Node, error) {
 	cfg := &config.Config{
 		Identity:  identity, // Assuming 'identity' is already defined
 		Datastore: datastoreConfig,
+		Ipns: config.Ipns{
+			UsePubsub: config.True,
+		},
 	}
 
 	errx := fsrepo.Init(repoPath, cfg)
@@ -250,25 +253,12 @@ func (n *Node) Start(ctx context.Context) error {
 
 	go discoverPeers(ctx, n, "space-data-network", 30*time.Second)
 
-	/*ps, err := pubsub.NewGossipSub(ctx, n.Host)
+	ipnsCID, err := n.PublishIPNSRecord(ctx, newCID.String())
 	if err != nil {
-		return fmt.Errorf("failed to initialize PubSub: %w", err)
+		return fmt.Errorf("failed to publish CID to IPNS: %w", err)
 	}
+	fmt.Println("NEW IPNS CID:", ipnsCID)
 
-		topic, err := ps.Join("space-data-network")
-		if err != nil {
-			return fmt.Errorf("failed to join topic 'space-data-network': %w", err)
-		}
-
-		go streamConsoleTo(ctx, topic)
-
-		sub, err := topic.Subscribe()
-		if err != nil {
-			return fmt.Errorf("failed to subscribe to topic: %w", err)
-		}
-
-		go printMessagesFrom(ctx, sub)
-	*/
 	return nil
 }
 
@@ -292,3 +282,23 @@ func (n *Node) Stop() {
 	}
 	fmt.Println("Node stopped successfully.")
 }
+
+/*ps, err := pubsub.NewGossipSub(ctx, n.Host)
+if err != nil {
+	return fmt.Errorf("failed to initialize PubSub: %w", err)
+}
+
+	topic, err := ps.Join("space-data-network")
+	if err != nil {
+		return fmt.Errorf("failed to join topic 'space-data-network': %w", err)
+	}
+
+	go streamConsoleTo(ctx, topic)
+
+	sub, err := topic.Subscribe()
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to topic: %w", err)
+	}
+
+	go printMessagesFrom(ctx, sub)
+*/

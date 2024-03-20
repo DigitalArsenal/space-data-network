@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	files "github.com/ipfs/boxo/files"
 	"github.com/ipfs/boxo/path"
+	"github.com/ipfs/kubo/core/coreiface/options"
 
 	"github.com/ipfs/kubo/core/coreapi"
 )
@@ -83,4 +85,35 @@ func (n *Node) AddFileFromBytes(ctx context.Context, data []byte) (path.Immutabl
 		return path.ImmutablePath{}, fmt.Errorf("failed to pin added file: %w", err)
 	}
 	return addedFile, nil
+}
+
+func (n *Node) PublishIPNSRecord(ctx context.Context, ipfsPathString string) (string, error) {
+	if n.IPFS == nil {
+		return "", fmt.Errorf("IPFS node is not initialized")
+	}
+
+	// Create a new path from the provided IPFS path string
+	ipfsPath, err := path.NewPath(ipfsPathString)
+	if err != nil {
+		return "", fmt.Errorf("failed to create path: %w", err)
+	}
+
+	ttl := 24 * time.Hour // Cache TTL of 24 hours
+
+	// Use coreapi to publish the IPNS record. This assumes you have initialized coreapi with your IPFS node.
+	coreAPI, err := coreapi.NewCoreAPI(n.IPFS)
+	if err != nil {
+		return "", fmt.Errorf("failed to get IPFS coreAPI: %w", err)
+	}
+
+	// Publish the IPNS record using the IPFS core API
+	ipnsPath, err := coreAPI.Name().Publish(ctx, ipfsPath, options.Name.Key("self"), options.Name.ValidTime(ttl))
+	if err != nil {
+		return "", fmt.Errorf("failed to publish IPNS record: %w", err)
+	}
+
+	fmt.Printf("Published IPNS record: %s\n", ipnsPath.String())
+
+	// Since the IPNS record might not directly give us a CID, we return the whole path
+	return ipnsPath.String(), nil
 }
