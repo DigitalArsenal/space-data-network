@@ -32,16 +32,16 @@ if [ -f ./scripts/post-build ]; then
 
         # Check if time has passed since the last run
         if [ "$TIME_DIFF" -gt 120 ]; then
-            bash ./scripts/post-build
-            bash ./build_dist.sh &
+            # bash ./scripts/post-build
+            # bash ./build_dist.sh &
             echo $CURRENT_TIMESTAMP >$TIMESTAMP_FILE
         else
             echo "Post-build script last run less than 2 minutes ago, skipping..."
         fi
     else
         # If timestamp file does not exist, run the script and create the file
-        bash ./scripts/post-build
-        bash ./build_dist.sh &
+        # bash ./scripts/post-build
+        # bash ./build_dist.sh &
         echo $CURRENT_TIMESTAMP >$TIMESTAMP_FILE
     fi
 else

@@ -29,7 +29,7 @@ func SetupPNMExchange(n *Node) {
 
 func (n *Node) handlePNMExchange(s network.Stream) {
 	peerID := s.Conn().RemotePeer()
-	fmt.Println("handlePNMExchange with peer:", peerID)
+	//fmt.Println("handlePNMExchange with peer:", peerID)
 
 	pnmData, _ := n.KeyStore.LoadPNM()
 
@@ -52,7 +52,7 @@ func (n *Node) handlePNMExchange(s network.Stream) {
 		return
 	}
 
-	fmt.Printf("PNM sent to peer %s\n", peerID)
+	//fmt.Printf("PNM sent to peer %s\n", peerID)
 	s.Close()
 }
 
@@ -68,7 +68,7 @@ func RequestPNM(ctx context.Context, h host.Host, peerID peer.ID) error {
 
 	// Variables to hold deserialized data and values outside the closure
 	var pnm *PNM.PNM
-	var cid, ethSignature, publicKeyHex, filePath string
+	var cid, ethSignature, filePath string
 	var panicErr error
 
 	// Use a deferred function to encapsulate panic recovery
@@ -97,9 +97,9 @@ func RequestPNM(ctx context.Context, h host.Host, peerID peer.ID) error {
 		return err // Return deserialization error if it occurred
 	}
 
-	fmt.Printf("Received PNM from %s\n", peerID)
-	fmt.Printf("with CID: %s\n", cid)
-	fmt.Printf("ETH Signature: %s\n", ethSignature)
+	//fmt.Printf("Received PNM from %s\n", peerID)
+	//fmt.Printf("with CID: %s\n", cid)
+	//fmt.Printf("ETH Signature: %s\n", ethSignature)
 
 	hash := crypto.Keccak256Hash(pnm.CID())
 	fmt.Println(hash.Hex())
@@ -126,10 +126,10 @@ func RequestPNM(ctx context.Context, h host.Host, peerID peer.ID) error {
 		return fmt.Errorf("public keys do not match")
 	}
 
-	fmt.Println("Public keys match")
+	//fmt.Println("Public keys match")
 
-	publicKeyHex = "0x" + hex.EncodeToString(append(x.Bytes(), y.Bytes()...))
-	directoryPath := filepath.Join(config.Conf.Datastore.Directory, "data", publicKeyHex, "PNM")
+	//publicKeyHex = "0x" + hex.EncodeToString(append(x.Bytes(), y.Bytes()...))
+	directoryPath := filepath.Join(config.Conf.Datastore.Directory, "data", peerID.String(), "PNM")
 	if err := os.MkdirAll(directoryPath, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %v", err)
 	}

@@ -89,6 +89,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
 		libp2p.EnableNATService(),
 		libp2p.EnableRelay(),
+		libp2p.EnableRelayService(),
 		libp2p.EnableHolePunching(),
 		libp2p.EnableAutoRelayWithPeerSource(
 			autoRelayPeerSource,
@@ -241,8 +242,10 @@ func (n *Node) Start(ctx context.Context) error {
 
 	newCID, _ := n.AddFileFromBytes(ctx, vepm)
 
-	fmt.Println("ADDED CID FOR EPM: ")
-	fmt.Println(newCID)
+	//fmt.Println("ADDED CID FOR EPM: ")
+	//fmt.Println(newCID)
+	//fr1
+	//cmz
 
 	SetupPNMExchange(n)
 

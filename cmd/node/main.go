@@ -1,107 +1,70 @@
 package main
 
 import (
-	"context"
-	"flag"
 	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
+	"log"
 
-	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
+	"github.com/ethereum/go-ethereum/crypto"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
+	bip32 "github.com/tyler-smith/go-bip32"
+	"github.com/tyler-smith/go-bip39"
 )
 
 func main() {
-	// CLI flags
-	helpFlag := flag.Bool("help", false, "Display help")
-	envDocs := flag.Bool("env-docs", false, "Display environment variable docs")
-	createEPMFlag := flag.Bool("create-server-epm", false, "Create server EPM")
-	outputEPMFlag := flag.Bool("output-server-epm", false, "Output server EPM")
-	outputQRFlag := flag.Bool("qr", false, "Output server EPM as QR code")
-
-	flag.Parse()
-
-	// Help flag
-	if *helpFlag {
-		flag.Usage()
-		return
-	}
-
-	if *envDocs {
-		fmt.Print(`Environment Variables
-
-		- SPACE_DATA_NETWORK_DATASTORE_PASSWORD: Used to access the application's datastore. This is a critical security parameter, and it's recommended to set this in production environments.
-		- SPACE_DATA_NETWORK_DATASTORE_DIRECTORY: Specifies the filesystem path for the secure LevelDB storage. If not set, the application defaults to a directory named .spacedatanetwork in the user's home directory.
-		- SPACE_DATA_NETWORK_WEBSERVER_PORT: Port for the webserver to listen on.
-		- SPACE_DATA_NETWORK_CPUS: Number of CPUs to give to the webserver.
-		- SPACE_DATA_NETWORK_ETHEREUM_DERIVATION_PATH: BIP32 / BIP44 path to use for account. Defaults to: m/44'/60'/0'/0'/0. It's important to set this in environments that interact with the Ethereum blockchain.
-		
-		For more information, see https://spacedatanetwork.com
-			`)
-	}
-
-	// EPM related operations should be checked first and then exit if they are called
-	if *createEPMFlag {
-		nodepkg.CreateServerEPM()
-		return
-	}
-
-	if *outputEPMFlag {
-		nodepkg.ReadServerEPM(*outputQRFlag)
-		return
-	}
-
-	// If no other action flag is passed, proceed with running the node by default
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Initialize the Node
-	node, err := nodepkg.NewNode(ctx)
+	// Generate a mnemonic for a new wallet (or use an existing one)
+	entropy, err := bip39.NewEntropy(128)
 	if err != nil {
-		fmt.Printf("Error initializing node: %v\n", err)
-		os.Exit(1)
+		log.Fatalf("Error generating entropy: %v", err)
+	}
+	mnemonic, err := bip39.NewMnemonic(entropy)
+	if err != nil {
+		log.Fatalf("Error creating mnemonic: %v", err)
+	}
+	fmt.Println("Mnemonic:", mnemonic)
+
+	// Generate a seed from the mnemonic
+	seed := bip39.NewSeed(mnemonic, "")
+
+	// Generate a master key from the seed
+	masterKey, err := bip32.NewMasterKey(seed)
+	if err != nil {
+		log.Fatalf("Error generating master key: %v", err)
 	}
 
-	// Start the Node operations
-	if err := node.Start(ctx); err != nil {
-		fmt.Printf("Error starting node: %v\n", err)
-		os.Exit(1)
+	// Derive the path: m/44'/60'/0'/0/0 for Ethereum
+	derivationPath := []uint32{0x8000002C, 0x8000003C, 0x80000000, 0, 0}
+
+	var derivedKey *bip32.Key
+	for _, index := range derivationPath {
+		if derivedKey == nil {
+			derivedKey, err = masterKey.NewChildKey(index)
+		} else {
+			derivedKey, err = derivedKey.NewChildKey(index)
+		}
+		if err != nil {
+			log.Fatalf("Error deriving key at index %d: %v", index, err)
+		}
 	}
 
-	// Handle system interrupts for graceful shutdown
-	setupGracefulShutdown(ctx, node, cancel)
+	fmt.Println(derivedKey.Key)
 
-	// Wait here until the context is cancelled
-	<-ctx.Done()
-	fmt.Println("Node shutdown completed")
-}
+	// Convert the derived key to an ECDSA private key
+	privateKey, err := crypto.ToECDSA(derivedKey.Key)
+	if err != nil {
+		log.Fatalf("Error converting to ECDSA: %v", err)
+	}
 
-func setupGracefulShutdown(_ context.Context, node *nodepkg.Node, cancel context.CancelFunc) {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-c
-		fmt.Println("\nReceived shutdown signal, shutting down...")
-		node.Stop()
-		cancel()
-	}()
-}
+	// Generate the Ethereum address from the private key
+	address := crypto.PubkeyToAddress(privateKey.PublicKey)
+	fmt.Printf("Address: %s\n", address.Hex())
 
-func flagUsage() {
-	usageText := `
-Usage: main [options]
+	// Convert the ECDSA private key to libp2p's crypto.PrivateKey format
+	libp2pPrivKey, err := libp2pcrypto.UnmarshalSecp256k1PrivateKey(crypto.FromECDSA(privateKey))
+	if err != nil {
+		log.Fatalf("Error converting to libp2p private key: %v", err)
+	}
 
-Options:
-	-help                 Display this help message
-	-run                  Run the server node
-	-create-server-epm    Create server Entity Profile Message (EPM)
-	-output-server-epm    Output server Entity Profile Message (EPM)
-	-qr                   Output server EPM as QR code
-	-env-docs             Display environment variable docs
-	`
-	fmt.Println(usageText)
-}
-
-func init() {
-	flag.Usage = flagUsage
+	fmt.Println(libp2pPrivKey.Raw())
+	// Now you can use libp2pPrivKey within the libp2p ecosystem
+	fmt.Println("Successfully converted to libp2p private key")
 }
