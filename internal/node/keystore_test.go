@@ -1,6 +1,7 @@
 package node
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,6 +79,7 @@ func TestGetOrGeneratePrivateKey(t *testing.T) {
 
 	// Test generating a new key
 	wallet, signingAccount, encryptionAccount, privKey, err := keyStore.GetOrGeneratePrivateKey()
+	fmt.Println(wallet)
 	require.NotNil(t, wallet)
 	require.NotNil(t, signingAccount)
 	require.NotNil(t, encryptionAccount)
