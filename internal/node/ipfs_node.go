@@ -1,7 +1,6 @@
 package node
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -65,10 +64,7 @@ func (n *Node) AddFileFromBytes(ctx context.Context, data []byte) (path.Immutabl
 	var addedFile path.ImmutablePath
 
 	// Convert the byte array to a Reader
-	reader := bytes.NewReader(data)
-
-	// Create a ReaderFile from the byte reader
-	readerFile := files.NewReaderFile(reader)
+	f := files.NewBytesFile(data)
 
 	// Get the CoreAPI from the IpfsNode
 	api, err := coreapi.NewCoreAPI(n.IPFS)
@@ -77,7 +73,7 @@ func (n *Node) AddFileFromBytes(ctx context.Context, data []byte) (path.Immutabl
 	}
 
 	// Use the CoreAPI to add the file to IPFS
-	addedFile, err = api.Unixfs().Add(ctx, readerFile)
+	addedFile, err = api.Unixfs().Add(ctx, f)
 	if err != nil {
 		return addedFile, fmt.Errorf("failed to add file to IPFS: %w", err)
 	}

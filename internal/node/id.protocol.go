@@ -11,6 +11,7 @@ import (
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
+	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/secp256k1"
@@ -64,19 +65,41 @@ func RequestPNM(ctx context.Context, h host.Host, peerID peer.ID) error {
 	defer s.Close()
 
 	pnmBytes, _ := spacedatastandards_utils.ReadDataFromSource(ctx, s)
-	// Deserialize PNM from the stream.
-	pnm, err := spacedatastandards_utils.DeserializePNM(ctx, pnmBytes)
+
+	// Variables to hold deserialized data and values outside the closure
+	var pnm *PNM.PNM
+	var cid, ethSignature, publicKeyHex, filePath string
+	var panicErr error
+
+	// Use a deferred function to encapsulate panic recovery
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("Recovered from panic while deserializing PNM or accessing fields: %v\n", r)
+				panicErr = fmt.Errorf("panic occurred: %v", r)
+			}
+		}()
+
+		// Deserialize PNM from the stream.
+		pnm, err = spacedatastandards_utils.DeserializePNM(ctx, pnmBytes)
+		if err != nil {
+			panic(fmt.Errorf("failed to deserialize PNM: %v", err)) // Convert error to panic for recovery
+		}
+
+		// Access the PNM fields within the same deferred function.
+		cid = string(pnm.CID())
+		ethSignature = string(pnm.SIGNATURE()[2:])
+	}()
+	if panicErr != nil {
+		return panicErr // Return the captured panic error
+	}
 	if err != nil {
-		return fmt.Errorf("failed to deserialize PNM: %v", err)
+		return err // Return deserialization error if it occurred
 	}
 
-	// Access the PNM fields.
-	cid := string(pnm.CID())
-	ethSignature := string(pnm.SIGNATURE()[2:])
 	fmt.Printf("Received PNM from %s\n", peerID)
 	fmt.Printf("with CID: %s\n", cid)
 	fmt.Printf("ETH Signature: %s\n", ethSignature)
-	fmt.Println(config.Conf.Datastore.Directory)
 
 	hash := crypto.Keccak256Hash(pnm.CID())
 	fmt.Println(hash.Hex())
@@ -85,40 +108,38 @@ func RequestPNM(ctx context.Context, h host.Host, peerID peer.ID) error {
 
 	sigPublicKey, err := crypto.Ecrecover(hash.Bytes(), ethSignatureBytes)
 	if err != nil {
-		fmt.Println("Error Signature", err)
+		return fmt.Errorf("error Signature: %v", err)
 	}
 
-	pPubKey, _ := peerID.ExtractPublicKey()
+	pPubKey, err := peerID.ExtractPublicKey()
+	if err != nil {
+		return fmt.Errorf("error extracting public key: %v", err)
+	}
 
-	pPubKeyRaw, _ := pPubKey.Raw()
+	pPubKeyRaw, err := pPubKey.Raw()
+	if err != nil {
+		return fmt.Errorf("error getting raw public key: %v", err)
+	}
 
 	x, y := secp256k1.DecompressPubkey(pPubKeyRaw)
-
-	if bytes.Equal(append(x.Bytes(), y.Bytes()...), sigPublicKey[1:]) {
-		fmt.Println("Public keys match")
-
-		// Convert the public key (x, y) to hex with 0x prefix
-		publicKeyHex := "0x" + hex.EncodeToString(append(x.Bytes(), y.Bytes()...))
-
-		// Construct the directory path using the hex representation of the public key
-		directoryPath := filepath.Join(config.Conf.Datastore.Directory, "data", publicKeyHex, "PNM")
-
-		// Ensure the directory exists
-		if err := os.MkdirAll(directoryPath, 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %v", err)
-		}
-
-		// Define the full path to the new file using the CID as the filename
-		filePath := filepath.Join(directoryPath, cid)
-
-		// Save the PNM content to the file
-		// Assuming pnm.Content() gives you the content of the PNM
-		if err := os.WriteFile(filePath, pnmBytes, 0644); err != nil {
-			return fmt.Errorf("failed to write PNM to file: %v", err)
-		}
-
-		fmt.Printf("PNM saved successfully to %s\n", filePath)
+	if !bytes.Equal(append(x.Bytes(), y.Bytes()...), sigPublicKey[1:]) {
+		return fmt.Errorf("public keys do not match")
 	}
+
+	fmt.Println("Public keys match")
+
+	publicKeyHex = "0x" + hex.EncodeToString(append(x.Bytes(), y.Bytes()...))
+	directoryPath := filepath.Join(config.Conf.Datastore.Directory, "data", publicKeyHex, "PNM")
+	if err := os.MkdirAll(directoryPath, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %v", err)
+	}
+
+	filePath = filepath.Join(directoryPath, cid)
+	if err := os.WriteFile(filePath, pnmBytes, 0644); err != nil {
+		return fmt.Errorf("failed to write PNM to file: %v", err)
+	}
+
+	fmt.Printf("PNM saved successfully to %s\n", filePath)
 
 	return nil
 }
