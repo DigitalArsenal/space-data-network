@@ -6,16 +6,19 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
+	files "github.com/ipfs/boxo/files"
+	boxoPath "github.com/ipfs/boxo/path"
+	"github.com/ipfs/kubo/core/coreapi"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/secp256k1"
-	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
@@ -56,7 +59,10 @@ func (n *Node) handlePNMExchange(s network.Stream) {
 	s.Close()
 }
 
-func RequestPNM(ctx context.Context, h host.Host, peerID peer.ID) error {
+func RequestPNM(ctx context.Context, n *Node, peerID peer.ID) error {
+
+	h := n.Host
+
 	fmt.Printf("Requesting PNM from %s\n", peerID)
 	s, err := h.NewStream(ctx, peerID, IDExchangeProtocol)
 	if err != nil {
@@ -140,6 +146,40 @@ func RequestPNM(ctx context.Context, h host.Host, peerID peer.ID) error {
 	}
 
 	fmt.Printf("PNM saved successfully to %s\n", filePath)
+
+	// Prepend '/ipfs/' to the CID to form a valid IPFS path
+	ipfsPath := fmt.Sprintf("/ipfs/%s", cid)
+	fmt.Printf("Downloading content from IPFS for CID: %s\n", ipfsPath)
+
+	// Create a new path object using the full IPFS path
+	path, err := boxoPath.NewPath(ipfsPath)
+	if err != nil {
+		return fmt.Errorf("failed to parse IPFS path: %v", err)
+	}
+
+	// Initialize the CoreAPI instance
+	api, err := coreapi.NewCoreAPI(n.IPFS)
+	if err != nil {
+		return fmt.Errorf("failed to create IPFS CoreAPI instance: %v", err)
+	}
+
+	// Use the CoreAPI to get the content from the specified path
+	rootNode, err := api.Unixfs().Get(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to fetch content from IPFS: %v", err)
+	}
+
+	file, ok := rootNode.(files.File)
+	if !ok {
+		return fmt.Errorf("fetched IPFS node is not a file")
+	}
+
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return fmt.Errorf("failed to read content from IPFS file: %v", err)
+	}
+
+	fmt.Printf("Content fetched from IPFS:\n%s\n", string(content))
 
 	return nil
 }

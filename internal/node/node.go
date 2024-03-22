@@ -125,8 +125,9 @@ func NewNode(ctx context.Context) (*Node, error) {
 			func(ctx context.Context, _ int) <-chan peer.AddrInfo {
 				return node.peerChan
 			},
-			autorelay.WithMinInterval(1)),
+			autorelay.WithMinInterval(0)),
 	)
+
 	if err != nil {
 		return node, fmt.Errorf("failed to create libp2p host: %w", err)
 	}

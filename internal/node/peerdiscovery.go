@@ -123,7 +123,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 				}
 				fmt.Printf("Connected to: %s\n", peer.ID)
 				// Request PNM from the connected DHT peer
-				if err := RequestPNM(ctx, h, peer.ID); err != nil {
+				if err := RequestPNM(ctx, n, peer.ID); err != nil {
 					fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
 					continue
 				}
@@ -144,7 +144,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 			fmt.Printf("Connected to mDNS peer: %s\n", pi.ID)
 
 			// Request PNM from the connected mDNS peer
-			if err := RequestPNM(ctx, h, pi.ID); err != nil {
+			if err := RequestPNM(ctx, n, pi.ID); err != nil {
 				fmt.Printf("Failed to request PNM from %s: %v\n", pi.ID, err)
 				continue
 			}
