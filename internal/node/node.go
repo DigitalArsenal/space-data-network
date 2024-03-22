@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"time"
 
 	configs "github.com/DigitalArsenal/space-data-network/configs"
+	"github.com/cenkalti/backoff"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ipfs/kubo/config"
 	"github.com/ipfs/kubo/core"
@@ -39,31 +41,52 @@ type Node struct {
 	signingAccount    accounts.Account
 	encryptionAccount accounts.Account
 	IPFS              *core.IpfsNode
+	peerChan          chan peer.AddrInfo
 }
 
 // autoRelayPeerSource returns a function that provides peers for auto-relay.
-func(ctx context.Context, numPeers int) <-chan peer.AddrInfo {
-	// TODO(9257): make this code smarter (have a state and actually try to grow the search outward) instead of a long running task just polling our K cluster.
-	r := make(chan peer.AddrInfo)
+func autoRelayFeeder(ctx context.Context, h host.Host, dht *dht.IpfsDHT, peerChan chan<- peer.AddrInfo) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovering from unexpected error in AutoRelayFeeder:", r)
+			debug.PrintStack()
+		}
+	}()
 	go func() {
-		defer close(r)
-		for ; numPeers != 0; numPeers-- {
+		// Feed peers more often right after the bootstrap, then backoff
+		bo := backoff.NewExponentialBackOff()
+		bo.InitialInterval = 15 * time.Second
+		bo.Multiplier = 3
+		bo.MaxInterval = 1 * time.Hour
+		bo.MaxElapsedTime = 0 // never stop
+		t := backoff.NewTicker(bo)
+		defer t.Stop()
+		for {
 			select {
-			case v, ok := <-peerChan:
-				if !ok {
-					return
-				}
-				select {
-				case r <- v:
-				case <-ctx.Done():
-					return
-				}
+			case <-t.C:
 			case <-ctx.Done():
 				return
 			}
+
+			closestPeers, err := dht.GetClosestPeers(ctx, h.ID().String())
+			if err != nil {
+				// no-op: usually 'failed to find any peer in table' during startup
+				continue
+			}
+			for _, p := range closestPeers {
+				addrs := h.Peerstore().Addrs(p)
+				if len(addrs) == 0 {
+					continue
+				}
+				dhtPeer := peer.AddrInfo{ID: p, Addrs: addrs}
+				select {
+				case peerChan <- dhtPeer:
+				case <-ctx.Done():
+					return
+				}
+			}
 		}
 	}()
-	return r
 }
 
 func NewNode(ctx context.Context) (*Node, error) {
@@ -82,6 +105,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 	if err != nil {
 		return node, fmt.Errorf("failed to get private key: %w", err)
 	}
+	node.peerChan = make(chan peer.AddrInfo, 100) // Buffer to avoid blocking
 
 	node.Host, err = libp2p.New(
 		libp2p.Identity(privKey),
@@ -95,14 +119,18 @@ func NewNode(ctx context.Context) (*Node, error) {
 		libp2p.Transport(quic.NewTransport),
 		libp2p.Transport(webtransport.New),
 		libp2p.NATPortMap(),
+		libp2p.EnableRelay(),
 		libp2p.EnableHolePunching(),
 		libp2p.EnableAutoRelayWithPeerSource(
-			autoRelayPeerSource,
+			func(ctx context.Context, _ int) <-chan peer.AddrInfo {
+				return node.peerChan
+			},
 			autorelay.WithMinInterval(1)),
 	)
 	if err != nil {
 		return node, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
+
 	fmt.Println("Node PeerID: ", node.Host.ID())
 
 	customHostOption := func(id peer.ID, ps peerstore.Peerstore, options ...libp2p.Option) (host.Host, error) {
@@ -180,7 +208,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 	datastoreConfig := config.Datastore{
 		StorageMax:         "10GB",
 		StorageGCWatermark: 90,
-		GCPeriod:           "1h",
+		GCPeriod:           "1h", // Example, set according to your needs
 		Spec:               datastoreSpec,
 		HashOnRead:         false, // Default setting
 		BloomFilterSize:    0,     // Default setting
@@ -256,6 +284,8 @@ func (n *Node) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize DHT: %w", err)
 	}
 
+	//Start auto relay
+	autoRelayFeeder(ctx, n.Host, n.DHT, n.peerChan)
 	go discoverPeers(ctx, n, "space-data-network", 30*time.Second)
 
 	ipnsCID, err := n.PublishIPNSRecord(ctx, newCID.String())
