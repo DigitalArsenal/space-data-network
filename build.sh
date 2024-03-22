@@ -1,5 +1,35 @@
 #!/bin/bash
 
+HOSTS=("root@Tokyo2" "root@deathstar")
+REMOTE_PATH="/opt/software/space-data-network/space-data-network"
+LOCAL_PATH="./tmp/main"
+TIMESTAMP_FILE="./tmp/last_post_build_run"
+
+deploy_and_restart() {
+    # Define the remote hosts and the path to the executable
+
+    # Define the start and stop commands for your service
+    # Replace these with the actual commands you use to start/stop your executable
+    STOP_COMMAND="systemctl stop space-data-network"
+    START_COMMAND="systemctl start space-data-network"
+
+    # Loop through each host and perform the operations
+    for HOST in "${HOSTS[@]}"; do
+        echo "Stopping service on ${HOST}..."
+        ssh ${HOST} "${STOP_COMMAND}"
+
+        echo "Transferring executable to ${HOST}..."
+        scp $LOCAL_PATH ${HOST}:${REMOTE_PATH}
+
+        echo "Starting service on ${HOST}..."
+        ssh ${HOST} "${START_COMMAND}"
+
+        echo "Operation completed on ${HOST}."
+    done
+
+    echo "All done."
+}
+
 # Detect the operating system
 UNAME_S=$(uname -s)
 
@@ -21,29 +51,24 @@ TIMESTAMP_FILE="./tmp/last_post_build_run"
 CURRENT_TIMESTAMP=$(date +%s)
 
 # Execute post-build script if it exists and if the most recent run was more than 30 seconds ago
-if [ -f ./scripts/post-build ]; then
-    # Check if timestamp file exists
-    if [ -f "$TIMESTAMP_FILE" ]; then
-        # Read the last run timestamp
-        LAST_RUN_TIMESTAMP=$(cat $TIMESTAMP_FILE)
+# Check if timestamp file exists
+if [ -f "$TIMESTAMP_FILE" ]; then
+    # Read the last run timestamp
+    LAST_RUN_TIMESTAMP=$(cat $TIMESTAMP_FILE)
 
-        # Calculate the time difference
-        TIME_DIFF=$((CURRENT_TIMESTAMP - LAST_RUN_TIMESTAMP))
+    # Calculate the time difference
+    TIME_DIFF=$((CURRENT_TIMESTAMP - LAST_RUN_TIMESTAMP))
 
-        # Check if time has passed since the last run
-        if [ "$TIME_DIFF" -gt 120 ]; then
-            bash ./scripts/post-build
-            bash ./build_dist.sh &
-            echo $CURRENT_TIMESTAMP >$TIMESTAMP_FILE
-        else
-            echo "Post-build script last run less than 2 minutes ago, skipping..."
-        fi
-    else
-        # If timestamp file does not exist, run the script and create the file
-        bash ./scripts/post-build
-        bash ./build_dist.sh &
+    # Check if time has passed since the last run
+    if [ "$TIME_DIFF" -gt 120 ]; then
+        deploy_and_restart
         echo $CURRENT_TIMESTAMP >$TIMESTAMP_FILE
+    else
+        echo "Post-build script last run less than 2 minutes ago, skipping..."
     fi
 else
-    echo 'No post-build script found, skipping'
+    # If timestamp file does not exist, run the script and create the file
+    deploy_and_restart
+    echo $CURRENT_TIMESTAMP >$TIMESTAMP_FILE
 fi
+#!/bin/bash

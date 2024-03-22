@@ -16,15 +16,19 @@ import (
 	"github.com/ipfs/kubo/repo/fsrepo"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
-
-	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
-
-	noise "github.com/libp2p/go-libp2p/p2p/security/noise"
+	"github.com/libp2p/go-libp2p/p2p/security/noise"
+	tls "github.com/libp2p/go-libp2p/p2p/security/tls"
+	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
+	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
+	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
+
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 )
 
 type Node struct {
@@ -38,12 +42,9 @@ type Node struct {
 }
 
 // autoRelayPeerSource returns a function that provides peers for auto-relay.
-func autoRelayPeerSource(ctx context.Context, numPeers int) <-chan peer.AddrInfo {
-
-	peerChan := make(chan peer.AddrInfo)
-
+func(ctx context.Context, numPeers int) <-chan peer.AddrInfo {
+	// TODO(9257): make this code smarter (have a state and actually try to grow the search outward) instead of a long running task just polling our K cluster.
 	r := make(chan peer.AddrInfo)
-
 	go func() {
 		defer close(r)
 		for ; numPeers != 0; numPeers-- {
@@ -62,9 +63,7 @@ func autoRelayPeerSource(ctx context.Context, numPeers int) <-chan peer.AddrInfo
 			}
 		}
 	}()
-
 	return r
-
 }
 
 func NewNode(ctx context.Context) (*Node, error) {
@@ -86,14 +85,20 @@ func NewNode(ctx context.Context) (*Node, error) {
 
 	node.Host, err = libp2p.New(
 		libp2p.Identity(privKey),
-		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
 		libp2p.EnableNATService(),
 		libp2p.EnableRelay(),
+		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0", "/ip6/::/tcp/0"),
+		libp2p.Security(noise.ID, noise.New),
+		libp2p.Security(tls.ID, tls.New),
+		libp2p.Transport(tcp.NewTCPTransport, tcp.WithMetrics()),
+		libp2p.Transport(websocket.New),
+		libp2p.Transport(quic.NewTransport),
+		libp2p.Transport(webtransport.New),
+		libp2p.NATPortMap(),
 		libp2p.EnableHolePunching(),
 		libp2p.EnableAutoRelayWithPeerSource(
 			autoRelayPeerSource,
 			autorelay.WithMinInterval(1)),
-		libp2p.Security(noise.ID, noise.New),
 	)
 	if err != nil {
 		return node, fmt.Errorf("failed to create libp2p host: %w", err)
@@ -173,9 +178,9 @@ func NewNode(ctx context.Context) (*Node, error) {
 	}
 
 	datastoreConfig := config.Datastore{
-		StorageMax:         "10GB", // Example, set according to your needs
-		StorageGCWatermark: 90,     // Example, set according to your needs
-		GCPeriod:           "1h",   // Example, set according to your needs
+		StorageMax:         "10GB",
+		StorageGCWatermark: 90,
+		GCPeriod:           "1h",
 		Spec:               datastoreSpec,
 		HashOnRead:         false, // Default setting
 		BloomFilterSize:    0,     // Default setting
