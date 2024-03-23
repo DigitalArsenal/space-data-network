@@ -2,6 +2,22 @@
 
 A Peer-to-Peer Network for Collaborative Space Data Exchange, based on [LibP2P](https://libp2p.io) and utilizing [Google Flatbuffers](https://flatbuffers.dev/) through schemas maintained at the [Space Data Standards](https://spacedatastandards.org) project.
 
+## CLI Options
+
+The application supports several CLI options that allow you to control its behavior and access various functionalities:
+
+-help: Display a detailed help message outlining all the available CLI options.
+
+-version: Display the current version of the Space Data Network application.
+
+-create-server-epm: Create a server Entity Profile Message (EPM), a unique identifier for your node within the network.
+
+-output-server-epm: Output the server's Entity Profile Message (EPM) to the console. Use in conjunction with -qr to output as a QR code.
+
+-qr: When used with -output-server-epm, outputs the server EPM as a QR code for easy sharing and scanning.
+
+-env-docs: Display documentation for environment variables that the application uses for configuration.
+
 ## Environment Variables
 
 The application can be configured using the following environment variables:
@@ -14,7 +30,7 @@ The application can be configured using the following environment variables:
 
 - `SPACE_DATA_NETWORK_CPUS`: Number of CPUs to give to the webserver
 
-- `SPACE_DATA_NETWORK_ETHEREUM_DERIVATION_PATH`: BIP32 / BIP44 path to use for account.  Defaults to: `m/44'/60'/0'/0/0`.  
+- `SPACE_DATA_NETWORK_ETHEREUM_DERIVATION_PATH`: BIP32 / BIP44 path to use for account. Defaults to: `m/44'/60'/0'/0/0`.
 
 ## License
 
