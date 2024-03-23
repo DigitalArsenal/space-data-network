@@ -12,6 +12,7 @@ import (
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
+	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
 	files "github.com/ipfs/boxo/files"
 	boxoPath "github.com/ipfs/boxo/path"
@@ -179,7 +180,31 @@ func RequestPNM(ctx context.Context, n *Node, peerID peer.ID) error {
 		return fmt.Errorf("failed to read content from IPFS file: %v", err)
 	}
 
-	fmt.Printf("Content fetched from IPFS:\n%s\n", string(content))
+	peerEPM, _ := spacedatastandards_utils.DeserializeEPM(ctx, content)
+
+	keysLen := peerEPM.KEYSLength() // Retrieve the number of keys
+
+	for i := 0; i < keysLen; i++ {
+		key := new(EPM.CryptoKey)
+		if peerEPM.KEYS(key, i) { // Assuming KEYS method populates the 'key' and returns a boolean for success
+			keyType := key.KEY_TYPE()
+			keyHex := key.PUBLIC_KEY()
+			if keyHex != nil {
+				var domain string
+				if keyType == EPM.KeyTypeSigning {
+					domain = "signing.digitalarsenal.io"
+				} else if keyType == EPM.KeyTypeEncryption {
+					domain = "encryption.digitalarsenal.io"
+				}
+
+				// Assuming keyHex needs to be converted to a string
+				email := fmt.Sprintf("%s@%s", keyHex, domain)
+				fmt.Println(email) // Print out the email or add it to a list
+			}
+		}
+	}
+
+	fmt.Println(peerEPM.KEYSLength())
 
 	return nil
 }

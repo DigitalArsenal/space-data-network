@@ -92,14 +92,14 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 
 	ticker = time.NewTicker(discoveryInterval)
 	defer ticker.Stop()
-
+	printTicker := time.NewTicker(discoveryInterval * 10)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			fmt.Println("Stopping peer discovery due to context cancellation")
 			return
 		case <-ticker.C:
-			fmt.Println("Searching for peers...")
 			peerChan, err := routingDiscovery.FindPeers(ctx, channelName)
 			if err != nil {
 				panic(err)
@@ -130,7 +130,8 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 
 				processAndMarkPeer(peer, &mutex, d)
 			}
-
+		case <-printTicker.C:
+			fmt.Println("Searching for peers...")
 		case pi := <-discoveredPeersChan: // Handle peers discovered via mDNS
 			fmt.Printf("mDNS discovered peer: %s\n", pi.ID)
 

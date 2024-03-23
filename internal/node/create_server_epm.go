@@ -303,7 +303,7 @@ func generateAndDisplayQRCode(content string) {
 		WhiteBlackChar: qrterminal.WHITE_BLACK,
 		WhiteChar:      qrterminal.WHITE_WHITE,
 		BlackWhiteChar: qrterminal.BLACK_WHITE,
-		QuietZone:      1,
+		QuietZone:      0,
 	}
 
 	fmt.Println("QR code:")

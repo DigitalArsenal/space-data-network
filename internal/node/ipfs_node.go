@@ -117,3 +117,43 @@ func (n *Node) PublishIPNSRecord(ctx context.Context, ipfsPathString string) (st
 	// Since the IPNS record might not directly give us a CID, we return the whole path
 	return ipnsPath.String(), nil
 }
+
+func (n *Node) AddFolderToIPNS(ctx context.Context, folderPath string) (string, error) {
+	// Get the CoreAPI from the IpfsNode
+	api, err := coreapi.NewCoreAPI(n.IPFS)
+	if err != nil {
+		return "", fmt.Errorf("failed to get core API: %w", err)
+	}
+
+	// Stat the directory to get the FileInfo
+	stat, err := os.Stat(folderPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat folder: %w", err)
+	}
+
+	// Create a SerialFile for the directory
+	folderFiles, err := files.NewSerialFile(folderPath, false, stat)
+	if err != nil {
+		return "", fmt.Errorf("failed to create serial file for folder: %w", err)
+	}
+
+	// Add the directory to IPFS
+	folderCid, err := api.Unixfs().Add(ctx, folderFiles)
+	if err != nil {
+		return "", fmt.Errorf("failed to add folder to IPFS: %w", err)
+	}
+
+	// Pin the directory CID to ensure it remains on the node
+	if err := api.Pin().Add(ctx, folderCid); err != nil {
+		return "", fmt.Errorf("failed to pin folder CID: %w", err)
+	}
+
+	// Publish the directory CID to IPNS
+	ipnsPath, err := n.PublishIPNSRecord(ctx, folderCid.String())
+	if err != nil {
+		return "", fmt.Errorf("failed to publish folder CID to IPNS: %w", err)
+	}
+
+	fmt.Printf("Folder published to IPNS at path: %s\n", ipnsPath)
+	return ipnsPath, nil
+}

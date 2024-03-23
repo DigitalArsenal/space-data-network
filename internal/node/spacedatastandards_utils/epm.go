@@ -41,6 +41,8 @@ func CreateEPM(
 
 	spk, _ := wallet.PublicKeyHex(signingAccount)
 	epk, _ := wallet.PublicKeyHex(encryptionAccount)
+	spk = "0x" + spk
+	epk = "0x" + epk
 
 	// Key accounts
 	signingPublicKeyOffset := builder.CreateString(spk)
