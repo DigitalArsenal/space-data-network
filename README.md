@@ -2,6 +2,18 @@
 
 A Peer-to-Peer Network for Collaborative Space Data Exchange, based on [LibP2P](https://libp2p.io) and utilizing [Google Flatbuffers](https://flatbuffers.dev/) through schemas maintained at the [Space Data Standards](https://spacedatastandards.org) project.
 
+## Key Features
+
+- **Immediate Peer-to-Peer Data Exchange**: Users can engage in secure data exchange directly, without the need for intermediary APIs, complex firewall setups, or dedicated web servers. The platform supports a simple executable download or the use of an official Docker container.
+
+- **Resilient Storage and Access**: By utilizing the users' own filesystems, SDN ensures that data is not only accessible but also securely encrypted at rest and in transit, reinforcing data integrity and confidentiality.
+
+- **Decentralized Infrastructure**: At the heart of SDN is a peer-to-peer data exchange mechanism, underpinned by the robust InterPlanetary File System (IPFS) and Amino for peer discovery through the IPFS Distributed Hash Table (DHT).
+
+- **Seamless and Secure User Interactions**: With Ethereum keys integrated into IPFS, SDN offers a simplified yet secure framework for user interactions and data sharing, eliminating the redundancy of managing separate accounts and keys for different data sources.
+
+- **Digital Identity Creation**: Utilizing IPNS (InterPlanetary Naming System) and ENS (Ethereum Name Service), SDN allows data providers to establish and share their digital identities effortlessly across the network.
+
 ## CLI Options
 
 The application supports several CLI options that allow you to control its behavior and access various functionalities:
