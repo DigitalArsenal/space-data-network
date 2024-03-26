@@ -48,4 +48,9 @@ ssh ${HOST} "mkdir -p ${REMOTE_TARGET_PATH}"
 echo "Transferring 'dist' folder to ${HOST}:${REMOTE_TARGET_PATH}..."
 scp -r ./dist/* ${HOST}:${REMOTE_TARGET_PATH}/
 
+cp -rf ./dist ../space-data-network/
+cd ../space-data-network
+git add -A 
+git commit -m 'updates'
+git push
 echo "Upload to ${HOST} completed."

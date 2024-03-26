@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	configs "github.com/DigitalArsenal/space-data-network/configs"
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
 )
 
@@ -18,6 +19,7 @@ func main() {
 	createEPMFlag := flag.Bool("create-server-epm", false, "Create server EPM")
 	outputEPMFlag := flag.Bool("output-server-epm", false, "Output server EPM")
 	outputQRFlag := flag.Bool("qr", false, "Output server EPM as QR code")
+	versionFlag := flag.Bool("version", false, "Display the version")
 
 	flag.Parse()
 
@@ -38,6 +40,13 @@ func main() {
 		
 		For more information, see https://spacedatanetwork.com
 			`)
+	}
+
+	// Version flag
+	if *versionFlag {
+		configs.Init() // Make sure configuration is initialized and version is loaded
+		fmt.Println("Version:", configs.Conf.Info.Version)
+		return
 	}
 
 	// EPM related operations should be checked first and then exit if they are called
@@ -93,6 +102,7 @@ Usage: main [options]
 
 Options:
 	-help                 Display this help message
+	-version			  Display the version
 	-run                  Run the server node
 	-create-server-epm    Create server Entity Profile Message (EPM)
 	-output-server-epm    Output server Entity Profile Message (EPM)

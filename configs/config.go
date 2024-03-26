@@ -1,7 +1,8 @@
 package config
 
 import (
-	"encoding/hex"
+	"embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -10,8 +11,12 @@ import (
 	"strconv"
 	"sync"
 
+	crypto_utils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
 	"golang.org/x/crypto/argon2"
 )
+
+//go:embed manifest.json
+var versionFile embed.FS
 
 var once sync.Once
 
@@ -22,6 +27,11 @@ type datastoreConfig struct {
 
 type webserverConfig struct {
 	Port int
+}
+
+type Info struct {
+	Version string `json:"version"`
+	// Other properties from manifest.json can be added here.
 }
 
 type keyConfig struct {
@@ -39,6 +49,7 @@ type AppConfig struct {
 	Webserver webserverConfig
 	KeyConfig keyConfig
 	Keys      keys
+	Info      Info
 }
 
 // Conf is the exported variable that will hold all the configuration settings
@@ -47,6 +58,18 @@ var Conf AppConfig
 // Init initializes the global configuration
 func Init() {
 	once.Do(func() {
+
+		// Parse the version from manifest.json
+		var versionInfo Info
+		data, err := versionFile.ReadFile("manifest.json")
+		if err != nil {
+			log.Fatalf("Failed to read version file: %v", err)
+		}
+		if err := json.Unmarshal(data, &versionInfo); err != nil {
+			log.Fatalf("Failed to parse version info: %v", err)
+		}
+		Conf.Info = versionInfo
+
 		// Webserver settings
 		var webserverPortStr string
 		flag.StringVar(&webserverPortStr, "webserver.port", "4000", "Port for the webserver to listen on")
@@ -96,11 +119,16 @@ func Init() {
 			Conf.Datastore.Password = password
 		} else {
 
+			salt, err := crypto_utils.GenerateSalt(32)
+			if err != nil {
+				panic("could not generate salt")
+			}
+
 			hostname, _ := os.Hostname()
 			homeDir, _ := os.UserHomeDir()
 
 			input := fmt.Sprintf("%s:%s", homeDir, hostname)
-			Conf.Datastore.Password = hex.EncodeToString(argon2.IDKey([]byte(input), []byte("some_salt"), 1, 64*1024, 4, 32))
+			Conf.Datastore.Password = string(argon2.IDKey([]byte(input), salt, 1, 64*1024, 4, 32))
 
 		}
 

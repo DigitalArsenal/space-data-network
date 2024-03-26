@@ -8,42 +8,19 @@
   - [x] Use all transports (tcp, websockets, etc)
   - [x] Use all discovery methods
   - [x] Use dht and identity services (in case bootstrap nodes are down / unreachable)
-- [ ] Discovery other nodes in data network
-  - [x] Discoverable through 'data-network' DHT key
-  - [x] Publish time added to PNM, signed by publisher !!!!!!!!!!!!!!
-  - [ ] Exchange EPMs for servers
-    - [ ] Each EPM is placed in the data directory / public key subdirectory / file type, file name is the CID of the EPM
-    - [ ] Once written, digitally sign it and create a PNM, stored in the same way, file name includes EPM CID
-  - [ ] Have EPMs advertise services (need to modify for this)
-  - [ ] Exchange peerID and encryption xpub (control vs comms)
-  - [ ] Node discovery channel for "global" network
-- [ ] PubSub
-  - [ ] Multiaddr and ETH digital signature sent over channel using the Publish Notification Message (PNM)
-  - [ ] PNM stored as proof of signature in storage adapter
-- [ ] User Interface
-  - [ ] HTTP or libp2p access to node
-  - [ ] Takes JSON or Flatbuffer input
-  - [ ] Converts JSON to flatbuffer, returns flatbuffer if JSON input
-  - [ ] Pick messages to store based on producer, message type, and limit
-- [ ] Storage adapter
-  - [ ] IPFS storage adapter using external IPFS node
-  - [ ] Other storage adapters will accept messages using pubsub interface
-  - [ ] Implement libp2p [MessageCache](https://github.com/ChainSafe/js-libp2p-gossipsub/blob/f255ae4907ea1eb64272b27534794d6b8be1321d/src/message-cache.ts#L26)
-- [ ] Identity management
-  - [ ] Use SpaceDataStandards.org EPM
-  - [ ] Have 'publish to global' option, sent to IPFS
-- [ ] Set up channels per provider
-- [ ] Request management
-  - [ ] Send a request for service (XXX)
-  - [ ] Get a response with new channel name for service (XXX)
-  - [ ] Have node (or node provider) sub to channel
-  - [ ] Send Publish Notification Message or actual data message to channel
-- [ ] Custom packaging
-  - [ ] Cut custom executables with config for each customer, with xpub
-- [ ] Versioning
-  - [ ] Expanse-based!
-  - [ ] Use SDS versioning, also for advertising for network, so those that don't update age out
-  
+- [ ] Versioning with version string for Advertise
+- [ ] Export / Import private key
+- [ ] Self-updating binary
+- [ ] Publish folder with vcf, QR image, index.html (editable)
+- [ ] Pin settings
+  - [ ] Pin other EPM, only mandatory pin
+  - [ ] Have pin interface for adding pins based on key, message type, size? number? how recent?  
+- [ ] Programs interface
+  - [ ] List of keys in program
+  - [ ] Set up folder structure, program then subfolder for keys
+  - [ ] Have direct dial protocols for clients to get their encrypted files
+- [ ] Remove musl-gcc dependency
+
 ## Marketing
 
 - [ ] Realtime

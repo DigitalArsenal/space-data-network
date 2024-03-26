@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
+	"golang.org/x/crypto/argon2"
 
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 )
@@ -217,7 +219,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 
 	// Use the identity in your IPFS config
 	cfg := &config.Config{
-		Identity:  identity, // Assuming 'identity' is already defined
+		Identity:  identity,
 		Datastore: datastoreConfig,
 		Ipns: config.Ipns{
 			UsePubsub: config.True,
@@ -288,6 +290,10 @@ func (n *Node) Start(ctx context.Context) error {
 	//Start auto relay
 	autoRelayFeeder(ctx, n.Host, n.DHT, n.peerChan)
 	go discoverPeers(ctx, n, "space-data-network", 30*time.Second)
+	//Find others with the same version
+	versionHex := []byte(configs.Conf.Info.Version)
+	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
+	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
 	ipnsCID, err := n.PublishIPNSRecord(ctx, newCID.String())
 	if err != nil {
