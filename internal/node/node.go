@@ -243,6 +243,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 		Host:      customHostOption,
 		Repo:      repo,
 	})
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IPFS node: %w", err)
 	}
@@ -277,8 +278,8 @@ func (n *Node) Start(ctx context.Context) error {
 
 	newCID, _ := n.AddFileFromBytes(ctx, vepm)
 
-	fmt.Println("ADDED CID FOR EPM: ")
-	fmt.Println(newCID)
+	//fmt.Println("ADDED CID FOR EPM: ")
+	//fmt.Println(newCID)
 
 	SetupPNMExchange(n)
 
@@ -295,11 +296,11 @@ func (n *Node) Start(ctx context.Context) error {
 	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
-	ipnsCID, err := n.PublishIPNSRecord(ctx, newCID.String())
+	_, err = n.PublishIPNSRecord(ctx, newCID.String())
 	if err != nil {
 		return fmt.Errorf("failed to publish CID to IPNS: %w", err)
 	}
-	fmt.Println("NEW IPNS CID:", ipnsCID)
+	//fmt.Println("NEW IPNS CID:", ipnsCID)
 
 	return nil
 }
@@ -324,23 +325,3 @@ func (n *Node) Stop() {
 	}
 	fmt.Println("Node stopped successfully.")
 }
-
-/*ps, err := pubsub.NewGossipSub(ctx, n.Host)
-if err != nil {
-	return fmt.Errorf("failed to initialize PubSub: %w", err)
-}
-
-	topic, err := ps.Join("space-data-network")
-	if err != nil {
-		return fmt.Errorf("failed to join topic 'space-data-network': %w", err)
-	}
-
-	go streamConsoleTo(ctx, topic)
-
-	sub, err := topic.Subscribe()
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to topic: %w", err)
-	}
-
-	go printMessagesFrom(ctx, sub)
-*/

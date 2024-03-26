@@ -85,7 +85,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 	mdnsService := mdns.NewMdnsService(h, "space-data-network-mdns", notifee)
 	go func() {
 		if err := mdnsService.Start(); err != nil {
-			fmt.Println("Failed to start mDNS service:", err)
+			//fmt.Println("Failed to start mDNS service:", err)
 		}
 	}()
 	defer mdnsService.Close()
@@ -97,7 +97,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Println("Stopping peer discovery due to context cancellation")
+			//fmt.Println("Stopping peer discovery due to context cancellation")
 			return
 		case <-ticker.C:
 			peerChan, err := routingDiscovery.FindPeers(ctx, channelName)
@@ -118,20 +118,20 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 					continue
 				}
 
-				for _, addr := range peer.Addrs {
+				/*for _, addr := range peer.Addrs {
 					fmt.Printf("\t%s/p2p/%s\n", addr, peer.ID)
 				}
-				fmt.Printf("Connected to: %s\n", peer.ID)
+				fmt.Printf("Connected to: %s\n", peer.ID)*/
 				// Request PNM from the connected DHT peer
 				if err := RequestPNM(ctx, n, peer.ID); err != nil {
 					fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
 					continue
 				}
 
-				processAndMarkPeer(peer, &mutex, d)
+				processAndMarkPeer(peer, &mutex)
 			}
 		case <-printTicker.C:
-			fmt.Println("Searching for peers...")
+			//fmt.Println("Searching for peers...")
 		case pi := <-discoveredPeersChan: // Handle peers discovered via mDNS
 			fmt.Printf("mDNS discovered peer: %s\n", pi.ID)
 
@@ -150,7 +150,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 				continue
 			}
 
-			processAndMarkPeer(pi, &mutex, d)
+			processAndMarkPeer(pi, &mutex)
 		}
 	}
 }
@@ -162,7 +162,7 @@ func alreadyContacted(peerID peer.ID, mutex *sync.Mutex) bool {
 	return contacted
 }
 
-func processAndMarkPeer(peer peer.AddrInfo, mutex *sync.Mutex, dht *dht.IpfsDHT) {
+func processAndMarkPeer(peer peer.AddrInfo, mutex *sync.Mutex) {
 	mutex.Lock()
 	defer mutex.Unlock()
 

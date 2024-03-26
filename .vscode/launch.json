@@ -9,7 +9,7 @@
       "type": "go",
       "request": "launch",
       "mode": "auto",
-      "program": "${fileDirname}",
+      "program": "${fileDirname}/../cmd/node/main.go",
       "env": {
         "CGO_CFLAGS": "-g -O2 -Wno-return-local-addr"
       }

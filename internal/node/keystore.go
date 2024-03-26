@@ -59,7 +59,7 @@ func NewKeyStore(password string, customPaths ...string) (*KeyStore, error) {
 	}
 
 	// Open the database with the resolved path
-	db, err := sql.Open("sqlite", fmt.Sprintf("%s?_pragma_key=%s", dbPath, password))
+	db, err := sql.Open("sqlite", fmt.Sprintf(""))
 	if err != nil {
 		return nil, err
 	}
