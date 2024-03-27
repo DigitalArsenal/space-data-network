@@ -5,18 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"os"
-	"path/filepath"
 	"runtime/debug"
 	"time"
 
 	configs "github.com/DigitalArsenal/space-data-network/configs"
 	"github.com/cenkalti/backoff"
 	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ipfs/kubo/config"
 	"github.com/ipfs/kubo/core"
-	"github.com/ipfs/kubo/plugin/loader"
-	"github.com/ipfs/kubo/repo/fsrepo"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -98,16 +93,11 @@ func NewNode(ctx context.Context) (*Node, error) {
 
 	var err error
 
-	node.KeyStore, err = NewKeyStore(configs.Conf.Datastore.Password)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize key store: %w", err)
-	}
+	repo, privKey, encPrivKey, err := LoadOrCreateIPFSRepo(ctx)
 
-	wallet, signingAccount, encryptionAccount, privKey, err := node.KeyStore.GetOrGeneratePrivateKey()
 	if err != nil {
-		return node, fmt.Errorf("failed to get private key: %w", err)
+		return nil, fmt.Errorf("failed to load or create IPFS repo: %w", err)
 	}
-	node.peerChan = make(chan peer.AddrInfo, 100) // Buffer to avoid blocking
 
 	node.Host, err = libp2p.New(
 		libp2p.Identity(privKey),
@@ -134,107 +124,27 @@ func NewNode(ctx context.Context) (*Node, error) {
 		return node, fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 
-	fmt.Println("Node PeerID: ", node.Host.ID())
+	peerID := node.Host.ID()
+
+	// Update the repository configuration with the peer ID
+	cfg, err := repo.Config()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read IPFS config: %w", err)
+	}
+
+	if cfg.Identity.PeerID != peerID.String() {
+		cfg.Identity.PeerID = peerID.String()
+		cfg.Identity.PrivKey = encPrivKey
+		if err := repo.SetConfig(cfg); err != nil {
+			return nil, fmt.Errorf("failed to update IPFS repo config: %w", err)
+		}
+	}
+
+	cPK, _ := crypto.MarshalPrivateKey(privKey)
+	cfg.Identity.PrivKey = base64.StdEncoding.EncodeToString(cPK)
 
 	customHostOption := func(id peer.ID, ps peerstore.Peerstore, options ...libp2p.Option) (host.Host, error) {
 		return node.Host, nil
-	}
-
-	repoPath := filepath.Join(configs.Conf.Datastore.Directory, "ipfs")
-	// Ensure the directory exists
-	if err := os.MkdirAll(repoPath, 0755); err != nil {
-		fmt.Printf("failed to create directory: %v", err)
-	}
-
-	h := node.Host
-	privKeyH := h.Peerstore().PrivKey(h.ID())
-	if privKeyH == nil {
-		panic("private key not found")
-	}
-
-	// Marshal the private key to protobuf
-	privKeyBytes, err := crypto.MarshalPrivateKey(privKeyH)
-	if err != nil {
-		panic(err)
-	}
-
-	// Encode the marshaled private key to a base64 string
-	privKeyBase64 := base64.StdEncoding.EncodeToString(privKeyBytes)
-
-	// Prepare the IPFS config Identity section
-	identity := config.Identity{
-		PeerID:  h.ID().String(), // Use String() method for peer.ID
-		PrivKey: privKeyBase64,   // Use the base64 encoded marshaled private key
-	}
-
-	plugins, err := loader.NewPluginLoader(filepath.Join("", "plugins"))
-	if err != nil {
-		fmt.Printf("error loading plugins: %s", err)
-	}
-
-	// Load preloaded and external plugins
-	if err := plugins.Initialize(); err != nil {
-		fmt.Printf("error initializing plugins: %s", err)
-	}
-
-	if err := plugins.Inject(); err != nil {
-		fmt.Printf("error initializing plugins: %s", err)
-	}
-
-	datastoreSpec := map[string]interface{}{
-		"type": "mount",
-		"mounts": []interface{}{
-			map[string]interface{}{
-				"mountpoint": "/blocks",
-				"type":       "measure",
-				"prefix":     "flatfs.datastore",
-				"child": map[string]interface{}{
-					"type":      "flatfs",
-					"path":      "blocks",
-					"sync":      true,
-					"shardFunc": "/repo/flatfs/shard/v1/next-to-last/2",
-				},
-			},
-			map[string]interface{}{
-				"mountpoint": "/",
-				"type":       "measure",
-				"prefix":     "leveldb.datastore",
-				"child": map[string]interface{}{
-					"type":        "levelds",
-					"path":        "datastore",
-					"compression": "none",
-				},
-			},
-		},
-	}
-
-	datastoreConfig := config.Datastore{
-		StorageMax:         "10GB",
-		StorageGCWatermark: 90,
-		GCPeriod:           "1h", // Example, set according to your needs
-		Spec:               datastoreSpec,
-		HashOnRead:         false, // Default setting
-		BloomFilterSize:    0,     // Default setting
-	}
-
-	// Use the identity in your IPFS config
-	cfg := &config.Config{
-		Identity:  identity,
-		Datastore: datastoreConfig,
-		Ipns: config.Ipns{
-			UsePubsub: config.True,
-		},
-	}
-
-	errx := fsrepo.Init(repoPath, cfg)
-	fmt.Println("REP", repoPath)
-	if errx != nil {
-		fmt.Println("Error Creating Repo: ", errx)
-	}
-
-	repo, err := fsrepo.Open(repoPath)
-	if err != nil {
-		return nil, err
 	}
 
 	node.IPFS, err = core.NewNode(ctx, &core.BuildCfg{
@@ -243,14 +153,13 @@ func NewNode(ctx context.Context) (*Node, error) {
 		Host:      customHostOption,
 		Repo:      repo,
 	})
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IPFS node: %w", err)
 	}
 
-	node.wallet = wallet
-	node.signingAccount = signingAccount
-	node.encryptionAccount = encryptionAccount
+	//node.wallet = wallet
+	//node.signingAccount = signingAccount
+	//node.encryptionAccount = encryptionAccount
 	repoConfig, err := node.IPFS.Repo.Config()
 	if err != nil {
 		fmt.Printf("Failed to get IPFS repo config: %s\n", err)
@@ -262,6 +171,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 	}
 	fmt.Println("")
 	fmt.Println("Node PeerID: ", node.Host.ID())
+	fmt.Println("Node PeerID: ", node.IPFS.PeerHost.ID())
 	fmt.Println("Node Signing Ethereum Address: ", node.signingAccount.Address)
 	fmt.Println("Node Encryption Ethereum Address: ", node.encryptionAccount.Address)
 	fmt.Println("")
@@ -273,10 +183,11 @@ func NewNode(ctx context.Context) (*Node, error) {
 
 func (n *Node) Start(ctx context.Context) error {
 	var err error
+	n.peerChan = make(chan peer.AddrInfo, 100) // Buffer to avoid blocking
 
-	vepm, _ := n.KeyStore.LoadEPM()
+	//vepm, _ := n.KeyStore.LoadEPM()
 
-	newCID, _ := n.AddFileFromBytes(ctx, vepm)
+	//newCID, _ := n.AddFileFromBytes(ctx, vepm)
 
 	//fmt.Println("ADDED CID FOR EPM: ")
 	//fmt.Println(newCID)
@@ -296,10 +207,10 @@ func (n *Node) Start(ctx context.Context) error {
 	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
-	_, err = n.PublishIPNSRecord(ctx, newCID.String())
-	if err != nil {
-		return fmt.Errorf("failed to publish CID to IPNS: %w", err)
-	}
+	//_, err = n.PublishIPNSRecord(ctx, newCID.String())
+	//if err != nil {
+	//	return fmt.Errorf("failed to publish CID to IPNS: %w", err)
+	//}
 	//fmt.Println("NEW IPNS CID:", ipnsCID)
 
 	return nil

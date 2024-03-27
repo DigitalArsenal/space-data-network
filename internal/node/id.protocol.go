@@ -26,7 +26,7 @@ func SetupPNMExchange(n *Node) {
 func (n *Node) handlePNMExchange(s network.Stream) {
 	//peerID := s.Conn().RemotePeer()
 	//fmt.Println("handlePNMExchange with peer:", peerID)
-
+	return
 	pnmData, _ := n.KeyStore.LoadPNM()
 
 	// Create a buffered writer for the stream
@@ -126,8 +126,11 @@ func RequestPNM(ctx context.Context, n *Node, peerID peer.ID) error {
 		return fmt.Errorf("public keys do not match")
 	}
 
-	fmt.Println("Public keys match")
-	fmt.Println(cid)
+	if cid == "" {
+		fmt.Println("Public keys match")
+		fmt.Println(cid)
+	}
+
 	/*
 		publicKeyHex = "0x" + hex.EncodeToString(append(x.Bytes(), y.Bytes()...))
 		directoryPath := filepath.Join(config.Conf.Datastore.Directory, "data", publicKeyHex, "PNM")

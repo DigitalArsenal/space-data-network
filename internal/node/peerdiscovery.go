@@ -133,7 +133,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 		case <-printTicker.C:
 			//fmt.Println("Searching for peers...")
 		case pi := <-discoveredPeersChan: // Handle peers discovered via mDNS
-			fmt.Printf("mDNS discovered peer: %s\n", pi.ID)
+			//fmt.Printf("mDNS discovered peer: %s\n", pi.ID)
 
 			if alreadyContacted(pi.ID, &mutex) {
 				continue
@@ -142,7 +142,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 			if err := h.Connect(ctx, pi); err != nil {
 				continue
 			}
-			fmt.Printf("Connected to mDNS peer: %s\n", pi.ID)
+			//fmt.Printf("Connected to mDNS peer: %s\n", pi.ID)
 
 			// Request PNM from the connected mDNS peer
 			if err := RequestPNM(ctx, n, pi.ID); err != nil {

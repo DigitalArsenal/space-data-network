@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	configs "github.com/DigitalArsenal/space-data-network/configs"
+	config "github.com/DigitalArsenal/space-data-network/configs"
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
 )
 
@@ -44,8 +44,8 @@ func main() {
 
 	// Version flag
 	if *versionFlag {
-		configs.Init() // Make sure configuration is initialized and version is loaded
-		fmt.Println("Version:", configs.Conf.Info.Version)
+		config.Init() // Make sure configuration is initialized and version is loaded
+		fmt.Println("Version:", config.Conf.Info.Version)
 		return
 	}
 

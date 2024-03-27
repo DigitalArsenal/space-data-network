@@ -3,7 +3,6 @@ package node
 import (
 	"bufio"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +13,6 @@ import (
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
-	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
 	"github.com/mdp/qrterminal/v3"
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -59,6 +57,7 @@ func setupNode() *Node {
 
 func CreateDefaultServerEPM(n *Node) {
 	// Load existing EPM from the KeyStore
+	return
 	vepm, _ := n.KeyStore.LoadEPM()
 	if len(vepm) > 0 {
 		return
@@ -138,22 +137,23 @@ func CreateDefaultServerEPM(n *Node) {
 		panic("Failed to generate a valid CID after 3 attempts.")
 	}
 
-	sig, err := n.wallet.SignData(n.signingAccount, "application/octet-stream", []byte(CID))
-	if err != nil {
-		fmt.Printf("Failed to sign CID: %v\n", err)
-		return
-	}
-	signatureHex := hex.EncodeToString(sig)
-	formattedSignature := fmt.Sprintf("0x%s", signatureHex)
+	//sig, err := n.wallet.SignData(n.signingAccount, "application/octet-stream", []byte(CID))
+	//if err != nil {
+	//	fmt.Printf("Failed to sign CID: %v\n", err)
+	//	return
+	//}
+	//signatureHex := hex.EncodeToString(sig)
+	//formattedSignature := fmt.Sprintf("0x%s", signatureHex)
 
 	// Create PNM and save EPM and PNM to KeyStore
-	pnmBytes := spacedatastandards_utils.CreatePNM("", CID, formattedSignature)
-	n.KeyStore.SaveEPM(epmBytes)
-	n.KeyStore.SavePNM(pnmBytes)
+	//pnmBytes := spacedatastandards_utils.CreatePNM("", CID, formattedSignature)
+	//n.KeyStore.SaveEPM(epmBytes)
+	//n.KeyStore.SavePNM(pnmBytes)
 }
 
 func CreateServerEPM() {
 
+	return
 	newNode := setupNode()
 	reader := bufio.NewReader(os.Stdin)
 
@@ -230,7 +230,7 @@ func CreateServerEPM() {
 
 	// Handle the generated EPM bytes, such as saving them to a file or sending over a network.
 	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
-	CID, _ := spacedatastandards_utils.GenerateCID(epmBytes)
+	/*CID, _ := spacedatastandards_utils.GenerateCID(epmBytes)
 
 	sig, err := newNode.wallet.SignData(newNode.signingAccount, "application/octet-stream", []byte(CID))
 	if err != nil {
@@ -244,7 +244,7 @@ func CreateServerEPM() {
 	pnmBytes := spacedatastandards_utils.CreatePNM("/ip4/127.0.0.1/tcp/4001", CID, formattedSignature)
 	//TODO save PNM
 	newNode.KeyStore.SaveEPM(epmBytes)
-	newNode.KeyStore.SavePNM(pnmBytes)
+	newNode.KeyStore.SavePNM(pnmBytes)*/
 }
 
 func ReadServerEPM(showQR ...bool) {
@@ -286,12 +286,12 @@ func ReadServerEPM(showQR ...bool) {
 
 	// Only print the vCard if no path was provided for saving
 	fmt.Println(vCard)
-	pnmBytes, _ := newNode.KeyStore.LoadPNM()
+	/*pnmBytes, _ := newNode.KeyStore.LoadPNM()
 
 	pnm := PNM.GetSizePrefixedRootAsPNM(pnmBytes, 0)
 
 	fmt.Println("EPM CID: ", string(pnm.CID()))
-	fmt.Println("Ethereum Digital Signature: ", string(pnm.SIGNATURE()))
+	fmt.Println("Ethereum Digital Signature: ", string(pnm.SIGNATURE()))*/
 }
 
 func generateAndDisplayQRCode(content string) {

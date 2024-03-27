@@ -8,10 +8,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 
-	crypto_utils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -118,16 +118,12 @@ func Init() {
 		if password, exists := os.LookupEnv("SPACE_DATA_NETWORK_DATASTORE_PASSWORD"); exists {
 			Conf.Datastore.Password = password
 		} else {
-
-			salt, err := crypto_utils.GenerateSalt(32)
-			if err != nil {
-				panic("could not generate salt")
-			}
-
 			hostname, _ := os.Hostname()
 			homeDir, _ := os.UserHomeDir()
-
-			input := fmt.Sprintf("%s:%s", homeDir, hostname)
+			cpu := runtime.GOARCH
+			osType := runtime.GOOS
+			input := fmt.Sprintf("%s:%s:%s", hostname, cpu, osType)
+			salt := []byte(homeDir)
 			Conf.Datastore.Password = string(argon2.IDKey([]byte(input), salt, 1, 64*1024, 4, 32))
 
 		}
