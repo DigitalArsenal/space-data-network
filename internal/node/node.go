@@ -33,7 +33,6 @@ import (
 type Node struct {
 	Host              host.Host
 	DHT               *dht.IpfsDHT
-	KeyStore          *KeyStore
 	wallet            *hdwallet.Wallet
 	signingAccount    accounts.Account
 	encryptionAccount accounts.Account
@@ -93,7 +92,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 
 	var err error
 
-	repo, privKey, encPrivKey, err := LoadOrCreateIPFSRepo(ctx)
+	repo, wallet, signingAccount, encryptionAccount, privKey, encPrivKey, err := GenerateWalletAndIPFSRepo(ctx, "")
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create IPFS repo: %w", err)
@@ -157,9 +156,14 @@ func NewNode(ctx context.Context) (*Node, error) {
 		return nil, fmt.Errorf("failed to create IPFS node: %w", err)
 	}
 
-	//node.wallet = wallet
-	//node.signingAccount = signingAccount
-	//node.encryptionAccount = encryptionAccount
+	if err != nil {
+		panic("Error generating Ethereum wallets")
+	}
+
+	node.wallet = wallet
+	node.signingAccount = signingAccount
+	node.encryptionAccount = encryptionAccount
+
 	repoConfig, err := node.IPFS.Repo.Config()
 	if err != nil {
 		fmt.Printf("Failed to get IPFS repo config: %s\n", err)
@@ -170,8 +174,14 @@ func NewNode(ctx context.Context) (*Node, error) {
 		fmt.Println("IPFS repo path:", repoPath)
 	}
 	fmt.Println("")
-	fmt.Println("Node PeerID: ", node.Host.ID())
-	fmt.Println("Node PeerID: ", node.IPFS.PeerHost.ID())
+	fmt.Println("Node PeerID: ", peerID)
+
+	ipnsAddress := fmt.Sprintf("/ipns/%s", peerID)
+
+	fmt.Println("Node IPNS Address: ", ipnsAddress)
+	fmt.Println(node.Host.Peerstore().PubKey(node.Host.ID()).Raw())
+	fmt.Println(node.wallet.PublicKeyBytes(node.signingAccount))
+
 	fmt.Println("Node Signing Ethereum Address: ", node.signingAccount.Address)
 	fmt.Println("Node Encryption Ethereum Address: ", node.encryptionAccount.Address)
 	fmt.Println("")
@@ -218,12 +228,6 @@ func (n *Node) Start(ctx context.Context) error {
 
 func (n *Node) Stop() {
 	fmt.Println("Shutting down node...")
-
-	if n.KeyStore != nil {
-		if err := n.KeyStore.Close(); err != nil {
-			fmt.Println("Failed to close Keystore:", err)
-		}
-	}
 	if n.Host != nil {
 		if err := n.Host.Close(); err != nil {
 			fmt.Println("Failed to close libp2p host:", err)

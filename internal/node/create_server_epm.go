@@ -58,106 +58,107 @@ func setupNode() *Node {
 func CreateDefaultServerEPM(n *Node) {
 	// Load existing EPM from the KeyStore
 	return
-	vepm, _ := n.KeyStore.LoadEPM()
-	if len(vepm) > 0 {
-		return
-	}
-
-	fmt.Println("Creating a server EPM...")
-
-	// Generate email using peerID
-	peerID := n.Host.ID()
-	email := fmt.Sprintf("%s@spacedatanetwork.digitalarsenal.io", peerID)
-
-	// Set default values for required fields
-	legalName := "Default Organization"
-	familyName := ""
-	givenName := ""
-	additionalName := ""
-	honorificPrefix := ""
-	honorificSuffix := ""
-	jobTitle := ""
-	occupation := ""
-	alternateNames := []string{"Default Name"}
-	dnString := fmt.Sprintf("CN=%s %s, O=Default Organization", givenName, familyName)
-
-	// Assume default values for address components
-	country := "Default Country"
-	region := "Default Region"
-	locality := "Default City"
-	postalCode := "00000"
-	street := "Default Street 1"
-	poBox := ""
-
-	// Call the spacedatastandards_utils.CreateEPM with the collected data
-	epmBytes := spacedatastandards_utils.CreateEPM(
-		dnString,
-		legalName,
-		familyName,
-		givenName,
-		additionalName,
-		honorificPrefix,
-		honorificSuffix,
-		jobTitle,
-		occupation,
-		alternateNames,
-		email,
-		"", // Telephone not set
-		country,
-		region,
-		locality,
-		postalCode,
-		street,
-		poBox,
-		n.wallet,
-		n.signingAccount,
-		n.encryptionAccount,
-	)
-
-	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
-
-	var CID string
-	var err error
-	maxRetries := 3
-
-	for i := 0; i < maxRetries; i++ {
-		CID, err = spacedatastandards_utils.GenerateCID(epmBytes)
-		if err != nil {
-			fmt.Printf("Attempt %d: Failed to generate CID, error: %v\n", i+1, err)
-			continue
+	/*
+		vepm, _ := n.KeyStore.LoadEPM()
+		if len(vepm) > 0 {
+			return
 		}
-		if CID != "" {
-			fmt.Println("Print CID from autogenerate:", CID)
-			break
+
+		fmt.Println("Creating a server EPM...")
+
+		// Generate email using peerID
+		peerID := n.Host.ID()
+		email := fmt.Sprintf("%s@spacedatanetwork.digitalarsenal.io", peerID)
+
+		// Set default values for required fields
+		legalName := "Default Organization"
+		familyName := ""
+		givenName := ""
+		additionalName := ""
+		honorificPrefix := ""
+		honorificSuffix := ""
+		jobTitle := ""
+		occupation := ""
+		alternateNames := []string{"Default Name"}
+		dnString := fmt.Sprintf("CN=%s %s, O=Default Organization", givenName, familyName)
+
+		// Assume default values for address components
+		country := "Default Country"
+		region := "Default Region"
+		locality := "Default City"
+		postalCode := "00000"
+		street := "Default Street 1"
+		poBox := ""
+
+		// Call the spacedatastandards_utils.CreateEPM with the collected data
+		epmBytes := spacedatastandards_utils.CreateEPM(
+			dnString,
+			legalName,
+			familyName,
+			givenName,
+			additionalName,
+			honorificPrefix,
+			honorificSuffix,
+			jobTitle,
+			occupation,
+			alternateNames,
+			email,
+			"", // Telephone not set
+			country,
+			region,
+			locality,
+			postalCode,
+			street,
+			poBox,
+			n.wallet,
+			n.signingAccount,
+			n.encryptionAccount,
+		)
+
+		fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
+
+		var CID string
+		var err error
+		maxRetries := 3
+
+		for i := 0; i < maxRetries; i++ {
+			CID, err = spacedatastandards_utils.GenerateCID(epmBytes)
+			if err != nil {
+				fmt.Printf("Attempt %d: Failed to generate CID, error: %v\n", i+1, err)
+				continue
+			}
+			if CID != "" {
+				fmt.Println("Print CID from autogenerate:", CID)
+				break
+			}
+			fmt.Printf("Attempt %d: Received blank CID, retrying...\n", i+1)
 		}
-		fmt.Printf("Attempt %d: Received blank CID, retrying...\n", i+1)
-	}
 
-	if CID == "" {
-		panic("Failed to generate a valid CID after 3 attempts.")
-	}
+		if CID == "" {
+			panic("Failed to generate a valid CID after 3 attempts.")
+		}
 
-	//sig, err := n.wallet.SignData(n.signingAccount, "application/octet-stream", []byte(CID))
-	//if err != nil {
-	//	fmt.Printf("Failed to sign CID: %v\n", err)
-	//	return
-	//}
-	//signatureHex := hex.EncodeToString(sig)
-	//formattedSignature := fmt.Sprintf("0x%s", signatureHex)
+		//sig, err := n.wallet.SignData(n.signingAccount, "application/octet-stream", []byte(CID))
+		//if err != nil {
+		//	fmt.Printf("Failed to sign CID: %v\n", err)
+		//	return
+		//}
+		//signatureHex := hex.EncodeToString(sig)
+		//formattedSignature := fmt.Sprintf("0x%s", signatureHex)
 
-	// Create PNM and save EPM and PNM to KeyStore
-	//pnmBytes := spacedatastandards_utils.CreatePNM("", CID, formattedSignature)
-	//n.KeyStore.SaveEPM(epmBytes)
-	//n.KeyStore.SavePNM(pnmBytes)
+		// Create PNM and save EPM and PNM to KeyStore
+		//pnmBytes := spacedatastandards_utils.CreatePNM("", CID, formattedSignature)
+		//n.KeyStore.SaveEPM(epmBytes)
+		//n.KeyStore.SavePNM(pnmBytes)*/
 }
 
 func CreateServerEPM() {
 
-	return
 	newNode := setupNode()
 	reader := bufio.NewReader(os.Stdin)
 
-	vepm, _ := newNode.KeyStore.LoadEPM()
+	vepm := []byte("")
+
 	if len(vepm) > 0 {
 		epm := EPM.GetSizePrefixedRootAsEPM(vepm, 0)
 
@@ -248,8 +249,8 @@ func CreateServerEPM() {
 }
 
 func ReadServerEPM(showQR ...bool) {
-	newNode := setupNode()
-	vepm, _ := newNode.KeyStore.LoadEPM()
+
+	vepm := []byte("")
 	if len(vepm) == 0 {
 		fmt.Println("EPM not found, run with flag '-create-server-epm' to generate")
 		return

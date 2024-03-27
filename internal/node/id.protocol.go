@@ -1,7 +1,6 @@
 package node
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/hex"
@@ -27,7 +26,7 @@ func (n *Node) handlePNMExchange(s network.Stream) {
 	//peerID := s.Conn().RemotePeer()
 	//fmt.Println("handlePNMExchange with peer:", peerID)
 	return
-	pnmData, _ := n.KeyStore.LoadPNM()
+	/*pnmData, _ := n.KeyStore.LoadPNM()
 
 	// Create a buffered writer for the stream
 	rw := bufio.NewWriter(s)
@@ -49,7 +48,7 @@ func (n *Node) handlePNMExchange(s network.Stream) {
 	}
 
 	//fmt.Printf("PNM sent to peer %s\n", peerID)
-	s.Close()
+	s.Close()*/
 }
 
 func RequestPNM(ctx context.Context, n *Node, peerID peer.ID) error {

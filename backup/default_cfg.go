@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	cryptoUtils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
@@ -52,10 +51,6 @@ var datastoreConfig = ipfsConfig.Datastore{
 	HashOnRead:         false, // Default setting
 	BloomFilterSize:    0,     // Default setting
 }
-
-var (
-	pluginsLoaded sync.Once // Declared at the package level
-)
 
 func LoadOrCreateIPFSRepo(ctx context.Context) (repo.Repo, crypto.PrivKey, string, error) {
 
