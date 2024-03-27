@@ -179,8 +179,6 @@ func NewNode(ctx context.Context) (*Node, error) {
 	ipnsAddress := fmt.Sprintf("/ipns/%s", peerID)
 
 	fmt.Println("Node IPNS Address: ", ipnsAddress)
-	fmt.Println(node.Host.Peerstore().PubKey(node.Host.ID()).Raw())
-	fmt.Println(node.wallet.PublicKeyBytes(node.signingAccount))
 
 	fmt.Println("Node Signing Ethereum Address: ", node.signingAccount.Address)
 	fmt.Println("Node Encryption Ethereum Address: ", node.encryptionAccount.Address)
