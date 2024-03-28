@@ -125,18 +125,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Start the Node operations
-	if err := node.Start(ctx); err != nil {
-		fmt.Printf("Error starting node: %v\n", err)
-		os.Exit(1)
+	if len(mnemonic) == 0 {
+		// Start the Node operations
+		if err := node.Start(ctx); err != nil {
+			fmt.Printf("Error starting node: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Handle system interrupts for graceful shutdown
+		setupGracefulShutdown(ctx, node, cancel)
+
+		// Wait here until the context is cancelled
+		<-ctx.Done()
+		fmt.Println("Node shutdown completed")
 	}
-
-	// Handle system interrupts for graceful shutdown
-	setupGracefulShutdown(ctx, node, cancel)
-
-	// Wait here until the context is cancelled
-	<-ctx.Done()
-	fmt.Println("Node shutdown completed")
 }
 
 func setupGracefulShutdown(_ context.Context, node *nodepkg.Node, cancel context.CancelFunc) {
