@@ -47,7 +47,7 @@ func setupNode() *Node {
 	config.Conf.Datastore.Password = strings.TrimSpace(password)
 
 	// Create a new node, which will use the updated configuration for its KeyStore
-	newNode, err := NewNode(context.Background())
+	newNode, err := NewSDNNode(context.Background(), "")
 	if err != nil {
 		fmt.Printf("Failed to create new node: %v\n", err)
 		return nil

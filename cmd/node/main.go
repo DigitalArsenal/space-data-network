@@ -2,15 +2,36 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
+	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
+
+func validateEthPrivateKey(key string) string {
+	// Check if key is a mnemonic phrase: typically 12, 15, 18, 21, or 24 words
+	wordCount := len(strings.Fields(key))
+	if wordCount >= 12 && wordCount <= 24 && wordCount%3 == 0 {
+		return "mnemonic"
+	}
+
+	// Check if key is a hex string: starts with '0x' and is 64 characters long
+	if strings.HasPrefix(key, "0x") && len(key) == 66 { // 2 characters for '0x' + 64 hex characters
+		_, err := hex.DecodeString(key[2:])
+		if err == nil {
+			return "hex"
+		}
+	}
+
+	return "invalid"
+}
 
 func main() {
 	// CLI flags
@@ -20,6 +41,7 @@ func main() {
 	outputEPMFlag := flag.Bool("output-server-epm", false, "Output server EPM")
 	outputQRFlag := flag.Bool("qr", false, "Output server EPM as QR code")
 	versionFlag := flag.Bool("version", false, "Display the version")
+	privateKeyFilePath := flag.String("private-key-file", "", "Path to file with private key (mnemonic phrase or hex key '0x' prefix)")
 
 	flag.Parse()
 
@@ -27,6 +49,39 @@ func main() {
 	if *helpFlag {
 		flag.Usage()
 		return
+	}
+	var mnemonic string
+
+	if *privateKeyFilePath != "" {
+		privateKey, err := os.ReadFile(*privateKeyFilePath)
+		if err != nil {
+			fmt.Printf("Failed to read Ethereum private key file: %v\n", err)
+			os.Exit(1)
+		}
+		ethPrivateKey := strings.TrimSpace(string(privateKey))
+		keyType := validateEthPrivateKey(ethPrivateKey)
+		if keyType == "invalid" {
+			fmt.Println("Invalid private key in file. Please ensure it contains a valid mnemonic phrase or hex key.")
+			os.Exit(1)
+		}
+		if keyType == "mnemonic" {
+			mnemonic = ethPrivateKey
+		}
+		if keyType == "hex" {
+
+			entropy, err := hex.DecodeString(ethPrivateKey[2:])
+			if err != nil {
+				fmt.Printf("Failed to decode hex string: %v\n", err)
+				os.Exit(1)
+			}
+
+			mnemonic, err = hdwallet.NewMnemonicFromEntropy(entropy)
+			if err != nil {
+				fmt.Printf("Failed to decode hex string: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		fmt.Println(mnemonic)
 	}
 
 	if *envDocs {
@@ -65,7 +120,7 @@ func main() {
 	defer cancel()
 
 	// Initialize the Node
-	node, err := nodepkg.NewNode(ctx)
+	node, err := nodepkg.NewSDNNode(ctx, mnemonic)
 	if err != nil {
 		fmt.Printf("Error initializing node: %v\n", err)
 		os.Exit(1)
@@ -97,21 +152,21 @@ func setupGracefulShutdown(_ context.Context, node *nodepkg.Node, cancel context
 }
 
 func flagUsage() {
-	usageText := `
-Usage: main [options]
+	// Find the longest flag name
+	longestFlagNameLen := 0
+	flag.VisitAll(func(f *flag.Flag) {
+		if len(f.Name) > longestFlagNameLen {
+			longestFlagNameLen = len(f.Name)
+		}
+	})
 
-Options:
-	-help                 Display this help message
-	-version			  Display the version
-	-run                  Run the server node
-	-create-server-epm    Create server Entity Profile Message (EPM)
-	-output-server-epm    Output server Entity Profile Message (EPM)
-	-qr                   Output server EPM as QR code
-	-env-docs             Display environment variable docs
-	`
-	fmt.Println(usageText)
+	// Create the usage output with aligned descriptions
+	fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+	flag.VisitAll(func(f *flag.Flag) {
+		padding := strings.Repeat(" ", longestFlagNameLen-len(f.Name))    // Calculate padding
+		fmt.Fprintf(os.Stderr, "  -%s%s\t%s\n", f.Name, padding, f.Usage) // Print flag name with padding and its usage description
+	})
 }
-
 func init() {
 	flag.Usage = flagUsage
 }

@@ -85,14 +85,14 @@ func autoRelayFeeder(ctx context.Context, h host.Host, dht *dht.IpfsDHT, peerCha
 	}()
 }
 
-func NewNode(ctx context.Context) (*Node, error) {
+func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 	configs.Init()
 
 	node := &Node{}
 
 	var err error
 
-	repo, wallet, signingAccount, encryptionAccount, privKey, encPrivKey, err := GenerateWalletAndIPFSRepo(ctx, "")
+	repo, wallet, signingAccount, encryptionAccount, privKey, encPrivKey, err := GenerateWalletAndIPFSRepo(ctx, mnemonic)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create IPFS repo: %w", err)
