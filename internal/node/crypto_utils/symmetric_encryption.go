@@ -2,7 +2,6 @@ package crypto_utils
 
 import (
 	"crypto/rand"
-	"fmt"
 	"log"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
@@ -33,6 +32,5 @@ func DecryptPrivateKey(key []byte) []byte {
 	if err != nil {
 		log.Fatalf("Failed to decrypt private key: %v", err)
 	}
-	fmt.Printf("Decrypted: %s\n", decrypted)
 	return decrypted
 }
