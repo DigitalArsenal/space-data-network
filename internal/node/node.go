@@ -156,23 +156,10 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 		return nil, fmt.Errorf("failed to create IPFS node: %w", err)
 	}
 
-	if err != nil {
-		panic("Error generating Ethereum wallets")
-	}
-
 	node.wallet = wallet
 	node.signingAccount = signingAccount
 	node.encryptionAccount = encryptionAccount
 
-	repoConfig, err := node.IPFS.Repo.Config()
-	if err != nil {
-		fmt.Printf("Failed to get IPFS repo config: %s\n", err)
-	} else {
-		// The Repo's path is typically not directly exposed in the config,
-		// but the Repo itself knows its path which can be accessed this way
-		repoPath := repoConfig.Datastore.Path
-		fmt.Println("IPFS repo path:", repoPath)
-	}
 	fmt.Println("")
 	fmt.Println("Node PeerID: ", peerID)
 

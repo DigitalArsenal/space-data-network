@@ -12,7 +12,12 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/ipfs/kubo/plugin/loader"
 	"golang.org/x/crypto/argon2"
+)
+
+var (
+	pluginsLoaded sync.Once
 )
 
 //go:embed manifest.json
@@ -59,6 +64,24 @@ var Conf AppConfig
 func Init() {
 	once.Do(func() {
 
+		pluginsLoaded.Do(func() {
+			plugins, err := loader.NewPluginLoader(filepath.Join("", "plugins"))
+			if err != nil {
+				fmt.Printf("error loading plugins: %s\n", err)
+				return
+			}
+
+			if err := plugins.Initialize(); err != nil {
+				fmt.Printf("error initializing plugins: %s\n", err)
+				return
+			}
+
+			if err := plugins.Inject(); err != nil {
+				fmt.Printf("error injecting plugins: %s\n", err)
+				return
+			}
+		})
+
 		// Parse the version from manifest.json
 		var versionInfo Info
 		data, err := versionFile.ReadFile("manifest.json")
@@ -91,28 +114,29 @@ func Init() {
 			Conf.Webserver.Port = 1969 // Default port if conversion fails
 		}
 
-		// Override datastore settings with environment variables if they exist
 		if dir, exists := os.LookupEnv("SPACE_DATA_NETWORK_DATASTORE_DIRECTORY"); exists {
-			Conf.Datastore.Directory = dir
-		} else {
-			// Use the user's home directory if no environment variable or custom path is provided
-			homeDir, err := os.UserHomeDir()
-			if err != nil {
-				log.Printf("Error getting user home directory: %v", err)
-				return // Early return on error
-			}
-
-			// Set the default directory to a specific folder in the user's home directory
-			defaultDir := filepath.Join(homeDir, ".spacedatanetwork")
-			Conf.Datastore.Directory = defaultDir
-
-			// Ensure the base directory exists
-			if _, err := os.Stat(Conf.Datastore.Directory); os.IsNotExist(err) {
-				if err := os.MkdirAll(Conf.Datastore.Directory, 0700); err != nil {
-					log.Printf("Error creating directory '%s': %v", Conf.Datastore.Directory, err)
+			fmt.Println("SPACE_DATA_NETWORK_DATASTORE_DIRECTORY", dir)
+			// Check if the directory exists
+			if _, err := os.Stat(dir); os.IsNotExist(err) {
+				// Directory does not exist, clear the environment variable
+				err := os.Unsetenv("SPACE_DATA_NETWORK_DATASTORE_DIRECTORY")
+				if err != nil {
+					log.Printf("Error unsetting environment variable: %v", err)
 					return // Early return on error
 				}
+
+				// Inform the user that the provided directory does not exist and the default will be used
+				log.Printf("The provided directory '%s' does not exist. Defaulting to home directory.\n", dir)
+
+				// Set the default directory to the user's home directory
+				Conf.Datastore.Directory = setDefaultDatastoreDirectory()
+			} else {
+				// If the directory exists, use it
+				Conf.Datastore.Directory = dir
 			}
+		} else {
+			// No environment variable provided; use default
+			Conf.Datastore.Directory = setDefaultDatastoreDirectory()
 		}
 
 		if password, exists := os.LookupEnv("SPACE_DATA_NETWORK_DATASTORE_PASSWORD"); exists {
@@ -134,4 +158,13 @@ func Init() {
 		Conf.KeyConfig.EntropyLengthBits = 256
 
 	})
+}
+
+func setDefaultDatastoreDirectory() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		panic(fmt.Sprintf("Error getting user home directory: %v", err))
+	}
+
+	return filepath.Join(homeDir, ".spacedatanetwork")
 }

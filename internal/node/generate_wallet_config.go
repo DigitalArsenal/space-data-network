@@ -6,33 +6,46 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	cryptoUtils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
 	"github.com/ethereum/go-ethereum/accounts"
 	ipfsConfig "github.com/ipfs/kubo/config"
-	"github.com/ipfs/kubo/plugin/loader"
 	"github.com/ipfs/kubo/repo"
 	"github.com/ipfs/kubo/repo/fsrepo"
 	libp2pCrypto "github.com/libp2p/go-libp2p/core/crypto"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
-)
-
-var (
-	pluginsLoaded sync.Once
+	"github.com/tyler-smith/go-bip39"
 )
 
 func GenerateWalletAndIPFSRepo(ctx context.Context, mnemonicInput string) (repo.Repo, *hdwallet.Wallet, accounts.Account, accounts.Account, libp2pCrypto.PrivKey, string, error) {
 	var err error
+	var unencryptedPrivateKey []byte
+	var cfg *ipfsConfig.Config
+	var ipfsConfigDir = filepath.Join(config.Conf.Datastore.Directory, "ipfs")
+
 	mnemonic := mnemonicInput
 
 	if len(mnemonic) == 0 {
-		mnemonic, err = hdwallet.NewMnemonic(config.Conf.KeyConfig.EntropyLengthBits)
-		if err != nil {
-			return nil, nil, accounts.Account{}, accounts.Account{}, &libp2pCrypto.Secp256k1PrivateKey{}, "", err
+
+		repo, err := fsrepo.Open(ipfsConfigDir)
+		if err == nil {
+			cfg, _ = repo.Config()
+			pkBytes, _ := base64.StdEncoding.DecodeString(cfg.Identity.PrivKey)
+			unencryptedPrivateKey = cryptoUtils.DecryptPrivateKey(pkBytes)
+		}
+
+		if len(unencryptedPrivateKey) > 0 {
+			mnemonic, _ = hdwallet.NewMnemonicFromEntropy(unencryptedPrivateKey)
+		} else {
+			mnemonic, err = hdwallet.NewMnemonic(config.Conf.KeyConfig.EntropyLengthBits)
+			if err != nil {
+				return nil, nil, accounts.Account{}, accounts.Account{}, &libp2pCrypto.Secp256k1PrivateKey{}, "", err
+			}
 		}
 	}
+
+	unencryptedPrivateKey, _ = bip39.EntropyFromMnemonic(mnemonic)
 
 	wallet, err := hdwallet.NewFromMnemonic(mnemonic)
 	if err != nil {
@@ -62,11 +75,12 @@ func GenerateWalletAndIPFSRepo(ctx context.Context, mnemonicInput string) (repo.
 	}
 
 	// Encrypt the private key bytes for storage
-	encryptedPrivKey := cryptoUtils.EncryptPrivateKey(signingPrivKey)
+	encryptedPrivKey := cryptoUtils.EncryptPrivateKey(unencryptedPrivateKey)
+
 	// Convert encrypted private key to base64 for easier storage and handling
 	encPrivKeyBase64 := base64.StdEncoding.EncodeToString([]byte(encryptedPrivKey))
 
-	ipfsRepo, err := loadOrCreateIPFSRepo(ctx, libp2pPrivKey)
+	ipfsRepo, err := loadOrCreateIPFSRepo(ctx, encPrivKeyBase64)
 	if err != nil {
 		return nil, nil, accounts.Account{}, accounts.Account{}, libp2pPrivKey, encPrivKeyBase64, err
 	}
@@ -74,43 +88,16 @@ func GenerateWalletAndIPFSRepo(ctx context.Context, mnemonicInput string) (repo.
 	return ipfsRepo, wallet, signingAccount, encryptionAccount, libp2pPrivKey, encPrivKeyBase64, err
 }
 
-func loadOrCreateIPFSRepo(ctx context.Context, privKey libp2pCrypto.PrivKey) (repo.Repo, error) {
-	pluginsLoaded.Do(func() {
-		plugins, err := loader.NewPluginLoader(filepath.Join("", "plugins"))
-		if err != nil {
-			fmt.Printf("error loading plugins: %s\n", err)
-			return
-		}
-
-		if err := plugins.Initialize(); err != nil {
-			fmt.Printf("error initializing plugins: %s\n", err)
-			return
-		}
-
-		if err := plugins.Inject(); err != nil {
-			fmt.Printf("error injecting plugins: %s\n", err)
-			return
-		}
-	})
-
-	ipfsConfigDir := filepath.Join(config.Conf.Datastore.Directory, "ipfs")
+func loadOrCreateIPFSRepo(_ context.Context, privKeyBase64 string) (repo.Repo, error) {
+	var ipfsConfigDir = filepath.Join(config.Conf.Datastore.Directory, "ipfs")
 
 	if _, err := os.Stat(filepath.Join(ipfsConfigDir, "config")); os.IsNotExist(err) {
-		privKeyBytes, err := libp2pCrypto.MarshalPrivateKey(privKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal private key: %w", err)
-		}
-
-		encryptedPrivKey := cryptoUtils.EncryptPrivateKey(privKeyBytes)
-		privKeyBase64 := base64.StdEncoding.EncodeToString([]byte(encryptedPrivKey))
 
 		newCfg := &ipfsConfig.Config{
 			Identity: ipfsConfig.Identity{
 				PrivKey: privKeyBase64,
 			},
-			Datastore: ipfsConfig.Datastore{
-				Spec: map[string]interface{}{ /* ... */ },
-			},
+			Datastore: DatastoreConfig,
 		}
 
 		if err := os.MkdirAll(ipfsConfigDir, 0700); err != nil {

@@ -9,10 +9,46 @@ import (
 
 	files "github.com/ipfs/boxo/files"
 	"github.com/ipfs/boxo/path"
-	"github.com/ipfs/kubo/core/coreiface/options"
-
+	ipfsConfig "github.com/ipfs/kubo/config"
 	"github.com/ipfs/kubo/core/coreapi"
+	"github.com/ipfs/kubo/core/coreiface/options"
 )
+
+var datastoreSpec = map[string]interface{}{
+	"type": "mount",
+	"mounts": []interface{}{
+		map[string]interface{}{
+			"mountpoint": "/blocks",
+			"type":       "measure",
+			"prefix":     "flatfs.datastore",
+			"child": map[string]interface{}{
+				"type":      "flatfs",
+				"path":      "blocks",
+				"sync":      true,
+				"shardFunc": "/repo/flatfs/shard/v1/next-to-last/2",
+			},
+		},
+		map[string]interface{}{
+			"mountpoint": "/",
+			"type":       "measure",
+			"prefix":     "leveldb.datastore",
+			"child": map[string]interface{}{
+				"type":        "levelds",
+				"path":        "datastore",
+				"compression": "none",
+			},
+		},
+	},
+}
+
+var DatastoreConfig = ipfsConfig.Datastore{
+	StorageMax:         "10GB",
+	StorageGCWatermark: 90,
+	GCPeriod:           "1h", // Example, set according to your needs
+	Spec:               datastoreSpec,
+	HashOnRead:         false, // Default setting
+	BloomFilterSize:    0,     // Default setting
+}
 
 func (n *Node) AddFile(ctx context.Context, filePath string) (path.ImmutablePath, error) {
 	var addedFile path.ImmutablePath
