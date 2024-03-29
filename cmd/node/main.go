@@ -27,10 +27,13 @@ func validateEthPrivateKey(key string) string {
 	}
 
 	// Check if key is a hex string: starts with '0x' and is 64 characters long
-	if strings.HasPrefix(key, "0x") && len(key) == 66 { // 2 characters for '0x' + 64 hex characters
-		_, err := hex.DecodeString(key[2:])
-		if err == nil {
-			return "hex"
+	if strings.HasPrefix(key, "0x") {
+		hexLength := len(key) - 2                                   // Subtracting 2 to account for the '0x' prefix
+		if hexLength >= 32 && hexLength <= 64 && hexLength%2 == 0 { // Length should be even, each byte is represented by two hex characters
+			_, err := hex.DecodeString(key[2:])
+			if err == nil {
+				return "hex"
+			}
 		}
 	}
 
@@ -45,9 +48,10 @@ func main() {
 	outputEPMFlag := flag.Bool("output-server-epm", false, "Output server EPM")
 	outputQRFlag := flag.Bool("qr", false, "Output server EPM as QR code")
 	versionFlag := flag.Bool("version", false, "Display the version")
-	importPrivateKeyFilePath := flag.String("import-private-key-file", "", "Path to file with private key (mnemonic or hex w/ '0x' prefix)")
-	exportPrivateKeyMnemonic := flag.String("export-private-key-file-mnemonic", "", "Path to file where the private as a mnemonic will be exported")
-	exportPrivateKeyHex := flag.String("export-private-key-file-hex", "", "Path to file where the private key as a hex string will be exported")
+	importPrivateKeyMnemonicPath := flag.String("import-private-key-mnemonic", "", "Path to file containing a mnemonic phrase for the Ethereum private key")
+	importPrivateKeyHexPath := flag.String("import-private-key-hex", "", "Path to file containing a hex string (with '0x' prefix) for the Ethereum private key")
+	exportPrivateKeyMnemonic := flag.String("export-private-key-mnemonic", "", "Path to file where the private as a mnemonic will be exported")
+	exportPrivateKeyHex := flag.String("export-private-key-hex", "", "Path to file where the private key as a hex string will be exported")
 
 	flag.Parse()
 	config.Init() // Make sure configuration is initialized
@@ -59,34 +63,47 @@ func main() {
 	}
 	var mnemonic string
 
-	if *importPrivateKeyFilePath != "" {
-		privateKey, err := os.ReadFile(*importPrivateKeyFilePath)
+	if *importPrivateKeyMnemonicPath != "" && *importPrivateKeyHexPath != "" {
+		fmt.Println("Please specify only one import flag, either -import-private-key-mnemonic or -import-private-key-hex.")
+		os.Exit(1)
+	}
+
+	var privateKeyContent string
+
+	if *importPrivateKeyMnemonicPath != "" {
+		content, err := os.ReadFile(*importPrivateKeyMnemonicPath)
 		if err != nil {
-			fmt.Printf("Failed to read Ethereum private key file: %v\n", err)
+			fmt.Printf("Failed to read file: %v\n", err)
 			os.Exit(1)
 		}
-		ethPrivateKey := strings.TrimSpace(string(privateKey))
-		keyType := validateEthPrivateKey(ethPrivateKey)
-		if keyType == "invalid" {
-			fmt.Println("Invalid private key in file. Please ensure it contains a valid mnemonic phrase or hex key.")
+		privateKeyContent = strings.TrimSpace(string(content))
+		mnemonic = privateKeyContent
+		if validateEthPrivateKey(privateKeyContent) != "mnemonic" {
+			fmt.Println("Invalid mnemonic phrase in file. Please ensure it contains a valid mnemonic phrase.")
 			os.Exit(1)
 		}
-		if keyType == "mnemonic" {
-			mnemonic = ethPrivateKey
+	}
+
+	if *importPrivateKeyHexPath != "" {
+		content, err := os.ReadFile(*importPrivateKeyHexPath)
+		if err != nil {
+			fmt.Printf("Failed to read file: %v\n", err)
+			os.Exit(1)
 		}
-		if keyType == "hex" {
-
-			entropy, err := hex.DecodeString(ethPrivateKey[2:])
-			if err != nil {
-				fmt.Printf("Failed to decode hex string: %v\n", err)
-				os.Exit(1)
-			}
-
-			mnemonic, err = hdwallet.NewMnemonicFromEntropy(entropy)
-			if err != nil {
-				fmt.Printf("Failed to decode hex string: %v\n", err)
-				os.Exit(1)
-			}
+		privateKeyContent = strings.TrimSpace(string(content))
+		entropy, err := hex.DecodeString(privateKeyContent[2:])
+		if err != nil {
+			fmt.Printf("Failed to decode hex string: %v\n", err)
+			os.Exit(1)
+		}
+		mnemonic, err = hdwallet.NewMnemonicFromEntropy(entropy)
+		if err != nil {
+			fmt.Printf("Failed to decode hex string: %v\n", err)
+			os.Exit(1)
+		}
+		if validateEthPrivateKey(privateKeyContent) != "hex" {
+			fmt.Println("Invalid hex string in file. Please ensure it contains a valid hex string with '0x' prefix.")
+			os.Exit(1)
 		}
 	}
 
