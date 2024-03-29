@@ -110,7 +110,7 @@ func CreateDefaultServerEPM(n *Node) {
 			postalCode,
 			street,
 			poBox,
-			n.wallet,
+			n.Wallet,
 			n.signingAccount,
 			n.encryptionAccount,
 		)
@@ -138,7 +138,7 @@ func CreateDefaultServerEPM(n *Node) {
 			panic("Failed to generate a valid CID after 3 attempts.")
 		}
 
-		//sig, err := n.wallet.SignData(n.signingAccount, "application/octet-stream", []byte(CID))
+		//sig, err := n.Wallet.SignData(n.signingAccount, "application/octet-stream", []byte(CID))
 		//if err != nil {
 		//	fmt.Printf("Failed to sign CID: %v\n", err)
 		//	return
@@ -224,7 +224,7 @@ func CreateServerEPM() {
 		postalCode,
 		street,
 		poBox,
-		newNode.wallet,
+		newNode.Wallet,
 		newNode.signingAccount,
 		newNode.encryptionAccount,
 	)
@@ -233,7 +233,7 @@ func CreateServerEPM() {
 	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
 	/*CID, _ := spacedatastandards_utils.GenerateCID(epmBytes)
 
-	sig, err := newNode.wallet.SignData(newNode.signingAccount, "application/octet-stream", []byte(CID))
+	sig, err := newNode.Wallet.SignData(newNode.signingAccount, "application/octet-stream", []byte(CID))
 	if err != nil {
 		stackTrace := captureStackTrace()
 		wrappedErr := fmt.Errorf("failed to sign CID: %w\nStack trace:\n%s", err, stackTrace)

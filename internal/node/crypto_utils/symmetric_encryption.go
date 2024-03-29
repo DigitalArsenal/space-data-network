@@ -4,12 +4,11 @@ import (
 	"crypto/rand"
 	"log"
 
-	config "github.com/DigitalArsenal/space-data-network/configs"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-func EncryptPrivateKey(key []byte) []byte {
-	aead, err := chacha20poly1305.NewX([]byte(config.Conf.Datastore.Password))
+func EncryptPrivateKey(key []byte, password string) []byte {
+	aead, err := chacha20poly1305.NewX([]byte(password))
 	if err != nil {
 		log.Fatalf("Failed to create encryption cipher: %v", err)
 	}
@@ -22,8 +21,8 @@ func EncryptPrivateKey(key []byte) []byte {
 	return aead.Seal(nonce, nonce, key, nil)
 }
 
-func DecryptPrivateKey(key []byte) []byte {
-	aead, err := chacha20poly1305.NewX([]byte(config.Conf.Datastore.Password))
+func DecryptPrivateKey(key []byte, password string) []byte {
+	aead, err := chacha20poly1305.NewX([]byte(password))
 	if err != nil {
 		log.Fatalf("Failed to create decryption cipher: %v", err)
 	}

@@ -2,16 +2,20 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	config "github.com/DigitalArsenal/space-data-network/configs"
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
+	cryptoUtils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
+	"github.com/ipfs/kubo/repo/fsrepo"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
 
@@ -41,9 +45,12 @@ func main() {
 	outputEPMFlag := flag.Bool("output-server-epm", false, "Output server EPM")
 	outputQRFlag := flag.Bool("qr", false, "Output server EPM as QR code")
 	versionFlag := flag.Bool("version", false, "Display the version")
-	privateKeyFilePath := flag.String("private-key-file", "", "Path to file with private key (mnemonic phrase or hex key '0x' prefix)")
+	importPrivateKeyFilePath := flag.String("import-private-key-file", "", "Path to file with private key (mnemonic or hex w/ '0x' prefix)")
+	exportPrivateKeyMnemonic := flag.String("export-private-key-file-mnemonic", "", "Path to file where the private as a mnemonic will be exported")
+	exportPrivateKeyHex := flag.String("export-private-key-file-hex", "", "Path to file where the private key as a hex string will be exported")
 
 	flag.Parse()
+	config.Init() // Make sure configuration is initialized
 
 	// Help flag
 	if *helpFlag {
@@ -52,8 +59,8 @@ func main() {
 	}
 	var mnemonic string
 
-	if *privateKeyFilePath != "" {
-		privateKey, err := os.ReadFile(*privateKeyFilePath)
+	if *importPrivateKeyFilePath != "" {
+		privateKey, err := os.ReadFile(*importPrivateKeyFilePath)
 		if err != nil {
 			fmt.Printf("Failed to read Ethereum private key file: %v\n", err)
 			os.Exit(1)
@@ -83,6 +90,62 @@ func main() {
 		}
 	}
 
+	if *exportPrivateKeyMnemonic != "" || *exportPrivateKeyHex != "" {
+		var ipfsConfigDir = filepath.Join(config.Conf.Datastore.Directory, "ipfs")
+		repo, err := fsrepo.Open(ipfsConfigDir)
+		if err != nil {
+			fmt.Printf("Failed to open IPFS repo: %v\n", err)
+			os.Exit(1)
+		}
+
+		cfg, err := repo.Config()
+		if err != nil {
+			fmt.Printf("Failed to get config from repo: %v\n", err)
+			os.Exit(1)
+		}
+
+		pkBytes, err := base64.StdEncoding.DecodeString(cfg.Identity.PrivKey)
+		if err != nil {
+			fmt.Printf("Failed to decode base64 private key: %v\n", err)
+			os.Exit(1)
+		}
+
+		unencryptedPrivateKey := cryptoUtils.DecryptPrivateKey(pkBytes, config.Conf.Datastore.Password)
+
+		// Determine the output content and file path
+		var outputContent string
+		var outputFilePath string
+		if *exportPrivateKeyMnemonic != "" {
+			mnemonic, err := hdwallet.NewMnemonicFromEntropy(unencryptedPrivateKey)
+			if err != nil {
+				fmt.Printf("Failed to generate mnemonic from entropy: %v\n", err)
+				os.Exit(1)
+			}
+			outputContent = mnemonic
+			outputFilePath = *exportPrivateKeyMnemonic
+		} else {
+			outputContent = fmt.Sprintf("0x%s", hex.EncodeToString(unencryptedPrivateKey))
+			outputFilePath = *exportPrivateKeyHex
+		}
+
+		// Check if the directory of the output file exists, create it if not
+		outputFileDir := filepath.Dir(outputFilePath)
+		if _, err := os.Stat(outputFileDir); os.IsNotExist(err) {
+			if err := os.MkdirAll(outputFileDir, 0755); err != nil {
+				fmt.Printf("Failed to create directory for output file: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		// Write the output content to the file
+		if err := os.WriteFile(outputFilePath, []byte(outputContent), 0644); err != nil {
+			fmt.Printf("Failed to write to output file: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Data exported successfully to %s\n", outputFilePath)
+		os.Exit(0)
+	}
+
 	if *envDocs {
 		fmt.Print(`Environment Variables
 
@@ -98,7 +161,6 @@ func main() {
 
 	// Version flag
 	if *versionFlag {
-		config.Init() // Make sure configuration is initialized and version is loaded
 		fmt.Println("Version:", config.Conf.Info.Version)
 		return
 	}

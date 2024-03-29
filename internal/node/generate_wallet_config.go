@@ -32,7 +32,7 @@ func GenerateWalletAndIPFSRepo(ctx context.Context, mnemonicInput string) (repo.
 		if err == nil {
 			cfg, _ = repo.Config()
 			pkBytes, _ := base64.StdEncoding.DecodeString(cfg.Identity.PrivKey)
-			unencryptedPrivateKey = cryptoUtils.DecryptPrivateKey(pkBytes)
+			unencryptedPrivateKey = cryptoUtils.DecryptPrivateKey(pkBytes, config.Conf.Datastore.Password)
 		}
 
 		if len(unencryptedPrivateKey) > 0 {
@@ -75,7 +75,7 @@ func GenerateWalletAndIPFSRepo(ctx context.Context, mnemonicInput string) (repo.
 	}
 
 	// Encrypt the private key bytes for storage
-	encryptedPrivKey := cryptoUtils.EncryptPrivateKey(unencryptedPrivateKey)
+	encryptedPrivKey := cryptoUtils.EncryptPrivateKey(unencryptedPrivateKey, config.Conf.Datastore.Password)
 
 	// Convert encrypted private key to base64 for easier storage and handling
 	encPrivKeyBase64 := base64.StdEncoding.EncodeToString([]byte(encryptedPrivKey))

@@ -33,7 +33,7 @@ import (
 type Node struct {
 	Host              host.Host
 	DHT               *dht.IpfsDHT
-	wallet            *hdwallet.Wallet
+	Wallet            *hdwallet.Wallet
 	signingAccount    accounts.Account
 	encryptionAccount accounts.Account
 	IPFS              *core.IpfsNode
@@ -156,7 +156,7 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 		return nil, fmt.Errorf("failed to create IPFS node: %w", err)
 	}
 
-	node.wallet = wallet
+	node.Wallet = wallet
 	node.signingAccount = signingAccount
 	node.encryptionAccount = encryptionAccount
 
