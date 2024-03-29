@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	config "github.com/DigitalArsenal/space-data-network/configs"
 	cryptoUtils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
+	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/ethereum/go-ethereum/accounts"
 	ipfsConfig "github.com/ipfs/kubo/config"
 	"github.com/ipfs/kubo/repo"

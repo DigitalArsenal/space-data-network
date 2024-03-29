@@ -116,7 +116,7 @@ func SerializePNM(builder *flatbuffers.Builder, pnm flatbuffers.UOffsetT) []byte
 
 // DeserializePNM deserializes PNM from a ByteReader.
 func DeserializePNM(ctx context.Context, src interface{}) (*PNM.PNM, error) {
-	data, err := ReadDataFromSource(ctx, src)
+	data, _, err := ReadDataFromSource(ctx, src)
 	if err != nil {
 		return nil, err
 	}

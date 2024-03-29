@@ -4,4 +4,4 @@ rm -R internal/spacedatastandards/*
 
 cp -R ../spacedatastandards.org/lib/go/* internal/spacedatastandards/ 
 
-cp ../spacedatastandards.org/dist/manifest.json configs/
+cp ../spacedatastandards.org/dist/manifest.json serverconfig/

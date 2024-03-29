@@ -12,9 +12,9 @@ import (
 	"strings"
 	"syscall"
 
-	config "github.com/DigitalArsenal/space-data-network/configs"
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
 	cryptoUtils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
+	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/ipfs/kubo/repo/fsrepo"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )

@@ -8,7 +8,7 @@ import (
 	"runtime/debug"
 	"time"
 
-	configs "github.com/DigitalArsenal/space-data-network/configs"
+	serverconfig "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/cenkalti/backoff"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ipfs/kubo/core"
@@ -86,7 +86,7 @@ func autoRelayFeeder(ctx context.Context, h host.Host, dht *dht.IpfsDHT, peerCha
 }
 
 func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
-	configs.Init()
+	serverconfig.Init()
 
 	node := &Node{}
 
@@ -198,7 +198,7 @@ func (n *Node) Start(ctx context.Context) error {
 	autoRelayFeeder(ctx, n.Host, n.DHT, n.peerChan)
 	go discoverPeers(ctx, n, "space-data-network", 30*time.Second)
 	//Find others with the same version
-	versionHex := []byte(configs.Conf.Info.Version)
+	versionHex := []byte(serverconfig.Conf.Info.Version)
 	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 

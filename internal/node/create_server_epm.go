@@ -10,9 +10,9 @@ import (
 	"runtime"
 	"strings"
 
-	config "github.com/DigitalArsenal/space-data-network/configs"
 	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
+	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/mdp/qrterminal/v3"
 	qrcode "github.com/skip2/go-qrcode"
 )

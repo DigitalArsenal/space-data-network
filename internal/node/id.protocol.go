@@ -62,7 +62,7 @@ func RequestPNM(ctx context.Context, n *Node, peerID peer.ID) error {
 	}
 	defer s.Close()
 
-	pnmBytes, _ := spacedatastandards_utils.ReadDataFromSource(ctx, s)
+	pnmBytes, _, _ := spacedatastandards_utils.ReadDataFromSource(ctx, s)
 
 	// Variables to hold deserialized data and values outside the closure
 	var pnm *PNM.PNM
