@@ -30,6 +30,11 @@ var indexHTML embed.FS
 
 var once sync.Once
 
+type folderConfig struct {
+	RootFolder     string
+	OutgoingFolder string
+}
+
 type datastoreConfig struct {
 	Directory string
 	Password  string
@@ -60,6 +65,7 @@ type AppConfig struct {
 	KeyConfig keyConfig
 	Keys      keys
 	Info      Info
+	Folders   folderConfig
 }
 
 // Conf is the exported variable that will hold all the configuration settings
@@ -162,7 +168,10 @@ func Init() {
 
 		Conf.KeyConfig.EntropyLengthBits = 256
 
+		// SETUP IPFS ROOT
+
 		rootDir := filepath.Join(Conf.Datastore.Directory, "root")
+		Conf.Folders.RootFolder = rootDir
 		if _, err := os.Stat(rootDir); os.IsNotExist(err) {
 			if err := os.MkdirAll(rootDir, 0755); err != nil {
 				log.Fatalf("Failed to create 'root' directory: %v", err)
@@ -177,6 +186,14 @@ func Init() {
 			indexPath := filepath.Join(rootDir, "index.html")
 			if err := os.WriteFile(indexPath, indexContent, 0644); err != nil {
 				log.Fatalf("Failed to create 'index.html' in the 'root' directory: %v", err)
+			}
+		}
+
+		outgoingDirectory := filepath.Join(Conf.Datastore.Directory, "outgoing")
+		Conf.Folders.OutgoingFolder = outgoingDirectory
+		if _, err := os.Stat(outgoingDirectory); os.IsNotExist(err) {
+			if err := os.MkdirAll(outgoingDirectory, 0755); err != nil {
+				log.Fatalf("Failed to create 'root' directory: %v", err)
 			}
 		}
 	})

@@ -38,6 +38,7 @@ type Node struct {
 	encryptionAccount accounts.Account
 	IPFS              *core.IpfsNode
 	peerChan          chan peer.AddrInfo
+	FileWatcher       Watcher
 }
 
 // autoRelayPeerSource returns a function that provides peers for auto-relay.
@@ -178,16 +179,10 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 
 func (n *Node) Start(ctx context.Context) error {
 	var err error
+
+	n.FileWatcher = *NewWatcher()
+	n.FileWatcher.Watch(serverconfig.Conf.Folders.OutgoingFolder)
 	n.peerChan = make(chan peer.AddrInfo, 100) // Buffer to avoid blocking
-
-	//vepm, _ := n.KeyStore.LoadEPM()
-
-	//newCID, _ := n.AddFileFromBytes(ctx, vepm)
-
-	//fmt.Println("ADDED CID FOR EPM: ")
-	//fmt.Println(newCID)
-
-	SetupPNMExchange(n)
 
 	n.DHT, err = initDHT(ctx, n.Host)
 	if err != nil {
@@ -202,11 +197,7 @@ func (n *Node) Start(ctx context.Context) error {
 	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
-	//_, err = n.PublishIPNSRecord(ctx, newCID.String())
-	//if err != nil {
-	//	return fmt.Errorf("failed to publish CID to IPNS: %w", err)
-	//}
-	//fmt.Println("NEW IPNS CID:", ipnsCID)
+	SetupPNMExchange(n)
 
 	return nil
 }
@@ -223,5 +214,8 @@ func (n *Node) Stop() {
 			fmt.Println("Failed to close DHT:", err)
 		}
 	}
+
+	n.FileWatcher.Unwatch()
+
 	fmt.Println("Node stopped successfully.")
 }

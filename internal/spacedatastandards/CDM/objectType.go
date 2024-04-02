@@ -7,11 +7,14 @@ import "strconv"
 type objectType int8
 
 const (
+	///0
 	objectTypePAYLOAD     objectType = 0
+	///1
 	objectTypeROCKET_BODY objectType = 1
+	///2
 	objectTypeDEBRIS      objectType = 2
+	///3
 	objectTypeUNKNOWN     objectType = 3
-	objectTypeOTHER       objectType = 4
 )
 
 var EnumNamesobjectType = map[objectType]string{
@@ -19,7 +22,6 @@ var EnumNamesobjectType = map[objectType]string{
 	objectTypeROCKET_BODY: "ROCKET_BODY",
 	objectTypeDEBRIS:      "DEBRIS",
 	objectTypeUNKNOWN:     "UNKNOWN",
-	objectTypeOTHER:       "OTHER",
 }
 
 var EnumValuesobjectType = map[string]objectType{
@@ -27,7 +29,6 @@ var EnumValuesobjectType = map[string]objectType{
 	"ROCKET_BODY": objectTypeROCKET_BODY,
 	"DEBRIS":      objectTypeDEBRIS,
 	"UNKNOWN":     objectTypeUNKNOWN,
-	"OTHER":       objectTypeOTHER,
 }
 
 func (v objectType) String() string {
