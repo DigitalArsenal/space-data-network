@@ -10,11 +10,8 @@ import (
 	"runtime"
 	"strings"
 
-	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
-	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/mdp/qrterminal/v3"
-	qrcode "github.com/skip2/go-qrcode"
 )
 
 func captureStackTrace() string {
@@ -57,7 +54,7 @@ func setupNode() *Node {
 
 func CreateDefaultServerEPM(n *Node) {
 	// Load existing EPM from the KeyStore
-	return
+
 	/*
 		vepm, _ := n.KeyStore.LoadEPM()
 		if len(vepm) > 0 {
@@ -153,84 +150,84 @@ func CreateDefaultServerEPM(n *Node) {
 }
 
 func CreateServerEPM() {
+	/*
+		newNode := setupNode()
+		reader := bufio.NewReader(os.Stdin)
 
-	newNode := setupNode()
-	reader := bufio.NewReader(os.Stdin)
+		vepm := []byte("")
 
-	vepm := []byte("")
+		if len(vepm) > 0 {
+			epm := EPM.GetSizePrefixedRootAsEPM(vepm, 0)
 
-	if len(vepm) > 0 {
-		epm := EPM.GetSizePrefixedRootAsEPM(vepm, 0)
+			fmt.Println(string(epm.EMAIL()))
+		}
+		entityType, _ := readInput(reader, "Are you creating a profile for an Organization or a Person? (O/P): ")
+		isPerson := strings.ToUpper(entityType) == "P"
 
-		fmt.Println(string(epm.EMAIL()))
-	}
-	entityType, _ := readInput(reader, "Are you creating a profile for an Organization or a Person? (O/P): ")
-	isPerson := strings.ToUpper(entityType) == "P"
+		fmt.Println("Creating a server EPM...")
 
-	fmt.Println("Creating a server EPM...")
+		email, err := enforceValidEmail(reader, "Enter email: ")
+		if err != nil {
+			fmt.Printf("Error reading email: %v\n", err)
+			return
+		}
 
-	email, err := enforceValidEmail(reader, "Enter email: ")
-	if err != nil {
-		fmt.Printf("Error reading email: %v\n", err)
-		return
-	}
+		telephone, _ := readInput(reader, "Enter telephone: ")
 
-	telephone, _ := readInput(reader, "Enter telephone: ")
+		var legalName, familyName, givenName, additionalName, honorificPrefix, honorificSuffix, jobTitle, occupation string
 
-	var legalName, familyName, givenName, additionalName, honorificPrefix, honorificSuffix, jobTitle, occupation string
+		country, _ := readInput(reader, "Enter country: ")
+		region, _ := readInput(reader, "Enter region/state: ")
+		locality, _ := readInput(reader, "Enter locality/city: ")
+		postalCode, _ := readInput(reader, "Enter postal code: ")
+		street, _ := readInput(reader, "Enter street address: ")
+		poBox, _ := readInput(reader, "Enter post office box number (if any): ")
 
-	country, _ := readInput(reader, "Enter country: ")
-	region, _ := readInput(reader, "Enter region/state: ")
-	locality, _ := readInput(reader, "Enter locality/city: ")
-	postalCode, _ := readInput(reader, "Enter postal code: ")
-	street, _ := readInput(reader, "Enter street address: ")
-	poBox, _ := readInput(reader, "Enter post office box number (if any): ")
+		if isPerson {
+			// Person-specific fields
+			familyName, _ = readInput(reader, "Enter family name: ")
+			givenName, _ = readInput(reader, "Enter given name: ")
+			additionalName, _ = readInput(reader, "Enter additional name: ")
+			honorificPrefix, _ = readInput(reader, "Enter honorific prefix: ")
+			honorificSuffix, _ = readInput(reader, "Enter honorific suffix: ")
+			jobTitle, _ = readInput(reader, "Enter job title: ")
+		} else {
+			legalName, _ = readInput(reader, "Enter organization name: ")
+		}
 
-	if isPerson {
-		// Person-specific fields
-		familyName, _ = readInput(reader, "Enter family name: ")
-		givenName, _ = readInput(reader, "Enter given name: ")
-		additionalName, _ = readInput(reader, "Enter additional name: ")
-		honorificPrefix, _ = readInput(reader, "Enter honorific prefix: ")
-		honorificSuffix, _ = readInput(reader, "Enter honorific suffix: ")
-		jobTitle, _ = readInput(reader, "Enter job title: ")
-	} else {
-		legalName, _ = readInput(reader, "Enter organization name: ")
-	}
+		altNamesInput, _ := readInput(reader, "Enter alternate names (comma-separated): ")
 
-	altNamesInput, _ := readInput(reader, "Enter alternate names (comma-separated): ")
+		// Parse comma-separated alternate names and multiformat addresses
+		alternateNames := parseInput(altNamesInput)
+		dnString, _ := readInput(reader, "Enter DN (e.g., 'CN=John Doe, O=E Corp, OU=IT, DC=ex, DC=com'): ")
 
-	// Parse comma-separated alternate names and multiformat addresses
-	alternateNames := parseInput(altNamesInput)
-	dnString, _ := readInput(reader, "Enter DN (e.g., 'CN=John Doe, O=E Corp, OU=IT, DC=ex, DC=com'): ")
-
-	// Call the spacedatastandards_utils.CreateEPM with the collected data
-	epmBytes := spacedatastandards_utils.CreateEPM(
-		dnString,
-		legalName,
-		familyName,
-		givenName,
-		additionalName,
-		honorificPrefix,
-		honorificSuffix,
-		jobTitle,
-		occupation,
-		alternateNames,
-		email,
-		telephone,
-		country,
-		region,
-		locality,
-		postalCode,
-		street,
-		poBox,
-		newNode.Wallet,
-		newNode.signingAccount,
-		newNode.encryptionAccount,
-	)
+		// Call the spacedatastandards_utils.CreateEPM with the collected data
+		/*epmBytes := spacedatastandards_utils.CreateEPM(
+			dnString,
+			legalName,
+			familyName,
+			givenName,
+			additionalName,
+			honorificPrefix,
+			honorificSuffix,
+			jobTitle,
+			occupation,
+			alternateNames,
+			email,
+			telephone,
+			country,
+			region,
+			locality,
+			postalCode,
+			street,
+			poBox,
+			newNode.Wallet,
+			newNode.signingAccount,
+			newNode.encryptionAccount,
+		)*/
 
 	// Handle the generated EPM bytes, such as saving them to a file or sending over a network.
-	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
+	// fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
 	/*CID, _ := spacedatastandards_utils.GenerateCID(epmBytes)
 
 	sig, err := newNode.Wallet.SignData(newNode.signingAccount, "application/octet-stream", []byte(CID))
@@ -255,7 +252,7 @@ func ReadServerEPM(showQR ...bool) {
 		fmt.Println("EPM not found, run with flag '-create-server-epm' to generate")
 		return
 	}
-	vCard := spacedatastandards_utils.ConvertTovCard(vepm)
+	/*vCard := spacedatastandards_utils.ConvertTovCard(vepm)
 
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Enter the path to save the vCard (.vcf), or leave blank to skip: ")

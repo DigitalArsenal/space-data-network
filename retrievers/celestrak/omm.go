@@ -43,9 +43,7 @@ func main() {
 	}
 	defer outgoingFile.Close()
 
-	iterations := 1
-
-	for i := 0; i < iterations; i++ {
+	for {
 		record, err := reader.Read()
 		if err != nil {
 			break // End of file or an error

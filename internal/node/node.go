@@ -197,7 +197,7 @@ func (n *Node) Start(ctx context.Context) error {
 	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
-	SetupPNMExchange(n)
+	//SetupPNMExchange(n)
 
 	return nil
 }

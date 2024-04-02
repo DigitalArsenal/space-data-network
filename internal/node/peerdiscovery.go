@@ -121,12 +121,12 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 				/*for _, addr := range peer.Addrs {
 					fmt.Printf("\t%s/p2p/%s\n", addr, peer.ID)
 				}
-				fmt.Printf("Connected to: %s\n", peer.ID)*/
+				fmt.Printf("Connected to: %s\n", peer.ID)
 				// Request PNM from the connected DHT peer
 				if err := RequestPNM(ctx, n, peer.ID); err != nil {
 					fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
 					continue
-				}
+				}*/
 
 				processAndMarkPeer(peer, &mutex)
 			}
@@ -145,10 +145,10 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 			//fmt.Printf("Connected to mDNS peer: %s\n", pi.ID)
 
 			// Request PNM from the connected mDNS peer
-			if err := RequestPNM(ctx, n, pi.ID); err != nil {
+			/*if err := RequestPNM(ctx, n, pi.ID); err != nil {
 				fmt.Printf("Failed to request PNM from %s: %v\n", pi.ID, err)
 				continue
-			}
+			}*/
 
 			processAndMarkPeer(pi, &mutex)
 		}

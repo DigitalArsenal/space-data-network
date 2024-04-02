@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 
-	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
+	f_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -68,17 +68,14 @@ func (w *Watcher) processFile(filePath string) error {
 		return fmt.Errorf("failed to open file '%s': %v", filePath, err)
 	}
 	defer file.Close()
-	fmt.Println("TEST", file)
-	ctx := context.Background() // You can use context.WithTimeout to set a timeout if needed
-	data, fileID, err := spacedatastandards_utils.ReadDataFromSource(ctx, file)
+
+	// Use ReadDataFromSource to read all FlatBuffers from the file
+	flatBuffers, err := f_utils.ReadDataFromSource(context.Background(), file)
 	if err != nil {
-		return fmt.Errorf("failed to read data from file '%s': %v", filePath, err)
+		return fmt.Errorf("failed to read FlatBuffers from file '%s': %v", filePath, err)
 	}
 
-	fmt.Println(data)
-	fmt.Println(fileID)
-	// Your logic to handle the data and file ID
-	// e.g., publishDataToIPNS(data, fileID)
+	fmt.Println(f_utils.FID(flatBuffers))
 
 	return nil
 }

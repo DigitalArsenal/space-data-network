@@ -140,7 +140,7 @@ func SerializeEPM(builder *flatbuffers.Builder, epm flatbuffers.UOffsetT) []byte
 }
 
 func DeserializeEPM(ctx context.Context, src interface{}) (*EPM.EPM, error) {
-	data, _, err := ReadDataFromSource(ctx, src)
+	data, err := ReadDataFromSource(ctx, src)
 	if err != nil {
 		return nil, err
 	}

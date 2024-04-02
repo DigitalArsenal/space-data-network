@@ -8,7 +8,16 @@ import (
 	"io"
 )
 
-func ReadDataFromSource(ctx context.Context, src interface{}) ([]byte, string, error) {
+// FID extracts the File ID from a FlatBuffer record.
+func FID(fb []byte) string {
+	if len(fb) < 12 {
+		return ""
+	}
+	return string(fb[8:12])
+}
+
+// ReadDataFromSource checks the FlatBuffer records in the provided source and returns concatenated content if checks pass.
+func ReadDataFromSource(ctx context.Context, src interface{}) ([]byte, error) {
 	var stream io.Reader
 	switch s := src.(type) {
 	case io.Reader:
@@ -16,63 +25,50 @@ func ReadDataFromSource(ctx context.Context, src interface{}) ([]byte, string, e
 	case []byte:
 		stream = bytes.NewReader(s)
 	default:
-		return nil, "", fmt.Errorf("unsupported source type: %T", src)
+		return nil, fmt.Errorf("unsupported source type: %T", src)
 	}
 
-	// Read the total size prefix from the stream
-	totalSizeBuf := make([]byte, 4)
-	if _, err := io.ReadFull(stream, totalSizeBuf); err != nil {
-		return nil, "", fmt.Errorf("failed to read total size prefix: %v", err)
-	}
-	totalSize := binary.LittleEndian.Uint32(totalSizeBuf)
+	var concatenatedFlatBuffers []byte // Slice to hold concatenated FlatBuffers
+	var previousFID string
+	firstRecord := true
 
-	// Read the table offset after the total size prefix
-	tableOffsetBuf := make([]byte, 4)
-	if _, err := io.ReadFull(stream, tableOffsetBuf); err != nil {
-		return nil, "", fmt.Errorf("failed to read table offset: %v", err)
-	}
-	_ = binary.LittleEndian.Uint32(tableOffsetBuf)
-
-	// Read the file ID right after the table offset
-	fileIDBuf := make([]byte, 4)
-	if _, err := io.ReadFull(stream, fileIDBuf); err != nil {
-		return nil, "", fmt.Errorf("failed to read file ID: %v", err)
-	}
-	fileID := string(fileIDBuf)
-
-	// Initialize a buffer to hold the incoming data, including the size prefix, table offset, and file ID
-	data := make([]byte, 0, totalSize+12) // +4 for the size prefix, +4 for the table offset, +4 for the file ID
-	data = append(data, totalSizeBuf...)
-	data = append(data, tableOffsetBuf...)
-	data = append(data, fileIDBuf...)
-
-	fmt.Println("HEADER", data)
-	// Keep reading data until the buffer is filled to the expected size
-	for uint32(len(data)-4) < totalSize { // minus size prefix
-		select {
-		case <-ctx.Done():
-			return nil, "", ctx.Err()
-		default:
-			remainingSize := totalSize - uint32(len(data)-12) // Calculate remaining data size
-			chunkSize := min(remainingSize, 4096)             // Read in chunks of 4096 bytes or the remaining size, whichever is smaller
-			chunk := make([]byte, chunkSize)
-			n, err := io.ReadFull(stream, chunk)
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				// If EOF is reached, append what was read and break the loop
-				data = append(data, chunk[:n]...)
+	for {
+		// Attempt to read the total size prefix.
+		totalSizeBuf := make([]byte, 4)
+		if _, err := io.ReadFull(stream, totalSizeBuf); err != nil {
+			if err == io.EOF { // If EOF, end of data, break out of loop.
 				break
-			} else if err != nil {
-				return nil, "", fmt.Errorf("failed to read data: %v", err)
 			}
-			data = append(data, chunk[:n]...)
+			return nil, fmt.Errorf("failed to read total size prefix: %v", err)
 		}
+		totalSize := binary.LittleEndian.Uint32(totalSizeBuf)
+
+		// Allocate a buffer for the entire FlatBuffer data, including the total size prefix.
+		flatBuffer := make([]byte, 4+totalSize) // Include space for the size prefix.
+		copy(flatBuffer, totalSizeBuf)          // Copy the size prefix into the FlatBuffer.
+
+		// Read the FlatBuffer data into the slice, starting after the size prefix.
+		if _, err := io.ReadFull(stream, flatBuffer[4:]); err != nil {
+			return nil, fmt.Errorf("failed to read FlatBuffer data: %v", err)
+		}
+
+		// Check the File ID.
+		currentFID := FID(flatBuffer)
+		if firstRecord {
+			previousFID = currentFID
+			firstRecord = false
+		} else if currentFID != previousFID {
+			return nil, fmt.Errorf("mismatched File IDs found in FlatBuffer records")
+		}
+
+		// Check that all bytes are present as per the size header.
+		if int(totalSize) != len(flatBuffer[4:]) {
+			return nil, fmt.Errorf("size header does not match the actual data size")
+		}
+
+		// Append the complete FlatBuffer to the concatenated slice if all checks pass.
+		concatenatedFlatBuffers = append(concatenatedFlatBuffers, flatBuffer...)
 	}
 
-	finalDataSize := uint32(len(data)) // Size of the data buffer including headers
-	expectedSize := totalSize + 4      // Expected size including the size prefix
-	if finalDataSize != expectedSize {
-		return nil, "", fmt.Errorf("data size mismatch: expected %d bytes, got %d bytes", expectedSize, finalDataSize)
-	}
-
-	return data, fileID, nil
+	return concatenatedFlatBuffers, nil // Return the concatenated FlatBuffers if all checks passed.
 }
