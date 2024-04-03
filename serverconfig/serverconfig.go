@@ -45,8 +45,8 @@ type webserverConfig struct {
 }
 
 type Info struct {
-	Version string `json:"version"`
-	// Other properties from manifest.json can be added here.
+	Version   string   `json:"version"`
+	Standards []string `json:"threeLetterCodes"`
 }
 
 type keyConfig struct {
@@ -94,14 +94,25 @@ func Init() {
 		})
 
 		// Parse the version from manifest.json
-		var versionInfo Info
+		var rawManifest map[string]interface{}
 		data, err := versionFile.ReadFile("manifest.json")
 		if err != nil {
 			log.Fatalf("Failed to read version file: %v", err)
 		}
-		if err := json.Unmarshal(data, &versionInfo); err != nil {
-			log.Fatalf("Failed to parse version info: %v", err)
+		if err := json.Unmarshal(data, &rawManifest); err != nil {
+			log.Fatalf("Failed to parse manifest file: %v", err)
 		}
+
+		versionInfo := Info{
+			Version: rawManifest["version"].(string),
+		}
+
+		if standards, ok := rawManifest["STANDARDS"].(map[string]interface{}); ok {
+			for standard := range standards {
+				versionInfo.Standards = append(versionInfo.Standards, standard)
+			}
+		}
+
 		Conf.Info = versionInfo
 
 		// Webserver settings
