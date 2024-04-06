@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"runtime/debug"
 	"time"
 
@@ -177,10 +178,28 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 	return node, nil
 }
 
+func (n *Node) onFileProcessed(filePath string, err error) {
+	if err != nil {
+		log.Printf("Error processing file '%s': %v", filePath, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	addedFile, addErr := n.AddFile(ctx, filePath)
+	if addErr != nil {
+		log.Printf("Failed to add file '%s' to IPFS: %v", filePath, addErr)
+		return
+	}
+
+	log.Printf("File '%s' added to IPFS with path: %s", filePath, addedFile.String())
+}
+
 func (n *Node) Start(ctx context.Context) error {
 	var err error
 
-	n.FileWatcher = *NewWatcher()
+	n.FileWatcher = *NewWatcher(n.onFileProcessed)
 	n.FileWatcher.Watch(serverconfig.Conf.Folders.OutgoingFolder)
 	n.peerChan = make(chan peer.AddrInfo, 100) // Buffer to avoid blocking
 

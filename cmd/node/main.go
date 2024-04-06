@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 
+	web "github.com/DigitalArsenal/space-data-network/internal/web"
+
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
 	cryptoUtils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
 	config "github.com/DigitalArsenal/space-data-network/serverconfig"
@@ -210,6 +212,9 @@ func main() {
 			fmt.Printf("Error starting node: %v\n", err)
 			os.Exit(1)
 		}
+
+		server := web.NewAPI(node)
+		server.Start()
 
 		// Handle system interrupts for graceful shutdown
 		setupGracefulShutdown(ctx, node, cancel)

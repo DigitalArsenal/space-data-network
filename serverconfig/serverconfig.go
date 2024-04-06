@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -45,8 +46,8 @@ type webserverConfig struct {
 }
 
 type Info struct {
-	Version   string   `json:"version"`
-	Standards []string `json:"threeLetterCodes"`
+	Version   string   `json:"Version"`
+	Standards []string `json:"Standards"`
 }
 
 type keyConfig struct {
@@ -117,7 +118,7 @@ func Init() {
 
 		// Webserver settings
 		var webserverPortStr string
-		flag.StringVar(&webserverPortStr, "webserver.port", "4000", "Port for the webserver to listen on")
+		flag.StringVar(&webserverPortStr, "webserver.port", "8080", "Port for the webserver to listen on")
 
 		// Datastore settings
 		flag.StringVar(&Conf.Datastore.Directory, "datastore.directory", "", "Directory for the datastore")
@@ -125,16 +126,6 @@ func Init() {
 
 		// Parse command-line flags
 		flag.Parse()
-
-		// Override webserver port with environment variable if exists
-		if portStr, exists := os.LookupEnv("SPACE_DATA_NETWORK_WEBSERVER_PORT"); exists {
-			webserverPortStr = portStr
-		}
-		if port, err := strconv.Atoi(webserverPortStr); err == nil {
-			Conf.Webserver.Port = port
-		} else {
-			Conf.Webserver.Port = 1969 // Default port if conversion fails
-		}
 
 		if dir, exists := os.LookupEnv("SPACE_DATA_NETWORK_DATASTORE_DIRECTORY"); exists {
 			fmt.Println("SPACE_DATA_NETWORK_DATASTORE_DIRECTORY", dir)
@@ -159,6 +150,21 @@ func Init() {
 		} else {
 			// No environment variable provided; use default
 			Conf.Datastore.Directory = setDefaultDatastoreDirectory()
+		}
+
+		err = Conf.LoadConfigFromFile()
+		if err != nil {
+			log.Printf("Failed to load configuration from file: %v\n", err)
+			// Proceed with default and command-line configurations
+		}
+		// Override webserver port with environment variable if exists
+		if portStr, exists := os.LookupEnv("SPACE_DATA_NETWORK_WEBSERVER_PORT"); exists {
+			webserverPortStr = portStr
+		}
+		if port, err := strconv.Atoi(webserverPortStr); err == nil {
+			Conf.Webserver.Port = port
+		} else {
+			Conf.Webserver.Port = 8080
 		}
 
 		if password, exists := os.LookupEnv("SPACE_DATA_NETWORK_DATASTORE_PASSWORD"); exists {
@@ -207,9 +213,39 @@ func Init() {
 				log.Fatalf("Failed to create 'root' directory: %v", err)
 			}
 		}
+
+		err = Conf.SaveConfigToFile()
+		if err != nil {
+			log.Fatalf("Failed to save configuration to file: %v", err)
+		}
 	})
 }
 
+// LoadConfigFromFile loads the configuration settings from a JSON file
+func (c *AppConfig) LoadConfigFromFile() error {
+	configFilePath := filepath.Join(c.Datastore.Directory, "config.json")
+	data, err := ioutil.ReadFile(configFilePath)
+	if err != nil {
+		return fmt.Errorf("could not read configuration file: %w", err)
+	}
+	if err := json.Unmarshal(data, c); err != nil {
+		return fmt.Errorf("could not unmarshal configuration data: %w", err)
+	}
+	return nil
+}
+
+// SaveConfigToFile saves the current configuration settings to a JSON file
+func (c *AppConfig) SaveConfigToFile() error {
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return fmt.Errorf("could not marshal configuration data: %w", err)
+	}
+	configFilePath := filepath.Join(c.Datastore.Directory, "config.json")
+	if err := ioutil.WriteFile(configFilePath, data, 0644); err != nil {
+		return fmt.Errorf("could not write configuration file: %w", err)
+	}
+	return nil
+}
 func setDefaultDatastoreDirectory() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
