@@ -18,7 +18,7 @@ func main() {
 	serverconfig.Init()
 
 	// Repeat the writing process 10 times
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 5; i++ {
 		go func(idx int) { // Pass 'i' as a parameter
 			now := time.Now()
 			timestamp := now.Format("20060102T150405")

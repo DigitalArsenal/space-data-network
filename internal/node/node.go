@@ -187,13 +187,18 @@ func (n *Node) onFileProcessed(filePath string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	addedFile, addErr := n.AddFile(ctx, filePath)
+	_, addErr := n.AddFile(ctx, filePath)
 	if addErr != nil {
 		log.Printf("Failed to add file '%s' to IPFS: %v", filePath, addErr)
 		return
 	}
 
-	log.Printf("File '%s' added to IPFS with path: %s", filePath, addedFile.String())
+	//log.Printf("File '%s' added to IPFS with path: %s", filePath, addedFile.String())
+	ipnsCID, err := n.AddFolderToIPNS(ctx, serverconfig.Conf.Folders.RootFolder)
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Printf("IPNS CID: '%s' ", ipnsCID)
 }
 
 func (n *Node) Start(ctx context.Context) error {

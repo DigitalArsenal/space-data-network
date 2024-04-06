@@ -173,11 +173,17 @@ func (n *Node) AddFolderToIPNS(ctx context.Context, folderPath string) (string, 
 		return "", fmt.Errorf("failed to create serial file for folder: %w", err)
 	}
 
+	fmt.Printf("BB Publish published to IPNS at path: %s\n", folderPath)
+
 	// Add the directory to IPFS
 	folderCid, err := api.Unixfs().Add(ctx, folderFiles)
+	fmt.Printf("XX Publish published to IPNS at path: %s\n", folderCid)
+
 	if err != nil {
 		return "", fmt.Errorf("failed to add folder to IPFS: %w", err)
 	}
+
+	fmt.Printf("Starting Publish published to IPNS at path: %s\n", folderPath)
 
 	// Pin the directory CID to ensure it remains on the node
 	if err := api.Pin().Add(ctx, folderCid); err != nil {
