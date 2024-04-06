@@ -4,16 +4,21 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"log"
 	"runtime/debug"
+	"sync"
 	"time"
 
+	crypto_utils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
 	serverconfig "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/cenkalti/backoff"
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ipfs/go-cid"
 	"github.com/ipfs/kubo/core"
 	"github.com/libp2p/go-libp2p"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -26,9 +31,8 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
+	mh "github.com/multiformats/go-multihash"
 	"golang.org/x/crypto/argon2"
-
-	dht "github.com/libp2p/go-libp2p-kad-dht"
 )
 
 type Node struct {
@@ -162,16 +166,79 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 	node.signingAccount = signingAccount
 	node.encryptionAccount = encryptionAccount
 
+	// Extract the public key from the private key
+	pubKey := privKey.GetPublic()
+	// Marshal the public key to bytes
+	pubKeyBytes, err := crypto.MarshalPublicKey(pubKey)
+	if err != nil {
+		fmt.Printf("failed to marshal public key to bytes: %s\n", err)
+	}
+
+	hexPublicKey := hex.EncodeToString(pubKeyBytes)
+
 	fmt.Println("")
+	fmt.Printf("Node Public Key: 0x%s \n", hexPublicKey)
 	fmt.Println("Node PeerID: ", peerID)
-
-	ipnsAddress := fmt.Sprintf("/ipns/%s", peerID)
-
-	fmt.Println("Node IPNS Address: ", ipnsAddress)
 
 	fmt.Println("Node Signing Ethereum Address: ", node.signingAccount.Address)
 	fmt.Println("Node Encryption Ethereum Address: ", node.encryptionAccount.Address)
 	fmt.Println("")
+
+	var showIpnsAddress = flag.Bool("show-ipns-address", false, "Print the IPNS address")
+
+	if *showIpnsAddress {
+		// Step 1: Public Key
+
+		// Step 1: Convert hex string to bytes
+		bytes, err := crypto_utils.HexStringToBytes(hexPublicKey)
+		if err != nil {
+			fmt.Printf("Error converting hex string to bytes: %s\n", err)
+		}
+
+		// Unmarshal the public key from the bytes
+		pubKey, err := crypto.UnmarshalPublicKey(bytes)
+		if err != nil {
+			fmt.Printf("Error unmarshalling public key: %s\n", err)
+		}
+
+		// Step 2: Convert the public key to a Peer ID
+		pid, err := peer.IDFromPublicKey(pubKey)
+		if err != nil {
+			fmt.Printf("Error getting peer ID from public key: %s\n", err)
+		}
+
+		// Step 3: Convert the Peer ID to a multihash
+		peerMh, err := mh.FromB58String(pid.String())
+		if err != nil {
+			fmt.Printf("Error converting Peer ID to multihash: %s\n", err)
+		}
+
+		// Step 4: Create a CIDv1 with the 'libp2p-key' codec using the multihash
+		peerCid := cid.NewCidV1(cid.Libp2pKey, peerMh)
+
+		// Step 5: Encode the CIDv1 in base36
+		peerCidStr := peerCid.String()
+
+		fmt.Println("Base36 Encoded CIDv1:", peerCidStr)
+
+		// Marshal the public key to bytes
+		pubKeyBytes, err = crypto.MarshalPublicKey(pubKey)
+		if err != nil {
+			fmt.Printf("failed to marshal public key to bytes: %s\n", err)
+		}
+
+		// Use the public key bytes to create a multihash with the "identity" hash function
+		pubKeyMh, err := mh.Sum(pubKeyBytes, mh.IDENTITY, -1)
+		if err != nil {
+			fmt.Printf("Error creating multihash from public key bytes: %s\n", err)
+		}
+
+		// Create a CIDv1 with the "libp2p-key" codec using the multihash
+		pubKeyCid := cid.NewCidV1(cid.Libp2pKey, pubKeyMh)
+
+		// Print the base36 encoded CID, which is similar to the IPNS hash in your JS code
+		fmt.Println("IPNS CIDv1 (Base36):", pubKeyCid.String())
+	}
 
 	CreateDefaultServerEPM(node)
 
@@ -193,12 +260,20 @@ func (n *Node) onFileProcessed(filePath string, err error) {
 		return
 	}
 
-	//log.Printf("File '%s' added to IPFS with path: %s", filePath, addedFile.String())
-	ipnsCID, err := n.AddFolderToIPNS(ctx, serverconfig.Conf.Folders.RootFolder)
+	n.publishIPNS(ctx)
+}
+
+func (n *Node) publishIPNS(ctx context.Context) {
+	// Ensure the context has a timeout
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	// Your existing IPNS publish logic...
+	_, err := n.AddFolderToIPNS(ctx, serverconfig.Conf.Folders.RootFolder)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("Failed to publish to IPNS:", err)
+		return
 	}
-	fmt.Printf("IPNS CID: '%s' ", ipnsCID)
 }
 
 func (n *Node) Start(ctx context.Context) error {
@@ -222,6 +297,39 @@ func (n *Node) Start(ctx context.Context) error {
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
 	//SetupPNMExchange(n)
+	// Initial IPNS publish
+	n.publishIPNS(ctx)
+
+	// Setup the debounced IPNS publish
+	var debounceMu sync.Mutex
+	var debounceTimer *time.Timer
+	n.FileWatcher = *NewWatcher(func(filePath string, err error) {
+		debounceMu.Lock()
+		defer debounceMu.Unlock()
+		if debounceTimer != nil {
+			debounceTimer.Stop()
+		}
+		debounceTimer = time.AfterFunc(30*time.Second, func() {
+			n.publishIPNS(ctx)
+		})
+	})
+
+	n.FileWatcher.Watch(serverconfig.Conf.Folders.OutgoingFolder)
+
+	// Setup periodic IPNS publish every 4 hours
+	go func() {
+		ticker := time.NewTicker(4 * time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				n.publishIPNS(ctx)
+			}
+		}
+	}()
 
 	return nil
 }

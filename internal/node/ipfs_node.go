@@ -11,6 +11,7 @@ import (
 	"github.com/ipfs/boxo/path"
 	ipfsConfig "github.com/ipfs/kubo/config"
 	"github.com/ipfs/kubo/core/coreapi"
+	coreiface "github.com/ipfs/kubo/core/coreiface"
 	"github.com/ipfs/kubo/core/coreiface/options"
 )
 
@@ -148,8 +149,6 @@ func (n *Node) PublishIPNSRecord(ctx context.Context, ipfsPathString string) (st
 		return "", fmt.Errorf("failed to publish IPNS record: %w", err)
 	}
 
-	fmt.Printf("Published IPNS record: %s\n", ipnsPath.String())
-
 	// Since the IPNS record might not directly give us a CID, we return the whole path
 	return ipnsPath.String(), nil
 }
@@ -173,17 +172,11 @@ func (n *Node) AddFolderToIPNS(ctx context.Context, folderPath string) (string, 
 		return "", fmt.Errorf("failed to create serial file for folder: %w", err)
 	}
 
-	fmt.Printf("BB Publish published to IPNS at path: %s\n", folderPath)
-
 	// Add the directory to IPFS
 	folderCid, err := api.Unixfs().Add(ctx, folderFiles)
-	fmt.Printf("XX Publish published to IPNS at path: %s\n", folderCid)
-
 	if err != nil {
 		return "", fmt.Errorf("failed to add folder to IPFS: %w", err)
 	}
-
-	fmt.Printf("Starting Publish published to IPNS at path: %s\n", folderPath)
 
 	// Pin the directory CID to ensure it remains on the node
 	if err := api.Pin().Add(ctx, folderCid); err != nil {
@@ -196,6 +189,82 @@ func (n *Node) AddFolderToIPNS(ctx context.Context, folderPath string) (string, 
 		return "", fmt.Errorf("failed to publish folder CID to IPNS: %w", err)
 	}
 
-	fmt.Printf("Folder published to IPNS at path: %s\n", ipnsPath)
 	return ipnsPath, nil
+}
+
+func (n *Node) ResolveIPNS(ctx context.Context, ipnsPath string) (string, error) {
+	if n.IPFS == nil {
+		return "", fmt.Errorf("IPFS node is not initialized")
+	}
+
+	coreAPI, err := coreapi.NewCoreAPI(n.IPFS)
+	if err != nil {
+		return "", fmt.Errorf("failed to get IPFS coreAPI: %w", err)
+	}
+
+	resolvedPath, err := coreAPI.Name().Resolve(ctx, ipnsPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve IPNS path: %w", err)
+	}
+
+	return resolvedPath.String(), nil
+}
+
+func (n *Node) ListDirectoryContents(ctx context.Context, ipfsOrIpnsPath string) ([]coreiface.DirEntry, error) {
+	if n.IPFS == nil {
+		return nil, fmt.Errorf("IPFS node is not initialized")
+	}
+
+	coreAPI, err := coreapi.NewCoreAPI(n.IPFS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get IPFS coreAPI: %w", err)
+	}
+
+	resolvedPath, err := path.NewPath(ipfsOrIpnsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create path: %w", err)
+	}
+
+	var entries []coreiface.DirEntry
+	dir, err := coreAPI.Unixfs().Ls(ctx, resolvedPath)
+	if err != nil {
+		return nil, err
+	}
+
+	for entry := range dir {
+		if entry.Err != nil {
+			return nil, entry.Err
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
+}
+
+func (n *Node) GetFileContents(ctx context.Context, ipfsPath string) ([]byte, error) {
+	if n.IPFS == nil {
+		return nil, fmt.Errorf("IPFS node is not initialized")
+	}
+
+	coreAPI, err := coreapi.NewCoreAPI(n.IPFS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get IPFS coreAPI: %w", err)
+	}
+
+	resolvedPath, err := path.NewPath(ipfsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create path: %w", err)
+	}
+
+	fileNode, err := coreAPI.Unixfs().Get(ctx, resolvedPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get file: %w", err)
+	}
+
+	file, ok := fileNode.(files.File)
+	if !ok {
+		return nil, fmt.Errorf("resolved path is not a file")
+	}
+
+	return io.ReadAll(file)
 }
