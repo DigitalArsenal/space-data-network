@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"runtime/debug"
-	"sync"
 	"time"
 
 	crypto_utils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
@@ -16,6 +15,7 @@ import (
 	"github.com/cenkalti/backoff"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ipfs/go-cid"
+	"github.com/ipfs/kubo/config"
 	"github.com/ipfs/kubo/core"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -44,6 +44,8 @@ type Node struct {
 	IPFS              *core.IpfsNode
 	peerChan          chan peer.AddrInfo
 	FileWatcher       Watcher
+	publishTimer      *time.Timer
+	timerActive       bool
 }
 
 // autoRelayPeerSource returns a function that provides peers for auto-relay.
@@ -94,7 +96,10 @@ func autoRelayFeeder(ctx context.Context, h host.Host, dht *dht.IpfsDHT, peerCha
 func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 	serverconfig.Init()
 
-	node := &Node{}
+	node := &Node{
+		publishTimer: time.NewTimer(1 * time.Minute),
+		timerActive:  false,
+	}
 
 	var err error
 
@@ -136,6 +141,8 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read IPFS config: %w", err)
 	}
+
+	cfg.Ipns.UsePubsub = config.True
 
 	if cfg.Identity.PeerID != peerID.String() {
 		cfg.Identity.PeerID = peerID.String()
@@ -186,7 +193,7 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 
 	var showIpnsAddress = flag.Bool("show-ipns-address", false, "Print the IPNS address")
 
-	if *showIpnsAddress {
+	if *showIpnsAddress || true {
 		// Step 1: Public Key
 
 		// Step 1: Convert hex string to bytes
@@ -247,7 +254,7 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 
 func (n *Node) onFileProcessed(filePath string, err error) {
 	if err != nil {
-		log.Printf("Error processing file '%s': %v", filePath, err)
+		log.Printf("Error processing file onFileProcessed '%s': %v", filePath, err)
 		return
 	}
 
@@ -259,21 +266,26 @@ func (n *Node) onFileProcessed(filePath string, err error) {
 		log.Printf("Failed to add file '%s' to IPFS: %v", filePath, addErr)
 		return
 	}
-
-	n.publishIPNS(ctx)
 }
 
-func (n *Node) publishIPNS(ctx context.Context) {
-	// Ensure the context has a timeout
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
+func (n *Node) publishIPNS() {
+	//n.unpublishIPNSRecord()
 
-	// Your existing IPNS publish logic...
+	if n.publishTimer != nil {
+		n.publishTimer.Stop()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	// IPNS publish logic...
 	_, err := n.AddFolderToIPNS(ctx, serverconfig.Conf.Folders.RootFolder)
 	if err != nil {
-		fmt.Println("Failed to publish to IPNS:", err)
+		log.Println("Failed to publish to IPNS:", err)
 		return
 	}
+
+	//log.Printf("Published to IPNS: %s \n", CID)
+
 }
 
 func (n *Node) Start(ctx context.Context) error {
@@ -298,27 +310,45 @@ func (n *Node) Start(ctx context.Context) error {
 
 	//SetupPNMExchange(n)
 	// Initial IPNS publish
-	n.publishIPNS(ctx)
+	n.publishIPNS()
 
 	// Setup the debounced IPNS publish
-	var debounceMu sync.Mutex
-	var debounceTimer *time.Timer
 	n.FileWatcher = *NewWatcher(func(filePath string, err error) {
-		debounceMu.Lock()
-		defer debounceMu.Unlock()
-		if debounceTimer != nil {
-			debounceTimer.Stop()
+		if err != nil {
+			log.Printf("Error processing file '%s': %v", filePath, err)
+			return
 		}
-		debounceTimer = time.AfterFunc(30*time.Second, func() {
-			n.publishIPNS(ctx)
-		})
+
+		if !n.timerActive {
+			// If the timer is not already active, start it with a delay
+			n.publishTimer = time.AfterFunc(30*time.Second, func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+
+				// IPNS publish logic...
+				CID, err := n.AddFolderToIPNS(ctx, serverconfig.Conf.Folders.RootFolder)
+				if err != nil {
+					log.Println("Failed to publish to IPNS:", err)
+					return
+				}
+
+				log.Printf("Published to IPNS: %s \n", CID)
+
+				// Reset timerActive flag after execution
+				n.timerActive = false
+			})
+			n.timerActive = true
+		} else {
+			// If the timer is already active, reset it to delay the execution
+			n.publishTimer.Reset(30 * time.Second)
+		}
 	})
 
 	n.FileWatcher.Watch(serverconfig.Conf.Folders.OutgoingFolder)
 
-	// Setup periodic IPNS publish every 4 hours
+	// Setup periodic IPNS publish every 30 seconds
 	go func() {
-		ticker := time.NewTicker(4 * time.Hour)
+		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 
 		for {
@@ -326,7 +356,7 @@ func (n *Node) Start(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				n.publishIPNS(ctx)
+				n.publishIPNS()
 			}
 		}
 	}()
@@ -336,6 +366,9 @@ func (n *Node) Start(ctx context.Context) error {
 
 func (n *Node) Stop() {
 	fmt.Println("Shutting down node...")
+	if n.publishTimer != nil {
+		n.publishTimer.Stop()
+	}
 	if n.Host != nil {
 		if err := n.Host.Close(); err != nil {
 			fmt.Println("Failed to close libp2p host:", err)

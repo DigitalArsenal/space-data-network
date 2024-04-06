@@ -164,7 +164,7 @@ func Init() {
 
 		err = Conf.LoadConfigFromFile()
 		if err != nil {
-			log.Printf("Failed to load configuration from file: %v\n", err)
+			log.Printf("Failed to load configuration from file, proceeding with defaults.")
 			// Proceed with default and command-line configurations
 		}
 		// Override webserver port with environment variable if exists

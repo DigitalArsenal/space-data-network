@@ -135,9 +135,8 @@ func (n *Node) PublishIPNSRecord(ctx context.Context, ipfsPathString string) (st
 		return "", fmt.Errorf("failed to create path: %w", err)
 	}
 
-	ttl := 24 * time.Hour // Cache TTL of 24 hours
+	ttl := 1 * time.Hour // Cache TTL of 1 hours
 
-	// Use coreapi to publish the IPNS record. This assumes you have initialized coreapi with your IPFS node.
 	coreAPI, err := coreapi.NewCoreAPI(n.IPFS)
 	if err != nil {
 		return "", fmt.Errorf("failed to get IPFS coreAPI: %w", err)
@@ -208,6 +207,41 @@ func (n *Node) ResolveIPNS(ctx context.Context, ipnsPath string) (string, error)
 	}
 
 	return resolvedPath.String(), nil
+}
+
+func (n *Node) unpublishIPNSRecord() error {
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	if n.IPFS == nil {
+		return fmt.Errorf("IPFS node is not initialized")
+	}
+
+	coreAPI, err := coreapi.NewCoreAPI(n.IPFS)
+	if err != nil {
+		return fmt.Errorf("failed to get IPFS coreAPI: %w", err)
+	}
+
+	// Path to an empty file or directory on IPFS
+	// Use an empty file CID as discussed in the conversation
+	emptyContentPath := "/ipfs/bafkqaaa" // This CID points to an inlined empty file
+
+	// Convert the string path to a core path
+	emptyPath, err := path.NewPath(emptyContentPath)
+	if err != nil {
+		return fmt.Errorf("failed to create path: %w", err)
+	}
+
+	ttl := 10 * time.Second // Short TTL to minimize the time this record is active
+
+	// Publish the "empty" record to IPNS
+	_, err = coreAPI.Name().Publish(ctx, emptyPath, options.Name.Key("self"), options.Name.ValidTime(ttl))
+	if err != nil {
+		return fmt.Errorf("failed to publish IPNS record: %w", err)
+	}
+
+	return nil
 }
 
 func (n *Node) ListDirectoryContents(ctx context.Context, ipfsOrIpnsPath string) ([]coreiface.DirEntry, error) {

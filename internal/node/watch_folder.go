@@ -15,7 +15,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-var debounce = 500 * time.Millisecond
+var debounce = 10 * time.Second
 
 type FileState struct {
 	lastModified   time.Time
@@ -59,7 +59,7 @@ func (w *Watcher) Watch(dir string) {
 				w.enqueueFiles(dir) // Periodic checking
 			case filePath := <-w.processChan:
 				if err := w.processFile(filePath); err != nil {
-					log.Printf("Error processing file '%s': %v", filePath, err)
+					log.Printf("Error processing file Watch '%s': %v", filePath, err)
 				}
 			case <-w.doneChan:
 				return
@@ -73,13 +73,9 @@ func (w *Watcher) watchFile(filePath string, state *FileState) {
 		return // Prevent multiple watchers on the same file
 	}
 
-	// Set up a context with cancellation for this watch operation
 	ctx, cancel := context.WithCancel(context.Background())
 	state.cancelWatchCtx = cancel
 	state.watching = true
-
-	// Set up a timer with a 5-second duration
-	timer := time.NewTimer(debounce)
 
 	go func() {
 		defer func() {
@@ -88,32 +84,28 @@ func (w *Watcher) watchFile(filePath string, state *FileState) {
 			w.watcher.Remove(filePath) // Stop watching the file
 		}()
 
-		// Loop to handle events for this file
+		lastWriteTime := time.Now()
 		for {
 			select {
 			case <-ctx.Done(): // Context cancelled, stop watching
 				return
 			case event := <-w.watcher.Events:
-				if event.Name != filePath {
-					continue // Ignore events for other files
+				if event.Name != filePath || event.Op&fsnotify.Write != fsnotify.Write {
+					continue // Ignore irrelevant events
 				}
-				if event.Op&fsnotify.Write == fsnotify.Write {
-					// File was written to, reset the timer
-					if !timer.Stop() {
-						<-timer.C // Drain the channel if necessary
+				lastWriteTime = time.Now() // Update last write time on write event
+			case <-time.After(debounce):
+				if time.Since(lastWriteTime) >= debounce {
+					// Process the file if there have been no writes for the debounce period
+					if err := w.processFile(filePath); err != nil {
+						log.Printf("Error processing file Timer'%s': %v", filePath, err)
 					}
-					timer.Reset(debounce)
+					return // Processing done, exit goroutine
 				}
-			case <-timer.C: // 1 seconds passed without writes, process the file
-				if err := w.processFile(filePath); err != nil {
-					log.Printf("Error processing file '%s': %v", filePath, err)
-				}
-				return // Processing done, exit goroutine
 			}
 		}
 	}()
 
-	// Start watching the file for write events
 	if err := w.watcher.Add(filePath); err != nil {
 		log.Printf("Failed to watch file '%s': %v", filePath, err)
 		cancel() // Ensure resources are cleaned up on failure to add watcher

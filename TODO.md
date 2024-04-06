@@ -8,9 +8,10 @@
   - [x] Use all transports (tcp, websockets, etc)
   - [x] Use all discovery methods
   - [x] Use dht and identity services (in case bootstrap nodes are down / unreachable)
+- [x] Export / Import private key
 - [ ] Publish PNM after pin
 - [ ] Republish IPNS
-- [x] Export / Import private key
+- [ ] Restart server if cannot find peer
 - [ ] Publish folder with vcf, QR image, index.html (editable)
 - [ ] Pin settings
   - [ ] Pin other EPM, only mandatory pin
