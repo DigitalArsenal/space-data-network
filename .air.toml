@@ -4,6 +4,9 @@ root = "."
 # Temporary directory to store build artifacts
 tmp_dir = "tmp"
 
+[pre_build]
+  cmd = "touch tmp/restart.sig"
+
 [build]
   # Command to build your application
   cmd = "./build.sh"
@@ -14,13 +17,14 @@ tmp_dir = "tmp"
   # File extensions to include in the watch
   include_ext = ["go", "tpl", "tmpl", "html"]
   # Binary file name (located in tmp_dir)
-  bin = "./tmp/main"
+  bin = "./tmp/spacedatanetwork"
   # Log file for build errors
   log = "build-errors.log"
+  send_interrupt = true
+  
 
 [cmd]
-# Command to run your binary with the --run flag
-exec = "./tmp/main --run"
+exec = "./tmp/spacedatanetwork"
 
 [color]
   # Color settings (use the color names supported by air)

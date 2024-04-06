@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -59,6 +58,16 @@ type keys struct {
 	SigningAccountDerivationPath    string
 }
 
+type IpfsPeerPinConfig struct {
+	PeerID  string   `json:"PeerID"`
+	FileIDs []string `json:"FileIDs"`
+}
+
+type IpfsConfig struct {
+	PeerPins    []IpfsPeerPinConfig `json:"PeerPins"`
+	IPNSKeyPath string              `json:"IPNSKeyPath"`
+}
+
 // AppConfig holds the entire application configuration with namespaces
 type AppConfig struct {
 	Datastore datastoreConfig
@@ -67,6 +76,7 @@ type AppConfig struct {
 	Keys      keys
 	Info      Info
 	Folders   folderConfig
+	IPFS      IpfsConfig
 }
 
 // Conf is the exported variable that will hold all the configuration settings
@@ -224,7 +234,7 @@ func Init() {
 // LoadConfigFromFile loads the configuration settings from a JSON file
 func (c *AppConfig) LoadConfigFromFile() error {
 	configFilePath := filepath.Join(c.Datastore.Directory, "config.json")
-	data, err := ioutil.ReadFile(configFilePath)
+	data, err := os.ReadFile(configFilePath)
 	if err != nil {
 		return fmt.Errorf("could not read configuration file: %w", err)
 	}
@@ -241,7 +251,7 @@ func (c *AppConfig) SaveConfigToFile() error {
 		return fmt.Errorf("could not marshal configuration data: %w", err)
 	}
 	configFilePath := filepath.Join(c.Datastore.Directory, "config.json")
-	if err := ioutil.WriteFile(configFilePath, data, 0644); err != nil {
+	if err := os.WriteFile(configFilePath, data, 0644); err != nil {
 		return fmt.Errorf("could not write configuration file: %w", err)
 	}
 	return nil

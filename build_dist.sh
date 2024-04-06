@@ -32,7 +32,7 @@ export CGO_CFLAGS='-g -O2'
 compile "linux" "amd64" "linux" "" "musl-gcc" "1" '-s -w -extldflags "-static"'
 
 # Compile for Windows with MinGW
-compile "windows" "amd64" "win" ".exe" "x86_64-w64-mingw32-gcc" "1" '-s -w'
+#compile "windows" "amd64" "win" ".exe" "x86_64-w64-mingw32-gcc" "1" '-s -w'
 
 # Compiling for macOS typically requires a macOS environment. These commands are placeholders
 # and might not work as expected in a non-macOS environment. Consider using osxcross or compiling natively on macOS.

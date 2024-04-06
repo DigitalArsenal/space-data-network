@@ -2,7 +2,7 @@
 
 HOSTS=("root@Tokyo2" "root@deathstar")
 REMOTE_PATH="/opt/software/space-data-network/space-data-network"
-LOCAL_PATH="./tmp/main"
+LOCAL_PATH="./tmp/spacedatanetwork"
 TIMESTAMP_FILE="./tmp/last_post_build_run"
 
 deploy_and_restart() {
@@ -42,7 +42,7 @@ fi
 
 # Execute the Go build command - fast by removing '-a' and only building what has changed
 #CC=musl-gcc CGO_ENABLED=1 go build -a -tags netgo -ldflags '-s -w -extldflags "-static"' -o ./tmp/main ./cmd/node/main.go
-CC=musl-gcc CGO_ENABLED=1 go build -tags netgo -ldflags '-s -w -extldflags "-static"' -o ./tmp/main ./cmd/node/main.go
+CC=musl-gcc CGO_ENABLED=1 go build -tags netgo -ldflags '-s -w -extldflags "-static"' -o ./tmp/spacedatanetwork ./cmd/node/main.go
 
 # Timestamp file path
 TIMESTAMP_FILE="./tmp/last_post_build_run"

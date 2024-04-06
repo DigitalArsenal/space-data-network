@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,32 @@ import (
 	"github.com/ipfs/kubo/repo/fsrepo"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
+
+func saveConfigAndSendSIGHUP() {
+	// Save the configuration
+	err := config.Conf.SaveConfigToFile()
+	if err != nil {
+		fmt.Printf("Failed to save configuration: %v\n", err)
+		return
+	}
+
+	// Send SIGHUP to the daemon
+	pgrepCmd := exec.Command("pgrep", "-f", "spacedatanetwork")
+	pid, err := pgrepCmd.Output()
+	if err != nil {
+		fmt.Printf("Failed to find PID of daemon: %v\n", err)
+		fmt.Println("If the daemon is not running, changes will take effect when it is next started.")
+		return
+	}
+
+	killCmd := exec.Command("kill", "-HUP", strings.TrimSpace(string(pid)))
+	err = killCmd.Run()
+	if err != nil {
+		fmt.Printf("Failed to send SIGHUP to daemon: %v\n", err)
+	} else {
+		fmt.Println("Configuration saved. Sent SIGHUP to the daemon. Please ensure the daemon is set up to handle SIGHUP signals for reloading configuration.")
+	}
+}
 
 func validateEthPrivateKey(key string) string {
 	// Check if key is a mnemonic phrase: typically 12, 15, 18, 21, or 24 words
@@ -42,6 +69,93 @@ func validateEthPrivateKey(key string) string {
 	return "invalid"
 }
 
+var (
+	addPeerID     = flag.String("add-peerid", "", "PeerID to add along with fileID(s)")
+	addFileIDs    = flag.String("add-fileids", "", "Comma-separated FileIDs to add for the specified PeerID")
+	removePeerID  = flag.String("remove-peerid", "", "PeerID to remove along with fileID(s)")
+	removeFileIDs = flag.String("remove-fileids", "", "Comma-separated FileIDs to remove for the specified PeerID")
+)
+
+func managePeerFileIDs() {
+	if *addPeerID != "" && *addFileIDs != "" {
+		fileIDs := strings.Split(*addFileIDs, ",")
+		if validateFileIDs(fileIDs) {
+			addPeerFileIDPair(*addPeerID, fileIDs)
+		} else {
+			fmt.Println("One or more FileIDs are not supported. Please check the 'Standards' in the configuration.")
+			os.Exit(1)
+		}
+	}
+
+	if *removePeerID != "" && *removeFileIDs != "" {
+		fileIDs := strings.Split(*removeFileIDs, ",")
+		removePeerFileIDPair(*removePeerID, fileIDs)
+	}
+}
+
+func addPeerFileIDPair(peerID string, fileIDs []string) {
+	for _, configPeer := range config.Conf.IPFS.PeerPins {
+		if configPeer.PeerID == peerID {
+			for _, fileID := range fileIDs {
+				if !contains(configPeer.FileIDs, fileID) {
+					configPeer.FileIDs = append(configPeer.FileIDs, fileID)
+				}
+			}
+			return
+		}
+	}
+	config.Conf.IPFS.PeerPins = append(config.Conf.IPFS.PeerPins, config.IpfsPeerPinConfig{
+		PeerID:  peerID,
+		FileIDs: fileIDs,
+	})
+}
+
+func removePeerFileIDPair(peerID string, fileIDs []string) {
+	for i, configPeer := range config.Conf.IPFS.PeerPins {
+		if configPeer.PeerID == peerID {
+			newFileIDs := []string{}
+			for _, existingFileID := range configPeer.FileIDs {
+				if !contains(fileIDs, existingFileID) {
+					newFileIDs = append(newFileIDs, existingFileID)
+				}
+			}
+			if len(newFileIDs) == 0 {
+				config.Conf.IPFS.PeerPins = append(config.Conf.IPFS.PeerPins[:i], config.Conf.IPFS.PeerPins[i+1:]...)
+			} else {
+				configPeer.FileIDs = newFileIDs
+			}
+			return
+		}
+	}
+}
+
+func contains(slice []string, item string) bool {
+	for _, sliceItem := range slice {
+		if sliceItem == item {
+			return true
+		}
+	}
+	return false
+}
+
+func validateFileIDs(fileIDs []string) bool {
+	for _, fileID := range fileIDs {
+		if !isSupportedFileID(fileID) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSupportedFileID(fileID string) bool {
+	for _, standard := range config.Conf.Info.Standards {
+		if fileID == standard {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
 	// CLI flags
 	helpFlag := flag.Bool("help", false, "Display help")
@@ -57,6 +171,10 @@ func main() {
 
 	flag.Parse()
 	config.Init() // Make sure configuration is initialized
+	if *addPeerID != "" || *removePeerID != "" {
+		managePeerFileIDs()
+		saveConfigAndSendSIGHUP()
+	}
 
 	// Help flag
 	if *helpFlag {
@@ -84,6 +202,7 @@ func main() {
 			fmt.Println("Invalid mnemonic phrase in file. Please ensure it contains a valid mnemonic phrase.")
 			os.Exit(1)
 		}
+		saveConfigAndSendSIGHUP()
 	}
 
 	if *importPrivateKeyHexPath != "" {
@@ -107,6 +226,7 @@ func main() {
 			fmt.Println("Invalid hex string in file. Please ensure it contains a valid hex string with '0x' prefix.")
 			os.Exit(1)
 		}
+		saveConfigAndSendSIGHUP()
 	}
 
 	if *exportPrivateKeyMnemonic != "" || *exportPrivateKeyHex != "" {
@@ -187,6 +307,7 @@ func main() {
 	// EPM related operations should be checked first and then exit if they are called
 	if *createEPMFlag {
 		nodepkg.CreateServerEPM()
+		saveConfigAndSendSIGHUP()
 		return
 	}
 
@@ -202,7 +323,11 @@ func main() {
 	// Initialize the Node
 	node, err := nodepkg.NewSDNNode(ctx, mnemonic)
 	if err != nil {
-		fmt.Printf("Error initializing node: %v\n", err)
+		if strings.Contains(err.Error(), "lock") && strings.Contains(err.Error(), "someone else has the lock") {
+			fmt.Println("The spacedatanetwork daemon is already running. Please stop the existing instance before starting a new one.")
+		} else {
+			fmt.Printf("Error initializing node: %v\n", err)
+		}
 		os.Exit(1)
 	}
 
@@ -227,7 +352,7 @@ func main() {
 
 func setupGracefulShutdown(_ context.Context, node *nodepkg.Node, cancel context.CancelFunc) {
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	go func() {
 		<-c
 		fmt.Println("\nReceived shutdown signal, shutting down...")
