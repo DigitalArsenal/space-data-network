@@ -15,7 +15,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-var debounce = 10 * time.Second
+var debounce = 1 * time.Second
 
 type FileState struct {
 	lastModified   time.Time
@@ -125,7 +125,7 @@ func (w *Watcher) enqueueFiles(dir string) {
 		if !file.IsDir() {
 			info, err := file.Info()
 			if err != nil {
-				log.Printf("Error getting info for file '%s': %v", file.Name(), err)
+				//log.Printf("Error getting info for file '%s': %v", file.Name(), err)
 				continue
 			}
 			fileInfos = append(fileInfos, info)
@@ -152,12 +152,30 @@ func (w *Watcher) enqueueFiles(dir string) {
 }
 
 func (w *Watcher) processFile(filePath string) error {
+	var file *os.File
 	var err error
-	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_EXCL, 0666)
-	if err != nil {
-		return fmt.Errorf("failed to open file '%s': %v", filePath, err)
+
+	// Retry opening the file up to 3 times with a 2-second delay between retries
+	for i := 0; i < 5; i++ {
+		file, err = os.OpenFile(filePath, os.O_RDWR|os.O_EXCL, 0666)
+		if err == nil {
+			defer file.Close()
+			break // Successfully opened the file, exit the retry loop
+		}
+
+		if os.IsNotExist(err) {
+			// If the file does not exist, no need to retry
+			return fmt.Errorf("file '%s' does not exist", filePath)
+		}
+
+		log.Printf("Attempt %d: Error opening file '%s': %v", i+1, filePath, err)
+		time.Sleep(2 * time.Second) // Wait for 2 seconds before retrying
 	}
-	defer file.Close()
+
+	if err != nil {
+		// Failed to open the file after retries
+		return fmt.Errorf("failed to open file '%s' after retries: %v", filePath, err)
+	}
 
 	// Use ReadDataFromSource to read all FlatBuffers from the file
 	flatBuffers, err := f_utils.ReadDataFromSource(context.Background(), file)

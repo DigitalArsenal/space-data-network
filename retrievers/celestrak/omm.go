@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"path"
 	"strconv"
@@ -75,7 +76,8 @@ func main() {
 				classificationType := builder.CreateString(record[10])
 
 				noradCatId, _ := strconv.ParseUint(record[11], 10, 32)
-				elementSetNo, _ := strconv.ParseUint(record[12], 10, 32)
+				//elementSetNo, _ := strconv.ParseUint(record[12], 10, 32)
+				elementSetNo := uint64(rand.Intn(10000)) // Use a random number up to 10000 as the value
 				revAtEpoch, _ := strconv.ParseFloat(record[13], 64)
 				bstar, _ := strconv.ParseFloat(record[14], 64)
 				meanMotionDot, _ := strconv.ParseFloat(record[15], 64)

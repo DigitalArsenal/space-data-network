@@ -244,18 +244,31 @@ func (c *AppConfig) LoadConfigFromFile() error {
 	return nil
 }
 
-// SaveConfigToFile saves the current configuration settings to a JSON file
+// SaveConfigToFile saves the current configuration settings to a JSON file, excluding sensitive information like the datastore password
 func (c *AppConfig) SaveConfigToFile() error {
-	data, err := json.MarshalIndent(c, "", "  ")
+	// Clone the current AppConfig object
+	clonedConfig := *c
+
+	// Remove the password from the cloned object to avoid saving it to disk
+	clonedConfig.Datastore.Password = ""
+
+	// Marshal the cloned configuration data to JSON, excluding the password
+	data, err := json.MarshalIndent(clonedConfig, "", "  ")
 	if err != nil {
 		return fmt.Errorf("could not marshal configuration data: %w", err)
 	}
+
+	// Define the path for the configuration file
 	configFilePath := filepath.Join(c.Datastore.Directory, "config.json")
+
+	// Write the configuration data to the file
 	if err := os.WriteFile(configFilePath, data, 0644); err != nil {
 		return fmt.Errorf("could not write configuration file: %w", err)
 	}
+
 	return nil
 }
+
 func setDefaultDatastoreDirectory() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {

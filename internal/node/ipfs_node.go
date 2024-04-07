@@ -233,7 +233,7 @@ func (n *Node) unpublishIPNSRecord() error {
 		return fmt.Errorf("failed to create path: %w", err)
 	}
 
-	ttl := 10 * time.Second // Short TTL to minimize the time this record is active
+	ttl := 10 * time.Minute // Short TTL to minimize the time this record is active
 
 	// Publish the "empty" record to IPNS
 	_, err = coreAPI.Name().Publish(ctx, emptyPath, options.Name.Key("self"), options.Name.ValidTime(ttl))
