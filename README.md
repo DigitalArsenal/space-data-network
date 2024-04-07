@@ -47,3 +47,7 @@ The application can be configured using the following environment variables:
 ## License
 
 This software is provided under the terms of the Software License Agreement contained in the [LICENSE](LICENSE) file in the root directory of this project. By downloading, installing, or using this software, you are agreeing to be bound by the terms of this agreement. Please read the license carefully before using the software.
+
+## Contact
+
+[SpaceDataNetwork@DigitalArsenal.io](spacedatanetwork@digitalarsenal.io)
