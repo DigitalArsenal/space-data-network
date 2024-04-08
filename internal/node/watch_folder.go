@@ -87,7 +87,7 @@ func (fw *FolderWatcher) checkFolder() {
 
 		info, err := entry.Info()
 		if err != nil {
-			log.Printf("Error getting info for file: %v", err)
+			//log.Printf("Error getting info for file: %v", err)
 			continue
 		}
 
@@ -112,32 +112,45 @@ func (fw *FolderWatcher) processQueue() {
 
 		// Get the oldest file from the queue
 		item := fw.queue.Items[0]
+
+		// Check if the file is already being processed or has been processed recently
+		_, beingProcessed := fw.beingProcessed[item.Path]
+		fw.procFilesMu.Lock()
+		_, processed := fw.processedFiles[item.Path]
+		fw.procFilesMu.Unlock()
+
+		if beingProcessed || processed {
+			// If already processed or being processed, remove from queue and skip
+			fw.queue.Items = fw.queue.Items[1:]
+			fw.queue.mu.Unlock()
+			continue
+		}
+
 		if time.Since(item.LastSeen) < 5*time.Second {
 			fw.queue.mu.Unlock()
 			time.Sleep(1 * time.Second) // Wait for stability
 			continue                    // Re-check the stability of the file after the wait
 		}
 
-		// File is ready for processing; remove it from the queue
+		// File is ready for processing; remove it from the queue and mark as being processed
 		fw.queue.Items = fw.queue.Items[1:]
-
-		// Before unlocking, mark this file as being processed to avoid re-checking it
-		// This assumes the existence of a beingProcessed map to track such files
 		fw.beingProcessed[item.Path] = struct{}{}
 		fw.queue.mu.Unlock()
 
-		// Do any necessary cleanup or final checks before sending the file for processing
-		// For example, you could double-check the file's existence or modification time
-
-		// Send the file for processing
-		fw.node.readyFilesChan <- item.Path
-
-		// After sending the file for processing, remove it from the beingProcessed map
-		// This step might need to be done asynchronously or in the part of the code that consumes the channel
-		fw.procFilesMu.Lock()
-		delete(fw.beingProcessed, item.Path)
-		fw.procFilesMu.Unlock()
+		// Process the file
+		go fw.processFile(item)
 	}
+}
+
+func (fw *FolderWatcher) processFile(item FileItem) {
+	// Send the file for processing
+	fw.node.readyFilesChan <- item.Path
+
+	// Mark the file as processed
+	fw.procFilesMu.Lock()
+	fw.processedFiles[item.Path] = time.Now()
+	delete(fw.beingProcessed, item.Path)
+	fw.procFilesMu.Unlock()
 }
 
 func (fw *FolderWatcher) Stop() {
