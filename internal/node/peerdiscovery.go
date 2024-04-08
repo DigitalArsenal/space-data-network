@@ -3,7 +3,6 @@ package node
 import (
 	"context"
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	dutil "github.com/libp2p/go-libp2p/p2p/discovery/util"
-	"github.com/multiformats/go-multiaddr"
 )
 
 var (
@@ -23,6 +21,8 @@ var (
 	mutex          = sync.Mutex{}
 )
 
+//TODO
+/*
 // isPublicIP checks if the given IP address is a public one.
 func isPublicIP(ip net.IP) bool {
 	return !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast()
@@ -47,11 +47,13 @@ func hasPublicIP(addrs []multiaddr.Multiaddr) bool {
 	}
 	return false
 }
+*/
 
 func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryInterval time.Duration) {
 
 	h := n.Host
 	d := n.DHT
+	p := n.peerChan
 
 	// Create a NotifyBundle and assign event handlers
 	notifiee := &NotifyBundle{
@@ -76,28 +78,27 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 	ticker := time.NewTicker(discoveryInterval)
 	defer ticker.Stop()
 
+	printTicker := time.NewTicker(discoveryInterval * 10)
+	defer printTicker.Stop()
+
 	routingDiscovery := drouting.NewRoutingDiscovery(d)
 	dutil.Advertise(ctx, routingDiscovery, channelName)
-	discoveredPeersChan := make(chan peer.AddrInfo)
 
 	// Initialize mDNS service
-	notifee := &discoveryNotifee{h: h, contactedPeers: make(map[peer.ID]struct{}), mutex: &sync.Mutex{}, discoveredPeersChan: discoveredPeersChan}
+	notifee := &discoveryNotifee{h: h, contactedPeers: make(map[peer.ID]struct{}), mutex: &sync.Mutex{}, discoveredPeersChan: p}
 	mdnsService := mdns.NewMdnsService(h, "space-data-network-mdns", notifee)
 	go func() {
 		if err := mdnsService.Start(); err != nil {
-			//fmt.Println("Failed to start mDNS service:", err)
+			fmt.Println("Failed to start mDNS service:", err)
 		}
 	}()
+
 	defer mdnsService.Close()
 
-	ticker = time.NewTicker(discoveryInterval)
-	defer ticker.Stop()
-	printTicker := time.NewTicker(discoveryInterval * 10)
-	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			//fmt.Println("Stopping peer discovery due to context cancellation")
+			fmt.Println("Stopping peer discovery due to context cancellation")
 			return
 		case <-ticker.C:
 			peerChan, err := routingDiscovery.FindPeers(ctx, channelName)
@@ -118,22 +119,16 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 					continue
 				}
 
-				/*for _, addr := range peer.Addrs {
-					fmt.Printf("\t%s/p2p/%s\n", addr, peer.ID)
+				select {
+				case p <- peer:
+				case <-ctx.Done():
+					return
 				}
-				fmt.Printf("Connected to: %s\n", peer.ID)
-				// Request PNM from the connected DHT peer
-				if err := RequestPNM(ctx, n, peer.ID); err != nil {
-					fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
-					continue
-				}*/
 
 				processAndMarkPeer(peer, &mutex)
 			}
 		case <-printTicker.C:
-			//fmt.Println("Searching for peers...")
-		case pi := <-discoveredPeersChan: // Handle peers discovered via mDNS
-			//fmt.Printf("mDNS discovered peer: %s\n", pi.ID)
+		case pi := <-p: // Handle peers discovered via mDNS
 
 			if alreadyContacted(pi.ID, &mutex) {
 				continue
@@ -142,14 +137,6 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 			if err := h.Connect(ctx, pi); err != nil {
 				continue
 			}
-			//fmt.Printf("Connected to mDNS peer: %s\n", pi.ID)
-
-			// Request PNM from the connected mDNS peer
-			/*if err := RequestPNM(ctx, n, pi.ID); err != nil {
-				fmt.Printf("Failed to request PNM from %s: %v\n", pi.ID, err)
-				continue
-			}*/
-
 			processAndMarkPeer(pi, &mutex)
 		}
 	}
@@ -176,7 +163,13 @@ func processAndMarkPeer(peer peer.AddrInfo, mutex *sync.Mutex) {
 }
 
 func initDHT(ctx context.Context, h host.Host) (*dht.IpfsDHT, error) {
-	kademliaDHT, err := dht.New(ctx, h)
+	dhtOpts := []dht.Option{
+		dht.Mode(dht.ModeServer), // Enable server mode for full DHT functionality
+		dht.Concurrency(20),      // Increase query concurrency
+		//dht.BucketSize(20),       // Increase the bucket size in the routing table
+
+	}
+	kademliaDHT, err := dht.New(ctx, h, dhtOpts...)
 	if err != nil {
 		return nil, err
 	}

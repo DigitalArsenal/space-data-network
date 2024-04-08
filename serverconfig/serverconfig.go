@@ -23,11 +23,6 @@ var (
 //go:embed manifest.json
 var versionFile embed.FS
 
-// Embed the index.html file
-//
-//go:embed assets/index.html
-var indexHTML embed.FS
-
 var once sync.Once
 
 type folderConfig struct {
@@ -85,6 +80,9 @@ var Conf AppConfig
 // Init initializes the global configuration
 func Init() {
 	once.Do(func() {
+
+		//TODO option
+		os.Setenv("IPFS_LOGGING", "panic")
 
 		pluginsLoaded.Do(func() {
 			plugins, err := loader.NewPluginLoader(filepath.Join("", "plugins"))
@@ -202,17 +200,6 @@ func Init() {
 		if _, err := os.Stat(rootDir); os.IsNotExist(err) {
 			if err := os.MkdirAll(rootDir, 0755); err != nil {
 				log.Fatalf("Failed to create 'root' directory: %v", err)
-			}
-
-			// Extract 'index.html' from the embedded file system and write it to the 'root' directory
-			indexContent, err := indexHTML.ReadFile("assets/index.html") // Ensure the path matches the embed directive
-			if err != nil {
-				log.Fatalf("Failed to read embedded 'index.html': %v", err)
-			}
-
-			indexPath := filepath.Join(rootDir, "index.html")
-			if err := os.WriteFile(indexPath, indexContent, 0644); err != nil {
-				log.Fatalf("Failed to create 'index.html' in the 'root' directory: %v", err)
 			}
 		}
 

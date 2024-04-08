@@ -135,7 +135,7 @@ func (n *Node) PublishIPNSRecord(ctx context.Context, ipfsPathString string) (st
 		return "", fmt.Errorf("failed to create path: %w", err)
 	}
 
-	ttl := 1 * time.Hour // Cache TTL of 1 hours
+	ttl := 24 * time.Hour // Cache TTL of 24
 
 	coreAPI, err := coreapi.NewCoreAPI(n.IPFS)
 	if err != nil {
