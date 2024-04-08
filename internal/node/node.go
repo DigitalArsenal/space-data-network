@@ -289,7 +289,8 @@ func (n *Node) Start(ctx context.Context) error {
 	//go discoverPeers(ctx, n, "space-data-network", 30*time.Second)
 	//Find others with the same version
 	versionHex := []byte(serverconfig.Conf.Info.Version)
-	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
+	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 8))
+	fmt.Println("discovery hex: " + discoveryHex)
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
 	//SetupPNMExchange(n)
