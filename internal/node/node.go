@@ -290,6 +290,7 @@ func (n *Node) Start(ctx context.Context) error {
 	//Find others with the same version
 	versionHex := []byte(serverconfig.Conf.Info.Version)
 	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 8))
+	fmt.Println("Version: " + serverconfig.Conf.Info.Version)
 	fmt.Println("discovery hex: " + discoveryHex)
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
@@ -331,9 +332,13 @@ func (n *Node) Start(ctx context.Context) error {
 
 	n.FileWatcher.Watch(serverconfig.Conf.Folders.OutgoingFolder)
 
+	pinnedFiles, _ := n.ListPinnedFiles(ctx)
+	fmt.Println("pinnedFiles: ")
+	fmt.Println(pinnedFiles)
+
 	// Setup periodic IPNS publish every 30 seconds
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(12 * time.Hour)
 		defer ticker.Stop()
 
 		for {

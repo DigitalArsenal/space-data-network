@@ -59,8 +59,8 @@ type IpfsPeerPinConfig struct {
 }
 
 type IpfsConfig struct {
-	PeerPins    []IpfsPeerPinConfig `json:"PeerPins"`
-	IPNSKeyPath string              `json:"IPNSKeyPath"`
+	PeerPins  []IpfsPeerPinConfig `json:"PeerPins"`
+	SdnEpmCid map[string]string   `json:"SdnEpmCid"` // Maps PeerID to their EPM CID, including the current node's
 }
 
 // AppConfig holds the entire application configuration with namespaces
@@ -101,6 +101,12 @@ func Init() {
 				return
 			}
 		})
+
+		err := Conf.LoadConfigFromFile()
+		if err != nil {
+			log.Printf("Failed to load configuration from file, proceeding with defaults.")
+			// Proceed with default and command-line configurations
+		}
 
 		// Parse the version from manifest.json
 		var rawManifest map[string]interface{}
@@ -160,11 +166,6 @@ func Init() {
 			Conf.Datastore.Directory = setDefaultDatastoreDirectory()
 		}
 
-		err = Conf.LoadConfigFromFile()
-		if err != nil {
-			log.Printf("Failed to load configuration from file, proceeding with defaults.")
-			// Proceed with default and command-line configurations
-		}
 		// Override webserver port with environment variable if exists
 		if portStr, exists := os.LookupEnv("SPACE_DATA_NETWORK_WEBSERVER_PORT"); exists {
 			webserverPortStr = portStr
@@ -216,6 +217,24 @@ func Init() {
 			log.Fatalf("Failed to save configuration to file: %v", err)
 		}
 	})
+}
+
+// UpdateEpmCidForPeer updates or adds the EPM CID for a given PeerID, including the current node's
+func (c *AppConfig) UpdateEpmCidForPeer(peerID string, cid string) {
+	if c.IPFS.SdnEpmCid == nil {
+		c.IPFS.SdnEpmCid = make(map[string]string)
+	}
+	c.IPFS.SdnEpmCid[peerID] = cid
+	err := c.SaveConfigToFile()
+	if err != nil {
+		log.Fatalf("Failed to save configuration after updating EPM CID for peer: %v", err)
+	}
+}
+
+// GetEpmCidForPeer retrieves the EPM CID associated with a given PeerID, including the current node's
+func (c *AppConfig) GetEpmCidForPeer(peerID string) (string, bool) {
+	cid, exists := c.IPFS.SdnEpmCid[peerID]
+	return cid, exists
 }
 
 // LoadConfigFromFile loads the configuration settings from a JSON file

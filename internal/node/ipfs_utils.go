@@ -78,6 +78,51 @@ func (n *Node) AddFile(ctx context.Context, filePath string) (path.ImmutablePath
 	return addedFile, nil
 }
 
+func (n *Node) ListPinnedFiles(ctx context.Context) ([]string, error) {
+	var pinnedFiles []string
+
+	// Get the CoreAPI from the IpfsNode
+	api, err := coreapi.NewCoreAPI(n.IPFS)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get core API: %w", err)
+	}
+
+	// List all pinned files
+	pinList, err := api.Pin().Ls(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pinned files: %w", err)
+	}
+
+	// Iterate through the pin list and extract the paths
+	for pin := range pinList {
+		pinnedFiles = append(pinnedFiles, pin.Path().String())
+	}
+
+	return pinnedFiles, nil
+}
+
+func (n *Node) UnpinFile(ctx context.Context, pathStr string) error {
+	// Convert the string path to an IPFS path
+	ipfsPath, err := path.NewPath(pathStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse path: %w", err)
+	}
+
+	// Get the CoreAPI from the IpfsNode
+	api, err := coreapi.NewCoreAPI(n.IPFS)
+	if err != nil {
+		return fmt.Errorf("failed to get core API: %w", err)
+	}
+
+	// Unpin the file
+	err = api.Pin().Rm(ctx, ipfsPath)
+	if err != nil {
+		return fmt.Errorf("failed to unpin file: %w", err)
+	}
+
+	return nil
+}
+
 func (n *Node) AddFileFromStream(ctx context.Context, stream io.Reader) (path.ImmutablePath, error) {
 	var addedFile path.ImmutablePath
 
