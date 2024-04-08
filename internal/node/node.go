@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
-	"path/filepath"
 	"runtime/debug"
 	"time"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
+	"github.com/multiformats/go-multibase"
 	mh "github.com/multiformats/go-multihash"
 	"golang.org/x/crypto/argon2"
 )
@@ -192,33 +192,43 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 	fmt.Println("Node Encryption Ethereum Address: ", node.encryptionAccount.Address)
 	fmt.Println("")
 
-	// Step 2: Convert the public key to a Peer ID
 	pid, err := peer.IDFromPublicKey(pubKey)
 	if err != nil {
 		fmt.Printf("Error getting peer ID from public key: %s\n", err)
 	}
 
-	// Step 3: Convert the Peer ID to a multihash
 	peerMh, err := mh.FromB58String(pid.String())
 	if err != nil {
 		fmt.Printf("Error converting Peer ID to multihash: %s\n", err)
 	}
 
-	// Step 4: Create a CIDv1 with the 'libp2p-key' codec using the multihash
+	// Create a CIDv1 with the 'libp2p-key' codec from the Peer ID's multihash
 	peerCid := cid.NewCidV1(cid.Libp2pKey, peerMh)
 
-	// Step 5: Encode the CIDv1 in base36
-	peerCidStr := peerCid.String()
+	// Encode the CIDv1 in base32
+	base32Encoded, err := multibase.Encode(multibase.Base32, peerCid.Bytes())
+	if err != nil {
+		fmt.Printf("Error encoding CID to base32: %s\n", err)
+	}
 
-	fmt.Println("Base36 Encoded CIDv1:", peerCidStr)
+	// Encode the CIDv1 in base36
+	base36Encoded, err := multibase.Encode(multibase.Base36, peerCid.Bytes())
+	if err != nil {
+		fmt.Printf("Error encoding CID to base36: %s\n", err)
+
+	}
+
+	fmt.Println("Base32 Encoded CIDv1:", base32Encoded)
+	fmt.Println("Base36 Encoded CIDv1:", base36Encoded)
 
 	content.WriteNodeInfoToTemplate(
 		hexPublicKey,
 		peerID.String(),
 		node.signingAccount.Address.Hex(),
 		node.encryptionAccount.Address.Hex(),
-		peerCidStr,
-		filepath.Join(serverconfig.Conf.Datastore.Directory, "root"))
+		base32Encoded,
+		base36Encoded,
+		serverconfig.Conf.Folders.RootFolder)
 
 	CreateDefaultServerEPM(node)
 
@@ -276,7 +286,7 @@ func (n *Node) Start(ctx context.Context) error {
 	//Start auto relay
 	autoRelayFeeder(ctx, n.Host, n.DHT, n.peerChan)
 	//TODO REMOVE
-	go discoverPeers(ctx, n, "space-data-network", 30*time.Second)
+	//go discoverPeers(ctx, n, "space-data-network", 30*time.Second)
 	//Find others with the same version
 	versionHex := []byte(serverconfig.Conf.Info.Version)
 	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))

@@ -195,7 +195,7 @@ func Init() {
 
 		// SETUP IPFS ROOT
 
-		rootDir := filepath.Join(Conf.Datastore.Directory, "root")
+		rootDir := filepath.Join(Conf.Datastore.Directory, "ipns_home")
 		Conf.Folders.RootFolder = rootDir
 		if _, err := os.Stat(rootDir); os.IsNotExist(err) {
 			if err := os.MkdirAll(rootDir, 0755); err != nil {

@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"sync"
 	"time"
@@ -158,14 +159,25 @@ func processAndMarkPeer(peer peer.AddrInfo, mutex *sync.Mutex) {
 	if _, processed := contactedPeers[peerID]; processed {
 		return
 	}
-
+	pubKey, err := peerID.ExtractPublicKey()
+	if err != nil {
+		fmt.Printf("Peer Found: %s (public key not retrievable)\n", peerID)
+	} else {
+		pubKeyBytes, err := pubKey.Raw()
+		if err != nil {
+			fmt.Printf("Peer Found: %s (public key not decodable)\n", peerID)
+		} else {
+			pubKeyB64 := base64.StdEncoding.EncodeToString(pubKeyBytes)
+			fmt.Printf("Peer Found: %s, Public Key: %s\n", peerID, pubKeyB64)
+		}
+	}
 	contactedPeers[peerID] = struct{}{}
 }
 
 func initDHT(ctx context.Context, h host.Host) (*dht.IpfsDHT, error) {
 	dhtOpts := []dht.Option{
 		dht.Mode(dht.ModeServer), // Enable server mode for full DHT functionality
-		dht.Concurrency(20),      // Increase query concurrency
+		dht.Concurrency(30),      // Increase query concurrency
 		//dht.BucketSize(20),       // Increase the bucket size in the routing table
 
 	}

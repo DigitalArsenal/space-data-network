@@ -18,17 +18,19 @@ type NodeData struct {
 	PeerID            string
 	SigningAddress    string
 	EncryptionAddress string
+	Base32CIDv1       string
 	Base36CIDv1       string
 }
 
-func WriteNodeInfoToTemplate(hexPublicKey, peerID, signingAddress, encryptionAddress, peerCidStr, rootDir string) {
+func WriteNodeInfoToTemplate(hexPublicKey, peerID, signingAddress, encryptionAddress, base32CIDv1, base36CIDv1, rootDir string) {
 	// Create an instance of NodeData with your data
 	data := NodeData{
 		PublicKey:         hexPublicKey,
 		PeerID:            peerID,
 		SigningAddress:    signingAddress,
 		EncryptionAddress: encryptionAddress,
-		Base36CIDv1:       peerCidStr,
+		Base32CIDv1:       base32CIDv1,
+		Base36CIDv1:       base36CIDv1,
 	}
 
 	// Read the embedded 'index.html' template
