@@ -43,7 +43,7 @@ var datastoreSpec = map[string]interface{}{
 }
 
 var DatastoreConfig = ipfsConfig.Datastore{
-	StorageMax:         "10GB",
+	StorageMax:         "100GB",
 	StorageGCWatermark: 90,
 	GCPeriod:           "1h", // Example, set according to your needs
 	Spec:               datastoreSpec,
