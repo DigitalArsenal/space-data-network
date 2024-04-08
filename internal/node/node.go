@@ -235,42 +235,6 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 	return node, nil
 }
 
-func (n *Node) onFileProcessed(filePath string, err error) {
-	if err != nil {
-		log.Printf("Error processing file onFileProcessed '%s': %v", filePath, err)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	_, addErr := n.AddFile(ctx, filePath)
-	if addErr != nil {
-		log.Printf("Failed to add file '%s' to IPFS: %v", filePath, addErr)
-		return
-	}
-}
-
-func (n *Node) publishIPNS() {
-	//n.unpublishIPNSRecord()
-
-	if n.publishTimer != nil {
-		n.publishTimer.Stop()
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	// IPNS publish logic...
-	_, err := n.AddFolderToIPNS(ctx, serverconfig.Conf.Folders.RootFolder)
-	if err != nil {
-		log.Println("Failed to publish to IPNS:", err)
-		return
-	}
-
-	//log.Printf("Published to IPNS: %s \n", CID)
-
-}
-
 func (n *Node) Start(ctx context.Context) error {
 	var err error
 
@@ -332,13 +296,13 @@ func (n *Node) Start(ctx context.Context) error {
 
 	n.FileWatcher.Watch(serverconfig.Conf.Folders.OutgoingFolder)
 
-	pinnedFiles, _ := n.ListPinnedFiles(ctx)
+	/*pinnedFiles, _ := n.ListPinnedFiles(ctx)
 	fmt.Println("pinnedFiles: ")
-	fmt.Println(pinnedFiles)
+	fmt.Println(pinnedFiles)*/
 
-	// Setup periodic IPNS publish every 30 seconds
+	// Setup periodic IPNS publish every 30 Seconds
 	go func() {
-		ticker := time.NewTicker(12 * time.Hour)
+		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 
 		for {
