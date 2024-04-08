@@ -31,8 +31,8 @@ type folderConfig struct {
 }
 
 type datastoreConfig struct {
-	Directory string
-	Password  string
+	Directory string `json:"Directory,omitempty"`
+	Password  string `json:"Password,omitempty"`
 }
 
 type webserverConfig struct {
@@ -102,34 +102,6 @@ func Init() {
 			}
 		})
 
-		err := Conf.LoadConfigFromFile()
-		if err != nil {
-			log.Printf("Failed to load configuration from file, proceeding with defaults.")
-			// Proceed with default and command-line configurations
-		}
-
-		// Parse the version from manifest.json
-		var rawManifest map[string]interface{}
-		data, err := versionFile.ReadFile("manifest.json")
-		if err != nil {
-			log.Fatalf("Failed to read version file: %v", err)
-		}
-		if err := json.Unmarshal(data, &rawManifest); err != nil {
-			log.Fatalf("Failed to parse manifest file: %v", err)
-		}
-
-		versionInfo := Info{
-			Version: rawManifest["version"].(string),
-		}
-
-		if standards, ok := rawManifest["STANDARDS"].(map[string]interface{}); ok {
-			for standard := range standards {
-				versionInfo.Standards = append(versionInfo.Standards, standard)
-			}
-		}
-
-		Conf.Info = versionInfo
-
 		// Webserver settings
 		var webserverPortStr string
 		flag.StringVar(&webserverPortStr, "webserver.port", "8080", "Port for the webserver to listen on")
@@ -165,6 +137,34 @@ func Init() {
 			// No environment variable provided; use default
 			Conf.Datastore.Directory = setDefaultDatastoreDirectory()
 		}
+
+		err := Conf.LoadConfigFromFile()
+		if err != nil {
+			log.Printf("Failed to load configuration from file, proceeding with defaults.")
+			// Proceed with default and command-line configurations
+		}
+
+		// Parse the version from manifest.json
+		var rawManifest map[string]interface{}
+		data, err := versionFile.ReadFile("manifest.json")
+		if err != nil {
+			log.Fatalf("Failed to read version file: %v", err)
+		}
+		if err := json.Unmarshal(data, &rawManifest); err != nil {
+			log.Fatalf("Failed to parse manifest file: %v", err)
+		}
+
+		versionInfo := Info{
+			Version: rawManifest["version"].(string),
+		}
+
+		if standards, ok := rawManifest["STANDARDS"].(map[string]interface{}); ok {
+			for standard := range standards {
+				versionInfo.Standards = append(versionInfo.Standards, standard)
+			}
+		}
+
+		Conf.Info = versionInfo
 
 		// Override webserver port with environment variable if exists
 		if portStr, exists := os.LookupEnv("SPACE_DATA_NETWORK_WEBSERVER_PORT"); exists {
@@ -239,6 +239,7 @@ func (c *AppConfig) GetEpmCidForPeer(peerID string) (string, bool) {
 
 // LoadConfigFromFile loads the configuration settings from a JSON file
 func (c *AppConfig) LoadConfigFromFile() error {
+	tmpDir := c.Datastore.Directory
 	configFilePath := filepath.Join(c.Datastore.Directory, "config.json")
 	data, err := os.ReadFile(configFilePath)
 	if err != nil {
@@ -247,6 +248,7 @@ func (c *AppConfig) LoadConfigFromFile() error {
 	if err := json.Unmarshal(data, c); err != nil {
 		return fmt.Errorf("could not unmarshal configuration data: %w", err)
 	}
+	c.Datastore.Directory = tmpDir
 	return nil
 }
 
@@ -257,6 +259,9 @@ func (c *AppConfig) SaveConfigToFile() error {
 
 	// Remove the password from the cloned object to avoid saving it to disk
 	clonedConfig.Datastore.Password = ""
+
+	// Remove the datastore directory since it's wherever the file is found
+	clonedConfig.Datastore.Directory = ""
 
 	// Marshal the cloned configuration data to JSON, excluding the password
 	data, err := json.MarshalIndent(clonedConfig, "", "  ")

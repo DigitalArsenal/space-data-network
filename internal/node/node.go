@@ -5,8 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"os"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	content "github.com/DigitalArsenal/space-data-network/internal/node/content"
@@ -43,9 +44,11 @@ type Node struct {
 	encryptionAccount accounts.Account
 	IPFS              *core.IpfsNode
 	peerChan          chan peer.AddrInfo
-	FileWatcher       Watcher
+	watchedDirs       map[string]*FolderWatcher
+	mu                sync.Mutex
 	publishTimer      *time.Timer
 	timerActive       bool
+	readyFilesChan    chan string // Channel to receive file paths that are ready for processing
 }
 
 // autoRelayPeerSource returns a function that provides peers for auto-relay.
@@ -97,8 +100,10 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 	serverconfig.Init()
 
 	node := &Node{
-		publishTimer: time.NewTimer(1 * time.Minute),
-		timerActive:  false,
+		watchedDirs:    make(map[string]*FolderWatcher),
+		publishTimer:   time.NewTimer(1 * time.Minute),
+		timerActive:    false,
+		readyFilesChan: make(chan string, 1024),
 	}
 
 	var err error
@@ -235,47 +240,9 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 	return node, nil
 }
 
-func (n *Node) onFileProcessed(filePath string, err error) {
-	if err != nil {
-		log.Printf("Error processing file onFileProcessed '%s': %v", filePath, err)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	_, addErr := n.AddFile(ctx, filePath)
-	if addErr != nil {
-		log.Printf("Failed to add file '%s' to IPFS: %v", filePath, addErr)
-		return
-	}
-}
-
-func (n *Node) publishIPNS() {
-	//n.unpublishIPNSRecord()
-
-	if n.publishTimer != nil {
-		n.publishTimer.Stop()
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	// IPNS publish logic...
-	_, err := n.AddFolderToIPNS(ctx, serverconfig.Conf.Folders.RootFolder)
-	if err != nil {
-		log.Println("Failed to publish to IPNS:", err)
-		return
-	}
-
-	//log.Printf("Published to IPNS: %s \n", CID)
-
-}
-
 func (n *Node) Start(ctx context.Context) error {
 	var err error
 
-	n.FileWatcher = *NewWatcher(n.onFileProcessed)
-	n.FileWatcher.Watch(serverconfig.Conf.Folders.OutgoingFolder)
 	n.peerChan = make(chan peer.AddrInfo, 100) // Buffer to avoid blocking
 
 	n.DHT, err = initDHT(ctx, n.Host)
@@ -294,47 +261,14 @@ func (n *Node) Start(ctx context.Context) error {
 	fmt.Println("discovery hex: " + discoveryHex)
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
+	n.StartWatching(ctx, serverconfig.Conf.Folders.OutgoingFolder)
 	//SetupPNMExchange(n)
 	// Initial IPNS publish
-	n.publishIPNS()
+	//n.publishIPNS()
 
-	// Setup the debounced IPNS publish
-	n.FileWatcher = *NewWatcher(func(filePath string, err error) {
-		if err != nil {
-			log.Printf("Error processing file '%s': %v", filePath, err)
-			return
-		}
-
-		if !n.timerActive {
-			// If the timer is not already active, start it with a delay
-			n.publishTimer = time.AfterFunc(30*time.Second, func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-				defer cancel()
-
-				// IPNS publish logic...
-				CID, err := n.AddFolderToIPNS(ctx, serverconfig.Conf.Folders.RootFolder)
-				if err != nil {
-					log.Println("Failed to publish to IPNS:", err)
-					return
-				}
-
-				log.Printf("Published to IPNS: %s \n", CID)
-
-				// Reset timerActive flag after execution
-				n.timerActive = false
-			})
-			n.timerActive = true
-		} else {
-			// If the timer is already active, reset it to delay the execution
-			n.publishTimer.Reset(30 * time.Second)
-		}
-	})
-
-	n.FileWatcher.Watch(serverconfig.Conf.Folders.OutgoingFolder)
-
-	pinnedFiles, _ := n.ListPinnedFiles(ctx)
+	/*pinnedFiles, _ := n.ListPinnedFiles(ctx)
 	fmt.Println("pinnedFiles: ")
-	fmt.Println(pinnedFiles)
+	fmt.Println(pinnedFiles)*/
 
 	// Setup periodic IPNS publish every 30 seconds
 	go func() {
@@ -346,10 +280,12 @@ func (n *Node) Start(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				n.publishIPNS()
+				//n.publishIPNS()
 			}
 		}
 	}()
+
+	go n.processReadyFiles(ctx)
 
 	return nil
 }
@@ -370,7 +306,33 @@ func (n *Node) Stop() {
 		}
 	}
 
-	n.FileWatcher.Unwatch()
-
 	fmt.Println("Node stopped successfully.")
+}
+
+func (n *Node) StartWatching(ctx context.Context, dir string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if _, exists := n.watchedDirs[dir]; exists {
+		fmt.Printf("Already watching directory: %s\n", dir)
+		return
+	}
+
+	watcher := NewFolderWatcher(n, dir)
+	n.watchedDirs[dir] = watcher
+	watcher.Start(ctx)
+}
+
+func (n *Node) processReadyFiles(ctx context.Context) {
+	for {
+		select {
+		case filePath := <-n.readyFilesChan:
+			// Process the file using Node's IPFS node, e.g., pinning
+			fmt.Printf("Processing file: %s\n", filePath)
+			os.Remove(filePath)
+			// Example: n.PinFile(filePath)
+		case <-ctx.Done():
+			return // Stop processing if context is cancelled
+		}
+	}
 }

@@ -109,11 +109,11 @@ func main() {
 				builder.FinishSizePrefixedWithFileIdentifier(omm, []byte("$OMM"))
 				buf := builder.FinishedBytes()
 
-				//for i := 0; i < 50; i++ {
-				if _, err := outgoingFile.Write(buf); err != nil {
-					log.Fatalf("Error writing to outgoing file: %v", err)
+				for i := 0; i < 100; i++ {
+					if _, err := outgoingFile.Write(buf); err != nil {
+						log.Fatalf("Error writing to outgoing file: %v", err)
+					}
 				}
-				//}
 			}
 			fmt.Println("Written to: ", outgoingFilePath)
 		}(i) // Pass 'i' as an argument to the anonymous function

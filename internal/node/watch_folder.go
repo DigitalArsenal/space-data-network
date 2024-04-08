@@ -2,231 +2,146 @@ package node
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
+	"sync"
 	"time"
-
-	f_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
-	"github.com/DigitalArsenal/space-data-network/serverconfig"
-	"github.com/fsnotify/fsnotify"
 )
 
-var debounce = 1 * time.Second
-
-type FileState struct {
-	lastModified   time.Time
-	watching       bool
-	cancelWatchCtx func()
+type FileItem struct {
+	Path     string
+	LastSeen time.Time
 }
 
-type FileProcessedCallback func(filePath string, err error)
-
-type Watcher struct {
-	watcher     *fsnotify.Watcher
-	timer       *time.Ticker
-	doneChan    chan bool
-	fileStates  map[string]*FileState
-	processChan chan string
-	callback    FileProcessedCallback // Callback function
+type OrderedQueue struct {
+	Items []FileItem
+	mu    sync.Mutex
 }
 
-func NewWatcher(callback FileProcessedCallback) *Watcher {
-	w, err := fsnotify.NewWatcher()
-	if err != nil {
-		log.Fatalf("Failed to create fsnotify watcher: %v", err)
+// Add updates the item's LastSeen time if it exists, or appends it if it doesn't.
+func (q *OrderedQueue) Add(item FileItem) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	for i, existingItem := range q.Items {
+		if existingItem.Path == item.Path {
+			q.Items[i].LastSeen = item.LastSeen // Update LastSeen time
+			return
+		}
 	}
-	return &Watcher{
-		watcher:     w,
-		timer:       time.NewTicker(debounce),
-		doneChan:    make(chan bool),
-		fileStates:  make(map[string]*FileState),
-		processChan: make(chan string, 100),
-		callback:    callback,
+
+	q.Items = append(q.Items, item) // Add new item
+}
+
+type FolderWatcher struct {
+	node           *Node
+	dir            string
+	cancel         context.CancelFunc
+	queue          OrderedQueue
+	ticker         *time.Ticker
+	processedFiles map[string]time.Time // Track processed files to avoid re-processing
+	procFilesMu    sync.Mutex           // Mutex for processedFiles map
+	beingProcessed map[string]struct{}  // Map to track files being processed
+}
+
+func NewFolderWatcher(node *Node, dir string) *FolderWatcher {
+	return &FolderWatcher{
+		node:           node,
+		dir:            dir,
+		queue:          OrderedQueue{},
+		ticker:         time.NewTicker(1 * time.Second),
+		processedFiles: make(map[string]time.Time),
+		beingProcessed: make(map[string]struct{}),
 	}
 }
 
-func (w *Watcher) Watch(dir string) {
-	w.enqueueFiles(dir) // Initial enqueue of existing files
+func (fw *FolderWatcher) Start(ctx context.Context) {
+	_, fw.cancel = context.WithCancel(ctx)
+	fw.checkFolder() // Initial check to queue existing files
 
 	go func() {
 		for {
 			select {
-			case <-w.timer.C:
-				w.enqueueFiles(dir) // Periodic checking
-			case filePath := <-w.processChan:
-				if err := w.processFile(filePath); err != nil {
-					log.Printf("Error processing file Watch '%s': %v", filePath, err)
-				}
-			case <-w.doneChan:
+			case <-fw.ticker.C:
+				fw.checkFolder()
+			case <-ctx.Done():
+				fw.ticker.Stop()
 				return
 			}
 		}
 	}()
 }
 
-func (w *Watcher) watchFile(filePath string, state *FileState) {
-	if state.watching {
-		return // Prevent multiple watchers on the same file
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	state.cancelWatchCtx = cancel
-	state.watching = true
-
-	go func() {
-		defer func() {
-			cancel()                   // Cancel the context to clean up the goroutine
-			state.watching = false     // Reset the watching flag
-			w.watcher.Remove(filePath) // Stop watching the file
-		}()
-
-		lastWriteTime := time.Now()
-		for {
-			select {
-			case <-ctx.Done(): // Context cancelled, stop watching
-				return
-			case event := <-w.watcher.Events:
-				if event.Name != filePath || event.Op&fsnotify.Write != fsnotify.Write {
-					continue // Ignore irrelevant events
-				}
-				lastWriteTime = time.Now() // Update last write time on write event
-			case <-time.After(debounce):
-				if time.Since(lastWriteTime) >= debounce {
-					// Process the file if there have been no writes for the debounce period
-					if err := w.processFile(filePath); err != nil {
-						log.Printf("Error processing file Timer'%s': %v", filePath, err)
-					}
-					return // Processing done, exit goroutine
-				}
-			}
-		}
-	}()
-
-	if err := w.watcher.Add(filePath); err != nil {
-		log.Printf("Failed to watch file '%s': %v", filePath, err)
-		cancel() // Ensure resources are cleaned up on failure to add watcher
-		state.watching = false
-	}
-}
-
-func (w *Watcher) enqueueFiles(dir string) {
-	files, err := os.ReadDir(dir)
+func (fw *FolderWatcher) checkFolder() {
+	entries, err := os.ReadDir(fw.dir)
 	if err != nil {
-		log.Printf("Failed to read directory '%s': %v", dir, err)
+		log.Printf("Error reading directory: %v", err)
 		return
 	}
 
-	var fileInfos []os.FileInfo
-	for _, file := range files {
-		if !file.IsDir() {
-			info, err := file.Info()
-			if err != nil {
-				//log.Printf("Error getting info for file '%s': %v", file.Name(), err)
-				continue
-			}
-			fileInfos = append(fileInfos, info)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
 		}
+
+		info, err := entry.Info()
+		if err != nil {
+			log.Printf("Error getting info for file: %v", err)
+			continue
+		}
+
+		filePath := filepath.Join(fw.dir, entry.Name())
+		fw.procFilesMu.Lock()
+		if _, processed := fw.processedFiles[filePath]; !processed {
+			fw.queue.Add(FileItem{Path: filePath, LastSeen: info.ModTime()})
+		}
+		fw.procFilesMu.Unlock()
 	}
 
-	// Sort by modification time, oldest first
-	sort.Slice(fileInfos, func(i, j int) bool {
-		return fileInfos[i].ModTime().Before(fileInfos[j].ModTime())
-	})
+	fw.processQueue()
+}
 
-	// Enqueue only the next file to be processed based on modification time
-	if len(fileInfos) > 0 {
-		nextFile := fileInfos[0] // Assuming the oldest file is the next to be processed
-		filePath := filepath.Join(dir, nextFile.Name())
-		state, exists := w.fileStates[filePath]
-		if !exists {
-			state = &FileState{lastModified: nextFile.ModTime()}
-			w.fileStates[filePath] = state
+func (fw *FolderWatcher) processQueue() {
+	for {
+		fw.queue.mu.Lock()
+		if len(fw.queue.Items) == 0 {
+			fw.queue.mu.Unlock()
+			return // Exit if there are no items to process
 		}
 
-		w.watchFile(filePath, state)
+		// Get the oldest file from the queue
+		item := fw.queue.Items[0]
+		if time.Since(item.LastSeen) < 5*time.Second {
+			fw.queue.mu.Unlock()
+			time.Sleep(1 * time.Second) // Wait for stability
+			continue                    // Re-check the stability of the file after the wait
+		}
+
+		// File is ready for processing; remove it from the queue
+		fw.queue.Items = fw.queue.Items[1:]
+
+		// Before unlocking, mark this file as being processed to avoid re-checking it
+		// This assumes the existence of a beingProcessed map to track such files
+		fw.beingProcessed[item.Path] = struct{}{}
+		fw.queue.mu.Unlock()
+
+		// Do any necessary cleanup or final checks before sending the file for processing
+		// For example, you could double-check the file's existence or modification time
+
+		// Send the file for processing
+		fw.node.readyFilesChan <- item.Path
+
+		// After sending the file for processing, remove it from the beingProcessed map
+		// This step might need to be done asynchronously or in the part of the code that consumes the channel
+		fw.procFilesMu.Lock()
+		delete(fw.beingProcessed, item.Path)
+		fw.procFilesMu.Unlock()
 	}
 }
 
-func (w *Watcher) processFile(filePath string) error {
-	var file *os.File
-	var err error
-
-	// Retry opening the file up to 3 times with a 2-second delay between retries
-	for i := 0; i < 5; i++ {
-		file, err = os.OpenFile(filePath, os.O_RDWR|os.O_EXCL, 0666)
-		if err == nil {
-			defer file.Close()
-			break // Successfully opened the file, exit the retry loop
-		}
-
-		if os.IsNotExist(err) {
-			// If the file does not exist, no need to retry
-			return fmt.Errorf("file '%s' does not exist", filePath)
-		}
-
-		log.Printf("Attempt %d: Error opening file '%s': %v", i+1, filePath, err)
-		time.Sleep(2 * time.Second) // Wait for 2 seconds before retrying
+func (fw *FolderWatcher) Stop() {
+	if fw.cancel != nil {
+		fw.cancel()
 	}
-
-	if err != nil {
-		// Failed to open the file after retries
-		return fmt.Errorf("failed to open file '%s' after retries: %v", filePath, err)
-	}
-
-	// Use ReadDataFromSource to read all FlatBuffers from the file
-	flatBuffers, err := f_utils.ReadDataFromSource(context.Background(), file)
-	if err != nil {
-		return fmt.Errorf("failed to read FlatBuffers from file '%s': %v", filePath, err)
-	}
-
-	if len(flatBuffers) < 12 {
-		return fmt.Errorf("invalid FlatBuffers data in file '%s'", filePath)
-	}
-
-	fileStandard := strings.Split(f_utils.FID(flatBuffers), "$")[1]
-	found := false
-
-	for _, standard := range serverconfig.Conf.Info.Standards {
-		if standard == fileStandard {
-			found = true
-			break
-		}
-	}
-
-	if found {
-		// Construct the outgoing path using the RootFolder, fileStandard, and the base file name
-		outgoingPath := filepath.Join(serverconfig.Conf.Folders.RootFolder, fileStandard, filepath.Base(filePath))
-
-		// Create the directory structure if it doesn't exist
-		if err = os.MkdirAll(filepath.Dir(outgoingPath), os.ModePerm); err != nil {
-			return fmt.Errorf("failed to create directories for the outgoing path: %v", err)
-		}
-
-		// Move the file to the constructed outgoing path
-		if err = os.Rename(filePath, outgoingPath); err != nil {
-			return fmt.Errorf("failed to move file to the outgoing folder: %v", err)
-		}
-		if w.callback != nil {
-			w.callback(outgoingPath, err) // Invoke the callback
-		}
-	} else {
-		// Delete the file
-		if err = os.Remove(filePath); err != nil {
-			return fmt.Errorf("failed to delete file: %v", err)
-		}
-		fmt.Printf("File not a SpaceDataStandard.org flatbuffer, deleted: %s\n", filePath)
-	}
-
-	return err
-}
-
-// Unwatch stops the timer and cleans up resources
-func (w *Watcher) Unwatch() {
-	w.doneChan <- true
-	close(w.doneChan)
-	w.timer.Stop()
 }
