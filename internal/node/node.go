@@ -48,6 +48,8 @@ type Node struct {
 	publishTimer      *time.Timer
 	timerActive       bool
 	readyFilesChan    chan string // Channel to receive file paths that are ready for processing
+	publishingIPNS    bool
+	publishAttempts   int
 }
 
 // autoRelayPeerSource returns a function that provides peers for auto-relay.
@@ -260,7 +262,10 @@ func (n *Node) Start(ctx context.Context) error {
 	fmt.Println("discovery hex: " + discoveryHex)
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
-	n.StartWatching(ctx, serverconfig.Conf.Folders.OutgoingFolder)
+	go func() {
+		n.StartWatching(ctx, serverconfig.Conf.Folders.OutgoingFolder)
+	}()
+
 	//SetupPNMExchange(n)
 	// Initial IPNS publish
 	n.publishIPNS()
@@ -269,9 +274,9 @@ func (n *Node) Start(ctx context.Context) error {
 	fmt.Println("pinnedFiles: ")
 	fmt.Println(pinnedFiles)*/
 
-	// Setup periodic IPNS publish every 30 seconds
+	// Setup periodic IPNS publish every 1 minute
 	go func() {
-		ticker := time.NewTicker(12 * time.Hour)
+		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
 
 		for {
@@ -309,17 +314,19 @@ func (n *Node) Stop() {
 }
 
 func (n *Node) StartWatching(ctx context.Context, dir string) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
 
-	if _, exists := n.watchedDirs[dir]; exists {
-		fmt.Printf("Already watching directory: %s\n", dir)
-		return
-	}
+	go func() {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		if _, exists := n.watchedDirs[dir]; exists {
+			fmt.Printf("Already watching directory: %s\n", dir)
+			return
+		}
 
-	watcher := NewFolderWatcher(n, dir)
-	n.watchedDirs[dir] = watcher
-	watcher.Start(ctx)
+		watcher := NewFolderWatcher(n, dir)
+		n.watchedDirs[dir] = watcher
+		watcher.Start(ctx)
+	}()
 }
 
 func (n *Node) processReadyFiles(ctx context.Context) {
@@ -329,7 +336,6 @@ func (n *Node) processReadyFiles(ctx context.Context) {
 			// Process the file using Node's IPFS node, e.g., pinning
 			fmt.Printf("Processing file: %s\n", filePath)
 			n.processFile(filePath)
-			n.publishIPNS()
 		case <-ctx.Done():
 			return // Stop processing if context is cancelled
 		}
