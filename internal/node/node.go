@@ -263,7 +263,7 @@ func (n *Node) Start(ctx context.Context) error {
 	n.StartWatching(ctx, serverconfig.Conf.Folders.OutgoingFolder)
 	//SetupPNMExchange(n)
 	// Initial IPNS publish
-	n.publishIPNS(ctx)
+	n.publishIPNS()
 
 	/*pinnedFiles, _ := n.ListPinnedFiles(ctx)
 	fmt.Println("pinnedFiles: ")
@@ -279,7 +279,7 @@ func (n *Node) Start(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				n.publishIPNS(ctx)
+				n.publishIPNS()
 			}
 		}
 	}()
@@ -329,14 +329,16 @@ func (n *Node) processReadyFiles(ctx context.Context) {
 			// Process the file using Node's IPFS node, e.g., pinning
 			fmt.Printf("Processing file: %s\n", filePath)
 			n.processFile(filePath)
-			n.publishIPNS(ctx)
+			n.publishIPNS()
 		case <-ctx.Done():
 			return // Stop processing if context is cancelled
 		}
 	}
 }
 
-func (n *Node) publishIPNS(ctx context.Context) {
+func (n *Node) publishIPNS() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 	CID, err := n.AddFolderToIPNS(ctx, serverconfig.Conf.Folders.RootFolder)
 	if err != nil {
 		fmt.Println("Failed to publish to IPNS:", err)
