@@ -23,11 +23,6 @@ var (
 //go:embed manifest.json
 var versionFile embed.FS
 
-// Embed the index.html file
-//
-//go:embed assets/index.html
-var indexHTML embed.FS
-
 var once sync.Once
 
 type folderConfig struct {
@@ -36,8 +31,8 @@ type folderConfig struct {
 }
 
 type datastoreConfig struct {
-	Directory string
-	Password  string
+	Directory string `json:"Directory,omitempty"`
+	Password  string `json:"Password,omitempty"`
 }
 
 type webserverConfig struct {
@@ -64,8 +59,8 @@ type IpfsPeerPinConfig struct {
 }
 
 type IpfsConfig struct {
-	PeerPins    []IpfsPeerPinConfig `json:"PeerPins"`
-	IPNSKeyPath string              `json:"IPNSKeyPath"`
+	PeerPins  []IpfsPeerPinConfig `json:"PeerPins"`
+	SdnEpmCid map[string]string   `json:"SdnEpmCid"` // Maps PeerID to their EPM CID, including the current node's
 }
 
 // AppConfig holds the entire application configuration with namespaces
@@ -86,6 +81,9 @@ var Conf AppConfig
 func Init() {
 	once.Do(func() {
 
+		//TODO option
+		os.Setenv("IPFS_LOGGING", "panic")
+
 		pluginsLoaded.Do(func() {
 			plugins, err := loader.NewPluginLoader(filepath.Join("", "plugins"))
 			if err != nil {
@@ -103,28 +101,6 @@ func Init() {
 				return
 			}
 		})
-
-		// Parse the version from manifest.json
-		var rawManifest map[string]interface{}
-		data, err := versionFile.ReadFile("manifest.json")
-		if err != nil {
-			log.Fatalf("Failed to read version file: %v", err)
-		}
-		if err := json.Unmarshal(data, &rawManifest); err != nil {
-			log.Fatalf("Failed to parse manifest file: %v", err)
-		}
-
-		versionInfo := Info{
-			Version: rawManifest["version"].(string),
-		}
-
-		if standards, ok := rawManifest["STANDARDS"].(map[string]interface{}); ok {
-			for standard := range standards {
-				versionInfo.Standards = append(versionInfo.Standards, standard)
-			}
-		}
-
-		Conf.Info = versionInfo
 
 		// Webserver settings
 		var webserverPortStr string
@@ -162,11 +138,34 @@ func Init() {
 			Conf.Datastore.Directory = setDefaultDatastoreDirectory()
 		}
 
-		err = Conf.LoadConfigFromFile()
+		err := Conf.LoadConfigFromFile()
 		if err != nil {
 			log.Printf("Failed to load configuration from file, proceeding with defaults.")
 			// Proceed with default and command-line configurations
 		}
+
+		// Parse the version from manifest.json
+		var rawManifest map[string]interface{}
+		data, err := versionFile.ReadFile("manifest.json")
+		if err != nil {
+			log.Fatalf("Failed to read version file: %v", err)
+		}
+		if err := json.Unmarshal(data, &rawManifest); err != nil {
+			log.Fatalf("Failed to parse manifest file: %v", err)
+		}
+
+		versionInfo := Info{
+			Version: rawManifest["version"].(string),
+		}
+
+		if standards, ok := rawManifest["STANDARDS"].(map[string]interface{}); ok {
+			for standard := range standards {
+				versionInfo.Standards = append(versionInfo.Standards, standard)
+			}
+		}
+
+		Conf.Info = versionInfo
+
 		// Override webserver port with environment variable if exists
 		if portStr, exists := os.LookupEnv("SPACE_DATA_NETWORK_WEBSERVER_PORT"); exists {
 			webserverPortStr = portStr
@@ -197,22 +196,11 @@ func Init() {
 
 		// SETUP IPFS ROOT
 
-		rootDir := filepath.Join(Conf.Datastore.Directory, "root")
+		rootDir := filepath.Join(Conf.Datastore.Directory, "ipns_home")
 		Conf.Folders.RootFolder = rootDir
 		if _, err := os.Stat(rootDir); os.IsNotExist(err) {
 			if err := os.MkdirAll(rootDir, 0755); err != nil {
 				log.Fatalf("Failed to create 'root' directory: %v", err)
-			}
-
-			// Extract 'index.html' from the embedded file system and write it to the 'root' directory
-			indexContent, err := indexHTML.ReadFile("assets/index.html") // Ensure the path matches the embed directive
-			if err != nil {
-				log.Fatalf("Failed to read embedded 'index.html': %v", err)
-			}
-
-			indexPath := filepath.Join(rootDir, "index.html")
-			if err := os.WriteFile(indexPath, indexContent, 0644); err != nil {
-				log.Fatalf("Failed to create 'index.html' in the 'root' directory: %v", err)
 			}
 		}
 
@@ -231,8 +219,27 @@ func Init() {
 	})
 }
 
+// UpdateEpmCidForPeer updates or adds the EPM CID for a given PeerID, including the current node's
+func (c *AppConfig) UpdateEpmCidForPeer(peerID string, cid string) {
+	if c.IPFS.SdnEpmCid == nil {
+		c.IPFS.SdnEpmCid = make(map[string]string)
+	}
+	c.IPFS.SdnEpmCid[peerID] = cid
+	err := c.SaveConfigToFile()
+	if err != nil {
+		log.Fatalf("Failed to save configuration after updating EPM CID for peer: %v", err)
+	}
+}
+
+// GetEpmCidForPeer retrieves the EPM CID associated with a given PeerID, including the current node's
+func (c *AppConfig) GetEpmCidForPeer(peerID string) (string, bool) {
+	cid, exists := c.IPFS.SdnEpmCid[peerID]
+	return cid, exists
+}
+
 // LoadConfigFromFile loads the configuration settings from a JSON file
 func (c *AppConfig) LoadConfigFromFile() error {
+	tmpDir := c.Datastore.Directory
 	configFilePath := filepath.Join(c.Datastore.Directory, "config.json")
 	data, err := os.ReadFile(configFilePath)
 	if err != nil {
@@ -241,21 +248,38 @@ func (c *AppConfig) LoadConfigFromFile() error {
 	if err := json.Unmarshal(data, c); err != nil {
 		return fmt.Errorf("could not unmarshal configuration data: %w", err)
 	}
+	c.Datastore.Directory = tmpDir
 	return nil
 }
 
-// SaveConfigToFile saves the current configuration settings to a JSON file
+// SaveConfigToFile saves the current configuration settings to a JSON file, excluding sensitive information like the datastore password
 func (c *AppConfig) SaveConfigToFile() error {
-	data, err := json.MarshalIndent(c, "", "  ")
+	// Clone the current AppConfig object
+	clonedConfig := *c
+
+	// Remove the password from the cloned object to avoid saving it to disk
+	clonedConfig.Datastore.Password = ""
+
+	// Remove the datastore directory since it's wherever the file is found
+	clonedConfig.Datastore.Directory = ""
+
+	// Marshal the cloned configuration data to JSON, excluding the password
+	data, err := json.MarshalIndent(clonedConfig, "", "  ")
 	if err != nil {
 		return fmt.Errorf("could not marshal configuration data: %w", err)
 	}
+
+	// Define the path for the configuration file
 	configFilePath := filepath.Join(c.Datastore.Directory, "config.json")
+
+	// Write the configuration data to the file
 	if err := os.WriteFile(configFilePath, data, 0644); err != nil {
 		return fmt.Errorf("could not write configuration file: %w", err)
 	}
+
 	return nil
 }
+
 func setDefaultDatastoreDirectory() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {

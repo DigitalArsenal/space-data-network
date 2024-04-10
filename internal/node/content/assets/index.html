@@ -1,0 +1,17 @@
+<!-- template.html -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Node Information</title>
+  </head>
+  <body>
+    <h1>Node Information</h1>
+    <p>Node Public Key: {{.PublicKey}}</p>
+    <p>Node PeerID: {{.PeerID}}</p>
+    <p>Node Signing Ethereum Address: {{.SigningAddress}}</p>
+    <p>Node Encryption Ethereum Address: {{.EncryptionAddress}}</p>
+    <p>IPNS Base32 Encoded CIDv1: {{.Base32CIDv1}}</p>
+    <p>IPNS Base36 Encoded CIDv1: {{.Base36CIDv1}}</p>
+  </body>
+</html>

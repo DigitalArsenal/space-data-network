@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
-	"flag"
 	"fmt"
 	"log"
 	"runtime/debug"
 	"time"
 
-	crypto_utils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
+	content "github.com/DigitalArsenal/space-data-network/internal/node/content"
 	serverconfig "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/cenkalti/backoff"
 	"github.com/ethereum/go-ethereum/accounts"
@@ -31,6 +30,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
+	"github.com/multiformats/go-multibase"
 	mh "github.com/multiformats/go-multihash"
 	"golang.org/x/crypto/argon2"
 )
@@ -187,65 +187,48 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 	fmt.Printf("Node Public Key: 0x%s \n", hexPublicKey)
 	fmt.Println("Node PeerID: ", peerID)
 
+	fmt.Println("")
 	fmt.Println("Node Signing Ethereum Address: ", node.signingAccount.Address)
 	fmt.Println("Node Encryption Ethereum Address: ", node.encryptionAccount.Address)
 	fmt.Println("")
 
-	var showIpnsAddress = flag.Bool("show-ipns-address", false, "Print the IPNS address")
-
-	if *showIpnsAddress || true {
-		// Step 1: Public Key
-
-		// Step 1: Convert hex string to bytes
-		bytes, err := crypto_utils.HexStringToBytes(hexPublicKey)
-		if err != nil {
-			fmt.Printf("Error converting hex string to bytes: %s\n", err)
-		}
-
-		// Unmarshal the public key from the bytes
-		pubKey, err := crypto.UnmarshalPublicKey(bytes)
-		if err != nil {
-			fmt.Printf("Error unmarshalling public key: %s\n", err)
-		}
-
-		// Step 2: Convert the public key to a Peer ID
-		pid, err := peer.IDFromPublicKey(pubKey)
-		if err != nil {
-			fmt.Printf("Error getting peer ID from public key: %s\n", err)
-		}
-
-		// Step 3: Convert the Peer ID to a multihash
-		peerMh, err := mh.FromB58String(pid.String())
-		if err != nil {
-			fmt.Printf("Error converting Peer ID to multihash: %s\n", err)
-		}
-
-		// Step 4: Create a CIDv1 with the 'libp2p-key' codec using the multihash
-		peerCid := cid.NewCidV1(cid.Libp2pKey, peerMh)
-
-		// Step 5: Encode the CIDv1 in base36
-		peerCidStr := peerCid.String()
-
-		fmt.Println("Base36 Encoded CIDv1:", peerCidStr)
-
-		// Marshal the public key to bytes
-		pubKeyBytes, err = crypto.MarshalPublicKey(pubKey)
-		if err != nil {
-			fmt.Printf("failed to marshal public key to bytes: %s\n", err)
-		}
-
-		// Use the public key bytes to create a multihash with the "identity" hash function
-		pubKeyMh, err := mh.Sum(pubKeyBytes, mh.IDENTITY, -1)
-		if err != nil {
-			fmt.Printf("Error creating multihash from public key bytes: %s\n", err)
-		}
-
-		// Create a CIDv1 with the "libp2p-key" codec using the multihash
-		pubKeyCid := cid.NewCidV1(cid.Libp2pKey, pubKeyMh)
-
-		// Print the base36 encoded CID, which is similar to the IPNS hash in your JS code
-		fmt.Println("IPNS CIDv1 (Base36):", pubKeyCid.String())
+	pid, err := peer.IDFromPublicKey(pubKey)
+	if err != nil {
+		fmt.Printf("Error getting peer ID from public key: %s\n", err)
 	}
+
+	peerMh, err := mh.FromB58String(pid.String())
+	if err != nil {
+		fmt.Printf("Error converting Peer ID to multihash: %s\n", err)
+	}
+
+	// Create a CIDv1 with the 'libp2p-key' codec from the Peer ID's multihash
+	peerCid := cid.NewCidV1(cid.Libp2pKey, peerMh)
+
+	// Encode the CIDv1 in base32
+	base32Encoded, err := multibase.Encode(multibase.Base32, peerCid.Bytes())
+	if err != nil {
+		fmt.Printf("Error encoding CID to base32: %s\n", err)
+	}
+
+	// Encode the CIDv1 in base36
+	base36Encoded, err := multibase.Encode(multibase.Base36, peerCid.Bytes())
+	if err != nil {
+		fmt.Printf("Error encoding CID to base36: %s\n", err)
+
+	}
+
+	fmt.Println("Base32 Encoded CIDv1:", base32Encoded)
+	fmt.Println("Base36 Encoded CIDv1:", base36Encoded)
+
+	content.WriteNodeInfoToTemplate(
+		hexPublicKey,
+		peerID.String(),
+		node.signingAccount.Address.Hex(),
+		node.encryptionAccount.Address.Hex(),
+		base32Encoded,
+		base36Encoded,
+		serverconfig.Conf.Folders.RootFolder)
 
 	CreateDefaultServerEPM(node)
 

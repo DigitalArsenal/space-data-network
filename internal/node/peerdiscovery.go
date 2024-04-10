@@ -82,10 +82,10 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 
 	// Initialize mDNS service
 	notifee := &discoveryNotifee{h: h, contactedPeers: make(map[peer.ID]struct{}), mutex: &sync.Mutex{}, discoveredPeersChan: discoveredPeersChan}
-	mdnsService := mdns.NewMdnsService(h, "space-data-network-mdns", notifee)
+	mdnsService := mdns.NewMdnsService(h, "channelName", notifee)
 	go func() {
 		if err := mdnsService.Start(); err != nil {
-			//fmt.Println("Failed to start mDNS service:", err)
+			fmt.Println("Failed to start mDNS service:", err)
 		}
 	}()
 	defer mdnsService.Close()
