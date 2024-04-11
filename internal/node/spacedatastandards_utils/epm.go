@@ -7,9 +7,7 @@ import (
 
 	EPM "github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	"github.com/emersion/go-vcard"
-	"github.com/ethereum/go-ethereum/accounts"
 	flatbuffers "github.com/google/flatbuffers/go"
-	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
 
 var EPMFID string = "$EPM"
@@ -33,20 +31,21 @@ func CreateEPM(
 	postalCode string,
 	street string,
 	poBox string,
-	wallet *hdwallet.Wallet,
-	signingAccount accounts.Account,
-	encryptionAccount accounts.Account,
+	signingPublicKeyHex string, // Use hexadecimal string directly
+	encryptionPublicKeyHex string, // Use hexadecimal string directly
 ) []byte {
 	builder := flatbuffers.NewBuilder(0)
 
-	spk, _ := wallet.PublicKeyHex(signingAccount)
-	epk, _ := wallet.PublicKeyHex(encryptionAccount)
-	spk = "0x" + spk
-	epk = "0x" + epk
+	if !strings.HasPrefix(signingPublicKeyHex, "0x") {
+		signingPublicKeyHex = "0x" + signingPublicKeyHex
+	}
+	if !strings.HasPrefix(encryptionPublicKeyHex, "0x") {
+		encryptionPublicKeyHex = "0x" + encryptionPublicKeyHex
+	}
 
 	// Key accounts
-	signingPublicKeyOffset := builder.CreateString(spk)
-	encryptionPublicKeyOffset := builder.CreateString(epk)
+	signingPublicKeyOffset := builder.CreateString(signingPublicKeyHex)
+	encryptionPublicKeyOffset := builder.CreateString(encryptionPublicKeyHex)
 
 	// Create and end the CryptoKey for the signing key
 	EPM.CryptoKeyStart(builder)

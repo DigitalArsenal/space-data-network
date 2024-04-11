@@ -2,6 +2,7 @@ package socket
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
+	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
 	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 )
 
@@ -28,7 +30,9 @@ var CommandRegistry = map[string]CommandHandler{
 }
 
 func handleServerEPM(conn net.Conn, args []byte) {
-
+	serverEPM, _ := spacedatastandards_utils.DeserializeEPM(context.Background(), args)
+	nodepkg.CreateServerEPM(context.Background(), nil)
+	fmt.Println(string(serverEPM.EMAIL()))
 }
 
 func SendCommandToSocket(commandKey string, data []byte) {

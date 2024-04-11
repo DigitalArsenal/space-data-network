@@ -59,8 +59,7 @@ func captureStackTrace() string {
 	return builder.String()
 }
 
-func CreateDefaultServerEPM(ctx context.Context, n *Node) {
-	// Load existing EPM from the KeyStore
+func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 
 	vepm, _ := LoadEPMFromFile()
 	if len(vepm) > 0 {
@@ -68,8 +67,15 @@ func CreateDefaultServerEPM(ctx context.Context, n *Node) {
 	}
 
 	fmt.Println("Creating a server A EPM...")
-	// Generate email using peerID
-	peerID := n.Host.ID()
+
+	if node == nil || node.Host == nil {
+		// Node or node.Host is nil, can't proceed further
+		fmt.Println("Node or node.Host is nil, cannot create default server EPM.")
+		return
+	}
+
+	//lint:ignore SA5011 check above for nil
+	peerID := node.Host.ID()
 	email := fmt.Sprintf("%s@spacedatanetwork.digitalarsenal.io", peerID)
 
 	// Set default values for required fields
@@ -92,6 +98,26 @@ func CreateDefaultServerEPM(ctx context.Context, n *Node) {
 	street := "Default Street 1"
 	poBox := ""
 
+	var signingPublicKeyHex, encryptionPublicKeyHex string
+
+	// Check if node is not nil to fetch the public keys
+	if node != nil {
+		var err error
+		// Get the hexadecimal representation of the public keys
+		signingPublicKeyHex, err = node.Wallet.PublicKeyHex(node.signingAccount)
+		if err != nil {
+			fmt.Printf("Error getting signing public key: %v\n", err)
+			return
+		}
+		signingPublicKeyHex = "0x" + signingPublicKeyHex
+
+		encryptionPublicKeyHex, err = node.Wallet.PublicKeyHex(node.encryptionAccount)
+		if err != nil {
+			fmt.Printf("Error getting encryption public key: %v\n", err)
+			return
+		}
+		encryptionPublicKeyHex = "0x" + encryptionPublicKeyHex
+	}
 	// Call the spacedatastandards_utils.CreateEPM with the collected data
 	epmBytes := spacedatastandards_utils.CreateEPM(
 		dnString,
@@ -112,16 +138,15 @@ func CreateDefaultServerEPM(ctx context.Context, n *Node) {
 		postalCode,
 		street,
 		poBox,
-		n.Wallet,
-		n.signingAccount,
-		n.encryptionAccount,
+		signingPublicKeyHex,
+		encryptionPublicKeyHex,
 	)
 
 	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
 
-	CID, err := n.AddFileFromBytes(ctx, epmBytes)
+	CID, _ := node.AddFileFromBytes(ctx, epmBytes)
 	CIDString := CID.String()
-	sig, err := n.Wallet.SignData(n.signingAccount, "application/octet-stream", []byte(CIDString))
+	sig, err := node.Wallet.SignData(node.signingAccount, "application/octet-stream", []byte(CIDString))
 	if err != nil {
 		fmt.Printf("Failed to sign CID: %v\n", err)
 		return
@@ -135,7 +160,7 @@ func CreateDefaultServerEPM(ctx context.Context, n *Node) {
 	SavePNMToFile(pnmBytes)
 }
 
-func CreateServerEPM(ctx context.Context, node *Node) {
+func CreateServerEPM(ctx context.Context, node *Node) []byte {
 
 	reader := bufio.NewReader(os.Stdin)
 
@@ -154,7 +179,7 @@ func CreateServerEPM(ctx context.Context, node *Node) {
 	email, err := enforceValidEmail(reader, "Enter email: ")
 	if err != nil {
 		fmt.Printf("Error reading email: %v\n", err)
-		return
+		return nil
 	}
 
 	telephone, _ := readInput(reader, "Enter telephone: ")
@@ -186,6 +211,27 @@ func CreateServerEPM(ctx context.Context, node *Node) {
 	alternateNames := parseInput(altNamesInput)
 	dnString, _ := readInput(reader, "Enter DN (e.g., 'CN=John Doe, O=E Corp, OU=IT, DC=ex, DC=com'): ")
 
+	var signingPublicKeyHex, encryptionPublicKeyHex string
+
+	// Check if node is not nil to fetch the public keys
+	if node != nil {
+		var err error
+		// Get the hexadecimal representation of the public keys
+		signingPublicKeyHex, err = node.Wallet.PublicKeyHex(node.signingAccount)
+		if err != nil {
+			fmt.Printf("Error getting signing public key: %v\n", err)
+			return nil // Or handle the error as appropriate
+		}
+		signingPublicKeyHex = "0x" + signingPublicKeyHex
+
+		encryptionPublicKeyHex, err = node.Wallet.PublicKeyHex(node.encryptionAccount)
+		if err != nil {
+			fmt.Printf("Error getting encryption public key: %v\n", err)
+			return nil // Or handle the error as appropriate
+		}
+		encryptionPublicKeyHex = "0x" + encryptionPublicKeyHex
+	}
+
 	// Call the spacedatastandards_utils.CreateEPM with the collected data
 	epmBytes := spacedatastandards_utils.CreateEPM(
 		dnString,
@@ -206,10 +252,13 @@ func CreateServerEPM(ctx context.Context, node *Node) {
 		postalCode,
 		street,
 		poBox,
-		node.Wallet,
-		node.signingAccount,
-		node.encryptionAccount,
+		signingPublicKeyHex,
+		encryptionPublicKeyHex,
 	)
+
+	if node == nil {
+		return epmBytes
+	}
 
 	// Handle the generated EPM bytes, such as saving them to a file or sending over a network.
 	// fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
@@ -229,6 +278,8 @@ func CreateServerEPM(ctx context.Context, node *Node) {
 	//TODO save PNM
 	SaveEPMToFile(epmBytes)
 	SavePNMToFile(pnmBytes)
+
+	return epmBytes
 }
 
 func ReadServerEPM(showQR ...bool) {
