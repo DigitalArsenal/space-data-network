@@ -34,7 +34,9 @@ type datastoreConfig struct {
 	Directory string `json:"Directory,omitempty"`
 	Password  string `json:"Password,omitempty"`
 }
-
+type socketServer struct {
+	Path string
+}
 type webserverConfig struct {
 	Port int
 }
@@ -65,13 +67,14 @@ type IpfsConfig struct {
 
 // AppConfig holds the entire application configuration with namespaces
 type AppConfig struct {
-	Datastore datastoreConfig
-	Webserver webserverConfig
-	KeyConfig keyConfig
-	Keys      keys
-	Info      Info
-	Folders   folderConfig
-	IPFS      IpfsConfig
+	Datastore    datastoreConfig
+	Webserver    webserverConfig
+	KeyConfig    keyConfig
+	Keys         keys
+	Info         Info
+	Folders      folderConfig
+	IPFS         IpfsConfig
+	SocketServer socketServer
 }
 
 // Conf is the exported variable that will hold all the configuration settings
@@ -137,7 +140,7 @@ func Init() {
 			// No environment variable provided; use default
 			Conf.Datastore.Directory = setDefaultDatastoreDirectory()
 		}
-
+		Conf.SocketServer.Path = filepath.Join(Conf.Datastore.Directory, "app.sock")
 		err := Conf.LoadConfigFromFile()
 		if err != nil {
 			log.Printf("Failed to load configuration from file, proceeding with defaults.")

@@ -100,6 +100,8 @@ func loadOrCreateIPFSRepo(_ context.Context, privKeyBase64 string) (repo.Repo, e
 			Datastore: DatastoreConfig,
 		}
 
+		//newCfg.Routing.AcceleratedDHTClient = true
+
 		if err := os.MkdirAll(ipfsConfigDir, 0700); err != nil {
 			return nil, fmt.Errorf("failed to create IPFS config directory: %w", err)
 		}

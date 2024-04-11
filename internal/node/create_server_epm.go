@@ -3,6 +3,7 @@ package node
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,9 +11,36 @@ import (
 	"runtime"
 	"strings"
 
+	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
+	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/mdp/qrterminal/v3"
+	"github.com/skip2/go-qrcode"
 )
+
+// SaveEPMToFile saves the EPM data to a file in the RootFolder.
+func SaveEPMToFile(data []byte) error {
+	epmFilePath := filepath.Join(config.Conf.Folders.RootFolder, "server.epm")
+	return os.WriteFile(epmFilePath, data, 0644)
+}
+
+// LoadEPMFromFile loads the EPM data from a file in the RootFolder.
+func LoadEPMFromFile() ([]byte, error) {
+	epmFilePath := filepath.Join(config.Conf.Folders.RootFolder, "server.epm")
+	return os.ReadFile(epmFilePath)
+}
+
+// SavePNMToFile saves the PNM data to a file in the RootFolder.
+func SavePNMToFile(data []byte) error {
+	pnmFilePath := filepath.Join(config.Conf.Folders.RootFolder, "server.pnm")
+	return os.WriteFile(pnmFilePath, data, 0644)
+}
+
+// LoadPNMFromFile loads the PNM data from a file in the RootFolder.
+func LoadPNMFromFile() ([]byte, error) {
+	pnmFilePath := filepath.Join(config.Conf.Folders.RootFolder, "server.pnm")
+	return os.ReadFile(pnmFilePath)
+}
 
 func captureStackTrace() string {
 	var builder strings.Builder
@@ -32,17 +60,6 @@ func captureStackTrace() string {
 }
 func setupNode() *Node {
 
-	// Prompt for KeyStore password
-	fmt.Print("KeyStore Password (leave blank if none has been set): ")
-	password, err := readPassword()
-	if err != nil {
-		fmt.Printf("Failed to read password: %v\n", err)
-		return nil
-	}
-
-	// Set the configuration property for KeyStore password
-	config.Conf.Datastore.Password = strings.TrimSpace(password)
-
 	// Create a new node, which will use the updated configuration for its KeyStore
 	newNode, err := NewSDNNode(context.Background(), "")
 	if err != nil {
@@ -55,180 +72,178 @@ func setupNode() *Node {
 func CreateDefaultServerEPM(n *Node) {
 	// Load existing EPM from the KeyStore
 
-	/*
-		vepm, _ := n.KeyStore.LoadEPM()
-		if len(vepm) > 0 {
-			return
+	vepm, _ := LoadEPMFromFile()
+	if len(vepm) > 0 {
+		return
+	}
+
+	fmt.Println("Creating a server A EPM...")
+	// Generate email using peerID
+	peerID := n.Host.ID()
+	email := fmt.Sprintf("%s@spacedatanetwork.digitalarsenal.io", peerID)
+
+	// Set default values for required fields
+	legalName := "Default Organization"
+	familyName := ""
+	givenName := ""
+	additionalName := ""
+	honorificPrefix := ""
+	honorificSuffix := ""
+	jobTitle := ""
+	occupation := ""
+	alternateNames := []string{"Default Name"}
+	dnString := fmt.Sprintf("CN=%s %s, O=Default Organization", givenName, familyName)
+
+	// Assume default values for address components
+	country := "Default Country"
+	region := "Default Region"
+	locality := "Default City"
+	postalCode := "00000"
+	street := "Default Street 1"
+	poBox := ""
+
+	// Call the spacedatastandards_utils.CreateEPM with the collected data
+	epmBytes := spacedatastandards_utils.CreateEPM(
+		dnString,
+		legalName,
+		familyName,
+		givenName,
+		additionalName,
+		honorificPrefix,
+		honorificSuffix,
+		jobTitle,
+		occupation,
+		alternateNames,
+		email,
+		"", // Telephone not set
+		country,
+		region,
+		locality,
+		postalCode,
+		street,
+		poBox,
+		n.Wallet,
+		n.signingAccount,
+		n.encryptionAccount,
+	)
+
+	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
+
+	var CID string
+	var err error
+	maxRetries := 3
+
+	for i := 0; i < maxRetries; i++ {
+		CID, err = spacedatastandards_utils.GenerateCID(epmBytes)
+		if err != nil {
+			fmt.Printf("Attempt %d: Failed to generate CID, error: %v\n", i+1, err)
+			continue
 		}
-
-		fmt.Println("Creating a server EPM...")
-
-		// Generate email using peerID
-		peerID := n.Host.ID()
-		email := fmt.Sprintf("%s@spacedatanetwork.digitalarsenal.io", peerID)
-
-		// Set default values for required fields
-		legalName := "Default Organization"
-		familyName := ""
-		givenName := ""
-		additionalName := ""
-		honorificPrefix := ""
-		honorificSuffix := ""
-		jobTitle := ""
-		occupation := ""
-		alternateNames := []string{"Default Name"}
-		dnString := fmt.Sprintf("CN=%s %s, O=Default Organization", givenName, familyName)
-
-		// Assume default values for address components
-		country := "Default Country"
-		region := "Default Region"
-		locality := "Default City"
-		postalCode := "00000"
-		street := "Default Street 1"
-		poBox := ""
-
-		// Call the spacedatastandards_utils.CreateEPM with the collected data
-		epmBytes := spacedatastandards_utils.CreateEPM(
-			dnString,
-			legalName,
-			familyName,
-			givenName,
-			additionalName,
-			honorificPrefix,
-			honorificSuffix,
-			jobTitle,
-			occupation,
-			alternateNames,
-			email,
-			"", // Telephone not set
-			country,
-			region,
-			locality,
-			postalCode,
-			street,
-			poBox,
-			n.Wallet,
-			n.signingAccount,
-			n.encryptionAccount,
-		)
-
-		fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
-
-		var CID string
-		var err error
-		maxRetries := 3
-
-		for i := 0; i < maxRetries; i++ {
-			CID, err = spacedatastandards_utils.GenerateCID(epmBytes)
-			if err != nil {
-				fmt.Printf("Attempt %d: Failed to generate CID, error: %v\n", i+1, err)
-				continue
-			}
-			if CID != "" {
-				fmt.Println("Print CID from autogenerate:", CID)
-				break
-			}
-			fmt.Printf("Attempt %d: Received blank CID, retrying...\n", i+1)
+		if CID != "" {
+			fmt.Println("Print CID from autogenerate:", CID)
+			break
 		}
+		fmt.Printf("Attempt %d: Received blank CID, retrying...\n", i+1)
+	}
 
-		if CID == "" {
-			panic("Failed to generate a valid CID after 3 attempts.")
-		}
+	if CID == "" {
+		panic("Failed to generate a valid CID after 3 attempts.")
+	}
 
-		//sig, err := n.Wallet.SignData(n.signingAccount, "application/octet-stream", []byte(CID))
-		//if err != nil {
-		//	fmt.Printf("Failed to sign CID: %v\n", err)
-		//	return
-		//}
-		//signatureHex := hex.EncodeToString(sig)
-		//formattedSignature := fmt.Sprintf("0x%s", signatureHex)
+	sig, err := n.Wallet.SignData(n.signingAccount, "application/octet-stream", []byte(CID))
+	if err != nil {
+		fmt.Printf("Failed to sign CID: %v\n", err)
+		return
+	}
+	signatureHex := hex.EncodeToString(sig)
+	formattedSignature := fmt.Sprintf("0x%s", signatureHex)
 
-		// Create PNM and save EPM and PNM to KeyStore
-		//pnmBytes := spacedatastandards_utils.CreatePNM("", CID, formattedSignature)
-		//n.KeyStore.SaveEPM(epmBytes)
-		//n.KeyStore.SavePNM(pnmBytes)*/
+	//Create PNM and save EPM and PNM to KeyStore
+	pnmBytes := spacedatastandards_utils.CreatePNM("", CID, formattedSignature)
+	SaveEPMToFile(epmBytes)
+	SavePNMToFile(pnmBytes)
 }
 
 func CreateServerEPM() {
-	/*
-		newNode := setupNode()
-		reader := bufio.NewReader(os.Stdin)
 
-		vepm := []byte("")
+	newNode := setupNode()
+	reader := bufio.NewReader(os.Stdin)
 
-		if len(vepm) > 0 {
-			epm := EPM.GetSizePrefixedRootAsEPM(vepm, 0)
+	vepm := []byte("")
 
-			fmt.Println(string(epm.EMAIL()))
-		}
-		entityType, _ := readInput(reader, "Are you creating a profile for an Organization or a Person? (O/P): ")
-		isPerson := strings.ToUpper(entityType) == "P"
+	if len(vepm) > 0 {
+		epm := EPM.GetSizePrefixedRootAsEPM(vepm, 0)
 
-		fmt.Println("Creating a server EPM...")
+		fmt.Println(string(epm.EMAIL()))
+	}
+	entityType, _ := readInput(reader, "Are you creating a profile for an Organization or a Person? (O/P): ")
+	isPerson := strings.ToUpper(entityType) == "P"
 
-		email, err := enforceValidEmail(reader, "Enter email: ")
-		if err != nil {
-			fmt.Printf("Error reading email: %v\n", err)
-			return
-		}
+	fmt.Println("Creating a server EPM...")
 
-		telephone, _ := readInput(reader, "Enter telephone: ")
+	email, err := enforceValidEmail(reader, "Enter email: ")
+	if err != nil {
+		fmt.Printf("Error reading email: %v\n", err)
+		return
+	}
 
-		var legalName, familyName, givenName, additionalName, honorificPrefix, honorificSuffix, jobTitle, occupation string
+	telephone, _ := readInput(reader, "Enter telephone: ")
 
-		country, _ := readInput(reader, "Enter country: ")
-		region, _ := readInput(reader, "Enter region/state: ")
-		locality, _ := readInput(reader, "Enter locality/city: ")
-		postalCode, _ := readInput(reader, "Enter postal code: ")
-		street, _ := readInput(reader, "Enter street address: ")
-		poBox, _ := readInput(reader, "Enter post office box number (if any): ")
+	var legalName, familyName, givenName, additionalName, honorificPrefix, honorificSuffix, jobTitle, occupation string
 
-		if isPerson {
-			// Person-specific fields
-			familyName, _ = readInput(reader, "Enter family name: ")
-			givenName, _ = readInput(reader, "Enter given name: ")
-			additionalName, _ = readInput(reader, "Enter additional name: ")
-			honorificPrefix, _ = readInput(reader, "Enter honorific prefix: ")
-			honorificSuffix, _ = readInput(reader, "Enter honorific suffix: ")
-			jobTitle, _ = readInput(reader, "Enter job title: ")
-		} else {
-			legalName, _ = readInput(reader, "Enter organization name: ")
-		}
+	country, _ := readInput(reader, "Enter country: ")
+	region, _ := readInput(reader, "Enter region/state: ")
+	locality, _ := readInput(reader, "Enter locality/city: ")
+	postalCode, _ := readInput(reader, "Enter postal code: ")
+	street, _ := readInput(reader, "Enter street address: ")
+	poBox, _ := readInput(reader, "Enter post office box number (if any): ")
 
-		altNamesInput, _ := readInput(reader, "Enter alternate names (comma-separated): ")
+	if isPerson {
+		// Person-specific fields
+		familyName, _ = readInput(reader, "Enter family name: ")
+		givenName, _ = readInput(reader, "Enter given name: ")
+		additionalName, _ = readInput(reader, "Enter additional name: ")
+		honorificPrefix, _ = readInput(reader, "Enter honorific prefix: ")
+		honorificSuffix, _ = readInput(reader, "Enter honorific suffix: ")
+		jobTitle, _ = readInput(reader, "Enter job title: ")
+	} else {
+		legalName, _ = readInput(reader, "Enter organization name: ")
+	}
 
-		// Parse comma-separated alternate names and multiformat addresses
-		alternateNames := parseInput(altNamesInput)
-		dnString, _ := readInput(reader, "Enter DN (e.g., 'CN=John Doe, O=E Corp, OU=IT, DC=ex, DC=com'): ")
+	altNamesInput, _ := readInput(reader, "Enter alternate names (comma-separated): ")
 
-		// Call the spacedatastandards_utils.CreateEPM with the collected data
-		/*epmBytes := spacedatastandards_utils.CreateEPM(
-			dnString,
-			legalName,
-			familyName,
-			givenName,
-			additionalName,
-			honorificPrefix,
-			honorificSuffix,
-			jobTitle,
-			occupation,
-			alternateNames,
-			email,
-			telephone,
-			country,
-			region,
-			locality,
-			postalCode,
-			street,
-			poBox,
-			newNode.Wallet,
-			newNode.signingAccount,
-			newNode.encryptionAccount,
-		)*/
+	// Parse comma-separated alternate names and multiformat addresses
+	alternateNames := parseInput(altNamesInput)
+	dnString, _ := readInput(reader, "Enter DN (e.g., 'CN=John Doe, O=E Corp, OU=IT, DC=ex, DC=com'): ")
+
+	// Call the spacedatastandards_utils.CreateEPM with the collected data
+	epmBytes := spacedatastandards_utils.CreateEPM(
+		dnString,
+		legalName,
+		familyName,
+		givenName,
+		additionalName,
+		honorificPrefix,
+		honorificSuffix,
+		jobTitle,
+		occupation,
+		alternateNames,
+		email,
+		telephone,
+		country,
+		region,
+		locality,
+		postalCode,
+		street,
+		poBox,
+		newNode.Wallet,
+		newNode.signingAccount,
+		newNode.encryptionAccount,
+	)
 
 	// Handle the generated EPM bytes, such as saving them to a file or sending over a network.
 	// fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
-	/*CID, _ := spacedatastandards_utils.GenerateCID(epmBytes)
+	CID, _ := spacedatastandards_utils.GenerateCID(epmBytes)
 
 	sig, err := newNode.Wallet.SignData(newNode.signingAccount, "application/octet-stream", []byte(CID))
 	if err != nil {
@@ -240,9 +255,10 @@ func CreateServerEPM() {
 	formattedSignature := fmt.Sprintf("0x%s", signatureHex)
 
 	pnmBytes := spacedatastandards_utils.CreatePNM("/ip4/127.0.0.1/tcp/4001", CID, formattedSignature)
+
 	//TODO save PNM
-	newNode.KeyStore.SaveEPM(epmBytes)
-	newNode.KeyStore.SavePNM(pnmBytes)*/
+	SaveEPMToFile(epmBytes)
+	SavePNMToFile(pnmBytes)
 }
 
 func ReadServerEPM(showQR ...bool) {
@@ -252,7 +268,7 @@ func ReadServerEPM(showQR ...bool) {
 		fmt.Println("EPM not found, run with flag '-create-server-epm' to generate")
 		return
 	}
-	/*vCard := spacedatastandards_utils.ConvertTovCard(vepm)
+	vCard := spacedatastandards_utils.ConvertTovCard(vepm)
 
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Enter the path to save the vCard (.vcf), or leave blank to skip: ")
@@ -284,12 +300,6 @@ func ReadServerEPM(showQR ...bool) {
 
 	// Only print the vCard if no path was provided for saving
 	fmt.Println(vCard)
-	/*pnmBytes, _ := newNode.KeyStore.LoadPNM()
-
-	pnm := PNM.GetSizePrefixedRootAsPNM(pnmBytes, 0)
-
-	fmt.Println("EPM CID: ", string(pnm.CID()))
-	fmt.Println("Ethereum Digital Signature: ", string(pnm.SIGNATURE()))*/
 }
 
 func generateAndDisplayQRCode(content string) {

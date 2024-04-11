@@ -92,7 +92,7 @@ func AccessPNM(buf []byte) *PNM.PNM {
 	return PNM.GetRootAsPNM(buf, 0)
 }
 
-func CreatePNM(multiformatAddress string, cid string, ethDigitalSignature string) flatbuffers.UOffsetT {
+func CreatePNM(multiformatAddress string, cid string, ethDigitalSignature string) []byte {
 	builder := flatbuffers.NewBuilder(0)
 	multiformatAddressOffset := builder.CreateString(multiformatAddress)
 	cidOffset := builder.CreateString(cid)
@@ -110,7 +110,7 @@ func CreatePNM(multiformatAddress string, cid string, ethDigitalSignature string
 	// Add other fields as needed
 	pnm := PNM.PNMEnd(builder)
 
-	return pnm
+	return SerializePNMs(builder, []flatbuffers.UOffsetT{pnm})
 }
 
 // SerializePNM takes a PNM object and serializes it into a byte slice.

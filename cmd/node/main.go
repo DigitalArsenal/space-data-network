@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -16,101 +14,15 @@ import (
 	"syscall"
 
 	web "github.com/DigitalArsenal/space-data-network/internal/web"
+	"github.com/DigitalArsenal/space-data-network/serverconfig"
 
+	socketserver "github.com/DigitalArsenal/space-data-network/cmd/socket"
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
 	cryptoUtils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
 	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/ipfs/kubo/repo/fsrepo"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
-
-func startSocketServer(socketPath string, n *nodepkg.Node) {
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		fmt.Printf("Failed to listen on socket: %s, error: %v\n", socketPath, err)
-		return
-	}
-	defer listener.Close()
-
-	fmt.Printf("Socket server listening at %s\n", socketPath)
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			fmt.Printf("Failed to accept connection on socket: %v\n", err)
-			continue
-		}
-		go handleSocketConnection(conn, n)
-	}
-}
-
-func handleSocketConnection(conn net.Conn, n *nodepkg.Node) {
-	defer conn.Close()
-
-	reader := bufio.NewReader(conn)
-	// Read the initial command from the client
-	command, err := reader.ReadString('\n')
-	if err != nil {
-		fmt.Printf("Error reading command from connection: %v\n", err)
-		return
-	}
-	command = strings.TrimSpace(command)
-
-	// Echo back the received command for verification
-	fmt.Fprintf(conn, "Received command: %s\n", command)
-
-	// Process the command
-	if command == "GET_PEER_ID" {
-		// Read the next line, which should be the Peer ID or public key hex
-		clientInput, err := reader.ReadString('\n')
-		if err != nil {
-			fmt.Printf("Error reading from connection: %v\n", err)
-			return
-		}
-		clientInput = strings.TrimSpace(clientInput)
-
-		// Echo back what was received for verification
-		fmt.Fprintf(conn, "Client sent: %s\n", clientInput)
-
-		// Here you can use `clientInput` to perform the required operation,
-		// for now, we just print it to the server's console and send back a dummy response
-		fmt.Println("Received from client:", clientInput)
-		peerID := n.Host.ID()
-		fmt.Println("Node PeerID:", peerID.String())
-		fmt.Fprintln(conn, peerID.String()) // Respond with the Node's PeerID or the relevant info
-	} else {
-		fmt.Fprintln(conn, "Unknown command")
-	}
-}
-
-// handlePublicKeyHex connects to the socket server, sends the public key, and prints the response
-func GetPeerID(pubKeyHex string) {
-	fmt.Printf("Public Key: %s\n", pubKeyHex)
-
-	socketPath := filepath.Join(config.Conf.Datastore.Directory, "app.sock")
-	conn, err := net.Dial("unix", socketPath)
-	if err != nil {
-		fmt.Printf("Daemon not running: %v\n", err)
-		return
-	}
-	defer conn.Close()
-
-	// Send the GET_PEER_ID command to the socket server
-	command := "GET_PEER_ID"
-	fmt.Fprintf(conn, "%s\n", command)
-
-	// Optionally send the public key if needed by the server for this operation
-	fmt.Fprintf(conn, "%s\n", pubKeyHex)
-
-	// Read and print the response from the socket server
-	scanner := bufio.NewScanner(conn)
-	if scanner.Scan() {
-		fmt.Println("Received from server:", scanner.Text())
-	}
-	if err := scanner.Err(); err != nil {
-		fmt.Printf("Error reading from socket server: %v\n", err)
-	}
-}
 
 func main() {
 	var (
@@ -129,16 +41,16 @@ func main() {
 		importPrivateKeyHexPath      = flag.String("import-private-key-hex", "", "Path to file containing a hex string (with '0x' prefix) for the Ethereum private key")
 		exportPrivateKeyMnemonic     = flag.String("export-private-key-mnemonic", "", "Path to file where the private as a mnemonic will be exported")
 		exportPrivateKeyHex          = flag.String("export-private-key-hex", "", "Path to file where the private key as a hex string will be exported")
-		publicKeyHex                 = flag.String("pubkey", "", "The public key in hexadecimal format")
+		publicKeyHex                 = flag.Bool("pubkey", false, "The public key in hexadecimal format")
 	)
 
 	flag.Parse()
 
 	config.Init()
 
-	if *publicKeyHex != "" {
-		GetPeerID(*publicKeyHex)
-		return // Exit after handling public key
+	if *publicKeyHex {
+		socketserver.SendCommandToSocket("PUBLIC_KEY", []byte("xxx"))
+		return
 	}
 
 	if *helpFlag {
@@ -152,7 +64,6 @@ func main() {
 	}
 
 	if *addPeerID != "" || *removePeerID != "" {
-
 		managePeerFileIDs(*addPeerID, *addFileIDs, *removePeerID, *removeFileIDs)
 		saveConfigAndSendSIGHUP()
 	}
@@ -194,13 +105,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Determine the socket path from the configuration's root folder
-	socketPath := filepath.Join(config.Conf.Datastore.Directory, "app.sock")
-	os.Remove(socketPath) // Remove the existing socket file if present
+	os.Remove(serverconfig.Conf.SocketServer.Path) // Remove the existing socket file if present
 
 	// Start the socket server in a goroutine
-	go startSocketServer(socketPath, node)
-
+	go socketserver.StartSocketServer(serverconfig.Conf.SocketServer.Path, node)
 	server := web.NewAPI(node)
 	server.Start()
 

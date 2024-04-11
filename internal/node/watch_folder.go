@@ -15,7 +15,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-var debounce = 10 * time.Second
+var debounce = 1 * time.Second
 
 type FileState struct {
 	lastModified   time.Time
@@ -153,6 +153,13 @@ func (w *Watcher) enqueueFiles(dir string) {
 
 func (w *Watcher) processFile(filePath string) error {
 	var err error
+	_, err = os.Stat(filePath)
+	if os.IsNotExist(err) {
+		// Return nil if the file does not exist
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to check if file '%s' exists: %v", filePath, err)
+	}
 	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_EXCL, 0666)
 	if err != nil {
 		return fmt.Errorf("failed to open file '%s': %v", filePath, err)

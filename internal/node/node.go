@@ -244,11 +244,12 @@ func (n *Node) onFileProcessed(filePath string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	_, addErr := n.AddFile(ctx, filePath)
+	CID, addErr := n.AddFile(ctx, filePath)
 	if addErr != nil {
 		log.Printf("Failed to add file '%s' to IPFS: %v", filePath, addErr)
 		return
 	}
+	fmt.Println("ADDED CID: " + CID.String())
 }
 
 func (n *Node) publishIPNS() {

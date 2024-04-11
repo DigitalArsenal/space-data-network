@@ -29,3 +29,8 @@
 - [ ] Realtime
 - [ ] Encrypted / Secure
 - [ ] Point to point security (isolated)
+
+# Concept
+
+Posting the index.html to IPNS; due to slow propagation, have it cached at nodes.
+Create protocols to list pinned files, and request them directly.
