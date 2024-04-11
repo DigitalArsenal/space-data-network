@@ -61,8 +61,8 @@ type IpfsPeerPinConfig struct {
 }
 
 type IpfsConfig struct {
-	PeerPins  []IpfsPeerPinConfig `json:"PeerPins"`
-	SdnEpmCid map[string]string   `json:"SdnEpmCid"` // Maps PeerID to their EPM CID, including the current node's
+	PeerPins []IpfsPeerPinConfig `json:"PeerPins"`
+	PeerEPM  map[string]string   `json:"PeerEPM"` // Maps PeerID to their EPM CID, including the current node's
 }
 
 // AppConfig holds the entire application configuration with namespaces
@@ -224,10 +224,10 @@ func Init() {
 
 // UpdateEpmCidForPeer updates or adds the EPM CID for a given PeerID, including the current node's
 func (c *AppConfig) UpdateEpmCidForPeer(peerID string, cid string) {
-	if c.IPFS.SdnEpmCid == nil {
-		c.IPFS.SdnEpmCid = make(map[string]string)
+	if c.IPFS.PeerEPM == nil {
+		c.IPFS.PeerEPM = make(map[string]string)
 	}
-	c.IPFS.SdnEpmCid[peerID] = cid
+	c.IPFS.PeerEPM[peerID] = cid
 	err := c.SaveConfigToFile()
 	if err != nil {
 		log.Fatalf("Failed to save configuration after updating EPM CID for peer: %v", err)
@@ -236,7 +236,7 @@ func (c *AppConfig) UpdateEpmCidForPeer(peerID string, cid string) {
 
 // GetEpmCidForPeer retrieves the EPM CID associated with a given PeerID, including the current node's
 func (c *AppConfig) GetEpmCidForPeer(peerID string) (string, bool) {
-	cid, exists := c.IPFS.SdnEpmCid[peerID]
+	cid, exists := c.IPFS.PeerEPM[peerID]
 	return cid, exists
 }
 
