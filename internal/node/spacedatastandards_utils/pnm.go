@@ -6,16 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
-	files "github.com/ipfs/boxo/files"
 	config "github.com/ipfs/kubo/config"
-	"github.com/ipfs/kubo/core"
-	"github.com/ipfs/kubo/core/coreapi"
-	coreiface "github.com/ipfs/kubo/core/coreiface"
 	"github.com/ipfs/kubo/repo/fsrepo"
 )
 
@@ -43,53 +38,6 @@ func createTempRepo(_ context.Context) (string, error) {
 	}
 
 	return repoPath, nil
-}
-
-func createNode(ctx context.Context, repoPath string) (coreiface.CoreAPI, error) {
-	repo, err := fsrepo.Open(repoPath)
-	if err != nil {
-		return nil, err
-	}
-
-	node, err := core.NewNode(ctx, &core.BuildCfg{
-		Online: true,
-		Repo:   repo,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return coreapi.NewCoreAPI(node)
-}
-
-func GenerateCID(data []byte) (string, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	repoPath, err := createTempRepo(ctx)
-	if err != nil {
-		return "", err
-	}
-	// Ensure the temporary repo is cleaned up after use
-	defer os.RemoveAll(repoPath)
-
-	ipfs, err := createNode(ctx, repoPath)
-	if err != nil {
-		return "", err
-	}
-
-	f := files.NewBytesFile(data)
-	cidFile, err := ipfs.Unixfs().Add(ctx, f)
-	if err != nil {
-		return "", fmt.Errorf("could not add data to IPFS: %s", err)
-	}
-
-	fmt.Println("Generated CID", cidFile.String())
-	return strings.TrimPrefix(cidFile.String(), "/ipfs/"), nil
-}
-
-func AccessPNM(buf []byte) *PNM.PNM {
-	return PNM.GetRootAsPNM(buf, 0)
 }
 
 func CreatePNM(multiformatAddress string, cid string, ethDigitalSignature string) []byte {

@@ -58,18 +58,8 @@ func captureStackTrace() string {
 
 	return builder.String()
 }
-func setupNode() *Node {
 
-	// Create a new node, which will use the updated configuration for its KeyStore
-	newNode, err := NewSDNNode(context.Background(), "")
-	if err != nil {
-		fmt.Printf("Failed to create new node: %v\n", err)
-		return nil
-	}
-	return newNode
-}
-
-func CreateDefaultServerEPM(n *Node) {
+func CreateDefaultServerEPM(ctx context.Context, n *Node) {
 	// Load existing EPM from the KeyStore
 
 	vepm, _ := LoadEPMFromFile()
@@ -129,28 +119,9 @@ func CreateDefaultServerEPM(n *Node) {
 
 	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
 
-	var CID string
-	var err error
-	maxRetries := 3
-
-	for i := 0; i < maxRetries; i++ {
-		CID, err = spacedatastandards_utils.GenerateCID(epmBytes)
-		if err != nil {
-			fmt.Printf("Attempt %d: Failed to generate CID, error: %v\n", i+1, err)
-			continue
-		}
-		if CID != "" {
-			fmt.Println("Print CID from autogenerate:", CID)
-			break
-		}
-		fmt.Printf("Attempt %d: Received blank CID, retrying...\n", i+1)
-	}
-
-	if CID == "" {
-		panic("Failed to generate a valid CID after 3 attempts.")
-	}
-
-	sig, err := n.Wallet.SignData(n.signingAccount, "application/octet-stream", []byte(CID))
+	CID, err := n.AddFileFromBytes(ctx, epmBytes)
+	CIDString := CID.String()
+	sig, err := n.Wallet.SignData(n.signingAccount, "application/octet-stream", []byte(CIDString))
 	if err != nil {
 		fmt.Printf("Failed to sign CID: %v\n", err)
 		return
@@ -159,14 +130,13 @@ func CreateDefaultServerEPM(n *Node) {
 	formattedSignature := fmt.Sprintf("0x%s", signatureHex)
 
 	//Create PNM and save EPM and PNM to KeyStore
-	pnmBytes := spacedatastandards_utils.CreatePNM("", CID, formattedSignature)
+	pnmBytes := spacedatastandards_utils.CreatePNM("", CIDString, formattedSignature)
 	SaveEPMToFile(epmBytes)
 	SavePNMToFile(pnmBytes)
 }
 
-func CreateServerEPM() {
+func CreateServerEPM(ctx context.Context, node *Node) {
 
-	newNode := setupNode()
 	reader := bufio.NewReader(os.Stdin)
 
 	vepm := []byte("")
@@ -236,16 +206,16 @@ func CreateServerEPM() {
 		postalCode,
 		street,
 		poBox,
-		newNode.Wallet,
-		newNode.signingAccount,
-		newNode.encryptionAccount,
+		node.Wallet,
+		node.signingAccount,
+		node.encryptionAccount,
 	)
 
 	// Handle the generated EPM bytes, such as saving them to a file or sending over a network.
 	// fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
-	CID, _ := spacedatastandards_utils.GenerateCID(epmBytes)
-
-	sig, err := newNode.Wallet.SignData(newNode.signingAccount, "application/octet-stream", []byte(CID))
+	CID, _ := node.AddFileFromBytes(ctx, epmBytes)
+	CIDString := CID.String()
+	sig, err := node.Wallet.SignData(node.signingAccount, "application/octet-stream", []byte(CIDString))
 	if err != nil {
 		stackTrace := captureStackTrace()
 		wrappedErr := fmt.Errorf("failed to sign CID: %w\nStack trace:\n%s", err, stackTrace)
@@ -254,7 +224,7 @@ func CreateServerEPM() {
 	signatureHex := hex.EncodeToString(sig)
 	formattedSignature := fmt.Sprintf("0x%s", signatureHex)
 
-	pnmBytes := spacedatastandards_utils.CreatePNM("/ip4/127.0.0.1/tcp/4001", CID, formattedSignature)
+	pnmBytes := spacedatastandards_utils.CreatePNM("/ip4/127.0.0.1/tcp/4001", CIDString, formattedSignature)
 
 	//TODO save PNM
 	SaveEPMToFile(epmBytes)
@@ -316,15 +286,6 @@ func generateAndDisplayQRCode(content string) {
 
 	fmt.Println("QR code:")
 	qrterminal.GenerateWithConfig(content, config)
-}
-
-func readPassword() (string, error) {
-	bytePassword, err := bufio.NewReader(os.Stdin).ReadBytes('\n')
-	if err != nil {
-		return "", err
-	}
-	password := string(bytePassword)
-	return strings.TrimSpace(password), nil
 }
 
 func readInput(reader *bufio.Reader, prompt string) (string, error) {

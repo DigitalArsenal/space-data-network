@@ -19,11 +19,16 @@ var daemonNode *Node
 type CommandHandler func(net.Conn, []byte)
 
 var CommandRegistry = map[string]CommandHandler{
-	"ADD_PEER":    handleAddPeer,
-	"REMOVE_PEER": handleRemovePeer,
-	"LIST_PEERS":  handleListPeers,
-	"PUBLIC_KEY":  handlePublicKey,
+	"ADD_PEER":          handleAddPeer,
+	"REMOVE_PEER":       handleRemovePeer,
+	"LIST_PEERS":        handleListPeers,
+	"PUBLIC_KEY":        handlePublicKey,
+	"CREATE_SERVER_EPM": handleServerEPM,
 	// Add more commands and their handlers here
+}
+
+func handleServerEPM(conn net.Conn, args []byte) {
+
 }
 
 func SendCommandToSocket(commandKey string, data []byte) {

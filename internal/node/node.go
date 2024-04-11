@@ -230,7 +230,7 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 		base36Encoded,
 		serverconfig.Conf.Folders.RootFolder)
 
-	CreateDefaultServerEPM(node)
+	CreateDefaultServerEPM(ctx, node)
 
 	return node, nil
 }
