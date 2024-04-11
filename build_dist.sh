@@ -1,5 +1,7 @@
 #!/bin/bash
 
+
+rm -rf ./dist/*
 # Function to compile for a specific OS and Arch
 compile() {
     GOOS=$1

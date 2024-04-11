@@ -1,6 +1,6 @@
 #!/bin/bash
 
-HOSTS=("root@Tokyo2" "root@deathstar")
+HOSTS=("root@Tokyo2" "root@deathstar" "root@api.spaceaware" "root@celestrak.eth")
 REMOTE_PATH="/opt/software/space-data-network/space-data-network"
 LOCAL_PATH="./tmp/spacedatanetwork"
 TIMESTAMP_FILE="./tmp/last_post_build_run"
