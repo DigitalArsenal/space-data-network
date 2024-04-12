@@ -2,7 +2,6 @@ package spacedatastandards_utils
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -58,53 +57,23 @@ func CreatePNM(multiformatAddress string, cid string, ethDigitalSignature string
 	// Add other fields as needed
 	pnm := PNM.PNMEnd(builder)
 
-	return SerializePNMs(builder, []flatbuffers.UOffsetT{pnm})
+	// Return the serialized PNM
+	return SerializePNM(builder, pnm)
 }
 
 // SerializePNM takes a PNM object and serializes it into a byte slice.
-func SerializePNMs(builder *flatbuffers.Builder, pnms []flatbuffers.UOffsetT) []byte {
-	// We will collect all serialized PNMs into this slice
-	var serializedPNMs []byte
-
-	for _, pnm := range pnms {
-		// Finish each PNM with a size prefix and a file identifier
-		builder.FinishSizePrefixedWithFileIdentifier(pnm, []byte(PNMFID))
-
-		// Append the serialized PNM to our slice
-		serializedPNMs = append(serializedPNMs, builder.FinishedBytes()...)
-
-		// Reset the builder for the next PNM
-		builder.Reset()
-	}
-
-	return serializedPNMs
+func SerializePNM(builder *flatbuffers.Builder, epm flatbuffers.UOffsetT) []byte {
+	builder.FinishSizePrefixedWithFileIdentifier(epm, []byte(PNMFID))
+	return builder.FinishedBytes()
 }
 
 // DeserializePNM deserializes PNM from a ByteReader.
-func DeserializePNMs(data []byte) ([]*PNM.PNM, error) {
-	var pnms []*PNM.PNM
-	offset := 0
-
-	for offset < len(data) {
-		// Read the size of the next PNM (size is prefixed as a 32-bit unsigned integer)
-		if len(data)-offset < 4 {
-			return nil, fmt.Errorf("incomplete data for PNM size at offset %d", offset)
-		}
-		size := binary.LittleEndian.Uint32(data[offset:])
-		offset += 4 // Move past the size prefix
-
-		// Ensure the entire PNM is contained within the data slice
-		if len(data)-offset < int(size) {
-			return nil, fmt.Errorf("incomplete PNM data starting at offset %d", offset)
-		}
-
-		// Deserialize the PNM and add it to the slice
-		pnmData := data[offset : offset+int(size)]
-		pnm := PNM.GetRootAsPNM(pnmData, flatbuffers.GetUOffsetT(pnmData))
-		pnms = append(pnms, pnm)
-
-		offset += int(size) // Move to the start of the next PNM
+func DeserializePNM(ctx context.Context, src interface{}) (*PNM.PNM, error) {
+	data, err := ReadDataFromSource(ctx, src)
+	if err != nil {
+		return nil, err
 	}
 
-	return pnms, nil
+	epm := PNM.GetSizePrefixedRootAsPNM(data, 0)
+	return epm, nil
 }

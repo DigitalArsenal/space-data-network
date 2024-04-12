@@ -143,8 +143,7 @@ func Init() {
 		Conf.SocketServer.Path = filepath.Join(Conf.Datastore.Directory, "app.sock")
 		err := Conf.LoadConfigFromFile()
 		if err != nil {
-			log.Printf("Failed to load configuration from file, proceeding with defaults.")
-			// Proceed with default and command-line configurations
+			log.Printf("Creating Default Config File...")
 		}
 
 		// Parse the version from manifest.json

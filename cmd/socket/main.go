@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
-	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
 	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 )
 
@@ -30,9 +29,7 @@ var CommandRegistry = map[string]CommandHandler{
 }
 
 func handleServerEPM(conn net.Conn, args []byte) {
-	epm := nodepkg.CreateServerEPM(context.Background(), args, daemonNode)
-	serverEPM, _ := spacedatastandards_utils.DeserializeEPM(context.Background(), epm)
-	fmt.Println(string(serverEPM.EMAIL()))
+	_ = nodepkg.CreateServerEPM(context.Background(), args, daemonNode)
 }
 
 func SendCommandToSocket(commandKey string, data []byte) {
