@@ -3,7 +3,6 @@ package node
 import (
 	"context"
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	dutil "github.com/libp2p/go-libp2p/p2p/discovery/util"
-	"github.com/multiformats/go-multiaddr"
 )
 
 var (
@@ -23,31 +21,6 @@ var (
 	connectedPeers = make(map[peer.ID]struct{})
 	mutex          = sync.Mutex{}
 )
-
-// isPublicIP checks if the given IP address is a public one.
-func isPublicIP(ip net.IP) bool {
-	return !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast()
-}
-
-// hasPublicIP checks if any of the multiaddresses contain a public IP address.
-func hasPublicIP(addrs []multiaddr.Multiaddr) bool {
-	for _, addr := range addrs {
-		ip, err := addr.ValueForProtocol(multiaddr.P_IP4)
-		if err == nil {
-			if isPublicIP(net.ParseIP(ip)) {
-				return true
-			}
-		}
-
-		ip, err = addr.ValueForProtocol(multiaddr.P_IP6)
-		if err == nil {
-			if isPublicIP(net.ParseIP(ip)) {
-				return true
-			}
-		}
-	}
-	return false
-}
 
 func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryInterval time.Duration) {
 
@@ -124,7 +97,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 				}
 
 				// Request PNM from the connected DHT peer*/
-				fmt.Printf("Connected to: %s\n", peer.ID)
+				//fmt.Printf("Connected to: %s\n", peer.ID)
 				if err := protocols.RequestPNM(ctx, n.Host, n.IPFS, peer.ID); err != nil {
 					//fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
 					continue

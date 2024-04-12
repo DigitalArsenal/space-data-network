@@ -160,6 +160,7 @@ func RequestPNM(ctx context.Context, h host.Host, i *core.IpfsNode, peerID peer.
 
 	peerEPM, _ := sds_utils.DeserializeEPM(ctx, content)
 
+	fmt.Print("\n\n")
 	fmt.Println("Found Peer: " + string(peerEPM.EMAIL()))
 	fmt.Println("")
 	keysLen := peerEPM.KEYSLength() // Retrieve the number of keys
@@ -177,14 +178,25 @@ func RequestPNM(ctx context.Context, h host.Host, i *core.IpfsNode, peerID peer.
 					domain = "encryption.digitalarsenal.io"
 				}
 
-				//Assuming keyHex needs to be converted to a string
-				email := fmt.Sprintf("%s@%s", keyHex, domain)
-				fmt.Println(email) // Print out the email or add it to a list
+				email := formatEmail(string(keyHex), domain)
+				fmt.Println(email)
 			}
 		}
 	}
 
-	fmt.Println("")
+	fmt.Print("\n\n")
 
 	return nil
+}
+
+func formatEmail(keyHex, domain string) string {
+	var formattedKey string
+	if len(keyHex) > 10 {
+		// Extract the first 5 characters, concatenate with an ellipsis, and the last 5 characters
+		formattedKey = fmt.Sprintf("%s...%s", keyHex[:5], keyHex[len(keyHex)-5:])
+	} else {
+		// If keyHex is not long enough, use it as is
+		formattedKey = keyHex
+	}
+	return fmt.Sprintf("%s@%s", formattedKey, domain)
 }

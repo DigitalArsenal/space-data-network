@@ -214,8 +214,6 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 		alternateNames = parseInput(altNamesInput)
 		dnString, _ = readInput(reader, "Enter DN (e.g., 'CN=John Doe, O=E Corp, OU=IT, DC=ex, DC=com'): ")
 
-		var signingPublicKeyHex, encryptionPublicKeyHex string
-
 		// Check if node is not nil to fetch the public keys
 		if node != nil {
 			var err error
@@ -279,9 +277,10 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 
 	pnmBytes := sds_utils.CreatePNM("/ip4/127.0.0.1/tcp/4001", CIDString, formattedSignature)
 
-	//TODO save PNM
-	server_info.SaveEPMToFile(outputEPMBytes)
-	server_info.SavePNMToFile(pnmBytes)
+	if node != nil {
+		server_info.SaveEPMToFile(outputEPMBytes)
+		server_info.SavePNMToFile(pnmBytes)
+	}
 
 	return outputEPMBytes
 }

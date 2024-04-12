@@ -1,0 +1,25 @@
+
+// isPublicIP checks if the given IP address is a public one.
+func isPublicIP(ip net.IP) bool {
+	return !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast()
+}
+
+// hasPublicIP checks if any of the multiaddresses contain a public IP address.
+func hasPublicIP(addrs []multiaddr.Multiaddr) bool {
+	for _, addr := range addrs {
+		ip, err := addr.ValueForProtocol(multiaddr.P_IP4)
+		if err == nil {
+			if isPublicIP(net.ParseIP(ip)) {
+				return true
+			}
+		}
+
+		ip, err = addr.ValueForProtocol(multiaddr.P_IP6)
+		if err == nil {
+			if isPublicIP(net.ParseIP(ip)) {
+				return true
+			}
+		}
+	}
+	return false
+}
