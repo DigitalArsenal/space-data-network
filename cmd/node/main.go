@@ -79,7 +79,7 @@ func main() {
 	}
 
 	if *createEPMFlag {
-		epmBytes := nodepkg.CreateServerEPM(context.Background(), nil)
+		epmBytes := nodepkg.CreateServerEPM(context.Background(), nil, nil)
 
 		socketserver.SendCommandToSocket("CREATE_SERVER_EPM", epmBytes)
 		return

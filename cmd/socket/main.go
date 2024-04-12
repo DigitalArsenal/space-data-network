@@ -30,8 +30,8 @@ var CommandRegistry = map[string]CommandHandler{
 }
 
 func handleServerEPM(conn net.Conn, args []byte) {
-	serverEPM, _ := spacedatastandards_utils.DeserializeEPM(context.Background(), args)
-	nodepkg.CreateServerEPM(context.Background(), nil)
+	epm := nodepkg.CreateServerEPM(context.Background(), args, daemonNode)
+	serverEPM, _ := spacedatastandards_utils.DeserializeEPM(context.Background(), epm)
 	fmt.Println(string(serverEPM.EMAIL()))
 }
 
