@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	spacedatastandards_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
+	sds_utils "github.com/DigitalArsenal/space-data-network/internal/node/sds_utils"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/mdp/qrterminal/v3"
@@ -118,8 +118,8 @@ func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 		}
 		encryptionPublicKeyHex = "0x" + encryptionPublicKeyHex
 	}
-	// Call the spacedatastandards_utils.CreateEPM with the collected data
-	epmBytes := spacedatastandards_utils.CreateEPM(
+	// Call the sds_utils.CreateEPM with the collected data
+	epmBytes := sds_utils.CreateEPM(
 		dnString,
 		legalName,
 		familyName,
@@ -155,7 +155,7 @@ func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 	formattedSignature := fmt.Sprintf("0x%s", signatureHex)
 
 	//Create PNM and save EPM and PNM to KeyStore
-	pnmBytes := spacedatastandards_utils.CreatePNM("", CIDString, formattedSignature)
+	pnmBytes := sds_utils.CreatePNM("", CIDString, formattedSignature)
 	SaveEPMToFile(epmBytes)
 	SavePNMToFile(pnmBytes)
 }
@@ -174,7 +174,7 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 	var isPerson bool
 
 	if len(epmBytes) > 0 {
-		epm, err = spacedatastandards_utils.DeserializeEPM(ctx, epmBytes)
+		epm, err = sds_utils.DeserializeEPM(ctx, epmBytes)
 		if err != nil {
 			fmt.Printf("Error deserializing EPM: %v\n", err)
 			return nil
@@ -260,8 +260,8 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 		}
 	}
 
-	// Call the spacedatastandards_utils.CreateEPM with the collected data
-	outputEPMBytes = spacedatastandards_utils.CreateEPM(
+	// Call the sds_utils.CreateEPM with the collected data
+	outputEPMBytes = sds_utils.CreateEPM(
 		dnString,
 		legalName,
 		familyName,
@@ -301,7 +301,7 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 	signatureHex := hex.EncodeToString(sig)
 	formattedSignature := fmt.Sprintf("0x%s", signatureHex)
 
-	pnmBytes := spacedatastandards_utils.CreatePNM("/ip4/127.0.0.1/tcp/4001", CIDString, formattedSignature)
+	pnmBytes := sds_utils.CreatePNM("/ip4/127.0.0.1/tcp/4001", CIDString, formattedSignature)
 
 	//TODO save PNM
 	SaveEPMToFile(outputEPMBytes)
@@ -317,7 +317,7 @@ func ReadServerEPM(showQR ...bool) {
 		fmt.Println("EPM not found, run with flag '-create-server-epm' to generate")
 		return
 	}
-	vCard := spacedatastandards_utils.ConvertTovCard(vepm)
+	vCard := sds_utils.ConvertTovCard(vepm)
 
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Enter the path to save the vCard (.vcf), or leave blank to skip: ")

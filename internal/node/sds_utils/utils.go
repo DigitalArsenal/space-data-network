@@ -1,4 +1,4 @@
-package spacedatastandards_utils
+package sds_utils
 
 import (
 	"bytes"

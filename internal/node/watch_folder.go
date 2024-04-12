@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	f_utils "github.com/DigitalArsenal/space-data-network/internal/node/spacedatastandards_utils"
+	f_utils "github.com/DigitalArsenal/space-data-network/internal/node/sds_utils"
 	"github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/fsnotify/fsnotify"
 )
