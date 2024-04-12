@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/ipfs/kubo/plugin/loader"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -222,7 +223,8 @@ func Init() {
 }
 
 // UpdateEpmCidForPeer updates or adds the EPM CID for a given PeerID, including the current node's
-func (c *AppConfig) UpdateEpmCidForPeer(peerID string, cid string) {
+func (c *AppConfig) UpdateEpmCidForPeer(pID peer.ID, cid string) {
+	peerID := pID.String()
 	if c.IPFS.PeerEPM == nil {
 		c.IPFS.PeerEPM = make(map[string]string)
 	}

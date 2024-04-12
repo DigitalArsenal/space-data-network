@@ -12,6 +12,7 @@ import (
 	"github.com/DigitalArsenal/space-data-network/internal/node/server_info"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
+	"github.com/DigitalArsenal/space-data-network/serverconfig"
 	files "github.com/ipfs/boxo/files"
 	boxoPath "github.com/ipfs/boxo/path"
 	"github.com/ipfs/kubo/core"
@@ -159,6 +160,8 @@ func RequestPNM(ctx context.Context, h host.Host, i *core.IpfsNode, peerID peer.
 	}
 
 	peerEPM, _ := sds_utils.DeserializeEPM(ctx, content)
+
+	serverconfig.Conf.UpdateEpmCidForPeer(peerID, cid)
 
 	fmt.Print("\n\n")
 	fmt.Println("Found Peer: " + string(peerEPM.EMAIL()))

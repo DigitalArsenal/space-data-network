@@ -76,24 +76,22 @@ func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 
 	var signingPublicKeyHex, encryptionPublicKeyHex string
 
-	// Check if node is not nil to fetch the public keys
-	if node != nil {
-		var err error
-		// Get the hexadecimal representation of the public keys
-		signingPublicKeyHex, err = node.Wallet.PublicKeyHex(node.signingAccount)
-		if err != nil {
-			fmt.Printf("Error getting signing public key: %v\n", err)
-			return
-		}
-		signingPublicKeyHex = "0x" + signingPublicKeyHex
-
-		encryptionPublicKeyHex, err = node.Wallet.PublicKeyHex(node.encryptionAccount)
-		if err != nil {
-			fmt.Printf("Error getting encryption public key: %v\n", err)
-			return
-		}
-		encryptionPublicKeyHex = "0x" + encryptionPublicKeyHex
+	var err error
+	// Get the hexadecimal representation of the public keys
+	signingPublicKeyHex, err = node.Wallet.PublicKeyHex(node.signingAccount)
+	if err != nil {
+		fmt.Printf("Error getting signing public key: %v\n", err)
+		return
 	}
+	signingPublicKeyHex = "0x" + signingPublicKeyHex
+
+	encryptionPublicKeyHex, err = node.Wallet.PublicKeyHex(node.encryptionAccount)
+	if err != nil {
+		fmt.Printf("Error getting encryption public key: %v\n", err)
+		return
+	}
+	encryptionPublicKeyHex = "0x" + encryptionPublicKeyHex
+
 	// Call the sds_utils.CreateEPM with the collected data
 	epmBytes := sds_utils.CreateEPM(
 		dnString,
@@ -176,7 +174,9 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 		postalCode = string(address.POSTAL_CODE())
 		street = string(address.STREET())
 		poBox = string(address.POST_OFFICE_BOX_NUMBER())
+
 	} else {
+
 		entityType, _ := readInput(reader, "Are you creating a profile for an Organization or a Person? (O/P): ")
 		isPerson = strings.ToUpper(entityType) == "P"
 
@@ -214,24 +214,24 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 		alternateNames = parseInput(altNamesInput)
 		dnString, _ = readInput(reader, "Enter DN (e.g., 'CN=John Doe, O=E Corp, OU=IT, DC=ex, DC=com'): ")
 
-		// Check if node is not nil to fetch the public keys
-		if node != nil {
-			var err error
-			// Get the hexadecimal representation of the public keys
-			signingPublicKeyHex, err = node.Wallet.PublicKeyHex(node.signingAccount)
-			if err != nil {
-				fmt.Printf("Error getting signing public key: %v\n", err)
-				return nil // Or handle the error as appropriate
-			}
-			signingPublicKeyHex = "0x" + signingPublicKeyHex
+	}
 
-			encryptionPublicKeyHex, err = node.Wallet.PublicKeyHex(node.encryptionAccount)
-			if err != nil {
-				fmt.Printf("Error getting encryption public key: %v\n", err)
-				return nil // Or handle the error as appropriate
-			}
-			encryptionPublicKeyHex = "0x" + encryptionPublicKeyHex
+	if node != nil {
+		var err error
+		// Get the hexadecimal representation of the public keys
+		signingPublicKeyHex, err = node.Wallet.PublicKeyHex(node.signingAccount)
+		if err != nil {
+			fmt.Printf("Error getting signing public key: %v\n", err)
+			return nil // Or handle the error as appropriate
 		}
+		signingPublicKeyHex = "0x" + signingPublicKeyHex
+
+		encryptionPublicKeyHex, err = node.Wallet.PublicKeyHex(node.encryptionAccount)
+		if err != nil {
+			fmt.Printf("Error getting encryption public key: %v\n", err)
+			return nil // Or handle the error as appropriate
+		}
+		encryptionPublicKeyHex = "0x" + encryptionPublicKeyHex
 	}
 
 	// Call the sds_utils.CreateEPM with the collected data
@@ -277,7 +277,9 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 
 	pnmBytes := sds_utils.CreatePNM("/ip4/127.0.0.1/tcp/4001", CIDString, formattedSignature)
 
-	if node != nil {
+	fmt.Println(signingPublicKeyHex, encryptionPublicKeyHex)
+
+	if len(signingPublicKeyHex) > 0 && len(encryptionPublicKeyHex) > 0 {
 		server_info.SaveEPMToFile(outputEPMBytes)
 		server_info.SavePNMToFile(pnmBytes)
 	}
@@ -357,20 +359,6 @@ func parseInput(input string) []string {
 		return []string{}
 	}
 	return strings.Split(input, ",")
-}
-
-// readInputWithDefault prompts the user with a default value
-func readInputWithDefault(reader *bufio.Reader, prompt, defaultValue string) (string, error) {
-	fmt.Printf("%s [%s]: ", prompt, defaultValue)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		return "", err
-	}
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return defaultValue, nil
-	}
-	return input, nil
 }
 
 // isValidEmail checks if the given string is a valid email

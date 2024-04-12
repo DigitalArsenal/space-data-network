@@ -24,6 +24,11 @@ import (
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 )
 
+func RegisterPlugins(node *nodepkg.Node) {
+	node.Host.SetStreamHandler(protocols.IDExchangeProtocol, protocols.HandlePNMExchange)
+
+}
+
 func main() {
 	var (
 		addPeerID                    = flag.String("add-peerid", "", "PeerID to add along with fileID(s)")
@@ -113,7 +118,8 @@ func main() {
 	server := web.NewAPI(node)
 	server.Start()
 
-	node.Host.SetStreamHandler(protocols.IDExchangeProtocol, protocols.HandlePNMExchange)
+	// Setup Plugins
+	RegisterPlugins(node)
 
 	setupGracefulShutdown(ctx, node, cancel)
 
