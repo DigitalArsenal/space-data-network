@@ -160,6 +160,8 @@ func RequestPNM(ctx context.Context, h host.Host, i *core.IpfsNode, peerID peer.
 
 	peerEPM, _ := sds_utils.DeserializeEPM(ctx, content)
 
+	fmt.Println("Found Peer: " + string(peerEPM.EMAIL()))
+	fmt.Println("")
 	keysLen := peerEPM.KEYSLength() // Retrieve the number of keys
 
 	for i := 0; i < keysLen; i++ {
@@ -181,6 +183,8 @@ func RequestPNM(ctx context.Context, h host.Host, i *core.IpfsNode, peerID peer.
 			}
 		}
 	}
+
+	fmt.Println("")
 
 	return nil
 }
