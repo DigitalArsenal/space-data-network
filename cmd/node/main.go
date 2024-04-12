@@ -13,12 +13,12 @@ import (
 	"strings"
 	"syscall"
 
-	web "github.com/DigitalArsenal/space-data-network/internal/web"
-	"github.com/DigitalArsenal/space-data-network/serverconfig"
-
 	socketserver "github.com/DigitalArsenal/space-data-network/cmd/socket"
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
 	cryptoUtils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
+	protocols "github.com/DigitalArsenal/space-data-network/internal/node/protocols"
+	web "github.com/DigitalArsenal/space-data-network/internal/web"
+	"github.com/DigitalArsenal/space-data-network/serverconfig"
 	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/ipfs/kubo/repo/fsrepo"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
@@ -112,6 +112,8 @@ func main() {
 	go socketserver.StartSocketServer(serverconfig.Conf.SocketServer.Path, node)
 	server := web.NewAPI(node)
 	server.Start()
+
+	node.Host.SetStreamHandler(protocols.IDExchangeProtocol, protocols.HandlePNMExchange)
 
 	setupGracefulShutdown(ctx, node, cancel)
 

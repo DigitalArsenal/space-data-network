@@ -12,35 +12,11 @@ import (
 	"strings"
 
 	sds_utils "github.com/DigitalArsenal/space-data-network/internal/node/sds_utils"
+	server_info "github.com/DigitalArsenal/space-data-network/internal/node/server_info"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
-	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/skip2/go-qrcode"
 )
-
-// SaveEPMToFile saves the EPM data to a file in the RootFolder.
-func SaveEPMToFile(data []byte) error {
-	epmFilePath := filepath.Join(config.Conf.Folders.RootFolder, "server.epm")
-	return os.WriteFile(epmFilePath, data, 0644)
-}
-
-// LoadEPMFromFile loads the EPM data from a file in the RootFolder.
-func LoadEPMFromFile() ([]byte, error) {
-	epmFilePath := filepath.Join(config.Conf.Folders.RootFolder, "server.epm")
-	return os.ReadFile(epmFilePath)
-}
-
-// SavePNMToFile saves the PNM data to a file in the RootFolder.
-func SavePNMToFile(data []byte) error {
-	pnmFilePath := filepath.Join(config.Conf.Folders.RootFolder, "server.pnm")
-	return os.WriteFile(pnmFilePath, data, 0644)
-}
-
-// LoadPNMFromFile loads the PNM data from a file in the RootFolder.
-func LoadPNMFromFile() ([]byte, error) {
-	pnmFilePath := filepath.Join(config.Conf.Folders.RootFolder, "server.pnm")
-	return os.ReadFile(pnmFilePath)
-}
 
 func captureStackTrace() string {
 	var builder strings.Builder
@@ -61,7 +37,7 @@ func captureStackTrace() string {
 
 func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 
-	vepm, _ := LoadEPMFromFile()
+	vepm, _ := server_info.LoadEPMFromFile()
 	if len(vepm) > 0 {
 		return
 	}
@@ -156,8 +132,8 @@ func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 
 	//Create PNM and save EPM and PNM to KeyStore
 	pnmBytes := sds_utils.CreatePNM("", CIDString, formattedSignature)
-	SaveEPMToFile(epmBytes)
-	SavePNMToFile(pnmBytes)
+	server_info.SaveEPMToFile(epmBytes)
+	server_info.SavePNMToFile(pnmBytes)
 }
 
 func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
@@ -304,8 +280,8 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 	pnmBytes := sds_utils.CreatePNM("/ip4/127.0.0.1/tcp/4001", CIDString, formattedSignature)
 
 	//TODO save PNM
-	SaveEPMToFile(outputEPMBytes)
-	SavePNMToFile(pnmBytes)
+	server_info.SaveEPMToFile(outputEPMBytes)
+	server_info.SavePNMToFile(pnmBytes)
 
 	return outputEPMBytes
 }

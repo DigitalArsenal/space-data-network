@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DigitalArsenal/space-data-network/internal/node/protocols"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -121,12 +122,13 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 				/*for _, addr := range peer.Addrs {
 					fmt.Printf("\t%s/p2p/%s\n", addr, peer.ID)
 				}
+
+				// Request PNM from the connected DHT peer*/
 				fmt.Printf("Connected to: %s\n", peer.ID)
-				// Request PNM from the connected DHT peer
-				if err := RequestPNM(ctx, n, peer.ID); err != nil {
-					fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
+				if err := protocols.RequestPNM(ctx, n.Host, n.IPFS, peer.ID); err != nil {
+					//fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
 					continue
-				}*/
+				}
 
 				processAndMarkPeer(peer, &mutex)
 			}

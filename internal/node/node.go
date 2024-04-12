@@ -96,6 +96,8 @@ func autoRelayFeeder(ctx context.Context, h host.Host, dht *dht.IpfsDHT, peerCha
 func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 	serverconfig.Init()
 
+	log.SetOutput(NewLogFilter())
+
 	node := &Node{
 		publishTimer: time.NewTimer(1 * time.Minute),
 		timerActive:  false,
@@ -253,23 +255,16 @@ func (n *Node) onFileProcessed(filePath string, err error) {
 }
 
 func (n *Node) publishIPNS() {
-	//n.unpublishIPNSRecord()
-
 	if n.publishTimer != nil {
 		n.publishTimer.Stop()
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	// IPNS publish logic...
 	_, err := n.AddFolderToIPNS(ctx, serverconfig.Conf.Folders.RootFolder)
 	if err != nil {
 		log.Println("Failed to publish to IPNS:", err)
 		return
 	}
-
-	//log.Printf("Published to IPNS: %s \n", CID)
-
 }
 
 func (n *Node) Start(ctx context.Context) error {
@@ -292,8 +287,6 @@ func (n *Node) Start(ctx context.Context) error {
 	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
-	//SetupPNMExchange(n)
-	// Initial IPNS publish
 	n.publishIPNS()
 
 	// Setup the debounced IPNS publish
