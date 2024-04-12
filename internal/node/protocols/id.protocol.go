@@ -7,19 +7,19 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 
 	sds_utils "github.com/DigitalArsenal/space-data-network/internal/node/sds_utils"
 	"github.com/DigitalArsenal/space-data-network/internal/node/server_info"
-	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
 	"github.com/DigitalArsenal/space-data-network/serverconfig"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/secp256k1"
 	files "github.com/ipfs/boxo/files"
 	boxoPath "github.com/ipfs/boxo/path"
 	"github.com/ipfs/kubo/core"
 	"github.com/ipfs/kubo/core/coreapi"
-
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/crypto/secp256k1"
+	"github.com/ipfs/kubo/core/coreiface/options"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -161,33 +161,32 @@ func RequestPNM(ctx context.Context, h host.Host, i *core.IpfsNode, peerID peer.
 
 	peerEPM, _ := sds_utils.DeserializeEPM(ctx, content)
 
-	serverconfig.Conf.UpdateEpmCidForPeer(peerID, cid)
+	oldCID, _ := serverconfig.Conf.UpdateEpmCidForPeer(peerID, cid)
 
-	fmt.Print("\n\n")
-	fmt.Println("Found Peer: " + string(peerEPM.EMAIL()))
-	fmt.Println("")
-	keysLen := peerEPM.KEYSLength() // Retrieve the number of keys
+	if oldCID != "" && oldCID != cid {
+		// Unpin the old CID
+		oldPath, err := boxoPath.NewPath(oldCID)
+		if err != nil {
+			log.Printf("Failed to parse old CID path: %v", err)
+			// Handle error appropriately
+			return nil
+		}
 
-	for i := 0; i < keysLen; i++ {
-		key := new(EPM.CryptoKey)
-		if peerEPM.KEYS(key, i) {
-			keyType := key.KEY_TYPE()
-			keyHex := key.PUBLIC_KEY()
-			if keyHex != nil {
-				var domain string
-				if keyType == EPM.KeyTypeSigning {
-					domain = "signing.digitalarsenal.io"
-				} else if keyType == EPM.KeyTypeEncryption {
-					domain = "encryption.digitalarsenal.io"
-				}
-
-				email := formatEmail(string(keyHex), domain)
-				fmt.Println(email)
-			}
+		err = api.Pin().Rm(ctx, oldPath, options.Pin.RmRecursive(true))
+		if err != nil {
+			log.Printf("Failed to unpin old content in IPFS: %v", err)
+			// Handle error appropriately
+		} else {
+			log.Println("Successfully unpinned old CID:", oldCID)
 		}
 	}
 
-	fmt.Print("\n\n")
+	// Attempt to pin the rootNode
+	err = api.Pin().Add(ctx, path, options.Pin.Recursive(true))
+
+	if err != nil {
+		return fmt.Errorf("failed to pin content in IPFS: %v", err)
+	}
 
 	return nil
 }

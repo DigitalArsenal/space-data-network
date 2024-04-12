@@ -222,17 +222,28 @@ func Init() {
 	})
 }
 
-// UpdateEpmCidForPeer updates or adds the EPM CID for a given PeerID, including the current node's
-func (c *AppConfig) UpdateEpmCidForPeer(pID peer.ID, cid string) {
+func (c *AppConfig) UpdateEpmCidForPeer(pID peer.ID, cid string) (oldCid string, err error) {
 	peerID := pID.String()
+
+	// Initialize the map if it is nil
 	if c.IPFS.PeerEPM == nil {
 		c.IPFS.PeerEPM = make(map[string]string)
 	}
+
+	// Get the old CID if it exists
+	oldCid, _ = c.IPFS.PeerEPM[peerID]
+
+	// Update the map with the new CID
 	c.IPFS.PeerEPM[peerID] = cid
-	err := c.SaveConfigToFile()
+
+	// Attempt to save the configuration to file
+	err = c.SaveConfigToFile()
 	if err != nil {
-		log.Fatalf("Failed to save configuration after updating EPM CID for peer: %v", err)
+		log.Printf("Failed to save configuration after updating EPM CID for peer: %v", err)
+		return oldCid, err
 	}
+
+	return oldCid, nil
 }
 
 // GetEpmCidForPeer retrieves the EPM CID associated with a given PeerID, including the current node's

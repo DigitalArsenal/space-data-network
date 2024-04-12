@@ -1,0 +1,26 @@
+	/*
+		fmt.Print("\n\n")
+		fmt.Println("Found Peer: " + string(peerEPM.EMAIL()))
+		fmt.Println("")
+		keysLen := peerEPM.KEYSLength() // Retrieve the number of keys
+
+		for i := 0; i < keysLen; i++ {
+			key := new(EPM.CryptoKey)
+			if peerEPM.KEYS(key, i) {
+				keyType := key.KEY_TYPE()
+				keyHex := key.PUBLIC_KEY()
+				if keyHex != nil {
+					var domain string
+					if keyType == EPM.KeyTypeSigning {
+						domain = "signing.digitalarsenal.io"
+					} else if keyType == EPM.KeyTypeEncryption {
+						domain = "encryption.digitalarsenal.io"
+					}
+
+					email := formatEmail(string(keyHex), domain)
+					fmt.Println(email)
+				}
+			}
+		}
+
+		fmt.Print("\n\n")*/
