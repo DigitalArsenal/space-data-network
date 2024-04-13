@@ -19,6 +19,7 @@ import (
 
 var (
 	pluginsLoaded sync.Once
+	epmMutex      sync.Mutex
 )
 
 //go:embed manifest.json
@@ -224,6 +225,8 @@ func Init() {
 
 func (c *AppConfig) UpdateEpmCidForPeer(pID peer.ID, cid string) (oldCid string, err error) {
 	peerID := pID.String()
+	epmMutex.Lock()
+	defer epmMutex.Unlock() // Ensure the mutex is unlocked after map access
 
 	// Initialize the map if it is nil
 	if c.IPFS.PeerEPM == nil {
@@ -231,7 +234,7 @@ func (c *AppConfig) UpdateEpmCidForPeer(pID peer.ID, cid string) (oldCid string,
 	}
 
 	// Get the old CID if it exists
-	oldCid, _ = c.IPFS.PeerEPM[peerID]
+	oldCid = c.IPFS.PeerEPM[peerID]
 
 	// Update the map with the new CID
 	c.IPFS.PeerEPM[peerID] = cid
