@@ -32,9 +32,11 @@
 
 # Concept
 
-Have user create EPM using CLI, use running daemon to publish to IPFS, get CID, write EPM / PNM to folder, publish to IPNS (dup publishing will be taken care of using DHT).
+[x] Have user create EPM using CLI, use running daemon to publish to IPFS, get CID, write EPM / PNM to folder, publish to IPNS (dup publishing will be taken care of using DHT).
 
-Re-instate protocol for exchange, and during exchange, add peers to list of Space Data Network peers, write them to disk (config.Conf.IpfsConfig.PeerEPM)
+[x] Re-instate protocol for exchange, and during exchange, add peers to list of Space Data Network peers, write them to disk (config.Conf.IpfsConfig.PeerEPM)
+
+[ ] Rebroadcast OR have another dialable protocol to send PNM on EPM edit
 
 Posting the index.html to IPNS; due to slow propagation, have it cached at nodes.
 Create protocols to list pinned files, and request them directly.
