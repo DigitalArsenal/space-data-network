@@ -88,14 +88,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 					continue
 				}
 
-				/*for _, addr := range peer.Addrs {
-					fmt.Printf("\t%s/p2p/%s\n", addr, peer.ID)
-				}
-
-				// Request PNM from the connected DHT peer*/
-				//fmt.Printf("Connected to: %s\n", peer.ID)
 				if err := protocols.RequestPNM(ctx, n.Host, n.IPFS, peer.ID); err != nil {
-					//fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
 					continue
 				}
 

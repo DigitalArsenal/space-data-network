@@ -54,7 +54,7 @@ type discoveryNotifee struct {
 }
 
 func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
-	if pi.ID == n.h.ID() || alreadyContacted(pi.ID, n.mutex) {
+	if pi.ID == n.h.ID() {
 		return
 	}
 	n.discoveredPeersChan <- pi
