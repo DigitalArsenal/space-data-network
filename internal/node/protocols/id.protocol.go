@@ -161,6 +161,11 @@ func RequestPNM(ctx context.Context, h host.Host, i *core.IpfsNode, peerID peer.
 
 	peerEPM, _ := sds_utils.DeserializeEPM(ctx, content)
 
+	if len(peerEPM.EMAIL()) == 0 {
+		//TODO error out or check another field
+		return nil
+	}
+
 	oldCID, _ := serverconfig.Conf.UpdateEpmCidForPeer(peerID, cid)
 
 	if oldCID != "" && oldCID != cid {

@@ -83,10 +83,6 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 					continue
 				}
 
-				if alreadyContacted(peer.ID, &mutex) {
-					continue
-				}
-
 				err := h.Connect(ctx, peer)
 				if err != nil {
 					continue
@@ -107,34 +103,23 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 			}
 		case <-printTicker.C:
 			//fmt.Println("Searching for peers...")
-		case pi := <-discoveredPeersChan: // Handle peers discovered via mDNS
+		case peer := <-discoveredPeersChan: // Handle peers discovered via mDNS
 			//fmt.Printf("mDNS discovered peer: %s\n", pi.ID)
 
-			if alreadyContacted(pi.ID, &mutex) {
+			if err := h.Connect(ctx, peer); err != nil {
 				continue
 			}
 
-			if err := h.Connect(ctx, pi); err != nil {
-				continue
-			}
 			//fmt.Printf("Connected to mDNS peer: %s\n", pi.ID)
 
-			// Request PNM from the connected mDNS peer
-			/*if err := RequestPNM(ctx, n, pi.ID); err != nil {
-				fmt.Printf("Failed to request PNM from %s: %v\n", pi.ID, err)
+			if err := protocols.RequestPNM(ctx, n.Host, n.IPFS, peer.ID); err != nil {
+				//fmt.Printf("Failed to request PNM from %s: %v\n", peer.ID, err)
 				continue
-			}*/
+			}
 
-			processAndMarkPeer(pi, &mutex)
+			processAndMarkPeer(peer, &mutex)
 		}
 	}
-}
-
-func alreadyContacted(peerID peer.ID, mutex *sync.Mutex) bool {
-	mutex.Lock()
-	defer mutex.Unlock()
-	_, contacted := contactedPeers[peerID]
-	return contacted
 }
 
 func processAndMarkPeer(peer peer.AddrInfo, mutex *sync.Mutex) {
