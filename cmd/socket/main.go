@@ -122,6 +122,7 @@ func HandleSocketConnection(conn net.Conn) {
 }
 
 func StartSocketServer(socketPath string, node *Node) {
+
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		fmt.Printf("Failed to listen on socket: %v\n", err)

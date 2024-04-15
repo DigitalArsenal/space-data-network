@@ -17,7 +17,6 @@ import (
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
 	cryptoUtils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
 	protocols "github.com/DigitalArsenal/space-data-network/internal/node/protocols"
-	web "github.com/DigitalArsenal/space-data-network/internal/web"
 	"github.com/DigitalArsenal/space-data-network/serverconfig"
 	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/ipfs/kubo/repo/fsrepo"
@@ -98,31 +97,29 @@ func main() {
 	processPrivateKeyFlags(importPrivateKeyMnemonicPath, importPrivateKeyHexPath, exportPrivateKeyMnemonic, exportPrivateKeyHex)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
-	node, err := nodepkg.NewSDNNode(ctx, "")
+	node, err := nodepkg.NewSDNNode(ctx, cancel, "")
 	if err != nil {
 		handleNodeInitializationError(err)
 		return
-	}
-
-	if err := node.Start(ctx); err != nil {
-		fmt.Printf("Error starting node: %v\n", err)
-		os.Exit(1)
 	}
 
 	os.Remove(serverconfig.Conf.SocketServer.Path) // Remove the existing socket file if present
 
 	// Start the socket server in a goroutine
 	go socketserver.StartSocketServer(serverconfig.Conf.SocketServer.Path, node)
-	server := web.NewAPI(node)
-	server.Start()
 
 	// Setup Plugins
 	RegisterPlugins(node)
 
 	setupGracefulShutdown(ctx, node, cancel)
 
+	if err := node.Start(ctx); err != nil {
+		fmt.Printf("Error starting node: %v\n", err)
+		os.Exit(1)
+	}
+
+	//important to block context
 	<-ctx.Done()
 	fmt.Println("Node shutdown completed")
 }

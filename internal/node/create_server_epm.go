@@ -129,9 +129,10 @@ func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 	formattedSignature := fmt.Sprintf("0x%s", signatureHex)
 
 	//Create PNM and save EPM and PNM to KeyStore
-	pnmBytes := sds_utils.CreatePNM("", CIDString, formattedSignature)
+	pnmBytes := sds_utils.CreatePNM("", CIDString, formattedSignature, "EPM")
 	server_info.SaveEPMToFile(epmBytes)
 	server_info.SavePNMToFile(pnmBytes)
+	node.SDSTopic.Publish(ctx, pnmBytes)
 }
 
 func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
@@ -275,13 +276,12 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 	signatureHex := hex.EncodeToString(sig)
 	formattedSignature := fmt.Sprintf("0x%s", signatureHex)
 
-	pnmBytes := sds_utils.CreatePNM("/ip4/127.0.0.1/tcp/4001", CIDString, formattedSignature)
-
-	fmt.Println(signingPublicKeyHex, encryptionPublicKeyHex)
+	pnmBytes := sds_utils.CreatePNM("/ip4/127.0.0.1/tcp/4001", CIDString, formattedSignature, "EPM")
 
 	if len(signingPublicKeyHex) > 0 && len(encryptionPublicKeyHex) > 0 {
 		server_info.SaveEPMToFile(outputEPMBytes)
 		server_info.SavePNMToFile(pnmBytes)
+		node.SDSTopic.Publish(ctx, pnmBytes)
 	}
 
 	return outputEPMBytes

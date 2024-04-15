@@ -39,13 +39,14 @@ func createTempRepo(_ context.Context) (string, error) {
 	return repoPath, nil
 }
 
-func CreatePNM(multiformatAddress string, cid string, ethDigitalSignature string) []byte {
+func CreatePNM(multiformatAddress string, cid string, ethDigitalSignature string, fileID string) []byte {
 	builder := flatbuffers.NewBuilder(0)
 	multiformatAddressOffset := builder.CreateString(multiformatAddress)
 	cidOffset := builder.CreateString(cid)
 	ethDigitalSignatureOffset := builder.CreateString(ethDigitalSignature)
 	publishTimeStampOffset := builder.CreateString(time.Now().Format(time.RFC3339))
 	signatureTypeOffset := builder.CreateString("ETH")
+	fID := builder.CreateString(fileID)
 
 	// Start the PNM object and set its fields
 	PNM.PNMStart(builder)
@@ -54,6 +55,7 @@ func CreatePNM(multiformatAddress string, cid string, ethDigitalSignature string
 	PNM.PNMAddPUBLISH_TIMESTAMP(builder, publishTimeStampOffset)
 	PNM.PNMAddSIGNATURE(builder, ethDigitalSignatureOffset)
 	PNM.PNMAddSIGNATURE_TYPE(builder, signatureTypeOffset)
+	PNM.PNMAddFILE_ID(builder, fID)
 	// Add other fields as needed
 	pnm := PNM.PNMEnd(builder)
 

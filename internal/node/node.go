@@ -6,8 +6,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
 	"runtime/debug"
 	"time"
+
+	pubsubservice "github.com/DigitalArsenal/space-data-network/internal/node/pubsub"
 
 	content "github.com/DigitalArsenal/space-data-network/internal/node/content"
 	serverconfig "github.com/DigitalArsenal/space-data-network/serverconfig"
@@ -18,6 +21,7 @@ import (
 	"github.com/ipfs/kubo/core"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -46,6 +50,10 @@ type Node struct {
 	FileWatcher       Watcher
 	publishTimer      *time.Timer
 	timerActive       bool
+	SDSTopic          *pubsub.Topic
+	SDSSubscription   *pubsub.Subscription
+	ctx               context.Context
+	cancel            context.CancelFunc
 }
 
 // autoRelayPeerSource returns a function that provides peers for auto-relay.
@@ -93,7 +101,7 @@ func autoRelayFeeder(ctx context.Context, h host.Host, dht *dht.IpfsDHT, peerCha
 	}()
 }
 
-func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
+func NewSDNNode(ctx context.Context, cancel context.CancelFunc, mnemonic string) (*Node, error) {
 	serverconfig.Init()
 
 	log.SetOutput(NewLogFilter())
@@ -101,11 +109,13 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 	node := &Node{
 		publishTimer: time.NewTimer(1 * time.Minute),
 		timerActive:  false,
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 
 	var err error
 
-	repo, wallet, signingAccount, encryptionAccount, privKey, encPrivKey, err := GenerateWalletAndIPFSRepo(ctx, mnemonic)
+	repo, wallet, signingAccount, encryptionAccount, privKey, encPrivKey, err := GenerateWalletAndIPFSRepo(node.ctx, mnemonic)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create IPFS repo: %w", err)
@@ -161,7 +171,7 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 		return node.Host, nil
 	}
 
-	node.IPFS, err = core.NewNode(ctx, &core.BuildCfg{
+	node.IPFS, err = core.NewNode(node.ctx, &core.BuildCfg{
 		Online:    true,
 		Permanent: true,
 		Host:      customHostOption,
@@ -232,7 +242,7 @@ func NewSDNNode(ctx context.Context, mnemonic string) (*Node, error) {
 		base36Encoded,
 		serverconfig.Conf.Folders.RootFolder)
 
-	CreateDefaultServerEPM(ctx, node)
+	CreateDefaultServerEPM(node.ctx, node)
 
 	return node, nil
 }
@@ -242,11 +252,7 @@ func (n *Node) onFileProcessed(filePath string, err error) {
 		log.Printf("Error processing file onFileProcessed '%s': %v", filePath, err)
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	CID, addErr := n.AddFile(ctx, filePath)
+	CID, addErr := n.AddFile(n.ctx, filePath)
 	if addErr != nil {
 		log.Printf("Failed to add file '%s' to IPFS: %v", filePath, addErr)
 		return
@@ -258,9 +264,8 @@ func (n *Node) publishIPNS() {
 	if n.publishTimer != nil {
 		n.publishTimer.Stop()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	_, err := n.AddFolderToIPNS(ctx, serverconfig.Conf.Folders.RootFolder)
+
+	_, err := n.AddFolderToIPNS(n.ctx, serverconfig.Conf.Folders.RootFolder)
 	if err != nil {
 		log.Println("Failed to publish to IPNS:", err)
 		return
@@ -281,11 +286,14 @@ func (n *Node) Start(ctx context.Context) error {
 
 	//Start auto relay
 	autoRelayFeeder(ctx, n.Host, n.DHT, n.peerChan)
+
 	go discoverPeers(ctx, n, "space-data-network", 30*time.Second)
 	//Find others with the same version
 	versionHex := []byte(serverconfig.Conf.Info.Version)
 	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
+
+	n.SDSSubscription, n.SDSTopic, _ = pubsubservice.SetupPubSub(ctx, n.Host, discoveryHex)
 
 	n.publishIPNS()
 
@@ -323,8 +331,25 @@ func (n *Node) Start(ctx context.Context) error {
 
 	n.FileWatcher.Watch(serverconfig.Conf.Folders.OutgoingFolder)
 
+	// Test
+	/*go func() {
+
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				n.SDSTopic.Publish(n.ctx, []byte(time.Now().String()))
+
+			}
+		}
+	}()*/
+
 	// Setup periodic IPNS publish every 30 seconds
 	go func() {
+
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 
@@ -342,7 +367,16 @@ func (n *Node) Start(ctx context.Context) error {
 }
 
 func (n *Node) Stop() {
+
 	fmt.Println("Shutting down node...")
+
+	n.cancel()
+	n.SDSSubscription.Cancel()
+
+	err := n.SDSTopic.Close()
+	if err != nil {
+		fmt.Println(err)
+	}
 	if n.publishTimer != nil {
 		n.publishTimer.Stop()
 	}
@@ -358,6 +392,6 @@ func (n *Node) Stop() {
 	}
 
 	n.FileWatcher.Unwatch()
-
+	os.Remove(serverconfig.Conf.SocketServer.Path) // Remove the existing socket file if present
 	fmt.Println("Node stopped successfully.")
 }
