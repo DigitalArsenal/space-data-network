@@ -52,7 +52,7 @@ type Node struct {
 	timerActive       bool
 	SDSTopic          *pubsub.Topic
 	SDSSubscription   *pubsub.Subscription
-	ctx               context.Context
+	Ctx               context.Context
 	cancel            context.CancelFunc
 }
 
@@ -109,13 +109,13 @@ func NewSDNNode(ctx context.Context, cancel context.CancelFunc, mnemonic string)
 	node := &Node{
 		publishTimer: time.NewTimer(1 * time.Minute),
 		timerActive:  false,
-		ctx:          ctx,
+		Ctx:          ctx,
 		cancel:       cancel,
 	}
 
 	var err error
 
-	repo, wallet, signingAccount, encryptionAccount, privKey, encPrivKey, err := GenerateWalletAndIPFSRepo(node.ctx, mnemonic)
+	repo, wallet, signingAccount, encryptionAccount, privKey, encPrivKey, err := GenerateWalletAndIPFSRepo(node.Ctx, mnemonic)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create IPFS repo: %w", err)
@@ -171,7 +171,7 @@ func NewSDNNode(ctx context.Context, cancel context.CancelFunc, mnemonic string)
 		return node.Host, nil
 	}
 
-	node.IPFS, err = core.NewNode(node.ctx, &core.BuildCfg{
+	node.IPFS, err = core.NewNode(node.Ctx, &core.BuildCfg{
 		Online:    true,
 		Permanent: true,
 		Host:      customHostOption,
@@ -242,7 +242,7 @@ func NewSDNNode(ctx context.Context, cancel context.CancelFunc, mnemonic string)
 		base36Encoded,
 		serverconfig.Conf.Folders.RootFolder)
 
-	CreateDefaultServerEPM(node.ctx, node)
+	CreateDefaultServerEPM(node.Ctx, node)
 
 	return node, nil
 }
@@ -252,7 +252,7 @@ func (n *Node) onFileProcessed(filePath string, err error) {
 		log.Printf("Error processing file onFileProcessed '%s': %v", filePath, err)
 		return
 	}
-	CID, addErr := n.AddFile(n.ctx, filePath)
+	CID, addErr := n.AddFile(n.Ctx, filePath)
 	if addErr != nil {
 		log.Printf("Failed to add file '%s' to IPFS: %v", filePath, addErr)
 		return
@@ -265,7 +265,7 @@ func (n *Node) publishIPNS() {
 		n.publishTimer.Stop()
 	}
 
-	_, err := n.AddFolderToIPNS(n.ctx, serverconfig.Conf.Folders.RootFolder)
+	_, err := n.AddFolderToIPNS(n.Ctx, serverconfig.Conf.Folders.RootFolder)
 	if err != nil {
 		log.Println("Failed to publish to IPNS:", err)
 		return

@@ -54,15 +54,13 @@ func main() {
 		addFileIDs    = flag.String("add-fileids", "", "Comma-separated FileIDs to add for the specified PeerID")
 		removePeerID  = flag.String("remove-peerid", "", "PeerID to remove along with fileID(s)")
 		removeFileIDs = flag.String("remove-fileids", "", "Comma-separated FileIDs to remove for the specified PeerID")
-		listPeersFlag = flag.Bool("list-peers", false, "List all peers and their associated file IDs")
-
 		// Flags for listing peers
-		listPeersDetailed = flag.Bool("list-peers-detailed", false, "List peers with details")
+		listPeers = flag.Bool("list-peers", false, "List peers with details")
 
 		// Flags for fetching and outputting EPM
 		getEPM       = flag.String("get-epm", "", "Get EPM by PeerID, index, or email")
 		outputPath   = flag.String("output-path", "", "File path to output the EPM data")
-		outputFormat = flag.String("output-format", "flatbuffer", "Format to output the EPM (flatbuffer, csv, vcard, qr)")
+		outputFormat = flag.String("output-format", "flatbuffer", "Format to output the EPM (flatbuffer, csv, vcard, qrcode)")
 
 		helpFlag                     = flag.Bool("help", false, "Display help")
 		envDocs                      = flag.Bool("env-docs", false, "Display environment variable docs")
@@ -84,7 +82,7 @@ func main() {
 	config.Init()
 
 	if *publicKeyHex {
-		socketserver.SendCommandToSocket("PUBLIC_KEY", []byte("xxx"))
+		socketserver.SendCommandToSocket("PUBLIC_KEY", []byte(""))
 		return
 	}
 
@@ -93,12 +91,9 @@ func main() {
 		return
 	}
 
-	if *listPeersFlag {
-		listPeersAndFileIDs()
-		return
-	}
-	if *listPeersDetailed {
-		listPeersAndDetails()
+	if *listPeers {
+		response := socketserver.SendCommandToSocket("LIST_PEERS", []byte(""))
+		fmt.Println(string(response))
 		return
 	}
 
@@ -213,29 +208,6 @@ func removePeerFileIDPair(peerID string, fileIDs []string) {
 			}
 			return
 		}
-	}
-}
-
-func listPeersAndFileIDs() {
-	for _, peerPin := range config.Conf.IPFS.PeerPins {
-		fmt.Printf("PeerID: %s, FileIDs: %v\n", peerPin.PeerID, peerPin.FileIDs)
-	}
-}
-
-func listPeersAndDetails() {
-	// Implementation to list peers
-	fmt.Println("Listing peers with details...")
-	// Dummy data example
-	peers := []struct {
-		Index  int
-		Email  string
-		PeerID string
-	}{
-		{1, "example1@domain.com", "peer1...peer1"},
-		{2, "example2@domain.com", "peer2...peer2"},
-	}
-	for _, peer := range peers {
-		fmt.Printf("Index: %d, Email: %s, PeerID: (%s)\n", peer.Index, peer.Email, peer.PeerID)
 	}
 }
 

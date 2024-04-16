@@ -32,6 +32,7 @@ import (
 
 var (
 	pluginsLoaded sync.Once
+	epmMutex      sync.Mutex
 	configMutex   sync.Mutex
 )
 
@@ -285,6 +286,8 @@ func VerifyPNMSignature(pnm *PNM.PNM, pubKeyRaw []byte) (bool, error) {
 }
 
 func (c *AppConfig) UpdateEpmCidForPeer(ctx context.Context, api coreiface.CoreAPI, peerID peer.ID, newCid string) (err error) {
+	epmMutex.Lock()
+	defer epmMutex.Unlock()
 	var oldCid string
 	peerIDStr := peerID.String()
 
