@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -17,11 +18,13 @@ import (
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
 	cryptoUtils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
 	protocols "github.com/DigitalArsenal/space-data-network/internal/node/protocols"
+	"github.com/DigitalArsenal/space-data-network/internal/node/sds_utils"
 	"github.com/DigitalArsenal/space-data-network/serverconfig"
 	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/ipfs/kubo/repo/fsrepo"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	"github.com/rs/zerolog"
+	"github.com/skip2/go-qrcode"
 )
 
 func RegisterPlugins(node *nodepkg.Node) {
@@ -50,17 +53,17 @@ func setupLogging(level string) {
 
 func main() {
 	var (
-		addPeerID     = flag.String("add-peerid", "", "PeerID to add along with fileID(s)")
-		addFileIDs    = flag.String("add-fileids", "", "Comma-separated FileIDs to add for the specified PeerID")
-		removePeerID  = flag.String("remove-peerid", "", "PeerID to remove along with fileID(s)")
-		removeFileIDs = flag.String("remove-fileids", "", "Comma-separated FileIDs to remove for the specified PeerID")
+		// addPeerID     = flag.String("add-peerid", "", "PeerID to add along with fileID(s)")
+		// addFileIDs    = flag.String("add-fileids", "", "Comma-separated FileIDs to add for the specified PeerID")
+		// removePeerID  = flag.String("remove-peerid", "", "PeerID to remove along with fileID(s)")
+		// removeFileIDs = flag.String("remove-fileids", "", "Comma-separated FileIDs to remove for the specified PeerID")
 		// Flags for listing peers
 		listPeers = flag.Bool("list-peers", false, "List peers with details")
 
 		// Flags for fetching and outputting EPM
 		getEPM       = flag.String("get-epm", "", "Get EPM by PeerID, index, or email")
 		outputPath   = flag.String("output-path", "", "File path to output the EPM data")
-		outputFormat = flag.String("output-format", "flatbuffer", "Format to output the EPM (flatbuffer, csv, vcard, qrcode)")
+		outputFormat = flag.String("output-format", "vcard", "Format to output the EPM (flatbuffer, vcard, qrcode)")
 
 		helpFlag                     = flag.Bool("help", false, "Display help")
 		envDocs                      = flag.Bool("env-docs", false, "Display environment variable docs")
@@ -98,12 +101,59 @@ func main() {
 	}
 
 	if *getEPM != "" {
-		processEPM(*getEPM, *outputPath, *outputFormat)
+		response := socketserver.SendCommandToSocket("GET_EPM", []byte(*getEPM))
+		processEPMResponse(response, *outputPath, *outputFormat)
+		return
 	}
-	if *addPeerID != "" || *removePeerID != "" {
-		managePeerFileIDs(*addPeerID, *addFileIDs, *removePeerID, *removeFileIDs)
-		saveConfigAndSendSIGHUP()
-	}
+
+	/*
+				if *addPeerID != "" || *removePeerID != "" {
+					managePeerFileIDs(*addPeerID, *addFileIDs, *removePeerID, *removeFileIDs)
+					saveConfigAndSendSIGHUP()
+				}
+
+		func managePeerFileIDs(addPeerID, addFileIDs, removePeerID, removeFileIDs string) {
+			if addPeerID != "" && addFileIDs != "" {
+				fileIDs := strings.Split(addFileIDs, ",")
+				if validateFileIDs(fileIDs) {
+					addPeerFileIDPair(addPeerID, fileIDs)
+				} else {
+					fmt.Println("Invalid FileID(s). Check the 'Standards' in the configuration.")
+					os.Exit(1)
+				}
+			}
+
+			if removePeerID != "" && removeFileIDs != "" {
+				fileIDs := strings.Split(removeFileIDs, ",")
+				removePeerFileIDPair(removePeerID, fileIDs)
+			}
+		}
+
+		func addPeerFileIDPair(peerID string, fileIDs []string) {
+			for _, configPeer := range config.Conf.IPFS.PeerPins {
+				if configPeer.PeerID == peerID {
+					configPeer.FileIDs = appendUnique(configPeer.FileIDs, fileIDs)
+					return
+				}
+			}
+			config.Conf.IPFS.PeerPins = append(config.Conf.IPFS.PeerPins, config.IpfsPeerPinConfig{
+				PeerID:  peerID,
+				FileIDs: fileIDs,
+			})
+		}
+
+		func removePeerFileIDPair(peerID string, fileIDs []string) {
+			for i, configPeer := range config.Conf.IPFS.PeerPins {
+				if configPeer.PeerID == peerID {
+					configPeer.FileIDs = removeItems(configPeer.FileIDs, fileIDs)
+					if len(configPeer.FileIDs) == 0 {
+						config.Conf.IPFS.PeerPins = append(config.Conf.IPFS.PeerPins[:i], config.Conf.IPFS.PeerPins[i+1:]...)
+					}
+					return
+				}
+			}
+		}
+	*/
 
 	if *envDocs {
 		displayEnvironmentVariableDocs()
@@ -169,69 +219,56 @@ func displayEnvironmentVariableDocs() {
 For more information, visit https://spacedatanetwork.com`)
 }
 
-func managePeerFileIDs(addPeerID, addFileIDs, removePeerID, removeFileIDs string) {
-	if addPeerID != "" && addFileIDs != "" {
-		fileIDs := strings.Split(addFileIDs, ",")
-		if validateFileIDs(fileIDs) {
-			addPeerFileIDPair(addPeerID, fileIDs)
-		} else {
-			fmt.Println("Invalid FileID(s). Check the 'Standards' in the configuration.")
-			os.Exit(1)
-		}
+// Function to process the response of the GET_EPM command
+func processEPMResponse(response []byte, outputPath, format string) {
+	// Decode the response from a hex string to bytes.
+	epmBytes, err := hex.DecodeString(string(response))
+	if err != nil {
+		fmt.Printf("Error decoding response: %v\n", err)
+		return
 	}
 
-	if removePeerID != "" && removeFileIDs != "" {
-		fileIDs := strings.Split(removeFileIDs, ",")
-		removePeerFileIDPair(removePeerID, fileIDs)
-	}
-}
-
-func addPeerFileIDPair(peerID string, fileIDs []string) {
-	for _, configPeer := range config.Conf.IPFS.PeerPins {
-		if configPeer.PeerID == peerID {
-			configPeer.FileIDs = appendUnique(configPeer.FileIDs, fileIDs)
-			return
-		}
-	}
-	config.Conf.IPFS.PeerPins = append(config.Conf.IPFS.PeerPins, config.IpfsPeerPinConfig{
-		PeerID:  peerID,
-		FileIDs: fileIDs,
-	})
-}
-
-func removePeerFileIDPair(peerID string, fileIDs []string) {
-	for i, configPeer := range config.Conf.IPFS.PeerPins {
-		if configPeer.PeerID == peerID {
-			configPeer.FileIDs = removeItems(configPeer.FileIDs, fileIDs)
-			if len(configPeer.FileIDs) == 0 {
-				config.Conf.IPFS.PeerPins = append(config.Conf.IPFS.PeerPins[:i], config.Conf.IPFS.PeerPins[i+1:]...)
-			}
-			return
-		}
-	}
-}
-
-func processEPM(peerIdentifier, outputPath, format string) {
-	// Implementation to fetch and output EPM
-	fmt.Printf("Fetching EPM for: %s\n", peerIdentifier)
-	fmt.Printf("Output Path: %s\n", outputPath)
-	fmt.Printf("Output Format: %s\n", format)
-
-	// Example of handling different formats
+	var output string
+	vCard := sds_utils.ConvertTovCard(epmBytes)
 	switch format {
-	case "flatbuffer":
-		fmt.Println("Processing as FlatBuffer...")
-	case "csv":
-		fmt.Println("Processing as CSV...")
 	case "vcard":
-		fmt.Println("Processing as vCard...")
-	case "qr":
-		fmt.Println("Processing as QR Code...")
-	default:
-		fmt.Println("Unknown format specified.")
-	}
+		// Convert to vCard format
+		output = vCard
+		if outputPath != "" {
+			if err := os.WriteFile(outputPath, []byte(output), 0644); err != nil {
+				fmt.Printf("Failed to save output to file: %v\n", err)
+			} else {
+				fmt.Printf("Output saved to %s\n", outputPath)
+			}
+		}
 
-	// Additional logic to fetch the EPM data and write it to the specified output path
+	case "qrcode":
+		if outputPath != "" {
+			// Save QR code to the specified file
+			err := qrcode.WriteFile(vCard, qrcode.Medium, 256, outputPath)
+
+			if err != nil {
+				fmt.Printf("Failed to generate QR code: %v\n", err)
+				return
+			}
+			fmt.Printf("QR code saved to %s\n", outputPath)
+			return
+		} else {
+			// Display QR code in the terminal
+			nodepkg.GenerateAndDisplayQRCode(vCard)
+			return
+		}
+	default:
+		if outputPath != "" {
+			if err := os.WriteFile(outputPath, epmBytes, 0644); err != nil {
+				fmt.Printf("Failed to save output to file: %v\n", err)
+			} else {
+				fmt.Printf("Output saved to %s\n", outputPath)
+			}
+		} else {
+			fmt.Println("Output:", output)
+		}
+	}
 }
 
 func saveConfigAndSendSIGHUP() {
@@ -437,8 +474,18 @@ func handleNodeInitializationError(err error) {
 
 func flagUsage() {
 	fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+
+	// Determine the longest flag name
+	var longestNameLength int
 	flag.VisitAll(func(f *flag.Flag) {
-		fmt.Fprintf(os.Stderr, "  -%s\t%s\n", f.Name, f.Usage)
+		if len(f.Name) > longestNameLength {
+			longestNameLength = len(f.Name)
+		}
+	})
+
+	// Print each flag with padding to align descriptions
+	flag.VisitAll(func(f *flag.Flag) {
+		fmt.Fprintf(os.Stderr, "  -%-"+strconv.Itoa(longestNameLength)+"s\t%s\n", f.Name, f.Usage)
 	})
 }
 

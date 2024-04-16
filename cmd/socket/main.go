@@ -3,6 +3,7 @@ package socket
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +13,7 @@ import (
 
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
 	sds_utils "github.com/DigitalArsenal/space-data-network/internal/node/sds_utils"
+	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	files "github.com/ipfs/boxo/files"
 	boxoPath "github.com/ipfs/boxo/path"
@@ -30,11 +32,76 @@ var CommandRegistry = map[string]CommandHandler{
 	"LIST_PEERS":        handleListPeers,
 	"PUBLIC_KEY":        handlePublicKey,
 	"CREATE_SERVER_EPM": handleServerEPM,
+	"GET_EPM":           handleGetEPM,
 	// Add more commands and their handlers here
 }
 
+type EPMData struct {
+	PeerID   string
+	Email    string
+	EPM      *EPM.EPM
+	EPMBytes []byte
+	Valid    bool
+	Error    error
+}
+
+func fetchEPMDataByCID(peerID, cid string) EPMData {
+	path, err := boxoPath.NewPath(cid)
+	if err != nil {
+		return EPMData{PeerID: peerID, Valid: false, Error: fmt.Errorf("error parsing IPFS path: %v", err)}
+	}
+
+	api, err := coreapi.NewCoreAPI(daemonNode.IPFS)
+	if err != nil {
+		return EPMData{PeerID: peerID, Valid: false, Error: fmt.Errorf("error creating IPFS CoreAPI instance: %v", err)}
+	}
+
+	rootNode, err := api.Unixfs().Get(daemonNode.Ctx, path)
+	if err != nil {
+		return EPMData{PeerID: peerID, Valid: false, Error: fmt.Errorf("error fetching content from IPFS: %v", err)}
+	}
+
+	file, ok := rootNode.(files.File)
+	if !ok {
+		return EPMData{PeerID: peerID, Valid: false, Error: fmt.Errorf("fetched IPFS node is not a file")}
+	}
+
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return EPMData{PeerID: peerID, Valid: false, Error: fmt.Errorf("failed to read content from IPFS file: %v", err)}
+	}
+
+	peerEPM, _ := sds_utils.DeserializeEPM(daemonNode.Ctx, content)
+	return EPMData{
+		PeerID:   peerID,
+		Email:    string(peerEPM.EMAIL()),
+		EPM:      peerEPM,
+		EPMBytes: content,
+		Valid:    true,
+	}
+}
+
 func handleServerEPM(conn net.Conn, args []byte) {
-	_ = nodepkg.CreateServerEPM(context.Background(), args, daemonNode)
+	epmBytes := nodepkg.CreateServerEPM(context.Background(), args, daemonNode)
+	sendResponse(conn, "Server EPM Created with length: "+string(len(epmBytes)))
+}
+
+func handleGetEPM(conn net.Conn, args []byte) {
+	identifier := string(args)
+	var found bool
+
+	for peerID, CID := range config.Conf.IPFS.PeerEPM {
+		epmData := fetchEPMDataByCID(peerID, CID)
+		if epmData.Valid && (epmData.PeerID == identifier || strings.EqualFold(epmData.Email, identifier)) {
+			sendResponse(conn, hex.EncodeToString(epmData.EPMBytes))
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		fmt.Fprintf(conn, "No EPM found for the given identifier\x04")
+	}
 }
 
 func handlePublicKey(conn net.Conn, args []byte) {
@@ -62,35 +129,9 @@ func handleListPeers(conn net.Conn, args []byte) {
 
 	// Assume PeerEPM maps PeerID to CID
 	for peerID, CID := range config.Conf.IPFS.PeerEPM {
-		// Create a new path object using the full IPFS path
-		path, err := boxoPath.NewPath(CID)
-		if err != nil {
-			fmt.Println("failed to parse IPFS path: %v", err)
-		}
+		peerEPMData := fetchEPMDataByCID(peerID, CID)
 
-		// Initialize the CoreAPI instance
-		api, err := coreapi.NewCoreAPI(daemonNode.IPFS)
-		if err != nil {
-			fmt.Println("failed to create IPFS CoreAPI instance: %v", err)
-		}
-
-		// Use the CoreAPI to get the content from the specified path
-		rootNode, err := api.Unixfs().Get(daemonNode.Ctx, path)
-		if err != nil {
-			fmt.Println("failed to fetch content from IPFS: %v", err)
-		}
-
-		file, ok := rootNode.(files.File)
-		if !ok {
-			fmt.Println("fetched IPFS node is not a file")
-		}
-
-		content, err := io.ReadAll(file)
-		if err != nil {
-			fmt.Println("failed to read content from IPFS file: %v", err)
-		}
-
-		peerEPM, _ := sds_utils.DeserializeEPM(daemonNode.Ctx, content)
+		peerEPM := peerEPMData.EPM
 
 		if len(peerEPM.EMAIL()) == 0 {
 			//TODO error out or check another field
@@ -140,23 +181,49 @@ func SendCommandToSocket(commandKey string, data []byte) []byte {
 		return []byte("")
 	}
 
-	// Wait for a response
-	responseReader := bufio.NewReader(conn)
-	response, err := responseReader.ReadString('\x04') // Read until EOT character
-	if err != nil {
-		fmt.Printf("Failed to read response: %v\n", err)
+	// Setup a channel to read response and a timer for timeout
+	responseChan := make(chan []byte, 1)
+	go func() {
+		responseReader := bufio.NewReader(conn)
+		response, err := responseReader.ReadString('\x04') // Read until EOT character
+		if err != nil {
+			fmt.Printf("Failed to read response: %v\n", err)
+			responseChan <- []byte("")
+			return
+		}
+		// Send response to channel, trimming the EOT character
+		responseChan <- []byte(strings.TrimSuffix(response, "\x04"))
+	}()
+
+	// Use select to wait for response or timeout
+	select {
+	case response := <-responseChan:
+		return response
+	case <-time.After(10 * time.Second):
+		fmt.Println("Response timeout: no response from server within 10 seconds.")
 		return []byte("")
 	}
-
-	// Print the response to the console, trimming the EOT character
-	return []byte(strings.TrimSuffix(response, "\x04"))
 }
 
-func sendResponse(conn net.Conn, data string) {
-	// Append the EOT character to the data
-	message := data + "\x04"
+func sendResponse(conn net.Conn, data interface{}) {
+	var message []byte
+
+	// Check the type of data and process accordingly
+	switch v := data.(type) {
+	case string:
+		// If data is a string, convert it to []byte and append the EOT character
+		message = append([]byte(v), '\x04')
+	case []byte:
+		// If data is already []byte, simply append the EOT character
+		message = append(v, '\x04')
+	default:
+		// If data is neither []byte nor string, log an error or handle it appropriately
+		fmt.Println("sendResponse received data of unsupported type")
+		return
+	}
+
 	// Write the message with EOT to the connection
-	if _, err := conn.Write([]byte(message)); err != nil {
+	if _, err := conn.Write(message); err != nil {
 		fmt.Printf("Failed to send response: %v\n", err)
 	}
 	conn.Close()

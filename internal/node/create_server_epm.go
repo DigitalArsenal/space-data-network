@@ -282,7 +282,7 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 	if len(signingPublicKeyHex) > 0 && len(encryptionPublicKeyHex) > 0 {
 		server_info.SaveEPMToFile(outputEPMBytes)
 		server_info.SavePNMToFile(pnmBytes)
-		serverconfig.PublishWithBackoff(ctx, node.SDSTopic, pnmBytes, 3)
+		go serverconfig.PublishWithBackoff(ctx, node.SDSTopic, pnmBytes, 3)
 	}
 
 	return outputEPMBytes
@@ -322,14 +322,14 @@ func ReadServerEPM(showQR ...bool) {
 				fmt.Printf("QR code saved to %s\n", qrPath)
 			}
 		}
-		generateAndDisplayQRCode(vCard)
+		GenerateAndDisplayQRCode(vCard)
 	}
 
 	// Only print the vCard if no path was provided for saving
 	fmt.Println(vCard)
 }
 
-func generateAndDisplayQRCode(content string) {
+func GenerateAndDisplayQRCode(content string) {
 	config := qrterminal.Config{
 		Level:          qrterminal.L,
 		Writer:         os.Stdout,
