@@ -246,10 +246,9 @@ func PublishWithBackoff(ctx context.Context, topic *pubsub.Topic, message []byte
 	backoff := initialBackoff
 
 	for i := 0; i < maxRetries; i++ {
-		fmt.Println(message)
 		err := topic.Publish(ctx, message)
-		if err == nil {
-			return nil // Successfully published
+		if err != nil {
+			return err
 		}
 
 		if i < maxRetries-1 { // Don't sleep after the last attempt
@@ -280,6 +279,7 @@ func VerifyPNMSignature(pnm *PNM.PNM, pubKeyRaw []byte) (bool, error) {
 	}
 	return true, nil
 }
+
 func (c *AppConfig) UpdateEpmCidForPeer(ctx context.Context, api coreiface.CoreAPI, peerID peer.ID, newCid string) (err error) {
 	var oldCid string
 	peerIDStr := peerID.String()

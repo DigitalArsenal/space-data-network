@@ -2,9 +2,7 @@ package protocols
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"io"
 
@@ -12,8 +10,6 @@ import (
 	"github.com/DigitalArsenal/space-data-network/internal/node/server_info"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
 	"github.com/DigitalArsenal/space-data-network/serverconfig"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/crypto/secp256k1"
 	files "github.com/ipfs/boxo/files"
 	boxoPath "github.com/ipfs/boxo/path"
 	"github.com/ipfs/kubo/core"
@@ -65,7 +61,7 @@ func RequestPNM(ctx context.Context, h host.Host, i *core.IpfsNode, peerID peer.
 
 	// Variables to hold deserialized data and values outside the closure
 	var pnm *PNM.PNM
-	var cid, ethSignature string
+	var cid string
 	//var publicKeyHex, filePath string
 	var panicErr error
 
@@ -86,42 +82,23 @@ func RequestPNM(ctx context.Context, h host.Host, i *core.IpfsNode, peerID peer.
 
 		// Access the PNM fields within the same deferred function.
 		cid = string(pnm.CID())
-		ethSignature = string(pnm.SIGNATURE()[2:])
+		pPubKey, err := peerID.ExtractPublicKey()
+		if err != nil {
+			return
+		}
+
+		pPubKeyRaw, err := pPubKey.Raw()
+		if err != nil {
+			return
+		}
+		serverconfig.VerifyPNMSignature(pnm, pPubKeyRaw)
 	}()
+
 	if panicErr != nil {
 		return panicErr // Return the captured panic error
 	}
 	if err != nil {
 		return err // Return deserialization error if it occurred
-	}
-
-	hash := crypto.Keccak256Hash(pnm.CID())
-
-	ethSignatureBytes, _ := hex.DecodeString(ethSignature)
-
-	sigPublicKey, err := crypto.Ecrecover(hash.Bytes(), ethSignatureBytes)
-	if err != nil {
-		return fmt.Errorf("error Signature: %v", err)
-	}
-
-	pPubKey, err := peerID.ExtractPublicKey()
-	if err != nil {
-		return fmt.Errorf("error extracting public key: %v", err)
-	}
-
-	pPubKeyRaw, err := pPubKey.Raw()
-	if err != nil {
-		return fmt.Errorf("error getting raw public key: %v", err)
-	}
-
-	x, y := secp256k1.DecompressPubkey(pPubKeyRaw)
-	if !bytes.Equal(append(x.Bytes(), y.Bytes()...), sigPublicKey[1:]) {
-		return fmt.Errorf("public keys do not match")
-	}
-
-	if cid == "" {
-		fmt.Println("Public keys match")
-		fmt.Println(cid)
 	}
 
 	// Create a new path object using the full IPFS path
@@ -159,19 +136,5 @@ func RequestPNM(ctx context.Context, h host.Host, i *core.IpfsNode, peerID peer.
 		return nil
 	}
 
-	err = serverconfig.Conf.UpdateEpmCidForPeer(ctx, api, peerID, cid)
-
-	return err
-}
-
-func formatEmail(keyHex, domain string) string {
-	var formattedKey string
-	if len(keyHex) > 10 {
-		// Extract the first 5 characters, concatenate with an ellipsis, and the last 5 characters
-		formattedKey = fmt.Sprintf("%s...%s", keyHex[:5], keyHex[len(keyHex)-5:])
-	} else {
-		// If keyHex is not long enough, use it as is
-		formattedKey = keyHex
-	}
-	return fmt.Sprintf("%s@%s", formattedKey, domain)
+	return serverconfig.Conf.UpdateEpmCidForPeer(ctx, api, peerID, cid)
 }
