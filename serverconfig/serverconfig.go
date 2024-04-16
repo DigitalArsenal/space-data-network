@@ -1,7 +1,10 @@
 package serverconfig
 
 import (
+	"bytes"
+	"context"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,8 +14,18 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"time"
 
+	zerolog "github.com/rs/zerolog/log"
+
+	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/PNM"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/secp256k1"
+	boxoPath "github.com/ipfs/boxo/path"
+	coreiface "github.com/ipfs/kubo/core/coreiface"
+	"github.com/ipfs/kubo/core/coreiface/options"
 	"github.com/ipfs/kubo/plugin/loader"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"golang.org/x/crypto/argon2"
 )
@@ -223,30 +236,88 @@ func Init() {
 	})
 }
 
-func (c *AppConfig) UpdateEpmCidForPeer(pID peer.ID, cid string) (oldCid string, err error) {
-	peerID := pID.String()
-	epmMutex.Lock()
-	defer epmMutex.Unlock() // Ensure the mutex is unlocked after map access
+// Backoff settings
+const (
+	initialBackoff = 1 * time.Minute // initial backoff duration
+	backoffFactor  = 2               // multiplier for each retry
+)
 
-	// Initialize the map if it is nil
+func PublishWithBackoff(ctx context.Context, topic *pubsub.Topic, message []byte, maxRetries int) error {
+	backoff := initialBackoff
+
+	for i := 0; i < maxRetries; i++ {
+		fmt.Println(message)
+		err := topic.Publish(ctx, message)
+		if err == nil {
+			return nil // Successfully published
+		}
+
+		if i < maxRetries-1 { // Don't sleep after the last attempt
+			time.Sleep(backoff)
+			backoff *= time.Duration(backoffFactor)
+		}
+	}
+
+	return fmt.Errorf("failed to publish after %d attempts", maxRetries)
+}
+
+func VerifyPNMSignature(pnm *PNM.PNM, pubKeyRaw []byte) (bool, error) {
+	ethSignature := string(pnm.SIGNATURE()[2:])
+	hash := crypto.Keccak256Hash(pnm.CID())
+	ethSignatureBytes, _ := hex.DecodeString(ethSignature)
+	sigPublicKey, err := crypto.Ecrecover(hash.Bytes(), ethSignatureBytes)
+	if err != nil {
+		return false, fmt.Errorf("signature verification failed: %v", err)
+	}
+	x, y := secp256k1.DecompressPubkey(pubKeyRaw)
+	computedPubKey := append(x.Bytes(), y.Bytes()...)
+	if !bytes.Equal(computedPubKey, sigPublicKey[1:]) {
+		zerolog.Error().
+			Str("computedPublicKey", hex.EncodeToString(computedPubKey)).
+			Str("signaturePublicKey", hex.EncodeToString(sigPublicKey[1:])).
+			Msg("Public keys do not match")
+		return false, fmt.Errorf("public keys do not match")
+	}
+	return true, nil
+}
+func (c *AppConfig) UpdateEpmCidForPeer(ctx context.Context, api coreiface.CoreAPI, peerID peer.ID, newCid string) (err error) {
+	var oldCid string
+	peerIDStr := peerID.String()
+	epmMutex.Lock()
+	defer epmMutex.Unlock()
+
 	if c.IPFS.PeerEPM == nil {
 		c.IPFS.PeerEPM = make(map[string]string)
 	}
-
-	// Get the old CID if it exists
-	oldCid = c.IPFS.PeerEPM[peerID]
-
-	// Update the map with the new CID
-	c.IPFS.PeerEPM[peerID] = cid
-
-	// Attempt to save the configuration to file
+	oldCid = c.IPFS.PeerEPM[peerIDStr]
+	if oldCid != "" && oldCid != newCid {
+		oldPath, err := boxoPath.NewPath(oldCid)
+		if err != nil {
+			log.Printf("Failed to parse old CID path: %v", err)
+			return err
+		}
+		err = api.Pin().Rm(ctx, oldPath, options.Pin.RmRecursive(true))
+		if err != nil {
+			log.Printf("Failed to unpin old content in IPFS: %v", err)
+			return err
+		}
+		log.Println("Successfully unpinned old CID:", oldCid)
+	}
+	c.IPFS.PeerEPM[peerIDStr] = newCid
+	newPath, err := boxoPath.NewPath(newCid)
+	if err != nil {
+		return fmt.Errorf("failed to parse new IPFS path: %v", err)
+	}
+	err = api.Pin().Add(ctx, newPath, options.Pin.Recursive(true))
+	if err != nil {
+		return fmt.Errorf("failed to pin new content in IPFS: %v", err)
+	}
 	err = c.SaveConfigToFile()
 	if err != nil {
 		log.Printf("Failed to save configuration after updating EPM CID for peer: %v", err)
-		return oldCid, err
+		return err
 	}
-
-	return oldCid, nil
+	return nil
 }
 
 // GetEpmCidForPeer retrieves the EPM CID associated with a given PeerID, including the current node's

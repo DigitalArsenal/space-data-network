@@ -14,6 +14,7 @@ import (
 	sds_utils "github.com/DigitalArsenal/space-data-network/internal/node/sds_utils"
 	server_info "github.com/DigitalArsenal/space-data-network/internal/node/server_info"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
+	"github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/skip2/go-qrcode"
 )
@@ -132,7 +133,7 @@ func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 	pnmBytes := sds_utils.CreatePNM("", CIDString, formattedSignature, "EPM")
 	server_info.SaveEPMToFile(epmBytes)
 	server_info.SavePNMToFile(pnmBytes)
-	node.SDSTopic.Publish(ctx, pnmBytes)
+	serverconfig.PublishWithBackoff(ctx, node.SDSTopic, pnmBytes, 3)
 }
 
 func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
@@ -281,7 +282,7 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 	if len(signingPublicKeyHex) > 0 && len(encryptionPublicKeyHex) > 0 {
 		server_info.SaveEPMToFile(outputEPMBytes)
 		server_info.SavePNMToFile(pnmBytes)
-		node.SDSTopic.Publish(ctx, pnmBytes)
+		serverconfig.PublishWithBackoff(ctx, node.SDSTopic, pnmBytes, 3)
 	}
 
 	return outputEPMBytes

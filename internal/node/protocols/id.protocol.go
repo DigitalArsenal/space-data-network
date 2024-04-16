@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 
 	sds_utils "github.com/DigitalArsenal/space-data-network/internal/node/sds_utils"
 	"github.com/DigitalArsenal/space-data-network/internal/node/server_info"
@@ -19,7 +18,6 @@ import (
 	boxoPath "github.com/ipfs/boxo/path"
 	"github.com/ipfs/kubo/core"
 	"github.com/ipfs/kubo/core/coreapi"
-	"github.com/ipfs/kubo/core/coreiface/options"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -97,12 +95,7 @@ func RequestPNM(ctx context.Context, h host.Host, i *core.IpfsNode, peerID peer.
 		return err // Return deserialization error if it occurred
 	}
 
-	//fmt.Printf("Received PNM from %s\n", peerID)
-	//fmt.Printf("with CID: %s\n", cid)
-	//fmt.Printf("ETH Signature: %s\n", ethSignature)
-
 	hash := crypto.Keccak256Hash(pnm.CID())
-	//fmt.Println(hash.Hex())
 
 	ethSignatureBytes, _ := hex.DecodeString(ethSignature)
 
@@ -166,34 +159,9 @@ func RequestPNM(ctx context.Context, h host.Host, i *core.IpfsNode, peerID peer.
 		return nil
 	}
 
-	oldCID, _ := serverconfig.Conf.UpdateEpmCidForPeer(peerID, cid)
+	err = serverconfig.Conf.UpdateEpmCidForPeer(ctx, api, peerID, cid)
 
-	if oldCID != "" && oldCID != cid {
-		// Unpin the old CID
-		oldPath, err := boxoPath.NewPath(oldCID)
-		if err != nil {
-			log.Printf("Failed to parse old CID path: %v", err)
-			// Handle error appropriately
-			return nil
-		}
-
-		err = api.Pin().Rm(ctx, oldPath, options.Pin.RmRecursive(true))
-		if err != nil {
-			log.Printf("Failed to unpin old content in IPFS: %v", err)
-			// Handle error appropriately
-		} else {
-			log.Println("Successfully unpinned old CID:", oldCID)
-		}
-	}
-
-	// Attempt to pin the rootNode
-	err = api.Pin().Add(ctx, path, options.Pin.Recursive(true))
-
-	if err != nil {
-		return fmt.Errorf("failed to pin content in IPFS: %v", err)
-	}
-
-	return nil
+	return err
 }
 
 func formatEmail(keyHex, domain string) string {
