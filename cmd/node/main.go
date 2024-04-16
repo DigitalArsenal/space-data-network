@@ -21,11 +21,31 @@ import (
 	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/ipfs/kubo/repo/fsrepo"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
+	"github.com/rs/zerolog"
 )
 
 func RegisterPlugins(node *nodepkg.Node) {
 	node.Host.SetStreamHandler(protocols.IDExchangeProtocol, protocols.HandlePNMExchange)
 
+}
+func setupLogging(level string) {
+	// Map string levels to zerolog levels
+	levelMap := map[string]zerolog.Level{
+		"debug": zerolog.DebugLevel,
+		"info":  zerolog.InfoLevel,
+		"warn":  zerolog.WarnLevel,
+		"error": zerolog.ErrorLevel,
+		"fatal": zerolog.FatalLevel,
+		"panic": zerolog.PanicLevel,
+	}
+
+	// Set global log level from flag
+	if chosenLevel, ok := levelMap[level]; ok {
+		zerolog.SetGlobalLevel(chosenLevel)
+	} else {
+		fmt.Printf("Invalid log level: %s. Defaulting to error.\n", level)
+		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	}
 }
 
 func main() {
@@ -46,9 +66,11 @@ func main() {
 		exportPrivateKeyMnemonic     = flag.String("export-private-key-mnemonic", "", "Path to file where the private as a mnemonic will be exported")
 		exportPrivateKeyHex          = flag.String("export-private-key-hex", "", "Path to file where the private key as a hex string will be exported")
 		publicKeyHex                 = flag.Bool("pubkey", false, "The public key in hexadecimal format")
+		errorLevel                   = flag.String("error-level", "error", "Set the logging level (debug, info, warn, error, fatal, panic)")
 	)
 
 	flag.Parse()
+	setupLogging(*errorLevel)
 
 	config.Init()
 

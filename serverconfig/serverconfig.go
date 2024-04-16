@@ -271,7 +271,7 @@ func VerifyPNMSignature(pnm *PNM.PNM, pubKeyRaw []byte) (bool, error) {
 	x, y := secp256k1.DecompressPubkey(pubKeyRaw)
 	computedPubKey := append(x.Bytes(), y.Bytes()...)
 	if !bytes.Equal(computedPubKey, sigPublicKey[1:]) {
-		zerolog.Error().
+		zerolog.Info().
 			Str("computedPublicKey", hex.EncodeToString(computedPubKey)).
 			Str("signaturePublicKey", hex.EncodeToString(sigPublicKey[1:])).
 			Msg("Public keys do not match")
