@@ -287,8 +287,6 @@ func VerifyPNMSignature(pnm *PNM.PNM, pubKeyRaw []byte) (bool, error) {
 func (c *AppConfig) UpdateEpmCidForPeer(ctx context.Context, api coreiface.CoreAPI, peerID peer.ID, newCid string) (err error) {
 	var oldCid string
 	peerIDStr := peerID.String()
-	configMutex.Lock()
-	defer configMutex.Unlock()
 
 	if c.IPFS.PeerEPM == nil {
 		c.IPFS.PeerEPM = make(map[string]string)
@@ -322,6 +320,7 @@ func (c *AppConfig) UpdateEpmCidForPeer(ctx context.Context, api coreiface.CoreA
 		return err
 	}
 	return nil
+
 }
 
 // GetEpmCidForPeer retrieves the EPM CID associated with a given PeerID, including the current node's
@@ -349,6 +348,7 @@ func (c *AppConfig) LoadConfigFromFile() error {
 func (c *AppConfig) SaveConfigToFile() error {
 	configMutex.Lock()
 	defer configMutex.Unlock()
+
 	// Clone the current AppConfig object
 	clonedConfig := *c
 
@@ -367,9 +367,16 @@ func (c *AppConfig) SaveConfigToFile() error {
 	// Define the path for the configuration file
 	configFilePath := filepath.Join(c.Datastore.Directory, "config.json")
 
+	// Open the file for writing
+	file, err := os.OpenFile(configFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("could not open configuration file: %w", err)
+	}
+	defer file.Close()
+
 	// Write the configuration data to the file
-	if err := os.WriteFile(configFilePath, data, 0644); err != nil {
-		return fmt.Errorf("could not write configuration file: %w", err)
+	if _, err := file.Write(data); err != nil {
+		return fmt.Errorf("could not write configuration data to file: %w", err)
 	}
 
 	return nil

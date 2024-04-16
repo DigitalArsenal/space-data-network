@@ -50,11 +50,20 @@ func setupLogging(level string) {
 
 func main() {
 	var (
-		addPeerID                    = flag.String("add-peerid", "", "PeerID to add along with fileID(s)")
-		addFileIDs                   = flag.String("add-fileids", "", "Comma-separated FileIDs to add for the specified PeerID")
-		removePeerID                 = flag.String("remove-peerid", "", "PeerID to remove along with fileID(s)")
-		removeFileIDs                = flag.String("remove-fileids", "", "Comma-separated FileIDs to remove for the specified PeerID")
-		listPeersFlag                = flag.Bool("list-peers", false, "List all peers and their associated file IDs")
+		addPeerID     = flag.String("add-peerid", "", "PeerID to add along with fileID(s)")
+		addFileIDs    = flag.String("add-fileids", "", "Comma-separated FileIDs to add for the specified PeerID")
+		removePeerID  = flag.String("remove-peerid", "", "PeerID to remove along with fileID(s)")
+		removeFileIDs = flag.String("remove-fileids", "", "Comma-separated FileIDs to remove for the specified PeerID")
+		listPeersFlag = flag.Bool("list-peers", false, "List all peers and their associated file IDs")
+
+		// Flags for listing peers
+		listPeersDetailed = flag.Bool("list-peers-detailed", false, "List peers with details")
+
+		// Flags for fetching and outputting EPM
+		getEPM       = flag.String("get-epm", "", "Get EPM by PeerID, index, or email")
+		outputPath   = flag.String("output-path", "", "File path to output the EPM data")
+		outputFormat = flag.String("output-format", "flatbuffer", "Format to output the EPM (flatbuffer, csv, vcard, qr)")
+
 		helpFlag                     = flag.Bool("help", false, "Display help")
 		envDocs                      = flag.Bool("env-docs", false, "Display environment variable docs")
 		createEPMFlag                = flag.Bool("create-server-epm", false, "Create server EPM")
@@ -88,7 +97,14 @@ func main() {
 		listPeersAndFileIDs()
 		return
 	}
+	if *listPeersDetailed {
+		listPeersAndDetails()
+		return
+	}
 
+	if *getEPM != "" {
+		processEPM(*getEPM, *outputPath, *outputFormat)
+	}
 	if *addPeerID != "" || *removePeerID != "" {
 		managePeerFileIDs(*addPeerID, *addFileIDs, *removePeerID, *removeFileIDs)
 		saveConfigAndSendSIGHUP()
@@ -204,6 +220,46 @@ func listPeersAndFileIDs() {
 	for _, peerPin := range config.Conf.IPFS.PeerPins {
 		fmt.Printf("PeerID: %s, FileIDs: %v\n", peerPin.PeerID, peerPin.FileIDs)
 	}
+}
+
+func listPeersAndDetails() {
+	// Implementation to list peers
+	fmt.Println("Listing peers with details...")
+	// Dummy data example
+	peers := []struct {
+		Index  int
+		Email  string
+		PeerID string
+	}{
+		{1, "example1@domain.com", "peer1...peer1"},
+		{2, "example2@domain.com", "peer2...peer2"},
+	}
+	for _, peer := range peers {
+		fmt.Printf("Index: %d, Email: %s, PeerID: (%s)\n", peer.Index, peer.Email, peer.PeerID)
+	}
+}
+
+func processEPM(peerIdentifier, outputPath, format string) {
+	// Implementation to fetch and output EPM
+	fmt.Printf("Fetching EPM for: %s\n", peerIdentifier)
+	fmt.Printf("Output Path: %s\n", outputPath)
+	fmt.Printf("Output Format: %s\n", format)
+
+	// Example of handling different formats
+	switch format {
+	case "flatbuffer":
+		fmt.Println("Processing as FlatBuffer...")
+	case "csv":
+		fmt.Println("Processing as CSV...")
+	case "vcard":
+		fmt.Println("Processing as vCard...")
+	case "qr":
+		fmt.Println("Processing as QR Code...")
+	default:
+		fmt.Println("Unknown format specified.")
+	}
+
+	// Additional logic to fetch the EPM data and write it to the specified output path
 }
 
 func saveConfigAndSendSIGHUP() {
