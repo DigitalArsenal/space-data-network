@@ -246,6 +246,13 @@ func PublishWithBackoff(ctx context.Context, topic *pubsub.Topic, message []byte
 	backoff := initialBackoff
 
 	for i := 0; i < maxRetries; i++ {
+		if topic == nil {
+			// Wait for the topic to be ready
+			time.Sleep(backoff)
+			backoff *= time.Duration(backoffFactor)
+			continue
+		}
+
 		err := topic.Publish(ctx, message)
 		if err != nil {
 			return err
