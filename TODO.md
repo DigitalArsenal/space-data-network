@@ -36,7 +36,9 @@
 
 [x] Re-instate protocol for exchange, and during exchange, add peers to list of Space Data Network peers, write them to disk (config.Conf.IpfsConfig.PeerEPM)
 
-[ ] Rebroadcast OR have another dialable protocol to send PNM on EPM edit
+[x] Rebroadcast OR have another dialable protocol to send PNM on EPM edit
+
+[ ] Docker Image
 
 Posting the index.html to IPNS; due to slow propagation, have it cached at nodes.
 Create protocols to list pinned files, and request them directly.

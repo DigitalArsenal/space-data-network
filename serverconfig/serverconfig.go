@@ -32,7 +32,7 @@ import (
 
 var (
 	pluginsLoaded sync.Once
-	epmMutex      sync.Mutex
+	configMutex   sync.Mutex
 )
 
 //go:embed manifest.json
@@ -283,8 +283,8 @@ func VerifyPNMSignature(pnm *PNM.PNM, pubKeyRaw []byte) (bool, error) {
 func (c *AppConfig) UpdateEpmCidForPeer(ctx context.Context, api coreiface.CoreAPI, peerID peer.ID, newCid string) (err error) {
 	var oldCid string
 	peerIDStr := peerID.String()
-	epmMutex.Lock()
-	defer epmMutex.Unlock()
+	configMutex.Lock()
+	defer configMutex.Unlock()
 
 	if c.IPFS.PeerEPM == nil {
 		c.IPFS.PeerEPM = make(map[string]string)
@@ -301,7 +301,7 @@ func (c *AppConfig) UpdateEpmCidForPeer(ctx context.Context, api coreiface.CoreA
 			log.Printf("Failed to unpin old content in IPFS: %v", err)
 			return err
 		}
-		log.Println("Successfully unpinned old CID:", oldCid)
+		zerolog.Info().Msgf("Successfully unpinned old CID: %s", oldCid)
 	}
 	c.IPFS.PeerEPM[peerIDStr] = newCid
 	newPath, err := boxoPath.NewPath(newCid)
@@ -343,6 +343,8 @@ func (c *AppConfig) LoadConfigFromFile() error {
 
 // SaveConfigToFile saves the current configuration settings to a JSON file, excluding sensitive information like the datastore password
 func (c *AppConfig) SaveConfigToFile() error {
+	configMutex.Lock()
+	defer configMutex.Unlock()
 	// Clone the current AppConfig object
 	clonedConfig := *c
 
