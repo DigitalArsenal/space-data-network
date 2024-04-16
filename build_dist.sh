@@ -12,7 +12,7 @@ compile() {
     CGO_ENABLED_FLAG=$6
     LDFLAGS=$7
 
-    BINARY_NAME="main${EXTENSION}"
+    BINARY_NAME="spacedatanetwork${EXTENSION}"
     TARGET_FOLDER="./dist/${FOLDER}"
 
     # Create target folder if it doesn't exist

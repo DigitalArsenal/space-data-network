@@ -1,0 +1,99 @@
+	/*
+						if *addPeerID != "" || *removePeerID != "" {
+							managePeerFileIDs(*addPeerID, *addFileIDs, *removePeerID, *removeFileIDs)
+							saveConfigAndSendSIGHUP()
+						}
+
+				func managePeerFileIDs(addPeerID, addFileIDs, removePeerID, removeFileIDs string) {
+					if addPeerID != "" && addFileIDs != "" {
+						fileIDs := strings.Split(addFileIDs, ",")
+						if validateFileIDs(fileIDs) {
+							addPeerFileIDPair(addPeerID, fileIDs)
+						} else {
+							fmt.Println("Invalid FileID(s). Check the 'Standards' in the configuration.")
+							os.Exit(1)
+						}
+					}
+
+					if removePeerID != "" && removeFileIDs != "" {
+						fileIDs := strings.Split(removeFileIDs, ",")
+						removePeerFileIDPair(removePeerID, fileIDs)
+					}
+				}
+
+				func addPeerFileIDPair(peerID string, fileIDs []string) {
+					for _, configPeer := range config.Conf.IPFS.PeerPins {
+						if configPeer.PeerID == peerID {
+							configPeer.FileIDs = appendUnique(configPeer.FileIDs, fileIDs)
+							return
+						}
+					}
+					config.Conf.IPFS.PeerPins = append(config.Conf.IPFS.PeerPins, config.IpfsPeerPinConfig{
+						PeerID:  peerID,
+						FileIDs: fileIDs,
+					})
+				}
+
+				func removePeerFileIDPair(peerID string, fileIDs []string) {
+					for i, configPeer := range config.Conf.IPFS.PeerPins {
+						if configPeer.PeerID == peerID {
+							configPeer.FileIDs = removeItems(configPeer.FileIDs, fileIDs)
+							if len(configPeer.FileIDs) == 0 {
+								config.Conf.IPFS.PeerPins = append(config.Conf.IPFS.PeerPins[:i], config.Conf.IPFS.PeerPins[i+1:]...)
+							}
+							return
+						}
+					}
+				}
+
+				func appendUnique(slice []string, items []string) []string {
+			for _, item := range items {
+				if !contains(slice, item) {
+					slice = append(slice, item)
+				}
+			}
+			return slice
+		}
+
+		func removeItems(slice []string, itemsToRemove []string) []string {
+			var result []string
+			for _, item := range slice {
+				if !contains(itemsToRemove, item) {
+					result = append(result, item)
+				}
+			}
+			return result
+		}
+
+		func contains(slice []string, item string) bool {
+			for _, sliceItem := range slice {
+				if sliceItem == item {
+					return true
+				}
+			}
+			return false
+		}
+
+		func validateFileIDs(fileIDs []string) bool {
+			for _, fileID := range fileIDs {
+				if !isSupportedFileID(fileID) {
+					return false
+				}
+			}
+			return true
+		}
+
+		func isSupportedFileID(fileID string) bool {
+			for _, standard := range serverconfig.Conf.Info.Standards {
+				if fileID == standard {
+					return true
+				}
+			}
+			return false
+		}
+	*/
+
+    		// addPeerID     = flag.String("add-peerid", "", "PeerID to add along with fileID(s)")
+		// addFileIDs    = flag.String("add-fileids", "", "Comma-separated FileIDs to add for the specified PeerID")
+		// removePeerID  = flag.String("remove-peerid", "", "PeerID to remove along with fileID(s)")
+		// removeFileIDs = flag.String("remove-fileids", "", "Comma-separated FileIDs to remove for the specified PeerID")

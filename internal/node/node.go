@@ -10,13 +10,13 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
 	pubsubservice "github.com/DigitalArsenal/space-data-network/internal/node/pubsub"
 
 	content "github.com/DigitalArsenal/space-data-network/internal/node/content"
 	serverconfig "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/cenkalti/backoff"
 	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ipfs/go-cid"
 	"github.com/ipfs/kubo/config"
 	"github.com/ipfs/kubo/core"
 	"github.com/libp2p/go-libp2p"
@@ -34,8 +34,6 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
-	"github.com/multiformats/go-multibase"
-	mh "github.com/multiformats/go-multihash"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -204,31 +202,11 @@ func NewSDNNode(ctx context.Context, cancel context.CancelFunc, mnemonic string)
 	fmt.Println("Node Encryption Ethereum Address: ", node.encryptionAccount.Address)
 	fmt.Println("")
 
-	pid, err := peer.IDFromPublicKey(pubKey)
-	if err != nil {
-		fmt.Printf("Error getting peer ID from public key: %s\n", err)
-	}
-
-	peerMh, err := mh.FromB58String(pid.String())
-	if err != nil {
-		fmt.Printf("Error converting Peer ID to multihash: %s\n", err)
-	}
-
-	// Create a CIDv1 with the 'libp2p-key' codec from the Peer ID's multihash
-	peerCid := cid.NewCidV1(cid.Libp2pKey, peerMh)
-
 	// Encode the CIDv1 in base32
-	base32Encoded, err := multibase.Encode(multibase.Base32, peerCid.Bytes())
-	if err != nil {
-		fmt.Printf("Error encoding CID to base32: %s\n", err)
-	}
+	base32Encoded, _ := crypto_utils.EncodePublicKeyToBase32(pubKey)
 
 	// Encode the CIDv1 in base36
-	base36Encoded, err := multibase.Encode(multibase.Base36, peerCid.Bytes())
-	if err != nil {
-		fmt.Printf("Error encoding CID to base36: %s\n", err)
-
-	}
+	base36Encoded, _ := crypto_utils.EncodePublicKeyToBase36(pubKey)
 
 	fmt.Println("Base32 Encoded CIDv1:", base32Encoded)
 	fmt.Println("Base36 Encoded CIDv1:", base36Encoded)
@@ -287,7 +265,7 @@ func (n *Node) Start(ctx context.Context) error {
 	//Start auto relay
 	autoRelayFeeder(ctx, n.Host, n.DHT, n.peerChan)
 
-	go discoverPeers(ctx, n, "space-data-network", 30*time.Second)
+	//go discoverPeers(ctx, n, "space-data-network", 30*time.Second)
 	//Find others with the same version
 	versionHex := []byte(serverconfig.Conf.Info.Version)
 	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
@@ -330,22 +308,6 @@ func (n *Node) Start(ctx context.Context) error {
 	})
 
 	n.FileWatcher.Watch(serverconfig.Conf.Folders.OutgoingFolder)
-
-	// Test
-	/*go func() {
-
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				n.SDSTopic.Publish(n.ctx, []byte(time.Now().String()))
-
-			}
-		}
-	}()*/
 
 	// Setup periodic IPNS publish every 30 seconds
 	go func() {
