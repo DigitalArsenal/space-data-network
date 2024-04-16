@@ -20,7 +20,6 @@ import (
 	protocols "github.com/DigitalArsenal/space-data-network/internal/node/protocols"
 	"github.com/DigitalArsenal/space-data-network/internal/node/sds_utils"
 	"github.com/DigitalArsenal/space-data-network/serverconfig"
-	config "github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/ipfs/kubo/repo/fsrepo"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	"github.com/rs/zerolog"
@@ -82,7 +81,7 @@ func main() {
 	flag.Parse()
 	setupLogging(*errorLevel)
 
-	config.Init()
+	serverconfig.Init()
 
 	if *publicKeyHex {
 		socketserver.SendCommandToSocket("PUBLIC_KEY", []byte(""))
@@ -161,7 +160,7 @@ func main() {
 	}
 
 	if *versionFlag {
-		fmt.Println("Version:", config.Conf.Info.Version)
+		fmt.Println("Version:", serverconfig.Conf.Info.Version)
 		return
 	}
 
@@ -272,7 +271,7 @@ func processEPMResponse(response []byte, outputPath, format string) {
 }
 
 func saveConfigAndSendSIGHUP() {
-	err := config.Conf.SaveConfigToFile()
+	err := serverconfig.Conf.SaveConfigToFile()
 	if err != nil {
 		fmt.Printf("Failed to save configuration: %v\n", err)
 		return
@@ -332,7 +331,7 @@ func validateFileIDs(fileIDs []string) bool {
 }
 
 func isSupportedFileID(fileID string) bool {
-	for _, standard := range config.Conf.Info.Standards {
+	for _, standard := range serverconfig.Conf.Info.Standards {
 		if fileID == standard {
 			return true
 		}
@@ -388,7 +387,7 @@ func importPrivateKeyHex(importPrivateKeyHexPath *string) {
 }
 
 func exportPrivateKey(exportPrivateKeyMnemonic, exportPrivateKeyHex *string) {
-	var ipfsConfigDir = filepath.Join(config.Conf.Datastore.Directory, "ipfs")
+	var ipfsConfigDir = filepath.Join(serverconfig.Conf.Datastore.Directory, "ipfs")
 	repo, err := fsrepo.Open(ipfsConfigDir)
 	if err != nil {
 		fmt.Printf("Failed to open IPFS repo: %v\n", err)
@@ -407,7 +406,7 @@ func exportPrivateKey(exportPrivateKeyMnemonic, exportPrivateKeyHex *string) {
 		os.Exit(1)
 	}
 
-	unencryptedPrivateKey := cryptoUtils.DecryptPrivateKey(pkBytes, config.Conf.Datastore.Password)
+	unencryptedPrivateKey := cryptoUtils.DecryptPrivateKey(pkBytes, serverconfig.Conf.Datastore.Password)
 
 	var outputContent, outputFilePath string
 	if *exportPrivateKeyMnemonic != "" {
