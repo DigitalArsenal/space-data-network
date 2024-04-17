@@ -83,6 +83,8 @@ func fetchEPMDataByCID(peerID, cid string) EPMData {
 
 func handleServerEPM(conn net.Conn, args []byte) {
 	epmBytes := nodepkg.CreateServerEPM(context.Background(), args, daemonNode)
+	epm, _ := sds_utils.DeserializeEPM(daemonNode.Ctx, epmBytes)
+	daemonNode.EPM = epm
 	sendResponse(conn, "Server EPM Created with length: "+string(len(epmBytes)))
 }
 
@@ -125,30 +127,34 @@ func handleRemovePeer(conn net.Conn, args []byte) {
 func handleListPeers(conn net.Conn, args []byte) {
 	var output strings.Builder
 
-	index := 1 // Start an index for numbering the peers
+	// Assuming EMAIL and MULTIFORMAT_ADDRESS are accessible through currentEPM
 
-	// Assume PeerEPM maps PeerID to CID
+	fmt.Fprintf(&output, "(Current Node)\n")
+	fmt.Fprintf(&output, "Email:    %s\n", string(daemonNode.EPM.EMAIL()))
+	fmt.Fprintf(&output, "PeerID:   (%s)\n", daemonNode.Host.ID())
+	for i := 0; i < daemonNode.EPM.MULTIFORMAT_ADDRESSLength(); i++ {
+		fmt.Fprintf(&output, "IPNS:     %s\n\n", string(daemonNode.EPM.MULTIFORMAT_ADDRESS(i)))
+	}
+
 	for peerID, CID := range config.Conf.IPFS.PeerEPM {
 		peerEPMData := fetchEPMDataByCID(peerID, CID)
 
 		peerEPM := peerEPMData.EPM
 
 		if len(peerEPM.EMAIL()) == 0 {
-			//TODO error out or check another field
 			fmt.Println("No Email")
 
+		} else {
+			fmt.Fprintf(&output, "Email:    %s\n", string(peerEPM.EMAIL()))
 		}
-		// Format the PeerID to show only part of it for readability, assuming it's long enough
 		displayPeerID := peerID
-		/*if len(peerID) > 10 {
-			displayPeerID = peerID[:5] + "..." + peerID[len(peerID)-5:]
-		}*/
-
-		fmt.Fprintf(&output, "Index:    %d\n", index)
-		fmt.Fprintf(&output, "Email:    %s\n", string(peerEPM.EMAIL()))
 		fmt.Fprintf(&output, "PeerID:   (%s)\n", displayPeerID)
 		fmt.Fprintf(&output, "CID:      %s\n\n", CID)
-		index++
+
+		for i := 0; i < peerEPM.MULTIFORMAT_ADDRESSLength(); i++ {
+			fmt.Fprintf(&output, "IPNS:      %s\n\n", string(peerEPM.MULTIFORMAT_ADDRESS(i)))
+		}
+
 	}
 	sendResponse(conn, output.String())
 }

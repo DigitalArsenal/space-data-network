@@ -361,6 +361,8 @@ func (c *AppConfig) SaveConfigToFile() error {
 	// Remove the datastore directory since it's wherever the file is found
 	clonedConfig.Datastore.Directory = ""
 
+	clonedConfig.IPFS.PeerEPM = nil
+
 	// Marshal the cloned configuration data to JSON, excluding the password
 	data, err := json.MarshalIndent(clonedConfig, "", "  ")
 	if err != nil {

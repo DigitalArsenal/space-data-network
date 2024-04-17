@@ -15,6 +15,7 @@ import (
 	server_info "github.com/DigitalArsenal/space-data-network/internal/node/server_info"
 	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	"github.com/DigitalArsenal/space-data-network/serverconfig"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/skip2/go-qrcode"
 )
@@ -36,11 +37,11 @@ func captureStackTrace() string {
 	return builder.String()
 }
 
-func CreateDefaultServerEPM(ctx context.Context, node *Node) {
+func CreateDefaultServerEPM(ctx context.Context, node *Node) []byte {
 
 	vepm, _ := server_info.LoadEPMFromFile()
 	if len(vepm) > 0 {
-		return
+		return vepm
 	}
 
 	fmt.Println("Creating a server A EPM...")
@@ -48,7 +49,7 @@ func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 	if node == nil || node.Host == nil {
 		// Node or node.Host is nil, can't proceed further
 		fmt.Println("Node or node.Host is nil, cannot create default server EPM.")
-		return
+		return []byte{}
 	}
 
 	//lint:ignore SA5011 check above for nil
@@ -82,14 +83,14 @@ func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 	signingPublicKeyHex, err = node.Wallet.PublicKeyHex(node.signingAccount)
 	if err != nil {
 		fmt.Printf("Error getting signing public key: %v\n", err)
-		return
+		return []byte{}
 	}
 	signingPublicKeyHex = "0x" + signingPublicKeyHex
 
 	encryptionPublicKeyHex, err = node.Wallet.PublicKeyHex(node.encryptionAccount)
 	if err != nil {
 		fmt.Printf("Error getting encryption public key: %v\n", err)
-		return
+		return []byte{}
 	}
 	encryptionPublicKeyHex = "0x" + encryptionPublicKeyHex
 
@@ -115,6 +116,7 @@ func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 		poBox,
 		signingPublicKeyHex,
 		encryptionPublicKeyHex,
+		peerID,
 	)
 
 	fmt.Println("EPM created successfully. Length of EPM bytes:", len(epmBytes))
@@ -124,7 +126,7 @@ func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 	sig, err := node.Wallet.SignData(node.signingAccount, "application/octet-stream", []byte(CIDString))
 	if err != nil {
 		fmt.Printf("Failed to sign CID: %v\n", err)
-		return
+		return []byte{}
 	}
 	signatureHex := hex.EncodeToString(sig)
 	formattedSignature := fmt.Sprintf("0x%s", signatureHex)
@@ -133,7 +135,9 @@ func CreateDefaultServerEPM(ctx context.Context, node *Node) {
 	pnmBytes := sds_utils.CreatePNM("", CIDString, formattedSignature, "EPM")
 	server_info.SaveEPMToFile(epmBytes)
 	server_info.SavePNMToFile(pnmBytes)
-	serverconfig.PublishWithBackoff(ctx, node.SDSTopic, pnmBytes, 3)
+	serverconfig.PublishWithBackoff(ctx, node.SDSTopics["PNM"], pnmBytes, 3)
+
+	return epmBytes
 }
 
 func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
@@ -236,6 +240,11 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 		encryptionPublicKeyHex = "0x" + encryptionPublicKeyHex
 	}
 
+	var peerID peer.ID
+	if node != nil && node.Host != nil {
+		peerID = node.Host.ID()
+	}
+
 	// Call the sds_utils.CreateEPM with the collected data
 	outputEPMBytes = sds_utils.CreateEPM(
 		dnString,
@@ -258,6 +267,7 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 		poBox,
 		signingPublicKeyHex,
 		encryptionPublicKeyHex,
+		peerID,
 	)
 
 	if node == nil {
@@ -282,7 +292,7 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 	if len(signingPublicKeyHex) > 0 && len(encryptionPublicKeyHex) > 0 {
 		server_info.SaveEPMToFile(outputEPMBytes)
 		server_info.SavePNMToFile(pnmBytes)
-		go serverconfig.PublishWithBackoff(ctx, node.SDSTopic, pnmBytes, 3)
+		go serverconfig.PublishWithBackoff(ctx, node.SDSTopics["PNM"], pnmBytes, 3)
 	}
 
 	return outputEPMBytes
@@ -290,7 +300,7 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 
 func ReadServerEPM(showQR ...bool) {
 
-	vepm := []byte("")
+	vepm := []byte{}
 	if len(vepm) == 0 {
 		fmt.Println("EPM not found, run with flag '-create-server-epm' to generate")
 		return

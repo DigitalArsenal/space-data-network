@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
 	EPM "github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 	"github.com/emersion/go-vcard"
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -33,6 +36,7 @@ func CreateEPM(
 	poBox string,
 	signingPublicKeyHex string, // Use hexadecimal string directly
 	encryptionPublicKeyHex string, // Use hexadecimal string directly
+	peerID peer.ID,
 ) []byte {
 	builder := flatbuffers.NewBuilder(0)
 
@@ -97,6 +101,21 @@ func CreateEPM(
 	}
 	alternateNamesVec := builder.EndVector(len(alternateNamesOffsets))
 
+	// Encode the Peer ID to base32
+	ipnsMultiaddrBase32, _ := crypto_utils.EncodePeerIDToBase32(peerID)
+
+	ipnsMultiaddrBase32Offset := builder.CreateString(ipnsMultiaddrBase32)
+
+	// Encode the Peer ID to base36
+	ipnsMultiaddrBase36, _ := crypto_utils.EncodePeerIDToBase36(peerID)
+
+	ipnsMultiaddrBase36Offset := builder.CreateString(ipnsMultiaddrBase36)
+	// Create a vector for the multi-format addresses
+	EPM.EPMStartMULTIFORMAT_ADDRESSVector(builder, 2) // Notice the count is now 2
+	builder.PrependUOffsetT(ipnsMultiaddrBase36Offset)
+	builder.PrependUOffsetT(ipnsMultiaddrBase32Offset)
+	multiaddrVec := builder.EndVector(2)
+
 	// Start the Address table
 	EPM.AddressStart(builder)
 	EPM.AddressAddCOUNTRY(builder, countryOffset)
@@ -122,8 +141,7 @@ func CreateEPM(
 	EPM.EPMAddEMAIL(builder, emailOffset)
 	EPM.EPMAddTELEPHONE(builder, telephoneOffset)
 	EPM.EPMAddADDRESS(builder, addressOffset)
-
-	// Add the keys vector to the EPM table
+	EPM.EPMAddMULTIFORMAT_ADDRESS(builder, multiaddrVec)
 	EPM.EPMAddKEYS(builder, keysVectorOffset)
 
 	// Finish the EPM table
@@ -200,6 +218,17 @@ func ConvertTovCard(binaryEPM []byte) string {
 	// Only add the ADR field to the card if there are non-empty address components
 	if len(addrComponents) > 0 {
 		card.Add("ADR", &vcard.Field{Value: strings.Join(addrComponents, ";")})
+	}
+
+	// Extract IPNS addresses from the MULTIFORMAT_ADDRESS field and add them to the vCard
+	multiFormatAddrLen := epm.MULTIFORMAT_ADDRESSLength()
+	for i := 0; i < multiFormatAddrLen; i++ {
+		if addrBytes := epm.MULTIFORMAT_ADDRESS(i); addrBytes != nil {
+			addr := string(addrBytes)
+			if strings.HasPrefix(addr, "/ipns/") {
+				card.Add("URL", &vcard.Field{Value: addr})
+			}
+		}
 	}
 
 	familyNameFB := epm.FAMILY_NAME()

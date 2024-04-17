@@ -12,6 +12,8 @@ import (
 
 	"github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
 	pubsubservice "github.com/DigitalArsenal/space-data-network/internal/node/pubsub"
+	"github.com/DigitalArsenal/space-data-network/internal/node/sds_utils"
+	"github.com/DigitalArsenal/space-data-network/internal/spacedatastandards/EPM"
 
 	content "github.com/DigitalArsenal/space-data-network/internal/node/content"
 	serverconfig "github.com/DigitalArsenal/space-data-network/serverconfig"
@@ -48,10 +50,11 @@ type Node struct {
 	FileWatcher       Watcher
 	publishTimer      *time.Timer
 	timerActive       bool
-	SDSTopic          *pubsub.Topic
-	SDSSubscription   *pubsub.Subscription
+	SDSTopics         map[string]*pubsub.Topic
+	SDSSubscriptions  map[string]*pubsub.Subscription
 	Ctx               context.Context
 	cancel            context.CancelFunc
+	EPM               *EPM.EPM
 }
 
 // autoRelayPeerSource returns a function that provides peers for auto-relay.
@@ -220,7 +223,8 @@ func NewSDNNode(ctx context.Context, cancel context.CancelFunc, mnemonic string)
 		base36Encoded,
 		serverconfig.Conf.Folders.RootFolder)
 
-	CreateDefaultServerEPM(node.Ctx, node)
+	epmBytes := CreateDefaultServerEPM(node.Ctx, node)
+	node.EPM, _ = sds_utils.DeserializeEPM(ctx, epmBytes)
 
 	return node, nil
 }
@@ -271,7 +275,7 @@ func (n *Node) Start(ctx context.Context) error {
 	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
-	n.SDSSubscription, n.SDSTopic, _ = pubsubservice.SetupPubSub(ctx, n.Host, discoveryHex)
+	n.SDSSubscriptions, n.SDSTopics, _ = pubsubservice.SetupPubSub(ctx, n.Host, discoveryHex)
 
 	n.publishIPNS()
 
@@ -333,15 +337,19 @@ func (n *Node) Stop() {
 	fmt.Println("Shutting down node...")
 
 	n.cancel()
-	n.SDSSubscription.Cancel()
 
-	err := n.SDSTopic.Close()
-	if err != nil {
-		fmt.Println(err)
+	for _, sub := range n.SDSSubscriptions {
+		sub.Cancel()
 	}
+
+	for _, topic := range n.SDSTopics {
+		topic.Close()
+	}
+
 	if n.publishTimer != nil {
 		n.publishTimer.Stop()
 	}
+
 	if n.Host != nil {
 		if err := n.Host.Close(); err != nil {
 			fmt.Println("Failed to close libp2p host:", err)

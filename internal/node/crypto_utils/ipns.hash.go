@@ -53,3 +53,21 @@ func EncodePublicKeyToBase36(pubKey crypto.PubKey) (string, error) {
 	}
 	return EncodePeerIDToBase36(pid)
 }
+
+// EncodePeerIDFromStringToBase32 encodes a peer ID string to base32
+func EncodePeerIDFromStringToBase32(peerIDStr string) (string, error) {
+	pid, err := peer.Decode(peerIDStr)
+	if err != nil {
+		return "", fmt.Errorf("error decoding peer ID from string: %w", err)
+	}
+	return EncodePeerIDToBase32(pid)
+}
+
+// EncodePeerIDFromStringToBase36 encodes a peer ID string to base36
+func EncodePeerIDFromStringToBase36(peerIDStr string) (string, error) {
+	pid, err := peer.Decode(peerIDStr)
+	if err != nil {
+		return "", fmt.Errorf("error decoding peer ID from string: %w", err)
+	}
+	return EncodePeerIDToBase36(pid)
+}
