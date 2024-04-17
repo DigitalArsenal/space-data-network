@@ -133,9 +133,9 @@ func handleListPeers(conn net.Conn, args []byte) {
 	fmt.Fprintf(&output, "Email:    %s\n", string(daemonNode.EPM.EMAIL()))
 	fmt.Fprintf(&output, "PeerID:   (%s)\n", daemonNode.Host.ID())
 	for i := 0; i < daemonNode.EPM.MULTIFORMAT_ADDRESSLength(); i++ {
-		fmt.Fprintf(&output, "IPNS:     %s\n\n", string(daemonNode.EPM.MULTIFORMAT_ADDRESS(i)))
+		fmt.Fprintf(&output, "IPNS:     %s\n", string(daemonNode.EPM.MULTIFORMAT_ADDRESS(i)))
 	}
-
+	fmt.Fprint(&output, "\n")
 	for peerID, CID := range config.Conf.IPFS.PeerEPM {
 		peerEPMData := fetchEPMDataByCID(peerID, CID)
 
@@ -149,12 +149,12 @@ func handleListPeers(conn net.Conn, args []byte) {
 		}
 		displayPeerID := peerID
 		fmt.Fprintf(&output, "PeerID:   (%s)\n", displayPeerID)
-		fmt.Fprintf(&output, "CID:      %s\n\n", CID)
+		fmt.Fprintf(&output, "CID:      %s\n", CID)
 
 		for i := 0; i < peerEPM.MULTIFORMAT_ADDRESSLength(); i++ {
-			fmt.Fprintf(&output, "IPNS:      %s\n\n", string(peerEPM.MULTIFORMAT_ADDRESS(i)))
+			fmt.Fprintf(&output, "IPNS:      %s\n", string(peerEPM.MULTIFORMAT_ADDRESS(i)))
 		}
-
+		fmt.Fprint(&output, "\n")
 	}
 	sendResponse(conn, output.String())
 }

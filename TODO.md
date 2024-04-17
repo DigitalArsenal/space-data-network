@@ -31,8 +31,6 @@
 - [ ] Encrypted / Secure
 - [ ] Point to point security (isolated)
 
-# Concept
+## Concept
 
-[x] Have user create EPM using CLI, use running daemon to publish to IPFS, get CID, write EPM / PNM to folder, publish to IPNS (dup publishing will be taken care of using DHT).
-
-[ ]
+[x] Have user create EPM using CLI, use running daemon to publish to IPFS, get CID, write EPM / PNM to folder, publish to IPNS (dup publishing will be taken care of using DHT) with rolling limit acting as a cache, publish data directly to channel for standard
