@@ -9,10 +9,12 @@
   - [x] Use all discovery methods
   - [x] Use dht and identity services (in case bootstrap nodes are down / unreachable)
 - [x] Export / Import private key
-- [ ] Publish PNM after pin
-- [ ] Republish IPNS
-- [ ] Restart server if cannot find peer
-- [ ] Publish folder with vcf, QR image, index.html (editable)
+- [x] Publish PNM after pin
+- [x] Republish IPNS
+- [x] Publish folder with vcf, QR image, index.html (editable)
+- [ ] Change folder interface to publish on standard channel after ingest (ex: PublisH(version+OMM, data))
+- [ ] Write to {standard}/{peerid} for data, add it then remove it to get hash, look in PNMs to find metadata (inc filename)
+- [ ] Rolling limit for files in IPNS folder (size/number)
 - [ ] Pin settings
   - [ ] Pin other EPM, only mandatory pin
   - [ ] Have pin interface for adding pins based on key, message type, size? number? how recent?
@@ -21,8 +23,7 @@
   - [ ] Set up folder structure, program then subfolder for keys
   - [ ] Have direct dial protocols for clients to get their encrypted files
 - [ ] Remove musl-gcc dependency
-- [ ] Self-updating binary
-- [ ] Versioning with version string for Advertise
+- [x] Versioning with version string for Advertise
 
 ## Marketing
 
@@ -34,12 +35,4 @@
 
 [x] Have user create EPM using CLI, use running daemon to publish to IPFS, get CID, write EPM / PNM to folder, publish to IPNS (dup publishing will be taken care of using DHT).
 
-[x] Re-instate protocol for exchange, and during exchange, add peers to list of Space Data Network peers, write them to disk (config.Conf.IpfsConfig.PeerEPM)
-
-[x] Rebroadcast OR have another dialable protocol to send PNM on EPM edit
-
-[ ] Docker Image
-
-Posting the index.html to IPNS; due to slow propagation, have it cached at nodes.
-Create protocols to list pinned files, and request them directly.
-
+[ ]
