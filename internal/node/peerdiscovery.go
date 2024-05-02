@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	dutil "github.com/libp2p/go-libp2p/p2p/discovery/util"
+	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+	"github.com/multiformats/go-multiaddr"
 )
 
 var (
@@ -56,7 +59,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 
 	// Initialize mDNS service
 	notifee := &discoveryNotifee{h: h, contactedPeers: make(map[peer.ID]struct{}), mutex: &sync.Mutex{}, discoveredPeersChan: discoveredPeersChan}
-	mdnsService := mdns.NewMdnsService(h, "channelName", notifee)
+	mdnsService := mdns.NewMdnsService(h, "space-data-network-mdns", notifee)
 	go func() {
 		if err := mdnsService.Start(); err != nil {
 			fmt.Println("Failed to start mDNS service:", err)
@@ -92,7 +95,7 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 					continue
 				}
 
-				processAndMarkPeer(peer, &mutex)
+				processAndMarkPeer(peer, &mutex, ctx, h)
 			}
 		case <-printTicker.C:
 			//fmt.Println("Searching for peers...")
@@ -110,12 +113,12 @@ func discoverPeers(ctx context.Context, n *Node, channelName string, discoveryIn
 				continue
 			}
 
-			processAndMarkPeer(peer, &mutex)
+			processAndMarkPeer(peer, &mutex, ctx, h)
 		}
 	}
 }
 
-func processAndMarkPeer(peer peer.AddrInfo, mutex *sync.Mutex) {
+func processAndMarkPeer(peer peer.AddrInfo, mutex *sync.Mutex, ctx context.Context, h host.Host) {
 	mutex.Lock()
 	defer mutex.Unlock()
 
@@ -126,6 +129,35 @@ func processAndMarkPeer(peer peer.AddrInfo, mutex *sync.Mutex) {
 	}
 
 	contactedPeers[peerID] = struct{}{}
+
+	if err := h.Connect(ctx, peer); err != nil {
+		log.Printf("Failed to connect to peer %s: %v", peer.ID, err)
+		return
+	}
+	// Attempt to make a reservation
+	relayInfo, err := makeRelayReservation(ctx, peer, h)
+	if err != nil {
+		log.Printf("Failed to make relay reservation with peer %s: %v", peer.ID, err)
+		return
+	}
+
+	log.Printf("Successfully made relay reservation with peer %s at relay %s", peer.ID, relayInfo)
+}
+
+func makeRelayReservation(ctx context.Context, peerInfo peer.AddrInfo, h host.Host) (string, error) {
+
+	_, err := client.Reserve(ctx, h, peerInfo)
+	if err != nil {
+		return "", fmt.Errorf("failed to reserve relay slot with peer %s: %w", peerInfo.ID, err)
+	}
+
+	// Create a new relayed address for the peer
+	relayAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/p2p/%s/p2p-circuit/p2p/%s", peerInfo.ID, h.ID()))
+	if err != nil {
+		return "", fmt.Errorf("failed to create relay address: %w", err)
+	}
+	log.Println(relayAddr.String())
+	return relayAddr.String(), nil
 }
 
 func initDHT(ctx context.Context, h host.Host) (*dht.IpfsDHT, error) {

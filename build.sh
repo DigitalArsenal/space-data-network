@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#"root@Tokyo2"
 HOSTS=("root@Tokyo2" "root@deathstar" "root@api.spaceaware" "root@celestrak.eth")
 REMOTE_PATH="/opt/software/space-data-network/space-data-network"
 LOCAL_PATH="./tmp/spacedatanetwork"

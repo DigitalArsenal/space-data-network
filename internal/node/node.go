@@ -29,6 +29,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
+	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	tls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
@@ -126,7 +127,7 @@ func NewSDNNode(ctx context.Context, cancel context.CancelFunc, mnemonic string)
 		libp2p.Identity(privKey),
 		libp2p.EnableNATService(),
 		libp2p.EnableRelay(),
-		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0", "/ip6/::/tcp/0"),
+		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/8080/ws", "/ip4/0.0.0.0/tcp/0", "/ip6/::/tcp/0"),
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.Security(tls.ID, tls.New),
 		libp2p.Transport(tcp.NewTCPTransport, tcp.WithMetrics()),
@@ -134,7 +135,6 @@ func NewSDNNode(ctx context.Context, cancel context.CancelFunc, mnemonic string)
 		libp2p.Transport(quic.NewTransport),
 		libp2p.Transport(webtransport.New),
 		libp2p.NATPortMap(),
-		libp2p.EnableRelay(),
 		libp2p.EnableHolePunching(),
 		libp2p.EnableAutoRelayWithPeerSource(
 			func(ctx context.Context, _ int) <-chan peer.AddrInfo {
@@ -145,6 +145,12 @@ func NewSDNNode(ctx context.Context, cancel context.CancelFunc, mnemonic string)
 
 	if err != nil {
 		return node, fmt.Errorf("failed to create libp2p host: %w", err)
+	}
+
+	// Initialize the relay v2 with default options
+	_, err = relay.New(node.Host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to instantiate the relay: %w", err)
 	}
 
 	peerID := node.Host.ID()
@@ -225,7 +231,9 @@ func NewSDNNode(ctx context.Context, cancel context.CancelFunc, mnemonic string)
 
 	epmBytes := CreateDefaultServerEPM(node.Ctx, node)
 	node.EPM, _ = sds_utils.DeserializeEPM(ctx, epmBytes)
-
+	for _, addr := range node.Host.Addrs() {
+		fmt.Printf("Listening on %s/p2p/%s\n", addr, node.Host.ID())
+	}
 	return node, nil
 }
 
@@ -273,6 +281,7 @@ func (n *Node) Start(ctx context.Context) error {
 	//Find others with the same version
 	versionHex := []byte(serverconfig.Conf.Info.Version)
 	discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
+	fmt.Printf("Discovery Hex: %s \n", discoveryHex)
 	go discoverPeers(ctx, n, discoveryHex, 30*time.Second)
 
 	n.SDSSubscriptions, n.SDSTopics, _ = pubsubservice.SetupPubSub(ctx, n.Host, discoveryHex)
