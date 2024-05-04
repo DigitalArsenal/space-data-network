@@ -42,8 +42,11 @@ fi
 
 # Execute the Go build command - fast by removing '-a' and only building what has changed
 #CC=musl-gcc CGO_ENABLED=1 go build -a -tags netgo -ldflags '-s -w -extldflags "-static"' -o ./tmp/main ./cmd/node/main.go
-CC=musl-gcc CGO_ENABLED=1 go build -tags netgo -ldflags '-s -w -extldflags "-static"' -o ./tmp/spacedatanetwork ./cmd/node/main.go
-
+if [ "$UNAME_S" == "Darwin" ]; then # macOS
+    go build -o ./tmp/spacedatanetwork ./cmd/node/main.go
+else
+    CC=musl-gcc CGO_ENABLED=1 go build -tags netgo -ldflags '-s -w -extldflags "-static"' -o ./tmp/spacedatanetwork ./cmd/node/main.go
+fi
 # Timestamp file path
 TIMESTAMP_FILE="./tmp/last_post_build_run"
 
@@ -68,6 +71,10 @@ if [ -f "$TIMESTAMP_FILE" ]; then
     fi
 else
     # If timestamp file does not exist, run the script and create the file
-    deploy_and_restart
+    if [ "$UNAME_S" != "Darwin" ]; then
+        deploy_and_restart
+    else
+        echo "Build completed on macOS, skipping deployment and restart."
+    fi
     echo $CURRENT_TIMESTAMP >$TIMESTAMP_FILE
 fi
