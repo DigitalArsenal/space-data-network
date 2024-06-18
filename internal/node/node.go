@@ -148,7 +148,7 @@ func NewSDNNode(ctx context.Context, cancel context.CancelFunc, mnemonic string)
 	}
 
 	// Initialize the relay v2 with default options
-	_, err = relay.New(node.Host)
+	_, err = relay.New(node.Host, relay.WithLimit(nil))
 	if err != nil {
 		return nil, fmt.Errorf("failed to instantiate the relay: %w", err)
 	}

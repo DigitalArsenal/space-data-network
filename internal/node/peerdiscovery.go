@@ -135,13 +135,13 @@ func processAndMarkPeer(peer peer.AddrInfo, mutex *sync.Mutex, ctx context.Conte
 		return
 	}
 	// Attempt to make a reservation
-	relayInfo, err := makeRelayReservation(ctx, peer, h)
+	_, err := makeRelayReservation(ctx, peer, h)
 	if err != nil {
 		log.Printf("Failed to make relay reservation with peer %s: %v", peer.ID, err)
 		return
 	}
 
-	log.Printf("Successfully made relay reservation with peer %s at relay %s", peer.ID, relayInfo)
+	//log.Printf("Successfully made relay reservation with peer %s at relay %s", peer.ID, relayInfo)
 }
 
 func makeRelayReservation(ctx context.Context, peerInfo peer.AddrInfo, h host.Host) (string, error) {
