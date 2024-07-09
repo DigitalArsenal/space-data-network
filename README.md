@@ -1,3 +1,5 @@
+# NOTICE: THIS IS PRE-ALPHA SOFTWARE, USE AT YOUR OWN RISK
+
 # Space Data Network
 
 A Peer-to-Peer Network for Collaborative Space Data Exchange, based on [LibP2P](https://libp2p.io) and utilizing [Google Flatbuffers](https://flatbuffers.dev/) through schemas maintained at the [Space Data Standards](https://spacedatastandards.org) project.
