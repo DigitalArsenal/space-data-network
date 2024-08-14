@@ -91,4 +91,14 @@ Please read [CONTRIBUTING.md](./CONTRIBUTING.md) for details on our code of cond
 
 ## License
 
-This project is proprietary AF. Unauthorized copying of this project, via any medium, modification, distribution, and use of the proprietary components without express permission from the copyright owner is strictly prohibited. For permission requests, please contact the project owner.
+This project is licensed under the GNU Affero General Public License v3.0.
+
+You are free to:
+
+Use the software for any purpose.
+Study how the software works and make modifications.
+Share copies of the original software with others.
+Distribute copies of your modified versions to others.
+However, if you distribute copies or modified versions of this software, or if you make it available as a service over a network, you must also share the source code under the same license.
+
+For more information, please refer to the full [license text](https://www.gnu.org/licenses/agpl-3.0.en.html).

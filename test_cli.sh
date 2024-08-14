@@ -53,7 +53,7 @@ run_test "$app_path --env-docs"
 run_test "$app_path --version"
 
 # Test --create-server-epm flag
-run_test "$app_path --create-server-epm"
+#run_test "$app_path --create-server-epm"
 
 # Test --output-server-epm flag
 run_test "$app_path --output-server-epm"

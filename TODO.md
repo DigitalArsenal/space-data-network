@@ -33,4 +33,7 @@
 
 ## Concept
 
-[x] Have user create EPM using CLI, use running daemon to publish to IPFS, get CID, write EPM / PNM to folder, publish to IPNS (dup publishing will be taken care of using DHT) with rolling limit acting as a cache, publish data directly to channel for standard
+- [x] Have user create EPM using CLI, use running daemon to publish to IPFS, get CID, write EPM / PNM to folder, publish to IPNS (dup publishing will be taken care of using DHT) with rolling limit acting as a cache, publish data directly to channel for standard
+- [ ] Publish a JSON manifest of the current PNMs of actively hosted files.  This way, it's still discoverable over IPFS/IPNS and human / machine readable.
+- [ ] Manifest Update Message schema(?) timestamp, digital signature of hash of manifest.
+- [ ] Program Manifest
