@@ -12,7 +12,7 @@
 - [x] Publish PNM after pin
 - [x] Republish IPNS
 - [x] Publish folder with vcf, QR image, index.html (editable)
-- [ ] Change folder interface to publish on standard channel after ingest (ex: PublisH(version+OMM, data))
+- [ ] Change folder interface to publish on standard channel after ingest (ex: Publish(version+OMM, data))
 - [ ] Write to {standard}/{peerid} for data, add it then remove it to get hash, look in PNMs to find metadata (inc filename)
 - [ ] Rolling limit for files in IPNS folder (size/number)
 - [ ] Pin settings
@@ -24,12 +24,6 @@
   - [ ] Have direct dial protocols for clients to get their encrypted files
 - [ ] Remove musl-gcc dependency
 - [x] Versioning with version string for Advertise
-
-## Marketing
-
-- [ ] Realtime
-- [ ] Encrypted / Secure
-- [ ] Point to point security (isolated)
 
 ## Concept
 
