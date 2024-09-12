@@ -24,6 +24,7 @@ tmp_dir = "tmp"
   
 
 [cmd]
+envs = ["SPACE_DATA_NETWORK_GO_ENV=development"]
 exec = "./tmp/spacedatanetwork"
 
 [color]

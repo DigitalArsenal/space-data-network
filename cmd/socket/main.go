@@ -151,11 +151,11 @@ func handleListPeers(conn net.Conn, args []byte) {
 		fmt.Fprintf(&output, "PeerID:   (%s)\n", displayPeerID)
 		fmt.Fprintf(&output, "CID:      %s\n", CID)
 
-		/*for i := 0; i < peerEPM.MULTIFORMAT_ADDRESSLength(); i++ {
+		for i := 0; i < peerEPM.MULTIFORMAT_ADDRESSLength(); i++ {
 			fmt.Fprintf(&output, "IPNS:      %s\n", string(peerEPM.MULTIFORMAT_ADDRESS(i)))
 		}
 		fmt.Fprint(&output, "\n")
-		*/
+
 	}
 	sendResponse(conn, output.String())
 }

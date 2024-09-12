@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -21,6 +22,7 @@ import (
 	"github.com/DigitalArsenal/space-data-network/internal/node/sds_utils"
 	"github.com/DigitalArsenal/space-data-network/serverconfig"
 	"github.com/ipfs/kubo/repo/fsrepo"
+	"github.com/joho/godotenv"
 	hdwallet "github.com/miguelmota/go-ethereum-hdwallet"
 	"github.com/rs/zerolog"
 	"github.com/skip2/go-qrcode"
@@ -51,6 +53,14 @@ func setupLogging(level string) {
 }
 
 func main() {
+	if os.Getenv("SPACE_DATA_NETWORK_GO_ENV") == "development" {
+		// Load .env file
+		err := godotenv.Load()
+		if err != nil {
+			log.Fatalf("Error loading .env file")
+		}
+		fmt.Println("Loaded .env file for development")
+	}
 	var (
 		// Flags for listing peers
 		listPeers = flag.Bool("list-peers", false, "List peers with details")

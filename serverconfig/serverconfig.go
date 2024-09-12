@@ -191,7 +191,7 @@ func Init() {
 		if port, err := strconv.Atoi(webserverPortStr); err == nil {
 			Conf.Webserver.Port = port
 		} else {
-			Conf.Webserver.Port = 8080
+			Conf.Webserver.Port = 1957
 		}
 
 		if password, exists := os.LookupEnv("SPACE_DATA_NETWORK_DATASTORE_PASSWORD"); exists {
