@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-HOSTS=() #"root@Tokyo2" "root@deathstar" "root@api.spaceaware" "root@celestrak.eth")
+HOSTS=("root@Tokyo2" "root@deathstar" "root@api.spaceaware" "root@celestrak.eth")
 REMOTE_PATH="/opt/software/space-data-network/space-data-network"
 LOCAL_PATH="./tmp/spacedatanetwork"
 TIMESTAMP_FILE="./tmp/last_post_build_run"
@@ -63,11 +63,11 @@ if [ -f "$TIMESTAMP_FILE" ]; then
     TIME_DIFF=$((CURRENT_TIMESTAMP - LAST_RUN_TIMESTAMP))
 
     # Check if time has passed since the last run
-    if [ "$TIME_DIFF" -gt 600 ]; then
+    if [ "$TIME_DIFF" -gt 120 ]; then
         deploy_and_restart
         echo $CURRENT_TIMESTAMP >$TIMESTAMP_FILE
     else
-        echo "Post-build script last run less than 10 minutes ago, skipping..."
+        echo "Post-build script last run less than 2 minutes ago, skipping..."
     fi
 else
     # If timestamp file does not exist, run the script and create the file

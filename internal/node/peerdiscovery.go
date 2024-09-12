@@ -3,9 +3,10 @@ package node
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/DigitalArsenal/space-data-network/internal/node/protocols"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -137,11 +138,11 @@ func processAndMarkPeer(peer peer.AddrInfo, mutex *sync.Mutex, ctx context.Conte
 	// Attempt to make a reservation
 	_, err := makeRelayReservation(ctx, peer, h)
 	if err != nil {
-		log.Printf("Failed to make relay reservation with peer %s: %v", peer.ID, err)
+		log.Debug().Msgf("Failed to make relay reservation with peer %s: %v", peer.ID, err)
 		return
 	}
 
-	//log.Printf("Successfully made relay reservation with peer %s at relay %s", peer.ID, relayInfo)
+	//log.Printf("Successfully made relay reservation with peer %s at relay", peer.ID)
 }
 
 func makeRelayReservation(ctx context.Context, peerInfo peer.AddrInfo, h host.Host) (string, error) {
@@ -156,7 +157,7 @@ func makeRelayReservation(ctx context.Context, peerInfo peer.AddrInfo, h host.Ho
 	if err != nil {
 		return "", fmt.Errorf("failed to create relay address: %w", err)
 	}
-	log.Println(relayAddr.String())
+
 	return relayAddr.String(), nil
 }
 
@@ -175,7 +176,7 @@ func initDHT(ctx context.Context, h host.Host) (*dht.IpfsDHT, error) {
 		go func() {
 			defer wg.Done()
 			if err := h.Connect(ctx, *peerinfo); err != nil {
-				//fmt.Println("Bootstrap warning:", err)
+				fmt.Println("Bootstrap warning:", err)
 			}
 		}()
 	}

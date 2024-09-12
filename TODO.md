@@ -1,5 +1,14 @@
 # TODO
 
+- [ ] File manifest at root, entries are filename, IPFS hash, digital signature of hash
+- [ ] Check file size / number, limit IPFS to 1 GB / 1000 files
+- [ ] Let's Encrypt certificate if domain matches server IP from lookup
+- [ ] Digitally sign unique string in certificate and provide that signature in CN
+- [ ] Add CORS for only the other servers in the network
+- [ ] Do DNS detection for servers in the network
+
+## Old TODO
+
 - [ ] Create config system
   - [x] Create datastore in encrypted SQLite DB
   - [x] Allow user save / load keys
@@ -24,8 +33,6 @@
   - [ ] Have direct dial protocols for clients to get their encrypted files
 - [ ] Remove musl-gcc dependency
 - [x] Versioning with version string for Advertise
-
-## Concept
 
 - [x] Have user create EPM using CLI, use running daemon to publish to IPFS, get CID, write EPM / PNM to folder, publish to IPNS (dup publishing will be taken care of using DHT) with rolling limit acting as a cache, publish data directly to channel for standard
 - [ ] Publish a JSON manifest of the current PNMs of actively hosted files.  This way, it's still discoverable over IPFS/IPNS and human / machine readable.

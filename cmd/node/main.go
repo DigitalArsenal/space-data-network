@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 
+	httpserver "github.com/DigitalArsenal/space-data-network/cmd/http"
 	socketserver "github.com/DigitalArsenal/space-data-network/cmd/socket"
 	nodepkg "github.com/DigitalArsenal/space-data-network/internal/node"
 	cryptoUtils "github.com/DigitalArsenal/space-data-network/internal/node/crypto_utils"
@@ -32,6 +33,7 @@ func RegisterPlugins(node *nodepkg.Node) {
 	node.Host.SetStreamHandler(protocols.IDExchangeProtocol, protocols.HandlePNMExchange)
 
 }
+
 func setupLogging(level string) {
 	// Map string levels to zerolog levels
 	levelMap := map[string]zerolog.Level{
@@ -148,6 +150,7 @@ func main() {
 	// Start the socket server in a goroutine
 	go socketserver.StartSocketServer(serverconfig.Conf.SocketServer.Path, node)
 
+	httpserver.StartHTTPServer(node)
 	// Setup Plugins
 	RegisterPlugins(node)
 
