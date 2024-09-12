@@ -5,7 +5,7 @@ root = "."
 tmp_dir = "tmp"
 
 [pre_build]
-  cmd = "touch tmp/restart.sig"
+  cmd = "touch tmp/restart.sig && pkill -f './tmp/spacedatanetwork'"
 
 [build]
   # Command to build your application
