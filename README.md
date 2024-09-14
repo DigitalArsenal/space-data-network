@@ -14,7 +14,7 @@ The application can be configured using the following environment variables:
 
 - `SPACE_DATA_NETWORK_CPUS`: Number of CPUs to give to the webserver
 
-- `SPACE_DATA_NETWORK_ETHEREUM_DERIVATION_PATH`: BIP32 / BIP44 path to use for account.  Defaults to: `m/44'/60'/0'/0/0`.  
+- `SPACE_DATA_NETWORK_ETHEREUM_DERIVATION_PATH`: BIP32 / BIP44 path to use for account. Defaults to: `m/44'/60'/0'/0/0`.
 
 ### Setting Environment Variables
 

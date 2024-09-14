@@ -10,24 +10,43 @@
           Oxygen, Ubuntu, Cantarell, sans-serif;
         margin: 0;
         padding: 0;
+        padding-bottom: env(
+          safe-area-inset-bottom
+        ); /* Adjust for iOS safe area */
         background-color: #f4f4f9;
         color: #333;
-        height: 100vh;
+        min-height: 100vh;
         display: flex;
         flex-direction: column;
+        height: 100%;
+        width: 100%;
+        position: fixed;
       }
 
       header {
         user-select: none;
         background-color: #282c34;
         color: white;
-        padding: 15px;
-        text-align: center;
-        font-size: 1.5rem;
-        font-weight: 200;
+        padding: 10px 15px;
         display: flex;
         justify-content: space-between;
         align-items: center;
+        flex-wrap: nowrap;
+      }
+
+      .header-title {
+        flex-grow: 1;
+        text-align: center;
+        font-size: 1.5rem;
+        font-weight: 200;
+        margin: 0;
+        text-align: left;
+      }
+
+      .header-buttons {
+        display: flex;
+        gap: 10px;
+        flex-shrink: 0;
       }
 
       main {
@@ -39,6 +58,9 @@
         border-top: 1px silver solid;
         text-align: center;
         padding: 10px;
+        padding-bottom: calc(
+          10px + env(safe-area-inset-bottom)
+        ); /* Adjust for iOS safe area */
         background-color: #282c34;
         color: white;
         font-size: 1rem;
@@ -183,6 +205,32 @@
       .modal-open {
         display: flex !important;
       }
+
+      /* Responsive styles for smaller screens */
+      @media screen and (max-width: 600px) {
+        body {
+          font-size: 14px;
+        }
+
+        .header-title {
+          font-size: 1.2rem;
+        }
+
+        .header-button {
+          padding: 5px 10px;
+          font-size: 0.8rem;
+        }
+
+        .modal-content {
+          width: 90%;
+          max-width: 90%;
+        }
+
+        /* Adjust modal table font size */
+        .modal-content table {
+          font-size: 0.9rem;
+        }
+      }
     </style>
     <link
       rel="stylesheet"
@@ -267,6 +315,13 @@
             console.log("Domain verification successful.");
             console.log("Verified Domain:", data.domain);
             console.log("Node IPs:", data.node_ips);
+            // If domain verification is successful, redirect to HTTPS after 5 seconds
+            console.log("Redirecting to HTTPS in 5 seconds...");
+
+            setTimeout(() => {
+              // Redirect to the HTTPS version of the page
+              window.location.href = `https://${window.location.hostname}${window.location.pathname}`;
+            }, 5000);
           })
           .catch((error) => {
             // Log any errors encountered during the verification process
@@ -324,8 +379,8 @@
   </head>
   <body>
     <header>
-      SPACE DATA NETWORK
-      <div>
+      <h1 class="header-title">SPACE DATA NETWORK</h1>
+      <div class="header-buttons">
         <button class="header-button" onclick="openModal('serverInfoModal')">
           Server Info
         </button>

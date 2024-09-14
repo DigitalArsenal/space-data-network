@@ -17,7 +17,7 @@ import (
 
 	content "github.com/DigitalArsenal/space-data-network/internal/node/content"
 	serverconfig "github.com/DigitalArsenal/space-data-network/serverconfig"
-	"github.com/cenkalti/backoff"
+	"github.com/cenkalti/backoff/v4"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ipfs/kubo/config"
 	"github.com/ipfs/kubo/core"

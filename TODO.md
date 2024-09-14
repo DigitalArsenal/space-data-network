@@ -6,6 +6,7 @@
 - [ ] Digitally sign unique string in certificate and provide that signature in CN
 - [ ] Add CORS for only the other servers in the network
 - [ ] Do DNS detection for servers in the network
+- [ ] Update channel for binary
 
 ## Old TODO
 

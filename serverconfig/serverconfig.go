@@ -123,7 +123,7 @@ func Init() {
 
 		// Webserver settings
 		var webserverPortStr string
-		flag.StringVar(&webserverPortStr, "webserver.port", "1957", "Port for the webserver to listen on")
+		flag.StringVar(&webserverPortStr, "webserver.port", "80", "Port for the webserver to listen on")
 
 		// Datastore settings
 		flag.StringVar(&Conf.Datastore.Directory, "datastore.directory", "", "Directory for the datastore")

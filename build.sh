@@ -47,6 +47,10 @@ if [ "$UNAME_S" == "Darwin" ]; then # macOS
 else
     CC=musl-gcc CGO_ENABLED=1 go build -tags netgo -ldflags '-s -w -extldflags "-static"' -o ./tmp/spacedatanetwork ./cmd/node/main.go
 fi
+
+# Set Permissions to allow port binding
+sudo setcap 'cap_net_bind_service=+ep' ./tmp/spacedatanetwork
+
 # Timestamp file path
 TIMESTAMP_FILE="./tmp/last_post_build_run"
 
