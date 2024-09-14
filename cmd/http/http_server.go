@@ -77,7 +77,7 @@ func StartHTTPServer(node *Node) {
 
 	// Certificates exist, start the HTTPS and redirect servers
 	log.Println("Certificates found. Starting HTTPS server with HTTP redirection.")
-	StartHTTPSServer(certPath, keyPath)
+	StartHTTPSServer()
 }
 
 // startPlainHTTPServer starts the HTTP server and enables the `/verify-domain` path for domain verification

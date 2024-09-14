@@ -5,9 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 
-	"github.com/DigitalArsenal/space-data-network/serverconfig"
 	"golang.org/x/crypto/acme/autocert"
 )
 
@@ -15,7 +13,6 @@ var autocertManager *autocert.Manager
 
 // InitializeAutocertManager initializes the autocert manager and returns it.
 func InitializeAutocertManager(domain string) *autocert.Manager {
-	certDir := filepath.Join(serverconfig.Conf.Datastore.Directory, "cert")
 
 	// Ensure the certificate directory exists
 	err := os.MkdirAll(certDir, 0700)
