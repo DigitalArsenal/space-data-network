@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -36,13 +38,50 @@ var serverUpgradeLock sync.Mutex
 
 var handlerWithMiddleware http.Handler
 
-// StartHTTPServer initializes and starts the HTTP server
+// Define the certificate paths
+var certDir string
+var certPath string
+var keyPath string
+
+// StartHTTPServer checks for existing certificates, and starts the appropriate servers.
 func StartHTTPServer(node *Node) {
 	currentNode = node
+	// Define the certificate paths
+	certDir = filepath.Join(serverconfig.Conf.Datastore.Directory, "certificates")
+	certPath = filepath.Join(certDir, "server.crt")
+	keyPath = filepath.Join(certDir, "server.key")
 	nodeIP := getNodeIPAddress(currentNode)
+
+	log.Print(certDir)
 
 	log.Printf("Starting server on node IP address: %s", nodeIP)
 
+	// Ensure the certificate directory exists
+	err := os.MkdirAll(certDir, 0700)
+	if err != nil {
+		log.Fatalf("Failed to create certificate directory: %v", err)
+	}
+
+	// Check if the certificates already exist
+	if _, errCert := os.Stat(certPath); os.IsNotExist(errCert) {
+		log.Println("No existing certificates found. Starting HTTP server with domain verification.")
+		startPlainHTTPServer()
+		return
+	}
+
+	if _, errKey := os.Stat(keyPath); os.IsNotExist(errKey) {
+		log.Println("No existing key found. Starting HTTP server with domain verification.")
+		startPlainHTTPServer()
+		return
+	}
+
+	// Certificates exist, start the HTTPS and redirect servers
+	log.Println("Certificates found. Starting HTTPS server with HTTP redirection.")
+	StartHTTPSServer(certPath, keyPath)
+}
+
+// startPlainHTTPServer starts the HTTP server and enables the `/verify-domain` path for domain verification
+func startPlainHTTPServer() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", indexHandler)
 	mux.HandleFunc("/verify-domain", verifyDomainHandler)
@@ -62,46 +101,16 @@ func StartHTTPServer(node *Node) {
 	}()
 }
 
-// StartHTTPSServer starts the HTTPS server with Let's Encrypt certificates
-func StartHTTPSServer(domain string) {
-	InitializeAutocertManager(domain)
-
-	go StartAutocertChallengeServer()
-
-	httpsServer := &http.Server{
-		Addr:      ":443",
-		Handler:   handlerWithMiddleware,
-		TLSConfig: GetTLSConfig(),
-	}
-
-	log.Printf("Starting HTTPS server on %s", httpsServer.Addr)
-
-	go func() {
-		if err := httpsServer.ListenAndServeTLS("", ""); err != nil {
-			log.Fatalf("HTTPS server ListenAndServeTLS: %v", err)
-		}
-	}()
-
-	// Start redirect HTTP server after HTTPS is running
-	StartHTTPToHTTPSRedirectServer()
-}
-
-// StartSelfSignedHTTPSServer starts an HTTPS server with a self-signed certificate.
-func StartSelfSignedHTTPSServer() {
-	certPath := "selfsigned.crt"
-	keyPath := "selfsigned.key"
-
-	// Generate the self-signed certificate if it doesn't exist
-	if err := GenerateSelfSignedCert(certPath, keyPath); err != nil {
-		log.Fatalf("Failed to generate self-signed certificate: %v", err)
-	}
-
+// StartHTTPSServer starts the HTTPS server with existing certificates and redirects HTTP traffic to HTTPS.
+func StartHTTPSServer() {
 	httpsServer := &http.Server{
 		Addr:    ":443",
-		Handler: handlerWithMiddleware, // Use the middleware from the main package
+		Handler: handlerWithMiddleware,
 	}
 
-	log.Printf("Starting HTTPS server with self-signed certificate on %s", httpsServer.Addr)
+	GenerateSelfSignedCert(certPath, keyPath)
+
+	log.Printf("Starting HTTPS server with certificates at %s and %s", certPath, keyPath)
 
 	go func() {
 		if err := httpsServer.ListenAndServeTLS(certPath, keyPath); err != nil {
@@ -109,11 +118,11 @@ func StartSelfSignedHTTPSServer() {
 		}
 	}()
 
-	// Start redirect HTTP server after HTTPS is running
+	// Start HTTP redirect to HTTPS
 	StartHTTPToHTTPSRedirectServer()
 }
 
-// StartHTTPToHTTPSRedirectServer keeps the HTTP server up and redirects to HTTPS
+// StartHTTPToHTTPSRedirectServer starts the HTTP server to redirect traffic to HTTPS
 func StartHTTPToHTTPSRedirectServer() {
 	redirectMux := http.NewServeMux()
 

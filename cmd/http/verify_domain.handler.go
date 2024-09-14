@@ -67,7 +67,7 @@ func verifyDomainHandler(w http.ResponseWriter, r *http.Request) {
 			serverUpgradeLock.Unlock()
 			// Generate and start the HTTPS server using self-signed certificate
 			stopHTTPServer()
-			go StartSelfSignedHTTPSServer()
+			go StartHTTPSServer()
 			response := struct {
 				Message string `json:"message"`
 			}{
@@ -148,7 +148,7 @@ func verifyDomainHandler(w http.ResponseWriter, r *http.Request) {
 			// Stop HTTP server
 			stopHTTPServer()
 			// Start HTTPS server
-			go StartHTTPSServer(domain)
+			go StartHTTPSServer()
 			response.Message = "Server is restarting with HTTPS"
 		} else {
 			serverUpgradeLock.Unlock()
