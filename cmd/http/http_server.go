@@ -42,6 +42,7 @@ var handlerWithMiddleware http.Handler
 var certDir string
 var certPath string
 var keyPath string
+var mux = http.NewServeMux()
 
 // StartHTTPServer checks for existing certificates, and starts the appropriate servers.
 func StartHTTPServer(node *Node) {
@@ -55,6 +56,10 @@ func StartHTTPServer(node *Node) {
 	log.Print(certDir)
 
 	log.Printf("Starting server on node IP address: %s", nodeIP)
+
+	mux.HandleFunc("/", indexHandler)
+	mux.HandleFunc("/verify-domain", verifyDomainHandler)
+	handlerWithMiddleware = corsMiddleware(rateLimitMiddleware(mux))
 
 	// Ensure the certificate directory exists
 	err := os.MkdirAll(certDir, 0700)
@@ -82,11 +87,6 @@ func StartHTTPServer(node *Node) {
 
 // startPlainHTTPServer starts the HTTP server and enables the `/verify-domain` path for domain verification
 func startPlainHTTPServer() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", indexHandler)
-	mux.HandleFunc("/verify-domain", verifyDomainHandler)
-
-	handlerWithMiddleware = corsMiddleware(rateLimitMiddleware(mux))
 
 	httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", serverconfig.Conf.Webserver.Port),

@@ -315,13 +315,34 @@
             console.log("Domain verification successful.");
             console.log("Verified Domain:", data.domain);
             console.log("Node IPs:", data.node_ips);
-            // If domain verification is successful, redirect to HTTPS after 5 seconds
-            console.log("Redirecting to HTTPS in 5 seconds...");
-
             setTimeout(() => {
-              // Redirect to the HTTPS version of the page
-              window.location.href = `https://${window.location.hostname}${window.location.pathname}`;
-            }, 5000);
+              // Check if the HTTPS version returns a 200 status
+              const httpsUrl = `https://${window.location.hostname}${window.location.pathname}`;
+
+              console.log("Checking if HTTPS version is available...");
+
+              fetch(httpsUrl, { method: "HEAD" })
+                .then((response) => {
+                  if (response.ok) {
+                    console.log(
+                      "HTTPS version is available. Redirecting to HTTPS in 5 seconds..."
+                    );
+
+                    // Redirect to the HTTPS version of the page
+                    window.location.href = httpsUrl;
+                  } else {
+                    console.log(
+                      `HTTPS version returned status: ${response.status}. Not redirecting.`
+                    );
+                  }
+                })
+                .catch((error) => {
+                  console.error(
+                    "Failed to reach HTTPS version:",
+                    error.message
+                  );
+                });
+            }, 10000);
           })
           .catch((error) => {
             // Log any errors encountered during the verification process

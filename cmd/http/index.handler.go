@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 
@@ -9,6 +10,7 @@ import (
 )
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("indexHandler was called")
 	// Handling root path for non-file requests
 	if r.URL.Path == "/" {
 		// Construct the path to index.html inside the RootFolder

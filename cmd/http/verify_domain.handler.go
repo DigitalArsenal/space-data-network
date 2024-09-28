@@ -139,20 +139,37 @@ func verifyDomainHandler(w http.ResponseWriter, r *http.Request) {
 		MatchingIPs: matchingIPs,
 	}
 
-	if len(matchingIPs) > 0 {
-		// Proceed to create Let's Encrypt certificate and restart the server
+	if len(domainIPs) > 0 {
+		// If domain is localhost, run self-signed certificate generator and start HTTPS server with it
 		serverUpgradeLock.Lock()
 		if !serverUpgradedToHTTPS {
 			serverUpgradedToHTTPS = true
 			serverUpgradeLock.Unlock()
-			// Stop HTTP server
+			// Generate and start the HTTPS server using self-signed certificate
 			stopHTTPServer()
-			// Start HTTPS server
 			go StartHTTPSServer()
-			response.Message = "Server is restarting with HTTPS"
+			response := struct {
+				Message string `json:"message"`
+			}{
+				Message: "Server is restarting with self-signed HTTPS for localhost",
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			}
+			return
 		} else {
 			serverUpgradeLock.Unlock()
-			response.Message = "Server is already running with HTTPS"
+			response := struct {
+				Message string `json:"message"`
+			}{
+				Message: "Server is already running with HTTPS",
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			}
+			return
 		}
 	} else {
 		response.Message = "Domain verification failed. No matching IPs."
