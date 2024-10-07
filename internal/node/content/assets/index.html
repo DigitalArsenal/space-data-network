@@ -284,14 +284,6 @@
 
       // Function to send the request for domain verification
       function verifyDomain() {
-        // Only proceed if the page is not loaded over HTTPS
-        if (isPageOverHTTPS()) {
-          console.log(
-            "Page is already loaded over HTTPS, no need to verify domain."
-          );
-          return;
-        }
-
         // Send the GET request to verify the domain
         fetch(
           `/verify-domain?domain=${encodeURIComponent(

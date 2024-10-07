@@ -1,3 +1,5 @@
+// verify_domain_handler.go
+
 package httpserver
 
 import (
@@ -10,10 +12,21 @@ import (
 	"github.com/cenkalti/backoff/v4"
 )
 
-// Handler for verifying the domain from the GET request
+// isLocalDomain checks if the domain is 'localhost' or an IP address
+func isLocalDomain(domain string) bool {
+	if domain == "localhost" {
+		return true
+	}
+	// Check if the domain is a valid IP address
+	ip := net.ParseIP(domain)
+	return ip != nil
+}
+
+// verifyDomainHandler handles the `/verify-domain` endpoint.
 func verifyDomainHandler(w http.ResponseWriter, r *http.Request) {
 	// Only allow GET requests
 	if r.Method != http.MethodGet {
+		log.Printf("Invalid request method: %s from %s", r.Method, r.RemoteAddr)
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
@@ -21,6 +34,7 @@ func verifyDomainHandler(w http.ResponseWriter, r *http.Request) {
 	// Extract the IP address of the requester
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
+		log.Printf("Unable to determine IP address from %s: %v", r.RemoteAddr, err)
 		http.Error(w, "Unable to determine IP address", http.StatusInternalServerError)
 		return
 	}
@@ -28,24 +42,27 @@ func verifyDomainHandler(w http.ResponseWriter, r *http.Request) {
 	// Apply exponential backoff starting from the second request
 	verifyDomainLock.Lock()
 	verifyDomainCounts[ip]++
-
-	if verifyDomainCounts[ip] > 1 {
+	count := verifyDomainCounts[ip]
+	if count > 1 {
 		if verifyDomainBackoffs[ip] == nil {
 			expBackoff := backoff.NewExponentialBackOff()
 			expBackoff.InitialInterval = 1 * time.Second
 			expBackoff.MaxInterval = 60 * time.Second
 			expBackoff.MaxElapsedTime = 15 * time.Minute
 			verifyDomainBackoffs[ip] = expBackoff
+			log.Printf("Initialized backoff for IP: %s", ip)
 		}
 		nextBackoff := verifyDomainBackoffs[ip].NextBackOff()
 		if nextBackoff == backoff.Stop {
 			// MaxElapsedTime exceeded
 			verifyDomainLock.Unlock()
+			log.Printf("Too many requests from IP: %s", ip)
 			http.Error(w, "Too many requests", http.StatusTooManyRequests)
 			return
 		}
 		verifyDomainLock.Unlock()
 		// Sleep for the duration
+		log.Printf("Applying backoff for IP: %s, sleeping for %v", ip, nextBackoff)
 		time.Sleep(nextBackoff)
 	} else {
 		verifyDomainLock.Unlock()
@@ -54,130 +71,131 @@ func verifyDomainHandler(w http.ResponseWriter, r *http.Request) {
 	// Extract the domain from the query string
 	domain := r.URL.Query().Get("domain")
 	if domain == "" {
+		log.Printf("Missing domain query parameter from IP: %s", ip)
 		http.Error(w, "Missing domain query parameter", http.StatusBadRequest)
 		return
 	}
 
-	// Check if the domain is 'localhost'
-	if domain == "localhost" {
-		// If domain is localhost, run self-signed certificate generator and start HTTPS server with it
-		serverUpgradeLock.Lock()
-		if !serverUpgradedToHTTPS {
-			serverUpgradedToHTTPS = true
-			serverUpgradeLock.Unlock()
-			// Generate and start the HTTPS server using self-signed certificate
-			stopHTTPServer()
-			go StartHTTPSServer()
-			response := struct {
-				Message string `json:"message"`
-			}{
-				Message: "Server is restarting with self-signed HTTPS for localhost",
-			}
-			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(response); err != nil {
-				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-			}
-			return
-		} else {
-			serverUpgradeLock.Unlock()
-			response := struct {
-				Message string `json:"message"`
-			}{
-				Message: "Server is already running with HTTPS",
-			}
-			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(response); err != nil {
-				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-			}
-			return
+	// Check if the domain is 'localhost' or an IP address
+	if isLocalDomain(domain) {
+		log.Printf("Domain '%s' is local. HTTPS is already using a self-signed certificate.", domain)
+		response := map[string]string{
+			"message": "Domain is local. HTTPS is already using a self-signed certificate.",
 		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
 	}
 
-	// Get the node's IP addresses for other domains
-	nodeIPs := []string{}
-	for _, addr := range currentNode.Host.Addrs() {
-		ip, _, err := net.SplitHostPort(addr.String())
-		if err == nil {
-			nodeIPs = append(nodeIPs, ip)
-		}
-	}
-
-	// Perform a DNS lookup to get the IP addresses for the domain
+	// Perform DNS lookup for domain verification
 	domainIPs, err := net.LookupHost(domain)
 	if err != nil {
+		log.Printf("Failed to resolve domain '%s': %v", domain, err)
 		http.Error(w, "Failed to resolve domain", http.StatusInternalServerError)
 		return
 	}
 
-	// Compare the node IPs with the domain IPs
-	matchingIPs := []string{}
-	for _, nodeIP := range nodeIPs {
-		for _, domainIP := range domainIPs {
-			if nodeIP == domainIP {
-				matchingIPs = append(matchingIPs, nodeIP)
-			}
-		}
-	}
+	log.Printf("Domain '%s' resolved to IPs: %v", domain, domainIPs)
 
-	// Log the domain, node IPs, and matching IPs
-	log.Printf("Verifying domain: %s", domain)
-	log.Printf("Node IP addresses: %v", nodeIPs)
-	log.Printf("Domain IP addresses: %v", domainIPs)
-	log.Printf("Matching IP addresses: %v", matchingIPs)
-
-	// Return the response in JSON format with the domain IPs, node IPs, and matching IPs
-	response := struct {
-		Domain      string   `json:"domain"`
-		NodeIPs     []string `json:"node_ips"`
-		DomainIPs   []string `json:"domain_ips"`
-		MatchingIPs []string `json:"matching_ips"`
-		Message     string   `json:"message"`
-	}{
-		Domain:      domain,
-		NodeIPs:     nodeIPs,
-		DomainIPs:   domainIPs,
-		MatchingIPs: matchingIPs,
-	}
-
-	if len(domainIPs) > 0 {
-		// If domain is localhost, run self-signed certificate generator and start HTTPS server with it
-		serverUpgradeLock.Lock()
-		if !serverUpgradedToHTTPS {
-			serverUpgradedToHTTPS = true
-			serverUpgradeLock.Unlock()
-			// Generate and start the HTTPS server using self-signed certificate
-			stopHTTPServer()
-			go StartHTTPSServer()
-			response := struct {
-				Message string `json:"message"`
-			}{
-				Message: "Server is restarting with self-signed HTTPS for localhost",
-			}
-			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(response); err != nil {
-				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-			}
-			return
-		} else {
-			serverUpgradeLock.Unlock()
-			response := struct {
-				Message string `json:"message"`
-			}{
-				Message: "Server is already running with HTTPS",
-			}
-			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(response); err != nil {
-				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-			}
-			return
-		}
-	} else {
-		response.Message = "Domain verification failed. No matching IPs."
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	// Get server's primary IP address
+	serverIP := getServerPrimaryIP()
+	if serverIP == "" {
+		log.Println("Unable to determine server's primary IP address.")
+		http.Error(w, "Server IP not found", http.StatusInternalServerError)
 		return
 	}
+
+	// Check if the domain resolves to the server's IP
+	domainPointsToServer := false
+	for _, ipAddr := range domainIPs {
+		if ipAddr == serverIP {
+			domainPointsToServer = true
+			break
+		}
+	}
+
+	if !domainPointsToServer {
+		log.Printf("Domain '%s' does not point to the server's IP (%s).", domain, serverIP)
+		http.Error(w, "Domain does not point to the server's IP", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("Domain '%s' successfully points to the server's IP (%s).", domain, serverIP)
+
+	// Upgrade HTTPS server to use autocert-managed certificates
+	go func(verifiedDomain string) {
+		if autocertManager != nil {
+			return
+		}
+		// Prevent multiple upgrades for the same domain
+		verifyDomainLock.Lock()
+		if _, exists := verifiedDomains[verifiedDomain]; exists {
+			verifyDomainLock.Unlock()
+			log.Printf("Domain '%s' has already been verified and processed.", verifiedDomain)
+			return
+		}
+		verifiedDomains[verifiedDomain] = true
+		verifyDomainLock.Unlock()
+
+		// Upgrade HTTPS server
+		UpgradeHTTPSWithAutocert(verifiedDomain)
+	}(domain)
+
+	// Respond back to the client
+	response := map[string]interface{}{
+		"domain":    domain,
+		"domainIPs": domainIPs,
+		"message":   "Domain verification successful. HTTPS server is being upgraded to use Let's Encrypt certificates.",
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+
+	log.Printf("Domain '%s' verified successfully. HTTPS server upgrade initiated.", domain)
+}
+
+// getServerPrimaryIP retrieves the server's primary IP address.
+func getServerPrimaryIP() string {
+	// This function should return the server's primary IP address.
+	// Implementation depends on the environment.
+	// Here's a simple implementation that picks the first non-loopback interface's IP.
+
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		log.Printf("Failed to get network interfaces: %v", err)
+		return ""
+	}
+
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue // interface down
+		}
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue // loopback interface
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			log.Printf("Failed to get addresses for interface %s: %v", iface.Name, err)
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+			ip = ip.To4()
+			if ip == nil {
+				continue // not an ipv4 address
+			}
+			return ip.String()
+		}
+	}
+
+	log.Println("No suitable non-loopback IPv4 address found.")
+	return ""
 }
