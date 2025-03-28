@@ -18,6 +18,17 @@ The application can be configured using the following environment variables:
 
 ### Setting Environment Variables
 
+#### Install Go
+
+#### Install deps
+
+```sh
+sudo apt update
+sudo apt install musl musl-dev musl-tools
+```
+
+run `setup.sh`
+
 #### For Development
 
 Environment variables can be set in various ways depending on your operating environment.

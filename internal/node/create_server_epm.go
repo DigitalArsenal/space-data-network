@@ -300,7 +300,8 @@ func CreateServerEPM(ctx context.Context, epmBytes []byte, node *Node) []byte {
 
 func ReadServerEPM(showQR ...bool) {
 
-	vepm := []byte{}
+	vepm, _ := server_info.LoadEPMFromFile()
+
 	if len(vepm) == 0 {
 		fmt.Println("EPM not found, run with flag '-create-server-epm' to generate")
 		return
