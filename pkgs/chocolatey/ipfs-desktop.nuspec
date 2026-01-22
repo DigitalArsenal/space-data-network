@@ -1,0 +1,26 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>ipfs-desktop</id>
+    <version>0.34.0</version>
+    <title>IPFS Desktop</title>
+    <authors>ipfs-shipyard</authors>
+    <owners>hacdias</owners>
+    <projectUrl>https://github.com/ipfs/ipfs-desktop/#readme</projectUrl>
+    <iconUrl>https://cdn.statically.io/gh/ipfs/ipfs-desktop/v0.34.0/assets/icons/tray/others/on-large.png</iconUrl>
+    <licenseUrl>https://cdn.statically.io/gh/ipfs/ipfs-desktop/main/LICENSE</licenseUrl>
+    <projectSourceUrl>https://github.com/ipfs/ipfs-desktop/</projectSourceUrl>
+    <bugTrackerUrl>https://github.com/ipfs/ipfs-desktop/issues</bugTrackerUrl>
+    <tags>ipfs-desktop ipfs p2p distributed InterPlanetary-File-System gateway protocol</tags>
+    <summary>A desktop client for IPFS.</summary>
+    <description>
+    IPFS Desktop
+
+    A desktop client for [IPFS](https://ipfs.tech).
+    You don't need the command line to run an IPFS node. Just install IPFS Desktop and have all the power of IPFS in your hands. Powered by [Kubo](https://github.com/ipfs/kubo#readme) and [Web UI](https://github.com/ipfs/ipfs-webui).
+    </description>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

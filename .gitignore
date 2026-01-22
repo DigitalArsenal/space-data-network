@@ -1,0 +1,12 @@
+node_modules
+dist
+.cache
+.env
+config.gypi
+assets/webui
+*.nupkg
+*.bak
+combined.log
+error.log
+assets/build/snap-hooks
+test-results/

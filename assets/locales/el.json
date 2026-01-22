@@ -1,0 +1,234 @@
+{
+  "ipfsIsRunning": "Το IPFS λειτουργεί",
+  "ipfsIsStopping": "Το IPFS σταματάει",
+  "ipfsIsStarting": "Το IPFS εκκινεί",
+  "ipfsIsNotRunning": "Το IPFS δεν λειτουργεί",
+  "ipfsHasErrored": "",
+  "runningWithGC": "",
+  "runningWhileCheckingForUpdate": "",
+  "start": "Εκκίνηση",
+  "stop": "Διακοπή",
+  "restart": "Επανεκκίνηση",
+  "about": "Σχετικά",
+  "advanced": "Για προχωρημένους",
+  "openRepoDir": "",
+  "openLogsDir": "",
+  "openConfigFile": "",
+  "openKuboConfigFile": "",
+  "viewOnGitHub": "Προβολή στο GitHub…",
+  "helpUsTranslate": "",
+  "readReleaseNotes": "Σημειώσεις Έκδοσης",
+  "status": "Κατάσταση",
+  "files": "Αρχεία",
+  "peers": "",
+  "quit": "Έξοδος",
+  "versions": "Εκδόσεις",
+  "screenshotTaken": "Πάρθηκε στιγμιότυπο οθόνης",
+  "shareableLinkCopied": "Έγινε αντιγραφή στο πρόχειρο σύνδεσμου προς κοινοποίηση. Κλικ εδώ για προβολή του στιγμιότυπου οθόνης.",
+  "couldNotTakeScreenshot": "Αδυναμία πάρσης στιγμιότυπου οθόνης",
+  "errorwhileTakingScreenshot": "Προέκυψε σφάλμα κατά την πάρση του στιγμιότυπου οθόνης.",
+  "clickToOpenLogs": "Για άνοιγμα των αρχείων καταγραφής, κλικ εδώ.",
+  "ipfsNotRunning": "Το IPFS δεν λειτουργεί",
+  "checkForUpdates": "Έλεγχος για Ενημερώσεις…",
+  "checkingForUpdates": "Έλεγχος για Ενημερώσεις",
+  "yes": "Ναι",
+  "no": "Όχι",
+  "close": "Κλείσιμο",
+  "ok": "Εντάξει",
+  "cancel": "Ακύρωση",
+  "enable": "Ενεργοποίηση",
+  "reportTheError": "Αναφορά σφάλματος",
+  "restartIpfsDesktop": "Επανεκκίνηση του IPFS Desktop",
+  "openLogs": "Άνοιγμα αρχείων καταγραφής",
+  "takeScreenshot": "Λήψη Στιγμιότυπου Οθόνης",
+  "moveRepositoryLocation": "Μετακίνηση Θέσης Αποθετηρίου",
+  "runGarbageCollector": "",
+  "selectDirectory": "Επιλογή Φακέλου",
+  "customIpfsBinary": "",
+  "setCustomIpfsBinary": "",
+  "clearCustomIpfsBinary": "",
+  "openCliDocumentation": "",
+  "polkitDialog": {
+    "title": "Το polkit δεν βρέθηκε",
+    "message": "Το IPFS δεν μπορεί να προστεθεί στο /usr/local/bin/ χωρίς το polkit."
+  },
+  "noPermissionDialog": {
+    "title": "Δεν υπάρχει άδεια",
+    "message": "Το IPFS δεν μπορούσε να προστεθεί στο /usr/local/bin/, γιατί εισάγατε τον λάθος κωδικό ή δεν έχετε άδεια"
+  },
+  "ipfsNotRunningDialog": {
+    "title": "Το IPFS δεν εκτελείται",
+    "message": "Το IPFS πρέπει να τρέχει για να το κάνετε αυτό. Θέλετε να το εκκινήσετε;"
+  },
+  "recoverableErrorDialog": {
+    "title": "Προέκυψε σφάλμα",
+    "message": "Παρουσιάστηκε σφάλμα, αλλά δεν εμποδίζει την εκτέλεση του IPFS Desktop. Μπορείτε είτε να δείτε τα αρχεία καταγραφής είτε να αναφέρετε το σφάλμα στους προγραμματιστές."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Αδυναμία σύνδεσης στο API",
+    "message": "To IPFS Desktop δεν μπορεί να συνδεθεί στην διεύθυνση API { addr }."
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "Το IPFS Desktop έχει κλείσει",
+    "message": "Το IPFS Desktop έχει κλείσει λόγω σφάλματος. Μπορείτε να κάνετε επανεκκίνηση της εφαρμογής ή να αναφέρετε το σφάλμα στους προγραμματιστές, το οποίο απαιτεί λογαριασμό GitHub."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Μετακίνηση αποθετηρίου",
+    "message": "Αν η αποθήση σας παίρνει πάρα πολύ χώρο στον κεντρικό σας δίσκο, μπορείτε να την μετακινήσετε σε κάποια άλλη θέση. Λάβετε υπόψη ότι η νέα τοποθεσία πρέπει να είναι πάντα διαθέσιμη ώστε το IPFS Desktop να λειτουργεί σωστά.",
+    "action": "Μετακίνηση και επανεκκίνηση κόμβου"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "Επιτυχής μετακίνηση αποθετηρίου",
+    "message": "Η αποθήκη σας μεταφέρθηκε με επιτυχία στη θέση { location } και η διαμόρφωσή σας ενημερώθηκε. Η εφαρμογή θα επανεκκινηθεί."
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "Επιλέχτηκε ο ίδιος φάκελος.",
+    "message": "Ο φάκελος που επιλέξατε είναι ο ίδιος με τον τρέχοντα: { location }. Κατά συνέπεια, δεν θα γίνουν αλλαγές."
+  },
+  "moveRepositoryDirExists": {
+    "title": "Ο φάκελος υπάρχει ήδη",
+    "message": "Ο φάκελος { location } υπάρχει ήδη. Παρακαλούμε δοκιμάστε έναν διαφορετικό."
+  },
+  "busyPortsDialog": {
+    "title": "Οι θύρες είναι απασχολημένες",
+    "message": "Οι θύρες { port1 } και { port2 } δεν είναι διαθέσιμες. Θέλετε εναλλακτικά να χρησιμοποιήσετε τις { alt1 } και { alt2 };",
+    "action": "Εναλλακτική χρήση των θυρών { alt1 } και { alt2 }"
+  },
+  "busyPortDialog": {
+    "title": "Η θύρα είναι απασχολημένη",
+    "message": "Η θύρα { port } δεν είναι διαθέσιμη. Θέλετε εναλλακτικά να χρησιμοποιήσετε την { alt };",
+    "action": "Εναλλακτική χρήση θύρας { alt }"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Οι θύρες είναι απασχολημένες",
+    "message": "Δεν είναι δυνατή η δέσμευση σε μία ή περισσότερες από τις διευθύνσεις API ή Gateway επειδή οι θύρες είναι απασχολημένες.",
+    "action": "Άνοιγμα αρχείου παραμετροποίησης"
+  },
+  "itemsAddedNotification": {
+    "title": "Τα στοιχεία προστέθηκαν",
+    "message": "{ count } στοιχεία προστέθηκαν στον κόμβο σας IPFS. Ένας κοινοποιήσιμος σύνδεσμος αντιγράφηκε στο πρόχειρό σας."
+  },
+  "itemAddedNotification": {
+    "title": "Το στοιχείο προστέθηκε",
+    "message": "Το στοιχείο προστέθηκε στον κόμβο σας IPFS. Ένας κοινοποιήσιμος σύνδεσμος αντιγράφηκε στο πρόχειρό σας."
+  },
+  "itemsFailedNotification": {
+    "title": "Αποτυχία προσθήκης στοιχείων",
+    "message": "Δεν ήταν δυνατή η προσθήκη των στοιχείων σας στον κόμβο σας."
+  },
+  "updateAvailableDialog": {
+    "title": "Διαθέσιμη ενημέρωση",
+    "message": ""
+  },
+  "updateNotAvailableDialog": {
+    "title": "Μη διαθέσιμη ενημέρωση",
+    "message": ""
+  },
+  "updateErrorDialog": {
+    "title": "Αδυναμία λήψης ενημέρωσης",
+    "message": "Η λήψη της ενημέρωσης δεν ήταν δυνατή. Παρακαλούμε ελέγξτε τη σύνδεσή σας στο Διαδίκτυο και δοκιμάστε ξανά."
+  },
+  "autoUpdateError": {
+    "title": "",
+    "message": "",
+    "downloadNow": "",
+    "later": "Αργότερα"
+  },
+  "updateDownloadedDialog": {
+    "title": "",
+    "message": "",
+    "later": "Αργότερα",
+    "now": "Εγκατάσταση τώρα"
+  },
+  "updateDownloadedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "runGarbageCollectorWarning": {
+    "title": "",
+    "message": "",
+    "action": "Εκτέλεση"
+  },
+  "runGarbageCollectorDone": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryFailed": {
+    "title": "Μετακίνηση αποθετηρίου",
+    "message": "Αδυναμία μετακίνησης αποθετηρίου από \"{ currDir }\" σε \"{ newDir }\"."
+  },
+  "runGarbageCollectorErrored": {
+    "title": "",
+    "message": ""
+  },
+  "launchAtLoginNotSupported": {
+    "title": "Σφάλμα",
+    "message": "Η εκκίνηση κατά την είσοδο δεν υποστηρίζεται στην πλατφόρμα σας."
+  },
+  "launchAtLoginFailed": {
+    "title": "Σφάλμα",
+    "message": "Η εκκίνηση κατά την είσοδο δεν μπόρεσε να ενεργοποιηθεί στο μηχάνημά σας."
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "Ενεργοποίηση συντόμευσης στιγμιότυπου οθόνης",
+    "message": ""
+  },
+  "settings": {
+    "settings": "Ρυθμίσεις",
+    "preferences": "Προτιμήσεις",
+    "openNodeSettings": "Άνοιγμα Ρυθμίσεων Κόμβου",
+    "appPreferences": "Προτιμήσεις Εφαρμογής",
+    "launchOnStartup": "Εκκίνηση κατά την Είσοδο",
+    "openWebUIAtLaunch": "",
+    "pubsub": "Ενεργοποίηση PubSub",
+    "namesysPubsub": "Ενεργοποίηση IPNS μέσω PubSub",
+    "automaticGC": "",
+    "takeScreenshotShortcut": "",
+    "experiments": "Πειράματα",
+    "npmOnIpfs": "Ενεργοποίηση npm στο IPFS",
+    "monochromeTrayIcon": ""
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "",
+    "message": ""
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "unresponsiveWindowDialog": {
+    "title": "",
+    "message": "Η τρέχουσα λειτουργία καταλαμβάνει περισσότερους πόρους από το αναμενόμενο. Θέλετε να τη ματαιώσετε και να επαναφορτώσετε το περιβάλλον;",
+    "forceReload": "Ναι, επαναφόρτωση",
+    "doNothing": "Να μείνει ως έχει"
+  },
+  "migrationDialog": {
+    "title": "",
+    "message": "",
+    "closeAndContinue": "Συνέχιση στο παρασκήνιο"
+  },
+  "startupFailedDialog": {
+    "title": "",
+    "message": "Ο κόμβος IPFS αντιμετώπισε κάποιο σφάλμα και η εκκίνηση δεν μπόρεσε να ολοκληρωθεί:"
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "Το αποθετήριο του IPFS πρέπει να είναι φάκελος",
+    "message": ""
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "Λείπει η Παραμετροποίηση του Αποθετηρίου IPFS",
+    "message": ""
+  },
+  "privateNetworkDialog": {
+    "title": "Αποθετήριο IPFS Ιδιωτικού Δικτύου",
+    "message": ""
+  },
+  "invalidRepositoryDialog": {
+    "title": "Μη έγκυρο Αποθετήριο IPFS ή Αρχείο Παραμετροποίησης",
+    "message": ""
+  }
+}

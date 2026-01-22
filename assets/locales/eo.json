@@ -1,0 +1,234 @@
+{
+  "ipfsIsRunning": "IPFS estas funkcianta",
+  "ipfsIsStopping": "IPFS estas ĉesata",
+  "ipfsIsStarting": "IPFS estas lanĉata",
+  "ipfsIsNotRunning": "IPFS ne estas funkcianta",
+  "ipfsHasErrored": "IPFS detektis erarojn",
+  "runningWithGC": "Funkcianta (Rubkolektado estas plenumata)",
+  "runningWhileCheckingForUpdate": "",
+  "start": "Lanĉi",
+  "stop": "Ĉesi",
+  "restart": "Relanĉi",
+  "about": "Pri",
+  "advanced": "Altnivela",
+  "openRepoDir": "",
+  "openLogsDir": "",
+  "openConfigFile": "",
+  "openKuboConfigFile": "",
+  "viewOnGitHub": "Rigardi ĉe GitHub…",
+  "helpUsTranslate": "Helpi traduki ĉi programon",
+  "readReleaseNotes": "Legi eldonajn notojn",
+  "status": "Stato",
+  "files": "Dosieroj",
+  "peers": "Samtavolanoj",
+  "quit": "Ĉesi",
+  "versions": "Versioj",
+  "screenshotTaken": "",
+  "shareableLinkCopied": "",
+  "couldNotTakeScreenshot": "",
+  "errorwhileTakingScreenshot": "",
+  "clickToOpenLogs": "",
+  "ipfsNotRunning": "IPFS ne estas funkcianta",
+  "checkForUpdates": "Kontroli ĝisdatigojn...",
+  "checkingForUpdates": "",
+  "yes": "Jes",
+  "no": "Ne",
+  "close": "Fermi",
+  "ok": "Bone",
+  "cancel": "Rezigni",
+  "enable": "Ŝalti",
+  "reportTheError": "Raporti pri la eraro",
+  "restartIpfsDesktop": "Relanĉi IPFS Labotablan",
+  "openLogs": "Malfermi protokolon",
+  "takeScreenshot": "",
+  "moveRepositoryLocation": "",
+  "runGarbageCollector": "Lanĉu rubkolektilon",
+  "selectDirectory": "Elekti dosierujon",
+  "customIpfsBinary": "",
+  "setCustomIpfsBinary": "",
+  "clearCustomIpfsBinary": "",
+  "openCliDocumentation": "",
+  "polkitDialog": {
+    "title": "",
+    "message": ""
+  },
+  "noPermissionDialog": {
+    "title": "Permesoj forestas",
+    "message": ""
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS ne estas funkcianta",
+    "message": ""
+  },
+  "recoverableErrorDialog": {
+    "title": "Iu eraro okazis",
+    "message": ""
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Ne povas konekti al API",
+    "message": ""
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Movi deponejon",
+    "message": "",
+    "action": "Movi kaj relanĉi nodon"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "Deponejo estas movita sukcese",
+    "message": ""
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryDirExists": {
+    "title": "Dosierujo jam ekzistas",
+    "message": "La dosierujo { location }jam ekzistas. Provu uzi alian."
+  },
+  "busyPortsDialog": {
+    "title": "Retpordoj estas okupitaj",
+    "message": "",
+    "action": ""
+  },
+  "busyPortDialog": {
+    "title": "Retpordo estas okupita",
+    "message": "",
+    "action": ""
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Retpordoj estas okupitaj",
+    "message": "",
+    "action": "Malfermi dosieron de agordoj"
+  },
+  "itemsAddedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "itemAddedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "itemsFailedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "updateAvailableDialog": {
+    "title": "Ĝisdatigo estas disponebla",
+    "message": ""
+  },
+  "updateNotAvailableDialog": {
+    "title": "Ĝisdatigo ne estas disponebla",
+    "message": ""
+  },
+  "updateErrorDialog": {
+    "title": "Ne povas elŝuti ĝisdatigon",
+    "message": ""
+  },
+  "autoUpdateError": {
+    "title": "",
+    "message": "",
+    "downloadNow": "",
+    "later": ""
+  },
+  "updateDownloadedDialog": {
+    "title": "",
+    "message": "",
+    "later": "",
+    "now": ""
+  },
+  "updateDownloadedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "runGarbageCollectorWarning": {
+    "title": "Rubkolektilo",
+    "message": "",
+    "action": "Lanĉi"
+  },
+  "runGarbageCollectorDone": {
+    "title": "Rubkolektilo",
+    "message": ""
+  },
+  "moveRepositoryFailed": {
+    "title": "Movi deponejon",
+    "message": ""
+  },
+  "runGarbageCollectorErrored": {
+    "title": "Rubkolektilo",
+    "message": ""
+  },
+  "launchAtLoginNotSupported": {
+    "title": "Eraro",
+    "message": ""
+  },
+  "launchAtLoginFailed": {
+    "title": "Eraro",
+    "message": ""
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "",
+    "message": ""
+  },
+  "settings": {
+    "settings": "Agordoj",
+    "preferences": "Agordoj",
+    "openNodeSettings": "",
+    "appPreferences": "",
+    "launchOnStartup": "",
+    "openWebUIAtLaunch": "",
+    "pubsub": "",
+    "namesysPubsub": "",
+    "automaticGC": "",
+    "takeScreenshotShortcut": "",
+    "experiments": "",
+    "npmOnIpfs": "",
+    "monochromeTrayIcon": ""
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "",
+    "message": ""
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "unresponsiveWindowDialog": {
+    "title": "",
+    "message": "",
+    "forceReload": "",
+    "doNothing": ""
+  },
+  "migrationDialog": {
+    "title": "",
+    "message": "",
+    "closeAndContinue": ""
+  },
+  "startupFailedDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "",
+    "message": ""
+  },
+  "privateNetworkDialog": {
+    "title": "",
+    "message": ""
+  },
+  "invalidRepositoryDialog": {
+    "title": "",
+    "message": ""
+  }
+}

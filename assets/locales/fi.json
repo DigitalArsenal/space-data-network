@@ -1,0 +1,234 @@
+{
+  "ipfsIsRunning": "IPFS on Käynnissä",
+  "ipfsIsStopping": "IPFS Pysähtyy",
+  "ipfsIsStarting": "IPFS Käynnistyy",
+  "ipfsIsNotRunning": "IPFS ei ole Käynnissä",
+  "ipfsHasErrored": "Virhe IPFS:ssä",
+  "runningWithGC": "Käynnissä (vapautetaan muistia käyttämättömästä datasta)",
+  "runningWhileCheckingForUpdate": "Käynnissä (tarkastetaan päivityksiä)",
+  "start": "Käynnistä",
+  "stop": "Pysäytä",
+  "restart": "Käynnistä uudelleen",
+  "about": "Lisätietoja",
+  "advanced": "Lisäasetukset",
+  "openRepoDir": "",
+  "openLogsDir": "",
+  "openConfigFile": "",
+  "openKuboConfigFile": "",
+  "viewOnGitHub": "Katso Github:ssa",
+  "helpUsTranslate": "Auta tämän applikaation kääntämisessä",
+  "readReleaseNotes": "Lue julkaisutiedot",
+  "status": "Tila",
+  "files": "Tiedostot",
+  "peers": "Toverit",
+  "quit": "Lopeta",
+  "versions": "Versiot",
+  "screenshotTaken": "Kuvakaappaus otettu",
+  "shareableLinkCopied": "Jaettava linkki kopioitu leikepöydälle. Klikkaa tähän katsoaksesi kuvakaappauksen.",
+  "couldNotTakeScreenshot": "Ei pystytty ottamaan kuvakaappausta",
+  "errorwhileTakingScreenshot": "Virhe ilmeni kuvakaappauksen ottamisen yhteydessä.",
+  "clickToOpenLogs": "Klikkaa tästä avaaksesi lokin.",
+  "ipfsNotRunning": "IPFS ei ole käynnissä",
+  "checkForUpdates": "Hae päivityksiä...",
+  "checkingForUpdates": "Tarkastetaan päivityksiä",
+  "yes": "Kyllä",
+  "no": "Ei",
+  "close": "Sulje",
+  "ok": "OK",
+  "cancel": "Peruuta",
+  "enable": "Ota käyttöön",
+  "reportTheError": "Raportoi virhe",
+  "restartIpfsDesktop": "Käynnistä 'IPFS Desktop' uudelleen",
+  "openLogs": "Avaa loki",
+  "takeScreenshot": "Ota kuvakaappaus",
+  "moveRepositoryLocation": "Siirrä säilöpaikan sijaintia",
+  "runGarbageCollector": "Vapauta käyttämätön muisti",
+  "selectDirectory": "Valitse hakemisto",
+  "customIpfsBinary": "Muokattu IPFS-binääri",
+  "setCustomIpfsBinary": "Aseta muokattu IPFS-binääri",
+  "clearCustomIpfsBinary": "Tyhjennä muokattu IPFS-binääri",
+  "openCliDocumentation": "Avaa CLI-dokumentaatio",
+  "polkitDialog": {
+    "title": "'Polkit' ei löydettävissä",
+    "message": "IPFS:ää ei voida lisätä kansioon /usr/local/bin/ ilman 'polkit'-agenttia"
+  },
+  "noPermissionDialog": {
+    "title": "Ei oikeutta",
+    "message": ""
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS ei ole käynnissä",
+    "message": ""
+  },
+  "recoverableErrorDialog": {
+    "title": "Virhe on ilmennyt",
+    "message": ""
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Ohjelmointirajapintaan ei voida yhdistää",
+    "message": ""
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "IPFS Desktop on lakannut toimimasta",
+    "message": ""
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Siirrä säilöpaikka",
+    "message": "",
+    "action": "Siirrä ja käynnistä solmu uudelleen"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "Säilö siirretty onnistuneesti",
+    "message": ""
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryDirExists": {
+    "title": "",
+    "message": ""
+  },
+  "busyPortsDialog": {
+    "title": "",
+    "message": "",
+    "action": ""
+  },
+  "busyPortDialog": {
+    "title": "",
+    "message": "",
+    "action": ""
+  },
+  "multipleBusyPortsDialog": {
+    "title": "",
+    "message": "",
+    "action": ""
+  },
+  "itemsAddedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "itemAddedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "itemsFailedNotification": {
+    "title": "Epäonnistuttiin lisäämään kohteita",
+    "message": ""
+  },
+  "updateAvailableDialog": {
+    "title": "",
+    "message": ""
+  },
+  "updateNotAvailableDialog": {
+    "title": "",
+    "message": ""
+  },
+  "updateErrorDialog": {
+    "title": "",
+    "message": ""
+  },
+  "autoUpdateError": {
+    "title": "",
+    "message": "",
+    "downloadNow": "",
+    "later": ""
+  },
+  "updateDownloadedDialog": {
+    "title": "",
+    "message": "",
+    "later": "",
+    "now": ""
+  },
+  "updateDownloadedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "runGarbageCollectorWarning": {
+    "title": "Muistin vapauttaja",
+    "message": "",
+    "action": "Suorita"
+  },
+  "runGarbageCollectorDone": {
+    "title": "Muistin vapauttaja",
+    "message": "Käyttämätön muisti vapautettiin onnistuneesti."
+  },
+  "moveRepositoryFailed": {
+    "title": "Siirrä säilöpaikka",
+    "message": "Säilöpaikkaa ei voitu siirtää sijainnista \"{ currDir }\" sijaintiin \"{ newDir }\"."
+  },
+  "runGarbageCollectorErrored": {
+    "title": "Muistin vapauttaja",
+    "message": "Käyttämätöntä muistia ei voitu vapauttaa."
+  },
+  "launchAtLoginNotSupported": {
+    "title": "Virhe",
+    "message": "'Käynnistä sisäänkirjautumisen yhteydessä' ei ole tuettu alustallasi."
+  },
+  "launchAtLoginFailed": {
+    "title": "Virhe",
+    "message": "Ei pystytty ottamaan 'Käynnistä sisäänkirjautumisen yhteydessä' käyttöön laitteellasi."
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "",
+    "message": ""
+  },
+  "settings": {
+    "settings": "Asetukset",
+    "preferences": "",
+    "openNodeSettings": "",
+    "appPreferences": "",
+    "launchOnStartup": "Käynnistä sisäänkirjautumisen yhteydessä",
+    "openWebUIAtLaunch": "",
+    "pubsub": "",
+    "namesysPubsub": "",
+    "automaticGC": "",
+    "takeScreenshotShortcut": "Globaali kuvakaappaus oikotie",
+    "experiments": "Kokeilut",
+    "npmOnIpfs": "",
+    "monochromeTrayIcon": ""
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "",
+    "message": ""
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "unresponsiveWindowDialog": {
+    "title": "",
+    "message": "",
+    "forceReload": "",
+    "doNothing": ""
+  },
+  "migrationDialog": {
+    "title": "",
+    "message": "",
+    "closeAndContinue": ""
+  },
+  "startupFailedDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "",
+    "message": ""
+  },
+  "privateNetworkDialog": {
+    "title": "",
+    "message": ""
+  },
+  "invalidRepositoryDialog": {
+    "title": "",
+    "message": ""
+  }
+}

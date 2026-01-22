@@ -1,0 +1,234 @@
+{
+  "ipfsIsRunning": "IPFS працює",
+  "ipfsIsStopping": "IPFS зупиняється",
+  "ipfsIsStarting": "IPFS запускається",
+  "ipfsIsNotRunning": "IPFS не працює",
+  "ipfsHasErrored": "IPFS має проблеми",
+  "runningWithGC": "Працює (очищується сміття)",
+  "runningWhileCheckingForUpdate": "",
+  "start": "Запустити",
+  "stop": "Зупинити",
+  "restart": "Перезапустити",
+  "about": "Про программу ",
+  "advanced": "Продвинуті",
+  "openRepoDir": "",
+  "openLogsDir": "",
+  "openConfigFile": "",
+  "openKuboConfigFile": "",
+  "viewOnGitHub": "Подивитись на GitHub",
+  "helpUsTranslate": "Допомогти перекласти цей застосунок",
+  "readReleaseNotes": "Прочитати зміни в випуску",
+  "status": "Стан",
+  "files": "Файли",
+  "peers": "Піри",
+  "quit": "Вийти",
+  "versions": "Версії",
+  "screenshotTaken": "Знімок екрану зроблено",
+  "shareableLinkCopied": "Публічне посилання скопійовано до буферу обміну. Натисніть тут для того щоб побачити знімок екрана.",
+  "couldNotTakeScreenshot": "Не вдалося зробити знімок екрана",
+  "errorwhileTakingScreenshot": "Трапилася помилка під час знімку екрана.",
+  "clickToOpenLogs": "Натисніть тут, щоб відкрити журнал.",
+  "ipfsNotRunning": "IPFS не працює",
+  "checkForUpdates": "Пошук оновлень...",
+  "checkingForUpdates": "",
+  "yes": "Так",
+  "no": "Ні",
+  "close": "Закрити",
+  "ok": "ОК",
+  "cancel": "Скасувати",
+  "enable": "Увімкнути",
+  "reportTheError": "Повідомити про помилку",
+  "restartIpfsDesktop": "Перезапустити IPFS Desktop",
+  "openLogs": "Відкрити журнал",
+  "takeScreenshot": "Зробити знімок екрану",
+  "moveRepositoryLocation": "Змінити розташування сховища",
+  "runGarbageCollector": "Запустити збирач сміття",
+  "selectDirectory": "Вибрати каталог",
+  "customIpfsBinary": "",
+  "setCustomIpfsBinary": "",
+  "clearCustomIpfsBinary": "",
+  "openCliDocumentation": "",
+  "polkitDialog": {
+    "title": "Polkit не знайдено",
+    "message": "Неможливо додати IPFS в каталог /usr/local/bin/ без агента polkit."
+  },
+  "noPermissionDialog": {
+    "title": "Немає дозволу",
+    "message": "Неможливо додати IPFS в каталог /usr/local/bin/, через невірно введений пароль, або через те, що немає дозволу."
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS не працює",
+    "message": "Щоб виконати цю дію необхідно, щоб працював IPFS. Хочете запустити цей сервіс?"
+  },
+  "recoverableErrorDialog": {
+    "title": "Трапилася помилка",
+    "message": "Трапилася помилка, однак це не перешкоджає виконанню IPFS Desktop. Ви можете переглянути журнал помилок чи повідомити про помилку розробникам."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Не вдалося з'єднатися з API",
+    "message": "IPFS Desktop не вдалося з'єднатися з наданою API адресою: { addr }."
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "IPFS Desktop вимкнено",
+    "message": "IPFS Desktop вимкнено через помилку. Ви можете перезапустити застосунок чи повідомити про помилку розробників, але для цього потрібно мати обліковий запис на GitHub."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Перемістити сховище",
+    "message": "Якщо ваше сховище займає надто багато місця на диску, ви можете його перемістити в інше розташування. Однак, майте на увазі, що нове розташування повинне бути завжди доступним, щоб IPFS Desktop працював як належне.",
+    "action": "Перемістити і перезапустити вузол"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "Сховище успішно переміщено",
+    "message": "Ваше сховище успішно переміщено в { location }. Налаштування оновлено. Сервіс зараз запуститься."
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "Вибрано той самий каталог",
+    "message": "Каталог, який ви вибрали такий самий як поточний: { location }. Тому, нічого не помінялося."
+  },
+  "moveRepositoryDirExists": {
+    "title": "Каталог вже існує",
+    "message": "Каталог { location } вже існує. Спробуйте інший."
+  },
+  "busyPortsDialog": {
+    "title": "Порти зайняті",
+    "message": "Порти { port1 } та { port2 } не доступні. Хочете використати натомість порти { alt1 } і { alt2 }?",
+    "action": "Використати порти { alt1 } та { alt2 }"
+  },
+  "busyPortDialog": {
+    "title": "Порт зайнятий",
+    "message": "Порт { port } не доступний. Хочете використати натомість порт { alt }?",
+    "action": "Використати порт { alt }"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Порти зайняті",
+    "message": "",
+    "action": ""
+  },
+  "itemsAddedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "itemAddedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "itemsFailedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "updateAvailableDialog": {
+    "title": "",
+    "message": ""
+  },
+  "updateNotAvailableDialog": {
+    "title": "",
+    "message": ""
+  },
+  "updateErrorDialog": {
+    "title": "",
+    "message": ""
+  },
+  "autoUpdateError": {
+    "title": "",
+    "message": "",
+    "downloadNow": "",
+    "later": ""
+  },
+  "updateDownloadedDialog": {
+    "title": "",
+    "message": "",
+    "later": "",
+    "now": ""
+  },
+  "updateDownloadedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "runGarbageCollectorWarning": {
+    "title": "",
+    "message": "Запуск збирача сміття (GC) видалить усі незакріплені об'єкти з вашого репозиторію чи з MFS (мінливої файлової системи). Це може зайняти деякий час. Бажаєте продовжити?",
+    "action": ""
+  },
+  "runGarbageCollectorDone": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryFailed": {
+    "title": "Перемістити сховище",
+    "message": ""
+  },
+  "runGarbageCollectorErrored": {
+    "title": "",
+    "message": ""
+  },
+  "launchAtLoginNotSupported": {
+    "title": "",
+    "message": ""
+  },
+  "launchAtLoginFailed": {
+    "title": "",
+    "message": ""
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "",
+    "message": ""
+  },
+  "settings": {
+    "settings": "Налаштування",
+    "preferences": "",
+    "openNodeSettings": "",
+    "appPreferences": "",
+    "launchOnStartup": "",
+    "openWebUIAtLaunch": "",
+    "pubsub": "",
+    "namesysPubsub": "",
+    "automaticGC": "",
+    "takeScreenshotShortcut": "",
+    "experiments": "Експерименти",
+    "npmOnIpfs": "",
+    "monochromeTrayIcon": ""
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "",
+    "message": ""
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "unresponsiveWindowDialog": {
+    "title": "",
+    "message": "",
+    "forceReload": "",
+    "doNothing": ""
+  },
+  "migrationDialog": {
+    "title": "",
+    "message": "",
+    "closeAndContinue": ""
+  },
+  "startupFailedDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "",
+    "message": ""
+  },
+  "privateNetworkDialog": {
+    "title": "",
+    "message": ""
+  },
+  "invalidRepositoryDialog": {
+    "title": "",
+    "message": ""
+  }
+}
