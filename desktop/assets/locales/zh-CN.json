@@ -1,0 +1,234 @@
+{
+  "ipfsIsRunning": "IPFS 正在运行",
+  "ipfsIsStopping": "IPFS 正在停止",
+  "ipfsIsStarting": "IPFS 正在启动",
+  "ipfsIsNotRunning": "IPFS 没有运行",
+  "ipfsHasErrored": "IPFS 出现错误",
+  "runningWithGC": "运行中（正在进行垃圾回收GC）",
+  "runningWhileCheckingForUpdate": "运行中（正在检查更新）",
+  "start": "启动",
+  "stop": "停止",
+  "restart": "重新启动",
+  "about": "关于",
+  "advanced": "高级",
+  "openRepoDir": "打开Kubo仓库目录",
+  "openLogsDir": "打开日志目录",
+  "openConfigFile": "打开配置文件",
+  "openKuboConfigFile": "打开Kubo配置文件",
+  "viewOnGitHub": "在GitHub上查看…",
+  "helpUsTranslate": "帮助翻译此应用程序…",
+  "readReleaseNotes": "阅读更新内容",
+  "status": "状态",
+  "files": "文件",
+  "peers": "节点",
+  "quit": "退出",
+  "versions": "版本",
+  "screenshotTaken": "已捕获截图",
+  "shareableLinkCopied": "可共享的链接已复制到剪贴板。 点击此处查看截图。",
+  "couldNotTakeScreenshot": "无法截图",
+  "errorwhileTakingScreenshot": "进行截图时出错。",
+  "clickToOpenLogs": "点击这里打开日志。",
+  "ipfsNotRunning": "IPFS没有运行",
+  "checkForUpdates": "检查更新…",
+  "checkingForUpdates": "正在检查更新",
+  "yes": "是",
+  "no": "否",
+  "close": "关闭",
+  "ok": "好的",
+  "cancel": "取消",
+  "enable": "启用",
+  "reportTheError": "报告错误",
+  "restartIpfsDesktop": "重启 IPFS 桌面",
+  "openLogs": "打开日志",
+  "takeScreenshot": "截屏",
+  "moveRepositoryLocation": "移动仓库目录",
+  "runGarbageCollector": "进行缓存清理",
+  "selectDirectory": "选择目录",
+  "customIpfsBinary": "自定义IPFS二进制文件",
+  "setCustomIpfsBinary": "设置自定义IPFS二进制文件",
+  "clearCustomIpfsBinary": "清除自定义IPFS二进制文件",
+  "openCliDocumentation": "打开命令行文档",
+  "polkitDialog": {
+    "title": "Polkit (策略工具包)没有找到",
+    "message": "由于缺少 Polkit 代理，无法将 IPFS 添加到 /usr/local/bin/ 目录中。"
+  },
+  "noPermissionDialog": {
+    "title": "没有权限",
+    "message": "由于密码错误或者没有权限，无法将 IPFS 添加到 /usr/local/bin/ 目录中。"
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS未运行",
+    "message": "该功能需要 IPFS 运行，你想启动它吗？"
+  },
+  "recoverableErrorDialog": {
+    "title": "发生了错误",
+    "message": "发生了错误，但不会中断 IPFS 桌面运行。你可以检查日志或将错误报告给开发者。"
+  },
+  "cannotConnectToApiDialog": {
+    "title": "无法连接 API",
+    "message": "IPFS 桌面无法连接到提供的 API 地址：{ addr }"
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "IPFS 桌面已经关闭",
+    "message": "因为发生了一个错误， IPFS 桌面已经关闭。你可以重新启动程序，或将该错误报告给开发者，这需要你有一个 GitHub 账号。"
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "移动仓库",
+    "message": "如果仓库在主驱动器上占用了太多空间，可以将其移动到其他位置。 请保证新位置始终可用，以保持 IPFS 桌面正常工作。",
+    "action": "移动并重启节点"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "仓库移动成功",
+    "message": "你的仓库已被成功移动到 { location } 且配置已更新。守护程序正在启动。"
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "您选择了当前的目录",
+    "message": "您选择的目录就是仓库所在的目录 { location } ，因此不会进行任何更改。"
+  },
+  "moveRepositoryDirExists": {
+    "title": "目录已经存在",
+    "message": "目录 { location } 已经存在。请选择其他目录。"
+  },
+  "busyPortsDialog": {
+    "title": "端口繁忙",
+    "message": "端口 { port1 } 和 { port2 } 不可用。您想转而使用端口 { alt1 } 和 { alt2 } 吗？",
+    "action": "使用端口 { alt1 } 和 { alt2 } "
+  },
+  "busyPortDialog": {
+    "title": "端口繁忙",
+    "message": "无法使用端口 { port }，你想使用备用端口 { alt } 吗？",
+    "action": "使用备用端口 { alt }"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "端口繁忙",
+    "message": "由于端口被占用，无法绑定到一个或多个 API 或网关地址。",
+    "action": "打开配置文件"
+  },
+  "itemsAddedNotification": {
+    "title": "项目已添加",
+    "message": "{ count }个项目已添加到您的节点。一条分享链接已复制到您的剪贴板。"
+  },
+  "itemAddedNotification": {
+    "title": "项目已添加",
+    "message": "项目已添加到您的IPFS 节点。一条分享链接已复制到您的剪贴板。"
+  },
+  "itemsFailedNotification": {
+    "title": "项目添加失败",
+    "message": "不能将此项目加入节点"
+  },
+  "updateAvailableDialog": {
+    "title": "新版本可用",
+    "message": "IPFS 桌面的一个新版本 ({ version }) 已经准备就绪，将在后台启动下载。"
+  },
+  "updateNotAvailableDialog": {
+    "title": "无可用更新",
+    "message": "已经是最新的 IPFS 桌面 ({ version }) "
+  },
+  "updateErrorDialog": {
+    "title": "更新下载失败",
+    "message": "无法下载更新，请检查您的网络连接并重试。"
+  },
+  "autoUpdateError": {
+    "title": "更新下载失败",
+    "message": "无法自动安装更新。你想手动下载吗？",
+    "downloadNow": "立即下载",
+    "later": "稍后"
+  },
+  "updateDownloadedDialog": {
+    "title": "IPFS 桌面 更新",
+    "message": "现在可以更新至IPFS 桌面 { version }，你希望现在更新吗？",
+    "later": "稍后",
+    "now": "现在更新"
+  },
+  "updateDownloadedNotification": {
+    "title": "IPFS 桌面 更新",
+    "message": "新版本IPFS 桌面 { version }更新目前已准备就绪。"
+  },
+  "runGarbageCollectorWarning": {
+    "title": "缓存清理",
+    "message": "进行缓存清理（GC）将从存储库中删除所有未固定或在MFS上的对象。这可能需要一段时间，你想继续吗？",
+    "action": "运行"
+  },
+  "runGarbageCollectorDone": {
+    "title": "缓存清理",
+    "message": "已清理缓存"
+  },
+  "moveRepositoryFailed": {
+    "title": "移动仓库",
+    "message": "未能将仓库从 \"{ currDir }\" 移动到 \"{ newDir }\" 。"
+  },
+  "runGarbageCollectorErrored": {
+    "title": "缓存清理",
+    "message": "缓存清理未能完全进行"
+  },
+  "launchAtLoginNotSupported": {
+    "title": "错误",
+    "message": "您的平台不支持在登录时启动。"
+  },
+  "launchAtLoginFailed": {
+    "title": "错误",
+    "message": "无法在您的计算机上启用登录时启动。"
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "启用屏幕快照快捷键",
+    "message": "启用此选项，在IPFS桌面运行时，可以用快捷键“{ accelerator }”获取屏幕快照。"
+  },
+  "settings": {
+    "settings": "配置",
+    "preferences": "首选项",
+    "openNodeSettings": "打开节点设置",
+    "appPreferences": "应用首选项",
+    "launchOnStartup": "登录时启动",
+    "openWebUIAtLaunch": "启动时打开Web UI界面",
+    "pubsub": "启用 PubSub",
+    "namesysPubsub": "启用基于 PubSub 的 IPNS",
+    "automaticGC": "自动缓存清理",
+    "takeScreenshotShortcut": "全局屏幕截图快捷键",
+    "experiments": "试验",
+    "npmOnIpfs": "启用 IPFS 上的 npm",
+    "monochromeTrayIcon": "使用黑白托盘图标"
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "自定义IPFS二进制文件",
+    "message": "通过设置自定义IPFS，IPFS 桌面将不再使用捆绑的IPFS版本，并将使用指定的二进制文件。继续吗？"
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "自定义IPFS二进制文件",
+    "message": "IPFS桌面将使用位于{ path }的二进制文件。要使用它，首先要重新启动IPFS。"
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "清除自定义IPFS二进制文件",
+    "message": "已清除自定义IPFS二进制文件。要开始使用捆绑的IPFS版本，首先要重新启动IPFS。"
+  },
+  "unresponsiveWindowDialog": {
+    "title": "IPFS 桌面 未响应",
+    "message": "正在执行的操作所需要的资源超出预期。你希望中止并强制重载界面吗？",
+    "forceReload": "是，重新载入",
+    "doNothing": "否，继续等待"
+  },
+  "migrationDialog": {
+    "title": "IPFS 桌面 迁移",
+    "message": "再等一会! IPFS 桌面需要运行最新的数据储存迁移:",
+    "closeAndContinue": "在后台继续执行"
+  },
+  "startupFailedDialog": {
+    "title": "IPFS 桌面 启动失败",
+    "message": "IPFS 节点遇到错误且启动可能没有成功"
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "IPFS仓库必须是一个目录",
+    "message": "这个仓库的路径“{ path }”是无效的，它不是一个目录\n\n再重新启动IPFS 桌面之前，请重命名旧有的仓库为“.ipfs.backup”，请注意这会使得IPFS 桌面重新生成一个新的仓库"
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "IPFS 仓库配置丢失",
+    "message": "这个仓库的路径“{ path }”没有包含一个“config”文件，此文件必须是一个有效的JSON文件。\n\n再重新启动IPFS 桌面之前，请修复配置文件或者将旧有的仓库命名为“.ipfs.backup”。请注意这会使得IPFS 桌面重新生成一个新的仓库"
+  },
+  "privateNetworkDialog": {
+    "title": "私有网络IPFS仓库",
+    "message": "这个仓库的路径“{ path }”属于一个私有网络，它不被IPFS 桌面所支持"
+  },
+  "invalidRepositoryDialog": {
+    "title": "无效的IPFS库或者配置文件",
+    "message": "这个仓库的路径“{ path }”或它的配置是无效的。“config”文件必须是一个有效的JSON文件。\n\n再重新启动IPFS 桌面之前，请修复配置文件或者将旧有的仓库命名为“.ipfs.backup”。请注意这会使得IPFS 桌面重新生成一个新的仓库"
+  }
+}

@@ -1,0 +1,265 @@
+name: ci
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+
+jobs:
+
+  webui:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 'lts/*'
+
+      - name: Read ipfs-webui CID from package.json
+        id: read-webui-version
+        run: |
+          echo '::echo::on'
+          echo "cid=$(grep "build:webui:download" package.json | grep -Eio "bafy[a-z0-9]+")" >> $GITHUB_OUTPUT
+          echo '::echo::off'
+        shell: bash
+      - name: Cache webui
+        uses: actions/cache@v5
+        id: webui-cache
+        with:
+          path: assets/webui
+          key: ${{ steps.read-webui-version.outputs.cid }}
+
+      - name: Cache bigger downloads
+        uses: actions/cache@v5
+        id: cache
+        if: steps.webui-cache.outputs.cache-hit != 'true'
+        with:
+          path: ${{ github.workspace }}/.cache
+          key: ${{ runner.os }}-${{ hashFiles('package.json', 'package-lock.json', 'electron-builder.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ hashFiles('package.json', 'package-lock.json', 'electron-builder.yml') }}
+            ${{ runner.os }}-
+
+      - uses: ipfs/download-ipfs-distribution-action@v1
+        if: steps.webui-cache.outputs.cache-hit != 'true'
+        with:
+          name: kubo
+      - uses: ipfs/start-ipfs-daemon-action@v1
+        if: steps.webui-cache.outputs.cache-hit != 'true'
+
+      - name: Install dependencies and fetch ipfs-webui
+        if: steps.webui-cache.outputs.cache-hit != 'true'
+        run: |
+          npm ci --prefer-offline --no-audit --progress=false --cache ${{ github.workspace }}/.cache/npm
+          npm run clean
+          npm run force-webui-download
+
+      - name: Attach cached ipfs-webui to Github Action
+        uses: actions/upload-artifact@v5
+        with:
+          name: ipfs-webui
+          path: assets/webui
+          if-no-files-found: error
+
+  test:
+    runs-on: ${{ matrix.os }}
+    needs: webui
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 'lts/*'
+
+      - name: Read ipfs-webui CID from package.json
+        id: read-webui-version
+        run: echo "cid=$(grep "build:webui:download" package.json | grep -Eio "bafy[a-z0-9]+")" >> $GITHUB_OUTPUT
+        shell: bash
+      - name: Cache webui
+        uses: actions/cache@v5
+        id: webui-cache
+        with:
+          path: assets/webui
+          key: ${{ steps.read-webui-version.outputs.cid }}
+
+      - name: Cache bigger downloads
+        uses: actions/cache@v5
+        id: cache
+        with:
+          path: ${{ github.workspace }}/.cache
+          key: ${{ runner.os }}-${{ hashFiles('package.json', 'package-lock.json', 'electron-builder.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ hashFiles('package.json', 'package-lock.json', 'electron-builder.yml') }}
+            ${{ runner.os }}-
+
+      - uses: ipfs/download-ipfs-distribution-action@v1
+        if: steps.webui-cache.outputs.cache-hit != 'true'
+        with:
+          name: kubo
+      - uses: ipfs/start-ipfs-daemon-action@v1
+        if: steps.webui-cache.outputs.cache-hit != 'true'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --progress=false --cache ${{ github.workspace }}/.cache/npm
+
+      - name: Build
+        run: npm run build
+
+      - name: Stop any ipfs daemon before tests
+        run: ipfs shutdown || true
+        shell: bash
+
+      - name: Test
+        run: npm run test
+
+      # https://github.com/ipfs/ipfs-desktop/pull/2915
+      # https://github.com/microsoft/playwright/issues/34251#issuecomment-2580591770
+      - name: Workaround to enable e2e tests on github CI
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Test end-to-end
+        run: npm run test:e2e
+
+      - name: Lint
+        run: npm run lint
+
+  build:
+    runs-on: ${{ matrix.os }}
+    needs: test # build packages only if tests passed
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 'lts/*'
+
+      - name: Read ipfs-webui CID from package.json
+        id: read-webui-version
+        run: echo "cid=$(grep "build:webui:download" package.json | grep -Eio "bafy[a-z0-9]+")" >> $GITHUB_OUTPUT
+        shell: bash
+      - name: Cache webui
+        uses: actions/cache@v5
+        id: webui-cache
+        with:
+          path: assets/webui
+          key: ${{ steps.read-webui-version.outputs.cid }}
+
+      - name: Cache bigger downloads
+        uses: actions/cache@v5
+        id: cache
+        with:
+          path: ${{ github.workspace }}/.cache
+          key: ${{ runner.os }}-${{ hashFiles('package.json', 'package-lock.json', 'electron-builder.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ hashFiles('package.json', 'package-lock.json', 'electron-builder.yml') }}
+            ${{ runner.os }}-
+
+      - uses: ipfs/download-ipfs-distribution-action@v1
+        if: steps.webui-cache.outputs.cache-hit != 'true'
+        with:
+          name: kubo
+      - uses: ipfs/start-ipfs-daemon-action@v1
+        if: steps.webui-cache.outputs.cache-hit != 'true'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --progress=false --cache ${{ github.workspace }}/.cache/npm
+
+      - name: Build
+        run: npm run build
+
+      - name: Get tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == "refs/tags/"* ]]; then
+            echo "tag=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+        continue-on-error: true # empty steps.tag.outputs.tag will inform the next step
+
+
+      # This step creates a release-please PR if there are any commits that haven't been released yet.
+      - name: Run release-please release-pr # see https://github.com/google-github-actions/release-please-action/issues/841
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: npm run release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true # release-please release-pr will fail when a release-please PR was merged and the tag doesn't exist.
+
+      # This step will only handle the creation of the release draft, the "Build binaries with electron-builder" step
+      # will attach binaries to that release draft
+      - name: Run release-please github-release # see https://github.com/google-github-actions/release-please-action/issues/841
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: npm run release-gh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true # release-please github-release will fail when a release-please PR was merged and the tag doesn't exist.
+
+      - name: Build binaries with electron-builder
+        uses: paneron/action-electron-builder@14b133702d1b2e9749912051c43ed62b4afe56c8 # v1.8.1
+        with:
+          package_manager: npm
+          skip_package_manager_install: true
+          args: --publish onTagOrDraft # attach signed binaries to an existing release draft or when a tag is merged
+          release: false # keep github release as draft for manual inspection
+          max_attempts: 2
+          # GH token for attaching atrifacts to release draft on tag build
+          github_token: ${{ secrets.github_token }}
+          # Apple signing
+          mac_certs: ${{ secrets.mac_certs }}
+          mac_certs_password: ${{ secrets.mac_certs_password }}
+        env:
+          # CI_BUILD_TAG: ${{steps.tag.outputs.tag}} # used by --publish onTag
+          # Force signing on PR IFF secrets are around
+          PUBLISH_FOR_PULL_REQUEST: ${{ secrets.PUBLISH_FOR_PULL_REQUEST }}
+          CSC_FOR_PULL_REQUEST: ${{ secrets.CSC_FOR_PULL_REQUEST }}
+          # Apple notarization
+          APPLEID: ${{ secrets.apple_id }}
+          APPLEIDPASS: ${{ secrets.apple_id_pass }}
+          # Windows Azure Trusted Signing
+          AZURE_TENANT_ID: ${{secrets.AZURE_TENANT_ID}}
+          AZURE_CLIENT_ID: ${{secrets.AZURE_CLIENT_ID}}
+          AZURE_CLIENT_SECRET: ${{secrets.AZURE_CLIENT_SECRET}}
+
+      - name: Show dist/
+        run: du -sh dist/ && ls -l dist/
+
+      # Persist produced binaries and effective config used for building them
+      # - this is not for releases, but for quick testing during the dev
+      # - action artifacts can be downloaded for 90 days, then are removed by github
+      # - binaries in PRs from forks won't be signed
+      - name: Attach produced packages to Github Action
+        uses: actions/upload-artifact@v5
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist/*esktop*.*
+          if-no-files-found: error
+
+      - name: Show Cache
+        run: du -sh ${{ github.workspace }}/.cache/ && ls -l ${{ github.workspace }}/.cache/
+
