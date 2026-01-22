@@ -113,19 +113,33 @@ git checkout -b sdn-base
 
 **Remove:**
 - [ ] Generic content pinning (we only store validated SDS data)
-- [ ] IPFS gateway HTTP server (not needed)
-- [ ] Filestore/MFS (replaced by SQLite)
-- [ ] Bitswap (replaced by SDS-specific protocol)
-- [ ] IPNS name system (replaced by SDS identity)
-- [ ] Provider system (replaced by SDS PubSub)
-- [ ] Unused transports (keep TCP, WebSocket, QUIC only)
+- [ ] Bitswap (replaced by SDS-specific protocol) - *optional, may keep for compatibility*
+- [ ] Gateway HTTP server (not needed for SDN)
 
-**Keep:**
+**Keep (CRITICAL - currently in use by SDN):**
 - [ ] LibP2P core (host, DHT, PubSub)
-- [ ] Circuit relay v2
+- [ ] **IPNS name system** - actively used for publishing folder hierarchies (30-second publish cycle)
+- [ ] **IPNS over PubSub** - enabled via `cfg.Ipns.UsePubsub = config.True`
+- [ ] **Kademlia DHT** - used for peer routing AND content discovery
+- [ ] **Custom DHT Discovery Namespace** - Argon2 hash of version string as rendezvous point:
+
+  ```go
+  versionHex := []byte(serverconfig.Conf.Info.Version)
+  discoveryHex := hex.EncodeToString(argon2.IDKey(versionHex, versionHex, 1, 64*1024, 4, 32))
+  ```
+
+- [ ] **GossipSub PubSub** - per-standard topics (e.g., `{discoveryHex}-PNM`)
+- [ ] **FlatFS blockstore** - v1/next-to-last/2 sharding for `/blocks`
+- [ ] **LevelDB datastore** - for general key-value storage at `/`
+- [ ] Circuit relay v2 + AutoRelay feeder (fed from DHT peers)
 - [ ] Hole punching / AutoNAT
 - [ ] Connection manager
-- [ ] Peer discovery (DHT + mDNS)
+- [ ] Peer discovery (DHT routing discovery + mDNS with service name `"space-data-network-mdns"`)
+- [ ] All transports: TCP, WebSocket, QUIC, WebTransport
+
+**Custom SDN Protocols (already implemented):**
+- [ ] `/space-data-network/id-exchange/1.0.0` - PNM/EPM exchange between peers
+- [ ] `/space-data-network/chat/1.0.0` - peer chat
 
 #### 1.2 Fork IPFS Desktop
 
@@ -1370,6 +1384,119 @@ EOF
 systemctl enable spacedatanetwork-edge
 systemctl start spacedatanetwork-edge
 ```
+
+---
+
+## Implementation Checklist
+
+### Phase 0: Repository Restructuring
+
+- [ ] Create `legacy/` directory
+- [ ] Move existing code to legacy: `mv cmd internal javascript serverconfig backup docs retrievers scripts test go.mod go.sum *.sh dist tmp .air.toml .env README.md TODO.md legacy/`
+- [ ] Add Kubo upstream remote: `git remote add kubo-upstream https://github.com/ipfs/kubo.git`
+- [ ] Fetch Kubo: `git fetch kubo-upstream`
+- [ ] Add Kubo subtree: `git subtree add --prefix=kubo kubo-upstream/master --squash -m "Add Kubo as subtree"`
+- [ ] Add Desktop upstream remote: `git remote add desktop-upstream https://github.com/ipfs/ipfs-desktop.git`
+- [ ] Fetch Desktop: `git fetch desktop-upstream`
+- [ ] Add Desktop subtree: `git subtree add --prefix=desktop desktop-upstream/main --squash -m "Add IPFS Desktop as subtree"`
+- [ ] Add schemas submodule: `git submodule add https://github.com/DigitalArsenal/spacedatastandards.org.git schemas/sds`
+- [ ] Create `scripts/subtree-update.sh` for upstream merging
+
+### Phase 1: Fork and Strip Kubo
+
+- [ ] Create `sdn-server/` directory structure
+- [ ] Create `sdn-server/go.mod` with replace directive for kubo
+- [ ] Create `sdn-server/cmd/spacedatanetwork/main.go`
+- [ ] Add `github.com/tetratelabs/wazero` dependency
+- [ ] Configure LibP2P with all transports (TCP, WS, QUIC, WebTransport)
+- [ ] Keep IPNS, DHT, PubSub, Circuit Relay v2
+- [ ] Remove Gateway HTTP server references
+- [ ] Verify build: `cd sdn-server && go build ./...`
+
+### P2: FlatBuffers WASM Integration
+
+- [ ] Create `sdn-server/internal/wasm/flatc.go`
+- [ ] Implement FlatcModule struct with wazero runtime
+- [ ] Load flatc-wasm from `../flatbuffers/wasm/`
+- [ ] Expose functions: malloc, free, jsonToBinary, binaryToJson
+- [ ] Expose crypto functions: encrypt, decrypt, sign, verify
+- [ ] Create `sdn-server/internal/sds/validator.go`
+- [ ] Write unit tests for WASM integration
+
+### Phase 3: SQLite Storage
+
+- [ ] Create `sdn-server/internal/storage/flatsql.go`
+- [ ] Implement FlatSQLStore struct
+- [ ] Load flatsql.wasm from `../flatbuffers-sqlite/`
+- [ ] Create tables per SDS schema (cid, peer_id, timestamp, data, signature)
+- [ ] Create FlatBuffer virtual tables for querying
+- [ ] Implement Store() and Query() methods
+- [ ] Write unit tests for storage layer
+
+### Phase 4: SDS Protocol
+
+- [ ] Create `sdn-server/internal/protocol/sds_exchange.go`
+- [ ] Define SDSProtocolID: `/spacedatanetwork/sds-exchange/1.0.0`
+- [ ] Implement message types: REQUEST_DATA (0x01), PUSH_DATA (0x02), QUERY (0x03)
+- [ ] Implement HandleStream() for incoming connections
+- [ ] Implement handleDataPush() with signature verification
+- [ ] Create `sdn-server/internal/pubsub/topics.go`
+- [ ] Setup per-schema PubSub topics: `/spacedatanetwork/sds/{schemaName}`
+- [ ] Migrate patterns from `legacy/internal/node/protocols/`
+
+### P5: Edge Relay Binary
+
+- [ ] Create `sdn-server/cmd/spacedatanetwork-edge/main.go`
+- [ ] Implement EdgeConfig struct (ListenAddrs, MaxConnections, etc.)
+- [ ] Create minimal LibP2P host (WS + QUIC only)
+- [ ] Enable relay service but disable storage
+- [ ] Add build tag: `// +build edge`
+- [ ] Verify smaller binary: `go build -tags edge`
+- [ ] Create systemd service file template
+
+### P6: Browser SDK (sdn-js)
+
+- [ ] Create `sdn-js/` directory structure
+- [ ] Create `sdn-js/package.json`
+- [ ] Migrate `legacy/javascript/sdn.libp2p.ts` to `sdn-js/src/node.ts`
+- [ ] Create `sdn-js/src/storage.ts` (IndexedDB + flatsql.wasm)
+- [ ] Create `sdn-js/src/crypto.ts` (flatc-encryption.wasm wrapper)
+- [ ] Create `sdn-js/src/schemas.ts` (bundled SDS schemas)
+- [ ] Create `sdn-js/src/edge-discovery.ts`
+- [ ] Copy WASM files to `sdn-js/wasm/`
+- [ ] Verify build: `cd sdn-js && npm install && npm run build`
+
+### P7: Embedded SDS Schemas
+
+- [ ] Create `sdn-server/internal/sds/registry.go`
+- [ ] Add `//go:embed schemas/sds/*.fbs` directive
+- [ ] Define SupportedSchemas list (EPM, PNM, OMM, CDM, etc.)
+- [ ] Implement schema loading from embedded FS
+- [ ] Wire validator to use embedded schemas
+- [ ] Write schema validation tests
+
+### Phase 8: Encrypted Edge Relay Distribution
+
+- [ ] Create `scripts/build-edge-registry.ts`
+- [ ] Implement XChaCha20 encryption for relay list
+- [ ] Generate obfuscated key embedding
+- [ ] Compile to `sdn-js/wasm/edge-relays.wasm`
+- [ ] Create `sdn-server/cmd/registry-builder/main.go`
+- [ ] Implement DHT monitoring for edge relay announcements
+- [ ] Implement auto-rebuild on relay changes
+- [ ] Create `scripts/cdn-deploy.sh` for CDN updates
+- [ ] Implement SRI hash generation
+- [ ] Create `sdn-js/src/edge-discovery.ts` WASM loader
+
+### Final Verification
+
+- [ ] `cd sdn-server && go build ./cmd/spacedatanetwork` compiles
+- [ ] `cd sdn-server && go build -tags edge ./cmd/spacedatanetwork-edge` produces smaller binary
+- [ ] `cd sdn-js && npm run build` succeeds
+- [ ] Schema validation tests pass
+- [ ] Edge relay WASM loads and decrypts in browser
+- [ ] Full node can discover peers via DHT
+- [ ] PubSub topics work for SDS message exchange
 
 ---
 
