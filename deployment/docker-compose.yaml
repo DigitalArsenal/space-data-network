@@ -1,0 +1,154 @@
+# SDN Local Cluster Simulation
+# Simulates a global network with full nodes, edge relays, and registry builder
+
+version: '3.8'
+
+services:
+  # ============================================
+  # FULL NODES (Datacenter nodes with storage)
+  # ============================================
+
+  full-node-1:
+    build:
+      context: ..
+      dockerfile: deployment/docker/Dockerfile.full
+    container_name: sdn-full-1
+    hostname: full-node-1
+    environment:
+      - SDN_MODE=full
+      - SDN_BOOTSTRAP=
+    ports:
+      - "4001:4001"      # TCP
+      - "4001:4001/udp"  # QUIC
+      - "8080:8080"      # WebSocket
+    volumes:
+      - full-node-1-data:/home/sdn/.spacedatanetwork
+    networks:
+      sdn-network:
+        ipv4_address: 172.28.0.10
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  full-node-2:
+    build:
+      context: ..
+      dockerfile: deployment/docker/Dockerfile.full
+    container_name: sdn-full-2
+    hostname: full-node-2
+    environment:
+      - SDN_MODE=full
+      - SDN_BOOTSTRAP=/ip4/172.28.0.10/tcp/4001
+    ports:
+      - "4002:4001"
+      - "4002:4001/udp"
+      - "8081:8080"
+    volumes:
+      - full-node-2-data:/home/sdn/.spacedatanetwork
+    networks:
+      sdn-network:
+        ipv4_address: 172.28.0.11
+    depends_on:
+      - full-node-1
+
+  # ============================================
+  # EDGE RELAYS (Global edge locations)
+  # ============================================
+
+  edge-relay-us:
+    build:
+      context: ..
+      dockerfile: deployment/docker/Dockerfile.edge
+    container_name: sdn-edge-us
+    hostname: edge-relay-us
+    environment:
+      - SDN_REGION=us-east
+    ports:
+      - "8090:8080"
+      - "8091:8081"  # Health check
+    networks:
+      sdn-network:
+        ipv4_address: 172.28.0.20
+    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/ip4/172.28.0.10/tcp/4001", "--health-port", "8081"]
+    depends_on:
+      - full-node-1
+
+  edge-relay-eu:
+    build:
+      context: ..
+      dockerfile: deployment/docker/Dockerfile.edge
+    container_name: sdn-edge-eu
+    hostname: edge-relay-eu
+    environment:
+      - SDN_REGION=eu-west
+    ports:
+      - "8092:8080"
+      - "8093:8081"
+    networks:
+      sdn-network:
+        ipv4_address: 172.28.0.21
+    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/ip4/172.28.0.10/tcp/4001", "--health-port", "8081"]
+    depends_on:
+      - full-node-1
+
+  edge-relay-asia:
+    build:
+      context: ..
+      dockerfile: deployment/docker/Dockerfile.edge
+    container_name: sdn-edge-asia
+    hostname: edge-relay-asia
+    environment:
+      - SDN_REGION=asia-tokyo
+    ports:
+      - "8094:8080"
+      - "8095:8081"
+    networks:
+      sdn-network:
+        ipv4_address: 172.28.0.22
+    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/ip4/172.28.0.10/tcp/4001", "--health-port", "8081"]
+    depends_on:
+      - full-node-1
+
+  # ============================================
+  # REGISTRY BUILDER (DHT monitor)
+  # ============================================
+
+  registry-builder:
+    build:
+      context: ..
+      dockerfile: deployment/docker/Dockerfile.registry
+    container_name: sdn-registry
+    hostname: registry-builder
+    volumes:
+      - registry-output:/app/output
+    networks:
+      sdn-network:
+        ipv4_address: 172.28.0.30
+    command: ["--bootstrap", "/ip4/172.28.0.10/tcp/4001", "--poll", "1m", "--output", "/app/output"]
+    depends_on:
+      - full-node-1
+      - edge-relay-us
+      - edge-relay-eu
+      - edge-relay-asia
+
+# ============================================
+# NETWORKS
+# ============================================
+
+networks:
+  sdn-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ============================================
+# VOLUMES
+# ============================================
+
+volumes:
+  full-node-1-data:
+  full-node-2-data:
+  registry-output:

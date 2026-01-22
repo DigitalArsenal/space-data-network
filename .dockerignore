@@ -1,0 +1,53 @@
+# Git
+.git
+.gitignore
+.gitmodules
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Build artifacts
+sdn-server/spacedatanetwork
+sdn-server/spacedatanetwork-edge
+sdn-server/registry-builder
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+
+# Node modules (use npm ci in Docker)
+sdn-js/node_modules
+node_modules
+
+# Legacy code
+legacy/
+
+# Upstream forks (large)
+kubo/
+desktop/
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Local configs
+.env
+.env.local
+*.local.*
+
+# Claude
+.claude/
+
+# Temporary files
+tmp/
+*.tmp
+*.log

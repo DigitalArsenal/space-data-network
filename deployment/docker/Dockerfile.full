@@ -1,0 +1,45 @@
+# SDN Full Node
+# Provides full storage, DHT participation, and relay services
+
+FROM golang:1.22-alpine AS builder
+
+RUN apk add --no-cache gcc musl-dev sqlite-dev
+
+WORKDIR /build
+COPY sdn-server/go.mod sdn-server/go.sum ./sdn-server/
+WORKDIR /build/sdn-server
+RUN go mod download
+
+WORKDIR /build
+COPY sdn-server/ ./sdn-server/
+
+WORKDIR /build/sdn-server
+RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/spacedatanetwork ./cmd/spacedatanetwork
+
+# Runtime image
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates sqlite-libs
+
+# Create non-root user
+RUN adduser -D -u 1000 sdn
+USER sdn
+
+WORKDIR /app
+COPY --from=builder /out/spacedatanetwork /app/
+
+# Data directory
+RUN mkdir -p /home/sdn/.spacedatanetwork/data
+VOLUME /home/sdn/.spacedatanetwork
+
+# Expose ports:
+# 4001 - TCP libp2p
+# 4001/udp - QUIC
+# 8080 - WebSocket
+EXPOSE 4001 4001/udp 8080
+
+ENV SDN_MODE=full
+ENV SDN_LISTEN="/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/tcp/8080/ws,/ip4/0.0.0.0/udp/4001/quic-v1"
+
+ENTRYPOINT ["/app/spacedatanetwork"]
+CMD ["daemon"]

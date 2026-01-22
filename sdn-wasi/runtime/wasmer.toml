@@ -1,0 +1,25 @@
+# Wasmer configuration for SDN WASI module
+# Usage: wasmer run --config wasmer.toml sdn-wasi.wasm
+
+[module]
+name = "sdn-wasi"
+
+[wasi]
+# Map directories
+preopened-directories = [
+    { host = "./data", guest = "/data" },
+    { host = "./config", guest = "/config" }
+]
+
+# Environment variables
+env = []
+
+# Inherit arguments
+args = []
+
+[limits]
+# Memory limit (in pages, 64KB each)
+max-memory-pages = 4096  # 256MB
+
+# Stack size
+stack-size = 1048576  # 1MB
