@@ -1,0 +1,66 @@
+{
+  "name": "@spacedatanetwork/sdn-js",
+  "version": "1.0.0",
+  "description": "Space Data Network JavaScript library for browser and Node.js",
+  "main": "dist/index.js",
+  "module": "dist/index.esm.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.esm.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "wasm"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "vitest",
+    "lint": "eslint src --ext .ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "space",
+    "data",
+    "network",
+    "p2p",
+    "libp2p",
+    "flatbuffers",
+    "ipfs"
+  ],
+  "author": "Space Data Network",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/spacedatanetwork/sdn-js.git"
+  },
+  "dependencies": {
+    "@chainsafe/libp2p-gossipsub": "^13.0.0",
+    "@chainsafe/libp2p-noise": "^15.0.0",
+    "@chainsafe/libp2p-yamux": "^6.0.0",
+    "@libp2p/bootstrap": "^10.0.0",
+    "@libp2p/circuit-relay-v2": "^1.0.0",
+    "@libp2p/identify": "^2.0.0",
+    "@libp2p/kad-dht": "^12.0.0",
+    "@libp2p/websockets": "^8.0.0",
+    "@libp2p/webtransport": "^4.0.0",
+    "@multiformats/multiaddr": "^12.1.0",
+    "idb": "^8.0.0",
+    "libp2p": "^1.2.0",
+    "uint8arrays": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "eslint": "^8.55.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
