@@ -11,3 +11,14 @@ export type { StoredRecord, QueryFilter } from './storage';
 export { loadEdgeRelays, getBootstrapRelays, DEFAULT_EDGE_RELAYS } from './edge-discovery';
 export { SDS_SCHEMAS, SUPPORTED_SCHEMAS } from './schemas';
 export type { SchemaName } from './schemas';
+export {
+  loadCryptoModule,
+  isCryptoAvailable,
+  encrypt,
+  decrypt,
+  sign,
+  verify,
+  generateKey,
+  randomBytes,
+  sha256,
+} from './crypto';

@@ -256,17 +256,17 @@ static const uint8_t KEY_MATERIAL[] = {
 function compileToWasm(cppPath: string): void {
   const wasmPath = join(OUTPUT_DIR, 'edge-relays.wasm');
 
+  // Use single quotes around array arguments to prevent shell escaping issues
   const cmd = [
     'emcc',
     cppPath,
     '-o', wasmPath,
-    '-s', 'EXPORTED_FUNCTIONS=["_get_edge_relays", "_get_relay_count", "_malloc", "_free"]',
-    '-s', 'EXPORTED_RUNTIME_METHODS=["UTF8ToString"]',
+    '-s', '\'EXPORTED_FUNCTIONS=["_get_edge_relays", "_get_relay_count", "_malloc", "_free"]\'',
+    '-s', '\'EXPORTED_RUNTIME_METHODS=["UTF8ToString"]\'',
     '-s', 'WASM=1',
-    '-s', 'MODULARIZE=1',
-    '-s', 'EXPORT_NAME="EdgeRelaysModule"',
+    '--no-entry',  // Library mode - no main() required
     '-O3',
-    '--closure', '1',
+    '-I', SRC_DIR,
   ].join(' ');
 
   console.log('Compiling to WASM...');

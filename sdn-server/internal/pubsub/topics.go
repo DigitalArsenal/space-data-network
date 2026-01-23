@@ -2,6 +2,7 @@
 package pubsub
 
 import (
+	"context"
 	"fmt"
 
 	logging "github.com/ipfs/go-log/v2"
@@ -79,7 +80,7 @@ func (tm *TopicManager) Publish(schemaName string, data []byte) error {
 		return fmt.Errorf("unknown schema: %s", schemaName)
 	}
 
-	return topic.Publish(tm.pubsub.GetTopics()[0], data)
+	return topic.Publish(context.Background(), data)
 }
 
 // GetTopic returns the topic for a schema.

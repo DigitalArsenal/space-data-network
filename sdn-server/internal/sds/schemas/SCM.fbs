@@ -1,0 +1,27 @@
+// Hash: 2f9fc90dd4401a2235a71af63b002e83dc5797977e5e8c96938adfdf0905c096
+// Version: 1.0.1
+// -----------------------------------END_HEADER
+/// Schema Standard Definition
+table SCHEMA_STANDARD {
+  /// Unique identifier for the standard
+  key: string;
+
+  /// IDL
+  idl: string;
+
+  /// List Of File Paths
+  files: [string];
+}
+
+/// Schema Manifest
+table SCM {
+  /// Version of Space Data Standards
+  version: string;
+
+  /// Standards Dictionary
+  RECORDS: [SCHEMA_STANDARD];
+}
+
+/// Declaring the root type
+root_type SCM;
+file_identifier "$SCM";

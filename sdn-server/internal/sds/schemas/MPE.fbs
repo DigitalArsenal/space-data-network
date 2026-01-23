@@ -1,0 +1,37 @@
+// Hash: 564dd96a264924dd1c243dfbc822b7a3915dd7104ecbed63eb02e64c86f39424
+// Version: 1.0.3
+// -----------------------------------END_HEADER
+include "../MET/main.fbs";
+
+// Minimum-Propagatable-Element-Set (MPE)
+// Description
+// Truncated version of the Orbit Mean-Elements Message (OMM). Includes only the Mean Elements required to propagate an orbit.
+// Legacy format description can be found here.
+// CCSDS Reference documentation: 502x0b2c1e2.
+
+/// Minimum Propagatable Element Set
+table MPE {  
+  /// Unique ID as a String [no units]
+  ENTITY_ID: string;
+  /// Epoch of Mean Keplerian elements (UNIX timestamp) [numeric seconds since 1970-01-01T00:00:00 UTC]
+  EPOCH: double;
+  /// Mean motion in rev/day [M if chosen to represent orbit size for SGP/SGP4 elements]
+  MEAN_MOTION: double;
+  /// Eccentricity (unitless)
+  ECCENTRICITY: double;
+  /// Inclination in degrees
+  INCLINATION: double;
+  /// Right ascension of ascending node in degrees
+  RA_OF_ASC_NODE: double;
+  /// Argument of pericenter in degrees
+  ARG_OF_PERICENTER: double;
+  /// Mean anomaly in degrees
+  MEAN_ANOMALY: double;
+  /// SGP/SGP4 drag-like coefficient (BSTAR) in units of 1/[Earth radii]
+  BSTAR: double;
+  /// Description of the Mean Element Theory (SGP4, DSST, USM)
+  MEAN_ELEMENT_THEORY:meanElementTheory = SGP4;
+}
+
+root_type MPE;
+file_identifier "$MPE";

@@ -26,27 +26,38 @@ func init() {
 
 // SupportedSchemas lists all SDS schema files.
 var SupportedSchemas = []string{
-	"EPM.fbs",  // Entity Profile Manifest
-	"PNM.fbs",  // Peer Network Manifest
-	"OMM.fbs",  // Orbit Mean-Elements Message
-	"OEM.fbs",  // Orbit Ephemeris Message
-	"CDM.fbs",  // Conjunction Data Message
-	"CAT.fbs",  // Catalog
-	"CSM.fbs",  // Conjunction Summary Message
-	"LDM.fbs",  // Launch Data Message
-	"IDM.fbs",  // Initial Data Message
-	"PLD.fbs",  // Payload
+	"ATM.fbs",  // Attitude Message
 	"BOV.fbs",  // Body Orientation and Velocity
+	"CAT.fbs",  // Catalog
+	"CDM.fbs",  // Conjunction Data Message
+	"CRM.fbs",  // Collision Risk Message
+	"CSM.fbs",  // Conjunction Summary Message
+	"CTR.fbs",  // Contact Report
+	"EME.fbs",  // Electromagnetic Emissions
 	"EOO.fbs",  // Earth Orientation
-	"RFM.fbs",  // Reference Frame Message
-	"TDM.fbs",  // Tracking Data Message
-	"AEM.fbs",  // Attitude Ephemeris Message
-	"APM.fbs",  // Attitude Parameter Message
-	"OPM.fbs",  // Orbit Parameter Message
+	"EOP.fbs",  // Earth Orientation Parameters
+	"EPM.fbs",  // Entity Profile Manifest
+	"HYP.fbs",  // Hyperbolic Orbit
+	"IDM.fbs",  // Initial Data Message
+	"LCC.fbs",  // Launch Collision Corridor
+	"LDM.fbs",  // Launch Data Message
+	"MET.fbs",  // Meteorological Data
 	"MPE.fbs",  // Maneuver Planning Ephemeris
 	"OCM.fbs",  // Orbit Comprehensive Message
-	"RDM.fbs",  // Re-entry Data Message
+	"OEM.fbs",  // Orbit Ephemeris Message
+	"OMM.fbs",  // Orbit Mean-Elements Message
+	"OSM.fbs",  // Orbit State Message
+	"PLD.fbs",  // Payload
+	"PNM.fbs",  // Peer Network Manifest
+	"PRG.fbs",  // Propagation Settings
+	"REC.fbs",  // Records
+	"RFM.fbs",  // Reference Frame Message
+	"ROC.fbs",  // Re-entry Operations Corridor
+	"SCM.fbs",  // Spacecraft Message
 	"SIT.fbs",  // Satellite Impact Table
+	"TDM.fbs",  // Tracking Data Message
+	"TIM.fbs",  // Time Message
+	"VCM.fbs",  // Vector Covariance Message
 }
 
 // Validator validates data against SDS schemas.

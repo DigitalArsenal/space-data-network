@@ -1,0 +1,143 @@
+// Hash: 367f8502c58df536b35c2555b6b6eef0d6b4f3a7162a75999fb9d4140503e8b2
+// Version: 1.0.3
+// -----------------------------------END_HEADER
+include "../RFM/main.fbs";
+include "../TIM/main.fbs";
+include "../CAT/main.fbs";
+
+// Orbit Ephemeris Message (OEM)
+// Description
+// Orbit information may be exchanged between two participants by sending an
+// ephemeris in the form of a series of state vectors (Cartesian vectors providing position and
+// velocity, and optionally accelerations) using an Orbit Ephemeris Message (OEM). The
+// message recipient must have a means of interpolating across these state vectors to obtain the
+// state at an arbitrary time contained within the span of the ephemeris.
+// CCSDS Reference documentation: 502x0b2c1e2.
+
+/// A single ephemeris data line
+table ephemerisDataLine {
+  /// Epoch time, in ISO 8601 UTC format
+  EPOCH:string;
+  /// Position vector X-component km
+  X:double;
+  /// Position vector Y-component km
+  Y:double;
+  /// Position vector Z-component km
+  Z:double;
+  /// Velocity vector X-component km/s
+  X_DOT:double;
+  /// Velocity vector Y-component km/s
+  Y_DOT:double;
+  /// Velocity vector Z-component km/s
+  Z_DOT:double;
+  /// Optional: Acceleration vector X-component km/s/s
+  X_DDOT:double;
+  /// Optional: Acceleration vector Y-component km/s/s
+  Y_DDOT:double;
+  /// Optional: Acceleration vector Z-component km/s/s
+  Z_DDOT:double;
+}
+
+/// Position/Velocity Covariance Matrix Line
+table covarianceMatrixLine {
+  /// Epoch
+  EPOCH:string;
+  /// Covariance matrix [1,1] km**2
+  CX_X:double;
+  /// Covariance matrix [2,1] km**2
+  CY_X:double;
+  /// Covariance matrix [2,2] km**2
+  CY_Y:double;
+  /// Covariance matrix [3,1] km**2
+  CZ_X:double;
+  /// Covariance matrix [3,2] km**2
+  CZ_Y:double;
+  /// Covariance matrix [3,3] km**2
+  CZ_Z:double;
+  /// Covariance matrix [4,1] km**2/s
+  CX_DOT_X:double;
+  /// Covariance matrix [4,2] km**2/s
+  CX_DOT_Y:double;
+  /// Covariance matrix [4,3] km**2/s
+  CX_DOT_Z:double;
+  /// Covariance matrix [4,4] km**2/s**2
+  CX_DOT_X_DOT:double;
+  /// Covariance matrix [5,1] km**2/s
+  CY_DOT_X:double;
+  /// Covariance matrix [5,2] km**2/s
+  CY_DOT_Y:double;
+  /// Covariance matrix [5,3] km**2/s
+  CY_DOT_Z:double;
+  /// Covariance matrix [5,4] km**2/s**2
+  CY_DOT_X_DOT:double;
+  /// Covariance matrix [5,5] km**2/s**2
+  CY_DOT_Y_DOT:double;
+  /// Covariance matrix [6,1] km**2/s
+  CZ_DOT_X:double;
+  /// Covariance matrix [6,2] km**2/s
+  CZ_DOT_Y:double;
+  /// Covariance matrix [6,3] km**2/s
+  CZ_DOT_Z:double;
+  /// Covariance matrix [6,4] km**2/s**2
+  CZ_DOT_X_DOT:double;
+  /// Covariance matrix [6,5] km**2/s**2
+  CZ_DOT_Y_DOT:double;
+  /// Covariance matrix [6,6] km**2/s**2
+  CZ_DOT_Z_DOT:double;
+}
+
+/// OEM Ephemeris Data Block
+table ephemerisDataBlock {
+  /// Plain-Text Comment
+  COMMENT:string;
+  /// Satellite name for the first object
+  OBJECT: CAT;
+  /// Origin of reference frame (EARTH, MARS, MOON, etc.)
+  CENTER_NAME:string;
+  /// Name of the reference frame (TEME, EME2000, etc.)
+  REFERENCE_FRAME:RFM;
+  /// Epoch of reference frame, if not intrinsic to the definition of the reference frame
+  REFERENCE_FRAME_EPOCH:string;
+  /// Reference frame for the covariance matrix
+  COV_REFERENCE_FRAME:RFM;
+  /// Time system used for the orbit state and covariance matrix. (UTC)
+  TIME_SYSTEM:timeSystem;
+  /// Start of TOTAL time span covered by ephemeris data and covariance data (ISO 8601)
+  START_TIME:string;
+  /// Optional start USEABLE time span covered by ephemeris data (ISO 8601)
+  USEABLE_START_TIME:string;
+  /// Optional end of USEABLE time span covered by ephemeris data (ISO 8601)
+  USEABLE_STOP_TIME:string;
+  /// End of TOTAL time span covered by ephemeris data and covariance data (ISO 8601)
+  STOP_TIME:string;
+  /// Step size in seconds separating the epochs of each ephemeris data row
+  STEP_SIZE:double;
+  /// Recommended interpolation method for ephemeris data (Hermite, Linear, Lagrange, etc.)
+  INTERPOLATION:string;
+  /// Recommended interpolation degree for ephemeris data
+  INTERPOLATION_DEGREE:uint;
+
+  /// Array of ephemeris data lines
+  EPHEMERIS_DATA_LINES:[ephemerisDataLine];
+  /// Array of covariance matrix lines
+  COVARIANCE_MATRIX_LINES:[covarianceMatrixLine];
+}
+
+/// Orbit Ephemeris Message
+table OEM {
+  /// OEM Header
+  /// Classification marking of the data in IC/CAPCO Portion-marked format.
+  CLASSIFICATION: string;
+  /// OEM Version
+  CCSDS_OEM_VERS:double;
+  /// Creation Date
+  CREATION_DATE:string;
+  /// Originator
+  ORIGINATOR:string;
+
+  /// Array of ephemeris data blocks
+  EPHEMERIS_DATA_BLOCK:[ephemerisDataBlock];
+}
+
+root_type OEM;
+file_identifier "$OEM";

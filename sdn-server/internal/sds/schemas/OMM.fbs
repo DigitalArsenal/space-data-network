@@ -1,0 +1,166 @@
+// Hash: 4052bd4e7b1e02b4ac22e3e908b4f71af8ff6849f6bde1a8d6f025d49ba8e2b3
+// Version: 1.0.5
+// -----------------------------------END_HEADER
+include "../RFM/main.fbs";
+include "../TIM/main.fbs";
+include "../MET/main.fbs";
+
+// Orbit Mean Elements Message (OMM)
+//
+// Orbit information may be exchanged between two participants by sending an orbital
+// state based on mean Keplerian elements for a specified epoch using an
+// Orbit Mean-Elements Message (OMM). The message recipient must use appropriate orbit
+// propagator algorithms in order to correctly propagate the OMM state to compute the orbit at
+// other desired epochs. 
+// Legacy format description can be found here.
+// CCSDS Reference documentation: 502x0b2c1e2.
+
+enum ephemerisType : byte {
+  /// Simplified General Perturbation Model
+  SGP,
+  /// Simplified General Perturbation Model 4
+  SGP4,
+  /// Simplified Deep Space Perturbation Model 4
+  SDP4,
+  /// Simplified General Perturbation Model 8
+  SGP8,
+  /// Simplified Deep Space Perturbation Model 8
+  SDP8
+}
+
+/// Orbit Mean Elements Message
+table OMM {
+  /// CCSDS OMM Version 
+  CCSDS_OMM_VERS:double;
+  /// Creation Date (ISO 8601 UTC format) 
+  CREATION_DATE:string;
+  /// Originator 
+  ORIGINATOR:string;
+
+  /// Satellite Name(s)
+  OBJECT_NAME:string;
+  /// International Designator (YYYY-NNNAAA)
+  OBJECT_ID:string;
+  /// Center Name (e.g. EARTH, MARS)
+  CENTER_NAME:string;
+  /// Reference Frame
+  /// Typically TEMEOFDATE
+  REFERENCE_FRAME:RFM;
+  /// Reference Frame Epoch (ISO 8601 UTC format)
+  REFERENCE_FRAME_EPOCH:string;
+  /// Time System [M, UTC]
+  TIME_SYSTEM:timeSystem = UTC;
+  /// Mean Element Theory
+  MEAN_ELEMENT_THEORY:meanElementTheory = SGP4;
+
+  /// COMMENT (O)
+  COMMENT:string;
+  /// EPOCH of Mean Keplerian elements (ISO 8601 UTC format)
+  EPOCH:string;
+  /// Semi-major axis in km or Mean Motion in rev/day
+  SEMI_MAJOR_AXIS:double;
+  /// Mean motion in rev/day if MEAN_ELEMENT_THEORY=SGP/SGP4 else unused
+  MEAN_MOTION:double;
+  /// Eccentricity (unitless)
+  ECCENTRICITY:double;
+  /// Inclination in degrees
+  INCLINATION:double;
+  /// RA_OF_ASC_NODE in degrees
+  RA_OF_ASC_NODE:double;
+  /// ARG_OF_PERICENTER in degrees
+  ARG_OF_PERICENTER:double;
+  /// MEAN_ANOMALY in degrees
+  MEAN_ANOMALY:double;
+  /// GM in km**3/s**2
+  GM:double;
+  
+  /// MASS in kg
+  MASS:double;
+  /// SOLAR_RAD_AREA in m**2
+  SOLAR_RAD_AREA:double;
+  /// SOLAR_RAD_COEFF (unitless)
+  SOLAR_RAD_COEFF:double;
+  /// DRAG_AREA in m**2
+  DRAG_AREA:double;
+  /// DRAG_COEFF (unitless)
+  DRAG_COEFF:double;
+
+  /// TLE Related Parameters (Only if MEAN_ELEMENT_THEORY=SGP/SGP4)
+  /// EPHEMERIS_TYPE Default=0
+  EPHEMERIS_TYPE:ephemerisType = SGP4;
+  /// CLASSIFICATION_TYPE Default=U
+  CLASSIFICATION_TYPE:string;
+  /// NORAD_CAT_ID (integer) [O if SGP/SGP4]
+  NORAD_CAT_ID:uint32;
+  /// ELEMENT_SET_NO [O if SGP/SGP4]
+  ELEMENT_SET_NO:uint32;
+  /// REV_AT_EPOCH [O if SGP/SGP4]
+  REV_AT_EPOCH:double;
+  /// BSTAR in 1/Earth radii or BTERM in m²/kg depending on MEAN_ELEMENT_THEORY [C]
+  BSTAR:double;
+  /// MEAN_MOTION_DOT in rev/day² [C if SGP or PPT3]
+  MEAN_MOTION_DOT:double;
+  /// MEAN_MOTION_DDOT in rev/day³ if SGP/PPT3 or AGOM in m²/kg if SGP4-XP [C]
+  MEAN_MOTION_DDOT:double;
+
+  /// Position/Velocity Covariance Matrix (6x6 Lower Triangular) [C if any covariance provided]
+  /// COV_REF_FRAME reference frame for covariance [C if covariance given]
+  /// Typically RSW
+  COV_REFERENCE_FRAME:RFM;
+  /// CX_X [km**2]
+  CX_X:double;
+  /// CY_X [km**2]
+  CY_X:double;
+  /// CY_Y [km**2]
+  CY_Y:double;
+  /// CZ_X [km**2]
+  CZ_X:double;
+  /// CZ_Y [km**2]
+  CZ_Y:double;
+  /// CZ_Z [km**2]
+  CZ_Z:double;
+  /// CX_DOT_X [km**2/s]
+  CX_DOT_X:double;
+  /// CX_DOT_Y [km**2/s]
+  CX_DOT_Y:double;
+  /// CX_DOT_Z [km**2/s]
+  CX_DOT_Z:double;
+  /// CX_DOT_X_DOT [km**2/s**2]
+  CX_DOT_X_DOT:double;
+  /// CY_DOT_X [km**2/s]
+  CY_DOT_X:double;
+  /// CY_DOT_Y [km**2/s]
+  CY_DOT_Y:double;
+  /// CY_DOT_Z [km**2/s]
+  CY_DOT_Z:double;
+  /// CY_DOT_X_DOT [km**2/s**2]
+  CY_DOT_X_DOT:double;
+  /// CY_DOT_Y_DOT [km**2/s**2]
+  CY_DOT_Y_DOT:double;
+  /// CZ_DOT_X [km**2/s]
+  CZ_DOT_X:double;
+  /// CZ_DOT_Y [km**2/s]
+  CZ_DOT_Y:double;
+  /// CZ_DOT_Z [km**2/s]
+  CZ_DOT_Z:double;
+  /// CZ_DOT_X_DOT [km**2/s**2]
+  CZ_DOT_X_DOT:double;
+  /// CZ_DOT_Y_DOT [km**2/s**2]
+  CZ_DOT_Y_DOT:double;
+  /// CZ_DOT_Z_DOT [km**2/s**2]
+  CZ_DOT_Z_DOT:double;
+
+  /// USER_DEFINED_BIP_0044_TYPE [O, units per ICD]
+  USER_DEFINED_BIP_0044_TYPE:uint;
+  /// USER_DEFINED_OBJECT_DESIGNATOR [O, units per ICD]
+  USER_DEFINED_OBJECT_DESIGNATOR:string;
+  /// USER_DEFINED_EARTH_MODEL [O, units per ICD]
+  USER_DEFINED_EARTH_MODEL:string;
+  /// USER_DEFINED_EPOCH_TIMESTAMP [O, units per ICD]
+  USER_DEFINED_EPOCH_TIMESTAMP: double;
+  /// USER_DEFINED_MICROSECONDS [O, units per ICD]
+  USER_DEFINED_MICROSECONDS: double;
+}
+
+root_type OMM;
+file_identifier "$OMM";

@@ -3,27 +3,38 @@
  */
 
 export const SUPPORTED_SCHEMAS = [
-  'EPM.fbs',   // Entity Profile Manifest
-  'PNM.fbs',   // Peer Network Manifest
-  'OMM.fbs',   // Orbit Mean-Elements Message
-  'OEM.fbs',   // Orbit Ephemeris Message
-  'CDM.fbs',   // Conjunction Data Message
-  'CAT.fbs',   // Catalog
-  'CSM.fbs',   // Conjunction Summary Message
-  'LDM.fbs',   // Launch Data Message
-  'IDM.fbs',   // Initial Data Message
-  'PLD.fbs',   // Payload
+  'ATM.fbs',   // Attitude Message
   'BOV.fbs',   // Body Orientation and Velocity
+  'CAT.fbs',   // Catalog
+  'CDM.fbs',   // Conjunction Data Message
+  'CRM.fbs',   // Collision Risk Message
+  'CSM.fbs',   // Conjunction Summary Message
+  'CTR.fbs',   // Contact Report
+  'EME.fbs',   // Electromagnetic Emissions
   'EOO.fbs',   // Earth Orientation
-  'RFM.fbs',   // Reference Frame Message
-  'TDM.fbs',   // Tracking Data Message
-  'AEM.fbs',   // Attitude Ephemeris Message
-  'APM.fbs',   // Attitude Parameter Message
-  'OPM.fbs',   // Orbit Parameter Message
+  'EOP.fbs',   // Earth Orientation Parameters
+  'EPM.fbs',   // Entity Profile Manifest
+  'HYP.fbs',   // Hyperbolic Orbit
+  'IDM.fbs',   // Initial Data Message
+  'LCC.fbs',   // Launch Collision Corridor
+  'LDM.fbs',   // Launch Data Message
+  'MET.fbs',   // Meteorological Data
   'MPE.fbs',   // Maneuver Planning Ephemeris
   'OCM.fbs',   // Orbit Comprehensive Message
-  'RDM.fbs',   // Re-entry Data Message
+  'OEM.fbs',   // Orbit Ephemeris Message
+  'OMM.fbs',   // Orbit Mean-Elements Message
+  'OSM.fbs',   // Orbit State Message
+  'PLD.fbs',   // Payload
+  'PNM.fbs',   // Peer Network Manifest
+  'PRG.fbs',   // Propagation Settings
+  'REC.fbs',   // Records
+  'RFM.fbs',   // Reference Frame Message
+  'ROC.fbs',   // Re-entry Operations Corridor
+  'SCM.fbs',   // Spacecraft Message
   'SIT.fbs',   // Satellite Impact Table
+  'TDM.fbs',   // Tracking Data Message
+  'TIM.fbs',   // Time Message
+  'VCM.fbs',   // Vector Covariance Message
 ] as const;
 
 export type SchemaName = typeof SUPPORTED_SCHEMAS[number];
@@ -32,54 +43,76 @@ export type SchemaName = typeof SUPPORTED_SCHEMAS[number];
  * Schema descriptions
  */
 export const SCHEMA_DESCRIPTIONS: Record<SchemaName, string> = {
-  'EPM.fbs': 'Entity Profile Manifest - Organization identity and contact information',
-  'PNM.fbs': 'Peer Network Manifest - Peer identity and network capabilities',
-  'OMM.fbs': 'Orbit Mean-Elements Message - Satellite orbital parameters',
-  'OEM.fbs': 'Orbit Ephemeris Message - Time-series position/velocity data',
-  'CDM.fbs': 'Conjunction Data Message - Close approach warnings',
+  'ATM.fbs': 'Attitude Message - Spacecraft attitude information',
+  'BOV.fbs': 'Body Orientation and Velocity - Attitude and angular velocity',
   'CAT.fbs': 'Catalog - Space object catalog entries',
+  'CDM.fbs': 'Conjunction Data Message - Close approach warnings',
+  'CRM.fbs': 'Collision Risk Message - Collision probability assessments',
   'CSM.fbs': 'Conjunction Summary Message - Brief conjunction events',
-  'LDM.fbs': 'Launch Data Message - Launch event information',
-  'IDM.fbs': 'Initial Data Message - Initial orbit determination',
-  'PLD.fbs': 'Payload - Spacecraft payload information',
-  'BOV.fbs': 'Body Orientation and Velocity - Attitude data',
+  'CTR.fbs': 'Contact Report - Communication contact reports',
+  'EME.fbs': 'Electromagnetic Emissions - RF and electromagnetic data',
   'EOO.fbs': 'Earth Orientation - Earth orientation parameters',
-  'RFM.fbs': 'Reference Frame Message - Coordinate frame definitions',
-  'TDM.fbs': 'Tracking Data Message - Radar/optical observations',
-  'AEM.fbs': 'Attitude Ephemeris Message - Time-series attitude data',
-  'APM.fbs': 'Attitude Parameter Message - Attitude state',
-  'OPM.fbs': 'Orbit Parameter Message - Orbit state',
+  'EOP.fbs': 'Earth Orientation Parameters - Polar motion and UT1-UTC',
+  'EPM.fbs': 'Entity Profile Manifest - Organization identity and contact information',
+  'HYP.fbs': 'Hyperbolic Orbit - Hyperbolic trajectory parameters',
+  'IDM.fbs': 'Initial Data Message - Initial orbit determination',
+  'LCC.fbs': 'Launch Collision Corridor - Launch trajectory corridors',
+  'LDM.fbs': 'Launch Data Message - Launch event information',
+  'MET.fbs': 'Meteorological Data - Atmospheric and weather data',
   'MPE.fbs': 'Maneuver Planning Ephemeris - Planned maneuvers',
   'OCM.fbs': 'Orbit Comprehensive Message - Full orbit data',
-  'RDM.fbs': 'Re-entry Data Message - Reentry predictions',
+  'OEM.fbs': 'Orbit Ephemeris Message - Time-series position/velocity data',
+  'OMM.fbs': 'Orbit Mean-Elements Message - Satellite orbital parameters',
+  'OSM.fbs': 'Orbit State Message - Orbit state vectors',
+  'PLD.fbs': 'Payload - Spacecraft payload information',
+  'PNM.fbs': 'Peer Network Manifest - Peer identity and network capabilities',
+  'PRG.fbs': 'Propagation Settings - Orbit propagation parameters',
+  'REC.fbs': 'Records - Data records and observations',
+  'RFM.fbs': 'Reference Frame Message - Coordinate frame definitions',
+  'ROC.fbs': 'Re-entry Operations Corridor - Re-entry trajectory corridors',
+  'SCM.fbs': 'Spacecraft Message - Spacecraft characteristics',
   'SIT.fbs': 'Satellite Impact Table - Impact assessments',
+  'TDM.fbs': 'Tracking Data Message - Radar/optical observations',
+  'TIM.fbs': 'Time Message - Time synchronization data',
+  'VCM.fbs': 'Vector Covariance Message - State vector with covariance',
 };
 
 /**
  * Bundled schema content (populated at build time)
  */
 export const SDS_SCHEMAS: Record<SchemaName, string> = {
-  'EPM.fbs': '',
-  'PNM.fbs': '',
-  'OMM.fbs': '',
-  'OEM.fbs': '',
-  'CDM.fbs': '',
-  'CAT.fbs': '',
-  'CSM.fbs': '',
-  'LDM.fbs': '',
-  'IDM.fbs': '',
-  'PLD.fbs': '',
+  'ATM.fbs': '',
   'BOV.fbs': '',
+  'CAT.fbs': '',
+  'CDM.fbs': '',
+  'CRM.fbs': '',
+  'CSM.fbs': '',
+  'CTR.fbs': '',
+  'EME.fbs': '',
   'EOO.fbs': '',
-  'RFM.fbs': '',
-  'TDM.fbs': '',
-  'AEM.fbs': '',
-  'APM.fbs': '',
-  'OPM.fbs': '',
+  'EOP.fbs': '',
+  'EPM.fbs': '',
+  'HYP.fbs': '',
+  'IDM.fbs': '',
+  'LCC.fbs': '',
+  'LDM.fbs': '',
+  'MET.fbs': '',
   'MPE.fbs': '',
   'OCM.fbs': '',
-  'RDM.fbs': '',
+  'OEM.fbs': '',
+  'OMM.fbs': '',
+  'OSM.fbs': '',
+  'PLD.fbs': '',
+  'PNM.fbs': '',
+  'PRG.fbs': '',
+  'REC.fbs': '',
+  'RFM.fbs': '',
+  'ROC.fbs': '',
+  'SCM.fbs': '',
   'SIT.fbs': '',
+  'TDM.fbs': '',
+  'TIM.fbs': '',
+  'VCM.fbs': '',
 };
 
 /**

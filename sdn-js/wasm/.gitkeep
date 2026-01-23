@@ -1,0 +1,2 @@
+# Keep this directory for WASM files
+# Actual .wasm files are generated at build time
