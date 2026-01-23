@@ -4,9 +4,12 @@ export default defineConfig({
   title: 'Space Data Network',
   description: 'Decentralized peer-to-peer network for exchanging standardized space data',
 
+  // Force dark mode only
+  appearance: 'dark',
+
   head: [
     ['link', { rel: 'icon', href: '/favicon.ico' }],
-    ['meta', { name: 'theme-color', content: '#1a1a2e' }],
+    ['meta', { name: 'theme-color', content: '#000000' }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:title', content: 'Space Data Network' }],
     ['meta', { property: 'og:description', content: 'Decentralized P2P network for space data exchange' }],
@@ -17,6 +20,7 @@ export default defineConfig({
 
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
+      { text: 'Security', link: '/guide/security-encryption' },
       { text: 'Reference', link: '/reference/schemas' },
       { text: 'API', link: '/api/server' },
       { text: 'Downloads', link: '/downloads' },
@@ -64,6 +68,15 @@ export default defineConfig({
             { text: 'Pipeline Overview', link: '/guide/ingestion-overview' },
             { text: 'WASM Plugins', link: '/guide/ingestion-plugins' },
             { text: 'Custom Converters', link: '/guide/ingestion-custom' },
+          ]
+        },
+        {
+          text: 'Security',
+          items: [
+            { text: 'Transport Encryption', link: '/guide/security-encryption' },
+            { text: 'Encryption at Rest', link: '/guide/encryption-at-rest' },
+            { text: 'Schemas & Versioning', link: '/guide/schemas-versioning' },
+            { text: 'Digital Identity', link: '/guide/digital-identity' },
           ]
         }
       ],

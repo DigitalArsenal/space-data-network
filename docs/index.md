@@ -24,12 +24,12 @@ features:
     details: Leverages battle-tested IPFS/libp2p networking—DHT discovery, GossipSub messaging, and circuit relay for browsers.
   - title: 32 Space Data Standards
     details: Full support for all Space Data Standards schemas including OMM, CDM, EPM, TDM, and more.
-  - title: Space Traffic Management
-    details: Purpose-built for STM/SSA—share conjunction warnings, orbital data, and maneuver plans globally.
-  - title: Cryptographic Security
-    details: All data is signed with Ed25519. Verify authenticity and integrity automatically.
-  - title: Real-time PubSub
-    details: Subscribe to data streams by type. Receive updates the moment they're published across the network.
+  - title: Transport Encryption
+    details: All connections secured with Noise Protocol Framework—forward secrecy and mutual authentication built in.
+  - title: Encryption at Rest
+    details: WASM-powered AES-256-GCM encryption protects stored data. Argon2 key derivation for password-based security.
+  - title: Digital Identity
+    details: Ed25519 cryptographic identities with vCard-style Entity Profile Manifests for verified organizational data.
   - title: Cross-Platform
     details: Run full nodes on servers, edge relays on embedded devices, or connect directly from browsers.
 ---
