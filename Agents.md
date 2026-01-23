@@ -1185,7 +1185,7 @@ aws cloudfront create-invalidation \
 - [x] Subresource Integrity (SRI) hash generation
 - [x] WASM signature verification in JS loader (SRI hash verification)
 - [x] Fallback relay list for offline/failure scenarios
-- [ ] Metrics for relay discovery and WASM load success rates
+- [x] Metrics for relay discovery and WASM load success rates
 
 ---
 

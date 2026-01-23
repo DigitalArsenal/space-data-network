@@ -29,6 +29,58 @@ let edgeRelaysModule: EdgeRelaysModule | null = null;
 let cachedRelays: string[] | null = null;
 let wasmVerified = false;
 
+/**
+ * Metrics for relay discovery and WASM loading
+ */
+export interface DiscoveryMetrics {
+  wasmLoadAttempts: number;
+  wasmLoadSuccesses: number;
+  wasmLoadFailures: number;
+  wasmVerificationSuccesses: number;
+  wasmVerificationFailures: number;
+  relaysDiscovered: number;
+  fallbacksUsed: number;
+  lastLoadTime: number | null;
+  lastLoadDuration: number | null;
+  lastError: string | null;
+}
+
+const metrics: DiscoveryMetrics = {
+  wasmLoadAttempts: 0,
+  wasmLoadSuccesses: 0,
+  wasmLoadFailures: 0,
+  wasmVerificationSuccesses: 0,
+  wasmVerificationFailures: 0,
+  relaysDiscovered: 0,
+  fallbacksUsed: 0,
+  lastLoadTime: null,
+  lastLoadDuration: null,
+  lastError: null,
+};
+
+/**
+ * Get current discovery metrics
+ */
+export function getDiscoveryMetrics(): Readonly<DiscoveryMetrics> {
+  return { ...metrics };
+}
+
+/**
+ * Reset discovery metrics (useful for testing)
+ */
+export function resetDiscoveryMetrics(): void {
+  metrics.wasmLoadAttempts = 0;
+  metrics.wasmLoadSuccesses = 0;
+  metrics.wasmLoadFailures = 0;
+  metrics.wasmVerificationSuccesses = 0;
+  metrics.wasmVerificationFailures = 0;
+  metrics.relaysDiscovered = 0;
+  metrics.fallbacksUsed = 0;
+  metrics.lastLoadTime = null;
+  metrics.lastLoadDuration = null;
+  metrics.lastError = null;
+}
+
 interface EdgeRelaysModule {
   ready: Promise<void>;
   _get_edge_relays: () => number;
@@ -50,6 +102,9 @@ export async function loadEdgeRelays(): Promise<string[]> {
     return cachedRelays;
   }
 
+  const startTime = Date.now();
+  metrics.wasmLoadAttempts++;
+
   try {
     // Try to load WASM module dynamically
     if (!edgeRelaysModule) {
@@ -64,14 +119,24 @@ export async function loadEdgeRelays(): Promise<string[]> {
       const relaysJson = edgeRelaysModule.UTF8ToString(relaysPtr);
 
       cachedRelays = JSON.parse(relaysJson);
+      metrics.wasmLoadSuccesses++;
+      metrics.relaysDiscovered = cachedRelays.length;
+      metrics.lastLoadTime = Date.now();
+      metrics.lastLoadDuration = Date.now() - startTime;
       return cachedRelays!;
     }
   } catch (err) {
+    metrics.wasmLoadFailures++;
+    metrics.lastError = err instanceof Error ? err.message : String(err);
     console.warn('Failed to load encrypted edge relays, using defaults:', err);
   }
 
   // Fall back to default relays
+  metrics.fallbacksUsed++;
   cachedRelays = DEFAULT_EDGE_RELAYS;
+  metrics.relaysDiscovered = cachedRelays.length;
+  metrics.lastLoadTime = Date.now();
+  metrics.lastLoadDuration = Date.now() - startTime;
   return cachedRelays;
 }
 
@@ -171,9 +236,11 @@ async function loadEdgeRelaysWasm(options: WasmLoadOptions = {}): Promise<EdgeRe
           if (expectedSri) {
             const isValid = await verifySri(wasmBytes, expectedSri);
             if (!isValid) {
+              metrics.wasmVerificationFailures++;
               console.error(`WASM from ${path} failed integrity check`);
               continue;
             }
+            metrics.wasmVerificationSuccesses++;
             wasmVerified = true;
           } else {
             console.warn(`No SRI hash available for ${path}, loading without verification`);
