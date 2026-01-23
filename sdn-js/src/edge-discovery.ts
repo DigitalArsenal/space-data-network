@@ -118,9 +118,10 @@ export async function loadEdgeRelays(): Promise<string[]> {
       const relaysPtr = edgeRelaysModule._get_edge_relays();
       const relaysJson = edgeRelaysModule.UTF8ToString(relaysPtr);
 
-      cachedRelays = JSON.parse(relaysJson);
+      const parsedRelays: string[] = JSON.parse(relaysJson);
+      cachedRelays = parsedRelays;
       metrics.wasmLoadSuccesses++;
-      metrics.relaysDiscovered = cachedRelays.length;
+      metrics.relaysDiscovered = parsedRelays.length;
       metrics.lastLoadTime = Date.now();
       metrics.lastLoadDuration = Date.now() - startTime;
       return cachedRelays!;
