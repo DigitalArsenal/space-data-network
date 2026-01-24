@@ -27,7 +27,7 @@ As space becomes increasingly congested with satellites, debris, and new actors,
 
 Space Data Network enables real-time sharing of space situational awareness data between organizations, satellites, and ground stations. Built on [IPFS](https://ipfs.tech)/[libp2p](https://libp2p.io) with [FlatBuffers](https://google.github.io/flatbuffers/) serialization, SDN provides:
 
-- **Standardized Data Exchange** - All 32 Space Data Standards schemas supported
+- **Standardized Data Exchange** - All Space Data Standards schemas supported
 - **Decentralized Architecture** - No central server required
 - **Real-time PubSub** - Subscribe to data streams by type (OMM, CDM, EPM, etc.)
 - **Cryptographic Verification** - Ed25519 signatures on all data
@@ -190,7 +190,7 @@ SDN extends IPFS with space-specific optimizations:
 
 ## Supported Standards
 
-SDN supports all 32 Space Data Standards:
+SDN supports all [Space Data Standards](https://spacedatastandards.org):
 
 | Category | Standards |
 |----------|-----------|
@@ -363,12 +363,15 @@ cd sdn-js && npm test
 
 ## Documentation
 
-- [Getting Started](./docs/getting-started.md)
-- [Full Node Setup](./docs/full-node.md)
-- [Edge Relay Deployment](./docs/edge-relay.md)
-- [JavaScript SDK Reference](./docs/js-sdk.md)
-- [Schema Reference](./docs/schemas.md)
-- [API Documentation](./docs/api.md)
+Full documentation is available at [docs.spacedatanetwork.org](https://docs.spacedatanetwork.org) or locally at [docs/docs.html](./docs/docs.html).
+
+**Topics covered:**
+- Getting Started & Quick Start
+- Full Node Setup & Configuration
+- Edge Relay Deployment
+- JavaScript SDK Reference
+- REST & WebSocket API
+- Schema Reference (all Space Data Standards)
 
 ---
 

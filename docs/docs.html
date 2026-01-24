@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Space Data Network Documentation - Guides for running full nodes, edge relays, using the JavaScript SDK, and API reference.">
+  <meta name="theme-color" content="#000000">
+  <title>Documentation - Space Data Network</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #000000;
+      --text-primary: #F5F5F7;
+      --text-secondary: rgba(255, 255, 255, 0.8);
+      --text-muted: rgba(134, 134, 139, 1.0);
+      --ui-bg: rgba(42, 42, 45, 0.72);
+      --ui-hover: rgba(66, 66, 69, 0.72);
+      --ui-border: rgba(134, 134, 139, 0.3);
+      --nav-bg: rgba(22, 22, 23, 0.95);
+      --code-bg: rgba(30, 30, 35, 0.9);
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      --radius: 12px;
+      --sidebar-width: 260px;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: #60a5fa;
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    /* Navigation */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 52px;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .nav-content {
+      max-width: 1400px;
+      margin: 0 auto;
+      height: 100%;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text-primary);
+    }
+
+    .logo svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 24px;
+    }
+
+    .nav-links a {
+      color: var(--text-secondary);
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .nav-links a:hover {
+      color: var(--text-primary);
+      text-decoration: none;
+    }
+
+    /* Layout */
+    .layout {
+      display: flex;
+      margin-top: 52px;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      position: fixed;
+      top: 52px;
+      left: 0;
+      width: var(--sidebar-width);
+      height: calc(100vh - 52px);
+      overflow-y: auto;
+      padding: 24px;
+      background: rgba(15, 15, 18, 0.95);
+      border-right: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .sidebar-section {
+      margin-bottom: 24px;
+    }
+
+    .sidebar-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    .sidebar-links {
+      list-style: none;
+    }
+
+    .sidebar-links li {
+      margin-bottom: 4px;
+    }
+
+    .sidebar-links a {
+      display: block;
+      padding: 8px 12px;
+      font-size: 14px;
+      color: var(--text-secondary);
+      border-radius: 6px;
+      transition: all 0.15s;
+    }
+
+    .sidebar-links a:hover {
+      background: var(--ui-bg);
+      color: var(--text-primary);
+      text-decoration: none;
+    }
+
+    .sidebar-links a.active {
+      background: rgba(96, 165, 250, 0.15);
+      color: #60a5fa;
+    }
+
+    /* Main Content */
+    .main {
+      margin-left: var(--sidebar-width);
+      flex: 1;
+      padding: 48px;
+      max-width: 900px;
+    }
+
+    /* Typography */
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    h2 {
+      font-size: 1.75rem;
+      font-weight: 600;
+      margin-top: 48px;
+      margin-bottom: 16px;
+      padding-top: 24px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      letter-spacing: -0.01em;
+    }
+
+    h2:first-of-type {
+      margin-top: 32px;
+      border-top: none;
+      padding-top: 0;
+    }
+
+    h3 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 12px;
+    }
+
+    h4 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-top: 24px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin-bottom: 16px;
+      color: var(--text-secondary);
+    }
+
+    .lead {
+      font-size: 1.2rem;
+      color: var(--text-muted);
+      margin-bottom: 32px;
+    }
+
+    /* Code blocks */
+    pre {
+      background: var(--code-bg);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      overflow-x: auto;
+      margin-bottom: 24px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.9em;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    pre code {
+      background: none;
+      padding: 0;
+      font-size: inherit;
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 24px;
+      font-size: 14px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    th {
+      font-weight: 600;
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    td {
+      color: var(--text-secondary);
+    }
+
+    /* Lists */
+    ul, ol {
+      margin-bottom: 16px;
+      padding-left: 24px;
+      color: var(--text-secondary);
+    }
+
+    li {
+      margin-bottom: 8px;
+    }
+
+    /* Callouts */
+    .callout {
+      padding: 16px 20px;
+      border-radius: var(--radius);
+      margin-bottom: 24px;
+      border: 1px solid;
+    }
+
+    .callout-info {
+      background: rgba(96, 165, 250, 0.1);
+      border-color: rgba(96, 165, 250, 0.3);
+    }
+
+    .callout-warning {
+      background: rgba(251, 191, 36, 0.1);
+      border-color: rgba(251, 191, 36, 0.3);
+    }
+
+    .callout-title {
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 8px;
+      color: var(--text-primary);
+    }
+
+    .callout p {
+      margin: 0;
+      font-size: 14px;
+    }
+
+    /* Section anchors */
+    .doc-section {
+      scroll-margin-top: 80px;
+    }
+
+    /* Responsive */
+    @media (max-width: 1024px) {
+      .sidebar {
+        display: none;
+      }
+      .main {
+        margin-left: 0;
+        padding: 24px;
+      }
+    }
+
+    /* Mobile nav toggle */
+    .mobile-menu-btn {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text-primary);
+      cursor: pointer;
+      padding: 8px;
+    }
+
+    @media (max-width: 1024px) {
+      .mobile-menu-btn {
+        display: block;
+      }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="nav-content">
+      <a href="index.html" class="logo">
+        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="4">
+          <circle cx="50" cy="50" r="45"/>
+          <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2"/>
+          <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(60 50 50)"/>
+          <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(120 50 50)"/>
+          <circle cx="50" cy="50" r="8" fill="currentColor" stroke="none"/>
+        </svg>
+        <span>Space Data Network</span>
+      </a>
+      <div class="nav-links">
+        <a href="index.html">Home</a>
+        <a href="index.html#technology">Technology</a>
+        <a href="index.html#architecture">Architecture</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-title">Getting Started</div>
+        <ul class="sidebar-links">
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#quick-start">Quick Start</a></li>
+          <li><a href="#installation">Installation</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">Node Setup</div>
+        <ul class="sidebar-links">
+          <li><a href="#full-node">Full Node</a></li>
+          <li><a href="#edge-relay">Edge Relay</a></li>
+          <li><a href="#docker">Docker Deployment</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">JavaScript SDK</div>
+        <ul class="sidebar-links">
+          <li><a href="#sdk-install">Installation</a></li>
+          <li><a href="#sdk-usage">Usage</a></li>
+          <li><a href="#sdk-identity">Identity</a></li>
+          <li><a href="#sdk-astrodynamics">Astrodynamics</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">API Reference</div>
+        <ul class="sidebar-links">
+          <li><a href="#api-rest">REST API</a></li>
+          <li><a href="#api-websocket">WebSocket</a></li>
+          <li><a href="#api-errors">Errors</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">Schemas</div>
+        <ul class="sidebar-links">
+          <li><a href="#schemas-overview">Overview</a></li>
+          <li><a href="#schemas-orbit">Orbit Schemas</a></li>
+          <li><a href="#schemas-conjunction">Conjunction Schemas</a></li>
+          <li><a href="#schemas-entity">Entity Schemas</a></li>
+        </ul>
+      </div>
+    </aside>
+
+    <main class="main">
+      <h1>Documentation</h1>
+      <p class="lead">Complete guides for running SDN nodes, using the JavaScript SDK, and integrating with the API.</p>
+
+      <!-- Getting Started -->
+      <section id="overview" class="doc-section">
+        <h2>Overview</h2>
+        <p>Space Data Network (SDN) is a decentralized peer-to-peer network for exchanging standardized space situational awareness data. Built on libp2p with FlatBuffers serialization, SDN enables real-time sharing of orbital data, conjunction warnings, and tracking information.</p>
+
+        <h3>Network Components</h3>
+        <table>
+          <thead>
+            <tr><th>Component</th><th>Description</th><th>Use Case</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Full Node</strong></td><td>Server-side Go application</td><td>Infrastructure providers, relay operators</td></tr>
+            <tr><td><strong>Edge Relay</strong></td><td>WebSocket bridge for browsers</td><td>Connecting browser clients to the network</td></tr>
+            <tr><td><strong>JavaScript SDK</strong></td><td>Browser/Node.js client library</td><td>Web applications, desktop apps</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="quick-start" class="doc-section">
+        <h2>Quick Start</h2>
+
+        <h3>Browser (JavaScript)</h3>
+        <pre><code>import { SDNNode } from '@spacedatanetwork/sdn-js';
+
+const node = new SDNNode();
+await node.start();
+
+// Subscribe to Orbital Mean-Elements Messages
+node.subscribe('OMM', (data, peerId) => {
+  console.log(`Received OMM from ${peerId}:`, data);
+});
+
+// Publish data
+await node.publish('OMM', {
+  OBJECT_NAME: 'ISS (ZARYA)',
+  OBJECT_ID: '1998-067A',
+  EPOCH: '2025-01-24T12:00:00.000Z',
+  MEAN_MOTION: 15.5,
+  ECCENTRICITY: 0.0001,
+  INCLINATION: 51.6,
+  RA_OF_ASC_NODE: 200.0,
+  ARG_OF_PERICENTER: 100.0,
+  MEAN_ANOMALY: 50.0
+});</code></pre>
+
+        <h3>Server (Go)</h3>
+        <pre><code># Initialize configuration
+./spacedatanetwork init
+
+# Start the node
+./spacedatanetwork daemon</code></pre>
+      </section>
+
+      <section id="installation" class="doc-section">
+        <h2>Installation</h2>
+
+        <h3>JavaScript SDK</h3>
+        <pre><code># npm
+npm install @spacedatanetwork/sdn-js
+
+# yarn
+yarn add @spacedatanetwork/sdn-js</code></pre>
+
+        <h3>Server Binary</h3>
+        <pre><code># Linux amd64
+curl -Lo spacedatanetwork \
+  https://github.com/DigitalArsenal/go-space-data-network/releases/latest/download/spacedatanetwork-linux-amd64
+
+# macOS arm64 (Apple Silicon)
+curl -Lo spacedatanetwork \
+  https://github.com/DigitalArsenal/go-space-data-network/releases/latest/download/spacedatanetwork-darwin-arm64
+
+chmod +x spacedatanetwork</code></pre>
+      </section>
+
+      <!-- Full Node -->
+      <section id="full-node" class="doc-section">
+        <h2>Full Node Setup</h2>
+        <p>Run a full SDN node to contribute to the network's routing, relay traffic for firewalled peers, and store pinned content.</p>
+
+        <h3>Requirements</h3>
+        <ul>
+          <li><strong>Public IP address</strong> - Required for other peers to connect directly</li>
+          <li><strong>Open ports:</strong> 4001/tcp (libp2p), 4001/udp (QUIC), 8080/tcp (HTTP API)</li>
+          <li><strong>Storage:</strong> Minimum 1GB recommended</li>
+          <li><strong>Memory:</strong> 512MB minimum, 2GB+ for busy nodes</li>
+        </ul>
+
+        <h3>Configuration</h3>
+        <pre><code># Initialize
+./spacedatanetwork init</code></pre>
+
+        <p>This creates <code>~/.spacedatanetwork/</code> with:</p>
+        <ul>
+          <li><code>config.json</code> - Node configuration</li>
+          <li><code>identity.key</code> - Ed25519 private key (keep this safe!)</li>
+          <li><code>data/</code> - SQLite database and pinned content</li>
+        </ul>
+
+        <h3>Configuration File</h3>
+        <pre><code>{
+  "listenAddresses": [
+    "/ip4/0.0.0.0/tcp/4001",
+    "/ip4/0.0.0.0/udp/4001/quic-v1"
+  ],
+  "announceAddresses": [
+    "/ip4/YOUR_PUBLIC_IP/tcp/4001",
+    "/ip4/YOUR_PUBLIC_IP/udp/4001/quic-v1"
+  ],
+  "bootstrapPeers": [
+    "/dnsaddr/bootstrap.spacedatanetwork.org"
+  ],
+  "relay": {
+    "enabled": true,
+    "hop": true,
+    "maxCircuits": 100
+  },
+  "dht": {
+    "mode": "server"
+  },
+  "api": {
+    "address": "127.0.0.1:8080"
+  }
+}</code></pre>
+
+        <h3>Running as a Service</h3>
+        <p>Create <code>/etc/systemd/system/spacedatanetwork.service</code>:</p>
+        <pre><code>[Unit]
+Description=Space Data Network Node
+After=network.target
+
+[Service]
+Type=simple
+User=sdn
+ExecStart=/usr/local/bin/spacedatanetwork daemon
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+
+        <pre><code>sudo systemctl enable spacedatanetwork
+sudo systemctl start spacedatanetwork</code></pre>
+      </section>
+
+      <!-- Edge Relay -->
+      <section id="edge-relay" class="doc-section">
+        <h2>Edge Relay Deployment</h2>
+        <p>Edge relays bridge browser clients (which can only use WebSocket/WebRTC) to the full libp2p network.</p>
+
+        <div class="callout callout-info">
+          <div class="callout-title">What is an Edge Relay?</div>
+          <p>Edge relays accept WebSocket connections from browsers, translate to libp2p protocols, participate in GossipSub, and forward messages bidirectionally.</p>
+        </div>
+
+        <h3>Command Line Options</h3>
+        <table>
+          <thead>
+            <tr><th>Option</th><th>Default</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>--listen</code></td><td>:8080</td><td>HTTP/WebSocket listen address</td></tr>
+            <tr><td><code>--ws-path</code></td><td>/ws</td><td>WebSocket endpoint path</td></tr>
+            <tr><td><code>--max-connections</code></td><td>500</td><td>Maximum concurrent WebSocket connections</td></tr>
+            <tr><td><code>--cors-origins</code></td><td>*</td><td>Allowed CORS origins</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Production with TLS (nginx)</h3>
+        <pre><code>server {
+    listen 443 ssl;
+    server_name relay.example.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location /ws {
+        proxy_pass http://localhost:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
+    }
+}</code></pre>
+
+        <h3>Client Configuration</h3>
+        <pre><code>import { SDNNode } from '@spacedatanetwork/sdn-js';
+
+const node = new SDNNode({
+  relays: [
+    'wss://relay.spacedatanetwork.org/ws',
+    'wss://relay2.spacedatanetwork.org/ws'
+  ],
+  relayStrategy: 'failover' // or 'round-robin'
+});
+
+await node.start();</code></pre>
+      </section>
+
+      <!-- Docker -->
+      <section id="docker" class="doc-section">
+        <h2>Docker Deployment</h2>
+
+        <h3>Full Node</h3>
+        <pre><code>docker run -d \
+  --name spacedatanetwork \
+  -p 4001:4001 \
+  -p 4001:4001/udp \
+  -v sdn-data:/root/.spacedatanetwork \
+  ghcr.io/digitalarsenal/spacedatanetwork:latest</code></pre>
+
+        <h3>Edge Relay (Kubernetes)</h3>
+        <pre><code>apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sdn-edge
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sdn-edge
+  template:
+    spec:
+      containers:
+      - name: edge
+        image: ghcr.io/digitalarsenal/spacedatanetwork-edge:latest
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sdn-edge
+spec:
+  type: LoadBalancer
+  sessionAffinity: ClientIP
+  ports:
+  - port: 443
+    targetPort: 8080
+  selector:
+    app: sdn-edge</code></pre>
+      </section>
+
+      <!-- JavaScript SDK -->
+      <section id="sdk-install" class="doc-section">
+        <h2>JavaScript SDK</h2>
+
+        <h3>Installation</h3>
+        <pre><code>npm install @spacedatanetwork/sdn-js</code></pre>
+
+        <h3>Browser (ES Modules)</h3>
+        <pre><code>&lt;script type="module"&gt;
+  import { SDNNode } from 'https://unpkg.com/@spacedatanetwork/sdn-js/dist/esm/index.js';
+
+  const node = new SDNNode();
+  await node.start();
+&lt;/script&gt;</code></pre>
+
+        <h3>Browser (UMD)</h3>
+        <pre><code>&lt;script src="https://unpkg.com/@spacedatanetwork/sdn-js/dist/umd/sdn.min.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  const node = new SDN.SDNNode();
+  node.start().then(() =&gt; console.log('Connected!'));
+&lt;/script&gt;</code></pre>
+      </section>
+
+      <section id="sdk-usage" class="doc-section">
+        <h3>SDNNode Options</h3>
+        <table>
+          <thead>
+            <tr><th>Option</th><th>Type</th><th>Default</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>relays</code></td><td>string[]</td><td>Built-in</td><td>WebSocket relay URLs</td></tr>
+            <tr><td><code>relayStrategy</code></td><td>'failover' | 'round-robin'</td><td>'failover'</td><td>Relay selection strategy</td></tr>
+            <tr><td><code>identity</code></td><td>Identity</td><td>Generated</td><td>Ed25519 identity</td></tr>
+            <tr><td><code>storage</code></td><td>'memory' | 'indexeddb'</td><td>'memory'</td><td>Data storage backend</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Methods</h3>
+        <pre><code>// Start/stop
+await node.start();
+await node.stop();
+
+// Subscribe to schema
+node.subscribe('OMM', (data, peerId, signature) => {
+  console.log(data.OBJECT_NAME);
+});
+
+// Unsubscribe
+node.unsubscribe('OMM');
+
+// Publish data
+await node.publish('OMM', { ...ommData });
+
+// Get connected peers
+const peers = await node.getPeers();
+
+// Get network stats
+const stats = await node.getStats();</code></pre>
+
+        <h3>Events</h3>
+        <pre><code>node.on('connected', () => console.log('Connected'));
+node.on('disconnected', () => console.log('Disconnected'));
+node.on('peer:connect', (peerId) => console.log(`Peer: ${peerId}`));
+node.on('error', (error) => console.error(error));</code></pre>
+      </section>
+
+      <section id="sdk-identity" class="doc-section">
+        <h3>Identity Management</h3>
+        <pre><code>import { Identity } from '@spacedatanetwork/sdn-js';
+
+// Generate new identity
+const identity = await Identity.generate();
+console.log(identity.peerId);     // Qm...
+console.log(identity.publicKey);  // Base64 public key
+
+// From seed phrase (BIP-39)
+const identity = await Identity.fromMnemonic(
+  'abandon abandon abandon...'
+);
+
+// Export/Import (encrypted)
+const exported = await identity.export('password123');
+const imported = await Identity.import(exported, 'password123');</code></pre>
+      </section>
+
+      <section id="sdk-astrodynamics" class="doc-section">
+        <h3>Astrodynamics Library</h3>
+        <p>The SDK includes a complete astrodynamics library for propagation and conjunction assessment.</p>
+
+        <pre><code>import { propagate, sgp4 } from '@spacedatanetwork/sdn-js/astro';
+
+// SGP4 propagation from TLE
+const state = sgp4(tle, epochMinutes);
+// { position: [x, y, z], velocity: [vx, vy, vz] }
+
+// Propagate OMM
+const states = propagate(omm, {
+  start: new Date('2025-01-24T00:00:00Z'),
+  end: new Date('2025-01-25T00:00:00Z'),
+  step: 60 // seconds
+});</code></pre>
+
+        <pre><code>import { screenConjunctions, computePc } from '@spacedatanetwork/sdn-js/astro';
+
+// Screen for close approaches
+const conjunctions = screenConjunctions(primaryOMM, secondaryOMMs, {
+  threshold: 5000, // meters
+  timeWindow: 7 * 24 * 3600 // 7 days
+});
+
+// Compute collision probability
+const pc = computePc(cdm);</code></pre>
+
+        <pre><code>import { eciToEcef, ecefToLla } from '@spacedatanetwork/sdn-js/astro';
+
+// ECI to ECEF
+const ecef = eciToEcef(eci, gmst);
+
+// ECEF to Lat/Lon/Alt
+const lla = ecefToLla(ecef);
+// { lat: 51.5, lon: -0.1, alt: 400000 }</code></pre>
+      </section>
+
+      <!-- API Reference -->
+      <section id="api-rest" class="doc-section">
+        <h2>REST API</h2>
+        <p>The HTTP API is available on the configured API port (default: 8080).</p>
+
+        <h3>Base URL</h3>
+        <pre><code>http://localhost:8080/api/v1</code></pre>
+
+        <h3>Node Information</h3>
+        <pre><code>GET /id         # Get node identity
+GET /version    # Get software version
+GET /stats      # Get node statistics</code></pre>
+
+        <h3>Peers</h3>
+        <pre><code>GET    /peers              # List connected peers
+GET    /peers/{peerId}     # Get specific peer info
+POST   /peers/connect      # Connect to a peer
+DELETE /peers/{peerId}     # Disconnect from a peer</code></pre>
+
+        <h3>PubSub</h3>
+        <pre><code>GET    /pubsub/topics              # List subscribed topics
+POST   /pubsub/subscribe           # Subscribe to a topic
+DELETE /pubsub/subscribe/{topic}   # Unsubscribe
+POST   /pubsub/publish             # Publish a message
+GET    /pubsub/messages            # Get recent messages</code></pre>
+
+        <h3>Content</h3>
+        <pre><code>GET    /content/{cid}      # Retrieve content by CID
+POST   /content            # Add content to local storage
+GET    /content/{cid}/pin  # Check if content is pinned
+POST   /content/{cid}/pin  # Pin content locally
+DELETE /content/{cid}/pin  # Unpin content
+GET    /pins               # List all pinned CIDs</code></pre>
+
+        <h3>DHT</h3>
+        <pre><code>GET  /dht/providers/{cid}   # Find providers for a CID
+POST /dht/provide/{cid}     # Announce this node provides a CID
+GET  /dht/findpeer/{peerId} # Find addresses for a peer</code></pre>
+      </section>
+
+      <section id="api-websocket" class="doc-section">
+        <h2>WebSocket API</h2>
+
+        <h3>Connect</h3>
+        <pre><code>ws://localhost:8080/ws</code></pre>
+
+        <h3>Subscribe</h3>
+        <pre><code>{
+  "type": "subscribe",
+  "topic": "OMM"
+}</code></pre>
+
+        <h3>Publish</h3>
+        <pre><code>{
+  "type": "publish",
+  "topic": "OMM",
+  "data": { ... }
+}</code></pre>
+
+        <h3>Receive Message</h3>
+        <pre><code>{
+  "type": "message",
+  "topic": "OMM",
+  "cid": "bafy...",
+  "from": "Qm...",
+  "timestamp": "2025-01-24T12:00:00Z",
+  "data": { ... }
+}</code></pre>
+      </section>
+
+      <section id="api-errors" class="doc-section">
+        <h2>Error Handling</h2>
+
+        <p>All errors return JSON:</p>
+        <pre><code>{
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Missing required field: topic",
+    "details": { }
+  }
+}</code></pre>
+
+        <table>
+          <thead>
+            <tr><th>Code</th><th>HTTP Status</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>INVALID_REQUEST</code></td><td>400</td><td>Malformed request</td></tr>
+            <tr><td><code>UNAUTHORIZED</code></td><td>401</td><td>Missing/invalid auth</td></tr>
+            <tr><td><code>FORBIDDEN</code></td><td>403</td><td>Insufficient permissions</td></tr>
+            <tr><td><code>NOT_FOUND</code></td><td>404</td><td>Resource not found</td></tr>
+            <tr><td><code>VALIDATION_ERROR</code></td><td>422</td><td>Schema validation failed</td></tr>
+            <tr><td><code>RATE_LIMITED</code></td><td>429</td><td>Too many requests</td></tr>
+            <tr><td><code>INTERNAL_ERROR</code></td><td>500</td><td>Server error</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Rate Limiting</h3>
+        <p>Default limits: 100 requests/minute for reads, 10 requests/minute for writes.</p>
+        <pre><code>X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1706097600</code></pre>
+      </section>
+
+      <!-- Schemas -->
+      <section id="schemas-overview" class="doc-section">
+        <h2>Schema Reference</h2>
+        <p>SDN supports all Space Data Standards (SDS) schemas. All data on the network must conform to these schemas.</p>
+
+        <table>
+          <thead>
+            <tr><th>Category</th><th>Schemas</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Orbit</strong></td><td>OMM, OEM, OCM, OSM</td><td>Orbital elements and ephemeris</td></tr>
+            <tr><td><strong>Conjunction</strong></td><td>CDM, CSM</td><td>Close approach and collision data</td></tr>
+            <tr><td><strong>Tracking</strong></td><td>TDM, RFM</td><td>Observation and measurement data</td></tr>
+            <tr><td><strong>Catalog</strong></td><td>CAT, SIT</td><td>Object catalogs and identification</td></tr>
+            <tr><td><strong>Entity</strong></td><td>EPM, PNM</td><td>Organization and personnel info</td></tr>
+            <tr><td><strong>Maneuver</strong></td><td>MET, MPE</td><td>Maneuver planning and execution</td></tr>
+            <tr><td><strong>Propagation</strong></td><td>HYP, EME, EOO, EOP</td><td>Propagation parameters</td></tr>
+            <tr><td><strong>Reference</strong></td><td>LCC, LDM, CRM, CTR</td><td>Launch and reference data</td></tr>
+            <tr><td><strong>Other</strong></td><td>ATM, BOV, IDM, PLD, PRG, REC, ROC, SCM, TIM, VCM</td><td>Specialized data types</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="schemas-orbit" class="doc-section">
+        <h3>OMM - Orbit Mean-Elements Message</h3>
+        <p>Standard format for mean orbital elements (TLE-equivalent).</p>
+        <pre><code>interface OMM {
+  OBJECT_NAME: string;           // Satellite name
+  OBJECT_ID: string;             // International designator
+  CENTER_NAME: string;           // Central body (EARTH)
+  REF_FRAME: string;             // Reference frame (TEME)
+  TIME_SYSTEM: string;           // Time system (UTC)
+  MEAN_ELEMENT_THEORY: string;   // Theory (SGP4)
+  EPOCH: string;                 // Epoch (ISO 8601)
+  MEAN_MOTION: number;           // Rev/day
+  ECCENTRICITY: number;          // Dimensionless
+  INCLINATION: number;           // Degrees
+  RA_OF_ASC_NODE: number;        // Degrees
+  ARG_OF_PERICENTER: number;     // Degrees
+  MEAN_ANOMALY: number;          // Degrees
+  // ... additional optional fields
+}</code></pre>
+
+        <h3>OEM - Orbit Ephemeris Message</h3>
+        <p>High-precision state vectors over time.</p>
+        <pre><code>interface OEM {
+  OBJECT_NAME: string;
+  OBJECT_ID: string;
+  CENTER_NAME: string;
+  REF_FRAME: string;
+  START_TIME: string;
+  STOP_TIME: string;
+  EPHEMERIS: EphemerisDataLine[];
+}
+
+interface EphemerisDataLine {
+  EPOCH: string;
+  X: number;      // km
+  Y: number;      // km
+  Z: number;      // km
+  X_DOT: number;  // km/s
+  Y_DOT: number;  // km/s
+  Z_DOT: number;  // km/s
+}</code></pre>
+      </section>
+
+      <section id="schemas-conjunction" class="doc-section">
+        <h3>CDM - Conjunction Data Message</h3>
+        <p>Standard format for close approach warnings.</p>
+        <pre><code>interface CDM {
+  CCSDS_CDM_VERS: string;
+  CREATION_DATE: string;
+  ORIGINATOR: string;
+  MESSAGE_ID: string;
+
+  // Conjunction info
+  TCA: string;                    // Time of Closest Approach
+  MISS_DISTANCE: number;          // meters
+  RELATIVE_SPEED: number;         // m/s
+  COLLISION_PROBABILITY?: number; // 0-1
+
+  // Object 1
+  OBJECT1_OBJECT_DESIGNATOR: string;
+  OBJECT1_OBJECT_NAME: string;
+  OBJECT1_INTERNATIONAL_DESIGNATOR: string;
+  // ... state and covariance
+
+  // Object 2
+  OBJECT2_OBJECT_DESIGNATOR: string;
+  // ... same fields as Object 1
+}</code></pre>
+      </section>
+
+      <section id="schemas-entity" class="doc-section">
+        <h3>EPM - Entity Profile Manifest</h3>
+        <p>Organization/entity identification with cryptographic keys.</p>
+        <pre><code>interface EPM {
+  ENTITY_ID: string;              // Unique identifier
+  ENTITY_NAME: string;            // Organization name
+  ENTITY_TYPE: string;            // OPERATOR, AGENCY, etc.
+  LEGAL_NAME?: string;
+  CONTACT_EMAIL?: string;
+  PUBLIC_KEY: string;             // Ed25519 public key (base64)
+  KEY_ALGORITHM: string;          // ED25519
+  CREATED: string;                // ISO 8601
+  UPDATED: string;                // ISO 8601
+}</code></pre>
+
+        <h3>Schema Validation</h3>
+        <pre><code>import { SchemaRegistry } from '@spacedatanetwork/sdn-js';
+
+// Validate data against schema
+const errors = SchemaRegistry.validate('OMM', data);
+if (errors.length > 0) {
+  console.error('Validation failed:', errors);
+}
+
+// List all schemas
+const schemas = SchemaRegistry.list();
+// ['OMM', 'OEM', 'CDM', 'EPM', ...]</code></pre>
+
+        <h3>Converting from TLE</h3>
+        <pre><code>import { tleToOMM } from '@spacedatanetwork/sdn-js';
+
+const tle = [
+  '1 25544U 98067A   25024.50000000  .00016717  00000-0  10270-3 0  9029',
+  '2 25544  51.6400 200.0000 0001000 100.0000  50.0000 15.50000000000000'
+];
+
+const omm = tleToOMM(tle);</code></pre>
+      </section>
+
+    </main>
+  </div>
+
+  <script>
+    // Highlight current section in sidebar
+    const sections = document.querySelectorAll('.doc-section');
+    const sidebarLinks = document.querySelectorAll('.sidebar-links a');
+
+    function updateActiveLink() {
+      let current = '';
+      sections.forEach(section => {
+        const sectionTop = section.offsetTop - 100;
+        if (window.scrollY >= sectionTop) {
+          current = section.getAttribute('id');
+        }
+      });
+
+      sidebarLinks.forEach(link => {
+        link.classList.remove('active');
+        if (link.getAttribute('href') === '#' + current) {
+          link.classList.add('active');
+        }
+      });
+    }
+
+    window.addEventListener('scroll', updateActiveLink);
+    updateActiveLink();
+  </script>
+</body>
+</html>

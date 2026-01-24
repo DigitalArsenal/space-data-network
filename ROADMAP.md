@@ -63,7 +63,7 @@ A commercial layer enabling data providers to monetize their space data:
 
 - [x] Core libp2p networking (Go server)
 - [x] JavaScript SDK for browser/Node.js
-- [x] All 32 Space Data Standards schemas
+- [x] All Space Data Standards schemas
 - [x] Ed25519 identity and signatures
 - [x] GossipSub pub/sub messaging
 - [x] Circuit relay for NAT traversal
