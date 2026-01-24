@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Space Data Network - Decentralized peer-to-peer infrastructure for global space situational awareness. Built on IPFS with 32 Space Data Standards.">
+  <meta name="theme-color" content="#000000">
+  <meta property="og:title" content="Space Data Network">
+  <meta property="og:description" content="Open infrastructure for global collaboration on space situational awareness">
+  <meta property="og:type" content="website">
+  <title>Space Data Network</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    /* ============================================
+       CSS VARIABLES & RESET
+       ============================================ */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #000000;
+      --text-primary: #F5F5F7;
+      --text-secondary: rgba(255, 255, 255, 0.8);
+      --text-muted: rgba(134, 134, 139, 1.0);
+      --ui-bg: rgba(42, 42, 45, 0.72);
+      --ui-hover: rgba(66, 66, 69, 0.72);
+      --ui-border: rgba(134, 134, 139, 0.3);
+      --ui-border-hover: rgba(134, 134, 139, 0.5);
+      --nav-bg: rgba(22, 22, 23, 0.95);
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      --radius: 28px;
+      --radius-sm: 16px;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.6;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    /* ============================================
+       VIDEO BACKGROUND
+       ============================================ */
+    .page-video-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: -2;
+      opacity: 0;
+      transition: opacity 1s ease;
+    }
+
+    .page-video-bg.loaded {
+      opacity: 0.4;
+    }
+
+    .page-video-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.3);
+      z-index: -1;
+    }
+
+    /* ============================================
+       NAVIGATION
+       ============================================ */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 44px;
+      z-index: 9999;
+      background: var(--nav-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .nav-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      height: 100%;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text-primary);
+    }
+
+    .logo svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 28px;
+    }
+
+    .nav-links a {
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: var(--text-primary);
+    }
+
+    .nav-cta {
+      padding: 8px 18px;
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      backdrop-filter: blur(10px);
+      transition: all 0.2s;
+    }
+
+    .nav-cta:hover {
+      background: var(--ui-hover);
+      border-color: var(--ui-border-hover);
+    }
+
+    .nav-menu-btn {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text-primary);
+      cursor: pointer;
+      padding: 8px;
+    }
+
+    /* ============================================
+       BUTTONS
+       ============================================ */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 16px 32px;
+      font-size: 17px;
+      font-weight: 600;
+      border-radius: var(--radius);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      transition: all 0.2s ease;
+      cursor: pointer;
+      border: 1px solid var(--ui-border);
+      text-decoration: none;
+    }
+
+    .btn-primary {
+      background: var(--ui-bg);
+      color: var(--text-primary);
+    }
+
+    .btn-primary:hover {
+      background: var(--ui-hover);
+      border-color: var(--ui-border-hover);
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text-primary);
+    }
+
+    .btn-secondary:hover {
+      background: var(--ui-bg);
+    }
+
+    .btn-sm {
+      padding: 10px 20px;
+      font-size: 14px;
+    }
+
+    /* ============================================
+       HERO SECTION
+       ============================================ */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 120px 24px 80px;
+      position: relative;
+    }
+
+    .hero-title {
+      font-size: 80px;
+      font-weight: 600;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      margin-bottom: 24px;
+    }
+
+    .hero-tagline {
+      font-size: 26px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      max-width: 700px;
+      margin-bottom: 16px;
+    }
+
+    .hero-subtitle {
+      font-size: 20px;
+      color: var(--text-muted);
+      margin-bottom: 48px;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .scroll-indicator {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      animation: bounce 2s infinite;
+    }
+
+    .scroll-indicator svg {
+      width: 28px;
+      height: 28px;
+      color: var(--text-muted);
+    }
+
+    @keyframes bounce {
+      0%, 20%, 50%, 80%, 100% { transform: translateX(-50%) translateY(0); }
+      40% { transform: translateX(-50%) translateY(10px); }
+      60% { transform: translateX(-50%) translateY(5px); }
+    }
+
+    /* ============================================
+       SECTIONS
+       ============================================ */
+    section {
+      padding: 140px 24px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 72px;
+    }
+
+    .section-title {
+      font-size: 52px;
+      font-weight: 600;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin-bottom: 20px;
+    }
+
+    .section-subtitle {
+      font-size: 20px;
+      color: var(--text-secondary);
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    /* ============================================
+       FEATURES GRID
+       ============================================ */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .feature-card {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 32px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      transition: all 0.3s ease;
+    }
+
+    .feature-card:hover {
+      background: var(--ui-hover);
+      border-color: var(--ui-border-hover);
+      transform: translateY(-4px);
+    }
+
+    .feature-icon {
+      width: 52px;
+      height: 52px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    .feature-icon svg {
+      width: 26px;
+      height: 26px;
+      color: var(--text-primary);
+    }
+
+    .feature-title {
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    .feature-desc {
+      font-size: 16px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    /* ============================================
+       STATS GRID
+       ============================================ */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+    }
+
+    .stat-card {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 40px 24px;
+      text-align: center;
+      backdrop-filter: blur(20px);
+    }
+
+    .stat-number {
+      font-size: 56px;
+      font-weight: 600;
+      line-height: 1.1;
+      margin-bottom: 8px;
+    }
+
+    .stat-label {
+      font-size: 16px;
+      color: var(--text-muted);
+    }
+
+    /* ============================================
+       CODE BLOCKS
+       ============================================ */
+    .code-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+    }
+
+    .code-block {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      backdrop-filter: blur(20px);
+    }
+
+    .code-header {
+      padding: 14px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .code-lang {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .code-copy {
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .code-copy:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: var(--text-primary);
+    }
+
+    .code-block pre {
+      margin: 0;
+      padding: 20px;
+      overflow-x: auto;
+    }
+
+    .code-block code {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--text-primary);
+    }
+
+    .code-comment { color: var(--text-muted); }
+    .code-keyword { color: var(--text-primary); font-weight: 600; }
+    .code-string { color: var(--text-secondary); }
+
+    /* ============================================
+       VISION / USE CASES
+       ============================================ */
+    .vision-intro {
+      font-size: 22px;
+      color: var(--text-secondary);
+      text-align: center;
+      max-width: 800px;
+      margin: 0 auto 56px;
+      line-height: 1.5;
+    }
+
+    .vision-intro strong {
+      color: var(--text-primary);
+    }
+
+    .vision-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 20px;
+      margin-bottom: 56px;
+    }
+
+    .vision-item {
+      text-align: center;
+      padding: 24px 12px;
+    }
+
+    .vision-item h4 {
+      font-size: 17px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .vision-item p {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .vision-tagline {
+      font-size: 26px;
+      font-weight: 600;
+      text-align: center;
+    }
+
+    /* ============================================
+       SCHEMAS CAROUSEL
+       ============================================ */
+    .carousel-wrapper {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .carousel-track {
+      display: flex;
+      gap: 20px;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+      padding: 10px 0;
+    }
+
+    .carousel-track::-webkit-scrollbar {
+      display: none;
+    }
+
+    .carousel-item {
+      flex: 0 0 300px;
+      scroll-snap-align: start;
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 28px;
+      backdrop-filter: blur(20px);
+      transition: all 0.2s;
+    }
+
+    .carousel-item:hover {
+      border-color: var(--ui-border-hover);
+    }
+
+    .carousel-item h3 {
+      font-size: 24px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .carousel-item p {
+      font-size: 15px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+
+    .carousel-nav {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      margin-top: 28px;
+    }
+
+    .carousel-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      transition: all 0.2s;
+    }
+
+    .carousel-btn:hover {
+      background: var(--ui-hover);
+      color: var(--text-primary);
+    }
+
+    .carousel-btn:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    /* ============================================
+       FAQ / ACCORDION
+       ============================================ */
+    .accordion {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .accordion-item {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .accordion-item:first-child {
+      border-top: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .accordion-trigger {
+      width: 100%;
+      background: transparent;
+      border: none;
+      padding: 24px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .accordion-trigger span {
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .accordion-trigger svg {
+      width: 20px;
+      height: 20px;
+      color: var(--text-muted);
+      transition: transform 0.3s ease;
+      flex-shrink: 0;
+    }
+
+    .accordion-item.open .accordion-trigger svg {
+      transform: rotate(180deg);
+    }
+
+    .accordion-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+
+    .accordion-item.open .accordion-content {
+      max-height: 400px;
+    }
+
+    .accordion-content-inner {
+      padding-bottom: 24px;
+      padding-right: 48px;
+    }
+
+    .accordion-content-inner p {
+      font-size: 17px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* ============================================
+       DOCUMENTATION SECTION
+       ============================================ */
+    .docs-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .doc-card {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 28px;
+      backdrop-filter: blur(20px);
+      transition: all 0.2s;
+    }
+
+    .doc-card:hover {
+      background: var(--ui-hover);
+      border-color: var(--ui-border-hover);
+    }
+
+    .doc-card h3 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .doc-card h3 svg {
+      width: 20px;
+      height: 20px;
+      color: var(--text-muted);
+    }
+
+    .doc-card p {
+      font-size: 15px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+
+    .doc-card ul {
+      list-style: none;
+    }
+
+    .doc-card li {
+      font-size: 14px;
+      color: var(--text-muted);
+      padding: 6px 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .doc-card li:first-child {
+      border-top: none;
+      padding-top: 0;
+    }
+
+    /* ============================================
+       CTA SECTION
+       ============================================ */
+    .cta-section {
+      text-align: center;
+      padding: 160px 24px;
+    }
+
+    .cta-buttons {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 48px;
+    }
+
+    /* ============================================
+       FOOTER
+       ============================================ */
+    footer {
+      padding: 48px 24px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .footer-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 24px;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 32px;
+    }
+
+    .footer-links a {
+      font-size: 14px;
+      color: var(--text-muted);
+      transition: color 0.2s;
+    }
+
+    .footer-links a:hover {
+      color: var(--text-primary);
+    }
+
+    .footer-copyright {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    /* ============================================
+       RESPONSIVE
+       ============================================ */
+    @media (max-width: 1068px) {
+      .hero-title { font-size: 60px; }
+      .section-title { font-size: 44px; }
+      .features-grid { grid-template-columns: repeat(2, 1fr); }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .code-grid { grid-template-columns: 1fr; }
+      .vision-grid { grid-template-columns: repeat(3, 1fr); }
+      .docs-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 734px) {
+      .hero-title { font-size: 42px; }
+      .hero-tagline { font-size: 20px; }
+      .hero-subtitle { font-size: 16px; }
+      .section-title { font-size: 32px; }
+      .stat-number { font-size: 40px; }
+
+      section { padding: 80px 20px; }
+      .section-header { margin-bottom: 48px; }
+
+      .nav-links { display: none; }
+      .nav-menu-btn { display: block; }
+
+      .features-grid { grid-template-columns: 1fr; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .vision-grid { grid-template-columns: 1fr; gap: 8px; }
+      .docs-grid { grid-template-columns: 1fr; }
+      .carousel-item { flex: 0 0 280px; }
+
+      .hero-actions { flex-direction: column; align-items: center; }
+      .btn { width: 100%; max-width: 300px; }
+      .cta-buttons { flex-direction: column; align-items: center; }
+
+      .footer-content { flex-direction: column; text-align: center; }
+      .footer-links { flex-wrap: wrap; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Video Background -->
+  <video class="page-video-bg" id="bgVideo" autoplay loop muted playsinline disablepictureinpicture></video>
+  <div class="page-video-overlay"></div>
+
+  <!-- Navigation -->
+  <nav>
+    <div class="nav-content">
+      <a href="#" class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+        </svg>
+        Space Data Network
+      </a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#technology">Technology</a>
+        <a href="#schemas">Schemas</a>
+        <a href="#docs">Documentation</a>
+        <a href="#faq">FAQ</a>
+        <a href="https://github.com/DigitalArsenal/go-space-data-network" target="_blank">GitHub</a>
+      </div>
+      <a href="#get-started" class="nav-cta">Get Started</a>
+      <button class="nav-menu-btn" id="menuBtn" aria-label="Menu">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="3" y1="12" x2="21" y2="12"/>
+          <line x1="3" y1="6" x2="21" y2="6"/>
+          <line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <section class="hero" id="hero">
+    <h1 class="hero-title">Space Data<br>Network</h1>
+    <p class="hero-tagline">Open infrastructure for global collaboration on space situational awareness</p>
+    <p class="hero-subtitle">Decentralized peer-to-peer data exchange built on IPFS</p>
+    <div class="hero-actions">
+      <a href="#get-started" class="btn btn-primary">Get Started</a>
+      <a href="https://github.com/DigitalArsenal/go-space-data-network" class="btn btn-secondary" target="_blank">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+        </svg>
+        GitHub
+      </a>
+      <a href="#downloads" class="btn btn-secondary">Downloads</a>
+    </div>
+    <div class="scroll-indicator">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </div>
+  </section>
+
+  <!-- Features Section -->
+  <section id="features">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Built for the Future of Space</h2>
+        <p class="section-subtitle">SDN provides open infrastructure for global space traffic coordination</p>
+      </div>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Built on IPFS</h3>
+          <p class="feature-desc">Battle-tested libp2p networking with DHT discovery, GossipSub messaging, and circuit relay for browser connectivity.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+              <line x1="12" y1="22.08" x2="12" y2="12"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">32 Space Data Standards</h3>
+          <p class="feature-desc">Full support for all SDS schemas including OMM, CDM, EPM, TDM, OEM, and 27 more standard formats.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Transport Encryption</h3>
+          <p class="feature-desc">All connections secured with Noise Protocol Framework providing forward secrecy and mutual authentication.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Encryption at Rest</h3>
+          <p class="feature-desc">WASM-powered AES-256-GCM encryption with Argon2 key derivation for password-based security.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Digital Identity</h3>
+          <p class="feature-desc">Ed25519 cryptographic identities with vCard-style Entity Profile Manifests for verified organizational data.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Cross-Platform</h3>
+          <p class="feature-desc">Run full nodes on servers, edge relays on embedded devices, or connect directly from web browsers.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Stats Section -->
+  <section id="stats">
+    <div class="container">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-number">32</div>
+          <div class="stat-label">Space Data Standards</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number">IPFS</div>
+          <div class="stat-label">Built on libp2p</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number">P2P</div>
+          <div class="stat-label">Fully Decentralized</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number">Open</div>
+          <div class="stat-label">Source & Standards</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Technology Section -->
+  <section id="technology">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Technology Deep Dive</h2>
+        <p class="section-subtitle">Built on proven, battle-tested foundations for mission-critical reliability</p>
+      </div>
+      <div class="features-grid">
+        <div class="feature-card">
+          <h3 class="feature-title">IPFS Foundation</h3>
+          <p class="feature-desc">Content-addressed storage ensures data integrity. Every piece of space data is cryptographically verified, making tampering impossible.</p>
+        </div>
+        <div class="feature-card">
+          <h3 class="feature-title">libp2p Networking</h3>
+          <p class="feature-desc">Modular peer-to-peer networking with NAT traversal, protocol multiplexing, and secure channels built-in.</p>
+        </div>
+        <div class="feature-card">
+          <h3 class="feature-title">FlatBuffers Efficiency</h3>
+          <p class="feature-desc">Zero-copy deserialization with Space Data Standards schemas. Parse orbital data without memory allocation overhead.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quick Start Section -->
+  <section id="get-started">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Quick Start</h2>
+        <p class="section-subtitle">Get running in minutes with the server or JavaScript SDK</p>
+      </div>
+      <div class="code-grid">
+        <div class="code-block">
+          <div class="code-header">
+            <span class="code-lang">Server (Go)</span>
+            <button class="code-copy" onclick="copyCode(this)">Copy</button>
+          </div>
+          <pre><code><span class="code-comment"># Download and install</span>
+curl -Lo spacedatanetwork \
+  https://github.com/DigitalArsenal/go-space-data-network/releases/latest/download/spacedatanetwork-linux-amd64
+chmod +x spacedatanetwork
+
+<span class="code-comment"># Initialize and start</span>
+./spacedatanetwork init
+./spacedatanetwork daemon</code></pre>
+        </div>
+        <div class="code-block">
+          <div class="code-header">
+            <span class="code-lang">Browser (TypeScript)</span>
+            <button class="code-copy" onclick="copyCode(this)">Copy</button>
+          </div>
+          <pre><code><span class="code-keyword">import</span> { SDNNode } <span class="code-keyword">from</span> <span class="code-string">'@spacedatanetwork/sdn-js'</span>;
+
+<span class="code-keyword">const</span> node = <span class="code-keyword">new</span> SDNNode();
+<span class="code-keyword">await</span> node.start();
+
+<span class="code-comment">// Subscribe to orbital data</span>
+node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
+  console.log(<span class="code-string">`Received from ${peer}`</span>);
+});
+
+<span class="code-comment">// Publish conjunction data</span>
+<span class="code-keyword">await</span> node.publish(<span class="code-string">'CDM'</span>, conjunctionData);</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Use Cases Section -->
+  <section id="use-cases">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Open Space Traffic Management</h2>
+      </div>
+      <p class="vision-intro">
+        As space becomes increasingly congested, coordination is essential. SDN provides <strong>open infrastructure</strong> that enables:
+      </p>
+      <div class="vision-grid">
+        <div class="vision-item">
+          <h4>Space Agencies</h4>
+          <p>Share conjunction warnings and tracking data globally</p>
+        </div>
+        <div class="vision-item">
+          <h4>Satellite Operators</h4>
+          <p>Coordinate maneuvers and publish orbital elements in real-time</p>
+        </div>
+        <div class="vision-item">
+          <h4>STM Providers</h4>
+          <p>Build services on open, verifiable data from across the ecosystem</p>
+        </div>
+        <div class="vision-item">
+          <h4>Researchers</h4>
+          <p>Access live space data for analysis and algorithm development</p>
+        </div>
+        <div class="vision-item">
+          <h4>New Entrants</h4>
+          <p>Participate without expensive proprietary integrations</p>
+        </div>
+      </div>
+      <p class="vision-tagline">No central authority. No single point of failure. Just open collaboration.</p>
+    </div>
+  </section>
+
+  <!-- Schemas Carousel -->
+  <section id="schemas">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Space Data Standards</h2>
+        <p class="section-subtitle">Comprehensive support for all 32 SDS schemas</p>
+      </div>
+      <div class="carousel-wrapper">
+        <div class="carousel-track" id="carouselTrack">
+          <div class="carousel-item">
+            <h3>OMM</h3>
+            <p>Orbital Mean-Elements Message - TLE-compatible orbital data for satellite tracking</p>
+          </div>
+          <div class="carousel-item">
+            <h3>CDM</h3>
+            <p>Conjunction Data Message - Close approach predictions and collision probability</p>
+          </div>
+          <div class="carousel-item">
+            <h3>TDM</h3>
+            <p>Tracking Data Message - Ground station observations and measurements</p>
+          </div>
+          <div class="carousel-item">
+            <h3>EPM</h3>
+            <p>Entity Profile Manifest - Organization and operator identification</p>
+          </div>
+          <div class="carousel-item">
+            <h3>OEM</h3>
+            <p>Orbital Ephemeris Message - State vectors over time for precise positioning</p>
+          </div>
+          <div class="carousel-item">
+            <h3>CAT</h3>
+            <p>Catalog Entry - Space object catalog records with full metadata</p>
+          </div>
+          <div class="carousel-item">
+            <h3>ROC</h3>
+            <p>Re-entry Object Collection - Debris decay and re-entry predictions</p>
+          </div>
+          <div class="carousel-item">
+            <h3>SIT</h3>
+            <p>Site Message - Ground station and facility information</p>
+          </div>
+        </div>
+        <div class="carousel-nav">
+          <button class="carousel-btn" id="carouselPrev" aria-label="Previous">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+          </button>
+          <button class="carousel-btn" id="carouselNext" aria-label="Next">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Documentation Section -->
+  <section id="docs">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Documentation</h2>
+        <p class="section-subtitle">Everything you need to build with SDN</p>
+      </div>
+      <div class="docs-grid">
+        <div class="doc-card">
+          <h3>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            Getting Started
+          </h3>
+          <p>Quick start guides for all platforms</p>
+          <ul>
+            <li>Server installation</li>
+            <li>JavaScript SDK setup</li>
+            <li>Browser integration</li>
+            <li>First data exchange</li>
+          </ul>
+        </div>
+        <div class="doc-card">
+          <h3>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M3 9h18M9 21V9"/>
+            </svg>
+            Architecture
+          </h3>
+          <p>Deep dive into SDN internals</p>
+          <ul>
+            <li>Network topology</li>
+            <li>Protocol stack</li>
+            <li>Data flow</li>
+            <li>Security model</li>
+          </ul>
+        </div>
+        <div class="doc-card">
+          <h3>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+            Security
+          </h3>
+          <p>Cryptography and identity</p>
+          <ul>
+            <li>Transport encryption</li>
+            <li>Data at rest</li>
+            <li>Digital identity</li>
+            <li>Key management</li>
+          </ul>
+        </div>
+        <div class="doc-card">
+          <h3>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="16 18 22 12 16 6"/>
+              <polyline points="8 6 2 12 8 18"/>
+            </svg>
+            API Reference
+          </h3>
+          <p>Complete API documentation</p>
+          <ul>
+            <li>Server CLI</li>
+            <li>JavaScript SDK</li>
+            <li>HTTP endpoints</li>
+            <li>RPC interface</li>
+          </ul>
+        </div>
+        <div class="doc-card">
+          <h3>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+            </svg>
+            Schemas
+          </h3>
+          <p>Space Data Standards reference</p>
+          <ul>
+            <li>All 32 schemas</li>
+            <li>Field definitions</li>
+            <li>Validation rules</li>
+            <li>Conversion utilities</li>
+          </ul>
+        </div>
+        <div class="doc-card">
+          <h3>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="7" width="20" height="14" rx="2"/>
+              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+            </svg>
+            Deployment
+          </h3>
+          <p>Production deployment guides</p>
+          <ul>
+            <li>Docker / Kubernetes</li>
+            <li>Cloud providers</li>
+            <li>High availability</li>
+            <li>Monitoring</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ Section -->
+  <section id="faq">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Frequently Asked Questions</h2>
+      </div>
+      <div class="accordion">
+        <div class="accordion-item">
+          <button class="accordion-trigger">
+            <span>Is SDN a blockchain?</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div class="accordion-content">
+            <div class="accordion-content-inner">
+              <p>No. SDN uses cryptographic primitives (Ed25519 keys, signatures) but is not a blockchain. There are no tokens, no mining, no consensus mechanisms. SDN is pure infrastructure for data exchange. Your Ed25519 identity can be derived from BIP-39 seed phrases and is compatible with blockchain ecosystems, but SDN itself operates independently.</p>
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <button class="accordion-trigger">
+            <span>Why decentralized for space data?</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div class="accordion-content">
+            <div class="accordion-content-inner">
+              <p>Space traffic management data is too critical to depend on any single provider. Centralized systems create single points of failure and geopolitical dependencies. SDN ensures that conjunction warnings and orbital data remain available even if individual nodes or organizations go offline. The network self-heals and routes around failures.</p>
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <button class="accordion-trigger">
+            <span>How does SDN compare to Space-Track?</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div class="accordion-content">
+            <div class="accordion-content-inner">
+              <p>Space-Track provides authoritative tracking data from the 18th Space Defense Squadron. SDN is complementary infrastructure that enables organizations to share their own data directly with each other. SDN can ingest Space-Track data and combine it with commercial, academic, and international sources for a more complete picture.</p>
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <button class="accordion-trigger">
+            <span>Can browsers connect to the network?</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div class="accordion-content">
+            <div class="accordion-content-inner">
+              <p>Yes. SDN includes edge relays that bridge WebSocket connections to the full P2P network. The JavaScript SDK handles this automatically - just call node.start() and you're connected. Browsers can subscribe to real-time data, publish messages, and verify signatures using the WASM crypto module.</p>
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <button class="accordion-trigger">
+            <span>What about data authenticity?</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div class="accordion-content">
+            <div class="accordion-content-inner">
+              <p>Every message on SDN is cryptographically signed by its publisher. Entity Profile Manifests (EPM) link Ed25519 public keys to organizational identities. You can verify exactly who published any piece of data and whether it has been tampered with. Trust decisions remain with recipients - SDN provides the cryptographic tools.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA Section -->
+  <section class="cta-section" id="downloads">
+    <div class="container">
+      <h2 class="section-title">Ready to Get Started?</h2>
+      <p class="section-subtitle">Join the open network for space data exchange</p>
+      <div class="cta-buttons">
+        <a href="https://github.com/DigitalArsenal/go-space-data-network/releases" class="btn btn-primary" target="_blank">Download Server</a>
+        <a href="https://www.npmjs.com/package/@spacedatanetwork/sdn-js" class="btn btn-secondary" target="_blank">npm install sdn-js</a>
+        <a href="https://github.com/DigitalArsenal/go-space-data-network" class="btn btn-secondary" target="_blank">View Source</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-content">
+      <div class="footer-links">
+        <a href="https://github.com/DigitalArsenal/go-space-data-network" target="_blank">GitHub</a>
+        <a href="https://www.npmjs.com/package/@spacedatanetwork/sdn-js" target="_blank">npm</a>
+        <a href="https://spacedatastandards.org" target="_blank">Space Data Standards</a>
+        <a href="#faq">FAQ</a>
+      </div>
+      <p class="footer-copyright">Released under the MIT License. &copy; 2024 Digital Arsenal / Space Data Standards</p>
+    </div>
+  </footer>
+
+  <!-- JavaScript -->
+  <script>
+    // Video URLs
+    const videoUrls = [
+      'https://customer-cbeadsgr09pnsezs.cloudflarestream.com/90bb1b34646b81b3b63e5a854ea00da3/manifest/video.m3u8',
+      'https://customer-cbeadsgr09pnsezs.cloudflarestream.com/df176a2fb2ea2b64bd21ae1c10d3af6a/manifest/video.m3u8',
+      'https://customer-cbeadsgr09pnsezs.cloudflarestream.com/12a9780eeb1ea015801a5f55cf2e9d3d/manifest/video.m3u8',
+      'https://customer-cbeadsgr09pnsezs.cloudflarestream.com/964cb3eddff1a67e3772aac9a7aceea2/manifest/video.m3u8',
+      'https://customer-cbeadsgr09pnsezs.cloudflarestream.com/dd17599dfa77f41517133fa7a4967535/manifest/video.m3u8',
+      'https://customer-cbeadsgr09pnsezs.cloudflarestream.com/408ad52e3f15bc8f01ae69d194a8cf3a/manifest/video.m3u8',
+      'https://customer-cbeadsgr09pnsezs.cloudflarestream.com/e923e67d71fed3e0853ec57f0348451e/manifest/video.m3u8',
+      'https://customer-cbeadsgr09pnsezs.cloudflarestream.com/136a8a211c6c3b1cc1fd7b1c7d836c58/manifest/video.m3u8',
+      'https://customer-cbeadsgr09pnsezs.cloudflarestream.com/c9ddd33ac3d964e5d33b31ce849e8f95/manifest/video.m3u8',
+      'https://customer-cbeadsgr09pnsezs.cloudflarestream.com/257c7359efd4b4aaebcc03aa8fc78a36/manifest/video.m3u8',
+      'https://customer-cbeadsgr09pnsezs.cloudflarestream.com/697945ca6b876878dba3b23fbd2f1561/manifest/video.m3u8'
+    ];
+
+    // Initialize background video
+    function initVideo() {
+      const video = document.getElementById('bgVideo');
+      const randomUrl = videoUrls[Math.floor(Math.random() * videoUrls.length)];
+
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = randomUrl;
+        video.addEventListener('loadeddata', () => video.classList.add('loaded'));
+      } else if (Hls.isSupported()) {
+        const hls = new Hls({ enableWorker: true, lowLatencyMode: false });
+        hls.loadSource(randomUrl);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.classList.add('loaded');
+          video.play().catch(() => {});
+        });
+      }
+    }
+
+    // Accordion
+    function initAccordion() {
+      document.querySelectorAll('.accordion-trigger').forEach(trigger => {
+        trigger.addEventListener('click', () => {
+          const item = trigger.parentElement;
+          const isOpen = item.classList.contains('open');
+          document.querySelectorAll('.accordion-item').forEach(i => i.classList.remove('open'));
+          if (!isOpen) item.classList.add('open');
+        });
+      });
+    }
+
+    // Carousel
+    function initCarousel() {
+      const track = document.getElementById('carouselTrack');
+      const prev = document.getElementById('carouselPrev');
+      const next = document.getElementById('carouselNext');
+      const scrollAmount = 320;
+
+      prev.addEventListener('click', () => track.scrollBy({ left: -scrollAmount, behavior: 'smooth' }));
+      next.addEventListener('click', () => track.scrollBy({ left: scrollAmount, behavior: 'smooth' }));
+
+      function updateButtons() {
+        prev.disabled = track.scrollLeft <= 0;
+        next.disabled = track.scrollLeft >= track.scrollWidth - track.clientWidth - 10;
+      }
+
+      track.addEventListener('scroll', updateButtons);
+      updateButtons();
+    }
+
+    // Copy code
+    function copyCode(button) {
+      const code = button.closest('.code-block').querySelector('code').textContent;
+      navigator.clipboard.writeText(code).then(() => {
+        const orig = button.textContent;
+        button.textContent = 'Copied!';
+        setTimeout(() => button.textContent = orig, 2000);
+      });
+    }
+
+    // Smooth scroll
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', function(e) {
+        e.preventDefault();
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+          const offset = 44;
+          window.scrollTo({ top: target.offsetTop - offset, behavior: 'smooth' });
+        }
+      });
+    });
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      initVideo();
+      initAccordion();
+      initCarousel();
+    });
+  </script>
+</body>
+</html>
