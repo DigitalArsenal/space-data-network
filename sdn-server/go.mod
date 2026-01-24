@@ -5,19 +5,26 @@ go 1.24.6
 toolchain go1.24.12
 
 require (
+	github.com/DigitalArsenal/spacedatastandards.org/lib/go v0.0.0-00010101000000-000000000000
+	github.com/emersion/go-vcard v0.0.0-20241024213814-c9703dde27ff
+	github.com/google/flatbuffers v25.12.19+incompatible
 	github.com/ipfs/go-cid v0.6.0
 	github.com/ipfs/go-log/v2 v2.9.0
 	github.com/libp2p/go-libp2p v0.46.0
 	github.com/libp2p/go-libp2p-kad-dht v0.36.0
 	github.com/libp2p/go-libp2p-pubsub v0.15.0
+	github.com/makiuchi-d/gozxing v0.1.1
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/multiformats/go-multihash v0.2.3
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.8.0
 	github.com/tetratelabs/wazero v1.7.0
 	golang.org/x/time v0.12.0
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+replace github.com/DigitalArsenal/spacedatastandards.org/lib/go => ../schemas/sds/lib/go
 
 require (
 	github.com/benbjohnson/clock v1.3.5 // indirect
@@ -123,6 +130,7 @@ require (
 	golang.org/x/telemetry v0.0.0-20251203150158-8fff8a5912fc // indirect
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/tools v0.40.0 // indirect
+	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	gonum.org/v1/gonum v0.16.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect

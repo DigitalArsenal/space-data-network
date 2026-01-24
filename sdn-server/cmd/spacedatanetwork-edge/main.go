@@ -26,7 +26,6 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
-	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/spf13/cobra"
 
@@ -171,8 +170,8 @@ func NewEdgeNode(ctx context.Context, cfg EdgeConfig) (*EdgeNode, error) {
 		libp2p.Identity(privKey),
 		libp2p.ListenAddrs(listenMAs...),
 
-		// WebSocket for edge relays
-		libp2p.Transport(websocket.New),
+		// Default transports (TCP, QUIC, WebSocket)
+		libp2p.DefaultTransports,
 
 		// Security
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),

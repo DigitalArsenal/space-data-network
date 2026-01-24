@@ -9,7 +9,7 @@ version: '3.8'
 # Define bootstrap address as a reusable variable
 # Peer ID: 12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt (from deployment/keys/node.key)
 x-bootstrap-addr: &bootstrap-addr
-  SDN_BOOTSTRAP: /dns4/full-node-1/tcp/4001/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt
+  SDN_BOOTSTRAP: /ip4/172.18.0.2/tcp/8080/ws/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt
 
 services:
   # ============================================
@@ -66,7 +66,7 @@ services:
     environment:
       - SDN_MODE=full
       # Use DNS name with peer ID for secure bootstrap (Docker internal DNS)
-      - SDN_BOOTSTRAP=/dns4/full-node-1/tcp/4001/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt
+      - SDN_BOOTSTRAP=/ip4/172.18.0.2/tcp/8080/ws/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt
       - SDN_MAX_MESSAGE_SIZE=${SDN_MAX_MESSAGE_SIZE:-10485760}
       - SDN_MAX_CONNECTIONS=${SDN_MAX_CONNECTIONS:-1000}
     ports:
@@ -113,7 +113,7 @@ services:
     networks:
       - sdn-network
     # Use DNS name for bootstrap instead of hardcoded IP
-    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/dns4/full-node-1/tcp/4001/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--health-port", "8081"]
+    command: ["--debug", "--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/ip4/172.18.0.2/tcp/4001/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--health-port", "8081"]
     depends_on:
       - full-node-1
     # Security hardening
@@ -145,7 +145,7 @@ services:
       - "8093:8081"
     networks:
       - sdn-network
-    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/dns4/full-node-1/tcp/4001/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--health-port", "8081"]
+    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/ip4/172.18.0.2/tcp/8080/ws/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--health-port", "8081"]
     depends_on:
       - full-node-1
     # Security hardening
@@ -176,7 +176,7 @@ services:
       - "8095:8081"
     networks:
       - sdn-network
-    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/dns4/full-node-1/tcp/4001/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--health-port", "8081"]
+    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/ip4/172.18.0.2/tcp/8080/ws/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--health-port", "8081"]
     depends_on:
       - full-node-1
     # Security hardening
@@ -209,7 +209,7 @@ services:
     networks:
       - sdn-network
     # Use DNS name for bootstrap
-    command: ["--bootstrap", "/dns4/full-node-1/tcp/4001/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--poll", "1m", "--output", "/app/output"]
+    command: ["--bootstrap", "/ip4/172.18.0.2/tcp/8080/ws/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--poll", "1m", "--output", "/app/output"]
     depends_on:
       - full-node-1
       - edge-relay-us

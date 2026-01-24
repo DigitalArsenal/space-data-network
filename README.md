@@ -186,6 +186,15 @@ SDN extends IPFS with space-specific optimizations:
 | [schemas](./schemas) | FlatBuffer schema definitions | FlatBuffers |
 | [kubo](./kubo) | IPFS reference implementation | Go |
 
+### Server Packages
+
+| Package | Description |
+|---------|-------------|
+| `internal/sds` | FlatBuffer builders for all SDS schemas with fluent API |
+| `internal/vcard` | EPM to vCard/QR code bidirectional conversion |
+| `internal/pubsub` | PubSub topics and PNM-based tip/queue system |
+| `internal/storage` | SQLite storage with FlatBuffer support |
+
 ---
 
 ## Supported Standards
@@ -291,6 +300,41 @@ All data on SDN is **content-addressed** using cryptographic hashes (CIDs):
 | **Permanent references** | CIDs never change - reference specific data versions forever |
 | **Deduplication** | Same data = same hash - network automatically deduplicates |
 | **Selective pinning** | Choose what to store locally - pin critical data for availability |
+
+---
+
+## PNM Tip/Queue System
+
+SDN uses **Publish Notification Messages (PNM)** for intelligent content distribution. Instead of broadcasting all data, nodes announce content availability via PNM, allowing peers to selectively fetch based on their configuration.
+
+### How It Works
+
+```
+Publisher                           Subscriber
+    |                                   |
+    |-- Pin content locally             |
+    |-- Broadcast PNM (CID + schema) ---|--> Receive PNM
+    |                                   |-- Check config for peer + schema
+    |                                   |-- If autoFetch: fetch content
+    |                                   |-- If autoPin: pin with TTL
+```
+
+### Configuration
+
+Nodes can configure auto-fetch, auto-pin, and TTL per-source AND per-schema:
+
+| Setting | Description |
+|---------|-------------|
+| **Per-schema defaults** | E.g., always fetch CDM (conjunction data) |
+| **Per-source overrides** | E.g., trust data from partner organizations |
+| **Per-source+schema** | E.g., special handling for OMM from trusted source |
+
+This enables flexible policies like:
+- Auto-pin all conjunction warnings from anyone
+- Auto-fetch orbital data only from trusted partners
+- Store data from government agencies for 1 week, commercial for 24h
+
+See [sdn-server documentation](./sdn-server/README.md) for configuration details.
 
 ---
 
