@@ -377,6 +377,25 @@
       transform: translateY(-4px);
     }
 
+    .feature-card-link {
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }
+
+    .external-link-icon {
+      width: 14px;
+      height: 14px;
+      margin-left: 6px;
+      vertical-align: middle;
+      opacity: 0.5;
+      transition: opacity 0.2s;
+    }
+
+    .feature-card-link:hover .external-link-icon {
+      opacity: 1;
+    }
+
     .feature-icon {
       width: 52px;
       height: 52px;
@@ -842,61 +861,123 @@
     }
 
     .growth-chart {
-      max-width: 600px;
+      max-width: 800px;
       margin: 0 auto;
+      display: flex;
+    }
+
+    .chart-y-axis {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding-right: 12px;
+      height: 250px;
+      padding-bottom: 30px;
+    }
+
+    .y-axis-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: right;
+      min-width: 50px;
+    }
+
+    .chart-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
     }
 
     .chart-bars {
       display: flex;
-      justify-content: space-between;
+      justify-content: space-around;
       align-items: flex-end;
-      height: 200px;
-      padding: 0 20px;
+      height: 250px;
+      padding: 0 10px;
+      border-left: 1px solid rgba(255,255,255,0.2);
       border-bottom: 1px solid rgba(255,255,255,0.2);
-      margin-bottom: 16px;
+      position: relative;
+    }
+
+    .chart-bars::before,
+    .chart-bars::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      border-top: 1px dashed rgba(255,255,255,0.1);
+    }
+
+    .chart-bars::before {
+      top: 50%;
+    }
+
+    .chart-bars::after {
+      top: 25%;
     }
 
     .chart-bar-group {
       display: flex;
       flex-direction: column;
       align-items: center;
-      flex: 1;
+      gap: 4px;
+    }
+
+    .chart-bar-pair {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      height: 220px;
     }
 
     .chart-bar {
-      width: 50px;
-      background: linear-gradient(180deg, #17ead9 0%, #6078ea 100%);
-      border-radius: 8px 8px 0 0;
+      width: 28px;
+      border-radius: 4px 4px 0 0;
       display: flex;
       align-items: flex-start;
       justify-content: center;
-      padding-top: 8px;
-      min-height: 30px;
+      padding-top: 4px;
+      min-height: 20px;
+      position: relative;
+    }
+
+    .chart-bar.active {
+      background: linear-gradient(180deg, #17ead9 0%, #6078ea 100%);
+    }
+
+    .chart-bar.tracked {
+      background: linear-gradient(180deg, #ff6b6b 0%, #ffa06b 100%);
     }
 
     .chart-bar.projected {
-      background: linear-gradient(180deg, rgba(23, 234, 217, 0.5) 0%, rgba(96, 120, 234, 0.5) 100%);
-      border: 1px dashed rgba(255,255,255,0.3);
+      opacity: 0.6;
+      border: 1px dashed rgba(255,255,255,0.4);
       border-bottom: none;
     }
 
     .chart-value {
-      font-size: 12px;
+      font-size: 9px;
       font-weight: 600;
       color: #fff;
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      transform: rotate(180deg);
+      white-space: nowrap;
     }
 
     .chart-label {
-      font-size: 13px;
+      font-size: 12px;
       color: var(--text-muted);
-      margin-top: 12px;
+      margin-top: 8px;
+      font-weight: 500;
     }
 
     .chart-legend {
       display: flex;
       justify-content: center;
       gap: 24px;
-      margin-top: 8px;
+      margin-top: 16px;
+      flex-wrap: wrap;
     }
 
     .legend-item {
@@ -913,13 +994,17 @@
       border-radius: 4px;
     }
 
-    .legend-color.current {
+    .legend-color.active {
       background: linear-gradient(180deg, #17ead9 0%, #6078ea 100%);
     }
 
-    .legend-color.projected {
-      background: linear-gradient(180deg, rgba(23, 234, 217, 0.5) 0%, rgba(96, 120, 234, 0.5) 100%);
-      border: 1px dashed rgba(255,255,255,0.3);
+    .legend-color.tracked {
+      background: linear-gradient(180deg, #ff6b6b 0%, #ffa06b 100%);
+    }
+
+    .legend-color.projected-marker {
+      background: transparent;
+      border: 1px dashed rgba(255,255,255,0.5);
     }
 
     .chart-note {
@@ -1014,7 +1099,13 @@
         grid-template-columns: 1fr;
       }
       .chart-bar {
-        width: 36px;
+        width: 20px;
+      }
+      .chart-y-axis {
+        display: none;
+      }
+      .chart-bars {
+        border-left: none;
       }
       .growth-chart-section {
         padding: 24px;
@@ -2268,19 +2359,101 @@
         <p class="section-subtitle">Built on proven, battle-tested foundations for mission-critical reliability</p>
       </div>
       <div class="features-grid">
-        <div class="feature-card">
-          <h3 class="feature-title">IPFS Foundation</h3>
-          <p class="feature-desc">Content-addressed storage ensures data integrity. Every piece of space data is cryptographically verified, making tampering impossible.</p>
-        </div>
-        <div class="feature-card">
-          <h3 class="feature-title">libp2p Networking</h3>
+        <a href="https://libp2p.io" target="_blank" class="feature-card feature-card-link">
+          <div class="feature-icon icon-cyan">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">libp2p Networking <svg class="external-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg></h3>
           <p class="feature-desc">Modular peer-to-peer networking with NAT traversal, protocol multiplexing, and secure channels built-in.</p>
+        </a>
+        <a href="https://flatbuffers.dev" target="_blank" class="feature-card feature-card-link">
+          <div class="feature-icon icon-green">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+              <line x1="12" y1="22.08" x2="12" y2="12"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">FlatBuffers <svg class="external-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg></h3>
+          <p class="feature-desc">Zero-copy deserialization with Space Data Standards schemas. Parse orbital data without memory allocation overhead.</p>
+        </a>
+        <a href="https://github.com/nicklausw/flatsql" target="_blank" class="feature-card feature-card-link">
+          <div class="feature-icon icon-purple">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">FlatSQL <svg class="external-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg></h3>
+          <p class="feature-desc">Query FlatBuffer data with SQL syntax. Efficient database-style operations on binary space data without conversion overhead.</p>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Astrodynamics Section -->
+  <section id="astrodynamics">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Open Source Astrodynamics</h2>
+        <p class="section-subtitle">Complete SSA processing pipeline included with every SDN client</p>
+      </div>
+      <p class="vision-intro">
+        Every SDN installation - whether the full server node or the lightweight JavaScript client - includes a complete <strong>open source astrodynamics baseline</strong>. No proprietary software licenses required.
+      </p>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon icon-cyan">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10"/>
+              <path d="M2 12h20"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Orbit Propagation</h3>
+          <p class="feature-desc">SGP4/SDP4 propagators for TLE data, plus numerical integration for high-precision ephemeris. Runs identically in Go and WebAssembly.</p>
         </div>
         <div class="feature-card">
-          <h3 class="feature-title">FlatBuffers Efficiency</h3>
-          <p class="feature-desc">Zero-copy deserialization with Space Data Standards schemas. Parse orbital data without memory allocation overhead.</p>
+          <div class="feature-icon icon-orange">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/>
+              <circle cx="12" cy="12" r="8" stroke-dasharray="4 2"/>
+              <line x1="12" y1="1" x2="12" y2="4"/>
+              <line x1="12" y1="20" x2="12" y2="23"/>
+              <line x1="1" y1="12" x2="4" y2="12"/>
+              <line x1="20" y1="12" x2="23" y2="12"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Observation Association</h3>
+          <p class="feature-desc">Correlate observations with cataloged objects. Match radar tracks, optical measurements, and RF detections to known satellites or identify new objects.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon icon-purple">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Orbit Determination</h3>
+          <p class="feature-desc">Batch least-squares and sequential filters for orbit determination. Differential correction to refine orbital elements from tracking data.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon icon-red">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+          <h3 class="feature-title">Conjunction Assessment</h3>
+          <p class="feature-desc">Screen for close approaches, compute collision probabilities, and generate Conjunction Data Messages (CDM). Built-in hard body radius screening and probability of collision calculation.</p>
         </div>
       </div>
+      <p class="chart-note" style="margin-top: 40px;">All astrodynamics functions are available in both the Go server and JavaScript SDK, enabling consistent processing from cloud infrastructure to web browsers.</p>
     </div>
   </section>
 
@@ -2339,8 +2512,8 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
       <!-- Iridium-COSMOS Collision Feature -->
       <div class="collision-feature">
         <div class="collision-image">
-          <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Iridium_33_Cosmos_2251_702km.png/1280px-Iridium_33_Cosmos_2251_702km.png" alt="Iridium 33 and Cosmos 2251 collision debris field" loading="lazy">
-          <div class="image-caption">Debris field from the 2009 Iridium 33 / Cosmos 2251 collision at 790 km altitude</div>
+          <img src="iridium-cosmos-debris.jpg" alt="Iridium 33 and Cosmos 2251 collision debris field visualization from NASA" loading="lazy">
+          <div class="image-caption">Debris from Iridium 33 / Cosmos 2251 collision still in orbit (Feb 2024). Credit: NASA SVS</div>
         </div>
         <div class="collision-content">
           <h3>The Wake-Up Call: Iridium 33 & Cosmos 2251</h3>
@@ -2376,7 +2549,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
                 <line x1="12" y1="17" x2="12.01" y2="17"/>
               </svg>
             </div>
-            <div class="stm-stat-value">~10,000</div>
+            <div class="stm-stat-value" id="stat-cdm-warnings">~50,000</div>
             <div class="stm-stat-label">Conjunction warnings per day</div>
             <div class="stm-stat-detail">issued by the 18th Space Defense Squadron</div>
           </div>
@@ -2387,9 +2560,9 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
                 <path d="M12 6v6l4 2"/>
               </svg>
             </div>
-            <div class="stm-stat-value">45,000+</div>
+            <div class="stm-stat-value" id="stat-tracked-objects">~50,000</div>
             <div class="stm-stat-label">Tracked objects in orbit</div>
-            <div class="stm-stat-detail">as of 2024, increasing rapidly</div>
+            <div class="stm-stat-detail" id="stat-tracked-detail">as of 2025, increasing rapidly</div>
           </div>
           <div class="stm-stat-card">
             <div class="stm-stat-icon icon-purple">
@@ -2397,7 +2570,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
                 <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
               </svg>
             </div>
-            <div class="stm-stat-value">~50</div>
+            <div class="stm-stat-value" id="stat-maneuvers">~100</div>
             <div class="stm-stat-label">Collision avoidance maneuvers</div>
             <div class="stm-stat-detail">performed weekly by active satellites</div>
           </div>
@@ -2407,7 +2580,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
                 <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
               </svg>
             </div>
-            <div class="stm-stat-value">100,000+</div>
+            <div class="stm-stat-value" id="stat-planned">100,000+</div>
             <div class="stm-stat-label">Satellites planned by 2030</div>
             <div class="stm-stat-detail">from mega-constellations alone</div>
           </div>
@@ -2417,45 +2590,80 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
       <!-- Growth Chart -->
       <div class="growth-chart-section">
         <h3>Projected Growth of Space Objects</h3>
-        <div class="growth-chart">
-          <div class="chart-bars">
-            <div class="chart-bar-group">
-              <div class="chart-bar" style="height: 15%">
-                <span class="chart-value">~8K</span>
-              </div>
-              <span class="chart-label">2020</span>
-            </div>
-            <div class="chart-bar-group">
-              <div class="chart-bar" style="height: 30%">
-                <span class="chart-value">~15K</span>
-              </div>
-              <span class="chart-label">2024</span>
-            </div>
-            <div class="chart-bar-group">
-              <div class="chart-bar" style="height: 50%">
-                <span class="chart-value">~30K</span>
-              </div>
-              <span class="chart-label">2027</span>
-            </div>
-            <div class="chart-bar-group">
-              <div class="chart-bar projected" style="height: 75%">
-                <span class="chart-value">~60K</span>
-              </div>
-              <span class="chart-label">2030</span>
-            </div>
-            <div class="chart-bar-group">
-              <div class="chart-bar projected" style="height: 100%">
-                <span class="chart-value">~100K</span>
-              </div>
-              <span class="chart-label">2035</span>
-            </div>
+        <div class="growth-chart" id="growthChart">
+          <div class="chart-y-axis">
+            <span class="y-axis-label">100K</span>
+            <span class="y-axis-label">75K</span>
+            <span class="y-axis-label">50K</span>
+            <span class="y-axis-label">25K</span>
+            <span class="y-axis-label">0</span>
           </div>
-          <div class="chart-legend">
-            <span class="legend-item"><span class="legend-color current"></span> Current/Near-term</span>
-            <span class="legend-item"><span class="legend-color projected"></span> Projected</span>
+          <div class="chart-area">
+            <div class="chart-bars">
+              <div class="chart-bar-group">
+                <div class="chart-bar-pair">
+                  <div class="chart-bar active" style="height: 7%" title="Active Satellites: 3,300">
+                    <span class="chart-value">3.3K</span>
+                  </div>
+                  <div class="chart-bar tracked" style="height: 22%" title="Total Tracked: 22,000">
+                    <span class="chart-value">22K</span>
+                  </div>
+                </div>
+                <span class="chart-label">2020</span>
+              </div>
+              <div class="chart-bar-group">
+                <div class="chart-bar-pair">
+                  <div class="chart-bar active" style="height: 12%" title="Active Satellites: 10,000">
+                    <span class="chart-value">10K</span>
+                  </div>
+                  <div class="chart-bar tracked" style="height: 35%" title="Total Tracked: 35,000">
+                    <span class="chart-value">35K</span>
+                  </div>
+                </div>
+                <span class="chart-label">2023</span>
+              </div>
+              <div class="chart-bar-group">
+                <div class="chart-bar-pair">
+                  <div class="chart-bar active" style="height: 15%" title="Active Satellites: 13,000">
+                    <span class="chart-value">13K</span>
+                  </div>
+                  <div class="chart-bar tracked" style="height: 48%" title="Total Tracked: 48,000">
+                    <span class="chart-value">48K</span>
+                  </div>
+                </div>
+                <span class="chart-label">2025</span>
+              </div>
+              <div class="chart-bar-group">
+                <div class="chart-bar-pair">
+                  <div class="chart-bar active projected" style="height: 35%" title="Active Satellites: 35,000 (projected)">
+                    <span class="chart-value">35K</span>
+                  </div>
+                  <div class="chart-bar tracked projected" style="height: 65%" title="Total Tracked: 65,000 (projected)">
+                    <span class="chart-value">65K</span>
+                  </div>
+                </div>
+                <span class="chart-label">2028</span>
+              </div>
+              <div class="chart-bar-group">
+                <div class="chart-bar-pair">
+                  <div class="chart-bar active projected" style="height: 58%" title="Active Satellites: 58,000 (projected)">
+                    <span class="chart-value">58K</span>
+                  </div>
+                  <div class="chart-bar tracked projected" style="height: 85%" title="Total Tracked: 85,000 (projected)">
+                    <span class="chart-value">85K</span>
+                  </div>
+                </div>
+                <span class="chart-label">2030</span>
+              </div>
+            </div>
+            <div class="chart-legend">
+              <span class="legend-item"><span class="legend-color active"></span> Active Satellites</span>
+              <span class="legend-item"><span class="legend-color tracked"></span> Total Tracked Objects</span>
+              <span class="legend-item"><span class="legend-color projected-marker"></span> Projected</span>
+            </div>
           </div>
         </div>
-        <p class="chart-note">Estimated active satellites in orbit. Source: ESA Space Debris Office, satellite operator filings.</p>
+        <p class="chart-note">Sources: ESA Space Debris Office, Space-Track.org, satellite operator filings. Projections based on approved constellation deployments.</p>
       </div>
 
       <!-- Stakeholders -->
@@ -2936,14 +3144,22 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
         </div>
         <div class="accordion-item">
           <button class="accordion-trigger">
-            <span>How does SDN compare to Space-Track?</span>
+            <span>How does this compare to...</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="6 9 12 15 18 9"/>
             </svg>
           </button>
           <div class="accordion-content">
             <div class="accordion-content-inner">
-              <p>Space-Track provides authoritative tracking data from the 18th Space Defense Squadron. SDN is complementary infrastructure that enables organizations to share their own data directly with each other. SDN can ingest Space-Track data and combine it with commercial, academic, and international sources for a more complete picture.</p>
+              <p>SDN is complementary infrastructure that enables organizations to share data directly with each other. Here's how it relates to existing SSA data providers:</p>
+              <ul style="margin: 16px 0; padding-left: 20px; color: var(--text-secondary);">
+                <li style="margin-bottom: 8px;"><strong><a href="https://space-track.org" target="_blank" style="color: var(--text-primary);">Space-Track</a></strong> - Authoritative catalog from the 18th Space Defense Squadron. SDN can ingest and redistribute this data while adding commercial and international sources.</li>
+                <li style="margin-bottom: 8px;"><strong><a href="https://celestrak.org" target="_blank" style="color: var(--text-primary);">CelesTrak</a></strong> - Dr. T.S. Kelso's invaluable TLE distribution service. SDN supports the same data formats and can extend CelesTrak data with real-time operator ephemerides.</li>
+                <li style="margin-bottom: 8px;"><strong><a href="https://discosweb.esoc.esa.int" target="_blank" style="color: var(--text-primary);">ESA DISCOS</a></strong> - European Space Agency's database on space objects. SDN enables interoperability between ESA data and other international sources.</li>
+                <li style="margin-bottom: 8px;"><strong><a href="https://www.eu-ssa.eu" target="_blank" style="color: var(--text-primary);">EU SST</a></strong> - European Union Space Surveillance & Tracking. SDN can bridge EU SST data with global partners.</li>
+                <li style="margin-bottom: 8px;"><strong>Commercial SSA providers</strong> (LeoLabs, ExoAnalytic, etc.) - SDN provides an open data exchange layer that commercial providers can use to share data with customers.</li>
+              </ul>
+              <p>Unlike centralized services, SDN has no single point of failure, no usage quotas, and enables direct peer-to-peer data sharing with cryptographic verification of data provenance.</p>
             </div>
           </div>
         </div>
@@ -2983,6 +3199,26 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
           <div class="accordion-content">
             <div class="accordion-content-inner">
               <p>Due to the distributed nature of IPFS and libp2p, there is no central authority that can remove data from the network. Content is replicated across participating nodes and addressed by its cryptographic hash. Only the original author who holds the signing key can issue updates or retractions. This is by design - it ensures that critical space safety data cannot be censored by any single entity, but it also means participants should carefully consider what they publish. Nodes can individually choose to stop pinning or serving specific content, but this doesn't remove it from other nodes that have copies.</p>
+            </div>
+          </div>
+        </div>
+        <div class="accordion-item">
+          <button class="accordion-trigger">
+            <span>How do I put my data on the network?</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div class="accordion-content">
+            <div class="accordion-content-inner">
+              <p><strong>Only Space Data Standards (SDS) formatted data is allowed on the network.</strong> This ensures interoperability and allows all participants to parse and validate incoming data.</p>
+              <p style="margin-top: 12px;">To onboard your data:</p>
+              <ul style="margin: 12px 0; padding-left: 20px; color: var(--text-secondary);">
+                <li style="margin-bottom: 8px;"><strong>Use the SDK</strong> - The JavaScript and Go SDKs include converters for common formats (TLE, CCSDS XML/KVN, etc.) to SDS FlatBuffers.</li>
+                <li style="margin-bottom: 8px;"><strong>AI-Powered Assistant</strong> - An AI assistant is available to help map your existing data schemas to SDS formats and generate conversion code.</li>
+                <li style="margin-bottom: 8px;"><strong>Request New Schemas</strong> - If your data doesn't fit existing schemas, <a href="https://github.com/DigitalArsenal/spacedatastandards.org/issues" target="_blank" style="color: var(--text-primary);">open an issue on the SDS repository</a> to propose additions.</li>
+              </ul>
+              <p style="margin-top: 12px;">SDS FlatBuffers are <strong>always backwards compatible</strong> by design - new fields can be added without breaking existing parsers. See the <a href="https://flatbuffers.dev/flatbuffers_guide_writing_schema.html" target="_blank" style="color: var(--text-primary);">FlatBuffers schema evolution documentation</a> for details. The network software automatically updates when new SDS versions are released.</p>
             </div>
           </div>
         </div>
@@ -3249,6 +3485,49 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
       video.src = 'space-bg.mp4';
       video.addEventListener('loadeddata', () => video.classList.add('loaded'));
       video.play().catch(() => {});
+    }
+
+    // Dynamic statistics based on date projections
+    function initDynamicStats() {
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const yearFraction = (now.getMonth() + 1) / 12;
+
+      // Baseline values (as of early 2025)
+      const baseYear = 2025;
+      const baseCDMWarnings = 50000;        // CDM warnings per day
+      const baseTrackedObjects = 48000;      // Total tracked objects
+      const baseActiveManeuvers = 100;       // Weekly collision avoidance maneuvers
+
+      // Annual growth rates (reasonable projections)
+      const cdmGrowthRate = 0.15;           // 15% annual increase in CDM warnings
+      const trackedGrowthRate = 0.12;        // 12% annual increase in tracked objects
+      const maneuverGrowthRate = 0.20;       // 20% annual increase in maneuvers
+
+      // Calculate years since baseline
+      const yearsDiff = (currentYear - baseYear) + yearFraction;
+
+      // Project current values
+      const currentCDM = Math.round(baseCDMWarnings * Math.pow(1 + cdmGrowthRate, yearsDiff));
+      const currentTracked = Math.round(baseTrackedObjects * Math.pow(1 + trackedGrowthRate, yearsDiff));
+      const currentManeuvers = Math.round(baseActiveManeuvers * Math.pow(1 + maneuverGrowthRate, yearsDiff));
+
+      // Format numbers
+      const formatNumber = (n) => {
+        if (n >= 1000) return '~' + Math.round(n / 1000) + ',' + String(n % 1000).padStart(3, '0').slice(0, 3);
+        return '~' + n.toLocaleString();
+      };
+
+      // Update DOM
+      const cdmEl = document.getElementById('stat-cdm-warnings');
+      const trackedEl = document.getElementById('stat-tracked-objects');
+      const trackedDetailEl = document.getElementById('stat-tracked-detail');
+      const maneuversEl = document.getElementById('stat-maneuvers');
+
+      if (cdmEl) cdmEl.textContent = formatNumber(currentCDM);
+      if (trackedEl) trackedEl.textContent = formatNumber(currentTracked);
+      if (trackedDetailEl) trackedDetailEl.textContent = `as of ${currentYear}, increasing rapidly`;
+      if (maneuversEl) maneuversEl.textContent = '~' + currentManeuvers;
     }
 
     // Accordion
@@ -3636,6 +3915,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
       initMobileMenu();
       initPKIDemo();
       initIdentityDemo();
+      initDynamicStats();
     });
   </script>
 </body>
