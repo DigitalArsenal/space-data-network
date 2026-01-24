@@ -232,6 +232,98 @@ node.subscribe('CDM', (cdm, peerId) => {
 
 ---
 
+## Network Architecture
+
+SDN uses a **two-tier peer topology** for maximum reach and reliability:
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│                    FULL NODES (Open Internet)                    │
+│                                                                  │
+│    ┌──────────┐      ┌──────────┐      ┌──────────┐             │
+│    │Full Node │◄────►│Full Node │◄────►│Full Node │             │
+│    │  (Go)    │      │  (Go)    │      │  (Go)    │             │
+│    └────┬─────┘      └────┬─────┘      └────┬─────┘             │
+│         │                 │                 │                    │
+│         │    DHT + GossipSub + Relay        │                    │
+│         │                 │                 │                    │
+├─────────┼─────────────────┼─────────────────┼────────────────────┤
+│         ▼                 ▼                 ▼                    │
+│                 LIGHT PEERS (Behind NAT/Firewall)                │
+│                                                                  │
+│    ┌──────────┐      ┌──────────┐      ┌──────────┐             │
+│    │ Browser  │      │ Desktop  │      │Corporate │             │
+│    │  (JS)    │      │  (App)   │      │   Node   │             │
+│    └──────────┘      └──────────┘      └──────────┘             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Full Nodes
+- Run on servers with **public IP addresses**
+- Participate in DHT routing and peer discovery
+- Relay traffic for firewalled peers via Circuit Relay
+- Pin and store content for the network
+- **Requirements:** Public IP, ports 4001 (libp2p), 8080 (HTTP API)
+
+### Light Peers
+- Connect through relay nodes when behind NAT/firewalls
+- Can subscribe to data, publish messages, verify signatures
+- Cannot contribute to DHT routing
+- Includes: browsers, mobile apps, desktop apps, corporate networks
+
+### Run a Full Node
+
+Help strengthen the network by running a full node:
+
+```bash
+./spacedatanetwork daemon --relay-enabled --announce-public
+```
+
+---
+
+## Content Addressing
+
+All data on SDN is **content-addressed** using cryptographic hashes (CIDs):
+
+| Feature | Description |
+|---------|-------------|
+| **Tamper-proof** | Hash changes if data is modified - tampering is immediately detectable |
+| **Permanent references** | CIDs never change - reference specific data versions forever |
+| **Deduplication** | Same data = same hash - network automatically deduplicates |
+| **Selective pinning** | Choose what to store locally - pin critical data for availability |
+
+---
+
+## Data Marketplace
+
+SDN includes an optional **commercial layer** for monetizing space data:
+
+### How It Works
+
+1. **Provider publishes** premium data product (high-precision ephemeris, analysis, etc.)
+2. **Per-customer encryption** - Data encrypted with each customer's public key (ECIES)
+3. **Customer pays** via credit card through integrated payment gateway
+4. **Access granted** - Customer receives and decrypts data with their private key
+
+### Features
+
+| Category | Options |
+|----------|---------|
+| **Data Products** | High-precision ephemeris, conjunction analysis, historical archives, real-time feeds |
+| **Plugin Marketplace** | Analysis algorithms, visualization tools, format converters, custom propagators |
+| **Payment Options** | Credit cards (Stripe), subscriptions, usage-based billing, enterprise invoicing |
+
+### Technical Details
+
+- **Encryption:** ECIES with X25519 key exchange + AES-256-GCM
+- **Payment Gateway:** Stripe integration for credit card processing
+- **Revenue Distribution:** Automated splits between data providers and platform
+- **Metering:** Usage tracking for consumption-based billing
+
+The marketplace operates **on top of the free, open network**. Core SSA data exchange remains free and open - the commercial layer is opt-in for premium products.
+
+---
+
 ## Development
 
 ### Prerequisites

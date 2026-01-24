@@ -582,6 +582,441 @@
       color: var(--text-secondary);
     }
 
+    /* ============================================
+       NETWORK ARCHITECTURE
+       ============================================ */
+    .network-diagram {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 40px;
+      margin-bottom: 40px;
+    }
+
+    .network-tier {
+      padding: 24px;
+      border-radius: var(--radius-sm);
+      margin-bottom: 16px;
+    }
+
+    .tier-full {
+      background: rgba(23, 234, 217, 0.1);
+      border: 1px solid rgba(23, 234, 217, 0.3);
+    }
+
+    .tier-light {
+      background: rgba(255, 107, 107, 0.1);
+      border: 1px solid rgba(255, 107, 107, 0.3);
+    }
+
+    .tier-label {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+
+    .tier-full .tier-label { color: #17ead9; }
+    .tier-light .tier-label { color: #ff6b6b; }
+
+    .tier-nodes {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+
+    .network-node {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 16px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 12px;
+      min-width: 80px;
+    }
+
+    .node-icon {
+      width: 40px;
+      height: 40px;
+    }
+
+    .node-icon svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .node-full .node-icon { color: #17ead9; }
+    .node-light .node-icon { color: #ff6b6b; }
+
+    .network-node span {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .network-connection {
+      width: 40px;
+      height: 2px;
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .tier-desc {
+      font-size: 14px;
+      color: var(--text-secondary);
+      text-align: center;
+      max-width: 600px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+
+    .network-relay-arrows {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 8px 0;
+    }
+
+    .network-relay-arrows svg {
+      width: 100px;
+      height: 40px;
+      color: var(--text-muted);
+    }
+
+    .relay-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .run-full-node {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 32px;
+    }
+
+    .run-full-node h3 {
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    .run-full-node p {
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+    }
+
+    .run-full-node ul {
+      list-style: none;
+      padding: 0;
+      margin-bottom: 24px;
+    }
+
+    .run-full-node li {
+      padding: 8px 0;
+      padding-left: 24px;
+      position: relative;
+      color: var(--text-secondary);
+    }
+
+    .run-full-node li::before {
+      content: '→';
+      position: absolute;
+      left: 0;
+      color: var(--text-muted);
+    }
+
+    .run-node-code {
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+      overflow-x: auto;
+    }
+
+    .run-node-code code {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      color: #17ead9;
+    }
+
+    .run-node-note {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 0;
+    }
+
+    /* ============================================
+       CONTENT PINNING
+       ============================================ */
+    .content-hash-demo {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 40px;
+      margin-bottom: 40px;
+    }
+
+    .hash-explainer {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .hash-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      max-width: 280px;
+    }
+
+    .hash-step-num {
+      width: 28px;
+      height: 28px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .hash-step-content h4 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .hash-step-content p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    .hash-example-data code,
+    .hash-example-cid code {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      background: rgba(0, 0, 0, 0.4);
+      padding: 8px;
+      border-radius: 6px;
+      display: block;
+      word-break: break-all;
+      color: #17ead9;
+    }
+
+    .hash-example-nodes {
+      display: flex;
+      gap: 8px;
+    }
+
+    .pin-node {
+      width: 20px;
+      height: 20px;
+      background: linear-gradient(135deg, #17ead9, #6078ea);
+      border-radius: 4px;
+    }
+
+    .hash-arrow {
+      flex-shrink: 0;
+    }
+
+    .hash-arrow svg {
+      width: 24px;
+      height: 24px;
+      color: var(--text-muted);
+    }
+
+    .pinning-features {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+    }
+
+    .pinning-card {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 24px;
+      text-align: center;
+    }
+
+    .pinning-icon {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+    }
+
+    .pinning-icon svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .pinning-card h4 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .pinning-card p {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* ============================================
+       MARKETPLACE
+       ============================================ */
+    .marketplace-flow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 48px;
+      padding: 32px;
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+    }
+
+    .marketplace-step {
+      text-align: center;
+      max-width: 160px;
+    }
+
+    .marketplace-step-icon {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+    }
+
+    .marketplace-step-icon svg {
+      width: 28px;
+      height: 28px;
+    }
+
+    .marketplace-step h4 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .marketplace-step p {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .marketplace-arrow {
+      flex-shrink: 0;
+    }
+
+    .marketplace-arrow svg {
+      width: 24px;
+      height: 24px;
+      color: var(--text-muted);
+    }
+
+    .marketplace-features {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .marketplace-feature-card {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 24px;
+    }
+
+    .marketplace-feature-card h4 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    .marketplace-feature-card ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    .marketplace-feature-card li {
+      padding: 8px 0;
+      padding-left: 20px;
+      position: relative;
+      font-size: 14px;
+      color: var(--text-secondary);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .marketplace-feature-card li:first-child {
+      border-top: none;
+      padding-top: 0;
+    }
+
+    .marketplace-feature-card li::before {
+      content: '•';
+      position: absolute;
+      left: 0;
+      color: var(--text-muted);
+    }
+
+    @media (max-width: 1068px) {
+      .pinning-features {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .marketplace-features {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 734px) {
+      .hash-explainer {
+        flex-direction: column;
+      }
+      .hash-arrow svg {
+        transform: rotate(90deg);
+      }
+      .pinning-features {
+        grid-template-columns: 1fr;
+      }
+      .marketplace-flow {
+        flex-direction: column;
+      }
+      .marketplace-arrow svg {
+        transform: rotate(90deg);
+      }
+      .tier-nodes {
+        flex-direction: column;
+      }
+      .network-connection {
+        width: 2px;
+        height: 20px;
+      }
+    }
+
     @media (max-width: 1068px) {
       .ipfs-content {
         grid-template-columns: 1fr;
@@ -2176,6 +2611,656 @@
       .logo { font-size: 0; }
       .logo svg { width: 28px; height: 28px; }
     }
+
+    /* ============================================
+       LOGIN MODAL
+       ============================================ */
+    .modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      z-index: 10000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .modal.open {
+      display: flex;
+    }
+
+    .modal-content {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      max-width: 440px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      backdrop-filter: blur(20px);
+    }
+
+    .modal-header {
+      padding: 24px 24px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-header h3 {
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 28px;
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+      transition: color 0.2s;
+    }
+
+    .modal-close:hover {
+      color: var(--text-primary);
+    }
+
+    .modal-body {
+      padding: 24px;
+    }
+
+    .method-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+
+    .method-tab {
+      flex: 1;
+      padding: 12px;
+      background: transparent;
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius-sm);
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .method-tab:hover {
+      border-color: var(--ui-border-hover);
+      color: var(--text-secondary);
+    }
+
+    .method-tab.active {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: var(--text-primary);
+      color: var(--text-primary);
+    }
+
+    .method-content {
+      display: none;
+    }
+
+    .method-content.active {
+      display: block;
+    }
+
+    .glass-input-group {
+      margin-bottom: 16px;
+    }
+
+    .glass-input {
+      width: 100%;
+      padding: 14px 16px;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--ui-border);
+      border-radius: 12px;
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 15px;
+      transition: all 0.2s;
+    }
+
+    .glass-input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .glass-input:focus {
+      outline: none;
+      border-color: var(--ui-border-hover);
+      background: rgba(0, 0, 0, 0.4);
+    }
+
+    .glass-textarea {
+      resize: vertical;
+      min-height: 80px;
+      font-family: var(--font-mono);
+      font-size: 14px;
+    }
+
+    .entropy-bar {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 2px;
+      margin-top: 8px;
+      overflow: hidden;
+    }
+
+    .entropy-fill {
+      height: 100%;
+      width: 0;
+      border-radius: 2px;
+      transition: all 0.3s;
+    }
+
+    .entropy-fill.weak { background: #ef4444; }
+    .entropy-fill.fair { background: #f59e0b; }
+    .entropy-fill.good { background: #10b981; }
+    .entropy-fill.strong { background: #06b6d4; }
+
+    .entropy-label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 6px;
+      text-align: right;
+    }
+
+    .seed-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .glass-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 14px 24px;
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      color: var(--text-primary);
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .glass-btn:hover:not(:disabled) {
+      background: var(--ui-hover);
+      border-color: var(--ui-border-hover);
+    }
+
+    .glass-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .glass-btn.primary {
+      background: var(--text-primary);
+      color: var(--bg);
+      border-color: var(--text-primary);
+    }
+
+    .glass-btn.primary:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.9);
+    }
+
+    .glass-btn.small {
+      padding: 8px 16px;
+      font-size: 13px;
+      border-radius: var(--radius-sm);
+    }
+
+    .glass-btn.full-width {
+      width: 100%;
+    }
+
+    .remember-wallet-group {
+      margin: 20px 0;
+    }
+
+    .glass-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    .glass-checkbox input {
+      display: none;
+    }
+
+    .checkmark {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--ui-border);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+
+    .glass-checkbox input:checked + .checkmark {
+      background: var(--text-primary);
+      border-color: var(--text-primary);
+    }
+
+    .glass-checkbox input:checked + .checkmark::after {
+      content: '✓';
+      color: var(--bg);
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    .remember-options {
+      margin-top: 16px;
+      padding: 16px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 12px;
+    }
+
+    .remember-method-selector {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .remember-method-btn {
+      flex: 1;
+      padding: 10px;
+      background: transparent;
+      border: 1px solid var(--ui-border);
+      border-radius: 8px;
+      color: var(--text-muted);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .remember-method-btn.active {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: var(--text-primary);
+      color: var(--text-primary);
+    }
+
+    .pin-input-group {
+      margin-top: 12px;
+    }
+
+    .pin-input, .pin-input-large {
+      text-align: center;
+      letter-spacing: 0.5em;
+      font-family: var(--font-mono);
+    }
+
+    .pin-input-large {
+      font-size: 24px;
+      padding: 16px;
+    }
+
+    .passkey-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .passkey-info svg {
+      flex-shrink: 0;
+    }
+
+    .stored-wallet-info {
+      text-align: center;
+      padding: 24px;
+    }
+
+    .stored-wallet-info svg {
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+
+    .stored-wallet-info p {
+      font-size: 16px;
+      margin-bottom: 4px;
+    }
+
+    .stored-wallet-date {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .stored-divider {
+      text-align: center;
+      margin: 16px 0;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    /* ============================================
+       ADVERSARIAL SECURITY SECTION
+       ============================================ */
+    .adversarial-intro-card {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 40px;
+      margin-bottom: 32px;
+      backdrop-filter: blur(20px);
+    }
+
+    .adversarial-intro {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 40px;
+    }
+
+    .intro-icon {
+      width: 64px;
+      height: 64px;
+      background: rgba(16, 185, 129, 0.2);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .intro-content h3 {
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .intro-content p {
+      font-size: 16px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    .adversarial-principles {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+
+    .principle {
+      display: flex;
+      gap: 16px;
+      padding: 20px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: var(--radius-sm);
+    }
+
+    .principle-number {
+      width: 32px;
+      height: 32px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .principle-content h4 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .principle-content p {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .adversarial-login-required {
+      text-align: center;
+      padding: 48px 24px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: var(--radius-sm);
+    }
+
+    .adversarial-login-required svg {
+      margin-bottom: 16px;
+      opacity: 0.5;
+    }
+
+    .adversarial-login-required p {
+      color: var(--text-muted);
+      max-width: 400px;
+      margin: 0 auto;
+    }
+
+    .adversarial-balances {
+      margin-top: 32px;
+    }
+
+    .balances-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .balances-header h3 {
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .balances-intro {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+    }
+
+    .wallet-networks-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .wallet-network-card {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius-sm);
+      padding: 20px;
+      display: flex;
+      gap: 16px;
+      transition: all 0.2s;
+    }
+
+    .wallet-network-card:hover {
+      border-color: var(--ui-border-hover);
+      background: rgba(0, 0, 0, 0.4);
+    }
+
+    .network-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .network-icon.btc { background: linear-gradient(135deg, #f7931a 0%, #ffb347 100%); }
+    .network-icon.eth { background: linear-gradient(135deg, #627eea 0%, #9baaf3 100%); }
+    .network-icon.sol { background: linear-gradient(135deg, #9945ff 0%, #14f195 100%); }
+    .network-icon.sui { background: linear-gradient(135deg, #4da2ff 0%, #6fbcff 100%); }
+    .network-icon.atom { background: linear-gradient(135deg, #2e3148 0%, #6f7390 100%); }
+    .network-icon.ada { background: linear-gradient(135deg, #0033ad 0%, #0052ff 100%); }
+
+    .network-icon svg {
+      width: 24px;
+      height: 24px;
+      color: white;
+    }
+
+    .network-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .network-name-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .network-name {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .derivation-path {
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+
+    .network-address-link {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+      text-decoration: none;
+    }
+
+    .network-address-link code {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .network-address-link svg {
+      color: var(--text-muted);
+      flex-shrink: 0;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .wallet-network-card:hover .network-address-link svg {
+      opacity: 1;
+    }
+
+    .network-balance-row {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+
+    .balance-value {
+      font-size: 16px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+
+    .balance-unit {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Web3 Connect Button */
+    .web3-connect-section {
+      text-align: center;
+      margin-top: 32px;
+      padding-top: 32px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .web3-connect-section p {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+
+    #connect-wallet-btn.connected {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: rgba(16, 185, 129, 0.5);
+      color: #10b981;
+    }
+
+    #web3-address {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 8px;
+    }
+
+    @media (max-width: 1068px) {
+      .wallet-networks-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .adversarial-principles {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 734px) {
+      .wallet-networks-grid {
+        grid-template-columns: 1fr;
+      }
+      .adversarial-intro {
+        flex-direction: column;
+        text-align: center;
+      }
+      .intro-icon {
+        margin: 0 auto;
+      }
+      .adversarial-intro-card {
+        padding: 24px;
+      }
+    }
+
+    /* Nav Login Button */
+    .nav-login {
+      padding: 8px 18px;
+      background: var(--text-primary);
+      border: 1px solid var(--text-primary);
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--bg);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .nav-login:hover {
+      background: rgba(255, 255, 255, 0.9);
+    }
+
+    .nav-login.logged-in {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: rgba(16, 185, 129, 0.5);
+      color: #10b981;
+    }
   </style>
 </head>
 <body>
@@ -2196,12 +3281,13 @@
       <div class="nav-links">
         <a href="#features">Features</a>
         <a href="#security">Security</a>
+        <a href="#adversarial">Adversarial</a>
         <a href="#identity">Identity</a>
         <a href="#docs">Docs</a>
         <a href="#downloads">Downloads</a>
         <a href="https://github.com/DigitalArsenal/go-space-data-network" target="_blank">GitHub</a>
       </div>
-      <a href="#get-started" class="nav-cta">Get Started</a>
+      <button class="nav-login" id="nav-login">Login</button>
       <button class="nav-menu-btn" id="menuBtn" aria-label="Menu">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="menu-icon">
           <line x1="3" y1="12" x2="21" y2="12"/>
@@ -2221,6 +3307,7 @@
     <a href="#features">Features</a>
     <a href="#technology">Technology</a>
     <a href="#security">Security & Crypto</a>
+    <a href="#adversarial">Adversarial Security</a>
     <a href="#identity">Digital Identity</a>
     <a href="#docs">Documentation</a>
     <a href="#downloads">Downloads</a>
@@ -2395,6 +3482,340 @@
           </a>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- Network Architecture Section -->
+  <section id="network-architecture">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Network Architecture</h2>
+        <p class="section-subtitle">Two-tier peer topology for maximum reach and reliability</p>
+      </div>
+
+      <div class="network-diagram">
+        <div class="network-tier tier-full">
+          <div class="tier-label">Full Nodes (Open Internet)</div>
+          <div class="tier-nodes">
+            <div class="network-node node-full">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="2" width="20" height="8" rx="2"/>
+                  <rect x="2" y="14" width="20" height="8" rx="2"/>
+                  <circle cx="6" cy="6" r="1" fill="currentColor"/>
+                  <circle cx="6" cy="18" r="1" fill="currentColor"/>
+                </svg>
+              </div>
+              <span>Full Node</span>
+            </div>
+            <div class="network-connection bidirectional"></div>
+            <div class="network-node node-full">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="2" width="20" height="8" rx="2"/>
+                  <rect x="2" y="14" width="20" height="8" rx="2"/>
+                  <circle cx="6" cy="6" r="1" fill="currentColor"/>
+                  <circle cx="6" cy="18" r="1" fill="currentColor"/>
+                </svg>
+              </div>
+              <span>Full Node</span>
+            </div>
+            <div class="network-connection bidirectional"></div>
+            <div class="network-node node-full">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="2" width="20" height="8" rx="2"/>
+                  <rect x="2" y="14" width="20" height="8" rx="2"/>
+                  <circle cx="6" cy="6" r="1" fill="currentColor"/>
+                  <circle cx="6" cy="18" r="1" fill="currentColor"/>
+                </svg>
+              </div>
+              <span>Full Node</span>
+            </div>
+          </div>
+          <div class="tier-desc">
+            <strong>Run on the open internet</strong> with public IP addresses. Contribute to DHT routing, relay traffic for firewalled peers, and store pinned content. These nodes form the backbone of the network.
+          </div>
+        </div>
+
+        <div class="network-relay-arrows">
+          <svg viewBox="0 0 100 40" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 5 L20 35 M15 30 L20 35 L25 30" />
+            <path d="M50 5 L50 35 M45 30 L50 35 L55 30" />
+            <path d="M80 5 L80 35 M75 30 L80 35 L85 30" />
+          </svg>
+          <span class="relay-label">Circuit Relay</span>
+        </div>
+
+        <div class="network-tier tier-light">
+          <div class="tier-label">Light Peers (Behind Firewalls/NAT)</div>
+          <div class="tier-nodes">
+            <div class="network-node node-light">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2"/>
+                  <line x1="8" y1="21" x2="16" y2="21"/>
+                  <line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+              </div>
+              <span>Browser</span>
+            </div>
+            <div class="network-node node-light">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="5" y="2" width="14" height="20" rx="2"/>
+                  <line x1="12" y1="18" x2="12.01" y2="18"/>
+                </svg>
+              </div>
+              <span>Mobile</span>
+            </div>
+            <div class="network-node node-light">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2"/>
+                  <line x1="8" y1="21" x2="16" y2="21"/>
+                  <line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+              </div>
+              <span>Desktop</span>
+            </div>
+            <div class="network-node node-light">
+              <div class="node-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+              </div>
+              <span>Corporate</span>
+            </div>
+          </div>
+          <div class="tier-desc">
+            <strong>Connect through relay nodes</strong> when behind firewalls, NAT, or corporate networks. Can subscribe to data, publish messages, and verify signatures, but cannot contribute to routing.
+          </div>
+        </div>
+      </div>
+
+      <div class="run-full-node">
+        <h3>Run a Full Node</h3>
+        <p>Help strengthen the network by running a full node on a server with a public IP address. Full nodes:</p>
+        <ul>
+          <li><strong>Route traffic</strong> - Participate in DHT and help peers discover each other</li>
+          <li><strong>Relay connections</strong> - Bridge traffic for peers that can't connect directly</li>
+          <li><strong>Pin content</strong> - Store and serve data for the network</li>
+          <li><strong>Improve resilience</strong> - More full nodes = more reliable network</li>
+        </ul>
+        <div class="run-node-code">
+          <code>./spacedatanetwork daemon --relay-enabled --announce-public</code>
+        </div>
+        <p class="run-node-note">Requires: Public IP address, open ports (4001 TCP/UDP, 8080 HTTP)</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Content Pinning Section -->
+  <section id="content-pinning">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Content Addressing & Pinning</h2>
+        <p class="section-subtitle">Immutable data with cryptographic integrity</p>
+      </div>
+
+      <div class="content-hash-demo">
+        <div class="hash-explainer">
+          <div class="hash-step">
+            <div class="hash-step-num">1</div>
+            <div class="hash-step-content">
+              <h4>Data Input</h4>
+              <p>Any SDS data (OMM, CDM, etc.)</p>
+              <div class="hash-example-data">
+                <code>{ "OBJECT_NAME": "ISS", "EPOCH": "2025-01-24T12:00:00Z", ... }</code>
+              </div>
+            </div>
+          </div>
+          <div class="hash-arrow">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+          </div>
+          <div class="hash-step">
+            <div class="hash-step-num">2</div>
+            <div class="hash-step-content">
+              <h4>Content Hash (CID)</h4>
+              <p>SHA-256 hash of the content</p>
+              <div class="hash-example-cid">
+                <code>bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi</code>
+              </div>
+            </div>
+          </div>
+          <div class="hash-arrow">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+          </div>
+          <div class="hash-step">
+            <div class="hash-step-num">3</div>
+            <div class="hash-step-content">
+              <h4>Distributed Storage</h4>
+              <p>Pinned across network nodes</p>
+              <div class="hash-example-nodes">
+                <span class="pin-node"></span>
+                <span class="pin-node"></span>
+                <span class="pin-node"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pinning-features">
+        <div class="pinning-card">
+          <div class="pinning-icon icon-cyan">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <path d="M9 12l2 2 4-4"/>
+            </svg>
+          </div>
+          <h4>Tamper-Proof</h4>
+          <p>Content hash changes if data is modified. Any alteration is immediately detectable.</p>
+        </div>
+        <div class="pinning-card">
+          <div class="pinning-icon icon-green">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 6v6l4 2"/>
+            </svg>
+          </div>
+          <h4>Permanent References</h4>
+          <p>CIDs never change. Reference specific data versions forever, even as new versions are published.</p>
+        </div>
+        <div class="pinning-card">
+          <div class="pinning-icon icon-purple">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+            </svg>
+          </div>
+          <h4>Deduplication</h4>
+          <p>Same data = same hash. Network automatically deduplicates, saving storage and bandwidth.</p>
+        </div>
+        <div class="pinning-card">
+          <div class="pinning-icon icon-orange">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+              <line x1="1" y1="1" x2="23" y2="23"/>
+            </svg>
+          </div>
+          <h4>Selective Pinning</h4>
+          <p>Choose what to store locally. Pin critical data for availability, let other data flow through.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Marketplace Section -->
+  <section id="marketplace">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Data Marketplace</h2>
+        <p class="section-subtitle">Monetize your space data with built-in commerce</p>
+      </div>
+
+      <p class="vision-intro">
+        SDN includes a <strong>commercial layer</strong> enabling data providers to sell access to premium data products. Encryption ensures only paying customers can access purchased content.
+      </p>
+
+      <div class="marketplace-flow">
+        <div class="marketplace-step">
+          <div class="marketplace-step-icon icon-cyan">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+          </div>
+          <h4>1. Publish Data</h4>
+          <p>Provider uploads premium data product (high-precision ephemeris, analysis results, etc.)</p>
+        </div>
+        <div class="marketplace-arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12h14M12 5l7 7-7 7"/>
+          </svg>
+        </div>
+        <div class="marketplace-step">
+          <div class="marketplace-step-icon icon-green">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </div>
+          <h4>2. Per-Customer Encryption</h4>
+          <p>Data encrypted with each customer's public key using ECIES. Only key holder can decrypt.</p>
+        </div>
+        <div class="marketplace-arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12h14M12 5l7 7-7 7"/>
+          </svg>
+        </div>
+        <div class="marketplace-step">
+          <div class="marketplace-step-icon icon-purple">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="1" y="4" width="22" height="16" rx="2"/>
+              <line x1="1" y1="10" x2="23" y2="10"/>
+            </svg>
+          </div>
+          <h4>3. Payment</h4>
+          <p>Customer pays via credit card through integrated payment gateway. Automatic revenue distribution.</p>
+        </div>
+        <div class="marketplace-arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12h14M12 5l7 7-7 7"/>
+          </svg>
+        </div>
+        <div class="marketplace-step">
+          <div class="marketplace-step-icon icon-gold">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </div>
+          <h4>4. Access Granted</h4>
+          <p>Customer receives encrypted data. Decrypts locally with their private key.</p>
+        </div>
+      </div>
+
+      <div class="marketplace-features">
+        <div class="marketplace-feature-card">
+          <h4>Data Products</h4>
+          <ul>
+            <li>High-precision ephemeris data</li>
+            <li>Proprietary conjunction analysis</li>
+            <li>Historical catalogs and archives</li>
+            <li>Real-time tracking feeds</li>
+            <li>Specialized sensor data</li>
+          </ul>
+        </div>
+        <div class="marketplace-feature-card">
+          <h4>Plugin Marketplace</h4>
+          <ul>
+            <li>Analysis algorithms</li>
+            <li>Visualization tools</li>
+            <li>Format converters</li>
+            <li>Integration connectors</li>
+            <li>Custom propagators</li>
+          </ul>
+        </div>
+        <div class="marketplace-feature-card">
+          <h4>Payment Options</h4>
+          <ul>
+            <li>Credit/debit cards (Stripe)</li>
+            <li>One-time purchases</li>
+            <li>Recurring subscriptions</li>
+            <li>Usage-based billing</li>
+            <li>Enterprise invoicing</li>
+          </ul>
+        </div>
+      </div>
+
+      <p class="chart-note" style="margin-top: 40px;">The marketplace operates on top of the free, open network. Core SSA data exchange remains free and open. Commercial layer is opt-in for premium products.</p>
     </div>
   </section>
 
@@ -2989,6 +4410,262 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
               <div class="step-num">5</div>
               <div class="step-text"><strong>Send:</strong> Ephemeral public key + nonce + ciphertext + tag sent to Bob</div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Adversarial Security Section -->
+  <section id="adversarial">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Adversarial Security</h2>
+        <p class="section-subtitle">Cryptographic keys derive blockchain addresses. Value at an address proves key integrity.</p>
+      </div>
+
+      <div class="adversarial-intro-card">
+        <div class="adversarial-intro">
+          <div class="intro-icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="white" stroke="white" stroke-width="1.5"/>
+              <path d="M9 12l2 2 4-4" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="intro-content">
+            <h3>What is Adversarial Security?</h3>
+            <p>A novel trust mechanism where <strong>cryptocurrency value acts as a security bond</strong> for cryptographic keys. The same public key used for encryption can derive addresses on blockchain networks. If significant value remains at those addresses without being drained, it provides strong evidence that the private key hasn't been compromised.</p>
+          </div>
+        </div>
+
+        <div class="adversarial-principles">
+          <div class="principle">
+            <div class="principle-number">1</div>
+            <div class="principle-content">
+              <h4>Key Derivation</h4>
+              <p>Any cryptographic public key (secp256k1, Ed25519) can mathematically derive addresses on cryptocurrency networks. This is a one-way function - the address is uniquely tied to that key.</p>
+            </div>
+          </div>
+          <div class="principle">
+            <div class="principle-number">2</div>
+            <div class="principle-content">
+              <h4>Value as Trust Signal</h4>
+              <p>Anyone can send cryptocurrency to an address without permission. If you rely on a key being secure, you can deposit funds as a "security bond." The more value at stake, the higher the trust signal.</p>
+            </div>
+          </div>
+          <div class="principle">
+            <div class="principle-number">3</div>
+            <div class="principle-content">
+              <h4>Adversarial Assumption</h4>
+              <p>If a private key is compromised, a rational attacker drains the funds immediately. <strong>Undrained value = uncompromised key.</strong> Data signed by that key can be trusted.</p>
+            </div>
+          </div>
+          <div class="principle">
+            <div class="principle-number">4</div>
+            <div class="principle-content">
+              <h4>Real-Time Proof</h4>
+              <p>Blockchain explorers show balances updated every block. This provides <strong>continuous, verifiable proof</strong> of key integrity - not a certificate, but live security monitoring.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Login Required State -->
+        <div class="adversarial-login-required" id="adversarial-login-required">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <p>Login to derive addresses from your keys and check live balances across multiple blockchain networks.</p>
+        </div>
+
+        <!-- Wallet Addresses (shown after login) -->
+        <div class="adversarial-balances" id="adversarial-balances" style="display: none;">
+          <div class="balances-header">
+            <h3>Your Derived Addresses</h3>
+            <button id="refresh-balances" class="glass-btn small">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"/>
+                <polyline points="1 20 1 14 7 14"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+              </svg>
+              Refresh
+            </button>
+          </div>
+          <p class="balances-intro">These addresses are mathematically derived from your HD wallet keys. Anyone can verify the derivation and send funds to increase trust in your keys.</p>
+
+          <div class="wallet-networks-grid" id="wallet-networks-grid">
+            <!-- Bitcoin -->
+            <div class="wallet-network-card" id="wallet-btc-card">
+              <div class="network-icon btc">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-1.67v-1.89c-1.05-.1-2.07-.45-2.81-.95l.47-1.84c.82.43 1.82.79 2.75.79.82 0 1.42-.29 1.42-.95 0-.63-.52-.97-1.73-1.39-1.73-.6-2.92-1.43-2.92-3.07 0-1.48 1.08-2.64 2.82-2.98V6h1.67v1.69c.82.08 1.59.29 2.22.59l-.43 1.77c-.63-.26-1.43-.55-2.32-.55-.92 0-1.24.38-1.24.83 0 .53.5.87 1.9 1.39 1.92.7 2.76 1.63 2.76 3.17-.01 1.53-1.12 2.72-2.89 3.1z"/>
+                </svg>
+              </div>
+              <div class="network-info">
+                <div class="network-name-row">
+                  <span class="network-name">Bitcoin</span>
+                  <span class="derivation-path">m/44'/0'/0'/0/0</span>
+                </div>
+                <a href="#" id="wallet-btc-explorer" class="network-address-link" target="_blank" rel="noopener">
+                  <code id="wallet-btc-address">--</code>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </a>
+                <div class="network-balance-row">
+                  <span class="balance-value" id="wallet-btc-balance">--</span>
+                  <span class="balance-unit">BTC</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Ethereum -->
+            <div class="wallet-network-card" id="wallet-eth-card">
+              <div class="network-icon eth">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 1.5l-7 10.8 7 4.2 7-4.2-7-10.8zm0 15.6l-7-4.2 7 9.6 7-9.6-7 4.2z"/>
+                </svg>
+              </div>
+              <div class="network-info">
+                <div class="network-name-row">
+                  <span class="network-name">Ethereum</span>
+                  <span class="derivation-path">m/44'/60'/0'/0/0</span>
+                </div>
+                <a href="#" id="wallet-eth-explorer" class="network-address-link" target="_blank" rel="noopener">
+                  <code id="wallet-eth-address">--</code>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </a>
+                <div class="network-balance-row">
+                  <span class="balance-value" id="wallet-eth-balance">--</span>
+                  <span class="balance-unit">ETH</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Solana -->
+            <div class="wallet-network-card" id="wallet-sol-card">
+              <div class="network-icon sol">
+                <svg width="24" height="24" viewBox="0 0 397.7 311.7" fill="currentColor">
+                  <path d="M64.6 237.9c2.4-2.4 5.7-3.8 9.2-3.8h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1l62.7-62.7z"/>
+                  <path d="M64.6 3.8C67.1 1.4 70.4 0 73.8 0h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1L64.6 3.8z"/>
+                  <path d="M333.1 120.1c-2.4-2.4-5.7-3.8-9.2-3.8H6.5c-5.8 0-8.7 7-4.6 11.1l62.7 62.7c2.4 2.4 5.7 3.8 9.2 3.8h317.4c5.8 0 8.7-7 4.6-11.1l-62.7-62.7z"/>
+                </svg>
+              </div>
+              <div class="network-info">
+                <div class="network-name-row">
+                  <span class="network-name">Solana</span>
+                  <span class="derivation-path">m/44'/501'/0'/0'</span>
+                </div>
+                <a href="#" id="wallet-sol-explorer" class="network-address-link" target="_blank" rel="noopener">
+                  <code id="wallet-sol-address">--</code>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </a>
+                <div class="network-balance-row">
+                  <span class="balance-value" id="wallet-sol-balance">--</span>
+                  <span class="balance-unit">SOL</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- SUI -->
+            <div class="wallet-network-card" id="wallet-sui-card">
+              <div class="network-icon sui">
+                <svg width="24" height="24" viewBox="0 0 32 32" fill="currentColor">
+                  <path d="M21.63 10.26a8.3 8.3 0 0 0-1.45-1.65l-6.6 7.24a.84.84 0 0 1-1.26 0 .89.89 0 0 1 0-1.24l6.45-7.1a8.7 8.7 0 0 0-2.68-1.3 8.6 8.6 0 0 0-5.15.18l7.7 8.46a.89.89 0 0 1 0 1.24.84.84 0 0 1-1.26 0L9.7 8.64A8.6 8.6 0 0 0 7.4 11a8.4 8.4 0 0 0-1.15 6.92 8.5 8.5 0 0 0 4.28 5.5 8.6 8.6 0 0 0 6.94.5 8.5 8.5 0 0 0 5.08-4.72 8.4 8.4 0 0 0-.92-8.94z" fill="#4DA2FF"/>
+                </svg>
+              </div>
+              <div class="network-info">
+                <div class="network-name-row">
+                  <span class="network-name">SUI</span>
+                  <span class="derivation-path">m/44'/784'/0'/0'/0'</span>
+                </div>
+                <a href="#" id="wallet-sui-explorer" class="network-address-link" target="_blank" rel="noopener">
+                  <code id="wallet-sui-address">--</code>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </a>
+                <div class="network-balance-row">
+                  <span class="balance-value" id="wallet-sui-balance">--</span>
+                  <span class="balance-unit">SUI</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Cosmos -->
+            <div class="wallet-network-card" id="wallet-atom-card">
+              <div class="network-icon atom">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="12" r="10"/>
+                  <circle cx="12" cy="12" r="3" fill="var(--bg)"/>
+                </svg>
+              </div>
+              <div class="network-info">
+                <div class="network-name-row">
+                  <span class="network-name">Cosmos</span>
+                  <span class="derivation-path">m/44'/118'/0'/0/0</span>
+                </div>
+                <a href="#" id="wallet-atom-explorer" class="network-address-link" target="_blank" rel="noopener">
+                  <code id="wallet-atom-address">--</code>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </a>
+                <div class="network-balance-row">
+                  <span class="balance-value" id="wallet-atom-balance">--</span>
+                  <span class="balance-unit">ATOM</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Cardano -->
+            <div class="wallet-network-card" id="wallet-ada-card">
+              <div class="network-icon ada">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="12" r="10"/>
+                  <circle cx="12" cy="12" r="3" fill="var(--bg)"/>
+                </svg>
+              </div>
+              <div class="network-info">
+                <div class="network-name-row">
+                  <span class="network-name">Cardano</span>
+                  <span class="derivation-path">m/1852'/1815'/0'/0/0</span>
+                </div>
+                <a href="#" id="wallet-ada-explorer" class="network-address-link" target="_blank" rel="noopener">
+                  <code id="wallet-ada-address">--</code>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                </a>
+                <div class="network-balance-row">
+                  <span class="balance-value" id="wallet-ada-balance">--</span>
+                  <span class="balance-unit">ADA</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Web3 Connect -->
+          <div class="web3-connect-section">
+            <p>Or connect your existing Web3 wallet</p>
+            <button id="connect-wallet-btn" class="glass-btn">Connect Wallet</button>
+            <div id="web3-address" style="display: none;"></div>
           </div>
         </div>
       </div>
@@ -3601,6 +5278,138 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
       <p class="footer-copyright">Released under the MIT License. &copy; 2024 Digital Arsenal / Space Data Standards</p>
     </div>
   </footer>
+
+  <!-- Login Modal -->
+  <div id="login-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Login</h3>
+        <button class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="method-tabs">
+          <button class="method-tab active" data-method="password">Password</button>
+          <button class="method-tab" data-method="seed">Seed Phrase</button>
+          <button class="method-tab" data-method="stored" id="stored-tab" style="display: none;">Stored</button>
+        </div>
+
+        <form id="password-method" class="method-content active" onsubmit="return false;">
+          <div class="glass-input-group">
+            <input type="text" id="wallet-username" class="glass-input" placeholder="Username" autocomplete="username">
+          </div>
+          <div class="glass-input-group">
+            <input type="password" id="wallet-password" class="glass-input" placeholder="Password (24+ chars)" autocomplete="new-password">
+            <div class="entropy-bar">
+              <div class="entropy-fill" id="strength-fill"></div>
+            </div>
+            <span class="entropy-label"><span id="entropy-bits">0</span> bits entropy</span>
+          </div>
+          <div class="remember-wallet-group">
+            <label class="glass-checkbox">
+              <input type="checkbox" id="remember-wallet-password">
+              <span class="checkmark"></span>
+              <span>Remember wallet</span>
+            </label>
+            <div class="remember-options" id="remember-options-password" style="display: none;">
+              <div class="remember-method-selector">
+                <button type="button" class="remember-method-btn" data-method="pin" data-target="password">PIN</button>
+                <button type="button" class="remember-method-btn active" data-method="passkey" data-target="password" id="passkey-btn-password">Passkey</button>
+              </div>
+              <div class="pin-input-group" id="pin-group-password" style="display: none;">
+                <input type="password" id="pin-input-password" class="glass-input pin-input" placeholder="6-digit PIN" maxlength="6" inputmode="numeric" pattern="[0-9]*">
+              </div>
+              <div class="passkey-info" id="passkey-info-password">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2a5 5 0 0 1 5 5v3H7V7a5 5 0 0 1 5-5z"/>
+                  <rect x="3" y="10" width="18" height="12" rx="2"/>
+                  <circle cx="12" cy="16" r="1"/>
+                </svg>
+                <span>Use Face ID, Touch ID, or device PIN</span>
+              </div>
+            </div>
+          </div>
+          <button id="derive-from-password" class="glass-btn primary full-width" disabled type="button">
+            Login
+          </button>
+        </form>
+
+        <div id="seed-method" class="method-content">
+          <div class="glass-input-group">
+            <textarea id="seed-phrase" class="glass-input glass-textarea" rows="3" placeholder="Enter 12 or 24 word seed phrase..."></textarea>
+            <div class="seed-actions">
+              <button id="generate-seed" class="glass-btn small">Generate</button>
+              <button id="validate-seed" class="glass-btn small">Validate</button>
+            </div>
+          </div>
+          <div class="remember-wallet-group">
+            <label class="glass-checkbox">
+              <input type="checkbox" id="remember-wallet-seed">
+              <span class="checkmark"></span>
+              <span>Remember wallet</span>
+            </label>
+            <div class="remember-options" id="remember-options-seed" style="display: none;">
+              <div class="remember-method-selector">
+                <button type="button" class="remember-method-btn" data-method="pin" data-target="seed">PIN</button>
+                <button type="button" class="remember-method-btn active" data-method="passkey" data-target="seed" id="passkey-btn-seed">Passkey</button>
+              </div>
+              <div class="pin-input-group" id="pin-group-seed" style="display: none;">
+                <input type="password" id="pin-input-seed" class="glass-input pin-input" placeholder="6-digit PIN" maxlength="6" inputmode="numeric" pattern="[0-9]*">
+              </div>
+              <div class="passkey-info" id="passkey-info-seed">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2a5 5 0 0 1 5 5v3H7V7a5 5 0 0 1 5-5z"/>
+                  <rect x="3" y="10" width="18" height="12" rx="2"/>
+                  <circle cx="12" cy="16" r="1"/>
+                </svg>
+                <span>Use Face ID, Touch ID, or device PIN</span>
+              </div>
+            </div>
+          </div>
+          <button id="derive-from-seed" class="glass-btn primary full-width" disabled>
+            Login
+          </button>
+        </div>
+
+        <div id="stored-method" class="method-content">
+          <div class="stored-wallet-info">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <p>Encrypted wallet found</p>
+            <span class="stored-wallet-date" id="stored-wallet-date"></span>
+          </div>
+          <div id="stored-pin-section">
+            <div class="glass-input-group">
+              <input type="password" id="pin-input-unlock" class="glass-input pin-input-large" placeholder="Enter 6-digit PIN" maxlength="6" inputmode="numeric" pattern="[0-9]*">
+            </div>
+            <button id="unlock-stored-wallet" class="glass-btn primary full-width" disabled>
+              Unlock with PIN
+            </button>
+          </div>
+          <div id="stored-passkey-section" style="display: none;">
+            <button id="unlock-with-passkey" class="glass-btn primary full-width">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a5 5 0 0 1 5 5v3H7V7a5 5 0 0 1 5-5z"/>
+                <rect x="3" y="10" width="18" height="12" rx="2"/>
+                <circle cx="12" cy="16" r="1"/>
+              </svg>
+              Unlock with Passkey
+            </button>
+          </div>
+          <div class="stored-divider" id="stored-divider" style="display: none;">
+            <span>or</span>
+          </div>
+          <button id="forget-stored-wallet" class="glass-btn full-width">
+            Forget Wallet
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- App Module -->
+  <script type="module" src="app.mjs"></script>
 
   <!-- JavaScript -->
   <script>
