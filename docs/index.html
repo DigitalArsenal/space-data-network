@@ -2271,17 +2271,22 @@
     }
 
     .doc-card {
+      display: block;
       background: var(--ui-bg);
       border: 1px solid var(--ui-border);
       border-radius: var(--radius);
       padding: 28px;
       backdrop-filter: blur(20px);
       transition: all 0.2s;
+      text-decoration: none;
+      color: inherit;
+      cursor: pointer;
     }
 
     .doc-card:hover {
       background: var(--ui-hover);
       border-color: var(--ui-border-hover);
+      transform: translateY(-2px);
     }
 
     .doc-card h3 {
@@ -4813,7 +4818,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
         <p class="section-subtitle">Everything you need to build with SDN</p>
       </div>
       <div class="docs-grid">
-        <div class="doc-card">
+        <a href="docs.html#overview" class="doc-card">
           <h3>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
@@ -4828,8 +4833,8 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
             <li>Browser integration</li>
             <li>First data exchange</li>
           </ul>
-        </div>
-        <div class="doc-card">
+        </a>
+        <a href="docs.html#full-node" class="doc-card">
           <h3>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -4844,8 +4849,8 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
             <li>Data flow</li>
             <li>Security model</li>
           </ul>
-        </div>
-        <div class="doc-card">
+        </a>
+        <a href="docs.html#sdk-identity" class="doc-card">
           <h3>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -4859,8 +4864,8 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
             <li>Digital identity</li>
             <li>Key management</li>
           </ul>
-        </div>
-        <div class="doc-card">
+        </a>
+        <a href="docs.html#api-rest" class="doc-card">
           <h3>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="16 18 22 12 16 6"/>
@@ -4875,8 +4880,8 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
             <li>HTTP endpoints</li>
             <li>RPC interface</li>
           </ul>
-        </div>
-        <div class="doc-card">
+        </a>
+        <a href="docs.html#schemas-overview" class="doc-card">
           <h3>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
@@ -4890,8 +4895,8 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
             <li>Validation rules</li>
             <li>Conversion utilities</li>
           </ul>
-        </div>
-        <div class="doc-card">
+        </a>
+        <a href="docs.html#docker" class="doc-card">
           <h3>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="2" y="7" width="20" height="14" rx="2"/>
@@ -4906,7 +4911,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
             <li>High availability</li>
             <li>Monitoring</li>
           </ul>
-        </div>
+        </a>
       </div>
     </div>
   </section>
@@ -5261,7 +5266,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
           </svg>
           View on GitHub
         </a>
-        <a href="#docs" class="btn btn-secondary">Read Documentation</a>
+        <a href="docs.html" class="btn btn-secondary">Read Documentation</a>
       </div>
     </div>
   </section>
