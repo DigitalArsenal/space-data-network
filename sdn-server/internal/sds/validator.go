@@ -4,8 +4,10 @@ package sds
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -13,6 +15,58 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
+
+// Schema name validation constants
+const (
+	// MaxSchemaNameLength is the maximum allowed length for a schema name
+	MaxSchemaNameLength = 64
+)
+
+// Schema name validation errors
+var (
+	// ErrSchemaNameEmpty is returned when the schema name is empty
+	ErrSchemaNameEmpty = errors.New("schema name cannot be empty")
+	// ErrSchemaNameTooLong is returned when the schema name exceeds the maximum length
+	ErrSchemaNameTooLong = errors.New("schema name exceeds maximum length")
+	// ErrSchemaNameInvalidChars is returned when the schema name contains invalid characters
+	ErrSchemaNameInvalidChars = errors.New("schema name contains invalid characters (only alphanumeric, dots, and underscores allowed)")
+	// ErrSchemaNamePathTraversal is returned when the schema name contains path traversal sequences
+	ErrSchemaNamePathTraversal = errors.New("schema name contains path traversal sequences")
+)
+
+// validSchemaNameRegex matches valid schema names: alphanumeric, dots, and underscores only
+var validSchemaNameRegex = regexp.MustCompile(`^[a-zA-Z0-9._]+$`)
+
+// ValidateSchemaName validates a schema name to prevent path traversal attacks,
+// SQL injection through table names, and other security issues.
+// Valid schema names:
+// - Are not empty
+// - Are at most MaxSchemaNameLength characters
+// - Contain only alphanumeric characters, dots, and underscores
+// - Do not contain path separators or traversal sequences
+func ValidateSchemaName(name string) error {
+	// Check for empty name
+	if name == "" {
+		return ErrSchemaNameEmpty
+	}
+
+	// Check maximum length
+	if len(name) > MaxSchemaNameLength {
+		return ErrSchemaNameTooLong
+	}
+
+	// Check for path traversal sequences (before character validation for better error messages)
+	if strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		return ErrSchemaNamePathTraversal
+	}
+
+	// Check for valid characters (alphanumeric, dots, underscores only)
+	if !validSchemaNameRegex.MatchString(name) {
+		return ErrSchemaNameInvalidChars
+	}
+
+	return nil
+}
 
 var log = logging.Logger("sds")
 

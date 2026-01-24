@@ -150,6 +150,102 @@ func TestSchemaNameToTable(t *testing.T) {
 	}
 }
 
+func TestValidateSchemaName(t *testing.T) {
+	tests := []struct {
+		name        string
+		schemaName  string
+		expectError error
+	}{
+		// Valid schema names
+		{"valid simple", "OMM.fbs", nil},
+		{"valid uppercase", "CDM", nil},
+		{"valid lowercase", "omm", nil},
+		{"valid with underscore", "my_schema", nil},
+		{"valid with dot", "schema.fbs", nil},
+		{"valid alphanumeric", "schema123", nil},
+		{"valid mixed", "My_Schema_v2.fbs", nil},
+
+		// Empty name
+		{"empty string", "", ErrSchemaNameEmpty},
+
+		// Too long
+		{"too long", "a" + string(make([]byte, MaxSchemaNameLength)), ErrSchemaNameTooLong},
+		{"exactly max length", string(make([]byte, MaxSchemaNameLength)), nil}, // 64 'a' characters
+
+		// Path traversal
+		{"path traversal double dot", "../etc/passwd", ErrSchemaNamePathTraversal},
+		{"path traversal forward slash", "foo/bar", ErrSchemaNamePathTraversal},
+		{"path traversal backslash", "foo\\bar", ErrSchemaNamePathTraversal},
+		{"path traversal complex", "..\\..\\etc\\passwd", ErrSchemaNamePathTraversal},
+		{"double dot in middle", "foo..bar", ErrSchemaNamePathTraversal},
+
+		// Invalid characters (potential SQL injection or other issues)
+		{"sql injection semicolon", "schema;DROP TABLE", ErrSchemaNameInvalidChars},
+		{"sql injection quote", "schema'--", ErrSchemaNameInvalidChars},
+		{"space in name", "my schema", ErrSchemaNameInvalidChars},
+		{"hyphen in name", "my-schema", ErrSchemaNameInvalidChars},
+		{"special char at", "user@domain", ErrSchemaNameInvalidChars},
+		{"special char hash", "schema#1", ErrSchemaNameInvalidChars},
+		{"special char dollar", "$schema", ErrSchemaNameInvalidChars},
+		{"special char percent", "schema%20", ErrSchemaNameInvalidChars},
+		{"null byte", "schema\x00name", ErrSchemaNameInvalidChars},
+		{"newline", "schema\nname", ErrSchemaNameInvalidChars},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// For "exactly max length" test, create a string of exactly MaxSchemaNameLength 'a' characters
+			schemaName := tt.schemaName
+			if tt.name == "exactly max length" {
+				schemaName = string(make([]byte, MaxSchemaNameLength))
+				for i := range schemaName {
+					schemaName = schemaName[:i] + "a" + schemaName[i+1:]
+				}
+				// Actually create it properly
+				buf := make([]byte, MaxSchemaNameLength)
+				for i := range buf {
+					buf[i] = 'a'
+				}
+				schemaName = string(buf)
+			}
+
+			err := ValidateSchemaName(schemaName)
+			if tt.expectError != nil {
+				if err == nil {
+					t.Errorf("Expected error %v, got nil", tt.expectError)
+				} else if err != tt.expectError {
+					t.Errorf("Expected error %v, got %v", tt.expectError, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateSchemaNameMaxLength(t *testing.T) {
+	// Test boundary conditions for max length
+	exactMax := make([]byte, MaxSchemaNameLength)
+	for i := range exactMax {
+		exactMax[i] = 'a'
+	}
+
+	overMax := make([]byte, MaxSchemaNameLength+1)
+	for i := range overMax {
+		overMax[i] = 'a'
+	}
+
+	if err := ValidateSchemaName(string(exactMax)); err != nil {
+		t.Errorf("Expected no error for exactly max length, got %v", err)
+	}
+
+	if err := ValidateSchemaName(string(overMax)); err != ErrSchemaNameTooLong {
+		t.Errorf("Expected ErrSchemaNameTooLong for over max length, got %v", err)
+	}
+}
+
 func TestSupportedSchemas(t *testing.T) {
 	// Verify SupportedSchemas contains expected schemas
 	expectedSchemas := []string{

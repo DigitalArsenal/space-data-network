@@ -4,11 +4,15 @@ package node
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
+	"time"
 
+	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -17,14 +21,16 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
+	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
+	mh "github.com/multiformats/go-multihash"
 	"github.com/multiformats/go-multiaddr"
-	"golang.org/x/crypto/argon2"
 
+	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -160,18 +166,94 @@ func (n *Node) init() error {
 		}
 	}
 
-	// Setup protocol handler
-	n.protocol = protocol.NewSDSExchangeHandler(n.store, n.validator, n.flatc)
+	// Setup protocol handler with message limits from config
+	limits := protocol.MessageLimits{
+		MaxMessageSize: n.config.Network.MaxMessageSize,
+		MaxSchemaName:  n.config.Network.MaxSchemaName,
+		MaxQuerySize:   n.config.Network.MaxQuerySize,
+	}
+	// Use defaults if not configured
+	if limits.MaxMessageSize <= 0 {
+		limits.MaxMessageSize = 10 * 1024 * 1024 // 10MB
+	}
+	if limits.MaxSchemaName <= 0 {
+		limits.MaxSchemaName = 256
+	}
+	if limits.MaxQuerySize <= 0 {
+		limits.MaxQuerySize = 4 * 1024 // 4KB
+	}
+
+	// Log security status at startup
+	if n.flatc == nil && !n.config.Security.InsecureMode {
+		log.Errorf("SECURITY: WASM crypto module not loaded and insecure mode is disabled")
+		log.Errorf("SECURITY: All data push operations will be REJECTED until WASM is available")
+		log.Errorf("SECURITY: Ensure flatc.wasm is available, or enable insecure mode for development")
+	}
+
+	// Create rate limiter for DoS protection
+	var rateLimiter *protocol.PeerRateLimiter
+	if n.config.Network.MaxMessagesPerSecond > 0 || n.config.Network.MaxMessagesPerMinute > 0 {
+		rateLimitConfig := protocol.RateLimitConfig{
+			MaxMessagesPerSecond: n.config.Network.MaxMessagesPerSecond,
+			MaxMessagesPerMinute: n.config.Network.MaxMessagesPerMinute,
+			Burst:                n.config.Network.RateLimitBurst,
+		}
+		// Apply defaults if not configured
+		if rateLimitConfig.MaxMessagesPerSecond <= 0 {
+			rateLimitConfig.MaxMessagesPerSecond = 100
+		}
+		if rateLimitConfig.MaxMessagesPerMinute <= 0 {
+			rateLimitConfig.MaxMessagesPerMinute = 1000
+		}
+		if rateLimitConfig.Burst <= 0 {
+			rateLimitConfig.Burst = 50
+		}
+		rateLimiter = protocol.NewPeerRateLimiter(rateLimitConfig)
+	}
+
+	n.protocol = protocol.NewSDSExchangeHandlerWithOptions(n.store, n.validator, n.flatc, limits, n.config.Security.InsecureMode, rateLimiter)
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
 
 	return nil
 }
 
 func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
-	// For now, generate a new key each time
-	// TODO: Persist key to disk
+	// Determine key storage path
+	keyDir := filepath.Join(filepath.Dir(n.config.Storage.Path), "keys")
+	keyPath := filepath.Join(keyDir, "node.key")
+
+	// Try to load existing key
+	if keyData, err := os.ReadFile(keyPath); err == nil {
+		privKey, err := crypto.UnmarshalPrivateKey(keyData)
+		if err == nil {
+			log.Infof("Loaded existing node identity from %s", keyPath)
+			return privKey, nil
+		}
+		log.Warnf("Failed to unmarshal existing key, generating new one: %v", err)
+	}
+
+	// Generate new key
 	privKey, _, err := crypto.GenerateEd25519Key(rand.Reader)
-	return privKey, err
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate key: %w", err)
+	}
+
+	// Persist key to disk
+	if err := os.MkdirAll(keyDir, 0700); err != nil {
+		return nil, fmt.Errorf("failed to create key directory: %w", err)
+	}
+
+	keyData, err := crypto.MarshalPrivateKey(privKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal private key: %w", err)
+	}
+
+	if err := os.WriteFile(keyPath, keyData, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write key file: %w", err)
+	}
+
+	log.Infof("Generated and saved new node identity to %s", keyPath)
+	return privKey, nil
 }
 
 func (n *Node) findWasmPath() string {
@@ -196,27 +278,37 @@ func (n *Node) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to bootstrap DHT: %w", err)
 	}
 
-	// Connect to bootstrap peers
-	for _, addr := range n.config.Network.Bootstrap {
-		ma, err := multiaddr.NewMultiaddr(addr)
-		if err != nil {
-			log.Warnf("Invalid bootstrap address %s: %v", addr, err)
-			continue
+	// Validate bootstrap configuration and warn about missing peer IDs
+	if warnings := bootstrap.ValidateBootstrapConfig(n.config.Network.Bootstrap); len(warnings) > 0 {
+		for _, w := range warnings {
+			log.Warnf("Bootstrap configuration: %s", w)
 		}
-		peerInfo, err := peer.AddrInfoFromP2pAddr(ma)
-		if err != nil {
-			log.Warnf("Failed to parse peer info from %s: %v", addr, err)
-			continue
-		}
+	}
+
+	// Parse and validate bootstrap addresses with peer ID pinning
+	bootstrapPeers, err := bootstrap.ParseBootstrapAddresses(n.config.Network.Bootstrap)
+	if err != nil {
+		log.Warnf("Error parsing bootstrap addresses: %v", err)
+	}
+
+	// Filter to only peers with pinned IDs for security
+	pinnedPeers := bootstrap.RequirePinnedPeerIDs(bootstrapPeers)
+	if len(pinnedPeers) < len(bootstrapPeers) {
+		log.Warnf("Skipping %d bootstrap peers without peer IDs (peer ID pinning required)",
+			len(bootstrapPeers)-len(pinnedPeers))
+	}
+
+	// Connect to bootstrap peers asynchronously with peer ID verification
+	for _, p := range pinnedPeers {
 		n.wg.Add(1)
-		go func(pi peer.AddrInfo) {
+		go func(peerInfo bootstrap.PeerInfo) {
 			defer n.wg.Done()
-			if err := n.host.Connect(ctx, pi); err != nil {
-				log.Warnf("Failed to connect to bootstrap peer %s: %v", pi.ID, err)
+			if err := n.host.Connect(ctx, peerInfo.AddrInfo); err != nil {
+				log.Warnf("Failed to connect to bootstrap peer %s: %v", peerInfo.AddrInfo.ID, err)
 			} else {
-				log.Infof("Connected to bootstrap peer %s", pi.ID)
+				log.Infof("Connected to bootstrap peer %s (peer ID verified)", peerInfo.AddrInfo.ID)
 			}
-		}(*peerInfo)
+		}(p)
 	}
 
 	// Setup per-schema PubSub topics
@@ -276,24 +368,145 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 	}
 }
 
+// mdnsNotifee handles mDNS peer discovery events.
+type mdnsNotifee struct {
+	host host.Host
+	ctx  context.Context
+}
+
+// HandlePeerFound is called when a peer is discovered via mDNS.
+func (m *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
+	// Don't connect to ourselves
+	if pi.ID == m.host.ID() {
+		return
+	}
+
+	log.Debugf("mDNS discovered peer: %s", pi.ID)
+
+	// Connect to the discovered peer
+	if err := m.host.Connect(m.ctx, pi); err != nil {
+		log.Debugf("Failed to connect to mDNS peer %s: %v", pi.ID, err)
+	} else {
+		log.Infof("Connected to mDNS peer: %s", pi.ID)
+	}
+}
+
 func (n *Node) runMDNS() {
 	defer n.wg.Done()
-	// TODO: Implement mDNS discovery with MDNSServiceName
-	log.Debug("mDNS discovery started")
+
+	notifee := &mdnsNotifee{
+		host: n.host,
+		ctx:  n.ctx,
+	}
+
+	// Create mDNS service with our custom service name
+	mdnsService := mdns.NewMdnsService(n.host, MDNSServiceName, notifee)
+	if err := mdnsService.Start(); err != nil {
+		log.Warnf("Failed to start mDNS service: %v", err)
+		return
+	}
+	defer mdnsService.Close()
+
+	log.Infof("mDNS discovery started with service name: %s", MDNSServiceName)
+
+	// Wait for context cancellation
+	<-n.ctx.Done()
+	log.Debug("mDNS discovery stopped")
 }
 
 func (n *Node) runDHTDiscovery() {
 	defer n.wg.Done()
 
-	// Create discovery namespace from version hash (Argon2)
+	// Create discovery namespace from version hash using SHA-256
+	// Note: Using SHA-256 instead of Argon2 since this is for deterministic
+	// namespace generation, not password hashing. Argon2 is designed for
+	// password-based key derivation with computational cost, which is
+	// inappropriate for this use case.
 	versionBytes := []byte(SDNVersion)
-	hash := argon2.IDKey(versionBytes, versionBytes, 1, 64*1024, 4, 32)
-	discoveryNS := hex.EncodeToString(hash)
+	hash := sha256.Sum256(versionBytes)
+	discoveryNS := hex.EncodeToString(hash[:])
 
 	log.Infof("DHT discovery namespace: %s", discoveryNS[:16]+"...")
 
-	// Announce ourselves periodically
-	// TODO: Implement announcement loop
+	// Create a CID for the discovery namespace to use with DHT.Provide
+	// We use the namespace hash as the content ID
+	multihash, err := mh.Encode(hash[:], mh.SHA2_256)
+	if err != nil {
+		log.Errorf("Failed to create multihash for discovery: %v", err)
+		return
+	}
+	discoveryCID := cid.NewCidV1(cid.Raw, multihash)
+
+	// Announcement interval (every 30 seconds as per Agents.md spec)
+	announceTicker := time.NewTicker(30 * time.Second)
+	defer announceTicker.Stop()
+
+	// Discovery ticker (find other peers every 60 seconds)
+	discoveryTicker := time.NewTicker(60 * time.Second)
+	defer discoveryTicker.Stop()
+
+	// Initial announcement
+	n.announceOnDHT(discoveryCID)
+
+	for {
+		select {
+		case <-n.ctx.Done():
+			log.Debug("DHT discovery stopped")
+			return
+
+		case <-announceTicker.C:
+			n.announceOnDHT(discoveryCID)
+
+		case <-discoveryTicker.C:
+			n.discoverPeers(discoveryCID)
+		}
+	}
+}
+
+// announceOnDHT announces our presence in the DHT discovery namespace.
+func (n *Node) announceOnDHT(discoveryCID cid.Cid) {
+	ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+	defer cancel()
+
+	err := n.dht.Provide(ctx, discoveryCID, true)
+	if err != nil {
+		log.Debugf("DHT announce failed: %v", err)
+	} else {
+		log.Debug("DHT announcement successful")
+	}
+}
+
+// discoverPeers finds other SDN peers in the DHT discovery namespace.
+func (n *Node) discoverPeers(discoveryCID cid.Cid) {
+	ctx, cancel := context.WithTimeout(n.ctx, 30*time.Second)
+	defer cancel()
+
+	// Find providers (other SDN nodes) in the discovery namespace
+	peerChan := n.dht.FindProvidersAsync(ctx, discoveryCID, 20)
+
+	for peerInfo := range peerChan {
+		// Skip ourselves
+		if peerInfo.ID == n.host.ID() {
+			continue
+		}
+
+		// Skip if already connected
+		if n.host.Network().Connectedness(peerInfo.ID) == 2 { // Connected
+			continue
+		}
+
+		// Try to connect
+		go func(pi peer.AddrInfo) {
+			connectCtx, connectCancel := context.WithTimeout(n.ctx, 10*time.Second)
+			defer connectCancel()
+
+			if err := n.host.Connect(connectCtx, pi); err != nil {
+				log.Debugf("Failed to connect to discovered peer %s: %v", pi.ID, err)
+			} else {
+				log.Infof("Connected to discovered SDN peer: %s", pi.ID)
+			}
+		}(peerInfo)
+	}
 }
 
 // Stop gracefully shuts down the node.

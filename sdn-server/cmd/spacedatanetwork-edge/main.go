@@ -29,16 +29,19 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/spf13/cobra"
+
+	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 )
 
 var log = logging.Logger("sdn-edge")
 
 // EdgeConfig contains edge relay configuration.
 type EdgeConfig struct {
-	ListenAddrs    []string
-	BootstrapPeers []string
-	MaxConnections int
-	HealthPort     int
+	ListenAddrs       []string
+	BootstrapPeers    []string
+	MaxConnections    int
+	HealthPort        int
+	InsecureBootstrap bool // WARNING: Disables peer ID verification for bootstrap (development only)
 }
 
 var rootCmd = &cobra.Command{
@@ -53,11 +56,12 @@ and forwards PubSub messages.`,
 }
 
 var (
-	listenAddrs    []string
-	bootstrapPeers []string
-	maxConns       int
-	healthPort     int
-	debug          bool
+	listenAddrs       []string
+	bootstrapPeers    []string
+	maxConns          int
+	healthPort        int
+	debug             bool
+	insecureBootstrap bool
 )
 
 func init() {
@@ -66,6 +70,7 @@ func init() {
 	rootCmd.Flags().IntVarP(&maxConns, "max-conns", "m", 500, "maximum connections")
 	rootCmd.Flags().IntVarP(&healthPort, "health-port", "p", 0, "health check port (0 to disable)")
 	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "enable debug logging")
+	rootCmd.Flags().BoolVar(&insecureBootstrap, "insecure-bootstrap", false, "allow bootstrap without peer ID verification (DEVELOPMENT ONLY)")
 }
 
 func main() {
@@ -86,10 +91,11 @@ func runEdge(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	cfg := EdgeConfig{
-		ListenAddrs:    listenAddrs,
-		BootstrapPeers: bootstrapPeers,
-		MaxConnections: maxConns,
-		HealthPort:     healthPort,
+		ListenAddrs:       listenAddrs,
+		BootstrapPeers:    bootstrapPeers,
+		MaxConnections:    maxConns,
+		HealthPort:        healthPort,
+		InsecureBootstrap: insecureBootstrap,
 	}
 
 	edge, err := NewEdgeNode(ctx, cfg)
@@ -219,25 +225,49 @@ func NewEdgeNode(ctx context.Context, cfg EdgeConfig) (*EdgeNode, error) {
 		log.Warnf("DHT bootstrap warning: %v", err)
 	}
 
-	// Connect to bootstrap peers
-	for _, addr := range cfg.BootstrapPeers {
-		ma, err := multiaddr.NewMultiaddr(addr)
-		if err != nil {
-			log.Warnf("Invalid bootstrap address %s: %v", addr, err)
-			continue
+	// Validate bootstrap configuration and warn about missing peer IDs
+	if warnings := bootstrap.ValidateBootstrapConfig(cfg.BootstrapPeers); len(warnings) > 0 {
+		for _, w := range warnings {
+			log.Warnf("Bootstrap configuration: %s", w)
 		}
-		peerInfo, err := peer.AddrInfoFromP2pAddr(ma)
-		if err != nil {
-			log.Warnf("Failed to parse peer info from %s: %v", addr, err)
-			continue
+	}
+
+	// Parse and validate bootstrap addresses with peer ID pinning
+	parsedBootstrapPeers, err := bootstrap.ParseBootstrapAddresses(cfg.BootstrapPeers)
+	if err != nil {
+		log.Warnf("Error parsing bootstrap addresses: %v", err)
+	}
+
+	// Determine which peers to connect to based on security mode
+	var peersToConnect []bootstrap.PeerInfo
+	if cfg.InsecureBootstrap {
+		log.Warnf("SECURITY WARNING: Insecure bootstrap mode enabled - connecting to peers without peer ID verification")
+		log.Warnf("SECURITY WARNING: This mode is for DEVELOPMENT ONLY and should NEVER be used in production")
+		peersToConnect = parsedBootstrapPeers
+	} else {
+		// Filter to only peers with pinned IDs for security
+		peersToConnect = bootstrap.RequirePinnedPeerIDs(parsedBootstrapPeers)
+		if len(peersToConnect) < len(parsedBootstrapPeers) {
+			log.Warnf("Skipping %d bootstrap peers without peer IDs (peer ID pinning required)",
+				len(parsedBootstrapPeers)-len(peersToConnect))
 		}
-		go func(pi peer.AddrInfo) {
-			if err := h.Connect(nodeCtx, pi); err != nil {
-				log.Warnf("Failed to connect to bootstrap peer %s: %v", pi.ID, err)
-			} else {
-				log.Infof("Connected to bootstrap peer %s", pi.ID)
+	}
+
+	// Connect to bootstrap peers asynchronously
+	for _, p := range peersToConnect {
+		go func(peerInfo bootstrap.PeerInfo) {
+			// For insecure mode without peer ID, discover peer via DHT random walk
+			if !peerInfo.HasPinnedID && cfg.InsecureBootstrap {
+				log.Warnf("INSECURE: Cannot connect without peer ID - use full multiaddr with /p2p/<PEER_ID>")
+				log.Warnf("INSECURE: Address %s will be skipped, waiting for DHT peer discovery", peerInfo.RawAddress)
+				return
 			}
-		}(*peerInfo)
+			if err := h.Connect(nodeCtx, peerInfo.AddrInfo); err != nil {
+				log.Warnf("Failed to connect to bootstrap peer %s: %v", peerInfo.AddrInfo.ID, err)
+			} else {
+				log.Infof("Connected to bootstrap peer %s (peer ID verified)", peerInfo.AddrInfo.ID)
+			}
+		}(p)
 	}
 
 	// Join edge relay announcement topic

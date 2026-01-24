@@ -18,6 +18,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { SDNStorage, StoredRecord } from './storage';
 import { getBootstrapRelays } from './edge-discovery';
 import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
+import { sign, loadCryptoModule } from './crypto';
 
 const TOPIC_PREFIX = '/spacedatanetwork/sds/';
 
@@ -25,6 +26,10 @@ export interface SDNConfig {
   edgeRelays?: string[];
   enableStorage?: boolean;
   storeName?: string;
+  /** Private key for signing messages (32 bytes Ed25519 seed) */
+  privateKey?: Uint8Array;
+  /** Skip signature verification on received messages (not recommended) */
+  skipSignatureVerification?: boolean;
 }
 
 export interface SDNNodeEvents {
@@ -39,10 +44,13 @@ export class SDNNode {
   private config: SDNConfig;
   private events: SDNNodeEvents;
   private subscriptions: Map<string, AbortController> = new Map();
+  private privateKey: Uint8Array | null = null;
+  private cryptoReady = false;
 
   private constructor(config: SDNConfig, events: SDNNodeEvents = {}) {
     this.config = config;
     this.events = events;
+    this.privateKey = config.privateKey ?? null;
   }
 
   /**
@@ -50,6 +58,13 @@ export class SDNNode {
    */
   static async create(config: SDNConfig = {}, events: SDNNodeEvents = {}): Promise<SDNNode> {
     const node = new SDNNode(config, events);
+
+    // Try to load crypto module for signing
+    node.cryptoReady = await loadCryptoModule();
+    if (!node.cryptoReady) {
+      console.warn('Crypto WASM not loaded - signatures will be disabled');
+    }
+
     await node.init();
     return node;
   }
@@ -130,9 +145,17 @@ export class SDNNode {
     const jsonStr = JSON.stringify(data);
     const binary = new TextEncoder().encode(jsonStr);
 
-    // Create message with signature placeholder
-    // In production, sign with Ed25519 via WASM
-    const signature = new Uint8Array(64); // Placeholder
+    // Sign the message with Ed25519
+    let signature: Uint8Array;
+    if (this.cryptoReady && this.privateKey) {
+      // Use real Ed25519 signature via WASM
+      signature = await sign(this.privateKey, binary);
+    } else {
+      // Fallback: zero signature (will fail verification on peers with crypto enabled)
+      console.warn('Publishing without signature - no private key or crypto not available');
+      signature = new Uint8Array(64);
+    }
+
     const message = new Uint8Array(binary.length + signature.length);
     message.set(binary, 0);
     message.set(signature, binary.length);
@@ -149,6 +172,23 @@ export class SDNNode {
     }
 
     return cid;
+  }
+
+  /**
+   * Set the private key for signing messages
+   */
+  setPrivateKey(key: Uint8Array): void {
+    if (key.length !== 32 && key.length !== 64) {
+      throw new Error('Invalid private key length - expected 32 (seed) or 64 bytes');
+    }
+    this.privateKey = key.length === 64 ? key.slice(0, 32) : key;
+  }
+
+  /**
+   * Check if signing is available
+   */
+  get canSign(): boolean {
+    return this.cryptoReady && this.privateKey !== null;
   }
 
   /**

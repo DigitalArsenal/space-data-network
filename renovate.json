@@ -1,0 +1,120 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    "security:openssf-scorecard"
+  ],
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 10,
+  "prHourlyLimit": 5,
+  "timezone": "UTC",
+  "schedule": ["before 9am on monday"],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security", "dependencies"]
+  },
+  "packageRules": [
+    {
+      "description": "Go libp2p ecosystem - group minor/patch",
+      "matchManagers": ["gomod"],
+      "matchPackagePatterns": [
+        "github.com/libp2p/.*",
+        "github.com/ipfs/.*",
+        "github.com/multiformats/.*"
+      ],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "libp2p ecosystem (Go)",
+      "automerge": false
+    },
+    {
+      "description": "Go minor/patch updates - automerge",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "excludePackagePatterns": [
+        "github.com/libp2p/.*",
+        "github.com/ipfs/.*",
+        "github.com/multiformats/.*"
+      ],
+      "groupName": "Go dependencies",
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash"
+    },
+    {
+      "description": "JS libp2p ecosystem - group minor/patch",
+      "matchManagers": ["npm"],
+      "matchPackagePatterns": [
+        "@libp2p/.*",
+        "@chainsafe/.*",
+        "^libp2p$"
+      ],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "libp2p ecosystem (JS)",
+      "automerge": false
+    },
+    {
+      "description": "TypeScript and build tools",
+      "matchManagers": ["npm"],
+      "matchPackagePatterns": [
+        "typescript",
+        "vite",
+        "@types/.*",
+        "tslib"
+      ],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "TypeScript build tools",
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "JS dev dependencies - automerge",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "excludePackagePatterns": [
+        "@libp2p/.*",
+        "@chainsafe/.*",
+        "typescript",
+        "vite"
+      ],
+      "groupName": "JS dev dependencies",
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "GitHub Actions - automerge minor/patch",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "GitHub Actions",
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Docker base images",
+      "matchManagers": ["dockerfile"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "Docker base images",
+      "automerge": false
+    },
+    {
+      "description": "Major updates - require manual review",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "major-update"]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Go version in Dockerfiles",
+      "fileMatch": ["(^|/)Dockerfile[^/]*$"],
+      "matchStrings": [
+        "FROM golang:(?<currentValue>[\\d.]+)"
+      ],
+      "depNameTemplate": "golang",
+      "datasourceTemplate": "docker"
+    }
+  ]
+}

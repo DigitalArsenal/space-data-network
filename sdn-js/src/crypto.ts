@@ -1,8 +1,43 @@
 /**
  * SDN Crypto - WASM-based cryptographic operations for FlatBuffer encryption
+ * Features:
+ * - Ed25519 signing and verification
+ * - AES-GCM encryption/decryption
+ * - SRI hash verification for WASM integrity
  */
 
 let cryptoModule: CryptoModule | null = null;
+let wasmVerified = false;
+
+/**
+ * Metrics for crypto WASM loading
+ */
+export interface CryptoMetrics {
+  wasmLoadAttempts: number;
+  wasmLoadSuccesses: number;
+  wasmLoadFailures: number;
+  wasmVerificationSuccesses: number;
+  wasmVerificationFailures: number;
+  lastLoadTime: number | null;
+  lastError: string | null;
+}
+
+const cryptoMetrics: CryptoMetrics = {
+  wasmLoadAttempts: 0,
+  wasmLoadSuccesses: 0,
+  wasmLoadFailures: 0,
+  wasmVerificationSuccesses: 0,
+  wasmVerificationFailures: 0,
+  lastLoadTime: null,
+  lastError: null,
+};
+
+/**
+ * Get current crypto metrics
+ */
+export function getCryptoMetrics(): Readonly<CryptoMetrics> {
+  return { ...cryptoMetrics };
+}
 
 interface WasmExports {
   _encrypt_bytes?: (keyPtr: number, keyLen: number, dataPtr: number, dataLen: number, outPtr: number, outLen: number) => number;
@@ -25,6 +60,13 @@ interface CryptoModule {
   HEAPU8: Uint8Array;
 }
 
+interface CryptoLoadOptions {
+  /** Expected SRI hash for integrity verification */
+  expectedSri?: string;
+  /** Skip integrity verification (not recommended for production) */
+  skipIntegrityCheck?: boolean;
+}
+
 const WASM_PATHS = [
   './flatc-crypto.wasm',
   '/flatc-crypto.wasm',
@@ -32,12 +74,68 @@ const WASM_PATHS = [
 ];
 
 /**
- * Load the crypto WASM module
+ * Verify WASM integrity using SRI hash
  */
-export async function loadCryptoModule(): Promise<boolean> {
+async function verifySri(data: ArrayBuffer, expectedSri: string): Promise<boolean> {
+  try {
+    // Parse the expected SRI hash (format: "sha384-base64hash")
+    const match = expectedSri.match(/^sha(256|384|512)-(.+)$/);
+    if (!match) {
+      console.warn('Invalid SRI format:', expectedSri);
+      return false;
+    }
+
+    const algorithm = `SHA-${match[1]}`;
+    const expectedHash = match[2];
+
+    // Compute hash of the data
+    const hashBuffer = await crypto.subtle.digest(algorithm, data);
+    const hashArray = new Uint8Array(hashBuffer);
+    const actualHash = btoa(String.fromCharCode(...hashArray));
+
+    // Compare hashes
+    if (actualHash !== expectedHash) {
+      console.error('Crypto WASM integrity check failed: hash mismatch');
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.error('SRI verification error:', err);
+    return false;
+  }
+}
+
+/**
+ * Fetch SRI hash for WASM file
+ */
+async function fetchSriHash(wasmPath: string): Promise<string | null> {
+  try {
+    const sriPath = wasmPath + '.sri';
+    const response = await fetch(sriPath);
+    if (!response.ok) return null;
+    return (await response.text()).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if the crypto WASM was verified
+ */
+export function isCryptoWasmVerified(): boolean {
+  return wasmVerified;
+}
+
+/**
+ * Load the crypto WASM module with integrity verification
+ */
+export async function loadCryptoModule(options: CryptoLoadOptions = {}): Promise<boolean> {
   if (cryptoModule) {
     return true;
   }
+
+  cryptoMetrics.wasmLoadAttempts++;
 
   for (const path of WASM_PATHS) {
     try {
@@ -45,6 +143,30 @@ export async function loadCryptoModule(): Promise<boolean> {
       if (!response.ok) continue;
 
       const wasmBytes = await response.arrayBuffer();
+
+      // Verify integrity if not skipped
+      if (!options.skipIntegrityCheck) {
+        let expectedSri = options.expectedSri;
+
+        // Try to fetch SRI hash if not provided
+        if (!expectedSri) {
+          expectedSri = (await fetchSriHash(path)) ?? undefined;
+        }
+
+        if (expectedSri) {
+          const isValid = await verifySri(wasmBytes, expectedSri);
+          if (!isValid) {
+            cryptoMetrics.wasmVerificationFailures++;
+            console.error(`Crypto WASM from ${path} failed integrity check`);
+            continue;
+          }
+          cryptoMetrics.wasmVerificationSuccesses++;
+          wasmVerified = true;
+        } else {
+          console.warn(`No SRI hash available for ${path}, loading without verification`);
+        }
+      }
+
       const memory = new WebAssembly.Memory({ initial: 256, maximum: 512 });
 
       const importObject = {
@@ -78,12 +200,16 @@ export async function loadCryptoModule(): Promise<boolean> {
         HEAPU8: new Uint8Array(wasmMemory.buffer),
       };
 
+      cryptoMetrics.wasmLoadSuccesses++;
+      cryptoMetrics.lastLoadTime = Date.now();
       return true;
-    } catch {
+    } catch (err) {
+      cryptoMetrics.lastError = err instanceof Error ? err.message : String(err);
       continue;
     }
   }
 
+  cryptoMetrics.wasmLoadFailures++;
   return false;
 }
 

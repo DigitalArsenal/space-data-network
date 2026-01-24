@@ -7,13 +7,32 @@
  */
 
 /**
- * Default edge relay addresses (fallback when WASM is not available or fails)
- * These are hardcoded bootstrap nodes that should always be available.
+ * Environment variable or runtime configuration for edge relays.
+ * In production, prefer DNS-based addresses over hardcoded IPs.
  */
-export const DEFAULT_EDGE_RELAYS = [
-  '/ip4/209.182.234.97/tcp/8080/ws/p2p/16Uiu2HAkxKtJncDGfgtFpx4mNqtrzbBBrCZ8iaKKyKuEqEHuEz5J',
+const getEnvRelays = (): string[] | null => {
+  // Check for environment/runtime configuration
+  if (typeof process !== 'undefined' && process.env?.SDN_EDGE_RELAYS) {
+    return process.env.SDN_EDGE_RELAYS.split(',').map((s) => s.trim());
+  }
+  // Check for window-based configuration (browser)
+  if (typeof window !== 'undefined' && (window as any).__SDN_EDGE_RELAYS__) {
+    return (window as any).__SDN_EDGE_RELAYS__;
+  }
+  return null;
+};
+
+/**
+ * Default edge relay addresses (fallback when WASM is not available or fails)
+ * Prefer DNS-based addresses for production deployments.
+ * IP addresses should only be used for development/testing.
+ */
+export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [
+  // Primary relays use DNS names for flexibility
   '/dns4/relay1.spacedatanetwork.org/tcp/443/wss/p2p/12D3KooWRelay1',
   '/dns4/relay2.spacedatanetwork.org/tcp/443/wss/p2p/12D3KooWRelay2',
+  // Development/testing relay (Tokyo) - configure via SDN_EDGE_RELAYS env var in production
+  '/dns4/tokyo.relay.spacedatanetwork.org/tcp/443/wss/p2p/16Uiu2HAkxKtJncDGfgtFpx4mNqtrzbBBrCZ8iaKKyKuEqEHuEz5J',
 ];
 
 /**

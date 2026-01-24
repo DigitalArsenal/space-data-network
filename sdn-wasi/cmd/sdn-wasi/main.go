@@ -13,6 +13,8 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -143,6 +145,9 @@ func sdnValidate(schemaID int32, dataPtr, dataLen uint32) int32 {
 // Message Processing
 // ============================================
 
+// MaxQueueSize is the maximum number of messages that can be queued
+const MaxQueueSize = 1000
+
 // Message represents an SDS message
 type Message struct {
 	Schema    string `json:"schema"`
@@ -159,6 +164,12 @@ func sdnProcessMessage(schemaPtr, schemaLen, dataPtr, dataLen, sigPtr, sigLen, f
 	data := getBytes(dataPtr, dataLen)
 	sig := getBytes(sigPtr, sigLen)
 	from := string(getBytes(fromPtr, fromLen))
+
+	// Check queue size limit
+	if len(messageQueue) >= MaxQueueSize {
+		log(fmt.Sprintf("Message queue full (max=%d), rejecting message", MaxQueueSize))
+		return -3
+	}
 
 	// Validate
 	schemaID, ok := schemaIDs[schema]
@@ -293,38 +304,33 @@ func sdnIsSubscribed(schemaPtr, schemaLen uint32) int32 {
 func sdnHashSHA256(dataPtr, dataLen uint32) uint32 {
 	data := getBytes(dataPtr, dataLen)
 
-	// Simple SHA256 implementation using golang.org/x/crypto
-	// For WASI, we need a pure Go implementation
-	hash := sha256(data)
+	// Use Go's standard crypto/sha256 package for proper hashing
+	hash := sha256.Sum256(data)
 
-	copy(sharedBuffer, hash)
+	copy(sharedBuffer, hash[:])
 	return 32 // SHA256 output is 32 bytes
-}
-
-// Pure Go SHA256 (simplified - in production use crypto/sha256)
-func sha256(data []byte) []byte {
-	// This is a placeholder - in the actual build, we'd use
-	// a proper pure-Go SHA256 implementation
-	h := make([]byte, 32)
-	for i, b := range data {
-		h[i%32] ^= b
-	}
-	return h
 }
 
 //export sdn_verify_signature
 func sdnVerifySignature(pubKeyPtr, pubKeyLen, msgPtr, msgLen, sigPtr, sigLen uint32) int32 {
-	// Ed25519 signature verification
-	// For now, return success - in production, implement proper verification
+	// Ed25519 signature verification using Go's standard crypto/ed25519 package
 	pubKey := getBytes(pubKeyPtr, pubKeyLen)
+	msg := getBytes(msgPtr, msgLen)
 	sig := getBytes(sigPtr, sigLen)
 
-	if len(pubKey) != 32 || len(sig) != 64 {
-		return -1
+	// Ed25519 public keys are 32 bytes, signatures are 64 bytes
+	if len(pubKey) != ed25519.PublicKeySize {
+		return -1 // Invalid public key length
+	}
+	if len(sig) != ed25519.SignatureSize {
+		return -2 // Invalid signature length
 	}
 
-	// TODO: Implement Ed25519 verification
-	return 0
+	// Verify the signature using ed25519
+	if ed25519.Verify(pubKey, msg, sig) {
+		return 0 // Signature is valid
+	}
+	return -3 // Signature verification failed
 }
 
 // ============================================

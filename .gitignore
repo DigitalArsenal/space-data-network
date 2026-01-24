@@ -1,4 +1,97 @@
+# Environment and secrets
 .env
-.vscode
+.env.*
+.env.local
+.env.production
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+**/secrets/**
+**/credentials/**
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Build outputs
 dist/
+build/
+out/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Claude Code
 .claude/
+
+# Go
+*.test
+coverage.out
+coverage.html
+vendor/
+go.work
+go.work.sum
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+.yarn/
+*.tgz
+
+# WASM builds
+*.wasm.map
+/sdn-wasi/dist/
+
+# Emscripten SDK (external dependency)
+packages/emsdk/
+
+# Database and storage
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Test artifacts
+coverage/
+.nyc_output/
+*.lcov
+
+# Docker
+docker-compose.override.yml
+
+# OS-specific
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Security - prevent accidental commits
+**/private_key*
+**/node.key
+**/*.secret
+**/api_key*

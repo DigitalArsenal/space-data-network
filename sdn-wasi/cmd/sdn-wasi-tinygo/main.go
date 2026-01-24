@@ -5,6 +5,8 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/json"
 	"unsafe"
 )
@@ -138,6 +140,9 @@ func sdnValidate(schemaID int32, dataPtr, dataLen uint32) int32 {
 // Message Processing
 // ============================================
 
+// MaxQueueSize is the maximum number of messages that can be queued
+const MaxQueueSize = 1000
+
 type Message struct {
 	Schema    string `json:"schema"`
 	Data      []byte `json:"data"`
@@ -153,6 +158,12 @@ func sdnProcessMessage(schemaPtr, schemaLen, dataPtr, dataLen, sigPtr, sigLen, f
 	data := getBytes(dataPtr, dataLen)
 	sig := getBytes(sigPtr, sigLen)
 	from := getString(fromPtr, fromLen)
+
+	// Check queue size limit
+	if len(messageQueue) >= MaxQueueSize {
+		logMsg("Message queue full, rejecting message")
+		return -3
+	}
 
 	// Validate schema exists
 	schemaID := sdnGetSchemaID(schemaPtr, schemaLen)
@@ -273,25 +284,34 @@ func sdnIsSubscribed(schemaPtr, schemaLen uint32) int32 {
 //export sdn_hash_sha256
 func sdnHashSHA256(dataPtr, dataLen uint32) uint32 {
 	data := getBytes(dataPtr, dataLen)
-	hash := simpleSHA256(data)
-	copy(sharedBuffer[:], hash)
-	return 32
-}
 
-func simpleSHA256(data []byte) []byte {
-	h := make([]byte, 32)
-	for i, b := range data {
-		h[i%32] ^= b
-	}
-	return h
+	// Use Go's standard crypto/sha256 package for proper hashing
+	hash := sha256.Sum256(data)
+
+	copy(sharedBuffer[:], hash[:])
+	return 32 // SHA256 output is 32 bytes
 }
 
 //export sdn_verify_signature
 func sdnVerifySignature(pubKeyPtr, pubKeyLen, msgPtr, msgLen, sigPtr, sigLen uint32) int32 {
-	if pubKeyLen != 32 || sigLen != 64 {
-		return -1
+	// Ed25519 signature verification using Go's standard crypto/ed25519 package
+	pubKey := getBytes(pubKeyPtr, pubKeyLen)
+	msg := getBytes(msgPtr, msgLen)
+	sig := getBytes(sigPtr, sigLen)
+
+	// Ed25519 public keys are 32 bytes, signatures are 64 bytes
+	if len(pubKey) != ed25519.PublicKeySize {
+		return -1 // Invalid public key length
 	}
-	return 0
+	if len(sig) != ed25519.SignatureSize {
+		return -2 // Invalid signature length
+	}
+
+	// Verify the signature using ed25519
+	if ed25519.Verify(pubKey, msg, sig) {
+		return 0 // Signature is valid
+	}
+	return -3 // Signature verification failed
 }
 
 // ============================================
