@@ -111,6 +111,14 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 16px;
+    }
+
+    .nav-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
     }
 
     .logo {
@@ -137,6 +145,15 @@
     .nav-links {
       display: flex;
       gap: 28px;
+      flex-shrink: 1;
+      overflow: hidden;
+    }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
     }
 
     /* Mobile Menu */
@@ -3250,7 +3267,6 @@
       height: 8px;
       border-radius: 50%;
       background: #ef4444;
-      margin-left: 8px;
       flex-shrink: 0;
       transition: all 0.3s ease;
     }
@@ -3283,9 +3299,26 @@
       color: #10b981;
     }
 
-    /* Hide login button on mobile */
+    /* Tablet adjustments (iPad) */
+    @media (max-width: 1024px) {
+      .nav-links {
+        gap: 16px;
+      }
+      .nav-links a {
+        font-size: 12px;
+      }
+      .nav-login {
+        padding: 6px 12px;
+        font-size: 12px;
+      }
+    }
+
+    /* Hide login button and nav links on mobile */
     @media (max-width: 734px) {
       .nav-login {
+        display: none;
+      }
+      .nav-links {
         display: none;
       }
     }
@@ -3372,25 +3405,27 @@
   <!-- Navigation -->
   <nav>
     <div class="nav-content">
-      <a href="#" class="logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/>
-          <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-        </svg>
-        <span class="logo-text">Space Data Network</span>
+      <div class="nav-left">
+        <a href="#" class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+          </svg>
+          <span class="logo-text">Space Data Network</span>
+        </a>
         <span class="status-dot" id="status-dot"></span>
-      </a>
+      </div>
       <div class="nav-links">
         <a href="#features">Features</a>
-        <a href="#security">Security</a>
-        <a href="#adversarial">Adversarial</a>
         <a href="#identity">Identity</a>
+        <a href="#security">Security</a>
         <a href="#docs">Docs</a>
         <a href="#downloads">Downloads</a>
         <a href="https://github.com/DigitalArsenal/go-space-data-network" target="_blank">GitHub</a>
       </div>
-      <button class="nav-login" id="nav-login">Login</button>
-      <button class="nav-menu-btn" id="menuBtn" aria-label="Menu">
+      <div class="nav-right">
+        <button class="nav-login" id="nav-login">Login</button>
+        <button class="nav-menu-btn" id="menuBtn" aria-label="Menu">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="menu-icon">
           <line x1="3" y1="12" x2="21" y2="12"/>
           <line x1="3" y1="6" x2="21" y2="6"/>
@@ -3401,16 +3436,15 @@
           <line x1="6" y1="6" x2="18" y2="18"/>
         </svg>
       </button>
+      </div>
     </div>
   </nav>
 
   <!-- Mobile Menu -->
   <div class="mobile-menu" id="mobileMenu">
     <a href="#features">Features</a>
-    <a href="#technology">Technology</a>
-    <a href="#security">Security & Crypto</a>
-    <a href="#adversarial">Adversarial Security</a>
     <a href="#identity">Digital Identity</a>
+    <a href="#security">Security</a>
     <a href="#docs">Documentation</a>
     <a href="#downloads">Downloads</a>
     <a href="#faq">FAQ</a>
@@ -3467,7 +3501,7 @@
             </svg>
           </div>
           <h3 class="feature-title">Space Data Standards</h3>
-          <p class="feature-desc">Full support for all SDS schemas including OMM, CDM, EPM, TDM, OEM, and more standard formats.</p>
+          <p class="feature-desc">Fully CCSDS and NIST compatible software suite with support for OMM, CDM, EPM, TDM, OEM, and more standard formats.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon icon-green">
@@ -3477,7 +3511,7 @@
             </svg>
           </div>
           <h3 class="feature-title">Transport Encryption</h3>
-          <p class="feature-desc">All connections secured with Noise Protocol Framework providing forward secrecy and mutual authentication.</p>
+          <p class="feature-desc">All connections secured with <a href="https://noiseprotocol.org" target="_blank" style="color: var(--accent-color);">Noise Protocol Framework</a> providing forward secrecy and mutual authentication.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon icon-orange">
@@ -3486,7 +3520,7 @@
             </svg>
           </div>
           <h3 class="feature-title">Encryption at Rest</h3>
-          <p class="feature-desc">WASM-powered AES-256-GCM encryption with Argon2 key derivation for password-based security.</p>
+          <p class="feature-desc">AES-256 encryption with Argon2 key derivation for password-based security.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon icon-blue">
@@ -3496,7 +3530,7 @@
             </svg>
           </div>
           <h3 class="feature-title">Digital Identity</h3>
-          <p class="feature-desc">Ed25519 cryptographic identities with vCard-style Entity Profile Manifests for verified organizational data.</p>
+          <p class="feature-desc">Cryptographic identities with vCard-style Entity Profile Manifests for verified organizational data.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon icon-teal">
@@ -4393,7 +4427,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
         <div class="arch-row">
           <div class="arch-box arch-transport">
             <div class="arch-label">Transport Layer</div>
-            <div class="arch-items">Noise Protocol &bull; libp2p &bull; GossipSub</div>
+            <div class="arch-items"><a href="https://noiseprotocol.org" target="_blank" style="color: inherit;">Noise Protocol</a> &bull; libp2p &bull; GossipSub</div>
           </div>
         </div>
         <div class="arch-arrow">&#x25BC;</div>
@@ -4546,7 +4580,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
             <div class="principle-number">1</div>
             <div class="principle-content">
               <h4>Key Derivation</h4>
-              <p>Any cryptographic public key (secp256k1, Ed25519) can mathematically derive addresses on cryptocurrency networks. This is a one-way function - the address is uniquely tied to that key.</p>
+              <p>Any cryptographic public key can mathematically derive addresses on cryptocurrency networks. This is a one-way function - the address is uniquely tied to that key.</p>
             </div>
           </div>
           <div class="principle">
@@ -4854,7 +4888,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
               <code id="identityEncKey"></code>
             </div>
           </div>
-          <p class="identity-note">These keys are derived deterministically. The same password/seed will always produce the same identity.</p>
+          <p class="identity-note">These keys are derived deterministically from your private key. The same password/seed will always produce the same identity. The public key is derived from your private key and used for encryption.</p>
         </div>
 
         <div class="identity-explainer">
@@ -5030,7 +5064,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
           </button>
           <div class="accordion-content">
             <div class="accordion-content-inner">
-              <p>No. SDN uses cryptographic primitives (Ed25519 keys, signatures) but is not a blockchain. There are no tokens, no mining, no consensus mechanisms. SDN is pure infrastructure for data exchange. Your Ed25519 identity can be derived from BIP-39 seed phrases and is compatible with blockchain ecosystems, but SDN itself operates independently.</p>
+              <p>No. SDN uses cryptographic primitives (keys, signatures) but is not a blockchain. There are no tokens, no mining, no consensus mechanisms. SDN is pure infrastructure for data exchange. Your identity can be derived from BIP-39 seed phrases and is compatible with blockchain ecosystems, but SDN itself operates independently.</p>
             </div>
           </div>
         </div>
@@ -5077,7 +5111,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
           </button>
           <div class="accordion-content">
             <div class="accordion-content-inner">
-              <p>Yes. SDN includes edge relays that bridge WebSocket connections to the full P2P network. The JavaScript SDK handles this automatically - just call node.start() and you're connected. Browsers can subscribe to real-time data, publish messages, and verify signatures using the WASM crypto module.</p>
+              <p>Yes. SDN includes edge relays that bridge WebSocket connections to the full P2P network. The JavaScript SDK handles this automatically - just call node.start() and you're connected. Browsers can subscribe to real-time data, publish messages, and verify signatures.</p>
             </div>
           </div>
         </div>
@@ -5090,7 +5124,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
           </button>
           <div class="accordion-content">
             <div class="accordion-content-inner">
-              <p>Every message on SDN is cryptographically signed by its publisher. Entity Profile Manifests (EPM) link Ed25519 public keys to organizational identities. You can verify exactly who published any piece of data and whether it has been tampered with. Trust decisions remain with recipients - SDN provides the cryptographic tools.</p>
+              <p>Every message on SDN is cryptographically signed by its publisher. Entity Profile Manifests (EPM) link public keys (derived from the publisher's private key) to organizational identities. You can verify exactly who published any piece of data and whether it has been tampered with. Trust decisions remain with recipients - SDN provides the cryptographic tools.</p>
             </div>
           </div>
         </div>
