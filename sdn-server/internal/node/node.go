@@ -32,6 +32,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -59,6 +60,10 @@ type Node struct {
 	store     *storage.FlatSQLStore
 	protocol  *protocol.SDSExchangeHandler
 	config    *config.Config
+
+	// Trusted peer management
+	peerRegistry *peers.Registry
+	peerGater    *peers.TrustedConnectionGater
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -91,6 +96,44 @@ func (n *Node) init() error {
 		return fmt.Errorf("failed to load identity: %w", err)
 	}
 
+	// Initialize trusted peer registry
+	registryPath := n.config.Peers.RegistryPath
+	if registryPath == "" {
+		registryPath = filepath.Join(filepath.Dir(n.config.Storage.Path), "peers.db")
+	}
+	persistence, err := peers.NewSQLitePersistence(registryPath)
+	if err != nil {
+		log.Warnf("Failed to create peer persistence, using in-memory registry: %v", err)
+		persistence = nil
+	}
+	n.peerRegistry = peers.NewRegistry(n.config.Peers.StrictMode, persistence)
+	n.peerGater = peers.NewTrustedConnectionGater(n.peerRegistry)
+
+	// Log trusted peer mode
+	if n.config.Peers.StrictMode {
+		log.Infof("Trusted peer strict mode ENABLED - only registry peers allowed")
+	} else {
+		log.Infof("Trusted peer strict mode disabled - unknown peers allowed with Standard trust")
+	}
+
+	// Add configured trusted peers to registry
+	for _, peerAddr := range n.config.Peers.TrustedPeers {
+		addrInfo, err := peer.AddrInfoFromString(peerAddr)
+		if err != nil {
+			log.Warnf("Invalid trusted peer address %s: %v", peerAddr, err)
+			continue
+		}
+		tp := &peers.TrustedPeer{
+			ID:         addrInfo.ID,
+			Addrs:      addrInfo.Addrs,
+			TrustLevel: peers.Trusted,
+			Name:       "Config Trusted Peer",
+		}
+		if err := n.peerRegistry.AddPeer(tp); err != nil && err != peers.ErrPeerAlreadyExists {
+			log.Warnf("Failed to add trusted peer %s: %v", addrInfo.ID, err)
+		}
+	}
+
 	// Parse listen addresses
 	listenAddrs := make([]multiaddr.Multiaddr, 0, len(n.config.Network.Listen))
 	for _, addr := range n.config.Network.Listen {
@@ -103,14 +146,14 @@ func (n *Node) init() error {
 
 	// Create connection manager
 	connMgr, err := connmgr.NewConnManager(
-		100,                      // low water
+		100,                       // low water
 		n.config.Network.MaxConns, // high water
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create connection manager: %w", err)
 	}
 
-	// Create libp2p host
+	// Create libp2p host with connection gater for trust-based filtering
 	var dhtRouting *dht.IpfsDHT
 	n.host, err = libp2p.New(
 		libp2p.Identity(privKey),
@@ -120,6 +163,7 @@ func (n *Node) init() error {
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.ConnectionManager(connMgr),
+		libp2p.ConnectionGater(n.peerGater), // Trust-based connection gating
 		libp2p.EnableHolePunching(),
 		libp2p.EnableRelay(),
 		libp2p.EnableRelayService(),
@@ -545,4 +589,19 @@ func (n *Node) Publish(schema string, data []byte) error {
 	}
 
 	return topic.Publish(n.ctx, data)
+}
+
+// PeerRegistry returns the trusted peer registry.
+func (n *Node) PeerRegistry() *peers.Registry {
+	return n.peerRegistry
+}
+
+// PeerGater returns the connection gater for trust-based filtering.
+func (n *Node) PeerGater() *peers.TrustedConnectionGater {
+	return n.peerGater
+}
+
+// Config returns the node configuration.
+func (n *Node) Config() *config.Config {
+	return n.config
 }

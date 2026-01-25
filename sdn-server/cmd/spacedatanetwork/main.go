@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
 var log = logging.Logger("sdn")
@@ -101,12 +103,43 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		log.Infof("Listening on: %s", addr)
 	}
 
+	// Start admin server if enabled
+	var adminServer *http.Server
+	if cfg.Admin.Enabled {
+		adminUI, err := peers.NewAdminUI(n.PeerRegistry(), n.PeerGater())
+		if err != nil {
+			log.Warnf("Failed to create admin UI: %v", err)
+		} else {
+			adminAddr := cfg.Admin.ListenAddr
+			if adminAddr == "" {
+				adminAddr = "127.0.0.1:5001"
+			}
+			adminServer = &http.Server{
+				Addr:    adminAddr,
+				Handler: adminUI,
+			}
+			go func() {
+				log.Infof("Admin interface available at http://%s/admin", adminAddr)
+				log.Infof("Peer API available at http://%s/api/peers", adminAddr)
+				if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					log.Warnf("Admin server error: %v", err)
+				}
+			}()
+		}
+	}
+
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
 	log.Info("Shutting down...")
+
+	// Shutdown admin server
+	if adminServer != nil {
+		adminServer.Shutdown(ctx)
+	}
+
 	return n.Stop()
 }
 

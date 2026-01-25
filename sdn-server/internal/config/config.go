@@ -15,6 +15,9 @@ type Config struct {
 	Storage  StorageConfig  `yaml:"storage"`
 	Schemas  SchemaConfig   `yaml:"schemas"`
 	Security SecurityConfig `yaml:"security"`
+	Peers    PeersConfig    `yaml:"peers"`
+	Admin    AdminConfig    `yaml:"admin"`
+	Setup    SetupConfig    `yaml:"setup"`
 }
 
 // NetworkConfig contains network-related settings.
@@ -56,6 +59,57 @@ type SecurityConfig struct {
 	InsecureMode bool `yaml:"insecure_mode"`
 }
 
+// PeersConfig contains peer trust registry settings.
+type PeersConfig struct {
+	// StrictMode only allows connections to/from peers in the trusted registry.
+	// When disabled, unknown peers get Standard trust level by default.
+	StrictMode bool `yaml:"strict_mode"`
+
+	// RegistryPath is the path to the peer registry database.
+	// If empty, defaults to {storage_path}/peers.db
+	RegistryPath string `yaml:"registry_path"`
+
+	// TrustedPeers is a list of peer addresses that should be always connected (like IPFS Peering.Peers).
+	// These peers will be added to the registry with Trusted level on startup.
+	TrustedPeers []string `yaml:"trusted_peers"`
+
+	// EnableDHT enables DHT-based peer discovery.
+	EnableDHT bool `yaml:"enable_dht"`
+
+	// EnableMDNS enables mDNS-based local peer discovery.
+	EnableMDNS bool `yaml:"enable_mdns"`
+
+	// TrustBasedRateLimiting adjusts rate limits based on peer trust level.
+	TrustBasedRateLimiting bool `yaml:"trust_based_rate_limiting"`
+}
+
+// AdminConfig contains admin interface settings.
+type AdminConfig struct {
+	// Enabled enables the admin web interface.
+	Enabled bool `yaml:"enabled"`
+
+	// ListenAddr is the address for the admin interface (default: 127.0.0.1:5001).
+	ListenAddr string `yaml:"listen_addr"`
+
+	// RequireAuth requires authentication for the admin interface.
+	RequireAuth bool `yaml:"require_auth"`
+
+	// SessionExpiry is the duration for admin session tokens (default: 24h).
+	SessionExpiry string `yaml:"session_expiry"`
+
+	// TOTPRequired requires TOTP 2FA for admin login.
+	TOTPRequired bool `yaml:"totp_required"`
+}
+
+// SetupConfig contains first-time setup settings.
+type SetupConfig struct {
+	// TokenExpiry is how long the setup token is valid (default: 10m).
+	TokenExpiry string `yaml:"token_expiry"`
+
+	// DataPath is the base path for setup data (default: storage path).
+	DataPath string `yaml:"data_path"`
+}
+
 // Default returns a default configuration.
 func Default() *Config {
 	homeDir, _ := os.UserHomeDir()
@@ -94,6 +148,25 @@ func Default() *Config {
 		},
 		Security: SecurityConfig{
 			InsecureMode: false, // Signature verification required by default
+		},
+		Peers: PeersConfig{
+			StrictMode:             false, // Allow unknown peers by default
+			RegistryPath:           "",    // Use default path
+			TrustedPeers:           []string{},
+			EnableDHT:              true,
+			EnableMDNS:             true,
+			TrustBasedRateLimiting: true,
+		},
+		Admin: AdminConfig{
+			Enabled:       true,
+			ListenAddr:    "127.0.0.1:5001",
+			RequireAuth:   false, // Disabled by default for local development
+			SessionExpiry: "24h",
+			TOTPRequired:  false,
+		},
+		Setup: SetupConfig{
+			TokenExpiry: "10m",
+			DataPath:    "", // Use storage path by default
 		},
 	}
 }
