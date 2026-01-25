@@ -1,0 +1,122 @@
+// Hash: placeholder
+// Version: 1.0.0
+// -----------------------------------END_HEADER
+
+include "../STF/main.fbs";
+
+/// Purchase request status
+enum PurchaseStatus : byte {
+  /// Request submitted, awaiting payment
+  Pending,
+  /// Payment detected, awaiting confirmation
+  PaymentDetected,
+  /// Payment confirmed, grant being issued
+  PaymentConfirmed,
+  /// Grant issued, purchase complete
+  Completed,
+  /// Purchase failed
+  Failed,
+  /// Purchase cancelled by buyer
+  Cancelled,
+  /// Refund requested
+  RefundRequested,
+  /// Refund completed
+  Refunded,
+  /// Purchase expired (payment timeout)
+  Expired
+}
+
+/// Purchase Request Message
+table PUR {
+  /// Unique request identifier (UUID)
+  request_id: string (required);
+  /// Reference to the listing being purchased
+  listing_id: string (required);
+  /// Selected tier name
+  tier_name: string (required);
+
+  /// Buyer information
+  buyer_peer_id: string (required);
+  /// Buyer's encryption public key for data delivery
+  buyer_encryption_pubkey: [ubyte];
+  /// Key algorithm (x25519, secp256k1, p256)
+  key_algorithm: string;
+  /// Optional buyer contact email
+  buyer_email: string;
+
+  /// Payment details
+  payment_method: PaymentMethod (required);
+  payment_amount: uint64 (required);
+  payment_currency: string (required);
+
+  /// For crypto payments
+  /// Transaction hash on chain
+  payment_tx_hash: string;
+  /// Blockchain network (ethereum, solana, bitcoin)
+  payment_chain: string;
+  /// Sender wallet address
+  sender_address: string;
+  /// Block number where tx was confirmed
+  confirmation_block: uint64;
+
+  /// For fiat/Stripe payments
+  payment_intent_id: string;
+
+  /// For SDN credits
+  credits_transaction_id: string;
+
+  /// Request status
+  status: PurchaseStatus = Pending;
+  /// Status message/reason
+  status_message: string;
+
+  /// Timestamps
+  created_at: uint64 (required);
+  updated_at: uint64;
+  /// Payment deadline (Unix timestamp)
+  payment_deadline: uint64;
+  /// When payment was confirmed
+  payment_confirmed_at: uint64;
+  /// When grant was issued
+  grant_issued_at: uint64;
+
+  /// Resulting grant ID (after completion)
+  grant_id: string;
+
+  /// Provider acknowledgment
+  provider_peer_id: string;
+  provider_acknowledged_at: uint64;
+
+  /// Delivery preferences
+  preferred_delivery_method: string;
+  /// Webhook URL for WebhookPush delivery
+  webhook_url: string;
+
+  /// Ed25519 signature from buyer
+  buyer_signature: [ubyte];
+  /// Ed25519 signature from provider (acknowledgment)
+  provider_signature: [ubyte];
+}
+
+/// Purchase intent - lightweight request before full purchase
+table PurchaseIntent {
+  /// Intent ID
+  intent_id: string (required);
+  /// Listing reference
+  listing_id: string (required);
+  /// Tier name
+  tier_name: string (required);
+  /// Buyer peer ID
+  buyer_peer_id: string (required);
+  /// Payment method
+  payment_method: PaymentMethod;
+  /// Created timestamp
+  created_at: uint64;
+  /// Expiration (short-lived)
+  expires_at: uint64;
+  /// Payment address (for crypto) or intent URL (for Stripe)
+  payment_target: string;
+}
+
+root_type PUR;
+file_identifier "$PUR";

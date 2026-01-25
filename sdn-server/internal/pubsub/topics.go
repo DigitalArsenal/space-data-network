@@ -19,6 +19,27 @@ const TopicPrefix = "/spacedatanetwork/sds/"
 // EdgeRelayTopic is the topic for edge relay announcements.
 const EdgeRelayTopic = "/spacedatanetwork/edge-relays"
 
+// Storefront/Marketplace topics
+const (
+	// StorefrontListingsTopic is for new/updated listing announcements.
+	StorefrontListingsTopic = "/sdn/storefront/listings"
+
+	// StorefrontPurchasesTopic is for purchase request notifications.
+	StorefrontPurchasesTopic = "/sdn/storefront/purchases"
+
+	// StorefrontReviewsTopic is for new review announcements.
+	StorefrontReviewsTopic = "/sdn/storefront/reviews"
+)
+
+// DataDeliveryTopicPrefix is the prefix for subscription data delivery topics.
+// Full topic format: /sdn/data/{listing_id}/{buyer_peer_id}
+const DataDeliveryTopicPrefix = "/sdn/data/"
+
+// DataDeliveryTopic returns the topic for delivering data to a specific buyer.
+func DataDeliveryTopic(listingID, buyerPeerID string) string {
+	return DataDeliveryTopicPrefix + listingID + "/" + buyerPeerID
+}
+
 // TopicManager manages PubSub topics for SDS schemas.
 type TopicManager struct {
 	pubsub    *ps.PubSub

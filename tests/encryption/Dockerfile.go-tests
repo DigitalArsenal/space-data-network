@@ -1,0 +1,22 @@
+# Go Test Runner for SDN Encryption Tests
+FROM golang:1.21-alpine
+
+# Install dependencies
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /app
+
+# Copy go.mod and go.sum first for caching
+COPY go/go.mod go/go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy test source code
+COPY go/ ./
+
+# Create test results directory
+RUN mkdir -p /app/test-results
+
+# Default command runs all tests
+CMD ["go", "test", "-v", "-count=1", "./..."]

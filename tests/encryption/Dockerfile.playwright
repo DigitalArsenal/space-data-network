@@ -1,0 +1,20 @@
+# Playwright Test Runner for SDN Browser Encryption Tests
+FROM mcr.microsoft.com/playwright:v1.40.0-jammy
+
+WORKDIR /app
+
+# Copy package files
+COPY playwright/package.json playwright/package-lock.json* ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy test source code
+COPY playwright/ ./
+COPY fixtures/ ./fixtures/
+
+# Create test results directory
+RUN mkdir -p /app/test-results
+
+# Default command runs all Playwright tests
+CMD ["npx", "playwright", "test"]

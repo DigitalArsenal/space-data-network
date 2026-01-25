@@ -1,0 +1,183 @@
+// Hash: placeholder
+// Version: 1.0.0
+// -----------------------------------END_HEADER
+
+/// Access type for storefront listings
+enum AccessType : byte {
+  /// One-time purchase
+  OneTime,
+  /// Subscription-based access
+  Subscription,
+  /// Real-time streaming
+  Streaming,
+  /// Query-based access
+  Query
+}
+
+/// Payment methods supported
+enum PaymentMethod : byte {
+  /// Ethereum cryptocurrency
+  Crypto_ETH,
+  /// Solana cryptocurrency
+  Crypto_SOL,
+  /// Bitcoin cryptocurrency
+  Crypto_BTC,
+  /// USDC stablecoin
+  Crypto_USDC,
+  /// Internal SDN credits
+  SDN_Credits,
+  /// Fiat payment via Stripe
+  Fiat_Stripe,
+  /// Free/open data
+  Free
+}
+
+/// Spatial coverage types
+enum SpatialCoverageType : byte {
+  /// Global coverage
+  Global,
+  /// Regional coverage
+  Region,
+  /// Specific object list
+  ObjectList,
+  /// Custom coverage area
+  Custom
+}
+
+/// Spatial coverage definition
+table SpatialCoverage {
+  /// Coverage type
+  type: SpatialCoverageType = Global;
+  /// Orbital regions (e.g., LEO, MEO, GEO, HEO)
+  regions: [string];
+  /// Specific NORAD catalog IDs
+  object_ids: [string];
+  /// Minimum altitude in km (for orbital coverage)
+  min_altitude_km: double;
+  /// Maximum altitude in km (for orbital coverage)
+  max_altitude_km: double;
+  /// Geographic bounding box [min_lat, min_lon, max_lat, max_lon]
+  geo_bounds: [double];
+}
+
+/// Temporal coverage definition
+table TemporalCoverage {
+  /// Start of coverage epoch (ISO 8601 UTC)
+  start_epoch: string;
+  /// End of coverage epoch (ISO 8601 UTC)
+  end_epoch: string;
+  /// Update frequency (realtime, hourly, daily, weekly, monthly)
+  update_frequency: string;
+  /// Days of historical data available
+  historical_depth_days: uint32;
+  /// Latency in seconds for real-time data
+  latency_seconds: uint32;
+}
+
+/// Combined data coverage
+table DataCoverage {
+  /// Spatial coverage
+  spatial: SpatialCoverage;
+  /// Temporal coverage
+  temporal: TemporalCoverage;
+}
+
+/// Pricing tier for data access
+table PricingTier {
+  /// Tier name (e.g., Basic, Pro, Enterprise)
+  name: string (required);
+  /// Price amount in smallest unit (cents, satoshis, etc.)
+  price_amount: uint64;
+  /// Price currency (USD, ETH, SOL, SDN_CREDITS)
+  price_currency: string (required);
+  /// Duration in days (0 = one-time purchase, >0 = subscription period)
+  duration_days: uint32;
+  /// Rate limit (requests per hour, 0 = unlimited)
+  rate_limit: uint32;
+  /// Maximum records per request
+  max_records_per_request: uint32;
+  /// Features included in this tier
+  features: [string];
+  /// Description of the tier
+  description: string;
+}
+
+/// Provider reputation information
+table ProviderReputation {
+  /// Total number of completed sales
+  total_sales: uint64;
+  /// Average rating (1-5 scale, stored as 10-50 for precision)
+  average_rating_x10: uint16;
+  /// Total number of ratings received
+  total_ratings: uint32;
+  /// Uptime percentage (0-10000 for 0-100.00%)
+  uptime_percentage_x100: uint16;
+  /// Average delivery latency in milliseconds
+  avg_delivery_latency_ms: uint32;
+  /// Number of disputes
+  dispute_count: uint32;
+  /// Provider since (Unix timestamp)
+  provider_since: uint64;
+}
+
+/// Storefront Listing Message
+table STF {
+  /// Unique listing identifier (UUID)
+  listing_id: string (required);
+  /// Provider's libp2p peer ID
+  provider_peer_id: string (required);
+  /// CID of provider's EPM (Entity Profile Manifest)
+  provider_epm_cid: string;
+
+  /// Listing title
+  title: string (required);
+  /// Detailed description
+  description: string;
+  /// Data types offered (e.g., OMM, CDM, TLE, EPM)
+  data_types: [string];
+  /// Tags for search/categorization
+  tags: [string];
+
+  /// Coverage information
+  coverage: DataCoverage;
+  /// IPFS CID of sample data
+  sample_cid: string;
+  /// Number of records in sample
+  sample_record_count: uint32;
+
+  /// Access model
+  access_type: AccessType = OneTime;
+  /// Whether encryption is required
+  encryption_required: bool = true;
+  /// Delivery methods supported (PubSubStream, DirectTransfer, IPFSPin, WebhookPush)
+  delivery_methods: [string];
+
+  /// Pricing tiers
+  pricing: [PricingTier];
+  /// Accepted payment methods
+  accepted_payments: [PaymentMethod];
+
+  /// Provider reputation snapshot
+  reputation: ProviderReputation;
+
+  /// Listing metadata
+  created_at: uint64;
+  updated_at: uint64;
+  /// Version of this listing (incremented on update)
+  version: uint32;
+  /// Whether listing is active
+  active: bool = true;
+  /// Expiration timestamp (0 = no expiration)
+  expires_at: uint64;
+
+  /// Terms and conditions CID (IPFS)
+  terms_cid: string;
+  /// License type (e.g., CC-BY, proprietary, custom)
+  license: string;
+
+  /// Ed25519 signature from provider over listing content
+  signature: [ubyte];
+}
+
+root_type STF;
+file_identifier "$STF";

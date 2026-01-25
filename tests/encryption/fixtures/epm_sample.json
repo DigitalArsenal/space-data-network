@@ -1,0 +1,79 @@
+{
+  "ENTITY_ID": "ORG-001-NASA",
+  "ENTITY_TYPE": "OPERATOR",
+  "VERSION": "1.0",
+  "CREATED_AT": "2024-01-25T00:00:00.000Z",
+  "UPDATED_AT": "2024-01-25T12:00:00.000Z",
+  "NAME": "National Aeronautics and Space Administration",
+  "SHORT_NAME": "NASA",
+  "COUNTRY": "US",
+  "CONTACT": {
+    "EMAIL": "info@nasa.gov",
+    "PHONE": "+1-202-358-0001",
+    "ADDRESS": {
+      "STREET": "300 E Street SW",
+      "CITY": "Washington",
+      "STATE": "DC",
+      "POSTAL_CODE": "20546",
+      "COUNTRY": "US"
+    },
+    "WEBSITE": "https://www.nasa.gov"
+  },
+  "PEER_INFO": {
+    "PEER_ID": "12D3KooWNASApeerIdPlaceholder123456789abcdef",
+    "MULTIADDRS": [
+      "/ip4/192.168.1.100/tcp/4001/p2p/12D3KooWNASApeerIdPlaceholder123456789abcdef",
+      "/dns4/sdn.nasa.gov/tcp/4001/ws/p2p/12D3KooWNASApeerIdPlaceholder123456789abcdef"
+    ],
+    "PROTOCOLS": [
+      "/spacedatanetwork/sds-exchange/1.0.0",
+      "/spacedatanetwork/sds/OMM.fbs",
+      "/spacedatanetwork/sds/CDM.fbs",
+      "/spacedatanetwork/sds/OEM.fbs"
+    ]
+  },
+  "CRYPTO_KEYS": [
+    {
+      "KEY_TYPE": "ED25519_SIGNING",
+      "PUBLIC_KEY": "MCowBQYDK2VwAyEAbase64EncodedEd25519PublicKey==",
+      "CREATED_AT": "2024-01-25T00:00:00.000Z",
+      "EXPIRES_AT": "2025-01-25T00:00:00.000Z"
+    },
+    {
+      "KEY_TYPE": "X25519_ENCRYPTION",
+      "PUBLIC_KEY": "MCowBQYDK2VuAyEAbase64EncodedX25519PublicKey==",
+      "CREATED_AT": "2024-01-25T00:00:00.000Z",
+      "EXPIRES_AT": "2025-01-25T00:00:00.000Z"
+    },
+    {
+      "KEY_TYPE": "SECP256K1",
+      "PUBLIC_KEY": "0x04abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678",
+      "CREATED_AT": "2024-01-25T00:00:00.000Z",
+      "EXPIRES_AT": "2025-01-25T00:00:00.000Z",
+      "ETHEREUM_ADDRESS": "0x1234567890abcdef1234567890abcdef12345678"
+    }
+  ],
+  "CAPABILITIES": {
+    "PROVIDES": ["OMM", "OEM", "CDM", "TDM"],
+    "CONSUMES": ["CDM", "EPM"],
+    "RELAY": true,
+    "STORAGE": true,
+    "MAX_MESSAGE_SIZE": 10485760
+  },
+  "TRUST_INFO": {
+    "TRUST_LEVEL": "TRUSTED",
+    "VERIFIED_BY": ["12D3KooWTrustedVerifier123456789abcdef"],
+    "VERIFICATION_METHOD": "ORGANIZATION_CERT",
+    "LAST_VERIFIED": "2024-01-20T00:00:00.000Z"
+  },
+  "METADATA": {
+    "DESCRIPTION": "NASA Space Data Network node for orbital data exchange",
+    "TAGS": ["government", "operator", "usa", "orbital-data"],
+    "LOGO_URL": "https://www.nasa.gov/sites/default/files/thumbnails/image/nasa-logo-web-rgb.png"
+  },
+  "SIGNATURE": {
+    "ALGORITHM": "ED25519",
+    "SIGNER_KEY_ID": "ED25519_SIGNING",
+    "VALUE": "base64EncodedSignatureOfEntireDocument=="
+  }
+}

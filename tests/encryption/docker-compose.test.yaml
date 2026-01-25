@@ -1,0 +1,232 @@
+# SDN Encrypted Traffic Test Network
+# This configuration creates a test network with multiple node types
+# for testing encrypted communication between all SDN components.
+
+version: '3.8'
+
+services:
+  # ============================================
+  # FULL NODES (Storage + Encryption)
+  # ============================================
+
+  server-alice:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile.full
+    container_name: sdn-test-alice
+    hostname: server-alice
+    environment:
+      - SDN_MODE=full
+      - SDN_BOOTSTRAP=
+      - SDN_INSECURE_MODE=true  # For testing only
+      - SDN_MAX_MESSAGE_SIZE=52428800  # 50MB for large payload tests
+    ports:
+      - "18080:8080"  # WebSocket
+      - "14001:4001"  # TCP
+    volumes:
+      - alice-data:/home/sdn/.spacedatanetwork
+      - ../../deployment/keys/node.key:/home/sdn/.spacedatanetwork/keys/node.key:ro
+    networks:
+      sdn-test-network:
+        ipv4_address: 172.20.0.10
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server-bob:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile.full
+    container_name: sdn-test-bob
+    hostname: server-bob
+    environment:
+      - SDN_MODE=full
+      - SDN_BOOTSTRAP=/ip4/172.20.0.10/tcp/8080/ws/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt
+      - SDN_INSECURE_MODE=true  # For testing only
+      - SDN_MAX_MESSAGE_SIZE=52428800
+    ports:
+      - "18081:8080"
+      - "14002:4001"
+    volumes:
+      - bob-data:/home/sdn/.spacedatanetwork
+    networks:
+      sdn-test-network:
+        ipv4_address: 172.20.0.11
+    depends_on:
+      server-alice:
+        condition: service_healthy
+
+  server-carol:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile.full
+    container_name: sdn-test-carol
+    hostname: server-carol
+    environment:
+      - SDN_MODE=full
+      - SDN_BOOTSTRAP=/ip4/172.20.0.10/tcp/8080/ws/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt
+      - SDN_INSECURE_MODE=true
+      - SDN_MAX_MESSAGE_SIZE=52428800
+    ports:
+      - "18082:8080"
+      - "14003:4001"
+    volumes:
+      - carol-data:/home/sdn/.spacedatanetwork
+    networks:
+      sdn-test-network:
+        ipv4_address: 172.20.0.12
+    depends_on:
+      server-alice:
+        condition: service_healthy
+
+  # ============================================
+  # EDGE RELAYS (Pass-through testing)
+  # ============================================
+
+  edge-relay-1:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile.edge
+    container_name: sdn-test-edge-1
+    hostname: edge-relay-1
+    environment:
+      - SDN_REGION=test-region-1
+    ports:
+      - "18090:8080"
+      - "18091:8081"  # Health
+    networks:
+      sdn-test-network:
+        ipv4_address: 172.20.0.20
+    command: ["--debug", "--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/ip4/172.20.0.10/tcp/4001/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--health-port", "8081"]
+    depends_on:
+      server-alice:
+        condition: service_healthy
+
+  edge-relay-2:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile.edge
+    container_name: sdn-test-edge-2
+    hostname: edge-relay-2
+    environment:
+      - SDN_REGION=test-region-2
+    ports:
+      - "18092:8080"
+      - "18093:8081"
+    networks:
+      sdn-test-network:
+        ipv4_address: 172.20.0.21
+    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/ip4/172.20.0.20/tcp/8080/ws/p2p/12D3KooWEdge1PeerIdPlaceholder", "--health-port", "8081"]
+    depends_on:
+      - edge-relay-1
+
+  # ============================================
+  # TEST RUNNERS
+  # ============================================
+
+  go-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.go-tests
+    container_name: sdn-test-go-runner
+    environment:
+      - SDN_ALICE_ADDR=172.20.0.10:8080
+      - SDN_BOB_ADDR=172.20.0.11:8080
+      - SDN_CAROL_ADDR=172.20.0.12:8080
+      - SDN_EDGE1_ADDR=172.20.0.20:8080
+      - SDN_EDGE2_ADDR=172.20.0.21:8080
+    volumes:
+      - ./go:/app
+      - go-cache:/go/pkg/mod
+      - ./test-results:/app/test-results
+    networks:
+      sdn-test-network:
+        ipv4_address: 172.20.0.100
+    depends_on:
+      - server-alice
+      - server-bob
+      - server-carol
+      - edge-relay-1
+    command: ["go", "test", "-v", "-count=1", "-json", "./...", "-coverprofile=/app/test-results/coverage.out"]
+    profiles:
+      - testing
+
+  playwright-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.playwright
+    container_name: sdn-test-playwright-runner
+    environment:
+      - SDN_SERVER_URL=http://172.20.0.10:8080
+      - CI=true
+    volumes:
+      - ./playwright:/app
+      - ./test-results:/app/test-results
+      - playwright-cache:/ms-playwright
+    networks:
+      sdn-test-network:
+        ipv4_address: 172.20.0.101
+    depends_on:
+      - server-alice
+      - edge-relay-1
+    command: ["npx", "playwright", "test", "--reporter=json", "--output=/app/test-results"]
+    profiles:
+      - testing
+
+  # ============================================
+  # METRICS AND MONITORING
+  # ============================================
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: sdn-test-prometheus
+    ports:
+      - "19090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      sdn-test-network:
+        ipv4_address: 172.20.0.200
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: sdn-test-grafana
+    ports:
+      - "13000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./config/grafana:/etc/grafana/provisioning:ro
+    networks:
+      sdn-test-network:
+        ipv4_address: 172.20.0.201
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
+# ============================================
+# NETWORKS
+# ============================================
+
+networks:
+  sdn-test-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ============================================
+# VOLUMES
+# ============================================
+
+volumes:
+  alice-data:
+  bob-data:
+  carol-data:
+  go-cache:
+  playwright-cache:

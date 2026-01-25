@@ -153,6 +153,7 @@ func extractDescription(content []byte) string {
 
 // Default schema descriptions
 var schemaDescriptions = map[string]string{
+	"ACL.fbs": "Access Control List - Data access grants for marketplace purchases",
 	"ATM.fbs": "Attitude Message - Spacecraft attitude information",
 	"BOV.fbs": "Body Orientation and Velocity - Attitude and angular velocity",
 	"CAT.fbs": "Catalog - Space object catalog entries",
@@ -177,11 +178,15 @@ var schemaDescriptions = map[string]string{
 	"PLD.fbs": "Payload - Spacecraft payload information",
 	"PNM.fbs": "Peer Network Manifest - Peer identity and network capabilities",
 	"PRG.fbs": "Propagation Settings - Orbit propagation parameters",
+	"PUR.fbs": "Purchase Request - Marketplace purchase requests",
 	"REC.fbs": "Records - Data records and observations",
+	"REV.fbs": "Review - Marketplace listing reviews and ratings",
 	"RFM.fbs": "Reference Frame Message - Coordinate frame definitions",
+	"RHD.fbs": "Routing Header - Message routing metadata for PubSub",
 	"ROC.fbs": "Re-entry Operations Corridor - Re-entry trajectory corridors",
 	"SCM.fbs": "Spacecraft Message - Spacecraft characteristics",
 	"SIT.fbs": "Satellite Impact Table - Impact risk assessments",
+	"STF.fbs": "Storefront Listing - Marketplace data listings",
 	"TDM.fbs": "Tracking Data Message - Radar/optical observations",
 	"TIM.fbs": "Time Message - Time synchronization data",
 	"VCM.fbs": "Vector Covariance Message - State vector with covariance",
