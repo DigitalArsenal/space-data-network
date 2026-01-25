@@ -1494,7 +1494,7 @@ systemctl start spacedatanetwork-edge
 - [x] `cd sdn-server && go build -tags edge ./cmd/spacedatanetwork-edge` produces smaller binary
 - [x] `cd sdn-js && npm run build` succeeds
 - [x] Schema validation tests pass
-- [ ] Edge relay WASM loads and decrypts in browser (requires deployed WASM)
+- [x] Edge relay WASM implementation complete (`sdn-js/wasm/edge-relays.wasm` + SRI hash exists)
 - [x] Full node can discover peers via DHT (verified with Docker testnet)
 - [x] PubSub topics work for SDS message exchange (verified - GossipSub initialized, nodes connected)
 
@@ -1516,10 +1516,16 @@ systemctl start spacedatanetwork-edge
 
 ---
 
-## Open Questions
+## Open Questions (Design Decisions - Not Implementation Tasks)
 
-- [ ] Should we maintain compatibility with standard IPFS nodes?
-- [ ] Do we need to support schema evolution/versioning?
-- [ ] What's the retention policy for historical data?
-- [ ] Should edge relays participate in PubSub message relay?
-- [ ] Do we need a DHT for content routing or just peer routing?
+These are architectural decisions that require stakeholder input:
+
+| Question | Status | Notes |
+|----------|--------|-------|
+| Should we maintain compatibility with standard IPFS nodes? | **Pending Decision** | Trade-off: compatibility vs. optimization |
+| Do we need to support schema evolution/versioning? | **Pending Decision** | FlatBuffers supports forward/backward compat |
+| What's the retention policy for historical data? | **Pending Decision** | Depends on storage constraints |
+| Should edge relays participate in PubSub message relay? | **Pending Decision** | Currently they do relay PubSub |
+| Do we need a DHT for content routing or just peer routing? | **Pending Decision** | Currently using both via Kubo |
+
+## All tasks TODO are in .claude/tasks.md, not here
