@@ -86,6 +86,13 @@ const state = {
     provider: null,
     address: null,
     chainId: null,
+    detected: {
+      ethereum: false,
+      solana: false,
+      phantom: false,
+      metamask: false,
+      coinbase: false,
+    },
   },
 };
 
@@ -718,22 +725,33 @@ async function eciesDecrypt(recipientPrivateKey, ciphertext, header) {
 // =============================================================================
 
 async function connectMetaMask() {
+  console.log('connectMetaMask() called');
+  console.log('window.ethereum type:', typeof window.ethereum);
+  console.log('window.ethereum.isMetaMask:', window.ethereum?.isMetaMask);
+
   if (typeof window.ethereum === 'undefined') {
-    throw new Error('MetaMask is not installed');
+    console.error('window.ethereum is undefined');
+    throw new Error('MetaMask not detected - window.ethereum is undefined');
   }
 
+  console.log('Requesting Ethereum accounts...');
   const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+  console.log('Accounts received:', accounts);
+
   const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+  console.log('Chain ID:', chainId);
 
   state.web3 = {
     connected: true,
     provider: 'metamask',
     address: accounts[0],
     chainId: parseInt(chainId, 16),
+    detected: state.web3.detected,
   };
 
   // Listen for account/chain changes
   window.ethereum.on('accountsChanged', (accounts) => {
+    console.log('Accounts changed:', accounts);
     if (accounts.length === 0) {
       disconnectWeb3();
     } else {
@@ -743,29 +761,46 @@ async function connectMetaMask() {
   });
 
   window.ethereum.on('chainChanged', (chainId) => {
+    console.log('Chain changed:', chainId);
     state.web3.chainId = parseInt(chainId, 16);
     updateWeb3UI();
   });
 
+  console.log('MetaMask connected successfully, state:', state.web3);
   return state.web3;
 }
 
 async function connectPhantom() {
-  if (typeof window.solana === 'undefined' || !window.solana.isPhantom) {
-    throw new Error('Phantom wallet is not installed');
+  console.log('connectPhantom() called');
+  console.log('window.solana type:', typeof window.solana);
+  console.log('window.solana:', window.solana);
+  console.log('window.solana.isPhantom:', window.solana?.isPhantom);
+
+  if (typeof window.solana === 'undefined') {
+    console.error('window.solana is undefined');
+    throw new Error('Phantom wallet not detected - window.solana is undefined');
   }
 
+  if (!window.solana.isPhantom) {
+    console.error('window.solana exists but isPhantom is false');
+    throw new Error('Phantom wallet not detected - not a Phantom provider');
+  }
+
+  console.log('Calling window.solana.connect()...');
   const resp = await window.solana.connect();
+  console.log('Phantom connection response:', resp);
 
   state.web3 = {
     connected: true,
     provider: 'phantom',
     address: resp.publicKey.toString(),
     chainId: null,
+    detected: state.web3.detected,
   };
 
   window.solana.on('disconnect', disconnectWeb3);
 
+  console.log('Phantom connected successfully, state:', state.web3);
   return state.web3;
 }
 
@@ -1315,23 +1350,47 @@ function initEventListeners() {
   const connectWalletBtn = $('connect-wallet-btn');
   if (connectWalletBtn) {
     connectWalletBtn.addEventListener('click', async () => {
-      // Show wallet selection modal or try to detect available wallets
-      if (typeof window.ethereum !== 'undefined') {
+      console.log('Connect wallet button clicked');
+      console.log('Current window.ethereum:', typeof window.ethereum);
+      console.log('Current window.solana:', typeof window.solana);
+      console.log('window.solana.isPhantom:', window.solana?.isPhantom);
+
+      // Re-detect wallets in case they were injected after init
+      await waitForWeb3(1000);
+
+      // Try Phantom (Solana) first if detected
+      if (typeof window.solana !== 'undefined' && window.solana.isPhantom) {
         try {
-          await connectMetaMask();
-          updateWeb3UI();
-        } catch (err) {
-          alert('Failed to connect: ' + err.message);
-        }
-      } else if (typeof window.solana !== 'undefined' && window.solana.isPhantom) {
-        try {
+          console.log('Attempting to connect to Phantom...');
           await connectPhantom();
           updateWeb3UI();
+          console.log('Phantom connected successfully');
+          await handleLogin('web3', {});
         } catch (err) {
+          console.error('Phantom connection failed:', err);
+          alert('Failed to connect to Phantom: ' + err.message);
+        }
+      }
+      // Try MetaMask/Ethereum wallets
+      else if (typeof window.ethereum !== 'undefined') {
+        try {
+          console.log('Attempting to connect to Ethereum wallet...');
+          await connectMetaMask();
+          updateWeb3UI();
+          console.log('Ethereum wallet connected successfully');
+          await handleLogin('web3', {});
+        } catch (err) {
+          console.error('Ethereum wallet connection failed:', err);
           alert('Failed to connect: ' + err.message);
         }
-      } else {
-        alert('No Web3 wallet detected. Please install MetaMask or Phantom.');
+      }
+      // No wallet detected
+      else {
+        console.warn('No Web3 wallet detected');
+        alert('No Web3 wallet detected.\n\nDetected wallets:\n- Ethereum: ' +
+              (typeof window.ethereum !== 'undefined' ? 'Yes' : 'No') + '\n- Solana: ' +
+              (typeof window.solana !== 'undefined' ? 'Yes' : 'No') +
+              '\n\nPlease install MetaMask or Phantom, or open this page in a wallet browser.');
       }
     });
   }
@@ -1412,20 +1471,119 @@ function initEventListeners() {
 }
 
 // =============================================================================
+// Web3 Wallet Detection
+// =============================================================================
+
+async function detectWeb3Wallets() {
+  console.log('Detecting Web3 wallets...');
+
+  const detected = {
+    ethereum: typeof window.ethereum !== 'undefined',
+    solana: typeof window.solana !== 'undefined',
+    phantom: typeof window.solana !== 'undefined' && window.solana?.isPhantom,
+    metamask: typeof window.ethereum !== 'undefined' && window.ethereum?.isMetaMask,
+    coinbase: typeof window.ethereum !== 'undefined' && window.ethereum?.isCoinbaseWallet,
+  };
+
+  console.log('Web3 detection results:', detected);
+
+  // Auto-show Web3 tab if in wallet browser
+  if (detected.phantom || detected.ethereum) {
+    console.log('Web3 wallet environment detected, showing Web3 tab');
+    const web3Tab = $('web3-tab');
+    const web3Method = $('web3-method');
+    if (web3Tab && web3Method) {
+      // Make Web3 tab active by default
+      document.querySelectorAll('.method-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.method-content').forEach(c => c.classList.remove('active'));
+      web3Tab.classList.add('active');
+      web3Method.classList.add('active');
+
+      // Update button text with detected wallet
+      const connectBtn = $('connect-wallet-btn');
+      if (connectBtn && detected.phantom) {
+        connectBtn.textContent = 'Connect Phantom Wallet';
+      } else if (connectBtn && detected.metamask) {
+        connectBtn.textContent = 'Connect MetaMask';
+      }
+    }
+  }
+
+  return detected;
+}
+
+// Wait for Web3 wallet injection (some browsers inject async)
+function waitForWeb3(timeout = 3000) {
+  return new Promise((resolve) => {
+    console.log('Waiting for Web3 wallet injection...');
+
+    // Check immediately
+    if (window.ethereum || window.solana) {
+      console.log('Web3 wallet already available');
+      resolve(true);
+      return;
+    }
+
+    let elapsed = 0;
+    const interval = 100;
+
+    const checkInterval = setInterval(() => {
+      elapsed += interval;
+
+      if (window.ethereum || window.solana) {
+        console.log(`Web3 wallet detected after ${elapsed}ms`);
+        clearInterval(checkInterval);
+        resolve(true);
+        return;
+      }
+
+      if (elapsed >= timeout) {
+        console.log('Web3 wallet not detected within timeout');
+        clearInterval(checkInterval);
+        resolve(false);
+      }
+    }, interval);
+  });
+}
+
+// =============================================================================
 // Initialization
 // =============================================================================
 
 async function init() {
   console.log('SDN Crypto Wallet initializing...');
+  console.log('User agent:', navigator.userAgent);
 
   try {
     // Initialize event listeners
     initEventListeners();
 
-    // Check for Web3 wallet in URL or dApp browser
-    if (window.ethereum || window.solana) {
-      console.log('Web3 wallet detected');
+    // Listen for wallet injection events
+    window.addEventListener('ethereum#initialized', () => {
+      console.log('Ethereum wallet injected via event');
+      detectWeb3Wallets();
+    });
+
+    if (window.ethereum) {
+      window.ethereum.on('connect', () => {
+        console.log('Ethereum wallet connected');
+      });
     }
+
+    // Phantom-specific events
+    window.addEventListener('solana#initialized', () => {
+      console.log('Solana wallet injected via event');
+      detectWeb3Wallets();
+    });
+
+    // Wait for Web3 wallet injection (especially important for mobile wallet browsers)
+    await waitForWeb3();
+
+    // Detect available Web3 wallets
+    const detected = await detectWeb3Wallets();
+
+    // Store detection results
+    state.web3.detected = detected;
 
     state.initialized = true;
     console.log('SDN Crypto Wallet initialized');
