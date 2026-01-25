@@ -908,11 +908,18 @@ function updateLoginUI() {
   document.querySelectorAll('.login-required').forEach(el => el.style.display = 'none');
   document.querySelectorAll('.logged-in-content').forEach(el => el.style.display = 'block');
 
-  // Update nav button
+  // Update nav button (desktop)
   const navLogin = $('nav-login');
   if (navLogin) {
     navLogin.textContent = 'Logged In';
     navLogin.classList.add('logged-in');
+  }
+
+  // Update mobile login button
+  const mobileLogin = $('mobile-login');
+  if (mobileLogin) {
+    mobileLogin.textContent = 'Logged In';
+    mobileLogin.classList.add('logged-in');
   }
 
   // Update adversarial balances
@@ -1049,10 +1056,21 @@ function closeLoginModal() {
 // =============================================================================
 
 function initEventListeners() {
-  // Login button
+  // Login button (desktop)
   const navLogin = $('nav-login');
   if (navLogin) {
     navLogin.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (!state.loggedIn) {
+        openLoginModal();
+      }
+    });
+  }
+
+  // Login button (mobile)
+  const mobileLogin = $('mobile-login');
+  if (mobileLogin) {
+    mobileLogin.addEventListener('click', (e) => {
       e.preventDefault();
       if (!state.loggedIn) {
         openLoginModal();
