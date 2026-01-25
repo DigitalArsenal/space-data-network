@@ -4541,11 +4541,15 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
             </div>
             <div class="ecies-step">
               <div class="step-num">4</div>
-              <div class="step-text"><strong>Encrypt:</strong> AES-256-GCM encrypts the message with authentication</div>
+              <div class="step-text"><strong>Encrypt:</strong> AES-256-CTR encrypts the message (length-preserving)</div>
             </div>
             <div class="ecies-step">
               <div class="step-num">5</div>
-              <div class="step-text"><strong>Send:</strong> Ephemeral public key + nonce + ciphertext + tag sent to Bob</div>
+              <div class="step-text"><strong>Authenticate:</strong> HMAC-SHA256 provides integrity (Encrypt-then-MAC)</div>
+            </div>
+            <div class="ecies-step">
+              <div class="step-num">6</div>
+              <div class="step-text"><strong>Send:</strong> Ephemeral public key + nonce + ciphertext + MAC sent to Bob</div>
             </div>
           </div>
         </div>
