@@ -22,3 +22,75 @@ export {
   randomBytes,
   sha256,
 } from './crypto';
+
+// EPM Resolution
+export {
+  EPMResolver,
+  createEPMResolver,
+  KeyType,
+} from './epm-resolver';
+export type {
+  EPMKey,
+  ParsedEPM,
+  EPMResolverOptions,
+  KeyExchangeAlgorithm,
+} from './epm-resolver';
+
+// Subscription Management
+export {
+  SubscriptionManager,
+  defaultSubscriptionManager,
+  evaluateFilter,
+  evaluateFilters,
+  validateSubscriptionConfig,
+  createDefaultConfig,
+  generateSubscriptionId,
+  serializeRoutingHeader,
+  deserializeRoutingHeader,
+  getSchemaRoutingTopic,
+  getPeerRoutingTopic,
+  StreamingMode,
+} from './subscription';
+export type {
+  SubscriptionConfig,
+  QueryFilter as SubscriptionQueryFilter,
+  RoutingHeader,
+  ActiveSubscription,
+  SubscriptionEvent,
+  SubscriptionEventType,
+  SubscriptionEventHandler,
+} from './subscription';
+
+// Storefront / Marketplace
+export {
+  StorefrontClient,
+  createStorefrontClient,
+  AccessType,
+  PaymentMethod,
+  GrantStatus,
+  PurchaseStatus,
+  ReviewStatus,
+} from './storefront';
+export type {
+  StorefrontClientConfig,
+  StorefrontEvents,
+  Listing,
+  AccessGrant,
+  PurchaseRequest,
+  Review,
+  ReviewStats,
+  SearchQuery,
+  SearchResult,
+  SearchFacets,
+  CreditsBalance,
+  PricingTier,
+  DataCoverage,
+  SpatialCoverage,
+  TemporalCoverage,
+  ProviderReputation,
+  DataQualityMetrics,
+  DeliveryMethod,
+  CreateListingRequest,
+  CreatePurchaseRequest,
+  CreateReviewRequest,
+} from './storefront';

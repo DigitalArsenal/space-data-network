@@ -3,6 +3,7 @@
  */
 
 export const SUPPORTED_SCHEMAS = [
+  'ACL.fbs',   // Access Control List - Data access grants
   'ATM.fbs',   // Attitude Message
   'BOV.fbs',   // Body Orientation and Velocity
   'CAT.fbs',   // Catalog
@@ -27,11 +28,15 @@ export const SUPPORTED_SCHEMAS = [
   'PLD.fbs',   // Payload
   'PNM.fbs',   // Peer Network Manifest
   'PRG.fbs',   // Propagation Settings
+  'PUR.fbs',   // Purchase Request - Marketplace purchases
   'REC.fbs',   // Records
+  'REV.fbs',   // Review - Marketplace reviews
   'RFM.fbs',   // Reference Frame Message
+  'RHD.fbs',   // Routing Header - Message routing metadata
   'ROC.fbs',   // Re-entry Operations Corridor
   'SCM.fbs',   // Spacecraft Message
   'SIT.fbs',   // Satellite Impact Table
+  'STF.fbs',   // Storefront Listing - Marketplace listings
   'TDM.fbs',   // Tracking Data Message
   'TIM.fbs',   // Time Message
   'VCM.fbs',   // Vector Covariance Message
@@ -43,6 +48,7 @@ export type SchemaName = typeof SUPPORTED_SCHEMAS[number];
  * Schema descriptions
  */
 export const SCHEMA_DESCRIPTIONS: Record<SchemaName, string> = {
+  'ACL.fbs': 'Access Control List - Data access grants for marketplace',
   'ATM.fbs': 'Attitude Message - Spacecraft attitude information',
   'BOV.fbs': 'Body Orientation and Velocity - Attitude and angular velocity',
   'CAT.fbs': 'Catalog - Space object catalog entries',
@@ -67,11 +73,15 @@ export const SCHEMA_DESCRIPTIONS: Record<SchemaName, string> = {
   'PLD.fbs': 'Payload - Spacecraft payload information',
   'PNM.fbs': 'Peer Network Manifest - Peer identity and network capabilities',
   'PRG.fbs': 'Propagation Settings - Orbit propagation parameters',
+  'PUR.fbs': 'Purchase Request - Marketplace purchase requests',
   'REC.fbs': 'Records - Data records and observations',
+  'REV.fbs': 'Review - Marketplace listing reviews and ratings',
   'RFM.fbs': 'Reference Frame Message - Coordinate frame definitions',
+  'RHD.fbs': 'Routing Header - Message routing metadata for PubSub',
   'ROC.fbs': 'Re-entry Operations Corridor - Re-entry trajectory corridors',
   'SCM.fbs': 'Spacecraft Message - Spacecraft characteristics',
   'SIT.fbs': 'Satellite Impact Table - Impact assessments',
+  'STF.fbs': 'Storefront Listing - Marketplace data listings',
   'TDM.fbs': 'Tracking Data Message - Radar/optical observations',
   'TIM.fbs': 'Time Message - Time synchronization data',
   'VCM.fbs': 'Vector Covariance Message - State vector with covariance',
@@ -81,6 +91,7 @@ export const SCHEMA_DESCRIPTIONS: Record<SchemaName, string> = {
  * Bundled schema content (populated at build time)
  */
 export const SDS_SCHEMAS: Record<SchemaName, string> = {
+  'ACL.fbs': '',
   'ATM.fbs': '',
   'BOV.fbs': '',
   'CAT.fbs': '',
@@ -105,11 +116,15 @@ export const SDS_SCHEMAS: Record<SchemaName, string> = {
   'PLD.fbs': '',
   'PNM.fbs': '',
   'PRG.fbs': '',
+  'PUR.fbs': '',
   'REC.fbs': '',
+  'REV.fbs': '',
   'RFM.fbs': '',
+  'RHD.fbs': '',
   'ROC.fbs': '',
   'SCM.fbs': '',
   'SIT.fbs': '',
+  'STF.fbs': '',
   'TDM.fbs': '',
   'TIM.fbs': '',
   'VCM.fbs': '',

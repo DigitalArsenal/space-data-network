@@ -80,6 +80,7 @@ func init() {
 
 // SupportedSchemas lists all SDS schema files.
 var SupportedSchemas = []string{
+	"ACL.fbs",  // Access Control List - Data access grants
 	"ATM.fbs",  // Attitude Message
 	"BOV.fbs",  // Body Orientation and Velocity
 	"CAT.fbs",  // Catalog
@@ -104,11 +105,15 @@ var SupportedSchemas = []string{
 	"PLD.fbs",  // Payload
 	"PNM.fbs",  // Peer Network Manifest
 	"PRG.fbs",  // Propagation Settings
+	"PUR.fbs",  // Purchase Request - Marketplace purchases
 	"REC.fbs",  // Records
+	"REV.fbs",  // Review - Marketplace reviews
 	"RFM.fbs",  // Reference Frame Message
+	"RHD.fbs",  // Routing Header - Message routing metadata
 	"ROC.fbs",  // Re-entry Operations Corridor
 	"SCM.fbs",  // Spacecraft Message
 	"SIT.fbs",  // Satellite Impact Table
+	"STF.fbs",  // Storefront Listing - Marketplace listings
 	"TDM.fbs",  // Tracking Data Message
 	"TIM.fbs",  // Time Message
 	"VCM.fbs",  // Vector Covariance Message

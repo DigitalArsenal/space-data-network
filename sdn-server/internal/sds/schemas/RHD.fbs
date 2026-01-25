@@ -1,0 +1,80 @@
+// Hash: placeholder
+// Version: 1.0.0
+// -----------------------------------END_HEADER
+
+/// Message priority levels
+enum Priority : byte {
+  /// Low priority, best-effort delivery
+  Low = 0,
+  /// Normal priority
+  Normal = 1,
+  /// High priority, expedited delivery
+  High = 2,
+  /// Critical priority, immediate delivery
+  Critical = 3
+}
+
+/// Routing Header Message
+/// Used for routing messages through the SDN PubSub network
+/// This header remains unencrypted to enable routing decisions
+table RHD {
+  /// Schema type of the payload (e.g., "OMM", "CDM", "STF")
+  schema_type: string (required);
+
+  /// Destination peer IDs (empty = broadcast)
+  destination_peers: [string];
+
+  /// Source peer ID
+  source_peer_id: string;
+
+  /// Time-to-live in hops (decremented at each relay)
+  ttl: uint8 = 7;
+
+  /// Message priority
+  priority: Priority = Normal;
+
+  /// Whether the payload is encrypted
+  encrypted: bool = false;
+
+  /// Encryption key ID (if encrypted)
+  key_id: string;
+
+  /// Message ID for deduplication
+  message_id: string;
+
+  /// Timestamp (Unix milliseconds)
+  timestamp: uint64;
+
+  /// Sequence number for ordering
+  sequence: uint64;
+
+  /// Topic override (if not using schema-based routing)
+  topic: string;
+
+  /// Correlation ID for request-response patterns
+  correlation_id: string;
+
+  /// Reply-to topic for responses
+  reply_to: string;
+
+  /// Content type hint
+  content_type: string;
+
+  /// Compression algorithm (none, gzip, zstd, lz4)
+  compression: string;
+
+  /// Original payload size (before compression)
+  original_size: uint32;
+
+  /// Checksum of payload (CRC32 or SHA256 prefix)
+  checksum: uint32;
+
+  /// Trace ID for distributed tracing
+  trace_id: string;
+
+  /// Custom metadata as JSON string
+  metadata: string;
+}
+
+root_type RHD;
+file_identifier "$RHD";
