@@ -1395,6 +1395,92 @@ function initEventListeners() {
     });
   }
 
+  // Individual wallet buttons in login modal
+  const connectPhantomBtn = $('connect-phantom');
+  if (connectPhantomBtn) {
+    connectPhantomBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      console.log('Phantom button clicked');
+
+      // Re-detect in case wallet was injected late
+      await waitForWeb3(1000);
+
+      if (typeof window.solana !== 'undefined' && window.solana.isPhantom) {
+        try {
+          console.log('Connecting to Phantom...');
+          await connectPhantom();
+          updateWeb3UI();
+          await handleLogin('web3', {});
+        } catch (err) {
+          console.error('Phantom connection failed:', err);
+          alert('Failed to connect to Phantom: ' + err.message);
+        }
+      } else {
+        console.warn('Phantom not detected');
+        alert('Phantom wallet not detected.\n\nwindow.solana: ' +
+              (typeof window.solana !== 'undefined' ? 'exists' : 'undefined') +
+              '\nisPhantom: ' + (window.solana?.isPhantom || false));
+      }
+    });
+  }
+
+  const connectMetaMaskBtn = $('connect-metamask');
+  if (connectMetaMaskBtn) {
+    connectMetaMaskBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      console.log('MetaMask button clicked');
+
+      await waitForWeb3(1000);
+
+      if (typeof window.ethereum !== 'undefined') {
+        try {
+          console.log('Connecting to MetaMask...');
+          await connectMetaMask();
+          updateWeb3UI();
+          await handleLogin('web3', {});
+        } catch (err) {
+          console.error('MetaMask connection failed:', err);
+          alert('Failed to connect to MetaMask: ' + err.message);
+        }
+      } else {
+        alert('MetaMask not detected. Please install MetaMask extension.');
+      }
+    });
+  }
+
+  const connectCoinbaseBtn = $('connect-coinbase');
+  if (connectCoinbaseBtn) {
+    connectCoinbaseBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      console.log('Coinbase button clicked');
+
+      await waitForWeb3(1000);
+
+      if (typeof window.ethereum !== 'undefined') {
+        try {
+          console.log('Connecting to Coinbase Wallet...');
+          await connectCoinbaseWallet();
+          updateWeb3UI();
+          await handleLogin('web3', {});
+        } catch (err) {
+          console.error('Coinbase connection failed:', err);
+          alert('Failed to connect to Coinbase Wallet: ' + err.message);
+        }
+      } else {
+        alert('Coinbase Wallet not detected. Please install Coinbase Wallet.');
+      }
+    });
+  }
+
+  const connectSuiBtn = $('connect-sui');
+  if (connectSuiBtn) {
+    connectSuiBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      console.log('SUI Wallet button clicked');
+      alert('SUI Wallet connection coming soon.');
+    });
+  }
+
   // Refresh balances
   const refreshBalancesBtn = $('refresh-balances');
   if (refreshBalancesBtn) {
