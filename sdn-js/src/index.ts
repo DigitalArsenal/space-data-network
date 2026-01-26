@@ -11,6 +11,7 @@ export type { StoredRecord, QueryFilter } from './storage';
 export { loadEdgeRelays, getBootstrapRelays, DEFAULT_EDGE_RELAYS } from './edge-discovery';
 export { SDS_SCHEMAS, SUPPORTED_SCHEMAS } from './schemas';
 export type { SchemaName } from './schemas';
+// Legacy crypto exports (backward compatible)
 export {
   loadCryptoModule,
   isCryptoAvailable,
@@ -21,7 +22,43 @@ export {
   generateKey,
   randomBytes,
   sha256,
+  isCryptoWasmVerified,
+  getCryptoMetrics,
 } from './crypto';
+export type { CryptoMetrics } from './crypto';
+
+// New HD Wallet exports
+export {
+  initHDWallet,
+  isHDWalletAvailable,
+  injectEntropy,
+  hasEntropy,
+  generateMnemonic,
+  validateMnemonic,
+  mnemonicToSeed,
+  deriveEd25519Key,
+  deriveEd25519KeyPair,
+  ed25519PublicKey,
+  x25519PublicKey,
+  deriveIdentity,
+  identityFromMnemonic,
+  x25519ECDH,
+  encryptBytes,
+  decryptBytes,
+  LanguageCode,
+  ErrorCode,
+  SDNDerivation,
+  buildSigningPath,
+  buildEncryptionPath,
+} from './crypto/index';
+export type {
+  HDWalletOptions,
+  MnemonicOptions,
+  DerivedKey,
+  KeyPair,
+  EncryptionKeyPair,
+  DerivedIdentity,
+} from './crypto/index';
 
 // EPM Resolution
 export {
