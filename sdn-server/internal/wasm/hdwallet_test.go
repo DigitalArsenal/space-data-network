@@ -21,12 +21,12 @@ const testMnemonic = "abandon abandon abandon abandon abandon abandon abandon ab
 func testHDWalletModule(t *testing.T) *HDWalletModule {
 	t.Helper()
 
-	// Look for hd-wallet-wasi.wasm in common locations
-	// Note: The standard hd-wallet.wasm is Emscripten build for JS, we need WASI build
+	// Look for hd-wallet.wasm in common locations (WASI build)
+	// Note: The WASM file is built with wasi-sdk for Go/wazero integration
 	wasmPaths := []string{
 		os.Getenv("HD_WALLET_WASM_PATH"),
-		"../../../../hd-wallet-wasm/build-wasi/hd-wallet-wasi.wasm",
-		"../../../hd-wallet-wasm/build-wasi/hd-wallet-wasi.wasm",
+		"../../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
+		"../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
 	}
 
 	var wasmPath string
@@ -41,7 +41,7 @@ func testHDWalletModule(t *testing.T) *HDWalletModule {
 	}
 
 	if wasmPath == "" {
-		t.Skip("HD wallet WASI WASM not found - set HD_WALLET_WASM_PATH env var to a WASI build (not Emscripten)")
+		t.Skip("HD wallet WASM not found - set HD_WALLET_WASM_PATH to a pure WASI build (requires wasi-sdk, not Emscripten)")
 	}
 
 	ctx := context.Background()

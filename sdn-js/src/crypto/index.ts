@@ -2,14 +2,11 @@
  * SDN Crypto Module
  *
  * Unified cryptographic operations using hd-wallet-wasm.
- * Provides backward-compatible APIs from flatc-crypto.wasm
- * plus new HD wallet functionality.
+ * Provides HD wallet functionality plus backward-compatible crypto APIs.
  */
 
 // Re-export types
 export type {
-  HDWalletWasmExports,
-  HDWalletModule,
   HDWalletOptions,
   MnemonicOptions,
   DerivedKey,
@@ -20,7 +17,6 @@ export type {
 
 export {
   LanguageCode,
-  ErrorCode,
   SDNDerivation,
   buildSigningPath,
   buildEncryptionPath,
@@ -49,11 +45,11 @@ export {
   deriveIdentity,
   identityFromMnemonic,
 
-  // Signing (backward compatible)
+  // Signing
   sign,
   verify,
 
-  // Encryption (backward compatible)
+  // Encryption
   encrypt,
   decrypt,
   encryptBytes,

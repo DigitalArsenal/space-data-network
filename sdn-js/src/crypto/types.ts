@@ -3,116 +3,6 @@
  */
 
 /**
- * WASM module exports for hd-wallet-wasm
- */
-export interface HDWalletWasmExports {
-  // Memory management
-  hd_alloc: (size: number) => number;
-  hd_dealloc: (ptr: number) => void;
-  memory: WebAssembly.Memory;
-
-  // Entropy
-  hd_inject_entropy: (ptr: number, len: number) => void;
-  hd_get_entropy_status: () => number;
-
-  // Mnemonic functions
-  hd_mnemonic_generate: (
-    outputPtr: number,
-    outputSize: number,
-    wordCount: number,
-    language: number
-  ) => number;
-  hd_mnemonic_validate: (mnemonicPtr: number, language: number) => number;
-  hd_mnemonic_to_seed: (
-    mnemonicPtr: number,
-    passphrasePtr: number,
-    seedOutPtr: number,
-    seedSize: number
-  ) => number;
-
-  // Key derivation
-  hd_slip10_ed25519_derive_path: (
-    seedPtr: number,
-    seedLen: number,
-    pathPtr: number,
-    keyOutPtr: number,
-    chainCodeOutPtr: number
-  ) => number;
-  hd_ed25519_pubkey_from_seed: (
-    seedPtr: number,
-    publicKeyOutPtr: number,
-    publicKeySize: number
-  ) => number;
-
-  // Signing
-  hd_ed25519_sign: (
-    seedPtr: number,
-    seedLen: number,
-    messagePtr: number,
-    messageLen: number,
-    signatureOutPtr: number,
-    signatureSize: number
-  ) => number;
-  hd_ed25519_verify: (
-    publicKeyPtr: number,
-    publicKeyLen: number,
-    messagePtr: number,
-    messageLen: number,
-    signaturePtr: number,
-    signatureLen: number
-  ) => number;
-
-  // X25519 ECDH
-  hd_x25519_pubkey: (
-    privateKeyPtr: number,
-    publicKeyOutPtr: number,
-    publicKeySize: number
-  ) => number;
-  hd_ecdh_x25519: (
-    privateKeyPtr: number,
-    publicKeyPtr: number,
-    sharedSecretOutPtr: number,
-    sharedSecretSize: number
-  ) => number;
-
-  // AES-GCM encryption
-  hd_aes_gcm_encrypt?: (
-    keyPtr: number,
-    keyLen: number,
-    plaintextPtr: number,
-    plaintextLen: number,
-    outputPtr: number,
-    outputSize: number
-  ) => number;
-  hd_aes_gcm_decrypt?: (
-    keyPtr: number,
-    keyLen: number,
-    ciphertextPtr: number,
-    ciphertextLen: number,
-    outputPtr: number,
-    outputSize: number
-  ) => number;
-
-  // Version
-  hd_get_version: () => number;
-}
-
-/**
- * HD wallet module wrapper
- */
-export interface HDWalletModule {
-  ready: Promise<void>;
-  exports: HDWalletWasmExports;
-  heap: Uint8Array;
-  alloc: (size: number) => number;
-  dealloc: (ptr: number) => void;
-  writeBytes: (ptr: number, data: Uint8Array) => void;
-  readBytes: (ptr: number, length: number) => Uint8Array;
-  writeString: (str: string) => number;
-  readString: (ptr: number, length: number) => string;
-}
-
-/**
  * Derived key result from HD derivation
  */
 export interface DerivedKey {
@@ -164,10 +54,6 @@ export interface DerivedIdentity {
 export interface HDWalletOptions {
   /** Path to WASM file (optional, uses default paths if not provided) */
   wasmPath?: string;
-  /** Expected SRI hash for integrity verification */
-  expectedSri?: string;
-  /** Skip integrity verification (not recommended for production) */
-  skipIntegrityCheck?: boolean;
 }
 
 /**
@@ -194,21 +80,6 @@ export const LanguageCode = {
   italian: 7,
   czech: 8,
   portuguese: 9,
-} as const;
-
-/**
- * Error codes from WASM module
- */
-export const ErrorCode = {
-  OK: 0,
-  NO_ENTROPY: -1,
-  INVALID_MNEMONIC: -2,
-  INVALID_PATH: -3,
-  INVALID_KEY: -4,
-  SIGNING_FAILED: -5,
-  VERIFICATION_FAILED: -6,
-  ENCRYPTION_FAILED: -7,
-  DECRYPTION_FAILED: -8,
 } as const;
 
 /**

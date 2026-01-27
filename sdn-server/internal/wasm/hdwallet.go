@@ -72,6 +72,8 @@ func NewHDWalletModule(ctx context.Context, wasmPath string) (*HDWalletModule, e
 }
 
 // NewHDWalletModuleFromBytes creates a new HDWalletModule from WASM bytes.
+// NOTE: Requires a pure WASI build (built with wasi-sdk, not Emscripten).
+// Emscripten builds require JS glue code and won't work with wazero.
 func NewHDWalletModuleFromBytes(ctx context.Context, wasmBytes []byte) (*HDWalletModule, error) {
 	r := wazero.NewRuntime(ctx)
 

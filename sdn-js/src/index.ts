@@ -11,42 +11,49 @@ export type { StoredRecord, QueryFilter } from './storage';
 export { loadEdgeRelays, getBootstrapRelays, DEFAULT_EDGE_RELAYS } from './edge-discovery';
 export { SDS_SCHEMAS, SUPPORTED_SCHEMAS } from './schemas';
 export type { SchemaName } from './schemas';
-// Legacy crypto exports (backward compatible)
+// Crypto and HD Wallet exports (unified from hd-wallet-wasm)
 export {
-  loadCryptoModule,
-  isCryptoAvailable,
-  encrypt,
-  decrypt,
-  sign,
-  verify,
-  generateKey,
-  randomBytes,
-  sha256,
-  isCryptoWasmVerified,
-  getCryptoMetrics,
-} from './crypto';
-export type { CryptoMetrics } from './crypto';
-
-// New HD Wallet exports
-export {
+  // Initialization
   initHDWallet,
   isHDWalletAvailable,
   injectEntropy,
   hasEntropy,
+
+  // Mnemonic
   generateMnemonic,
   validateMnemonic,
   mnemonicToSeed,
+
+  // Key derivation
   deriveEd25519Key,
   deriveEd25519KeyPair,
   ed25519PublicKey,
   x25519PublicKey,
+
+  // SDN identity
   deriveIdentity,
   identityFromMnemonic,
-  x25519ECDH,
+
+  // Signing
+  sign,
+  verify,
+
+  // Encryption
+  encrypt,
+  decrypt,
   encryptBytes,
   decryptBytes,
+
+  // ECDH
+  x25519ECDH,
+
+  // Utilities
+  randomBytes,
+  generateKey,
+  sha256,
+
+  // Constants
   LanguageCode,
-  ErrorCode,
   SDNDerivation,
   buildSigningPath,
   buildEncryptionPath,

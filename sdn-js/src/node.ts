@@ -18,7 +18,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { SDNStorage, StoredRecord } from './storage';
 import { getBootstrapRelays } from './edge-discovery';
 import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
-import { sign, loadCryptoModule } from './crypto';
+import { sign, initHDWallet } from './crypto/index';
 
 const TOPIC_PREFIX = '/spacedatanetwork/sds/';
 
@@ -59,10 +59,10 @@ export class SDNNode {
   static async create(config: SDNConfig = {}, events: SDNNodeEvents = {}): Promise<SDNNode> {
     const node = new SDNNode(config, events);
 
-    // Try to load crypto module for signing
-    node.cryptoReady = await loadCryptoModule();
+    // Try to load HD wallet module for signing
+    node.cryptoReady = await initHDWallet();
     if (!node.cryptoReady) {
-      console.warn('Crypto WASM not loaded - signatures will be disabled');
+      console.warn('HD Wallet WASM not loaded - signatures will be disabled');
     }
 
     await node.init();

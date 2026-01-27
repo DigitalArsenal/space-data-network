@@ -1,43 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
-  getCryptoMetrics,
-  isCryptoAvailable,
-  isCryptoWasmVerified,
+  isHDWalletAvailable,
   encrypt,
   decrypt,
   generateKey,
   randomBytes,
   sha256,
-} from './crypto';
+} from './crypto/index';
 
 describe('crypto', () => {
-  describe('getCryptoMetrics', () => {
-    it('should return crypto metrics object', () => {
-      const metrics = getCryptoMetrics();
-      expect(metrics).toHaveProperty('wasmLoadAttempts');
-      expect(metrics).toHaveProperty('wasmLoadSuccesses');
-      expect(metrics).toHaveProperty('wasmLoadFailures');
-      expect(metrics).toHaveProperty('lastLoadTime');
-      expect(metrics).toHaveProperty('lastError');
-    });
-
-    it('should return a copy (immutable)', () => {
-      const metrics1 = getCryptoMetrics();
-      const metrics2 = getCryptoMetrics();
-      expect(metrics1).not.toBe(metrics2);
-    });
-  });
-
-  describe('isCryptoAvailable', () => {
+  describe('isHDWalletAvailable', () => {
     it('should return false when WASM not loaded', () => {
       // In test environment, WASM is not loaded
-      expect(isCryptoAvailable()).toBe(false);
-    });
-  });
-
-  describe('isCryptoWasmVerified', () => {
-    it('should return false when WASM not verified', () => {
-      expect(isCryptoWasmVerified()).toBe(false);
+      expect(isHDWalletAvailable()).toBe(false);
     });
   });
 
@@ -122,7 +97,7 @@ describe('crypto', () => {
     });
   });
 
-  describe('encrypt/decrypt (Web Crypto fallback)', () => {
+  describe('encrypt/decrypt (Web Crypto)', () => {
     it('should encrypt and decrypt data', async () => {
       const key = generateKey();
       const plaintext = new TextEncoder().encode('Hello, World!');
