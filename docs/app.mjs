@@ -911,11 +911,24 @@ async function handleLogin(method, data) {
       await deriveKeysFromSeed(data.seedPhrase);
     } else if (method === 'stored-pin') {
       const walletData = await retrieveWalletWithPIN(data.pin);
-      // Restore wallet from stored data
-      await deriveKeysFromSeed(walletData.seedPhrase);
+      // Restore wallet from stored data based on type
+      if (walletData.type === 'password') {
+        await deriveKeysFromPassword(walletData.username, walletData.password);
+      } else if (walletData.seedPhrase) {
+        await deriveKeysFromSeed(walletData.seedPhrase);
+      } else {
+        throw new Error('Invalid stored wallet data');
+      }
     } else if (method === 'stored-passkey') {
       const walletData = await authenticatePasskeyAndRetrieveWallet();
-      await deriveKeysFromSeed(walletData.seedPhrase);
+      // Restore wallet from stored data based on type
+      if (walletData.type === 'password') {
+        await deriveKeysFromPassword(walletData.username, walletData.password);
+      } else if (walletData.seedPhrase) {
+        await deriveKeysFromSeed(walletData.seedPhrase);
+      } else {
+        throw new Error('Invalid stored wallet data');
+      }
     }
 
     state.loggedIn = true;
@@ -946,14 +959,14 @@ function updateLoginUI() {
   // Update nav button (desktop)
   const navLogin = $('nav-login');
   if (navLogin) {
-    navLogin.textContent = 'Logged In';
+    navLogin.textContent = 'Logout';
     navLogin.classList.add('logged-in');
   }
 
   // Update mobile login button
   const mobileLogin = $('mobile-login');
   if (mobileLogin) {
-    mobileLogin.textContent = 'Logged In';
+    mobileLogin.textContent = 'Logout';
     mobileLogin.classList.add('logged-in');
   }
 
@@ -962,6 +975,45 @@ function updateLoginUI() {
 
   // Update PKI UI
   updatePKIUI();
+}
+
+function logout() {
+  // Reset state
+  state.loggedIn = false;
+  state.loginMethod = null;
+  state.wallet = { x25519: null, ed25519: null, secp256k1: null, p256: null };
+  state.masterSeed = null;
+  state.hdRoot = null;
+  state.addresses = { btc: null, eth: null, sol: null, sui: null, atom: null, ada: null };
+  state.encryptionKey = null;
+  state.encryptionIV = null;
+  state.pki = { algorithm: 'x25519', alice: null, bob: null };
+
+  // Update UI - show login prompts, hide logged-in content
+  document.querySelectorAll('.login-required').forEach(el => el.style.display = 'block');
+  document.querySelectorAll('.logged-in-content').forEach(el => el.style.display = 'none');
+
+  // Update nav button (desktop)
+  const navLogin = $('nav-login');
+  if (navLogin) {
+    navLogin.textContent = 'Login';
+    navLogin.classList.remove('logged-in');
+  }
+
+  // Update mobile login button
+  const mobileLogin = $('mobile-login');
+  if (mobileLogin) {
+    mobileLogin.textContent = 'Login';
+    mobileLogin.classList.remove('logged-in');
+  }
+
+  // Update adversarial UI
+  updateAdversarialUI();
+
+  // Update PKI UI
+  updatePKIUI();
+
+  console.log('Logged out successfully');
 }
 
 function updateAdversarialUI() {
@@ -1091,23 +1143,27 @@ function closeLoginModal() {
 // =============================================================================
 
 function initEventListeners() {
-  // Login button (desktop)
+  // Login/Logout button (desktop)
   const navLogin = $('nav-login');
   if (navLogin) {
     navLogin.addEventListener('click', (e) => {
       e.preventDefault();
-      if (!state.loggedIn) {
+      if (state.loggedIn) {
+        logout();
+      } else {
         openLoginModal();
       }
     });
   }
 
-  // Login button (mobile)
+  // Login/Logout button (mobile)
   const mobileLogin = $('mobile-login');
   if (mobileLogin) {
     mobileLogin.addEventListener('click', (e) => {
       e.preventDefault();
-      if (!state.loggedIn) {
+      if (state.loggedIn) {
+        logout();
+      } else {
         openLoginModal();
       }
     });
@@ -1148,9 +1204,14 @@ function initEventListeners() {
   const deriveFromPassword = $('derive-from-password');
   if (deriveFromPassword) {
     deriveFromPassword.addEventListener('click', async () => {
-      const username = $('wallet-username').value;
-      const password = $('wallet-password').value;
+      const username = $('wallet-username')?.value?.trim();
+      const password = $('wallet-password')?.value;
       const rememberWallet = $('remember-wallet-password')?.checked;
+
+      if (!username || !password) {
+        alert('Please enter both username and password');
+        return;
+      }
 
       try {
         deriveFromPassword.textContent = 'Logging in...';
@@ -1162,10 +1223,27 @@ function initEventListeners() {
           const pin = $('pin-input-password')?.value;
           const usePasskey = $('passkey-btn-password')?.classList.contains('active');
 
+          // Store credentials for later restoration
+          const walletData = { type: 'password', username, password };
+
           if (usePasskey && isPasskeySupported()) {
-            await registerPasskeyAndStoreWallet({ seedPhrase: generateSeedPhrase() });
-          } else if (pin) {
-            await storeWalletWithPIN(pin, { seedPhrase: generateSeedPhrase() });
+            try {
+              await registerPasskeyAndStoreWallet(walletData);
+              console.log('Wallet stored with passkey');
+            } catch (e) {
+              console.error('Failed to store with passkey:', e);
+              alert('Failed to save with passkey: ' + e.message);
+            }
+          } else if (pin && pin.length === 6) {
+            try {
+              await storeWalletWithPIN(pin, walletData);
+              console.log('Wallet stored with PIN');
+            } catch (e) {
+              console.error('Failed to store with PIN:', e);
+              alert('Failed to save with PIN: ' + e.message);
+            }
+          } else if (rememberWallet && !usePasskey && (!pin || pin.length !== 6)) {
+            alert('Please enter a 6-digit PIN to remember your wallet');
           }
         }
       } catch (err) {
@@ -1200,13 +1278,52 @@ function initEventListeners() {
   const deriveFromSeed = $('derive-from-seed');
   if (deriveFromSeed) {
     deriveFromSeed.addEventListener('click', async () => {
-      const seedPhrase = $('seed-phrase').value;
+      const seedPhrase = $('seed-phrase')?.value?.trim();
+      const rememberWallet = $('remember-wallet-seed')?.checked;
+
+      if (!seedPhrase) {
+        alert('Please enter a seed phrase');
+        return;
+      }
+
+      if (!validateSeedPhrase(seedPhrase)) {
+        alert('Invalid seed phrase');
+        return;
+      }
 
       try {
         deriveFromSeed.textContent = 'Logging in...';
         deriveFromSeed.disabled = true;
 
         await handleLogin('seed', { seedPhrase });
+
+        if (rememberWallet) {
+          const pin = $('pin-input-seed')?.value;
+          const usePasskey = $('passkey-btn-seed')?.classList.contains('active');
+
+          // Store seed phrase for later restoration
+          const walletData = { type: 'seed', seedPhrase };
+
+          if (usePasskey && isPasskeySupported()) {
+            try {
+              await registerPasskeyAndStoreWallet(walletData);
+              console.log('Wallet stored with passkey');
+            } catch (e) {
+              console.error('Failed to store with passkey:', e);
+              alert('Failed to save with passkey: ' + e.message);
+            }
+          } else if (pin && pin.length === 6) {
+            try {
+              await storeWalletWithPIN(pin, walletData);
+              console.log('Wallet stored with PIN');
+            } catch (e) {
+              console.error('Failed to store with PIN:', e);
+              alert('Failed to save with PIN: ' + e.message);
+            }
+          } else if (rememberWallet && !usePasskey && (!pin || pin.length !== 6)) {
+            alert('Please enter a 6-digit PIN to remember your wallet');
+          }
+        }
       } catch (err) {
         alert('Login failed: ' + err.message);
       } finally {
