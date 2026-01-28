@@ -43,6 +43,10 @@
       scroll-behavior: smooth;
     }
 
+    section[id] {
+      scroll-margin-top: 50px;
+    }
+
     body {
       font-family: var(--font-sans);
       background: var(--bg);
@@ -1958,293 +1962,6 @@
     }
 
     /* ============================================
-       IDENTITY SECTION
-       ============================================ */
-    .identity-demo {
-      background: var(--ui-bg);
-      border: 1px solid var(--ui-border);
-      border-radius: var(--radius);
-      padding: 48px;
-      backdrop-filter: blur(20px);
-    }
-
-    .identity-methods {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 16px;
-      margin-bottom: 32px;
-    }
-
-    .identity-method {
-      position: relative;
-    }
-
-    .identity-method input[type="radio"] {
-      position: absolute;
-      opacity: 0;
-      pointer-events: none;
-    }
-
-    .identity-method label {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 20px;
-      background: rgba(0, 0, 0, 0.3);
-      border: 2px solid var(--ui-border);
-      border-radius: var(--radius-sm);
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .identity-method input[type="radio"]:checked + label {
-      border-color: var(--text-primary);
-      background: rgba(255, 255, 255, 0.05);
-    }
-
-    .identity-method label:hover {
-      border-color: var(--ui-border-hover);
-    }
-
-    .method-icon {
-      width: 48px;
-      height: 48px;
-      background: rgba(255, 255, 255, 0.1);
-      border-radius: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-
-    .method-icon svg {
-      width: 24px;
-      height: 24px;
-      color: var(--text-primary);
-    }
-
-    .method-info strong {
-      display: block;
-      font-size: 16px;
-      margin-bottom: 4px;
-    }
-
-    .method-info span {
-      font-size: 13px;
-      color: var(--text-muted);
-    }
-
-    .identity-input-area {
-      background: rgba(0, 0, 0, 0.3);
-      border-radius: var(--radius-sm);
-      padding: 24px;
-      margin-bottom: 24px;
-    }
-
-    .identity-input-area label {
-      display: block;
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--text-secondary);
-      margin-bottom: 8px;
-    }
-
-    .identity-input-area input[type="password"],
-    .identity-input-area textarea {
-      width: 100%;
-      background: rgba(0, 0, 0, 0.4);
-      border: 1px solid var(--ui-border);
-      border-radius: 12px;
-      padding: 14px 16px;
-      font-family: var(--font-mono);
-      font-size: 14px;
-      color: var(--text-primary);
-      margin-bottom: 8px;
-    }
-
-    .identity-input-area input:focus,
-    .identity-input-area textarea:focus {
-      outline: none;
-      border-color: var(--ui-border-hover);
-    }
-
-    .input-hint {
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-bottom: 20px;
-    }
-
-    .seed-actions {
-      margin-bottom: 8px;
-    }
-
-    .identity-result {
-      background: rgba(0, 0, 0, 0.3);
-      border-radius: var(--radius-sm);
-      padding: 24px;
-      margin-bottom: 32px;
-    }
-
-    .identity-result h4 {
-      font-size: 18px;
-      font-weight: 600;
-      margin-bottom: 20px;
-      text-align: center;
-    }
-
-    .identity-keys {
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-
-    .identity-key label {
-      display: block;
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-bottom: 6px;
-    }
-
-    .identity-key code {
-      display: block;
-      font-family: var(--font-mono);
-      font-size: 12px;
-      color: var(--text-secondary);
-      background: rgba(0, 0, 0, 0.4);
-      padding: 12px 16px;
-      border-radius: 8px;
-      word-break: break-all;
-    }
-
-    .identity-note {
-      font-size: 13px;
-      color: var(--text-muted);
-      text-align: center;
-      margin-top: 20px;
-      margin-bottom: 0;
-    }
-
-    .identity-explainer {
-      border-top: 1px solid rgba(255, 255, 255, 0.1);
-      padding-top: 32px;
-    }
-
-    .identity-explainer h4 {
-      font-size: 18px;
-      font-weight: 600;
-      margin-bottom: 24px;
-      text-align: center;
-    }
-
-    .derivation-diagram {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-bottom: 20px;
-    }
-
-    .deriv-step {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .deriv-box {
-      background: rgba(255, 255, 255, 0.1);
-      border: 1px solid var(--ui-border);
-      border-radius: 8px;
-      padding: 10px 16px;
-      font-size: 13px;
-      font-weight: 500;
-      font-family: var(--font-mono);
-    }
-
-    .deriv-arrow {
-      font-size: 11px;
-      color: var(--text-muted);
-      background: rgba(0, 0, 0, 0.3);
-      padding: 4px 8px;
-      border-radius: 4px;
-    }
-
-    .derivation-note {
-      font-size: 13px;
-      color: var(--text-muted);
-      text-align: center;
-      margin: 0;
-    }
-
-    .crypto-compat {
-      margin-top: 24px;
-      text-align: center;
-    }
-
-    .crypto-label {
-      font-size: 13px;
-      color: var(--text-muted);
-      display: block;
-      margin-bottom: 16px;
-    }
-
-    .crypto-icons {
-      display: flex;
-      justify-content: center;
-      gap: 16px;
-      flex-wrap: wrap;
-    }
-
-    .crypto-badge {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 16px;
-      background: rgba(255,255,255,0.05);
-      border: 1px solid var(--ui-border);
-      border-radius: 12px;
-      transition: all 0.2s;
-    }
-
-    .crypto-badge:hover {
-      background: rgba(255,255,255,0.1);
-      border-color: var(--ui-border-hover);
-    }
-
-    .crypto-badge svg {
-      width: 28px;
-      height: 28px;
-      color: var(--text-secondary);
-    }
-
-    .crypto-badge span {
-      font-size: 11px;
-      color: var(--text-muted);
-    }
-
-    @media (max-width: 734px) {
-      .identity-methods {
-        grid-template-columns: 1fr;
-      }
-      .identity-demo {
-        padding: 24px;
-      }
-      .derivation-diagram {
-        flex-direction: column;
-      }
-      .deriv-step {
-        flex-direction: column;
-      }
-      .crypto-icons {
-        gap: 12px;
-      }
-      .crypto-badge {
-        padding: 10px 12px;
-      }
-    }
-
-    /* ============================================
        FAQ / ACCORDION
        ============================================ */
     .accordion {
@@ -3455,7 +3172,7 @@
       </div>
       <div class="nav-links">
         <a href="#features">Features</a>
-        <a href="#identity">Identity</a>
+        <a href="#network-architecture">Architecture</a>
         <a href="#security">Security</a>
         <a href="#docs">Docs</a>
         <a href="#downloads">Downloads</a>
@@ -3481,7 +3198,7 @@
   <!-- Mobile Menu -->
   <div class="mobile-menu" id="mobileMenu">
     <a href="#features">Features</a>
-    <a href="#identity">Digital Identity</a>
+    <a href="#network-architecture">Architecture</a>
     <a href="#security">Security</a>
     <a href="#docs">Documentation</a>
     <a href="#downloads">Downloads</a>
@@ -3980,7 +3697,7 @@
             </div>
           </div>
           <div class="tier-desc">
-            <strong>Connect through relay nodes</strong> when behind firewalls, NAT, or corporate networks. Can subscribe to data, publish messages, and verify signatures, but cannot contribute to routing.
+            <strong>Connect through relay nodes</strong> when behind firewalls, NAT, or corporate networks. Can subscribe to data, decrypt data, and verify signatures, but cannot contribute to routing.
           </div>
         </div>
       </div>
@@ -5023,139 +4740,6 @@
     </div>
   </section>
 
-  <!-- Identity Section -->
-  <section id="identity">
-    <div class="container">
-      <div class="section-header">
-        <h2 class="section-title">Digital Identity</h2>
-        <p class="section-subtitle">Create your cryptographic identity for the Space Data Network</p>
-      </div>
-
-      <div class="identity-demo">
-        <div class="identity-methods">
-          <div class="identity-method" id="methodPassword">
-            <input type="radio" name="identityMethod" id="radioPassword" checked>
-            <label for="radioPassword">
-              <div class="method-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="3" y="11" width="18" height="11" rx="2"/>
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                </svg>
-              </div>
-              <div class="method-info">
-                <strong>Password</strong>
-                <span>Derive keys using Argon2id KDF</span>
-              </div>
-            </label>
-          </div>
-
-          <div class="identity-method" id="methodSeed">
-            <input type="radio" name="identityMethod" id="radioSeed">
-            <label for="radioSeed">
-              <div class="method-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                  <path d="M2 17l10 5 10-5"/>
-                  <path d="M2 12l10 5 10-5"/>
-                </svg>
-              </div>
-              <div class="method-info">
-                <strong>BIP-39 Seed Phrase</strong>
-                <span>HD wallet compatible (BIP-32/44)</span>
-              </div>
-            </label>
-          </div>
-        </div>
-
-        <div class="identity-input-area">
-          <div class="identity-password-input" id="passwordInput">
-            <label for="identityPassword">Password</label>
-            <input type="password" id="identityPassword" placeholder="Enter a strong password...">
-            <p class="input-hint">Minimum 12 characters. Keys derived using Argon2id with high memory cost.</p>
-          </div>
-
-          <div class="identity-seed-input" id="seedInput" style="display: none;">
-            <label for="identitySeed">Seed Phrase (12 or 24 words)</label>
-            <textarea id="identitySeed" placeholder="Enter your BIP-39 seed phrase..." rows="3"></textarea>
-            <div class="seed-actions">
-              <button class="btn btn-secondary btn-sm" id="generateSeedBtn">Generate New</button>
-            </div>
-            <p class="input-hint">Your seed phrase provides access to your identity. Never share it.</p>
-          </div>
-
-          <button class="btn btn-primary" id="deriveIdentityBtn">Derive Identity</button>
-        </div>
-
-        <div class="identity-result" id="identityResult" style="display: none;">
-          <h4>Your SDN Identity</h4>
-          <div class="identity-keys">
-            <div class="identity-key">
-              <label>Public Key (Ed25519)</label>
-              <code id="identityPubKey"></code>
-            </div>
-            <div class="identity-key">
-              <label>Peer ID (libp2p)</label>
-              <code id="identityPeerId"></code>
-            </div>
-            <div class="identity-key">
-              <label>Encryption Key (X25519)</label>
-              <code id="identityEncKey"></code>
-            </div>
-          </div>
-          <p class="identity-note">These keys are derived deterministically from your private key. The same password/seed will always produce the same identity. The public key is derived from your private key and used for encryption.</p>
-        </div>
-
-        <div class="identity-explainer">
-          <h4>HD Wallet Derivation</h4>
-          <div class="derivation-diagram">
-            <div class="deriv-step">
-              <div class="deriv-box">Seed Phrase</div>
-              <div class="deriv-arrow">BIP-39</div>
-            </div>
-            <div class="deriv-step">
-              <div class="deriv-box">Master Key</div>
-              <div class="deriv-arrow">BIP-32</div>
-            </div>
-            <div class="deriv-step">
-              <div class="deriv-box">m/44'/501'/0'</div>
-              <div class="deriv-arrow">Ed25519</div>
-            </div>
-            <div class="deriv-step">
-              <div class="deriv-box">SDN Identity</div>
-            </div>
-          </div>
-          <p class="derivation-note">SDN supports both <strong>secp256k1</strong> (ECDSA) and <strong>Ed25519</strong> (EdDSA) signing algorithms, with X25519 for key exchange.</p>
-
-          <div class="crypto-compat">
-            <span class="crypto-label">Compatible with:</span>
-            <div class="crypto-icons">
-              <div class="crypto-badge" title="Bitcoin">
-                <svg viewBox="0 0 32 32" fill="currentColor"><path d="M16 32C7.163 32 0 24.837 0 16S7.163 0 16 0s16 7.163 16 16-7.163 16-16 16zm7.189-17.98c.314-2.096-1.283-3.223-3.465-3.975l.708-2.84-1.728-.43-.69 2.765c-.454-.114-.92-.22-1.385-.326l.695-2.783L15.596 6l-.708 2.839c-.376-.086-.746-.17-1.104-.26l.002-.009-2.384-.595-.46 1.846s1.283.294 1.256.312c.7.175.826.638.805 1.006l-.806 3.235c.048.012.11.03.18.057l-.183-.045-1.13 4.532c-.086.212-.303.531-.793.41.018.025-1.256-.314-1.256-.314l-.858 1.978 2.25.561c.418.105.828.215 1.231.318l-.715 2.872 1.727.43.708-2.84c.472.127.93.245 1.378.357l-.706 2.828 1.728.43.715-2.866c2.948.558 5.164.333 6.097-2.333.752-2.146-.037-3.385-1.588-4.192 1.13-.26 1.98-1.003 2.207-2.538zm-3.95 5.538c-.533 2.147-4.148.986-5.32.695l.95-3.805c1.172.293 4.929.872 4.37 3.11zm.535-5.569c-.487 1.953-3.495.96-4.47.717l.86-3.45c.975.243 4.118.696 3.61 2.733z"/></svg>
-                <span>Bitcoin</span>
-              </div>
-              <div class="crypto-badge" title="Ethereum">
-                <svg viewBox="0 0 32 32" fill="currentColor"><path d="M16 32C7.163 32 0 24.837 0 16S7.163 0 16 0s16 7.163 16 16-7.163 16-16 16zm7.994-15.781L16.498 4 9 16.22l7.498 4.353 7.496-4.354zM24 17.616l-7.502 4.351L9 17.617l7.498 10.378L24 17.616z"/></svg>
-                <span>Ethereum</span>
-              </div>
-              <div class="crypto-badge" title="Solana">
-                <svg viewBox="0 0 32 32" fill="currentColor"><path d="M16 32C7.163 32 0 24.837 0 16S7.163 0 16 0s16 7.163 16 16-7.163 16-16 16zM9.925 18.266l1.09-1.09a.528.528 0 0 1 .373-.155h12.405a.264.264 0 0 1 .187.45l-1.09 1.09a.528.528 0 0 1-.373.155H10.112a.264.264 0 0 1-.187-.45zm1.09-5.72a.528.528 0 0 1 .373-.154h12.405a.264.264 0 0 1 .187.45l-1.09 1.09a.528.528 0 0 1-.373.154H10.112a.264.264 0 0 1-.187-.45l1.09-1.09zm11.778 10.35l-1.09 1.09a.528.528 0 0 1-.373.154H8.925a.264.264 0 0 1-.187-.45l1.09-1.09a.528.528 0 0 1 .373-.154h12.405a.264.264 0 0 1 .187.45z"/></svg>
-                <span>Solana</span>
-              </div>
-              <div class="crypto-badge" title="Cosmos">
-                <svg viewBox="0 0 32 32" fill="currentColor"><circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="16" r="3"/><ellipse cx="16" cy="16" rx="10" ry="4" fill="none" stroke="currentColor" stroke-width="1.5" transform="rotate(60 16 16)"/><ellipse cx="16" cy="16" rx="10" ry="4" fill="none" stroke="currentColor" stroke-width="1.5" transform="rotate(-60 16 16)"/></svg>
-                <span>Cosmos</span>
-              </div>
-              <div class="crypto-badge" title="Polkadot">
-                <svg viewBox="0 0 32 32" fill="currentColor"><circle cx="16" cy="6" r="4"/><circle cx="16" cy="26" r="4"/><circle cx="7" cy="11" r="3"/><circle cx="25" cy="11" r="3"/><circle cx="7" cy="21" r="3"/><circle cx="25" cy="21" r="3"/><circle cx="16" cy="16" r="5"/></svg>
-                <span>Polkadot</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <!-- Documentation Section -->
   <section id="docs">
     <div class="container">
@@ -6141,150 +5725,46 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
       });
     }
 
-    // Smooth scroll
+    // Smooth scroll + deeplinking
+    const NAV_OFFSET = 44;
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
       anchor.addEventListener('click', function(e) {
+        const href = this.getAttribute('href');
+        if (href === '#') return;
         e.preventDefault();
-        const target = document.querySelector(this.getAttribute('href'));
+        const target = document.querySelector(href);
         if (target) {
-          const offset = 44;
-          window.scrollTo({ top: target.offsetTop - offset, behavior: 'smooth' });
+          window.scrollTo({ top: target.offsetTop - NAV_OFFSET, behavior: 'smooth' });
+          history.replaceState(null, '', href);
         }
       });
     });
 
-    // Identity Demo
-    const BIP39_WORDLIST = [
-      'abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract', 'absurd', 'abuse',
-      'access', 'accident', 'account', 'accuse', 'achieve', 'acid', 'acoustic', 'acquire', 'across', 'act',
-      'action', 'actor', 'actress', 'actual', 'adapt', 'add', 'addict', 'address', 'adjust', 'admit',
-      'adult', 'advance', 'advice', 'aerobic', 'affair', 'afford', 'afraid', 'again', 'age', 'agent',
-      'agree', 'ahead', 'aim', 'air', 'airport', 'aisle', 'alarm', 'album', 'alcohol', 'alert',
-      'alien', 'all', 'alley', 'allow', 'almost', 'alone', 'alpha', 'already', 'also', 'alter',
-      'always', 'amateur', 'amazing', 'among', 'amount', 'amused', 'analyst', 'anchor', 'ancient', 'anger',
-      'angle', 'angry', 'animal', 'ankle', 'announce', 'annual', 'another', 'answer', 'antenna', 'antique',
-      'anxiety', 'any', 'apart', 'apology', 'appear', 'apple', 'approve', 'april', 'arch', 'arctic',
-      'area', 'arena', 'argue', 'arm', 'armed', 'armor', 'army', 'around', 'arrange', 'arrest',
-      'arrive', 'arrow', 'art', 'artefact', 'artist', 'artwork', 'ask', 'aspect', 'assault', 'asset',
-      'assist', 'assume', 'asthma', 'athlete', 'atom', 'attack', 'attend', 'attitude', 'attract', 'auction'
-    ];
-
-    function generateMnemonic(wordCount = 12) {
-      const words = [];
-      const array = new Uint32Array(wordCount);
-      crypto.getRandomValues(array);
-      for (let i = 0; i < wordCount; i++) {
-        words.push(BIP39_WORDLIST[array[i] % BIP39_WORDLIST.length]);
-      }
-      return words.join(' ');
-    }
-
-    async function deriveKeyFromPassword(password) {
-      const encoder = new TextEncoder();
-      const salt = encoder.encode('SDN-Identity-Salt-v1');
-      const keyMaterial = await crypto.subtle.importKey(
-        'raw',
-        encoder.encode(password),
-        'PBKDF2',
-        false,
-        ['deriveBits']
-      );
-      const bits = await crypto.subtle.deriveBits(
-        { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
-        keyMaterial,
-        256
-      );
-      return new Uint8Array(bits);
-    }
-
-    async function deriveKeyFromSeed(seedPhrase) {
-      const encoder = new TextEncoder();
-      const salt = encoder.encode('mnemonic');
-      const keyMaterial = await crypto.subtle.importKey(
-        'raw',
-        encoder.encode(seedPhrase.trim().toLowerCase()),
-        'PBKDF2',
-        false,
-        ['deriveBits']
-      );
-      const bits = await crypto.subtle.deriveBits(
-        { name: 'PBKDF2', salt, iterations: 2048, hash: 'SHA-512' },
-        keyMaterial,
-        512
-      );
-      return new Uint8Array(bits).slice(0, 32);
-    }
-
-    function initIdentityDemo() {
-      const radioPassword = document.getElementById('radioPassword');
-      const radioSeed = document.getElementById('radioSeed');
-      const passwordInput = document.getElementById('passwordInput');
-      const seedInput = document.getElementById('seedInput');
-      const generateSeedBtn = document.getElementById('generateSeedBtn');
-      const deriveBtn = document.getElementById('deriveIdentityBtn');
-      const resultDiv = document.getElementById('identityResult');
-
-      radioPassword.addEventListener('change', () => {
-        passwordInput.style.display = 'block';
-        seedInput.style.display = 'none';
-      });
-
-      radioSeed.addEventListener('change', () => {
-        passwordInput.style.display = 'none';
-        seedInput.style.display = 'block';
-      });
-
-      generateSeedBtn.addEventListener('click', () => {
-        document.getElementById('identitySeed').value = generateMnemonic(12);
-      });
-
-      deriveBtn.addEventListener('click', async () => {
-        deriveBtn.textContent = 'Deriving...';
-        deriveBtn.disabled = true;
-
-        try {
-          let keyBytes;
-          if (radioPassword.checked) {
-            const password = document.getElementById('identityPassword').value;
-            if (password.length < 12) {
-              alert('Password must be at least 12 characters');
-              throw new Error('Password too short');
-            }
-            keyBytes = await deriveKeyFromPassword(password);
-          } else {
-            const seed = document.getElementById('identitySeed').value;
-            if (seed.split(/\s+/).filter(w => w).length < 12) {
-              alert('Seed phrase must have at least 12 words');
-              throw new Error('Seed phrase too short');
-            }
-            keyBytes = await deriveKeyFromSeed(seed);
+    // Update URL hash on scroll
+    const sections = document.querySelectorAll('section[id]');
+    let scrollTimeout;
+    window.addEventListener('scroll', () => {
+      clearTimeout(scrollTimeout);
+      scrollTimeout = setTimeout(() => {
+        let current = '';
+        for (const section of sections) {
+          if (window.scrollY >= section.offsetTop - NAV_OFFSET - 100) {
+            current = section.id;
           }
-
-          // Generate display values (simulated Ed25519 public key format)
-          const pubKeyHex = bufferToHex(keyBytes);
-          const peerId = '12D3KooW' + pubKeyHex.slice(0, 44);
-
-          // Derive encryption key (different derivation for X25519)
-          const encKeyMaterial = await crypto.subtle.importKey('raw', keyBytes, 'PBKDF2', false, ['deriveBits']);
-          const encBits = await crypto.subtle.deriveBits(
-            { name: 'PBKDF2', salt: new TextEncoder().encode('x25519'), iterations: 1, hash: 'SHA-256' },
-            encKeyMaterial,
-            256
-          );
-          const encKeyHex = bufferToHex(new Uint8Array(encBits));
-
-          document.getElementById('identityPubKey').textContent = pubKeyHex;
-          document.getElementById('identityPeerId').textContent = peerId;
-          document.getElementById('identityEncKey').textContent = encKeyHex;
-          resultDiv.style.display = 'block';
-        } catch (e) {
-          console.error(e);
         }
+        if (current && location.hash !== '#' + current) {
+          history.replaceState(null, '', '#' + current);
+        }
+      }, 100);
+    }, { passive: true });
 
-        deriveBtn.textContent = 'Derive Identity';
-        deriveBtn.disabled = false;
-      });
-    }
+    // Scroll to hash on page load
+    window.addEventListener('popstate', () => {
+      if (location.hash) {
+        const target = document.querySelector(location.hash);
+        if (target) window.scrollTo({ top: target.offsetTop - NAV_OFFSET, behavior: 'smooth' });
+      }
+    });
 
     // Initialize
     document.addEventListener('DOMContentLoaded', () => {
@@ -6292,8 +5772,11 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
       initAccordion();
       initMobileMenu();
       initPKIDemo();
-      initIdentityDemo();
       initDynamicStats();
+      if (location.hash) {
+        const target = document.querySelector(location.hash);
+        if (target) setTimeout(() => window.scrollTo({ top: target.offsetTop - NAV_OFFSET, behavior: 'smooth' }), 100);
+      }
     });
   </script>
 </body>
