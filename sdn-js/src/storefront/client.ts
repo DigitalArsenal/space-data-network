@@ -396,9 +396,9 @@ export class StorefrontClient {
   }
 
   /**
-   * Emit an event
+   * Emit an event (reserved for future PubSub integration)
    */
-  private emit<K extends keyof StorefrontEvents>(event: K, data: StorefrontEvents[K]): void {
+  private _emit<K extends keyof StorefrontEvents>(event: K, data: StorefrontEvents[K]): void {
     const handlers = this.eventHandlers.get(event);
     if (handlers) {
       handlers.forEach((handler) => handler(data));
