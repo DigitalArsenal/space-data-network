@@ -249,12 +249,13 @@ func TestValidateSchemaNameMaxLength(t *testing.T) {
 func TestSupportedSchemas(t *testing.T) {
 	// Verify SupportedSchemas contains expected schemas
 	expectedSchemas := []string{
-		"ATM.fbs", "BOV.fbs", "CAT.fbs", "CDM.fbs", "CRM.fbs",
-		"CSM.fbs", "CTR.fbs", "EME.fbs", "EOO.fbs", "EOP.fbs",
-		"EPM.fbs", "HYP.fbs", "IDM.fbs", "LCC.fbs", "LDM.fbs",
-		"MET.fbs", "MPE.fbs", "OCM.fbs", "OEM.fbs", "OMM.fbs",
-		"OSM.fbs", "PLD.fbs", "PNM.fbs", "PRG.fbs", "REC.fbs",
-		"RFM.fbs", "ROC.fbs", "SCM.fbs", "SIT.fbs", "TDM.fbs",
+		"ACL.fbs", "ATM.fbs", "BOV.fbs", "CAT.fbs", "CDM.fbs",
+		"CRM.fbs", "CSM.fbs", "CTR.fbs", "EME.fbs", "EOO.fbs",
+		"EOP.fbs", "EPM.fbs", "HYP.fbs", "IDM.fbs", "LCC.fbs",
+		"LDM.fbs", "MET.fbs", "MPE.fbs", "OCM.fbs", "OEM.fbs",
+		"OMM.fbs", "OSM.fbs", "PLD.fbs", "PNM.fbs", "PRG.fbs",
+		"PUR.fbs", "REC.fbs", "REV.fbs", "RFM.fbs", "RHD.fbs",
+		"ROC.fbs", "SCM.fbs", "SIT.fbs", "STF.fbs", "TDM.fbs",
 		"TIM.fbs", "VCM.fbs",
 	}
 
