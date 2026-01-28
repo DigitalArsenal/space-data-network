@@ -396,16 +396,6 @@ export class StorefrontClient {
   }
 
   /**
-   * Emit an event (reserved for future PubSub integration)
-   */
-  private _emit<K extends keyof StorefrontEvents>(event: K, data: StorefrontEvents[K]): void {
-    const handlers = this.eventHandlers.get(event);
-    if (handlers) {
-      handlers.forEach((handler) => handler(data));
-    }
-  }
-
-  /**
    * Start listening for PubSub messages
    */
   async startListening(): Promise<void> {
