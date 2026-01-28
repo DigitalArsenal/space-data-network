@@ -279,12 +279,13 @@
        ============================================ */
     .hero {
       min-height: 100vh;
+      min-height: 100dvh;
       display: flex;
       flex-direction: column;
       justify-content: center;
       align-items: center;
       text-align: center;
-      padding: 120px 24px 80px;
+      padding: 120px 24px calc(80px + env(safe-area-inset-bottom, 0px));
       position: relative;
     }
 
