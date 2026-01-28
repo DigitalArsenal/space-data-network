@@ -409,6 +409,14 @@ cd sdn-js && npm test
 
 Full documentation is available at [docs.spacedatanetwork.org](https://docs.spacedatanetwork.org) or locally at [docs/docs.html](./docs/docs.html).
 
+To preview the docs locally, start a webserver from the `docs/` directory:
+
+```bash
+cd docs && python3 -m http.server 8080
+```
+
+Then open [http://localhost:8080](http://localhost:8080).
+
 **Topics covered:**
 - Getting Started & Quick Start
 - Full Node Setup & Configuration
