@@ -508,29 +508,9 @@
        ============================================ */
     .ipfs-content {
       display: grid;
-      grid-template-columns: auto 1fr;
-      grid-template-rows: auto auto;
+      grid-template-columns: 1fr;
       gap: 40px;
       align-items: start;
-    }
-
-    .ipfs-logo {
-      grid-row: span 2;
-      width: 160px;
-      height: 160px;
-      background: var(--ui-bg);
-      border: 1px solid var(--ui-border);
-      border-radius: var(--radius);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      backdrop-filter: blur(20px);
-    }
-
-    .ipfs-logo svg {
-      width: 80px;
-      height: 80px;
-      color: var(--text-primary);
     }
 
     .ipfs-description {
@@ -539,20 +519,30 @@
       border-radius: var(--radius);
       padding: 28px;
       backdrop-filter: blur(20px);
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
     }
 
-    .ipfs-description p {
+    .ipfs-description-icon {
+      flex-shrink: 0;
+      width: 48px;
+      height: 48px;
+      color: var(--text-primary);
+    }
+
+    .ipfs-description-text p {
       font-size: 17px;
       color: var(--text-secondary);
       line-height: 1.6;
       margin-bottom: 16px;
     }
 
-    .ipfs-description p:last-child {
+    .ipfs-description-text p:last-child {
       margin-bottom: 0;
     }
 
-    .ipfs-description strong {
+    .ipfs-description-text strong {
       color: var(--text-primary);
     }
 
@@ -1071,27 +1061,9 @@
       }
     }
 
-    @media (max-width: 1068px) {
-      .ipfs-content {
-        grid-template-columns: 1fr;
-      }
-      .ipfs-logo {
-        grid-row: auto;
-        justify-self: center;
-      }
-    }
-
     @media (max-width: 734px) {
       .ipfs-links {
         grid-template-columns: 1fr;
-      }
-      .ipfs-logo {
-        width: 120px;
-        height: 120px;
-      }
-      .ipfs-logo svg {
-        width: 60px;
-        height: 60px;
       }
     }
 
@@ -3281,7 +3253,7 @@
   <section class="hero" id="hero">
     <h1 class="hero-title">Space Data<br>Network</h1>
     <p class="hero-tagline">Open infrastructure for global collaboration on space situational awareness</p>
-    <p class="hero-subtitle">Decentralized peer-to-peer data exchange built on IPFS</p>
+    <p class="hero-subtitle">Decentralized peer-to-peer data exchange built on <a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: underline;">IPFS</a></p>
     <div class="hero-actions">
       <a href="#get-started" class="btn btn-primary">Get Started</a>
       <a href="https://github.com/DigitalArsenal/go-space-data-network" class="btn btn-secondary" target="_blank">
@@ -3530,8 +3502,8 @@
               <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
             </svg>
           </div>
-          <h3 class="feature-title">Built on IPFS</h3>
-          <p class="feature-desc">Battle-tested libp2p networking with DHT discovery, GossipSub messaging, and circuit relay for browser connectivity.</p>
+          <h3 class="feature-title">Built on <a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: none; border-bottom: 1px dashed rgba(255,255,255,0.3);">IPFS</a></h3>
+          <p class="feature-desc">Battle-tested <a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a> networking with DHT discovery, GossipSub messaging, and circuit relay for browser connectivity.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon icon-purple">
@@ -3541,8 +3513,8 @@
               <line x1="12" y1="22.08" x2="12" y2="12"/>
             </svg>
           </div>
-          <h3 class="feature-title">Space Data Standards</h3>
-          <p class="feature-desc">Fully CCSDS and NIST compatible software suite with support for OMM, CDM, EPM, TDM, OEM, and more standard formats.</p>
+          <h3 class="feature-title"><a href="https://spacedatastandards.org" target="_blank" style="color: inherit; text-decoration: none; border-bottom: 1px dashed rgba(255,255,255,0.3);">Space Data Standards</a></h3>
+          <p class="feature-desc">Fully CCSDS-compliant schemas for standardized space data exchange.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon icon-green">
@@ -3592,18 +3564,18 @@
   <section id="ipfs">
     <div class="container">
       <div class="section-header">
-        <h2 class="section-title">Powered by IPFS</h2>
+        <h2 class="section-title">Powered by <a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: none; border-bottom: 1px dashed rgba(255,255,255,0.3);">IPFS</a></h2>
         <p class="section-subtitle">Built on the InterPlanetary File System for true decentralization</p>
       </div>
       <div class="ipfs-content">
-        <div class="ipfs-logo">
-          <svg viewBox="0 0 512 512" fill="currentColor">
+        <div class="ipfs-description">
+          <svg class="ipfs-description-icon" viewBox="0 0 512 512" fill="currentColor">
             <path d="M255.9 33L63.6 127.5v242.9l192.3 94.5 192.3-94.5V127.5L255.9 33zm0 23.6l162.8 80.1-162.8 80.1-162.8-80.1L255.9 56.6zM83.6 148.3l162.3 79.8v175.8l-162.3-79.8V148.3zm344.8 0v175.8l-162.3 79.8V228.1l162.3-79.8z"/>
           </svg>
-        </div>
-        <div class="ipfs-description">
-          <p>IPFS (InterPlanetary File System) is a peer-to-peer hypermedia protocol designed to preserve and grow humanity's knowledge by making the web upgradeable, resilient, and more open.</p>
-          <p>SDN leverages IPFS's core technologies including <strong>libp2p</strong> for networking, <strong>content addressing</strong> for data integrity, and <strong>DHT</strong> for decentralized discovery.</p>
+          <div class="ipfs-description-text">
+            <p><a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: underline;">IPFS</a> (InterPlanetary File System) is a peer-to-peer hypermedia protocol designed to preserve and grow humanity's knowledge by making the web upgradeable, resilient, and more open.</p>
+            <p>SDN leverages <a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: underline;">IPFS</a>'s core technologies including <strong><a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a></strong> for networking, <strong>content addressing</strong> for data integrity, and <strong>DHT</strong> for decentralized discovery.</p>
+          </div>
         </div>
         <div class="ipfs-links">
           <a href="https://ipfs.tech" class="ipfs-link" target="_blank">
@@ -3803,7 +3775,7 @@
             <div class="hash-step-num">1</div>
             <div class="hash-step-content">
               <h4>Data Input</h4>
-              <p>Any SDS data (OMM, CDM, etc.)</p>
+              <p>Any SDS schema data</p>
               <div class="hash-example-data">
                 <code>{ "OBJECT_NAME": "ISS", "EPOCH": "2025-01-24T12:00:00Z", ... }</code>
               </div>
@@ -4025,7 +3997,7 @@
             </svg>
           </div>
           <h3 class="feature-title">FlatBuffers <svg class="external-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg></h3>
-          <p class="feature-desc">Zero-copy deserialization with Space Data Standards schemas. Parse orbital data without memory allocation overhead.</p>
+          <p class="feature-desc">Zero-copy deserialization with <a href="https://spacedatastandards.org" target="_blank" style="color: inherit; text-decoration: underline;">Space Data Standards</a> schemas. Parse orbital data without memory allocation overhead.</p>
         </a>
         <a href="https://github.com/nicklausw/flatsql" target="_blank" class="feature-card feature-card-link">
           <div class="feature-icon icon-purple">
@@ -4410,7 +4382,7 @@
         <div class="arch-row">
           <div class="arch-box arch-app">
             <div class="arch-label">Application Layer</div>
-            <div class="arch-items">Space Data Standards (SDS Schemas)</div>
+            <div class="arch-items"><a href="https://spacedatastandards.org" target="_blank" style="color: inherit; text-decoration: underline;">Space Data Standards</a> (SDS Schemas)</div>
           </div>
         </div>
         <div class="arch-arrow">&#x25BC;</div>
@@ -4424,14 +4396,14 @@
         <div class="arch-row">
           <div class="arch-box arch-transport">
             <div class="arch-label">Transport Layer</div>
-            <div class="arch-items"><a href="https://noiseprotocol.org" target="_blank" style="color: inherit;">Noise Protocol</a> &bull; libp2p &bull; GossipSub</div>
+            <div class="arch-items"><a href="https://noiseprotocol.org" target="_blank" style="color: inherit;">Noise Protocol</a> &bull; <a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a> &bull; GossipSub</div>
           </div>
         </div>
         <div class="arch-arrow">&#x25BC;</div>
         <div class="arch-row">
           <div class="arch-box arch-network">
             <div class="arch-label">Network Layer</div>
-            <div class="arch-items">IPFS DHT &bull; Circuit Relay &bull; WebSocket Bridge</div>
+            <div class="arch-items"><a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: underline;">IPFS</a> DHT &bull; Circuit Relay &bull; WebSocket Bridge</div>
           </div>
         </div>
       </div>
@@ -5113,7 +5085,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
           </button>
           <div class="accordion-content">
             <div class="accordion-content-inner">
-              <p>Due to the distributed nature of IPFS and libp2p, there is no central authority that can remove data from the network. Content is replicated across participating nodes and addressed by its cryptographic hash. Only the original author who holds the signing key can issue updates or retractions. This is by design - it ensures that critical space safety data cannot be censored by any single entity, but it also means participants should carefully consider what they publish. Nodes can individually choose to stop pinning or serving specific content, but this doesn't remove it from other nodes that have copies.</p>
+              <p>Due to the distributed nature of <a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: underline;">IPFS</a> and <a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a>, there is no central authority that can remove data from the network. Content is replicated across participating nodes and addressed by its cryptographic hash. Only the original author who holds the signing key can issue updates or retractions. This is by design - it ensures that critical space safety data cannot be censored by any single entity, but it also means participants should carefully consider what they publish. Nodes can individually choose to stop pinning or serving specific content, but this doesn't remove it from other nodes that have copies.</p>
             </div>
           </div>
         </div>
@@ -5126,7 +5098,7 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
           </button>
           <div class="accordion-content">
             <div class="accordion-content-inner">
-              <p><strong>Only Space Data Standards (SDS) formatted data is allowed on the network.</strong> This ensures interoperability and allows all participants to parse and validate incoming data.</p>
+              <p><strong>Only <a href="https://spacedatastandards.org" target="_blank" style="color: inherit; text-decoration: underline;">Space Data Standards</a> (SDS) formatted data is allowed on the network.</strong> This ensures interoperability and allows all participants to parse and validate incoming data.</p>
               <p style="margin-top: 12px;">To onboard your data:</p>
               <ul style="margin: 12px 0; padding-left: 20px; color: var(--text-secondary);">
                 <li style="margin-bottom: 8px;"><strong>Use the SDK</strong> - The JavaScript and Go SDKs include converters for common formats (TLE, CCSDS XML/KVN, etc.) to SDS FlatBuffers.</li>

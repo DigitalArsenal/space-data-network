@@ -524,7 +524,7 @@
       <!-- Getting Started -->
       <section id="overview" class="doc-section">
         <h2>Overview</h2>
-        <p>Space Data Network (SDN) is a decentralized peer-to-peer network for exchanging standardized space situational awareness data. Built on libp2p with FlatBuffers serialization, SDN enables real-time sharing of orbital data, conjunction warnings, and tracking information.</p>
+        <p>Space Data Network (SDN) is a decentralized peer-to-peer network for exchanging standardized space situational awareness data. Built on <a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a> with FlatBuffers serialization, SDN enables real-time sharing of orbital data, conjunction warnings, and tracking information.</p>
 
         <h3 id="network-ecosystem">Network Ecosystem</h3>
         <p>The diagram below shows how satellites, sensors, operations centers, independent contributors, commercial operators, and data consumers interconnect through the decentralized SDN mesh. All participants exchange standardized Space Data Standards messages peer-to-peer with no central server.</p>
@@ -895,7 +895,7 @@ chmod +x spacedatanetwork</code></pre>
         <h3>Requirements</h3>
         <ul>
           <li><strong>Public IP address</strong> - Required for other peers to connect directly</li>
-          <li><strong>Open ports:</strong> 4001/tcp (libp2p), 4001/udp (QUIC), 8080/tcp (HTTP API)</li>
+          <li><strong>Open ports:</strong> 4001/tcp (<a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a>), 4001/udp (QUIC), 8080/tcp (HTTP API)</li>
           <li><strong>Storage:</strong> Minimum 1GB recommended</li>
           <li><strong>Memory:</strong> 512MB minimum, 2GB+ for busy nodes</li>
         </ul>
@@ -960,11 +960,11 @@ sudo systemctl start spacedatanetwork</code></pre>
       <!-- Edge Relay -->
       <section id="edge-relay" class="doc-section">
         <h2>Edge Relay Deployment</h2>
-        <p>Edge relays bridge browser clients (which can only use WebSocket/WebRTC) to the full libp2p network.</p>
+        <p>Edge relays bridge browser clients (which can only use WebSocket/WebRTC) to the full <a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a> network.</p>
 
         <div class="callout callout-info">
           <div class="callout-title">What is an Edge Relay?</div>
-          <p>Edge relays accept WebSocket connections from browsers, translate to libp2p protocols, participate in GossipSub, and forward messages bidirectionally.</p>
+          <p>Edge relays accept WebSocket connections from browsers, translate to <a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a> protocols, participate in GossipSub, and forward messages bidirectionally.</p>
         </div>
 
         <h3>Command Line Options</h3>
@@ -1853,7 +1853,7 @@ go test -bench=. ./internal/vcard/</code></pre>
             <tr><td>ADDRESS.COUNTRY</td><td>ADR (part 7)</td><td></td></tr>
             <tr><td>KEYS (Signing)</td><td>X-SIGNING-KEY</td><td>Custom extension</td></tr>
             <tr><td>KEYS (Encryption)</td><td>X-ENCRYPTION-KEY</td><td>Custom extension</td></tr>
-            <tr><td>MULTIFORMAT_ADDRESS</td><td>URL</td><td>IPNS/IPFS addresses</td></tr>
+            <tr><td>MULTIFORMAT_ADDRESS</td><td>URL</td><td>IPNS/<a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: underline;">IPFS</a> addresses</td></tr>
             <tr><td>ALTERNATE_NAMES</td><td>X-ALTERNATE-NAME</td><td>Custom extension (multiple)</td></tr>
           </tbody>
         </table>
