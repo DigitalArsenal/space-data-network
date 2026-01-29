@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0d1117"/>
+      <stop offset="50%" style="stop-color:#0a2540"/>
+      <stop offset="100%" style="stop-color:#0d1117"/>
+    </linearGradient>
+    <linearGradient id="orbitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#58a6ff"/>
+      <stop offset="100%" style="stop-color:#69c4cd"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="180" fill="url(#bg)"/>
+  <!-- Subtle IPFS cube in background (ghost) -->
+  <g transform="translate(512, 480) scale(0.35)" opacity="0.12">
+    <polygon points="0,-200 173,-100 173,100 0,200 -173,100 -173,-100" fill="none" stroke="#69c4cd" stroke-width="12"/>
+    <line x1="0" y1="-200" x2="0" y2="200" stroke="#69c4cd" stroke-width="8"/>
+    <line x1="-173" y1="-100" x2="173" y2="100" stroke="#69c4cd" stroke-width="8"/>
+    <line x1="173" y1="-100" x2="-173" y2="100" stroke="#69c4cd" stroke-width="8"/>
+  </g>
+  <!-- SDN orbital logo centered -->
+  <g transform="translate(512, 512) scale(4.2)">
+    <!-- Outer circle -->
+    <circle cx="0" cy="0" r="45" fill="none" stroke="url(#orbitGrad)" stroke-width="3" shape-rendering="geometricPrecision"/>
+    <!-- Orbits -->
+    <ellipse cx="0" cy="0" rx="45" ry="18" fill="none" stroke="url(#orbitGrad)" stroke-width="1.8" shape-rendering="geometricPrecision"/>
+    <ellipse cx="0" cy="0" rx="45" ry="18" fill="none" stroke="url(#orbitGrad)" stroke-width="1.8" transform="rotate(60)" shape-rendering="geometricPrecision"/>
+    <ellipse cx="0" cy="0" rx="45" ry="18" fill="none" stroke="url(#orbitGrad)" stroke-width="1.8" transform="rotate(120)" shape-rendering="geometricPrecision"/>
+    <!-- Center node -->
+    <circle cx="0" cy="0" r="7" fill="#58a6ff"/>
+    <!-- Endpoint nodes 0deg -->
+    <circle cx="-45" cy="0" r="5" fill="#69c4cd"/>
+    <circle cx="45" cy="0" r="5" fill="#69c4cd"/>
+    <!-- Endpoint nodes 60deg -->
+    <circle cx="-22.5" cy="-38.97" r="5" fill="#69c4cd"/>
+    <circle cx="22.5" cy="38.97" r="5" fill="#69c4cd"/>
+    <!-- Endpoint nodes 120deg -->
+    <circle cx="22.5" cy="-38.97" r="5" fill="#69c4cd"/>
+    <circle cx="-22.5" cy="38.97" r="5" fill="#69c4cd"/>
+  </g>
+  <!-- SDN text below -->
+  <text x="512" y="920" text-anchor="middle" font-family="Inter, -apple-system, sans-serif" font-size="80" font-weight="700" fill="#58a6ff" letter-spacing="8">SDN</text>
+</svg>
