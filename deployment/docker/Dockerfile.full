@@ -17,7 +17,7 @@ WORKDIR /build/sdn-server
 RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/spacedatanetwork ./cmd/spacedatanetwork
 
 # Runtime image
-FROM alpine:3.19
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates sqlite-libs
 

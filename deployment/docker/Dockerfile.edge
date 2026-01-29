@@ -18,7 +18,7 @@ WORKDIR /build/sdn-server
 RUN CGO_ENABLED=0 go build -tags edge -ldflags="-s -w" -o /out/spacedatanetwork-edge ./cmd/spacedatanetwork-edge
 
 # Minimal runtime image
-FROM alpine:3.19
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates
 
