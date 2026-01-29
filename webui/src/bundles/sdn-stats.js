@@ -7,7 +7,7 @@
  * - Schema types supported
  */
 import { createSelector } from 'redux-bundler'
-import ms from 'milliseconds'
+// ms import removed - using inline values
 
 const SDN_PUBSUB_TOPICS = [
   'sdn/omm',
@@ -55,7 +55,7 @@ const sdnStatsBundle = {
       try {
         const ipfs = getIpfs()
         let pubsubTopics = []
-        let pubsubPeers = {}
+        const pubsubPeers = {}
 
         // Try to get PubSub topics (may fail if not enabled)
         try {

@@ -41,7 +41,7 @@ function saveCache (cache) {
 }
 
 const initialState = {
-  sdnPeerIds: {},    // { peerId: { isSdn: bool, ts: number } }
+  sdnPeerIds: {}, // { peerId: { isSdn: bool, ts: number } }
   lastCheck: 0,
   isChecking: false
 }
@@ -74,7 +74,6 @@ const sdnPeersBundle = {
     return async ({ dispatch, getIpfs, store }) => {
       dispatch({ type: 'SDN_PEERS_CHECK_STARTED' })
       try {
-        const ipfs = getIpfs()
         const peers = store.selectPeers()
         if (!Array.isArray(peers)) {
           dispatch({ type: 'SDN_PEERS_CHECK_FAILED' })
