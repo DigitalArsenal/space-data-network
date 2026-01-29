@@ -23,6 +23,9 @@ import experimentsBundle from './experiments.js'
 import cliTutorModeBundle from './cli-tutor-mode.js'
 import gatewayBundle from './gateway.js'
 import ipnsBundle from './ipns.js'
+import sdnThemeBundle from './sdn-theme.js'
+import sdnPeersBundle from './sdn-peers.js'
+import sdnStatsBundle from './sdn-stats.js'
 import { contextBridge } from '../helpers/context-bridge'
 
 export default composeBundles(
@@ -60,5 +63,8 @@ export default composeBundles(
   repoStats,
   cliTutorModeBundle,
   createAnalyticsBundle({}),
-  ipnsBundle
+  ipnsBundle,
+  sdnThemeBundle,
+  sdnPeersBundle,
+  sdnStatsBundle
 )

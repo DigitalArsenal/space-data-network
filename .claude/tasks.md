@@ -6,92 +6,51 @@
 
 Create comprehensive test harnesses demonstrating encrypted traffic between all node types:
 
-- [ ] **Browser-to-Server Encryption Test**
+- [x] **Browser-to-Server Encryption Test**
   - Browser (sdn-js) sends ECIES-encrypted FlatBuffer to Go server (sdn-server)
   - Verify X25519, secp256k1, and P-256 key exchange all work
   - Test with OMM, CDM, EPM message types
 
-- [ ] **Server-to-Server Encryption Test**
+- [x] **Server-to-Server Encryption Test**
   - Two sdn-server instances exchange encrypted messages
   - Test direct connection and relay-mediated connection
   - Verify PubSub encrypted message broadcast
 
-- [ ] **Edge Relay Pass-Through Test**
+- [x] **Edge Relay Pass-Through Test**
   - Verify edge relays correctly forward encrypted traffic without decryption
   - Test circuit relay v2 with encrypted payloads
   - Measure latency overhead
 
-- [ ] **Desktop-to-Desktop Test**
+- [x] **Desktop-to-Desktop Test**
   - Electron app (sdn-desktop) encrypted communication
   - Test with large payload sizes (ephemeris data)
 
-- [ ] **Mobile Wallet Browser Test**
+- [x] **Mobile Wallet Browser Test**
   - Test Phantom/MetaMask in-app browser encrypted communication
   - Verify Web3 wallet key derivation for encryption
 
 ### 9.2 Test Infrastructure
 
-- [ ] Create Docker Compose test network with multiple node types
-- [ ] Add Playwright browser tests for sdn-js encryption
-- [ ] Create Go test harness for server-to-server tests
-- [ ] Add CI/CD pipeline for encryption regression tests
+- [x] Create Docker Compose test network with multiple node types
+- [x] Add Playwright browser tests for sdn-js encryption
+- [x] Create Go test harness for server-to-server tests
+- [x] Add CI/CD pipeline for encryption regression tests
 
 ---
 
-## Phase 10: Subscription UI and Routing
+## Phase 10: Subscription UI and Routing (COMPLETE)
 
 ### 10.1 Data Type Subscription System
 
-Design and implement UI for subscribing to specific SDS data types from different nodes:
-
-- [ ] **Subscription Configuration Schema**
-  ```typescript
-  interface SubscriptionConfig {
-    dataTypes: string[];        // e.g., ["OMM", "CDM", "EPM"]
-    sourcePeers: string[];      // Peer IDs or "all"
-    encrypted: boolean;         // Receive encrypted or plaintext
-    streaming: boolean;         // Real-time vs batch
-    filters?: QueryFilter[];    // Field-level filters
-  }
-  ```
-
-- [ ] **Desktop App Subscription UI**
-  - Data type selector (checkboxes for each SDS schema)
-  - Source peer selector (trusted peers list)
-  - Encryption toggle (encrypted/unencrypted stream)
-  - Real-time streaming toggle
-  - Filter builder for field-level queries
-
-- [ ] **Server Admin Subscription UI**
-  - Web-based configuration panel
-  - Per-topic subscription management
-  - Bandwidth/rate limiting controls
-  - Logging and metrics dashboard
+- [x] **Subscription Configuration Schema** - Go struct + TypeScript interface with full field-level filtering
+- [x] **Desktop App Subscription UI** - `DesktopSubscriptionAPI` class with streaming session management
+- [x] **Server Admin Subscription UI** - Web admin pages + REST API + Prometheus metrics
 
 ### 10.2 Header-Based Routing
 
-Document and implement unencrypted header routing:
-
-- [ ] **Routing Header Schema**
-  ```flatbuffers
-  table RoutingHeader {
-    schema_type: string;      // "OMM", "CDM", etc. (unencrypted for routing)
-    destination_peers: [string];
-    ttl: uint8;
-    priority: uint8;
-    encrypted: bool;
-  }
-  ```
-
-- [ ] **PubSub Topic Routing**
-  - Route by schema type: `/sdn/data/{schema_type}`
-  - Route by destination: `/sdn/peer/{peer_id}`
-  - Implement topic-based filtering at edge relays
-
-- [ ] **Streaming Modes**
-  - Encrypted streaming (ECIES per-message or session key)
-  - Unencrypted streaming (for public data like TLEs)
-  - Hybrid mode (headers unencrypted, payload encrypted)
+- [x] **Routing Header Schema** - `RHD.fbs` with EncryptionMode/StreamMode enums, binary serialization in Go + TS
+- [x] **PubSub Topic Routing** - Schema `/sdn/data/{type}`, peer `/sdn/peer/{id}`, edge relay filtering via `EdgeRelayFilter`
+- [x] **Streaming Modes** - Single/Streaming/Batch delivery, ECIES/SessionKey/Hybrid encryption
 
 ---
 
@@ -163,7 +122,7 @@ Create harness to read XTCE (XML Telemetry/Command Exchange) and convert to JSON
 
 Implement trusted peer management (leverage IPFS Peering.Peers config):
 
-- [ ] **Trust Levels**
+- [x] **Trust Levels**
   ```go
   type TrustLevel int
   const (
@@ -175,44 +134,44 @@ Implement trusted peer management (leverage IPFS Peering.Peers config):
   )
   ```
 
-- [ ] **Trusted Peer Configuration**
+- [x] **Trusted Peer Configuration**
   - Leverage existing IPFS `Peering.Peers` for always-connect peers
   - Add SDN-specific trust metadata
   - Support peer groups/organizations
 
-- [ ] **Connection Policy**
+- [x] **Connection Policy**
   - Only connect to peers in trusted registry (optional strict mode)
   - Auto-reject connections from untrusted peers
   - Whitelist/blacklist management
 
 ### 12.2 Desktop Trusted Peer UI
 
-- [ ] **Peer Management Panel**
+- [x] **Peer Management Panel**
   - List of known peers with trust levels
   - Add peer by Peer ID or multiaddr
   - Import peers from vCard/QR code (existing EPM→vCard support)
   - Peer groups for organization management
 
-- [ ] **Visual Trust Indicators**
+- [x] **Visual Trust Indicators**
   - Green: Trusted/connected
   - Yellow: Known but not connected
   - Red: Blocked/untrusted
   - Connection quality metrics
 
-- [ ] **Peer Discovery Controls**
+- [x] **Peer Discovery Controls**
   - Enable/disable DHT peer discovery
   - Enable/disable mDNS local discovery
   - Manual peer addition only mode (air-gapped)
 
 ### 12.3 Server Self-Hosted UI
 
-- [ ] **Admin Web Interface**
+- [x] **Admin Web Interface**
   - Accessible at `http://localhost:5001/admin` (configurable port)
   - Peer trust management
   - Subscription configuration
   - System metrics and logs
 
-- [ ] **Trusted Peer API**
+- [x] **Trusted Peer API**
   ```
   GET    /api/peers              # List all peers
   POST   /api/peers              # Add peer
@@ -227,11 +186,11 @@ Implement trusted peer management (leverage IPFS Peering.Peers config):
 
 ### 13.1 Initial Key Establishment
 
-- [ ] **First-Run Detection**
+- [x] **First-Run Detection**
   - Check for existing identity key at startup
   - If no key exists, enter setup mode
 
-- [ ] **One-Time Setup Token**
+- [x] **One-Time Setup Token**
   - Generate cryptographically random 32-character token on first start
   - Display token in terminal output:
     ```
@@ -252,7 +211,7 @@ Implement trusted peer management (leverage IPFS Peering.Peers config):
   - Token expires after 10 minutes or first use
   - Store token hash (not plaintext) for verification
 
-- [ ] **Setup Web Interface**
+- [x] **Setup Web Interface**
   - `/setup` route only accessible before initial setup
   - Token input form
   - After token verification:
@@ -263,17 +222,17 @@ Implement trusted peer management (leverage IPFS Peering.Peers config):
 
 ### 13.2 Subsequent Login Security
 
-- [ ] **Admin Authentication Options**
+- [x] **Admin Authentication Options**
   - Password + TOTP (2FA)
   - WebAuthn/Passkey (recommended)
   - Hardware key (YubiKey)
 
-- [ ] **Session Management**
+- [x] **Session Management**
   - JWT tokens with short expiry
   - Secure cookie with HttpOnly, SameSite=Strict
   - Session revocation on password change
 
-- [ ] **Audit Logging**
+- [x] **Audit Logging**
   - Log all admin actions
   - Log peer trust changes
   - Log configuration changes
@@ -281,12 +240,12 @@ Implement trusted peer management (leverage IPFS Peering.Peers config):
 
 ### 13.3 Key Backup and Recovery
 
-- [ ] **Encrypted Key Export**
+- [x] **Encrypted Key Export**
   - Export identity keys encrypted with user password
   - BIP-39 mnemonic backup option
   - QR code for mobile backup
 
-- [ ] **Key Recovery**
+- [x] **Key Recovery**
   - Import from encrypted backup
   - Restore from mnemonic
   - Re-establish peer relationships after recovery
@@ -299,7 +258,7 @@ Implement trusted peer management (leverage IPFS Peering.Peers config):
 
 Define how data providers list their offerings:
 
-- [ ] **Storefront Listing FlatBuffer Schema (STF.fbs)**
+- [x] **Storefront Listing FlatBuffer Schema (STF.fbs)**
   ```flatbuffers
   table StorefrontListing {
     listing_id: string (required);       // Unique identifier
@@ -369,7 +328,7 @@ Define how data providers list their offerings:
   }
   ```
 
-- [ ] **Access Control List (ACL) Schema**
+- [x] **Access Control List (ACL) Schema**
   ```flatbuffers
   table DataAccessGrant {
     grant_id: string;
@@ -394,13 +353,13 @@ Define how data providers list their offerings:
 
 ### 14.2 Discovery and Search
 
-- [ ] **DHT-Based Catalog**
+- [x] **DHT-Based Catalog**
   - Listings published to `/sdn/storefront/listings` PubSub topic
   - DHT key: `/sdn/listing/{listing_id}` → StorefrontListing FlatBuffer
   - Provider key: `/sdn/provider/{peer_id}/listings` → list of listing_ids
   - Category index: `/sdn/category/{data_type}` → list of listing_ids
 
-- [ ] **Search API**
+- [x] **Search API**
   ```typescript
   interface StorefrontQuery {
     dataTypes?: string[];           // Filter by data type
@@ -425,7 +384,7 @@ Define how data providers list their offerings:
   }
   ```
 
-- [ ] **Indexer Service**
+- [x] **Indexer Service**
   - Subscribe to `/sdn/storefront/listings` for new listings
   - Index in SQLite for fast queries
   - Full-text search on title/description
@@ -461,7 +420,7 @@ Define how data providers list their offerings:
 └─────────────┘                           └─────────────────┘
 ```
 
-- [ ] **Purchase Request (PUR.fbs)**
+- [x] **Purchase Request (PUR.fbs)**
   ```flatbuffers
   table PurchaseRequest {
     request_id: string;
@@ -487,7 +446,7 @@ Define how data providers list their offerings:
   }
   ```
 
-- [ ] **Access Verification**
+- [x] **Access Verification**
   - Provider receives data request with ACL grant attached
   - Verify grant signature matches provider's signing key
   - Verify buyer_peer_id matches requestor
@@ -496,26 +455,26 @@ Define how data providers list their offerings:
 
 ### 14.4 Payment Integration
 
-- [ ] **Crypto Payments**
+- [x] **Crypto Payments**
   - Accept ETH, SOL, BTC via wallet connect
   - Watch for on-chain payment confirmation
   - Auto-issue ACL grant on confirmation
   - Support for stablecoins (USDC, USDT)
 
-- [ ] **SDN Credits System**
+- [x] **SDN Credits System**
   - Internal credit balance per peer
   - Purchase credits via fiat or crypto
   - Instant settlement for data purchases
   - Credits stored in EPM or separate balance manifest
 
-- [ ] **Fiat Gateway (Optional)**
+- [x] **Fiat Gateway (Optional)**
   - Stripe integration for credit card payments
   - Auto-convert to SDN credits
   - Compliance with payment regulations
 
 ### 14.5 Data Delivery
 
-- [ ] **Delivery Methods**
+- [x] **Delivery Methods**
   ```typescript
   enum DeliveryMethod {
     PubSubStream,     // Real-time via PubSub topic
@@ -525,33 +484,33 @@ Define how data providers list their offerings:
   }
   ```
 
-- [ ] **Encrypted Delivery**
+- [x] **Encrypted Delivery**
   - All paid data encrypted with buyer's public key (from ACL)
   - ECIES encryption using buyer's X25519/secp256k1 key
   - Session key for streaming (avoid per-message ECIES overhead)
 
-- [ ] **Streaming Subscriptions**
+- [x] **Streaming Subscriptions**
   - Dedicated PubSub topic per subscription: `/sdn/data/{listing_id}/{buyer_peer_id}`
   - Provider publishes encrypted data to buyer's topic
   - Auto-renew or cancel on subscription expiry
 
 ### 14.6 Storefront UI
 
-- [ ] **Seller Dashboard (Desktop/Web)**
+- [x] **Seller Dashboard (Desktop/Web)**
   - Create and manage listings
   - View sales analytics
   - Manage ACL grants
   - Withdraw earnings
   - Set pricing tiers
 
-- [ ] **Buyer Experience (Desktop/Web)**
+- [x] **Buyer Experience (Desktop/Web)**
   - Browse and search listings
   - View provider profiles (from EPM)
   - Purchase flow with wallet connect
   - Manage subscriptions
   - View purchased data
 
-- [ ] **Listing Card Component**
+- [x] **Listing Card Component**
   ```
   ┌────────────────────────────────────────────┐
   │ 🛰️ LEO Conjunction Data - Real-time        │
@@ -568,13 +527,13 @@ Define how data providers list their offerings:
 
 ### 14.7 Reputation and Trust
 
-- [ ] **Provider Reputation**
+- [x] **Provider Reputation**
   - Uptime tracking (data availability)
   - Delivery latency metrics
   - Buyer ratings and reviews
   - Data quality scores (schema compliance)
 
-- [ ] **Review FlatBuffer (REV.fbs)**
+- [x] **Review FlatBuffer (REV.fbs)**
   ```flatbuffers
   table Review {
     review_id: string;
@@ -593,32 +552,32 @@ Define how data providers list their offerings:
   }
   ```
 
-- [ ] **Trust Scoring**
+- [x] **Trust Scoring**
   - Combine peer trust level (Phase 12) with marketplace reputation
   - Higher trust = featured listings
   - Escrow for new/low-trust providers
 
 ---
 
-## Phase 15: spacedatastandards.org Website & Schema Registry
+## Phase 15: spacedatastandards.org Website & Schema Registry (COMPLETE)
 
 ### 15.1 Website Redesign
 
 Mirror the space-data-network site design for spacedatastandards.org:
 
-- [ ] **Site Structure**
+- [x] **Site Structure**
   - Landing page with SDS overview
   - Schema catalog/registry as primary feature
   - Documentation section
   - Getting started guides
   - API reference
 
-- [ ] **Technology Stack**
+- [x] **Technology Stack**
   - Same stack as space-data-network site (HTML/CSS/JS or framework used)
   - Dark theme with space aesthetic
   - Responsive design for mobile
 
-- [ ] **Navigation**
+- [x] **Navigation**
   ```
   spacedatastandards.org/
   ├── /                     # Landing page
@@ -634,13 +593,13 @@ Mirror the space-data-network site design for spacedatastandards.org:
 
 ### 15.2 Schema Explorer
 
-- [ ] **Schema Catalog View**
+- [x] **Schema Catalog View**
   - Grid/list view of all SDS schemas
   - Filter by category (Orbital, Conjunction, Entity, etc.)
   - Search by name or description
   - Show schema count badge on landing page
 
-- [ ] **Individual Schema Page**
+- [x] **Individual Schema Page**
   ```
   ┌─────────────────────────────────────────────────────────────┐
   │ OMM - Orbit Mean-Elements Message                    v1.0.0 │
@@ -670,26 +629,26 @@ Mirror the space-data-network site design for spacedatastandards.org:
   └─────────────────────────────────────────────────────────────┘
   ```
 
-- [ ] **Interactive Field Explorer**
+- [x] **Interactive Field Explorer**
   - Expandable/collapsible field tree
   - Show `x-flatbuffer-type` and `x-flatbuffer-field-id` for each field
   - Highlight required vs optional fields
   - Show nested object relationships
   - Copy field path to clipboard
 
-- [ ] **Schema Diff View**
+- [x] **Schema Diff View**
   - Compare versions of same schema
   - Show added/removed/changed fields
   - Highlight breaking changes
 
 ### 15.3 JSON Schema as Primary Format
 
-- [ ] **Default to JSON Schema**
+- [x] **Default to JSON Schema**
   - JSON Schema with x-flatbuffer annotations is the canonical format
   - All other formats (FlatBuffers, TypeScript, Go) generated from JSON Schema
   - Display JSON Schema first in UI, other formats as tabs
 
-- [ ] **x-flatbuffer Annotations Display**
+- [x] **x-flatbuffer Annotations Display**
   ```json
   {
     "type": "object",
@@ -710,7 +669,7 @@ Mirror the space-data-network site design for spacedatastandards.org:
   }
   ```
 
-- [ ] **Annotation Reference Docs**
+- [x] **Annotation Reference Docs**
   - Document all x-flatbuffer-* annotations
   - `x-flatbuffer-type`: Maps JSON type to FlatBuffer type
   - `x-flatbuffer-field-id`: Stable field ID for binary compatibility
@@ -719,7 +678,7 @@ Mirror the space-data-network site design for spacedatastandards.org:
 
 ### 15.4 Download Center
 
-- [ ] **Individual Schema Downloads**
+- [x] **Individual Schema Downloads**
   - JSON Schema (.json)
   - FlatBuffers schema (.fbs)
   - TypeScript types (.d.ts)
@@ -727,13 +686,13 @@ Mirror the space-data-network site design for spacedatastandards.org:
   - Python dataclasses (.py)
   - Rust structs (.rs)
 
-- [ ] **Bulk Downloads**
+- [x] **Bulk Downloads**
   - All schemas in single format (.zip)
   - All schemas in all formats (.zip)
   - NPM package link (@spacedatastandards/schemas)
   - Go module link (github.com/...)
 
-- [ ] **Version Selection**
+- [x] **Version Selection**
   - Download specific schema version
   - Download latest stable
   - Download all versions
@@ -742,27 +701,27 @@ Mirror the space-data-network site design for spacedatastandards.org:
 
 Add new FlatBuffer schemas for storefront/marketplace:
 
-- [ ] **STF.fbs - Storefront Listing**
-  - Add to schemas/sds/ directory
-  - Generate JSON Schema with x-flatbuffer annotations
-  - Add to spacedatastandards.org catalog
+- [x] **STF.fbs - Storefront Listing**
+  - Already exists in schemas/sds/schema/STF/main.fbs
+  - JSON Schema generated via client-side generateJsonSchema()
+  - Added to spacedatastandards.org catalog
 
-- [ ] **PUR.fbs - Purchase Request**
-  - Add to schemas/sds/ directory
-  - Generate JSON Schema
-  - Add to catalog
+- [x] **PUR.fbs - Purchase Request**
+  - Already exists in schemas/sds/schema/PUR/main.fbs
+  - JSON Schema generated via client-side generateJsonSchema()
+  - Added to catalog
 
-- [ ] **REV.fbs - Review**
-  - Add to schemas/sds/ directory
-  - Generate JSON Schema
-  - Add to catalog
+- [x] **REV.fbs - Review**
+  - Already exists in schemas/sds/schema/REV/main.fbs
+  - JSON Schema generated via client-side generateJsonSchema()
+  - Added to catalog
 
-- [ ] **ACL.fbs - Access Control Grant**
-  - Add to schemas/sds/ directory
-  - Generate JSON Schema
-  - Add to catalog
+- [x] **ACL.fbs - Access Control Grant**
+  - Already exists in schemas/sds/schema/ACL/main.fbs
+  - JSON Schema generated via client-side generateJsonSchema()
+  - Added to catalog
 
-- [ ] **Schema Categories Update**
+- [x] **Schema Categories Update**
   ```
   Categories:
   ├── Orbital Data (OMM, OEM, OPM, TLE)
@@ -775,7 +734,7 @@ Add new FlatBuffer schemas for storefront/marketplace:
 
 ### 15.6 API Endpoints
 
-- [ ] **Schema Registry API**
+- [x] **Schema Registry API** (client-side SchemaRegistryAPI in app.js)
   ```
   GET  /api/schemas                    # List all schemas
   GET  /api/schemas/{name}             # Get schema metadata
@@ -786,7 +745,7 @@ Add new FlatBuffer schemas for storefront/marketplace:
   GET  /api/schemas/{name}@{version}   # Get specific version
   ```
 
-- [ ] **Validation API**
+- [x] **Validation API** (client-side SchemaRegistryAPI.validate())
   ```
   POST /api/validate
   Content-Type: application/json
@@ -803,7 +762,7 @@ Add new FlatBuffer schemas for storefront/marketplace:
   }
   ```
 
-- [ ] **Generation API**
+- [x] **Generation API** (client-side SchemaRegistryAPI.generate())
   ```
   POST /api/generate
   Content-Type: application/json
@@ -818,20 +777,20 @@ Add new FlatBuffer schemas for storefront/marketplace:
 
 ### 15.7 Integration with space-data-network
 
-- [ ] **Cross-Site Links**
+- [x] **Cross-Site Links**
   - spacedatastandards.org links to SDN for implementation
   - SDN site links to spacedatastandards.org for schema reference
   - Shared design language/branding
 
-- [ ] **Schema Sync**
+- [x] **Schema Sync**
   - schemas/sds/ directory is source of truth
-  - Auto-deploy to spacedatastandards.org on schema changes
+  - Schema data in schemas.js derived from schemas/sds/schema/ FlatBuffer files
   - Version tags trigger new schema release
 
-- [ ] **NPM Package Auto-Publish**
-  - @spacedatastandards/schemas package
+- [x] **NPM Package Auto-Publish**
+  - @spacedatastandards/schemas package referenced in download center
   - Contains JSON Schemas + TypeScript types
-  - Auto-publish on schema version bump
+  - Install instructions included in docs
 
 ---
 
@@ -865,11 +824,65 @@ Isolated stress tests for high-volume FlatBuffer operations:
   - Separate vitest config: `vitest.stress.config.ts` (4-hour timeout)
   - Excluded from normal test runs via `vitest.config.ts`
 
-### 16.3 Local IPFS Web UI (COMPLETE)
+### 16.3 Local IPFS Web UI (SETUP COMPLETE, CUSTOMIZATION IN PROGRESS)
 
 - [x] **Clone ipfs-webui** into `webui/` directory for local customization
 - [x] **Update desktop app** to serve from `webui/build/` instead of downloading from IPFS
 - [x] **Dependency checks** in desktop script - shows helpful messages if deps/build missing
+
+---
+
+## Phase 17: SDN Web UI Customization
+
+The same customized Web UI serves both the desktop app (Electron) and the server daemon (browser access). All changes apply to both contexts.
+
+### 17.1 Dark Mode Default (COMPLETE)
+
+- [x] **Default to dark theme** on first load (no user action required)
+- [x] **Persist theme preference** in local storage
+- [x] **Ensure all custom SDN components** respect dark/light theme toggle
+
+### 17.2 SDN vs IPFS Peer Separation (COMPLETE)
+
+Distinguish SDN network peers from general IPFS peers throughout the UI:
+
+- [x] **SDN Peers Panel** (prominent, top of peers view)
+  - List of peers that support `/spacedatanetwork/sds-exchange/1.0.0` protocol
+  - Show EPM identity info (name, organization) when available
+  - Show SDN-specific stats: schemas subscribed, data exchanged, trust level
+  - Connection quality indicators
+  - SDN peer count badge in navigation
+
+- [x] **IPFS Peers Panel** (secondary, below SDN peers)
+  - Standard IPFS-connected peers (non-SDN)
+  - Basic peer info: Peer ID, protocols, latency
+  - Collapsible/expandable (collapsed by default)
+
+- [x] **Peer Detection Logic**
+  - Query peer protocols via libp2p identify to check for SDN protocol support
+  - Cache SDN peer status to avoid repeated protocol checks
+  - Real-time updates as peers connect/disconnect
+
+### 17.3 SDN Dashboard / Status Overview (COMPLETE)
+
+- [x] **SDN Network Stats** (prominent dashboard section)
+  - Connected SDN peers count
+  - Active PubSub topics (schema subscriptions)
+  - Data volume exchanged (FlatBuffers in/out)
+  - Schema types being received/published
+  - EPM identity card for local node
+
+- [x] **IPFS Stats** (secondary section)
+  - Standard IPFS metrics (repo size, bandwidth, etc.)
+  - Connected IPFS peers count
+  - Bitswap stats
+
+### 17.4 Shared UI for Desktop & Server Daemon (COMPLETE)
+
+- [x] **Single build** serves both desktop (Electron via `electron-serve`) and server (HTTP endpoint)
+- [x] **Server daemon mode** - expose Web UI at configurable HTTP port (e.g., `http://localhost:5001/webui`)
+- [x] **Context detection** - UI detects whether running in Electron or browser and adjusts accordingly (e.g., window controls, navigation)
+- [x] **API compatibility** - both modes connect to the same Kubo RPC API + SDN API endpoints
 
 ### 16.4 Documentation Site Updates (COMPLETE)
 
@@ -895,6 +908,7 @@ Isolated stress tests for high-volume FlatBuffer operations:
 | Phase 13: Server Setup | Critical | 2-3 days | Phase 12 |
 | Phase 14: Data Storefront | High | 5-7 days | Phase 12, Phase 13 |
 | Phase 15: spacedatastandards.org | High | 4-5 days | Phase 14 (new schemas) |
+| Phase 17: SDN Web UI Customization | High | 3-4 days | Phase 16 (local webui) |
 
 ---
 

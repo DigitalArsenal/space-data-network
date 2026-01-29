@@ -3,6 +3,7 @@
 /* They forgot to include word break: https://github.com/tachyons-css/tachyons/issues/563 */
 @import "../node_modules/tachyons/src/_word-break.css";
 @import "../node_modules/ipfs-css";
+@import './sdn-theme.css';
 
 body {
   overflow-y: scroll;

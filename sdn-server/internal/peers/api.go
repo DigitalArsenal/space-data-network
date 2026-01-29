@@ -64,6 +64,10 @@ func (h *APIHandler) setupRoutes() {
 	// Import/Export
 	h.mux.HandleFunc("/api/export", h.handleExport)
 	h.mux.HandleFunc("/api/import", h.handleImport)
+
+	// vCard import/export
+	h.mux.HandleFunc("/api/peers/import/vcard", h.handleVCardImport)
+	h.mux.HandleFunc("/api/peers/export/vcard/", h.handleVCardExport)
 }
 
 // handlePeers handles GET /api/peers and POST /api/peers
@@ -613,6 +617,103 @@ func (h *APIHandler) handleImport(w http.ResponseWriter, r *http.Request) {
 		GroupCount: h.registry.GroupCount(),
 	}
 	writeJSON(w, settings)
+}
+
+// handleVCardImport handles POST /api/peers/import/vcard
+func (h *APIHandler) handleVCardImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	vcardStr := string(data)
+
+	// Try multi-vCard parse first
+	infos, err := ParseVCards(vcardStr)
+	if err != nil {
+		http.Error(w, "Invalid vCard data: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var imported []*TrustedPeer
+	var errors []string
+
+	for _, info := range infos {
+		trustLevel := Standard
+		if tlStr, ok := info.Metadata["trust_level"]; ok {
+			if tl, parseErr := ParseTrustLevel(tlStr); parseErr == nil {
+				trustLevel = tl
+			}
+		}
+
+		tp := &TrustedPeer{
+			ID:           info.PeerID,
+			Addrs:        info.Addrs,
+			TrustLevel:   trustLevel,
+			Name:         info.Name,
+			Organization: info.Organization,
+			Notes:        info.Notes,
+			VCardData:    vcardStr,
+		}
+
+		if addErr := h.registry.AddPeer(tp); addErr != nil {
+			errors = append(errors, info.PeerID.ShortString()+": "+addErr.Error())
+		} else {
+			imported = append(imported, tp)
+		}
+	}
+
+	result := struct {
+		Imported int      `json:"imported"`
+		Errors   []string `json:"errors,omitempty"`
+	}{
+		Imported: len(imported),
+		Errors:   errors,
+	}
+
+	if len(imported) > 0 {
+		w.WriteHeader(http.StatusCreated)
+	} else {
+		w.WriteHeader(http.StatusBadRequest)
+	}
+	writeJSON(w, result)
+}
+
+// handleVCardExport handles GET /api/peers/export/vcard/:id
+func (h *APIHandler) handleVCardExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	peerIDStr := strings.TrimPrefix(r.URL.Path, "/api/peers/export/vcard/")
+	if peerIDStr == "" {
+		http.Error(w, "Peer ID required", http.StatusBadRequest)
+		return
+	}
+
+	peerID, err := peer.Decode(peerIDStr)
+	if err != nil {
+		http.Error(w, "Invalid peer ID", http.StatusBadRequest)
+		return
+	}
+
+	tp, err := h.registry.GetPeer(peerID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	vcardData := TrustedPeerToVCard(tp)
+	w.Header().Set("Content-Type", "text/vcard")
+	w.Header().Set("Content-Disposition", "attachment; filename=peer-"+peerID.ShortString()+".vcf")
+	w.Write([]byte(vcardData))
 }
 
 // Helper functions

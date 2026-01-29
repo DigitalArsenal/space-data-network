@@ -850,6 +850,381 @@ func (s *Store) UpdateCreditsBalance(peerID string, delta int64) error {
 	return nil
 }
 
+// GetPurchaseRequest retrieves a purchase request by ID
+func (s *Store) GetPurchaseRequest(requestID string) (*PurchaseRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var req PurchaseRequest
+	var createdAt, updatedAt, paymentDeadline, paymentConfirmedAt, grantIssuedAt, providerAcknowledgedAt int64
+
+	err := s.db.QueryRow(`
+		SELECT request_id, listing_id, tier_name, buyer_peer_id, buyer_encryption_pubkey,
+			key_algorithm, buyer_email, payment_method, payment_amount, payment_currency,
+			payment_tx_hash, payment_chain, sender_address, confirmation_block,
+			payment_intent_id, credits_transaction_id, status, status_message,
+			created_at, updated_at, payment_deadline, payment_confirmed_at,
+			grant_issued_at, grant_id, provider_peer_id, provider_acknowledged_at,
+			preferred_delivery_method, webhook_url, buyer_signature, provider_signature
+		FROM storefront_purchases WHERE request_id = ?
+	`, requestID).Scan(
+		&req.RequestID, &req.ListingID, &req.TierName, &req.BuyerPeerID,
+		&req.BuyerEncryptionPubkey, &req.KeyAlgorithm, &req.BuyerEmail,
+		&req.PaymentMethod, &req.PaymentAmount, &req.PaymentCurrency,
+		&req.PaymentTxHash, &req.PaymentChain, &req.SenderAddress, &req.ConfirmationBlock,
+		&req.PaymentIntentID, &req.CreditsTransactionID, &req.Status, &req.StatusMessage,
+		&createdAt, &updatedAt, &paymentDeadline, &paymentConfirmedAt,
+		&grantIssuedAt, &req.GrantID, &req.ProviderPeerID, &providerAcknowledgedAt,
+		&req.PreferredDeliveryMethod, &req.WebhookURL,
+		&req.BuyerSignature, &req.ProviderSignature,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get purchase request: %w", err)
+	}
+
+	req.CreatedAt = time.Unix(createdAt, 0)
+	req.UpdatedAt = time.Unix(updatedAt, 0)
+	req.PaymentDeadline = time.Unix(paymentDeadline, 0)
+	req.PaymentConfirmedAt = time.Unix(paymentConfirmedAt, 0)
+	req.GrantIssuedAt = time.Unix(grantIssuedAt, 0)
+	req.ProviderAcknowledgedAt = time.Unix(providerAcknowledgedAt, 0)
+
+	return &req, nil
+}
+
+// UpdatePurchasePayment updates payment details on a purchase request
+func (s *Store) UpdatePurchasePayment(requestID, txHash, chain, senderAddress string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		UPDATE storefront_purchases
+		SET payment_tx_hash = ?, payment_chain = ?, sender_address = ?, updated_at = ?
+		WHERE request_id = ?
+	`, txHash, chain, senderAddress, time.Now().Unix(), requestID)
+	if err != nil {
+		return fmt.Errorf("failed to update purchase payment: %w", err)
+	}
+	return nil
+}
+
+// UpdatePurchaseCreditsTransaction updates the credits transaction ID on a purchase
+func (s *Store) UpdatePurchaseCreditsTransaction(requestID, txID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		UPDATE storefront_purchases
+		SET credits_transaction_id = ?, updated_at = ?
+		WHERE request_id = ?
+	`, txID, time.Now().Unix(), requestID)
+	if err != nil {
+		return fmt.Errorf("failed to update credits transaction: %w", err)
+	}
+	return nil
+}
+
+// UpdatePurchaseFiatIntent updates the fiat payment intent ID on a purchase
+func (s *Store) UpdatePurchaseFiatIntent(requestID, intentID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		UPDATE storefront_purchases
+		SET payment_intent_id = ?, updated_at = ?
+		WHERE request_id = ?
+	`, intentID, time.Now().Unix(), requestID)
+	if err != nil {
+		return fmt.Errorf("failed to update fiat intent: %w", err)
+	}
+	return nil
+}
+
+// UpdatePurchaseGrant updates the grant ID on a purchase request
+func (s *Store) UpdatePurchaseGrant(requestID, grantID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		UPDATE storefront_purchases
+		SET grant_id = ?, grant_issued_at = ?, status = ?, updated_at = ?
+		WHERE request_id = ?
+	`, grantID, time.Now().Unix(), PurchaseStatusCompleted, time.Now().Unix(), requestID)
+	if err != nil {
+		return fmt.Errorf("failed to update purchase grant: %w", err)
+	}
+	return nil
+}
+
+// GetProviderPurchases retrieves all purchases for a provider
+func (s *Store) GetProviderPurchases(providerPeerID string, limit, offset int) ([]*PurchaseRequest, int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var total int
+	s.db.QueryRow(`SELECT COUNT(*) FROM storefront_purchases WHERE provider_peer_id = ?`, providerPeerID).Scan(&total)
+
+	rows, err := s.db.Query(`
+		SELECT request_id, listing_id, tier_name, buyer_peer_id, buyer_encryption_pubkey,
+			key_algorithm, buyer_email, payment_method, payment_amount, payment_currency,
+			payment_tx_hash, payment_chain, sender_address, confirmation_block,
+			payment_intent_id, credits_transaction_id, status, status_message,
+			created_at, updated_at, payment_deadline, payment_confirmed_at,
+			grant_issued_at, grant_id, provider_peer_id, provider_acknowledged_at,
+			preferred_delivery_method, webhook_url, buyer_signature, provider_signature
+		FROM storefront_purchases WHERE provider_peer_id = ?
+		ORDER BY created_at DESC LIMIT ? OFFSET ?
+	`, providerPeerID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query provider purchases: %w", err)
+	}
+	defer rows.Close()
+
+	var purchases []*PurchaseRequest
+	for rows.Next() {
+		var req PurchaseRequest
+		var createdAt, updatedAt, paymentDeadline, paymentConfirmedAt, grantIssuedAt, providerAcknowledgedAt int64
+
+		err := rows.Scan(
+			&req.RequestID, &req.ListingID, &req.TierName, &req.BuyerPeerID,
+			&req.BuyerEncryptionPubkey, &req.KeyAlgorithm, &req.BuyerEmail,
+			&req.PaymentMethod, &req.PaymentAmount, &req.PaymentCurrency,
+			&req.PaymentTxHash, &req.PaymentChain, &req.SenderAddress, &req.ConfirmationBlock,
+			&req.PaymentIntentID, &req.CreditsTransactionID, &req.Status, &req.StatusMessage,
+			&createdAt, &updatedAt, &paymentDeadline, &paymentConfirmedAt,
+			&grantIssuedAt, &req.GrantID, &req.ProviderPeerID, &providerAcknowledgedAt,
+			&req.PreferredDeliveryMethod, &req.WebhookURL,
+			&req.BuyerSignature, &req.ProviderSignature,
+		)
+		if err != nil {
+			log.Warnf("Failed to scan purchase row: %v", err)
+			continue
+		}
+
+		req.CreatedAt = time.Unix(createdAt, 0)
+		req.UpdatedAt = time.Unix(updatedAt, 0)
+		req.PaymentDeadline = time.Unix(paymentDeadline, 0)
+		req.PaymentConfirmedAt = time.Unix(paymentConfirmedAt, 0)
+		req.GrantIssuedAt = time.Unix(grantIssuedAt, 0)
+		req.ProviderAcknowledgedAt = time.Unix(providerAcknowledgedAt, 0)
+
+		purchases = append(purchases, &req)
+	}
+
+	return purchases, total, nil
+}
+
+// CreateCreditsTransaction records a credits transaction
+func (s *Store) CreateCreditsTransaction(tx *CreditsTransaction) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		INSERT INTO storefront_credits_transactions (
+			transaction_id, from_peer_id, to_peer_id, amount, type, reference, created_at, status
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, tx.TransactionID, tx.FromPeerID, tx.ToPeerID, tx.Amount,
+		tx.Type, tx.Reference, tx.CreatedAt.Unix(), tx.Status)
+	if err != nil {
+		return fmt.Errorf("failed to create credits transaction: %w", err)
+	}
+	return nil
+}
+
+// GetCreditsTransactions retrieves credit transactions for a peer
+func (s *Store) GetCreditsTransactions(peerID string, limit, offset int) ([]*CreditsTransaction, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT transaction_id, from_peer_id, to_peer_id, amount, type, reference, created_at, status
+		FROM storefront_credits_transactions
+		WHERE from_peer_id = ? OR to_peer_id = ?
+		ORDER BY created_at DESC LIMIT ? OFFSET ?
+	`, peerID, peerID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query transactions: %w", err)
+	}
+	defer rows.Close()
+
+	var txs []*CreditsTransaction
+	for rows.Next() {
+		var tx CreditsTransaction
+		var createdAt int64
+		err := rows.Scan(&tx.TransactionID, &tx.FromPeerID, &tx.ToPeerID,
+			&tx.Amount, &tx.Type, &tx.Reference, &createdAt, &tx.Status)
+		if err != nil {
+			continue
+		}
+		tx.CreatedAt = time.Unix(createdAt, 0)
+		txs = append(txs, &tx)
+	}
+	return txs, nil
+}
+
+// UpdateGrantUsage updates usage tracking on a grant
+func (s *Store) UpdateGrantUsage(grantID string, requestsIncrement, recordsIncrement int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		UPDATE storefront_grants
+		SET total_requests = total_requests + ?,
+			total_records = total_records + ?,
+			last_access = ?,
+			updated_at = ?
+		WHERE grant_id = ?
+	`, requestsIncrement, recordsIncrement, time.Now().Unix(), time.Now().Unix(), grantID)
+	if err != nil {
+		return fmt.Errorf("failed to update grant usage: %w", err)
+	}
+	return nil
+}
+
+// UpdateListingReputation updates the reputation snapshot on a listing
+func (s *Store) UpdateListingReputation(listingID string, rep ProviderReputation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	reputationJSON, _ := json.Marshal(rep)
+	_, err := s.db.Exec(`
+		UPDATE storefront_listings SET reputation = ?, updated_at = ? WHERE listing_id = ?
+	`, string(reputationJSON), time.Now().Unix(), listingID)
+	if err != nil {
+		return fmt.Errorf("failed to update listing reputation: %w", err)
+	}
+	return nil
+}
+
+// GetProviderGrants retrieves all grants issued by a provider
+func (s *Store) GetProviderGrants(providerPeerID string, limit, offset int) ([]*AccessGrant, int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var total int
+	s.db.QueryRow(`SELECT COUNT(*) FROM storefront_grants WHERE provider_peer_id = ?`, providerPeerID).Scan(&total)
+
+	rows, err := s.db.Query(`
+		SELECT grant_id, listing_id, tier_name, buyer_peer_id, buyer_encryption_pubkey,
+			key_algorithm, access_type, rate_limit, max_records_per_request,
+			granted_at, expires_at, status, payment_tx_hash, payment_method,
+			payment_amount, payment_currency, payment_chain, next_renewal,
+			auto_renew, renewal_count, total_requests, total_records,
+			last_access, delivery_topic, created_at, updated_at, notes,
+			provider_signature, provider_peer_id
+		FROM storefront_grants WHERE provider_peer_id = ?
+		ORDER BY created_at DESC LIMIT ? OFFSET ?
+	`, providerPeerID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query provider grants: %w", err)
+	}
+	defer rows.Close()
+
+	var grants []*AccessGrant
+	for rows.Next() {
+		var grant AccessGrant
+		var grantedAt, expiresAt, nextRenewal, lastAccess, createdAt, updatedAt int64
+
+		err := rows.Scan(
+			&grant.GrantID, &grant.ListingID, &grant.TierName, &grant.BuyerPeerID,
+			&grant.BuyerEncryptionPubkey, &grant.KeyAlgorithm, &grant.AccessType,
+			&grant.RateLimit, &grant.MaxRecordsPerRequest,
+			&grantedAt, &expiresAt, &grant.Status,
+			&grant.PaymentTxHash, &grant.PaymentMethod, &grant.PaymentAmount,
+			&grant.PaymentCurrency, &grant.PaymentChain, &nextRenewal,
+			&grant.AutoRenew, &grant.RenewalCount, &grant.TotalRequests,
+			&grant.TotalRecords, &lastAccess, &grant.DeliveryTopic,
+			&createdAt, &updatedAt, &grant.Notes,
+			&grant.ProviderSignature, &grant.ProviderPeerID,
+		)
+		if err != nil {
+			log.Warnf("Failed to scan provider grant row: %v", err)
+			continue
+		}
+
+		grant.GrantedAt = time.Unix(grantedAt, 0)
+		grant.ExpiresAt = time.Unix(expiresAt, 0)
+		grant.NextRenewal = time.Unix(nextRenewal, 0)
+		grant.LastAccess = time.Unix(lastAccess, 0)
+		grant.CreatedAt = time.Unix(createdAt, 0)
+		grant.UpdatedAt = time.Unix(updatedAt, 0)
+
+		grants = append(grants, &grant)
+	}
+
+	return grants, total, nil
+}
+
+// UpdateReviewVote updates the helpfulness vote count on a review
+func (s *Store) UpdateReviewVote(reviewID string, helpful bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var col string
+	if helpful {
+		col = "helpful_count"
+	} else {
+		col = "not_helpful_count"
+	}
+
+	_, err := s.db.Exec(fmt.Sprintf(`
+		UPDATE storefront_reviews SET %s = %s + 1, updated_at = ? WHERE review_id = ?
+	`, col, col), time.Now().Unix(), reviewID)
+	if err != nil {
+		return fmt.Errorf("failed to update review vote: %w", err)
+	}
+	return nil
+}
+
+// AddProviderResponse adds a provider response to a review
+func (s *Store) AddProviderResponse(reviewID, response string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		UPDATE storefront_reviews
+		SET provider_response = ?, provider_response_at = ?, updated_at = ?
+		WHERE review_id = ?
+	`, response, time.Now().Unix(), time.Now().Unix(), reviewID)
+	if err != nil {
+		return fmt.Errorf("failed to add provider response: %w", err)
+	}
+	return nil
+}
+
+// UpdateListingActive updates the active status of a listing
+func (s *Store) UpdateListingActive(listingID string, active bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		UPDATE storefront_listings SET active = ?, updated_at = ? WHERE listing_id = ?
+	`, active, time.Now().Unix(), listingID)
+	if err != nil {
+		return fmt.Errorf("failed to update listing active: %w", err)
+	}
+	return nil
+}
+
+// GetProviderEarnings returns total earnings for a provider
+func (s *Store) GetProviderEarnings(providerPeerID string) (uint64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var total uint64
+	err := s.db.QueryRow(`
+		SELECT COALESCE(SUM(payment_amount), 0)
+		FROM storefront_grants WHERE provider_peer_id = ? AND status = 0
+	`, providerPeerID).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get provider earnings: %w", err)
+	}
+	return total, nil
+}
+
 // Close closes the store
 func (s *Store) Close() error {
 	return s.db.Close()

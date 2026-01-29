@@ -32,7 +32,7 @@ on:
         default: 'false'
 
 env:
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.24'
   NODE_VERSION: '20'
 
 jobs:
@@ -74,6 +74,16 @@ jobs:
           cd tests/encryption/go
           go test -v -count=1 -race ./relay/... -coverprofile=coverage-relay.out
 
+      - name: Run Desktop tests
+        run: |
+          cd tests/encryption/go
+          go test -v -count=1 -race ./desktop/... -coverprofile=coverage-desktop.out
+
+      - name: Run Cross-Node tests
+        run: |
+          cd tests/encryption/go
+          go test -v -count=1 -race ./crossnode/... -coverprofile=coverage-crossnode.out
+
       - name: Run benchmarks
         run: |
           cd tests/encryption/go
@@ -82,7 +92,12 @@ jobs:
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3
         with:
-          files: tests/encryption/go/coverage-*.out
+          files: |
+            tests/encryption/go/coverage-ecies.out
+            tests/encryption/go/coverage-s2s.out
+            tests/encryption/go/coverage-relay.out
+            tests/encryption/go/coverage-desktop.out
+            tests/encryption/go/coverage-crossnode.out
           flags: encryption-go
           name: go-encryption-coverage
 

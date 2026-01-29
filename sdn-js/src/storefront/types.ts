@@ -312,3 +312,141 @@ export interface CreateReviewRequest {
   qualityMetrics?: DataQualityMetrics;
   aclGrantId?: string;
 }
+
+// --- 14.2 DHT Catalog types ---
+
+/** DHT catalog entry */
+export interface CatalogEntry {
+  listingId: string;
+  providerPeerId: string;
+  title: string;
+  dataTypes: string[];
+  accessType: number;
+  updatedAt: Date;
+  active: boolean;
+}
+
+// --- 14.4 Payment types ---
+
+/** Crypto payment request */
+export interface CryptoPaymentRequest {
+  requestId: string;
+  txHash: string;
+  chain: 'ethereum' | 'solana' | 'bitcoin';
+  senderAddress?: string;
+  amount: number;
+  currency: string;
+}
+
+/** Crypto payment verification result */
+export interface CryptoPaymentResult {
+  verified: boolean;
+  confirmationBlock?: number;
+  error?: string;
+}
+
+/** Fiat gateway request */
+export interface FiatGatewayRequest {
+  requestId: string;
+  amount: number;
+  currency: string;
+  buyerEmail?: string;
+  description?: string;
+  successUrl?: string;
+  cancelUrl?: string;
+}
+
+/** Fiat gateway result */
+export interface FiatGatewayResult {
+  paymentIntentId: string;
+  clientSecret: string;
+  checkoutUrl: string;
+}
+
+/** Credits transaction */
+export interface CreditsTransaction {
+  transactionId: string;
+  fromPeerId: string;
+  toPeerId: string;
+  amount: number;
+  type: 'purchase' | 'refund' | 'deposit' | 'withdrawal';
+  reference: string;
+  createdAt: Date;
+  status: string;
+}
+
+// --- 14.5 Delivery types ---
+
+/** Delivery request */
+export interface DeliveryRequest {
+  grantId: string;
+  listingId: string;
+  buyerPeerId: string;
+  method: DeliveryMethod;
+  data: Uint8Array;
+  encrypted: boolean;
+  deliveryTopic?: string;
+  webhookUrl?: string;
+}
+
+/** Delivery result */
+export interface DeliveryResult {
+  success: boolean;
+  method: string;
+  deliveredAt: number;
+  bytesSent: number;
+  cid?: string;
+  topicId?: string;
+  webhookStatus?: number;
+  error?: string;
+}
+
+// --- 14.6 Dashboard types ---
+
+/** Seller dashboard response */
+export interface SellerDashboard {
+  listings: Listing[];
+  totalListings: number;
+  activeGrants: number;
+  totalEarnings: number;
+  recentPurchases: PurchaseRequest[];
+  trustScore?: TrustScore;
+  creditsBalance: CreditsBalance;
+}
+
+/** Buyer dashboard response */
+export interface BuyerDashboard {
+  activeGrants: AccessGrant[];
+  totalGrants: number;
+  recentPurchases?: PurchaseRequest[];
+  creditsBalance: CreditsBalance;
+}
+
+// --- 14.7 Trust types ---
+
+/** Trust score for a provider */
+export interface TrustScore {
+  peerId: string;
+  overallScore: number;
+  reputationScore: number;
+  uptimeScore: number;
+  deliveryScore: number;
+  dataQualityScore: number;
+  disputeScore: number;
+  tenureScore: number;
+  volumeScore: number;
+  escrowRequired: boolean;
+  featured: boolean;
+  computedAt: number;
+}
+
+/** Trust weight configuration */
+export interface TrustWeights {
+  reputation: number;
+  uptime: number;
+  delivery: number;
+  dataQuality: number;
+  disputes: number;
+  tenure: number;
+  volume: number;
+}

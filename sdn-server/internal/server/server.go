@@ -16,6 +16,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/audit"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/setup"
 )
 
@@ -23,15 +24,19 @@ var log = logging.Logger("sdn-server")
 
 // Server represents the HTTP server with admin and setup functionality.
 type Server struct {
-	config      *config.Config
-	setupMgr    *setup.Manager
-	keyMgr      *keys.Manager
-	adminMgr    *admin.Manager
-	auditLog    *audit.Logger
-	httpServer  *http.Server
-	mux         *http.ServeMux
-	setupToken  string
-	mu          sync.RWMutex
+	config        *config.Config
+	setupMgr      *setup.Manager
+	keyMgr        *keys.Manager
+	adminMgr      *admin.Manager
+	auditLog      *audit.Logger
+	peerRegistry  *peers.Registry
+	peerGater     *peers.TrustedConnectionGater
+	peerRateLimiter *peers.TrustBasedRateLimiter
+	peerAdminUI   *peers.AdminUI
+	httpServer    *http.Server
+	mux           *http.ServeMux
+	setupToken    string
+	mu            sync.RWMutex
 }
 
 // NewServer creates a new HTTP server.
@@ -66,13 +71,42 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to create audit logger: %w", err)
 	}
 
+	// Initialize peer registry from config
+	registryPath := cfg.Peers.RegistryPath
+	if registryPath == "" {
+		registryPath = filepath.Join(cfg.Storage.Path, "peers.db")
+	}
+
+	peerRegistry, peerGater, peerRateLimiter, err := peers.InitializeFromConfig(peers.RegistryConfig{
+		StrictMode:             cfg.Peers.StrictMode,
+		RegistryPath:           registryPath,
+		TrustedPeers:           cfg.Peers.TrustedPeers,
+		TrustBasedRateLimiting: cfg.Peers.TrustBasedRateLimiting,
+		BaseMPS:                cfg.Network.MaxMessagesPerSecond,
+		BaseMPM:                cfg.Network.MaxMessagesPerMinute,
+		BaseBurst:              cfg.Network.RateLimitBurst,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize peer registry: %w", err)
+	}
+
+	// Initialize peer admin UI
+	peerAdminUI, err := peers.NewAdminUI(peerRegistry, peerGater)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create peer admin UI: %w", err)
+	}
+
 	s := &Server{
-		config:   cfg,
-		setupMgr: setupMgr,
-		keyMgr:   keyMgr,
-		adminMgr: adminMgr,
-		auditLog: auditLog,
-		mux:      http.NewServeMux(),
+		config:          cfg,
+		setupMgr:        setupMgr,
+		keyMgr:          keyMgr,
+		adminMgr:        adminMgr,
+		auditLog:        auditLog,
+		peerRegistry:    peerRegistry,
+		peerGater:       peerGater,
+		peerRateLimiter: peerRateLimiter,
+		peerAdminUI:     peerAdminUI,
+		mux:             http.NewServeMux(),
 	}
 
 	// Setup HTTP routes
@@ -103,6 +137,20 @@ func (s *Server) setupRoutes() {
 
 	// Audit log routes (require authentication)
 	s.mux.HandleFunc("/api/audit", s.requireAuth(s.handleAuditAPI))
+
+	// Peer registry API and admin UI (require authentication)
+	// The peer admin UI serves at /admin/peers and the API at /api/peers, /api/groups, etc.
+	s.mux.HandleFunc("/admin/peers", s.requireAuth(s.handlePeerAdmin))
+	s.mux.HandleFunc("/admin/peers/", s.requireAuth(s.handlePeerAdmin))
+	s.mux.HandleFunc("/api/peers", s.requireAuth(s.handlePeerAPI))
+	s.mux.HandleFunc("/api/peers/", s.requireAuth(s.handlePeerAPI))
+	s.mux.HandleFunc("/api/groups", s.requireAuth(s.handlePeerAPI))
+	s.mux.HandleFunc("/api/groups/", s.requireAuth(s.handlePeerAPI))
+	s.mux.HandleFunc("/api/blocklist", s.requireAuth(s.handlePeerAPI))
+	s.mux.HandleFunc("/api/blocklist/", s.requireAuth(s.handlePeerAPI))
+	s.mux.HandleFunc("/api/settings", s.requireAuth(s.handlePeerAPI))
+	s.mux.HandleFunc("/api/export", s.requireAuth(s.handlePeerAPI))
+	s.mux.HandleFunc("/api/import", s.requireAuth(s.handlePeerAPI))
 
 	// Health check
 	s.mux.HandleFunc("/health", s.handleHealth)
@@ -398,6 +446,14 @@ func (s *Server) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleSessions(w, r)
 	case path == "profile":
 		s.handleProfile(w, r)
+	case path == "totp/setup" && r.Method == http.MethodPost:
+		s.handleTOTPSetup(w, r)
+	case path == "totp/enable" && r.Method == http.MethodPost:
+		s.handleTOTPEnable(w, r)
+	case path == "totp/disable" && r.Method == http.MethodPost:
+		s.handleTOTPDisable(w, r)
+	case path == "audit/verify" && r.Method == http.MethodGet:
+		s.handleAuditVerify(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -587,6 +643,134 @@ func (s *Server) handleAuditAPI(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `]}`)
 }
 
+// handleTOTPSetup generates a TOTP secret for enrollment.
+func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
+	session := r.Context().Value("session").(*admin.Session)
+
+	adm, err := s.adminMgr.GetAdmin(session.AdminID)
+	if err != nil {
+		http.Error(w, "Admin not found", http.StatusInternalServerError)
+		return
+	}
+
+	if adm.TOTPEnabled {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, `{"success":false,"error":"TOTP already enabled"}`)
+		return
+	}
+
+	secret, uri, err := admin.GenerateTOTPSecretForUser(adm.Username)
+	if err != nil {
+		http.Error(w, "Failed to generate TOTP secret", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"success":true,"secret":"%s","uri":"%s"}`, secret, uri)
+}
+
+// handleTOTPEnable verifies a TOTP code and enables TOTP for the admin.
+func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
+	session := r.Context().Value("session").(*admin.Session)
+	clientIP := getClientIP(r)
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	secret := r.FormValue("secret")
+	code := r.FormValue("code")
+
+	if secret == "" || code == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, `{"success":false,"error":"Secret and code are required"}`)
+		return
+	}
+
+	// Verify the code matches the secret before enabling
+	if !admin.ValidateTOTP(secret, code) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, `{"success":false,"error":"Invalid TOTP code"}`)
+		return
+	}
+
+	if err := s.adminMgr.EnableTOTP(session.AdminID, secret); err != nil {
+		http.Error(w, "Failed to enable TOTP", http.StatusInternalServerError)
+		return
+	}
+
+	s.auditLog.Log(audit.EventTypeTOTPEnable, audit.SeverityInfo,
+		"TOTP enabled", session.AdminID, clientIP, nil)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"success":true}`)
+}
+
+// handleTOTPDisable disables TOTP for the admin.
+func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
+	session := r.Context().Value("session").(*admin.Session)
+	clientIP := getClientIP(r)
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	// Require password confirmation to disable TOTP
+	password := r.FormValue("password")
+	if password == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, `{"success":false,"error":"Password required to disable TOTP"}`)
+		return
+	}
+
+	// Verify password by trying to get admin and checking password
+	adm, err := s.adminMgr.GetAdmin(session.AdminID)
+	if err != nil {
+		http.Error(w, "Admin not found", http.StatusInternalServerError)
+		return
+	}
+
+	// Use authenticate to verify password (will return ErrTOTPRequired if TOTP is on, which is fine)
+	_, authErr := s.adminMgr.Authenticate(adm.Username, password, clientIP, "", false)
+	if authErr != nil && authErr != admin.ErrTOTPRequired {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprintf(w, `{"success":false,"error":"Invalid password"}`)
+		return
+	}
+
+	if err := s.adminMgr.DisableTOTP(session.AdminID); err != nil {
+		http.Error(w, "Failed to disable TOTP", http.StatusInternalServerError)
+		return
+	}
+
+	s.auditLog.Log(audit.EventTypeTOTPDisable, audit.SeverityWarning,
+		"TOTP disabled", session.AdminID, clientIP, nil)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"success":true}`)
+}
+
+// handleAuditVerify verifies the audit log chain integrity.
+func (s *Server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
+	valid, err := s.auditLog.VerifyChain()
+
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, `{"valid":false,"error":"%s"}`, err.Error())
+		return
+	}
+
+	fmt.Fprintf(w, `{"valid":%t}`, valid)
+}
+
 // handleHealth returns server health status.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -619,6 +803,31 @@ func (s *Server) KeyManager() *keys.Manager {
 // AuditLogger returns the audit logger.
 func (s *Server) AuditLogger() *audit.Logger {
 	return s.auditLog
+}
+
+// PeerRegistry returns the peer registry.
+func (s *Server) PeerRegistry() *peers.Registry {
+	return s.peerRegistry
+}
+
+// PeerGater returns the trusted connection gater.
+func (s *Server) PeerGater() *peers.TrustedConnectionGater {
+	return s.peerGater
+}
+
+// PeerRateLimiter returns the trust-based rate limiter (may be nil).
+func (s *Server) PeerRateLimiter() *peers.TrustBasedRateLimiter {
+	return s.peerRateLimiter
+}
+
+// handlePeerAdmin serves the peer management admin UI.
+func (s *Server) handlePeerAdmin(w http.ResponseWriter, r *http.Request) {
+	s.peerAdminUI.ServeHTTP(w, r)
+}
+
+// handlePeerAPI proxies peer management API requests to the peer admin UI handler.
+func (s *Server) handlePeerAPI(w http.ResponseWriter, r *http.Request) {
+	s.peerAdminUI.ServeHTTP(w, r)
 }
 
 // Login page HTML

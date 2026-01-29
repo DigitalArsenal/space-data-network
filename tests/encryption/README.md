@@ -68,7 +68,9 @@ tests/encryption/
 ├── go/                       # Go test harnesses
 │   ├── ecies/               # ECIES encryption tests
 │   ├── server_to_server/    # Server-to-server tests
-│   └── relay/               # Edge relay tests
+│   ├── relay/               # Edge relay tests
+│   ├── desktop/             # Desktop-to-desktop tests
+│   └── crossnode/           # Cross-node FlatBuffer encryption tests
 ├── playwright/              # Browser tests
 │   ├── browser_to_server/   # Browser-to-server encryption
 │   └── wallet/              # Web3 wallet tests

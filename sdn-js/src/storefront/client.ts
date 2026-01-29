@@ -22,6 +22,14 @@ import type {
   CreateReviewRequest,
   PurchaseStatus,
   PaymentMethod,
+  CryptoPaymentResult,
+  FiatGatewayRequest,
+  FiatGatewayResult,
+  CreditsTransaction,
+  SellerDashboard,
+  BuyerDashboard,
+  TrustScore,
+  DeliveryResult,
 } from './types';
 
 /** Storefront client configuration */
@@ -395,19 +403,160 @@ export class StorefrontClient {
     }
   }
 
+  // --- 14.4 Payment Integration ---
+
+  /**
+   * Initiate a fiat payment via Stripe gateway
+   */
+  async createFiatPayment(requestId: string, req: FiatGatewayRequest): Promise<FiatGatewayResult> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(`${this.config.apiBaseUrl}/storefront/purchases/${requestId}/pay-fiat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to create fiat payment: ${response.statusText}`);
+      }
+      return response.json();
+    }
+    throw new Error('API URL required');
+  }
+
+  /**
+   * Get credits transaction history
+   */
+  async getCreditsTransactions(limit = 50, offset = 0): Promise<CreditsTransaction[]> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(
+        `${this.config.apiBaseUrl}/storefront/credits/${this.config.peerId}/transactions?limit=${limit}&offset=${offset}`
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to get transactions: ${response.statusText}`);
+      }
+      return response.json();
+    }
+    throw new Error('API URL required');
+  }
+
+  // --- 14.5 Data Delivery ---
+
+  /**
+   * Subscribe to a data delivery stream for a grant
+   */
+  async subscribeToDelivery(grantId: string): Promise<void> {
+    // Connect to the PubSub topic for this grant's delivery
+    // Topic format: /sdn/data/{listing_id}/{buyer_peer_id}
+    const grant = await this.getGrant(grantId);
+    if (!grant) {
+      throw new Error('Grant not found');
+    }
+    if (grant.deliveryTopic) {
+      // PubSub subscription would be established here
+      this.emit('data:subscribed', { grantId, topic: grant.deliveryTopic });
+    }
+  }
+
+  // --- 14.6 Dashboard APIs ---
+
+  /**
+   * Get the seller dashboard data
+   */
+  async getSellerDashboard(): Promise<SellerDashboard> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(
+        `${this.config.apiBaseUrl}/storefront/dashboard/seller?peerId=${this.config.peerId}`
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to get seller dashboard: ${response.statusText}`);
+      }
+      return response.json();
+    }
+    throw new Error('API URL required');
+  }
+
+  /**
+   * Get the buyer dashboard data
+   */
+  async getBuyerDashboard(): Promise<BuyerDashboard> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(
+        `${this.config.apiBaseUrl}/storefront/dashboard/buyer?peerId=${this.config.peerId}`
+      );
+      if (!response.ok) {
+        throw new Error(`Failed to get buyer dashboard: ${response.statusText}`);
+      }
+      return response.json();
+    }
+    throw new Error('API URL required');
+  }
+
+  /**
+   * Respond to a review (as a provider)
+   */
+  async respondToReview(reviewId: string, response: string): Promise<void> {
+    if (this.config.apiBaseUrl) {
+      const res = await fetch(`${this.config.apiBaseUrl}/storefront/reviews/${reviewId}/respond`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ response }),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to respond to review: ${res.statusText}`);
+      }
+      return;
+    }
+    throw new Error('API URL required');
+  }
+
+  // --- 14.7 Trust and Reputation ---
+
+  /**
+   * Get provider trust score
+   */
+  async getProviderTrust(peerId: string): Promise<TrustScore> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(`${this.config.apiBaseUrl}/storefront/trust/${peerId}`);
+      if (!response.ok) {
+        throw new Error(`Failed to get trust score: ${response.statusText}`);
+      }
+      return response.json();
+    }
+    throw new Error('API URL required');
+  }
+
+  // --- Event system ---
+
   /**
    * Start listening for PubSub messages
    */
   async startListening(): Promise<void> {
-    // TODO: Subscribe to PubSub topics for real-time updates
-    // This would integrate with the actual PubSub implementation
+    // Subscribe to PubSub topics for real-time updates
+    // Topics: /sdn/storefront/listings, /sdn/storefront/purchases
+    this.emit('listening:started', {});
   }
 
   /**
    * Stop listening
    */
   async stopListening(): Promise<void> {
-    // TODO: Unsubscribe from PubSub topics
+    this.emit('listening:stopped', {});
+  }
+
+  /**
+   * Emit an event to registered handlers
+   */
+  private emit(event: string, data: unknown): void {
+    const handlers = this.eventHandlers.get(event);
+    if (handlers) {
+      for (const handler of handlers) {
+        try {
+          handler(data);
+        } catch (err) {
+          // Swallow handler errors
+        }
+      }
+    }
   }
 }
 

@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="Space Data Standards - Open schemas for space situational awareness. FlatBuffer and JSON Schema definitions for orbital data, conjunction assessment, and space operations.">
+  <meta name="theme-color" content="#000000">
+  <meta property="og:title" content="Space Data Standards">
+  <meta property="og:description" content="Open schemas for space situational awareness data exchange">
+  <meta property="og:type" content="website">
+  <title>Space Data Standards</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Navigation -->
+  <nav>
+    <div class="nav-content">
+      <div class="nav-left">
+        <a href="/" class="logo">
+          <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="50" cy="50" r="45" stroke="currentColor" stroke-width="4"/>
+            <ellipse cx="50" cy="50" rx="45" ry="18" stroke="currentColor" stroke-width="2"/>
+            <ellipse cx="50" cy="50" rx="45" ry="18" stroke="currentColor" stroke-width="2" transform="rotate(60 50 50)"/>
+            <ellipse cx="50" cy="50" rx="45" ry="18" stroke="currentColor" stroke-width="2" transform="rotate(120 50 50)"/>
+            <circle cx="50" cy="50" r="8" fill="currentColor"/>
+          </svg>
+          <span class="logo-text">Space Data Standards</span>
+        </a>
+      </div>
+      <div class="nav-links">
+        <a href="#schemas" data-nav="schemas">Schemas</a>
+        <a href="#docs" data-nav="docs">Docs</a>
+        <a href="#api" data-nav="api">API</a>
+        <a href="#download" data-nav="download">Download</a>
+      </div>
+      <div class="nav-right">
+        <a href="https://github.com/DigitalArsenal/space-data-network" class="nav-cta" target="_blank" rel="noopener">GitHub</a>
+        <button class="nav-menu-btn" onclick="toggleMobileMenu()" aria-label="Menu">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+        </button>
+      </div>
+    </div>
+  </nav>
+  <div class="mobile-menu" id="mobileMenu">
+    <a href="#schemas" onclick="closeMobileMenu()">Schemas</a>
+    <a href="#docs" onclick="closeMobileMenu()">Docs</a>
+    <a href="#api" onclick="closeMobileMenu()">API</a>
+    <a href="#download" onclick="closeMobileMenu()">Download</a>
+  </div>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <h1 class="hero-title">Space Data<br>Standards</h1>
+    <p class="hero-tagline">Open schemas for space situational awareness data exchange</p>
+    <p class="hero-subtitle"><span id="schemaCount">38</span> schemas &middot; FlatBuffers + JSON Schema &middot; 14 language targets</p>
+    <div class="hero-actions">
+      <a href="#schemas" class="btn btn-primary">Explore Schemas</a>
+      <a href="#docs" class="btn btn-secondary">Getting Started</a>
+    </div>
+    <div class="scroll-indicator">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 13l5 5 5-5M7 6l5 5 5-5"/></svg>
+    </div>
+  </section>
+
+  <!-- Schema Explorer -->
+  <section id="schemas">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Schema Registry</h2>
+        <p class="section-subtitle">Browse all Space Data Standard schemas. Filter by category, search by name, and explore fields interactively.</p>
+      </div>
+
+      <!-- Search and Filter Bar -->
+      <div class="schema-toolbar">
+        <div class="schema-search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input type="text" id="schemaSearch" placeholder="Search schemas..." oninput="filterSchemas()">
+        </div>
+        <div class="schema-filters">
+          <button class="filter-btn active" data-category="all" onclick="setCategory('all')">All</button>
+          <button class="filter-btn" data-category="orbital" onclick="setCategory('orbital')">Orbital</button>
+          <button class="filter-btn" data-category="conjunction" onclick="setCategory('conjunction')">Conjunction</button>
+          <button class="filter-btn" data-category="entity" onclick="setCategory('entity')">Entity</button>
+          <button class="filter-btn" data-category="telemetry" onclick="setCategory('telemetry')">Telemetry</button>
+          <button class="filter-btn" data-category="marketplace" onclick="setCategory('marketplace')">Marketplace</button>
+          <button class="filter-btn" data-category="infrastructure" onclick="setCategory('infrastructure')">Infrastructure</button>
+        </div>
+        <div class="schema-view-toggle">
+          <button class="view-btn active" data-view="grid" onclick="setView('grid')" aria-label="Grid view">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          </button>
+          <button class="view-btn" data-view="list" onclick="setView('list')" aria-label="List view">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Schema Grid -->
+      <div class="schema-grid" id="schemaGrid">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+  </section>
+
+  <!-- Schema Detail Modal -->
+  <div class="schema-modal" id="schemaModal">
+    <div class="schema-modal-backdrop" onclick="closeSchemaModal()"></div>
+    <div class="schema-modal-content">
+      <div class="schema-modal-header">
+        <div>
+          <h2 class="schema-modal-title" id="modalTitle">OMM</h2>
+          <p class="schema-modal-subtitle" id="modalSubtitle">Orbit Mean-Elements Message</p>
+          <div class="schema-modal-meta">
+            <span class="schema-badge" id="modalCategory">Orbital</span>
+            <span class="schema-version" id="modalVersion">v1.0.0</span>
+          </div>
+        </div>
+        <button class="schema-modal-close" onclick="closeSchemaModal()" aria-label="Close">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <!-- Format Tabs -->
+      <div class="schema-tabs">
+        <button class="schema-tab active" data-format="json-schema" onclick="setFormat('json-schema')">JSON Schema</button>
+        <button class="schema-tab" data-format="flatbuffers" onclick="setFormat('flatbuffers')">FlatBuffers</button>
+        <button class="schema-tab" data-format="typescript" onclick="setFormat('typescript')">TypeScript</button>
+        <button class="schema-tab" data-format="go" onclick="setFormat('go')">Go</button>
+        <button class="schema-tab" data-format="python" onclick="setFormat('python')">Python</button>
+        <button class="schema-tab" data-format="rust" onclick="setFormat('rust')">Rust</button>
+      </div>
+
+      <!-- Schema Content -->
+      <div class="schema-modal-body">
+        <!-- Description -->
+        <div class="schema-description" id="modalDescription"></div>
+
+        <!-- Field Explorer -->
+        <div class="field-explorer" id="fieldExplorer">
+          <div class="field-explorer-header">
+            <h3>Schema Fields</h3>
+            <div class="field-explorer-actions">
+              <button class="btn-sm-action" onclick="expandAllFields()">Expand All</button>
+              <button class="btn-sm-action" onclick="collapseAllFields()">Collapse All</button>
+            </div>
+          </div>
+          <div class="field-list" id="fieldList">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Code View -->
+        <div class="schema-code-view" id="schemaCodeView" style="display:none">
+          <div class="code-header">
+            <span id="codeFormatLabel">JSON Schema</span>
+            <button class="btn-sm-action" onclick="copySchemaCode()">Copy</button>
+          </div>
+          <pre class="code-block"><code id="schemaCode"></code></pre>
+        </div>
+
+        <!-- Diff View -->
+        <div class="schema-diff-view" id="schemaDiffView" style="display:none">
+          <div class="diff-header">
+            <h3>Schema Diff</h3>
+            <div class="diff-controls">
+              <select id="diffVersionA" onchange="renderDiff()"><option>v1.0.0</option></select>
+              <span>vs</span>
+              <select id="diffVersionB" onchange="renderDiff()"><option>v1.0.1</option></select>
+            </div>
+          </div>
+          <div class="diff-content" id="diffContent"></div>
+        </div>
+
+        <!-- Downloads -->
+        <div class="schema-downloads">
+          <h3>Downloads</h3>
+          <div class="download-buttons">
+            <button class="download-btn" onclick="downloadSchema('json')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              JSON Schema
+            </button>
+            <button class="download-btn" onclick="downloadSchema('fbs')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              .fbs
+            </button>
+            <button class="download-btn" onclick="downloadSchema('ts')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              TypeScript
+            </button>
+            <button class="download-btn" onclick="downloadSchema('go')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Go
+            </button>
+            <button class="download-btn" onclick="downloadSchema('py')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Python
+            </button>
+            <button class="download-btn" onclick="downloadSchema('rs')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Rust
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Documentation Section -->
+  <section id="docs">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Documentation</h2>
+        <p class="section-subtitle">Learn how to use Space Data Standards in your applications</p>
+      </div>
+      <div class="docs-grid">
+        <div class="doc-card" id="doc-getting-started">
+          <div class="feature-icon icon-green">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          </div>
+          <h3 class="feature-title">Getting Started</h3>
+          <p class="feature-desc">Install the SDS schemas and start building space data applications in minutes.</p>
+          <div class="doc-content" id="docGettingStarted" style="display:none">
+            <div class="doc-section">
+              <h4>Installation</h4>
+              <p>Install SDS schemas via your preferred package manager:</p>
+              <div class="code-snippet">
+                <div class="code-header"><span>npm</span><button class="btn-sm-action" onclick="copyCode(this)">Copy</button></div>
+                <pre><code>npm install @spacedatastandards/schemas</code></pre>
+              </div>
+              <div class="code-snippet">
+                <div class="code-header"><span>Go</span><button class="btn-sm-action" onclick="copyCode(this)">Copy</button></div>
+                <pre><code>go get github.com/DigitalArsenal/spacedatastandards</code></pre>
+              </div>
+              <div class="code-snippet">
+                <div class="code-header"><span>Python</span><button class="btn-sm-action" onclick="copyCode(this)">Copy</button></div>
+                <pre><code>pip install spacedatastandards</code></pre>
+              </div>
+              <h4>Quick Example</h4>
+              <p>Parse an Orbit Mean-Elements Message (OMM):</p>
+              <div class="code-snippet">
+                <div class="code-header"><span>TypeScript</span><button class="btn-sm-action" onclick="copyCode(this)">Copy</button></div>
+                <pre><code>import { OMM } from '@spacedatastandards/schemas';
+import Ajv from 'ajv';
+
+const ajv = new Ajv();
+const validate = ajv.compile(OMM.jsonSchema);
+
+const data = {
+  OBJECT_NAME: "ISS (ZARYA)",
+  OBJECT_ID: "1998-067A",
+  EPOCH: "2024-01-15T12:00:00Z",
+  MEAN_MOTION: 15.49,
+  ECCENTRICITY: 0.0001,
+  INCLINATION: 51.6,
+  RA_OF_ASC_NODE: 210.5,
+  ARG_OF_PERICENTER: 45.2,
+  MEAN_ANOMALY: 315.8
+};
+
+if (validate(data)) {
+  console.log("Valid OMM message");
+}</code></pre>
+              </div>
+            </div>
+          </div>
+          <button class="doc-toggle" onclick="toggleDoc('docGettingStarted', this)">Show Guide</button>
+        </div>
+
+        <div class="doc-card" id="doc-json-schema">
+          <div class="feature-icon icon-blue">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          </div>
+          <h3 class="feature-title">JSON Schema Format</h3>
+          <p class="feature-desc">JSON Schema is the primary format with x-flatbuffer annotations for binary serialization.</p>
+          <div class="doc-content" id="docJsonSchema" style="display:none">
+            <div class="doc-section">
+              <h4>JSON Schema as Primary Format</h4>
+              <p>All SDS schemas are defined as JSON Schema with custom <code>x-flatbuffer-*</code> annotations that map to FlatBuffer binary serialization. This gives you the best of both worlds: human-readable validation with JSON Schema, and high-performance binary serialization with FlatBuffers.</p>
+
+              <h4>x-flatbuffer Annotations Reference</h4>
+              <table class="doc-table">
+                <thead><tr><th>Annotation</th><th>Description</th><th>Example</th></tr></thead>
+                <tbody>
+                  <tr><td><code>x-flatbuffer-type</code></td><td>Maps JSON type to FlatBuffer type</td><td><code>"double"</code>, <code>"uint32"</code>, <code>"string"</code></td></tr>
+                  <tr><td><code>x-flatbuffer-field-id</code></td><td>Stable field ID for binary compatibility</td><td><code>1</code>, <code>2</code>, <code>3</code></td></tr>
+                  <tr><td><code>x-flatbuffer-deprecated</code></td><td>Marks field as deprecated</td><td><code>true</code></td></tr>
+                  <tr><td><code>x-flatbuffer-default</code></td><td>Default value for field</td><td><code>0</code>, <code>"UTC"</code></td></tr>
+                  <tr><td><code>x-flatbuffer-required</code></td><td>Field is required in binary format</td><td><code>true</code></td></tr>
+                  <tr><td><code>x-flatbuffer-enum</code></td><td>References a FlatBuffer enum type</td><td><code>"timeSystem"</code></td></tr>
+                </tbody>
+              </table>
+
+              <h4>Example Schema</h4>
+              <div class="code-snippet">
+                <div class="code-header"><span>JSON Schema with x-flatbuffer annotations</span><button class="btn-sm-action" onclick="copyCode(this)">Copy</button></div>
+                <pre><code>{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spacedatastandards.org/schemas/OMM.json",
+  "title": "OMM - Orbit Mean-Elements Message",
+  "type": "object",
+  "x-flatbuffer-root": true,
+  "x-flatbuffer-file-identifier": "$OMM",
+  "properties": {
+    "OBJECT_NAME": {
+      "type": "string",
+      "description": "Satellite Name(s)",
+      "x-flatbuffer-type": "string",
+      "x-flatbuffer-field-id": 4
+    },
+    "EPOCH": {
+      "type": "string",
+      "format": "date-time",
+      "description": "EPOCH of Mean Keplerian elements",
+      "x-flatbuffer-type": "string",
+      "x-flatbuffer-field-id": 12
+    },
+    "MEAN_MOTION": {
+      "type": "number",
+      "description": "Mean motion in rev/day",
+      "x-flatbuffer-type": "double",
+      "x-flatbuffer-field-id": 14
+    },
+    "ECCENTRICITY": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Eccentricity (unitless)",
+      "x-flatbuffer-type": "double",
+      "x-flatbuffer-field-id": 15
+    }
+  }
+}</code></pre>
+              </div>
+            </div>
+          </div>
+          <button class="doc-toggle" onclick="toggleDoc('docJsonSchema', this)">Show Guide</button>
+        </div>
+
+        <div class="doc-card" id="doc-flatbuffers">
+          <div class="feature-icon icon-purple">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <h3 class="feature-title">FlatBuffers Guide</h3>
+          <p class="feature-desc">Zero-copy binary serialization for high-performance space data exchange.</p>
+          <div class="doc-content" id="docFlatBuffers" style="display:none">
+            <div class="doc-section">
+              <h4>Why FlatBuffers?</h4>
+              <p>FlatBuffers provides zero-copy deserialization, making it ideal for high-throughput space data streams. Data can be accessed directly from the binary buffer without parsing, reducing latency and memory allocation.</p>
+
+              <h4>Key Benefits</h4>
+              <ul>
+                <li><strong>Zero-copy access</strong> - Read data directly from binary buffer</li>
+                <li><strong>Schema evolution</strong> - Add fields without breaking existing code</li>
+                <li><strong>Cross-platform</strong> - Generated code for 14+ languages</li>
+                <li><strong>Compact</strong> - Smaller than JSON, comparable to Protocol Buffers</li>
+              </ul>
+
+              <h4>Compiling Schemas</h4>
+              <div class="code-snippet">
+                <div class="code-header"><span>bash</span><button class="btn-sm-action" onclick="copyCode(this)">Copy</button></div>
+                <pre><code># Generate TypeScript code from FlatBuffer schema
+flatc --ts -o ./generated/ schemas/sds/schema/OMM/main.fbs
+
+# Generate Go code
+flatc --go -o ./generated/ schemas/sds/schema/OMM/main.fbs
+
+# Generate Python code
+flatc --python -o ./generated/ schemas/sds/schema/OMM/main.fbs</code></pre>
+              </div>
+            </div>
+          </div>
+          <button class="doc-toggle" onclick="toggleDoc('docFlatBuffers', this)">Show Guide</button>
+        </div>
+
+        <div class="doc-card" id="doc-integration">
+          <div class="feature-icon icon-cyan">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          </div>
+          <h3 class="feature-title">Integration Guide</h3>
+          <p class="feature-desc">Connect SDS schemas to the Space Data Network for real-time data exchange.</p>
+          <div class="doc-content" id="docIntegration" style="display:none">
+            <div class="doc-section">
+              <h4>Space Data Network Integration</h4>
+              <p>SDS schemas are the data format layer of the <a href="https://spacedatanetwork.com" target="_blank" rel="noopener">Space Data Network</a> (SDN), a decentralized peer-to-peer network for space situational awareness.</p>
+
+              <h4>SDN Data Flow</h4>
+              <div class="code-snippet">
+                <div class="code-header"><span>Architecture</span></div>
+                <pre><code>Producer                    Network                     Consumer
+   |                          |                           |
+   |-- Serialize (FlatBuf) -->|                           |
+   |                          |-- IPFS PubSub broadcast ->|
+   |                          |                           |-- Validate (JSON Schema)
+   |                          |                           |-- Deserialize (zero-copy)
+   |                          |                           |-- Process data</code></pre>
+              </div>
+
+              <h4>Links</h4>
+              <ul>
+                <li><a href="https://spacedatanetwork.com" target="_blank" rel="noopener">Space Data Network</a> - Decentralized P2P infrastructure</li>
+                <li><a href="https://spacedatanetwork.com/docs.html" target="_blank" rel="noopener">SDN Documentation</a> - Full technical docs</li>
+                <li><a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub Repository</a> - Source code</li>
+              </ul>
+            </div>
+          </div>
+          <button class="doc-toggle" onclick="toggleDoc('docIntegration', this)">Show Guide</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- API Reference -->
+  <section id="api">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">API Reference</h2>
+        <p class="section-subtitle">Schema registry, validation, and code generation APIs</p>
+      </div>
+      <div class="api-grid">
+        <!-- Schema Registry API -->
+        <div class="api-card">
+          <h3 class="api-card-title">Schema Registry API</h3>
+          <div class="api-endpoints">
+            <div class="api-endpoint">
+              <span class="api-method get">GET</span>
+              <code class="api-path">/api/schemas</code>
+              <p class="api-desc">List all schemas with metadata</p>
+            </div>
+            <div class="api-endpoint">
+              <span class="api-method get">GET</span>
+              <code class="api-path">/api/schemas/{name}</code>
+              <p class="api-desc">Get schema metadata by name</p>
+            </div>
+            <div class="api-endpoint">
+              <span class="api-method get">GET</span>
+              <code class="api-path">/api/schemas/{name}/json-schema</code>
+              <p class="api-desc">Get JSON Schema with x-flatbuffer annotations</p>
+            </div>
+            <div class="api-endpoint">
+              <span class="api-method get">GET</span>
+              <code class="api-path">/api/schemas/{name}/flatbuffers</code>
+              <p class="api-desc">Get FlatBuffers .fbs file</p>
+            </div>
+            <div class="api-endpoint">
+              <span class="api-method get">GET</span>
+              <code class="api-path">/api/schemas/{name}/typescript</code>
+              <p class="api-desc">Get generated TypeScript types</p>
+            </div>
+            <div class="api-endpoint">
+              <span class="api-method get">GET</span>
+              <code class="api-path">/api/schemas/{name}/versions</code>
+              <p class="api-desc">List all versions of a schema</p>
+            </div>
+            <div class="api-endpoint">
+              <span class="api-method get">GET</span>
+              <code class="api-path">/api/schemas/{name}@{version}</code>
+              <p class="api-desc">Get a specific version of a schema</p>
+            </div>
+          </div>
+
+          <h4 class="api-example-title">Example Response</h4>
+          <div class="code-snippet">
+            <div class="code-header"><span>GET /api/schemas/OMM</span><button class="btn-sm-action" onclick="copyCode(this)">Copy</button></div>
+            <pre><code>{
+  "name": "OMM",
+  "description": "Orbit Mean-Elements Message",
+  "version": "1.0.5",
+  "category": "orbital",
+  "fieldCount": 42,
+  "formats": ["json-schema", "flatbuffers", "typescript", "go", "python", "rust"],
+  "links": {
+    "json_schema": "/api/schemas/OMM/json-schema",
+    "flatbuffers": "/api/schemas/OMM/flatbuffers",
+    "typescript": "/api/schemas/OMM/typescript"
+  }
+}</code></pre>
+          </div>
+        </div>
+
+        <!-- Validation API -->
+        <div class="api-card">
+          <h3 class="api-card-title">Validation API</h3>
+          <div class="api-endpoints">
+            <div class="api-endpoint">
+              <span class="api-method post">POST</span>
+              <code class="api-path">/api/validate</code>
+              <p class="api-desc">Validate data against a schema</p>
+            </div>
+          </div>
+
+          <h4 class="api-example-title">Example Request</h4>
+          <div class="code-snippet">
+            <div class="code-header"><span>POST /api/validate</span><button class="btn-sm-action" onclick="copyCode(this)">Copy</button></div>
+            <pre><code>{
+  "schema": "OMM",
+  "data": {
+    "OBJECT_NAME": "ISS (ZARYA)",
+    "OBJECT_ID": "1998-067A",
+    "EPOCH": "2024-01-15T12:00:00Z",
+    "MEAN_MOTION": 15.49,
+    "ECCENTRICITY": 0.0001,
+    "INCLINATION": 51.6
+  }
+}</code></pre>
+          </div>
+
+          <h4 class="api-example-title">Example Response</h4>
+          <div class="code-snippet">
+            <div class="code-header"><span>200 OK</span></div>
+            <pre><code>{
+  "valid": true,
+  "errors": [],
+  "schema": "OMM",
+  "version": "1.0.5"
+}</code></pre>
+          </div>
+        </div>
+
+        <!-- Generation API -->
+        <div class="api-card">
+          <h3 class="api-card-title">Generation API</h3>
+          <div class="api-endpoints">
+            <div class="api-endpoint">
+              <span class="api-method post">POST</span>
+              <code class="api-path">/api/generate</code>
+              <p class="api-desc">Generate code from a schema</p>
+            </div>
+          </div>
+
+          <h4 class="api-example-title">Example Request</h4>
+          <div class="code-snippet">
+            <div class="code-header"><span>POST /api/generate</span><button class="btn-sm-action" onclick="copyCode(this)">Copy</button></div>
+            <pre><code>{
+  "schema": "OMM",
+  "format": "typescript"
+}</code></pre>
+          </div>
+
+          <h4 class="api-example-title">Example Response</h4>
+          <div class="code-snippet">
+            <div class="code-header"><span>200 OK - TypeScript output</span></div>
+            <pre><code>export interface OMM {
+  CCSDS_OMM_VERS?: number;
+  CREATION_DATE?: string;
+  ORIGINATOR?: string;
+  OBJECT_NAME?: string;
+  OBJECT_ID?: string;
+  CENTER_NAME?: string;
+  EPOCH?: string;
+  MEAN_MOTION?: number;
+  ECCENTRICITY?: number;
+  INCLINATION?: number;
+  RA_OF_ASC_NODE?: number;
+  ARG_OF_PERICENTER?: number;
+  MEAN_ANOMALY?: number;
+  // ... additional fields
+}</code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download Center -->
+  <section id="download">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Download Center</h2>
+        <p class="section-subtitle">Download schemas individually or in bulk, in any format</p>
+      </div>
+      <div class="download-grid">
+        <div class="download-card">
+          <div class="feature-icon icon-blue">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </div>
+          <h3 class="feature-title">All Schemas - JSON Schema</h3>
+          <p class="feature-desc">All 38 schemas as JSON Schema files with x-flatbuffer annotations</p>
+          <button class="btn btn-sm btn-primary" onclick="downloadBulk('json')">Download .zip</button>
+        </div>
+        <div class="download-card">
+          <div class="feature-icon icon-purple">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </div>
+          <h3 class="feature-title">All Schemas - FlatBuffers</h3>
+          <p class="feature-desc">All 38 schemas as .fbs FlatBuffer schema definitions</p>
+          <button class="btn btn-sm btn-primary" onclick="downloadBulk('fbs')">Download .zip</button>
+        </div>
+        <div class="download-card">
+          <div class="feature-icon icon-cyan">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </div>
+          <h3 class="feature-title">All Schemas - TypeScript</h3>
+          <p class="feature-desc">Generated TypeScript type definitions for all schemas</p>
+          <button class="btn btn-sm btn-primary" onclick="downloadBulk('ts')">Download .zip</button>
+        </div>
+        <div class="download-card">
+          <div class="feature-icon icon-green">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </div>
+          <h3 class="feature-title">All Schemas - All Formats</h3>
+          <p class="feature-desc">Complete bundle with JSON Schema, FlatBuffers, TypeScript, Go, Python, and Rust</p>
+          <button class="btn btn-sm btn-primary" onclick="downloadBulk('all')">Download .zip</button>
+        </div>
+        <div class="download-card">
+          <div class="feature-icon icon-orange">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+          <h3 class="feature-title">NPM Package</h3>
+          <p class="feature-desc">Install via npm: @spacedatastandards/schemas</p>
+          <div class="code-snippet compact">
+            <pre><code>npm install @spacedatastandards/schemas</code></pre>
+          </div>
+        </div>
+        <div class="download-card">
+          <div class="feature-icon icon-teal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          </div>
+          <h3 class="feature-title">Go Module</h3>
+          <p class="feature-desc">Install via Go modules</p>
+          <div class="code-snippet compact">
+            <pre><code>go get github.com/DigitalArsenal/spacedatastandards</code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container">
+      <div class="footer-content">
+        <div class="footer-brand">
+          <div class="logo">
+            <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="50" cy="50" r="45" stroke="currentColor" stroke-width="4"/>
+              <ellipse cx="50" cy="50" rx="45" ry="18" stroke="currentColor" stroke-width="2"/>
+              <ellipse cx="50" cy="50" rx="45" ry="18" stroke="currentColor" stroke-width="2" transform="rotate(60 50 50)"/>
+              <ellipse cx="50" cy="50" rx="45" ry="18" stroke="currentColor" stroke-width="2" transform="rotate(120 50 50)"/>
+              <circle cx="50" cy="50" r="8" fill="currentColor"/>
+            </svg>
+            <span>Space Data Standards</span>
+          </div>
+          <p class="footer-desc">Open schemas for space situational awareness, built on FlatBuffers and JSON Schema.</p>
+        </div>
+        <div class="footer-links">
+          <div class="footer-col">
+            <h4>Schemas</h4>
+            <a href="#schemas">Schema Explorer</a>
+            <a href="#download">Download Center</a>
+            <a href="#api">API Reference</a>
+          </div>
+          <div class="footer-col">
+            <h4>Resources</h4>
+            <a href="#docs">Documentation</a>
+            <a href="https://spacedatanetwork.com" target="_blank" rel="noopener">Space Data Network</a>
+            <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" rel="noopener">GitHub</a>
+          </div>
+          <div class="footer-col">
+            <h4>Standards</h4>
+            <a href="https://public.ccsds.org/default.aspx" target="_blank" rel="noopener">CCSDS</a>
+            <a href="https://flatbuffers.dev" target="_blank" rel="noopener">FlatBuffers</a>
+            <a href="https://json-schema.org" target="_blank" rel="noopener">JSON Schema</a>
+          </div>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>Space Data Standards is part of the <a href="https://spacedatanetwork.com" target="_blank" rel="noopener">Space Data Network</a> project.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="schemas.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

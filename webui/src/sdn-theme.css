@@ -1,0 +1,260 @@
+/* =========================
+   SDN Dark/Light Theme CSS
+   Phase 17.1: Dark Mode Default
+   ========================= */
+
+/* Dark theme (default) */
+:root[data-theme="dark"] {
+  --sdn-bg-primary: #0d1117;
+  --sdn-bg-secondary: #161b22;
+  --sdn-bg-tertiary: #21262d;
+  --sdn-bg-box: #161b22;
+  --sdn-bg-header: #0d1117;
+  --sdn-bg-input: #0d1117;
+  --sdn-text-primary: #e6edf3;
+  --sdn-text-secondary: #8b949e;
+  --sdn-text-muted: #484f58;
+  --sdn-border: #30363d;
+  --sdn-accent: #58a6ff;
+  --sdn-accent-green: #3fb950;
+  --sdn-accent-orange: #d29922;
+  --sdn-accent-red: #f85149;
+  --sdn-accent-purple: #bc8cff;
+  --sdn-nav-bg: #010409;
+  --sdn-link: #58a6ff;
+  --sdn-table-row-hover: #1c2128;
+  --sdn-table-header: #21262d;
+}
+
+/* Light theme */
+:root[data-theme="light"] {
+  --sdn-bg-primary: #ffffff;
+  --sdn-bg-secondary: #f6f8fa;
+  --sdn-bg-tertiary: #eaeef2;
+  --sdn-bg-box: #fbfbfb;
+  --sdn-bg-header: #F0F6FA;
+  --sdn-bg-input: #ffffff;
+  --sdn-text-primary: #1f2328;
+  --sdn-text-secondary: #656d76;
+  --sdn-text-muted: #8b949e;
+  --sdn-border: #d0d7de;
+  --sdn-accent: #0969da;
+  --sdn-accent-green: #1a7f37;
+  --sdn-accent-orange: #9a6700;
+  --sdn-accent-red: #cf222e;
+  --sdn-accent-purple: #8250df;
+  --sdn-nav-bg: #0b3a53;
+  --sdn-link: #0969da;
+  --sdn-table-row-hover: #f6f8fa;
+  --sdn-table-header: #f6f8fa;
+}
+
+/* Apply theme variables to core elements */
+:root[data-theme="dark"] body {
+  background-color: var(--sdn-bg-primary);
+  color: var(--sdn-text-primary);
+}
+
+:root[data-theme="dark"] .bg-white {
+  background-color: var(--sdn-bg-secondary) !important;
+}
+
+:root[data-theme="dark"] .bg-white-70 {
+  background-color: var(--sdn-bg-secondary) !important;
+}
+
+:root[data-theme="dark"] .bg-near-white {
+  background-color: var(--sdn-bg-tertiary) !important;
+}
+
+:root[data-theme="dark"] .bg-snow {
+  background-color: var(--sdn-bg-secondary) !important;
+}
+
+:root[data-theme="dark"] .charcoal {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] .charcoal-muted {
+  color: var(--sdn-text-secondary) !important;
+}
+
+:root[data-theme="dark"] .gray {
+  color: var(--sdn-text-secondary) !important;
+}
+
+:root[data-theme="dark"] .navy {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] .bg-navy {
+  background-color: var(--sdn-nav-bg) !important;
+}
+
+:root[data-theme="dark"] .link.blue,
+:root[data-theme="dark"] a.blue {
+  color: var(--sdn-link) !important;
+}
+
+:root[data-theme="dark"] .b--black-20 {
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .b--near-white {
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .input-reset {
+  background-color: var(--sdn-bg-input);
+  color: var(--sdn-text-primary);
+  border-color: var(--sdn-border);
+}
+
+:root[data-theme="dark"] main.bg-white {
+  background-color: var(--sdn-bg-primary) !important;
+}
+
+/* Box component dark override */
+:root[data-theme="dark"] section {
+  background-color: var(--sdn-bg-box) !important;
+}
+
+/* Peers table dark mode */
+:root[data-theme="dark"] .peersTableItem {
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .ReactVirtualized__Table__headerRow {
+  background-color: var(--sdn-table-header);
+}
+
+:root[data-theme="dark"] .teal {
+  color: var(--sdn-accent) !important;
+}
+
+/* Header bar dark mode */
+:root[data-theme="dark"] .sdn-header-bar {
+  background-color: var(--sdn-bg-header) !important;
+  border-bottom: 1px solid var(--sdn-border);
+}
+
+/* Theme toggle button */
+.sdn-theme-toggle {
+  background: none;
+  border: 1px solid var(--sdn-border, #30363d);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--sdn-text-primary, #e6edf3);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s ease;
+}
+
+.sdn-theme-toggle:hover {
+  background-color: var(--sdn-bg-tertiary, #21262d);
+}
+
+/* SDN-specific component styles */
+.sdn-panel {
+  background-color: var(--sdn-bg-box);
+  border: 1px solid var(--sdn-border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.sdn-panel-header {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sdn-text-secondary);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--sdn-border);
+}
+
+.sdn-stat-card {
+  background-color: var(--sdn-bg-tertiary);
+  border: 1px solid var(--sdn-border);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+
+.sdn-stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--sdn-accent);
+  line-height: 1.2;
+}
+
+.sdn-stat-label {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sdn-text-secondary);
+  margin-top: 4px;
+}
+
+.sdn-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sdn-badge-sdn {
+  background-color: rgba(59, 130, 246, 0.15);
+  color: var(--sdn-accent);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.sdn-badge-ipfs {
+  background-color: rgba(139, 148, 158, 0.15);
+  color: var(--sdn-text-secondary);
+  border: 1px solid rgba(139, 148, 158, 0.3);
+}
+
+.sdn-identity-card {
+  background: linear-gradient(135deg, var(--sdn-bg-tertiary), var(--sdn-bg-secondary));
+  border: 1px solid var(--sdn-border);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.sdn-identity-card h3 {
+  color: var(--sdn-accent);
+  margin: 0 0 12px 0;
+  font-size: 16px;
+}
+
+.sdn-identity-field {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--sdn-border);
+  font-size: 13px;
+}
+
+.sdn-identity-field:last-child {
+  border-bottom: none;
+}
+
+.sdn-identity-field-label {
+  color: var(--sdn-text-secondary);
+  font-weight: 500;
+}
+
+.sdn-identity-field-value {
+  color: var(--sdn-text-primary);
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Mono', monospace;
+  font-size: 12px;
+}

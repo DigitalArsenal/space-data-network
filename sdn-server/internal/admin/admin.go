@@ -468,23 +468,14 @@ func (m *Manager) DisableTOTP(adminID int64) error {
 	return nil
 }
 
-// GenerateTOTPSecret generates a new TOTP secret.
-func GenerateTOTPSecret() (string, error) {
-	secret := make([]byte, 20)
-	if _, err := rand.Read(secret); err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(secret), nil
+// GenerateTOTPSecretForUser generates a TOTP secret and provisioning URI for a user.
+func GenerateTOTPSecretForUser(username string) (secret, uri string, err error) {
+	return GenerateTOTPSetup(username)
 }
 
-// verifyTOTP verifies a TOTP code (simplified implementation).
-// In production, use a proper TOTP library like github.com/pquerna/otp.
+// verifyTOTP verifies a TOTP code using RFC 6238 time-based one-time password.
 func verifyTOTP(secret, code string) bool {
-	// This is a placeholder - implement actual TOTP verification
-	// using time-based one-time password algorithm (RFC 6238)
-	_ = secret
-	_ = code
-	return true // Placeholder - always returns true
+	return ValidateTOTP(secret, code)
 }
 
 // CleanupExpiredSessions removes expired sessions from the database.

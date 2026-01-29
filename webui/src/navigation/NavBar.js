@@ -71,10 +71,15 @@ export const NavBar = ({ t }) => {
   return (
     <div className='h-100 fixed-l flex flex-column justify-between' style={{ overflowY: 'auto', width: 'inherit' }}>
       <div className='flex flex-column'>
-        <a href="#/welcome" role='menuitem' title={t('welcome:description')}>
-          <div className='pt3 pb1 pb2-l'>
-            <img className='navbar-logo-vert center db-l dn pt3 pb1' style={{ height: 94 }} src={ipfsLogoTextVert} alt='' />
-            <img className='navbar-logo-horiz center db dn-l' style={{ height: 70 }} src={ipfsLogoTextHoriz} alt='' />
+        <a href="#/" role='menuitem' title='Space Data Network'>
+          <div className='pt3 pb1 pb2-l tc'>
+            <div className='navbar-logo-vert center db-l dn pt3 pb1' style={{ height: 94, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ fontSize: '24px', fontWeight: 700, color: '#58a6ff', fontFamily: 'Montserrat, sans-serif', letterSpacing: '0.05em' }}>SDN</span>
+              <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', fontFamily: 'Montserrat, sans-serif', marginTop: '4px' }}>Space Data Network</span>
+            </div>
+            <div className='navbar-logo-horiz center db dn-l' style={{ height: 70, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ fontSize: '20px', fontWeight: 700, color: '#58a6ff', fontFamily: 'Montserrat, sans-serif', letterSpacing: '0.05em' }}>SDN</span>
+            </div>
           </div>
         </a>
         <div className='db overflow-x-scroll overflow-x-hidden-l nowrap tc' role='menubar'>

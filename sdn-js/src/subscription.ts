@@ -692,3 +692,480 @@ export class SubscriptionManager {
  * Default subscription manager instance
  */
 export const defaultSubscriptionManager = new SubscriptionManager();
+
+// --- Streaming Mode Support ---
+
+/**
+ * Encryption mode for streaming payloads
+ */
+export enum EncryptionMode {
+  /** No encryption */
+  None = 0,
+  /** ECIES per-message encryption */
+  ECIES = 1,
+  /** Session key encryption (AES-GCM with pre-shared key) */
+  SessionKey = 2,
+  /** Hybrid: header unencrypted, payload encrypted */
+  Hybrid = 3,
+}
+
+/**
+ * Stream delivery mode
+ */
+export enum StreamDeliveryMode {
+  /** Single message delivery */
+  Single = 0,
+  /** Real-time streaming */
+  Streaming = 1,
+  /** Batch delivery */
+  Batch = 2,
+}
+
+/**
+ * Streaming session state
+ */
+export interface StreamingSession {
+  /** Unique session ID */
+  id: string;
+  /** Associated subscription ID */
+  subscriptionId: string;
+  /** Remote peer ID */
+  peerId: string;
+  /** Schema types this session handles */
+  schemaTypes: string[];
+  /** Delivery mode */
+  mode: StreamDeliveryMode;
+  /** Encryption mode */
+  encryptionMode: EncryptionMode;
+  /** Session key ID (for session-key encryption) */
+  sessionKeyId?: string;
+  /** Whether the session is active */
+  active: boolean;
+  /** Messages sent count */
+  messagesSent: number;
+  /** Bytes sent count */
+  bytesSent: number;
+  /** Creation timestamp */
+  createdAt: number;
+  /** Last activity timestamp */
+  lastActivity: number;
+}
+
+/**
+ * Extended routing header with encryption mode and streaming support
+ */
+export interface ExtendedRoutingHeader extends RoutingHeader {
+  /** Encryption mode for the payload */
+  encryptionMode: EncryptionMode;
+  /** Source peer ID */
+  sourcePeer?: string;
+  /** Sequence number for ordering */
+  sequence?: number;
+  /** Timestamp (Unix milliseconds) */
+  timestamp: number;
+  /** Topic override */
+  topicOverride?: string;
+  /** Stream delivery mode */
+  streamMode?: StreamDeliveryMode;
+}
+
+/**
+ * Edge relay filter configuration
+ */
+export interface EdgeRelayFilter {
+  /** Allowed schema types (empty = all) */
+  allowedSchemas?: string[];
+  /** Allowed destination peers (empty = all) */
+  allowedPeers?: string[];
+  /** Minimum priority to forward (0 = all) */
+  minPriority: number;
+  /** Maximum TTL accepted (0 = no limit) */
+  maxTTL: number;
+  /** Allow encrypted messages */
+  allowEncrypted: boolean;
+  /** Allow unencrypted messages */
+  allowUnencrypted: boolean;
+}
+
+/**
+ * Creates a default edge relay filter (permissive)
+ */
+export function createDefaultEdgeRelayFilter(): EdgeRelayFilter {
+  return {
+    minPriority: 0,
+    maxTTL: 0,
+    allowEncrypted: true,
+    allowUnencrypted: true,
+  };
+}
+
+/**
+ * Evaluates an edge relay filter against a routing header
+ */
+export function evaluateEdgeRelayFilter(filter: EdgeRelayFilter, header: RoutingHeader): boolean {
+  // Schema filter
+  if (filter.allowedSchemas && filter.allowedSchemas.length > 0) {
+    if (!filter.allowedSchemas.includes(header.schemaType)) {
+      return false;
+    }
+  }
+
+  // Peer filter
+  if (filter.allowedPeers && filter.allowedPeers.length > 0 && header.destinationPeers.length > 0) {
+    const hasAllowed = header.destinationPeers.some(p => filter.allowedPeers!.includes(p));
+    if (!hasAllowed) {
+      return false;
+    }
+  }
+
+  // Priority filter
+  if (header.priority < filter.minPriority) {
+    return false;
+  }
+
+  // TTL filter
+  if (filter.maxTTL > 0 && header.ttl > filter.maxTTL) {
+    return false;
+  }
+
+  // Encryption filter
+  if (header.encrypted && !filter.allowEncrypted) {
+    return false;
+  }
+  if (!header.encrypted && !filter.allowUnencrypted) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Creates an extended routing header with streaming support
+ */
+export function createRoutingHeader(
+  schemaType: string,
+  sourcePeer: string,
+  options?: Partial<ExtendedRoutingHeader>,
+): ExtendedRoutingHeader {
+  return {
+    schemaType,
+    destinationPeers: [],
+    ttl: 7,
+    priority: 64, // Normal
+    encrypted: true,
+    encryptionMode: EncryptionMode.ECIES,
+    sourcePeer,
+    timestamp: Date.now(),
+    streamMode: StreamDeliveryMode.Single,
+    ...options,
+  };
+}
+
+/**
+ * Serializes an extended routing header to binary format
+ * Compatible with Go SerializeRoutingHeader
+ */
+export function serializeExtendedRoutingHeader(header: ExtendedRoutingHeader): Uint8Array {
+  const encoder = new TextEncoder();
+  const schemaBytes = encoder.encode(header.schemaType);
+  const destBytes = header.destinationPeers.map(p => encoder.encode(p));
+
+  let size = 1 + schemaBytes.length; // schema type length + schema type
+  size += 1; // destination count
+  for (const dest of destBytes) {
+    size += 1 + dest.length;
+  }
+  size += 3; // ttl + priority + flags
+
+  const sessionKeyBytes = header.sessionKeyId ? encoder.encode(header.sessionKeyId) : null;
+  const sourcePeerBytes = header.sourcePeer ? encoder.encode(header.sourcePeer) : null;
+  const topicOverrideBytes = header.topicOverride ? encoder.encode(header.topicOverride) : null;
+
+  if (sessionKeyBytes) size += 1 + sessionKeyBytes.length;
+  if (sourcePeerBytes) size += 1 + sourcePeerBytes.length;
+  if (topicOverrideBytes) size += 1 + topicOverrideBytes.length;
+
+  size += 16; // sequence (8) + timestamp (8)
+
+  const buffer = new Uint8Array(size);
+  const view = new DataView(buffer.buffer);
+  let offset = 0;
+
+  // Schema type
+  buffer[offset++] = schemaBytes.length;
+  buffer.set(schemaBytes, offset);
+  offset += schemaBytes.length;
+
+  // Destination peers
+  buffer[offset++] = destBytes.length;
+  for (const dest of destBytes) {
+    buffer[offset++] = dest.length;
+    buffer.set(dest, offset);
+    offset += dest.length;
+  }
+
+  // TTL and priority
+  buffer[offset++] = Math.min(255, Math.max(0, header.ttl));
+  buffer[offset++] = Math.min(255, Math.max(0, header.priority));
+
+  // Flags
+  let flags = 0;
+  if (header.encrypted) flags |= 0x01;
+  if (sessionKeyBytes) flags |= 0x02;
+  if (sourcePeerBytes) flags |= 0x04;
+  if (topicOverrideBytes) flags |= 0x08;
+  flags |= (header.encryptionMode & 0x03) << 5;
+  buffer[offset++] = flags;
+
+  // Optional session key ID
+  if (sessionKeyBytes) {
+    buffer[offset++] = sessionKeyBytes.length;
+    buffer.set(sessionKeyBytes, offset);
+    offset += sessionKeyBytes.length;
+  }
+
+  // Optional source peer
+  if (sourcePeerBytes) {
+    buffer[offset++] = sourcePeerBytes.length;
+    buffer.set(sourcePeerBytes, offset);
+    offset += sourcePeerBytes.length;
+  }
+
+  // Optional topic override
+  if (topicOverrideBytes) {
+    buffer[offset++] = topicOverrideBytes.length;
+    buffer.set(topicOverrideBytes, offset);
+    offset += topicOverrideBytes.length;
+  }
+
+  // Sequence (8 bytes, big endian)
+  const seq = header.sequence ?? 0;
+  view.setUint32(offset, Math.floor(seq / 0x100000000));
+  view.setUint32(offset + 4, seq >>> 0);
+  offset += 8;
+
+  // Timestamp (8 bytes, big endian)
+  const ts = header.timestamp;
+  view.setUint32(offset, Math.floor(ts / 0x100000000));
+  view.setUint32(offset + 4, ts >>> 0);
+  offset += 8;
+
+  return buffer.slice(0, offset);
+}
+
+/**
+ * Deserializes an extended routing header from binary format
+ * Compatible with Go DeserializeRoutingHeader
+ */
+export function deserializeExtendedRoutingHeader(data: Uint8Array): ExtendedRoutingHeader | null {
+  if (data.length < 5) return null;
+
+  const decoder = new TextDecoder();
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let offset = 0;
+
+  // Schema type
+  const schemaTypeLen = data[offset++];
+  if (offset + schemaTypeLen > data.length) return null;
+  const schemaType = decoder.decode(data.slice(offset, offset + schemaTypeLen));
+  offset += schemaTypeLen;
+
+  // Destination peers
+  if (offset >= data.length) return null;
+  const destCount = data[offset++];
+  const destinationPeers: string[] = [];
+  for (let i = 0; i < destCount; i++) {
+    if (offset >= data.length) return null;
+    const destLen = data[offset++];
+    if (offset + destLen > data.length) return null;
+    destinationPeers.push(decoder.decode(data.slice(offset, offset + destLen)));
+    offset += destLen;
+  }
+
+  // TTL, priority, flags
+  if (offset + 3 > data.length) return null;
+  const ttl = data[offset++];
+  const priority = data[offset++];
+  const flags = data[offset++];
+
+  const encrypted = (flags & 0x01) !== 0;
+  const hasSessionKey = (flags & 0x02) !== 0;
+  const hasSourcePeer = (flags & 0x04) !== 0;
+  const hasTopicOverride = (flags & 0x08) !== 0;
+  const encryptionMode: EncryptionMode = ((flags >> 5) & 0x03) as EncryptionMode;
+
+  let sessionKeyId: string | undefined;
+  if (hasSessionKey && offset < data.length) {
+    const len = data[offset++];
+    if (offset + len <= data.length) {
+      sessionKeyId = decoder.decode(data.slice(offset, offset + len));
+      offset += len;
+    }
+  }
+
+  let sourcePeer: string | undefined;
+  if (hasSourcePeer && offset < data.length) {
+    const len = data[offset++];
+    if (offset + len <= data.length) {
+      sourcePeer = decoder.decode(data.slice(offset, offset + len));
+      offset += len;
+    }
+  }
+
+  let topicOverride: string | undefined;
+  if (hasTopicOverride && offset < data.length) {
+    const len = data[offset++];
+    if (offset + len <= data.length) {
+      topicOverride = decoder.decode(data.slice(offset, offset + len));
+      offset += len;
+    }
+  }
+
+  let sequence: number | undefined;
+  let timestamp = 0;
+  if (offset + 16 <= data.length) {
+    sequence = view.getUint32(offset) * 0x100000000 + view.getUint32(offset + 4);
+    offset += 8;
+    timestamp = view.getUint32(offset) * 0x100000000 + view.getUint32(offset + 4);
+    offset += 8;
+  }
+
+  return {
+    schemaType,
+    destinationPeers,
+    ttl,
+    priority,
+    encrypted,
+    encryptionMode,
+    sessionKeyId,
+    sourcePeer,
+    sequence,
+    timestamp,
+    topicOverride,
+  };
+}
+
+/**
+ * Creates a message with routing header prepended (matches Go format)
+ * Format: [headerLen(2)][header(n)][payload(m)]
+ */
+export function createMessageWithHeader(header: ExtendedRoutingHeader, payload: Uint8Array): Uint8Array {
+  const headerBytes = serializeExtendedRoutingHeader(header);
+  const message = new Uint8Array(2 + headerBytes.length + payload.length);
+  const view = new DataView(message.buffer);
+  view.setUint16(0, headerBytes.length);
+  message.set(headerBytes, 2);
+  message.set(payload, 2 + headerBytes.length);
+  return message;
+}
+
+/**
+ * Parses a message with routing header to extract header and payload
+ */
+export function parseMessageWithHeader(message: Uint8Array): { header: ExtendedRoutingHeader; payload: Uint8Array } | null {
+  if (message.length < 2) return null;
+
+  const view = new DataView(message.buffer, message.byteOffset, message.byteLength);
+  const headerLen = view.getUint16(0);
+
+  if (message.length < 2 + headerLen) return null;
+
+  const header = deserializeExtendedRoutingHeader(message.slice(2, 2 + headerLen));
+  if (!header) return null;
+
+  const payload = message.slice(2 + headerLen);
+  return { header, payload };
+}
+
+/**
+ * Determines the routing topic for a message based on its header
+ */
+export function getRoutingTopicForHeader(header: RoutingHeader | ExtendedRoutingHeader): string {
+  const extended = header as ExtendedRoutingHeader;
+  if (extended.topicOverride) {
+    return extended.topicOverride;
+  }
+  if (header.destinationPeers.length === 1) {
+    return getPeerRoutingTopic(header.destinationPeers[0]);
+  }
+  return getSchemaRoutingTopic(header.schemaType);
+}
+
+/**
+ * Desktop app subscription data model API.
+ * Provides the data model and configuration interface for the desktop app.
+ */
+export class DesktopSubscriptionAPI {
+  private manager: SubscriptionManager;
+  private streamingSessions: Map<string, StreamingSession> = new Map();
+
+  constructor(manager?: SubscriptionManager) {
+    this.manager = manager ?? new SubscriptionManager();
+  }
+
+  /** Get the subscription manager */
+  getManager(): SubscriptionManager {
+    return this.manager;
+  }
+
+  /** Create a subscription with streaming session */
+  createStreamingSubscription(
+    config: SubscriptionConfig,
+    peerId: string,
+    mode: StreamDeliveryMode = StreamDeliveryMode.Streaming,
+    encMode: EncryptionMode = EncryptionMode.ECIES,
+  ): { subscription: ActiveSubscription; session: StreamingSession } {
+    const subscription = this.manager.createSubscription(config);
+
+    const session: StreamingSession = {
+      id: `sess_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 10)}`,
+      subscriptionId: subscription.id,
+      peerId,
+      schemaTypes: config.dataTypes,
+      mode,
+      encryptionMode: encMode,
+      sessionKeyId: encMode === EncryptionMode.SessionKey
+        ? `sk_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 10)}`
+        : undefined,
+      active: true,
+      messagesSent: 0,
+      bytesSent: 0,
+      createdAt: Date.now(),
+      lastActivity: Date.now(),
+    };
+
+    this.streamingSessions.set(session.id, session);
+    return { subscription, session };
+  }
+
+  /** Close a streaming session */
+  closeSession(sessionId: string): boolean {
+    const session = this.streamingSessions.get(sessionId);
+    if (!session) return false;
+    session.active = false;
+    this.streamingSessions.delete(sessionId);
+    return true;
+  }
+
+  /** Get all streaming sessions */
+  getSessions(): StreamingSession[] {
+    return Array.from(this.streamingSessions.values());
+  }
+
+  /** Get sessions for a specific peer */
+  getPeerSessions(peerId: string): StreamingSession[] {
+    return this.getSessions().filter(s => s.peerId === peerId);
+  }
+
+  /** Get all required topics including streaming sessions */
+  getRequiredTopics(): string[] {
+    const topics = this.manager.getRequiredTopics();
+    // Add session-specific peer topics
+    for (const session of this.streamingSessions.values()) {
+      if (session.active) {
+        topics.add(getPeerRoutingTopic(session.peerId));
+      }
+    }
+    return Array.from(topics);
+  }
+}

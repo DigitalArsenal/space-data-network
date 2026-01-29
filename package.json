@@ -6,6 +6,8 @@
   "scripts": {
     "docs": "cd docs && npx http-server -p 4173 -c-1",
     "docs:open": "cd docs && npx http-server -p 4173 -c-1 -o",
+    "standards": "cd spacedatastandards-site && npx http-server -p 4174 -c-1",
+    "standards:open": "cd spacedatastandards-site && npx http-server -p 4174 -c-1 -o",
     "test": "npm run test:go && npm run test:js",
     "test:go": "cd sdn-server && go test ./...",
     "test:js": "cd sdn-js && npm test",

@@ -9,6 +9,7 @@ import BandwidthStatsDisabled from './BandwidthStatsDisabled.js'
 import IsNotConnected from '../components/is-not-connected/is-not-connected.js'
 import NodeInfo from './NodeInfo.js'
 import NodeInfoAdvanced from './NodeInfoAdvanced.js'
+import SdnDashboard from './SdnDashboard.js'
 import NodeBandwidthChart from './NodeBandwidthChart.js'
 import NetworkTraffic from './NetworkTraffic.js'
 import Box from '../components/box/Box.js'
@@ -32,8 +33,12 @@ const StatusPage = ({
   return (
     <div data-id='StatusPage' className='mw9 center'>
       <Helmet>
-        <title>{t('title')} | IPFS</title>
+        <title>{t('title')} | SDN</title>
       </Helmet>
+
+      {/* Phase 17.3: SDN Dashboard - Prominent */}
+      { ipfsConnected && <SdnDashboard /> }
+
       <Box className='pa3 joyride-status-node' style={{ minHeight: 0 }}>
         <div className='flex'>
           <div className='flex-auto'>

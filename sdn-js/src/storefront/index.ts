@@ -62,6 +62,18 @@ export type {
   CreateListingRequest,
   CreatePurchaseRequest,
   CreateReviewRequest,
+  CatalogEntry,
+  CryptoPaymentRequest,
+  CryptoPaymentResult,
+  FiatGatewayRequest,
+  FiatGatewayResult,
+  CreditsTransaction,
+  DeliveryRequest,
+  DeliveryResult,
+  SellerDashboard,
+  BuyerDashboard,
+  TrustScore,
+  TrustWeights,
 } from './types';
 
 // Client
@@ -84,6 +96,18 @@ export {
   formatRating,
   renderListingCardHTML,
   listingCardStyles,
+  formatEarnings,
+  formatTrustScore,
+  renderSellerDashboardHTML,
+  sellerDashboardStyles,
+  formatGrantStatus,
+  formatDeliveryMethod,
+  renderBuyerDashboardHTML,
+  buyerDashboardStyles,
 } from './components';
 
-export type { ListingCardProps } from './components';
+export type {
+  ListingCardProps,
+  SellerDashboardProps,
+  BuyerDashboardProps,
+} from './components';

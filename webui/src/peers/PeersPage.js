@@ -11,6 +11,7 @@ import { getJoyrideLocales } from '../helpers/i8n.js'
 import Box from '../components/box/Box.js'
 import WorldMap from './WorldMap/WorldMap.js'
 import PeersTable from './PeersTable/PeersTable.js'
+import SdnPeersPanel from './SdnPeersPanel.js'
 import AddConnection from './AddConnection/AddConnection.js'
 import CliTutorMode from '../components/cli-tutor-mode/CliTutorMode.js'
 import { cliCmdKeys, cliCommandList } from '../bundles/files/consts.js'
@@ -18,13 +19,16 @@ import { cliCmdKeys, cliCommandList } from '../bundles/files/consts.js'
 const PeersPage = ({ t, toursEnabled, handleJoyrideCallback }) => (
   <div data-id='PeersPage' className='overflow-hidden'>
     <Helmet>
-      <title>{t('title')} | IPFS</title>
+      <title>{t('title')} | SDN</title>
     </Helmet>
 
     <div className='flex justify-end items-center mb3'>
       <CliTutorMode showIcon={true} command={cliCommandList[cliCmdKeys.ADD_NEW_PEER]()} t={t}/>
       <AddConnection />
     </div>
+
+    {/* Phase 17.2: SDN vs IPFS Peer Separation */}
+    <SdnPeersPanel />
 
     <Box className='pt3 ph3 pb4'>
       <WorldMap className='joyride-peers-map' />
