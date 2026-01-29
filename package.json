@@ -16,7 +16,7 @@
     "server": "cd sdn-server && go run ./cmd/spacedatanetwork",
     "server:edge": "cd sdn-server && go run ./cmd/spacedatanetwork-edge",
     "server:build": "cd sdn-server && go build -o bin/spacedatanetwork ./cmd/spacedatanetwork && go build -o bin/spacedatanetwork-edge ./cmd/spacedatanetwork-edge",
-    "desktop": "npm --prefix desktop start",
+    "desktop": "test -d desktop/node_modules || (echo 'Dependencies not installed. Run: npm run install:desktop' && exit 1) && npm --prefix desktop start",
     "desktop:build": "cd desktop && npm run build && npm run package",
     "install:js": "cd sdn-js && npm install",
     "install:desktop": "cd desktop && npm install",
