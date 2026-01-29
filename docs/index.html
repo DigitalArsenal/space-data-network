@@ -1986,7 +1986,7 @@
     }
 
     .accordion-item.open .accordion-content {
-      max-height: 400px;
+      max-height: 2000px;
     }
 
     .accordion-content-inner {
@@ -3728,6 +3728,7 @@
         <a href="#security">Security</a>
         <a href="#docs">Docs</a>
         <a href="#downloads">Downloads</a>
+        <a href="#faq">FAQ</a>
         <a href="https://github.com/DigitalArsenal/go-space-data-network" target="_blank">GitHub</a>
       </div>
       <div class="nav-right">
@@ -5561,6 +5562,10 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
                 <li style="margin-bottom: 8px;"><strong><a href="https://celestrak.org" target="_blank" style="color: var(--text-primary);">CelesTrak</a></strong> - Dr. T.S. Kelso's invaluable TLE distribution service. SDN supports the same data formats and can extend CelesTrak data with real-time operator ephemerides.</li>
                 <li style="margin-bottom: 8px;"><strong><a href="https://discosweb.esoc.esa.int" target="_blank" style="color: var(--text-primary);">ESA DISCOS</a></strong> - European Space Agency's database on space objects. SDN enables interoperability between ESA data and other international sources.</li>
                 <li style="margin-bottom: 8px;"><strong><a href="https://www.eu-ssa.eu" target="_blank" style="color: var(--text-primary);">EU SST</a></strong> - European Union Space Surveillance & Tracking. SDN can bridge EU SST data with global partners.</li>
+                <li style="margin-bottom: 8px;"><strong><a href="http://spacedata.vimpel.ru" target="_blank" style="color: var(--text-primary);">JSC Vimpel</a></strong> - Russia's independent space object catalog maintained by the Keldysh Institute and Vimpel Corporation, with data from 80+ optical systems across multiple countries. SDN can interoperate with Vimpel catalog data alongside Western sources.</li>
+                <li style="margin-bottom: 8px;"><strong><a href="https://global.jaxa.jp/projects/ssa/" target="_blank" style="color: var(--text-primary);">JAXA SSA</a></strong> - Japan's Space Situational Awareness system operated from the Kamisaibara and Bisei Space Guard Centers. SDN enables sharing of JAXA-tracked objects with the broader international community.</li>
+                <li style="margin-bottom: 8px;"><strong><a href="https://www.isro.gov.in/SSA.html" target="_blank" style="color: var(--text-primary);">ISRO NETRA</a></strong> - India's Network for space object TRacking and Analysis, providing independent SSA capability. SDN can bridge NETRA data with other national catalogs.</li>
+                <li style="margin-bottom: 8px;"><strong>China's SSA Network</strong> - China is building an independent space object catalog using space-based and ground sensors operated by the PLA and CNSA. SDN's open protocol allows integration if and when this data becomes available.</li>
                 <li style="margin-bottom: 8px;"><strong>Commercial SSA providers</strong> (LeoLabs, ExoAnalytic, etc.) - SDN provides an open data exchange layer that commercial providers can use to share data with customers.</li>
               </ul>
               <p>Unlike centralized services, SDN has no single point of failure, no usage quotas, and enables direct peer-to-peer data sharing with cryptographic verification of data provenance.</p>
