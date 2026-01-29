@@ -1,0 +1,109 @@
+{
+  "actions": {
+    "add": "Ekle",
+    "apply": "Uygula",
+    "browse": "Araştır",
+    "cancel": "İptal et",
+    "change": "Değiştir",
+    "clear": "Temizle",
+    "close": "Kapat",
+    "copy": "Kopyala",
+    "create": "Oluştur",
+    "default": "",
+    "remove": "Kaldır",
+    "download": "İndir",
+    "edit": "Düzenle",
+    "import": "İçe aktar",
+    "inspect": "İncele",
+    "more": "Daha fazla",
+    "rename": "Adını değiştir",
+    "reset": "Sıfırla",
+    "save": "Kaydet",
+    "saving": "Kaydediliyor…",
+    "setPinning": "Sabitlemeyi ayarla",
+    "submit": "Gönder",
+    "unselectAll": "Hepsinin seçimini kaldır",
+    "generate": "Oluştur",
+    "publish": "Yayınla",
+    "downloadCar": "",
+    "done": "Bitti",
+    "checkRetrieval": ""
+  },
+  "cliModal": {
+    "description": ""
+  },
+  "nav": {
+    "bugsLink": "Hata bildirin",
+    "codeLink": "Kodu gör"
+  },
+  "status": {
+    "connectedToIpfs": "IPFS'ye bağlı",
+    "connectingToIpfs": "IPFS'ye bağlanılıyor…",
+    "couldNotConnect": ""
+  },
+  "apiAddressForm": {
+    "placeholder": ""
+  },
+  "publicGatewayForm": {
+    "placeholder": ""
+  },
+  "publicSubdomainGatewayForm": {
+    "placeholder": "Bir URL girin (https://dweb.link)"
+  },
+  "ipfsCheckForm": {
+    "label": "",
+    "placeholder": ""
+  },
+  "terms": {
+    "address": "Adres",
+    "addresses": "Adresler",
+    "advanced": "İleri",
+    "agent": "Ajan",
+    "api": "",
+    "apiAddress": "",
+    "blocks": "Bloklar",
+    "connection": "Bağlantı",
+    "downSpeed": "Gelen",
+    "example": "Örnek:",
+    "file": "Dosya",
+    "files": "Dosyalar",
+    "folder": "Klasör",
+    "folders": "Klasörler",
+    "gateway": "Köprü",
+    "in": "İçeri",
+    "latency": "Gecikme",
+    "loading": "Yükleniyor",
+    "location": "Konum",
+    "name": "Ad",
+    "node": "Düğüm",
+    "out": "Dışarı",
+    "peer": "Eş",
+    "peerId": "Eş kimliği",
+    "id": "ID",
+    "peers": "Eşler",
+    "pinNoun": "Raptiye",
+    "pins": "Raptiye",
+    "pinStatus": "Pin Durumu",
+    "publicKey": "Genel anahtar",
+    "publicGateway": "Genel Ağ Geçidi",
+    "rateIn": "Giren oranı",
+    "rateOut": "Çıkan oranı",
+    "repo": "Repo",
+    "size": "Boyut",
+    "totalIn": "Toplam gelen",
+    "totalOut": "Toplam çıkan",
+    "unknown": "Bilinmeyen",
+    "ui": "Kullanıcı Arayüzü",
+    "upSpeed": "Çıkan",
+    "revision": "Revizyon"
+  },
+  "tour": {
+    "back": "Geri",
+    "close": "Kapat",
+    "finish": "Bitir",
+    "next": "Sonraki",
+    "skip": "Atla",
+    "tooltip": "Mevcut sayfada rehberli bir tur için istediğiniz zaman bu düğmeyi tıklayın."
+  },
+  "startTourHelper": "Tura başla"
+}

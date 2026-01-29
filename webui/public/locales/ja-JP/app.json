@@ -1,0 +1,109 @@
+{
+  "actions": {
+    "add": "追加",
+    "apply": "適用",
+    "browse": "ブラウズ",
+    "cancel": "キャンセル",
+    "change": "変更",
+    "clear": "クリア",
+    "close": "閉じる",
+    "copy": "コピー",
+    "create": "作成",
+    "default": "",
+    "remove": "削除",
+    "download": "ダウンロード",
+    "edit": "編集",
+    "import": "インポート",
+    "inspect": "",
+    "more": "",
+    "rename": "名前を変更",
+    "reset": "リセット",
+    "save": "保存",
+    "saving": "保存中……",
+    "setPinning": "ピンを設定",
+    "submit": "設定",
+    "unselectAll": "選択を全て解除",
+    "generate": "生成",
+    "publish": "",
+    "downloadCar": "",
+    "done": "終了",
+    "checkRetrieval": ""
+  },
+  "cliModal": {
+    "description": ""
+  },
+  "nav": {
+    "bugsLink": "バグ報告",
+    "codeLink": "コードを見る"
+  },
+  "status": {
+    "connectedToIpfs": "IPFSに接続完了",
+    "connectingToIpfs": "IPFSサービスに接続しています…",
+    "couldNotConnect": ""
+  },
+  "apiAddressForm": {
+    "placeholder": ""
+  },
+  "publicGatewayForm": {
+    "placeholder": ""
+  },
+  "publicSubdomainGatewayForm": {
+    "placeholder": "URLを入力 (https://dweb.link)"
+  },
+  "ipfsCheckForm": {
+    "label": "",
+    "placeholder": ""
+  },
+  "terms": {
+    "address": "アドレス",
+    "addresses": "アドレス",
+    "advanced": "詳細情報",
+    "agent": "",
+    "api": "",
+    "apiAddress": "",
+    "blocks": "",
+    "connection": "接続",
+    "downSpeed": "受信量",
+    "example": "例:",
+    "file": "",
+    "files": "ファイル",
+    "folder": "フォルダ",
+    "folders": "フォルダ",
+    "gateway": "ゲートウェイ",
+    "in": "受信量",
+    "latency": "レイテンシ",
+    "loading": "",
+    "location": "位置",
+    "name": "名前",
+    "node": "ノード",
+    "out": "送信量",
+    "peer": "ピア",
+    "peerId": "ピアID",
+    "id": "ID",
+    "peers": "ピア",
+    "pinNoun": "ピン",
+    "pins": "ピン",
+    "pinStatus": "ピンの状態",
+    "publicKey": "公開鍵",
+    "publicGateway": "公開ゲートウェイ",
+    "rateIn": "下り通信量",
+    "rateOut": "上り通信量",
+    "repo": "",
+    "size": "サイズ",
+    "totalIn": "下り通信量（合計）",
+    "totalOut": "上り通信量（合計）",
+    "unknown": "不明",
+    "ui": "UI",
+    "upSpeed": "送信量",
+    "revision": "リビジョン"
+  },
+  "tour": {
+    "back": "戻る",
+    "close": "閉じる",
+    "finish": "終了",
+    "next": "次へ",
+    "skip": "スキップ",
+    "tooltip": ""
+  },
+  "startTourHelper": ""
+}

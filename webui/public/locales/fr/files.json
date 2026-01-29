@@ -1,0 +1,157 @@
+{
+  "title": "Fichiers",
+  "home": "Accueil",
+  "breadcrumbs": "Fils d'Ariane",
+  "finished": "Terminé !",
+  "totalSize": "Taille totale: {size}",
+  "filesSelected": "{count, plural, one {Élément sélectionné} many {Éléments sélectionnés} other {Éléments sélectionnés}}",
+  "menuOptions": "Options pour l'élément sélectionné ",
+  "selectedAllEntries": "Tout sélectionner",
+  "individualFilesOnly": "Disponible uniquement pour les fichiers individuels",
+  "noPDFSupport": "Votre navigateur ne prend pas en charge les PDF. Merci de télécharger le PDF pour le visualiser :",
+  "downloadPDF": "Télécharger un PDF",
+  "openWithPublicGateway": "Essayer de l'ouvrir plutôt avec votre <1>passerelle publique</1>.",
+  "openWithLocalAndPublicGateway": "Essayer de l'ouvrir plutôt avec votre <1>passerelle locale</1> ou votre <3>passerelle publique</3>.",
+  "cantBePreviewed": "Désolé, ce fichier ne peut pas être prévisualisé",
+  "addByPath": "Depuis IPFS",
+  "addByCar": "From CAR",
+  "bulkImport": "Bulk import",
+  "newFolder": "Nouveau répertoire",
+  "generating": "Génération...",
+  "actions": {
+    "copyHash": "Copier le CID",
+    "share": "Partager",
+    "publishWithIpns": "Publier via IPNS"
+  },
+  "cliModal": {
+    "extraNotesPinning": "Cette commande est seulement pour l'épinglage/désépinglage local. Si vous voulez utiliser un service d'épinglage distant, consultez la documentation de ce service pour apprendre comment épingler/désépingler depuis la ligne de commande."
+  },
+  "shareModal": {
+    "title": "Partager des fichiers",
+    "description": "Copiez le lien ci-dessous et partagez-le avec vos amis."
+  },
+  "renameModal": {
+    "titleFile": "Renommer le fichier",
+    "titleFolder": "Renommer le dossier",
+    "descriptionFile": "Choisir un nouveau nom pour ce fichier.",
+    "descriptionFolder": "Choisir un nouveau nom pour ce dossier."
+  },
+  "removeModal": {
+    "titleItem": "{count, plural, one {Supprimer l'élément {name} ?} many {Supprimer {count} éléments ?} other {Supprimer {count} éléments ?}}",
+    "titleFolder": "{count, plural, one {Supprimer le dossier {name} ?} many {Supprimer {count} dossiers ?} other {Supprimer {count} dossiers ?}}",
+    "titleFile": "{count, plural, one {Supprimer le fichier {name} ?} many {Supprimer {count} fichiers ?} other {Supprimer {count} fichiers ?}}",
+    "descriptionItem": "{count, plural, one {Êtes-vous sûr(e) de vouloir supprimer cet élément ? Il n'apparaîtra plus dans l'onglet Fichiers, et sera supprimé de façon définitive lors du prochain nettoyage (mais des copies peuvent exister sur d'autres nœuds IPFS). Cette action est irréversible.} many {Êtes-vous sûr(e) de vouloir supprimer ces {count} éléments ? Ils n'apparaitront plus dans l'onglet Fichiers, et seront supprimés de façon définitive lors du prochain nettoyage (mais des copies peuvent exister sur d'autres nœuds IPFS). Cette action est irréversible.} other {Êtes-vous sûr(e) de vouloir supprimer ces {count} éléments ? Ils n'apparaitront plus dans l'onglet Fichiers, et seront supprimés de façon définitive lors du prochain nettoyage (mais des copies peuvent exister sur d'autres nœuds IPFS). Cette action est irréversible.}}",
+    "descriptionFolder": "{count, plural, one {Êtes-vous sûr(e) de vouloir supprimer ce dossier ? Il n'apparaitra plus dans l'onglet Fichiers, et sera supprimé de façon définitive lors du prochain nettoyage (mais des copies peuvent exister sur d'autres nœuds IPFS). Cette action est irréversible.} many {Êtes-vous sûr(e) de vouloir supprimer ces {count} dossiers ? Ils n'apparaitront plus dans l'onglet Fichiers, et seront supprimés de façon définitive lors du prochain nettoyage (mais des copies peuvent exister sur d'autres nœuds IPFS). Cette action est irréversible.} other {Êtes-vous sûr(e) de vouloir supprimer ces {count} dossiers ? Ils n'apparaitront plus dans l'onglet Fichiers, et seront supprimés de façon définitive lors du prochain nettoyage (mais des copies peuvent exister sur d'autres nœuds IPFS). Cette action est irréversible.}}",
+    "descriptionFile": "{count, plural, one {Êtes-vous sûr(e) de vouloir supprimer ce fichier? Il n'apparaitra plus dans l'onglet Fichiers, et sera supprimé de façon définitive lors du prochain nettoyage (mais des copies peuvent exister sur d'autres nœuds IPFS). Cette action est irréversible.} many {Êtes-vous sûr(e) de vouloir supprimer ces {count} fichiers ? Ils n'apparaitront plus dans l'onglet Fichiers, et seront supprimés de façon définitive lors du prochain nettoyage (mais des copies peuvent exister sur d'autres nœuds IPFS). Cette action est irréversible.} other {Êtes-vous sûr(e) de vouloir supprimer ces {count} fichiers ? Ils n'apparaitront plus dans l'onglet Fichiers, et seront supprimés de façon définitive lors du prochain nettoyage (mais des copies peuvent exister sur d'autres nœuds IPFS). Cette action est irréversible.}}",
+    "checkboxRemoveLocalPin": "Aussi supprimer l'épinglage local (recommandé)",
+    "checkboxUnpinFromServices": "Désépingler de tous les services d'épinglage"
+  },
+  "pinningModal": {
+    "title": "Choisissez où vous vouler épingler ces éléments. ",
+    "complianceLabel": "🔍 Vérifier la conformance des services d'épinglage",
+    "footer": "Besoin d'ajouter ou de configurer un service d'épinglage? Allez aux <1>Paramètres</1>.",
+    "localNode": "Nœud local",
+    "totalSize": "Taille totale: {size}"
+  },
+  "addByPathModal": {
+    "title": "Importer depuis IPFS",
+    "description": "Entrez un chemin IPFS (CID) pour l'importer.",
+    "preloadNote": "NOTE: Par défaut, les chemins importés sont chargés à la volée, et seront demandés sur demande quand vous naviguez vers eux. Pour charger proactivement les chemins importés vers le Datastore local, choisissez \"Télécharger\" depuis le menu contextuel. ",
+    "importPathPlaceholder": "Chemin ou CID (requis)",
+    "namePlaceholder": "Nom (optionnel)",
+    "examples": "Exemples :"
+  },
+  "addByCarModal": {
+    "title": "CAR Import",
+    "description": "Choose a CAR file to import a DAG from and specify a name for it to be imported into the current directory.",
+    "selectCARButtonText": "Select CAR…",
+    "namePlaceholder": "Nom",
+    "renameImportPath": "Rename import"
+  },
+  "bulkImportModal": {
+    "title": "Bulk import with text file",
+    "description": "Upload a text file with a list of CIDs (names are optional). Example:",
+    "select": "Select file",
+    "selectedFile": "Selected file",
+    "invalidCids": "*Invalid CID(s) found",
+    "failedToReadFile": "*Failed to read file contents"
+  },
+  "newFolderModal": {
+    "title": "Nouveau dossier",
+    "description": "Insérer le nom du dossier que vous voulez créer."
+  },
+  "filesListLabel": "Liste des fichiers",
+  "filesList": {
+    "noFiles": "<0>Pas de fichiers dans ce dossier. Cliquez sur le boutton \"Importer\" pour en ajouter.</0>"
+  },
+  "filesImportStatus": {
+    "imported": "{count, plural, one {1 élément importé} many {{count} éléments importés} other {{count} éléments importés}}",
+    "importing": "{count, plural, one {Import de 1 élément} many {Import de {count} éléments} other {Import de {count} éléments}}",
+    "toggleDropdown": "Dérouler la liste",
+    "closeDropdown": "Fermer la liste",
+    "count": "{count} sur {count}"
+  },
+  "addFilesInfo": "<0>Aucun fichier ici pour l'instant ! Ajoutez-en à votre nœud IPFS local en cliquant sur le bouton <1>Importer</1> ci-dessus.</0>",
+  "companionInfo": "<0>Comme vous utilisez <1>IPFS Companion</1>, la liste des fichiers est limitée aux fichiers ajoutés lors de l'utilisation de l'extension.</0>",
+  "tour": {
+    "step1": {
+      "title": "Page des fichiers",
+      "paragraph1": "<0>Cest ici que les fichiers de votre <1> Mutable File System (MFS) </1> se trouvent. Vous pouvez ajouter des fichiers ou des dossiers et les gérer sur cette page.</0>",
+      "paragraph2": "Cliquez sur \"Suivant\" pour en savoir plus."
+    },
+    "step2": {
+      "title": "Fils d'Ariane",
+      "paragraph1": "Ce fil d'Ariane montre le chemin vers votre dossier courant. Vous pouvez...",
+      "bullet1": "Cliquer sur une étape du fil d'Ariane pour aller vers ce dossier",
+      "bullet2": "Faire un clic droit sur un élément du fil d'Ariane pour afficher le menu contextuel des actions pour ce dossier",
+      "bullet3": "Glisser-déposer des fichiers sur une étape du fil d'Ariane pour les déplacer ou les importer."
+    },
+    "step3": {
+      "title": "Ajouter des fichiers",
+      "paragraph1": "Ici vous pouvez voir comment les blocs et les fichiers sont épinglés.",
+      "paragraph2": "Vous pouvez ajouter des fichiers ou des dossiers dans votre dépot en utilisant le menu déroulant sur la droite.",
+      "paragraph3": "<0>Si vous voulez ajouter quelque chose déjà présent sur IPFS, vous pouvez l'importer dans votre MFS en entrant son <1>Identifiant de contenu (CID)</1>.</0>"
+    },
+    "step5": {
+      "title": "Liste des fichiers",
+      "paragraph1": "Finallement, vous pouvez ajouter des fichiers et des dossiers en utilisant le glisser deposer.",
+      "paragraph2": "Vous pouvez partager ou télécharger des fichiers, les inspecter dans l'Explorateur de IPLD, les renommer, ou les supprimer !",
+      "paragraph3": "Astuce : glissez-déposez un fichier n'importe où sur l'interface web pour l'ajouter à la racine de votre MFS."
+    }
+  },
+  "previewLimitReached": "Cet aperçu est limité à 10 kB. Cliquez sur le bouton de téléchargement pour accéder au fichier entier.",
+  "previousFolder": "Revenir au dossier précédent",
+  "fileLabel": "Sélectionner {type}{name} de taille : {size}",
+  "hashUnavailable": "hash non disponible",
+  "checkboxLabel": "Voir plus d'options pour {name}",
+  "pinned": "Épinglé",
+  "pinnedRemotely": "Épinglé à distance",
+  "pinningRemotely": "Épinglage à distance",
+  "pinningCompleted": "Épinglage terminé",
+  "pinningFailed": "L'épinglage a échoué",
+  "clickToDismiss": "Cliquez pour fermer",
+  "clickToCancel": "Cliquez pour annuler",
+  "blocks": "Blocs",
+  "localDatastore": "Datastore local",
+  "localDatastoreDescription": "Taille totale de tous les blocs actuellement stockés sur votre nœud IPFS (\"RepoSize\" de \"ipfs repo stat\"). Cela inclut tout ce qui est dans la vue Fichiers (MFS), les épinglages de bas niveau et les blocs récemment supprimés ou temporairement mis en cache qui n'ont pas encore été collectés par le ramasse-miettes.",
+  "currentLocationRoot": "Mes Fichiers",
+  "currentLocation": "Emplacement actuel",
+  "currentLocationDescription": "Taille totale du DAG du dossier courant (\"CumulativeSize\" de 'ipfs files stat\"). Cela inclut les blocs locaux et distants et peut être plus grand que la taille de votre datastore local.",
+  "pinningQueue": "Queue d'épinglage",
+  "more": "Plus",
+  "files": "Fichiers",
+  "cidNotFileNorDir": "Le lien actuel n'est ni un fichier ni un dossier. Essayez plutôt de <1>l'inspecter</1>.",
+  "sortBy": "Trier les éléments par {name}",
+  "publishModal": {
+    "title": "Publier via IPNS",
+    "cidToPublish": "CID :",
+    "publishUnderKey": "Sélectionner une clé pour publier :",
+    "help": "Allez dans Paramètres pour en savoir plus à propos d'IPNS et créer plus de clés.",
+    "publishedUnderKey": "Publié avec succès sous la clé :",
+    "linkCopied": "Lien copié !",
+    "sharingPrompt": "Copiez le lien ci-dessous et partagez-le avec les autres. L'adresse IPNS sera résolue tant que votre nœud reste disponible sur le réseau une fois par jour pour rafraichir l'enregistrement IPNS. ",
+    "pleaseWait": "Merci d'attendre pendant que les 20 premières copies de l'enregistrement IPNS mis à jour sont stockés avec l'aide des pairs DHT..."
+  },
+  "noPinsInProgress": "Terminé, aucun épinglage distant en cours.",
+  "remotePinningInProgress": "Épinglage distant en cours:"
+}

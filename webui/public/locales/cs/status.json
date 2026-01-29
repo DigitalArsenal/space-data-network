@@ -1,0 +1,47 @@
+{
+  "title": "Stav",
+  "nodeInfo": "Informace o uzlu",
+  "spaceUsed": "Místo využito",
+  "networkTraffic": "Síťový provoz",
+  "bandwidthOverTime": "Internetový provoz přes čas",
+  "bandwidthByPeer": "Internetový provoz podle uzlu",
+  "distributionOfPeers": "Geografická distribuce uzlů",
+  "pieChartLabel": "{count, plural, one {{percent}% ({count} Uzel)} few {{percent}% ({count} Uzlů)} many {{percent}% ({count} Uzlů)} other {{percent}% ({count} Uzlů)}}",
+  "countMore": "... a {count} více",
+  "StatusConnected": {
+    "repoSize": "Hostování {repoSize} dat",
+    "peersCount": "{peersCount, plural, one {Objeven 1 peer} few {Objeveny {peersCount} peery} many {Objeveno {peersCount} peerů} other {Objeveno {peersCount} peerů}}"
+  },
+  "customApiConfig": "Vlastní konfigurace JSON",
+  "AnalyticsBanner": {
+    "label": "Nedávno jsme aktualizovali naše zásady telemetrie a přešli jsme na metriky opt-out. Dříve jste měli sběr telemetrie vypnutý. Na stránce nastavení můžete sběr telemetrie (opět) zakázat."
+  },
+  "tour": {
+    "step1": {
+      "title": "Stránka stavu",
+      "paragraph1": "Toto je výchozí bod vašeho uzlu IPFS a kde si můžete zkontrolovat jeho základní informace.",
+      "paragraph2": "Klikněte na tlačítko \"Další\" a dozvíte se více."
+    },
+    "step2": {
+      "title": "Stav připojení",
+      "paragraph1": "Kliknutím na tuto ikonu odkudkoli v aplikaci se vrátíte na stavovou stránku. Pokud dojde ke ztrátě spojení s Kubo RPC, ikona zčervená.",
+      "paragraph2": "Pokud potřebujete nakonfigurovat vlastní adresu API pro svůj uzel, stačí kliknout na odkaz \"Upravit\" vedle místa, kde je na této stránce uvedena adresa API."
+    },
+    "step3": {
+      "title": "Informace o uzlu",
+      "paragraph1": "Zde máte informace o velikosti vašeho repozitáře, o tom, kolik uzlů je připojeno, vaše ID uzlu a IPFS varianta, která se v současné době používá.",
+      "paragraph2": "<0>Rozbalením odkazu <1>Pokročilé</1> zobrazíte další informace, například adresu URL brány a adresy. Uvnitř sekce Pokročilé je také odkaz, který umožňuje změnit adresu API.</0>"
+    },
+    "step4": {
+      "title": "Šířka pásma sítě / provoz",
+      "paragraph1": "Tento graf ukazuje využití šířky pásma sítě v průběhu času.",
+      "paragraph2": "Tachometry ukazují aktuální odchozí a příchozí provoz."
+    },
+    "stepExplore": {
+      "title": "Prozkoumat",
+      "paragraph": "Vložte CID a prozkoumejte soubory obsažené za CID nebo se podívejte, jak jsou tato data strukturována a propojena mezi protokoly."
+    }
+  },
+  "bandwidthStats": "Statistiky šířky pásma",
+  "bandwidthStatsDisabled": "Máte zakázané metriky šířky pásma. Můžete je povolit zadáním příkazu níže nebo změnou klíče <1>Swarm.DisableBandwidthMetrics</1> na hodnotu <3>false</3> v <5>Nastavení</5>. Poté je třeba restartovat démona IPFS, aby se změny projevily."
+}

@@ -1,0 +1,157 @@
+{
+  "title": "Soubory",
+  "home": "Hlavní stránka",
+  "breadcrumbs": "Cesta",
+  "finished": "Dokončeno!",
+  "totalSize": "Celková velikost: {size}",
+  "filesSelected": "{count, plural, one {položka vybrána} few {položky vybrány} many {položek vybráno} other {položek vybráno}}",
+  "menuOptions": "Možnosti pro vybranou položku",
+  "selectedAllEntries": "Vybrat všechny položky tabulky",
+  "individualFilesOnly": "Dostupné pouze pro jednotlivé soubory",
+  "noPDFSupport": "Váš prohlížeč nepodporuje PDF. Prosím stáhněte si PDF soubor k otevření:",
+  "downloadPDF": "Stáhnout PDF",
+  "openWithPublicGateway": "Zkuste ji místo toho otevřít pomocí <1>veřejné brány</1>.",
+  "openWithLocalAndPublicGateway": "Místo toho ji zkuste otevřít pomocí <1>místní</1> nebo <3>veřejné brány</3>.",
+  "cantBePreviewed": "Litujeme, tento soubor nelze zobrazit",
+  "addByPath": "Od IPFS",
+  "addByCar": "From CAR",
+  "bulkImport": "Bulk import",
+  "newFolder": "Nová složka",
+  "generating": "Vytváření…",
+  "actions": {
+    "copyHash": "Zkopírovat CID",
+    "share": "Sdílet odkaz",
+    "publishWithIpns": "Zveřejněte do IPNS"
+  },
+  "cliModal": {
+    "extraNotesPinning": "Tento příkaz je určen pouze pro místní připínání/odpínání. Pokud chcete použít vzdálenou službu připínání, podívejte se do dokumentace k této službě a zjistěte, jak připínat/odpínat z příkazového řádku."
+  },
+  "shareModal": {
+    "title": "Sdílet soubory",
+    "description": "Zkopírovat odkaz níže a sdílet ho s vašimi přátely."
+  },
+  "renameModal": {
+    "titleFile": "Přejmenujte soubor",
+    "titleFolder": "Přejmenovat složku",
+    "descriptionFile": "Vyberte nové jméno pro tento soubor.",
+    "descriptionFolder": "Vyberte nové jméno pro tuto složku."
+  },
+  "removeModal": {
+    "titleItem": "{count, plural, one {Odebrat položku? {name}} few {Odebrat {count} položky?} many {Odebrat {count} položek?} other {Odebrat {count} položek?}}",
+    "titleFolder": "{count, plural, one {Odebrat složku? {name}} few {Odebrat {count} složky?} many {Odebrat {count} složek?} other {Odebrat {count} složek?}}",
+    "titleFile": "{count, plural, one {Odebrat soubor? {name}} few {Odebrat {count} soubory?} many {Odebrat {count} souborů?} other {Odebrat {count} souborů?}}",
+    "descriptionItem": "{count, plural, one {Opravdu chcete tuto položku odstranit? Nebude se již zobrazovat na obrazovce Soubory a bude trvale odstraněna při příštím plánovaném čištění (ačkoli její kopie mohou existovat na jiných uzlech IPFS). Tuto akci a nelze vrátit zpět.} few {OPravdu chcete tyto {count} položky odstranit? Nebudou se již zobrazovat na obrazovce Soubory a budou trvale odstraněny při příštím plánovaném čištění (ačkoli jejich kopie mohou existovat na jiných uzlech IPFS). Tuto akci nelze vrátit zpět.} many {Opravdu chcete těchto {count} položek odstranit? Nebudou se již zobrazovat na obrazovce Soubory a budou trvale odstraněny při příštím plánovaném čištění (ačkoli jejich kopie mohou existovat na jiných uzlech IPFS). Tuto akci nelze vrátit zpět.} other {Opravdu chcete těchto {count} položek odstranit? Nebudou se již zobrazovat na obrazovce Soubory a budou trvale odstraněny při příštím plánovaném čištění (ačkoli jejich kopie mohou existovat na jiných uzlech IPFS). Tuto akci nelze vrátit zpět.}}",
+    "descriptionFolder": "{count, plural, one {Opravdu chcete tuto složku odstranit? Složka se již nebude zobrazovat na obrazovce Soubory a bude trvale odstraněna při příštím plánovaném čištění (ačkoli její kopie mohou existovat na jiných uzlech IPFS). Tuto akci nelze vrátit zpět.} few {Opravdu chcete tyto {count} složky odstranit? Nebudou se již zobrazovat na obrazovce Soubory a budou trvale odstraněny při příštím plánovaném čištění (i když jejich kopie mohou existovat na jiných uzlech IPFS). Tuto akci nelze vrátit zpět.} many {Opravdu chcete těchto {count} složek odstranit? Nebudou se již zobrazovat na obrazovce Soubory a budou trvale odstraněny při příštím plánovaném čištění (i když jejich kopie mohou existovat na jiných uzlech IPFS). Tuto akci nelze vrátit zpět.} other {Opravdu chcete těchto {count} složek odstranit? Nebudou se již zobrazovat na obrazovce Soubory a budou trvale odstraněny při příštím plánovaném čištění (i když jejich kopie mohou existovat na jiných uzlech IPFS). Tuto akci nelze vrátit zpět.}}",
+    "descriptionFile": "{count, plural, one {Opravdu chcete tento soubor odstranit? Nebude se již zobrazovat na obrazovce Soubory a bude trvale odstraněn při příštím plánovaném čištění (ačkoli jeho kopie mohou existovat na jiných uzlech IPFS). Tuto akci nelze vrátit zpět.} few {Opravdu chcete tyto {count} soubory odstranit? Nebudou se již zobrazovat na obrazovce Soubory a budou trvale odstraněny při příštím plánovaném čištění (ačkoli jejich kopie mohou existovat na jiných uzlech IPFS). Tuto akci nelze vrátit zpět.} many {Opravdu chcete těchto {count} souborů odstranit? Nebudou se již zobrazovat na obrazovce Soubory a budou trvale odstraněny při příštím plánovaném čištění (ačkoli jejich kopie mohou existovat na jiných uzlech IPFS). Tuto akci nelze vrátit zpět.} other {Opravdu chcete těchto {count} souborů odstranit? Nebudou se již zobrazovat na obrazovce Soubory a budou trvale odstraněny při příštím plánovaném čištění (ačkoli jejich kopie mohou existovat na jiných uzlech IPFS). Tuto akci nelze vrátit zpět.}}",
+    "checkboxRemoveLocalPin": "Odstranit také místní připnutí (doporučeno)",
+    "checkboxUnpinFromServices": "Odpojení od všech služeb připínání"
+  },
+  "pinningModal": {
+    "title": "Vyberte, kam chcete tyto položky připnout.",
+    "complianceLabel": "🔍 Kontrola souladu služeb připínání",
+    "footer": "Potřebujete přidat nebo nakonfigurovat službu připnutí? Přejděte do <1>Nastavení</1>.",
+    "localNode": "Místní uzel",
+    "totalSize": "Celková velikost: {size}"
+  },
+  "addByPathModal": {
+    "title": "Import z IPFS",
+    "description": "Vložte cestu IPFS (CID) pro import.",
+    "preloadNote": "POZNÁMKA: Importovaná cesta je ve výchozím nastavení líně načtena a bude načtena na vyžádání při jejím procházení. Chcete-li proaktivně přednačíst importovanou cestu do místního datového úložiště, vyberte z kontextové nabídky možnost \"Stáhnout\"",
+    "importPathPlaceholder": "Cesta nebo CID (povinné)",
+    "namePlaceholder": "Název (nepovinné)",
+    "examples": "Příklady:"
+  },
+  "addByCarModal": {
+    "title": "CAR Import",
+    "description": "Choose a CAR file to import a DAG from and specify a name for it to be imported into the current directory.",
+    "selectCARButtonText": "Select CAR…",
+    "namePlaceholder": "Jméno",
+    "renameImportPath": "Rename import"
+  },
+  "bulkImportModal": {
+    "title": "Bulk import with text file",
+    "description": "Upload a text file with a list of CIDs (names are optional). Example:",
+    "select": "Select file",
+    "selectedFile": "Selected file",
+    "invalidCids": "*Invalid CID(s) found",
+    "failedToReadFile": "*Failed to read file contents"
+  },
+  "newFolderModal": {
+    "title": "Nová složka",
+    "description": "Vložte jméno složky, kterou chcete vytvořit."
+  },
+  "filesListLabel": "Seznam souborů",
+  "filesList": {
+    "noFiles": "<0>V tomto adresáři nejsou žádné soubory. Klikněte na tlačítko \"Importovat\" a některé přidejte.</0>"
+  },
+  "filesImportStatus": {
+    "imported": "{count, plural, one {Importována 1 položka} few {Importovány {count} položky} many {Importováno {count} položek} other {Importováno {count} položek}}",
+    "importing": "{count, plural, one {Importování 1 položky} few {Importování {count} položek} many {Importování {count} položek} other {Importování {count} položek}}",
+    "toggleDropdown": "Přepnout rozbalovací nabídku",
+    "closeDropdown": "Zavřít rozbalovací nabídku",
+    "count": "{count} z {count}"
+  },
+  "addFilesInfo": "<0>Zatím zde nejsou žádné soubory! Přidejte soubory do místního uzlu IPFS kliknutím na tlačítko <1>Importovat</1> výše.</0>",
+  "companionInfo": "<0>Jelikož používáte <1>IPFS Companion</1>, zobrazené soubory jsou omezeny pouze na ty které jste přidali během používání tohoto rozšíření.</0>",
+  "tour": {
+    "step1": {
+      "title": "Stránka se soubory",
+      "paragraph1": "<0>Zde žijí soubory ve vašem systému <1>Meable File System (MFS)</1>. Na této stránce můžete přidat soubory nebo složky a spravovat je.</0>",
+      "paragraph2": "Klikněte na tlačítko \"Další\" a dozvíte se více."
+    },
+    "step2": {
+      "title": "Cesta",
+      "paragraph1": "Tato drobečková navigace zobrazujë cestu k aktuálnímu adresáři. Můžete...",
+      "bullet1": "Kliknutím na jednotlivou drobečkovou navigaci přejdete do daného adresáře.",
+      "bullet2": "Kliknutím pravým tlačítkem myši na drobečkovou navigaci zobrazíte nabídku akcí pro daný adresář.",
+      "bullet3": "Přetažením souborů na drobečkovou navigaci je můžete přesunout nebo importovat."
+    },
+    "step3": {
+      "title": "Přidat soubory",
+      "paragraph1": "Zde vidíte, kolik bloků a souborů jste přidali.",
+      "paragraph2": "K repozitáři můžete přidat soubory nebo složky pomocí rozbalovací nabídky na pravé straně.",
+      "paragraph3": "<0>Pokud chcete přidat něco, co je již na IPFS, můžete jej importovat do vašeho MFS předáním jeho <1>identifikátoru obsahu (CID)</1>.</0>"
+    },
+    "step5": {
+      "title": "Seznam souborů",
+      "paragraph1": "Nakonec seznam, kde můžete najít své soubory a složky. Přetáhněte soubory nebo složky a přidejte je.",
+      "paragraph2": "Soubory můžete sdílet nebo stahovat, kontrolovat je v Průzkumníku IPLD, přejmenovávat nebo odstraňovat!",
+      "paragraph3": "Pro tip: přetáhněte soubor z jakékoli jiné stránky webového uživatelského rozhraní a přidejte je do kořenového adresáře vašeho MFS."
+    }
+  },
+  "previewLimitReached": "Tento náhled je omezen na 10 KiB. Kliknutím na tlačítko pro stažení získáte přístup k celému souboru.",
+  "previousFolder": "Návrat do předchozí složky",
+  "fileLabel": "Zvolte {type} {name} velikost: {size}",
+  "hashUnavailable": "hash není k dispozici",
+  "checkboxLabel": "Zobrazit další možnosti pro {name}",
+  "pinned": "Připíchnuté",
+  "pinnedRemotely": "Připnuto na dálku",
+  "pinningRemotely": "Připnutí vzdáleně",
+  "pinningCompleted": "Připnutí dokončeno",
+  "pinningFailed": "Připnutí se nezdařilo",
+  "clickToDismiss": "Klikněte pro zamítnutí",
+  "clickToCancel": "Kliknutím zrušte",
+  "blocks": "Bloky",
+  "localDatastore": "Místní datové úložiště",
+  "localDatastoreDescription": "Celková velikost všech bloků aktuálně uložených v datovém úložišti uzlu IPFS (\"RepoSize\" z \"ipfs repo stat\"). Zahrnuje vše v zobrazení Soubory (MFS), nízkoúrovňové vývody a všechny nedávno odstraněné nebo dočasně uložené bloky, které ještě nebyly shromážděny do mezipaměti.",
+  "currentLocationRoot": "Moje soubory",
+  "currentLocation": "Současná poloha",
+  "currentLocationDescription": "Celková velikost DAG za aktuálním adresářem (\"CumulativeSize\" z \"ipfs files stat\"). Tato hodnota zahrnuje místní i vzdálené bloky a může být větší než velikost místního datového úložiště.",
+  "pinningQueue": "Fronta připnutí",
+  "more": "Více",
+  "files": "Soubory",
+  "cidNotFileNorDir": "Aktuální odkaz není soubor ani adresář. Zkuste jej místo toho <1>zkontrolovat</1>.",
+  "sortBy": "Seřadit položky podle {name}",
+  "publishModal": {
+    "title": "Zveřejněte do IPNS",
+    "cidToPublish": "CID:",
+    "publishUnderKey": "Vyberte klíč pro publikování:",
+    "help": "Přejděte do Nastavení, kde se dozvíte o IPNS a vytvoříte další klíče.",
+    "publishedUnderKey": "Úspěšně zveřejněno pod klíčem:",
+    "linkCopied": "Odkaz zkopírován!",
+    "sharingPrompt": "Zkopírujte níže uvedený odkaz a sdílejte jej s ostatními. Adresa IPNS se bude řešit tak dlouho, dokud bude váš uzel v síti dostupný, a to jednou denně, aby se záznam IPNS obnovil.",
+    "pleaseWait": "Počkejte prosím, než se pomocí DHT peerů uloží počátečních 20 kopií aktualizovaného záznamu IPNS..."
+  },
+  "noPinsInProgress": "Vše je hotovo, žádné vzdálené připnutí neprobíhá.",
+  "remotePinningInProgress": "Probíhá vzdálené připnutí:"
+}

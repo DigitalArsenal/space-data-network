@@ -1,0 +1,109 @@
+{
+  "actions": {
+    "add": "新增",
+    "apply": "確認",
+    "browse": "瀏覽",
+    "cancel": "取消",
+    "change": "修改",
+    "clear": "清除",
+    "close": "關閉",
+    "copy": "複製",
+    "create": "創建",
+    "default": "",
+    "remove": "移除",
+    "download": "下載",
+    "edit": "編輯",
+    "import": "匯入",
+    "inspect": "檢查",
+    "more": "更多",
+    "rename": "重新命名",
+    "reset": "重置",
+    "save": "儲存",
+    "saving": "儲存中…",
+    "setPinning": "設置為錨釘",
+    "submit": "提交",
+    "unselectAll": "取消全部選擇",
+    "generate": "",
+    "publish": "",
+    "downloadCar": "",
+    "done": "",
+    "checkRetrieval": ""
+  },
+  "cliModal": {
+    "description": ""
+  },
+  "nav": {
+    "bugsLink": "回報臭蟲",
+    "codeLink": "檢視原始碼"
+  },
+  "status": {
+    "connectedToIpfs": "已連接到 IPFS",
+    "connectingToIpfs": "正在連接 IPFS",
+    "couldNotConnect": ""
+  },
+  "apiAddressForm": {
+    "placeholder": ""
+  },
+  "publicGatewayForm": {
+    "placeholder": ""
+  },
+  "publicSubdomainGatewayForm": {
+    "placeholder": ""
+  },
+  "ipfsCheckForm": {
+    "label": "",
+    "placeholder": ""
+  },
+  "terms": {
+    "address": "地址",
+    "addresses": "地址",
+    "advanced": "進階",
+    "agent": "代理",
+    "api": "",
+    "apiAddress": "",
+    "blocks": "區塊",
+    "connection": "連接",
+    "downSpeed": "接收",
+    "example": "例子：",
+    "file": "檔案",
+    "files": "檔案",
+    "folder": "資料夾",
+    "folders": "資料夾",
+    "gateway": "閘道器",
+    "in": "接收",
+    "latency": "延時",
+    "loading": "載入中",
+    "location": "地點",
+    "name": "名稱",
+    "node": "節點",
+    "out": "發送",
+    "peer": "節點",
+    "peerId": "節點 ID",
+    "id": "",
+    "peers": "節點",
+    "pinNoun": "錨釘",
+    "pins": "錨釘",
+    "pinStatus": "錨釘狀態",
+    "publicKey": "公鑰",
+    "publicGateway": "",
+    "rateIn": "發送率",
+    "rateOut": "接收率",
+    "repo": "儲存庫",
+    "size": "大小",
+    "totalIn": "總共接收",
+    "totalOut": "總共發送",
+    "unknown": "不明",
+    "ui": "UI",
+    "upSpeed": "發送",
+    "revision": "更新版本"
+  },
+  "tour": {
+    "back": "返回",
+    "close": "關閉",
+    "finish": "完成",
+    "next": "下一步",
+    "skip": "略過",
+    "tooltip": "隨時點選這個按鈕以獲得這個頁面的使用導覽。"
+  },
+  "startTourHelper": "啟動引導"
+}

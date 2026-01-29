@@ -1,0 +1,109 @@
+{
+  "actions": {
+    "add": "Добавить",
+    "apply": "Применить",
+    "browse": "Смотреть",
+    "cancel": "Отмена",
+    "change": "Изменить",
+    "clear": "Очистить",
+    "close": "Закрыть",
+    "copy": "Копировать",
+    "create": "Создать",
+    "default": "",
+    "remove": "Удалить",
+    "download": "Загрузить",
+    "edit": "Изменить",
+    "import": "Импорт",
+    "inspect": "Проверить",
+    "more": "Больше",
+    "rename": "Переименовать",
+    "reset": "Сброс",
+    "save": "Сохранить",
+    "saving": "Сохранение...",
+    "setPinning": "Установить процесс ",
+    "submit": "Применить",
+    "unselectAll": "Снять выделение",
+    "generate": "Генерировать",
+    "publish": "Опубликовать",
+    "downloadCar": "",
+    "done": "Готово",
+    "checkRetrieval": ""
+  },
+  "cliModal": {
+    "description": ""
+  },
+  "nav": {
+    "bugsLink": "Сообщить об ошибке",
+    "codeLink": "Смотреть код"
+  },
+  "status": {
+    "connectedToIpfs": "Подключено к IPFS",
+    "connectingToIpfs": "Подключение к IPFS…",
+    "couldNotConnect": ""
+  },
+  "apiAddressForm": {
+    "placeholder": ""
+  },
+  "publicGatewayForm": {
+    "placeholder": ""
+  },
+  "publicSubdomainGatewayForm": {
+    "placeholder": "Введите URL (https://dweb.link)"
+  },
+  "ipfsCheckForm": {
+    "label": "",
+    "placeholder": ""
+  },
+  "terms": {
+    "address": "Адрес",
+    "addresses": "Адреса",
+    "advanced": "Дополнительно",
+    "agent": "Агент",
+    "api": "Kubo RPC",
+    "apiAddress": "",
+    "blocks": "Блоки",
+    "connection": "Подключение",
+    "downSpeed": "Входящий",
+    "example": "Пример:",
+    "file": "Файл",
+    "files": "Файлы",
+    "folder": "Папка",
+    "folders": "Папки",
+    "gateway": "Шлюз",
+    "in": "В",
+    "latency": "Задержка",
+    "loading": "Загрузка",
+    "location": "Местоположение",
+    "name": "Имя",
+    "node": "Нода",
+    "out": "Внешний",
+    "peer": "Пир",
+    "peerId": "ID пира",
+    "id": "ID",
+    "peers": "Пиры",
+    "pinNoun": "Закрепить",
+    "pins": "Закрепления",
+    "pinStatus": "Статус процесса",
+    "publicKey": "Публичный ключ",
+    "publicGateway": "Публичный шлюз",
+    "rateIn": "Входящий рейтинг",
+    "rateOut": "Исходящий рейтинг",
+    "repo": "Репо",
+    "size": "Размер",
+    "totalIn": "Всего пришло",
+    "totalOut": "Всего вышло",
+    "unknown": "Неизвестно",
+    "ui": "Пользовательский интерфейс",
+    "upSpeed": "Исходящий",
+    "revision": "Ревизия"
+  },
+  "tour": {
+    "back": "Назад",
+    "close": "Закрыть",
+    "finish": "Завершить",
+    "next": "Далее",
+    "skip": "Пропустить",
+    "tooltip": "Нажмите эту кнопку для начала ознакомления."
+  },
+  "startTourHelper": "Начать ознакомление"
+}

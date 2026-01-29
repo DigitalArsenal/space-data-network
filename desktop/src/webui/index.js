@@ -20,7 +20,8 @@ const ipcMainEvents = require('../common/ipc-main-events')
 const getCtx = require('../context')
 const { STATUS } = require('../daemon/consts')
 
-serve({ scheme: 'webui', directory: join(__dirname, '../../assets/webui') })
+// Use local webui build from the webui/ directory at project root
+serve({ scheme: 'webui', directory: join(__dirname, '../../../webui/build') })
 
 /**
  *

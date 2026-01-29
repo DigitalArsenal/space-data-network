@@ -1,0 +1,109 @@
+{
+  "actions": {
+    "add": "Ajouter",
+    "apply": "Appliquer",
+    "browse": "Chercher",
+    "cancel": "Annuler",
+    "change": "Modifier",
+    "clear": "Effacer",
+    "close": "Fermer",
+    "copy": "Copier",
+    "create": "Créer",
+    "default": "",
+    "remove": "Supprimer",
+    "download": "Télécharger",
+    "edit": "Modifier",
+    "import": "Importer",
+    "inspect": "Inspecter",
+    "more": "Plus",
+    "rename": "Renommer",
+    "reset": "Réinitialiser",
+    "save": "Sauvegarder",
+    "saving": "Enregistrement...",
+    "setPinning": "Régler l'épinglage",
+    "submit": "Valider",
+    "unselectAll": "Tout désélectionner",
+    "generate": "Générer",
+    "publish": "Publier",
+    "downloadCar": "Exporter CAR",
+    "done": "Terminé",
+    "checkRetrieval": ""
+  },
+  "cliModal": {
+    "description": "Collez la commande suivante dans votre terminal pour effectuer cette tache via l'invite de commande. Souvenez vous de remplacer les exemples par votre propres paramètres."
+  },
+  "nav": {
+    "bugsLink": "Signaler un bug",
+    "codeLink": "Voir le code"
+  },
+  "status": {
+    "connectedToIpfs": "Connecté à IPFS",
+    "connectingToIpfs": "Connexion à IPFS...",
+    "couldNotConnect": "Nous n'avons pas pu nous connecter au RPC de Kubo"
+  },
+  "apiAddressForm": {
+    "placeholder": "Entrez un URL (http://user:password@127.0.0.1:5001) ou une Multiaddr (/ip4/127.0.0.1/tcp/5001)"
+  },
+  "publicGatewayForm": {
+    "placeholder": "Entrez une URL (https://ipfs.io)"
+  },
+  "publicSubdomainGatewayForm": {
+    "placeholder": "Entrez une URL (https://dweb.link)"
+  },
+  "ipfsCheckForm": {
+    "label": "",
+    "placeholder": ""
+  },
+  "terms": {
+    "address": "Adresse",
+    "addresses": "Adresses",
+    "advanced": "Avancé",
+    "agent": "Agent",
+    "api": "RPC de Kubo",
+    "apiAddress": "Adresse de l'API du RPC de Kubo",
+    "blocks": "Blocs",
+    "connection": "Connexion",
+    "downSpeed": "Entrant",
+    "example": "Exemple :",
+    "file": "Fichier",
+    "files": "Fichiers",
+    "folder": "Dossier",
+    "folders": "Dossiers",
+    "gateway": "Passerelle",
+    "in": "Entrant",
+    "latency": "Latence",
+    "loading": "Chargement",
+    "location": "Emplacement",
+    "name": "Nom",
+    "node": "Nœud",
+    "out": "Sortant",
+    "peer": "Pair",
+    "peerId": "Peer ID",
+    "id": "ID",
+    "peers": "Pairs",
+    "pinNoun": "Épingler",
+    "pins": "Éléments épinglés",
+    "pinStatus": "Statut des épingles",
+    "publicKey": "Clé publique",
+    "publicGateway": "Passerelle publique",
+    "rateIn": "Ratio entrant",
+    "rateOut": "Ratio sortant",
+    "repo": "Répertoire",
+    "size": "Taille",
+    "totalIn": "Total entrant",
+    "totalOut": "Total sortant",
+    "unknown": "Inconnu",
+    "ui": "UI",
+    "upSpeed": "Sortant",
+    "revision": "Révision"
+  },
+  "tour": {
+    "back": "Retour",
+    "close": "Fermer",
+    "finish": "Terminer",
+    "next": "Suivant",
+    "skip": "Passer",
+    "tooltip": "Cliquez sur ce bouton à n'importe quel moment pour une visite guidée de la page en cours."
+  },
+  "startTourHelper": "Commencer la visite guidée"
+}

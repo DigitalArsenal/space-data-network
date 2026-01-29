@@ -1,0 +1,157 @@
+{
+  "title": "Dosyalar",
+  "home": "Ana Sayfa",
+  "breadcrumbs": "Kırıntılar",
+  "finished": "Bitti!",
+  "totalSize": "Toplam boyut: {size}",
+  "filesSelected": "{count, plural, one {Öge seçildi} other {Ögeler seçildi}}",
+  "menuOptions": "Seçili öğe için seçenekler",
+  "selectedAllEntries": "Tüm tablo girişlerini seçin",
+  "individualFilesOnly": "Yalnızca bireysel dosyalar için kullanılabilir",
+  "noPDFSupport": "Tarayıcınız PDF'leri desteklemiyor. Görüntülemek için lütfen PDF'yi indirin:",
+  "downloadPDF": "PDF İndir",
+  "openWithPublicGateway": "Bunun yerine <1>genel ağ geçidinizle</1> açmayı deneyin.",
+  "openWithLocalAndPublicGateway": "Bunun yerine  <1>yerel ağ geçidinizle</1> veya <3>genel ağ geçidinizle</3> açmayı deneyin.",
+  "cantBePreviewed": "Maalesef bu dosya önizlenemiyor",
+  "addByPath": "IPFS'den",
+  "addByCar": "From CAR",
+  "bulkImport": "Bulk import",
+  "newFolder": "Yeni dosya",
+  "generating": "Oluşturuluyor…",
+  "actions": {
+    "copyHash": "CID'yi kopyala",
+    "share": "Linki paylaş",
+    "publishWithIpns": "IPNS'e yayınla"
+  },
+  "cliModal": {
+    "extraNotesPinning": "Bu komut yalnızca yerel sabitleme/sabitlemeyi kaldırma içindir. Bir uzaktan iğneleme hizmeti kullanmak istiyorsanız, komut satırını nasıl sabitleyeceğinizi/sabitlemeyi kaldıracağınızı öğrenmek için o hizmetin belgelerine bakın."
+  },
+  "shareModal": {
+    "title": "Dosyaları paylaş",
+    "description": "Aşağıdaki bağlantıyı kopyalayın ve arkadaşlarınızla paylaşın."
+  },
+  "renameModal": {
+    "titleFile": "Dosyayı yeniden isimlendir",
+    "titleFolder": "Dosyayı yeniden adlandır",
+    "descriptionFile": "Bu dosya için yeni bir isim seçin.",
+    "descriptionFolder": "Bu klasör için yeni bir ad seçin."
+  },
+  "removeModal": {
+    "titleItem": "{count, plural, one {Ögeyi silmek istediğinizden emin misiniz? {name}} other {{count} ögeyi silmek istediğinizden emin misiniz?}}",
+    "titleFolder": "{count, plural, one {Klasörü silmek istediğinizden emin misiniz? {name}} other {{count}klasörü silmek istediğinizden emin misiniz?}}",
+    "titleFile": "{count, plural, one {Dosyayı silmek istediğinizden emin misiniz? {name}} other {{count}dosyayı silmek istediğinizden emin misiniz?}}",
+    "descriptionItem": "{count, plural, one {Bu öğeyi kaldırmak istediğinizden emin misiniz? Artık Dosyalar ekranında görünmeyecek ve bir sonraki zamanlanmış temizlemede kalıcı olarak kaldırılacaktır (ancak diğer IPFS düğümlerinde kopyalar olabilir). Bu eylem ve geri alınamaz.} other {Bu {count} öğeyi kaldırmak istediğinizden emin misiniz? Artık Dosyalar ekranında görünmeyecek ve bir sonraki zamanlanmış temizlemede kalıcı olarak kaldırılacaktır (ancak diğer IPFS düğümlerinde kopyalar olabilir). Bu eylem ve geri alınamaz.}}",
+    "descriptionFolder": "{count, plural, one {Bu klasörü kaldırmak istediğinizden emin misiniz? Artık Dosyalar ekranında görünmeyecek ve bir sonraki zamanlanmış temizlemede kalıcı olarak kaldırılacaktır (ancak diğer IPFS düğümlerinde kopyalar olabilir). Bu işlem geri alınamaz.} other {Bu {count} klasörü kaldırmak istediğinizden emin misiniz? Artık Dosyalar ekranında görünmeyecek ve bir sonraki zamanlanmış temizlemede kalıcı olarak kaldırılacaktır (ancak diğer IPFS düğümlerinde kopyalar olabilir). Bu işlem geri alınamaz.}}",
+    "descriptionFile": "{count, plural, one {Bu dosyayı kaldırmak istediğinizden emin misiniz? Artık Dosyalar ekranında görünmeyecek ve bir sonraki zamanlanmış temizlemede kalıcı olarak kaldırılacaktır (ancak diğer IPFS düğümlerinde kopyalar olabilir). Bu işlem geri alınamaz.} other {Bu {count} dosyayı kaldırmak istediğinizden emin misiniz? Artık Dosyalar ekranında görünmeyecekler ve bir sonraki zamanlanmış temizlemede kalıcı olarak kaldırılacaklar (ancak diğer IPFS düğümlerinde kopyaları olabilir). Bu işlem geri alınamaz.}}",
+    "checkboxRemoveLocalPin": "Yerel sabitlemeyi de kaldır (önerilen)",
+    "checkboxUnpinFromServices": "Tüm sabitleme hizmetlerinden sabitlemeyi kaldır"
+  },
+  "pinningModal": {
+    "title": "Bu öğeleri nereye sabitlemek istediğinizi seçin.",
+    "complianceLabel": "🔍 Check pinning services' compliance",
+    "footer": "Bir sabitleme hizmeti eklemeniz veya yapılandırmanız mı gerekiyor? <1>Ayarlara</1> git.",
+    "localNode": "Yerel düğüm",
+    "totalSize": "Toplam boyut: {size}"
+  },
+  "addByPathModal": {
+    "title": "IPFS'den içe aktar",
+    "description": "İçe aktarmak için bir IPFS yolu (CID) girin.",
+    "preloadNote": "NOTE: Imported path is lazy-loaded by default, and will be retrieved on-demand as you browse it. To proactively prefetch imported path to the local Datastore, choose ”Download” from the context menu.",
+    "importPathPlaceholder": "Yol veya Müşteri Kimliği (gerekli)",
+    "namePlaceholder": "İsim (İsteğe bağlı)",
+    "examples": "Örnekler:"
+  },
+  "addByCarModal": {
+    "title": "CAR Import",
+    "description": "Choose a CAR file to import a DAG from and specify a name for it to be imported into the current directory.",
+    "selectCARButtonText": "Select CAR…",
+    "namePlaceholder": "Ad",
+    "renameImportPath": "Rename import"
+  },
+  "bulkImportModal": {
+    "title": "Bulk import with text file",
+    "description": "Upload a text file with a list of CIDs (names are optional). Example:",
+    "select": "Select file",
+    "selectedFile": "Selected file",
+    "invalidCids": "*Invalid CID(s) found",
+    "failedToReadFile": "*Failed to read file contents"
+  },
+  "newFolderModal": {
+    "title": "Yeni dosya",
+    "description": "Oluşturmak istediğiniz klasörün adını girin."
+  },
+  "filesListLabel": "Dosyalar listesi",
+  "filesList": {
+    "noFiles": "<0>Bu dizinde dosya yok. Bazılarını eklemek için \"İçe Aktar\" düğmesini tıklayın.</0>"
+  },
+  "filesImportStatus": {
+    "imported": "{count, plural, one {1 öğe içe aktarıldı} other {{count} öğe içe aktarıldı}}",
+    "importing": "{count, plural, one {1 öğe içe aktarılıyor} other {{count} öğe içe aktarılıyor}}",
+    "toggleDropdown": "Açılır menüyü aç / kapat",
+    "closeDropdown": "Açılır menüyü kapat",
+    "count": "{count} / {count}"
+  },
+  "addFilesInfo": "<0>Burada henüz dosya yok! Yukarıdaki <1>İçe Aktar</1> düğmesini tıklayarak yerel IPFS düğümünüze dosya ekleyin.</0>",
+  "companionInfo": "<0><1>IPFS Companion</1>'ı kullandığınız için, dosya görünümü, uzantı kullanılırken eklenen dosyalarla sınırlıdır.</0>",
+  "tour": {
+    "step1": {
+      "title": "Dosyalar sayfası",
+      "paragraph1": "<0>Bu, <1>Değişken Dosya Sisteminizdeki (MFS)</1> dosyaların bulunduğu yerdir. Bu sayfadan dosya veya klasör ekleyebilir ve bunları yönetebilirsiniz.</0>",
+      "paragraph2": "Daha fazla bilgi edinmek için \"İleri\" yi tıklayın."
+    },
+    "step2": {
+      "title": "Kırıntılar",
+      "paragraph1": "Bu kırıntılar, geçerli dizininizin yolunu görüntüler. Yapabilirsin…",
+      "bullet1": "Bu dizine gitmek için tek bir kırıntıyı tıklayın",
+      "bullet2": "Bir dizinin eylemler menüsünü almak için bir kırıntıyı sağ tıklayın",
+      "bullet3": "Dosyaları taşımak veya içe aktarmak için bir kırıntıya sürükleyin"
+    },
+    "step3": {
+      "title": "Dosyaları ekle",
+      "paragraph1": "Burada kaç blok ve dosya sabitlediğinizi görebilirsiniz.",
+      "paragraph2": "Sağdaki açılır menü aracılığıyla deponuza dosya veya klasör ekleyebilirsiniz.",
+      "paragraph3": "<0>Zaten IPFS'de olan bir şey eklemek istiyorsanız, bunu <1>İçerik Tanımlayıcısına (CID)</1> ileterek MFS'nize aktarabilirsiniz.</0>"
+    },
+    "step5": {
+      "title": "Dosyalar listesi",
+      "paragraph1": "Son olarak, dosyalarınızı ve klasörlerinizi bulabileceğiniz liste. Dosyaları veya klasörleri eklemek için sürükleyip bırakın.",
+      "paragraph2": "Dosyaları paylaşabilir veya indirebilir, IPLD Explorer'da inceleyebilir, yeniden adlandırabilir veya silebilirsiniz!",
+      "paragraph3": "Uzman ipucu: MFS'nizin kök dizinine eklemek için Web kullanıcı arayüzünün herhangi bir sayfasından bir dosyayı sürükleyip bırakın."
+    }
+  },
+  "previewLimitReached": "This preview is limited to 10 KiB. Click the download button to access the full file.",
+  "previousFolder": "Önceki klasöre dön",
+  "fileLabel": "Şu boyutta {type} {name} seçin: {size}",
+  "hashUnavailable": "özüt kullanılamıyor",
+  "checkboxLabel": "{name} için daha fazla seçenek görüntüleyin",
+  "pinned": "Sabitlendi",
+  "pinnedRemotely": "Uzaktan sabitlendi",
+  "pinningRemotely": "Uzaktan tutturuluyor",
+  "pinningCompleted": "Tutturma tamamlandı",
+  "pinningFailed": "Tutturma başarısız oldu",
+  "clickToDismiss": "Yok saymak için tıklayın",
+  "clickToCancel": "İptal etmek için tıklayın",
+  "blocks": "Bloklar",
+  "localDatastore": "Local Datastore",
+  "localDatastoreDescription": "Total size of all blocks currently stored in the Datastore of your IPFS node (“RepoSize” from “ipfs repo stat”). This includes everything in the Files view (MFS), low-level pins, and any recently removed or temporary cached blocks that were not garbage-collected yet.",
+  "currentLocationRoot": "My Files",
+  "currentLocation": "Current Location",
+  "currentLocationDescription": "Total size of the DAG behind the current directory (“CumulativeSize” from “ipfs files stat”). This value includes both local and remote blocks, and could be bigger than the size of your local datastore.",
+  "pinningQueue": "Kuyruk tutturuluyor",
+  "more": "Daha fazla",
+  "files": "Dosyalar",
+  "cidNotFileNorDir": "Geçerli bağlantı bir dosya veya dizin değil. Bunun yerine <1>incelemeyi</1> deneyin.",
+  "sortBy": "Öğeleri {name}'a göre sırala",
+  "publishModal": {
+    "title": "IPNS'e yayınla",
+    "cidToPublish": "CID:",
+    "publishUnderKey": "Yayınlamak için anahtar seçin:",
+    "help": "IPNS hakkında bilgi edinmek ve daha fazla anahtar oluşturmak için Ayarlar'a gidin.",
+    "publishedUnderKey": "Bu anahtar altında başarılı bir şekilde yayınlandı:",
+    "linkCopied": "Link kopyalandı!",
+    "sharingPrompt": "Copy the link below and share it with others. The IPNS address will resolve as long as your node remains available on the network once a day to refresh the IPNS record.",
+    "pleaseWait": "Please wait while the initial 20 copies of the updated IPNS record are stored with the help of DHT peers…"
+  },
+  "noPinsInProgress": "All done, no remote pins in progress.",
+  "remotePinningInProgress": "Remote pinning in progress:"
+}

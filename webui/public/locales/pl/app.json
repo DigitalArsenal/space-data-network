@@ -1,0 +1,109 @@
+{
+  "actions": {
+    "add": "Dodaj",
+    "apply": "Zastosuj",
+    "browse": "Przeglądaj",
+    "cancel": "Anuluj",
+    "change": "Zmień",
+    "clear": "Wyczyść",
+    "close": "Zamknij",
+    "copy": "Kopiuj",
+    "create": "Utwórz",
+    "default": "Domyślne",
+    "remove": "Usuń",
+    "download": "Pobierz",
+    "edit": "Edytuj",
+    "import": "Importuj",
+    "inspect": "Analizuj",
+    "more": "Więcej",
+    "rename": "Zmień nazwę",
+    "reset": "Resetuj",
+    "save": "Zapisz",
+    "saving": "Zapisywanie…",
+    "setPinning": "Ustaw przypinanie",
+    "submit": "Zatwierdź",
+    "unselectAll": "Odznacz wszystko",
+    "generate": "Generuj",
+    "publish": "Publikuj",
+    "downloadCar": "Eksportuj CAR",
+    "done": "Gotowe",
+    "checkRetrieval": "Sprawdź dostępność"
+  },
+  "cliModal": {
+    "description": "Wklej poniższe polecenie do terminala, aby wykonać to zadanie w Kubo z linii poleceń. Pamiętaj, że musisz zastąpić symbole zastępcze swoimi konkretnymi parametrami."
+  },
+  "nav": {
+    "bugsLink": "Zgłoś błąd",
+    "codeLink": "Zobacz kod"
+  },
+  "status": {
+    "connectedToIpfs": "Połączono z IPFS",
+    "connectingToIpfs": "Łączenie z IPFS…",
+    "couldNotConnect": "Nie można połączyć się z Kubo RPC"
+  },
+  "apiAddressForm": {
+    "placeholder": "Wprowadź URL (http://user:password@127.0.0.1:5001) lub Multiaddr (/ip4/127.0.0.1/tcp/5001)"
+  },
+  "publicGatewayForm": {
+    "placeholder": "Wprowadź URL (https://ipfs.io)"
+  },
+  "publicSubdomainGatewayForm": {
+    "placeholder": "Wprowadź URL (https://dweb.link)"
+  },
+  "ipfsCheckForm": {
+    "label": "URL usługi sprawdzania dostępności",
+    "placeholder": "Wprowadź URL (https://check.ipfs.network)"
+  },
+  "terms": {
+    "address": "Adres",
+    "addresses": "Adresy",
+    "advanced": "Zaawansowane",
+    "agent": "Agent",
+    "api": "Kubo RPC",
+    "apiAddress": "Adres Kubo RPC API",
+    "blocks": "Bloki",
+    "connection": "Połączenie",
+    "downSpeed": "Przychodzące",
+    "example": "Przykład:",
+    "file": "Plik",
+    "files": "Pliki",
+    "folder": "Folder",
+    "folders": "Foldery",
+    "gateway": "Bramka",
+    "in": "Przychodzące",
+    "latency": "Opóźnienie",
+    "loading": "Wczytywanie",
+    "location": "Lokalizacja",
+    "name": "Nazwa",
+    "node": "Węzeł",
+    "out": "Wychodzące",
+    "peer": "Węzeł",
+    "peerId": "ID węzła",
+    "id": "ID",
+    "peers": "Węzły",
+    "pinNoun": "Przypięcie",
+    "pins": "Przypięcia",
+    "pinStatus": "Status przypięcia",
+    "publicKey": "Klucz publiczny",
+    "publicGateway": "Publiczna bramka",
+    "rateIn": "Transfer przychodzący",
+    "rateOut": "Transfer wychodzący",
+    "repo": "Repozytorium",
+    "size": "Rozmiar",
+    "totalIn": "Razem przychodzące",
+    "totalOut": "Razem wychodzące",
+    "unknown": "Nieznane",
+    "ui": "Interfejs",
+    "upSpeed": "Wychodzące",
+    "revision": "Wersja"
+  },
+  "tour": {
+    "back": "Wstecz",
+    "close": "Zamknij",
+    "finish": "Zakończ",
+    "next": "Dalej",
+    "skip": "Pomiń",
+    "tooltip": "Kliknij ten przycisk w dowolnym momencie, aby zobaczyć przewodnik po bieżącej stronie."
+  },
+  "startTourHelper": "Uruchom przewodnik"
+}

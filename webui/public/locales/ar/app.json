@@ -1,0 +1,109 @@
+{
+  "actions": {
+    "add": "أضف",
+    "apply": "تطبيق",
+    "browse": "تصفح",
+    "cancel": "إلغاء",
+    "change": "تغيير",
+    "clear": "واضح",
+    "close": "أغلق",
+    "copy": "نسخ",
+    "create": "إنشاء ",
+    "default": "",
+    "remove": "إزالة",
+    "download": "تحميل",
+    "edit": "تعديل",
+    "import": " استيراد",
+    "inspect": "فحص",
+    "more": "أكثر",
+    "rename": "إعادة تسمية",
+    "reset": "إعادة تعيين",
+    "save": "حفظ",
+    "saving": "ادخار",
+    "setPinning": "ضبط التثبيت",
+    "submit": "إرسال",
+    "unselectAll": "إلغاء تحديد الكل",
+    "generate": "",
+    "publish": "",
+    "downloadCar": "",
+    "done": "",
+    "checkRetrieval": ""
+  },
+  "cliModal": {
+    "description": ""
+  },
+  "nav": {
+    "bugsLink": "الإبلاغ عن خطأ",
+    "codeLink": "انظر الرمز"
+  },
+  "status": {
+    "connectedToIpfs": "متصل بـ IPFS",
+    "connectingToIpfs": "جارٍ الاتصال بـ IPFS ...",
+    "couldNotConnect": ""
+  },
+  "apiAddressForm": {
+    "placeholder": ""
+  },
+  "publicGatewayForm": {
+    "placeholder": ""
+  },
+  "publicSubdomainGatewayForm": {
+    "placeholder": "أدخل عنوان  (https://dweb.link)"
+  },
+  "ipfsCheckForm": {
+    "label": "",
+    "placeholder": ""
+  },
+  "terms": {
+    "address": "عنوان",
+    "addresses": "عناوين",
+    "advanced": "متقدم",
+    "agent": "عميل",
+    "api": "",
+    "apiAddress": "",
+    "blocks": "تم التثبيت",
+    "connection": "الإتصال",
+    "downSpeed": "واردة",
+    "example": "مثال:",
+    "file": "ملف",
+    "files": "الملفات",
+    "folder": "مجلد",
+    "folders": "المجلدات",
+    "gateway": "بوابة",
+    "in": "في",
+    "latency": "وقت الإستجابة",
+    "loading": "تحميل",
+    "location": "موقع",
+    "name": "اسم",
+    "node": "العقدة",
+    "out": "خارج",
+    "peer": "الند",
+    "peerId": "معرف الأقران",
+    "id": "",
+    "peers": "الأقران",
+    "pinNoun": "رمز المرور",
+    "pins": "رموز المرور ",
+    "pinStatus": "حالة المشبك",
+    "publicKey": "المفتاح العام",
+    "publicGateway": "بوابة عامة",
+    "rateIn": "التقييم",
+    "rateOut": "خارج التقييم",
+    "repo": "مخزن",
+    "size": "حجم",
+    "totalIn": "إجمالي الدخل",
+    "totalOut": "إجمالي المستحقات",
+    "unknown": "مجهول",
+    "ui": "واجهة المستخدم",
+    "upSpeed": "منفتح",
+    "revision": "مراجعة"
+  },
+  "tour": {
+    "back": "عودة",
+    "close": "أغلق",
+    "finish": "إنهاء",
+    "next": "التالى",
+    "skip": "تخطى",
+    "tooltip": "انقر فوق هذا الزر في أي وقت لإجراء جولة إرشادية على الصفحة الحالية."
+  },
+  "startTourHelper": "بدء جولة"
+}

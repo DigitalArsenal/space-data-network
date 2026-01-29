@@ -1,0 +1,140 @@
+{
+  "title": "الملفات",
+  "home": "الصفحة الرئيسية",
+  "breadcrumbs": "فتات ",
+  "finished": "منتهي",
+  "totalSize": "الحجم الإجمالي:{size}",
+  "filesSelected": "{count, plural, zero {العناصر المحددة} one {العناصر المحددة} two {العناصر المحددة} few {العناصر المحددة} many {العناصر المحددة} other {العناصر المحددة}}",
+  "menuOptions": "خيارات العنصر المحدد",
+  "selectedAllEntries": "حدد كافة إدخالات الجدول",
+  "individualFilesOnly": "متاح فقط للملفات الفردية",
+  "noPDFSupport": "متصفحك لا يدعم ملفات PDF. يرجى تنزيل ملف PDF لعرضه:",
+  "downloadPDF": "تحميل PDF",
+  "openWithPublicGateway": "حاول فتحه بدلاً من ذلك باستخدام ملف <1>البوابة العامة</1>.",
+  "openWithLocalAndPublicGateway": "حاول فتحه بدلاً من ذلك باستخدام ملف <1>البوابة المحلية</1> أو<3>البوابة العامة</3>.",
+  "cantBePreviewed": "عذرًا ، لا يمكن معاينة هذا الملف",
+  "addByPath": "من IPFS",
+  "newFolder": "ملف جديد",
+  "generating": "جارٍ الإنشاء ...",
+  "actions": {
+    "copyHash": "انسخ CID",
+    "share": "مشاركة الرابط",
+    "publishWithIpns": "Publish to IPNS"
+  },
+  "cliModal": {
+    "extraNotesPinning": "هذا الأمر مخصص فقط للتثبيت / إلغاء التثبيت المحلي. إذا كنت تريد استخدام خدمة التثبيت عن بُعد ، فاستشر وثائق تلك الخدمة لمعرفة كيفية التثبيت / إلغاء التثبيت من سطر الأوامر."
+  },
+  "shareModal": {
+    "title": "مشاركة الملفات",
+    "description": "انسخ الرابط أدناه وشاركه مع أصدقائك."
+  },
+  "renameModal": {
+    "titleFile": "إعادة تسمية الملف",
+    "titleFolder": "إعادة تسمية المجلد",
+    "descriptionFile": "اختر اسمًا جديدًا لهذا الملف.",
+    "descriptionFolder": "اختر اسمًا جديدًا لهذا المجلد."
+  },
+  "removeModal": {
+    "titleItem": "{count, plural, zero {إزالة {count} العناصر?} one {إزالة {count} العناصر?} two {إزالة {count} العناصر?} few {إزالة {count} العناصر?} many {إزالة {count} العناصر?} other {إزالة {count} العناصر?}}",
+    "titleFolder": "{count, plural, zero {إزالة المجلد؟ {name}} one {Remove folder? {name}} two {Remove {count} folders?} few {Remove {count} folders?} many {إزالة المجلد؟ {name}} other {Remove {count} folders?}}",
+    "titleFile": "{count, plural, zero {إزالة الملف؟{name}} one {Remove file? {name}} two {Remove {count} files?} few {Remove {count} files?} many {Remove {count} files?} other {Remove {count} files?}}",
+    "descriptionItem": "{count, plural, zero {هل أنت متأكد أنك تريد إزالة هذا العنصر؟ لن يظهر بعد الآن على شاشة الملفات ، وستتم إزالته نهائيًا في عملية التنظيف المجدولة التالية (على الرغم من إمكانية وجود نسخ على عقد IPFS أخرى). هذا العمل ولا يمكن عكسه.} one {Are you sure you want to remove this item? It will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action and cannot be reversed.} two {Are you sure you want to remove these {count} items? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} few {Are you sure you want to remove these {count} items? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} many {Are you sure you want to remove these {count} items? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} other {Are you sure you want to remove these {count} items? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.}}",
+    "descriptionFolder": "{count, plural, zero {هل أنت متأكد أنك تريد إزالة هذا المجلد؟ لن يظهر بعد الآن على شاشة \"الملفات\" ، وستتم إزالته نهائيًا في عملية التنظيف المجدولة التالية (على الرغم من إمكانية وجود نسخ على عقد IPFS أخرى). لا يمكن عكس هذا الإجراء.} one {Are you sure you want to remove this folder? It will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} two {Are you sure you want to remove these {count} folders? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} few {Are you sure you want to remove these {count} folders? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} many {Are you sure you want to remove these {count} folders? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} other {Are you sure you want to remove these {count} folders? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.}}",
+    "descriptionFile": "{count, plural, zero {هل أنت متأكد أنك تريد إزالة هذا الملف؟ لن يظهر بعد الآن على شاشة الملفات، وستتم إزالته نهائيًا في عملية التنظيف المجدولة التالية (على الرغم من إمكانية وجود نسخ على عقد IPFS أخرى). لا يمكن عكس هذا الإجراء.} one {Are you sure you want to remove this file? It will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} two {Are you sure you want to remove these {count} files? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} few {Are you sure you want to remove these {count} files? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} many {Are you sure you want to remove these {count} files? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} other {Are you sure you want to remove these {count} files? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.}}",
+    "checkboxRemoveLocalPin": "قم أيضًا بإزالة الدبوس المحلي (موصى به)",
+    "checkboxUnpinFromServices": "قم بإلغاء التثبيت من جميع خدمات التثبيت"
+  },
+  "pinningModal": {
+    "title": "حدد المكان الذي تريد تثبيت هذه العناصر فيه.",
+    "complianceLabel": "🔍 Check pinning services' compliance",
+    "footer": "هل تحتاج إلى إضافة أو تكوين خدمة تثبيت؟ اذهب إلى <1>إعدادات</1>.",
+    "localNode": "العقدة المحلية",
+    "totalSize": "الحجم الإجمالي:{size}"
+  },
+  "addByPathModal": {
+    "title": "استيراد من IPFS",
+    "description": "إدراج مسار IPFS (CID) للاستيراد.",
+    "preloadNote": "NOTE: Imported path is lazy-loaded by default, and will be retrieved on-demand as you browse it. To proactively prefetch imported path to the local Datastore, choose ”Download” from the context menu.",
+    "importPathPlaceholder": "المسار أو الرقم التعريفي للعميل (مطلوب)",
+    "namePlaceholder": "الاسم (اختياري)",
+    "examples": "أمثلة:"
+  },
+  "newFolderModal": {
+    "title": "ملف جديد",
+    "description": "أدخل اسم المجلد الذي تريد إنشاءه."
+  },
+  "filesListLabel": "قائمة الملفات",
+  "filesList": {
+    "noFiles": "<0>لا توجد ملفات في هذا الدليل. انقر فوق الزر \"استيراد\" لإضافة البعض.</0>"
+  },
+  "filesImportStatus": {
+    "imported": "{count, plural, zero {تم استيراد عنصر 1} one {Imported 1 item} two {Imported {count} items} few {Imported {count} items} many {Imported {count} items} other {Imported {count} items}}",
+    "importing": "{count, plural, zero {استيراد 1 عنصر } one {Importing 1 item} two {Importing {count} items} few {Importing {count} items} many {Importing {count} items} other {Importing {count} items}}",
+    "toggleDropdown": "تبديل القائمة المنسدلة",
+    "closeDropdown": "إغلاق القائمة المنسدلة",
+    "count": "{count}من{count}"
+  },
+  "addFilesInfo": "<0>لا توجد ملفات هنا حتى الآن! أضف ملفات إلى عقدة IPFS المحلية الخاصة بك عن طريق النقر فوق<1>استيراد</1>زر أعلاه.</0>",
+  "companionInfo": "<0>أثناء استخدامك لـ<1> IPFS Companion</1> ، يقتصر عرض الملفات على الملفات المضافة أثناء استخدام الامتداد.</0>",
+  "tour": {
+    "step1": {
+      "title": "صفحة الملفات",
+      "paragraph1": "<0> هذا هو المكان الذي تعيش فيه الملفات الموجودة على نظام<1> الملفات القابلة للتغيير (MFS).</1> يمكنك إضافة ملفات أو مجلدات وإدارتها من هذه الصفحة.</0>",
+      "paragraph2": "انقر فوق \"التالي\" لمعرفة المزيد."
+    },
+    "step2": {
+      "title": "فتات ",
+      "paragraph1": "تعرض مسارات التنقل هذه المسار إلى دليلك الحالي. تستطيع…",
+      "bullet1": "انقر فوق مسار تنقل فردي للانتقال إلى هذا الدليل",
+      "bullet2": "انقر بزر الماوس الأيمن فوق مسار التنقل للحصول على قائمة الإجراءات لهذا الدليل",
+      "bullet3": "اسحب الملفات إلى مسار التنقل لنقلها أو استيرادها"
+    },
+    "step3": {
+      "title": "إضافة ملفات",
+      "paragraph1": "هنا يمكنك أن ترى عدد الكتل والملفات التي قمت بتثبيتها.",
+      "paragraph2": "يمكنك إضافة ملفات أو مجلدات إلى الريبو الخاص بك من خلال القائمة المنسدلة على اليمين.",
+      "paragraph3": "<0> إذا كنت تريد إضافة شيء موجود بالفعل على IPFS ، فيمكنك استيراده إلى MFS الخاص بك عن طريق تمرير معرف<1> المحتوى (CID) الخاص به</1>.</0>"
+    },
+    "step5": {
+      "title": "قائمة الملفات",
+      "paragraph1": "أخيرًا ، القائمة حيث يمكنك العثور على الملفات والمجلدات. اسحب الملفات أو المجلدات وأفلتها لإضافتها.",
+      "paragraph2": "يمكنك مشاركة الملفات أو تنزيلها, وفحصها في IPLD Explorer,  وإعادة تسميتها أو إزالتها!",
+      "paragraph3": "نصيحة احترافية: اسحب ملف وأفلته من أي صفحة أخرى لواجهة مستخدم الويب لإضافتها إلى جذر MFS."
+    }
+  },
+  "previewLimitReached": "This preview is limited to 10 KiB. Click the download button to access the full file.",
+  "previousFolder": "ارجع إلى المجلد السابق",
+  "fileLabel": "حدد{type}{name} الحجم{size}",
+  "hashUnavailable": "التجزئة غير متاحة",
+  "checkboxLabel": "عرض المزيد من الخيارات لـ{name}",
+  "pinned": "تم التثبيت",
+  "pinnedRemotely": "مثبت عن بعد",
+  "pinningRemotely": "Pinning remotely",
+  "pinningCompleted": "Pinning completed",
+  "pinningFailed": "Pinning failed",
+  "clickToDismiss": "Click to dismiss",
+  "clickToCancel": "Click to cancel",
+  "blocks": "تم التثبيت",
+  "localDatastore": "Local Datastore",
+  "localDatastoreDescription": "Total size of all blocks currently stored in the Datastore of your IPFS node (“RepoSize” from “ipfs repo stat”). This includes everything in the Files view (MFS), low-level pins, and any recently removed or temporary cached blocks that were not garbage-collected yet.",
+  "currentLocationRoot": "My Files",
+  "currentLocation": "Current Location",
+  "currentLocationDescription": "Total size of the DAG behind the current directory (“CumulativeSize” from “ipfs files stat”). This value includes both local and remote blocks, and could be bigger than the size of your local datastore.",
+  "pinningQueue": "Pinning queue",
+  "more": "أكثر",
+  "files": "الملفات",
+  "cidNotFileNorDir": "الرابط الحالي ليس ملفًا ولا دليلًا. حاول <1>تفقده</1> بدلا من ذلك.",
+  "sortBy": "فرز العناصر حسب {name}",
+  "publishModal": {
+    "title": "Publish to IPNS",
+    "cidToPublish": "CID:",
+    "publishUnderKey": "Select key for publishing:",
+    "help": "Go to Settings to learn about IPNS and create more keys.",
+    "publishedUnderKey": "Successfully published under the key:",
+    "linkCopied": "Link copied!",
+    "sharingPrompt": "Copy the link below and share it with others. The IPNS address will resolve as long as your node remains available on the network once a day to refresh the IPNS record.",
+    "pleaseWait": "Please wait while the initial 20 copies of the updated IPNS record are stored with the help of DHT peers…"
+  },
+  "noPinsInProgress": "All done, no remote pins in progress.",
+  "remotePinningInProgress": "Remote pinning in progress:"
+}

@@ -1,0 +1,109 @@
+{
+  "actions": {
+    "add": "Přidat",
+    "apply": "Použít",
+    "browse": "Procházet",
+    "cancel": "Zrušit",
+    "change": "Změnit",
+    "clear": "Smazat",
+    "close": "Zavřít",
+    "copy": "Zkopírovat",
+    "create": "Vytvořit",
+    "default": "",
+    "remove": "Odstranit",
+    "download": "Stáhnout",
+    "edit": "Upravit",
+    "import": "Import",
+    "inspect": "Prozkoumat",
+    "more": "Více",
+    "rename": "Přejmenovat",
+    "reset": "Resetovat",
+    "save": "Uložit",
+    "saving": "Ukládání…",
+    "setPinning": "Nastavit připínání",
+    "submit": "Odeslat",
+    "unselectAll": "Odznačit vše",
+    "generate": "Generovat",
+    "publish": "Publikovat",
+    "downloadCar": "",
+    "done": "Hotovo",
+    "checkRetrieval": ""
+  },
+  "cliModal": {
+    "description": "Chcete-li tento úkol provést v systému Kubo prostřednictvím příkazového řádku, vložte do terminálu následující příkaz. Nezapomeňte, že je třeba nahradit zástupné znaky konkrétními parametry."
+  },
+  "nav": {
+    "bugsLink": "Nahlásit chybu",
+    "codeLink": "Podívejte se na kód"
+  },
+  "status": {
+    "connectedToIpfs": "Připojeno k IPFS",
+    "connectingToIpfs": "Připojení k IPFS...",
+    "couldNotConnect": "Nepodařilo se připojit ke Kubo RPC"
+  },
+  "apiAddressForm": {
+    "placeholder": ""
+  },
+  "publicGatewayForm": {
+    "placeholder": "Zadejte URL (https://ipfs.io)"
+  },
+  "publicSubdomainGatewayForm": {
+    "placeholder": "Zadejte adresu URL (https://dweb.link)"
+  },
+  "ipfsCheckForm": {
+    "label": "",
+    "placeholder": ""
+  },
+  "terms": {
+    "address": "Adresa",
+    "addresses": "Adresa",
+    "advanced": "Pokročilý",
+    "agent": "Agent",
+    "api": "Kubo RPC",
+    "apiAddress": "Adresa Kubo RPC API",
+    "blocks": "Bloky",
+    "connection": "Připojení",
+    "downSpeed": "Příchozí",
+    "example": "Příklad:",
+    "file": "Soubor",
+    "files": "Soubory",
+    "folder": "Složka",
+    "folders": "Složky",
+    "gateway": "Brána",
+    "in": "Vstup",
+    "latency": "Prodleva",
+    "loading": "Načítání",
+    "location": "Umístění",
+    "name": "Jméno",
+    "node": "Uzel",
+    "out": "Výstup",
+    "peer": "Uzel",
+    "peerId": "ID uzlu",
+    "id": "ID",
+    "peers": "Uzly",
+    "pinNoun": "Připnout",
+    "pins": "Špendlíky",
+    "pinStatus": "Stav připnutí",
+    "publicKey": "Veřejný klíč",
+    "publicGateway": "Veřejná brána",
+    "rateIn": "Hodnota uvnitř",
+    "rateOut": "Hodnota ven",
+    "repo": "Repozitář",
+    "size": "Velikost",
+    "totalIn": "Celkem dovnitř",
+    "totalOut": "Celkem ven",
+    "unknown": "Neznámé",
+    "ui": "UI",
+    "upSpeed": "Odchozí",
+    "revision": "Revize"
+  },
+  "tour": {
+    "back": "Zpět",
+    "close": "Zavřít",
+    "finish": "Dokončit",
+    "next": "Další",
+    "skip": "Přeskočit",
+    "tooltip": "Kliknutím na toto tlačítko kdykoli zobrazíte prohlídku aktuální stránky."
+  },
+  "startTourHelper": "Zahájení prohlídky"
+}

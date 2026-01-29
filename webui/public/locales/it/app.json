@@ -1,0 +1,109 @@
+{
+  "actions": {
+    "add": "Aggiungi",
+    "apply": "Applica",
+    "browse": "Esplora",
+    "cancel": "Annulla",
+    "change": "Cambia",
+    "clear": "Svuota",
+    "close": "Chiudi",
+    "copy": "Copia",
+    "create": "Crea",
+    "default": "",
+    "remove": "Rimuovi",
+    "download": "Scarica",
+    "edit": "Modifica",
+    "import": "Importa",
+    "inspect": "Ispeziona",
+    "more": "Altro",
+    "rename": "Rinomina",
+    "reset": "Ripristina",
+    "save": "Salva",
+    "saving": "Salvataggio in corso...",
+    "setPinning": "Imposta pinning",
+    "submit": "Applica",
+    "unselectAll": "Deseleziona tutto",
+    "generate": "",
+    "publish": "",
+    "downloadCar": "",
+    "done": "",
+    "checkRetrieval": ""
+  },
+  "cliModal": {
+    "description": ""
+  },
+  "nav": {
+    "bugsLink": "Segnala un problema",
+    "codeLink": "Guarda il codice"
+  },
+  "status": {
+    "connectedToIpfs": "Connesso ad IPFS",
+    "connectingToIpfs": "Connessione ad IPFS...",
+    "couldNotConnect": ""
+  },
+  "apiAddressForm": {
+    "placeholder": ""
+  },
+  "publicGatewayForm": {
+    "placeholder": ""
+  },
+  "publicSubdomainGatewayForm": {
+    "placeholder": "Inserisci un URL (https://dweb.link)"
+  },
+  "ipfsCheckForm": {
+    "label": "",
+    "placeholder": ""
+  },
+  "terms": {
+    "address": "Indirizzo",
+    "addresses": "Indirizzi",
+    "advanced": "Avanzate",
+    "agent": "Agent",
+    "api": "",
+    "apiAddress": "",
+    "blocks": "Blocchi",
+    "connection": "Connessione",
+    "downSpeed": "In entrata",
+    "example": "Esempio:",
+    "file": "File",
+    "files": "File",
+    "folder": "Cartella",
+    "folders": "Cartelle",
+    "gateway": "Gateway",
+    "in": "Entrata",
+    "latency": "Latenza",
+    "loading": "Caricamento",
+    "location": "Luogo",
+    "name": "Nome",
+    "node": "Nodo",
+    "out": "Uscita",
+    "peer": "Peer",
+    "peerId": "Peer ID",
+    "id": "ID",
+    "peers": "Peer",
+    "pinNoun": "Fisso",
+    "pins": "Fissi",
+    "pinStatus": "Stato Pin",
+    "publicKey": "Chiave pubblica",
+    "publicGateway": "Gateway pubblico",
+    "rateIn": "Tasso d'entrata",
+    "rateOut": "Tasso d'uscita",
+    "repo": "Repo",
+    "size": "Dimensione",
+    "totalIn": "Totale entrata",
+    "totalOut": "Totale uscita",
+    "unknown": "Sconosciuto",
+    "ui": "UI",
+    "upSpeed": "In uscita",
+    "revision": "Revisiona"
+  },
+  "tour": {
+    "back": "Indietro",
+    "close": "Chiudi",
+    "finish": "Fine",
+    "next": "Avanti",
+    "skip": "Salta",
+    "tooltip": "Clicca su questo bottone in qualunque momento per un tour guidato nella pagina corrente."
+  },
+  "startTourHelper": "Inizia tour"
+}

@@ -1,0 +1,109 @@
+{
+  "actions": {
+    "add": "شامل کریں",
+    "apply": "لاگو کریں",
+    "browse": "لائیں",
+    "cancel": "منسوخ کریں",
+    "change": "تبدیل کریں",
+    "clear": "صاف کریں",
+    "close": "بند کریں",
+    "copy": "نقل کریں",
+    "create": "تشکیل دیں",
+    "default": "",
+    "remove": "",
+    "download": "ڈاؤنلوڈ کریں",
+    "edit": "ترمیم کریں",
+    "import": "درآمد کریں",
+    "inspect": "معائنہ کریں",
+    "more": "مزید",
+    "rename": "ری نیم",
+    "reset": "ری سیٹ",
+    "save": "محفوظ",
+    "saving": "محفوظ ہو رہا ہے...",
+    "setPinning": "پِن کرنا طے کریں",
+    "submit": "جمع کریں",
+    "unselectAll": "تمام غیر منتخب کریں",
+    "generate": "",
+    "publish": "",
+    "downloadCar": "",
+    "done": "",
+    "checkRetrieval": ""
+  },
+  "cliModal": {
+    "description": ""
+  },
+  "nav": {
+    "bugsLink": "خرابی کی اطلاع دیں",
+    "codeLink": "کوڈ دیکھیں"
+  },
+  "status": {
+    "connectedToIpfs": ".IPFS سے مربوط ہوا",
+    "connectingToIpfs": ".IPFS سے مربوط ہو رہا ہے...",
+    "couldNotConnect": ""
+  },
+  "apiAddressForm": {
+    "placeholder": ""
+  },
+  "publicGatewayForm": {
+    "placeholder": ""
+  },
+  "publicSubdomainGatewayForm": {
+    "placeholder": ""
+  },
+  "ipfsCheckForm": {
+    "label": "",
+    "placeholder": ""
+  },
+  "terms": {
+    "address": "پتہ",
+    "addresses": "پتے",
+    "advanced": "ایڈوانسڈ",
+    "agent": "ایجنٹ",
+    "api": "",
+    "apiAddress": "",
+    "blocks": "بلاکس",
+    "connection": "رابطے",
+    "downSpeed": "آنے والی",
+    "example": "مثال:",
+    "file": "فائل",
+    "files": "فائلیں",
+    "folder": "فولڈر",
+    "folders": "فولڈرز",
+    "gateway": "گیٹ وے",
+    "in": "میں",
+    "latency": "تاخیر",
+    "loading": "لوڈ ہو رہا ہے",
+    "location": "مقام",
+    "name": "نام",
+    "node": "نوڈ",
+    "out": "آؤٹ",
+    "peer": "پیر",
+    "peerId": "پیر کی شناخت",
+    "id": "",
+    "peers": "پیر",
+    "pinNoun": "پِن",
+    "pins": "پنوں",
+    "pinStatus": "پن کی حالت",
+    "publicKey": "عوامی کلید",
+    "publicGateway": "",
+    "rateIn": "میں شرح",
+    "rateOut": "درجہ بندی",
+    "repo": "ریپو",
+    "size": "سائز",
+    "totalIn": "کُل میں",
+    "totalOut": "کُل باہر",
+    "unknown": "نامعلوم",
+    "ui": "UI",
+    "upSpeed": "باہر جانے والا",
+    "revision": "نظرثانی"
+  },
+  "tour": {
+    "back": "پیچھے",
+    "close": "بند کریں",
+    "finish": "ختم",
+    "next": "اگلے",
+    "skip": "چھوڑ دیں",
+    "tooltip": "موجودہ صفحے پر ہدایتی دورے کے لئے کسی بھی وقت اس بٹن پر کلک کریں۔"
+  },
+  "startTourHelper": "دورے شروع کریں"
+}

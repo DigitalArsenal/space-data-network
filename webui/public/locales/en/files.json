@@ -1,0 +1,206 @@
+{
+  "title": "Files",
+  "breadcrumbs": "Breadcrumbs",
+  "totalSize": "Total size: {size}",
+  "filesSelected": "{count, plural, one {Item selected} other {Items selected}}",
+  "menuOptions": "Options for selected item",
+  "individualFilesOnly": "Only available for individual files",
+  "noPDFSupport": "Your browser does not support PDFs. Please download the PDF to view it:",
+  "downloadPDF": "Download PDF",
+  "openWithPublicGateway": "Try opening it instead with your <1>public gateway</1>.",
+  "openWithLocalAndPublicGateway": "Try opening it instead with your <1>local gateway</1> or <3>public gateway</3>.",
+  "cantBePreviewed": "Sorry, this file can’t be previewed",
+  "addByPath": "From IPFS",
+  "addByCar": "From CAR",
+  "bulkImport": "Bulk import",
+  "newFolder": "New folder",
+  "switchToListView": "Click to switch to list view",
+  "switchToGridView": "Click to switch to grid view",
+  "generating": "Generating…",
+  "dropHere": "Drop here to move",
+  "actions": {
+    "copyHash": "Copy CID",
+    "share": "Share link",
+    "publishWithIpns": "Publish to IPNS"
+  },
+  "cliModal": {
+    "extraNotesPinning": "This command is only for local pinning/unpinning. If you want to use a remote pinning service, consult that service's documentation to learn how to pin/unpin from the command line."
+  },
+  "shareModal": {
+    "title": "Share files",
+    "description": "Copy the link below and share it with your friends."
+  },
+  "renameModal": {
+    "titleFile": "Rename file",
+    "titleFolder": "Rename folder",
+    "descriptionFile": "Choose a new name for this file.",
+    "descriptionFolder": "Choose a new name for this folder."
+  },
+  "removeModal": {
+    "titleItem": "{count, plural, one {Remove item? {name}} other {Remove {count} items?}}",
+    "titleFolder": "{count, plural, one {Remove folder? {name}} other {Remove {count} folders?}}",
+    "titleFile": "{count, plural, one {Remove file? {name}} other {Remove {count} files?}}",
+    "descriptionItem": "{count, plural, one {Are you sure you want to remove this item? It will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action and cannot be reversed.} other {Are you sure you want to remove these {count} items? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.}}",
+    "descriptionFolder": "{count, plural, one {Are you sure you want to remove this folder? It will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} other {Are you sure you want to remove these {count} folders? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.}}",
+    "descriptionFile": "{count, plural, one {Are you sure you want to remove this file? It will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.} other {Are you sure you want to remove these {count} files? They will no longer appear on the Files screen, and will be permanently removed in the next scheduled cleanup (though copies may exist on other IPFS nodes). This action cannot be reversed.}}",
+    "checkboxRemoveLocalPin": "Also remove local pin (recommended)",
+    "checkboxUnpinFromServices": "Unpin from all pinning services"
+  },
+  "shortcutModal": {
+    "title": "Keyboard Shortcuts",
+    "description": "The following keyboard shortcuts are available in the Files section:",
+    "navigation": "Navigation",
+    "selection": "Selection",
+    "actions": "Actions",
+    "other": "Other",
+    "moveDown": "Move down",
+    "moveUp": "Move up",
+    "moveLeft": "Move left",
+    "moveRight": "Move right",
+    "navigate": "Navigate to selected item",
+    "rename": "Rename selected item",
+    "delete": "Delete selected item(s)",
+    "toggleSelection": "Toggle selection",
+    "selectAll": "Select all items",
+    "deselectAll": "Deselect all items",
+    "copy": "Copy selected item(s)",
+    "paste": "Paste item(s)",
+    "cut": "Cut selected item(s)",
+    "showShortcuts": "Show keyboard shortcuts"
+  },
+  "pinningModal": {
+    "title": "Select where you would like to pin these items.",
+    "complianceLabel": "🔍 Check pinning services' compliance",
+    "footer": "Need to add or configure a pinning service? Go to <1>Settings</1>.",
+    "localNode": "Local node",
+    "totalSize": "Total size: {size}"
+  },
+  "addByPathModal": {
+    "title": "Import from IPFS",
+    "description": "Insert an IPFS or IPNS path, CID, or protocol URL to import.",
+    "preloadNote": "NOTE: Imported path is lazy-loaded by default, and will be retrieved on-demand as you browse it. To proactively prefetch imported path to the local Datastore, choose \u201cDownload\u201d from the context menu.",
+    "importPathPlaceholder": "Path, CID, or URL (required)",
+    "namePlaceholder": "Name (optional)",
+    "examples": "Examples:"
+  },
+  "addByCarModal": {
+    "title": "CAR Import",
+    "description": "Choose a CAR file to import a DAG from and specify a name for it to be imported into the current directory.",
+    "selectCARButtonText": "Select CAR…",
+    "namePlaceholder": "Name",
+    "renameImportPath": "Rename import"
+  },
+  "bulkImportModal": {
+    "title": "Bulk import with text file",
+    "description": "Upload a text file with a list of CIDs (names are optional). Example:",
+    "select": "Select file",
+    "selectedFile": "Selected file",
+    "invalidCids": "*Invalid CID(s) found",
+    "failedToReadFile": "*Failed to read file contents"
+  },
+  "newFolderModal": {
+    "title": "New folder",
+    "description": "Insert the name of the folder you want to create."
+  },
+  "filesListLabel": "Files list",
+  "filesGridLabel": "Files grid",
+  "filesList": {
+    "noFiles": "<0>No files in this directory. Click the “Import” button to add some.</0>"
+  },
+  "filesImportStatus": {
+    "imported": "{count, plural, one {Imported 1 item} other {Imported {count} items}}",
+    "importing": "{count, plural, one {Importing 1 item} other {Importing {count} items}}",
+    "failed": "{count, plural, one {Failed to import 1 item} other {Failed to import {count} items}}",
+    "toggleDropdown": "Toggle dropdown",
+    "closeDropdown": "Close dropdown",
+    "count": "{count} of {count}"
+  },
+  "addFilesInfo": "<0>No files here yet! Add files to your local IPFS node by clicking the <1>Import</1> button above.</0>",
+  "companionInfo": "<0>As you are using <1>IPFS Companion</1>, the files view is limited to files added while using the extension.</0>",
+  "tour": {
+    "step1": {
+      "title": "Files page",
+      "paragraph1": "<0>This is where the files on your <1>Mutable File System (MFS)</1> live. You can add files or folders and manage them from this page.</0>",
+      "paragraph2": "Click \"Next\" to learn more."
+    },
+    "step2": {
+      "title": "Breadcrumbs",
+      "paragraph1": "These breadcrumbs display the path to your current directory. You can…",
+      "bullet1": "Click an individual breadcrumb to go to that directory",
+      "bullet2": "Right-click a breadcrumb to get the actions menu for that directory",
+      "bullet3": "Drag files onto a breadcrumb to move or import them"
+    },
+    "step3": {
+      "title": "Add files",
+      "paragraph1": "Here you can see how many blocks and files you have pinned.",
+      "paragraph2": "You can add files or folders to your repo through the dropdown on the right.",
+      "paragraph3": "<0>If you want to add something that is already on IPFS, you can import it to your MFS by passing its <1>Content Identifier (CID)</1>.</0>"
+    },
+    "step5": {
+      "title": "Files list",
+      "paragraph1": "Finally, the listing where you can find your files and folders. Drag and drop files or folders to add them.",
+      "paragraph2": "You can share or download files, inspect them in the IPLD Explorer, rename or remove them!",
+      "paragraph3": "Pro tip: drag and drop a file from any other page of the Web UI to add them to the root of your MFS."
+    },
+    "step6": {
+      "title": "Files grid",
+      "paragraph1": "The grid view displays your files and folders as thumbnails, making it easy to visually browse your content.",
+      "paragraph2": "You can share or download files, inspect them in the IPLD Explorer, rename or remove them!"
+    }
+  },
+  "previewLimitReached": "This preview is limited to 10 KiB. Click the download button to access the full file.",
+  "previousFolder": "Go back to previous folder",
+  "fileLabel": "Select {type} {name} with size: {size}",
+  "hashUnavailable": "hash unavailable",
+  "checkboxLabel": "View more options for {name}",
+  "pinned": "Pinned",
+  "pinnedRemotely": "Pinned remotely",
+  "pinningRemotely": "Pinning remotely",
+  "pinningCompleted": "Pinning completed",
+  "pinningFailed": "Pinning failed",
+  "clickToDismiss": "Click to dismiss",
+  "clickToCancel": "Click to cancel",
+  "blocks": "Blocks",
+  "localDatastore": "Local Datastore",
+  "localDatastoreDescription": "Total size of all blocks currently stored in the Datastore of your IPFS node (“RepoSize” from “ipfs repo stat”). This includes everything in the Files view (MFS), low-level pins, and any recently removed or temporary cached blocks that were not garbage-collected yet.",
+  "currentLocationRoot": "My Files",
+  "currentLocation": "Current Location",
+  "currentLocationDescription": "Total size of the DAG behind the current directory (“CumulativeSize” from “ipfs files stat”). This value includes both local and remote blocks, and could be bigger than the size of your local datastore.",
+  "pinningQueue": "Pinning queue",
+  "more": "More",
+  "files": "Files",
+  "cidNotFileNorDir": "The current link isn't a file, nor a directory. Try to <1>inspect</1> it instead.",
+  "sortBy": "Sort items by {name}",
+  "sortFiles": "Sort files",
+  "sortByNameAsc": "Name (A → Z)",
+  "sortByNameDesc": "Name (Z → A)",
+  "sortBySizeAsc": "Size (smallest first)",
+  "sortBySizeDesc": "Size (largest first)",
+  "sortByPinnedFirst": "Pinned first",
+  "sortByUnpinnedFirst": "Unpinned first",
+  "sortByOriginal": "Original DAG order",
+  "publishModal": {
+    "title": "Publish to IPNS",
+    "cidToPublish": "CID:",
+    "publishUnderKey": "Select key for publishing:",
+    "help": "Go to Settings to learn about IPNS and create more keys.",
+    "publishedUnderKey": "Successfully published under the key:",
+    "linkCopied": "Link copied!",
+    "sharingPrompt": "Copy the link below and share it with others. The IPNS address will resolve as long as your node remains available on the network once a day to refresh the IPNS record.",
+    "pleaseWait": "Please wait while the initial 20 copies of the updated IPNS record are stored with the help of DHT peers…"
+  },
+  "noPinsInProgress": "All done, no remote pins in progress.",
+  "remotePinningInProgress": "Remote pinning in progress:",
+  "selectAllEntries": "Select all entries",
+  "previewNotFound": {
+    "title": "Unable to load this path",
+    "errorPrefix": "Error:",
+    "helpTitle": "How you can proceed:",
+    "helpListItemSearchError": "Copy the error message above and search the web for potential solutions.",
+    "helpListItemInspect": "Try <1>inspecting the path</1> (or its parent) in DAG Explorer to debug the issue.",
+    "helpListItemRetrieval": "If you have a CID you believe should work, <1>run Retrieval Diagnostics</1>.",
+    "helpListItemForums": "Visit the <1>Discussion Forums</1> to ask for help.",
+    "backButton": "Go to Files"
+  },
+  "inspectResolveFailed": "Failed to resolve path: {{path}}"
+}

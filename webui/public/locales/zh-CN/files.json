@@ -1,0 +1,203 @@
+{
+  "title": "文件",
+  "breadcrumbs": "导航栏",
+  "totalSize": "总计大小: {size}",
+  "filesSelected": "{count, plural, other {已选择的项目}}",
+  "menuOptions": "所选项目的选项",
+  "individualFilesOnly": "仅对文件有效",
+  "noPDFSupport": "您的浏览器不支持阅读 PDF 文件。请下载后阅读。",
+  "downloadPDF": "下载 PDF 文件",
+  "openWithPublicGateway": "尝试使用您的<1>公共网关</1>来打开",
+  "openWithLocalAndPublicGateway": "尝试使用您的<1>本地网关</1>或者<3>公共网关</3>来打开。",
+  "cantBePreviewed": "对不起，本文件不支持预览。",
+  "addByPath": "来自 IPFS 路径",
+  "addByCar": "来自 CAR",
+  "bulkImport": "批量导入",
+  "newFolder": "新建文件夹",
+  "switchToListView": "单击以切换到列表视图",
+  "switchToGridView": "单击以切换到网格视图",
+  "generating": "生成 ...",
+  "dropHere": "拖拽到这里来移动",
+  "actions": {
+    "copyHash": "复制 CID",
+    "share": "分享链接",
+    "publishWithIpns": "发布至IPNS"
+  },
+  "cliModal": {
+    "extraNotesPinning": "这条命令只适用于本地固定/取消固定。如果您想要使用远程固定服务，请参阅该服务的文档以了解如何从命令行执行远程固定/取消固定。"
+  },
+  "shareModal": {
+    "title": "共享文件",
+    "description": "请复制以下链接并与您的朋友分享。"
+  },
+  "renameModal": {
+    "titleFile": "重命名文件",
+    "titleFolder": "重命名文件夹",
+    "descriptionFile": "重命名此文件",
+    "descriptionFolder": "重命名此文件夹"
+  },
+  "removeModal": {
+    "titleItem": "{count, plural, other {移除{count}个项目？}}",
+    "titleFolder": "{count, plural, other {移除{count}个文件夹？}}",
+    "titleFile": "{count, plural, other {移除{count}个文件？}}",
+    "descriptionItem": "{count, plural, other {您确定要删除这些{count}个项目吗？它们将不再出现在“文件”页面中，并将在下次自动清理中被永久删除（虽然它的副本可能存在于其他IPFS节点上），此操作具有不可逆性。}}",
+    "descriptionFolder": "{count, plural, other {您确定要删除这些{count}个文件夹吗？它们将不再出现在“文件”页面中，并将在下次自动清理中被永久删除（虽然它的副本可能存在于其他IPFS节点上），此操作具有不可逆性。}}",
+    "descriptionFile": "{count, plural, other {您确定要删除这些{count}个文件吗？它们将不再出现在“文件”页面中，并将在下次自动清理中被永久删除（虽然它的副本可能存在于其他IPFS节点上），此操作具有不可逆性。}}",
+    "checkboxRemoveLocalPin": "同时也从本地固定中移除（推荐）",
+    "checkboxUnpinFromServices": "从所有固定服务中取消固定"
+  },
+  "shortcutModal": {
+    "title": "快捷键",
+    "description": "“文件”部分提供以下快捷键：",
+    "navigation": "导航",
+    "selection": "选项",
+    "actions": "操作",
+    "other": "其它",
+    "moveDown": "下移",
+    "moveUp": "上移",
+    "moveLeft": "左移",
+    "moveRight": "右移",
+    "navigate": "导航到选择的项目",
+    "rename": "重命名选择的项目",
+    "delete": "删除所有选择的项目",
+    "toggleSelection": "切换选项",
+    "selectAll": "全选",
+    "deselectAll": "反选所有",
+    "copy": "复制已选择的项目",
+    "paste": "粘贴已选择的项目",
+    "cut": "剪贴已选择的项目",
+    "showShortcuts": "显示快捷键"
+  },
+  "pinningModal": {
+    "title": "选择你想将这些文件固定到哪里",
+    "complianceLabel": "🔍 检查固定服务合规性",
+    "footer": "需要增加或配置一个固定服务？前往<1>设置</1>。",
+    "localNode": "本地节点",
+    "totalSize": "总计大小: {size}"
+  },
+  "addByPathModal": {
+    "title": "从IPFS导入",
+    "description": "输入要导入到的IPFS路径（CID）。",
+    "preloadNote": "注意：默认情况下，导入的路径是延迟加载的，在您浏览时将按需检索。要主动将导入的路径预取到本地数据存储，请从上下文菜单中选择“下载”。",
+    "importPathPlaceholder": "路径或CID (必要)",
+    "namePlaceholder": "名称 (可选)",
+    "examples": "示例："
+  },
+  "addByCarModal": {
+    "title": "导入 CAR",
+    "description": "选择要导入当前目录下DAG的CAR文件，并为其指定名称.",
+    "selectCARButtonText": "选择 CAR",
+    "namePlaceholder": "名称",
+    "renameImportPath": "重命名并导入"
+  },
+  "bulkImportModal": {
+    "title": "使用文本文件进行批量导入",
+    "description": "上传一个包含CID列表的文本文件（名称是可选的）。例如：",
+    "select": "选择文件",
+    "selectedFile": "已选择的文件",
+    "invalidCids": "*发现一个或多个无效的CID",
+    "failedToReadFile": "*读取文件内容失败"
+  },
+  "newFolderModal": {
+    "title": "新建文件夹",
+    "description": "输入新建文件夹名称"
+  },
+  "filesListLabel": "文件列表",
+  "filesGridLabel": "文件数据网格",
+  "filesList": {
+    "noFiles": "<0>这个目录下没有文件，可单击“导入”按钮加入一些文件</0>"
+  },
+  "filesImportStatus": {
+    "imported": "{count, plural, other {已导入{count}项目}}",
+    "importing": "{count, plural, other {已导入{count}项目}}",
+    "toggleDropdown": "切换下拉框",
+    "closeDropdown": "关闭下拉框",
+    "count": "{count}个 / 共{count}个"
+  },
+  "addFilesInfo": "<0>现在还没有任何文件！使用上方的<1>导入</1>按钮为您的本地IPFS 节点添加文件。</0>",
+  "companionInfo": "<0>如果您正在使用<1> IPFS 伴侣</1>，文件视图仅限于使用扩展程序时添加的文件。</0>",
+  "tour": {
+    "step1": {
+      "title": "文件页面",
+      "paragraph1": "<0>这是 <1>可变数据系统（MFS）</1> 上的文件所在的位置。您可以添加文件或文件夹，并从此页面进行管理</0>",
+      "paragraph2": "单击“下一步”了解更多信息。"
+    },
+    "step2": {
+      "title": "导航栏",
+      "paragraph1": "这些导航栏指示了您当前所在目录的路径。",
+      "bullet1": "您可以通过点击他们来浏览文件夹目录的层次结构",
+      "bullet2": "右键一个导航栏目录可以展开操作菜单",
+      "bullet3": "您可以拖动文件到导航栏的目录上来实现文件的移动和导入"
+    },
+    "step3": {
+      "title": "添加文件",
+      "paragraph1": "在这里，您可以看到已固定的块数和文件数。",
+      "paragraph2": "您可以通过右侧的下拉列表将文件或文件夹添加到您的仓库。",
+      "paragraph3": "<0>如果想要添加 IPFS 上已有的内容，可以通过传递其 <1>Content Identifier（CID）</1> 将其导入 MFS</0>"
+    },
+    "step5": {
+      "title": "文件列表",
+      "paragraph1": "最后，您可以在列表中找到您的文件和文件夹。通过拖放文件或文件夹来添加它们。",
+      "paragraph2": "您可以分享或下载文件，在 IPLD 资源管理器中查看、重命名或删除它们。",
+      "paragraph3": "专家提示：可以从 Web UI 的任何其他页面拖放文件，把它们添加到 MFS 的根目录。"
+    },
+    "step6": {
+      "title": "文件数据网格",
+      "paragraph1": "网格视图会将您的文件和文件夹显示为缩略图，便于您直观地浏览内容",
+      "paragraph2": "您可以分享或下载文件，在 IPLD 资源管理器中查看、重命名或删除它们。"
+    }
+  },
+  "previewLimitReached": "此预览已限制为10 KiB。单击下载按钮访问完整文件。",
+  "previousFolder": "回到之前的文件夹",
+  "fileLabel": "选择的{type}{name}的文件大小为:{size}",
+  "hashUnavailable": "哈希不可用",
+  "checkboxLabel": "查看更多选项{name}",
+  "pinned": "已固定",
+  "pinnedRemotely": "远程固定",
+  "pinningRemotely": "远程固定",
+  "pinningCompleted": "固定完成",
+  "pinningFailed": "固定失败",
+  "clickToDismiss": "按此忽略",
+  "clickToCancel": "按此取消",
+  "blocks": "块",
+  "localDatastore": "本地数据存储",
+  "localDatastoreDescription": "当前存储在IPFS节点数据存储中的所有块的总大小 (“RepoSize” 来自 “ipfs 仓库统计”)。这包括文件视图（MFS）中的所有内容、低级引脚以及任何最近删除或临时缓存但尚未垃圾回收的块。",
+  "currentLocationRoot": "我的文件",
+  "currentLocation": "当前位置",
+  "currentLocationDescription": "当前目录后面的DAG的总大小 (“CumulativeSize” 来自 “ipfs文件统计”)。此值包括本地和远程块，并且可能大于本地数据存储的大小。",
+  "pinningQueue": "固定队列",
+  "more": "更多",
+  "files": "文件",
+  "cidNotFileNorDir": "当前的连接不是一个文件或目录，请使用<1>检查</1> 功能替代。",
+  "sortBy": "按照{name}排序项目",
+  "sortFiles": "排序文件",
+  "sortByNameAsc": "名称 (A → Z)",
+  "sortByNameDesc": "名称 (Z → A)",
+  "sortBySizeAsc": "尺寸（最小的优先）",
+  "sortBySizeDesc": "尺寸（最大的优先）",
+  "sortByPinnedFirst": "已固定 第一个",
+  "sortByUnpinnedFirst": "取消固定 第一个",
+  "sortByOriginal": "原始DAG有向无环图订单",
+  "publishModal": {
+    "title": "发布至IPNS",
+    "cidToPublish": "CID:",
+    "publishUnderKey": "选择发布密钥",
+    "help": "跳转至设置页面了解IPNS以及创建更多密钥",
+    "publishedUnderKey": "已基于以下密钥成功发布：",
+    "linkCopied": "链接已复制！",
+    "sharingPrompt": "复制以下链接分享给其他人。只要您的节点保持可用，此IPNS地址将会以每天更新一次的频率更新解析记录",
+    "pleaseWait": "请等待片刻以使得初始的20份IPNS更新记录副本储存至DHT节点"
+  },
+  "noPinsInProgress": "全部已完成，没有正在进行的远程固定操作",
+  "remotePinningInProgress": "远程固定中:",
+  "selectAllEntries": "全选",
+  "previewNotFound": {
+    "title": "IPFS 无法找到这个项目",
+    "helpTitle": "这些是常用的故障排查步骤也许会有帮助:",
+    "helpListItemPathTypo": "您输入的路径中是否有拼写错误？",
+    "helpListItemFileMoved": "文件是否被移动、重命名或删除？",
+    "helpListItemBookmarkMigrated": "你是否从另一台电脑复制了网址或书签？如果是这样，你需要",
+    "helpListItemBookmarkMigratedLink": "将此实例指向该计算机的节点",
+    "backButton": "返回主页"
+  }
+}

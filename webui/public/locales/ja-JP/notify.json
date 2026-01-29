@@ -1,0 +1,30 @@
+{
+  "ipfsApiRequestFailed": "接続できません。IPFS デーモンが起動していることを確認してください。",
+  "windowIpfsRequestFailed": "IPFSリクエストに失敗しました。IPFS Companionの設定を確認してください。",
+  "ipfsInvalidApiAddress": "",
+  "ipfsConnectSuccess": "",
+  "ipfsConnectFail": "",
+  "ipfsPinFailReason": "{serviceName}のピン留めができません：{errorMsg}",
+  "ipfsPinSucceedReason": "{serviceName}のピン留めに成功",
+  "ipfsUnpinSucceedReason": "{serviceName}からピン留めの解除に成功",
+  "ipfsIsBack": "通常のIPFSサービスが再起動しました。おかえりなさい。",
+  "folderExists": "その名前のアイテムは既に存在します。別の名前を指定してください。",
+  "filesFetchFailed": "これらのファイルの取得に失敗しました。パスを確認して、もう一度お試しください。",
+  "filesRenameFailed": "ファイル名の変更に失敗しました。もう一度お試しください。",
+  "filesMakeDirFailed": "ディレクトリの作成に失敗しました。もう一度お試しください。",
+  "filesCopyFailed": "ファイルのコピーに失敗しました。もう一度お試しください。",
+  "filesRemoveFailed": "ファイルを削除できませんでした。もう一度やり直してください。",
+  "filesAddFailed": "IPFSへのファイルの追加に失敗しました。もう一度お試しください。",
+  "filesEventFailed": "リクエストの処理に失敗しました。もう一度お試しください。",
+  "couldntConnectToPeer": "提供されたピアに接続できませんでした。",
+  "connectedToPeer": "提供されたピアへの接続に成功しました。",
+  "experimentsErrors": {
+    "npmOnIpfs": "システムに変更を加えることができませんでした。'ipfs-npm' パッケージを手動でインストールまたはアンインストールしてください。"
+  },
+  "desktopToggleErrors": {
+    "autoLaunch": "起動時のオプションで起動の切り替えができませんでした。",
+    "ipfsOnPath": "IPFS コマンドラインツールの切り替えができませんでした。",
+    "downloadHashShortcut": "ダウンロードハッシュショートカットを切り替えられませんでした。",
+    "screenshotShortcut": "スクリーンショットのショートカットを切り替えることができませんでした。"
+  }
+}
