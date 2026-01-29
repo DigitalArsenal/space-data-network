@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { connect } from 'redux-bundler-react'
 import { withTranslation } from 'react-i18next'
+import ContextSwitcher from '../components/context-switcher/ContextSwitcher.js'
 
 /**
  * SDN Peers Panel - Phase 17.2: SDN vs IPFS Peer Separation
@@ -8,6 +9,8 @@ import { withTranslation } from 'react-i18next'
  * Splits peers into two panels:
  * - SDN Peers (prominent, top) - peers supporting /spacedatanetwork/sds-exchange/1.0.0
  * - IPFS Peers (secondary, below) - standard IPFS peers
+ *
+ * With context switching between SDN and IPFS views.
  */
 
 const PeerRow = ({ peer, isSdn }) => {
@@ -65,7 +68,20 @@ const PeerTable = ({ peers, isSdn, emptyMessage }) => {
   )
 }
 
-const SdnPeersPanel = ({ peerLocationsForSwarm, sdnPeerIds, sdnPeersCount, t }) => {
+const summaryLineStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  padding: '10px 16px',
+  fontSize: '13px',
+  color: 'var(--sdn-text-secondary)',
+  background: 'var(--sdn-bg-secondary)',
+  borderRadius: '8px',
+  marginBottom: '12px',
+  border: '1px solid var(--sdn-border)'
+}
+
+const SdnPeersPanel = ({ peerLocationsForSwarm, sdnPeerIds, sdnPeersCount, isSdnContext, isIpfsContext, doSetSdnContext, t }) => {
   const [resolvedPeers, setResolvedPeers] = useState([])
 
   useEffect(() => {
@@ -92,31 +108,67 @@ const SdnPeersPanel = ({ peerLocationsForSwarm, sdnPeerIds, sdnPeersCount, t }) 
 
   return (
     <div>
-      {/* SDN Peers - Prominent */}
-      <div className='sdn-panel'>
-        <div className='sdn-panel-header'>
-          <span className='sdn-badge sdn-badge-sdn' style={{ marginRight: '8px' }}>SDN</span>
-          SDN Peers ({sdnPeers.length})
-        </div>
-        <PeerTable
-          peers={sdnPeers}
-          isSdn={true}
-          emptyMessage='No SDN peers connected. SDN peers support the /spacedatanetwork/sds-exchange/1.0.0 protocol.'
-        />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+        <ContextSwitcher />
       </div>
 
-      {/* IPFS Peers - Secondary */}
-      <div className='sdn-panel' style={{ opacity: 0.85 }}>
-        <div className='sdn-panel-header'>
-          <span className='sdn-badge sdn-badge-ipfs' style={{ marginRight: '8px' }}>IPFS</span>
-          IPFS Peers ({ipfsPeers.length})
+      {/* SDN Peers */}
+      {isSdnContext && (
+        <div className='sdn-panel'>
+          <div className='sdn-panel-header'>
+            <span className='sdn-badge sdn-badge-sdn' style={{ marginRight: '8px' }}>SDN</span>
+            SDN Peers ({sdnPeers.length})
+          </div>
+          <PeerTable
+            peers={sdnPeers}
+            isSdn={true}
+            emptyMessage='No SDN peers connected. SDN peers support the /spacedatanetwork/sds-exchange/1.0.0 protocol.'
+          />
         </div>
-        <PeerTable
-          peers={ipfsPeers}
-          isSdn={false}
-          emptyMessage='No IPFS peers connected.'
-        />
-      </div>
+      )}
+      {!isSdnContext && (
+        <div style={summaryLineStyle}>
+          <div>
+            <span className='sdn-badge sdn-badge-sdn' style={{ marginRight: '8px' }}>SDN</span>
+            {sdnPeers.length} SDN peers connected
+          </div>
+          <button
+            onClick={() => doSetSdnContext('sdn')}
+            style={{ background: 'none', border: 'none', color: 'var(--sdn-accent)', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+          >
+            Expand
+          </button>
+        </div>
+      )}
+
+      {/* IPFS Peers */}
+      {isIpfsContext && (
+        <div className='sdn-panel'>
+          <div className='sdn-panel-header'>
+            <span className='sdn-badge sdn-badge-ipfs' style={{ marginRight: '8px' }}>IPFS</span>
+            IPFS Peers ({ipfsPeers.length})
+          </div>
+          <PeerTable
+            peers={ipfsPeers}
+            isSdn={false}
+            emptyMessage='No IPFS peers connected.'
+          />
+        </div>
+      )}
+      {!isIpfsContext && (
+        <div style={summaryLineStyle}>
+          <div>
+            <span className='sdn-badge sdn-badge-ipfs' style={{ marginRight: '8px' }}>IPFS</span>
+            {ipfsPeers.length} IPFS peers connected
+          </div>
+          <button
+            onClick={() => doSetSdnContext('ipfs')}
+            style={{ background: 'none', border: 'none', color: 'var(--sdn-accent)', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+          >
+            Expand
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -125,5 +177,8 @@ export default connect(
   'selectPeerLocationsForSwarm',
   'selectSdnPeerIds',
   'selectSdnPeersCount',
+  'selectIsSdnContext',
+  'selectIsIpfsContext',
+  'doSetSdnContext',
   withTranslation('peers')(SdnPeersPanel)
 )

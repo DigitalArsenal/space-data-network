@@ -26,6 +26,7 @@ import ipnsBundle from './ipns.js'
 import sdnThemeBundle from './sdn-theme.js'
 import sdnPeersBundle from './sdn-peers.js'
 import sdnStatsBundle from './sdn-stats.js'
+import sdnContextBundle from './sdn-context.js'
 import { contextBridge } from '../helpers/context-bridge'
 
 export default composeBundles(
@@ -66,5 +67,6 @@ export default composeBundles(
   ipnsBundle,
   sdnThemeBundle,
   sdnPeersBundle,
-  sdnStatsBundle
+  sdnStatsBundle,
+  sdnContextBundle
 )

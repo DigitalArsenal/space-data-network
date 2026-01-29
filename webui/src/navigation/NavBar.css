@@ -58,3 +58,7 @@
 .navbar-item:focus:not(:focus-visible) {
   background-color: transparent;
 }
+
+.sdn-logo:hover {
+  filter: drop-shadow(0 0 6px #58a6ff);
+}

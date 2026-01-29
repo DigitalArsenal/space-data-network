@@ -1,0 +1,14 @@
+{
+  "name": "@spacedatastandards/schema-explorer",
+  "version": "1.0.0",
+  "description": "Space Data Standards schema data, code generators, and registry API",
+  "main": "src/index.js",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./schemas": "./src/schemas.js",
+    "./generators": "./src/generators.js",
+    "./api": "./src/api.js"
+  },
+  "license": "MIT"
+}

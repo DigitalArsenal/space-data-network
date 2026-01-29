@@ -8,6 +8,7 @@ import StrokeCube from '../icons/StrokeCube.js'
 import StrokeSettings from '../icons/StrokeSettings.js'
 import StrokeIpld from '../icons/StrokeIpld.js'
 import StrokeLab from '../icons/StrokeLab.js'
+import SdnLogo from '../icons/SdnLogo.js'
 
 // Styles
 import './NavBar.css'
@@ -39,7 +40,7 @@ const NavLink = ({
   }, ['navbar-item dib db-l pt2 pb3 pv1-l white no-underline f5 hover-bg-white-10 tc bb bw2 bw0-l b--navy'])
   const svgClass = classnames({
     'o-100': active,
-    'o-50': !active
+    'o-70': !active
   }, ['fill-current-color'])
 
   return (
@@ -49,7 +50,7 @@ const NavLink = ({
         <div className='db'>
           <Svg width='46' role='presentation' className={svgClass} />
         </div>
-        <div className={`${active ? 'o-100' : 'o-50'} db f6 tc montserrat ttu fw1 navbar-item-label`}>
+        <div className={`${active ? 'o-100' : 'o-70'} db f6 tc montserrat ttu fw1 navbar-item-label`}>
           {children}
         </div>
       </div>
@@ -72,11 +73,12 @@ export const NavBar = ({ t }) => {
         <a href="#/" role='menuitem' title='Space Data Network'>
           <div className='pt3 pb1 pb2-l tc'>
             <div className='navbar-logo-vert center db-l dn pt3 pb1' style={{ height: 94, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ fontSize: '24px', fontWeight: 700, color: '#58a6ff', fontFamily: 'Montserrat, sans-serif', letterSpacing: '0.05em' }}>SDN</span>
-              <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', fontFamily: 'Montserrat, sans-serif', marginTop: '4px' }}>Space Data Network</span>
+              <SdnLogo width={40} className='sdn-logo' />
+              <span style={{ fontSize: '14px', fontWeight: 700, color: '#58a6ff', fontFamily: 'Montserrat, sans-serif', letterSpacing: '0.05em', marginTop: '4px' }}>SDN</span>
             </div>
-            <div className='navbar-logo-horiz center db dn-l' style={{ height: 70, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ fontSize: '20px', fontWeight: 700, color: '#58a6ff', fontFamily: 'Montserrat, sans-serif', letterSpacing: '0.05em' }}>SDN</span>
+            <div className='navbar-logo-horiz center db dn-l' style={{ height: 70, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <SdnLogo width={28} className='sdn-logo' />
+              <span style={{ fontSize: '16px', fontWeight: 700, color: '#58a6ff', fontFamily: 'Montserrat, sans-serif', letterSpacing: '0.05em' }}>SDN</span>
             </div>
           </div>
         </a>
@@ -84,6 +86,7 @@ export const NavBar = ({ t }) => {
           <NavLink to='/' alternative="status" icon={StrokeMarketing}>{t('status:title')}</NavLink>
           <NavLink to='/files' icon={StrokeWeb}>{t('files:title')}</NavLink>
           <NavLink to='/explore' icon={StrokeIpld}>{t('explore:tabName')}</NavLink>
+          <NavLink to='/schemas' icon={StrokeIpld}>{t('Schemas')}</NavLink>
           <NavLink to='/peers' icon={StrokeCube}>{t('peers:title')}</NavLink>
           <NavLink to='/settings' icon={StrokeSettings}>{t('settings:title')}</NavLink>
           <NavLink to='/diagnostics' icon={StrokeLab}>{t('diagnostics:title')}</NavLink>

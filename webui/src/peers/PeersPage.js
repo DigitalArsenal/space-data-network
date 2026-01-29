@@ -16,7 +16,7 @@ import AddConnection from './AddConnection/AddConnection.js'
 import CliTutorMode from '../components/cli-tutor-mode/CliTutorMode.js'
 import { cliCmdKeys, cliCommandList } from '../bundles/files/consts.js'
 
-const PeersPage = ({ t, toursEnabled, handleJoyrideCallback }) => (
+const PeersPage = ({ t, toursEnabled, handleJoyrideCallback, isIpfsContext }) => (
   <div data-id='PeersPage' className='overflow-hidden'>
     <Helmet>
       <title>{t('title')} | SDN</title>
@@ -30,10 +30,12 @@ const PeersPage = ({ t, toursEnabled, handleJoyrideCallback }) => (
     {/* Phase 17.2: SDN vs IPFS Peer Separation */}
     <SdnPeersPanel />
 
-    <Box className='pt3 ph3 pb4'>
-      <WorldMap className='joyride-peers-map' />
-      <PeersTable className='joyride-peers-table' />
-    </Box>
+    {isIpfsContext && (
+      <Box className='pt3 ph3 pb4'>
+        <WorldMap className='joyride-peers-map' />
+        <PeersTable className='joyride-peers-table' />
+      </Box>
+    )}
 
     <ReactJoyride
       run={toursEnabled}
@@ -50,5 +52,6 @@ const PeersPage = ({ t, toursEnabled, handleJoyrideCallback }) => (
 export default connect(
   'selectToursEnabled',
   'selectIsCliTutorModeEnabled',
+  'selectIsIpfsContext',
   withTour(withTranslation('peers')(PeersPage))
 )
