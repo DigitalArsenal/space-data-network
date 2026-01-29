@@ -6,7 +6,7 @@
  * - Multi-chain address derivation (BTC, ETH, SOL, SUI, Cosmos)
  * - ECIES encryption (X25519, secp256k1, P-256)
  * - PIN/Passkey wallet storage
- * - Web3 wallet connection (WalletConnect, MetaMask, Phantom)
+ * - vCard generation with embedded cryptographic keys
  * - Adversarial security with blockchain balance verification
  */
 
@@ -28,6 +28,8 @@ import { hkdf } from 'https://esm.sh/@noble/hashes@1.3.3/hkdf';
 import { pbkdf2 } from 'https://esm.sh/@noble/hashes@1.3.3/pbkdf2';
 import { base58, base58check } from 'https://esm.sh/@scure/base@1.1.5';
 import { bech32 } from 'https://esm.sh/@scure/base@1.1.5';
+import { createV3 } from 'https://esm.sh/vcard-cryptoperson@1.1.10';
+import QRCode from 'https://esm.sh/qrcode@1.5.3';
 
 // Make Buffer available globally for bip39
 if (typeof window !== 'undefined' && !window.Buffer) {
@@ -42,7 +44,7 @@ if (typeof window !== 'undefined' && !window.Buffer) {
 const state = {
   initialized: false,
   loggedIn: false,
-  loginMethod: null, // 'password' | 'seed' | 'stored' | 'web3'
+  loginMethod: null, // 'password' | 'seed' | 'stored'
 
   // Wallet keys
   wallet: {
@@ -80,20 +82,11 @@ const state = {
     header: null,
   },
 
-  // Web3 connection
-  web3: {
-    connected: false,
-    provider: null,
-    address: null,
-    chainId: null,
-    detected: {
-      ethereum: false,
-      solana: false,
-      phantom: false,
-      metamask: false,
-      coinbase: false,
-    },
-  },
+  // vCard photo (base64 data URI)
+  vcardPhoto: null,
+
+  // Mnemonic (seed phrase)
+  mnemonic: null,
 };
 
 // =============================================================================
@@ -180,6 +173,24 @@ function fromHex(hex) {
 function truncateAddress(address, start = 8, end = 6) {
   if (!address || address.length <= start + end) return address;
   return `${address.slice(0, start)}...${address.slice(-end)}`;
+}
+
+// Alias for toHex (used in vCard generation)
+function bytesToHex(bytes) {
+  return toHex(bytes);
+}
+
+// Show toast notification
+function showToast(message, duration = 2000) {
+  let toast = document.querySelector('.toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.className = 'toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), duration);
 }
 
 // =============================================================================
@@ -333,6 +344,195 @@ function generateAddresses() {
   return addresses;
 }
 
+// Coin type to config mapping
+const coinTypeMap = {
+  '0': 'btc',
+  '2': 'ltc',
+  '3': 'doge',
+  '60': 'eth',
+  '118': 'atom',
+  '145': 'bch',
+  '330': 'algo',
+  '354': 'dot',
+  '501': 'sol',
+  '784': 'sui',
+  '1815': 'ada',
+};
+
+// Extended crypto config for additional coins
+const extendedCryptoConfig = {
+  ...cryptoConfig,
+  ltc: { name: 'Litecoin', symbol: 'LTC', coinType: 2, explorer: 'https://blockchair.com/litecoin/address/' },
+  doge: { name: 'Dogecoin', symbol: 'DOGE', coinType: 3, explorer: 'https://dogechain.info/address/' },
+  bch: { name: 'Bitcoin Cash', symbol: 'BCH', coinType: 145, explorer: 'https://blockchair.com/bitcoin-cash/address/' },
+  algo: { name: 'Algorand', symbol: 'ALGO', coinType: 330, explorer: 'https://algoexplorer.io/address/' },
+  dot: { name: 'Polkadot', symbol: 'DOT', coinType: 354, explorer: 'https://polkadot.subscan.io/account/' },
+};
+
+// Derive and display address based on current HD controls
+function deriveAndDisplayAddress() {
+  if (!state.hdRoot) {
+    // Show not initialized message
+    const notInit = $('hd-not-initialized');
+    const result = $('derived-result');
+    if (notInit) notInit.style.display = 'block';
+    if (result) result.style.display = 'none';
+    return;
+  }
+
+  // Hide not initialized, show result
+  const notInit = $('hd-not-initialized');
+  const result = $('derived-result');
+  if (notInit) notInit.style.display = 'none';
+  if (result) result.style.display = 'block';
+
+  const coinType = $('hd-coin')?.value || '0';
+  const account = parseInt($('hd-account')?.value || '0', 10);
+  const index = parseInt($('hd-index')?.value || '0', 10);
+
+  const coinKey = coinTypeMap[coinType] || 'btc';
+  const config = extendedCryptoConfig[coinKey] || cryptoConfig.btc;
+  const coinTypeNum = parseInt(coinType, 10);
+
+  try {
+    // Build HD path
+    const purpose = coinTypeNum === 1815 ? 1852 : 44;
+    let path;
+    let signingPath;
+    let encryptionPath;
+
+    if (coinTypeNum === 501 || coinTypeNum === 784) {
+      // Ed25519 coins use hardened derivation
+      path = `m/${purpose}'/${coinTypeNum}'/${account}'/${index}'`;
+      signingPath = path;
+      encryptionPath = `m/${purpose}'/${coinTypeNum}'/${account}'/1'/${index}'`;
+    } else if (coinTypeNum === 1815) {
+      // Cardano uses 1852' purpose
+      path = `m/${purpose}'/${coinTypeNum}'/${account}'/0/${index}`;
+      signingPath = path;
+      encryptionPath = `m/${purpose}'/${coinTypeNum}'/${account}'/1/${index}`;
+    } else {
+      // Standard BIP44
+      path = `m/${purpose}'/${coinTypeNum}'/${account}'/0/${index}`;
+      signingPath = path;
+      encryptionPath = `m/${purpose}'/${coinTypeNum}'/${account}'/1/${index}`;
+    }
+
+    // Derive key
+    let hdKey;
+    let address;
+    let signingPubKey;
+
+    // Generate address based on coin type
+    switch (coinTypeNum) {
+      case 0: // BTC
+      case 2: // LTC
+      case 3: // DOGE
+      case 145: // BCH
+        hdKey = state.hdRoot.derive(path);
+        address = generateBtcAddress(hdKey.publicKey);
+        signingPubKey = hdKey.publicKey;
+        break;
+      case 60: // ETH
+        hdKey = state.hdRoot.derive(path);
+        address = generateEthAddress(hdKey.publicKey);
+        signingPubKey = hdKey.publicKey;
+        break;
+      case 501: // SOL
+        // Solana needs Ed25519 - derive from seed
+        const solSeed = hkdf(sha256, state.masterSeed.slice(0, 32), new Uint8Array(0),
+          new TextEncoder().encode(`sol-${account}-${index}`), 32);
+        const solPub = ed25519.getPublicKey(solSeed);
+        address = generateSolAddress(solPub);
+        signingPubKey = solPub;
+        break;
+      case 784: // SUI
+        const suiSeed = hkdf(sha256, state.masterSeed.slice(0, 32), new Uint8Array(0),
+          new TextEncoder().encode(`sui-${account}-${index}`), 32);
+        const suiPub = ed25519.getPublicKey(suiSeed);
+        address = deriveSuiAddress(suiPub);
+        signingPubKey = suiPub;
+        break;
+      case 118: // ATOM
+        hdKey = state.hdRoot.derive(path);
+        address = generateCosmosAddress(hdKey.publicKey);
+        signingPubKey = hdKey.publicKey;
+        break;
+      case 1815: // ADA
+        hdKey = state.hdRoot.derive(path);
+        address = 'addr1...' + toHex(sha256(hdKey.publicKey)).slice(0, 56);
+        signingPubKey = hdKey.publicKey;
+        break;
+      default:
+        hdKey = state.hdRoot.derive(path);
+        address = 'Unsupported coin type';
+        signingPubKey = hdKey?.publicKey;
+    }
+
+    // Update signing key display
+    const signingPathEl = $('signing-path');
+    const signingPubkeyEl = $('signing-pubkey');
+    if (signingPathEl) signingPathEl.textContent = signingPath;
+    if (signingPubkeyEl && signingPubKey) signingPubkeyEl.textContent = toHex(signingPubKey);
+
+    // Update encryption key display
+    const encPathEl = $('encryption-path');
+    const encPubkeyEl = $('encryption-pubkey');
+    if (encPathEl) encPathEl.textContent = encryptionPath;
+    if (encPubkeyEl && state.wallet.x25519) {
+      encPubkeyEl.textContent = toHex(state.wallet.x25519.publicKey);
+    }
+
+    // Update address display
+    const cryptoNameEl = $('derived-crypto-name');
+    const addressEl = $('derived-address');
+    const explorerLink = $('derived-explorer-link');
+
+    if (cryptoNameEl) cryptoNameEl.textContent = config.name;
+    if (addressEl) addressEl.textContent = truncateAddress(address, 12, 8);
+    if (explorerLink && config.explorer) {
+      explorerLink.href = config.explorer + address;
+    }
+
+    // Generate QR code for address
+    const qrCanvas = $('address-qr');
+    if (qrCanvas && address) {
+      generateQRCode(address, qrCanvas, 64);
+    }
+
+    // Update root keys display
+    updateRootKeysDisplay();
+
+  } catch (e) {
+    console.warn('Address derivation failed:', e);
+    const addressEl = $('derived-address');
+    if (addressEl) addressEl.textContent = 'Derivation error';
+  }
+}
+
+// Update root keys display in the Account modal
+function updateRootKeysDisplay() {
+  if (!state.hdRoot) return;
+
+  // Master public key (xpub)
+  const xpubEl = $('wallet-xpub');
+  if (xpubEl && state.hdRoot.publicExtendedKey) {
+    xpubEl.textContent = state.hdRoot.publicExtendedKey;
+  }
+
+  // Master private key (xprv)
+  const xprvEl = $('wallet-xprv');
+  if (xprvEl && state.hdRoot.privateExtendedKey) {
+    xprvEl.textContent = state.hdRoot.privateExtendedKey;
+  }
+
+  // Seed phrase (if available)
+  const seedDisplay = $('wallet-seed-phrase');
+  if (seedDisplay && state.mnemonic) {
+    seedDisplay.textContent = state.mnemonic;
+  }
+}
+
 // =============================================================================
 // Key Derivation
 // =============================================================================
@@ -388,6 +588,9 @@ async function deriveKeysFromPassword(username, password) {
 async function deriveKeysFromSeed(seedPhrase) {
   const seed = await bip39.mnemonicToSeed(seedPhrase);
   const encoder = new TextEncoder();
+
+  // Store mnemonic for display
+  state.mnemonic = seedPhrase.trim();
 
   // Master key
   const masterKey = hkdf(sha256, new Uint8Array(seed.slice(0, 32)), new Uint8Array(0), encoder.encode('sdn-wallet'), 32);
@@ -721,147 +924,96 @@ async function eciesDecrypt(recipientPrivateKey, ciphertext, header) {
 }
 
 // =============================================================================
-// Web3 Wallet Connection
+// vCard Generation
 // =============================================================================
 
-async function connectMetaMask() {
-  console.log('connectMetaMask() called');
-  console.log('window.ethereum type:', typeof window.ethereum);
-  console.log('window.ethereum.isMetaMask:', window.ethereum?.isMetaMask);
-
-  if (typeof window.ethereum === 'undefined') {
-    console.error('window.ethereum is undefined');
-    throw new Error('MetaMask not detected - window.ethereum is undefined');
-  }
-
-  console.log('Requesting Ethereum accounts...');
-  const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-  console.log('Accounts received:', accounts);
-
-  const chainId = await window.ethereum.request({ method: 'eth_chainId' });
-  console.log('Chain ID:', chainId);
-
-  state.web3 = {
-    connected: true,
-    provider: 'metamask',
-    address: accounts[0],
-    chainId: parseInt(chainId, 16),
-    detected: state.web3.detected,
+function generateVCard(info, { skipPhoto = false } = {}) {
+  // Create UPMT-compatible person object for vcard-cryptoperson
+  const person = {
+    HONORIFIC_PREFIX: info.prefix || '',
+    GIVEN_NAME: info.givenName || '',
+    ADDITIONAL_NAME: info.middleName || '',
+    FAMILY_NAME: info.familyName || '',
+    HONORIFIC_SUFFIX: info.suffix || '',
+    CONTACT_POINT: [],
+    AFFILIATION: null,
+    HAS_OCCUPATION: null,
+    KEY: [],
+    IMAGE: null,
   };
 
-  // Listen for account/chain changes
-  window.ethereum.on('accountsChanged', (accounts) => {
-    console.log('Accounts changed:', accounts);
-    if (accounts.length === 0) {
-      disconnectWeb3();
-    } else {
-      state.web3.address = accounts[0];
-      updateWeb3UI();
-    }
-  });
-
-  window.ethereum.on('chainChanged', (chainId) => {
-    console.log('Chain changed:', chainId);
-    state.web3.chainId = parseInt(chainId, 16);
-    updateWeb3UI();
-  });
-
-  console.log('MetaMask connected successfully, state:', state.web3);
-  return state.web3;
-}
-
-async function connectPhantom() {
-  console.log('connectPhantom() called');
-  console.log('window.solana type:', typeof window.solana);
-  console.log('window.solana:', window.solana);
-  console.log('window.solana.isPhantom:', window.solana?.isPhantom);
-
-  if (typeof window.solana === 'undefined') {
-    console.error('window.solana is undefined');
-    throw new Error('Phantom wallet not detected - window.solana is undefined');
+  // Add email
+  if (info.email) {
+    person.CONTACT_POINT.push({
+      EMAIL: info.email,
+      CONTACT_TYPE: 'work',
+    });
   }
 
-  if (!window.solana.isPhantom) {
-    console.error('window.solana exists but isPhantom is false');
-    throw new Error('Phantom wallet not detected - not a Phantom provider');
+  // Add organization
+  if (info.organization) {
+    person.AFFILIATION = {
+      NAME: info.organization,
+      LEGAL_NAME: info.organization,
+    };
   }
 
-  console.log('Calling window.solana.connect()...');
-  const resp = await window.solana.connect();
-  console.log('Phantom connection response:', resp);
-
-  state.web3 = {
-    connected: true,
-    provider: 'phantom',
-    address: resp.publicKey.toString(),
-    chainId: null,
-    detected: state.web3.detected,
-  };
-
-  window.solana.on('disconnect', disconnectWeb3);
-
-  console.log('Phantom connected successfully, state:', state.web3);
-  return state.web3;
-}
-
-async function connectCoinbaseWallet() {
-  // Coinbase Wallet browser extension exposes ethereum provider
-  if (typeof window.ethereum === 'undefined') {
-    throw new Error('Coinbase Wallet is not installed');
+  // Add job title
+  if (info.title) {
+    person.HAS_OCCUPATION = {
+      NAME: info.title,
+    };
   }
 
-  // Check if it's specifically Coinbase Wallet
-  if (!window.ethereum.isCoinbaseWallet && window.ethereum.providers) {
-    const coinbaseProvider = window.ethereum.providers.find(p => p.isCoinbaseWallet);
-    if (coinbaseProvider) {
-      window.ethereum = coinbaseProvider;
+  // Add photo
+  if (!skipPhoto && state.vcardPhoto) {
+    person.IMAGE = state.vcardPhoto;
+  }
+
+  // Add crypto keys if logged in and requested
+  if (info.includeKeys && state.wallet.ed25519) {
+    // Ed25519 signing key
+    person.KEY.push({
+      PUBLIC_KEY: bytesToHex(state.wallet.ed25519.publicKey),
+      ADDRESS_TYPE: 1, // Ed25519
+    });
+
+    // X25519 encryption key
+    if (state.wallet.x25519) {
+      person.KEY.push({
+        PUBLIC_KEY: bytesToHex(state.wallet.x25519.publicKey),
+        ADDRESS_TYPE: 2, // X25519
+      });
     }
   }
 
-  const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-  const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+  // Generate vCard
+  const note = info.includeKeys && state.wallet.ed25519
+    ? `Ed25519: ${bytesToHex(state.wallet.ed25519.publicKey).slice(0, 16)}...`
+    : '';
+  let vcard = createV3(person, note);
 
-  state.web3 = {
-    connected: true,
-    provider: 'coinbase',
-    address: accounts[0],
-    chainId: parseInt(chainId, 16),
-  };
+  // Make photo iOS compatible (convert VALUE=URI format to ENCODING=b)
+  vcard = vcard.replace(
+    /PHOTO;VALUE=URI:data:image\/(jpeg|png);base64,([^\n]+)/gi,
+    (match, type, data) => {
+      const vcardType = type.toUpperCase();
+      // vCard 3.0 line folding: continuation lines start with a space
+      let folded = `PHOTO;ENCODING=b;TYPE=${vcardType}:`;
+      const lines = data.match(/.{1,74}/g) || [data];
+      folded += lines.join('\n ');
+      return folded;
+    }
+  );
 
-  return state.web3;
+  return vcard;
 }
 
-function disconnectWeb3() {
-  state.web3 = {
-    connected: false,
-    provider: null,
-    address: null,
-    chainId: null,
-  };
-  updateWeb3UI();
-}
-
-function updateWeb3UI() {
-  const connectBtn = $('connect-wallet-btn');
-  const addressDisplay = $('web3-address');
-
-  if (state.web3.connected) {
-    if (connectBtn) {
-      connectBtn.textContent = 'Connected';
-      connectBtn.classList.add('connected');
-    }
-    if (addressDisplay) {
-      addressDisplay.textContent = truncateAddress(state.web3.address);
-      addressDisplay.style.display = 'block';
-    }
-  } else {
-    if (connectBtn) {
-      connectBtn.textContent = 'Connect Wallet';
-      connectBtn.classList.remove('connected');
-    }
-    if (addressDisplay) {
-      addressDisplay.style.display = 'none';
-    }
+async function generateQRCode(text, canvas, width = 256) {
+  try {
+    await QRCode.toCanvas(canvas, text, { width, margin: 2 });
+  } catch (err) {
+    console.error('QR code generation failed:', err);
   }
 }
 
@@ -956,12 +1108,14 @@ function updateLoginUI() {
   document.querySelectorAll('.login-required').forEach(el => el.style.display = 'none');
   document.querySelectorAll('.logged-in-content').forEach(el => el.style.display = 'block');
 
-  // Update nav button (desktop)
+  // Hide nav login button, show Account and Logout
   const navLogin = $('nav-login');
-  if (navLogin) {
-    navLogin.textContent = 'Logout';
-    navLogin.classList.add('logged-in');
-  }
+  const navKeys = $('nav-keys');
+  const navLogout = $('nav-logout');
+
+  if (navLogin) navLogin.style.display = 'none';
+  if (navKeys) navKeys.style.display = 'inline-flex';
+  if (navLogout) navLogout.style.display = 'inline-block';
 
   // Update mobile login button
   const mobileLogin = $('mobile-login');
@@ -984,6 +1138,7 @@ function logout() {
   state.wallet = { x25519: null, ed25519: null, secp256k1: null, p256: null };
   state.masterSeed = null;
   state.hdRoot = null;
+  state.mnemonic = null;
   state.addresses = { btc: null, eth: null, sol: null, sui: null, atom: null, ada: null };
   state.encryptionKey = null;
   state.encryptionIV = null;
@@ -993,12 +1148,18 @@ function logout() {
   document.querySelectorAll('.login-required').forEach(el => el.style.display = 'block');
   document.querySelectorAll('.logged-in-content').forEach(el => el.style.display = 'none');
 
-  // Update nav button (desktop)
+  // Show nav login button, hide Account and Logout
   const navLogin = $('nav-login');
-  if (navLogin) {
-    navLogin.textContent = 'Login';
-    navLogin.classList.remove('logged-in');
-  }
+  const navKeys = $('nav-keys');
+  const navLogout = $('nav-logout');
+
+  if (navLogin) navLogin.style.display = 'inline-block';
+  if (navKeys) navKeys.style.display = 'none';
+  if (navLogout) navLogout.style.display = 'none';
+
+  // Close keys modal if open
+  const keysModal = $('keys-modal');
+  if (keysModal) keysModal.classList.remove('active');
 
   // Update mobile login button
   const mobileLogin = $('mobile-login');
@@ -1463,141 +1624,6 @@ function initEventListeners() {
     });
   }
 
-  // Web3 wallet connect
-  const connectWalletBtn = $('connect-wallet-btn');
-  if (connectWalletBtn) {
-    connectWalletBtn.addEventListener('click', async () => {
-      console.log('Connect wallet button clicked');
-      console.log('Current window.ethereum:', typeof window.ethereum);
-      console.log('Current window.solana:', typeof window.solana);
-      console.log('window.solana.isPhantom:', window.solana?.isPhantom);
-
-      // Re-detect wallets in case they were injected after init
-      await waitForWeb3(1000);
-
-      // Try Phantom (Solana) first if detected
-      if (typeof window.solana !== 'undefined' && window.solana.isPhantom) {
-        try {
-          console.log('Attempting to connect to Phantom...');
-          await connectPhantom();
-          updateWeb3UI();
-          console.log('Phantom connected successfully');
-          await handleLogin('web3', {});
-        } catch (err) {
-          console.error('Phantom connection failed:', err);
-          alert('Failed to connect to Phantom: ' + err.message);
-        }
-      }
-      // Try MetaMask/Ethereum wallets
-      else if (typeof window.ethereum !== 'undefined') {
-        try {
-          console.log('Attempting to connect to Ethereum wallet...');
-          await connectMetaMask();
-          updateWeb3UI();
-          console.log('Ethereum wallet connected successfully');
-          await handleLogin('web3', {});
-        } catch (err) {
-          console.error('Ethereum wallet connection failed:', err);
-          alert('Failed to connect: ' + err.message);
-        }
-      }
-      // No wallet detected
-      else {
-        console.warn('No Web3 wallet detected');
-        alert('No Web3 wallet detected.\n\nDetected wallets:\n- Ethereum: ' +
-              (typeof window.ethereum !== 'undefined' ? 'Yes' : 'No') + '\n- Solana: ' +
-              (typeof window.solana !== 'undefined' ? 'Yes' : 'No') +
-              '\n\nPlease install MetaMask or Phantom, or open this page in a wallet browser.');
-      }
-    });
-  }
-
-  // Individual wallet buttons in login modal
-  const connectPhantomBtn = $('connect-phantom');
-  if (connectPhantomBtn) {
-    connectPhantomBtn.addEventListener('click', async (e) => {
-      e.preventDefault();
-      console.log('Phantom button clicked');
-
-      // Re-detect in case wallet was injected late
-      await waitForWeb3(1000);
-
-      if (typeof window.solana !== 'undefined' && window.solana.isPhantom) {
-        try {
-          console.log('Connecting to Phantom...');
-          await connectPhantom();
-          updateWeb3UI();
-          await handleLogin('web3', {});
-        } catch (err) {
-          console.error('Phantom connection failed:', err);
-          alert('Failed to connect to Phantom: ' + err.message);
-        }
-      } else {
-        console.warn('Phantom not detected');
-        alert('Phantom wallet not detected.\n\nwindow.solana: ' +
-              (typeof window.solana !== 'undefined' ? 'exists' : 'undefined') +
-              '\nisPhantom: ' + (window.solana?.isPhantom || false));
-      }
-    });
-  }
-
-  const connectMetaMaskBtn = $('connect-metamask');
-  if (connectMetaMaskBtn) {
-    connectMetaMaskBtn.addEventListener('click', async (e) => {
-      e.preventDefault();
-      console.log('MetaMask button clicked');
-
-      await waitForWeb3(1000);
-
-      if (typeof window.ethereum !== 'undefined') {
-        try {
-          console.log('Connecting to MetaMask...');
-          await connectMetaMask();
-          updateWeb3UI();
-          await handleLogin('web3', {});
-        } catch (err) {
-          console.error('MetaMask connection failed:', err);
-          alert('Failed to connect to MetaMask: ' + err.message);
-        }
-      } else {
-        alert('MetaMask not detected. Please install MetaMask extension.');
-      }
-    });
-  }
-
-  const connectCoinbaseBtn = $('connect-coinbase');
-  if (connectCoinbaseBtn) {
-    connectCoinbaseBtn.addEventListener('click', async (e) => {
-      e.preventDefault();
-      console.log('Coinbase button clicked');
-
-      await waitForWeb3(1000);
-
-      if (typeof window.ethereum !== 'undefined') {
-        try {
-          console.log('Connecting to Coinbase Wallet...');
-          await connectCoinbaseWallet();
-          updateWeb3UI();
-          await handleLogin('web3', {});
-        } catch (err) {
-          console.error('Coinbase connection failed:', err);
-          alert('Failed to connect to Coinbase Wallet: ' + err.message);
-        }
-      } else {
-        alert('Coinbase Wallet not detected. Please install Coinbase Wallet.');
-      }
-    });
-  }
-
-  const connectSuiBtn = $('connect-sui');
-  if (connectSuiBtn) {
-    connectSuiBtn.addEventListener('click', async (e) => {
-      e.preventDefault();
-      console.log('SUI Wallet button clicked');
-      alert('SUI Wallet connection coming soon.');
-    });
-  }
-
   // Refresh balances
   const refreshBalancesBtn = $('refresh-balances');
   if (refreshBalancesBtn) {
@@ -1671,82 +1697,261 @@ function initEventListeners() {
       }
     });
   });
-}
 
-// =============================================================================
-// Web3 Wallet Detection
-// =============================================================================
+  // ==========================================================================
+  // Account Modal Handlers
+  // ==========================================================================
 
-async function detectWeb3Wallets() {
-  console.log('Detecting Web3 wallets...');
-
-  const detected = {
-    ethereum: typeof window.ethereum !== 'undefined',
-    solana: typeof window.solana !== 'undefined',
-    phantom: typeof window.solana !== 'undefined' && window.solana?.isPhantom,
-    metamask: typeof window.ethereum !== 'undefined' && window.ethereum?.isMetaMask,
-    coinbase: typeof window.ethereum !== 'undefined' && window.ethereum?.isCoinbaseWallet,
-  };
-
-  console.log('Web3 detection results:', detected);
-
-  // Auto-show Web3 tab if in wallet browser
-  if (detected.phantom || detected.ethereum) {
-    console.log('Web3 wallet environment detected, showing Web3 tab');
-    const web3Tab = $('web3-tab');
-    const web3Method = $('web3-method');
-    if (web3Tab && web3Method) {
-      // Make Web3 tab active by default
-      document.querySelectorAll('.method-tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.method-content').forEach(c => c.classList.remove('active'));
-      web3Tab.classList.add('active');
-      web3Method.classList.add('active');
-
-      // Update button text with detected wallet
-      const connectBtn = $('connect-wallet-btn');
-      if (connectBtn && detected.phantom) {
-        connectBtn.textContent = 'Connect Phantom Wallet';
-      } else if (connectBtn && detected.metamask) {
-        connectBtn.textContent = 'Connect MetaMask';
+  // Account button (opens keys modal)
+  const navKeys = $('nav-keys');
+  if (navKeys) {
+    navKeys.addEventListener('click', () => {
+      const keysModal = $('keys-modal');
+      if (keysModal) {
+        keysModal.classList.add('active');
+        deriveAndDisplayAddress();
       }
-    }
+    });
   }
 
-  return detected;
-}
+  // Logout button
+  const navLogout = $('nav-logout');
+  if (navLogout) {
+    navLogout.addEventListener('click', () => {
+      logout();
+    });
+  }
 
-// Wait for Web3 wallet injection (some browsers inject async)
-function waitForWeb3(timeout = 3000) {
-  return new Promise((resolve) => {
-    console.log('Waiting for Web3 wallet injection...');
+  // Keys modal close
+  const keysModal = $('keys-modal');
+  if (keysModal) {
+    keysModal.querySelectorAll('.modal-close').forEach(btn => {
+      btn.addEventListener('click', () => {
+        keysModal.classList.remove('active');
+      });
+    });
 
-    // Check immediately
-    if (window.ethereum || window.solana) {
-      console.log('Web3 wallet already available');
-      resolve(true);
-      return;
-    }
+    keysModal.addEventListener('click', (e) => {
+      if (e.target === keysModal) keysModal.classList.remove('active');
+    });
+  }
 
-    let elapsed = 0;
-    const interval = 100;
+  // Modal tabs (Keys/vCard)
+  document.querySelectorAll('.modal-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const tabId = tab.dataset.modalTab;
+      if (!tabId) return;
 
-    const checkInterval = setInterval(() => {
-      elapsed += interval;
+      // Update tabs
+      tab.closest('.modal-tabs').querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
 
-      if (window.ethereum || window.solana) {
-        console.log(`Web3 wallet detected after ${elapsed}ms`);
-        clearInterval(checkInterval);
-        resolve(true);
-        return;
+      // Update content
+      const modal = tab.closest('.modal');
+      if (modal) {
+        modal.querySelectorAll('.modal-tab-content').forEach(c => c.classList.remove('active'));
+        const content = modal.querySelector(`#${tabId}`);
+        if (content) content.classList.add('active');
       }
-
-      if (elapsed >= timeout) {
-        console.log('Web3 wallet not detected within timeout');
-        clearInterval(checkInterval);
-        resolve(false);
-      }
-    }, interval);
+    });
   });
+
+  // Quick derive buttons (coin type is in data-coin attribute)
+  document.querySelectorAll('.quick-derive .glass-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const coinType = btn.dataset.coin;
+      if (coinType) {
+        const hdCoin = $('hd-coin');
+        if (hdCoin) {
+          hdCoin.value = coinType;
+          deriveAndDisplayAddress();
+        }
+      }
+    });
+  });
+
+  // HD controls (network, account, index)
+  const hdCoin = $('hd-coin');
+  const hdAccount = $('hd-account');
+  const hdIndex = $('hd-index');
+
+  if (hdCoin) hdCoin.addEventListener('change', deriveAndDisplayAddress);
+  if (hdAccount) hdAccount.addEventListener('change', deriveAndDisplayAddress);
+  if (hdIndex) hdIndex.addEventListener('change', deriveAndDisplayAddress);
+
+  // Reveal key buttons
+  document.querySelectorAll('.reveal-key-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.dataset.target;
+      const target = $(targetId);
+      if (target) {
+        const isRevealed = target.dataset.revealed === 'true';
+        target.dataset.revealed = (!isRevealed).toString();
+        target.classList.toggle('blurred', isRevealed);
+      }
+    });
+  });
+
+  // Copy key buttons
+  document.querySelectorAll('.copy-btn, .copy-key-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.dataset.copy;
+      const target = $(targetId);
+      if (target) {
+        navigator.clipboard.writeText(target.textContent);
+        showToast('Copied!');
+      }
+    });
+  });
+
+  // vCard photo upload
+  const vcardPhotoInput = $('vcard-photo-input');
+  if (vcardPhotoInput) {
+    vcardPhotoInput.addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          // Resize to 128x128
+          const canvas = document.createElement('canvas');
+          canvas.width = 128;
+          canvas.height = 128;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, 128, 128);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+            state.vcardPhoto = dataUrl;
+
+            // Update preview
+            const preview = $('vcard-photo-preview');
+            if (preview) {
+              preview.innerHTML = `<img src="${dataUrl}" alt="Photo">`;
+            }
+
+            // Show remove button
+            const removeBtn = $('vcard-photo-remove');
+            if (removeBtn) removeBtn.style.display = 'inline-block';
+          }
+        };
+        img.src = event.target?.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // vCard photo remove
+  const vcardPhotoRemove = $('vcard-photo-remove');
+  if (vcardPhotoRemove) {
+    vcardPhotoRemove.addEventListener('click', () => {
+      state.vcardPhoto = null;
+
+      // Reset preview
+      const preview = $('vcard-photo-preview');
+      if (preview) {
+        preview.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="photo-placeholder-icon">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        `;
+      }
+
+      // Hide remove button
+      vcardPhotoRemove.style.display = 'none';
+
+      // Clear input
+      const input = $('vcard-photo-input');
+      if (input) input.value = '';
+    });
+  }
+
+  // Generate vCard button
+  const generateVcardBtn = $('generate-vcard');
+  if (generateVcardBtn) {
+    generateVcardBtn.addEventListener('click', async () => {
+      const info = {
+        prefix: $('vcard-prefix')?.value || '',
+        givenName: $('vcard-firstname')?.value || '',
+        middleName: $('vcard-middlename')?.value || '',
+        familyName: $('vcard-lastname')?.value || '',
+        suffix: $('vcard-suffix')?.value || '',
+        email: $('vcard-email')?.value || '',
+        organization: $('vcard-org')?.value || '',
+        title: $('vcard-title')?.value || '',
+        includeKeys: $('include-keys')?.checked ?? true,
+      };
+
+      // Generate vCard (without photo for QR)
+      const vcard = generateVCard(info, { skipPhoto: true });
+
+      // Show result view
+      const formView = $('vcard-form-view');
+      const resultView = $('vcard-result-view');
+      if (formView) formView.style.display = 'none';
+      if (resultView) resultView.style.display = 'flex';
+
+      // Generate QR code
+      const qrCanvas = $('qr-code');
+      if (qrCanvas) {
+        await generateQRCode(vcard, qrCanvas);
+      }
+
+      // Show preview
+      const preview = $('vcard-preview');
+      if (preview) preview.textContent = vcard;
+
+      // Store for download (with photo)
+      const vcardWithPhoto = generateVCard(info);
+      resultView.dataset.vcard = vcardWithPhoto;
+      resultView.dataset.name = `${info.givenName || 'contact'}_${info.familyName || 'vcard'}`;
+    });
+  }
+
+  // Download vCard button
+  const downloadVcardBtn = $('download-vcard');
+  if (downloadVcardBtn) {
+    downloadVcardBtn.addEventListener('click', () => {
+      const resultView = $('vcard-result-view');
+      const vcard = resultView?.dataset.vcard;
+      const name = resultView?.dataset.name || 'contact';
+
+      if (!vcard) return;
+
+      const blob = new Blob([vcard], { type: 'text/vcard;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name}.vcf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
+
+  // Copy vCard button
+  const copyVcardBtn = $('copy-vcard');
+  if (copyVcardBtn) {
+    copyVcardBtn.addEventListener('click', () => {
+      const preview = $('vcard-preview');
+      if (preview) {
+        navigator.clipboard.writeText(preview.textContent);
+        showToast('Copied to clipboard!');
+      }
+    });
+  }
+
+  // Back to vCard editor
+  const vcardBackBtn = $('vcard-back-btn');
+  if (vcardBackBtn) {
+    vcardBackBtn.addEventListener('click', () => {
+      const formView = $('vcard-form-view');
+      const resultView = $('vcard-result-view');
+      if (formView) formView.style.display = 'block';
+      if (resultView) resultView.style.display = 'none';
+    });
+  }
 }
 
 // =============================================================================
@@ -1755,38 +1960,16 @@ function waitForWeb3(timeout = 3000) {
 
 async function init() {
   console.log('SDN Crypto Wallet initializing...');
-  console.log('User agent:', navigator.userAgent);
 
   try {
     // Initialize event listeners
     initEventListeners();
 
-    // Listen for wallet injection events
-    window.addEventListener('ethereum#initialized', () => {
-      console.log('Ethereum wallet injected via event');
-      detectWeb3Wallets();
-    });
-
-    if (window.ethereum) {
-      window.ethereum.on('connect', () => {
-        console.log('Ethereum wallet connected');
-      });
+    // Check for stored wallet
+    const stored = hasStoredWallet();
+    if (stored) {
+      console.log('Found stored wallet from', stored.date);
     }
-
-    // Phantom-specific events
-    window.addEventListener('solana#initialized', () => {
-      console.log('Solana wallet injected via event');
-      detectWeb3Wallets();
-    });
-
-    // Wait for Web3 wallet injection (especially important for mobile wallet browsers)
-    await waitForWeb3();
-
-    // Detect available Web3 wallets
-    const detected = await detectWeb3Wallets();
-
-    // Store detection results
-    state.web3.detected = detected;
 
     state.initialized = true;
     console.log('SDN Crypto Wallet initialized');
@@ -1816,10 +1999,7 @@ export {
   generateAddresses,
   eciesEncrypt,
   eciesDecrypt,
-  connectMetaMask,
-  connectPhantom,
-  connectCoinbaseWallet,
-  disconnectWeb3,
+  generateVCard,
   openLoginModal,
   closeLoginModal,
 };

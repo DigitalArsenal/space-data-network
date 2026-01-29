@@ -2395,6 +2395,455 @@
       backdrop-filter: blur(20px);
     }
 
+    .modal-wide {
+      max-width: 600px;
+    }
+
+    .key-warning-header {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: normal;
+      margin-left: auto;
+      margin-right: 16px;
+    }
+
+    /* Modal Tabs (for Keys/vCard) */
+    .modal-tabs {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--ui-border);
+      margin-bottom: 20px;
+    }
+
+    .modal-tab {
+      padding: 12px 24px;
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 14px;
+    }
+
+    .modal-tab:hover {
+      color: var(--text-primary);
+    }
+
+    .modal-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    .modal-tab-content {
+      display: none;
+    }
+
+    .modal-tab-content.active {
+      display: block;
+    }
+
+    /* Quick Derive Buttons */
+    .quick-derive {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+
+    .quick-label {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* HD Section */
+    .hd-section {
+      margin-bottom: 20px;
+    }
+
+    .section-label {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+
+    .hd-controls-row {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .hd-control-group {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .hd-control-group label {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .hd-num-input {
+      width: 100%;
+    }
+
+    .hd-not-initialized {
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: var(--radius);
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    /* Derived Result */
+    .derived-result {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+
+    .hd-key-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .hd-key-row:last-of-type {
+      border-bottom: none;
+    }
+
+    .hd-key-label {
+      min-width: 80px;
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    .hd-key-path code {
+      font-size: 12px;
+      color: var(--text-secondary);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+
+    .hd-key-value {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .hd-key-value code {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .hd-address-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 12px;
+      margin-top: 8px;
+      border-top: 1px solid var(--ui-border);
+    }
+
+    .hd-address-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .crypto-name {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .hd-address {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .explorer-link {
+      color: var(--text-muted);
+      transition: color 0.2s;
+    }
+
+    .explorer-link:hover {
+      color: var(--accent);
+    }
+
+    .qr-section {
+      flex-shrink: 0;
+    }
+
+    .qr-section canvas {
+      border-radius: 4px;
+      background: #fff;
+      padding: 4px;
+    }
+
+    /* Copy/Reveal Buttons */
+    .copy-btn,
+    .copy-key-btn,
+    .reveal-key-btn {
+      padding: 6px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .copy-btn:hover,
+    .copy-key-btn:hover,
+    .reveal-key-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
+    }
+
+    /* Collapsible Section */
+    .collapsible-section {
+      margin-top: 16px;
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+    }
+
+    .collapsible-section summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .collapsible-section summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .collapse-icon {
+      transition: transform 0.2s;
+    }
+
+    .collapsible-section[open] .collapse-icon {
+      transform: rotate(180deg);
+    }
+
+    .collapsible-content {
+      padding: 0 16px 16px;
+    }
+
+    /* Key Items */
+    .key-item {
+      margin-bottom: 16px;
+    }
+
+    .key-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .key-item label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .key-value-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .key-value {
+      flex: 1;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .key-value.seed-phrase {
+      white-space: normal;
+      word-break: break-word;
+    }
+
+    .key-value.blurred {
+      filter: blur(4px);
+      user-select: none;
+    }
+
+    /* Photo Upload */
+    .photo-upload-section {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .photo-preview {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.05);
+      border: 2px dashed rgba(255, 255, 255, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .photo-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .photo-placeholder-icon {
+      width: 40px;
+      height: 40px;
+      color: var(--text-muted);
+    }
+
+    .photo-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    /* Identity Form */
+    .identity-form {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .form-row .glass-input-group {
+      flex: 1;
+      min-width: 100px;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+
+    .checkbox-label input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
+
+    /* vCard Actions */
+    .vcard-actions-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 24px;
+    }
+
+    /* vCard Result View */
+    #vcard-result-view {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .qr-container {
+      padding: 16px;
+      background: #fff;
+      border-radius: 12px;
+    }
+
+    .vcard-result-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .vcard-details {
+      width: 100%;
+    }
+
+    .vcard-details summary {
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+
+    #vcard-preview {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 16px;
+      border-radius: var(--radius);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-primary);
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .vcard-back-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    @media (max-width: 600px) {
+      .modal-wide {
+        max-width: 95vw;
+      }
+
+      .hd-controls-row {
+        flex-direction: column;
+      }
+
+      .hd-key-row {
+        flex-wrap: wrap;
+      }
+
+      .form-row {
+        flex-direction: column;
+      }
+    }
+
     .modal-header {
       padding: 24px 24px 0;
       display: flex;
@@ -3096,6 +3545,45 @@
       color: #10b981;
     }
 
+    .nav-keys {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: var(--radius);
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .nav-keys:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .nav-keys svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .nav-logout {
+      padding: 8px 18px;
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .nav-logout:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
     /* Tablet adjustments (iPad) */
     @media (max-width: 1024px) {
       .nav-links {
@@ -3192,6 +3680,28 @@
       color: var(--text-muted);
       margin: 0;
     }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: rgba(0, 0, 0, 0.9);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      opacity: 0;
+      transition: all 0.3s ease;
+      z-index: 10000;
+      pointer-events: none;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
   </style>
 </head>
 <body>
@@ -3222,6 +3732,13 @@
       </div>
       <div class="nav-right">
         <button class="nav-login" id="nav-login">Login</button>
+        <button class="nav-keys" id="nav-keys" style="display: none;" title="Account">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </button>
+        <button class="nav-logout" id="nav-logout" style="display: none;">Logout</button>
         <button class="nav-menu-btn" id="menuBtn" aria-label="Menu">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="menu-icon">
           <line x1="3" y1="12" x2="21" y2="12"/>
@@ -5373,62 +5890,9 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
       </div>
       <div class="modal-body">
         <div class="method-tabs">
-          <button class="method-tab" data-method="web3" id="web3-tab" style="display: none;">Wallet</button>
           <button class="method-tab active" data-method="password">Password</button>
           <button class="method-tab" data-method="seed">Seed Phrase</button>
           <button class="method-tab" data-method="stored" id="stored-tab" style="display: none;">Stored</button>
-        </div>
-
-        <!-- Web3 Wallet Connection -->
-        <div id="web3-method" class="method-content">
-          <div class="web3-wallets">
-            <button class="web3-wallet-btn" id="connect-metamask">
-              <svg width="32" height="32" viewBox="0 0 318.6 318.6" fill="none">
-                <path fill="#E2761B" stroke="#E2761B" stroke-linecap="round" stroke-linejoin="round" d="m274.1 35.5-99.5 73.9L193 65.8z"/>
-                <path fill="#E4761B" stroke="#E4761B" stroke-linecap="round" stroke-linejoin="round" d="m44.4 35.5 98.7 74.6-17.5-44.3zm193.9 171.3-26.5 40.6 56.7 15.6 16.3-55.3zm-204.4.9L50.1 263l56.7-15.6-26.5-40.6z"/>
-                <path fill="#E4761B" stroke="#E4761B" stroke-linecap="round" stroke-linejoin="round" d="m103.6 138.2-15.8 23.9 56.3 2.5-2-60.5zm111.3 0-39-34.8-1.3 61.2 56.2-2.5zM106.8 247.4l33.8-16.5-29.2-22.8zm71.1-16.5 33.9 16.5-4.7-39.3z"/>
-                <path fill="#D7C1B3" stroke="#D7C1B3" stroke-linecap="round" stroke-linejoin="round" d="m211.8 247.4-33.9-16.5 2.7 22.1-.3 9.3zm-105 0 31.5 14.9-.2-9.3 2.5-22.1z"/>
-                <path fill="#233447" stroke="#233447" stroke-linecap="round" stroke-linejoin="round" d="m138.8 193.5-28.2-8.3 19.9-9.1zm40.9 0 8.3-17.4 20 9.1z"/>
-                <path fill="#CD6116" stroke="#CD6116" stroke-linecap="round" stroke-linejoin="round" d="m106.8 247.4 4.8-40.6-31.3.9zM207 206.8l4.8 40.6 26.5-39.7zm23.8-44.7-56.2 2.5 5.2 28.9 8.3-17.4 20 9.1zm-120.2 23.1 20-9.1 8.2 17.4 5.3-28.9-56.3-2.5z"/>
-                <path fill="#E4751F" stroke="#E4751F" stroke-linecap="round" stroke-linejoin="round" d="m87.8 162.1 23.6 46-.8-22.9zm120.3 23.1-.7 22.9 23.5-46zm-64-20.6-5.3 28.9 6.6 34.1 1.5-44.9zm30.5 0-2.7 18 1.2 45 6.7-34.1z"/>
-                <path fill="#F6851B" stroke="#F6851B" stroke-linecap="round" stroke-linejoin="round" d="m179.8 193.5-6.7 34.1 4.8 3.3 29.2-22.8.7-22.9zm-69.2-8.3.8 22.9 29.2 22.8 4.8-3.3-6.6-34.1z"/>
-                <path fill="#C0AD9E" stroke="#C0AD9E" stroke-linecap="round" stroke-linejoin="round" d="m180.3 262.3.3-9.3-2.5-2.2h-37.7l-2.3 2.2.2 9.3-31.5-14.9 11 9 22.3 15.5h38.3l22.4-15.5 11-9z"/>
-                <path fill="#161616" stroke="#161616" stroke-linecap="round" stroke-linejoin="round" d="m177.9 230.9-4.8-3.3h-27.7l-4.8 3.3-2.5 22.1 2.3-2.2h37.7l2.5 2.2z"/>
-                <path fill="#763D16" stroke="#763D16" stroke-linecap="round" stroke-linejoin="round" d="m278.3 114.2 8.5-40.8-12.7-37.9-96.2 71.4 37 31.3 52.3 15.3 11.6-13.5-5-3.6 8-7.3-6.2-4.8 8-6.1zM31.8 73.4l8.5 40.8-5.4 4 8 6.1-6.1 4.8 8 7.3-5 3.6 11.5 13.5 52.3-15.3 37-31.3-96.2-71.4z"/>
-                <path fill="#F6851B" stroke="#F6851B" stroke-linecap="round" stroke-linejoin="round" d="m267.2 153.5-52.3-15.3 15.9 23.9-23.7 46 31.2-.4h46.5zm-163.6-15.3-52.3 15.3-17.4 54.2h46.4l31.1.4-23.6-46zm71 26.4 3.3-57.7 15.2-41.1h-67.5l15 41.1 3.5 57.7 1.2 18.2.1 44.8h27.7l.2-44.8z"/>
-              </svg>
-              <span>MetaMask</span>
-            </button>
-            <button class="web3-wallet-btn" id="connect-phantom">
-              <svg width="32" height="32" viewBox="0 0 128 128" fill="none">
-                <rect width="128" height="128" rx="26.5" fill="url(#phantom-grad)"/>
-                <path d="M110.5 64.3c0-3.7-.4-7.3-1.2-10.8-.8-3.5-2-6.8-3.6-9.9-1.6-3.1-3.6-5.9-5.9-8.4-2.3-2.5-4.9-4.7-7.8-6.5-2.9-1.8-6-3.2-9.3-4.2-3.3-1-6.8-1.5-10.4-1.5h-9.7c-3.6 0-7.1.5-10.4 1.5-3.3 1-6.4 2.4-9.3 4.2-2.9 1.8-5.5 4-7.8 6.5-2.3 2.5-4.3 5.3-5.9 8.4-1.6 3.1-2.8 6.4-3.6 9.9-.8 3.5-1.2 7.1-1.2 10.8v.6c0 3.7.4 7.3 1.2 10.8.8 3.5 2 6.8 3.6 9.9 1.6 3.1 3.6 5.9 5.9 8.4 2.3 2.5 4.9 4.7 7.8 6.5 2.9 1.8 6 3.2 9.3 4.2 3.3 1 6.8 1.5 10.4 1.5h9.7c3.6 0 7.1-.5 10.4-1.5 3.3-1 6.4-2.4 9.3-4.2 2.9-1.8 5.5-4 7.8-6.5 2.3-2.5 4.3-5.3 5.9-8.4 1.6-3.1 2.8-6.4 3.6-9.9.8-3.5 1.2-7.1 1.2-10.8v-.6z" fill="#fff"/>
-                <path d="M86.9 60.8c0-3.5-2.8-6.3-6.3-6.3s-6.3 2.8-6.3 6.3 2.8 6.3 6.3 6.3 6.3-2.8 6.3-6.3zM53.8 60.8c0-3.5-2.8-6.3-6.3-6.3s-6.3 2.8-6.3 6.3 2.8 6.3 6.3 6.3 6.3-2.8 6.3-6.3z" fill="#AB9FF2"/>
-                <defs>
-                  <linearGradient id="phantom-grad" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
-                    <stop stop-color="#534BB1"/>
-                    <stop offset="1" stop-color="#551BF9"/>
-                  </linearGradient>
-                </defs>
-              </svg>
-              <span>Phantom</span>
-            </button>
-            <button class="web3-wallet-btn" id="connect-coinbase">
-              <svg width="32" height="32" viewBox="0 0 1024 1024" fill="none">
-                <rect width="1024" height="1024" rx="200" fill="#0052FF"/>
-                <path fill-rule="evenodd" clip-rule="evenodd" d="M512 192c-176.7 0-320 143.3-320 320s143.3 320 320 320 320-143.3 320-320-143.3-320-320-320zm-96 256c-17.7 0-32 14.3-32 32v64c0 17.7 14.3 32 32 32h192c17.7 0 32-14.3 32-32v-64c0-17.7-14.3-32-32-32H416z" fill="#fff"/>
-              </svg>
-              <span>Coinbase</span>
-            </button>
-            <button class="web3-wallet-btn" id="connect-sui">
-              <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                <circle cx="16" cy="16" r="16" fill="#4DA2FF"/>
-                <path d="M21.63 10.26a8.3 8.3 0 0 0-1.45-1.65l-6.6 7.24a.84.84 0 0 1-1.26 0 .89.89 0 0 1 0-1.24l6.45-7.1a8.7 8.7 0 0 0-2.68-1.3 8.6 8.6 0 0 0-5.15.18l7.7 8.46a.89.89 0 0 1 0 1.24.84.84 0 0 1-1.26 0L9.7 8.64A8.6 8.6 0 0 0 7.4 11a8.4 8.4 0 0 0-1.15 6.92 8.5 8.5 0 0 0 4.28 5.5 8.6 8.6 0 0 0 6.94.5 8.5 8.5 0 0 0 5.08-4.72 8.4 8.4 0 0 0-.92-8.94z" fill="white"/>
-              </svg>
-              <span>SUI Wallet</span>
-            </button>
-          </div>
-          <p class="web3-hint">Connect your existing Web3 wallet to login</p>
         </div>
 
         <form id="password-method" class="method-content active" onsubmit="return false;">
@@ -5541,6 +6005,284 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
           <button id="forget-stored-wallet" class="glass-btn full-width">
             Forget Wallet
           </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Account/Keys Modal -->
+  <div id="keys-modal" class="modal">
+    <div class="modal-content modal-wide">
+      <div class="modal-header">
+        <h3>Account</h3>
+        <span class="key-warning-header">Private keys stored in memory only</span>
+        <button class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <!-- Modal Tabs -->
+        <div class="modal-tabs">
+          <button class="modal-tab active" data-modal-tab="keys-tab-content">Keys</button>
+          <button class="modal-tab" data-modal-tab="vcard-tab-content">vCard</button>
+        </div>
+
+        <!-- Keys Tab Content -->
+        <div id="keys-tab-content" class="modal-tab-content active">
+          <!-- Quick Derive Buttons -->
+          <div class="quick-derive">
+            <span class="quick-label">Quick derive:</span>
+            <button class="glass-btn small" data-coin="0" data-purpose="84">BTC</button>
+            <button class="glass-btn small" data-coin="60" data-purpose="44">ETH</button>
+            <button class="glass-btn small" data-coin="501" data-purpose="44">SOL</button>
+            <button class="glass-btn small" data-coin="2" data-purpose="44">LTC</button>
+            <button class="glass-btn small" data-coin="3" data-purpose="44">DOGE</button>
+          </div>
+
+          <!-- HD Wallet Section -->
+          <div class="keys-section hd-section">
+            <h4 class="section-label">HD Wallet Derivation (BIP44)</h4>
+
+            <!-- HD Controls Row -->
+            <div class="hd-controls-row">
+              <div class="hd-control-group">
+                <label>Network</label>
+                <select id="hd-coin" class="glass-select compact">
+                  <option value="0" data-symbol="BTC" data-name="Bitcoin">Bitcoin</option>
+                  <option value="60" data-symbol="ETH" data-name="Ethereum">Ethereum</option>
+                  <option value="501" data-symbol="SOL" data-name="Solana">Solana</option>
+                  <option value="2" data-symbol="LTC" data-name="Litecoin">Litecoin</option>
+                  <option value="145" data-symbol="BCH" data-name="Bitcoin Cash">Bitcoin Cash</option>
+                  <option value="3" data-symbol="DOGE" data-name="Dogecoin">Dogecoin</option>
+                  <option value="118" data-symbol="ATOM" data-name="Cosmos">Cosmos</option>
+                  <option value="330" data-symbol="ALGO" data-name="Algorand">Algorand</option>
+                  <option value="354" data-symbol="DOT" data-name="Polkadot">Polkadot</option>
+                  <option value="1815" data-symbol="ADA" data-name="Cardano">Cardano</option>
+                </select>
+              </div>
+              <div class="hd-control-group">
+                <label>Account</label>
+                <input type="number" id="hd-account" class="glass-input compact hd-num-input" value="0" min="0" step="1">
+              </div>
+              <div class="hd-control-group">
+                <label>Index</label>
+                <input type="number" id="hd-index" class="glass-input compact hd-num-input" value="0" min="0" step="1">
+              </div>
+            </div>
+
+            <!-- HD Wallet Not Initialized Message -->
+            <div id="hd-not-initialized" class="hd-not-initialized" style="display: none;">
+              <p>HD wallet not initialized. Please log in with a password or seed phrase to enable HD derivation.</p>
+            </div>
+
+            <!-- Derived Keys Display -->
+            <div id="derived-result" class="derived-result" style="display: none;">
+              <!-- Signing Key Row -->
+              <div class="hd-key-row">
+                <div class="hd-key-label">Signing</div>
+                <div class="hd-key-path">
+                  <code id="signing-path">m/44'/0'/0'/0'/0'</code>
+                </div>
+                <div class="hd-key-value">
+                  <code id="signing-pubkey" class="truncate"></code>
+                  <button class="copy-btn" data-copy="signing-pubkey" title="Copy">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Encryption Key Row -->
+              <div class="hd-key-row">
+                <div class="hd-key-label">Encryption</div>
+                <div class="hd-key-path">
+                  <code id="encryption-path">m/44'/0'/0'/1'/0'</code>
+                </div>
+                <div class="hd-key-value">
+                  <code id="encryption-pubkey" class="truncate"></code>
+                  <button class="copy-btn" data-copy="encryption-pubkey" title="Copy">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Address Display -->
+              <div class="hd-address-row">
+                <div class="hd-address-info">
+                  <span class="crypto-icon" id="derived-icon"></span>
+                  <span class="crypto-name" id="derived-crypto-name">Bitcoin</span>
+                  <code id="derived-address" class="hd-address"></code>
+                  <a id="derived-explorer-link" href="#" target="_blank" class="explorer-link" title="View on Explorer">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                      <polyline points="15 3 21 3 21 9"></polyline>
+                      <line x1="10" y1="14" x2="21" y2="3"></line>
+                    </svg>
+                  </a>
+                </div>
+                <div class="qr-section">
+                  <canvas id="address-qr" width="64" height="64"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- HD Wallet Root Keys Section -->
+          <details class="keys-section collapsible-section">
+            <summary class="section-label collapsible-header">
+              <span>HD Wallet Root</span>
+              <svg class="collapse-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </summary>
+            <div class="collapsible-content">
+              <!-- Master Public Key -->
+              <div class="key-item">
+                <label>Master Public Key (xpub)</label>
+                <div class="key-value-row">
+                  <code id="wallet-xpub" class="key-value truncate"></code>
+                  <button class="copy-key-btn" data-copy="wallet-xpub" title="Copy">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Master Private Key (blurred) -->
+              <div class="key-item sensitive">
+                <label>Master Private Key (xprv)</label>
+                <div class="key-value-row">
+                  <code id="wallet-xprv" class="key-value truncate blurred" data-revealed="false"></code>
+                  <button class="reveal-key-btn" data-target="wallet-xprv" title="Click to reveal">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  </button>
+                  <button class="copy-key-btn" data-copy="wallet-xprv" title="Copy">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Seed Phrase (blurred) -->
+              <div class="key-item sensitive">
+                <label>Seed Phrase (BIP39)</label>
+                <div class="key-value-row">
+                  <code id="wallet-seed-phrase" class="key-value seed-phrase blurred" data-revealed="false"></code>
+                  <button class="reveal-key-btn" data-target="wallet-seed-phrase" title="Click to reveal">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  </button>
+                  <button class="copy-key-btn" data-copy="wallet-seed-phrase" title="Copy">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <!-- vCard Tab Content -->
+        <div id="vcard-tab-content" class="modal-tab-content">
+          <!-- Form View -->
+          <div id="vcard-form-view">
+            <!-- Photo Upload -->
+            <div class="photo-upload-section">
+              <div class="photo-preview" id="vcard-photo-preview">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="photo-placeholder-icon">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                  <circle cx="12" cy="7" r="4"/>
+                </svg>
+              </div>
+              <div class="photo-actions">
+                <label class="glass-btn small" for="vcard-photo-input">Upload</label>
+                <input type="file" id="vcard-photo-input" accept="image/*" hidden>
+                <button id="vcard-photo-remove" class="glass-btn small" style="display:none;">Remove</button>
+              </div>
+            </div>
+
+            <!-- vCard Form -->
+            <div class="identity-form">
+              <div class="form-row">
+                <div class="glass-input-group">
+                  <label>Prefix</label>
+                  <input type="text" id="vcard-prefix" class="glass-input" placeholder="Dr.">
+                </div>
+                <div class="glass-input-group">
+                  <label>First Name</label>
+                  <input type="text" id="vcard-firstname" class="glass-input" placeholder="John">
+                </div>
+                <div class="glass-input-group">
+                  <label>Middle Name</label>
+                  <input type="text" id="vcard-middlename" class="glass-input" placeholder="Michael">
+                </div>
+                <div class="glass-input-group">
+                  <label>Last Name</label>
+                  <input type="text" id="vcard-lastname" class="glass-input" placeholder="Doe">
+                </div>
+                <div class="glass-input-group">
+                  <label>Suffix</label>
+                  <input type="text" id="vcard-suffix" class="glass-input" placeholder="Jr.">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="glass-input-group">
+                  <label>Email</label>
+                  <input type="email" id="vcard-email" class="glass-input" placeholder="john@example.com">
+                </div>
+                <div class="glass-input-group">
+                  <label>Organization</label>
+                  <input type="text" id="vcard-org" class="glass-input" placeholder="Company Name">
+                </div>
+                <div class="glass-input-group">
+                  <label>Job Title</label>
+                  <input type="text" id="vcard-title" class="glass-input" placeholder="Software Engineer">
+                </div>
+              </div>
+              <label class="checkbox-label">
+                <input type="checkbox" id="include-keys" checked>
+                <span>Include cryptographic public keys</span>
+              </label>
+            </div>
+
+            <!-- vCard Actions Row -->
+            <div class="vcard-actions-row">
+              <button id="generate-vcard" class="glass-btn primary">Generate vCard</button>
+            </div>
+          </div>
+
+          <!-- Result View -->
+          <div id="vcard-result-view" style="display: none;">
+            <div class="qr-container">
+              <canvas id="qr-code"></canvas>
+            </div>
+            <div class="vcard-result-actions">
+              <button id="download-vcard" class="glass-btn primary">Download .vcf</button>
+              <button id="copy-vcard" class="glass-btn">Copy</button>
+            </div>
+            <details class="vcard-details">
+              <summary>View Raw vCard</summary>
+              <pre id="vcard-preview"></pre>
+            </details>
+            <button id="vcard-back-btn" class="glass-btn vcard-back-btn">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+              Back to Editor
+            </button>
+          </div>
         </div>
       </div>
     </div>

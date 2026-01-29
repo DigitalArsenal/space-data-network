@@ -64,6 +64,20 @@ export {
   sha256,
 } from './hd-wallet';
 
+// vCard utilities
+export type {
+  VCardPersonInfo,
+  VCardOptions,
+  ParsedVCard,
+} from './vcard';
+
+export {
+  generateVCard,
+  parseVCard,
+  createVCardBlob,
+  createVCardDataURL,
+} from './vcard';
+
 // Default export for convenience
 import * as hdWallet from './hd-wallet';
 export default hdWallet;
