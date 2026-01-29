@@ -17,7 +17,7 @@ WORKDIR /build/sdn-server
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/registry-builder ./cmd/registry-builder
 
 # Runtime image with Node.js for build script
-FROM node:20-alpine
+FROM node:25-alpine
 
 RUN apk add --no-cache ca-certificates
 
