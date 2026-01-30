@@ -397,10 +397,118 @@
       padding: 8px;
     }
 
+    .mobile-menu-btn svg {
+      width: 24px;
+      height: 24px;
+    }
+
     @media (max-width: 1024px) {
       .mobile-menu-btn {
         display: block;
       }
+
+      .nav-links {
+        display: none;
+      }
+
+      .sidebar.open {
+        display: block;
+        z-index: 99;
+      }
+
+      .sidebar-overlay {
+        display: none;
+        position: fixed;
+        top: 52px;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 98;
+      }
+
+      .sidebar-overlay.open {
+        display: block;
+      }
+
+      .main {
+        max-width: 100vw;
+      }
+
+      h1 {
+        font-size: 1.75rem;
+      }
+
+      h2 {
+        font-size: 1.35rem;
+      }
+
+      pre {
+        font-size: 12px;
+        padding: 12px;
+      }
+
+      table {
+        font-size: 12px;
+      }
+
+      th, td {
+        padding: 8px 10px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .main {
+        padding: 16px;
+      }
+
+      h1 {
+        font-size: 1.5rem;
+      }
+
+      pre {
+        font-size: 11px;
+        padding: 10px;
+        border-radius: 8px;
+      }
+    }
+
+    /* Quick Start Tabs */
+    .qs-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      margin-bottom: 24px;
+    }
+
+    .qs-tab {
+      padding: 10px 20px;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .qs-tab:hover {
+      color: var(--text-secondary);
+    }
+
+    .qs-tab.active {
+      color: #60a5fa;
+      border-bottom-color: #60a5fa;
+    }
+
+    .qs-panel {
+      display: none;
+    }
+
+    .qs-panel.active {
+      display: block;
     }
 
     /* Master Network Connectivity Diagram */
@@ -451,11 +559,15 @@
         <a href="index.html#architecture">Architecture</a>
         <a href="https://github.com/DigitalArsenal/space-data-network">GitHub</a>
       </div>
+      <button class="mobile-menu-btn" onclick="toggleSidebar()" aria-label="Toggle menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
     </div>
   </nav>
 
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
   <div class="layout">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="sidebar-section">
         <div class="sidebar-title">Getting Started</div>
         <ul class="sidebar-links">
@@ -833,8 +945,38 @@
       <section id="quick-start" class="doc-section">
         <h2>Quick Start</h2>
 
-        <h3>Browser (JavaScript)</h3>
-        <pre><code>import { SDNNode } from '@spacedatanetwork/sdn-js';
+        <div class="qs-tabs">
+          <button class="qs-tab active" onclick="switchQsTab('desktop')">Desktop</button>
+          <button class="qs-tab" onclick="switchQsTab('server')">Server</button>
+          <button class="qs-tab" onclick="switchQsTab('browser')">Browser</button>
+        </div>
+
+        <div id="qs-desktop" class="qs-panel active">
+          <h3>Desktop Application</h3>
+          <p>Download the SDN Desktop app for macOS, Windows, or Linux. It includes a bundled IPFS node and the full SDN Web UI.</p>
+          <pre><code># Clone and build from source
+git clone https://github.com/DigitalArsenal/space-data-network.git
+cd space-data-network
+npm run install:all
+npm run desktop</code></pre>
+          <p>The desktop app provides a graphical interface for managing peers, browsing schemas, monitoring network stats, and configuring subscriptions.</p>
+        </div>
+
+        <div id="qs-server" class="qs-panel">
+          <h3>Server (Go)</h3>
+          <p>Run a headless SDN node for production deployments, data providers, and always-on infrastructure.</p>
+          <pre><code># Initialize configuration
+./spacedatanetwork init
+
+# Start the node
+./spacedatanetwork daemon</code></pre>
+          <p>See <a href="#full-node">Full Node Setup</a> and <a href="#edge-relay">Edge Relay Deployment</a> for detailed configuration.</p>
+        </div>
+
+        <div id="qs-browser" class="qs-panel">
+          <h3>Browser (JavaScript)</h3>
+          <p>Integrate SDN directly into web applications using the JavaScript SDK.</p>
+          <pre><code>import { SDNNode } from '@spacedatanetwork/sdn-js';
 
 const node = new SDNNode();
 await node.start();
@@ -856,13 +998,7 @@ await node.publish('OMM', {
   ARG_OF_PERICENTER: 100.0,
   MEAN_ANOMALY: 50.0
 });</code></pre>
-
-        <h3>Server (Go)</h3>
-        <pre><code># Initialize configuration
-./spacedatanetwork init
-
-# Start the node
-./spacedatanetwork daemon</code></pre>
+        </div>
       </section>
 
       <section id="installation" class="doc-section">
@@ -1956,6 +2092,28 @@ scannedEPM, err := vcard.QRToEPM(pngData)
 
     window.addEventListener('scroll', updateActiveLink);
     updateActiveLink();
+
+    // Mobile sidebar toggle
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('open');
+      document.getElementById('sidebarOverlay').classList.toggle('open');
+    }
+
+    // Close sidebar when clicking a link on mobile
+    document.querySelectorAll('.sidebar-links a').forEach(link => {
+      link.addEventListener('click', () => {
+        document.getElementById('sidebar').classList.remove('open');
+        document.getElementById('sidebarOverlay').classList.remove('open');
+      });
+    });
+
+    // Quick Start tabs
+    function switchQsTab(tab) {
+      document.querySelectorAll('.qs-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.qs-panel').forEach(p => p.classList.remove('active'));
+      document.querySelector(`[onclick="switchQsTab('${tab}')"]`).classList.add('active');
+      document.getElementById('qs-' + tab).classList.add('active');
+    }
   </script>
 </body>
 </html>
