@@ -5,9 +5,10 @@ go 1.24.6
 toolchain go1.24.12
 
 require (
-	github.com/DigitalArsenal/spacedatastandards.org/lib/go v0.0.0-00010101000000-000000000000
+	github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.65.0
 	github.com/emersion/go-vcard v0.0.0-20241024213814-c9703dde27ff
 	github.com/google/flatbuffers v25.12.19+incompatible
+	github.com/google/uuid v1.6.0
 	github.com/ipfs/go-cid v0.6.0
 	github.com/ipfs/go-log/v2 v2.9.0
 	github.com/libp2p/go-libp2p v0.46.0
@@ -20,11 +21,10 @@ require (
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.8.0
 	github.com/tetratelabs/wazero v1.7.0
+	golang.org/x/crypto v0.47.0
 	golang.org/x/time v0.12.0
 	gopkg.in/yaml.v3 v3.0.1
 )
-
-replace github.com/DigitalArsenal/spacedatastandards.org/lib/go => ../schemas/sds/lib/go
 
 require (
 	github.com/benbjohnson/clock v1.3.5 // indirect
@@ -38,7 +38,6 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/gopacket v1.1.19 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
@@ -121,7 +120,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
-	golang.org/x/crypto v0.47.0 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/net v0.49.0 // indirect

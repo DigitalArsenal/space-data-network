@@ -30,7 +30,11 @@
     "lint:js": "cd sdn-js && npm run lint",
     "docker:up": "cd deployment && docker-compose up -d",
     "docker:down": "cd deployment && docker-compose down",
-    "docker:logs": "cd deployment && docker-compose logs -f"
+    "docker:logs": "cd deployment && docker-compose logs -f",
+    "update:deps": "bash scripts/update-deps.sh",
+    "check:versions": "node scripts/check-version-consistency.js",
+    "precommit": "npm run check:versions && npm run test",
+    "prepare": "husky"
   },
   "repository": {
     "type": "git",
