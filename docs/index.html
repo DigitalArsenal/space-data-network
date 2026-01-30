@@ -2008,6 +2008,48 @@
       scroll-margin-top: 80px;
     }
 
+    .qs-tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: 0;
+      border-bottom: 1px solid var(--ui-border);
+    }
+
+    .qs-tab {
+      padding: 10px 24px;
+      background: none;
+      border: 1px solid transparent;
+      border-bottom: none;
+      border-radius: var(--radius) var(--radius) 0 0;
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: var(--font-sans);
+      transition: all 0.15s;
+    }
+
+    .qs-tab:hover {
+      color: var(--text-primary);
+      background: var(--ui-bg);
+    }
+
+    .qs-tab.active {
+      color: var(--text-primary);
+      background: var(--ui-bg);
+      border-color: var(--ui-border);
+      border-bottom: 1px solid var(--ui-bg);
+      margin-bottom: -1px;
+    }
+
+    .qs-panel {
+      display: none;
+    }
+
+    .qs-panel.active {
+      display: block;
+    }
+
     .docs-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -5049,7 +5091,7 @@
     <div class="container">
       <div class="section-header">
         <h2 class="section-title">Adversarial Security</h2>
-        <p class="section-subtitle">Put money on the line to prove your key is safe. If someone steals the key, they take the money — and everyone knows.</p>
+        <p class="section-subtitle">Rational actors drain compromised keys. Undrained value proves key integrity.</p>
       </div>
 
       <div class="adversarial-intro-card">
@@ -5062,8 +5104,7 @@
           </div>
           <div class="intro-content">
             <h3>What is Adversarial Security?</h3>
-            <p>Think of it like leaving cash in an unlocked safe that only your key can open. If someone steals your key, <strong>the first thing they'll do is take the money</strong> — it's free and anonymous. But here's the catch: once the money is gone, <strong>everyone can see it's been drained</strong>, and now the thief has the cash but has lost the ability to impersonate you undetected. They've burned the key's credibility for a one-time payout.</p>
-            <p style="margin-top: 12px;">So if the money is still there? <strong>Nobody has stolen your key.</strong> The funds act as a live, tamper-evident seal — no certificates, no authorities, just simple economics: a rational person with a stolen key always takes the money first.</p>
+            <p>Cryptographic public keys can derive addresses on cryptocurrency networks. By depositing value at those derived addresses, you create a <strong>game-theoretic security bond</strong>. A rational actor who compromises the private key will drain the funds — the payout is immediate, anonymous, and risk-free. This makes the balance a <strong>real-time indicator of key integrity</strong>: undrained value implies an uncompromised key, because no rational adversary would sit on a free withdrawal.</p>
           </div>
         </div>
 
@@ -5134,7 +5175,7 @@
             </div>
             <div class="principle-content">
               <h4>Key Derivation</h4>
-              <p>Your encryption key can double as a crypto wallet address — it's just math. The same key you use to sign data can also hold Bitcoin, Ethereum, or other currencies. One key, two purposes.</p>
+              <p>A public key used for signing data can mathematically derive addresses on multiple blockchain networks (BIP-32/44). One key pair serves both authentication and value custody — no additional infrastructure required.</p>
             </div>
           </div>
           <div class="principle">
@@ -5143,7 +5184,7 @@
             </div>
             <div class="principle-content">
               <h4>Value as Trust Signal</h4>
-              <p>Anyone can send money to a key's address — no permission needed. Want to show you trust a key? Put money on it. Want others to trust <em>your</em> key? Put your own money on it. The more money sitting there untouched, the stronger the signal: "this key is safe."</p>
+              <p>Derived addresses are permissionless — anyone can deposit funds to signal trust in a key. The depositor stakes value on the key's integrity: self-bonding (owner deposits) or third-party bonding (others deposit). The aggregate balance quantifies the economic cost of compromise.</p>
             </div>
           </div>
           <div class="principle">
@@ -5151,8 +5192,8 @@
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.5" fill="currentColor"/></svg>
             </div>
             <div class="principle-content">
-              <h4>Why a Thief Always Takes the Money</h4>
-              <p>Imagine someone steals your key. They could try to impersonate you — but that's risky and complicated. Or they could just <strong>take the free money sitting at the address</strong>. Since anyone else who gets the key could also grab it first, there's a race to drain the funds. This is why a compromised key <em>always</em> loses its money: <strong>the thief has everything to gain and nothing to lose by taking it.</strong> So if the money is still there, the key is still safe.</p>
+              <h4>Rational Actor Assumption</h4>
+              <p>A compromised key gives the attacker access to both impersonation <em>and</em> fund withdrawal. Draining funds is the dominant strategy: it's <strong>immediate, irreversible, and carries zero marginal risk</strong> since the key is already compromised. Multiple adversaries with the same key create a race condition that accelerates drainage. Undrained value therefore implies no compromise.</p>
             </div>
           </div>
           <div class="principle">
@@ -5160,8 +5201,8 @@
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
             </div>
             <div class="principle-content">
-              <h4>Real-Time Proof</h4>
-              <p>You don't need to trust anyone's word — just check the blockchain. Balances update every few seconds. If the money is still there right now, <strong>the key hasn't been stolen right now.</strong> It's like a security camera you can check anytime, and the whole world can verify it too.</p>
+              <h4>Real-Time Verification</h4>
+              <p>Blockchain state is publicly auditable and updates every block. This provides <strong>continuous, permissionless proof of key integrity</strong> — not a point-in-time certificate, but a live signal. Any observer can independently verify the balance without trusting a certificate authority or revocation list.</p>
             </div>
           </div>
         </div>
@@ -5379,9 +5420,32 @@
 
       <div id="get-started" class="quick-start-inline">
         <h3 class="section-subtitle" style="font-size: 28px; color: var(--text-primary); margin-bottom: 8px;">Quick Start</h3>
-        <p style="color: var(--text-muted); margin-bottom: 24px;">Get running in minutes with the server or JavaScript SDK</p>
-        <div class="code-grid">
-          <div class="code-block">
+        <p style="color: var(--text-muted); margin-bottom: 24px;">Get running in minutes</p>
+
+        <div class="qs-tabs">
+          <button class="qs-tab active" onclick="switchQsTab('desktop')">Desktop</button>
+          <button class="qs-tab" onclick="switchQsTab('server')">Server</button>
+          <button class="qs-tab" onclick="switchQsTab('browser')">Browser</button>
+        </div>
+
+        <div id="qs-desktop" class="qs-panel active">
+          <div class="code-block" style="border-top-left-radius: 0; border-top-right-radius: 0;">
+            <div class="code-header">
+              <span class="code-lang">Desktop (Electron)</span>
+              <button class="code-copy" onclick="copyCode(this)">Copy</button>
+            </div>
+            <pre><code><span class="code-comment"># Clone and install</span>
+git clone https://github.com/DigitalArsenal/space-data-network.git
+cd space-data-network
+npm install
+
+<span class="code-comment"># Build the UI and launch the desktop app</span>
+npm run desktop</code></pre>
+          </div>
+        </div>
+
+        <div id="qs-server" class="qs-panel">
+          <div class="code-block" style="border-top-left-radius: 0; border-top-right-radius: 0;">
             <div class="code-header">
               <span class="code-lang">Server (Go)</span>
               <button class="code-copy" onclick="copyCode(this)">Copy</button>
@@ -5395,7 +5459,10 @@ chmod +x spacedatanetwork
 ./spacedatanetwork init
 ./spacedatanetwork daemon</code></pre>
           </div>
-          <div class="code-block">
+        </div>
+
+        <div id="qs-browser" class="qs-panel">
+          <div class="code-block" style="border-top-left-radius: 0; border-top-right-radius: 0;">
             <div class="code-header">
               <span class="code-lang">Browser (TypeScript)</span>
               <button class="code-copy" onclick="copyCode(this)">Copy</button>
@@ -5406,7 +5473,7 @@ chmod +x spacedatanetwork
 <span class="code-keyword">await</span> node.start();
 
 <span class="code-comment">// Subscribe to orbital data</span>
-node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
+node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
   console.log(<span class="code-string">`Received from ${peer}`</span>);
 });
 
@@ -6574,6 +6641,13 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) => {
     }
 
     // Copy code
+    function switchQsTab(tab) {
+      document.querySelectorAll('.qs-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.qs-panel').forEach(p => p.classList.remove('active'));
+      document.querySelector(`#qs-${tab}`).classList.add('active');
+      document.querySelector(`.qs-tab[onclick*="${tab}"]`).classList.add('active');
+    }
+
     function copyCode(button) {
       const code = button.closest('.code-block').querySelector('code').textContent;
       navigator.clipboard.writeText(code).then(() => {
