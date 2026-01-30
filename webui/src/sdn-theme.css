@@ -119,6 +119,31 @@
   background-color: var(--sdn-bg-box) !important;
 }
 
+:root[data-theme="dark"] .bg-white-80 {
+  background-color: var(--sdn-bg-tertiary) !important;
+}
+
+.sdn-bg-advanced {
+  background-color: rgba(255, 255, 255, 0.8);
+}
+
+:root[data-theme="dark"] .sdn-bg-advanced {
+  background-color: var(--sdn-bg-tertiary) !important;
+}
+
+:root[data-theme="dark"] {
+  --sdn-bg-overlay: rgba(13, 17, 23, 0.7);
+}
+
+/* Explore page / ipld-explorer-components dark overrides */
+:root[data-theme="dark"] [style*="background: rgb(251, 251, 251)"],
+:root[data-theme="dark"] [style*="background:#FBFBFB"],
+:root[data-theme="dark"] [style*="background: #FBFBFB"],
+:root[data-theme="dark"] [style*="background:#fbfbfb"],
+:root[data-theme="dark"] [style*="background: #fbfbfb"] {
+  background: var(--sdn-bg-box) !important;
+}
+
 /* Peers table dark mode */
 :root[data-theme="dark"] .peersTableItem {
   border-color: var(--sdn-border) !important;

@@ -29,7 +29,7 @@ export const Term = ({ children, width = 100 }) => {
 
 export const Description = ({ children, advanced }) => {
   return (
-    <dd className={`db dtc-ns ma0 charcoal monospace ${advanced ? 'word-wrap pa2 f7 bg-white-80' : 'truncate f7 f6-ns'}`}>
+    <dd className={`db dtc-ns ma0 charcoal monospace ${advanced ? 'word-wrap pa2 f7 sdn-bg-advanced' : 'truncate f7 f6-ns'}`}>
       {children}
     </dd>
   )

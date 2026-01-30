@@ -13,7 +13,7 @@ export const Box = ({
   children
 }) => {
   return (
-    <section className={className} style={{ background: '#fbfbfb', ...style }}>
+    <section className={className} style={{ background: 'var(--sdn-bg-box, #fbfbfb)', ...style }}>
       <ErrorBoundary resetKeys={[globalThis.location?.pathname || '']}>
         {children}
       </ErrorBoundary>

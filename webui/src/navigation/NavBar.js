@@ -8,6 +8,7 @@ import StrokeCube from '../icons/StrokeCube.js'
 import StrokeSettings from '../icons/StrokeSettings.js'
 import StrokeIpld from '../icons/StrokeIpld.js'
 import StrokeLab from '../icons/StrokeLab.js'
+import StrokeDocument from '../icons/StrokeDocument.js'
 import SdnLogo from '../icons/SdnLogo.js'
 
 // Styles
@@ -70,15 +71,11 @@ export const NavBar = ({ t }) => {
   return (
     <div className='h-100 fixed-l flex flex-column justify-between' style={{ overflowY: 'auto', width: 'inherit' }}>
       <div className='flex flex-column'>
-        <a href="#/" role='menuitem' title='Space Data Network'>
+        <a href="#/" role='menuitem' title='Space Data Network' className='no-underline'>
           <div className='pt3 pb1 pb2-l tc'>
-            <div className='navbar-logo-vert center db-l dn pt3 pb1' style={{ height: 94, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+            <div className='navbar-logo-vert center pt3 pb1' style={{ height: 94, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
               <SdnLogo width={40} className='sdn-logo' />
               <span style={{ fontSize: '14px', fontWeight: 700, color: '#58a6ff', fontFamily: 'Montserrat, sans-serif', letterSpacing: '0.05em', marginTop: '4px' }}>SDN</span>
-            </div>
-            <div className='navbar-logo-horiz center db dn-l' style={{ height: 70, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-              <SdnLogo width={28} className='sdn-logo' />
-              <span style={{ fontSize: '16px', fontWeight: 700, color: '#58a6ff', fontFamily: 'Montserrat, sans-serif', letterSpacing: '0.05em' }}>SDN</span>
             </div>
           </div>
         </a>
@@ -86,6 +83,7 @@ export const NavBar = ({ t }) => {
           <NavLink to='/' alternative="status" icon={StrokeMarketing}>{t('status:title')}</NavLink>
           <NavLink to='/files' icon={StrokeWeb}>{t('files:title')}</NavLink>
           <NavLink to='/explore' icon={StrokeIpld}>{t('explore:tabName')}</NavLink>
+          <NavLink to='/schemas' icon={StrokeDocument}>Schemas</NavLink>
           <NavLink to='/peers' icon={StrokeCube}>{t('peers:title')}</NavLink>
           <NavLink to='/settings' icon={StrokeSettings}>{t('settings:title')}</NavLink>
           <NavLink to='/diagnostics' icon={StrokeLab}>{t('diagnostics:title')}</NavLink>

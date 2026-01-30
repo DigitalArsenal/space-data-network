@@ -18,13 +18,13 @@
     "server": "cd sdn-server && go run ./cmd/spacedatanetwork",
     "server:edge": "cd sdn-server && go run ./cmd/spacedatanetwork-edge",
     "server:build": "cd sdn-server && go build -o bin/spacedatanetwork ./cmd/spacedatanetwork && go build -o bin/spacedatanetwork-edge ./cmd/spacedatanetwork-edge",
-    "desktop": "test -d desktop/node_modules || (echo 'Desktop dependencies not installed. Run: npm run install:desktop' && exit 1) && test -d webui/build || (echo 'WebUI not built. Run: npm run install:webui && npm run webui:build' && exit 1) && npm --prefix desktop start",
+    "desktop": "test -d desktop/node_modules || (echo 'Desktop dependencies not installed. Run: npm run install:desktop' && exit 1) && npm run webui:build && npm --prefix desktop start",
     "desktop:build": "cd desktop && npm run build && npm run package",
     "install:js": "cd sdn-js && npm install",
     "install:desktop": "cd desktop && npm install",
     "install:webui": "cd webui && npm install",
     "install:all": "npm run install:js && npm run install:desktop && npm run install:webui",
-    "webui": "npm --prefix webui start",
+    "webui": "IPFS=./desktop/node_modules/kubo/kubo/ipfs && $IPFS config --json API.HTTPHeaders.Access-Control-Allow-Origin '[\"http://localhost:3117\", \"http://127.0.0.1:5001\", \"https://webui.ipfs.io\"]' && $IPFS config --json API.HTTPHeaders.Access-Control-Allow-Methods '[\"PUT\", \"POST\"]' && $IPFS daemon & until curl -s -o /dev/null http://127.0.0.1:5001/api/v0/version -X POST; do sleep 1; done && echo 'IPFS daemon ready' && PORT=3117 npm --prefix webui start",
     "webui:build": "npm --prefix webui run build",
     "build:js": "cd sdn-js && npm run build",
     "lint:js": "cd sdn-js && npm run lint",
@@ -48,5 +48,8 @@
     "space-situational-awareness"
   ],
   "author": "Space Data Network",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "baseline-browser-mapping": "^2.9.19"
+  }
 }

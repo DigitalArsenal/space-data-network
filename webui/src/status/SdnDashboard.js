@@ -96,22 +96,16 @@ const SdnDashboard = ({
         <div className='sdn-panel'>
           <div className='sdn-panel-header'>
             <span className='sdn-badge sdn-badge-sdn' style={{ marginRight: '8px' }}>SDN</span>
-            Space Data Network Stats
+            Space Data Network
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '16px' }}>
             <StatCard value={sdnPeersCount || 0} label='SDN Peers' accent='var(--sdn-accent)' />
             <StatCard value={sdnActivePubsubCount || 0} label='Active Topics' accent='var(--sdn-accent-green)' />
             <StatCard value={humanDataVolume} label='Data Volume' accent='var(--sdn-accent-purple)' />
-            <StatCard value={sdnSchemaTypes?.length || 0} label='Schema Types' accent='var(--sdn-accent-orange)' />
+            <a href='#/schemas' style={{ textDecoration: 'none', color: 'inherit' }}>
+              <StatCard value={sdnSchemaTypes?.length || 0} label='Schema Types' accent='var(--sdn-accent-orange)' />
+            </a>
           </div>
-
-          {sdnSchemaTypes && sdnSchemaTypes.length > 0 && (
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '16px' }}>
-              {sdnSchemaTypes.map(type => (
-                <span key={type} className='sdn-badge sdn-badge-sdn'>{type}</span>
-              ))}
-            </div>
-          )}
 
           <EpmIdentityCard identity={null} />
         </div>

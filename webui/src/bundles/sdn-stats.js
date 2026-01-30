@@ -7,22 +7,16 @@
  * - Schema types supported
  */
 import { createSelector } from 'redux-bundler'
+import { SCHEMAS } from '../schemas/schema-data.js'
 // ms import removed - using inline values
 
-const SDN_PUBSUB_TOPICS = [
-  'sdn/omm',
-  'sdn/cdm',
-  'sdn/epm',
-  'sdn/rfm',
-  'sdn/tca',
-  'sdn/tle'
-]
+const SDN_PUBSUB_TOPICS = SCHEMAS.map(s => `sdn/${s.name.toLowerCase()}`)
 
 const initialState = {
   pubsubTopics: [],
   pubsubPeers: {},
   dataVolume: 0,
-  schemaTypes: ['OMM', 'CDM', 'EPM', 'RFM', 'TCA', 'TLE'],
+  schemaTypes: SCHEMAS.map(s => s.name),
   lastFetch: 0,
   isFetching: false,
   epmIdentity: null
