@@ -189,7 +189,7 @@ upload_wasm() {
             ;;
     esac
 
-    log_info "  Uploaded to: https://cdn.spacedatanetwork.org/${CDN_PATH}/${filename}"
+    log_info "  Uploaded to: https://digitalarsenal.github.io/space-data-network/cdn/${CDN_PATH}/${filename}"
 }
 
 # Generate manifest JSON

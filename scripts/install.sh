@@ -1,6 +1,6 @@
 #!/bin/bash
 # Space Data Network Install Script
-# Usage: curl -sSL https://spacedatanetwork.org/install.sh | bash
+# Usage: curl -sSL https://digitalarsenal.github.io/space-data-network/install.sh | bash
 #
 # Environment variables:
 #   SDN_VERSION  - Specific version to install (default: latest)
@@ -207,7 +207,7 @@ main() {
     verify_installation
 
     echo ""
-    log_info "Documentation: https://docs.spacedatanetwork.org"
+    log_info "Documentation: https://docs.digitalarsenal.github.io/space-data-network"
     log_info "GitHub: https://github.com/${REPO}"
     echo ""
 }

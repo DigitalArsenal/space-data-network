@@ -41,7 +41,7 @@ Space Data Network enables real-time sharing of space situational awareness data
 
 ```bash
 # Download latest release
-curl -sSL https://spacedatanetwork.org/install.sh | bash
+curl -sSL https://digitalarsenal.github.io/space-data-network//install.sh | bash
 
 # Or build from source
 git clone https://github.com/DigitalArsenal/space-data-network.git
@@ -407,7 +407,7 @@ cd sdn-js && npm test
 
 ## Documentation
 
-Full documentation is available at [docs.spacedatanetwork.org](https://docs.spacedatanetwork.org) or locally at [docs/docs.html](./docs/docs.html).
+Full documentation is available at [docs.digitalarsenal.github.io/space-data-network](https://digitalarsenal.github.io/space-data-network/) or locally at [docs/docs.html](./docs/docs.html).
 
 To preview the docs locally, start a webserver from the `docs/` directory:
 
@@ -429,8 +429,8 @@ Then open [http://localhost:8080](http://localhost:8080).
 
 ## Links
 
-- [spacedatanetwork.org](https://spacedatanetwork.org)
-- [docs.spacedatanetwork.org](https://docs.spacedatanetwork.org)
+- [digitalarsenal.github.io/space-data-network](https://digitalarsenal.github.io/space-data-network/)
+- [docs.digitalarsenal.github.io/space-data-network](https://digitalarsenal.github.io/space-data-network/)
 - [GitHub](https://github.com/DigitalArsenal/space-data-network)
 - [Space Data Standards](https://spacedatastandards.org)
 - [npm: @spacedatanetwork/sdn-js](https://www.npmjs.com/package/@spacedatanetwork/sdn-js)

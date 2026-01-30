@@ -1248,7 +1248,7 @@ network:
     - /ip4/0.0.0.0/udp/4001/quic
 
   bootstrap:
-    - /dnsaddr/bootstrap.spacedatanetwork.org/p2p/QmBootstrap1
+    - /dnsaddr/bootstrap.digitalarsenal.io/p2p/QmBootstrap1
 
   edge_relays:
     - /ip4/203.0.113.1/tcp/8080/ws/p2p/QmEdge1
@@ -1277,7 +1277,7 @@ network:
   max_connections: 500
 
   bootstrap:
-    - /dnsaddr/bootstrap.spacedatanetwork.org/p2p/QmBootstrap1
+    - /dnsaddr/bootstrap.digitalarsenal.io/p2p/QmBootstrap1
 
 # No storage in edge mode
 ```

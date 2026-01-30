@@ -48,7 +48,7 @@ network:
     - /ip4/0.0.0.0/tcp/8080/ws
     - /ip4/0.0.0.0/udp/4001/quic-v1
   bootstrap:
-    - /dnsaddr/bootstrap.spacedatanetwork.org/p2p/QmBootstrap1
+    - /dnsaddr/bootstrap.digitalarsenal.io/p2p/QmBootstrap1
   max_connections: 1000
   enable_relay: true
 storage:

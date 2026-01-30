@@ -78,10 +78,10 @@ registry_builders:
     poll_interval: 5m
     cdn_endpoints:
       - s3://sdn-cdn/edge-relays.wasm
-      - https://cdn.spacedatanetwork.org/
+      - https://digitalarsenal.github.io/space-data-network/cdn/
 
 # Bootstrap nodes (subset of full nodes used for initial connection)
 bootstrap:
   - /ip4/203.0.113.10/tcp/4001/p2p/PEER_ID_HERE
   - /ip4/203.0.113.11/tcp/4001/p2p/PEER_ID_HERE
-  - /dnsaddr/bootstrap.spacedatanetwork.org
+  - /dnsaddr/bootstrap.digitalarsenal.io

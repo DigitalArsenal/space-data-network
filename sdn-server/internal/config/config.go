@@ -124,7 +124,7 @@ func Default() *Config {
 				"/ip4/0.0.0.0/udp/4001/quic-v1",
 			},
 			Bootstrap: []string{
-				"/dnsaddr/bootstrap.spacedatanetwork.org/p2p/QmBootstrap1",
+				"/dnsaddr/bootstrap.digitalarsenal.io/p2p/QmBootstrap1",
 			},
 			EdgeRelays:     []string{},
 			MaxConns:       1000,

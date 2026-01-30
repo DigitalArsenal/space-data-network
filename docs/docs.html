@@ -922,7 +922,7 @@ chmod +x spacedatanetwork</code></pre>
     "/ip4/YOUR_PUBLIC_IP/udp/4001/quic-v1"
   ],
   "bootstrapPeers": [
-    "/dnsaddr/bootstrap.spacedatanetwork.org"
+    "/dnsaddr/bootstrap.digitalarsenal.io"
   ],
   "relay": {
     "enabled": true,
@@ -1002,8 +1002,8 @@ sudo systemctl start spacedatanetwork</code></pre>
 
 const node = new SDNNode({
   relays: [
-    'wss://relay.spacedatanetwork.org/ws',
-    'wss://relay2.spacedatanetwork.org/ws'
+    'wss://relay.digitalarsenal.io/ws',
+    'wss://relay2.digitalarsenal.io/ws'
   ],
   relayStrategy: 'failover' // or 'round-robin'
 });

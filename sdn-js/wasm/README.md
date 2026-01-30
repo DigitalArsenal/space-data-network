@@ -44,7 +44,7 @@ emcc src/flatsql.cpp -o ../sdn-js/wasm/flatsql.wasm \
 The SDN library attempts to load WASM from multiple locations:
 1. `./[module].wasm` - Same directory as the application
 2. `/[module].wasm` - Root of the web server
-3. `https://cdn.spacedatanetwork.org/[module].wasm` - CDN fallback
+3. `https://digitalarsenal.github.io/space-data-network/cdn/[module].wasm` - CDN fallback
 
 ## CORS Requirements
 

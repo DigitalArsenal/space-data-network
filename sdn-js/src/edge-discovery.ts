@@ -29,19 +29,19 @@ const getEnvRelays = (): string[] | null => {
  */
 export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [
   // Primary relays use DNS names for flexibility
-  '/dns4/relay1.spacedatanetwork.org/tcp/443/wss/p2p/12D3KooWRelay1',
-  '/dns4/relay2.spacedatanetwork.org/tcp/443/wss/p2p/12D3KooWRelay2',
+  '/dns4/relay1.digitalarsenal.io/tcp/443/wss/p2p/12D3KooWRelay1',
+  '/dns4/relay2.digitalarsenal.io/tcp/443/wss/p2p/12D3KooWRelay2',
   // Development/testing relay (Tokyo) - configure via SDN_EDGE_RELAYS env var in production
-  '/dns4/tokyo.relay.spacedatanetwork.org/tcp/443/wss/p2p/16Uiu2HAkxKtJncDGfgtFpx4mNqtrzbBBrCZ8iaKKyKuEqEHuEz5J',
+  '/dns4/tokyo.relay.digitalarsenal.io/tcp/443/wss/p2p/16Uiu2HAkxKtJncDGfgtFpx4mNqtrzbBBrCZ8iaKKyKuEqEHuEz5J',
 ];
 
 /**
  * Fallback relays for regional availability
  */
 export const REGIONAL_FALLBACK_RELAYS: Record<string, string[]> = {
-  'us-east': ['/dns4/us-east.relay.spacedatanetwork.org/tcp/443/wss/p2p/12D3KooWUSEast1'],
-  'eu-west': ['/dns4/eu-west.relay.spacedatanetwork.org/tcp/443/wss/p2p/12D3KooWEUWest1'],
-  'ap-southeast': ['/dns4/ap-southeast.relay.spacedatanetwork.org/tcp/443/wss/p2p/12D3KooWAPSE1'],
+  'us-east': ['/dns4/us-east.relay.digitalarsenal.io/tcp/443/wss/p2p/12D3KooWUSEast1'],
+  'eu-west': ['/dns4/eu-west.relay.digitalarsenal.io/tcp/443/wss/p2p/12D3KooWEUWest1'],
+  'ap-southeast': ['/dns4/ap-southeast.relay.digitalarsenal.io/tcp/443/wss/p2p/12D3KooWAPSE1'],
 };
 
 let edgeRelaysModule: EdgeRelaysModule | null = null;
@@ -234,7 +234,7 @@ async function loadEdgeRelaysWasm(options: WasmLoadOptions = {}): Promise<EdgeRe
     const wasmPaths = [
       './edge-relays.wasm',
       '/edge-relays.wasm',
-      'https://cdn.spacedatanetwork.org/wasm/edge-relays.wasm',
+      'https://cdn.digitalarsenal.io/wasm/edge-relays.wasm',
     ];
 
     for (const path of wasmPaths) {

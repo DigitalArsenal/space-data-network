@@ -149,7 +149,7 @@ See [Agents.md](./Agents.md) for the full implementation roadmap.
 ## Questions?
 
 - Open a [GitHub Discussion](https://github.com/DigitalArsenal/go-space-data-network/discussions)
-- Review existing documentation at [docs.spacedatanetwork.org](https://docs.spacedatanetwork.org)
+- Review existing documentation at [digitalarsenal.github.io/space-data-network](https://digitalarsenal.github.io/space-data-network/)
 
 ## License
 
