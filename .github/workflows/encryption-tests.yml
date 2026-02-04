@@ -90,7 +90,7 @@ jobs:
           go test -bench=. -benchmem ./... | tee benchmark-results.txt
 
       - name: Upload coverage reports
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           files: |
             tests/encryption/go/coverage-ecies.out
