@@ -49,10 +49,10 @@ A vertically-integrated, open-core ecosystem:
 | **Identity & Crypto** | hd-wallet-wasm (HD wallets, signing) | — |
 | **Network** | Space Data Network (P2P protocol) | Data Marketplace (transaction fees) |
 | **Simulation** | Tudat-WASM, Basilisk-WASM | — |
-| **Visualization** | CesiumJS (base) | OrbPro2/3 (licensed product) |
-| **AI/NLP** | — | OrbPro2-MCP (NLP globe control) |
-| **Modeling & Sim** | — | OrbPro2-ModSim (combat/mission sim) |
-| **Platform** | — | SpaceAware.io (SaaS accounts, dashboards) |
+| **Visualization** | CesiumJS (base) | SpaceAware.io (OrbPro2/3 embedded) |
+| **AI/NLP** | — | SpaceAware.io (MCP NLP globe control) |
+| **Modeling & Sim** | — | SpaceAware.io (ModSim plugins) |
+| **Platform** | — | SpaceAware.io (SaaS — all commercial features) |
 
 ### Why Now
 
@@ -70,15 +70,13 @@ A vertically-integrated, open-core ecosystem:
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     USER-FACING PRODUCTS                            │
 │                                                                     │
-│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────────────┐   │
-│  │ SpaceAware  │  │   OrbPro2    │  │     OrbPro2-MCP          │   │
-│  │   .io       │  │   Desktop    │  │  (NLP Globe Control)     │   │
-│  │  (SaaS)     │  │  (Licensed)  │  │  (Browser AI + CesiumJS) │   │
-│  └──────┬──────┘  └──────┬───────┘  └───────────┬──────────────┘   │
-│         │                │                       │                   │
-│  ┌──────┴────────────────┴───────────────────────┴──────────────┐   │
-│  │              OrbPro2-ModSim (18 WASM plugins)                │   │
-│  │         608 entity types · combat sim · astrodynamics        │   │
+│  ┌───────────────────────────────────────────────────────────────┐   │
+│  │                    SpaceAware.io (SaaS)                      │   │
+│  │   $0 Free · $10 Explorer · $20 Analyst · $30 Operator ·     │   │
+│  │   $40 Mission — all per-seat/month                           │   │
+│  ├───────────────────────────────────────────────────────────────┤   │
+│  │  OrbPro2 Engine │ OrbPro2-MCP (NLP) │ ModSim (18 plugins)   │   │
+│  │  (visualization)│ (AI globe control) │ (608 entity types)    │   │
 │  └──────────────────────────┬───────────────────────────────────┘   │
 │                             │                                       │
 ├─────────────────────────────┼───────────────────────────────────────┤
@@ -112,11 +110,11 @@ A vertically-integrated, open-core ecosystem:
 | `hd-wallet-wasm` | Identity & crypto | Apache 2.0 | None (drives adoption) |
 | `tudat-wasm` | Astrodynamics engine | BSD 3-Clause | None (drives adoption) |
 | `basilisk` | Spacecraft simulation | ISC | None (drives adoption) |
-| `OrbPro` | 3D visualization platform | Proprietary | License sales |
-| `OrbPro2-MCP` | AI-powered globe control | Proprietary | Bundled with OrbPro |
-| `OrbPro2-ModSim` | Modeling & simulation | Proprietary | Bundled with OrbPro |
-| `WEBGPU_OrbPro3` | Next-gen rendering engine | Proprietary | Future OrbPro version |
-| `spaceaware.io` | SaaS platform (TBD) | Proprietary | Subscriptions |
+| `OrbPro` | 3D visualization engine | Proprietary | Powers SpaceAware.io |
+| `OrbPro2-MCP` | AI-powered globe control | Proprietary | SpaceAware.io $30+ tier |
+| `OrbPro2-ModSim` | Modeling & simulation | Proprietary | SpaceAware.io $40 tier |
+| `WEBGPU_OrbPro3` | Next-gen rendering engine | Proprietary | Future SpaceAware.io upgrade |
+| `spaceaware.io` | SaaS platform | Proprietary | Per-seat subscriptions ($0-$40/mo) |
 
 ---
 
@@ -172,24 +170,18 @@ All sites share a unified visual identity and cross-link as parts of one ecosyst
   - Case studies and testimonials
 
 #### D. **spaceaware.io** (SaaS Platform — To Be Created)
-- **Audience:** Satellite operators, SSA analysts, defense/intel users
-- **Purpose:** Commercial platform for space situational awareness
+- **Audience:** Satellite operators, SSA analysts, defense/intel users, hobbyists, researchers
+- **Purpose:** The single commercial surface for the entire ecosystem
 - **Content:**
   - Product features and demo video
-  - Pricing tiers (Free / Pro / Enterprise)
-  - Account creation and login
-  - Dashboard screenshots/live demo
-  - Integration docs (how SpaceAware uses SDN under the hood)
-
-#### E. **OrbPro Product Pages** (Subsection of digitalarsenal.io or standalone)
-- **Audience:** GIS developers, defense contractors, space software teams
-- **Purpose:** Sell OrbPro2 licenses
-- **Content:**
+  - Pricing page: Free / Explorer $10 / Analyst $20 / Operator $30 / Mission $40 (per-seat)
   - Feature comparison vs. STK, FreeFlyer, GMAT
-  - Pricing (see commercialization section)
-  - Sandcastle gallery of demos
+  - Account creation and login
+  - Dashboard screenshots / live free-tier demo
+  - Sandcastle gallery of interactive demos
   - API documentation
-  - Plugin marketplace preview
+  - Data marketplace browser
+  - Integration docs (how SpaceAware uses SDN, OrbPro, Tudat, Basilisk under the hood)
 
 #### F. **GitHub Pages for Open-Source Repos**
 - Each repo (SDN, flatbuffers, flatsql, hd-wallet-wasm, tudat-wasm, basilisk) keeps its GitHub Pages docs
@@ -208,44 +200,134 @@ All sites share a unified visual identity and cross-link as parts of one ecosyst
 
 ## 4. Commercialization Strategy
 
-### Revenue Streams
+### Primary Revenue: SpaceAware.io (Per-Seat SaaS)
 
-#### Stream 1: OrbPro2 Licenses ($$$)
+All commercial features — OrbPro visualization, MCP AI control, ModSim simulation, sensor modeling, marketplace access — are delivered through a single product: **SpaceAware.io**. No separate developer licenses. One product, five tiers, per-seat pricing.
 
-**Product Tiers:**
+#### Tier Overview
 
-| Tier | Price | Includes |
-|------|-------|---------|
-| **OrbPro2 Community** | Free | CesiumJS base + basic orbit visualization |
-| **OrbPro2 Professional** | $2,500/year/seat | SGP4 WASM plugin, sensor modeling, viewshed analysis, access analysis, terrain pinning, draggable entities |
-| **OrbPro2 Enterprise** | $10,000/year/seat | All Professional + ModSim plugins (608 entity types), combat simulation, MCP NLP interface, priority support, custom plugins |
-| **OrbPro2 Government** | $25,000/year/seat | All Enterprise + FIPS 140-3 crypto, classified network deployment support, ITAR-compliant builds, on-prem licensing |
+| Tier | Price | Theme |
+|------|-------|-------|
+| **Free** | $0/seat/month | Awareness |
+| **Explorer** | $10/seat/month | Share & Save |
+| **Analyst** | $20/seat/month | Analyze |
+| **Operator** | $30/seat/month | Simulate |
+| **Mission** | $40/seat/month | Command |
 
-**Volume Discounts:**
-- 5-10 seats: 15% off
-- 11-50 seats: 25% off
-- 50+ seats: Custom enterprise agreement
+#### Free — Awareness ($0/seat/month)
 
-**Plugin Add-Ons (a la carte):**
-- SGP4 Propagation Plugin: $500/year
-- Sensor Modeling Plugin: $500/year
-- Viewshed Analysis Plugin: $500/year
-- Combat Simulation Plugin: $1,500/year
-- MCP NLP Control Plugin: $1,000/year
+The free tier is generous by design — it drives network effects and SDN adoption.
 
-#### Stream 2: SpaceAware.io Subscriptions ($$)
+| Feature | Details |
+|---------|---------|
+| **Satellite Catalog** | Full public catalog (GP/TLE) — every tracked object |
+| **Full History** | Complete historical orbital data, no time restrictions |
+| **Conjunction Assessments** | View all public conjunction data messages (CDMs) |
+| **3D Globe** | OrbPro2-powered CesiumJS visualization |
+| **Upload Data** | Publish data to Space Data Network (any SDS schema) |
+| **SDN Node** | Built-in light peer — you're part of the network |
+| **Object Search** | Search by NORAD ID, name, intl designator, object type |
+| **Basic Alerts** | Email notification for conjunction events on your tracked objects (up to 10) |
 
-**Account Tiers:**
+#### Explorer — Share & Save ($10/seat/month)
 
-| Tier | Price | Features |
-|------|-------|---------|
-| **Free** | $0 | View public catalog (GP/TLE), basic 3D globe, 10 tracked objects |
-| **Starter** | $49/month | 100 tracked objects, conjunction alerts, ephemeris history, API access (1K calls/day) |
-| **Professional** | $199/month | Unlimited tracked objects, high-fidelity propagation (Tudat/Basilisk WASM), custom sensor FOV analysis, API (50K calls/day), data export |
-| **Team** | $499/month | 5 seats, shared workspaces, collision avoidance workflows, maneuver planning, integration webhooks |
-| **Enterprise** | Custom | SSO/SAML, SLA, dedicated SDN node, custom data feeds, on-prem option |
+For hobbyists, students, and researchers who want to save and share their work.
 
-#### Stream 3: Data Marketplace Transaction Fees ($$$)
+| Feature | Details |
+|---------|---------|
+| Everything in Free | + |
+| **Link Sharing** | Generate shareable URLs for any view, object, or analysis |
+| **Scenario Saving** | Save up to 50 scenarios (camera position, tracked objects, time range, overlays) |
+| **Data Export** | Export data as CSV, JSON, or FlatBuffers binary |
+| **Custom Alerts** | Configure conjunction thresholds, miss distance filters, email + in-app notifications |
+| **Tracked Objects** | Up to 100 objects with persistent monitoring |
+| **Embed Widget** | Embeddable 3D globe iframe for websites/blogs |
+| **Bookmarks & Tags** | Organize objects into collections with custom tags |
+| **Dark/Light Theme** | UI customization |
+
+#### Analyst — Analyze ($20/seat/month)
+
+For SSA analysts, GIS developers, and defense analysts who need professional tooling.
+
+| Feature | Details |
+|---------|---------|
+| Everything in Explorer | + |
+| **Sensor FOV Modeling** | Define conic, rectangular, and custom-geometry sensor volumes |
+| **Access Analysis** | Multi-tier visibility checks: range → body occlusion → FOV → terrain |
+| **Viewshed Analysis** | GPU-accelerated terrain visibility with shadow maps |
+| **SGP4 Propagation** | WASM-accelerated orbit propagation with shared memory |
+| **Conjunction Screening** | Custom screening volumes, probability thresholds, what-if miss distance |
+| **API Access** | REST + WebSocket API — 25K calls/day |
+| **Unlimited Scenarios** | No cap on saved scenarios |
+| **Unlimited Tracked Objects** | Monitor your entire constellation |
+| **Data Overlay Layers** | Space weather, atmospheric density, ground tracks, coverage maps |
+| **Webhook Alerts** | Push alerts to Slack, Teams, PagerDuty, or any HTTP endpoint |
+| **Marketplace Browse** | Browse and purchase data/plugins from the SDN marketplace |
+
+#### Operator — Simulate ($30/seat/month)
+
+For satellite operators, mission planners, and flight dynamics teams who need simulation and AI.
+
+| Feature | Details |
+|---------|---------|
+| Everything in Analyst | + |
+| **High-Fidelity Propagation** | Tudat-WASM: full force models (gravity harmonics, drag, SRP, third-body, tides) |
+| **Spacecraft Simulation** | Basilisk-WASM: attitude dynamics, reaction wheels, thrusters, sensors, FSW algorithms |
+| **Maneuver Planning** | Plan and simulate orbital maneuvers, delta-V budgets, station-keeping |
+| **What-If Scenarios** | Fork any scenario, change parameters, compare outcomes side-by-side |
+| **AI/NLP Globe Control** | MCP-powered natural language: "Show me all Starlink over Europe" / "Propagate ISS 72 hours" |
+| **Monte Carlo Analysis** | Run batch simulations with parameter variations |
+| **API Access** | 100K calls/day + streaming WebSocket feeds |
+| **Marketplace Purchasing** | Buy premium data feeds, plugins, and analysis from the marketplace |
+| **Collision Avoidance Workflow** | End-to-end CA: detect → assess → plan maneuver → simulate → share CDM |
+| **CZML/KML Export** | Export scenarios for use in other tools |
+
+#### Mission — Command ($40/seat/month)
+
+For mission operations centers, defense teams, and organizations running multi-user operations.
+
+| Feature | Details |
+|---------|---------|
+| Everything in Operator | + |
+| **Combat/Mission Simulation** | OrbPro2-ModSim: 608 entity types, 18 WASM plugins — air, space, surface, subsurface |
+| **Team Workspaces** | Shared scenarios, annotations, and analysis across your team |
+| **Role-Based Access** | Admin / Analyst / Viewer roles within your organization |
+| **SSO/SAML** | Enterprise identity provider integration |
+| **Marketplace Selling** | List and sell your own data, plugins, and analysis on the marketplace |
+| **Custom Plugin Hosting** | Deploy proprietary WASM plugins to your workspace |
+| **Unlimited API** | No rate limits, priority queue |
+| **Priority Support** | Dedicated support channel, 4-hour response SLA |
+| **Audit Logging** | Full activity audit trail for compliance |
+| **FIPS 140-3 Crypto** | hd-wallet-wasm in FIPS mode for regulated environments |
+| **Dedicated SDN Node** | Optional managed full node for your organization |
+| **On-Prem Deployment** | Self-hosted option for air-gapped / classified networks |
+
+#### Volume Pricing
+
+All tiers are per-seat. Volume discounts for annual commitments:
+
+| Seats | Discount |
+|-------|----------|
+| 1-4 | List price |
+| 5-19 | 15% off |
+| 20-49 | 25% off |
+| 50+ | Custom agreement |
+
+**Annual billing**: 2 months free (pay for 10, get 12)
+
+#### Revenue Math
+
+| Scenario | Seats | Tier Mix | MRR | ARR |
+|----------|-------|----------|-----|-----|
+| **Y1 Target** | 500 free, 100 paid | 50x$10 + 30x$20 + 15x$30 + 5x$40 | $1,760 | $21K |
+| **Y2 Target** | 2,000 free, 500 paid | 200x$10 + 150x$20 + 100x$30 + 50x$40 | $10,000 | $120K |
+| **Y3 Target** | 8,000 free, 2,000 paid | 800x$10 + 600x$20 + 400x$30 + 200x$40 | $40,000 | $480K |
+| **Y4 Target** | 25,000 free, 6,000 paid | 2.4Kx$10 + 1.8Kx$20 + 1.2Kx$30 + 600x$40 | $120,000 | $1.44M |
+| **Y5 Target** | 75,000 free, 18,000 paid | 7.2Kx$10 + 5.4Kx$20 + 3.6Kx$30 + 1.8Kx$40 | $360,000 | $4.32M |
+
+### Secondary Revenue
+
+#### Stream 2: Data Marketplace Transaction Fees ($$$)
 
 **Built into the SDN protocol's storefront system:**
 
@@ -266,7 +348,7 @@ All sites share a unified visual identity and cross-link as parts of one ecosyst
 - Custom propagation algorithms (plugins)
 - Sensor tasking results
 
-#### Stream 4: NFT-Based Asset Timeshares ($$$ — Longer Term)
+#### Stream 3: NFT-Based Asset Timeshares ($$$ — Longer Term)
 
 **Concept:** Tokenize time slots and capabilities on on-orbit assets, ground stations, and data centers.
 
@@ -289,7 +371,7 @@ All sites share a unified visual identity and cross-link as parts of one ecosyst
 
 **Revenue:** 2.5% minting fee + 1% secondary market royalty
 
-#### Stream 5: Consulting & Integration Services ($$)
+#### Stream 4: Consulting & Integration Services ($$)
 
 - SDN node deployment and configuration
 - Custom plugin development for OrbPro2
@@ -301,13 +383,13 @@ All sites share a unified visual identity and cross-link as parts of one ecosyst
 
 ### Revenue Projections (Conservative Estimates)
 
-| Year | OrbPro2 Licenses | SpaceAware.io | Marketplace Fees | NFTs | Services | Total |
-|------|-----------------|---------------|-------------------|------|----------|-------|
-| **Y1** | $150K | $50K | $25K | $0 | $75K | **$300K** |
-| **Y2** | $500K | $200K | $150K | $50K | $150K | **$1.05M** |
-| **Y3** | $1.2M | $600K | $500K | $200K | $300K | **$2.8M** |
-| **Y4** | $2.5M | $1.5M | $1.5M | $500K | $500K | **$6.5M** |
-| **Y5** | $5M | $3M | $4M | $1.5M | $750K | **$14.25M** |
+| Year | SpaceAware.io Subs | Marketplace Fees | NFTs | Services | Total |
+|------|-------------------|-------------------|------|----------|-------|
+| **Y1** | $21K | $10K | $0 | $75K | **$106K** |
+| **Y2** | $120K | $75K | $25K | $100K | **$320K** |
+| **Y3** | $480K | $250K | $100K | $200K | **$1.03M** |
+| **Y4** | $1.44M | $750K | $300K | $350K | **$2.84M** |
+| **Y5** | $4.32M | $2M | $750K | $500K | **$7.57M** |
 
 ---
 
@@ -345,10 +427,12 @@ All sites share a unified visual identity and cross-link as parts of one ecosyst
 - HD-Wallet-WASM: Cryptographic identity and blockchain integration
 - **6 years of R&D, 100K+ lines of code, impossible to replicate quickly**
 
-**Slide 6 — Commercial Products**
-- **OrbPro2**: CesiumJS-based visualization platform with WASM plugins — competes with $500K/yr STK at 1/20th the cost
-- **SpaceAware.io**: SaaS platform for SSA — subscription-based dashboards, alerts, analysis
-- **Data Marketplace**: Built into the protocol — 5% transaction fees on a growing $2B+ SSA market
+**Slide 6 — Commercial Product: SpaceAware.io**
+- One product, five tiers, $0-$40/seat/month — replaces $500K/yr STK
+- Free tier: full catalog + history + conjunction data + upload to SDN (drives adoption)
+- Paid tiers progressively unlock: sharing → sensor analysis → simulation → mission ops
+- Built on OrbPro2 engine, Tudat/Basilisk WASM, MCP AI control, ModSim plugins
+- Data Marketplace baked in — 5% transaction fees on a growing $2B+ SSA market
 
 **Slide 7 — Demo / Screenshots**
 - OrbPro2 3D visualization with sensor modeling
@@ -363,10 +447,10 @@ All sites share a unified visual identity and cross-link as parts of one ecosyst
 - Our SAM (Serviceable Addressable Market): $800M by 2030
 
 **Slide 9 — Business Model**
-- Revenue mix: License (35%) + SaaS (25%) + Marketplace (25%) + Services (15%)
-- Gross margins: 85%+ (software)
-- Open source drives adoption → adoption drives commercial attach rate
-- Network effects: More nodes = more data = more marketplace value
+- Revenue mix: SaaS (55%) + Marketplace (20%) + Services (15%) + NFTs (10%)
+- Gross margins: 90%+ (pure SaaS, no hardware)
+- Free tier drives SDN adoption → network effects → marketplace flywheel
+- Per-seat pricing: predictable, scalable, low friction to start
 
 **Slide 10 — Traction & Validation**
 - [Insert current metrics: GitHub stars, npm downloads, node count]
@@ -388,7 +472,7 @@ All sites share a unified visual identity and cross-link as parts of one ecosyst
 
 ### Supplementary Slides (Appendix)
 
-- **Competitive Landscape**: STK vs. FreeFlyer vs. GMAT vs. OrbPro2 feature matrix
+- **Competitive Landscape**: STK vs. FreeFlyer vs. GMAT vs. SpaceAware.io feature matrix
 - **Technical Deep Dive**: Architecture, performance benchmarks, security model
 - **Customer Pipeline**: LOIs, pilots, conversations
 - **IP Portfolio**: List of key innovations and potential patents
@@ -590,8 +674,8 @@ Claude Teams workflow:
 - Goal: Drive traffic to spacedatanetwork.io, collect email leads
 
 **Phase 2 (Months 6-12): Conversion**
-- Retargeting website visitors with OrbPro2 trial offers
-- SpaceAware.io free tier signup campaigns
+- Retargeting website visitors with SpaceAware.io free tier signup
+- SpaceAware.io paid tier upgrade campaigns
 - Webinar promotion ads
 - Budget: $5K-10K/month
 
@@ -650,10 +734,10 @@ Claude Teams workflow:
 |---|---|---|
 | Unify website nav/footer across all sites | Month 1 | Not started |
 | Launch spacedatanetwork.io hub site | Month 2 | Not started |
-| OrbPro2 Professional tier pricing page + license system | Month 2 | Not started |
-| First 3 OrbPro2 paying customers | Month 3 | Not started |
+| SpaceAware.io Free tier live (catalog + history + conjunctions) | Month 2 | Not started |
+| SpaceAware.io Explorer tier ($10) live | Month 3 | Not started |
 | Submit NASA SBIR Phase I proposal | Month 3 | Not started |
-| SpaceAware.io landing page + waitlist | Month 4 | Not started |
+| First 50 SpaceAware.io free accounts | Month 4 | Not started |
 | Launch data marketplace beta (on SDN testnet) | Month 5 | Not started |
 | First LinkedIn article series (6 articles) | Month 2-4 | Not started |
 | 10 SDN full nodes running | Month 6 | Not started |
@@ -664,15 +748,15 @@ Claude Teams workflow:
 
 | Milestone | Target |
 |---|---|
-| SpaceAware.io MVP launch (Free + Starter tiers) | Month 7 |
-| 50 SpaceAware.io accounts | Month 8 |
+| SpaceAware.io Analyst ($20) + Operator ($30) tiers live | Month 7 |
+| 500 SpaceAware.io free accounts, 50 paid | Month 8 |
 | First data marketplace transaction | Month 8 |
 | SBIR Phase I award (or resubmit) | Month 9 |
-| 10 OrbPro2 paying customers | Month 9 |
+| SpaceAware.io Mission ($40) tier live | Month 9 |
 | First conference talk (AMOS or SmallSat) | Month 8-9 |
 | 50 SDN full nodes | Month 10 |
 | First YouTube tutorial series (5 videos) | Month 8 |
-| $100K cumulative revenue | Month 12 |
+| $50K cumulative revenue | Month 12 |
 
 ### Phase 3: Scale (Months 12-24)
 
@@ -681,14 +765,13 @@ Claude Teams workflow:
 | Milestone | Target |
 |---|---|
 | Raise $1.5-3M Seed round | Month 14 |
-| SpaceAware.io Professional + Team tiers | Month 13 |
-| 500 SpaceAware.io accounts | Month 15 |
-| OrbPro3 (WebGPU) beta launch | Month 16 |
+| 2,000 free accounts, 500 paid seats | Month 15 |
+| OrbPro3 (WebGPU) engine upgrade for SpaceAware.io | Month 16 |
 | NFT asset tokenization pilot (ground station time) | Month 18 |
-| First enterprise customer ($50K+ ACV) | Month 15 |
+| First $40/seat Mission customer (10+ seats) | Month 15 |
 | 200 SDN full nodes globally | Month 18 |
 | SBIR Phase II award | Month 18 |
-| $1M ARR | Month 24 |
+| $120K ARR | Month 24 |
 
 ### Phase 4: Dominance (Months 24-48)
 
@@ -699,12 +782,12 @@ Claude Teams workflow:
 | SDN protocol submitted to CCSDS or ITU for standardization | Month 30 |
 | Space Data Standards adopted by 3+ government agencies | Month 30 |
 | 1,000+ SDN nodes globally | Month 30 |
-| OrbPro2 competitive with STK in government evaluations | Month 36 |
+| SpaceAware.io competitive with STK in government evaluations | Month 36 |
 | NFT marketplace for satellite time operational | Month 36 |
-| $5M ARR | Month 36 |
+| $1.5M ARR | Month 36 |
 | Series A raise ($8-15M) | Month 36 |
 | International office (ESA/JAXA partner region) | Month 48 |
-| $15M ARR | Month 48 |
+| $4.3M ARR | Month 48 |
 
 ---
 
@@ -748,22 +831,22 @@ Claude Teams workflow:
 ### This Week
 - [ ] Review and refine this master plan
 - [ ] Decide on fundraising strategy (bootstrap vs. grant-first vs. VC-first)
-- [ ] Identify first 3 target OrbPro2 customers to approach
+- [ ] Define SpaceAware.io Free tier MVP feature set
 
 ### This Month
 - [ ] Build unified nav component for all websites
 - [ ] Create spacedatanetwork.io landing page
-- [ ] Set up OrbPro2 licensing/payment system
+- [ ] Set up SpaceAware.io with Stripe billing ($10/$20/$30/$40 per-seat)
 - [ ] Draft first 3 LinkedIn articles
 - [ ] Identify specific SBIR topics for next submission window
 
 ### This Quarter
-- [ ] Launch OrbPro2 commercially
-- [ ] SpaceAware.io landing page + waitlist
+- [ ] Launch SpaceAware.io Free + Explorer tiers
+- [ ] First 50 free accounts
 - [ ] Submit first SBIR proposal
 - [ ] Attend or present at first conference
 - [ ] Create explainer video
-- [ ] Reach $25K revenue
+- [ ] First paying SpaceAware.io customers
 
 ---
 
