@@ -1,0 +1,1774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Space Data Network - The Open Protocol for Space Data Exchange. Investor Pitch Deck.">
+  <title>Space Data Network — Pitch Deck</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #000000;
+      --text-primary: #F5F5F7;
+      --text-secondary: rgba(255, 255, 255, 0.75);
+      --text-muted: rgba(134, 134, 139, 1.0);
+      --ui-bg: rgba(42, 42, 45, 0.72);
+      --ui-hover: rgba(66, 66, 69, 0.72);
+      --ui-border: rgba(134, 134, 139, 0.25);
+      --ui-border-hover: rgba(134, 134, 139, 0.5);
+      --nav-bg: rgba(22, 22, 23, 0.95);
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+      --radius: 24px;
+      --radius-sm: 14px;
+      --accent-blue: #3b82f6;
+      --accent-purple: #8b5cf6;
+      --accent-cyan: #06b6d4;
+      --accent-green: #10b981;
+      --accent-orange: #f59e0b;
+      --accent-pink: #ec4899;
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.6;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; text-decoration: none; }
+
+    /* ============================================
+       ANIMATED BACKGROUND
+       ============================================ */
+    .bg-canvas {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: -1;
+      background: radial-gradient(ellipse at 20% 50%, rgba(59, 130, 246, 0.08) 0%, transparent 60%),
+                  radial-gradient(ellipse at 80% 20%, rgba(139, 92, 246, 0.06) 0%, transparent 50%),
+                  radial-gradient(ellipse at 50% 80%, rgba(6, 182, 212, 0.05) 0%, transparent 50%),
+                  #000;
+    }
+
+    .stars {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: -1;
+      background-image:
+        radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,0.6), transparent),
+        radial-gradient(1px 1px at 30% 70%, rgba(255,255,255,0.4), transparent),
+        radial-gradient(1.5px 1.5px at 50% 10%, rgba(255,255,255,0.7), transparent),
+        radial-gradient(1px 1px at 70% 40%, rgba(255,255,255,0.3), transparent),
+        radial-gradient(1px 1px at 90% 80%, rgba(255,255,255,0.5), transparent),
+        radial-gradient(1px 1px at 15% 90%, rgba(255,255,255,0.4), transparent),
+        radial-gradient(1.5px 1.5px at 85% 60%, rgba(255,255,255,0.6), transparent),
+        radial-gradient(1px 1px at 45% 45%, rgba(255,255,255,0.3), transparent),
+        radial-gradient(1px 1px at 60% 85%, rgba(255,255,255,0.5), transparent),
+        radial-gradient(1px 1px at 25% 35%, rgba(255,255,255,0.4), transparent);
+      animation: twinkle 8s ease-in-out infinite alternate;
+    }
+
+    @keyframes twinkle {
+      0% { opacity: 0.6; }
+      100% { opacity: 1; }
+    }
+
+    /* ============================================
+       NAVIGATION
+       ============================================ */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 52px;
+      z-index: 9999;
+      background: var(--nav-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .nav-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      height: 100%;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 15px;
+    }
+
+    .logo svg { width: 24px; height: 24px; }
+
+    .slide-nav {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .slide-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.2);
+      cursor: pointer;
+      transition: all 0.3s;
+      border: none;
+      padding: 0;
+    }
+
+    .slide-dot.active {
+      background: var(--accent-blue);
+      width: 24px;
+      border-radius: 4px;
+    }
+
+    .slide-dot:hover:not(.active) {
+      background: rgba(255,255,255,0.4);
+    }
+
+    .slide-counter {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      margin-left: 12px;
+    }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .nav-link {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      transition: color 0.2s;
+    }
+
+    .nav-link:hover { color: var(--text-primary); }
+
+    /* ============================================
+       SLIDES
+       ============================================ */
+    .slide {
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 80px 24px 60px;
+      position: relative;
+    }
+
+    .slide-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .slide-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent-blue);
+      margin-bottom: 24px;
+      font-family: var(--font-mono);
+    }
+
+    .slide-label::before {
+      content: '';
+      width: 20px;
+      height: 2px;
+      background: currentColor;
+    }
+
+    .slide-title {
+      font-size: 64px;
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      margin-bottom: 24px;
+    }
+
+    .slide-subtitle {
+      font-size: 22px;
+      color: var(--text-secondary);
+      max-width: 700px;
+      line-height: 1.5;
+      margin-bottom: 48px;
+    }
+
+    .gradient-text {
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6, #06b6d4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .gradient-text-warm {
+      background: linear-gradient(135deg, #f59e0b, #ec4899, #8b5cf6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .gradient-text-green {
+      background: linear-gradient(135deg, #10b981, #06b6d4, #3b82f6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* ============================================
+       CARDS & GRIDS
+       ============================================ */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 32px;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      transition: all 0.3s ease;
+    }
+
+    .card:hover {
+      border-color: var(--ui-border-hover);
+      transform: translateY(-2px);
+    }
+
+    .card-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      font-size: 24px;
+    }
+
+    .card h3 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .card p {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* ============================================
+       STATS
+       ============================================ */
+    .stat-row {
+      display: flex;
+      gap: 48px;
+      margin-bottom: 48px;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stat-value {
+      font-size: 56px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-top: 8px;
+      font-weight: 500;
+    }
+
+    /* ============================================
+       PROBLEM BULLETS
+       ============================================ */
+    .problem-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      max-width: 800px;
+    }
+
+    .problem-list li {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+      font-size: 18px;
+      line-height: 1.5;
+    }
+
+    .problem-icon {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      margin-top: 2px;
+    }
+
+    .problem-icon.red { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+    .problem-icon.green { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+
+    /* ============================================
+       PRICING TABLE
+       ============================================ */
+    .pricing-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+    }
+
+    .price-card {
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius-sm);
+      padding: 24px 18px;
+      text-align: center;
+      backdrop-filter: blur(20px);
+      transition: all 0.3s;
+      position: relative;
+    }
+
+    .price-card.featured {
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 30px rgba(59, 130, 246, 0.15);
+    }
+
+    .price-card.featured::before {
+      content: 'MOST POPULAR';
+      position: absolute;
+      top: -10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--accent-blue);
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      padding: 3px 10px;
+      border-radius: 6px;
+    }
+
+    .price-tier {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+
+    .price-amount {
+      font-size: 36px;
+      font-weight: 800;
+      margin-bottom: 4px;
+      letter-spacing: -0.02em;
+    }
+
+    .price-amount span {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    .price-period {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+
+    .price-features {
+      list-style: none;
+      text-align: left;
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .price-features li::before {
+      content: '\2713';
+      margin-right: 6px;
+      color: var(--accent-green);
+      font-weight: 700;
+    }
+
+    /* ============================================
+       ARCHITECTURE DIAGRAM
+       ============================================ */
+    .arch-diagram {
+      background: rgba(42, 42, 45, 0.5);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius);
+      padding: 40px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.8;
+      overflow-x: auto;
+      backdrop-filter: blur(20px);
+    }
+
+    .arch-layer {
+      margin-bottom: 24px;
+      padding: 20px;
+      border-radius: var(--radius-sm);
+      border: 1px solid;
+    }
+
+    .arch-layer.commercial {
+      border-color: rgba(139, 92, 246, 0.3);
+      background: rgba(139, 92, 246, 0.05);
+    }
+
+    .arch-layer.open {
+      border-color: rgba(16, 185, 129, 0.3);
+      background: rgba(16, 185, 129, 0.05);
+    }
+
+    .arch-layer-title {
+      font-family: var(--font-sans);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 12px;
+    }
+
+    .arch-layer.commercial .arch-layer-title { color: var(--accent-purple); }
+    .arch-layer.open .arch-layer-title { color: var(--accent-green); }
+
+    .arch-items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .arch-item {
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      font-family: var(--font-sans);
+    }
+
+    .arch-layer.commercial .arch-item {
+      background: rgba(139, 92, 246, 0.15);
+      color: rgba(196, 181, 253, 1);
+    }
+
+    .arch-layer.open .arch-item {
+      background: rgba(16, 185, 129, 0.15);
+      color: rgba(167, 243, 208, 1);
+    }
+
+    /* ============================================
+       MARKET SIZE BARS
+       ============================================ */
+    .market-bar-group {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      max-width: 700px;
+    }
+
+    .market-bar {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .market-bar-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+
+    .market-bar-label {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .market-bar-value {
+      font-size: 15px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+    }
+
+    .market-bar-track {
+      height: 12px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 6px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .market-bar-fill {
+      height: 100%;
+      border-radius: 6px;
+      transition: width 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+      width: 0;
+    }
+
+    .market-bar-fill.blue { background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan)); }
+    .market-bar-fill.purple { background: linear-gradient(90deg, var(--accent-purple), var(--accent-pink)); }
+    .market-bar-fill.green { background: linear-gradient(90deg, var(--accent-green), var(--accent-cyan)); }
+    .market-bar-fill.orange { background: linear-gradient(90deg, var(--accent-orange), var(--accent-pink)); }
+
+    .market-cagr {
+      font-size: 12px;
+      color: var(--accent-green);
+      font-weight: 600;
+    }
+
+    /* ============================================
+       REVENUE TABLE
+       ============================================ */
+    .revenue-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .revenue-table th {
+      text-align: left;
+      padding: 12px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--ui-border);
+    }
+
+    .revenue-table td {
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-family: var(--font-mono);
+      font-size: 14px;
+    }
+
+    .revenue-table tr:last-child td { border-bottom: none; }
+    .revenue-table .total { font-weight: 700; color: var(--accent-green); }
+
+    /* ============================================
+       OPEN SOURCE GRID
+       ============================================ */
+    .oss-item {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 20px;
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: var(--radius-sm);
+      backdrop-filter: blur(20px);
+      transition: all 0.3s;
+    }
+
+    .oss-item:hover {
+      border-color: var(--ui-border-hover);
+      transform: translateY(-2px);
+    }
+
+    .oss-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 20px;
+    }
+
+    .oss-info h4 {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    .oss-info p {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* ============================================
+       TIMELINE
+       ============================================ */
+    .timeline {
+      display: flex;
+      gap: 0;
+      position: relative;
+    }
+
+    .timeline::before {
+      content: '';
+      position: absolute;
+      top: 24px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple), var(--accent-green), var(--accent-orange));
+      border-radius: 1px;
+    }
+
+    .timeline-item {
+      flex: 1;
+      padding-top: 40px;
+      position: relative;
+      padding-right: 16px;
+    }
+
+    .timeline-item::before {
+      content: '';
+      position: absolute;
+      top: 18px;
+      left: 0;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 3px solid;
+      background: var(--bg);
+    }
+
+    .timeline-item:nth-child(1)::before { border-color: var(--accent-blue); }
+    .timeline-item:nth-child(2)::before { border-color: var(--accent-purple); }
+    .timeline-item:nth-child(3)::before { border-color: var(--accent-green); }
+    .timeline-item:nth-child(4)::before { border-color: var(--accent-orange); }
+
+    .timeline-phase {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+
+    .timeline-item:nth-child(1) .timeline-phase { color: var(--accent-blue); }
+    .timeline-item:nth-child(2) .timeline-phase { color: var(--accent-purple); }
+    .timeline-item:nth-child(3) .timeline-phase { color: var(--accent-green); }
+    .timeline-item:nth-child(4) .timeline-phase { color: var(--accent-orange); }
+
+    .timeline-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .timeline-items {
+      list-style: none;
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .timeline-items li::before {
+      content: '\2022';
+      margin-right: 6px;
+      color: var(--text-muted);
+    }
+
+    /* ============================================
+       CTA SECTION
+       ============================================ */
+    .cta-section {
+      text-align: center;
+      padding: 120px 24px;
+    }
+
+    .cta-section .slide-title {
+      max-width: 800px;
+      margin: 0 auto 24px;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 32px;
+      font-size: 16px;
+      font-weight: 600;
+      border-radius: var(--radius);
+      cursor: pointer;
+      border: 1px solid var(--ui-border);
+      transition: all 0.2s;
+      font-family: var(--font-sans);
+    }
+
+    .btn-primary {
+      background: white;
+      color: black;
+      border-color: white;
+    }
+
+    .btn-primary:hover {
+      background: rgba(255,255,255,0.9);
+      transform: translateY(-1px);
+    }
+
+    .btn-secondary {
+      background: var(--ui-bg);
+      color: var(--text-primary);
+      backdrop-filter: blur(20px);
+    }
+
+    .btn-secondary:hover {
+      background: var(--ui-hover);
+      border-color: var(--ui-border-hover);
+    }
+
+    /* ============================================
+       QUOTE / CALLOUT
+       ============================================ */
+    .callout {
+      background: rgba(59, 130, 246, 0.08);
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      border-radius: var(--radius);
+      padding: 32px 40px;
+      font-size: 20px;
+      font-weight: 500;
+      line-height: 1.5;
+      color: rgba(191, 219, 254, 1);
+      position: relative;
+      margin: 32px 0;
+    }
+
+    .callout::before {
+      content: '\201C';
+      position: absolute;
+      top: 16px;
+      left: 20px;
+      font-size: 48px;
+      color: var(--accent-blue);
+      font-weight: 800;
+      line-height: 1;
+      opacity: 0.4;
+    }
+
+    /* ============================================
+       FLYWHEEL
+       ============================================ */
+    .flywheel {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 32px 0;
+    }
+
+    .flywheel-step {
+      padding: 12px 24px;
+      background: var(--ui-bg);
+      border: 1px solid var(--ui-border);
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 600;
+      backdrop-filter: blur(20px);
+    }
+
+    .flywheel-arrow {
+      font-size: 20px;
+      color: var(--text-muted);
+    }
+
+    /* ============================================
+       FOOTER
+       ============================================ */
+    footer {
+      padding: 40px 24px;
+      text-align: center;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 24px;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+
+    .footer-links a {
+      font-size: 13px;
+      color: var(--text-muted);
+      transition: color 0.2s;
+    }
+
+    .footer-links a:hover { color: var(--text-primary); }
+
+    .footer-copy {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* ============================================
+       RESPONSIVE
+       ============================================ */
+    @media (max-width: 1024px) {
+      .slide-title { font-size: 48px; }
+      .stat-value { font-size: 42px; }
+      .pricing-grid { grid-template-columns: repeat(3, 1fr); }
+      .grid-3 { grid-template-columns: 1fr 1fr; }
+      .grid-4 { grid-template-columns: 1fr 1fr; }
+      .timeline { flex-direction: column; gap: 24px; }
+      .timeline::before {
+        top: 0; bottom: 0; left: 6px;
+        width: 2px; height: auto;
+        right: auto;
+      }
+      .timeline-item { padding-top: 0; padding-left: 32px; }
+      .timeline-item::before { top: 2px; left: 0; }
+    }
+
+    @media (max-width: 768px) {
+      .slide-title { font-size: 36px; }
+      .slide-subtitle { font-size: 18px; }
+      .stat-row { gap: 32px; }
+      .stat-value { font-size: 36px; }
+      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+      .pricing-grid { grid-template-columns: 1fr 1fr; }
+      .price-card.featured::before { display: none; }
+      .callout { font-size: 16px; padding: 24px; }
+      .arch-diagram { padding: 20px; }
+      .slide-nav { display: none; }
+      .nav-right { display: none; }
+    }
+
+    @media (max-width: 480px) {
+      .slide-title { font-size: 28px; }
+      .pricing-grid { grid-template-columns: 1fr; }
+      .stat-row { flex-direction: column; gap: 24px; }
+    }
+
+    /* ============================================
+       ANIMATIONS
+       ============================================ */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.8s ease, transform 0.8s ease;
+    }
+
+    .fade-in.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .fade-in-delay-1 { transition-delay: 0.1s; }
+    .fade-in-delay-2 { transition-delay: 0.2s; }
+    .fade-in-delay-3 { transition-delay: 0.3s; }
+    .fade-in-delay-4 { transition-delay: 0.4s; }
+
+    /* Dividers */
+    .slide-divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+      max-width: 600px;
+      margin: 0 auto;
+    }
+  </style>
+</head>
+<body>
+
+<div class="bg-canvas"></div>
+<div class="stars"></div>
+
+<!-- Navigation -->
+<nav>
+  <div class="nav-content">
+    <div class="nav-left">
+      <a href="index.html" class="logo">
+        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="4">
+          <circle cx="50" cy="50" r="45"/>
+          <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2"/>
+          <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(60 50 50)"/>
+          <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(120 50 50)"/>
+          <circle cx="50" cy="50" r="8" fill="currentColor" stroke="none"/>
+        </svg>
+        Pitch Deck
+      </a>
+      <div class="slide-nav" id="slideNav"></div>
+      <span class="slide-counter" id="slideCounter">1 / 12</span>
+    </div>
+    <div class="nav-right">
+      <a href="index.html" class="nav-link">Home</a>
+      <a href="docs.html" class="nav-link">Docs</a>
+      <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank" class="nav-link">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ========================================
+     SLIDE 1: TITLE
+     ======================================== -->
+<section class="slide" id="slide-1">
+  <div class="slide-inner" style="text-align: center;">
+    <div class="fade-in">
+      <div style="font-size: 64px; margin-bottom: 32px;">
+        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="3" width="64" height="64">
+          <circle cx="50" cy="50" r="45"/>
+          <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="1.5"/>
+          <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="1.5" transform="rotate(60 50 50)"/>
+          <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="1.5" transform="rotate(120 50 50)"/>
+          <circle cx="50" cy="50" r="8" fill="currentColor" stroke="none"/>
+        </svg>
+      </div>
+    </div>
+    <h1 class="slide-title fade-in fade-in-delay-1">
+      <span class="gradient-text">Space Data Network</span>
+    </h1>
+    <p class="slide-subtitle fade-in fade-in-delay-2" style="margin: 0 auto 20px; max-width: 600px;">
+      The open protocol for space data exchange.
+    </p>
+    <p class="fade-in fade-in-delay-3" style="font-size: 18px; color: var(--text-muted); margin-bottom: 48px;">
+      DigitalArsenal.io, Inc.
+    </p>
+    <div class="fade-in fade-in-delay-4 btn-row">
+      <a href="#slide-2" class="btn btn-primary">
+        View Deck
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M7 17l9.2-9.2M17 17V7H7"/></svg>
+      </a>
+      <a href="index.html" class="btn btn-secondary">Visit Site</a>
+    </div>
+  </div>
+</section>
+
+<div class="slide-divider"></div>
+
+<!-- ========================================
+     SLIDE 2: THE PROBLEM
+     ======================================== -->
+<section class="slide" id="slide-2">
+  <div class="slide-inner">
+    <span class="slide-label fade-in">The Problem</span>
+    <h2 class="slide-title fade-in fade-in-delay-1">
+      Space is booming.<br><span class="gradient-text-warm">Data sharing isn't.</span>
+    </h2>
+
+    <div class="stat-row fade-in fade-in-delay-2">
+      <div class="stat">
+        <span class="stat-value">10,000+</span>
+        <span class="stat-label">Active satellites</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">40,000+</span>
+        <span class="stat-label">Tracked objects</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">30%</span>
+        <span class="stat-label">Annual growth rate</span>
+      </div>
+    </div>
+
+    <ul class="problem-list fade-in fade-in-delay-3">
+      <li>
+        <span class="problem-icon red">&#x2717;</span>
+        <span><strong>Proprietary silos</strong> &mdash; Incompatible formats, bilateral agreements, email-based data exchange between operators</span>
+      </li>
+      <li>
+        <span class="problem-icon red">&#x2717;</span>
+        <span><strong>Single points of failure</strong> &mdash; Centralized clearinghouses can go down, get defunded, or become geopolitically contested</span>
+      </li>
+      <li>
+        <span class="problem-icon red">&#x2717;</span>
+        <span><strong>Legacy formats</strong> &mdash; TLEs were designed for punch cards in the 1960s. CDMs are exchanged as flat text files</span>
+      </li>
+      <li>
+        <span class="problem-icon red">&#x2717;</span>
+        <span><strong>$500K/yr software</strong> &mdash; Orbital mechanics tools like STK and FreeFlyer are inaccessible to most organizations</span>
+      </li>
+      <li>
+        <span class="problem-icon red">&#x2717;</span>
+        <span><strong>No data marketplace</strong> &mdash; No trustless, automated way to buy and sell space observations</span>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<div class="slide-divider"></div>
+
+<!-- ========================================
+     SLIDE 3: THE SOLUTION
+     ======================================== -->
+<section class="slide" id="slide-3">
+  <div class="slide-inner">
+    <span class="slide-label fade-in">The Solution</span>
+    <h2 class="slide-title fade-in fade-in-delay-1">
+      The <span class="gradient-text">TCP/IP</span> of space.
+    </h2>
+    <p class="slide-subtitle fade-in fade-in-delay-2">
+      A decentralized peer-to-peer protocol for exchanging standardized space data &mdash; with an integrated marketplace and browser-native tools that make space operations accessible to everyone.
+    </p>
+
+    <div class="grid-3 fade-in fade-in-delay-3">
+      <div class="card">
+        <div class="card-icon" style="background: rgba(59, 130, 246, 0.15); color: var(--accent-blue);">&#x1F310;</div>
+        <h3>Decentralized P2P</h3>
+        <p>Like BitTorrent for space data. No central server, no single point of failure. Built on IPFS/libp2p.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon" style="background: rgba(139, 92, 246, 0.15); color: var(--accent-purple);">&#x1F4CB;</div>
+        <h3>127 Standards</h3>
+        <p>FlatBuffers-based schemas for every space data type. 13 programming languages. Zero-copy performance.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon" style="background: rgba(6, 182, 212, 0.15); color: var(--accent-cyan);">&#x1F680;</div>
+        <h3>Runs in Your Browser</h3>
+        <p>Full astrodynamics simulation via WebAssembly. No installs, no license servers, no vendor lock-in.</p>
+      </div>
+    </div>
+
+    <div class="callout fade-in fade-in-delay-4">
+      We built TCP/IP for space, and we're selling the Cisco routers.
+    </div>
+  </div>
+</section>
+
+<div class="slide-divider"></div>
+
+<!-- ========================================
+     SLIDE 4: ARCHITECTURE
+     ======================================== -->
+<section class="slide" id="slide-4">
+  <div class="slide-inner">
+    <span class="slide-label fade-in">How It Works</span>
+    <h2 class="slide-title fade-in fade-in-delay-1">
+      Open infrastructure.<br><span class="gradient-text-green">Commercial on top.</span>
+    </h2>
+
+    <div class="fade-in fade-in-delay-2" style="margin-top: 16px;">
+      <div class="arch-layer commercial">
+        <div class="arch-layer-title">Commercial Product &mdash; SpaceAware.io</div>
+        <div class="arch-items">
+          <span class="arch-item">OrbPro2 3D Engine</span>
+          <span class="arch-item">AI/NLP Globe Control (MCP)</span>
+          <span class="arch-item">ModSim (608 Entity Types)</span>
+          <span class="arch-item">Sensor Modeling</span>
+          <span class="arch-item">Viewshed Analysis</span>
+          <span class="arch-item">Maneuver Planning</span>
+          <span class="arch-item">Data Marketplace</span>
+          <span class="arch-item">Team Workspaces</span>
+        </div>
+      </div>
+
+      <div class="arch-layer open">
+        <div class="arch-layer-title">Open Source Infrastructure (Free Forever)</div>
+        <div class="arch-items">
+          <span class="arch-item">Space Data Network (P2P Protocol)</span>
+          <span class="arch-item">Space Data Standards (127 Schemas)</span>
+          <span class="arch-item">FlatBuffers WASM</span>
+          <span class="arch-item">FlatSQL (Query Engine)</span>
+          <span class="arch-item">HD-Wallet-WASM (Identity)</span>
+          <span class="arch-item">Tudat-WASM (Astrodynamics)</span>
+          <span class="arch-item">Basilisk-WASM (310+ Classes)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flywheel fade-in fade-in-delay-3">
+      <span class="flywheel-step">Free tier drives adoption</span>
+      <span class="flywheel-arrow">&rarr;</span>
+      <span class="flywheel-step">More SDN nodes</span>
+      <span class="flywheel-arrow">&rarr;</span>
+      <span class="flywheel-step">More data</span>
+      <span class="flywheel-arrow">&rarr;</span>
+      <span class="flywheel-step">More marketplace value</span>
+      <span class="flywheel-arrow">&rarr;</span>
+      <span class="flywheel-step" style="color: var(--accent-green);">More users</span>
+    </div>
+  </div>
+</section>
+
+<div class="slide-divider"></div>
+
+<!-- ========================================
+     SLIDE 5: OPEN SOURCE MOAT
+     ======================================== -->
+<section class="slide" id="slide-5">
+  <div class="slide-inner">
+    <span class="slide-label fade-in">The Moat</span>
+    <h2 class="slide-title fade-in fade-in-delay-1">
+      6 years of R&D.<br><span class="gradient-text">Impossible to replicate quickly.</span>
+    </h2>
+
+    <div class="grid-3 fade-in fade-in-delay-2" style="margin-bottom: 32px;">
+      <div class="oss-item">
+        <div class="oss-icon" style="background: rgba(16, 185, 129, 0.15);">&#x1F4D0;</div>
+        <div class="oss-info">
+          <h4>Space Data Standards</h4>
+          <p>127 schemas &middot; 13 languages &middot; FlatBuffers IDL</p>
+        </div>
+      </div>
+      <div class="oss-item">
+        <div class="oss-icon" style="background: rgba(59, 130, 246, 0.15);">&#x26A1;</div>
+        <div class="oss-info">
+          <h4>FlatBuffers WASM</h4>
+          <p>Zero-dep serialization &middot; in-browser compiler</p>
+        </div>
+      </div>
+      <div class="oss-item">
+        <div class="oss-icon" style="background: rgba(139, 92, 246, 0.15);">&#x1F5C3;</div>
+        <div class="oss-info">
+          <h4>FlatSQL</h4>
+          <p>SQL over binary data &middot; 580K ops/sec</p>
+        </div>
+      </div>
+      <div class="oss-item">
+        <div class="oss-icon" style="background: rgba(245, 158, 11, 0.15);">&#x1F512;</div>
+        <div class="oss-info">
+          <h4>HD-Wallet-WASM</h4>
+          <p>BIP-32/39/44 &middot; 50+ chains &middot; FIPS 140-3</p>
+        </div>
+      </div>
+      <div class="oss-item">
+        <div class="oss-icon" style="background: rgba(6, 182, 212, 0.15);">&#x1F52D;</div>
+        <div class="oss-info">
+          <h4>Tudat-WASM</h4>
+          <p>TU Delft astrodynamics &middot; browser-native</p>
+        </div>
+      </div>
+      <div class="oss-item">
+        <div class="oss-icon" style="background: rgba(236, 72, 153, 0.15);">&#x1F6F0;</div>
+        <div class="oss-info">
+          <h4>Basilisk-WASM</h4>
+          <p>310+ classes &middot; 1,757 tests passing &middot; world first</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="stat-row fade-in fade-in-delay-3">
+      <div class="stat">
+        <span class="stat-value" style="color: var(--accent-green);">100K+</span>
+        <span class="stat-label">Lines of code</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" style="color: var(--accent-blue);">13</span>
+        <span class="stat-label">Language targets</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" style="color: var(--accent-purple);">1,757</span>
+        <span class="stat-label">Basilisk tests passing</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="slide-divider"></div>
+
+<!-- ========================================
+     SLIDE 6: COMMERCIAL PRODUCT
+     ======================================== -->
+<section class="slide" id="slide-6">
+  <div class="slide-inner">
+    <span class="slide-label fade-in">The Product</span>
+    <h2 class="slide-title fade-in fade-in-delay-1">
+      <span class="gradient-text-warm">SpaceAware.io</span>
+    </h2>
+    <p class="slide-subtitle fade-in fade-in-delay-2">
+      One product. Five tiers. Per-seat pricing. Everything from free satellite tracking to mission-operations-center-grade simulation.
+    </p>
+
+    <div class="pricing-grid fade-in fade-in-delay-3">
+      <div class="price-card">
+        <div class="price-tier">Free</div>
+        <div class="price-amount">$0</div>
+        <div class="price-period">forever</div>
+        <ul class="price-features">
+          <li>Full satellite catalog</li>
+          <li>Complete history</li>
+          <li>Conjunction assessments</li>
+          <li>Upload data to SDN</li>
+          <li>3D globe visualization</li>
+          <li>10 tracked objects</li>
+        </ul>
+      </div>
+
+      <div class="price-card">
+        <div class="price-tier" style="color: var(--accent-blue);">Explorer</div>
+        <div class="price-amount">$10<span>/mo</span></div>
+        <div class="price-period">per seat</div>
+        <ul class="price-features">
+          <li>Link sharing</li>
+          <li>50 saved scenarios</li>
+          <li>Data export (CSV/JSON)</li>
+          <li>Custom alerts</li>
+          <li>100 tracked objects</li>
+          <li>Embed widget</li>
+        </ul>
+      </div>
+
+      <div class="price-card featured">
+        <div class="price-tier" style="color: var(--accent-purple);">Analyst</div>
+        <div class="price-amount">$20<span>/mo</span></div>
+        <div class="price-period">per seat</div>
+        <ul class="price-features">
+          <li>Sensor FOV modeling</li>
+          <li>Access &amp; viewshed analysis</li>
+          <li>SGP4 propagation (WASM)</li>
+          <li>API access (25K/day)</li>
+          <li>Unlimited everything</li>
+          <li>Webhook alerts</li>
+        </ul>
+      </div>
+
+      <div class="price-card">
+        <div class="price-tier" style="color: var(--accent-cyan);">Operator</div>
+        <div class="price-amount">$30<span>/mo</span></div>
+        <div class="price-period">per seat</div>
+        <ul class="price-features">
+          <li>Hi-fi propagation (Tudat)</li>
+          <li>Spacecraft sim (Basilisk)</li>
+          <li>AI/NLP globe control</li>
+          <li>Maneuver planning</li>
+          <li>Monte Carlo analysis</li>
+          <li>CA workflow</li>
+        </ul>
+      </div>
+
+      <div class="price-card">
+        <div class="price-tier" style="color: var(--accent-orange);">Mission</div>
+        <div class="price-amount">$40<span>/mo</span></div>
+        <div class="price-period">per seat</div>
+        <ul class="price-features">
+          <li>Combat/mission sim</li>
+          <li>Team workspaces</li>
+          <li>SSO/SAML</li>
+          <li>Marketplace selling</li>
+          <li>On-prem deployment</li>
+          <li>FIPS 140-3 crypto</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="fade-in fade-in-delay-4" style="text-align: center; color: var(--text-muted); font-size: 14px; margin-top: 24px;">
+      Annual billing: pay for 10 months, get 12. Volume discounts for 5+ seats.
+    </p>
+  </div>
+</section>
+
+<div class="slide-divider"></div>
+
+<!-- ========================================
+     SLIDE 7: DEMO HIGHLIGHTS
+     ======================================== -->
+<section class="slide" id="slide-7">
+  <div class="slide-inner">
+    <span class="slide-label fade-in">See It In Action</span>
+    <h2 class="slide-title fade-in fade-in-delay-1">
+      STK-level analysis.<br><span class="gradient-text">In your browser.</span>
+    </h2>
+
+    <div class="grid-2 fade-in fade-in-delay-2">
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div style="background: linear-gradient(135deg, rgba(59,130,246,0.2), rgba(139,92,246,0.2)); padding: 80px 32px; text-align: center;">
+          <div style="font-size: 64px; margin-bottom: 16px;">&#x1F30D;</div>
+          <h3 style="margin-bottom: 8px;">3D Visualization</h3>
+          <p style="font-size: 14px; color: var(--text-secondary);">OrbPro2 engine with sensor volumes, ground tracks, and real-time propagation</p>
+        </div>
+      </div>
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div style="background: linear-gradient(135deg, rgba(6,182,212,0.2), rgba(16,185,129,0.2)); padding: 80px 32px; text-align: center;">
+          <div style="font-size: 64px; margin-bottom: 16px;">&#x1F916;</div>
+          <h3 style="margin-bottom: 8px;">AI Globe Control</h3>
+          <p style="font-size: 14px; color: var(--text-secondary);">"Show me all Starlink satellites over Europe" &mdash; natural language via MCP</p>
+        </div>
+      </div>
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div style="background: linear-gradient(135deg, rgba(236,72,153,0.2), rgba(245,158,11,0.2)); padding: 80px 32px; text-align: center;">
+          <div style="font-size: 64px; margin-bottom: 16px;">&#x1F6F0;</div>
+          <h3 style="margin-bottom: 8px;">Spacecraft Simulation</h3>
+          <p style="font-size: 14px; color: var(--text-secondary);">Basilisk-WASM: attitude dynamics, reaction wheels, thrusters, full FSW</p>
+        </div>
+      </div>
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div style="background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(59,130,246,0.2)); padding: 80px 32px; text-align: center;">
+          <div style="font-size: 64px; margin-bottom: 16px;">&#x1F6D2;</div>
+          <h3 style="margin-bottom: 8px;">Data Marketplace</h3>
+          <p style="font-size: 14px; color: var(--text-secondary);">Buy and sell space data, plugins, and analysis &mdash; crypto or Stripe</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="slide-divider"></div>
+
+<!-- ========================================
+     SLIDE 8: MARKET SIZE
+     ======================================== -->
+<section class="slide" id="slide-8">
+  <div class="slide-inner">
+    <span class="slide-label fade-in">Market Opportunity</span>
+    <h2 class="slide-title fade-in fade-in-delay-1">
+      A <span class="gradient-text-green">$10B+</span> addressable market.
+    </h2>
+    <p class="slide-subtitle fade-in fade-in-delay-2">Growing 19% annually, driven by mega-constellations and regulatory mandates.</p>
+
+    <div class="market-bar-group fade-in fade-in-delay-3">
+      <div class="market-bar">
+        <div class="market-bar-header">
+          <span class="market-bar-label">Space Situational Awareness</span>
+          <span class="market-bar-value">$1.5B &rarr; $3.6B <span class="market-cagr">19% CAGR</span></span>
+        </div>
+        <div class="market-bar-track">
+          <div class="market-bar-fill blue" data-width="90%"></div>
+        </div>
+      </div>
+
+      <div class="market-bar">
+        <div class="market-bar-header">
+          <span class="market-bar-label">Earth Observation Data</span>
+          <span class="market-bar-value">$7.5B &rarr; $14.5B <span class="market-cagr">14% CAGR</span></span>
+        </div>
+        <div class="market-bar-track">
+          <div class="market-bar-fill purple" data-width="100%"></div>
+        </div>
+      </div>
+
+      <div class="market-bar">
+        <div class="market-bar-header">
+          <span class="market-bar-label">Space Simulation Software</span>
+          <span class="market-bar-value">$2.1B &rarr; $4.8B <span class="market-cagr">18% CAGR</span></span>
+        </div>
+        <div class="market-bar-track">
+          <div class="market-bar-fill green" data-width="60%"></div>
+        </div>
+      </div>
+
+      <div class="market-bar" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--ui-border);">
+        <div class="market-bar-header">
+          <span class="market-bar-label" style="font-size: 18px; font-weight: 700;">Our SAM (Serviceable Addressable)</span>
+          <span class="market-bar-value" style="font-size: 18px; color: var(--accent-green);">$800M by 2030</span>
+        </div>
+        <div class="market-bar-track" style="height: 16px;">
+          <div class="market-bar-fill orange" data-width="45%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="slide-divider"></div>
+
+<!-- ========================================
+     SLIDE 9: BUSINESS MODEL
+     ======================================== -->
+<section class="slide" id="slide-9">
+  <div class="slide-inner">
+    <span class="slide-label fade-in">Business Model</span>
+    <h2 class="slide-title fade-in fade-in-delay-1">
+      SaaS + Marketplace +<br><span class="gradient-text-warm">Network effects.</span>
+    </h2>
+
+    <div class="grid-2 fade-in fade-in-delay-2" style="margin-bottom: 40px;">
+      <div>
+        <div class="grid-2" style="gap: 12px;">
+          <div class="card" style="text-align: center; padding: 24px;">
+            <div style="font-size: 32px; font-weight: 800; color: var(--accent-blue);">55%</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">SaaS Subscriptions</div>
+          </div>
+          <div class="card" style="text-align: center; padding: 24px;">
+            <div style="font-size: 32px; font-weight: 800; color: var(--accent-purple);">20%</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Marketplace Fees</div>
+          </div>
+          <div class="card" style="text-align: center; padding: 24px;">
+            <div style="font-size: 32px; font-weight: 800; color: var(--accent-green);">15%</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Services</div>
+          </div>
+          <div class="card" style="text-align: center; padding: 24px;">
+            <div style="font-size: 32px; font-weight: 800; color: var(--accent-orange);">10%</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">NFT Asset Tokenization</div>
+          </div>
+        </div>
+        <p style="font-size: 14px; color: var(--text-muted); margin-top: 16px; text-align: center;">
+          90%+ gross margins &middot; Per-seat pricing &middot; Annual discounts
+        </p>
+      </div>
+
+      <div>
+        <div class="card" style="padding: 0; overflow: hidden;">
+          <table class="revenue-table">
+            <thead>
+              <tr>
+                <th>Year</th>
+                <th>SaaS</th>
+                <th>Marketplace</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Y1</td>
+                <td>$21K</td>
+                <td>$10K</td>
+                <td class="total">$106K</td>
+              </tr>
+              <tr>
+                <td>Y2</td>
+                <td>$120K</td>
+                <td>$75K</td>
+                <td class="total">$320K</td>
+              </tr>
+              <tr>
+                <td>Y3</td>
+                <td>$480K</td>
+                <td>$250K</td>
+                <td class="total">$1.03M</td>
+              </tr>
+              <tr>
+                <td>Y4</td>
+                <td>$1.44M</td>
+                <td>$750K</td>
+                <td class="total">$2.84M</td>
+              </tr>
+              <tr>
+                <td style="font-weight: 700;">Y5</td>
+                <td style="font-weight: 700;">$4.32M</td>
+                <td style="font-weight: 700;">$2M</td>
+                <td class="total" style="font-size: 16px;">$7.57M</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout fade-in fade-in-delay-3" style="text-align: center;">
+      Marketplace revenue compounds: 5% of every data transaction + 15% of every plugin sale.<br>
+      As the network grows, so does revenue &mdash; without additional sales effort.
+    </div>
+  </div>
+</section>
+
+<div class="slide-divider"></div>
+
+<!-- ========================================
+     SLIDE 10: WHY NOW
+     ======================================== -->
+<section class="slide" id="slide-10">
+  <div class="slide-inner">
+    <span class="slide-label fade-in">Why Now</span>
+    <h2 class="slide-title fade-in fade-in-delay-1">
+      Five forces <span class="gradient-text">converging.</span>
+    </h2>
+
+    <div class="grid-3 fade-in fade-in-delay-2" style="margin-top: 24px;">
+      <div class="card">
+        <div class="card-icon" style="background: rgba(59, 130, 246, 0.15); color: var(--accent-blue);">&#x1F4DC;</div>
+        <h3>Regulatory Momentum</h3>
+        <p>UN COPUOS guidelines, FCC debris rules, and proposed STM frameworks all mandate better data sharing.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon" style="background: rgba(139, 92, 246, 0.15); color: var(--accent-purple);">&#x1F4C8;</div>
+        <h3>Commercial SSA Boom</h3>
+        <p>LeoLabs, Slingshot, Kayhan Space prove there's a market. Mega-constellations demand SSA at scale.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon" style="background: rgba(6, 182, 212, 0.15); color: var(--accent-cyan);">&#x2699;</div>
+        <h3>WASM Maturity</h3>
+        <p>WebAssembly enables full spacecraft simulation in the browser for the first time. No installs.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon" style="background: rgba(16, 185, 129, 0.15); color: var(--accent-green);">&#x1F517;</div>
+        <h3>Decentralization Ready</h3>
+        <p>libp2p, IPFS, and FlatBuffers are production-grade. The infrastructure for trustless networks exists.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon" style="background: rgba(245, 158, 11, 0.15); color: var(--accent-orange);">&#x1F9E0;</div>
+        <h3>AI Integration</h3>
+        <p>Model Context Protocol (MCP) enables natural-language interfaces for space operations. Barrier to entry drops to zero.</p>
+      </div>
+      <div class="card" style="display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1));">
+        <div style="font-size: 48px; margin-bottom: 12px;">&#x1F4A1;</div>
+        <h3>First-Mover Advantage</h3>
+        <p>Nobody else has the full stack: standards + serialization + query + identity + network + simulation + visualization.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="slide-divider"></div>
+
+<!-- ========================================
+     SLIDE 11: ROADMAP
+     ======================================== -->
+<section class="slide" id="slide-11">
+  <div class="slide-inner">
+    <span class="slide-label fade-in">Roadmap</span>
+    <h2 class="slide-title fade-in fade-in-delay-1">
+      From launch to <span class="gradient-text-green">market leadership.</span>
+    </h2>
+
+    <div class="timeline fade-in fade-in-delay-2" style="margin-top: 48px;">
+      <div class="timeline-item">
+        <div class="timeline-phase">Phase 1 &middot; 0&ndash;6mo</div>
+        <div class="timeline-title">Foundation</div>
+        <ul class="timeline-items">
+          <li>SpaceAware.io Free + Explorer launch</li>
+          <li>Unified website ecosystem</li>
+          <li>NASA SBIR Phase I submission</li>
+          <li>First 50 free accounts</li>
+          <li>10 SDN nodes running</li>
+        </ul>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-phase">Phase 2 &middot; 6&ndash;12mo</div>
+        <div class="timeline-title">Growth</div>
+        <ul class="timeline-items">
+          <li>Analyst + Operator + Mission tiers</li>
+          <li>500 free accounts, 50 paid seats</li>
+          <li>First marketplace transactions</li>
+          <li>AMOS / SmallSat conference talks</li>
+          <li>$50K cumulative revenue</li>
+        </ul>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-phase">Phase 3 &middot; 12&ndash;24mo</div>
+        <div class="timeline-title">Scale</div>
+        <ul class="timeline-items">
+          <li>$1.5&ndash;3M Seed round</li>
+          <li>OrbPro3 (WebGPU) engine upgrade</li>
+          <li>NFT asset tokenization pilot</li>
+          <li>200 SDN nodes globally</li>
+          <li>$120K ARR</li>
+        </ul>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-phase">Phase 4 &middot; 24&ndash;48mo</div>
+        <div class="timeline-title">Dominance</div>
+        <ul class="timeline-items">
+          <li>CCSDS/ITU standardization</li>
+          <li>1,000+ SDN nodes globally</li>
+          <li>$8&ndash;15M Series A</li>
+          <li>International expansion</li>
+          <li>$4.3M ARR</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="slide-divider"></div>
+
+<!-- ========================================
+     SLIDE 12: THE ASK
+     ======================================== -->
+<section class="slide cta-section" id="slide-12">
+  <div class="slide-inner">
+    <span class="slide-label fade-in" style="justify-content: center;">Let's Build This Together</span>
+    <h2 class="slide-title fade-in fade-in-delay-1">
+      The future of space data<br>is <span class="gradient-text">open, decentralized,</span><br>and <span class="gradient-text-warm">accessible to everyone.</span>
+    </h2>
+    <p class="slide-subtitle fade-in fade-in-delay-2" style="margin: 0 auto 48px; text-align: center;">
+      We're looking for partners who believe space operations shouldn't require a half-million-dollar software license.
+    </p>
+
+    <div class="grid-4 fade-in fade-in-delay-3" style="max-width: 800px; margin: 0 auto 48px;">
+      <div class="card" style="text-align: center; padding: 20px;">
+        <div style="font-size: 14px; font-weight: 700; color: var(--accent-blue);">40%</div>
+        <div style="font-size: 11px; color: var(--text-muted);">Engineering</div>
+      </div>
+      <div class="card" style="text-align: center; padding: 20px;">
+        <div style="font-size: 14px; font-weight: 700; color: var(--accent-purple);">25%</div>
+        <div style="font-size: 11px; color: var(--text-muted);">Go-to-Market</div>
+      </div>
+      <div class="card" style="text-align: center; padding: 20px;">
+        <div style="font-size: 14px; font-weight: 700; color: var(--accent-green);">20%</div>
+        <div style="font-size: 11px; color: var(--text-muted);">Operations</div>
+      </div>
+      <div class="card" style="text-align: center; padding: 20px;">
+        <div style="font-size: 14px; font-weight: 700; color: var(--accent-orange);">15%</div>
+        <div style="font-size: 11px; color: var(--text-muted);">Reserve</div>
+      </div>
+    </div>
+
+    <div class="btn-row fade-in fade-in-delay-4">
+      <a href="mailto:info@digitalarsenal.io" class="btn btn-primary">
+        Get in Touch
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </a>
+      <a href="https://github.com/DigitalArsenal/space-data-network" class="btn btn-secondary" target="_blank">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+        View on GitHub
+      </a>
+      <a href="docs.html" class="btn btn-secondary">Read the Docs</a>
+    </div>
+
+    <p style="margin-top: 32px; font-size: 14px; color: var(--text-muted);">
+      info@digitalarsenal.io &middot; DigitalArsenal.io, Inc.
+    </p>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="docs.html">Documentation</a>
+    <a href="https://spacedatastandards.org" target="_blank">Standards</a>
+    <a href="https://github.com/DigitalArsenal/space-data-network" target="_blank">GitHub</a>
+  </div>
+  <p class="footer-copy">&copy; 2024&ndash;2026 DigitalArsenal.io, Inc. &middot; Released under the MIT License</p>
+</footer>
+
+<script>
+  // ============================================
+  // SLIDE NAVIGATION
+  // ============================================
+  const slides = document.querySelectorAll('.slide');
+  const slideNav = document.getElementById('slideNav');
+  const slideCounter = document.getElementById('slideCounter');
+
+  // Create dots
+  slides.forEach((_, i) => {
+    const dot = document.createElement('button');
+    dot.className = 'slide-dot' + (i === 0 ? ' active' : '');
+    dot.title = `Slide ${i + 1}`;
+    dot.addEventListener('click', () => {
+      slides[i].scrollIntoView({ behavior: 'smooth' });
+    });
+    slideNav.appendChild(dot);
+  });
+
+  const dots = document.querySelectorAll('.slide-dot');
+
+  // Intersection observer for active slide
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const idx = Array.from(slides).indexOf(entry.target);
+        dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+        slideCounter.textContent = `${idx + 1} / ${slides.length}`;
+      }
+    });
+  }, { threshold: 0.5 });
+
+  slides.forEach(s => observer.observe(s));
+
+  // ============================================
+  // FADE-IN ANIMATIONS
+  // ============================================
+  const fadeObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+      }
+    });
+  }, { threshold: 0.1 });
+
+  document.querySelectorAll('.fade-in').forEach(el => fadeObserver.observe(el));
+
+  // ============================================
+  // MARKET BAR ANIMATION
+  // ============================================
+  const barObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.querySelectorAll('.market-bar-fill').forEach(bar => {
+          bar.style.width = bar.dataset.width;
+        });
+      }
+    });
+  }, { threshold: 0.3 });
+
+  document.querySelectorAll('.market-bar-group').forEach(el => barObserver.observe(el));
+
+  // ============================================
+  // KEYBOARD NAVIGATION
+  // ============================================
+  let currentSlide = 0;
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === ' ') {
+      e.preventDefault();
+      currentSlide = Math.min(currentSlide + 1, slides.length - 1);
+      slides[currentSlide].scrollIntoView({ behavior: 'smooth' });
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      currentSlide = Math.max(currentSlide - 1, 0);
+      slides[currentSlide].scrollIntoView({ behavior: 'smooth' });
+    }
+  });
+
+  // Track current slide for keyboard nav
+  const keyObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        currentSlide = Array.from(slides).indexOf(entry.target);
+      }
+    });
+  }, { threshold: 0.5 });
+
+  slides.forEach(s => keyObserver.observe(s));
+</script>
+</body>
+</html>
