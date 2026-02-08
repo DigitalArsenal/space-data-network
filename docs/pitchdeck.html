@@ -59,7 +59,7 @@
     }
 
     .bg-video.loaded {
-      opacity: 0.45;
+      opacity: 0.22;
     }
 
     .bg-canvas {
@@ -67,7 +67,8 @@
       top: 0; left: 0;
       width: 100%; height: 100%;
       z-index: -1;
-      background: radial-gradient(ellipse at 20% 50%, rgba(91, 141, 239, 0.06) 0%, transparent 60%),
+      background: radial-gradient(ellipse at 50% 50%, transparent 30%, rgba(10, 14, 23, 0.7) 100%),
+                  radial-gradient(ellipse at 20% 50%, rgba(91, 141, 239, 0.06) 0%, transparent 60%),
                   radial-gradient(ellipse at 80% 20%, rgba(124, 111, 212, 0.04) 0%, transparent 50%),
                   radial-gradient(ellipse at 50% 80%, rgba(79, 171, 181, 0.03) 0%, transparent 50%);
     }
@@ -206,6 +207,7 @@
       line-height: 1.05;
       letter-spacing: -0.03em;
       margin-bottom: 24px;
+      text-shadow: 0 2px 20px rgba(0, 0, 0, 0.5);
     }
 
     .slide-subtitle {
@@ -214,24 +216,25 @@
       max-width: 700px;
       line-height: 1.5;
       margin-bottom: 48px;
+      text-shadow: 0 1px 12px rgba(0, 0, 0, 0.4);
     }
 
     .gradient-text {
-      background: linear-gradient(135deg, #5B8DEF, #7C6FD4, #4FABB5);
+      background: linear-gradient(135deg, #7BA4F7, #9B8FE2, #6DC4CE);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
     }
 
     .gradient-text-warm {
-      background: linear-gradient(135deg, #C4933A, #B4628A, #7C6FD4);
+      background: linear-gradient(135deg, #DDB05A, #D08AAB, #9B8FE2);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
     }
 
     .gradient-text-green {
-      background: linear-gradient(135deg, #4DA882, #4FABB5, #5B8DEF);
+      background: linear-gradient(135deg, #6DC49E, #6DC4CE, #7BA4F7);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
