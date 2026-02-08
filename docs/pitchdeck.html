@@ -13,25 +13,25 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #000000;
-      --text-primary: #F5F5F7;
-      --text-secondary: rgba(255, 255, 255, 0.75);
-      --text-muted: rgba(134, 134, 139, 1.0);
-      --ui-bg: rgba(42, 42, 45, 0.72);
-      --ui-hover: rgba(66, 66, 69, 0.72);
-      --ui-border: rgba(134, 134, 139, 0.25);
-      --ui-border-hover: rgba(134, 134, 139, 0.5);
-      --nav-bg: rgba(22, 22, 23, 0.95);
+      --bg: #0a0e17;
+      --text-primary: #E8ECF1;
+      --text-secondary: rgba(200, 210, 225, 0.75);
+      --text-muted: rgba(120, 130, 150, 1.0);
+      --ui-bg: rgba(15, 22, 36, 0.80);
+      --ui-hover: rgba(25, 35, 55, 0.80);
+      --ui-border: rgba(60, 80, 120, 0.25);
+      --ui-border-hover: rgba(80, 110, 160, 0.45);
+      --nav-bg: rgba(8, 12, 22, 0.95);
       --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
       --radius: 24px;
       --radius-sm: 14px;
-      --accent-blue: #3b82f6;
-      --accent-purple: #8b5cf6;
-      --accent-cyan: #06b6d4;
-      --accent-green: #10b981;
-      --accent-orange: #f59e0b;
-      --accent-pink: #ec4899;
+      --accent-blue: #5B8DEF;
+      --accent-purple: #7C6FD4;
+      --accent-cyan: #4FABB5;
+      --accent-green: #4DA882;
+      --accent-orange: #C4933A;
+      --accent-pink: #B4628A;
     }
 
     html { scroll-behavior: smooth; }
@@ -48,39 +48,28 @@
     /* ============================================
        ANIMATED BACKGROUND
        ============================================ */
+    .bg-video {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: -2;
+      object-fit: cover;
+      opacity: 0;
+      transition: opacity 1.5s ease;
+    }
+
+    .bg-video.loaded {
+      opacity: 0.45;
+    }
+
     .bg-canvas {
       position: fixed;
       top: 0; left: 0;
       width: 100%; height: 100%;
       z-index: -1;
-      background: radial-gradient(ellipse at 20% 50%, rgba(59, 130, 246, 0.08) 0%, transparent 60%),
-                  radial-gradient(ellipse at 80% 20%, rgba(139, 92, 246, 0.06) 0%, transparent 50%),
-                  radial-gradient(ellipse at 50% 80%, rgba(6, 182, 212, 0.05) 0%, transparent 50%),
-                  #000;
-    }
-
-    .stars {
-      position: fixed;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      z-index: -1;
-      background-image:
-        radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,0.6), transparent),
-        radial-gradient(1px 1px at 30% 70%, rgba(255,255,255,0.4), transparent),
-        radial-gradient(1.5px 1.5px at 50% 10%, rgba(255,255,255,0.7), transparent),
-        radial-gradient(1px 1px at 70% 40%, rgba(255,255,255,0.3), transparent),
-        radial-gradient(1px 1px at 90% 80%, rgba(255,255,255,0.5), transparent),
-        radial-gradient(1px 1px at 15% 90%, rgba(255,255,255,0.4), transparent),
-        radial-gradient(1.5px 1.5px at 85% 60%, rgba(255,255,255,0.6), transparent),
-        radial-gradient(1px 1px at 45% 45%, rgba(255,255,255,0.3), transparent),
-        radial-gradient(1px 1px at 60% 85%, rgba(255,255,255,0.5), transparent),
-        radial-gradient(1px 1px at 25% 35%, rgba(255,255,255,0.4), transparent);
-      animation: twinkle 8s ease-in-out infinite alternate;
-    }
-
-    @keyframes twinkle {
-      0% { opacity: 0.6; }
-      100% { opacity: 1; }
+      background: radial-gradient(ellipse at 20% 50%, rgba(91, 141, 239, 0.06) 0%, transparent 60%),
+                  radial-gradient(ellipse at 80% 20%, rgba(124, 111, 212, 0.04) 0%, transparent 50%),
+                  radial-gradient(ellipse at 50% 80%, rgba(79, 171, 181, 0.03) 0%, transparent 50%);
     }
 
     /* ============================================
@@ -228,21 +217,21 @@
     }
 
     .gradient-text {
-      background: linear-gradient(135deg, #3b82f6, #8b5cf6, #06b6d4);
+      background: linear-gradient(135deg, #5B8DEF, #7C6FD4, #4FABB5);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
     }
 
     .gradient-text-warm {
-      background: linear-gradient(135deg, #f59e0b, #ec4899, #8b5cf6);
+      background: linear-gradient(135deg, #C4933A, #B4628A, #7C6FD4);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
     }
 
     .gradient-text-green {
-      background: linear-gradient(135deg, #10b981, #06b6d4, #3b82f6);
+      background: linear-gradient(135deg, #4DA882, #4FABB5, #5B8DEF);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
@@ -367,8 +356,8 @@
       margin-top: 2px;
     }
 
-    .problem-icon.red { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
-    .problem-icon.green { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+    .problem-icon.red { background: rgba(180, 75, 75, 0.15); color: #C06060; }
+    .problem-icon.green { background: rgba(77, 168, 130, 0.15); color: #4DA882; }
 
     /* ============================================
        PRICING TABLE
@@ -392,7 +381,7 @@
 
     .price-card.featured {
       border-color: var(--accent-blue);
-      box-shadow: 0 0 30px rgba(59, 130, 246, 0.15);
+      box-shadow: 0 0 30px rgba(91, 141, 239, 0.12);
     }
 
     .price-card.featured::before {
@@ -451,7 +440,7 @@
       content: '\2713';
       margin-right: 6px;
       color: var(--accent-green);
-      font-weight: 700;
+      font-weight: 600;
     }
 
     /* ============================================
@@ -477,13 +466,13 @@
     }
 
     .arch-layer.commercial {
-      border-color: rgba(139, 92, 246, 0.3);
-      background: rgba(139, 92, 246, 0.05);
+      border-color: rgba(124, 111, 212, 0.3);
+      background: rgba(124, 111, 212, 0.05);
     }
 
     .arch-layer.open {
-      border-color: rgba(16, 185, 129, 0.3);
-      background: rgba(16, 185, 129, 0.05);
+      border-color: rgba(77, 168, 130, 0.3);
+      background: rgba(77, 168, 130, 0.05);
     }
 
     .arch-layer-title {
@@ -513,13 +502,13 @@
     }
 
     .arch-layer.commercial .arch-item {
-      background: rgba(139, 92, 246, 0.15);
-      color: rgba(196, 181, 253, 1);
+      background: rgba(124, 111, 212, 0.12);
+      color: rgba(180, 172, 230, 1);
     }
 
     .arch-layer.open .arch-item {
-      background: rgba(16, 185, 129, 0.15);
-      color: rgba(167, 243, 208, 1);
+      background: rgba(77, 168, 130, 0.12);
+      color: rgba(150, 215, 180, 1);
     }
 
     /* ============================================
@@ -766,13 +755,13 @@
     }
 
     .btn-primary {
-      background: white;
-      color: black;
-      border-color: white;
+      background: #E8ECF1;
+      color: #0a0e17;
+      border-color: #E8ECF1;
     }
 
     .btn-primary:hover {
-      background: rgba(255,255,255,0.9);
+      background: rgba(232, 236, 241, 0.9);
       transform: translateY(-1px);
     }
 
@@ -791,14 +780,14 @@
        QUOTE / CALLOUT
        ============================================ */
     .callout {
-      background: rgba(59, 130, 246, 0.08);
-      border: 1px solid rgba(59, 130, 246, 0.2);
+      background: rgba(91, 141, 239, 0.06);
+      border: 1px solid rgba(91, 141, 239, 0.15);
       border-radius: var(--radius);
       padding: 32px 40px;
       font-size: 20px;
       font-weight: 500;
       line-height: 1.5;
-      color: rgba(191, 219, 254, 1);
+      color: rgba(170, 195, 230, 1);
       position: relative;
       margin: 32px 0;
     }
@@ -929,6 +918,14 @@
     .fade-in-delay-3 { transition-delay: 0.3s; }
     .fade-in-delay-4 { transition-delay: 0.4s; }
 
+    /* Demo card images */
+    .card img {
+      transition: opacity 0.3s ease;
+    }
+    .card:hover img {
+      opacity: 1 !important;
+    }
+
     /* Dividers */
     .slide-divider {
       height: 1px;
@@ -940,8 +937,8 @@
 </head>
 <body>
 
+<video class="bg-video" id="bgVideo" autoplay muted loop playsinline></video>
 <div class="bg-canvas"></div>
-<div class="stars"></div>
 
 <!-- Navigation -->
 <nav>
@@ -1072,17 +1069,17 @@
 
     <div class="grid-3 fade-in fade-in-delay-3">
       <div class="card">
-        <div class="card-icon" style="background: rgba(59, 130, 246, 0.15); color: var(--accent-blue);">&#x1F310;</div>
+        <div class="card-icon" style="background: rgba(91, 141, 239, 0.12); color: var(--accent-blue);">&#x1F310;</div>
         <h3>Decentralized P2P</h3>
         <p>Like BitTorrent for space data. No central server, no single point of failure. Built on IPFS/libp2p.</p>
       </div>
       <div class="card">
-        <div class="card-icon" style="background: rgba(139, 92, 246, 0.15); color: var(--accent-purple);">&#x1F4CB;</div>
+        <div class="card-icon" style="background: rgba(124, 111, 212, 0.12); color: var(--accent-purple);">&#x1F4CB;</div>
         <h3>127 Standards</h3>
         <p>FlatBuffers-based schemas for every space data type. 13 programming languages. Zero-copy performance.</p>
       </div>
       <div class="card">
-        <div class="card-icon" style="background: rgba(6, 182, 212, 0.15); color: var(--accent-cyan);">&#x1F680;</div>
+        <div class="card-icon" style="background: rgba(79, 171, 181, 0.12); color: var(--accent-cyan);">&#x1F680;</div>
         <h3>Runs in Your Browser</h3>
         <p>Full astrodynamics simulation via WebAssembly. No installs, no license servers, no vendor lock-in.</p>
       </div>
@@ -1163,42 +1160,42 @@
 
     <div class="grid-3 fade-in fade-in-delay-2" style="margin-bottom: 32px;">
       <div class="oss-item">
-        <div class="oss-icon" style="background: rgba(16, 185, 129, 0.15);">&#x1F4D0;</div>
+        <div class="oss-icon" style="background: rgba(77, 168, 130, 0.12);">&#x1F4D0;</div>
         <div class="oss-info">
           <h4>Space Data Standards</h4>
           <p>127 schemas &middot; 13 languages &middot; FlatBuffers IDL</p>
         </div>
       </div>
       <div class="oss-item">
-        <div class="oss-icon" style="background: rgba(59, 130, 246, 0.15);">&#x26A1;</div>
+        <div class="oss-icon" style="background: rgba(91, 141, 239, 0.12);">&#x26A1;</div>
         <div class="oss-info">
           <h4>FlatBuffers WASM</h4>
           <p>Zero-dep serialization &middot; in-browser compiler</p>
         </div>
       </div>
       <div class="oss-item">
-        <div class="oss-icon" style="background: rgba(139, 92, 246, 0.15);">&#x1F5C3;</div>
+        <div class="oss-icon" style="background: rgba(124, 111, 212, 0.12);">&#x1F5C3;</div>
         <div class="oss-info">
           <h4>FlatSQL</h4>
           <p>SQL over binary data &middot; 580K ops/sec</p>
         </div>
       </div>
       <div class="oss-item">
-        <div class="oss-icon" style="background: rgba(245, 158, 11, 0.15);">&#x1F512;</div>
+        <div class="oss-icon" style="background: rgba(196, 147, 58, 0.12);">&#x1F512;</div>
         <div class="oss-info">
           <h4>HD-Wallet-WASM</h4>
           <p>BIP-32/39/44 &middot; 50+ chains &middot; FIPS 140-3</p>
         </div>
       </div>
       <div class="oss-item">
-        <div class="oss-icon" style="background: rgba(6, 182, 212, 0.15);">&#x1F52D;</div>
+        <div class="oss-icon" style="background: rgba(79, 171, 181, 0.12);">&#x1F52D;</div>
         <div class="oss-info">
           <h4>Tudat-WASM</h4>
           <p>TU Delft astrodynamics &middot; browser-native</p>
         </div>
       </div>
       <div class="oss-item">
-        <div class="oss-icon" style="background: rgba(236, 72, 153, 0.15);">&#x1F6F0;</div>
+        <div class="oss-icon" style="background: rgba(180, 98, 138, 0.12);">&#x1F6F0;</div>
         <div class="oss-info">
           <h4>Basilisk-WASM</h4>
           <p>310+ classes &middot; 1,757 tests passing &middot; world first</p>
@@ -1330,31 +1327,39 @@
 
     <div class="grid-2 fade-in fade-in-delay-2">
       <div class="card" style="padding: 0; overflow: hidden;">
-        <div style="background: linear-gradient(135deg, rgba(59,130,246,0.2), rgba(139,92,246,0.2)); padding: 80px 32px; text-align: center;">
-          <div style="font-size: 64px; margin-bottom: 16px;">&#x1F30D;</div>
-          <h3 style="margin-bottom: 8px;">3D Visualization</h3>
-          <p style="font-size: 14px; color: var(--text-secondary);">OrbPro2 engine with sensor volumes, ground tracks, and real-time propagation</p>
+        <div style="position: relative;">
+          <img src="img-sensors-detection.jpg" alt="Sensors and Detection" style="width: 100%; height: 220px; object-fit: cover; display: block; opacity: 0.85;">
+          <div style="position: absolute; bottom: 0; left: 0; right: 0; padding: 20px 24px; background: linear-gradient(transparent, rgba(10, 14, 23, 0.95));">
+            <h3 style="margin-bottom: 4px; font-size: 16px;">Sensor Network & Detection</h3>
+            <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">SSN sensor coverage with real-time detection across 11,000+ targets</p>
+          </div>
         </div>
       </div>
       <div class="card" style="padding: 0; overflow: hidden;">
-        <div style="background: linear-gradient(135deg, rgba(6,182,212,0.2), rgba(16,185,129,0.2)); padding: 80px 32px; text-align: center;">
-          <div style="font-size: 64px; margin-bottom: 16px;">&#x1F916;</div>
-          <h3 style="margin-bottom: 8px;">AI Globe Control</h3>
-          <p style="font-size: 14px; color: var(--text-secondary);">"Show me all Starlink satellites over Europe" &mdash; natural language via MCP</p>
+        <div style="position: relative;">
+          <img src="img-sgp4-propagation.jpg" alt="SGP4 Propagation" style="width: 100%; height: 220px; object-fit: cover; display: block; opacity: 0.85;">
+          <div style="position: absolute; bottom: 0; left: 0; right: 0; padding: 20px 24px; background: linear-gradient(transparent, rgba(10, 14, 23, 0.95));">
+            <h3 style="margin-bottom: 4px; font-size: 16px;">Full Catalog Propagation</h3>
+            <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">29,000+ objects propagated in-browser via WASM-accelerated SGP4</p>
+          </div>
         </div>
       </div>
       <div class="card" style="padding: 0; overflow: hidden;">
-        <div style="background: linear-gradient(135deg, rgba(236,72,153,0.2), rgba(245,158,11,0.2)); padding: 80px 32px; text-align: center;">
-          <div style="font-size: 64px; margin-bottom: 16px;">&#x1F6F0;</div>
-          <h3 style="margin-bottom: 8px;">Spacecraft Simulation</h3>
-          <p style="font-size: 14px; color: var(--text-secondary);">Basilisk-WASM: attitude dynamics, reaction wheels, thrusters, full FSW</p>
+        <div style="position: relative;">
+          <img src="img-sensor-volume.jpg" alt="Sensor Volume Modeling" style="width: 100%; height: 220px; object-fit: cover; display: block; opacity: 0.85;">
+          <div style="position: absolute; bottom: 0; left: 0; right: 0; padding: 20px 24px; background: linear-gradient(transparent, rgba(10, 14, 23, 0.95));">
+            <h3 style="margin-bottom: 4px; font-size: 16px;">Sensor FOV & Viewshed</h3>
+            <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">GPU-accelerated terrain visibility with multi-geometry sensor volumes</p>
+          </div>
         </div>
       </div>
       <div class="card" style="padding: 0; overflow: hidden;">
-        <div style="background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(59,130,246,0.2)); padding: 80px 32px; text-align: center;">
-          <div style="font-size: 64px; margin-bottom: 16px;">&#x1F6D2;</div>
-          <h3 style="margin-bottom: 8px;">Data Marketplace</h3>
-          <p style="font-size: 14px; color: var(--text-secondary);">Buy and sell space data, plugins, and analysis &mdash; crypto or Stripe</p>
+        <div style="position: relative;">
+          <img src="img-earth-night.jpg" alt="Earth at Night" style="width: 100%; height: 220px; object-fit: cover; display: block; opacity: 0.85;">
+          <div style="position: absolute; bottom: 0; left: 0; right: 0; padding: 20px 24px; background: linear-gradient(transparent, rgba(10, 14, 23, 0.95));">
+            <h3 style="margin-bottom: 4px; font-size: 16px;">AI Globe Control & Marketplace</h3>
+            <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.4;">Natural language via MCP &mdash; buy and sell space data on the SDN</p>
+          </div>
         </div>
       </div>
     </div>
@@ -1524,31 +1529,31 @@
 
     <div class="grid-3 fade-in fade-in-delay-2" style="margin-top: 24px;">
       <div class="card">
-        <div class="card-icon" style="background: rgba(59, 130, 246, 0.15); color: var(--accent-blue);">&#x1F4DC;</div>
+        <div class="card-icon" style="background: rgba(91, 141, 239, 0.12); color: var(--accent-blue);">&#x1F4DC;</div>
         <h3>Regulatory Momentum</h3>
         <p>UN COPUOS guidelines, FCC debris rules, and proposed STM frameworks all mandate better data sharing.</p>
       </div>
       <div class="card">
-        <div class="card-icon" style="background: rgba(139, 92, 246, 0.15); color: var(--accent-purple);">&#x1F4C8;</div>
+        <div class="card-icon" style="background: rgba(124, 111, 212, 0.12); color: var(--accent-purple);">&#x1F4C8;</div>
         <h3>Commercial SSA Boom</h3>
         <p>LeoLabs, Slingshot, Kayhan Space prove there's a market. Mega-constellations demand SSA at scale.</p>
       </div>
       <div class="card">
-        <div class="card-icon" style="background: rgba(6, 182, 212, 0.15); color: var(--accent-cyan);">&#x2699;</div>
+        <div class="card-icon" style="background: rgba(79, 171, 181, 0.12); color: var(--accent-cyan);">&#x2699;</div>
         <h3>WASM Maturity</h3>
         <p>WebAssembly enables full spacecraft simulation in the browser for the first time. No installs.</p>
       </div>
       <div class="card">
-        <div class="card-icon" style="background: rgba(16, 185, 129, 0.15); color: var(--accent-green);">&#x1F517;</div>
+        <div class="card-icon" style="background: rgba(77, 168, 130, 0.12); color: var(--accent-green);">&#x1F517;</div>
         <h3>Decentralization Ready</h3>
         <p>libp2p, IPFS, and FlatBuffers are production-grade. The infrastructure for trustless networks exists.</p>
       </div>
       <div class="card">
-        <div class="card-icon" style="background: rgba(245, 158, 11, 0.15); color: var(--accent-orange);">&#x1F9E0;</div>
+        <div class="card-icon" style="background: rgba(196, 147, 58, 0.12); color: var(--accent-orange);">&#x1F9E0;</div>
         <h3>AI Integration</h3>
         <p>Model Context Protocol (MCP) enables natural-language interfaces for space operations. Barrier to entry drops to zero.</p>
       </div>
-      <div class="card" style="display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1));">
+      <div class="card" style="display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: linear-gradient(135deg, rgba(91,141,239,0.07), rgba(124,111,212,0.07));">
         <div style="font-size: 48px; margin-bottom: 12px;">&#x1F4A1;</div>
         <h3>First-Mover Advantage</h3>
         <p>Nobody else has the full stack: standards + serialization + query + identity + network + simulation + visualization.</p>
@@ -1682,6 +1687,14 @@
 </footer>
 
 <script>
+  // ============================================
+  // VIDEO BACKGROUND
+  // ============================================
+  const bgVideo = document.getElementById('bgVideo');
+  bgVideo.src = 'space-bg.mp4';
+  bgVideo.addEventListener('loadeddata', () => bgVideo.classList.add('loaded'));
+  bgVideo.play().catch(() => {});
+
   // ============================================
   // SLIDE NAVIGATION
   // ============================================
