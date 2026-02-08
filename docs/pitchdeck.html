@@ -359,7 +359,7 @@
       margin-top: 2px;
     }
 
-    .problem-icon.red { background: rgba(180, 75, 75, 0.15); color: #C06060; }
+    .problem-icon.muted { background: rgba(120, 130, 150, 0.12); color: var(--text-muted); }
     .problem-icon.green { background: rgba(77, 168, 130, 0.15); color: #4DA882; }
 
     /* ============================================
@@ -1030,28 +1030,38 @@
       </div>
     </div>
 
-    <ul class="problem-list fade-in fade-in-delay-3">
-      <li>
-        <span class="problem-icon red">&#x2717;</span>
-        <span><strong>Proprietary silos</strong> &mdash; Incompatible formats, bilateral agreements, email-based data exchange between operators</span>
-      </li>
-      <li>
-        <span class="problem-icon red">&#x2717;</span>
-        <span><strong>Single points of failure</strong> &mdash; Centralized clearinghouses can go down, get defunded, or become geopolitically contested</span>
-      </li>
-      <li>
-        <span class="problem-icon red">&#x2717;</span>
-        <span><strong>Legacy formats</strong> &mdash; TLEs were designed for punch cards in the 1960s. CDMs are exchanged as flat text files</span>
-      </li>
-      <li>
-        <span class="problem-icon red">&#x2717;</span>
-        <span><strong>$500K/yr software</strong> &mdash; Orbital mechanics tools like STK and FreeFlyer are inaccessible to most organizations</span>
-      </li>
-      <li>
-        <span class="problem-icon red">&#x2717;</span>
-        <span><strong>No data marketplace</strong> &mdash; No trustless, automated way to buy and sell space observations</span>
-      </li>
-    </ul>
+    <div class="grid-3 fade-in fade-in-delay-3" style="margin-top: 8px;">
+      <div class="card">
+        <div class="card-icon" style="background: rgba(120, 130, 150, 0.12); color: var(--text-muted);">&#x1F512;</div>
+        <h3>Proprietary Silos</h3>
+        <p>Incompatible formats, bilateral agreements, and email-based data exchange between operators.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon" style="background: rgba(120, 130, 150, 0.12); color: var(--text-muted);">&#x26A0;</div>
+        <h3>Single Points of Failure</h3>
+        <p>Centralized clearinghouses can go down, get defunded, or become geopolitically contested.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon" style="background: rgba(120, 130, 150, 0.12); color: var(--text-muted);">&#x1F4BE;</div>
+        <h3>Legacy Formats</h3>
+        <p>TLEs were designed for punch cards in the 1960s. CDMs are still exchanged as flat text files.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon" style="background: rgba(120, 130, 150, 0.12); color: var(--text-muted);">&#x1F4B0;</div>
+        <h3>$500K/yr Software</h3>
+        <p>Orbital mechanics tools like STK and FreeFlyer are inaccessible to most organizations.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon" style="background: rgba(120, 130, 150, 0.12); color: var(--text-muted);">&#x1F6AB;</div>
+        <h3>No Data Marketplace</h3>
+        <p>No trustless, automated way to buy and sell space observations at scale.</p>
+      </div>
+      <div class="card" style="display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; border-style: dashed;">
+        <div style="font-size: 36px; margin-bottom: 12px; opacity: 0.5;">?</div>
+        <h3 style="color: var(--text-muted);">No Open Standard</h3>
+        <p>The space industry lacks a universal, open protocol for real-time data exchange.</p>
+      </div>
+    </div>
   </div>
 </section>
 
