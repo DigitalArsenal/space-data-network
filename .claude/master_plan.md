@@ -850,4 +850,10 @@ Claude Teams workflow:
 
 ---
 
+## Contact
+
+**ALL e-mail correspondence goes to tj@digitalarsenal.io.**
+
+---
+
 *This is a living document. Update as strategy evolves.*
