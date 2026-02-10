@@ -595,6 +595,15 @@
         </ul>
       </div>
       <div class="sidebar-section">
+        <div class="sidebar-title">Identity & Cryptography</div>
+        <ul class="sidebar-links">
+          <li><a href="#identity-overview">Key Derivation</a></li>
+          <li><a href="#identity-signing">Signing & IPFS</a></li>
+          <li><a href="#identity-encryption">Encryption</a></li>
+          <li><a href="#identity-pinning">IPFS Pinning</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
         <div class="sidebar-title">API Reference</div>
         <ul class="sidebar-links">
           <li><a href="#api-rest">REST API</a></li>
@@ -1316,6 +1325,152 @@ const ecef = eciToEcef(eci, gmst);
 // ECEF to Lat/Lon/Alt
 const lla = ecefToLla(ecef);
 // { lat: 51.5, lon: -0.1, alt: 400000 }</code></pre>
+      </section>
+
+      <!-- Identity & Cryptography -->
+      <section id="identity-overview" class="doc-section">
+        <h2>Identity & Key Derivation</h2>
+        <p>Every SDN node derives its full cryptographic identity from a <strong>BIP-39 mnemonic</strong> generated client-side. No central authority issues keys &mdash; identity is fully decentralized. Using <a href="https://github.com/satoshilabs/slips/blob/master/slip-0010.md" target="_blank">SLIP-10</a> hierarchical deterministic derivation with custom <a href="https://github.com/satoshilabs/slips/blob/master/slip-0044.md" target="_blank">SLIP-44</a> coin type <code>9999</code>, one seed produces all the keys a node needs.</p>
+
+        <h3>Derivation Tree</h3>
+        <pre><code>BIP-39 Mnemonic (generated client-side)
+    │
+    ▼ PBKDF2
+  512-bit Seed
+    │
+    ▼ SLIP-10 Master Key
+  Extended Key (xpub / xprv)  ← Master Network Identity
+    │
+    ├── m/44'/9999'/0'/0'/0'  →  Ed25519 Signing Key (also libp2p PeerID)
+    │
+    └── m/44'/9999'/0'/1'/0'  →  X25519 Encryption Key</code></pre>
+
+        <p>The <strong>xpub</strong> (extended public key) serves as the node's master network identity. Anyone with the xpub can derive the node's public signing and encryption keys without access to private key material.</p>
+
+        <h3>JavaScript SDK</h3>
+        <pre><code>import { initHDWallet, deriveIdentity, mnemonicToSeed } from '@spacedatanetwork/sdn-js';
+
+// Initialize WASM module
+await initHDWallet();
+
+// Generate or load mnemonic
+const mnemonic = 'abandon abandon abandon ...'; // generated client-side
+const seed = await mnemonicToSeed(mnemonic);
+
+// Derive full identity (signing + encryption keys)
+const identity = await deriveIdentity(seed, 0); // account 0
+
+console.log(identity.signingKey.publicKey);    // Ed25519 pub (32 bytes)
+console.log(identity.encryptionKey.publicKey); // X25519 pub (32 bytes)
+console.log(identity.signingKeyPath);          // m/44'/9999'/0'/0'/0'
+console.log(identity.encryptionKeyPath);       // m/44'/9999'/0'/1'/0'</code></pre>
+
+        <h3>Go Server</h3>
+        <pre><code>// The server automatically derives identity from mnemonic on startup.
+// Set HD_WALLET_WASM_PATH to the WASI build of hd-wallet-wasm.
+//
+// Keys are stored in:
+//   keys/mnemonic   - BIP-39 mnemonic (keep secret!)
+//   keys/node.key   - Serialized libp2p private key (backward compat)
+
+hw, _ := wasm.NewHDWalletModule(ctx, "/path/to/hd-wallet.wasm")
+identity, _ := hw.IdentityFromMnemonic(ctx, mnemonic, "", 0)
+
+fmt.Println(identity.PeerID)            // libp2p PeerID
+fmt.Println(identity.SigningKeyPath)    // m/44'/9999'/0'/0'/0'
+fmt.Println(identity.EncryptionKeyPath) // m/44'/9999'/0'/1'/0'</code></pre>
+      </section>
+
+      <section id="identity-signing" class="doc-section">
+        <h3>Signing & IPFS Identity</h3>
+        <p>The Ed25519 signing key at path <code>m/44'/9999'/account'/0'/0'</code> serves a dual purpose:</p>
+        <ul>
+          <li><strong>Digital Signatures</strong> &mdash; Sign any data (SDS schemas, messages, transactions) with Ed25519. Recipients verify signatures using the corresponding public key.</li>
+          <li><strong>libp2p PeerID</strong> &mdash; The Ed25519 public key is encoded as a <a href="https://docs.libp2p.io/concepts/fundamentals/peers/" target="_blank">libp2p PeerID</a> (multihash of the public key). This is the node's IPFS/libp2p address on the network.</li>
+        </ul>
+        <p>Because the same key handles both signing and network identity, every piece of signed data is cryptographically bound to the author's PeerID. There is no separate "identity key" &mdash; your signing key <em>is</em> your identity.</p>
+
+        <pre><code>// Sign data with the identity's Ed25519 key
+const { sign, verify } = await import('@spacedatanetwork/sdn-js');
+
+const message = new TextEncoder().encode('ISS conjunction alert');
+const signature = await sign(identity.signingKey.privateKey, message);
+
+// Anyone with the public key (or PeerID) can verify
+const valid = await verify(identity.signingKey.publicKey, message, signature);
+console.log(valid); // true</code></pre>
+
+        <pre><code>// Go: sign and verify using the DerivedIdentity
+sig, _ := identity.Sign([]byte("ISS conjunction alert"))
+ok, _  := identity.Verify([]byte("ISS conjunction alert"), sig)
+// ok == true</code></pre>
+      </section>
+
+      <section id="identity-encryption" class="doc-section">
+        <h3>Encryption (X25519 ECDH)</h3>
+        <p>The encryption key at path <code>m/44'/9999'/account'/1'/0'</code> is derived from the <strong>same seed</strong> as the signing key but at a different derivation path (change index <code>1</code> instead of <code>0</code>). This produces an X25519 key pair used for:</p>
+        <ul>
+          <li><strong>ECDH Key Exchange</strong> &mdash; Two peers combine their X25519 keys to derive a shared secret without transmitting it.</li>
+          <li><strong>AES-256-GCM Encryption</strong> &mdash; The shared secret encrypts data end-to-end. Only the intended recipient can decrypt.</li>
+        </ul>
+
+        <pre><code>import { encryptBytes, decryptBytes, deriveIdentity } from '@spacedatanetwork/sdn-js';
+
+// Alice and Bob each derive their identity
+const alice = await deriveIdentity(aliceSeed, 0);
+const bob   = await deriveIdentity(bobSeed, 0);
+
+// Alice encrypts a message for Bob using his X25519 public key
+const plaintext = new TextEncoder().encode('Classified orbital data');
+const encrypted = await encryptBytes(
+  plaintext,
+  bob.encryptionKey.publicKey,    // Bob's X25519 public key
+  alice.encryptionKey.privateKey  // Alice's X25519 private key
+);
+
+// Bob decrypts using Alice's public key and his private key
+const decrypted = await decryptBytes(
+  encrypted,
+  alice.encryptionKey.publicKey,  // Alice's X25519 public key
+  bob.encryptionKey.privateKey    // Bob's X25519 private key
+);
+
+console.log(new TextDecoder().decode(decrypted)); // 'Classified orbital data'</code></pre>
+
+        <h4>Key Separation</h4>
+        <p>Using separate derivation paths for signing and encryption follows cryptographic best practice. A compromised encryption key does not affect the signing key (and vice versa), even though both derive from the same master seed.</p>
+      </section>
+
+      <section id="identity-pinning" class="doc-section">
+        <h3>IPFS Pinning Mechanics</h3>
+        <p>SDN uses <a href="https://ipfs.tech" target="_blank">IPFS</a>-style content addressing to identify data. Every piece of data published on the network gets a <strong>Content Identifier (CID)</strong>: a cryptographic hash that uniquely identifies the content.</p>
+
+        <h4>How Content Addressing Works</h4>
+        <pre><code>1. Data (e.g., an OMM FlatBuffer)  →  SHA-256 hash  →  CID
+   bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi
+
+2. The CID is announced on the DHT (Kademlia distributed hash table)
+3. Any node can retrieve the data by requesting the CID from the network
+4. The hash guarantees integrity: if the data changes, the CID changes</code></pre>
+
+        <h4>Pinning = Persistent Availability</h4>
+        <p>By default, data flowing through the network is transient &mdash; nodes process and forward it but don't store it permanently. <strong>Pinning</strong> is the act of committing to store a CID and serve it to the network on demand.</p>
+        <ul>
+          <li><strong>Self-hosted nodes</strong> can pin any data for free &mdash; you control your own storage.</li>
+          <li><strong>SpaceAware.io</strong> (our hosted premium node) charges a per-GB/month fee for persistent pinning, providing guaranteed availability and SLA-backed uptime.</li>
+          <li>Operators running their own marketplace nodes can set their own pinning fees or offer pinning for free.</li>
+        </ul>
+
+        <h4>Signed Pinning</h4>
+        <p>When a node pins data, it signs the pin announcement with its Ed25519 signing key. This creates a verifiable chain:</p>
+        <pre><code>Author signs data  →  CID (content hash)  →  Pin announcement (signed)
+
+Verifiers can confirm:
+  1. The data matches the CID (content integrity)
+  2. The CID was published by a specific PeerID (author attribution)
+  3. The pin was committed by a specific node (availability commitment)</code></pre>
+
+        <p>Because the signing key and PeerID are the same key (see <a href="#identity-signing">Signing & IPFS</a>), author attribution is built into the protocol &mdash; no separate identity layer is needed.</p>
       </section>
 
       <!-- API Reference -->
