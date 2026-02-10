@@ -4124,8 +4124,8 @@
   <section id="ipfs">
     <div class="container">
       <div class="section-header">
-        <h2 class="section-title">Powered by <a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: none; border-bottom: 1px dashed rgba(255,255,255,0.3);">IPFS</a></h2>
-        <p class="section-subtitle">Built on the InterPlanetary File System for true decentralization</p>
+        <h2 class="section-title">Powered by <a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: none; border-bottom: 1px dashed rgba(255,255,255,0.3);">IPFS</a> and <a href="https://digitalarsenal.github.io/flatbuffers/" target="_blank" style="color: inherit; text-decoration: none; border-bottom: 1px dashed rgba(255,255,255,0.3);">Google FlatBuffers</a></h2>
+        <p class="section-subtitle">Proven, battle-tested foundations for mission-critical space data infrastructure</p>
       </div>
       <div class="ipfs-content">
         <div class="ipfs-description">
@@ -4133,8 +4133,8 @@
             <path d="M255.9 33L63.6 127.5v242.9l192.3 94.5 192.3-94.5V127.5L255.9 33zm0 23.6l162.8 80.1-162.8 80.1-162.8-80.1L255.9 56.6zM83.6 148.3l162.3 79.8v175.8l-162.3-79.8V148.3zm344.8 0v175.8l-162.3 79.8V228.1l162.3-79.8z"/>
           </svg>
           <div class="ipfs-description-text">
-            <p><a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: underline;">IPFS</a> (InterPlanetary File System) is a peer-to-peer hypermedia protocol designed to preserve and grow humanity's knowledge by making the web upgradeable, resilient, and more open.</p>
-            <p>SDN leverages <a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: underline;">IPFS</a>'s core technologies including <strong><a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a></strong> for networking, <strong>content addressing</strong> for data integrity, and <strong>DHT</strong> for decentralized discovery.</p>
+            <p><a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: underline;">IPFS</a> provides the decentralized networking foundation &mdash; <strong><a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a></strong> for peer-to-peer transport with NAT traversal and secure channels, <strong>content addressing</strong> for data integrity, and <strong>DHT</strong> for decentralized discovery.</p>
+            <p><a href="https://digitalarsenal.github.io/flatbuffers/" target="_blank" style="color: inherit; text-decoration: underline;">Google FlatBuffers</a> provides zero-copy serialization for all 127 <a href="https://spacedatastandards.org" target="_blank" style="color: inherit; text-decoration: underline;">Space Data Standards</a> schemas, while <strong><a href="https://github.com/nicklausw/flatsql" target="_blank" style="color: inherit; text-decoration: underline;">FlatSQL</a></strong> enables SQL queries directly over binary FlatBuffer data without conversion overhead.</p>
           </div>
         </div>
         <div class="ipfs-links">
@@ -4187,6 +4187,34 @@
             <div class="ipfs-link-info">
               <strong>IPFS GitHub</strong>
               <span>Open source repositories</span>
+            </div>
+            <svg class="ipfs-link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M17 7H7M17 7v10"/></svg>
+          </a>
+          <a href="https://digitalarsenal.github.io/flatbuffers/" class="ipfs-link" target="_blank">
+            <div class="ipfs-link-icon icon-green">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                <line x1="12" y1="22.08" x2="12" y2="12"/>
+              </svg>
+            </div>
+            <div class="ipfs-link-info">
+              <strong>Google FlatBuffers</strong>
+              <span>Zero-copy serialization &bull; 13 languages</span>
+            </div>
+            <svg class="ipfs-link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M17 7H7M17 7v10"/></svg>
+          </a>
+          <a href="https://github.com/nicklausw/flatsql" class="ipfs-link" target="_blank">
+            <div class="ipfs-link-icon icon-purple">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+                <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+              </svg>
+            </div>
+            <div class="ipfs-link-info">
+              <strong>FlatSQL</strong>
+              <span>SQL over FlatBuffer binary data</span>
             </div>
             <svg class="ipfs-link-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M17 7H7M17 7v10"/></svg>
           </a>
@@ -4530,50 +4558,6 @@
   </section>
 
   <!-- Technology Section -->
-  <section id="technology">
-    <div class="container">
-      <div class="section-header">
-        <h2 class="section-title">Technology Deep Dive</h2>
-        <p class="section-subtitle">Built on proven, battle-tested foundations for mission-critical reliability</p>
-      </div>
-      <div class="features-grid">
-        <a href="https://libp2p.io" target="_blank" class="feature-card feature-card-link">
-          <div class="feature-icon icon-cyan">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-              <circle cx="9" cy="7" r="4"/>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
-            </svg>
-          </div>
-          <h3 class="feature-title">libp2p Networking <svg class="external-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg></h3>
-          <p class="feature-desc">Modular peer-to-peer networking with NAT traversal, protocol multiplexing, and secure channels built-in.</p>
-        </a>
-        <a href="https://digitalarsenal.github.io/flatbuffers/" target="_blank" class="feature-card feature-card-link">
-          <div class="feature-icon icon-green">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-              <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-              <line x1="12" y1="22.08" x2="12" y2="12"/>
-            </svg>
-          </div>
-          <h3 class="feature-title">FlatBuffers <svg class="external-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg></h3>
-          <p class="feature-desc">Zero-copy deserialization with Space Data Standards schemas. Parse orbital data without memory allocation overhead.</p>
-        </a>
-        <a href="https://github.com/nicklausw/flatsql" target="_blank" class="feature-card feature-card-link">
-          <div class="feature-icon icon-purple">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <ellipse cx="12" cy="5" rx="9" ry="3"/>
-              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
-              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
-            </svg>
-          </div>
-          <h3 class="feature-title">FlatSQL <svg class="external-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg></h3>
-          <p class="feature-desc">Query FlatBuffer data with SQL syntax. Efficient database-style operations on binary space data without conversion overhead.</p>
-        </a>
-      </div>
-    </div>
-  </section>
-
   <!-- Astrodynamics Section -->
   <section id="astrodynamics">
     <div class="container">
