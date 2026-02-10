@@ -10,14 +10,15 @@
 
 1. [Vision & Narrative](#1-vision--narrative)
 2. [Ecosystem Map](#2-ecosystem-map)
-3. [Website Unification Strategy](#3-website-unification-strategy)
-4. [Commercialization Strategy](#4-commercialization-strategy)
-5. [Pitch Deck Outline](#5-pitch-deck-outline)
-6. [Funding & Grant Opportunities](#6-funding--grant-opportunities)
-7. [Marketing Strategy](#7-marketing-strategy)
-8. [Roadmap & Milestones](#8-roadmap--milestones)
-9. [Risk Analysis & Mitigations](#9-risk-analysis--mitigations)
-10. [Appendix: Repository Index](#10-appendix-repository-index)
+3. [Technical Architecture](#3-technical-architecture)
+4. [Website Unification Strategy](#4-website-unification-strategy)
+5. [Commercialization Strategy](#5-commercialization-strategy)
+6. [Pitch Deck Outline](#6-pitch-deck-outline)
+7. [Funding & Grant Opportunities](#7-funding--grant-opportunities)
+8. [Marketing Strategy](#8-marketing-strategy)
+9. [Roadmap & Milestones](#9-roadmap--milestones)
+10. [Risk Analysis & Mitigations](#10-risk-analysis--mitigations)
+11. [Appendix: Repository Index](#11-appendix-repository-index)
 
 ---
 
@@ -118,7 +119,417 @@ A vertically-integrated, open-core ecosystem:
 
 ---
 
-## 3. Website Unification Strategy
+## 3. Technical Architecture
+
+This section details how data flows through the Space Data Network ecosystem — from serialization with FlatBuffers, to queryable storage via FlatSQL, to real-time streaming into OrbPro and other clients.
+
+### 3.1 FlatBuffers & Space Data Standards
+
+All data in the ecosystem is serialized using [FlatBuffers](https://google.github.io/flatbuffers/), Google's zero-copy serialization library. The **Space Data Standards (SDS)** define 127 FlatBuffer schemas covering every domain of space operations:
+
+| Category | Schemas | Examples |
+|----------|---------|----------|
+| **Orbital Data** | OMM, OEM, OCM, OSM | Orbit Mean-elements, Ephemeris, Comprehensive, State Messages |
+| **Conjunction Assessment** | CDM, CSM | Conjunction Data Messages, Conjunction Summaries |
+| **Tracking** | TDM, RFM | Tracking Data Messages, Reference Frame Messages |
+| **Catalog** | CAT, SIT | Object Catalogs, Satellite Information |
+| **Entity/Identity** | EPM, PNM, IDM | Entity Profiles, Publish Notifications, Identity Messages |
+| **Environment** | MET, EOO, EOP | Meteorological, Earth Orientation, Atmospheric data |
+| **Marketplace** | STF, PLG, PLK, PUR, ACL | Storefront Listings, Plugins, Purchase Records, Access Control |
+
+**Why FlatBuffers (not Protobuf, JSON, or XML):**
+- **Zero-copy deserialization** — access fields directly from the wire buffer without parsing (~5ns per record, 250M ops/sec on M3 Ultra)
+- **Schema evolution** — add fields without breaking existing readers
+- **13-language code generation** — C++, C#, Go, Java, JavaScript, TypeScript, Python, Rust, Swift, Kotlin, Dart, Lua, PHP via `flatc-wasm`
+- **Compact binary format** — 10-100x smaller than equivalent XML/JSON
+- **No runtime dependency** — generated code is self-contained
+
+**Compilation pipeline:**
+```
+.fbs schema files (spacedatastandards.org)
+        ↓
+flatc-wasm (FlatBuffers compiler running in WASM)
+        ↓
+├── Go structs      → sdn-server
+├── TypeScript      → sdn-js (browser/Node.js)
+├── C++ headers     → OrbPro / native clients
+└── C# classes      → .NET integrations
+```
+
+**Server-side fluent builders (Go):**
+```go
+omm := sds.NewOMMBuilder().
+    WithObjectName("ISS (ZARYA)").
+    WithNoradCatID(25544).
+    WithEpoch("2026-02-09T12:00:00Z").
+    WithMeanMotion(15.489).
+    Build()  // → FlatBuffer binary, ready for network transmission
+```
+
+### 3.2 FlatSQL — SQL over FlatBuffers
+
+FlatSQL bridges the gap between FlatBuffers' binary efficiency and SQL's query power. It implements **SQLite virtual tables** that operate directly on FlatBuffer binary data.
+
+**How it works in the SDN server:**
+
+Each SDS schema type gets a dedicated SQLite table with content-addressed storage:
+
+```sql
+CREATE TABLE IF NOT EXISTS <schema_type> (
+    cid        TEXT PRIMARY KEY,    -- Content Identifier (SHA-256 hash)
+    peer_id    TEXT NOT NULL,       -- Source peer
+    timestamp  INTEGER NOT NULL,    -- When received
+    data       BLOB NOT NULL,       -- Raw FlatBuffer binary
+    signature  BLOB,                -- Ed25519 signature
+    created_at INTEGER DEFAULT (strftime('%s', 'now'))
+);
+CREATE INDEX idx_<schema>_peer_ts ON <schema> (peer_id, timestamp);
+```
+
+**Query capabilities:**
+- `Get(cid)` — retrieve a specific record by content hash
+- `Query(schemaType, filters)` — filter by schema fields
+- `QueryWithPeerID(schemaType, peerID)` — all data from a specific peer
+- `QuerySince(schemaType, timestamp)` — time-windowed queries for sync
+
+**Why this matters for OrbPro:**
+- OrbPro can query historical orbital data with SQL while receiving real-time updates via streaming
+- Content addressing (CID) ensures deduplication — the same observation from multiple peers is stored once
+- The `peer_id` + `timestamp` index enables fast reconstruction of any peer's data timeline
+
+### 3.3 OrbPro Data Streaming
+
+OrbPro consumes space data through the SDN's real-time streaming infrastructure. Data flows from the P2P network into OrbPro's 3D visualization engine via a multi-layered pipeline.
+
+#### Streaming Protocol Stack
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  OrbPro Visualization (CesiumJS fork)                        │
+│  Renders: satellites, orbits, sensor FOVs, conjunctions      │
+├──────────────────────────────────────────────────────────────┤
+│  Subscription Manager                                        │
+│  Modes: Single | Real-Time Streaming | Batch                 │
+│  Filters: schema, field values, rate limits, TTL             │
+├──────────────────────────────────────────────────────────────┤
+│  SDN Node (sdn-js in browser, or sdn-server via API)         │
+│  GossipSub topics: /spacedatanetwork/sds/<SCHEMA_TYPE>       │
+├──────────────────────────────────────────────────────────────┤
+│  libp2p Transport                                            │
+│  WebSocket | WebTransport (QUIC) | Circuit Relay v2          │
+├──────────────────────────────────────────────────────────────┤
+│  Noise Encryption + Ed25519 Peer Identity                    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+#### Publish-Subscribe Flow
+
+**Publishing (any peer):**
+1. Serialize data as FlatBuffer using SDS schema
+2. Pin content locally → generates CID (content hash)
+3. Create a **PNM (Publish Notification Message)** containing: CID, schema FILE_ID, digital signature, multiformat address
+4. Broadcast PNM on GossipSub topic `/spacedatanetwork/sds/PNM`
+
+**Subscribing (OrbPro or any client):**
+1. Subscribe to relevant GossipSub topics (e.g., `OMM` for orbit data, `CDM` for conjunction alerts)
+2. Receive PNM → check subscription config for source peer + schema type
+3. If `autoFetch` enabled → retrieve full FlatBuffer payload by CID from DHT/IPFS
+4. If `autoPin` enabled → store locally with configurable TTL
+5. Deserialize (zero-copy) and render in OrbPro
+
+#### Subscription Modes
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| **Single** | One-shot request/response | Load catalog on startup |
+| **Streaming** | Real-time as messages arrive | Live conjunction alerts, tracking updates |
+| **Batch** | Collect N messages or wait T seconds, deliver as group | Bulk ephemeris updates, historical data sync |
+
+#### Advanced Subscription Features
+
+```typescript
+// OrbPro subscribes to real-time conjunction alerts with filtering
+await node.subscribe('CDM', {
+    mode: 'streaming',
+    encryption: 'hybrid',           // Accept both encrypted and plaintext
+    filters: [{
+        field: 'MISS_DISTANCE',
+        operator: 'lt',
+        value: 1000                  // Only conjunctions < 1km
+    }],
+    rateLimit: { messagesPerMinute: 120 },
+    ttl: 86400,                      // Retain for 24 hours
+    autoFetch: true,
+    autoPin: true
+});
+```
+
+#### PNM Tip/Queue System
+
+The server manages incoming PNMs with a priority-based configuration hierarchy:
+
+1. **Source+Schema override** (highest priority) — custom rules per peer per schema
+2. **Source override** — trust-based rules per peer
+3. **Schema default** — per-schema auto-fetch/pin/TTL settings
+4. **System default** (lowest) — global fallback configuration
+
+This allows OrbPro deployments to prioritize data from trusted sources (e.g., auto-fetch all OMMs from 18th SDS, but only manually review data from unknown peers).
+
+#### Wire Protocol
+
+The SDS Exchange protocol (`/spacedatanetwork/sds-exchange/1.0.0`) uses a compact binary format:
+
+```
+Byte 0:        Message Type (RequestData=0x01 | PushData=0x02 | Query=0x03 | Response=0x04 | Ack=0x05 | Nack=0x06)
+Bytes 1-2:     Schema Name Length
+Bytes 3-N:     Schema Name (UTF-8)
+Bytes N+1-N+4: Data Length
+Bytes N+5-End: FlatBuffer Binary Payload
+```
+
+**Routing headers** support directed messaging:
+```go
+RoutingHeader{
+    SchemaType:       "CDM",
+    DestinationPeers: []string{peerID1, peerID2},
+    TTL:              3,          // Max hops
+    Priority:         200,        // 0-255 (higher = more urgent)
+    Encrypted:        true,
+    SessionKeyID:     "session-abc-123",
+}
+```
+
+#### Performance
+
+| Metric | Value |
+|--------|-------|
+| OMM Serialization | 327ns/record |
+| OMM Deserialization | 5ns/record (zero-copy) |
+| EPM Serialization | 574ns/record |
+| PNM Serialization | 207ns/record |
+| Max message size | 10MB (configurable) |
+| Batch buffer | 1000 messages (configurable) |
+| Stress-tested throughput | 10GB+ sustained streaming |
+
+### 3.4 Backend Architecture — SDN Server (Go)
+
+The SDN server (`sdn-server/`) is the backbone full-node implementation, written in Go for performance and cross-platform deployment.
+
+#### Component Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      HTTP Server (REST API)                      │
+│          Setup UI · Admin Dashboard · Peer Management            │
+├───────┬──────────┬──────────┬──────────┬──────────┬─────────────┤
+│ Admin │  Audit   │   Keys   │  Peers   │ Storage  │ Storefront  │
+│ Mgmt  │ Logging  │   Mgmt   │  Mgmt    │ (FlatSQL)│ (Marketplace│
+├───────┴──────────┴──────────┴──────────┴──────────┴─────────────┤
+│                    SDN Node (internal/node/)                      │
+│    libp2p Host · GossipSub · Kademlia DHT · Topic Registry       │
+├──────────────────────────────────────────────────────────────────┤
+│              Subscription & Streaming Manager                     │
+│    Session mgmt · Batch/Stream/Single modes · Rate limiting       │
+├──────────────────────────────────────────────────────────────────┤
+│                 Protocol Handlers                                 │
+│  /sds-exchange/1.0.0 · /id-exchange/1.0.0 · /chat/1.0.0         │
+├──────────────────────────────────────────────────────────────────┤
+│              libp2p (TCP · WebSocket · WebTransport · Relay)      │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+#### Core Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **Node** | `internal/node/` | Manages libp2p host, GossipSub, DHT, topic registry, and trusted peer connections |
+| **Storage (FlatSQL)** | `internal/storage/` | SQLite-backed FlatBuffer storage with CID-based content addressing |
+| **Subscription** | `internal/subscription/` | StreamingManager with per-peer session limits, timeout handling, activity tracking |
+| **Protocol** | `internal/protocol/` | SDS Exchange protocol handler — request/push/query/ack with rate limiting |
+| **PubSub/PNM** | `internal/pubsub/` | PNM tip queue with priority-based configuration hierarchy |
+| **Storefront** | `internal/storefront/` | Data marketplace — catalog, payments (Stripe), ECIES encryption, trust scoring |
+| **Peers** | `internal/peers/` | TrustedConnectionGater, peer registry, reputation tracking, trust-based rate limiting |
+| **Keys** | `internal/keys/` | Ed25519 signing keys, X25519 encryption keys, key rotation |
+| **Admin** | `internal/admin/` | User management, RBAC, setup/initialization workflows |
+| **Audit** | `internal/audit/` | Event tracking, action logging, compliance trails |
+| **SDS** | `internal/sds/` | Fluent API builders for all schema types, schema validation |
+| **vCard** | `internal/vcard/` | Bidirectional EPM ↔ vCard 4.0 conversion, QR code generation |
+| **Server** | `internal/server/` | HTTP server — setup interface, admin dashboard, peer management UI |
+| **Config** | `internal/config/` | Network, security, storage, PubSub, and discovery configuration |
+
+#### Deployment Modes
+
+| Mode | Binary | Use Case |
+|------|--------|----------|
+| **Full Node** | `spacedatanetwork` | Public-IP server — full DHT, GossipSub, relay, storage, marketplace |
+| **Edge Relay** | `spacedatanetwork-edge` | Lightweight relay node for NAT traversal, minimal storage |
+
+#### Key Dependencies
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| libp2p-go | v0.46.0 | P2P networking foundation |
+| go-libp2p-pubsub | v0.15.0 | GossipSub messaging |
+| go-libp2p-kad-dht | v0.36.0 | Kademlia distributed hash table |
+| FlatBuffers | v25.12.19 | Serialization runtime |
+| go-sqlite3 | v1.14.22 | FlatSQL storage backend |
+| wazero | v1.7.0 | WebAssembly runtime (for HD wallet crypto in Go) |
+
+#### Network Topology
+
+```
+                    ┌───────────────┐
+                    │  Bootstrap    │
+                    │  Peers (DHT)  │
+                    └───────┬───────┘
+                            │
+        ┌───────────────────┼───────────────────┐
+        │                   │                   │
+┌───────┴───────┐   ┌──────┴────────┐   ┌─────┴─────────┐
+│  Full Node A  │◄─►│  Full Node B  │◄─►│  Full Node C  │
+│  (Public IP)  │   │  (Public IP)  │   │  (Public IP)  │
+│  + Relay      │   │  + Relay      │   │  + Relay      │
+└───────┬───────┘   └──────┬────────┘   └───────────────┘
+        │                  │
+   Circuit Relay v2   Circuit Relay v2
+        │                  │
+┌───────┴───────┐   ┌──────┴────────┐
+│  Light Peer   │   │  Light Peer   │
+│  (Browser/    │   │  (Desktop,    │
+│   OrbPro)     │   │   behind NAT) │
+└───────────────┘   └───────────────┘
+```
+
+- **Full Nodes:** Public IP, participate in DHT, relay traffic for light peers, run storefront
+- **Light Peers:** Browser-based (OrbPro, sdn-js) or desktop behind NAT, connect via Circuit Relay v2
+- **Discovery:** Kademlia DHT for global peer discovery + mDNS (`space-data-network-mdns`) for local network
+
+### 3.5 Client Applications
+
+#### A. JavaScript SDK (`sdn-js`) — Browser & Node.js
+
+**Package:** `@spacedatanetwork/sdn-js`
+
+The primary client library for browser-based applications including OrbPro. Implements a full P2P node that runs in-browser via WebAssembly.
+
+| Feature | Details |
+|---------|---------|
+| **P2P Node** | Full libp2p node with GossipSub, DHT, Circuit Relay |
+| **Transports** | WebSocket, WebTransport (QUIC), Circuit Relay v2 |
+| **Pub/Sub** | Subscribe/publish to all SDS schema topics |
+| **Storage** | IndexedDB for persistent local data |
+| **Crypto** | Ed25519 signing via HD wallet WASM module |
+| **Streaming** | Single, real-time, and batch subscription modes |
+| **Filtering** | Field-level filters (eq, ne, gt, lt, contains, startsWith, in, between) |
+| **Storefront** | Full marketplace client — search, purchase, review, sell |
+| **Encryption** | ECIES (X25519 + AES-256-GCM) for premium data delivery |
+
+```typescript
+import { createSDNNode } from '@spacedatanetwork/sdn-js';
+
+const node = await createSDNNode({ relay: true });
+
+// Subscribe to real-time orbit data
+await node.subscribe('OMM', (data, peerId) => {
+    // Zero-copy FlatBuffer → render in OrbPro
+    updateSatellitePosition(data);
+});
+
+// Publish observation data to the network
+const cid = await node.publish('OMM', ommFlatBuffer);
+```
+
+#### B. Desktop Application (`desktop/`)
+
+An Electron-based native application forked from IPFS Desktop, providing a full SDN node with system tray integration.
+
+| Feature | Details |
+|---------|---------|
+| **Platforms** | Windows, macOS, Linux |
+| **Node Type** | Full IPFS/SDN node with bundled Kubo binary |
+| **UI** | Embedded WebUI for node management |
+| **System Tray** | Background operation with tray menu |
+| **Auto-Update** | Built-in update mechanism |
+| **Storage** | Local filesystem-backed IPFS datastore |
+
+#### C. Web UI (`webui/`)
+
+A React-based web interface forked from IPFS WebUI, providing browser-based node management.
+
+| Feature | Details |
+|---------|---------|
+| **File Browser** | Upload, browse, and manage pinned data |
+| **Node Status** | Connection info, bandwidth stats, peer count |
+| **Peer Management** | View connected peers, add bootstrap nodes |
+| **Settings** | Configuration management for the SDN node |
+| **Compatibility** | Works with any SDN/IPFS node via HTTP API |
+
+#### D. Storefront Client (`sdn-js/src/storefront/`)
+
+A TypeScript client for the data marketplace, usable from any JavaScript environment.
+
+| Feature | Details |
+|---------|---------|
+| **Search** | Filter listings by schema type, price, provider, keywords |
+| **Purchase** | Buy data access with Stripe payment integration |
+| **Access Grants** | Receive ECIES-encrypted data keyed to your public key |
+| **Reviews** | Rate and review data providers |
+| **Credits** | Balance tracking and usage management |
+| **Seller Tools** | List data products, set pricing, manage subscriptions |
+
+```typescript
+const storefront = new StorefrontClient({
+    apiBaseUrl: 'https://storefront.spacedatanetwork.io',
+    peerId: myNode.peerId,
+    sign: async (data) => myNode.sign(data),
+});
+
+// Browse premium ephemeris data
+const listings = await storefront.searchListings({
+    query: 'high-precision ephemeris',
+    schemaTypes: ['OEM', 'OCM'],
+    maxPrice: 50,
+});
+
+// Purchase access
+const order = await storefront.purchaseAccess(listings[0].id, {
+    paymentMethod: 'stripe',
+});
+```
+
+#### E. OrbPro Engine (CesiumJS Fork)
+
+The proprietary 3D visualization engine that is the primary consumer of SDN data for SpaceAware.io.
+
+| Feature | Details |
+|---------|---------|
+| **Rendering** | CesiumJS fork with orbital-specific optimizations |
+| **Data Source** | Connects to SDN via embedded sdn-js node |
+| **Sensor Modeling** | Conic, rectangular, and custom sensor FOV volumes |
+| **Access Analysis** | Range → body occlusion → FOV → terrain multi-tier checks |
+| **Viewshed** | GPU-accelerated terrain visibility via shadow maps |
+| **Propagation** | SGP4 (WASM-accelerated) + Tudat high-fidelity |
+| **Simulation** | Basilisk spacecraft simulation (attitude, thrusters, sensors) |
+| **AI Control** | OrbPro2-MCP enables NLP commands ("Show Starlink over Europe") |
+| **ModSim** | 18 WASM plugins, 608 entity types for combat/mission simulation |
+
+#### Client Comparison Matrix
+
+| Capability | sdn-js (Browser) | Desktop | Web UI | Storefront | OrbPro |
+|------------|:-:|:-:|:-:|:-:|:-:|
+| P2P Node | Full (light) | Full | — | — | Full (light) |
+| Pub/Sub | Yes | Yes | — | — | Yes |
+| FlatBuffer Decode | Yes (WASM) | Yes | — | — | Yes (WASM) |
+| Local Storage | IndexedDB | Filesystem | — | — | IndexedDB |
+| Marketplace | Via StorefrontClient | Via API | — | Yes | Yes |
+| 3D Visualization | — | — | — | — | Yes |
+| Simulation | — | — | — | — | Yes (Tudat/Basilisk) |
+| AI/NLP Control | — | — | — | — | Yes (MCP) |
+| Offline Capable | Partial | Full | — | — | Partial |
+
+---
+
+## 4. Website Unification Strategy
 
 ### Current State
 
@@ -198,7 +609,7 @@ All sites share a unified visual identity and cross-link as parts of one ecosyst
 
 ---
 
-## 4. Commercialization Strategy
+## 5. Commercialization Strategy
 
 ### Primary Revenue: SpaceAware.io (Per-Seat SaaS)
 
@@ -393,7 +804,7 @@ All tiers are per-seat. Volume discounts for annual commitments:
 
 ---
 
-## 5. Pitch Deck Outline
+## 6. Pitch Deck Outline
 
 ### Slide Structure (12 slides, 3-minute pitch)
 
@@ -480,7 +891,7 @@ All tiers are per-seat. Volume discounts for annual commitments:
 
 ---
 
-## 6. Funding & Grant Opportunities
+## 7. Funding & Grant Opportunities
 
 ### Government Grants & Programs
 
@@ -560,7 +971,7 @@ All tiers are per-seat. Volume discounts for annual commitments:
 
 ---
 
-## 7. Marketing Strategy
+## 8. Marketing Strategy
 
 ### Brand Positioning
 
@@ -724,7 +1135,7 @@ Claude Teams workflow:
 
 ---
 
-## 8. Roadmap & Milestones
+## 9. Roadmap & Milestones
 
 ### Phase 1: Foundation (Months 1-6)
 
@@ -791,7 +1202,7 @@ Claude Teams workflow:
 
 ---
 
-## 9. Risk Analysis & Mitigations
+## 10. Risk Analysis & Mitigations
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
@@ -806,7 +1217,7 @@ Claude Teams workflow:
 
 ---
 
-## 10. Appendix: Repository Index
+## 11. Appendix: Repository Index
 
 | # | Repository | Path | Description | License |
 |---|-----------|------|-------------|---------|
