@@ -1236,7 +1236,129 @@
 <div class="slide-divider"></div>
 
 <!-- ========================================
-     SLIDE 6: COMMERCIAL PRODUCT
+     SLIDE 6: ENCRYPTED CONJUNCTION ASSESSMENT
+     ======================================== -->
+<section class="slide" id="slide-6">
+  <div class="slide-inner">
+    <span class="slide-label fade-in">Breakthrough</span>
+    <h2 class="slide-title fade-in fade-in-delay-1">
+      Collision avoidance<br><span class="gradient-text">without revealing your orbit.</span>
+    </h2>
+    <p class="slide-subtitle fade-in fade-in-delay-2">
+      Homomorphic encryption lets the network compute conjunction assessments on <em>encrypted</em> ephemeris. Operators never share their actual positions &mdash; only the safety result is revealed.
+    </p>
+
+    <!-- SVG Flow Diagram -->
+    <div class="fade-in fade-in-delay-3" style="margin: 0 auto 36px; max-width: 860px;">
+      <svg viewBox="0 0 860 370" fill="none" xmlns="http://www.w3.org/2000/svg" style="width: 100%; height: auto;">
+        <!-- Background grid dots -->
+        <defs>
+          <pattern id="dotGrid" width="20" height="20" patternUnits="userSpaceOnUse">
+            <circle cx="10" cy="10" r="0.5" fill="rgba(120,130,150,0.15)"/>
+          </pattern>
+          <linearGradient id="gradBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#5B8DEF" stop-opacity="0.15"/>
+            <stop offset="100%" stop-color="#5B8DEF" stop-opacity="0.05"/>
+          </linearGradient>
+          <linearGradient id="gradPurple" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#7C6FD4" stop-opacity="0.15"/>
+            <stop offset="100%" stop-color="#7C6FD4" stop-opacity="0.05"/>
+          </linearGradient>
+          <linearGradient id="gradGreen" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#4DA882" stop-opacity="0.2"/>
+            <stop offset="100%" stop-color="#4DA882" stop-opacity="0.05"/>
+          </linearGradient>
+          <linearGradient id="gradOrange" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#C4933A" stop-opacity="0.15"/>
+            <stop offset="100%" stop-color="#C4933A" stop-opacity="0.05"/>
+          </linearGradient>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+            <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <rect width="860" height="370" fill="url(#dotGrid)" rx="16"/>
+
+        <!-- OPERATOR A (left) -->
+        <rect x="20" y="30" width="200" height="130" rx="12" fill="url(#gradBlue)" stroke="#5B8DEF" stroke-opacity="0.4" stroke-width="1"/>
+        <text x="120" y="58" text-anchor="middle" fill="#5B8DEF" font-family="Inter,sans-serif" font-size="11" font-weight="700" letter-spacing="0.08em">OPERATOR A</text>
+        <text x="120" y="82" text-anchor="middle" fill="#E8ECF1" font-family="Inter,sans-serif" font-size="12" font-weight="500">Encrypts position</text>
+        <text x="120" y="100" text-anchor="middle" fill="rgba(200,210,225,0.6)" font-family="JetBrains Mono,monospace" font-size="9">x = 6878 km</text>
+        <text x="120" y="114" text-anchor="middle" fill="rgba(200,210,225,0.6)" font-family="JetBrains Mono,monospace" font-size="9">y = 0 km</text>
+        <text x="120" y="128" text-anchor="middle" fill="rgba(200,210,225,0.6)" font-family="JetBrains Mono,monospace" font-size="9">z = 0 km</text>
+        <!-- Lock icon -->
+        <rect x="94" y="135" width="52" height="26" rx="6" fill="rgba(91,141,239,0.15)" stroke="#5B8DEF" stroke-opacity="0.5" stroke-width="1"/>
+        <text x="120" y="152" text-anchor="middle" fill="#5B8DEF" font-family="Inter,sans-serif" font-size="10" font-weight="600">Encrypt</text>
+
+        <!-- OPERATOR B (right) -->
+        <rect x="640" y="30" width="200" height="130" rx="12" fill="url(#gradOrange)" stroke="#C4933A" stroke-opacity="0.4" stroke-width="1"/>
+        <text x="740" y="58" text-anchor="middle" fill="#C4933A" font-family="Inter,sans-serif" font-size="11" font-weight="700" letter-spacing="0.08em">OPERATOR B</text>
+        <text x="740" y="82" text-anchor="middle" fill="#E8ECF1" font-family="Inter,sans-serif" font-size="12" font-weight="500">Encrypts position</text>
+        <text x="740" y="100" text-anchor="middle" fill="rgba(200,210,225,0.6)" font-family="JetBrains Mono,monospace" font-size="9">x = 6881 km</text>
+        <text x="740" y="114" text-anchor="middle" fill="rgba(200,210,225,0.6)" font-family="JetBrains Mono,monospace" font-size="9">y = 5 km</text>
+        <text x="740" y="128" text-anchor="middle" fill="rgba(200,210,225,0.6)" font-family="JetBrains Mono,monospace" font-size="9">z = -4 km</text>
+        <!-- Lock icon -->
+        <rect x="714" y="135" width="52" height="26" rx="6" fill="rgba(196,147,58,0.15)" stroke="#C4933A" stroke-opacity="0.5" stroke-width="1"/>
+        <text x="740" y="152" text-anchor="middle" fill="#C4933A" font-family="Inter,sans-serif" font-size="10" font-weight="600">Encrypt</text>
+
+        <!-- Encrypted ciphertext blobs -->
+        <text x="120" y="185" text-anchor="middle" fill="rgba(91,141,239,0.5)" font-family="JetBrains Mono,monospace" font-size="8">0x7A3F...E91B</text>
+        <text x="740" y="185" text-anchor="middle" fill="rgba(196,147,58,0.5)" font-family="JetBrains Mono,monospace" font-size="8">0xB4C2...5D7A</text>
+
+        <!-- Arrows flowing in -->
+        <line x1="220" y1="148" x2="300" y2="220" stroke="#5B8DEF" stroke-opacity="0.5" stroke-width="1.5" stroke-dasharray="6 3"/>
+        <polygon points="297,214 305,222 293,224" fill="#5B8DEF" fill-opacity="0.5"/>
+
+        <line x1="640" y1="148" x2="560" y2="220" stroke="#C4933A" stroke-opacity="0.5" stroke-width="1.5" stroke-dasharray="6 3"/>
+        <polygon points="563,214 555,222 567,224" fill="#C4933A" fill-opacity="0.5"/>
+
+        <!-- NETWORK CENTER (computation) -->
+        <rect x="280" y="195" width="300" height="120" rx="14" fill="url(#gradPurple)" stroke="#7C6FD4" stroke-opacity="0.5" stroke-width="1.5"/>
+        <text x="430" y="220" text-anchor="middle" fill="#7C6FD4" font-family="Inter,sans-serif" font-size="11" font-weight="700" letter-spacing="0.08em">SPACE DATA NETWORK</text>
+        <text x="430" y="242" text-anchor="middle" fill="#E8ECF1" font-family="Inter,sans-serif" font-size="12" font-weight="500">Computes on encrypted data</text>
+        <text x="430" y="262" text-anchor="middle" fill="rgba(200,210,225,0.55)" font-family="JetBrains Mono,monospace" font-size="9">dx = Sub(enc_Ax, enc_Bx)</text>
+        <text x="430" y="276" text-anchor="middle" fill="rgba(200,210,225,0.55)" font-family="JetBrains Mono,monospace" font-size="9">d&sup2; = dx&sup2; + dy&sup2; + dz&sup2;</text>
+        <text x="430" y="296" text-anchor="middle" fill="rgba(200,210,225,0.55)" font-family="Inter,sans-serif" font-size="10" font-style="italic">No private keys. No decryption.</text>
+
+        <!-- Arrow down to result -->
+        <line x1="430" y1="315" x2="430" y2="340" stroke="#4DA882" stroke-opacity="0.6" stroke-width="1.5"/>
+        <polygon points="424,337 430,347 436,337" fill="#4DA882" fill-opacity="0.6"/>
+
+        <!-- RESULT -->
+        <rect x="310" y="340" width="240" height="28" rx="8" fill="url(#gradGreen)" stroke="#4DA882" stroke-opacity="0.6" stroke-width="1.5" filter="url(#glow)"/>
+        <text x="430" y="359" text-anchor="middle" fill="#4DA882" font-family="Inter,sans-serif" font-size="13" font-weight="700">CONJUNCTION: 7.3 km</text>
+
+        <!-- Shield/lock indicators on the sides -->
+        <text x="30" y="190" fill="rgba(91,141,239,0.35)" font-family="Inter,sans-serif" font-size="9" font-weight="600">POSITION HIDDEN</text>
+        <text x="830" y="190" text-anchor="end" fill="rgba(196,147,58,0.35)" font-family="Inter,sans-serif" font-size="9" font-weight="600">POSITION HIDDEN</text>
+      </svg>
+    </div>
+
+    <!-- Key insight cards -->
+    <div class="grid-3 fade-in fade-in-delay-4" style="margin-bottom: 0;">
+      <div class="card" style="padding: 24px; border-color: rgba(91,141,239,0.2);">
+        <div class="card-icon" style="background: rgba(91, 141, 239, 0.12); color: var(--accent-blue);"><svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+        <h3 style="font-size: 15px;">Positions Never Revealed</h3>
+        <p style="font-size: 13px;">Military, commercial, and classified satellites can participate in conjunction assessment without exposing orbital elements to anyone.</p>
+      </div>
+      <div class="card" style="padding: 24px; border-color: rgba(124,111,212,0.2);">
+        <div class="card-icon" style="background: rgba(124, 111, 212, 0.12); color: var(--accent-purple);"><svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+        <h3 style="font-size: 15px;">Protects $B in Assets</h3>
+        <p style="font-size: 13px;">Satellite constellation positioning is a multi-billion dollar investment. HE lets operators protect that IP while still ensuring safety.</p>
+      </div>
+      <div class="card" style="padding: 24px; border-color: rgba(77,168,130,0.2);">
+        <div class="card-icon" style="background: rgba(77, 168, 130, 0.12); color: var(--accent-green);"><svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+        <h3 style="font-size: 15px;">STM Foundation</h3>
+        <p style="font-size: 13px;">The absolute minimum baseline for a functional, secure space traffic management system. Built on Microsoft SEAL &mdash; shipping this month.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="slide-divider"></div>
+
+<!-- ========================================
+     SLIDE 7: COMMERCIAL PRODUCT
      ======================================== -->
 <section class="slide" id="slide-6">
   <div class="slide-inner">

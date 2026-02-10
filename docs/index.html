@@ -4870,6 +4870,288 @@
     </div>
   </section>
 
+  <!-- Encrypted Conjunction Assessment Section -->
+  <section id="encrypted-ca" style="padding: 120px 0;">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Encrypted Conjunction Assessment</h2>
+        <p class="section-subtitle" style="max-width: 720px;">Compute collision risks on <strong>encrypted</strong> satellite positions. Nobody sees your orbit &mdash; everyone stays safe.</p>
+      </div>
+
+      <!-- The Problem: Why operators don't share -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 72px; align-items: start;">
+        <div>
+          <h3 style="font-size: 28px; font-weight: 700; margin-bottom: 20px; line-height: 1.2;">Why operators <span style="color: #f5576c;">won't share</span> their best data today</h3>
+          <div style="display: flex; flex-direction: column; gap: 16px;">
+            <div style="background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: 16px; padding: 20px 24px; display: flex; gap: 16px; align-items: flex-start;">
+              <div style="min-width: 40px; height: 40px; border-radius: 10px; background: rgba(245,87,108,0.1); display: flex; align-items: center; justify-content: center;">
+                <svg width="20" height="20" fill="none" stroke="#f5576c" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>
+              </div>
+              <div>
+                <h4 style="font-size: 15px; font-weight: 600; margin-bottom: 4px;">National Security</h4>
+                <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">Military and intelligence satellites have classified orbits. Sharing precise ephemeris reveals capabilities, coverage gaps, and mission intent to adversaries.</p>
+              </div>
+            </div>
+            <div style="background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: 16px; padding: 20px 24px; display: flex; gap: 16px; align-items: flex-start;">
+              <div style="min-width: 40px; height: 40px; border-radius: 10px; background: rgba(196,147,58,0.1); display: flex; align-items: center; justify-content: center;">
+                <svg width="20" height="20" fill="none" stroke="#C4933A" stroke-width="1.5" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              </div>
+              <div>
+                <h4 style="font-size: 15px; font-weight: 600; margin-bottom: 4px;">Commercial IP</h4>
+                <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">Constellation geometry is a multi-billion-dollar investment. Precise orbital slots, station-keeping strategies, and coverage patterns are proprietary trade secrets.</p>
+              </div>
+            </div>
+            <div style="background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: 16px; padding: 20px 24px; display: flex; gap: 16px; align-items: flex-start;">
+              <div style="min-width: 40px; height: 40px; border-radius: 10px; background: rgba(124,111,212,0.1); display: flex; align-items: center; justify-content: center;">
+                <svg width="20" height="20" fill="none" stroke="#7C6FD4" stroke-width="1.5" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              </div>
+              <div>
+                <h4 style="font-size: 15px; font-weight: 600; margin-bottom: 4px;">Liability Exposure</h4>
+                <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">Sharing data creates legal obligations. If you share ephemeris and a conjunction is missed, you may bear greater liability than if you had shared nothing at all.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div>
+          <h3 style="font-size: 28px; font-weight: 700; margin-bottom: 20px; line-height: 1.2;">How <span style="background: linear-gradient(135deg, #6DC49E, #6DC4CE, #7BA4F7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">homomorphic encryption</span> changes everything</h3>
+          <div style="display: flex; flex-direction: column; gap: 16px;">
+            <div style="background: var(--ui-bg); border: 1px solid rgba(77,168,130,0.25); border-radius: 16px; padding: 20px 24px; display: flex; gap: 16px; align-items: flex-start;">
+              <div style="min-width: 40px; height: 40px; border-radius: 10px; background: rgba(77,168,130,0.1); display: flex; align-items: center; justify-content: center;">
+                <svg width="20" height="20" fill="none" stroke="#4DA882" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              </div>
+              <div>
+                <h4 style="font-size: 15px; font-weight: 600; margin-bottom: 4px;">Math on Ciphertext</h4>
+                <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">The network computes <code style="background: rgba(77,168,130,0.1); padding: 2px 6px; border-radius: 4px; font-size: 12px;">d&sup2; = &Delta;x&sup2; + &Delta;y&sup2; + &Delta;z&sup2;</code> entirely on encrypted data. The math works &mdash; the data stays locked.</p>
+              </div>
+            </div>
+            <div style="background: var(--ui-bg); border: 1px solid rgba(77,168,130,0.25); border-radius: 16px; padding: 20px 24px; display: flex; gap: 16px; align-items: flex-start;">
+              <div style="min-width: 40px; height: 40px; border-radius: 10px; background: rgba(91,141,239,0.1); display: flex; align-items: center; justify-content: center;">
+                <svg width="20" height="20" fill="none" stroke="#5B8DEF" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              </div>
+              <div>
+                <h4 style="font-size: 15px; font-weight: 600; margin-bottom: 4px;">Only Distance Revealed</h4>
+                <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">Only the conjunction assessor can decrypt the result &mdash; and the result is a <em>distance</em>, not a position. Neither operator's orbit is ever exposed.</p>
+              </div>
+            </div>
+            <div style="background: var(--ui-bg); border: 1px solid rgba(77,168,130,0.25); border-radius: 16px; padding: 20px 24px; display: flex; gap: 16px; align-items: flex-start;">
+              <div style="min-width: 40px; height: 40px; border-radius: 10px; background: rgba(124,111,212,0.1); display: flex; align-items: center; justify-content: center;">
+                <svg width="20" height="20" fill="none" stroke="#7C6FD4" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              </div>
+              <div>
+                <h4 style="font-size: 15px; font-weight: 600; margin-bottom: 4px;">Streaming on SDN</h4>
+                <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">Encrypted ephemeris streams over the decentralized Space Data Network in real time. Assessments are continuous, not periodic batch processes.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Full SVG Flow Chart -->
+      <div style="margin-bottom: 72px;">
+        <h3 style="text-align: center; font-size: 24px; font-weight: 700; margin-bottom: 8px;">How It Works</h3>
+        <p style="text-align: center; font-size: 15px; color: var(--text-secondary); margin-bottom: 36px; max-width: 600px; margin-left: auto; margin-right: auto;">End-to-end encrypted conjunction assessment using Microsoft SEAL homomorphic encryption (BFV scheme) integrated directly into FlatBuffers</p>
+
+        <svg viewBox="0 0 1000 580" fill="none" xmlns="http://www.w3.org/2000/svg" style="width: 100%; max-width: 1000px; margin: 0 auto; display: block; height: auto;">
+          <defs>
+            <pattern id="heGrid" width="24" height="24" patternUnits="userSpaceOnUse">
+              <circle cx="12" cy="12" r="0.6" fill="rgba(120,130,150,0.12)"/>
+            </pattern>
+            <linearGradient id="heGradBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#5B8DEF" stop-opacity="0.18"/>
+              <stop offset="100%" stop-color="#5B8DEF" stop-opacity="0.04"/>
+            </linearGradient>
+            <linearGradient id="heGradOrange" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#C4933A" stop-opacity="0.18"/>
+              <stop offset="100%" stop-color="#C4933A" stop-opacity="0.04"/>
+            </linearGradient>
+            <linearGradient id="heGradPurple" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#7C6FD4" stop-opacity="0.18"/>
+              <stop offset="100%" stop-color="#7C6FD4" stop-opacity="0.04"/>
+            </linearGradient>
+            <linearGradient id="heGradGreen" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#4DA882" stop-opacity="0.25"/>
+              <stop offset="100%" stop-color="#4DA882" stop-opacity="0.06"/>
+            </linearGradient>
+            <linearGradient id="heGradCyan" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#4FABB5" stop-opacity="0.18"/>
+              <stop offset="100%" stop-color="#4FABB5" stop-opacity="0.04"/>
+            </linearGradient>
+            <filter id="heGlow">
+              <feGaussianBlur stdDeviation="4" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="heGlowStrong">
+              <feGaussianBlur stdDeviation="6" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <rect width="1000" height="580" fill="url(#heGrid)" rx="20"/>
+          <rect width="1000" height="580" fill="none" stroke="rgba(60,80,120,0.2)" stroke-width="1" rx="20"/>
+
+          <!-- ===== STEP 1: KEY GENERATION (top center) ===== -->
+          <rect x="340" y="20" width="320" height="70" rx="12" fill="url(#heGradCyan)" stroke="#4FABB5" stroke-opacity="0.4" stroke-width="1"/>
+          <text x="365" y="43" fill="#4FABB5" font-family="Inter,sans-serif" font-size="10" font-weight="700" letter-spacing="0.1em">STEP 1</text>
+          <text x="445" y="43" fill="#E8ECF1" font-family="Inter,sans-serif" font-size="12" font-weight="600">Assessor generates HE key pair</text>
+          <text x="500" y="65" text-anchor="middle" fill="rgba(200,210,225,0.55)" font-family="JetBrains Mono,monospace" font-size="10">Public key &rarr; distributed &nbsp;&nbsp;|&nbsp;&nbsp; Secret key &rarr; kept private</text>
+
+          <!-- Arrows from Step 1 to operators -->
+          <path d="M400 90 L200 145" stroke="#4FABB5" stroke-opacity="0.35" stroke-width="1.2" stroke-dasharray="5 3"/>
+          <polygon points="203,140 196,149 208,148" fill="#4FABB5" fill-opacity="0.35"/>
+          <text x="285" y="115" fill="rgba(79,171,181,0.5)" font-family="Inter,sans-serif" font-size="9" font-weight="500" transform="rotate(-16 285 115)">public key</text>
+
+          <path d="M600 90 L800 145" stroke="#4FABB5" stroke-opacity="0.35" stroke-width="1.2" stroke-dasharray="5 3"/>
+          <polygon points="797,140 804,149 792,148" fill="#4FABB5" fill-opacity="0.35"/>
+          <text x="710" y="115" fill="rgba(79,171,181,0.5)" font-family="Inter,sans-serif" font-size="9" font-weight="500" transform="rotate(16 710 115)">public key</text>
+
+          <!-- ===== STEP 2: OPERATOR A (left) ===== -->
+          <rect x="40" y="140" width="280" height="160" rx="14" fill="url(#heGradBlue)" stroke="#5B8DEF" stroke-opacity="0.4" stroke-width="1"/>
+          <text x="65" y="168" fill="#5B8DEF" font-family="Inter,sans-serif" font-size="10" font-weight="700" letter-spacing="0.1em">STEP 2a</text>
+          <text x="145" y="168" fill="#E8ECF1" font-family="Inter,sans-serif" font-size="12" font-weight="600">Operator A encrypts ephemeris</text>
+
+          <!-- Satellite icon -->
+          <circle cx="80" cy="215" r="16" fill="rgba(91,141,239,0.1)" stroke="#5B8DEF" stroke-opacity="0.3" stroke-width="1"/>
+          <text x="80" y="219" text-anchor="middle" fill="#5B8DEF" font-family="Inter,sans-serif" font-size="14">&#x1F6F0;</text>
+
+          <text x="110" y="200" fill="rgba(200,210,225,0.7)" font-family="Inter,sans-serif" font-size="11" font-weight="500">Plaintext position (km):</text>
+          <text x="110" y="218" fill="rgba(200,210,225,0.5)" font-family="JetBrains Mono,monospace" font-size="10">x: 6878 &nbsp; y: 0 &nbsp; z: 0</text>
+          <text x="110" y="240" fill="rgba(200,210,225,0.45)" font-family="Inter,sans-serif" font-size="10" font-style="italic">&#8595; Encrypt with public key</text>
+          <text x="110" y="260" fill="rgba(91,141,239,0.5)" font-family="JetBrains Mono,monospace" font-size="9">ct_ax = 0x7A3F...E91B (~2KB)</text>
+          <text x="110" y="276" fill="rgba(91,141,239,0.5)" font-family="JetBrains Mono,monospace" font-size="9">ct_ay = 0x1D82...F3A0 (~2KB)</text>
+          <text x="110" y="292" fill="rgba(91,141,239,0.5)" font-family="JetBrains Mono,monospace" font-size="9">ct_az = 0x9E47...2C5D (~2KB)</text>
+
+          <!-- ===== STEP 2: OPERATOR B (right) ===== -->
+          <rect x="680" y="140" width="280" height="160" rx="14" fill="url(#heGradOrange)" stroke="#C4933A" stroke-opacity="0.4" stroke-width="1"/>
+          <text x="705" y="168" fill="#C4933A" font-family="Inter,sans-serif" font-size="10" font-weight="700" letter-spacing="0.1em">STEP 2b</text>
+          <text x="790" y="168" fill="#E8ECF1" font-family="Inter,sans-serif" font-size="12" font-weight="600">Operator B encrypts ephemeris</text>
+
+          <!-- Satellite icon -->
+          <circle cx="720" cy="215" r="16" fill="rgba(196,147,58,0.1)" stroke="#C4933A" stroke-opacity="0.3" stroke-width="1"/>
+          <text x="720" y="219" text-anchor="middle" fill="#C4933A" font-family="Inter,sans-serif" font-size="14">&#x1F6F0;</text>
+
+          <text x="750" y="200" fill="rgba(200,210,225,0.7)" font-family="Inter,sans-serif" font-size="11" font-weight="500">Plaintext position (km):</text>
+          <text x="750" y="218" fill="rgba(200,210,225,0.5)" font-family="JetBrains Mono,monospace" font-size="10">x: 6881 &nbsp; y: 5 &nbsp; z: -4</text>
+          <text x="750" y="240" fill="rgba(200,210,225,0.45)" font-family="Inter,sans-serif" font-size="10" font-style="italic">&#8595; Encrypt with public key</text>
+          <text x="750" y="260" fill="rgba(196,147,58,0.5)" font-family="JetBrains Mono,monospace" font-size="9">ct_bx = 0xB4C2...5D7A (~2KB)</text>
+          <text x="750" y="276" fill="rgba(196,147,58,0.5)" font-family="JetBrains Mono,monospace" font-size="9">ct_by = 0x6F19...A8E3 (~2KB)</text>
+          <text x="750" y="292" fill="rgba(196,147,58,0.5)" font-family="JetBrains Mono,monospace" font-size="9">ct_bz = 0xD351...7B2F (~2KB)</text>
+
+          <!-- ===== Arrows from operators to network ===== -->
+          <path d="M320 260 L380 370" stroke="#5B8DEF" stroke-opacity="0.4" stroke-width="1.5" stroke-dasharray="6 3"/>
+          <polygon points="377,364 384,374 372,373" fill="#5B8DEF" fill-opacity="0.4"/>
+          <text x="330" y="320" fill="rgba(91,141,239,0.45)" font-family="Inter,sans-serif" font-size="9" font-weight="500" transform="rotate(60 330 320)">ciphertext only</text>
+
+          <path d="M680 260 L620 370" stroke="#C4933A" stroke-opacity="0.4" stroke-width="1.5" stroke-dasharray="6 3"/>
+          <polygon points="623,364 616,374 628,373" fill="#C4933A" fill-opacity="0.4"/>
+          <text x="660" y="320" fill="rgba(196,147,58,0.45)" font-family="Inter,sans-serif" font-size="9" font-weight="500" transform="rotate(-60 660 320)">ciphertext only</text>
+
+          <!-- ===== STEP 3: NETWORK COMPUTATION (center) ===== -->
+          <rect x="250" y="340" width="500" height="115" rx="16" fill="url(#heGradPurple)" stroke="#7C6FD4" stroke-opacity="0.5" stroke-width="1.5"/>
+          <text x="280" y="368" fill="#7C6FD4" font-family="Inter,sans-serif" font-size="10" font-weight="700" letter-spacing="0.1em">STEP 3</text>
+          <text x="350" y="368" fill="#E8ECF1" font-family="Inter,sans-serif" font-size="13" font-weight="600">Network computes on encrypted data (no secret key)</text>
+
+          <text x="500" y="395" text-anchor="middle" fill="rgba(200,210,225,0.6)" font-family="JetBrains Mono,monospace" font-size="11">ct_dx = Sub(ct_ax, ct_bx) &nbsp;&nbsp; ct_dy = Sub(ct_ay, ct_by) &nbsp;&nbsp; ct_dz = Sub(ct_az, ct_bz)</text>
+          <text x="500" y="415" text-anchor="middle" fill="rgba(200,210,225,0.6)" font-family="JetBrains Mono,monospace" font-size="11">ct_dx2 = Mul(ct_dx, ct_dx) &nbsp; ct_dy2 = Mul(ct_dy, ct_dy) &nbsp; ct_dz2 = Mul(ct_dz, ct_dz)</text>
+          <text x="500" y="435" text-anchor="middle" fill="rgba(200,210,225,0.6)" font-family="JetBrains Mono,monospace" font-size="11">ct_dist2 = Add(ct_dx2, Add(ct_dy2, ct_dz2))</text>
+          <text x="500" y="450" text-anchor="middle" fill="rgba(124,111,212,0.5)" font-family="Inter,sans-serif" font-size="10" font-style="italic">8 homomorphic operations per time step &bull; No decryption at any point</text>
+
+          <!-- ===== Arrow to result ===== -->
+          <line x1="500" y1="455" x2="500" y2="490" stroke="#4DA882" stroke-opacity="0.5" stroke-width="1.5"/>
+          <polygon points="494,486 500,496 506,486" fill="#4DA882" fill-opacity="0.5"/>
+
+          <!-- ===== STEP 4: RESULT (bottom center) ===== -->
+          <rect x="280" y="492" width="440" height="72" rx="14" fill="url(#heGradGreen)" stroke="#4DA882" stroke-opacity="0.6" stroke-width="1.5" filter="url(#heGlow)"/>
+          <text x="310" y="518" fill="#4DA882" font-family="Inter,sans-serif" font-size="10" font-weight="700" letter-spacing="0.1em">STEP 4</text>
+          <text x="380" y="518" fill="#E8ECF1" font-family="Inter,sans-serif" font-size="13" font-weight="600">Assessor decrypts distance only</text>
+          <rect x="310" y="530" width="380" height="24" rx="6" fill="rgba(77,168,130,0.15)"/>
+          <text x="500" y="547" text-anchor="middle" fill="#4DA882" font-family="JetBrains Mono,monospace" font-size="13" font-weight="700" filter="url(#heGlowStrong)">CONJUNCTION DETECTED: 7.3 km &lt; 15 km threshold</text>
+
+          <!-- ===== Side labels ===== -->
+          <rect x="40" y="380" width="170" height="50" rx="10" fill="rgba(245,87,108,0.05)" stroke="rgba(245,87,108,0.2)" stroke-width="1" stroke-dasharray="4 3"/>
+          <text x="125" y="400" text-anchor="middle" fill="rgba(245,87,108,0.6)" font-family="Inter,sans-serif" font-size="10" font-weight="600">Operator A's position</text>
+          <text x="125" y="418" text-anchor="middle" fill="rgba(245,87,108,0.45)" font-family="Inter,sans-serif" font-size="10" font-weight="700">NEVER REVEALED</text>
+
+          <rect x="790" y="380" width="170" height="50" rx="10" fill="rgba(245,87,108,0.05)" stroke="rgba(245,87,108,0.2)" stroke-width="1" stroke-dasharray="4 3"/>
+          <text x="875" y="400" text-anchor="middle" fill="rgba(245,87,108,0.6)" font-family="Inter,sans-serif" font-size="10" font-weight="600">Operator B's position</text>
+          <text x="875" y="418" text-anchor="middle" fill="rgba(245,87,108,0.45)" font-family="Inter,sans-serif" font-size="10" font-weight="700">NEVER REVEALED</text>
+        </svg>
+      </div>
+
+      <!-- Operational & Security Implications -->
+      <div style="margin-bottom: 72px;">
+        <h3 style="text-align: center; font-size: 24px; font-weight: 700; margin-bottom: 8px;">Why This Changes Everything</h3>
+        <p style="text-align: center; font-size: 15px; color: var(--text-secondary); margin-bottom: 36px;">The security and operational implications for the space industry</p>
+
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">
+          <div style="background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: var(--radius); padding: 32px; transition: all 0.3s ease;">
+            <div style="width: 48px; height: 48px; border-radius: 14px; background: rgba(91,141,239,0.12); display: flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+              <svg width="24" height="24" fill="none" stroke="#5B8DEF" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+            </div>
+            <h4 style="font-size: 16px; font-weight: 700; margin-bottom: 8px;">Classified Satellites Can Participate</h4>
+            <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">For the first time, military and intelligence satellites can participate in global conjunction assessment without compromising operational security. The encrypted protocol ensures that even the network operators cannot determine orbital parameters.</p>
+          </div>
+          <div style="background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: var(--radius); padding: 32px; transition: all 0.3s ease;">
+            <div style="width: 48px; height: 48px; border-radius: 14px; background: rgba(196,147,58,0.12); display: flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+              <svg width="24" height="24" fill="none" stroke="#C4933A" stroke-width="1.5" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            </div>
+            <h4 style="font-size: 16px; font-weight: 700; margin-bottom: 8px;">Safeguards Billions in Investment</h4>
+            <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">A constellation's orbital geometry represents years of R&amp;D and billions in launch costs. HE-encrypted conjunction assessment lets operators protect their most valuable IP &mdash; the precise positions that define their competitive advantage &mdash; while still ensuring space safety.</p>
+          </div>
+          <div style="background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: var(--radius); padding: 32px; transition: all 0.3s ease;">
+            <div style="width: 48px; height: 48px; border-radius: 14px; background: rgba(77,168,130,0.12); display: flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+              <svg width="24" height="24" fill="none" stroke="#4DA882" stroke-width="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            </div>
+            <h4 style="font-size: 16px; font-weight: 700; margin-bottom: 8px;">Minimum Viable STM Baseline</h4>
+            <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">This is the absolute minimum foundation for a functional, secure space traffic management system. Without privacy-preserving computation, global STM coordination requires operators to trust a central authority with their most sensitive data &mdash; a non-starter for most.</p>
+          </div>
+          <div style="background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: var(--radius); padding: 32px; transition: all 0.3s ease;">
+            <div style="width: 48px; height: 48px; border-radius: 14px; background: rgba(124,111,212,0.12); display: flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+              <svg width="24" height="24" fill="none" stroke="#7C6FD4" stroke-width="1.5" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            </div>
+            <h4 style="font-size: 16px; font-weight: 700; margin-bottom: 8px;">Built Into FlatBuffers</h4>
+            <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">HE encryption is integrated at the serialization layer via the <code style="background: rgba(124,111,212,0.1); padding: 2px 6px; border-radius: 4px; font-size: 13px;">he_encrypted</code> FlatBuffers attribute. Mark fields for encryption in your schema &mdash; the toolchain handles key management, ciphertext serialization, and homomorphic operations.</p>
+          </div>
+          <div style="background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: var(--radius); padding: 32px; transition: all 0.3s ease;">
+            <div style="width: 48px; height: 48px; border-radius: 14px; background: rgba(79,171,181,0.12); display: flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+              <svg width="24" height="24" fill="none" stroke="#4FABB5" stroke-width="1.5" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            </div>
+            <h4 style="font-size: 16px; font-weight: 700; margin-bottom: 8px;">Real-Time Over P2P</h4>
+            <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">Encrypted ephemeris streams over the Space Data Network's GossipSub pub/sub layer. Conjunction assessments run continuously as new encrypted positions arrive &mdash; not as a periodic batch job gated by a central coordinator.</p>
+          </div>
+          <div style="background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: var(--radius); padding: 32px; transition: all 0.3s ease;">
+            <div style="width: 48px; height: 48px; border-radius: 14px; background: rgba(180,98,138,0.12); display: flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+              <svg width="24" height="24" fill="none" stroke="#B4628A" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            </div>
+            <h4 style="font-size: 16px; font-weight: 700; margin-bottom: 8px;">Microsoft SEAL BFV</h4>
+            <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">Powered by <a href="https://github.com/microsoft/SEAL" target="_blank" style="color: #B4628A; text-decoration: underline;">Microsoft SEAL v4.1.1</a>, an industry-standard homomorphic encryption library. BFV scheme with 4096-polynomial degree provides 128-bit security with ~2KB ciphertext overhead per encrypted value.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Technical spec callout -->
+      <div style="background: linear-gradient(135deg, rgba(77,168,130,0.08), rgba(91,141,239,0.08)); border: 1px solid rgba(77,168,130,0.25); border-radius: var(--radius); padding: 36px 40px; text-align: center;">
+        <div style="display: flex; justify-content: center; gap: 64px; flex-wrap: wrap; margin-bottom: 16px;">
+          <div>
+            <div style="font-size: 36px; font-weight: 800; background: linear-gradient(135deg, #6DC49E, #6DC4CE); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">8</div>
+            <div style="font-size: 13px; color: var(--text-secondary);">HE operations per time step</div>
+          </div>
+          <div>
+            <div style="font-size: 36px; font-weight: 800; background: linear-gradient(135deg, #5B8DEF, #7C6FD4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">~2KB</div>
+            <div style="font-size: 13px; color: var(--text-secondary);">ciphertext per encrypted value</div>
+          </div>
+          <div>
+            <div style="font-size: 36px; font-weight: 800; background: linear-gradient(135deg, #7C6FD4, #B4628A); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">128-bit</div>
+            <div style="font-size: 13px; color: var(--text-secondary);">security (SEAL BFV 4096)</div>
+          </div>
+          <div>
+            <div style="font-size: 36px; font-weight: 800; background: linear-gradient(135deg, #C4933A, #DDB05A); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">0</div>
+            <div style="font-size: 13px; color: var(--text-secondary);">private positions revealed</div>
+          </div>
+        </div>
+        <p style="font-size: 15px; color: var(--text-secondary); max-width: 700px; margin: 0 auto;">Encrypted conjunction assessment is live in the FlatBuffers fork and shipping in the Space Data Network by end of February 2026. This is the first implementation of homomorphic encryption for space traffic management.</p>
+      </div>
+    </div>
+  </section>
+
   <!-- No Central Authority Section -->
   <section id="decentralized">
     <div class="container">
