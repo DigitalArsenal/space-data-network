@@ -527,6 +527,173 @@ The proprietary 3D visualization engine that is the primary consumer of SDN data
 | AI/NLP Control | — | — | — | — | Yes (MCP) |
 | Offline Capable | Partial | Full | — | — | Partial |
 
+### 3.6 Homomorphic Encryption — Encrypted Conjunction Assessment
+
+The Space Data Network includes **homomorphic encryption (HE)** built directly into the FlatBuffers serialization layer, enabling conjunction assessment on encrypted satellite ephemeris data. This is the absolute minimum foundation for a functional, secure space traffic management system.
+
+#### The Problem: Why Operators Don't Share Their Best Data
+
+| Barrier | Details |
+|---------|---------|
+| **National Security** | Military and intelligence satellites have classified orbits. Sharing precise ephemeris reveals capabilities, coverage gaps, and mission intent. |
+| **Commercial IP** | Constellation geometry represents billions in investment. Orbital slots, station-keeping strategies, and coverage patterns are proprietary trade secrets. |
+| **Liability Exposure** | Sharing data creates legal obligations. If you share ephemeris and a conjunction is missed, you may bear greater liability than if you shared nothing. |
+| **Trust Deficit** | No operator wants to trust a central authority with their most sensitive data. The US DoD's 18th SDS is the de facto authority today, but allies and commercial operators want alternatives. |
+
+#### The Solution: Math on Ciphertext
+
+Using **Microsoft SEAL v4.1.1** (BFV lattice-based scheme), the FlatBuffers fork supports homomorphic arithmetic on encrypted data fields. Operators encrypt their satellite positions with a public key and send them via **direct authenticated libp2p streams** to a mutually-agreed assessor node. The assessor computes squared Euclidean distance entirely on ciphertext; only the assessor can decrypt the result — and the result is a *distance*, not a position.
+
+**Critical architecture decision:** Encrypted ephemeris is **never broadcast on GossipSub** or any public channel. If ciphertexts were public, any peer could grab them and perform HE computations locally against arbitrary probe positions — the HE math doesn't need the secret key. This would allow adversaries to triangulate hidden satellite orbits by binary-searching with fake ephemeris. Instead, ciphertexts flow exclusively through **point-to-point authenticated streams** to the assessor, who is the only entity that ever holds both parties' ciphertexts and performs the computation.
+
+#### How It Works
+
+```
+Step 1: Assessor generates HE key pair
+        ├── Public key → distributed to operators (via direct stream)
+        └── Secret key → kept by assessor only
+
+Step 2: Operators encrypt ephemeris (each independently)
+        Operator A: enc(x_a), enc(y_a), enc(z_a) → sent to assessor via direct stream
+        Operator B: enc(x_b), enc(y_b), enc(z_b) → sent to assessor via direct stream
+        ⚠ Ciphertexts NEVER touch GossipSub or any public channel
+
+Step 3: Assessor computes on encrypted data (NO secret key needed for math)
+        ct_dx = Sub(enc(x_a), enc(x_b))
+        ct_dy = Sub(enc(y_a), enc(y_b))
+        ct_dz = Sub(enc(z_a), enc(z_b))
+        ct_dx2 = Mul(ct_dx, ct_dx)
+        ct_dy2 = Mul(ct_dy, ct_dy)
+        ct_dz2 = Mul(ct_dz, ct_dz)
+        ct_dist2 = Add(ct_dx2, Add(ct_dy2, ct_dz2))
+
+Step 4: Assessor decrypts ONLY the distance
+        dist² = Decrypt(ct_dist2)
+        if dist² < threshold² → CONJUNCTION ALERT
+```
+
+**8 homomorphic operations per time step. Zero private positions revealed.**
+
+#### Implementation Details
+
+| Component | Details |
+|-----------|---------|
+| **HE Library** | Microsoft SEAL v4.1.1, compiled into WASM via Emscripten |
+| **Scheme** | BFV (Brakerski/Fan-Vercauteren) — integer arithmetic on lattices |
+| **Polynomial Degree** | 4096 (128-bit security) |
+| **Ciphertext Size** | ~2KB per encrypted value |
+| **Float Encoding** | Fixed-point with scale 2¹⁶ (65536) — ~4-5 decimal digits of precision |
+| **Schema Integration** | `he_encrypted` attribute on FlatBuffer numeric fields |
+| **Supported Types** | int8–int64, uint8–uint64, float, double, and vectors thereof |
+| **Key Serialization** | FlatBuffer schema (`he_context.fbs`) with file identifier `HEBK` |
+| **WASI Bindings** | C interface for WASM: `wasi_he_encrypt_int64()`, `wasi_he_add()`, etc. |
+
+#### FlatBuffer Schema Example
+
+```fbs
+attribute "he_encrypted";
+
+table EncryptedEphemeris {
+  object_id: uint64;             // Public — NORAD catalog ID
+  epoch: double;                 // Public — timestamp
+  x_km: double (he_encrypted);  // Encrypted — position X
+  y_km: double (he_encrypted);  // Encrypted — position Y
+  z_km: double (he_encrypted);  // Encrypted — position Z
+}
+```
+
+#### Operational Implications
+
+1. **Classified satellites can participate** in global conjunction assessment without compromising operational security
+2. **Commercial IP is protected** — constellation positioning (a multi-billion-dollar investment) never leaves the operator's control
+3. **Liability is reduced** — operators contribute to safety without creating data-sharing obligations
+4. **No central authority required** — any SDN full node can serve as an assessor; operators choose by mutual agreement. The role is decentralized even though the data path is point-to-point.
+5. **Continuous, not periodic** — operators stream encrypted ephemeris to the assessor via persistent direct streams, enabling continuous conjunction monitoring without batch delays
+
+#### Anti-Probing Defenses (Ephemeris Scanning Attack Mitigation)
+
+**The Attack:** An adversary wants to locate hidden/classified satellites. If encrypted ephemeris were broadcast on the public network (GossipSub), an attacker could grab any operator's ciphertext and perform HE distance computations locally against thousands of probe positions — HE arithmetic doesn't need the secret key. By observing which probes produce "near" results, the attacker triangulates the hidden orbit.
+
+**The Fundamental Defense: Private Data Path**
+
+Encrypted ephemeris **never touches GossipSub or any public channel**. Ciphertexts flow exclusively through direct, authenticated libp2p streams:
+
+```
+Operator A ──[direct stream]──► Assessor Node ◄──[direct stream]── Operator B
+                                      │
+                                 HE computation
+                                 (only entity with
+                                  both ciphertexts)
+                                      │
+                              Decrypt → SAFE/ALERT
+                                      │
+                     ┌────────────────┴────────────────┐
+                     ▼                                 ▼
+               Operator A                        Operator B
+              (binary result)                   (binary result)
+```
+
+The assessor is the **only entity that ever holds both parties' ciphertexts**. No other peer on the network can perform HE computations against your ephemeris because they never see it.
+
+The SDN P2P network is still used for:
+- **Discovery** — finding assessor nodes and potential assessment partners via DHT
+- **Signaling** — handshake/negotiation for assessment sessions
+- **Public data** — non-sensitive data (public TLEs, CDMs, catalog objects) still flows over GossipSub
+- **Result delivery** — binary SAFE/ALERT notifications
+
+**Defense-in-Depth Layers (beyond the private data path):**
+
+| Layer | Mechanism | What It Prevents |
+|-------|-----------|-----------------|
+| **1. Assessor as Gatekeeper** | The assessor node performs ALL HE computation and ALL decryption. It enforces policy: both operators must be authenticated, the assessment must be mutually authorized, and each operator's ciphertext is received via their direct authenticated stream. | No third party can compute against your ciphertext because they never have it. The assessor controls the only copy. |
+| **2. Bilateral Opt-In** | Both operators must complete a mutual handshake (signed by both HD wallet identities) before the assessor accepts any ciphertexts. Neither party can unilaterally initiate an assessment. | Prevents an attacker from creating fake identities and running assessments against unwilling targets. |
+| **3. Identity Staking** | Each SDN identity must post a cryptographic bond or accumulate reputation through verified activity before participating in HE assessments. Malicious behavior triggers slashing. | Makes Sybil attacks expensive — creating many fake identities to probe from different angles requires proportional economic cost. |
+| **4. Proof of Custody** | Ephemeris submissions must be corroborated by at least one independent source (radar track from a trusted sensor network, or cross-reference with publicly tracked catalog objects). | Prevents submission of fabricated ephemeris for nonexistent satellites. You can't probe with a "satellite" that doesn't exist. |
+| **5. Rate Limiting** | The assessor limits each identity to N assessment sessions per epoch. Limits scale with reputation/stake. | Even if an attacker bypasses bilateral consent (e.g., by colluding with a target), the rate limit caps information extraction. |
+| **6. Threshold-Only Output** | Assessments return only a binary SAFE/ALERT, not the computed distance. Precise distance requires both parties to opt in post-alert. | Each query leaks at most 1 bit. Triangulation requires O(log(orbital_volume/threshold)) queries minimum per orbital dimension. |
+| **7. Differential Privacy** | The assessor adds calibrated Laplace noise to the distance before threshold comparison. | Even the 1-bit threshold output is noisy — repeated queries give inconsistent answers, defeating systematic probing. |
+| **8. Anomaly Detection** | The assessor monitors for scanning signatures: rapid sequential assessments, grid-pattern positions, ephemeris violating Keplerian constraints, single identity requesting assessments against many different operators. | Catches attackers who manage to get through the other layers by detecting statistical patterns across many queries. |
+
+**Protocol Flow:**
+
+```
+1. Discovery: Operator A finds Operator B via SDN DHT
+   → Both verify each other's identity (HD wallet signatures)
+   → Both select a mutually-trusted assessor node
+
+2. Handshake: Three-way mutual authorization
+   → A signs: "I authorize assessment with B via Assessor X"
+   → B signs: "I authorize assessment with A via Assessor X"
+   → Assessor verifies both signatures + stake + rate limits
+
+3. Key Distribution: Assessor generates fresh HE key pair for this session
+   → Public key sent to A and B via their direct streams
+   → Secret key never leaves the assessor
+
+4. Encrypted Submission: Each operator encrypts and sends via direct stream
+   → A sends enc(x_a, y_a, z_a) to Assessor (never broadcast)
+   → B sends enc(x_b, y_b, z_b) to Assessor (never broadcast)
+   → Assessor validates: proof of custody, Keplerian sanity check
+
+5. Computation: Assessor performs HE distance + adds noise
+   → noisy_d² = HE_distance²(A, B) + Laplace(λ)
+   → Result: noisy_d² < threshold² → ALERT or SAFE
+
+6. Disclosure: Binary result sent to both operators
+   → If ALERT and both opt in → precise distance revealed
+   → Assessor logs session for anomaly detection
+```
+
+**Why This Is Secure:** The critical insight is that HE arithmetic is permissionless — anyone with ciphertexts can compute on them. Therefore, **ciphertexts themselves must be treated as sensitive**, even though they're encrypted. The private data path ensures that the only entity capable of computing on your ciphertext is the assessor you chose, and the only decryption results you see are for assessments you mutually authorized.
+
+**Decentralization is preserved:** Any SDN full node can serve as an assessor. Operators aren't locked into a single authority — they can choose different assessors for different assessment partners, rotate assessors, or even run their own assessor node. The trust model is: "I trust this specific node to perform my computation honestly" — not "I trust a central authority with all my data forever."
+
+#### Status
+
+- **Working**: Encrypted conjunction assessment test passing (5 time steps, 15km threshold, conjunction detected at 7.3km)
+- **Timeline**: Shipping in SDN by end of February 2026
+- **Code**: [flatbuffers/tests/he_encryption_test.cpp](https://github.com/DigitalArsenal/flatbuffers/blob/cb41d970d2429736daa8cdadd1c63c3b1b5bf5db/tests/he_encryption_test.cpp#L342)
+
 ---
 
 ## 4. Website Unification Strategy
@@ -627,18 +794,19 @@ All commercial features — OrbPro visualization, MCP AI control, ModSim simulat
 
 #### Free — Awareness ($0/seat/month)
 
-The free tier is generous by design — it drives network effects and SDN adoption.
+The free tier is built on open-source algorithms — generous by design to drive network effects and SDN adoption. **No saving, no link sharing.**
 
 | Feature | Details |
 |---------|---------|
-| **Satellite Catalog** | Full public catalog (GP/TLE) — every tracked object |
-| **Full History** | Complete historical orbital data, no time restrictions |
-| **Conjunction Assessments** | View all public conjunction data messages (CDMs) |
-| **3D Globe** | OrbPro2-powered CesiumJS visualization |
-| **Upload Data** | Publish data to Space Data Network (any SDS schema) |
-| **SDN Node** | Built-in light peer — you're part of the network |
+| **Conjunction Assessment** | View all public conjunction data messages (CDMs) from the SDN |
+| **SGP4 / SGP4-XP Propagation** | WASM-accelerated TLE/GP propagation — standard and extended precision |
+| **High-Def Orbit Propagation** | Tudat-WASM numerical propagation (gravity harmonics, drag, SRP, third-body) |
+| **3D Globe Visualization** | OrbPro2-powered CesiumJS with full satellite catalog |
+| **Crypto Wallet Integration** | HD-Wallet-WASM: BIP-32/39/44 key derivation, Ed25519 signing, peer identity |
+| **FIPS 140-3 Encryption** | NIST-validated cryptographic module for all on-wire data |
+| **vCards on SDN** | View and publish entity profile cards (EPM ↔ vCard 4.0) on the Space Data Network |
+| **SDN Light Node** | Built-in P2P node — you're part of the network, contribute to data availability |
 | **Object Search** | Search by NORAD ID, name, intl designator, object type |
-| **Basic Alerts** | Email notification for conjunction events on your tracked objects (up to 10) |
 
 #### Explorer — Share & Save ($10/seat/month)
 
@@ -648,69 +816,70 @@ For hobbyists, students, and researchers who want to save and share their work.
 |---------|---------|
 | Everything in Free | + |
 | **Link Sharing** | Generate shareable URLs for any view, object, or analysis |
-| **Scenario Saving** | Save up to 50 scenarios (camera position, tracked objects, time range, overlays) |
+| **10 Saved Scenarios** | Save camera position, tracked objects, time range, and overlays |
 | **Data Export** | Export data as CSV, JSON, or FlatBuffers binary |
 | **Custom Alerts** | Configure conjunction thresholds, miss distance filters, email + in-app notifications |
-| **Tracked Objects** | Up to 100 objects with persistent monitoring |
 | **Embed Widget** | Embeddable 3D globe iframe for websites/blogs |
 | **Bookmarks & Tags** | Organize objects into collections with custom tags |
-| **Dark/Light Theme** | UI customization |
 
 #### Analyst — Analyze ($20/seat/month)
 
-For SSA analysts, GIS developers, and defense analysts who need professional tooling.
+For SSA analysts and researchers who need simulation and maneuver planning.
 
 | Feature | Details |
 |---------|---------|
 | Everything in Explorer | + |
+| **100 Saved Scenarios** | Expanded scenario library |
+| **Spacecraft Simulator** | Basilisk-WASM: attitude dynamics, reaction wheels, thrusters, sensors, FSW algorithms (310+ classes) |
+| **Lambert Transfer Planning** | Compute minimum-energy transfer orbits between any two points |
+| **Hohmann Transfer Planning** | Two-impulse coplanar orbit transfers with delta-V budgets |
 | **Sensor FOV Modeling** | Define conic, rectangular, and custom-geometry sensor volumes |
-| **Access Analysis** | Multi-tier visibility checks: range → body occlusion → FOV → terrain |
-| **Viewshed Analysis** | GPU-accelerated terrain visibility with shadow maps |
-| **SGP4 Propagation** | WASM-accelerated orbit propagation with shared memory |
-| **Conjunction Screening** | Custom screening volumes, probability thresholds, what-if miss distance |
+| **Access & Viewshed Analysis** | Multi-tier visibility: range → body occlusion → FOV → terrain |
 | **API Access** | REST + WebSocket API — 25K calls/day |
-| **Unlimited Scenarios** | No cap on saved scenarios |
-| **Unlimited Tracked Objects** | Monitor your entire constellation |
-| **Data Overlay Layers** | Space weather, atmospheric density, ground tracks, coverage maps |
-| **Webhook Alerts** | Push alerts to Slack, Teams, PagerDuty, or any HTTP endpoint |
 | **Marketplace Browse** | Browse and purchase data/plugins from the SDN marketplace |
 
 #### Operator — Simulate ($30/seat/month)
 
-For satellite operators, mission planners, and flight dynamics teams who need simulation and AI.
+For satellite operators, defense analysts, and mission planners who need advanced simulation and team coordination.
 
 | Feature | Details |
 |---------|---------|
 | Everything in Analyst | + |
-| **High-Fidelity Propagation** | Tudat-WASM: full force models (gravity harmonics, drag, SRP, third-body, tides) |
-| **Spacecraft Simulation** | Basilisk-WASM: attitude dynamics, reaction wheels, thrusters, sensors, FSW algorithms |
-| **Maneuver Planning** | Plan and simulate orbital maneuvers, delta-V budgets, station-keeping |
-| **What-If Scenarios** | Fork any scenario, change parameters, compare outcomes side-by-side |
+| **Monte Carlo Analysis** | Batch simulations with parameter variations and statistical output |
+| **Missile Trajectory Simulation** | Ballistic and cruise missile flight modeling with atmospheric effects |
+| **Launch & Reentry Modeling** | Ascent trajectory planning, reentry corridor analysis, debris footprint prediction |
+| **500 Saved Scenarios** | Large scenario library for operational workflows |
+| **Operator Chat** | Real-time team messaging with arbitrary groups created through the Space Data Network |
 | **AI/NLP Globe Control** | MCP-powered natural language: "Show me all Starlink over Europe" / "Propagate ISS 72 hours" |
-| **Monte Carlo Analysis** | Run batch simulations with parameter variations |
-| **API Access** | 100K calls/day + streaming WebSocket feeds |
-| **Marketplace Purchasing** | Buy premium data feeds, plugins, and analysis from the marketplace |
 | **Collision Avoidance Workflow** | End-to-end CA: detect → assess → plan maneuver → simulate → share CDM |
+| **API Access** | 100K calls/day + streaming WebSocket feeds |
 | **CZML/KML Export** | Export scenarios for use in other tools |
 
 #### Mission — Command ($40/seat/month)
 
-For mission operations centers, defense teams, and organizations running multi-user operations.
+For mission operations centers, defense teams, and organizations running multi-domain operations.
 
 | Feature | Details |
 |---------|---------|
 | Everything in Operator | + |
-| **Combat/Mission Simulation** | OrbPro2-ModSim: 608 entity types, 18 WASM plugins — air, space, surface, subsurface |
+| **RPO / Proximity Operations** | Rendezvous & proximity operations planning — relative motion, approach corridors, safety ellipsoids |
+| **Combat/Mission Simulation** | OrbPro2-ModSim: 608 entity types across 35 WASM plugins — air, space, ground, naval, subsurface |
+| **Unlimited Saved Scenarios** | No cap on scenario storage |
+| **Electronic Warfare (EW)** | Jamming, spoofing, signal analysis, and electromagnetic spectrum modeling |
+| **Multi-Domain Simulation** | Aircraft 6DOF, helicopter, naval vessels, submarines (sonar), ground vehicles, ballistics |
+| **Sensor Fusion & Tracking** | Multi-sensor data fusion (radar, optical, IR), track correlation, custody management |
+| **Fire Control Systems** | Weapons engagement zones, kill chains, target assignment optimization |
+| **Damage & Vulnerability Assessment** | Lethality modeling, armor penetration, blast effects, structural vulnerability |
+| **Threat Modeling** | Adversary capability analysis, order of battle, threat rings, engagement envelopes |
+| **Ground Segment Operations** | Ground station scheduling, contact planning, pass prediction, link margin analysis |
+| **Comms & Link Budget** | RF propagation, antenna patterns, interference analysis, link availability |
+| **Power & Thermal Analysis** | Solar array modeling, battery state-of-charge, thermal environment simulation |
 | **Team Workspaces** | Shared scenarios, annotations, and analysis across your team |
-| **Role-Based Access** | Admin / Analyst / Viewer roles within your organization |
+| **Operator Chat (Teams)** | Arbitrary team creation through SDN for cross-org coordination |
 | **SSO/SAML** | Enterprise identity provider integration |
 | **Marketplace Selling** | List and sell your own data, plugins, and analysis on the marketplace |
-| **Custom Plugin Hosting** | Deploy proprietary WASM plugins to your workspace |
 | **Unlimited API** | No rate limits, priority queue |
-| **Priority Support** | Dedicated support channel, 4-hour response SLA |
 | **Audit Logging** | Full activity audit trail for compliance |
-| **FIPS 140-3 Crypto** | hd-wallet-wasm in FIPS mode for regulated environments |
-| **Dedicated SDN Node** | Optional managed full node for your organization |
 | **On-Prem Deployment** | Self-hosted option for air-gapped / classified networks |
 
 #### Volume Pricing
@@ -813,7 +982,7 @@ All tiers are per-seat. Volume discounts for annual commitments:
 > DigitalArsenal.io, Inc.
 
 **Slide 2 — The Problem**
-- 10,000+ active satellites, 40,000+ tracked objects, growing 30% annually
+- 15,000+ active satellites, 30,000+ tracked objects, growing rapidly
 - Data exchange relies on email, FTP, and 1960s-era formats (TLE)
 - $50K-$500K/year for orbital mechanics software
 - No standardized marketplace for space data
@@ -836,7 +1005,7 @@ All tiers are per-seat. Volume discounts for annual commitments:
 - FlatSQL: SQL queries over binary data at 580K ops/sec
 - Tudat + Basilisk WASM: Full astrodynamics simulation in browser (world first)
 - HD-Wallet-WASM: Cryptographic identity and blockchain integration
-- **6 years of R&D, 100K+ lines of code, impossible to replicate quickly**
+- **10 years of R&D, 100K+ lines of code, impossible to replicate quickly**
 
 **Slide 6 — Commercial Product: SpaceAware.io**
 - One product, five tiers, $0-$40/seat/month — replaces $500K/yr STK
@@ -1211,7 +1380,7 @@ Claude Teams workflow:
 | **ITAR/export control on simulation tools** | Medium | Medium | Tudat (Dutch) and Basilisk (university) have academic exceptions. Browser-WASM distribution is software, not hardware. Legal review needed. |
 | **Crypto/NFT regulatory risk** | Medium | Medium | NFT features are optional layer. Support Stripe/fiat payments as primary. |
 | **Slow enterprise sales cycle** | High | Medium | Focus on self-serve (SpaceAware.io) for revenue while building enterprise pipeline. Government grants bridge the gap. |
-| **Open-source competitors** | Medium | Medium | 6+ years of R&D is hard to replicate. Community + ecosystem effects compound. Stay 2 years ahead. |
+| **Open-source competitors** | Medium | Medium | 10+ years of R&D is hard to replicate. Community + ecosystem effects compound. Stay 2 years ahead. |
 | **Key person risk** | High | High | Document everything. Build team. Use Claude Teams to capture institutional knowledge. |
 | **Decentralization adoption resistance** | Medium | Medium | Position SDN as optional enhancement, not replacement. Support centralized deployment too. |
 
