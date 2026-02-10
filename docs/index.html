@@ -6976,11 +6976,90 @@ node.subscribe(<span class="code-string">'OMM'</span>, (data, peer) =&gt; {
       }
     });
 
+    // Modal system
+    function initModals() {
+      const loginModal = document.getElementById('login-modal');
+      const keysModal = document.getElementById('keys-modal');
+      const navLogin = document.getElementById('nav-login');
+      const navKeys = document.getElementById('nav-keys');
+      const navLogout = document.getElementById('nav-logout');
+      const mobileLogin = document.getElementById('mobile-login');
+
+      function openModal(modal) {
+        if (modal) modal.classList.add('open');
+      }
+
+      function closeModal(modal) {
+        if (modal) modal.classList.remove('open');
+      }
+
+      // Login button opens login modal
+      if (navLogin) navLogin.addEventListener('click', () => openModal(loginModal));
+      if (mobileLogin) mobileLogin.addEventListener('click', () => {
+        document.getElementById('mobileMenu').classList.remove('open');
+        openModal(loginModal);
+      });
+
+      // Profile/keys icon opens keys modal
+      if (navKeys) navKeys.addEventListener('click', () => openModal(keysModal));
+
+      // Close buttons
+      document.querySelectorAll('.modal-close').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const modal = btn.closest('.modal');
+          if (modal) closeModal(modal);
+        });
+      });
+
+      // Click outside modal to close
+      [loginModal, keysModal].forEach(modal => {
+        if (modal) modal.addEventListener('click', (e) => {
+          if (e.target === modal) closeModal(modal);
+        });
+      });
+
+      // Escape key to close
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          closeModal(loginModal);
+          closeModal(keysModal);
+        }
+      });
+
+      // Login modal method tabs
+      document.querySelectorAll('.method-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          const method = tab.dataset.method;
+          document.querySelectorAll('.method-tab').forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.method-content').forEach(c => c.classList.remove('active'));
+          tab.classList.add('active');
+          const content = document.getElementById(method + '-method');
+          if (content) content.classList.add('active');
+        });
+      });
+
+      // Keys modal tabs
+      document.querySelectorAll('.modal-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          const tabId = tab.dataset.modalTab;
+          document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.modal-tab-content').forEach(c => c.classList.remove('active'));
+          tab.classList.add('active');
+          const content = document.getElementById(tabId);
+          if (content) content.classList.add('active');
+        });
+      });
+
+      // Expose for other code to use
+      window.sdnModals = { openModal, closeModal, loginModal, keysModal, navKeys, navLogin, navLogout };
+    }
+
     // Initialize
     document.addEventListener('DOMContentLoaded', () => {
       initVideo();
       initAccordion();
       initMobileMenu();
+      initModals();
       initPKIDemo();
       initDynamicStats();
       if (location.hash) {
