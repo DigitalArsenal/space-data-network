@@ -39,7 +39,7 @@
     "url": "https://github.com/spacedatanetwork/sdn-js.git"
   },
   "dependencies": {
-    "hd-wallet-wasm": "0.2.1",
+    "hd-wallet-wasm": "1.2.0",
     "vcard-cryptoperson": "^1.1.10",
     "qrcode": "^1.5.3",
     "@chainsafe/libp2p-gossipsub": "^13.0.0",

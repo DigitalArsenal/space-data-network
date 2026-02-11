@@ -6,6 +6,7 @@
 
 export { SDNNode } from './node';
 export type { SDNConfig, SDNNodeEvents } from './node';
+export { LEGACY_ID_EXCHANGE_PROTOCOL, IPFS_BOOTSTRAP_PEERS } from './node';
 export { SDNStorage } from './storage';
 export type { StoredRecord, QueryFilter } from './storage';
 export { loadEdgeRelays, getBootstrapRelays, DEFAULT_EDGE_RELAYS } from './edge-discovery';

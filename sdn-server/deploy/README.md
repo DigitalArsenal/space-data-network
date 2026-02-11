@@ -4,6 +4,34 @@ This directory contains deployment configurations for the Space Data Network ser
 
 ## Systemd Services
 
+### Ingestion Worker Service
+
+The ingestion worker pulls CelesTrak feeds continuously and performs checkpointed Space-Track gap-fill in bounded day batches.
+
+```bash
+# Install ingestion worker
+sudo cp spacedatanetwork-ingest.service /etc/systemd/system/
+sudo mkdir -p /opt/spacedatanetwork/bin
+sudo mkdir -p /opt/data/sdn /opt/data/raw
+sudo cp ../bin/spacedatanetwork /opt/spacedatanetwork/bin/
+
+# Set Space-Track credentials (required for gap-fill)
+sudo systemctl edit spacedatanetwork-ingest
+# Add:
+# [Service]
+# Environment=SPACETRACK_IDENTITY=your_username
+# Environment=SPACETRACK_PASSWORD=your_password
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable spacedatanetwork-ingest
+sudo systemctl start spacedatanetwork-ingest
+
+# Check status
+sudo systemctl status spacedatanetwork-ingest
+sudo journalctl -u spacedatanetwork-ingest -f
+```
+
 ### Edge Relay Service
 
 The edge relay provides WebSocket and QUIC transport for browser clients without storing data.
@@ -80,6 +108,24 @@ sudo systemctl start spacedatanetwork
 | SDN_LISTEN | Listen addresses | TCP 4001, WS 8080, QUIC 4001 |
 | SDN_MAX_CONNECTIONS | Max peer connections | 1000 |
 | SDN_HEALTH_PORT | Health check HTTP port | 9090 |
+| SPACETRACK_IDENTITY | Space-Track username for gap-fill | (empty) |
+| SPACETRACK_PASSWORD | Space-Track password for gap-fill | (empty) |
+| STRIPE_SECRET_KEY | Stripe API secret key for checkout sessions | (empty) |
+| STRIPE_WEBHOOK_SECRET | Stripe webhook signing secret | (empty) |
+| STRIPE_SUCCESS_URL | Checkout success redirect URL | (empty) |
+| STRIPE_CANCEL_URL | Checkout cancel redirect URL | (empty) |
+
+### Stripe Webhook Routing
+
+If using Cloudflare in front of the core node, route Stripe webhooks to:
+
+`POST /api/storefront/payments/stripe/webhook`
+
+Example origin URL:
+
+```bash
+https://api.spaceaware.io/api/storefront/payments/stripe/webhook
+```
 
 ## Health Checks
 

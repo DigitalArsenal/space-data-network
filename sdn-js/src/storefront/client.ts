@@ -22,14 +22,12 @@ import type {
   CreateReviewRequest,
   PurchaseStatus,
   PaymentMethod,
-  CryptoPaymentResult,
   FiatGatewayRequest,
   FiatGatewayResult,
   CreditsTransaction,
   SellerDashboard,
   BuyerDashboard,
   TrustScore,
-  DeliveryResult,
 } from './types';
 
 /** Storefront client configuration */

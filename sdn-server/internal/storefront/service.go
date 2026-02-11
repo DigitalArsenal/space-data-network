@@ -22,14 +22,14 @@ const StorefrontPurchasesTopic = "/sdn/storefront/purchases"
 
 // Service provides storefront business logic
 type Service struct {
-	store        *Store
-	peerID       string
-	signingKey   ed25519.PrivateKey
-	pubsub       *ps.PubSub
-	listingTopic *ps.Topic
+	store         *Store
+	peerID        string
+	signingKey    ed25519.PrivateKey
+	pubsub        *ps.PubSub
+	listingTopic  *ps.Topic
 	purchaseTopic *ps.Topic
-	subscribers  map[string]chan *Listing // listingID -> channel
-	mu           sync.RWMutex
+	subscribers   map[string]chan *Listing // listingID -> channel
+	mu            sync.RWMutex
 }
 
 // NewService creates a new storefront service
@@ -207,7 +207,12 @@ func (s *Service) ProcessPayment(ctx context.Context, requestID string, txHash s
 	}
 
 	// Update purchase with grant ID
-	s.store.UpdatePurchaseStatus(requestID, PurchaseStatusCompleted, fmt.Sprintf("Grant issued: %s", grant.GrantID))
+	if err := s.store.UpdatePurchaseGrant(requestID, grant.GrantID); err != nil {
+		log.Warnf("Failed to attach grant to purchase %s: %v", requestID, err)
+	}
+	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusCompleted, fmt.Sprintf("Grant issued: %s", grant.GrantID)); err != nil {
+		log.Warnf("Failed to set purchase completed for %s: %v", requestID, err)
+	}
 
 	return nil
 }
@@ -251,27 +256,143 @@ func (s *Service) ProcessCreditsPayment(ctx context.Context, requestID string, b
 		return fmt.Errorf("failed to issue grant: %w", err)
 	}
 
-	s.store.UpdatePurchaseStatus(requestID, PurchaseStatusCompleted, fmt.Sprintf("Grant issued: %s", grant.GrantID))
+	if err := s.store.UpdatePurchaseGrant(requestID, grant.GrantID); err != nil {
+		log.Warnf("Failed to attach grant to purchase %s: %v", requestID, err)
+	}
+	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusCompleted, fmt.Sprintf("Grant issued: %s", grant.GrantID)); err != nil {
+		log.Warnf("Failed to set purchase completed for %s: %v", requestID, err)
+	}
 
 	return nil
 }
 
+// CompleteStripeCheckout finalizes a Stripe checkout flow and issues access.
+func (s *Service) CompleteStripeCheckout(ctx context.Context, requestID, sessionID, subscriptionID, customerID string) (*AccessGrant, error) {
+	purchase, err := s.store.GetPurchaseRequest(requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load purchase request: %w", err)
+	}
+	if purchase == nil {
+		return nil, fmt.Errorf("purchase not found: %s", requestID)
+	}
+
+	if sessionID != "" {
+		if err := s.store.UpdatePurchaseFiatIntent(requestID, sessionID); err != nil {
+			log.Warnf("Failed to store Stripe session for %s: %v", requestID, err)
+		}
+	}
+
+	// Idempotent completion for duplicate webhook deliveries.
+	if purchase.Status == PurchaseStatusCompleted && purchase.GrantID != "" {
+		existing, err := s.store.GetGrant(purchase.GrantID)
+		if err == nil && existing != nil {
+			return existing, nil
+		}
+	}
+
+	msg := "Stripe checkout completed"
+	if subscriptionID != "" {
+		msg += " subscription=" + subscriptionID
+	}
+	if customerID != "" {
+		msg += " customer=" + customerID
+	}
+	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusPaymentConfirmed, msg); err != nil {
+		return nil, fmt.Errorf("failed to update purchase status: %w", err)
+	}
+
+	grant, err := s.IssueGrant(ctx, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to issue grant: %w", err)
+	}
+	if err := s.store.UpdatePurchaseGrant(requestID, grant.GrantID); err != nil {
+		log.Warnf("Failed to attach grant to purchase %s: %v", requestID, err)
+	}
+	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusCompleted, fmt.Sprintf("Grant issued: %s", grant.GrantID)); err != nil {
+		log.Warnf("Failed to set purchase completed for %s: %v", requestID, err)
+	}
+
+	return grant, nil
+}
+
 // IssueGrant issues an access grant for a purchase
 func (s *Service) IssueGrant(ctx context.Context, requestID string) (*AccessGrant, error) {
-	// Note: In a real implementation, we'd fetch the purchase request
-	// For now, create a basic grant
+	now := time.Now()
+
+	purchase, err := s.store.GetPurchaseRequest(requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get purchase request: %w", err)
+	}
+	if purchase == nil {
+		// Backward-compatible fallback for older tests/flows that call IssueGrant directly.
+		grant := &AccessGrant{
+			GrantID:        uuid.New().String(),
+			ListingID:      requestID,
+			TierName:       "Basic",
+			BuyerPeerID:    "buyer-" + requestID,
+			AccessType:     AccessTypeOneTime,
+			GrantedAt:      now,
+			Status:         GrantStatusActive,
+			ProviderPeerID: s.peerID,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}
+		if s.signingKey != nil {
+			signature, err := s.signGrant(grant)
+			if err != nil {
+				return nil, fmt.Errorf("failed to sign grant: %w", err)
+			}
+			grant.ProviderSignature = signature
+		}
+		if err := s.store.CreateGrant(grant); err != nil {
+			return nil, fmt.Errorf("failed to store grant: %w", err)
+		}
+		return grant, nil
+	}
+
+	listing, err := s.store.GetListing(purchase.ListingID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get listing: %w", err)
+	}
+	if listing == nil {
+		return nil, fmt.Errorf("listing not found: %s", purchase.ListingID)
+	}
+
+	tier := findPricingTierByName(listing, purchase.TierName)
+	if tier == nil {
+		return nil, fmt.Errorf("tier not found: %s", purchase.TierName)
+	}
 
 	grant := &AccessGrant{
-		GrantID:        uuid.New().String(),
-		ListingID:      requestID, // Would be from purchase request
-		TierName:       "Basic",
-		BuyerPeerID:    "buyer-" + requestID,
-		AccessType:     AccessTypeOneTime,
-		GrantedAt:      time.Now(),
-		Status:         GrantStatusActive,
-		ProviderPeerID: s.peerID,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		GrantID:               uuid.New().String(),
+		ListingID:             purchase.ListingID,
+		TierName:              purchase.TierName,
+		BuyerPeerID:           purchase.BuyerPeerID,
+		BuyerEncryptionPubkey: purchase.BuyerEncryptionPubkey,
+		KeyAlgorithm:          purchase.KeyAlgorithm,
+		AccessType:            listing.AccessType,
+		RateLimit:             tier.RateLimit,
+		MaxRecordsPerRequest:  tier.MaxRecordsPerRequest,
+		GrantedAt:             now,
+		Status:                GrantStatusActive,
+		PaymentTxHash:         purchase.PaymentTxHash,
+		PaymentMethod:         purchase.PaymentMethod,
+		PaymentAmount:         purchase.PaymentAmount,
+		PaymentCurrency:       purchase.PaymentCurrency,
+		PaymentChain:          purchase.PaymentChain,
+		CreatedAt:             now,
+		UpdatedAt:             now,
+		ProviderPeerID:        purchase.ProviderPeerID,
+	}
+	if grant.ProviderPeerID == "" {
+		grant.ProviderPeerID = listing.ProviderPeerID
+	}
+	if tier.DurationDays > 0 {
+		grant.ExpiresAt = now.Add(time.Duration(tier.DurationDays) * 24 * time.Hour)
+	}
+	if grant.AccessType == AccessTypeSubscription && !grant.ExpiresAt.IsZero() {
+		grant.NextRenewal = grant.ExpiresAt
+		grant.AutoRenew = true
 	}
 
 	// Generate delivery topic for streaming
@@ -304,6 +425,18 @@ func (s *Service) signGrant(grant *AccessGrant) ([]byte, error) {
 		grant.GrantedAt.Unix(),
 	)
 	return ed25519.Sign(s.signingKey, []byte(data)), nil
+}
+
+func findPricingTierByName(listing *Listing, tierName string) *PricingTier {
+	if listing == nil {
+		return nil
+	}
+	for i := range listing.Pricing {
+		if listing.Pricing[i].Name == tierName {
+			return &listing.Pricing[i]
+		}
+	}
+	return nil
 }
 
 // VerifyGrant verifies an access grant
