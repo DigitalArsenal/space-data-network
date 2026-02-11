@@ -39,9 +39,6 @@
     "url": "https://github.com/spacedatanetwork/sdn-js.git"
   },
   "dependencies": {
-    "hd-wallet-wasm": "1.2.0",
-    "vcard-cryptoperson": "^1.1.10",
-    "qrcode": "^1.5.3",
     "@chainsafe/libp2p-gossipsub": "^13.0.0",
     "@chainsafe/libp2p-noise": "^15.0.0",
     "@chainsafe/libp2p-yamux": "^6.0.0",
@@ -52,9 +49,13 @@
     "@libp2p/websockets": "^8.0.0",
     "@libp2p/webtransport": "^4.0.0",
     "@multiformats/multiaddr": "^12.1.0",
+    "flatsql": "github:DigitalArsenal/flatsql#v0.3.9",
+    "hd-wallet-wasm": "1.2.0",
     "idb": "^8.0.0",
     "libp2p": "^1.2.0",
-    "uint8arrays": "^5.0.0"
+    "qrcode": "^1.5.3",
+    "uint8arrays": "^5.0.0",
+    "vcard-cryptoperson": "^1.1.10"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
