@@ -93,6 +93,12 @@ Paid-scope example route:
 
 - `GET /api/v1/data/secure/omm` (requires scope `api:data:read:premium`)
 
+Data API response format:
+
+- Default for `OMM`, `MPE`, `CAT` query endpoints: `application/x-flatbuffers`
+- Stream framing: `uint32be-length-prefixed` records
+- JSON fallback for debugging: add `?format=json` (or `Accept: application/json`)
+
 Plugin catalog location:
 
 - Default root: `${STORAGE_PATH}/license/plugins`

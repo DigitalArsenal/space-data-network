@@ -4,6 +4,7 @@ package api
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -99,6 +100,7 @@ func (h *DataQueryHandler) handleMPE(w http.ResponseWriter, r *http.Request) {
 
 	limit := parseLimit(r, 100, 1000)
 	includeData := parseBool(r, "include_data")
+	format := requestedDataFormat(r)
 
 	records, err := h.store.QueryByIndexedFields("MPE.fbs", day, nil, entityID, limit)
 	if err != nil {
@@ -108,6 +110,10 @@ func (h *DataQueryHandler) handleMPE(w http.ResponseWriter, r *http.Request) {
 
 	setCachePolicy(w, day)
 	if handleConditionalCache(w, r, "MPE.fbs", day, entityID, records) {
+		return
+	}
+	if format == dataFormatFlatBuffers {
+		writeFlatBufferStream(w, "MPE.fbs", records)
 		return
 	}
 
@@ -163,6 +169,7 @@ func (h *DataQueryHandler) handleCAT(w http.ResponseWriter, r *http.Request) {
 
 	limit := parseLimit(r, 5, 100)
 	includeData := parseBool(r, "include_data")
+	format := requestedDataFormat(r)
 
 	records, err := h.store.QueryByIndexedFields("CAT.fbs", "", &noradID, "", limit)
 	if err != nil {
@@ -172,6 +179,10 @@ func (h *DataQueryHandler) handleCAT(w http.ResponseWriter, r *http.Request) {
 
 	setCachePolicy(w, "")
 	if handleConditionalCache(w, r, "CAT.fbs", "", fmt.Sprintf("%d", noradID), records) {
+		return
+	}
+	if format == dataFormatFlatBuffers {
+		writeFlatBufferStream(w, "CAT.fbs", records)
 		return
 	}
 
@@ -310,6 +321,7 @@ func (h *DataQueryHandler) writeOMMResponse(w http.ResponseWriter, r *http.Reque
 
 	limit := parseLimit(r, 100, 1000)
 	includeData := parseBool(r, "include_data")
+	format := requestedDataFormat(r)
 
 	records, err := h.store.QueryByIndexedFields("OMM.fbs", day, &noradID, "", limit)
 	if err != nil {
@@ -324,6 +336,10 @@ func (h *DataQueryHandler) writeOMMResponse(w http.ResponseWriter, r *http.Reque
 		}
 	} else {
 		w.Header().Set("Cache-Control", "private, no-store")
+	}
+	if format == dataFormatFlatBuffers {
+		writeFlatBufferStream(w, "OMM.fbs", records)
+		return
 	}
 
 	results := make([]map[string]interface{}, 0, len(records))
@@ -372,7 +388,7 @@ func setCachePolicy(w http.ResponseWriter, day string) {
 		}
 	}
 	w.Header().Set("Cache-Control", cacheControl)
-	w.Header().Set("Vary", "Accept-Encoding")
+	w.Header().Set("Vary", "Accept, Accept-Encoding")
 }
 
 func handleConditionalCache(w http.ResponseWriter, r *http.Request, schema, day, objectKey string, records []*storage.Record) bool {
@@ -406,6 +422,50 @@ func handleConditionalCache(w http.ResponseWriter, r *http.Request, schema, day,
 	}
 
 	return false
+}
+
+type dataFormat int
+
+const (
+	dataFormatFlatBuffers dataFormat = iota
+	dataFormatJSON
+)
+
+func requestedDataFormat(r *http.Request) dataFormat {
+	queryValue := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	switch queryValue {
+	case "json", "application/json":
+		return dataFormatJSON
+	case "flatbuffers", "flatbuffer", "binary", "fbs", "fb":
+		return dataFormatFlatBuffers
+	}
+
+	accept := strings.ToLower(strings.TrimSpace(r.Header.Get("Accept")))
+	if strings.Contains(accept, "application/json") {
+		return dataFormatJSON
+	}
+
+	// FlatBuffers-first API contract.
+	return dataFormatFlatBuffers
+}
+
+func writeFlatBufferStream(w http.ResponseWriter, schema string, records []*storage.Record) {
+	w.Header().Set("Content-Type", "application/x-flatbuffers")
+	w.Header().Set("X-SDN-Schema", schema)
+	w.Header().Set("X-SDN-Record-Count", strconv.Itoa(len(records)))
+	w.Header().Set("X-SDN-Stream-Format", "uint32be-length-prefixed")
+	w.WriteHeader(http.StatusOK)
+
+	var lenBuf [4]byte
+	for _, rec := range records {
+		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(rec.Data)))
+		if _, err := w.Write(lenBuf[:]); err != nil {
+			return
+		}
+		if _, err := w.Write(rec.Data); err != nil {
+			return
+		}
+	}
 }
 
 func decodeOMM(data []byte) (*OMM.OMM, error) {
