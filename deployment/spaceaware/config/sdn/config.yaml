@@ -44,6 +44,9 @@ admin:
   require_auth: true
   session_expiry: 24h
   totp_required: true
+  tls_enabled: false
+  tls_cert_file: /etc/spacedatanetwork/tls/origin.crt
+  tls_key_file: /etc/spacedatanetwork/tls/origin.key
 
 setup:
   token_expiry: 10m

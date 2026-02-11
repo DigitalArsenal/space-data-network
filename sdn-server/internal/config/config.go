@@ -10,7 +10,7 @@ import (
 
 // Config represents the SDN server configuration.
 type Config struct {
-	Mode     string         `yaml:"mode"`     // "full" or "edge"
+	Mode     string         `yaml:"mode"` // "full" or "edge"
 	Network  NetworkConfig  `yaml:"network"`
 	Storage  StorageConfig  `yaml:"storage"`
 	Schemas  SchemaConfig   `yaml:"schemas"`
@@ -99,6 +99,15 @@ type AdminConfig struct {
 
 	// TOTPRequired requires TOTP 2FA for admin login.
 	TOTPRequired bool `yaml:"totp_required"`
+
+	// TLSEnabled enables native HTTPS on the admin/API server.
+	TLSEnabled bool `yaml:"tls_enabled"`
+
+	// TLSCertFile is the PEM-encoded certificate chain path.
+	TLSCertFile string `yaml:"tls_cert_file"`
+
+	// TLSKeyFile is the PEM-encoded private key path.
+	TLSKeyFile string `yaml:"tls_key_file"`
 }
 
 // SetupConfig contains first-time setup settings.
@@ -163,6 +172,9 @@ func Default() *Config {
 			RequireAuth:   false, // Disabled by default for local development
 			SessionExpiry: "24h",
 			TOTPRequired:  false,
+			TLSEnabled:    false,
+			TLSCertFile:   "",
+			TLSKeyFile:    "",
 		},
 		Setup: SetupConfig{
 			TokenExpiry: "10m",
