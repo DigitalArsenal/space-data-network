@@ -182,7 +182,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			adminMux.Handle("/", adminUI)
+			adminMux.Handle("/", adminLandingHandler(adminUI))
 
 			adminServer = &http.Server{
 				Addr:    adminAddr,
@@ -232,6 +232,79 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	return n.Stop()
 }
+
+func adminLandingHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=120")
+			w.WriteHeader(http.StatusOK)
+			if r.Method != http.MethodHead {
+				_, _ = w.Write([]byte(defaultLandingPageHTML))
+			}
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+const defaultLandingPageHTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SpaceAware API</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: #0b1020;
+      color: #e6edf6;
+    }
+    main {
+      max-width: 760px;
+      margin: 6rem auto;
+      padding: 0 1rem;
+    }
+    h1 { margin: 0 0 .5rem 0; font-size: 2rem; }
+    p { color: #a6b0c3; line-height: 1.5; }
+    .card {
+      margin-top: 1.5rem;
+      background: #11182c;
+      border: 1px solid #27314d;
+      border-radius: 10px;
+      padding: 1rem;
+    }
+    a {
+      color: #7ec8ff;
+      text-decoration: none;
+    }
+    code {
+      background: #18233e;
+      border: 1px solid #27314d;
+      border-radius: 6px;
+      padding: .15rem .35rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>SpaceAware API is online</h1>
+    <p>This origin serves Space Data Network APIs over HTTPS.</p>
+    <div class="card">
+      <p><a href="/api/v1/data/health">GET /api/v1/data/health</a></p>
+      <p><a href="/api/v1/data/omm?norad_cat_id=25544&amp;day=2026-02-11&amp;limit=5">GET /api/v1/data/omm</a> (FlatBuffers default)</p>
+      <p><a href="/api/v1/data/omm?norad_cat_id=25544&amp;day=2026-02-11&amp;limit=5&amp;format=json">GET /api/v1/data/omm?format=json</a></p>
+      <p><a href="/api/v1/data/cat?norad_cat_id=25544&amp;limit=1&amp;format=json">GET /api/v1/data/cat?format=json</a></p>
+      <p><a href="/admin">/admin</a></p>
+    </div>
+  </main>
+</body>
+</html>`
 
 func runInit(cmd *cobra.Command, args []string) error {
 	cfg := config.Default()
