@@ -4,6 +4,7 @@
 
 import { openDB, IDBPDatabase, DBSchema } from 'idb';
 import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
+import { preloadFlatSQLWASI } from './flatsql';
 
 interface SDNDBSchema extends DBSchema {
   records: {
@@ -55,6 +56,14 @@ export class SDNStorage {
   }
 
   private async init(): Promise<void> {
+    // Attempt FlatSQL WASI preload for consumers that query raw FlatBuffers.
+    // Storage remains functional if this optional preload fails.
+    try {
+      await preloadFlatSQLWASI();
+    } catch (err) {
+      console.warn('FlatSQL WASI preload failed, continuing with IndexedDB only:', err);
+    }
+
     this.db = await openDB<SDNDBSchema>(this.dbName, 1, {
       upgrade(db) {
         // Create records store with indexes

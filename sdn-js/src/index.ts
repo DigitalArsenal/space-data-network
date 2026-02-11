@@ -9,6 +9,7 @@ export type { SDNConfig, SDNNodeEvents } from './node';
 export { LEGACY_ID_EXCHANGE_PROTOCOL, IPFS_BOOTSTRAP_PEERS } from './node';
 export { SDNStorage } from './storage';
 export type { StoredRecord, QueryFilter } from './storage';
+export { preloadFlatSQLWASI, getFlatSQLWASIPath } from './flatsql';
 export { loadEdgeRelays, getBootstrapRelays, DEFAULT_EDGE_RELAYS } from './edge-discovery';
 export { SDS_SCHEMAS, SUPPORTED_SCHEMAS } from './schemas';
 export type { SchemaName } from './schemas';
