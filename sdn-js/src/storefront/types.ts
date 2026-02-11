@@ -354,6 +354,9 @@ export interface FiatGatewayRequest {
   description?: string;
   successUrl?: string;
   cancelUrl?: string;
+  stripePriceId?: string;
+  mode?: 'payment' | 'subscription';
+  metadata?: Record<string, string>;
 }
 
 /** Fiat gateway result */

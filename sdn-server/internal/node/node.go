@@ -27,11 +27,12 @@ import (
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
-	mh "github.com/multiformats/go-multihash"
 	"github.com/multiformats/go-multiaddr"
+	mh "github.com/multiformats/go-multihash"
 
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -56,9 +57,12 @@ type Node struct {
 	pubsub    *pubsub.PubSub
 	topics    map[string]*pubsub.Topic
 	flatc     *wasm.FlatcModule
+	hdwallet  *wasm.HDWalletModule
+	identity  *wasm.DerivedIdentity // nil if using random key (no HD wallet)
 	validator *sds.Validator
 	store     *storage.FlatSQLStore
 	protocol  *protocol.SDSExchangeHandler
+	license   *license.Service
 	config    *config.Config
 
 	// Trusted peer management
@@ -90,6 +94,22 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 }
 
 func (n *Node) init() error {
+	// Initialize HD wallet WASM module (optional, enables deterministic identity)
+	if hdPath := n.findHDWalletWasmPath(); hdPath != "" {
+		hw, err := wasm.NewHDWalletModule(n.ctx, hdPath)
+		if err != nil {
+			log.Warnf("HD wallet WASM not loaded (will use random key): %v", err)
+		} else {
+			n.hdwallet = hw
+			// Inject entropy for WASI environment
+			entropy := make([]byte, 64)
+			if _, err := rand.Read(entropy); err == nil {
+				_ = hw.InjectEntropy(n.ctx, entropy)
+			}
+			log.Infof("HD wallet WASM loaded - deterministic identity derivation available")
+		}
+	}
+
 	// Generate or load identity key
 	privKey, err := n.loadOrCreateKey()
 	if err != nil {
@@ -257,16 +277,80 @@ func (n *Node) init() error {
 
 	n.protocol = protocol.NewSDSExchangeHandlerWithOptions(n.store, n.validator, n.flatc, limits, n.config.Security.InsecureMode, rateLimiter)
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
+	n.host.SetStreamHandler(protocol.IDExchangeProtoID, protocol.HandleLegacyIDExchange)
+	n.host.SetStreamHandler(protocol.ChatProtoID, protocol.HandleLegacyChat)
+
+	// Initialize license service (full node mode only).
+	if n.config.Mode != "edge" {
+		basePath := filepath.Dir(n.config.Storage.Path)
+		licenseSvc, err := license.NewService(basePath, n.host.ID().String())
+		if err != nil {
+			log.Warnf("License service initialization failed: %v", err)
+		} else {
+			n.license = licenseSvc
+			n.host.SetStreamHandler(license.ProtocolID, n.license.HandleStream)
+			log.Infof("License protocol enabled: %s", license.ProtocolID)
+		}
+	}
 
 	return nil
 }
 
 func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
-	// Determine key storage path
 	keyDir := filepath.Join(filepath.Dir(n.config.Storage.Path), "keys")
 	keyPath := filepath.Join(keyDir, "node.key")
+	mnemonicPath := filepath.Join(keyDir, "mnemonic")
 
-	// Try to load existing key
+	// If HD wallet is available, prefer mnemonic-based identity
+	if n.hdwallet != nil {
+		if err := os.MkdirAll(keyDir, 0700); err != nil {
+			return nil, fmt.Errorf("failed to create key directory: %w", err)
+		}
+
+		var mnemonic string
+
+		// Try to load existing mnemonic
+		if data, err := os.ReadFile(mnemonicPath); err == nil {
+			mnemonic = string(data)
+			log.Infof("Loaded existing mnemonic from %s", mnemonicPath)
+		} else {
+			// Generate new mnemonic
+			newMnemonic, _, err := n.hdwallet.GenerateNewIdentity(n.ctx, 24)
+			if err != nil {
+				log.Warnf("HD wallet mnemonic generation failed, falling back to random key: %v", err)
+				return n.generateRandomKey(keyDir, keyPath)
+			}
+			mnemonic = newMnemonic
+
+			// Save mnemonic to disk
+			if err := os.WriteFile(mnemonicPath, []byte(mnemonic), 0600); err != nil {
+				return nil, fmt.Errorf("failed to save mnemonic: %w", err)
+			}
+			log.Infof("Generated and saved new mnemonic to %s", mnemonicPath)
+		}
+
+		// Derive identity from mnemonic
+		identity, err := n.hdwallet.IdentityFromMnemonic(n.ctx, mnemonic, "", 0)
+		if err != nil {
+			log.Warnf("HD wallet identity derivation failed, falling back to random key: %v", err)
+			return n.generateRandomKey(keyDir, keyPath)
+		}
+
+		n.identity = identity
+		info := identity.Info()
+		log.Infof("HD wallet identity derived: PeerID=%s SigningPath=%s EncryptionPath=%s",
+			info.PeerID, info.SigningKeyPath, info.EncryptionKeyPath)
+
+		// Also save the serialized key for backward compatibility
+		keyData, err := identity.MarshalPrivateKey()
+		if err == nil {
+			_ = os.WriteFile(keyPath, keyData, 0600)
+		}
+
+		return identity.SigningPrivKey, nil
+	}
+
+	// Fallback: load existing key or generate random one
 	if keyData, err := os.ReadFile(keyPath); err == nil {
 		privKey, err := crypto.UnmarshalPrivateKey(keyData)
 		if err == nil {
@@ -276,13 +360,15 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 		log.Warnf("Failed to unmarshal existing key, generating new one: %v", err)
 	}
 
-	// Generate new key
+	return n.generateRandomKey(keyDir, keyPath)
+}
+
+func (n *Node) generateRandomKey(keyDir, keyPath string) (crypto.PrivKey, error) {
 	privKey, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate key: %w", err)
 	}
 
-	// Persist key to disk
 	if err := os.MkdirAll(keyDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create key directory: %w", err)
 	}
@@ -306,6 +392,27 @@ func (n *Node) findWasmPath() string {
 		"../flatbuffers/wasm/flatc.wasm",
 		"../../flatbuffers/wasm/flatc.wasm",
 		"/usr/local/lib/flatc.wasm",
+	}
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+func (n *Node) findHDWalletWasmPath() string {
+	// Check environment variable first
+	if envPath := os.Getenv("HD_WALLET_WASM_PATH"); envPath != "" {
+		if _, err := os.Stat(envPath); err == nil {
+			return envPath
+		}
+	}
+	// Look for hd-wallet.wasm in common locations (WASI build)
+	paths := []string{
+		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
+		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
+		"/usr/local/lib/hd-wallet.wasm",
 	}
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
@@ -563,6 +670,11 @@ func (n *Node) Stop() error {
 			log.Warnf("Error closing storage: %v", err)
 		}
 	}
+	if n.license != nil {
+		if err := n.license.Close(); err != nil {
+			log.Warnf("Error closing license service: %v", err)
+		}
+	}
 
 	if err := n.host.Close(); err != nil {
 		return fmt.Errorf("failed to close host: %w", err)
@@ -604,4 +716,14 @@ func (n *Node) PeerGater() *peers.TrustedConnectionGater {
 // Config returns the node configuration.
 func (n *Node) Config() *config.Config {
 	return n.config
+}
+
+// Store returns the local storage backend (nil for edge mode).
+func (n *Node) Store() *storage.FlatSQLStore {
+	return n.store
+}
+
+// LicenseService returns the local license service (nil in edge mode or if unavailable).
+func (n *Node) LicenseService() *license.Service {
+	return n.license
 }

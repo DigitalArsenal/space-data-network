@@ -21,9 +21,24 @@ import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
 import { sign, initHDWallet } from './crypto/index';
 
 const TOPIC_PREFIX = '/spacedatanetwork/sds/';
+export const LEGACY_ID_EXCHANGE_PROTOCOL = '/space-data-network/id-exchange/1.0.0';
+
+// Public IPFS bootstrap peers + SDN relay can be combined for browser interop.
+export const IPFS_BOOTSTRAP_PEERS = [
+  '/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN',
+  '/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb',
+  '/dnsaddr/bootstrap.libp2p.io/p2p/QmZa1sAxajnQjVM8WjWXoMbmPd7NsWhfKsPkErzpm9wGkp',
+  '/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa',
+  '/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt',
+] as const;
+
+type StreamChunk = Uint8Array | { subarray: (start?: number, end?: number) => Uint8Array };
 
 export interface SDNConfig {
   edgeRelays?: string[];
+  bootstrapPeers?: string[];
+  includeIPFSBootstrap?: boolean;
+  idExchangeProtocol?: string;
   enableStorage?: boolean;
   storeName?: string;
   /** Private key for signing messages (32 bytes Ed25519 seed) */
@@ -70,8 +85,9 @@ export class SDNNode {
   }
 
   private async init(): Promise<void> {
-    // Get bootstrap relays
-    const bootstrapList = this.config.edgeRelays || await getBootstrapRelays();
+    // Build bootstrap list from SDN relays and IPFS public bootstrappers.
+    const relays = this.config.edgeRelays ?? await getBootstrapRelays();
+    const bootstrapList = resolveBootstrapList(relays, this.config);
 
     // Initialize libp2p
     this.libp2p = await createLibp2p({
@@ -309,6 +325,58 @@ export class SDNNode {
   }
 
   /**
+   * Dial a specific protocol through a relay circuit and return the first reply chunk.
+   */
+  async dialProtocolThroughRelay(
+    relayAddr: string,
+    targetPeerId: string,
+    protocolId: string,
+    payload: Uint8Array | string
+  ): Promise<Uint8Array> {
+    if (!this.libp2p) {
+      throw new Error('Node not initialized');
+    }
+
+    const relayMa = multiaddr(relayAddr);
+    const circuitAddr = relayMa.encapsulate(`/p2p-circuit/p2p/${targetPeerId}`);
+    const stream = await this.libp2p.dialProtocol(circuitAddr, protocolId);
+
+    try {
+      const payloadBytes = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
+
+      await stream.sink((async function *source() {
+        yield payloadBytes;
+      })());
+
+      const iterator = stream.source[Symbol.asyncIterator]();
+      const first = await iterator.next();
+      if (first.done) {
+        return new Uint8Array(0);
+      }
+      return chunkToBytes(first.value as StreamChunk);
+    } finally {
+      try {
+        await stream.close();
+      } catch {
+        // Ignore close errors in probe/test path.
+      }
+    }
+  }
+
+  /**
+   * Compatibility helper for the historical id-exchange relay probe script.
+   */
+  async idExchangeThroughRelay(relayAddr: string, targetPeerId: string, message = 'ping'): Promise<string> {
+    const response = await this.dialProtocolThroughRelay(
+      relayAddr,
+      targetPeerId,
+      this.config.idExchangeProtocol ?? LEGACY_ID_EXCHANGE_PROTOCOL,
+      message,
+    );
+    return new TextDecoder().decode(response);
+  }
+
+  /**
    * Stop the node
    */
   async stop(): Promise<void> {
@@ -335,4 +403,27 @@ export class SDNNode {
   static get schemas(): readonly SchemaName[] {
     return SUPPORTED_SCHEMAS;
   }
+
+  static get ipfsBootstrapPeers(): readonly string[] {
+    return IPFS_BOOTSTRAP_PEERS;
+  }
+}
+
+function resolveBootstrapList(relays: string[], config: SDNConfig): string[] {
+  const includeIPFS = config.includeIPFSBootstrap !== false;
+  const configured = config.bootstrapPeers ?? [];
+  const combined = [
+    ...(includeIPFS ? IPFS_BOOTSTRAP_PEERS : []),
+    ...relays,
+    ...configured,
+  ];
+
+  return Array.from(new Set(combined.filter((addr) => addr.trim().length > 0)));
+}
+
+function chunkToBytes(chunk: StreamChunk): Uint8Array {
+  if (chunk instanceof Uint8Array) {
+    return chunk;
+  }
+  return chunk.subarray();
 }

@@ -2,6 +2,7 @@ package storefront
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,11 +10,11 @@ import (
 
 // APIHandler provides HTTP handlers for the storefront API
 type APIHandler struct {
-	service   *Service
-	catalog   *Catalog
-	delivery  *DeliveryService
-	payment   *PaymentProcessor
-	trust     *TrustScorer
+	service  *Service
+	catalog  *Catalog
+	delivery *DeliveryService
+	payment  *PaymentProcessor
+	trust    *TrustScorer
 }
 
 // NewAPIHandler creates a new API handler
@@ -57,6 +58,9 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Buyer dashboard
 	mux.HandleFunc("/api/storefront/dashboard/buyer", h.handleBuyerDashboard)
+
+	// Stripe webhook
+	mux.HandleFunc("/api/storefront/payments/stripe/webhook", h.handleStripeWebhook)
 }
 
 func (h *APIHandler) handleListings(w http.ResponseWriter, r *http.Request) {
@@ -350,6 +354,41 @@ func (h *APIHandler) handlePayWithFiat(w http.ResponseWriter, r *http.Request, r
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (h *APIHandler) handleStripeWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.payment == nil {
+		http.Error(w, "payments not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	payload, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	action, err := h.payment.HandleStripeWebhook(r.Context(), r.Header.Get("Stripe-Signature"), payload)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if action != nil && action.Paid && action.RequestID != "" && h.service != nil {
+		if _, err := h.service.CompleteStripeCheckout(r.Context(), action.RequestID, action.SessionID, action.SubscriptionID, action.CustomerID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"received": true,
+		"action":   action,
+	})
+}
+
 func (h *APIHandler) handleGrants(w http.ResponseWriter, r *http.Request) {
 	buyerID := r.URL.Query().Get("buyer")
 	if buyerID != "" {
@@ -590,10 +629,10 @@ func (h *APIHandler) handleSellerDashboard(w http.ResponseWriter, r *http.Reques
 
 // BuyerDashboardResponse represents the buyer dashboard data
 type BuyerDashboardResponse struct {
-	ActiveGrants   []*AccessGrant     `json:"active_grants"`
-	TotalGrants    int                `json:"total_grants"`
+	ActiveGrants    []*AccessGrant     `json:"active_grants"`
+	TotalGrants     int                `json:"total_grants"`
 	RecentPurchases []*PurchaseRequest `json:"recent_purchases,omitempty"`
-	CreditsBalance *CreditsBalance     `json:"credits_balance"`
+	CreditsBalance  *CreditsBalance    `json:"credits_balance"`
 }
 
 func (h *APIHandler) handleBuyerDashboard(w http.ResponseWriter, r *http.Request) {

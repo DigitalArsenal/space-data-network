@@ -15,6 +15,96 @@ go build -o spacedatanetwork ./cmd/spacedatanetwork
 ./spacedatanetwork daemon
 ```
 
+## Ingestion Workers (CelesTrak + Space-Track)
+
+Run a one-time sync:
+
+```bash
+./spacedatanetwork ingest --once --storage-path /opt/data/sdn --raw-path /opt/data/raw
+```
+
+Run continuous workers with Space-Track credentials:
+
+```bash
+export SPACETRACK_IDENTITY="your-identity"
+export SPACETRACK_PASSWORD="your-password"
+./spacedatanetwork ingest \
+  --storage-path /opt/data/sdn \
+  --raw-path /opt/data/raw \
+  --celestrak-interval 1h \
+  --satcat-interval 24h \
+  --spacetrack-enabled true \
+  --spacetrack-batch-days 3 \
+  --spacetrack-batch-sleep 3s
+```
+
+## Stripe Subscription Billing (Storefront)
+
+The daemon now mounts storefront routes on the admin HTTP listener, including Stripe-backed checkout and webhook handling:
+
+- `POST /api/storefront/purchases/{request_id}/pay-fiat`
+- `POST /api/storefront/payments/stripe/webhook`
+
+Set these environment variables on the server:
+
+```bash
+export STRIPE_SECRET_KEY="sk_live_..."
+export STRIPE_WEBHOOK_SECRET="whsec_..."
+export STRIPE_SUCCESS_URL="https://spaceaware.io/billing/success?session_id={CHECKOUT_SESSION_ID}"
+export STRIPE_CANCEL_URL="https://spaceaware.io/billing/cancel"
+```
+
+If Stripe env vars are not set, fiat checkout falls back to the existing local stub behavior.
+
+## License Protocol and Capability Tokens
+
+The daemon now exposes a libp2p license protocol on full nodes:
+
+- Stream protocol: `/orbpro/license/1.0.0`
+- Flow: `challenge_request` -> `proof_request` -> `grant_response`
+- Token format: Ed25519-signed compact token (JWT-style `header.payload.signature`)
+
+HTTP endpoints on the admin listener:
+
+- `GET /api/v1/license/verify` (verify bearer token and optional scopes)
+- `GET/POST/PUT /api/v1/license/entitlements` (xpub entitlement management)
+- `GET /api/v1/plugins/manifest` (encrypted plugin catalog metadata)
+- `GET /api/v1/plugins/{id}/bundle` (cacheable encrypted plugin bytes)
+- `POST /api/v1/plugins/{id}/key-envelope` (auth required; returns wrapped decryption material)
+
+Set an admin token to enable entitlement updates:
+
+```bash
+export SDN_LICENSE_ADMIN_TOKEN="replace-with-random-secret"
+```
+
+Paid-scope example route:
+
+- `GET /api/v1/data/secure/omm` (requires scope `api:data:read:premium`)
+
+Plugin catalog location:
+
+- Default root: `${STORAGE_PATH}/license/plugins`
+- Override with: `SDN_PLUGIN_ROOT`
+- Catalog file: `${SDN_PLUGIN_ROOT}/catalog.json`
+
+Example `catalog.json`:
+
+```json
+{
+  "plugins": [
+    {
+      "id": "orbpro-core",
+      "version": "2026.02.11",
+      "required_scope": "orbpro:premium",
+      "encrypted_path": "orbpro-core.wasm.enc",
+      "key_path": "orbpro-core.key",
+      "content_type": "application/wasm"
+    }
+  ]
+}
+```
+
 ## Packages
 
 ### Core Packages

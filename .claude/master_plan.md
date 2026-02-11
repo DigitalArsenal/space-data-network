@@ -1,7 +1,7 @@
 # Space Data Network — Master Plan
 
 **Owner:** DigitalArsenal.io, Inc.
-**Last Updated:** 2026-02-06
+**Last Updated:** 2026-02-11
 **Status:** Draft v1.0
 
 ---
@@ -19,6 +19,7 @@
 9. [Roadmap & Milestones](#9-roadmap--milestones)
 10. [Risk Analysis & Mitigations](#10-risk-analysis--mitigations)
 11. [Appendix: Repository Index](#11-appendix-repository-index)
+12. [24-Hour SpaceAware.io Launch Plan (Free Tier)](#12-24-hour-spaceawareio-launch-plan-free-tier)
 
 ---
 
@@ -1403,6 +1404,317 @@ Claude Teams workflow:
 | 11 | WEBGPU_OrbPro3 | `../WEBGPU_OrbPro3` | Next-gen WebGPU CesiumJS rendering engine | Proprietary |
 | 12 | spaceaware.io | `../spaceaware.io` | SaaS platform for space awareness (TO BE CREATED) | Proprietary |
 | 13 | DigitalArsenal.io | `../DigitalArsenal.io` | Company website, Svelte + CesiumJS + Tailwind | Proprietary |
+
+---
+
+## 12. 24-Hour SpaceAware.io Launch Plan (Free Tier)
+
+**Target window:** Start now (2026-02-11), public launch within 24 hours (by 2026-02-12).
+
+### 12.1 Free Tier Definition (Launch Scope)
+
+Ship only these features in the first 24 hours:
+
+1. Public catalog/ephemeris API for `OMM`, `MPE`, and `CAT` lookups by object/day.
+2. Historical + current catalog updates from local archives + CelesTrak + Space-Track catch-up.
+3. Public status page + landing/docs on GitHub Pages.
+4. One production SDN full node + one edge relay in DigitalOcean.
+5. OrbPro license server running as a sidecar service (plugin integration deferred to phase 2).
+6. Stripe subscription checkout + webhook confirmation for paid tiers.
+
+### 12.2 Deployment Topology (DigitalOcean + Cloudflare + GitHub Pages)
+
+**DNS / Routing**
+- `spaceaware.io` and `www.spaceaware.io` -> GitHub Pages (marketing/docs).
+- `api.spaceaware.io` -> Cloudflare proxied -> DigitalOcean SDN node admin/API port.
+- `relay.spaceaware.io` -> Cloudflare proxied (WS enabled) -> DigitalOcean edge relay.
+
+**DigitalOcean (minimum production shape)**
+- Droplet A (`spaceaware-core`, 8 vCPU / 16 GB / 200+ GB volume):
+  - `spacedatanetwork daemon` (full mode)
+  - FlatSQL data at `/opt/data/sdn`
+  - public query API exposed via `/api/v1/data/*` on admin listener
+  - OrbPro license server container from `../OrbPro` on private Docker network
+- Droplet B (`spaceaware-edge`, 2 vCPU / 4 GB):
+  - `spacedatanetwork-edge` relay
+
+### 12.3 Data Pipeline in First 24 Hours
+
+**Local history import**
+- Canonical storage root: `/opt/data/`
+- Keep raw upstream files in `/opt/data/raw/{source}/{yyyy-mm-dd}/`
+- Keep FlatSQL DB in `/opt/data/sdn/sdn.db`
+- Run `spacedatanetwork reindex` after initial import to populate fast query indexes.
+
+**Gap-fill strategy (Space-Track, no usage spikes)**
+- Pull in day-sized windows with checkpointing:
+  - checkpoint table/file stores last successful date per source/schema.
+  - process `N` days, sleep, continue (avoid burst limits and retry storms).
+- Do not re-request completed windows unless checksum/version changed.
+
+**Current updates (CelesTrak)**
+- Hourly: `https://celestrak.org/pub/GP/catalog.csv` -> normalize to SDS `OMM` + derived `MPE`.
+- Daily: `https://celestrak.org/pub/satcat.csv` -> normalize to SDS `CAT`.
+
+### 12.4 API Contract for Cloudflare Caching
+
+**Launch endpoints**
+- `GET /api/v1/data/health`
+- `GET /api/v1/data/omm?norad_cat_id=<id>&day=YYYY-MM-DD&limit=100`
+- `GET /api/v1/data/mpe?entity_id=<id>&day=YYYY-MM-DD&limit=100`
+- `GET /api/v1/data/cat?norad_cat_id=<id>&limit=5`
+
+**Caching behavior**
+- Response headers include `ETag`, `Last-Modified`, `Cache-Control`.
+- Past-day queries cache long (`s-maxage=86400`), current-day queries short (`s-maxage=120`).
+- Cloudflare cache key should include full query string.
+
+### 12.5 24-Hour Execution Timeline
+
+**Hour 0-2**
+1. Provision two DigitalOcean droplets and attach `/opt/data` volume to core node.
+2. Configure Cloudflare DNS + proxy rules (`api`, `relay`, root domain).
+3. Deploy SDN full node and edge relay containers/services.
+
+**Hour 2-6**
+1. Load historical `/opt/data` records into FlatSQL.
+2. Run `spacedatanetwork reindex` on core node.
+3. Verify query API locally for known NORAD IDs and dates.
+
+**Hour 6-12**
+1. Start Space-Track gap-fill with checkpointed day windows.
+2. Start hourly CelesTrak GP sync and daily SATCAT sync jobs.
+3. Bring up OrbPro license sidecar and verify internal connectivity.
+
+**Hour 12-18**
+1. Publish GitHub Pages landing + API docs + free-tier limits.
+2. Enable Cloudflare caching/WAF/rate limits for `api.spaceaware.io`.
+3. Configure Stripe webhook to `POST /api/storefront/payments/stripe/webhook`.
+4. Smoke-test from external network (API + relay + website + billing flow).
+
+**Hour 18-24**
+1. Announce free tier (LinkedIn/X + docs changelog).
+2. Monitor latency/error/cache-hit metrics and tune limits.
+3. Freeze launch scope; defer non-critical plugin integration work.
+
+### 12.6 Launch-Day Command Checklist
+
+```bash
+# On core node
+spacedatanetwork init
+spacedatanetwork reindex
+export STRIPE_SECRET_KEY="sk_live_..."
+export STRIPE_WEBHOOK_SECRET="whsec_..."
+export STRIPE_SUCCESS_URL="https://spaceaware.io/billing/success?session_id={CHECKOUT_SESSION_ID}"
+export STRIPE_CANCEL_URL="https://spaceaware.io/billing/cancel"
+spacedatanetwork daemon
+```
+
+```bash
+# Key API checks
+curl "https://api.spaceaware.io/api/v1/data/health"
+curl "https://api.spaceaware.io/api/v1/data/omm?norad_cat_id=25544&day=2026-02-11&limit=5"
+curl "https://api.spaceaware.io/api/v1/data/cat?norad_cat_id=25544&limit=1"
+```
+
+### 12.7 Single-File App Delivery Over IPFS/IPNS
+
+**Goal:** Ship SpaceAware UI as one static artifact, domain-independent, while keeping paid capability enforcement server-side.
+
+**Build/output shape**
+- Produce a single `index.html` with inlined JS/CSS (no runtime chunk loading).
+- Bundle `sdn-js`, `hd-wallet-wasm` bootstrap glue, and OrbPro viewer loader stubs into the single file.
+- Keep large optional assets (WASM/sprites/terrain packs) as separate immutable CIDs loaded on demand.
+
+**Publishing model**
+- Publish `index.html` to IPFS -> immutable CID.
+- Publish `spaceaware-app` IPNS key to latest CID.
+- Client bootstrap options:
+  - Native IPFS node: `ipns://<spaceaware-app-key>`
+  - Gateway fallback: `https://<gateway>/ipns/<spaceaware-app-key>`
+
+**Critical rule**
+- No reusable secrets in published IPFS content.
+- IPFS content can contain public keys and endpoint hints, never private/shared long-lived license keys.
+
+### 12.8 License/Entitlement Architecture (xpub + PeerID + Stripe)
+
+**Identity**
+- Canonical user identifier: `xpub` from `hd-wallet-wasm`.
+- Network identifier: `peer_id` derived from the signing public key used by libp2p.
+- Store verified binding: `xpub <-> signing_pubkey <-> peer_id`.
+
+**License service transport**
+- Run OrbPro license server as a libp2p protocol service on a stable peer:
+  - `/orbpro/license/1.0.0`
+- Discover via:
+  - pinned bootstrap peer multiaddr list
+  - optional IPNS record containing current reachable multiaddrs
+
+**Why this is lockable without domain dependence**
+- App delivery is content-addressed and public.
+- Authorization is live, cryptographic, and short-lived (capability grants).
+- Paid APIs/features validate server-signed grants, not hostname/session cookies.
+
+**Encrypted plugin delivery (current implementation)**
+- `GET /api/v1/plugins/manifest` returns plugin metadata (id/version/scope/sha256/size).
+- `GET /api/v1/plugins/{id}/bundle` serves encrypted plugin bytes with `ETag` and cache headers.
+- `POST /api/v1/plugins/{id}/key-envelope` requires bearer token + scope and returns an X25519-wrapped decryption envelope.
+- Browser/client sends ephemeral X25519 public key in the request; server returns wrapped key material bound to:
+  - `peer_id`
+  - capability token `jti`
+  - plugin id/version/hash
+  - short expiry
+- Cloudflare can cache encrypted bundles; key-envelope responses are `private, no-store`.
+
+### 12.9 Protocol Messages (Launch Format: JSON over libp2p stream)
+
+For the 24-hour launch, keep protocol simple: newline-delimited JSON messages on `/orbpro/license/1.0.0`.
+
+**1) Challenge request**
+
+```json
+{
+  "type": "challenge_request",
+  "req_id": "uuid-v4",
+  "xpub": "xpub6CUGRU...",
+  "peer_id": "12D3KooW...",
+  "client_pubkey_hex": "aabbcc...",
+  "ts": 1760000000
+}
+```
+
+**2) Challenge response**
+
+```json
+{
+  "type": "challenge_response",
+  "req_id": "uuid-v4",
+  "challenge": "base64-32-bytes",
+  "expires_at": 1760000060,
+  "server_peer_id": "12D3KooWLicense..."
+}
+```
+
+**3) Proof request**
+
+```json
+{
+  "type": "proof_request",
+  "req_id": "uuid-v4",
+  "xpub": "xpub6CUGRU...",
+  "peer_id": "12D3KooW...",
+  "challenge": "base64-32-bytes",
+  "signature_hex": "ed25519sig...",
+  "ts": 1760000020
+}
+```
+
+**4) Grant response**
+
+```json
+{
+  "type": "grant_response",
+  "req_id": "uuid-v4",
+  "entitlement": {
+    "plan": "free",
+    "status": "active",
+    "stripe_customer_id": "cus_...",
+    "stripe_subscription_id": "sub_..."
+  },
+  "capability_token": "base64url-jws",
+  "expires_at": 1760000920
+}
+```
+
+**Capability token claims (server-signed, Ed25519)**
+
+```json
+{
+  "iss": "spaceaware-license",
+  "sub": "xpub6CUGRU...",
+  "peer_id": "12D3KooW...",
+  "plan": "free",
+  "scopes": ["api:data:read:free", "orbpro:base"],
+  "iat": 1760000020,
+  "exp": 1760000920,
+  "jti": "uuid-v4"
+}
+```
+
+**Enforcement**
+- Free endpoints: no token required, aggressively cacheable via Cloudflare.
+- Paid endpoints/features: require `Authorization: Bearer <capability_token>`.
+- Reject if `exp` elapsed, `peer_id` mismatch, revoked `jti`, or subscription inactive.
+
+### 12.10 Docker Deployment (Single Host, Launch Day)
+
+Use one DigitalOcean host for first 24 hours (split edge relay to host #2 in phase 2).
+
+```yaml
+version: "3.9"
+services:
+  sdn-node:
+    image: ghcr.io/spacedatanetwork/sdn-server:latest
+    command: ["spacedatanetwork", "daemon", "--config", "/etc/sdn/config.yaml"]
+    volumes:
+      - /opt/data/sdn:/opt/data/sdn
+      - /opt/data/raw:/opt/data/raw
+      - /opt/data/keys:/opt/data/keys
+      - ./config/sdn:/etc/sdn
+    environment:
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - STRIPE_SUCCESS_URL=${STRIPE_SUCCESS_URL}
+      - STRIPE_CANCEL_URL=${STRIPE_CANCEL_URL}
+      - HD_WALLET_WASM_PATH=/opt/wasm/hd-wallet.wasm
+    ports:
+      - "8080:8080"   # ws relay/listen
+      - "5001:5001"   # admin/api
+    networks: [sdn]
+    restart: unless-stopped
+
+  sdn-ingest:
+    image: ghcr.io/spacedatanetwork/sdn-server:latest
+    command: ["spacedatanetwork", "ingest", "--config", "/etc/sdn/config.yaml", "--loop"]
+    volumes:
+      - /opt/data/sdn:/opt/data/sdn
+      - /opt/data/raw:/opt/data/raw
+      - ./config/sdn:/etc/sdn
+    depends_on: [sdn-node]
+    networks: [sdn]
+    restart: unless-stopped
+
+  orbpro-license:
+    image: ghcr.io/digitalarsenal/orbpro-license:latest
+    environment:
+      - LICENSE_PROTOCOL=/orbpro/license/1.0.0
+      - SDN_BOOTSTRAP=/ip4/<PUBLIC_IP>/tcp/8080/ws/p2p/<SDN_PEER_ID>
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - ENTITLEMENTS_DB=/opt/data/license/license.db
+    volumes:
+      - /opt/data/license:/opt/data/license
+    depends_on: [sdn-node]
+    networks: [sdn]
+    restart: unless-stopped
+
+networks:
+  sdn:
+    driver: bridge
+```
+
+**Cloudflare cache policy**
+- Cache only `GET` on free/public API routes.
+- Bypass cache for any request with `Authorization` header.
+- Add WAF + rate limits on `/api/storefront/payments/stripe/webhook` and license endpoints.
+
+### 12.11 Non-Goals for This 24-Hour Window
+
+- Full OrbPro pluginization inside SDN protocol path.
+- Advanced entitlement automation beyond Stripe payment confirmation + grant issuance.
+- Multi-region replicated databases.
+- Advanced analytics dashboards beyond core operational health.
 
 ---
 

@@ -10,7 +10,7 @@
  */
 
 import type { SellerDashboard, TrustScore, Listing } from '../types';
-import { formatPrice, formatAccessType } from './ListingCard';
+import { formatAccessType } from './ListingCard';
 
 /** Seller dashboard render props */
 export interface SellerDashboardProps {

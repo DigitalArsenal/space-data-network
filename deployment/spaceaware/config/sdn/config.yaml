@@ -1,0 +1,50 @@
+mode: full
+
+network:
+  listen:
+    - /ip4/0.0.0.0/tcp/4001
+    - /ip4/0.0.0.0/tcp/8080/ws
+    - /ip4/0.0.0.0/udp/4001/quic-v1
+  bootstrap:
+    - /ip4/203.0.113.10/tcp/8080/ws/p2p/12D3KooWReplaceWithRealPeerID
+  edge_relays: []
+  max_connections: 1000
+  enable_relay: true
+  max_message_size: 10485760
+  max_schema_name: 256
+  max_query_size: 4096
+  max_messages_per_second: 100
+  max_messages_per_minute: 1000
+  rate_limit_burst: 50
+
+storage:
+  path: /opt/data/sdn
+  max_size: 500GB
+  gc_interval: 1h
+
+schemas:
+  validate: true
+  strict: true
+
+security:
+  insecure_mode: false
+
+peers:
+  strict_mode: false
+  registry_path: /opt/data/sdn/peers.db
+  trusted_peers:
+    - /ip4/203.0.113.10/tcp/8080/ws/p2p/12D3KooWReplaceWithRealPeerID
+  enable_dht: true
+  enable_mdns: false
+  trust_based_rate_limiting: true
+
+admin:
+  enabled: true
+  listen_addr: 0.0.0.0:5001
+  require_auth: true
+  session_expiry: 24h
+  totp_required: true
+
+setup:
+  token_expiry: 10m
+  data_path: /opt/data
