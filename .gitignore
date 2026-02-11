@@ -11,6 +11,9 @@ secrets/
 credentials/
 **/secrets/**
 **/credentials/**
+secrets/cloudflare-origin/
+secrets/cloudflare-origin/origin.crt
+secrets/cloudflare-origin/origin.key
 
 # IDE and editor
 .vscode/

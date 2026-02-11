@@ -72,6 +72,17 @@ HTTP endpoints on the admin listener:
 - `GET /api/v1/plugins/{id}/bundle` (cacheable encrypted plugin bytes)
 - `POST /api/v1/plugins/{id}/key-envelope` (auth required; returns wrapped decryption material)
 
+Native TLS on admin/API listener (no reverse proxy):
+
+```yaml
+admin:
+  enabled: true
+  listen_addr: 0.0.0.0:443
+  tls_enabled: true
+  tls_cert_file: /etc/spacedatanetwork/tls/origin.crt
+  tls_key_file: /etc/spacedatanetwork/tls/origin.key
+```
+
 Set an admin token to enable entitlement updates:
 
 ```bash

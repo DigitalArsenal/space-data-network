@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	logging "github.com/ipfs/go-log/v2"
@@ -131,14 +132,25 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			if adminAddr == "" {
 				adminAddr = "127.0.0.1:5001"
 			}
+			adminTLS := cfg.Admin.TLSEnabled
+			adminCertFile := strings.TrimSpace(cfg.Admin.TLSCertFile)
+			adminKeyFile := strings.TrimSpace(cfg.Admin.TLSKeyFile)
+			if adminTLS && (adminCertFile == "" || adminKeyFile == "") {
+				return fmt.Errorf("admin TLS is enabled but tls_cert_file or tls_key_file is empty")
+			}
+
+			adminScheme := "http"
+			if adminTLS {
+				adminScheme = "https"
+			}
 			adminMux := http.NewServeMux()
 			var tokenVerifier *license.TokenVerifier
 			if n.LicenseService() != nil {
 				tokenVerifier = n.LicenseService().Verifier()
 				licenseAPI := license.NewAPIHandler(n.LicenseService())
 				licenseAPI.RegisterRoutes(adminMux)
-				log.Infof("License verification API available at http://%s/api/v1/license/verify", adminAddr)
-				log.Infof("License entitlement admin API available at http://%s/api/v1/license/entitlements", adminAddr)
+				log.Infof("License verification API available at %s://%s/api/v1/license/verify", adminScheme, adminAddr)
+				log.Infof("License entitlement admin API available at %s://%s/api/v1/license/entitlements", adminScheme, adminAddr)
 			}
 			dataAPI := api.NewDataQueryHandler(n.Store(), tokenVerifier)
 			dataAPI.RegisterRoutes(adminMux)
@@ -164,8 +176,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						storefrontSvc = sfSvc
 						storefrontStore = sfStore
 						storefrontDelivery = sfDelivery
-						log.Infof("Storefront API available at http://%s/api/storefront/listings", adminAddr)
-						log.Infof("Stripe webhook endpoint: http://%s/api/storefront/payments/stripe/webhook", adminAddr)
+						log.Infof("Storefront API available at %s://%s/api/storefront/listings", adminScheme, adminAddr)
+						log.Infof("Stripe webhook endpoint: %s://%s/api/storefront/payments/stripe/webhook", adminScheme, adminAddr)
 					}
 				}
 			}
@@ -177,10 +189,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				Handler: adminMux,
 			}
 			go func() {
-				log.Infof("Admin interface available at http://%s/admin", adminAddr)
-				log.Infof("Peer API available at http://%s/api/peers", adminAddr)
-				log.Infof("Public data API available at http://%s/api/v1/data/omm", adminAddr)
-				if err := adminServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Infof("Admin interface available at %s://%s/admin", adminScheme, adminAddr)
+				log.Infof("Peer API available at %s://%s/api/peers", adminScheme, adminAddr)
+				log.Infof("Public data API available at %s://%s/api/v1/data/omm", adminScheme, adminAddr)
+				var err error
+				if adminTLS {
+					err = adminServer.ListenAndServeTLS(adminCertFile, adminKeyFile)
+				} else {
+					err = adminServer.ListenAndServe()
+				}
+				if err != nil && err != http.ErrServerClosed {
 					log.Warnf("Admin server error: %v", err)
 				}
 			}()
