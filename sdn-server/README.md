@@ -115,6 +115,13 @@ admin:
   tls_enabled: true
   tls_cert_file: /etc/spacedatanetwork/tls/origin.crt
   tls_key_file: /etc/spacedatanetwork/tls/origin.key
+  homepage_file: /opt/spacedatanetwork/spaceaware/index.html
+```
+
+Build the SpaceAware single-file homepage:
+
+```bash
+npm --prefix ../packages/spaceaware run build
 ```
 
 Set an admin token to enable entitlement updates:
