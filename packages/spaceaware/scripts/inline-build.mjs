@@ -24,7 +24,7 @@ async function inlineStyles(html) {
     const href = match[1];
     const cssPath = toAssetPath(href);
     const css = await readFile(cssPath, "utf8");
-    out = out.replace(fullTag, `<style>\n${css}\n</style>`);
+    out = out.replace(fullTag, () => `<style>\n${css}\n</style>`);
   }
 
   return out;
@@ -43,7 +43,7 @@ async function inlineModuleScript(html) {
   const jsPath = toAssetPath(src);
   const js = await readFile(jsPath, "utf8");
 
-  return html.replace(fullTag, `<script type="module">\n${js}\n</script>`);
+  return html.replace(fullTag, () => `<script type="module">\n${js}\n</script>`);
 }
 
 async function buildSingleFile() {
