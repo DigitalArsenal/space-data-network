@@ -12,8 +12,8 @@ const repoRoot = path.resolve(packageRoot, "..", "..");
 const orbProLocalPath =
   process.env.ORBPRO_ESM_PATH ||
   path.resolve(repoRoot, "..", "OrbPro", "Build", "OrbPro", "OrbPro.esm.js");
-const orbProModuleUrl = process.env.ORBPRO_ESM_URL || "/Build/OrbPro/OrbPro.esm.js";
-const orbProBaseUrl = process.env.ORBPRO_BASE_URL || "/Build/CesiumUnminified/";
+const orbProModuleUrl = process.env.ORBPRO_ESM_URL || "Build/OrbPro/OrbPro.esm.js";
+const orbProBaseUrl = process.env.ORBPRO_BASE_URL || "Build/CesiumUnminified/";
 const orbProLocalExists = fs.existsSync(orbProLocalPath);
 if (!orbProLocalExists) {
   console.warn(

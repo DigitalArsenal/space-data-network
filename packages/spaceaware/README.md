@@ -27,12 +27,13 @@ Svelte 5 single-file SpaceAware beta homepage for `spaceaware.io`.
 - FlatBuffers-first querying (`format=flatbuffers` default)
 - JSON debugging mode (`format=json`)
 - Beta link sharing (deep-link query state)
-- OrbPro globe loaded from URL (`/Build/OrbPro/OrbPro.esm.js`)
+- OrbPro globe loaded from URL (`Build/OrbPro/OrbPro.esm.js`)
 
 ## Scripts
 
 - `npm run dev`: local dev server
 - `npm run build`: Vite build + inline to single-file artifact
+- `npm run build:ipfs`: build + copy OrbPro runtime assets into `dist/Build`
 - `npm run preview`: preview build output
 - `npm run serve`: static serve `dist/`
 
@@ -50,20 +51,20 @@ Outputs:
 - `packages/spaceaware/dist/index.html`
 - `packages/spaceaware/dist/spaceaware.single.html`
 
-Both are single-file HTML artifacts that lazily import OrbPro from `/Build/*`.
+Both are single-file HTML artifacts that lazily import OrbPro from `Build/*`.
 
 ### OrbPro runtime URLs
 
 Defaults:
 
-- Module URL: `/Build/OrbPro/OrbPro.esm.js`
-- Base URL (workers/assets): `/Build/CesiumUnminified/`
+- Module URL: `Build/OrbPro/OrbPro.esm.js`
+- Base URL (workers/assets): `Build/CesiumUnminified/`
 
 Override at build time:
 
 ```bash
-ORBPRO_ESM_URL=/Build/OrbPro/OrbPro.esm.js \
-ORBPRO_BASE_URL=/Build/CesiumUnminified/ \
+ORBPRO_ESM_URL=Build/OrbPro/OrbPro.esm.js \
+ORBPRO_BASE_URL=Build/CesiumUnminified/ \
 npm --prefix packages/spaceaware run build
 ```
 
@@ -84,3 +85,5 @@ ORBPRO_ESM_PATH=/absolute/path/to/OrbPro.esm.js npm --prefix packages/spaceaware
 
 - `dist/index.html` is rewritten as an inlined single-file page.
 - `dist/spaceaware.single.html` is a copy for explicit distribution.
+- For IPFS/gateway deploys, run `npm run build:ipfs` and publish the full `dist/`
+  folder so `dist/Build/*` is available under the same CID path.

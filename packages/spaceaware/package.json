@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite dev --host 0.0.0.0 --port 4180",
     "build": "vite build && node scripts/inline-build.mjs",
+    "build:ipfs": "npm run build && node scripts/copy-orbpro-build.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4180",
     "clean": "rm -rf dist .vite",
     "serve": "npx http-server dist -p 4180 -c-1"
