@@ -9,7 +9,8 @@
   import { hydrateQueryFromUrl } from "./lib/stores/queryStore.js";
 
   let buildStamp = $state(__SPACEAWARE_BUILD_STAMP__);
-  let orbProPath = $state(__SPACEAWARE_ORBPRO_PATH__);
+  let orbProModuleUrl = $state(__SPACEAWARE_ORBPRO_MODULE_URL__);
+  let orbProBaseUrl = $state(__SPACEAWARE_ORBPRO_BASE_URL__);
 
   onMount(() => {
     hydrateQueryFromUrl(window.location.href);
@@ -24,5 +25,5 @@
     <OrbProPanel />
   </div>
 
-  <AppFooter {buildStamp} {orbProPath} />
+  <AppFooter {buildStamp} {orbProModuleUrl} {orbProBaseUrl} />
 </div>

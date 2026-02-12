@@ -9,31 +9,26 @@ const __dirname = path.dirname(__filename);
 const packageRoot = __dirname;
 const repoRoot = path.resolve(packageRoot, "..", "..");
 
-const orbProPath =
+const orbProLocalPath =
   process.env.ORBPRO_ESM_PATH ||
   path.resolve(repoRoot, "..", "OrbPro", "Build", "OrbPro", "OrbPro.esm.js");
-
-function loadOrbProSource() {
-  try {
-    return fs.readFileSync(orbProPath, "utf8");
-  } catch (error) {
-    console.warn(
-      `[spaceaware] Failed to read OrbPro bundle at ${orbProPath}. Build will keep a placeholder.`,
-    );
-    return "__ORBPRO_ESM_SOURCE__";
-  }
+const orbProModuleUrl = process.env.ORBPRO_ESM_URL || "/Build/OrbPro/OrbPro.esm.js";
+const orbProBaseUrl = process.env.ORBPRO_BASE_URL || "/Build/CesiumUnminified/";
+const orbProLocalExists = fs.existsSync(orbProLocalPath);
+if (!orbProLocalExists) {
+  console.warn(
+    `[spaceaware] OrbPro local file not found at ${orbProLocalPath}. Build continues because module loads from URL (${orbProModuleUrl}).`,
+  );
 }
-
-const orbProSource = loadOrbProSource();
 const buildStamp = new Date().toISOString();
 
 export default defineConfig({
   plugins: [svelte()],
   base: "./",
   define: {
-    __ORBPRO_ESM_SOURCE__: JSON.stringify(orbProSource),
+    __SPACEAWARE_ORBPRO_MODULE_URL__: JSON.stringify(orbProModuleUrl),
+    __SPACEAWARE_ORBPRO_BASE_URL__: JSON.stringify(orbProBaseUrl),
     __SPACEAWARE_BUILD_STAMP__: JSON.stringify(buildStamp),
-    __SPACEAWARE_ORBPRO_PATH__: JSON.stringify(orbProPath),
   },
   build: {
     outDir: "dist",

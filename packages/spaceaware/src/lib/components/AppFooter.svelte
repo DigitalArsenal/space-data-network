@@ -1,11 +1,13 @@
 <svelte:options runes={true} />
 
 <script>
-  let { buildStamp, orbProPath } = $props();
+  let { buildStamp, orbProModuleUrl, orbProBaseUrl } = $props();
 </script>
 
 <div class="footer">
   Build: {buildStamp}
   <br />
-  OrbPro Source: {orbProPath}
+  OrbPro Module URL: {orbProModuleUrl}
+  <br />
+  OrbPro Base URL: {orbProBaseUrl}
 </div>

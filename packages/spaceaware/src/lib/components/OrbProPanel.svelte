@@ -24,7 +24,7 @@
         loaded: false,
         loading: false,
         kind: "bad",
-        message: "OrbPro bundle not embedded in this build.",
+        message: "OrbPro module URL is not configured for this build.",
       });
       return;
     }
@@ -66,8 +66,8 @@
 <section class="card">
   <h2>OrbPro Viewer</h2>
   <p class="small">
-    OrbPro is embedded from the single-file build and loaded lazily. Use this
-    to inspect globe context while running free-tier queries.
+    OrbPro is loaded lazily from the local `/Build` static path. Use this to
+    inspect globe context while running free-tier queries.
   </p>
 
   <div class="actions">
