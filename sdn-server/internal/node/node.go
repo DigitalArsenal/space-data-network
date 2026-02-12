@@ -38,6 +38,8 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
+	"github.com/spacedatanetwork/sdn-server/plugins"
+	"github.com/spacedatanetwork/sdn-server/plugins/licenseplugin"
 )
 
 var log = logging.Logger("sdn-node")
@@ -62,7 +64,8 @@ type Node struct {
 	validator *sds.Validator
 	store     *storage.FlatSQLStore
 	protocol  *protocol.SDSExchangeHandler
-	license   *license.Service
+	plugins   *plugins.Manager
+	license   *licenseplugin.Plugin
 	config    *config.Config
 
 	// Trusted peer management
@@ -280,16 +283,24 @@ func (n *Node) init() error {
 	n.host.SetStreamHandler(protocol.IDExchangeProtoID, protocol.HandleLegacyIDExchange)
 	n.host.SetStreamHandler(protocol.ChatProtoID, protocol.HandleLegacyChat)
 
-	// Initialize license service (full node mode only).
-	if n.config.Mode != "edge" {
+	// Initialize runtime plugins.
+	n.plugins = plugins.New()
+	n.license = licenseplugin.New()
+	if err := n.plugins.Register(n.license); err != nil {
+		log.Warnf("Failed to register plugin %q: %v", licenseplugin.ID, err)
+	} else {
 		basePath := filepath.Dir(n.config.Storage.Path)
-		licenseSvc, err := license.NewService(basePath, n.host.ID().String())
-		if err != nil {
-			log.Warnf("License service initialization failed: %v", err)
-		} else {
-			n.license = licenseSvc
-			n.host.SetStreamHandler(license.ProtocolID, n.license.HandleStream)
-			log.Infof("License protocol enabled: %s", license.ProtocolID)
+		pluginCtx := plugins.RuntimeContext{
+			Host:         n.host,
+			BaseDataPath: basePath,
+			PeerID:       n.host.ID().String(),
+			Mode:         n.config.Mode,
+		}
+		if err := n.plugins.StartAll(n.ctx, pluginCtx); err != nil {
+			log.Warnf("Plugin startup completed with errors: %v", err)
+		}
+		if n.license.Service() != nil {
+			log.Infof("Plugin enabled: %s (%s)", n.license.ID(), license.ProtocolID)
 		}
 	}
 
@@ -670,9 +681,9 @@ func (n *Node) Stop() error {
 			log.Warnf("Error closing storage: %v", err)
 		}
 	}
-	if n.license != nil {
-		if err := n.license.Close(); err != nil {
-			log.Warnf("Error closing license service: %v", err)
+	if n.plugins != nil {
+		if err := n.plugins.Close(); err != nil {
+			log.Warnf("Error closing plugins: %v", err)
 		}
 	}
 
@@ -723,7 +734,23 @@ func (n *Node) Store() *storage.FlatSQLStore {
 	return n.store
 }
 
+// PluginManager returns the node plugin manager.
+func (n *Node) PluginManager() *plugins.Manager {
+	return n.plugins
+}
+
 // LicenseService returns the local license service (nil in edge mode or if unavailable).
 func (n *Node) LicenseService() *license.Service {
-	return n.license
+	if n.license == nil {
+		return nil
+	}
+	return n.license.Service()
+}
+
+// TokenVerifier returns the capability-token verifier from the license plugin.
+func (n *Node) TokenVerifier() *license.TokenVerifier {
+	if n.license == nil {
+		return nil
+	}
+	return n.license.TokenVerifier()
 }

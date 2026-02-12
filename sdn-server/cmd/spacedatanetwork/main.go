@@ -18,7 +18,6 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
-	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -145,13 +144,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				adminScheme = "https"
 			}
 			adminMux := http.NewServeMux()
-			var tokenVerifier *license.TokenVerifier
-			if n.LicenseService() != nil {
-				tokenVerifier = n.LicenseService().Verifier()
-				licenseAPI := license.NewAPIHandler(n.LicenseService())
-				licenseAPI.RegisterRoutes(adminMux)
+			if n.PluginManager() != nil {
+				n.PluginManager().RegisterRoutes(adminMux)
+			}
+			tokenVerifier := n.TokenVerifier()
+			if tokenVerifier != nil {
 				log.Infof("License verification API available at %s://%s/api/v1/license/verify", adminScheme, adminAddr)
 				log.Infof("License entitlement admin API available at %s://%s/api/v1/license/entitlements", adminScheme, adminAddr)
+				log.Infof("Plugin manifest API available at %s://%s/api/v1/plugins/manifest", adminScheme, adminAddr)
 			}
 			dataAPI := api.NewDataQueryHandler(n.Store(), tokenVerifier)
 			dataAPI.RegisterRoutes(adminMux)
