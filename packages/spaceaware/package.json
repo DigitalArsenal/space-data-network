@@ -1,0 +1,20 @@
+{
+  "name": "@spacedatanetwork/spaceaware",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Single-file SpaceAware beta homepage powered by OrbPro + SDN APIs",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-single-file.mjs",
+    "clean": "rm -f dist/index.html dist/spaceaware.single.html",
+    "serve": "npx http-server dist -p 4180 -c-1"
+  },
+  "keywords": [
+    "spaceaware",
+    "orbpro",
+    "single-file",
+    "sdn",
+    "ipfs"
+  ],
+  "license": "MIT"
+}

@@ -12,12 +12,21 @@ This folder is a launch-oriented deployment scaffold for a 24-hour rollout on on
 
 1. Copy `.env.example` to `.env` and fill values.
 2. Update `config/sdn/config.yaml` bootstrap/listen fields and trusted peers.
-3. Ensure host paths exist:
+3. Build and copy SpaceAware single-file homepage:
+
+```bash
+npm --prefix packages/spaceaware run build
+scp packages/spaceaware/dist/index.html root@<SERVER_IP>:/opt/spacedatanetwork/spaceaware/index.html
+```
+
+4. Ensure `admin.homepage_file` points to `/opt/spacedatanetwork/spaceaware/index.html`.
+5. Ensure host paths exist:
    - `/opt/data/sdn`
    - `/opt/data/raw`
    - `/opt/data/keys`
    - `/opt/data/license`
-4. Launch:
+   - `/opt/spacedatanetwork/spaceaware`
+6. Launch:
 
 ```bash
 docker compose --env-file .env -f deployment/spaceaware/docker-compose.yml up -d

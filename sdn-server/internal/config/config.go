@@ -108,6 +108,10 @@ type AdminConfig struct {
 
 	// TLSKeyFile is the PEM-encoded private key path.
 	TLSKeyFile string `yaml:"tls_key_file"`
+
+	// HomepageFile is an optional single-file HTML app served at "/" and "/index.html".
+	// If empty, the built-in default landing page is served.
+	HomepageFile string `yaml:"homepage_file"`
 }
 
 // SetupConfig contains first-time setup settings.
@@ -175,6 +179,7 @@ func Default() *Config {
 			TLSEnabled:    false,
 			TLSCertFile:   "",
 			TLSKeyFile:    "",
+			HomepageFile:  "",
 		},
 		Setup: SetupConfig{
 			TokenExpiry: "10m",

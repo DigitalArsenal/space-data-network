@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -182,7 +183,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			adminMux.Handle("/", adminLandingHandler(adminUI))
+			landingHTML, err := loadLandingPage(cfg.Admin.HomepageFile)
+			if err != nil {
+				log.Warnf("Falling back to built-in landing page: %v", err)
+				landingHTML = []byte(defaultLandingPageHTML)
+			}
+			adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
 
 			adminServer = &http.Server{
 				Addr:    adminAddr,
@@ -233,7 +239,22 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	return n.Stop()
 }
 
-func adminLandingHandler(next http.Handler) http.Handler {
+func loadLandingPage(customPath string) ([]byte, error) {
+	if strings.TrimSpace(customPath) == "" {
+		return []byte(defaultLandingPageHTML), nil
+	}
+
+	content, err := os.ReadFile(customPath)
+	if err != nil {
+		return nil, fmt.Errorf("read admin.homepage_file %q: %w", customPath, err)
+	}
+	if len(bytes.TrimSpace(content)) == 0 {
+		return nil, fmt.Errorf("admin.homepage_file %q is empty", customPath)
+	}
+	return content, nil
+}
+
+func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -244,7 +265,7 @@ func adminLandingHandler(next http.Handler) http.Handler {
 			w.Header().Set("Cache-Control", "public, max-age=120")
 			w.WriteHeader(http.StatusOK)
 			if r.Method != http.MethodHead {
-				_, _ = w.Write([]byte(defaultLandingPageHTML))
+				_, _ = w.Write(landingHTML)
 			}
 			return
 		}
