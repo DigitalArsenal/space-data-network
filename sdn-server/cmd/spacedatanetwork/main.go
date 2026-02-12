@@ -188,6 +188,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Warnf("Falling back to built-in landing page: %v", err)
 				landingHTML = []byte(defaultLandingPageHTML)
 			}
+			if cfg.Admin.RequireAuth {
+				adminMux.HandleFunc("/admin", lockedAdminHandler)
+				adminMux.HandleFunc("/admin/", lockedAdminHandler)
+			}
+
 			adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
 
 			adminServer = &http.Server{
@@ -195,7 +200,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				Handler: adminMux,
 			}
 			go func() {
-				log.Infof("Admin interface available at %s://%s/admin", adminScheme, adminAddr)
+				if cfg.Admin.RequireAuth {
+					log.Infof("Admin interface is hidden at /admin because admin.require_auth=true (auth UI enforcement pending)")
+				} else {
+					log.Infof("Admin interface available at %s://%s/admin", adminScheme, adminAddr)
+				}
 				log.Infof("Peer API available at %s://%s/api/peers", adminScheme, adminAddr)
 				log.Infof("Public data API available at %s://%s/api/v1/data/omm", adminScheme, adminAddr)
 				var err error
@@ -273,6 +282,10 @@ func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
 	})
 }
 
+func lockedAdminHandler(w http.ResponseWriter, r *http.Request) {
+	http.NotFound(w, r)
+}
+
 const defaultLandingPageHTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -321,7 +334,6 @@ const defaultLandingPageHTML = `<!doctype html>
       <p><a href="/api/v1/data/omm?norad_cat_id=25544&amp;day=2026-02-11&amp;limit=5">GET /api/v1/data/omm</a> (FlatBuffers default)</p>
       <p><a href="/api/v1/data/omm?norad_cat_id=25544&amp;day=2026-02-11&amp;limit=5&amp;format=json">GET /api/v1/data/omm?format=json</a></p>
       <p><a href="/api/v1/data/cat?norad_cat_id=25544&amp;limit=1&amp;format=json">GET /api/v1/data/cat?format=json</a></p>
-      <p><a href="/admin">/admin</a></p>
     </div>
   </main>
 </body>
