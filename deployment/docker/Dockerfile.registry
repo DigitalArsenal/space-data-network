@@ -1,7 +1,7 @@
 # SDN Registry Builder
 # Monitors DHT for edge relays and rebuilds encrypted WASM registry
 
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache gcc musl-dev
 
