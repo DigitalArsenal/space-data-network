@@ -106,6 +106,12 @@ HTTP endpoints on the admin listener:
 - `GET /api/v1/plugins/{id}/bundle` (cacheable encrypted plugin bytes)
 - `POST /api/v1/plugins/{id}/key-envelope` (auth required; returns wrapped decryption material)
 
+Runtime plugin architecture:
+
+- Plugin manager package: `github.com/spacedatanetwork/sdn-server/plugins`
+- Built-in license plugin package: `github.com/spacedatanetwork/sdn-server/plugins/licenseplugin`
+- The node now installs license functionality through this plugin manager at startup.
+
 Native TLS on admin/API listener (no reverse proxy):
 
 ```yaml
