@@ -38,6 +38,40 @@ export SPACETRACK_PASSWORD="your-password"
   --spacetrack-batch-sleep 3s
 ```
 
+Production (systemd) credential location:
+
+```bash
+/etc/systemd/system/spacedatanetwork-ingest.service.d/spacetrack.conf
+```
+
+```ini
+[Service]
+Environment=SPACETRACK_IDENTITY=your-identity
+Environment=SPACETRACK_PASSWORD=your-password
+```
+
+Apply changes:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart spacedatanetwork-ingest
+```
+
+Legacy import from `/opt/data/satellite_data.db`:
+
+```bash
+./spacedatanetwork import-legacy-sqlite \
+  --source-db /opt/data/satellite_data.db \
+  --storage-path /opt/data/sdn \
+  --batch-size 2000
+```
+
+Resume behavior is checkpointed at:
+
+```bash
+/opt/data/sdn/legacy-import-checkpoint.json
+```
+
 ## Stripe Subscription Billing (Storefront)
 
 The daemon now mounts storefront routes on the admin HTTP listener, including Stripe-backed checkout and webhook handling:
