@@ -16,6 +16,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
+	flatbuffers "github.com/google/flatbuffers/go"
 
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -102,42 +103,50 @@ func (h *DataQueryHandler) handleMPE(w http.ResponseWriter, r *http.Request) {
 	includeData := parseBool(r, "include_data")
 	format := requestedDataFormat(r)
 
-	records, err := h.store.QueryByIndexedFields("MPE.fbs", day, nil, entityID, limit)
+	records, err := h.store.QueryByIndexedFields("OMM.fbs", day, nil, entityID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	setCachePolicy(w, day)
-	if handleConditionalCache(w, r, "MPE.fbs", day, entityID, records) {
-		return
-	}
-	if format == dataFormatFlatBuffers {
-		writeFlatBufferStream(w, "MPE.fbs", records)
+	if handleConditionalCache(w, r, "OMM.fbs", day, entityID, records) {
 		return
 	}
 
+	mpePayloads := make([][]byte, 0, len(records))
 	results := make([]map[string]interface{}, 0, len(records))
 	for _, rec := range records {
+		omm, err := decodeOMM(rec.Data)
+		if err != nil {
+			continue
+		}
+		mpeData := buildMPEFromOMM(omm)
+		mpePayloads = append(mpePayloads, mpeData)
+
 		row := map[string]interface{}{
 			"cid":       rec.CID,
 			"peer_id":   rec.PeerID,
 			"timestamp": rec.Timestamp.UTC().Format(time.RFC3339),
 		}
 
-		if mpe, err := decodeMPE(rec.Data); err == nil {
-			row["entity_id"] = string(mpe.ENTITY_ID())
-			row["epoch_unix"] = int64(mpe.EPOCH())
-			row["mean_motion"] = mpe.MEAN_MOTION()
-			row["eccentricity"] = mpe.ECCENTRICITY()
-			row["inclination"] = mpe.INCLINATION()
-		}
+		epochUnix, _ := parseEpochUnix(strings.TrimSpace(string(omm.EPOCH())))
+		row["entity_id"] = strings.TrimSpace(string(omm.OBJECT_ID()))
+		row["epoch_unix"] = epochUnix
+		row["mean_motion"] = omm.MEAN_MOTION()
+		row["eccentricity"] = omm.ECCENTRICITY()
+		row["inclination"] = omm.INCLINATION()
 
 		if includeData {
-			row["data_base64"] = base64.StdEncoding.EncodeToString(rec.Data)
+			row["data_base64"] = base64.StdEncoding.EncodeToString(mpeData)
 		}
 
 		results = append(results, row)
+	}
+
+	if format == dataFormatFlatBuffers {
+		writeFlatBufferPayloadStream(w, "MPE.fbs", mpePayloads)
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -450,22 +459,104 @@ func requestedDataFormat(r *http.Request) dataFormat {
 }
 
 func writeFlatBufferStream(w http.ResponseWriter, schema string, records []*storage.Record) {
+	payloads := make([][]byte, 0, len(records))
+	for _, rec := range records {
+		payloads = append(payloads, rec.Data)
+	}
+	writeFlatBufferPayloadStream(w, schema, payloads)
+}
+
+func writeFlatBufferPayloadStream(w http.ResponseWriter, schema string, payloads [][]byte) {
 	w.Header().Set("Content-Type", "application/x-flatbuffers")
 	w.Header().Set("X-SDN-Schema", schema)
-	w.Header().Set("X-SDN-Record-Count", strconv.Itoa(len(records)))
+	w.Header().Set("X-SDN-Record-Count", strconv.Itoa(len(payloads)))
 	w.Header().Set("X-SDN-Stream-Format", "uint32be-length-prefixed")
 	w.WriteHeader(http.StatusOK)
 
 	var lenBuf [4]byte
-	for _, rec := range records {
-		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(rec.Data)))
+	for _, payload := range payloads {
+		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(payload)))
 		if _, err := w.Write(lenBuf[:]); err != nil {
 			return
 		}
-		if _, err := w.Write(rec.Data); err != nil {
+		if _, err := w.Write(payload); err != nil {
 			return
 		}
 	}
+}
+
+func buildMPEFromOMM(omm *OMM.OMM) []byte {
+	builder := flatbuffers.NewBuilder(256)
+	entityID := strings.TrimSpace(string(omm.OBJECT_ID()))
+	if entityID == "" && omm.NORAD_CAT_ID() > 0 {
+		entityID = fmt.Sprintf("NORAD-%d", omm.NORAD_CAT_ID())
+	}
+	entityIDOffset := builder.CreateString(entityID)
+
+	epochUnix, _ := parseEpochUnix(strings.TrimSpace(string(omm.EPOCH())))
+
+	MPE.MPEStart(builder)
+	MPE.MPEAddENTITY_ID(builder, entityIDOffset)
+	if epochUnix > 0 {
+		MPE.MPEAddEPOCH(builder, float64(epochUnix))
+	}
+	if v := omm.MEAN_MOTION(); v != 0 {
+		MPE.MPEAddMEAN_MOTION(builder, v)
+	}
+	if v := omm.ECCENTRICITY(); v != 0 {
+		MPE.MPEAddECCENTRICITY(builder, v)
+	}
+	if v := omm.INCLINATION(); v != 0 {
+		MPE.MPEAddINCLINATION(builder, v)
+	}
+	if v := omm.RA_OF_ASC_NODE(); v != 0 {
+		MPE.MPEAddRA_OF_ASC_NODE(builder, v)
+	}
+	if v := omm.ARG_OF_PERICENTER(); v != 0 {
+		MPE.MPEAddARG_OF_PERICENTER(builder, v)
+	}
+	if v := omm.MEAN_ANOMALY(); v != 0 {
+		MPE.MPEAddMEAN_ANOMALY(builder, v)
+	}
+	if v := omm.BSTAR(); v != 0 {
+		MPE.MPEAddBSTAR(builder, v)
+	}
+
+	mpe := MPE.MPEEnd(builder)
+	MPE.FinishSizePrefixedMPEBuffer(builder, mpe)
+
+	out := make([]byte, len(builder.FinishedBytes()))
+	copy(out, builder.FinishedBytes())
+	return out
+}
+
+func parseEpochUnix(raw string) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, fmt.Errorf("empty epoch")
+	}
+
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.000000",
+		"2006-01-02T15:04:05.000",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	}
+
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t.UTC().Unix(), nil
+		}
+	}
+
+	if f, err := strconv.ParseFloat(raw, 64); err == nil && f > 0 {
+		return int64(f), nil
+	}
+
+	return 0, fmt.Errorf("unsupported epoch format: %q", raw)
 }
 
 func decodeOMM(data []byte) (*OMM.OMM, error) {

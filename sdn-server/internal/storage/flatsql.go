@@ -577,6 +577,7 @@ func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error
 			idCopy := id
 			out.noradCatID = &idCopy
 		}
+		out.entityID = strings.TrimSpace(string(omm.OBJECT_ID()))
 
 		epochStr := strings.TrimSpace(string(omm.EPOCH()))
 		if epochStr == "" {
