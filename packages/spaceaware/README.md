@@ -27,7 +27,7 @@ Svelte 5 single-file SpaceAware beta homepage for `spaceaware.io`.
 - FlatBuffers-first querying (`format=flatbuffers` default)
 - JSON debugging mode (`format=json`)
 - Beta link sharing (deep-link query state)
-- OrbPro globe loaded from an embedded single-file ESM bundle
+- OrbPro globe loaded from URL (`/Build/OrbPro/OrbPro.esm.js`)
 
 ## Scripts
 
@@ -50,11 +50,27 @@ Outputs:
 - `packages/spaceaware/dist/index.html`
 - `packages/spaceaware/dist/spaceaware.single.html`
 
-Both are single-file HTML artifacts with OrbPro embedded inline.
+Both are single-file HTML artifacts that lazily import OrbPro from `/Build/*`.
 
-### OrbPro input path
+### OrbPro runtime URLs
 
-Default OrbPro bundle path:
+Defaults:
+
+- Module URL: `/Build/OrbPro/OrbPro.esm.js`
+- Base URL (workers/assets): `/Build/CesiumUnminified/`
+
+Override at build time:
+
+```bash
+ORBPRO_ESM_URL=/Build/OrbPro/OrbPro.esm.js \
+ORBPRO_BASE_URL=/Build/CesiumUnminified/ \
+npm --prefix packages/spaceaware run build
+```
+
+### OrbPro local validation path
+
+The build checks for a local OrbPro file to catch missing dependencies early.
+Default local file:
 
 `../OrbPro/Build/OrbPro/OrbPro.esm.js`
 

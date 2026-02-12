@@ -188,6 +188,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Warnf("Falling back to built-in landing page: %v", err)
 				landingHTML = []byte(defaultLandingPageHTML)
 			}
+			if buildAssetsDir := resolveBuildAssetsDir(cfg.Admin.HomepageFile); buildAssetsDir != "" {
+				adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
+				log.Infof("Static build assets served at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
+			}
 			if cfg.Admin.RequireAuth {
 				adminMux.HandleFunc("/admin", lockedAdminHandler)
 				adminMux.HandleFunc("/admin/", lockedAdminHandler)
@@ -261,6 +265,14 @@ func loadLandingPage(customPath string) ([]byte, error) {
 		return nil, fmt.Errorf("admin.homepage_file %q is empty", customPath)
 	}
 	return content, nil
+}
+
+func resolveBuildAssetsDir(homepageFile string) string {
+	path := strings.TrimSpace(homepageFile)
+	if path == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(path), "Build")
 }
 
 func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {

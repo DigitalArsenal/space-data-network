@@ -1,4 +1,4 @@
-import { ORBPRO_ESM_SOURCE } from "./embeddedOrbPro.js";
+import { ORBPRO_BASE_URL, ORBPRO_ESM_MODULE_URL } from "./embeddedOrbPro.js";
 
 const runtime = {
   cesium: null,
@@ -7,9 +7,9 @@ const runtime = {
 
 export function hasEmbeddedOrbPro() {
   return (
-    typeof ORBPRO_ESM_SOURCE === "string" &&
-    ORBPRO_ESM_SOURCE.length > 0 &&
-    !ORBPRO_ESM_SOURCE.startsWith("__")
+    typeof ORBPRO_ESM_MODULE_URL === "string" &&
+    ORBPRO_ESM_MODULE_URL.length > 0 &&
+    !ORBPRO_ESM_MODULE_URL.startsWith("__")
   );
 }
 
@@ -23,54 +23,49 @@ export async function loadOrbPro(containerId) {
   }
 
   if (!hasEmbeddedOrbPro()) {
-    throw new Error("OrbPro bundle was not embedded at build time.");
+    throw new Error("OrbPro module URL is not configured for this build.");
   }
 
-  const moduleUrl = URL.createObjectURL(
-    new Blob([ORBPRO_ESM_SOURCE], { type: "text/javascript" }),
-  );
+  const moduleUrl = ORBPRO_ESM_MODULE_URL;
+  window.CESIUM_BASE_URL = ORBPRO_BASE_URL;
 
-  try {
-    const Cesium = await import(moduleUrl);
-    runtime.cesium = Cesium;
+  const Cesium = await import(moduleUrl);
+  runtime.cesium = Cesium;
 
-    const blueMarble = Cesium.EmbeddedImageryProvider.createBlueMarble();
-    runtime.viewer = new Cesium.Viewer(containerId, {
-      baseLayer: new Cesium.ImageryLayer(blueMarble),
-      baseLayerPicker: false,
-      geocoder: false,
-      animation: false,
-      timeline: false,
-      homeButton: false,
-      sceneModePicker: false,
-      navigationHelpButton: false,
-      infoBox: false,
-      selectionIndicator: false,
+  const blueMarble = Cesium.EmbeddedImageryProvider.createBlueMarble();
+  runtime.viewer = new Cesium.Viewer(containerId, {
+    baseLayer: new Cesium.ImageryLayer(blueMarble),
+    baseLayerPicker: false,
+    geocoder: false,
+    animation: false,
+    timeline: false,
+    homeButton: false,
+    sceneModePicker: false,
+    navigationHelpButton: false,
+    infoBox: false,
+    selectionIndicator: false,
+  });
+
+  if (typeof Cesium.Viewer.configureEmbeddedImagery === "function") {
+    Cesium.Viewer.configureEmbeddedImagery(runtime.viewer, {
+      enableLighting: true,
+      addNightLayer: true,
     });
-
-    if (typeof Cesium.Viewer.configureEmbeddedImagery === "function") {
-      Cesium.Viewer.configureEmbeddedImagery(runtime.viewer, {
-        enableLighting: true,
-        addNightLayer: true,
-      });
-    }
-
-    runtime.viewer.scene.globe.depthTestAgainstTerrain = true;
-    runtime.viewer.clock.shouldAnimate = true;
-    runtime.viewer.clock.multiplier = 60;
-    runtime.viewer.camera.setView({
-      destination: Cesium.Cartesian3.fromDegrees(-40, 20, 14000000),
-      orientation: {
-        heading: 0,
-        pitch: Cesium.Math.toRadians(-90),
-        roll: 0,
-      },
-    });
-
-    return runtime;
-  } finally {
-    URL.revokeObjectURL(moduleUrl);
   }
+
+  runtime.viewer.scene.globe.depthTestAgainstTerrain = true;
+  runtime.viewer.clock.shouldAnimate = true;
+  runtime.viewer.clock.multiplier = 60;
+  runtime.viewer.camera.setView({
+    destination: Cesium.Cartesian3.fromDegrees(-40, 20, 14000000),
+    orientation: {
+      heading: 0,
+      pitch: Cesium.Math.toRadians(-90),
+      roll: 0,
+    },
+  });
+
+  return runtime;
 }
 
 export function flyToIssContext() {
