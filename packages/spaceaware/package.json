@@ -2,11 +2,13 @@
   "name": "@spacedatanetwork/spaceaware",
   "version": "0.1.0",
   "private": true,
-  "description": "Single-file SpaceAware beta homepage powered by OrbPro + SDN APIs",
+  "description": "SpaceAware Svelte 5 single-file homepage powered by OrbPro + SDN APIs",
   "type": "module",
   "scripts": {
-    "build": "node scripts/build-single-file.mjs",
-    "clean": "rm -f dist/index.html dist/spaceaware.single.html",
+    "dev": "vite dev --host 0.0.0.0 --port 4180",
+    "build": "vite build && node scripts/inline-build.mjs",
+    "preview": "vite preview --host 0.0.0.0 --port 4180",
+    "clean": "rm -rf dist .vite",
     "serve": "npx http-server dist -p 4180 -c-1"
   },
   "keywords": [
@@ -14,7 +16,15 @@
     "orbpro",
     "single-file",
     "sdn",
-    "ipfs"
+    "ipfs",
+    "svelte"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "svelte": "^5.50.1"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.1.1",
+    "vite": "^6.4.1"
+  }
 }
