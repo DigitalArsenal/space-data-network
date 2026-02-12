@@ -5,6 +5,37 @@ const runtime = {
   viewer: null,
 };
 
+function isAbsoluteOrRootPath(value) {
+  return /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(value) || value.startsWith("/");
+}
+
+function resolveRuntimeBaseUrl() {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+
+  if (url.pathname.endsWith("/")) {
+    return url.toString();
+  }
+
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length === 2 && (parts[0] === "ipfs" || parts[0] === "ipns")) {
+    url.pathname = `${url.pathname}/`;
+    return url.toString();
+  }
+
+  const slash = url.pathname.lastIndexOf("/");
+  url.pathname = slash >= 0 ? url.pathname.slice(0, slash + 1) : "/";
+  return url.toString();
+}
+
+function resolveAssetUrl(pathValue) {
+  if (isAbsoluteOrRootPath(pathValue)) {
+    return pathValue;
+  }
+  return new URL(pathValue, resolveRuntimeBaseUrl()).toString();
+}
+
 export function hasEmbeddedOrbPro() {
   return (
     typeof ORBPRO_ESM_MODULE_URL === "string" &&
@@ -26,8 +57,8 @@ export async function loadOrbPro(containerId) {
     throw new Error("OrbPro module URL is not configured for this build.");
   }
 
-  const moduleUrl = ORBPRO_ESM_MODULE_URL;
-  window.CESIUM_BASE_URL = ORBPRO_BASE_URL;
+  const moduleUrl = resolveAssetUrl(ORBPRO_ESM_MODULE_URL);
+  window.CESIUM_BASE_URL = resolveAssetUrl(ORBPRO_BASE_URL);
 
   const Cesium = await import(moduleUrl);
   runtime.cesium = Cesium;
