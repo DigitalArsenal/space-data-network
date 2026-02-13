@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
@@ -61,7 +62,6 @@ func SessionFromContext(ctx context.Context) *Session {
 // wantsJSON returns true if the request prefers JSON over HTML.
 func wantsJSON(r *http.Request) bool {
 	accept := r.Header.Get("Accept")
-	return accept == "application/json" ||
-		(len(accept) > 0 && accept[0] == '{') ||
+	return strings.Contains(accept, "application/json") ||
 		r.Header.Get("Content-Type") == "application/json"
 }

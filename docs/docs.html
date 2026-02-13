@@ -1330,7 +1330,7 @@ const lla = ecefToLla(ecef);
       <!-- Identity & Cryptography -->
       <section id="identity-overview" class="doc-section">
         <h2>Identity & Key Derivation</h2>
-        <p>Every SDN node derives its full cryptographic identity from a <strong>BIP-39 mnemonic</strong> generated client-side. No central authority issues keys &mdash; identity is fully decentralized. Using <a href="https://github.com/satoshilabs/slips/blob/master/slip-0010.md" target="_blank">SLIP-10</a> hierarchical deterministic derivation with custom <a href="https://github.com/satoshilabs/slips/blob/master/slip-0044.md" target="_blank">SLIP-44</a> coin type <code>9999</code>, one seed produces all the keys a node needs.</p>
+        <p>Every SDN node derives its full cryptographic identity from a <strong>BIP-39 mnemonic</strong> generated client-side. No central authority issues keys &mdash; identity is fully decentralized. Using <a href="https://github.com/satoshilabs/slips/blob/master/slip-0010.md" target="_blank">SLIP-10</a> hierarchical deterministic derivation with custom <a href="https://github.com/satoshilabs/slips/blob/master/slip-0044.md" target="_blank">SLIP-44</a> coin type <code>1957</code>, one seed produces all the keys a node needs.</p>
 
         <h3>Derivation Tree</h3>
         <pre><code>BIP-39 Mnemonic (generated client-side)
@@ -1341,11 +1341,20 @@ const lla = ecefToLla(ecef);
     ▼ SLIP-10 Master Key
   Extended Key (xpub / xprv)  ← Master Network Identity
     │
-    ├── m/44'/9999'/0'/0'/0'  →  Ed25519 Signing Key (also libp2p PeerID)
+    ├── m/44'/1957'/0'/0'/0'  →  Ed25519 Signing Key (also libp2p PeerID)
     │
-    └── m/44'/9999'/0'/1'/0'  →  X25519 Encryption Key</code></pre>
+    └── m/44'/1957'/0'/1'/0'  →  X25519 Encryption Key</code></pre>
 
         <p>The <strong>xpub</strong> (extended public key) serves as the node's master network identity. Anyone with the xpub can derive the node's public signing and encryption keys without access to private key material.</p>
+
+        <h3>Why Coin Type 1957?</h3>
+        <p>The <a href="https://github.com/satoshilabs/slips/blob/master/slip-0044.md" target="_blank">SLIP-44 registry</a> assigns coin type numbers to distinguish derivation paths between different blockchain networks (e.g., Bitcoin = 0, Ethereum = 60, Solana = 501). SDN uses coin type <code>1957</code> &mdash; the year <strong>Sputnik</strong> launched, marking the dawn of the space age &mdash; because:</p>
+        <ul>
+          <li><strong>SDN is not a cryptocurrency.</strong> Using a registered coin type (like Bitcoin's <code>0</code> or Ethereum's <code>60</code>) would collide with wallets that derive keys for those chains. A user's SDN identity key must never accidentally overlap with their BTC or ETH keys.</li>
+          <li><strong>Unregistered in SLIP-44.</strong> Coin type <code>1957</code> is unassigned in the SLIP-44 registry, avoiding conflicts with any officially registered blockchain network. This is appropriate for application-layer identity systems that reuse HD wallet infrastructure without implementing a blockchain.</li>
+          <li><strong>Deterministic, wallet-native identity.</strong> By using a BIP-44-style path (<code>m/44'/1957'/account'/change'/index'</code>), SDN nodes can derive signing and encryption keys from the same BIP-39 mnemonic a user already has for their cryptocurrency wallets &mdash; without interfering with those wallets' key derivation. One seed, many independent key trees.</li>
+          <li><strong>Multi-account support.</strong> The <code>account'</code> segment enables a single mnemonic to manage multiple SDN identities (e.g., account 0 for an operator, account 1 for a sensor, account 2 for an analytics service), each with its own independent signing and encryption key pair.</li>
+        </ul>
 
         <h3>JavaScript SDK</h3>
         <pre><code>import { initHDWallet, deriveIdentity, mnemonicToSeed } from '@spacedatanetwork/sdn-js';
@@ -1362,8 +1371,8 @@ const identity = await deriveIdentity(seed, 0); // account 0
 
 console.log(identity.signingKey.publicKey);    // Ed25519 pub (32 bytes)
 console.log(identity.encryptionKey.publicKey); // X25519 pub (32 bytes)
-console.log(identity.signingKeyPath);          // m/44'/9999'/0'/0'/0'
-console.log(identity.encryptionKeyPath);       // m/44'/9999'/0'/1'/0'</code></pre>
+console.log(identity.signingKeyPath);          // m/44'/1957'/0'/0'/0'
+console.log(identity.encryptionKeyPath);       // m/44'/1957'/0'/1'/0'</code></pre>
 
         <h3>Go Server</h3>
         <pre><code>// The server automatically derives identity from mnemonic on startup.
@@ -1377,13 +1386,13 @@ hw, _ := wasm.NewHDWalletModule(ctx, "/path/to/hd-wallet.wasm")
 identity, _ := hw.IdentityFromMnemonic(ctx, mnemonic, "", 0)
 
 fmt.Println(identity.PeerID)            // libp2p PeerID
-fmt.Println(identity.SigningKeyPath)    // m/44'/9999'/0'/0'/0'
-fmt.Println(identity.EncryptionKeyPath) // m/44'/9999'/0'/1'/0'</code></pre>
+fmt.Println(identity.SigningKeyPath)    // m/44'/1957'/0'/0'/0'
+fmt.Println(identity.EncryptionKeyPath) // m/44'/1957'/0'/1'/0'</code></pre>
       </section>
 
       <section id="identity-signing" class="doc-section">
         <h3>Signing & IPFS Identity</h3>
-        <p>The Ed25519 signing key at path <code>m/44'/9999'/account'/0'/0'</code> serves a dual purpose:</p>
+        <p>The Ed25519 signing key at path <code>m/44'/1957'/account'/0'/0'</code> serves a dual purpose:</p>
         <ul>
           <li><strong>Digital Signatures</strong> &mdash; Sign any data (SDS schemas, messages, transactions) with Ed25519. Recipients verify signatures using the corresponding public key.</li>
           <li><strong>libp2p PeerID</strong> &mdash; The Ed25519 public key is encoded as a <a href="https://docs.libp2p.io/concepts/fundamentals/peers/" target="_blank">libp2p PeerID</a> (multihash of the public key). This is the node's IPFS/libp2p address on the network.</li>
@@ -1408,7 +1417,7 @@ ok, _  := identity.Verify([]byte("ISS conjunction alert"), sig)
 
       <section id="identity-encryption" class="doc-section">
         <h3>Encryption (X25519 ECDH)</h3>
-        <p>The encryption key at path <code>m/44'/9999'/account'/1'/0'</code> is derived from the <strong>same seed</strong> as the signing key but at a different derivation path (change index <code>1</code> instead of <code>0</code>). This produces an X25519 key pair used for:</p>
+        <p>The encryption key at path <code>m/44'/1957'/account'/1'/0'</code> is derived from the <strong>same seed</strong> as the signing key but at a different derivation path (change index <code>1</code> instead of <code>0</code>). This produces an X25519 key pair used for:</p>
         <ul>
           <li><strong>ECDH Key Exchange</strong> &mdash; Two peers combine their X25519 keys to derive a shared secret without transmitting it.</li>
           <li><strong>AES-256-GCM Encryption</strong> &mdash; The shared secret encrypts data end-to-end. Only the intended recipient can decrypt.</li>

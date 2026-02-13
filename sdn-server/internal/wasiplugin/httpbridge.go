@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 )
@@ -75,7 +76,14 @@ func (h *Handler) HandleKeyExchange(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	response, status, err := h.runtime.HandleRequest(ctx, body, r.Host)
+	// Cap Host header length to prevent oversized allocations in WASM.
+	host := r.Host
+	if len(host) > 253 { // RFC 1035 max DNS name length
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	response, status, err := h.runtime.HandleRequest(ctx, body, host)
 	if err != nil {
 		log.Errorf("HandleRequest failed: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -123,9 +131,10 @@ func (h *Handler) HandleUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 
+	// C7: Escape domain strings to prevent XSS in rendered HTML.
 	domainsHTML := ""
 	for _, d := range domains {
-		domainsHTML += "<li>" + d + "</li>"
+		domainsHTML += "<li>" + html.EscapeString(d) + "</li>"
 	}
 
 	fmt.Fprintf(w, `<!DOCTYPE html>
@@ -179,6 +188,9 @@ func parseBinaryDomains(metadata []byte) []string {
 		return nil
 	}
 	count := binary.LittleEndian.Uint32(metadata[:4])
+	if count > 256 { // sanity cap
+		count = 256
+	}
 	offset := 4
 	domains := make([]string, 0, count)
 	for i := uint32(0); i < count && offset+2 <= len(metadata); i++ {

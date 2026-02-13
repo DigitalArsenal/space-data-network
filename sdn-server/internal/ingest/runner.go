@@ -506,7 +506,7 @@ func (r *Runner) fetchBytes(ctx context.Context, sourceURL string) ([]byte, erro
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return nil, fmt.Errorf("status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, 100*1024*1024)) // 100MB limit
 }
 
 func (r *Runner) archiveRaw(source, filename string, data []byte) error {

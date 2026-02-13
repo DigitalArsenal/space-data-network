@@ -71,7 +71,7 @@ func TestFullSetupFlow(t *testing.T) {
 	reqBody := SetupRequest{
 		Token:      token,
 		Username:   "admin",
-		Password:   "securepassword123",
+		Password:   "SecurePassword123",
 		ServerName: "Test SDN Server",
 	}
 	body, _ := json.Marshal(reqBody)
@@ -116,7 +116,7 @@ func TestFullSetupFlow(t *testing.T) {
 	}
 
 	// 7. Verify admin can authenticate
-	sessionToken, err := adminMgr.Authenticate("admin", "securepassword123", "127.0.0.1", "test", false)
+	sessionToken, err := adminMgr.Authenticate("admin", "SecurePassword123", "127.0.0.1", "test", false)
 	if err != nil {
 		t.Fatalf("Admin authentication failed: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestSetupAPIRejectsInvalidToken(t *testing.T) {
 	reqBody := SetupRequest{
 		Token:    "SETUP-0000-0000-0000-0000-0000-0000-0000",
 		Username: "admin",
-		Password: "password123",
+		Password: "SecurePassword123",
 	}
 	body, _ := json.Marshal(reqBody)
 
@@ -234,7 +234,7 @@ func TestSetupAPIRejectsShortUsername(t *testing.T) {
 	reqBody := SetupRequest{
 		Token:    token,
 		Username: "ab",
-		Password: "password123",
+		Password: "SecurePassword123",
 	}
 	body, _ := json.Marshal(reqBody)
 
@@ -262,7 +262,7 @@ func TestSetupAPIRejectsAfterCompletion(t *testing.T) {
 	reqBody := SetupRequest{
 		Token:      token,
 		Username:   "admin",
-		Password:   "password12345",
+		Password:   "SecurePassword123",
 		ServerName: "Test",
 	}
 	body, _ := json.Marshal(reqBody)
@@ -276,7 +276,7 @@ func TestSetupAPIRejectsAfterCompletion(t *testing.T) {
 	body2, _ := json.Marshal(SetupRequest{
 		Token:    "SETUP-0000-0000-0000-0000-0000-0000-0000",
 		Username: "admin2",
-		Password: "password12345",
+		Password: "SecurePassword123",
 	})
 
 	req2 := httptest.NewRequest(http.MethodPost, "/api/setup", bytes.NewReader(body2))

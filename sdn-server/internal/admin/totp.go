@@ -5,11 +5,13 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/subtle"
 	"encoding/base32"
 	"encoding/binary"
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -42,8 +44,53 @@ func GenerateTOTPSetup(username string) (secret, uri string, err error) {
 	return secret, uri, nil
 }
 
+// totpReplayCache tracks recently used TOTP codes to prevent replay attacks.
+// Keyed by adminID, then by code string, with the time it was used.
+var (
+	totpUsedCodes   = make(map[int64]map[string]time.Time)
+	totpUsedCodesMu sync.Mutex
+)
+
+func cleanupTOTPReplayCache() {
+	cutoff := time.Now().Add(-time.Duration(totpPeriod*(2*totpSkew+1)) * time.Second)
+	for adminID, codes := range totpUsedCodes {
+		for code, usedAt := range codes {
+			if usedAt.Before(cutoff) {
+				delete(codes, code)
+			}
+		}
+		if len(codes) == 0 {
+			delete(totpUsedCodes, adminID)
+		}
+	}
+}
+
+// IsTOTPCodeUsed checks if a TOTP code was already used for this admin.
+func IsTOTPCodeUsed(adminID int64, code string) bool {
+	totpUsedCodesMu.Lock()
+	defer totpUsedCodesMu.Unlock()
+	cleanupTOTPReplayCache()
+	if codes, ok := totpUsedCodes[adminID]; ok {
+		if _, used := codes[code]; used {
+			return true
+		}
+	}
+	return false
+}
+
+// MarkTOTPCodeUsed records a TOTP code as used for replay prevention.
+func MarkTOTPCodeUsed(adminID int64, code string) {
+	totpUsedCodesMu.Lock()
+	defer totpUsedCodesMu.Unlock()
+	if totpUsedCodes[adminID] == nil {
+		totpUsedCodes[adminID] = make(map[string]time.Time)
+	}
+	totpUsedCodes[adminID][code] = time.Now()
+}
+
 // ValidateTOTP validates a TOTP code against a secret.
 // It checks the current time window and allows +/- totpSkew periods for clock drift.
+// All windows are checked using constant-time comparison to prevent timing leaks.
 func ValidateTOTP(secret, code string) bool {
 	if len(code) != totpDigits {
 		return false
@@ -52,15 +99,16 @@ func ValidateTOTP(secret, code string) bool {
 	now := time.Now().Unix()
 	currentCounter := now / totpPeriod
 
-	// Check current and adjacent time windows
+	// Check all windows with constant-time comparison to prevent timing leaks.
+	match := 0
 	for i := -int64(totpSkew); i <= int64(totpSkew); i++ {
 		expected := generateTOTPCode(secret, currentCounter+i)
-		if expected == code {
-			return true
+		if subtle.ConstantTimeCompare([]byte(expected), []byte(code)) == 1 {
+			match = 1
 		}
 	}
 
-	return false
+	return match == 1
 }
 
 // validateTOTPAtTime validates a TOTP code at a specific time (for testing).
@@ -71,14 +119,15 @@ func validateTOTPAtTime(secret, code string, t time.Time) bool {
 
 	counter := t.Unix() / totpPeriod
 
+	match := 0
 	for i := -int64(totpSkew); i <= int64(totpSkew); i++ {
 		expected := generateTOTPCode(secret, counter+i)
-		if expected == code {
-			return true
+		if subtle.ConstantTimeCompare([]byte(expected), []byte(code)) == 1 {
+			match = 1
 		}
 	}
 
-	return false
+	return match == 1
 }
 
 // GenerateTOTPCode generates the current TOTP code for a secret (for testing/display).

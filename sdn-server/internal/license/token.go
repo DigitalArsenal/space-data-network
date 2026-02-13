@@ -146,6 +146,20 @@ func VerifyCapabilityToken(token string, publicKey ed25519.PublicKey, opts Verif
 	if len(parts) != 3 {
 		return nil, ErrInvalidTokenFormat
 	}
+
+	// L4: Verify the header algorithm field is "EdDSA" before proceeding.
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, ErrInvalidTokenFormat
+	}
+	var hdr tokenHeader
+	if err := json.Unmarshal(headerBytes, &hdr); err != nil {
+		return nil, ErrInvalidTokenFormat
+	}
+	if hdr.Alg != "EdDSA" {
+		return nil, fmt.Errorf("%w: expected EdDSA, got %s", ErrInvalidTokenFormat, hdr.Alg)
+	}
+
 	signingInput := parts[0] + "." + parts[1]
 
 	signature, err := base64.RawURLEncoding.DecodeString(parts[2])

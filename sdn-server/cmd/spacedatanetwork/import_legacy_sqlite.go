@@ -141,7 +141,7 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 	query := fmt.Sprintf(`
 		SELECT rowid, OBJECT_ID, EPOCH, MEAN_MOTION, ECCENTRICITY, INCLINATION,
 		       RA_OF_ASC_NODE, ARG_OF_PERICENTER, MEAN_ANOMALY, NORAD_CAT_ID, BSTAR
-		FROM %s
+		FROM "%s"
 		WHERE rowid > ?
 		ORDER BY rowid
 		LIMIT ?

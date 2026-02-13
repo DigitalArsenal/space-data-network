@@ -2,13 +2,20 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
+
+func hashToken(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
+}
 
 const sessionTokenLength = 32
 
@@ -70,7 +77,7 @@ func (ss *SessionStore) CreateSession(xpub string, trust peers.TrustLevel, ip, u
 
 	_, err := ss.db.Exec(
 		"INSERT INTO sessions (token, xpub, trust_level, created_at, expires_at, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		token, xpub, int(trust), now.Unix(), expiresAt.Unix(), ip, ua,
+		hashToken(token), xpub, int(trust), now.Unix(), expiresAt.Unix(), ip, ua,
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create session: %w", err)
@@ -86,9 +93,10 @@ func (ss *SessionStore) ValidateSession(token string) (*Session, error) {
 	var createdAt, expiresAt int64
 	var revoked int
 
+	tokenHash := hashToken(token)
 	err := ss.db.QueryRow(
 		"SELECT token, xpub, trust_level, created_at, expires_at, ip_address, user_agent, revoked FROM sessions WHERE token = ?",
-		token,
+		tokenHash,
 	).Scan(&s.Token, &s.XPub, &trust, &createdAt, &expiresAt, &s.IPAddress, &s.UserAgent, &revoked)
 
 	if err == sql.ErrNoRows {
@@ -115,7 +123,7 @@ func (ss *SessionStore) ValidateSession(token string) (*Session, error) {
 
 // RevokeSession invalidates a session token.
 func (ss *SessionStore) RevokeSession(token string) error {
-	_, err := ss.db.Exec("UPDATE sessions SET revoked = 1 WHERE token = ?", token)
+	_, err := ss.db.Exec("UPDATE sessions SET revoked = 1 WHERE token = ?", hashToken(token))
 	return err
 }
 
@@ -123,6 +131,23 @@ func (ss *SessionStore) RevokeSession(token string) error {
 func (ss *SessionStore) RevokeAllForUser(xpub string) error {
 	_, err := ss.db.Exec("UPDATE sessions SET revoked = 1 WHERE xpub = ?", xpub)
 	return err
+}
+
+// StartCleanup runs Cleanup in a background goroutine every hour.
+// The goroutine stops when the provided stop channel is closed.
+func (ss *SessionStore) StartCleanup(stop <-chan struct{}) {
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				ss.Cleanup()
+			case <-stop:
+				return
+			}
+		}
+	}()
 }
 
 // Cleanup removes expired and revoked sessions.

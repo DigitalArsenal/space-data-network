@@ -88,6 +88,17 @@ func (tr *TopicRouter) HandleTopicMessage(topic string, data []byte, from string
 		return nil
 	}
 
+	// Verify source peer matches routing header to prevent spoofing.
+	// An empty SourcePeer in the header could bypass this check, so reject it.
+	if header.SourcePeer == "" {
+		log.Warnf("Rejecting message with empty SourcePeer in routing header from %q on topic %s", from, topic)
+		return fmt.Errorf("routing header has empty SourcePeer")
+	}
+	if header.SourcePeer != from {
+		log.Warnf("Source peer mismatch: header says %q but message from %q on topic %s — rejecting", header.SourcePeer, from, topic)
+		return fmt.Errorf("source peer mismatch: header=%q from=%q", header.SourcePeer, from)
+	}
+
 	// Apply topic filters (for edge relay filtering)
 	tr.mu.RLock()
 	filters := tr.topicFilters[topic]

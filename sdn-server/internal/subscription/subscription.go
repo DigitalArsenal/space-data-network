@@ -2,6 +2,8 @@
 package subscription
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -282,10 +284,16 @@ func (m *Manager) AddGlobalHandler(handler MessageHandler) {
 	m.globalHandler = append(m.globalHandler, handler)
 }
 
+// maxConcurrentHandlers bounds the number of goroutines spawned for message dispatch.
+const maxConcurrentHandlers = 256
+
+// handlerSem limits concurrent handler goroutines.
+var handlerSem = make(chan struct{}, maxConcurrentHandlers)
+
 // ProcessMessage processes an incoming message against all subscriptions
 func (m *Manager) ProcessMessage(schema string, data []byte, from string, header *RoutingHeader) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	for _, sub := range m.subscriptions {
 		if sub.Status != StatusActive {
@@ -307,16 +315,34 @@ func (m *Manager) ProcessMessage(schema string, data []byte, from string, header
 		now := time.Now()
 		sub.LastMessageAt = &now
 
-		// Call subscription-specific handlers
+		// Call subscription-specific handlers with bounded concurrency.
 		if handlers, ok := m.handlers[sub.ID]; ok {
 			for _, handler := range handlers {
-				go handler(sub, schema, data, from, header)
+				h := handler
+				select {
+				case handlerSem <- struct{}{}:
+					go func() {
+						defer func() { <-handlerSem }()
+						h(sub, schema, data, from, header)
+					}()
+				default:
+					log.Warnf("Handler semaphore full, dropping message for subscription %s", sub.ID)
+				}
 			}
 		}
 
-		// Call global handlers
+		// Call global handlers with bounded concurrency.
 		for _, handler := range m.globalHandler {
-			go handler(sub, schema, data, from, header)
+			h := handler
+			select {
+			case handlerSem <- struct{}{}:
+				go func() {
+					defer func() { <-handlerSem }()
+					h(sub, schema, data, from, header)
+				}()
+			default:
+				log.Warnf("Handler semaphore full, dropping global handler message")
+			}
 		}
 	}
 }
@@ -631,7 +657,12 @@ func inArray(value, arr interface{}) bool {
 	return false
 }
 
-// generateID generates a unique subscription ID
+// generateID generates a cryptographically random subscription ID
 func generateID() string {
-	return fmt.Sprintf("sub_%d_%x", time.Now().UnixNano(), time.Now().UnixNano()%0xFFFF)
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback should never happen with crypto/rand
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return "sub_" + hex.EncodeToString(b)
 }

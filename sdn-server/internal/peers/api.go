@@ -32,12 +32,12 @@ func NewAPIHandler(registry *Registry, gater *TrustedConnectionGater) *APIHandle
 
 // ServeHTTP implements http.Handler.
 func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Add CORS headers for local development
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
+	// Admin API is served from the same origin; no wildcard CORS.
+	// Only set CORS headers for OPTIONS pre-flight so same-origin
+	// requests work normally without exposing the API cross-origin.
 	if r.Method == "OPTIONS" {
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -598,7 +598,7 @@ func (h *APIHandler) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := io.ReadAll(r.Body)
+	data, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -626,7 +626,7 @@ func (h *APIHandler) handleVCardImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := io.ReadAll(r.Body)
+	data, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
 	if err != nil {
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return

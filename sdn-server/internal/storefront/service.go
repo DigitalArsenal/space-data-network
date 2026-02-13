@@ -219,32 +219,20 @@ func (s *Service) ProcessPayment(ctx context.Context, requestID string, txHash s
 
 // ProcessCreditsPayment processes a payment using SDN credits
 func (s *Service) ProcessCreditsPayment(ctx context.Context, requestID string, buyerPeerID string) error {
-	// Get the purchase request
-	// Note: We'd need to add GetPurchaseRequest to store, simplified here
-
-	// Check buyer's balance
-	balance, err := s.store.GetCreditsBalance(buyerPeerID)
-	if err != nil {
-		return fmt.Errorf("failed to get balance: %w", err)
-	}
-
 	// TODO: Get actual amount from purchase request
 	// For now, simplified implementation
-	amount := int64(100) // Placeholder
+	amount := uint64(100) // Placeholder
 
-	if balance.Balance < uint64(amount) {
-		return fmt.Errorf("insufficient credits: have %d, need %d", balance.Balance, amount)
-	}
-
-	// Deduct credits
-	if err := s.store.UpdateCreditsBalance(buyerPeerID, -amount); err != nil {
-		return fmt.Errorf("failed to deduct credits: %w", err)
+	// Atomically check balance and deduct credits in a single SQL UPDATE
+	// to prevent TOCTOU race conditions
+	if err := s.store.AtomicDeductCredits(buyerPeerID, amount); err != nil {
+		return fmt.Errorf("credits payment failed: %w", err)
 	}
 
 	// Update purchase status
 	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusPaymentConfirmed, "Credits deducted"); err != nil {
 		// Refund on failure
-		s.store.UpdateCreditsBalance(buyerPeerID, amount)
+		s.store.UpdateCreditsBalance(buyerPeerID, int64(amount))
 		return err
 	}
 
@@ -252,7 +240,7 @@ func (s *Service) ProcessCreditsPayment(ctx context.Context, requestID string, b
 	grant, err := s.IssueGrant(ctx, requestID)
 	if err != nil {
 		// Refund on failure
-		s.store.UpdateCreditsBalance(buyerPeerID, amount)
+		s.store.UpdateCreditsBalance(buyerPeerID, int64(amount))
 		return fmt.Errorf("failed to issue grant: %w", err)
 	}
 

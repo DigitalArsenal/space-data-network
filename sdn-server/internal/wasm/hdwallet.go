@@ -7,11 +7,22 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
+
+// wasmCallTimeout is the maximum duration for a single WASM function call.
+const wasmCallTimeout = 5 * time.Second
+
+// zeroBytes overwrites a byte slice with zeros to clear sensitive key material.
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
 
 // HD wallet errors
 var (
@@ -75,7 +86,9 @@ func NewHDWalletModule(ctx context.Context, wasmPath string) (*HDWalletModule, e
 // NOTE: Requires a pure WASI build (built with wasi-sdk, not Emscripten).
 // Emscripten builds require JS glue code and won't work with wazero.
 func NewHDWalletModuleFromBytes(ctx context.Context, wasmBytes []byte) (*HDWalletModule, error) {
-	r := wazero.NewRuntime(ctx)
+	// H8: Limit WASM memory to 256 pages (16MB) to prevent unbounded allocation.
+	cfg := wazero.NewRuntimeConfig().WithMemoryLimitPages(256)
+	r := wazero.NewRuntimeWithConfig(ctx, cfg)
 
 	// Instantiate WASI for standard I/O
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, r); err != nil {
@@ -144,6 +157,10 @@ func (hw *HDWalletModule) InjectEntropy(ctx context.Context, entropy []byte) err
 		return ErrHDWalletNoModule
 	}
 
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
+
 	entropyPtr, err := hw.allocate(ctx, entropy)
 	if err != nil {
 		return err
@@ -162,6 +179,10 @@ func (hw *HDWalletModule) HasEntropy(ctx context.Context) (bool, error) {
 	if hw.getEntropyStatus == nil {
 		return false, ErrHDWalletNoModule
 	}
+
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
 
 	results, err := hw.getEntropyStatus.Call(ctx)
 	if err != nil {
@@ -182,6 +203,10 @@ func (hw *HDWalletModule) GenerateMnemonic(ctx context.Context, wordCount int) (
 	if hw.mnemonicGenerate == nil {
 		return "", ErrHDWalletNoModule
 	}
+
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
 
 	// Allocate output buffer (max ~240 chars for 24-word mnemonic)
 	outputSize := uint32(512)
@@ -230,6 +255,10 @@ func (hw *HDWalletModule) ValidateMnemonic(ctx context.Context, mnemonic string)
 		return false, ErrHDWalletNoModule
 	}
 
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
+
 	mnemonicPtr, err := hw.allocateString(ctx, mnemonic)
 	if err != nil {
 		return false, err
@@ -254,6 +283,10 @@ func (hw *HDWalletModule) MnemonicToSeed(ctx context.Context, mnemonic, passphra
 	if hw.mnemonicToSeed == nil {
 		return nil, ErrHDWalletNoModule
 	}
+
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
 
 	mnemonicPtr, err := hw.allocateString(ctx, mnemonic)
 	if err != nil {
@@ -298,7 +331,7 @@ type DerivedKey struct {
 }
 
 // DeriveEd25519Key derives an Ed25519 key at the given path using SLIP-10.
-// Path format: "m/44'/9999'/0'/0/0" (all components must be hardened for Ed25519)
+// Path format: "m/44'/1957'/0'/0'/0'" (all components must be hardened for Ed25519)
 func (hw *HDWalletModule) DeriveEd25519Key(ctx context.Context, seed []byte, path string) (*DerivedKey, error) {
 	hw.mu.Lock()
 	defer hw.mu.Unlock()
@@ -310,6 +343,10 @@ func (hw *HDWalletModule) DeriveEd25519Key(ctx context.Context, seed []byte, pat
 	if len(seed) != 64 {
 		return nil, ErrHDWalletInvalidSeed
 	}
+
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
 
 	seedPtr, err := hw.allocate(ctx, seed)
 	if err != nil {
@@ -380,6 +417,10 @@ func (hw *HDWalletModule) Ed25519PublicKeyFromSeed(ctx context.Context, seed []b
 		return nil, ErrHDWalletInvalidSeed
 	}
 
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
+
 	seedPtr, err := hw.allocate(ctx, seed)
 	if err != nil {
 		return nil, err
@@ -422,6 +463,10 @@ func (hw *HDWalletModule) Ed25519Sign(ctx context.Context, seed, message []byte)
 	if len(seed) != 32 {
 		return nil, ErrHDWalletInvalidSeed
 	}
+
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
 
 	seedPtr, err := hw.allocate(ctx, seed)
 	if err != nil {
@@ -476,6 +521,10 @@ func (hw *HDWalletModule) Ed25519Verify(ctx context.Context, publicKey, message,
 		return false, errors.New("invalid signature length")
 	}
 
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
+
 	pubKeyPtr, err := hw.allocate(ctx, publicKey)
 	if err != nil {
 		return false, err
@@ -521,6 +570,10 @@ func (hw *HDWalletModule) X25519PublicKey(ctx context.Context, privateKey []byte
 		return nil, errors.New("invalid private key length")
 	}
 
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
+
 	privKeyPtr, err := hw.allocate(ctx, privateKey)
 	if err != nil {
 		return nil, err
@@ -562,6 +615,10 @@ func (hw *HDWalletModule) X25519ECDH(ctx context.Context, privateKey, publicKey 
 	if len(privateKey) != 32 || len(publicKey) != 32 {
 		return nil, errors.New("invalid key length")
 	}
+
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
 
 	privKeyPtr, err := hw.allocate(ctx, privateKey)
 	if err != nil {
@@ -607,6 +664,10 @@ func (hw *HDWalletModule) GetVersion(ctx context.Context) (string, error) {
 	if hw.getVersion == nil {
 		return "", ErrHDWalletNoModule
 	}
+
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
 
 	results, err := hw.getVersion.Call(ctx)
 	if err != nil {
@@ -668,9 +729,16 @@ func (hw *HDWalletModule) allocateSize(ctx context.Context, size uint32) (uint32
 func (hw *HDWalletModule) allocateString(ctx context.Context, s string) (uint32, error) {
 	// Add null terminator
 	data := append([]byte(s), 0)
+	// H10: Zero the temporary buffer after copying to WASM memory,
+	// since it may contain sensitive material (mnemonics, passphrases).
+	defer zeroBytes(data)
 	return hw.allocate(ctx, data)
 }
 
+// deallocate frees WASM memory at the given pointer.
+// M11: The size parameter is accepted for API consistency but is not passed to
+// the WASM hd_dealloc function, which wraps libc free() and only requires the
+// pointer. The allocator tracks block sizes internally.
 func (hw *HDWalletModule) deallocate(ctx context.Context, ptr, size uint32) {
 	if hw.free != nil {
 		hw.free.Call(ctx, uint64(ptr))

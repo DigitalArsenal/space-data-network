@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,12 +41,17 @@ type Runtime struct {
 	getMetadataFn   api.Function
 }
 
+// pluginCallTimeout is the maximum duration for a single WASI plugin function call.
+const pluginCallTimeout = 10 * time.Second
+
 // New loads a WASI plugin from raw WASM bytes. The module must export
 // malloc, free, plugin_init, plugin_handle_request, plugin_get_public_key,
 // and plugin_get_metadata. Host functions (sdn.clock_now_ms, sdn.random_bytes,
 // sdn.log) are registered automatically.
 func New(ctx context.Context, wasmBytes []byte) (*Runtime, error) {
-	r := wazero.NewRuntime(ctx)
+	// H8: Limit WASM memory to 512 pages (32MB) for plugin modules.
+	cfg := wazero.NewRuntimeConfig().WithMemoryLimitPages(512)
+	r := wazero.NewRuntimeWithConfig(ctx, cfg)
 
 	// Standard WASI imports (libc may call fd_write, proc_exit, etc.)
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, r); err != nil {
@@ -69,6 +75,12 @@ func New(ctx context.Context, wasmBytes []byte) (*Runtime, error) {
 			api.GoModuleFunc(func(_ context.Context, mod api.Module, stack []uint64) {
 				ptr := api.DecodeU32(stack[0])
 				length := api.DecodeU32(stack[1])
+				// Cap allocation to prevent guest from requesting unbounded host memory.
+				const maxRandomBytes = 8192
+				if length > maxRandomBytes {
+					stack[0] = api.EncodeI32(-1)
+					return
+				}
 				buf := make([]byte, length)
 				if _, err := rand.Read(buf); err != nil {
 					stack[0] = api.EncodeI32(-1)
@@ -90,11 +102,22 @@ func New(ctx context.Context, wasmBytes []byte) (*Runtime, error) {
 				level := api.DecodeI32(stack[0])
 				ptr := api.DecodeU32(stack[1])
 				length := api.DecodeU32(stack[2])
+				// Cap log message length to prevent log flooding / OOM.
+				const maxLogLen = 4096
+				if length > maxLogLen {
+					length = maxLogLen
+				}
 				data, ok := mod.Memory().Read(ptr, length)
 				if !ok {
 					return
 				}
-				msg := string(data)
+				// Sanitize: replace control characters (except space) to prevent log injection.
+				msg := strings.Map(func(r rune) rune {
+					if r < 0x20 && r != ' ' {
+						return '?'
+					}
+					return r
+				}, string(data))
 				switch {
 				case level <= 0:
 					log.Debugf("[plugin] %s", msg)
@@ -161,6 +184,10 @@ func (rt *Runtime) Init(ctx context.Context, config []byte) error {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
+	defer cancel()
+
 	configPtr, err := rt.allocate(ctx, config)
 	if err != nil {
 		return fmt.Errorf("failed to allocate config: %w", err)
@@ -183,6 +210,10 @@ func (rt *Runtime) GetPublicKey(ctx context.Context) ([]byte, error) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
+	defer cancel()
+
 	const outCap = 128
 	outPtr, err := rt.allocateSize(ctx, outCap)
 	if err != nil {
@@ -199,6 +230,9 @@ func (rt *Runtime) GetPublicKey(ctx context.Context) ([]byte, error) {
 	if length < 0 {
 		return nil, fmt.Errorf("plugin_get_public_key returned error %d", length)
 	}
+	if uint32(length) > outCap {
+		return nil, fmt.Errorf("plugin_get_public_key output length %d exceeds buffer capacity %d", length, outCap)
+	}
 
 	return rt.readMemory(outPtr, uint32(length))
 }
@@ -208,6 +242,10 @@ func (rt *Runtime) GetPublicKey(ctx context.Context) ([]byte, error) {
 func (rt *Runtime) GetMetadata(ctx context.Context) ([]byte, error) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
+	defer cancel()
 
 	const outCap = 4096
 	outPtr, err := rt.allocateSize(ctx, outCap)
@@ -225,6 +263,9 @@ func (rt *Runtime) GetMetadata(ctx context.Context) ([]byte, error) {
 	if length < 0 {
 		return nil, fmt.Errorf("plugin_get_metadata returned error %d", length)
 	}
+	if uint32(length) > outCap {
+		return nil, fmt.Errorf("plugin_get_metadata output length %d exceeds buffer capacity %d", length, outCap)
+	}
 
 	return rt.readMemory(outPtr, uint32(length))
 }
@@ -235,6 +276,10 @@ func (rt *Runtime) GetMetadata(ctx context.Context) ([]byte, error) {
 func (rt *Runtime) HandleRequest(ctx context.Context, packet []byte, hostHeader string) ([]byte, int32, error) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+
+	// H9: Wrap context with execution timeout inside locked section.
+	ctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
+	defer cancel()
 
 	reqPtr, err := rt.allocate(ctx, packet)
 	if err != nil {
@@ -283,6 +328,11 @@ func (rt *Runtime) HandleRequest(ctx context.Context, packet []byte, hostHeader 
 
 	if outLen == 0 {
 		return nil, status, nil
+	}
+
+	// Validate guest-reported length does not exceed allocated buffer capacity.
+	if outLen > outCap {
+		return nil, status, fmt.Errorf("plugin output length %d exceeds buffer capacity %d", outLen, outCap)
 	}
 
 	output, err := rt.readMemory(outPtr, outLen)

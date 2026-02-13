@@ -3,7 +3,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -21,6 +23,25 @@ import (
 )
 
 var log = logging.Logger("sdn-server")
+
+type contextKey struct{}
+
+var sessionContextKey = contextKey{}
+
+// writeJSON writes a JSON response, safely encoding values to prevent injection.
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+// isSecureRequest checks if the request came over TLS (directly or via proxy).
+func isSecureRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
 
 // Server represents the HTTP server with admin and setup functionality.
 type Server struct {
@@ -190,10 +211,14 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 
-	// Create HTTP server
+	// Create HTTP server with timeouts to prevent Slowloris attacks
 	s.httpServer = &http.Server{
-		Addr:    s.config.Admin.ListenAddr,
-		Handler: s.mux,
+		Addr:              s.config.Admin.ListenAddr,
+		Handler:           s.mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Start listening
@@ -324,9 +349,7 @@ func (s *Server) handleLoginAPI(w http.ResponseWriter, r *http.Request) {
 			msg = "TOTP required"
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		fmt.Fprintf(w, `{"success":false,"error":"%s"}`, msg)
+		writeJSON(w, status, map[string]interface{}{"success": false, "error": msg})
 		return
 	}
 
@@ -336,19 +359,23 @@ func (s *Server) handleLoginAPI(w http.ResponseWriter, r *http.Request) {
 		s.auditLog.LogAdminLogin(session.AdminID, username, clientIP, true)
 	}
 
-	// Set session cookie
+	// Set session cookie with appropriate MaxAge based on rememberMe
+	maxAge := int(time.Hour / time.Second) // 1 hour default
+	if rememberMe {
+		maxAge = int(24 * time.Hour / time.Second) // 24 hours if remember me
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     "sdn_session",
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   isSecureRequest(r),
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int(24 * time.Hour / time.Second),
+		MaxAge:   maxAge,
 	})
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"success":true,"redirect":"/admin"}`)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "redirect": "/admin"})
 }
 
 // handleLogoutAPI handles logout requests.
@@ -364,17 +391,18 @@ func (s *Server) handleLogoutAPI(w http.ResponseWriter, r *http.Request) {
 		s.adminMgr.RevokeSession(cookie.Value)
 	}
 
-	// Clear cookie
+	// Clear cookie with matching attributes
 	http.SetCookie(w, &http.Cookie{
 		Name:     "sdn_session",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isSecureRequest(r),
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"success":true}`)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 // requireAuth is a middleware that checks for valid session.
@@ -422,8 +450,8 @@ func (s *Server) requireAuth(handler http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Store session in context
-		ctx := context.WithValue(r.Context(), "session", session)
+		// Store session in context using typed key
+		ctx := context.WithValue(r.Context(), sessionContextKey, session)
 		handler(w, r.WithContext(ctx))
 	}
 }
@@ -461,7 +489,7 @@ func (s *Server) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 
 // handlePasswordChange handles password change requests.
 func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
-	session := r.Context().Value("session").(*admin.Session)
+	session := r.Context().Value(sessionContextKey).(*admin.Session)
 	clientIP := getClientIP(r)
 
 	if err := r.ParseForm(); err != nil {
@@ -473,21 +501,18 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	newPassword := r.FormValue("new_password")
 
 	if err := s.adminMgr.ChangePassword(session.AdminID, oldPassword, newPassword); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `{"success":false,"error":"%s"}`, err.Error())
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
 
 	s.auditLog.LogPasswordChange(session.AdminID, clientIP)
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"success":true}`)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 // handleSessions handles session management requests.
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
-	session := r.Context().Value("session").(*admin.Session)
+	session := r.Context().Value(sessionContextKey).(*admin.Session)
 
 	if r.Method == http.MethodGet {
 		// List active sessions
@@ -497,26 +522,31 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"sessions":[`)
-		for i, sess := range sessions {
-			if i > 0 {
-				fmt.Fprintf(w, ",")
-			}
-			isCurrent := sess.Token == session.Token
-			fmt.Fprintf(w, `{"id":"%s","ip":"%s","user_agent":"%s","created_at":"%s","current":%t}`,
-				admin.HashToken(sess.Token), sess.IPAddress, sess.UserAgent,
-				sess.CreatedAt.Format(time.RFC3339), isCurrent)
+		type sessionInfo struct {
+			ID        string `json:"id"`
+			IP        string `json:"ip"`
+			UserAgent string `json:"user_agent"`
+			CreatedAt string `json:"created_at"`
+			Current   bool   `json:"current"`
 		}
-		fmt.Fprintf(w, `]}`)
+		var items []sessionInfo
+		for _, sess := range sessions {
+			items = append(items, sessionInfo{
+				ID:        admin.HashToken(sess.Token),
+				IP:        sess.IPAddress,
+				UserAgent: sess.UserAgent,
+				CreatedAt: sess.CreatedAt.Format(time.RFC3339),
+				Current:   sess.Token == session.Token,
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"sessions": items})
 		return
 	}
 
 	if r.Method == http.MethodDelete {
 		// Revoke all other sessions
 		s.adminMgr.RevokeAllSessions(session.AdminID)
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"success":true}`)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
 	}
 
@@ -525,7 +555,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 
 // handleProfile returns the admin profile.
 func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
-	session := r.Context().Value("session").(*admin.Session)
+	session := r.Context().Value(sessionContextKey).(*admin.Session)
 
 	adm, err := s.adminMgr.GetAdmin(session.AdminID)
 	if err != nil {
@@ -533,14 +563,16 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"username":"%s","totp_enabled":%t,"created_at":"%s"}`,
-		adm.Username, adm.TOTPEnabled, adm.CreatedAt.Format(time.RFC3339))
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"username":     adm.Username,
+		"totp_enabled": adm.TOTPEnabled,
+		"created_at":   adm.CreatedAt.Format(time.RFC3339),
+	})
 }
 
 // handleKeyBackup handles key backup requests.
 func (s *Server) handleKeyBackup(w http.ResponseWriter, r *http.Request) {
-	session := r.Context().Value("session").(*admin.Session)
+	session := r.Context().Value(sessionContextKey).(*admin.Session)
 	clientIP := getClientIP(r)
 
 	if r.Method != http.MethodPost {
@@ -574,7 +606,7 @@ func (s *Server) handleKeyBackup(w http.ResponseWriter, r *http.Request) {
 
 // handleKeyRestore handles key restore requests.
 func (s *Server) handleKeyRestore(w http.ResponseWriter, r *http.Request) {
-	session := r.Context().Value("session").(*admin.Session)
+	session := r.Context().Value(sessionContextKey).(*admin.Session)
 	clientIP := getClientIP(r)
 
 	if r.Method != http.MethodPost {
@@ -591,16 +623,13 @@ func (s *Server) handleKeyRestore(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 
 	if err := s.keyMgr.ImportEncrypted(backup, password); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `{"success":false,"error":"%s"}`, err.Error())
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": err.Error()})
 		return
 	}
 
 	s.auditLog.LogKeyRestore(session.AdminID, clientIP, s.keyMgr.PublicKeyFingerprint())
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"success":true,"fingerprint":"%s"}`, s.keyMgr.PublicKeyFingerprint())
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "fingerprint": s.keyMgr.PublicKeyFingerprint()})
 }
 
 // handleAuditAPI handles audit log API requests.
@@ -631,21 +660,29 @@ func (s *Server) handleAuditAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"entries":[`)
-	for i, entry := range entries {
-		if i > 0 {
-			fmt.Fprintf(w, ",")
-		}
-		fmt.Fprintf(w, `{"id":%d,"timestamp":"%s","type":"%s","severity":"%s","description":"%s"}`,
-			entry.ID, entry.Timestamp.Format(time.RFC3339), entry.EventType, entry.Severity, entry.Description)
+	type auditEntry struct {
+		ID          int64  `json:"id"`
+		Timestamp   string `json:"timestamp"`
+		Type        string `json:"type"`
+		Severity    string `json:"severity"`
+		Description string `json:"description"`
 	}
-	fmt.Fprintf(w, `]}`)
+	var items []auditEntry
+	for _, entry := range entries {
+		items = append(items, auditEntry{
+			ID:          entry.ID,
+			Timestamp:   entry.Timestamp.Format(time.RFC3339),
+			Type:        entry.EventType,
+			Severity:    entry.Severity,
+			Description: entry.Description,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"entries": items})
 }
 
 // handleTOTPSetup generates a TOTP secret for enrollment.
 func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
-	session := r.Context().Value("session").(*admin.Session)
+	session := r.Context().Value(sessionContextKey).(*admin.Session)
 
 	adm, err := s.adminMgr.GetAdmin(session.AdminID)
 	if err != nil {
@@ -654,9 +691,7 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if adm.TOTPEnabled {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `{"success":false,"error":"TOTP already enabled"}`)
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": "TOTP already enabled"})
 		return
 	}
 
@@ -666,13 +701,12 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"success":true,"secret":"%s","uri":"%s"}`, secret, uri)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "secret": secret, "uri": uri})
 }
 
 // handleTOTPEnable verifies a TOTP code and enables TOTP for the admin.
 func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
-	session := r.Context().Value("session").(*admin.Session)
+	session := r.Context().Value(sessionContextKey).(*admin.Session)
 	clientIP := getClientIP(r)
 
 	if err := r.ParseForm(); err != nil {
@@ -684,17 +718,13 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 	code := r.FormValue("code")
 
 	if secret == "" || code == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `{"success":false,"error":"Secret and code are required"}`)
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": "Secret and code are required"})
 		return
 	}
 
 	// Verify the code matches the secret before enabling
 	if !admin.ValidateTOTP(secret, code) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `{"success":false,"error":"Invalid TOTP code"}`)
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": "Invalid TOTP code"})
 		return
 	}
 
@@ -706,13 +736,12 @@ func (s *Server) handleTOTPEnable(w http.ResponseWriter, r *http.Request) {
 	s.auditLog.Log(audit.EventTypeTOTPEnable, audit.SeverityInfo,
 		"TOTP enabled", session.AdminID, clientIP, nil)
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"success":true}`)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 // handleTOTPDisable disables TOTP for the admin.
 func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
-	session := r.Context().Value("session").(*admin.Session)
+	session := r.Context().Value(sessionContextKey).(*admin.Session)
 	clientIP := getClientIP(r)
 
 	if err := r.ParseForm(); err != nil {
@@ -723,9 +752,7 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	// Require password confirmation to disable TOTP
 	password := r.FormValue("password")
 	if password == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `{"success":false,"error":"Password required to disable TOTP"}`)
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": "Password required to disable TOTP"})
 		return
 	}
 
@@ -739,9 +766,7 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	// Use authenticate to verify password (will return ErrTOTPRequired if TOTP is on, which is fine)
 	_, authErr := s.adminMgr.Authenticate(adm.Username, password, clientIP, "", false)
 	if authErr != nil && authErr != admin.ErrTOTPRequired {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprintf(w, `{"success":false,"error":"Invalid password"}`)
+		writeJSON(w, http.StatusUnauthorized, map[string]interface{}{"success": false, "error": "Invalid password"})
 		return
 	}
 
@@ -753,46 +778,50 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	s.auditLog.Log(audit.EventTypeTOTPDisable, audit.SeverityWarning,
 		"TOTP disabled", session.AdminID, clientIP, nil)
 
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"success":true}`)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 // handleAuditVerify verifies the audit log chain integrity.
 func (s *Server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 	valid, err := s.auditLog.VerifyChain()
 
-	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, `{"valid":false,"error":"%s"}`, err.Error())
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"valid": false, "error": err.Error()})
 		return
 	}
 
-	fmt.Fprintf(w, `{"valid":%t}`, valid)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"valid": valid})
 }
 
 // handleHealth returns server health status.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"status":"ok","setup_required":%t}`, s.setupMgr.IsSetupRequired())
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "setup_required": s.setupMgr.IsSetupRequired()})
 }
 
 // getClientIP extracts the client IP from the request.
+// Only trusts proxy headers when the direct connection is from a loopback address.
 func getClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if len(parts) > 0 {
-			return strings.TrimSpace(parts[0])
+	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if remoteHost == "" {
+		remoteHost = r.RemoteAddr
+	}
+
+	remoteIP := net.ParseIP(remoteHost)
+	isTrustedProxy := remoteIP != nil && remoteIP.IsLoopback()
+
+	if isTrustedProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			if len(parts) > 0 {
+				return strings.TrimSpace(parts[0])
+			}
+		}
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return strings.TrimSpace(xri)
 		}
 	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-	addr := r.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx != -1 {
-		return addr[:idx]
-	}
-	return addr
+
+	return remoteHost
 }
 
 // KeyManager returns the key manager.

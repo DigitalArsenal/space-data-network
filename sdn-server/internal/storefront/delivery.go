@@ -5,12 +5,78 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
 	ps "github.com/libp2p/go-libp2p-pubsub"
 )
+
+// validateWebhookURL validates that a webhook URL is safe to call (anti-SSRF).
+func validateWebhookURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid webhook URL: %w", err)
+	}
+
+	// Reject non-HTTPS schemes (allow HTTP only for localhost in dev)
+	hostname := parsed.Hostname()
+	if parsed.Scheme != "https" {
+		if parsed.Scheme == "http" && (hostname == "localhost" || hostname == "127.0.0.1") {
+			// Allow HTTP for localhost in development
+		} else {
+			return fmt.Errorf("webhook URL must use HTTPS scheme, got %q", parsed.Scheme)
+		}
+	}
+
+	// Resolve the hostname and reject internal/private addresses
+	ips, err := net.LookupHost(hostname)
+	if err != nil {
+		return fmt.Errorf("failed to resolve webhook hostname %q: %w", hostname, err)
+	}
+
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+
+		// Reject loopback (127.0.0.0/8)
+		if ip.IsLoopback() {
+			return fmt.Errorf("webhook URL resolves to loopback address %s", ipStr)
+		}
+
+		// Reject unspecified (0.0.0.0)
+		if ip.IsUnspecified() {
+			return fmt.Errorf("webhook URL resolves to unspecified address %s", ipStr)
+		}
+
+		// Reject link-local (169.254.0.0/16)
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return fmt.Errorf("webhook URL resolves to link-local address %s", ipStr)
+		}
+
+		// Reject RFC 1918 private ranges
+		privateRanges := []struct {
+			network string
+			label   string
+		}{
+			{"10.0.0.0/8", "RFC1918 10.0.0.0/8"},
+			{"172.16.0.0/12", "RFC1918 172.16.0.0/12"},
+			{"192.168.0.0/16", "RFC1918 192.168.0.0/16"},
+		}
+		for _, pr := range privateRanges {
+			_, cidr, _ := net.ParseCIDR(pr.network)
+			if cidr.Contains(ip) {
+				return fmt.Errorf("webhook URL resolves to private address %s (%s)", ipStr, pr.label)
+			}
+		}
+	}
+
+	return nil
+}
 
 // DeliveryConfig configures data delivery
 type DeliveryConfig struct {
@@ -205,6 +271,11 @@ func (ds *DeliveryService) deliverIPFSPin(ctx context.Context, req *DeliveryRequ
 func (ds *DeliveryService) deliverWebhook(ctx context.Context, req *DeliveryRequest) (*DeliveryResult, error) {
 	if req.WebhookURL == "" {
 		return nil, fmt.Errorf("webhook URL not provided")
+	}
+
+	// Validate webhook URL to prevent SSRF
+	if err := validateWebhookURL(req.WebhookURL); err != nil {
+		return nil, fmt.Errorf("webhook URL rejected: %w", err)
 	}
 
 	// Build webhook payload

@@ -241,7 +241,7 @@ export async function deriveIdentity(
 /**
  * Derive a deterministic account xpub from the seed.
  *
- * Path: m/44'/9999'/{account}'
+ * Path: m/44'/1957'/{account}'
  */
 export async function deriveXPub(
   seed: Uint8Array,

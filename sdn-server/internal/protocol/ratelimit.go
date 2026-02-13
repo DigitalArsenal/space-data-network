@@ -39,7 +39,17 @@ type peerLimiter struct {
 	lastActive time.Time
 }
 
+// maxTrackedPeers caps the number of peer entries in the rate limiter map
+// to prevent unbounded memory growth from peer ID rotation attacks.
+const maxTrackedPeers = 100000
+
 // PeerRateLimiter manages rate limiting for multiple peers.
+//
+// SECURITY NOTE: This rate limiter is keyed solely on peer.ID. A
+// malicious actor can bypass rate limits by rotating peer IDs (generating
+// new libp2p key pairs). This is an inherent limitation of libp2p peer
+// identity: there is no cost to creating new identities, so peer-based
+// rate limiting alone cannot prevent determined abuse.
 type PeerRateLimiter struct {
 	config   RateLimitConfig
 	limiters map[peer.ID]*peerLimiter
@@ -77,6 +87,11 @@ func (prl *PeerRateLimiter) Allow(peerID peer.ID) bool {
 	pl, exists := prl.limiters[peerID]
 
 	if !exists {
+		// Reject new peers if the map is at capacity to prevent OOM.
+		if len(prl.limiters) >= maxTrackedPeers {
+			log.Warnf("Rate limiter map at capacity (%d peers), rejecting new peer %s", maxTrackedPeers, peerID.ShortString())
+			return false
+		}
 		// Create new limiter for this peer
 		pl = &peerLimiter{
 			limiter:      rate.NewLimiter(rate.Limit(prl.config.MaxMessagesPerSecond), prl.config.Burst),

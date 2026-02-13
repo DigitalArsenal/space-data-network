@@ -1,42 +1,411 @@
 package auth
 
 import (
-	"html/template"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 )
 
-type loginPageData struct {
-	WalletUIBase string // "/wallet-ui" for local, "https://unpkg.com/hd-wallet-ui@latest" for CDN
-}
-
+// handleLoginPage serves a branded SDN login page that loads the wallet-ui
+// as a module.  A header bar shows the SDN logo and a "Sign In" button;
+// below it the page displays live node information fetched from /api/node/info.
+//
+// Clicking "Sign In" opens the wallet-ui login modal.  After the user
+// authenticates with their HD wallet the injected window.__sdnOnLogin
+// callback performs an Ed25519 challenge-response against /api/auth/*
+// and redirects to /admin on success.
+//
+// If no local wallet-ui dist is available the handler returns a minimal
+// fallback page.
 func (h *Handler) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// If already authenticated, redirect to admin
+	// Already authenticated → redirect to admin.
 	if session, err := h.sessionFromRequest(r); err == nil && session != nil {
 		http.Redirect(w, r, "/admin", http.StatusFound)
 		return
 	}
 
-	data := loginPageData{
-		WalletUIBase: "https://unpkg.com/hd-wallet-ui@latest",
+	walletUI := strings.TrimSpace(h.walletUIPath)
+	if walletUI == "" {
+		serveFallbackLogin(w)
+		return
 	}
-	if strings.TrimSpace(h.walletUIPath) != "" {
-		data.WalletUIBase = "/wallet-ui"
+
+	html := cachedLoginPage(walletUI)
+	if html == "" {
+		serveFallbackLogin(w)
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	loginTemplate.Execute(w, data)
+	w.Write([]byte(html))
 }
 
-var loginTemplate = template.Must(template.New("login").Parse(loginPageHTML))
+// ---------------------------------------------------------------------------
+// Login page builder
+// ---------------------------------------------------------------------------
 
-const loginPageHTML = `<!doctype html>
+var (
+	loginPageOnce  sync.Once
+	loginPageCache string
+
+	reScriptSrc = regexp.MustCompile(`src="\.\/assets\/(main-[^"]+\.js)"`)
+	reCSSHref   = regexp.MustCompile(`href="\.\/assets\/(main-[^"]+\.css)"`)
+)
+
+// cachedLoginPage reads the wallet-ui dist/index.html once to discover asset
+// filenames, then builds and caches a custom branded login page.
+func cachedLoginPage(walletUIPath string) string {
+	loginPageOnce.Do(func() {
+		indexPath := filepath.Join(walletUIPath, "index.html")
+		raw, err := os.ReadFile(indexPath)
+		if err != nil {
+			return
+		}
+		src := string(raw)
+
+		// Extract hashed asset filenames from the dist HTML.
+		jsMatch := reScriptSrc.FindStringSubmatch(src)
+		cssMatch := reCSSHref.FindStringSubmatch(src)
+
+		jsFile := ""
+		cssFile := ""
+		if len(jsMatch) > 1 {
+			jsFile = jsMatch[1]
+		}
+		if len(cssMatch) > 1 {
+			cssFile = cssMatch[1]
+		}
+		if jsFile == "" {
+			return
+		}
+
+		loginPageCache = buildLoginPage(jsFile, cssFile)
+	})
+	return loginPageCache
+}
+
+// buildLoginPage returns the full HTML for the SDN login page.
+func buildLoginPage(jsFile, cssFile string) string {
+	cssLink := ""
+	if cssFile != "" {
+		cssLink = `<link rel="stylesheet" crossorigin href="/wallet-ui/assets/` + cssFile + `">`
+	}
+
+	return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Space Data Network — Login</title>
+  ` + cssLink + `
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#000;
+      --text-primary:#F5F5F7;
+      --text-secondary:rgba(255,255,255,0.8);
+      --text-muted:rgba(134,134,139,1.0);
+      --ui-bg:rgba(42,42,45,0.72);
+      --ui-border:rgba(134,134,139,0.3);
+      --ui-border-hover:rgba(134,134,139,0.5);
+      --nav-bg:rgba(22,22,23,0.95);
+      --font-sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      --font-mono:'JetBrains Mono','SF Mono','Fira Code',monospace;
+      --radius:16px;
+    }
+    html,body{height:100%}
+    body{
+      font-family:var(--font-sans);
+      background:var(--bg);color:var(--text-primary);
+      display:flex;flex-direction:column;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+
+    /* ---- Header ---- */
+    .sdn-header{
+      position:sticky;top:0;z-index:900;
+      display:flex;align-items:center;justify-content:space-between;
+      padding:0 24px;height:44px;
+      background:var(--nav-bg);
+      backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+      border-bottom:1px solid rgba(255,255,255,0.1);
+    }
+    .sdn-logo{display:flex;align-items:center;gap:10px;color:var(--text-primary);font-weight:600;font-size:15px;white-space:nowrap}
+    .sdn-logo svg{width:22px;height:22px;flex-shrink:0}
+    .sdn-sign-in{
+      padding:6px 16px;border:none;border-radius:980px;cursor:pointer;
+      font-family:var(--font-sans);font-size:13px;font-weight:500;
+      background:var(--text-primary);color:var(--bg);
+      transition:opacity .15s;
+    }
+    .sdn-sign-in:hover{opacity:.85}
+    .sdn-sign-in:disabled{opacity:.3;cursor:default}
+
+    /* ---- Main ---- */
+    .sdn-main{flex:1;display:flex;flex-direction:column;align-items:center;padding:60px 24px 80px}
+    .sdn-hero{text-align:center;margin-bottom:48px}
+    .sdn-hero h1{font-size:32px;font-weight:300;letter-spacing:.02em;margin-bottom:10px}
+    .sdn-hero p{color:var(--text-muted);font-size:15px;line-height:1.7;max-width:520px;margin:0 auto}
+
+    /* ---- Node info cards ---- */
+    .sdn-cards{
+      display:flex;flex-wrap:wrap;gap:16px;justify-content:center;
+      width:100%;max-width:880px;
+    }
+    .sdn-card{
+      background:var(--ui-bg);border:1px solid var(--ui-border);
+      border-radius:var(--radius);padding:24px;width:100%;max-width:420px;
+      backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    }
+    .sdn-card h3{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);margin-bottom:14px;font-weight:600}
+    .sdn-card .val{
+      font-family:var(--font-mono);
+      font-size:13px;word-break:break-all;line-height:1.7;color:var(--text-primary);
+    }
+    .sdn-card .val.accent{color:rgba(255,255,255,0.95)}
+    .sdn-card .label{font-size:12px;color:var(--text-muted);margin-top:12px;margin-bottom:2px;font-weight:500}
+    .sdn-card .chip{
+      display:inline-block;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:500;
+      background:rgba(255,255,255,0.08);color:var(--text-secondary);margin:2px 4px 2px 0;
+      border:1px solid rgba(255,255,255,0.06);
+      font-family:var(--font-mono);
+    }
+    .sdn-placeholder{text-align:center;padding:48px 0;color:var(--text-muted);font-size:14px}
+
+    /* ---- Setup banner ---- */
+    .sdn-setup{
+      max-width:640px;width:100%;margin:0 auto 32px;
+      background:rgba(234,179,8,0.08);border:1px solid rgba(234,179,8,0.25);
+      border-radius:var(--radius);padding:24px 28px;
+    }
+    .sdn-setup h2{font-size:15px;font-weight:600;color:#fbbf24;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+    .sdn-setup p{font-size:13px;color:var(--text-secondary);line-height:1.7;margin-bottom:10px}
+    .sdn-setup code{
+      display:block;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);
+      border-radius:8px;padding:12px 16px;margin:10px 0;font-family:var(--font-mono);
+      font-size:12px;line-height:1.8;color:var(--text-secondary);white-space:pre;overflow-x:auto;
+    }
+    .sdn-setup .step{color:var(--text-muted);font-size:12px;margin-top:12px}
+
+    /* ---- Auth toast ---- */
+    .sdn-auth-status{
+      display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+      padding:12px 28px;background:rgba(30,30,35,.95);color:#F5F5F7;
+      border:1px solid var(--ui-border);border-radius:14px;
+      font-size:14px;font-weight:500;z-index:100000;
+      backdrop-filter:blur(12px);text-align:center;max-width:90vw;
+      box-shadow:0 8px 32px rgba(0,0,0,.6);
+      font-family:var(--font-sans);
+    }
+    .sdn-auth-status.success{border-color:rgba(52,211,153,.5);color:#6ee7b7}
+    .sdn-auth-status.error{border-color:rgba(248,113,113,.5);color:#fca5a5}
+  </style>
+
+  <script>
+  // --- SDN Auth Hook ---
+  // Runs BEFORE the deferred wallet-ui module script.
+  window.__sdnAutoOpen = false;
+
+  window.__sdnOnLogin = async function(identity) {
+    var statusEl = document.getElementById('sdn-auth-status');
+    var show = function(msg, cls) {
+      if (!statusEl) return;
+      statusEl.className = 'sdn-auth-status ' + (cls || '');
+      statusEl.textContent = msg;
+      statusEl.style.display = 'block';
+    };
+
+    try {
+      var pubKeyHex = Array.from(identity.signingPublicKey)
+        .map(function(b){return b.toString(16).padStart(2,'0')}).join('');
+      var xpub = identity.xpub;
+
+      show('Requesting challenge\u2026');
+
+      var challengeResp = await fetch('/api/auth/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ xpub: xpub, client_pubkey_hex: pubKeyHex, ts: Math.floor(Date.now()/1000) })
+      });
+      var challengeData = await challengeResp.json();
+      if (!challengeResp.ok) throw new Error(challengeData.message || 'Challenge failed');
+
+      show('Signing challenge\u2026');
+
+      var b64 = challengeData.challenge;
+      while (b64.length % 4 !== 0) b64 += '=';
+      var binary = atob(b64);
+      var challengeBytes = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++) challengeBytes[i] = binary.charCodeAt(i);
+
+      var signature = await identity.sign(challengeBytes);
+      var sigHex = Array.from(signature)
+        .map(function(b){return b.toString(16).padStart(2,'0')}).join('');
+
+      show('Verifying\u2026');
+
+      var verifyResp = await fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          challenge_id: challengeData.challenge_id,
+          xpub: xpub, client_pubkey_hex: pubKeyHex,
+          challenge: challengeData.challenge, signature_hex: sigHex
+        })
+      });
+      var verifyData = await verifyResp.json();
+      if (!verifyResp.ok) throw new Error(verifyData.message || 'Verification failed');
+
+      var trustNames = ['untrusted','limited','standard','trusted','admin'];
+      var name = verifyData.user.name || 'user';
+      var trust = trustNames[verifyData.user.trust_level] || 'unknown';
+      show('Authenticated as ' + name + ' (' + trust + '). Redirecting\u2026', 'success');
+      setTimeout(function(){ window.location.href = '/admin'; }, 800);
+
+    } catch (err) {
+      show(err.message, 'error');
+    }
+  };
+
+  window.__sdnWalletReady = function(ui) {
+    var btn = document.getElementById('sdn-sign-in');
+    if (btn) {
+      btn.disabled = false;
+      btn.addEventListener('click', function(){ ui.openLogin(); });
+    }
+  };
+  </script>
+</head>
+<body>
+
+  <header class="sdn-header">
+    <div class="sdn-logo">
+      <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="4">
+        <circle cx="50" cy="50" r="45"/>
+        <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2"/>
+        <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(60 50 50)"/>
+        <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(120 50 50)"/>
+        <circle cx="50" cy="50" r="8" fill="currentColor" stroke="none"/>
+      </svg>
+      <span>SPACE DATA NETWORK</span>
+    </div>
+    <button id="sdn-sign-in" class="sdn-sign-in" disabled>Sign In</button>
+  </header>
+
+  <main class="sdn-main">
+    <div id="sdn-setup-banner"></div>
+
+    <section class="sdn-hero">
+      <h1>Node Dashboard</h1>
+      <p>Sign in with your HD Wallet to access the admin panel.<br>
+         Authentication uses Ed25519 challenge-response &mdash; your keys never leave your browser.</p>
+    </section>
+
+    <section class="sdn-cards" id="sdn-node-info">
+      <div class="sdn-placeholder">Loading node information&hellip;</div>
+    </section>
+  </main>
+
+  <div id="sdn-auth-status" class="sdn-auth-status"></div>
+
+  <script type="module" crossorigin src="/wallet-ui/assets/` + jsFile + `"></script>
+
+  <script>
+  (function(){
+    // Check if admin is configured — show setup banner if not
+    fetch('/api/auth/status').then(function(r){return r.json()}).then(function(s){
+      if (s.admin_configured) return;
+      var banner = document.getElementById('sdn-setup-banner');
+      if (!banner) return;
+      banner.innerHTML =
+        '<div class="sdn-setup">' +
+          '<h2>\u26a0 Admin Setup Required</h2>' +
+          '<p>No administrator account is configured. To enable authentication, add your HD wallet\u2019s <strong>extended public key (xpub)</strong> to the server\u2019s <code>config.yaml</code>:</p>' +
+          '<code>users:\n  - xpub: "YOUR_XPUB_HERE"\n    trust_level: "admin"\n    name: "Operator"</code>' +
+          '<p>To find your xpub, click <strong>Sign In</strong> above and open your wallet. Your xpub is displayed on the account keys screen.</p>' +
+          '<p class="step">After adding the entry, restart the server for changes to take effect.</p>' +
+        '</div>';
+    }).catch(function(){});
+
+    fetch('/api/node/info').then(function(r){return r.json()}).then(function(info){
+      var el = document.getElementById('sdn-node-info');
+      if (!el) return;
+
+      var addrs = (info.listen_addresses||[]).map(function(a){
+        return '<span class="chip">' + esc(a) + '</span>';
+      }).join(' ');
+
+      var cards = '';
+
+      // Identity card
+      cards += '<div class="sdn-card">';
+      cards += '<h3>Node Identity</h3>';
+      cards += '<div class="val accent">' + esc(info.peer_id) + '</div>';
+      cards += '<div class="label">Mode</div><div class="val">' + esc(info.mode) + '</div>';
+      cards += '<div class="label">Version</div><div class="val">' + esc(info.version) + '</div>';
+      if (addrs) { cards += '<div class="label">Listen Addresses</div><div style="margin-top:4px">' + addrs + '</div>'; }
+      cards += '</div>';
+
+      // Crypto card
+      if (info.signing_pubkey_hex || info.encryption_pubkey_hex) {
+        cards += '<div class="sdn-card">';
+        cards += '<h3>Cryptographic Keys</h3>';
+        if (info.signing_pubkey_hex) {
+          cards += '<div class="label">Signing (Ed25519)</div>';
+          cards += '<div class="val">' + esc(info.signing_pubkey_hex) + '</div>';
+          if (info.signing_key_path) cards += '<div class="val" style="color:var(--sdn-muted);font-size:12px">' + esc(info.signing_key_path) + '</div>';
+        }
+        if (info.encryption_pubkey_hex) {
+          cards += '<div class="label" style="margin-top:12px">Encryption (X25519)</div>';
+          cards += '<div class="val">' + esc(info.encryption_pubkey_hex) + '</div>';
+          if (info.encryption_key_path) cards += '<div class="val" style="color:var(--sdn-muted);font-size:12px">' + esc(info.encryption_key_path) + '</div>';
+        }
+        cards += '</div>';
+      }
+
+      el.innerHTML = cards;
+    }).catch(function(){
+      var el = document.getElementById('sdn-node-info');
+      if (el) el.innerHTML = '<div class="sdn-placeholder">Unable to load node information.</div>';
+    });
+
+    function esc(s) {
+      if (!s) return '';
+      var d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+  })();
+  </script>
+
+</body>
+</html>`
+}
+
+// ---------------------------------------------------------------------------
+// Fallback login page (no local wallet-ui dist)
+// ---------------------------------------------------------------------------
+
+func serveFallbackLogin(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write([]byte(fallbackLoginHTML))
+}
+
+const fallbackLoginHTML = `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -45,340 +414,30 @@ const loginPageHTML = `<!doctype html>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
-      background: #0d1117;
-      color: #c9d1d9;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0d1117; color: #c9d1d9;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
     }
-    .login-container {
-      max-width: 480px;
-      width: 100%;
-      padding: 2rem;
-    }
-    h1 {
-      text-align: center;
-      font-size: 1.5rem;
-      font-weight: 300;
-      margin-bottom: 0.5rem;
-      color: #e6edf6;
-    }
-    .subtitle {
-      text-align: center;
-      color: #8b949e;
-      margin-bottom: 2rem;
-      font-size: 0.9rem;
-    }
-    #wallet-root {
-      margin-bottom: 1.5rem;
-    }
-    .sign-in-btn {
-      display: none;
-      width: 100%;
-      padding: 12px;
-      border: none;
-      border-radius: 8px;
-      background: linear-gradient(135deg, #238636, #2ea043);
-      color: #fff;
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: opacity 0.2s;
-    }
-    .sign-in-btn:hover { opacity: 0.9; }
-    .sign-in-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .sign-in-btn.visible { display: block; }
-    #status {
-      text-align: center;
-      margin-top: 1rem;
-      font-size: 0.9rem;
-      color: #8b949e;
-      min-height: 1.5em;
-    }
-    #status.error { color: #f85149; }
-    #status.success { color: #3fb950; }
-    .node-info {
-      margin-top: 2rem;
-      padding: 1rem;
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      display: none;
-    }
-    .node-info.visible { display: block; }
-    .node-info h3 {
-      font-size: 0.85rem;
-      color: #8b949e;
-      margin-bottom: 0.75rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .info-row {
-      display: flex;
-      justify-content: space-between;
-      padding: 6px 0;
-      border-bottom: 1px solid #21262d;
-      font-size: 0.85rem;
-    }
-    .info-row:last-child { border-bottom: none; }
-    .info-label { color: #8b949e; }
-    .info-value {
-      color: #c9d1d9;
-      font-family: monospace;
-      max-width: 240px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      cursor: pointer;
-    }
-    .info-value:hover { color: #58a6ff; }
+    .container { max-width: 480px; width: 100%; padding: 2rem; text-align: center; }
+    h1 { font-size: 1.5rem; font-weight: 300; color: #e6edf6; margin-bottom: 1rem; }
+    p { color: #8b949e; margin-bottom: 1.5rem; line-height: 1.6; }
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
-  <div class="login-container">
+  <div class="container">
     <h1>SPACE DATA NETWORK</h1>
-    <p class="subtitle">Authenticate with your HD wallet to continue</p>
-
-    <div id="wallet-root"></div>
-
-    <button id="signInBtn" class="sign-in-btn" onclick="signInToServer()">
-      Sign In to Server
-    </button>
-
-    <div id="status"></div>
-
-    <div id="nodeInfo" class="node-info">
-      <h3>Node Information</h3>
-      <div id="nodeInfoContent"></div>
-    </div>
+    <p>
+      Authentication requires the HD Wallet UI.<br>
+      The server administrator needs to configure <code>wallet_ui_path</code> in the
+      server config to point to the wallet-ui dist directory.
+    </p>
+    <p>
+      <a href="https://github.com/DigitalArsenal/hd-wallet-wasm" target="_blank">
+        Get HD Wallet UI &rarr;
+      </a>
+    </p>
   </div>
-
-  <script type="module">
-    const WALLET_UI_BASE = '{{.WalletUIBase}}';
-
-    // =========================================================================
-    // Dynamic imports from hd-wallet-ui
-    // =========================================================================
-    let createWalletUI, walletLib, hdWalletWasm;
-    let walletUI = null;
-    let walletState = null;
-
-    async function loadModules() {
-      try {
-        const appMod = await import(WALLET_UI_BASE + '/src/app.js');
-        createWalletUI = appMod.createWalletUI;
-      } catch(e) {
-        // Try alternate import path
-        const appMod = await import(WALLET_UI_BASE);
-        createWalletUI = appMod.createWalletUI;
-      }
-    }
-
-    // =========================================================================
-    // Initialize wallet UI
-    // =========================================================================
-    async function initWallet() {
-      await loadModules();
-
-      const root = document.getElementById('wallet-root');
-      walletUI = await createWalletUI(root, { autoOpenWallet: true });
-
-      // Watch for login state changes by polling
-      setInterval(checkLoginState, 500);
-    }
-
-    function checkLoginState() {
-      // The wallet-ui sets a login flag on its internal state.
-      // We detect login by checking for the keys-modal having content.
-      const keysModal = document.getElementById('keys-modal');
-      const loginModal = document.getElementById('login-modal');
-      const signInBtn = document.getElementById('signInBtn');
-
-      if (keysModal && !loginModal?.classList.contains('active')) {
-        // User has logged in if the keys modal exists and login is dismissed
-        const walletTab = document.querySelector('[data-tab="wallet"]');
-        if (walletTab || document.querySelector('.wallet-portfolio')) {
-          signInBtn.classList.add('visible');
-        }
-      }
-    }
-
-    // =========================================================================
-    // Challenge-response authentication
-    // =========================================================================
-    window.signInToServer = async function() {
-      const status = document.getElementById('status');
-      const btn = document.getElementById('signInBtn');
-      btn.disabled = true;
-      status.className = '';
-      status.textContent = 'Authenticating...';
-
-      try {
-        // Import noble curves for Ed25519 signing
-        const { ed25519 } = await import('https://esm.sh/@noble/curves@1.8.1/ed25519');
-
-        // Get the HD root from wallet-ui's internal state
-        // The wallet-ui module stores state in a closure, but we can access
-        // the derived keys through the DOM or by re-deriving from stored wallet
-        const { getSigningKey, buildSigningPath, WellKnownCoinType } = await import(WALLET_UI_BASE + '/src/lib.js');
-
-        // Try to get stored wallet data to re-derive keys
-        const { hasStoredWallet, retrieveWithPIN } = await import(WALLET_UI_BASE + '/src/lib.js');
-
-        // We need the Ed25519 signing key at SDN coin type (9999)
-        // The wallet-ui derives keys from hdRoot — we need to access it
-        // Strategy: look for the xpub in localStorage or prompt re-derivation
-
-        // Access the wallet module's internal hdRoot via the global hdkey
-        // The wallet-ui sets window.Buffer and uses hdkey from hd-wallet-wasm
-        const initHDWallet = (await import('hd-wallet-wasm')).default;
-        const hdMod = await import('hd-wallet-wasm');
-
-        // Check if we can find the seed in the wallet-ui's state
-        // The createWalletUI function returns a limited API, but the state
-        // is in module scope. We'll re-derive from PIN storage if available.
-
-        // For now, prompt the user to enter their signing details
-        // This will be replaced with proper wallet-ui state access
-
-        // Derive the SDN signing key (coin type 9999, account 0)
-        // hdRoot should be available from the wallet-ui's initialization
-        const hdRoot = window.__hdRoot; // Set by wallet-ui after login
-
-        if (!hdRoot) {
-          throw new Error('Wallet not initialized. Please log in first using the wallet above.');
-        }
-
-        const sdnSigningPath = "m/44'/9999'/0'/0'/0'";
-        const derived = hdRoot.derivePath(sdnSigningPath);
-        const signingKeyBytes = derived.privateKey;
-
-        // Get Ed25519 public key from the 32-byte seed
-        const pubKey = ed25519.getPublicKey(signingKeyBytes);
-        const pubKeyHex = bytesToHex(pubKey);
-
-        // Derive xpub at account level m/44'/9999'/0'
-        const accountPath = "m/44'/9999'/0'";
-        const accountDerived = hdRoot.derivePath(accountPath);
-        const xpub = accountDerived.toXpub ? accountDerived.toXpub() : pubKeyHex;
-
-        // Step 1: Request challenge
-        const challengeResp = await fetch('/api/auth/challenge', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            xpub: xpub,
-            client_pubkey_hex: pubKeyHex,
-            ts: Math.floor(Date.now() / 1000)
-          })
-        });
-        const challengeData = await challengeResp.json();
-        if (!challengeResp.ok) throw new Error(challengeData.message || 'Challenge request failed');
-
-        // Step 2: Sign the challenge
-        const challengeBytes = base64ToBytes(challengeData.challenge);
-        const signature = ed25519.sign(challengeBytes, signingKeyBytes);
-        const signatureHex = bytesToHex(signature);
-
-        // Step 3: Verify signature with server
-        const verifyResp = await fetch('/api/auth/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            challenge_id: challengeData.challenge_id,
-            xpub: xpub,
-            client_pubkey_hex: pubKeyHex,
-            challenge: challengeData.challenge,
-            signature_hex: signatureHex
-          })
-        });
-        const verifyData = await verifyResp.json();
-        if (!verifyResp.ok) throw new Error(verifyData.message || 'Verification failed');
-
-        status.className = 'success';
-        status.textContent = 'Authenticated as ' + (verifyData.user.name || 'user') +
-          ' (trust: ' + verifyData.user.trust_level + '). Redirecting...';
-
-        setTimeout(() => { window.location.href = '/admin'; }, 1000);
-
-      } catch(err) {
-        status.className = 'error';
-        status.textContent = err.message;
-        btn.disabled = false;
-      }
-    };
-
-    // =========================================================================
-    // Fetch and display node info
-    // =========================================================================
-    async function loadNodeInfo() {
-      try {
-        const resp = await fetch('/api/node/info');
-        if (!resp.ok) return;
-        const info = await resp.json();
-
-        const container = document.getElementById('nodeInfoContent');
-        const rows = [
-          ['Peer ID', info.peer_id],
-          ['Mode', info.mode],
-          ['Version', info.version],
-        ];
-        if (info.signing_pubkey_hex) rows.push(['Signing Key', info.signing_pubkey_hex]);
-        if (info.encryption_pubkey_hex) rows.push(['Encryption Key', info.encryption_pubkey_hex]);
-        if (info.signing_key_path) rows.push(['Signing Path', info.signing_key_path]);
-        if (info.listen_addresses) {
-          info.listen_addresses.forEach((addr, i) => {
-            rows.push(['Listen ' + (i+1), addr]);
-          });
-        }
-
-        container.innerHTML = rows.map(([label, value]) =>
-          '<div class="info-row">' +
-          '  <span class="info-label">' + label + '</span>' +
-          '  <span class="info-value" title="Click to copy" onclick="copyText(this)">' + value + '</span>' +
-          '</div>'
-        ).join('');
-
-        document.getElementById('nodeInfo').classList.add('visible');
-      } catch(e) {
-        console.warn('Failed to load node info:', e);
-      }
-    }
-
-    window.copyText = function(el) {
-      navigator.clipboard.writeText(el.textContent.trim()).then(() => {
-        const orig = el.textContent;
-        el.textContent = 'Copied!';
-        setTimeout(() => { el.textContent = orig; }, 1000);
-      });
-    };
-
-    // =========================================================================
-    // Utilities
-    // =========================================================================
-    function bytesToHex(bytes) {
-      return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-    }
-
-    function base64ToBytes(b64) {
-      // Handle both standard and URL-safe base64, with or without padding
-      const padded = b64.replace(/-/g, '+').replace(/_/g, '/');
-      const binary = atob(padded);
-      return new Uint8Array(binary.length).map((_, i) => binary.charCodeAt(i));
-    }
-
-    // =========================================================================
-    // Boot
-    // =========================================================================
-    loadNodeInfo();
-    initWallet().catch(err => {
-      console.error('Failed to initialize wallet UI:', err);
-      document.getElementById('status').textContent =
-        'Failed to load wallet UI. Check console for details.';
-      document.getElementById('status').className = 'error';
-    });
-  </script>
 </body>
 </html>`

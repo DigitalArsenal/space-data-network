@@ -1,6 +1,7 @@
 package license
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -69,7 +70,7 @@ func (h *APIHandler) handleEntitlements(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
-	if strings.TrimSpace(r.Header.Get("X-License-Admin-Token")) != adminToken {
+	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(r.Header.Get("X-License-Admin-Token"))), []byte(adminToken)) != 1 {
 		writeLicenseJSON(w, http.StatusUnauthorized, ErrorResponse{
 			Type:    msgTypeErrorResponse,
 			Code:    "unauthorized",
@@ -110,6 +111,15 @@ func (h *APIHandler) handleEntitlements(w http.ResponseWriter, r *http.Request) 
 			case entitlementStatusActive, entitlementStatusCancelled, entitlementStatusPastDue, entitlementStatusSuspended:
 			default:
 				writeLicenseJSON(w, http.StatusBadRequest, ErrorResponse{Type: msgTypeErrorResponse, Code: "invalid_request", Message: "invalid entitlement status"})
+				return
+			}
+		}
+		// Validate plan field to prevent arbitrary values.
+		if p := strings.TrimSpace(ent.Plan); p != "" {
+			switch p {
+			case "free", "starter", "pro", "enterprise":
+			default:
+				writeLicenseJSON(w, http.StatusBadRequest, ErrorResponse{Type: msgTypeErrorResponse, Code: "invalid_request", Message: "invalid plan value"})
 				return
 			}
 		}

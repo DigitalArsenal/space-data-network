@@ -168,6 +168,32 @@ func (s *UserStore) ListUsers() ([]User, error) {
 	return users, nil
 }
 
+// HasAdmin returns true if at least one user with Admin trust exists.
+func (s *UserStore) HasAdmin() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, u := range s.configUsers {
+		if u.TrustLevel >= peers.Admin {
+			return true
+		}
+	}
+
+	var count int
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM users WHERE trust_level >= ?", int(peers.Admin)).Scan(&count)
+	return count > 0
+}
+
+// UserCount returns the total number of configured users.
+func (s *UserStore) UserCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var dbCount int
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&dbCount)
+	return dbCount + len(s.configUsers)
+}
+
 // AddUser adds a user to the database.
 func (s *UserStore) AddUser(xpub, name string, trust peers.TrustLevel) error {
 	s.mu.Lock()

@@ -23,7 +23,7 @@ type Config struct {
 
 // UserEntry maps an HD wallet xpub to a trust level for authentication.
 type UserEntry struct {
-	// XPub is the BIP-32 extended public key at m/44'/9999'/account'.
+	// XPub is the BIP-32 extended public key at m/44'/1957'/account'.
 	XPub string `yaml:"xpub"`
 
 	// TrustLevel: "untrusted", "limited", "standard", "trusted", "admin".
@@ -190,7 +190,7 @@ func Default() *Config {
 		Admin: AdminConfig{
 			Enabled:       true,
 			ListenAddr:    "127.0.0.1:5001",
-			RequireAuth:   false, // Disabled by default for local development
+			RequireAuth:   true, // Require authentication by default
 			SessionExpiry: "24h",
 			TOTPRequired:  false,
 			TLSEnabled:    false,
@@ -228,12 +228,12 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	cfg := Default()
+	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
 
-	return &cfg, nil
+	return cfg, nil
 }
 
 // Save saves the configuration to a file.
@@ -244,7 +244,7 @@ func Save(path string, cfg *Config) error {
 
 	// Ensure directory exists
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 
@@ -253,5 +253,5 @@ func Save(path string, cfg *Config) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
