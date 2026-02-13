@@ -39,7 +39,7 @@ func TestCreateAdmin(t *testing.T) {
 	defer m.Close()
 
 	// Create admin
-	err = m.CreateAdmin("testadmin", "testpassword123")
+	err = m.CreateAdmin("testadmin", "TestPassword123")
 	if err != nil {
 		t.Fatalf("Failed to create admin: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestCreateAdmin(t *testing.T) {
 	}
 
 	// Cannot create duplicate
-	err = m.CreateAdmin("testadmin", "anotherpassword")
+	err = m.CreateAdmin("testadmin", "AnotherPass123")
 	if err != ErrAdminExists {
 		t.Errorf("Expected ErrAdminExists, got: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestAuthenticate(t *testing.T) {
 	defer m.Close()
 
 	// Create admin
-	m.CreateAdmin("testadmin", "testpassword123")
+	m.CreateAdmin("testadmin", "TestPassword123")
 
 	// Authenticate with wrong password
 	_, err = m.Authenticate("testadmin", "wrongpassword", "127.0.0.1", "test-agent", false)
@@ -79,13 +79,13 @@ func TestAuthenticate(t *testing.T) {
 	}
 
 	// Authenticate with wrong username
-	_, err = m.Authenticate("wronguser", "testpassword123", "127.0.0.1", "test-agent", false)
+	_, err = m.Authenticate("wronguser", "TestPassword123", "127.0.0.1", "test-agent", false)
 	if err != ErrInvalidCredentials {
 		t.Errorf("Expected ErrInvalidCredentials, got: %v", err)
 	}
 
 	// Authenticate with correct credentials
-	token, err := m.Authenticate("testadmin", "testpassword123", "127.0.0.1", "test-agent", false)
+	token, err := m.Authenticate("testadmin", "TestPassword123", "127.0.0.1", "test-agent", false)
 	if err != nil {
 		t.Fatalf("Authentication failed: %v", err)
 	}
@@ -108,10 +108,10 @@ func TestSessionValidation(t *testing.T) {
 	}
 	defer m.Close()
 
-	m.CreateAdmin("testadmin", "testpassword123")
+	m.CreateAdmin("testadmin", "TestPassword123")
 
 	// Get session token
-	token, _ := m.Authenticate("testadmin", "testpassword123", "127.0.0.1", "test-agent", false)
+	token, _ := m.Authenticate("testadmin", "TestPassword123", "127.0.0.1", "test-agent", false)
 
 	// Validate session
 	session, err := m.ValidateSession(token)
@@ -146,8 +146,8 @@ func TestSessionRevocation(t *testing.T) {
 	}
 	defer m.Close()
 
-	m.CreateAdmin("testadmin", "testpassword123")
-	token, _ := m.Authenticate("testadmin", "testpassword123", "127.0.0.1", "test-agent", false)
+	m.CreateAdmin("testadmin", "TestPassword123")
+	token, _ := m.Authenticate("testadmin", "TestPassword123", "127.0.0.1", "test-agent", false)
 
 	// Revoke session
 	err = m.RevokeSession(token)
@@ -175,21 +175,21 @@ func TestChangePassword(t *testing.T) {
 	}
 	defer m.Close()
 
-	m.CreateAdmin("testadmin", "oldpassword123")
-	token, _ := m.Authenticate("testadmin", "oldpassword123", "127.0.0.1", "test-agent", false)
+	m.CreateAdmin("testadmin", "OldPassword123")
+	token, _ := m.Authenticate("testadmin", "OldPassword123", "127.0.0.1", "test-agent", false)
 
 	// Get admin ID
 	session, _ := m.ValidateSession(token)
 	adminID := session.AdminID
 
 	// Change password with wrong old password
-	err = m.ChangePassword(adminID, "wrongold", "newpassword123")
+	err = m.ChangePassword(adminID, "wrongold", "NewPassword123")
 	if err != ErrInvalidCredentials {
 		t.Errorf("Expected ErrInvalidCredentials, got: %v", err)
 	}
 
 	// Change password correctly
-	err = m.ChangePassword(adminID, "oldpassword123", "newpassword123")
+	err = m.ChangePassword(adminID, "OldPassword123", "NewPassword123")
 	if err != nil {
 		t.Fatalf("Failed to change password: %v", err)
 	}
@@ -201,13 +201,13 @@ func TestChangePassword(t *testing.T) {
 	}
 
 	// Can authenticate with new password
-	_, err = m.Authenticate("testadmin", "newpassword123", "127.0.0.1", "test-agent", false)
+	_, err = m.Authenticate("testadmin", "NewPassword123", "127.0.0.1", "test-agent", false)
 	if err != nil {
 		t.Errorf("Should be able to login with new password: %v", err)
 	}
 
 	// Cannot authenticate with old password
-	_, err = m.Authenticate("testadmin", "oldpassword123", "127.0.0.1", "test-agent", false)
+	_, err = m.Authenticate("testadmin", "OldPassword123", "127.0.0.1", "test-agent", false)
 	if err != ErrInvalidCredentials {
 		t.Errorf("Should not be able to login with old password")
 	}
@@ -226,12 +226,12 @@ func TestRevokeAllSessions(t *testing.T) {
 	}
 	defer m.Close()
 
-	m.CreateAdmin("testadmin", "testpassword123")
+	m.CreateAdmin("testadmin", "TestPassword123")
 
 	// Create multiple sessions
-	token1, _ := m.Authenticate("testadmin", "testpassword123", "127.0.0.1", "agent1", false)
-	token2, _ := m.Authenticate("testadmin", "testpassword123", "127.0.0.2", "agent2", false)
-	token3, _ := m.Authenticate("testadmin", "testpassword123", "127.0.0.3", "agent3", false)
+	token1, _ := m.Authenticate("testadmin", "TestPassword123", "127.0.0.1", "agent1", false)
+	token2, _ := m.Authenticate("testadmin", "TestPassword123", "127.0.0.2", "agent2", false)
+	token3, _ := m.Authenticate("testadmin", "TestPassword123", "127.0.0.3", "agent3", false)
 
 	// Get admin ID
 	session, _ := m.ValidateSession(token1)
@@ -265,8 +265,8 @@ func TestGetAdmin(t *testing.T) {
 	}
 	defer m.Close()
 
-	m.CreateAdmin("testadmin", "testpassword123")
-	token, _ := m.Authenticate("testadmin", "testpassword123", "127.0.0.1", "test-agent", false)
+	m.CreateAdmin("testadmin", "TestPassword123")
+	token, _ := m.Authenticate("testadmin", "TestPassword123", "127.0.0.1", "test-agent", false)
 	session, _ := m.ValidateSession(token)
 
 	// Get admin
@@ -296,11 +296,11 @@ func TestListActiveSessions(t *testing.T) {
 	}
 	defer m.Close()
 
-	m.CreateAdmin("testadmin", "testpassword123")
+	m.CreateAdmin("testadmin", "TestPassword123")
 
 	// Create sessions
-	token1, _ := m.Authenticate("testadmin", "testpassword123", "127.0.0.1", "agent1", false)
-	m.Authenticate("testadmin", "testpassword123", "127.0.0.2", "agent2", false)
+	token1, _ := m.Authenticate("testadmin", "TestPassword123", "127.0.0.1", "agent1", false)
+	m.Authenticate("testadmin", "TestPassword123", "127.0.0.2", "agent2", false)
 
 	session, _ := m.ValidateSession(token1)
 
@@ -328,8 +328,8 @@ func TestCleanupExpiredSessions(t *testing.T) {
 	}
 	defer m.Close()
 
-	m.CreateAdmin("testadmin", "testpassword123")
-	m.Authenticate("testadmin", "testpassword123", "127.0.0.1", "test-agent", false)
+	m.CreateAdmin("testadmin", "TestPassword123")
+	m.Authenticate("testadmin", "TestPassword123", "127.0.0.1", "test-agent", false)
 
 	// Cleanup should not remove active sessions
 	deleted, err := m.CleanupExpiredSessions()
@@ -376,13 +376,13 @@ func TestSessionExpiry(t *testing.T) {
 	}
 	defer m.Close()
 
-	m.CreateAdmin("testadmin", "testpassword123")
+	m.CreateAdmin("testadmin", "TestPassword123")
 
 	// Create session without remember me (short expiry)
-	_, _ = m.Authenticate("testadmin", "testpassword123", "127.0.0.1", "test-agent", false)
+	_, _ = m.Authenticate("testadmin", "TestPassword123", "127.0.0.1", "test-agent", false)
 
 	// Create session with remember me (long expiry)
-	token2, _ := m.Authenticate("testadmin", "testpassword123", "127.0.0.1", "test-agent", true)
+	token2, _ := m.Authenticate("testadmin", "TestPassword123", "127.0.0.1", "test-agent", true)
 
 	session, _ := m.ValidateSession(token2)
 

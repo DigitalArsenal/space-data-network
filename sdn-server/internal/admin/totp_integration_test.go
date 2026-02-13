@@ -19,10 +19,10 @@ func TestTOTPEnrollmentFlow(t *testing.T) {
 	defer m.Close()
 
 	// Create admin
-	m.CreateAdmin("admin", "password123456")
+	m.CreateAdmin("admin", "Password123456")
 
 	// Authenticate without TOTP
-	token, err := m.Authenticate("admin", "password123456", "127.0.0.1", "test", false)
+	token, err := m.Authenticate("admin", "Password123456", "127.0.0.1", "test", false)
 	if err != nil {
 		t.Fatalf("Auth failed: %v", err)
 	}
@@ -62,14 +62,14 @@ func TestTOTPEnrollmentFlow(t *testing.T) {
 	}
 
 	// Now auth without TOTP should return ErrTOTPRequired
-	_, err = m.Authenticate("admin", "password123456", "127.0.0.1", "test", false)
+	_, err = m.Authenticate("admin", "Password123456", "127.0.0.1", "test", false)
 	if err != ErrTOTPRequired {
 		t.Errorf("Expected ErrTOTPRequired, got: %v", err)
 	}
 
 	// Auth with TOTP code should succeed
 	newCode, _ := GenerateTOTPCode(secret)
-	token2, err := m.AuthenticateWithTOTP("admin", "password123456", newCode, "127.0.0.1", "test", false)
+	token2, err := m.AuthenticateWithTOTP("admin", "Password123456", newCode, "127.0.0.1", "test", false)
 	if err != nil {
 		t.Fatalf("Auth with TOTP failed: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestTOTPEnrollmentFlow(t *testing.T) {
 	}
 
 	// Auth with wrong TOTP code should fail
-	_, err = m.AuthenticateWithTOTP("admin", "password123456", "000000", "127.0.0.1", "test", false)
+	_, err = m.AuthenticateWithTOTP("admin", "Password123456", "000000", "127.0.0.1", "test", false)
 	if err != ErrTOTPInvalid {
 		t.Errorf("Expected ErrTOTPInvalid, got: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestTOTPEnrollmentFlow(t *testing.T) {
 	}
 
 	// Auth without TOTP should work again
-	token3, err := m.Authenticate("admin", "password123456", "127.0.0.1", "test", false)
+	token3, err := m.Authenticate("admin", "Password123456", "127.0.0.1", "test", false)
 	if err != nil {
 		t.Fatalf("Auth after TOTP disable failed: %v", err)
 	}
@@ -119,8 +119,8 @@ func TestTOTPWithPasswordChange(t *testing.T) {
 	}
 	defer m.Close()
 
-	m.CreateAdmin("admin", "oldpassword123")
-	token, _ := m.Authenticate("admin", "oldpassword123", "127.0.0.1", "test", false)
+	m.CreateAdmin("admin", "OldPassword123")
+	token, _ := m.Authenticate("admin", "OldPassword123", "127.0.0.1", "test", false)
 	session, _ := m.ValidateSession(token)
 
 	// Enable TOTP
@@ -128,7 +128,7 @@ func TestTOTPWithPasswordChange(t *testing.T) {
 	m.EnableTOTP(session.AdminID, secret)
 
 	// Change password
-	err = m.ChangePassword(session.AdminID, "oldpassword123", "newpassword123")
+	err = m.ChangePassword(session.AdminID, "OldPassword123", "NewPassword123")
 	if err != nil {
 		t.Fatalf("Password change failed: %v", err)
 	}
@@ -140,14 +140,14 @@ func TestTOTPWithPasswordChange(t *testing.T) {
 	}
 
 	// Should still require TOTP with new password
-	_, err = m.Authenticate("admin", "newpassword123", "127.0.0.1", "test", false)
+	_, err = m.Authenticate("admin", "NewPassword123", "127.0.0.1", "test", false)
 	if err != ErrTOTPRequired {
 		t.Errorf("Should still require TOTP after password change: %v", err)
 	}
 
 	// Auth with new password + TOTP should work
 	code, _ := GenerateTOTPCode(secret)
-	newToken, err := m.AuthenticateWithTOTP("admin", "newpassword123", code, "127.0.0.1", "test", false)
+	newToken, err := m.AuthenticateWithTOTP("admin", "NewPassword123", code, "127.0.0.1", "test", false)
 	if err != nil {
 		t.Fatalf("Auth with new password + TOTP failed: %v", err)
 	}
@@ -169,14 +169,14 @@ func TestSessionSecurityProperties(t *testing.T) {
 	}
 	defer m.Close()
 
-	m.CreateAdmin("admin", "password123456")
+	m.CreateAdmin("admin", "Password123456")
 
 	// Short session (no remember me)
-	token1, _ := m.Authenticate("admin", "password123456", "127.0.0.1", "agent1", false)
+	token1, _ := m.Authenticate("admin", "Password123456", "127.0.0.1", "agent1", false)
 	session1, _ := m.ValidateSession(token1)
 
 	// Long session (remember me)
-	token2, _ := m.Authenticate("admin", "password123456", "127.0.0.1", "agent2", true)
+	token2, _ := m.Authenticate("admin", "Password123456", "127.0.0.1", "agent2", true)
 	session2, _ := m.ValidateSession(token2)
 
 	// Long session should expire later
