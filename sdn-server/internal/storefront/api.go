@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
 // APIHandler provides HTTP handlers for the storefront API
@@ -28,51 +31,74 @@ func NewAPIHandler(service *Service, catalog *Catalog, delivery *DeliveryService
 	}
 }
 
-// RegisterRoutes registers the storefront HTTP routes on a mux
-func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
-	// Listings
-	mux.HandleFunc("/api/storefront/listings", h.handleListings)
-	mux.HandleFunc("/api/storefront/listings/search", h.handleSearchListings)
-	mux.HandleFunc("/api/storefront/listings/", h.handleListingByID)
+// RegisterRoutes registers the storefront HTTP routes on a mux.
+// authHandler may be nil (auth disabled), in which case all routes are open.
+func (h *APIHandler) RegisterRoutes(mux *http.ServeMux, authHandler *auth.Handler) {
+	// Helper to wrap with auth at a given trust level (no-op if authHandler is nil)
+	requireAuth := func(minTrust peers.TrustLevel, handler http.HandlerFunc) http.HandlerFunc {
+		if authHandler == nil {
+			return handler
+		}
+		return authHandler.RequireAuth(minTrust, handler)
+	}
+	optionalAuth := func(handler http.HandlerFunc) http.HandlerFunc {
+		if authHandler == nil {
+			return handler
+		}
+		return authHandler.OptionalAuth(handler)
+	}
 
-	// Purchases
-	mux.HandleFunc("/api/storefront/purchases", h.handleCreatePurchase)
-	mux.HandleFunc("/api/storefront/purchases/", h.handlePurchaseByID)
+	// Listings — read is public, write requires auth
+	mux.HandleFunc("/api/storefront/listings", optionalAuth(h.handleListings))
+	mux.HandleFunc("/api/storefront/listings/search", optionalAuth(h.handleSearchListings))
+	mux.HandleFunc("/api/storefront/listings/", optionalAuth(h.handleListingByID))
 
-	// Grants
-	mux.HandleFunc("/api/storefront/grants", h.handleGrants)
-	mux.HandleFunc("/api/storefront/grants/", h.handleGrantByID)
+	// Purchases — all require auth
+	mux.HandleFunc("/api/storefront/purchases", requireAuth(peers.Standard, h.handleCreatePurchase))
+	mux.HandleFunc("/api/storefront/purchases/", requireAuth(peers.Standard, h.handlePurchaseByID))
 
-	// Reviews
-	mux.HandleFunc("/api/storefront/reviews", h.handleCreateReview)
-	mux.HandleFunc("/api/storefront/reviews/", h.handleReviewByID)
+	// Grants — require auth
+	mux.HandleFunc("/api/storefront/grants", requireAuth(peers.Standard, h.handleGrants))
+	mux.HandleFunc("/api/storefront/grants/", requireAuth(peers.Standard, h.handleGrantByID))
 
-	// Credits
-	mux.HandleFunc("/api/storefront/credits/", h.handleCredits)
+	// Reviews — read is public via listing sub-path, create requires auth
+	mux.HandleFunc("/api/storefront/reviews", requireAuth(peers.Standard, h.handleCreateReview))
+	mux.HandleFunc("/api/storefront/reviews/", requireAuth(peers.Standard, h.handleReviewByID))
 
-	// Trust
+	// Credits — require auth
+	mux.HandleFunc("/api/storefront/credits/", requireAuth(peers.Standard, h.handleCredits))
+
+	// Trust — public (read-only)
 	mux.HandleFunc("/api/storefront/trust/", h.handleTrust)
 
-	// Seller dashboard
-	mux.HandleFunc("/api/storefront/dashboard/seller", h.handleSellerDashboard)
+	// Dashboards — require auth
+	mux.HandleFunc("/api/storefront/dashboard/seller", requireAuth(peers.Standard, h.handleSellerDashboard))
+	mux.HandleFunc("/api/storefront/dashboard/buyer", requireAuth(peers.Standard, h.handleBuyerDashboard))
 
-	// Buyer dashboard
-	mux.HandleFunc("/api/storefront/dashboard/buyer", h.handleBuyerDashboard)
-
-	// Stripe webhook
+	// Stripe webhook — no auth (validated by HMAC signature)
 	mux.HandleFunc("/api/storefront/payments/stripe/webhook", h.handleStripeWebhook)
 }
 
 func (h *APIHandler) handleListings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 		var listing Listing
 		if err := json.NewDecoder(r.Body).Decode(&listing); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
+		// Field validation
+		if strings.TrimSpace(listing.Title) == "" {
+			http.Error(w, "title is required", http.StatusBadRequest)
+			return
+		}
+		if len(listing.Pricing) == 0 {
+			http.Error(w, "at least one pricing tier is required", http.StatusBadRequest)
+			return
+		}
 		if err := h.service.CreateListing(r.Context(), &listing); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "failed to create listing", http.StatusInternalServerError)
 			return
 		}
 		if h.catalog != nil {
@@ -85,7 +111,7 @@ func (h *APIHandler) handleListings(w http.ResponseWriter, r *http.Request) {
 		if providerID != "" {
 			result, err := h.service.GetProviderListings(r.Context(), providerID)
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
 				return
 			}
 			writeJSON(w, http.StatusOK, result)
@@ -94,7 +120,7 @@ func (h *APIHandler) handleListings(w http.ResponseWriter, r *http.Request) {
 		// Default: return all active listings
 		result, err := h.service.SearchListings(r.Context(), &SearchQuery{Limit: 50})
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, http.StatusOK, result)
@@ -110,6 +136,7 @@ func (h *APIHandler) handleSearchListings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 	var query SearchQuery
 	if err := json.NewDecoder(r.Body).Decode(&query); err != nil {
 		http.Error(w, "invalid query", http.StatusBadRequest)
@@ -118,7 +145,7 @@ func (h *APIHandler) handleSearchListings(w http.ResponseWriter, r *http.Request
 
 	result, err := h.service.SearchListings(r.Context(), &query)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "search failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -145,7 +172,7 @@ func (h *APIHandler) handleListingByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		listing, err := h.service.GetListing(r.Context(), listingID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		if listing == nil {
@@ -156,12 +183,13 @@ func (h *APIHandler) handleListingByID(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodDelete:
 		if err := h.service.store.UpdateListingActive(listingID, false); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 
 	case http.MethodPatch:
+		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 		var updates Listing
 		if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
 			http.Error(w, "invalid body", http.StatusBadRequest)
@@ -192,7 +220,7 @@ func (h *APIHandler) handleListingReviews(w http.ResponseWriter, r *http.Request
 
 	reviews, stats, err := h.service.GetListingReviews(r.Context(), listingID, limit, offset)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -208,14 +236,23 @@ func (h *APIHandler) handleCreatePurchase(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var req PurchaseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+	if strings.TrimSpace(req.ListingID) == "" {
+		http.Error(w, "listing_id is required", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.TierName) == "" {
+		http.Error(w, "tier_name is required", http.StatusBadRequest)
+		return
+	}
 
 	if err := h.service.CreatePurchaseRequest(r.Context(), &req); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to create purchase", http.StatusInternalServerError)
 		return
 	}
 
@@ -244,7 +281,7 @@ func (h *APIHandler) handlePurchaseByID(w http.ResponseWriter, r *http.Request) 
 	// GET purchase by ID
 	purchase, err := h.service.store.GetPurchaseRequest(requestID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	if purchase == nil {
@@ -260,6 +297,7 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 	var body struct {
 		TxHash        string `json:"txHash"`
 		Chain         string `json:"chain"`
@@ -278,7 +316,7 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 			SenderAddress: body.SenderAddress,
 		})
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		if !result.Verified {
@@ -288,7 +326,7 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.service.ProcessPayment(r.Context(), requestID, body.TxHash, body.Chain); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -313,14 +351,14 @@ func (h *APIHandler) handlePayWithCredits(w http.ResponseWriter, r *http.Request
 		err = h.service.ProcessCreditsPayment(r.Context(), requestID, purchase.BuyerPeerID)
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	// Issue grant
 	grant, err := h.service.IssueGrant(r.Context(), requestID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -338,6 +376,7 @@ func (h *APIHandler) handlePayWithFiat(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 	var body FiatGatewayRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -347,7 +386,7 @@ func (h *APIHandler) handlePayWithFiat(w http.ResponseWriter, r *http.Request, r
 
 	result, err := h.payment.CreateFiatPaymentIntent(r.Context(), &body)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to create payment intent", http.StatusInternalServerError)
 		return
 	}
 
@@ -378,7 +417,7 @@ func (h *APIHandler) handleStripeWebhook(w http.ResponseWriter, r *http.Request)
 
 	if action != nil && action.Paid && action.RequestID != "" && h.service != nil {
 		if _, err := h.service.CompleteStripeCheckout(r.Context(), action.RequestID, action.SessionID, action.SubscriptionID, action.CustomerID); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -394,7 +433,7 @@ func (h *APIHandler) handleGrants(w http.ResponseWriter, r *http.Request) {
 	if buyerID != "" {
 		grants, err := h.service.GetBuyerGrants(r.Context(), buyerID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, http.StatusOK, grants)
@@ -407,7 +446,7 @@ func (h *APIHandler) handleGrants(w http.ResponseWriter, r *http.Request) {
 		offset := queryInt(r, "offset", 0)
 		grants, total, err := h.service.store.GetProviderGrants(providerID, limit, offset)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -440,7 +479,7 @@ func (h *APIHandler) handleGrantByID(w http.ResponseWriter, r *http.Request) {
 
 	grant, err := h.service.store.GetGrant(grantID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	if grant == nil {
@@ -456,14 +495,24 @@ func (h *APIHandler) handleCreateReview(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var review Review
 	if err := json.NewDecoder(r.Body).Decode(&review); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	// Validate rating
+	if review.Rating < 1 || review.Rating > 5 {
+		http.Error(w, "rating must be between 1 and 5", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(review.ListingID) == "" {
+		http.Error(w, "listing_id is required", http.StatusBadRequest)
+		return
+	}
 
 	if err := h.service.CreateReview(r.Context(), &review); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to create review", http.StatusInternalServerError)
 		return
 	}
 
@@ -476,6 +525,7 @@ func (h *APIHandler) handleReviewByID(w http.ResponseWriter, r *http.Request) {
 	reviewID := parts[0]
 
 	if len(parts) > 1 && parts[1] == "vote" {
+		r.Body = http.MaxBytesReader(w, r.Body, 1024)
 		var body struct {
 			Helpful bool `json:"helpful"`
 		}
@@ -484,7 +534,7 @@ func (h *APIHandler) handleReviewByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.service.store.UpdateReviewVote(reviewID, body.Helpful); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -492,6 +542,7 @@ func (h *APIHandler) handleReviewByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(parts) > 1 && parts[1] == "respond" {
+		r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 		var body struct {
 			Response string `json:"response"`
 		}
@@ -500,7 +551,7 @@ func (h *APIHandler) handleReviewByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.service.store.AddProviderResponse(reviewID, body.Response); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -514,6 +565,7 @@ func (h *APIHandler) handleCredits(w http.ResponseWriter, r *http.Request) {
 
 	if parts[0] == "purchase" {
 		// Purchase credits
+		r.Body = http.MaxBytesReader(w, r.Body, 1024)
 		var body struct {
 			Amount        uint64        `json:"amount"`
 			PaymentMethod PaymentMethod `json:"paymentMethod"`
@@ -537,7 +589,7 @@ func (h *APIHandler) handleCredits(w http.ResponseWriter, r *http.Request) {
 		offset := queryInt(r, "offset", 0)
 		txs, err := h.service.store.GetCreditsTransactions(peerID, limit, offset)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, http.StatusOK, txs)
@@ -546,7 +598,7 @@ func (h *APIHandler) handleCredits(w http.ResponseWriter, r *http.Request) {
 
 	balance, err := h.service.GetCreditsBalance(r.Context(), peerID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, balance)
@@ -566,7 +618,7 @@ func (h *APIHandler) handleTrust(w http.ResponseWriter, r *http.Request) {
 
 	score, err := h.trust.ComputeProviderTrust(peerID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, score)
@@ -593,7 +645,7 @@ func (h *APIHandler) handleSellerDashboard(w http.ResponseWriter, r *http.Reques
 	// Get listings
 	listingsResult, err := h.service.GetProviderListings(r.Context(), providerID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -644,7 +696,7 @@ func (h *APIHandler) handleBuyerDashboard(w http.ResponseWriter, r *http.Request
 
 	grants, err := h.service.GetBuyerGrants(r.Context(), buyerID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 

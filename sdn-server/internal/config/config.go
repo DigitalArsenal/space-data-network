@@ -129,6 +129,11 @@ type AdminConfig struct {
 	// WalletUIPath is the filesystem path to the hd-wallet-ui dist directory.
 	// If empty, the login page loads wallet UI from CDN (unpkg.com/hd-wallet-ui).
 	WalletUIPath string `yaml:"wallet_ui_path"`
+
+	// TrustedProxy is the IP address of a trusted reverse proxy. When set,
+	// the server will trust X-Forwarded-Proto from this IP for cookie Secure flag.
+	// Set to "loopback" to trust any loopback address (127.0.0.0/8, ::1).
+	TrustedProxy string `yaml:"trusted_proxy"`
 }
 
 // SetupConfig contains first-time setup settings.

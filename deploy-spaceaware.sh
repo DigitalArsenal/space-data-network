@@ -79,6 +79,14 @@ else
   log "Warning: key broker WASM not found at $LICENSE_WASM (build with: cd packages/sdn-license-plugin && mkdir -p build-wasi && cd build-wasi && cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/wasi-sdk.cmake && make)"
 fi
 
+HD_WALLET_WASM="$ROOT_DIR/../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm"
+if [[ -f "$HD_WALLET_WASM" ]]; then
+  log "Syncing HD wallet WASM to $SERVER"
+  rsync -az "$HD_WALLET_WASM" "$SERVER:$REMOTE_WASM_DIR/hd-wallet.wasm"
+else
+  log "Warning: HD wallet WASM not found at $HD_WALLET_WASM (build with: cd ../hd-wallet-wasm && mkdir -p build-wasi && cd build-wasi && cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/wasi-sdk.cmake && make)"
+fi
+
 WALLET_UI_DIST="$ROOT_DIR/../hd-wallet-wasm/wallet-ui/dist"
 REMOTE_WALLET_UI="/opt/spacedatanetwork/wallet-ui"
 if [[ -d "$WALLET_UI_DIST" ]]; then
@@ -123,6 +131,11 @@ ssh "${SSH_OPTS[@]}" "$SERVER" "
   if ! grep -q '^SDN_WALLET_UI_PATH=' '$REMOTE_ENV_FILE'; then
     echo 'SDN_WALLET_UI_PATH=$REMOTE_WALLET_UI' >> '$REMOTE_ENV_FILE'
     echo '[deploy-spaceaware] Added SDN_WALLET_UI_PATH in $REMOTE_ENV_FILE'
+  fi
+
+  if ! grep -q '^HD_WALLET_WASM_PATH=' '$REMOTE_ENV_FILE'; then
+    echo 'HD_WALLET_WASM_PATH=$REMOTE_WASM_DIR/hd-wallet.wasm' >> '$REMOTE_ENV_FILE'
+    echo '[deploy-spaceaware] Added HD_WALLET_WASM_PATH in $REMOTE_ENV_FILE'
   fi
 
   current_token=\$(awk -F= '/^SDN_LICENSE_ADMIN_TOKEN=/{print \$2}' '$REMOTE_ENV_FILE' | tail -n 1)

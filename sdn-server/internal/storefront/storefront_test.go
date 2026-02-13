@@ -5,16 +5,27 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	store, err := NewStore(dbPath)
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	flatStore, err := storage.NewFlatSQLStore(dir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create FlatSQLStore: %v", err)
+	}
+	t.Cleanup(func() { flatStore.Close() })
+
+	store, err := NewStore(flatStore)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

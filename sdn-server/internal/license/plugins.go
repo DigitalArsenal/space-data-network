@@ -543,7 +543,8 @@ func buildPluginEnvelopeAAD(asset *PluginAsset, claims *CapabilityClaims, issuer
 // for key derivation from the shared secret.
 func derivePluginWrapKey(sharedSecret []byte, aad string) [32]byte {
 	info := []byte("sdn-plugin-key-wrap:" + aad)
-	kdf := hkdf.New(sha256.New, sharedSecret, nil, info)
+	salt := []byte("sdn-plugin-key-v1")
+	kdf := hkdf.New(sha256.New, sharedSecret, salt, info)
 	var key [32]byte
 	if _, err := io.ReadFull(kdf, key[:]); err != nil {
 		// hkdf.Read should never fail for valid inputs; panic indicates a bug.

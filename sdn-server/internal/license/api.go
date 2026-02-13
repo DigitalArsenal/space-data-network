@@ -311,6 +311,7 @@ func (h *APIHandler) handlePluginKeyEnvelope(w http.ResponseWriter, r *http.Requ
 		})
 		return
 	}
+	defer zeroBytes(pluginKey)
 	envelope, err := BuildPluginKeyEnvelope(asset, pluginKey, clientPub, claims, h.service.issuer, time.Now().UTC())
 	if err != nil {
 		writeLicenseJSON(w, http.StatusInternalServerError, ErrorResponse{

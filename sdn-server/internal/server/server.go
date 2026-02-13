@@ -36,28 +36,76 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 }
 
 // isSecureRequest checks if the request came over TLS (directly or via proxy).
-func isSecureRequest(r *http.Request) bool {
+// Only trusts X-Forwarded-Proto when a trusted proxy is configured.
+func isSecureRequest(r *http.Request, trustedProxy string) bool {
 	if r.TLS != nil {
 		return true
 	}
-	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	if trustedProxy != "" {
+		remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if remoteHost == trustedProxy || (trustedProxy == "loopback" && net.ParseIP(remoteHost).IsLoopback()) {
+			return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+		}
+	}
+	return false
+}
+
+// loginRateLimiter tracks login attempts per IP for brute-force protection.
+type loginRateLimiter struct {
+	attempts sync.Map // ip -> *loginAttempts
+}
+
+type loginAttempts struct {
+	mu      sync.Mutex
+	times   []time.Time
+}
+
+const (
+	loginRateWindow = time.Minute
+	loginRateMax    = 5
+)
+
+func (l *loginRateLimiter) allow(ip string) bool {
+	val, _ := l.attempts.LoadOrStore(ip, &loginAttempts{})
+	attempts := val.(*loginAttempts)
+	attempts.mu.Lock()
+	defer attempts.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-loginRateWindow)
+
+	// Trim old attempts
+	valid := attempts.times[:0]
+	for _, t := range attempts.times {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
+	attempts.times = valid
+
+	if len(attempts.times) >= loginRateMax {
+		return false
+	}
+	attempts.times = append(attempts.times, now)
+	return true
 }
 
 // Server represents the HTTP server with admin and setup functionality.
 type Server struct {
-	config        *config.Config
-	setupMgr      *setup.Manager
-	keyMgr        *keys.Manager
-	adminMgr      *admin.Manager
-	auditLog      *audit.Logger
-	peerRegistry  *peers.Registry
-	peerGater     *peers.TrustedConnectionGater
+	config          *config.Config
+	setupMgr        *setup.Manager
+	keyMgr          *keys.Manager
+	adminMgr        *admin.Manager
+	auditLog        *audit.Logger
+	peerRegistry    *peers.Registry
+	peerGater       *peers.TrustedConnectionGater
 	peerRateLimiter *peers.TrustBasedRateLimiter
-	peerAdminUI   *peers.AdminUI
-	httpServer    *http.Server
-	mux           *http.ServeMux
-	setupToken    string
-	mu            sync.RWMutex
+	peerAdminUI     *peers.AdminUI
+	httpServer      *http.Server
+	mux             *http.ServeMux
+	setupToken      string
+	loginLimiter    loginRateLimiter
+	mu              sync.RWMutex
 }
 
 // NewServer creates a new HTTP server.
@@ -314,6 +362,17 @@ func (s *Server) handleLoginAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Brute-force protection: rate limit login attempts per IP
+	clientIP := getClientIP(r)
+	if !s.loginLimiter.allow(clientIP) {
+		w.Header().Set("Retry-After", "60")
+		writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+			"success": false,
+			"error":   "Too many login attempts. Try again in 1 minute.",
+		})
+		return
+	}
+
 	// Parse form data
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
@@ -325,7 +384,6 @@ func (s *Server) handleLoginAPI(w http.ResponseWriter, r *http.Request) {
 	rememberMe := r.FormValue("remember_me") == "true"
 	totpCode := r.FormValue("totp_code")
 
-	clientIP := getClientIP(r)
 	userAgent := r.UserAgent()
 
 	var token string
@@ -370,7 +428,7 @@ func (s *Server) handleLoginAPI(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isSecureRequest(r),
+		Secure:   isSecureRequest(r, s.config.Admin.TrustedProxy),
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   maxAge,
 	})
@@ -397,7 +455,7 @@ func (s *Server) handleLogoutAPI(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isSecureRequest(r),
+		Secure:   isSecureRequest(r, s.config.Admin.TrustedProxy),
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})

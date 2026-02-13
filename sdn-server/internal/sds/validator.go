@@ -286,8 +286,12 @@ func SchemaNameFromExtension(ext string) string {
 }
 
 // SchemaNameToTable converts a schema name to a table name for storage.
-func SchemaNameToTable(schemaName string) string {
+// It validates the schema name first to prevent SQL injection via dynamic table names.
+func SchemaNameToTable(schemaName string) (string, error) {
+	if err := ValidateSchemaName(schemaName); err != nil {
+		return "", fmt.Errorf("invalid schema name for table: %w", err)
+	}
 	name := strings.TrimSuffix(schemaName, ".fbs")
 	name = strings.ToLower(name)
-	return "sds_" + name
+	return "sds_" + name, nil
 }

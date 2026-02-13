@@ -53,6 +53,9 @@ type DerivedIdentity struct {
 
 	// EncryptionKeyPath is the derivation path used for the encryption key
 	EncryptionKeyPath string
+
+	// Addresses holds derived standard blockchain addresses (BTC, ETH, SOL)
+	Addresses *CoinAddresses
 }
 
 // DeriveIdentity derives a libp2p identity from an HD wallet seed.
@@ -98,6 +101,9 @@ func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, accou
 		return nil, fmt.Errorf("failed to create peer ID: %w", err)
 	}
 
+	// Derive standard blockchain addresses (non-fatal if unavailable)
+	coinAddrs, _ := hw.DeriveCoinAddresses(ctx, seed)
+
 	return &DerivedIdentity{
 		Account:           account,
 		SigningPrivKey:    privKey,
@@ -107,6 +113,7 @@ func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, accou
 		PeerID:            peerID,
 		SigningKeyPath:    signingPath,
 		EncryptionKeyPath: encryptionPath,
+		Addresses:         coinAddrs,
 	}, nil
 }
 
@@ -185,6 +192,7 @@ type IdentityInfo struct {
 	EncryptionPubHex  string
 	SigningKeyPath    string
 	EncryptionKeyPath string
+	Addresses         *CoinAddresses
 }
 
 // Info returns non-sensitive identity information.
@@ -197,6 +205,7 @@ func (id *DerivedIdentity) Info() IdentityInfo {
 		EncryptionPubHex:  fmt.Sprintf("%x", id.EncryptionPub),
 		SigningKeyPath:    id.SigningKeyPath,
 		EncryptionKeyPath: id.EncryptionKeyPath,
+		Addresses:         id.Addresses,
 	}
 }
 

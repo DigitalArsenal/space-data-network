@@ -366,12 +366,35 @@ func buildLoginPage(jsFile, cssFile string) string {
         if (info.signing_pubkey_hex) {
           cards += '<div class="label">Signing (Ed25519)</div>';
           cards += '<div class="val">' + esc(info.signing_pubkey_hex) + '</div>';
-          if (info.signing_key_path) cards += '<div class="val" style="color:var(--sdn-muted);font-size:12px">' + esc(info.signing_key_path) + '</div>';
+          if (info.signing_key_path) cards += '<div class="val" style="color:var(--text-muted);font-size:12px">' + esc(info.signing_key_path) + '</div>';
         }
         if (info.encryption_pubkey_hex) {
           cards += '<div class="label" style="margin-top:12px">Encryption (X25519)</div>';
           cards += '<div class="val">' + esc(info.encryption_pubkey_hex) + '</div>';
-          if (info.encryption_key_path) cards += '<div class="val" style="color:var(--sdn-muted);font-size:12px">' + esc(info.encryption_key_path) + '</div>';
+          if (info.encryption_key_path) cards += '<div class="val" style="color:var(--text-muted);font-size:12px">' + esc(info.encryption_key_path) + '</div>';
+        }
+        cards += '</div>';
+      }
+
+      // Blockchain addresses card
+      var a = info.addresses;
+      if (a && (a.bitcoin || a.ethereum || a.solana)) {
+        cards += '<div class="sdn-card">';
+        cards += '<h3>Blockchain Addresses</h3>';
+        if (a.bitcoin) {
+          cards += '<div class="label">Bitcoin (P2WPKH)</div>';
+          cards += '<div class="val accent">' + esc(a.bitcoin.address) + '</div>';
+          cards += '<div class="val" style="color:var(--text-muted);font-size:12px">' + esc(a.bitcoin.path) + '</div>';
+        }
+        if (a.ethereum) {
+          cards += '<div class="label" style="margin-top:12px">Ethereum</div>';
+          cards += '<div class="val accent">' + esc(a.ethereum.address) + '</div>';
+          cards += '<div class="val" style="color:var(--text-muted);font-size:12px">' + esc(a.ethereum.path) + '</div>';
+        }
+        if (a.solana) {
+          cards += '<div class="label" style="margin-top:12px">Solana</div>';
+          cards += '<div class="val accent">' + esc(a.solana.address) + '</div>';
+          cards += '<div class="val" style="color:var(--text-muted);font-size:12px">' + esc(a.solana.path) + '</div>';
         }
         cards += '</div>';
       }
