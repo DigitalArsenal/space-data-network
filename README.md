@@ -156,6 +156,30 @@ npm install @spacedatanetwork/sdn-js
 
 ---
 
+## Identity & Coin Type 1957
+
+Every SDN node derives its cryptographic identity from a **BIP-39 mnemonic** using [SLIP-10](https://github.com/satoshilabs/slips/blob/master/slip-0010.md) hierarchical deterministic key derivation with coin type **1957** — the year [Sputnik](https://en.wikipedia.org/wiki/Sputnik_1) launched, marking the dawn of the space age.
+
+```text
+BIP-39 Mnemonic → PBKDF2 → 512-bit Seed → SLIP-10 Master Key
+    ├── m/44'/1957'/0'/0'/0'  →  Ed25519 Signing Key (also libp2p PeerID)
+    └── m/44'/1957'/0'/1'/0'  →  X25519 Encryption Key
+```
+
+### Why coin type 1957?
+
+[SLIP-44](https://github.com/satoshilabs/slips/blob/master/slip-0044.md) assigns coin type numbers to blockchain networks (Bitcoin = 0, Ethereum = 60, Solana = 501). SDN uses **1957** because:
+
+- **SDN is not a cryptocurrency.** Using a registered coin type would collide with actual blockchain wallets. A user's SDN identity must never overlap with their BTC/ETH/SOL keys.
+- **Unregistered in SLIP-44.** 1957 is unassigned in the SLIP-44 registry, avoiding conflicts with any officially registered blockchain network.
+- **Space heritage.** October 4, 1957 — the launch of Sputnik 1 — began the space age. This coin type number ties SDN's cryptographic identity to the domain it serves.
+- **Wallet-native identity.** The BIP-44 path structure lets users derive SDN signing and encryption keys from the same mnemonic they use for cryptocurrency wallets, without interference. One seed, many independent key trees.
+- **Multi-account.** The `account'` segment enables one mnemonic to manage multiple SDN identities (operator, sensor, analytics service), each with independent key pairs.
+
+The **xpub** (extended public key) serves as the master network identity. Anyone with the xpub can derive the node's public signing and encryption keys without access to private key material.
+
+---
+
 ## Built on IPFS
 
 Space Data Network is built on the **[InterPlanetary File System (IPFS)](https://ipfs.tech)** stack:

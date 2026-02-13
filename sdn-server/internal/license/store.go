@@ -29,7 +29,7 @@ func NewEntitlementStore(path string) (*EntitlementStore, error) {
 	if dbPath == "" {
 		return nil, errors.New("entitlement db path is required")
 	}
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		return nil, fmt.Errorf("create entitlement dir: %w", err)
 	}
 

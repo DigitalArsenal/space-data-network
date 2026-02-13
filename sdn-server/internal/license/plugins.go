@@ -20,7 +20,15 @@ import (
 	"time"
 
 	"golang.org/x/crypto/curve25519"
+	"golang.org/x/crypto/hkdf"
 )
+
+// zeroBytes overwrites a byte slice with zeros to clear sensitive key material.
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
 
 const (
 	defaultPluginCatalogFile      = "catalog.json"
@@ -314,6 +322,8 @@ func BuildPluginKeyEnvelope(asset *PluginAsset, pluginKey, clientX25519Pub []byt
 	if _, err := io.ReadFull(rand.Reader, serverPriv); err != nil {
 		return nil, fmt.Errorf("generate ephemeral server key: %w", err)
 	}
+	// H10: Zero ephemeral private key when done.
+	defer zeroBytes(serverPriv)
 	clampX25519PrivateKey(serverPriv)
 
 	serverPub, err := curve25519.X25519(serverPriv, curve25519.Basepoint)
@@ -324,6 +334,8 @@ func BuildPluginKeyEnvelope(asset *PluginAsset, pluginKey, clientX25519Pub []byt
 	if err != nil {
 		return nil, fmt.Errorf("derive shared secret: %w", err)
 	}
+	// H10: Zero shared secret when done.
+	defer zeroBytes(sharedSecret)
 
 	aad := buildPluginEnvelopeAAD(asset, claims, issuer, exp)
 	wrapKey := derivePluginWrapKey(sharedSecret, aad)
@@ -527,9 +539,15 @@ func buildPluginEnvelopeAAD(asset *PluginAsset, claims *CapabilityClaims, issuer
 	)
 }
 
+// H12: Use proper HKDF (RFC 5869) instead of simple SHA-256 concatenation
+// for key derivation from the shared secret.
 func derivePluginWrapKey(sharedSecret []byte, aad string) [32]byte {
-	input := make([]byte, 0, len(sharedSecret)+len(aad))
-	input = append(input, sharedSecret...)
-	input = append(input, []byte(aad)...)
-	return sha256.Sum256(input)
+	info := []byte("sdn-plugin-key-wrap:" + aad)
+	kdf := hkdf.New(sha256.New, sharedSecret, nil, info)
+	var key [32]byte
+	if _, err := io.ReadFull(kdf, key[:]); err != nil {
+		// hkdf.Read should never fail for valid inputs; panic indicates a bug.
+		panic("hkdf read failed: " + err.Error())
+	}
+	return key
 }

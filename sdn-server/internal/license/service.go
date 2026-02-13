@@ -29,6 +29,8 @@ const (
 	defaultTokenTTL      = 15 * time.Minute
 	defaultClockSkew     = 2 * time.Minute
 	defaultRequestMaxLen = 64 * 1024
+	maxPendingChallenges = 10000
+	maxChallengesPerPeer = 128
 )
 
 var log = logging.Logger("sdn-license")
@@ -265,6 +267,24 @@ func (s *Service) handleChallengeRequest(req ChallengeRequest, serverPeerID, rem
 	s.cleanupChallenges(now)
 
 	s.mu.Lock()
+	if _, exists := s.challenges[req.ReqID]; exists {
+		s.mu.Unlock()
+		return nil, &ErrorResponse{Type: msgTypeErrorResponse, Code: "duplicate_request", Message: "req_id already pending"}
+	}
+	if len(s.challenges) >= maxPendingChallenges {
+		s.mu.Unlock()
+		return nil, &ErrorResponse{Type: msgTypeErrorResponse, Code: "too_many_requests", Message: "too many pending challenges"}
+	}
+	peerPending := 0
+	for _, entry := range s.challenges {
+		if entry.remotePeer == remotePeerID {
+			peerPending++
+		}
+	}
+	if peerPending >= maxChallengesPerPeer {
+		s.mu.Unlock()
+		return nil, &ErrorResponse{Type: msgTypeErrorResponse, Code: "too_many_requests", Message: "too many pending challenges for peer"}
+	}
 	s.challenges[req.ReqID] = pendingChallenge{
 		reqID:      req.ReqID,
 		xpub:       req.XPub,

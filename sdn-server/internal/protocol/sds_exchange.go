@@ -26,6 +26,10 @@ const (
 	DefaultReadTimeout = 10 * time.Second
 	// DefaultValidationTimeout is the timeout for validation operations
 	DefaultValidationTimeout = 5 * time.Second
+	// DefaultQueryRecordLimit caps records returned per protocol query response.
+	DefaultQueryRecordLimit = 100
+	// DefaultQueryResponseMaxBytes caps total serialized payload bytes for protocol queries.
+	DefaultQueryResponseMaxBytes = 2 * 1024 * 1024
 )
 
 var log = logging.Logger("sds-protocol")
@@ -130,7 +134,7 @@ func NewSDSExchangeHandlerWithOptions(store *storage.FlatSQLStore, validator *sd
 		log.Warnf("Rate limiting is DISABLED - server may be vulnerable to DoS attacks")
 	}
 
-	return &SDSExchangeHandler{
+	h := &SDSExchangeHandler{
 		store:        store,
 		validator:    validator,
 		flatc:        flatc,
@@ -138,6 +142,19 @@ func NewSDSExchangeHandlerWithOptions(store *storage.FlatSQLStore, validator *sd
 		rateLimiter:  rateLimiter,
 		insecureMode: insecureMode,
 	}
+
+	// Periodic insecure-mode reminder so operators notice in log rotation.
+	if insecureMode {
+		go func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
+				log.Warnf(insecureModeWarning)
+			}
+		}()
+	}
+
+	return h
 }
 
 // HandleStream handles an incoming SDS exchange stream.
@@ -410,15 +427,16 @@ func (h *SDSExchangeHandler) handleQuery(ctx context.Context, s network.Stream) 
 		return
 	}
 
-	// Read query
+	// Read query (ignored — raw SQL queries from peers are not supported for security)
 	query := make([]byte, queryLen)
 	if _, err := io.ReadFull(s, query); err != nil {
 		log.Warnf("Failed to read query: %v", err)
 		return
 	}
 
-	// Execute query
-	results, err := h.store.Query(string(schemaName), string(query))
+	// Execute safe bounded query — peer-provided SQL is not used to prevent injection.
+	// Enforce a strict row/byte budget to avoid response amplification and memory pressure.
+	results, err := h.store.QueryAllBounded(string(schemaName), DefaultQueryRecordLimit, DefaultQueryResponseMaxBytes)
 	if err != nil {
 		log.Warnf("Query failed: %v", err)
 		s.Write([]byte{RespReject})
@@ -614,6 +632,9 @@ func RequestData(ctx context.Context, s network.Stream, schemaName, cid string) 
 	}
 
 	dataLen := binary.BigEndian.Uint32(dataLenBuf)
+	if int(dataLen) > DefaultMessageLimits().MaxMessageSize {
+		return nil, fmt.Errorf("response too large: %d bytes", dataLen)
+	}
 
 	// Read data
 	data := make([]byte, dataLen)

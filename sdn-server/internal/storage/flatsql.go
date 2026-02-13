@@ -36,7 +36,7 @@ type FlatSQLStore struct {
 // NewFlatSQLStore creates a new FlatSQL storage instance.
 func NewFlatSQLStore(basePath string, validator *sds.Validator) (*FlatSQLStore, error) {
 	// Ensure directory exists
-	if err := os.MkdirAll(basePath, 0755); err != nil {
+	if err := os.MkdirAll(basePath, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
 	}
 
@@ -166,9 +166,11 @@ func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, sign
 	// Compute CID (content identifier)
 	cid := computeCID(data)
 
-	// Store the data
+	// Use INSERT OR IGNORE: content-addressed records are immutable.
+	// REPLACE would allow a different peer to overwrite the original
+	// author's peer_id (attribution hijacking).
 	insertSQL := fmt.Sprintf(`
-		INSERT OR REPLACE INTO %s (cid, peer_id, timestamp, data, signature)
+		INSERT OR IGNORE INTO %s (cid, peer_id, timestamp, data, signature)
 		VALUES (?, ?, ?, ?, ?)
 	`, tableName)
 
@@ -208,7 +210,9 @@ func (s *FlatSQLStore) Get(schemaName, cid string) ([]byte, error) {
 	return data, nil
 }
 
-// Query executes a query against a schema table.
+// Query executes a safe parameterized query against a schema table.
+// The whereClause MUST use ? placeholders for all values.
+// This method is only used internally with trusted where clauses.
 func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}) ([][]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -235,6 +239,61 @@ func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}
 			log.Warnf("Failed to scan row: %v", err)
 			continue
 		}
+		results = append(results, data)
+	}
+
+	return results, nil
+}
+
+// QueryAll returns all records for a schema (no filtering). Safe for protocol use.
+func (s *FlatSQLStore) QueryAll(schemaName string, limit int) ([][]byte, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+	return s.Query(schemaName, "1=1 ORDER BY timestamp DESC LIMIT ?", limit)
+}
+
+// QueryAllBounded returns recent records while enforcing both row and total-byte limits.
+func (s *FlatSQLStore) QueryAllBounded(schemaName string, limit int, maxTotalBytes int) ([][]byte, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	if maxTotalBytes <= 0 {
+		maxTotalBytes = 2 * 1024 * 1024 // 2MB default response budget
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	tableName := sds.SchemaNameToTable(schemaName)
+	querySQL := fmt.Sprintf(`SELECT data FROM %s ORDER BY timestamp DESC LIMIT ?`, tableName)
+	rows, err := s.db.Query(querySQL, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query bounded records: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([][]byte, 0, limit)
+	totalBytes := 0
+	for rows.Next() {
+		var data []byte
+		if err := rows.Scan(&data); err != nil {
+			log.Warnf("Failed to scan row: %v", err)
+			continue
+		}
+		if len(data) > maxTotalBytes {
+			continue
+		}
+		if totalBytes+len(data) > maxTotalBytes {
+			break
+		}
+		totalBytes += len(data)
 		results = append(results, data)
 	}
 
@@ -619,7 +678,12 @@ func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error
 	return out, nil
 }
 
-func parseOMM(data []byte) (*OMM.OMM, error) {
+func parseOMM(data []byte) (omm *OMM.OMM, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("malformed OMM buffer: %v", r)
+		}
+	}()
 	switch {
 	case OMM.SizePrefixedOMMBufferHasIdentifier(data):
 		return OMM.GetSizePrefixedRootAsOMM(data, 0), nil
@@ -630,7 +694,12 @@ func parseOMM(data []byte) (*OMM.OMM, error) {
 	}
 }
 
-func parseMPE(data []byte) (*MPE.MPE, error) {
+func parseMPE(data []byte) (mpe *MPE.MPE, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("malformed MPE buffer: %v", r)
+		}
+	}()
 	switch {
 	case MPE.SizePrefixedMPEBufferHasIdentifier(data):
 		return MPE.GetSizePrefixedRootAsMPE(data, 0), nil
@@ -641,7 +710,12 @@ func parseMPE(data []byte) (*MPE.MPE, error) {
 	}
 }
 
-func parseCAT(data []byte) (*CAT.CAT, error) {
+func parseCAT(data []byte) (cat *CAT.CAT, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("malformed CAT buffer: %v", r)
+		}
+	}()
 	switch {
 	case CAT.SizePrefixedCATBufferHasIdentifier(data):
 		return CAT.GetSizePrefixedRootAsCAT(data, 0), nil

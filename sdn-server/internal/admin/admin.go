@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+	"unicode"
 
 	logging "github.com/ipfs/go-log/v2"
 	_ "github.com/mattn/go-sqlite3"
@@ -31,6 +32,7 @@ var (
 	ErrAdminNotFound      = errors.New("admin account not found")
 	ErrTOTPRequired       = errors.New("TOTP verification required")
 	ErrTOTPInvalid        = errors.New("invalid TOTP code")
+	ErrWeakPassword       = errors.New("password must be at least 12 characters with uppercase, lowercase, and digit")
 )
 
 const (
@@ -163,8 +165,33 @@ func (m *Manager) HasAdmin() bool {
 	return err == nil && count > 0
 }
 
+func validatePassword(password string) error {
+	if len(password) < 12 {
+		return ErrWeakPassword
+	}
+	var hasUpper, hasLower, hasDigit bool
+	for _, r := range password {
+		switch {
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsLower(r):
+			hasLower = true
+		case unicode.IsDigit(r):
+			hasDigit = true
+		}
+	}
+	if !hasUpper || !hasLower || !hasDigit {
+		return ErrWeakPassword
+	}
+	return nil
+}
+
 // CreateAdmin creates a new admin account.
 func (m *Manager) CreateAdmin(username, password string) error {
+	if err := validatePassword(password); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -200,10 +227,8 @@ func (m *Manager) CreateAdmin(username, password string) error {
 
 // Authenticate verifies credentials and returns a session token.
 func (m *Manager) Authenticate(username, password, ipAddress, userAgent string, rememberMe bool) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Look up admin
+	// Phase 1: Read admin record (read lock only).
+	m.mu.RLock()
 	var admin Admin
 	var createdAt, updatedAt int64
 	var lastLoginAt sql.NullInt64
@@ -213,14 +238,17 @@ func (m *Manager) Authenticate(username, password, ipAddress, userAgent string, 
 		FROM admins WHERE username = ?
 	`, username).Scan(&admin.ID, &admin.Username, &admin.PasswordHash, &admin.PasswordSalt,
 		&admin.TOTPEnabled, &createdAt, &updatedAt, &lastLoginAt)
+	m.mu.RUnlock()
 
 	if err == sql.ErrNoRows {
+		// Burn constant time to prevent user-enumeration via timing.
+		argon2.IDKey([]byte(password), make([]byte, saltLength), argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
 		return "", ErrInvalidCredentials
 	} else if err != nil {
 		return "", fmt.Errorf("database error: %w", err)
 	}
 
-	// Verify password
+	// Phase 2: Verify password (no lock — expensive Argon2 runs unlocked).
 	salt, _ := hex.DecodeString(admin.PasswordSalt)
 	expectedHash, _ := hex.DecodeString(admin.PasswordHash)
 	providedHash := argon2.IDKey([]byte(password), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
@@ -234,14 +262,17 @@ func (m *Manager) Authenticate(username, password, ipAddress, userAgent string, 
 		return "", ErrTOTPRequired
 	}
 
-	// Create session
+	// Phase 3: Create session (write lock).
+	m.mu.Lock()
 	token, err := m.createSession(admin.ID, ipAddress, userAgent, rememberMe)
+	if err == nil {
+		m.db.Exec("UPDATE admins SET last_login_at = ? WHERE id = ?", time.Now().Unix(), admin.ID)
+	}
+	m.mu.Unlock()
+
 	if err != nil {
 		return "", err
 	}
-
-	// Update last login time
-	m.db.Exec("UPDATE admins SET last_login_at = ? WHERE id = ?", time.Now().Unix(), admin.ID)
 
 	log.Infof("Admin authenticated: %s from %s", username, ipAddress)
 	return token, nil
@@ -249,10 +280,8 @@ func (m *Manager) Authenticate(username, password, ipAddress, userAgent string, 
 
 // AuthenticateWithTOTP verifies credentials including TOTP.
 func (m *Manager) AuthenticateWithTOTP(username, password, totpCode, ipAddress, userAgent string, rememberMe bool) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Look up admin
+	// Phase 1: Read admin record (read lock only).
+	m.mu.RLock()
 	var admin Admin
 	var createdAt, updatedAt int64
 
@@ -261,14 +290,17 @@ func (m *Manager) AuthenticateWithTOTP(username, password, totpCode, ipAddress, 
 		FROM admins WHERE username = ?
 	`, username).Scan(&admin.ID, &admin.Username, &admin.PasswordHash, &admin.PasswordSalt,
 		&admin.TOTPSecret, &admin.TOTPEnabled, &createdAt, &updatedAt)
+	m.mu.RUnlock()
 
 	if err == sql.ErrNoRows {
+		// Burn constant time to prevent user-enumeration via timing.
+		argon2.IDKey([]byte(password), make([]byte, saltLength), argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
 		return "", ErrInvalidCredentials
 	} else if err != nil {
 		return "", fmt.Errorf("database error: %w", err)
 	}
 
-	// Verify password
+	// Phase 2: Verify password (no lock — expensive Argon2 runs unlocked).
 	salt, _ := hex.DecodeString(admin.PasswordSalt)
 	expectedHash, _ := hex.DecodeString(admin.PasswordHash)
 	providedHash := argon2.IDKey([]byte(password), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
@@ -279,25 +311,33 @@ func (m *Manager) AuthenticateWithTOTP(username, password, totpCode, ipAddress, 
 
 	// Verify TOTP if enabled
 	if admin.TOTPEnabled {
+		if IsTOTPCodeUsed(admin.ID, totpCode) {
+			return "", ErrTOTPInvalid
+		}
 		if !verifyTOTP(admin.TOTPSecret, totpCode) {
 			return "", ErrTOTPInvalid
 		}
+		MarkTOTPCodeUsed(admin.ID, totpCode)
 	}
 
-	// Create session
+	// Phase 3: Create session (write lock).
+	m.mu.Lock()
 	token, err := m.createSession(admin.ID, ipAddress, userAgent, rememberMe)
+	if err == nil {
+		m.db.Exec("UPDATE admins SET last_login_at = ? WHERE id = ?", time.Now().Unix(), admin.ID)
+	}
+	m.mu.Unlock()
+
 	if err != nil {
 		return "", err
 	}
-
-	// Update last login time
-	m.db.Exec("UPDATE admins SET last_login_at = ? WHERE id = ?", time.Now().Unix(), admin.ID)
 
 	log.Infof("Admin authenticated with TOTP: %s from %s", username, ipAddress)
 	return token, nil
 }
 
 // createSession creates a new session for an admin.
+// Caller must hold m.mu write lock.
 func (m *Manager) createSession(adminID int64, ipAddress, userAgent string, rememberMe bool) (string, error) {
 	// Generate session token
 	tokenBytes := make([]byte, SessionTokenLength)
@@ -315,10 +355,12 @@ func (m *Manager) createSession(adminID int64, ipAddress, userAgent string, reme
 	now := time.Now()
 	expiresAt := now.Add(expiry)
 
+	// Store SHA-256 hash of token to prevent exposure if DB is compromised.
+	tokenHash := hashSessionTokenFull(token)
 	_, err := m.db.Exec(`
 		INSERT INTO sessions (token, admin_id, created_at, expires_at, ip_address, user_agent)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, token, adminID, now.Unix(), expiresAt.Unix(), ipAddress, userAgent)
+	`, tokenHash, adminID, now.Unix(), expiresAt.Unix(), ipAddress, userAgent)
 
 	if err != nil {
 		return "", fmt.Errorf("failed to create session: %w", err)
@@ -335,10 +377,11 @@ func (m *Manager) ValidateSession(token string) (*Session, error) {
 	var session Session
 	var createdAt, expiresAt int64
 
+	tokenHash := hashSessionTokenFull(token)
 	err := m.db.QueryRow(`
 		SELECT token, admin_id, created_at, expires_at, ip_address, user_agent, revoked
 		FROM sessions WHERE token = ?
-	`, token).Scan(&session.Token, &session.AdminID, &createdAt, &expiresAt,
+	`, tokenHash).Scan(&session.Token, &session.AdminID, &createdAt, &expiresAt,
 		&session.IPAddress, &session.UserAgent, &session.Revoked)
 
 	if err == sql.ErrNoRows {
@@ -366,7 +409,7 @@ func (m *Manager) RevokeSession(token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	_, err := m.db.Exec("UPDATE sessions SET revoked = 1 WHERE token = ?", token)
+	_, err := m.db.Exec("UPDATE sessions SET revoked = 1 WHERE token = ?", hashSessionTokenFull(token))
 	return err
 }
 
@@ -386,6 +429,10 @@ func (m *Manager) RevokeAllSessions(adminID int64) error {
 
 // ChangePassword updates the admin password and revokes all sessions.
 func (m *Manager) ChangePassword(adminID int64, oldPassword, newPassword string) error {
+	if err := validatePassword(newPassword); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -483,7 +530,7 @@ func (m *Manager) CleanupExpiredSessions() (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	result, err := m.db.Exec("DELETE FROM sessions WHERE expires_at < ?", time.Now().Unix())
+	result, err := m.db.Exec("DELETE FROM sessions WHERE expires_at < ? OR revoked = 1", time.Now().Unix())
 	if err != nil {
 		return 0, err
 	}
@@ -564,7 +611,14 @@ func (m *Manager) ListActiveSessions(adminID int64) ([]Session, error) {
 	return sessions, nil
 }
 
-// HashToken creates a SHA-256 hash of a session token for logging.
+// hashSessionTokenFull returns the full SHA-256 hex digest of a session token
+// for storage in the database (prevents exposure if DB is compromised).
+func hashSessionTokenFull(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])
+}
+
+// HashToken creates a truncated SHA-256 hash of a session token for logging.
 func HashToken(token string) string {
 	hash := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(hash[:8])

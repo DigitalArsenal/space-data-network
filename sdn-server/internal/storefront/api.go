@@ -364,7 +364,7 @@ func (h *APIHandler) handleStripeWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	payload, err := io.ReadAll(r.Body)
+	payload, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
 	if err != nil {
 		http.Error(w, "failed to read request body", http.StatusBadRequest)
 		return

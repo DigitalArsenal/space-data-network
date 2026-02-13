@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"html/template"
+	"net"
 	"net/http"
 	"strings"
 
@@ -18,46 +19,46 @@ import (
 
 // Handler handles HTTP requests for the setup process.
 type Handler struct {
-	setupMgr  *Manager
-	keyMgr    *keys.Manager
-	adminMgr  *admin.Manager
-	auditLog  *audit.Logger
+	setupMgr *Manager
+	keyMgr   *keys.Manager
+	adminMgr *admin.Manager
+	auditLog *audit.Logger
 }
 
 // NewHandler creates a new setup handler.
 func NewHandler(setupMgr *Manager, keyMgr *keys.Manager, adminMgr *admin.Manager, auditLog *audit.Logger) *Handler {
 	return &Handler{
-		setupMgr:  setupMgr,
-		keyMgr:    keyMgr,
-		adminMgr:  adminMgr,
-		auditLog:  auditLog,
+		setupMgr: setupMgr,
+		keyMgr:   keyMgr,
+		adminMgr: adminMgr,
+		auditLog: auditLog,
 	}
 }
 
 // SetupPageData contains data for the setup page template.
 type SetupPageData struct {
-	SetupComplete   bool
-	TokenExpired    bool
-	RemainingTime   string
-	ErrorMessage    string
-	SuccessMessage  string
+	SetupComplete  bool
+	TokenExpired   bool
+	RemainingTime  string
+	ErrorMessage   string
+	SuccessMessage string
 }
 
 // SetupRequest represents a setup completion request.
 type SetupRequest struct {
-	Token       string `json:"token"`
-	Username    string `json:"username"`
-	Password    string `json:"password"`
-	ServerName  string `json:"server_name"`
+	Token      string `json:"token"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	ServerName string `json:"server_name"`
 }
 
 // SetupResponse represents the response after setup completion.
 type SetupResponse struct {
-	Success            bool   `json:"success"`
-	Error              string `json:"error,omitempty"`
-	SigningPublicKey   string `json:"signing_public_key,omitempty"`
+	Success             bool   `json:"success"`
+	Error               string `json:"error,omitempty"`
+	SigningPublicKey    string `json:"signing_public_key,omitempty"`
 	EncryptionPublicKey string `json:"encryption_public_key,omitempty"`
-	Fingerprint        string `json:"fingerprint,omitempty"`
+	Fingerprint         string `json:"fingerprint,omitempty"`
 }
 
 // HandleSetupPage serves the setup page.
@@ -206,10 +207,10 @@ func (h *Handler) HandleSetupAPI(w http.ResponseWriter, r *http.Request) {
 	// Return success response with public keys
 	signingKey, encryptionKey := h.keyMgr.ExportPublicKeys()
 	sendJSONResponse(w, SetupResponse{
-		Success:            true,
-		SigningPublicKey:   signingKey,
+		Success:             true,
+		SigningPublicKey:    signingKey,
 		EncryptionPublicKey: encryptionKey,
-		Fingerprint:        fingerprint,
+		Fingerprint:         fingerprint,
 	}, http.StatusOK)
 
 	log.Infof("Setup completed successfully. Server fingerprint: %s", fingerprint)
@@ -224,23 +225,27 @@ func sendJSONResponse(w http.ResponseWriter, data interface{}, status int) {
 
 // getClientIP extracts the client IP from the request.
 func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if len(parts) > 0 {
-			return strings.TrimSpace(parts[0])
+	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if remoteHost == "" {
+		remoteHost = r.RemoteAddr
+	}
+
+	remoteIP := net.ParseIP(remoteHost)
+	isTrustedProxy := remoteIP != nil && remoteIP.IsLoopback()
+
+	if isTrustedProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			if len(parts) > 0 {
+				return strings.TrimSpace(parts[0])
+			}
+		}
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return strings.TrimSpace(xri)
 		}
 	}
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-	// Fall back to RemoteAddr
-	addr := r.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx != -1 {
-		return addr[:idx]
-	}
-	return addr
+
+	return remoteHost
 }
 
 // formatTime formats minutes and seconds as "Xm Ys".

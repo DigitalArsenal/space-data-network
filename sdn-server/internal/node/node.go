@@ -101,17 +101,29 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 func (n *Node) init() error {
 	// Initialize HD wallet WASM module (optional, enables deterministic identity)
 	if hdPath := n.findHDWalletWasmPath(); hdPath != "" {
-		hw, err := wasm.NewHDWalletModule(n.ctx, hdPath)
+		// H11: Compute and log SHA-256 hash of WASM file for integrity verification.
+		wasmBytes, err := os.ReadFile(hdPath)
 		if err != nil {
 			log.Warnf("HD wallet WASM not loaded (will use random key): %v", err)
 		} else {
-			n.hdwallet = hw
-			// Inject entropy for WASI environment
-			entropy := make([]byte, 64)
-			if _, err := rand.Read(entropy); err == nil {
-				_ = hw.InjectEntropy(n.ctx, entropy)
+			wasmHash := sha256.Sum256(wasmBytes)
+			log.Infof("WASM module loaded: %s (sha256: %s)", hdPath, hex.EncodeToString(wasmHash[:]))
+
+			hw, err := wasm.NewHDWalletModuleFromBytes(n.ctx, wasmBytes)
+			if err != nil {
+				log.Warnf("HD wallet WASM not loaded (will use random key): %v", err)
+			} else {
+				n.hdwallet = hw
+				// M10: Make entropy injection failure fatal - log critical warning.
+				entropy := make([]byte, 64)
+				if _, err := rand.Read(entropy); err != nil {
+					return fmt.Errorf("CRITICAL: failed to read random entropy: %w", err)
+				}
+				if err := hw.InjectEntropy(n.ctx, entropy); err != nil {
+					log.Errorf("CRITICAL: Failed to inject entropy into WASM module: %v", err)
+				}
+				log.Infof("HD wallet WASM loaded - deterministic identity derivation available")
 			}
-			log.Infof("HD wallet WASM loaded - deterministic identity derivation available")
 		}
 	}
 
@@ -294,11 +306,16 @@ func (n *Node) init() error {
 
 	// Register WASI-based OrbPro key broker plugin.
 	if wasmPath := n.findKeyBrokerWasmPath(); wasmPath != "" {
+		// H11: Compute and log SHA-256 hash of WASM file for integrity verification.
+		if kbBytes, err := os.ReadFile(wasmPath); err == nil {
+			kbHash := sha256.Sum256(kbBytes)
+			log.Infof("WASM module loaded: %s (sha256: %s)", wasmPath, hex.EncodeToString(kbHash[:]))
+		}
 		n.keyBroker = wasmlicenseplugin.New(wasmPath)
 		if err := n.plugins.Register(n.keyBroker); err != nil {
 			log.Warnf("Failed to register plugin %q: %v", wasmlicenseplugin.ID, err)
 		} else {
-			log.Infof("OrbPro key broker WASM loaded from %s", wasmPath)
+			log.Infof("OrbPro key broker WASM registered from %s", wasmPath)
 		}
 	}
 

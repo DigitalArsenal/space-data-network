@@ -106,6 +106,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		cfg.Network.Listen = []string{listenAddr}
 	}
 
+	// Allow environment variable overrides for paths commonly set via systemd env files
+	if cfg.Admin.WalletUIPath == "" {
+		if envPath := os.Getenv("SDN_WALLET_UI_PATH"); envPath != "" {
+			cfg.Admin.WalletUIPath = envPath
+		}
+	}
+
 	// Create and start the node
 	n, err := node.New(ctx, cfg)
 	if err != nil {
@@ -201,31 +208,34 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				authDBPath := filepath.Join(cfg.Storage.Path, "auth.db")
 				authDB, err := sql.Open("sqlite3", authDBPath+"?_journal_mode=WAL")
 				if err != nil {
-					log.Warnf("Failed to open auth database: %v", err)
-				} else {
-					userStore, err := auth.NewUserStore(authDBPath, cfg.Users)
-					if err != nil {
-						log.Warnf("Failed to create user store: %v", err)
-					} else {
-						sessionStore, err := auth.NewSessionStore(authDB)
-						if err != nil {
-							log.Warnf("Failed to create session store: %v", err)
-						} else {
-							sessionTTL, _ := time.ParseDuration(cfg.Admin.SessionExpiry)
-							if sessionTTL == 0 {
-								sessionTTL = 24 * time.Hour
-							}
-							authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, cfg.Admin.WalletUIPath)
-							authHandler.RegisterRoutes(adminMux)
-							log.Infof("HD wallet authentication enabled at %s://%s/login", adminScheme, adminAddr)
+					return fmt.Errorf("admin authentication required: open auth database: %w", err)
+				}
 
-							// Serve wallet-ui static files if configured
-							if walletUIPath := strings.TrimSpace(cfg.Admin.WalletUIPath); walletUIPath != "" {
-								adminMux.Handle("/wallet-ui/", http.StripPrefix("/wallet-ui/", http.FileServer(http.Dir(walletUIPath))))
-								log.Infof("Wallet UI served at %s://%s/wallet-ui/ from %s", adminScheme, adminAddr, walletUIPath)
-							}
-						}
-					}
+				userStore, err := auth.NewUserStore(authDBPath, cfg.Users)
+				if err != nil {
+					_ = authDB.Close()
+					return fmt.Errorf("admin authentication required: create user store: %w", err)
+				}
+
+				sessionStore, err := auth.NewSessionStore(authDB)
+				if err != nil {
+					_ = authDB.Close()
+					return fmt.Errorf("admin authentication required: create session store: %w", err)
+				}
+
+				sessionTTL, _ := time.ParseDuration(cfg.Admin.SessionExpiry)
+				if sessionTTL == 0 {
+					sessionTTL = 24 * time.Hour
+				}
+
+				authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, cfg.Admin.WalletUIPath)
+				authHandler.RegisterRoutes(adminMux)
+				log.Infof("HD wallet authentication enabled at %s://%s/login", adminScheme, adminAddr)
+
+				// Serve wallet-ui static files if configured
+				if walletUIPath := strings.TrimSpace(cfg.Admin.WalletUIPath); walletUIPath != "" {
+					adminMux.Handle("/wallet-ui/", http.StripPrefix("/wallet-ui/", http.FileServer(http.Dir(walletUIPath))))
+					log.Infof("Wallet UI served at %s://%s/wallet-ui/ from %s", adminScheme, adminAddr, walletUIPath)
 				}
 			}
 
@@ -241,7 +251,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			}
 
 			// Admin panel — gated by auth if RequireAuth is set
-			if cfg.Admin.RequireAuth && authHandler != nil {
+			if cfg.Admin.RequireAuth {
+				if authHandler == nil {
+					return fmt.Errorf("admin authentication required but handler is unavailable")
+				}
 				adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
 				adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
 			} else {
@@ -252,11 +265,40 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
 
 			adminServer = &http.Server{
-				Addr: adminAddr,
+				Addr:              adminAddr,
+				ReadHeaderTimeout: 10 * time.Second,
+				ReadTimeout:       30 * time.Second,
+				WriteTimeout:      60 * time.Second,
+				IdleTimeout:       120 * time.Second,
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 					w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
 					w.Header().Set("X-Content-Type-Options", "nosniff")
+					w.Header().Set("X-Frame-Options", "DENY")
+
+					// Default-deny: gate all API and plugin routes behind auth,
+					// except explicitly listed public endpoints.
+					if cfg.Admin.RequireAuth {
+						if authHandler == nil {
+							http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+							return
+						}
+
+						path := r.URL.Path
+						isAPIOrPlugin := strings.HasPrefix(path, "/api/") ||
+							strings.HasPrefix(path, "/orbpro-key-broker/")
+
+						if isAPIOrPlugin && !isPublicAPIPath(path) {
+							minTrust := peers.Standard
+							if isAdminOnlyAPIPath(path) {
+								minTrust = peers.Admin
+							}
+							authHandler.RequireAuth(minTrust, func(w http.ResponseWriter, r *http.Request) {
+								adminMux.ServeHTTP(w, r)
+							})(w, r)
+							return
+						}
+					}
 					adminMux.ServeHTTP(w, r)
 				}),
 			}
@@ -331,6 +373,25 @@ func resolveBuildAssetsDir(homepageFile string) string {
 		return ""
 	}
 	return filepath.Join(filepath.Dir(path), "Build")
+}
+
+func isPublicAPIPath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/data/") ||
+		strings.HasPrefix(path, "/api/v1/license/") ||
+		strings.HasPrefix(path, "/api/v1/plugins/manifest") ||
+		strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook") ||
+		strings.HasPrefix(path, "/api/auth/") ||
+		strings.HasPrefix(path, "/orbpro-key-broker/v1/")
+}
+
+func isAdminOnlyAPIPath(path string) bool {
+	return strings.HasPrefix(path, "/api/peers") ||
+		strings.HasPrefix(path, "/api/groups") ||
+		strings.HasPrefix(path, "/api/blocklist") ||
+		strings.HasPrefix(path, "/api/settings") ||
+		strings.HasPrefix(path, "/api/export") ||
+		strings.HasPrefix(path, "/api/import") ||
+		strings.HasPrefix(path, "/api/node/info")
 }
 
 func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {

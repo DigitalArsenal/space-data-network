@@ -8,12 +8,25 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+)
+
+const (
+	maxPendingChallenges         = 10000
+	maxRateLimitEntries          = 50000
+	authRateWindow               = time.Minute
+	maxChallengePerMinutePerIP   = 60
+	maxChallengePerMinutePerXPub = 30
+	maxVerifyPerMinutePerIP      = 120
+	maxVerifyPerMinutePerXPub    = 60
+	maxXPubLength                = 256
 )
 
 // Handler serves HTTP authentication endpoints using Ed25519 challenge-response.
@@ -26,6 +39,8 @@ type Handler struct {
 	sessionTTL   time.Duration
 	clockSkew    time.Duration
 	walletUIPath string // filesystem path to hd-wallet-ui dist, or empty for CDN
+	rateMu       sync.Mutex
+	rates        map[string]rateEntry
 }
 
 type pendingChallenge struct {
@@ -35,6 +50,11 @@ type pendingChallenge struct {
 	challenge []byte
 	createdAt time.Time
 	expiresAt time.Time
+}
+
+type rateEntry struct {
+	count       int
+	windowStart time.Time
 }
 
 // challenge request/response types
@@ -59,9 +79,8 @@ type verifyRequest struct {
 }
 
 type verifyResponse struct {
-	SessionToken string `json:"session_token"`
-	User         User   `json:"user"`
-	ExpiresAt    int64  `json:"expires_at"`
+	User      User  `json:"user"`
+	ExpiresAt int64 `json:"expires_at"`
 }
 
 type addUserRequest struct {
@@ -85,6 +104,7 @@ func NewHandler(userStore *UserStore, sessions *SessionStore, sessionTTL time.Du
 		sessionTTL:   sessionTTL,
 		clockSkew:    2 * time.Minute,
 		walletUIPath: walletUIPath,
+		rates:        make(map[string]rateEntry),
 	}
 }
 
@@ -94,9 +114,21 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/verify", h.handleVerify)
 	mux.HandleFunc("/api/auth/logout", h.handleLogout)
 	mux.HandleFunc("/api/auth/me", h.handleMe)
+	mux.HandleFunc("/api/auth/status", h.handleAuthStatus)
 	mux.HandleFunc("/api/auth/users", h.handleUsers)
 	mux.HandleFunc("/api/auth/users/", h.handleUserByXPub)
 	mux.HandleFunc("/login", h.handleLoginPage)
+}
+
+func (h *Handler) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"admin_configured": h.userStore.HasAdmin(),
+		"users_configured": h.userStore.UserCount() > 0,
+	})
 }
 
 // UserStore returns the underlying user store for external use.
@@ -116,7 +148,7 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req challengeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8*1024)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "invalid JSON body"})
 		return
 	}
@@ -128,14 +160,27 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "xpub and client_pubkey_hex are required"})
 		return
 	}
+	if len(req.XPub) > maxXPubLength {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "xpub too long"})
+		return
+	}
+	now := time.Now().UTC()
+	clientIP := clientIPForRequest(r)
+	if !h.allowRateLimited("challenge:ip:"+clientIP, maxChallengePerMinutePerIP, now) ||
+		!h.allowRateLimited("challenge:xpub:"+strings.ToLower(req.XPub), maxChallengePerMinutePerXPub, now) {
+		writeJSON(w, http.StatusTooManyRequests, errorResponse{Code: "too_many_requests", Message: "rate limit exceeded"})
+		return
+	}
 
-	// Validate timestamp within clock skew
-	if req.TS != 0 {
-		diff := time.Since(time.Unix(req.TS, 0))
-		if diff < -h.clockSkew || diff > h.clockSkew {
-			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_timestamp", Message: "timestamp outside allowable skew"})
-			return
-		}
+	// Validate timestamp (mandatory)
+	if req.TS == 0 {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_timestamp", Message: "timestamp required"})
+		return
+	}
+	diff := time.Since(time.Unix(req.TS, 0))
+	if diff < -h.clockSkew || diff > h.clockSkew {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_timestamp", Message: "timestamp outside allowable skew"})
+		return
 	}
 
 	// Validate public key
@@ -145,14 +190,10 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify user exists
+	// Check if user exists
 	user, err := h.userStore.GetUser(req.XPub)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Code: "server_error", Message: "failed to look up user"})
-		return
-	}
-	if user == nil {
-		writeJSON(w, http.StatusForbidden, errorResponse{Code: "unknown_user", Message: "xpub not registered"})
 		return
 	}
 
@@ -168,19 +209,27 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	rand.Read(idBytes)
 	challengeID := hex.EncodeToString(idBytes)
 
-	now := time.Now().UTC()
 	h.cleanupChallenges(now)
 
-	h.mu.Lock()
-	h.challenges[challengeID] = pendingChallenge{
-		id:        challengeID,
-		xpub:      req.XPub,
-		pubKey:    append(ed25519.PublicKey(nil), pubRaw...),
-		challenge: challengeBytes,
-		createdAt: now,
-		expiresAt: now.Add(h.challengeTTL),
+	// Only store the challenge if the user is known; unknown xpubs get a
+	// valid-looking response that can never be verified (prevents enumeration).
+	if user != nil {
+		h.mu.Lock()
+		if len(h.challenges) >= maxPendingChallenges {
+			h.mu.Unlock()
+			writeJSON(w, http.StatusTooManyRequests, errorResponse{Code: "too_many_requests", Message: "too many pending challenges"})
+			return
+		}
+		h.challenges[challengeID] = pendingChallenge{
+			id:        challengeID,
+			xpub:      req.XPub,
+			pubKey:    append(ed25519.PublicKey(nil), pubRaw...),
+			challenge: challengeBytes,
+			createdAt: now,
+			expiresAt: now.Add(h.challengeTTL),
+		}
+		h.mu.Unlock()
 	}
-	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, challengeResponse{
 		ChallengeID: challengeID,
@@ -196,7 +245,7 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req verifyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8*1024)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "invalid JSON body"})
 		return
 	}
@@ -209,6 +258,17 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 
 	if req.ChallengeID == "" || req.XPub == "" || req.ClientPubKeyHex == "" || req.SignatureHex == "" || req.Challenge == "" {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "all fields are required"})
+		return
+	}
+	if len(req.XPub) > maxXPubLength {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "xpub too long"})
+		return
+	}
+	now := time.Now().UTC()
+	clientIP := clientIPForRequest(r)
+	if !h.allowRateLimited("verify:ip:"+clientIP, maxVerifyPerMinutePerIP, now) ||
+		!h.allowRateLimited("verify:xpub:"+strings.ToLower(req.XPub), maxVerifyPerMinutePerXPub, now) {
+		writeJSON(w, http.StatusTooManyRequests, errorResponse{Code: "too_many_requests", Message: "rate limit exceeded"})
 		return
 	}
 
@@ -224,7 +284,6 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
 	h.cleanupChallenges(now)
 
 	// Look up and consume challenge (single-use)
@@ -236,41 +295,38 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "challenge_not_found", Message: "challenge not found or expired"})
+		h.writeAuthenticationFailure(w)
 		return
 	}
 	if pending.expiresAt.Before(now) {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "challenge_expired", Message: "challenge expired"})
+		h.writeAuthenticationFailure(w)
 		return
 	}
 	if pending.xpub != req.XPub {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "challenge_mismatch", Message: "challenge context mismatch"})
+		h.writeAuthenticationFailure(w)
 		return
 	}
 	if !bytes.Equal(pending.challenge, challengeRaw) {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "challenge_mismatch", Message: "challenge bytes mismatch"})
+		h.writeAuthenticationFailure(w)
 		return
 	}
 
 	// Verify Ed25519 signature
 	if !ed25519.Verify(pending.pubKey, challengeRaw, signature) {
-		writeJSON(w, http.StatusForbidden, errorResponse{Code: "signature_invalid", Message: "signature verification failed"})
+		h.writeAuthenticationFailure(w)
 		return
 	}
 
 	// Look up user trust level
 	user, err := h.userStore.GetUser(req.XPub)
 	if err != nil || user == nil {
-		writeJSON(w, http.StatusForbidden, errorResponse{Code: "unknown_user", Message: "xpub not registered"})
+		h.writeAuthenticationFailure(w)
 		return
 	}
 
 	// Create session
-	ip := r.RemoteAddr
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		ip = strings.Split(fwd, ",")[0]
-	}
-	token, err := h.sessions.CreateSession(req.XPub, user.TrustLevel, strings.TrimSpace(ip), r.UserAgent(), h.sessionTTL)
+	ip := clientIPForRequest(r)
+	token, err := h.sessions.CreateSession(req.XPub, user.TrustLevel, ip, r.UserAgent(), h.sessionTTL)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Code: "server_error", Message: "failed to create session"})
 		return
@@ -279,13 +335,16 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	// Record login
 	_ = h.userStore.RecordLogin(req.XPub)
 
+	// Detect TLS: direct TLS or behind a TLS-terminating reverse proxy.
+	isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+
 	// Set session cookie
 	http.SetCookie(w, &http.Cookie{
-		Name:     "sdn_session",
+		Name:     "sdn_wallet_session",
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   isSecure,
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int(h.sessionTTL.Seconds()),
 	})
@@ -293,9 +352,8 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	log.Infof("User authenticated: %s (trust=%s) from %s", user.Name, user.TrustLevel, ip)
 
 	writeJSON(w, http.StatusOK, verifyResponse{
-		SessionToken: token,
-		User:         *user,
-		ExpiresAt:    time.Now().Add(h.sessionTTL).Unix(),
+		User:      *user,
+		ExpiresAt: time.Now().Add(h.sessionTTL).Unix(),
 	})
 }
 
@@ -305,17 +363,22 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cookie, err := r.Cookie("sdn_session")
+	cookie, err := r.Cookie("sdn_wallet_session")
 	if err == nil {
 		_ = h.sessions.RevokeSession(cookie.Value)
 	}
 
-	// Clear cookie
+	// Detect TLS for Secure flag.
+	isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+
+	// Clear cookie with matching security flags.
 	http.SetCookie(w, &http.Cookie{
-		Name:     "sdn_session",
+		Name:     "sdn_wallet_session",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isSecure,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})
 
@@ -441,7 +504,7 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 
 // sessionFromRequest extracts and validates the session from a request cookie.
 func (h *Handler) sessionFromRequest(r *http.Request) (*Session, error) {
-	cookie, err := r.Cookie("sdn_session")
+	cookie, err := r.Cookie("sdn_wallet_session")
 	if err != nil {
 		return nil, fmt.Errorf("no session cookie")
 	}
@@ -456,6 +519,74 @@ func (h *Handler) cleanupChallenges(now time.Time) {
 			delete(h.challenges, id)
 		}
 	}
+}
+
+func (h *Handler) allowRateLimited(key string, limit int, now time.Time) bool {
+	if limit <= 0 || key == "" {
+		return false
+	}
+
+	h.rateMu.Lock()
+	defer h.rateMu.Unlock()
+
+	if len(h.rates) >= maxRateLimitEntries {
+		h.compactRateLimits(now)
+		if len(h.rates) >= maxRateLimitEntries {
+			return false
+		}
+	}
+
+	entry := h.rates[key]
+	if entry.windowStart.IsZero() || now.Sub(entry.windowStart) >= authRateWindow {
+		h.rates[key] = rateEntry{
+			count:       1,
+			windowStart: now,
+		}
+		return true
+	}
+
+	if entry.count >= limit {
+		return false
+	}
+
+	entry.count++
+	h.rates[key] = entry
+	return true
+}
+
+func (h *Handler) compactRateLimits(now time.Time) {
+	for k, entry := range h.rates {
+		if entry.windowStart.IsZero() || now.Sub(entry.windowStart) >= authRateWindow {
+			delete(h.rates, k)
+		}
+	}
+}
+
+func clientIPForRequest(r *http.Request) string {
+	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if remoteHost == "" {
+		remoteHost = r.RemoteAddr
+	}
+
+	remoteIP := net.ParseIP(remoteHost)
+	isTrustedProxy := remoteIP != nil && remoteIP.IsLoopback()
+	if isTrustedProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			if len(parts) > 0 {
+				return strings.TrimSpace(parts[0])
+			}
+		}
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return strings.TrimSpace(xri)
+		}
+	}
+
+	return strings.TrimSpace(remoteHost)
+}
+
+func (h *Handler) writeAuthenticationFailure(w http.ResponseWriter) {
+	writeJSON(w, http.StatusForbidden, errorResponse{Code: "authentication_failed", Message: "authentication failed"})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

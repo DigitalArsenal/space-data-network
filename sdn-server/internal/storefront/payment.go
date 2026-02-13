@@ -87,52 +87,43 @@ func (pp *PaymentProcessor) VerifyCryptoPayment(ctx context.Context, req *Crypto
 }
 
 func (pp *PaymentProcessor) verifyEthereumPayment(ctx context.Context, req *CryptoPaymentRequest) (*CryptoPaymentResult, error) {
-	// Stub: In production, use eth_getTransactionReceipt RPC call
-	// Verify: recipient address, amount, token contract (for ERC-20), confirmation count
-	log.Infof("Verifying Ethereum tx: %s (amount: %d %s)", req.TxHash, req.Amount, req.Currency)
-
+	// NOT IMPLEMENTED: In production, use eth_getTransactionReceipt RPC call
+	log.Warnf("Ethereum payment verification not implemented — rejecting tx: %s", req.TxHash)
 	return &CryptoPaymentResult{
-		Verified:          true,
-		ConfirmationBlock: 0, // Would be actual block number
+		Verified: false,
+		Error:    "ethereum payment verification not yet implemented",
 	}, nil
 }
 
 func (pp *PaymentProcessor) verifySolanaPayment(ctx context.Context, req *CryptoPaymentRequest) (*CryptoPaymentResult, error) {
-	// Stub: In production, use getTransaction RPC call
-	// Verify: recipient, amount, SPL token (for USDC), finality
-	log.Infof("Verifying Solana tx: %s (amount: %d %s)", req.TxHash, req.Amount, req.Currency)
-
+	// NOT IMPLEMENTED: In production, use getTransaction RPC call
+	log.Warnf("Solana payment verification not implemented — rejecting tx: %s", req.TxHash)
 	return &CryptoPaymentResult{
-		Verified:          true,
-		ConfirmationBlock: 0,
+		Verified: false,
+		Error:    "solana payment verification not yet implemented",
 	}, nil
 }
 
 func (pp *PaymentProcessor) verifyBitcoinPayment(ctx context.Context, req *CryptoPaymentRequest) (*CryptoPaymentResult, error) {
-	// Stub: In production, use getrawtransaction or block explorer API
-	// Verify: output address, amount, confirmation count (>= 3 recommended)
-	log.Infof("Verifying Bitcoin tx: %s (amount: %d %s)", req.TxHash, req.Amount, req.Currency)
-
+	// NOT IMPLEMENTED: In production, use getrawtransaction or block explorer API
+	log.Warnf("Bitcoin payment verification not implemented — rejecting tx: %s", req.TxHash)
 	return &CryptoPaymentResult{
-		Verified:          true,
-		ConfirmationBlock: 0,
+		Verified: false,
+		Error:    "bitcoin payment verification not yet implemented",
 	}, nil
 }
 
-// ProcessCredits processes a payment using SDN credits
+// ProcessCredits processes a payment using SDN credits atomically.
 func (pp *PaymentProcessor) ProcessCredits(ctx context.Context, requestID string, buyerPeerID string, amount uint64, providerPeerID string) error {
-	// Check balance
-	balance, err := pp.store.GetCreditsBalance(buyerPeerID)
-	if err != nil {
-		return fmt.Errorf("failed to get buyer balance: %w", err)
-	}
+	txID := uuid.New().String()
 
-	if balance.Balance < amount {
-		return fmt.Errorf("insufficient credits: have %d, need %d", balance.Balance, amount)
+	// Use atomic deduction to prevent double-spend race conditions.
+	// AtomicDeductCredits checks balance >= amount and deducts in a single SQL statement.
+	if err := pp.store.AtomicDeductCredits(buyerPeerID, amount); err != nil {
+		return fmt.Errorf("failed to deduct credits: %w", err)
 	}
 
 	// Create transaction record
-	txID := uuid.New().String()
 	tx := &CreditsTransaction{
 		TransactionID: txID,
 		FromPeerID:    buyerPeerID,
@@ -145,12 +136,9 @@ func (pp *PaymentProcessor) ProcessCredits(ctx context.Context, requestID string
 	}
 
 	if err := pp.store.CreateCreditsTransaction(tx); err != nil {
+		// Refund on failure
+		pp.store.UpdateCreditsBalance(buyerPeerID, int64(amount))
 		return fmt.Errorf("failed to create credits transaction: %w", err)
-	}
-
-	// Deduct from buyer
-	if err := pp.store.UpdateCreditsBalance(buyerPeerID, -int64(amount)); err != nil {
-		return fmt.Errorf("failed to deduct credits: %w", err)
 	}
 
 	// Credit to provider

@@ -427,18 +427,18 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 	countQuery := "SELECT COUNT(*) FROM storefront_listings WHERE " + whereClause
 	s.db.QueryRow(countQuery, args...).Scan(&total)
 
-	// Sort
-	orderBy := "updated_at DESC"
-	switch query.SortBy {
-	case "price":
-		orderBy = "pricing"
-	case "rating":
-		orderBy = "reputation"
-	case "updated":
-		orderBy = "updated_at"
+	// Sort — strict allowlist to prevent SQL injection via ORDER BY
+	var orderByAllowlist = map[string]string{
+		"price":   "pricing",
+		"rating":  "reputation",
+		"updated": "updated_at",
 	}
-	if query.SortDesc {
-		orderBy += " DESC"
+	orderBy := "updated_at DESC"
+	if col, ok := orderByAllowlist[query.SortBy]; ok {
+		orderBy = col
+		if query.SortDesc {
+			orderBy += " DESC"
+		}
 	}
 
 	// Pagination
@@ -845,6 +845,35 @@ func (s *Store) UpdateCreditsBalance(peerID string, delta int64) error {
 	`, peerID, delta, now, delta, now)
 	if err != nil {
 		return fmt.Errorf("failed to update credits balance: %w", err)
+	}
+
+	return nil
+}
+
+// AtomicDeductCredits atomically checks and deducts credits using a single
+// UPDATE with a WHERE balance check to prevent race conditions (TOCTOU).
+// Returns an error if the peer has insufficient balance.
+func (s *Store) AtomicDeductCredits(peerID string, amount uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now().Unix()
+
+	result, err := s.db.Exec(`
+		UPDATE storefront_credits
+		SET balance = balance - ?, total_spent = total_spent + ?, updated_at = ?
+		WHERE peer_id = ? AND balance >= ?
+	`, amount, amount, now, peerID, amount)
+	if err != nil {
+		return fmt.Errorf("failed to deduct credits: %w", err)
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check deduction result: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("insufficient credits for peer %s (need %d)", peerID, amount)
 	}
 
 	return nil
