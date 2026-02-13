@@ -122,7 +122,10 @@ func (s *FlatSQLStore) initTables() error {
 
 	// Create tables for each schema
 	for _, schemaName := range s.validator.Schemas() {
-		tableName := sds.SchemaNameToTable(schemaName)
+		tableName, err := sds.SchemaNameToTable(schemaName)
+		if err != nil {
+			return fmt.Errorf("invalid schema name %q: %w", schemaName, err)
+		}
 
 		// Main data table
 		createSQL := fmt.Sprintf(`
@@ -161,7 +164,10 @@ func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, sign
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	tableName := sds.SchemaNameToTable(schemaName)
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return "", fmt.Errorf("invalid schema name: %w", err)
+	}
 
 	// Compute CID (content identifier)
 	cid := computeCID(data)
@@ -175,7 +181,7 @@ func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, sign
 	`, tableName)
 
 	now := time.Now().Unix()
-	_, err := s.db.Exec(insertSQL, cid, peerID, now, data, signature)
+	_, err = s.db.Exec(insertSQL, cid, peerID, now, data, signature)
 	if err != nil {
 		return "", fmt.Errorf("failed to store data: %w", err)
 	}
@@ -194,12 +200,15 @@ func (s *FlatSQLStore) Get(schemaName, cid string) ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName := sds.SchemaNameToTable(schemaName)
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schema name: %w", err)
+	}
 
 	querySQL := fmt.Sprintf(`SELECT data FROM %s WHERE cid = ?`, tableName)
 
 	var data []byte
-	err := s.db.QueryRow(querySQL, cid).Scan(&data)
+	err = s.db.QueryRow(querySQL, cid).Scan(&data)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("not found: %s", cid)
@@ -217,7 +226,10 @@ func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName := sds.SchemaNameToTable(schemaName)
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schema name: %w", err)
+	}
 
 	var querySQL string
 	if whereClause != "" {
@@ -271,7 +283,10 @@ func (s *FlatSQLStore) QueryAllBounded(schemaName string, limit int, maxTotalByt
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName := sds.SchemaNameToTable(schemaName)
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schema name: %w", err)
+	}
 	querySQL := fmt.Sprintf(`SELECT data FROM %s ORDER BY timestamp DESC LIMIT ?`, tableName)
 	rows, err := s.db.Query(querySQL, limit)
 	if err != nil {
@@ -315,7 +330,10 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	tableName := sds.SchemaNameToTable(schemaName)
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return fmt.Errorf("invalid schema name: %w", err)
+	}
 
 	deleteSQL := fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, tableName)
 
@@ -341,10 +359,13 @@ func (s *FlatSQLStore) Count(schemaName string) (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName := sds.SchemaNameToTable(schemaName)
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return 0, fmt.Errorf("invalid schema name: %w", err)
+	}
 
 	var count int64
-	err := s.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, tableName)).Scan(&count)
+	err = s.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, tableName)).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count: %w", err)
 	}
@@ -361,7 +382,11 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 	var totalDeleted int64
 
 	for _, schemaName := range s.validator.Schemas() {
-		tableName := sds.SchemaNameToTable(schemaName)
+		tableName, err := sds.SchemaNameToTable(schemaName)
+		if err != nil {
+			log.Warnf("GC skipping invalid schema %q: %v", schemaName, err)
+			continue
+		}
 
 		deleteSQL := fmt.Sprintf(`DELETE FROM %s WHERE timestamp < ?`, tableName)
 		result, err := s.db.Exec(deleteSQL, cutoff)
@@ -422,6 +447,11 @@ func computeCID(data []byte) string {
 	return hex.EncodeToString(hash[:])
 }
 
+// Path returns the database file path.
+func (s *FlatSQLStore) Path() string {
+	return s.dbPath
+}
+
 // Record represents a stored record with metadata.
 type Record struct {
 	CID       string
@@ -439,7 +469,10 @@ func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
 	summary := make(map[string]int64)
 
 	for _, schemaName := range s.validator.Schemas() {
-		tableName := sds.SchemaNameToTable(schemaName)
+		tableName, err := sds.SchemaNameToTable(schemaName)
+		if err != nil {
+			return nil, fmt.Errorf("invalid schema name %q: %w", schemaName, err)
+		}
 		rows, err := s.db.Query(fmt.Sprintf(`SELECT cid, timestamp, data FROM %s`, tableName))
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s for reindex: %w", tableName, err)
@@ -475,7 +508,8 @@ func (s *FlatSQLStore) QueryByIndexedFields(schemaName, day string, noradCatID *
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if err := sds.ValidateSchemaName(schemaName); err != nil {
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
 
@@ -491,8 +525,6 @@ func (s *FlatSQLStore) QueryByIndexedFields(schemaName, day string, noradCatID *
 	if limit > 1000 {
 		limit = 1000
 	}
-
-	tableName := sds.SchemaNameToTable(schemaName)
 
 	query := fmt.Sprintf(`
 		SELECT d.cid, d.peer_id, d.timestamp, d.data, d.signature
@@ -547,7 +579,10 @@ func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName := sds.SchemaNameToTable(schemaName)
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schema name: %w", err)
+	}
 
 	querySQL := fmt.Sprintf(`
 		SELECT cid, peer_id, timestamp, data, signature
@@ -556,7 +591,7 @@ func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
 
 	var record Record
 	var timestamp int64
-	err := s.db.QueryRow(querySQL, cid).Scan(
+	err = s.db.QueryRow(querySQL, cid).Scan(
 		&record.CID,
 		&record.PeerID,
 		&timestamp,

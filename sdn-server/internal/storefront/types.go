@@ -138,6 +138,7 @@ type Listing struct {
 	TermsCID          string             `json:"terms_cid"`
 	License           string             `json:"license"`
 	Signature         []byte             `json:"signature"`
+	SourcePeerID      string             `json:"source_peer_id,omitempty"` // empty = local, set = discovered from remote peer
 }
 
 // AccessGrant represents a data access grant (ACL)

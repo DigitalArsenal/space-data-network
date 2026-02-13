@@ -226,7 +226,11 @@ func (s *UserStore) RemoveUser(xpub string) error {
 		return fmt.Errorf("user not found in database (config users cannot be removed)")
 	}
 
-	log.Infof("Removed user with xpub %s...%s from database", xpub[:8], xpub[len(xpub)-4:])
+	if len(xpub) >= 12 {
+		log.Infof("Removed user with xpub %s...%s from database", xpub[:8], xpub[len(xpub)-4:])
+	} else {
+		log.Infof("Removed user from database")
+	}
 	return nil
 }
 

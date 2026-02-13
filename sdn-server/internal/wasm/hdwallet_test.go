@@ -17,14 +17,18 @@ const testMnemonic = "abandon abandon abandon abandon abandon abandon abandon ab
 // testHDWalletModule returns a test HD wallet module, skipping if WASM not available.
 // NOTE: The HD wallet WASM must be built with WASI (not Emscripten) for Go integration.
 // The Emscripten build (for JavaScript) won't work with wazero.
-// To build WASI version: use wasi-sdk or set HD_WALLET_WASM_PATH to a WASI build.
+// To build the hardened WASI version:
+//   emcmake cmake -B build-wasi -S . -DHD_WALLET_BUILD_WASM=ON -DCMAKE_BUILD_TYPE=Release
+//   cmake --build build-wasi --target hd_wallet_wasm_wasi
+// Or set HD_WALLET_WASM_PATH to a WASI build.
 func testHDWalletModule(t *testing.T) *HDWalletModule {
 	t.Helper()
 
-	// Look for hd-wallet.wasm in common locations (WASI build)
-	// Note: The WASM file is built with wasi-sdk for Go/wazero integration
+	// Look for hd-wallet WASM binary. Prefer hardened Emscripten WASI build.
 	wasmPaths := []string{
 		os.Getenv("HD_WALLET_WASM_PATH"),
+		"../../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
+		"../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
 		"../../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
 		"../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
 	}
@@ -41,7 +45,7 @@ func testHDWalletModule(t *testing.T) *HDWalletModule {
 	}
 
 	if wasmPath == "" {
-		t.Skip("HD wallet WASM not found - set HD_WALLET_WASM_PATH to a pure WASI build (requires wasi-sdk, not Emscripten)")
+		t.Skip("HD wallet WASM not found - set HD_WALLET_WASM_PATH or build with emcmake")
 	}
 
 	ctx := context.Background()

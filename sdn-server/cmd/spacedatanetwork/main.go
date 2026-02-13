@@ -28,6 +28,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storefront"
+	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
 var log = logging.Logger("sdn")
@@ -174,9 +175,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			dataAPI.RegisterRoutes(adminMux)
 
 			// Storefront API (listings, purchases, Stripe checkout/webhooks).
+			// Uses FlatSQL for content-addressed storage of STF/ACL/PUR/REV records.
 			if n.Store() != nil {
-				storefrontDBPath := filepath.Join(cfg.Storage.Path, "storefront.db")
-				sfStore, err := storefront.NewStore(storefrontDBPath)
+				sfStore, err := storefront.NewStore(n.Store())
 				if err != nil {
 					log.Warnf("Failed to initialize storefront store: %v", err)
 				} else {
@@ -190,7 +191,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						sfPayment := storefront.NewPaymentProcessor(sfStore, n.PeerID().String())
 						sfTrust := storefront.NewTrustScorer(sfStore, storefront.DefaultTrustWeights())
 						sfAPI := storefront.NewAPIHandler(sfSvc, sfCatalog, sfDelivery, sfPayment, sfTrust)
-						sfAPI.RegisterRoutes(adminMux)
+						sfAPI.RegisterRoutes(adminMux, authHandler)
 						storefrontSvc = sfSvc
 						storefrontStore = sfStore
 						storefrontDelivery = sfDelivery
@@ -271,10 +272,31 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				WriteTimeout:      60 * time.Second,
 				IdleTimeout:       120 * time.Second,
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					// Global security headers on ALL responses
 					w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
 					w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
 					w.Header().Set("X-Content-Type-Options", "nosniff")
 					w.Header().Set("X-Frame-Options", "DENY")
+					w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+					if adminTLS {
+						w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+					}
+
+					// CSRF protection: for state-changing requests using cookie auth,
+					// require Origin/Referer or X-Requested-With header.
+					if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+						if _, cookieErr := r.Cookie("sdn_session"); cookieErr == nil {
+							origin := r.Header.Get("Origin")
+							xrw := r.Header.Get("X-Requested-With")
+							if origin == "" && xrw == "" {
+								referer := r.Header.Get("Referer")
+								if referer == "" && !isWebhookPath(r.URL.Path) {
+									http.Error(w, "CSRF validation failed", http.StatusForbidden)
+									return
+								}
+							}
+						}
+					}
 
 					// Default-deny: gate all API and plugin routes behind auth,
 					// except explicitly listed public endpoints.
@@ -380,8 +402,16 @@ func isPublicAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/v1/license/") ||
 		strings.HasPrefix(path, "/api/v1/plugins/manifest") ||
 		strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook") ||
+		strings.HasPrefix(path, "/api/storefront/listings") ||
+		strings.HasPrefix(path, "/api/storefront/reviews") ||
+		strings.HasPrefix(path, "/api/storefront/trust/") ||
 		strings.HasPrefix(path, "/api/auth/") ||
+		strings.HasPrefix(path, "/api/node/info") ||
 		strings.HasPrefix(path, "/orbpro-key-broker/v1/")
+}
+
+func isWebhookPath(path string) bool {
+	return strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook")
 }
 
 func isAdminOnlyAPIPath(path string) bool {
@@ -390,8 +420,7 @@ func isAdminOnlyAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/blocklist") ||
 		strings.HasPrefix(path, "/api/settings") ||
 		strings.HasPrefix(path, "/api/export") ||
-		strings.HasPrefix(path, "/api/import") ||
-		strings.HasPrefix(path, "/api/node/info")
+		strings.HasPrefix(path, "/api/import")
 }
 
 func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
@@ -416,14 +445,15 @@ func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
 // handleNodeInfo returns an HTTP handler that serves the node's public identity info.
 func handleNodeInfo(n *node.Node) http.HandlerFunc {
 	type nodeInfoResponse struct {
-		PeerID            string   `json:"peer_id"`
-		ListenAddresses   []string `json:"listen_addresses"`
-		SigningPubKeyHex  string   `json:"signing_pubkey_hex,omitempty"`
-		EncryptionPubHex  string   `json:"encryption_pubkey_hex,omitempty"`
-		SigningKeyPath    string   `json:"signing_key_path,omitempty"`
-		EncryptionKeyPath string   `json:"encryption_key_path,omitempty"`
-		Mode              string   `json:"mode"`
-		Version           string   `json:"version"`
+		PeerID            string              `json:"peer_id"`
+		ListenAddresses   []string            `json:"listen_addresses"`
+		SigningPubKeyHex  string              `json:"signing_pubkey_hex,omitempty"`
+		EncryptionPubHex  string              `json:"encryption_pubkey_hex,omitempty"`
+		SigningKeyPath    string              `json:"signing_key_path,omitempty"`
+		EncryptionKeyPath string              `json:"encryption_key_path,omitempty"`
+		Addresses         *wasm.CoinAddresses `json:"addresses,omitempty"`
+		Mode              string              `json:"mode"`
+		Version           string              `json:"version"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -451,6 +481,7 @@ func handleNodeInfo(n *node.Node) http.HandlerFunc {
 			info.EncryptionPubHex = idInfo.EncryptionPubHex
 			info.SigningKeyPath = idInfo.SigningKeyPath
 			info.EncryptionKeyPath = idInfo.EncryptionKeyPath
+			info.Addresses = idInfo.Addresses
 		}
 
 		w.Header().Set("Content-Type", "application/json")

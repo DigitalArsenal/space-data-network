@@ -1,26 +1,35 @@
 package storefront
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
-func TestStoreListings(t *testing.T) {
-	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "storefront-test-*")
+func newTestStoreHelper(t *testing.T) *Store {
+	t.Helper()
+	dir := t.TempDir()
+	validator, err := sds.NewValidator(nil)
 	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+		t.Fatalf("Failed to create validator: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
-
-	// Create store
-	store, err := NewStore(filepath.Join(tmpDir, "storefront.db"))
+	flatStore, err := storage.NewFlatSQLStore(dir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create FlatSQLStore: %v", err)
+	}
+	t.Cleanup(func() { flatStore.Close() })
+	store, err := NewStore(flatStore)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
-	defer store.Close()
+	t.Cleanup(func() { store.Close() })
+	return store
+}
+
+func TestStoreListings(t *testing.T) {
+	store := newTestStoreHelper(t)
 
 	// Create a listing
 	listing := &Listing{
@@ -106,17 +115,7 @@ func TestStoreListings(t *testing.T) {
 }
 
 func TestStoreGrants(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "storefront-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	store, err := NewStore(filepath.Join(tmpDir, "storefront.db"))
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := newTestStoreHelper(t)
 
 	// First create a listing
 	listing := &Listing{
@@ -176,17 +175,7 @@ func TestStoreGrants(t *testing.T) {
 }
 
 func TestStoreReviews(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "storefront-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	store, err := NewStore(filepath.Join(tmpDir, "storefront.db"))
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := newTestStoreHelper(t)
 
 	// Create a listing
 	listing := &Listing{
@@ -239,17 +228,7 @@ func TestStoreReviews(t *testing.T) {
 }
 
 func TestStoreCredits(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "storefront-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	store, err := NewStore(filepath.Join(tmpDir, "storefront.db"))
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	defer store.Close()
+	store := newTestStoreHelper(t)
 
 	peerID := "12D3KooWTestPeer"
 

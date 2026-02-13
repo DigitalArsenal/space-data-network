@@ -448,8 +448,13 @@ func (n *Node) findHDWalletWasmPath() string {
 			return envPath
 		}
 	}
-	// Look for hd-wallet.wasm in common locations (WASI build)
+	// Look for hd-wallet WASM binary. Prefer the hardened Emscripten WASI build
+	// (hd-wallet-wasi.wasm) which includes Crypto++ with constant-time operations,
+	// HMAC-DRBG entropy, and SecureAllocator. Fall back to legacy wasi-sdk build.
 	paths := []string{
+		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
+		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
+		"/usr/local/lib/hd-wallet-wasi.wasm",
 		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
 		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
 		"/usr/local/lib/hd-wallet.wasm",
@@ -806,4 +811,30 @@ func (n *Node) TokenVerifier() *license.TokenVerifier {
 		return nil
 	}
 	return n.license.TokenVerifier()
+}
+
+// DHT returns the Kademlia DHT instance for content routing.
+func (n *Node) DHT() *dht.IpfsDHT {
+	return n.dht
+}
+
+// Host returns the libp2p host.
+func (n *Node) Host() host.Host {
+	return n.host
+}
+
+// PubSub returns the GossipSub PubSub instance.
+func (n *Node) PubSub() *pubsub.PubSub {
+	return n.pubsub
+}
+
+// SigningKey returns the node's Ed25519 signing private key bytes, or nil if unavailable.
+func (n *Node) SigningKey() []byte {
+	if n.identity != nil && n.identity.SigningPrivKey != nil {
+		raw, err := n.identity.SigningPrivKey.Raw()
+		if err == nil {
+			return raw
+		}
+	}
+	return nil
 }

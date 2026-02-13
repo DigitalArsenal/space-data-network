@@ -143,7 +143,11 @@ func TestSchemaNameToTable(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		result := SchemaNameToTable(test.input)
+		result, err := SchemaNameToTable(test.input)
+		if err != nil {
+			t.Errorf("SchemaNameToTable(%q) returned error: %v", test.input, err)
+			continue
+		}
 		if result != test.expected {
 			t.Errorf("SchemaNameToTable(%q) = %q, want %q", test.input, result, test.expected)
 		}

@@ -10,37 +10,76 @@ import (
 
 	logging "github.com/ipfs/go-log/v2"
 	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 var log = logging.Logger("storefront")
 
-// Store provides SQLite-based storage for storefront data
-type Store struct {
-	db *sql.DB
-	mu sync.RWMutex
+// FlatSQL schema names for storefront record types.
+const (
+	SchemaSTF = "STF.fbs"
+	SchemaACL = "ACL.fbs"
+	SchemaPUR = "PUR.fbs"
+	SchemaREV = "REV.fbs"
+)
+
+// sanitizeFTS5Query escapes special FTS5 operators from user input by quoting
+// each whitespace-delimited token. This prevents FTS5 MATCH injection where
+// operators like AND, OR, NOT, NEAR, *, or column filters could be abused.
+func sanitizeFTS5Query(input string) string {
+	tokens := strings.Fields(input)
+	if len(tokens) == 0 {
+		return ""
+	}
+	quoted := make([]string, 0, len(tokens))
+	for _, tok := range tokens {
+		tok = strings.ReplaceAll(tok, "\"", "")
+		if tok == "" {
+			continue
+		}
+		quoted = append(quoted, "\""+tok+"\"")
+	}
+	return strings.Join(quoted, " ")
 }
 
-// NewStore creates a new storefront store
-func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+// Store provides FlatSQL-backed storage for storefront data.
+// Canonical record data (STF, ACL, PUR, REV) is stored through FlatSQLStore
+// as content-addressed blobs. Lightweight index tables in the same database
+// provide rich query support (search, filter, pagination).
+type Store struct {
+	flatStore *storage.FlatSQLStore
+	db        *sql.DB // own connection for index tables
+	mu        sync.RWMutex
+}
+
+// NewStore creates a new storefront store backed by FlatSQL.
+// It opens its own connection to the same sdn.db for index tables,
+// while using flatStore for content-addressed record storage.
+func NewStore(flatStore *storage.FlatSQLStore) (*Store, error) {
+	db, err := sql.Open("sqlite3", flatStore.Path()+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		return nil, fmt.Errorf("failed to open index database: %w", err)
 	}
 
-	store := &Store{db: db}
+	store := &Store{
+		flatStore: flatStore,
+		db:        db,
+	}
 	if err := store.initTables(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to initialize tables: %w", err)
+		return nil, fmt.Errorf("failed to initialize index tables: %w", err)
 	}
 
 	return store, nil
 }
 
 func (s *Store) initTables() error {
-	// Listings table
+	// Listing index — lightweight searchable projection of STF records
 	_, err := s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS storefront_listings (
 			listing_id TEXT PRIMARY KEY,
+			cid TEXT DEFAULT '',
 			provider_peer_id TEXT NOT NULL,
 			provider_epm_cid TEXT,
 			title TEXT NOT NULL,
@@ -64,15 +103,21 @@ func (s *Store) initTables() error {
 			terms_cid TEXT,
 			license TEXT,
 			signature BLOB,
+			source_peer_id TEXT DEFAULT '',
 			UNIQUE(listing_id)
 		);
 		CREATE INDEX IF NOT EXISTS idx_listings_provider ON storefront_listings(provider_peer_id);
 		CREATE INDEX IF NOT EXISTS idx_listings_active ON storefront_listings(active);
 		CREATE INDEX IF NOT EXISTS idx_listings_updated ON storefront_listings(updated_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_listings_cid ON storefront_listings(cid);
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create listings table: %w", err)
+		return fmt.Errorf("failed to create listings index table: %w", err)
 	}
+
+	// Migration: add cid and source_peer_id columns to existing tables
+	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN cid TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN source_peer_id TEXT DEFAULT ''`)
 
 	// Full-text search for listings
 	_, err = s.db.Exec(`
@@ -90,10 +135,11 @@ func (s *Store) initTables() error {
 		log.Warnf("Failed to create FTS table (may already exist): %v", err)
 	}
 
-	// Access grants table
+	// Grant index
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS storefront_grants (
 			grant_id TEXT PRIMARY KEY,
+			cid TEXT DEFAULT '',
 			listing_id TEXT NOT NULL,
 			tier_name TEXT NOT NULL,
 			buyer_peer_id TEXT NOT NULL,
@@ -121,21 +167,23 @@ func (s *Store) initTables() error {
 			updated_at INTEGER NOT NULL,
 			notes TEXT,
 			provider_signature BLOB,
-			provider_peer_id TEXT NOT NULL,
-			FOREIGN KEY (listing_id) REFERENCES storefront_listings(listing_id)
+			provider_peer_id TEXT NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_grants_buyer ON storefront_grants(buyer_peer_id);
 		CREATE INDEX IF NOT EXISTS idx_grants_listing ON storefront_grants(listing_id);
 		CREATE INDEX IF NOT EXISTS idx_grants_status ON storefront_grants(status);
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create grants table: %w", err)
+		return fmt.Errorf("failed to create grants index table: %w", err)
 	}
 
-	// Purchase requests table
+	s.db.Exec(`ALTER TABLE storefront_grants ADD COLUMN cid TEXT DEFAULT ''`)
+
+	// Purchase index
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS storefront_purchases (
 			request_id TEXT PRIMARY KEY,
+			cid TEXT DEFAULT '',
 			listing_id TEXT NOT NULL,
 			tier_name TEXT NOT NULL,
 			buyer_peer_id TEXT NOT NULL,
@@ -164,21 +212,23 @@ func (s *Store) initTables() error {
 			preferred_delivery_method TEXT,
 			webhook_url TEXT,
 			buyer_signature BLOB,
-			provider_signature BLOB,
-			FOREIGN KEY (listing_id) REFERENCES storefront_listings(listing_id)
+			provider_signature BLOB
 		);
 		CREATE INDEX IF NOT EXISTS idx_purchases_buyer ON storefront_purchases(buyer_peer_id);
 		CREATE INDEX IF NOT EXISTS idx_purchases_listing ON storefront_purchases(listing_id);
 		CREATE INDEX IF NOT EXISTS idx_purchases_status ON storefront_purchases(status);
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create purchases table: %w", err)
+		return fmt.Errorf("failed to create purchases index table: %w", err)
 	}
 
-	// Reviews table
+	s.db.Exec(`ALTER TABLE storefront_purchases ADD COLUMN cid TEXT DEFAULT ''`)
+
+	// Reviews index
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS storefront_reviews (
 			review_id TEXT PRIMARY KEY,
+			cid TEXT DEFAULT '',
 			listing_id TEXT NOT NULL,
 			reviewer_peer_id TEXT NOT NULL,
 			rating INTEGER NOT NULL,
@@ -196,17 +246,18 @@ func (s *Store) initTables() error {
 			provider_response_at INTEGER,
 			flagged_count INTEGER DEFAULT 0,
 			moderation_notes TEXT,
-			reviewer_signature BLOB,
-			FOREIGN KEY (listing_id) REFERENCES storefront_listings(listing_id)
+			reviewer_signature BLOB
 		);
 		CREATE INDEX IF NOT EXISTS idx_reviews_listing ON storefront_reviews(listing_id);
 		CREATE INDEX IF NOT EXISTS idx_reviews_reviewer ON storefront_reviews(reviewer_peer_id);
 	`)
 	if err != nil {
-		return fmt.Errorf("failed to create reviews table: %w", err)
+		return fmt.Errorf("failed to create reviews index table: %w", err)
 	}
 
-	// Credits balance table
+	s.db.Exec(`ALTER TABLE storefront_reviews ADD COLUMN cid TEXT DEFAULT ''`)
+
+	// Credits balance table (not a FlatBuffer type — local ledger only)
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS storefront_credits (
 			peer_id TEXT PRIMARY KEY,
@@ -221,7 +272,7 @@ func (s *Store) initTables() error {
 		return fmt.Errorf("failed to create credits table: %w", err)
 	}
 
-	// Credits transactions table
+	// Credits transactions table (local ledger)
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS storefront_credits_transactions (
 			transaction_id TEXT PRIMARY KEY,
@@ -240,15 +291,41 @@ func (s *Store) initTables() error {
 		return fmt.Errorf("failed to create credits transactions table: %w", err)
 	}
 
-	log.Info("Storefront tables initialized")
+	log.Info("Storefront index tables initialized (FlatSQL-backed)")
 	return nil
 }
 
-// CreateListing creates a new listing
+// storeRecordToFlatSQL marshals data to JSON and stores it through FlatSQL.
+// Returns the content identifier (CID).
+func (s *Store) storeRecordToFlatSQL(schemaName string, data interface{}, peerID string, signature []byte) (string, error) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal record: %w", err)
+	}
+	cid, err := s.flatStore.Store(schemaName, jsonData, peerID, signature)
+	if err != nil {
+		return "", fmt.Errorf("failed to store %s record in FlatSQL: %w", schemaName, err)
+	}
+	return cid, nil
+}
+
+// CreateListing creates a new listing. Stores the full record through FlatSQL
+// and updates the index table for queryability.
 func (s *Store) CreateListing(listing *Listing) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Store canonical record through FlatSQL (content-addressed)
+	peerID := listing.ProviderPeerID
+	if listing.SourcePeerID != "" {
+		peerID = listing.SourcePeerID
+	}
+	cid, err := s.storeRecordToFlatSQL(SchemaSTF, listing, peerID, listing.Signature)
+	if err != nil {
+		log.Warnf("FlatSQL store failed for listing %s: %v", listing.ListingID, err)
+	}
+
+	// Update index table
 	dataTypesJSON, _ := json.Marshal(listing.DataTypes)
 	tagsJSON, _ := json.Marshal(listing.Tags)
 	coverageJSON, _ := json.Marshal(listing.Coverage)
@@ -257,16 +334,16 @@ func (s *Store) CreateListing(listing *Listing) error {
 	acceptedPaymentsJSON, _ := json.Marshal(listing.AcceptedPayments)
 	reputationJSON, _ := json.Marshal(listing.Reputation)
 
-	_, err := s.db.Exec(`
-		INSERT INTO storefront_listings (
-			listing_id, provider_peer_id, provider_epm_cid, title, description,
+	_, err = s.db.Exec(`
+		INSERT OR REPLACE INTO storefront_listings (
+			listing_id, cid, provider_peer_id, provider_epm_cid, title, description,
 			data_types, tags, coverage, sample_cid, sample_record_count,
 			access_type, encryption_required, delivery_methods, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
-			active, expires_at, terms_cid, license, signature
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			active, expires_at, terms_cid, license, signature, source_peer_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		listing.ListingID, listing.ProviderPeerID, listing.ProviderEPMCID,
+		listing.ListingID, cid, listing.ProviderPeerID, listing.ProviderEPMCID,
 		listing.Title, listing.Description,
 		string(dataTypesJSON), string(tagsJSON), string(coverageJSON),
 		listing.SampleCID, listing.SampleRecordCount,
@@ -275,10 +352,10 @@ func (s *Store) CreateListing(listing *Listing) error {
 		string(acceptedPaymentsJSON), string(reputationJSON),
 		listing.CreatedAt.Unix(), listing.UpdatedAt.Unix(),
 		listing.Version, listing.Active, listing.ExpiresAt.Unix(),
-		listing.TermsCID, listing.License, listing.Signature,
+		listing.TermsCID, listing.License, listing.Signature, listing.SourcePeerID,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create listing: %w", err)
+		return fmt.Errorf("failed to index listing: %w", err)
 	}
 
 	// Update FTS index
@@ -291,11 +368,11 @@ func (s *Store) CreateListing(listing *Listing) error {
 		log.Warnf("Failed to update FTS index: %v", err)
 	}
 
-	log.Infof("Created listing: %s", listing.ListingID)
+	log.Infof("Created listing: %s (CID: %s)", listing.ListingID, cid)
 	return nil
 }
 
-// GetListing retrieves a listing by ID
+// GetListing retrieves a listing by ID from the index.
 func (s *Store) GetListing(listingID string) (*Listing, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -351,7 +428,7 @@ func (s *Store) scanListing(row *sql.Row) (*Listing, error) {
 	return &listing, nil
 }
 
-// SearchListings searches listings with filters
+// SearchListings searches listings with filters using the index tables.
 func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -361,7 +438,6 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 
 	conditions = append(conditions, "active = 1")
 
-	// Data types filter
 	if len(query.DataTypes) > 0 {
 		placeholders := make([]string, len(query.DataTypes))
 		for i, dt := range query.DataTypes {
@@ -371,7 +447,6 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 		conditions = append(conditions, "("+strings.Join(placeholders, " OR ")+")")
 	}
 
-	// Access types filter
 	if len(query.AccessTypes) > 0 {
 		placeholders := make([]string, len(query.AccessTypes))
 		for i, at := range query.AccessTypes {
@@ -381,7 +456,6 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 		conditions = append(conditions, "("+strings.Join(placeholders, " OR ")+")")
 	}
 
-	// Provider filter
 	if len(query.ProviderPeerIDs) > 0 {
 		placeholders := make([]string, len(query.ProviderPeerIDs))
 		for i, pid := range query.ProviderPeerIDs {
@@ -394,10 +468,14 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 	// Full-text search
 	var listingIDs []string
 	if query.SearchText != "" {
+		sanitized := sanitizeFTS5Query(query.SearchText)
+		if sanitized == "" {
+			return &SearchResult{Listings: []Listing{}, Total: 0}, nil
+		}
 		rows, err := s.db.Query(`
 			SELECT listing_id FROM storefront_listings_fts
 			WHERE storefront_listings_fts MATCH ?
-		`, query.SearchText)
+		`, sanitized)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -415,14 +493,12 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 			}
 			conditions = append(conditions, "listing_id IN ("+strings.Join(placeholders, ",")+")")
 		} else if query.SearchText != "" {
-			// No FTS results, return empty
 			return &SearchResult{Listings: []Listing{}, Total: 0}, nil
 		}
 	}
 
 	whereClause := strings.Join(conditions, " AND ")
 
-	// Get total count
 	var total int
 	countQuery := "SELECT COUNT(*) FROM storefront_listings WHERE " + whereClause
 	s.db.QueryRow(countQuery, args...).Scan(&total)
@@ -441,14 +517,18 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 		}
 	}
 
-	// Pagination
 	limit := 20
 	if query.Limit > 0 && query.Limit <= 100 {
 		limit = query.Limit
 	}
 	offset := query.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > 10000 {
+		offset = 10000
+	}
 
-	// Execute query
 	querySQL := fmt.Sprintf(`
 		SELECT listing_id, provider_peer_id, provider_epm_cid, title, description,
 			data_types, tags, coverage, sample_cid, sample_record_count,
@@ -503,8 +583,6 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 		listings = append(listings, listing)
 	}
 
-	// TODO: Compute facets
-
 	return &SearchResult{
 		Listings: listings,
 		Total:    total,
@@ -512,23 +590,28 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 	}, nil
 }
 
-// CreateGrant creates a new access grant
+// CreateGrant creates a new access grant. Stores through FlatSQL and updates the index.
 func (s *Store) CreateGrant(grant *AccessGrant) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec(`
+	cid, err := s.storeRecordToFlatSQL(SchemaACL, grant, grant.ProviderPeerID, grant.ProviderSignature)
+	if err != nil {
+		log.Warnf("FlatSQL store failed for grant %s: %v", grant.GrantID, err)
+	}
+
+	_, err = s.db.Exec(`
 		INSERT INTO storefront_grants (
-			grant_id, listing_id, tier_name, buyer_peer_id, buyer_encryption_pubkey,
+			grant_id, cid, listing_id, tier_name, buyer_peer_id, buyer_encryption_pubkey,
 			key_algorithm, access_type, rate_limit, max_records_per_request,
 			granted_at, expires_at, status, payment_tx_hash, payment_method,
 			payment_amount, payment_currency, payment_chain, next_renewal,
 			auto_renew, renewal_count, total_requests, total_records,
 			last_access, delivery_topic, created_at, updated_at, notes,
 			provider_signature, provider_peer_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		grant.GrantID, grant.ListingID, grant.TierName, grant.BuyerPeerID,
+		grant.GrantID, cid, grant.ListingID, grant.TierName, grant.BuyerPeerID,
 		grant.BuyerEncryptionPubkey, grant.KeyAlgorithm, grant.AccessType,
 		grant.RateLimit, grant.MaxRecordsPerRequest,
 		grant.GrantedAt.Unix(), grant.ExpiresAt.Unix(), grant.Status,
@@ -540,14 +623,14 @@ func (s *Store) CreateGrant(grant *AccessGrant) error {
 		grant.ProviderSignature, grant.ProviderPeerID,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create grant: %w", err)
+		return fmt.Errorf("failed to index grant: %w", err)
 	}
 
-	log.Infof("Created grant: %s for buyer: %s", grant.GrantID, grant.BuyerPeerID)
+	log.Infof("Created grant: %s (CID: %s)", grant.GrantID, cid)
 	return nil
 }
 
-// GetGrant retrieves a grant by ID
+// GetGrant retrieves a grant by ID from the index.
 func (s *Store) GetGrant(grantID string) (*AccessGrant, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -593,7 +676,7 @@ func (s *Store) GetGrant(grantID string) (*AccessGrant, error) {
 	return &grant, nil
 }
 
-// GetGrantsByBuyer retrieves all grants for a buyer
+// GetGrantsByBuyer retrieves all grants for a buyer.
 func (s *Store) GetGrantsByBuyer(buyerPeerID string) ([]*AccessGrant, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -648,23 +731,28 @@ func (s *Store) GetGrantsByBuyer(buyerPeerID string) ([]*AccessGrant, error) {
 	return grants, nil
 }
 
-// CreatePurchaseRequest creates a new purchase request
+// CreatePurchaseRequest creates a new purchase request. Stores through FlatSQL.
 func (s *Store) CreatePurchaseRequest(req *PurchaseRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec(`
+	cid, err := s.storeRecordToFlatSQL(SchemaPUR, req, req.BuyerPeerID, req.BuyerSignature)
+	if err != nil {
+		log.Warnf("FlatSQL store failed for purchase %s: %v", req.RequestID, err)
+	}
+
+	_, err = s.db.Exec(`
 		INSERT INTO storefront_purchases (
-			request_id, listing_id, tier_name, buyer_peer_id, buyer_encryption_pubkey,
+			request_id, cid, listing_id, tier_name, buyer_peer_id, buyer_encryption_pubkey,
 			key_algorithm, buyer_email, payment_method, payment_amount, payment_currency,
 			payment_tx_hash, payment_chain, sender_address, confirmation_block,
 			payment_intent_id, credits_transaction_id, status, status_message,
 			created_at, updated_at, payment_deadline, payment_confirmed_at,
 			grant_issued_at, grant_id, provider_peer_id, provider_acknowledged_at,
 			preferred_delivery_method, webhook_url, buyer_signature, provider_signature
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		req.RequestID, req.ListingID, req.TierName, req.BuyerPeerID,
+		req.RequestID, cid, req.ListingID, req.TierName, req.BuyerPeerID,
 		req.BuyerEncryptionPubkey, req.KeyAlgorithm, req.BuyerEmail,
 		req.PaymentMethod, req.PaymentAmount, req.PaymentCurrency,
 		req.PaymentTxHash, req.PaymentChain, req.SenderAddress, req.ConfirmationBlock,
@@ -676,14 +764,14 @@ func (s *Store) CreatePurchaseRequest(req *PurchaseRequest) error {
 		req.BuyerSignature, req.ProviderSignature,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create purchase request: %w", err)
+		return fmt.Errorf("failed to index purchase request: %w", err)
 	}
 
-	log.Infof("Created purchase request: %s", req.RequestID)
+	log.Infof("Created purchase request: %s (CID: %s)", req.RequestID, cid)
 	return nil
 }
 
-// UpdatePurchaseStatus updates the status of a purchase request
+// UpdatePurchaseStatus updates the status of a purchase request in the index.
 func (s *Store) UpdatePurchaseStatus(requestID string, status PurchaseStatus, message string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -699,23 +787,28 @@ func (s *Store) UpdatePurchaseStatus(requestID string, status PurchaseStatus, me
 	return nil
 }
 
-// CreateReview creates a new review
+// CreateReview creates a new review. Stores through FlatSQL.
 func (s *Store) CreateReview(review *Review) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	cid, err := s.storeRecordToFlatSQL(SchemaREV, review, review.ReviewerPeerID, review.ReviewerSignature)
+	if err != nil {
+		log.Warnf("FlatSQL store failed for review %s: %v", review.ReviewID, err)
+	}
+
 	qualityMetricsJSON, _ := json.Marshal(review.QualityMetrics)
 
-	_, err := s.db.Exec(`
+	_, err = s.db.Exec(`
 		INSERT INTO storefront_reviews (
-			review_id, listing_id, reviewer_peer_id, rating, title, content,
+			review_id, cid, listing_id, reviewer_peer_id, rating, title, content,
 			quality_metrics, acl_grant_id, verified_purchase, created_at,
 			updated_at, status, helpful_count, not_helpful_count,
 			provider_response, provider_response_at, flagged_count,
 			moderation_notes, reviewer_signature
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		review.ReviewID, review.ListingID, review.ReviewerPeerID, review.Rating,
+		review.ReviewID, cid, review.ListingID, review.ReviewerPeerID, review.Rating,
 		review.Title, review.Content, string(qualityMetricsJSON),
 		review.ACLGrantID, review.VerifiedPurchase, review.CreatedAt.Unix(),
 		review.UpdatedAt.Unix(), review.Status, review.HelpfulCount,
@@ -724,19 +817,18 @@ func (s *Store) CreateReview(review *Review) error {
 		review.ModerationNotes, review.ReviewerSignature,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create review: %w", err)
+		return fmt.Errorf("failed to index review: %w", err)
 	}
 
-	log.Infof("Created review: %s for listing: %s", review.ReviewID, review.ListingID)
+	log.Infof("Created review: %s (CID: %s)", review.ReviewID, cid)
 	return nil
 }
 
-// GetReviewsForListing retrieves reviews for a listing
+// GetReviewsForListing retrieves reviews for a listing from the index.
 func (s *Store) GetReviewsForListing(listingID string, limit, offset int) ([]*Review, *ReviewStats, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Get reviews
 	rows, err := s.db.Query(`
 		SELECT review_id, listing_id, reviewer_peer_id, rating, title, content,
 			quality_metrics, acl_grant_id, verified_purchase, created_at,
@@ -779,7 +871,7 @@ func (s *Store) GetReviewsForListing(listingID string, limit, offset int) ([]*Re
 		reviews = append(reviews, &review)
 	}
 
-	// Get stats
+	// Aggregate stats
 	stats := &ReviewStats{ListingID: listingID}
 	s.db.QueryRow(`
 		SELECT COUNT(*), COALESCE(AVG(rating) * 10, 0),
@@ -789,7 +881,6 @@ func (s *Store) GetReviewsForListing(listingID string, limit, offset int) ([]*Re
 	`, listingID).Scan(&stats.TotalReviews, &stats.AverageRatingX10,
 		&stats.VerifiedReviews, &stats.LastReviewAt)
 
-	// Rating distribution
 	for i := 1; i <= 5; i++ {
 		var count uint32
 		s.db.QueryRow(`
@@ -802,7 +893,7 @@ func (s *Store) GetReviewsForListing(listingID string, limit, offset int) ([]*Re
 	return reviews, stats, nil
 }
 
-// GetCreditsBalance retrieves the credits balance for a peer
+// GetCreditsBalance retrieves the credits balance for a peer.
 func (s *Store) GetCreditsBalance(peerID string) (*CreditsBalance, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -819,7 +910,6 @@ func (s *Store) GetCreditsBalance(peerID string) (*CreditsBalance, error) {
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			// Return zero balance for new peers
 			return &CreditsBalance{PeerID: peerID}, nil
 		}
 		return nil, fmt.Errorf("failed to get credits balance: %w", err)
@@ -829,7 +919,7 @@ func (s *Store) GetCreditsBalance(peerID string) (*CreditsBalance, error) {
 	return &balance, nil
 }
 
-// UpdateCreditsBalance updates a peer's credits balance
+// UpdateCreditsBalance updates a peer's credits balance.
 func (s *Store) UpdateCreditsBalance(peerID string, delta int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -850,9 +940,7 @@ func (s *Store) UpdateCreditsBalance(peerID string, delta int64) error {
 	return nil
 }
 
-// AtomicDeductCredits atomically checks and deducts credits using a single
-// UPDATE with a WHERE balance check to prevent race conditions (TOCTOU).
-// Returns an error if the peer has insufficient balance.
+// AtomicDeductCredits atomically checks and deducts credits.
 func (s *Store) AtomicDeductCredits(peerID string, amount uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -879,7 +967,7 @@ func (s *Store) AtomicDeductCredits(peerID string, amount uint64) error {
 	return nil
 }
 
-// GetPurchaseRequest retrieves a purchase request by ID
+// GetPurchaseRequest retrieves a purchase request by ID.
 func (s *Store) GetPurchaseRequest(requestID string) (*PurchaseRequest, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -924,7 +1012,7 @@ func (s *Store) GetPurchaseRequest(requestID string) (*PurchaseRequest, error) {
 	return &req, nil
 }
 
-// UpdatePurchasePayment updates payment details on a purchase request
+// UpdatePurchasePayment updates payment details on a purchase request.
 func (s *Store) UpdatePurchasePayment(requestID, txHash, chain, senderAddress string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -940,7 +1028,7 @@ func (s *Store) UpdatePurchasePayment(requestID, txHash, chain, senderAddress st
 	return nil
 }
 
-// UpdatePurchaseCreditsTransaction updates the credits transaction ID on a purchase
+// UpdatePurchaseCreditsTransaction updates the credits transaction ID.
 func (s *Store) UpdatePurchaseCreditsTransaction(requestID, txID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -956,7 +1044,7 @@ func (s *Store) UpdatePurchaseCreditsTransaction(requestID, txID string) error {
 	return nil
 }
 
-// UpdatePurchaseFiatIntent updates the fiat payment intent ID on a purchase
+// UpdatePurchaseFiatIntent updates the fiat payment intent ID.
 func (s *Store) UpdatePurchaseFiatIntent(requestID, intentID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -972,7 +1060,7 @@ func (s *Store) UpdatePurchaseFiatIntent(requestID, intentID string) error {
 	return nil
 }
 
-// UpdatePurchaseGrant updates the grant ID on a purchase request
+// UpdatePurchaseGrant updates the grant ID on a purchase request.
 func (s *Store) UpdatePurchaseGrant(requestID, grantID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -988,7 +1076,7 @@ func (s *Store) UpdatePurchaseGrant(requestID, grantID string) error {
 	return nil
 }
 
-// GetProviderPurchases retrieves all purchases for a provider
+// GetProviderPurchases retrieves all purchases for a provider.
 func (s *Store) GetProviderPurchases(providerPeerID string, limit, offset int) ([]*PurchaseRequest, int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1046,7 +1134,7 @@ func (s *Store) GetProviderPurchases(providerPeerID string, limit, offset int) (
 	return purchases, total, nil
 }
 
-// CreateCreditsTransaction records a credits transaction
+// CreateCreditsTransaction records a credits transaction.
 func (s *Store) CreateCreditsTransaction(tx *CreditsTransaction) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1063,7 +1151,7 @@ func (s *Store) CreateCreditsTransaction(tx *CreditsTransaction) error {
 	return nil
 }
 
-// GetCreditsTransactions retrieves credit transactions for a peer
+// GetCreditsTransactions retrieves credit transactions for a peer.
 func (s *Store) GetCreditsTransactions(peerID string, limit, offset int) ([]*CreditsTransaction, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1094,7 +1182,7 @@ func (s *Store) GetCreditsTransactions(peerID string, limit, offset int) ([]*Cre
 	return txs, nil
 }
 
-// UpdateGrantUsage updates usage tracking on a grant
+// UpdateGrantUsage updates usage tracking on a grant.
 func (s *Store) UpdateGrantUsage(grantID string, requestsIncrement, recordsIncrement int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1113,7 +1201,7 @@ func (s *Store) UpdateGrantUsage(grantID string, requestsIncrement, recordsIncre
 	return nil
 }
 
-// UpdateListingReputation updates the reputation snapshot on a listing
+// UpdateListingReputation updates the reputation snapshot on a listing.
 func (s *Store) UpdateListingReputation(listingID string, rep ProviderReputation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1128,7 +1216,7 @@ func (s *Store) UpdateListingReputation(listingID string, rep ProviderReputation
 	return nil
 }
 
-// GetProviderGrants retrieves all grants issued by a provider
+// GetProviderGrants retrieves all grants issued by a provider.
 func (s *Store) GetProviderGrants(providerPeerID string, limit, offset int) ([]*AccessGrant, int, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1187,7 +1275,7 @@ func (s *Store) GetProviderGrants(providerPeerID string, limit, offset int) ([]*
 	return grants, total, nil
 }
 
-// UpdateReviewVote updates the helpfulness vote count on a review
+// UpdateReviewVote updates the helpfulness vote count on a review.
 func (s *Store) UpdateReviewVote(reviewID string, helpful bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1208,7 +1296,7 @@ func (s *Store) UpdateReviewVote(reviewID string, helpful bool) error {
 	return nil
 }
 
-// AddProviderResponse adds a provider response to a review
+// AddProviderResponse adds a provider response to a review.
 func (s *Store) AddProviderResponse(reviewID, response string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1224,7 +1312,7 @@ func (s *Store) AddProviderResponse(reviewID, response string) error {
 	return nil
 }
 
-// UpdateListingActive updates the active status of a listing
+// UpdateListingActive updates the active status of a listing.
 func (s *Store) UpdateListingActive(listingID string, active bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1238,7 +1326,7 @@ func (s *Store) UpdateListingActive(listingID string, active bool) error {
 	return nil
 }
 
-// GetProviderEarnings returns total earnings for a provider
+// GetProviderEarnings returns total earnings for a provider.
 func (s *Store) GetProviderEarnings(providerPeerID string) (uint64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1254,7 +1342,13 @@ func (s *Store) GetProviderEarnings(providerPeerID string) (uint64, error) {
 	return total, nil
 }
 
-// Close closes the store
+// FlatStore returns the underlying FlatSQLStore for direct access (e.g., DHT exchange).
+func (s *Store) FlatStore() *storage.FlatSQLStore {
+	return s.flatStore
+}
+
+// Close closes the index database connection.
+// Does NOT close FlatSQLStore (it's shared with the rest of the system).
 func (s *Store) Close() error {
 	return s.db.Close()
 }

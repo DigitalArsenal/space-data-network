@@ -20,6 +20,7 @@
 10. [Risk Analysis & Mitigations](#10-risk-analysis--mitigations)
 11. [Appendix: Repository Index](#11-appendix-repository-index)
 12. [24-Hour SpaceAware.io Launch Plan (Free Tier)](#12-24-hour-spaceawareio-launch-plan-free-tier)
+13. [Lobstronaut — Open Source Astrodynamics Agent](#13-lobstronaut--open-source-astrodynamics-agent)
 
 ---
 
@@ -1404,6 +1405,7 @@ Claude Teams workflow:
 | 11 | WEBGPU_OrbPro3 | `../WEBGPU_OrbPro3` | Next-gen WebGPU CesiumJS rendering engine | Proprietary |
 | 12 | spaceaware.io | `../spaceaware.io` | SaaS platform for space awareness (TO BE CREATED) | Proprietary |
 | 13 | DigitalArsenal.io | `../DigitalArsenal.io` | Company website, Svelte + CesiumJS + Tailwind | Proprietary |
+| 14 | openclaw (astrodynamics) | `github.com/digitalarsenal/openclaw` | Open source astrodynamics library, managed by Lobstronaut | Apache 2.0 |
 
 ---
 
@@ -1715,6 +1717,121 @@ networks:
 - Advanced entitlement automation beyond Stripe payment confirmation + grant issuance.
 - Multi-region replicated databases.
 - Advanced analytics dashboards beyond core operational health.
+
+---
+
+## 13. Lobstronaut — Open Source Astrodynamics Agent
+
+### Overview
+
+**Lobstronaut** is an autonomous AI agent — the **openclaw bot** — that serves as the public face and maintainer of DigitalArsenal's open source astrodynamics library on GitHub. Lobstronaut has its own GitHub account, social media presence, and acts as the community steward for the `openclaw` project — an open source astrodynamics library extracted from the OrbPro ecosystem.
+
+### Purpose
+
+1. **Open source credibility** — An actively maintained, bot-assisted open source astrodynamics library establishes DigitalArsenal as the authority in browser-native orbital mechanics
+2. **Community funnel** — Developers who discover `openclaw` via Lobstronaut's social presence become familiar with the DigitalArsenal ecosystem and eventually convert to SpaceAware.io users
+3. **Developer relations at scale** — Lobstronaut triages issues, reviews PRs, writes documentation, and engages on social media without requiring constant human attention
+4. **Open-core bridge** — The open source `openclaw` library provides the free foundation; OrbPro's proprietary features (encrypted shaders, key broker, ModSim plugins) remain commercial
+
+### The `openclaw` Library
+
+Based on the `@orbpro/core` package (`OrbPro/packages/orbpro-core/`), the open source astrodynamics library includes:
+
+| Module | Description |
+| ------ | ----------- |
+| **SGP4 Propagation** | `PropagatedPositionProperty.js` — satellite orbit propagation |
+| **Sensor Geometries** | Conic, rectangular, and custom sensor field-of-view visualization |
+| **Space Catalog** | `SpaceCatalogDataSource.js` — space catalog data handling |
+| **WASM Point Rendering** | `PointVisualizerWasm.js` — high-performance point rendering |
+| **Access Analysis** | `AccessWorker.js` — satellite access/visibility calculations |
+| **Conjunction Analysis** | `ConjunctionWorker.js` — conjunction assessment computations |
+| **CesiumJS Extensions** | Runtime-patchable and build-time integrations for CesiumJS |
+
+**Package:** `@openclaw/astrodynamics` (published to npm)
+**Repository:** `github.com/digitalarsenal/openclaw`
+**License:** Apache 2.0
+
+### Lobstronaut Identity & Presence
+
+| Channel | Handle | Purpose |
+| ------- | ------ | ------- |
+| **GitHub** | `@lobstronaut` | Repository owner/maintainer, issue triage, PR review, release management |
+| **Twitter/X** | `@lobstronaut_io` | Space industry commentary, library updates, tutorial threads, community engagement |
+| **LinkedIn** | Lobstronaut by DigitalArsenal | Professional presence, cross-posts from X, conference announcements |
+| **Discord** | Lobstronaut | Community support in SDN/OrbPro Discord server |
+
+### Lobstronaut Responsibilities
+
+**GitHub (Daily):**
+
+- Triage new issues (label, assign priority, request reproduction steps)
+- Review and merge community PRs (with human approval for significant changes)
+- Auto-generate release notes and changelogs
+- Maintain documentation (README, API docs, examples, migration guides)
+- Respond to discussions and Q&A
+- Create "Good First Issue" tasks for new contributors
+
+**Social Media (3-5x/week):**
+
+- Share library updates, new features, and release announcements
+- Post educational content: orbital mechanics explainers, code snippets, tutorials
+- Engage with the space tech and astrodynamics community
+- Cross-promote SpaceAware.io features that build on `openclaw`
+- Live-thread during space industry conferences and events
+
+**Content Creation:**
+
+- Tutorial series: "Build a Satellite Tracker with openclaw"
+- Code examples and Sandcastle demos
+- Benchmark reports (WASM performance, entity throughput)
+- Integration guides (CesiumJS, Three.js, custom renderers)
+
+### Relationship to OrbPro Ecosystem
+
+```text
+┌─────────────────────────────────────────────────────────┐
+│                    PROPRIETARY (OrbPro)                   │
+│                                                           │
+│  @orbpro/plugins      Encrypted shaders, premium sensors  │
+│  @orbpro/key-broker   License key distribution            │
+│  @cesium/wasm-engine  100K+ entity WASM backend           │
+│  OrbPro2-MCP          AI/NLP globe control                │
+│  OrbPro2-ModSim       608 entity types, 18 WASM plugins   │
+├─────────────────────────────────────────────────────────┤
+│                 OPEN SOURCE (openclaw)                     │
+│                 Maintained by Lobstronaut                   │
+│                                                           │
+│  SGP4 propagation · sensor geometries · access analysis   │
+│  conjunction workers · space catalog · WASM point viz     │
+│  CesiumJS runtime extensions · build-time integrations    │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Implementation Plan
+
+#### Phase 1: Setup (Week 1)
+
+- [ ] Create `@lobstronaut` GitHub account
+- [ ] Create `digitalarsenal/openclaw` repository
+- [ ] Extract and publish `@orbpro/core` as `@openclaw/astrodynamics` (Apache 2.0)
+- [ ] Set up Lobstronaut social media accounts (X, LinkedIn)
+- [ ] Configure GitHub Actions for CI/CD and automated releases
+
+#### Phase 2: Launch (Week 2-3)
+
+- [ ] Publish v1.0.0 to npm
+- [ ] Write launch blog post and social media announcements
+- [ ] Create initial tutorial: "Getting Started with openclaw"
+- [ ] Set up Sandcastle gallery with openclaw examples
+- [ ] Lobstronaut begins daily GitHub and social media activity
+
+#### Phase 3: Growth (Ongoing)
+
+- [ ] Build contributor community via "Good First Issue" pipeline
+- [ ] Monthly "State of openclaw" reports from Lobstronaut
+- [ ] Conference presence (Lobstronaut live-tweets, human presents)
+- [ ] Expand library scope: additional propagators, coordinate transforms, maneuver planning
+- [ ] Integration examples with Space Data Network and SpaceAware.io
 
 ---
 

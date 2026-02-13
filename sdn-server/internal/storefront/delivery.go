@@ -14,6 +14,21 @@ import (
 	ps "github.com/libp2p/go-libp2p-pubsub"
 )
 
+// isPrivateIP checks if an IP address is in a private/reserved range.
+func isPrivateIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+	privateRanges := []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+	for _, cidrStr := range privateRanges {
+		_, cidr, _ := net.ParseCIDR(cidrStr)
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 // validateWebhookURL validates that a webhook URL is safe to call (anti-SSRF).
 func validateWebhookURL(rawURL string) error {
 	parsed, err := url.Parse(rawURL)
@@ -21,7 +36,6 @@ func validateWebhookURL(rawURL string) error {
 		return fmt.Errorf("invalid webhook URL: %w", err)
 	}
 
-	// Reject non-HTTPS schemes (allow HTTP only for localhost in dev)
 	hostname := parsed.Hostname()
 	if parsed.Scheme != "https" {
 		if parsed.Scheme == "http" && (hostname == "localhost" || hostname == "127.0.0.1") {
@@ -31,7 +45,6 @@ func validateWebhookURL(rawURL string) error {
 		}
 	}
 
-	// Resolve the hostname and reject internal/private addresses
 	ips, err := net.LookupHost(hostname)
 	if err != nil {
 		return fmt.Errorf("failed to resolve webhook hostname %q: %w", hostname, err)
@@ -39,43 +52,36 @@ func validateWebhookURL(rawURL string) error {
 
 	for _, ipStr := range ips {
 		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			continue
-		}
-
-		// Reject loopback (127.0.0.0/8)
-		if ip.IsLoopback() {
-			return fmt.Errorf("webhook URL resolves to loopback address %s", ipStr)
-		}
-
-		// Reject unspecified (0.0.0.0)
-		if ip.IsUnspecified() {
-			return fmt.Errorf("webhook URL resolves to unspecified address %s", ipStr)
-		}
-
-		// Reject link-local (169.254.0.0/16)
-		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-			return fmt.Errorf("webhook URL resolves to link-local address %s", ipStr)
-		}
-
-		// Reject RFC 1918 private ranges
-		privateRanges := []struct {
-			network string
-			label   string
-		}{
-			{"10.0.0.0/8", "RFC1918 10.0.0.0/8"},
-			{"172.16.0.0/12", "RFC1918 172.16.0.0/12"},
-			{"192.168.0.0/16", "RFC1918 192.168.0.0/16"},
-		}
-		for _, pr := range privateRanges {
-			_, cidr, _ := net.ParseCIDR(pr.network)
-			if cidr.Contains(ip) {
-				return fmt.Errorf("webhook URL resolves to private address %s (%s)", ipStr, pr.label)
-			}
+		if ip != nil && isPrivateIP(ip) {
+			return fmt.Errorf("webhook URL resolves to private/reserved address %s", ipStr)
 		}
 	}
 
 	return nil
+}
+
+// ssrfSafeDialContext returns a DialContext function that re-validates resolved IPs
+// at connection time to prevent DNS rebinding attacks.
+func ssrfSafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid address %q: %w", addr, err)
+	}
+
+	ips, err := net.DefaultResolver.LookupHost(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("DNS resolution failed for %q: %w", host, err)
+	}
+
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip != nil && isPrivateIP(ip) {
+			return nil, fmt.Errorf("DNS rebinding detected: %q resolved to private address %s", host, ipStr)
+		}
+	}
+
+	var dialer net.Dialer
+	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0], port))
 }
 
 // DeliveryConfig configures data delivery
@@ -142,6 +148,9 @@ func NewDeliveryService(config DeliveryConfig, pubsub *ps.PubSub) *DeliveryServi
 		topics: make(map[string]*ps.Topic),
 		httpClient: &http.Client{
 			Timeout: config.WebhookTimeout,
+			Transport: &http.Transport{
+				DialContext: ssrfSafeDialContext,
+			},
 		},
 	}
 }
