@@ -6,7 +6,24 @@
 
 export { SDNNode } from './node';
 export type { SDNConfig, SDNNodeEvents } from './node';
-export { LEGACY_ID_EXCHANGE_PROTOCOL, IPFS_BOOTSTRAP_PEERS } from './node';
+export { LEGACY_ID_EXCHANGE_PROTOCOL, LICENSE_PROTOCOL_ID, IPFS_BOOTSTRAP_PEERS } from './node';
+export {
+  requestLicenseGrantViaRelay,
+  derivePeerIdFromEd25519Seed,
+  parseLicenseResponse,
+  LicenseProtocolError,
+} from './license';
+export type {
+  LicenseTransport,
+  LicenseChallengeRequest,
+  LicenseChallengeResponse,
+  LicenseProofRequest,
+  LicenseEntitlement,
+  LicenseGrantRequestOptions,
+  LicenseGrantResponse,
+  LicenseGrantResult,
+  LicenseErrorResponse,
+} from './license';
 export { SDNStorage } from './storage';
 export type { StoredRecord, QueryFilter } from './storage';
 export { preloadFlatSQLWASI, getFlatSQLWASIPath } from './flatsql';
@@ -35,6 +52,7 @@ export {
   // SDN identity
   deriveIdentity,
   identityFromMnemonic,
+  deriveXPub,
 
   // Signing
   sign,

@@ -18,6 +18,19 @@ type Config struct {
 	Peers    PeersConfig    `yaml:"peers"`
 	Admin    AdminConfig    `yaml:"admin"`
 	Setup    SetupConfig    `yaml:"setup"`
+	Users    []UserEntry    `yaml:"users"`
+}
+
+// UserEntry maps an HD wallet xpub to a trust level for authentication.
+type UserEntry struct {
+	// XPub is the BIP-32 extended public key at m/44'/9999'/account'.
+	XPub string `yaml:"xpub"`
+
+	// TrustLevel: "untrusted", "limited", "standard", "trusted", "admin".
+	TrustLevel string `yaml:"trust_level"`
+
+	// Name is an optional human-readable label.
+	Name string `yaml:"name"`
 }
 
 // NetworkConfig contains network-related settings.
@@ -112,6 +125,10 @@ type AdminConfig struct {
 	// HomepageFile is an optional single-file HTML app served at "/" and "/index.html".
 	// If empty, the built-in default landing page is served.
 	HomepageFile string `yaml:"homepage_file"`
+
+	// WalletUIPath is the filesystem path to the hd-wallet-ui dist directory.
+	// If empty, the login page loads wallet UI from CDN (unpkg.com/hd-wallet-ui).
+	WalletUIPath string `yaml:"wallet_ui_path"`
 }
 
 // SetupConfig contains first-time setup settings.
@@ -180,7 +197,9 @@ func Default() *Config {
 			TLSCertFile:   "",
 			TLSKeyFile:    "",
 			HomepageFile:  "",
+			WalletUIPath:  "",
 		},
+		Users: []UserEntry{},
 		Setup: SetupConfig{
 			TokenExpiry: "10m",
 			DataPath:    "", // Use storage path by default

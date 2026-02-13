@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,6 +24,32 @@ type Plugin interface {
 	Start(ctx context.Context, runtime RuntimeContext) error
 	RegisterRoutes(mux *http.ServeMux)
 	Close() error
+}
+
+// UIDescriptor describes a plugin's web UI. Plugins that provide a web
+// interface should implement the UIProvider interface.
+type UIDescriptor struct {
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	Icon        string `json:"icon,omitempty"`        // emoji or single character
+	Color       string `json:"color,omitempty"`        // CSS background for icon badge
+	TextColor   string `json:"textColor,omitempty"`    // CSS text color for icon badge
+	URL         string `json:"url,omitempty"`          // path to plugin UI page (served by plugin)
+}
+
+// UIProvider is an optional interface that plugins can implement to declare
+// a web UI that will be shown on the Plugins page in the SDN web client.
+type UIProvider interface {
+	UIDescriptor() UIDescriptor
+}
+
+// PluginManifestEntry is the JSON representation of a plugin in the manifest.
+type PluginManifestEntry struct {
+	ID          string        `json:"id"`
+	Version     string        `json:"version,omitempty"`
+	Status      string        `json:"status"`
+	Description string        `json:"description,omitempty"`
+	UI          *UIDescriptor `json:"ui,omitempty"`
 }
 
 // Manager coordinates plugin lifecycle and route registration.
@@ -93,6 +120,47 @@ func (m *Manager) Get(id string) Plugin {
 		}
 	}
 	return nil
+}
+
+// Manifest returns a JSON-serializable list of all registered plugins
+// with their status and optional UI descriptors.
+func (m *Manager) Manifest() []PluginManifestEntry {
+	if m == nil {
+		return nil
+	}
+	entries := make([]PluginManifestEntry, 0, len(m.plugins))
+	for _, p := range m.plugins {
+		entry := PluginManifestEntry{
+			ID:     p.ID(),
+			Status: "running",
+		}
+		if vp, ok := p.(interface{ Version() string }); ok {
+			entry.Version = vp.Version()
+		}
+		if dp, ok := p.(interface{ Description() string }); ok {
+			entry.Description = dp.Description()
+		}
+		if up, ok := p.(UIProvider); ok {
+			desc := up.UIDescriptor()
+			entry.UI = &desc
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// HandleManifest returns an http.HandlerFunc that serves the plugin manifest
+// as JSON at GET /api/v1/plugins/manifest.
+func (m *Manager) HandleManifest() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		json.NewEncoder(w).Encode(m.Manifest())
+	}
 }
 
 // Close shuts down all plugins in reverse registration order.

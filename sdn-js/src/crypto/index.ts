@@ -44,6 +44,7 @@ export {
   // SDN identity
   deriveIdentity,
   identityFromMnemonic,
+  deriveXPub,
 
   // Signing
   sign,

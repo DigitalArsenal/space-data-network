@@ -1,4 +1,4 @@
-import { ORBPRO_BASE_URL, ORBPRO_ESM_MODULE_URL } from "./embeddedOrbPro.js";
+import { ORBPRO_BASE_URL, ORBPRO_ESM_MODULE_URL, ORBPRO_KEY_BROKER_URL } from "./embeddedOrbPro.js";
 
 const runtime = {
   cesium: null,
@@ -59,6 +59,11 @@ export async function loadOrbPro(containerId) {
 
   const moduleUrl = resolveAssetUrl(ORBPRO_ESM_MODULE_URL);
   window.CESIUM_BASE_URL = resolveAssetUrl(ORBPRO_BASE_URL);
+
+  // Set key broker URL before OrbPro import so protection runtime can find it.
+  if (ORBPRO_KEY_BROKER_URL && !ORBPRO_KEY_BROKER_URL.startsWith("__")) {
+    globalThis.__ORBPRO_KEY_BROKER_URL__ = resolveAssetUrl(ORBPRO_KEY_BROKER_URL);
+  }
 
   const Cesium = await import(moduleUrl);
   runtime.cesium = Cesium;
