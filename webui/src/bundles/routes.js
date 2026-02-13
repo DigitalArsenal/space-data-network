@@ -10,8 +10,10 @@ import BlankPage from '../blank/BlankPage.js'
 import ExplorePageRenderer from '../explore/explore-page-renderer.jsx'
 import DiagnosticsPage from '../diagnostics/loadable-diagnostics-page'
 import SchemasPage from '../schemas/LoadableSchemasPage.js'
+import PluginsPage from '../plugins/LoadablePluginsPage.js'
 
 export default createRouteBundle({
+  '/plugins*': PluginsPage,
   '/schemas': SchemasPage,
   '/explore': ExplorePageRenderer,
   '/explore*': ExplorePageRenderer,

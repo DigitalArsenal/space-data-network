@@ -19,6 +19,7 @@ import {
   KeyPair,
   DerivedIdentity,
   LanguageCode,
+  SDNDerivation,
   buildSigningPath,
   buildEncryptionPath,
 } from './types';
@@ -235,6 +236,39 @@ export async function deriveIdentity(
     signingKeyPath: signingPath,
     encryptionKeyPath: encryptionPath,
   };
+}
+
+/**
+ * Derive a deterministic account xpub from the seed.
+ *
+ * Path: m/44'/9999'/{account}'
+ */
+export async function deriveXPub(
+  seed: Uint8Array,
+  account: number = 0,
+): Promise<string> {
+  const module = getModule();
+
+  if (seed.length !== 64) {
+    throw new Error('Seed must be 64 bytes');
+  }
+
+  const accountPath = `m/${SDNDerivation.BIP44_PURPOSE}'/${SDNDerivation.COIN_TYPE}'/${account}'`;
+
+  let masterKey: ReturnType<typeof module.hdkey.fromSeed> | null = null;
+  let accountKey: ReturnType<typeof module.hdkey.fromSeed> | null = null;
+  let neuteredKey: ReturnType<typeof module.hdkey.fromSeed> | null = null;
+
+  try {
+    masterKey = module.hdkey.fromSeed(seed, Curve.SECP256K1);
+    accountKey = masterKey.derivePath(accountPath);
+    neuteredKey = accountKey.neutered();
+    return neuteredKey.toXpub();
+  } finally {
+    neuteredKey?.wipe();
+    accountKey?.wipe();
+    masterKey?.wipe();
+  }
 }
 
 /**

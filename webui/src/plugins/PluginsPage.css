@@ -1,0 +1,151 @@
+.plugins-page {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.plugins-header {
+  margin-bottom: 24px;
+}
+
+.plugins-header h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.plugins-header-sub {
+  color: var(--gray);
+  font-size: 0.95rem;
+}
+
+.plugins-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.plugin-card {
+  border: 1px solid var(--color-snow-muted);
+  border-radius: 8px;
+  padding: 20px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  display: flex;
+  flex-direction: column;
+}
+
+.plugin-card:hover {
+  border-color: var(--color-aqua);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.plugin-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.plugin-card-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 1.25rem;
+}
+
+.plugin-card-title {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.plugin-card-version {
+  font-size: 0.75rem;
+  color: var(--gray);
+  margin-left: 8px;
+}
+
+.plugin-card-description {
+  color: var(--gray);
+  font-size: 0.875rem;
+  flex: 1;
+  margin-bottom: 12px;
+}
+
+.plugin-card-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.plugin-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.plugin-status-dot.running {
+  background: #34d399;
+}
+
+.plugin-status-dot.stopped {
+  background: #94a3b8;
+}
+
+.plugin-status-dot.error {
+  background: #f87171;
+}
+
+/* Plugin detail / iframe view */
+.plugin-detail {
+  margin-top: 16px;
+}
+
+.plugin-detail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-aqua);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  margin-bottom: 16px;
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+.plugin-detail-back:hover {
+  text-decoration: underline;
+}
+
+.plugin-ui-frame {
+  width: 100%;
+  border: 1px solid var(--color-snow-muted);
+  border-radius: 8px;
+  min-height: 500px;
+  background: white;
+}
+
+.plugins-empty {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--gray);
+}
+
+.plugins-empty h3 {
+  font-size: 1.1rem;
+  margin-bottom: 8px;
+}
+
+.plugins-loading {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--gray);
+}

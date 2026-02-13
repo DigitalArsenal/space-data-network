@@ -302,6 +302,15 @@ const adminTemplate = `<!DOCTYPE html>
         }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
+        .node-info-grid {
+            display: grid;
+            grid-template-columns: 200px 1fr;
+            gap: 0;
+        }
+        .node-info-grid > div {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
     </style>
 </head>
 <body>
@@ -329,6 +338,8 @@ const adminTemplate = `<!DOCTYPE html>
             <button class="tab" data-tab="groups">Groups</button>
             <button class="tab" data-tab="blocklist">Blocklist</button>
             <button class="tab" data-tab="settings">Settings</button>
+            <button class="tab" data-tab="users">Users</button>
+            <button class="tab" data-tab="node">Node</button>
         </div>
 
         <div class="tab-content active" id="peers-tab">
@@ -434,6 +445,39 @@ const adminTemplate = `<!DOCTYPE html>
                 </div>
             </div>
         </div>
+
+        <div class="tab-content" id="users-tab">
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Authenticated Users</h2>
+                    <button class="btn btn-primary" onclick="showAddUserModal()">Add User</button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>XPub</th>
+                            <th>Name</th>
+                            <th>Trust Level</th>
+                            <th>Source</th>
+                            <th>Last Login</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTable">
+                        <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="tab-content" id="node-tab">
+            <div class="panel">
+                <h2>Node Identity</h2>
+                <div id="nodeInfo" style="display:grid; grid-template-columns:200px 1fr; gap:12px; align-items:start;">
+                    <div class="empty-state" style="grid-column:1/-1;">Loading node info...</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Add Peer Modal -->
@@ -533,6 +577,39 @@ const adminTemplate = `<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- Add User Modal -->
+    <div class="modal" id="addUserModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add User</h2>
+                <button class="modal-close" onclick="closeModal('addUserModal')">&times;</button>
+            </div>
+            <form onsubmit="addUser(event)">
+                <div class="form-group">
+                    <label>XPub *</label>
+                    <input type="text" id="newUserXpub" placeholder="xpub6..." required>
+                </div>
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" id="newUserName" placeholder="Display name">
+                </div>
+                <div class="form-group">
+                    <label>Trust Level</label>
+                    <select id="newUserTrust">
+                        <option value="standard">Standard</option>
+                        <option value="limited">Limited</option>
+                        <option value="trusted">Trusted</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div class="actions">
+                    <button type="submit" class="btn btn-primary">Add User</button>
+                    <button type="button" class="btn" onclick="closeModal('addUserModal')">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         const API_BASE = '/api';
         let allPeers = [];
@@ -551,6 +628,7 @@ const adminTemplate = `<!DOCTYPE html>
         function showAddPeerModal() { document.getElementById('addPeerModal').classList.add('active'); }
         function showAddGroupModal() { document.getElementById('addGroupModal').classList.add('active'); }
         function showBlockPeerModal() { document.getElementById('blockPeerModal').classList.add('active'); }
+        function showAddUserModal() { document.getElementById('addUserModal').classList.add('active'); }
         function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 
         // API calls
@@ -844,11 +922,153 @@ const adminTemplate = `<!DOCTYPE html>
             reader.readAsText(file);
         }
 
+        // Users management
+        async function fetchUsers() {
+            try {
+                const res = await fetch('/api/auth/users');
+                if (!res.ok) {
+                    document.getElementById('usersTable').innerHTML = '<tr><td colspan="6" class="empty-state">Auth not enabled or not authorized</td></tr>';
+                    return;
+                }
+                const users = await res.json();
+                renderUsers(users);
+            } catch (e) {
+                document.getElementById('usersTable').innerHTML = '<tr><td colspan="6" class="empty-state">Could not load users</td></tr>';
+            }
+        }
+
+        function renderUsers(users) {
+            const tbody = document.getElementById('usersTable');
+            if (!users || users.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No users configured</td></tr>';
+                return;
+            }
+            tbody.innerHTML = users.map(u => {
+                const xpubShort = u.xpub.length > 20 ? u.xpub.substring(0, 12) + '...' + u.xpub.slice(-6) : u.xpub;
+                const trustName = ['untrusted','limited','standard','trusted','admin'][u.trust_level] || 'unknown';
+                const trustClass = 'trust-' + trustName;
+                const lastLogin = u.last_login ? new Date(u.last_login).toLocaleString() : 'Never';
+                const sourceBadge = u.source === 'config'
+                    ? '<span style="background:var(--bg-tertiary);border:1px solid var(--border-color);padding:2px 8px;border-radius:10px;font-size:11px;">config</span>'
+                    : '<span style="background:var(--accent-blue);color:white;padding:2px 8px;border-radius:10px;font-size:11px;">database</span>';
+                const actions = u.source === 'database'
+                    ? '<button class="btn btn-small" onclick="editUserTrust(\'' + u.xpub + '\')">Edit</button> <button class="btn btn-small btn-danger" onclick="removeUser(\'' + u.xpub + '\')">Remove</button>'
+                    : '<button class="btn btn-small" onclick="editUserTrust(\'' + u.xpub + '\')">Override</button>';
+                return '<tr>' +
+                    '<td class="peer-id" title="' + u.xpub + '">' + xpubShort + '</td>' +
+                    '<td>' + (u.name || '-') + '</td>' +
+                    '<td><span class="trust-badge ' + trustClass + '">' + trustName + '</span></td>' +
+                    '<td>' + sourceBadge + '</td>' +
+                    '<td>' + lastLogin + '</td>' +
+                    '<td>' + actions + '</td>' +
+                    '</tr>';
+            }).join('');
+        }
+
+        async function addUser(e) {
+            e.preventDefault();
+            const user = {
+                xpub: document.getElementById('newUserXpub').value,
+                name: document.getElementById('newUserName').value,
+                trust_level: document.getElementById('newUserTrust').value
+            };
+            try {
+                const res = await fetch('/api/auth/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(user)
+                });
+                if (res.ok) {
+                    closeModal('addUserModal');
+                    document.getElementById('newUserXpub').value = '';
+                    document.getElementById('newUserName').value = '';
+                    fetchUsers();
+                } else {
+                    alert('Error: ' + await res.text());
+                }
+            } catch (e) {
+                alert('Error adding user: ' + e);
+            }
+        }
+
+        async function editUserTrust(xpub) {
+            const newTrust = prompt('Enter new trust level (untrusted, limited, standard, trusted, admin):');
+            if (!newTrust) return;
+            try {
+                const res = await fetch('/api/auth/users/' + encodeURIComponent(xpub), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ trust_level: newTrust })
+                });
+                if (res.ok) {
+                    fetchUsers();
+                } else {
+                    alert('Error: ' + await res.text());
+                }
+            } catch (e) {
+                alert('Error updating user: ' + e);
+            }
+        }
+
+        async function removeUser(xpub) {
+            if (!confirm('Remove this user?')) return;
+            try {
+                const res = await fetch('/api/auth/users/' + encodeURIComponent(xpub), { method: 'DELETE' });
+                if (res.ok) {
+                    fetchUsers();
+                } else {
+                    alert('Error: ' + await res.text());
+                }
+            } catch (e) {
+                alert('Error removing user: ' + e);
+            }
+        }
+
+        // Node info
+        async function fetchNodeInfo() {
+            try {
+                const res = await fetch('/api/node/info');
+                if (!res.ok) {
+                    document.getElementById('nodeInfo').innerHTML = '<div class="empty-state" style="grid-column:1/-1;">Could not load node info</div>';
+                    return;
+                }
+                const info = await res.json();
+                renderNodeInfo(info);
+            } catch (e) {
+                document.getElementById('nodeInfo').innerHTML = '<div class="empty-state" style="grid-column:1/-1;">Could not load node info</div>';
+            }
+        }
+
+        function renderNodeInfo(info) {
+            const el = document.getElementById('nodeInfo');
+            const row = (label, value, mono) => {
+                const style = mono ? 'font-family:SFMono-Regular,Consolas,monospace;font-size:12px;word-break:break-all;color:var(--accent-blue);' : '';
+                return '<div style="color:var(--text-secondary);font-weight:500;padding:8px 0;">' + label + '</div>' +
+                       '<div style="padding:8px 0;' + style + '">' + value + '</div>';
+            };
+            let html = '';
+            html += row('Peer ID', info.peer_id || '-', true);
+            html += row('Mode', info.mode || '-', false);
+            html += row('Version', info.version || '-', false);
+            html += row('Signing Key', info.signing_pubkey_hex || '-', true);
+            html += row('Signing Path', info.signing_key_path || '-', true);
+            html += row('Encryption Key', info.encryption_pubkey_hex || '-', true);
+            html += row('Encryption Path', info.encryption_key_path || '-', true);
+            if (info.listen_addresses && info.listen_addresses.length > 0) {
+                html += row('Listen Addresses', info.listen_addresses.map(a => '<div style="font-family:SFMono-Regular,Consolas,monospace;font-size:12px;color:var(--accent-blue);padding:2px 0;">' + a + '</div>').join(''), false);
+            } else {
+                html += row('Listen Addresses', 'None', false);
+            }
+            el.innerHTML = html;
+        }
+
         // Initial load
         fetchPeers();
         fetchGroups();
         fetchBlocklist();
         fetchSettings();
+        fetchUsers();
+        fetchNodeInfo();
 
         // Refresh every 30 seconds
         setInterval(() => {

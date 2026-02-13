@@ -40,6 +40,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 	"github.com/spacedatanetwork/sdn-server/plugins/licenseplugin"
+	"github.com/spacedatanetwork/sdn-server/plugins/wasmlicenseplugin"
 )
 
 var log = logging.Logger("sdn-node")
@@ -66,6 +67,7 @@ type Node struct {
 	protocol  *protocol.SDSExchangeHandler
 	plugins   *plugins.Manager
 	license   *licenseplugin.Plugin
+	keyBroker *wasmlicenseplugin.Plugin
 	config    *config.Config
 
 	// Trusted peer management
@@ -288,20 +290,30 @@ func (n *Node) init() error {
 	n.license = licenseplugin.New()
 	if err := n.plugins.Register(n.license); err != nil {
 		log.Warnf("Failed to register plugin %q: %v", licenseplugin.ID, err)
-	} else {
-		basePath := filepath.Dir(n.config.Storage.Path)
-		pluginCtx := plugins.RuntimeContext{
-			Host:         n.host,
-			BaseDataPath: basePath,
-			PeerID:       n.host.ID().String(),
-			Mode:         n.config.Mode,
+	}
+
+	// Register WASI-based OrbPro key broker plugin.
+	if wasmPath := n.findKeyBrokerWasmPath(); wasmPath != "" {
+		n.keyBroker = wasmlicenseplugin.New(wasmPath)
+		if err := n.plugins.Register(n.keyBroker); err != nil {
+			log.Warnf("Failed to register plugin %q: %v", wasmlicenseplugin.ID, err)
+		} else {
+			log.Infof("OrbPro key broker WASM loaded from %s", wasmPath)
 		}
-		if err := n.plugins.StartAll(n.ctx, pluginCtx); err != nil {
-			log.Warnf("Plugin startup completed with errors: %v", err)
-		}
-		if n.license.Service() != nil {
-			log.Infof("Plugin enabled: %s (%s)", n.license.ID(), license.ProtocolID)
-		}
+	}
+
+	basePath := filepath.Dir(n.config.Storage.Path)
+	pluginCtx := plugins.RuntimeContext{
+		Host:         n.host,
+		BaseDataPath: basePath,
+		PeerID:       n.host.ID().String(),
+		Mode:         n.config.Mode,
+	}
+	if err := n.plugins.StartAll(n.ctx, pluginCtx); err != nil {
+		log.Warnf("Plugin startup completed with errors: %v", err)
+	}
+	if n.license.Service() != nil {
+		log.Infof("Plugin enabled: %s (%s)", n.license.ID(), license.ProtocolID)
 	}
 
 	return nil
@@ -424,6 +436,25 @@ func (n *Node) findHDWalletWasmPath() string {
 		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
 		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
 		"/usr/local/lib/hd-wallet.wasm",
+	}
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+func (n *Node) findKeyBrokerWasmPath() string {
+	if envPath := os.Getenv("ORBPRO_KEY_BROKER_WASM_PATH"); envPath != "" {
+		if _, err := os.Stat(envPath); err == nil {
+			return envPath
+		}
+	}
+	paths := []string{
+		"../../packages/sdn-license-plugin/build-wasi/sdn-license-plugin.wasm",
+		"../packages/sdn-license-plugin/build-wasi/sdn-license-plugin.wasm",
+		"/usr/local/lib/sdn-license-plugin.wasm",
 	}
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
@@ -745,6 +776,11 @@ func (n *Node) LicenseService() *license.Service {
 		return nil
 	}
 	return n.license.Service()
+}
+
+// Identity returns the node's HD wallet identity, or nil if using a random key.
+func (n *Node) Identity() *wasm.DerivedIdentity {
+	return n.identity
 }
 
 // TokenVerifier returns the capability-token verifier from the license plugin.

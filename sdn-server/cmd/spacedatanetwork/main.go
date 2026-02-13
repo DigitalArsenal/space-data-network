@@ -5,6 +5,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,11 +14,14 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	logging "github.com/ipfs/go-log/v2"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/spf13/cobra"
 
 	"github.com/spacedatanetwork/sdn-server/internal/api"
+	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -120,6 +125,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	// Start admin server if enabled
 	var adminServer *http.Server
+	var authHandler *auth.Handler
 	var storefrontSvc *storefront.Service
 	var storefrontStore *storefront.Store
 	var storefrontDelivery *storefront.DeliveryService
@@ -144,6 +150,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				adminScheme = "https"
 			}
 			adminMux := http.NewServeMux()
+
+			// Plugin routes
 			if n.PluginManager() != nil {
 				n.PluginManager().RegisterRoutes(adminMux)
 			}
@@ -153,6 +161,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Infof("License entitlement admin API available at %s://%s/api/v1/license/entitlements", adminScheme, adminAddr)
 				log.Infof("Plugin manifest API available at %s://%s/api/v1/plugins/manifest", adminScheme, adminAddr)
 			}
+
+			// Data API routes
 			dataAPI := api.NewDataQueryHandler(n.Store(), tokenVerifier)
 			dataAPI.RegisterRoutes(adminMux)
 
@@ -183,6 +193,43 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 			}
 
+			// Node info API endpoint
+			adminMux.HandleFunc("/api/node/info", handleNodeInfo(n))
+
+			// HD wallet authentication
+			if cfg.Admin.RequireAuth {
+				authDBPath := filepath.Join(cfg.Storage.Path, "auth.db")
+				authDB, err := sql.Open("sqlite3", authDBPath+"?_journal_mode=WAL")
+				if err != nil {
+					log.Warnf("Failed to open auth database: %v", err)
+				} else {
+					userStore, err := auth.NewUserStore(authDBPath, cfg.Users)
+					if err != nil {
+						log.Warnf("Failed to create user store: %v", err)
+					} else {
+						sessionStore, err := auth.NewSessionStore(authDB)
+						if err != nil {
+							log.Warnf("Failed to create session store: %v", err)
+						} else {
+							sessionTTL, _ := time.ParseDuration(cfg.Admin.SessionExpiry)
+							if sessionTTL == 0 {
+								sessionTTL = 24 * time.Hour
+							}
+							authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, cfg.Admin.WalletUIPath)
+							authHandler.RegisterRoutes(adminMux)
+							log.Infof("HD wallet authentication enabled at %s://%s/login", adminScheme, adminAddr)
+
+							// Serve wallet-ui static files if configured
+							if walletUIPath := strings.TrimSpace(cfg.Admin.WalletUIPath); walletUIPath != "" {
+								adminMux.Handle("/wallet-ui/", http.StripPrefix("/wallet-ui/", http.FileServer(http.Dir(walletUIPath))))
+								log.Infof("Wallet UI served at %s://%s/wallet-ui/ from %s", adminScheme, adminAddr, walletUIPath)
+							}
+						}
+					}
+				}
+			}
+
+			// Static build assets (OrbPro, Cesium, etc.)
 			landingHTML, err := loadLandingPage(cfg.Admin.HomepageFile)
 			if err != nil {
 				log.Warnf("Falling back to built-in landing page: %v", err)
@@ -192,24 +239,35 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
 				log.Infof("Static build assets served at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
 			}
-			if cfg.Admin.RequireAuth {
-				adminMux.HandleFunc("/admin", lockedAdminHandler)
-				adminMux.HandleFunc("/admin/", lockedAdminHandler)
+
+			// Admin panel — gated by auth if RequireAuth is set
+			if cfg.Admin.RequireAuth && authHandler != nil {
+				adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
+				adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
+			} else {
+				// No auth: admin panel open (local development mode)
 			}
 
+			// Landing page (catch-all at root)
 			adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
 
 			adminServer = &http.Server{
-				Addr:    adminAddr,
-				Handler: adminMux,
+				Addr: adminAddr,
+				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+					w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+					w.Header().Set("X-Content-Type-Options", "nosniff")
+					adminMux.ServeHTTP(w, r)
+				}),
 			}
 			go func() {
-				if cfg.Admin.RequireAuth {
-					log.Infof("Admin interface is hidden at /admin because admin.require_auth=true (auth UI enforcement pending)")
+				if cfg.Admin.RequireAuth && authHandler != nil {
+					log.Infof("Admin interface at %s://%s/admin (requires HD wallet login at /login)", adminScheme, adminAddr)
 				} else {
 					log.Infof("Admin interface available at %s://%s/admin", adminScheme, adminAddr)
 				}
 				log.Infof("Peer API available at %s://%s/api/peers", adminScheme, adminAddr)
+				log.Infof("Node info API available at %s://%s/api/node/info", adminScheme, adminAddr)
 				log.Infof("Public data API available at %s://%s/api/v1/data/omm", adminScheme, adminAddr)
 				var err error
 				if adminTLS {
@@ -294,8 +352,49 @@ func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
 	})
 }
 
-func lockedAdminHandler(w http.ResponseWriter, r *http.Request) {
-	http.NotFound(w, r)
+// handleNodeInfo returns an HTTP handler that serves the node's public identity info.
+func handleNodeInfo(n *node.Node) http.HandlerFunc {
+	type nodeInfoResponse struct {
+		PeerID            string   `json:"peer_id"`
+		ListenAddresses   []string `json:"listen_addresses"`
+		SigningPubKeyHex  string   `json:"signing_pubkey_hex,omitempty"`
+		EncryptionPubHex  string   `json:"encryption_pubkey_hex,omitempty"`
+		SigningKeyPath    string   `json:"signing_key_path,omitempty"`
+		EncryptionKeyPath string   `json:"encryption_key_path,omitempty"`
+		Mode              string   `json:"mode"`
+		Version           string   `json:"version"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		addrs := n.ListenAddrs()
+		addrStrings := make([]string, len(addrs))
+		for i, a := range addrs {
+			addrStrings[i] = a.String()
+		}
+
+		info := nodeInfoResponse{
+			PeerID:          n.PeerID().String(),
+			ListenAddresses: addrStrings,
+			Mode:            n.Config().Mode,
+			Version:         "spacedatanetwork/1.0.0",
+		}
+
+		if identity := n.Identity(); identity != nil {
+			idInfo := identity.Info()
+			info.SigningPubKeyHex = idInfo.SigningPubKeyHex
+			info.EncryptionPubHex = idInfo.EncryptionPubHex
+			info.SigningKeyPath = idInfo.SigningKeyPath
+			info.EncryptionKeyPath = idInfo.EncryptionKeyPath
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(info)
+	}
 }
 
 const defaultLandingPageHTML = `<!doctype html>

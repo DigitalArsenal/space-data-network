@@ -19,9 +19,16 @@ import { SDNStorage, StoredRecord } from './storage';
 import { getBootstrapRelays } from './edge-discovery';
 import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
 import { sign, initHDWallet } from './crypto/index';
+import {
+  requestLicenseGrantViaRelay,
+  LICENSE_PROTOCOL_ID,
+  type LicenseGrantRequestOptions,
+  type LicenseGrantResult,
+} from './license';
 
 const TOPIC_PREFIX = '/spacedatanetwork/sds/';
 export const LEGACY_ID_EXCHANGE_PROTOCOL = '/space-data-network/id-exchange/1.0.0';
+export { LICENSE_PROTOCOL_ID };
 
 // Public IPFS bootstrap peers + SDN relay can be combined for browser interop.
 export const IPFS_BOOTSTRAP_PEERS = [
@@ -348,12 +355,11 @@ export class SDNNode {
         yield payloadBytes;
       })());
 
-      const iterator = stream.source[Symbol.asyncIterator]();
-      const first = await iterator.next();
-      if (first.done) {
-        return new Uint8Array(0);
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of stream.source) {
+        chunks.push(chunkToBytes(chunk as StreamChunk));
       }
-      return chunkToBytes(first.value as StreamChunk);
+      return concatBytes(chunks);
     } finally {
       try {
         await stream.close();
@@ -374,6 +380,13 @@ export class SDNNode {
       message,
     );
     return new TextDecoder().decode(response);
+  }
+
+  /**
+   * Request a capability token from the license service over libp2p relay.
+   */
+  async requestLicenseGrant(options: LicenseGrantRequestOptions): Promise<LicenseGrantResult> {
+    return requestLicenseGrantViaRelay(this, options);
   }
 
   /**
@@ -426,4 +439,26 @@ function chunkToBytes(chunk: StreamChunk): Uint8Array {
     return chunk;
   }
   return chunk.subarray();
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  if (chunks.length === 0) {
+    return new Uint8Array(0);
+  }
+  if (chunks.length === 1) {
+    return chunks[0];
+  }
+
+  let totalLength = 0;
+  for (const chunk of chunks) {
+    totalLength += chunk.length;
+  }
+
+  const out = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
 }

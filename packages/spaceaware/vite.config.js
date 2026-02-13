@@ -14,6 +14,7 @@ const orbProLocalPath =
   path.resolve(repoRoot, "..", "OrbPro", "Build", "OrbPro", "OrbPro.esm.js");
 const orbProModuleUrl = process.env.ORBPRO_ESM_URL || "Build/OrbPro/OrbPro.esm.js";
 const orbProBaseUrl = process.env.ORBPRO_BASE_URL || "Build/CesiumUnminified/";
+const orbProKeyBrokerUrl = process.env.ORBPRO_KEY_BROKER_URL || "/orbpro-key-broker";
 const orbProLocalExists = fs.existsSync(orbProLocalPath);
 if (!orbProLocalExists) {
   console.warn(
@@ -28,6 +29,7 @@ export default defineConfig({
   define: {
     __SPACEAWARE_ORBPRO_MODULE_URL__: JSON.stringify(orbProModuleUrl),
     __SPACEAWARE_ORBPRO_BASE_URL__: JSON.stringify(orbProBaseUrl),
+    __SPACEAWARE_ORBPRO_KEY_BROKER_URL__: JSON.stringify(orbProKeyBrokerUrl),
     __SPACEAWARE_BUILD_STAMP__: JSON.stringify(buildStamp),
   },
   build: {
