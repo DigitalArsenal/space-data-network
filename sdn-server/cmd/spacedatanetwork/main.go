@@ -9,8 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -113,6 +116,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			cfg.Admin.WalletUIPath = envPath
 		}
 	}
+	if cfg.Admin.WebuiPath == "" {
+		if envPath := os.Getenv("SDN_WEBUI_PATH"); envPath != "" {
+			cfg.Admin.WebuiPath = envPath
+		}
+	}
 
 	// Create and start the node
 	n, err := node.New(ctx, cfg)
@@ -174,6 +182,39 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			dataAPI := api.NewDataQueryHandler(n.Store(), tokenVerifier)
 			dataAPI.RegisterRoutes(adminMux)
 
+			// Optional: proxy Kubo RPC API so the React WebUI can talk to IPFS via the
+			// authenticated SDN admin server.
+			if rawIPFSURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL); rawIPFSURL != "" {
+				target, err := url.Parse(rawIPFSURL)
+				if err != nil || target.Scheme == "" || target.Host == "" {
+					log.Warnf("Invalid admin.ipfs_api_url %q: expected base URL like http://127.0.0.1:5001", rawIPFSURL)
+				} else {
+					if strings.TrimSpace(target.Path) != "" && target.Path != "/" {
+						log.Warnf("admin.ipfs_api_url should not include a path (got %q); ignoring path", target.Path)
+					}
+					target.Path = ""
+					proxy := httputil.NewSingleHostReverseProxy(target)
+					origDirector := proxy.Director
+					proxy.Director = func(req *http.Request) {
+						origDirector(req)
+						// Kubo's RPC API will return 403 when it sees an Origin that isn't
+						// explicitly allowed. Since the browser talks to SDN (same-origin),
+						// strip Origin/Referer when proxying to the upstream Kubo daemon.
+						req.Header.Del("Origin")
+						req.Header.Del("Referer")
+					}
+					proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+						http.Error(w, "upstream IPFS API unavailable", http.StatusBadGateway)
+					}
+					adminMux.Handle("/api/v0/", proxy)
+					adminMux.Handle("/api/v0", http.RedirectHandler("/api/v0/", http.StatusPermanentRedirect))
+					log.Infof("Proxying /api/v0/* to %s", rawIPFSURL)
+				}
+			}
+
+			// Trusted peer registry management (admin UI React app consumes these endpoints).
+			adminMux.Handle("/api/", peers.NewAPIHandler(n.PeerRegistry(), n.PeerGater()))
+
 			// Storefront API (listings, purchases, Stripe checkout/webhooks).
 			// Uses FlatSQL for content-addressed storage of STF/ACL/PUR/REV records.
 			if n.Store() != nil {
@@ -188,7 +229,26 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					} else {
 						sfCatalog := storefront.NewCatalog(sfStore, nil)
 						sfDelivery := storefront.NewDeliveryService(storefront.DefaultDeliveryConfig(), nil)
-						sfPayment := storefront.NewPaymentProcessor(sfStore, n.PeerID().String())
+						var chainVerifiers []storefront.ChainVerifier
+						if cfg.Blockchain.Ethereum.RPCURL != "" {
+							chainVerifiers = append(chainVerifiers, storefront.NewEthereumVerifier(storefront.ChainConfig{
+								RPCURL:                cfg.Blockchain.Ethereum.RPCURL,
+								RequiredConfirmations: cfg.Blockchain.Ethereum.RequiredConfirmations,
+							}))
+						}
+						if cfg.Blockchain.Solana.RPCURL != "" {
+							chainVerifiers = append(chainVerifiers, storefront.NewSolanaVerifier(storefront.ChainConfig{
+								RPCURL:                cfg.Blockchain.Solana.RPCURL,
+								RequiredConfirmations: cfg.Blockchain.Solana.RequiredConfirmations,
+							}))
+						}
+						if cfg.Blockchain.Bitcoin.RPCURL != "" {
+							chainVerifiers = append(chainVerifiers, storefront.NewBitcoinVerifier(storefront.ChainConfig{
+								RPCURL:                cfg.Blockchain.Bitcoin.RPCURL,
+								RequiredConfirmations: cfg.Blockchain.Bitcoin.RequiredConfirmations,
+							}))
+						}
+						sfPayment := storefront.NewPaymentProcessor(sfStore, n.PeerID().String(), chainVerifiers...)
 						sfTrust := storefront.NewTrustScorer(sfStore, storefront.DefaultTrustWeights())
 						sfAPI := storefront.NewAPIHandler(sfSvc, sfCatalog, sfDelivery, sfPayment, sfTrust)
 						sfAPI.RegisterRoutes(adminMux, authHandler)
@@ -229,7 +289,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					sessionTTL = 24 * time.Hour
 				}
 
-				authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, cfg.Admin.WalletUIPath)
+				cfgDisplayPath := configPath
+				if cfgDisplayPath == "" {
+					cfgDisplayPath = config.DefaultPath()
+				}
+				authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, cfg.Admin.WalletUIPath, cfgDisplayPath)
 				authHandler.RegisterRoutes(adminMux)
 				log.Infof("HD wallet authentication enabled at %s://%s/login", adminScheme, adminAddr)
 
@@ -237,6 +301,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if walletUIPath := strings.TrimSpace(cfg.Admin.WalletUIPath); walletUIPath != "" {
 					adminMux.Handle("/wallet-ui/", http.StripPrefix("/wallet-ui/", http.FileServer(http.Dir(walletUIPath))))
 					log.Infof("Wallet UI served at %s://%s/wallet-ui/ from %s", adminScheme, adminAddr, walletUIPath)
+				}
+
+				// Discover wallet-ui assets and pass to admin UI for the Wallet tab
+				auth.DiscoverWalletAssets(cfg.Admin.WalletUIPath)
+				if jsFile, cssFile := auth.WalletAssets(); jsFile != "" {
+					adminUI.SetWalletAssets(jsFile, cssFile)
 				}
 			}
 
@@ -262,8 +332,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				// No auth: admin panel open (local development mode)
 			}
 
-			// Landing page (catch-all at root)
-			adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
+			// Primary UI at root: React WebUI build (if configured), otherwise landing page.
+			if webuiPath := strings.TrimSpace(cfg.Admin.WebuiPath); webuiPath != "" {
+				webuiHandler, err := makeWebUIHandler(webuiPath)
+				if err != nil {
+					log.Warnf("WebUI disabled: %v", err)
+					adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
+				} else {
+					adminMux.Handle("/", webuiHandler)
+					log.Infof("WebUI served at %s://%s/ from %s", adminScheme, adminAddr, webuiPath)
+				}
+			} else {
+				adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
+			}
 
 			adminServer = &http.Server{
 				Addr:              adminAddr,
@@ -273,27 +354,43 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				IdleTimeout:       120 * time.Second,
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					// Global security headers on ALL responses
-					w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
-					w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
 					w.Header().Set("X-Content-Type-Options", "nosniff")
 					w.Header().Set("X-Frame-Options", "DENY")
 					w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
+					// Cross-origin isolation only for OrbPro routes (SharedArrayBuffer)
+					if strings.HasPrefix(r.URL.Path, "/Build/") {
+						w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+						w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+					}
 					if adminTLS {
 						w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 					}
 
 					// CSRF protection: for state-changing requests using cookie auth,
-					// require Origin/Referer or X-Requested-With header.
+					// require same-origin Origin/Referer, or X-Requested-With.
 					if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-						if _, cookieErr := r.Cookie("sdn_session"); cookieErr == nil {
-							origin := r.Header.Get("Origin")
-							xrw := r.Header.Get("X-Requested-With")
-							if origin == "" && xrw == "" {
-								referer := r.Header.Get("Referer")
-								if referer == "" && !isWebhookPath(r.URL.Path) {
-									http.Error(w, "CSRF validation failed", http.StatusForbidden)
+						if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) {
+							origin := strings.TrimSpace(r.Header.Get("Origin"))
+							referer := strings.TrimSpace(r.Header.Get("Referer"))
+							xrw := strings.TrimSpace(r.Header.Get("X-Requested-With"))
+
+							// If Origin is present, enforce same-origin.
+							if origin != "" {
+								if !isSameOrigin(r, origin) {
+									http.Error(w, "CSRF validation failed (origin mismatch)", http.StatusForbidden)
 									return
 								}
+							} else if referer != "" {
+								// Otherwise fall back to Referer check.
+								if !isSameOrigin(r, referer) {
+									http.Error(w, "CSRF validation failed (referer mismatch)", http.StatusForbidden)
+									return
+								}
+							} else if xrw == "" {
+								// No Origin/Referer: require explicit X-Requested-With (AJAX).
+								http.Error(w, "CSRF validation failed (missing origin)", http.StatusForbidden)
+								return
 							}
 						}
 					}
@@ -414,6 +511,57 @@ func isWebhookPath(path string) bool {
 	return strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook")
 }
 
+func hasSessionCookie(r *http.Request) bool {
+	if _, err := r.Cookie("sdn_wallet_session"); err == nil {
+		return true
+	}
+	if _, err := r.Cookie("sdn_session"); err == nil {
+		return true
+	}
+	return false
+}
+
+func isSameOrigin(r *http.Request, raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	if u.Hostname() == "" {
+		return false
+	}
+
+	originHost := strings.ToLower(u.Hostname())
+	originPort := u.Port()
+	if originPort == "" {
+		originPort = defaultPortForScheme(u.Scheme)
+	}
+
+	expectedURL, err := url.Parse(u.Scheme + "://" + r.Host)
+	if err != nil || expectedURL.Hostname() == "" {
+		return false
+	}
+	expectedHost := strings.ToLower(expectedURL.Hostname())
+	expectedPort := expectedURL.Port()
+	if expectedPort == "" {
+		expectedPort = defaultPortForScheme(u.Scheme)
+	}
+
+	return originHost == expectedHost && originPort == expectedPort
+}
+
+func defaultPortForScheme(scheme string) string {
+	if scheme == "https" {
+		return "443"
+	}
+	if scheme == "http" {
+		return "80"
+	}
+	return ""
+}
+
 func isAdminOnlyAPIPath(path string) bool {
 	return strings.HasPrefix(path, "/api/peers") ||
 		strings.HasPrefix(path, "/api/groups") ||
@@ -440,6 +588,49 @@ func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func makeWebUIHandler(buildDir string) (http.Handler, error) {
+	buildDir = strings.TrimSpace(buildDir)
+	if buildDir == "" {
+		return nil, fmt.Errorf("admin.webui_path is empty")
+	}
+
+	indexPath := filepath.Join(buildDir, "index.html")
+	if st, err := os.Stat(indexPath); err != nil {
+		return nil, fmt.Errorf("admin.webui_path %q: missing index.html: %w", buildDir, err)
+	} else if st.IsDir() {
+		return nil, fmt.Errorf("admin.webui_path %q: index.html is a directory", buildDir)
+	}
+
+	fs := http.FileServer(http.Dir(buildDir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only static serving here; API routes are handled by more specific mux patterns.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// If the path maps to an existing file, serve it. Otherwise:
+		// - if it looks like an asset (has an extension), 404
+		// - else serve index.html (SPA fallback)
+		clean := path.Clean("/" + r.URL.Path)
+		clean = strings.TrimPrefix(clean, "/")
+		if clean != "" {
+			full := filepath.Join(buildDir, filepath.FromSlash(clean))
+			if st, err := os.Stat(full); err == nil && !st.IsDir() {
+				fs.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		if ext := path.Ext(r.URL.Path); ext != "" && r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+
+		http.ServeFile(w, r, indexPath)
+	}), nil
 }
 
 // handleNodeInfo returns an HTTP handler that serves the node's public identity info.

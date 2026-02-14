@@ -39,6 +39,7 @@ type Handler struct {
 	sessionTTL   time.Duration
 	clockSkew    time.Duration
 	walletUIPath string // filesystem path to hd-wallet-ui dist, or empty for CDN
+	configPath   string // filesystem path to config.yaml for setup instructions
 	rateMu       sync.Mutex
 	rates        map[string]rateEntry
 }
@@ -84,9 +85,10 @@ type verifyResponse struct {
 }
 
 type addUserRequest struct {
-	XPub       string `json:"xpub"`
-	Name       string `json:"name"`
-	TrustLevel string `json:"trust_level"`
+	XPub             string `json:"xpub"`
+	Name             string `json:"name"`
+	TrustLevel       string `json:"trust_level"`
+	SigningPubKeyHex string `json:"signing_pubkey_hex"`
 }
 
 type errorResponse struct {
@@ -95,7 +97,7 @@ type errorResponse struct {
 }
 
 // NewHandler creates a new auth handler.
-func NewHandler(userStore *UserStore, sessions *SessionStore, sessionTTL time.Duration, walletUIPath string) *Handler {
+func NewHandler(userStore *UserStore, sessions *SessionStore, sessionTTL time.Duration, walletUIPath, configPath string) *Handler {
 	return &Handler{
 		userStore:    userStore,
 		sessions:     sessions,
@@ -104,6 +106,7 @@ func NewHandler(userStore *UserStore, sessions *SessionStore, sessionTTL time.Du
 		sessionTTL:   sessionTTL,
 		clockSkew:    2 * time.Minute,
 		walletUIPath: walletUIPath,
+		configPath:   configPath,
 		rates:        make(map[string]rateEntry),
 	}
 }
@@ -125,9 +128,14 @@ func (h *Handler) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	jsFile, cssFile := WalletAssets()
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"admin_configured": h.userStore.HasAdmin(),
-		"users_configured": h.userStore.UserCount() > 0,
+		"admin_configured":     h.userStore.HasAdmin(),
+		"users_configured":     h.userStore.UserCount() > 0,
+		"config_path":          h.configPath,
+		"wallet_ui_configured": strings.TrimSpace(h.walletUIPath) != "",
+		"wallet_js_file":       jsFile,
+		"wallet_css_file":      cssFile,
 	})
 }
 
@@ -197,6 +205,28 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Only store challenges for known users with a bound signing key that matches
+	// the provided client_pubkey_hex. This binds xpub -> signing public key on the
+	// server side and prevents "xpub-only" impersonation.
+	shouldStore := false
+	expectedPubKey := []byte(nil)
+	if user != nil {
+		normalized, nerr := normalizeEd25519PubKeyHex(user.SigningPubKeyHex)
+		if nerr != nil || normalized == "" {
+			log.Warnf("Auth challenge for xpub %q: missing/invalid signing_pubkey_hex (err=%v)", req.XPub, nerr)
+		} else {
+			expRaw, derr := hex.DecodeString(normalized)
+			if derr != nil || len(expRaw) != ed25519.PublicKeySize {
+				log.Warnf("Auth challenge for xpub %q: failed to decode signing_pubkey_hex: %v", req.XPub, derr)
+			} else if bytes.Equal(expRaw, pubRaw) {
+				shouldStore = true
+				expectedPubKey = expRaw
+			} else {
+				log.Warnf("Auth challenge for xpub %q: client_pubkey_hex mismatch", req.XPub)
+			}
+		}
+	}
+
 	// Generate challenge
 	challengeBytes := make([]byte, 32)
 	if _, err := rand.Read(challengeBytes); err != nil {
@@ -213,7 +243,7 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 
 	// Only store the challenge if the user is known; unknown xpubs get a
 	// valid-looking response that can never be verified (prevents enumeration).
-	if user != nil {
+	if shouldStore {
 		h.mu.Lock()
 		if len(h.challenges) >= maxPendingChallenges {
 			h.mu.Unlock()
@@ -223,7 +253,7 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		h.challenges[challengeID] = pendingChallenge{
 			id:        challengeID,
 			xpub:      req.XPub,
-			pubKey:    append(ed25519.PublicKey(nil), pubRaw...),
+			pubKey:    append(ed25519.PublicKey(nil), expectedPubKey...),
 			challenge: challengeBytes,
 			createdAt: now,
 			expiresAt: now.Add(h.challengeTTL),
@@ -434,8 +464,17 @@ func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_trust_level", Message: err.Error()})
 			return
 		}
-		if err := h.userStore.AddUser(req.XPub, req.Name, trust); err != nil {
-			writeJSON(w, http.StatusConflict, errorResponse{Code: "user_exists", Message: err.Error()})
+		if err := h.userStore.AddUser(req.XPub, req.Name, trust, req.SigningPubKeyHex); err != nil {
+			msg := err.Error()
+			lmsg := strings.ToLower(msg)
+			switch {
+			case strings.Contains(lmsg, "signing_pubkey_hex"):
+				writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_signing_pubkey", Message: msg})
+			case strings.Contains(lmsg, "unique") || strings.Contains(lmsg, "constraint"):
+				writeJSON(w, http.StatusConflict, errorResponse{Code: "user_exists", Message: msg})
+			default:
+				writeJSON(w, http.StatusInternalServerError, errorResponse{Code: "server_error", Message: msg})
+			}
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
@@ -494,6 +533,12 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 		if err := h.userStore.UpdateTrust(xpub, trust); err != nil {
 			writeJSON(w, http.StatusBadRequest, errorResponse{Code: "update_failed", Message: err.Error()})
 			return
+		}
+		if strings.TrimSpace(req.SigningPubKeyHex) != "" {
+			if err := h.userStore.UpdateSigningPubKey(xpub, req.SigningPubKeyHex); err != nil {
+				writeJSON(w, http.StatusBadRequest, errorResponse{Code: "update_failed", Message: err.Error()})
+				return
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 

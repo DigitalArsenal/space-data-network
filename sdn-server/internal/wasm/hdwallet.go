@@ -3,22 +3,15 @@ package wasm
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/hmac"
-	"crypto/sha512"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
-	"golang.org/x/crypto/curve25519"
 )
 
 // wasmCallTimeout is the maximum duration for a single WASM function call.
@@ -61,7 +54,12 @@ type HDWalletModule struct {
 	ed25519Verify api.Function
 
 	// X25519 functions
-	ecdhX25519 api.Function
+	ecdhX25519  api.Function
+	x25519Pubkey api.Function
+
+	// SLIP-10 / Ed25519 key derivation
+	slip10Ed25519DerivePath api.Function
+	ed25519PubkeyFromSeed   api.Function
 
 	// BIP-32 handle-based key derivation (all curves)
 	keyFromSeed     api.Function
@@ -138,6 +136,11 @@ func NewHDWalletModuleFromBytes(ctx context.Context, wasmBytes []byte) (*HDWalle
 
 	// X25519
 	hw.ecdhX25519 = module.ExportedFunction("hd_ecdh_x25519")
+	hw.x25519Pubkey = module.ExportedFunction("hd_x25519_pubkey")
+
+	// SLIP-10 / Ed25519 key derivation
+	hw.slip10Ed25519DerivePath = module.ExportedFunction("hd_slip10_ed25519_derive_path")
+	hw.ed25519PubkeyFromSeed = module.ExportedFunction("hd_ed25519_pubkey_from_seed")
 
 	// BIP-32 handle-based key derivation (all curves)
 	hw.keyFromSeed = module.ExportedFunction("hd_key_from_seed")
@@ -349,86 +352,118 @@ type DerivedKey struct {
 	ChainCode  []byte // 32 bytes
 }
 
-// DeriveEd25519Key derives an Ed25519 key at the given path using SLIP-10.
+// DeriveEd25519Key derives an Ed25519 key at the given path using SLIP-10 via WASM.
 // Path format: "m/44'/1957'/0'/0'/0'" (all components must be hardened for Ed25519)
-// Implemented in pure Go — SLIP-10 Ed25519 uses only HMAC-SHA512, no WASM needed.
-func (hw *HDWalletModule) DeriveEd25519Key(_ context.Context, seed []byte, path string) (*DerivedKey, error) {
+// Calls hd_slip10_ed25519_derive_path(seed, seed_len, path, key_out, chain_code_out) → i32
+func (hw *HDWalletModule) DeriveEd25519Key(ctx context.Context, seed []byte, path string) (*DerivedKey, error) {
+	hw.mu.Lock()
+	defer hw.mu.Unlock()
+
+	if hw.slip10Ed25519DerivePath == nil {
+		return nil, ErrHDWalletNoModule
+	}
+
 	if len(seed) != 64 {
 		return nil, ErrHDWalletInvalidSeed
 	}
-	return slip10DeriveEd25519(seed, path)
-}
 
-// slip10DeriveEd25519 implements SLIP-10 Ed25519 key derivation in pure Go.
-// Reference: https://github.com/satoshilabs/slips/blob/master/slip-0010.md
-func slip10DeriveEd25519(seed []byte, path string) (*DerivedKey, error) {
-	indices, err := slip10ParsePath(path)
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
+
+	seedPtr, err := hw.allocate(ctx, seed)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, seedPtr, uint32(len(seed)))
+
+	pathPtr, err := hw.allocateString(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, pathPtr, uint32(len(path)+1))
+
+	keySize := uint32(32)
+	keyPtr, err := hw.allocateSize(ctx, keySize)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, keyPtr, keySize)
+
+	chainCodePtr, err := hw.allocateSize(ctx, keySize)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, chainCodePtr, keySize)
+
+	results, err := hw.slip10Ed25519DerivePath.Call(ctx,
+		uint64(seedPtr), uint64(len(seed)),
+		uint64(pathPtr),
+		uint64(keyPtr),
+		uint64(chainCodePtr),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("SLIP-10 derivation failed: %w", err)
+	}
+
+	if int32(results[0]) != 0 {
+		return nil, fmt.Errorf("SLIP-10 derivation error: %d", int32(results[0]))
+	}
+
+	privKey, err := hw.readMemory(ctx, keyPtr, keySize)
+	if err != nil {
+		return nil, err
+	}
+	chainCode, err := hw.readMemory(ctx, chainCodePtr, keySize)
 	if err != nil {
 		return nil, err
 	}
 
-	// Master key: HMAC-SHA512(key="ed25519 seed", data=seed)
-	mac := hmac.New(sha512.New, []byte("ed25519 seed"))
-	mac.Write(seed)
-	I := mac.Sum(nil)
-	key := I[:32]
-	chainCode := I[32:]
-
-	// Derive each child (SLIP-10 Ed25519 only supports hardened derivation)
-	for _, idx := range indices {
-		mac = hmac.New(sha512.New, chainCode)
-		mac.Write([]byte{0x00}) // Ed25519: 0x00 prefix
-		mac.Write(key)          // 32-byte private key
-		var idxBytes [4]byte
-		binary.BigEndian.PutUint32(idxBytes[:], idx)
-		mac.Write(idxBytes[:])
-		I = mac.Sum(nil)
-		key = I[:32]
-		chainCode = I[32:]
-	}
-
-	result := &DerivedKey{
-		PrivateKey: make([]byte, 32),
-		ChainCode:  make([]byte, 32),
-	}
-	copy(result.PrivateKey, key)
-	copy(result.ChainCode, chainCode)
-	return result, nil
+	return &DerivedKey{PrivateKey: privKey, ChainCode: chainCode}, nil
 }
 
-// slip10ParsePath parses a BIP-44 path like "m/44'/1957'/0'/0'/0'" into hardened indices.
-func slip10ParsePath(path string) ([]uint32, error) {
-	path = strings.TrimPrefix(path, "m/")
-	if path == "" {
-		return nil, ErrHDWalletInvalidPath
+// Ed25519PublicKeyFromSeed derives Ed25519 public key from a 32-byte seed via WASM.
+// Calls hd_ed25519_pubkey_from_seed(seed, public_key_out, public_key_size) → i32
+func (hw *HDWalletModule) Ed25519PublicKeyFromSeed(ctx context.Context, seed []byte) ([]byte, error) {
+	hw.mu.Lock()
+	defer hw.mu.Unlock()
+
+	if hw.ed25519PubkeyFromSeed == nil {
+		return nil, ErrHDWalletNoModule
 	}
 
-	parts := strings.Split(path, "/")
-	indices := make([]uint32, len(parts))
-	for i, part := range parts {
-		hardened := strings.HasSuffix(part, "'")
-		if !hardened {
-			return nil, fmt.Errorf("SLIP-10 Ed25519 requires all hardened components, got: %s", part)
-		}
-		part = strings.TrimSuffix(part, "'")
-		idx, err := strconv.ParseUint(part, 10, 31)
-		if err != nil {
-			return nil, fmt.Errorf("invalid path component %q: %w", part, err)
-		}
-		indices[i] = uint32(idx) | 0x80000000
-	}
-	return indices, nil
-}
-
-// Ed25519PublicKeyFromSeed derives Ed25519 public key from a 32-byte seed.
-// Uses pure Go crypto/ed25519 — no WASM needed.
-func (hw *HDWalletModule) Ed25519PublicKeyFromSeed(_ context.Context, seed []byte) ([]byte, error) {
 	if len(seed) != 32 {
 		return nil, ErrHDWalletInvalidSeed
 	}
-	privKey := ed25519.NewKeyFromSeed(seed)
-	pubKey := privKey.Public().(ed25519.PublicKey)
-	return []byte(pubKey), nil
+
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
+
+	seedPtr, err := hw.allocate(ctx, seed)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, seedPtr, uint32(len(seed)))
+
+	pubSize := uint32(32)
+	pubPtr, err := hw.allocateSize(ctx, pubSize)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, pubPtr, pubSize)
+
+	results, err := hw.ed25519PubkeyFromSeed.Call(ctx,
+		uint64(seedPtr),
+		uint64(pubPtr), uint64(pubSize),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("Ed25519 pubkey derivation failed: %w", err)
+	}
+
+	if int32(results[0]) != 0 {
+		return nil, fmt.Errorf("Ed25519 pubkey derivation error: %d", int32(results[0]))
+	}
+
+	return hw.readMemory(ctx, pubPtr, pubSize)
 }
 
 // Ed25519Sign signs a message using Ed25519.
@@ -538,17 +573,49 @@ func (hw *HDWalletModule) Ed25519Verify(ctx context.Context, publicKey, message,
 	return results[0] == 1, nil
 }
 
-// X25519PublicKey derives the X25519 public key from a private key.
-// Uses pure Go golang.org/x/crypto/curve25519 — no WASM needed.
-func (hw *HDWalletModule) X25519PublicKey(_ context.Context, privateKey []byte) ([]byte, error) {
+// X25519PublicKey derives the X25519 public key from a private key via WASM.
+// Calls hd_x25519_pubkey(private_key, public_key_out, public_key_size) → i32
+func (hw *HDWalletModule) X25519PublicKey(ctx context.Context, privateKey []byte) ([]byte, error) {
+	hw.mu.Lock()
+	defer hw.mu.Unlock()
+
+	if hw.x25519Pubkey == nil {
+		return nil, ErrHDWalletNoModule
+	}
+
 	if len(privateKey) != 32 {
 		return nil, errors.New("invalid private key length")
 	}
-	pub, err := curve25519.X25519(privateKey, curve25519.Basepoint)
+
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
+
+	privPtr, err := hw.allocate(ctx, privateKey)
 	if err != nil {
-		return nil, fmt.Errorf("X25519 scalar base mult failed: %w", err)
+		return nil, err
 	}
-	return pub, nil
+	defer hw.deallocate(ctx, privPtr, uint32(len(privateKey)))
+
+	pubSize := uint32(32)
+	pubPtr, err := hw.allocateSize(ctx, pubSize)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, pubPtr, pubSize)
+
+	results, err := hw.x25519Pubkey.Call(ctx,
+		uint64(privPtr),
+		uint64(pubPtr), uint64(pubSize),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("X25519 pubkey derivation failed: %w", err)
+	}
+
+	if int32(results[0]) != 0 {
+		return nil, fmt.Errorf("X25519 pubkey derivation error: %d", int32(results[0]))
+	}
+
+	return hw.readMemory(ctx, pubPtr, pubSize)
 }
 
 // X25519ECDH performs X25519 key exchange.

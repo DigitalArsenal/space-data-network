@@ -10,21 +10,44 @@ import (
 
 // Config represents the SDN server configuration.
 type Config struct {
-	Mode     string         `yaml:"mode"` // "full" or "edge"
-	Network  NetworkConfig  `yaml:"network"`
-	Storage  StorageConfig  `yaml:"storage"`
-	Schemas  SchemaConfig   `yaml:"schemas"`
-	Security SecurityConfig `yaml:"security"`
-	Peers    PeersConfig    `yaml:"peers"`
-	Admin    AdminConfig    `yaml:"admin"`
-	Setup    SetupConfig    `yaml:"setup"`
-	Users    []UserEntry    `yaml:"users"`
+	Mode       string           `yaml:"mode"` // "full" or "edge"
+	Network    NetworkConfig    `yaml:"network"`
+	Storage    StorageConfig    `yaml:"storage"`
+	Schemas    SchemaConfig     `yaml:"schemas"`
+	Security   SecurityConfig   `yaml:"security"`
+	Peers      PeersConfig      `yaml:"peers"`
+	Admin      AdminConfig      `yaml:"admin"`
+	Setup      SetupConfig      `yaml:"setup"`
+	Users      []UserEntry      `yaml:"users"`
+	Blockchain BlockchainConfig `yaml:"blockchain"`
+}
+
+// BlockchainConfig holds RPC settings for crypto payment verification.
+type BlockchainConfig struct {
+	Ethereum ChainRPCConfig `yaml:"ethereum"`
+	Solana   ChainRPCConfig `yaml:"solana"`
+	Bitcoin  ChainRPCConfig `yaml:"bitcoin"`
+}
+
+// ChainRPCConfig holds per-chain RPC endpoint and confirmation threshold.
+type ChainRPCConfig struct {
+	RPCURL                string `yaml:"rpc_url"`
+	RequiredConfirmations uint64 `yaml:"required_confirmations"`
 }
 
 // UserEntry maps an HD wallet xpub to a trust level for authentication.
 type UserEntry struct {
 	// XPub is the BIP-32 extended public key at m/44'/1957'/account'.
 	XPub string `yaml:"xpub"`
+
+	// SigningPubKeyHex is the Ed25519 public key (32 bytes hex) used to sign
+	// authentication challenges for this xpub.
+	//
+	// NOTE: xpubs are derived on the SECP256K1 curve, while SDN auth uses an
+	// Ed25519 signing key derived from the same wallet seed on a hardened path.
+	// There is no safe way for the server to derive the Ed25519 key from the xpub,
+	// so this field binds the xpub identity to a specific signing key.
+	SigningPubKeyHex string `yaml:"signing_pubkey_hex"`
 
 	// TrustLevel: "untrusted", "limited", "standard", "trusted", "admin".
 	TrustLevel string `yaml:"trust_level"`
@@ -126,6 +149,17 @@ type AdminConfig struct {
 	// If empty, the built-in default landing page is served.
 	HomepageFile string `yaml:"homepage_file"`
 
+	// WebuiPath is the filesystem path to an IPFS WebUI build directory (webui/build).
+	// If set, the admin server serves this SPA at "/" (with index.html fallback).
+	// If empty, the landing page is served instead.
+	WebuiPath string `yaml:"webui_path"`
+
+	// IPFSAPIURL is the base URL of an upstream Kubo RPC API endpoint (no path),
+	// e.g. "http://127.0.0.1:5001". When set, the admin server reverse-proxies
+	// requests to "/api/v0/*" to this endpoint so the React WebUI can talk to IPFS
+	// through the authenticated SDN admin server.
+	IPFSAPIURL string `yaml:"ipfs_api_url"`
+
 	// WalletUIPath is the filesystem path to the hd-wallet-ui dist directory.
 	// If empty, the login page loads wallet UI from CDN (unpkg.com/hd-wallet-ui).
 	WalletUIPath string `yaml:"wallet_ui_path"`
@@ -202,12 +236,19 @@ func Default() *Config {
 			TLSCertFile:   "",
 			TLSKeyFile:    "",
 			HomepageFile:  "",
+			WebuiPath:     "",
+			IPFSAPIURL:    "",
 			WalletUIPath:  "",
 		},
 		Users: []UserEntry{},
 		Setup: SetupConfig{
 			TokenExpiry: "10m",
 			DataPath:    "", // Use storage path by default
+		},
+		Blockchain: BlockchainConfig{
+			Ethereum: ChainRPCConfig{RequiredConfirmations: 12},
+			Solana:   ChainRPCConfig{RequiredConfirmations: 1},
+			Bitcoin:  ChainRPCConfig{RequiredConfirmations: 6},
 		},
 	}
 }

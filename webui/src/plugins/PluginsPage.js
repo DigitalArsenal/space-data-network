@@ -27,7 +27,18 @@ const PluginCard = ({ plugin, onSelect }) => {
   const ui = plugin.ui || {}
   const status = plugin.status || 'running'
   return (
-    <div className='plugin-card' onClick={() => onSelect(plugin)} role='button' tabIndex={0}>
+    <div
+      className='plugin-card'
+      onClick={() => onSelect(plugin)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect(plugin)
+        }
+      }}
+      role='button'
+      tabIndex={0}
+    >
       <div className='plugin-card-header'>
         <div
           className='plugin-card-icon'

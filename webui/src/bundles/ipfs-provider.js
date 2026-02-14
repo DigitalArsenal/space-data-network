@@ -155,7 +155,24 @@ const init = () => {
  */
 const readAPIAddressSetting = () => {
   const setting = readSetting('ipfsApi')
-  return setting == null ? null : asAPIOptions(setting)
+  if (setting == null) {
+    // Default to same-origin Kubo RPC path so the UI works when /api/v0 is
+    // served locally (e.g. proxied by sdn-server).
+    try {
+      return `${window.location.origin}/api/v0`
+    } catch (_) {
+      return null
+    }
+  }
+  const parsed = asAPIOptions(setting)
+  if (parsed == null) {
+    try {
+      return `${window.location.origin}/api/v0`
+    } catch (_) {
+      return null
+    }
+  }
+  return parsed
 }
 
 /**

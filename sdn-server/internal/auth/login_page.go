@@ -57,9 +57,26 @@ var (
 	loginPageOnce  sync.Once
 	loginPageCache string
 
+	walletJSFile  string
+	walletCSSFile string
+
 	reScriptSrc = regexp.MustCompile(`src="\.\/assets\/(main-[^"]+\.js)"`)
 	reCSSHref   = regexp.MustCompile(`href="\.\/assets\/(main-[^"]+\.css)"`)
 )
+
+// DiscoverWalletAssets scans the wallet-ui dist for asset filenames and caches them.
+// Call this at startup to make WalletAssets() available immediately.
+func DiscoverWalletAssets(walletUIPath string) {
+	if walletUIPath == "" {
+		return
+	}
+	cachedLoginPage(walletUIPath)
+}
+
+// WalletAssets returns the discovered wallet-ui JS and CSS filenames.
+func WalletAssets() (jsFile, cssFile string) {
+	return walletJSFile, walletCSSFile
+}
 
 // cachedLoginPage reads the wallet-ui dist/index.html once to discover asset
 // filenames, then builds and caches a custom branded login page.
@@ -88,6 +105,8 @@ func cachedLoginPage(walletUIPath string) string {
 			return
 		}
 
+		walletJSFile = jsFile
+		walletCSSFile = cssFile
 		loginPageCache = buildLoginPage(jsFile, cssFile)
 	})
 	return loginPageCache
@@ -125,7 +144,8 @@ func buildLoginPage(jsFile, cssFile string) string {
       --font-mono:'JetBrains Mono','SF Mono','Fira Code',monospace;
       --radius:16px;
     }
-    html,body{height:100%}
+    *,*::before,*::after{box-sizing:border-box}
+    html,body{height:100%;margin:0;padding:0}
     body{
       font-family:var(--font-sans);
       background:var(--bg);color:var(--text-primary);
@@ -138,21 +158,39 @@ func buildLoginPage(jsFile, cssFile string) string {
     .sdn-header{
       position:sticky;top:0;z-index:900;
       display:flex;align-items:center;justify-content:space-between;
-      padding:0 24px;height:44px;
-      background:var(--nav-bg);
-      backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-      border-bottom:1px solid rgba(255,255,255,0.1);
+      padding:20px 48px;
+      background:linear-gradient(180deg, rgba(22,22,23,0.98) 0%, rgba(22,22,23,0.92) 100%);
+      backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+      border-bottom:1px solid rgba(255,255,255,0.08);
+      box-shadow:0 1px 12px rgba(0,0,0,0.3);
     }
-    .sdn-logo{display:flex;align-items:center;gap:10px;color:var(--text-primary);font-weight:600;font-size:15px;white-space:nowrap}
-    .sdn-logo svg{width:22px;height:22px;flex-shrink:0}
+    .sdn-logo{display:flex;align-items:center;gap:14px;color:var(--text-primary);font-weight:600;font-size:18px;letter-spacing:.06em;white-space:nowrap}
+    .sdn-logo svg{width:36px;height:36px;flex-shrink:0;opacity:0.9}
     .sdn-sign-in{
-      padding:6px 16px;border:none;border-radius:980px;cursor:pointer;
-      font-family:var(--font-sans);font-size:13px;font-weight:500;
+      padding:10px 28px;border:none;border-radius:980px;cursor:pointer;
+      font-family:var(--font-sans);font-size:15px;font-weight:600;
       background:var(--text-primary);color:var(--bg);
-      transition:opacity .15s;
+      transition:all .2s;letter-spacing:.02em;
+      align-self:center;height:auto;line-height:1;
+      flex-shrink:0;
     }
-    .sdn-sign-in:hover{opacity:.85}
-    .sdn-sign-in:disabled{opacity:.3;cursor:default}
+    .sdn-sign-in:hover{opacity:.85;transform:scale(1.02)}
+    .sdn-sign-in:disabled{opacity:.3;cursor:default;transform:none}
+    .sdn-header-right{display:flex;align-items:center;gap:16px}
+    .sdn-trust-badge{
+      display:none;align-items:center;gap:8px;
+      font-size:13px;color:var(--text-muted);font-family:var(--font-mono);
+    }
+    .sdn-trust-badge .trust-level{
+      padding:4px 12px;border-radius:980px;font-size:12px;font-weight:600;
+      letter-spacing:.04em;text-transform:uppercase;
+    }
+    .sdn-trust-badge .trust-level.admin{background:rgba(52,211,153,.15);color:#6ee7b7;border:1px solid rgba(52,211,153,.3)}
+    .sdn-trust-badge .trust-level.trusted{background:rgba(96,165,250,.15);color:#93bbfd;border:1px solid rgba(96,165,250,.3)}
+    .sdn-trust-badge .trust-level.standard{background:rgba(251,191,36,.15);color:#fcd34d;border:1px solid rgba(251,191,36,.3)}
+    .sdn-trust-badge .trust-level.limited{background:rgba(248,113,113,.15);color:#fca5a5;border:1px solid rgba(248,113,113,.3)}
+    .sdn-trust-badge .trust-level.untrusted{background:rgba(134,134,139,.15);color:#a1a1a6;border:1px solid rgba(134,134,139,.3)}
+    .sdn-trust-badge .trust-desc{color:var(--text-muted);font-family:var(--font-sans);font-size:12px}
 
     /* ---- Main ---- */
     .sdn-main{flex:1;display:flex;flex-direction:column;align-items:center;padding:60px 24px 80px}
@@ -218,6 +256,7 @@ func buildLoginPage(jsFile, cssFile string) string {
   // --- SDN Auth Hook ---
   // Runs BEFORE the deferred wallet-ui module script.
   window.__sdnAutoOpen = false;
+  window.__sdnOpenAccountAfterLogin = false;
 
   window.__sdnOnLogin = async function(identity) {
     var statusEl = document.getElementById('sdn-auth-status');
@@ -227,6 +266,37 @@ func buildLoginPage(jsFile, cssFile string) string {
       statusEl.textContent = msg;
       statusEl.style.display = 'block';
     };
+    var hide = function() { if (statusEl) statusEl.style.display = 'none'; };
+
+    var trustDescriptions = {
+      admin: 'full access',
+      trusted: 'elevated privileges',
+      standard: 'basic access',
+      limited: 'read-only',
+      untrusted: 'no access'
+    };
+
+    function showTrustBadge(trustName, desc) {
+      var badge = document.getElementById('sdn-trust-badge');
+      if (!badge) return;
+      badge.innerHTML = '<span class="trust-level ' + trustName + '">' + trustName + '</span>' +
+        '<span class="trust-desc">(' + desc + ')</span>';
+      badge.style.display = 'flex';
+    }
+
+    function updateBannerIdentity(xpub, signingPubKeyHex) {
+      var banner = document.getElementById('sdn-setup-banner');
+      if (!banner) return;
+      var codes = banner.querySelectorAll('code');
+      for (var i = 0; i < codes.length; i++) {
+        if (xpub && codes[i].textContent.indexOf('YOUR_XPUB_HERE') !== -1) {
+          codes[i].textContent = codes[i].textContent.replace('YOUR_XPUB_HERE', xpub);
+        }
+        if (signingPubKeyHex && codes[i].textContent.indexOf('YOUR_SIGNING_PUBKEY_HEX_HERE') !== -1) {
+          codes[i].textContent = codes[i].textContent.replace('YOUR_SIGNING_PUBKEY_HEX_HERE', signingPubKeyHex);
+        }
+      }
+    }
 
     try {
       var pubKeyHex = Array.from(identity.signingPublicKey)
@@ -267,16 +337,39 @@ func buildLoginPage(jsFile, cssFile string) string {
         })
       });
       var verifyData = await verifyResp.json();
-      if (!verifyResp.ok) throw new Error(verifyData.message || 'Verification failed');
 
-      var trustNames = ['untrusted','limited','standard','trusted','admin'];
-      var name = verifyData.user.name || 'user';
-      var trust = trustNames[verifyData.user.trust_level] || 'unknown';
-      show('Authenticated as ' + name + ' (' + trust + '). Redirecting\u2026', 'success');
-      setTimeout(function(){ window.location.href = '/admin'; }, 800);
+      if (!verifyResp.ok) {
+        // Auth failed — user not in config. Show "unregistered" badge, update banner.
+        updateBannerIdentity(xpub, pubKeyHex);
+        showTrustBadge('untrusted', 'not in server config');
+        hide();
+        var btn = document.getElementById('sdn-sign-in');
+        if (btn) { btn.textContent = 'Sign In'; btn.disabled = false; }
+        return;
+      }
+
+      var trustName = (verifyData.user.trust_level || 'unknown').toLowerCase();
+      var trustDesc = trustDescriptions[trustName] || '';
+
+      // Show trust badge in header
+      showTrustBadge(trustName, trustDesc);
+      hide();
+
+      if (trustName === 'admin') {
+        // Admin — redirect to admin panel
+        show('Redirecting to admin panel\u2026', 'success');
+        setTimeout(function(){ window.location.href = '/admin'; }, 600);
+      } else {
+        // Non-admin — stay on page, show their level
+        var btn = document.getElementById('sdn-sign-in');
+        if (btn) { btn.textContent = verifyData.user.name || 'Signed In'; btn.disabled = true; }
+      }
 
     } catch (err) {
-      show(err.message, 'error');
+      // Network or unexpected error — show badge, not a toast
+      showTrustBadge('untrusted', err.message);
+      hide();
+      if (typeof xpub !== 'undefined' && xpub) updateBannerIdentity(xpub, (typeof pubKeyHex !== 'undefined' ? pubKeyHex : ''));
     }
   };
 
@@ -302,7 +395,10 @@ func buildLoginPage(jsFile, cssFile string) string {
       </svg>
       <span>SPACE DATA NETWORK</span>
     </div>
-    <button id="sdn-sign-in" class="sdn-sign-in" disabled>Sign In</button>
+    <div class="sdn-header-right">
+      <div id="sdn-trust-badge" class="sdn-trust-badge"></div>
+      <button id="sdn-sign-in" class="sdn-sign-in" disabled>Sign In</button>
+    </div>
   </header>
 
   <main class="sdn-main">
@@ -330,13 +426,17 @@ func buildLoginPage(jsFile, cssFile string) string {
       if (s.admin_configured) return;
       var banner = document.getElementById('sdn-setup-banner');
       if (!banner) return;
+      var cfgPath = s.config_path || 'config.yaml';
       banner.innerHTML =
         '<div class="sdn-setup">' +
           '<h2>\u26a0 Admin Setup Required</h2>' +
-          '<p>No administrator account is configured. To enable authentication, add your HD wallet\u2019s <strong>extended public key (xpub)</strong> to the server\u2019s <code>config.yaml</code>:</p>' +
-          '<code>users:\n  - xpub: "YOUR_XPUB_HERE"\n    trust_level: "admin"\n    name: "Operator"</code>' +
-          '<p>To find your xpub, click <strong>Sign In</strong> above and open your wallet. Your xpub is displayed on the account keys screen.</p>' +
-          '<p class="step">After adding the entry, restart the server for changes to take effect.</p>' +
+          '<p>No administrator account is configured. Add your HD wallet\u2019s <strong>extended public key (xpub)</strong> and <strong>Ed25519 signing public key</strong> to:</p>' +
+          '<code>' + esc(cfgPath) + '</code>' +
+          '<p style="margin-top:12px">Add the following block:</p>' +
+          '<code>users:\n  - xpub: "YOUR_XPUB_HERE"\n    signing_pubkey_hex: "YOUR_SIGNING_PUBKEY_HEX_HERE"\n    trust_level: "admin"\n    name: "Operator"</code>' +
+          '<p>To find your keys, click <strong>Sign In</strong> above and open your wallet. Your xpub and signing public key are displayed on the account keys screen. They will be auto-filled into the config snippet above.</p>' +
+          '<p class="step">After editing, restart the server:</p>' +
+          '<code>sudo systemctl restart spacedatanetwork</code>' +
         '</div>';
     }).catch(function(){});
 

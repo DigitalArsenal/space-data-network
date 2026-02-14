@@ -8,9 +8,17 @@ import (
 
 // AdminUI provides the admin web interface for peer management.
 type AdminUI struct {
-	apiHandler *APIHandler
-	templates  *template.Template
-	mux        *http.ServeMux
+	apiHandler    *APIHandler
+	templates     *template.Template
+	mux           *http.ServeMux
+	walletJSFile  string
+	walletCSSFile string
+}
+
+// AdminTemplateData is passed to the admin template.
+type AdminTemplateData struct {
+	WalletJSFile  string
+	WalletCSSFile string
 }
 
 // NewAdminUI creates a new admin UI handler.
@@ -26,6 +34,12 @@ func NewAdminUI(registry *Registry, gater *TrustedConnectionGater) (*AdminUI, er
 
 	ui.setupRoutes()
 	return ui, nil
+}
+
+// SetWalletAssets sets the wallet-ui JS and CSS file names for the admin template.
+func (ui *AdminUI) SetWalletAssets(jsFile, cssFile string) {
+	ui.walletJSFile = jsFile
+	ui.walletCSSFile = cssFile
 }
 
 // ServeHTTP implements http.Handler.
@@ -44,7 +58,10 @@ func (ui *AdminUI) setupRoutes() {
 
 func (ui *AdminUI) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	ui.templates.ExecuteTemplate(w, "admin", nil)
+	ui.templates.ExecuteTemplate(w, "admin", AdminTemplateData{
+		WalletJSFile:  ui.walletJSFile,
+		WalletCSSFile: ui.walletCSSFile,
+	})
 }
 
 // Inline admin template for when embedded templates aren't available
@@ -312,24 +329,31 @@ const adminTemplate = `<!DOCTYPE html>
             border-bottom: 1px solid var(--border-color);
         }
     </style>
+    {{if .WalletCSSFile}}<link rel="stylesheet" crossorigin href="/wallet-ui/assets/{{.WalletCSSFile}}">{{end}}
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Space Data Network - Trusted Peer Registry</h1>
-            <div class="stats">
-                <div class="stat-card">
-                    <div class="stat-value" id="peerCount">-</div>
-                    <div class="stat-label">Total Peers</div>
+            <div>
+                <h1>Space Data Network - Admin</h1>
+                <div id="currentUser" style="font-size:13px;color:var(--text-secondary);margin-top:4px;"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:16px;">
+                <div class="stats">
+                    <div class="stat-card">
+                        <div class="stat-value" id="peerCount">-</div>
+                        <div class="stat-label">Total Peers</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="groupCount">-</div>
+                        <div class="stat-label">Groups</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="blockedCount">-</div>
+                        <div class="stat-label">Blocked</div>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="groupCount">-</div>
-                    <div class="stat-label">Groups</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value" id="blockedCount">-</div>
-                    <div class="stat-label">Blocked</div>
-                </div>
+                <button class="btn btn-danger" id="signOutBtn" onclick="signOut()" style="display:none;">Sign Out</button>
             </div>
         </header>
 
@@ -340,6 +364,7 @@ const adminTemplate = `<!DOCTYPE html>
             <button class="tab" data-tab="settings">Settings</button>
             <button class="tab" data-tab="users">Users</button>
             <button class="tab" data-tab="node">Node</button>
+            <button class="tab" data-tab="wallet">Wallet</button>
         </div>
 
         <div class="tab-content active" id="peers-tab">
@@ -478,6 +503,14 @@ const adminTemplate = `<!DOCTYPE html>
                 </div>
             </div>
         </div>
+
+        <div class="tab-content" id="wallet-tab">
+            <div class="panel">
+                <h2>HD Wallet</h2>
+                <p style="color:var(--text-secondary);margin-bottom:16px;">View your wallet, keys, and blockchain addresses.</p>
+                <div id="wallet-ui-mount"></div>
+            </div>
+        </div>
     </div>
 
     <!-- Add Peer Modal -->
@@ -588,6 +621,10 @@ const adminTemplate = `<!DOCTYPE html>
                 <div class="form-group">
                     <label>XPub *</label>
                     <input type="text" id="newUserXpub" placeholder="xpub6..." required>
+                </div>
+                <div class="form-group">
+                    <label>Signing PubKey (Ed25519 hex) *</label>
+                    <input type="text" id="newUserSigningPubKey" placeholder="32-byte hex (64 chars)" required>
                 </div>
                 <div class="form-group">
                     <label>Name</label>
@@ -945,7 +982,7 @@ const adminTemplate = `<!DOCTYPE html>
             }
             tbody.innerHTML = users.map(u => {
                 const xpubShort = u.xpub.length > 20 ? u.xpub.substring(0, 12) + '...' + u.xpub.slice(-6) : u.xpub;
-                const trustName = ['untrusted','limited','standard','trusted','admin'][u.trust_level] || 'unknown';
+                const trustName = (typeof u.trust_level === 'string') ? u.trust_level : (['untrusted','limited','standard','trusted','admin'][u.trust_level] || 'unknown');
                 const trustClass = 'trust-' + trustName;
                 const lastLogin = u.last_login ? new Date(u.last_login).toLocaleString() : 'Never';
                 const sourceBadge = u.source === 'config'
@@ -969,6 +1006,7 @@ const adminTemplate = `<!DOCTYPE html>
             e.preventDefault();
             const user = {
                 xpub: document.getElementById('newUserXpub').value,
+                signing_pubkey_hex: document.getElementById('newUserSigningPubKey').value,
                 name: document.getElementById('newUserName').value,
                 trust_level: document.getElementById('newUserTrust').value
             };
@@ -981,6 +1019,7 @@ const adminTemplate = `<!DOCTYPE html>
                 if (res.ok) {
                     closeModal('addUserModal');
                     document.getElementById('newUserXpub').value = '';
+                    document.getElementById('newUserSigningPubKey').value = '';
                     document.getElementById('newUserName').value = '';
                     fetchUsers();
                 } else {
@@ -1062,6 +1101,47 @@ const adminTemplate = `<!DOCTYPE html>
             el.innerHTML = html;
         }
 
+        // Sign out
+        async function signOut() {
+            try {
+                await fetch('/api/auth/logout', { method: 'POST' });
+            } catch(e) {}
+            window.location.href = '/login';
+        }
+
+        // Current user
+        async function fetchCurrentUser() {
+            try {
+                const res = await fetch('/api/auth/me');
+                if (!res.ok) return;
+                const user = await res.json();
+                const el = document.getElementById('currentUser');
+                const btn = document.getElementById('signOutBtn');
+                if (el) {
+                    const trustName = user.trust_level || 'unknown';
+                    el.textContent = (user.name || 'User') + ' \u2014 ' + trustName;
+                }
+                if (btn) btn.style.display = '';
+            } catch(e) {}
+        }
+
+        // Wallet tab — load wallet-ui when tab is clicked
+        let walletLoaded = false;
+        document.querySelector('[data-tab="wallet"]').addEventListener('click', function() {
+            if (walletLoaded) return;
+            walletLoaded = true;
+            const jsFile = '{{.WalletJSFile}}';
+            if (!jsFile) {
+                document.getElementById('wallet-ui-mount').innerHTML = '<div class="empty-state">Wallet UI not available. Configure wallet_ui_path in config.yaml.</div>';
+                return;
+            }
+            const script = document.createElement('script');
+            script.type = 'module';
+            script.crossOrigin = 'anonymous';
+            script.src = '/wallet-ui/assets/' + jsFile;
+            document.body.appendChild(script);
+        });
+
         // Initial load
         fetchPeers();
         fetchGroups();
@@ -1069,6 +1149,7 @@ const adminTemplate = `<!DOCTYPE html>
         fetchSettings();
         fetchUsers();
         fetchNodeInfo();
+        fetchCurrentUser();
 
         // Refresh every 30 seconds
         setInterval(() => {

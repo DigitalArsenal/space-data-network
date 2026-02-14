@@ -13,7 +13,40 @@ import ContextSwitcher from '../components/context-switcher/ContextSwitcher.js'
  * With context switching between SDN and IPFS views.
  */
 
-const PeerRow = ({ peer, isSdn }) => {
+const TrustBadge = ({ level }) => {
+  const l = String(level || '').toLowerCase()
+  if (!l) return null
+  let color = 'var(--sdn-accent-red)'
+  if (l === 'admin') color = 'var(--sdn-accent-purple)'
+  else if (l === 'trusted') color = 'var(--sdn-accent-green)'
+  else if (l === 'standard') color = 'var(--sdn-accent)'
+  else if (l === 'limited') color = 'var(--sdn-accent-orange)'
+  return (
+    <a
+      href='#/trust'
+      className='no-underline'
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        padding: '2px 8px',
+        marginLeft: 8,
+        borderRadius: 999,
+        border: `1px solid ${color}`,
+        color,
+        fontSize: 11,
+        fontWeight: 800,
+        letterSpacing: '0.03em',
+        textTransform: 'uppercase',
+        background: 'rgba(0,0,0,0.12)'
+      }}
+      title='Edit trust'
+    >
+      {l}
+    </a>
+  )
+}
+
+const PeerRow = ({ peer, isSdn, trustLevel }) => {
   const peerId = peer.peerId || peer.peer?.toString() || 'unknown'
   const shortId = peerId.length > 16 ? `${peerId.slice(0, 8)}...${peerId.slice(-8)}` : peerId
 
@@ -24,6 +57,7 @@ const PeerRow = ({ peer, isSdn }) => {
         <span className='monospace' style={{ fontSize: '12px', color: 'var(--sdn-text-primary)' }} title={peerId}>
           {shortId}
         </span>
+        {isSdn && trustLevel && <TrustBadge level={trustLevel} />}
       </td>
       <td style={{ padding: '8px 12px', color: 'var(--sdn-text-secondary)', fontSize: '13px' }}>
         {peer.location || 'Unknown'}
@@ -38,7 +72,7 @@ const PeerRow = ({ peer, isSdn }) => {
   )
 }
 
-const PeerTable = ({ peers, isSdn, emptyMessage }) => {
+const PeerTable = ({ peers, isSdn, emptyMessage, trustLevelByPeerId }) => {
   if (!peers || peers.length === 0) {
     return (
       <div style={{ padding: '20px', textAlign: 'center', color: 'var(--sdn-text-secondary)', fontSize: '14px' }}>
@@ -60,7 +94,12 @@ const PeerTable = ({ peers, isSdn, emptyMessage }) => {
         </thead>
         <tbody>
           {peers.map((peer, i) => (
-            <PeerRow key={peer.peerId || i} peer={peer} isSdn={isSdn} />
+            <PeerRow
+              key={peer.peerId || i}
+              peer={peer}
+              isSdn={isSdn}
+              trustLevel={trustLevelByPeerId && (trustLevelByPeerId[peer.peerId] || trustLevelByPeerId[peer.peer?.toString()])}
+            />
           ))}
         </tbody>
       </table>
@@ -81,7 +120,7 @@ const summaryLineStyle = {
   border: '1px solid var(--sdn-border)'
 }
 
-const SdnPeersPanel = ({ peerLocationsForSwarm, sdnPeerIds, sdnPeersCount, isSdnContext, isIpfsContext, doSetSdnContext, t }) => {
+const SdnPeersPanel = ({ peerLocationsForSwarm, sdnPeerIds, sdnPeersCount, trustLevelByPeerId, isSdnContext, isIpfsContext, doSetSdnContext, t, isAdminUser }) => {
   const [resolvedPeers, setResolvedPeers] = useState([])
 
   useEffect(() => {
@@ -122,6 +161,7 @@ const SdnPeersPanel = ({ peerLocationsForSwarm, sdnPeerIds, sdnPeersCount, isSdn
           <PeerTable
             peers={sdnPeers}
             isSdn={true}
+            trustLevelByPeerId={isAdminUser ? trustLevelByPeerId : null}
             emptyMessage='No SDN peers connected. SDN peers support the /spacedatanetwork/sds-exchange/1.0.0 protocol.'
           />
         </div>
@@ -151,6 +191,7 @@ const SdnPeersPanel = ({ peerLocationsForSwarm, sdnPeerIds, sdnPeersCount, isSdn
           <PeerTable
             peers={ipfsPeers}
             isSdn={false}
+            trustLevelByPeerId={null}
             emptyMessage='No IPFS peers connected.'
           />
         </div>
@@ -177,6 +218,8 @@ export default connect(
   'selectPeerLocationsForSwarm',
   'selectSdnPeerIds',
   'selectSdnPeersCount',
+  'selectTrustLevelByPeerId',
+  'selectIsAdminUser',
   'selectIsSdnContext',
   'selectIsIpfsContext',
   'doSetSdnContext',
