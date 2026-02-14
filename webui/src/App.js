@@ -20,16 +20,21 @@ import TourHelper from './components/tour/TourHelper.js'
 import FilesExploreForm from './files/explore-form/files-explore-form.tsx'
 import SdnThemeToggle from './components/sdn-theme-toggle/SdnThemeToggle.js'
 import SdnStatusBar from './components/sdn-status-bar/SdnStatusBar.js'
+import LoginPage from './auth/LoginPage.js'
 
 export class App extends Component {
   static propTypes = {
     doSetupLocalStorage: PropTypes.func.isRequired,
     doTryInitIpfs: PropTypes.func.isRequired,
+    doCheckSession: PropTypes.func.isRequired,
     doUpdateUrl: PropTypes.func.isRequired,
     doUpdateHash: PropTypes.func.isRequired,
     doFilesWrite: PropTypes.func.isRequired,
     routeInfo: PropTypes.object.isRequired,
     filesPathInfo: PropTypes.object,
+    isAuthenticated: PropTypes.bool.isRequired,
+    authLoading: PropTypes.bool.isRequired,
+    authEnabled: PropTypes.bool.isRequired,
     // Injected by DropTarget
     isOver: PropTypes.bool.isRequired
   }
@@ -40,7 +45,16 @@ export class App extends Component {
   }
 
   componentDidMount () {
-    this.props.doTryInitIpfs()
+    this.props.doCheckSession()
+  }
+
+  componentDidUpdate (prevProps) {
+    const { authLoading, isAuthenticated, ipfsReady } = this.props
+    const authJustResolved = prevProps.authLoading && !authLoading
+    const authJustSucceeded = !prevProps.isAuthenticated && isAuthenticated
+    if ((authJustResolved || authJustSucceeded) && isAuthenticated && !ipfsReady) {
+      this.props.doTryInitIpfs()
+    }
   }
 
   addFiles = async (filesPromise) => {
@@ -63,7 +77,24 @@ export class App extends Component {
   }
 
   render () {
-    const { t, route: Page, ipfsReady, doFilesNavigateTo, routeInfo: { url }, connectDropTarget, canDrop, isOver, showTooltip } = this.props
+    const { t, route: Page, ipfsReady, doFilesNavigateTo, routeInfo: { url }, connectDropTarget, canDrop, isOver, showTooltip, isAuthenticated, authLoading } = this.props
+
+    if (authLoading) {
+      return (
+        <div className='sans-serif h-100 relative'>
+          <ComponentLoader />
+        </div>
+      )
+    }
+
+    if (!isAuthenticated) {
+      return (
+        <div className='sans-serif h-100 relative'>
+          <LoginPage />
+        </div>
+      )
+    }
+
     return connectDropTarget(
       // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
       <div className='sans-serif h-100 relative' onClick={getNavHelper(this.props.doUpdateUrl)}>
@@ -135,10 +166,14 @@ export default connect(
   'selectRouteInfo',
   'selectIpfsReady',
   'selectShowTooltip',
+  'selectIsAuthenticated',
+  'selectAuthLoading',
+  'selectAuthEnabled',
   'doFilesNavigateTo',
   'doUpdateUrl',
   'doUpdateHash',
   'doSetupLocalStorage',
+  'doCheckSession',
   'doTryInitIpfs',
   'doFilesWrite',
   'doDisableTooltip',

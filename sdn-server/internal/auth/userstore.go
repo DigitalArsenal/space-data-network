@@ -2,10 +2,13 @@
 package auth
 
 import (
+	"crypto/ed25519"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,12 +23,13 @@ var log = logging.Logger("sdn-auth")
 
 // User represents an authenticated user mapped by xpub.
 type User struct {
-	XPub       string          `json:"xpub"`
-	Name       string          `json:"name,omitempty"`
-	TrustLevel peers.TrustLevel `json:"trust_level"`
-	Source     string          `json:"source"` // "config" or "database"
-	CreatedAt  time.Time       `json:"created_at"`
-	LastLogin  *time.Time      `json:"last_login,omitempty"`
+	XPub             string           `json:"xpub"`
+	Name             string           `json:"name,omitempty"`
+	TrustLevel       peers.TrustLevel `json:"trust_level"`
+	SigningPubKeyHex string           `json:"signing_pubkey_hex,omitempty"`
+	Source           string           `json:"source"` // "config" or "database"
+	CreatedAt        time.Time        `json:"created_at"`
+	LastLogin        *time.Time       `json:"last_login,omitempty"`
 }
 
 // UserStore manages xpub-to-trust-level mappings from config and database.
@@ -65,12 +69,21 @@ func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, 
 			log.Warnf("Skipping config user %q: invalid trust level %q", entry.Name, entry.TrustLevel)
 			continue
 		}
+		signingHex, err := normalizeEd25519PubKeyHex(entry.SigningPubKeyHex)
+		if err != nil {
+			log.Warnf("Config user %q: invalid signing_pubkey_hex: %v", entry.Name, err)
+			signingHex = ""
+		} else if signingHex == "" {
+			// Auth requires a bound signing key; log so operators catch misconfig early.
+			log.Warnf("Config user %q (%s): missing signing_pubkey_hex (login will fail)", entry.Name, entry.XPub)
+		}
 		s.configUsers[entry.XPub] = User{
-			XPub:       entry.XPub,
-			Name:       entry.Name,
-			TrustLevel: trust,
-			Source:     "config",
-			CreatedAt:  now,
+			XPub:             entry.XPub,
+			Name:             entry.Name,
+			TrustLevel:       trust,
+			SigningPubKeyHex: signingHex,
+			Source:           "config",
+			CreatedAt:        now,
 		}
 	}
 
@@ -84,11 +97,21 @@ func (s *UserStore) initDB() error {
 			xpub TEXT PRIMARY KEY,
 			name TEXT DEFAULT '',
 			trust_level INTEGER NOT NULL DEFAULT 2,
+			signing_pubkey_hex TEXT DEFAULT '',
 			created_at INTEGER NOT NULL,
 			last_login_at INTEGER
 		)
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migrate older databases (pre signing_pubkey_hex).
+	_, err = s.db.Exec(`ALTER TABLE users ADD COLUMN signing_pubkey_hex TEXT DEFAULT ''`)
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+		return err
+	}
+	return nil
 }
 
 // GetUser retrieves a user by xpub. Database entries take precedence over config.
@@ -101,9 +124,9 @@ func (s *UserStore) GetUser(xpub string) (*User, error) {
 	var createdAt int64
 	var lastLogin sql.NullInt64
 	err := s.db.QueryRow(
-		"SELECT xpub, name, trust_level, created_at, last_login_at FROM users WHERE xpub = ?",
+		"SELECT xpub, name, trust_level, signing_pubkey_hex, created_at, last_login_at FROM users WHERE xpub = ?",
 		xpub,
-	).Scan(&u.XPub, &u.Name, &u.TrustLevel, &createdAt, &lastLogin)
+	).Scan(&u.XPub, &u.Name, &u.TrustLevel, &u.SigningPubKeyHex, &createdAt, &lastLogin)
 
 	if err == nil {
 		u.Source = "database"
@@ -111,6 +134,13 @@ func (s *UserStore) GetUser(xpub string) (*User, error) {
 		if lastLogin.Valid {
 			t := time.Unix(lastLogin.Int64, 0)
 			u.LastLogin = &t
+		}
+		// Avoid lockouts when an older DB row exists without a signing key; fall back
+		// to the config signing key if present.
+		if strings.TrimSpace(u.SigningPubKeyHex) == "" {
+			if cu, ok := s.configUsers[u.XPub]; ok && strings.TrimSpace(cu.SigningPubKeyHex) != "" {
+				u.SigningPubKeyHex = cu.SigningPubKeyHex
+			}
 		}
 		return &u, nil
 	}
@@ -135,7 +165,7 @@ func (s *UserStore) ListUsers() ([]User, error) {
 	var users []User
 
 	// Database users first (higher precedence)
-	rows, err := s.db.Query("SELECT xpub, name, trust_level, created_at, last_login_at FROM users ORDER BY created_at")
+	rows, err := s.db.Query("SELECT xpub, name, trust_level, signing_pubkey_hex, created_at, last_login_at FROM users ORDER BY created_at")
 	if err != nil {
 		return nil, fmt.Errorf("database error: %w", err)
 	}
@@ -145,7 +175,7 @@ func (s *UserStore) ListUsers() ([]User, error) {
 		var u User
 		var createdAt int64
 		var lastLogin sql.NullInt64
-		if err := rows.Scan(&u.XPub, &u.Name, &u.TrustLevel, &createdAt, &lastLogin); err != nil {
+		if err := rows.Scan(&u.XPub, &u.Name, &u.TrustLevel, &u.SigningPubKeyHex, &createdAt, &lastLogin); err != nil {
 			continue
 		}
 		u.Source = "database"
@@ -153,6 +183,11 @@ func (s *UserStore) ListUsers() ([]User, error) {
 		if lastLogin.Valid {
 			t := time.Unix(lastLogin.Int64, 0)
 			u.LastLogin = &t
+		}
+		if strings.TrimSpace(u.SigningPubKeyHex) == "" {
+			if cu, ok := s.configUsers[u.XPub]; ok && strings.TrimSpace(cu.SigningPubKeyHex) != "" {
+				u.SigningPubKeyHex = cu.SigningPubKeyHex
+			}
 		}
 		users = append(users, u)
 		seen[u.XPub] = true
@@ -174,13 +209,16 @@ func (s *UserStore) HasAdmin() bool {
 	defer s.mu.RUnlock()
 
 	for _, u := range s.configUsers {
-		if u.TrustLevel >= peers.Admin {
+		if u.TrustLevel >= peers.Admin && strings.TrimSpace(u.SigningPubKeyHex) != "" {
 			return true
 		}
 	}
 
 	var count int
-	_ = s.db.QueryRow("SELECT COUNT(*) FROM users WHERE trust_level >= ?", int(peers.Admin)).Scan(&count)
+	_ = s.db.QueryRow(
+		"SELECT COUNT(*) FROM users WHERE trust_level >= ? AND signing_pubkey_hex != ''",
+		int(peers.Admin),
+	).Scan(&count)
 	return count > 0
 }
 
@@ -195,19 +233,65 @@ func (s *UserStore) UserCount() int {
 }
 
 // AddUser adds a user to the database.
-func (s *UserStore) AddUser(xpub, name string, trust peers.TrustLevel) error {
+func (s *UserStore) AddUser(xpub, name string, trust peers.TrustLevel, signingPubKeyHex string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, err := s.db.Exec(
-		"INSERT INTO users (xpub, name, trust_level, created_at) VALUES (?, ?, ?, ?)",
-		xpub, name, int(trust), time.Now().Unix(),
+	signingHex, err := normalizeEd25519PubKeyHex(signingPubKeyHex)
+	if err != nil {
+		return fmt.Errorf("invalid signing_pubkey_hex: %w", err)
+	}
+	if signingHex == "" {
+		return fmt.Errorf("signing_pubkey_hex is required")
+	}
+
+	_, err = s.db.Exec(
+		"INSERT INTO users (xpub, name, trust_level, signing_pubkey_hex, created_at) VALUES (?, ?, ?, ?, ?)",
+		xpub, name, int(trust), signingHex, time.Now().Unix(),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to add user: %w", err)
 	}
 
 	log.Infof("Added user %q (trust=%s) to database", name, trust)
+	return nil
+}
+
+// UpdateSigningPubKey sets/overrides the signing public key for a user.
+// For config users, this creates a database row to override the config value.
+func (s *UserStore) UpdateSigningPubKey(xpub, signingPubKeyHex string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	signingHex, err := normalizeEd25519PubKeyHex(signingPubKeyHex)
+	if err != nil {
+		return fmt.Errorf("invalid signing_pubkey_hex: %w", err)
+	}
+	if signingHex == "" {
+		return fmt.Errorf("signing_pubkey_hex is required")
+	}
+
+	result, err := s.db.Exec("UPDATE users SET signing_pubkey_hex = ? WHERE xpub = ?", signingHex, xpub)
+	if err != nil {
+		return fmt.Errorf("failed to update signing key: %w", err)
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		// If it's a config user, promote to database to override
+		if cu, ok := s.configUsers[xpub]; ok {
+			_, err := s.db.Exec(
+				"INSERT INTO users (xpub, name, trust_level, signing_pubkey_hex, created_at) VALUES (?, ?, ?, ?, ?)",
+				xpub, cu.Name, int(cu.TrustLevel), signingHex, time.Now().Unix(),
+			)
+			if err != nil {
+				return fmt.Errorf("failed to override config user signing key: %w", err)
+			}
+			return nil
+		}
+		return fmt.Errorf("user not found")
+	}
+
 	return nil
 }
 
@@ -250,8 +334,8 @@ func (s *UserStore) UpdateTrust(xpub string, trust peers.TrustLevel) error {
 		if _, ok := s.configUsers[xpub]; ok {
 			cu := s.configUsers[xpub]
 			_, err := s.db.Exec(
-				"INSERT INTO users (xpub, name, trust_level, created_at) VALUES (?, ?, ?, ?)",
-				xpub, cu.Name, int(trust), time.Now().Unix(),
+				"INSERT INTO users (xpub, name, trust_level, signing_pubkey_hex, created_at) VALUES (?, ?, ?, ?, ?)",
+				xpub, cu.Name, int(trust), cu.SigningPubKeyHex, time.Now().Unix(),
 			)
 			if err != nil {
 				return fmt.Errorf("failed to override config user trust: %w", err)
@@ -282,8 +366,8 @@ func (s *UserStore) RecordLogin(xpub string) error {
 		// Config user — create a database entry to track login
 		if cu, ok := s.configUsers[xpub]; ok {
 			_, err := s.db.Exec(
-				"INSERT INTO users (xpub, name, trust_level, created_at, last_login_at) VALUES (?, ?, ?, ?, ?)",
-				xpub, cu.Name, int(cu.TrustLevel), now, now,
+				"INSERT INTO users (xpub, name, trust_level, signing_pubkey_hex, created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?)",
+				xpub, cu.Name, int(cu.TrustLevel), cu.SigningPubKeyHex, now, now,
 			)
 			return err
 		}
@@ -295,4 +379,21 @@ func (s *UserStore) RecordLogin(xpub string) error {
 // Close closes the database connection.
 func (s *UserStore) Close() error {
 	return s.db.Close()
+}
+
+func normalizeEd25519PubKeyHex(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "0x")
+	s = strings.ToLower(s)
+	if s == "" {
+		return "", nil
+	}
+	raw, err := hex.DecodeString(s)
+	if err != nil {
+		return "", err
+	}
+	if len(raw) != ed25519.PublicKeySize {
+		return "", fmt.Errorf("expected 32-byte Ed25519 public key hex, got %d bytes", len(raw))
+	}
+	return s, nil
 }

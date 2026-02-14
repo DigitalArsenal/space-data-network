@@ -10,6 +10,8 @@ import StrokeIpld from '../icons/StrokeIpld.js'
 import StrokeLab from '../icons/StrokeLab.js'
 import StrokeCode from '../icons/StrokeCode.js'
 import StrokeDocument from '../icons/StrokeDocument.js'
+import StrokeLock from '../icons/StrokeLock.js'
+import StrokeWallet from '../icons/StrokeWallet.js'
 import SdnLogo from '../icons/SdnLogo.js'
 
 // Styles
@@ -64,7 +66,7 @@ const NavLink = ({
  * @param {Object} props
  * @param {import('i18next').TFunction} props.t
  */
-export const NavBar = ({ t }) => {
+export const NavBar = ({ t, isAdminUser: isAdmin, authUser, doLogout }) => {
   const codeUrl = 'https://github.com/ipfs/ipfs-webui'
   const bugsUrl = `${codeUrl}/issues`
   const gitRevision = process.env.REACT_APP_GIT_REV
@@ -87,11 +89,34 @@ export const NavBar = ({ t }) => {
           <NavLink to='/schemas' icon={StrokeDocument}>Schemas</NavLink>
           <NavLink to='/plugins' icon={StrokeCode}>Plugins</NavLink>
           <NavLink to='/peers' icon={StrokeCube}>{t('peers:title')}</NavLink>
+          {isAdmin && <NavLink to='/trust' icon={StrokeLock}>Trust</NavLink>}
+          {isAdmin && <NavLink to='/wallet' icon={StrokeWallet}>Wallet</NavLink>}
           <NavLink to='/settings' icon={StrokeSettings}>{t('settings:title')}</NavLink>
           <NavLink to='/diagnostics' icon={StrokeLab}>{t('diagnostics:title')}</NavLink>
         </div>
       </div>
       <div className='dn db-l navbar-footer mb2 tc center f7 o-80 glow'>
+        {authUser && (
+          <div className='mb1' style={{ color: 'rgba(255,255,255,0.8)' }}>
+            {authUser.name || 'User'} ({authUser.trust_level || 'unknown'})
+          </div>
+        )}
+        <div className='mb2'>
+          <button
+            className='pointer'
+            onClick={() => doLogout && doLogout()}
+            style={{
+              padding: '8px 10px',
+              borderRadius: 10,
+              border: '1px solid rgba(88, 166, 255, 0.35)',
+              background: 'transparent',
+              color: 'white',
+              fontWeight: 700
+            }}
+          >
+            Sign out
+          </button>
+        </div>
         { gitRevision && <div className='mb1'>
           <a className='link white' href={revisionUrl} target='_blank' rel='noopener noreferrer'>{t('app:terms.revision')} {gitRevision}</a>
         </div> }
@@ -107,5 +132,8 @@ export const NavBar = ({ t }) => {
 }
 
 export default connect(
+  'selectIsAdminUser',
+  'selectAuthUser',
+  'doLogout',
   withTranslation()(NavBar)
 )

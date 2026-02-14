@@ -3,13 +3,8 @@ package wasm
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/sha512"
-	"encoding/binary"
 	"fmt"
-	"math/big"
-	"strconv"
 	"strings"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -38,26 +33,29 @@ const (
 	SolanaDerivePath   = "m/44'/501'/0'/0'"  // BIP-44 Solana (all hardened for Ed25519)
 )
 
-// secp256k1 curve order
-var secp256k1N = secp256k1.S256().N
+// Curve constants matching the WASM enum (types.h)
+const (
+	CurveSecp256k1 = 0
+	CurveEd25519   = 1
+)
 
 // DeriveCoinAddresses derives Bitcoin, Ethereum, and Solana addresses from a 64-byte seed.
-// Uses pure Go for all derivation — no WASM dependency.
+// Uses WASM for all key derivation; pure Go only for address encoding.
 // Failures for individual coins are non-fatal; unavailable addresses are left nil.
-func (hw *HDWalletModule) DeriveCoinAddresses(_ context.Context, seed []byte) (*CoinAddresses, error) {
+func (hw *HDWalletModule) DeriveCoinAddresses(ctx context.Context, seed []byte) (*CoinAddresses, error) {
 	if len(seed) != 64 {
 		return nil, ErrHDWalletInvalidSeed
 	}
 
 	addrs := &CoinAddresses{}
 
-	if addr, err := deriveBitcoinAddress(seed); err == nil {
+	if addr, err := hw.deriveBitcoinAddress(ctx, seed); err == nil {
 		addrs.Bitcoin = addr
 	}
-	if addr, err := deriveEthereumAddress(seed); err == nil {
+	if addr, err := hw.deriveEthereumAddress(ctx, seed); err == nil {
 		addrs.Ethereum = addr
 	}
-	if addr, err := deriveSolanaAddress(seed); err == nil {
+	if addr, err := hw.deriveSolanaAddress(ctx, seed); err == nil {
 		addrs.Solana = addr
 	}
 
@@ -65,117 +63,86 @@ func (hw *HDWalletModule) DeriveCoinAddresses(_ context.Context, seed []byte) (*
 }
 
 // ---------------------------------------------------------------------------
-// Pure Go BIP-32 secp256k1 key derivation
+// WASM-based BIP-32 secp256k1 key derivation (handle API)
 // ---------------------------------------------------------------------------
 
-// bip32DeriveSecp256k1 derives a compressed secp256k1 public key at the given BIP-32 path.
-// Implements BIP-32 master key generation and child derivation in pure Go.
-func bip32DeriveSecp256k1(seed []byte, path string) ([]byte, error) {
-	// Parse path into indices
-	indices, err := bip32ParsePath(path)
+// deriveSecp256k1PubKey derives a compressed secp256k1 public key at the given BIP-32 path via WASM.
+// Uses hd_key_from_seed → hd_key_derive_path → hd_key_get_public → hd_key_destroy.
+func (hw *HDWalletModule) deriveSecp256k1PubKey(ctx context.Context, seed []byte, path string) ([]byte, error) {
+	hw.mu.Lock()
+	defer hw.mu.Unlock()
+
+	if hw.keyFromSeed == nil || hw.keyDerivePath == nil || hw.keyGetPublic == nil || hw.keyDestroy == nil {
+		return nil, ErrHDWalletNoModule
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
+
+	seedPtr, err := hw.allocate(ctx, seed)
 	if err != nil {
 		return nil, err
 	}
+	defer hw.deallocate(ctx, seedPtr, uint32(len(seed)))
 
-	// Master key: HMAC-SHA512(key="Bitcoin seed", data=seed)
-	mac := hmac.New(sha512.New, []byte("Bitcoin seed"))
-	mac.Write(seed)
-	I := mac.Sum(nil)
-	privKey := new(big.Int).SetBytes(I[:32])
-	chainCode := I[32:]
+	// hd_key_from_seed(seed, seed_len, curve) → handle
+	results, err := hw.keyFromSeed.Call(ctx,
+		uint64(seedPtr), uint64(len(seed)),
+		uint64(CurveSecp256k1),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("key_from_seed failed: %w", err)
+	}
+	masterHandle := results[0]
+	if masterHandle == 0 {
+		return nil, fmt.Errorf("key_from_seed returned null handle")
+	}
+	defer hw.keyDestroy.Call(ctx, masterHandle)
 
-	// Validate master key
-	if privKey.Sign() == 0 || privKey.Cmp(secp256k1N) >= 0 {
-		return nil, fmt.Errorf("invalid master key")
+	// hd_key_derive_path(handle, path) → derived_handle
+	pathPtr, err := hw.allocateString(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, pathPtr, uint32(len(path)+1))
+
+	results, err = hw.keyDerivePath.Call(ctx, masterHandle, uint64(pathPtr))
+	if err != nil {
+		return nil, fmt.Errorf("key_derive_path failed: %w", err)
+	}
+	derivedHandle := results[0]
+	if derivedHandle == 0 {
+		return nil, fmt.Errorf("key_derive_path returned null handle for path %s", path)
+	}
+	defer hw.keyDestroy.Call(ctx, derivedHandle)
+
+	// hd_key_get_public(handle, out, out_size) → bytes_written or negative error
+	pubSize := uint32(33) // compressed secp256k1 pubkey
+	pubPtr, err := hw.allocateSize(ctx, pubSize)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, pubPtr, pubSize)
+
+	results, err = hw.keyGetPublic.Call(ctx, derivedHandle, uint64(pubPtr), uint64(pubSize))
+	if err != nil {
+		return nil, fmt.Errorf("key_get_public failed: %w", err)
+	}
+	written := int32(results[0])
+	if written < 0 {
+		return nil, fmt.Errorf("key_get_public error: %d", written)
 	}
 
-	// Derive each child
-	for _, idx := range indices {
-		hardened := idx >= 0x80000000
-
-		var data []byte
-		if hardened {
-			// Hardened: 0x00 || private_key (32 bytes, zero-padded) || index
-			data = make([]byte, 1+32+4)
-			data[0] = 0x00
-			privBytes := privKey.Bytes()
-			copy(data[1+32-len(privBytes):33], privBytes)
-		} else {
-			// Non-hardened: compressed_pubkey (33 bytes) || index
-			pubKey := compressedPubFromPriv(privKey)
-			data = make([]byte, 33+4)
-			copy(data, pubKey)
-		}
-		binary.BigEndian.PutUint32(data[len(data)-4:], idx)
-
-		mac = hmac.New(sha512.New, chainCode)
-		mac.Write(data)
-		I = mac.Sum(nil)
-
-		il := new(big.Int).SetBytes(I[:32])
-		chainCode = I[32:]
-
-		// Child key = (IL + parent_key) mod n
-		childKey := new(big.Int).Add(il, privKey)
-		childKey.Mod(childKey, secp256k1N)
-
-		if il.Cmp(secp256k1N) >= 0 || childKey.Sign() == 0 {
-			return nil, fmt.Errorf("invalid child key at index %d", idx)
-		}
-
-		privKey = childKey
-	}
-
-	return compressedPubFromPriv(privKey), nil
-}
-
-// compressedPubFromPriv derives a 33-byte compressed secp256k1 public key from a private key.
-func compressedPubFromPriv(privKey *big.Int) []byte {
-	var privKeyMod secp256k1.ModNScalar
-	privBytes := make([]byte, 32)
-	b := privKey.Bytes()
-	copy(privBytes[32-len(b):], b)
-	privKeyMod.SetByteSlice(privBytes)
-
-	var pubKeyJ secp256k1.JacobianPoint
-	secp256k1.ScalarBaseMultNonConst(&privKeyMod, &pubKeyJ)
-	pubKeyJ.ToAffine()
-
-	pub := secp256k1.NewPublicKey(&pubKeyJ.X, &pubKeyJ.Y)
-	return pub.SerializeCompressed()
-}
-
-// bip32ParsePath parses a BIP-32 path like "m/84'/0'/0'/0/0" into indices.
-func bip32ParsePath(path string) ([]uint32, error) {
-	path = strings.TrimPrefix(path, "m/")
-	if path == "" {
-		return nil, fmt.Errorf("empty path")
-	}
-
-	parts := strings.Split(path, "/")
-	indices := make([]uint32, len(parts))
-	for i, part := range parts {
-		hardened := strings.HasSuffix(part, "'")
-		part = strings.TrimSuffix(part, "'")
-		idx, err := strconv.ParseUint(part, 10, 31)
-		if err != nil {
-			return nil, fmt.Errorf("invalid path component %q: %w", part, err)
-		}
-		indices[i] = uint32(idx)
-		if hardened {
-			indices[i] |= 0x80000000
-		}
-	}
-	return indices, nil
+	return hw.readMemory(ctx, pubPtr, uint32(written))
 }
 
 // ---------------------------------------------------------------------------
-// Coin address derivation (all pure Go)
+// Coin address derivation (WASM key derivation + pure Go encoding)
 // ---------------------------------------------------------------------------
 
 // deriveBitcoinAddress derives a P2WPKH (bc1q...) address at m/84'/0'/0'/0/0.
-func deriveBitcoinAddress(seed []byte) (*CoinAddress, error) {
-	pubkey, err := bip32DeriveSecp256k1(seed, BitcoinDerivePath)
+func (hw *HDWalletModule) deriveBitcoinAddress(ctx context.Context, seed []byte) (*CoinAddress, error) {
+	pubkey, err := hw.deriveSecp256k1PubKey(ctx, seed, BitcoinDerivePath)
 	if err != nil {
 		return nil, err
 	}
@@ -189,8 +156,8 @@ func deriveBitcoinAddress(seed []byte) (*CoinAddress, error) {
 }
 
 // deriveEthereumAddress derives a checksummed Ethereum address at m/44'/60'/0'/0/0.
-func deriveEthereumAddress(seed []byte) (*CoinAddress, error) {
-	pubkey, err := bip32DeriveSecp256k1(seed, EthereumDerivePath)
+func (hw *HDWalletModule) deriveEthereumAddress(ctx context.Context, seed []byte) (*CoinAddress, error) {
+	pubkey, err := hw.deriveSecp256k1PubKey(ctx, seed, EthereumDerivePath)
 	if err != nil {
 		return nil, err
 	}
@@ -203,9 +170,9 @@ func deriveEthereumAddress(seed []byte) (*CoinAddress, error) {
 	return &CoinAddress{Address: addr, Path: EthereumDerivePath}, nil
 }
 
-// deriveSolanaAddress derives a Solana address at m/44'/501'/0'/0'.
-func deriveSolanaAddress(seed []byte) (*CoinAddress, error) {
-	derived, err := slip10DeriveEd25519(seed, SolanaDerivePath)
+// deriveSolanaAddress derives a Solana address at m/44'/501'/0'/0' via WASM SLIP-10.
+func (hw *HDWalletModule) deriveSolanaAddress(ctx context.Context, seed []byte) (*CoinAddress, error) {
+	derived, err := hw.DeriveEd25519Key(ctx, seed, SolanaDerivePath)
 	if err != nil {
 		return nil, err
 	}

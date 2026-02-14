@@ -468,7 +468,10 @@ func TestCryptoPaymentVerification(t *testing.T) {
 	}
 	store.CreatePurchaseRequest(req)
 
-	pp := NewPaymentProcessor(store, "test-peer-id")
+	pp := NewPaymentProcessor(store, "test-peer-id", &mockChainVerifier{
+		chain:  "ethereum",
+		result: &CryptoPaymentResult{Verified: true, ConfirmationBlock: 12345},
+	})
 	result, err := pp.VerifyCryptoPayment(ctx, &CryptoPaymentRequest{
 		RequestID: "crypto-purchase-1",
 		TxHash:    "0xabc123def456",
@@ -880,4 +883,16 @@ func (m *mockDHTStore) GetValue(ctx context.Context, key string) ([]byte, error)
 		return nil, os.ErrNotExist
 	}
 	return v, nil
+}
+
+type mockChainVerifier struct {
+	chain  string
+	result *CryptoPaymentResult
+	err    error
+}
+
+func (m *mockChainVerifier) Chain() string { return m.chain }
+
+func (m *mockChainVerifier) VerifyTransaction(ctx context.Context, req *CryptoPaymentRequest) (*CryptoPaymentResult, error) {
+	return m.result, m.err
 }

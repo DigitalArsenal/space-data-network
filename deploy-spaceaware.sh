@@ -49,9 +49,13 @@ fi
 log "Building SpaceAware single-file app"
 npm --prefix "$ROOT_DIR/packages/spaceaware" run build
 
+log "Building WebUI (React SPA)"
+npm --prefix "$ROOT_DIR/webui" install
+npm --prefix "$ROOT_DIR/webui" run build
+
 log "Ensuring remote directories exist on $SERVER"
 ssh "${SSH_OPTS[@]}" "$SERVER" \
-  "mkdir -p '$REMOTE_SRC' '$REMOTE_BIN_DIR' '$REMOTE_SPACEAWARE_DIR' '$REMOTE_BUILD_DIR/OrbPro' '$REMOTE_BUILD_DIR/CesiumUnminified' '$REMOTE_PLUGIN_ROOT' '$REMOTE_WASM_DIR'"
+  "mkdir -p '$REMOTE_SRC' '$REMOTE_BIN_DIR' '$REMOTE_SPACEAWARE_DIR' '$REMOTE_BUILD_DIR/OrbPro' '$REMOTE_BUILD_DIR/CesiumUnminified' '$REMOTE_PLUGIN_ROOT' '$REMOTE_WASM_DIR' '/opt/spacedatanetwork/webui'"
 
 log "Syncing sdn-server source to $SERVER"
 rsync -az --delete --exclude=.git \
@@ -62,6 +66,11 @@ log "Syncing SpaceAware landing page to $SERVER"
 rsync -az \
   "$ROOT_DIR/packages/spaceaware/dist/index.html" \
   "$SERVER:$REMOTE_SPACEAWARE_INDEX"
+
+log "Syncing WebUI build to $SERVER"
+rsync -az --delete \
+  "$ROOT_DIR/webui/build/" \
+  "$SERVER:/opt/spacedatanetwork/webui/"
 
 log "Syncing OrbPro module and runtime assets to $SERVER"
 rsync -az --delete \
@@ -131,6 +140,11 @@ ssh "${SSH_OPTS[@]}" "$SERVER" "
   if ! grep -q '^SDN_WALLET_UI_PATH=' '$REMOTE_ENV_FILE'; then
     echo 'SDN_WALLET_UI_PATH=$REMOTE_WALLET_UI' >> '$REMOTE_ENV_FILE'
     echo '[deploy-spaceaware] Added SDN_WALLET_UI_PATH in $REMOTE_ENV_FILE'
+  fi
+
+  if ! grep -q '^SDN_WEBUI_PATH=' '$REMOTE_ENV_FILE'; then
+    echo 'SDN_WEBUI_PATH=/opt/spacedatanetwork/webui' >> '$REMOTE_ENV_FILE'
+    echo '[deploy-spaceaware] Added SDN_WEBUI_PATH in $REMOTE_ENV_FILE'
   fi
 
   if ! grep -q '^HD_WALLET_WASM_PATH=' '$REMOTE_ENV_FILE'; then

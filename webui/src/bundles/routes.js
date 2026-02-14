@@ -11,10 +11,14 @@ import ExplorePageRenderer from '../explore/explore-page-renderer.jsx'
 import DiagnosticsPage from '../diagnostics/loadable-diagnostics-page'
 import SchemasPage from '../schemas/LoadableSchemasPage.js'
 import PluginsPage from '../plugins/LoadablePluginsPage.js'
+import TrustPage from '../trust/LoadableTrustPage.js'
+import WalletPage from '../wallet/LoadableWalletPage.js'
 
 export default createRouteBundle({
   '/plugins*': PluginsPage,
   '/schemas': SchemasPage,
+  '/wallet': WalletPage,
+  '/trust*': TrustPage,
   '/explore': ExplorePageRenderer,
   '/explore*': ExplorePageRenderer,
   '/files*': FilesPage,

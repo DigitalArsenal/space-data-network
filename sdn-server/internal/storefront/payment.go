@@ -20,16 +20,23 @@ import (
 
 // PaymentProcessor handles payment verification and processing
 type PaymentProcessor struct {
-	store  *Store
-	peerID string
+	store          *Store
+	peerID         string
+	chainVerifiers map[string]ChainVerifier
 }
 
-// NewPaymentProcessor creates a new payment processor
-func NewPaymentProcessor(store *Store, peerID string) *PaymentProcessor {
-	return &PaymentProcessor{
-		store:  store,
-		peerID: peerID,
+// NewPaymentProcessor creates a new payment processor.
+// Optional ChainVerifier instances can be provided for blockchain verification.
+func NewPaymentProcessor(store *Store, peerID string, verifiers ...ChainVerifier) *PaymentProcessor {
+	pp := &PaymentProcessor{
+		store:          store,
+		peerID:         peerID,
+		chainVerifiers: make(map[string]ChainVerifier),
 	}
+	for _, v := range verifiers {
+		pp.chainVerifiers[v.Chain()] = v
+	}
+	return pp
 }
 
 const (
@@ -73,44 +80,12 @@ func (pp *PaymentProcessor) VerifyCryptoPayment(ctx context.Context, req *Crypto
 		return nil, err
 	}
 
-	// Chain-specific verification
-	switch req.Chain {
-	case "ethereum":
-		return pp.verifyEthereumPayment(ctx, req)
-	case "solana":
-		return pp.verifySolanaPayment(ctx, req)
-	case "bitcoin":
-		return pp.verifyBitcoinPayment(ctx, req)
-	default:
-		return &CryptoPaymentResult{Verified: false, Error: fmt.Sprintf("unsupported chain: %s", req.Chain)}, nil
+	// Chain-specific verification via registered verifier
+	verifier, ok := pp.chainVerifiers[req.Chain]
+	if !ok {
+		return &CryptoPaymentResult{Verified: false, Error: fmt.Sprintf("no verifier configured for chain: %s", req.Chain)}, nil
 	}
-}
-
-func (pp *PaymentProcessor) verifyEthereumPayment(ctx context.Context, req *CryptoPaymentRequest) (*CryptoPaymentResult, error) {
-	// NOT IMPLEMENTED: In production, use eth_getTransactionReceipt RPC call
-	log.Warnf("Ethereum payment verification not implemented — rejecting tx: %s", req.TxHash)
-	return &CryptoPaymentResult{
-		Verified: false,
-		Error:    "ethereum payment verification not yet implemented",
-	}, nil
-}
-
-func (pp *PaymentProcessor) verifySolanaPayment(ctx context.Context, req *CryptoPaymentRequest) (*CryptoPaymentResult, error) {
-	// NOT IMPLEMENTED: In production, use getTransaction RPC call
-	log.Warnf("Solana payment verification not implemented — rejecting tx: %s", req.TxHash)
-	return &CryptoPaymentResult{
-		Verified: false,
-		Error:    "solana payment verification not yet implemented",
-	}, nil
-}
-
-func (pp *PaymentProcessor) verifyBitcoinPayment(ctx context.Context, req *CryptoPaymentRequest) (*CryptoPaymentResult, error) {
-	// NOT IMPLEMENTED: In production, use getrawtransaction or block explorer API
-	log.Warnf("Bitcoin payment verification not implemented — rejecting tx: %s", req.TxHash)
-	return &CryptoPaymentResult{
-		Verified: false,
-		Error:    "bitcoin payment verification not yet implemented",
-	}, nil
+	return verifier.VerifyTransaction(ctx, req)
 }
 
 // ProcessCredits processes a payment using SDN credits atomically.

@@ -24,6 +24,8 @@ import cliTutorModeBundle from './cli-tutor-mode.js'
 import gatewayBundle from './gateway.js'
 import ipnsBundle from './ipns.js'
 import sdnThemeBundle from './sdn-theme.js'
+import sdnAuthBundle from './sdn-auth.js'
+import sdnTrustBundle from './sdn-trust.js'
 import sdnPeersBundle from './sdn-peers.js'
 import sdnStatsBundle from './sdn-stats.js'
 import sdnContextBundle from './sdn-context.js'
@@ -66,6 +68,8 @@ export default composeBundles(
   createAnalyticsBundle({}),
   ipnsBundle,
   sdnThemeBundle,
+  sdnAuthBundle,
+  sdnTrustBundle,
   sdnPeersBundle,
   sdnStatsBundle,
   sdnContextBundle
