@@ -353,7 +353,7 @@ type DerivedKey struct {
 }
 
 // DeriveEd25519Key derives an Ed25519 key at the given path using SLIP-10 via WASM.
-// Path format: "m/44'/1957'/0'/0'/0'" (all components must be hardened for Ed25519)
+// Path format: "m/44'/0'/0'/0'/0'" (all components must be hardened for Ed25519)
 // Calls hd_slip10_ed25519_derive_path(seed, seed_len, path, key_out, chain_code_out) → i32
 func (hw *HDWalletModule) DeriveEd25519Key(ctx context.Context, seed []byte, path string) (*DerivedKey, error) {
 	hw.mu.Lock()

@@ -52,7 +52,7 @@
     "@libp2p/webtransport": "^4.0.0",
     "@multiformats/multiaddr": "^12.1.0",
     "flatsql": "github:DigitalArsenal/flatsql#v0.3.9",
-    "hd-wallet-wasm": "1.2.0",
+    "hd-wallet-wasm": "file:../../hd-wallet-wasm/wasm",
     "idb": "^8.0.0",
     "libp2p": "^1.2.0",
     "qrcode": "^1.5.3",

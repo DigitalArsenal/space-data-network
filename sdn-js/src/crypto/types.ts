@@ -86,8 +86,8 @@ export const LanguageCode = {
  * SDN derivation constants
  */
 export const SDNDerivation = {
-  /** SLIP-44 coin type for SDN (1957 = Sputnik launch year) */
-  COIN_TYPE: 1957,
+  /** BIP-44 coin type (0 = Bitcoin, standard default) */
+  COIN_TYPE: 0,
   /** Signing key purpose (change index 0) */
   SIGNING_PURPOSE: 0,
   /** Encryption key purpose (change index 1) */

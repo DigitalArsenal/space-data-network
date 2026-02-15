@@ -1,0 +1,27 @@
+# SDN Local Dev — single-node with full admin UI and wallet login
+#
+# Prerequisites (run once):
+#   cp -r ../hd-wallet-wasm/wallet-ui/dist wallet-ui-dist
+#   cp ../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm hd-wallet-wasi.wasm
+#
+# Or use the helper script:
+#   ./scripts/dev-docker.sh
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yaml up --build
+#   # Open http://localhost:5001/login
+#   # Mnemonic: abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about
+
+services:
+  sdn-dev:
+    build:
+      context: .
+      dockerfile: deployment/docker/Dockerfile.dev
+    container_name: sdn-dev
+    ports:
+      - "5001:5001"
+      - "4001:4001"
+      - "8080:8080"
+    volumes:
+      - ./data/dev-docker:/app/data
+    restart: unless-stopped

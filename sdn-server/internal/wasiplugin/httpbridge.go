@@ -171,11 +171,14 @@ func (h *Handler) HandleUI(w http.ResponseWriter, r *http.Request) {
   </div>
 
   <div class="card">
-    <h3>Endpoints</h3>
+    <h3>Transport</h3>
     <ul>
-      <li><code>GET /orbpro-key-broker/v1/orbpro/public-key</code></li>
-      <li><code>POST /orbpro-key-broker/v1/orbpro/key</code></li>
+      <li><code>/orbpro/public-key/1.0.0</code> (libp2p stream)</li>
+      <li><code>/orbpro/key-broker/1.0.0</code> (libp2p stream)</li>
     </ul>
+    <p style="margin-top: 8px; font-size: 0.8rem; color: #64748b;">
+      Key exchange uses encrypted libp2p streams. Public key is published to DHT.
+    </p>
   </div>
 </body>
 </html>`, pubKeyHex, domainsHTML)

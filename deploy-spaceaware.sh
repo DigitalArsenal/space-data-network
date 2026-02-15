@@ -10,9 +10,7 @@ SSH_OPTS=(-o StrictHostKeyChecking=accept-new)
 REMOTE_SRC="/opt/spacedatanetwork/src/sdn-server"
 REMOTE_BIN_DIR="/opt/spacedatanetwork/bin"
 REMOTE_BIN="${REMOTE_BIN_DIR}/spacedatanetwork"
-REMOTE_SPACEAWARE_DIR="/opt/spacedatanetwork/spaceaware"
-REMOTE_SPACEAWARE_INDEX="${REMOTE_SPACEAWARE_DIR}/index.html"
-REMOTE_BUILD_DIR="${REMOTE_SPACEAWARE_DIR}/Build"
+REMOTE_FRONTEND_DIR="/opt/spacedatanetwork/frontend"
 REMOTE_ENV_FILE="/etc/default/spacedatanetwork"
 REMOTE_PLUGIN_ROOT="/opt/data/license/plugins"
 REMOTE_WASM_DIR="/opt/spacedatanetwork/wasm"
@@ -46,39 +44,31 @@ if [[ ! -d "$ORBPRO_BASE_DIR/Workers" ]]; then
   exit 1
 fi
 
-log "Building SpaceAware single-file app"
-npm --prefix "$ROOT_DIR/packages/spaceaware" run build
-
 log "Building WebUI (React SPA)"
 npm --prefix "$ROOT_DIR/webui" install
 npm --prefix "$ROOT_DIR/webui" run build
 
 log "Ensuring remote directories exist on $SERVER"
 ssh "${SSH_OPTS[@]}" "$SERVER" \
-  "mkdir -p '$REMOTE_SRC' '$REMOTE_BIN_DIR' '$REMOTE_SPACEAWARE_DIR' '$REMOTE_BUILD_DIR/OrbPro' '$REMOTE_BUILD_DIR/CesiumUnminified' '$REMOTE_PLUGIN_ROOT' '$REMOTE_WASM_DIR' '/opt/spacedatanetwork/webui'"
+  "mkdir -p '$REMOTE_SRC' '$REMOTE_BIN_DIR' '$REMOTE_FRONTEND_DIR' '$REMOTE_PLUGIN_ROOT' '$REMOTE_WASM_DIR' '/opt/spacedatanetwork/webui'"
 
 log "Syncing sdn-server source to $SERVER"
 rsync -az --delete --exclude=.git \
   "$ROOT_DIR/sdn-server/" \
   "$SERVER:$REMOTE_SRC/"
 
-log "Syncing SpaceAware landing page to $SERVER"
-rsync -az \
-  "$ROOT_DIR/packages/spaceaware/dist/index.html" \
-  "$SERVER:$REMOTE_SPACEAWARE_INDEX"
+log "Syncing OrbPro as frontend homepage to $SERVER"
+rsync -az --delete --exclude='CesiumUnminified' \
+  "$ORBPRO_MODULE_DIR/" \
+  "$SERVER:$REMOTE_FRONTEND_DIR/"
+rsync -az --delete \
+  "$ORBPRO_BASE_DIR/" \
+  "$SERVER:$REMOTE_FRONTEND_DIR/CesiumUnminified/"
 
 log "Syncing WebUI build to $SERVER"
 rsync -az --delete \
   "$ROOT_DIR/webui/build/" \
   "$SERVER:/opt/spacedatanetwork/webui/"
-
-log "Syncing OrbPro module and runtime assets to $SERVER"
-rsync -az --delete \
-  "$ORBPRO_MODULE_DIR/" \
-  "$SERVER:$REMOTE_BUILD_DIR/OrbPro/"
-rsync -az --delete \
-  "$ORBPRO_BASE_DIR/" \
-  "$SERVER:$REMOTE_BUILD_DIR/CesiumUnminified/"
 
 LICENSE_WASM="$ROOT_DIR/packages/sdn-license-plugin/build-wasi/sdn-license-plugin.wasm"
 if [[ -f "$LICENSE_WASM" ]]; then
@@ -181,10 +171,10 @@ license_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{htt
 entitlements_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "token=\$(awk -F= '/^SDN_LICENSE_ADMIN_TOKEN=/{print \$2}' '$REMOTE_ENV_FILE' | tail -n 1); curl -ksS -o /dev/null -w '%{http_code}' -H \"X-License-Admin-Token: \$token\" 'https://127.0.0.1/api/v1/license/entitlements?xpub=__deploy_smoke__'")"
 plugins_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/plugins/manifest")"
 admin_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/admin")"
-keybroker_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/orbpro-key-broker/v1/orbpro/public-key")"
 login_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/login")"
 
-log "health=$health_code license_verify=$license_code entitlements_admin=$entitlements_code plugins_manifest=$plugins_code admin=$admin_code keybroker=$keybroker_code login=$login_code"
+# Key broker no longer exposes HTTP endpoints — key exchange uses libp2p streams.
+log "health=$health_code license_verify=$license_code entitlements_admin=$entitlements_code plugins_manifest=$plugins_code admin=$admin_code login=$login_code"
 
 if [[ "$health_code" != "200" ]]; then
   echo "Health check failed: expected 200, got $health_code" >&2

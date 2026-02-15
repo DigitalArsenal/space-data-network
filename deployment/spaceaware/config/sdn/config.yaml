@@ -47,7 +47,17 @@ admin:
   tls_enabled: false
   tls_cert_file: /etc/spacedatanetwork/tls/origin.crt
   tls_key_file: /etc/spacedatanetwork/tls/origin.key
-  homepage_file: /opt/spacedatanetwork/spaceaware/index.html
+  # Public frontend served at / (default: ~/.spacedatanetwork/frontend/)
+  frontend_path: /opt/spacedatanetwork/frontend
+  # IPFS WebUI served at /admin (requires admin auth)
+  webui_path: ""
+
+# Admin user: paste your SDN xpub (generated via `spacedatanetwork derive-xpub`)
+# The Ed25519 signing public key is extracted automatically from the xpub.
+users:
+  - xpub: "PASTE_YOUR_SDN_XPUB_HERE"
+    trust_level: "admin"
+    name: "Operator"
 
 setup:
   token_expiry: 10m

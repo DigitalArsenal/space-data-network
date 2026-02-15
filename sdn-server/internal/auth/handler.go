@@ -205,15 +205,22 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only store challenges for known users with a bound signing key that matches
-	// the provided client_pubkey_hex. This binds xpub -> signing public key on the
-	// server side and prevents "xpub-only" impersonation.
+	// Store challenges for known users. If the user has a bound signing key,
+	// only accept challenges where client_pubkey_hex matches. If the user has
+	// no signing key yet (e.g. config has xpub only), accept the presented key
+	// — it will be permanently bound on first successful verify (TOFU).
+	// Unknown xpubs get a valid-looking response that can never be verified
+	// (prevents user enumeration).
 	shouldStore := false
 	expectedPubKey := []byte(nil)
 	if user != nil {
 		normalized, nerr := normalizeEd25519PubKeyHex(user.SigningPubKeyHex)
 		if nerr != nil || normalized == "" {
-			log.Warnf("Auth challenge for xpub %q: missing/invalid signing_pubkey_hex (err=%v)", req.XPub, nerr)
+			// TOFU: no signing key bound yet — accept the presented key.
+			// The key will be permanently bound on first successful verify.
+			shouldStore = true
+			expectedPubKey = pubRaw
+			log.Infof("Auth challenge for xpub %q: no signing key bound, TOFU mode", req.XPub)
 		} else {
 			expRaw, derr := hex.DecodeString(normalized)
 			if derr != nil || len(expRaw) != ed25519.PublicKeySize {
@@ -352,6 +359,18 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	if err != nil || user == nil {
 		h.writeAuthenticationFailure(w)
 		return
+	}
+
+	// TOFU: bind signing key on first successful authentication.
+	// The user proved ownership of the private key by signing the challenge.
+	if strings.TrimSpace(user.SigningPubKeyHex) == "" {
+		sigHex := hex.EncodeToString(pending.pubKey)
+		if err := h.userStore.UpdateSigningPubKey(req.XPub, sigHex); err != nil {
+			log.Warnf("TOFU: failed to bind signing key for %q: %v", req.XPub, err)
+		} else {
+			log.Infof("TOFU: bound signing key %s for user %q", sigHex, user.Name)
+			user.SigningPubKeyHex = sigHex
+		}
 	}
 
 	// Create session

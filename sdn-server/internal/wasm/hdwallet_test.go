@@ -183,8 +183,8 @@ func TestHDWalletModule_DeriveEd25519Key(t *testing.T) {
 		path    string
 		wantErr bool
 	}{
-		{"SDN signing key", "m/44'/1957'/0'/0'/0'", false},
-		{"SDN encryption key", "m/44'/1957'/0'/1'/0'", false},
+		{"BIP-44 signing key", "m/44'/0'/0'/0'/0'", false},
+		{"BIP-44 encryption key", "m/44'/0'/0'/1'/0'", false},
 		{"Solana path", "m/44'/501'/0'/0'", false},
 		{"invalid path", "invalid", true},
 	}
@@ -208,14 +208,14 @@ func TestHDWalletModule_DeriveEd25519Key(t *testing.T) {
 	}
 
 	// Test determinism
-	key1, _ := hw.DeriveEd25519Key(ctx, seed, "m/44'/1957'/0'/0'/0'")
-	key2, _ := hw.DeriveEd25519Key(ctx, seed, "m/44'/1957'/0'/0'/0'")
+	key1, _ := hw.DeriveEd25519Key(ctx, seed, "m/44'/0'/0'/0'/0'")
+	key2, _ := hw.DeriveEd25519Key(ctx, seed, "m/44'/0'/0'/0'/0'")
 	if !bytes.Equal(key1.PrivateKey, key2.PrivateKey) {
 		t.Error("DeriveEd25519Key() should be deterministic")
 	}
 
 	// Different paths produce different keys
-	key3, _ := hw.DeriveEd25519Key(ctx, seed, "m/44'/1957'/1'/0'/0'")
+	key3, _ := hw.DeriveEd25519Key(ctx, seed, "m/44'/0'/1'/0'/0'")
 	if bytes.Equal(key1.PrivateKey, key3.PrivateKey) {
 		t.Error("DeriveEd25519Key() different paths should produce different keys")
 	}
@@ -231,7 +231,7 @@ func TestHDWalletModule_Ed25519SignVerify(t *testing.T) {
 	}
 
 	// Derive a key
-	derivedKey, err := hw.DeriveEd25519Key(ctx, seed, "m/44'/1957'/0'/0'/0'")
+	derivedKey, err := hw.DeriveEd25519Key(ctx, seed, "m/44'/0'/0'/0'/0'")
 	if err != nil {
 		t.Fatalf("DeriveEd25519Key() error = %v", err)
 	}
@@ -294,12 +294,12 @@ func TestHDWalletModule_X25519(t *testing.T) {
 	}
 
 	// Derive two X25519 key pairs
-	aliceKey, err := hw.DeriveEd25519Key(ctx, seed, "m/44'/1957'/0'/1'/0'")
+	aliceKey, err := hw.DeriveEd25519Key(ctx, seed, "m/44'/0'/0'/1'/0'")
 	if err != nil {
 		t.Fatalf("DeriveEd25519Key() error = %v", err)
 	}
 
-	bobKey, err := hw.DeriveEd25519Key(ctx, seed, "m/44'/1957'/1'/1'/0'")
+	bobKey, err := hw.DeriveEd25519Key(ctx, seed, "m/44'/0'/1'/1'/0'")
 	if err != nil {
 		t.Fatalf("DeriveEd25519Key() error = %v", err)
 	}

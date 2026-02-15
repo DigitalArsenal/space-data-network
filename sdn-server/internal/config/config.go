@@ -37,17 +37,18 @@ type ChainRPCConfig struct {
 
 // UserEntry maps an HD wallet xpub to a trust level for authentication.
 type UserEntry struct {
-	// XPub is the BIP-32 extended public key at m/44'/1957'/account'.
+	// XPub is the SDN extended public key at the signing key path
+	// m/44'/0'/0'/0'/0'. It uses Base58Check encoding with SDN-specific
+	// version bytes and directly embeds the Ed25519 signing public key.
+	//
+	// The server automatically extracts the Ed25519 signing public key from
+	// the xpub, so signing_pubkey_hex is no longer required.
 	XPub string `yaml:"xpub"`
 
-	// SigningPubKeyHex is the Ed25519 public key (32 bytes hex) used to sign
-	// authentication challenges for this xpub.
-	//
-	// NOTE: xpubs are derived on the SECP256K1 curve, while SDN auth uses an
-	// Ed25519 signing key derived from the same wallet seed on a hardened path.
-	// There is no safe way for the server to derive the Ed25519 key from the xpub,
-	// so this field binds the xpub identity to a specific signing key.
-	SigningPubKeyHex string `yaml:"signing_pubkey_hex"`
+	// SigningPubKeyHex is an optional Ed25519 public key (32 bytes hex) override.
+	// When omitted, the signing key is extracted from the xpub automatically.
+	// This field is retained for backward compatibility.
+	SigningPubKeyHex string `yaml:"signing_pubkey_hex,omitempty"`
 
 	// TrustLevel: "untrusted", "limited", "standard", "trusted", "admin".
 	TrustLevel string `yaml:"trust_level"`
@@ -145,13 +146,21 @@ type AdminConfig struct {
 	// TLSKeyFile is the PEM-encoded private key path.
 	TLSKeyFile string `yaml:"tls_key_file"`
 
+	// FrontendPath is the filesystem path to the public-facing frontend directory.
+	// This directory is served at "/" as a static file server with SPA fallback.
+	// Default: "" (resolved at runtime to ~/.spacedatanetwork/frontend/).
+	// The directory is created automatically with a default page if it doesn't exist.
+	// Override with SDN_FRONTEND_PATH env var or set explicitly in config.
+	FrontendPath string `yaml:"frontend_path"`
+
 	// HomepageFile is an optional single-file HTML app served at "/" and "/index.html".
+	// Deprecated: use frontend_path instead. If frontend_path is set, this is ignored.
 	// If empty, the built-in default landing page is served.
 	HomepageFile string `yaml:"homepage_file"`
 
 	// WebuiPath is the filesystem path to an IPFS WebUI build directory (webui/build).
-	// If set, the admin server serves this SPA at "/" (with index.html fallback).
-	// If empty, the landing page is served instead.
+	// When set, the IPFS WebUI is served at "/admin" behind admin authentication.
+	// If empty, the admin panel uses the built-in admin UI.
 	WebuiPath string `yaml:"webui_path"`
 
 	// IPFSAPIURL is the base URL of an upstream Kubo RPC API endpoint (no path),
@@ -235,6 +244,7 @@ func Default() *Config {
 			TLSEnabled:    false,
 			TLSCertFile:   "",
 			TLSKeyFile:    "",
+			FrontendPath:  "",
 			HomepageFile:  "",
 			WebuiPath:     "",
 			IPFSAPIURL:    "",
@@ -257,6 +267,12 @@ func Default() *Config {
 func DefaultPath() string {
 	homeDir, _ := os.UserHomeDir()
 	return filepath.Join(homeDir, ".spacedatanetwork", "config.yaml")
+}
+
+// DefaultFrontendPath returns the standard frontend directory path.
+func DefaultFrontendPath() string {
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".spacedatanetwork", "frontend")
 }
 
 // Load loads the configuration from a file.

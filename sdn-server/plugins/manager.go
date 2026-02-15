@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"net/http"
 
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
 )
 
 // RuntimeContext provides node/runtime dependencies that plugins need at startup.
 type RuntimeContext struct {
 	Host         host.Host
+	DHT          *dht.IpfsDHT
 	BaseDataPath string
 	PeerID       string
 	Mode         string

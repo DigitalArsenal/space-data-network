@@ -28,7 +28,7 @@ func (h *Handler) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 
 	// Already authenticated → redirect to admin.
 	if session, err := h.sessionFromRequest(r); err == nil && session != nil {
-		http.Redirect(w, r, "/admin", http.StatusFound)
+		http.Redirect(w, r, "/admin/", http.StatusFound)
 		return
 	}
 
@@ -230,13 +230,13 @@ func buildLoginPage(jsFile, cssFile string) string {
       border-radius:var(--radius);padding:24px 28px;
     }
     .sdn-setup h2{font-size:15px;font-weight:600;color:#fbbf24;margin-bottom:8px;display:flex;align-items:center;gap:8px}
-    .sdn-setup p{font-size:13px;color:var(--text-secondary);line-height:1.7;margin-bottom:10px}
+    .sdn-setup p{font-size:13px;color:var(--text-secondary);line-height:1.7;margin-bottom:16px}
     .sdn-setup code{
       display:block;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);
-      border-radius:8px;padding:12px 16px;margin:10px 0;font-family:var(--font-mono);
+      border-radius:8px;padding:12px 16px;margin:12px 0 16px;font-family:var(--font-mono);
       font-size:12px;line-height:1.8;color:var(--text-secondary);white-space:pre;overflow-x:auto;
     }
-    .sdn-setup .step{color:var(--text-muted);font-size:12px;margin-top:12px}
+    .sdn-setup .step{color:var(--text-muted);font-size:12px;margin-top:16px}
 
     /* ---- Auth toast ---- */
     .sdn-auth-status{
@@ -284,16 +284,13 @@ func buildLoginPage(jsFile, cssFile string) string {
       badge.style.display = 'flex';
     }
 
-    function updateBannerIdentity(xpub, signingPubKeyHex) {
+    function updateBannerIdentity(xpub) {
       var banner = document.getElementById('sdn-setup-banner');
       if (!banner) return;
       var codes = banner.querySelectorAll('code');
       for (var i = 0; i < codes.length; i++) {
         if (xpub && codes[i].textContent.indexOf('YOUR_XPUB_HERE') !== -1) {
           codes[i].textContent = codes[i].textContent.replace('YOUR_XPUB_HERE', xpub);
-        }
-        if (signingPubKeyHex && codes[i].textContent.indexOf('YOUR_SIGNING_PUBKEY_HEX_HERE') !== -1) {
-          codes[i].textContent = codes[i].textContent.replace('YOUR_SIGNING_PUBKEY_HEX_HERE', signingPubKeyHex);
         }
       }
     }
@@ -340,7 +337,7 @@ func buildLoginPage(jsFile, cssFile string) string {
 
       if (!verifyResp.ok) {
         // Auth failed — user not in config. Show "unregistered" badge, update banner.
-        updateBannerIdentity(xpub, pubKeyHex);
+        updateBannerIdentity(xpub);
         showTrustBadge('untrusted', 'not in server config');
         hide();
         var btn = document.getElementById('sdn-sign-in');
@@ -358,7 +355,7 @@ func buildLoginPage(jsFile, cssFile string) string {
       if (trustName === 'admin') {
         // Admin — redirect to admin panel
         show('Redirecting to admin panel\u2026', 'success');
-        setTimeout(function(){ window.location.href = '/admin'; }, 600);
+        setTimeout(function(){ window.location.href = '/admin/'; }, 600);
       } else {
         // Non-admin — stay on page, show their level
         var btn = document.getElementById('sdn-sign-in');
@@ -369,7 +366,7 @@ func buildLoginPage(jsFile, cssFile string) string {
       // Network or unexpected error — show badge, not a toast
       showTrustBadge('untrusted', err.message);
       hide();
-      if (typeof xpub !== 'undefined' && xpub) updateBannerIdentity(xpub, (typeof pubKeyHex !== 'undefined' ? pubKeyHex : ''));
+      if (typeof xpub !== 'undefined' && xpub) updateBannerIdentity(xpub);
     }
   };
 
@@ -430,11 +427,11 @@ func buildLoginPage(jsFile, cssFile string) string {
       banner.innerHTML =
         '<div class="sdn-setup">' +
           '<h2>\u26a0 Admin Setup Required</h2>' +
-          '<p>No administrator account is configured. Add your HD wallet\u2019s <strong>extended public key (xpub)</strong> and <strong>Ed25519 signing public key</strong> to:</p>' +
+          '<p>No administrator account is configured. Add your SDN <strong>extended public key (xpub)</strong> to:</p>' +
           '<code>' + esc(cfgPath) + '</code>' +
           '<p style="margin-top:12px">Add the following block:</p>' +
-          '<code>users:\n  - xpub: "YOUR_XPUB_HERE"\n    signing_pubkey_hex: "YOUR_SIGNING_PUBKEY_HEX_HERE"\n    trust_level: "admin"\n    name: "Operator"</code>' +
-          '<p>To find your keys, click <strong>Sign In</strong> above and open your wallet. Your xpub and signing public key are displayed on the account keys screen. They will be auto-filled into the config snippet above.</p>' +
+          '<code>users:\n  - xpub: "YOUR_XPUB_HERE"\n    trust_level: "admin"\n    name: "Operator"</code>' +
+          '<p>Click <strong>Sign In</strong> to open your wallet \u2014 your xpub will be auto-filled above.</p>' +
           '<p class="step">After editing, restart the server:</p>' +
           '<code>sudo systemctl restart spacedatanetwork</code>' +
         '</div>';
