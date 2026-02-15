@@ -63,12 +63,26 @@ func (hw *HDWalletModule) DeriveCoinAddresses(ctx context.Context, seed []byte) 
 }
 
 // ---------------------------------------------------------------------------
-// WASM-based BIP-32 secp256k1 key derivation (handle API)
+// BIP-32 secp256k1 key derivation (via WASM)
 // ---------------------------------------------------------------------------
 
-// deriveSecp256k1PubKey derives a compressed secp256k1 public key at the given BIP-32 path via WASM.
-// Uses hd_key_from_seed → hd_key_derive_path → hd_key_get_public → hd_key_destroy.
+// deriveSecp256k1PubKey derives a compressed secp256k1 public key at the given BIP-32 path.
 func (hw *HDWalletModule) deriveSecp256k1PubKey(ctx context.Context, seed []byte, path string) ([]byte, error) {
+	pubkey, err := hw.deriveSecp256k1PubKeyWASM(ctx, seed, path)
+	if err != nil {
+		return nil, err
+	}
+	if len(pubkey) != 33 {
+		return nil, fmt.Errorf("expected 33-byte pubkey, got %d", len(pubkey))
+	}
+	if _, parseErr := secp256k1.ParsePubKey(pubkey); parseErr != nil {
+		return nil, fmt.Errorf("invalid secp256k1 pubkey: %w", parseErr)
+	}
+	return pubkey, nil
+}
+
+// deriveSecp256k1PubKeyWASM derives via WASM handle API.
+func (hw *HDWalletModule) deriveSecp256k1PubKeyWASM(ctx context.Context, seed []byte, path string) ([]byte, error) {
 	hw.mu.Lock()
 	defer hw.mu.Unlock()
 
@@ -85,7 +99,6 @@ func (hw *HDWalletModule) deriveSecp256k1PubKey(ctx context.Context, seed []byte
 	}
 	defer hw.deallocate(ctx, seedPtr, uint32(len(seed)))
 
-	// hd_key_from_seed(seed, seed_len, curve) → handle
 	results, err := hw.keyFromSeed.Call(ctx,
 		uint64(seedPtr), uint64(len(seed)),
 		uint64(CurveSecp256k1),
@@ -99,7 +112,6 @@ func (hw *HDWalletModule) deriveSecp256k1PubKey(ctx context.Context, seed []byte
 	}
 	defer hw.keyDestroy.Call(ctx, masterHandle)
 
-	// hd_key_derive_path(handle, path) → derived_handle
 	pathPtr, err := hw.allocateString(ctx, path)
 	if err != nil {
 		return nil, err
@@ -116,8 +128,7 @@ func (hw *HDWalletModule) deriveSecp256k1PubKey(ctx context.Context, seed []byte
 	}
 	defer hw.keyDestroy.Call(ctx, derivedHandle)
 
-	// hd_key_get_public(handle, out, out_size) → bytes_written or negative error
-	pubSize := uint32(33) // compressed secp256k1 pubkey
+	pubSize := uint32(33)
 	pubPtr, err := hw.allocateSize(ctx, pubSize)
 	if err != nil {
 		return nil, err
@@ -128,12 +139,13 @@ func (hw *HDWalletModule) deriveSecp256k1PubKey(ctx context.Context, seed []byte
 	if err != nil {
 		return nil, fmt.Errorf("key_get_public failed: %w", err)
 	}
-	written := int32(results[0])
-	if written < 0 {
-		return nil, fmt.Errorf("key_get_public error: %d", written)
+	// Return value is an error code (0 = OK, negative = error), not byte count.
+	errCode := int32(results[0])
+	if errCode < 0 {
+		return nil, fmt.Errorf("key_get_public error: %d", errCode)
 	}
 
-	return hw.readMemory(ctx, pubPtr, uint32(written))
+	return hw.readMemory(ctx, pubPtr, pubSize)
 }
 
 // ---------------------------------------------------------------------------

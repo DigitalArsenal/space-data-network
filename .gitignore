@@ -89,6 +89,11 @@ coverage/
 # Docker
 docker-compose.override.yml
 
+# Dev environment data and build context artifacts
+data/
+wallet-ui-dist/
+hd-wallet-wasi.wasm
+
 # OS-specific
 .DS_Store
 .AppleDouble

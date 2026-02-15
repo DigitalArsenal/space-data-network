@@ -322,6 +322,7 @@ func (n *Node) init() error {
 	basePath := filepath.Dir(n.config.Storage.Path)
 	pluginCtx := plugins.RuntimeContext{
 		Host:         n.host,
+		DHT:          n.dht,
 		BaseDataPath: basePath,
 		PeerID:       n.host.ID().String(),
 		Mode:         n.config.Mode,

@@ -2,6 +2,10 @@
 // backed by a C++ WASI module. The plugin handles P-256 ECDH key exchange for
 // OrbPro's protection runtime, running the crypto entirely inside WASM/WASI
 // via the Wazero runtime.
+//
+// Key exchange happens over encrypted libp2p streams (not HTTP), following a
+// Widevine/Signal-style model. The server's P-256 public key is published to
+// the DHT so clients can discover the key broker by CID.
 package wasmlicenseplugin
 
 import (
@@ -15,8 +19,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	logging "github.com/ipfs/go-log/v2"
+	"github.com/libp2p/go-libp2p/core/host"
 
 	"github.com/spacedatanetwork/sdn-server/internal/wasiplugin"
 	"github.com/spacedatanetwork/sdn-server/plugins"
@@ -32,7 +38,14 @@ type Plugin struct {
 	mu       sync.RWMutex
 	runtime  *wasiplugin.Runtime
 	handler  *wasiplugin.Handler
+	bridge   *wasiplugin.StreamBridge
+	host     host.Host
 	wasmPath string
+
+	// Background goroutine lifecycle
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // New returns an unstarted plugin that will load the WASM module from wasmPath.
@@ -44,7 +57,10 @@ func New(wasmPath string) *Plugin {
 func (p *Plugin) ID() string { return ID }
 
 // Start loads the WASM module, derives the P-256 public key, packs the binary
-// config blob, and calls plugin_init. Config comes from environment variables:
+// config blob, calls plugin_init, then registers libp2p stream handlers and
+// publishes the public key to the DHT.
+//
+// Config comes from environment variables:
 //
 //   - ORBPRO_SERVER_PRIVATE_KEY_HEX  — 32-byte P-256 private key (64 hex chars)
 //   - DERIVATION_SECRET              — shared secret for KDF program
@@ -126,17 +142,72 @@ func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 	}
 
 	handler := wasiplugin.NewHandler(rt)
+	bridge := wasiplugin.NewStreamBridge(rt)
 
 	p.mu.Lock()
 	p.runtime = rt
 	p.handler = handler
+	p.bridge = bridge
+	p.host = runtime.Host
 	p.mu.Unlock()
 
-	log.Infof("OrbPro key broker plugin started (domains: %s)", allowedDomains)
+	// Register libp2p stream handlers for key exchange over p2p transport.
+	// The key exchange happens entirely over encrypted libp2p streams,
+	// not HTTP — following a Widevine/Signal-style model.
+	if runtime.Host != nil {
+		runtime.Host.SetStreamHandler(wasiplugin.PublicKeyProtocolID, bridge.HandlePublicKeyStream)
+		runtime.Host.SetStreamHandler(wasiplugin.KeyBrokerProtocolID, bridge.HandleKeyBrokerStream)
+		log.Infof("Registered libp2p stream handlers: %s, %s",
+			wasiplugin.PublicKeyProtocolID, wasiplugin.KeyBrokerProtocolID)
+	}
+
+	// Publish the server's public key CID to the DHT in a background goroutine.
+	// This re-announces periodically so new peers can discover the key broker.
+	if runtime.DHT != nil {
+		p.ctx, p.cancel = context.WithCancel(ctx)
+		p.wg.Add(1)
+		go p.announceLoop(runtime)
+	}
+
+	log.Infof("OrbPro key broker plugin started (domains: %s, transport: libp2p)", allowedDomains)
 	return nil
 }
 
-// RegisterRoutes mounts the OrbPro key broker HTTP endpoints.
+// announceLoop periodically publishes the public key CID to the DHT.
+func (p *Plugin) announceLoop(runtime plugins.RuntimeContext) {
+	defer p.wg.Done()
+
+	p.mu.RLock()
+	bridge := p.bridge
+	p.mu.RUnlock()
+
+	if bridge == nil {
+		return
+	}
+
+	// Initial announcement
+	if err := bridge.AnnouncePublicKey(p.ctx, runtime.DHT); err != nil {
+		log.Warnf("Initial DHT announcement failed: %v", err)
+	}
+
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-ticker.C:
+			if err := bridge.AnnouncePublicKey(p.ctx, runtime.DHT); err != nil {
+				log.Debugf("DHT re-announcement failed: %v", err)
+			}
+		}
+	}
+}
+
+// RegisterRoutes mounts the OrbPro key broker admin UI endpoint.
+// Key exchange no longer happens over HTTP — it uses libp2p streams.
+// Only the admin UI endpoint is kept for the plugin dashboard.
 func (p *Plugin) RegisterRoutes(mux *http.ServeMux) {
 	p.mu.RLock()
 	h := p.handler
@@ -146,24 +217,24 @@ func (p *Plugin) RegisterRoutes(mux *http.ServeMux) {
 		return
 	}
 
-	mux.HandleFunc("/orbpro-key-broker/v1/orbpro/public-key", h.HandlePublicKey)
-	mux.HandleFunc("/orbpro-key-broker/v1/orbpro/key", h.HandleKeyExchange)
+	// Only the admin UI is served over HTTP (behind admin auth).
+	// Public key and key exchange happen over libp2p streams.
 	mux.HandleFunc("/orbpro-key-broker/v1/orbpro/ui", h.HandleUI)
 }
 
 // Version returns the plugin version string.
-func (p *Plugin) Version() string { return "1.0.0" }
+func (p *Plugin) Version() string { return "2.0.0" }
 
 // Description returns a short description of the plugin.
 func (p *Plugin) Description() string {
-	return "P-256 ECDH key broker for OrbPro protection runtime"
+	return "P-256 ECDH key broker for OrbPro protection runtime (libp2p transport)"
 }
 
 // UIDescriptor returns the plugin's web UI metadata.
 func (p *Plugin) UIDescriptor() plugins.UIDescriptor {
 	return plugins.UIDescriptor{
 		Title:       "OrbPro Key Broker",
-		Description: "P-256 ECDH key exchange service for OrbPro content protection",
+		Description: "P-256 ECDH key exchange over libp2p (Widevine/Signal model)",
 		Icon:        "\U0001F511",
 		Color:       "#fef3c7",
 		TextColor:   "#92400e",
@@ -171,13 +242,29 @@ func (p *Plugin) UIDescriptor() plugins.UIDescriptor {
 	}
 }
 
-// Close shuts down the WASI runtime.
+// Close shuts down the background announce loop, removes libp2p stream
+// handlers, and releases the WASI runtime.
 func (p *Plugin) Close() error {
+	// Stop background goroutine
+	if p.cancel != nil {
+		p.cancel()
+	}
+	p.wg.Wait()
+
 	p.mu.Lock()
 	rt := p.runtime
+	h := p.host
 	p.runtime = nil
 	p.handler = nil
+	p.bridge = nil
+	p.host = nil
 	p.mu.Unlock()
+
+	// Remove stream handlers
+	if h != nil {
+		h.RemoveStreamHandler(wasiplugin.PublicKeyProtocolID)
+		h.RemoveStreamHandler(wasiplugin.KeyBrokerProtocolID)
+	}
 
 	if rt != nil {
 		return rt.Close(context.Background())

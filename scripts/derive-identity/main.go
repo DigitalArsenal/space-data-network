@@ -28,15 +28,15 @@ func main() {
 	seed := bip39.NewSeed(mnemonic, "") // No passphrase used in SDN default
 
 	// 2. Derive Ed25519 Key using SLIP-10
-	// Path: m/44'/1957'/0'/0'/0'
+	// Path: m/44'/0'/0'/0'/0'  (BIP-44 Bitcoin coin type, all hardened for Ed25519)
 	// 44' = 0x8000002C
-	// 1957' = 0x800007A5
-	// 0' = 0x80000000
-	// 0' = 0x80000000
-	// 0' = 0x80000000
+	// 0'  = 0x80000000
+	// 0'  = 0x80000000
+	// 0'  = 0x80000000
+	// 0'  = 0x80000000
 	path := []uint32{
 		0x8000002C,
-		0x800007A5,
+		0x80000000,
 		0x80000000,
 		0x80000000,
 		0x80000000,

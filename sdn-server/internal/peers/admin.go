@@ -364,6 +364,7 @@ const adminTemplate = `<!DOCTYPE html>
             <button class="tab" data-tab="settings">Settings</button>
             <button class="tab" data-tab="users">Users</button>
             <button class="tab" data-tab="node">Node</button>
+            <button class="tab" data-tab="frontend">Frontend</button>
             <button class="tab" data-tab="wallet">Wallet</button>
         </div>
 
@@ -501,6 +502,98 @@ const adminTemplate = `<!DOCTYPE html>
                 <div id="nodeInfo" style="display:grid; grid-template-columns:200px 1fr; gap:12px; align-items:start;">
                     <div class="empty-state" style="grid-column:1/-1;">Loading node info...</div>
                 </div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="frontend-tab">
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Frontend Manager</h2>
+                    <div class="actions">
+                        <label class="btn btn-primary" style="cursor:pointer;">
+                            Upload Files
+                            <input type="file" multiple onchange="uploadFrontendFiles(this)" style="display:none;">
+                        </label>
+                        <button class="btn" onclick="showGitImportModal()">Git Import</button>
+                        <button class="btn" onclick="showNewFileModal()">New File</button>
+                    </div>
+                </div>
+                <p style="color:var(--text-secondary);margin-bottom:16px;font-size:13px;">
+                    Manage the public-facing frontend served at <code>/</code>.
+                    Upload files, edit HTML/CSS/JS, or import a git repository.
+                </p>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Size</th>
+                            <th>Modified</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="frontendFilesTable">
+                        <tr><td colspan="4" class="empty-state">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- File Editor Panel -->
+            <div class="panel" id="editorPanel" style="display:none;margin-top:20px;">
+                <div class="panel-header">
+                    <h2 id="editorTitle">Edit File</h2>
+                    <div class="actions">
+                        <button class="btn btn-primary" onclick="saveEditedFile()">Save</button>
+                        <button class="btn" onclick="closeEditor()">Close</button>
+                    </div>
+                </div>
+                <textarea id="fileEditor" style="width:100%;min-height:400px;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:6px;padding:12px;color:var(--text-primary);font-family:SFMono-Regular,Consolas,monospace;font-size:13px;resize:vertical;tab-size:2;"></textarea>
+            </div>
+        </div>
+
+        <!-- Git Import Modal -->
+        <div class="modal" id="gitImportModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Import from Git</h2>
+                    <button class="modal-close" onclick="closeModal('gitImportModal')">&times;</button>
+                </div>
+                <form onsubmit="doGitImport(event)">
+                    <div class="form-group">
+                        <label>Repository URL *</label>
+                        <input type="text" id="gitImportURL" placeholder="https://github.com/user/repo.git" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Branch (optional)</label>
+                        <input type="text" id="gitImportBranch" placeholder="main">
+                    </div>
+                    <p style="color:var(--accent-yellow);font-size:12px;margin-bottom:15px;">
+                        Warning: This will replace all existing frontend files.
+                    </p>
+                    <div class="actions">
+                        <button type="submit" class="btn btn-primary" id="gitImportBtn">Import</button>
+                        <button type="button" class="btn" onclick="closeModal('gitImportModal')">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- New File Modal -->
+        <div class="modal" id="newFileModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>New File</h2>
+                    <button class="modal-close" onclick="closeModal('newFileModal')">&times;</button>
+                </div>
+                <form onsubmit="createNewFile(event)">
+                    <div class="form-group">
+                        <label>File Path *</label>
+                        <input type="text" id="newFilePath" placeholder="e.g. index.html or css/style.css" required>
+                    </div>
+                    <div class="actions">
+                        <button type="submit" class="btn btn-primary">Create</button>
+                        <button type="button" class="btn" onclick="closeModal('newFileModal')">Cancel</button>
+                    </div>
+                </form>
             </div>
         </div>
 
@@ -1140,6 +1233,183 @@ const adminTemplate = `<!DOCTYPE html>
             script.crossOrigin = 'anonymous';
             script.src = '/wallet-ui/assets/' + jsFile;
             document.body.appendChild(script);
+        });
+
+        // Frontend management
+        let currentEditPath = '';
+        function showGitImportModal() { document.getElementById('gitImportModal').classList.add('active'); }
+        function showNewFileModal() { document.getElementById('newFileModal').classList.add('active'); }
+
+        async function fetchFrontendFiles() {
+            try {
+                const res = await fetch('/api/admin/frontend/files', { headers: {'X-Requested-With': 'XMLHttpRequest'} });
+                if (!res.ok) {
+                    document.getElementById('frontendFilesTable').innerHTML = '<tr><td colspan="4" class="empty-state">Could not load files</td></tr>';
+                    return;
+                }
+                const files = await res.json();
+                renderFrontendFiles(files);
+            } catch (e) {
+                document.getElementById('frontendFilesTable').innerHTML = '<tr><td colspan="4" class="empty-state">Error: ' + e.message + '</td></tr>';
+            }
+        }
+
+        function renderFrontendFiles(files) {
+            const tbody = document.getElementById('frontendFilesTable');
+            const fileList = files.filter(f => !f.is_dir);
+            if (fileList.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No files</td></tr>';
+                return;
+            }
+            tbody.innerHTML = fileList.map(f => {
+                const size = f.size < 1024 ? f.size + ' B' : f.size < 1048576 ? (f.size/1024).toFixed(1) + ' KB' : (f.size/1048576).toFixed(1) + ' MB';
+                const mod = new Date(f.mod_time).toLocaleString();
+                const isEditable = /\.(html?|css|js|json|txt|md|xml|svg|ya?ml|toml)$/i.test(f.path);
+                return '<tr>' +
+                    '<td class="peer-id">' + f.path + '</td>' +
+                    '<td>' + size + '</td>' +
+                    '<td>' + mod + '</td>' +
+                    '<td>' +
+                    (isEditable ? '<button class="btn btn-small" onclick="editFrontendFile(\'' + f.path.replace(/'/g, "\\'") + '\')">Edit</button> ' : '') +
+                    '<button class="btn btn-small btn-danger" onclick="deleteFrontendFile(\'' + f.path.replace(/'/g, "\\'") + '\')">Delete</button>' +
+                    '</td></tr>';
+            }).join('');
+        }
+
+        async function editFrontendFile(path) {
+            try {
+                const res = await fetch('/api/admin/frontend/files/' + encodeURIComponent(path), { headers: {'X-Requested-With': 'XMLHttpRequest'} });
+                if (!res.ok) { alert('Failed to load file'); return; }
+                const data = await res.json();
+                currentEditPath = path;
+                document.getElementById('editorTitle').textContent = 'Edit: ' + path;
+                document.getElementById('fileEditor').value = data.content;
+                document.getElementById('editorPanel').style.display = '';
+                document.getElementById('fileEditor').focus();
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function saveEditedFile() {
+            if (!currentEditPath) return;
+            try {
+                const res = await fetch('/api/admin/frontend/files/' + encodeURIComponent(currentEditPath), {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+                    body: JSON.stringify({ content: document.getElementById('fileEditor').value })
+                });
+                if (res.ok) {
+                    fetchFrontendFiles();
+                } else {
+                    alert('Save failed: ' + await res.text());
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        function closeEditor() {
+            document.getElementById('editorPanel').style.display = 'none';
+            currentEditPath = '';
+        }
+
+        async function deleteFrontendFile(path) {
+            if (!confirm('Delete ' + path + '?')) return;
+            try {
+                const res = await fetch('/api/admin/frontend/files/' + encodeURIComponent(path), {
+                    method: 'DELETE',
+                    headers: {'X-Requested-With': 'XMLHttpRequest'}
+                });
+                if (res.ok) {
+                    fetchFrontendFiles();
+                    if (currentEditPath === path) closeEditor();
+                } else {
+                    alert('Delete failed: ' + await res.text());
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function uploadFrontendFiles(input) {
+            const files = input.files;
+            if (!files.length) return;
+            const form = new FormData();
+            for (const f of files) form.append('files', f);
+            try {
+                const res = await fetch('/api/admin/frontend/upload', {
+                    method: 'POST',
+                    headers: {'X-Requested-With': 'XMLHttpRequest'},
+                    body: form
+                });
+                if (res.ok) {
+                    fetchFrontendFiles();
+                } else {
+                    alert('Upload failed: ' + await res.text());
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+            input.value = '';
+        }
+
+        async function doGitImport(e) {
+            e.preventDefault();
+            const btn = document.getElementById('gitImportBtn');
+            btn.disabled = true;
+            btn.textContent = 'Importing...';
+            try {
+                const res = await fetch('/api/admin/frontend/git-import', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+                    body: JSON.stringify({
+                        url: document.getElementById('gitImportURL').value,
+                        branch: document.getElementById('gitImportBranch').value
+                    })
+                });
+                if (res.ok) {
+                    closeModal('gitImportModal');
+                    fetchFrontendFiles();
+                    const data = await res.json();
+                    if (!data.has_index) alert('Warning: imported repo has no index.html');
+                } else {
+                    alert('Import failed: ' + await res.text());
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Import';
+            }
+        }
+
+        async function createNewFile(e) {
+            e.preventDefault();
+            const path = document.getElementById('newFilePath').value.trim();
+            if (!path) return;
+            try {
+                const res = await fetch('/api/admin/frontend/files/' + encodeURIComponent(path), {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+                    body: JSON.stringify({ content: '' })
+                });
+                if (res.ok) {
+                    closeModal('newFileModal');
+                    document.getElementById('newFilePath').value = '';
+                    fetchFrontendFiles();
+                    editFrontendFile(path);
+                } else {
+                    alert('Error: ' + await res.text());
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        // Load frontend files when tab is clicked
+        document.querySelector('[data-tab="frontend"]').addEventListener('click', function() {
+            fetchFrontendFiles();
         });
 
         // Initial load

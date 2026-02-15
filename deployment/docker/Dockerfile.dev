@@ -1,0 +1,66 @@
+# SDN Dev Node — all-in-one image with admin UI, wallet login, and WebUI
+#
+# Build context must be the space-data-network repo root.
+# Requires ../hd-wallet-wasm to be a sibling directory.
+#
+# Build:
+#   docker compose -f docker-compose.dev.yaml build
+#
+# Run:
+#   docker compose -f docker-compose.dev.yaml up
+
+# ── Stage 1: Build Go server ──────────────────────────────────────────────────
+FROM golang:1.24-alpine AS builder
+
+RUN apk add --no-cache gcc musl-dev sqlite-dev
+
+WORKDIR /build
+COPY sdn-server/go.mod sdn-server/go.sum ./sdn-server/
+WORKDIR /build/sdn-server
+RUN go mod download
+
+WORKDIR /build
+COPY sdn-server/ ./sdn-server/
+
+WORKDIR /build/sdn-server
+RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/spacedatanetwork ./cmd/spacedatanetwork
+
+# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates sqlite-libs
+
+# Create non-root user
+RUN adduser -D -u 1000 sdn
+WORKDIR /app
+
+# Server binary
+COPY --from=builder /out/spacedatanetwork /app/spacedatanetwork
+
+# WebUI build (React admin panel)
+COPY webui/build/ /app/webui/
+
+# Wallet UI (hd-wallet-ui login interface)
+COPY wallet-ui-dist/ /app/wallet-ui/
+
+# HD wallet WASM binary
+COPY hd-wallet-wasi.wasm /app/wasm/hd-wallet-wasi.wasm
+
+# Dev config
+COPY config/dev-docker.yaml /app/config/dev.yaml
+
+# Data directory
+RUN mkdir -p /app/data && chown -R sdn:sdn /app/data
+VOLUME /app/data
+
+USER sdn
+
+# Ports: admin (5001), TCP libp2p (4001), WebSocket (8080)
+EXPOSE 5001 4001 8080
+
+ENV HD_WALLET_WASM_PATH=/app/wasm/hd-wallet-wasi.wasm
+ENV SDN_WALLET_UI_PATH=/app/wallet-ui
+ENV SDN_WEBUI_PATH=/app/webui
+
+ENTRYPOINT ["/app/spacedatanetwork"]
+CMD ["daemon", "--config", "/app/config/dev.yaml", "--debug"]

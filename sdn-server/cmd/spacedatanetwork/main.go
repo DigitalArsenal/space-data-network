@@ -3,8 +3,10 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -26,6 +28,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/frontend"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -65,10 +68,20 @@ var reindexCmd = &cobra.Command{
 	RunE:  runReindex,
 }
 
+var deriveXPubCmd = &cobra.Command{
+	Use:   "derive-xpub",
+	Short: "Derive an SDN xpub from a BIP-39 mnemonic",
+	Long: `Derives the extended public key at m/44'/0'/0'/0'/0' from a BIP-39 mnemonic.
+The resulting xpub embeds the Ed25519 signing public key and can be pasted directly
+into config.yaml as the user's xpub field. No signing_pubkey_hex is needed.`,
+	RunE: runDeriveXPub,
+}
+
 var (
 	configPath string
 	listenAddr string
 	debug      bool
+	wasmPath   string
 )
 
 func init() {
@@ -76,10 +89,12 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug logging")
 
 	daemonCmd.Flags().StringVarP(&listenAddr, "listen", "l", "", "override listen address")
+	deriveXPubCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet.wasm (default: $HD_WALLET_WASM_PATH or ../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm)")
 
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(reindexCmd)
+	rootCmd.AddCommand(deriveXPubCmd)
 }
 
 func main() {
@@ -120,6 +135,17 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		if envPath := os.Getenv("SDN_WEBUI_PATH"); envPath != "" {
 			cfg.Admin.WebuiPath = envPath
 		}
+	}
+	if envPath := os.Getenv("SDN_FRONTEND_PATH"); envPath != "" {
+		cfg.Admin.FrontendPath = envPath
+	}
+	// Resolve empty frontend path to standard location
+	if strings.TrimSpace(cfg.Admin.FrontendPath) == "" {
+		cfg.Admin.FrontendPath = config.DefaultFrontendPath()
+	}
+	// Auto-provision frontend directory with default page if it doesn't exist
+	if err := provisionFrontendDir(cfg.Admin.FrontendPath); err != nil {
+		log.Warnf("Could not provision frontend directory %q: %v", cfg.Admin.FrontendPath, err)
 	}
 
 	// Create and start the node
@@ -264,6 +290,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Node info API endpoint
 			adminMux.HandleFunc("/api/node/info", handleNodeInfo(n))
 
+			// libp2p bootstrap JS — serves a JS module with the node's raw IP,
+			// peer ID, and ws:// multiaddr injected at request time so browsers
+			// can connect using the raw IP without DNS.
+			adminMux.HandleFunc("/sdn/libp2p.js", handleLibp2pJS(n))
+
 			// HD wallet authentication
 			if cfg.Admin.RequireAuth {
 				authDBPath := filepath.Join(cfg.Storage.Path, "auth.db")
@@ -310,39 +341,64 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			// Static build assets (OrbPro, Cesium, etc.)
-			landingHTML, err := loadLandingPage(cfg.Admin.HomepageFile)
-			if err != nil {
-				log.Warnf("Falling back to built-in landing page: %v", err)
-				landingHTML = []byte(defaultLandingPageHTML)
-			}
-			if buildAssetsDir := resolveBuildAssetsDir(cfg.Admin.HomepageFile); buildAssetsDir != "" {
-				adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
-				log.Infof("Static build assets served at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
-			}
+			// ----------------------------------------------------------------
+			// Frontend management API (admin-only)
+			// ----------------------------------------------------------------
+			frontendMgr := frontend.NewManager(cfg.Admin.FrontendPath)
+			frontendMgr.RegisterRoutes(adminMux)
+			log.Infof("Frontend manager at %s://%s/api/admin/frontend/ (dir: %s)", adminScheme, adminAddr, cfg.Admin.FrontendPath)
 
-			// Admin panel — gated by auth if RequireAuth is set
+			// ----------------------------------------------------------------
+			// Admin panel at /admin — IPFS WebUI (if configured) behind admin auth
+			// ----------------------------------------------------------------
 			if cfg.Admin.RequireAuth {
 				if authHandler == nil {
 					return fmt.Errorf("admin authentication required but handler is unavailable")
 				}
-				adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
-				adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
-			} else {
-				// No auth: admin panel open (local development mode)
-			}
-
-			// Primary UI at root: React WebUI build (if configured), otherwise landing page.
-			if webuiPath := strings.TrimSpace(cfg.Admin.WebuiPath); webuiPath != "" {
-				webuiHandler, err := makeWebUIHandler(webuiPath)
-				if err != nil {
-					log.Warnf("WebUI disabled: %v", err)
-					adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
+				if webuiPath := strings.TrimSpace(cfg.Admin.WebuiPath); webuiPath != "" {
+					webuiHandler, err := makeWebUIHandler(webuiPath, "/admin")
+					if err != nil {
+						log.Warnf("IPFS WebUI disabled at /admin: %v", err)
+						adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
+						adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
+					} else {
+						// Redirect /admin → /admin/ so the React SPA's relative asset
+						// paths (homepage: "./") resolve under /admin/ not site root.
+						adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, func(w http.ResponseWriter, r *http.Request) {
+							http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
+						}))
+						adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, http.StripPrefix("/admin", webuiHandler).ServeHTTP))
+						log.Infof("IPFS WebUI at %s://%s/admin (requires admin auth) from %s", adminScheme, adminAddr, webuiPath)
+					}
 				} else {
-					adminMux.Handle("/", webuiHandler)
-					log.Infof("WebUI served at %s://%s/ from %s", adminScheme, adminAddr, webuiPath)
+					adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
+					adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
 				}
 			} else {
+				// No auth: admin panel open (local development mode)
+				adminMux.HandleFunc("/admin", adminUI.ServeHTTP)
+				adminMux.HandleFunc("/admin/", adminUI.ServeHTTP)
+			}
+
+			// ----------------------------------------------------------------
+			// Public frontend at / — configurable static file server
+			// ----------------------------------------------------------------
+			if frontendPath := strings.TrimSpace(cfg.Admin.FrontendPath); frontendPath != "" {
+				frontendHandler, err := makeFrontendHandler(frontendPath)
+				if err != nil {
+					log.Warnf("Frontend disabled (falling back to built-in landing): %v", err)
+					landingHTML := loadLandingPageFallback(cfg.Admin.HomepageFile)
+					adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
+				} else {
+					adminMux.Handle("/", frontendHandler)
+					log.Infof("Public frontend at %s://%s/ from %s", adminScheme, adminAddr, frontendPath)
+				}
+			} else {
+				landingHTML := loadLandingPageFallback(cfg.Admin.HomepageFile)
+				if buildAssetsDir := resolveBuildAssetsDir(cfg.Admin.HomepageFile); buildAssetsDir != "" {
+					adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
+					log.Infof("Static build assets at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
+				}
 				adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
 			}
 
@@ -358,11 +414,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					w.Header().Set("X-Frame-Options", "DENY")
 					w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 
-					// Cross-origin isolation only for OrbPro routes (SharedArrayBuffer)
-					if strings.HasPrefix(r.URL.Path, "/Build/") {
-						w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
-						w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
-					}
+					// Cross-origin isolation headers are set by the frontend handler
+					// (makeFrontendHandler) for OrbPro routes that need SharedArrayBuffer.
 					if adminTLS {
 						w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 					}
@@ -504,7 +557,10 @@ func isPublicAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/storefront/trust/") ||
 		strings.HasPrefix(path, "/api/auth/") ||
 		strings.HasPrefix(path, "/api/node/info") ||
-		strings.HasPrefix(path, "/orbpro-key-broker/v1/")
+		path == "/sdn/libp2p.js"
+	// Key broker is NOT a public HTTP endpoint.
+	// Plugin key exchange happens over encrypted IPFS/libp2p transport,
+	// not HTTP. The server's public key is published to IPFS by CID.
 }
 
 func isWebhookPath(path string) bool {
@@ -568,7 +624,8 @@ func isAdminOnlyAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/blocklist") ||
 		strings.HasPrefix(path, "/api/settings") ||
 		strings.HasPrefix(path, "/api/export") ||
-		strings.HasPrefix(path, "/api/import")
+		strings.HasPrefix(path, "/api/import") ||
+		strings.HasPrefix(path, "/api/admin/")
 }
 
 func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
@@ -590,30 +647,26 @@ func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
 	})
 }
 
-func makeWebUIHandler(buildDir string) (http.Handler, error) {
+func makeWebUIHandler(buildDir string, _ string) (http.Handler, error) {
 	buildDir = strings.TrimSpace(buildDir)
 	if buildDir == "" {
-		return nil, fmt.Errorf("admin.webui_path is empty")
+		return nil, fmt.Errorf("webui_path is empty")
 	}
 
 	indexPath := filepath.Join(buildDir, "index.html")
 	if st, err := os.Stat(indexPath); err != nil {
-		return nil, fmt.Errorf("admin.webui_path %q: missing index.html: %w", buildDir, err)
+		return nil, fmt.Errorf("webui_path %q: missing index.html: %w", buildDir, err)
 	} else if st.IsDir() {
-		return nil, fmt.Errorf("admin.webui_path %q: index.html is a directory", buildDir)
+		return nil, fmt.Errorf("webui_path %q: index.html is a directory", buildDir)
 	}
 
 	fs := http.FileServer(http.Dir(buildDir))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Only static serving here; API routes are handled by more specific mux patterns.
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		// If the path maps to an existing file, serve it. Otherwise:
-		// - if it looks like an asset (has an extension), 404
-		// - else serve index.html (SPA fallback)
 		clean := path.Clean("/" + r.URL.Path)
 		clean = strings.TrimPrefix(clean, "/")
 		if clean != "" {
@@ -631,6 +684,208 @@ func makeWebUIHandler(buildDir string) (http.Handler, error) {
 
 		http.ServeFile(w, r, indexPath)
 	}), nil
+}
+
+// provisionFrontendDir creates the frontend directory with a default index.html
+// if it doesn't already exist.
+func provisionFrontendDir(dir string) error {
+	if _, err := os.Stat(dir); err == nil {
+		return nil // already exists
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	indexPath := filepath.Join(dir, "index.html")
+	return os.WriteFile(indexPath, []byte(defaultFrontendHTML), 0644)
+}
+
+const defaultFrontendHTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Space Data Network Node</title>
+  <style>
+    body { margin:0; font-family:system-ui,sans-serif; background:#0b1020; color:#e6edf6; }
+    main { max-width:760px; margin:6rem auto; padding:0 1rem; }
+    h1 { margin:0 0 .5rem; font-size:2rem; }
+    p { color:#a6b0c3; line-height:1.5; }
+    .card { margin-top:1.5rem; background:#11182c; border:1px solid #27314d; border-radius:10px; padding:1rem; }
+    a { color:#7ec8ff; text-decoration:none; }
+    code { background:#18233e; border:1px solid #27314d; border-radius:6px; padding:.15rem .35rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Space Data Network Node</h1>
+    <p>This node is online. Customize this page from the <a href="/admin">admin panel</a>.</p>
+    <div class="card">
+      <p><a href="/api/v1/data/health">GET /api/v1/data/health</a></p>
+      <p><a href="/api/v1/data/omm?format=json&amp;limit=5">GET /api/v1/data/omm</a></p>
+      <p><a href="/admin">Admin Panel</a></p>
+    </div>
+  </main>
+</body>
+</html>`
+
+// makeFrontendHandler creates a static file server for the public frontend
+// directory with SPA fallback and cross-origin isolation headers for OrbPro.
+func makeFrontendHandler(frontendDir string) (http.Handler, error) {
+	frontendDir = strings.TrimSpace(frontendDir)
+	if frontendDir == "" {
+		return nil, fmt.Errorf("frontend_path is empty")
+	}
+
+	info, err := os.Stat(frontendDir)
+	if err != nil {
+		return nil, fmt.Errorf("frontend_path %q: %w", frontendDir, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("frontend_path %q: not a directory", frontendDir)
+	}
+
+	indexPath := filepath.Join(frontendDir, "index.html")
+	if _, err := os.Stat(indexPath); err != nil {
+		return nil, fmt.Errorf("frontend_path %q: missing index.html: %w", frontendDir, err)
+	}
+
+	// Read index.html and inject key broker URL configuration
+	indexHTML, err := os.ReadFile(indexPath)
+	if err != nil {
+		return nil, fmt.Errorf("frontend_path %q: read index.html: %w", frontendDir, err)
+	}
+	injectedHTML := injectFrontendConfig(indexHTML)
+
+	fs := http.FileServer(http.Dir(frontendDir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Cross-origin isolation for SharedArrayBuffer (required by OrbPro/WASM)
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+
+		// Serve index.html with injected config for "/" and "/index.html"
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusOK)
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(injectedHTML)
+			}
+			return
+		}
+
+		// Serve existing files directly
+		clean := path.Clean("/" + r.URL.Path)
+		clean = strings.TrimPrefix(clean, "/")
+		if clean != "" {
+			full := filepath.Join(frontendDir, filepath.FromSlash(clean))
+			if st, err := os.Stat(full); err == nil && !st.IsDir() {
+				fs.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// Asset paths (have extension) → 404
+		if ext := path.Ext(r.URL.Path); ext != "" && r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+
+		// SPA fallback — serve injected index.html
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write(injectedHTML)
+		}
+	}), nil
+}
+
+// injectFrontendConfig injects SDN runtime configuration into index.html.
+// This adds a <script> block before the closing </head> tag with the node's
+// IPFS peer info so the frontend can connect over libp2p for key exchange.
+// Plugin key exchange happens over encrypted IPFS/libp2p, NOT HTTP.
+func injectFrontendConfig(html []byte) []byte {
+	configScript := []byte(`<script>window.__SDN_CONFIG__={apiBase:"/api/v1"};</script>`)
+	// Try to inject before </head>
+	if idx := bytes.Index(html, []byte("</head>")); idx >= 0 {
+		result := make([]byte, 0, len(html)+len(configScript))
+		result = append(result, html[:idx]...)
+		result = append(result, configScript...)
+		result = append(result, html[idx:]...)
+		return result
+	}
+	// Fallback: prepend to the whole document
+	return append(configScript, html...)
+}
+
+// loadLandingPageFallback loads a custom landing page or returns the built-in default.
+func loadLandingPageFallback(homepageFile string) []byte {
+	html, err := loadLandingPage(homepageFile)
+	if err != nil {
+		if strings.TrimSpace(homepageFile) != "" {
+			log.Warnf("Falling back to built-in landing page: %v", err)
+		}
+		return []byte(defaultLandingPageHTML)
+	}
+	return html
+}
+
+// handleLibp2pJS serves a JavaScript module with the node's raw IP, peer ID,
+// and ws:// multiaddr injected at request time. Browsers can load this script
+// to connect to the node using the raw IP without DNS resolution.
+//
+//	GET /sdn/libp2p.js → application/javascript
+func handleLibp2pJS(n *node.Node) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		peerID := n.PeerID().String()
+		addrs := n.ListenAddrs()
+
+		// Find the first public /ip4/<ip>/tcp/<port>/ws multiaddr.
+		var wsMultiaddr string
+		for _, a := range addrs {
+			s := a.String()
+			if strings.Contains(s, "/ws") &&
+				!strings.Contains(s, "/ip4/127.") &&
+				!strings.Contains(s, "/ip6/::1") {
+				if !strings.HasSuffix(s, "/p2p/"+peerID) {
+					s += "/p2p/" + peerID
+				}
+				wsMultiaddr = s
+				break
+			}
+		}
+
+		// Collect all listen address strings.
+		addrStrings := make([]string, len(addrs))
+		for i, a := range addrs {
+			addrStrings[i] = a.String()
+		}
+		addrsJSON, _ := json.Marshal(addrStrings)
+
+		js := fmt.Sprintf(
+			`// Auto-generated by SpaceAware SDN server — do not edit.
+// Connection parameters injected at request time.
+export const SDN_PEER_ID = %q;
+export const SDN_WS_MULTIADDR = %q;
+export const SDN_LISTEN_ADDRS = %s;
+`,
+			peerID, wsMultiaddr, addrsJSON)
+
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Write([]byte(js))
+	}
 }
 
 // handleNodeInfo returns an HTTP handler that serves the node's public identity info.
@@ -772,6 +1027,90 @@ func runReindex(cmd *cobra.Command, args []string) error {
 		log.Infof("Indexed %d records for %s", count, schema)
 	}
 	log.Infof("Reindex complete: %d total records indexed", total)
+
+	return nil
+}
+
+func runDeriveXPub(cmd *cobra.Command, args []string) error {
+	// Resolve WASM path
+	wp := strings.TrimSpace(wasmPath)
+	if wp == "" {
+		wp = os.Getenv("HD_WALLET_WASM_PATH")
+	}
+	if wp == "" {
+		wp = "../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm"
+	}
+	if _, err := os.Stat(wp); err != nil {
+		return fmt.Errorf("hd-wallet.wasm not found at %q (set --wasm or HD_WALLET_WASM_PATH)", wp)
+	}
+
+	ctx := context.Background()
+	hw, err := wasm.NewHDWalletModule(ctx, wp)
+	if err != nil {
+		return fmt.Errorf("failed to load HD wallet WASM: %w", err)
+	}
+	defer hw.Close(ctx)
+
+	// Read mnemonic from stdin
+	fmt.Fprint(os.Stderr, "Enter your BIP-39 mnemonic phrase: ")
+	reader := bufio.NewReader(os.Stdin)
+	mnemonic, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read mnemonic: %w", err)
+	}
+	mnemonic = strings.TrimSpace(mnemonic)
+	if mnemonic == "" {
+		return fmt.Errorf("mnemonic cannot be empty")
+	}
+
+	valid, err := hw.ValidateMnemonic(ctx, mnemonic)
+	if err != nil {
+		return fmt.Errorf("failed to validate mnemonic: %w", err)
+	}
+	if !valid {
+		return fmt.Errorf("invalid mnemonic phrase")
+	}
+
+	// Derive seed
+	seed, err := hw.MnemonicToSeed(ctx, mnemonic, "")
+	if err != nil {
+		return fmt.Errorf("failed to derive seed: %w", err)
+	}
+
+	// Derive signing key at m/44'/0'/0'/0'/0'
+	signingPath := fmt.Sprintf(wasm.SigningKeyPath, 0)
+	derived, err := hw.DeriveEd25519Key(ctx, seed, signingPath)
+	if err != nil {
+		return fmt.Errorf("failed to derive signing key: %w", err)
+	}
+
+	// Compute Ed25519 public key from private key seed
+	privKey := ed25519.NewKeyFromSeed(derived.PrivateKey)
+	pubKey := privKey.Public().(ed25519.PublicKey)
+
+	// Build SDN xpub
+	xpubKey, err := auth.NewSDNXPub(
+		pubKey,
+		derived.ChainCode,
+		5,                // depth: m / 44' / 0' / 0' / 0' / 0'
+		[4]byte{0, 0, 0, 0}, // fingerprint (omitted for simplicity)
+		0x80000000,       // child index: 0' (hardened)
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create xpub: %w", err)
+	}
+
+	xpubStr := auth.SerializeSDNXPub(xpubKey)
+
+	fmt.Fprintf(os.Stderr, "\n--- SDN Identity ---\n")
+	fmt.Fprintf(os.Stderr, "Path:              %s\n", signingPath)
+	fmt.Fprintf(os.Stderr, "Signing PubKey:    %x\n", pubKey)
+	fmt.Fprintf(os.Stderr, "SDN XPub:          %s\n", xpubStr)
+	fmt.Fprintf(os.Stderr, "\nAdd to config.yaml:\n")
+	fmt.Fprintf(os.Stderr, "users:\n  - xpub: \"%s\"\n    trust_level: \"admin\"\n    name: \"Operator\"\n", xpubStr)
+
+	// Print just the xpub to stdout (for scripting)
+	fmt.Println(xpubStr)
 
 	return nil
 }

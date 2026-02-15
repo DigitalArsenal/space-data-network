@@ -1,0 +1,53 @@
+# Docker development configuration
+# Test mnemonic: abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about
+
+mode: full
+
+network:
+  listen:
+    - /ip4/0.0.0.0/tcp/4001
+    - /ip4/0.0.0.0/tcp/8080/ws
+  bootstrap: []
+  edge_relays: []
+  max_connections: 100
+  enable_relay: false
+  max_message_size: 10485760
+  max_schema_name: 256
+  max_query_size: 4096
+
+storage:
+  path: /app/data
+  max_size: 1GB
+  gc_interval: 1h
+
+schemas:
+  validate: true
+  strict: false
+
+security:
+  insecure_mode: true
+
+peers:
+  strict_mode: false
+  enable_dht: false
+  enable_mdns: false
+
+admin:
+  enabled: true
+  listen_addr: 0.0.0.0:5001
+  require_auth: true
+  session_expiry: 24h
+  totp_required: false
+  tls_enabled: false
+  webui_path: /app/webui
+  wallet_ui_path: /app/wallet-ui
+
+# Test wallet: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+users:
+  - xpub: "277N9b7DtdYGfPZQsibhPVpT2g7RWBGJWWdbmqFx2LMSX5gvNSSRTeLN4LFuN3wLk1fX8ok4b7XnYZdiRFJCr3WmvCjPkyERjgw8QipJrEwzYUXf"
+    trust_level: "admin"
+    name: "Dev Admin"
+
+setup:
+  token_expiry: 10m
+  data_path: /app/data

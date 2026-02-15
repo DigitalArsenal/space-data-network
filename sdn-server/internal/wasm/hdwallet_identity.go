@@ -9,23 +9,18 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
-// SDN derivation constants
+// HD wallet derivation constants — standard BIP-44 Bitcoin paths.
 const (
-	// SDNCoinType is the SLIP-44 coin type for Space Data Network.
-	// 1957 commemorates the launch of Sputnik — the dawn of the space age.
-	// This number is unregistered in the SLIP-44 registry, avoiding conflicts
-	// with any assigned blockchain network.
-	SDNCoinType = 1957
+	// DefaultCoinType is the BIP-44 coin type used for identity derivation.
+	DefaultCoinType = 0
 
 	// SigningKeyPath is the derivation path for Ed25519 signing keys.
-	// Format: m/44'/1957'/account'/0'/0'
-	// Purpose: 44' (BIP-44), Coin: 1957' (SDN), Account: variable, Change: 0 (signing), Index: 0
-	SigningKeyPath = "m/44'/1957'/%d'/0'/0'"
+	// Format: m/44'/0'/account'/0'/0'
+	SigningKeyPath = "m/44'/0'/%d'/0'/0'"
 
 	// EncryptionKeyPath is the derivation path for X25519 encryption keys.
-	// Format: m/44'/1957'/account'/1'/0'
-	// Purpose: 44' (BIP-44), Coin: 1957' (SDN), Account: variable, Change: 1 (encryption), Index: 0
-	EncryptionKeyPath = "m/44'/1957'/%d'/1'/0'"
+	// Format: m/44'/0'/account'/1'/0'
+	EncryptionKeyPath = "m/44'/0'/%d'/1'/0'"
 )
 
 // DerivedIdentity represents a libp2p identity derived from an HD seed.
@@ -70,13 +65,13 @@ func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, accou
 	signingPath := fmt.Sprintf(SigningKeyPath, account)
 	encryptionPath := fmt.Sprintf(EncryptionKeyPath, account)
 
-	// Derive Ed25519 signing key at m/44'/1957'/account'/0'/0'
+	// Derive Ed25519 signing key at m/44'/0'/account'/0'/0'
 	signingDerived, err := hw.DeriveEd25519Key(ctx, seed, signingPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive signing key: %w", err)
 	}
 
-	// Derive X25519 encryption key at m/44'/1957'/account'/1'/0'
+	// Derive X25519 encryption key at m/44'/0'/account'/1'/0'
 	encryptionDerived, err := hw.DeriveEd25519Key(ctx, seed, encryptionPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive encryption key: %w", err)

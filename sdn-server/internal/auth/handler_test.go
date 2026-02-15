@@ -214,10 +214,10 @@ func TestAuth_ChallengeVerify_FailsWithMismatchedKey(t *testing.T) {
 	}
 }
 
-func TestAuth_ChallengeVerify_FailsWhenUserMissingSigningKey(t *testing.T) {
+func TestAuth_TOFU_BindsSigningKeyOnFirstLogin(t *testing.T) {
 	t.Parallel()
 
-	// Client keypair (doesn't matter).
+	// Client keypair — will be bound via TOFU.
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
@@ -227,15 +227,21 @@ func TestAuth_ChallengeVerify_FailsWhenUserMissingSigningKey(t *testing.T) {
 	dir := t.TempDir()
 	userStore, err := NewUserStore(filepath.Join(dir, "users.db"), []config.UserEntry{
 		{
-			XPub:       "xpub-missing-key",
+			XPub:       "xpub-tofu-admin",
 			TrustLevel: "admin",
-			Name:       "Misconfigured Admin",
+			Name:       "TOFU Admin",
+			// No SigningPubKeyHex — will be bound on first login.
 		},
 	})
 	if err != nil {
 		t.Fatalf("NewUserStore: %v", err)
 	}
 	defer userStore.Close()
+
+	// HasAdmin should return true even without a signing key.
+	if !userStore.HasAdmin() {
+		t.Fatalf("HasAdmin() should return true for config admin without signing key")
+	}
 
 	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
 	if err != nil {
@@ -250,8 +256,9 @@ func TestAuth_ChallengeVerify_FailsWhenUserMissingSigningKey(t *testing.T) {
 
 	h := NewHandler(userStore, sessions, 24*time.Hour, "", "")
 
+	// Step 1: challenge with no pre-bound signing key → TOFU mode.
 	chReqBody, _ := json.Marshal(map[string]any{
-		"xpub":              "xpub-missing-key",
+		"xpub":              "xpub-tofu-admin",
 		"client_pubkey_hex": pubHex,
 		"ts":                time.Now().Unix(),
 	})
@@ -276,11 +283,12 @@ func TestAuth_ChallengeVerify_FailsWhenUserMissingSigningKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode challenge: %v", err)
 	}
-	sig := ed25519.Sign(priv, challengeBytes)
 
+	// Step 2: sign and verify — should succeed and bind the signing key.
+	sig := ed25519.Sign(priv, challengeBytes)
 	verReqBody, _ := json.Marshal(map[string]any{
 		"challenge_id":      chResp.ChallengeID,
-		"xpub":              "xpub-missing-key",
+		"xpub":              "xpub-tofu-admin",
 		"client_pubkey_hex": pubHex,
 		"challenge":         chResp.Challenge,
 		"signature_hex":     hex.EncodeToString(sig),
@@ -290,7 +298,54 @@ func TestAuth_ChallengeVerify_FailsWhenUserMissingSigningKey(t *testing.T) {
 	verRec := httptest.NewRecorder()
 	h.handleVerify(verRec, verReq)
 
-	if verRec.Code != http.StatusForbidden {
-		t.Fatalf("verify status: got %d want %d: %s", verRec.Code, http.StatusForbidden, verRec.Body.String())
+	if verRec.Code != http.StatusOK {
+		t.Fatalf("verify status: got %d want %d: %s", verRec.Code, http.StatusOK, verRec.Body.String())
+	}
+
+	// Verify the signing key was bound in the store.
+	user, err := userStore.GetUser("xpub-tofu-admin")
+	if err != nil || user == nil {
+		t.Fatalf("GetUser after TOFU: %v", err)
+	}
+	if user.SigningPubKeyHex != pubHex {
+		t.Fatalf("signing key not bound: got %q want %q", user.SigningPubKeyHex, pubHex)
+	}
+
+	// Step 3: a different key should now be rejected (key is bound).
+	attPub, attPriv, _ := ed25519.GenerateKey(nil)
+	attPubHex := hex.EncodeToString(attPub)
+
+	ch2Body, _ := json.Marshal(map[string]any{
+		"xpub":              "xpub-tofu-admin",
+		"client_pubkey_hex": attPubHex,
+		"ts":                time.Now().Unix(),
+	})
+	ch2Req := httptest.NewRequest(http.MethodPost, "/api/auth/challenge", bytes.NewReader(ch2Body))
+	ch2Req.RemoteAddr = "127.0.0.1:12345"
+	ch2Rec := httptest.NewRecorder()
+	h.handleChallenge(ch2Rec, ch2Req)
+
+	var ch2Resp struct {
+		ChallengeID string `json:"challenge_id"`
+		Challenge   string `json:"challenge"`
+	}
+	json.Unmarshal(ch2Rec.Body.Bytes(), &ch2Resp)
+	ch2Bytes, _ := base64.RawStdEncoding.DecodeString(ch2Resp.Challenge)
+	attSig := ed25519.Sign(attPriv, ch2Bytes)
+
+	ver2Body, _ := json.Marshal(map[string]any{
+		"challenge_id":      ch2Resp.ChallengeID,
+		"xpub":              "xpub-tofu-admin",
+		"client_pubkey_hex": attPubHex,
+		"challenge":         ch2Resp.Challenge,
+		"signature_hex":     hex.EncodeToString(attSig),
+	})
+	ver2Req := httptest.NewRequest(http.MethodPost, "/api/auth/verify", bytes.NewReader(ver2Body))
+	ver2Req.RemoteAddr = "127.0.0.1:12345"
+	ver2Rec := httptest.NewRecorder()
+	h.handleVerify(ver2Rec, ver2Req)
+
+	if ver2Rec.Code != http.StatusForbidden {
+		t.Fatalf("attacker verify status: got %d want %d (key should be bound now)", ver2Rec.Code, http.StatusForbidden)
 	}
 }
