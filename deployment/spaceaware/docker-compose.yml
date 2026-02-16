@@ -1,6 +1,22 @@
 version: "3.9"
 
 services:
+  kubo:
+    image: ipfs/kubo:latest
+    container_name: spaceaware-kubo
+    environment:
+      - IPFS_PATH=/data/ipfs
+    volumes:
+      - ipfs_data:/data/ipfs
+      - ./config/kubo/init.d:/container-init.d:ro
+    ports:
+      # Swarm (4001 is taken by SDN P2P, use 4002 on host)
+      - "4002:4001/tcp"
+      - "4002:4001/udp"
+      # API and Gateway stay internal — proxied via SDN admin server
+    restart: unless-stopped
+    networks: [spaceaware]
+
   sdn-node:
     image: ${SDN_SERVER_IMAGE}
     container_name: spaceaware-sdn-node
@@ -24,6 +40,7 @@ services:
       - "4001:4001/udp"
       - "8080:8080"
       - "5001:5001"
+    depends_on: [kubo]
     restart: unless-stopped
     networks: [spaceaware]
 
@@ -76,6 +93,9 @@ services:
     depends_on: [sdn-node]
     restart: unless-stopped
     networks: [spaceaware]
+
+volumes:
+  ipfs_data:
 
 networks:
   spaceaware:

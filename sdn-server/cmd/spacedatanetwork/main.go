@@ -135,6 +135,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			cfg.Admin.WebuiPath = envPath
 		}
 	}
+	if cfg.Admin.IPFSAPIURL == "" {
+		if envURL := os.Getenv("SDN_IPFS_API_URL"); envURL != "" {
+			cfg.Admin.IPFSAPIURL = envURL
+		}
+	}
 	if envPath := os.Getenv("SDN_FRONTEND_PATH"); envPath != "" {
 		cfg.Admin.FrontendPath = envPath
 	}
@@ -430,6 +435,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				WriteTimeout:      60 * time.Second,
 				IdleTimeout:       120 * time.Second,
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					// DEBUG: log /api/v0/ requests to diagnose 403
+					if strings.HasPrefix(r.URL.Path, "/api/v0/") {
+						log.Infof("[DEBUG-IPFS] %s %s | Host=%s Origin=%s Cookie=%v Public=%v HasSession=%v",
+							r.Method, r.URL.Path, r.Host,
+							r.Header.Get("Origin"),
+							hasSessionCookie(r),
+							isPublicAPIPath(r.URL.Path),
+							r.Header.Get("Cookie") != "")
+						// Wrap response to capture status code
+						origW := w
+						w = &statusLogger{ResponseWriter: origW, path: r.URL.Path}
+					}
+
 					// Global security headers on ALL responses
 					w.Header().Set("X-Content-Type-Options", "nosniff")
 					w.Header().Set("X-Frame-Options", "DENY")
@@ -444,7 +462,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					// CSRF protection: for state-changing requests using cookie auth,
 					// require same-origin Origin/Referer, or X-Requested-With.
 					if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-						if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) {
+						if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) && !isPublicAPIPath(r.URL.Path) {
 							origin := strings.TrimSpace(r.Header.Get("Origin"))
 							referer := strings.TrimSpace(r.Header.Get("Referer"))
 							xrw := strings.TrimSpace(r.Header.Get("X-Requested-With"))
@@ -579,8 +597,10 @@ func isPublicAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/storefront/trust/") ||
 		strings.HasPrefix(path, "/api/auth/") ||
 		strings.HasPrefix(path, "/api/node/info") ||
+		strings.HasPrefix(path, "/api/v0/") ||
 		strings.HasPrefix(path, "/orbpro-key-broker/v1/orbpro/public-key") ||
 		strings.HasPrefix(path, "/orbpro-key-broker/v1/orbpro/key") ||
+		path == "/api/v0" ||
 		path == "/sdn/libp2p.js"
 }
 
@@ -637,6 +657,30 @@ func defaultPortForScheme(scheme string) string {
 		return "80"
 	}
 	return ""
+}
+
+// statusLogger wraps http.ResponseWriter to log the response status code for /api/v0/ debug.
+type statusLogger struct {
+	http.ResponseWriter
+	path       string
+	statusCode int
+	written    bool
+}
+
+func (sl *statusLogger) WriteHeader(code int) {
+	sl.statusCode = code
+	sl.written = true
+	log.Infof("[DEBUG-IPFS-RESP] %s → %d", sl.path, code)
+	sl.ResponseWriter.WriteHeader(code)
+}
+
+func (sl *statusLogger) Write(b []byte) (int, error) {
+	if !sl.written {
+		sl.statusCode = 200
+		sl.written = true
+		log.Infof("[DEBUG-IPFS-RESP] %s → %d (implicit)", sl.path, 200)
+	}
+	return sl.ResponseWriter.Write(b)
 }
 
 func isAdminOnlyAPIPath(path string) bool {

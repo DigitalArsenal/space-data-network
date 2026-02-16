@@ -420,6 +420,7 @@ const actions = {
           try {
             await last(ipfs.stats.bw())
           } catch (err) {
+            console.error('[SDN] Kubo connection test failed:', err)
             const error = /** @type {Error} */(err)
             const errorString = error.toString() || error.message || /** @type {string} */(/** @type {unknown} */(error))
             if (!/bandwidth reporter disabled in config/.test(errorString)) {

@@ -51,6 +51,8 @@ admin:
   frontend_path: /opt/spacedatanetwork/frontend
   # IPFS WebUI served at /admin (requires admin auth)
   webui_path: ""
+  # Proxy /api/v0/* to Kubo RPC API (Docker internal network)
+  ipfs_api_url: "http://kubo:5001"
 
 # Admin user: paste your SDN xpub (generated via `spacedatanetwork derive-xpub`)
 # The Ed25519 signing public key is extracted automatically from the xpub.

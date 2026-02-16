@@ -15,6 +15,12 @@ REMOTE_ENV_FILE="/etc/default/spacedatanetwork"
 REMOTE_PLUGIN_ROOT="/opt/data/license/plugins"
 REMOTE_WASM_DIR="/opt/spacedatanetwork/wasm"
 
+# Kubo (IPFS) — API on 5002 to avoid conflict with SDN admin on 5001
+KUBO_VERSION="${KUBO_VERSION:-v0.34.1}"
+KUBO_API_PORT=5002
+KUBO_GATEWAY_PORT=8081
+KUBO_SWARM_PORT=4002
+
 ORBPRO_BUILD_ROOT="${ORBPRO_BUILD_ROOT:-$ROOT_DIR/../OrbPro/Build}"
 ORBPRO_MODULE_DIR="${ORBPRO_MODULE_DIR:-$ORBPRO_BUILD_ROOT/OrbPro}"
 ORBPRO_BASE_DIR="${ORBPRO_BASE_DIR:-$ORBPRO_BUILD_ROOT/CesiumUnminified}"
@@ -96,6 +102,83 @@ else
   log "Warning: wallet-ui dist not found at $WALLET_UI_DIST (build with: cd ../hd-wallet-wasm/wallet-ui && npm run build)"
 fi
 
+log "Installing/configuring Kubo (IPFS) on $SERVER"
+ssh "${SSH_OPTS[@]}" "$SERVER" "
+  set -e
+
+  # Install Kubo if missing or wrong version
+  WANTED='$KUBO_VERSION'
+  CURRENT=\$(ipfs --version 2>/dev/null | awk '{print \"v\"\$3}' || echo none)
+  if [ \"\$CURRENT\" != \"\$WANTED\" ]; then
+    echo \"[deploy-spaceaware] Installing Kubo \$WANTED (current: \$CURRENT)\"
+    cd /tmp
+    ARCH=\$(uname -m)
+    case \$ARCH in
+      x86_64)  ARCH=amd64 ;;
+      aarch64) ARCH=arm64 ;;
+    esac
+    curl -fsSL \"https://dist.ipfs.tech/kubo/\${WANTED}/kubo_\${WANTED}_linux-\${ARCH}.tar.gz\" -o kubo.tar.gz
+    tar xzf kubo.tar.gz
+    cd kubo
+    bash install.sh
+    rm -rf /tmp/kubo /tmp/kubo.tar.gz
+    echo \"[deploy-spaceaware] Kubo \$WANTED installed\"
+  else
+    echo \"[deploy-spaceaware] Kubo \$WANTED already installed\"
+  fi
+
+  # Create ipfs user if needed
+  if ! id -u ipfs >/dev/null 2>&1; then
+    useradd -r -m -d /var/lib/ipfs -s /usr/sbin/nologin ipfs
+    echo '[deploy-spaceaware] Created ipfs system user'
+  fi
+
+  # Init IPFS repo if needed
+  export IPFS_PATH=/var/lib/ipfs
+  if [ ! -f \$IPFS_PATH/config ]; then
+    sudo -u ipfs IPFS_PATH=\$IPFS_PATH ipfs init --profile=server
+    echo '[deploy-spaceaware] Initialized IPFS repo'
+  fi
+
+  # Configure ports to avoid conflicts with SDN (admin=5001, p2p=4001, ws=8080)
+  sudo -u ipfs IPFS_PATH=\$IPFS_PATH ipfs config Addresses.API /ip4/127.0.0.1/tcp/$KUBO_API_PORT
+  sudo -u ipfs IPFS_PATH=\$IPFS_PATH ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/$KUBO_GATEWAY_PORT
+  sudo -u ipfs IPFS_PATH=\$IPFS_PATH ipfs config --json Addresses.Swarm '[\"/ip4/0.0.0.0/tcp/$KUBO_SWARM_PORT\", \"/ip4/0.0.0.0/udp/$KUBO_SWARM_PORT/quic-v1\", \"/ip4/0.0.0.0/udp/$KUBO_SWARM_PORT/quic-v1/webtransport\", \"/ip6/::/tcp/$KUBO_SWARM_PORT\", \"/ip6/::/udp/$KUBO_SWARM_PORT/quic-v1\"]'
+
+  # CORS — SDN strips Origin when proxying, but configure anyway for direct access
+  sudo -u ipfs IPFS_PATH=\$IPFS_PATH ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin '[\"https://spaceaware.io\", \"http://localhost:3000\", \"http://127.0.0.1:$KUBO_API_PORT\", \"https://webui.ipfs.io\"]'
+  sudo -u ipfs IPFS_PATH=\$IPFS_PATH ipfs config --json API.HTTPHeaders.Access-Control-Allow-Methods '[\"PUT\", \"POST\"]'
+
+  # Create systemd service
+  cat > /etc/systemd/system/ipfs.service <<'UNIT'
+[Unit]
+Description=IPFS Kubo Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=ipfs
+Environment=IPFS_PATH=/var/lib/ipfs
+ExecStart=/usr/local/bin/ipfs daemon --migrate=true
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  systemctl daemon-reload
+  systemctl enable ipfs
+  systemctl restart ipfs
+  sleep 2
+  if systemctl is-active ipfs >/dev/null 2>&1; then
+    echo '[deploy-spaceaware] IPFS daemon running'
+  else
+    echo '[deploy-spaceaware] WARNING: IPFS daemon failed to start'
+    journalctl -u ipfs --no-pager -n 10
+  fi
+"
+
 log "Ensuring license service environment on $SERVER"
 ssh "${SSH_OPTS[@]}" "$SERVER" "
   set -e
@@ -142,6 +225,11 @@ ssh "${SSH_OPTS[@]}" "$SERVER" "
     echo '[deploy-spaceaware] Added HD_WALLET_WASM_PATH in $REMOTE_ENV_FILE'
   fi
 
+  if ! grep -q '^SDN_IPFS_API_URL=' '$REMOTE_ENV_FILE'; then
+    echo 'SDN_IPFS_API_URL=http://127.0.0.1:$KUBO_API_PORT' >> '$REMOTE_ENV_FILE'
+    echo '[deploy-spaceaware] Added SDN_IPFS_API_URL in $REMOTE_ENV_FILE'
+  fi
+
   current_token=\$(awk -F= '/^SDN_LICENSE_ADMIN_TOKEN=/{print \$2}' '$REMOTE_ENV_FILE' | tail -n 1)
   if [ -z \"\$current_token\" ] || [ \"\$current_token\" = 'replace-with-long-random-secret' ]; then
     new_token=\$(hexdump -n 32 -e '32/1 \"%02x\"' /dev/urandom)
@@ -172,9 +260,10 @@ entitlements_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "token=\$(awk -F= '/^SDN_LIC
 plugins_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/plugins/manifest")"
 admin_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/admin")"
 login_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/login")"
+ipfs_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:${KUBO_API_PORT}/api/v0/id")"
 
 # Key broker no longer exposes HTTP endpoints — key exchange uses libp2p streams.
-log "health=$health_code license_verify=$license_code entitlements_admin=$entitlements_code plugins_manifest=$plugins_code admin=$admin_code login=$login_code"
+log "health=$health_code license_verify=$license_code entitlements_admin=$entitlements_code plugins_manifest=$plugins_code admin=$admin_code login=$login_code ipfs_api=$ipfs_code"
 
 if [[ "$health_code" != "200" ]]; then
   echo "Health check failed: expected 200, got $health_code" >&2
