@@ -60,7 +60,8 @@ export const TrustPage = ({
   doAddAuthUser,
   doRemoveAuthUser,
   doUpdateAuthUserTrust,
-  doUpdateHash
+  doUpdateHash,
+  embedded
 }) => {
   const [tab, setTab] = useState('peers')
   const [opError, setOpError] = useState(null)
@@ -98,13 +99,14 @@ export const TrustPage = ({
 
   useEffect(() => {
     if (!isAdmin) {
-      doUpdateHash('/status')
+      if (!embedded) doUpdateHash('/status')
       return
     }
     doFetchTrustData()
-  }, [isAdmin, doFetchTrustData, doUpdateHash])
+  }, [isAdmin, doFetchTrustData, doUpdateHash, embedded])
 
   if (!isAdmin) {
+    if (embedded) return null
     return (
       <Box>
         <h1 className='f3 ma0 mb2' style={{ color: 'var(--sdn-text-primary)' }}>Trust</h1>
@@ -124,8 +126,10 @@ export const TrustPage = ({
     }
   }
 
+  const Wrapper = embedded ? React.Fragment : Box
+
   return (
-    <Box>
+    <Wrapper>
       <h1 className='f3 ma0 mb2' style={{ color: 'var(--sdn-text-primary)' }}>Trust</h1>
       <p className='ma0 mb3' style={{ color: 'var(--sdn-text-secondary)' }}>
         Manage peer trust, groups, blocklist, wallet-auth users, and node identity.
@@ -605,7 +609,7 @@ export const TrustPage = ({
           </div>
         </div>
       )}
-    </Box>
+    </Wrapper>
   )
 }
 

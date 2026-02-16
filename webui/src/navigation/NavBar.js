@@ -10,8 +10,6 @@ import StrokeIpld from '../icons/StrokeIpld.js'
 import StrokeLab from '../icons/StrokeLab.js'
 import StrokeCode from '../icons/StrokeCode.js'
 import StrokeDocument from '../icons/StrokeDocument.js'
-import StrokeLock from '../icons/StrokeLock.js'
-import StrokeWallet from '../icons/StrokeWallet.js'
 import SdnLogo from '../icons/SdnLogo.js'
 
 // Styles
@@ -41,7 +39,7 @@ const NavLink = ({
   const anchorClass = classnames({
     'bg-white-10 navbar-item-active': active,
     'o-50 no-pointer-events': disabled
-  }, ['navbar-item dib db-l pt2 pb3 pv1-l white no-underline f5 hover-bg-white-10 tc bb bw2 bw0-l b--navy'])
+  }, ['navbar-item dib db-l pt1 pb2 pv1-l white no-underline f5 hover-bg-white-10 tc bb bw2 bw0-l b--navy'])
   const svgClass = classnames({
     'o-100': active,
     'o-70': !active
@@ -52,9 +50,9 @@ const NavLink = ({
     <a href={disabled ? undefined : href} onClick={(e) => e.currentTarget.blur()} className={anchorClass} role='menuitem' title={children}>
       <div className='db ph2 pv1'>
         <div className='db'>
-          <Svg width='46' role='presentation' className={svgClass} />
+          <Svg width='36' role='presentation' className={svgClass} />
         </div>
-        <div className={`${active ? 'o-100' : 'o-70'} db f6 tc montserrat ttu fw1 navbar-item-label`}>
+        <div className={`${active ? 'o-100' : 'o-70'} db f7 tc montserrat ttu fw1 navbar-item-label`}>
           {children}
         </div>
       </div>
@@ -72,13 +70,13 @@ export const NavBar = ({ t, isAdminUser: isAdmin, authUser, doLogout }) => {
   const gitRevision = process.env.REACT_APP_GIT_REV
   const revisionUrl = `${codeUrl}/commit/${gitRevision}`
   return (
-    <div className='h-100 fixed-l flex flex-column justify-between' style={{ overflowY: 'auto', width: 'inherit' }}>
+    <div className='h-100 fixed-l flex flex-column justify-between' style={{ overflowY: 'hidden', width: 'inherit' }}>
       <div className='flex flex-column'>
         <a href="#/" role='menuitem' title='Space Data Network' className='no-underline'>
-          <div className='pt3 pb1 pb2-l tc'>
-            <div className='navbar-logo-vert center pt3 pb1' style={{ height: 94, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-              <SdnLogo width={40} className='sdn-logo' />
-              <span style={{ fontSize: '14px', fontWeight: 700, color: '#58a6ff', fontFamily: 'Montserrat, sans-serif', letterSpacing: '0.05em', marginTop: '4px' }}>SDN</span>
+          <div className='pt2 pb1 pb1-l tc'>
+            <div className='navbar-logo-vert center pt2 pb1' style={{ height: 70, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+              <SdnLogo width={32} className='sdn-logo' />
+              <span style={{ fontSize: '12px', fontWeight: 700, color: '#58a6ff', fontFamily: 'Montserrat, sans-serif', letterSpacing: '0.05em', marginTop: '2px' }}>SDN</span>
             </div>
           </div>
         </a>
@@ -89,8 +87,6 @@ export const NavBar = ({ t, isAdminUser: isAdmin, authUser, doLogout }) => {
           <NavLink to='/schemas' icon={StrokeDocument}>Schemas</NavLink>
           <NavLink to='/plugins' icon={StrokeCode}>Plugins</NavLink>
           <NavLink to='/peers' icon={StrokeCube}>{t('peers:title')}</NavLink>
-          {isAdmin && <NavLink to='/trust' icon={StrokeLock}>Trust</NavLink>}
-          {isAdmin && <NavLink to='/wallet' icon={StrokeWallet}>Wallet</NavLink>}
           <NavLink to='/settings' icon={StrokeSettings}>{t('settings:title')}</NavLink>
           <NavLink to='/diagnostics' icon={StrokeLab}>{t('diagnostics:title')}</NavLink>
         </div>
