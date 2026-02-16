@@ -3384,6 +3384,7 @@
 
     .adversarial-balances {
       margin-top: 32px;
+      overflow: hidden;
     }
 
     .balances-header {
@@ -3418,6 +3419,8 @@
       display: flex;
       gap: 16px;
       transition: all 0.2s;
+      overflow: hidden;
+      min-width: 0;
     }
 
     .wallet-network-card:hover {
@@ -3458,17 +3461,22 @@
       justify-content: space-between;
       align-items: center;
       margin-bottom: 8px;
+      overflow: hidden;
+      gap: 8px;
     }
 
     .network-name {
       font-size: 15px;
       font-weight: 600;
+      white-space: nowrap;
     }
 
     .derivation-path {
       font-size: 10px;
       font-family: var(--font-mono);
       color: var(--text-muted);
+      white-space: nowrap;
+      flex-shrink: 0;
     }
 
     .network-address-link {
@@ -3477,6 +3485,8 @@
       gap: 6px;
       margin-bottom: 8px;
       text-decoration: none;
+      overflow: hidden;
+      min-width: 0;
     }
 
     .network-address-link code {
@@ -3485,6 +3495,7 @@
       color: var(--text-secondary);
       overflow: hidden;
       text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .network-address-link svg {
