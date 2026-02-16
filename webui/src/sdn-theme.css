@@ -360,8 +360,8 @@
    ============================================= */
 
 /* --- Buttons --- */
-:root[data-theme="dark"] button,
-:root[data-theme="dark"] .button-reset {
+:root[data-theme="dark"] button:where(:not(#hd-wallet-ui-container *)),
+:root[data-theme="dark"] .button-reset:where(:not(#hd-wallet-ui-container *)) {
   color: var(--sdn-text-primary);
 }
 

@@ -1,0 +1,231 @@
+.pdm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.pdm-modal {
+  background: var(--sdn-bg-secondary);
+  border: 1px solid var(--sdn-border);
+  border-radius: 14px;
+  padding: 24px;
+  max-width: 540px;
+  width: 90%;
+  max-height: 85vh;
+  overflow-y: auto;
+  font-family: Montserrat, sans-serif;
+}
+
+.pdm-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.pdm-header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.pdm-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--sdn-accent, #58a6ff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.pdm-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--sdn-text-primary);
+  margin: 0;
+  line-height: 1.3;
+}
+
+.pdm-subtitle {
+  font-size: 13px;
+  color: var(--sdn-text-secondary);
+  margin: 2px 0 0 0;
+}
+
+.pdm-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.pdm-status {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.pdm-online {
+  color: #3fb950;
+  background: rgba(63, 185, 80, 0.1);
+}
+
+.pdm-offline {
+  color: var(--sdn-text-muted, var(--sdn-text-secondary));
+  background: var(--sdn-bg-tertiary);
+}
+
+.pdm-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: var(--sdn-text-secondary);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.pdm-close:hover {
+  color: var(--sdn-text-primary);
+}
+
+.pdm-section {
+  margin-bottom: 18px;
+}
+
+.pdm-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sdn-text-muted, var(--sdn-text-secondary));
+  margin-bottom: 8px;
+}
+
+.pdm-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--sdn-border);
+  font-size: 13px;
+}
+
+.pdm-field:last-child {
+  border-bottom: none;
+}
+
+.pdm-label {
+  color: var(--sdn-text-secondary);
+  min-width: 80px;
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.pdm-value {
+  color: var(--sdn-text-primary);
+  font-size: 13px;
+}
+
+.pdm-mono {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--sdn-text-primary);
+  word-break: break-all;
+}
+
+.pdm-copyable {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.pdm-copy-hint {
+  font-size: 10px;
+  color: var(--sdn-text-muted, var(--sdn-text-secondary));
+  border: 1px solid var(--sdn-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.pdm-copyable:hover .pdm-copy-hint {
+  opacity: 1;
+}
+
+.pdm-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.pdm-stat {
+  background: var(--sdn-bg-tertiary);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+}
+
+.pdm-stat-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sdn-text-secondary);
+  margin-bottom: 4px;
+}
+
+.pdm-stat-value {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--sdn-text-primary);
+}
+
+.pdm-notes {
+  font-size: 13px;
+  color: var(--sdn-text-primary);
+  line-height: 1.5;
+  padding: 8px;
+  background: var(--sdn-bg-tertiary);
+  border-radius: 8px;
+}
+
+.pdm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.pdm-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--sdn-border);
+  background: var(--sdn-bg-tertiary);
+  color: var(--sdn-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: Montserrat, sans-serif;
+  transition: all 0.15s;
+}
+
+.pdm-btn:hover {
+  background: rgba(88, 166, 255, 0.10);
+  border-color: rgba(88, 166, 255, 0.5);
+}

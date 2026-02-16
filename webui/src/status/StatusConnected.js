@@ -8,7 +8,7 @@ export const StatusConnected = ({ t, peersCount, repoSize }) => {
   return (
     <header>
       <h1 className='montserrat fw2 f3 charcoal ma0 pt0 pb2'>
-        <Trans i18nKey='app:status.connectedToIpfs' t={t}>Connected to IPFS</Trans>
+        <Trans i18nKey='app:status.connectedToIpfs' t={t}>Connected to Space Data Network</Trans>
       </h1>
       <p className='montserrat fw4 f5 ma0 pb3 lh-copy'>
         <span className='db dib-ns'>

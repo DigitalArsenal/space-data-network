@@ -32,6 +32,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
@@ -66,9 +67,10 @@ type Node struct {
 	store     *storage.FlatSQLStore
 	protocol  *protocol.SDSExchangeHandler
 	plugins   *plugins.Manager
-	license   *licenseplugin.Plugin
-	keyBroker *wasmlicenseplugin.Plugin
-	config    *config.Config
+	license    *licenseplugin.Plugin
+	keyBroker  *wasmlicenseplugin.Plugin
+	epmService *epm.Service
+	config     *config.Config
 
 	// Trusted peer management
 	peerRegistry *peers.Registry
@@ -297,6 +299,27 @@ func (n *Node) init() error {
 	n.host.SetStreamHandler(protocol.IDExchangeProtoID, protocol.HandleLegacyIDExchange)
 	n.host.SetStreamHandler(protocol.ChatProtoID, protocol.HandleLegacyChat)
 
+	// Initialize EPM (Entity Profile Message) service for node identity cards.
+	basePath := filepath.Dir(n.config.Storage.Path)
+	var xpubStr string
+	if n.hdwallet != nil && n.identity != nil {
+		// Derive xpub from mnemonic seed for the EPM
+		mnemonicPath := filepath.Join(basePath, "keys", "mnemonic")
+		if mnemonicData, err := os.ReadFile(mnemonicPath); err == nil {
+			if seed, err := n.hdwallet.MnemonicToSeed(n.ctx, string(mnemonicData), ""); err == nil {
+				if xpub, err := n.hdwallet.DeriveXPub(n.ctx, seed, 0); err == nil {
+					xpubStr = xpub
+				}
+			}
+		}
+	}
+	n.epmService = epm.NewService(n.identity, n.peerRegistry, n.host.ID(), xpubStr, basePath)
+	if err := n.epmService.Init(); err != nil {
+		log.Warnf("EPM service initialization failed (non-fatal): %v", err)
+	} else {
+		n.epmService.RegisterProtocol(n.host)
+	}
+
 	// Initialize runtime plugins.
 	n.plugins = plugins.New()
 	n.license = licenseplugin.New()
@@ -319,7 +342,6 @@ func (n *Node) init() error {
 		}
 	}
 
-	basePath := filepath.Dir(n.config.Storage.Path)
 	pluginCtx := plugins.RuntimeContext{
 		Host:         n.host,
 		DHT:          n.dht,
@@ -555,6 +577,15 @@ func (n *Node) Start(ctx context.Context) error {
 	// Announce on DHT with custom discovery namespace
 	n.wg.Add(1)
 	go n.runDHTDiscovery()
+
+	// Start EPM auto-publish via PubSub (every 30 minutes)
+	if n.epmService != nil && n.epmService.GetNodeEPM() != nil {
+		n.wg.Add(1)
+		go func() {
+			defer n.wg.Done()
+			n.epmService.StartAutoPublish(n.ctx, n, 30*time.Minute)
+		}()
+	}
 
 	return nil
 }
@@ -827,6 +858,11 @@ func (n *Node) Host() host.Host {
 // PubSub returns the GossipSub PubSub instance.
 func (n *Node) PubSub() *pubsub.PubSub {
 	return n.pubsub
+}
+
+// EPMService returns the node's EPM service for identity card management.
+func (n *Node) EPMService() *epm.Service {
+	return n.epmService
 }
 
 // SigningKey returns the node's Ed25519 signing private key bytes, or nil if unavailable.

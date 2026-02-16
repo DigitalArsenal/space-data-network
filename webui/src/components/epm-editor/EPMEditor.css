@@ -1,0 +1,131 @@
+.epm-editor {
+  background: var(--sdn-bg-secondary);
+  border: 1px solid var(--sdn-border);
+  border-radius: 0;
+  padding: 24px;
+  font-family: Montserrat, sans-serif;
+}
+
+.epm-editor-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sdn-text-muted, var(--sdn-text-secondary));
+  margin-bottom: 12px;
+}
+
+.epm-editor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 500px) {
+  .epm-editor-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.epm-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.epm-editor-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sdn-text-secondary);
+}
+
+.epm-editor-input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--sdn-border);
+  background: var(--sdn-bg-tertiary);
+  color: var(--sdn-text-primary);
+  font-size: 13px;
+  font-family: Montserrat, sans-serif;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.epm-editor-input:focus {
+  border-color: rgba(88, 166, 255, 0.7);
+}
+
+.epm-editor-input::placeholder {
+  color: var(--sdn-text-muted, var(--sdn-text-secondary));
+  opacity: 0.5;
+}
+
+.epm-editor-readonly {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.epm-editor-ro-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--sdn-border);
+  font-size: 13px;
+}
+
+.epm-editor-ro-field:last-child {
+  border-bottom: none;
+}
+
+.epm-editor-ro-label {
+  color: var(--sdn-text-secondary);
+  min-width: 110px;
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.epm-editor-ro-value {
+  color: var(--sdn-text-primary);
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  word-break: break-all;
+  flex: 1;
+  opacity: 0.8;
+}
+
+.epm-editor-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.epm-editor-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--sdn-border);
+  background: var(--sdn-bg-tertiary);
+  color: var(--sdn-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: Montserrat, sans-serif;
+  transition: all 0.15s;
+}
+
+.epm-editor-btn:hover:not(:disabled) {
+  background: rgba(88, 166, 255, 0.10);
+  border-color: rgba(88, 166, 255, 0.5);
+}
+
+.epm-editor-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.epm-editor-btn-primary {
+  background: rgba(88, 166, 255, 0.15);
+  border-color: rgba(88, 166, 255, 0.5);
+}

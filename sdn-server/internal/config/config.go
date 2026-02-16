@@ -164,6 +164,12 @@ type AdminConfig struct {
 	// through the authenticated SDN admin server.
 	IPFSAPIURL string `yaml:"ipfs_api_url"`
 
+	// IPFSGatewayURL is the base URL of an upstream Kubo HTTP gateway (no path),
+	// e.g. "http://127.0.0.1:8080". When set, the admin server reverse-proxies
+	// requests to "/ipfs/*" so the WebUI can fetch IPFS content without needing
+	// direct access to the Kubo gateway port.
+	IPFSGatewayURL string `yaml:"ipfs_gateway_url"`
+
 	// WalletUIPath is the filesystem path to the hd-wallet-ui dist directory.
 	// If empty, the login page loads wallet UI from CDN (unpkg.com/hd-wallet-ui).
 	WalletUIPath string `yaml:"wallet_ui_path"`

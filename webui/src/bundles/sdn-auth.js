@@ -15,6 +15,7 @@ const initialState = {
   authEnabled: true,
   authenticated: false,
   user: null,
+  identity: null,
   loading: true,
   error: null,
   status: null
@@ -48,7 +49,8 @@ const sdnAuthBundle = {
           error: null,
           authEnabled: action.payload.authEnabled,
           authenticated: action.payload.authenticated,
-          user: action.payload.user
+          user: action.payload.user,
+          identity: action.payload.identity || state.identity
         }
       case 'SDN_AUTH_STATUS_UPDATED':
         return { ...state, status: action.payload }
@@ -57,7 +59,7 @@ const sdnAuthBundle = {
       case 'SDN_AUTH_LOGIN_FAILED':
         return { ...state, loading: false, error: action.payload || 'Login failed', authenticated: false, user: null }
       case 'SDN_AUTH_LOGOUT_FINISHED':
-        return { ...state, loading: false, error: null, authenticated: false, user: null }
+        return { ...state, loading: false, error: null, authenticated: false, user: null, identity: null }
       default:
         return state
     }
@@ -105,6 +107,11 @@ const sdnAuthBundle = {
       const tl = (user && user.trust_level) ? String(user.trust_level).toLowerCase() : ''
       return tl === 'admin'
     }
+  ),
+
+  selectWalletIdentity: createSelector(
+    'selectSdnAuth',
+    (auth) => auth.identity
   ),
 
   doCheckSession () {
@@ -225,7 +232,7 @@ const sdnAuthBundle = {
         // Cookie is set by the server; just mark authenticated in UI.
         dispatch({
           type: 'SDN_AUTH_CHECK_FINISHED',
-          payload: { authEnabled: true, authenticated: true, user: verifyData.user || null }
+          payload: { authEnabled: true, authenticated: true, user: verifyData.user || null, identity }
         })
       } catch (err) {
         dispatch({ type: 'SDN_AUTH_LOGIN_FAILED', payload: err && err.message ? err.message : 'Login failed' })

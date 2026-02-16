@@ -1,0 +1,92 @@
+/* Peers page layout - fixed tabs, scrollable body */
+.peers-page {
+  display: flex;
+  flex-direction: column;
+  /* 28px status bar + 75px header bar + ~48px main padding (pa3/pa4-l) */
+  height: calc(100vh - 155px);
+  overflow: hidden;
+}
+
+.peers-page-header {
+  flex-shrink: 0;
+  padding-bottom: 0;
+  background: var(--sdn-bg-primary);
+}
+
+:root[data-theme="dark"] .peers-page-header {
+  background: var(--sdn-bg-primary);
+}
+
+.peers-page-body {
+  flex: 1;
+  overflow-y: auto;
+  padding-top: 16px;
+  min-height: 0;
+}
+
+/* Tab bar */
+.peers-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--sdn-border);
+}
+
+.peers-tab {
+  padding: 10px 22px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--sdn-text-secondary);
+  font-weight: 700;
+  font-family: Montserrat, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  position: relative;
+}
+
+.peers-tab:hover:not(.peers-tab-active) {
+  color: var(--sdn-text-primary);
+  background: rgba(88, 166, 255, 0.04);
+}
+
+.peers-tab-active {
+  color: var(--sdn-accent);
+  border-bottom-color: var(--sdn-accent);
+}
+
+/* Identity tab - horizontal layout on desktop */
+.peers-identity-layout {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.peers-identity-layout > .identity-card {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+}
+
+.peers-identity-layout > .epm-editor {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+}
+
+@media (max-width: 900px) {
+  .peers-identity-layout {
+    flex-direction: column;
+  }
+
+  .peers-page {
+    height: auto;
+    overflow: visible;
+  }
+
+  .peers-page-body {
+    overflow-y: visible;
+  }
+}

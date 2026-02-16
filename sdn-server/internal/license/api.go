@@ -1,10 +1,14 @@
 package license
 
 import (
+	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -363,4 +367,155 @@ func isTokenError(err error) bool {
 		errors.Is(err, ErrTokenIssuerMismatch) ||
 		errors.Is(err, ErrTokenPeerIDMismatch) ||
 		errors.Is(err, ErrTokenMissingScope)
+}
+
+// UploadHandler handles signed WASM plugin uploads.
+type UploadHandler struct {
+	reg         *PluginRegistry
+	keyLookup   func(xpub string) (string, error)    // returns signing_pubkey_hex
+	xpubFromReq func(r *http.Request) (string, error) // extracts xpub from session
+}
+
+// NewUploadHandler creates a handler for plugin uploads.
+func NewUploadHandler(reg *PluginRegistry, keyLookup func(string) (string, error), xpubFromReq func(*http.Request) (string, error)) *UploadHandler {
+	return &UploadHandler{reg: reg, keyLookup: keyLookup, xpubFromReq: xpubFromReq}
+}
+
+type uploadMetadata struct {
+	ID      string `json:"id"`
+	Version string `json:"version"`
+}
+
+func (h *UploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract the uploader's xpub from the authenticated session.
+	xpub, err := h.xpubFromReq(r)
+	if err != nil {
+		writeLicenseJSON(w, http.StatusUnauthorized, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "unauthorized", Message: "session required",
+		})
+		return
+	}
+
+	const maxUploadSize = 50 << 20 // 50 MB
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+		writeLicenseJSON(w, http.StatusBadRequest, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "bad_request", Message: "invalid multipart form: " + err.Error(),
+		})
+		return
+	}
+
+	// Read bundle file.
+	file, _, err := r.FormFile("bundle")
+	if err != nil {
+		writeLicenseJSON(w, http.StatusBadRequest, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "bad_request", Message: "missing bundle file",
+		})
+		return
+	}
+	defer file.Close()
+
+	bundleData, err := io.ReadAll(io.LimitReader(file, maxUploadSize+1))
+	if err != nil {
+		writeLicenseJSON(w, http.StatusBadRequest, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "bad_request", Message: "failed to read bundle",
+		})
+		return
+	}
+	if int64(len(bundleData)) > maxUploadSize {
+		writeLicenseJSON(w, http.StatusRequestEntityTooLarge, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "too_large", Message: "bundle exceeds 50 MB limit",
+		})
+		return
+	}
+
+	// Parse metadata.
+	metaStr := r.FormValue("metadata")
+	if metaStr == "" {
+		writeLicenseJSON(w, http.StatusBadRequest, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "bad_request", Message: "missing metadata field",
+		})
+		return
+	}
+	var meta uploadMetadata
+	if err := json.Unmarshal([]byte(metaStr), &meta); err != nil {
+		writeLicenseJSON(w, http.StatusBadRequest, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "bad_request", Message: "invalid metadata JSON: " + err.Error(),
+		})
+		return
+	}
+	if !pluginIDPattern.MatchString(strings.TrimSpace(meta.ID)) {
+		writeLicenseJSON(w, http.StatusBadRequest, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "bad_request", Message: "invalid plugin id (allowed: A-Za-z0-9._-)",
+		})
+		return
+	}
+
+	// Parse signature.
+	sigHex := strings.TrimSpace(r.FormValue("signature_hex"))
+	if sigHex == "" {
+		writeLicenseJSON(w, http.StatusBadRequest, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "bad_request", Message: "missing signature_hex field",
+		})
+		return
+	}
+	signature, err := hex.DecodeString(sigHex)
+	if err != nil || len(signature) != ed25519.SignatureSize {
+		writeLicenseJSON(w, http.StatusBadRequest, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "bad_request", Message: "signature_hex must be 64-byte Ed25519 signature (128 hex chars)",
+		})
+		return
+	}
+
+	// Look up signer's bound public key.
+	pubKeyHex, err := h.keyLookup(xpub)
+	if err != nil {
+		writeLicenseJSON(w, http.StatusForbidden, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "forbidden", Message: "user not found",
+		})
+		return
+	}
+	if pubKeyHex == "" {
+		writeLicenseJSON(w, http.StatusForbidden, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "forbidden", Message: "no signing key bound to this user (login with wallet first)",
+		})
+		return
+	}
+	pubKey, err := hex.DecodeString(pubKeyHex)
+	if err != nil || len(pubKey) != ed25519.PublicKeySize {
+		writeLicenseJSON(w, http.StatusInternalServerError, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "server_error", Message: "invalid stored signing key",
+		})
+		return
+	}
+
+	// Verify Ed25519 signature over SHA-256(bundle).
+	bundleHash := sha256.Sum256(bundleData)
+	if !ed25519.Verify(pubKey, bundleHash[:], signature) {
+		writeLicenseJSON(w, http.StatusForbidden, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "signature_invalid", Message: "Ed25519 signature verification failed",
+		})
+		return
+	}
+
+	// Store the plugin.
+	asset, err := h.reg.AddPlugin(meta.ID, meta.Version, bundleData, sigHex, pubKeyHex)
+	if err != nil {
+		writeLicenseJSON(w, http.StatusInternalServerError, ErrorResponse{
+			Type: msgTypeErrorResponse, Code: "server_error", Message: "failed to store plugin: " + err.Error(),
+		})
+		return
+	}
+
+	writeLicenseJSON(w, http.StatusCreated, map[string]interface{}{
+		"status":        "ok",
+		"plugin_id":     asset.ID,
+		"version":       asset.Version,
+		"bundle_sha256": asset.BundleSHA256,
+		"size_bytes":    asset.SizeBytes,
+	})
 }
