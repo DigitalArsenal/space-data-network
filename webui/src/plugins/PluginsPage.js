@@ -12,9 +12,9 @@ import './PluginsPage.css'
  *   - ui.icon:  emoji or single character for the card icon
  *   - ui.color: CSS background color for the icon badge
  */
-async function fetchPluginManifest (apiUrl) {
+async function fetchPluginManifest () {
   try {
-    const res = await fetch(`${apiUrl}/api/v1/plugins/manifest`)
+    const res = await fetch(`${window.location.origin}/api/v1/plugins/manifest`)
     if (!res.ok) return []
     const data = await res.json()
     return Array.isArray(data) ? data : (data.plugins || [])
@@ -107,15 +107,15 @@ const PluginDetail = ({ plugin, apiUrl, onBack }) => {
   )
 }
 
-const PluginsPage = ({ ipfsApiUrl }) => {
+const PluginsPage = ({ ipfsApiAddress }) => {
   const [plugins, setPlugins] = useState(null)
   const [selected, setSelected] = useState(null)
 
-  const apiUrl = ipfsApiUrl || ''
+  const apiUrl = ipfsApiAddress || ''
 
   useEffect(() => {
-    fetchPluginManifest(apiUrl).then(setPlugins)
-  }, [apiUrl])
+    fetchPluginManifest().then(setPlugins)
+  }, [])
 
   const handleSelect = useCallback((plugin) => {
     if (plugin.ui?.url) {
@@ -176,6 +176,6 @@ const PluginsPage = ({ ipfsApiUrl }) => {
 }
 
 export default connect(
-  'selectIpfsApiUrl',
+  'selectIpfsApiAddress',
   PluginsPage
 )
