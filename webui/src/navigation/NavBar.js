@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { connect } from 'redux-bundler-react'
 import { withTranslation } from 'react-i18next'
 import classnames from 'classnames'
@@ -11,6 +11,9 @@ import StrokeLab from '../icons/StrokeLab.js'
 import StrokeCode from '../icons/StrokeCode.js'
 import StrokeDocument from '../icons/StrokeDocument.js'
 import SdnLogo from '../icons/SdnLogo.js'
+import TrustBadge from '../components/trust-badge/TrustBadge.js'
+import TrustLevelsModal from '../components/trust-levels-modal/TrustLevelsModal.js'
+import SignOutModal from '../components/sign-out-modal/SignOutModal.js'
 
 // Styles
 import './NavBar.css'
@@ -65,6 +68,9 @@ const NavLink = ({
  * @param {import('i18next').TFunction} props.t
  */
 export const NavBar = ({ t, isAdminUser: isAdmin, authUser, doLogout }) => {
+  const [showSignOut, setShowSignOut] = useState(false)
+  const [showTrustLevels, setShowTrustLevels] = useState(false)
+
   const codeUrl = 'https://github.com/ipfs/ipfs-webui'
   const bugsUrl = `${codeUrl}/issues`
   const gitRevision = process.env.REACT_APP_GIT_REV
@@ -91,38 +97,57 @@ export const NavBar = ({ t, isAdminUser: isAdmin, authUser, doLogout }) => {
           <NavLink to='/diagnostics' icon={StrokeLab}>{t('diagnostics:title')}</NavLink>
         </div>
       </div>
-      <div className='dn db-l navbar-footer mb2 tc center f7 o-80 glow'>
+      <div className='dn db-l navbar-footer tc center' style={{ padding: '12px 10px 14px' }}>
         {authUser && (
-          <div className='mb1' style={{ color: 'rgba(255,255,255,0.8)' }}>
-            {authUser.name || 'User'} ({authUser.trust_level || 'unknown'})
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+              {authUser.name || 'User'}
+            </div>
+            <TrustBadge
+              level={authUser.trust_level}
+              size='small'
+              onClick={() => setShowTrustLevels(true)}
+            />
           </div>
         )}
-        <div className='mb2'>
+        <div style={{ marginBottom: 12 }}>
           <button
             className='pointer'
-            onClick={() => doLogout && doLogout()}
+            onClick={() => setShowSignOut(true)}
             style={{
-              padding: '8px 10px',
-              borderRadius: 10,
+              padding: '7px 14px',
+              borderRadius: 8,
               border: '1px solid rgba(88, 166, 255, 0.35)',
               background: 'transparent',
               color: 'white',
-              fontWeight: 700
+              fontWeight: 600,
+              fontSize: 12
             }}
           >
             Sign out
           </button>
         </div>
-        { gitRevision && <div className='mb1'>
-          <a className='link white' href={revisionUrl} target='_blank' rel='noopener noreferrer'>{t('app:terms.revision')} {gitRevision}</a>
-        </div> }
-        <div className='mb1'>
-          <a className='link white' href={codeUrl} target='_blank' rel='noopener noreferrer'>{t('app:nav.codeLink')}</a>
-        </div>
-        <div>
-          <a className='link white' href={bugsUrl} target='_blank' rel='noopener noreferrer'>{t('app:nav.bugsLink')}</a>
+        <div className='o-60' style={{ fontSize: 10, lineHeight: 1.6 }}>
+          { gitRevision && <div>
+            <a className='link white' href={revisionUrl} target='_blank' rel='noopener noreferrer'>{gitRevision}</a>
+          </div> }
+          <div>
+            <a className='link white' href={codeUrl} target='_blank' rel='noopener noreferrer'>{t('app:nav.codeLink')}</a>
+            {' · '}
+            <a className='link white' href={bugsUrl} target='_blank' rel='noopener noreferrer'>{t('app:nav.bugsLink')}</a>
+          </div>
         </div>
       </div>
+
+      <SignOutModal
+        show={showSignOut}
+        onCancel={() => setShowSignOut(false)}
+        onConfirm={() => { setShowSignOut(false); doLogout && doLogout() }}
+      />
+      <TrustLevelsModal
+        show={showTrustLevels}
+        onClose={() => setShowTrustLevels(false)}
+      />
     </div>
   )
 }
