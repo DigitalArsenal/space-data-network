@@ -29,6 +29,8 @@ import sdnTrustBundle from './sdn-trust.js'
 import sdnPeersBundle from './sdn-peers.js'
 import sdnStatsBundle from './sdn-stats.js'
 import sdnContextBundle from './sdn-context.js'
+import sdnEpmBundle from './sdn-epm.js'
+import sdnGraphBundle from './sdn-graph.js'
 import { contextBridge } from '../helpers/context-bridge'
 
 export default composeBundles(
@@ -72,5 +74,7 @@ export default composeBundles(
   sdnTrustBundle,
   sdnPeersBundle,
   sdnStatsBundle,
-  sdnContextBundle
+  sdnContextBundle,
+  sdnEpmBundle,
+  sdnGraphBundle
 )

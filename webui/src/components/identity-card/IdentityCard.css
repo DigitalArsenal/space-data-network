@@ -1,0 +1,159 @@
+.identity-card {
+  background: var(--sdn-bg-secondary);
+  border: 1px solid var(--sdn-border);
+  border-radius: 0;
+  padding: 24px;
+  font-family: Montserrat, sans-serif;
+}
+
+.identity-card-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.identity-card-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--sdn-accent, #58a6ff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.identity-card-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--sdn-text-primary);
+  margin: 0;
+  line-height: 1.3;
+}
+
+.identity-card-subtitle {
+  font-size: 13px;
+  color: var(--sdn-text-secondary);
+  margin: 2px 0 0 0;
+}
+
+.identity-card-section {
+  margin-bottom: 16px;
+}
+
+.identity-card-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sdn-text-muted, var(--sdn-text-secondary));
+  margin-bottom: 6px;
+}
+
+.identity-card-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--sdn-border);
+  font-size: 13px;
+}
+
+.identity-card-field:last-child {
+  border-bottom: none;
+}
+
+.identity-card-label {
+  color: var(--sdn-text-secondary);
+  min-width: 100px;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.identity-card-value {
+  color: var(--sdn-text-primary);
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+  flex: 1;
+}
+
+.identity-card-value-text {
+  color: var(--sdn-text-primary);
+  font-size: 13px;
+  flex: 1;
+}
+
+.identity-card-copy-btn {
+  background: none;
+  border: 1px solid var(--sdn-border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--sdn-text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.identity-card-copy-btn:hover {
+  background: var(--sdn-bg-tertiary);
+  color: var(--sdn-text-primary);
+}
+
+.identity-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.identity-card-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--sdn-border);
+  background: var(--sdn-bg-tertiary);
+  color: var(--sdn-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: Montserrat, sans-serif;
+  transition: all 0.15s;
+}
+
+.identity-card-btn:hover {
+  background: rgba(88, 166, 255, 0.10);
+  border-color: rgba(88, 166, 255, 0.5);
+}
+
+.identity-card-btn-primary {
+  background: rgba(88, 166, 255, 0.15);
+  border-color: rgba(88, 166, 255, 0.5);
+}
+
+.identity-card-qr-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.identity-card-qr-content {
+  background: var(--sdn-bg-secondary);
+  border: 1px solid var(--sdn-border);
+  border-radius: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.identity-card-qr-content img {
+  max-width: 256px;
+  border-radius: 8px;
+}

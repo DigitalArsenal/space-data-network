@@ -1,8 +1,8 @@
 {
-  "title": "Welcome | IPFS",
+  "title": "Welcome | Space Data Network",
   "description": "Welcome Page",
   "connected": {
-    "paragraph1": "Welcome to the future of the internet! You are now a valuable part of the distributed web."
+    "paragraph1": "Welcome to the Space Data Network! Your node is online and part of the decentralized web."
   },
   "notConnected": {
     "paragraph1": "<0>Check out the installation guide in the <1>IPFS Docs</1>, or try these common fixes:</0>",
@@ -11,28 +11,27 @@
     "paragraph4": "<0>Is your Kubo RPC API on a port other than 5001? If your node is configured with a <1>custom API address</1>, enter it here.</0>"
   },
   "aboutIpfs": {
-    "header": "What is IPFS?",
-    "paragraph1": "<0><0>A hypermedia distribution protocol</0> that incorporates ideas from Kademlia, BitTorrent, Git, and more</0>",
-    "paragraph2": "<0><0>A peer-to-peer file transfer network</0> with a completely decentralized architecture and no central point of failure, censorship, or control</0>",
-    "paragraph3": "<0><0>An on-ramp to tomorrow's web</0> — traditional browsers can access IPFS files through gateways like <2>https://dweb.link</2> or directly using the <4>IPFS Companion</4> extension</0>",
-    "paragraph4": "<0><0>A next-gen CDN</0> — just add a file to your node to make it available to the world with cache-friendly content-hash addressing and BitTorrent-style bandwidth distribution</0>",
-    "paragraph5": "<0><0>A developer toolset</0> for building <2>completely distributed apps and services</2>, backed by a robust open-source community</0>"
+    "header": "What is the Space Data Network?",
+    "paragraph1": "<0><0>A decentralized data platform</0> built on IPFS that gives you sovereign control over your data with HD wallet-based identity and end-to-end encryption</0>",
+    "paragraph2": "<0><0>A peer-to-peer network</0> where nodes discover each other, share data, and communicate without central servers or single points of failure</0>",
+    "paragraph3": "<0><0>A cryptographic identity system</0> — your HD wallet derives signing and encryption keys, giving you a portable identity that you own and control</0>",
+    "paragraph4": "<0><0>Content-addressed storage</0> — files are identified by their content hash, making them tamper-proof, cache-friendly, and globally distributable</0>",
+    "paragraph5": "<0><0>An extensible plugin system</0> for building decentralized applications and services on top of a robust peer-to-peer foundation</0>"
   },
   "welcomeInfo": {
     "header": "In this app, you can …",
     "paragraph1": "<0><0>Check your node status</0>, including how many peers you're connected to, your storage and bandwidth stats, and more</0>",
     "paragraph2": "<0><0>View and manage files</0> in your IPFS repo, including drag-and-drop file import, easy pinning, and quick sharing and download options</0>",
-    "paragraph3": "<0><0>Visit the \"Merkle Forest\"</0> with some sample datasets and explore IPLD, the data model that underpins how IPFS works</0>",
-    "paragraph4": "<0><0>See who's connected to your node</0>, geolocated on a world map by their IP address</0>",
-    "paragraph5": "<0><0>Review or edit your node settings</0> — no command line required</0>",
-    "paragraph6": "<0><0>Check this app's source code</0> to <2>report a bug</2> or make a contribution, and make IPFS better for everyone!</0>"
+    "paragraph3": "<0><0>Explore content</0> with sample datasets and browse IPLD, the data model that underpins content-addressed storage</0>",
+    "paragraph4": "<0><0>Browse the peer directory</0> to see connected nodes, verify identities, and manage trust relationships</0>",
+    "paragraph5": "<0><0>Review or edit your node settings</0> — no command line required</0>"
   },
   "tour": {
     "step1": {
       "title": "Welcome page",
-      "paragraph1": "This page lets you know if you're connected to IPFS, and offers ideas for things you can do in this app.",
+      "paragraph1": "This page lets you know if you're connected to the Space Data Network, and offers ideas for things you can do in this app.",
       "paragraph2": "If you aren't connected to the Kubo RPC API, this page also appears in place of some other pages, with hints for how to get connected.",
-      "paragraph3": "You can visit this page from anywhere in the app by clicking the IPFS cube logo in the navigation bar."
+      "paragraph3": "You can visit this page from anywhere in the app by clicking the logo in the navigation bar."
     }
   }
 }

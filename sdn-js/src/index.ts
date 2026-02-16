@@ -87,6 +87,18 @@ export type {
   DerivedIdentity,
 } from './crypto/index';
 
+// DHT Discovery + Baked Keys
+export {
+  deriveServerPeerID,
+  computeServerCIDHash,
+  discoverServer,
+} from './discovery';
+export {
+  LICENSE_SERVER_PUBKEY_HEX,
+  getLicenseServerPubkey,
+  hexToBytes,
+} from './baked-keys';
+
 // EPM Resolution
 export {
   EPMResolver,

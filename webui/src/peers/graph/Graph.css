@@ -1,0 +1,124 @@
+.graph-container {
+  background: var(--sdn-bg-secondary);
+  border: 1px solid var(--sdn-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.graph-svg {
+  width: 100%;
+  display: block;
+  background: var(--sdn-bg-primary, #0d1117);
+}
+
+.graph-link {
+  stroke-opacity: 0.6;
+}
+
+.graph-node {
+  cursor: pointer;
+}
+
+.graph-node:hover circle {
+  stroke-width: 2;
+  stroke: #fff;
+}
+
+.graph-label {
+  fill: var(--sdn-text-secondary, #8b949e);
+  font-size: 11px;
+  font-family: Montserrat, sans-serif;
+  pointer-events: none;
+}
+
+.tree-link {
+  stroke-opacity: 0.4;
+}
+
+.tree-node {
+  cursor: default;
+}
+
+.tree-node:hover circle {
+  stroke-width: 2;
+  stroke: #fff;
+}
+
+/* Controls */
+.graph-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+  font-family: Montserrat, sans-serif;
+}
+
+.graph-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-ctrl-btn {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--sdn-border);
+  background: var(--sdn-bg-tertiary);
+  color: var(--sdn-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: Montserrat, sans-serif;
+  transition: all 0.15s;
+}
+
+.graph-ctrl-btn.active {
+  background: rgba(88, 166, 255, 0.15);
+  border-color: rgba(88, 166, 255, 0.5);
+}
+
+.graph-ctrl-btn:hover:not(:disabled) {
+  background: rgba(88, 166, 255, 0.10);
+  border-color: rgba(88, 166, 255, 0.5);
+}
+
+.graph-ctrl-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.graph-ctrl-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--sdn-text-secondary);
+  cursor: pointer;
+}
+
+.graph-ctrl-label input[type="checkbox"] {
+  accent-color: #58a6ff;
+}
+
+.graph-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.graph-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--sdn-text-secondary);
+}
+
+.graph-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}

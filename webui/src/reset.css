@@ -1,4 +1,4 @@
-button {
+button:where(:not(#hd-wallet-ui-container *)) {
     appearance: none !important; /* !important due to tachyons reset`*/
     outline: none;
     background: transparent;
@@ -7,11 +7,11 @@ button {
     color: inherit;
 }
 
-button:not(.disabled) {
+button:where(:not(.disabled, #hd-wallet-ui-container *)) {
     cursor: pointer;
 }
-  
-button:not(.default):focus-visible {
+
+button:where(:not(.default, #hd-wallet-ui-container *)):focus-visible {
     outline: 1px solid #bbb;
     outline-offset: -1px;
 }

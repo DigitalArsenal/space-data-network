@@ -27,7 +27,9 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/frontend"
+	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -133,6 +135,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if cfg.Admin.WebuiPath == "" {
 		if envPath := os.Getenv("SDN_WEBUI_PATH"); envPath != "" {
 			cfg.Admin.WebuiPath = envPath
+		}
+	}
+	if cfg.Admin.IPFSAPIURL == "" {
+		if envURL := os.Getenv("SDN_IPFS_API_URL"); envURL != "" {
+			cfg.Admin.IPFSAPIURL = envURL
+		}
+	}
+	if cfg.Admin.IPFSGatewayURL == "" {
+		if envURL := os.Getenv("SDN_IPFS_GATEWAY_URL"); envURL != "" {
+			cfg.Admin.IPFSGatewayURL = envURL
 		}
 	}
 	if envPath := os.Getenv("SDN_FRONTEND_PATH"); envPath != "" {
@@ -244,11 +256,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					origDirector := proxy.Director
 					proxy.Director = func(req *http.Request) {
 						origDirector(req)
-						// Kubo's RPC API will return 403 when it sees an Origin that isn't
-						// explicitly allowed. Since the browser talks to SDN (same-origin),
-						// strip Origin/Referer when proxying to the upstream Kubo daemon.
+						// Kubo's RPC API rejects browser User-Agent headers (403) and
+						// Origins not in its allowlist. Strip all three when proxying.
 						req.Header.Del("Origin")
 						req.Header.Del("Referer")
+						req.Header.Del("User-Agent")
 					}
 					proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 						http.Error(w, "upstream IPFS API unavailable", http.StatusBadGateway)
@@ -256,6 +268,30 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					adminMux.Handle("/api/v0/", proxy)
 					adminMux.Handle("/api/v0", http.RedirectHandler("/api/v0/", http.StatusPermanentRedirect))
 					log.Infof("Proxying /api/v0/* to %s", rawIPFSURL)
+				}
+			}
+
+			// Optional: proxy Kubo HTTP gateway so the WebUI can fetch IPFS content
+			// via the same origin without needing direct access to the gateway port.
+			if rawGWURL := strings.TrimSpace(cfg.Admin.IPFSGatewayURL); rawGWURL != "" {
+				gwTarget, err := url.Parse(rawGWURL)
+				if err != nil || gwTarget.Scheme == "" || gwTarget.Host == "" {
+					log.Warnf("Invalid admin.ipfs_gateway_url %q: expected base URL like http://127.0.0.1:8080", rawGWURL)
+				} else {
+					gwTarget.Path = ""
+					gwProxy := httputil.NewSingleHostReverseProxy(gwTarget)
+					origGWDirector := gwProxy.Director
+					gwProxy.Director = func(req *http.Request) {
+						origGWDirector(req)
+						req.Header.Del("Origin")
+						req.Header.Del("Referer")
+						req.Header.Del("User-Agent")
+					}
+					gwProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+						http.Error(w, "upstream IPFS gateway unavailable", http.StatusBadGateway)
+					}
+					adminMux.Handle("/ipfs/", gwProxy)
+					log.Infof("Proxying /ipfs/* to %s", rawGWURL)
 				}
 			}
 
@@ -311,6 +347,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Node info API endpoint
 			adminMux.HandleFunc("/api/node/info", handleNodeInfo(n))
 
+			// EPM (Entity Profile Message) API endpoints
+			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
+			adminMux.HandleFunc("/api/node/epm/vcard", handleNodeEPMVCard(n))
+			adminMux.HandleFunc("/api/node/epm/qr", handleNodeEPMQR(n))
+			adminMux.HandleFunc("/api/node/epm", handleNodeEPM(n))
+
+			// Peer graph API endpoints
+			adminMux.HandleFunc("/api/peers/graph", handlePeerGraph(n))
+			adminMux.HandleFunc("/api/peers/graph/schema", handlePeerGraphSchema)
+
 			// libp2p bootstrap JS — serves a JS module with the node's raw IP,
 			// peer ID, and ws:// multiaddr injected at request time so browsers
 			// can connect using the raw IP without DNS.
@@ -359,6 +405,38 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				auth.DiscoverWalletAssets(cfg.Admin.WalletUIPath)
 				if jsFile, cssFile := auth.WalletAssets(); jsFile != "" {
 					adminUI.SetWalletAssets(jsFile, cssFile)
+				}
+			}
+
+			// ----------------------------------------------------------------
+			// Plugin upload API (admin-only, requires auth + license plugin)
+			// ----------------------------------------------------------------
+			if authHandler != nil {
+				if licSvc := n.LicenseService(); licSvc != nil {
+					if reg := licSvc.PluginRegistry(); reg != nil {
+						uploadHandler := license.NewUploadHandler(
+							reg,
+							func(xpub string) (string, error) {
+								user, err := authHandler.UserStore().GetUser(xpub)
+								if err != nil {
+									return "", err
+								}
+								if user == nil {
+									return "", fmt.Errorf("user not found")
+								}
+								return user.SigningPubKeyHex, nil
+							},
+							func(r *http.Request) (string, error) {
+								session := auth.SessionFromContext(r.Context())
+								if session == nil {
+									return "", fmt.Errorf("no session")
+								}
+								return session.XPub, nil
+							},
+						)
+						adminMux.HandleFunc("/api/v1/plugins/upload", uploadHandler.ServeHTTP)
+						log.Infof("Plugin upload API at %s://%s/api/v1/plugins/upload", adminScheme, adminAddr)
+					}
 				}
 			}
 
@@ -444,7 +522,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					// CSRF protection: for state-changing requests using cookie auth,
 					// require same-origin Origin/Referer, or X-Requested-With.
 					if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-						if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) {
+						if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) && !isPublicAPIPath(r.URL.Path) {
 							origin := strings.TrimSpace(r.Header.Get("Origin"))
 							referer := strings.TrimSpace(r.Header.Get("Referer"))
 							xrw := strings.TrimSpace(r.Header.Get("X-Requested-With"))
@@ -579,8 +657,11 @@ func isPublicAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/storefront/trust/") ||
 		strings.HasPrefix(path, "/api/auth/") ||
 		strings.HasPrefix(path, "/api/node/info") ||
+		strings.HasPrefix(path, "/api/v0/") ||
+		strings.HasPrefix(path, "/ipfs/") ||
 		strings.HasPrefix(path, "/orbpro-key-broker/v1/orbpro/public-key") ||
 		strings.HasPrefix(path, "/orbpro-key-broker/v1/orbpro/key") ||
+		path == "/api/v0" ||
 		path == "/sdn/libp2p.js"
 }
 
@@ -646,7 +727,8 @@ func isAdminOnlyAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/settings") ||
 		strings.HasPrefix(path, "/api/export") ||
 		strings.HasPrefix(path, "/api/import") ||
-		strings.HasPrefix(path, "/api/admin/")
+		strings.HasPrefix(path, "/api/admin/") ||
+		path == "/api/v1/plugins/upload"
 }
 
 func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
@@ -919,6 +1001,8 @@ func handleNodeInfo(n *node.Node) http.HandlerFunc {
 		SigningKeyPath    string              `json:"signing_key_path,omitempty"`
 		EncryptionKeyPath string              `json:"encryption_key_path,omitempty"`
 		Addresses         *wasm.CoinAddresses `json:"addresses,omitempty"`
+		XPub              string              `json:"xpub,omitempty"`
+		HasEPM            bool                `json:"has_epm"`
 		Mode              string              `json:"mode"`
 		Version           string              `json:"version"`
 	}
@@ -951,9 +1035,160 @@ func handleNodeInfo(n *node.Node) http.HandlerFunc {
 			info.Addresses = idInfo.Addresses
 		}
 
+		if epmSvc := n.EPMService(); epmSvc != nil {
+			info.HasEPM = epmSvc.GetNodeEPM() != nil
+			if profile := epmSvc.GetNodeProfile(); profile != nil {
+				// xpub is embedded in the EPM JSON; expose at top level too
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(info)
 	}
+}
+
+// handleNodeEPMJSON returns the node's EPM as JSON.
+func handleNodeEPMJSON(n *node.Node) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		epmSvc := n.EPMService()
+		if epmSvc == nil {
+			http.Error(w, "EPM service not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		epmJSON := epmSvc.GetNodeEPMJSON()
+		if epmJSON == nil {
+			http.Error(w, "no EPM available", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(epmJSON)
+	}
+}
+
+// handleNodeEPMVCard returns the node's EPM as a vCard 4.0 string.
+func handleNodeEPMVCard(n *node.Node) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		epmSvc := n.EPMService()
+		if epmSvc == nil {
+			http.Error(w, "EPM service not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		vcardStr, err := epmSvc.GetNodeVCard()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/vcard")
+		w.Header().Set("Content-Disposition", "attachment; filename=node.vcf")
+		w.Write([]byte(vcardStr))
+	}
+}
+
+// handleNodeEPMQR returns a QR code PNG of the node's vCard.
+func handleNodeEPMQR(n *node.Node) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		epmSvc := n.EPMService()
+		if epmSvc == nil {
+			http.Error(w, "EPM service not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		qrData, err := epmSvc.GetNodeQR(256)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(qrData)
+	}
+}
+
+// handleNodeEPM handles GET (binary EPM) and PUT (update profile) for the node's EPM.
+func handleNodeEPM(n *node.Node) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		epmSvc := n.EPMService()
+		if epmSvc == nil {
+			http.Error(w, "EPM service not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			epmData := epmSvc.GetNodeEPM()
+			if epmData == nil {
+				http.Error(w, "no EPM available", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-flatbuffers")
+			w.Write(epmData)
+
+		case http.MethodPut:
+			var profile epm.Profile
+			if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+				http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := epmSvc.UpdateProfile(&profile); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(epmSvc.GetNodeEPMJSON())
+
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// handlePeerGraph returns the current peer graph as JSON.
+func handlePeerGraph(n *node.Node) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		data, err := epm.GraphSnapshotJSON(n.Host(), n.PeerRegistry())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
+	}
+}
+
+// handlePeerGraphSchema serves the PGR.fbs schema file.
+func handlePeerGraphSchema(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(epm.PGRSchema))
 }
 
 const defaultLandingPageHTML = `<!doctype html>

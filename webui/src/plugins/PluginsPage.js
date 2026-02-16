@@ -3,6 +3,10 @@ import { Helmet } from 'react-helmet'
 import { connect } from 'redux-bundler-react'
 import './PluginsPage.css'
 
+const bytesToHex = (bytes) => Array.from(bytes || [])
+  .map(b => b.toString(16).padStart(2, '0'))
+  .join('')
+
 /**
  * Fetches the plugin manifest from the server.
  * Each plugin can declare a `ui` object with:
@@ -107,11 +111,18 @@ const PluginDetail = ({ plugin, apiUrl, onBack }) => {
   )
 }
 
-const PluginsPage = ({ ipfsApiAddress }) => {
+const PluginsPage = ({ ipfsApiAddress, isAdminUser, walletIdentity }) => {
   const [plugins, setPlugins] = useState(null)
   const [selected, setSelected] = useState(null)
+  const [showUpload, setShowUpload] = useState(false)
+  const [uploadFile, setUploadFile] = useState(null)
+  const [uploadMeta, setUploadMeta] = useState({ id: '', version: '1.0.0' })
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState(null)
+  const [uploadSuccess, setUploadSuccess] = useState(null)
 
   const apiUrl = ipfsApiAddress || ''
+  const canUpload = isAdminUser && walletIdentity && typeof walletIdentity.sign === 'function'
 
   useEffect(() => {
     fetchPluginManifest().then(setPlugins)
@@ -122,6 +133,43 @@ const PluginsPage = ({ ipfsApiAddress }) => {
       setSelected(plugin)
     }
   }, [])
+
+  const handleUpload = useCallback(async () => {
+    if (!uploadFile || !walletIdentity || !uploadMeta.id) return
+    setUploading(true)
+    setUploadError(null)
+    setUploadSuccess(null)
+    try {
+      const buffer = await uploadFile.arrayBuffer()
+      const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
+      const hashBytes = new Uint8Array(hashBuffer)
+      const signature = await walletIdentity.sign(hashBytes)
+      const sigHex = bytesToHex(signature)
+
+      const form = new FormData()
+      form.append('bundle', uploadFile)
+      form.append('metadata', JSON.stringify({ id: uploadMeta.id.trim(), version: uploadMeta.version.trim() }))
+      form.append('signature_hex', sigHex)
+
+      const res = await fetch('/api/v1/plugins/upload', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        body: form
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.message || 'Upload failed')
+
+      setUploadSuccess(`Plugin "${data.plugin_id}" v${data.version} uploaded (${data.bundle_sha256.slice(0, 12)}...)`)
+      setUploadFile(null)
+      setUploadMeta({ id: '', version: '1.0.0' })
+      fetchPluginManifest().then(setPlugins)
+    } catch (err) {
+      setUploadError(err.message || 'Upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }, [uploadFile, uploadMeta, walletIdentity])
 
   if (selected) {
     return (
@@ -140,11 +188,59 @@ const PluginsPage = ({ ipfsApiAddress }) => {
         <title>Plugins | SDN</title>
       </Helmet>
       <div className='plugins-header'>
-        <h1>Plugins</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <h1>Plugins</h1>
+          {canUpload && (
+            <button className='plugin-upload-btn' onClick={() => setShowUpload(!showUpload)}>
+              {showUpload ? 'Cancel' : 'Upload Plugin'}
+            </button>
+          )}
+        </div>
         <p className='plugins-header-sub'>
           Installed WASI plugins running on this node
         </p>
       </div>
+
+      {showUpload && canUpload && (
+        <div className='plugin-upload-panel'>
+          <h3>Upload WASM Plugin</h3>
+          <p>The plugin binary will be signed with your wallet key before upload.</p>
+          <input
+            type='file'
+            accept='.wasm'
+            onChange={e => setUploadFile(e.target.files[0] || null)}
+          />
+          <div className='plugin-upload-fields'>
+            <input
+              type='text'
+              placeholder='Plugin ID (e.g. my-plugin)'
+              value={uploadMeta.id}
+              onChange={e => setUploadMeta({ ...uploadMeta, id: e.target.value })}
+            />
+            <input
+              type='text'
+              placeholder='Version (e.g. 1.0.0)'
+              value={uploadMeta.version}
+              onChange={e => setUploadMeta({ ...uploadMeta, version: e.target.value })}
+            />
+          </div>
+          <button
+            className='plugin-upload-submit'
+            disabled={!uploadFile || !uploadMeta.id.trim() || uploading}
+            onClick={handleUpload}
+          >
+            {uploading ? 'Signing & Uploading...' : 'Sign & Upload'}
+          </button>
+          {uploadError && <div className='plugin-upload-error'>{uploadError}</div>}
+          {uploadSuccess && <div className='plugin-upload-success'>{uploadSuccess}</div>}
+        </div>
+      )}
+
+      {isAdminUser && !walletIdentity && (
+        <div className='plugin-upload-hint'>
+          To upload plugins, sign out and sign back in with your wallet — the signing key is only available during the login session (not after a page refresh).
+        </div>
+      )}
 
       {plugins === null
         ? (
@@ -177,5 +273,7 @@ const PluginsPage = ({ ipfsApiAddress }) => {
 
 export default connect(
   'selectIpfsApiAddress',
+  'selectIsAdminUser',
+  'selectWalletIdentity',
   PluginsPage
 )

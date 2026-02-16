@@ -1,0 +1,75 @@
+// Hash: (auto-generated on first build)
+// Version: 1.0.0
+// -----------------------------------END_HEADER
+/// Type of connection between peers
+enum ConnectionType : byte {
+  Direct,
+  Relay,
+  Bootstrap,
+  DHT
+}
+
+/// Role of a peer in the network
+enum PeerRole : byte {
+  Standard,
+  Bootstrap,
+  Relay,
+  Gateway,
+  Seed
+}
+
+/// Represents a peer node in the network graph
+table PeerNode {
+  /// libp2p Peer ID
+  PEER_ID: string;
+  /// Display name from EPM
+  DN: string;
+  /// Organization from EPM
+  ORGANIZATION: string;
+  /// Trust level (untrusted, limited, standard, trusted, admin)
+  TRUST_LEVEL: string;
+  /// Role of this peer
+  ROLE: PeerRole;
+  /// Known multiformat addresses
+  MULTIFORMAT_ADDRESS: [string];
+  /// ISO 8601 timestamp of last activity
+  LAST_SEEN: string;
+  /// Whether this peer is currently connected
+  IS_ONLINE: bool;
+}
+
+/// Represents an edge (connection) between two peers
+table PeerEdge {
+  /// Source peer ID
+  SOURCE_PEER_ID: string;
+  /// Target peer ID
+  TARGET_PEER_ID: string;
+  /// Type of connection
+  CONNECTION_TYPE: ConnectionType;
+  /// Round-trip latency in milliseconds
+  LATENCY_MS: uint32;
+  /// Bandwidth in bytes per second
+  BANDWIDTH_BPS: uint64;
+  /// ISO 8601 timestamp when connection was established
+  ESTABLISHED_AT: string;
+  /// Protocols negotiated on this connection
+  PROTOCOLS: [string];
+}
+
+/// A snapshot of the peer network graph at a point in time
+table PeerGraphSnapshot {
+  /// ISO 8601 timestamp of the snapshot
+  TIMESTAMP: string;
+  /// The local node's peer ID
+  LOCAL_PEER_ID: string;
+  /// All known peer nodes
+  NODES: [PeerNode];
+  /// All known edges between peers
+  EDGES: [PeerEdge];
+  /// Optional JSON metadata string
+  METADATA: string;
+}
+
+root_type PeerGraphSnapshot;
+
+file_identifier "$PGR";

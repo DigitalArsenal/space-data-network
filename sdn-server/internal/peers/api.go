@@ -10,6 +10,8 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+
+	"github.com/spacedatanetwork/sdn-server/internal/vcard"
 )
 
 // APIHandler provides HTTP endpoints for peer management.
@@ -107,6 +109,14 @@ func (h *APIHandler) handlePeerByID(w http.ResponseWriter, r *http.Request) {
 			return
 		case "stats":
 			h.handlePeerStats(w, r, peerID)
+			return
+		case "epm":
+			// /api/peers/:id/epm, /api/peers/:id/epm/vcard, /api/peers/:id/epm/qr
+			subFormat := ""
+			if len(parts) > 2 {
+				subFormat = parts[2]
+			}
+			h.handlePeerEPM(w, r, peerID, subFormat)
 			return
 		}
 	}
@@ -353,6 +363,64 @@ func (h *APIHandler) handlePeerStats(w http.ResponseWriter, r *http.Request, pee
 	}
 
 	writeJSON(w, stats)
+}
+
+// handlePeerEPM handles GET /api/peers/:id/epm[/vcard|/qr]
+func (h *APIHandler) handlePeerEPM(w http.ResponseWriter, r *http.Request, peerID peer.ID, format string) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	tp, err := h.registry.GetPeer(peerID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	switch format {
+	case "vcard":
+		vcardData := tp.VCardData
+		if vcardData == "" {
+			// Try to generate from EPM data
+			if len(tp.EPMData) > 0 {
+				if vc, err := vcard.EPMToVCard(tp.EPMData); err == nil {
+					vcardData = vc
+				}
+			}
+		}
+		if vcardData == "" {
+			// Fall back to generating from TrustedPeer fields
+			vcardData = TrustedPeerToVCard(tp)
+		}
+		w.Header().Set("Content-Type", "text/vcard")
+		w.Header().Set("Content-Disposition", "attachment; filename=peer-"+peerID.ShortString()+".vcf")
+		w.Write([]byte(vcardData))
+
+	case "qr":
+		var qrData []byte
+		if len(tp.EPMData) > 0 {
+			qrData, err = vcard.EPMToQR(tp.EPMData, 256)
+		} else {
+			vcardData := TrustedPeerToVCard(tp)
+			qrData, err = vcard.VCardToQR(vcardData, 256)
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(qrData)
+
+	default:
+		// Return raw EPM FlatBuffer
+		if len(tp.EPMData) == 0 {
+			http.Error(w, "no EPM data for this peer", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-flatbuffers")
+		w.Write(tp.EPMData)
+	}
 }
 
 // handleGroups handles GET /api/groups and POST /api/groups

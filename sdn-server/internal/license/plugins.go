@@ -47,40 +47,53 @@ type PluginCatalogFile struct {
 	Plugins []PluginCatalogEntry `json:"plugins"`
 }
 
-// PluginCatalogEntry describes an encrypted plugin bundle and its key material location.
+// PluginCatalogEntry describes a plugin bundle and its key material location.
 type PluginCatalogEntry struct {
 	ID            string `json:"id"`
 	Version       string `json:"version"`
 	RequiredScope string `json:"required_scope"`
-	EncryptedPath string `json:"encrypted_path"`
-	KeyPath       string `json:"key_path"`
+	EncryptedPath string `json:"encrypted_path,omitempty"`
+	KeyPath       string `json:"key_path,omitempty"`
+	PlainPath     string `json:"plain_path,omitempty"`
 	ContentType   string `json:"content_type,omitempty"`
 	CacheControl  string `json:"cache_control,omitempty"`
+
+	// Upload audit fields (set when uploaded via API).
+	SignatureHex    string `json:"signature_hex,omitempty"`
+	SignerPubKeyHex string `json:"signer_pubkey_hex,omitempty"`
+	UploadedAt      string `json:"uploaded_at,omitempty"`
 }
 
 // PluginDescriptor is safe to return publicly (no key path information).
 type PluginDescriptor struct {
-	ID            string `json:"id"`
-	Version       string `json:"version"`
-	RequiredScope string `json:"required_scope"`
-	ContentType   string `json:"content_type"`
-	CacheControl  string `json:"cache_control"`
-	BundleSHA256  string `json:"bundle_sha256"`
-	SizeBytes     int64  `json:"size_bytes"`
+	ID              string `json:"id"`
+	Version         string `json:"version"`
+	RequiredScope   string `json:"required_scope"`
+	ContentType     string `json:"content_type"`
+	CacheControl    string `json:"cache_control"`
+	BundleSHA256    string `json:"bundle_sha256"`
+	SizeBytes       int64  `json:"size_bytes"`
+	SignatureHex    string `json:"signature_hex,omitempty"`
+	SignerPubKeyHex string `json:"signer_pubkey_hex,omitempty"`
+	UploadedAt      string `json:"uploaded_at,omitempty"`
 }
 
 // PluginAsset is an in-memory validated plugin metadata record.
 type PluginAsset struct {
-	ID            string
-	Version       string
-	RequiredScope string
-	ContentType   string
-	CacheControl  string
-	BundleSHA256  string
-	SizeBytes     int64
+	ID              string
+	Version         string
+	RequiredScope   string
+	ContentType     string
+	CacheControl    string
+	BundleSHA256    string
+	SizeBytes       int64
+	SignatureHex    string
+	SignerPubKeyHex string
+	UploadedAt      string
 
 	encryptedPath string
 	keyPath       string
+	plainPath     string
 }
 
 func (a *PluginAsset) clone() *PluginAsset {
@@ -93,13 +106,16 @@ func (a *PluginAsset) clone() *PluginAsset {
 
 func (a *PluginAsset) Descriptor() PluginDescriptor {
 	return PluginDescriptor{
-		ID:            a.ID,
-		Version:       a.Version,
-		RequiredScope: a.RequiredScope,
-		ContentType:   a.ContentType,
-		CacheControl:  a.CacheControl,
-		BundleSHA256:  a.BundleSHA256,
-		SizeBytes:     a.SizeBytes,
+		ID:              a.ID,
+		Version:         a.Version,
+		RequiredScope:   a.RequiredScope,
+		ContentType:     a.ContentType,
+		CacheControl:    a.CacheControl,
+		BundleSHA256:    a.BundleSHA256,
+		SizeBytes:       a.SizeBytes,
+		SignatureHex:    a.SignatureHex,
+		SignerPubKeyHex: a.SignerPubKeyHex,
+		UploadedAt:      a.UploadedAt,
 	}
 }
 
@@ -232,15 +248,22 @@ func (r *PluginRegistry) Get(id string) (*PluginAsset, bool) {
 	return asset.clone(), true
 }
 
-// ReadEncryptedBundle reads the encrypted plugin bytes.
+// ReadEncryptedBundle reads plugin bytes (encrypted or plain).
 func (r *PluginRegistry) ReadEncryptedBundle(id string) ([]byte, *PluginAsset, error) {
 	asset, ok := r.Get(id)
 	if !ok {
 		return nil, nil, os.ErrNotExist
 	}
-	data, err := os.ReadFile(asset.encryptedPath)
+	bundlePath := asset.encryptedPath
+	if bundlePath == "" {
+		bundlePath = asset.plainPath
+	}
+	if bundlePath == "" {
+		return nil, nil, fmt.Errorf("plugin %q has no bundle path", id)
+	}
+	data, err := os.ReadFile(bundlePath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read encrypted plugin %q: %w", id, err)
+		return nil, nil, fmt.Errorf("read plugin %q: %w", id, err)
 	}
 	return data, asset, nil
 }
@@ -407,14 +430,6 @@ func validateCatalogEntry(rootAbs string, entry PluginCatalogEntry) (*PluginAsse
 	if requiredScope == "" {
 		requiredScope = defaultPluginRequiredScope
 	}
-	encryptedPath, err := resolveRelativePath(rootAbs, entry.EncryptedPath)
-	if err != nil {
-		return nil, fmt.Errorf("encrypted_path: %w", err)
-	}
-	keyPath, err := resolveRelativePath(rootAbs, entry.KeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("key_path: %w", err)
-	}
 	contentType := strings.TrimSpace(entry.ContentType)
 	if contentType == "" {
 		contentType = defaultPluginContentType
@@ -422,6 +437,49 @@ func validateCatalogEntry(rootAbs string, entry PluginCatalogEntry) (*PluginAsse
 	cacheControl := strings.TrimSpace(entry.CacheControl)
 	if cacheControl == "" {
 		cacheControl = defaultPluginCacheControl
+	}
+
+	asset := &PluginAsset{
+		ID:              id,
+		Version:         version,
+		RequiredScope:   requiredScope,
+		ContentType:     contentType,
+		CacheControl:    cacheControl,
+		SignatureHex:    entry.SignatureHex,
+		SignerPubKeyHex: entry.SignerPubKeyHex,
+		UploadedAt:      entry.UploadedAt,
+	}
+
+	// Plain (uploaded) plugins have plain_path; encrypted have encrypted_path + key_path.
+	if plainRel := strings.TrimSpace(entry.PlainPath); plainRel != "" {
+		plainPath, err := resolveRelativePath(rootAbs, plainRel)
+		if err != nil {
+			return nil, fmt.Errorf("plain_path: %w", err)
+		}
+		info, err := os.Stat(plainPath)
+		if err != nil {
+			return nil, fmt.Errorf("stat plain_path: %w", err)
+		}
+		if info.IsDir() {
+			return nil, errors.New("plain_path must be a file")
+		}
+		sum, err := hashFileSHA256(plainPath)
+		if err != nil {
+			return nil, fmt.Errorf("hash plain_path: %w", err)
+		}
+		asset.plainPath = plainPath
+		asset.BundleSHA256 = sum
+		asset.SizeBytes = info.Size()
+		return asset, nil
+	}
+
+	encryptedPath, err := resolveRelativePath(rootAbs, entry.EncryptedPath)
+	if err != nil {
+		return nil, fmt.Errorf("encrypted_path: %w", err)
+	}
+	keyPath, err := resolveRelativePath(rootAbs, entry.KeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("key_path: %w", err)
 	}
 
 	info, err := os.Stat(encryptedPath)
@@ -441,17 +499,114 @@ func validateCatalogEntry(rootAbs string, entry PluginCatalogEntry) (*PluginAsse
 		return nil, errors.New("key_path must be a file")
 	}
 
-	return &PluginAsset{
-		ID:            id,
-		Version:       version,
-		RequiredScope: requiredScope,
-		ContentType:   contentType,
-		CacheControl:  cacheControl,
-		BundleSHA256:  sum,
-		SizeBytes:     info.Size(),
-		encryptedPath: encryptedPath,
-		keyPath:       keyPath,
-	}, nil
+	asset.encryptedPath = encryptedPath
+	asset.keyPath = keyPath
+	asset.BundleSHA256 = sum
+	asset.SizeBytes = info.Size()
+	return asset, nil
+}
+
+// AddPlugin writes a plain (unencrypted) WASM bundle to the registry.
+func (r *PluginRegistry) AddPlugin(id, version string, wasmData []byte, signatureHex, signerPubKeyHex string) (*PluginAsset, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errors.New("plugin id is required")
+	}
+	if !pluginIDPattern.MatchString(id) {
+		return nil, errors.New("plugin id contains invalid characters")
+	}
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return nil, errors.New("version is required")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	pluginDir := filepath.Join(r.rootPath, id)
+	if err := os.MkdirAll(pluginDir, 0700); err != nil {
+		return nil, fmt.Errorf("create plugin directory: %w", err)
+	}
+
+	bundlePath := filepath.Join(pluginDir, "bundle.wasm")
+	if err := os.WriteFile(bundlePath, wasmData, 0600); err != nil {
+		return nil, fmt.Errorf("write plugin bundle: %w", err)
+	}
+
+	h := sha256.Sum256(wasmData)
+
+	asset := &PluginAsset{
+		ID:              id,
+		Version:         version,
+		RequiredScope:   defaultPluginRequiredScope,
+		ContentType:     defaultPluginContentType,
+		CacheControl:    defaultPluginCacheControl,
+		BundleSHA256:    hex.EncodeToString(h[:]),
+		SizeBytes:       int64(len(wasmData)),
+		SignatureHex:    signatureHex,
+		SignerPubKeyHex: signerPubKeyHex,
+		UploadedAt:      time.Now().UTC().Format(time.RFC3339),
+		plainPath:       bundlePath,
+	}
+
+	r.assets[id] = asset
+	if err := r.saveCatalogLocked(); err != nil {
+		// Roll back on catalog save failure.
+		delete(r.assets, id)
+		_ = os.Remove(bundlePath)
+		return nil, fmt.Errorf("save catalog: %w", err)
+	}
+	return asset.clone(), nil
+}
+
+// saveCatalogLocked writes catalog.json from the current in-memory assets.
+// Caller must hold r.mu.
+func (r *PluginRegistry) saveCatalogLocked() error {
+	entries := make([]PluginCatalogEntry, 0, len(r.assets))
+	for _, a := range r.assets {
+		entry := PluginCatalogEntry{
+			ID:              a.ID,
+			Version:         a.Version,
+			RequiredScope:   a.RequiredScope,
+			ContentType:     a.ContentType,
+			CacheControl:    a.CacheControl,
+			SignatureHex:    a.SignatureHex,
+			SignerPubKeyHex: a.SignerPubKeyHex,
+			UploadedAt:      a.UploadedAt,
+		}
+		if a.plainPath != "" {
+			rel, err := filepath.Rel(r.rootPath, a.plainPath)
+			if err != nil {
+				return fmt.Errorf("relativize plain path for %q: %w", a.ID, err)
+			}
+			entry.PlainPath = rel
+		} else {
+			if a.encryptedPath != "" {
+				rel, err := filepath.Rel(r.rootPath, a.encryptedPath)
+				if err != nil {
+					return fmt.Errorf("relativize encrypted path for %q: %w", a.ID, err)
+				}
+				entry.EncryptedPath = rel
+			}
+			if a.keyPath != "" {
+				rel, err := filepath.Rel(r.rootPath, a.keyPath)
+				if err != nil {
+					return fmt.Errorf("relativize key path for %q: %w", a.ID, err)
+				}
+				entry.KeyPath = rel
+			}
+		}
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
+
+	catalog := PluginCatalogFile{Plugins: entries}
+	data, err := json.MarshalIndent(catalog, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal catalog: %w", err)
+	}
+	catalogPath := filepath.Join(r.rootPath, defaultPluginCatalogFile)
+	return os.WriteFile(catalogPath, data, 0600)
 }
 
 func resolveRelativePath(rootAbs, relPath string) (string, error) {
