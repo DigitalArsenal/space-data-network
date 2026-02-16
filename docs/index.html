@@ -1633,6 +1633,16 @@
       justify-content: center;
     }
 
+    .arch-row-split {
+      gap: 16px;
+    }
+
+    .arch-row-split .arch-box {
+      flex: 1;
+      max-width: 360px;
+      min-width: 0;
+    }
+
     .arch-box {
       background: var(--ui-bg);
       border: 1px solid var(--ui-border);
@@ -1930,6 +1940,13 @@
       .arch-box {
         min-width: 100%;
         padding: 16px 20px;
+      }
+      .arch-row-split {
+        flex-direction: column;
+        align-items: center;
+      }
+      .arch-row-split .arch-box {
+        max-width: 100%;
       }
     }
 
@@ -5325,12 +5342,12 @@
           </div>
         </div>
         <div class="arch-arrow">&#x25BC;</div>
-        <div class="arch-row" style="display: flex; gap: 16px; justify-content: center;">
-          <div class="arch-box arch-transport" style="flex: 1; max-width: 360px;">
+        <div class="arch-row arch-row-split">
+          <div class="arch-box arch-transport">
             <div class="arch-label">Signing Key</div>
             <div class="arch-items" style="font-size: 12px;">m/44'/0'/0'/0'/0' &bull; Ed25519<br>Digital signatures &bull; libp2p PeerID &bull; IPFS address</div>
           </div>
-          <div class="arch-box arch-network" style="flex: 1; max-width: 360px;">
+          <div class="arch-box arch-network">
             <div class="arch-label">Encryption Key</div>
             <div class="arch-items" style="font-size: 12px;">m/44'/0'/0'/1'/0' &bull; X25519<br>ECDH key exchange &bull; AES-256-GCM &bull; End-to-end encrypted data</div>
           </div>
