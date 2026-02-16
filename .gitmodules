@@ -1,6 +1,3 @@
 [submodule "schemas/sds"]
 	path = schemas/sds
 	url = https://github.com/DigitalArsenal/spacedatastandards.org.git
-[submodule "packages/sdn-license-plugin"]
-	path = packages/sdn-license-plugin
-	url = https://github.com/DigitalArsenal/sdn-license-plugin.git
