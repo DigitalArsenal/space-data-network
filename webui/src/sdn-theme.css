@@ -163,6 +163,31 @@
   border-bottom: 1px solid var(--sdn-border);
 }
 
+/* Browse/Inspect buttons dark mode */
+:root[data-theme="dark"] .ExploreFormButton.bg-gray {
+  background-color: var(--sdn-bg-tertiary) !important;
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .ExploreFormButton.bg-teal {
+  background-color: rgba(88, 166, 255, 0.15) !important;
+  border-color: rgba(88, 166, 255, 0.4) !important;
+}
+
+:root[data-theme="dark"] .ExploreFormButton {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] #ipfs-path {
+  background-color: var(--sdn-bg-input) !important;
+  color: var(--sdn-text-primary) !important;
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] #ipfs-path::placeholder {
+  color: var(--sdn-text-muted) !important;
+}
+
 /* Theme toggle button */
 .sdn-theme-toggle {
   background: none;

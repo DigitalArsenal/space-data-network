@@ -107,7 +107,7 @@ export class App extends Component {
               <div className='joyride-app-explore' style={{ width: 560 }}>
                 <FilesExploreForm onBrowse={doFilesNavigateTo} />
               </div>
-              <div className='dn flex-ns flex-auto items-center justify-end'>
+              <div className='dn flex-ns flex-auto items-center justify-end' style={{ gap: 12, paddingRight: 4 }}>
                 <SdnThemeToggle />
                 <TourHelper />
                 <Connected className='joyride-app-status' />

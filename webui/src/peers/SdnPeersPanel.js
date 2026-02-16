@@ -22,9 +22,7 @@ const TrustBadge = ({ level }) => {
   else if (l === 'standard') color = 'var(--sdn-accent)'
   else if (l === 'limited') color = 'var(--sdn-accent-orange)'
   return (
-    <a
-      href='#/trust'
-      className='no-underline'
+    <span
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -39,10 +37,10 @@ const TrustBadge = ({ level }) => {
         textTransform: 'uppercase',
         background: 'rgba(0,0,0,0.12)'
       }}
-      title='Edit trust'
+      title={`Trust level: ${l}`}
     >
       {l}
-    </a>
+    </span>
   )
 }
 

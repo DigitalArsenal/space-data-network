@@ -31,7 +31,8 @@ export const WalletPage = ({
   isAdminUser: isAdmin,
   authStatus,
   doFetchAuthStatus,
-  doUpdateHash
+  doUpdateHash,
+  embedded
 }) => {
   const [walletUI, setWalletUI] = useState(() => window.__sdnWalletUI || null)
 
@@ -44,11 +45,11 @@ export const WalletPage = ({
 
   useEffect(() => {
     if (!isAdmin) {
-      doUpdateHash('/status')
+      if (!embedded) doUpdateHash('/status')
       return
     }
     doFetchAuthStatus()
-  }, [isAdmin, doFetchAuthStatus, doUpdateHash])
+  }, [isAdmin, doFetchAuthStatus, doUpdateHash, embedded])
 
   useEffect(() => {
     window.__sdnWalletReady = (ui) => {
@@ -69,6 +70,7 @@ export const WalletPage = ({
   }, [walletUI])
 
   if (!isAdmin) {
+    if (embedded) return null
     return (
       <Box>
         <h1 className='f3 ma0 mb2' style={{ color: 'var(--sdn-text-primary)' }}>Wallet</h1>
@@ -79,30 +81,33 @@ export const WalletPage = ({
     )
   }
 
+  const Wrapper = embedded ? React.Fragment : Box
+  const wrapperProps = embedded ? {} : { className: 'pa3 pa4-l' }
+
   if (!walletAssets.configured) {
     return (
-      <Box>
+      <Wrapper {...wrapperProps}>
         <h1 className='f3 ma0 mb2' style={{ color: 'var(--sdn-text-primary)' }}>Wallet</h1>
         <p className='ma0' style={{ color: 'var(--sdn-text-secondary)' }}>
           Wallet UI is not configured on this node. Set <code>admin.wallet_ui_path</code> and restart.
         </p>
-      </Box>
+      </Wrapper>
     )
   }
 
   if (!walletAssets.jsFile) {
     return (
-      <Box>
+      <Wrapper {...wrapperProps}>
         <h1 className='f3 ma0 mb2' style={{ color: 'var(--sdn-text-primary)' }}>Wallet</h1>
         <p className='ma0' style={{ color: 'var(--sdn-text-secondary)' }}>
           Wallet UI assets were not detected in <code>admin.wallet_ui_path</code>.
         </p>
-      </Box>
+      </Wrapper>
     )
   }
 
   return (
-    <Box className='pa3 pa4-l'>
+    <Wrapper {...wrapperProps}>
       <div className='flex items-center justify-between mb3'>
         <div>
           <h1 className='f3 ma0' style={{ color: 'var(--sdn-text-primary)' }}>Wallet</h1>
@@ -147,7 +152,7 @@ export const WalletPage = ({
       <div style={{ color: 'var(--sdn-text-secondary)', fontSize: 13 }}>
         Use the buttons above to open the wallet modals. This page is admin-only.
       </div>
-    </Box>
+    </Wrapper>
   )
 }
 
