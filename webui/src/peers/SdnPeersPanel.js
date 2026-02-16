@@ -2,6 +2,8 @@ import React, { useEffect, useState, useMemo } from 'react'
 import { connect } from 'redux-bundler-react'
 import { withTranslation } from 'react-i18next'
 import ContextSwitcher from '../components/context-switcher/ContextSwitcher.js'
+import TrustBadge from '../components/trust-badge/TrustBadge.js'
+import TrustLevelsModal from '../components/trust-levels-modal/TrustLevelsModal.js'
 
 /**
  * SDN Peers Panel - Phase 17.2: SDN vs IPFS Peer Separation
@@ -13,38 +15,7 @@ import ContextSwitcher from '../components/context-switcher/ContextSwitcher.js'
  * With context switching between SDN and IPFS views.
  */
 
-const TrustBadge = ({ level }) => {
-  const l = String(level || '').toLowerCase()
-  if (!l) return null
-  let color = 'var(--sdn-accent-red)'
-  if (l === 'admin') color = 'var(--sdn-accent-purple)'
-  else if (l === 'trusted') color = 'var(--sdn-accent-green)'
-  else if (l === 'standard') color = 'var(--sdn-accent)'
-  else if (l === 'limited') color = 'var(--sdn-accent-orange)'
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        padding: '2px 8px',
-        marginLeft: 8,
-        borderRadius: 999,
-        border: `1px solid ${color}`,
-        color,
-        fontSize: 11,
-        fontWeight: 800,
-        letterSpacing: '0.03em',
-        textTransform: 'uppercase',
-        background: 'rgba(0,0,0,0.12)'
-      }}
-      title={`Trust level: ${l}`}
-    >
-      {l}
-    </span>
-  )
-}
-
-const PeerRow = ({ peer, isSdn, trustLevel }) => {
+const PeerRow = ({ peer, isSdn, trustLevel, onTrustBadgeClick }) => {
   const peerId = peer.peerId || peer.peer?.toString() || 'unknown'
   const shortId = peerId.length > 16 ? `${peerId.slice(0, 8)}...${peerId.slice(-8)}` : peerId
 
@@ -55,7 +26,7 @@ const PeerRow = ({ peer, isSdn, trustLevel }) => {
         <span className='monospace' style={{ fontSize: '12px', color: 'var(--sdn-text-primary)' }} title={peerId}>
           {shortId}
         </span>
-        {isSdn && trustLevel && <TrustBadge level={trustLevel} />}
+        {isSdn && trustLevel && <span style={{ marginLeft: 8 }}><TrustBadge level={trustLevel} onClick={onTrustBadgeClick} /></span>}
       </td>
       <td style={{ padding: '8px 12px', color: 'var(--sdn-text-secondary)', fontSize: '13px' }}>
         {peer.location || 'Unknown'}
@@ -70,7 +41,7 @@ const PeerRow = ({ peer, isSdn, trustLevel }) => {
   )
 }
 
-const PeerTable = ({ peers, isSdn, emptyMessage, trustLevelByPeerId }) => {
+const PeerTable = ({ peers, isSdn, emptyMessage, trustLevelByPeerId, onTrustBadgeClick }) => {
   if (!peers || peers.length === 0) {
     return (
       <div style={{ padding: '20px', textAlign: 'center', color: 'var(--sdn-text-secondary)', fontSize: '14px' }}>
@@ -97,6 +68,7 @@ const PeerTable = ({ peers, isSdn, emptyMessage, trustLevelByPeerId }) => {
               peer={peer}
               isSdn={isSdn}
               trustLevel={trustLevelByPeerId && (trustLevelByPeerId[peer.peerId] || trustLevelByPeerId[peer.peer?.toString()])}
+              onTrustBadgeClick={onTrustBadgeClick}
             />
           ))}
         </tbody>
@@ -120,6 +92,7 @@ const summaryLineStyle = {
 
 const SdnPeersPanel = ({ peerLocationsForSwarm, sdnPeerIds, sdnPeersCount, trustLevelByPeerId, isSdnContext, isIpfsContext, doSetSdnContext, t, isAdminUser }) => {
   const [resolvedPeers, setResolvedPeers] = useState([])
+  const [showTrustLevels, setShowTrustLevels] = useState(false)
 
   useEffect(() => {
     if (peerLocationsForSwarm?.then) {
@@ -160,6 +133,7 @@ const SdnPeersPanel = ({ peerLocationsForSwarm, sdnPeerIds, sdnPeersCount, trust
             peers={sdnPeers}
             isSdn={true}
             trustLevelByPeerId={isAdminUser ? trustLevelByPeerId : null}
+            onTrustBadgeClick={() => setShowTrustLevels(true)}
             emptyMessage='No SDN peers connected. SDN peers support the /spacedatanetwork/sds-exchange/1.0.0 protocol.'
           />
         </div>
@@ -190,6 +164,7 @@ const SdnPeersPanel = ({ peerLocationsForSwarm, sdnPeerIds, sdnPeersCount, trust
             peers={ipfsPeers}
             isSdn={false}
             trustLevelByPeerId={null}
+            onTrustBadgeClick={() => setShowTrustLevels(true)}
             emptyMessage='No IPFS peers connected.'
           />
         </div>
@@ -208,6 +183,11 @@ const SdnPeersPanel = ({ peerLocationsForSwarm, sdnPeerIds, sdnPeersCount, trust
           </button>
         </div>
       )}
+
+      <TrustLevelsModal
+        show={showTrustLevels}
+        onClose={() => setShowTrustLevels(false)}
+      />
     </div>
   )
 }
