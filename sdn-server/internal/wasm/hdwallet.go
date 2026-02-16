@@ -62,12 +62,14 @@ type HDWalletModule struct {
 	ed25519PubkeyFromSeed   api.Function
 
 	// BIP-32 handle-based key derivation (all curves)
-	keyFromSeed     api.Function
-	keyDerivePath   api.Function
-	keyGetPublic    api.Function
-	keyGetPrivate   api.Function
-	keyGetChainCode api.Function
-	keyDestroy      api.Function
+	keyFromSeed      api.Function
+	keyDerivePath    api.Function
+	keyGetPublic     api.Function
+	keyGetPrivate    api.Function
+	keyGetChainCode  api.Function
+	keyDestroy       api.Function
+	keyNeutered      api.Function
+	keySerializeXpub api.Function
 
 	// Entropy management
 	injectEntropy    api.Function
@@ -149,6 +151,8 @@ func NewHDWalletModuleFromBytes(ctx context.Context, wasmBytes []byte) (*HDWalle
 	hw.keyGetPrivate = module.ExportedFunction("hd_key_get_private")
 	hw.keyGetChainCode = module.ExportedFunction("hd_key_get_chain_code")
 	hw.keyDestroy = module.ExportedFunction("hd_key_destroy")
+	hw.keyNeutered = module.ExportedFunction("hd_key_neutered")
+	hw.keySerializeXpub = module.ExportedFunction("hd_key_serialize_xpub")
 
 	// Entropy
 	hw.injectEntropy = module.ExportedFunction("hd_inject_entropy")
@@ -419,6 +423,95 @@ func (hw *HDWalletModule) DeriveEd25519Key(ctx context.Context, seed []byte, pat
 	}
 
 	return &DerivedKey{PrivateKey: privKey, ChainCode: chainCode}, nil
+}
+
+// DeriveXPub derives a standard BIP-32 extended public key (xpub) from a seed.
+// Uses secp256k1 curve at the given BIP-44 account path (e.g., m/44'/0'/0').
+// Returns the Base58Check-encoded xpub string (starts with "xpub").
+func (hw *HDWalletModule) DeriveXPub(ctx context.Context, seed []byte, account uint32) (string, error) {
+	hw.mu.Lock()
+	defer hw.mu.Unlock()
+
+	if hw.keyFromSeed == nil || hw.keyDerivePath == nil || hw.keyNeutered == nil || hw.keySerializeXpub == nil {
+		return "", ErrHDWalletNoModule
+	}
+
+	if len(seed) != 64 {
+		return "", ErrHDWalletInvalidSeed
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
+
+	// Allocate seed in WASM memory
+	seedPtr, err := hw.allocate(ctx, seed)
+	if err != nil {
+		return "", err
+	}
+	defer hw.deallocate(ctx, seedPtr, uint32(len(seed)))
+
+	// Create master key from seed using secp256k1 (curve = 0)
+	results, err := hw.keyFromSeed.Call(ctx, uint64(seedPtr), uint64(len(seed)), 0)
+	if err != nil {
+		return "", fmt.Errorf("hd_key_from_seed failed: %w", err)
+	}
+	masterHandle := uint32(results[0])
+	if masterHandle == 0 {
+		return "", fmt.Errorf("hd_key_from_seed returned null handle")
+	}
+	defer hw.keyDestroy.Call(ctx, uint64(masterHandle))
+
+	// Derive account key at m/44'/0'/{account}'
+	accountPath := fmt.Sprintf("m/44'/0'/%d'", account)
+	pathPtr, err := hw.allocateString(ctx, accountPath)
+	if err != nil {
+		return "", err
+	}
+	defer hw.deallocate(ctx, pathPtr, uint32(len(accountPath)+1))
+
+	results, err = hw.keyDerivePath.Call(ctx, uint64(masterHandle), uint64(pathPtr))
+	if err != nil {
+		return "", fmt.Errorf("hd_key_derive_path failed: %w", err)
+	}
+	accountHandle := uint32(results[0])
+	if accountHandle == 0 {
+		return "", fmt.Errorf("hd_key_derive_path returned null handle")
+	}
+	defer hw.keyDestroy.Call(ctx, uint64(accountHandle))
+
+	// Get neutered (public-only) key
+	results, err = hw.keyNeutered.Call(ctx, uint64(accountHandle))
+	if err != nil {
+		return "", fmt.Errorf("hd_key_neutered failed: %w", err)
+	}
+	neuteredHandle := uint32(results[0])
+	if neuteredHandle == 0 {
+		return "", fmt.Errorf("hd_key_neutered returned null handle")
+	}
+	defer hw.keyDestroy.Call(ctx, uint64(neuteredHandle))
+
+	// Serialize as xpub
+	bufSize := uint32(128)
+	bufPtr, err := hw.allocateSize(ctx, bufSize)
+	if err != nil {
+		return "", err
+	}
+	defer hw.deallocate(ctx, bufPtr, bufSize)
+
+	results, err = hw.keySerializeXpub.Call(ctx, uint64(neuteredHandle), uint64(bufPtr), uint64(bufSize))
+	if err != nil {
+		return "", fmt.Errorf("hd_key_serialize_xpub failed: %w", err)
+	}
+	if int32(results[0]) != 0 {
+		return "", fmt.Errorf("hd_key_serialize_xpub error: %d", int32(results[0]))
+	}
+
+	xpubStr, err := hw.readCString(ctx, bufPtr, bufSize)
+	if err != nil {
+		return "", err
+	}
+
+	return xpubStr, nil
 }
 
 // Ed25519PublicKeyFromSeed derives Ed25519 public key from a 32-byte seed via WASM.

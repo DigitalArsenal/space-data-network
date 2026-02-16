@@ -81,16 +81,9 @@ func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, 
 			}
 		}
 
-		// If no explicit signing key, try to extract from SDN xpub.
+		// No signing key yet — it will be bound on first wallet login (TOFU).
 		if signingHex == "" {
-			pubKey, err := ExtractEd25519PubKeyFromXPub(entry.XPub)
-			if err == nil && len(pubKey) == 32 {
-				signingHex = hex.EncodeToString(pubKey)
-				log.Infof("Config user %q: derived signing pubkey from SDN xpub", entry.Name)
-			} else if strings.TrimSpace(entry.SigningPubKeyHex) == "" {
-				// Neither explicit key nor parseable SDN xpub — warn.
-				log.Warnf("Config user %q (%s): no signing key (provide SDN xpub or signing_pubkey_hex)", entry.Name, entry.XPub)
-			}
+			log.Infof("Config user %q: signing key will be bound on first login (TOFU)", entry.Name)
 		}
 
 		s.configUsers[entry.XPub] = User{
@@ -153,15 +146,8 @@ func (s *UserStore) GetUser(xpub string) (*User, error) {
 		}
 		// Avoid lockouts when an older DB row exists without a signing key.
 		if strings.TrimSpace(u.SigningPubKeyHex) == "" {
-			// Try config signing key first.
 			if cu, ok := s.configUsers[u.XPub]; ok && strings.TrimSpace(cu.SigningPubKeyHex) != "" {
 				u.SigningPubKeyHex = cu.SigningPubKeyHex
-			}
-			// Try extracting from SDN xpub.
-			if strings.TrimSpace(u.SigningPubKeyHex) == "" {
-				if pubKey, err := ExtractEd25519PubKeyFromXPub(u.XPub); err == nil && len(pubKey) == 32 {
-					u.SigningPubKeyHex = hex.EncodeToString(pubKey)
-				}
 			}
 		}
 		return &u, nil
@@ -210,11 +196,6 @@ func (s *UserStore) ListUsers() ([]User, error) {
 			if cu, ok := s.configUsers[u.XPub]; ok && strings.TrimSpace(cu.SigningPubKeyHex) != "" {
 				u.SigningPubKeyHex = cu.SigningPubKeyHex
 			}
-			if strings.TrimSpace(u.SigningPubKeyHex) == "" {
-				if pubKey, xErr := ExtractEd25519PubKeyFromXPub(u.XPub); xErr == nil && len(pubKey) == 32 {
-					u.SigningPubKeyHex = hex.EncodeToString(pubKey)
-				}
-			}
 		}
 		users = append(users, u)
 		seen[u.XPub] = true
@@ -230,8 +211,7 @@ func (s *UserStore) ListUsers() ([]User, error) {
 	return users, nil
 }
 
-// HasAdmin returns true if at least one user with Admin trust and a valid
-// signing key (either explicit or derived from SDN xpub) exists.
+// HasAdmin returns true if at least one user with Admin trust level exists.
 func (s *UserStore) HasAdmin() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -273,16 +253,8 @@ func (s *UserStore) AddUser(xpub, name string, trust peers.TrustLevel, signingPu
 		return fmt.Errorf("invalid signing_pubkey_hex: %w", err)
 	}
 
-	// If no explicit signing key, try to extract from SDN xpub.
-	if signingHex == "" {
-		pubKey, xpubErr := ExtractEd25519PubKeyFromXPub(xpub)
-		if xpubErr == nil && len(pubKey) == 32 {
-			signingHex = hex.EncodeToString(pubKey)
-		}
-	}
-	if signingHex == "" {
-		return fmt.Errorf("signing key required: provide an SDN xpub or signing_pubkey_hex")
-	}
+	// Signing key is optional at creation — it gets bound on first login (TOFU).
+	// If provided, it's already validated above.
 
 	_, err = s.db.Exec(
 		"INSERT INTO users (xpub, name, trust_level, signing_pubkey_hex, created_at) VALUES (?, ?, ?, ?, ?)",

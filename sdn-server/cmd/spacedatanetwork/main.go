@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -70,10 +69,10 @@ var reindexCmd = &cobra.Command{
 
 var deriveXPubCmd = &cobra.Command{
 	Use:   "derive-xpub",
-	Short: "Derive an SDN xpub from a BIP-39 mnemonic",
-	Long: `Derives the extended public key at m/44'/0'/0'/0'/0' from a BIP-39 mnemonic.
-The resulting xpub embeds the Ed25519 signing public key and can be pasted directly
-into config.yaml as the user's xpub field. No signing_pubkey_hex is needed.`,
+	Short: "Derive a BIP-32 xpub from a BIP-39 mnemonic",
+	Long: `Derives the standard BIP-32 extended public key at m/44'/0'/0' from a BIP-39 mnemonic.
+The resulting xpub can be pasted directly into config.yaml as the user's xpub field.
+The Ed25519 signing key is bound on first wallet login (TOFU).`,
 	RunE: runDeriveXPub,
 }
 
@@ -207,6 +206,28 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Data API routes
 			dataAPI := api.NewDataQueryHandler(n.Store(), tokenVerifier)
 			dataAPI.RegisterRoutes(adminMux)
+
+			// Demo API routes (encrypted WASM demo)
+			if demoPayloadPath := os.Getenv("SDN_DEMO_PAYLOAD_PATH"); demoPayloadPath != "" {
+				ipfsAPIURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL)
+				demoAPI := api.NewDemoHandler(demoPayloadPath, ipfsAPIURL)
+				demoAPI.RegisterRoutes(adminMux)
+				log.Infof("Demo available at %s://%s/demo", adminScheme, adminAddr)
+				log.Infof("Demo API available at %s://%s/api/v1/demo/payload", adminScheme, adminAddr)
+
+				// Pin demo payload to IPFS in background if configured
+				if ipfsAPIURL != "" {
+					go func() {
+						cid, err := demoAPI.PinToIPFS(ctx)
+						if err != nil {
+							log.Warnf("Failed to pin demo payload to IPFS: %v", err)
+						} else {
+							log.Infof("Demo payload pinned to IPFS: %s", cid)
+							log.Infof("IPFS gateway: https://ipfs.io/ipfs/%s", cid)
+						}
+					}()
+				}
+			}
 
 			// Optional: proxy Kubo RPC API so the React WebUI can talk to IPFS via the
 			// authenticated SDN admin server.
@@ -551,16 +572,16 @@ func isPublicAPIPath(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/data/") ||
 		strings.HasPrefix(path, "/api/v1/license/") ||
 		strings.HasPrefix(path, "/api/v1/plugins/manifest") ||
+		strings.HasPrefix(path, "/api/v1/demo/") ||
 		strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook") ||
 		strings.HasPrefix(path, "/api/storefront/listings") ||
 		strings.HasPrefix(path, "/api/storefront/reviews") ||
 		strings.HasPrefix(path, "/api/storefront/trust/") ||
 		strings.HasPrefix(path, "/api/auth/") ||
 		strings.HasPrefix(path, "/api/node/info") ||
+		strings.HasPrefix(path, "/orbpro-key-broker/v1/orbpro/public-key") ||
+		strings.HasPrefix(path, "/orbpro-key-broker/v1/orbpro/key") ||
 		path == "/sdn/libp2p.js"
-	// Key broker is NOT a public HTTP endpoint.
-	// Plugin key exchange happens over encrypted IPFS/libp2p transport,
-	// not HTTP. The server's public key is published to IPFS by CID.
 }
 
 func isWebhookPath(path string) bool {
@@ -1077,35 +1098,14 @@ func runDeriveXPub(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to derive seed: %w", err)
 	}
 
-	// Derive signing key at m/44'/0'/0'/0'/0'
-	signingPath := fmt.Sprintf(wasm.SigningKeyPath, 0)
-	derived, err := hw.DeriveEd25519Key(ctx, seed, signingPath)
+	// Derive standard BIP-32 xpub at m/44'/0'/0' (account 0)
+	xpubStr, err := hw.DeriveXPub(ctx, seed, 0)
 	if err != nil {
-		return fmt.Errorf("failed to derive signing key: %w", err)
+		return fmt.Errorf("failed to derive xpub: %w", err)
 	}
-
-	// Compute Ed25519 public key from private key seed
-	privKey := ed25519.NewKeyFromSeed(derived.PrivateKey)
-	pubKey := privKey.Public().(ed25519.PublicKey)
-
-	// Build SDN xpub
-	xpubKey, err := auth.NewSDNXPub(
-		pubKey,
-		derived.ChainCode,
-		5,                // depth: m / 44' / 0' / 0' / 0' / 0'
-		[4]byte{0, 0, 0, 0}, // fingerprint (omitted for simplicity)
-		0x80000000,       // child index: 0' (hardened)
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create xpub: %w", err)
-	}
-
-	xpubStr := auth.SerializeSDNXPub(xpubKey)
 
 	fmt.Fprintf(os.Stderr, "\n--- SDN Identity ---\n")
-	fmt.Fprintf(os.Stderr, "Path:              %s\n", signingPath)
-	fmt.Fprintf(os.Stderr, "Signing PubKey:    %x\n", pubKey)
-	fmt.Fprintf(os.Stderr, "SDN XPub:          %s\n", xpubStr)
+	fmt.Fprintf(os.Stderr, "XPub (BIP-32):     %s\n", xpubStr)
 	fmt.Fprintf(os.Stderr, "\nAdd to config.yaml:\n")
 	fmt.Fprintf(os.Stderr, "users:\n  - xpub: \"%s\"\n    trust_level: \"admin\"\n    name: \"Operator\"\n", xpubStr)
 

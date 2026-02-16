@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDN Encrypted WASM Demo</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    background: #0b1020;
+    color: #e6edf6;
+    min-height: 100vh;
+  }
+  main { max-width: 800px; margin: 0 auto; padding: 3rem 1.5rem; }
+  h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
+  h1 span { color: #7ec8ff; }
+  .subtitle { color: #a6b0c3; margin-bottom: 2rem; line-height: 1.5; }
+
+  .card {
+    background: #11182c;
+    border: 1px solid #27314d;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .card h2 { font-size: 1rem; color: #7ec8ff; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .info-grid { display: grid; grid-template-columns: 140px 1fr; gap: 0.5rem 1rem; font-size: 0.875rem; }
+  .info-grid dt { color: #64748b; }
+  .info-grid dd { color: #c8d4e6; word-break: break-all; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem; }
+
+  button {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.75rem 2rem;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #log {
+    background: #080d1a;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 1rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .log-step { color: #7ec8ff; }
+  .log-ok { color: #34d399; }
+  .log-err { color: #f87171; }
+  .log-dim { color: #64748b; }
+  .log-val { color: #fbbf24; }
+
+  .results-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+  .result-card {
+    background: #0f1729;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 1rem;
+    text-align: center;
+  }
+  .result-card .label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+  .result-card .value { font-size: 1.5rem; font-weight: 700; color: #34d399; font-family: 'SF Mono', monospace; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span>Encrypted WASM</span> Demo</h1>
+  <p class="subtitle">
+    This demonstrates the OrbPro-style DRM pipeline: P-256 ECDH key exchange with the key broker,
+    epoch-locked key derivation, DEK unwrapping, and AES-256-GCM payload decryption &mdash;
+    all using the browser's native SubtleCrypto API. Zero external dependencies.
+  </p>
+
+  <div class="card" id="info-card">
+    <h2>Server Info</h2>
+    <dl class="info-grid" id="server-info">
+      <dt>Status</dt><dd id="info-status">Loading...</dd>
+    </dl>
+  </div>
+
+  <div style="text-align: center; margin-bottom: 1.5rem;">
+    <button id="btn-run" disabled>Decrypt &amp; Run WASM</button>
+  </div>
+
+  <div class="card">
+    <h2>Protocol Log</h2>
+    <div id="log"></div>
+  </div>
+
+  <div class="card" id="results-card" style="display: none;">
+    <h2>WASM Results</h2>
+    <div class="results-grid" id="results"></div>
+  </div>
+</main>
+
+<script>
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
+function bytesToHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function concatBuffers(...buffers) {
+  let total = 0;
+  for (const b of buffers) total += b.byteLength;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const b of buffers) {
+    out.set(b instanceof Uint8Array ? b : new Uint8Array(b), offset);
+    offset += b.byteLength;
+  }
+  return out;
+}
+
+function writeU16BE(arr, offset, value) {
+  arr[offset] = (value >> 8) & 0xff;
+  arr[offset + 1] = value & 0xff;
+}
+
+function readU16BE(arr, offset) {
+  return (arr[offset] << 8) | arr[offset + 1];
+}
+
+function writeU64LE(arr, offset, value) {
+  for (let i = 0; i < 8; i++) {
+    arr[offset + i] = value & 0xff;
+    value = Math.floor(value / 256);
+  }
+}
+
+function readU64LE(arr, offset) {
+  let value = 0;
+  for (let i = 7; i >= 0; i--) value = value * 256 + arr[offset + i];
+  return value;
+}
+
+function constantTimeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+const te = new TextEncoder();
+
+// ── UI Logging ──────────────────────────────────────────────────────────────
+
+const logEl = document.getElementById('log');
+function log(msg, cls) {
+  const span = document.createElement('span');
+  span.className = cls || '';
+  span.textContent = msg + '\n';
+  logEl.appendChild(span);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── Key Broker Base URL ─────────────────────────────────────────────────────
+const BROKER_BASE = location.origin + '/orbpro-key-broker';
+const DEMO_API = location.origin + '/api/v1/demo';
+
+// ── Load Server Info ────────────────────────────────────────────────────────
+
+let demoPayload = null;
+let ipfsInfo = null;
+
+async function loadServerInfo() {
+  try {
+    const resp = await fetch(DEMO_API + '/info');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const info = await resp.json();
+
+    let infoHTML = `
+      <dt>Plugin ID</dt><dd>${info.pluginId}</dd>
+      <dt>WASM Size</dt><dd>${info.wasmSize} bytes</dd>
+      <dt>Epoch</dt><dd>${info.currentEpoch} (${Math.round(info.epochPeriodMs / 86400000)}-day rotation)</dd>
+      <dt>Server Key</dt><dd>${info.serverPublicKeyHex ? info.serverPublicKeyHex.substring(0, 40) + '...' : 'N/A'}</dd>
+      <dt>Domains</dt><dd>${(info.domains || []).join(', ')}</dd>
+      <dt>Created</dt><dd>${info.createdAt}</dd>
+    `;
+
+    if (info.ipfsCID) {
+      ipfsInfo = { cid: info.ipfsCID, gatewayURL: info.ipfsGatewayURL };
+      infoHTML += `<dt>IPFS CID</dt><dd><a href="${info.ipfsGatewayURL}" target="_blank" style="color:#7ec8ff">${info.ipfsCID}</a></dd>`;
+    }
+
+    document.getElementById('server-info').innerHTML = infoHTML;
+
+    // Pre-fetch the full payload
+    const payloadResp = await fetch(DEMO_API + '/payload');
+    if (!payloadResp.ok) throw new Error('Payload HTTP ' + payloadResp.status);
+    demoPayload = await payloadResp.json();
+
+    document.getElementById('btn-run').disabled = false;
+    const source = ipfsInfo ? 'Ready to decrypt. IPFS available.' : 'Server info loaded. Ready to decrypt.';
+    log(source, 'log-ok');
+  } catch (e) {
+    document.getElementById('info-status').textContent = 'Error: ' + e.message;
+    log('Failed to load server info: ' + e.message, 'log-err');
+  }
+}
+
+// ── P-256 ECDH Key Exchange ─────────────────────────────────────────────────
+
+async function requestServerKey(brokerUrl, pluginId) {
+  const subtle = crypto.subtle;
+
+  // Step 1: Generate ephemeral P-256 keypair
+  log('[1/6] Generating ephemeral P-256 keypair...', 'log-step');
+  const keyPair = await subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits']
+  );
+
+  // Step 2: Export raw public key (65 bytes, uncompressed 0x04 prefix)
+  const rawPubKey = new Uint8Array(await subtle.exportKey('raw', keyPair.publicKey));
+  log('  Client public key: ' + bytesToHex(rawPubKey).substring(0, 40) + '...', 'log-dim');
+
+  // Step 3: Fetch server's static P-256 public key
+  log('[2/6] Fetching server P-256 public key...', 'log-step');
+  const pkResp = await fetch(brokerUrl + '/v1/orbpro/public-key');
+  if (!pkResp.ok) throw new Error('Public key fetch failed: HTTP ' + pkResp.status);
+  const serverInfo = await pkResp.json();
+
+  if (!serverInfo.publicKey || serverInfo.publicKey.length < 64) {
+    throw new Error('Invalid server public key');
+  }
+  log('  Server public key: ' + serverInfo.publicKey.substring(0, 40) + '...', 'log-dim');
+  log('  Allowed domains: ' + (serverInfo.domains || []).join(', '), 'log-dim');
+
+  // Step 4: Import server public key and perform ECDH
+  log('[3/6] Performing ECDH key agreement...', 'log-step');
+  const serverPubKeyBytes = hexToBytes(serverInfo.publicKey);
+  const serverPubKey = await subtle.importKey(
+    'raw', serverPubKeyBytes,
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false, []
+  );
+
+  const sharedBits = await subtle.deriveBits(
+    { name: 'ECDH', public: serverPubKey },
+    keyPair.privateKey,
+    256
+  );
+  const shared = new Uint8Array(sharedBits);
+  log('  Shared secret: ' + bytesToHex(shared).substring(0, 16) + '... (32 bytes)', 'log-dim');
+
+  // Step 5: HKDF to derive request encryption key
+  log('[4/6] Deriving request key via HKDF-SHA256...', 'log-step');
+  const sharedKey = await subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']);
+  shared.fill(0); // wipe
+
+  const requestSalt = crypto.getRandomValues(new Uint8Array(32));
+  const requestKey = await subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: requestSalt, info: te.encode('orbpro:kek:req:v1') },
+    sharedKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt']
+  );
+
+  // Step 6: Build and encrypt request plaintext
+  const hostname = location.hostname;
+  const domainBytes = te.encode(hostname);
+  const pluginIdBytes = te.encode(pluginId);
+  const nonce = crypto.getRandomValues(new Uint8Array(16));
+  const timestampMs = Date.now();
+
+  log('  Domain: ' + hostname + ', Plugin: ' + pluginId, 'log-dim');
+  log('  Timestamp: ' + timestampMs + ' (' + new Date(timestampMs).toISOString() + ')', 'log-dim');
+
+  // Request plaintext: version(1) + domainLen(1) + pluginLen(1) + reserved(1) + timestamp(8) + nonce(16) + domain + pluginId
+  const ptLen = 4 + 8 + 16 + domainBytes.length + pluginIdBytes.length;
+  const requestPt = new Uint8Array(ptLen);
+  requestPt[0] = 1;
+  requestPt[1] = domainBytes.length;
+  requestPt[2] = pluginIdBytes.length;
+  requestPt[3] = 0;
+  writeU64LE(requestPt, 4, timestampMs);
+  requestPt.set(nonce, 12);
+  requestPt.set(domainBytes, 28);
+  requestPt.set(pluginIdBytes, 28 + domainBytes.length);
+
+  // Encrypt with AES-256-GCM
+  const requestIv = crypto.getRandomValues(new Uint8Array(12));
+  const requestCt = await subtle.encrypt(
+    { name: 'AES-GCM', iv: requestIv, tagLength: 128 },
+    requestKey,
+    requestPt
+  );
+  const requestBlob = concatBuffers(requestIv, new Uint8Array(requestCt));
+
+  // Build binary packet
+  const packet = new Uint8Array(103 + requestBlob.length);
+  packet[0] = 1; // protocol version
+  packet[1] = 2; // keyKind: P-256 uncompressed
+  packet[2] = 0;
+  packet[3] = 0;
+  packet.set(rawPubKey, 4);
+  packet.set(requestSalt, 69);
+  writeU16BE(packet, 101, requestBlob.length);
+  packet.set(requestBlob, 103);
+
+  // Step 7: POST to key broker
+  log('[5/6] Sending encrypted key request to broker...', 'log-step');
+  log('  Packet size: ' + packet.length + ' bytes', 'log-dim');
+
+  const keyResp = await fetch(brokerUrl + '/v1/orbpro/key', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: packet
+  });
+
+  if (!keyResp.ok) {
+    throw new Error('Key exchange failed: HTTP ' + keyResp.status);
+  }
+
+  const responsePacket = new Uint8Array(await keyResp.arrayBuffer());
+  log('  Response: ' + responsePacket.length + ' bytes', 'log-dim');
+
+  // Step 8: Parse and decrypt response
+  log('[6/6] Decrypting server response...', 'log-step');
+  if (responsePacket.length < 38) throw new Error('Response too short');
+
+  const respStatus = responsePacket[1];
+  if (respStatus !== 0) throw new Error('Server rejected request (status=' + respStatus + ')');
+
+  const responseSalt = responsePacket.slice(4, 36);
+  const respBlobLen = readU16BE(responsePacket, 36);
+  const responseBlob = responsePacket.slice(38, 38 + respBlobLen);
+
+  const responseKey = await subtle.deriveKey(
+    { name: 'HKDF', hash: 'SHA-256', salt: responseSalt, info: te.encode('orbpro:kek:resp:v1') },
+    sharedKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt']
+  );
+
+  const respIv = responseBlob.slice(0, 12);
+  const respCtTag = responseBlob.slice(12);
+  const responsePt = new Uint8Array(await subtle.decrypt(
+    { name: 'AES-GCM', iv: respIv, tagLength: 128 },
+    responseKey,
+    respCtTag
+  ));
+
+  if (responsePt.length < 101) throw new Error('Response plaintext too short');
+
+  // Validate echoed nonce
+  const echoedNonce = responsePt.slice(20, 36);
+  if (!constantTimeEqual(echoedNonce, nonce)) throw new Error('Nonce mismatch');
+
+  const pluginKey = responsePt.slice(36, 68);
+  const expiresAtMs = readU64LE(responsePt, 4);
+  const epoch = readU64LE(responsePt, 12);
+
+  log('  Plugin key received (32 bytes)', 'log-ok');
+  log('  Epoch: ' + epoch + ', Expires: ' + new Date(expiresAtMs).toISOString(), 'log-dim');
+
+  return { pluginKey, expiresAtMs, epoch };
+}
+
+// ── DEK Unwrap + Payload Decrypt ────────────────────────────────────────────
+
+async function decryptPayload(pluginKeyBytes, encryptedData, wrappedDEKs) {
+  const subtle = crypto.subtle;
+
+  log('Unwrapping DEK with plugin key...', 'log-step');
+
+  const pluginKey = await subtle.importKey(
+    'raw', pluginKeyBytes,
+    { name: 'AES-GCM' },
+    false, ['decrypt']
+  );
+
+  // Try each wrapped DEK until GCM auth succeeds (domain match)
+  let dekBytes = null;
+  for (let i = 0; i < wrappedDEKs.length; i++) {
+    const wrapped = wrappedDEKs[i];
+    if (wrapped.length < 28) continue;
+    const iv = wrapped.slice(0, 12);
+    const ctTag = wrapped.slice(12);
+    try {
+      dekBytes = new Uint8Array(await subtle.decrypt(
+        { name: 'AES-GCM', iv, tagLength: 128 },
+        pluginKey,
+        ctTag
+      ));
+      log('  DEK unwrapped from slot ' + i + ' (domain match)', 'log-ok');
+      break;
+    } catch (_) {
+      log('  Slot ' + i + ': GCM auth failed (different domain)', 'log-dim');
+    }
+  }
+
+  if (!dekBytes) throw new Error('No matching DEK found for this domain');
+
+  // Decrypt the WASM payload
+  log('Decrypting WASM payload with DEK...', 'log-step');
+
+  const dekKey = await subtle.importKey(
+    'raw', dekBytes,
+    { name: 'AES-GCM' },
+    false, ['decrypt']
+  );
+  dekBytes.fill(0); // wipe
+
+  const payloadIv = encryptedData.slice(0, 12);
+  const payloadCtTag = encryptedData.slice(12);
+
+  const decrypted = new Uint8Array(await subtle.decrypt(
+    { name: 'AES-GCM', iv: payloadIv, tagLength: 128 },
+    dekKey,
+    payloadCtTag
+  ));
+
+  log('  Decrypted: ' + decrypted.length + ' bytes of WASM', 'log-ok');
+  return decrypted;
+}
+
+// ── Main Demo Flow ──────────────────────────────────────────────────────────
+
+async function runDemo() {
+  const btn = document.getElementById('btn-run');
+  btn.disabled = true;
+  btn.textContent = 'Running...';
+  logEl.innerHTML = '';
+
+  try {
+    if (!demoPayload) throw new Error('Demo payload not loaded');
+
+    log('=== SDN Encrypted WASM Demo ===', 'log-step');
+    log('Protocol: P-256 ECDH + HKDF-SHA256 + AES-256-GCM', 'log-dim');
+    if (ipfsInfo) log('IPFS CID: ' + ipfsInfo.cid, 'log-dim');
+    log('', '');
+
+    // 1. Key exchange with broker
+    const t0 = performance.now();
+    const { pluginKey } = await requestServerKey(BROKER_BASE, demoPayload.pluginId);
+    const t1 = performance.now();
+    log('', '');
+    log('Key exchange completed in ' + (t1 - t0).toFixed(1) + 'ms', 'log-ok');
+    log('', '');
+
+    // 2. Fetch payload (IPFS gateway or HTTP API)
+    let payloadData = demoPayload;
+    if (ipfsInfo) {
+      log('Fetching encrypted payload from IPFS gateway...', 'log-step');
+      log('  CID: ' + ipfsInfo.cid, 'log-dim');
+      try {
+        const ipfsResp = await fetch(ipfsInfo.gatewayURL);
+        if (ipfsResp.ok) {
+          payloadData = await ipfsResp.json();
+          log('  Fetched from IPFS gateway', 'log-ok');
+        } else {
+          log('  IPFS gateway returned ' + ipfsResp.status + ', falling back to HTTP API', 'log-dim');
+        }
+      } catch (_) {
+        log('  IPFS gateway unavailable, using HTTP API fallback', 'log-dim');
+      }
+    }
+
+    // 3. Parse payload
+    const encryptedData = Uint8Array.from(atob(payloadData.encryptedPayload), c => c.charCodeAt(0));
+    const wrappedDEKs = payloadData.wrappedDEKs.map(b64 =>
+      Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+    );
+
+    log('Encrypted payload: ' + encryptedData.length + ' bytes', 'log-dim');
+    log('Wrapped DEKs: ' + wrappedDEKs.length + ' slots', 'log-dim');
+    log('', '');
+
+    // 3. Decrypt
+    const t2 = performance.now();
+    const wasmBytes = await decryptPayload(pluginKey, encryptedData, wrappedDEKs);
+    const t3 = performance.now();
+    log('', '');
+    log('Payload decrypted in ' + (t3 - t2).toFixed(1) + 'ms', 'log-ok');
+
+    // 4. Verify WASM magic bytes
+    if (wasmBytes[0] !== 0x00 || wasmBytes[1] !== 0x61 || wasmBytes[2] !== 0x73 || wasmBytes[3] !== 0x6d) {
+      throw new Error('Invalid WASM magic bytes after decryption');
+    }
+    log('WASM magic bytes verified: 00 61 73 6d', 'log-ok');
+    log('', '');
+
+    // 5. Instantiate WASM
+    log('Instantiating WebAssembly module...', 'log-step');
+    const { instance } = await WebAssembly.instantiate(wasmBytes);
+    const exports = instance.exports;
+    log('  Exports: ' + Object.keys(exports).filter(k => typeof exports[k] === 'function').join(', '), 'log-dim');
+    log('', '');
+
+    // 6. Call exported functions
+    log('Calling WASM functions:', 'log-step');
+
+    const results = [];
+
+    if (exports.demo_add) {
+      const r = exports.demo_add(17, 25);
+      log('  demo_add(17, 25) = ' + r, 'log-val');
+      results.push({ label: 'demo_add(17, 25)', value: r });
+    }
+
+    if (exports.demo_multiply) {
+      const r = exports.demo_multiply(6, 7);
+      log('  demo_multiply(6, 7) = ' + r, 'log-val');
+      results.push({ label: 'demo_multiply(6, 7)', value: r });
+    }
+
+    if (exports.demo_fibonacci) {
+      const r = exports.demo_fibonacci(10);
+      log('  demo_fibonacci(10) = ' + r, 'log-val');
+      results.push({ label: 'demo_fibonacci(10)', value: r });
+    }
+
+    if (exports.demo_factorial) {
+      const r = Number(exports.demo_factorial(12));
+      log('  demo_factorial(12) = ' + r, 'log-val');
+      results.push({ label: 'demo_factorial(12)', value: r });
+    }
+
+    // Display results
+    const resultsCard = document.getElementById('results-card');
+    const resultsGrid = document.getElementById('results');
+    resultsCard.style.display = 'block';
+    resultsGrid.innerHTML = results.map(r => `
+      <div class="result-card">
+        <div class="label">${r.label}</div>
+        <div class="value">${r.value}</div>
+      </div>
+    `).join('');
+
+    const totalMs = (t3 - t0).toFixed(1);
+    log('', '');
+    log('=== Demo complete (' + totalMs + 'ms total) ===', 'log-ok');
+
+  } catch (e) {
+    log('', '');
+    log('ERROR: ' + e.message, 'log-err');
+    if (e.stack) log(e.stack, 'log-dim');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Decrypt & Run WASM';
+  }
+}
+
+// ── Init ────────────────────────────────────────────────────────────────────
+
+document.getElementById('btn-run').addEventListener('click', runDemo);
+loadServerInfo();
+</script>
+</body>
+</html>
