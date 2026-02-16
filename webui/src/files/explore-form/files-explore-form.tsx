@@ -118,11 +118,11 @@ const FilesExploreForm: React.FC<FilesExploreFormProps> = ({ onBrowse: onBrowseP
         <div className='flex'>
           <div className='flex-auto'>
             <div className='relative'>
-              <input id='ipfs-path' className={`input-reset bn pa2 mb2 db w-100 f6 br-0 placeholder-light ${inputClass}`} style={{ borderRadius: '3px 0 0 3px' }} type='text' placeholder='QmHash/bafyHash' aria-describedby='ipfs-path-desc' onChange={onChange} onKeyDown={onKeyDown} value={path} />
-              <small id='ipfs-path-desc' className='o-0 absolute f6 black-60 db mb2'>Paste in a CID or IPFS path</small>
+              <input id='ipfs-path' className={`input-reset bn pa2 db w-100 f6 br-0 placeholder-light ${inputClass}`} style={{ borderRadius: '3px 0 0 3px' }} type='text' placeholder='QmHash/bafyHash' aria-describedby='ipfs-path-desc' onChange={onChange} onKeyDown={onKeyDown} value={path} />
+              <small id='ipfs-path-desc' className='o-0 absolute f6 black-60 db'>Paste in a CID or IPFS path</small>
             </div>
           </div>
-          <div className='flex flex-row-reverse mb2'>
+          <div className='flex flex-row-reverse'>
             <Button
               minWidth={0}
               disabled={!isValid || isResolving}
