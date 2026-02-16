@@ -1633,16 +1633,6 @@
       justify-content: center;
     }
 
-    .arch-row-split {
-      gap: 16px;
-    }
-
-    .arch-row-split .arch-box {
-      flex: 1;
-      max-width: 360px;
-      min-width: 0;
-    }
-
     .arch-box {
       background: var(--ui-bg);
       border: 1px solid var(--ui-border);
@@ -1940,13 +1930,6 @@
       .arch-box {
         min-width: 100%;
         padding: 16px 20px;
-      }
-      .arch-row-split {
-        flex-direction: column;
-        align-items: center;
-      }
-      .arch-row-split .arch-box {
-        max-width: 100%;
       }
     }
 
@@ -5320,36 +5303,6 @@
           <div class="arch-box arch-network">
             <div class="arch-label">Network Layer</div>
             <div class="arch-items"><a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: underline;">IPFS</a> DHT &bull; Circuit Relay &bull; WebSocket Bridge</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Identity Derivation -->
-      <div class="arch-diagram" style="margin-top: 48px;">
-        <h3 style="text-align: center; margin-bottom: 8px; font-size: 1.1rem; font-weight: 600; color: var(--text-primary);">Unified Identity Derivation</h3>
-        <p style="text-align: center; font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 24px;">Generated client-side &mdash; fully decentralized identity</p>
-        <div class="arch-row">
-          <div class="arch-box arch-app">
-            <div class="arch-label">BIP-39 Mnemonic</div>
-            <div class="arch-items">Generated client-side &rarr; 512-bit master seed</div>
-          </div>
-        </div>
-        <div class="arch-arrow">&#x25BC;</div>
-        <div class="arch-row">
-          <div class="arch-box arch-crypto">
-            <div class="arch-label">Extended Key (xpub)</div>
-            <div class="arch-items">Master public key &bull; Network identity &bull; <a href="https://github.com/satoshilabs/slips/blob/master/slip-0010.md" target="_blank" style="color: inherit; text-decoration: underline;">SLIP-10</a> HD derivation</div>
-          </div>
-        </div>
-        <div class="arch-arrow">&#x25BC;</div>
-        <div class="arch-row arch-row-split">
-          <div class="arch-box arch-transport">
-            <div class="arch-label">Signing Key</div>
-            <div class="arch-items" style="font-size: 12px;">m/44'/0'/0'/0'/0' &bull; Ed25519<br>Digital signatures &bull; libp2p PeerID &bull; IPFS address</div>
-          </div>
-          <div class="arch-box arch-network">
-            <div class="arch-label">Encryption Key</div>
-            <div class="arch-items" style="font-size: 12px;">m/44'/0'/0'/1'/0' &bull; X25519<br>ECDH key exchange &bull; AES-256-GCM &bull; End-to-end encrypted data</div>
           </div>
         </div>
       </div>
