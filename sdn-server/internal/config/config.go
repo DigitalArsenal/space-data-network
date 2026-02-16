@@ -37,17 +37,12 @@ type ChainRPCConfig struct {
 
 // UserEntry maps an HD wallet xpub to a trust level for authentication.
 type UserEntry struct {
-	// XPub is the SDN extended public key at the signing key path
-	// m/44'/0'/0'/0'/0'. It uses Base58Check encoding with SDN-specific
-	// version bytes and directly embeds the Ed25519 signing public key.
-	//
-	// The server automatically extracts the Ed25519 signing public key from
-	// the xpub, so signing_pubkey_hex is no longer required.
+	// XPub is a standard BIP-32 extended public key (Base58Check, starts with "xpub").
+	// Generate with: spacedatanetwork derive-xpub
 	XPub string `yaml:"xpub"`
 
-	// SigningPubKeyHex is an optional Ed25519 public key (32 bytes hex) override.
-	// When omitted, the signing key is extracted from the xpub automatically.
-	// This field is retained for backward compatibility.
+	// SigningPubKeyHex is an optional Ed25519 public key (32 bytes hex).
+	// When omitted, the signing key is bound on first wallet login (TOFU).
 	SigningPubKeyHex string `yaml:"signing_pubkey_hex,omitempty"`
 
 	// TrustLevel: "untrusted", "limited", "standard", "trusted", "admin".

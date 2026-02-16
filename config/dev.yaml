@@ -39,10 +39,11 @@ admin:
   session_expiry: 24h
   totp_required: false
   tls_enabled: false
+  wallet_ui_path: ../hd-wallet-wasm/wallet-ui/dist
 
 # Test wallet: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 users:
-  - xpub: "277N9b7DtdYGfPZQsibhPVpT2g7RWBGJWWdbmqFx2LMSX5gvNSSRTeLN4LFuN3wLk1fX8ok4b7XnYZdiRFJCr3WmvCjPkyERjgw8QipJrEwzYUXf"
+  - xpub: "xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj"
     trust_level: "admin"
     name: "Dev Admin"
 

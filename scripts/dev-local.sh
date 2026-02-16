@@ -91,6 +91,14 @@ if [ -z "$WALLET_UI_PATH" ]; then
   echo -e "${YELLOW}WARNING: Wallet UI not found. Login will use CDN fallback.${NC}"
 fi
 
+# Demo payload + key broker secrets
+DEMO_PAYLOAD="$ROOT/demo/demo-payload.json"
+DEMO_ENV="$ROOT/demo/.demo-env"
+if [ -f "$DEMO_ENV" ]; then
+  # shellcheck disable=SC1090
+  set -a; source "$DEMO_ENV"; set +a
+fi
+
 # Ensure data directory exists
 mkdir -p "$ROOT/data/dev"
 
@@ -103,6 +111,10 @@ echo ""
 echo -e "  Admin:     ${GREEN}http://localhost:5001/admin${NC}"
 echo -e "  Login:     ${GREEN}http://localhost:5001/login${NC}"
 echo -e "  Data API:  ${GREEN}http://localhost:5001/api/v1/data/health${NC}"
+if [ -f "$DEMO_PAYLOAD" ]; then
+  echo -e "  Demo:      ${GREEN}http://localhost:5001/demo${NC}"
+  echo -e "  Demo API:  ${GREEN}http://localhost:5001/api/v1/demo/payload${NC}"
+fi
 echo ""
 echo -e "  ${YELLOW}Test mnemonic:${NC}"
 echo "  abandon abandon abandon abandon abandon abandon"
@@ -125,5 +137,8 @@ echo ""
 export HD_WALLET_WASM_PATH="${HD_WALLET_WASM:-}"
 export SDN_WALLET_UI_PATH="${WALLET_UI_PATH:-}"
 export SDN_WEBUI_PATH="$WEBUI_BUILD"
+if [ -f "$DEMO_PAYLOAD" ]; then
+  export SDN_DEMO_PAYLOAD_PATH="$DEMO_PAYLOAD"
+fi
 
 exec "$ROOT/sdn-server/spacedatanetwork" daemon --config "$ROOT/config/dev.yaml" --debug
