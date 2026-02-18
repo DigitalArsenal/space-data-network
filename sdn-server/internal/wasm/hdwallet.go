@@ -514,6 +514,171 @@ func (hw *HDWalletModule) DeriveXPub(ctx context.Context, seed []byte, account u
 	return xpubStr, nil
 }
 
+// DeriveSecp256k1Key derives a secp256k1 key at the given BIP-32 path.
+// Returns the raw 32-byte private key and 32-byte chain code.
+// Path format: "m/44'/0'/0'" (standard BIP-44 account level for Bitcoin).
+func (hw *HDWalletModule) DeriveSecp256k1Key(ctx context.Context, seed []byte, path string) (*DerivedKey, error) {
+	hw.mu.Lock()
+	defer hw.mu.Unlock()
+
+	if hw.keyFromSeed == nil || hw.keyDerivePath == nil || hw.keyGetPrivate == nil || hw.keyGetChainCode == nil {
+		return nil, ErrHDWalletNoModule
+	}
+
+	if len(seed) != 64 {
+		return nil, ErrHDWalletInvalidSeed
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
+
+	// Allocate seed in WASM memory
+	seedPtr, err := hw.allocate(ctx, seed)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, seedPtr, uint32(len(seed)))
+
+	// Create master key from seed using secp256k1 (curve = 0)
+	results, err := hw.keyFromSeed.Call(ctx, uint64(seedPtr), uint64(len(seed)), 0)
+	if err != nil {
+		return nil, fmt.Errorf("hd_key_from_seed failed: %w", err)
+	}
+	masterHandle := uint32(results[0])
+	if masterHandle == 0 {
+		return nil, fmt.Errorf("hd_key_from_seed returned null handle")
+	}
+	defer hw.keyDestroy.Call(ctx, uint64(masterHandle))
+
+	// Derive child key at path
+	pathPtr, err := hw.allocateString(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, pathPtr, uint32(len(path)+1))
+
+	results, err = hw.keyDerivePath.Call(ctx, uint64(masterHandle), uint64(pathPtr))
+	if err != nil {
+		return nil, fmt.Errorf("hd_key_derive_path failed: %w", err)
+	}
+	derivedHandle := uint32(results[0])
+	if derivedHandle == 0 {
+		return nil, fmt.Errorf("hd_key_derive_path returned null handle")
+	}
+	defer hw.keyDestroy.Call(ctx, uint64(derivedHandle))
+
+	// Extract 32-byte private key
+	privSize := uint32(32)
+	privPtr, err := hw.allocateSize(ctx, privSize)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, privPtr, privSize)
+
+	results, err = hw.keyGetPrivate.Call(ctx, uint64(derivedHandle), uint64(privPtr), uint64(privSize))
+	if err != nil {
+		return nil, fmt.Errorf("hd_key_get_private failed: %w", err)
+	}
+	if int32(results[0]) != 0 {
+		return nil, fmt.Errorf("hd_key_get_private error: %d", int32(results[0]))
+	}
+
+	privKey, err := hw.readMemory(ctx, privPtr, privSize)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract 32-byte chain code
+	chainSize := uint32(32)
+	chainPtr, err := hw.allocateSize(ctx, chainSize)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, chainPtr, chainSize)
+
+	results, err = hw.keyGetChainCode.Call(ctx, uint64(derivedHandle), uint64(chainPtr), uint64(chainSize))
+	if err != nil {
+		return nil, fmt.Errorf("hd_key_get_chain_code failed: %w", err)
+	}
+	if int32(results[0]) != 0 {
+		return nil, fmt.Errorf("hd_key_get_chain_code error: %d", int32(results[0]))
+	}
+
+	chainCode, err := hw.readMemory(ctx, chainPtr, chainSize)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DerivedKey{PrivateKey: privKey, ChainCode: chainCode}, nil
+}
+
+// Secp256k1PublicKey derives the compressed secp256k1 public key (33 bytes) at a BIP-32 path.
+func (hw *HDWalletModule) Secp256k1PublicKey(ctx context.Context, seed []byte, path string) ([]byte, error) {
+	hw.mu.Lock()
+	defer hw.mu.Unlock()
+
+	if hw.keyFromSeed == nil || hw.keyDerivePath == nil || hw.keyGetPublic == nil {
+		return nil, ErrHDWalletNoModule
+	}
+
+	if len(seed) != 64 {
+		return nil, ErrHDWalletInvalidSeed
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
+	defer cancel()
+
+	seedPtr, err := hw.allocate(ctx, seed)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, seedPtr, uint32(len(seed)))
+
+	results, err := hw.keyFromSeed.Call(ctx, uint64(seedPtr), uint64(len(seed)), 0)
+	if err != nil {
+		return nil, fmt.Errorf("hd_key_from_seed failed: %w", err)
+	}
+	masterHandle := uint32(results[0])
+	if masterHandle == 0 {
+		return nil, fmt.Errorf("hd_key_from_seed returned null handle")
+	}
+	defer hw.keyDestroy.Call(ctx, uint64(masterHandle))
+
+	pathPtr, err := hw.allocateString(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, pathPtr, uint32(len(path)+1))
+
+	results, err = hw.keyDerivePath.Call(ctx, uint64(masterHandle), uint64(pathPtr))
+	if err != nil {
+		return nil, fmt.Errorf("hd_key_derive_path failed: %w", err)
+	}
+	derivedHandle := uint32(results[0])
+	if derivedHandle == 0 {
+		return nil, fmt.Errorf("hd_key_derive_path returned null handle")
+	}
+	defer hw.keyDestroy.Call(ctx, uint64(derivedHandle))
+
+	// Extract 33-byte compressed public key
+	pubSize := uint32(33)
+	pubPtr, err := hw.allocateSize(ctx, pubSize)
+	if err != nil {
+		return nil, err
+	}
+	defer hw.deallocate(ctx, pubPtr, pubSize)
+
+	results, err = hw.keyGetPublic.Call(ctx, uint64(derivedHandle), uint64(pubPtr), uint64(pubSize))
+	if err != nil {
+		return nil, fmt.Errorf("hd_key_get_public failed: %w", err)
+	}
+	if int32(results[0]) != 0 {
+		return nil, fmt.Errorf("hd_key_get_public error: %d", int32(results[0]))
+	}
+
+	return hw.readMemory(ctx, pubPtr, pubSize)
+}
+
 // Ed25519PublicKeyFromSeed derives Ed25519 public key from a 32-byte seed via WASM.
 // Calls hd_ed25519_pubkey_from_seed(seed, public_key_out, public_key_size) → i32
 func (hw *HDWalletModule) Ed25519PublicKeyFromSeed(ctx context.Context, seed []byte) ([]byte, error) {

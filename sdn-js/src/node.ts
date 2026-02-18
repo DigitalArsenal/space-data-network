@@ -15,10 +15,13 @@ import { yamux } from '@chainsafe/libp2p-yamux';
 import { kadDHT } from '@libp2p/kad-dht';
 import { multiaddr } from '@multiformats/multiaddr';
 
+import { keys } from '@libp2p/crypto';
+
 import { SDNStorage, StoredRecord } from './storage';
 import { getBootstrapRelays } from './edge-discovery';
 import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
 import { sign, initHDWallet } from './crypto/index';
+import type { DerivedIdentity } from './crypto/types';
 import {
   requestLicenseGrantViaRelay,
   LICENSE_PROTOCOL_ID,
@@ -50,6 +53,8 @@ export interface SDNConfig {
   storeName?: string;
   /** Private key for signing messages (32 bytes Ed25519 seed) */
   privateKey?: Uint8Array;
+  /** Full HD wallet-derived identity (secp256k1 for PeerID + Ed25519 for auth) */
+  identity?: DerivedIdentity;
   /** Skip signature verification on received messages (not recommended) */
   skipSignatureVerification?: boolean;
 }
@@ -96,8 +101,8 @@ export class SDNNode {
     const relays = this.config.edgeRelays ?? await getBootstrapRelays();
     const bootstrapList = resolveBootstrapList(relays, this.config);
 
-    // Initialize libp2p
-    this.libp2p = await createLibp2p({
+    // Build libp2p options
+    const libp2pOpts: Parameters<typeof createLibp2p>[0] = {
       transports: [
         webSockets({ filter: wsFilters }),
         webTransport(),
@@ -120,7 +125,20 @@ export class SDNNode {
           clientMode: true,
         }),
       },
-    });
+    };
+
+    // If an HD wallet identity is provided, use its secp256k1 key for deterministic PeerID
+    if (this.config.identity?.identityKey) {
+      const rawKey = this.config.identity.identityKey.privateKey;
+      libp2pOpts.privateKey = await keys.unmarshalPrivateKey(marshalSecp256k1PrivateKey(rawKey));
+      // Also set the Ed25519 signing key for message auth
+      if (!this.privateKey) {
+        this.privateKey = this.config.identity.signingKey.privateKey;
+      }
+    }
+
+    // Initialize libp2p
+    this.libp2p = await createLibp2p(libp2pOpts);
 
     // Initialize storage if enabled
     if (this.config.enableStorage !== false) {
@@ -439,6 +457,20 @@ function chunkToBytes(chunk: StreamChunk): Uint8Array {
     return chunk;
   }
   return chunk.subarray();
+}
+
+/**
+ * Marshal a 32-byte secp256k1 private key into the libp2p protobuf format.
+ * KeyType=2 (Secp256k1), Data=32-byte raw key.
+ */
+function marshalSecp256k1PrivateKey(rawKey: Uint8Array): Uint8Array {
+  const buf = new Uint8Array(36);
+  buf[0] = 0x08; // field 1 tag
+  buf[1] = 0x02; // KeyType.Secp256k1
+  buf[2] = 0x12; // field 2 tag
+  buf[3] = 0x20; // length = 32
+  buf.set(rawKey, 4);
+  return buf;
 }
 
 function concatBytes(chunks: Uint8Array[]): Uint8Array {

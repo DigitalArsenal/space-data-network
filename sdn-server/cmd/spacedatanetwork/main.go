@@ -29,6 +29,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/frontend"
+	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/node"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -78,11 +79,23 @@ The Ed25519 signing key is bound on first wallet login (TOFU).`,
 	RunE: runDeriveXPub,
 }
 
+var showIdentityCmd = &cobra.Command{
+	Use:   "show-identity",
+	Short: "Show the node's identity (PeerID, xpub, mnemonic)",
+	Long: `Decrypts the stored mnemonic and derives the node's full identity:
+PeerID, xpub, signing public key, and optionally the mnemonic phrase itself.
+
+The mnemonic is only shown when --show-mnemonic is passed.
+Password is resolved from SDN_KEY_PASSWORD env, config, or machine default.`,
+	RunE: runShowIdentity,
+}
+
 var (
-	configPath string
-	listenAddr string
-	debug      bool
-	wasmPath   string
+	configPath   string
+	listenAddr   string
+	debug        bool
+	wasmPath     string
+	showMnemonic bool
 )
 
 func init() {
@@ -91,11 +104,14 @@ func init() {
 
 	daemonCmd.Flags().StringVarP(&listenAddr, "listen", "l", "", "override listen address")
 	deriveXPubCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet.wasm (default: $HD_WALLET_WASM_PATH or ../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm)")
+	showIdentityCmd.Flags().BoolVar(&showMnemonic, "show-mnemonic", false, "display the decrypted mnemonic phrase (SENSITIVE)")
+	showIdentityCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet.wasm")
 
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(reindexCmd)
 	rootCmd.AddCommand(deriveXPubCmd)
+	rootCmd.AddCommand(showIdentityCmd)
 }
 
 func main() {
@@ -1346,6 +1362,100 @@ func runDeriveXPub(cmd *cobra.Command, args []string) error {
 
 	// Print just the xpub to stdout (for scripting)
 	fmt.Println(xpubStr)
+
+	return nil
+}
+
+func runShowIdentity(cmd *cobra.Command, args []string) error {
+	// Load config for storage path and key password
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Resolve key password: env > config > machine default
+	keyPassword := os.Getenv("SDN_KEY_PASSWORD")
+	if keyPassword == "" {
+		keyPassword = cfg.Security.KeyPassword
+	}
+	if keyPassword == "" {
+		keyPassword = keys.DeriveDefaultPassword()
+	}
+
+	// Locate mnemonic file
+	keyDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "keys")
+	mnemonicPath := filepath.Join(keyDir, "mnemonic")
+
+	data, err := os.ReadFile(mnemonicPath)
+	if err != nil {
+		return fmt.Errorf("failed to read mnemonic file %s: %w", mnemonicPath, err)
+	}
+
+	// Decrypt if encrypted, otherwise use as-is
+	var mnemonic string
+	if keys.IsMnemonicEncrypted(data) {
+		mnemonic, err = keys.DecryptMnemonic(data, keyPassword)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt mnemonic (wrong password?): %w", err)
+		}
+	} else {
+		mnemonic = string(data)
+	}
+
+	// Resolve WASM path
+	wp := strings.TrimSpace(wasmPath)
+	if wp == "" {
+		wp = os.Getenv("HD_WALLET_WASM_PATH")
+	}
+	if wp == "" {
+		wp = "../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm"
+	}
+	if _, err := os.Stat(wp); err != nil {
+		return fmt.Errorf("hd-wallet.wasm not found at %q (set --wasm or HD_WALLET_WASM_PATH)", wp)
+	}
+
+	ctx := context.Background()
+	hw, err := wasm.NewHDWalletModule(ctx, wp)
+	if err != nil {
+		return fmt.Errorf("failed to load HD wallet WASM: %w", err)
+	}
+	defer hw.Close(ctx)
+
+	// Derive seed from mnemonic
+	seed, err := hw.MnemonicToSeed(ctx, mnemonic, "")
+	if err != nil {
+		return fmt.Errorf("failed to derive seed: %w", err)
+	}
+
+	// Derive identity (account 0)
+	identity, err := hw.DeriveIdentity(ctx, seed, 0)
+	if err != nil {
+		return fmt.Errorf("failed to derive identity: %w", err)
+	}
+
+	// Derive xpub
+	xpubStr, err := hw.DeriveXPub(ctx, seed, 0)
+	if err != nil {
+		return fmt.Errorf("failed to derive xpub: %w", err)
+	}
+
+	info := identity.Info()
+
+	fmt.Fprintf(os.Stderr, "\n--- SDN Node Identity ---\n")
+	fmt.Fprintf(os.Stderr, "PeerID:         %s\n", info.PeerID)
+	fmt.Fprintf(os.Stderr, "XPub:           %s\n", xpubStr)
+	fmt.Fprintf(os.Stderr, "Signing Key:    %s  (path: %s)\n", info.SigningPubKeyHex, info.SigningKeyPath)
+	fmt.Fprintf(os.Stderr, "Encryption Key: %s  (path: %s)\n", info.EncryptionPubHex, info.EncryptionKeyPath)
+	fmt.Fprintf(os.Stderr, "Identity Path:  %s\n", info.IdentityKeyPath)
+	fmt.Fprintf(os.Stderr, "Mnemonic File:  %s\n", mnemonicPath)
+
+	if showMnemonic {
+		fmt.Fprintf(os.Stderr, "\n*** MNEMONIC (SENSITIVE — DO NOT SHARE) ***\n")
+		fmt.Fprintf(os.Stderr, "%s\n", mnemonic)
+	}
+
+	// Print PeerID to stdout (for scripting)
+	fmt.Println(info.PeerID)
 
 	return nil
 }

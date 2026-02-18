@@ -17,9 +17,11 @@ import {
   MnemonicOptions,
   DerivedKey,
   KeyPair,
+  IdentityKeyPair,
   DerivedIdentity,
   LanguageCode,
   SDNDerivation,
+  buildIdentityPath,
   buildSigningPath,
   buildEncryptionPath,
 } from './types';
@@ -209,6 +211,62 @@ export async function x25519PublicKey(privateKey: Uint8Array): Promise<Uint8Arra
 }
 
 // =============================================================================
+// Secp256k1 Key Derivation
+// =============================================================================
+
+/**
+ * Derive a secp256k1 key pair at the given BIP-32 path
+ */
+export async function deriveSecp256k1Key(
+  seed: Uint8Array,
+  path: string
+): Promise<IdentityKeyPair> {
+  const module = getModule();
+
+  if (seed.length !== 64) {
+    throw new Error('Seed must be 64 bytes');
+  }
+
+  const masterKey = module.hdkey.fromSeed(seed, Curve.SECP256K1);
+  const derived = masterKey.derivePath(path);
+
+  try {
+    return {
+      privateKey: derived.privateKey(),
+      publicKey: derived.publicKey(), // 33-byte compressed
+    };
+  } finally {
+    derived.wipe();
+    masterKey.wipe();
+  }
+}
+
+/**
+ * Derive a PeerID string from a secp256k1 compressed public key
+ */
+export function derivePeerIdFromPublicKey(publicKey: Uint8Array): string {
+  const module = getModule();
+  const peerIdBytes = module.libp2p.peerIdFromPublicKey(publicKey, Curve.SECP256K1);
+  return module.libp2p.peerIdToString(peerIdBytes);
+}
+
+/**
+ * Derive a PeerID string from an xpub
+ */
+export function derivePeerIdFromXpub(xpub: string): string {
+  const module = getModule();
+  return module.libp2p.peerIdFromXpub(xpub);
+}
+
+/**
+ * Derive an IPNS hash from an xpub
+ */
+export function deriveIpnsHashFromXpub(xpub: string): string {
+  const module = getModule();
+  return module.libp2p.ipnsHashFromXpub(xpub);
+}
+
+// =============================================================================
 // SDN Identity Functions
 // =============================================================================
 
@@ -219,20 +277,33 @@ export async function deriveIdentity(
   seed: Uint8Array,
   account: number = 0
 ): Promise<DerivedIdentity> {
+  const identityPath = buildIdentityPath(account);
   const signingPath = buildSigningPath(account);
   const encryptionPath = buildEncryptionPath(account);
 
+  // Secp256k1 identity key (for PeerID)
+  const identityKey = await deriveSecp256k1Key(seed, identityPath);
+  const peerId = derivePeerIdFromPublicKey(identityKey.publicKey);
+  const xpub = await deriveXPub(seed, account);
+
+  // Ed25519 signing key (for auth)
   const signingKey = await deriveEd25519KeyPair(seed, signingPath);
+
+  // X25519 encryption key
   const encryptionDerived = await deriveEd25519Key(seed, encryptionPath);
   const encryptionPubKey = await x25519PublicKey(encryptionDerived.privateKey);
 
   return {
     account,
+    identityKey,
+    peerId,
+    xpub,
     signingKey,
     encryptionKey: {
       privateKey: encryptionDerived.privateKey,
       publicKey: encryptionPubKey,
     },
+    identityKeyPath: identityPath,
     signingKeyPath: signingPath,
     encryptionKeyPath: encryptionPath,
   };

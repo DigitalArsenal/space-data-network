@@ -1,7 +1,5 @@
-import { keys } from '@libp2p/crypto';
-import { createFromPrivKey } from '@libp2p/peer-id-factory';
-
-import { ed25519PublicKey, sign } from './crypto/hd-wallet';
+import { ed25519PublicKey, sign, deriveSecp256k1Key, derivePeerIdFromPublicKey, derivePeerIdFromXpub } from './crypto/hd-wallet';
+import { buildIdentityPath } from './crypto/types';
 
 export const LICENSE_PROTOCOL_ID = '/orbpro/license/1.0.0';
 
@@ -101,11 +99,25 @@ export class LicenseProtocolError extends Error {
   }
 }
 
+/**
+ * Derive PeerID from a 64-byte BIP-39 seed using secp256k1 at m/44'/0'/0'.
+ */
+export async function derivePeerIdFromSeed(seed: Uint8Array, account: number = 0): Promise<string> {
+  const identityKey = await deriveSecp256k1Key(seed, buildIdentityPath(account));
+  return derivePeerIdFromPublicKey(identityKey.publicKey);
+}
+
+/**
+ * @deprecated Use derivePeerIdFromSeed() instead. This function is kept for backward compatibility.
+ */
 export async function derivePeerIdFromEd25519Seed(privateKey: Uint8Array): Promise<string> {
-  const seed = normalizeSeed(privateKey);
-  const libp2pPriv = await keys.generateKeyPairFromSeed('Ed25519', seed);
-  const peerId = await createFromPrivKey(libp2pPriv);
-  return peerId.toString();
+  // Legacy: this used to derive from Ed25519 seed. Now we need a full 64-byte seed
+  // for secp256k1 derivation. If given a 32-byte seed, we can't do BIP-32 derivation.
+  // Fall back to requiring the caller to pass the full seed.
+  if (privateKey.length === 64) {
+    return derivePeerIdFromSeed(privateKey);
+  }
+  throw new Error('derivePeerIdFromEd25519Seed is deprecated. Use derivePeerIdFromSeed() with a 64-byte BIP-39 seed.');
 }
 
 export async function requestLicenseGrantViaRelay(
@@ -122,7 +134,7 @@ export async function requestLicenseGrantViaRelay(
   const seed = normalizeSeed(options.signingPrivateKey);
   const publicKey = await ed25519PublicKey(seed);
   const clientPublicKeyHex = toHex(publicKey);
-  const peerId = options.peerId?.trim() || await derivePeerIdFromEd25519Seed(seed);
+  const peerId = options.peerId?.trim() || derivePeerIdFromXpub(xpub);
 
   const challengeReq: LicenseChallengeRequest = {
     type: 'challenge_request',

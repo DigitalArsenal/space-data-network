@@ -33,6 +33,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
@@ -303,12 +304,20 @@ func (n *Node) init() error {
 	basePath := filepath.Dir(n.config.Storage.Path)
 	var xpubStr string
 	if n.hdwallet != nil && n.identity != nil {
-		// Derive xpub from mnemonic seed for the EPM
+		// Derive xpub from encrypted mnemonic seed for the EPM
 		mnemonicPath := filepath.Join(basePath, "keys", "mnemonic")
 		if mnemonicData, err := os.ReadFile(mnemonicPath); err == nil {
-			if seed, err := n.hdwallet.MnemonicToSeed(n.ctx, string(mnemonicData), ""); err == nil {
-				if xpub, err := n.hdwallet.DeriveXPub(n.ctx, seed, 0); err == nil {
-					xpubStr = xpub
+			var mnemonic string
+			if keys.IsMnemonicEncrypted(mnemonicData) {
+				mnemonic, _ = keys.DecryptMnemonic(mnemonicData, n.resolveKeyPassword())
+			} else {
+				mnemonic = string(mnemonicData)
+			}
+			if mnemonic != "" {
+				if seed, err := n.hdwallet.MnemonicToSeed(n.ctx, mnemonic, ""); err == nil {
+					if xpub, err := n.hdwallet.DeriveXPub(n.ctx, seed, 0); err == nil {
+						xpubStr = xpub
+					}
 				}
 			}
 		}
@@ -370,12 +379,33 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 			return nil, fmt.Errorf("failed to create key directory: %w", err)
 		}
 
+		// Resolve key password: env var > config > machine-derived default
+		keyPassword := n.resolveKeyPassword()
+
 		var mnemonic string
 
-		// Try to load existing mnemonic
+		// Try to load existing mnemonic (encrypted or plaintext)
 		if data, err := os.ReadFile(mnemonicPath); err == nil {
-			mnemonic = string(data)
-			log.Infof("Loaded existing mnemonic from %s", mnemonicPath)
+			if keys.IsMnemonicEncrypted(data) {
+				// Decrypt encrypted mnemonic
+				mnemonic, err = keys.DecryptMnemonic(data, keyPassword)
+				if err != nil {
+					return nil, fmt.Errorf("failed to decrypt mnemonic from %s: %w", mnemonicPath, err)
+				}
+				log.Infof("Loaded encrypted mnemonic from %s", mnemonicPath)
+			} else {
+				// Plaintext mnemonic found — migrate to encrypted format
+				mnemonic = string(data)
+				log.Warnf("Found plaintext mnemonic at %s — migrating to encrypted storage", mnemonicPath)
+				encrypted, err := keys.EncryptMnemonic(mnemonic, keyPassword)
+				if err != nil {
+					return nil, fmt.Errorf("failed to encrypt mnemonic during migration: %w", err)
+				}
+				if err := os.WriteFile(mnemonicPath, encrypted, 0600); err != nil {
+					return nil, fmt.Errorf("failed to write encrypted mnemonic: %w", err)
+				}
+				log.Infof("Mnemonic migrated to encrypted storage at %s", mnemonicPath)
+			}
 		} else {
 			// Generate new mnemonic
 			newMnemonic, _, err := n.hdwallet.GenerateNewIdentity(n.ctx, 24)
@@ -385,11 +415,15 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 			}
 			mnemonic = newMnemonic
 
-			// Save mnemonic to disk
-			if err := os.WriteFile(mnemonicPath, []byte(mnemonic), 0600); err != nil {
-				return nil, fmt.Errorf("failed to save mnemonic: %w", err)
+			// Save encrypted mnemonic to disk
+			encrypted, err := keys.EncryptMnemonic(mnemonic, keyPassword)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encrypt mnemonic: %w", err)
 			}
-			log.Infof("Generated and saved new mnemonic to %s", mnemonicPath)
+			if err := os.WriteFile(mnemonicPath, encrypted, 0600); err != nil {
+				return nil, fmt.Errorf("failed to save encrypted mnemonic: %w", err)
+			}
+			log.Infof("Generated and saved encrypted mnemonic to %s", mnemonicPath)
 		}
 
 		// Derive identity from mnemonic
@@ -401,8 +435,8 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 
 		n.identity = identity
 		info := identity.Info()
-		log.Infof("HD wallet identity derived: PeerID=%s SigningPath=%s EncryptionPath=%s",
-			info.PeerID, info.SigningKeyPath, info.EncryptionKeyPath)
+		log.Infof("HD wallet identity derived: PeerID=%s IdentityPath=%s SigningPath=%s EncryptionPath=%s",
+			info.PeerID, info.IdentityKeyPath, info.SigningKeyPath, info.EncryptionKeyPath)
 
 		// Also save the serialized key for backward compatibility
 		keyData, err := identity.MarshalPrivateKey()
@@ -410,7 +444,8 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 			_ = os.WriteFile(keyPath, keyData, 0600)
 		}
 
-		return identity.SigningPrivKey, nil
+		// Return secp256k1 identity key for libp2p PeerID
+		return identity.IdentityPrivKey, nil
 	}
 
 	// Fallback: load existing key or generate random one
@@ -426,8 +461,20 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 	return n.generateRandomKey(keyDir, keyPath)
 }
 
+// resolveKeyPassword returns the password for mnemonic encryption/decryption.
+// Priority: SDN_KEY_PASSWORD env var > config security.key_password > machine-derived default.
+func (n *Node) resolveKeyPassword() string {
+	if envPw := os.Getenv("SDN_KEY_PASSWORD"); envPw != "" {
+		return envPw
+	}
+	if n.config.Security.KeyPassword != "" {
+		return n.config.Security.KeyPassword
+	}
+	return keys.DeriveDefaultPassword()
+}
+
 func (n *Node) generateRandomKey(keyDir, keyPath string) (crypto.PrivKey, error) {
-	privKey, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	privKey, _, err := crypto.GenerateSecp256k1Key(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate key: %w", err)
 	}
