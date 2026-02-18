@@ -33,15 +33,33 @@ export interface EncryptionKeyPair {
 }
 
 /**
+ * Secp256k1 identity key pair (for libp2p PeerID)
+ */
+export interface IdentityKeyPair {
+  /** 32-byte secp256k1 private key */
+  privateKey: Uint8Array;
+  /** 33-byte compressed secp256k1 public key */
+  publicKey: Uint8Array;
+}
+
+/**
  * Derived SDN identity
  */
 export interface DerivedIdentity {
   /** BIP-44 account index */
   account: number;
-  /** Ed25519 signing key pair */
+  /** Secp256k1 identity key at m/44'/0'/account' (for libp2p PeerID) */
+  identityKey: IdentityKeyPair;
+  /** PeerID string derived from secp256k1 identity public key */
+  peerId: string;
+  /** BIP-32 xpub at m/44'/0'/account' */
+  xpub: string;
+  /** Ed25519 signing key pair (for auth) */
   signingKey: KeyPair;
   /** X25519 encryption key pair */
   encryptionKey: EncryptionKeyPair;
+  /** Derivation path for identity key */
+  identityKeyPath: string;
   /** Derivation path for signing key */
   signingKeyPath: string;
   /** Derivation path for encryption key */
@@ -95,6 +113,13 @@ export const SDNDerivation = {
   /** Default BIP-44 purpose */
   BIP44_PURPOSE: 44,
 } as const;
+
+/**
+ * Build SDN derivation path for identity key (secp256k1): m/44'/0'/account'
+ */
+export function buildIdentityPath(account: number): string {
+  return `m/${SDNDerivation.BIP44_PURPOSE}'/${SDNDerivation.COIN_TYPE}'/${account}'`;
+}
 
 /**
  * Build SDN derivation path for signing key

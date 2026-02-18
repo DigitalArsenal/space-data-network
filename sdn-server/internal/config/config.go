@@ -89,6 +89,11 @@ type SecurityConfig struct {
 	// In production, signature verification is REQUIRED for all data operations.
 	// When enabled, a warning will be logged at startup.
 	InsecureMode bool `yaml:"insecure_mode"`
+
+	// KeyPassword is the password used to encrypt/decrypt the mnemonic at rest.
+	// If empty, a machine-derived password is used (hostname + arch + OS via Argon2).
+	// Can also be set via SDN_KEY_PASSWORD environment variable.
+	KeyPassword string `yaml:"key_password,omitempty"`
 }
 
 // PeersConfig contains peer trust registry settings.

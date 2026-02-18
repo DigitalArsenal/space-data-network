@@ -236,12 +236,6 @@ const PluginsPage = ({ ipfsApiAddress, isAdminUser, walletIdentity }) => {
         </div>
       )}
 
-      {isAdminUser && !walletIdentity && (
-        <div className='plugin-upload-hint'>
-          To upload plugins, sign out and sign back in with your wallet — the signing key is only available during the login session (not after a page refresh).
-        </div>
-      )}
-
       {plugins === null
         ? (
           <div className='plugins-loading'>Loading plugins...</div>

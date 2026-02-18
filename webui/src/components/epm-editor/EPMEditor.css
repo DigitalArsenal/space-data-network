@@ -17,20 +17,37 @@
 
 .epm-editor-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(6, 1fr);
   gap: 10px;
+}
+
+/* Default: half-width (3 of 6 columns) */
+.epm-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  grid-column: span 3;
+}
+
+/* Full-width fields (display name, legal name, email, street) */
+.epm-editor-field-full {
+  grid-column: span 6;
+}
+
+/* Third-width fields (prefix, suffix, postal code, country, po box) */
+.epm-editor-field-third {
+  grid-column: span 2;
 }
 
 @media (max-width: 500px) {
   .epm-editor-grid {
     grid-template-columns: 1fr;
   }
-}
-
-.epm-editor-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  .epm-editor-field,
+  .epm-editor-field-full,
+  .epm-editor-field-third {
+    grid-column: span 1;
+  }
 }
 
 .epm-editor-label {
@@ -41,7 +58,7 @@
 
 .epm-editor-input {
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: 0;
   border: 1px solid var(--sdn-border);
   background: var(--sdn-bg-tertiary);
   color: var(--sdn-text-primary);
@@ -60,40 +77,18 @@
   opacity: 0.5;
 }
 
-.epm-editor-readonly {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.epm-editor-input-error {
+  border-color: var(--sdn-accent-red, #f85149);
 }
 
-.epm-editor-ro-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--sdn-border);
-  font-size: 13px;
+.epm-editor-input-error:focus {
+  border-color: var(--sdn-accent-red, #f85149);
 }
 
-.epm-editor-ro-field:last-child {
-  border-bottom: none;
-}
-
-.epm-editor-ro-label {
-  color: var(--sdn-text-secondary);
-  min-width: 110px;
-  flex-shrink: 0;
-  font-weight: 600;
-  font-size: 12px;
-}
-
-.epm-editor-ro-value {
-  color: var(--sdn-text-primary);
-  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+.epm-editor-error {
   font-size: 11px;
-  word-break: break-all;
-  flex: 1;
-  opacity: 0.8;
+  color: var(--sdn-accent-red, #f85149);
+  line-height: 1.3;
 }
 
 .epm-editor-actions {
@@ -104,7 +99,7 @@
 
 .epm-editor-btn {
   padding: 8px 16px;
-  border-radius: 8px;
+  border-radius: 0;
   border: 1px solid var(--sdn-border);
   background: var(--sdn-bg-tertiary);
   color: var(--sdn-text-primary);
