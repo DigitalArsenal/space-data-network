@@ -611,6 +611,7 @@
           <li><a href="#full-node">Full Node</a></li>
           <li><a href="#edge-relay">Edge Relay</a></li>
           <li><a href="#docker">Docker Deployment</a></li>
+          <li><a href="#cli-commands">CLI Commands</a></li>
         </ul>
       </div>
       <div class="sidebar-section">
@@ -626,8 +627,10 @@
         <div class="sidebar-title">Identity & Cryptography</div>
         <ul class="sidebar-links">
           <li><a href="#identity-overview">Key Derivation</a></li>
-          <li><a href="#identity-signing">Signing & IPFS</a></li>
+          <li><a href="#identity-secp256k1">Secp256k1 Identity</a></li>
+          <li><a href="#identity-signing">Signing & Auth</a></li>
           <li><a href="#identity-encryption">Encryption</a></li>
+          <li><a href="#key-security">Key Security</a></li>
           <li><a href="#identity-pinning">IPFS Pinning</a></li>
         </ul>
       </div>
@@ -1074,41 +1077,57 @@ chmod +x spacedatanetwork</code></pre>
         </ul>
 
         <h3>Configuration</h3>
-        <pre><code># Initialize
+        <pre><code># Initialize default config
 ./spacedatanetwork init</code></pre>
 
         <p>This creates <code>~/.spacedatanetwork/</code> with:</p>
         <ul>
-          <li><code>config.json</code> - Node configuration</li>
-          <li><code>identity.key</code> - Ed25519 private key (keep this safe!)</li>
-          <li><code>data/</code> - SQLite database and pinned content</li>
+          <li><code>config.yaml</code> &mdash; Node configuration (YAML format)</li>
+          <li><code>keys/mnemonic</code> &mdash; BIP-39 mnemonic, <strong>encrypted at rest</strong> with XChaCha20-Poly1305 (see <a href="#key-security">Key Security</a>)</li>
+          <li><code>keys/node.key</code> &mdash; Serialized libp2p private key (backward compatibility)</li>
+          <li><code>data/</code> &mdash; SQLite database and pinned content</li>
         </ul>
 
         <h3>Configuration File</h3>
-        <pre><code>{
-  "listenAddresses": [
-    "/ip4/0.0.0.0/tcp/4001",
-    "/ip4/0.0.0.0/udp/4001/quic-v1"
-  ],
-  "announceAddresses": [
-    "/ip4/YOUR_PUBLIC_IP/tcp/4001",
-    "/ip4/YOUR_PUBLIC_IP/udp/4001/quic-v1"
-  ],
-  "bootstrapPeers": [
-    "/dnsaddr/bootstrap.digitalarsenal.io"
-  ],
-  "relay": {
-    "enabled": true,
-    "hop": true,
-    "maxCircuits": 100
-  },
-  "dht": {
-    "mode": "server"
-  },
-  "api": {
-    "address": "127.0.0.1:8080"
-  }
-}</code></pre>
+        <p>The server uses YAML configuration at <code>~/.spacedatanetwork/config.yaml</code> (override with <code>--config</code> flag).</p>
+        <pre><code>mode: full
+
+network:
+  listen:
+    - /ip4/0.0.0.0/tcp/4001
+    - /ip4/0.0.0.0/tcp/8080/ws
+    - /ip4/0.0.0.0/udp/4001/quic-v1
+  bootstrap:
+    - /dnsaddr/bootstrap.digitalarsenal.io/p2p/QmBootstrap1
+  enable_relay: true
+  max_connections: 1000
+
+storage:
+  path: /home/sdn/.spacedatanetwork/data
+  max_size: 10GB
+  gc_interval: 1h
+
+security:
+  insecure_mode: false          # Never disable in production
+  # key_password: ""            # Optional: explicit mnemonic password
+                                # Default: machine-derived via Argon2
+                                # Override: SDN_KEY_PASSWORD env var
+
+admin:
+  enabled: true
+  listen_addr: "0.0.0.0:443"
+  require_auth: true
+  session_expiry: 24h
+  tls_enabled: true
+  tls_cert_file: /etc/ssl/certs/your-cert.pem
+  tls_key_file: /etc/ssl/private/your-key.pem
+  ipfs_api_url: "http://127.0.0.1:5002"
+
+# HD wallet users (xpub-based authentication)
+users:
+  - xpub: "xpub6..."
+    trust_level: admin
+    name: Operator</code></pre>
 
         <h3>Running as a Service</h3>
         <p>Create <code>/etc/systemd/system/spacedatanetwork.service</code>:</p>
@@ -1128,6 +1147,71 @@ WantedBy=multi-user.target</code></pre>
 
         <pre><code>sudo systemctl enable spacedatanetwork
 sudo systemctl start spacedatanetwork</code></pre>
+      </section>
+
+      <!-- CLI Commands -->
+      <section id="cli-commands" class="doc-section">
+        <h2>CLI Commands</h2>
+        <p>The <code>spacedatanetwork</code> binary provides several subcommands for node management and identity inspection.</p>
+
+        <h3>daemon</h3>
+        <p>Start the SDN server node (default command).</p>
+        <pre><code>spacedatanetwork daemon --config /path/to/config.yaml</code></pre>
+        <table>
+          <thead>
+            <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>--config</code></td><td><code>~/.spacedatanetwork/config.yaml</code></td><td>Path to configuration file</td></tr>
+            <tr><td><code>--wasm</code></td><td><code>~/.spacedatanetwork/wasm/hd-wallet.wasm</code></td><td>Path to hd-wallet WASM binary</td></tr>
+          </tbody>
+        </table>
+
+        <h3>show-identity</h3>
+        <p>Display the node&rsquo;s cryptographic identity derived from its BIP-39 mnemonic. Prints PeerID to <code>stdout</code> (for scripting) and full details to <code>stderr</code>.</p>
+        <pre><code>spacedatanetwork show-identity \
+  --config /path/to/config.yaml \
+  --wasm /path/to/hd-wallet.wasm</code></pre>
+        <table>
+          <thead>
+            <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>--config</code></td><td><code>~/.spacedatanetwork/config.yaml</code></td><td>Path to configuration file</td></tr>
+            <tr><td><code>--wasm</code></td><td><code>~/.spacedatanetwork/wasm/hd-wallet.wasm</code></td><td>Path to hd-wallet WASM binary</td></tr>
+            <tr><td><code>--show-mnemonic</code></td><td><code>false</code></td><td>Also display the decrypted mnemonic (use with caution)</td></tr>
+          </tbody>
+        </table>
+        <p>Example output:</p>
+        <pre><code>$ spacedatanetwork show-identity --wasm /opt/sdn/wasm/hd-wallet.wasm
+
+=== SDN Node Identity ===
+XPub:            xpub6DKCyLbCHZLFR...FZ3Wa
+PeerID:          16Uiu2HAm1LbvwjEH...Fm45
+Signing Key:     0d80e1fd5f...42fc8c (Ed25519)
+Encryption Key:  08ea56d043...191741 (X25519)
+
+Derivation Paths:
+  Identity:   m/44'/0'/0'        (secp256k1 &rarr; PeerID + XPub)
+  Signing:    m/44'/0'/0'/0'/0'  (Ed25519, SLIP-10)
+  Encryption: m/44'/0'/0'/1'/0'  (X25519, SLIP-10)
+
+# Get just the PeerID for scripting:
+PEER_ID=$(spacedatanetwork show-identity --wasm /opt/sdn/wasm/hd-wallet.wasm 2>/dev/null)</code></pre>
+
+        <h3>derive-xpub</h3>
+        <p>Derive an xpub from a BIP-39 mnemonic for use in the <code>users</code> config section. The xpub is the node&rsquo;s public identity &mdash; safe to share and used for authentication.</p>
+        <pre><code>spacedatanetwork derive-xpub --wasm /path/to/hd-wallet.wasm</code></pre>
+        <p>You will be prompted to enter a mnemonic. The derived xpub is printed to <code>stdout</code>.</p>
+
+        <div class="callout callout-info">
+          <div class="callout-title">Scripting Tip</div>
+          <p>Both <code>show-identity</code> and <code>derive-xpub</code> print their primary output (PeerID or xpub) to <code>stdout</code> and diagnostics to <code>stderr</code>, making them easy to use in scripts with standard redirects.</p>
+        </div>
+
+        <h3>init</h3>
+        <p>Initialize a new SDN data directory with default configuration and a fresh BIP-39 mnemonic (encrypted at rest).</p>
+        <pre><code>spacedatanetwork init --config /path/to/config.yaml</code></pre>
       </section>
 
       <!-- Edge Relay -->
@@ -1366,14 +1450,21 @@ const lla = ecefToLla(ecef);
     ▼ PBKDF2
   512-bit Seed
     │
-    ▼ SLIP-10 Master Key
-  Extended Key (xpub / xprv)  ← Master Network Identity
+    ├── BIP-32 secp256k1 Master Key
+    │     │
+    │     └── m/44'/0'/0'  →  Identity Key (secp256k1)
+    │           ├── xpub   →  Master Network Identity
+    │           └── PeerID →  libp2p address (16Uiu2...)
     │
-    ├── m/44'/0'/0'/0'/0'  →  Ed25519 Signing Key (also libp2p PeerID)
-    │
-    └── m/44'/0'/0'/1'/0'  →  X25519 Encryption Key</code></pre>
+    └── SLIP-10 Ed25519 Master Key
+          │
+          ├── m/44'/0'/0'/0'/0'  →  Ed25519 Signing Key (auth, data signatures)
+          │
+          └── m/44'/0'/0'/1'/0'  →  X25519 Encryption Key (ECDH, ECIES)</code></pre>
 
-        <p>The <strong>xpub</strong> (extended public key) serves as the node's master network identity. Anyone with the xpub can derive the node's public signing and encryption keys without access to private key material.</p>
+        <p>The <strong>xpub</strong> (extended public key) at <code>m/44'/0'/account'</code> serves as the node's master network identity. It encodes a secp256k1 public key from which the <a href="https://docs.libp2p.io/concepts/fundamentals/peers/" target="_blank">libp2p PeerID</a> is deterministically derived. Anyone with the xpub can compute the PeerID without access to private key material.</p>
+
+        <p>The Ed25519 signing key is bound to the xpub identity on first login via <strong>TOFU</strong> (Trust On First Use) and is used for authentication and data signatures. The X25519 encryption key provides end-to-end encryption between peers.</p>
 
         <h3>Why BIP-44?</h3>
         <p>SDN reuses the standard <a href="https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki" target="_blank">BIP-44</a> HD wallet path structure with Bitcoin's coin type <code>0</code>:</p>
@@ -1401,29 +1492,90 @@ console.log(identity.signingKeyPath);          // m/44'/0'/0'/0'/0'
 console.log(identity.encryptionKeyPath);       // m/44'/0'/0'/1'/0'</code></pre>
 
         <h3>Go Server</h3>
-        <pre><code>// The server automatically derives identity from mnemonic on startup.
-// Set HD_WALLET_WASM_PATH to the WASI build of hd-wallet-wasm.
+        <pre><code>// The server automatically derives identity from its encrypted mnemonic on startup.
+// The mnemonic is encrypted at rest with XChaCha20-Poly1305 (see Key Security).
 //
-// Keys are stored in:
-//   keys/mnemonic   - BIP-39 mnemonic (keep secret!)
-//   keys/node.key   - Serialized libp2p private key (backward compat)
+// Files in ~/.spacedatanetwork/keys/:
+//   mnemonic     - BIP-39 mnemonic (encrypted at rest)
+//   node.key     - Serialized libp2p private key (backward compat)
+//
+// Inspect the node identity without starting the daemon:
+//   spacedatanetwork show-identity --wasm /path/to/hd-wallet.wasm
 
 hw, _ := wasm.NewHDWalletModule(ctx, "/path/to/hd-wallet.wasm")
-identity, _ := hw.IdentityFromMnemonic(ctx, mnemonic, "", 0)
+seed, _ := hw.MnemonicToSeed(ctx, mnemonic, "")
+identity, _ := hw.DeriveIdentity(ctx, seed, 0)
+xpub, _ := hw.DeriveXPub(ctx, seed, 0)
 
-fmt.Println(identity.PeerID)            // libp2p PeerID
+fmt.Println(xpub)                       // BIP-32 xpub (secp256k1)
+fmt.Println(identity.PeerID)            // libp2p PeerID (from secp256k1)
 fmt.Println(identity.SigningKeyPath)    // m/44'/0'/0'/0'/0'
 fmt.Println(identity.EncryptionKeyPath) // m/44'/0'/0'/1'/0'</code></pre>
       </section>
 
-      <section id="identity-signing" class="doc-section">
-        <h3>Signing & IPFS Identity</h3>
-        <p>The Ed25519 signing key at path <code>m/44'/0'/account'/0'/0'</code> serves a dual purpose:</p>
+      <section id="identity-secp256k1" class="doc-section">
+        <h3>Secp256k1 Identity (xpub &amp; PeerID)</h3>
+        <p>The <strong>secp256k1 identity key</strong> at <code>m/44'/0'/account'</code> is the root of a node's network identity. It is derived using standard <a href="https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki" target="_blank">BIP-32</a> hierarchical deterministic derivation on the secp256k1 curve &mdash; the same curve and derivation used by Bitcoin, Ethereum, and most cryptocurrency wallets.</p>
+
+        <h4>xpub (Extended Public Key)</h4>
+        <p>The <strong>xpub</strong> is a Base58Check-encoded extended public key (prefix <code>xpub6...</code>) that encodes:</p>
         <ul>
-          <li><strong>Digital Signatures</strong> &mdash; Sign any data (SDS schemas, messages, transactions) with Ed25519. Recipients verify signatures using the corresponding public key.</li>
-          <li><strong>libp2p PeerID</strong> &mdash; The Ed25519 public key is encoded as a <a href="https://docs.libp2p.io/concepts/fundamentals/peers/" target="_blank">libp2p PeerID</a> (multihash of the public key). This is the node's IPFS/libp2p address on the network.</li>
+          <li>The 33-byte <strong>compressed secp256k1 public key</strong></li>
+          <li>A 32-byte <strong>chain code</strong> for child key derivation</li>
+          <li>Depth, parent fingerprint, and child index metadata</li>
         </ul>
-        <p>Because the same key handles both signing and network identity, every piece of signed data is cryptographically bound to the author's PeerID. There is no separate "identity key" &mdash; your signing key <em>is</em> your identity.</p>
+        <p>The xpub serves as the node's <strong>portable identity</strong>. It is safe to share publicly and is used in the <code>users</code> config section for authentication:</p>
+        <pre><code>users:
+  - xpub: "xpub6DKCyLbCHZLFR4XpFg26royZdkxExSMHTjNorEgkn1kgvQbLF5sts9RfNt3PbGhphVUh7WsFQ5H6GJBh4LhmRL27oSPt1qDkJ5mAr6FZ3Wa"
+    trust_level: admin
+    name: Operator</code></pre>
+
+        <h4>PeerID from secp256k1</h4>
+        <p>The <a href="https://docs.libp2p.io/concepts/fundamentals/peers/" target="_blank">libp2p PeerID</a> is deterministically derived from the compressed secp256k1 public key:</p>
+        <pre><code>secp256k1 pubkey (33 bytes, compressed)
+    │
+    ▼ Protobuf encode (libp2p crypto key format)
+  PublicKey { Type: Secp256k1, Data: [33 bytes] }
+    │
+    ▼ SHA-256 multihash (identity CID for keys &le;42 bytes uses inline)
+  PeerID: 16Uiu2HAm1LbvwjEH...Fm45</code></pre>
+
+        <p>Secp256k1 PeerIDs have a <code>16Uiu2...</code> prefix, distinguishing them from Ed25519 PeerIDs (<code>12D3Koo...</code>). Because the PeerID is derived purely from the xpub's public key, <strong>anyone with an xpub can compute the corresponding PeerID</strong> without any private key material.</p>
+
+        <h4>Why secp256k1 for Identity?</h4>
+        <ul>
+          <li><strong>Wallet compatibility</strong> &mdash; The same BIP-39 mnemonic used for Bitcoin/Ethereum wallets produces the SDN identity key. No separate key management needed.</li>
+          <li><strong>xpub portability</strong> &mdash; BIP-32 xpubs are a widely-understood, standardized format. Operators can share an xpub to grant access, and any SDN node can verify identity from it.</li>
+          <li><strong>1:1 xpub&harr;PeerID mapping</strong> &mdash; Every xpub maps to exactly one PeerID and vice versa, enabling deterministic peer discovery from identity alone.</li>
+          <li><strong>Multi-account isolation</strong> &mdash; Different <code>account'</code> indices produce completely independent identities from the same seed, each with its own xpub, PeerID, signing key, and encryption key.</li>
+        </ul>
+
+        <h4>Computing PeerID from xpub</h4>
+        <pre><code>// JavaScript (hd-wallet-wasm)
+import init from 'hd-wallet-wasm';
+const { libp2p } = await init();
+const peerId = libp2p.peerIdFromXpub('xpub6DKCyLb...');
+// → "16Uiu2HAm1LbvwjEH...Fm45"</code></pre>
+
+        <pre><code>// Go server CLI
+spacedatanetwork show-identity --wasm /path/to/hd-wallet.wasm
+# PeerID printed to stdout</code></pre>
+
+        <pre><code>// Go (programmatic)
+hw, _ := wasm.NewHDWalletModule(ctx, wasmPath)
+seed, _ := hw.MnemonicToSeed(ctx, mnemonic, "")
+identity, _ := hw.DeriveIdentity(ctx, seed, 0) // account 0
+fmt.Println(identity.PeerID()) // "16Uiu2HAm..."</code></pre>
+      </section>
+
+      <section id="identity-signing" class="doc-section">
+        <h3>Signing &amp; Authentication</h3>
+        <p>SDN uses a two-layer identity model:</p>
+        <ul>
+          <li><strong>Network Identity (secp256k1)</strong> &mdash; The secp256k1 key at <code>m/44'/0'/account'</code> produces the xpub and <a href="https://docs.libp2p.io/concepts/fundamentals/peers/" target="_blank">libp2p PeerID</a>. The PeerID is a multihash of the compressed secp256k1 public key, giving every xpub a unique, deterministic network address (prefix <code>16Uiu2...</code>).</li>
+          <li><strong>Digital Signatures (Ed25519)</strong> &mdash; The Ed25519 key at <code>m/44'/0'/account'/0'/0'</code> signs data (SDS schemas, messages, authentication challenges). Recipients verify signatures using the corresponding 32-byte public key.</li>
+        </ul>
+        <p>The Ed25519 signing key is bound to the secp256k1 identity via <strong>TOFU</strong> (Trust On First Use): on the first wallet-based login, the server records the Ed25519 public key alongside the xpub. Subsequent logins require both the correct xpub <em>and</em> a valid Ed25519 challenge-response signature.</p>
 
         <pre><code>// Sign data with the identity's Ed25519 key
 const { sign, verify } = await import('@spacedatanetwork/sdn-js');
@@ -1538,6 +1690,47 @@ decCtx.decryptScalar(buffer, offset, length, fieldId, recordIndex);</code></pre>
             <tr><td>HMAC-SHA256</td><td>JS (via WASM SHA-256)</td><td>No</td></tr>
           </tbody>
         </table>
+      </section>
+
+      <section id="key-security" class="doc-section">
+        <h3>Key Security</h3>
+        <p>The BIP-39 mnemonic is the root secret from which all node keys are derived. SDN encrypts it at rest using <strong>XChaCha20-Poly1305</strong> authenticated encryption with a key derived from <strong>Argon2id</strong>.</p>
+
+        <h4>Encryption at Rest</h4>
+        <pre><code>File format:  salt (32 bytes) || nonce (24 bytes) || ciphertext
+Permissions:  0600 (owner-only read/write)
+Cipher:       XChaCha20-Poly1305 (AEAD)
+KDF:          Argon2id (time=3, memory=64 MiB, threads=4, keyLen=32)</code></pre>
+
+        <p>On first startup (or when a plaintext mnemonic is detected), the server automatically encrypts the mnemonic file in place. Subsequent reads decrypt transparently.</p>
+
+        <h4>Password Resolution</h4>
+        <p>The encryption password is resolved in order of priority:</p>
+        <ol>
+          <li><strong><code>SDN_KEY_PASSWORD</code></strong> environment variable (highest priority)</li>
+          <li><strong><code>security.key_password</code></strong> in <code>config.yaml</code></li>
+          <li><strong>Machine-derived password</strong> &mdash; deterministic Argon2id hash of <code>hostname:GOARCH:GOOS</code> with the user's home directory as salt (allows unattended startup)</li>
+        </ol>
+
+        <div class="callout callout-warning">
+          <div class="callout-title">Machine-Derived Passwords</div>
+          <p>The default machine-derived password prevents trivial offline reads of the mnemonic file but is <strong>not</strong> a substitute for a strong explicit password. For production deployments, always set <code>SDN_KEY_PASSWORD</code> or <code>security.key_password</code>.</p>
+        </div>
+
+        <h4>Configuration Example</h4>
+        <pre><code># Option 1: Environment variable (recommended for production)
+export SDN_KEY_PASSWORD="your-strong-passphrase"
+spacedatanetwork daemon
+
+# Option 2: Config file
+security:
+  key_password: "your-strong-passphrase"
+
+# Option 3: Machine-derived (default, for unattended startup)
+# No configuration needed &mdash; password is derived automatically</code></pre>
+
+        <h4>Auto-Migration</h4>
+        <p>If the server detects a <strong>plaintext</strong> mnemonic file (from an older installation), it automatically encrypts it using the resolved password. The original plaintext is overwritten with the encrypted blob. This migration is logged as a warning at startup.</p>
       </section>
 
       <section id="identity-pinning" class="doc-section">

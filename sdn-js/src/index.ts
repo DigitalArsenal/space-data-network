@@ -9,6 +9,7 @@ export type { SDNConfig, SDNNodeEvents } from './node';
 export { LEGACY_ID_EXCHANGE_PROTOCOL, LICENSE_PROTOCOL_ID, IPFS_BOOTSTRAP_PEERS } from './node';
 export {
   requestLicenseGrantViaRelay,
+  derivePeerIdFromSeed,
   derivePeerIdFromEd25519Seed,
   parseLicenseResponse,
   LicenseProtocolError,
@@ -48,6 +49,12 @@ export {
   deriveEd25519KeyPair,
   ed25519PublicKey,
   x25519PublicKey,
+  deriveSecp256k1Key,
+
+  // PeerID
+  derivePeerIdFromPublicKey,
+  derivePeerIdFromXpub,
+  deriveIpnsHashFromXpub,
 
   // SDN identity
   deriveIdentity,
@@ -75,6 +82,7 @@ export {
   // Constants
   LanguageCode,
   SDNDerivation,
+  buildIdentityPath,
   buildSigningPath,
   buildEncryptionPath,
 } from './crypto/index';
@@ -83,9 +91,14 @@ export type {
   MnemonicOptions,
   DerivedKey,
   KeyPair,
+  IdentityKeyPair,
   EncryptionKeyPair,
   DerivedIdentity,
 } from './crypto/index';
+
+// Key Storage
+export { HDKeyStore } from './crypto/key-store';
+export type { WalletMetadata } from './crypto/key-store';
 
 // DHT Discovery + Baked Keys
 export {
@@ -95,6 +108,7 @@ export {
 } from './discovery';
 export {
   LICENSE_SERVER_PUBKEY_HEX,
+  LICENSE_SERVER_XPUB,
   getLicenseServerPubkey,
   hexToBytes,
 } from './baked-keys';

@@ -2,12 +2,7 @@ import React, { useState, useCallback } from 'react'
 import TrustBadge from '../trust-badge/TrustBadge.js'
 import './IdentityCard.css'
 
-const truncate = (str, len = 16) => {
-  if (!str || str.length <= len * 2 + 3) return str || ''
-  return str.slice(0, len) + '...' + str.slice(-len)
-}
-
-const CopyField = ({ label, value, truncated }) => {
+const CopyField = ({ label, value }) => {
   const [copied, setCopied] = useState(false)
 
   const doCopy = useCallback(() => {
@@ -22,7 +17,7 @@ const CopyField = ({ label, value, truncated }) => {
   return (
     <div className='identity-card-field'>
       <span className='identity-card-label'>{label}</span>
-      <span className='identity-card-value'>{truncated || truncate(value)}</span>
+      <span className='identity-card-value'>{value}</span>
       <button className='identity-card-copy-btn' onClick={doCopy}>
         {copied ? 'Copied' : 'Copy'}
       </button>
