@@ -11,6 +11,7 @@ export type {
   MnemonicOptions,
   DerivedKey,
   KeyPair,
+  IdentityKeyPair,
   EncryptionKeyPair,
   DerivedIdentity,
 } from './types';
@@ -18,6 +19,7 @@ export type {
 export {
   LanguageCode,
   SDNDerivation,
+  buildIdentityPath,
   buildSigningPath,
   buildEncryptionPath,
 } from './types';
@@ -40,6 +42,12 @@ export {
   deriveEd25519KeyPair,
   ed25519PublicKey,
   x25519PublicKey,
+  deriveSecp256k1Key,
+
+  // PeerID
+  derivePeerIdFromPublicKey,
+  derivePeerIdFromXpub,
+  deriveIpnsHashFromXpub,
 
   // SDN identity
   deriveIdentity,

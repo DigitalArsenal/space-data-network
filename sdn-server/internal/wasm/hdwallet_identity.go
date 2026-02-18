@@ -14,7 +14,12 @@ const (
 	// DefaultCoinType is the BIP-44 coin type used for identity derivation.
 	DefaultCoinType = 0
 
-	// SigningKeyPath is the derivation path for Ed25519 signing keys.
+	// IdentityKeyPath is the BIP-32 secp256k1 derivation path for the node identity key.
+	// This is the account-level key whose public key is encoded in the xpub.
+	// Format: m/44'/0'/account'
+	IdentityKeyPath = "m/44'/0'/%d'"
+
+	// SigningKeyPath is the derivation path for Ed25519 signing keys (auth).
 	// Format: m/44'/0'/account'/0'/0'
 	SigningKeyPath = "m/44'/0'/%d'/0'/0'"
 
@@ -28,10 +33,16 @@ type DerivedIdentity struct {
 	// Account is the BIP-44 account index used for derivation
 	Account uint32
 
-	// SigningPrivKey is the Ed25519 private key for libp2p identity and signing
+	// IdentityPrivKey is the secp256k1 private key for libp2p identity (PeerID)
+	IdentityPrivKey crypto.PrivKey
+
+	// IdentityPubKey is the secp256k1 public key for libp2p identity
+	IdentityPubKey crypto.PubKey
+
+	// SigningPrivKey is the Ed25519 private key for auth challenge-response signing
 	SigningPrivKey crypto.PrivKey
 
-	// SigningPubKey is the Ed25519 public key
+	// SigningPubKey is the Ed25519 public key for auth verification
 	SigningPubKey crypto.PubKey
 
 	// EncryptionKey is the X25519 private key for encryption (32 bytes)
@@ -40,10 +51,13 @@ type DerivedIdentity struct {
 	// EncryptionPub is the X25519 public key (32 bytes)
 	EncryptionPub []byte
 
-	// PeerID is the libp2p peer ID derived from the signing public key
+	// PeerID is the libp2p peer ID derived from the secp256k1 identity key
 	PeerID peer.ID
 
-	// SigningKeyPath is the derivation path used for the signing key
+	// IdentityKeyPath is the derivation path for the secp256k1 identity key
+	IdentityKeyPath string
+
+	// SigningKeyPath is the derivation path used for the Ed25519 signing key
 	SigningKeyPath string
 
 	// EncryptionKeyPath is the derivation path used for the encryption key
@@ -56,19 +70,52 @@ type DerivedIdentity struct {
 // DeriveIdentity derives a libp2p identity from an HD wallet seed.
 // The seed must be 64 bytes (from BIP-39 mnemonic).
 // Account allows deriving multiple independent identities from the same seed.
+//
+// The libp2p PeerID is derived from a secp256k1 key at m/44'/0'/account'
+// (the BIP-44 account level — same key the xpub represents). This gives a
+// 1:1 mapping between xpub and PeerID.
+//
+// Ed25519 signing keys (for auth) and X25519 encryption keys are derived
+// separately via SLIP-10.
 func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, account uint32) (*DerivedIdentity, error) {
 	if len(seed) != 64 {
 		return nil, ErrHDWalletInvalidSeed
 	}
 
 	// Derive paths
+	identityPath := fmt.Sprintf(IdentityKeyPath, account)
 	signingPath := fmt.Sprintf(SigningKeyPath, account)
 	encryptionPath := fmt.Sprintf(EncryptionKeyPath, account)
 
-	// Derive Ed25519 signing key at m/44'/0'/account'/0'/0'
+	// Derive secp256k1 identity key at m/44'/0'/account'
+	identityDerived, err := hw.DeriveSecp256k1Key(ctx, seed, identityPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive identity key: %w", err)
+	}
+
+	// Create libp2p secp256k1 private key from raw 32-byte key
+	identityPrivKey, err := crypto.UnmarshalSecp256k1PrivateKey(identityDerived.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create libp2p secp256k1 key: %w", err)
+	}
+	identityPubKey := identityPrivKey.GetPublic()
+
+	// Get peer ID from secp256k1 public key
+	peerID, err := peer.IDFromPublicKey(identityPubKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create peer ID: %w", err)
+	}
+
+	// Derive Ed25519 signing key at m/44'/0'/account'/0'/0' (for auth)
 	signingDerived, err := hw.DeriveEd25519Key(ctx, seed, signingPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive signing key: %w", err)
+	}
+
+	// Convert Ed25519 seed to libp2p crypto.PrivKey
+	signingPrivKey, signingPubKey, err := crypto.GenerateEd25519Key(bytes.NewReader(signingDerived.PrivateKey))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create libp2p Ed25519 key: %w", err)
 	}
 
 	// Derive X25519 encryption key at m/44'/0'/account'/1'/0'
@@ -77,23 +124,10 @@ func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, accou
 		return nil, fmt.Errorf("failed to derive encryption key: %w", err)
 	}
 
-	// Convert Ed25519 seed to libp2p crypto.PrivKey
-	// libp2p's GenerateEd25519Key expects a reader that produces the seed
-	privKey, pubKey, err := crypto.GenerateEd25519Key(bytes.NewReader(signingDerived.PrivateKey))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create libp2p key: %w", err)
-	}
-
 	// Derive X25519 public key from the encryption private key
 	encryptionPub, err := hw.X25519PublicKey(ctx, encryptionDerived.PrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive encryption public key: %w", err)
-	}
-
-	// Get peer ID from public key
-	peerID, err := peer.IDFromPublicKey(pubKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create peer ID: %w", err)
 	}
 
 	// Derive standard blockchain addresses (non-fatal if unavailable)
@@ -101,14 +135,17 @@ func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, accou
 
 	return &DerivedIdentity{
 		Account:           account,
-		SigningPrivKey:    privKey,
-		SigningPubKey:     pubKey,
-		EncryptionKey:     encryptionDerived.PrivateKey,
-		EncryptionPub:     encryptionPub,
-		PeerID:            peerID,
-		SigningKeyPath:    signingPath,
-		EncryptionKeyPath: encryptionPath,
-		Addresses:         coinAddrs,
+		IdentityPrivKey:   identityPrivKey,
+		IdentityPubKey:    identityPubKey,
+		SigningPrivKey:     signingPrivKey,
+		SigningPubKey:      signingPubKey,
+		EncryptionKey:      encryptionDerived.PrivateKey,
+		EncryptionPub:      encryptionPub,
+		PeerID:             peerID,
+		IdentityKeyPath:    identityPath,
+		SigningKeyPath:     signingPath,
+		EncryptionKeyPath:  encryptionPath,
+		Addresses:          coinAddrs,
 	}, nil
 }
 
@@ -148,8 +185,7 @@ func (hw *HDWalletModule) IdentityFromMnemonic(ctx context.Context, mnemonic, pa
 	return hw.DeriveIdentity(ctx, seed, account)
 }
 
-// Sign signs a message using the identity's Ed25519 key.
-// This uses the libp2p crypto interface rather than direct WASM calls.
+// Sign signs a message using the identity's Ed25519 signing key.
 func (id *DerivedIdentity) Sign(message []byte) ([]byte, error) {
 	return id.SigningPrivKey.Sign(message)
 }
@@ -173,18 +209,20 @@ func (id *DerivedIdentity) RawSigningKey() ([]byte, error) {
 	return raw, nil
 }
 
-// MarshalPrivateKey serializes the identity's signing key for storage.
+// MarshalPrivateKey serializes the identity's secp256k1 identity key for storage.
 // The result can be used with crypto.UnmarshalPrivateKey to restore the key.
 func (id *DerivedIdentity) MarshalPrivateKey() ([]byte, error) {
-	return crypto.MarshalPrivateKey(id.SigningPrivKey)
+	return crypto.MarshalPrivateKey(id.IdentityPrivKey)
 }
 
 // IdentityInfo holds non-sensitive identity information for display.
 type IdentityInfo struct {
 	Account           uint32
 	PeerID            string
+	IdentityPubKeyHex string
 	SigningPubKeyHex  string
 	EncryptionPubHex  string
+	IdentityKeyPath   string
 	SigningKeyPath    string
 	EncryptionKeyPath string
 	Addresses         *CoinAddresses
@@ -192,15 +230,18 @@ type IdentityInfo struct {
 
 // Info returns non-sensitive identity information.
 func (id *DerivedIdentity) Info() IdentityInfo {
-	pubKeyBytes, _ := id.SigningPubKey.Raw()
+	identityPubBytes, _ := id.IdentityPubKey.Raw()
+	signingPubBytes, _ := id.SigningPubKey.Raw()
 	return IdentityInfo{
 		Account:           id.Account,
 		PeerID:            id.PeerID.String(),
-		SigningPubKeyHex:  fmt.Sprintf("%x", pubKeyBytes),
+		IdentityPubKeyHex: fmt.Sprintf("%x", identityPubBytes),
+		SigningPubKeyHex:  fmt.Sprintf("%x", signingPubBytes),
 		EncryptionPubHex:  fmt.Sprintf("%x", id.EncryptionPub),
-		SigningKeyPath:    id.SigningKeyPath,
-		EncryptionKeyPath: id.EncryptionKeyPath,
-		Addresses:         id.Addresses,
+		IdentityKeyPath:   id.IdentityKeyPath,
+		SigningKeyPath:     id.SigningKeyPath,
+		EncryptionKeyPath:  id.EncryptionKeyPath,
+		Addresses:          id.Addresses,
 	}
 }
 

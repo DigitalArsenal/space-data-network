@@ -38,6 +38,20 @@ const decodeBase64RawToBytes = (raw) => {
 const sdnAuthBundle = {
   name: 'sdnAuth',
 
+  init (store) {
+    // Warn before page refresh/navigation when wallet identity is active.
+    // The .sign() function cannot survive a page refresh, so losing it
+    // means the user must re-authenticate.
+    window.addEventListener('beforeunload', (e) => {
+      const state = store.getState()
+      const auth = state.sdnAuth
+      if (auth && auth.authenticated && auth.identity) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    })
+  },
+
   reducer (state = initialState, action) {
     switch (action.type) {
       case 'SDN_AUTH_CHECK_STARTED':
@@ -133,22 +147,22 @@ const sdnAuthBundle = {
           return
         }
 
-        if (res.status === 401) {
-          dispatch({
-            type: 'SDN_AUTH_CHECK_FINISHED',
-            payload: { authEnabled: true, authenticated: false, user: null }
-          })
-          return
+        // Auth is enabled. The wallet identity (.sign() function) cannot
+        // survive a page refresh, so always invalidate any stale session
+        // cookie and require a fresh wallet login.
+        if (res.ok) {
+          try {
+            await fetch('/api/auth/logout', {
+              method: 'POST',
+              headers: { 'X-Requested-With': 'XMLHttpRequest' },
+              credentials: 'same-origin'
+            })
+          } catch (_) {}
         }
 
-        if (!res.ok) {
-          throw new Error(`session check failed (${res.status})`)
-        }
-
-        const user = await res.json()
         dispatch({
           type: 'SDN_AUTH_CHECK_FINISHED',
-          payload: { authEnabled: true, authenticated: true, user }
+          payload: { authEnabled: true, authenticated: false, user: null }
         })
       } catch (err) {
         console.error('SDN auth session check failed:', err)
