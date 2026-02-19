@@ -253,13 +253,13 @@ probe_code() {
 }
 
 log "Verifying live endpoints"
-health_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/data/health")"
-license_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/license/verify")"
-entitlements_code="$(probe_code "token=\$(awk -F= '/^SDN_LICENSE_ADMIN_TOKEN=/{print \$2}' '$REMOTE_ENV_FILE' | tail -n 1); curl -ksS -o /dev/null -w '%{http_code}' -H \"X-License-Admin-Token: \$token\" 'https://127.0.0.1/api/v1/license/entitlements?xpub=__deploy_smoke__'")"
-plugins_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/plugins/manifest")"
-admin_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/admin")"
-login_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/login")"
-ipfs_code="$(probe_code "curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:${KUBO_API_PORT}/api/v0/id")"
+health_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/data/health 2>/dev/null")"
+license_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/license/verify 2>/dev/null")"
+entitlements_code="$(probe_code "token=\$(awk -F= '/^SDN_LICENSE_ADMIN_TOKEN=/{print \$2}' '$REMOTE_ENV_FILE' | tail -n 1); curl -ksS -o /dev/null -w '%{http_code}' -H \"X-License-Admin-Token: \$token\" 'https://127.0.0.1/api/v1/license/entitlements?xpub=__deploy_smoke__' 2>/dev/null")"
+plugins_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/plugins/manifest 2>/dev/null")"
+admin_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/admin 2>/dev/null")"
+login_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/login 2>/dev/null")"
+ipfs_code="$(probe_code "curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:${KUBO_API_PORT}/api/v0/id 2>/dev/null")"
 
 # Key broker no longer exposes HTTP endpoints — key exchange uses libp2p streams.
 log "health=$health_code license_verify=$license_code entitlements_admin=$entitlements_code plugins_manifest=$plugins_code admin=$admin_code login=$login_code ipfs_api=$ipfs_code"
