@@ -222,7 +222,7 @@ npm run generate:orbpro-key-broker-bindings
 Run the plugin SDK protocol test client:
 
 ```bash
-npm run test:plugin-sdk:key-broker-client -- --node-info-url http://127.0.0.1:5001/api/node/info
+npm run test:plugin-sdk:key-broker-client -- --node-info-url http://127.0.0.1:5010/api/node/info
 ```
 
 ### Server Packages
