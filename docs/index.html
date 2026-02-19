@@ -152,6 +152,7 @@
       gap: 28px;
       flex-shrink: 1;
       overflow: hidden;
+      white-space: nowrap;
     }
 
     .nav-right {
@@ -2866,7 +2867,7 @@
     /* Tablet adjustments (iPad) */
     @media (max-width: 1024px) {
       .nav-links {
-        gap: 16px;
+        gap: 12px;
       }
       .nav-links a {
         font-size: 12px;
@@ -2877,13 +2878,16 @@
       }
     }
 
-    /* Hide login button and nav links on mobile */
-    @media (max-width: 734px) {
+    /* Hide login button and nav links on smaller tablets/mobile */
+    @media (max-width: 900px) {
       .nav-login {
         display: none;
       }
       .nav-links {
         display: none;
+      }
+      .nav-menu-btn {
+        display: block;
       }
     }
 

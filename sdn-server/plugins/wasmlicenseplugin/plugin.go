@@ -41,6 +41,7 @@ type Plugin struct {
 	bridge   *wasiplugin.StreamBridge
 	host     host.Host
 	wasmPath string
+	wasmData []byte
 
 	// Background goroutine lifecycle
 	ctx    context.Context
@@ -51,6 +52,13 @@ type Plugin struct {
 // New returns an unstarted plugin that will load the WASM module from wasmPath.
 func New(wasmPath string) *Plugin {
 	return &Plugin{wasmPath: wasmPath}
+}
+
+// NewFromBytes returns an unstarted plugin that uses inline WASM bytes.
+func NewFromBytes(wasmBytes []byte) *Plugin {
+	data := make([]byte, len(wasmBytes))
+	copy(data, wasmBytes)
+	return &Plugin{wasmData: data}
 }
 
 // ID returns the plugin identifier.
@@ -100,9 +108,19 @@ func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 		return fmt.Errorf("failed to compute P-256 public key: %w", err)
 	}
 
-	wasmBytes, err := os.ReadFile(p.wasmPath)
-	if err != nil {
-		return fmt.Errorf("failed to read WASM file %s: %w", p.wasmPath, err)
+	if len(p.wasmData) == 0 && strings.TrimSpace(p.wasmPath) == "" {
+		return fmt.Errorf("no WASM source configured")
+	}
+	wasmBytes := p.wasmData
+	if len(wasmBytes) == 0 {
+		var err error
+		wasmBytes, err = os.ReadFile(p.wasmPath)
+		if err != nil {
+			return fmt.Errorf("failed to read WASM file %s: %w", p.wasmPath, err)
+		}
+	}
+	if len(wasmBytes) == 0 {
+		return fmt.Errorf("plugin module is empty")
 	}
 
 	rt, err := wasiplugin.New(ctx, wasmBytes)
