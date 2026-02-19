@@ -180,6 +180,16 @@ function asUint8Array(value) {
   if (value instanceof Uint8Array) {
     return value;
   }
+  if (
+    value &&
+    typeof value === "object" &&
+    typeof value.subarray === "function"
+  ) {
+    const view = value.subarray();
+    if (view instanceof Uint8Array) {
+      return view;
+    }
+  }
   if (value instanceof ArrayBuffer) {
     return new Uint8Array(value);
   }
