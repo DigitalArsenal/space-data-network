@@ -3,6 +3,7 @@ package license
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -38,6 +39,13 @@ const (
 	defaultPluginRequiredScope    = "orbpro:base"
 	defaultKeyEnvelopeAlgorithm   = "X25519+SHA256+AES-256-GCM"
 	defaultKeyEnvelopeLifetimeSec = int64(120)
+	pluginRuntimeStatusStopped    = "stopped"
+	pluginRuntimeStatusRunning    = "running"
+	pluginRuntimeStatusError      = "error"
+	pluginCryptoContext          = "orbpro-plugin-v1"
+	pluginBundleV2Format         = byte(0x02)
+	pluginBundleV2Header         = 61
+	pluginBundleV1Header         = 80
 )
 
 var pluginIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -76,6 +84,8 @@ type PluginDescriptor struct {
 	SignatureHex    string `json:"signature_hex,omitempty"`
 	SignerPubKeyHex string `json:"signer_pubkey_hex,omitempty"`
 	UploadedAt      string `json:"uploaded_at,omitempty"`
+	Status          string `json:"status"`
+	StatusMessage   string `json:"status_message,omitempty"`
 }
 
 // PluginAsset is an in-memory validated plugin metadata record.
@@ -94,6 +104,9 @@ type PluginAsset struct {
 	encryptedPath string
 	keyPath       string
 	plainPath     string
+
+	runtimeStatus string
+	statusMessage string
 }
 
 func (a *PluginAsset) clone() *PluginAsset {
@@ -105,6 +118,10 @@ func (a *PluginAsset) clone() *PluginAsset {
 }
 
 func (a *PluginAsset) Descriptor() PluginDescriptor {
+	status := strings.TrimSpace(a.runtimeStatus)
+	if status == "" {
+		status = pluginRuntimeStatusStopped
+	}
 	return PluginDescriptor{
 		ID:              a.ID,
 		Version:         a.Version,
@@ -116,6 +133,8 @@ func (a *PluginAsset) Descriptor() PluginDescriptor {
 		SignatureHex:    a.SignatureHex,
 		SignerPubKeyHex: a.SignerPubKeyHex,
 		UploadedAt:      a.UploadedAt,
+		Status:          status,
+		StatusMessage:   strings.TrimSpace(a.statusMessage),
 	}
 }
 
@@ -125,6 +144,54 @@ type PluginRegistry struct {
 
 	mu     sync.RWMutex
 	assets map[string]*PluginAsset
+}
+
+// SetRuntimeStatus updates runtime status for a catalog plugin.
+func (r *PluginRegistry) SetRuntimeStatus(id, status, message string) error {
+	normalized := strings.TrimSpace(id)
+	if normalized == "" {
+		return errors.New("plugin id is required")
+	}
+	if status = strings.TrimSpace(status); status == "" {
+		status = pluginRuntimeStatusStopped
+	}
+	if r == nil {
+		return errors.New("plugin registry is nil")
+	}
+	message = strings.TrimSpace(message)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	asset, ok := r.assets[normalized]
+	if !ok {
+		return os.ErrNotExist
+	}
+	asset.runtimeStatus = status
+	asset.statusMessage = message
+	return nil
+}
+
+// RuntimeStatus reports the current runtime status for a catalog plugin.
+func (r *PluginRegistry) RuntimeStatus(id string) (string, string, bool) {
+	asset, ok := r.Get(id)
+	if !ok {
+		return pluginRuntimeStatusStopped, "", false
+	}
+	status := strings.TrimSpace(asset.runtimeStatus)
+	if status == "" {
+		status = pluginRuntimeStatusStopped
+	}
+	return status, strings.TrimSpace(asset.statusMessage), true
+}
+
+// IsEncrypted reports whether a catalog entry stores encrypted bytes.
+func (r *PluginRegistry) IsEncrypted(id string) (bool, error) {
+	asset, ok := r.Get(id)
+	if !ok {
+		return false, os.ErrNotExist
+	}
+	return strings.TrimSpace(asset.keyPath) != "", nil
 }
 
 // PluginKeyEnvelope is returned by /api/v1/plugins/{id}/key-envelope.
@@ -266,6 +333,54 @@ func (r *PluginRegistry) ReadEncryptedBundle(id string) ([]byte, *PluginAsset, e
 		return nil, nil, fmt.Errorf("read plugin %q: %w", id, err)
 	}
 	return data, asset, nil
+}
+
+// DecryptBundle reads a plugin artifact and decrypts it using the supplied
+// X25519 private key when encrypted. Plain assets are returned as-is.
+func (r *PluginRegistry) DecryptBundle(id string, recipientPrivateKey []byte) ([]byte, error) {
+	data, asset, err := r.ReadEncryptedBundle(id)
+	if err != nil {
+		return nil, err
+	}
+	if asset == nil {
+		return nil, os.ErrNotExist
+	}
+	if asset.encryptedPath == "" {
+		return data, nil
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("plugin %q bundle is empty", id)
+	}
+	if len(recipientPrivateKey) == 0 {
+		return nil, fmt.Errorf("plugin %q requires a decryption key", id)
+	}
+	if recipientPrivateKey == nil {
+		recipientPrivateKey = []byte{}
+	}
+	if len(recipientPrivateKey) != 32 {
+		return nil, fmt.Errorf("invalid decryption key for plugin %q: expected 32 bytes, got %d", id, len(recipientPrivateKey))
+	}
+
+	if data[0] == pluginBundleV2Format {
+		if len(data) < pluginBundleV2Header {
+			return nil, fmt.Errorf("plugin %q invalid V2 payload: too short", id)
+		}
+		decrypted, err := decryptPluginBundleV2(data, recipientPrivateKey, []byte(pluginCryptoContext))
+		if err != nil {
+			return nil, fmt.Errorf("plugin %q failed to decrypt (V2): %w", id, err)
+		}
+		return decrypted, nil
+	}
+
+	if len(data) >= pluginBundleV1Header {
+		decrypted, err := decryptPluginBundleV1(data, recipientPrivateKey, []byte(pluginCryptoContext))
+		if err != nil {
+			return nil, fmt.Errorf("plugin %q failed to decrypt (V1): %w", id, err)
+		}
+		return decrypted, nil
+	}
+
+	return nil, fmt.Errorf("plugin %q has unrecognized encrypted format", id)
 }
 
 // ReadBundleKey reads and normalizes the plugin's symmetric content key.
@@ -668,6 +783,93 @@ func parseBundleKey(raw []byte) ([]byte, error) {
 		return out, nil
 	}
 	return nil, errors.New("key must be 32-byte raw, hex, or base64")
+}
+
+func decryptPluginBundleV2(encrypted []byte, recipientPrivateKey []byte, context []byte) ([]byte, error) {
+	ephemeralPublic := encrypted[1:33]
+	iv := encrypted[33:45]
+	tag := encrypted[45:61]
+	ciphertext := encrypted[61:]
+
+	sharedSecret, err := curve25519.X25519(recipientPrivateKey, ephemeralPublic)
+	if err != nil {
+		return nil, fmt.Errorf("derive shared secret: %w", err)
+	}
+	defer zeroBytes(sharedSecret)
+
+	symmetricKey, err := derivePluginBundleKey(sharedSecret, context)
+	if err != nil {
+		return nil, fmt.Errorf("derive symmetric key: %w", err)
+	}
+	defer zeroBytes(symmetricKey)
+
+	block, err := aes.NewCipher(symmetricKey)
+	if err != nil {
+		return nil, fmt.Errorf("create AES cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("create GCM: %w", err)
+	}
+
+	sealed := make([]byte, len(ciphertext)+len(tag))
+	copy(sealed, ciphertext)
+	copy(sealed[len(ciphertext):], tag)
+
+	plaintext, err := gcm.Open(nil, iv, sealed, ephemeralPublic)
+	if err != nil {
+		return nil, fmt.Errorf("AES-GCM auth failed: %w", err)
+	}
+	return plaintext, nil
+}
+
+func decryptPluginBundleV1(encrypted []byte, recipientPrivateKey []byte, context []byte) ([]byte, error) {
+	ephemeralPublic := encrypted[:32]
+	iv := encrypted[32:48]
+	expectedMac := encrypted[48:80]
+	ciphertext := encrypted[80:]
+
+	sharedSecret, err := curve25519.X25519(recipientPrivateKey, ephemeralPublic)
+	if err != nil {
+		return nil, fmt.Errorf("derive shared secret: %w", err)
+	}
+	defer zeroBytes(sharedSecret)
+
+	symmetricKey, err := derivePluginBundleKey(sharedSecret, context)
+	if err != nil {
+		return nil, fmt.Errorf("derive symmetric key: %w", err)
+	}
+	defer zeroBytes(symmetricKey)
+
+	authData := make([]byte, len(encrypted)-48)
+	copy(authData, ephemeralPublic)
+	copy(authData[32:], iv)
+	copy(authData[48:], ciphertext)
+
+	mac := hmac.New(sha256.New, symmetricKey)
+	_, _ = mac.Write(authData)
+	if !hmac.Equal(mac.Sum(nil), expectedMac) {
+		return nil, errors.New("HMAC verification failed")
+	}
+
+	block, err := aes.NewCipher(symmetricKey)
+	if err != nil {
+		return nil, fmt.Errorf("create AES cipher: %w", err)
+	}
+
+	stream := cipher.NewCTR(block, iv)
+	plaintext := make([]byte, len(ciphertext))
+	stream.XORKeyStream(plaintext, ciphertext)
+	return plaintext, nil
+}
+
+func derivePluginBundleKey(sharedSecret []byte, context []byte) ([]byte, error) {
+	k := make([]byte, 32)
+	kdf := hkdf.New(sha256.New, sharedSecret, make([]byte, 32), context)
+	if _, err := io.ReadFull(kdf, k); err != nil {
+		return nil, fmt.Errorf("hkdf read: %w", err)
+	}
+	return k, nil
 }
 
 func clampX25519PrivateKey(priv []byte) {

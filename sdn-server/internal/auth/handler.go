@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
@@ -40,6 +41,8 @@ type Handler struct {
 	clockSkew    time.Duration
 	walletUIPath string // filesystem path to hd-wallet-ui dist, or empty for CDN
 	configPath   string // filesystem path to config.yaml for setup instructions
+	nodeAttestations map[string]epm.IdentityAttestation
+	attestMu    sync.RWMutex
 	rateMu       sync.Mutex
 	rates        map[string]rateEntry
 }
@@ -107,8 +110,30 @@ func NewHandler(userStore *UserStore, sessions *SessionStore, sessionTTL time.Du
 		clockSkew:    2 * time.Minute,
 		walletUIPath: walletUIPath,
 		configPath:   configPath,
+		nodeAttestations: make(map[string]epm.IdentityAttestation),
 		rates:        make(map[string]rateEntry),
 	}
+}
+
+// SetNodeSigningAttestation injects an identity-attestation chain for key binding.
+// The attestation ties a Bitcoin-derived xpub to an Ed25519 signing public key.
+func (h *Handler) SetNodeSigningAttestation(attestation *epm.IdentityAttestation) {
+	if attestation == nil {
+		return
+	}
+	if strings.TrimSpace(attestation.XPub) == "" {
+		return
+	}
+
+	valid, err := attestation.Verify()
+	if err != nil || !valid {
+		log.Warnf("Ignoring invalid node signing attestation for %q: %v", strings.TrimSpace(attestation.XPub), err)
+		return
+	}
+
+	h.attestMu.Lock()
+	defer h.attestMu.Unlock()
+	h.nodeAttestations[attestation.XPub] = *attestation
 }
 
 // RegisterRoutes registers all auth routes on the provided mux.
@@ -208,7 +233,7 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	// Store challenges for known users. If the user has a bound signing key,
 	// only accept challenges where client_pubkey_hex matches. If the user has
 	// no signing key yet (e.g. config has xpub only), accept the presented key
-	// — it will be permanently bound on first successful verify (TOFU).
+	// — it will be permanently bound on first successful verify (TOFU or attestation).
 	// Unknown xpubs get a valid-looking response that can never be verified
 	// (prevents user enumeration).
 	shouldStore := false
@@ -216,11 +241,21 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	if user != nil {
 		normalized, nerr := normalizeEd25519PubKeyHex(user.SigningPubKeyHex)
 		if nerr != nil || normalized == "" {
-			// TOFU: no signing key bound yet — accept the presented key.
-			// The key will be permanently bound on first successful verify.
-			shouldStore = true
-			expectedPubKey = pubRaw
-			log.Infof("Auth challenge for xpub %q: no signing key bound, TOFU mode", req.XPub)
+			if attested := h.getNodeAttestedSigningKey(req.XPub); len(attested) > 0 {
+				if !bytes.Equal(attested, pubRaw) {
+					log.Warnf("Auth challenge for xpub %q: client_pubkey_hex does not match node attestation", req.XPub)
+				} else {
+					shouldStore = true
+					expectedPubKey = attested
+					log.Infof("Auth challenge for xpub %q: using attested signing key", req.XPub)
+				}
+			} else {
+				// TOFU: no signing key bound yet — accept the presented key.
+				// The key will be permanently bound on first successful verify.
+				shouldStore = true
+				expectedPubKey = pubRaw
+				log.Infof("Auth challenge for xpub %q: no signing key bound, TOFU mode", req.XPub)
+			}
 		} else {
 			expRaw, derr := hex.DecodeString(normalized)
 			if derr != nil || len(expRaw) != ed25519.PublicKeySize {
@@ -361,14 +396,19 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TOFU: bind signing key on first successful authentication.
-	// The user proved ownership of the private key by signing the challenge.
+	// TOFU/attestation: bind signing key on first successful authentication.
 	if strings.TrimSpace(user.SigningPubKeyHex) == "" {
+		attested := h.getNodeAttestedSigningKey(req.XPub)
+		if len(attested) > 0 && !bytes.Equal(attested, pending.pubKey) {
+			h.writeAuthenticationFailure(w)
+			return
+		}
+
 		sigHex := hex.EncodeToString(pending.pubKey)
 		if err := h.userStore.UpdateSigningPubKey(req.XPub, sigHex); err != nil {
-			log.Warnf("TOFU: failed to bind signing key for %q: %v", req.XPub, err)
+			log.Warnf("failed to bind signing key for %q: %v", req.XPub, err)
 		} else {
-			log.Infof("TOFU: bound signing key %s for user %q", sigHex, user.Name)
+			log.Infof("Bound signing key %s for user %q", sigHex, user.Name)
 			user.SigningPubKeyHex = sigHex
 		}
 	}
@@ -583,6 +623,26 @@ func (h *Handler) cleanupChallenges(now time.Time) {
 			delete(h.challenges, id)
 		}
 	}
+}
+
+func (h *Handler) getNodeAttestedSigningKey(xpub string) []byte {
+	if strings.TrimSpace(xpub) == "" {
+		return nil
+	}
+
+	h.attestMu.RLock()
+	defer h.attestMu.RUnlock()
+
+	att, ok := h.nodeAttestations[xpub]
+	if !ok {
+		return nil
+	}
+
+	raw, err := hex.DecodeString(att.SigningPubKeyHex)
+	if err != nil || len(raw) != ed25519.PublicKeySize {
+		return nil
+	}
+	return raw
 }
 
 func (h *Handler) allowRateLimited(key string, limit int, now time.Time) bool {
