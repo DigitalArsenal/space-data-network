@@ -3,16 +3,17 @@ package wasiplugin
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"time"
 
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/ipfs/go-cid"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	mh "github.com/multiformats/go-multihash"
+	keybroker "github.com/spacedatanetwork/sdn-server/internal/wasiplugin/fbs/orbpro/keybroker"
 )
 
 const (
@@ -34,8 +35,8 @@ const (
 	// streamWriteDeadline is the maximum time to send the response.
 	streamWriteDeadline = 10 * time.Second
 
-	// maxStreamPacketSize is the maximum size of a single binary packet
-	// over the stream (16 KB — same as HTTP bridge limit).
+	// maxStreamPacketSize is the maximum size of a single FlatBuffer
+	// message over the stream (16 KB — same as HTTP bridge limit).
 	maxStreamPacketSize = 16 * 1024
 
 	// publicKeyCIDNamespace is the content namespace for DHT provider
@@ -58,11 +59,11 @@ func NewStreamBridge(rt *Runtime) *StreamBridge {
 
 // HandlePublicKeyStream handles requests for the server's P-256 public key
 // over a libp2p stream. The client opens a stream, and the server responds
-// with the raw uncompressed P-256 public key bytes (65 bytes: 0x04 + x + y).
+// with a FlatBuffer payload containing the uncompressed public key.
 //
 // Wire format (response):
 //
-//	pubKeyLen(4 LE) + pubKeyBytes(N)
+//	orbpro.keybroker.PublicKeyResponse (file identifier: OBPK)
 func (sb *StreamBridge) HandlePublicKeyStream(stream network.Stream) {
 	defer stream.Close()
 
@@ -75,17 +76,11 @@ func (sb *StreamBridge) HandlePublicKeyStream(stream network.Stream) {
 		return
 	}
 
-	// Write length-prefixed public key
-	header := make([]byte, 4)
-	binary.LittleEndian.PutUint32(header, uint32(len(pubKey)))
+	response := encodePublicKeyResponse(pubKey)
 
 	_ = stream.SetWriteDeadline(time.Now().Add(streamWriteDeadline))
-	if _, err := stream.Write(header); err != nil {
-		log.Debugf("stream public-key: write header failed: %v", err)
-		return
-	}
-	if _, err := stream.Write(pubKey); err != nil {
-		log.Debugf("stream public-key: write key failed: %v", err)
+	if _, err := stream.Write(response); err != nil {
+		log.Debugf("stream public-key: write response failed: %v", err)
 		return
 	}
 
@@ -97,9 +92,9 @@ func (sb *StreamBridge) HandlePublicKeyStream(stream network.Stream) {
 // stream. This is the core of the Widevine/Signal-style key exchange:
 //
 //  1. Client opens stream to /orbpro/key-broker/1.0.0
-//  2. Client sends: packetLen(4 LE) + packet(N)
+//  2. Client sends: FlatBuffer KeyBrokerRequest (identifier: OBKQ)
 //  3. Server processes via WASM HandleRequest
-//  4. Server responds: statusCode(4 LE) + responseLen(4 LE) + response(N)
+//  4. Server responds: FlatBuffer KeyBrokerResponse (identifier: OBKS)
 //  5. Stream is closed
 //
 // The packet contents are opaque to the server — the WASM CDM defines the
@@ -109,23 +104,17 @@ func (sb *StreamBridge) HandleKeyBrokerStream(stream network.Stream) {
 
 	remotePeer := stream.Conn().RemotePeer().ShortString()
 
-	// Read request packet (length-prefixed binary)
+	// Read request payload (single FlatBuffer message)
 	_ = stream.SetReadDeadline(time.Now().Add(streamReadDeadline))
-
-	var packetLen uint32
-	if err := binary.Read(stream, binary.LittleEndian, &packetLen); err != nil {
-		log.Debugf("stream key-broker: read header from %s failed: %v", remotePeer, err)
+	requestPayload, err := readStreamMessage(stream, maxStreamPacketSize)
+	if err != nil {
+		log.Debugf("stream key-broker: read message from %s failed: %v", remotePeer, err)
 		return
 	}
 
-	if packetLen == 0 || packetLen > maxStreamPacketSize {
-		log.Warnf("stream key-broker: invalid packet size %d from %s", packetLen, remotePeer)
-		return
-	}
-
-	packet := make([]byte, packetLen)
-	if _, err := io.ReadFull(stream, packet); err != nil {
-		log.Debugf("stream key-broker: read packet from %s failed: %v", remotePeer, err)
+	packet, err := decodeKeyBrokerRequest(requestPayload)
+	if err != nil {
+		log.Warnf("stream key-broker: invalid request from %s: %v", remotePeer, err)
 		return
 	}
 
@@ -139,35 +128,84 @@ func (sb *StreamBridge) HandleKeyBrokerStream(stream network.Stream) {
 	response, status, err := sb.runtime.HandleRequest(ctx, packet, "")
 	if err != nil {
 		log.Errorf("stream key-broker: HandleRequest failed for %s: %v", remotePeer, err)
-		// Send error status
+		errorPayload := encodeKeyBrokerResponse(0xFFFFFFFF, nil)
 		_ = stream.SetWriteDeadline(time.Now().Add(streamWriteDeadline))
-		errResp := make([]byte, 8)
-		binary.LittleEndian.PutUint32(errResp[0:4], 0xFFFFFFFF) // -1 as uint32
-		binary.LittleEndian.PutUint32(errResp[4:8], 0)
-		_, _ = stream.Write(errResp)
+		_, _ = stream.Write(errorPayload)
 		return
 	}
 
-	// Write response: statusCode(4 LE) + responseLen(4 LE) + response(N)
+	responsePayload := encodeKeyBrokerResponse(uint32(status), response)
+
 	_ = stream.SetWriteDeadline(time.Now().Add(streamWriteDeadline))
-
-	respHeader := make([]byte, 8)
-	binary.LittleEndian.PutUint32(respHeader[0:4], uint32(status))
-	binary.LittleEndian.PutUint32(respHeader[4:8], uint32(len(response)))
-
-	if _, err := stream.Write(respHeader); err != nil {
-		log.Debugf("stream key-broker: write header to %s failed: %v", remotePeer, err)
+	if _, err := stream.Write(responsePayload); err != nil {
+		log.Debugf("stream key-broker: write response to %s failed: %v", remotePeer, err)
 		return
-	}
-	if len(response) > 0 {
-		if _, err := stream.Write(response); err != nil {
-			log.Debugf("stream key-broker: write response to %s failed: %v", remotePeer, err)
-			return
-		}
 	}
 
 	log.Debugf("stream key-broker: exchange with %s completed (status=%d, %d bytes)",
 		remotePeer, status, len(response))
+}
+
+func readStreamMessage(stream network.Stream, maxBytes int) ([]byte, error) {
+	limitedReader := io.LimitReader(stream, int64(maxBytes+1))
+	message, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return nil, err
+	}
+	if len(message) == 0 {
+		return nil, fmt.Errorf("empty message")
+	}
+	if len(message) > maxBytes {
+		return nil, fmt.Errorf("message exceeds %d-byte limit", maxBytes)
+	}
+	return message, nil
+}
+
+func encodePublicKeyResponse(pubKey []byte) []byte {
+	builder := flatbuffers.NewBuilder(96)
+	pubKeyOffset := builder.CreateByteVector(pubKey)
+	keybroker.PublicKeyResponseStart(builder)
+	keybroker.PublicKeyResponseAddPublicKey(builder, pubKeyOffset)
+	root := keybroker.PublicKeyResponseEnd(builder)
+	keybroker.FinishPublicKeyResponseBuffer(builder, root)
+	return builder.FinishedBytes()
+}
+
+func decodeKeyBrokerRequest(message []byte) ([]byte, error) {
+	if !keybroker.KeyBrokerRequestBufferHasIdentifier(message) {
+		return nil, fmt.Errorf("unexpected request file identifier")
+	}
+
+	req := keybroker.GetRootAsKeyBrokerRequest(message, 0)
+	packet := req.PacketBytes()
+	if len(packet) == 0 {
+		return nil, fmt.Errorf("empty packet payload")
+	}
+	if len(packet) > maxStreamPacketSize {
+		return nil, fmt.Errorf("packet exceeds %d-byte limit", maxStreamPacketSize)
+	}
+
+	packetCopy := make([]byte, len(packet))
+	copy(packetCopy, packet)
+	return packetCopy, nil
+}
+
+func encodeKeyBrokerResponse(status uint32, packet []byte) []byte {
+	builder := flatbuffers.NewBuilder(len(packet) + 64)
+
+	var packetOffset flatbuffers.UOffsetT
+	if len(packet) > 0 {
+		packetOffset = builder.CreateByteVector(packet)
+	}
+
+	keybroker.KeyBrokerResponseStart(builder)
+	keybroker.KeyBrokerResponseAddStatus(builder, status)
+	if len(packet) > 0 {
+		keybroker.KeyBrokerResponseAddPacket(builder, packetOffset)
+	}
+	root := keybroker.KeyBrokerResponseEnd(builder)
+	keybroker.FinishKeyBrokerResponseBuffer(builder, root)
+	return builder.FinishedBytes()
 }
 
 // PublicKeyCID computes the CID for the server's P-256 public key.
