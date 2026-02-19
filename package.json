@@ -38,7 +38,10 @@
     "check:versions": "node scripts/check-version-consistency.js",
     "precommit": "npm run check:versions && npm run test",
     "prepare": "husky",
-    "test:plugin-harness": "scripts/run-plugin-harness.sh"
+    "test:plugin-harness": "scripts/run-plugin-harness.sh",
+    "generate:plugin-sdk:key-broker-bindings": "node packages/plugin-sdk/scripts/generate-key-broker-bindings.mjs",
+    "generate:orbpro-key-broker-bindings": "node scripts/generate-orbpro-key-broker-bindings.mjs",
+    "test:plugin-sdk:key-broker-client": "node packages/plugin-sdk/scripts/key-broker-test-client.mjs"
   },
   "repository": {
     "type": "git",
@@ -58,6 +61,7 @@
   "author": "Space Data Network",
   "license": "MIT",
   "devDependencies": {
-    "baseline-browser-mapping": "^2.9.19"
+    "baseline-browser-mapping": "^2.9.19",
+    "flatc-wasm": "^25.12.19-wasm.43"
   }
 }
