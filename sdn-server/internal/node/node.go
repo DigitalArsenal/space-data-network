@@ -2,12 +2,12 @@
 package node
 
 import (
-	"errors"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,17 +60,17 @@ const (
 
 // Node represents a Space Data Network node.
 type Node struct {
-	host      host.Host
-	dht       *dht.IpfsDHT
-	pubsub    *pubsub.PubSub
-	topics    map[string]*pubsub.Topic
-	flatc     *wasm.FlatcModule
-	hdwallet  *wasm.HDWalletModule
-	identity  *wasm.DerivedIdentity // nil if using random key (no HD wallet)
-	validator *sds.Validator
-	store     *storage.FlatSQLStore
-	protocol  *protocol.SDSExchangeHandler
-	plugins   *plugins.Manager
+	host       host.Host
+	dht        *dht.IpfsDHT
+	pubsub     *pubsub.PubSub
+	topics     map[string]*pubsub.Topic
+	flatc      *wasm.FlatcModule
+	hdwallet   *wasm.HDWalletModule
+	identity   *wasm.DerivedIdentity // nil if using random key (no HD wallet)
+	validator  *sds.Validator
+	store      *storage.FlatSQLStore
+	protocol   *protocol.SDSExchangeHandler
+	plugins    *plugins.Manager
 	license    *licenseplugin.Plugin
 	keyBroker  *wasmlicenseplugin.Plugin
 	epmService *epm.Service
@@ -373,17 +373,31 @@ func (n *Node) init() error {
 
 	// Register a fallback OrbPro key broker WASM from explicit path.
 	if !registeredFromCatalog && n.keyBroker == nil {
+		fallbackWasmPath := ""
 		if wasmPath := n.findKeyBrokerWasmPath(); wasmPath != "" {
-			// H11: Compute and log SHA-256 hash of WASM file for integrity verification.
-			if kbBytes, err := os.ReadFile(wasmPath); err == nil {
+			fallbackWasmPath = wasmPath
+			kbBytes, decryptedEnvelope, loadErr := n.loadKeyBrokerWASMBytes(wasmPath)
+			if loadErr != nil {
+				log.Warnf("Failed to load OrbPro key broker plugin from %s: %v", wasmPath, loadErr)
+			} else {
 				kbHash := sha256.Sum256(kbBytes)
-				log.Infof("WASM module loaded: %s (sha256: %s)", wasmPath, hex.EncodeToString(kbHash[:]))
+				if decryptedEnvelope {
+					log.Infof(
+						"WASM module loaded (decrypted from envelope): %s (sha256: %s)",
+						wasmPath,
+						hex.EncodeToString(kbHash[:]),
+					)
+				} else {
+					log.Infof("WASM module loaded: %s (sha256: %s)", wasmPath, hex.EncodeToString(kbHash[:]))
+				}
+				n.keyBroker = wasmlicenseplugin.NewFromBytes(kbBytes)
 			}
-			n.keyBroker = wasmlicenseplugin.New(wasmPath)
+		}
+		if n.keyBroker != nil {
 			if err := n.plugins.Register(n.keyBroker); err != nil {
 				log.Warnf("Failed to register plugin %q: %v", wasmlicenseplugin.ID, err)
 			} else {
-				log.Infof("OrbPro key broker WASM registered from %s", wasmPath)
+				log.Infof("OrbPro key broker WASM registered from %s", fallbackWasmPath)
 			}
 		}
 	}
@@ -430,6 +444,8 @@ func (n *Node) findPluginDecryptPrivateKey() ([]byte, error) {
 		"SDN_PLUGIN_KEY",
 		"SDN_PLUGIN_RECIPIENT_KEY",
 		"SDN_PLUGIN_RECIPIENT_KEY_B64",
+		"ORBPRO_SERVER_PRIVATE_KEY_HEX",
+		"PLUGIN_SERVER_PRIVATE_KEY_HEX",
 	}
 	for _, envName := range envNames {
 		if raw := strings.TrimSpace(os.Getenv(envName)); raw != "" {
