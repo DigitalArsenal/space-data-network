@@ -27,6 +27,7 @@
     "webui": "IPFS=./desktop/node_modules/kubo/kubo/ipfs && $IPFS config --json API.HTTPHeaders.Access-Control-Allow-Origin '[\"http://localhost:3117\", \"http://127.0.0.1:5001\", \"https://webui.ipfs.io\"]' && $IPFS config --json API.HTTPHeaders.Access-Control-Allow-Methods '[\"PUT\", \"POST\"]' && $IPFS daemon & until curl -s -o /dev/null http://127.0.0.1:5001/api/v0/version -X POST; do sleep 1; done && echo 'IPFS daemon ready' && PORT=3117 npm --prefix webui start",
     "webui:build": "npm --prefix webui run build",
     "build:js": "cd sdn-js && npm run build",
+    "plugin-harness": "scripts/run-plugin-harness.sh",
     "spaceaware:build": "npm --prefix packages/spaceaware run build",
     "spaceaware:serve": "npm --prefix packages/spaceaware run serve",
     "lint:js": "cd sdn-js && npm run lint",
@@ -36,7 +37,8 @@
     "update:deps": "bash scripts/update-deps.sh",
     "check:versions": "node scripts/check-version-consistency.js",
     "precommit": "npm run check:versions && npm run test",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:plugin-harness": "scripts/run-plugin-harness.sh"
   },
   "repository": {
     "type": "git",

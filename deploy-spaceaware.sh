@@ -21,10 +21,6 @@ KUBO_API_PORT=5002
 KUBO_GATEWAY_PORT=8081
 KUBO_SWARM_PORT=4002
 
-ORBPRO_BUILD_ROOT="${ORBPRO_BUILD_ROOT:-$ROOT_DIR/../OrbPro/Build}"
-ORBPRO_MODULE_DIR="${ORBPRO_MODULE_DIR:-$ORBPRO_BUILD_ROOT/OrbPro}"
-ORBPRO_BASE_DIR="${ORBPRO_BASE_DIR:-$ORBPRO_BUILD_ROOT/CesiumUnminified}"
-
 log() {
   printf "[deploy-spaceaware] %s\n" "$*"
 }
@@ -40,16 +36,6 @@ require_cmd ssh
 require_cmd rsync
 require_cmd npm
 
-if [[ ! -f "$ORBPRO_MODULE_DIR/OrbPro.esm.js" ]]; then
-  echo "Missing OrbPro module at $ORBPRO_MODULE_DIR/OrbPro.esm.js" >&2
-  exit 1
-fi
-
-if [[ ! -d "$ORBPRO_BASE_DIR/Workers" ]]; then
-  echo "Missing OrbPro base assets at $ORBPRO_BASE_DIR (Workers directory required)" >&2
-  exit 1
-fi
-
 log "Building WebUI (React SPA)"
 npm --prefix "$ROOT_DIR/webui" install
 npm --prefix "$ROOT_DIR/webui" run build
@@ -62,14 +48,6 @@ log "Syncing sdn-server source to $SERVER"
 rsync -az --delete --exclude=.git \
   "$ROOT_DIR/sdn-server/" \
   "$SERVER:$REMOTE_SRC/"
-
-log "Syncing OrbPro as frontend homepage to $SERVER"
-rsync -az --delete --exclude='CesiumUnminified' \
-  "$ORBPRO_MODULE_DIR/" \
-  "$SERVER:$REMOTE_FRONTEND_DIR/"
-rsync -az --delete \
-  "$ORBPRO_BASE_DIR/" \
-  "$SERVER:$REMOTE_FRONTEND_DIR/CesiumUnminified/"
 
 log "Syncing WebUI build to $SERVER"
 rsync -az --delete \
@@ -189,14 +167,13 @@ ssh "${SSH_OPTS[@]}" "$SERVER" "
     echo 'SDN_PLUGIN_ROOT=$REMOTE_PLUGIN_ROOT' >> '$REMOTE_ENV_FILE'
   fi
 
-  if ! grep -q '^ORBPRO_KEY_BROKER_WASM_PATH=' '$REMOTE_ENV_FILE'; then
-    echo 'ORBPRO_KEY_BROKER_WASM_PATH=$REMOTE_WASM_DIR/sdn-license-plugin.wasm' >> '$REMOTE_ENV_FILE'
+  if ! grep -q '^PLUGIN_KEY_BROKER_WASM_PATH=' '$REMOTE_ENV_FILE'; then
+    echo 'PLUGIN_KEY_BROKER_WASM_PATH=$REMOTE_WASM_DIR/sdn-license-plugin.wasm' >> '$REMOTE_ENV_FILE'
   fi
-
-  if ! grep -q '^ORBPRO_SERVER_PRIVATE_KEY_HEX=' '$REMOTE_ENV_FILE'; then
+  if ! grep -q '^PLUGIN_SERVER_PRIVATE_KEY_HEX=' '$REMOTE_ENV_FILE'; then
     new_key=\$(hexdump -n 32 -e '32/1 \"%02x\"' /dev/urandom)
-    echo \"ORBPRO_SERVER_PRIVATE_KEY_HEX=\$new_key\" >> '$REMOTE_ENV_FILE'
-    echo '[deploy-spaceaware] Generated new ORBPRO_SERVER_PRIVATE_KEY_HEX in $REMOTE_ENV_FILE'
+    echo \"PLUGIN_SERVER_PRIVATE_KEY_HEX=\$new_key\" >> '$REMOTE_ENV_FILE'
+    echo '[deploy-spaceaware] Generated new PLUGIN_SERVER_PRIVATE_KEY_HEX in $REMOTE_ENV_FILE'
   fi
 
   if ! grep -q '^DERIVATION_SECRET=' '$REMOTE_ENV_FILE'; then
@@ -205,9 +182,9 @@ ssh "${SSH_OPTS[@]}" "$SERVER" "
     echo '[deploy-spaceaware] Generated new DERIVATION_SECRET in $REMOTE_ENV_FILE'
   fi
 
-  if ! grep -q '^ORBPRO_KEYSERVER_ALLOWED_DOMAINS=' '$REMOTE_ENV_FILE'; then
-    echo 'ORBPRO_KEYSERVER_ALLOWED_DOMAINS=spaceaware.io,www.spaceaware.io' >> '$REMOTE_ENV_FILE'
-    echo '[deploy-spaceaware] Added default ORBPRO_KEYSERVER_ALLOWED_DOMAINS in $REMOTE_ENV_FILE'
+  if ! grep -q '^PLUGIN_KEYSERVER_ALLOWED_DOMAINS=' '$REMOTE_ENV_FILE'; then
+    echo 'PLUGIN_KEYSERVER_ALLOWED_DOMAINS=spaceaware.io,www.spaceaware.io' >> '$REMOTE_ENV_FILE'
+    echo '[deploy-spaceaware] Added default PLUGIN_KEYSERVER_ALLOWED_DOMAINS in $REMOTE_ENV_FILE'
   fi
 
   if ! grep -q '^SDN_WALLET_UI_PATH=' '$REMOTE_ENV_FILE'; then
