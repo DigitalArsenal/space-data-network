@@ -1,0 +1,35 @@
+{
+  "name": "@spacedatanetwork/plugin-sdk",
+  "version": "1.0.0",
+  "description": "Plugin SDK contracts and protocol tooling for Space Data Network plugins",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./key-broker-codec": "./src/key-broker-codec.js"
+  },
+  "scripts": {
+    "generate:key-broker-bindings": "node scripts/generate-key-broker-bindings.mjs",
+    "test:key-broker-client": "node scripts/key-broker-test-client.mjs"
+  },
+  "dependencies": {
+    "@chainsafe/libp2p-noise": "^16.1.0",
+    "@libp2p/websockets": "^9.2.0",
+    "@multiformats/multiaddr": "^12.3.5",
+    "flatbuffers": "^25.9.23",
+    "libp2p": "^2.6.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.0",
+    "flatc-wasm": "^25.12.19-wasm.43"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "files": [
+    "schemas",
+    "src",
+    "README.md",
+    "scripts/key-broker-test-client.mjs"
+  ]
+}

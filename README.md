@@ -207,11 +207,23 @@ SDN extends IPFS with space-specific optimizations:
 | [schemas](./schemas) | FlatBuffer schema definitions | FlatBuffers |
 | [kubo](./kubo) | IPFS reference implementation | Go |
 
-OrbPro licensing/key exchange stream schemas are versioned in:
+OrbPro licensing/key exchange stream schemas (v1.0) are versioned in the plugin SDK:
 
-- `schemas/orbpro/key-broker/PublicKeyResponse.fbs`
-- `schemas/orbpro/key-broker/KeyBrokerRequest.fbs`
-- `schemas/orbpro/key-broker/KeyBrokerResponse.fbs`
+- `packages/plugin-sdk/schemas/orbpro/key-broker/PublicKeyResponse.fbs`
+- `packages/plugin-sdk/schemas/orbpro/key-broker/KeyBrokerRequest.fbs`
+- `packages/plugin-sdk/schemas/orbpro/key-broker/KeyBrokerResponse.fbs`
+
+Regenerate plugin SDK + SDN Go bindings from these schemas (via `flatc-wasm`):
+
+```bash
+npm run generate:orbpro-key-broker-bindings
+```
+
+Run the plugin SDK protocol test client:
+
+```bash
+npm run test:plugin-sdk:key-broker-client -- --node-info-url http://127.0.0.1:5001/api/node/info
+```
 
 ### Server Packages
 
