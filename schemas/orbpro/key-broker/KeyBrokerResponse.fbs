@@ -1,0 +1,13 @@
+namespace orbpro.keybroker;
+
+// Response envelope returned by /orbpro/key-broker/1.0.0.
+table KeyBrokerResponse {
+  // Status code from plugin request handling (0 = success).
+  status:uint;
+
+  // Opaque protocol-v2 response packet bytes.
+  packet:[ubyte];
+}
+
+root_type KeyBrokerResponse;
+file_identifier "OBKS";
