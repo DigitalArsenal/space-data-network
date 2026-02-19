@@ -59,90 +59,337 @@ func New(ctx context.Context, wasmBytes []byte) (*Runtime, error) {
 		return nil, fmt.Errorf("failed to instantiate WASI: %w", err)
 	}
 
-	// Custom "sdn" host module with plugin-specific host functions.
-	_, err := r.NewHostModuleBuilder("sdn").
-		NewFunctionBuilder().
-		WithGoModuleFunction(
-			api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-				stack[0] = api.EncodeI64(time.Now().UnixMilli())
-			}),
-			nil, // no params
-			[]api.ValueType{api.ValueTypeI64},
-		).
-		Export("clock_now_ms").
-		NewFunctionBuilder().
-		WithGoModuleFunction(
-			api.GoModuleFunc(func(_ context.Context, mod api.Module, stack []uint64) {
-				ptr := api.DecodeU32(stack[0])
-				length := api.DecodeU32(stack[1])
-				// Cap allocation to prevent guest from requesting unbounded host memory.
-				const maxRandomBytes = 8192
-				if length > maxRandomBytes {
-					stack[0] = api.EncodeI32(-1)
-					return
-				}
-				buf := make([]byte, length)
-				if _, err := rand.Read(buf); err != nil {
-					stack[0] = api.EncodeI32(-1)
-					return
-				}
-				if !mod.Memory().Write(ptr, buf) {
-					stack[0] = api.EncodeI32(-1)
-					return
-				}
-				stack[0] = 0
-			}),
-			[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32},
-			[]api.ValueType{api.ValueTypeI32},
-		).
-		Export("random_bytes").
-		NewFunctionBuilder().
-		WithGoModuleFunction(
-			api.GoModuleFunc(func(_ context.Context, mod api.Module, stack []uint64) {
-				level := api.DecodeI32(stack[0])
-				ptr := api.DecodeU32(stack[1])
-				length := api.DecodeU32(stack[2])
-				// Cap log message length to prevent log flooding / OOM.
-				const maxLogLen = 4096
-				if length > maxLogLen {
-					length = maxLogLen
-				}
-				data, ok := mod.Memory().Read(ptr, length)
-				if !ok {
-					return
-				}
-				// Sanitize: replace control characters (except space) to prevent log injection.
-				msg := strings.Map(func(r rune) rune {
-					if r < 0x20 && r != ' ' {
-						return '?'
+	registerHostModule := func(name string) error {
+		builder := r.NewHostModuleBuilder(name)
+
+		builder.NewFunctionBuilder().
+			WithGoModuleFunction(
+				api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
+					stack[0] = api.EncodeI64(time.Now().UnixMilli())
+				}),
+				nil, // no params
+				[]api.ValueType{api.ValueTypeI64},
+			).
+			Export("clock_now_ms")
+
+		builder.NewFunctionBuilder().
+			WithGoModuleFunction(
+				api.GoModuleFunc(func(_ context.Context, mod api.Module, stack []uint64) {
+					ptr := api.DecodeU32(stack[0])
+					length := api.DecodeU32(stack[1])
+					// Cap allocation to prevent guest from requesting unbounded host memory.
+					const maxRandomBytes = 8192
+					if length > maxRandomBytes {
+						stack[0] = api.EncodeI32(-1)
+						return
 					}
-					return r
-				}, string(data))
-				switch {
-				case level <= 0:
-					log.Debugf("[plugin] %s", msg)
-				case level == 1:
-					log.Infof("[plugin] %s", msg)
-				case level == 2:
-					log.Warnf("[plugin] %s", msg)
-				default:
-					log.Errorf("[plugin] %s", msg)
-				}
-			}),
-			[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
-			nil, // void return
-		).
-		Export("log").
-		Instantiate(ctx)
-	if err != nil {
-		r.Close(ctx)
-		return nil, fmt.Errorf("failed to register sdn host module: %w", err)
+					buf := make([]byte, length)
+					if _, err := rand.Read(buf); err != nil {
+						stack[0] = api.EncodeI32(-1)
+						return
+					}
+					if !mod.Memory().Write(ptr, buf) {
+						stack[0] = api.EncodeI32(-1)
+						return
+					}
+					stack[0] = 0
+				}),
+				[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32},
+				[]api.ValueType{api.ValueTypeI32},
+			).
+			Export("random_bytes")
+
+		builder.NewFunctionBuilder().
+			WithGoModuleFunction(
+				api.GoModuleFunc(func(_ context.Context, mod api.Module, stack []uint64) {
+					level := api.DecodeI32(stack[0])
+					ptr := api.DecodeU32(stack[1])
+					length := api.DecodeU32(stack[2])
+					// Cap log message length to prevent log flooding / OOM.
+					const maxLogLen = 4096
+					if length > maxLogLen {
+						length = maxLogLen
+					}
+					data, ok := mod.Memory().Read(ptr, length)
+					if !ok {
+						return
+					}
+					// Sanitize: replace control characters (except space) to prevent log injection.
+					msg := strings.Map(func(r rune) rune {
+						if r < 0x20 && r != ' ' {
+							return '?'
+						}
+						return r
+					}, string(data))
+					switch {
+					case level <= 0:
+						log.Debugf("[plugin] %s", msg)
+					case level == 1:
+						log.Infof("[plugin] %s", msg)
+					case level == 2:
+						log.Warnf("[plugin] %s", msg)
+					default:
+						log.Errorf("[plugin] %s", msg)
+					}
+				}),
+				[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
+				nil, // void return
+			).
+			Export("log")
+
+		if name == "env" {
+			exportI32ToI32 := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
+							stack[0] = api.EncodeI32(0)
+						}),
+						[]api.ValueType{api.ValueTypeI32},
+						[]api.ValueType{api.ValueTypeI32},
+					).
+					Export(symbol)
+			}
+			exportNoopI32 := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
+						[]api.ValueType{api.ValueTypeI32},
+						nil,
+					).
+					Export(symbol)
+			}
+			exportNoop := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
+						nil,
+						nil,
+					).
+					Export(symbol)
+			}
+			exportI32x2ToI32 := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
+							stack[0] = api.EncodeI32(0)
+						}),
+						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32},
+						[]api.ValueType{api.ValueTypeI32},
+					).
+					Export(symbol)
+			}
+			exportI32x3ToI32 := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
+							stack[0] = api.EncodeI32(0)
+						}),
+						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
+						[]api.ValueType{api.ValueTypeI32},
+					).
+					Export(symbol)
+			}
+			exportI32x3Noop := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
+						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
+						nil,
+					).
+					Export(symbol)
+			}
+			exportI32x4ToI32 := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
+							stack[0] = api.EncodeI32(0)
+						}),
+						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
+						[]api.ValueType{api.ValueTypeI32},
+					).
+					Export(symbol)
+			}
+			exportI32x4Noop := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
+						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
+						nil,
+					).
+					Export(symbol)
+			}
+			exportI32x5ToI32 := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
+							stack[0] = api.EncodeI32(0)
+						}),
+						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
+						[]api.ValueType{api.ValueTypeI32},
+					).
+					Export(symbol)
+			}
+			exportI32x5Noop := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
+						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
+						nil,
+					).
+					Export(symbol)
+			}
+			exportI32x6ToI32 := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
+							stack[0] = api.EncodeI32(0)
+						}),
+						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
+						[]api.ValueType{api.ValueTypeI32},
+					).
+					Export(symbol)
+			}
+			exportI32x6Noop := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
+						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
+						nil,
+					).
+					Export(symbol)
+			}
+			exportI32ToI64 := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
+							stack[0] = api.EncodeI64(0)
+						}),
+						[]api.ValueType{api.ValueTypeI32},
+						[]api.ValueType{api.ValueTypeI64},
+					).
+					Export(symbol)
+			}
+			exportI32I32I64I64I64Noop := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
+						[]api.ValueType{
+							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI64, api.ValueTypeI64, api.ValueTypeI64,
+						},
+						nil,
+					).
+					Export(symbol)
+			}
+			exportI32x7Noop := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
+						[]api.ValueType{
+							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32,
+							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32,
+						},
+						nil,
+					).
+					Export(symbol)
+			}
+			exportI32x8ToI32 := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
+							stack[0] = api.EncodeI32(0)
+						}),
+						[]api.ValueType{
+							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32,
+							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32,
+						},
+						[]api.ValueType{api.ValueTypeI32},
+					).
+					Export(symbol)
+			}
+			exportI32x10ToI32 := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
+							stack[0] = api.EncodeI32(0)
+						}),
+						[]api.ValueType{
+							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32,
+							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32,
+						},
+						[]api.ValueType{api.ValueTypeI32},
+					).
+					Export(symbol)
+			}
+
+			exportI32x2Noop := func(symbol string) {
+				builder.NewFunctionBuilder().
+					WithGoModuleFunction(
+						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
+						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32},
+						nil,
+					).
+					Export(symbol)
+			}
+
+			exportI32x2Noop("invoke_vi")
+			exportI32ToI32("__cxa_find_matching_catch_3")
+			exportI32x3ToI32("invoke_iii")
+			builder.NewFunctionBuilder().
+				WithGoModuleFunction(
+					api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
+						stack[0] = api.EncodeI32(0)
+					}),
+					nil,
+					[]api.ValueType{api.ValueTypeI32},
+				).
+				Export("__cxa_find_matching_catch_2")
+			exportNoopI32("__resumeException")
+			exportI32x6ToI32("invoke_iiiiii")
+			exportI32x6Noop("invoke_viiiii")
+			exportI32x5ToI32("invoke_iiiii")
+			exportI32ToI64("invoke_j")
+			exportI32x4ToI32("invoke_iiii")
+			exportI32I32I64I64I64Noop("invoke_vijjj")
+			exportI32x5Noop("invoke_viiii")
+			exportI32x4Noop("invoke_viii")
+			exportI32x2ToI32("invoke_ii")
+			exportNoopI32("invoke_v")
+			exportI32ToI32("invoke_i")
+			exportI32x8ToI32("invoke_iiiiiiii")
+			exportI32x3Noop("invoke_vii")
+			exportI32x7Noop("invoke_viiiiii")
+			exportI32ToI32("llvm_eh_typeid_for")
+			exportI32ToI32("__cxa_begin_catch")
+			exportNoop("__cxa_end_catch")
+			exportNoopI32("__throw_exception_with_stack_trace")
+			exportI32x10ToI32("invoke_iiiiiiiiii")
+		}
+
+		_, err := builder.Instantiate(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to register %s host module: %w", name, err)
+		}
+		return nil
+	}
+
+	// Support both "sdn" and "env" module imports for plugin host calls.
+	for _, hostModuleName := range []string{"sdn", "env"} {
+		if err := registerHostModule(hostModuleName); err != nil {
+			r.Close(ctx)
+			return nil, err
+		}
 	}
 
 	module, err := r.Instantiate(ctx, wasmBytes)
 	if err != nil {
 		r.Close(ctx)
 		return nil, fmt.Errorf("failed to instantiate WASM module: %w", err)
+	}
+	if initializeFn := module.ExportedFunction("_initialize"); initializeFn != nil {
+		if _, err := initializeFn.Call(ctx); err != nil {
+			r.Close(ctx)
+			return nil, fmt.Errorf("failed to run _initialize: %w", err)
+		}
 	}
 
 	rt := &Runtime{
@@ -179,7 +426,7 @@ func (rt *Runtime) Close(ctx context.Context) error {
 
 // Init calls plugin_init with the binary config blob.
 // Config format: privateKey(32) + publicKey(65) + secretLen(4 LE) + secret(N)
-//   + domainsCsv(NUL-terminated) + epochPeriodMs(8 LE) + maxSkewMs(8 LE) + leaseMs(8 LE)
+//   - domainsCsv(NUL-terminated) + epochPeriodMs(8 LE) + maxSkewMs(8 LE) + leaseMs(8 LE)
 func (rt *Runtime) Init(ctx context.Context, config []byte) error {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()

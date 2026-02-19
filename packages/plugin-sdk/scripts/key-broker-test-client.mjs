@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
 import { createLibp2p } from "libp2p";
+import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
 import { noise } from "@chainsafe/libp2p-noise";
+import { yamux } from "@chainsafe/libp2p-yamux";
 import { multiaddr } from "@multiformats/multiaddr";
 import {
   KEY_BROKER_PROTOCOL_ID,
@@ -12,7 +14,7 @@ import {
   encodeKeyBrokerRequest,
 } from "../src/index.js";
 
-const DEFAULT_NODE_INFO_URL = "http://127.0.0.1:5001/api/node/info";
+const DEFAULT_NODE_INFO_URL = "http://127.0.0.1:5010/api/node/info";
 const DEFAULT_TIMEOUT_MS = 15000;
 
 function parseArgs(argv) {
@@ -95,16 +97,22 @@ function appendPeerId(address, peerId) {
 }
 
 function selectBestAddress(addresses, peerId) {
-  const scored = [...addresses].sort((a, b) => scoreAddress(b) - scoreAddress(a));
+  const preferTcp = typeof window === "undefined";
+  const scored = [...addresses].sort(
+    (a, b) => scoreAddress(b, preferTcp) - scoreAddress(a, preferTcp),
+  );
   return appendPeerId(scored[0], peerId);
 }
 
-function scoreAddress(address) {
+function scoreAddress(address, preferTcp) {
   let score = 0;
   if (address.includes("/wss")) {
     score += 200;
   } else if (address.includes("/ws")) {
     score += 100;
+  }
+  if (preferTcp && address.includes("/tcp/") && !address.includes("/ws")) {
+    score += 300;
   }
   if (!address.includes("/ip4/127.0.0.1/") && !address.includes("/ip6/::1/")) {
     score += 50;
@@ -231,8 +239,9 @@ async function main() {
     args.multiaddr || (await resolveMultiaddrFromNodeInfo(args.nodeInfoUrl));
 
   const node = await createLibp2p({
-    transports: [webSockets()],
+    transports: [tcp(), webSockets()],
     connectionEncrypters: [noise()],
+    streamMuxers: [yamux()],
   });
 
   try {

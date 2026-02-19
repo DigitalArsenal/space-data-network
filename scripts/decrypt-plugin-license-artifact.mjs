@@ -286,11 +286,16 @@ function findEncryptedArtifactEntry(manifest) {
 
   return (
     manifest.files.find((entry) =>
-      String(entry?.outputFile || "") === "plugin-licensing-server.sdn.plugin",
+      [
+        "plugin-licensing-server.sdn.plugin",
+        "orbpro-licensing-server.sdn.plugin",
+      ].includes(String(entry?.outputFile || "")),
     ) ||
     manifest.files.find((entry) =>
       String(entry?.path || "") === "dist/protection-key-server.wasm" ||
-      String(entry?.path || "").endsWith("/protection-key-server.wasm"),
+      String(entry?.path || "").endsWith("/protection-key-server.wasm") ||
+      String(entry?.path || "") === "dist/orbpro-licensing-server.sdn.plugin" ||
+      String(entry?.path || "").endsWith("/orbpro-licensing-server.sdn.plugin"),
     ) ||
     null
   );
@@ -335,7 +340,9 @@ function decryptWithDirectManifest(artifactDir, privateKey, outputPath, manifest
 
   const fileEntry = findEncryptedArtifactEntry(manifest);
   if (!fileEntry) {
-  throw new Error("missing plugin-licensing-server.sdn.plugin entry");
+    throw new Error(
+      "missing plugin artifact entry (plugin-licensing-server.sdn.plugin or orbpro-licensing-server.sdn.plugin)",
+    );
   }
 
   const envelopePath = path.join(artifactDir, String(fileEntry.outputFile || ""));
