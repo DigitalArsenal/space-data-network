@@ -219,6 +219,28 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				adminScheme = "https"
 			}
 			adminMux := http.NewServeMux()
+			var wsUpgradeProxy http.Handler
+
+			if adminTLS {
+				listenAddrStrings := make([]string, 0, len(n.ListenAddrs()))
+				for _, addr := range n.ListenAddrs() {
+					listenAddrStrings = append(listenAddrStrings, addr.String())
+				}
+				if wsTarget, sourceAddr := resolveLocalLibp2pWsProxyTarget(listenAddrStrings); wsTarget != nil {
+					wsProxy := httputil.NewSingleHostReverseProxy(wsTarget)
+					wsProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+						http.Error(w, "upstream libp2p websocket unavailable", http.StatusBadGateway)
+					}
+					wsUpgradeProxy = wsProxy
+					log.Infof(
+						"Proxying secure websocket upgrades to local libp2p transport (%s -> %s)",
+						sourceAddr,
+						wsTarget.String(),
+					)
+				} else {
+					log.Warn("Admin TLS enabled but no local /ws libp2p listen address was discovered; secure browser key exchange may fail")
+				}
+			}
 
 			// Plugin routes
 			if n.PluginManager() != nil {
@@ -541,6 +563,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				WriteTimeout:      60 * time.Second,
 				IdleTimeout:       120 * time.Second,
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					// Tunnel secure websocket upgrades to the local libp2p ws listener.
+					if wsUpgradeProxy != nil && isWebSocketUpgradeRequest(r) {
+						wsUpgradeProxy.ServeHTTP(w, r)
+						return
+					}
+
 					// Global security headers on ALL responses
 					w.Header().Set("X-Content-Type-Options", "nosniff")
 					w.Header().Set("X-Frame-Options", "DENY")
@@ -749,6 +777,71 @@ func defaultPortForScheme(scheme string) string {
 	}
 	if scheme == "http" {
 		return "80"
+	}
+	return ""
+}
+
+func isWebSocketUpgradeRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if !headerHasToken(r.Header.Get("Connection"), "upgrade") {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket")
+}
+
+func headerHasToken(rawValue string, token string) bool {
+	target := strings.ToLower(strings.TrimSpace(token))
+	if target == "" {
+		return false
+	}
+	for _, entry := range strings.Split(strings.ToLower(rawValue), ",") {
+		if strings.TrimSpace(entry) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveLocalLibp2pWsProxyTarget(listenAddrs []string) (*url.URL, string) {
+	for _, rawAddr := range listenAddrs {
+		addr := strings.TrimSpace(rawAddr)
+		if addr == "" {
+			continue
+		}
+		if strings.Contains(addr, "/wss") || !strings.Contains(addr, "/ws") {
+			continue
+		}
+		port := extractTCPPortFromMultiaddr(addr)
+		if port == "" {
+			continue
+		}
+
+		target, err := url.Parse("http://127.0.0.1:" + port)
+		if err != nil {
+			continue
+		}
+		return target, addr
+	}
+
+	return nil, ""
+}
+
+func extractTCPPortFromMultiaddr(addr string) string {
+	clean := strings.Trim(addr, "/")
+	if clean == "" {
+		return ""
+	}
+	parts := strings.Split(clean, "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] != "tcp" {
+			continue
+		}
+		port := strings.TrimSpace(parts[i+1])
+		if port != "" {
+			return port
+		}
 	}
 	return ""
 }
@@ -1052,18 +1145,18 @@ export const SDN_LISTEN_ADDRS = %s;
 // handleNodeInfo returns an HTTP handler that serves the node's public identity info.
 func handleNodeInfo(n *node.Node) http.HandlerFunc {
 	type nodeInfoResponse struct {
-		PeerID              string                      `json:"peer_id"`
-		ListenAddresses     []string                    `json:"listen_addresses"`
-		SigningPubKeyHex    string                      `json:"signing_pubkey_hex,omitempty"`
-		EncryptionPubHex    string                      `json:"encryption_pubkey_hex,omitempty"`
-		SigningKeyPath      string                      `json:"signing_key_path,omitempty"`
-		EncryptionKeyPath   string                      `json:"encryption_key_path,omitempty"`
-		Addresses           *wasm.CoinAddresses         `json:"addresses,omitempty"`
-		XPub                string                      `json:"xpub,omitempty"`
-		IdentityAttestation *epm.IdentityAttestation    `json:"identity_attestation,omitempty"`
-		HasEPM              bool                        `json:"has_epm"`
-		Mode                string                      `json:"mode"`
-		Version             string                      `json:"version"`
+		PeerID              string                   `json:"peer_id"`
+		ListenAddresses     []string                 `json:"listen_addresses"`
+		SigningPubKeyHex    string                   `json:"signing_pubkey_hex,omitempty"`
+		EncryptionPubHex    string                   `json:"encryption_pubkey_hex,omitempty"`
+		SigningKeyPath      string                   `json:"signing_key_path,omitempty"`
+		EncryptionKeyPath   string                   `json:"encryption_key_path,omitempty"`
+		Addresses           *wasm.CoinAddresses      `json:"addresses,omitempty"`
+		XPub                string                   `json:"xpub,omitempty"`
+		IdentityAttestation *epm.IdentityAttestation `json:"identity_attestation,omitempty"`
+		HasEPM              bool                     `json:"has_epm"`
+		Mode                string                   `json:"mode"`
+		Version             string                   `json:"version"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
