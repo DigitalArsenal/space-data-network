@@ -102,7 +102,8 @@ OrbPro key exchange streams are FlatBuffer-based:
 
 - `/orbpro/public-key/1.0.0` returns `PublicKeyResponse` (file id `OBPK`)
 - `/orbpro/key-broker/1.0.0` accepts `KeyBrokerRequest` (`OBKQ`) and returns `KeyBrokerResponse` (`OBKS`)
-- Schema source of truth lives at `schemas/orbpro/key-broker/`
+- Schema source of truth lives at `packages/plugin-sdk/schemas/orbpro/key-broker/`
+- Regenerate plugin SDK + SDN Go bindings with `flatc-wasm` from repo root: `npm run generate:orbpro-key-broker-bindings`
 
 HTTP endpoints on the admin listener:
 
