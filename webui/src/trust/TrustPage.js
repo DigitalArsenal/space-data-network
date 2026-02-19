@@ -126,6 +126,8 @@ export const TrustPage = ({
     }
   }
 
+  const chainProofs = nodeInfo?.identity_attestation?.chain_proofs || []
+
   const Wrapper = embedded ? React.Fragment : Box
 
   return (
@@ -596,6 +598,10 @@ export const TrustPage = ({
               <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 10 }}>
                 <div style={{ color: 'var(--sdn-text-secondary)' }}>Peer ID</div>
                 <div style={{ color: 'var(--sdn-accent)', fontFamily: 'SFMono-Regular,ui-monospace,Menlo,Monaco,Consolas,monospace' }}>{nodeInfo.peer_id}</div>
+                <div style={{ color: 'var(--sdn-text-secondary)' }}>Signing (Ed25519)</div>
+                <div style={{ color: 'var(--sdn-text-primary)', fontFamily: 'SFMono-Regular,ui-monospace,Menlo,Monaco,Consolas,monospace' }}>{nodeInfo.signing_pubkey_hex || 'not available'}</div>
+                <div style={{ color: 'var(--sdn-text-secondary)' }}>Encryption (X25519)</div>
+                <div style={{ color: 'var(--sdn-text-primary)', fontFamily: 'SFMono-Regular,ui-monospace,Menlo,Monaco,Consolas,monospace' }}>{nodeInfo.encryption_pubkey_hex || 'not available'}</div>
                 <div style={{ color: 'var(--sdn-text-secondary)' }}>Mode</div>
                 <div style={{ color: 'var(--sdn-text-primary)' }}>{nodeInfo.mode}</div>
                 <div style={{ color: 'var(--sdn-text-secondary)' }}>Version</div>
@@ -606,6 +612,49 @@ export const TrustPage = ({
                 </div>
               </div>
             )}
+            {nodeInfo && nodeInfo.identity_attestation
+              ? (
+                <>
+                  <h3 className='f5 mt3 mb2' style={{ color: 'var(--sdn-text-primary)' }}>Identity attestation proofs</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 10 }}>
+                    <div style={{ color: 'var(--sdn-text-secondary)' }}>Signing key</div>
+                    <div style={{ color: 'var(--sdn-text-primary)' }}>{nodeInfo.identity_attestation.signing_pubkey_hex}</div>
+                    <div style={{ color: 'var(--sdn-text-secondary)' }}>Issued At</div>
+                    <div style={{ color: 'var(--sdn-text-primary)' }}>{new Date((nodeInfo.identity_attestation.issued_at || 0) * 1000).toLocaleString()}</div>
+                  </div>
+                  {chainProofs.length > 0 && (
+                    <div className='mt2'>
+                      {chainProofs.map((proof, i) => (
+                        <div
+                          key={`${proof.chain || 'chain'}-${i}`}
+                          className='mt2 pa2'
+                          style={{ border: '1px solid var(--sdn-border)', borderRadius: 8 }}
+                        >
+                          <div style={{ color: 'var(--sdn-text-secondary)' }}>Chain</div>
+                          <div style={{ color: 'var(--sdn-text-primary)' }}>{String(proof.chain || '').toUpperCase()}</div>
+                          <div style={{ marginTop: 6, color: 'var(--sdn-text-secondary)' }}>Signed Address</div>
+                          <div style={{ color: 'var(--sdn-text-primary)' }}>{proof.address || 'n/a'}</div>
+                          <div style={{ marginTop: 6, color: 'var(--sdn-text-secondary)' }}>Public Key</div>
+                          <div style={{ color: 'var(--sdn-text-primary)', wordBreak: 'break-all', fontFamily: 'SFMono-Regular,ui-monospace,Menlo,Monaco,Consolas,monospace', fontSize: 12 }}>
+                            {proof.public_key_hex || 'n/a'}
+                          </div>
+                          <div style={{ marginTop: 6, color: 'var(--sdn-text-secondary)' }}>Signature</div>
+                          <div style={{ color: 'var(--sdn-text-primary)', wordBreak: 'break-all', fontFamily: 'SFMono-Regular,ui-monospace,Menlo,Monaco,Consolas,monospace', fontSize: 12 }}>
+                            {proof.signature || 'n/a'}
+                          </div>
+                          <div style={{ marginTop: 6, color: 'var(--sdn-text-secondary)' }}>Encoding</div>
+                          <div style={{ color: 'var(--sdn-text-primary)' }}>{proof.signature_encoding} ({proof.signature_algorithm})</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )
+              : (
+                <div className='mt2' style={{ color: 'var(--sdn-text-secondary)' }}>
+                  Identity attestation not available (missing chain keys or EPM metadata not yet initialized).
+                </div>
+              )}
           </div>
         </div>
       )}

@@ -468,6 +468,18 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			frontendMgr.RegisterRoutes(adminMux)
 			log.Infof("Frontend manager at %s://%s/api/admin/frontend/ (dir: %s)", adminScheme, adminAddr, cfg.Admin.FrontendPath)
 
+			// Serve favicon.ico directly so root icon requests do not 404.
+			// Prefer the public frontend favicon, then wallet UI favicon, then fallback
+			// to a tiny built-in transparent icon.
+			frontendFaviconPath := filepath.Join(strings.TrimSpace(cfg.Admin.FrontendPath), "favicon.ico")
+			walletFaviconPath := ""
+			if wui := strings.TrimSpace(cfg.Admin.WalletUIPath); wui != "" {
+				walletFaviconPath = filepath.Join(wui, "favicon.ico")
+			}
+			adminMux.Handle("/favicon.ico", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				serveFavicon(w, r, []string{frontendFaviconPath, walletFaviconPath})
+			}))
+
 			// ----------------------------------------------------------------
 			// Admin panel at /admin — IPFS WebUI (if configured) behind admin auth
 			// ----------------------------------------------------------------
@@ -771,6 +783,31 @@ func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
 	})
 }
 
+func serveFavicon(w http.ResponseWriter, r *http.Request, candidatePaths []string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	for _, candidate := range candidatePaths {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+			http.ServeFile(w, r, candidate)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(defaultFaviconPNG)
+	}
+}
+
 func makeWebUIHandler(buildDir string, _ string) (http.Handler, error) {
 	buildDir = strings.TrimSpace(buildDir)
 	if buildDir == "" {
@@ -1015,17 +1052,18 @@ export const SDN_LISTEN_ADDRS = %s;
 // handleNodeInfo returns an HTTP handler that serves the node's public identity info.
 func handleNodeInfo(n *node.Node) http.HandlerFunc {
 	type nodeInfoResponse struct {
-		PeerID            string              `json:"peer_id"`
-		ListenAddresses   []string            `json:"listen_addresses"`
-		SigningPubKeyHex  string              `json:"signing_pubkey_hex,omitempty"`
-		EncryptionPubHex  string              `json:"encryption_pubkey_hex,omitempty"`
-		SigningKeyPath    string              `json:"signing_key_path,omitempty"`
-		EncryptionKeyPath string              `json:"encryption_key_path,omitempty"`
-		Addresses         *wasm.CoinAddresses `json:"addresses,omitempty"`
-		XPub              string              `json:"xpub,omitempty"`
-		HasEPM            bool                `json:"has_epm"`
-		Mode              string              `json:"mode"`
-		Version           string              `json:"version"`
+		PeerID              string                      `json:"peer_id"`
+		ListenAddresses     []string                    `json:"listen_addresses"`
+		SigningPubKeyHex    string                      `json:"signing_pubkey_hex,omitempty"`
+		EncryptionPubHex    string                      `json:"encryption_pubkey_hex,omitempty"`
+		SigningKeyPath      string                      `json:"signing_key_path,omitempty"`
+		EncryptionKeyPath   string                      `json:"encryption_key_path,omitempty"`
+		Addresses           *wasm.CoinAddresses         `json:"addresses,omitempty"`
+		XPub                string                      `json:"xpub,omitempty"`
+		IdentityAttestation *epm.IdentityAttestation    `json:"identity_attestation,omitempty"`
+		HasEPM              bool                        `json:"has_epm"`
+		Mode                string                      `json:"mode"`
+		Version             string                      `json:"version"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1060,6 +1098,9 @@ func handleNodeInfo(n *node.Node) http.HandlerFunc {
 			info.HasEPM = epmSvc.GetNodeEPM() != nil
 			if profile := epmSvc.GetNodeProfile(); profile != nil {
 				// xpub is embedded in the EPM JSON; expose at top level too
+			}
+			if att := epmSvc.GetIdentityAttestation(); att != nil {
+				info.IdentityAttestation = att
 			}
 		}
 
@@ -1261,9 +1302,18 @@ const defaultLandingPageHTML = `<!doctype html>
       <p><a href="/api/v1/data/omm?norad_cat_id=25544&amp;day=2026-02-11&amp;limit=5&amp;format=json">GET /api/v1/data/omm?format=json</a></p>
       <p><a href="/api/v1/data/cat?norad_cat_id=25544&amp;limit=1&amp;format=json">GET /api/v1/data/cat?format=json</a></p>
     </div>
-  </main>
+	</main>
 </body>
 </html>`
+
+var defaultFaviconPNG = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+	0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x04, 0x00, 0x00, 0x00, 0xb5, 0x1c, 0x0c, 0x02, 0x00, 0x00, 0x00,
+	0x0b, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xfc, 0xff, 0x1f, 0x00,
+	0x03, 0x03, 0x02, 0x00, 0xef, 0xbc, 0x7f, 0x44, 0x00, 0x00, 0x00, 0x00,
+	0x49, 0x45, 0x4e, 0x44, 0xAE, 0x42, 0x60, 0x82,
+}
 
 func runInit(cmd *cobra.Command, args []string) error {
 	cfg := config.Default()
