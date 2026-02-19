@@ -42,11 +42,35 @@ const (
 	pluginRuntimeStatusStopped    = "stopped"
 	pluginRuntimeStatusRunning    = "running"
 	pluginRuntimeStatusError      = "error"
-	pluginCryptoContext          = "orbpro-plugin-v1"
-	pluginBundleV2Format         = byte(0x02)
-	pluginBundleV2Header         = 61
-	pluginBundleV1Header         = 80
+	pluginCryptoContext           = "orbpro-plugin-v1"
+	pluginBundleV2Format          = byte(0x02)
+	pluginBundleV2Header          = 61
+	pluginBundleV1Header          = 80
 )
+
+var envelopeKeyWrapInfos = [][]byte{
+	[]byte("orbpro-key-server-artifact-wrap-v1"),
+	[]byte("plugin-key-server-artifact-wrap-v1"),
+}
+
+// stagedArtifactEnvelope represents the JSON envelope produced by OrbPro
+// key-server staging for encrypted-at-rest plugin artifacts.
+type stagedArtifactEnvelope struct {
+	KeyEncryption struct {
+		Scheme                string `json:"scheme"`
+		EphemeralPublicKeyHex string `json:"ephemeralPublicKeyHex"`
+		HKDFSaltB64           string `json:"hkdfSaltB64"`
+		WrapIvB64             string `json:"wrapIvB64"`
+		WrappedKeyB64         string `json:"wrappedKeyB64"`
+		WrappedKeyTagB64      string `json:"wrappedKeyTagB64"`
+	} `json:"keyEncryption"`
+	ContentEncryption struct {
+		Algorithm     string `json:"algorithm"`
+		IvB64         string `json:"ivB64"`
+		TagB64        string `json:"tagB64"`
+		CiphertextB64 string `json:"ciphertextB64"`
+	} `json:"contentEncryption"`
+}
 
 var pluginIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
@@ -381,6 +405,107 @@ func (r *PluginRegistry) DecryptBundle(id string, recipientPrivateKey []byte) ([
 	}
 
 	return nil, fmt.Errorf("plugin %q has unrecognized encrypted format", id)
+}
+
+// DecryptStagedArtifactEnvelope decrypts an OrbPro staged JSON artifact envelope
+// into raw WASM/plugin bytes using a 32-byte X25519 private key.
+func DecryptStagedArtifactEnvelope(envelopeJSON []byte, recipientPrivateKey []byte) ([]byte, error) {
+	if len(recipientPrivateKey) != 32 {
+		return nil, fmt.Errorf("invalid recipient private key: expected 32 bytes, got %d", len(recipientPrivateKey))
+	}
+	if len(envelopeJSON) == 0 {
+		return nil, errors.New("encrypted artifact envelope is empty")
+	}
+
+	var envelope stagedArtifactEnvelope
+	if err := json.Unmarshal(envelopeJSON, &envelope); err != nil {
+		return nil, fmt.Errorf("decode envelope json: %w", err)
+	}
+
+	scheme := strings.TrimSpace(envelope.KeyEncryption.Scheme)
+	if scheme != "ecies-x25519-hkdf-sha256-aes-256-gcm" {
+		return nil, fmt.Errorf("unsupported envelope scheme: %q", scheme)
+	}
+	algorithm := strings.TrimSpace(envelope.ContentEncryption.Algorithm)
+	if algorithm != "" && algorithm != "aes-256-gcm" {
+		return nil, fmt.Errorf("unsupported envelope content algorithm: %q", algorithm)
+	}
+
+	ephemeralPub, err := hex.DecodeString(strings.TrimSpace(envelope.KeyEncryption.EphemeralPublicKeyHex))
+	if err != nil {
+		return nil, fmt.Errorf("decode envelope ephemeral public key: %w", err)
+	}
+	if len(ephemeralPub) != 32 {
+		return nil, fmt.Errorf("invalid envelope ephemeral public key length: %d", len(ephemeralPub))
+	}
+
+	sharedSecret, err := curve25519.X25519(recipientPrivateKey, ephemeralPub)
+	if err != nil {
+		return nil, fmt.Errorf("derive envelope shared secret: %w", err)
+	}
+	defer zeroBytes(sharedSecret)
+
+	hkdfSalt, err := decodeBase64Loose(envelope.KeyEncryption.HKDFSaltB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode envelope hkdf salt: %w", err)
+	}
+	wrapIV, err := decodeBase64Loose(envelope.KeyEncryption.WrapIvB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode envelope wrap iv: %w", err)
+	}
+	wrappedKey, err := decodeBase64Loose(envelope.KeyEncryption.WrappedKeyB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode envelope wrapped key: %w", err)
+	}
+	wrappedKeyTag, err := decodeBase64Loose(envelope.KeyEncryption.WrappedKeyTagB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode envelope wrapped key tag: %w", err)
+	}
+
+	var contentKey []byte
+	var lastWrapErr error
+	for _, wrapInfo := range envelopeKeyWrapInfos {
+		candidateWrapKey, deriveErr := deriveHKDFSHA256(sharedSecret, hkdfSalt, wrapInfo, 32)
+		if deriveErr != nil {
+			lastWrapErr = deriveErr
+			continue
+		}
+
+		key, unwrapErr := decryptAESGCM(candidateWrapKey, wrapIV, wrappedKey, wrappedKeyTag, nil)
+		zeroBytes(candidateWrapKey)
+		if unwrapErr != nil {
+			lastWrapErr = unwrapErr
+			continue
+		}
+		contentKey = key
+		break
+	}
+	if len(contentKey) == 0 {
+		if lastWrapErr == nil {
+			lastWrapErr = errors.New("failed to unwrap content key")
+		}
+		return nil, fmt.Errorf("unwrap envelope content key: %w", lastWrapErr)
+	}
+	defer zeroBytes(contentKey)
+
+	contentIV, err := decodeBase64Loose(envelope.ContentEncryption.IvB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode envelope content iv: %w", err)
+	}
+	contentTag, err := decodeBase64Loose(envelope.ContentEncryption.TagB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode envelope content tag: %w", err)
+	}
+	contentCiphertext, err := decodeBase64Loose(envelope.ContentEncryption.CiphertextB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode envelope ciphertext: %w", err)
+	}
+
+	plaintext, err := decryptAESGCM(contentKey, contentIV, contentCiphertext, contentTag, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt envelope ciphertext: %w", err)
+	}
+	return plaintext, nil
 }
 
 // ReadBundleKey reads and normalizes the plugin's symmetric content key.
@@ -860,6 +985,53 @@ func decryptPluginBundleV1(encrypted []byte, recipientPrivateKey []byte, context
 	stream := cipher.NewCTR(block, iv)
 	plaintext := make([]byte, len(ciphertext))
 	stream.XORKeyStream(plaintext, ciphertext)
+	return plaintext, nil
+}
+
+func decodeBase64Loose(value string) ([]byte, error) {
+	normalized := strings.TrimSpace(value)
+	normalized = strings.ReplaceAll(normalized, "-", "+")
+	normalized = strings.ReplaceAll(normalized, "_", "/")
+	if normalized == "" {
+		return nil, errors.New("empty base64 value")
+	}
+	return base64.StdEncoding.DecodeString(normalized)
+}
+
+func deriveHKDFSHA256(secret []byte, salt []byte, info []byte, outLen int) ([]byte, error) {
+	if outLen <= 0 {
+		return nil, errors.New("invalid hkdf output length")
+	}
+	out := make([]byte, outLen)
+	kdf := hkdf.New(sha256.New, secret, salt, info)
+	if _, err := io.ReadFull(kdf, out); err != nil {
+		return nil, fmt.Errorf("hkdf read: %w", err)
+	}
+	return out, nil
+}
+
+func decryptAESGCM(key []byte, iv []byte, ciphertext []byte, tag []byte, aad []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("create aes cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("create gcm: %w", err)
+	}
+	if len(iv) != gcm.NonceSize() {
+		return nil, fmt.Errorf("invalid gcm iv length: expected %d, got %d", gcm.NonceSize(), len(iv))
+	}
+	if len(tag) != gcm.Overhead() {
+		return nil, fmt.Errorf("invalid gcm tag length: expected %d, got %d", gcm.Overhead(), len(tag))
+	}
+	sealed := make([]byte, 0, len(ciphertext)+len(tag))
+	sealed = append(sealed, ciphertext...)
+	sealed = append(sealed, tag...)
+	plaintext, err := gcm.Open(nil, iv, sealed, aad)
+	if err != nil {
+		return nil, fmt.Errorf("aes-gcm auth failed: %w", err)
+	}
 	return plaintext, nil
 }
 
