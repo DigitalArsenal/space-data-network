@@ -389,6 +389,73 @@ The marketplace operates **on top of the free, open network**. Core SSA data exc
 
 ---
 
+
+## Plugin harness smoke test
+
+Run an end-to-end check that validates loading a licensing plugin from a local workspace into SDN.
+
+```bash
+npm run plugin-harness -- /path/to/private-repo
+```
+
+You can also use the command with any plugin workspace path:
+
+```bash
+npm run plugin-harness -- /path/to/repo
+```
+
+Options:
+- `--repo` (or positional first arg): path to the plugin workspace
+- `--admin-addr`: admin endpoint used for verification (default `127.0.0.1:5010`)
+- `--artifact-dir`: path to existing encrypted artifacts when `--skip-build` is set
+- `--skip-build`: use existing artifacts in the staging directory
+- `--keep-workspace`: keep temporary workspace for debugging
+- `--derivation-secret`: optional derivation secret override (64 hex chars)
+
+This command is key-management agnostic on the CLI:
+- It derives the keypair internally for normal runs.
+- A fixed test public key is read from `PLUGIN_KEY_SERVER_ARTIFACT_PUBLIC_KEY_HEX` when set.
+- For `--skip-build`, it requires both `PLUGIN_KEY_SERVER_ARTIFACT_PUBLIC_KEY_HEX` and `PLUGIN_KEY_SERVER_ARTIFACT_PRIVATE_KEY_HEX`.
+
+The command uses the standardized plugin task:
+
+```bash
+npm run build:key-server
+```
+
+It then copies/decrypts the generated encrypted artifact, boots SDN with a temporary plugin catalog, and verifies:
+
+- `/api/v1/plugins/manifest` reports the plugin id (default `plugin-key-broker`) as `running`
+- `/api/v1/plugins/<plugin-id>/bundle` returns 200 and non-empty WASM payload
+
+### Private repo setup for plugin harness tests
+
+This harness runs against private repos as long as the repo is reachable and follows the plugin workspace contract.
+
+1. Clone/fetch private repo using your normal auth path (SSH key or token-based HTTPS).
+2. Confirm workspace layout includes:
+   - `package.json`
+   - `scripts/build-plugin-release.js` (or `PLUGIN_HARNESS_BUILD_HELPER_SCRIPT` override)
+   - `npm run build:key-server` succeeds (or configure `PLUGIN_HARNESS_BUILD_COMMAND`)
+3. Export one of the artifact public key env vars used for staging:
+   - `PLUGIN_KEY_SERVER_ARTIFACT_PUBLIC_KEY_HEX` (preferred)
+   - `PLUGIN_KEY_SERVER_ARTIFACT_PRIVATE_KEY_HEX` when using `--skip-build`
+4. Run:
+   ```bash
+npm run plugin-harness -- /path/to/private-plugin-repo
+   ```
+5. The harness validates the plugin lifecycle and plugin API endpoints in SDN.
+
+Use `--skip-build` when reusing staged artifacts already in CI:
+
+```bash
+export PLUGIN_KEY_SERVER_ARTIFACT_PUBLIC_KEY_HEX=<public_hex>
+export PLUGIN_KEY_SERVER_ARTIFACT_PRIVATE_KEY_HEX=<matching_private_hex>
+npm run plugin-harness -- /path/to/private-plugin-repo --skip-build --artifact-dir /path/to/Build/plugin/licensing-server
+```
+
+If your private repo has a custom auth requirement, run the harness in that authenticated shell context so Git can access dependencies and source.
+
 ## Development
 
 ### Prerequisites
