@@ -408,6 +408,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					cfgDisplayPath = config.DefaultPath()
 				}
 				authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, cfg.Admin.WalletUIPath, cfgDisplayPath)
+				if epmSvc := n.EPMService(); epmSvc != nil {
+					if att := epmSvc.GetIdentityAttestation(); att != nil {
+						authHandler.SetNodeSigningAttestation(att)
+					}
+				}
 				authHandler.RegisterRoutes(adminMux)
 				log.Infof("HD wallet authentication enabled at %s://%s/login", adminScheme, adminAddr)
 
