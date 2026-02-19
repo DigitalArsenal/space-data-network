@@ -33,7 +33,8 @@ type User struct {
 }
 
 // UserStore manages xpub-to-trust-level mappings from config and database.
-// Database entries take precedence over config entries for the same xpub.
+// Config values are always applied as authoritative overrides when a user exists
+// in both places, so operator config changes are reflected immediately.
 type UserStore struct {
 	db          *sql.DB
 	configUsers map[string]User
@@ -64,9 +65,13 @@ func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, 
 	// Load config users into memory
 	now := time.Now()
 	for _, entry := range configEntries {
-		trust, err := peers.ParseTrustLevel(entry.TrustLevel)
+		xpub := strings.TrimSpace(entry.XPub)
+		if xpub == "" {
+			continue
+		}
+		trust, err := peers.ParseTrustLevel(strings.TrimSpace(strings.ToLower(entry.TrustLevel)))
 		if err != nil {
-			log.Warnf("Skipping config user %q: invalid trust level %q", entry.Name, entry.TrustLevel)
+			log.Warnf("Skipping config user %q: invalid trust level %q", xpub, entry.TrustLevel)
 			continue
 		}
 
@@ -87,7 +92,7 @@ func NewUserStore(dbPath string, configEntries []config.UserEntry) (*UserStore, 
 		}
 
 		s.configUsers[entry.XPub] = User{
-			XPub:             entry.XPub,
+			XPub:             xpub,
 			Name:             entry.Name,
 			TrustLevel:       trust,
 			SigningPubKeyHex: signingHex,
@@ -123,7 +128,8 @@ func (s *UserStore) initDB() error {
 	return nil
 }
 
-// GetUser retrieves a user by xpub. Database entries take precedence over config.
+// GetUser retrieves a user by xpub, applying config-defined trust and key values
+// as overrides when the user also exists in the database.
 func (s *UserStore) GetUser(xpub string) (*User, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -144,12 +150,9 @@ func (s *UserStore) GetUser(xpub string) (*User, error) {
 			t := time.Unix(lastLogin.Int64, 0)
 			u.LastLogin = &t
 		}
-		// Avoid lockouts when an older DB row exists without a signing key.
-		if strings.TrimSpace(u.SigningPubKeyHex) == "" {
-			if cu, ok := s.configUsers[u.XPub]; ok && strings.TrimSpace(cu.SigningPubKeyHex) != "" {
-				u.SigningPubKeyHex = cu.SigningPubKeyHex
-			}
-		}
+		// Keep runtime state in DB, but apply configured values as the source of
+		// truth for trust and signing key checks.
+		s.applyConfigOverrides(&u)
 		return &u, nil
 	}
 	if err != sql.ErrNoRows {
@@ -164,7 +167,7 @@ func (s *UserStore) GetUser(xpub string) (*User, error) {
 	return nil, nil
 }
 
-// ListUsers returns all users from both config and database, with database taking precedence.
+// ListUsers returns all users from both config and database.
 func (s *UserStore) ListUsers() ([]User, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -192,11 +195,7 @@ func (s *UserStore) ListUsers() ([]User, error) {
 			t := time.Unix(lastLogin.Int64, 0)
 			u.LastLogin = &t
 		}
-		if strings.TrimSpace(u.SigningPubKeyHex) == "" {
-			if cu, ok := s.configUsers[u.XPub]; ok && strings.TrimSpace(cu.SigningPubKeyHex) != "" {
-				u.SigningPubKeyHex = cu.SigningPubKeyHex
-			}
-		}
+		s.applyConfigOverrides(&u)
 		users = append(users, u)
 		seen[u.XPub] = true
 	}
@@ -266,6 +265,31 @@ func (s *UserStore) AddUser(xpub, name string, trust peers.TrustLevel, signingPu
 
 	log.Infof("Added user %q (trust=%s) to database", name, trust)
 	return nil
+}
+
+func (s *UserStore) applyConfigOverrides(u *User) {
+	if u == nil {
+		return
+	}
+
+	cu, ok := s.configUsers[u.XPub]
+	if !ok {
+		return
+	}
+
+	// Config wins on trusted metadata to avoid stale DB rows blocking updated config.
+	u.Source = "database"
+	if strings.TrimSpace(cu.Name) != "" {
+		u.Name = cu.Name
+	}
+	u.TrustLevel = cu.TrustLevel
+	if strings.TrimSpace(cu.SigningPubKeyHex) != "" {
+		u.SigningPubKeyHex = cu.SigningPubKeyHex
+	} else {
+		// If the config intentionally omits the key, do not allow stale database
+		// entries to continue enforcing an old binding.
+		u.SigningPubKeyHex = ""
+	}
 }
 
 // UpdateSigningPubKey sets/overrides the signing public key for a user.
@@ -394,8 +418,10 @@ func (s *UserStore) Close() error {
 
 func normalizeEd25519PubKeyHex(s string) (string, error) {
 	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "0x")
 	s = strings.ToLower(s)
+	if strings.HasPrefix(s, "0x") {
+		s = s[2:]
+	}
 	if s == "" {
 		return "", nil
 	}

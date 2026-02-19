@@ -235,14 +235,31 @@ ssh "${SSH_OPTS[@]}" "$SERVER" "
   systemctl is-active spacedatanetwork
 "
 
+probe_code() {
+  local cmd="$1"
+  local max_tries=30
+  local code="000"
+
+  for ((i = 1; i <= max_tries; i++)); do
+    code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "$cmd" || echo 000)"
+    if [[ "$code" =~ ^[0-9]{3}$ ]]; then
+      echo "$code"
+      return
+    fi
+    sleep 1
+  done
+
+  echo "$code"
+}
+
 log "Verifying live endpoints"
-health_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/data/health")"
-license_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/license/verify")"
-entitlements_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "token=\$(awk -F= '/^SDN_LICENSE_ADMIN_TOKEN=/{print \$2}' '$REMOTE_ENV_FILE' | tail -n 1); curl -ksS -o /dev/null -w '%{http_code}' -H \"X-License-Admin-Token: \$token\" 'https://127.0.0.1/api/v1/license/entitlements?xpub=__deploy_smoke__'")"
-plugins_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/plugins/manifest")"
-admin_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/admin")"
-login_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/login")"
-ipfs_code="$(ssh "${SSH_OPTS[@]}" "$SERVER" "curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:${KUBO_API_PORT}/api/v0/id")"
+health_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/data/health")"
+license_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/license/verify")"
+entitlements_code="$(probe_code "token=\$(awk -F= '/^SDN_LICENSE_ADMIN_TOKEN=/{print \$2}' '$REMOTE_ENV_FILE' | tail -n 1); curl -ksS -o /dev/null -w '%{http_code}' -H \"X-License-Admin-Token: \$token\" 'https://127.0.0.1/api/v1/license/entitlements?xpub=__deploy_smoke__'")"
+plugins_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/api/v1/plugins/manifest")"
+admin_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/admin")"
+login_code="$(probe_code "curl -ksS -o /dev/null -w '%{http_code}' https://127.0.0.1/login")"
+ipfs_code="$(probe_code "curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:${KUBO_API_PORT}/api/v0/id")"
 
 # Key broker no longer exposes HTTP endpoints — key exchange uses libp2p streams.
 log "health=$health_code license_verify=$license_code entitlements_admin=$entitlements_code plugins_manifest=$plugins_code admin=$admin_code login=$login_code ipfs_api=$ipfs_code"
