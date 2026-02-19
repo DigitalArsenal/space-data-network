@@ -649,12 +649,12 @@ export const TrustPage = ({
                     </div>
                   )}
                 </>
-              )
+                )
               : (
                 <div className='mt2' style={{ color: 'var(--sdn-text-secondary)' }}>
                   Identity attestation not available (missing chain keys or EPM metadata not yet initialized).
                 </div>
-              )}
+                )}
           </div>
         </div>
       )}

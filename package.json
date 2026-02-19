@@ -61,7 +61,7 @@
   "author": "Space Data Network",
   "license": "MIT",
   "devDependencies": {
-    "baseline-browser-mapping": "^2.9.19",
+    "baseline-browser-mapping": "^2.10.0",
     "flatc-wasm": "^25.12.19-wasm.43"
   }
 }
