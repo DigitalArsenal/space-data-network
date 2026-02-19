@@ -98,6 +98,12 @@ The daemon now exposes a libp2p license protocol on full nodes:
 - Flow: `challenge_request` -> `proof_request` -> `grant_response`
 - Token format: Ed25519-signed compact token (JWT-style `header.payload.signature`)
 
+OrbPro key exchange streams are FlatBuffer-based:
+
+- `/orbpro/public-key/1.0.0` returns `PublicKeyResponse` (file id `OBPK`)
+- `/orbpro/key-broker/1.0.0` accepts `KeyBrokerRequest` (`OBKQ`) and returns `KeyBrokerResponse` (`OBKS`)
+- Schema source of truth lives at `schemas/orbpro/key-broker/`
+
 HTTP endpoints on the admin listener:
 
 - `GET /api/v1/license/verify` (verify bearer token and optional scopes)

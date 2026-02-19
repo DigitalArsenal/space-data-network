@@ -191,7 +191,7 @@ Space Data Network is built on the **[InterPlanetary File System (IPFS)](https:/
 
 SDN extends IPFS with space-specific optimizations:
 - FlatBuffers for zero-copy performance
-- Schema-validated data (Space Data Standards only)
+- Schema-validated data (Space Data Standards + OrbPro control schemas)
 - Topic-per-schema PubSub
 - SQLite storage with FlatBuffer virtual tables
 
@@ -206,6 +206,12 @@ SDN extends IPFS with space-specific optimizations:
 | [desktop](./desktop) | Desktop application | TypeScript |
 | [schemas](./schemas) | FlatBuffer schema definitions | FlatBuffers |
 | [kubo](./kubo) | IPFS reference implementation | Go |
+
+OrbPro licensing/key exchange stream schemas are versioned in:
+
+- `schemas/orbpro/key-broker/PublicKeyResponse.fbs`
+- `schemas/orbpro/key-broker/KeyBrokerRequest.fbs`
+- `schemas/orbpro/key-broker/KeyBrokerResponse.fbs`
 
 ### Server Packages
 

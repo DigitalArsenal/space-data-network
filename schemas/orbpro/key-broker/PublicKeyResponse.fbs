@@ -1,0 +1,10 @@
+namespace orbpro.keybroker;
+
+// Public key payload returned by /orbpro/public-key/1.0.0.
+table PublicKeyResponse {
+  // Uncompressed P-256 public key (0x04 || X || Y), 65 bytes.
+  public_key:[ubyte] (required);
+}
+
+root_type PublicKeyResponse;
+file_identifier "OBPK";
