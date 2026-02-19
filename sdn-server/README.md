@@ -131,6 +131,12 @@ admin:
   homepage_file: /opt/spacedatanetwork/spaceaware/index.html
 ```
 
+With admin TLS enabled, the daemon also proxies incoming `Upgrade: websocket`
+requests on the admin listener to the local libp2p WebSocket transport (for
+example `:8080`). This enables browser clients to dial secure multiaddrs such as:
+
+`/dns4/spaceaware.io/tcp/443/wss/p2p/<peer-id>`
+
 Build the SpaceAware single-file homepage:
 
 ```bash
