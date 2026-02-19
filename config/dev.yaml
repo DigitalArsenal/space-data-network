@@ -5,8 +5,8 @@ mode: full
 
 network:
   listen:
-    - /ip4/127.0.0.1/tcp/4001
-    - /ip4/127.0.0.1/tcp/8080/ws
+    - /ip4/127.0.0.1/tcp/14001
+    - /ip4/127.0.0.1/tcp/14080/ws
   bootstrap: []
   edge_relays: []
   max_connections: 100
@@ -34,7 +34,7 @@ peers:
 
 admin:
   enabled: true
-  listen_addr: 127.0.0.1:5001
+  listen_addr: 127.0.0.1:5010
   require_auth: true
   session_expiry: 24h
   totp_required: false
