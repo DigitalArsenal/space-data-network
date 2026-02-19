@@ -2,13 +2,16 @@
 package node
 
 import (
+	"errors"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -336,21 +339,6 @@ func (n *Node) init() error {
 		log.Warnf("Failed to register plugin %q: %v", licenseplugin.ID, err)
 	}
 
-	// Register WASI-based OrbPro key broker plugin.
-	if wasmPath := n.findKeyBrokerWasmPath(); wasmPath != "" {
-		// H11: Compute and log SHA-256 hash of WASM file for integrity verification.
-		if kbBytes, err := os.ReadFile(wasmPath); err == nil {
-			kbHash := sha256.Sum256(kbBytes)
-			log.Infof("WASM module loaded: %s (sha256: %s)", wasmPath, hex.EncodeToString(kbHash[:]))
-		}
-		n.keyBroker = wasmlicenseplugin.New(wasmPath)
-		if err := n.plugins.Register(n.keyBroker); err != nil {
-			log.Warnf("Failed to register plugin %q: %v", wasmlicenseplugin.ID, err)
-		} else {
-			log.Infof("OrbPro key broker WASM registered from %s", wasmPath)
-		}
-	}
-
 	pluginCtx := plugins.RuntimeContext{
 		Host:         n.host,
 		DHT:          n.dht,
@@ -358,6 +346,48 @@ func (n *Node) init() error {
 		PeerID:       n.host.ID().String(),
 		Mode:         n.config.Mode,
 	}
+
+	// Register WASI-based OrbPro key broker plugin from encrypted catalog (if configured),
+	// then fall back to configured static wasm path.
+	registeredFromCatalog := false
+	if n.license != nil {
+		if reg, regErr := n.loadPluginRegistry(); regErr != nil {
+			log.Warnf("Plugin registry unavailable: %v", regErr)
+		} else if reg != nil {
+			recipientKey, keyErr := n.findPluginDecryptPrivateKey()
+			if keyErr != nil {
+				log.Warnf("Plugin decryption key invalid: %v", keyErr)
+			}
+
+			if err := n.registerCatalogPlugins(reg, pluginCtx, recipientKey); err != nil {
+				log.Warnf("Plugin catalog runtime startup completed with errors: %v", err)
+			}
+
+			if p, ok := n.getPluginByID(reg, wasmlicenseplugin.ID); ok {
+				// Reuse catalog-provided orbpro key broker instance for status and observability.
+				n.keyBroker = p
+				registeredFromCatalog = true
+			}
+		}
+	}
+
+	// Register a fallback OrbPro key broker WASM from explicit path.
+	if !registeredFromCatalog && n.keyBroker == nil {
+		if wasmPath := n.findKeyBrokerWasmPath(); wasmPath != "" {
+			// H11: Compute and log SHA-256 hash of WASM file for integrity verification.
+			if kbBytes, err := os.ReadFile(wasmPath); err == nil {
+				kbHash := sha256.Sum256(kbBytes)
+				log.Infof("WASM module loaded: %s (sha256: %s)", wasmPath, hex.EncodeToString(kbHash[:]))
+			}
+			n.keyBroker = wasmlicenseplugin.New(wasmPath)
+			if err := n.plugins.Register(n.keyBroker); err != nil {
+				log.Warnf("Failed to register plugin %q: %v", wasmlicenseplugin.ID, err)
+			} else {
+				log.Infof("OrbPro key broker WASM registered from %s", wasmPath)
+			}
+		}
+	}
+
 	if err := n.plugins.StartAll(n.ctx, pluginCtx); err != nil {
 		log.Warnf("Plugin startup completed with errors: %v", err)
 	}
@@ -366,6 +396,149 @@ func (n *Node) init() error {
 	}
 
 	return nil
+}
+
+func (n *Node) loadPluginRegistry() (*license.PluginRegistry, error) {
+	baseDataPath := filepath.Dir(n.config.Storage.Path)
+	pluginRoot := strings.TrimSpace(os.Getenv("SDN_PLUGIN_ROOT"))
+	if pluginRoot == "" {
+		pluginRoot = license.DefaultPluginRoot(baseDataPath)
+	}
+
+	reg, err := license.LoadPluginRegistry(pluginRoot)
+	if err != nil {
+		return nil, fmt.Errorf("load plugin registry from %q: %w", pluginRoot, err)
+	}
+	if reg == nil {
+		return nil, nil
+	}
+	if reg.Count() > 0 {
+		log.Infof("Loaded %d plugin catalog entry(s) from %s", reg.Count(), pluginRoot)
+	}
+	return reg, nil
+}
+
+func (n *Node) findPluginDecryptPrivateKey() ([]byte, error) {
+	if n.identity != nil && len(n.identity.EncryptionKey) == 32 {
+		key := make([]byte, len(n.identity.EncryptionKey))
+		copy(key, n.identity.EncryptionKey)
+		return key, nil
+	}
+
+	envNames := []string{
+		"SDN_PLUGIN_DECRYPT_KEY",
+		"SDN_PLUGIN_KEY",
+		"SDN_PLUGIN_RECIPIENT_KEY",
+		"SDN_PLUGIN_RECIPIENT_KEY_B64",
+	}
+	for _, envName := range envNames {
+		if raw := strings.TrimSpace(os.Getenv(envName)); raw != "" {
+			key, err := parseX25519Key(raw)
+			if err != nil {
+				return nil, fmt.Errorf("invalid %s: %w", envName, err)
+			}
+			return key, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func (n *Node) registerCatalogPlugins(reg *license.PluginRegistry, pluginCtx plugins.RuntimeContext, recipientKey []byte) error {
+	if reg == nil {
+		return nil
+	}
+
+	var errs []error
+	for _, descriptor := range reg.ListPublic() {
+		pluginID := strings.TrimSpace(descriptor.ID)
+		if pluginID == "" {
+			continue
+		}
+
+		if pluginID != wasmlicenseplugin.ID {
+			log.Warnf("Skipping unsupported plugin %q in catalog (no local runtime wrapper)", pluginID)
+			continue
+		}
+
+		if existing := n.plugins.Get(pluginID); existing != nil {
+			log.Infof("Plugin %q already registered; skipping catalog registration", pluginID)
+			continue
+		}
+
+		wasmBytes, err := reg.DecryptBundle(pluginID, recipientKey)
+		if err != nil {
+			errMsg := fmt.Errorf("plugin %q decryption failed: %w", pluginID, err)
+			_ = reg.SetRuntimeStatus(pluginID, "error", errMsg.Error())
+			errs = append(errs, errMsg)
+			continue
+		}
+
+		plugin := wasmlicenseplugin.NewFromBytes(wasmBytes)
+		if err := n.plugins.Register(plugin); err != nil {
+			errMsg := fmt.Errorf("plugin %q registration failed: %w", pluginID, err)
+			_ = reg.SetRuntimeStatus(pluginID, "error", errMsg.Error())
+			errs = append(errs, errMsg)
+			continue
+		}
+
+		if err := reg.SetRuntimeStatus(pluginID, "stopped", "registered, waiting for startup"); err != nil {
+			log.Warnf("Unable to update runtime status for plugin %q: %v", pluginID, err)
+		}
+		log.Infof("Registered encrypted catalog plugin %q from runtime registry", pluginID)
+	}
+
+	if plugin, ok := n.getPluginByID(reg, wasmlicenseplugin.ID); ok && pluginCtx.Host != nil && plugin != nil {
+		n.keyBroker = plugin
+		_ = reg.SetRuntimeStatus(wasmlicenseplugin.ID, "running", "registered")
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
+func (n *Node) getPluginByID(reg *license.PluginRegistry, pluginID string) (*wasmlicenseplugin.Plugin, bool) {
+	pluginID = strings.TrimSpace(pluginID)
+	if pluginID == "" {
+		return nil, false
+	}
+	if reg != nil {
+		if _, ok := reg.Get(pluginID); !ok {
+			return nil, false
+		}
+	}
+	if n.plugins == nil {
+		return nil, false
+	}
+	p, ok := n.plugins.Get(pluginID).(*wasmlicenseplugin.Plugin)
+	if !ok || p == nil {
+		return nil, false
+	}
+	return p, true
+}
+
+func parseX25519Key(raw string) ([]byte, error) {
+	trimmed := strings.TrimSpace(raw)
+	trimmed = strings.TrimPrefix(trimmed, "0x")
+	if decoded, err := hex.DecodeString(trimmed); err == nil && len(decoded) == 32 {
+		return decoded, nil
+	}
+
+	for _, decode := range []func(string) ([]byte, error){
+		base64.RawStdEncoding.DecodeString,
+		base64.StdEncoding.DecodeString,
+		base64.RawURLEncoding.DecodeString,
+		base64.URLEncoding.DecodeString,
+	} {
+		decoded, err := decode(trimmed)
+		if err == nil && len(decoded) == 32 {
+			return decoded, nil
+		}
+	}
+
+	return nil, fmt.Errorf("must be 32-byte X25519 key encoded as hex or base64")
 }
 
 func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {

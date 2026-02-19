@@ -63,6 +63,24 @@ type DerivedIdentity struct {
 	// EncryptionKeyPath is the derivation path used for the encryption key
 	EncryptionKeyPath string
 
+	// BitcoinKeyPath is the derivation path used for the Bitcoin signing key
+	BitcoinKeyPath string
+
+	// BitcoinPrivateKey is the secp256k1 private key for Bitcoin signing (32 bytes)
+	BitcoinPrivateKey []byte
+
+	// EthereumKeyPath is the derivation path used for the Ethereum signing key
+	EthereumKeyPath string
+
+	// EthereumPrivateKey is the secp256k1 private key for Ethereum signing (32 bytes)
+	EthereumPrivateKey []byte
+
+	// SolanaKeyPath is the derivation path used for the Solana signing key
+	SolanaKeyPath string
+
+	// SolanaPrivateKey is the ed25519 private key for Solana signing (32 bytes)
+	SolanaPrivateKey []byte
+
 	// Addresses holds derived standard blockchain addresses (BTC, ETH, SOL)
 	Addresses *CoinAddresses
 }
@@ -133,18 +151,40 @@ func (hw *HDWalletModule) DeriveIdentity(ctx context.Context, seed []byte, accou
 	// Derive standard blockchain addresses (non-fatal if unavailable)
 	coinAddrs, _ := hw.DeriveCoinAddresses(ctx, seed)
 
+	// Derive chain-specific keys for address proofs (non-fatal if unavailable).
+	bitcoinDerived, _ := hw.DeriveSecp256k1Key(ctx, seed, BitcoinDerivePath)
+	ethereumDerived, _ := hw.DeriveSecp256k1Key(ctx, seed, EthereumDerivePath)
+	solanaDerived, _ := hw.DeriveEd25519Key(ctx, seed, SolanaDerivePath)
+
+	var bitcoinPriv, ethereumPriv, solanaPriv []byte
+	if bitcoinDerived != nil {
+		bitcoinPriv = bitcoinDerived.PrivateKey
+	}
+	if ethereumDerived != nil {
+		ethereumPriv = ethereumDerived.PrivateKey
+	}
+	if solanaDerived != nil {
+		solanaPriv = solanaDerived.PrivateKey
+	}
+
 	return &DerivedIdentity{
 		Account:           account,
 		IdentityPrivKey:   identityPrivKey,
 		IdentityPubKey:    identityPubKey,
-		SigningPrivKey:     signingPrivKey,
-		SigningPubKey:      signingPubKey,
-		EncryptionKey:      encryptionDerived.PrivateKey,
-		EncryptionPub:      encryptionPub,
-		PeerID:             peerID,
+		SigningPrivKey:    signingPrivKey,
+		SigningPubKey:     signingPubKey,
+		EncryptionKey:     encryptionDerived.PrivateKey,
+		EncryptionPub:     encryptionPub,
+		PeerID:           peerID,
 		IdentityKeyPath:    identityPath,
 		SigningKeyPath:     signingPath,
 		EncryptionKeyPath:  encryptionPath,
+		BitcoinKeyPath:     BitcoinDerivePath,
+		BitcoinPrivateKey:  bitcoinPriv,
+		EthereumKeyPath:    EthereumDerivePath,
+		EthereumPrivateKey: ethereumPriv,
+		SolanaKeyPath:      SolanaDerivePath,
+		SolanaPrivateKey:   solanaPriv,
 		Addresses:          coinAddrs,
 	}, nil
 }
