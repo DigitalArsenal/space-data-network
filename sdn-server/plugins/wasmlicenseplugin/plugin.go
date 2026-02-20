@@ -11,8 +11,8 @@ package wasmlicenseplugin
 import (
 	"context"
 	"crypto/ecdh"
+	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -70,22 +70,20 @@ func (p *Plugin) ID() string { return ID }
 //
 // Config comes from environment variables:
 //
-//   - ORBPRO_SERVER_PRIVATE_KEY_HEX  — 32-byte P-256 private key (64 hex chars)
 //   - DERIVATION_SECRET              — shared secret for KDF program
 //   - ORBPRO_KEYSERVER_ALLOWED_DOMAINS — comma-separated allowed origins
 //   - ORBPRO_KEYSERVER_EPOCH_PERIOD_MS (optional)
 //   - ORBPRO_KEYSERVER_MAX_SKEW_MS    (optional)
 //   - ORBPRO_KEYSERVER_LEASE_MS       (optional)
 func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) error {
-	privateKeyHex := strings.TrimSpace(os.Getenv("ORBPRO_SERVER_PRIVATE_KEY_HEX"))
-	if privateKeyHex == "" {
-		log.Warn("ORBPRO_SERVER_PRIVATE_KEY_HEX not set — key broker plugin disabled")
+	if len(runtime.NodeEncryptionKey) == 0 {
+		log.Warn("Node encryption key unavailable — key broker plugin disabled")
 		return nil
 	}
 
-	privateKey, err := hex.DecodeString(privateKeyHex)
-	if err != nil || len(privateKey) != 32 {
-		return fmt.Errorf("invalid ORBPRO_SERVER_PRIVATE_KEY_HEX: must be 64 hex chars (32 bytes)")
+	privateKey, err := deriveP256PrivateKey(runtime.NodeEncryptionKey)
+	if err != nil {
+		return fmt.Errorf("failed to derive P-256 key from node identity: %w", err)
 	}
 
 	derivationSecret := os.Getenv("DERIVATION_SECRET")
@@ -300,6 +298,26 @@ func p256PublicKey(privateKeyBytes []byte) ([]byte, error) {
 		return nil, err
 	}
 	return priv.PublicKey().Bytes(), nil
+}
+
+func deriveP256PrivateKey(seed []byte) ([]byte, error) {
+	if len(seed) == 0 {
+		return nil, fmt.Errorf("empty node encryption seed")
+	}
+
+	contextPrefix := []byte("orbpro:key-broker:p256:v1")
+	for counter := 0; counter < 64; counter++ {
+		hash := sha256.New()
+		hash.Write(contextPrefix)
+		hash.Write(seed)
+		hash.Write([]byte{byte(counter)})
+		candidate := hash.Sum(nil)
+		if _, err := ecdh.P256().NewPrivateKey(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+
+	return nil, fmt.Errorf("unable to derive valid P-256 private key from node seed")
 }
 
 func envInt64(key string, defaultVal int64) int64 {

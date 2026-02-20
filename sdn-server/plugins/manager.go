@@ -13,11 +13,12 @@ import (
 
 // RuntimeContext provides node/runtime dependencies that plugins need at startup.
 type RuntimeContext struct {
-	Host         host.Host
-	DHT          *dht.IpfsDHT
-	BaseDataPath string
-	PeerID       string
-	Mode         string
+	Host              host.Host
+	DHT               *dht.IpfsDHT
+	BaseDataPath      string
+	PeerID            string
+	Mode              string
+	NodeEncryptionKey []byte
 }
 
 // Plugin is the runtime contract for SDN server plugins.
@@ -33,10 +34,10 @@ type Plugin interface {
 type UIDescriptor struct {
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
-	Icon        string `json:"icon,omitempty"`        // emoji or single character
-	Color       string `json:"color,omitempty"`        // CSS background for icon badge
-	TextColor   string `json:"textColor,omitempty"`    // CSS text color for icon badge
-	URL         string `json:"url,omitempty"`          // path to plugin UI page (served by plugin)
+	Icon        string `json:"icon,omitempty"`      // emoji or single character
+	Color       string `json:"color,omitempty"`     // CSS background for icon badge
+	TextColor   string `json:"textColor,omitempty"` // CSS text color for icon badge
+	URL         string `json:"url,omitempty"`       // path to plugin UI page (served by plugin)
 }
 
 // UIProvider is an optional interface that plugins can implement to declare
