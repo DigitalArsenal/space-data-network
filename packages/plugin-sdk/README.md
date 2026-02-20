@@ -1,6 +1,7 @@
 # SDN Plugin SDK
 
-This package is the source of truth for OrbPro v1.0 key-broker contracts on
+This package is the source of truth for OrbPro key-broker and third-party
+plugin contracts on
 Space Data Network. It defines the wire schemas, generated bindings, protocol
 IDs, and validation tools used by plugin implementers and node operators.
 
@@ -34,9 +35,29 @@ Canonical schemas are versioned in this package:
 - `schemas/orbpro/key-broker/PublicKeyResponse.fbs`
 - `schemas/orbpro/key-broker/KeyBrokerRequest.fbs`
 - `schemas/orbpro/key-broker/KeyBrokerResponse.fbs`
+- `schemas/orbpro/third-party/v1/ThirdPartyClientLicenseRequest.fbs`
+- `schemas/orbpro/third-party/v1/ThirdPartyClientLicenseResponse.fbs`
+- `schemas/orbpro/third-party/v1/ThirdPartyServerPluginRegistration.fbs`
+- `schemas/orbpro/third-party/v1/ThirdPartyServerPluginGrant.fbs`
 
 Do not maintain parallel or forked schema copies in client/server repos. Update
 the schema here, then regenerate bindings.
+
+## Third-Party Plugin Contract (v1)
+
+Third-party plugins are account-scoped and split into two roles:
+
+1. Client plugin flow:
+   - `ThirdPartyClientLicenseRequest`
+   - `ThirdPartyClientLicenseResponse`
+2. Server plugin flow:
+   - `ThirdPartyServerPluginRegistration`
+   - `ThirdPartyServerPluginGrant`
+
+Reference protocol IDs exported by `src/index.js`:
+
+- `THIRDPARTY_CLIENT_LICENSE_PROTOCOL_ID`
+- `THIRDPARTY_SERVER_PLUGIN_PROTOCOL_ID`
 
 ## Code Generation (`flatc-wasm`)
 
@@ -51,6 +72,24 @@ Generated outputs:
 - `src/generated/orbpro/keybroker/*.ts`
 - `src/generated/orbpro/keybroker/*.js`
 
+Generate third-party bindings:
+
+```bash
+npm run generate:third-party-bindings
+```
+
+Generated outputs:
+
+- `src/generated/orbpro/thirdparty/v1/*.ts`
+- `src/generated/orbpro/thirdparty/v1/*.js`
+- `src/generated-go/orbpro/thirdparty/v1/*.go`
+
+Generate deterministic fixture vectors:
+
+```bash
+npm run generate:third-party-fixtures
+```
+
 From the `space-data-network` repo root, regenerate both plugin SDK bindings
 and SDN server Go bindings in one step:
 
@@ -62,6 +101,48 @@ That command updates:
 
 1. `packages/plugin-sdk/src/generated/orbpro/keybroker/*`
 2. `sdn-server/internal/wasiplugin/fbs/orbpro/keybroker/*`
+
+## Third-Party Scaffolding
+
+Generate starter projects for external implementers:
+
+```bash
+npm run scaffold:third-party-client -- --name "Example Client Plugin" --vendor-id example
+npm run scaffold:third-party-server -- --name "Example Server Plugin" --vendor-id example
+```
+
+Templates live in:
+
+- `templates/third-party-client-plugin/`
+- `templates/third-party-server-plugin/`
+
+## Mock Broker + Harness
+
+Start a local mock broker:
+
+```bash
+node scripts/mock-third-party-broker.mjs --host 127.0.0.1 --port 8899
+```
+
+Run both client and server test flows against it:
+
+```bash
+node scripts/mock-third-party-plugin-harness.mjs --base-url http://127.0.0.1:8899
+```
+
+## Conformance Suite
+
+Run fixture and scaffold conformance checks:
+
+```bash
+npm run test:conformance
+```
+
+This validates:
+
+1. Golden vectors decode/round-trip correctly.
+2. Invalid identifier fixtures fail as expected.
+3. Generated client/server scaffold manifests meet minimum contract shape.
 
 ## Runtime Plugin ABI (SDN WASI Host)
 
@@ -148,3 +229,10 @@ ORBPRO_KEYSERVER_ALLOWED_DOMAINS=localhost,127.0.0.1
 
 If local node-info is unavailable, treat this as an environment setup failure
 and fix local SDN startup first before running protocol tests.
+
+## Additional Docs
+
+- `../../docs/plugin-sdk/orbpro-third-party-schema-policy.md`
+- `../../docs/plugin-sdk/orbpro-third-party-server-plugins.md`
+- `../../docs/plugin-sdk/orbpro-third-party-client-plugins.md`
+- `../../docs/plugin-sdk/orbpro-third-party-custom-clients.md`
