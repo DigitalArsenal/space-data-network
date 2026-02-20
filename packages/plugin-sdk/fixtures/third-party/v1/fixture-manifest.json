@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-02-20T11:21:25.782Z",
+  "fixtures": [
+    {
+      "name": "third_party_client_license_request",
+      "file": "third_party_client_license_request.hex",
+      "bytes": 212,
+      "sha256": "7206a6f6df1f599a4507b96f334275346f295aa2d501c373b815161e019e1c16"
+    },
+    {
+      "name": "third_party_client_license_response",
+      "file": "third_party_client_license_response.hex",
+      "bytes": 112,
+      "sha256": "286c554b46ca3a0147670b89139ef6ffc7058955676f2b60f5214d2bd5f4d9b9"
+    },
+    {
+      "name": "third_party_server_plugin_registration",
+      "file": "third_party_server_plugin_registration.hex",
+      "bytes": 240,
+      "sha256": "c518855fecdd791a107d5b1e4c772f7dbf183b14a2e361732d48563e3be7df23"
+    },
+    {
+      "name": "third_party_server_plugin_grant",
+      "file": "third_party_server_plugin_grant.hex",
+      "bytes": 160,
+      "sha256": "4850e9492b2a710198b2352232ab64b3f8cbf2c62dd02b32c35b6ffa9ad4567f"
+    },
+    {
+      "name": "third_party_client_license_request_invalid_identifier",
+      "file": "third_party_client_license_request_invalid_identifier.hex",
+      "bytes": 212,
+      "sha256": "e31c55bc9acd8fdf2181d61a4ef96c11e0a3274ed60268007c9091039e0b6490",
+      "expectedFailure": "invalid third-party client license request identifier"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+namespace orbpro.thirdparty.v1;
+
+// Registration payload for third-party server plugins.
+table ThirdPartyServerPluginRegistration {
+  // Schema major version for compatibility checks.
+  schema_version:ushort = 1;
+
+  // Stable plugin identifier (reverse-dns or org scoped).
+  plugin_id:string (required);
+
+  // Plugin semantic version string.
+  plugin_version:string (required);
+
+  // Vendor/team id owning this plugin.
+  vendor_id:string (required);
+
+  // Public signing key advertised by plugin runtime.
+  signing_public_key:[ubyte] (required);
+
+  // Capability list exposed by plugin.
+  capabilities:[string];
+
+  // Hash of plugin manifest bytes for tamper detection.
+  manifest_hash:[ubyte] (required);
+}
+
+root_type ThirdPartyServerPluginRegistration;
+file_identifier "TPSR";

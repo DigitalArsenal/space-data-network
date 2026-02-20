@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "pluginType": "client",
+  "pluginId": "__PLUGIN_ID__",
+  "pluginName": "__PLUGIN_NAME__",
+  "pluginVersion": "0.1.0",
+  "vendorId": "__VENDOR_ID__",
+  "contact": "security@example.com",
+  "capabilities": [
+    "license.request"
+  ]
+}
