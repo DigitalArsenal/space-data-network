@@ -84,8 +84,8 @@ Set these environment variables on the server:
 ```bash
 export STRIPE_SECRET_KEY="sk_live_..."
 export STRIPE_WEBHOOK_SECRET="whsec_..."
-export STRIPE_SUCCESS_URL="https://spaceaware.io/billing/success?session_id={CHECKOUT_SESSION_ID}"
-export STRIPE_CANCEL_URL="https://spaceaware.io/billing/cancel"
+export STRIPE_SUCCESS_URL="https://your-domain.example/billing/success?session_id={CHECKOUT_SESSION_ID}"
+export STRIPE_CANCEL_URL="https://your-domain.example/billing/cancel"
 ```
 
 If Stripe env vars are not set, fiat checkout falls back to the existing local stub behavior.
@@ -103,7 +103,7 @@ OrbPro key exchange streams are FlatBuffer-based:
 - `/orbpro/public-key/1.0.0` returns `PublicKeyResponse` (file id `OBPK`)
 - `/orbpro/key-broker/1.0.0` accepts `KeyBrokerRequest` (`OBKQ`) and returns `KeyBrokerResponse` (`OBKS`)
 - Schema source of truth lives at `packages/plugin-sdk/schemas/orbpro/key-broker/`
-- Regenerate plugin SDK + SDN Go bindings with `flatc-wasm` from repo root: `npm run generate:orbpro-key-broker-bindings`
+- Regenerate plugin SDK + SDN Go bindings with `flatc-wasm` from repo root: `npm run generate:plugin-sdk:key-broker-bindings`
 
 HTTP endpoints on the admin listener:
 
@@ -128,20 +128,14 @@ admin:
   tls_enabled: true
   tls_cert_file: /etc/spacedatanetwork/tls/origin.crt
   tls_key_file: /etc/spacedatanetwork/tls/origin.key
-  homepage_file: /opt/spacedatanetwork/spaceaware/index.html
+  homepage_file: /opt/spacedatanetwork/web/index.html
 ```
 
 With admin TLS enabled, the daemon also proxies incoming `Upgrade: websocket`
 requests on the admin listener to the local libp2p WebSocket transport (for
 example `:8080`). This enables browser clients to dial secure multiaddrs such as:
 
-`/dns4/spaceaware.io/tcp/443/wss/p2p/<peer-id>`
-
-Build the SpaceAware single-file homepage:
-
-```bash
-npm --prefix ../packages/spaceaware run build
-```
+`/dns4/your-domain.example/tcp/443/wss/p2p/<peer-id>`
 
 Set an admin token to enable entitlement updates:
 

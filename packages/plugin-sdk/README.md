@@ -94,7 +94,7 @@ From the `space-data-network` repo root, regenerate both plugin SDK bindings
 and SDN server Go bindings in one step:
 
 ```bash
-npm run generate:orbpro-key-broker-bindings
+npm run generate:plugin-sdk:key-broker-bindings
 ```
 
 That command updates:
@@ -232,7 +232,7 @@ and fix local SDN startup first before running protocol tests.
 
 ## Additional Docs
 
-- `../../docs/plugin-sdk/orbpro-third-party-schema-policy.md`
-- `../../docs/plugin-sdk/orbpro-third-party-server-plugins.md`
-- `../../docs/plugin-sdk/orbpro-third-party-client-plugins.md`
-- `../../docs/plugin-sdk/orbpro-third-party-custom-clients.md`
+- `../../docs/plugin-sdk/third-party-schema-policy.md`
+- `../../docs/plugin-sdk/third-party-server-plugins.md`
+- `../../docs/plugin-sdk/third-party-client-plugins.md`
+- `../../docs/plugin-sdk/third-party-custom-clients.md`
