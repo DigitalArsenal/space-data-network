@@ -433,6 +433,12 @@ func (n *Node) loadPluginRegistry() (*license.PluginRegistry, error) {
 }
 
 func (n *Node) findPluginDecryptPrivateKey() ([]byte, error) {
+	if n.identity != nil && len(n.identity.EncryptionKey) == 32 {
+		key := make([]byte, len(n.identity.EncryptionKey))
+		copy(key, n.identity.EncryptionKey)
+		return key, nil
+	}
+
 	envNames := []string{
 		"SDN_PLUGIN_DECRYPT_KEY",
 		"SDN_PLUGIN_KEY",
@@ -449,12 +455,6 @@ func (n *Node) findPluginDecryptPrivateKey() ([]byte, error) {
 			}
 			return key, nil
 		}
-	}
-
-	if n.identity != nil && len(n.identity.EncryptionKey) == 32 {
-		key := make([]byte, len(n.identity.EncryptionKey))
-		copy(key, n.identity.EncryptionKey)
-		return key, nil
 	}
 
 	return nil, nil
