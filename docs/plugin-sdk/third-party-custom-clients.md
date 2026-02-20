@@ -1,6 +1,6 @@
-# OrbPro Third-Party Custom Clients (Non-OrbPro)
+# Third-Party Custom Clients
 
-This guide is for external clients that do not embed OrbPro runtime code but
+This guide is for external clients that do not embed a bundled runtime but
 still need to interoperate with third-party plugin licensing.
 
 ## Minimum interoperability requirements

@@ -1,7 +1,7 @@
-# OrbPro Third-Party Server Plugin Guide
+# Third-Party Server Plugin Guide
 
-This guide describes how to build a third-party **server plugin** for OrbPro
-licensing on Space Data Network.
+This guide describes how to build a third-party **server plugin** for licensing
+flows on Space Data Network.
 
 ## Contract
 

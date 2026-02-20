@@ -216,7 +216,7 @@ OrbPro licensing/key exchange stream schemas (v1.0) are versioned in the plugin 
 Regenerate plugin SDK + SDN Go bindings from these schemas (via `flatc-wasm`):
 
 ```bash
-npm run generate:orbpro-key-broker-bindings
+npm run generate:plugin-sdk:key-broker-bindings
 ```
 
 Run the plugin SDK protocol test client:
