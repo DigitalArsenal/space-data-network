@@ -40,8 +40,15 @@
     "prepare": "husky",
     "test:plugin-harness": "scripts/run-plugin-harness.sh",
     "generate:plugin-sdk:key-broker-bindings": "node packages/plugin-sdk/scripts/generate-key-broker-bindings.mjs",
+    "generate:plugin-sdk:third-party-bindings": "node packages/plugin-sdk/scripts/generate-third-party-bindings.mjs",
+    "generate:plugin-sdk:third-party-fixtures": "node packages/plugin-sdk/scripts/generate-third-party-fixtures.mjs",
+    "generate:plugin-sdk:all-bindings": "npm run generate:plugin-sdk:key-broker-bindings && npm run generate:plugin-sdk:third-party-bindings && npm run generate:plugin-sdk:third-party-fixtures",
     "generate:orbpro-key-broker-bindings": "node scripts/generate-orbpro-key-broker-bindings.mjs",
-    "test:plugin-sdk:key-broker-client": "node packages/plugin-sdk/scripts/key-broker-test-client.mjs"
+    "generate:orbpro-third-party-bindings": "node scripts/generate-orbpro-third-party-bindings.mjs",
+    "test:plugin-sdk:key-broker-client": "node packages/plugin-sdk/scripts/key-broker-test-client.mjs",
+    "test:plugin-sdk:conformance": "node packages/plugin-sdk/tests/conformance/run-conformance.mjs",
+    "test:plugin-sdk:mock-harness": "node packages/plugin-sdk/scripts/mock-third-party-plugin-harness.mjs",
+    "ci:plugin-sdk": "npm run generate:orbpro-key-broker-bindings && npm run generate:orbpro-third-party-bindings && npm run test:plugin-sdk:conformance"
   },
   "repository": {
     "type": "git",

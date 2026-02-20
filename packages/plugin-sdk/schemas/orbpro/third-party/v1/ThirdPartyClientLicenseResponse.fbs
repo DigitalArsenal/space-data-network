@@ -1,0 +1,22 @@
+namespace orbpro.thirdparty.v1;
+
+// Broker response for third-party client license requests.
+table ThirdPartyClientLicenseResponse {
+  // 0 = success; non-zero = broker/plugin specific error.
+  status:uint;
+
+  // Key version served by broker policy.
+  key_version:uint;
+
+  // Absolute expiration epoch in milliseconds.
+  expires_at_ms:ulong;
+
+  // Wrapped key material (format agreed by plugin contract).
+  wrapped_key:[ubyte];
+
+  // Optional challenge id for audit correlation.
+  challenge_id:[ubyte];
+}
+
+root_type ThirdPartyClientLicenseResponse;
+file_identifier "TPCS";
