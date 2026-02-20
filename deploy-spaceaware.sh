@@ -163,17 +163,21 @@ ssh "${SSH_OPTS[@]}" "$SERVER" "
   touch '$REMOTE_ENV_FILE'
   chmod 600 '$REMOTE_ENV_FILE'
 
+  # Key material is derived from node identity at runtime.
+  # Remove legacy env-based key settings if present.
+  sed -i '/^PLUGIN_SERVER_PRIVATE_KEY_HEX=/d' '$REMOTE_ENV_FILE'
+  sed -i '/^ORBPRO_SERVER_PRIVATE_KEY_HEX=/d' '$REMOTE_ENV_FILE'
+  sed -i '/^SDN_PLUGIN_DECRYPT_KEY=/d' '$REMOTE_ENV_FILE'
+  sed -i '/^SDN_PLUGIN_KEY=/d' '$REMOTE_ENV_FILE'
+  sed -i '/^SDN_PLUGIN_RECIPIENT_KEY=/d' '$REMOTE_ENV_FILE'
+  sed -i '/^SDN_PLUGIN_RECIPIENT_KEY_B64=/d' '$REMOTE_ENV_FILE'
+
   if ! grep -q '^SDN_PLUGIN_ROOT=' '$REMOTE_ENV_FILE'; then
     echo 'SDN_PLUGIN_ROOT=$REMOTE_PLUGIN_ROOT' >> '$REMOTE_ENV_FILE'
   fi
 
   if ! grep -q '^PLUGIN_KEY_BROKER_WASM_PATH=' '$REMOTE_ENV_FILE'; then
     echo 'PLUGIN_KEY_BROKER_WASM_PATH=$REMOTE_WASM_DIR/sdn-license-plugin.wasm' >> '$REMOTE_ENV_FILE'
-  fi
-  if ! grep -q '^PLUGIN_SERVER_PRIVATE_KEY_HEX=' '$REMOTE_ENV_FILE'; then
-    new_key=\$(hexdump -n 32 -e '32/1 \"%02x\"' /dev/urandom)
-    echo \"PLUGIN_SERVER_PRIVATE_KEY_HEX=\$new_key\" >> '$REMOTE_ENV_FILE'
-    echo '[deploy-spaceaware] Generated new PLUGIN_SERVER_PRIVATE_KEY_HEX in $REMOTE_ENV_FILE'
   fi
 
   if ! grep -q '^DERIVATION_SECRET=' '$REMOTE_ENV_FILE'; then

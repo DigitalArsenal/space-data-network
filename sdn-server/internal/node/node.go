@@ -345,6 +345,10 @@ func (n *Node) init() error {
 		PeerID:       n.host.ID().String(),
 		Mode:         n.config.Mode,
 	}
+	if n.identity != nil && len(n.identity.EncryptionKey) == 32 {
+		pluginCtx.NodeEncryptionKey = make([]byte, len(n.identity.EncryptionKey))
+		copy(pluginCtx.NodeEncryptionKey, n.identity.EncryptionKey)
+	}
 
 	// Register WASI-based OrbPro key broker plugin from encrypted catalog (if configured),
 	// then fall back to configured static wasm path.
