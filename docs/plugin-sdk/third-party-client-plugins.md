@@ -1,4 +1,4 @@
-# OrbPro Third-Party Client Plugin Guide
+# Third-Party Client Plugin Guide
 
 This guide describes how to build a third-party **client plugin** that requests
 user-account scoped license keys.
