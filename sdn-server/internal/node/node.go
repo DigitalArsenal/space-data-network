@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -439,24 +438,6 @@ func (n *Node) findPluginDecryptPrivateKey() ([]byte, error) {
 		return key, nil
 	}
 
-	envNames := []string{
-		"SDN_PLUGIN_DECRYPT_KEY",
-		"SDN_PLUGIN_KEY",
-		"SDN_PLUGIN_RECIPIENT_KEY",
-		"SDN_PLUGIN_RECIPIENT_KEY_B64",
-		"ORBPRO_SERVER_PRIVATE_KEY_HEX",
-		"PLUGIN_SERVER_PRIVATE_KEY_HEX",
-	}
-	for _, envName := range envNames {
-		if raw := strings.TrimSpace(os.Getenv(envName)); raw != "" {
-			key, err := parseX25519Key(raw)
-			if err != nil {
-				return nil, fmt.Errorf("invalid %s: %w", envName, err)
-			}
-			return key, nil
-		}
-	}
-
 	return nil, nil
 }
 
@@ -533,28 +514,6 @@ func (n *Node) getPluginByID(reg *license.PluginRegistry, pluginID string) (*was
 		return nil, false
 	}
 	return p, true
-}
-
-func parseX25519Key(raw string) ([]byte, error) {
-	trimmed := strings.TrimSpace(raw)
-	trimmed = strings.TrimPrefix(trimmed, "0x")
-	if decoded, err := hex.DecodeString(trimmed); err == nil && len(decoded) == 32 {
-		return decoded, nil
-	}
-
-	for _, decode := range []func(string) ([]byte, error){
-		base64.RawStdEncoding.DecodeString,
-		base64.StdEncoding.DecodeString,
-		base64.RawURLEncoding.DecodeString,
-		base64.URLEncoding.DecodeString,
-	} {
-		decoded, err := decode(trimmed)
-		if err == nil && len(decoded) == 32 {
-			return decoded, nil
-		}
-	}
-
-	return nil, fmt.Errorf("must be 32-byte X25519 key encoded as hex or base64")
 }
 
 func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
