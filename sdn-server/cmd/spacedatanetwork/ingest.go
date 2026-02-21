@@ -12,6 +12,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/ingest"
+	"github.com/spacedatanetwork/sdn-server/internal/tor"
 	"github.com/spf13/cobra"
 )
 
@@ -96,6 +97,44 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		password = strings.TrimSpace(os.Getenv("SPACETRACK_PASSWORD"))
 	}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	torStartTimeout := 30 * time.Second
+	if raw := strings.TrimSpace(cfg.Tor.StartTimeout); raw != "" {
+		if parsed, parseErr := time.ParseDuration(raw); parseErr != nil {
+			log.Warnf("Invalid tor.start_timeout %q, using %s", raw, torStartTimeout)
+		} else {
+			torStartTimeout = parsed
+		}
+	}
+
+	torRuntime, err := tor.Start(ctx, tor.StartOptions{
+		Enabled:              cfg.Tor.Enabled,
+		BinaryPath:           cfg.Tor.BinaryPath,
+		StoragePath:          storagePath,
+		DataDir:              cfg.Tor.DataDir,
+		SocksAddress:         cfg.Tor.SocksAddress,
+		StartTimeout:         torStartTimeout,
+		HiddenServiceEnabled: false,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to start tor runtime: %w", err)
+	}
+	if torRuntime != nil {
+		defer func() {
+			stopCtx, cancelStop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelStop()
+			if stopErr := torRuntime.Stop(stopCtx); stopErr != nil {
+				log.Warnf("TOR shutdown error: %v", stopErr)
+			}
+		}()
+		if err := torRuntime.ApplyHTTPProxy(cfg.Tor.BypassLocalAddresses); err != nil {
+			return fmt.Errorf("failed to apply tor proxy settings: %w", err)
+		}
+		log.Infof("Ingest outbound HTTP proxying enabled via TOR (%s)", torRuntime.ProxyURL())
+	}
+
 	runner, err := ingest.NewRunner(ingest.Config{
 		StoragePath: storagePath,
 		RawPath:     rawPath,
@@ -121,9 +160,6 @@ func runIngest(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	log.Infof("Starting ingest workers: storage=%s raw=%s once=%v", storagePath, rawPath, ingestOnce)
 	if ingestSpaceTrackEnabled && (identity == "" || password == "") {

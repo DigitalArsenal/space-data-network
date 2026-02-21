@@ -1074,3 +1074,23 @@ func (n *Node) SigningKey() []byte {
 	}
 	return nil
 }
+
+// IdentityKeyMaterial returns the raw private key bytes used for this node's
+// libp2p identity. This is used for deterministic derivations (for example, TOR
+// hidden-service key material).
+func (n *Node) IdentityKeyMaterial() []byte {
+	if n.host == nil {
+		return nil
+	}
+	priv := n.host.Peerstore().PrivKey(n.host.ID())
+	if priv == nil {
+		return nil
+	}
+	raw, err := priv.Raw()
+	if err != nil {
+		return nil
+	}
+	out := make([]byte, len(raw))
+	copy(out, raw)
+	return out
+}

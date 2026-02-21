@@ -36,6 +36,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storefront"
+	"github.com/spacedatanetwork/sdn-server/internal/tor"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
@@ -179,6 +180,68 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	n, err := node.New(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create node: %w", err)
+	}
+
+	torStartTimeout := 30 * time.Second
+	if raw := strings.TrimSpace(cfg.Tor.StartTimeout); raw != "" {
+		if parsed, parseErr := time.ParseDuration(raw); parseErr != nil {
+			log.Warnf("Invalid tor.start_timeout %q, using %s", raw, torStartTimeout)
+		} else {
+			torStartTimeout = parsed
+		}
+	}
+
+	hiddenServiceTarget := strings.TrimSpace(cfg.Tor.HiddenServiceTarget)
+	if hiddenServiceTarget == "" {
+		hiddenServiceTarget = cfg.Admin.ListenAddr
+	}
+	if strings.TrimSpace(hiddenServiceTarget) == "" {
+		hiddenServiceTarget = "127.0.0.1:5001"
+	}
+	hiddenServicePort := cfg.Tor.HiddenServicePort
+	if hiddenServicePort <= 0 {
+		if cfg.Admin.TLSEnabled {
+			hiddenServicePort = 443
+		} else {
+			hiddenServicePort = 80
+		}
+	}
+
+	torRuntime, err := tor.Start(ctx, tor.StartOptions{
+		Enabled:                 cfg.Tor.Enabled,
+		BinaryPath:              cfg.Tor.BinaryPath,
+		StoragePath:             cfg.Storage.Path,
+		DataDir:                 cfg.Tor.DataDir,
+		SocksAddress:            cfg.Tor.SocksAddress,
+		StartTimeout:            torStartTimeout,
+		HiddenServiceEnabled:    cfg.Admin.Enabled && cfg.Tor.HiddenServiceEnabled,
+		HiddenServicePort:       hiddenServicePort,
+		HiddenServiceTarget:     hiddenServiceTarget,
+		NodeIdentityKeyMaterial: n.IdentityKeyMaterial(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to start tor runtime: %w", err)
+	}
+	if torRuntime != nil {
+		defer func() {
+			stopCtx, cancelStop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelStop()
+			if stopErr := torRuntime.Stop(stopCtx); stopErr != nil {
+				log.Warnf("TOR shutdown error: %v", stopErr)
+			}
+		}()
+
+		if err := torRuntime.ApplyHTTPProxy(cfg.Tor.BypassLocalAddresses); err != nil {
+			return fmt.Errorf("failed to apply tor proxy settings: %w", err)
+		}
+		log.Infof("Outbound HTTP proxying enabled via TOR (%s)", torRuntime.ProxyURL())
+
+		if epmSvc := n.EPMService(); epmSvc != nil && torRuntime.OnionHost() != "" {
+			useTLS := cfg.Admin.TLSEnabled || hiddenServicePort == 443
+			if err := epmSvc.SetRuntimeAddresses([]string{torRuntime.OnionURL(useTLS)}); err != nil {
+				log.Warnf("Failed to inject onion metadata into EPM: %v", err)
+			}
+		}
 	}
 
 	log.Info("Starting Space Data Network daemon...")
@@ -383,7 +446,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			}
 
 			// Node info API endpoint
-			adminMux.HandleFunc("/api/node/info", handleNodeInfo(n))
+			adminMux.HandleFunc("/api/node/info", handleNodeInfo(n, torRuntime))
 
 			// EPM (Entity Profile Message) API endpoints
 			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
@@ -1143,10 +1206,11 @@ export const SDN_LISTEN_ADDRS = %s;
 }
 
 // handleNodeInfo returns an HTTP handler that serves the node's public identity info.
-func handleNodeInfo(n *node.Node) http.HandlerFunc {
+func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 	type nodeInfoResponse struct {
 		PeerID              string                   `json:"peer_id"`
 		ListenAddresses     []string                 `json:"listen_addresses"`
+		OnionAddress        string                   `json:"onion_address,omitempty"`
 		SigningPubKeyHex    string                   `json:"signing_pubkey_hex,omitempty"`
 		EncryptionPubHex    string                   `json:"encryption_pubkey_hex,omitempty"`
 		SigningKeyPath      string                   `json:"signing_key_path,omitempty"`
@@ -1176,6 +1240,9 @@ func handleNodeInfo(n *node.Node) http.HandlerFunc {
 			ListenAddresses: addrStrings,
 			Mode:            n.Config().Mode,
 			Version:         "spacedatanetwork/1.0.0",
+		}
+		if torRuntime != nil && torRuntime.OnionHost() != "" {
+			info.OnionAddress = torRuntime.OnionHost()
 		}
 
 		if identity := n.Identity(); identity != nil {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ps "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/spacedatanetwork/sdn-server/internal/tor"
 )
 
 // isPrivateIP checks if an IP address is in a private/reserved range.
@@ -63,6 +64,12 @@ func validateWebhookURL(rawURL string) error {
 // ssrfSafeDialContext returns a DialContext function that re-validates resolved IPs
 // at connection time to prevent DNS rebinding attacks.
 func ssrfSafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	// When an HTTP proxy is configured, allow dialing the proxy endpoint.
+	if tor.AllowProxyDialTarget(addr) {
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, network, addr)
+	}
+
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid address %q: %w", addr, err)
@@ -108,27 +115,27 @@ func DefaultDeliveryConfig() DeliveryConfig {
 
 // DeliveryRequest represents a request to deliver data to a buyer
 type DeliveryRequest struct {
-	GrantID        string         `json:"grant_id"`
-	ListingID      string         `json:"listing_id"`
-	BuyerPeerID    string         `json:"buyer_peer_id"`
-	Method         DeliveryMethod `json:"method"`
-	Data           []byte         `json:"data"`
-	Encrypted      bool           `json:"encrypted"`
-	DeliveryTopic  string         `json:"delivery_topic,omitempty"`
-	WebhookURL     string         `json:"webhook_url,omitempty"`
-	IPFSPinName    string         `json:"ipfs_pin_name,omitempty"`
+	GrantID       string         `json:"grant_id"`
+	ListingID     string         `json:"listing_id"`
+	BuyerPeerID   string         `json:"buyer_peer_id"`
+	Method        DeliveryMethod `json:"method"`
+	Data          []byte         `json:"data"`
+	Encrypted     bool           `json:"encrypted"`
+	DeliveryTopic string         `json:"delivery_topic,omitempty"`
+	WebhookURL    string         `json:"webhook_url,omitempty"`
+	IPFSPinName   string         `json:"ipfs_pin_name,omitempty"`
 }
 
 // DeliveryResult represents the result of a delivery attempt
 type DeliveryResult struct {
-	Success      bool   `json:"success"`
-	Method       string `json:"method"`
-	DeliveredAt  int64  `json:"delivered_at"`
-	BytesSent    int    `json:"bytes_sent"`
-	CID          string `json:"cid,omitempty"`          // For IPFSPin
-	TopicID      string `json:"topic_id,omitempty"`     // For PubSubStream
-	WebhookStatus int   `json:"webhook_status,omitempty"` // For WebhookPush
-	Error        string `json:"error,omitempty"`
+	Success       bool   `json:"success"`
+	Method        string `json:"method"`
+	DeliveredAt   int64  `json:"delivered_at"`
+	BytesSent     int    `json:"bytes_sent"`
+	CID           string `json:"cid,omitempty"`            // For IPFSPin
+	TopicID       string `json:"topic_id,omitempty"`       // For PubSubStream
+	WebhookStatus int    `json:"webhook_status,omitempty"` // For WebhookPush
+	Error         string `json:"error,omitempty"`
 }
 
 // DeliveryService handles data delivery to buyers
@@ -149,6 +156,7 @@ func NewDeliveryService(config DeliveryConfig, pubsub *ps.PubSub) *DeliveryServi
 		httpClient: &http.Client{
 			Timeout: config.WebhookTimeout,
 			Transport: &http.Transport{
+				Proxy:       http.ProxyFromEnvironment,
 				DialContext: ssrfSafeDialContext,
 			},
 		},
@@ -289,12 +297,12 @@ func (ds *DeliveryService) deliverWebhook(ctx context.Context, req *DeliveryRequ
 
 	// Build webhook payload
 	payload := map[string]interface{}{
-		"grant_id":   req.GrantID,
-		"listing_id": req.ListingID,
+		"grant_id":      req.GrantID,
+		"listing_id":    req.ListingID,
 		"buyer_peer_id": req.BuyerPeerID,
-		"encrypted":  req.Encrypted,
-		"timestamp":  time.Now().Unix(),
-		"data":       req.Data,
+		"encrypted":     req.Encrypted,
+		"timestamp":     time.Now().Unix(),
+		"data":          req.Data,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -338,10 +346,10 @@ func (ds *DeliveryService) deliverWebhook(ctx context.Context, req *DeliveryRequ
 	}
 
 	return &DeliveryResult{
-		Success:       false,
-		Method:        string(DeliveryWebhookPush),
-		DeliveredAt:   time.Now().Unix(),
-		Error:         lastErr.Error(),
+		Success:     false,
+		Method:      string(DeliveryWebhookPush),
+		DeliveredAt: time.Now().Unix(),
+		Error:       lastErr.Error(),
 	}, lastErr
 }
 
