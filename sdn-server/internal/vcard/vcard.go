@@ -94,11 +94,11 @@ func EPMToVCard(epmBytes []byte) (string, error) {
 		card.Add("ADR", &vcard.Field{Value: strings.Join(addrParts, ";")})
 	}
 
-	// Multiformat addresses -> URL (for IPNS addresses)
+	// Multiformat addresses -> URL
 	for i := 0; i < epm.MULTIFORMAT_ADDRESSLength(); i++ {
 		if addrBytes := epm.MULTIFORMAT_ADDRESS(i); addrBytes != nil {
 			addrStr := string(addrBytes)
-			if strings.HasPrefix(addrStr, "/ipns/") {
+			if strings.TrimSpace(addrStr) != "" {
 				card.Add("URL", &vcard.Field{Value: addrStr})
 			}
 		}

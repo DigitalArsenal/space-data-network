@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mr-tron/base58"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
+	"github.com/mr-tron/base58"
 	"sync"
 
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -35,19 +35,19 @@ import (
 var log = logging.Logger("sdn-epm")
 
 const (
-	identityAttestationVersion    = "1"
-	identityChainBitcoin          = "bitcoin"
-	identityChainEthereum         = "ethereum"
-	identityChainSolana           = "solana"
+	identityAttestationVersion           = "1"
+	identityChainBitcoin                 = "bitcoin"
+	identityChainEthereum                = "ethereum"
+	identityChainSolana                  = "solana"
 	identityAttestationAlgorithmBitcoin  = "secp256k1-compact-bitcoin"
 	identityAttestationAlgorithmEthereum = "secp256k1-compact-ethereum"
 	identityAttestationAlgorithmSolana   = "ed25519"
 )
 
 const (
-	identityAttestationBitcoinSigEncoding   = "compact"
-	identityAttestationEthereumSigEncoding  = "compact"
-	identityAttestationSolanaSigEncoding    = "raw-ed25519"
+	identityAttestationBitcoinSigEncoding  = "compact"
+	identityAttestationEthereumSigEncoding = "compact"
+	identityAttestationSolanaSigEncoding   = "raw-ed25519"
 )
 
 const bech32Alphabet = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
@@ -68,8 +68,8 @@ type IdentityAttestationChainProof struct {
 // IdentityAttestation is a chain attestation that binds the signing public key to
 // chain-owned identities (Bitcoin, Ethereum, Solana).
 type IdentityAttestation struct {
-	Version          string `json:"version"`
-	XPub             string `json:"xpub"`
+	Version           string `json:"version"`
+	XPub              string `json:"xpub"`
 	IdentityPubKeyHex string `json:"identity_pubkey_hex"`
 	IdentityKeyPath   string `json:"identity_key_path"`
 	SigningPubKeyHex  string `json:"signing_pubkey_hex"`
@@ -111,16 +111,16 @@ func (a *IdentityAttestation) SignedPayload() ([]byte, error) {
 	payload := identityAttestationPayload{
 		Version:           a.Version,
 		XPub:              a.XPub,
-		IdentityPubKeyHex:  a.IdentityPubKeyHex,
-		IdentityKeyPath:    a.IdentityKeyPath,
-		SigningPubKeyHex:   a.SigningPubKeyHex,
-		SigningKeyPath:     a.SigningKeyPath,
-		BitcoinAddress:     a.BitcoinAddress,
-		BitcoinKeyPath:     a.BitcoinKeyPath,
-		EthereumAddress:    a.EthereumAddress,
-		EthereumKeyPath:    a.EthereumKeyPath,
-		SolanaAddress:      a.SolanaAddress,
-		SolanaKeyPath:      a.SolanaKeyPath,
+		IdentityPubKeyHex: a.IdentityPubKeyHex,
+		IdentityKeyPath:   a.IdentityKeyPath,
+		SigningPubKeyHex:  a.SigningPubKeyHex,
+		SigningKeyPath:    a.SigningKeyPath,
+		BitcoinAddress:    a.BitcoinAddress,
+		BitcoinKeyPath:    a.BitcoinKeyPath,
+		EthereumAddress:   a.EthereumAddress,
+		EthereumKeyPath:   a.EthereumKeyPath,
+		SolanaAddress:     a.SolanaAddress,
+		SolanaKeyPath:     a.SolanaKeyPath,
 		IssuedAt:          a.IssuedAt,
 	}
 
@@ -566,6 +566,9 @@ type Service struct {
 
 	epmBytes []byte // current node EPM (size-prefixed FlatBuffer)
 	profile  *Profile
+	// runtimeAddresses are non-profile addresses injected at runtime
+	// (for example deterministic onion URLs).
+	runtimeAddresses    []string
 	identityAttestation *IdentityAttestation
 
 	mu sync.RWMutex
@@ -643,6 +646,23 @@ func (s *Service) GetNodeProfile() *Profile {
 	}
 	cp := *s.profile
 	return &cp
+}
+
+// SetRuntimeAddresses updates non-profile runtime addresses and rebuilds EPM.
+func (s *Service) SetRuntimeAddresses(addresses []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cleaned := normalizeRuntimeAddresses(addresses)
+	if stringSlicesEqual(cleaned, s.runtimeAddresses) {
+		return nil
+	}
+
+	s.runtimeAddresses = cleaned
+	if err := s.rebuildEPMLocked(); err != nil {
+		return fmt.Errorf("failed to rebuild EPM with runtime addresses: %w", err)
+	}
+	return nil
 }
 
 // GetNodeEPMJSON returns the EPM as a JSON-friendly structure.
@@ -974,14 +994,26 @@ func (s *Service) rebuildEPMLocked() error {
 		keysOff = builder.EndVector(len(keyOffsets))
 	}
 
-	// Multiformat addresses (IPNS)
+	// Multiformat addresses (IPNS + runtime addresses such as onion URL)
 	var multiAddrOff flatbuffers.UOffsetT
 	peerIDStr := s.peerID.String()
 	ipnsAddr := "/ipns/" + peerIDStr
-	addrOff := builder.CreateString(ipnsAddr)
-	EPM.EPMStartMULTIFORMAT_ADDRESSVector(builder, 1)
-	builder.PrependUOffsetT(addrOff)
-	multiAddrOff = builder.EndVector(1)
+	addresses := make([]string, 0, 1+len(s.runtimeAddresses))
+	addresses = append(addresses, ipnsAddr)
+	addresses = append(addresses, s.runtimeAddresses...)
+	addresses = normalizeRuntimeAddresses(addresses)
+
+	if len(addresses) > 0 {
+		addrOffsets := make([]flatbuffers.UOffsetT, len(addresses))
+		for i, addr := range addresses {
+			addrOffsets[i] = builder.CreateString(addr)
+		}
+		EPM.EPMStartMULTIFORMAT_ADDRESSVector(builder, len(addrOffsets))
+		for i := len(addrOffsets) - 1; i >= 0; i-- {
+			builder.PrependUOffsetT(addrOffsets[i])
+		}
+		multiAddrOff = builder.EndVector(len(addrOffsets))
+	}
 
 	// Build EPM table
 	EPM.EPMStart(builder)
@@ -1074,9 +1106,9 @@ func (s *Service) rebuildIdentityAttestationLocked() error {
 	payload := identityAttestationPayload{
 		Version:           identityAttestationVersion,
 		XPub:              s.xpub,
-		IdentityPubKeyHex:  hex.EncodeToString(identityPubRaw),
-		IdentityKeyPath:    s.identity.IdentityKeyPath,
-		SigningPubKeyHex:   hex.EncodeToString(signingPubRaw),
+		IdentityPubKeyHex: hex.EncodeToString(identityPubRaw),
+		IdentityKeyPath:   s.identity.IdentityKeyPath,
+		SigningPubKeyHex:  hex.EncodeToString(signingPubRaw),
 		SigningKeyPath:    s.identity.SigningKeyPath,
 		BitcoinAddress:    s.identity.Addresses.Bitcoin.Address,
 		BitcoinKeyPath:    s.identity.BitcoinKeyPath,
@@ -1112,17 +1144,17 @@ func (s *Service) rebuildIdentityAttestationLocked() error {
 	s.identityAttestation = &IdentityAttestation{
 		Version:           payload.Version,
 		XPub:              payload.XPub,
-		IdentityPubKeyHex:  payload.IdentityPubKeyHex,
-		IdentityKeyPath:    payload.IdentityKeyPath,
-		SigningPubKeyHex:   payload.SigningPubKeyHex,
-		SigningKeyPath:     payload.SigningKeyPath,
-		IssuedAt:           payload.IssuedAt,
-		BitcoinAddress:     payload.BitcoinAddress,
-		BitcoinKeyPath:     payload.BitcoinKeyPath,
-		EthereumAddress:    payload.EthereumAddress,
-		EthereumKeyPath:    payload.EthereumKeyPath,
-		SolanaAddress:      payload.SolanaAddress,
-		SolanaKeyPath:      payload.SolanaKeyPath,
+		IdentityPubKeyHex: payload.IdentityPubKeyHex,
+		IdentityKeyPath:   payload.IdentityKeyPath,
+		SigningPubKeyHex:  payload.SigningPubKeyHex,
+		SigningKeyPath:    payload.SigningKeyPath,
+		IssuedAt:          payload.IssuedAt,
+		BitcoinAddress:    payload.BitcoinAddress,
+		BitcoinKeyPath:    payload.BitcoinKeyPath,
+		EthereumAddress:   payload.EthereumAddress,
+		EthereumKeyPath:   payload.EthereumKeyPath,
+		SolanaAddress:     payload.SolanaAddress,
+		SolanaKeyPath:     payload.SolanaKeyPath,
 		ChainProofs: []IdentityAttestationChainProof{
 			bitcoinProof,
 			ethereumProof,
@@ -1200,6 +1232,37 @@ func (s *Service) buildSolanaAttestationProof(payload []byte, payloadInfo identi
 		SignatureEncoding:  identityAttestationSolanaSigEncoding,
 	}
 	return proof, nil
+}
+
+func normalizeRuntimeAddresses(addresses []string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(addresses))
+
+	for _, raw := range addresses {
+		addr := strings.TrimSpace(raw)
+		if addr == "" {
+			continue
+		}
+		key := strings.ToLower(addr)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, addr)
+	}
+	return out
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // defaultProfile creates a default profile with the node's PeerID as DN.
