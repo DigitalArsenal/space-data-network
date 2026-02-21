@@ -15,6 +15,7 @@ type Config struct {
 	Storage    StorageConfig    `yaml:"storage"`
 	Schemas    SchemaConfig     `yaml:"schemas"`
 	Security   SecurityConfig   `yaml:"security"`
+	Tor        TorConfig        `yaml:"tor"`
 	Peers      PeersConfig      `yaml:"peers"`
 	Admin      AdminConfig      `yaml:"admin"`
 	Setup      SetupConfig      `yaml:"setup"`
@@ -94,6 +95,37 @@ type SecurityConfig struct {
 	// If empty, a machine-derived password is used (hostname + arch + OS via Argon2).
 	// Can also be set via SDN_KEY_PASSWORD environment variable.
 	KeyPassword string `yaml:"key_password,omitempty"`
+}
+
+// TorConfig contains local TOR runtime settings.
+type TorConfig struct {
+	// Enabled starts a local tor daemon and routes outbound HTTP through it.
+	Enabled bool `yaml:"enabled"`
+
+	// BinaryPath points to the tor executable (default: "tor" in PATH).
+	BinaryPath string `yaml:"binary_path"`
+
+	// DataDir is the base directory for tor state (defaults to <storage-parent>/tor).
+	DataDir string `yaml:"data_dir"`
+
+	// SocksAddress is the local SOCKS listener, e.g. "127.0.0.1:9050".
+	SocksAddress string `yaml:"socks_address"`
+
+	// StartTimeout controls how long to wait for tor bootstrap/startup.
+	StartTimeout string `yaml:"start_timeout"`
+
+	// HiddenServiceEnabled publishes the node website as a v3 onion service.
+	HiddenServiceEnabled bool `yaml:"hidden_service_enabled"`
+
+	// HiddenServicePort is the virtual onion service port (80 or 443).
+	HiddenServicePort int `yaml:"hidden_service_port"`
+
+	// HiddenServiceTarget overrides local forward target (host:port).
+	// If empty, admin.listen_addr is used with loopback host normalization.
+	HiddenServiceTarget string `yaml:"hidden_service_target"`
+
+	// BypassLocalAddresses preserves direct localhost access for local-only services.
+	BypassLocalAddresses bool `yaml:"bypass_local_addresses"`
 }
 
 // PeersConfig contains peer trust registry settings.
@@ -232,6 +264,17 @@ func Default() *Config {
 		},
 		Security: SecurityConfig{
 			InsecureMode: false, // Signature verification required by default
+		},
+		Tor: TorConfig{
+			Enabled:              true,
+			BinaryPath:           "tor",
+			DataDir:              "",
+			SocksAddress:         "127.0.0.1:9050",
+			StartTimeout:         "30s",
+			HiddenServiceEnabled: true,
+			HiddenServicePort:    0, // auto: 80 (HTTP) or 443 (HTTPS)
+			HiddenServiceTarget:  "",
+			BypassLocalAddresses: true,
 		},
 		Peers: PeersConfig{
 			StrictMode:             false, // Allow unknown peers by default

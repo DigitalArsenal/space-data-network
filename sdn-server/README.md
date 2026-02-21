@@ -15,6 +15,38 @@ go build -o spacedatanetwork ./cmd/spacedatanetwork
 ./spacedatanetwork daemon
 ```
 
+## TOR by Default
+
+`spacedatanetwork daemon` and `spacedatanetwork ingest` now start a local TOR
+runtime by default and route outbound HTTP requests through TOR SOCKS5h.
+
+For daemon mode, a deterministic v3 onion service is created from the node's
+identity key material and published in node metadata:
+
+- `/api/node/info` includes `onion_address`
+- EPM `multiformat_address` includes the onion URL
+
+Default config values:
+
+```yaml
+tor:
+  enabled: true
+  binary_path: tor
+  socks_address: 127.0.0.1:9050
+  start_timeout: 30s
+  hidden_service_enabled: true
+  hidden_service_port: 0      # auto: 80 or 443 based on admin TLS
+  hidden_service_target: ""   # default: admin.listen_addr normalized to loopback
+  bypass_local_addresses: true
+```
+
+Disable TOR explicitly (for local debugging only):
+
+```yaml
+tor:
+  enabled: false
+```
+
 ## Ingestion Workers (CelesTrak + Space-Track)
 
 Run a one-time sync:
