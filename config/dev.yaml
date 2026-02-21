@@ -27,6 +27,9 @@ schemas:
 security:
   insecure_mode: true
 
+tor:
+  enabled: false
+
 peers:
   strict_mode: false
   enable_dht: false
