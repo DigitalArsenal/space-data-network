@@ -23,3 +23,14 @@ npm --prefix /path/to/space-data-network/packages/plugin-sdk run test:conformanc
 - Encode request with `encodeThirdPartyClientLicenseRequest`
 - Decode response with `decodeThirdPartyClientLicenseResponse`
 - Validate status + key version before decrypting plugin material.
+
+## Key-version compatibility reminder
+
+For OrbPro releases, key versions are minor-based (`MAJOR * 1000 + MINOR`), so
+patch releases within the same minor share a key version.
+
+Client implementations should:
+
+1. Require `status === 0`
+2. Validate `keyVersion` against policy (`active` plus grace window)
+3. Treat unknown/revoked key versions as hard failures
