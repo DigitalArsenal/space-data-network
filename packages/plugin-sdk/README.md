@@ -168,6 +168,14 @@ OrbPro distribution convention for this plugin binary is:
 
 - `orbpro-licensing-server.sdn.plugin`
 
+The artifact is expected to be a single encrypted JSON envelope (not raw
+WASM). Required top-level fields:
+
+1. `format` (`orbpro-key-server-artifact-v3`)
+2. `path` (`dist/orbpro-licensing-server.sdn.plugin`)
+3. `keyEncryption`
+4. `contentEncryption`
+
 ## OrbPro Release Layout Contract
 
 For OrbPro release staging, SDN integration expects:
@@ -180,6 +188,46 @@ The licensing artifact filename is fixed:
 - `Build/OrbPro/<version>/licensing-server/orbpro-licensing-server.sdn.plugin`
 
 `<version>` is the OrbPro SemVer version string (with patch as build counter).
+
+`licensing-server/` must contain only this file for release packaging.
+
+## Key Version Contract (Minor-Based)
+
+OrbPro key version is derived from `MAJOR.MINOR`:
+
+1. `keyVersion = MAJOR * 1000 + MINOR`
+2. Patch builds reuse the same key version.
+
+Examples:
+
+1. `1.137.45` -> `1137`
+2. `1.137.46` -> `1137`
+3. `1.138.1` -> `1138`
+
+Operational policy:
+
+1. Mark current minor key version as `active`
+2. Keep previous 11 minor key versions as `grace`
+3. Total rolling retention: last 12 minor key versions
+
+## Sandcastle Local Smoke Example
+
+From the OrbPro repo, a local plugin-init smoke path is:
+
+```bash
+npm run build:key-server
+node scripts/local-sdn-dev.mjs --run npm run start -- --port 8081
+```
+
+Then open:
+
+```text
+http://localhost:8081/Apps/Sandcastle2/index.html?id=key-broker-single-file
+```
+
+Expected milestone in the demo overlay:
+
+1. `Initialize plugins (WASM)` is marked done.
 
 ## Test Client
 
@@ -217,9 +265,15 @@ Do not rely on production endpoints during local plugin bring-up.
 Minimum plugin environment for local SDN daemon:
 
 1. `ORBPRO_KEY_BROKER_WASM_PATH` (path to `.sdn.plugin`)
-2. `ORBPRO_SERVER_PRIVATE_KEY_HEX` (P-256 private key, 32 bytes hex)
+2. `ORBPRO_SERVER_PRIVATE_KEY_FILE` (path to 32-byte hex private key file)
 3. `DERIVATION_SECRET` (shared secret used by the plugin runtime)
 4. `ORBPRO_KEYSERVER_ALLOWED_DOMAINS` (comma-separated local origins)
+5. `ORBPRO_KEYSERVER_ACTIVE_KEY_VERSION` (optional; defaults from OrbPro version)
+
+Security note:
+
+1. Do not pass private key material in environment variables.
+2. `ORBPRO_SERVER_PRIVATE_KEY_HEX` is forbidden in current runtime config.
 
 Typical local values:
 
