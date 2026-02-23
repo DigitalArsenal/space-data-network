@@ -1,0 +1,59 @@
+// Hash: f88a2e7fc0d365c165490209b10a54dd7c11367fa2a902d2be15a3feb085c305
+// Version: 1.44.6
+// -----------------------------------END_HEADER
+include "../ATM/main.fbs";
+include "../BOV/main.fbs";
+include "../CAT/main.fbs";
+include "../CDM/main.fbs";
+include "../CRM/main.fbs";
+include "../CSM/main.fbs";
+include "../CTR/main.fbs";
+include "../EME/main.fbs";
+include "../EOO/main.fbs";
+include "../EOP/main.fbs";
+include "../EPM/main.fbs";
+include "../HYP/main.fbs";
+include "../IDM/main.fbs";
+include "../LCC/main.fbs";
+include "../LDM/main.fbs";
+include "../MET/main.fbs";
+include "../MPE/main.fbs";
+include "../OCM/main.fbs";
+include "../OEM/main.fbs";
+include "../OMM/main.fbs";
+include "../OSM/main.fbs";
+include "../PLD/main.fbs";
+include "../PNM/main.fbs";
+include "../PRG/main.fbs";
+include "../RFM/main.fbs";
+include "../ROC/main.fbs";
+include "../SCM/main.fbs";
+include "../SIT/main.fbs";
+include "../TDM/main.fbs";
+include "../TIM/main.fbs";
+include "../VCM/main.fbs";
+
+union RecordType {
+  ATM, BOV, CAT, CDM,
+  CRM, CSM, CTR, EME,
+  EOO, EOP, EPM, HYP,
+  IDM, LCC, LDM, MET,
+  MPE, OCM, OEM, OMM,
+  OSM, PLD, PNM, PRG,
+  RFM, ROC, SCM, SIT,
+  TDM, TIM, VCM
+}  // Union of all record types
+
+table Record {
+  value: RecordType; 
+  standard: string;
+}
+
+/// Collection of Standard Records
+table REC {
+  version: string;
+  RECORDS: [Record]; 
+}
+
+root_type REC;
+file_identifier "$REC";

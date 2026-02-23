@@ -1,0 +1,79 @@
+// Hash: 56a7c33178d35833096bcaff5591b808a11da3adc5e19523ce26aba0aafb3aec
+// Version: 1.0.1
+// -----------------------------------END_HEADER
+enum KeyType : byte {
+  Signing,
+  Encryption
+}
+
+/// Represents cryptographic key information
+table CryptoKey {
+  /// Public part of the cryptographic key, in hexidecimal format
+  PUBLIC_KEY: string;
+  /// Extended public key https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#extended-keys
+  XPUB: string;
+  /// Private part of the cryptographic key in hexidecimal format, should be kept secret 
+  PRIVATE_KEY: string;
+  /// Extended private key https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#extended-keys
+  XPRIV: string;
+  /// Address generated from the cryptographic key
+  KEY_ADDRESS: string;
+  /// Type of the address generated from the cryptographic key
+  ADDRESS_TYPE: string;
+  /// Type of the cryptographic key (signing or encryption)
+  KEY_TYPE: KeyType;
+}
+
+/// Represents a geographic address
+table Address {
+  /// Country of the address
+  COUNTRY: string;
+  /// Region of the address (e.g., state or province)
+  REGION: string;
+  /// Locality of the address (e.g., city or town)
+  LOCALITY: string;
+  /// Postal code of the address
+  POSTAL_CODE: string;
+  /// Street address
+  STREET: string;
+  /// Post office box number
+  POST_OFFICE_BOX_NUMBER: string;
+}
+
+/// Entity Profile Message
+table EPM {
+  /// Distinguished Name of the entity
+  DN: string;
+  /// Common name of the entity (person or organization)
+  LEGAL_NAME: string;
+  /// Family name or surname of the person
+  FAMILY_NAME: string;
+  /// Given name or first name of the person
+  GIVEN_NAME: string;
+  /// Additional name or middle name of the person
+  ADDITIONAL_NAME: string;
+  /// Honorific prefix preceding the person's name (e.g., Mr., Dr.)
+  HONORIFIC_PREFIX: string;
+  /// Honorific suffix following the person's name (e.g., Jr., Sr.)
+  HONORIFIC_SUFFIX: string;
+  /// Job title of the person
+  JOB_TITLE: string;
+  /// Occupation of the person
+  OCCUPATION: string;
+  /// Physical Address
+  ADDRESS: Address;
+  /// Alternate names for the entity
+  ALTERNATE_NAMES: [string];
+  /// Email address of the entity
+  EMAIL: string;
+  /// Telephone number of the entity
+  TELEPHONE: string;
+  /// Cryptographic keys associated with the entity
+  KEYS: [CryptoKey];
+  /// Multiformat addresses associated with the entity
+  MULTIFORMAT_ADDRESS: [string];
+}
+
+root_type EPM;
+
+file_identifier "$EPM";

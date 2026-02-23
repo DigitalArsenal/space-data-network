@@ -1,0 +1,321 @@
+# SDN Encryption Tests CI/CD Pipeline
+# Runs comprehensive encryption tests between all node types
+
+name: Encryption Tests
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'sdn-server/**'
+      - 'sdn-js/**'
+      - 'tests/encryption/**'
+      - '.github/workflows/encryption-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'sdn-server/**'
+      - 'sdn-js/**'
+      - 'tests/encryption/**'
+  schedule:
+    # Run nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      skip_go_tests:
+        description: 'Skip Go tests'
+        required: false
+        default: 'false'
+      skip_playwright_tests:
+        description: 'Skip Playwright tests'
+        required: false
+        default: 'false'
+
+env:
+  GO_VERSION: '1.24'
+  NODE_VERSION: '20'
+
+jobs:
+  # ============================================
+  # Go ECIES and Server-to-Server Tests
+  # ============================================
+  go-encryption-tests:
+    name: Go Encryption Tests
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_go_tests != 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: tests/encryption/go/go.sum
+
+      - name: Download Go dependencies
+        run: |
+          cd tests/encryption/go
+          go mod download
+
+      - name: Run ECIES tests
+        run: |
+          cd tests/encryption/go
+          go test -v -count=1 -race ./ecies/... -coverprofile=coverage-ecies.out
+
+      - name: Run Server-to-Server tests
+        run: |
+          cd tests/encryption/go
+          go test -v -count=1 -race ./server_to_server/... -coverprofile=coverage-s2s.out
+
+      - name: Run Relay tests
+        run: |
+          cd tests/encryption/go
+          go test -v -count=1 -race ./relay/... -coverprofile=coverage-relay.out
+
+      - name: Run Desktop tests
+        run: |
+          cd tests/encryption/go
+          go test -v -count=1 -race ./desktop/... -coverprofile=coverage-desktop.out
+
+      - name: Run Cross-Node tests
+        run: |
+          cd tests/encryption/go
+          go test -v -count=1 -race ./crossnode/... -coverprofile=coverage-crossnode.out
+
+      - name: Run benchmarks
+        run: |
+          cd tests/encryption/go
+          go test -bench=. -benchmem ./... | tee benchmark-results.txt
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          files: |
+            tests/encryption/go/coverage-ecies.out
+            tests/encryption/go/coverage-s2s.out
+            tests/encryption/go/coverage-relay.out
+            tests/encryption/go/coverage-desktop.out
+            tests/encryption/go/coverage-crossnode.out
+          flags: encryption-go
+          name: go-encryption-coverage
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-benchmark-results
+          path: tests/encryption/go/benchmark-results.txt
+
+  # ============================================
+  # Playwright Browser Encryption Tests
+  # ============================================
+  playwright-encryption-tests:
+    name: Playwright Browser Tests
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_playwright_tests != 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: tests/encryption/playwright/package-lock.json
+
+      - name: Install Playwright dependencies
+        run: |
+          cd tests/encryption/playwright
+          npm ci
+          npx playwright install --with-deps chromium firefox
+
+      - name: Run Playwright tests
+        run: |
+          cd tests/encryption/playwright
+          npx playwright test --reporter=html,json
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: tests/encryption/playwright/playwright-report/
+          retention-days: 30
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-test-results
+          path: tests/encryption/playwright/test-results.json
+          retention-days: 30
+
+  # ============================================
+  # Integration Tests with Docker Network
+  # ============================================
+  integration-tests:
+    name: Integration Tests (Docker Network)
+    runs-on: ubuntu-latest
+    needs: [go-encryption-tests]
+
+    services:
+      docker:
+        image: docker:dind
+        options: --privileged
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build test images
+        run: |
+          cd tests/encryption
+          docker-compose -f docker-compose.test.yaml build
+
+      - name: Start test network
+        run: |
+          cd tests/encryption
+          docker-compose -f docker-compose.test.yaml up -d server-alice server-bob edge-relay-1
+          sleep 30  # Wait for services to be ready
+
+      - name: Check service health
+        run: |
+          cd tests/encryption
+          docker-compose -f docker-compose.test.yaml ps
+          docker-compose -f docker-compose.test.yaml logs server-alice
+
+      - name: Run integration tests
+        run: |
+          cd tests/encryption
+          docker-compose -f docker-compose.test.yaml --profile testing run --rm go-tests
+
+      - name: Collect logs
+        if: always()
+        run: |
+          cd tests/encryption
+          docker-compose -f docker-compose.test.yaml logs > docker-logs.txt
+
+      - name: Upload Docker logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: docker-logs
+          path: tests/encryption/docker-logs.txt
+
+      - name: Cleanup
+        if: always()
+        run: |
+          cd tests/encryption
+          docker-compose -f docker-compose.test.yaml down -v
+
+  # ============================================
+  # Security Scan
+  # ============================================
+  security-scan:
+    name: Crypto Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: 'tests/encryption'
+          ignore-unfixed: true
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Check for hardcoded secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./tests/encryption
+          extra_args: --only-verified
+
+  # ============================================
+  # Performance Regression Tests
+  # ============================================
+  performance-tests:
+    name: Performance Regression Tests
+    runs-on: ubuntu-latest
+    needs: [go-encryption-tests]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: tests/encryption/go/go.sum
+
+      - name: Run performance benchmarks
+        run: |
+          cd tests/encryption/go
+          go test -bench=. -benchmem -count=5 ./... | tee benchmark.txt
+
+      - name: Store benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'go'
+          output-file-path: tests/encryption/go/benchmark.txt
+          fail-on-alert: true
+          alert-threshold: '150%'
+          comment-on-alert: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+
+  # ============================================
+  # Summary Job
+  # ============================================
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [go-encryption-tests, playwright-encryption-tests, integration-tests, security-scan]
+    if: always()
+
+    steps:
+      - name: Check test results
+        run: |
+          if [[ "${{ needs.go-encryption-tests.result }}" == "failure" ]]; then
+            echo "Go encryption tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.playwright-encryption-tests.result }}" == "failure" ]]; then
+            echo "Playwright tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.integration-tests.result }}" == "failure" ]]; then
+            echo "Integration tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.security-scan.result }}" == "failure" ]]; then
+            echo "Security scan failed"
+            exit 1
+          fi
+          echo "All encryption tests passed!"

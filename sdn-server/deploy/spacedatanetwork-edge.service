@@ -1,0 +1,61 @@
+[Unit]
+Description=Space Data Network Edge Relay
+Documentation=https://github.com/spacedatanetwork/sdn-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sdn
+Group=sdn
+
+# Environment configuration
+Environment=SDN_MODE=edge
+Environment=SDN_LISTEN=/ip4/0.0.0.0/tcp/8080/ws,/ip4/0.0.0.0/udp/4001/quic-v1
+Environment=SDN_MAX_CONNECTIONS=1000
+Environment=SDN_HEALTH_PORT=9090
+
+# Working directory
+WorkingDirectory=/opt/spacedatanetwork
+
+# Main executable
+ExecStart=/opt/spacedatanetwork/bin/spacedatanetwork-edge \
+    --listen ${SDN_LISTEN} \
+    --max-connections ${SDN_MAX_CONNECTIONS} \
+    --health-port ${SDN_HEALTH_PORT}
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+LockPersonality=true
+
+# Allow binding to privileged ports if needed
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spacedatanetwork-edge
+
+[Install]
+WantedBy=multi-user.target

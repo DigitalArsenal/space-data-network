@@ -1,0 +1,188 @@
+{
+  "title": "Ustawienia",
+  "save": "Zapisz",
+  "saving": "Zapisywanie…",
+  "reset": "Resetuj",
+  "learnMoreLink": "Dowiedz się więcej.",
+  "showOptions": "Pokaż opcje",
+  "pinningServices": {
+    "title": "Usługi przypinania",
+    "description": "Użyj lokalnego przypinania, gdy chcesz mieć pewność, że element na Twoim węźle nigdy nie zostanie usunięty przez garbage collector, nawet jeśli usuniesz go z Plików. Możesz również połączyć swoje konta z innymi zdalnymi usługami przypinania, aby automatycznie lub wybiórczo przechowywać pliki u tych dostawców, co pozwala na tworzenie kopii zapasowych i/lub udostępnianie plików innym, gdy Twój lokalny węzeł jest offline.",
+    "noPinRemoteDescription": "Brak obsługi zdalnych usług przypinania. Zaktualizuj węzeł IPFS do Kubo 0.8.0 lub nowszego, aby móc je dodawać i konfigurować tutaj.",
+    "addAutoUpload": "Włącz automatyczne wysyłanie",
+    "removeAutoUpload": "Wyłącz automatyczne wysyłanie"
+  },
+  "language": "Język",
+  "analytics": "Analityka",
+  "cliTutorMode": "Tryb samouczka CLI",
+  "config": "Konfiguracja Kubo",
+  "languageModal": {
+    "title": "Zmień język",
+    "description": "Wybierz preferowany język.",
+    "translationProjectIntro": "Dodaj lub popraw tłumaczenia i pomóż ulepszyć IPFS dla wszystkich!",
+    "translationProjectLink": "Dołącz do projektu tłumaczeń IPFS"
+  },
+  "apiDescription": "<0>Jeśli Twój węzeł jest skonfigurowany z <1>niestandardowym adresem Kubo RPC API</1>, w tym portem innym niż domyślny 5001, wprowadź go tutaj.</0>",
+  "publicSubdomainGatewayDescription": "<0>Wybierz domyślną <1>bramkę subdomenową</1> do generowania linków do udostępniania.</0>",
+  "publicPathGatewayDescription": "<0>Wybierz zapasową <1>bramkę ścieżkową</1> do generowania linków dla CID-ów przekraczających 63-znakowy limit DNS.</0>",
+  "retrievalDiagnosticService": {
+    "title": "Usługa diagnostyki pobierania",
+    "description": "Skonfiguruj URL usługi <0>ipfs-check</0> używanej do <1>diagnostyki pobierania</1>. Ta usługa sprawdza, czy treść może być pomyślnie pobrana z Twojego węzła i innych węzłów hostujących dany CID, pomagając w rozwiązywaniu problemów z udostępnianiem."
+  },
+  "cliDescription": "<0>Włącz tę opcję, aby wyświetlić ikonę \"podgląd kodu\" <1></1> obok popularnych poleceń IPFS. Kliknięcie jej otwiera okno z poleceniem CLI, które możesz wkleić do terminala.</0>",
+  "cliModal": {
+    "extraNotesJsonConfig": "Jeśli dokonałeś zmian w konfiguracji w edytorze kodu na tej stronie i chcesz je zapisać, kliknij ikonę pobierania obok przycisku kopiowania, aby pobrać plik JSON."
+  },
+  "pinningModal": {
+    "title": "Wybierz dostawcę usługi przypinania.",
+    "description": "Nie widzisz swojego dostawcy usługi przypinania? <1>Dodaj własnego.<1>"
+  },
+  "pinningServiceModal": {
+    "title": "Skonfiguruj własną usługę przypinania.",
+    "description": "Chcesz udostępnić swoją usługę przypinania innym? <1>Dowiedz się jak.<1>",
+    "service": "Usługa",
+    "nickname": "Nazwa",
+    "nicknamePlaceholder": "Nazwa Twojej usługi",
+    "apiEndpoint": "Endpoint API",
+    "apiEndpointPlaceholder": "URL endpointu API",
+    "secretApiKey": "Tajny token dostępu",
+    "secretApiKeyHowToLink": "Jak wygenerować nowy token",
+    "autoUpload": "Automatyczne wysyłanie",
+    "complianceLabel": "{nickname} - raport zgodności usługi przypinania"
+  },
+  "autoUploadModal": {
+    "title": "Zmień politykę wysyłania dla {name}",
+    "description": "Po włączeniu automatyczne wysyłanie będzie okresowo przypinać główny katalog Plików, zapewniając, że wszystko jest przypięte zdalnie i dostępne dla innych węzłów, nawet gdy Twój lokalny węzeł IPFS jest offline. Po wyłączeniu nadal możesz przypinać każdy plik ręcznie, używając opcji \"Ustaw przypinanie\" na ekranie Pliki."
+  },
+  "errors": {
+    "nickname": "Nazwa jest wymagana",
+    "apiError": "Błąd API",
+    "apiEndpoint": "Musi być prawidłowym adresem URL",
+    "secretApiKey": "Tajny token dostępu jest wymagany",
+    "failedToFetch": "Nie udało się pobrać",
+    "failedToFetchTitle": "Nie można pobrać liczby pinów z tej zdalnej usługi. Upewnij się, że jest online i że podałeś prawidłowe dane uwierzytelniające. Jeśli to nowo dodana usługa, spróbuj ją usunąć i dodać ponownie."
+  },
+  "actions": {
+    "addService": "Dodaj usługę",
+    "generateKey": "Generuj klucz",
+    "edit": "Zmień",
+    "close": "Zamknij",
+    "save": "Zapisz",
+    "cancel": "Anuluj",
+    "enable": "Włącz",
+    "disable": "Wyłącz"
+  },
+  "edit": "Edytuj",
+  "visitService": "Odwiedź usługę",
+  "remove": "Usuń",
+  "localPinning": "Lokalne przypinanie",
+  "service": "Usługa",
+  "size": "Rozmiar",
+  "pins": "Przypięcia",
+  "autoUpload": "Automatyczne wysyłanie",
+  "autoUploadPolicy": {
+    "true": "Wszystkie pliki",
+    "false": "Wyłączone"
+  },
+  "fetchingSettings": "Pobieranie ustawień…",
+  "ipfsDaemonOffline": "Demon Kubo jest offline. Uruchom go i spróbuj ponownie.",
+  "settingsUnavailable": "Ustawienia niedostępne. Sprawdź, czy demon Kubo działa.",
+  "settingsHaveChanged": "Ustawienia zostały zmienione; kliknij <1>Resetuj</1>, aby zaktualizować zawartość edytora.",
+  "errorOccured": "Wystąpił błąd podczas zapisywania zmian",
+  "checkConsole": "Sprawdź konsolę przeglądarki, aby uzyskać więcej informacji.",
+  "changesSaved": "Twoje zmiany zostały zapisane.",
+  "settingsWillBeUsedNextTime": "Nowe ustawienia zostaną użyte po następnym uruchomieniu demona Kubo.",
+  "ipfsConfigDescription": "Plik konfiguracyjny Kubo to dokument JSON. Jest odczytywany raz przy uruchomieniu demona Kubo. Zapisz zmiany, a następnie uruchom ponownie demona Kubo, aby je zastosować.",
+  "ipfsConfigHelp": "Sprawdź dokumentację, aby uzyskać więcej informacji.",
+  "AnalyticsToggle": {
+    "label": "Pomóż ulepszyć tę aplikację, wysyłając anonimowe dane o użytkowaniu",
+    "summary": "Skonfiguruj, co jest zbierane",
+    "paragraph1": "Nie są zbierane żadne CID-y, nazwy plików ani inne dane osobowe. Chcemy, aby metryki pokazywały, które funkcje są przydatne, co pomoże nam ustalić priorytety, oraz informacje o konfiguracji systemu, aby ukierunkować nasze testy.",
+    "paragraph2": "Protocol Labs hostuje instancję <1>Countly</1> do zbierania anonimowych danych o użytkowaniu tej aplikacji.",
+    "basicInfo": "Do countly.ipfs.io wysyłane są następujące dodatkowe informacje",
+    "optionalInfo": "Możesz wyrazić zgodę na wysyłanie następujących informacji:",
+    "sessions": {
+      "label": "Sesje",
+      "summary": "Kiedy i jak długo korzystasz z aplikacji oraz metryki przeglądarki",
+      "details": "<0>Wysyłane są następujące metryki przeglądarki:</0><1><0>Losowo wygenerowany identyfikator urządzenia</0><1>Znacznik czasu rozpoczęcia sesji</1><2>Okresowe znaczniki czasu do śledzenia czasu trwania</2><3>Wersja aplikacji, np. 2.4.4</3><4>Lokalizacja, np. pl-PL</4><5>User agent, np. Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_2) …</5><6>Rozdzielczość ekranu, np. 800x600</6><7>Gęstość pikseli ekranu, np. 1</7></1>"
+    },
+    "events": {
+      "label": "Zdarzenia",
+      "summary": "Akcje takie jak dodawanie lub usuwanie plików oraz czas ich trwania",
+      "details": "Akcje specyficzne dla aplikacji. Rejestrujemy tylko fakt wystąpienia akcji, czas jej trwania od początku do końca oraz liczbę, jeśli zdarzenie dotyczyło wielu elementów."
+    },
+    "views": {
+      "label": "Odsłony stron",
+      "summary": "Które sekcje aplikacji odwiedzasz",
+      "details": "Rejestruje, które sekcje aplikacji są odwiedzane. Zapisywane ścieżki zawierają tylko wzorzec użyty do dopasowania trasy, a nie pełny adres URL."
+    },
+    "location": {
+      "label": "Lokalizacja",
+      "summary": "Kod kraju z adresu IP (adres IP jest odrzucany)",
+      "details": "Twój adres IP jest używany do obliczenia kodu kraju Twojej lokalizacji, np. \"PL\" dla Polski. Jeśli nie wyrażono zgody na śledzenie lokalizacji, ze wszystkimi żądaniami wysyłana jest pusta właściwość lokalizacji, aby zasygnalizować serwerowi wyłączenie wyszukiwania lokalizacji. Te informacje pomagają ukierunkować nasze tłumaczenia i ustalić, gdzie powinniśmy organizować wydarzenia."
+    },
+    "crashes": {
+      "label": "Błędy aplikacji",
+      "summary": "Komunikaty błędów JavaScript i ślady stosu",
+      "details": "Rejestruje komunikaty błędów JavaScript i ślady stosu występujące podczas korzystania z aplikacji, jeśli to możliwe. Bardzo pomocne jest wiedzieć, kiedy aplikacja nie działa, ale <1>komunikaty o błędach mogą zawierać informacje umożliwiające identyfikację</1>, takie jak CID-y lub ścieżki plików, więc włączaj tę opcję tylko wtedy, gdy nie masz nic przeciwko dzieleniu się tymi informacjami z nami."
+    }
+  },
+  "cliToggle": {
+    "label": "Włącz tryb samouczka interfejsu wiersza poleceń (CLI)"
+  },
+  "tour": {
+    "step1": {
+      "title": "Strona Ustawienia",
+      "paragraph1": "Tutaj możesz zmienić ustawienia Web UI i węzła Kubo.",
+      "paragraph2": "Jeśli używasz IPFS Desktop, będziesz mieć również specyficzne ustawienia dla niego."
+    },
+    "step2": {
+      "title": "Niestandardowy adres Kubo RPC API",
+      "paragraph1": "Jeśli skonfigurowałeś węzeł IPFS kompatybilny z Kubo z niestandardowym adresem RPC API, możesz zaktualizować plik konfiguracyjny tutaj, zamiast ręcznie edytować JSON."
+    },
+    "step3": {
+      "title": "Usługi przypinania",
+      "paragraph1": "<0>Jeśli masz konta w zdalnych usługach przypinania, dodaj je tutaj, aby móc przypinać/odpinać elementy do tych usług bezpośrednio z ekranu Pliki. Więcej informacji o usługach przypinania znajdziesz w <1>dokumentacji IPFS</1>.</0>"
+    },
+    "step4": {
+      "title": "Wybór języka",
+      "paragraph1": "<0>Możesz zmienić język Web UI. Jeśli Twój preferowany język nie jest dostępny, odwiedź stronę naszego projektu w <1>Transifex</1>, aby pomóc nam w tłumaczeniu!</0>"
+    },
+    "step5": {
+      "title": "Anonimowa analityka użytkowania",
+      "paragraph1": "Jeśli się zgodzisz, możesz pomóc nam ulepszyć Web UI, wysyłając anonimowe dane o użytkowaniu.",
+      "paragraph2": "Możesz wybrać, jakie dane nam wysyłasz, a my nie będziemy mogli Cię zidentyfikować - cenimy prywatność ponad wszystko."
+    },
+    "step6": {
+      "title": "Tryb samouczka CLI",
+      "paragraph1": "Włącz tryb samouczka CLI, aby zobaczyć skróty do wersji wiersza poleceń popularnych poleceń IPFS - przydatne, jeśli uczysz się korzystać z IPFS z terminala lub potrzebujesz odświeżenia."
+    },
+    "step7": {
+      "title": "Konfiguracja Kubo",
+      "paragraph1": "Możesz zmienić konfigurację węzła Kubo bezpośrednio z Web UI!",
+      "paragraph2": "Nie zapomnij zrestartować demona, aby zastosować zmiany."
+    }
+  },
+  "Experiments": {
+    "description": "Tutaj możesz uzyskać wczesny podgląd nowych funkcji IPFS, włączając poniższe opcje. Testujemy te pomysły i mogą nie być jeszcze doskonałe, więc chętnie poznamy Twoją opinię.",
+    "issueUrl": "Zgłoś problem",
+    "feedbackUrl": "Zostaw opinię",
+    "readMoreUrl": "Czytaj więcej"
+  },
+  "ipnsPublishingKeys": {
+    "title": "Klucze publikacji IPNS",
+    "description": "InterPlanetary Name System (IPNS) zapewnia kryptograficzne adresy do publikowania aktualizacji treści, które mają się zmieniać w czasie. Ta funkcja wymaga, aby Twój węzeł był online przynajmniej raz dziennie, aby zapewnić, że rekordy IPNS są utrzymywane w publicznym DHT."
+  },
+  "generateKeyModal": {
+    "title": "Generuj nowy klucz IPNS",
+    "description": "Wprowadź nazwę dla tego klucza:"
+  },
+  "renameKeyModal": {
+    "title": "Zmień nazwę klucza",
+    "description": "Wprowadź nową nazwę dla klucza IPNS <1>{name}</1>."
+  },
+  "removeKeyModal": {
+    "title": "Potwierdź usunięcie klucza IPNS",
+    "description": "Czy na pewno chcesz usunąć klucz IPNS <1>{name}</1>? Tej operacji nie można cofnąć, a adres IPNS zarządzany przez ten klucz zostanie utracony NA ZAWSZE. Rozważ najpierw wykonanie kopii zapasowej: ipfs key export --help"
+  }
+}

@@ -1,0 +1,234 @@
+{
+  "ipfsIsRunning": "IPFS قيد التشغيل",
+  "ipfsIsStopping": "توقف IPFS",
+  "ipfsIsStarting": "بدأ IPFS",
+  "ipfsIsNotRunning": "IPFS ليس قيد التشغيل",
+  "ipfsHasErrored": "لقد حدث خطأ في IPFS",
+  "runningWithGC": "قيد التشغيل (GC قيد التقدم)",
+  "runningWhileCheckingForUpdate": "قيد التشغيل (التحقق من وجود تحديثات)",
+  "start": "بداية",
+  "stop": "توقف",
+  "restart": "أعاد التشغيل",
+  "about": "حول",
+  "advanced": "متقدم",
+  "openRepoDir": "",
+  "openLogsDir": "",
+  "openConfigFile": "",
+  "openKuboConfigFile": "",
+  "viewOnGitHub": "عرض على GitHub ...",
+  "helpUsTranslate": "ساعد في ترجمة هذا التطبيق ...",
+  "readReleaseNotes": "اقرأ ملاحظات الإصدار",
+  "status": "الحالة",
+  "files": "الملفات",
+  "peers": "الأقران",
+  "quit": "غادر",
+  "versions": "إصدارات",
+  "screenshotTaken": "تم التقاط لقطة الشاشة",
+  "shareableLinkCopied": "تم نسخ الرابط القابل للمشاركة إلى الحافظة. انقر هنا لعرض لقطة الشاشة.",
+  "couldNotTakeScreenshot": "لا يمكن التقاط لقطة شاشة",
+  "errorwhileTakingScreenshot": "حدث خطأ أثناء أخذ لقطة الشاشة.",
+  "clickToOpenLogs": "انقر هنا لفتح السجلات.",
+  "ipfsNotRunning": "IPFS لا يعمل",
+  "checkForUpdates": "تحقق من وجود تحديثات…",
+  "checkingForUpdates": "البحث عن تحديثات",
+  "yes": "نعم",
+  "no": "لا",
+  "close": "أغلق",
+  "ok": "حسنا",
+  "cancel": "إلغاء",
+  "enable": "ممكن",
+  "reportTheError": "أبلغ عن الخطأ",
+  "restartIpfsDesktop": "أعد تشغيل سطح مكتب IPFS",
+  "openLogs": "فتح السجلات",
+  "takeScreenshot": "خد لقطة للشاشة",
+  "moveRepositoryLocation": "نقل موقع المستودع",
+  "runGarbageCollector": "تشغيل جامع القمامة",
+  "selectDirectory": "حدد الدليل",
+  "customIpfsBinary": "ثنائي مخصص IPFS",
+  "setCustomIpfsBinary": "تعيين ثنائي مخصص IPFS",
+  "clearCustomIpfsBinary": "مسح ثنائي مخصص IPFS",
+  "openCliDocumentation": "افتح وثائق CLI",
+  "polkitDialog": {
+    "title": "لم يتم العثور على Polkit",
+    "message": "لا يمكن إضافة IPFS إلى / usr / local / bin / بدون وكيل polkit."
+  },
+  "noPermissionDialog": {
+    "title": "لا يوجد إذن",
+    "message": "تعذرت إضافة IPFS إلى / usr / local / bin / ، إما لأنك أدخلت كلمة مرور خاطئة أو لأنك رفضت الإذن."
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS لا يعمل",
+    "message": "يجب تشغيل IPFS لتنفيذ هذا الإجراء. هل تريد أن تبدأ demon ؟"
+  },
+  "recoverableErrorDialog": {
+    "title": "حدث خطأ",
+    "message": "حدث خطأ ولكنه لا يمنع تنفيذ سطح مكتب IPFS. يمكنك إما فحص السجلات بنفسك أو الإبلاغ عن الخطأ للمطورين."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "لا يمكن الاتصال بواجهة برمجة التطبيقات",
+    "message": "يتعذر على  سطح المكتب IPFS  الاتصال بعنوان واجهة برمجة تطبيقات المقدم{ addr } :."
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "تم إيقاف تشغيل IPFS لسطح المكتب",
+    "message": "تم إيقاف تشغيل IPFS لسطح المكتب بسبب خطأ. يمكنك إعادة تشغيل التطبيق أو الإبلاغ عن الخطأ للمطورين ، الأمر الذي يتطلب حساب GitHub."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "نقل المستودع",
+    "message": "إذا كان المستودع الخاص بك يشغل مساحة كبيرة على محرك الأقراص الرئيسي ، يمكنك نقله إلى مكان آخر. ضع في اعتبارك أن الموقع الجديد يجب أن يكون متاحًا دائمًا لكي يعمل IPFS لسطح المكتب بشكل صحيح.",
+    "action": "نقل العقدة وإعادة تشغيلها"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "تم نقل المستودع بنجاح",
+    "message": "تم نقل المستودع الخاص بك بنجاح  { location }  وتم تحديث التكوين الخاص بك. سيبدأ البرنامج الخفي الآن مرة أخرى."
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "تم تحديد الدليل نفسه",
+    "message": "الدليل الذي اخترته هو نفسه الدليل الحالي{ location }. وبالتالي ، لن يتم إجراء أي تغييرات."
+  },
+  "moveRepositoryDirExists": {
+    "title": "الدليل موجود بالفعل",
+    "message": "الدليل { location } موجود بالفعل. يرجى محاولة استخدام واحد مختلف."
+  },
+  "busyPortsDialog": {
+    "title": "المنافذ مشغولة",
+    "message": "المنافذ { port1 } و { port2 } غير متوفرة. هل تريد استخدام { alt1 } و { alt2 } بدلا من ذلك؟",
+    "action": "استخدم المنافذ { alt1 } و { alt2 } بدلاً من ذلك"
+  },
+  "busyPortDialog": {
+    "title": "المنفذ مشغول",
+    "message": "المنفذ { port } غير متوفر. هل تريد استخدام { alt }  بدلا من ذلك؟",
+    "action": "استخدم المنفذ { alt }  بدلاً من ذلك"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "المنافذ مشغولة",
+    "message": "لا يمكن الارتباط بواحد أو أكثر من عناوين API أو العبّارة لأن المنافذ مشغولة.",
+    "action": "افتح ملف التهيئة"
+  },
+  "itemsAddedNotification": {
+    "title": "تمت إضافة عناصر",
+    "message": "{ count } العناصر المضافة إلى عقدة IPFS الخاصة بك. تم نسخ ارتباط قابل للمشاركة إلى الحافظة الخاصة بك."
+  },
+  "itemAddedNotification": {
+    "title": "تمت إضافة العنصر",
+    "message": "تمت إضافة العنصر إلى عقدة IPFS الخاصة بك. تم نسخ ارتباط قابل للمشاركة إلى الحافظة الخاصة بك."
+  },
+  "itemsFailedNotification": {
+    "title": "فشل في إضافة عناصر",
+    "message": "تعذرت إضافة العناصر الخاصة بك إلى العقدة الخاصة بك."
+  },
+  "updateAvailableDialog": {
+    "title": "التحديث متاح",
+    "message": "يتوفر إصدار جديد ({ version }) من IPFS لسطح المكتب. سيبدأ التنزيل قريبًا في الخلفية."
+  },
+  "updateNotAvailableDialog": {
+    "title": "التحديث غير متوفر",
+    "message": "أنت على أحدث إصدار من IPFS لسطح المكتب ({ version })."
+  },
+  "updateErrorDialog": {
+    "title": "تعذر تنزيل التحديث",
+    "message": "تعذر تنزيل التحديث. يرجى التحقق من اتصالك بالإنترنت وحاول مرة أخرى."
+  },
+  "autoUpdateError": {
+    "title": "",
+    "message": "",
+    "downloadNow": "",
+    "later": "لاحقا"
+  },
+  "updateDownloadedDialog": {
+    "title": "تحديث IPFS Desktop",
+    "message": "تحديث ل IPFS Desktop { version } متاح. هل ترغب في تثبيته حاليا?",
+    "later": "لاحقا",
+    "now": "تثبيت الآن"
+  },
+  "updateDownloadedNotification": {
+    "title": "تحديث IPFS Desktop",
+    "message": "تحديث ل IPFS Desktop { version } متاح."
+  },
+  "runGarbageCollectorWarning": {
+    "title": "جامع القمامة",
+    "message": "سيؤدي تشغيل جامع القمامة (GC) إلى إزالة كافة الكائنات التي لم يتم تثبيتها أو على MFS من المستودع الخاص بك. هذا قد يستغرق بعض الوقت. هل ترغب في المتابعة؟",
+    "action": "شغل"
+  },
+  "runGarbageCollectorDone": {
+    "title": "جامع القمامة",
+    "message": "تم تشغيل جامع القمامة بنجاح."
+  },
+  "moveRepositoryFailed": {
+    "title": "نقل المستودع",
+    "message": "تعذر نقل المستودع من \"{ currDir }\" إلى \"{ newDir }\"."
+  },
+  "runGarbageCollectorErrored": {
+    "title": "جامع القمامة",
+    "message": "تعذر إكمال تشغيل جامع البيانات المهملة بنجاح."
+  },
+  "launchAtLoginNotSupported": {
+    "title": "خطأ",
+    "message": "التشغيل عند تسجيل الدخول غير مدعوم على النظام الأساسي الخاص بك."
+  },
+  "launchAtLoginFailed": {
+    "title": "خطأ",
+    "message": "تعذر تمكين التشغيل عند تسجيل الدخول على جهازك."
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "تمكين اختصار لقطة الشاشة",
+    "message": "من خلال تمكين ذلك ، سيكون الاختصار \"{ accelerator }\" متاحًا لالتقاط لقطات الشاشة طالما أن IPFS لسطح المكتب قيد التشغيل."
+  },
+  "settings": {
+    "settings": "الإعدادات",
+    "preferences": "التفضيلات",
+    "openNodeSettings": "افتح إعدادات العقدة",
+    "appPreferences": "تفضيلات التطبيق",
+    "launchOnStartup": "إطلاق عند تسجيل الدخول",
+    "openWebUIAtLaunch": "افتح Web UI عند التشغيل",
+    "pubsub": "تمكين PubSub",
+    "namesysPubsub": "قم بتمكين IPNS عبر PubSub",
+    "automaticGC": "جمع القمامة التلقائي",
+    "takeScreenshotShortcut": "اختصار لقطة الشاشة العامة",
+    "experiments": "التجارب",
+    "npmOnIpfs": "تفعيل مدير حزمة العقد على IPFS",
+    "monochromeTrayIcon": ""
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "ثنائي مخصص IPFS",
+    "message": "من خلال تعيين IPFS مخصص ، لن يستخدم IPFS لسطح المكتب إصدار IPFS المرفق وسيستخدم الثنائي الذي تحدده. هل ترغب في المتابعة؟"
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "ثنائي مخصص IPFS",
+    "message": "سيبدأ IPFS لسطح المكتب باستخدام الثنائي الموجود في { path } . لبدء استخدامه ، يجب إعادة تشغيل IPFS أولاً."
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "مسح ثنائي مخصص IPFS",
+    "message": "تم محو ثنائي IPFS المخصص. لبدء استخدام إصدار IPFS المرفق ، يجب إعادة تشغيل IPFS أولاً."
+  },
+  "unresponsiveWindowDialog": {
+    "title": "IPFS Desktop أصبح غير مستجيب",
+    "message": "تتطلب العملية الجارية موارد أكثر مما كان متوقعًا. هل ترغب في إجهاض, وإعادة تحميل الواجهة بقوة؟",
+    "forceReload": "نعم، أعد التحميل",
+    "doNothing": "لا تفعل شيئا"
+  },
+  "migrationDialog": {
+    "title": "IPFS Desktop ترحيل",
+    "message": "لحظة واحدة! IPFS Desktop يحتاج إلى تشغيل أحدث عمليات ترحيل مخزن البيانات:",
+    "closeAndContinue": "تواصل في الخلفية"
+  },
+  "startupFailedDialog": {
+    "title": "فشل بدء تشغيل Desktop IPFS",
+    "message": "واجهت عقدة IPFS خطأ وتعذر إكمال بدء التشغيل:"
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "",
+    "message": ""
+  },
+  "privateNetworkDialog": {
+    "title": "",
+    "message": ""
+  },
+  "invalidRepositoryDialog": {
+    "title": "مستودع IPFS أو ملف التكوين غير صالح",
+    "message": ""
+  }
+}

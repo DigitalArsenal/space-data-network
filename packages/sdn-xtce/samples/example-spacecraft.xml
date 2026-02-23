@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Example XTCE document for testing the sdn-xtce converter
+  Based on CCSDS 660.1-G-2 standard
+-->
+<xtce:SpaceSystem xmlns:xtce="http://www.omg.org/spec/XTCE/20180204"
+                  name="ExampleSpacecraft"
+                  shortDescription="Example spacecraft telemetry and commands">
+
+  <xtce:TelemetryMetaData>
+    <xtce:ParameterTypeSet>
+      <!-- Integer Types -->
+      <xtce:IntegerParameterType name="uint8_t" signed="false" sizeInBits="8">
+        <xtce:UnitSet/>
+        <xtce:IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+      </xtce:IntegerParameterType>
+
+      <xtce:IntegerParameterType name="uint16_t" signed="false" sizeInBits="16">
+        <xtce:UnitSet/>
+        <xtce:IntegerDataEncoding sizeInBits="16" encoding="unsigned"/>
+      </xtce:IntegerParameterType>
+
+      <xtce:IntegerParameterType name="uint32_t" signed="false" sizeInBits="32">
+        <xtce:UnitSet/>
+        <xtce:IntegerDataEncoding sizeInBits="32" encoding="unsigned"/>
+      </xtce:IntegerParameterType>
+
+      <xtce:IntegerParameterType name="int16_t" signed="true" sizeInBits="16">
+        <xtce:UnitSet/>
+        <xtce:IntegerDataEncoding sizeInBits="16" encoding="twosComplement"/>
+      </xtce:IntegerParameterType>
+
+      <!-- Temperature Type (calibrated) -->
+      <xtce:IntegerParameterType name="Temperature_Raw" signed="true" sizeInBits="16"
+                                  shortDescription="Raw temperature sensor ADC value">
+        <xtce:UnitSet/>
+        <xtce:IntegerDataEncoding sizeInBits="16" encoding="twosComplement"/>
+        <xtce:ValidRange minInclusive="-32768" maxInclusive="32767"/>
+      </xtce:IntegerParameterType>
+
+      <!-- Float Types -->
+      <xtce:FloatParameterType name="float32_t" sizeInBits="32">
+        <xtce:UnitSet/>
+        <xtce:FloatDataEncoding sizeInBits="32" encoding="IEEE754_1985"/>
+      </xtce:FloatParameterType>
+
+      <xtce:FloatParameterType name="Temperature_Celsius" sizeInBits="64"
+                                shortDescription="Temperature in degrees Celsius">
+        <xtce:UnitSet>
+          <xtce:Unit description="Temperature">degC</xtce:Unit>
+        </xtce:UnitSet>
+        <xtce:FloatDataEncoding sizeInBits="64" encoding="IEEE754_1985"/>
+        <xtce:ValidRange minInclusive="-40.0" maxInclusive="85.0"/>
+      </xtce:FloatParameterType>
+
+      <xtce:FloatParameterType name="Voltage_Type" sizeInBits="32"
+                                shortDescription="Voltage measurement">
+        <xtce:UnitSet>
+          <xtce:Unit description="Potential">V</xtce:Unit>
+        </xtce:UnitSet>
+        <xtce:FloatDataEncoding sizeInBits="32" encoding="IEEE754_1985"/>
+        <xtce:ValidRange minInclusive="0.0" maxInclusive="50.0"/>
+      </xtce:FloatParameterType>
+
+      <!-- String Type -->
+      <xtce:StringParameterType name="StatusMessage_Type"
+                                 shortDescription="Status message string">
+        <xtce:StringDataEncoding encoding="UTF-8">
+          <xtce:SizeInBits>
+            <xtce:Fixed>
+              <xtce:FixedValue>256</xtce:FixedValue>
+            </xtce:Fixed>
+          </xtce:SizeInBits>
+        </xtce:StringDataEncoding>
+      </xtce:StringParameterType>
+
+      <!-- Enumerated Type -->
+      <xtce:EnumeratedParameterType name="OperationalMode_Type"
+                                     shortDescription="Spacecraft operational mode">
+        <xtce:IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        <xtce:EnumerationList>
+          <xtce:Enumeration value="0" label="SAFE_MODE" shortDescription="Minimal operations"/>
+          <xtce:Enumeration value="1" label="STANDBY" shortDescription="Ready for operations"/>
+          <xtce:Enumeration value="2" label="NOMINAL" shortDescription="Normal operations"/>
+          <xtce:Enumeration value="3" label="SCIENCE" shortDescription="Science data collection"/>
+          <xtce:Enumeration value="4" label="MANEUVER" shortDescription="Orbital maneuver"/>
+          <xtce:Enumeration value="5" label="EMERGENCY" shortDescription="Emergency mode"/>
+        </xtce:EnumerationList>
+      </xtce:EnumeratedParameterType>
+
+      <xtce:EnumeratedParameterType name="SubsystemStatus_Type"
+                                     shortDescription="Subsystem health status">
+        <xtce:IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        <xtce:EnumerationList>
+          <xtce:Enumeration value="0" label="OFF"/>
+          <xtce:Enumeration value="1" label="INITIALIZING"/>
+          <xtce:Enumeration value="2" label="NOMINAL"/>
+          <xtce:Enumeration value="3" label="DEGRADED"/>
+          <xtce:Enumeration value="4" label="FAILED"/>
+        </xtce:EnumerationList>
+      </xtce:EnumeratedParameterType>
+
+      <!-- Boolean Type -->
+      <xtce:BooleanParameterType name="Flag_Type"
+                                  zeroStringValue="FALSE" oneStringValue="TRUE"
+                                  shortDescription="Boolean flag">
+        <xtce:IntegerDataEncoding sizeInBits="1" encoding="unsigned"/>
+      </xtce:BooleanParameterType>
+
+      <xtce:BooleanParameterType name="HeaterState_Type"
+                                  zeroStringValue="OFF" oneStringValue="ON"
+                                  shortDescription="Heater on/off state">
+        <xtce:IntegerDataEncoding sizeInBits="1" encoding="unsigned"/>
+      </xtce:BooleanParameterType>
+
+      <!-- Time Type -->
+      <xtce:AbsoluteTimeParameterType name="Timestamp_Type"
+                                       shortDescription="Unix timestamp">
+        <xtce:Encoding>
+          <xtce:IntegerDataEncoding sizeInBits="64" encoding="unsigned"/>
+        </xtce:Encoding>
+        <xtce:ReferenceTime>
+          <xtce:Epoch>1970-01-01T00:00:00Z</xtce:Epoch>
+        </xtce:ReferenceTime>
+      </xtce:AbsoluteTimeParameterType>
+
+      <!-- Binary Type -->
+      <xtce:BinaryParameterType name="RawData_Type"
+                                 shortDescription="Raw binary data block">
+        <xtce:BinaryDataEncoding>
+          <xtce:SizeInBits>
+            <xtce:Fixed>
+              <xtce:FixedValue>512</xtce:FixedValue>
+            </xtce:Fixed>
+          </xtce:SizeInBits>
+        </xtce:BinaryDataEncoding>
+      </xtce:BinaryParameterType>
+
+    </xtce:ParameterTypeSet>
+
+    <xtce:ParameterSet>
+      <!-- Housekeeping Parameters -->
+      <xtce:Parameter name="PACKET_ID" parameterTypeRef="uint16_t"
+                      shortDescription="Telemetry packet identifier">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true"/>
+      </xtce:Parameter>
+
+      <xtce:Parameter name="PACKET_SEQUENCE" parameterTypeRef="uint16_t"
+                      shortDescription="Packet sequence counter">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true"/>
+      </xtce:Parameter>
+
+      <xtce:Parameter name="TIMESTAMP" parameterTypeRef="Timestamp_Type"
+                      shortDescription="Packet timestamp">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true"/>
+      </xtce:Parameter>
+
+      <xtce:Parameter name="MODE" parameterTypeRef="OperationalMode_Type"
+                      shortDescription="Current spacecraft mode">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true"/>
+      </xtce:Parameter>
+
+      <!-- Power Subsystem -->
+      <xtce:Parameter name="BATTERY_VOLTAGE" parameterTypeRef="Voltage_Type"
+                      shortDescription="Main battery voltage">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true">
+          <xtce:SystemName>EPS</xtce:SystemName>
+        </xtce:ParameterProperties>
+      </xtce:Parameter>
+
+      <xtce:Parameter name="SOLAR_ARRAY_CURRENT" parameterTypeRef="float32_t"
+                      shortDescription="Solar array current in Amps">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true">
+          <xtce:SystemName>EPS</xtce:SystemName>
+        </xtce:ParameterProperties>
+      </xtce:Parameter>
+
+      <xtce:Parameter name="EPS_STATUS" parameterTypeRef="SubsystemStatus_Type"
+                      shortDescription="EPS subsystem status">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true">
+          <xtce:SystemName>EPS</xtce:SystemName>
+        </xtce:ParameterProperties>
+      </xtce:Parameter>
+
+      <!-- Thermal Subsystem -->
+      <xtce:Parameter name="TEMP_BATTERY" parameterTypeRef="Temperature_Celsius"
+                      shortDescription="Battery temperature">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true">
+          <xtce:SystemName>TCS</xtce:SystemName>
+        </xtce:ParameterProperties>
+      </xtce:Parameter>
+
+      <xtce:Parameter name="TEMP_PAYLOAD" parameterTypeRef="Temperature_Celsius"
+                      shortDescription="Payload temperature">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true">
+          <xtce:SystemName>TCS</xtce:SystemName>
+        </xtce:ParameterProperties>
+      </xtce:Parameter>
+
+      <xtce:Parameter name="HEATER_1_STATE" parameterTypeRef="HeaterState_Type"
+                      shortDescription="Heater 1 on/off">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true">
+          <xtce:SystemName>TCS</xtce:SystemName>
+        </xtce:ParameterProperties>
+      </xtce:Parameter>
+
+      <xtce:Parameter name="HEATER_2_STATE" parameterTypeRef="HeaterState_Type"
+                      shortDescription="Heater 2 on/off">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true">
+          <xtce:SystemName>TCS</xtce:SystemName>
+        </xtce:ParameterProperties>
+      </xtce:Parameter>
+
+      <!-- Communication Subsystem -->
+      <xtce:Parameter name="COMM_STATUS" parameterTypeRef="SubsystemStatus_Type"
+                      shortDescription="Communication subsystem status">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true">
+          <xtce:SystemName>COMM</xtce:SystemName>
+        </xtce:ParameterProperties>
+      </xtce:Parameter>
+
+      <xtce:Parameter name="SIGNAL_STRENGTH" parameterTypeRef="int16_t"
+                      shortDescription="Received signal strength in dBm">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true">
+          <xtce:SystemName>COMM</xtce:SystemName>
+        </xtce:ParameterProperties>
+      </xtce:Parameter>
+
+      <xtce:Parameter name="STATUS_MESSAGE" parameterTypeRef="StatusMessage_Type"
+                      shortDescription="Current status message">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true"/>
+      </xtce:Parameter>
+
+      <xtce:Parameter name="RAW_PAYLOAD_DATA" parameterTypeRef="RawData_Type"
+                      shortDescription="Raw payload data block">
+        <xtce:ParameterProperties dataSource="telemetered" readOnly="true">
+          <xtce:SystemName>PAYLOAD</xtce:SystemName>
+        </xtce:ParameterProperties>
+      </xtce:Parameter>
+
+    </xtce:ParameterSet>
+
+  </xtce:TelemetryMetaData>
+
+  <xtce:CommandMetaData>
+    <xtce:ArgumentTypeSet>
+      <xtce:IntegerArgumentType name="ModeArg_Type" signed="false" sizeInBits="8">
+        <xtce:IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        <xtce:ValidRange minInclusive="0" maxInclusive="5"/>
+      </xtce:IntegerArgumentType>
+
+      <xtce:IntegerArgumentType name="HeaterIdArg_Type" signed="false" sizeInBits="8">
+        <xtce:IntegerDataEncoding sizeInBits="8" encoding="unsigned"/>
+        <xtce:ValidRange minInclusive="1" maxInclusive="4"/>
+      </xtce:IntegerArgumentType>
+
+      <xtce:BooleanArgumentType name="EnableArg_Type"
+                                 zeroStringValue="DISABLE" oneStringValue="ENABLE">
+        <xtce:IntegerDataEncoding sizeInBits="1" encoding="unsigned"/>
+      </xtce:BooleanArgumentType>
+
+      <xtce:FloatArgumentType name="SetpointArg_Type" sizeInBits="32">
+        <xtce:FloatDataEncoding sizeInBits="32" encoding="IEEE754_1985"/>
+        <xtce:ValidRange minInclusive="-40.0" maxInclusive="85.0"/>
+      </xtce:FloatArgumentType>
+    </xtce:ArgumentTypeSet>
+
+    <xtce:MetaCommandSet>
+      <xtce:MetaCommand name="SET_MODE" shortDescription="Set spacecraft operational mode">
+        <xtce:ArgumentList>
+          <xtce:Argument name="NEW_MODE" argumentTypeRef="ModeArg_Type"
+                         shortDescription="Target operational mode"/>
+        </xtce:ArgumentList>
+      </xtce:MetaCommand>
+
+      <xtce:MetaCommand name="SET_HEATER" shortDescription="Control heater state">
+        <xtce:ArgumentList>
+          <xtce:Argument name="HEATER_ID" argumentTypeRef="HeaterIdArg_Type"
+                         shortDescription="Heater identifier (1-4)"/>
+          <xtce:Argument name="STATE" argumentTypeRef="EnableArg_Type"
+                         shortDescription="Enable or disable heater"/>
+        </xtce:ArgumentList>
+      </xtce:MetaCommand>
+
+      <xtce:MetaCommand name="SET_TEMP_SETPOINT" shortDescription="Set temperature setpoint">
+        <xtce:ArgumentList>
+          <xtce:Argument name="SETPOINT" argumentTypeRef="SetpointArg_Type"
+                         shortDescription="Temperature setpoint in Celsius"/>
+        </xtce:ArgumentList>
+      </xtce:MetaCommand>
+
+    </xtce:MetaCommandSet>
+  </xtce:CommandMetaData>
+
+</xtce:SpaceSystem>

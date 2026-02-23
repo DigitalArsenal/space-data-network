@@ -1,0 +1,68 @@
+[Unit]
+Description=Space Data Network Ingestion Worker
+Documentation=https://github.com/spacedatanetwork/sdn-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sdn
+Group=sdn
+
+# Environment configuration
+Environment=SDN_CONFIG=/etc/spacedatanetwork/config.yaml
+Environment=SDN_STORAGE_PATH=/opt/data/sdn
+Environment=SDN_RAW_PATH=/opt/data/raw
+Environment=SPACETRACK_IDENTITY=
+Environment=SPACETRACK_PASSWORD=
+
+# Working directory
+WorkingDirectory=/opt/spacedatanetwork
+
+# Main executable
+ExecStart=/opt/spacedatanetwork/bin/spacedatanetwork \
+    --config ${SDN_CONFIG} \
+    ingest \
+    --storage-path ${SDN_STORAGE_PATH} \
+    --raw-path ${SDN_RAW_PATH} \
+    --celestrak-interval 1h \
+    --satcat-interval 24h \
+    --spacetrack-enabled true \
+    --spacetrack-batch-days 3 \
+    --spacetrack-batch-sleep 3s \
+    --spacetrack-poll-interval 30m
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# Read-write paths for data storage
+ReadWritePaths=/opt/data
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spacedatanetwork-ingest
+
+[Install]
+WantedBy=multi-user.target

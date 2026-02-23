@@ -1,0 +1,68 @@
+// Hash: a1b9c340c5703357f25b00b5e4e9112c686c8b32246ef0cd4acb60a5e68c3869
+// Version: 1.44.9
+// -----------------------------------END_HEADER
+include "../ACL/main.fbs";
+include "../ATM/main.fbs";
+include "../BOV/main.fbs";
+include "../CAT/main.fbs";
+include "../CDM/main.fbs";
+include "../CRM/main.fbs";
+include "../CSM/main.fbs";
+include "../CTR/main.fbs";
+include "../EME/main.fbs";
+include "../EOO/main.fbs";
+include "../EOP/main.fbs";
+include "../EPM/main.fbs";
+include "../HYP/main.fbs";
+include "../IDM/main.fbs";
+include "../LCC/main.fbs";
+include "../LDM/main.fbs";
+include "../MET/main.fbs";
+include "../MPE/main.fbs";
+include "../OCM/main.fbs";
+include "../OEM/main.fbs";
+include "../OMM/main.fbs";
+include "../OSM/main.fbs";
+include "../PLD/main.fbs";
+include "../PLG/main.fbs";
+include "../PLK/main.fbs";
+include "../PNM/main.fbs";
+include "../PRG/main.fbs";
+include "../PUR/main.fbs";
+include "../REV/main.fbs";
+include "../RFM/main.fbs";
+include "../ROC/main.fbs";
+include "../SCM/main.fbs";
+include "../SIT/main.fbs";
+include "../STF/main.fbs";
+include "../TDM/main.fbs";
+include "../TIM/main.fbs";
+include "../VCM/main.fbs";
+include "../XTC/main.fbs";
+
+union RecordType {
+  ACL, ATM, BOV, CAT,
+  CDM, CRM, CSM, CTR,
+  EME, EOO, EOP, EPM,
+  HYP, IDM, LCC, LDM,
+  MET, MPE, OCM, OEM,
+  OMM, OSM, PLD, PLG,
+  PLK, PNM, PRG, PUR,
+  REV, RFM, ROC, SCM,
+  SIT, STF, TDM, TIM,
+  VCM, XTC
+}  // Union of all record types
+
+table Record {
+  value: RecordType; 
+  standard: string;
+}
+
+/// Collection of Standard Records
+table REC {
+  version: string;
+  RECORDS: [Record]; 
+}
+
+root_type REC;
+file_identifier "$REC";

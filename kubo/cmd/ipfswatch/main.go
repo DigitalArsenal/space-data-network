@@ -1,0 +1,261 @@
+//go:build !plan9
+
+package main
+
+import (
+	"context"
+	"flag"
+	"log"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"slices"
+	"syscall"
+
+	commands "github.com/ipfs/kubo/commands"
+	"github.com/ipfs/kubo/config"
+	core "github.com/ipfs/kubo/core"
+	coreapi "github.com/ipfs/kubo/core/coreapi"
+	corehttp "github.com/ipfs/kubo/core/corehttp"
+	"github.com/ipfs/kubo/misc/fsutil"
+	"github.com/ipfs/kubo/plugin"
+	pluginbadgerds "github.com/ipfs/kubo/plugin/plugins/badgerds"
+	pluginflatfs "github.com/ipfs/kubo/plugin/plugins/flatfs"
+	pluginlevelds "github.com/ipfs/kubo/plugin/plugins/levelds"
+	pluginpebbleds "github.com/ipfs/kubo/plugin/plugins/pebbleds"
+	fsrepo "github.com/ipfs/kubo/repo/fsrepo"
+
+	fsnotify "github.com/fsnotify/fsnotify"
+	"github.com/ipfs/boxo/files"
+)
+
+var (
+	http      = flag.Bool("http", false, "expose IPFS HTTP API")
+	repoPath  *string
+	watchPath = flag.String("path", ".", "the path to watch")
+)
+
+func init() {
+	ipfsPath, err := config.PathRoot()
+	if err != nil {
+		ipfsPath = os.Getenv(config.EnvDir)
+	}
+	repoPath = flag.String("repo", ipfsPath, "repo path to use")
+}
+
+func main() {
+	flag.Parse()
+
+	// precedence
+	// 1. --repo flag
+	// 2. IPFS_PATH environment variable
+	// 3. default repo path
+	var ipfsPath string
+	if *repoPath != "" {
+		ipfsPath = *repoPath
+	} else {
+		var err error
+		ipfsPath, err = fsrepo.BestKnownPath()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	if err := run(ipfsPath, *watchPath); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func loadDatastorePlugins(plugins []plugin.Plugin) error {
+	for _, pl := range plugins {
+		if pl, ok := pl.(plugin.PluginDatastore); ok {
+			err := fsrepo.AddDatastoreConfigHandler(pl.DatastoreTypeName(), pl.DatastoreConfigParser())
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func run(ipfsPath, watchPath string) error {
+	log.Printf("running IPFSWatch on '%s' using repo at '%s'...", watchPath, ipfsPath)
+
+	ipfsPath, err := fsutil.ExpandHome(ipfsPath)
+	if err != nil {
+		return err
+	}
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+	defer watcher.Close()
+
+	if err := addTree(watcher, watchPath); err != nil {
+		return err
+	}
+
+	if err = loadDatastorePlugins(slices.Concat(
+		pluginbadgerds.Plugins,
+		pluginflatfs.Plugins,
+		pluginlevelds.Plugins,
+		pluginpebbleds.Plugins,
+	)); err != nil {
+		return err
+	}
+
+	r, err := fsrepo.Open(ipfsPath)
+	if err != nil {
+		// TODO handle case: daemon running
+		// TODO handle case: repo doesn't exist or isn't initialized
+		return err
+	}
+
+	node, err := core.NewNode(context.Background(), &core.BuildCfg{
+		Online: true,
+		Repo:   r,
+	})
+	if err != nil {
+		return err
+	}
+	defer node.Close()
+
+	api, err := coreapi.NewCoreAPI(node)
+	if err != nil {
+		return err
+	}
+
+	if *http {
+		addr := "/ip4/127.0.0.1/tcp/5001"
+		opts := []corehttp.ServeOption{
+			corehttp.GatewayOption("/ipfs", "/ipns"),
+			corehttp.WebUIOption,
+			corehttp.CommandsOption(cmdCtx(node, ipfsPath)),
+		}
+		go func() {
+			if err := corehttp.ListenAndServe(node, addr, opts...); err != nil {
+				return
+			}
+		}()
+	}
+
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt, syscall.SIGTERM)
+
+	for {
+		select {
+		case <-interrupts:
+			return nil
+		case e := <-watcher.Events:
+			log.Printf("received event: %s", e)
+			isDir, err := IsDirectory(e.Name)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			switch e.Op {
+			case fsnotify.Remove:
+				if isDir {
+					if err := watcher.Remove(e.Name); err != nil {
+						return err
+					}
+				}
+			default:
+				// all events except for Remove result in an IPFS.Add, but only
+				// directory creation triggers a new watch
+				switch e.Op {
+				case fsnotify.Create:
+					if isDir {
+						if err := addTree(watcher, e.Name); err != nil {
+							return err
+						}
+					}
+				}
+				go func() {
+					file, err := os.Open(e.Name)
+					if err != nil {
+						log.Println(err)
+						return
+					}
+					defer file.Close()
+
+					st, err := file.Stat()
+					if err != nil {
+						log.Println(err)
+						return
+					}
+
+					f, err := files.NewReaderPathFile(e.Name, file, st)
+					if err != nil {
+						log.Println(err)
+						return
+					}
+
+					k, err := api.Unixfs().Add(node.Context(), f)
+					if err != nil {
+						log.Println(err)
+					}
+					log.Printf("added %s... key: %s", e.Name, k)
+				}()
+			}
+		case err := <-watcher.Errors:
+			log.Println(err)
+		}
+	}
+}
+
+func addTree(w *fsnotify.Watcher, root string) error {
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			log.Println(err)
+			return nil
+		}
+		isDir, err := IsDirectory(path)
+		if err != nil {
+			log.Println(err)
+			return nil
+		}
+		switch {
+		case isDir && IsHidden(path):
+			log.Println(path)
+			return filepath.SkipDir
+		case isDir:
+			log.Println(path)
+			if err = w.Add(path); err != nil {
+				return err
+			}
+		default:
+			return nil
+		}
+		return nil
+	})
+	return err
+}
+
+func IsDirectory(path string) (bool, error) {
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return false, err
+	}
+	return fileInfo.IsDir(), nil
+}
+
+func IsHidden(path string) bool {
+	path = filepath.Base(path)
+	if path == "." || path == "" {
+		return false
+	}
+	if rune(path[0]) == rune('.') {
+		return true
+	}
+	return false
+}
+
+func cmdCtx(node *core.IpfsNode, repoPath string) commands.Context {
+	return commands.Context{
+		ConfigRoot: repoPath,
+		ConstructNode: func() (*core.IpfsNode, error) {
+			return node, nil
+		},
+	}
+}

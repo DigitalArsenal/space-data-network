@@ -1,0 +1,132 @@
+version: 2
+updates:
+  # Go modules (sdn-server)
+  - package-ecosystem: "gomod"
+    directory: "/sdn-server"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps(go)"
+    labels:
+      - "dependencies"
+      - "go"
+    groups:
+      # Group minor/patch libp2p updates together
+      libp2p:
+        patterns:
+          - "github.com/libp2p/*"
+          - "github.com/ipfs/*"
+          - "github.com/multiformats/*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group all other minor/patch updates
+      minor-and-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "github.com/libp2p/*"
+          - "github.com/ipfs/*"
+          - "github.com/multiformats/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Go modules (sdn-wasi)
+  - package-ecosystem: "gomod"
+    directory: "/sdn-wasi"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(wasi)"
+    labels:
+      - "dependencies"
+      - "go"
+      - "wasi"
+
+  # npm (sdn-js)
+  - package-ecosystem: "npm"
+    directory: "/sdn-js"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps(js)"
+    labels:
+      - "dependencies"
+      - "javascript"
+    groups:
+      # Group libp2p ecosystem updates
+      libp2p:
+        patterns:
+          - "@libp2p/*"
+          - "@chainsafe/*"
+          - "libp2p"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group TypeScript and build tools
+      build-tools:
+        patterns:
+          - "typescript"
+          - "vite"
+          - "@types/*"
+          - "tslib"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group all other updates
+      minor-and-patch:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@libp2p/*"
+          - "@chainsafe/*"
+          - "libp2p"
+          - "typescript"
+          - "vite"
+          - "@types/*"
+          - "tslib"
+        update-types:
+          - "minor"
+          - "patch"
+    # Security updates are always opened regardless of schedule
+    versioning-strategy: increase
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Docker (deployment images)
+  - package-ecosystem: "docker"
+    directory: "/deployment/docker"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(docker)"
+    labels:
+      - "dependencies"
+      - "docker"

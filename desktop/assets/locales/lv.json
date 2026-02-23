@@ -1,0 +1,234 @@
+{
+  "ipfsIsRunning": "IPFS darbojas",
+  "ipfsIsStopping": "IPFS apstājas",
+  "ipfsIsStarting": "IPFS sāk darbu",
+  "ipfsIsNotRunning": "IPFS nav aktīvs",
+  "ipfsHasErrored": "IPFS radusies kļūda",
+  "runningWithGC": "Darbojas (notiek GC)",
+  "runningWhileCheckingForUpdate": "Darbojas (pārbauda, vai nav atjauninājumi)",
+  "start": "Sākt",
+  "stop": "Apturēt",
+  "restart": "Pārstartēt",
+  "about": "Par",
+  "advanced": "Papildus",
+  "openRepoDir": "",
+  "openLogsDir": "",
+  "openConfigFile": "",
+  "openKuboConfigFile": "",
+  "viewOnGitHub": "Skatīt platformā GitHub...",
+  "helpUsTranslate": "Palīdzēt tulkot šo programmu",
+  "readReleaseNotes": "Lasīt izlaides aprakstu",
+  "status": "Statuss",
+  "files": "Faili",
+  "peers": "Līdzlietotāji",
+  "quit": "Iziet",
+  "versions": "Versijas",
+  "screenshotTaken": "Ekrāns uzņemts",
+  "shareableLinkCopied": "Dalīšanās saite nokopēta starpliktuvē. Klikšķiniet šeit, lai skatītu ekrānuzņēmumu.",
+  "couldNotTakeScreenshot": "Nevarēja saglabāt ekrānuzņēmumu",
+  "errorwhileTakingScreenshot": "Uzņemot ekrānu, notika kļūda",
+  "clickToOpenLogs": "Klikšķiniet šeit, lai atvērtu žurnālus.",
+  "ipfsNotRunning": "IPFS nav aktīvs",
+  "checkForUpdates": "Meklēt atjauninājumus...",
+  "checkingForUpdates": "Meklē atjauninājumus",
+  "yes": "Jā",
+  "no": "Nē",
+  "close": "Aizvērt",
+  "ok": "Labi",
+  "cancel": "Atcelt",
+  "enable": "Iespējot",
+  "reportTheError": "Ziņot par šo kļūdu",
+  "restartIpfsDesktop": "Pārstartēt IPFS Darbvirsmu",
+  "openLogs": "Atvērt žurnālus",
+  "takeScreenshot": "Uzņemt ekrānu",
+  "moveRepositoryLocation": "Pārvietot repozitoriju",
+  "runGarbageCollector": "Veikt Dražu Savākšanu (GC)",
+  "selectDirectory": "Atlasīt mapi",
+  "customIpfsBinary": "Pielāgots IPFS izpildāmais fails",
+  "setCustomIpfsBinary": "Iestatīt pielāgotu IPFS izpildāmo failu",
+  "clearCustomIpfsBinary": "Atiestatīt pielāgoto IPFS izpildāmo failu",
+  "openCliDocumentation": "Atvērt CLI dokumentāciju",
+  "polkitDialog": {
+    "title": "Polkit nav atrasts",
+    "message": "Nevar pievienot IPFS mapē /usr/local/bin/ bez Polkit aģenta"
+  },
+  "noPermissionDialog": {
+    "title": "Nav atļaujas",
+    "message": "Nevarēja pievienot IPFS mapē /usr/local/bin/ vai nu tāpēc, ka ievadījāt nepareizu paroli, vai noraidījāt atļauju."
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS nav aktīvs",
+    "message": "Lai veiktu šo darbību, jādarbojas IPFS. Vai vēlaties uzsākt dēmonu?"
+  },
+  "recoverableErrorDialog": {
+    "title": "Notikusi kļūda",
+    "message": "Notikusi kļūda, bet tā neaptur IPFS Darbvirsmas darbību. Varat vai nu pats apskatīt žurnālus, vai ziņot par kļūdu izstrādātājiem."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Nevarēja savienoties ar API",
+    "message": "IPFS Darbvirsma nevar savienoties ar norādīto adresi: { addr }."
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "IPFS Darbvirsma izslēdzās",
+    "message": "Kļūdas dēļ IPFS Darbvirsma ir izslēgusies. Varat pārstartēt programmu vai arī ziņot par kļūdu izstrādātājiem – taču tam nepieciešams GitHub konts."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Pārvietot repozitoriju",
+    "message": "Ja repozitorijs aizņem pārāk daudz vietas jūsu galvenajā diskā, varat to pārvietot kur citur. Ņemiet vērā, ka, lai IPFS Darbvirsma pareizi darbotos, jaunajai vietai vienmēr jābūt pieejamai.",
+    "action": "Pārvietot un pārstartēt mezglu"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "Repozitorijs veiksmīgi pārvietots",
+    "message": "Jūsu repozitorijs tika veiksmīgi pārvietots uz { location } un konfigurācija tika saglabāta. Tagad dēmons atkal sāks darbu."
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "Atlasīta tā pati mape",
+    "message": "Mape, kuru izvēlējaties ir tā pati, kas pašreiz iestatīta: { location }. Tātad netiks veiktas nekādas izmaiņas."
+  },
+  "moveRepositoryDirExists": {
+    "title": "Mape jau pastāv",
+    "message": "Mape { location }jau pastāv. Lūdzu, izvēlieties citu."
+  },
+  "busyPortsDialog": {
+    "title": "Porti ir aizņemti",
+    "message": "Porti { port1 } un { port2 } nav pieejami. Vai vēlaties to vietā izmantot { alt1 } un { alt2 }?",
+    "action": "Izmantot portus { alt1 } un { alt2 }"
+  },
+  "busyPortDialog": {
+    "title": "Ports ir aizņemts",
+    "message": "Ports { port } nav pieejams. Vai vēlaties tā vietā izmantot portu { alt }?",
+    "action": "Izmantot portu { alt }"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Porti ir aizņemti",
+    "message": "",
+    "action": ""
+  },
+  "itemsAddedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "itemAddedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "itemsFailedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "updateAvailableDialog": {
+    "title": "",
+    "message": ""
+  },
+  "updateNotAvailableDialog": {
+    "title": "",
+    "message": ""
+  },
+  "updateErrorDialog": {
+    "title": "",
+    "message": ""
+  },
+  "autoUpdateError": {
+    "title": "",
+    "message": "",
+    "downloadNow": "",
+    "later": ""
+  },
+  "updateDownloadedDialog": {
+    "title": "",
+    "message": "",
+    "later": "",
+    "now": ""
+  },
+  "updateDownloadedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "runGarbageCollectorWarning": {
+    "title": "",
+    "message": "",
+    "action": ""
+  },
+  "runGarbageCollectorDone": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryFailed": {
+    "title": "Pārvietot repozitoriju",
+    "message": ""
+  },
+  "runGarbageCollectorErrored": {
+    "title": "",
+    "message": ""
+  },
+  "launchAtLoginNotSupported": {
+    "title": "",
+    "message": ""
+  },
+  "launchAtLoginFailed": {
+    "title": "",
+    "message": ""
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "",
+    "message": ""
+  },
+  "settings": {
+    "settings": "",
+    "preferences": "",
+    "openNodeSettings": "",
+    "appPreferences": "",
+    "launchOnStartup": "",
+    "openWebUIAtLaunch": "",
+    "pubsub": "",
+    "namesysPubsub": "",
+    "automaticGC": "",
+    "takeScreenshotShortcut": "",
+    "experiments": "",
+    "npmOnIpfs": "",
+    "monochromeTrayIcon": ""
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "",
+    "message": ""
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "unresponsiveWindowDialog": {
+    "title": "",
+    "message": "",
+    "forceReload": "",
+    "doNothing": ""
+  },
+  "migrationDialog": {
+    "title": "",
+    "message": "",
+    "closeAndContinue": ""
+  },
+  "startupFailedDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "",
+    "message": ""
+  },
+  "privateNetworkDialog": {
+    "title": "",
+    "message": ""
+  },
+  "invalidRepositoryDialog": {
+    "title": "",
+    "message": ""
+  }
+}

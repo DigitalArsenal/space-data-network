@@ -1,0 +1,43 @@
+# Wasmtime configuration for SDN WASI module
+# Usage: wasmtime run --config wasmtime.toml sdn-wasi.wasm
+
+[wasi]
+# Enable WASI preview 1
+preview1 = true
+
+# File system access
+inherit-env = true
+inherit-args = true
+
+# Map directories
+[[wasi.dirs]]
+host = "./data"
+guest = "/data"
+
+[[wasi.dirs]]
+host = "./config"
+guest = "/config"
+
+# Network (experimental - requires wasmtime with WASI sockets)
+# [wasi.sockets]
+# enabled = true
+
+[limits]
+# Memory limits
+memory-size = "256MB"
+
+# Stack size
+stack-size = "1MB"
+
+# Fuel (for limiting execution)
+# fuel = 1000000000
+
+[codegen]
+# Optimization level
+opt-level = "speed"
+
+# Enable SIMD
+simd = true
+
+# Enable threads (if needed)
+threads = false

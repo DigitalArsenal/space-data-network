@@ -1,0 +1,234 @@
+{
+  "ipfsIsRunning": "",
+  "ipfsIsStopping": "",
+  "ipfsIsStarting": "",
+  "ipfsIsNotRunning": "",
+  "ipfsHasErrored": "",
+  "runningWithGC": "",
+  "runningWhileCheckingForUpdate": "",
+  "start": "Start",
+  "stop": "Stop",
+  "restart": "Genstart",
+  "about": "Mere om",
+  "advanced": "Avanceret",
+  "openRepoDir": "",
+  "openLogsDir": "",
+  "openConfigFile": "",
+  "openKuboConfigFile": "",
+  "viewOnGitHub": "",
+  "helpUsTranslate": "",
+  "readReleaseNotes": "",
+  "status": "Status",
+  "files": "Filer",
+  "peers": "Klient-forbindelser",
+  "quit": "Afslut",
+  "versions": "Versioner",
+  "screenshotTaken": "Skærmbillede optaget",
+  "shareableLinkCopied": "Delbart link kopieret til udklipsholderen. Klik her for at vise skærmbilledet.",
+  "couldNotTakeScreenshot": "Optagelse af skærmbillede mislykkedes",
+  "errorwhileTakingScreenshot": "En fejl opstod i forsøg på at optage skærmbilledet.",
+  "clickToOpenLogs": "Klik her for at åbne logfilerne.",
+  "ipfsNotRunning": "IPFS kører ikke",
+  "checkForUpdates": "",
+  "checkingForUpdates": "",
+  "yes": "Ja",
+  "no": "Nej",
+  "close": "Luk",
+  "ok": "OK",
+  "cancel": "Fortryd",
+  "enable": "",
+  "reportTheError": "Indrapporter fejlen",
+  "restartIpfsDesktop": "Genstart IPFS Skrivebord",
+  "openLogs": "Åben logfiler",
+  "takeScreenshot": "Optag skærmbillede",
+  "moveRepositoryLocation": "Flyt depot placering",
+  "runGarbageCollector": "",
+  "selectDirectory": "",
+  "customIpfsBinary": "",
+  "setCustomIpfsBinary": "",
+  "clearCustomIpfsBinary": "",
+  "openCliDocumentation": "",
+  "polkitDialog": {
+    "title": "Polkit ikke fundet",
+    "message": "IPFS kan ikke tilføjes til /usr/local/bin/ uden polkit agenten."
+  },
+  "noPermissionDialog": {
+    "title": "Ingen tilladelse",
+    "message": "IPFS kunne ikke tilføjes til /usr/local/bin/, enten fordi du har indtastet forkert kodeord, eller fordi du har afvist adgangen."
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS kører ikke",
+    "message": "IPFS skal køre for at kunne udføre denne handling. Vil du starte baggrunds-processen?"
+  },
+  "recoverableErrorDialog": {
+    "title": "En fejl er opstået",
+    "message": "En fejl er opstået men dette forhindrer ikke afviklingen af IPFS Skrivebord. Du kan enten inspicere log filerne selv eller indrapportere fejlen til udviklerne."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Kan ikke forbinde til API",
+    "message": "IPFS Skrivebord kan ikke forbinde til API adressen som angivet: { addr }."
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "IPFS Skrivebord er lukket ned",
+    "message": "IPFS Skrivebord er lukket ned som følge af en fejl. Du kan genstarte app'en eller indrapportere fejlen til udviklerne, hvilket dog forudsætter en GitHub konto."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Flyt depot",
+    "message": "",
+    "action": ""
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryDirExists": {
+    "title": "",
+    "message": ""
+  },
+  "busyPortsDialog": {
+    "title": "Portene er optaget",
+    "message": "Portene { port1 } og { port2 } er ikke tilgængelige. Ønsker du at benytte { alt1 } og { alt2 } i stedet?",
+    "action": "Benyt portene { alt1 } og { alt2 } i stedet"
+  },
+  "busyPortDialog": {
+    "title": "Port er optaget",
+    "message": "Porten { port } er ikke tilgængelig. Vil du benytte { alt } i stedet?",
+    "action": "Benyt port { alt } i stedet"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Portene er optaget",
+    "message": "",
+    "action": ""
+  },
+  "itemsAddedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "itemAddedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "itemsFailedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "updateAvailableDialog": {
+    "title": "Opdatering tilgængelig",
+    "message": ""
+  },
+  "updateNotAvailableDialog": {
+    "title": "Opdatering ikke tilgængelig",
+    "message": ""
+  },
+  "updateErrorDialog": {
+    "title": "",
+    "message": ""
+  },
+  "autoUpdateError": {
+    "title": "",
+    "message": "",
+    "downloadNow": "",
+    "later": ""
+  },
+  "updateDownloadedDialog": {
+    "title": "",
+    "message": "",
+    "later": "",
+    "now": ""
+  },
+  "updateDownloadedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "runGarbageCollectorWarning": {
+    "title": "",
+    "message": "",
+    "action": ""
+  },
+  "runGarbageCollectorDone": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryFailed": {
+    "title": "Flyt depot",
+    "message": ""
+  },
+  "runGarbageCollectorErrored": {
+    "title": "",
+    "message": ""
+  },
+  "launchAtLoginNotSupported": {
+    "title": "",
+    "message": ""
+  },
+  "launchAtLoginFailed": {
+    "title": "",
+    "message": ""
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "",
+    "message": ""
+  },
+  "settings": {
+    "settings": "Indstillinger",
+    "preferences": "",
+    "openNodeSettings": "",
+    "appPreferences": "",
+    "launchOnStartup": "",
+    "openWebUIAtLaunch": "",
+    "pubsub": "",
+    "namesysPubsub": "",
+    "automaticGC": "",
+    "takeScreenshotShortcut": "",
+    "experiments": "Eksperimenter",
+    "npmOnIpfs": "",
+    "monochromeTrayIcon": ""
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "",
+    "message": ""
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "unresponsiveWindowDialog": {
+    "title": "",
+    "message": "",
+    "forceReload": "",
+    "doNothing": ""
+  },
+  "migrationDialog": {
+    "title": "",
+    "message": "",
+    "closeAndContinue": ""
+  },
+  "startupFailedDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "",
+    "message": ""
+  },
+  "privateNetworkDialog": {
+    "title": "",
+    "message": ""
+  },
+  "invalidRepositoryDialog": {
+    "title": "",
+    "message": ""
+  }
+}

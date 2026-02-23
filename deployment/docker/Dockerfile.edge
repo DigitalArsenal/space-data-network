@@ -1,0 +1,38 @@
+# SDN Edge Relay
+# Minimal relay-only node for browser clients behind firewalls
+
+FROM golang:1.24-alpine AS builder
+
+RUN apk add --no-cache gcc musl-dev
+
+WORKDIR /build
+COPY sdn-server/go.mod sdn-server/go.sum ./sdn-server/
+WORKDIR /build/sdn-server
+RUN go mod download
+
+WORKDIR /build
+COPY sdn-server/ ./sdn-server/
+
+WORKDIR /build/sdn-server
+# Edge build doesn't need SQLite
+RUN CGO_ENABLED=0 go build -tags edge -ldflags="-s -w" -o /out/spacedatanetwork-edge ./cmd/spacedatanetwork-edge
+
+# Minimal runtime image
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates
+
+# Create non-root user
+RUN adduser -D -u 1000 sdn
+USER sdn
+
+WORKDIR /app
+COPY --from=builder /out/spacedatanetwork-edge /app/
+
+# Expose WebSocket port (primary for browsers)
+EXPOSE 8080
+
+ENV SDN_MAX_CONNS=500
+
+ENTRYPOINT ["/app/spacedatanetwork-edge"]
+CMD ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--max-conns", "500", "--health-port", "8081"]

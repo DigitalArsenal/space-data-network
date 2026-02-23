@@ -1,0 +1,109 @@
+{
+  "actions": {
+    "add": "Hozzáadás",
+    "apply": "Apply",
+    "browse": "Tallózás",
+    "cancel": "Mégsem",
+    "change": "Változtatás",
+    "clear": "Törlés",
+    "close": "Bezárás",
+    "copy": "Másolás",
+    "create": "Létrehozás",
+    "remove": "Remove",
+    "download": "Letölt",
+    "edit": "Szerkesztés",
+    "import": "Importálás",
+    "inspect": "Kivizsgálás",
+    "more": "Több",
+    "moreInfo": "Több infó",
+    "noThanks": "Nem, köszönöm",
+    "ok": "Rendben",
+    "pinVerb": "Kitűz",
+    "rename": "Átnevezés",
+    "reset": "Törlés",
+    "save": "Mentés",
+    "saving": "Mentés",
+    "selectAll": "Mindent kijelöl",
+    "setPinning": "Set pinning",
+    "submit": "Beküldés",
+    "unpin": "Levesz",
+    "unselectAll": "Minden kijelölést töröl",
+    "generate": "Generate",
+    "publish": "Publish",
+    "downloadCar": "Export CAR",
+    "done": "Done"
+  },
+  "cliModal": {
+    "description": "Paste the following into your terminal to do this task in Kubo via the command line. Remember that you'll need to replace placeholders with your specific parameters."
+  },
+  "nav": {
+    "bugsLink": "Hiba beküldése",
+    "codeLink": "Kód megnézése"
+  },
+  "status": {
+    "connectedToIpfs": "Csatlakozva az IPFS-hez",
+    "connectingToIpfs": "Csatlakozás az IPFS-hez",
+    "couldNotConnect": "Could not connect to the Kubo RPC"
+  },
+  "apiAddressForm": {
+    "placeholder": "Enter a URL (http://user:password@127.0.0.1:5001) or a Multiaddr (/ip4/127.0.0.1/tcp/5001)"
+  },
+  "publicGatewayForm": {
+    "placeholder": "Enter a URL (https://ipfs.io)"
+  },
+  "publicSubdomainGatewayForm": {
+    "placeholder": "Enter a URL (https://dweb.link)"
+  },
+  "terms": {
+    "address": "Cím",
+    "addresses": "Címek",
+    "advanced": "Haladó",
+    "agent": "Ügynök",
+    "api": "Kubo RPC",
+    "apiAddress": "Kubo RPC API address",
+    "blocks": "Blokkok",
+    "connection": "Csatlakozás",
+    "downSpeed": "Bejövő",
+    "example": "Példa:",
+    "file": "Fájl",
+    "files": "Fájlok",
+    "folder": "Mappa",
+    "folders": "Mappák",
+    "gateway": "Átjáró",
+    "in": "Be",
+    "latency": "Válaszidő",
+    "loading": "Loading",
+    "location": "Helyszín",
+    "name": "Név",
+    "node": "Csomópont",
+    "out": "Ki",
+    "peer": "Végpont",
+    "peerId": "Végpont azonosító",
+    "id": "ID",
+    "peers": "Ügyfelek",
+    "pinNoun": "Kitűzés",
+    "pins": "Kitűzések",
+    "pinStatus": "Pin Status",
+    "publicKey": "Nyilvános kulcs",
+    "publicGateway": "Public Gateway",
+    "rateIn": "Bejövő sebesség",
+    "rateOut": "Kimenő sebesség",
+    "repo": "Repo",
+    "size": "Méret",
+    "totalIn": "Bejövő összes",
+    "totalOut": "Kimenő összes",
+    "unknown": "Ismeretlen",
+    "ui": "UI",
+    "upSpeed": "Kimenő",
+    "revision": "Felülvizsgálat"
+  },
+  "tour": {
+    "back": "Vissza",
+    "close": "Bezárás",
+    "finish": "Vége",
+    "next": "Következő",
+    "skip": "Átugrás",
+    "tooltip": "Nyomd meg ezt a gombot bármikor egy bemutatóhoz ezen az oldalon"
+  },
+  "startTourHelper": "Bemutató indítása"
+}

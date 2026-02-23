@@ -1,0 +1,36 @@
+// Hash: af813818b2917f80f7a0f423e22a07f17a07f776d50b8e6dc5c54c6c12260e98
+// Version: 1.0.1
+// -----------------------------------END_HEADER
+enum timeSystem : byte {
+  /// Greenwich Mean Sidereal Time
+  GMST,
+  /// Global Positioning System
+  GPS,
+  /// Mission Elapsed Time
+  MET,
+  /// Mission Relative Time
+  MRT,
+  /// Spacecraft Clock (receiver) (requires rules for interpretation in ICD)
+  SCLK,
+  /// International Atomic Time
+  TAI,
+  /// Barycentric Coordinate Time
+  TCB,
+  /// Barycentric Dynamical Time
+  TDB,
+  /// Geocentric Coordinate Time
+  TCG,
+  /// Terrestrial Time
+  TT,
+  /// Universal Time
+  UT1,
+  /// Coordinated Universal Time
+  UTC
+}
+
+/// Time System
+table TIM {
+  TIME_SYSTEM: timeSystem;
+}
+root_type TIM;
+file_identifier "$TIM";

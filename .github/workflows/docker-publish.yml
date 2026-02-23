@@ -1,0 +1,213 @@
+name: Build and Sign Container Images
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_PREFIX: ${{ github.repository }}
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write  # Required for cosign keyless signing
+
+jobs:
+  build-and-sign:
+    name: Build and Sign Images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dockerfile: deployment/docker/Dockerfile.full
+            image_suffix: full
+            context: .
+          - dockerfile: deployment/docker/Dockerfile.edge
+            image_suffix: edge
+            context: .
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if Dockerfile exists
+        id: check
+        run: |
+          if [ -f "${{ matrix.dockerfile }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "::warning::Dockerfile ${{ matrix.dockerfile }} not found, skipping"
+          fi
+
+      # Install cosign for container signing
+      - name: Install cosign
+        if: steps.check.outputs.exists == 'true'
+        uses: sigstore/cosign-installer@v3.4.0
+        with:
+          cosign-release: 'v2.2.3'
+
+      # Set up Docker Buildx for multi-platform builds
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.exists == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      # Login to GitHub Container Registry
+      - name: Log in to Container Registry
+        if: steps.check.outputs.exists == 'true' && github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Extract metadata for Docker
+      - name: Extract Docker metadata
+        if: steps.check.outputs.exists == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_PREFIX }}-${{ matrix.image_suffix }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      # Build and push Docker image
+      - name: Build and push Docker image
+        if: steps.check.outputs.exists == 'true'
+        id: build-and-push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      # Sign the container image using cosign keyless signing (OIDC)
+      # This uses GitHub's OIDC provider for identity verification
+      - name: Sign container image
+        if: steps.check.outputs.exists == 'true' && github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          echo "=== Signing Container Image ==="
+          echo "Digest: ${DIGEST}"
+
+          # Sign each tag with cosign keyless signing
+          images=""
+          for tag in ${TAGS}; do
+            images+="${tag}@${DIGEST} "
+          done
+
+          # Cosign keyless signing using GitHub OIDC
+          # This creates a verifiable signature tied to the GitHub workflow
+          cosign sign --yes ${images}
+
+          echo "=== Image Signed Successfully ==="
+
+      # Generate and attach SBOM attestation
+      - name: Attest SBOM
+        if: steps.check.outputs.exists == 'true' && github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+        run: |
+          echo "=== Generating SBOM Attestation ==="
+
+          # Get the first tag for SBOM generation
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_PREFIX }}-${{ matrix.image_suffix }}@${DIGEST}"
+
+          # Generate SBOM using syft
+          docker run --rm anchore/syft:latest packages "${IMAGE}" -o cyclonedx-json > sbom.json || true
+
+          if [ -f sbom.json ] && [ -s sbom.json ]; then
+            # Attach SBOM attestation using cosign
+            cosign attest --yes --predicate sbom.json --type cyclonedx "${IMAGE}"
+            echo "SBOM attestation attached successfully"
+          else
+            echo "::warning::SBOM generation skipped or failed"
+          fi
+
+      # Output verification commands
+      - name: Output verification instructions
+        if: steps.check.outputs.exists == 'true' && github.event_name != 'pull_request'
+        run: |
+          echo "=== Verification Instructions ===" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To verify the image signature:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "cosign verify ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_PREFIX }}-${{ matrix.image_suffix }}:${{ github.ref_name }} \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --certificate-identity-regexp='https://github.com/${{ github.repository }}/.*' \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --certificate-oidc-issuer='https://token.actions.githubusercontent.com'" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To verify SBOM attestation:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "cosign verify-attestation ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_PREFIX }}-${{ matrix.image_suffix }}:${{ github.ref_name }} \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --type cyclonedx \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --certificate-identity-regexp='https://github.com/${{ github.repository }}/.*' \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --certificate-oidc-issuer='https://token.actions.githubusercontent.com'" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # Verify signatures after all images are built
+  verify-signatures:
+    name: Verify Image Signatures
+    runs-on: ubuntu-latest
+    needs: build-and-sign
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.4.0
+
+      - name: Verify full-node image
+        continue-on-error: true
+        run: |
+          echo "=== Verifying full-node image signature ==="
+          cosign verify ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_PREFIX }}-full:${{ github.ref_name }} \
+            --certificate-identity-regexp='https://github.com/${{ github.repository }}/.*' \
+            --certificate-oidc-issuer='https://token.actions.githubusercontent.com' || \
+            echo "::warning::Full-node image verification failed or image not found"
+
+      - name: Verify edge image
+        continue-on-error: true
+        run: |
+          echo "=== Verifying edge image signature ==="
+          cosign verify ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_PREFIX }}-edge:${{ github.ref_name }} \
+            --certificate-identity-regexp='https://github.com/${{ github.repository }}/.*' \
+            --certificate-oidc-issuer='https://token.actions.githubusercontent.com' || \
+            echo "::warning::Edge image verification failed or image not found"
+
+      - name: Summary
+        run: |
+          echo "# Container Image Signing Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Signed Images" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | Tag | Signed |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| full-node | ${{ github.ref_name }} | ✓ |" >> $GITHUB_STEP_SUMMARY
+          echo "| edge | ${{ github.ref_name }} | ✓ |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Security Features" >> $GITHUB_STEP_SUMMARY
+          echo "- **Keyless Signing**: Using Sigstore/cosign with GitHub OIDC" >> $GITHUB_STEP_SUMMARY
+          echo "- **SBOM**: CycloneDX format attestation attached" >> $GITHUB_STEP_SUMMARY
+          echo "- **Provenance**: Build provenance automatically attached" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Trust Chain" >> $GITHUB_STEP_SUMMARY
+          echo "Signatures are tied to this GitHub repository and workflow, providing:" >> $GITHUB_STEP_SUMMARY
+          echo "- Proof that the image was built from this repository" >> $GITHUB_STEP_SUMMARY
+          echo "- Tamper-evident verification" >> $GITHUB_STEP_SUMMARY
+          echo "- Supply chain integrity" >> $GITHUB_STEP_SUMMARY

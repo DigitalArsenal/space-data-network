@@ -1,0 +1,137 @@
+{
+  "title": "檔案",
+  "home": "首頁",
+  "breadcrumbs": "導覽列",
+  "finished": "已完成!",
+  "totalSize": "總大小: {size}",
+  "filesSelected": "{count, plural, other {已選擇的項目}}",
+  "menuOptions": "所選項目的選項",
+  "selectedAllEntries": "選擇所有條目",
+  "individualFilesOnly": "僅適用於單一檔案",
+  "noPDFSupport": "您的瀏覽器不支援 PDF 檔案格式。請下載此 PDF 檔案後閱讀。",
+  "downloadPDF": "下載 PDF",
+  "openWithPublicGateway": "Try opening it instead with your <1>public gateway</1>.",
+  "openWithLocalAndPublicGateway": "Try opening it instead with your <1>local gateway</1> or <3>public gateway</3>.",
+  "cantBePreviewed": "抱歉，本文件不支持預覽。",
+  "addByPath": "來自 IPFS",
+  "newFolder": "新增資料夾",
+  "generating": "生成…",
+  "actions": {
+    "copyHash": "複製 CID",
+    "share": "分享連結",
+    "publishWithIpns": "Publish to IPNS"
+  },
+  "cliModal": {
+    "extraNotesPinning": "這條指令只適用於本地錨釘/取消錨釘。如果您想要使用遠端錨釘服務，請參閱該服務的說明文件以瞭解如何透過指令執行遠端錨釘/取消固錨釘。"
+  },
+  "shareModal": {
+    "title": "分享文件",
+    "description": "複製以下連結並與您的朋友分享。"
+  },
+  "renameModal": {
+    "titleFile": "重新命名檔案",
+    "titleFolder": "重新命名資料夾",
+    "descriptionFile": "替這個檔案選擇個一新的名字",
+    "descriptionFolder": "替這個資料夾選擇個一新的名字"
+  },
+  "removeModal": {
+    "titleItem": "{count, plural, other {要移除{count}個項目？}}",
+    "titleFolder": "{count, plural, other {要移除{count}個資料夾？}}",
+    "titleFile": "{count, plural, other {要移除{count}個檔案？}}",
+    "descriptionItem": "{count, plural, other {您確定要刪除已選擇的{count}個項目嗎？它們不再出現在檔案頁面中，且將會在下一次的自動清理中被永久移除(雖然它們的副本有可能存在於其他的 IPFS 節點上)。這個動作將不可被取消。}}",
+    "descriptionFolder": "{count, plural, other {您確定要刪除已選擇的{count}個資料夾嗎？它們不再出現在檔案頁面中，且將會在下一次的自動清理中被永久移除(雖然它們的副本有可能存在於其他的 IPFS 節點上)。這個動作將不可被取消。}}",
+    "descriptionFile": "{count, plural, other {您確定要刪除已選擇的{count}個檔案嗎？它們不再出現在檔案頁面中，且將會在下一次的自動清理中被永久移除(雖然它們的副本有可能存在於其他的 IPFS 節點上)。這個動作將不可被取消。}}",
+    "checkboxRemoveLocalPin": "同時移除本機錨釘(推薦)",
+    "checkboxUnpinFromServices": "取消所有的錨釘服務"
+  },
+  "pinningModal": {
+    "title": "選擇你想將這些文件錨釘的位置",
+    "complianceLabel": "🔍 Check pinning services' compliance",
+    "footer": "需要新增或設置錨定服務？請到<0>設定<0>。",
+    "localNode": "本地節點",
+    "totalSize": "總大小: {size}"
+  },
+  "addByPathModal": {
+    "title": "從 IPFS 導入",
+    "description": "將要導入 IPFS 路徑 (CID) 輸入於此",
+    "importPathPlaceholder": "Path or CID (required)",
+    "namePlaceholder": "Name (optional)",
+    "examples": "範例:"
+  },
+  "newFolderModal": {
+    "title": "新增資料夾",
+    "description": "輸入您想要創建的資料夾名稱"
+  },
+  "filesListLabel": "檔案清單",
+  "filesList": {
+    "noFiles": "<0>這個資料夾內沒有檔案，請點擊\"導入\"按鈕加入檔案<0>"
+  },
+  "filesImportStatus": {
+    "imported": "{count, plural, other {已導入{count}個項目}}",
+    "importing": "{count, plural, other {正在導入{count}個項目}}",
+    "toggleDropdown": "切換下拉式選單",
+    "closeDropdown": "關閉下拉式選單",
+    "count": "{count}中的{count}個"
+  },
+  "addFilesInfo": "<0>現在還沒有任何檔案！使用上方的<1>導入<1>按鈕為您的本地IPFS 節點加入檔案。<0>",
+  "companionInfo": "<0>如果你正在使用<1> IPFS 伴侶</1>，文件視圖僅限於使用擴展程序時添加的文件。</0>",
+  "tour": {
+    "step1": {
+      "title": "檔案頁面",
+      "paragraph1": "<0>這是 <1>Mutable File System（MFS）</1> 上的文件所在的位置。您可以添加文件或文件夾，並從此頁面進行管理</0>",
+      "paragraph2": "點選 \"下一步\" 了解更多資訊。"
+    },
+    "step2": {
+      "title": "導覽列",
+      "paragraph1": "這些階層指示顯示當前目錄的路徑。 您可以… ",
+      "bullet1": "點擊階層指示後顯示該目錄",
+      "bullet2": "右鍵點擊階層指示將開啟該目錄的功能選單",
+      "bullet3": "將檔案拖動到階層指示將可以移動或是匯入到該目錄"
+    },
+    "step3": {
+      "title": "新增檔案",
+      "paragraph1": "在這裡，您可以看到已固定的區塊數和文件數。",
+      "paragraph2": "您可以通過右側的下拉列表將文件或文件夾添加到您的倉庫。",
+      "paragraph3": "<0>如果想要添加 IPFS 上已有的內容，可以通過傳遞其 <1>Content Identifier（CID）</1> 將其導入 MFS</0>"
+    },
+    "step5": {
+      "title": "檔案清單",
+      "paragraph1": "最後，您可以在列表中找到您的檔案和資料夾， 通過拖放檔案或資料夾來添加它們",
+      "paragraph2": "您可以分享或下載文件，在 IPLD 資源管理器中查看、重新命名或刪除它們。",
+      "paragraph3": "專家提示：可以從 Web UI 的任何其他頁面拖放文件，把它們添加到 MFS 的根目錄。"
+    }
+  },
+  "previewLimitReached": "This preview is limited to 10 KiB. Click the download button to access the full file.",
+  "previousFolder": "回到上一層資料夾",
+  "fileLabel": "選擇的{type}{name}的文件大小為：{size}",
+  "hashUnavailable": "hash 不可用",
+  "checkboxLabel": "查看更多選項{name}",
+  "pinned": "已錨釘",
+  "pinnedRemotely": "遠程錨釘",
+  "pinningRemotely": "Pinning remotely",
+  "pinningCompleted": "Pinning completed",
+  "pinningFailed": "Pinning failed",
+  "clickToDismiss": "Click to dismiss",
+  "clickToCancel": "Click to cancel",
+  "blocks": "區塊",
+  "allBlocks": "所有資料區塊",
+  "allBlocksDescription": "總計 IPFS 節點內的所有資料區塊大小；這包括所有的檔案，加上所有的本機錨釘的檔案以及任何任何臨時塊取的資料。",
+  "filesDescription": "當前目錄中數據的總大小（同時顯示子資料夾的數據大小） ",
+  "pinningQueue": "Pinning queue",
+  "more": "更多",
+  "files": "檔案",
+  "cidNotFileNorDir": "The current link isn't a file, nor a directory. Try to <1>inspect</1> it instead.",
+  "sortBy": "按照{name}排序項目",
+  "publishModal": {
+    "title": "Publish to IPNS",
+    "cidToPublish": "CID:",
+    "publishUnderKey": "Select key for publishing:",
+    "help": "Go to Settings to learn about IPNS and create more keys.",
+    "publishedUnderKey": "Successfully published under the key:",
+    "linkCopied": "Link copied!",
+    "sharingPrompt": "Copy the link below and share it with others. The IPNS address will resolve as long as your node remains available on the network once a day to refresh the IPNS record.",
+    "pleaseWait": "Please wait while the initial 20 copies of the updated IPNS record are stored with the help of DHT peers…"
+  },
+  "noPinsInProgress": "All done, no remote pins in progress.",
+  "remotePinningInProgress": "Remote pinning in progress:"
+}

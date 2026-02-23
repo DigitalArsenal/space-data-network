@@ -1,0 +1,126 @@
+.epm-editor {
+  background: var(--sdn-bg-secondary);
+  border: 1px solid var(--sdn-border);
+  border-radius: 0;
+  padding: 24px;
+  font-family: Montserrat, sans-serif;
+}
+
+.epm-editor-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sdn-text-muted, var(--sdn-text-secondary));
+  margin-bottom: 12px;
+}
+
+.epm-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 10px;
+}
+
+/* Default: half-width (3 of 6 columns) */
+.epm-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  grid-column: span 3;
+}
+
+/* Full-width fields (display name, legal name, email, street) */
+.epm-editor-field-full {
+  grid-column: span 6;
+}
+
+/* Third-width fields (prefix, suffix, postal code, country, po box) */
+.epm-editor-field-third {
+  grid-column: span 2;
+}
+
+@media (max-width: 500px) {
+  .epm-editor-grid {
+    grid-template-columns: 1fr;
+  }
+  .epm-editor-field,
+  .epm-editor-field-full,
+  .epm-editor-field-third {
+    grid-column: span 1;
+  }
+}
+
+.epm-editor-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sdn-text-secondary);
+}
+
+.epm-editor-input {
+  padding: 8px 10px;
+  border-radius: 0;
+  border: 1px solid var(--sdn-border);
+  background: var(--sdn-bg-tertiary);
+  color: var(--sdn-text-primary);
+  font-size: 13px;
+  font-family: Montserrat, sans-serif;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.epm-editor-input:focus {
+  border-color: rgba(88, 166, 255, 0.7);
+}
+
+.epm-editor-input::placeholder {
+  color: var(--sdn-text-muted, var(--sdn-text-secondary));
+  opacity: 0.5;
+}
+
+.epm-editor-input-error {
+  border-color: var(--sdn-accent-red, #f85149);
+}
+
+.epm-editor-input-error:focus {
+  border-color: var(--sdn-accent-red, #f85149);
+}
+
+.epm-editor-error {
+  font-size: 11px;
+  color: var(--sdn-accent-red, #f85149);
+  line-height: 1.3;
+}
+
+.epm-editor-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.epm-editor-btn {
+  padding: 8px 16px;
+  border-radius: 0;
+  border: 1px solid var(--sdn-border);
+  background: var(--sdn-bg-tertiary);
+  color: var(--sdn-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: Montserrat, sans-serif;
+  transition: all 0.15s;
+}
+
+.epm-editor-btn:hover:not(:disabled) {
+  background: rgba(88, 166, 255, 0.10);
+  border-color: rgba(88, 166, 255, 0.5);
+}
+
+.epm-editor-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.epm-editor-btn-primary {
+  background: rgba(88, 166, 255, 0.15);
+  border-color: rgba(88, 166, 255, 0.5);
+}

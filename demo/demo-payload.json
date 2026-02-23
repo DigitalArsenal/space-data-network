@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "pluginId": "sdn-demo",
+  "epochPeriodMs": 7776000000,
+  "currentEpoch": 227,
+  "createdAt": "2026-02-16T01:25:42.947Z",
+  "serverPublicKeyHex": "04aa4a18095334676e9756f1b50227dcdb653fd7ba8f80000a97f65ef242109a3b68fde5347a6116e171444fe47a3aa0db0976d0c7746f2261464775a44bd8332b",
+  "encryptedPayload": "9/HXeutvtF6goRJkIgFJAJ1sTdtDD5h4Se6Jhe/0u9GaItOfqLChEFuPpCoK6HNFs13bfbgRl0nrhZ2xyufuYh80UVsIn6aVvA59VLcO0+thJkYmoI1AnsbjhfZ3HhQTlOMPONqu6P70UMBg0u1GCuk1KS7OOH4/G31cM9yAWlvtr0U+4/+BTrqVNuX4LwdJ7QTAtWLPs4aMJetElWL0J9Ft8BK+IIGqWqksu3OW5DnPbQKca0A+Mw/DCeNJWIx4KJZpDMCi24YozVRbidyrJzhzGwv8iilmqYKMuX8mx55KkhkPUqS3IJswtHbAobQ4+xb/t+eAQXSJFTldyoJ2lqAQujAjprhvyhfIln1jTLfbJStE9DuJiq4GvYRuTo6k3JKg3gXBVNK53eVEgIAKeE0OTaJr/ENYHS7PJsgj2ByPTOeTH1Zm3TikSmpNH1tXAEqAX8//OGv3Ejv1bwPQywWTwNUjrBa9gDUyAtDq8RzHIkXphks1ixKXqgjH+k75S3TgF1/ob9HK3DXSg/UdE2Yx1w5MupHMgZGV/uWzP5V4y00YFV6ulSCh6YM5dQbpEw5z8yE/HU77+Xfu7ggPX18UJ2sx+pdtKy1dxgwXCwCwk2JsrZdM1YrDoyKpuBheCP5amrk0uxjusghWbaxJ78cbhkq+qSaK6BbyXvWjcaBe1xpR+GELPD1DYcSQ5Sqdfvv49azlakPNDGc5ZJofjcw4sFA0urj4mUgIwt/XrXAU0nuAXLsNdT+FrnQDeXQ3sVt5GYws1Gar1WImUgK9Ey7ebhjTMjKrK7T5PHIZsG9nU6V7jbGKjUNvYPdH2/oRyju5MD8tw+eEpIiyHkeKFnyifh37Ed9MYZ9/O2aELd5Y3uGCtzzis+TJU08gB9xURw72iqRdUofCKxalqPojR5VjnMqhtcmf3OqPvFR0AytqxmQnOM2iA3dyqaThLsaQL+6ynOEM21uab/zV",
+  "wrappedDEKs": [
+    "s66JImQj3HburRkFySl+nfVGsWKhgUAXV0Hs8vF43K2tmd5Bvf3V/6Vy0F0d9Rbi8Eps2pVK6UpIULao",
+    "Tmz8aHm7D3gXpLqDsDRP2kdfW0CbpGtuCipMUzwVWSEonjm10enBc6xJtK1urukhDQPCIppEobe5GAGe"
+  ],
+  "domains": [
+    "localhost",
+    "127.0.0.1"
+  ],
+  "wasmSize": 704
+}

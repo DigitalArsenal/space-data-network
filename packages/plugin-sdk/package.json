@@ -1,0 +1,48 @@
+{
+  "name": "@spacedatanetwork/plugin-sdk",
+  "version": "1.0.0",
+  "description": "Plugin SDK contracts and protocol tooling for Space Data Network plugins",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./key-broker-codec": "./src/key-broker-codec.js",
+    "./third-party-codec": "./src/third-party-codec.js"
+  },
+  "scripts": {
+    "generate:key-broker-bindings": "node scripts/generate-key-broker-bindings.mjs",
+    "generate:third-party-bindings": "node scripts/generate-third-party-bindings.mjs",
+    "generate:third-party-fixtures": "node scripts/generate-third-party-fixtures.mjs",
+    "generate:all-bindings": "npm run generate:key-broker-bindings && npm run generate:third-party-bindings && npm run generate:third-party-fixtures",
+    "scaffold:third-party-client": "node scripts/generate-third-party-scaffold.mjs --type client",
+    "scaffold:third-party-server": "node scripts/generate-third-party-scaffold.mjs --type server",
+    "test:key-broker-client": "node scripts/key-broker-test-client.mjs",
+    "test:conformance": "node tests/conformance/run-conformance.mjs"
+  },
+  "dependencies": {
+    "@chainsafe/libp2p-noise": "^16.1.0",
+    "@chainsafe/libp2p-yamux": "^7.0.4",
+    "@libp2p/tcp": "^10.1.12",
+    "@libp2p/websockets": "^9.2.0",
+    "@multiformats/multiaddr": "^12.3.5",
+    "flatbuffers": "^25.9.23",
+    "libp2p": "^2.6.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.0",
+    "flatc-wasm": "^25.12.19-wasm.43"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "files": [
+    "schemas",
+    "src",
+    "fixtures",
+    "templates",
+    "tests",
+    "scripts",
+    "README.md",
+    "scripts/key-broker-test-client.mjs"
+  ]
+}

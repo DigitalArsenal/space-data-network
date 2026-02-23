@@ -1,0 +1,62 @@
+name: chocolatey
+
+on:
+  workflow_dispatch:
+    inputs:
+      manual_name:
+        required: true
+        description: 'Release number to publish'
+        default: 'v0.0.0'
+  release:
+    types: [published]
+
+env:
+  XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+  release_name: ${{ github.event.inputs.manual_name || github.event.release.name }}
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '18.17.1'
+
+      - name: Cache bigger downloads
+        uses: actions/cache@v5
+        id: cache
+        with:
+          path: ${{ github.workspace }}/.cache
+          key: ${{ runner.os }}-${{ hashFiles('package.json', 'package-lock.json', 'electron-builder.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ hashFiles('package.json', 'package-lock.json', 'electron-builder.yml') }}
+            ${{ runner.os }}-
+
+      - name: Strip 'v' prefix and save as CHOCO_RELEASE_NAME
+        id: name
+        shell: bash
+        run: |
+          TAG=${{ github.event.inputs.manual_name || github.event.release.name }}
+          echo "CHOCO_RELEASE_NAME=${TAG#v}" >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --progress=false --cache ${{ github.workspace }}/.cache/npm
+
+      - name: Download .exe, update version, URL and hash
+        run: node update.mjs ${{ env.CHOCO_RELEASE_NAME }}
+        working-directory: .\pkgs\chocolatey
+
+      - name: Create .nupkg
+        run: choco pack
+        working-directory: .\pkgs\chocolatey
+
+      - name: Publish to Chocolatey
+        run: choco push ipfs-desktop.${{ env.CHOCO_RELEASE_NAME }}.nupkg --key ${{ secrets.chocolatey_key }} --source "https://push.chocolatey.org"
+        working-directory: .\pkgs\chocolatey

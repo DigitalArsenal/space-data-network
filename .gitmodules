@@ -1,0 +1,3 @@
+[submodule "schemas/sds"]
+	path = schemas/sds
+	url = https://github.com/DigitalArsenal/spacedatastandards.org.git

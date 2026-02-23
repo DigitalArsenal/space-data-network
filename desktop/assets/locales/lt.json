@@ -1,0 +1,234 @@
+{
+  "ipfsIsRunning": "",
+  "ipfsIsStopping": "",
+  "ipfsIsStarting": "",
+  "ipfsIsNotRunning": "",
+  "ipfsHasErrored": "IPFS susidūrė su klaidomis",
+  "runningWithGC": "",
+  "runningWhileCheckingForUpdate": "",
+  "start": "Pradėti",
+  "stop": "Stabdyti",
+  "restart": "Paleisti iš naujo",
+  "about": "Apie",
+  "advanced": "Išplėstiniai",
+  "openRepoDir": "",
+  "openLogsDir": "",
+  "openConfigFile": "",
+  "openKuboConfigFile": "",
+  "viewOnGitHub": "Žiūrėti „GitHub“ svetainėje...",
+  "helpUsTranslate": "Padėti išversti šią programą…",
+  "readReleaseNotes": "Skaityti laidos informaciją",
+  "status": "Būsena",
+  "files": "Failai",
+  "peers": "Lygiarangiai",
+  "quit": "Išeiti",
+  "versions": "Versijos",
+  "screenshotTaken": "Ekrano kopija padaryta",
+  "shareableLinkCopied": "",
+  "couldNotTakeScreenshot": "Nepavyko padaryti ekrano kopijos",
+  "errorwhileTakingScreenshot": "Darant ekrano kopiją, įvyko klaida.",
+  "clickToOpenLogs": "Spustelėkite čia, norėdami atverti žurnalus.",
+  "ipfsNotRunning": "",
+  "checkForUpdates": "Tikrinti, ar yra atnaujinimų…",
+  "checkingForUpdates": "Tikrinama, ar yra atnaujinimų",
+  "yes": "Taip",
+  "no": "Ne",
+  "close": "Užverti",
+  "ok": "Gerai",
+  "cancel": "Atsisakyti",
+  "enable": "Įjungti",
+  "reportTheError": "Pranešti apie klaidą",
+  "restartIpfsDesktop": "",
+  "openLogs": "Atverti žurnalus",
+  "takeScreenshot": "Padaryti ekrano kopiją",
+  "moveRepositoryLocation": "",
+  "runGarbageCollector": "",
+  "selectDirectory": "Pasirinkti katalogą",
+  "customIpfsBinary": "Tinkintas IPFS dvejetainis",
+  "setCustomIpfsBinary": "Nustatyti tinkintą IPFS dvejetainį",
+  "clearCustomIpfsBinary": "Išvalyti tinkintą IPFS dvejetainį",
+  "openCliDocumentation": "",
+  "polkitDialog": {
+    "title": "",
+    "message": ""
+  },
+  "noPermissionDialog": {
+    "title": "",
+    "message": ""
+  },
+  "ipfsNotRunningDialog": {
+    "title": "",
+    "message": ""
+  },
+  "recoverableErrorDialog": {
+    "title": "Įvyko klaida",
+    "message": ""
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Nepavyksta prisijungti prie API",
+    "message": ""
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Perkelti saugyklą",
+    "message": "",
+    "action": "Perkelti ir paleisti mazgą iš naujo"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "Pasirinktas tas pats katalogas",
+    "message": "Jūsų pasirinktas katalogas yra toks pats, kaip dabartinis: { location }. Vadinasi, nebus atlikta jokių pakeitimų."
+  },
+  "moveRepositoryDirExists": {
+    "title": "Katalogas jau yra",
+    "message": "Katalogas { location } jau yra. Pabandykite naudoti kitą katalogą."
+  },
+  "busyPortsDialog": {
+    "title": "Prievadai yra užimti",
+    "message": "Prievadai { port1 } ir { port2 } yra neprieinami. Ar norite, vietoj jų, naudoti { alt1 } ir { alt2 }?",
+    "action": "Vietoj jų naudoti prievadus { alt1 } ir { alt2 }"
+  },
+  "busyPortDialog": {
+    "title": "Prievadas yra užimtas",
+    "message": "Prievadas { port } yra neprieinamas. Ar norite, vietoj jo, naudoti { alt }?",
+    "action": "Vietoj jo naudoti prievadą { alt }"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Prievadai yra užimti",
+    "message": "",
+    "action": "Atverti konfigūracijos failą"
+  },
+  "itemsAddedNotification": {
+    "title": "Elementai pridėti",
+    "message": ""
+  },
+  "itemAddedNotification": {
+    "title": "Elementas pridėtas",
+    "message": ""
+  },
+  "itemsFailedNotification": {
+    "title": "Nepavyko pridėti elementų",
+    "message": "Nepavyko pridėti elementų į jūsų mazgą."
+  },
+  "updateAvailableDialog": {
+    "title": "Yra prieinamas atnaujinimas",
+    "message": ""
+  },
+  "updateNotAvailableDialog": {
+    "title": "Atnaujinimas neprieinamas",
+    "message": ""
+  },
+  "updateErrorDialog": {
+    "title": "Nepavyko atsisiųsti atnaujinimo",
+    "message": "Neįmanoma atsisiųsti atnaujinimo. Patikrinkite interneto ryšį ir mėginkite dar kartą."
+  },
+  "autoUpdateError": {
+    "title": "",
+    "message": "",
+    "downloadNow": "",
+    "later": "Vėliau"
+  },
+  "updateDownloadedDialog": {
+    "title": "",
+    "message": "",
+    "later": "Vėliau",
+    "now": "Įdiegti dabar"
+  },
+  "updateDownloadedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "runGarbageCollectorWarning": {
+    "title": "",
+    "message": "",
+    "action": "Paleisti"
+  },
+  "runGarbageCollectorDone": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryFailed": {
+    "title": "Perkelti saugyklą",
+    "message": "Nepavyko perkelti saugyklos iš „{ currDir }“ į „{ newDir }“."
+  },
+  "runGarbageCollectorErrored": {
+    "title": "",
+    "message": ""
+  },
+  "launchAtLoginNotSupported": {
+    "title": "Klaida",
+    "message": ""
+  },
+  "launchAtLoginFailed": {
+    "title": "Klaida",
+    "message": ""
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "Įjungti ekrano kopijos spartųjį klavišą",
+    "message": ""
+  },
+  "settings": {
+    "settings": "Nustatymai",
+    "preferences": "Nuostatos",
+    "openNodeSettings": "Atverti mazgo nustatymus",
+    "appPreferences": "Programos nuostatos",
+    "launchOnStartup": "",
+    "openWebUIAtLaunch": "",
+    "pubsub": "",
+    "namesysPubsub": "",
+    "automaticGC": "",
+    "takeScreenshotShortcut": "",
+    "experiments": "Eksperimentai",
+    "npmOnIpfs": "",
+    "monochromeTrayIcon": "Naudoti nespalvotą dėklo piktogramą"
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "Tinkintas IPFS dvejetainis",
+    "message": ""
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "Tinkintas IPFS dvejetainis",
+    "message": ""
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "Išvalyti tinkintą IPFS dvejetainį",
+    "message": ""
+  },
+  "unresponsiveWindowDialog": {
+    "title": "",
+    "message": "",
+    "forceReload": "Taip, įkelti iš naujo",
+    "doNothing": "Nieko nedaryti"
+  },
+  "migrationDialog": {
+    "title": "",
+    "message": "",
+    "closeAndContinue": "Tęsti fone"
+  },
+  "startupFailedDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "IPFS saugykla privalo būti katalogas",
+    "message": ""
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "Trūksta IPFS saugyklos konfigūracijos",
+    "message": ""
+  },
+  "privateNetworkDialog": {
+    "title": "Privataus tinklo IPFS saugykla",
+    "message": ""
+  },
+  "invalidRepositoryDialog": {
+    "title": "Neteisinga IPFS saugykla ar konfigūracijos failas",
+    "message": ""
+  }
+}

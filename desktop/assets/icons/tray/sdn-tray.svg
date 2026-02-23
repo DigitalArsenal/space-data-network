@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22">
+  <!-- SDN orbital logo - tray template (white for macOS Template images) -->
+  <g transform="translate(11, 11)">
+    <!-- Outer circle -->
+    <circle cx="0" cy="0" r="9.5" fill="none" stroke="white" stroke-width="0.8" shape-rendering="geometricPrecision"/>
+    <!-- Orbits -->
+    <ellipse cx="0" cy="0" rx="9.5" ry="3.8" fill="none" stroke="white" stroke-width="0.6" shape-rendering="geometricPrecision"/>
+    <ellipse cx="0" cy="0" rx="9.5" ry="3.8" fill="none" stroke="white" stroke-width="0.6" transform="rotate(60)" shape-rendering="geometricPrecision"/>
+    <ellipse cx="0" cy="0" rx="9.5" ry="3.8" fill="none" stroke="white" stroke-width="0.6" transform="rotate(120)" shape-rendering="geometricPrecision"/>
+    <!-- Center node -->
+    <circle cx="0" cy="0" r="1.8" fill="white"/>
+    <!-- Endpoint nodes -->
+    <circle cx="-9.5" cy="0" r="1.2" fill="white"/>
+    <circle cx="9.5" cy="0" r="1.2" fill="white"/>
+    <circle cx="-4.75" cy="-8.23" r="1.2" fill="white"/>
+    <circle cx="4.75" cy="8.23" r="1.2" fill="white"/>
+    <circle cx="4.75" cy="-8.23" r="1.2" fill="white"/>
+    <circle cx="-4.75" cy="8.23" r="1.2" fill="white"/>
+  </g>
+</svg>

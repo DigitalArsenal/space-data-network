@@ -1,0 +1,234 @@
+{
+  "ipfsIsRunning": "IPFS 실행 중",
+  "ipfsIsStopping": "IPFS 중지 중",
+  "ipfsIsStarting": "IPFS 시작하는 중",
+  "ipfsIsNotRunning": "IPFS 중지",
+  "ipfsHasErrored": "IPFS 오류 발생",
+  "runningWithGC": "실행 중 (GC 진행 중)",
+  "runningWhileCheckingForUpdate": "실행 중 (업데이트 검사 중)",
+  "start": "시작",
+  "stop": "중지",
+  "restart": "다시 시작",
+  "about": "정보",
+  "advanced": "고급 설정",
+  "openRepoDir": "",
+  "openLogsDir": "",
+  "openConfigFile": "",
+  "openKuboConfigFile": "",
+  "viewOnGitHub": "GitHub에서 보기",
+  "helpUsTranslate": "이 앱의 번역 도와주기...",
+  "readReleaseNotes": "릴리즈 노트 보기",
+  "status": "상태",
+  "files": "파일",
+  "peers": "피어",
+  "quit": "종료",
+  "versions": "버전",
+  "screenshotTaken": "스크린샷 찍음",
+  "shareableLinkCopied": "공유 가능한 링크가 클립보드에 복사되었습니다. 여기를 클릭하여 스크린샷을 볼 수 있습니다.",
+  "couldNotTakeScreenshot": "스크린샷을 찍을 수 없습니다",
+  "errorwhileTakingScreenshot": "스크린샷을 찍는 중 오류가 발생하였습니다.",
+  "clickToOpenLogs": "여기를 클릭하여 로그를 열 수 있습니다.",
+  "ipfsNotRunning": "IPFS가 실행 중이지 않습니다",
+  "checkForUpdates": "업데이트 확인",
+  "checkingForUpdates": "",
+  "yes": "예",
+  "no": "아니오",
+  "close": "닫기",
+  "ok": "확인",
+  "cancel": "취소",
+  "enable": "",
+  "reportTheError": "오류 보고",
+  "restartIpfsDesktop": "IPFS Desktop 재시작",
+  "openLogs": "로그 열기",
+  "takeScreenshot": "스크린샷 찍기",
+  "moveRepositoryLocation": "리포지터리 위치 이동",
+  "runGarbageCollector": "쓰레기 수거 사용",
+  "selectDirectory": "디렉터리 선택",
+  "customIpfsBinary": "",
+  "setCustomIpfsBinary": "",
+  "clearCustomIpfsBinary": "",
+  "openCliDocumentation": "",
+  "polkitDialog": {
+    "title": "Polkit을 찾을 수 없습니다",
+    "message": "Polkit Agent 없이는 /usr/local/bin/ 에 IPFS를 추가할 수 없습니다."
+  },
+  "noPermissionDialog": {
+    "title": "권한 없음",
+    "message": "/usr/local/bin에 IPFS를 추가할 수 없습니다. 암호를 잘못 입력하였거나 파일 권한이 올바르지 않기 때문일 수 있습니다."
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS가 실행 중이지 않습니다",
+    "message": "이 동작을 수행하려면 IPFS를 실행해야 합니다. 데몬을 시작할까요?"
+  },
+  "recoverableErrorDialog": {
+    "title": "오류가 발생하였습니다",
+    "message": "오류가 발생하였지만 IPFS Desktop 실행에는 문제가 없었습니다. 로그를 조사하시거나 개발자에게 오류를 보고할 수 있습니다."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "API에 연결할 수 없습니다",
+    "message": "IPFS Desktop이 해당 API 주소에 연결할 수 없습니다: { addr }"
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "IPFS Desktop 종료됨",
+    "message": "IPFS Desktop이 오류로 인해 종료되었습니다. 앱을 재시작하거나 GitHub 계정을 사용하여 개발자에게 오류를 보고할 수 있습니다."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "리포지터리 이동",
+    "message": "리포지터리가 주 드라이브에서 공간을 많이 차지하고 있다면, 리포지터리를 다른 위치로 옮길 수 있습니다. 새로운 위치가 항상 접근 가능해야 IPFS Desktop이 제대로 작동한다는 점을 알아두세요.",
+    "action": "옮기고 노드 재시작"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "성공적으로 리포지터리를 옮겼습니다",
+    "message": "리포지터리가 { location }(으)로 옮겨지고 구성이 업데이트되었습니다. 데몬을 재시작합니다."
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "같은 디렉터리 선택됨",
+    "message": "선택하신 디렉터리는 현재 사용 중인 디렉터리 ({ location }) 와 같습니다. 변경 사항이 없으니 무시합니다."
+  },
+  "moveRepositoryDirExists": {
+    "title": "디렉터리가 이미 존재합니다",
+    "message": "디렉터리 { location }은 이미 존재합니다. 다른 디렉터리를 사용하세요."
+  },
+  "busyPortsDialog": {
+    "title": "포트가 사용 중입니다",
+    "message": "포트 { port1 }과 { port2 }를 사용할 수 없습니다. 대신 { alt1 }과 { alt2 }를 사용하시겠습니까?",
+    "action": "대신 포트 { alt1 }(와)과 { alt2 }(을)를 사용"
+  },
+  "busyPortDialog": {
+    "title": "포트가 사용 중입니다",
+    "message": "포트 { port }(은)는 사용이 불가합니다. 대신 { alt }(을)를 사용할까요?",
+    "action": "포트 { alt }(을)를 대신 사용"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "포트가 사용 중입니다",
+    "message": "포트가 이미 사용 중이기 때문에 하나 이상의 API나 게이트웨이 주소를 할당할 수 없습니다.",
+    "action": "구성 파일 열기"
+  },
+  "itemsAddedNotification": {
+    "title": "항목 추가됨",
+    "message": ""
+  },
+  "itemAddedNotification": {
+    "title": "항목 추가됨",
+    "message": ""
+  },
+  "itemsFailedNotification": {
+    "title": "항목을 추가할 수 없습니다",
+    "message": "노드에 항목을 추가할 수 없습니다."
+  },
+  "updateAvailableDialog": {
+    "title": "업데이트 가능",
+    "message": ""
+  },
+  "updateNotAvailableDialog": {
+    "title": "업데이트 불가능",
+    "message": ""
+  },
+  "updateErrorDialog": {
+    "title": "",
+    "message": ""
+  },
+  "autoUpdateError": {
+    "title": "",
+    "message": "",
+    "downloadNow": "",
+    "later": ""
+  },
+  "updateDownloadedDialog": {
+    "title": "",
+    "message": "",
+    "later": "",
+    "now": ""
+  },
+  "updateDownloadedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "runGarbageCollectorWarning": {
+    "title": "",
+    "message": "",
+    "action": ""
+  },
+  "runGarbageCollectorDone": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryFailed": {
+    "title": "리포지터리 이동",
+    "message": ""
+  },
+  "runGarbageCollectorErrored": {
+    "title": "",
+    "message": ""
+  },
+  "launchAtLoginNotSupported": {
+    "title": "",
+    "message": ""
+  },
+  "launchAtLoginFailed": {
+    "title": "",
+    "message": ""
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "",
+    "message": ""
+  },
+  "settings": {
+    "settings": "설정",
+    "preferences": "",
+    "openNodeSettings": "",
+    "appPreferences": "",
+    "launchOnStartup": "",
+    "openWebUIAtLaunch": "",
+    "pubsub": "",
+    "namesysPubsub": "",
+    "automaticGC": "",
+    "takeScreenshotShortcut": "",
+    "experiments": "실험 기능",
+    "npmOnIpfs": "",
+    "monochromeTrayIcon": ""
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "",
+    "message": ""
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "unresponsiveWindowDialog": {
+    "title": "",
+    "message": "",
+    "forceReload": "",
+    "doNothing": ""
+  },
+  "migrationDialog": {
+    "title": "",
+    "message": "",
+    "closeAndContinue": ""
+  },
+  "startupFailedDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "",
+    "message": ""
+  },
+  "privateNetworkDialog": {
+    "title": "",
+    "message": ""
+  },
+  "invalidRepositoryDialog": {
+    "title": "",
+    "message": ""
+  }
+}

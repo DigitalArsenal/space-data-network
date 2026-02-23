@@ -1,0 +1,234 @@
+{
+  "ipfsIsRunning": "IPFS körs",
+  "ipfsIsStopping": "IPFS stannar av",
+  "ipfsIsStarting": "IPFS startar",
+  "ipfsIsNotRunning": "IPFS körs inte",
+  "ipfsHasErrored": "IPFS har felat",
+  "runningWithGC": "Körs (GC pågår)",
+  "runningWhileCheckingForUpdate": "Körs (Söker efter uppdateringar)",
+  "start": "Starta",
+  "stop": "",
+  "restart": "Starta om",
+  "about": "Om",
+  "advanced": "Avancerat",
+  "openRepoDir": "",
+  "openLogsDir": "",
+  "openConfigFile": "",
+  "openKuboConfigFile": "",
+  "viewOnGitHub": "Visa på GitHub...",
+  "helpUsTranslate": "Hjälp till att översätta den här appen...",
+  "readReleaseNotes": "Läs utgåvans anteckningar",
+  "status": "Status",
+  "files": "Filer",
+  "peers": "Kopplingar",
+  "quit": "Avsluta",
+  "versions": "Versioner",
+  "screenshotTaken": "Skärmdump togs",
+  "shareableLinkCopied": "Delbar länk kopierades till klippbordet. Klicka här för att visa skärmdumpen.",
+  "couldNotTakeScreenshot": "Kunde inte ta skärmdumpen",
+  "errorwhileTakingScreenshot": "Ett fel inträffade när skärmdumpen skulle tas.",
+  "clickToOpenLogs": "Klicka här för att öppna loggarna.",
+  "ipfsNotRunning": "IPFS körs inte",
+  "checkForUpdates": "Sök efter uppdateringar...",
+  "checkingForUpdates": "Söker efter uppdateringar",
+  "yes": "Ja",
+  "no": "Nej",
+  "close": "Stäng",
+  "ok": "OK",
+  "cancel": "Ångra",
+  "enable": "Aktivera",
+  "reportTheError": "Rapportera felet",
+  "restartIpfsDesktop": "Starta om IPFS-skrivbordet",
+  "openLogs": "Öppna loggar",
+  "takeScreenshot": "Ta en skärmdump",
+  "moveRepositoryLocation": "Flytta filförrådets plats",
+  "runGarbageCollector": "Kör skräpinsamlare",
+  "selectDirectory": "Välj mapp",
+  "customIpfsBinary": "Anpassad IPFS-binär",
+  "setCustomIpfsBinary": "Ställ in anpassad IPFS-binär",
+  "clearCustomIpfsBinary": "Rensa anpassad IPFS-binär",
+  "openCliDocumentation": "Öppna CLI-dokumentationen",
+  "polkitDialog": {
+    "title": "Polkit hittades inte",
+    "message": "IPFS kan inte läggas till i /usr/local/bin/ utan polkit-agenten."
+  },
+  "noPermissionDialog": {
+    "title": "Inget tillstånd",
+    "message": "IPFS kunde inte läggas till i /usr/local/bin/, antingen för att du angav fel lösenord eller så nekades du åtkomst."
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS körs inte",
+    "message": "IPFS behöver köras för att utföra den här åtgärden. Vill du starta demonen?"
+  },
+  "recoverableErrorDialog": {
+    "title": "Ett fel har inträffat",
+    "message": "Ett fel inträffade, men det verkar inte hindra från IPFS-skrivbordet körs. Du kan antingen inspektera loggarna självmant eller rapportera felet till utvecklarna."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Kan inte ansluta till API",
+    "message": "IPFS-skrivbordet kan inte ansluta till den API-adressen som angavs:{ addr }."
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "IPFS-skrivbordet har stängts ner",
+    "message": "IPFS-skrivbordet har stängts ner till följd av ett fel. Du kan starta om appen eller rapportera felet till utvecklarna vilket kräver ett GitHub-konto."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Flytta filförrådet",
+    "message": "",
+    "action": "Flytta och starta om noden"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "Flytten av filförrådet lyckades",
+    "message": ""
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryDirExists": {
+    "title": "Mappen existerar redan",
+    "message": "Mappen { location } finns redan. Vänligen prova att använda en annan."
+  },
+  "busyPortsDialog": {
+    "title": "Portarna är upptagna",
+    "message": "Porterna { port1 } och { port2 } är inte tillgängliga. Vill du använda { alt1 } och { alt2 } istället?",
+    "action": "Använd porterna { alt1 } och { alt2 } istället"
+  },
+  "busyPortDialog": {
+    "title": "Porten är upptagen",
+    "message": "Porten { port } är inte tillgänglig. Vill du använda { alt } istället?",
+    "action": "Använd port { alt } istället"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Portarna är upptagna",
+    "message": "",
+    "action": "Öppna konfigurationsfilen"
+  },
+  "itemsAddedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "itemAddedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "itemsFailedNotification": {
+    "title": "",
+    "message": "Kunde inte lägga till dina objekt till dina noder."
+  },
+  "updateAvailableDialog": {
+    "title": "Uppdatering tillgänglig",
+    "message": "En ny version ({ version }) av IPFS-skrivbord är tillgänglig. Hämtningen kommer att börja snart i bakgrunden."
+  },
+  "updateNotAvailableDialog": {
+    "title": "Uppdateringen är inte tillgänglig",
+    "message": "Du är i den senaste versionen av IPFS-skrivbord ({ version })."
+  },
+  "updateErrorDialog": {
+    "title": "Kunde inte hämta uppdateringen",
+    "message": ""
+  },
+  "autoUpdateError": {
+    "title": "",
+    "message": "",
+    "downloadNow": "",
+    "later": "Senare"
+  },
+  "updateDownloadedDialog": {
+    "title": "",
+    "message": "En uppdatering { version } för IPFS-skrivbordet är tillgänglig. Skulle du vilja installera den nu?",
+    "later": "Senare",
+    "now": "Installera nu"
+  },
+  "updateDownloadedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "runGarbageCollectorWarning": {
+    "title": "Skräpinsamlare",
+    "message": "",
+    "action": "Kör"
+  },
+  "runGarbageCollectorDone": {
+    "title": "Skräpinsamlare",
+    "message": "Körningen av skräpinsamlaren lyckades."
+  },
+  "moveRepositoryFailed": {
+    "title": "Flytta filförrådet",
+    "message": ""
+  },
+  "runGarbageCollectorErrored": {
+    "title": "Skräpinsamlare",
+    "message": ""
+  },
+  "launchAtLoginNotSupported": {
+    "title": "Fel",
+    "message": ""
+  },
+  "launchAtLoginFailed": {
+    "title": "Fel",
+    "message": ""
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "",
+    "message": ""
+  },
+  "settings": {
+    "settings": "Inställningar",
+    "preferences": "Egenskaper",
+    "openNodeSettings": "",
+    "appPreferences": "Egenskaper för appen",
+    "launchOnStartup": "Starta vid inloggning",
+    "openWebUIAtLaunch": "",
+    "pubsub": "Aktivera PubSub",
+    "namesysPubsub": "Aktivera IPNS över PubSub",
+    "automaticGC": "Automatisk skräpinsamling",
+    "takeScreenshotShortcut": "",
+    "experiments": "Experiment",
+    "npmOnIpfs": "Aktivera npm på IPFS",
+    "monochromeTrayIcon": "Använd monokrom ikon för verktygsfältet"
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "",
+    "message": ""
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "unresponsiveWindowDialog": {
+    "title": "",
+    "message": "",
+    "forceReload": "",
+    "doNothing": ""
+  },
+  "migrationDialog": {
+    "title": "",
+    "message": "",
+    "closeAndContinue": ""
+  },
+  "startupFailedDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "",
+    "message": ""
+  },
+  "privateNetworkDialog": {
+    "title": "",
+    "message": ""
+  },
+  "invalidRepositoryDialog": {
+    "title": "",
+    "message": ""
+  }
+}

@@ -1,0 +1,103 @@
+// Hash: placeholder
+// Version: 1.0.0
+// -----------------------------------END_HEADER
+
+include "../STF/main.fbs";
+
+/// Access grant status
+enum GrantStatus : byte {
+  /// Grant is active and valid
+  Active,
+  /// Grant has been revoked
+  Revoked,
+  /// Grant has expired
+  Expired,
+  /// Grant is suspended (temporary)
+  Suspended,
+  /// Grant is pending payment confirmation
+  Pending
+}
+
+/// Data Access Grant - Access Control List entry
+table ACL {
+  /// Unique grant identifier (UUID)
+  grant_id: string (required);
+  /// Reference to the listing this grant is for
+  listing_id: string (required);
+  /// Tier name purchased
+  tier_name: string (required);
+
+  /// Buyer's libp2p peer ID
+  buyer_peer_id: string (required);
+  /// Buyer's X25519/secp256k1 public key for encrypted delivery
+  buyer_encryption_pubkey: [ubyte];
+  /// Key algorithm (x25519, secp256k1, p256)
+  key_algorithm: string;
+
+  /// Access configuration
+  access_type: AccessType;
+  /// Rate limit (requests per hour)
+  rate_limit: uint32;
+  /// Maximum records per request
+  max_records_per_request: uint32;
+
+  /// Grant validity
+  granted_at: uint64 (required);
+  /// Expiration timestamp (0 = never expires)
+  expires_at: uint64;
+  /// Grant status
+  status: GrantStatus = Active;
+
+  /// Payment information
+  payment_tx_hash: string;
+  payment_method: PaymentMethod;
+  payment_amount: uint64;
+  payment_currency: string;
+  /// Blockchain network for crypto payments
+  payment_chain: string;
+
+  /// Subscription management
+  /// Next renewal date (Unix timestamp)
+  next_renewal: uint64;
+  /// Auto-renew enabled
+  auto_renew: bool;
+  /// Number of successful renewals
+  renewal_count: uint32;
+
+  /// Usage tracking
+  /// Total requests made
+  total_requests: uint64;
+  /// Total records delivered
+  total_records: uint64;
+  /// Last access timestamp
+  last_access: uint64;
+
+  /// Dedicated delivery topic for streaming subscriptions
+  delivery_topic: string;
+
+  /// Metadata
+  created_at: uint64;
+  updated_at: uint64;
+  /// Notes from provider
+  notes: string;
+
+  /// Ed25519 signature from provider
+  provider_signature: [ubyte];
+  /// Provider's peer ID (for verification)
+  provider_peer_id: string;
+}
+
+/// Collection of access grants
+table ACLCollection {
+  /// List of grants
+  grants: [ACL];
+  /// Total count (may differ from grants length for pagination)
+  total_count: uint32;
+  /// Pagination offset
+  offset: uint32;
+  /// Pagination limit
+  limit: uint32;
+}
+
+root_type ACL;
+file_identifier "$ACL";

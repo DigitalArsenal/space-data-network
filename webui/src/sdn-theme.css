@@ -1,0 +1,815 @@
+/* =========================
+   SDN Dark/Light Theme CSS
+   Phase 17.1: Dark Mode Default
+   ========================= */
+
+/* Dark theme (default) */
+:root[data-theme="dark"] {
+  --sdn-bg-primary: #0d1117;
+  --sdn-bg-secondary: #161b22;
+  --sdn-bg-tertiary: #21262d;
+  --sdn-bg-box: #161b22;
+  --sdn-bg-header: #0d1117;
+  --sdn-bg-input: #0d1117;
+  --sdn-text-primary: #e6edf3;
+  --sdn-text-secondary: #8b949e;
+  --sdn-text-muted: #484f58;
+  --sdn-border: #30363d;
+  --sdn-accent: #58a6ff;
+  --sdn-accent-green: #3fb950;
+  --sdn-accent-orange: #d29922;
+  --sdn-accent-red: #f85149;
+  --sdn-accent-purple: #bc8cff;
+  --sdn-nav-bg: #010409;
+  --sdn-link: #58a6ff;
+  --sdn-table-row-hover: #1c2128;
+  --sdn-table-header: #21262d;
+}
+
+/* Light theme */
+:root[data-theme="light"] {
+  --sdn-bg-primary: #ffffff;
+  --sdn-bg-secondary: #f6f8fa;
+  --sdn-bg-tertiary: #eaeef2;
+  --sdn-bg-box: #fbfbfb;
+  --sdn-bg-header: #F0F6FA;
+  --sdn-bg-input: #ffffff;
+  --sdn-text-primary: #1f2328;
+  --sdn-text-secondary: #656d76;
+  --sdn-text-muted: #8b949e;
+  --sdn-border: #d0d7de;
+  --sdn-accent: #0969da;
+  --sdn-accent-green: #1a7f37;
+  --sdn-accent-orange: #9a6700;
+  --sdn-accent-red: #cf222e;
+  --sdn-accent-purple: #8250df;
+  --sdn-nav-bg: #0b3a53;
+  --sdn-link: #0969da;
+  --sdn-table-row-hover: #f6f8fa;
+  --sdn-table-header: #f6f8fa;
+}
+
+/* Apply theme variables to core elements */
+:root[data-theme="dark"] body {
+  background-color: var(--sdn-bg-primary);
+  color: var(--sdn-text-primary);
+}
+
+:root[data-theme="dark"] .bg-white {
+  background-color: var(--sdn-bg-secondary) !important;
+}
+
+:root[data-theme="dark"] .bg-white-70 {
+  background-color: var(--sdn-bg-secondary) !important;
+}
+
+:root[data-theme="dark"] .bg-near-white {
+  background-color: var(--sdn-bg-tertiary) !important;
+}
+
+:root[data-theme="dark"] .bg-snow {
+  background-color: var(--sdn-bg-secondary) !important;
+}
+
+:root[data-theme="dark"] .charcoal {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] .charcoal-muted {
+  color: var(--sdn-text-secondary) !important;
+}
+
+:root[data-theme="dark"] .gray {
+  color: var(--sdn-text-secondary) !important;
+}
+
+:root[data-theme="dark"] .navy {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] .bg-navy {
+  background-color: var(--sdn-nav-bg) !important;
+}
+
+:root[data-theme="dark"] .link.blue,
+:root[data-theme="dark"] a.blue {
+  color: var(--sdn-link) !important;
+}
+
+:root[data-theme="dark"] .b--black-20 {
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .b--near-white {
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .input-reset {
+  background-color: var(--sdn-bg-input);
+  color: var(--sdn-text-primary);
+  border-color: var(--sdn-border);
+}
+
+:root[data-theme="dark"] main.bg-white {
+  background-color: var(--sdn-bg-primary) !important;
+}
+
+/* Box component dark override */
+:root[data-theme="dark"] section {
+  background-color: var(--sdn-bg-box) !important;
+}
+
+:root[data-theme="dark"] .bg-white-80 {
+  background-color: var(--sdn-bg-tertiary) !important;
+}
+
+.sdn-bg-advanced {
+  background-color: rgba(255, 255, 255, 0.8);
+}
+
+:root[data-theme="dark"] .sdn-bg-advanced {
+  background-color: var(--sdn-bg-tertiary) !important;
+}
+
+:root[data-theme="dark"] {
+  --sdn-bg-overlay: rgba(13, 17, 23, 0.7);
+}
+
+/* Explore page / ipld-explorer-components dark overrides */
+:root[data-theme="dark"] [style*="background: rgb(251, 251, 251)"],
+:root[data-theme="dark"] [style*="background:#FBFBFB"],
+:root[data-theme="dark"] [style*="background: #FBFBFB"],
+:root[data-theme="dark"] [style*="background:#fbfbfb"],
+:root[data-theme="dark"] [style*="background: #fbfbfb"] {
+  background: var(--sdn-bg-box) !important;
+}
+
+/* Peers table dark mode */
+:root[data-theme="dark"] .peersTableItem {
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .ReactVirtualized__Table__headerRow {
+  background-color: var(--sdn-table-header);
+}
+
+:root[data-theme="dark"] .teal {
+  color: var(--sdn-accent) !important;
+}
+
+/* Header bar dark mode */
+:root[data-theme="dark"] .sdn-header-bar {
+  background-color: var(--sdn-bg-header) !important;
+  border-bottom: 1px solid var(--sdn-border);
+}
+
+/* Browse/Inspect buttons dark mode */
+:root[data-theme="dark"] .ExploreFormButton.bg-gray {
+  background-color: var(--sdn-bg-tertiary) !important;
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .ExploreFormButton.bg-teal {
+  background-color: rgba(88, 166, 255, 0.15) !important;
+  border-color: rgba(88, 166, 255, 0.4) !important;
+}
+
+:root[data-theme="dark"] .ExploreFormButton {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] #ipfs-path {
+  background-color: var(--sdn-bg-input) !important;
+  color: var(--sdn-text-primary) !important;
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] #ipfs-path::placeholder {
+  color: var(--sdn-text-muted) !important;
+}
+
+/* Theme toggle button */
+.sdn-theme-toggle {
+  background: none;
+  border: 1px solid var(--sdn-border, #30363d);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--sdn-text-primary, #e6edf3);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s ease;
+}
+
+.sdn-theme-toggle:hover {
+  background-color: var(--sdn-bg-tertiary, #21262d);
+}
+
+/* SDN-specific component styles */
+.sdn-panel {
+  background-color: var(--sdn-bg-box);
+  border: 1px solid var(--sdn-border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.sdn-panel-header {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sdn-text-secondary);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--sdn-border);
+}
+
+.sdn-stat-card {
+  background-color: var(--sdn-bg-tertiary);
+  border: 1px solid var(--sdn-border);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+
+.sdn-stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--sdn-accent);
+  line-height: 1.2;
+}
+
+.sdn-stat-label {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sdn-text-secondary);
+  margin-top: 4px;
+}
+
+.sdn-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sdn-badge-sdn {
+  background-color: rgba(59, 130, 246, 0.15);
+  color: var(--sdn-accent);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.sdn-badge-ipfs {
+  background-color: rgba(139, 148, 158, 0.15);
+  color: var(--sdn-text-secondary);
+  border: 1px solid rgba(139, 148, 158, 0.3);
+}
+
+.sdn-identity-card {
+  background: linear-gradient(135deg, var(--sdn-bg-tertiary), var(--sdn-bg-secondary));
+  border: 1px solid var(--sdn-border);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.sdn-identity-card h3 {
+  color: var(--sdn-accent);
+  margin: 0 0 12px 0;
+  font-size: 16px;
+}
+
+.sdn-identity-field {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--sdn-border);
+  font-size: 13px;
+}
+
+.sdn-identity-field:last-child {
+  border-bottom: none;
+}
+
+.sdn-identity-field-label {
+  color: var(--sdn-text-secondary);
+  font-weight: 500;
+}
+
+.sdn-identity-field-value {
+  color: var(--sdn-text-primary);
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Mono', monospace;
+  font-size: 12px;
+}
+
+/* Navigation icon enhancements for dark mode */
+:root[data-theme="dark"] .navbar-item .fill-current-color {
+  transition: all 0.2s ease;
+}
+
+:root[data-theme="dark"] .navbar-item:not(.navbar-item-active) .fill-current-color {
+  opacity: 0.7 !important;
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+
+:root[data-theme="dark"] .navbar-item:hover .fill-current-color {
+  opacity: 1.0 !important;
+  color: #58a6ff !important;
+  filter: drop-shadow(0 0 6px rgba(88, 166, 255, 0.4));
+}
+
+:root[data-theme="dark"] .navbar-item-active .fill-current-color {
+  opacity: 1.0 !important;
+  color: #58a6ff !important;
+  filter: drop-shadow(0 0 8px rgba(88, 166, 255, 0.5));
+}
+
+/* Nav item labels brighter in dark mode */
+:root[data-theme="dark"] .navbar-item .navbar-item-label {
+  color: rgba(255, 255, 255, 0.7) !important;
+  transition: color 0.2s ease;
+}
+
+:root[data-theme="dark"] .navbar-item:hover .navbar-item-label {
+  color: #58a6ff !important;
+}
+
+:root[data-theme="dark"] .navbar-item-active .navbar-item-label {
+  color: #58a6ff !important;
+}
+
+/* Active nav item background in dark mode */
+:root[data-theme="dark"] .bg-white-10.navbar-item-active {
+  background-color: rgba(88, 166, 255, 0.1) !important;
+}
+
+:root[data-theme="dark"] .hover-bg-white-10:hover {
+  background-color: rgba(88, 166, 255, 0.08) !important;
+}
+
+/* =============================================
+   Comprehensive Dark Mode Overrides
+   Task 1: Complete Dark Theme Coverage
+   ============================================= */
+
+/* --- Buttons --- */
+:root[data-theme="dark"] button:where(:not(#hd-wallet-ui-container *)),
+:root[data-theme="dark"] .button-reset:where(:not(#hd-wallet-ui-container *)) {
+  color: var(--sdn-text-primary);
+}
+
+:root[data-theme="dark"] .bg-aqua {
+  background-color: #1a5c6b !important;
+  color: #7ee0ed !important;
+  border-color: #2a7a8a !important;
+}
+
+:root[data-theme="dark"] .bg-teal {
+  background-color: #0d4f5c !important;
+  color: #69c4cd !important;
+}
+
+:root[data-theme="dark"] .pointer.bg-teal,
+:root[data-theme="dark"] a.bg-teal {
+  background-color: #0d4f5c !important;
+  color: #69c4cd !important;
+}
+
+:root[data-theme="dark"] .pointer.bg-teal:hover,
+:root[data-theme="dark"] a.bg-teal:hover,
+:root[data-theme="dark"] .bg-teal:hover {
+  background-color: #126a7a !important;
+}
+
+:root[data-theme="dark"] .bg-green {
+  background-color: #1a4d2e !important;
+  color: var(--sdn-accent-green) !important;
+}
+
+:root[data-theme="dark"] .bg-green:hover {
+  background-color: #22633a !important;
+}
+
+:root[data-theme="dark"] .bg-red {
+  background-color: #4d1a1a !important;
+  color: var(--sdn-accent-red) !important;
+}
+
+:root[data-theme="dark"] .bg-red:hover {
+  background-color: #632222 !important;
+}
+
+:root[data-theme="dark"] .bg-yellow {
+  background-color: #4d3d0d !important;
+  color: var(--sdn-accent-orange) !important;
+}
+
+:root[data-theme="dark"] .bg-yellow:hover {
+  background-color: #635012 !important;
+}
+
+/* --- Text color classes --- */
+:root[data-theme="dark"] .white-70 {
+  color: rgba(230, 237, 243, 0.7) !important;
+}
+
+:root[data-theme="dark"] .dark-gray {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] .mid-gray {
+  color: var(--sdn-text-secondary) !important;
+}
+
+:root[data-theme="dark"] .near-black {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] .light-gray {
+  color: var(--sdn-text-secondary) !important;
+}
+
+:root[data-theme="dark"] .silver {
+  color: var(--sdn-text-muted) !important;
+}
+
+:root[data-theme="dark"] .black-70 {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] .black-60 {
+  color: var(--sdn-text-secondary) !important;
+}
+
+:root[data-theme="dark"] .black-40 {
+  color: var(--sdn-text-muted) !important;
+}
+
+:root[data-theme="dark"] .aqua {
+  color: #69c4cd !important;
+}
+
+:root[data-theme="dark"] .green {
+  color: var(--sdn-accent-green) !important;
+}
+
+:root[data-theme="dark"] .red {
+  color: var(--sdn-accent-red) !important;
+}
+
+:root[data-theme="dark"] .yellow {
+  color: var(--sdn-accent-orange) !important;
+}
+
+/* --- Background classes --- */
+:root[data-theme="dark"] .bg-light-gray {
+  background-color: var(--sdn-bg-tertiary) !important;
+}
+
+:root[data-theme="dark"] .bg-snow-muted {
+  background-color: var(--sdn-bg-secondary) !important;
+}
+
+/* --- Border classes --- */
+:root[data-theme="dark"] .ba {
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .b--light-gray {
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .b--silver {
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .b--black-10 {
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .b--black-30 {
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .b--white-20 {
+  border-color: var(--sdn-border) !important;
+}
+
+/* --- Form elements --- */
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] option {
+  background-color: var(--sdn-bg-input);
+  color: var(--sdn-text-primary);
+  border-color: var(--sdn-border);
+}
+
+:root[data-theme="dark"] textarea {
+  background-color: var(--sdn-bg-input);
+  color: var(--sdn-text-primary);
+  border-color: var(--sdn-border);
+}
+
+:root[data-theme="dark"] input[type="text"],
+:root[data-theme="dark"] input[type="search"],
+:root[data-theme="dark"] input[type="number"],
+:root[data-theme="dark"] input[type="url"],
+:root[data-theme="dark"] input[type="password"] {
+  background-color: var(--sdn-bg-input);
+  color: var(--sdn-text-primary);
+  border-color: var(--sdn-border);
+}
+
+:root[data-theme="dark"] input::placeholder,
+:root[data-theme="dark"] textarea::placeholder {
+  color: var(--sdn-text-muted);
+}
+
+:root[data-theme="dark"] select:focus,
+:root[data-theme="dark"] textarea:focus,
+:root[data-theme="dark"] input:focus,
+:root[data-theme="dark"] .input-reset:focus {
+  outline-color: var(--sdn-accent);
+  border-color: var(--sdn-accent);
+}
+
+/* --- ReactVirtualized table --- */
+:root[data-theme="dark"] .ReactVirtualized__Table__row {
+  border-bottom: 1px solid var(--sdn-border);
+  color: var(--sdn-text-primary);
+}
+
+:root[data-theme="dark"] .ReactVirtualized__Table__row:hover {
+  background-color: var(--sdn-table-row-hover) !important;
+}
+
+:root[data-theme="dark"] .ReactVirtualized__Table__headerColumn {
+  color: var(--sdn-text-secondary);
+}
+
+:root[data-theme="dark"] .ReactVirtualized__Table__rowColumn {
+  color: var(--sdn-text-primary);
+}
+
+/* --- File explorer --- */
+:root[data-theme="dark"] .files-list-item {
+  border-bottom-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] .files-list-item:hover {
+  background-color: var(--sdn-table-row-hover) !important;
+}
+
+:root[data-theme="dark"] .file-preview-card {
+  background-color: var(--sdn-bg-secondary) !important;
+  border-color: var(--sdn-border) !important;
+}
+
+/* --- Breadcrumbs --- */
+:root[data-theme="dark"] .breadcrumb a {
+  color: var(--sdn-link) !important;
+}
+
+:root[data-theme="dark"] .breadcrumb span {
+  color: var(--sdn-text-secondary) !important;
+}
+
+/* --- Settings panels --- */
+:root[data-theme="dark"] .settings-panel,
+:root[data-theme="dark"] .settings-section {
+  background-color: var(--sdn-bg-box) !important;
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] label {
+  color: var(--sdn-text-primary);
+}
+
+/* --- Modal/dialog overlays --- */
+:root[data-theme="dark"] .modal-overlay,
+:root[data-theme="dark"] .ReactModal__Overlay {
+  background-color: rgba(1, 4, 9, 0.75) !important;
+}
+
+:root[data-theme="dark"] .modal,
+:root[data-theme="dark"] [role="dialog"],
+:root[data-theme="dark"] .ReactModal__Content {
+  background-color: var(--sdn-bg-secondary) !important;
+  border: 1px solid var(--sdn-border) !important;
+  color: var(--sdn-text-primary) !important;
+}
+
+/* --- Dropdown menus --- */
+:root[data-theme="dark"] [class*="dropdown"],
+:root[data-theme="dark"] [class*="Dropdown"],
+:root[data-theme="dark"] .dropdown-menu {
+  background-color: var(--sdn-bg-secondary) !important;
+  border-color: var(--sdn-border) !important;
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] [class*="dropdown"] a,
+:root[data-theme="dark"] [class*="Dropdown"] a,
+:root[data-theme="dark"] .dropdown-menu a {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] [class*="dropdown"] a:hover,
+:root[data-theme="dark"] [class*="Dropdown"] a:hover,
+:root[data-theme="dark"] .dropdown-menu a:hover {
+  background-color: var(--sdn-bg-tertiary) !important;
+}
+
+/* --- Popover menus --- */
+:root[data-theme="dark"] [class*="popover"],
+:root[data-theme="dark"] [class*="Popover"] {
+  background-color: var(--sdn-bg-secondary) !important;
+  border-color: var(--sdn-border) !important;
+  color: var(--sdn-text-primary) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* --- Joyride tour component --- */
+:root[data-theme="dark"] .react-joyride__tooltip {
+  background-color: var(--sdn-bg-secondary) !important;
+  color: var(--sdn-text-primary) !important;
+  border: 1px solid var(--sdn-border) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+}
+
+:root[data-theme="dark"] .react-joyride__tooltip h4,
+:root[data-theme="dark"] .react-joyride__tooltip p {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] .react-joyride__tooltip button[data-action="primary"] {
+  background-color: var(--sdn-accent) !important;
+  color: #ffffff !important;
+}
+
+:root[data-theme="dark"] .react-joyride__tooltip button[data-action="back"] {
+  color: var(--sdn-text-secondary) !important;
+}
+
+:root[data-theme="dark"] .react-joyride__beacon {
+  filter: brightness(0.85);
+}
+
+/* --- Code/pre blocks --- */
+:root[data-theme="dark"] pre,
+:root[data-theme="dark"] code {
+  background-color: var(--sdn-bg-tertiary) !important;
+  color: var(--sdn-text-primary) !important;
+  border-color: var(--sdn-border) !important;
+}
+
+:root[data-theme="dark"] pre {
+  border: 1px solid var(--sdn-border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+/* --- Box component shadows/borders --- */
+:root[data-theme="dark"] .shadow-4,
+:root[data-theme="dark"] .shadow-hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+
+:root[data-theme="dark"] .shadow-1 {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25) !important;
+}
+
+:root[data-theme="dark"] .shadow-2 {
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* --- Links --- */
+:root[data-theme="dark"] a {
+  color: var(--sdn-link);
+}
+
+:root[data-theme="dark"] a:hover {
+  color: #79bbff;
+}
+
+/* --- Scrollbar styling --- */
+:root[data-theme="dark"] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+:root[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: var(--sdn-bg-primary);
+}
+
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: var(--sdn-bg-tertiary);
+  border-radius: 4px;
+}
+
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: #3a424b;
+}
+
+/* --- Miscellaneous utility overrides --- */
+:root[data-theme="dark"] hr {
+  border-color: var(--sdn-border);
+}
+
+:root[data-theme="dark"] .striped--light-gray:nth-child(odd) {
+  background-color: var(--sdn-bg-tertiary) !important;
+}
+
+:root[data-theme="dark"] .hover-bg-near-white:hover {
+  background-color: var(--sdn-bg-tertiary) !important;
+}
+
+:root[data-theme="dark"] .hover-bg-light-gray:hover {
+  background-color: var(--sdn-bg-tertiary) !important;
+}
+
+/* =============================================
+   Explore / Inspect Page Dark Mode Overrides
+   (ipld-explorer-components)
+   ============================================= */
+
+/* --- Missing Tachyons text classes --- */
+:root[data-theme="dark"] .black {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] .black-80 {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] .orange {
+  color: #e3873e !important;
+}
+
+:root[data-theme="dark"] .teal-muted {
+  color: #5ab5bd !important;
+}
+
+:root[data-theme="dark"] .hover-aqua:hover {
+  color: #7ee0ed !important;
+}
+
+/* --- Links table inline row backgrounds --- */
+:root[data-theme="dark"] [style*="background-color: rgb(255, 255, 255)"] {
+  background-color: var(--sdn-bg-secondary) !important;
+}
+
+:root[data-theme="dark"] [style*="background-color: rgb(251, 251, 251)"] {
+  background-color: var(--sdn-bg-box) !important;
+}
+
+/* Links table header (CSS module hashed class) */
+:root[data-theme="dark"] [class*="_header-grid_"] {
+  background: var(--sdn-bg-tertiary) !important;
+}
+
+/* --- react-inspector data tree dark overrides --- */
+:root[data-theme="dark"] .e2e-explorePage [role="tree"] {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] .e2e-explorePage [role="treeitem"] span {
+  color: var(--sdn-text-primary) !important;
+}
+
+:root[data-theme="dark"] .e2e-explorePage [role="treeitem"] span[style*="rgb(136, 19, 145)"] {
+  color: var(--sdn-accent-purple) !important;
+}
+
+:root[data-theme="dark"] .e2e-explorePage [role="treeitem"] span[style*="rgb(196, 26, 22)"] {
+  color: #f97583 !important;
+}
+
+:root[data-theme="dark"] .e2e-explorePage [role="treeitem"] span[style*="rgb(28, 0, 207)"] {
+  color: #79c0ff !important;
+}
+
+:root[data-theme="dark"] .e2e-explorePage [role="treeitem"] span[style*="rgb(0, 92, 197)"] {
+  color: var(--sdn-accent) !important;
+}
+
+/* --- GraphCrumb breadcrumb visibility --- */
+:root[data-theme="dark"] .e2e-explorePage .o-50 {
+  opacity: 0.8 !important;
+}
+
+/* --- Explore suggestion list borders --- */
+:root[data-theme="dark"] .explore-sug-2 .bb.b--black-10 {
+  border-color: var(--sdn-border) !important;
+}
+
+/* Light theme header bar */
+:root[data-theme="light"] .sdn-header-bar {
+  background-color: var(--sdn-bg-header);
+}

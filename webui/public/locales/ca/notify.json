@@ -1,0 +1,30 @@
+{
+  "ipfsApiRequestFailed": "No s'ha pogut connectar. Comproveu que el daemon estigui funcionant.",
+  "windowIpfsRequestFailed": "La sol·licitud a IPFS ha fallat. Comproveu la configuració del IPFS Companion.",
+  "ipfsInvalidApiAddress": "L'adreça RPC de Kubo proporcionada no és vàlida.",
+  "ipfsConnectSuccess": "S'ha connectat correctament a l'adreça RPC de Kubo",
+  "ipfsConnectFail": "No s'ha pogut connectar a l'adreça RPC de Kubo proporcionada",
+  "ipfsPinFailReason": "",
+  "ipfsPinSucceedReason": "",
+  "ipfsUnpinSucceedReason": "",
+  "ipfsIsBack": "El servei IPFS normal s'ha reprès. Gaudeix-ne!",
+  "folderExists": "Ja existeix un item amb aquest nom. Siusplau escolliu-ne un altre.",
+  "filesFetchFailed": "No s'han pogut obtenir aquests fitxers. Siusplau comproveu el path i torneu-ho a provar.",
+  "filesRenameFailed": "No s'ha pogut canviar el nom dels fitxers. Siusplau torneu-ho a provar.",
+  "filesMakeDirFailed": "No s'ha pogut crear el directori. Siusplau torneu-ho a provar.",
+  "filesCopyFailed": "No s'han pogut copiar els fitxers. Siusplau torneu-ho a provar.",
+  "filesRemoveFailed": "No s'han pogut borrar els arxius. Torneu-ho a provar.",
+  "filesAddFailed": "No s'han pogut afegir fitxers a IPFS. Siusplau torneu-ho a provar.",
+  "filesEventFailed": "No s'ha pogut processar la vostra sol·licitud. Siusplau torneu-ho a provar.",
+  "couldntConnectToPeer": "No s'ha pogut connectar al peer proporcionat.",
+  "connectedToPeer": "S'ha connectat correctament al peer proporcionat.",
+  "experimentsErrors": {
+    "npmOnIpfs": "No hem pogut fer canvis al vostre sistema. Siusplau instal·leu o desinstal·leu el paquet 'ipfs-npm' manualment."
+  },
+  "desktopToggleErrors": {
+    "autoLaunch": "No s'ha pogut canviar l'opció d'inici a l'inici.",
+    "ipfsOnPath": "No s'han pogut canviar les eines de command line d'IPFS.",
+    "downloadHashShortcut": "No s'ha pogut canviar la drecera hash de baixada.",
+    "screenshotShortcut": "No s'ha pogut canviar la drecera de captura de pantalla."
+  }
+}

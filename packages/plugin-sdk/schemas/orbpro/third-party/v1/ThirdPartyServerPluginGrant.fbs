@@ -1,0 +1,25 @@
+namespace orbpro.thirdparty.v1;
+
+// Grant payload returned after server-plugin registration/authz.
+table ThirdPartyServerPluginGrant {
+  // 0 = success; non-zero = broker/policy specific error.
+  status:uint;
+
+  // Opaque grant identifier for audit and revocation.
+  grant_id:string;
+
+  // Grant issuance epoch in milliseconds.
+  issued_at_ms:ulong;
+
+  // Grant expiration epoch in milliseconds.
+  expires_at_ms:ulong;
+
+  // Account ids this plugin is authorized to serve.
+  allowed_accounts:[string];
+
+  // Hash of policy object attached to this grant.
+  policy_hash:[ubyte];
+}
+
+root_type ThirdPartyServerPluginGrant;
+file_identifier "TPSG";

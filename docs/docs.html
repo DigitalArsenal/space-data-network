@@ -1,0 +1,2566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Space Data Network Documentation - Guides for running full nodes, edge relays, using the JavaScript SDK, and API reference.">
+  <meta name="theme-color" content="#000000">
+  <title>Documentation - Space Data Network</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%23fff' stroke-width='4'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(60 50 50)'/><ellipse cx='50' cy='50' rx='45' ry='18' fill='none' stroke='%23fff' stroke-width='2' transform='rotate(120 50 50)'/><circle cx='50' cy='50' r='8' fill='%23fff'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #000000;
+      --text-primary: #F5F5F7;
+      --text-secondary: rgba(255, 255, 255, 0.8);
+      --text-muted: rgba(134, 134, 139, 1.0);
+      --ui-bg: rgba(42, 42, 45, 0.72);
+      --ui-hover: rgba(66, 66, 69, 0.72);
+      --ui-border: rgba(134, 134, 139, 0.3);
+      --nav-bg: rgba(22, 22, 23, 0.95);
+      --code-bg: rgba(30, 30, 35, 0.9);
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      --radius: 12px;
+      --sidebar-width: 260px;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      overflow-x: hidden;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* Dark Theme Scrollbars */
+    ::-webkit-scrollbar {
+      width: 12px;
+      height: 12px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: rgba(30, 30, 35, 0.5);
+      border-radius: 10px;
+      margin: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(96, 165, 250, 0.3);
+      border-radius: 10px;
+      border: 2px solid rgba(30, 30, 35, 0.5);
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(96, 165, 250, 0.5);
+    }
+
+    ::-webkit-scrollbar-corner {
+      background: rgba(30, 30, 35, 0.5);
+    }
+
+    /* Firefox scrollbar styling */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(96, 165, 250, 0.3) rgba(30, 30, 35, 0.5);
+    }
+
+    a {
+      color: #60a5fa;
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    /* Navigation */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 52px;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .nav-content {
+      max-width: 1400px;
+      margin: 0 auto;
+      height: 100%;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text-primary);
+    }
+
+    .logo svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 24px;
+    }
+
+    .nav-links a {
+      color: var(--text-secondary);
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .nav-links a:hover {
+      color: var(--text-primary);
+      text-decoration: none;
+    }
+
+    /* Layout */
+    .layout {
+      display: flex;
+      margin-top: 52px;
+      width: 100%;
+      overflow-x: hidden;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      position: fixed;
+      top: 52px;
+      left: 0;
+      width: var(--sidebar-width);
+      height: calc(100vh - 52px);
+      overflow-y: auto;
+      padding: 24px;
+      background: rgba(15, 15, 18, 0.95);
+      border-right: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .sidebar-section {
+      margin-bottom: 24px;
+    }
+
+    .sidebar-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    .sidebar-links {
+      list-style: none;
+    }
+
+    .sidebar-links li {
+      margin-bottom: 4px;
+    }
+
+    .sidebar-links a {
+      display: block;
+      padding: 8px 12px;
+      font-size: 14px;
+      color: var(--text-secondary);
+      border-radius: 6px;
+      transition: all 0.15s;
+    }
+
+    .sidebar-links a:hover {
+      background: var(--ui-bg);
+      color: var(--text-primary);
+      text-decoration: none;
+    }
+
+    .sidebar-links a.active {
+      background: rgba(96, 165, 250, 0.15);
+      color: #60a5fa;
+    }
+
+    /* Main Content */
+    .main {
+      margin-left: var(--sidebar-width);
+      flex: 1;
+      padding: 48px;
+      max-width: calc(100vw - var(--sidebar-width));
+      width: 100%;
+      box-sizing: border-box;
+      overflow-x: hidden;
+    }
+
+    /* Typography */
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    h2 {
+      font-size: 1.75rem;
+      font-weight: 600;
+      margin-top: 48px;
+      margin-bottom: 16px;
+      padding-top: 24px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      letter-spacing: -0.01em;
+    }
+
+    h2:first-of-type {
+      margin-top: 32px;
+      border-top: none;
+      padding-top: 0;
+    }
+
+    h3 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 12px;
+    }
+
+    h4 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-top: 24px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin-bottom: 16px;
+      color: var(--text-secondary);
+    }
+
+    .lead {
+      font-size: 1.2rem;
+      color: var(--text-muted);
+      margin-bottom: 32px;
+    }
+
+    /* Code blocks */
+    pre {
+      background: var(--code-bg);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      overflow-x: auto;
+      margin-bottom: 24px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.6;
+      max-width: 100%;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.9em;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      word-break: break-word;
+    }
+
+    pre code {
+      background: none;
+      padding: 0;
+      font-size: inherit;
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 24px;
+      font-size: 14px;
+      table-layout: auto;
+      overflow-x: auto;
+      display: block;
+      max-width: 100%;
+    }
+
+    table tbody {
+      display: table;
+      width: 100%;
+    }
+
+    table thead {
+      display: table;
+      width: 100%;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    th {
+      font-weight: 600;
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    td {
+      color: var(--text-secondary);
+    }
+
+    /* Lists */
+    ul, ol {
+      margin-bottom: 16px;
+      padding-left: 24px;
+      color: var(--text-secondary);
+    }
+
+    li {
+      margin-bottom: 8px;
+    }
+
+    /* Callouts */
+    .callout {
+      padding: 16px 20px;
+      border-radius: var(--radius);
+      margin-bottom: 24px;
+      border: 1px solid;
+    }
+
+    .callout-info {
+      background: rgba(96, 165, 250, 0.1);
+      border-color: rgba(96, 165, 250, 0.3);
+    }
+
+    .callout-warning {
+      background: rgba(251, 191, 36, 0.1);
+      border-color: rgba(251, 191, 36, 0.3);
+    }
+
+    .callout-title {
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 8px;
+      color: var(--text-primary);
+    }
+
+    .callout p {
+      margin: 0;
+      font-size: 14px;
+    }
+
+    /* Section anchors */
+    .doc-section {
+      scroll-margin-top: 80px;
+    }
+
+    #network-ecosystem {
+      scroll-margin-top: 80px;
+    }
+
+    /* Responsive */
+    @media (max-width: 1024px) {
+      .sidebar {
+        display: none;
+      }
+      .main {
+        margin-left: 0;
+        padding: 24px;
+        max-width: 100vw;
+        overflow-x: hidden;
+      }
+    }
+
+    /* Mobile nav toggle */
+    .mobile-menu-btn {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text-primary);
+      cursor: pointer;
+      padding: 8px;
+    }
+
+    .mobile-menu-btn svg {
+      width: 24px;
+      height: 24px;
+    }
+
+    @media (max-width: 1024px) {
+      .mobile-menu-btn {
+        display: block;
+      }
+
+      .nav-links {
+        display: none;
+      }
+
+      .sidebar.open {
+        display: block;
+        z-index: 99;
+      }
+
+      .sidebar-overlay {
+        display: none;
+        position: fixed;
+        top: 52px;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 98;
+      }
+
+      .sidebar-overlay.open {
+        display: block;
+      }
+
+      h1 {
+        font-size: 1.75rem;
+      }
+
+      h2 {
+        font-size: 1.35rem;
+      }
+
+      pre {
+        font-size: 12px;
+        padding: 12px;
+      }
+
+      table {
+        font-size: 12px;
+      }
+
+      th, td {
+        padding: 8px 10px;
+      }
+
+      p, li {
+        overflow-wrap: break-word;
+        word-wrap: break-word;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .main {
+        padding: 12px;
+      }
+
+      h1 {
+        font-size: 1.5rem;
+      }
+
+      h2 {
+        font-size: 1.2rem;
+      }
+
+      pre {
+        font-size: 11px;
+        padding: 10px;
+        border-radius: 8px;
+      }
+
+      .qs-tabs {
+        flex-wrap: wrap;
+      }
+
+      .qs-tab {
+        padding: 8px 14px;
+        font-size: 13px;
+      }
+
+      .nav-content {
+        padding: 0 12px;
+      }
+
+      .logo span {
+        font-size: 13px;
+      }
+    }
+
+    /* Quick Start Tabs */
+    .qs-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      margin-bottom: 24px;
+    }
+
+    .qs-tab {
+      padding: 10px 20px;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .qs-tab:hover {
+      color: var(--text-secondary);
+    }
+
+    .qs-tab.active {
+      color: #60a5fa;
+      border-bottom-color: #60a5fa;
+    }
+
+    .qs-panel {
+      display: none;
+    }
+
+    .qs-panel.active {
+      display: block;
+    }
+
+    /* Master Network Connectivity Diagram */
+    .master-diagram-wrap {
+      border: 1px solid rgba(134, 134, 139, 0.3);
+      border-radius: var(--radius);
+      margin: 32px 0 24px;
+      padding: 5px;
+      overflow: hidden;
+      background: rgba(15, 15, 18, 0.95);
+    }
+
+    .master-diagram-svg {
+      width: 100%;
+      display: block;
+    }
+
+    @keyframes md-dash {
+      to { stroke-dashoffset: -30; }
+    }
+
+    @keyframes md-dash-rev {
+      to { stroke-dashoffset: 30; }
+    }
+
+    @keyframes md-pulse {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="nav-content">
+      <a href="index.html" class="logo">
+        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="4">
+          <circle cx="50" cy="50" r="45"/>
+          <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2"/>
+          <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(60 50 50)"/>
+          <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(120 50 50)"/>
+          <circle cx="50" cy="50" r="8" fill="currentColor" stroke="none"/>
+        </svg>
+        <span>Space Data Network</span>
+      </a>
+      <div class="nav-links">
+        <a href="index.html">Home</a>
+        <a href="index.html#technology">Technology</a>
+        <a href="index.html#architecture">Architecture</a>
+        <a href="https://github.com/DigitalArsenal/space-data-network">GitHub</a>
+      </div>
+      <button class="mobile-menu-btn" onclick="toggleSidebar()" aria-label="Toggle menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-title">Getting Started</div>
+        <ul class="sidebar-links">
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#network-ecosystem">Network Ecosystem</a></li>
+          <li><a href="#quick-start">Quick Start</a></li>
+          <li><a href="#installation">Installation</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">Node Setup</div>
+        <ul class="sidebar-links">
+          <li><a href="#full-node">Full Node</a></li>
+          <li><a href="#edge-relay">Edge Relay</a></li>
+          <li><a href="#docker">Docker Deployment</a></li>
+          <li><a href="#cli-commands">CLI Commands</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">JavaScript SDK</div>
+        <ul class="sidebar-links">
+          <li><a href="#sdk-install">Installation</a></li>
+          <li><a href="#sdk-usage">Usage</a></li>
+          <li><a href="#sdk-identity">Identity</a></li>
+          <li><a href="#sdk-astrodynamics">Astrodynamics</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">Identity & Cryptography</div>
+        <ul class="sidebar-links">
+          <li><a href="#identity-overview">Key Derivation</a></li>
+          <li><a href="#identity-secp256k1">Secp256k1 Identity</a></li>
+          <li><a href="#identity-signing">Signing & Auth</a></li>
+          <li><a href="#identity-encryption">Encryption</a></li>
+          <li><a href="#key-security">Key Security</a></li>
+          <li><a href="#identity-pinning">IPFS Pinning</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">API Reference</div>
+        <ul class="sidebar-links">
+          <li><a href="#api-rest">REST API</a></li>
+          <li><a href="#api-websocket">WebSocket</a></li>
+          <li><a href="#api-errors">Errors</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">Schemas</div>
+        <ul class="sidebar-links">
+          <li><a href="#schemas-overview">Overview</a></li>
+          <li><a href="#schemas-orbit">Orbit Schemas</a></li>
+          <li><a href="#schemas-conjunction">Conjunction Schemas</a></li>
+          <li><a href="#schemas-entity">Entity Schemas</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">Go Server SDK</div>
+        <ul class="sidebar-links">
+          <li><a href="#go-builders">FlatBuffer Builders</a></li>
+          <li><a href="#go-vcard">vCard/QR Conversion</a></li>
+          <li><a href="#go-tipqueue">PNM Tip/Queue</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">Testing</div>
+        <ul class="sidebar-links">
+          <li><a href="#testing-throughput">Throughput Benchmarks</a></li>
+          <li><a href="#testing-roundtrip">Roundtrip Tests</a></li>
+          <li><a href="#testing-epm-qr">EPM/QR Conversion</a></li>
+        </ul>
+      </div>
+    </aside>
+
+    <main class="main">
+      <h1>Documentation</h1>
+      <p class="lead">Complete guides for running SDN nodes, using the JavaScript SDK, and integrating with the API.</p>
+
+      <!-- Getting Started -->
+      <section id="overview" class="doc-section">
+        <h2>Overview</h2>
+        <p>Space Data Network (SDN) is a decentralized peer-to-peer network for exchanging standardized space situational awareness data. Built on <a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a> with FlatBuffers serialization, SDN enables real-time sharing of orbital data, conjunction warnings, and tracking information.</p>
+
+        <h3 id="network-ecosystem">Network Ecosystem</h3>
+        <p>The diagram below shows how satellites, sensors, operations centers, independent contributors, commercial operators, and data consumers interconnect through the decentralized SDN mesh. All participants exchange standardized Space Data Standards messages peer-to-peer with no central server.</p>
+
+        <div class="master-diagram-wrap">
+          <svg viewBox="0 0 1000 740" xmlns="http://www.w3.org/2000/svg" class="master-diagram-svg">
+            <defs>
+              <filter id="md-glow">
+                <feGaussianBlur stdDeviation="4" result="blur"/>
+                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+              </filter>
+              <radialGradient id="md-bg-glow" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="rgba(96,165,250,0.1)"/>
+                <stop offset="60%" stop-color="rgba(96,165,250,0.02)"/>
+                <stop offset="100%" stop-color="rgba(0,0,0,0)"/>
+              </radialGradient>
+              <radialGradient id="md-center-fill" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="rgba(96,165,250,0.18)"/>
+                <stop offset="100%" stop-color="rgba(30,30,35,0.9)"/>
+              </radialGradient>
+            </defs>
+
+            <!-- Background glow -->
+            <circle cx="500" cy="370" r="340" fill="url(#md-bg-glow)"/>
+
+            <!-- Peer-to-peer mesh connections (adjacent nodes) -->
+            <g fill="none" stroke-width="1" stroke-dasharray="6 5">
+              <line x1="500" y1="100" x2="690" y2="173" stroke="rgba(251,191,36,0.33)" style="animation: md-dash 2.5s linear infinite;"/>
+              <line x1="690" y1="173" x2="770" y2="370" stroke="rgba(167,139,250,0.33)" style="animation: md-dash-rev 2.8s linear infinite;"/>
+              <line x1="770" y1="370" x2="690" y2="557" stroke="rgba(23,234,217,0.33)" style="animation: md-dash 2.6s linear infinite;"/>
+              <line x1="690" y1="557" x2="500" y2="640" stroke="rgba(96,165,250,0.33)" style="animation: md-dash-rev 3s linear infinite;"/>
+              <line x1="500" y1="640" x2="310" y2="557" stroke="rgba(52,211,153,0.33)" style="animation: md-dash 2.7s linear infinite;"/>
+              <line x1="310" y1="557" x2="230" y2="370" stroke="rgba(244,114,182,0.33)" style="animation: md-dash-rev 2.9s linear infinite;"/>
+              <line x1="230" y1="370" x2="310" y2="173" stroke="rgba(251,146,60,0.33)" style="animation: md-dash 2.4s linear infinite;"/>
+              <line x1="310" y1="173" x2="500" y2="100" stroke="rgba(248,113,113,0.33)" style="animation: md-dash-rev 2.6s linear infinite;"/>
+            </g>
+
+            <!-- Cross-mesh connections (non-adjacent peer-to-peer) -->
+            <g fill="none" stroke-width="1" stroke-dasharray="4 6">
+              <line x1="500" y1="100" x2="690" y2="557" stroke="rgba(251,191,36,0.40)" style="animation: md-dash-rev 3.5s linear infinite;"/>
+              <line x1="690" y1="173" x2="310" y2="557" stroke="rgba(167,139,250,0.40)" style="animation: md-dash 4s linear infinite;"/>
+              <line x1="770" y1="370" x2="310" y2="173" stroke="rgba(23,234,217,0.40)" style="animation: md-dash-rev 3.8s linear infinite;"/>
+              <line x1="230" y1="370" x2="500" y2="640" stroke="rgba(251,146,60,0.40)" style="animation: md-dash 3.6s linear infinite;"/>
+              <line x1="690" y1="173" x2="230" y2="370" stroke="rgba(167,139,250,0.35)" style="animation: md-dash 4.2s linear infinite;"/>
+              <line x1="770" y1="370" x2="310" y2="557" stroke="rgba(23,234,217,0.35)" style="animation: md-dash-rev 3.9s linear infinite;"/>
+              <line x1="690" y1="557" x2="310" y2="173" stroke="rgba(96,165,250,0.35)" style="animation: md-dash 4.4s linear infinite;"/>
+              <line x1="500" y1="100" x2="500" y2="640" stroke="rgba(52,211,153,0.30)" style="animation: md-dash-rev 4.6s linear infinite;"/>
+            </g>
+
+            <!-- Primary connection lines (nodes to center mesh) -->
+            <line x1="500" y1="132" x2="500" y2="305" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="8 6" fill="none" opacity="0.75" style="animation: md-dash 1.5s linear infinite;"/>
+            <line x1="665" y1="195" x2="548" y2="318" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="8 6" fill="none" opacity="0.75" style="animation: md-dash 1.8s linear infinite;"/>
+            <line x1="738" y1="370" x2="565" y2="370" stroke="#17ead9" stroke-width="1.5" stroke-dasharray="8 6" fill="none" opacity="0.75" style="animation: md-dash-rev 1.6s linear infinite;"/>
+            <line x1="665" y1="535" x2="548" y2="418" stroke="#60a5fa" stroke-width="1.5" stroke-dasharray="8 6" fill="none" opacity="0.75" style="animation: md-dash-rev 1.7s linear infinite;"/>
+            <line x1="500" y1="608" x2="500" y2="435" stroke="#34d399" stroke-width="1.5" stroke-dasharray="8 6" fill="none" opacity="0.75" style="animation: md-dash 2.0s linear infinite;"/>
+            <line x1="335" y1="535" x2="452" y2="418" stroke="#f472b6" stroke-width="1.5" stroke-dasharray="8 6" fill="none" opacity="0.75" style="animation: md-dash-rev 1.9s linear infinite;"/>
+            <line x1="262" y1="370" x2="435" y2="370" stroke="#fb923c" stroke-width="1.5" stroke-dasharray="8 6" fill="none" opacity="0.75" style="animation: md-dash 1.4s linear infinite;"/>
+            <line x1="335" y1="195" x2="452" y2="318" stroke="#f87171" stroke-width="1.5" stroke-dasharray="8 6" fill="none" opacity="0.75" style="animation: md-dash-rev 2.1s linear infinite;"/>
+
+            <!-- Traveling data dots -->
+            <circle r="2.5" fill="#fbbf24" opacity="0.9">
+              <animateMotion dur="2.5s" repeatCount="indefinite" path="M500,132 L500,305"/>
+            </circle>
+            <circle r="2.5" fill="#60a5fa" opacity="0.9">
+              <animateMotion dur="3s" repeatCount="indefinite" path="M548,418 L665,535"/>
+            </circle>
+            <circle r="2.5" fill="#17ead9" opacity="0.9">
+              <animateMotion dur="2.8s" repeatCount="indefinite" path="M738,370 L565,370"/>
+            </circle>
+            <circle r="2.5" fill="#fb923c" opacity="0.9">
+              <animateMotion dur="2.6s" repeatCount="indefinite" path="M262,370 L435,370"/>
+            </circle>
+            <circle r="2" fill="#34d399" opacity="0.8">
+              <animateMotion dur="3.2s" repeatCount="indefinite" path="M500,608 L500,435"/>
+            </circle>
+            <circle r="2" fill="#f472b6" opacity="0.8">
+              <animateMotion dur="3.4s" repeatCount="indefinite" path="M452,418 L335,535"/>
+            </circle>
+            <circle r="2" fill="#a78bfa" opacity="0.8">
+              <animateMotion dur="2.9s" repeatCount="indefinite" path="M665,195 L548,318"/>
+            </circle>
+            <circle r="2" fill="#f87171" opacity="0.8">
+              <animateMotion dur="3.1s" repeatCount="indefinite" path="M452,318 L335,195"/>
+            </circle>
+
+            <!-- Mesh traveling dots (peer-to-peer between nodes) -->
+            <circle r="2" fill="#fbbf24" opacity="0.6">
+              <animateMotion dur="4s" repeatCount="indefinite" path="M500,100 L690,173"/>
+            </circle>
+            <circle r="2" fill="#17ead9" opacity="0.6">
+              <animateMotion dur="4.5s" repeatCount="indefinite" path="M770,370 L690,557"/>
+            </circle>
+            <circle r="2" fill="#fb923c" opacity="0.6">
+              <animateMotion dur="3.8s" repeatCount="indefinite" path="M310,173 L230,370"/>
+            </circle>
+            <circle r="2" fill="#34d399" opacity="0.6">
+              <animateMotion dur="4.2s" repeatCount="indefinite" path="M310,557 L500,640"/>
+            </circle>
+            <circle r="1.5" fill="#a78bfa" opacity="0.5">
+              <animateMotion dur="5s" repeatCount="indefinite" path="M690,173 L310,557"/>
+            </circle>
+            <circle r="1.5" fill="#fbbf24" opacity="0.5">
+              <animateMotion dur="5.5s" repeatCount="indefinite" path="M690,557 L500,100"/>
+            </circle>
+            <circle r="1.5" fill="#17ead9" opacity="0.5">
+              <animateMotion dur="4.8s" repeatCount="indefinite" path="M770,370 L310,557"/>
+            </circle>
+            <circle r="1.5" fill="#60a5fa" opacity="0.5">
+              <animateMotion dur="5.2s" repeatCount="indefinite" path="M690,557 L310,173"/>
+            </circle>
+            <circle r="1.5" fill="#34d399" opacity="0.4">
+              <animateMotion dur="6s" repeatCount="indefinite" path="M500,100 L500,640"/>
+            </circle>
+
+            <!-- Data type labels on connections -->
+            <g font-family="'JetBrains Mono', monospace" font-size="11" font-weight="500" fill="rgba(255,255,255,0.3)">
+              <text x="512" y="215" text-anchor="start">OMM TLE</text>
+              <text x="614" y="248" text-anchor="middle">TDM RFM</text>
+              <text x="655" y="362" text-anchor="middle">TDM CAT</text>
+              <text x="614" y="486" text-anchor="middle">CDM CSM</text>
+              <text x="512" y="528" text-anchor="start">ROC SIT</text>
+              <text x="386" y="486" text-anchor="middle">EPM PNM</text>
+              <text x="345" y="362" text-anchor="middle">OEM OCM</text>
+              <text x="386" y="248" text-anchor="middle">STF PUR</text>
+            </g>
+
+            <!-- ========== CENTER MESH ========== -->
+            <circle cx="500" cy="370" r="65" fill="url(#md-center-fill)" stroke="rgba(96,165,250,0.4)" stroke-width="1.5"/>
+            <circle cx="500" cy="370" fill="none" stroke="rgba(96,165,250,0.2)" stroke-width="1">
+              <animate attributeName="r" values="62;70;62" dur="4s" repeatCount="indefinite"/>
+              <animate attributeName="opacity" values="0.2;0.5;0.2" dur="4s" repeatCount="indefinite"/>
+            </circle>
+
+            <!-- Inner mesh topology dots -->
+            <g opacity="0.7">
+              <circle cx="485" cy="350" r="3" fill="#60a5fa"/>
+              <circle cx="515" cy="348" r="2.5" fill="#17ead9"/>
+              <circle cx="528" cy="368" r="3" fill="#a78bfa"/>
+              <circle cx="518" cy="388" r="2.5" fill="#fbbf24"/>
+              <circle cx="494" cy="393" r="3" fill="#34d399"/>
+              <circle cx="473" cy="376" r="2.5" fill="#f472b6"/>
+              <circle cx="478" cy="356" r="2" fill="#fb923c"/>
+              <circle cx="506" cy="362" r="2.5" fill="#f87171"/>
+              <circle cx="498" cy="375" r="2" fill="#fff"/>
+              <line x1="485" y1="350" x2="515" y2="348" stroke="rgba(255,255,255,0.2)" stroke-width="0.5"/>
+              <line x1="515" y1="348" x2="528" y2="368" stroke="rgba(255,255,255,0.2)" stroke-width="0.5"/>
+              <line x1="528" y1="368" x2="518" y2="388" stroke="rgba(255,255,255,0.2)" stroke-width="0.5"/>
+              <line x1="518" y1="388" x2="494" y2="393" stroke="rgba(255,255,255,0.2)" stroke-width="0.5"/>
+              <line x1="494" y1="393" x2="473" y2="376" stroke="rgba(255,255,255,0.2)" stroke-width="0.5"/>
+              <line x1="473" y1="376" x2="485" y2="350" stroke="rgba(255,255,255,0.2)" stroke-width="0.5"/>
+              <line x1="485" y1="350" x2="506" y2="362" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+              <line x1="506" y1="362" x2="528" y2="368" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+              <line x1="506" y1="362" x2="494" y2="393" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+              <line x1="498" y1="375" x2="518" y2="388" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+              <line x1="498" y1="375" x2="478" y2="356" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+              <line x1="478" y1="356" x2="506" y2="362" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+            </g>
+
+            <!-- Center label -->
+            <text x="500" y="362" text-anchor="middle" fill="white" font-family="'Inter', sans-serif" font-size="27" font-weight="700" letter-spacing="1.5">SDN</text>
+            <text x="500" y="386" text-anchor="middle" fill="rgba(255,255,255,0.55)" font-family="'Inter', sans-serif" font-size="18" font-weight="400" letter-spacing="0.3">IPFS / libp2p</text>
+
+            <!-- ========== OUTER NODES ========== -->
+
+            <!-- 1. Satellites & Spacecraft (top, amber #fbbf24) -->
+            <g filter="url(#md-glow)">
+              <circle cx="500" cy="100" r="34" fill="rgba(30,30,35,0.9)" stroke="#fbbf24" stroke-width="1.5" opacity="0.8" style="animation: md-pulse 3s ease-in-out infinite;"/>
+              <g transform="translate(500,100)" fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="-14" y="-4" width="10" height="8" rx="1"/>
+                <rect x="4" y="-4" width="10" height="8" rx="1"/>
+                <line x1="-4" y1="0" x2="4" y2="0"/>
+                <circle cx="0" cy="0" r="2.5" fill="#fbbf24" stroke="none"/>
+              </g>
+            </g>
+            <text x="500" y="154" text-anchor="middle" fill="#fbbf24" font-family="'Inter', sans-serif" font-size="18" font-weight="600">Satellites</text>
+            <text x="500" y="170" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-family="'Inter', sans-serif" font-size="14">LEO / MEO / GEO</text>
+
+            <!-- 2. Space-Based Sensors (top-right, violet #a78bfa) -->
+            <g filter="url(#md-glow)">
+              <circle cx="690" cy="173" r="34" fill="rgba(30,30,35,0.9)" stroke="#a78bfa" stroke-width="1.5" opacity="0.8" style="animation: md-pulse 3s ease-in-out 0.4s infinite;"/>
+              <g transform="translate(690,173)" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round">
+                <circle cx="0" cy="-4" r="8"/>
+                <circle cx="0" cy="-4" r="3" fill="rgba(167,139,250,0.3)"/>
+                <circle cx="0" cy="-4" r="1" fill="#a78bfa" stroke="none"/>
+                <line x1="0" y1="4" x2="0" y2="12"/>
+                <line x1="-5" y1="12" x2="5" y2="12"/>
+              </g>
+            </g>
+            <text x="690" y="227" text-anchor="middle" fill="#a78bfa" font-family="'Inter', sans-serif" font-size="18" font-weight="600">Space Sensors</text>
+            <text x="690" y="243" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-family="'Inter', sans-serif" font-size="14">SSA / SDA</text>
+
+            <!-- 3. Ground-Based Sensors (right, teal #17ead9) -->
+            <g filter="url(#md-glow)">
+              <circle cx="770" cy="370" r="34" fill="rgba(30,30,35,0.9)" stroke="#17ead9" stroke-width="1.5" opacity="0.8" style="animation: md-pulse 3s ease-in-out 0.8s infinite;"/>
+              <g transform="translate(770,370)" fill="none" stroke="#17ead9" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M-10,-2 Q0,-14 10,-2"/>
+                <line x1="0" y1="-6" x2="0" y2="8"/>
+                <circle cx="0" cy="-6" r="2" fill="#17ead9" stroke="none"/>
+                <line x1="-7" y1="8" x2="7" y2="8"/>
+                <line x1="-5" y1="12" x2="5" y2="12"/>
+              </g>
+            </g>
+            <text x="770" y="424" text-anchor="middle" fill="#17ead9" font-family="'Inter', sans-serif" font-size="18" font-weight="600">Ground Sensors</text>
+            <text x="770" y="440" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-family="'Inter', sans-serif" font-size="14">Radar / Optical / RF</text>
+
+            <!-- 4. Operations Centers (bottom-right, blue #60a5fa) -->
+            <g filter="url(#md-glow)">
+              <circle cx="690" cy="557" r="34" fill="rgba(30,30,35,0.9)" stroke="#60a5fa" stroke-width="1.5" opacity="0.8" style="animation: md-pulse 3s ease-in-out 1.2s infinite;"/>
+              <g transform="translate(690,557)" fill="none" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="-12" y="-9" width="24" height="15" rx="2"/>
+                <line x1="-5" y1="6" x2="5" y2="6"/>
+                <line x1="0" y1="6" x2="0" y2="11"/>
+                <line x1="-6" y1="11" x2="6" y2="11"/>
+                <rect x="-7" y="-5" width="5" height="4" rx="0.5" fill="rgba(96,165,250,0.3)"/>
+                <rect x="2" y="-5" width="5" height="4" rx="0.5" fill="rgba(96,165,250,0.3)"/>
+              </g>
+            </g>
+            <text x="690" y="611" text-anchor="middle" fill="#60a5fa" font-family="'Inter', sans-serif" font-size="18" font-weight="600">Ops Centers</text>
+            <text x="690" y="627" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-family="'Inter', sans-serif" font-size="14">CSpOC / ESOC / TsUP / CNSA / JAXA</text>
+
+            <!-- 5. Data Consumers (bottom, green #34d399) -->
+            <g filter="url(#md-glow)">
+              <circle cx="500" cy="640" r="34" fill="rgba(30,30,35,0.9)" stroke="#34d399" stroke-width="1.5" opacity="0.8" style="animation: md-pulse 3s ease-in-out 1.6s infinite;"/>
+              <g transform="translate(500,640)" fill="none" stroke="#34d399" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="-11" y="-11" width="22" height="22" rx="2"/>
+                <polyline points="-7,7 -3,-1 1,4 5,-3 8,-7"/>
+                <circle cx="8" cy="-7" r="1.5" fill="#34d399" stroke="none"/>
+              </g>
+            </g>
+            <text x="500" y="694" text-anchor="middle" fill="#34d399" font-family="'Inter', sans-serif" font-size="18" font-weight="600">Data Consumers</text>
+            <text x="500" y="710" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-family="'Inter', sans-serif" font-size="14">Analysts / Researchers / Insurers</text>
+
+            <!-- 6. Commercial Operators (bottom-left, pink #f472b6) -->
+            <g filter="url(#md-glow)">
+              <circle cx="310" cy="557" r="34" fill="rgba(30,30,35,0.9)" stroke="#f472b6" stroke-width="1.5" opacity="0.8" style="animation: md-pulse 3s ease-in-out 2.0s infinite;"/>
+              <g transform="translate(310,557)" fill="none" stroke="#f472b6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M0,-14 C7,-10 7,0 4,6"/>
+                <path d="M0,-14 C-7,-10 -7,0 -4,6"/>
+                <path d="M-4,6 L-8,12"/>
+                <path d="M4,6 L8,12"/>
+                <path d="M-1,6 L1,6"/>
+                <circle cx="0" cy="-6" r="2" fill="#f472b6" stroke="none"/>
+              </g>
+            </g>
+            <text x="310" y="611" text-anchor="middle" fill="#f472b6" font-family="'Inter', sans-serif" font-size="18" font-weight="600">Commercial</text>
+            <text x="310" y="627" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-family="'Inter', sans-serif" font-size="14">Launch / Comms / EO</text>
+
+            <!-- 7. Independent Contributors (left, orange #fb923c) -->
+            <g filter="url(#md-glow)">
+              <circle cx="230" cy="370" r="34" fill="rgba(30,30,35,0.9)" stroke="#fb923c" stroke-width="1.5" opacity="0.8" style="animation: md-pulse 3s ease-in-out 2.4s infinite;"/>
+              <g transform="translate(230,370)" fill="none" stroke="#fb923c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="-4" cy="-8" r="4"/>
+                <path d="M-4,-4 L-4,4"/>
+                <path d="M-4,4 L-9,12"/>
+                <path d="M-4,4 L1,12"/>
+                <path d="M-4,-1 L4,-5"/>
+                <path d="M4,-5 L8,-9"/>
+                <circle cx="9" cy="-10" r="2.5" fill="rgba(251,146,60,0.4)" stroke="#fb923c"/>
+              </g>
+            </g>
+            <text x="230" y="424" text-anchor="middle" fill="#fb923c" font-family="'Inter', sans-serif" font-size="18" font-weight="600">Independent</text>
+            <text x="230" y="440" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-family="'Inter', sans-serif" font-size="14">CubeSats / Universities</text>
+
+            <!-- 8. Data Marketplace (top-left, red #f87171) -->
+            <g filter="url(#md-glow)">
+              <circle cx="310" cy="173" r="34" fill="rgba(30,30,35,0.9)" stroke="#f87171" stroke-width="1.5" opacity="0.8" style="animation: md-pulse 3s ease-in-out 2.8s infinite;"/>
+              <g transform="translate(310,173)" fill="none" stroke="#f87171" stroke-width="2" stroke-linecap="round">
+                <path d="M-9,-4 L9,-4"/>
+                <path d="M5,-8 L9,-4 L5,0"/>
+                <path d="M9,4 L-9,4"/>
+                <path d="M-5,0 L-9,4 L-5,8"/>
+              </g>
+            </g>
+            <text x="310" y="227" text-anchor="middle" fill="#f87171" font-family="'Inter', sans-serif" font-size="18" font-weight="600">Marketplace</text>
+            <text x="310" y="243" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-family="'Inter', sans-serif" font-size="14">Buy / Sell / Subscribe</text>
+
+            <!-- Title -->
+            <text x="500" y="32" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="'Inter', sans-serif" font-size="18" font-weight="600" letter-spacing="0.5">Space Data Network Ecosystem</text>
+            <text x="500" y="50" text-anchor="middle" fill="rgba(255,255,255,0.4)" font-family="'Inter', sans-serif" font-size="12">Decentralized peer-to-peer exchange of standardized space data</text>
+
+            <!-- Legend -->
+            <g transform="translate(30,700)" font-family="'Inter', sans-serif" font-size="9" fill="rgba(255,255,255,0.4)">
+              <line x1="0" y1="0" x2="20" y2="0" stroke="rgba(255,255,255,0.3)" stroke-width="1.5" stroke-dasharray="8 6"/>
+              <text x="26" y="3">Data flow</text>
+              <circle cx="100" cy="0" r="2.5" fill="rgba(96,165,250,0.6)"/>
+              <text x="108" y="3">Data packet</text>
+              <text x="190" y="3" font-family="'JetBrains Mono', monospace" font-size="8" fill="rgba(255,255,255,0.3)">OMM CDM</text>
+              <text x="240" y="3">Schema types</text>
+            </g>
+          </svg>
+        </div>
+
+        <h3>Network Components</h3>
+        <table>
+          <thead>
+            <tr><th>Component</th><th>Description</th><th>Use Case</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Full Node</strong></td><td>Server-side Go application</td><td>Infrastructure providers, relay operators</td></tr>
+            <tr><td><strong>Edge Relay</strong></td><td>WebSocket bridge for browsers</td><td>Connecting browser clients to the network</td></tr>
+            <tr><td><strong>JavaScript SDK</strong></td><td>Browser/Node.js client library</td><td>Web applications, desktop apps</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="quick-start" class="doc-section">
+        <h2>Quick Start</h2>
+
+        <div class="qs-tabs">
+          <button class="qs-tab active" onclick="switchQsTab('desktop')">Desktop</button>
+          <button class="qs-tab" onclick="switchQsTab('server')">Server</button>
+          <button class="qs-tab" onclick="switchQsTab('browser')">Browser</button>
+        </div>
+
+        <div id="qs-desktop" class="qs-panel active">
+          <h3>Desktop Application</h3>
+          <p>Download the SDN Desktop app for macOS, Windows, or Linux. It includes a bundled IPFS node and the full SDN Web UI.</p>
+          <pre><code># Clone and build from source
+git clone https://github.com/DigitalArsenal/space-data-network.git
+cd space-data-network
+npm run install:all
+npm run desktop</code></pre>
+          <p>The desktop app provides a graphical interface for managing peers, browsing schemas, monitoring network stats, and configuring subscriptions.</p>
+        </div>
+
+        <div id="qs-server" class="qs-panel">
+          <h3>Server (Go)</h3>
+          <p>Run a headless SDN node for production deployments, data providers, and always-on infrastructure.</p>
+          <pre><code># Initialize configuration
+./spacedatanetwork init
+
+# Start the node
+./spacedatanetwork daemon</code></pre>
+          <p>See <a href="#full-node">Full Node Setup</a> and <a href="#edge-relay">Edge Relay Deployment</a> for detailed configuration.</p>
+        </div>
+
+        <div id="qs-browser" class="qs-panel">
+          <h3>Browser (JavaScript)</h3>
+          <p>Integrate SDN directly into web applications using the JavaScript SDK.</p>
+          <pre><code>import { SDNNode } from '@spacedatanetwork/sdn-js';
+
+const node = new SDNNode();
+await node.start();
+
+// Subscribe to Orbital Mean-Elements Messages
+node.subscribe('OMM', (data, peerId) => {
+  console.log(`Received OMM from ${peerId}:`, data);
+});
+
+// Publish data
+await node.publish('OMM', {
+  OBJECT_NAME: 'ISS (ZARYA)',
+  OBJECT_ID: '1998-067A',
+  EPOCH: '2025-01-24T12:00:00.000Z',
+  MEAN_MOTION: 15.5,
+  ECCENTRICITY: 0.0001,
+  INCLINATION: 51.6,
+  RA_OF_ASC_NODE: 200.0,
+  ARG_OF_PERICENTER: 100.0,
+  MEAN_ANOMALY: 50.0
+});</code></pre>
+        </div>
+      </section>
+
+      <section id="installation" class="doc-section">
+        <h2>Installation</h2>
+
+        <h3>JavaScript SDK</h3>
+        <pre><code># npm
+npm install @spacedatanetwork/sdn-js
+
+# yarn
+yarn add @spacedatanetwork/sdn-js</code></pre>
+
+        <h3>Server Binary</h3>
+        <pre><code># Linux amd64
+curl -Lo spacedatanetwork \
+  https://github.com/DigitalArsenal/space-data-network/releases/latest/download/spacedatanetwork-linux-amd64
+
+# macOS arm64 (Apple Silicon)
+curl -Lo spacedatanetwork \
+  https://github.com/DigitalArsenal/space-data-network/releases/latest/download/spacedatanetwork-darwin-arm64
+
+chmod +x spacedatanetwork</code></pre>
+      </section>
+
+      <!-- Full Node -->
+      <section id="full-node" class="doc-section">
+        <h2>Full Node Setup</h2>
+        <p>Run a full SDN node to contribute to the network's routing, relay traffic for firewalled peers, and store pinned content.</p>
+
+        <h3>Requirements</h3>
+        <ul>
+          <li><strong>Public IP address</strong> - Required for other peers to connect directly</li>
+          <li><strong>Open ports:</strong> 4001/tcp (<a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a>), 4001/udp (QUIC), 8080/tcp (HTTP API)</li>
+          <li><strong>Storage:</strong> Minimum 1GB recommended</li>
+          <li><strong>Memory:</strong> 512MB minimum, 2GB+ for busy nodes</li>
+        </ul>
+
+        <h3>Configuration</h3>
+        <pre><code># Initialize default config
+./spacedatanetwork init</code></pre>
+
+        <p>This creates <code>~/.spacedatanetwork/</code> with:</p>
+        <ul>
+          <li><code>config.yaml</code> &mdash; Node configuration (YAML format)</li>
+          <li><code>keys/mnemonic</code> &mdash; BIP-39 mnemonic, <strong>encrypted at rest</strong> with XChaCha20-Poly1305 (see <a href="#key-security">Key Security</a>)</li>
+          <li><code>keys/node.key</code> &mdash; Serialized libp2p private key (backward compatibility)</li>
+          <li><code>data/</code> &mdash; SQLite database and pinned content</li>
+        </ul>
+
+        <h3>Configuration File</h3>
+        <p>The server uses YAML configuration at <code>~/.spacedatanetwork/config.yaml</code> (override with <code>--config</code> flag).</p>
+        <pre><code>mode: full
+
+network:
+  listen:
+    - /ip4/0.0.0.0/tcp/4001
+    - /ip4/0.0.0.0/tcp/8080/ws
+    - /ip4/0.0.0.0/udp/4001/quic-v1
+  bootstrap:
+    - /dnsaddr/bootstrap.digitalarsenal.io/p2p/QmBootstrap1
+  enable_relay: true
+  max_connections: 1000
+
+storage:
+  path: /home/sdn/.spacedatanetwork/data
+  max_size: 10GB
+  gc_interval: 1h
+
+security:
+  insecure_mode: false          # Never disable in production
+  # key_password: ""            # Optional: explicit mnemonic password
+                                # Default: machine-derived via Argon2
+                                # Override: SDN_KEY_PASSWORD env var
+
+admin:
+  enabled: true
+  listen_addr: "0.0.0.0:443"
+  require_auth: true
+  session_expiry: 24h
+  tls_enabled: true
+  tls_cert_file: /etc/ssl/certs/your-cert.pem
+  tls_key_file: /etc/ssl/private/your-key.pem
+  ipfs_api_url: "http://127.0.0.1:5002"
+
+# HD wallet users (xpub-based authentication)
+users:
+  - xpub: "xpub6..."
+    trust_level: admin
+    name: Operator</code></pre>
+
+        <h3>Running as a Service</h3>
+        <p>Create <code>/etc/systemd/system/spacedatanetwork.service</code>:</p>
+        <pre><code>[Unit]
+Description=Space Data Network Node
+After=network.target
+
+[Service]
+Type=simple
+User=sdn
+ExecStart=/usr/local/bin/spacedatanetwork daemon
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+
+        <pre><code>sudo systemctl enable spacedatanetwork
+sudo systemctl start spacedatanetwork</code></pre>
+      </section>
+
+      <!-- CLI Commands -->
+      <section id="cli-commands" class="doc-section">
+        <h2>CLI Commands</h2>
+        <p>The <code>spacedatanetwork</code> binary provides several subcommands for node management and identity inspection.</p>
+
+        <h3>daemon</h3>
+        <p>Start the SDN server node (default command).</p>
+        <pre><code>spacedatanetwork daemon --config /path/to/config.yaml</code></pre>
+        <table>
+          <thead>
+            <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>--config</code></td><td><code>~/.spacedatanetwork/config.yaml</code></td><td>Path to configuration file</td></tr>
+            <tr><td><code>--wasm</code></td><td><code>~/.spacedatanetwork/wasm/hd-wallet.wasm</code></td><td>Path to hd-wallet WASM binary</td></tr>
+          </tbody>
+        </table>
+
+        <h3>show-identity</h3>
+        <p>Display the node&rsquo;s cryptographic identity derived from its BIP-39 mnemonic. Prints PeerID to <code>stdout</code> (for scripting) and full details to <code>stderr</code>.</p>
+        <pre><code>spacedatanetwork show-identity \
+  --config /path/to/config.yaml \
+  --wasm /path/to/hd-wallet.wasm</code></pre>
+        <table>
+          <thead>
+            <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>--config</code></td><td><code>~/.spacedatanetwork/config.yaml</code></td><td>Path to configuration file</td></tr>
+            <tr><td><code>--wasm</code></td><td><code>~/.spacedatanetwork/wasm/hd-wallet.wasm</code></td><td>Path to hd-wallet WASM binary</td></tr>
+            <tr><td><code>--show-mnemonic</code></td><td><code>false</code></td><td>Also display the decrypted mnemonic (use with caution)</td></tr>
+          </tbody>
+        </table>
+        <p>Example output:</p>
+        <pre><code>$ spacedatanetwork show-identity --wasm /opt/sdn/wasm/hd-wallet.wasm
+
+=== SDN Node Identity ===
+XPub:            xpub6DKCyLbCHZLFR...FZ3Wa
+PeerID:          16Uiu2HAm1LbvwjEH...Fm45
+Signing Key:     0d80e1fd5f...42fc8c (Ed25519)
+Encryption Key:  08ea56d043...191741 (X25519)
+
+Derivation Paths:
+  Identity:   m/44'/0'/0'        (secp256k1 &rarr; PeerID + XPub)
+  Signing:    m/44'/0'/0'/0'/0'  (Ed25519, SLIP-10)
+  Encryption: m/44'/0'/0'/1'/0'  (X25519, SLIP-10)
+
+# Get just the PeerID for scripting:
+PEER_ID=$(spacedatanetwork show-identity --wasm /opt/sdn/wasm/hd-wallet.wasm 2>/dev/null)</code></pre>
+
+        <h3>derive-xpub</h3>
+        <p>Derive an xpub from a BIP-39 mnemonic for use in the <code>users</code> config section. The xpub is the node&rsquo;s public identity &mdash; safe to share and used for authentication.</p>
+        <pre><code>spacedatanetwork derive-xpub --wasm /path/to/hd-wallet.wasm</code></pre>
+        <p>You will be prompted to enter a mnemonic. The derived xpub is printed to <code>stdout</code>.</p>
+
+        <div class="callout callout-info">
+          <div class="callout-title">Scripting Tip</div>
+          <p>Both <code>show-identity</code> and <code>derive-xpub</code> print their primary output (PeerID or xpub) to <code>stdout</code> and diagnostics to <code>stderr</code>, making them easy to use in scripts with standard redirects.</p>
+        </div>
+
+        <h3>init</h3>
+        <p>Initialize a new SDN data directory with default configuration and a fresh BIP-39 mnemonic (encrypted at rest).</p>
+        <pre><code>spacedatanetwork init --config /path/to/config.yaml</code></pre>
+      </section>
+
+      <!-- Edge Relay -->
+      <section id="edge-relay" class="doc-section">
+        <h2>Edge Relay Deployment</h2>
+        <p>Edge relays bridge browser clients (which can only use WebSocket/WebRTC) to the full <a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a> network.</p>
+
+        <div class="callout callout-info">
+          <div class="callout-title">What is an Edge Relay?</div>
+          <p>Edge relays accept WebSocket connections from browsers, translate to <a href="https://libp2p.io" target="_blank" style="color: inherit; text-decoration: underline;">libp2p</a> protocols, participate in GossipSub, and forward messages bidirectionally.</p>
+        </div>
+
+        <h3>Command Line Options</h3>
+        <table>
+          <thead>
+            <tr><th>Option</th><th>Default</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>--listen</code></td><td>:8080</td><td>HTTP/WebSocket listen address</td></tr>
+            <tr><td><code>--ws-path</code></td><td>/ws</td><td>WebSocket endpoint path</td></tr>
+            <tr><td><code>--max-connections</code></td><td>500</td><td>Maximum concurrent WebSocket connections</td></tr>
+            <tr><td><code>--cors-origins</code></td><td>*</td><td>Allowed CORS origins</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Production with TLS (nginx)</h3>
+        <pre><code>server {
+    listen 443 ssl;
+    server_name relay.example.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location /ws {
+        proxy_pass http://localhost:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
+    }
+}</code></pre>
+
+        <h3>Client Configuration</h3>
+        <pre><code>import { SDNNode } from '@spacedatanetwork/sdn-js';
+
+const node = new SDNNode({
+  relays: [
+    'wss://relay.digitalarsenal.io/ws',
+    'wss://relay2.digitalarsenal.io/ws'
+  ],
+  relayStrategy: 'failover' // or 'round-robin'
+});
+
+await node.start();</code></pre>
+      </section>
+
+      <!-- Docker -->
+      <section id="docker" class="doc-section">
+        <h2>Docker Deployment</h2>
+
+        <h3>Full Node</h3>
+        <pre><code>docker run -d \
+  --name spacedatanetwork \
+  -p 4001:4001 \
+  -p 4001:4001/udp \
+  -v sdn-data:/root/.spacedatanetwork \
+  ghcr.io/digitalarsenal/spacedatanetwork:latest</code></pre>
+
+        <h3>Edge Relay (Kubernetes)</h3>
+        <pre><code>apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sdn-edge
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sdn-edge
+  template:
+    spec:
+      containers:
+      - name: edge
+        image: ghcr.io/digitalarsenal/spacedatanetwork-edge:latest
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sdn-edge
+spec:
+  type: LoadBalancer
+  sessionAffinity: ClientIP
+  ports:
+  - port: 443
+    targetPort: 8080
+  selector:
+    app: sdn-edge</code></pre>
+      </section>
+
+      <!-- JavaScript SDK -->
+      <section id="sdk-install" class="doc-section">
+        <h2>JavaScript SDK</h2>
+
+        <h3>Installation</h3>
+        <pre><code>npm install @spacedatanetwork/sdn-js</code></pre>
+
+        <h3>Browser (ES Modules)</h3>
+        <pre><code>&lt;script type="module"&gt;
+  import { SDNNode } from 'https://unpkg.com/@spacedatanetwork/sdn-js/dist/esm/index.js';
+
+  const node = new SDNNode();
+  await node.start();
+&lt;/script&gt;</code></pre>
+
+        <h3>Browser (UMD)</h3>
+        <pre><code>&lt;script src="https://unpkg.com/@spacedatanetwork/sdn-js/dist/umd/sdn.min.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  const node = new SDN.SDNNode();
+  node.start().then(() =&gt; console.log('Connected!'));
+&lt;/script&gt;</code></pre>
+      </section>
+
+      <section id="sdk-usage" class="doc-section">
+        <h3>SDNNode Options</h3>
+        <table>
+          <thead>
+            <tr><th>Option</th><th>Type</th><th>Default</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>relays</code></td><td>string[]</td><td>Built-in</td><td>WebSocket relay URLs</td></tr>
+            <tr><td><code>relayStrategy</code></td><td>'failover' | 'round-robin'</td><td>'failover'</td><td>Relay selection strategy</td></tr>
+            <tr><td><code>identity</code></td><td>Identity</td><td>Generated</td><td>Ed25519 identity</td></tr>
+            <tr><td><code>storage</code></td><td>'memory' | 'indexeddb'</td><td>'memory'</td><td>Data storage backend</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Methods</h3>
+        <pre><code>// Start/stop
+await node.start();
+await node.stop();
+
+// Subscribe to schema
+node.subscribe('OMM', (data, peerId, signature) => {
+  console.log(data.OBJECT_NAME);
+});
+
+// Unsubscribe
+node.unsubscribe('OMM');
+
+// Publish data
+await node.publish('OMM', { ...ommData });
+
+// Get connected peers
+const peers = await node.getPeers();
+
+// Get network stats
+const stats = await node.getStats();</code></pre>
+
+        <h3>Events</h3>
+        <pre><code>node.on('connected', () => console.log('Connected'));
+node.on('disconnected', () => console.log('Disconnected'));
+node.on('peer:connect', (peerId) => console.log(`Peer: ${peerId}`));
+node.on('error', (error) => console.error(error));</code></pre>
+      </section>
+
+      <section id="sdk-identity" class="doc-section">
+        <h3>Identity Management</h3>
+        <pre><code>import { Identity } from '@spacedatanetwork/sdn-js';
+
+// Generate new identity
+const identity = await Identity.generate();
+console.log(identity.peerId);     // Qm...
+console.log(identity.publicKey);  // Base64 public key
+
+// From seed phrase (BIP-39)
+const identity = await Identity.fromMnemonic(
+  'abandon abandon abandon...'
+);
+
+// Export/Import (encrypted)
+const exported = await identity.export('password123');
+const imported = await Identity.import(exported, 'password123');</code></pre>
+      </section>
+
+      <section id="sdk-astrodynamics" class="doc-section">
+        <h3>Astrodynamics Library</h3>
+        <p>The SDK includes a complete astrodynamics library for propagation and conjunction assessment.</p>
+
+        <pre><code>import { propagate, sgp4 } from '@spacedatanetwork/sdn-js/astro';
+
+// SGP4 propagation from TLE
+const state = sgp4(tle, epochMinutes);
+// { position: [x, y, z], velocity: [vx, vy, vz] }
+
+// Propagate OMM
+const states = propagate(omm, {
+  start: new Date('2025-01-24T00:00:00Z'),
+  end: new Date('2025-01-25T00:00:00Z'),
+  step: 60 // seconds
+});</code></pre>
+
+        <pre><code>import { screenConjunctions, computePc } from '@spacedatanetwork/sdn-js/astro';
+
+// Screen for close approaches
+const conjunctions = screenConjunctions(primaryOMM, secondaryOMMs, {
+  threshold: 5000, // meters
+  timeWindow: 7 * 24 * 3600 // 7 days
+});
+
+// Compute collision probability
+const pc = computePc(cdm);</code></pre>
+
+        <pre><code>import { eciToEcef, ecefToLla } from '@spacedatanetwork/sdn-js/astro';
+
+// ECI to ECEF
+const ecef = eciToEcef(eci, gmst);
+
+// ECEF to Lat/Lon/Alt
+const lla = ecefToLla(ecef);
+// { lat: 51.5, lon: -0.1, alt: 400000 }</code></pre>
+      </section>
+
+      <!-- Identity & Cryptography -->
+      <section id="identity-overview" class="doc-section">
+        <h2>Identity & Key Derivation</h2>
+        <p>Every SDN node derives its full cryptographic identity from a <strong>BIP-39 mnemonic</strong> generated client-side. No central authority issues keys &mdash; identity is fully decentralized. Using <a href="https://github.com/satoshilabs/slips/blob/master/slip-0010.md" target="_blank">SLIP-10</a> hierarchical deterministic derivation with the standard <a href="https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki" target="_blank">BIP-44</a> Bitcoin derivation path (coin type <code>0</code>), one seed produces all the keys a node needs.</p>
+
+        <h3>Derivation Tree</h3>
+        <pre><code>BIP-39 Mnemonic (generated client-side)
+    │
+    ▼ PBKDF2
+  512-bit Seed
+    │
+    ├── BIP-32 secp256k1 Master Key
+    │     │
+    │     └── m/44'/0'/0'  →  Identity Key (secp256k1)
+    │           ├── xpub   →  Master Network Identity
+    │           └── PeerID →  libp2p address (16Uiu2...)
+    │
+    └── SLIP-10 Ed25519 Master Key
+          │
+          ├── m/44'/0'/0'/0'/0'  →  Ed25519 Signing Key (auth, data signatures)
+          │
+          └── m/44'/0'/0'/1'/0'  →  X25519 Encryption Key (ECDH, ECIES)</code></pre>
+
+        <p>The <strong>xpub</strong> (extended public key) at <code>m/44'/0'/account'</code> serves as the node's master network identity. It encodes a secp256k1 public key from which the <a href="https://docs.libp2p.io/concepts/fundamentals/peers/" target="_blank">libp2p PeerID</a> is deterministically derived. Anyone with the xpub can compute the PeerID without access to private key material.</p>
+
+        <p>The Ed25519 signing key is bound to the xpub identity on first login via <strong>TOFU</strong> (Trust On First Use) and is used for authentication and data signatures. The X25519 encryption key provides end-to-end encryption between peers.</p>
+
+        <h3>Why BIP-44?</h3>
+        <p>SDN reuses the standard <a href="https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki" target="_blank">BIP-44</a> HD wallet path structure with Bitcoin's coin type <code>0</code>:</p>
+        <ul>
+          <li><strong>Deterministic, wallet-native identity.</strong> By using a BIP-44-style path (<code>m/44'/0'/account'/change'/index'</code>), SDN nodes can derive signing and encryption keys from the same BIP-39 mnemonic a user already has for their cryptocurrency wallets. One seed, many independent key trees.</li>
+          <li><strong>Multi-account support.</strong> The <code>account'</code> segment enables a single mnemonic to manage multiple SDN identities (e.g., account 0 for an operator, account 1 for a sensor, account 2 for an analytics service), each with its own independent signing and encryption key pair.</li>
+        </ul>
+
+        <h3>JavaScript SDK</h3>
+        <pre><code>import { initHDWallet, deriveIdentity, mnemonicToSeed } from '@spacedatanetwork/sdn-js';
+
+// Initialize WASM module
+await initHDWallet();
+
+// Generate or load mnemonic
+const mnemonic = 'abandon abandon abandon ...'; // generated client-side
+const seed = await mnemonicToSeed(mnemonic);
+
+// Derive full identity (signing + encryption keys)
+const identity = await deriveIdentity(seed, 0); // account 0
+
+console.log(identity.signingKey.publicKey);    // Ed25519 pub (32 bytes)
+console.log(identity.encryptionKey.publicKey); // X25519 pub (32 bytes)
+console.log(identity.signingKeyPath);          // m/44'/0'/0'/0'/0'
+console.log(identity.encryptionKeyPath);       // m/44'/0'/0'/1'/0'</code></pre>
+
+        <h3>Go Server</h3>
+        <pre><code>// The server automatically derives identity from its encrypted mnemonic on startup.
+// The mnemonic is encrypted at rest with XChaCha20-Poly1305 (see Key Security).
+//
+// Files in ~/.spacedatanetwork/keys/:
+//   mnemonic     - BIP-39 mnemonic (encrypted at rest)
+//   node.key     - Serialized libp2p private key (backward compat)
+//
+// Inspect the node identity without starting the daemon:
+//   spacedatanetwork show-identity --wasm /path/to/hd-wallet.wasm
+
+hw, _ := wasm.NewHDWalletModule(ctx, "/path/to/hd-wallet.wasm")
+seed, _ := hw.MnemonicToSeed(ctx, mnemonic, "")
+identity, _ := hw.DeriveIdentity(ctx, seed, 0)
+xpub, _ := hw.DeriveXPub(ctx, seed, 0)
+
+fmt.Println(xpub)                       // BIP-32 xpub (secp256k1)
+fmt.Println(identity.PeerID)            // libp2p PeerID (from secp256k1)
+fmt.Println(identity.SigningKeyPath)    // m/44'/0'/0'/0'/0'
+fmt.Println(identity.EncryptionKeyPath) // m/44'/0'/0'/1'/0'</code></pre>
+      </section>
+
+      <section id="identity-secp256k1" class="doc-section">
+        <h3>Secp256k1 Identity (xpub &amp; PeerID)</h3>
+        <p>The <strong>secp256k1 identity key</strong> at <code>m/44'/0'/account'</code> is the root of a node's network identity. It is derived using standard <a href="https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki" target="_blank">BIP-32</a> hierarchical deterministic derivation on the secp256k1 curve &mdash; the same curve and derivation used by Bitcoin, Ethereum, and most cryptocurrency wallets.</p>
+
+        <h4>xpub (Extended Public Key)</h4>
+        <p>The <strong>xpub</strong> is a Base58Check-encoded extended public key (prefix <code>xpub6...</code>) that encodes:</p>
+        <ul>
+          <li>The 33-byte <strong>compressed secp256k1 public key</strong></li>
+          <li>A 32-byte <strong>chain code</strong> for child key derivation</li>
+          <li>Depth, parent fingerprint, and child index metadata</li>
+        </ul>
+        <p>The xpub serves as the node's <strong>portable identity</strong>. It is safe to share publicly and is used in the <code>users</code> config section for authentication:</p>
+        <pre><code>users:
+  - xpub: "xpub6DKCyLbCHZLFR4XpFg26royZdkxExSMHTjNorEgkn1kgvQbLF5sts9RfNt3PbGhphVUh7WsFQ5H6GJBh4LhmRL27oSPt1qDkJ5mAr6FZ3Wa"
+    trust_level: admin
+    name: Operator</code></pre>
+
+        <h4>PeerID from secp256k1</h4>
+        <p>The <a href="https://docs.libp2p.io/concepts/fundamentals/peers/" target="_blank">libp2p PeerID</a> is deterministically derived from the compressed secp256k1 public key:</p>
+        <pre><code>secp256k1 pubkey (33 bytes, compressed)
+    │
+    ▼ Protobuf encode (libp2p crypto key format)
+  PublicKey { Type: Secp256k1, Data: [33 bytes] }
+    │
+    ▼ SHA-256 multihash (identity CID for keys &le;42 bytes uses inline)
+  PeerID: 16Uiu2HAm1LbvwjEH...Fm45</code></pre>
+
+        <p>Secp256k1 PeerIDs have a <code>16Uiu2...</code> prefix, distinguishing them from Ed25519 PeerIDs (<code>12D3Koo...</code>). Because the PeerID is derived purely from the xpub's public key, <strong>anyone with an xpub can compute the corresponding PeerID</strong> without any private key material.</p>
+
+        <h4>Why secp256k1 for Identity?</h4>
+        <ul>
+          <li><strong>Wallet compatibility</strong> &mdash; The same BIP-39 mnemonic used for Bitcoin/Ethereum wallets produces the SDN identity key. No separate key management needed.</li>
+          <li><strong>xpub portability</strong> &mdash; BIP-32 xpubs are a widely-understood, standardized format. Operators can share an xpub to grant access, and any SDN node can verify identity from it.</li>
+          <li><strong>1:1 xpub&harr;PeerID mapping</strong> &mdash; Every xpub maps to exactly one PeerID and vice versa, enabling deterministic peer discovery from identity alone.</li>
+          <li><strong>Multi-account isolation</strong> &mdash; Different <code>account'</code> indices produce completely independent identities from the same seed, each with its own xpub, PeerID, signing key, and encryption key.</li>
+        </ul>
+
+        <h4>Computing PeerID from xpub</h4>
+        <pre><code>// JavaScript (hd-wallet-wasm)
+import init from 'hd-wallet-wasm';
+const { libp2p } = await init();
+const peerId = libp2p.peerIdFromXpub('xpub6DKCyLb...');
+// → "16Uiu2HAm1LbvwjEH...Fm45"</code></pre>
+
+        <pre><code>// Go server CLI
+spacedatanetwork show-identity --wasm /path/to/hd-wallet.wasm
+# PeerID printed to stdout</code></pre>
+
+        <pre><code>// Go (programmatic)
+hw, _ := wasm.NewHDWalletModule(ctx, wasmPath)
+seed, _ := hw.MnemonicToSeed(ctx, mnemonic, "")
+identity, _ := hw.DeriveIdentity(ctx, seed, 0) // account 0
+fmt.Println(identity.PeerID()) // "16Uiu2HAm..."</code></pre>
+      </section>
+
+      <section id="identity-signing" class="doc-section">
+        <h3>Signing &amp; Authentication</h3>
+        <p>SDN uses a two-layer identity model:</p>
+        <ul>
+          <li><strong>Network Identity (secp256k1)</strong> &mdash; The secp256k1 key at <code>m/44'/0'/account'</code> produces the xpub and <a href="https://docs.libp2p.io/concepts/fundamentals/peers/" target="_blank">libp2p PeerID</a>. The PeerID is a multihash of the compressed secp256k1 public key, giving every xpub a unique, deterministic network address (prefix <code>16Uiu2...</code>).</li>
+          <li><strong>Digital Signatures (Ed25519)</strong> &mdash; The Ed25519 key at <code>m/44'/0'/account'/0'/0'</code> signs data (SDS schemas, messages, authentication challenges). Recipients verify signatures using the corresponding 32-byte public key.</li>
+        </ul>
+        <p>The Ed25519 signing key is bound to the secp256k1 identity via <strong>TOFU</strong> (Trust On First Use): on the first wallet-based login, the server records the Ed25519 public key alongside the xpub. Subsequent logins require both the correct xpub <em>and</em> a valid Ed25519 challenge-response signature.</p>
+
+        <pre><code>// Sign data with the identity's Ed25519 key
+const { sign, verify } = await import('@spacedatanetwork/sdn-js');
+
+const message = new TextEncoder().encode('ISS conjunction alert');
+const signature = await sign(identity.signingKey.privateKey, message);
+
+// Anyone with the public key (or PeerID) can verify
+const valid = await verify(identity.signingKey.publicKey, message, signature);
+console.log(valid); // true</code></pre>
+
+        <pre><code>// Go: sign and verify using the DerivedIdentity
+sig, _ := identity.Sign([]byte("ISS conjunction alert"))
+ok, _  := identity.Verify([]byte("ISS conjunction alert"), sig)
+// ok == true</code></pre>
+      </section>
+
+      <section id="identity-encryption" class="doc-section">
+        <h3>Encryption (X25519 ECDH)</h3>
+        <p>The encryption key at path <code>m/44'/0'/account'/1'/0'</code> is derived from the <strong>same seed</strong> as the signing key but at a different derivation path (change index <code>1</code> instead of <code>0</code>). This produces an X25519 key pair used for:</p>
+        <ul>
+          <li><strong>ECDH Key Exchange</strong> &mdash; Two peers combine their X25519 keys to derive a shared secret without transmitting it.</li>
+          <li><strong>AES-256-GCM Encryption</strong> &mdash; The shared secret encrypts data end-to-end. Only the intended recipient can decrypt.</li>
+        </ul>
+
+        <pre><code>import { encryptBytes, decryptBytes, deriveIdentity } from '@spacedatanetwork/sdn-js';
+
+// Alice and Bob each derive their identity
+const alice = await deriveIdentity(aliceSeed, 0);
+const bob   = await deriveIdentity(bobSeed, 0);
+
+// Alice encrypts a message for Bob using his X25519 public key
+const plaintext = new TextEncoder().encode('Classified orbital data');
+const encrypted = await encryptBytes(
+  plaintext,
+  bob.encryptionKey.publicKey,    // Bob's X25519 public key
+  alice.encryptionKey.privateKey  // Alice's X25519 private key
+);
+
+// Bob decrypts using Alice's public key and his private key
+const decrypted = await decryptBytes(
+  encrypted,
+  alice.encryptionKey.publicKey,  // Alice's X25519 public key
+  bob.encryptionKey.privateKey    // Bob's X25519 private key
+);
+
+console.log(new TextDecoder().decode(decrypted)); // 'Classified orbital data'</code></pre>
+
+        <h4>Key Separation</h4>
+        <p>Using separate derivation paths for signing and encryption follows cryptographic best practice. A compromised encryption key does not affect the signing key (and vice versa), even though both derive from the same master seed.</p>
+
+        <h4>ECIES (Elliptic Curve Integrated Encryption)</h4>
+        <p>The underlying <code>hd-wallet-wasm</code> library provides a unified ECIES API that combines ECDH key agreement, HKDF-SHA256 key derivation, and AES-256-GCM authenticated encryption into a single encrypt/decrypt interface.</p>
+        <ul>
+          <li><strong>Supported curves</strong>: secp256k1, P-256 (NIST), P-384 (NIST), X25519</li>
+          <li><strong>FIPS mode</strong>: When enabled, restricts to P-256/P-384 and routes HKDF + AES-GCM through OpenSSL FIPS provider</li>
+          <li><strong>Wire format</strong>: <code>[ephemeral_pubkey][iv (12B)][ciphertext][tag (16B)]</code></li>
+        </ul>
+
+        <table>
+          <thead><tr><th>Curve</th><th>Ephemeral Key</th><th>Overhead</th></tr></thead>
+          <tbody>
+            <tr><td>secp256k1</td><td>33 bytes</td><td>61 bytes</td></tr>
+            <tr><td>P-256</td><td>33 bytes</td><td>61 bytes</td></tr>
+            <tr><td>P-384</td><td>49 bytes</td><td>77 bytes</td></tr>
+            <tr><td>X25519</td><td>32 bytes</td><td>60 bytes</td></tr>
+          </tbody>
+        </table>
+
+        <h4>AES-CTR Mode</h4>
+        <p>Counter mode encryption is available for streaming use cases. Unlike AES-GCM, CTR mode does not provide authentication &mdash; pair with HMAC-SHA256 if message integrity is required. Supports AES-128, AES-192, and AES-256 (key size selects variant). Uses 16-byte IV.</p>
+
+        <h4>FlatBuffers Field Encryption</h4>
+        <p>The <code>flatc-wasm</code> package provides per-field AES-256-CTR encryption for FlatBuffer data via the <code>encryption.mjs</code> module. Fields marked with the <code>(encrypted)</code> attribute are transparently encrypted with unique keys derived per field and per record.</p>
+
+        <pre><code>import {
+  loadEncryptionWasm, EncryptionContext,
+  x25519GenerateKeyPair, encryptionHeaderFromJSON,
+} from 'flatc-wasm';
+
+await loadEncryptionWasm();
+
+// Sender creates an ECIES encryption session
+const ctx = EncryptionContext.forEncryption(recipientPubKey, {
+  algorithm: 'x25519',    // or 'secp256k1'
+  context: 'sdn-orbit-v1' // HKDF domain separation
+});
+
+// Encrypt fields in a FlatBuffer
+ctx.encryptScalar(buffer, offset, length, fieldId, recordIndex);
+const headerJSON = ctx.getHeaderJSON(); // send to recipient
+
+// Recipient decrypts
+const decCtx = EncryptionContext.forDecryption(
+  myPrivateKey,
+  encryptionHeaderFromJSON(headerJSON),
+  'sdn-orbit-v1'
+);
+decCtx.decryptScalar(buffer, offset, length, fieldId, recordIndex);</code></pre>
+
+        <p>The module also provides authenticated encryption (AES-CTR + HMAC-SHA256), standalone HKDF, SHA-256, and signature operations for secp256k1, P-256, P-384, and Ed25519. P-256/P-384 operations use the Web Crypto API for FIPS-grade implementations.</p>
+
+        <table>
+          <thead><tr><th>Operation</th><th>Backend</th><th>Async</th></tr></thead>
+          <tbody>
+            <tr><td>AES-256-CTR, HKDF, SHA-256</td><td>WASM (Crypto++/OpenSSL)</td><td>No</td></tr>
+            <tr><td>X25519 ECDH</td><td>WASM</td><td>No</td></tr>
+            <tr><td>secp256k1 ECDH / ECDSA</td><td>WASM</td><td>No</td></tr>
+            <tr><td>P-256 ECDH / ECDSA</td><td>Web Crypto</td><td>Yes</td></tr>
+            <tr><td>P-384 ECDH / ECDSA</td><td>Web Crypto</td><td>Yes</td></tr>
+            <tr><td>Ed25519 sign/verify</td><td>WASM</td><td>No</td></tr>
+            <tr><td>HMAC-SHA256</td><td>JS (via WASM SHA-256)</td><td>No</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="key-security" class="doc-section">
+        <h3>Key Security</h3>
+        <p>The BIP-39 mnemonic is the root secret from which all node keys are derived. SDN encrypts it at rest using <strong>XChaCha20-Poly1305</strong> authenticated encryption with a key derived from <strong>Argon2id</strong>.</p>
+
+        <h4>Encryption at Rest</h4>
+        <pre><code>File format:  salt (32 bytes) || nonce (24 bytes) || ciphertext
+Permissions:  0600 (owner-only read/write)
+Cipher:       XChaCha20-Poly1305 (AEAD)
+KDF:          Argon2id (time=3, memory=64 MiB, threads=4, keyLen=32)</code></pre>
+
+        <p>On first startup (or when a plaintext mnemonic is detected), the server automatically encrypts the mnemonic file in place. Subsequent reads decrypt transparently.</p>
+
+        <h4>Password Resolution</h4>
+        <p>The encryption password is resolved in order of priority:</p>
+        <ol>
+          <li><strong><code>SDN_KEY_PASSWORD</code></strong> environment variable (highest priority)</li>
+          <li><strong><code>security.key_password</code></strong> in <code>config.yaml</code></li>
+          <li><strong>Machine-derived password</strong> &mdash; deterministic Argon2id hash of <code>hostname:GOARCH:GOOS</code> with the user's home directory as salt (allows unattended startup)</li>
+        </ol>
+
+        <div class="callout callout-warning">
+          <div class="callout-title">Machine-Derived Passwords</div>
+          <p>The default machine-derived password prevents trivial offline reads of the mnemonic file but is <strong>not</strong> a substitute for a strong explicit password. For production deployments, always set <code>SDN_KEY_PASSWORD</code> or <code>security.key_password</code>.</p>
+        </div>
+
+        <h4>Configuration Example</h4>
+        <pre><code># Option 1: Environment variable (recommended for production)
+export SDN_KEY_PASSWORD="your-strong-passphrase"
+spacedatanetwork daemon
+
+# Option 2: Config file
+security:
+  key_password: "your-strong-passphrase"
+
+# Option 3: Machine-derived (default, for unattended startup)
+# No configuration needed &mdash; password is derived automatically</code></pre>
+
+        <h4>Auto-Migration</h4>
+        <p>If the server detects a <strong>plaintext</strong> mnemonic file (from an older installation), it automatically encrypts it using the resolved password. The original plaintext is overwritten with the encrypted blob. This migration is logged as a warning at startup.</p>
+      </section>
+
+      <section id="identity-pinning" class="doc-section">
+        <h3>IPFS Pinning Mechanics</h3>
+        <p>SDN uses <a href="https://ipfs.tech" target="_blank">IPFS</a>-style content addressing to identify data. Every piece of data published on the network gets a <strong>Content Identifier (CID)</strong>: a cryptographic hash that uniquely identifies the content.</p>
+
+        <h4>How Content Addressing Works</h4>
+        <pre><code>1. Data (e.g., an OMM FlatBuffer)  →  SHA-256 hash  →  CID
+   bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi
+
+2. The CID is announced on the DHT (Kademlia distributed hash table)
+3. Any node can retrieve the data by requesting the CID from the network
+4. The hash guarantees integrity: if the data changes, the CID changes</code></pre>
+
+        <h4>Pinning = Persistent Availability</h4>
+        <p>By default, data flowing through the network is transient &mdash; nodes process and forward it but don't store it permanently. <strong>Pinning</strong> is the act of committing to store a CID and serve it to the network on demand.</p>
+        <ul>
+          <li><strong>Self-hosted nodes</strong> can pin any data for free &mdash; you control your own storage.</li>
+          <li><strong>SpaceAware.io</strong> (our hosted premium node) charges a per-GB/month fee for persistent pinning, providing guaranteed availability and SLA-backed uptime.</li>
+          <li>Operators running their own marketplace nodes can set their own pinning fees or offer pinning for free.</li>
+        </ul>
+
+        <h4>Signed Pinning</h4>
+        <p>When a node pins data, it signs the pin announcement with its Ed25519 signing key. This creates a verifiable chain:</p>
+        <pre><code>Author signs data  →  CID (content hash)  →  Pin announcement (signed)
+
+Verifiers can confirm:
+  1. The data matches the CID (content integrity)
+  2. The CID was published by a specific PeerID (author attribution)
+  3. The pin was committed by a specific node (availability commitment)</code></pre>
+
+        <p>Because the signing key and PeerID are the same key (see <a href="#identity-signing">Signing & IPFS</a>), author attribution is built into the protocol &mdash; no separate identity layer is needed.</p>
+      </section>
+
+      <!-- API Reference -->
+      <section id="api-rest" class="doc-section">
+        <h2>REST API</h2>
+        <p>The HTTP API is available on the configured API port (default: 8080).</p>
+
+        <h3>Base URL</h3>
+        <pre><code>http://localhost:8080/api/v1</code></pre>
+
+        <h3>Node Information</h3>
+        <pre><code>GET /id         # Get node identity
+GET /version    # Get software version
+GET /stats      # Get node statistics</code></pre>
+
+        <h3>Peers</h3>
+        <pre><code>GET    /peers              # List connected peers
+GET    /peers/{peerId}     # Get specific peer info
+POST   /peers/connect      # Connect to a peer
+DELETE /peers/{peerId}     # Disconnect from a peer</code></pre>
+
+        <h3>PubSub</h3>
+        <pre><code>GET    /pubsub/topics              # List subscribed topics
+POST   /pubsub/subscribe           # Subscribe to a topic
+DELETE /pubsub/subscribe/{topic}   # Unsubscribe
+POST   /pubsub/publish             # Publish a message
+GET    /pubsub/messages            # Get recent messages</code></pre>
+
+        <h3>Content</h3>
+        <pre><code>GET    /content/{cid}      # Retrieve content by CID
+POST   /content            # Add content to local storage
+GET    /content/{cid}/pin  # Check if content is pinned
+POST   /content/{cid}/pin  # Pin content locally
+DELETE /content/{cid}/pin  # Unpin content
+GET    /pins               # List all pinned CIDs</code></pre>
+
+        <h3>DHT</h3>
+        <pre><code>GET  /dht/providers/{cid}   # Find providers for a CID
+POST /dht/provide/{cid}     # Announce this node provides a CID
+GET  /dht/findpeer/{peerId} # Find addresses for a peer</code></pre>
+      </section>
+
+      <section id="api-websocket" class="doc-section">
+        <h2>WebSocket API</h2>
+
+        <h3>Connect</h3>
+        <pre><code>ws://localhost:8080/ws</code></pre>
+
+        <h3>Subscribe</h3>
+        <pre><code>{
+  "type": "subscribe",
+  "topic": "OMM"
+}</code></pre>
+
+        <h3>Publish</h3>
+        <pre><code>{
+  "type": "publish",
+  "topic": "OMM",
+  "data": { ... }
+}</code></pre>
+
+        <h3>Receive Message</h3>
+        <pre><code>{
+  "type": "message",
+  "topic": "OMM",
+  "cid": "bafy...",
+  "from": "Qm...",
+  "timestamp": "2025-01-24T12:00:00Z",
+  "data": { ... }
+}</code></pre>
+      </section>
+
+      <section id="api-errors" class="doc-section">
+        <h2>Error Handling</h2>
+
+        <p>All errors return JSON:</p>
+        <pre><code>{
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Missing required field: topic",
+    "details": { }
+  }
+}</code></pre>
+
+        <table>
+          <thead>
+            <tr><th>Code</th><th>HTTP Status</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>INVALID_REQUEST</code></td><td>400</td><td>Malformed request</td></tr>
+            <tr><td><code>UNAUTHORIZED</code></td><td>401</td><td>Missing/invalid auth</td></tr>
+            <tr><td><code>FORBIDDEN</code></td><td>403</td><td>Insufficient permissions</td></tr>
+            <tr><td><code>NOT_FOUND</code></td><td>404</td><td>Resource not found</td></tr>
+            <tr><td><code>VALIDATION_ERROR</code></td><td>422</td><td>Schema validation failed</td></tr>
+            <tr><td><code>RATE_LIMITED</code></td><td>429</td><td>Too many requests</td></tr>
+            <tr><td><code>INTERNAL_ERROR</code></td><td>500</td><td>Server error</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Rate Limiting</h3>
+        <p>Default limits: 100 requests/minute for reads, 10 requests/minute for writes.</p>
+        <pre><code>X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1706097600</code></pre>
+      </section>
+
+      <!-- Schemas -->
+      <section id="schemas-overview" class="doc-section">
+        <h2>Schema Reference</h2>
+        <p>SDN supports all Space Data Standards (SDS) schemas. All data on the network must conform to these schemas.</p>
+
+        <table>
+          <thead>
+            <tr><th>Category</th><th>Schemas</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Orbit</strong></td><td>OMM, OEM, OCM, OSM</td><td>Orbital elements and ephemeris</td></tr>
+            <tr><td><strong>Conjunction</strong></td><td>CDM, CSM</td><td>Close approach and collision data</td></tr>
+            <tr><td><strong>Tracking</strong></td><td>TDM, RFM</td><td>Observation and measurement data</td></tr>
+            <tr><td><strong>Catalog</strong></td><td>CAT, SIT</td><td>Object catalogs and identification</td></tr>
+            <tr><td><strong>Entity</strong></td><td>EPM, PNM</td><td>Organization and personnel info</td></tr>
+            <tr><td><strong>Maneuver</strong></td><td>MET, MPE</td><td>Maneuver planning and execution</td></tr>
+            <tr><td><strong>Propagation</strong></td><td>HYP, EME, EOO, EOP</td><td>Propagation parameters</td></tr>
+            <tr><td><strong>Reference</strong></td><td>LCC, LDM, CRM, CTR</td><td>Launch and reference data</td></tr>
+            <tr><td><strong>Other</strong></td><td>ATM, BOV, IDM, PLD, PRG, REC, ROC, SCM, TIM, VCM</td><td>Specialized data types</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="schemas-orbit" class="doc-section">
+        <h3>OMM - Orbit Mean-Elements Message</h3>
+        <p>Standard format for mean orbital elements (TLE-equivalent).</p>
+        <pre><code>interface OMM {
+  OBJECT_NAME: string;           // Satellite name
+  OBJECT_ID: string;             // International designator
+  CENTER_NAME: string;           // Central body (EARTH)
+  REF_FRAME: string;             // Reference frame (TEME)
+  TIME_SYSTEM: string;           // Time system (UTC)
+  MEAN_ELEMENT_THEORY: string;   // Theory (SGP4)
+  EPOCH: string;                 // Epoch (ISO 8601)
+  MEAN_MOTION: number;           // Rev/day
+  ECCENTRICITY: number;          // Dimensionless
+  INCLINATION: number;           // Degrees
+  RA_OF_ASC_NODE: number;        // Degrees
+  ARG_OF_PERICENTER: number;     // Degrees
+  MEAN_ANOMALY: number;          // Degrees
+  // ... additional optional fields
+}</code></pre>
+
+        <h3>OEM - Orbit Ephemeris Message</h3>
+        <p>High-precision state vectors over time.</p>
+        <pre><code>interface OEM {
+  OBJECT_NAME: string;
+  OBJECT_ID: string;
+  CENTER_NAME: string;
+  REF_FRAME: string;
+  START_TIME: string;
+  STOP_TIME: string;
+  EPHEMERIS: EphemerisDataLine[];
+}
+
+interface EphemerisDataLine {
+  EPOCH: string;
+  X: number;      // km
+  Y: number;      // km
+  Z: number;      // km
+  X_DOT: number;  // km/s
+  Y_DOT: number;  // km/s
+  Z_DOT: number;  // km/s
+}</code></pre>
+      </section>
+
+      <section id="schemas-conjunction" class="doc-section">
+        <h3>CDM - Conjunction Data Message</h3>
+        <p>Standard format for close approach warnings.</p>
+        <pre><code>interface CDM {
+  CCSDS_CDM_VERS: string;
+  CREATION_DATE: string;
+  ORIGINATOR: string;
+  MESSAGE_ID: string;
+
+  // Conjunction info
+  TCA: string;                    // Time of Closest Approach
+  MISS_DISTANCE: number;          // meters
+  RELATIVE_SPEED: number;         // m/s
+  COLLISION_PROBABILITY?: number; // 0-1
+
+  // Object 1
+  OBJECT1_OBJECT_DESIGNATOR: string;
+  OBJECT1_OBJECT_NAME: string;
+  OBJECT1_INTERNATIONAL_DESIGNATOR: string;
+  // ... state and covariance
+
+  // Object 2
+  OBJECT2_OBJECT_DESIGNATOR: string;
+  // ... same fields as Object 1
+}</code></pre>
+      </section>
+
+      <section id="schemas-entity" class="doc-section">
+        <h3>EPM - Entity Profile Manifest</h3>
+        <p>Organization/entity identification with cryptographic keys.</p>
+        <pre><code>interface EPM {
+  ENTITY_ID: string;              // Unique identifier
+  ENTITY_NAME: string;            // Organization name
+  ENTITY_TYPE: string;            // OPERATOR, AGENCY, etc.
+  LEGAL_NAME?: string;
+  CONTACT_EMAIL?: string;
+  PUBLIC_KEY: string;             // Ed25519 public key (base64)
+  KEY_ALGORITHM: string;          // ED25519
+  CREATED: string;                // ISO 8601
+  UPDATED: string;                // ISO 8601
+}</code></pre>
+
+        <h3>Schema Validation</h3>
+        <pre><code>import { SchemaRegistry } from '@spacedatanetwork/sdn-js';
+
+// Validate data against schema
+const errors = SchemaRegistry.validate('OMM', data);
+if (errors.length > 0) {
+  console.error('Validation failed:', errors);
+}
+
+// List all schemas
+const schemas = SchemaRegistry.list();
+// ['OMM', 'OEM', 'CDM', 'EPM', ...]</code></pre>
+
+        <h3>Converting from TLE</h3>
+        <pre><code>import { tleToOMM } from '@spacedatanetwork/sdn-js';
+
+const tle = [
+  '1 25544U 98067A   25024.50000000  .00016717  00000-0  10270-3 0  9029',
+  '2 25544  51.6400 200.0000 0001000 100.0000  50.0000 15.50000000000000'
+];
+
+const omm = tleToOMM(tle);</code></pre>
+      </section>
+
+      <!-- Go Server SDK -->
+      <section id="go-builders" class="doc-section">
+        <h2>Go FlatBuffer Builders</h2>
+        <p>The <code>internal/sds</code> package provides fluent builders for creating FlatBuffer messages that conform to Space Data Standards.</p>
+
+        <h3>Available Builders</h3>
+        <table>
+          <thead>
+            <tr><th>Schema</th><th>Builder</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>OMM</td><td><code>NewOMMBuilder()</code></td><td>Orbit Mean-Elements Message</td></tr>
+            <tr><td>EPM</td><td><code>NewEPMBuilder()</code></td><td>Entity Profile Message</td></tr>
+            <tr><td>PNM</td><td><code>NewPNMBuilder()</code></td><td>Publish Notification Message</td></tr>
+            <tr><td>CAT</td><td><code>NewCATBuilder()</code></td><td>Catalog Entry</td></tr>
+          </tbody>
+        </table>
+
+        <h3>OMM Builder Example</h3>
+        <pre><code>import "github.com/spacedatanetwork/sdn-server/internal/sds"
+
+data := sds.NewOMMBuilder().
+    WithObjectName("ISS (ZARYA)").
+    WithObjectID("1998-067A").
+    WithNoradCatID(25544).
+    WithEpoch("2024-01-15T12:00:00.000Z").
+    WithMeanMotion(15.49).
+    WithEccentricity(0.0001215).
+    WithInclination(51.6434).
+    WithRaOfAscNode(178.1234).
+    WithArgOfPericenter(85.5678).
+    WithMeanAnomaly(274.9012).
+    Build()</code></pre>
+
+        <h3>EPM Builder Example</h3>
+        <pre><code>data := sds.NewEPMBuilder().
+    WithDN("John Doe").
+    WithLegalName("Acme Corporation").
+    WithFamilyName("Doe").
+    WithGivenName("John").
+    WithEmail("john@acme.com").
+    WithTelephone("+1-555-0100").
+    WithAddress("123 Main St", "Springfield", "IL", "62701", "USA").
+    WithJobTitle("Chief Engineer").
+    WithKeys("signingKey123", "encryptionKey456").
+    Build()</code></pre>
+
+        <h3>Performance</h3>
+        <p>FlatBuffers provide zero-copy deserialization with excellent performance:</p>
+        <table>
+          <thead>
+            <tr><th>Operation</th><th>Time</th><th>Throughput</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>OMM Serialize</td><td>~341ns</td><td>~3.5M ops/sec</td></tr>
+            <tr><td>OMM Deserialize</td><td>~4.6ns</td><td>~257M ops/sec</td></tr>
+            <tr><td>EPM Serialize</td><td>~614ns</td><td>~2M ops/sec</td></tr>
+            <tr><td>EPM Deserialize</td><td>~4.7ns</td><td>~255M ops/sec</td></tr>
+            <tr><td>PNM Serialize</td><td>~208ns</td><td>~5.7M ops/sec</td></tr>
+            <tr><td>PNM Deserialize</td><td>~4.7ns</td><td>~250M ops/sec</td></tr>
+          </tbody>
+        </table>
+
+        <p>For complete throughput benchmarks including PNM and CAT schemas, batch processing, and parallel tests, see <a href="#testing-throughput">Throughput Benchmarks</a>.</p>
+      </section>
+
+      <section id="go-vcard" class="doc-section">
+        <h2>vCard/QR Code Conversion</h2>
+        <p>The <code>internal/vcard</code> package provides bidirectional conversion between EPM FlatBuffers, vCard 4.0 format, and QR codes.</p>
+
+        <h3>EPM to vCard Field Mapping</h3>
+        <table>
+          <thead>
+            <tr><th>EPM Field</th><th>vCard Property</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>DN</td><td>FN (Formatted Name)</td></tr>
+            <tr><td>LEGAL_NAME</td><td>ORG (Organization)</td></tr>
+            <tr><td>FAMILY_NAME, GIVEN_NAME</td><td>N (Structured Name)</td></tr>
+            <tr><td>EMAIL</td><td>EMAIL</td></tr>
+            <tr><td>TELEPHONE</td><td>TEL</td></tr>
+            <tr><td>ADDRESS</td><td>ADR</td></tr>
+            <tr><td>JOB_TITLE</td><td>TITLE</td></tr>
+            <tr><td>OCCUPATION</td><td>ROLE</td></tr>
+            <tr><td>KEYS (Signing)</td><td>X-SIGNING-KEY</td></tr>
+            <tr><td>KEYS (Encryption)</td><td>X-ENCRYPTION-KEY</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Conversion Examples</h3>
+        <pre><code>import "github.com/spacedatanetwork/sdn-server/internal/vcard"
+
+// EPM to vCard string
+vcardStr, err := vcard.EPMToVCard(epmBytes)
+
+// vCard string to EPM
+epmBytes, err := vcard.VCardToEPM(vcardStr)
+
+// EPM to QR Code (PNG)
+pngData, err := vcard.EPMToQR(epmBytes, 256)  // 256x256 pixels
+
+// QR Code to EPM
+epmBytes, err := vcard.QRToEPM(pngData)
+
+// Full roundtrip: EPM -> vCard -> QR -> vCard -> EPM
+qrPNG, _ := vcard.EPMToQR(originalEPM, 512)
+recoveredEPM, _ := vcard.QRToEPM(qrPNG)</code></pre>
+
+        <div class="callout callout-info">
+          <div class="callout-title">QR Code Sizes</div>
+          <p>The default size is 256x256 pixels. Maximum supported is 4096x4096. For typical entity profiles, 256-512 pixels is sufficient.</p>
+        </div>
+
+        <p>For complete test coverage of the EPM/vCard/QR conversion pipeline, see <a href="#testing-epm-qr">EPM/QR Conversion Tests</a>.</p>
+      </section>
+
+      <section id="go-tipqueue" class="doc-section">
+        <h2>PNM Tip/Queue System</h2>
+        <p>The tip/queue system uses <strong>Publish Notification Messages (PNM)</strong> as the core messaging mechanism for content discovery. This is a fundamental design principle: <strong>not all pinned data should be broadcast</strong>. Instead, nodes announce content availability via lightweight PNM messages, allowing subscribers to selectively fetch and pin content based on configurable policies.</p>
+
+        <div class="callout callout-warning">
+          <div class="callout-title">Key Design Principle</div>
+          <p>PNM-based messaging decouples content storage from content notification. When you pin data locally, you don't automatically broadcast it to everyone. Instead, you publish a PNM "tip" that announces the content's CID, schema type, and your signature. Subscribers decide whether to fetch based on their trust settings and schema preferences.</p>
+        </div>
+
+        <h3>Why PNM-Based Messaging?</h3>
+        <ul>
+          <li><strong>Bandwidth efficiency:</strong> PNM messages are tiny (~100-200 bytes) compared to actual content (KB to MB)</li>
+          <li><strong>Selective consumption:</strong> Nodes only fetch content they're interested in</li>
+          <li><strong>Trust-based filtering:</strong> Configure which peers and schema types to auto-fetch</li>
+          <li><strong>Spam resistance:</strong> Malicious nodes can't flood the network with large payloads</li>
+          <li><strong>Verifiable announcements:</strong> PNMs include cryptographic signatures for authenticity</li>
+        </ul>
+
+        <h3>Architecture</h3>
+        <pre><code>Publisher                           Subscriber
+    |                                   |
+    |-- Pin content locally             |
+    |-- Create PNM with CID + sig       |
+    |-- Broadcast PNM on /sdn/PNM ------|--> Receive PNM (lightweight notification)
+    |                                   |-- Check config for peer + schema
+    |                                   |-- If trusted + autoFetch: fetch by CID
+    |                                   |-- If autoPin: pin with TTL
+    |                                   |
+    |   [Content NOT sent unless        |   [Content fetched on-demand
+    |    explicitly requested]          |    based on subscriber policy]</code></pre>
+
+        <h3>Configuration Levels</h3>
+        <p>Configuration supports per-source AND per-schema settings with priority resolution:</p>
+        <table>
+          <thead>
+            <tr><th>Priority</th><th>Level</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>1 (highest)</td><td>Source+Schema</td><td>Specific peer + specific schema</td></tr>
+            <tr><td>2</td><td>Source</td><td>All schemas from a specific peer</td></tr>
+            <tr><td>3</td><td>Schema</td><td>Specific schema from any peer</td></tr>
+            <tr><td>4 (lowest)</td><td>System</td><td>Global defaults</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Configuration Example</h3>
+        <pre><code>import "github.com/spacedatanetwork/sdn-server/internal/pubsub"
+
+config := pubsub.NewTipQueueConfig()
+
+// System defaults
+config.DefaultAutoFetch = false
+config.DefaultAutoPin = false
+config.DefaultTTL = 24 * time.Hour
+
+// Per-schema: always fetch conjunction data
+config.SetSchemaDefault("CDM", &pubsub.SchemaConfig{
+    AutoFetch: true,
+    AutoPin:   true,
+    TTL:       48 * time.Hour,
+    Priority:  10,  // Critical data
+})
+
+// Per-source: trust a partner
+config.SetSourceOverride("trusted-peer-id", &pubsub.SourceConfig{
+    Trusted:   true,
+    AutoFetch: pubsub.BoolPtr(true),
+    TTL:       pubsub.DurationPtr(72 * time.Hour),
+})
+
+// Per-source+schema: custom handling
+config.SetSourceSchemaOverride("trusted-peer-id", "OMM", &pubsub.SchemaConfig{
+    AutoFetch: true,
+    AutoPin:   true,
+    TTL:       168 * time.Hour,  // 1 week
+})</code></pre>
+
+        <h3>TipQueue Usage</h3>
+        <pre><code>// Create and configure
+tq := pubsub.NewTipQueue(config)
+tq.SetTopicManager(topicManager)
+tq.SetFetcher(fetcher)
+tq.SetPinner(pinner)
+
+// Handle received tips
+tq.OnTip(func(tip *pubsub.Tip, cfg pubsub.ResolvedConfig) {
+    log.Printf("Tip from %s: CID=%s Schema=%s",
+        tip.PeerID, tip.CID, tip.SchemaType)
+})
+
+// Start listening
+tq.Subscribe()
+
+// Publish your own content
+tq.PublishTip(ctx, pubsub.PublishOptions{
+    CID:        "bafybei...",
+    SchemaType: "OMM",
+    Signature:  "0x...",
+})</code></pre>
+
+        <h3>Configurable Options</h3>
+        <table>
+          <thead>
+            <tr><th>Option</th><th>Type</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>AutoFetch</td><td>bool</td><td>Automatically fetch content by CID</td></tr>
+            <tr><td>AutoPin</td><td>bool</td><td>Automatically pin fetched content</td></tr>
+            <tr><td>TTL</td><td>duration</td><td>Time-to-live for pinned content</td></tr>
+            <tr><td>Priority</td><td>int</td><td>Queue priority (higher = more important)</td></tr>
+            <tr><td>Trusted</td><td>bool</td><td>Mark source as trusted</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Testing & Benchmarks -->
+      <section id="testing-throughput" class="doc-section">
+        <h2>Throughput Benchmarks</h2>
+        <p>The SDN server includes comprehensive benchmark tests for measuring SpaceDataStandards message throughput. All benchmarks use the current SDS FlatBuffer schemas.</p>
+
+        <h3>Running Benchmarks</h3>
+        <pre><code># Run all SDS benchmarks
+cd sdn-server
+go test -bench=. ./internal/sds/
+
+# Run specific schema benchmarks
+go test -bench=BenchmarkOMM ./internal/sds/
+go test -bench=BenchmarkEPM ./internal/sds/
+go test -bench=BenchmarkPNM ./internal/sds/
+go test -bench=BenchmarkCAT ./internal/sds/
+
+# Run with memory allocation stats
+go test -bench=. -benchmem ./internal/sds/
+
+# Run schema comparison suite
+go test -bench=BenchmarkSchemaComparison ./internal/sds/</code></pre>
+
+        <h3>Benchmark Results</h3>
+        <p>Actual throughput on Apple M3 Ultra (results vary by hardware):</p>
+        <table>
+          <thead>
+            <tr><th>Schema</th><th>Operation</th><th>Throughput</th><th>Latency</th><th>Memory</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>OMM</td><td>Serialize</td><td>~3.5M ops/sec</td><td>~341ns</td><td>288 B/op</td></tr>
+            <tr><td>OMM</td><td>Deserialize</td><td>~257M ops/sec</td><td>~4.6ns</td><td>0 B/op</td></tr>
+            <tr><td>EPM</td><td>Serialize</td><td>~2M ops/sec</td><td>~614ns</td><td>592 B/op</td></tr>
+            <tr><td>EPM</td><td>Deserialize</td><td>~255M ops/sec</td><td>~4.7ns</td><td>0 B/op</td></tr>
+            <tr><td>PNM</td><td>Serialize</td><td>~5.7M ops/sec</td><td>~208ns</td><td>288 B/op</td></tr>
+            <tr><td>PNM</td><td>Deserialize</td><td>~250M ops/sec</td><td>~4.7ns</td><td>0 B/op</td></tr>
+            <tr><td>CAT</td><td>Serialize</td><td>~4.6M ops/sec</td><td>~268ns</td><td>224 B/op</td></tr>
+            <tr><td>CAT</td><td>Deserialize</td><td>~255M ops/sec</td><td>~4.7ns</td><td>0 B/op</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout callout-info">
+          <div class="callout-title">Zero-Copy Deserialization</div>
+          <p>FlatBuffers' 0 B/op for deserialization demonstrates true zero-copy access. The data is read directly from the buffer without allocating new memory, resulting in ~250M ops/sec throughput.</p>
+        </div>
+
+        <h3>Batch Processing</h3>
+        <pre><code># Test batch message processing (100 messages)
+go test -bench=BenchmarkBatchProcessing ./internal/sds/
+
+# Test parallel processing
+go test -bench=BenchmarkParallelProcessing ./internal/sds/</code></pre>
+
+        <h3>Message Sizes</h3>
+        <pre><code># Report message sizes in bytes
+go test -bench=BenchmarkMessageSize ./internal/sds/</code></pre>
+
+        <table>
+          <thead>
+            <tr><th>Schema</th><th>Typical Size</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>OMM</td><td>~200-400 bytes</td><td>Orbit mean elements</td></tr>
+            <tr><td>EPM</td><td>~300-800 bytes</td><td>Entity profile (varies with fields)</td></tr>
+            <tr><td>PNM</td><td>~100-200 bytes</td><td>Publish notification (lightweight)</td></tr>
+            <tr><td>CAT</td><td>~150-300 bytes</td><td>Catalog entry</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="testing-roundtrip" class="doc-section">
+        <h2>Roundtrip Tests</h2>
+        <p>Roundtrip tests verify that data survives serialization and deserialization without loss.</p>
+
+        <h3>Running Roundtrip Tests</h3>
+        <pre><code># Run all SDS roundtrip tests
+go test -v -run=Roundtrip ./internal/sds/
+
+# Run vCard roundtrip tests
+go test -v -run=Roundtrip ./internal/vcard/
+
+# Run with race detection
+go test -race -run=Roundtrip ./internal/...</code></pre>
+
+        <h3>What's Tested</h3>
+        <ul>
+          <li><strong>OMM roundtrip:</strong> All orbital elements preserved through serialize/deserialize</li>
+          <li><strong>EPM roundtrip:</strong> Entity profiles with addresses, keys, alternate names</li>
+          <li><strong>PNM roundtrip:</strong> Publish notifications with CID, signatures, timestamps</li>
+          <li><strong>CAT roundtrip:</strong> Catalog entries with orbital parameters</li>
+          <li><strong>vCard roundtrip:</strong> EPM to vCard to EPM conversion</li>
+          <li><strong>QR code roundtrip:</strong> EPM to QR to EPM conversion</li>
+        </ul>
+
+        <h3>Example Test Output</h3>
+        <pre><code>=== RUN   TestOMMRoundtrip
+--- PASS: TestOMMRoundtrip (0.00s)
+=== RUN   TestEPMRoundtripWithAddress
+--- PASS: TestEPMRoundtripWithAddress (0.00s)
+=== RUN   TestEPMVCardRoundtrip
+--- PASS: TestEPMVCardRoundtrip (0.00s)
+=== RUN   TestEPMQRFullRoundtrip
+--- PASS: TestEPMQRFullRoundtrip (0.02s)
+PASS</code></pre>
+      </section>
+
+      <section id="testing-epm-qr" class="doc-section">
+        <h2>EPM / vCard / QR Code Conversion Tests</h2>
+        <p>The complete conversion pipeline enables Entity Profile Messages to be shared as standard vCards and embedded in QR codes for easy scanning.</p>
+
+        <h3>Conversion Flow</h3>
+        <pre><code>┌─────────────────────────────────────────────────────────────────┐
+│                    Full Conversion Pipeline                      │
+└─────────────────────────────────────────────────────────────────┘
+
+     EPM (FlatBuffer)                    vCard 4.0 String
+    ┌──────────────┐                   ┌──────────────────┐
+    │ DN           │                   │ BEGIN:VCARD      │
+    │ LEGAL_NAME   │  ──EPMToVCard──►  │ VERSION:4.0      │
+    │ FAMILY_NAME  │                   │ FN:John Doe      │
+    │ GIVEN_NAME   │                   │ N:Doe;John;;;    │
+    │ EMAIL        │  ◄──VCardToEPM──  │ ORG:Acme Corp    │
+    │ TELEPHONE    │                   │ EMAIL:john@...   │
+    │ ADDRESS      │                   │ ADR:;;123 Main...│
+    │ KEYS[]       │                   │ X-SIGNING-KEY:...│
+    └──────────────┘                   └──────────────────┘
+           │                                    │
+           │                                    │
+           ▼                                    ▼
+    ┌──────────────┐                   ┌──────────────────┐
+    │   EPMToQR    │                   │   VCardToQR      │
+    │   (direct)   │                   │                  │
+    └──────────────┘                   └──────────────────┘
+           │                                    │
+           └────────────┬───────────────────────┘
+                        ▼
+               ┌──────────────────┐
+               │   QR Code PNG    │
+               │   (scannable)    │
+               └──────────────────┘
+                        │
+           ┌────────────┴───────────────────────┐
+           ▼                                    ▼
+    ┌──────────────┐                   ┌──────────────────┐
+    │   QRToEPM    │                   │   QRToVCard      │
+    │   (direct)   │                   │                  │
+    └──────────────┘                   └──────────────────┘</code></pre>
+
+        <h3>Running EPM/QR Tests</h3>
+        <pre><code># Run all vCard tests
+go test -v ./internal/vcard/
+
+# Run QR-specific tests
+go test -v -run=QR ./internal/vcard/
+
+# Run the full roundtrip test
+go test -v -run=TestEPMQRFullRoundtrip ./internal/vcard/
+
+# Run benchmarks
+go test -bench=. ./internal/vcard/</code></pre>
+
+        <h3>Test Coverage</h3>
+        <table>
+          <thead>
+            <tr><th>Test</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>TestEPMToVCard</code></td><td>EPM FlatBuffer to vCard string conversion</td></tr>
+            <tr><td><code>TestVCardToEPM</code></td><td>vCard string to EPM FlatBuffer conversion</td></tr>
+            <tr><td><code>TestEPMVCardRoundtrip</code></td><td>EPM → vCard → EPM preserves all fields</td></tr>
+            <tr><td><code>TestVCardEPMRoundtrip</code></td><td>vCard → EPM → vCard preserves all fields</td></tr>
+            <tr><td><code>TestVCardToQR</code></td><td>vCard string to QR code PNG</td></tr>
+            <tr><td><code>TestQRToVCard</code></td><td>QR code PNG to vCard string</td></tr>
+            <tr><td><code>TestEPMToQR</code></td><td>Direct EPM to QR code conversion</td></tr>
+            <tr><td><code>TestQRToEPM</code></td><td>Direct QR code to EPM conversion</td></tr>
+            <tr><td><code>TestEPMQRFullRoundtrip</code></td><td>Complete: EPM → vCard → QR → vCard → EPM</td></tr>
+            <tr><td><code>TestVCardQRRoundtrip</code></td><td>vCard → QR → vCard with various content</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Field Mapping</h3>
+        <p>Complete mapping between EPM FlatBuffer fields and vCard 4.0 properties:</p>
+        <table>
+          <thead>
+            <tr><th>EPM Field</th><th>vCard Property</th><th>Format</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>DN</td><td>FN</td><td>Single value</td></tr>
+            <tr><td>LEGAL_NAME</td><td>ORG</td><td>Single value</td></tr>
+            <tr><td>FAMILY_NAME</td><td>N (part 1)</td><td>family;given;additional;prefix;suffix</td></tr>
+            <tr><td>GIVEN_NAME</td><td>N (part 2)</td><td></td></tr>
+            <tr><td>ADDITIONAL_NAME</td><td>N (part 3)</td><td></td></tr>
+            <tr><td>HONORIFIC_PREFIX</td><td>N (part 4)</td><td></td></tr>
+            <tr><td>HONORIFIC_SUFFIX</td><td>N (part 5)</td><td></td></tr>
+            <tr><td>EMAIL</td><td>EMAIL</td><td>Single value</td></tr>
+            <tr><td>TELEPHONE</td><td>TEL</td><td>Single value</td></tr>
+            <tr><td>JOB_TITLE</td><td>TITLE</td><td>Single value</td></tr>
+            <tr><td>OCCUPATION</td><td>ROLE</td><td>Single value</td></tr>
+            <tr><td>ADDRESS.STREET</td><td>ADR (part 3)</td><td>;;street;locality;region;postal;country</td></tr>
+            <tr><td>ADDRESS.LOCALITY</td><td>ADR (part 4)</td><td></td></tr>
+            <tr><td>ADDRESS.REGION</td><td>ADR (part 5)</td><td></td></tr>
+            <tr><td>ADDRESS.POSTAL_CODE</td><td>ADR (part 6)</td><td></td></tr>
+            <tr><td>ADDRESS.COUNTRY</td><td>ADR (part 7)</td><td></td></tr>
+            <tr><td>KEYS (Signing)</td><td>X-SIGNING-KEY</td><td>Custom extension</td></tr>
+            <tr><td>KEYS (Encryption)</td><td>X-ENCRYPTION-KEY</td><td>Custom extension</td></tr>
+            <tr><td>MULTIFORMAT_ADDRESS</td><td>URL</td><td>IPNS/<a href="https://ipfs.tech" target="_blank" style="color: inherit; text-decoration: underline;">IPFS</a> addresses</td></tr>
+            <tr><td>ALTERNATE_NAMES</td><td>X-ALTERNATE-NAME</td><td>Custom extension (multiple)</td></tr>
+          </tbody>
+        </table>
+
+        <h3>QR Code Specifications</h3>
+        <ul>
+          <li><strong>Default size:</strong> 256x256 pixels</li>
+          <li><strong>Maximum size:</strong> 4096x4096 pixels</li>
+          <li><strong>Error correction:</strong> Medium level (recovers ~15% damage)</li>
+          <li><strong>Format:</strong> PNG</li>
+          <li><strong>Typical capacity:</strong> ~1KB of vCard data</li>
+        </ul>
+
+        <h3>Conversion Throughput</h3>
+        <p>Benchmark results on Apple M3 Ultra:</p>
+        <table>
+          <thead>
+            <tr><th>Operation</th><th>Throughput</th><th>Latency</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>EPM to vCard</td><td>~336K ops/sec</td><td>~3.6\u00b5s</td></tr>
+            <tr><td>vCard to EPM</td><td>~250K ops/sec</td><td>~4.4\u00b5s</td></tr>
+            <tr><td>vCard to QR</td><td>~1K ops/sec</td><td>~1.6ms</td></tr>
+            <tr><td>QR to vCard</td><td>~2.2K ops/sec</td><td>~0.6ms</td></tr>
+            <tr><td>Full Roundtrip (EPM\u2192QR\u2192EPM)</td><td>~673 ops/sec</td><td>~1.7ms</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Code Example</h3>
+        <pre><code>import "github.com/spacedatanetwork/sdn-server/internal/vcard"
+import "github.com/spacedatanetwork/sdn-server/internal/sds"
+
+// Create an Entity Profile
+epmBytes := sds.NewEPMBuilder().
+    WithDN("Dr. Jane Smith").
+    WithLegalName("Space Agency").
+    WithFamilyName("Smith").
+    WithGivenName("Jane").
+    WithEmail("jane@spaceagency.gov").
+    WithTelephone("+1-555-0199").
+    WithAddress("1 Rocket Way", "Houston", "TX", "77058", "USA").
+    WithJobTitle("Chief Scientist").
+    WithKeys("0xed25519signingkey", "0xed25519encryptionkey").
+    Build()
+
+// Convert to vCard string
+vcardStr, err := vcard.EPMToVCard(epmBytes)
+// Result:
+// BEGIN:VCARD
+// VERSION:4.0
+// FN:Dr. Jane Smith
+// N:Smith;Jane;;;
+// ORG:Space Agency
+// EMAIL:jane@spaceagency.gov
+// TEL:+1-555-0199
+// TITLE:Chief Scientist
+// ADR:;;1 Rocket Way;Houston;TX;77058;USA
+// X-SIGNING-KEY:0xed25519signingkey
+// X-ENCRYPTION-KEY:0xed25519encryptionkey
+// END:VCARD
+
+// Generate QR code (256x256 PNG)
+pngData, err := vcard.EPMToQR(epmBytes, 256)
+os.WriteFile("entity-profile.png", pngData, 0644)
+
+// Scan QR code back to EPM
+scannedEPM, err := vcard.QRToEPM(pngData)
+// scannedEPM contains the original entity profile</code></pre>
+
+        <div class="callout callout-info">
+          <div class="callout-title">Use Cases</div>
+          <p>Entity profiles in QR codes enable quick onboarding: new operators can scan a QR code to import an organization's public keys, contact info, and IPNS addresses. This is particularly useful for establishing trust relationships at conferences, coordination meetings, or during on-site visits.</p>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script>
+    // Highlight current section in sidebar
+    const sections = document.querySelectorAll('.doc-section');
+    const sidebarLinks = document.querySelectorAll('.sidebar-links a');
+
+    function updateActiveLink() {
+      let current = '';
+      sections.forEach(section => {
+        const sectionTop = section.offsetTop - 100;
+        if (window.scrollY >= sectionTop) {
+          current = section.getAttribute('id');
+        }
+      });
+
+      sidebarLinks.forEach(link => {
+        link.classList.remove('active');
+        if (link.getAttribute('href') === '#' + current) {
+          link.classList.add('active');
+        }
+      });
+    }
+
+    window.addEventListener('scroll', updateActiveLink);
+    updateActiveLink();
+
+    // Mobile sidebar toggle
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('open');
+      document.getElementById('sidebarOverlay').classList.toggle('open');
+    }
+
+    // Close sidebar when clicking a link on mobile
+    document.querySelectorAll('.sidebar-links a').forEach(link => {
+      link.addEventListener('click', () => {
+        document.getElementById('sidebar').classList.remove('open');
+        document.getElementById('sidebarOverlay').classList.remove('open');
+      });
+    });
+
+    // Quick Start tabs
+    function switchQsTab(tab) {
+      document.querySelectorAll('.qs-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.qs-panel').forEach(p => p.classList.remove('active'));
+      document.querySelector(`[onclick="switchQsTab('${tab}')"]`).classList.add('active');
+      document.getElementById('qs-' + tab).classList.add('active');
+    }
+  </script>
+</body>
+</html>

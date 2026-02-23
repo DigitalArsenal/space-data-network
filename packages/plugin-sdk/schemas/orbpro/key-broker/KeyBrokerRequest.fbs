@@ -1,0 +1,10 @@
+namespace orbpro.keybroker;
+
+// Request envelope sent to /orbpro/key-broker/1.0.0.
+table KeyBrokerRequest {
+  // Opaque protocol-v2 key-exchange packet interpreted by the OrbPro key plugin.
+  packet:[ubyte] (required);
+}
+
+root_type KeyBrokerRequest;
+file_identifier "OBKQ";

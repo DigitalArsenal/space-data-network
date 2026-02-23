@@ -1,0 +1,188 @@
+{
+  "title": "設定",
+  "save": "保存",
+  "saving": "保存中……",
+  "reset": "リセット",
+  "learnMoreLink": "もっと詳しく知る。",
+  "showOptions": "",
+  "pinningServices": {
+    "title": "ピンサービス",
+    "description": "あなたのノードのアイテムに対し、ガベージコレクションを絶対に走らせたくない場合（ファイルを削除した場合を含む）はローカルピンを使用してください。\n\n持続的にファイルを保持したい場合、あなたのアカウントを他のリモートピンサービスに紐付けることが出来ます。紐付けを行うと、ローカルノードがオフラインとなった場合でも、あなたのファイルのバックアップコピーを他のホスト上で保持することが出来ます。",
+    "noPinRemoteDescription": "",
+    "addAutoUpload": "自動アップロードを有効化",
+    "removeAutoUpload": "自動アップロードを無効化"
+  },
+  "language": "言語",
+  "analytics": "分析",
+  "cliTutorMode": "CUI チューターモード",
+  "config": "",
+  "languageModal": {
+    "title": "言語を変更",
+    "description": "利用したい言語を選択してください",
+    "translationProjectIntro": "IPFSをみんなにとってよりよくするために翻訳を追加、校正しましょう!",
+    "translationProjectLink": "IPFS翻訳プロジェクトに参加"
+  },
+  "apiDescription": "",
+  "publicSubdomainGatewayDescription": "",
+  "publicPathGatewayDescription": "",
+  "retrievalDiagnosticService": {
+    "title": "",
+    "description": ""
+  },
+  "cliDescription": "<0>\"コードを見る\"オプション<1></1>を有効にするためには、このオプションを有効にします。\"コードを見る\"ボタンは普通のIPFSコマンドの隣に表示されます。\nこのボタンを押すことで、CUIのチートシートが表示され、そこからコマンドをコピー&ペーストすることが出来ます。</0>",
+  "cliModal": {
+    "extraNotesJsonConfig": "このページのコードエディタに使いたいコードを書いて、コピーボタンの隣にあるダウンロードアイコンを押せば、JSONファイルの形式でスクリプトが保存されます。このスクリプトはそのままインポートして使うことが出来ます。"
+  },
+  "pinningModal": {
+    "title": "ピンサービスのプロバイダを選択してください",
+    "description": "ピンサービスのプロバイダが見つかりませんか？<1>独自のプロバイダを追加できます<1>"
+  },
+  "pinningServiceModal": {
+    "title": "独自のピンサービスを設定します",
+    "description": "ピンサービスが他の人にも使えるようにしませんか？<1>方法はここで紹介しています<1>",
+    "service": "サービス",
+    "nickname": "ニックネーム",
+    "nicknamePlaceholder": "サービスの名前を決めます",
+    "apiEndpoint": "APIエンドポイント",
+    "apiEndpointPlaceholder": "APIエンドポイントのURLを入力します",
+    "secretApiKey": "アクセストークン（シークレット）",
+    "secretApiKeyHowToLink": "新規トークンの生成方法",
+    "autoUpload": "自動アップロード",
+    "complianceLabel": ""
+  },
+  "autoUploadModal": {
+    "title": "{name}のアップロードポリシーを変更する",
+    "description": "この設定を有効にすると自動アップロードの時にあなたのファイルディレクトリのルートを定期的にピンします（すべてのファイルをリモートにピンします。IPFSノードがオフラインとなったときでも他のピアからそのファイルを利用することが出来ます）。\n無効にすると自動でのピンは行われません（ファイル画面から自分でピンを設定することは可能です）。"
+  },
+  "errors": {
+    "nickname": "ニックネームが必要です",
+    "apiError": "APIエラー",
+    "apiEndpoint": "有効なURLが必要です",
+    "secretApiKey": "アクセストークン（シークレット）が必要です",
+    "failedToFetch": "読み込みに失敗しました",
+    "failedToFetchTitle": "リモートサービスからピンのカウントを取得できませんでした。ピンがオンラインで、かつ、正しい情報を入力しているか確認してください。\n新規に追加したサービスであれば、一度削除してもう一度追加し直してみてください。"
+  },
+  "actions": {
+    "addService": "サービスを追加",
+    "generateKey": "",
+    "edit": "変更",
+    "close": "閉じる",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "enable": "有効",
+    "disable": "無効"
+  },
+  "edit": "編集",
+  "visitService": "サービスのURLを開く",
+  "remove": "削除",
+  "localPinning": "ローカルピン",
+  "service": "サービス",
+  "size": "サイズ",
+  "pins": "ピン",
+  "autoUpload": "自動アップロード",
+  "autoUploadPolicy": {
+    "true": "すべてのファイル",
+    "false": "オフ"
+  },
+  "fetchingSettings": "設定を読み込んでいます…",
+  "ipfsDaemonOffline": "",
+  "settingsUnavailable": "",
+  "settingsHaveChanged": "設定が変更されました。<1>リセット</1>をクリックして編集しているファイルを再読み込みしてください。",
+  "errorOccured": "変更の保存中にエラーが発生しました。",
+  "checkConsole": "詳細については、ブラウザコンソールを参照してください。",
+  "changesSaved": "変更が保存されました。",
+  "settingsWillBeUsedNextTime": "",
+  "ipfsConfigDescription": "",
+  "ipfsConfigHelp": "より詳しい情報については、公式ドキュメントを参照してください。",
+  "AnalyticsToggle": {
+    "label": "匿名の利用状況データを送信することで、このアプリケーションの改善に協力する",
+    "summary": "送信するデータを選択する",
+    "paragraph1": "CIDやファイル名、個人情報は収集されません。我々はどの機能を次に開発すれば便利なのかを判断するための指標として利用します。加えて、IPFSデーモンのシステム設定情報をテストのために利用します。",
+    "paragraph2": "Protocol Labsはこのアプリの匿名の使用状況を記録するために、<1>Countly</1>インスタンスを持っています。",
+    "basicInfo": "次に示すより詳しい情報はcountly.ipfs.ioに送信されます。",
+    "optionalInfo": "送信する情報を選択してください:",
+    "sessions": {
+      "label": "セッション",
+      "summary": "いつ、どれくらい長くアプリを使用しているのかとブラウザの指標",
+      "details": "ブラウザ指標として次のものが送信されます。<1><0>ランダムに生成されたデバイスID</0><1>セッションが開始された時刻</1><2>セッションが保持されている期間</2><3>アプリのバージョン: 例. 2.4.4</3><4>言語: 例. en-GB</4><5>ユーザエージェント: 例 Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_2) ...</5><6>画面解像度: 例 800×600</6><7>画面ピクセル密度</7></1>"
+    },
+    "events": {
+      "label": "イベント",
+      "summary": "ファイルの追加や削除のような行動とそれがどれくらいの時間を消費したのか",
+      "details": "アプリ特有の行動です。我々は、行動が発生してから終わるまでの時間を記録し、その行動にいくつのアイテムが関係するかを計測します。"
+    },
+    "views": {
+      "label": "閲覧ページ数",
+      "summary": "アプリであなたが訪れたページの数を示します",
+      "details": "あなたが訪れたページの数を示します。パスは完全なURLだけでなく、ルートを含むものを記録します。"
+    },
+    "location": {
+      "label": "位置",
+      "summary": "IPアドレスから推測された国コード(IPアドレスは保存されません)",
+      "details": "あなたのIPアドレスから\"FR\"ならばフランスであるというように、あなたの国を計算します。位置情報を追跡されたくないのであれば、位置検索を無効にするためにサーバーの設定を変更し、空の位置情報を全てのリクエストに設定してください。この情報は、我々がどの言語を集中して翻訳に専念するか、次のイベントをどこで開催するのかを決定するために利用されます。"
+    },
+    "crashes": {
+      "label": "アプリエラー情報",
+      "summary": "Javascriptのエラーメッセージとスタックトレースです",
+      "details": "可能であれば、アプリを利用しているときにエラーが起きた際に、Javascriptのエラーメッセージとスタックトレースを記録します。これはアプリケーションがうまく動作しない状態を解析する際にとても有用な情報ですが、<1>エラーメッセージは識別可能な情報、たとえばCIDやファイルパスを含む可能性があり</1>もしそれらを送信してもいいならばこれを有効にしてください。"
+    }
+  },
+  "cliToggle": {
+    "label": "コマンドライン・インターフェイス（CUI）のチューターモードを有効にする"
+  },
+  "tour": {
+    "step1": {
+      "title": "設定",
+      "paragraph1": "",
+      "paragraph2": "もしあなたがIPFS Desktopを利用しているのであれば、ここでも特殊な設定が確認できるでしょう"
+    },
+    "step2": {
+      "title": "",
+      "paragraph1": ""
+    },
+    "step3": {
+      "title": "サービスをピン留めする",
+      "paragraph1": "<0>他のリモートピンサービスのアカウントをお持ちの場合は、ここで追加してください。ピン留め/解除をファイル画面から直接出来るようになります。詳しくは<1>IPFSドキュメント</1>を参照してください。</0>"
+    },
+    "step4": {
+      "title": "言語リスト",
+      "paragraph1": "<0>WebUIの言語を変更します。もし利用したい言語が見つからないときには<1>Transifex</1>で行われている翻訳プロジェクトに参加して、あなたが翻訳を作成してください。</0>"
+    },
+    "step5": {
+      "title": "利用状況の分析",
+      "paragraph1": "あなたが情報提供に承諾しているのであれば、WebUIをよりよくするための匿名化された利用統計の送信を行います。",
+      "paragraph2": "あなたは送信されるデータを選択できますし、我々はあなたをあなたとして特定することはできません。我々はプライバシーを何よりも重視しています。"
+    },
+    "step6": {
+      "title": "CUI チューターモード",
+      "paragraph1": "CUI版のコマンドのショートカットを見るためには、CUIチューターモードを有効にしてください - もしあなたがターミナルからのIPFS操作を勉強中の時や、コマンドをうっかり忘れてしまっている場合に役立つでしょう"
+    },
+    "step7": {
+      "title": "",
+      "paragraph1": "",
+      "paragraph2": "変更した設定を反映させるには、IPFSノードの再起動を忘れないでください！"
+    }
+  },
+  "Experiments": {
+    "description": "ここでは、実験的なIPFSの機能の有効化ができます。これらはテスト中の機能であるため完璧に動作するとは限りません。フィードバックをお待ちしています。",
+    "issueUrl": "WebUIに関する問題/議論/質問を投稿",
+    "feedbackUrl": "フィードバックを送信",
+    "readMoreUrl": "もっと読む"
+  },
+  "ipnsPublishingKeys": {
+    "title": "",
+    "description": ""
+  },
+  "generateKeyModal": {
+    "title": "",
+    "description": ""
+  },
+  "renameKeyModal": {
+    "title": "",
+    "description": ""
+  },
+  "removeKeyModal": {
+    "title": "",
+    "description": ""
+  }
+}

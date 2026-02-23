@@ -1,0 +1,24 @@
+{
+  "name": "sdn-wasi",
+  "description": "SDN WASI module configuration for WasmEdge",
+  "wasi": {
+    "preopens": {
+      "/data": "./data",
+      "/config": "./config"
+    },
+    "args": [],
+    "envs": []
+  },
+  "aot": {
+    "optimization_level": 3,
+    "output_format": "native"
+  },
+  "statistics": {
+    "instructions": false,
+    "memory": true,
+    "cost": false
+  },
+  "limits": {
+    "memory_pages": 4096
+  }
+}

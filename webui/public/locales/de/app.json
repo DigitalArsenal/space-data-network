@@ -1,0 +1,109 @@
+{
+  "actions": {
+    "add": "Hinzufügen",
+    "apply": "Anwenden",
+    "browse": "Durchstöbern",
+    "cancel": "Abbrechen",
+    "change": "Ändern",
+    "clear": "Löschen",
+    "close": "Schließen",
+    "copy": "Kopieren",
+    "create": "Erstellen",
+    "default": "",
+    "remove": "Entfernen",
+    "download": "Herunterladen",
+    "edit": "Bearbeiten",
+    "import": "Importieren",
+    "inspect": "Untersuchen",
+    "more": "Mehr",
+    "rename": "Umbenennen",
+    "reset": "Zurücksetzen",
+    "save": "Speichern",
+    "saving": "Speichervorgang läuft…",
+    "setPinning": "Anheften einstellen",
+    "submit": "Absenden",
+    "unselectAll": "Alle abwählen",
+    "generate": "Generieren",
+    "publish": "Veröffentlichen",
+    "downloadCar": "",
+    "done": "Fertig",
+    "checkRetrieval": ""
+  },
+  "cliModal": {
+    "description": ""
+  },
+  "nav": {
+    "bugsLink": "Fehler melden",
+    "codeLink": "Quelltext anzeigen"
+  },
+  "status": {
+    "connectedToIpfs": "Mit dem IPFS verbunden",
+    "connectingToIpfs": "Mit IPFS verbinden…",
+    "couldNotConnect": ""
+  },
+  "apiAddressForm": {
+    "placeholder": ""
+  },
+  "publicGatewayForm": {
+    "placeholder": ""
+  },
+  "publicSubdomainGatewayForm": {
+    "placeholder": "Gib eine URL ein (https://dweb.link)"
+  },
+  "ipfsCheckForm": {
+    "label": "",
+    "placeholder": ""
+  },
+  "terms": {
+    "address": "Adresse",
+    "addresses": "Addressen",
+    "advanced": "Erweitert",
+    "agent": "Agent",
+    "api": "",
+    "apiAddress": "",
+    "blocks": "Blöcke",
+    "connection": "Verbindung",
+    "downSpeed": "Eingehend",
+    "example": "Beispiel:",
+    "file": "Datei",
+    "files": "Dateien",
+    "folder": "Ordner",
+    "folders": "Ordner",
+    "gateway": "Gateway",
+    "in": "Eingang",
+    "latency": "Latenz",
+    "loading": "Wird geladen",
+    "location": "Standort",
+    "name": "Name",
+    "node": "Knoten",
+    "out": "Ausgang",
+    "peer": "Peer",
+    "peerId": "Peer-ID",
+    "id": "ID",
+    "peers": "Peers",
+    "pinNoun": "Anpinnen",
+    "pins": "Pins",
+    "pinStatus": "Anheftstatus",
+    "publicKey": "Öffentlicher Schlüssel",
+    "publicGateway": "Öffentliches Gateway",
+    "rateIn": "Eingangsrate",
+    "rateOut": "Ausgangsrate",
+    "repo": "Speicher",
+    "size": "Größe",
+    "totalIn": "Gesamteingang",
+    "totalOut": "Gesamtausgang",
+    "unknown": "Unbekannt",
+    "ui": "UI",
+    "upSpeed": "Ausgehend",
+    "revision": "Revision"
+  },
+  "tour": {
+    "back": "Zurück",
+    "close": "Schließen",
+    "finish": "Fertig",
+    "next": "Weiter",
+    "skip": "Überspringen",
+    "tooltip": "Klicke jederzeit auf diese Schaltfläche, um eine Führung auf der aktuellen Seite zu erhalten."
+  },
+  "startTourHelper": "Tour starten"
+}

@@ -1,0 +1,20 @@
+[
+  {
+    "peerId": "12D3KooWExample1",
+    "multiaddr": "/ip4/203.0.113.1/tcp/4001/p2p/12D3KooWExample1",
+    "lastSeen": 1706000000,
+    "region": "us-east"
+  },
+  {
+    "peerId": "12D3KooWExample2",
+    "multiaddr": "/ip4/198.51.100.1/tcp/4001/p2p/12D3KooWExample2",
+    "lastSeen": 1706000000,
+    "region": "eu-west"
+  },
+  {
+    "peerId": "12D3KooWExample3",
+    "multiaddr": "/ip4/192.0.2.1/tcp/4001/p2p/12D3KooWExample3",
+    "lastSeen": 1706000000,
+    "region": "ap-southeast"
+  }
+]

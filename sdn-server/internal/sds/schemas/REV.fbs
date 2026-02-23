@@ -1,0 +1,112 @@
+// Hash: placeholder
+// Version: 1.0.0
+// -----------------------------------END_HEADER
+
+include "../STF/main.fbs";
+
+/// Review status
+enum ReviewStatus : byte {
+  /// Review is published and visible
+  Published,
+  /// Review is pending moderation
+  Pending,
+  /// Review was flagged for review
+  Flagged,
+  /// Review was hidden by moderator
+  Hidden,
+  /// Review was removed
+  Removed
+}
+
+/// Quality metrics for the review
+table DataQualityMetrics {
+  /// Schema compliance (0-100)
+  schema_compliance: uint8;
+  /// Data freshness (0-100)
+  data_freshness: uint8;
+  /// Coverage accuracy (0-100)
+  coverage_accuracy: uint8;
+  /// Delivery reliability (0-100)
+  delivery_reliability: uint8;
+}
+
+/// Review Message
+table REV {
+  /// Unique review identifier (UUID)
+  review_id: string (required);
+  /// Reference to the listing being reviewed
+  listing_id: string (required);
+  /// Reviewer's peer ID
+  reviewer_peer_id: string (required);
+
+  /// Rating (1-5 stars)
+  rating: uint8 (required);
+  /// Review title
+  title: string;
+  /// Review content/body
+  content: string;
+
+  /// Data quality assessment
+  quality_metrics: DataQualityMetrics;
+
+  /// Proof of purchase (required for verified reviews)
+  acl_grant_id: string;
+  /// Whether this is a verified purchase review
+  verified_purchase: bool;
+
+  /// Review metadata
+  created_at: uint64 (required);
+  updated_at: uint64;
+  /// Review status
+  status: ReviewStatus = Published;
+
+  /// Helpfulness voting
+  helpful_count: uint32;
+  not_helpful_count: uint32;
+
+  /// Provider response
+  provider_response: string;
+  provider_response_at: uint64;
+
+  /// Moderation
+  flagged_count: uint32;
+  moderation_notes: string;
+
+  /// Ed25519 signature from reviewer
+  reviewer_signature: [ubyte];
+}
+
+/// Aggregated review statistics for a listing
+table ReviewStats {
+  /// Listing ID
+  listing_id: string (required);
+  /// Total number of reviews
+  total_reviews: uint32;
+  /// Number of verified purchase reviews
+  verified_reviews: uint32;
+  /// Average rating (x10 for precision, e.g., 42 = 4.2 stars)
+  average_rating_x10: uint16;
+  /// Rating distribution [1-star, 2-star, 3-star, 4-star, 5-star]
+  rating_distribution: [uint32];
+  /// Last review timestamp
+  last_review_at: uint64;
+  /// Average quality metrics across reviews
+  avg_quality_metrics: DataQualityMetrics;
+}
+
+/// Collection of reviews
+table ReviewCollection {
+  /// List of reviews
+  reviews: [REV];
+  /// Aggregated stats
+  stats: ReviewStats;
+  /// Total count (may differ from reviews length for pagination)
+  total_count: uint32;
+  /// Pagination offset
+  offset: uint32;
+  /// Pagination limit
+  limit: uint32;
+}
+
+root_type REV;
+file_identifier "$REV";

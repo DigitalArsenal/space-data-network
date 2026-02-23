@@ -1,0 +1,234 @@
+{
+  "ipfsIsRunning": "",
+  "ipfsIsStopping": "",
+  "ipfsIsStarting": "",
+  "ipfsIsNotRunning": "",
+  "ipfsHasErrored": "",
+  "runningWithGC": "",
+  "runningWhileCheckingForUpdate": "",
+  "start": "Start",
+  "stop": "Stop",
+  "restart": "Herstart",
+  "about": "Over",
+  "advanced": "Geavanceerd",
+  "openRepoDir": "",
+  "openLogsDir": "",
+  "openConfigFile": "",
+  "openKuboConfigFile": "",
+  "viewOnGitHub": "",
+  "helpUsTranslate": "",
+  "readReleaseNotes": "",
+  "status": "Status",
+  "files": "Bestanden",
+  "peers": "Peers",
+  "quit": "Afsluiten",
+  "versions": "Versies",
+  "screenshotTaken": "Screenshot gemaakt",
+  "shareableLinkCopied": "Deelbare link gekopieerd naar het klembord. Klik hier om de screenshot te bekijken.",
+  "couldNotTakeScreenshot": "Kon geen screenshot maken",
+  "errorwhileTakingScreenshot": "Er is een fout opgetreden bij het maken van de screenshot.",
+  "clickToOpenLogs": "Klik hier om de logs te openen.",
+  "ipfsNotRunning": "IPFS draait niet",
+  "checkForUpdates": "",
+  "checkingForUpdates": "",
+  "yes": "Ja",
+  "no": "Nee",
+  "close": "Sluiten",
+  "ok": "Ok",
+  "cancel": "Annuleren",
+  "enable": "",
+  "reportTheError": "Rapporteer deze fout",
+  "restartIpfsDesktop": "IPFS Desktop herstarten",
+  "openLogs": "Logs openen",
+  "takeScreenshot": "Screenshot maken",
+  "moveRepositoryLocation": "Repository locatie verplaatsen",
+  "runGarbageCollector": "",
+  "selectDirectory": "",
+  "customIpfsBinary": "",
+  "setCustomIpfsBinary": "",
+  "clearCustomIpfsBinary": "",
+  "openCliDocumentation": "",
+  "polkitDialog": {
+    "title": "Polkit niet gevonden",
+    "message": "IPFS kan niet worden toegevoegd aan /usr/local/bin/ zonder polkit agent."
+  },
+  "noPermissionDialog": {
+    "title": "Geen toestemming",
+    "message": "IPFS kan niet worden toegevoegd aan /usr/local/bin/ omdat je het verkeerde wachtwoord heb ingevoerd of geen toestemming hebt verleend."
+  },
+  "ipfsNotRunningDialog": {
+    "title": "IPFS draait niet",
+    "message": "IPFS moet draaien om deze actie uit te kunnen voeren. Wil je de daemon starten?"
+  },
+  "recoverableErrorDialog": {
+    "title": "Een fout is opgetreden",
+    "message": "Een fout is opgetreden maar dit voorkomt niet dat IPFS Desktop draait. Je kan zelf de logs inspecteren of de fout rapporteren aan de ontwikkelaars."
+  },
+  "cannotConnectToApiDialog": {
+    "title": "Kan geen verbinding maken met de API",
+    "message": "IPFS Desktop kan geen verbinding maken met het geleverde API adres: { addr }"
+  },
+  "ipfsDesktopHasShutdownDialog": {
+    "title": "IPFS Desktop is gesloten",
+    "message": "IPFS Desktop is gesloten vanwege een fout. Je kan de applicatie herstarten of de fout rapporteren aan de ontwikkelaars. Dit vereist een Github account."
+  },
+  "moveRepositoryWarnDialog": {
+    "title": "Repository verplaatsen",
+    "message": "Als je repository te veel ruimte inneemt op je harde schijf kan je dit naar een andere locatie verplaatsen. Bedenk dat deze nieuwe locatie altijd beschikbaar moet zijn voor IPFS Desktop om correct te werken.",
+    "action": "Verplaats en herstart node"
+  },
+  "moveRepositorySuccessDialog": {
+    "title": "Repository succesvol verplaatst",
+    "message": "Je repository was succesvol verplaatst naar { location } en je configuratie was geupdate. De daemon zal nu weer starten."
+  },
+  "moveRepositorySameDirDialog": {
+    "title": "Zelfde map geselecteerd",
+    "message": "De map die je gekozen hebt is dezelfde als de huidige: { location }. Hierdoor kunnen er geen wijzigingen gemaakt worden."
+  },
+  "moveRepositoryDirExists": {
+    "title": "Map bestaat al",
+    "message": "De map { location } bestaat al. Kies alsjeblieft een andere."
+  },
+  "busyPortsDialog": {
+    "title": "Poorten zijn bezet",
+    "message": "De poorten { port1 } en { port2 } zijn niet beschikbaar. WIl je { alt1 } en { alt2 } als vervanging gebruiken?",
+    "action": "Gebruik poorten { alt1 } en { alt2 }."
+  },
+  "busyPortDialog": {
+    "title": "Poort is in gebruik",
+    "message": "De poort { port } is niet beschikbaar. Wil je { alt } gebruiken?",
+    "action": "Gebruik poort { alt }"
+  },
+  "multipleBusyPortsDialog": {
+    "title": "Poorten zijn bezet",
+    "message": "Kan niet verbinden met een of meer van de API of gateway adressen omdat de poorten bezet zijn.",
+    "action": "Configuratie bestand openen"
+  },
+  "itemsAddedNotification": {
+    "title": "Items toegevoegd",
+    "message": ""
+  },
+  "itemAddedNotification": {
+    "title": "Item toegevoegd",
+    "message": ""
+  },
+  "itemsFailedNotification": {
+    "title": "Het is niet gelukt om items toe te voegen",
+    "message": "Het is niet gelukt om je items toe te voegen aan je node."
+  },
+  "updateAvailableDialog": {
+    "title": "Update beschikbaar",
+    "message": ""
+  },
+  "updateNotAvailableDialog": {
+    "title": "Update niet beschikbaar",
+    "message": ""
+  },
+  "updateErrorDialog": {
+    "title": "",
+    "message": ""
+  },
+  "autoUpdateError": {
+    "title": "",
+    "message": "",
+    "downloadNow": "",
+    "later": ""
+  },
+  "updateDownloadedDialog": {
+    "title": "",
+    "message": "",
+    "later": "",
+    "now": ""
+  },
+  "updateDownloadedNotification": {
+    "title": "",
+    "message": ""
+  },
+  "runGarbageCollectorWarning": {
+    "title": "",
+    "message": "",
+    "action": ""
+  },
+  "runGarbageCollectorDone": {
+    "title": "",
+    "message": ""
+  },
+  "moveRepositoryFailed": {
+    "title": "Repository verplaatsen",
+    "message": ""
+  },
+  "runGarbageCollectorErrored": {
+    "title": "",
+    "message": ""
+  },
+  "launchAtLoginNotSupported": {
+    "title": "Fout",
+    "message": ""
+  },
+  "launchAtLoginFailed": {
+    "title": "Fout",
+    "message": ""
+  },
+  "enableGlobalTakeScreenshotShortcut": {
+    "title": "",
+    "message": ""
+  },
+  "settings": {
+    "settings": "Instellingen",
+    "preferences": "",
+    "openNodeSettings": "",
+    "appPreferences": "",
+    "launchOnStartup": "",
+    "openWebUIAtLaunch": "",
+    "pubsub": "",
+    "namesysPubsub": "",
+    "automaticGC": "",
+    "takeScreenshotShortcut": "",
+    "experiments": "Experimenten",
+    "npmOnIpfs": "",
+    "monochromeTrayIcon": ""
+  },
+  "setCustomIpfsBinaryConfirmation": {
+    "title": "",
+    "message": ""
+  },
+  "setCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "clearCustomIpfsBinarySuccess": {
+    "title": "",
+    "message": ""
+  },
+  "unresponsiveWindowDialog": {
+    "title": "",
+    "message": "",
+    "forceReload": "",
+    "doNothing": ""
+  },
+  "migrationDialog": {
+    "title": "",
+    "message": "",
+    "closeAndContinue": ""
+  },
+  "startupFailedDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryMustBeDirectoryDialog": {
+    "title": "",
+    "message": ""
+  },
+  "repositoryConfigurationIsMissingDialog": {
+    "title": "",
+    "message": ""
+  },
+  "privateNetworkDialog": {
+    "title": "",
+    "message": ""
+  },
+  "invalidRepositoryDialog": {
+    "title": "",
+    "message": ""
+  }
+}
