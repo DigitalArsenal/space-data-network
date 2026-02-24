@@ -57,7 +57,7 @@
     "libp2p": "^1.2.0",
     "qrcode": "^1.5.3",
     "uint8arrays": "^5.0.0",
-    "vcard-cryptoperson": "^1.1.10"
+    "vcard-cryptoperson": "^1.1.11"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
