@@ -6,7 +6,7 @@ import {
   generateKey,
   randomBytes,
   sha256,
-} from './crypto/index';
+} from './crypto/hd-wallet';
 
 describe('crypto', () => {
   describe('isHDWalletAvailable', () => {
