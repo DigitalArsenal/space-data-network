@@ -65,6 +65,51 @@ export interface DiscoveryMetrics {
   lastError: string | null;
 }
 
+/** Response from /api/relay/status */
+export interface RelayStatus {
+  peer_id: string;
+  connections: number;
+  max_connections: number;
+  load: number;
+  mode: string;
+  version: string;
+  uptime_seconds: number;
+}
+
+/** Relay probe result enriched with latency measurement */
+export interface RelayProbeResult {
+  multiaddr: string;
+  status: RelayStatus | null;
+  latencyMs: number;
+  probeTime: number;
+  error: string | null;
+}
+
+/**
+ * Convert a libp2p multiaddr to an HTTP(S) URL for the relay status endpoint.
+ *
+ * - /dns4/example.com/tcp/443/wss/p2p/... → https://example.com/api/relay/status
+ * - /ip4/1.2.3.4/tcp/8080/ws/p2p/...     → http://1.2.3.4:8080/api/relay/status
+ *
+ * Returns null if the multiaddr cannot be converted (e.g., QUIC-only).
+ */
+export function multiaddrToStatusURL(ma: string): string | null {
+  const withoutPeerId = ma.replace(/\/p2p\/[^/]+$/, '');
+  const match = withoutPeerId.match(
+    /^\/(dns[46]?|ip[46])\/([^/]+)\/tcp\/(\d+)\/(wss?)$/,
+  );
+  if (!match) return null;
+
+  const [, , host, portStr, transport] = match;
+  const port = parseInt(portStr, 10);
+  const isSecure = transport === 'wss';
+  const scheme = isSecure ? 'https' : 'http';
+  const defaultPort = isSecure ? 443 : 80;
+  const portSuffix = port === defaultPort ? '' : `:${port}`;
+
+  return `${scheme}://${host}${portSuffix}/api/relay/status`;
+}
+
 const metrics: DiscoveryMetrics = {
   wasmLoadAttempts: 0,
   wasmLoadSuccesses: 0,
@@ -334,6 +379,10 @@ export class EdgeDiscovery {
   private failedRelays: Map<string, number>; // relay -> failure count
   private refreshInterval: number | null = null;
   private maxFailures = 3;
+  private probeResults: Map<string, RelayProbeResult> = new Map();
+  private probeInterval: ReturnType<typeof setInterval> | null = null;
+  private probeTimeoutMs = 5000;
+  private probeStalenessMs = 60_000;
 
   constructor(initialRelays: string[] = DEFAULT_EDGE_RELAYS) {
     this.knownRelays = new Set(initialRelays);

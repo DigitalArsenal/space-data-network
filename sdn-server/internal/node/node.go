@@ -188,7 +188,7 @@ func (n *Node) init() error {
 
 	// Create connection manager
 	connMgr, err := connmgr.NewConnManager(
-		100,                       // low water
+		1000,                      // low water
 		n.config.Network.MaxConns, // high water
 	)
 	if err != nil {

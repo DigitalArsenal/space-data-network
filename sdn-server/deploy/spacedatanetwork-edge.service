@@ -12,7 +12,7 @@ Group=sdn
 # Environment configuration
 Environment=SDN_MODE=edge
 Environment=SDN_LISTEN=/ip4/0.0.0.0/tcp/8080/ws,/ip4/0.0.0.0/udp/4001/quic-v1
-Environment=SDN_MAX_CONNECTIONS=1000
+Environment=SDN_MAX_CONNECTIONS=50000
 Environment=SDN_HEALTH_PORT=9090
 
 # Working directory
@@ -30,9 +30,9 @@ RestartSec=5
 StartLimitIntervalSec=60
 StartLimitBurst=3
 
-# Resource limits
-LimitNOFILE=65536
-LimitNPROC=4096
+# Resource limits (sized for 50k connections)
+LimitNOFILE=200000
+LimitNPROC=65536
 
 # Security hardening
 NoNewPrivileges=true

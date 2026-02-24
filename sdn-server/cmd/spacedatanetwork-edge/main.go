@@ -32,7 +32,10 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 )
 
-var log = logging.Logger("sdn-edge")
+var (
+	log           = logging.Logger("sdn-edge")
+	edgeStartTime = time.Now()
+)
 
 // EdgeConfig contains edge relay configuration.
 type EdgeConfig struct {
@@ -66,7 +69,7 @@ var (
 func init() {
 	rootCmd.Flags().StringArrayVarP(&listenAddrs, "listen", "l", []string{"/ip4/0.0.0.0/tcp/8080/ws"}, "listen addresses")
 	rootCmd.Flags().StringArrayVarP(&bootstrapPeers, "bootstrap", "b", []string{}, "bootstrap peer addresses")
-	rootCmd.Flags().IntVarP(&maxConns, "max-conns", "m", 500, "maximum connections")
+	rootCmd.Flags().IntVarP(&maxConns, "max-conns", "m", 50000, "maximum connections")
 	rootCmd.Flags().IntVarP(&healthPort, "health-port", "p", 0, "health check port (0 to disable)")
 	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "enable debug logging")
 	rootCmd.Flags().BoolVar(&insecureBootstrap, "insecure-bootstrap", false, "allow bootstrap without peer ID verification (DEVELOPMENT ONLY)")
@@ -153,9 +156,9 @@ func NewEdgeNode(ctx context.Context, cfg EdgeConfig) (*EdgeNode, error) {
 		listenMAs = append(listenMAs, ma)
 	}
 
-	// Create connection manager with low limits for edge
+	// Create connection manager
 	connMgr, err := connmgr.NewConnManager(
-		10,                  // low water
+		1000,                // low water
 		cfg.MaxConnections,  // high water
 		connmgr.WithGracePeriod(time.Minute),
 	)
@@ -301,16 +304,48 @@ func (e *EdgeNode) Close() error {
 
 // Health check server
 func startHealthServer(port int, edge *EdgeNode) {
-	// Simple HTTP health check
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+
+	// Legacy health check
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, `{"status":"ok","peers":%d,"peer_id":"%s"}`,
 			edge.ConnectedPeers(), edge.PeerID())
 	})
 
+	// Relay status endpoint (matches full node schema, used for load balancing)
+	mux.HandleFunc("/api/relay/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		conns := edge.ConnectedPeers()
+		maxC := maxConns
+		if maxC <= 0 {
+			maxC = 50000
+		}
+		load := float64(conns) / float64(maxC)
+		if load > 1.0 {
+			load = 1.0
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"peer_id":"%s","connections":%d,"max_connections":%d,"load":%.6f,"mode":"edge","version":"spacedatanetwork/1.0.0","uptime_seconds":%d}`,
+			edge.PeerID(), conns, maxC, load, int64(time.Since(edgeStartTime).Seconds()))
+	})
+
 	addr := fmt.Sprintf(":%d", port)
 	log.Infof("Health check server listening on %s", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Warnf("Health server error: %v", err)
 	}
 }

@@ -40,7 +40,10 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
-var log = logging.Logger("sdn")
+var (
+	log              = logging.Logger("sdn")
+	processStartTime = time.Now()
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "spacedatanetwork",
@@ -448,6 +451,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Node info API endpoint
 			adminMux.HandleFunc("/api/node/info", handleNodeInfo(n, torRuntime))
 
+			// Relay status endpoint (public, used by clients for load balancing)
+			adminMux.HandleFunc("/api/relay/status", handleRelayStatus(n))
+
 			// EPM (Entity Profile Message) API endpoints
 			adminMux.HandleFunc("/api/node/epm/json", handleNodeEPMJSON(n))
 			adminMux.HandleFunc("/api/node/epm/vcard", handleNodeEPMVCard(n))
@@ -781,6 +787,7 @@ func isPublicAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/storefront/trust/") ||
 		strings.HasPrefix(path, "/api/auth/") ||
 		strings.HasPrefix(path, "/api/node/info") ||
+		strings.HasPrefix(path, "/api/relay/status") ||
 		strings.HasPrefix(path, "/api/v0/") ||
 		strings.HasPrefix(path, "/ipfs/") ||
 		strings.HasPrefix(path, "/orbpro-key-broker/v1/orbpro/public-key") ||
@@ -1266,6 +1273,58 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(info)
+	}
+}
+
+// handleRelayStatus returns relay connection load for client-side load balancing.
+func handleRelayStatus(n *node.Node) http.HandlerFunc {
+	type relayStatusResponse struct {
+		PeerID         string  `json:"peer_id"`
+		Connections    int     `json:"connections"`
+		MaxConnections int     `json:"max_connections"`
+		Load           float64 `json:"load"`
+		Mode           string  `json:"mode"`
+		Version        string  `json:"version"`
+		UptimeSeconds  int64   `json:"uptime_seconds"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		peers := n.Host().Network().Peers()
+		maxConns := n.Config().Network.MaxConns
+		if maxConns <= 0 {
+			maxConns = 1000
+		}
+
+		load := float64(len(peers)) / float64(maxConns)
+		if load > 1.0 {
+			load = 1.0
+		}
+
+		status := relayStatusResponse{
+			PeerID:         n.PeerID().String(),
+			Connections:    len(peers),
+			MaxConnections: maxConns,
+			Load:           load,
+			Mode:           n.Config().Mode,
+			Version:        "spacedatanetwork/1.0.0",
+			UptimeSeconds:  int64(time.Since(processStartTime).Seconds()),
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(status)
 	}
 }
 
