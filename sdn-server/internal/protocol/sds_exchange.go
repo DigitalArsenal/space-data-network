@@ -15,7 +15,6 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
-	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
 // Protocol timeouts
@@ -76,54 +75,30 @@ func DefaultMessageLimits() MessageLimits {
 
 // SDSExchangeHandler handles the SDS exchange protocol.
 type SDSExchangeHandler struct {
-	store        *storage.FlatSQLStore
-	validator    *sds.Validator
-	flatc        *wasm.FlatcModule
-	limits       MessageLimits
-	rateLimiter  *PeerRateLimiter
-	insecureMode bool // WARNING: Disables mandatory signature verification (development only)
+	store       *storage.FlatSQLStore
+	validator   *sds.Validator
+	limits      MessageLimits
+	rateLimiter *PeerRateLimiter
 }
-
-// ErrSignatureVerificationUnavailable is returned when signature verification is required
-// but the WASM crypto module is not available.
-var ErrSignatureVerificationUnavailable = errors.New("signature verification unavailable: WASM crypto module not loaded")
 
 // ErrRateLimited is returned when a peer exceeds the rate limit.
 var ErrRateLimited = errors.New("rate limit exceeded")
 
-// ErrInsecureModeActive is logged when insecure mode is enabled.
-const insecureModeWarning = "SECURITY WARNING: Insecure mode is enabled. Signature verification is disabled. DO NOT use in production!"
-
 // NewSDSExchangeHandler creates a new SDS exchange handler.
-// If flatc is nil and insecureMode is false, all data push operations will be rejected.
-func NewSDSExchangeHandler(store *storage.FlatSQLStore, validator *sds.Validator, flatc *wasm.FlatcModule) *SDSExchangeHandler {
-	return NewSDSExchangeHandlerWithOptions(store, validator, flatc, DefaultMessageLimits(), false, nil)
+func NewSDSExchangeHandler(store *storage.FlatSQLStore, validator *sds.Validator) *SDSExchangeHandler {
+	return NewSDSExchangeHandlerWithOptions(store, validator, DefaultMessageLimits(), nil)
 }
 
 // NewSDSExchangeHandlerWithLimits creates a new SDS exchange handler with custom limits.
-// If flatc is nil and insecureMode is false, all data push operations will be rejected.
-func NewSDSExchangeHandlerWithLimits(store *storage.FlatSQLStore, validator *sds.Validator, flatc *wasm.FlatcModule, limits MessageLimits) *SDSExchangeHandler {
-	return NewSDSExchangeHandlerWithOptions(store, validator, flatc, limits, false, nil)
+func NewSDSExchangeHandlerWithLimits(store *storage.FlatSQLStore, validator *sds.Validator, limits MessageLimits) *SDSExchangeHandler {
+	return NewSDSExchangeHandlerWithOptions(store, validator, limits, nil)
 }
 
 // NewSDSExchangeHandlerWithOptions creates a new SDS exchange handler with all options.
-// If flatc is nil and insecureMode is false, all data push operations will be rejected.
-// WARNING: insecureMode should ONLY be used for development and testing.
 // If rateLimiter is nil, rate limiting will be disabled.
-func NewSDSExchangeHandlerWithOptions(store *storage.FlatSQLStore, validator *sds.Validator, flatc *wasm.FlatcModule, limits MessageLimits, insecureMode bool, rateLimiter *PeerRateLimiter) *SDSExchangeHandler {
-	// Log security warnings at initialization
-	if flatc == nil {
-		if insecureMode {
-			log.Warnf(insecureModeWarning)
-			log.Warnf("WASM crypto module not available - signature verification is DISABLED")
-		} else {
-			log.Warnf("SECURITY: WASM crypto module not available - all data push operations will be REJECTED")
-			log.Warnf("SECURITY: To enable insecure mode for development, set security.insecure_mode: true in config")
-		}
-	} else if insecureMode {
-		log.Warnf(insecureModeWarning)
-		log.Warnf("WASM crypto module is available but insecure mode is enabled - signature verification is DISABLED")
-	}
+func NewSDSExchangeHandlerWithOptions(store *storage.FlatSQLStore, validator *sds.Validator, limits MessageLimits, rateLimiter *PeerRateLimiter) *SDSExchangeHandler {
+	// NOTE: SDS v1 uses transport-authenticated streams and no detached payload signatures.
+	log.Infof("SDS message auth mode: transport-authenticated streams (no detached payload signatures)")
 
 	if rateLimiter != nil {
 		log.Infof("Rate limiting enabled: %.1f msg/s, %d msg/min, burst %d",
@@ -135,23 +110,10 @@ func NewSDSExchangeHandlerWithOptions(store *storage.FlatSQLStore, validator *sd
 	}
 
 	h := &SDSExchangeHandler{
-		store:        store,
-		validator:    validator,
-		flatc:        flatc,
-		limits:       limits,
-		rateLimiter:  rateLimiter,
-		insecureMode: insecureMode,
-	}
-
-	// Periodic insecure-mode reminder so operators notice in log rotation.
-	if insecureMode {
-		go func() {
-			ticker := time.NewTicker(5 * time.Minute)
-			defer ticker.Stop()
-			for range ticker.C {
-				log.Warnf(insecureModeWarning)
-			}
-		}()
+		store:       store,
+		validator:   validator,
+		limits:      limits,
+		rateLimiter: rateLimiter,
 	}
 
 	return h
@@ -322,14 +284,6 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 		return
 	}
 
-	// Read signature (64 bytes for Ed25519)
-	signature := make([]byte, 64)
-	if _, err := io.ReadFull(s, signature); err != nil {
-		log.Warnf("Failed to read signature: %v", err)
-		s.Write([]byte{RespReject})
-		return
-	}
-
 	// Get peer ID
 	peerID := s.Conn().RemotePeer()
 
@@ -343,32 +297,8 @@ func (h *SDSExchangeHandler) handleDataPush(ctx context.Context, s network.Strea
 		return
 	}
 
-	// Verify signature - MANDATORY unless insecure mode is enabled
-	if h.flatc == nil {
-		if h.insecureMode {
-			log.Warnf("INSECURE: Accepting data from %s without signature verification (insecure mode)", peerID.ShortString())
-		} else {
-			log.Errorf("SECURITY: Rejecting data from %s - signature verification unavailable (WASM not loaded)", peerID.ShortString())
-			s.Write([]byte{RespReject})
-			return
-		}
-	} else {
-		pubKey := extractPubKeyFromPeerID(peerID)
-		if pubKey == nil {
-			log.Warnf("SECURITY: Could not extract public key from peer %s", peerID.ShortString())
-			s.Write([]byte{RespReject})
-			return
-		}
-		valid, err := h.flatc.Verify(ctx, pubKey, data, signature)
-		if err != nil || !valid {
-			log.Warnf("SECURITY: Invalid signature from %s: %v", peerID, err)
-			s.Write([]byte{RespReject})
-			return
-		}
-	}
-
 	// Store data
-	cid, err := h.store.Store(string(schemaName), data, peerID.String(), signature)
+	cid, err := h.store.Store(string(schemaName), data, peerID.String(), nil)
 	if err != nil {
 		log.Warnf("Failed to store data: %v", err)
 		s.Write([]byte{RespReject})
@@ -479,13 +409,13 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 		return fmt.Errorf("invalid schema name: %w", err)
 	}
 
-	if len(data) < 65 {
+	if len(data) == 0 {
 		return errors.New("message too short")
 	}
 
-	// Validate message size (including signature)
-	if len(data) > h.limits.MaxMessageSize+64 {
-		return fmt.Errorf("message too large: %d > %d bytes", len(data), h.limits.MaxMessageSize+64)
+	// Validate message size.
+	if len(data) > h.limits.MaxMessageSize {
+		return fmt.Errorf("message too large: %d > %d bytes", len(data), h.limits.MaxMessageSize)
 	}
 
 	// Verify the schema name is in the list of supported schemas
@@ -494,34 +424,12 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 		return fmt.Errorf("unknown schema: %s", schema)
 	}
 
-	// Message format: [data...][signature(64 bytes)]
-	msgData := data[:len(data)-64]
-	signature := data[len(data)-64:]
+	// SDS v1 message format: [data...]
+	msgData := data
 
 	// Create context with timeout for PubSub message handling
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultValidationTimeout)
 	defer cancel()
-
-	// Verify signature - MANDATORY unless insecure mode is enabled
-	if h.flatc == nil {
-		if h.insecureMode {
-			log.Warnf("INSECURE: Accepting PubSub message from %s without signature verification (insecure mode)", from.ShortString())
-		} else {
-			log.Errorf("SECURITY: PubSub message rejected from %s - signature verification unavailable (WASM not loaded)", from.ShortString())
-			return ErrSignatureVerificationUnavailable
-		}
-	} else {
-		pubKey := extractPubKeyFromPeerID(from)
-		if pubKey == nil {
-			log.Warnf("SECURITY: PubSub message rejected - could not extract public key from peer %s", from.ShortString())
-			return errors.New("could not extract public key from peer ID")
-		}
-		valid, err := h.flatc.Verify(ctx, pubKey, msgData, signature)
-		if err != nil || !valid {
-			log.Warnf("SECURITY: PubSub message rejected - invalid signature from %s: %v", from.ShortString(), err)
-			return fmt.Errorf("invalid signature: %w", err)
-		}
-	}
 
 	// Validate data against schema
 	if err := h.validator.Validate(ctx, schema, msgData); err != nil {
@@ -530,7 +438,7 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 	}
 
 	// Store data
-	_, err := h.store.Store(schema, msgData, from.String(), signature)
+	_, err := h.store.Store(schema, msgData, from.String(), nil)
 	if err != nil {
 		return fmt.Errorf("failed to store: %w", err)
 	}
@@ -539,23 +447,8 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 	return nil
 }
 
-// extractPubKeyFromPeerID extracts the Ed25519 public key from a peer ID.
-func extractPubKeyFromPeerID(peerID peer.ID) []byte {
-	pubKey, err := peerID.ExtractPublicKey()
-	if err != nil {
-		return nil
-	}
-
-	raw, err := pubKey.Raw()
-	if err != nil {
-		return nil
-	}
-
-	return raw
-}
-
 // PushData sends data to a remote peer.
-func PushData(ctx context.Context, s network.Stream, schemaName string, data, signature []byte) (string, error) {
+func PushData(ctx context.Context, s network.Stream, schemaName string, data []byte) (string, error) {
 	// Write message type
 	if _, err := s.Write([]byte{MsgPushData}); err != nil {
 		return "", fmt.Errorf("failed to write message type: %w", err)
@@ -572,9 +465,6 @@ func PushData(ctx context.Context, s network.Stream, schemaName string, data, si
 	binary.BigEndian.PutUint32(dataLen, uint32(len(data)))
 	s.Write(dataLen)
 	s.Write(data)
-
-	// Write signature
-	s.Write(signature)
 
 	// Read response
 	resp := make([]byte, 1)

@@ -402,13 +402,13 @@ export class SDSExchangeClient {
   }
 
   async pushData(options = {}) {
+    if (options.signature !== undefined) {
+      throw new Error("options.signature is not supported in SDS v1");
+    }
+
     const schemaName = toSchemaName(options.schemaName);
     const schemaBytes = encoder.encode(schemaName);
     const data = asUint8Array(options.data);
-    const signature = asUint8Array(options.signature);
-    if (signature.length !== 64) {
-      throw new Error("signature must be 64 bytes");
-    }
 
     const payload = concatBytes([
       Uint8Array.of(SDS_MESSAGE_TYPES.PUSH_DATA),
@@ -416,7 +416,6 @@ export class SDSExchangeClient {
       schemaBytes,
       u32be(data.length),
       data,
-      signature,
     ]);
 
     const response = await this.exchange(options, payload);

@@ -24,9 +24,6 @@ schemas:
   validate: true
   strict: false
 
-security:
-  insecure_mode: true
-
 tor:
   enabled: false
 

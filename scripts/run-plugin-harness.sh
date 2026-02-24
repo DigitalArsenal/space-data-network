@@ -345,9 +345,6 @@ schemas:
   validate: true
   strict: false
 
-security:
-  insecure_mode: true
-
 peers:
   strict_mode: false
   enable_dht: false
