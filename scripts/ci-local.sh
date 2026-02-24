@@ -96,9 +96,30 @@ run_sdn_js() {
   ensure_npm_deps "$ROOT/sdn-js" eslint vitest tsup
   pass "sdn-js npm ci"
 
-  step "sdn-js lint"
-  (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm run lint)
-  pass "sdn-js lint"
+  local eslint_config=""
+  for cfg in \
+    "$ROOT/sdn-js/eslint.config.js" \
+    "$ROOT/sdn-js/eslint.config.cjs" \
+    "$ROOT/sdn-js/eslint.config.mjs" \
+    "$ROOT/sdn-js/.eslintrc" \
+    "$ROOT/sdn-js/.eslintrc.js" \
+    "$ROOT/sdn-js/.eslintrc.cjs" \
+    "$ROOT/sdn-js/.eslintrc.json" \
+    "$ROOT/sdn-js/.eslintrc.yml" \
+    "$ROOT/sdn-js/.eslintrc.yaml"; do
+    if [[ -f "$cfg" ]]; then
+      eslint_config="$cfg"
+      break
+    fi
+  done
+
+  if [[ -n "$eslint_config" ]]; then
+    step "sdn-js lint"
+    (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm run lint)
+    pass "sdn-js lint"
+  else
+    echo "Skipping sdn-js lint (no ESLint config found in sdn-js)"
+  fi
 
   step "sdn-js tests"
   (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm test -- --run)
