@@ -18,7 +18,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 import { keys } from '@libp2p/crypto';
 
 import { SDNStorage, StoredRecord } from './storage';
-import { getBootstrapRelays } from './edge-discovery';
+import { getBootstrapRelays, EdgeDiscovery } from './edge-discovery';
 import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
 import { sign, initHDWallet } from './crypto/hd-wallet';
 import type { DerivedIdentity } from './crypto/types';
@@ -57,6 +57,10 @@ export interface SDNConfig {
   identity?: DerivedIdentity;
   /** Skip signature verification on received messages (not recommended) */
   skipSignatureVerification?: boolean;
+  /** Enable relay load probing for load balancing (default: true) */
+  enableRelayProbing?: boolean;
+  /** Interval between relay probes in ms (default: 30000) */
+  relayProbeIntervalMs?: number;
 }
 
 export interface SDNNodeEvents {
@@ -73,6 +77,7 @@ export class SDNNode {
   private subscriptions: Map<string, AbortController> = new Map();
   private privateKey: Uint8Array | null = null;
   private cryptoReady = false;
+  private discovery: EdgeDiscovery | null = null;
 
   private constructor(config: SDNConfig, events: SDNNodeEvents = {}) {
     this.config = config;
@@ -98,7 +103,20 @@ export class SDNNode {
 
   private async init(): Promise<void> {
     // Build bootstrap list from SDN relays and IPFS public bootstrappers.
-    const relays = this.config.edgeRelays ?? await getBootstrapRelays();
+    const rawRelays = this.config.edgeRelays ?? await getBootstrapRelays();
+
+    // Create discovery instance for load-balanced relay selection
+    this.discovery = new EdgeDiscovery(rawRelays);
+    if (this.config.enableRelayProbing !== false) {
+      try {
+        await this.discovery.probeAllRelays();
+      } catch {
+        // Non-fatal: fall back to unprobed scoring
+      }
+      this.discovery.startProbing(this.config.relayProbeIntervalMs ?? 30_000);
+    }
+
+    const relays = this.discovery.getBestRelays(rawRelays.length);
     const bootstrapList = resolveBootstrapList(relays, this.config);
 
     // Build libp2p options
@@ -411,6 +429,9 @@ export class SDNNode {
    * Stop the node
    */
   async stop(): Promise<void> {
+    // Stop relay probing
+    this.discovery?.stopProbing();
+
     // Cancel all subscriptions
     for (const controller of this.subscriptions.values()) {
       controller.abort();
@@ -426,6 +447,13 @@ export class SDNNode {
     if (this.libp2p) {
       await this.libp2p.stop();
     }
+  }
+
+  /**
+   * Get the EdgeDiscovery instance for advanced relay management.
+   */
+  getDiscovery(): EdgeDiscovery | null {
+    return this.discovery;
   }
 
   /**

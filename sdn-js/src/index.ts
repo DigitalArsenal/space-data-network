@@ -28,7 +28,8 @@ export type {
 export { SDNStorage } from './storage';
 export type { StoredRecord, QueryFilter } from './storage';
 export { preloadFlatSQLWASI, getFlatSQLWASIPath } from './flatsql';
-export { loadEdgeRelays, getBootstrapRelays, DEFAULT_EDGE_RELAYS } from './edge-discovery';
+export { loadEdgeRelays, getBootstrapRelays, DEFAULT_EDGE_RELAYS, EdgeDiscovery, multiaddrToStatusURL } from './edge-discovery';
+export type { RelayStatus, RelayProbeResult, DiscoveryMetrics } from './edge-discovery';
 export { SDS_SCHEMAS, SUPPORTED_SCHEMAS } from './schemas';
 export type { SchemaName } from './schemas';
 // Crypto and HD Wallet exports (unified from hd-wallet-wasm)

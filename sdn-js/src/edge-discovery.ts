@@ -440,19 +440,114 @@ export class EdgeDiscovery {
   }
 
   /**
-   * Get the best relays (prioritizes those with fewer failures)
+   * Probe a single relay's /api/relay/status endpoint.
+   * Measures latency and caches the result.
+   */
+  async probeRelay(addr: string): Promise<RelayProbeResult> {
+    const url = multiaddrToStatusURL(addr);
+    const result: RelayProbeResult = {
+      multiaddr: addr,
+      status: null,
+      latencyMs: Infinity,
+      probeTime: Date.now(),
+      error: null,
+    };
+
+    if (!url) {
+      result.error = 'cannot convert multiaddr to HTTP URL';
+      this.probeResults.set(addr, result);
+      return result;
+    }
+
+    const start = performance.now();
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.probeTimeoutMs);
+      const response = await fetch(url, { signal: controller.signal, mode: 'cors' });
+      clearTimeout(timeout);
+      result.latencyMs = performance.now() - start;
+
+      if (!response.ok) {
+        result.error = `HTTP ${response.status}`;
+      } else {
+        result.status = (await response.json()) as RelayStatus;
+      }
+    } catch (err) {
+      result.latencyMs = performance.now() - start;
+      result.error = err instanceof Error ? err.message : String(err);
+    }
+
+    this.probeResults.set(addr, result);
+    return result;
+  }
+
+  /**
+   * Probe all known relays concurrently.
+   */
+  async probeAllRelays(): Promise<Map<string, RelayProbeResult>> {
+    const relays = this.getRelays();
+    await Promise.allSettled(relays.map((addr) => this.probeRelay(addr)));
+    return new Map(this.probeResults);
+  }
+
+  /**
+   * Start periodic relay probing for load balancing.
+   */
+  startProbing(intervalMs: number = 30_000): void {
+    this.stopProbing();
+    // Probe immediately, then on interval
+    this.probeAllRelays();
+    this.probeInterval = setInterval(() => {
+      this.probeAllRelays();
+    }, intervalMs);
+  }
+
+  /**
+   * Stop periodic relay probing.
+   */
+  stopProbing(): void {
+    if (this.probeInterval) {
+      clearInterval(this.probeInterval);
+      this.probeInterval = null;
+    }
+  }
+
+  /**
+   * Get cached probe result for a relay.
+   */
+  getProbeResult(addr: string): RelayProbeResult | undefined {
+    return this.probeResults.get(addr);
+  }
+
+  /**
+   * Get the best relays scored by load, latency, and failure history.
+   *
+   * Score (lower is better):
+   *   score = (load * 50) + (normalizedLatency * 30) + (failureScore * 20)
+   *
+   * When no probe data exists, falls back to failure-count-only sorting.
    */
   getBestRelays(count: number = 3): string[] {
     const relays = this.getRelays();
+    const now = Date.now();
 
-    // Sort by failure count (fewer failures = better)
-    const sorted = relays.sort((a, b) => {
-      const failA = this.failedRelays.get(a) || 0;
-      const failB = this.failedRelays.get(b) || 0;
-      return failA - failB;
+    const scored = relays.map((addr) => {
+      const probe = this.probeResults.get(addr);
+      const failures = this.failedRelays.get(addr) || 0;
+      const fresh = probe && now - probe.probeTime < this.probeStalenessMs;
+
+      const loadScore = fresh && probe.status ? probe.status.load : 0.5;
+      const latencyScore =
+        fresh && probe.latencyMs < Infinity
+          ? Math.min(probe.latencyMs / 5000, 1.0)
+          : 0.5;
+      const failureScore = Math.min(failures / this.maxFailures, 1.0);
+
+      return { addr, score: loadScore * 50 + latencyScore * 30 + failureScore * 20 };
     });
 
-    return sorted.slice(0, count);
+    scored.sort((a, b) => a.score - b.score);
+    return scored.slice(0, count).map((s) => s.addr);
   }
 
   /**
@@ -501,16 +596,16 @@ export class EdgeDiscovery {
   }
 
   /**
-   * Get a circuit relay address for a target peer
+   * Get a circuit relay address for a target peer.
+   * Picks randomly from the top 3 scored relays for load-aware jitter.
    */
   getCircuitAddress(targetPeerId: string): string | null {
-    const relays = this.getRelays();
-    if (relays.length === 0) {
+    const bestRelays = this.getBestRelays(3);
+    if (bestRelays.length === 0) {
       return null;
     }
 
-    // Pick a random relay
-    const relay = relays[Math.floor(Math.random() * relays.length)];
+    const relay = bestRelays[Math.floor(Math.random() * bestRelays.length)];
     return `${relay}/p2p-circuit/p2p/${targetPeerId}`;
   }
 }
