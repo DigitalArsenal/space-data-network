@@ -1,201 +1,185 @@
 #!/usr/bin/env bash
-# Local CI — replaces GitHub Actions when minutes are exhausted.
-# Runs the same checks as .github/workflows/{ci,security,encryption-tests}.yml
+# Canonical local CI runner.
+# This script is intentionally aligned with .github/workflows/ci.yml.
 #
 # Usage:
-#   ./scripts/ci-local.sh          # run all checks
-#   ./scripts/ci-local.sh quick    # skip slow checks (encryption, audit)
-#   ./scripts/ci-local.sh go       # Go checks only
-#   ./scripts/ci-local.sh js       # JS checks only
-#   ./scripts/ci-local.sh security # security scans only
+#   ./scripts/ci-local.sh quick   # default: preflight + go + sdn-js + plugin-sdk
+#   ./scripts/ci-local.sh full    # quick + encryption tests
+#   ./scripts/ci-local.sh go      # go checks only
+#   ./scripts/ci-local.sh js      # sdn-js checks only
+#   ./scripts/ci-local.sh plugin  # plugin-sdk conformance only
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MODE="${1:-all}"
-FAILED=0
-PASSED=0
-SKIPPED=0
+MODE="${1:-quick}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
 step() { echo -e "\n${CYAN}=== $1 ===${NC}"; }
-pass() { echo -e "${GREEN}PASS${NC}: $1"; PASSED=$((PASSED + 1)); }
-fail() { echo -e "${RED}FAIL${NC}: $1"; FAILED=$((FAILED + 1)); }
-skip() { echo -e "${YELLOW}SKIP${NC}: $1"; SKIPPED=$((SKIPPED + 1)); }
+pass() { echo -e "${GREEN}PASS${NC}: $1"; }
 
-# ─── Go Checks ─────────────────────────────────────────────────────────────
+ensure_npm_deps() {
+  local dir="$1"
+  shift || true
+  local required_bins=("$@")
+  local lockfile="$dir/package-lock.json"
+  local npm_cache="$ROOT/.npm-cache"
+
+  if [[ "${CI:-}" == "true" || "${CI:-}" == "1" ]]; then
+    if [[ -f "$lockfile" ]]; then
+      (cd "$dir" && npm_config_cache="$npm_cache" npm ci)
+    else
+      (cd "$dir" && npm_config_cache="$npm_cache" npm install --no-audit --no-fund)
+    fi
+    return
+  fi
+
+  if [[ ! -d "$dir/node_modules" ]]; then
+    echo "Missing dependencies in $dir/node_modules"
+    echo "Install first, then rerun:"
+    if [[ -f "$lockfile" ]]; then
+      echo "  (cd \"$dir\" && npm ci)"
+    else
+      echo "  (cd \"$dir\" && npm install)"
+    fi
+    return 1
+  fi
+
+  if [[ ${#required_bins[@]} -gt 0 ]]; then
+    for bin in "${required_bins[@]}"; do
+      if [[ ! -x "$dir/node_modules/.bin/$bin" ]]; then
+        echo "Missing required tool '$bin' in $dir/node_modules/.bin"
+        echo "Reinstall dependencies:"
+        if [[ -f "$lockfile" ]]; then
+          echo "  (cd \"$dir\" && npm ci)"
+        else
+          echo "  (cd \"$dir\" && npm install)"
+        fi
+        return 1
+      fi
+    done
+  fi
+
+  echo "Using existing dependencies in $dir/node_modules"
+}
+
+run_preflight() {
+  step "OSS preflight"
+  (cd "$ROOT" && ./scripts/oss-preflight.sh)
+  pass "oss-preflight"
+}
+
 run_go() {
-  step "Go Build (full node)"
-  if (cd "$ROOT/sdn-server" && go build -o /dev/null ./cmd/spacedatanetwork); then
-    pass "go build full node"
-  else
-    fail "go build full node"
-  fi
+  step "Go deps"
+  (cd "$ROOT/sdn-server" && GOCACHE="$ROOT/.gocache" go mod download)
+  pass "go mod download"
 
-  step "Go Build (edge relay)"
-  if (cd "$ROOT/sdn-server" && go build -tags edge -o /dev/null ./cmd/spacedatanetwork-edge 2>/dev/null); then
-    pass "go build edge relay"
-  else
-    skip "go build edge relay (no edge cmd or build tag issue)"
-  fi
+  step "Go tests (race)"
+  (cd "$ROOT/sdn-server" && GOCACHE="$ROOT/.gocache" go test -race -count=1 ./...)
+  pass "go test -race"
 
-  step "Go Vet"
-  if (cd "$ROOT/sdn-server" && go vet ./...); then
-    pass "go vet"
-  else
-    fail "go vet"
-  fi
+  step "Go build (full node)"
+  (cd "$ROOT/sdn-server" && GOCACHE="$ROOT/.gocache" go build -o /tmp/spacedatanetwork ./cmd/spacedatanetwork)
+  pass "go build spacedatanetwork"
 
-  step "Go Tests (race detector)"
-  if (cd "$ROOT/sdn-server" && go test -race -count=1 ./... 2>&1); then
-    pass "go test -race"
-  else
-    fail "go test -race"
-  fi
-
-  # WASM tests need the binary
-  local wasm_path=""
-  for p in \
-    "$ROOT/../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm" \
-    "$ROOT/../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm"; do
-    if [ -f "$p" ]; then wasm_path="$p"; break; fi
-  done
-
-  if [ -n "$wasm_path" ]; then
-    step "Go WASM Tests (hdwallet)"
-    if (cd "$ROOT/sdn-server" && HD_WALLET_WASM_PATH="$wasm_path" go test -v -count=1 ./internal/wasm/... 2>&1); then
-      pass "go wasm tests"
-    else
-      fail "go wasm tests"
-    fi
-  else
-    skip "go wasm tests (no hd-wallet WASM binary found)"
-  fi
+  step "Go build (edge relay)"
+  (cd "$ROOT/sdn-server" && GOCACHE="$ROOT/.gocache" go build -tags edge -o /tmp/spacedatanetwork-edge ./cmd/spacedatanetwork-edge)
+  pass "go build spacedatanetwork-edge"
 }
 
-# ─── JS Checks ──────────────────────────────────────────────────────────────
-run_js() {
-  if [ ! -d "$ROOT/sdn-js" ]; then
-    skip "sdn-js directory not found"
-    return
-  fi
+run_sdn_js() {
+  step "sdn-js install"
+  ensure_npm_deps "$ROOT/sdn-js" eslint vitest tsup
+  pass "sdn-js npm ci"
 
-  step "JS Install"
-  (cd "$ROOT/sdn-js" && npm ci --silent 2>/dev/null) || true
+  step "sdn-js lint"
+  (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm run lint)
+  pass "sdn-js lint"
 
-  step "JS Lint"
-  if (cd "$ROOT/sdn-js" && npm run lint 2>&1); then
-    pass "js lint"
-  else
-    skip "js lint (warnings/errors)"
-  fi
+  step "sdn-js tests"
+  (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm test -- --run)
+  pass "sdn-js test"
 
-  step "JS Tests"
-  if (cd "$ROOT/sdn-js" && npm test -- --run 2>&1); then
-    pass "js test"
-  else
-    fail "js test"
-  fi
-
-  step "JS Build"
-  if (cd "$ROOT/sdn-js" && npm run build 2>&1); then
-    pass "js build"
-  else
-    fail "js build"
-  fi
+  step "sdn-js build"
+  (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm run build)
+  pass "sdn-js build"
 }
 
-# ─── Security Scans ─────────────────────────────────────────────────────────
-run_security() {
-  step "Go Vulnerability Check"
-  if command -v govulncheck &>/dev/null; then
-    if (cd "$ROOT/sdn-server" && govulncheck ./... 2>&1); then
-      pass "govulncheck"
-    else
-      echo -e "${YELLOW}WARN${NC}: govulncheck found issues (non-blocking)"
-      pass "govulncheck (reported)"
-    fi
-  else
-    echo "  Installing govulncheck..."
-    go install golang.org/x/vuln/cmd/govulncheck@latest 2>/dev/null
-    if command -v govulncheck &>/dev/null; then
-      (cd "$ROOT/sdn-server" && govulncheck ./... 2>&1) || true
-      pass "govulncheck (reported)"
-    else
-      skip "govulncheck (not installed)"
-    fi
+run_plugin_sdk() {
+  local volatile_manifest="packages/plugin-sdk/fixtures/third-party/v1/fixture-manifest.json"
+
+  step "plugin-sdk install"
+  ensure_npm_deps "$ROOT/packages/plugin-sdk"
+  pass "plugin-sdk npm install"
+
+  step "plugin-sdk generate bindings"
+  (cd "$ROOT/packages/plugin-sdk" && npm_config_cache="$ROOT/.npm-cache" npm run generate:all-bindings)
+  pass "plugin-sdk generate bindings"
+
+  step "plugin-sdk conformance"
+  (cd "$ROOT/packages/plugin-sdk" && npm_config_cache="$ROOT/.npm-cache" npm run test:conformance)
+  pass "plugin-sdk conformance"
+
+  # This manifest includes a generated timestamp; restore it to avoid local churn
+  # while still validating all deterministic generated outputs.
+  if git -C "$ROOT" cat-file -e "HEAD:$volatile_manifest" >/dev/null 2>&1; then
+    git -C "$ROOT" show "HEAD:$volatile_manifest" > "$ROOT/$volatile_manifest"
   fi
 
-  step "npm Audit"
-  if [ -d "$ROOT/sdn-js" ]; then
-    (cd "$ROOT/sdn-js" && npm audit 2>&1) || true
-    pass "npm audit (reported)"
-  else
-    skip "npm audit (no sdn-js)"
-  fi
+  step "plugin-sdk generated artifacts are committed"
+  (
+    cd "$ROOT"
+    git diff --exit-code -- \
+      packages/plugin-sdk/src/generated \
+      packages/plugin-sdk/src/generated-go \
+      packages/plugin-sdk/fixtures \
+      ':(exclude)packages/plugin-sdk/fixtures/third-party/v1/fixture-manifest.json'
+  )
+  pass "plugin-sdk generated artifacts check"
 }
 
-# ─── Encryption Tests ───────────────────────────────────────────────────────
 run_encryption() {
-  if [ ! -d "$ROOT/tests/encryption/go" ]; then
-    skip "encryption tests (directory not found)"
+  if [[ ! -d "$ROOT/tests/encryption/go" ]]; then
+    echo "Encryption tests directory missing, skipping"
     return
   fi
 
-  step "Go Encryption Tests"
-  if (cd "$ROOT/tests/encryption/go" && go test -race -count=1 ./... 2>&1); then
-    pass "encryption tests"
-  else
-    fail "encryption tests"
-  fi
+  step "Encryption tests (Go)"
+  (cd "$ROOT/tests/encryption/go" && GOCACHE="$ROOT/.gocache" go test -race -count=1 ./...)
+  pass "encryption go tests"
 }
 
-# ─── Dispatch ────────────────────────────────────────────────────────────────
 case "$MODE" in
-  all)
-    run_go
-    run_js
-    run_security
-    run_encryption
-    ;;
   quick)
+    run_preflight
     run_go
-    run_js
+    run_sdn_js
+    run_plugin_sdk
+    ;;
+  full|all)
+    run_preflight
+    run_go
+    run_sdn_js
+    run_plugin_sdk
+    run_encryption
     ;;
   go)
     run_go
     ;;
   js)
-    run_js
+    run_sdn_js
     ;;
-  security)
-    run_security
-    ;;
-  encryption)
-    run_encryption
+  plugin)
+    run_plugin_sdk
     ;;
   *)
-    echo "Usage: $0 [all|quick|go|js|security|encryption]"
+    echo -e "${RED}Usage: $0 [quick|full|go|js|plugin]${NC}"
     exit 1
     ;;
 esac
 
-# ─── Summary ─────────────────────────────────────────────────────────────────
-echo ""
-echo -e "${CYAN}═══════════════════════════════════════${NC}"
-echo -e "  ${GREEN}Passed${NC}:  $PASSED"
-echo -e "  ${RED}Failed${NC}:  $FAILED"
-echo -e "  ${YELLOW}Skipped${NC}: $SKIPPED"
-echo -e "${CYAN}═══════════════════════════════════════${NC}"
-
-if [ "$FAILED" -gt 0 ]; then
-  echo -e "\n${RED}CI FAILED${NC}"
-  exit 1
-else
-  echo -e "\n${GREEN}CI PASSED${NC}"
-fi
+echo -e "\n${GREEN}CI PASSED (${MODE})${NC}"

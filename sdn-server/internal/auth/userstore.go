@@ -285,10 +285,6 @@ func (s *UserStore) applyConfigOverrides(u *User) {
 	u.TrustLevel = cu.TrustLevel
 	if strings.TrimSpace(cu.SigningPubKeyHex) != "" {
 		u.SigningPubKeyHex = cu.SigningPubKeyHex
-	} else {
-		// If the config intentionally omits the key, do not allow stale database
-		// entries to continue enforcing an old binding.
-		u.SigningPubKeyHex = ""
 	}
 }
 

@@ -526,7 +526,7 @@ export function createEPMResolver(options?: EPMResolverOptions): EPMResolver {
  * @example
  * ```typescript
  * import { createEPMResolver } from 'sdn-js';
- * import { EncryptionContext } from '@spacedatanetwork/flatbuffers-encryption';
+ * import { EncryptionContext } from 'flatbuffers-encryption';
  *
  * const resolver = createEPMResolver();
  *

@@ -27,21 +27,22 @@ const getEnvRelays = (): string[] | null => {
  * Prefer DNS-based addresses for production deployments.
  * IP addresses should only be used for development/testing.
  */
+const SPACEAWARE_RELAY_PEER_ID = '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
+
 export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [
-  // Primary relays use DNS names for flexibility
-  '/dns4/relay1.digitalarsenal.io/tcp/443/wss/p2p/12D3KooWRelay1',
-  '/dns4/relay2.digitalarsenal.io/tcp/443/wss/p2p/12D3KooWRelay2',
-  // Development/testing relay (Tokyo) - configure via SDN_EDGE_RELAYS env var in production
-  '/dns4/tokyo.relay.digitalarsenal.io/tcp/443/wss/p2p/16Uiu2HAkxKtJncDGfgtFpx4mNqtrzbBBrCZ8iaKKyKuEqEHuEz5J',
+  // Primary relay for the current production deployment.
+  `/dns4/spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`,
+  // Direct websocket fallback from the node's advertised listen address.
+  `/ip4/104.131.11.220/tcp/8080/ws/p2p/${SPACEAWARE_RELAY_PEER_ID}`,
 ];
 
 /**
  * Fallback relays for regional availability
  */
 export const REGIONAL_FALLBACK_RELAYS: Record<string, string[]> = {
-  'us-east': ['/dns4/us-east.relay.digitalarsenal.io/tcp/443/wss/p2p/12D3KooWUSEast1'],
-  'eu-west': ['/dns4/eu-west.relay.digitalarsenal.io/tcp/443/wss/p2p/12D3KooWEUWest1'],
-  'ap-southeast': ['/dns4/ap-southeast.relay.digitalarsenal.io/tcp/443/wss/p2p/12D3KooWAPSE1'],
+  'us-east': [`/dns4/spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
+  'eu-west': [`/ip4/104.131.11.220/tcp/8080/ws/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
+  'ap-southeast': [`/dns4/spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
 };
 
 let edgeRelaysModule: EdgeRelaysModule | null = null;

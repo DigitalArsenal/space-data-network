@@ -4,22 +4,6 @@
 name: Encryption Tests
 
 on:
-  push:
-    branches: [main, develop]
-    paths:
-      - 'sdn-server/**'
-      - 'sdn-js/**'
-      - 'tests/encryption/**'
-      - '.github/workflows/encryption-tests.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'sdn-server/**'
-      - 'sdn-js/**'
-      - 'tests/encryption/**'
-  schedule:
-    # Run nightly at 2 AM UTC
-    - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       skip_go_tests:

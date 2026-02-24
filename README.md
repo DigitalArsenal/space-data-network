@@ -2,10 +2,11 @@
 
 **A decentralized peer-to-peer network for exchanging standardized space data using [Space Data Standards](https://spacedatastandards.org), built on [IPFS](https://ipfs.tech) and [libp2p](https://libp2p.io).**
 
-[![Go](https://img.shields.io/badge/go-1.21+-white?style=flat&labelColor=black)](https://golang.org)
-[![TypeScript](https://img.shields.io/badge/typescript-5.0+-white?style=flat&labelColor=black)](https://www.typescriptlang.org)
-[![License](https://img.shields.io/badge/license-MIT-white?style=flat&labelColor=black)](LICENSE)
-[![IPFS](https://img.shields.io/badge/built_on-IPFS-white?style=flat&labelColor=black)](https://ipfs.tech)
+[![CI](https://img.shields.io/github/actions/workflow/status/DigitalArsenal/space-data-network/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/DigitalArsenal/space-data-network/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/DigitalArsenal/space-data-network?filename=sdn-server%2Fgo.mod&style=flat-square&logo=go)](https://github.com/DigitalArsenal/space-data-network/blob/main/sdn-server/go.mod)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License](https://img.shields.io/github/license/DigitalArsenal/space-data-network?style=flat-square)](https://github.com/DigitalArsenal/space-data-network/blob/main/LICENSE)
+[![Built on IPFS](https://img.shields.io/badge/project-IPFS-65C2CB?style=flat-square&logo=ipfs&logoColor=white)](https://ipfs.tech/)
 
 ---
 
@@ -49,14 +50,12 @@ cd space-data-network/sdn-server
 go build -o spacedatanetwork ./cmd/spacedatanetwork
 ```
 
-### Install the JavaScript SDK
+### Build the JavaScript SDK (Source)
 
 ```bash
-npm install @spacedatanetwork/sdn-js
-```
-
-```bash
-yarn add @spacedatanetwork/sdn-js
+cd space-data-network/sdn-js
+npm install
+npm run build
 ```
 
 ### Run a Full Node
@@ -72,7 +71,7 @@ yarn add @spacedatanetwork/sdn-js
 ### Browser Usage
 
 ```typescript
-import { SDNNode, SchemaRegistry } from '@spacedatanetwork/sdn-js';
+import { SDNNode, SchemaRegistry } from './path/to/sdn-js/dist/esm/index.js';
 
 // Create and start a node
 const node = new SDNNode();
@@ -86,6 +85,28 @@ node.subscribe('OMM', (data, peerId) => {
 // Publish data
 const ommData = { /* your OMM data */ };
 await node.publish('OMM', ommData);
+```
+
+---
+
+## CI and Local Checks
+
+- Local CI (same checks as GitHub CI):
+
+```bash
+./scripts/ci-local.sh quick
+```
+
+- Full local CI (includes encryption tests):
+
+```bash
+./scripts/ci-local.sh full
+```
+
+- Pushes run local CI automatically via `.husky/pre-push`. To bypass intentionally:
+
+```bash
+SKIP_LOCAL_CI=1 git push
 ```
 
 ---
@@ -151,7 +172,9 @@ await node.publish('OMM', ommData);
 ### JavaScript SDK
 
 ```bash
-npm install @spacedatanetwork/sdn-js
+cd sdn-js
+npm install
+npm run build
 ```
 
 ---
@@ -539,7 +562,7 @@ Then open [http://localhost:8080](http://localhost:8080).
 - [docs.digitalarsenal.github.io/space-data-network](https://digitalarsenal.github.io/space-data-network/)
 - [GitHub](https://github.com/DigitalArsenal/space-data-network)
 - [Space Data Standards](https://spacedatastandards.org)
-- [npm: @spacedatanetwork/sdn-js](https://www.npmjs.com/package/@spacedatanetwork/sdn-js)
+- [SDN JS Source](https://github.com/DigitalArsenal/space-data-network/tree/main/sdn-js)
 
 ---
 
