@@ -99,6 +99,7 @@ func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 	epochPeriodMs := envInt64("ORBPRO_KEYSERVER_EPOCH_PERIOD_MS", 0)
 	maxSkewMs := envInt64("ORBPRO_KEYSERVER_MAX_SKEW_MS", 0)
 	leaseMs := envInt64("ORBPRO_KEYSERVER_LEASE_MS", 0)
+	activeKeyVersion := envUint32("ORBPRO_KEYSERVER_ACTIVE_KEY_VERSION", 1)
 
 	// Derive the uncompressed P-256 public key (65 bytes: 0x04 + x + y).
 	pubKey, err := p256PublicKey(privateKey)
@@ -129,10 +130,11 @@ func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 	// Pack binary config for plugin_init:
 	//   privateKey(32) + publicKey(65) + secretLen(4 LE) + secret(N)
 	//   + domainsCsv(NUL-terminated) + epochPeriodMs(8 LE) + maxSkewMs(8 LE) + leaseMs(8 LE)
+	//   + activeKeyVersion(4 LE)
 	secretBytes := []byte(derivationSecret)
 	domainsBytes := append([]byte(allowedDomains), 0)
 
-	configSize := 32 + 65 + 4 + len(secretBytes) + len(domainsBytes) + 24
+	configSize := 32 + 65 + 4 + len(secretBytes) + len(domainsBytes) + 24 + 4
 	config := make([]byte, configSize)
 	off := 0
 
@@ -151,6 +153,8 @@ func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 	binary.LittleEndian.PutUint64(config[off:], uint64(maxSkewMs))
 	off += 8
 	binary.LittleEndian.PutUint64(config[off:], uint64(leaseMs))
+	off += 8
+	binary.LittleEndian.PutUint32(config[off:], activeKeyVersion)
 
 	if err := rt.Init(ctx, config); err != nil {
 		rt.Close(ctx)
@@ -186,6 +190,7 @@ func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 	}
 
 	log.Infof("OrbPro key broker plugin started (domains: %s, transport: libp2p)", allowedDomains)
+	log.Infof("OrbPro key broker active key version: %d", activeKeyVersion)
 	return nil
 }
 
@@ -330,4 +335,16 @@ func envInt64(key string, defaultVal int64) int64 {
 		return defaultVal
 	}
 	return v
+}
+
+func envUint32(key string, defaultVal uint32) uint32 {
+	s := strings.TrimSpace(os.Getenv(key))
+	if s == "" {
+		return defaultVal
+	}
+	v, err := strconv.ParseUint(s, 10, 32)
+	if err != nil || v == 0 {
+		return defaultVal
+	}
+	return uint32(v)
 }
