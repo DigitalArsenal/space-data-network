@@ -1,5 +1,7 @@
 import { ed25519PublicKey, sign, deriveSecp256k1Key, derivePeerIdFromPublicKey, derivePeerIdFromXpub } from './crypto/hd-wallet';
 import { buildIdentityPath } from './crypto/types';
+import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
+import { createFromPrivKey } from '@libp2p/peer-id-factory';
 
 export const LICENSE_PROTOCOL_ID = '/orbpro/license/1.0.0';
 
@@ -111,13 +113,18 @@ export async function derivePeerIdFromSeed(seed: Uint8Array, account: number = 0
  * @deprecated Use derivePeerIdFromSeed() instead. This function is kept for backward compatibility.
  */
 export async function derivePeerIdFromEd25519Seed(privateKey: Uint8Array): Promise<string> {
-  // Legacy: this used to derive from Ed25519 seed. Now we need a full 64-byte seed
-  // for secp256k1 derivation. If given a 32-byte seed, we can't do BIP-32 derivation.
-  // Fall back to requiring the caller to pass the full seed.
+  // Legacy callers commonly pass a 32-byte Ed25519 seed.
+  // Preserve that behavior without requiring the HD wallet WASM module.
+  if (privateKey.length === 32) {
+    const keyPair = await generateKeyPairFromSeed('Ed25519', privateKey);
+    const peerId = await createFromPrivKey(keyPair);
+    return peerId.toString();
+  }
+
   if (privateKey.length === 64) {
     return derivePeerIdFromSeed(privateKey);
   }
-  throw new Error('derivePeerIdFromEd25519Seed is deprecated. Use derivePeerIdFromSeed() with a 64-byte BIP-39 seed.');
+  throw new Error('Invalid seed length for derivePeerIdFromEd25519Seed; expected 32 or 64 bytes.');
 }
 
 export async function requestLicenseGrantViaRelay(
