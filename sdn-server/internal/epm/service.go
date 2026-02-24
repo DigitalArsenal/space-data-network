@@ -790,10 +790,49 @@ func (s *Service) GetNodeEPMJSON() map[string]interface{} {
 		result["multiformat_address"] = addrs
 	}
 
-	// Add identity metadata
-	result["peer_id"] = s.peerID.String()
-	if s.identityAttestation != nil {
-		result["identity_attestation"] = s.identityAttestation
+	// Signature and timestamp
+	if v := epm.SIGNATURE(); v != nil {
+		result["signature"] = string(v)
+	}
+	if ts := epm.SIGNATURE_TIMESTAMP(); ts != 0 {
+		result["signature_timestamp"] = ts
+	}
+
+	// Chain proofs
+	chainProof := new(EPM.ChainProof)
+	if n := epm.CHAIN_PROOFSLength(); n > 0 {
+		proofs := make([]map[string]interface{}, 0, n)
+		for i := 0; i < n; i++ {
+			if epm.CHAIN_PROOFS(chainProof, i) {
+				p := make(map[string]interface{})
+				if v := chainProof.CHAIN(); v != nil {
+					p["chain"] = string(v)
+				}
+				if v := chainProof.ADDRESS(); v != nil {
+					p["address"] = string(v)
+				}
+				if v := chainProof.PUBLIC_KEY(); v != nil {
+					p["public_key"] = string(v)
+				}
+				if v := chainProof.KEY_PATH(); v != nil {
+					p["key_path"] = string(v)
+				}
+				if v := chainProof.SIGNATURE(); v != nil {
+					p["signature"] = string(v)
+				}
+				if v := chainProof.SIGNED_PAYLOAD(); v != nil {
+					p["signed_payload"] = string(v)
+				}
+				if v := chainProof.ALGORITHM(); v != nil {
+					p["algorithm"] = string(v)
+				}
+				if v := chainProof.ENCODING(); v != nil {
+					p["encoding"] = string(v)
+				}
+				proofs = append(proofs, p)
+			}
+		}
+		result["chain_proofs"] = proofs
 	}
 
 	return result
@@ -1015,6 +1054,58 @@ func (s *Service) rebuildEPMLocked() error {
 		multiAddrOff = builder.EndVector(len(addrOffsets))
 	}
 
+	// Build identity attestation (chain proofs) before starting EPM table
+	if err := s.rebuildIdentityAttestationLocked(); err != nil {
+		log.Warnf("Failed to build identity attestation: %v", err)
+	}
+
+	// Build ChainProof FlatBuffer entries from identity attestation
+	var chainProofsOff flatbuffers.UOffsetT
+	if s.identityAttestation != nil && len(s.identityAttestation.ChainProofs) > 0 {
+		proofOffsets := make([]flatbuffers.UOffsetT, len(s.identityAttestation.ChainProofs))
+		for i, proof := range s.identityAttestation.ChainProofs {
+			chainOff := builder.CreateString(proof.Chain)
+			addrOff := builder.CreateString(proof.Address)
+			pubOff := builder.CreateString(proof.PublicKeyHex)
+			pathOff := builder.CreateString(proof.KeyPath)
+			sigOff := builder.CreateString(proof.Signature)
+			payloadOff := builder.CreateString(proof.SignedPayloadHex)
+			algOff := builder.CreateString(proof.SignatureAlgorithm)
+			encOff := builder.CreateString(proof.SignatureEncoding)
+
+			EPM.ChainProofStart(builder)
+			EPM.ChainProofAddCHAIN(builder, chainOff)
+			EPM.ChainProofAddADDRESS(builder, addrOff)
+			EPM.ChainProofAddPUBLIC_KEY(builder, pubOff)
+			EPM.ChainProofAddKEY_PATH(builder, pathOff)
+			EPM.ChainProofAddSIGNATURE(builder, sigOff)
+			EPM.ChainProofAddSIGNED_PAYLOAD(builder, payloadOff)
+			EPM.ChainProofAddALGORITHM(builder, algOff)
+			EPM.ChainProofAddENCODING(builder, encOff)
+			proofOffsets[i] = EPM.ChainProofEnd(builder)
+		}
+		EPM.EPMStartCHAIN_PROOFSVector(builder, len(proofOffsets))
+		for i := len(proofOffsets) - 1; i >= 0; i-- {
+			builder.PrependUOffsetT(proofOffsets[i])
+		}
+		chainProofsOff = builder.EndVector(len(proofOffsets))
+	}
+
+	// Timestamp for the EPM signature
+	signatureTimestamp := time.Now().Unix()
+
+	// Sign EPM content with Ed25519 (canonical JSON of all fields except SIGNATURE/SIGNATURE_TIMESTAMP)
+	var signatureOff flatbuffers.UOffsetT
+	if s.identity != nil {
+		canonicalContent := s.buildCanonicalSigningContent(signatureTimestamp)
+		sigPrivBytes, err := s.identity.SigningPrivKey.Raw()
+		if err == nil && len(sigPrivBytes) >= ed25519.SeedSize {
+			privKey := ed25519.NewKeyFromSeed(sigPrivBytes[:ed25519.SeedSize])
+			sig := ed25519.Sign(privKey, canonicalContent)
+			signatureOff = builder.CreateString(hex.EncodeToString(sig))
+		}
+	}
+
 	// Build EPM table
 	EPM.EPMStart(builder)
 	if dnOff != 0 {
@@ -1062,19 +1153,124 @@ func (s *Service) rebuildEPMLocked() error {
 	if multiAddrOff != 0 {
 		EPM.EPMAddMULTIFORMAT_ADDRESS(builder, multiAddrOff)
 	}
+	if signatureOff != 0 {
+		EPM.EPMAddSIGNATURE(builder, signatureOff)
+	}
+	EPM.EPMAddSIGNATURE_TIMESTAMP(builder, signatureTimestamp)
+	if chainProofsOff != 0 {
+		EPM.EPMAddCHAIN_PROOFS(builder, chainProofsOff)
+	}
 	epmOff := EPM.EPMEnd(builder)
 
 	EPM.FinishSizePrefixedEPMBuffer(builder, epmOff)
-
-	if err := s.rebuildIdentityAttestationLocked(); err != nil {
-		log.Warnf("Failed to build identity attestation: %v", err)
-	}
 
 	result := make([]byte, len(builder.FinishedBytes()))
 	copy(result, builder.FinishedBytes())
 	s.epmBytes = result
 
 	return nil
+}
+
+// buildCanonicalSigningContent builds the canonical JSON of all EPM fields
+// except SIGNATURE and SIGNATURE_TIMESTAMP for content signing.
+// This matches the JS buildEPMSigningContent() output.
+func (s *Service) buildCanonicalSigningContent(signatureTimestamp int64) []byte {
+	content := make(map[string]interface{})
+
+	p := s.profile
+	if p == nil {
+		p = &Profile{}
+	}
+
+	if p.DN != "" {
+		content["DN"] = p.DN
+	}
+	if p.LegalName != "" {
+		content["LEGAL_NAME"] = p.LegalName
+	}
+	if p.FamilyName != "" {
+		content["FAMILY_NAME"] = p.FamilyName
+	}
+	if p.GivenName != "" {
+		content["GIVEN_NAME"] = p.GivenName
+	}
+	if p.AdditionalName != "" {
+		content["ADDITIONAL_NAME"] = p.AdditionalName
+	}
+	if p.HonorificPrefix != "" {
+		content["HONORIFIC_PREFIX"] = p.HonorificPrefix
+	}
+	if p.HonorificSuffix != "" {
+		content["HONORIFIC_SUFFIX"] = p.HonorificSuffix
+	}
+	if p.JobTitle != "" {
+		content["JOB_TITLE"] = p.JobTitle
+	}
+	if p.Occupation != "" {
+		content["OCCUPATION"] = p.Occupation
+	}
+	if p.Email != "" {
+		content["EMAIL"] = p.Email
+	}
+	if p.Telephone != "" {
+		content["TELEPHONE"] = p.Telephone
+	}
+	if len(p.AlternateNames) > 0 {
+		content["ALTERNATE_NAMES"] = p.AlternateNames
+	}
+
+	// Keys
+	if s.identity != nil {
+		var keys []map[string]interface{}
+		sigPubBytes, _ := s.identity.SigningPubKey.Raw()
+		keys = append(keys, map[string]interface{}{
+			"PUBLIC_KEY":   hex.EncodeToString(sigPubBytes),
+			"ADDRESS_TYPE": "ed25519",
+			"KEY_ADDRESS":  s.identity.SigningKeyPath,
+			"KEY_TYPE":     "Signing",
+		})
+		if s.xpub != "" {
+			keys[0]["XPUB"] = s.xpub
+		}
+		keys = append(keys, map[string]interface{}{
+			"PUBLIC_KEY":   hex.EncodeToString(s.identity.EncryptionPub),
+			"ADDRESS_TYPE": "x25519",
+			"KEY_ADDRESS":  s.identity.EncryptionKeyPath,
+			"KEY_TYPE":     "Encryption",
+		})
+		content["KEYS"] = keys
+	}
+
+	// Multiformat addresses
+	peerIDStr := s.peerID.String()
+	addresses := []string{"/ipns/" + peerIDStr}
+	addresses = append(addresses, s.runtimeAddresses...)
+	addresses = normalizeRuntimeAddresses(addresses)
+	if len(addresses) > 0 {
+		content["MULTIFORMAT_ADDRESS"] = addresses
+	}
+
+	// Chain proofs
+	if s.identityAttestation != nil && len(s.identityAttestation.ChainProofs) > 0 {
+		var proofs []map[string]interface{}
+		for _, proof := range s.identityAttestation.ChainProofs {
+			proofs = append(proofs, map[string]interface{}{
+				"CHAIN":          proof.Chain,
+				"ADDRESS":        proof.Address,
+				"PUBLIC_KEY":     proof.PublicKeyHex,
+				"KEY_PATH":       proof.KeyPath,
+				"SIGNATURE":      proof.Signature,
+				"SIGNED_PAYLOAD": proof.SignedPayloadHex,
+				"ALGORITHM":      proof.SignatureAlgorithm,
+				"ENCODING":       proof.SignatureEncoding,
+			})
+		}
+		content["CHAIN_PROOFS"] = proofs
+	}
+
+	// json.Marshal sorts map keys alphabetically
+	canonical, _ := json.Marshal(content)
+	return canonical
 }
 
 func (s *Service) rebuildIdentityAttestationLocked() error {

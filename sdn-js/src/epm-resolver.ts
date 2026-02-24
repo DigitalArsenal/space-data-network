@@ -29,6 +29,18 @@ export interface EPMKey {
   algorithm?: KeyExchangeAlgorithm;
 }
 
+// Chain binding proof
+export interface ChainProof {
+  chain: string;
+  address: string;
+  publicKey: string;
+  keyPath: string;
+  signature: string;
+  signedPayload: string;
+  algorithm: string;
+  encoding: string;
+}
+
 // Parsed EPM data
 export interface ParsedEPM {
   dn?: string;
@@ -43,6 +55,12 @@ export interface ParsedEPM {
   cid?: string;
   peerID?: string;
   timestamp: number;
+  /** Ed25519 content signature (hex) */
+  signature?: string;
+  /** Unix timestamp (seconds) when signed */
+  signatureTimestamp?: number;
+  /** Chain binding proofs (Bitcoin, Ethereum, Solana) */
+  chainProofs?: ChainProof[];
 }
 
 // Cache entry with TTL

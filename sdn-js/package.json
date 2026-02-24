@@ -7,9 +7,9 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.esm.js",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
     }
   },
   "files": [
@@ -37,7 +37,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/spacedatanetwork/sdn-js.git"
+    "url": "https://github.com/DigitalArsenal/space-data-network.git",
+    "directory": "sdn-js"
+  },
+  "homepage": "https://github.com/DigitalArsenal/space-data-network/tree/main/sdn-js#readme",
+  "bugs": {
+    "url": "https://github.com/DigitalArsenal/space-data-network/issues"
   },
   "dependencies": {
     "@chainsafe/libp2p-gossipsub": "^13.0.0",
@@ -52,7 +57,7 @@
     "@libp2p/webtransport": "^4.0.0",
     "@multiformats/multiaddr": "^12.1.0",
     "flatsql": "github:DigitalArsenal/flatsql#v0.3.9",
-    "hd-wallet-wasm": "^1.5.4",
+    "hd-wallet-wasm": "^1.6.0",
     "idb": "^8.0.0",
     "libp2p": "^1.2.0",
     "qrcode": "^1.5.3",
