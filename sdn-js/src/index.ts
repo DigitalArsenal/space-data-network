@@ -125,7 +125,22 @@ export type {
   ParsedEPM,
   EPMResolverOptions,
   KeyExchangeAlgorithm,
+  ChainProof,
 } from './epm-resolver';
+
+// EPM Attestation (content signing + chain binding proofs)
+export {
+  buildCanonicalPayload,
+  buildEPMSigningContent,
+  signEPMContent,
+  verifyEPMSignature,
+  buildBitcoinChainProof,
+  buildEthereumChainProof,
+  buildSolanaChainProof,
+  buildAllChainProofs,
+  verifyChainProof,
+  verifyAllChainProofs,
+} from 'hd-wallet-wasm';
 
 // Subscription Management
 export {

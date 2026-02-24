@@ -1213,62 +1213,37 @@ export const SDN_LISTEN_ADDRS = %s;
 }
 
 // handleNodeInfo returns an HTTP handler that serves the node's public identity info.
+// The response is the full EPM JSON with runtime metadata overlaid.
 func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
-	type nodeInfoResponse struct {
-		PeerID              string                   `json:"peer_id"`
-		ListenAddresses     []string                 `json:"listen_addresses"`
-		OnionAddress        string                   `json:"onion_address,omitempty"`
-		SigningPubKeyHex    string                   `json:"signing_pubkey_hex,omitempty"`
-		EncryptionPubHex    string                   `json:"encryption_pubkey_hex,omitempty"`
-		SigningKeyPath      string                   `json:"signing_key_path,omitempty"`
-		EncryptionKeyPath   string                   `json:"encryption_key_path,omitempty"`
-		Addresses           *wasm.CoinAddresses      `json:"addresses,omitempty"`
-		XPub                string                   `json:"xpub,omitempty"`
-		IdentityAttestation *epm.IdentityAttestation `json:"identity_attestation,omitempty"`
-		HasEPM              bool                     `json:"has_epm"`
-		Mode                string                   `json:"mode"`
-		Version             string                   `json:"version"`
-	}
-
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
+		// Start with the full EPM JSON as the base response
+		var info map[string]interface{}
+		if epmSvc := n.EPMService(); epmSvc != nil {
+			info = epmSvc.GetNodeEPMJSON()
+		}
+		if info == nil {
+			info = make(map[string]interface{})
+		}
+
+		// Overlay runtime metadata
+		info["peer_id"] = n.PeerID().String()
+		info["mode"] = n.Config().Mode
+		info["version"] = "spacedatanetwork/1.0.0"
+
 		addrs := n.ListenAddrs()
 		addrStrings := make([]string, len(addrs))
 		for i, a := range addrs {
 			addrStrings[i] = a.String()
 		}
+		info["listen_addresses"] = addrStrings
 
-		info := nodeInfoResponse{
-			PeerID:          n.PeerID().String(),
-			ListenAddresses: addrStrings,
-			Mode:            n.Config().Mode,
-			Version:         "spacedatanetwork/1.0.0",
-		}
 		if torRuntime != nil && torRuntime.OnionHost() != "" {
-			info.OnionAddress = torRuntime.OnionHost()
-		}
-
-		if identity := n.Identity(); identity != nil {
-			idInfo := identity.Info()
-			info.SigningPubKeyHex = idInfo.SigningPubKeyHex
-			info.EncryptionPubHex = idInfo.EncryptionPubHex
-			info.SigningKeyPath = idInfo.SigningKeyPath
-			info.EncryptionKeyPath = idInfo.EncryptionKeyPath
-			info.Addresses = idInfo.Addresses
-		}
-
-		if epmSvc := n.EPMService(); epmSvc != nil {
-			info.HasEPM = epmSvc.GetNodeEPM() != nil
-			if profile := epmSvc.GetNodeProfile(); profile != nil {
-				// xpub is embedded in the EPM JSON; expose at top level too
-			}
-			if att := epmSvc.GetIdentityAttestation(); att != nil {
-				info.IdentityAttestation = att
-			}
+			info["onion_address"] = torRuntime.OnionHost()
 		}
 
 		w.Header().Set("Content-Type", "application/json")
