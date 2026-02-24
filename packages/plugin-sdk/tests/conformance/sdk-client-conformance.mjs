@@ -207,10 +207,6 @@ function withCapturedDialer(responseFactory, captures) {
 async function runSDSExchangeConformance() {
   const sdk = createPluginSDK();
   const captures = [];
-  const signature = new Uint8Array(64);
-  for (let i = 0; i < signature.length; i++) {
-    signature[i] = i;
-  }
 
   const pushDialer = withCapturedDialer(
     () =>
@@ -226,7 +222,6 @@ async function runSDSExchangeConformance() {
     dialProtocol: pushDialer,
     schemaName: "OMM.fbs",
     data: new Uint8Array([0xaa, 0xbb]),
-    signature,
     timeoutMs: 1_000,
   });
   assert.equal(
@@ -238,6 +233,19 @@ async function runSDSExchangeConformance() {
   assert.equal(pushPayload[0], SDS_MESSAGE_TYPES.PUSH_DATA);
   assert.equal(pushPayload[1], 0x00);
   assert.equal(pushPayload[2], 0x07); // len("OMM.fbs")
+  assert.equal(pushPayload.length, 16); // msgType + schemaLen + schema + dataLen + data
+
+  await assert.rejects(
+    () =>
+      sdk.sdsExchange.pushData({
+        dialProtocol: pushDialer,
+        schemaName: "OMM.fbs",
+        data: new Uint8Array([0xaa, 0xbb]),
+        signature: new Uint8Array(64),
+        timeoutMs: 1_000,
+      }),
+    /not supported in SDS v1/,
+  );
 
   const requestDialer = withCapturedDialer(
     () => new Uint8Array([0x01, ...u32be(3), 0x01, 0x02, 0x03]),

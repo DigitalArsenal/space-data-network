@@ -20,7 +20,7 @@ import { keys } from '@libp2p/crypto';
 import { SDNStorage, StoredRecord } from './storage';
 import { getBootstrapRelays, EdgeDiscovery } from './edge-discovery';
 import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
-import { sign, initHDWallet } from './crypto/hd-wallet';
+import { initHDWallet } from './crypto/hd-wallet';
 import type { DerivedIdentity } from './crypto/types';
 import {
   requestLicenseGrantViaRelay,
@@ -51,12 +51,10 @@ export interface SDNConfig {
   idExchangeProtocol?: string;
   enableStorage?: boolean;
   storeName?: string;
-  /** Private key for signing messages (32 bytes Ed25519 seed) */
+  /** Private key for auth challenge signing (32 bytes Ed25519 seed) */
   privateKey?: Uint8Array;
   /** Full HD wallet-derived identity (secp256k1 for PeerID + Ed25519 for auth) */
   identity?: DerivedIdentity;
-  /** Skip signature verification on received messages (not recommended) */
-  skipSignatureVerification?: boolean;
   /** Enable relay load probing for load balancing (default: true) */
   enableRelayProbing?: boolean;
   /** Interval between relay probes in ms (default: 30000) */
@@ -94,7 +92,7 @@ export class SDNNode {
     // Try to load HD wallet module for signing
     node.cryptoReady = await initHDWallet();
     if (!node.cryptoReady) {
-      console.warn('HD Wallet WASM not loaded - signatures will be disabled');
+      console.warn('HD Wallet WASM not loaded - auth challenge signing unavailable');
     }
 
     await node.init();
@@ -204,37 +202,22 @@ export class SDNNode {
     const jsonStr = JSON.stringify(data);
     const binary = new TextEncoder().encode(jsonStr);
 
-    // Sign the message with Ed25519
-    let signature: Uint8Array;
-    if (this.cryptoReady && this.privateKey) {
-      // Use real Ed25519 signature via WASM
-      signature = await sign(this.privateKey, binary);
-    } else {
-      // Fallback: zero signature (will fail verification on peers with crypto enabled)
-      console.warn('Publishing without signature - no private key or crypto not available');
-      signature = new Uint8Array(64);
-    }
-
-    const message = new Uint8Array(binary.length + signature.length);
-    message.set(binary, 0);
-    message.set(signature, binary.length);
-
     // Publish to topic
     const topicName = TOPIC_PREFIX + schema;
     const pubsub = this.libp2p.services.pubsub as GossipSub;
-    await pubsub.publish(topicName, message);
+    await pubsub.publish(topicName, binary);
 
     // Store locally
     let cid = '';
     if (this.storage) {
-      cid = await this.storage.store(schema, binary, this.peerId, signature);
+      cid = await this.storage.store(schema, binary, this.peerId, new Uint8Array(0));
     }
 
     return cid;
   }
 
   /**
-   * Set the private key for signing messages
+   * Set the private key for auth challenge signing
    */
   setPrivateKey(key: Uint8Array): void {
     if (key.length !== 32 && key.length !== 64) {
@@ -244,7 +227,7 @@ export class SDNNode {
   }
 
   /**
-   * Check if signing is available
+   * Check if auth challenge signing is available
    */
   get canSign(): boolean {
     return this.cryptoReady && this.privateKey !== null;
@@ -272,12 +255,8 @@ export class SDNNode {
     pubsub.addEventListener('message', (evt: CustomEvent) => {
       if (evt.detail.topic !== topicName) return;
 
-      const data = evt.detail.data;
-      if (data.length < 65) return; // Too short (needs data + signature)
-
-      // Extract data and signature
-      const msgData = data.slice(0, data.length - 64);
-      const signature = data.slice(data.length - 64);
+      const msgData = evt.detail.data;
+      if (msgData.length === 0) return;
 
       // Decode JSON (in production, use FlatBuffers via WASM)
       const jsonStr = new TextDecoder().decode(msgData);
@@ -293,7 +272,7 @@ export class SDNNode {
 
       // Store locally
       if (this.storage) {
-        this.storage.store(schema, msgData, from, signature).catch(console.error);
+        this.storage.store(schema, msgData, from, new Uint8Array(0)).catch(console.error);
       }
 
       // Call handlers

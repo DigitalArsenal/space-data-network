@@ -270,11 +270,7 @@ func (n *Node) init() error {
 	}
 
 	// Log security status at startup
-	if n.flatc == nil && !n.config.Security.InsecureMode {
-		log.Errorf("SECURITY: WASM crypto module not loaded and insecure mode is disabled")
-		log.Errorf("SECURITY: All data push operations will be REJECTED until WASM is available")
-		log.Errorf("SECURITY: Ensure flatc.wasm is available, or enable insecure mode for development")
-	}
+	log.Infof("SECURITY: SDS message auth mode = transport-authenticated streams (no detached payload signatures)")
 
 	// Create rate limiter for DoS protection
 	var rateLimiter *protocol.PeerRateLimiter
@@ -297,7 +293,7 @@ func (n *Node) init() error {
 		rateLimiter = protocol.NewPeerRateLimiter(rateLimitConfig)
 	}
 
-	n.protocol = protocol.NewSDSExchangeHandlerWithOptions(n.store, n.validator, n.flatc, limits, n.config.Security.InsecureMode, rateLimiter)
+	n.protocol = protocol.NewSDSExchangeHandlerWithOptions(n.store, n.validator, limits, rateLimiter)
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
 	n.host.SetStreamHandler(protocol.IDExchangeProtoID, protocol.HandleLegacyIDExchange)
 	n.host.SetStreamHandler(protocol.ChatProtoID, protocol.HandleLegacyChat)
