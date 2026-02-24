@@ -1,7 +1,7 @@
 import {
   decodeThirdPartyServerPluginGrant,
   encodeThirdPartyServerPluginRegistration,
-} from "@spacedatanetwork/plugin-sdk/third-party-codec";
+} from "plugin-sdk/third-party-codec";
 
 export async function registerServerPlugin({
   brokerFetch,

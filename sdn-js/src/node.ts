@@ -20,7 +20,7 @@ import { keys } from '@libp2p/crypto';
 import { SDNStorage, StoredRecord } from './storage';
 import { getBootstrapRelays } from './edge-discovery';
 import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
-import { sign, initHDWallet } from './crypto/index';
+import { sign, initHDWallet } from './crypto/hd-wallet';
 import type { DerivedIdentity } from './crypto/types';
 import {
   requestLicenseGrantViaRelay,

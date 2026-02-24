@@ -4,7 +4,7 @@
 # SSH settings
 ssh:
   user: root
-  key_path: ~/.ssh/sdn_deploy_key
+  key_path: /path/to/sdn_deploy_key
   port: 22
 
 # Docker registry (optional, for pre-built images)
@@ -40,7 +40,7 @@ full_nodes:
 
 # Edge relays - lightweight relay nodes at edge locations
 edge_relays:
-  - ip: 209.182.234.97
+  - ip: 203.0.113.97
     region: asia-tokyo
     name: edge-tokyo-1
     port: 8080

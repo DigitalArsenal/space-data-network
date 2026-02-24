@@ -44,7 +44,9 @@
     "test:plugin-sdk:key-broker-client": "node packages/plugin-sdk/scripts/key-broker-test-client.mjs",
     "test:plugin-sdk:conformance": "node packages/plugin-sdk/tests/conformance/run-conformance.mjs",
     "test:plugin-sdk:mock-harness": "node packages/plugin-sdk/scripts/mock-third-party-plugin-harness.mjs",
-    "ci:plugin-sdk": "npm run generate:plugin-sdk:key-broker-bindings && npm run generate:plugin-sdk:third-party-bindings && npm run test:plugin-sdk:conformance"
+    "ci:plugin-sdk": "npm run generate:plugin-sdk:key-broker-bindings && npm run generate:plugin-sdk:third-party-bindings && npm run test:plugin-sdk:conformance",
+    "ci:local": "scripts/ci-local.sh quick",
+    "ci:local:full": "scripts/ci-local.sh full"
   },
   "repository": {
     "type": "git",

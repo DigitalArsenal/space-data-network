@@ -737,7 +737,7 @@ export class SDNNode {
 
 // Default edge relays (seeded from configuration)
 export const DEFAULT_EDGE_RELAYS = [
-    '/ip4/209.182.234.97/tcp/8080/ws/p2p/16Uiu2HAkxKtJncDGfgtFpx4mNqtrzbBBrCZ8iaKKyKuEqEHuEz5J',
+    '/ip4/203.0.113.97/tcp/8080/ws/p2p/16Uiu2HAkxKtJncDGfgtFpx4mNqtrzbBBrCZ8iaKKyKuEqEHuEz5J',
     // Add more edge relay addresses here
 ];
 
@@ -1309,7 +1309,7 @@ import "github.com/spacedatanetwork/spacedatanetwork-server/internal/storage"
 
 ```typescript
 // Before (sdn.libp2p.ts)
-const tokyo2WS = "/ip4/209.182.234.97/tcp/8080/ws/p2p/...";
+const tokyo2WS = "/ip4/203.0.113.97/tcp/8080/ws/p2p/...";
 
 // After (spacedatanetwork-js)
 import { SDNNode, EDGE_RELAYS } from 'spacedatanetwork-js';

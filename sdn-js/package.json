@@ -20,6 +20,7 @@
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "test": "vitest",
+    "test:relay": "SDN_RUN_RELAY_TEST=1 vitest run src/spaceaware-relay.integration.test.ts",
     "lint": "eslint src --ext .ts",
     "prepublishOnly": "npm run build"
   },

@@ -1016,7 +1016,7 @@ npm run desktop</code></pre>
         <div id="qs-browser" class="qs-panel">
           <h3>Browser (JavaScript)</h3>
           <p>Integrate SDN directly into web applications using the JavaScript SDK.</p>
-          <pre><code>import { SDNNode } from '@spacedatanetwork/sdn-js';
+          <pre><code>import { SDNNode } from './sdn-js/dist/esm/index.js';
 
 const node = new SDNNode();
 await node.start();
@@ -1046,10 +1046,10 @@ await node.publish('OMM', {
 
         <h3>JavaScript SDK</h3>
         <pre><code># npm
-npm install @spacedatanetwork/sdn-js
+npm --prefix sdn-js install
 
 # yarn
-yarn add @spacedatanetwork/sdn-js</code></pre>
+npm --prefix sdn-js install</code></pre>
 
         <h3>Server Binary</h3>
         <pre><code># Linux amd64
@@ -1255,7 +1255,7 @@ PEER_ID=$(spacedatanetwork show-identity --wasm /opt/sdn/wasm/hd-wallet.wasm 2>/
 }</code></pre>
 
         <h3>Client Configuration</h3>
-        <pre><code>import { SDNNode } from '@spacedatanetwork/sdn-js';
+        <pre><code>import { SDNNode } from './sdn-js/dist/esm/index.js';
 
 const node = new SDNNode({
   relays: [
@@ -1321,18 +1321,18 @@ spec:
         <h2>JavaScript SDK</h2>
 
         <h3>Installation</h3>
-        <pre><code>npm install @spacedatanetwork/sdn-js</code></pre>
+        <pre><code>npm --prefix sdn-js install</code></pre>
 
         <h3>Browser (ES Modules)</h3>
         <pre><code>&lt;script type="module"&gt;
-  import { SDNNode } from 'https://unpkg.com/@spacedatanetwork/sdn-js/dist/esm/index.js';
+  import { SDNNode } from './sdn-js/dist/esm/index.js';
 
   const node = new SDNNode();
   await node.start();
 &lt;/script&gt;</code></pre>
 
         <h3>Browser (UMD)</h3>
-        <pre><code>&lt;script src="https://unpkg.com/@spacedatanetwork/sdn-js/dist/umd/sdn.min.js"&gt;&lt;/script&gt;
+        <pre><code>&lt;script src="./sdn-js/dist/umd/sdn.min.js"&gt;&lt;/script&gt;
 &lt;script&gt;
   const node = new SDN.SDNNode();
   node.start().then(() =&gt; console.log('Connected!'));
@@ -1384,7 +1384,7 @@ node.on('error', (error) => console.error(error));</code></pre>
 
       <section id="sdk-identity" class="doc-section">
         <h3>Identity Management</h3>
-        <pre><code>import { Identity } from '@spacedatanetwork/sdn-js';
+        <pre><code>import { Identity } from './sdn-js/dist/esm/index.js';
 
 // Generate new identity
 const identity = await Identity.generate();
@@ -1405,7 +1405,7 @@ const imported = await Identity.import(exported, 'password123');</code></pre>
         <h3>Astrodynamics Library</h3>
         <p>The SDK includes a complete astrodynamics library for propagation and conjunction assessment.</p>
 
-        <pre><code>import { propagate, sgp4 } from '@spacedatanetwork/sdn-js/astro';
+        <pre><code>import { propagate, sgp4 } from './sdn-js/dist/esm/astro/index.js';
 
 // SGP4 propagation from TLE
 const state = sgp4(tle, epochMinutes);
@@ -1418,7 +1418,7 @@ const states = propagate(omm, {
   step: 60 // seconds
 });</code></pre>
 
-        <pre><code>import { screenConjunctions, computePc } from '@spacedatanetwork/sdn-js/astro';
+        <pre><code>import { screenConjunctions, computePc } from './sdn-js/dist/esm/astro/index.js';
 
 // Screen for close approaches
 const conjunctions = screenConjunctions(primaryOMM, secondaryOMMs, {
@@ -1429,7 +1429,7 @@ const conjunctions = screenConjunctions(primaryOMM, secondaryOMMs, {
 // Compute collision probability
 const pc = computePc(cdm);</code></pre>
 
-        <pre><code>import { eciToEcef, ecefToLla } from '@spacedatanetwork/sdn-js/astro';
+        <pre><code>import { eciToEcef, ecefToLla } from './sdn-js/dist/esm/astro/index.js';
 
 // ECI to ECEF
 const ecef = eciToEcef(eci, gmst);
@@ -1474,7 +1474,7 @@ const lla = ecefToLla(ecef);
         </ul>
 
         <h3>JavaScript SDK</h3>
-        <pre><code>import { initHDWallet, deriveIdentity, mnemonicToSeed } from '@spacedatanetwork/sdn-js';
+        <pre><code>import { initHDWallet, deriveIdentity, mnemonicToSeed } from './sdn-js/dist/esm/index.js';
 
 // Initialize WASM module
 await initHDWallet();
@@ -1578,7 +1578,7 @@ fmt.Println(identity.PeerID()) // "16Uiu2HAm..."</code></pre>
         <p>The Ed25519 signing key is bound to the secp256k1 identity via <strong>TOFU</strong> (Trust On First Use): on the first wallet-based login, the server records the Ed25519 public key alongside the xpub. Subsequent logins require both the correct xpub <em>and</em> a valid Ed25519 challenge-response signature.</p>
 
         <pre><code>// Sign data with the identity's Ed25519 key
-const { sign, verify } = await import('@spacedatanetwork/sdn-js');
+const { sign, verify } = await import('./sdn-js/dist/esm/index.js');
 
 const message = new TextEncoder().encode('ISS conjunction alert');
 const signature = await sign(identity.signingKey.privateKey, message);
@@ -1601,7 +1601,7 @@ ok, _  := identity.Verify([]byte("ISS conjunction alert"), sig)
           <li><strong>AES-256-GCM Encryption</strong> &mdash; The shared secret encrypts data end-to-end. Only the intended recipient can decrypt.</li>
         </ul>
 
-        <pre><code>import { encryptBytes, decryptBytes, deriveIdentity } from '@spacedatanetwork/sdn-js';
+        <pre><code>import { encryptBytes, decryptBytes, deriveIdentity } from './sdn-js/dist/esm/index.js';
 
 // Alice and Bob each derive their identity
 const alice = await deriveIdentity(aliceSeed, 0);
@@ -1978,7 +1978,7 @@ interface EphemerisDataLine {
 }</code></pre>
 
         <h3>Schema Validation</h3>
-        <pre><code>import { SchemaRegistry } from '@spacedatanetwork/sdn-js';
+        <pre><code>import { SchemaRegistry } from './sdn-js/dist/esm/index.js';
 
 // Validate data against schema
 const errors = SchemaRegistry.validate('OMM', data);
@@ -1991,7 +1991,7 @@ const schemas = SchemaRegistry.list();
 // ['OMM', 'OEM', 'CDM', 'EPM', ...]</code></pre>
 
         <h3>Converting from TLE</h3>
-        <pre><code>import { tleToOMM } from '@spacedatanetwork/sdn-js';
+        <pre><code>import { tleToOMM } from './sdn-js/dist/esm/index.js';
 
 const tle = [
   '1 25544U 98067A   25024.50000000  .00016717  00000-0  10270-3 0  9029',

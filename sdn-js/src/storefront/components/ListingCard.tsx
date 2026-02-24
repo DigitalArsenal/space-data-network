@@ -6,7 +6,7 @@
  *
  * @example React implementation:
  * ```tsx
- * import { ListingCardProps } from '@spacedatanetwork/sdn-js/storefront/components';
+ * import { ListingCardProps } from 'sdn-js/storefront/components';
  *
  * export function ListingCard({ listing, onViewSample, onSubscribe }: ListingCardProps) {
  *   return (

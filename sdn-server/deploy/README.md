@@ -124,7 +124,7 @@ If using Cloudflare in front of the core node, route Stripe webhooks to:
 Example origin URL:
 
 ```bash
-https://api.spaceaware.io/api/storefront/payments/stripe/webhook
+https://api.example.com/api/storefront/payments/stripe/webhook
 ```
 
 ## Health Checks

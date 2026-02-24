@@ -1,0 +1,12 @@
+# Run local CI before pushing to reduce GitHub Actions spend.
+# Set SKIP_LOCAL_CI=1 to bypass intentionally.
+
+if [ "${SKIP_LOCAL_CI:-0}" = "1" ]; then
+  echo "SKIP_LOCAL_CI=1 set, skipping local CI"
+  exit 0
+fi
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+echo "Running local CI before push (quick mode)..."
+"$ROOT/scripts/ci-local.sh" quick

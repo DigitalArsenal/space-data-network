@@ -16,7 +16,7 @@
 import { EPMResolver, KeyType, createEPMResolver } from '../src/epm-resolver';
 
 // In production, import from the flatbuffers package:
-// import { EncryptionContext, initEncryption } from '@spacedatanetwork/flatbuffers-encryption';
+// import { EncryptionContext, initEncryption } from 'flatbuffers-encryption';
 
 // Mock types for this example (replace with actual imports)
 interface EncryptionHeader {
