@@ -48,7 +48,7 @@ jobs:
       # Install cosign for container signing
       - name: Install cosign
         if: steps.check.outputs.exists == 'true'
-        uses: sigstore/cosign-installer@v3.4.0
+        uses: sigstore/cosign-installer@v4.0.0
         with:
           cosign-release: 'v2.2.3'
 
@@ -171,7 +171,7 @@ jobs:
 
     steps:
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3.4.0
+        uses: sigstore/cosign-installer@v4.0.0
 
       - name: Verify full-node image
         continue-on-error: true
