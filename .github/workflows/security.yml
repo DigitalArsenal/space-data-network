@@ -16,7 +16,7 @@ jobs:
         working-directory: sdn-server
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -56,7 +56,7 @@ jobs:
         working-directory: sdn-js
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -108,7 +108,7 @@ jobs:
             name: edge-relay
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check if Dockerfile exists
         id: check
@@ -178,7 +178,7 @@ jobs:
             working-directory: sdn-js
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
