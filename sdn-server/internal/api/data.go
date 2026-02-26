@@ -43,6 +43,7 @@ func (h *DataQueryHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/data/mpe", h.handleMPE)
 	mux.HandleFunc("/api/v1/data/cat", h.handleCAT)
 	mux.HandleFunc("/api/v1/data/secure/omm", h.handleSecureOMM)
+	mux.HandleFunc("/api/v1/data/query/", h.handleGenericQuery)
 }
 
 func (h *DataQueryHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +226,97 @@ func (h *DataQueryHandler) handleCAT(w http.ResponseWriter, r *http.Request) {
 			"norad_cat_id": noradID,
 			"limit":        limit,
 		},
+		"count":   len(results),
+		"results": results,
+	})
+}
+
+// handleGenericQuery serves GET /api/v1/data/query/{schema}?day=&norad_cat_id=&entity_id=&limit=&offset=&format=
+// This generalizes the per-schema handlers into a single parameterized endpoint.
+func (h *DataQueryHandler) handleGenericQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+
+	// Extract schema from URL path: /api/v1/data/query/{schema}
+	schema := strings.TrimPrefix(r.URL.Path, "/api/v1/data/query/")
+	schema = strings.TrimSuffix(schema, "/")
+	if schema == "" {
+		writeError(w, http.StatusBadRequest, "missing schema in URL path")
+		return
+	}
+
+	q := r.URL.Query()
+	day := strings.TrimSpace(q.Get("day"))
+	entityID := strings.TrimSpace(q.Get("entity_id"))
+	limit := parseLimit(r, 100, 1000)
+	format := requestedDataFormat(r)
+	includeData := parseBool(r, "include_data")
+
+	var noradPtr *uint32
+	if raw := strings.TrimSpace(q.Get("norad_cat_id")); raw != "" {
+		v, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid norad_cat_id")
+			return
+		}
+		id := uint32(v)
+		noradPtr = &id
+	}
+
+	if day != "" {
+		if _, err := time.Parse("2006-01-02", day); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid day (expected YYYY-MM-DD)")
+			return
+		}
+	}
+
+	records, err := h.store.QueryByIndexedFields(schema, day, noradPtr, entityID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	setCachePolicy(w, day)
+
+	if format == dataFormatFlatBuffers {
+		writeFlatBufferStream(w, schema, records)
+		return
+	}
+
+	results := make([]map[string]interface{}, 0, len(records))
+	for _, rec := range records {
+		row := map[string]interface{}{
+			"cid":       rec.CID,
+			"peer_id":   rec.PeerID,
+			"timestamp": rec.Timestamp.UTC().Format(time.RFC3339),
+		}
+		if includeData {
+			row["data_base64"] = base64.StdEncoding.EncodeToString(rec.Data)
+		}
+		results = append(results, row)
+	}
+
+	queryInfo := map[string]interface{}{
+		"limit": limit,
+	}
+	if day != "" {
+		queryInfo["day"] = day
+	}
+	if noradPtr != nil {
+		queryInfo["norad_cat_id"] = *noradPtr
+	}
+	if entityID != "" {
+		queryInfo["entity_id"] = entityID
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"schema":  schema,
+		"query":   queryInfo,
 		"count":   len(results),
 		"results": results,
 	})

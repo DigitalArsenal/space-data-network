@@ -1,0 +1,111 @@
+name: Publish sdn-js to npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (skip actual publish)'
+        required: false
+        default: 'false'
+        type: boolean
+      tag:
+        description: 'npm dist-tag (e.g. latest, next, beta)'
+        required: false
+        default: 'latest'
+        type: string
+
+concurrency:
+  group: npm-publish-sdn-js
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build & Publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for npm provenance
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+          cache-dependency-path: sdn-js/package-lock.json
+
+      - name: Install dependencies
+        working-directory: sdn-js
+        run: npm ci
+
+      - name: Build
+        working-directory: sdn-js
+        run: npm run build
+
+      - name: Verify package contents
+        working-directory: sdn-js
+        run: |
+          echo "=== Package contents ==="
+          npm pack --dry-run 2>&1
+          echo ""
+          echo "=== Checking required files ==="
+          for f in dist/index.js dist/index.esm.js dist/index.d.ts; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: Missing $f"
+              exit 1
+            fi
+          done
+          echo "All required files present."
+
+      - name: Determine dist-tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag || 'latest' }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
+            if echo "$TAG_NAME" | grep -qE '(alpha|beta|rc|next)'; then
+              echo "tag=next" >> $GITHUB_OUTPUT
+            else
+              echo "tag=latest" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Publish to npm
+        if: ${{ github.event_name == 'release' || inputs.dry_run != 'true' }}
+        working-directory: sdn-js
+        run: npm publish --provenance --access public --tag ${{ steps.tag.outputs.tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish dry run
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true' }}
+        working-directory: sdn-js
+        run: |
+          echo "=== DRY RUN ==="
+          npm publish --dry-run --access public
+          echo "=== Would publish with tag: ${{ steps.tag.outputs.tag }} ==="
+
+      - name: Summary
+        run: |
+          VERSION=$(node -p "require('./sdn-js/package.json').version")
+          echo "## npm Publish Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | \`@spacedatanetwork/sdn-js\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${VERSION}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tag | \`${{ steps.tag.outputs.tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "| Status | Dry run (not published) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Status | Published |" >> $GITHUB_STEP_SUMMARY
+          fi
