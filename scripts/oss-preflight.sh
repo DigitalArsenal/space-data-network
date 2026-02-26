@@ -10,6 +10,11 @@ fi
 cd "$ROOT"
 
 fail=0
+if command -v rg >/dev/null 2>&1; then
+  FILTER_CMD="rg"
+else
+  FILTER_CMD="grep"
+fi
 
 echo "[oss-preflight] Repo: $ROOT"
 
@@ -20,7 +25,11 @@ INFRA_REGEX='api\\.spaceaware\\.io|relay\\.spaceaware\\.io|tokyo\\.relay\\.digit
 ALLOWLIST_REGEX='^kubo/test/sharness/t0165-keystore-data/|^sdn-server/internal/storefront/payment_stripe_test.go:|^sdn-js/node_modules/|^scripts/oss-preflight.sh:'
 
 echo "[oss-preflight] 1/3 Checking blocked tracked paths..."
-blocked_hits="$(git ls-files | rg -n "$BLOCKED_PATHS_REGEX" || true)"
+if [[ "$FILTER_CMD" == "rg" ]]; then
+  blocked_hits="$(git ls-files | rg -n "$BLOCKED_PATHS_REGEX" || true)"
+else
+  blocked_hits="$(git ls-files | grep -nE "$BLOCKED_PATHS_REGEX" || true)"
+fi
 if [[ -n "$blocked_hits" ]]; then
   echo "[oss-preflight] FAIL: blocked paths are still tracked:"
   echo "$blocked_hits"
@@ -32,7 +41,11 @@ fi
 echo "[oss-preflight] 2/3 Scanning tracked files for high-risk secret patterns..."
 secret_hits="$(git grep -n -I -E -e "$SECRET_REGEX" || true)"
 if [[ -n "$secret_hits" ]]; then
-  secret_hits="$(printf '%s\n' "$secret_hits" | rg -v "$ALLOWLIST_REGEX" || true)"
+  if [[ "$FILTER_CMD" == "rg" ]]; then
+    secret_hits="$(printf '%s\n' "$secret_hits" | rg -v "$ALLOWLIST_REGEX" || true)"
+  else
+    secret_hits="$(printf '%s\n' "$secret_hits" | grep -Ev "$ALLOWLIST_REGEX" || true)"
+  fi
 fi
 if [[ -n "$secret_hits" ]]; then
   echo "[oss-preflight] FAIL: possible secret material detected:"
@@ -45,7 +58,11 @@ fi
 echo "[oss-preflight] 3/3 Checking tracked files for production endpoint leaks..."
 infra_hits="$(git grep -n -I -E -e "$INFRA_REGEX" || true)"
 if [[ -n "$infra_hits" ]]; then
-  infra_hits="$(printf '%s\n' "$infra_hits" | rg -v "$ALLOWLIST_REGEX" || true)"
+  if [[ "$FILTER_CMD" == "rg" ]]; then
+    infra_hits="$(printf '%s\n' "$infra_hits" | rg -v "$ALLOWLIST_REGEX" || true)"
+  else
+    infra_hits="$(printf '%s\n' "$infra_hits" | grep -Ev "$ALLOWLIST_REGEX" || true)"
+  fi
 fi
 if [[ -n "$infra_hits" ]]; then
   echo "[oss-preflight] FAIL: production endpoint or host references detected:"
