@@ -1014,6 +1014,11 @@ func (n *Node) Store() *storage.FlatSQLStore {
 	return n.store
 }
 
+// Validator returns the SDS schema validator.
+func (n *Node) Validator() *sds.Validator {
+	return n.validator
+}
+
 // PluginManager returns the node plugin manager.
 func (n *Node) PluginManager() *plugins.Manager {
 	return n.plugins

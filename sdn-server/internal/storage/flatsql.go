@@ -761,6 +761,88 @@ func parseCAT(data []byte) (cat *CAT.CAT, err error) {
 	}
 }
 
+// SchemaDateRange holds catalog metadata for a single schema.
+type SchemaDateRange struct {
+	Schema      string
+	RecordCount int64
+	OldestEpoch *time.Time
+	NewestEpoch *time.Time
+	TotalBytes  int64
+}
+
+// SchemaDateRanges returns catalog metadata for all schemas with stored data.
+func (s *FlatSQLStore) SchemaDateRanges() ([]SchemaDateRange, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT schema_name, COUNT(*) as cnt,
+		       MIN(epoch_unix) as min_epoch,
+		       MAX(epoch_unix) as max_epoch
+		FROM sdn_record_index
+		GROUP BY schema_name
+		ORDER BY schema_name
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query schema date ranges: %w", err)
+	}
+	defer rows.Close()
+
+	var ranges []SchemaDateRange
+	for rows.Next() {
+		var r SchemaDateRange
+		var minEpoch, maxEpoch sql.NullInt64
+		if err := rows.Scan(&r.Schema, &r.RecordCount, &minEpoch, &maxEpoch); err != nil {
+			return nil, fmt.Errorf("failed to scan schema date range: %w", err)
+		}
+		if minEpoch.Valid && minEpoch.Int64 > 0 {
+			t := time.Unix(minEpoch.Int64, 0).UTC()
+			r.OldestEpoch = &t
+		}
+		if maxEpoch.Valid && maxEpoch.Int64 > 0 {
+			t := time.Unix(maxEpoch.Int64, 0).UTC()
+			r.NewestEpoch = &t
+		}
+		ranges = append(ranges, r)
+	}
+
+	// Compute total bytes from per-schema tables.
+	for i := range ranges {
+		tableName, err := sds.SchemaNameToTable(ranges[i].Schema)
+		if err != nil {
+			continue
+		}
+		var totalBytes sql.NullInt64
+		err = s.db.QueryRow(fmt.Sprintf(`SELECT SUM(LENGTH(data)) FROM %s`, tableName)).Scan(&totalBytes)
+		if err == nil && totalBytes.Valid {
+			ranges[i].TotalBytes = totalBytes.Int64
+		}
+	}
+
+	return ranges, nil
+}
+
+// PeerStorageBytes returns the total stored bytes for a given peer across all schemas.
+func (s *FlatSQLStore) PeerStorageBytes(peerID string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var total int64
+	for _, schemaName := range s.validator.Schemas() {
+		tableName, err := sds.SchemaNameToTable(schemaName)
+		if err != nil {
+			continue
+		}
+		var bytes sql.NullInt64
+		err = s.db.QueryRow(fmt.Sprintf(`SELECT SUM(LENGTH(data)) FROM %s WHERE peer_id = ?`, tableName), peerID).Scan(&bytes)
+		if err == nil && bytes.Valid {
+			total += bytes.Int64
+		}
+	}
+
+	return total, nil
+}
+
 func parseEpochString(raw string) (int64, error) {
 	normalized := strings.TrimSpace(raw)
 	if normalized == "" {

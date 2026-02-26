@@ -21,6 +21,25 @@ type Config struct {
 	Setup      SetupConfig      `yaml:"setup"`
 	Users      []UserEntry      `yaml:"users"`
 	Blockchain BlockchainConfig `yaml:"blockchain"`
+	Publishing PublishingConfig `yaml:"publishing"`
+}
+
+// PublishingConfig controls remote data publishing via the API.
+type PublishingConfig struct {
+	// Enabled enables the data publish endpoint.
+	Enabled bool `yaml:"enabled"`
+
+	// AllowedSchemas restricts which schemas can be published. Empty = all.
+	AllowedSchemas []string `yaml:"allowed_schemas"`
+
+	// MaxRecordBytes is the maximum size of a single record (default: 10MB).
+	MaxRecordBytes int `yaml:"max_record_bytes"`
+
+	// DefaultQuotaBytes is the per-peer storage quota (default: 100MB).
+	DefaultQuotaBytes int64 `yaml:"default_quota_bytes"`
+
+	// MinTrustLevel is the minimum peer trust level for publishing (default: "standard").
+	MinTrustLevel string `yaml:"min_trust_level"`
 }
 
 // BlockchainConfig holds RPC settings for crypto payment verification.
@@ -300,6 +319,13 @@ func Default() *Config {
 			Ethereum: ChainRPCConfig{RequiredConfirmations: 12},
 			Solana:   ChainRPCConfig{RequiredConfirmations: 1},
 			Bitcoin:  ChainRPCConfig{RequiredConfirmations: 6},
+		},
+		Publishing: PublishingConfig{
+			Enabled:           true,
+			AllowedSchemas:    []string{},
+			MaxRecordBytes:    10 * 1024 * 1024, // 10MB
+			DefaultQuotaBytes: 100 * 1024 * 1024, // 100MB
+			MinTrustLevel:     "standard",
 		},
 	}
 }

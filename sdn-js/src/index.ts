@@ -200,3 +200,25 @@ export type {
   CreatePurchaseRequest,
   CreateReviewRequest,
 } from './storefront';
+
+// Unified Client
+export { SDNClient, SDNTransportError } from './client';
+export type {
+  NodeCatalog,
+  SchemaCatalogEntry,
+  DataQueryOptions,
+  DataQueryResponse,
+  DataRecord,
+  PublishResult,
+  BatchPublishResult,
+  SDNClientOptions,
+} from './client';
+
+// Node Resolver
+export { resolveNode, detectIdentifierType } from './resolver';
+export type { ResolvedNode, ResolveOptions, IdentifierType } from './resolver';
+
+// Transport + Auth
+export { HttpTransport } from './transport/http';
+export { SessionAuth } from './transport/auth';
+export type { AuthProvider } from './transport/auth';

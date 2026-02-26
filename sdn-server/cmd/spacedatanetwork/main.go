@@ -323,6 +323,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			dataAPI := api.NewDataQueryHandler(n.Store(), tokenVerifier)
 			dataAPI.RegisterRoutes(adminMux)
 
+			// Catalog API route (public)
+			if n.Store() != nil {
+				catalogAPI := api.NewCatalogHandler(n.Store(), n.PeerID(), cfg)
+				catalogAPI.RegisterRoutes(adminMux)
+				log.Infof("Catalog API available at %s://%s/api/v1/catalog", adminScheme, adminAddr)
+			}
+
 			// Demo API routes (encrypted WASM demo)
 			if demoPayloadPath := os.Getenv("SDN_DEMO_PAYLOAD_PATH"); demoPayloadPath != "" {
 				ipfsAPIURL := strings.TrimSpace(cfg.Admin.IPFSAPIURL)
@@ -506,6 +513,21 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 				authHandler.RegisterRoutes(adminMux)
 				log.Infof("HD wallet authentication enabled at %s://%s/login", adminScheme, adminAddr)
+
+				// Publish API (requires auth)
+				if n.Store() != nil && cfg.Publishing.Enabled {
+					quotas := api.NewStorageQuotaManager(n.Store(), cfg.Publishing.DefaultQuotaBytes)
+					publishAPI := api.NewPublishHandler(n.Store(), n.Validator(), quotas, &cfg.Publishing, authHandler)
+					publishAPI.RegisterRoutes(adminMux)
+					log.Infof("Publish API available at %s://%s/api/v1/data/publish/", adminScheme, adminAddr)
+				}
+
+				// Peer ACL admin API (requires admin auth)
+				if n.PeerRegistry() != nil {
+					aclAPI := api.NewACLHandler(n.PeerRegistry(), authHandler)
+					aclAPI.RegisterRoutes(adminMux)
+					log.Infof("Peer ACL API available at %s://%s/api/v1/admin/peers", adminScheme, adminAddr)
+				}
 
 				// Serve wallet-ui static files if configured
 				if walletUIPath := strings.TrimSpace(cfg.Admin.WalletUIPath); walletUIPath != "" {
