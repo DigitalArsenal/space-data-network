@@ -1,6 +1,4 @@
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.65.0 h1:OTTn514Nu9NTbUCsO3Z7YK/DMKgpqrCtLg8IhTG7uGQ=
-github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.65.0/go.mod h1:jFhDGCY8zPLZ2pqE3997FowChLydOltNz98rT+Be6UM=
 github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.73.13-0.20260224193725-330f3af1e935 h1:ma75T+tqAt1EklHuelxLS4+BTaz6OETTui9cGxIEkow=
 github.com/DigitalArsenal/spacedatastandards.org/lib/go v1.73.13-0.20260224193725-330f3af1e935/go.mod h1:jFhDGCY8zPLZ2pqE3997FowChLydOltNz98rT+Be6UM=
 github.com/benbjohnson/clock v1.3.5 h1:VvXlSJBzZpA/zum6Sj74hxwYI2DIxRWuNIoXAzHZz5o=
