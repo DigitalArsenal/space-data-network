@@ -1528,4 +1528,4 @@ These are architectural decisions that require stakeholder input:
 | Should edge relays participate in PubSub message relay? | **Pending Decision** | Currently they do relay PubSub |
 | Do we need a DHT for content routing or just peer routing? | **Pending Decision** | Currently using both via Kubo |
 
-## All tasks TODO are in .claude/tasks.md, not here
+## All tasks TODO are in .claude/todo/tasks.md, not here
