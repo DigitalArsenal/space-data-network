@@ -812,8 +812,6 @@ func isPublicAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/relay/status") ||
 		strings.HasPrefix(path, "/api/v0/") ||
 		strings.HasPrefix(path, "/ipfs/") ||
-		strings.HasPrefix(path, "/orbpro-key-broker/v1/orbpro/public-key") ||
-		strings.HasPrefix(path, "/orbpro-key-broker/v1/orbpro/key") ||
 		path == "/api/v0" ||
 		path == "/sdn/libp2p.js"
 }

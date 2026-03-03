@@ -344,6 +344,17 @@ func (n *Node) init() error {
 	if n.identity != nil && len(n.identity.EncryptionKey) == 32 {
 		pluginCtx.NodeEncryptionKey = make([]byte, len(n.identity.EncryptionKey))
 		copy(pluginCtx.NodeEncryptionKey, n.identity.EncryptionKey)
+	} else {
+		if envNodeEncKey := strings.TrimSpace(os.Getenv("SDN_DEV_NODE_ENCRYPTION_KEY_HEX")); envNodeEncKey != "" {
+			if decoded, err := hex.DecodeString(envNodeEncKey); err != nil {
+				log.Warnf("Invalid SDN_DEV_NODE_ENCRYPTION_KEY_HEX value, expected 64 hex chars: %v", err)
+			} else if len(decoded) != 32 {
+				log.Warnf("SDN_DEV_NODE_ENCRYPTION_KEY_HEX must be 32 bytes (got %d bytes)", len(decoded))
+			} else {
+				pluginCtx.NodeEncryptionKey = decoded
+				log.Warnf("Using development node encryption key from SDN_DEV_NODE_ENCRYPTION_KEY_HEX")
+			}
+		}
 	}
 
 	// Register WASI-based OrbPro key broker plugin from encrypted catalog (if configured),

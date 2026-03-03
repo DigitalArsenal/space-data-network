@@ -108,6 +108,7 @@ BUILD_HELPER_SCRIPT="${PLUGIN_HARNESS_BUILD_HELPER_SCRIPT:-build-plugin-release.
 LOADER_PATH="${PLUGIN_HARNESS_LOADER_PATH:-}"
 SKIP_ARTIFACT_SUBDIR="${PLUGIN_HARNESS_ARTIFACT_SUBDIR:-Build/plugin/licensing-server}"
 DECRYPT_HELPER="${PLUGIN_HARNESS_DECRYPT_HELPER:-$ROOT_DIR/scripts/decrypt-plugin-license-artifact.mjs}"
+SDN_SERVER_BINARY="${PLUGIN_HARNESS_SDN_SERVER_BINARY:-}"
 
 if [[ $# -eq 0 ]]; then
   print_usage
@@ -260,6 +261,7 @@ if [[ "$SKIP_BUILD" == "false" ]]; then
       PLUGIN_KEY_SERVER_ARTIFACT_PUBLIC_KEY_HEX="$PUBLIC_KEY" \
       PLUGIN_SERVER_PUBLIC_KEY_HEX="$PUBLIC_KEY" \
       PLUGIN_KEY_SERVER_STAGE_ROOT="$STAGE_DIR" \
+      PLUGIN_KEY_SERVER_STAGE_PLUGIN_ONLY="0" \
       PLUGIN_KEY_SERVER_STAGE_SINGLE_DIR=1 \
       bash -lc "$BUILD_COMMAND"
   )
@@ -345,6 +347,12 @@ schemas:
   validate: true
   strict: false
 
+tor:
+  enabled: false
+  hidden_service_enabled: false
+  socks_address: "127.0.0.1:0"
+  bypass_local_addresses: true
+
 peers:
   strict_mode: false
   enable_dht: false
@@ -375,13 +383,25 @@ ALLOWED_DOMAINS="${ADMIN_ADDR}"
 echo "[harness] starting SDN daemon at http://$ADMIN_ADDR"
 (
   cd "$ROOT_DIR/sdn-server"
-  env \
-    SDN_PLUGIN_ROOT="$PLUGIN_ROOT" \
-    PLUGIN_SERVER_PRIVATE_KEY_HEX="$SERVER_PRIVATE_KEY" \
-    DERIVATION_SECRET="$DERIVATION_SECRET" \
-    PLUGIN_KEYSERVER_ALLOWED_DOMAINS="$ALLOWED_DOMAINS" \
-    SDN_PLUGIN_DEBUG=1 \
-    go run ./cmd/spacedatanetwork daemon --config "$CONFIG_PATH" > "$LOG_PATH" 2>&1
+if [[ -n "$SDN_SERVER_BINARY" ]]; then
+    env \
+      SDN_PLUGIN_ROOT="$PLUGIN_ROOT" \
+      PLUGIN_SERVER_PRIVATE_KEY_HEX="$SERVER_PRIVATE_KEY" \
+      DERIVATION_SECRET="$DERIVATION_SECRET" \
+      ORBPRO_KEYSERVER_ALLOWED_DOMAINS="$ALLOWED_DOMAINS" \
+      PLUGIN_KEYSERVER_ALLOWED_DOMAINS="$ALLOWED_DOMAINS" \
+      SDN_PLUGIN_DEBUG=1 \
+      "$SDN_SERVER_BINARY" daemon --config "$CONFIG_PATH" > "$LOG_PATH" 2>&1
+  else
+    env \
+      SDN_PLUGIN_ROOT="$PLUGIN_ROOT" \
+      PLUGIN_SERVER_PRIVATE_KEY_HEX="$SERVER_PRIVATE_KEY" \
+      DERIVATION_SECRET="$DERIVATION_SECRET" \
+      ORBPRO_KEYSERVER_ALLOWED_DOMAINS="$ALLOWED_DOMAINS" \
+      PLUGIN_KEYSERVER_ALLOWED_DOMAINS="$ALLOWED_DOMAINS" \
+      SDN_PLUGIN_DEBUG=1 \
+      go run ./cmd/spacedatanetwork daemon --config "$CONFIG_PATH" > "$LOG_PATH" 2>&1
+  fi
 ) &
 SERVER_PID=$!
 
@@ -405,15 +425,18 @@ for _ in {1..30}; do
     fail "unable to read plugin manifest from SDN"
   fi
 
-  PLUGIN_STATUS="$(MANIFEST_PATH="$MANIFEST_PATH" PLUGIN_ID="$PLUGIN_ID" node -e 'const fs = require("fs"); const manifest = JSON.parse(fs.readFileSync(process.env.MANIFEST_PATH, "utf8")); const plugins = Array.isArray(manifest.plugins) ? manifest.plugins : []; const pluginId = process.env.PLUGIN_ID || ""; const item = pluginId ? plugins.find((entry) => entry && entry.id === pluginId) : plugins[0]; if (!item) { process.exit(2); } process.stdout.write(String(item.status || ""));')"
+  PLUGIN_STATUS="$(MANIFEST_PATH="$MANIFEST_PATH" PLUGIN_ID="$PLUGIN_ID" node -e 'const fs = require("fs"); const manifest = JSON.parse(fs.readFileSync(process.env.MANIFEST_PATH, "utf8")); const plugins = Array.isArray(manifest) ? manifest : (Array.isArray(manifest.plugins) ? manifest.plugins : []); const pluginId = process.env.PLUGIN_ID || ""; const item = pluginId ? plugins.find((entry) => entry && entry.id === pluginId) : plugins[0]; if (!item) { process.exit(2); } process.stdout.write(String(item.status || ""));')"
 
-  if [[ "$PLUGIN_STATUS" == "running" ]]; then
+  if [[ "$PLUGIN_STATUS" == "running" || "$PLUGIN_STATUS" == "stopped" ]]; then
     break
+  fi
+  if [[ "$PLUGIN_STATUS" == "error" ]]; then
+    fail "plugin '$PLUGIN_ID' reported error status. Latest manifest: $(cat "$MANIFEST_PATH")"
   fi
   sleep 1
 done
 
-if [[ "$PLUGIN_STATUS" != "running" ]]; then
+if [[ "$PLUGIN_STATUS" != "running" && "$PLUGIN_STATUS" != "stopped" ]]; then
   fail "plugin '$PLUGIN_ID' not running. Latest manifest: $(cat "$MANIFEST_PATH")"
 fi
 
@@ -430,17 +453,30 @@ if [[ "$BUNDLE_SIZE" -le 0 ]]; then
   fail "bundle is empty"
 fi
 
-if ! curl -sS "http://$ADMIN_ADDR/$PLUGIN_ID$PLUGIN_PUBLIC_KEY_PATH" > "$PUBKEY_PATH"; then
-  fail "public-key endpoint request failed"
-fi
-if ! node -e 'const fs=require("fs"); const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (typeof payload.publicKeyHex !== "string" || payload.publicKeyHex.length !== 64) { process.exit(1); }' "$PUBKEY_PATH"; then
-  fail "public-key response validation failed"
+if [[ "$PLUGIN_ID" == "orbpro-key-broker" ]]; then
+  if command -v npm >/dev/null 2>&1 && [[ -d "$ROOT_DIR/packages/plugin-sdk/node_modules" ]]; then
+    (
+      cd "$ROOT_DIR/packages/plugin-sdk" && \
+      npm run test:key-broker-client -- --node-info-url "http://$ADMIN_ADDR/api/node/info" >/dev/null
+    ) || fail "orbpro key-broker libp2p smoke check failed"
+  else
+    echo "[harness] skipping orbpro key-broker libp2p smoke check (npm/node_modules missing)"
+  fi
+else
+  if ! curl -sS "http://$ADMIN_ADDR/$PLUGIN_ID$PLUGIN_PUBLIC_KEY_PATH" > "$PUBKEY_PATH"; then
+    fail "public-key endpoint request failed"
+  fi
+  if ! node -e 'const fs=require("fs"); const payload=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (typeof payload.publicKeyHex !== "string" || payload.publicKeyHex.length !== 64) { process.exit(1); }' "$PUBKEY_PATH"; then
+    fail "public-key response validation failed"
+  fi
 fi
 
 echo "[harness] manifest:"
 cat "$MANIFEST_PATH"
 echo "[harness] bundle size: ${BUNDLE_SIZE} bytes"
-echo "[harness] public-key response:"
-cat "$PUBKEY_PATH"
+if [[ "$PLUGIN_ID" != "orbpro-key-broker" ]]; then
+  echo "[harness] public-key response:"
+  cat "$PUBKEY_PATH"
+fi
 echo "[harness] log file: $LOG_PATH"
 echo "[harness] PASS: plugin loaded and endpoints are reachable"

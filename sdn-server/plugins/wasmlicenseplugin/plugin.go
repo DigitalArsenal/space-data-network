@@ -232,7 +232,7 @@ func (p *Plugin) announceLoop(runtime plugins.RuntimeContext) {
 }
 
 // RegisterRoutes mounts the OrbPro key broker HTTP endpoints.
-// Key exchange is available both over libp2p streams and HTTP.
+// The key broker protocol is served only over libp2p streams.
 func (p *Plugin) RegisterRoutes(mux *http.ServeMux) {
 	p.mu.RLock()
 	h := p.handler
@@ -241,10 +241,6 @@ func (p *Plugin) RegisterRoutes(mux *http.ServeMux) {
 	if h == nil {
 		return
 	}
-
-	// Public key + key exchange over HTTP (for browser-based demo clients).
-	mux.HandleFunc("/orbpro-key-broker/v1/orbpro/public-key", h.HandlePublicKey)
-	mux.HandleFunc("/orbpro-key-broker/v1/orbpro/key", h.HandleKeyExchange)
 
 	// Admin UI (behind admin auth).
 	mux.HandleFunc("/orbpro-key-broker/v1/orbpro/ui", h.HandleUI)
