@@ -176,9 +176,14 @@ func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 	// not HTTP — following a Widevine/Signal-style model.
 	if runtime.Host != nil {
 		runtime.Host.SetStreamHandler(wasiplugin.PublicKeyProtocolID, bridge.HandlePublicKeyStream)
+		runtime.Host.SetStreamHandler(wasiplugin.ChallengeProtocolID, bridge.HandleChallengeStream)
 		runtime.Host.SetStreamHandler(wasiplugin.KeyBrokerProtocolID, bridge.HandleKeyBrokerStream)
-		log.Infof("Registered libp2p stream handlers: %s, %s",
-			wasiplugin.PublicKeyProtocolID, wasiplugin.KeyBrokerProtocolID)
+		log.Infof(
+			"Registered libp2p stream handlers: %s, %s, %s",
+			wasiplugin.PublicKeyProtocolID,
+			wasiplugin.ChallengeProtocolID,
+			wasiplugin.KeyBrokerProtocolID,
+		)
 	}
 
 	// Publish the server's public key CID to the DHT in a background goroutine.
@@ -286,6 +291,7 @@ func (p *Plugin) Close() error {
 	// Remove stream handlers
 	if h != nil {
 		h.RemoveStreamHandler(wasiplugin.PublicKeyProtocolID)
+		h.RemoveStreamHandler(wasiplugin.ChallengeProtocolID)
 		h.RemoveStreamHandler(wasiplugin.KeyBrokerProtocolID)
 	}
 

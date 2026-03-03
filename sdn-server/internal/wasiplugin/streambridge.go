@@ -23,6 +23,11 @@ const (
 	// all crypto internally.
 	KeyBrokerProtocolID = protocol.ID("/orbpro/key-broker/1.0.0")
 
+	// ChallengeProtocolID is the libp2p protocol for v3 anti-replay
+	// challenge issuance. The server returns a JSON challenge token that is
+	// included in v3 request packets.
+	ChallengeProtocolID = protocol.ID("/orbpro/challenge/1.0.0")
+
 	// PublicKeyProtocolID is the libp2p protocol for retrieving the
 	// server's P-256 public key. Clients fetch this before initiating
 	// the key exchange.
@@ -45,8 +50,9 @@ const (
 )
 
 // StreamBridge adapts the WASI plugin Runtime to libp2p stream handlers.
-// It handles two protocols:
+// It handles three protocols:
 //   - /orbpro/public-key/1.0.0 — serves the server's P-256 public key
+//   - /orbpro/challenge/1.0.0 — issues v3 challenge tokens
 //   - /orbpro/key-broker/1.0.0 — handles binary key exchange packets
 type StreamBridge struct {
 	runtime *Runtime
@@ -146,6 +152,43 @@ func (sb *StreamBridge) HandleKeyBrokerStream(stream network.Stream) {
 		remotePeer, status, len(response))
 }
 
+// HandleChallengeStream issues a one-time challenge for v3 key exchange.
+//
+// Wire format:
+//
+//  1. Client opens stream to /orbpro/challenge/1.0.0
+//  2. Client sends JSON request, for example: {"keyVersion":1}
+//  3. Server replies with JSON: {"challengeId":"...","challengeToken":"...","keyVersion":1}
+//  4. Errors reply as JSON: {"error":<status>}
+func (sb *StreamBridge) HandleChallengeStream(stream network.Stream) {
+	defer stream.Close()
+
+	remotePeer := stream.Conn().RemotePeer().ShortString()
+
+	_ = stream.SetReadDeadline(time.Now().Add(streamReadDeadline))
+	requestPayload, err := readStreamMessage(stream, maxStreamPacketSize)
+	if err != nil {
+		log.Debugf("stream challenge: read message from %s failed: %v", remotePeer, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), streamWriteDeadline)
+	defer cancel()
+
+	response, status, err := sb.runtime.RequestChallenge(ctx, requestPayload)
+	if err != nil {
+		log.Errorf("stream challenge: RequestChallenge failed for %s: %v", remotePeer, err)
+		challengeResponse := encodeChallengeErrorResponse(-1)
+		_ = stream.SetWriteDeadline(time.Now().Add(streamWriteDeadline))
+		_, _ = stream.Write(challengeResponse)
+		return
+	}
+
+	challengeResponse := encodeChallengeResponse(status, response)
+	_ = stream.SetWriteDeadline(time.Now().Add(streamWriteDeadline))
+	_, _ = stream.Write(challengeResponse)
+}
+
 func readStreamMessage(stream network.Stream, maxBytes int) ([]byte, error) {
 	limitedReader := io.LimitReader(stream, int64(maxBytes+1))
 	message, err := io.ReadAll(limitedReader)
@@ -206,6 +249,20 @@ func encodeKeyBrokerResponse(status uint32, packet []byte) []byte {
 	root := keybroker.KeyBrokerResponseEnd(builder)
 	keybroker.FinishKeyBrokerResponseBuffer(builder, root)
 	return builder.FinishedBytes()
+}
+
+func encodeChallengeErrorResponse(status int32) []byte {
+	return []byte(fmt.Sprintf(`{"error":%d}`, status))
+}
+
+func encodeChallengeResponse(status int32, response []byte) []byte {
+	if status == 0 {
+		if len(response) == 0 {
+			return []byte("{}")
+		}
+		return response
+	}
+	return encodeChallengeErrorResponse(status)
 }
 
 // PublicKeyCID computes the CID for the server's P-256 public key.

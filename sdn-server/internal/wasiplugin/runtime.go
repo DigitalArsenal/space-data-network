@@ -35,10 +35,11 @@ type Runtime struct {
 	mallocFn api.Function
 	freeFn   api.Function
 
-	initFn          api.Function
-	handleRequestFn api.Function
-	getPublicKeyFn  api.Function
-	getMetadataFn   api.Function
+	initFn             api.Function
+	handleRequestFn    api.Function
+	requestChallengeFn api.Function
+	getPublicKeyFn     api.Function
+	getMetadataFn      api.Function
 }
 
 // pluginCallTimeout is the maximum duration for a single WASI plugin function call.
@@ -393,21 +394,22 @@ func New(ctx context.Context, wasmBytes []byte) (*Runtime, error) {
 	}
 
 	rt := &Runtime{
-		wazRuntime:      r,
-		module:          module,
-		mallocFn:        module.ExportedFunction("malloc"),
-		freeFn:          module.ExportedFunction("free"),
-		initFn:          module.ExportedFunction("plugin_init"),
-		handleRequestFn: module.ExportedFunction("plugin_handle_request"),
-		getPublicKeyFn:  module.ExportedFunction("plugin_get_public_key"),
-		getMetadataFn:   module.ExportedFunction("plugin_get_metadata"),
+		wazRuntime:         r,
+		module:             module,
+		mallocFn:           module.ExportedFunction("malloc"),
+		freeFn:             module.ExportedFunction("free"),
+		initFn:             module.ExportedFunction("plugin_init"),
+		handleRequestFn:    module.ExportedFunction("plugin_handle_request"),
+		requestChallengeFn: module.ExportedFunction("plugin_request_challenge"),
+		getPublicKeyFn:     module.ExportedFunction("plugin_get_public_key"),
+		getMetadataFn:      module.ExportedFunction("plugin_get_metadata"),
 	}
 
 	if rt.mallocFn == nil || rt.freeFn == nil {
 		r.Close(ctx)
 		return nil, fmt.Errorf("WASM module missing malloc/free exports")
 	}
-	if rt.initFn == nil || rt.handleRequestFn == nil ||
+	if rt.initFn == nil || rt.handleRequestFn == nil || rt.requestChallengeFn == nil ||
 		rt.getPublicKeyFn == nil || rt.getMetadataFn == nil {
 		r.Close(ctx)
 		return nil, fmt.Errorf("WASM module missing required plugin_* exports")
@@ -580,6 +582,68 @@ func (rt *Runtime) HandleRequest(ctx context.Context, packet []byte, hostHeader 
 	// Validate guest-reported length does not exceed allocated buffer capacity.
 	if outLen > outCap {
 		return nil, status, fmt.Errorf("plugin output length %d exceeds buffer capacity %d", outLen, outCap)
+	}
+
+	output, err := rt.readMemory(outPtr, outLen)
+	if err != nil {
+		return nil, status, fmt.Errorf("failed to read output: %w", err)
+	}
+
+	return output, status, nil
+}
+
+// RequestChallenge asks the guest to issue a challenge token for v3 protocol.
+func (rt *Runtime) RequestChallenge(ctx context.Context, requestPayload []byte) ([]byte, int32, error) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
+	defer cancel()
+
+	reqPayload := append([]byte{}, requestPayload...)
+	reqPtr, err := rt.allocate(ctx, reqPayload)
+	if err != nil {
+		return nil, -1, fmt.Errorf("failed to allocate request payload: %w", err)
+	}
+	defer rt.deallocate(ctx, reqPtr)
+
+	const outCap = 1024
+	outPtr, err := rt.allocateSize(ctx, outCap)
+	if err != nil {
+		return nil, -1, fmt.Errorf("failed to allocate output: %w", err)
+	}
+	defer rt.deallocate(ctx, outPtr)
+
+	outLenPtr, err := rt.allocateSize(ctx, 4)
+	if err != nil {
+		return nil, -1, fmt.Errorf("failed to allocate output length: %w", err)
+	}
+	defer rt.deallocate(ctx, outLenPtr)
+
+	results, err := rt.requestChallengeFn.Call(
+		ctx,
+		uint64(reqPtr),
+		uint64(len(requestPayload)),
+		uint64(outPtr),
+		uint64(outCap),
+		uint64(outLenPtr),
+	)
+	if err != nil {
+		return nil, -1, fmt.Errorf("plugin_request_challenge call failed: %w", err)
+	}
+
+	status := api.DecodeI32(results[0])
+	outLenBytes, ok := rt.module.Memory().Read(outLenPtr, 4)
+	if !ok {
+		return nil, status, fmt.Errorf("failed to read output length from WASM memory")
+	}
+	outLen := binary.LittleEndian.Uint32(outLenBytes)
+
+	if outLen == 0 {
+		return nil, status, nil
+	}
+	if outLen > outCap {
+		return nil, status, fmt.Errorf("plugin challenge output length %d exceeds buffer capacity %d", outLen, outCap)
 	}
 
 	output, err := rt.readMemory(outPtr, outLen)

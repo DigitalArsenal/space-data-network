@@ -133,7 +133,9 @@ The daemon now exposes a libp2p license protocol on full nodes:
 OrbPro key exchange streams are FlatBuffer-based:
 
 - `/orbpro/public-key/1.0.0` returns `PublicKeyResponse` (file id `OBPK`)
+- `/orbpro/challenge/1.0.0` returns challenge JSON `{protocolVersion, challengeId, challengeToken, keyVersion, expiresAtMs}`
 - `/orbpro/key-broker/1.0.0` accepts `KeyBrokerRequest` (`OBKQ`) and returns `KeyBrokerResponse` (`OBKS`)
+- The stream handlers are transport-only; all challenge and packet validation logic remains in the WASM plugin ABI.
 - Schema source of truth lives at `packages/plugin-sdk/schemas/orbpro/key-broker/`
 - Regenerate plugin SDK + SDN Go bindings with `flatc-wasm` from repo root: `npm run generate:plugin-sdk:key-broker-bindings`
 
