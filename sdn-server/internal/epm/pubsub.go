@@ -13,6 +13,8 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
+const pnmSchema = "PNM.fbs"
+
 // TopicPublisher is the interface for publishing to a PubSub topic.
 type TopicPublisher interface {
 	Publish(schema string, data []byte) error
@@ -74,7 +76,7 @@ func (s *Service) PublishEPM(ctx context.Context, publisher TopicPublisher) erro
 	data := make([]byte, len(builder.FinishedBytes()))
 	copy(data, builder.FinishedBytes())
 
-	if err := publisher.Publish("PNM", data); err != nil {
+	if err := publisher.Publish(pnmSchema, data); err != nil {
 		return fmt.Errorf("failed to publish EPM PNM: %w", err)
 	}
 

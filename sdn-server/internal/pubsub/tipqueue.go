@@ -19,6 +19,8 @@ var (
 	ErrNoTopicMgr    = errors.New("topic manager not set")
 )
 
+const pnmSchema = "PNM.fbs"
+
 // ContentFetcher fetches content by CID.
 type ContentFetcher interface {
 	Fetch(ctx context.Context, cid string) ([]byte, error)
@@ -122,7 +124,7 @@ func (tq *TipQueue) Subscribe() error {
 		return ErrNoTopicMgr
 	}
 
-	sub, err := tq.topicMgr.Subscribe("PNM")
+	sub, err := tq.topicMgr.Subscribe(pnmSchema)
 	if err != nil {
 		return err
 	}
@@ -386,7 +388,7 @@ func (tq *TipQueue) PublishTip(ctx context.Context, opts PublishOptions) error {
 	data := make([]byte, len(builder.FinishedBytes()))
 	copy(data, builder.FinishedBytes())
 
-	return topicMgr.Publish("PNM", data)
+	return topicMgr.Publish(pnmSchema, data)
 }
 
 // PublishOptions contains options for publishing a tip.
