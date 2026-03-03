@@ -26,6 +26,8 @@ export const SUPPORTED_SCHEMAS = [
   'OMM.fbs',   // Orbit Mean-Elements Message
   'OSM.fbs',   // Orbit State Message
   'PLD.fbs',   // Payload
+  'PLG.fbs',   // Publication Log Entry - Hash-chained publication log
+  'PLH.fbs',   // Publication Log Head - Log head announcement
   'PNM.fbs',   // Peer Network Manifest
   'PRG.fbs',   // Propagation Settings
   'PUR.fbs',   // Purchase Request - Marketplace purchases
@@ -71,6 +73,8 @@ export const SCHEMA_DESCRIPTIONS: Record<SchemaName, string> = {
   'OMM.fbs': 'Orbit Mean-Elements Message - Satellite orbital parameters',
   'OSM.fbs': 'Orbit State Message - Orbit state vectors',
   'PLD.fbs': 'Payload - Spacecraft payload information',
+  'PLG.fbs': 'Publication Log Entry - Hash-chained publication log for data provenance',
+  'PLH.fbs': 'Publication Log Head - Lightweight log head announcement via GossipSub',
   'PNM.fbs': 'Peer Network Manifest - Peer identity and network capabilities',
   'PRG.fbs': 'Propagation Settings - Orbit propagation parameters',
   'PUR.fbs': 'Purchase Request - Marketplace purchase requests',
@@ -114,6 +118,8 @@ export const SDS_SCHEMAS: Record<SchemaName, string> = {
   'OMM.fbs': '',
   'OSM.fbs': '',
   'PLD.fbs': '',
+  'PLG.fbs': '',
+  'PLH.fbs': '',
   'PNM.fbs': '',
   'PRG.fbs': '',
   'PUR.fbs': '',

@@ -6,6 +6,13 @@ import { openDB, IDBPDatabase, DBSchema } from 'idb';
 import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
 import { preloadFlatSQLWASI } from './flatsql';
 
+export interface LogSyncState {
+  publisherPeerID: string;
+  schema: string;
+  lastSyncedSequence: number;
+  lastSyncedAt: number;
+}
+
 interface SDNDBSchema extends DBSchema {
   records: {
     key: string; // cid
@@ -20,6 +27,10 @@ interface SDNDBSchema extends DBSchema {
   metadata: {
     key: string;
     value: unknown;
+  };
+  log_sync_state: {
+    key: [string, string]; // [publisherPeerID, schema]
+    value: LogSyncState;
   };
 }
 
@@ -64,17 +75,25 @@ export class SDNStorage {
       console.warn('FlatSQL WASI preload failed, continuing with IndexedDB only:', err);
     }
 
-    this.db = await openDB<SDNDBSchema>(this.dbName, 1, {
-      upgrade(db) {
-        // Create records store with indexes
-        const recordsStore = db.createObjectStore('records', { keyPath: 'cid' });
-        recordsStore.createIndex('by-schema', 'schema');
-        recordsStore.createIndex('by-peer', 'peerId');
-        recordsStore.createIndex('by-time', 'timestamp');
-        recordsStore.createIndex('by-schema-peer', ['schema', 'peerId']);
+    this.db = await openDB<SDNDBSchema>(this.dbName, 2, {
+      upgrade(db, oldVersion) {
+        if (oldVersion < 1) {
+          // Create records store with indexes
+          const recordsStore = db.createObjectStore('records', { keyPath: 'cid' });
+          recordsStore.createIndex('by-schema', 'schema');
+          recordsStore.createIndex('by-peer', 'peerId');
+          recordsStore.createIndex('by-time', 'timestamp');
+          recordsStore.createIndex('by-schema-peer', ['schema', 'peerId']);
 
-        // Create metadata store
-        db.createObjectStore('metadata');
+          // Create metadata store
+          db.createObjectStore('metadata');
+        }
+        if (oldVersion < 2) {
+          // Log sync state store for tracking (publisher, schema) → last synced sequence
+          db.createObjectStore('log_sync_state', {
+            keyPath: ['publisherPeerID', 'schema'],
+          });
+        }
       },
     });
   }
@@ -234,6 +253,28 @@ export class SDNStorage {
       this.db.close();
       this.db = null;
     }
+  }
+
+  /**
+   * Get the last synced sequence for a (publisher, schema) pair.
+   */
+  async getLogSyncState(publisherPeerID: string, schema: string): Promise<number> {
+    if (!this.db) throw new Error('Database not initialized');
+    const state = await this.db.get('log_sync_state', [publisherPeerID, schema]);
+    return state?.lastSyncedSequence ?? 0;
+  }
+
+  /**
+   * Update the last synced sequence for a (publisher, schema) pair.
+   */
+  async setLogSyncState(publisherPeerID: string, schema: string, sequence: number): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+    await this.db.put('log_sync_state', {
+      publisherPeerID,
+      schema,
+      lastSyncedSequence: sequence,
+      lastSyncedAt: Date.now(),
+    });
   }
 
   /**

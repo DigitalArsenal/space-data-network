@@ -26,7 +26,7 @@ export type {
   LicenseErrorResponse,
 } from './license';
 export { SDNStorage } from './storage';
-export type { StoredRecord, QueryFilter } from './storage';
+export type { StoredRecord, QueryFilter, LogSyncState } from './storage';
 export { preloadFlatSQLWASI, getFlatSQLWASIPath } from './flatsql';
 export { loadEdgeRelays, getBootstrapRelays, DEFAULT_EDGE_RELAYS, EdgeDiscovery, multiaddrToStatusURL } from './edge-discovery';
 export type { RelayStatus, RelayProbeResult, DiscoveryMetrics } from './edge-discovery';
@@ -211,6 +211,9 @@ export type {
   DataRecord,
   PublishResult,
   BatchPublishResult,
+  LogHeadResponse,
+  LogEntriesResponse,
+  LogHeadsResponse,
   SDNClientOptions,
 } from './client';
 
@@ -220,5 +223,6 @@ export type { ResolvedNode, ResolveOptions, IdentifierType } from './resolver';
 
 // Transport + Auth
 export { HttpTransport } from './transport/http';
+export type { LogEntry, LogHeadInfo } from './transport/http';
 export { SessionAuth } from './transport/auth';
 export type { AuthProvider } from './transport/auth';

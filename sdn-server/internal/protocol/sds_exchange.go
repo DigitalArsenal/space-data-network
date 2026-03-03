@@ -48,6 +48,8 @@ const (
 	MsgResponse    byte = 0x04
 	MsgAck         byte = 0x05
 	MsgNack        byte = 0x06
+	MsgSyncLog     byte = 0x07 // Request PLG entries since a sequence number
+	MsgSyncReply   byte = 0x08 // Response with PLG entries (length-prefixed stream)
 )
 
 // Response codes
@@ -73,12 +75,18 @@ func DefaultMessageLimits() MessageLimits {
 	}
 }
 
+// SyncLogHandler is an optional handler for MsgSyncLog requests.
+type SyncLogHandler interface {
+	HandleSyncLog(s network.Stream)
+}
+
 // SDSExchangeHandler handles the SDS exchange protocol.
 type SDSExchangeHandler struct {
 	store       *storage.FlatSQLStore
 	validator   *sds.Validator
 	limits      MessageLimits
 	rateLimiter *PeerRateLimiter
+	syncHandler SyncLogHandler
 }
 
 // ErrRateLimited is returned when a peer exceeds the rate limit.
@@ -156,6 +164,13 @@ func (h *SDSExchangeHandler) HandleStream(s network.Stream) {
 		h.handleDataPush(ctx, s)
 	case MsgQuery:
 		h.handleQuery(ctx, s)
+	case MsgSyncLog:
+		if h.syncHandler != nil {
+			h.syncHandler.HandleSyncLog(s)
+		} else {
+			log.Warnf("MsgSyncLog received but no sync handler registered")
+			s.Write([]byte{RespReject})
+		}
 	default:
 		log.Warnf("Unknown message type: 0x%02x", msgType[0])
 		s.Write([]byte{RespReject})
@@ -393,6 +408,11 @@ func (h *SDSExchangeHandler) handleQuery(ctx context.Context, s network.Stream) 
 	}
 
 	log.Debugf("Sent %d results for query on %s", len(results), schemaName)
+}
+
+// SetSyncHandler registers a handler for MsgSyncLog requests.
+func (h *SDSExchangeHandler) SetSyncHandler(handler SyncLogHandler) {
+	h.syncHandler = handler
 }
 
 // HandlePubSubMessage processes a message received via PubSub.

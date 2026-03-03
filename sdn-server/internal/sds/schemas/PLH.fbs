@@ -1,0 +1,51 @@
+// Hash: placeholder
+// Version: 1.0.0
+// -----------------------------------END_HEADER
+
+/// Publication Log Head
+/// Lightweight announcement broadcast via GossipSub when a publisher's log
+/// advances. Subscribers compare HEAD_SEQUENCE against their last-synced
+/// sequence to determine if they need to catch up.
+/// One PLH per (publisher, schema) — replaces bulk PNM flooding for
+/// catalog updates and batch publishes.
+table PLH {
+  /// SDS schema type (e.g., "OMM", "CDM", "CAT")
+  SCHEMA_TYPE: string (required);
+
+  /// Publisher's libp2p PeerID
+  PUBLISHER_PEER_ID: string (required);
+
+  /// Sequence number of the latest PLG entry
+  HEAD_SEQUENCE: uint64;
+
+  /// ENTRY_HASH of the latest PLG entry (verifiable chain tip)
+  HEAD_ENTRY_HASH: string (required);
+
+  /// Total number of records in this log
+  RECORD_COUNT: uint64;
+
+  /// Publisher's multiformat address for direct fetch
+  /// https://multiformats.io/multiaddr/
+  MULTIFORMAT_ADDRESS: string;
+
+  /// Unix timestamp (seconds) when this HEAD was announced
+  TIMESTAMP: uint64;
+
+  /// Ed25519 signature over:
+  /// SHA-256(SCHEMA_TYPE_UTF8 || PUBLISHER_PEER_ID_UTF8 ||
+  ///         HEAD_SEQUENCE_LE64 || HEAD_ENTRY_HASH_UTF8 || TIMESTAMP_LE64)
+  SIGNATURE: [ubyte];
+
+  /// Signature algorithm identifier (e.g., "Ed25519")
+  SIGNATURE_TYPE: string;
+
+  /// Oldest epoch day available in this log ("YYYY-MM-DD").
+  /// Helps subscribers decide if this publisher has data they care about.
+  OLDEST_EPOCH_DAY: string;
+
+  /// Newest epoch day available in this log ("YYYY-MM-DD").
+  NEWEST_EPOCH_DAY: string;
+}
+
+root_type PLH;
+file_identifier "$PLH";

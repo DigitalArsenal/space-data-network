@@ -64,6 +64,48 @@ export interface BatchPublishResult {
   results: Array<{ cid?: string; error?: string; bytes: number }>;
 }
 
+/** Log head response from GET /api/v1/log/{schema}/head. */
+export interface LogHeadResponse {
+  schema_type: string;
+  publisher_peer_id: string;
+  head_sequence: number;
+  head_entry_hash: string;
+  record_count: number;
+  oldest_epoch_day: string;
+  newest_epoch_day: string;
+}
+
+/** A single PLG log entry (base64-encoded). */
+export interface LogEntry {
+  data_base64: string;
+  bytes: number;
+}
+
+/** Log entries response from GET /api/v1/log/{schema}/entries. */
+export interface LogEntriesResponse {
+  schema_type: string;
+  publisher_peer_id: string;
+  since_sequence: number;
+  count: number;
+  entries: LogEntry[];
+}
+
+/** A single publisher's log head info. */
+export interface LogHeadInfo {
+  publisher_peer_id: string;
+  schema_type: string;
+  head_sequence: number;
+  head_entry_hash: string;
+  timestamp: string;
+}
+
+/** Log heads response from GET /api/v1/log/{schema}/heads. */
+export interface LogHeadsResponse {
+  schema_type: string;
+  count: number;
+  heads: LogHeadInfo[];
+}
+
 /** HTTP transport for SDN server APIs. */
 export class HttpTransport {
   private baseUrl: string;
@@ -145,6 +187,35 @@ export class HttpTransport {
       headers: { 'Content-Type': 'application/octet-stream' },
       body: stream.buffer as ArrayBuffer,
     });
+    return resp.json();
+  }
+
+  /** Get log head for a publisher+schema. */
+  async getLogHead(schema: string, publisherPeerID: string): Promise<LogHeadResponse> {
+    const params = new URLSearchParams({ publisher: publisherPeerID });
+    const resp = await this.fetch(`/api/v1/log/${encodeURIComponent(schema)}/head?${params}`);
+    return resp.json();
+  }
+
+  /** Get log entries for a publisher+schema since a given sequence. */
+  async getLogEntries(
+    schema: string,
+    publisherPeerID: string,
+    sinceSequence: number = 0,
+    limit: number = 100,
+  ): Promise<LogEntriesResponse> {
+    const params = new URLSearchParams({
+      publisher: publisherPeerID,
+      since: String(sinceSequence),
+      limit: String(limit),
+    });
+    const resp = await this.fetch(`/api/v1/log/${encodeURIComponent(schema)}/entries?${params}`);
+    return resp.json();
+  }
+
+  /** Get all publishers' log heads for a schema. */
+  async getLogHeads(schema: string): Promise<LogHeadsResponse> {
+    const resp = await this.fetch(`/api/v1/log/${encodeURIComponent(schema)}/heads`);
     return resp.json();
   }
 

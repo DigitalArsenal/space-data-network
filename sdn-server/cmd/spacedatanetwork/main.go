@@ -323,6 +323,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			dataAPI := api.NewDataQueryHandler(n.Store(), tokenVerifier)
 			dataAPI.RegisterRoutes(adminMux)
 
+			// Log API routes (publication log queries)
+			if n.Store() != nil {
+				logAPI := api.NewLogQueryHandler(n.Store())
+				logAPI.RegisterRoutes(adminMux)
+			}
+
 			// Catalog API route (public)
 			if n.Store() != nil {
 				catalogAPI := api.NewCatalogHandler(n.Store(), n.PeerID(), cfg)
@@ -518,6 +524,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if n.Store() != nil && cfg.Publishing.Enabled {
 					quotas := api.NewStorageQuotaManager(n.Store(), cfg.Publishing.DefaultQuotaBytes)
 					publishAPI := api.NewPublishHandler(n.Store(), n.Validator(), quotas, &cfg.Publishing, authHandler)
+					publishAPI.SetLogService(n.LogService())
 					publishAPI.RegisterRoutes(adminMux)
 					log.Infof("Publish API available at %s://%s/api/v1/data/publish/", adminScheme, adminAddr)
 				}

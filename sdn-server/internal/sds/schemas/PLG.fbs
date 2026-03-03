@@ -1,0 +1,60 @@
+// Hash: placeholder
+// Version: 1.0.0
+// -----------------------------------END_HEADER
+
+/// Publication Log Entry
+/// Append-only hash-chained log of data publications per (publisher, schema).
+/// Each entry references one data record CID and links to the previous entry,
+/// forming a tamper-evident chain that subscribers sync incrementally.
+/// Publishers maintain one log per schema type. Subscribers compare their
+/// last-synced sequence against the PLH head to determine the sync delta.
+table PLG {
+  /// Monotonic sequence number within this (publisher, schema) log.
+  /// Starts at 1. Gaps are not permitted.
+  SEQUENCE: uint64;
+
+  /// SDS schema type this log entry tracks (e.g., "OMM", "CDM", "CAT").
+  /// All entries in a single log share the same SCHEMA_TYPE.
+  SCHEMA_TYPE: string (required);
+
+  /// Publisher's libp2p PeerID
+  PUBLISHER_PEER_ID: string (required);
+
+  /// CID of the actual data record stored in the schema's FlatSQL table.
+  /// Subscribers fetch this CID from the publisher (or any peer that has it)
+  /// to obtain the underlying FlatBuffer payload.
+  RECORD_CID: string (required);
+
+  /// ENTRY_HASH of the previous PLG entry in this log.
+  /// Empty string for sequence=1 (genesis entry).
+  /// This is the hash chain link — the canonical ENTRY_HASH (not the FlatSQL CID)
+  /// so verification is serialization-independent.
+  PREVIOUS_ENTRY_HASH: string;
+
+  /// Canonical hash of this entry's logical fields:
+  /// SHA-256(SEQUENCE_LE64 || SCHEMA_TYPE_UTF8 || PUBLISHER_PEER_ID_UTF8 ||
+  ///         RECORD_CID_UTF8 || PREVIOUS_ENTRY_HASH_UTF8 || TIMESTAMP_LE64)
+  /// This is what gets signed and what the next entry chains to.
+  ENTRY_HASH: string (required);
+
+  /// Unix timestamp (seconds) when this entry was created
+  TIMESTAMP: uint64;
+
+  /// Ed25519 signature of ENTRY_HASH by the publisher's signing key
+  SIGNATURE: [ubyte];
+
+  /// Signature algorithm identifier (e.g., "Ed25519")
+  SIGNATURE_TYPE: string;
+
+  /// Entity identifiers contained in the referenced record.
+  /// For OMM: NORAD_CAT_ID as string. For CDM: both object IDs.
+  /// Allows subscribers to filter log entries without fetching the full record.
+  ENTITY_IDS: [string];
+
+  /// Epoch day of the referenced record ("YYYY-MM-DD" UTC).
+  /// Allows time-windowed sync (e.g., "give me everything since 2026-03-01").
+  EPOCH_DAY: string;
+}
+
+root_type PLG;
+file_identifier "$PLG";

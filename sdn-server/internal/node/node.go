@@ -35,6 +35,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/logservice"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -73,6 +74,7 @@ type Node struct {
 	license    *licenseplugin.Plugin
 	keyBroker  *wasmlicenseplugin.Plugin
 	epmService *epm.Service
+	logService *logservice.Service
 	config     *config.Config
 
 	// Trusted peer management
@@ -320,6 +322,17 @@ func (n *Node) init() error {
 			}
 		}
 	}
+	// Initialize publication log service for PLG/PLH hash-chained logs.
+	var signingKey crypto.PrivKey
+	if n.identity != nil {
+		signingKey = n.identity.SigningPrivKey
+	}
+	n.logService = logservice.NewService(n.store, signingKey, n.host.ID().String())
+
+	// Register sync handler for MsgSyncLog requests.
+	syncHandler := logservice.NewSyncHandler(n.store)
+	n.protocol.SetSyncHandler(syncHandler)
+
 	n.epmService = epm.NewService(n.identity, n.peerRegistry, n.host.ID(), xpubStr, basePath)
 	if err := n.epmService.Init(); err != nil {
 		log.Warnf("EPM service initialization failed (non-fatal): %v", err)
@@ -1023,6 +1036,11 @@ func (n *Node) Config() *config.Config {
 // Store returns the local storage backend (nil for edge mode).
 func (n *Node) Store() *storage.FlatSQLStore {
 	return n.store
+}
+
+// LogService returns the publication log service.
+func (n *Node) LogService() *logservice.Service {
+	return n.logService
 }
 
 // Validator returns the SDS schema validator.

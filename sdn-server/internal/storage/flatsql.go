@@ -120,6 +120,38 @@ func (s *FlatSQLStore) initTables() error {
 		return fmt.Errorf("failed to create entity index: %w", err)
 	}
 
+	// Publication log index for PLG hash-chained logs.
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS sdn_log_index (
+			publisher_peer_id TEXT NOT NULL,
+			schema_type       TEXT NOT NULL,
+			sequence          INTEGER NOT NULL,
+			entry_hash        TEXT NOT NULL,
+			record_cid        TEXT NOT NULL,
+			plg_cid           TEXT NOT NULL,
+			epoch_day         TEXT,
+			timestamp         INTEGER NOT NULL,
+			PRIMARY KEY (publisher_peer_id, schema_type, sequence)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create log index table: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_sdn_log_index_head
+		ON sdn_log_index (publisher_peer_id, schema_type, sequence DESC)
+	`); err != nil {
+		return fmt.Errorf("failed to create log head index: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_sdn_log_index_epoch
+		ON sdn_log_index (schema_type, epoch_day, timestamp DESC)
+	`); err != nil {
+		return fmt.Errorf("failed to create log epoch index: %w", err)
+	}
+
 	// Create tables for each schema
 	for _, schemaName := range s.validator.Schemas() {
 		tableName, err := sds.SchemaNameToTable(schemaName)
@@ -841,6 +873,166 @@ func (s *FlatSQLStore) PeerStorageBytes(peerID string) (int64, error) {
 	}
 
 	return total, nil
+}
+
+// LogHeadInfo holds the latest log state for a (publisher, schema) pair.
+type LogHeadInfo struct {
+	PublisherPeerID string
+	SchemaType      string
+	Sequence        uint64
+	EntryHash       string
+	RecordCID       string
+	Timestamp       int64
+}
+
+// UpsertLogIndex inserts or updates a publication log index entry.
+func (s *FlatSQLStore) UpsertLogIndex(publisherPeerID, schemaType string, sequence uint64, entryHash, recordCID, plgCID, epochDay string, timestamp int64) error {
+	_, err := s.db.Exec(`
+		INSERT INTO sdn_log_index (
+			publisher_peer_id, schema_type, sequence, entry_hash, record_cid, plg_cid, epoch_day, timestamp
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(publisher_peer_id, schema_type, sequence) DO UPDATE SET
+			entry_hash = excluded.entry_hash,
+			record_cid = excluded.record_cid,
+			plg_cid = excluded.plg_cid,
+			epoch_day = excluded.epoch_day,
+			timestamp = excluded.timestamp
+	`, publisherPeerID, schemaType, sequence, entryHash, recordCID, plgCID, epochDay, timestamp)
+	if err != nil {
+		return fmt.Errorf("failed to upsert log index: %w", err)
+	}
+	return nil
+}
+
+// GetLogHead returns the latest sequence and entry hash for a (publisher, schema) log.
+func (s *FlatSQLStore) GetLogHead(publisherPeerID, schemaType string) (uint64, string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var sequence uint64
+	var entryHash string
+	err := s.db.QueryRow(`
+		SELECT sequence, entry_hash
+		FROM sdn_log_index
+		WHERE publisher_peer_id = ? AND schema_type = ?
+		ORDER BY sequence DESC
+		LIMIT 1
+	`, publisherPeerID, schemaType).Scan(&sequence, &entryHash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, "", nil
+		}
+		return 0, "", fmt.Errorf("failed to get log head: %w", err)
+	}
+	return sequence, entryHash, nil
+}
+
+// QueryLogEntries returns PLG FlatBuffer data for entries after sinceSequence.
+func (s *FlatSQLStore) QueryLogEntries(publisherPeerID, schemaType string, sinceSequence uint64, limit int) ([][]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	rows, err := s.db.Query(`
+		SELECT p.data
+		FROM sdn_log_index li
+		INNER JOIN sds_plg p ON p.cid = li.plg_cid
+		WHERE li.publisher_peer_id = ?
+		  AND li.schema_type = ?
+		  AND li.sequence > ?
+		ORDER BY li.sequence ASC
+		LIMIT ?
+	`, publisherPeerID, schemaType, sinceSequence, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query log entries: %w", err)
+	}
+	defer rows.Close()
+
+	var results [][]byte
+	for rows.Next() {
+		var data []byte
+		if err := rows.Scan(&data); err != nil {
+			log.Warnf("Failed to scan log entry: %v", err)
+			continue
+		}
+		results = append(results, data)
+	}
+	return results, nil
+}
+
+// QueryLogHeads returns the latest log head info for all publishers of a schema type.
+func (s *FlatSQLStore) QueryLogHeads(schemaType string) ([]LogHeadInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT li.publisher_peer_id, li.schema_type, li.sequence, li.entry_hash, li.record_cid, li.timestamp
+		FROM sdn_log_index li
+		INNER JOIN (
+			SELECT publisher_peer_id, schema_type, MAX(sequence) as max_seq
+			FROM sdn_log_index
+			WHERE schema_type = ?
+			GROUP BY publisher_peer_id, schema_type
+		) latest ON li.publisher_peer_id = latest.publisher_peer_id
+		       AND li.schema_type = latest.schema_type
+		       AND li.sequence = latest.max_seq
+		ORDER BY li.publisher_peer_id
+	`, schemaType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query log heads: %w", err)
+	}
+	defer rows.Close()
+
+	var heads []LogHeadInfo
+	for rows.Next() {
+		var h LogHeadInfo
+		if err := rows.Scan(&h.PublisherPeerID, &h.SchemaType, &h.Sequence, &h.EntryHash, &h.RecordCID, &h.Timestamp); err != nil {
+			log.Warnf("Failed to scan log head: %v", err)
+			continue
+		}
+		heads = append(heads, h)
+	}
+	return heads, nil
+}
+
+// LogRecordCount returns the total number of log entries for a (publisher, schema) pair.
+func (s *FlatSQLStore) LogRecordCount(publisherPeerID, schemaType string) (uint64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var count uint64
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM sdn_log_index
+		WHERE publisher_peer_id = ? AND schema_type = ?
+	`, publisherPeerID, schemaType).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count log entries: %w", err)
+	}
+	return count, nil
+}
+
+// LogEpochRange returns the oldest and newest epoch days for a (publisher, schema) log.
+func (s *FlatSQLStore) LogEpochRange(publisherPeerID, schemaType string) (oldest, newest string, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	err = s.db.QueryRow(`
+		SELECT COALESCE(MIN(epoch_day), ''), COALESCE(MAX(epoch_day), '')
+		FROM sdn_log_index
+		WHERE publisher_peer_id = ? AND schema_type = ?
+		  AND epoch_day IS NOT NULL AND epoch_day != ''
+	`, publisherPeerID, schemaType).Scan(&oldest, &newest)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get log epoch range: %w", err)
+	}
+	return oldest, newest, nil
 }
 
 func parseEpochString(raw string) (int64, error) {

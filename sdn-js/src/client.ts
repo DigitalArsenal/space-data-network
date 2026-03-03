@@ -16,6 +16,9 @@ import type {
   DataRecord,
   PublishResult,
   BatchPublishResult,
+  LogHeadResponse,
+  LogEntriesResponse,
+  LogHeadsResponse,
 } from './transport/http';
 import { SessionAuth } from './transport/auth';
 import type { AuthProvider } from './transport/auth';
@@ -195,6 +198,26 @@ export class SDNClient {
   async publishBatch(schema: string, records: Uint8Array[]): Promise<BatchPublishResult> {
     return this.transport.publishBatch(schema, records);
   }
+
+  /** Get the log head for a publisher+schema. */
+  async logHead(schema: string, publisherPeerID: string): Promise<LogHeadResponse> {
+    return this.transport.getLogHead(schema, publisherPeerID);
+  }
+
+  /** Get log entries for a publisher+schema since a given sequence. */
+  async logEntries(
+    schema: string,
+    publisherPeerID: string,
+    sinceSequence: number = 0,
+    limit: number = 100,
+  ): Promise<LogEntriesResponse> {
+    return this.transport.getLogEntries(schema, publisherPeerID, sinceSequence, limit);
+  }
+
+  /** Get all publishers' log heads for a schema. */
+  async logHeads(schema: string): Promise<LogHeadsResponse> {
+    return this.transport.getLogHeads(schema);
+  }
 }
 
 // Re-export types for convenience
@@ -206,6 +229,9 @@ export type {
   DataRecord,
   PublishResult,
   BatchPublishResult,
+  LogHeadResponse,
+  LogEntriesResponse,
+  LogHeadsResponse,
   ResolvedNode,
   ResolveOptions,
   IdentifierType,

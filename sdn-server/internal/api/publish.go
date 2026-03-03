@@ -12,6 +12,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/logservice"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -71,11 +72,12 @@ type TipPublisher interface {
 
 // PublishHandler accepts data writes from authenticated peers.
 type PublishHandler struct {
-	store     *storage.FlatSQLStore
-	validator *sds.Validator
-	quotas    *StorageQuotaManager
-	cfg       *config.PublishingConfig
+	store       *storage.FlatSQLStore
+	validator   *sds.Validator
+	quotas      *StorageQuotaManager
+	cfg         *config.PublishingConfig
 	authHandler *auth.Handler
+	logService  *logservice.Service
 }
 
 // NewPublishHandler creates a new publish handler.
@@ -93,6 +95,11 @@ func NewPublishHandler(
 		cfg:         cfg,
 		authHandler: authHandler,
 	}
+}
+
+// SetLogService sets the publication log service for PLG entry creation.
+func (h *PublishHandler) SetLogService(ls *logservice.Service) {
+	h.logService = ls
 }
 
 // RegisterRoutes registers publish API routes.
@@ -182,6 +189,14 @@ func (h *PublishHandler) handlePublish(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to store record: "+err.Error())
 		return
+	}
+
+	// Append PLG entry for this published record (non-blocking on failure)
+	if h.logService != nil && schema != "PLG.fbs" && schema != "PLH.fbs" {
+		if _, _, logErr := h.logService.AppendEntry(schema, cid, nil, ""); logErr != nil {
+			// Log but don't fail the publish
+			_ = logErr
+		}
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
@@ -287,6 +302,13 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 				"bytes": len(data),
 			})
 			continue
+		}
+
+		// Append PLG entry for this record (non-blocking on failure)
+		if h.logService != nil && schema != "PLG.fbs" && schema != "PLH.fbs" {
+			if _, _, logErr := h.logService.AppendEntry(schema, cid, nil, ""); logErr != nil {
+				_ = logErr
+			}
 		}
 
 		results = append(results, map[string]interface{}{
