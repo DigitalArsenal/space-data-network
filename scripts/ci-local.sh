@@ -74,20 +74,27 @@ run_preflight() {
 }
 
 run_go() {
+  # Use Apple's system clang for CGO. Homebrew's LLVM clang may target an
+  # SDK that isn't installed (e.g. MacOSX26.sdk), causing linker failures.
+  local GO_CC="${CC:-}"
+  if [[ -z "$GO_CC" && -x /usr/bin/clang ]]; then
+    GO_CC=/usr/bin/clang
+  fi
+
   step "Go deps"
   (cd "$ROOT/sdn-server" && GOCACHE="$ROOT/.gocache" go mod download)
   pass "go mod download"
 
   step "Go tests (race)"
-  (cd "$ROOT/sdn-server" && GOCACHE="$ROOT/.gocache" go test -race -count=1 ./...)
+  (cd "$ROOT/sdn-server" && CC="$GO_CC" GOCACHE="$ROOT/.gocache" go test -race -count=1 ./...)
   pass "go test -race"
 
   step "Go build (full node)"
-  (cd "$ROOT/sdn-server" && GOCACHE="$ROOT/.gocache" go build -o /tmp/spacedatanetwork ./cmd/spacedatanetwork)
+  (cd "$ROOT/sdn-server" && CC="$GO_CC" GOCACHE="$ROOT/.gocache" go build -o /tmp/spacedatanetwork ./cmd/spacedatanetwork)
   pass "go build spacedatanetwork"
 
   step "Go build (edge relay)"
-  (cd "$ROOT/sdn-server" && GOCACHE="$ROOT/.gocache" go build -tags edge -o /tmp/spacedatanetwork-edge ./cmd/spacedatanetwork-edge)
+  (cd "$ROOT/sdn-server" && CC="$GO_CC" GOCACHE="$ROOT/.gocache" go build -tags edge -o /tmp/spacedatanetwork-edge ./cmd/spacedatanetwork-edge)
   pass "go build spacedatanetwork-edge"
 }
 
