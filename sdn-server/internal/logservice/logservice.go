@@ -25,8 +25,8 @@ import (
 var log = logging.Logger("logservice")
 
 const (
-	plgSchema = "PLG.fbs"
-	plhSchema = "PLH.fbs"
+	plgSchema = "PLOG.fbs"
+	plhSchema = "PLHD.fbs"
 )
 
 // TopicPublisher is the interface for publishing to a PubSub topic.
@@ -296,7 +296,7 @@ func ParsePLH(data []byte) (*PLHInfo, error) {
 	}
 
 	// For now, return a basic parsed result. Full FlatBuffer parsing
-	// will use generated bindings from PLH.fbs once flatc is run.
+	// will use generated bindings from PLHD.fbs once flatc is run.
 	// This placeholder allows the service to compile and the API to function.
 	info := &PLHInfo{}
 

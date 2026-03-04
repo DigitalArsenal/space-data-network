@@ -103,8 +103,8 @@ var SupportedSchemas = []string{
 	"OMM.fbs",  // Orbit Mean-Elements Message
 	"OSM.fbs",  // Orbit State Message
 	"PLD.fbs",  // Payload
-	"PLG.fbs",  // Publication Log Entry - Hash-chained publication log
-	"PLH.fbs",  // Publication Log Head - Log head announcement
+	"PLHD.fbs", // Publication Log Head - Log head announcement (SDN-internal)
+	"PLOG.fbs", // Publication Log Entry - Hash-chained publication log (SDN-internal)
 	"PNM.fbs",  // Peer Network Manifest
 	"PRG.fbs",  // Propagation Settings
 	"PUR.fbs",  // Purchase Request - Marketplace purchases

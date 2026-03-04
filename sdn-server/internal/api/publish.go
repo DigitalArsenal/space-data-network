@@ -192,7 +192,7 @@ func (h *PublishHandler) handlePublish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Append PLG entry for this published record (non-blocking on failure)
-	if h.logService != nil && schema != "PLG.fbs" && schema != "PLH.fbs" {
+	if h.logService != nil && schema != "PLOG.fbs" && schema != "PLHD.fbs" {
 		if _, _, logErr := h.logService.AppendEntry(schema, cid, nil, ""); logErr != nil {
 			// Log but don't fail the publish
 			_ = logErr
@@ -305,7 +305,7 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 		}
 
 		// Append PLG entry for this record (non-blocking on failure)
-		if h.logService != nil && schema != "PLG.fbs" && schema != "PLH.fbs" {
+		if h.logService != nil && schema != "PLOG.fbs" && schema != "PLHD.fbs" {
 			if _, _, logErr := h.logService.AppendEntry(schema, cid, nil, ""); logErr != nil {
 				_ = logErr
 			}

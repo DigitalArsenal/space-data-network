@@ -7,8 +7,8 @@
 /// Each entry references one data record CID and links to the previous entry,
 /// forming a tamper-evident chain that subscribers sync incrementally.
 /// Publishers maintain one log per schema type. Subscribers compare their
-/// last-synced sequence against the PLH head to determine the sync delta.
-table PLG {
+/// last-synced sequence against the PLHD head to determine the sync delta.
+table PLOG {
   /// Monotonic sequence number within this (publisher, schema) log.
   /// Starts at 1. Gaps are not permitted.
   SEQUENCE: uint64;
@@ -25,7 +25,7 @@ table PLG {
   /// to obtain the underlying FlatBuffer payload.
   RECORD_CID: string (required);
 
-  /// ENTRY_HASH of the previous PLG entry in this log.
+  /// ENTRY_HASH of the previous PLOG entry in this log.
   /// Empty string for sequence=1 (genesis entry).
   /// This is the hash chain link — the canonical ENTRY_HASH (not the FlatSQL CID)
   /// so verification is serialization-independent.
@@ -56,5 +56,5 @@ table PLG {
   EPOCH_DAY: string;
 }
 
-root_type PLG;
-file_identifier "$PLG";
+root_type PLOG;
+file_identifier "PLOG";

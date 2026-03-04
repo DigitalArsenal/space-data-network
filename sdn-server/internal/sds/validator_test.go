@@ -257,7 +257,7 @@ func TestSupportedSchemas(t *testing.T) {
 		"CRM.fbs", "CSM.fbs", "CTR.fbs", "EME.fbs", "EOO.fbs",
 		"EOP.fbs", "EPM.fbs", "HYP.fbs", "IDM.fbs", "LCC.fbs",
 		"LDM.fbs", "MET.fbs", "MPE.fbs", "OCM.fbs", "OEM.fbs",
-		"OMM.fbs", "OSM.fbs", "PLD.fbs", "PLG.fbs", "PLH.fbs",
+		"OMM.fbs", "OSM.fbs", "PLD.fbs", "PLHD.fbs", "PLOG.fbs",
 		"PNM.fbs", "PRG.fbs",
 		"PUR.fbs", "REC.fbs", "REV.fbs", "RFM.fbs", "RHD.fbs",
 		"ROC.fbs", "SCM.fbs", "SIT.fbs", "STF.fbs", "TDM.fbs",

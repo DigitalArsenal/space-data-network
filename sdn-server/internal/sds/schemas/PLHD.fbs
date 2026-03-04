@@ -6,19 +6,19 @@
 /// Lightweight announcement broadcast via GossipSub when a publisher's log
 /// advances. Subscribers compare HEAD_SEQUENCE against their last-synced
 /// sequence to determine if they need to catch up.
-/// One PLH per (publisher, schema) — replaces bulk PNM flooding for
+/// One PLHD per (publisher, schema) — replaces bulk PNM flooding for
 /// catalog updates and batch publishes.
-table PLH {
+table PLHD {
   /// SDS schema type (e.g., "OMM", "CDM", "CAT")
   SCHEMA_TYPE: string (required);
 
   /// Publisher's libp2p PeerID
   PUBLISHER_PEER_ID: string (required);
 
-  /// Sequence number of the latest PLG entry
+  /// Sequence number of the latest PLOG entry
   HEAD_SEQUENCE: uint64;
 
-  /// ENTRY_HASH of the latest PLG entry (verifiable chain tip)
+  /// ENTRY_HASH of the latest PLOG entry (verifiable chain tip)
   HEAD_ENTRY_HASH: string (required);
 
   /// Total number of records in this log
@@ -47,5 +47,5 @@ table PLH {
   NEWEST_EPOCH_DAY: string;
 }
 
-root_type PLH;
-file_identifier "$PLH";
+root_type PLHD;
+file_identifier "PLHD";
