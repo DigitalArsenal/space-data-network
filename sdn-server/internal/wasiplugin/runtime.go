@@ -40,6 +40,7 @@ type Runtime struct {
 	requestChallengeFn api.Function
 	getPublicKeyFn     api.Function
 	getMetadataFn      api.Function
+	cronFn             api.Function // optional: plugin_cron
 }
 
 // pluginCallTimeout is the maximum duration for a single WASI plugin function call.
@@ -403,6 +404,7 @@ func New(ctx context.Context, wasmBytes []byte) (*Runtime, error) {
 		requestChallengeFn: module.ExportedFunction("plugin_request_challenge"),
 		getPublicKeyFn:     module.ExportedFunction("plugin_get_public_key"),
 		getMetadataFn:      module.ExportedFunction("plugin_get_metadata"),
+		cronFn:             module.ExportedFunction("plugin_cron"), // optional
 	}
 
 	if rt.mallocFn == nil || rt.freeFn == nil {
@@ -652,6 +654,76 @@ func (rt *Runtime) RequestChallenge(ctx context.Context, requestPayload []byte) 
 	}
 
 	return output, status, nil
+}
+
+// HasCron returns true if the plugin exports plugin_cron.
+func (rt *Runtime) HasCron() bool {
+	return rt.cronFn != nil
+}
+
+// Cron calls the plugin_cron export with a method name and optional input.
+//
+// Signature: plugin_cron(method_ptr, method_len, in_ptr, in_len, out_ptr, out_cap) → i32
+//
+// Returns (output_bytes, error). The output may be empty if the cron method
+// produces no output (e.g. a cleanup task).
+func (rt *Runtime) Cron(ctx context.Context, method string, input []byte) ([]byte, error) {
+	if rt.cronFn == nil {
+		return nil, fmt.Errorf("plugin does not export plugin_cron")
+	}
+
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
+	defer cancel()
+
+	methodBytes := []byte(method)
+	methodPtr, err := rt.allocate(ctx, methodBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate method name: %w", err)
+	}
+	defer rt.deallocate(ctx, methodPtr)
+
+	var inputPtr uint32
+	inputLen := 0
+	if len(input) > 0 {
+		inputPtr, err = rt.allocate(ctx, input)
+		if err != nil {
+			return nil, fmt.Errorf("failed to allocate input: %w", err)
+		}
+		defer rt.deallocate(ctx, inputPtr)
+		inputLen = len(input)
+	}
+
+	const outCap = 16384 // 16KB output buffer
+	outPtr, err := rt.allocateSize(ctx, outCap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate output: %w", err)
+	}
+	defer rt.deallocate(ctx, outPtr)
+
+	results, err := rt.cronFn.Call(ctx,
+		uint64(methodPtr), uint64(len(methodBytes)),
+		uint64(inputPtr), uint64(inputLen),
+		uint64(outPtr), uint64(outCap),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("plugin_cron(%q) call failed: %w", method, err)
+	}
+
+	written := api.DecodeI32(results[0])
+	if written < 0 {
+		return nil, fmt.Errorf("plugin_cron(%q) returned error %d", method, written)
+	}
+	if written == 0 {
+		return nil, nil
+	}
+	if uint32(written) > outCap {
+		return nil, fmt.Errorf("plugin_cron(%q) output %d exceeds buffer %d", method, written, outCap)
+	}
+
+	return rt.readMemory(outPtr, uint32(written))
 }
 
 // --- memory helpers ---

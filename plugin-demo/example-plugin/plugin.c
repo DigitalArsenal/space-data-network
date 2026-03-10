@@ -15,6 +15,7 @@
  *     -Wl,--export=plugin_get_public_key \
  *     -Wl,--export=plugin_get_metadata \
  *     -Wl,--export=plugin_request_challenge \
+ *     -Wl,--export=plugin_cron \
  *     -o plugin.wasm plugin.c
  *
  * The SDN runtime (Wazero) loads this module and calls the exported functions.
@@ -83,7 +84,10 @@ static int32_t initialized = 0;
 /* Simulated public key (in real plugin: derive from identity_seed) */
 static uint8_t public_key[32];
 
-/* Plugin metadata as JSON */
+/* Cron tick counter — incremented by collect-telemetry method */
+static int32_t tick_count = 0;
+
+/* Plugin metadata as JSON — includes cron-eligible method declarations */
 static const char METADATA[] =
     "{"
     "\"id\":\"example-sensor-plugin\","
@@ -91,7 +95,30 @@ static const char METADATA[] =
     "\"name\":\"Example Sensor Data Plugin\","
     "\"description\":\"Demonstrates the SDN WASM plugin API\","
     "\"protocols\":[\"/example/sensor-data/1.0.0\"],"
-    "\"capabilities\":[\"publish\",\"subscribe\"]"
+    "\"capabilities\":[\"publish\",\"subscribe\"],"
+    "\"cron\":["
+      "{"
+        "\"method\":\"collect-telemetry\","
+        "\"description\":\"Sample sensor readings and publish as FlatBuffer\","
+        "\"default_interval\":\"30s\","
+        "\"input\":\"none\","
+        "\"output\":\"json\""
+      "},"
+      "{"
+        "\"method\":\"cleanup-cache\","
+        "\"description\":\"Prune expired entries from the local data cache\","
+        "\"default_interval\":\"5m\","
+        "\"input\":\"none\","
+        "\"output\":\"none\""
+      "},"
+      "{"
+        "\"method\":\"sync-catalog\","
+        "\"description\":\"Fetch latest catalog delta from upstream peer\","
+        "\"default_interval\":\"1h\","
+        "\"input\":\"json\","
+        "\"output\":\"json\""
+      "}"
+    "]"
     "}";
 
 /* =========================================================================
@@ -309,4 +336,113 @@ int32_t plugin_request_challenge(
     }
 
     return req_len;
+}
+
+/* =========================================================================
+ * Optional export: plugin_cron
+ *
+ * Called by the SDN host on a schedule configured in the server config or
+ * web UI. The plugin declares cron-eligible methods in its metadata JSON
+ * (see METADATA above). The host decides *whether* and *how often* to call
+ * each method.
+ *
+ * Parameters:
+ *   method_ptr, method_len — method name (e.g. "collect-telemetry")
+ *   in_ptr, in_len         — input data (type depends on method spec)
+ *   out_ptr, out_cap       — output buffer
+ *
+ * Returns: bytes written to out_ptr, 0 for no output, negative on error
+ * ========================================================================= */
+
+/* Helper: compare a fixed C string against a (ptr, len) buffer */
+static int str_eq(const char* a, const char* b, int32_t b_len) {
+    int32_t i = 0;
+    while (a[i] && i < b_len) {
+        if (a[i] != b[i]) return 0;
+        i++;
+    }
+    return (a[i] == '\0' && i == b_len);
+}
+
+__attribute__((export_name("plugin_cron")))
+int32_t plugin_cron(
+    const char* method_ptr, int32_t method_len,
+    uint8_t* in_ptr, int32_t in_len,
+    uint8_t* out_ptr, int32_t out_cap
+) {
+    if (!initialized) {
+        return -1;
+    }
+
+    /* ── collect-telemetry ── */
+    if (str_eq("collect-telemetry", method_ptr, method_len)) {
+        tick_count++;
+        int64_t now_ms = sdn_clock_now_ms();
+        log_info("cron: collect-telemetry tick");
+
+        /* Build a simple JSON status response.
+         * A real plugin would read sensors / build a FlatBuffer here. */
+        const char prefix[] = "{\"tick\":";
+        const char mid[]    = ",\"time_ms\":";
+        const char suffix[] = "}";
+
+        /* Format tick_count and now_ms as decimal strings */
+        char tick_str[16];
+        int32_t ti = 0;
+        {
+            int32_t v = tick_count;
+            char tmp[16];
+            int32_t t = 0;
+            if (v == 0) { tmp[t++] = '0'; }
+            while (v > 0) { tmp[t++] = '0' + (v % 10); v /= 10; }
+            for (int32_t j = t - 1; j >= 0; j--) tick_str[ti++] = tmp[j];
+            tick_str[ti] = '\0';
+        }
+
+        char time_str[24];
+        int32_t tmi = 0;
+        {
+            int64_t v = now_ms;
+            char tmp[24];
+            int32_t t = 0;
+            if (v == 0) { tmp[t++] = '0'; }
+            while (v > 0) { tmp[t++] = '0' + (char)(v % 10); v /= 10; }
+            for (int32_t j = t - 1; j >= 0; j--) time_str[tmi++] = tmp[j];
+            time_str[tmi] = '\0';
+        }
+
+        int32_t total = (sizeof(prefix) - 1) + ti + (sizeof(mid) - 1) + tmi + (sizeof(suffix) - 1);
+        if (out_cap < total) return -3;
+
+        int32_t off = 0;
+        memcpy(out_ptr + off, prefix, sizeof(prefix) - 1); off += sizeof(prefix) - 1;
+        memcpy(out_ptr + off, tick_str, ti);                off += ti;
+        memcpy(out_ptr + off, mid, sizeof(mid) - 1);       off += sizeof(mid) - 1;
+        memcpy(out_ptr + off, time_str, tmi);               off += tmi;
+        memcpy(out_ptr + off, suffix, sizeof(suffix) - 1);  off += sizeof(suffix) - 1;
+
+        return off;
+    }
+
+    /* ── cleanup-cache ── */
+    if (str_eq("cleanup-cache", method_ptr, method_len)) {
+        log_info("cron: cleanup-cache (no-op in demo)");
+        return 0;  /* No output */
+    }
+
+    /* ── sync-catalog ── */
+    if (str_eq("sync-catalog", method_ptr, method_len)) {
+        log_info("cron: sync-catalog (no-op in demo)");
+        /* In a real plugin: parse input JSON for sync params, fetch delta,
+         * return summary JSON. For demo, just echo that we ran. */
+        const char resp[] = "{\"status\":\"ok\",\"synced\":0}";
+        int32_t len = sizeof(resp) - 1;
+        if (out_cap < len) return -3;
+        memcpy(out_ptr, resp, len);
+        return len;
+    }
+
+    /* Unknown method */
+    log_error("cron: unknown method");
+    return -2;
 }
