@@ -8,6 +8,7 @@
 #   ./scripts/ci-local.sh go      # go checks only
 #   ./scripts/ci-local.sh js      # sdn-js checks only
 #   ./scripts/ci-local.sh plugin  # plugin-sdk conformance only
+#   ./scripts/ci-local.sh demo    # plugin-demo integration tests only
 
 set -euo pipefail
 
@@ -170,6 +171,16 @@ run_plugin_sdk() {
   pass "plugin-sdk generated artifacts check"
 }
 
+run_plugin_demo() {
+  step "plugin-demo install"
+  ensure_npm_deps "$ROOT/plugin-demo/tests"
+  pass "plugin-demo npm install"
+
+  step "plugin-demo integration tests"
+  node "$ROOT/plugin-demo/tests/integration.test.mjs"
+  pass "plugin-demo integration tests"
+}
+
 run_encryption() {
   if [[ ! -d "$ROOT/tests/encryption/go" ]]; then
     echo "Encryption tests directory missing, skipping"
@@ -187,12 +198,14 @@ case "$MODE" in
     run_go
     run_sdn_js
     run_plugin_sdk
+    run_plugin_demo
     ;;
   full|all)
     run_preflight
     run_go
     run_sdn_js
     run_plugin_sdk
+    run_plugin_demo
     run_encryption
     ;;
   go)
@@ -204,8 +217,11 @@ case "$MODE" in
   plugin)
     run_plugin_sdk
     ;;
+  demo|plugin-demo)
+    run_plugin_demo
+    ;;
   *)
-    echo -e "${RED}Usage: $0 [quick|full|go|js|plugin]${NC}"
+    echo -e "${RED}Usage: $0 [quick|full|go|js|plugin|demo]${NC}"
     exit 1
     ;;
 esac

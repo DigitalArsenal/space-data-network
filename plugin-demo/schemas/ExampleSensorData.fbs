@@ -1,0 +1,44 @@
+// Example custom schema for plugin demo.
+// This demonstrates how to define a new FlatBuffers schema for SDN.
+//
+// Schema rules:
+//   1. root_type must be a table (not struct)
+//   2. file_identifier must be exactly 4 ASCII bytes
+//   3. file_identifier must be unique across all schemas
+//   4. Field names should be UPPER_SNAKE_CASE (SDN convention)
+
+/// Example sensor telemetry message for plugin demo
+table ExampleSensorData {
+  /// Sensor unique identifier
+  SENSOR_ID: string (required);
+
+  /// ISO 8601 timestamp of measurement
+  MEASUREMENT_TIMESTAMP: string (required);
+
+  /// Latitude in decimal degrees (-90 to 90)
+  LATITUDE: double;
+
+  /// Longitude in decimal degrees (-180 to 180)
+  LONGITUDE: double;
+
+  /// Altitude in meters above WGS84 ellipsoid
+  ALTITUDE: double;
+
+  /// Temperature reading in Kelvin
+  TEMPERATURE_K: double;
+
+  /// Free-form metadata (JSON string)
+  METADATA: string;
+
+  /// Publisher's libp2p PeerID
+  PUBLISHER_PEER_ID: string;
+
+  /// Ed25519 signature of the measurement fields
+  SIGNATURE: string;
+
+  /// Signature algorithm ("Ed25519")
+  SIGNATURE_TYPE: string;
+}
+
+root_type ExampleSensorData;
+file_identifier "XSNS";
