@@ -1,0 +1,14 @@
+{
+  "name": "@spacedatanetwork/plugin-demo-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Integration tests for SDN plugin demo (server, publish, PNM, PLOG, sdn-js)",
+  "scripts": {
+    "test": "node integration.test.mjs",
+    "test:verbose": "SDN_TEST_VERBOSE=1 node integration.test.mjs"
+  },
+  "dependencies": {
+    "flatbuffers": "^24.0.0"
+  }
+}

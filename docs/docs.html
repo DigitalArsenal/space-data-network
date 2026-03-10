@@ -660,6 +660,21 @@
         </ul>
       </div>
       <div class="sidebar-section">
+        <div class="sidebar-title">Data Flow</div>
+        <ul class="sidebar-links">
+          <li><a href="#dataflow-overview">Architecture Overview</a></li>
+          <li><a href="#dataflow-flatbuffers">FlatBuffers Format</a></li>
+          <li><a href="#dataflow-flatsql">FlatSQL Storage</a></li>
+          <li><a href="#dataflow-pnm">PNM Notifications</a></li>
+          <li><a href="#dataflow-plog">Publication Logs</a></li>
+          <li><a href="#dataflow-streaming">Streaming & Channels</a></li>
+          <li><a href="#dataflow-encryption">Encrypted Messages</a></li>
+          <li><a href="#dataflow-identity">Wallet Identity</a></li>
+          <li><a href="#dataflow-browser">Browser Nodes</a></li>
+          <li><a href="#dataflow-plugins">Plugin System</a></li>
+        </ul>
+      </div>
+      <div class="sidebar-section">
         <div class="sidebar-title">Testing</div>
         <ul class="sidebar-links">
           <li><a href="#testing-throughput">Throughput Benchmarks</a></li>
@@ -2229,6 +2244,560 @@ tq.PublishTip(ctx, pubsub.PublishOptions{
             <tr><td>Trusted</td><td>bool</td><td>Mark source as trusted</td></tr>
           </tbody>
         </table>
+      </section>
+
+      <!-- ═══════════════════════════════════════════════════════════════
+           DATA FLOW — Complete architecture reference
+           ═══════════════════════════════════════════════════════════════ -->
+
+      <section id="dataflow-overview" class="doc-section">
+        <h2>Data Flow Architecture</h2>
+        <p>SDN uses a layered data flow architecture built on <strong>FlatBuffers</strong> for zero-copy binary serialization, <strong>FlatSQL</strong> (SQLite) for local storage, <strong>GossipSub</strong> for pub/sub messaging, and <strong>PLOG/PLHD</strong> for hash-chained publication logs. This section explains every layer from wire format to application delivery.</p>
+
+        <div class="callout callout-info">
+          <div class="callout-title">Key Principle</div>
+          <p>Every piece of data on SDN is a <strong>FlatBuffer binary blob</strong> with a 4-byte file identifier. JSON is only used for HTTP API responses, never for on-wire data exchange. This enables zero-copy reads and deterministic content addressing (SHA-256 CID).</p>
+        </div>
+
+        <!-- Data Flow Diagram (SVG) -->
+        <div style="overflow-x:auto; margin: 2rem 0;">
+          <svg viewBox="0 0 900 520" xmlns="http://www.w3.org/2000/svg" style="max-width: 900px; width: 100%; font-family: 'Inter', sans-serif;">
+            <!-- Background -->
+            <defs>
+              <linearGradient id="df-pub-grad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#4FABB5" stop-opacity="0.15"/>
+                <stop offset="100%" stop-color="#4FABB5" stop-opacity="0.05"/>
+              </linearGradient>
+              <linearGradient id="df-sub-grad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#7C6FD4" stop-opacity="0.15"/>
+                <stop offset="100%" stop-color="#7C6FD4" stop-opacity="0.05"/>
+              </linearGradient>
+              <filter id="df-glow">
+                <feGaussianBlur stdDeviation="2" result="blur"/>
+                <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+              </filter>
+            </defs>
+
+            <!-- Publisher Column -->
+            <rect x="20" y="10" width="380" height="500" rx="12" fill="url(#df-pub-grad)" stroke="#4FABB5" stroke-opacity="0.3"/>
+            <text x="210" y="40" text-anchor="middle" fill="#4FABB5" font-size="14" font-weight="600">PUBLISHER NODE</text>
+
+            <!-- Subscriber Column -->
+            <rect x="500" y="10" width="380" height="500" rx="12" fill="url(#df-sub-grad)" stroke="#7C6FD4" stroke-opacity="0.3"/>
+            <text x="690" y="40" text-anchor="middle" fill="#7C6FD4" font-size="14" font-weight="600">SUBSCRIBER NODE</text>
+
+            <!-- Publisher Steps -->
+            <rect x="40" y="60" width="340" height="36" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.4"/>
+            <text x="210" y="83" text-anchor="middle" fill="#F5F5F7" font-size="12">1. Build FlatBuffer (OMM, CDM, EPM...)</text>
+
+            <rect x="40" y="110" width="340" height="36" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.4"/>
+            <text x="210" y="133" text-anchor="middle" fill="#F5F5F7" font-size="12">2. POST /api/v1/data/publish/{schema}</text>
+
+            <rect x="40" y="160" width="340" height="36" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.4"/>
+            <text x="210" y="183" text-anchor="middle" fill="#F5F5F7" font-size="12">3. Validate &amp; store in FlatSQL (SQLite)</text>
+
+            <rect x="40" y="210" width="340" height="36" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.4"/>
+            <text x="210" y="233" text-anchor="middle" fill="#F5F5F7" font-size="12">4. Compute SHA-256 CID → content address</text>
+
+            <rect x="40" y="260" width="340" height="36" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.4"/>
+            <text x="210" y="283" text-anchor="middle" fill="#F5F5F7" font-size="12">5. Append PLOG entry (hash-chained log)</text>
+
+            <rect x="40" y="310" width="340" height="36" rx="6" fill="rgba(79,171,181,0.15)" stroke="#4FABB5" stroke-opacity="0.6"/>
+            <text x="210" y="333" text-anchor="middle" fill="#4FABB5" font-size="12" font-weight="600">6. Broadcast PNM via GossipSub</text>
+
+            <rect x="40" y="360" width="340" height="36" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.4"/>
+            <text x="210" y="383" text-anchor="middle" fill="#F5F5F7" font-size="12">7. Publish PLHD (log head announcement)</text>
+
+            <!-- Arrow: PNM broadcast -->
+            <line x1="380" y1="328" x2="520" y2="118" stroke="#4FABB5" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#df-arrow)"/>
+            <defs><marker id="df-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#4FABB5"/></marker></defs>
+            <text x="450" y="210" text-anchor="middle" fill="#4FABB5" font-size="10" font-style="italic">GossipSub</text>
+
+            <!-- Subscriber Steps -->
+            <rect x="520" y="100" width="340" height="36" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.4"/>
+            <text x="690" y="123" text-anchor="middle" fill="#F5F5F7" font-size="12">8. Receive PNM notification</text>
+
+            <rect x="520" y="150" width="340" height="36" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.4"/>
+            <text x="690" y="173" text-anchor="middle" fill="#F5F5F7" font-size="12">9. Verify Ed25519 signature on CID</text>
+
+            <rect x="520" y="200" width="340" height="36" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.4"/>
+            <text x="690" y="223" text-anchor="middle" fill="#F5F5F7" font-size="12">10. Check tip/queue config (trust + schema)</text>
+
+            <rect x="520" y="260" width="340" height="50" rx="6" fill="rgba(124,111,212,0.15)" stroke="#7C6FD4" stroke-opacity="0.6"/>
+            <text x="690" y="282" text-anchor="middle" fill="#7C6FD4" font-size="12" font-weight="600">11. autoFetch → fetch content by CID</text>
+            <text x="690" y="298" text-anchor="middle" fill="#86868B" font-size="10">from publisher or any peer that has it</text>
+
+            <rect x="520" y="324" width="340" height="36" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.4"/>
+            <text x="690" y="347" text-anchor="middle" fill="#F5F5F7" font-size="12">12. Store in local FlatSQL database</text>
+
+            <rect x="520" y="374" width="340" height="36" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.4"/>
+            <text x="690" y="397" text-anchor="middle" fill="#F5F5F7" font-size="12">13. autoPin with TTL (time-to-live)</text>
+
+            <rect x="520" y="424" width="340" height="36" rx="6" fill="rgba(77,168,130,0.15)" stroke="#4DA882" stroke-opacity="0.6"/>
+            <text x="690" y="447" text-anchor="middle" fill="#4DA882" font-size="12" font-weight="600">14. Fire onMessage(schema, data, peerId)</text>
+
+            <!-- Fetch arrow back -->
+            <line x1="520" y1="285" x2="380" y2="183" stroke="#7C6FD4" stroke-width="1.5" stroke-dasharray="4,4" marker-end="url(#df-arrow2)"/>
+            <defs><marker id="df-arrow2" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#7C6FD4"/></marker></defs>
+            <text x="450" y="250" text-anchor="middle" fill="#7C6FD4" font-size="10" font-style="italic">fetch CID</text>
+
+            <!-- Legend -->
+            <rect x="40" y="470" width="10" height="10" rx="2" fill="#4FABB5"/>
+            <text x="55" y="479" fill="#86868B" font-size="10">Write path</text>
+            <rect x="140" y="470" width="10" height="10" rx="2" fill="#7C6FD4"/>
+            <text x="155" y="479" fill="#86868B" font-size="10">Read path</text>
+            <rect x="240" y="470" width="10" height="10" rx="2" fill="#4DA882"/>
+            <text x="255" y="479" fill="#86868B" font-size="10">Application callback</text>
+          </svg>
+        </div>
+      </section>
+
+      <section id="dataflow-flatbuffers" class="doc-section">
+        <h2>FlatBuffers Binary Format</h2>
+        <p>All SDN data uses <a href="https://google.github.io/flatbuffers/">Google FlatBuffers</a> — a zero-copy binary serialization format. Unlike JSON or Protocol Buffers, FlatBuffers can be read directly from the binary without parsing or memory allocation.</p>
+
+        <h3>Binary Layout</h3>
+        <pre><code>Offset 0-3:  Root table offset (uint32 little-endian)
+Offset 4-7:  File identifier (4 ASCII bytes: "$PNM", "PLOG", "$OMM", etc.)
+Offset 8+:   VTable + field data + string/vector payloads</code></pre>
+
+        <h3>File Identifiers</h3>
+        <p>The 4-byte file identifier at bytes 4-7 tells you the message type <strong>without parsing</strong>:</p>
+        <table>
+          <thead><tr><th>Identifier</th><th>Schema</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>$PNM</code></td><td>PNM.fbs</td><td>Publish Notification Message</td></tr>
+            <tr><td><code>PLOG</code></td><td>PLOG.fbs</td><td>Publication Log Entry</td></tr>
+            <tr><td><code>PLHD</code></td><td>PLHD.fbs</td><td>Publication Log Head</td></tr>
+            <tr><td><code>$OMM</code></td><td>OMM.fbs</td><td>Orbit Mean-Elements Message</td></tr>
+            <tr><td><code>$CDM</code></td><td>CDM.fbs</td><td>Conjunction Data Message</td></tr>
+            <tr><td><code>$EPM</code></td><td>EPM.fbs</td><td>Entity Profile Manifest</td></tr>
+            <tr><td><code>$CAT</code></td><td>CAT.fbs</td><td>Catalog entry</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Reading the File Identifier</h3>
+        <pre><code>// JavaScript — identify message type from raw bytes
+const fileId = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
+// "$PNM" → Publish Notification, "PLOG" → Publication Log, etc.
+
+// Go — same concept
+fileID := string(data[4:8])</code></pre>
+
+        <h3>Why FlatBuffers?</h3>
+        <ul>
+          <li><strong>Zero-copy reads</strong> — read fields directly from the buffer, no deserialization step</li>
+          <li><strong>Deterministic hashing</strong> — same data produces same binary, enabling reliable SHA-256 CIDs</li>
+          <li><strong>Schema evolution</strong> — new fields can be added without breaking old readers</li>
+          <li><strong>44 schemas</strong> — all Space Data Standards (OMM, CDM, EPM, etc.) plus SDN internal schemas</li>
+        </ul>
+      </section>
+
+      <section id="dataflow-flatsql" class="doc-section">
+        <h2>FlatSQL Storage</h2>
+        <p><strong>FlatSQL</strong> is SDN's SQLite-based storage layer that stores raw FlatBuffer blobs alongside indexed metadata. Every node maintains a local SQLite database for fast queries.</p>
+
+        <h3>Database Schema</h3>
+        <pre><code>-- Per-schema data table (one table per registered SDS schema)
+CREATE TABLE sds_{schema_name} (
+  cid        TEXT PRIMARY KEY,   -- SHA-256 content hash
+  peer_id    TEXT,               -- Publisher's peer ID / xpub
+  timestamp  INTEGER,            -- Unix timestamp
+  data       BLOB,               -- Raw FlatBuffer binary bytes
+  signature  BLOB                -- Ed25519 signature
+);
+
+-- Fast query index (NORAD ID, epoch day, entity filtering)
+CREATE TABLE sdn_record_index (
+  schema_name  TEXT NOT NULL,
+  cid          TEXT NOT NULL,
+  norad_cat_id INTEGER,          -- For orbital data (OMM, CDM)
+  entity_id    TEXT,
+  epoch_day    TEXT,              -- "YYYY-MM-DD" for time queries
+  PRIMARY KEY (schema_name, cid)
+);
+
+-- Publication log index (hash-chained ledger)
+CREATE TABLE sdn_log_index (
+  publisher_peer_id TEXT NOT NULL,
+  schema_type       TEXT NOT NULL,
+  sequence          INTEGER NOT NULL,
+  entry_hash        TEXT NOT NULL,
+  record_cid        TEXT NOT NULL,
+  PRIMARY KEY (publisher_peer_id, schema_type, sequence)
+);</code></pre>
+
+        <h3>Content Addressing</h3>
+        <p>Every record gets a <strong>CID</strong> (Content Identifier) computed as <code>SHA-256(flatbuffer_bytes)</code>. This gives tamper-proof, permanent references — the same data always produces the same CID, and any modification changes the hash.</p>
+
+        <h3>Data Lifecycle</h3>
+        <pre><code>Incoming FlatBuffer bytes
+    → Validate file_identifier (bytes 4-7) against schema registry
+    → Compute CID = SHA-256(bytes) as hex string
+    → INSERT into sds_{schema}(cid, data, peer_id, signature)
+    → Extract index fields (NORAD_CAT_ID, epoch, entity_id)
+    → INSERT into sdn_record_index
+    → Append PLOG entry via logservice</code></pre>
+      </section>
+
+      <section id="dataflow-pnm" class="doc-section">
+        <h2>PNM — Publish Notification Messages</h2>
+        <p>PNM is a lightweight notification that tells the network "I just published data with this CID and schema type." Subscribers receive PNMs via GossipSub and decide whether to fetch the actual content based on their configuration.</p>
+
+        <h3>PNM Fields</h3>
+        <table>
+          <thead><tr><th>Field</th><th>Example</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>MULTIFORMAT_ADDRESS</code></td><td><code>/ip4/1.2.3.4/tcp/4001/p2p/12D3K...</code></td><td>Publisher's libp2p address</td></tr>
+            <tr><td><code>CID</code></td><td><code>bafybeig...</code></td><td>SHA-256 content hash</td></tr>
+            <tr><td><code>FILE_ID</code></td><td><code>OMM</code></td><td>Schema type of published data</td></tr>
+            <tr><td><code>FILE_NAME</code></td><td><code>ISS-2026-03-09.omm</code></td><td>Human-readable name</td></tr>
+            <tr><td><code>SIGNATURE</code></td><td><em>(base64)</em></td><td>Ed25519 signature of CID</td></tr>
+            <tr><td><code>PUBLISH_TIMESTAMP</code></td><td><code>2026-03-09T12:00:00Z</code></td><td>RFC3339 publish time</td></tr>
+            <tr><td><code>SIGNATURE_TYPE</code></td><td><code>Ed25519</code></td><td>Signature algorithm</td></tr>
+          </tbody>
+        </table>
+
+        <h3>GossipSub Topic Map</h3>
+        <p>Each schema type gets its own GossipSub topic. Nodes subscribe to the topics they care about:</p>
+        <pre><code>/spacedatanetwork/sds/PNM.fbs     ← Publish notifications
+/spacedatanetwork/sds/PLOG.fbs    ← Publication log entries
+/spacedatanetwork/sds/PLHD.fbs    ← Log head announcements
+/spacedatanetwork/sds/OMM.fbs     ← Orbital mean elements
+/spacedatanetwork/sds/CDM.fbs     ← Conjunction data
+/spacedatanetwork/sds/EPM.fbs     ← Entity profiles
+... (44 total schema topics)
+/spacedatanetwork/edge-relays     ← Edge relay announcements
+/sdn/storefront/listings          ← Marketplace listings
+/sdn/data/{listing}/{buyer}       ← Encrypted delivery channels</code></pre>
+      </section>
+
+      <section id="dataflow-plog" class="doc-section">
+        <h2>Publication Logs — PLOG &amp; PLHD</h2>
+        <p>The Publication Log system enables <strong>efficient incremental sync</strong> instead of re-downloading entire catalogs. Each publisher maintains a per-schema, append-only, hash-chained log.</p>
+
+        <h3>PLOG — Publication Log Entry</h3>
+        <p>Each PLOG entry records one data publication with a chain link to the previous entry:</p>
+        <pre><code>PLOG seq=1 ──hash──→ PLOG seq=2 ──hash──→ PLOG seq=3 → ...
+
+Entry fields:
+  SEQUENCE:            1, 2, 3... (monotonic, no gaps)
+  SCHEMA_TYPE:         "OMM", "CDM", etc.
+  PUBLISHER_PEER_ID:   libp2p PeerID
+  RECORD_CID:          SHA-256 of actual data record
+  PREVIOUS_ENTRY_HASH: chain link (empty for seq=1)
+  ENTRY_HASH:          SHA-256 of this entry's fields
+  SIGNATURE:           Ed25519 of ENTRY_HASH
+  ENTITY_IDS:          ["25544"] (NORAD IDs for filtering)
+  EPOCH_DAY:           "2026-03-09" (time windowing)</code></pre>
+
+        <h3>Hash Computation</h3>
+        <pre><code>ENTRY_HASH = SHA-256(
+  SEQUENCE      as 8-byte little-endian  ||
+  SCHEMA_TYPE   as UTF-8 bytes           ||
+  PUBLISHER_PEER_ID as UTF-8 bytes       ||
+  RECORD_CID    as UTF-8 bytes           ||
+  PREVIOUS_ENTRY_HASH as UTF-8 bytes     ||
+  TIMESTAMP     as 8-byte little-endian
+)</code></pre>
+
+        <h3>PLHD — Publication Log Head</h3>
+        <p>A lightweight announcement broadcast via GossipSub when a publisher's log advances. Subscribers compare the HEAD_SEQUENCE against their last-synced sequence to decide if they need to catch up.</p>
+
+        <h3>Sync Protocol</h3>
+        <pre><code>Subscriber                            Publisher
+    │                                     │
+    │  Receive PLHD (HEAD_SEQUENCE=100)   │
+    │  Local last_synced = 90             │
+    │  → Need 10 entries                  │
+    │                                     │
+    │── MsgSyncLog (0x07) ───────────────→│
+    │   since_sequence=90                 │
+    │   max_entries=500                   │
+    │                                     │
+    │←──── MsgSyncReply (0x08) ──────────│
+    │   [10 PLOG entries]                 │
+    │                                     │
+    │  Verify hash chain integrity        │
+    │  Verify Ed25519 signatures          │
+    │  Fetch missing data CIDs            │
+    │  Update last_synced = 100           │</code></pre>
+      </section>
+
+      <section id="dataflow-streaming" class="doc-section">
+        <h2>Streaming &amp; Channels</h2>
+        <p>SDN subscriptions support three delivery modes for real-time and batch data consumption:</p>
+
+        <table>
+          <thead><tr><th>Mode</th><th>ID</th><th>Behavior</th><th>Use Case</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Single</strong></td><td>0</td><td>One message per request</td><td>On-demand queries</td></tr>
+            <tr><td><strong>Streaming</strong></td><td>1</td><td>Continuous real-time delivery</td><td>Live monitoring (conjunction alerts)</td></tr>
+            <tr><td><strong>Batch</strong></td><td>2</td><td>Periodic batched delivery</td><td>Catalog updates, archiving</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Subscription Configuration</h3>
+        <pre><code>// JavaScript — create a filtered subscription
+const sub = subscriptionManager.createSubscription({
+  dataTypes: ['CDM.fbs', 'OMM.fbs'],  // Which schemas
+  sourcePeers: ['all'],                 // From any peer (or specific IDs)
+  encrypted: false,                     // Plaintext or encrypted
+  streaming: true,                      // Real-time delivery
+  filters: [{                           // Optional field filters
+    field: 'COLLISION_PROBABILITY',
+    operator: 'gt',
+    value: 1e-4
+  }],
+  rateLimit: 100,                       // Messages per minute
+  ttl: 3600000                          // 1 hour TTL
+});</code></pre>
+
+        <h3>Routing Headers</h3>
+        <p>Each message carries a binary <strong>RoutingHeader</strong> with metadata for efficient routing:</p>
+        <table>
+          <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>SchemaType</td><td>string</td><td>Data schema (e.g., "CDM.fbs")</td></tr>
+            <tr><td>DestinationPeers</td><td>string[]</td><td>Target peer IDs</td></tr>
+            <tr><td>Priority</td><td>enum</td><td>Low / Normal / High / Critical</td></tr>
+            <tr><td>Encrypted</td><td>bool</td><td>Is payload encrypted?</td></tr>
+            <tr><td>EncryptionMode</td><td>enum</td><td>None / ECIES / SessionKey / Hybrid</td></tr>
+            <tr><td>Sequence</td><td>uint64</td><td>Message sequence number</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="dataflow-encryption" class="doc-section">
+        <h2>Encrypted Messages Between Nodes</h2>
+        <p>SDN supports end-to-end encryption for private data delivery. Encryption uses the recipient's X25519 public key (derived from their xpub via SLIP-10).</p>
+
+        <h3>Encryption Modes</h3>
+        <table>
+          <thead><tr><th>Mode</th><th>ID</th><th>Algorithm</th><th>Use Case</th></tr></thead>
+          <tbody>
+            <tr><td><strong>None</strong></td><td>0</td><td>Plaintext</td><td>Public data (OMM, CDM)</td></tr>
+            <tr><td><strong>ECIES</strong></td><td>1</td><td>X25519 + ChaCha20-Poly1305</td><td>Per-message encryption</td></tr>
+            <tr><td><strong>SessionKey</strong></td><td>2</td><td>AES-256-GCM with pre-shared key</td><td>Bulk streaming</td></tr>
+            <tr><td><strong>Hybrid</strong></td><td>3</td><td>Plaintext header + encrypted payload</td><td>Routable encrypted data</td></tr>
+          </tbody>
+        </table>
+
+        <h3>ECIES Encryption Flow</h3>
+        <pre><code>Sender:
+  1. Look up recipient's X25519 public key (from xpub)
+  2. Generate ephemeral X25519 keypair
+  3. shared_secret = X25519(ephemeral_private, recipient_public)
+  4. key = HKDF-SHA256(shared_secret)
+  5. ciphertext = ChaCha20-Poly1305(key, nonce, plaintext)
+  6. envelope = [ephemeral_pubkey | nonce | ciphertext | auth_tag]
+
+Recipient:
+  1. Extract ephemeral public key from envelope
+  2. shared_secret = X25519(own_private, ephemeral_public)
+  3. key = HKDF-SHA256(shared_secret)
+  4. plaintext = ChaCha20-Poly1305.decrypt(key, nonce, ciphertext)</code></pre>
+
+        <h3>Encrypted Delivery Channels</h3>
+        <p>The marketplace uses per-buyer encrypted GossipSub topics for data delivery:</p>
+        <pre><code>/sdn/data/{listing_id}/{buyer_peer_id}</code></pre>
+        <p>Only the buyer (with the matching X25519 private key) can decrypt the data.</p>
+      </section>
+
+      <section id="dataflow-identity" class="doc-section">
+        <h2>Wallet Identity — Users Are Keys</h2>
+        <p>SDN has <strong>no separate concept of "user accounts"</strong>. A user IS their HD wallet key. The same BIP-39 mnemonic derives identical keys whether used in a Go server node, a browser via sdn-js, or the desktop app. Logging in = deriving your keys.</p>
+
+        <h3>Key Derivation</h3>
+        <div style="overflow-x:auto; margin: 1.5rem 0;">
+          <svg viewBox="0 0 800 300" xmlns="http://www.w3.org/2000/svg" style="max-width: 800px; width: 100%; font-family: 'Inter', sans-serif;">
+            <!-- Mnemonic -->
+            <rect x="250" y="10" width="300" height="40" rx="8" fill="rgba(79,171,181,0.15)" stroke="#4FABB5" stroke-opacity="0.5"/>
+            <text x="400" y="35" text-anchor="middle" fill="#4FABB5" font-size="13" font-weight="600">BIP-39 Mnemonic (12/24 words)</text>
+
+            <line x1="400" y1="50" x2="400" y2="70" stroke="#86868B" stroke-width="1.5"/>
+            <text x="410" y="65" fill="#86868B" font-size="10">PBKDF2</text>
+
+            <!-- Seed -->
+            <rect x="300" y="70" width="200" height="32" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.4"/>
+            <text x="400" y="91" text-anchor="middle" fill="#7C6FD4" font-size="12">512-bit Seed</text>
+
+            <line x1="400" y1="102" x2="400" y2="120" stroke="#86868B" stroke-width="1.5"/>
+            <text x="410" y="115" fill="#86868B" font-size="10">SLIP-10</text>
+
+            <!-- Master Key -->
+            <rect x="280" y="120" width="240" height="32" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.4"/>
+            <text x="400" y="141" text-anchor="middle" fill="#F5F5F7" font-size="12">SLIP-10 Master Key</text>
+
+            <!-- Three branches -->
+            <line x1="300" y1="152" x2="120" y2="190" stroke="#86868B" stroke-width="1"/>
+            <line x1="400" y1="152" x2="400" y2="190" stroke="#86868B" stroke-width="1"/>
+            <line x1="500" y1="152" x2="680" y2="190" stroke="#86868B" stroke-width="1"/>
+
+            <!-- Identity Key -->
+            <rect x="20" y="190" width="200" height="50" rx="6" fill="rgba(196,147,58,0.12)" stroke="#C4933A" stroke-opacity="0.5"/>
+            <text x="120" y="210" text-anchor="middle" fill="#C4933A" font-size="11" font-weight="600">m/44'/0'/account'</text>
+            <text x="120" y="228" text-anchor="middle" fill="#86868B" font-size="10">secp256k1 → xpub identity</text>
+
+            <!-- Signing Key -->
+            <rect x="270" y="190" width="260" height="50" rx="6" fill="rgba(79,171,181,0.12)" stroke="#4FABB5" stroke-opacity="0.5"/>
+            <text x="400" y="210" text-anchor="middle" fill="#4FABB5" font-size="11" font-weight="600">m/44'/0'/account'/0'/0'</text>
+            <text x="400" y="228" text-anchor="middle" fill="#86868B" font-size="10">Ed25519 → signing + PeerID</text>
+
+            <!-- Encryption Key -->
+            <rect x="570" y="190" width="220" height="50" rx="6" fill="rgba(124,111,212,0.12)" stroke="#7C6FD4" stroke-opacity="0.5"/>
+            <text x="680" y="210" text-anchor="middle" fill="#7C6FD4" font-size="11" font-weight="600">m/44'/0'/account'/1'/0'</text>
+            <text x="680" y="228" text-anchor="middle" fill="#86868B" font-size="10">X25519 → encryption (ECIES)</text>
+
+            <!-- Labels -->
+            <text x="120" y="268" text-anchor="middle" fill="#86868B" font-size="10">Network identity</text>
+            <text x="120" y="280" text-anchor="middle" fill="#86868B" font-size="10">(TOFU binding)</text>
+            <text x="400" y="268" text-anchor="middle" fill="#86868B" font-size="10">Signs all data, auth challenges,</text>
+            <text x="400" y="280" text-anchor="middle" fill="#86868B" font-size="10">PLOG entries. Also is libp2p PeerID.</text>
+            <text x="680" y="268" text-anchor="middle" fill="#86868B" font-size="10">X25519 + ChaCha20-Poly1305</text>
+            <text x="680" y="280" text-anchor="middle" fill="#86868B" font-size="10">per-message or session key</text>
+          </svg>
+        </div>
+
+        <h3>Multi-Account</h3>
+        <p>One mnemonic can manage multiple SDN identities by varying the <code>account'</code> segment:</p>
+        <ul>
+          <li><code>m/44'/0'/0'/...</code> — Operator identity</li>
+          <li><code>m/44'/0'/1'/...</code> — Sensor identity</li>
+          <li><code>m/44'/0'/2'/...</code> — Analytics service identity</li>
+        </ul>
+
+        <h3>TOFU Key Binding</h3>
+        <p>On first login, the Ed25519 signing public key is bound to the xpub. Subsequent logins verify this binding. This prevents key substitution attacks while allowing passwordless key rotation.</p>
+      </section>
+
+      <section id="dataflow-browser" class="doc-section">
+        <h2>Browser Nodes with sdn-js</h2>
+        <p>The <strong>sdn-js</strong> SDK turns any browser or Node.js process into a full SDN peer. A browser tab running sdn-js has the same cryptographic identity model as a Go server node — the only difference is transport (WebSocket/WebTransport instead of raw TCP).</p>
+
+        <div style="overflow-x:auto; margin: 1.5rem 0;">
+          <svg viewBox="0 0 800 360" xmlns="http://www.w3.org/2000/svg" style="max-width: 800px; width: 100%; font-family: 'Inter', sans-serif;">
+            <!-- Browser Box -->
+            <rect x="30" y="10" width="340" height="250" rx="12" fill="rgba(79,171,181,0.08)" stroke="#4FABB5" stroke-opacity="0.3"/>
+            <text x="200" y="35" text-anchor="middle" fill="#4FABB5" font-size="13" font-weight="600">Browser Tab (sdn-js)</text>
+
+            <rect x="50" y="50" width="300" height="24" rx="4" fill="rgba(255,255,255,0.05)"/>
+            <text x="200" y="67" text-anchor="middle" fill="#F5F5F7" font-size="10">libp2p (WebSocket + WebTransport)</text>
+
+            <rect x="50" y="82" width="300" height="24" rx="4" fill="rgba(255,255,255,0.05)"/>
+            <text x="200" y="99" text-anchor="middle" fill="#F5F5F7" font-size="10">GossipSub (pub/sub messaging)</text>
+
+            <rect x="50" y="114" width="300" height="24" rx="4" fill="rgba(255,255,255,0.05)"/>
+            <text x="200" y="131" text-anchor="middle" fill="#F5F5F7" font-size="10">HD Wallet WASM (hd-wallet-wasm)</text>
+
+            <rect x="50" y="146" width="300" height="24" rx="4" fill="rgba(255,255,255,0.05)"/>
+            <text x="200" y="163" text-anchor="middle" fill="#F5F5F7" font-size="10">IndexedDB (local FlatBuffer storage)</text>
+
+            <rect x="50" y="178" width="300" height="24" rx="4" fill="rgba(255,255,255,0.05)"/>
+            <text x="200" y="195" text-anchor="middle" fill="#F5F5F7" font-size="10">SubscriptionManager (filter + route)</text>
+
+            <rect x="50" y="210" width="300" height="24" rx="4" fill="rgba(255,255,255,0.05)"/>
+            <text x="200" y="227" text-anchor="middle" fill="#F5F5F7" font-size="10">Kademlia DHT (client mode)</text>
+
+            <!-- Arrow to relay -->
+            <line x1="370" y1="135" x2="450" y2="135" stroke="#4FABB5" stroke-width="2" marker-end="url(#df-arrow3)"/>
+            <defs><marker id="df-arrow3" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#4FABB5"/></marker></defs>
+            <text x="410" y="125" text-anchor="middle" fill="#86868B" font-size="9">WebSocket</text>
+
+            <!-- Edge Relay -->
+            <rect x="450" y="110" width="140" height="50" rx="8" fill="rgba(196,147,58,0.12)" stroke="#C4933A" stroke-opacity="0.4"/>
+            <text x="520" y="133" text-anchor="middle" fill="#C4933A" font-size="11" font-weight="500">Edge Relay</text>
+            <text x="520" y="148" text-anchor="middle" fill="#86868B" font-size="9">Circuit Relay v2</text>
+
+            <!-- Arrow to Full Node -->
+            <line x1="590" y1="135" x2="640" y2="135" stroke="#C4933A" stroke-width="2" marker-end="url(#df-arrow4)"/>
+            <defs><marker id="df-arrow4" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#C4933A"/></marker></defs>
+
+            <!-- Full Node -->
+            <rect x="640" y="80" width="140" height="110" rx="8" fill="rgba(77,168,130,0.12)" stroke="#4DA882" stroke-opacity="0.4"/>
+            <text x="710" y="105" text-anchor="middle" fill="#4DA882" font-size="11" font-weight="500">Full Node</text>
+            <text x="710" y="122" text-anchor="middle" fill="#86868B" font-size="9">DHT routing</text>
+            <text x="710" y="136" text-anchor="middle" fill="#86868B" font-size="9">GossipSub mesh</text>
+            <text x="710" y="150" text-anchor="middle" fill="#86868B" font-size="9">FlatSQL database</text>
+            <text x="710" y="164" text-anchor="middle" fill="#86868B" font-size="9">PLOG service</text>
+            <text x="710" y="178" text-anchor="middle" fill="#86868B" font-size="9">Plugin manager</text>
+
+            <!-- Key insight -->
+            <rect x="30" y="280" width="750" height="60" rx="8" fill="rgba(124,111,212,0.08)" stroke="#7C6FD4" stroke-opacity="0.3"/>
+            <text x="405" y="305" text-anchor="middle" fill="#7C6FD4" font-size="12" font-weight="600">Same mnemonic → Same keys → Same identity</text>
+            <text x="405" y="325" text-anchor="middle" fill="#86868B" font-size="11">Browser, desktop, and server nodes with the same mnemonic are the same peer on the network</text>
+          </svg>
+        </div>
+
+        <h3>Code Example</h3>
+        <pre><code>import { SDNNode, identityFromMnemonic } from '@spacedatanetwork/sdn-js';
+
+// Same mnemonic as your server node = same identity
+const identity = await identityFromMnemonic('abandon abandon ...');
+
+const node = await SDNNode.create({
+  identity,
+  edgeRelays: ['wss://relay.spaceaware.io/...'],
+  enableStorage: true,  // IndexedDB
+});
+
+// Subscribe to conjunction warnings
+await node.subscribe('CDM.fbs', (data, peerId) => {
+  console.log('Conjunction alert from', peerId);
+});
+
+// Publish orbital data
+await node.publish('OMM.fbs', flatBufferBytes);
+
+// Query remote server via REST
+import { SDNClient } from '@spacedatanetwork/sdn-js';
+const client = await SDNClient.resolve('spaceaware.io');
+const records = await client.query({
+  schema: 'OMM.fbs',
+  noradCatId: 25544,  // ISS
+  day: '2026-03-09'
+});</code></pre>
+      </section>
+
+      <section id="dataflow-plugins" class="doc-section">
+        <h2>Plugin System</h2>
+        <p>SDN loads plugins as <strong>WASI-compiled WebAssembly</strong> modules via Wazero (pure Go runtime). Plugins run in a sandboxed 32MB memory space and communicate with the host via shared memory and FlatBuffer messages.</p>
+
+        <h3>Required Plugin Exports</h3>
+        <table>
+          <thead><tr><th>Export</th><th>Signature</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>malloc</code></td><td><code>(i32) → i32</code></td><td>Memory allocation</td></tr>
+            <tr><td><code>free</code></td><td><code>(i32)</code></td><td>Memory deallocation</td></tr>
+            <tr><td><code>plugin_init</code></td><td><code>(ptr, len) → i32</code></td><td>Initialize with identity seed</td></tr>
+            <tr><td><code>plugin_handle_request</code></td><td><code>(in_ptr, in_len, out_ptr, out_cap) → i32</code></td><td>Handle request (FlatBuffer in/out)</td></tr>
+            <tr><td><code>plugin_get_public_key</code></td><td><code>(out_ptr, out_cap) → i32</code></td><td>Return public key</td></tr>
+            <tr><td><code>plugin_get_metadata</code></td><td><code>(out_ptr, out_cap) → i32</code></td><td>Return JSON metadata</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Host Functions Available</h3>
+        <table>
+          <thead><tr><th>Import</th><th>Module</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>clock_now_ms</code></td><td><code>sdn</code></td><td>Current epoch milliseconds</td></tr>
+            <tr><td><code>random_bytes</code></td><td><code>sdn</code></td><td>Cryptographic random (max 8192 bytes)</td></tr>
+            <tr><td><code>log</code></td><td><code>sdn</code></td><td>Log to daemon (debug/info/warn/error)</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Plugin Lifecycle</h3>
+        <pre><code>Load WASM → Wazero runtime (32MB limit)
+  → Instantiate WASI imports
+  → Register sdn.* host functions
+  → Call _initialize (if present)
+  → Call plugin_init(identity_seed)
+  → Call plugin_get_metadata() → register protocols
+  → Register HTTP routes: /api/v1/plugins/{id}/*
+  → Register libp2p stream handlers
+  → Plugin is running, handles requests via FlatBuffer I/O</code></pre>
+
+        <p>See the <a href="https://github.com/DigitalArsenal/space-data-network/tree/main/plugin-demo">plugin-demo directory</a> for a complete annotated example plugin with build instructions.</p>
       </section>
 
       <!-- Testing & Benchmarks -->

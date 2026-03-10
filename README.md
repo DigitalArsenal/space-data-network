@@ -228,6 +228,7 @@ SDN extends IPFS with space-specific optimizations:
 | [sdn-js](./sdn-js) | Browser/Node.js SDK | TypeScript |
 | [desktop](./desktop) | Desktop application | TypeScript |
 | [schemas](./schemas) | FlatBuffer schema definitions | FlatBuffers |
+| [plugin-demo](./plugin-demo) | Plugin development guide, WASM API reference, integration tests | C / JS |
 | [kubo](./kubo) | IPFS reference implementation | Go |
 
 OrbPro licensing/key exchange stream schemas (v1.0) are versioned in the plugin SDK:
@@ -365,25 +366,47 @@ All data on SDN is **content-addressed** using cryptographic hashes (CIDs):
 
 ---
 
-## PNM Tip/Queue System
+## Data Flow
 
-SDN uses **Publish Notification Messages (PNM)** for intelligent content distribution. Instead of broadcasting all data, nodes announce content availability via PNM, allowing peers to selectively fetch based on their configuration.
-
-### How It Works
+SDN uses a layered data flow architecture: **FlatBuffers** → **FlatSQL** → **PNM** → **PLOG/PLHD** → **Subscriptions**
 
 ```
-Publisher                           Subscriber
-    |                                   |
-    |-- Pin content locally             |
-    |-- Broadcast PNM (CID + schema) ---|--> Receive PNM
-    |                                   |-- Check config for peer + schema
-    |                                   |-- If autoFetch: fetch content
-    |                                   |-- If autoPin: pin with TTL
+Publisher                                      Subscriber
+    │                                               │
+    │  1. Build FlatBuffer (OMM, CDM, etc.)         │
+    │  2. POST /api/v1/data/publish/{schema}        │
+    │     → Validate + store in FlatSQL (SQLite)    │
+    │     → Compute SHA-256 CID                     │
+    │     → Append PLOG entry (hash-chained log)    │
+    │                                               │
+    │  3. Broadcast PNM via GossipSub ──────────────│──→ Receive PNM
+    │     (lightweight notification: CID + schema)  │
+    │                                               │  4. Verify signature
+    │  5. Publish PLHD (log head) ──────────────────│──→ Check tip/queue config
+    │                                               │
+    │                                               │  6. If autoFetch: fetch CID
+    │  ◄────────────────────────────────────────────│     from publisher or any peer
+    │     (SDS exchange protocol)                   │
+    │                                               │  7. Store in local FlatSQL
+    │                                               │  8. Fire onMessage(schema, data, peerId)
 ```
 
-### Configuration
+### FlatSQL Storage
 
-Nodes can configure auto-fetch, auto-pin, and TTL per-source AND per-schema:
+All data is stored in SQLite with per-schema tables: `sds_{schema}(cid, data, peer_id, signature)`. Records are indexed by NORAD ID, epoch day, and entity ID for fast queries. Content is addressed by SHA-256 CID — same data always produces the same hash.
+
+### Publication Logs (PLOG/PLHD)
+
+Each publisher maintains a per-schema **hash-chained log** for efficient incremental sync:
+
+- **PLOG** — Append-only log entries with sequence numbers, chain links, and Ed25519 signatures
+- **PLHD** — Lightweight log head announcements broadcast when the log advances
+- Subscribers compare HEAD_SEQUENCE against last_synced to determine the delta
+- Full chain verification: recompute hashes + verify signatures
+
+### PNM Tip/Queue System
+
+**Publish Notification Messages (PNM)** decouple content storage from notification. Nodes configure auto-fetch, auto-pin, and TTL per-source AND per-schema:
 
 | Setting | Description |
 |---------|-------------|
@@ -391,10 +414,25 @@ Nodes can configure auto-fetch, auto-pin, and TTL per-source AND per-schema:
 | **Per-source overrides** | E.g., trust data from partner organizations |
 | **Per-source+schema** | E.g., special handling for OMM from trusted source |
 
-This enables flexible policies like:
-- Auto-pin all conjunction warnings from anyone
-- Auto-fetch orbital data only from trusted partners
-- Store data from government agencies for 1 week, commercial for 24h
+### Encrypted Messages
+
+SDN supports end-to-end encryption for private data:
+
+| Mode | Algorithm | Use Case |
+|------|-----------|----------|
+| **ECIES** | X25519 + ChaCha20-Poly1305 | Per-message encryption |
+| **SessionKey** | AES-256-GCM | Bulk streaming |
+| **Hybrid** | Plaintext header + encrypted payload | Routable encrypted data |
+
+### Streaming Subscriptions
+
+Three delivery modes: **Single** (on-demand), **Streaming** (real-time), **Batch** (periodic). Subscriptions support schema/peer filtering, rate limiting, and priority routing.
+
+### Browser Nodes (sdn-js)
+
+The sdn-js SDK turns any browser or Node.js process into a full SDN peer. A browser with the same mnemonic as a server node has the **same cryptographic identity** — users ARE their HD wallet keys.
+
+See [docs/docs.html](./docs/docs.html) and [plugin-demo/](./plugin-demo/) for complete architecture documentation.
 
 See [sdn-server documentation](./sdn-server/README.md) for configuration details.
 
@@ -553,6 +591,10 @@ Then open [http://localhost:8080](http://localhost:8080).
 - JavaScript SDK Reference
 - REST & WebSocket API
 - Schema Reference (all Space Data Standards)
+- **Data Flow Architecture** — FlatBuffers, FlatSQL, PNM, PLOG/PLHD, streaming, encryption
+- **Wallet Identity** — HD key derivation, TOFU binding, multi-account
+- **Browser Nodes** — sdn-js as a full network peer
+- **Plugin System** — WASM API, host functions, lifecycle
 
 ---
 
