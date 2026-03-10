@@ -18,10 +18,9 @@ AI agents working on SDN plugin development.
 8. [Identity & HD Wallet Keys](#identity--hd-wallet-keys)
 9. [sdn-js: Browser/Node.js as a Network Node](#sdn-js-browsernode-as-a-network-node)
 10. [Periodic Tasks (Cron)](#periodic-tasks-cron)
-11. [Stream Handlers](#stream-handlers)
-12. [flatc-wasm: JSON ↔ FlatBuffer Streaming](#flatc-wasm-json--flatbuffer-streaming)
-13. [Integration Tests](#integration-tests)
-14. [File Map](#file-map)
+11. [flatc-wasm: JSON ↔ FlatBuffer Streaming](#flatc-wasm-json--flatbuffer-streaming)
+12. [Integration Tests](#integration-tests)
+13. [File Map](#file-map)
 
 ---
 
@@ -176,6 +175,7 @@ Your WASM module **must** export these functions:
 | `plugin_get_public_key` | `(out_ptr: i32, out_len: i32) → i32` | Return plugin's public key |
 | `plugin_get_metadata` | `(out_ptr: i32, out_len: i32) → i32` | Return JSON metadata |
 | `plugin_request_challenge` | `(req_ptr: i32, req_len: i32, out_ptr: i32, out_len: i32) → i32` | Challenge-response auth |
+| `plugin_cron` *(optional)* | `(method_ptr: i32, method_len: i32, in_ptr: i32, in_len: i32, out_ptr: i32, out_cap: i32) → i32` | Scheduled task execution |
 
 ### Host Functions Provided
 
@@ -612,157 +612,96 @@ Subscriptions support three delivery modes:
 
 ## Periodic Tasks (Cron)
 
-Plugins that need background work (DHT announcements, cache cleanup, health
-checks) implement the optional `PeriodicTaskProvider` interface. The plugin
-manager owns the goroutines — plugins just declare what to run and how often.
+WASM plugins can declare **cron-eligible methods** in their metadata JSON. The
+SDN host controls *whether* and *how often* each method runs — via the server
+config file or the web UI. The plugin never starts its own goroutines.
 
-### Interface
+### Metadata Declaration
 
-```go
-// In your plugin:
-type PeriodicTaskProvider interface {
-    PeriodicTasks() []plugins.PeriodicTaskConfig
-}
+In the JSON returned by `plugin_get_metadata`, include a `"cron"` array:
 
-type PeriodicTaskConfig struct {
-    Name       string         // Label for logging ("dht-announce")
-    Interval   time.Duration  // How often (minimum 1s)
-    RunOnStart bool           // Run immediately at startup?
-    Fn         func(ctx context.Context) error
+```json
+{
+  "id": "example-sensor-plugin",
+  "version": "1.0.0",
+  "cron": [
+    {
+      "method": "collect-telemetry",
+      "description": "Sample sensor readings and publish as FlatBuffer",
+      "default_interval": "30s",
+      "input": "none",
+      "output": "json"
+    },
+    {
+      "method": "cleanup-cache",
+      "description": "Prune expired entries from the local data cache",
+      "default_interval": "5m",
+      "input": "none",
+      "output": "none"
+    },
+    {
+      "method": "sync-catalog",
+      "description": "Fetch latest catalog delta from upstream peer",
+      "default_interval": "1h",
+      "input": "json",
+      "output": "json"
+    }
+  ]
 }
 ```
 
-### Example
+### CronMethodSpec Fields
 
-```go
-func (p *MyPlugin) PeriodicTasks() []plugins.PeriodicTaskConfig {
-    return []plugins.PeriodicTaskConfig{
-        {
-            Name:       "heartbeat",
-            Interval:   30 * time.Second,
-            RunOnStart: true,
-            Fn: func(ctx context.Context) error {
-                // Publish health record, re-announce to DHT, etc.
-                return p.announceHealth(ctx)
-            },
-        },
-        {
-            Name:       "cleanup",
-            Interval:   5 * time.Minute,
-            RunOnStart: false,
-            Fn: func(ctx context.Context) error {
-                return p.pruneExpiredCache(ctx)
-            },
-        },
-    }
-}
+| Field | Type | Description |
+|-------|------|-------------|
+| `method` | string | Identifier passed to `plugin_cron` (e.g. `"collect-telemetry"`) |
+| `description` | string | Human-readable label for the web UI |
+| `default_interval` | string | Suggested schedule (`"30s"`, `"5m"`, `"1h"`) — overridable by server config |
+| `input` | string | `"none"`, `"json"`, or `"flatbuffer"` — what the host passes in |
+| `output` | string | `"none"`, `"json"`, or `"flatbuffer"` — what the plugin returns |
+
+### WASM Export
+
+```c
+// Optional WASM export — only needed if the plugin declares cron methods
+__attribute__((export_name("plugin_cron")))
+int32_t plugin_cron(
+    const char* method_ptr, int32_t method_len,  // method name
+    uint8_t* in_ptr, int32_t in_len,             // input (type per spec)
+    uint8_t* out_ptr, int32_t out_cap            // output buffer
+);
+// Returns: bytes written to out_ptr, 0 for no output, negative on error
+```
+
+### Server-Side Configuration
+
+The server config file (or web UI) controls which methods are enabled and
+their actual intervals. The plugin's `default_interval` is only a suggestion:
+
+```yaml
+plugins:
+  cron:
+    example-sensor-plugin:
+      collect-telemetry:
+        enabled: true
+        interval: "1m"       # Override plugin's default "30s"
+      cleanup-cache:
+        enabled: true
+        interval: ""         # Use plugin default ("5m")
+      sync-catalog:
+        enabled: false       # Disabled by operator
 ```
 
 ### Lifecycle
 
+```text
+1. Host loads WASM module, calls plugin_init()
+2. Host calls plugin_get_metadata() → parses "cron" array
+3. Host merges cron specs with server config/UI settings
+4. For each enabled method: start a ticker goroutine
+5. On each tick: host calls plugin_cron(method, input, out)
+6. On shutdown: cancel all ticker goroutines, then plugin.Close()
 ```
-Plugin.Start()
-    │
-    ▼
-Manager detects PeriodicTaskProvider
-    │
-    ├── Task "heartbeat" (RunOnStart=true)
-    │   └── Run immediately, then every 30s
-    │
-    ├── Task "cleanup" (RunOnStart=false)
-    │   └── First run after 5m, then every 5m
-    │
-    ▼
-Manager.Close()
-    │
-    ├── Cancel task context (all goroutines stop)
-    ├── Wait for all goroutines to exit
-    └── Call Plugin.Close()
-```
-
-### Before vs After
-
-Previously, plugins like `wasmlicenseplugin` managed their own goroutines:
-
-```go
-// OLD: Manual goroutine management in each plugin
-p.ctx, p.cancel = context.WithCancel(ctx)
-p.wg.Add(1)
-go p.announceLoop(runtime)  // Each plugin handles its own lifecycle
-```
-
-Now, plugins just declare tasks and the manager handles everything:
-
-```go
-// NEW: Declarative — no goroutines, no WaitGroup, no cancel
-func (p *MyPlugin) PeriodicTasks() []plugins.PeriodicTaskConfig {
-    return []plugins.PeriodicTaskConfig{{
-        Name: "announce", Interval: 5 * time.Minute, RunOnStart: true,
-        Fn: p.announce,
-    }}
-}
-```
-
-See `sdn-server/plugins/exampleplugin/plugin.go` for a complete reference.
-
----
-
-## Stream Handlers
-
-Plugins that need custom libp2p protocols implement the optional
-`StreamProvider` interface. The manager registers handlers after `Start()`
-and removes them during `Close()`.
-
-### Interface
-
-```go
-type StreamProvider interface {
-    StreamHandlers() []plugins.StreamHandlerConfig
-}
-
-type StreamHandlerConfig struct {
-    ProtocolID protocol.ID          // e.g. "/my-plugin/data/1.0.0"
-    Handler    network.StreamHandler // func(network.Stream)
-}
-```
-
-### Example
-
-```go
-func (p *MyPlugin) StreamHandlers() []plugins.StreamHandlerConfig {
-    return []plugins.StreamHandlerConfig{
-        {
-            ProtocolID: protocol.ID("/my-plugin/sensor-feed/1.0.0"),
-            Handler:    p.handleSensorStream,
-        },
-    }
-}
-
-func (p *MyPlugin) handleSensorStream(stream network.Stream) {
-    defer stream.Close()
-
-    // Set deadlines (always!)
-    _ = stream.SetReadDeadline(time.Now().Add(15 * time.Second))
-    data, err := io.ReadAll(io.LimitReader(stream, 64*1024))
-    if err != nil {
-        return
-    }
-
-    // Process data...
-    response := processData(data)
-
-    _ = stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
-    stream.Write(response)
-}
-```
-
-### Stream Handler Best Practices
-
-1. **Always `defer stream.Close()`** — prevents resource leaks
-2. **Set read/write deadlines** — 15s read, 10s write is standard
-3. **Limit reader size** — `io.LimitReader(stream, maxBytes)` prevents OOM
-4. **FlatBuffer wire format** — use FlatBuffers for structured stream data
-5. **Length-prefix for multi-message** — use `uint32 LE` length prefix
 
 ---
 
@@ -909,8 +848,7 @@ plugin-demo/
 | Path | Description |
 |------|-------------|
 | `packages/plugin-sdk/` | Plugin SDK (schemas, codecs, conformance) |
-| `sdn-server/plugins/manager.go` | Plugin manager (PeriodicTask, StreamProvider) |
-| `sdn-server/plugins/exampleplugin/` | Example plugin with cron + streaming |
+| `sdn-server/plugins/manager.go` | Plugin manager (CronProvider, scheduling) |
 | `sdn-server/internal/wasiplugin/` | WASI runtime (Wazero) |
 | `sdn-server/internal/wasm/flatc.go` | flatc-wasm module (JSONToBinary, BinaryToJSON) |
 | `sdn-server/internal/wasm/stream_converter.go` | Streaming JSON↔FlatBuffer converter |
