@@ -91,7 +91,7 @@ function buildServer(serverDir) {
  *   - configPath: path to test config
  */
 export async function startTestServer(opts = {}) {
-  const repoRoot = opts.repoRoot || join(import.meta.dirname, '..', '..');
+  const repoRoot = opts.repoRoot || join(import.meta.dirname, '..', '..', '..');
   const serverDir = join(repoRoot, 'sdn-server');
 
   // Build server
