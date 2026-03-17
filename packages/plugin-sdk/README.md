@@ -265,7 +265,7 @@ Do not rely on production endpoints during local plugin bring-up.
 Minimum plugin environment for local SDN daemon:
 
 1. `ORBPRO_KEY_BROKER_WASM_PATH` (path to `.sdn.plugin`)
-2. `ORBPRO_SERVER_PRIVATE_KEY_FILE` (path to 32-byte hex private key file)
+2. `ORBPRO_SERVER_PRIVATE_KEY_FILE` (path to file containing P-256 private key, 32 bytes hex)
 3. `DERIVATION_SECRET` (shared secret used by the plugin runtime)
 4. `ORBPRO_KEYSERVER_ALLOWED_DOMAINS` (comma-separated local origins)
 5. `ORBPRO_KEYSERVER_ACTIVE_KEY_VERSION` (optional; defaults from OrbPro version)

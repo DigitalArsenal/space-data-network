@@ -52,7 +52,12 @@ tor:
 Run a one-time sync:
 
 ```bash
-./spacedatanetwork ingest --once --storage-path /opt/data/sdn --raw-path /opt/data/raw
+./spacedatanetwork ingest \
+  --once \
+  --storage-path /opt/data/sdn \
+  --raw-path /opt/data/raw \
+  --celestrak-catalog-url "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv" \
+  --celestrak-satcat-url "https://celestrak.org/pub/satcat.txt"
 ```
 
 Run continuous workers with Space-Track credentials:
@@ -63,12 +68,21 @@ export SPACETRACK_PASSWORD="your-password"
 ./spacedatanetwork ingest \
   --storage-path /opt/data/sdn \
   --raw-path /opt/data/raw \
-  --celestrak-interval 1h \
+  --celestrak-catalog-url "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv" \
+  --celestrak-satcat-url "https://celestrak.org/pub/satcat.txt" \
+  --celestrak-interval 3h \
   --satcat-interval 24h \
   --spacetrack-enabled true \
   --spacetrack-batch-days 3 \
   --spacetrack-batch-sleep 3s
 ```
+
+Default source behavior:
+
+- GP source: `https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv`
+- SATCAT source: `https://celestrak.org/pub/satcat.txt` (fixed-width text)
+- CelesTrak refresh minimum: 3 hours per endpoint (cached under `<raw-path>/cache`)
+- Ingest stores both `OMM.fbs` and `MPE.fbs`; use `MPE` endpoints for orbit bulk consumers.
 
 Production (systemd) credential location:
 
@@ -186,6 +200,11 @@ Data API response format:
 - Default for `OMM`, `MPE`, `CAT` query endpoints: `application/x-flatbuffers`
 - Stream framing: `uint32be-length-prefixed` records
 - JSON fallback for debugging: add `?format=json` (or `Accept: application/json`)
+
+Bulk FlatBuffer endpoints (globe feed):
+
+- `GET /api/v1/data/mpe/bulk?day=YYYY-MM-DD&limit=50000` (FlatBuffers default)
+- `GET /api/v1/data/cat/bulk?limit=50000` (FlatBuffers default)
 
 Plugin catalog location:
 

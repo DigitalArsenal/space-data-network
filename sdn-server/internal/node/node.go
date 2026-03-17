@@ -44,6 +44,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
+	"github.com/spacedatanetwork/sdn-server/plugins/ailogplugin"
 	"github.com/spacedatanetwork/sdn-server/plugins/licenseplugin"
 	"github.com/spacedatanetwork/sdn-server/plugins/wasmlicenseplugin"
 )
@@ -345,6 +346,9 @@ func (n *Node) init() error {
 	n.license = licenseplugin.New()
 	if err := n.plugins.Register(n.license); err != nil {
 		log.Warnf("Failed to register plugin %q: %v", licenseplugin.ID, err)
+	}
+	if err := n.plugins.Register(ailogplugin.New()); err != nil {
+		log.Warnf("Failed to register plugin %q: %v", ailogplugin.ID, err)
 	}
 
 	pluginCtx := plugins.RuntimeContext{

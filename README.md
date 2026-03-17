@@ -494,7 +494,7 @@ Options:
 This command is key-management agnostic on the CLI:
 - It derives the keypair internally for normal runs.
 - A fixed test public key is read from `PLUGIN_KEY_SERVER_ARTIFACT_PUBLIC_KEY_HEX` when set.
-- For `--skip-build`, it requires both `PLUGIN_KEY_SERVER_ARTIFACT_PUBLIC_KEY_HEX` and `PLUGIN_KEY_SERVER_ARTIFACT_PRIVATE_KEY_HEX`.
+- For `--skip-build`, it requires `PLUGIN_KEY_SERVER_ARTIFACT_PUBLIC_KEY_HEX` and `--artifact-private-key-file <path>`.
 
 The command uses the standardized plugin task:
 
@@ -518,7 +518,7 @@ This harness runs against private repos as long as the repo is reachable and fol
    - `npm run build:key-server` succeeds (or configure `PLUGIN_HARNESS_BUILD_COMMAND`)
 3. Export one of the artifact public key env vars used for staging:
    - `PLUGIN_KEY_SERVER_ARTIFACT_PUBLIC_KEY_HEX` (preferred)
-   - `PLUGIN_KEY_SERVER_ARTIFACT_PRIVATE_KEY_HEX` when using `--skip-build`
+   - For `--skip-build`, pass `--artifact-private-key-file <path>` pointing to the matching private key file
 4. Run:
    ```bash
 npm run plugin-harness -- /path/to/private-plugin-repo
@@ -529,8 +529,7 @@ Use `--skip-build` when reusing staged artifacts already in CI:
 
 ```bash
 export PLUGIN_KEY_SERVER_ARTIFACT_PUBLIC_KEY_HEX=<public_hex>
-export PLUGIN_KEY_SERVER_ARTIFACT_PRIVATE_KEY_HEX=<matching_private_hex>
-npm run plugin-harness -- /path/to/private-plugin-repo --skip-build --artifact-dir /path/to/Build/plugin/licensing-server
+npm run plugin-harness -- /path/to/private-plugin-repo --skip-build --artifact-dir /path/to/Build/plugin/licensing-server --artifact-private-key-file /secure/artifact-private-key.hex
 ```
 
 If your private repo has a custom auth requirement, run the harness in that authenticated shell context so Git can access dependencies and source.
