@@ -18,6 +18,7 @@
  *   DERIVATION_SECRET - Secret for key derivation (auto-generated if not set)
  *   DEMO_DOMAINS - Comma-separated allowed domains (default: localhost,127.0.0.1)
  *   DEMO_EPOCH_DAYS - Epoch period in days (default: 90)
+ *   ORBPRO_SERVER_PRIVATE_KEY_FILE - Optional path to file containing 32-byte P-256 key hex
  */
 
 import fs from "fs";
@@ -39,6 +40,31 @@ const domains = (process.env.DEMO_DOMAINS || "localhost,127.0.0.1").split(",").m
 const epochDays = parseInt(process.env.DEMO_EPOCH_DAYS || "90", 10);
 const epochPeriodMs = epochDays * 24 * 60 * 60 * 1000;
 
+function normalizeHex(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^0x/, "");
+}
+
+function readHexFromFile(filePath, label) {
+  if (typeof filePath !== "string" || filePath.trim() === "") {
+    return "";
+  }
+  const resolvedPath = filePath.trim();
+  let content;
+  try {
+    content = fs.readFileSync(resolvedPath, "utf8");
+  } catch (error) {
+    throw new Error(`${label} could not be read at ${resolvedPath}: ${error.message}`);
+  }
+  const normalized = normalizeHex(content);
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error(`${label} must contain a 32-byte hex private key (64 chars)`);
+  }
+  return normalized;
+}
+
 // Load or generate derivation secret
 let derivationSecret = process.env.DERIVATION_SECRET || "";
 const secretsPath = path.join(ROOT, "demo", ".demo-secrets.json");
@@ -54,12 +80,21 @@ if (!derivationSecret) {
   }
 }
 
+if (normalizeHex(process.env.ORBPRO_SERVER_PRIVATE_KEY_HEX)) {
+  throw new Error(
+    "ORBPRO_SERVER_PRIVATE_KEY_HEX is forbidden. Use ORBPRO_SERVER_PRIVATE_KEY_FILE instead.",
+  );
+}
+
 // Generate or load P-256 server private key
-let serverPrivateKeyHex = process.env.ORBPRO_SERVER_PRIVATE_KEY_HEX || "";
+let serverPrivateKeyHex = readHexFromFile(
+  process.env.ORBPRO_SERVER_PRIVATE_KEY_FILE,
+  "ORBPRO_SERVER_PRIVATE_KEY_FILE",
+);
 if (!serverPrivateKeyHex) {
   if (fs.existsSync(secretsPath)) {
     const secrets = JSON.parse(fs.readFileSync(secretsPath, "utf8"));
-    serverPrivateKeyHex = secrets.serverPrivateKeyHex || "";
+    serverPrivateKeyHex = normalizeHex(secrets.serverPrivateKeyHex || "");
   }
   if (!serverPrivateKeyHex) {
     // Generate P-256 private key
@@ -288,9 +323,11 @@ function main() {
   console.log(`  Payload size: ${fs.statSync(OUTPUT_PATH).size} bytes`);
 
   // Also write a .env file for the server
+  const serverPrivateKeyPath = path.join(ROOT, "demo", ".server-private-key.hex");
+  fs.writeFileSync(serverPrivateKeyPath, `${serverPrivateKeyHex}\n`, { mode: 0o600 });
   const envPath = path.join(ROOT, "demo", ".demo-env");
   const envContent = [
-    `ORBPRO_SERVER_PRIVATE_KEY_HEX=${serverPrivateKeyHex}`,
+    `ORBPRO_SERVER_PRIVATE_KEY_FILE=${serverPrivateKeyPath}`,
     `DERIVATION_SECRET=${derivationSecret}`,
     `ORBPRO_KEYSERVER_ALLOWED_DOMAINS=${domains.join(",")}`,
     `ORBPRO_KEYSERVER_EPOCH_PERIOD_MS=${epochPeriodMs}`,

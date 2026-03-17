@@ -49,10 +49,10 @@ func init() {
 	ingestCmd.Flags().StringVar(&ingestRawPath, "raw-path", "", "raw archive path (default: <storage-parent>/raw)")
 	ingestCmd.Flags().BoolVar(&ingestOnce, "once", false, "run one sync cycle and exit")
 
-	ingestCmd.Flags().DurationVar(&ingestCelestrakInterval, "celestrak-interval", time.Hour, "CelesTrak GP sync interval")
+	ingestCmd.Flags().DurationVar(&ingestCelestrakInterval, "celestrak-interval", 3*time.Hour, "CelesTrak GP sync interval (minimum 3h)")
 	ingestCmd.Flags().DurationVar(&ingestSatcatInterval, "satcat-interval", 24*time.Hour, "CelesTrak SATCAT sync interval")
 	ingestCmd.Flags().StringVar(&ingestCatalogURL, "celestrak-catalog-url", "", "override CelesTrak GP catalog CSV URL")
-	ingestCmd.Flags().StringVar(&ingestSatcatURL, "celestrak-satcat-url", "", "override CelesTrak SATCAT CSV URL")
+	ingestCmd.Flags().StringVar(&ingestSatcatURL, "celestrak-satcat-url", "", "override CelesTrak SATCAT URL (txt or csv)")
 
 	ingestCmd.Flags().BoolVar(&ingestSpaceTrackEnabled, "spacetrack-enabled", true, "enable Space-Track gap-fill worker")
 	ingestCmd.Flags().StringVar(&ingestSpaceTrackIdentity, "spacetrack-identity", "", "Space-Track login identity (or SPACETRACK_IDENTITY env)")

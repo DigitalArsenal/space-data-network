@@ -740,7 +740,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 				log.Infof("Peer API available at %s://%s/api/peers", adminScheme, adminAddr)
 				log.Infof("Node info API available at %s://%s/api/node/info", adminScheme, adminAddr)
-				log.Infof("Public data API available at %s://%s/api/v1/data/omm", adminScheme, adminAddr)
+				log.Infof("Public data API available at %s://%s/api/v1/data/mpe/bulk", adminScheme, adminAddr)
 				var err error
 				if adminTLS {
 					err = adminServer.ListenAndServeTLS(adminCertFile, adminKeyFile)
@@ -1072,7 +1072,8 @@ const defaultFrontendHTML = `<!doctype html>
     <p>This node is online. Customize this page from the <a href="/admin">admin panel</a>.</p>
     <div class="card">
       <p><a href="/api/v1/data/health">GET /api/v1/data/health</a></p>
-      <p><a href="/api/v1/data/omm?format=json&amp;limit=5">GET /api/v1/data/omm</a></p>
+      <p><a href="/api/v1/data/mpe/bulk?limit=5">GET /api/v1/data/mpe/bulk</a></p>
+      <p><a href="/api/v1/data/cat/bulk?limit=5">GET /api/v1/data/cat/bulk</a></p>
       <p><a href="/admin">Admin Panel</a></p>
     </div>
   </main>
@@ -1121,7 +1122,7 @@ func makeFrontendHandler(frontendDir string) (http.Handler, error) {
 		// Serve index.html with injected config for "/" and "/index.html"
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Cache-Control", "public, max-age=120")
 			w.WriteHeader(http.StatusOK)
 			if r.Method != http.MethodHead {
 				_, _ = w.Write(injectedHTML)
@@ -1135,6 +1136,7 @@ func makeFrontendHandler(frontendDir string) (http.Handler, error) {
 		if clean != "" {
 			full := filepath.Join(frontendDir, filepath.FromSlash(clean))
 			if st, err := os.Stat(full); err == nil && !st.IsDir() {
+				w.Header().Set("Cache-Control", "public, max-age=1800")
 				fs.ServeHTTP(w, r)
 				return
 			}
@@ -1148,7 +1150,7 @@ func makeFrontendHandler(frontendDir string) (http.Handler, error) {
 
 		// SPA fallback — serve injected index.html
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "public, max-age=120")
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
 			_, _ = w.Write(injectedHTML)
@@ -1519,9 +1521,10 @@ const defaultLandingPageHTML = `<!doctype html>
     <p>This origin serves Space Data Network APIs over HTTPS.</p>
     <div class="card">
       <p><a href="/api/v1/data/health">GET /api/v1/data/health</a></p>
-      <p><a href="/api/v1/data/omm?norad_cat_id=25544&amp;day=2026-02-11&amp;limit=5">GET /api/v1/data/omm</a> (FlatBuffers default)</p>
-      <p><a href="/api/v1/data/omm?norad_cat_id=25544&amp;day=2026-02-11&amp;limit=5&amp;format=json">GET /api/v1/data/omm?format=json</a></p>
-      <p><a href="/api/v1/data/cat?norad_cat_id=25544&amp;limit=1&amp;format=json">GET /api/v1/data/cat?format=json</a></p>
+      <p><a href="/api/v1/data/mpe/bulk?day=2026-02-11&amp;limit=5">GET /api/v1/data/mpe/bulk</a> (FlatBuffers default)</p>
+      <p><a href="/api/v1/data/mpe/bulk?day=2026-02-11&amp;limit=5&amp;format=json">GET /api/v1/data/mpe/bulk?format=json</a></p>
+      <p><a href="/api/v1/data/cat/bulk?limit=5">GET /api/v1/data/cat/bulk</a></p>
+      <p><a href="/api/v1/data/cat/bulk?limit=5&amp;format=json">GET /api/v1/data/cat/bulk?format=json</a></p>
     </div>
 	</main>
 </body>
