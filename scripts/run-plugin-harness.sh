@@ -411,7 +411,6 @@ ALLOWED_DOMAINS="${ADMIN_ADDR}"
 
 echo "[harness] starting SDN daemon at http://$ADMIN_ADDR"
 (
-  cd "$ROOT_DIR/sdn-server"
   env \
     SDN_PLUGIN_ROOT="$PLUGIN_ROOT" \
     ORBPRO_SERVER_PRIVATE_KEY_FILE="$SERVER_PRIVATE_KEY_FILE" \
@@ -419,7 +418,7 @@ echo "[harness] starting SDN daemon at http://$ADMIN_ADDR"
     DERIVATION_SECRET="$DERIVATION_SECRET" \
     PLUGIN_KEYSERVER_ALLOWED_DOMAINS="$ALLOWED_DOMAINS" \
     SDN_PLUGIN_DEBUG=1 \
-    go run ./cmd/spacedatanetwork daemon --config "$CONFIG_PATH" > "$LOG_PATH" 2>&1
+    "$ROOT_DIR/scripts/go-with-wasmedge.sh" run ./cmd/spacedatanetwork daemon --config "$CONFIG_PATH" > "$LOG_PATH" 2>&1
 ) &
 SERVER_PID=$!
 

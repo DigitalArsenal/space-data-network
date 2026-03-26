@@ -36,5 +36,6 @@ jobs:
 
       - name: Run CI checks (same as pre-push)
         run: |
-          chmod +x scripts/ci-local.sh scripts/oss-preflight.sh
+          chmod +x scripts/ci-local.sh scripts/oss-preflight.sh scripts/install-wasmedge.sh scripts/go-with-wasmedge.sh
+          ./scripts/install-wasmedge.sh
           ./scripts/ci-local.sh quick

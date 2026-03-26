@@ -1,13 +1,11 @@
 package wasiplugin
 
 import (
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
+	"time"
 )
 
 const maxRequestBodySize = 16 * 1024 // 16KB — plenty for key exchange packets
@@ -22,8 +20,7 @@ func NewHandler(rt *Runtime) *Handler {
 	return &Handler{runtime: rt}
 }
 
-// HandlePublicKey serves GET requests for the server's P-256 public key and
-// allowed-domain metadata. Response is JSON matching the OrbPro client expectation.
+// HandlePublicKey serves GET requests for the current key-broker state.
 func (h *Handler) HandlePublicKey(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -32,26 +29,19 @@ func (h *Handler) HandlePublicKey(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	pubKey, err := h.runtime.GetPublicKey(ctx)
+	state, err := h.runtime.GetRuntimeState(ctx)
 	if err != nil {
-		log.Errorf("GetPublicKey failed: %v", err)
+		log.Errorf("GetRuntimeState failed: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
-	metadata, err := h.runtime.GetMetadata(ctx)
-	if err != nil {
-		log.Errorf("GetMetadata failed: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	domains := parseBinaryDomains(metadata)
 
 	resp := map[string]interface{}{
-		"publicKey": hex.EncodeToString(pubKey),
-		"keyKind":   2, // P-256 uncompressed
-		"domains":   domains,
+		"publicKey":        state.PublicKeyHex,
+		"keyKind":          2,
+		"activeKeyVersion": state.ActiveKeyVersion,
+		"expiresAtMs":      state.ExpiresAtMs,
+		"maxSkewMs":        state.MaxSkewMs,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -111,31 +101,20 @@ func (h *Handler) HandleUI(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	pubKey, err := h.runtime.GetPublicKey(ctx)
+	state, err := h.runtime.GetRuntimeState(ctx)
 	if err != nil {
-		log.Errorf("GetPublicKey failed: %v", err)
+		log.Errorf("GetRuntimeState failed: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
-	metadata, err := h.runtime.GetMetadata(ctx)
-	if err != nil {
-		log.Errorf("GetMetadata failed: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
+	pubKeyHex := state.PublicKeyHex
+	expiry := "n/a"
+	if state.ExpiresAtMs > 0 {
+		expiry = time.UnixMilli(state.ExpiresAtMs).UTC().Format(time.RFC3339)
 	}
-
-	domains := parseBinaryDomains(metadata)
-	pubKeyHex := hex.EncodeToString(pubKey)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-
-	// C7: Escape domain strings to prevent XSS in rendered HTML.
-	domainsHTML := ""
-	for _, d := range domains {
-		domainsHTML += "<li>" + html.EscapeString(d) + "</li>"
-	}
 
 	fmt.Fprintf(w, `<!DOCTYPE html>
 <html lang="en">
@@ -166,8 +145,12 @@ func (h *Handler) HandleUI(w http.ResponseWriter, r *http.Request) {
   </div>
 
   <div class="card">
-    <h3>Allowed Domains</h3>
-    <ul>%s</ul>
+    <h3>Key Broker State</h3>
+    <ul>
+      <li><strong>Active Key Version:</strong> %d</li>
+      <li><strong>License Expires:</strong> %s</li>
+      <li><strong>Max Skew:</strong> %d ms</li>
+    </ul>
   </div>
 
   <div class="card">
@@ -177,33 +160,9 @@ func (h *Handler) HandleUI(w http.ResponseWriter, r *http.Request) {
       <li><code>/orbpro/key-broker/1.0.0</code> (libp2p stream)</li>
     </ul>
     <p style="margin-top: 8px; font-size: 0.8rem; color: #64748b;">
-      Key exchange uses encrypted libp2p streams. Public key is published to DHT.
+      Standalone artifact hosted through WasmEdge. Public key is published to the DHT.
     </p>
   </div>
 </body>
-</html>`, pubKeyHex, domainsHTML)
-}
-
-// parseBinaryDomains decodes the plugin_get_metadata binary format:
-// domainCount(4 LE) + [domainLen(2 LE) + domain(N)]...
-func parseBinaryDomains(metadata []byte) []string {
-	if len(metadata) < 4 {
-		return nil
-	}
-	count := binary.LittleEndian.Uint32(metadata[:4])
-	if count > 256 { // sanity cap
-		count = 256
-	}
-	offset := 4
-	domains := make([]string, 0, count)
-	for i := uint32(0); i < count && offset+2 <= len(metadata); i++ {
-		dlen := int(binary.LittleEndian.Uint16(metadata[offset : offset+2]))
-		offset += 2
-		if offset+dlen > len(metadata) {
-			break
-		}
-		domains = append(domains, string(metadata[offset:offset+dlen]))
-		offset += dlen
-	}
-	return domains
+</html>`, pubKeyHex, state.ActiveKeyVersion, expiry, state.MaxSkewMs)
 }

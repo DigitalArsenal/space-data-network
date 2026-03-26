@@ -35,9 +35,9 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
-	"github.com/spacedatanetwork/sdn-server/internal/logservice"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
+	"github.com/spacedatanetwork/sdn-server/internal/logservice"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -377,10 +377,12 @@ func (n *Node) init() error {
 	// Register WASI-based OrbPro key broker plugin from encrypted catalog (if configured),
 	// then fall back to configured static wasm path.
 	registeredFromCatalog := false
+	var pluginRegistry *license.PluginRegistry
 	if n.license != nil {
 		if reg, regErr := n.loadPluginRegistry(); regErr != nil {
 			log.Warnf("Plugin registry unavailable: %v", regErr)
 		} else if reg != nil {
+			pluginRegistry = reg
 			recipientKey, keyErr := n.findPluginDecryptPrivateKey()
 			if keyErr != nil {
 				log.Warnf("Plugin decryption key invalid: %v", keyErr)
@@ -431,6 +433,25 @@ func (n *Node) init() error {
 
 	if err := n.plugins.StartAll(n.ctx, pluginCtx); err != nil {
 		log.Warnf("Plugin startup completed with errors: %v", err)
+	}
+	if service := n.license.Service(); service != nil && n.keyBroker != nil {
+		if reg := service.PluginRegistry(); reg != nil {
+			if err := reg.SetRuntimeStatus(
+				wasmlicenseplugin.ID,
+				"running",
+				"started via WasmEdge standalone runtime",
+			); err != nil {
+				log.Warnf("Unable to update runtime status for plugin %q: %v", wasmlicenseplugin.ID, err)
+			}
+		}
+	} else if pluginRegistry != nil && n.keyBroker != nil {
+		if err := pluginRegistry.SetRuntimeStatus(
+			wasmlicenseplugin.ID,
+			"running",
+			"started via WasmEdge standalone runtime",
+		); err != nil {
+			log.Warnf("Unable to update runtime status for plugin %q: %v", wasmlicenseplugin.ID, err)
+		}
 	}
 	if n.license.Service() != nil {
 		log.Infof("Plugin enabled: %s (%s)", n.license.ID(), license.ProtocolID)
