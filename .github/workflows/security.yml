@@ -197,8 +197,10 @@ jobs:
         if: matrix.language == 'go'
         working-directory: sdn-server
         run: |
-          go mod download
-          go build ./...
+          chmod +x ../scripts/install-wasmedge.sh ../scripts/go-with-wasmedge.sh
+          ../scripts/install-wasmedge.sh
+          ../scripts/go-with-wasmedge.sh mod download
+          ../scripts/go-with-wasmedge.sh build ./...
 
       - name: Set up Node.js
         if: matrix.language == 'javascript'

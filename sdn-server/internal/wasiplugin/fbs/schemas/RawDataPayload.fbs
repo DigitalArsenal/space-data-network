@@ -1,0 +1,8 @@
+namespace orbpro.plugin;
+
+table RawDataPayload {
+  type_id: string;
+  data: [ubyte];
+}
+
+root_type RawDataPayload;

@@ -1,7 +1,7 @@
 // Package wasmlicenseplugin implements the OrbPro key broker as an SDN plugin
-// backed by a C++ WASI module. The plugin handles P-256 ECDH key exchange for
-// OrbPro's protection runtime, running the crypto entirely inside WASM/WASI
-// via the Wazero runtime.
+// backed by a standalone C++ WebAssembly artifact hosted through WasmEdge.
+// The plugin handles P-256 ECDH key exchange for OrbPro's protection runtime
+// with the crypto remaining inside the guest artifact.
 //
 // Key exchange happens over encrypted libp2p streams (not HTTP), following a
 // Widevine/Signal-style model. The server's P-256 public key is published to
@@ -12,7 +12,7 @@ import (
 	"context"
 	"crypto/ecdh"
 	"crypto/sha256"
-	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -64,17 +64,14 @@ func NewFromBytes(wasmBytes []byte) *Plugin {
 // ID returns the plugin identifier.
 func (p *Plugin) ID() string { return ID }
 
-// Start loads the WASM module, derives the P-256 public key, packs the binary
-// config blob, calls plugin_init, then registers libp2p stream handlers and
-// publishes the public key to the DHT.
+// Start loads the standalone artifact, derives the P-256 node key, configures
+// the guest through the canonical invoke ABI, then registers libp2p stream
+// handlers and publishes the public key to the DHT.
 //
 // Config comes from environment variables:
 //
-//   - DERIVATION_SECRET              — shared secret for KDF program
-//   - ORBPRO_KEYSERVER_ALLOWED_DOMAINS — comma-separated allowed origins
-//   - ORBPRO_KEYSERVER_EPOCH_PERIOD_MS (optional)
-//   - ORBPRO_KEYSERVER_MAX_SKEW_MS    (optional)
-//   - ORBPRO_KEYSERVER_LEASE_MS       (optional)
+//   - ORBPRO_KEYSERVER_MAX_SKEW_MS (optional)
+//   - ORBPRO_KEYSERVER_ACTIVE_KEY_VERSION (optional)
 func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) error {
 	if len(runtime.NodeEncryptionKey) == 0 {
 		log.Warn("Node encryption key unavailable — key broker plugin disabled")
@@ -86,26 +83,8 @@ func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 		return fmt.Errorf("failed to derive P-256 key from node identity: %w", err)
 	}
 
-	derivationSecret := os.Getenv("DERIVATION_SECRET")
-	if derivationSecret == "" {
-		return fmt.Errorf("DERIVATION_SECRET environment variable is required")
-	}
-
-	allowedDomains := strings.TrimSpace(os.Getenv("ORBPRO_KEYSERVER_ALLOWED_DOMAINS"))
-	if allowedDomains == "" {
-		return fmt.Errorf("ORBPRO_KEYSERVER_ALLOWED_DOMAINS environment variable is required")
-	}
-
-	epochPeriodMs := envInt64("ORBPRO_KEYSERVER_EPOCH_PERIOD_MS", 0)
 	maxSkewMs := envInt64("ORBPRO_KEYSERVER_MAX_SKEW_MS", 0)
-	leaseMs := envInt64("ORBPRO_KEYSERVER_LEASE_MS", 0)
 	activeKeyVersion := envUint32("ORBPRO_KEYSERVER_ACTIVE_KEY_VERSION", 1)
-
-	// Derive the uncompressed P-256 public key (65 bytes: 0x04 + x + y).
-	pubKey, err := p256PublicKey(privateKey)
-	if err != nil {
-		return fmt.Errorf("failed to compute P-256 public key: %w", err)
-	}
 
 	if len(p.wasmData) == 0 && strings.TrimSpace(p.wasmPath) == "" {
 		return fmt.Errorf("no WASM source configured")
@@ -127,38 +106,17 @@ func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 		return fmt.Errorf("failed to create WASI runtime: %w", err)
 	}
 
-	// Pack binary config for plugin_init:
-	//   privateKey(32) + publicKey(65) + secretLen(4 LE) + secret(N)
-	//   + domainsCsv(NUL-terminated) + epochPeriodMs(8 LE) + maxSkewMs(8 LE) + leaseMs(8 LE)
-	//   + activeKeyVersion(4 LE)
-	secretBytes := []byte(derivationSecret)
-	domainsBytes := append([]byte(allowedDomains), 0)
-
-	configSize := 32 + 65 + 4 + len(secretBytes) + len(domainsBytes) + 24 + 4
-	config := make([]byte, configSize)
-	off := 0
-
-	copy(config[off:], privateKey)
-	off += 32
-	copy(config[off:], pubKey)
-	off += 65
-	binary.LittleEndian.PutUint32(config[off:], uint32(len(secretBytes)))
-	off += 4
-	copy(config[off:], secretBytes)
-	off += len(secretBytes)
-	copy(config[off:], domainsBytes)
-	off += len(domainsBytes)
-	binary.LittleEndian.PutUint64(config[off:], uint64(epochPeriodMs))
-	off += 8
-	binary.LittleEndian.PutUint64(config[off:], uint64(maxSkewMs))
-	off += 8
-	binary.LittleEndian.PutUint64(config[off:], uint64(leaseMs))
-	off += 8
-	binary.LittleEndian.PutUint32(config[off:], activeKeyVersion)
-
-	if err := rt.Init(ctx, config); err != nil {
+	state, err := rt.ConfigureRuntime(
+		ctx,
+		wasiplugin.RuntimeConfiguration{
+			ServerPrivateKeyHex: hex.EncodeToString(privateKey),
+			MaxSkewMs:           maxSkewMs,
+			ActiveKeyVersion:    activeKeyVersion,
+		},
+	)
+	if err != nil {
 		rt.Close(ctx)
-		return fmt.Errorf("plugin_init failed: %w", err)
+		return fmt.Errorf("configure_runtime failed: %w", err)
 	}
 
 	handler := wasiplugin.NewHandler(rt)
@@ -194,8 +152,8 @@ func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 		go p.announceLoop(runtime)
 	}
 
-	log.Infof("OrbPro key broker plugin started (domains: %s, transport: libp2p)", allowedDomains)
-	log.Infof("OrbPro key broker active key version: %d", activeKeyVersion)
+	log.Infof("OrbPro key broker plugin started (transport: libp2p)")
+	log.Infof("OrbPro key broker active key version: %d", state.ActiveKeyVersion)
 	return nil
 }
 
@@ -295,16 +253,6 @@ func (p *Plugin) Close() error {
 		return rt.Close(context.Background())
 	}
 	return nil
-}
-
-// p256PublicKey derives the uncompressed P-256 public key (65 bytes) from a
-// 32-byte private key scalar.
-func p256PublicKey(privateKeyBytes []byte) ([]byte, error) {
-	priv, err := ecdh.P256().NewPrivateKey(privateKeyBytes)
-	if err != nil {
-		return nil, err
-	}
-	return priv.PublicKey().Bytes(), nil
 }
 
 func deriveP256PrivateKey(seed []byte) ([]byte, error) {

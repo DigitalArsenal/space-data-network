@@ -46,9 +46,14 @@ curl -sSL https://digitalarsenal.github.io/space-data-network//install.sh | bash
 
 # Or build from source
 git clone https://github.com/DigitalArsenal/space-data-network.git
-cd space-data-network/sdn-server
-go build -o spacedatanetwork ./cmd/spacedatanetwork
+cd space-data-network
+npm run install:wasmedge
+npm run server:build
 ```
+
+Source builds of the Go server host standalone WASM artifacts through WasmEdge,
+so `space-data-network` installs and wires the native WasmEdge SDK as part of
+its own build and test entrypoints.
 
 ### Build the JavaScript SDK (Source)
 
@@ -241,6 +246,7 @@ Regenerate plugin SDK + SDN Go bindings from these schemas (via `flatc-wasm`):
 
 ```bash
 npm run generate:plugin-sdk:key-broker-bindings
+npm run generate:module-sdk:go-bindings
 ```
 
 Run the plugin SDK protocol test client:
