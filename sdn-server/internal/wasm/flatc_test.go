@@ -129,21 +129,20 @@ func TestErrNoModule(t *testing.T) {
 	}
 }
 
-func TestAllocateWithoutMalloc(t *testing.T) {
+func TestAllocateWithoutModule(t *testing.T) {
 	ctx := context.Background()
 	fm := &FlatcModule{
 		schemas: make(map[string]int),
 	}
 
-	// Test allocate without malloc function
-	_, err := fm.allocate(ctx, []byte("test"))
+	// All operations should return ErrNoModule when mod is nil
+	_, err := fm.JSONToBinary(ctx, 1, []byte(`{}`))
 	if err != ErrNoModule {
-		t.Errorf("Expected ErrNoModule, got %v", err)
+		t.Errorf("Expected ErrNoModule from JSONToBinary, got %v", err)
 	}
 
-	// Test allocateSize without malloc function
-	_, err = fm.allocateSize(ctx, 1024)
+	_, err = fm.Encrypt(ctx, make([]byte, 32), []byte("test"))
 	if err != ErrNoModule {
-		t.Errorf("Expected ErrNoModule, got %v", err)
+		t.Errorf("Expected ErrNoModule from Encrypt, got %v", err)
 	}
 }
