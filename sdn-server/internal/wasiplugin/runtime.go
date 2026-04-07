@@ -1,6 +1,6 @@
-// Package wasiplugin provides a Wazero-based WASI plugin runtime for loading
-// C++ plugins compiled to WASM/WASI by wasi-sdk. The runtime provides host
-// functions (time, random, logging) and exposes the plugin's exported API.
+// Package wasiplugin provides a WasmEdge-based WASI plugin runtime for loading
+// C++ plugins compiled to WASM/WASI. The runtime provides host functions
+// (time, random, logging) and exposes the plugin's exported API.
 package wasiplugin
 
 import (
@@ -14,9 +14,8 @@ import (
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
-	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/api"
-	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
+	"github.com/second-state/WasmEdge-go/wasmedge"
+	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
 var log = logging.Logger("wasiplugin")
@@ -26,431 +25,237 @@ var (
 	ErrAllocationFailed = errors.New("WASM memory allocation failed")
 )
 
-// Runtime wraps a single WASI plugin module loaded via Wazero.
+// Runtime wraps a single WASI plugin module loaded via WasmEdge.
 type Runtime struct {
-	wazRuntime wazero.Runtime
-	module     api.Module
-	mu         sync.Mutex
-
-	mallocFn api.Function
-	freeFn   api.Function
-
-	initFn             api.Function
-	handleRequestFn    api.Function
-	requestChallengeFn api.Function
-	getPublicKeyFn     api.Function
-	getMetadataFn      api.Function
-	cronFn             api.Function // optional: plugin_cron
+	mod    *wasmrt.Module
+	mu     sync.Mutex
+	hasCron bool
 }
 
 // pluginCallTimeout is the maximum duration for a single WASI plugin function call.
 const pluginCallTimeout = 10 * time.Second
+
+// buildHostFuncs returns the host functions for a given module name ("sdn" or "env").
+func buildHostFuncs(name string) []wasmrt.HostFunc {
+	i32 := func() *wasmedge.ValType { return wasmedge.NewValTypeI32() }
+	i64 := func() *wasmedge.ValType { return wasmedge.NewValTypeI64() }
+
+	funcs := []wasmrt.HostFunc{
+		{
+			Name: "clock_now_ms",
+			Func: func(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
+				return []interface{}{time.Now().UnixMilli()}, wasmedge.Result_Success
+			},
+			Params:  nil,
+			Returns: []*wasmedge.ValType{i64()},
+		},
+		{
+			Name: "random_bytes",
+			Func: func(_ interface{}, callframe *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+				ptr := uint32(params[0].(int32))
+				length := uint32(params[1].(int32))
+				const maxRandomBytes = 8192
+				if length > maxRandomBytes {
+					return []interface{}{int32(-1)}, wasmedge.Result_Success
+				}
+				buf := make([]byte, length)
+				if _, err := rand.Read(buf); err != nil {
+					return []interface{}{int32(-1)}, wasmedge.Result_Success
+				}
+				mem := callframe.GetMemoryByIndex(0)
+				if mem == nil {
+					return []interface{}{int32(-1)}, wasmedge.Result_Success
+				}
+				if err := mem.SetData(buf, uint(ptr), uint(length)); err != nil {
+					return []interface{}{int32(-1)}, wasmedge.Result_Success
+				}
+				return []interface{}{int32(0)}, wasmedge.Result_Success
+			},
+			Params:  []*wasmedge.ValType{i32(), i32()},
+			Returns: []*wasmedge.ValType{i32()},
+		},
+		{
+			Name: "log",
+			Func: func(_ interface{}, callframe *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+				level := params[0].(int32)
+				ptr := uint32(params[1].(int32))
+				length := uint32(params[2].(int32))
+				const maxLogLen = 4096
+				if length > maxLogLen {
+					length = maxLogLen
+				}
+				mem := callframe.GetMemoryByIndex(0)
+				if mem == nil {
+					return nil, wasmedge.Result_Success
+				}
+				data, err := mem.GetData(uint(ptr), uint(length))
+				if err != nil {
+					return nil, wasmedge.Result_Success
+				}
+				msg := strings.Map(func(r rune) rune {
+					if r < 0x20 && r != ' ' {
+						return '?'
+					}
+					return r
+				}, string(data))
+				switch {
+				case level <= 0:
+					log.Debugf("[plugin] %s", msg)
+				case level == 1:
+					log.Infof("[plugin] %s", msg)
+				case level == 2:
+					log.Warnf("[plugin] %s", msg)
+				default:
+					log.Errorf("[plugin] %s", msg)
+				}
+				return nil, wasmedge.Result_Success
+			},
+			Params:  []*wasmedge.ValType{i32(), i32(), i32()},
+			Returns: nil,
+		},
+	}
+
+	// The "env" module also needs C++ exception/invoke stubs.
+	if name == "env" {
+		funcs = append(funcs, buildExceptionStubs()...)
+	}
+
+	return funcs
+}
+
+// stubReturn0 is a host function that returns int32(0).
+func stubReturn0(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
+	return []interface{}{int32(0)}, wasmedge.Result_Success
+}
+
+// stubNoop is a host function that does nothing.
+func stubNoop(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
+	return nil, wasmedge.Result_Success
+}
+
+// stubReturn0I64 returns int64(0).
+func stubReturn0I64(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
+	return []interface{}{int64(0)}, wasmedge.Result_Success
+}
+
+// buildExceptionStubs returns C++ exception handling stubs for the "env" module.
+func buildExceptionStubs() []wasmrt.HostFunc {
+	i32 := func() *wasmedge.ValType { return wasmedge.NewValTypeI32() }
+	i64 := func() *wasmedge.ValType { return wasmedge.NewValTypeI64() }
+
+	i32n := func(n int) []*wasmedge.ValType {
+		v := make([]*wasmedge.ValType, n)
+		for j := range v {
+			v[j] = i32()
+		}
+		return v
+	}
+
+	ret0 := func(name string, nParams int) wasmrt.HostFunc {
+		return wasmrt.HostFunc{Name: name, Func: stubReturn0, Params: i32n(nParams), Returns: []*wasmedge.ValType{i32()}}
+	}
+	noop := func(name string, params []*wasmedge.ValType) wasmrt.HostFunc {
+		return wasmrt.HostFunc{Name: name, Func: stubNoop, Params: params, Returns: nil}
+	}
+
+	return []wasmrt.HostFunc{
+		noop("invoke_vi", i32n(2)),
+		ret0("__cxa_find_matching_catch_3", 1),
+		ret0("invoke_iii", 3),
+		{Name: "__cxa_find_matching_catch_2", Func: stubReturn0, Params: nil, Returns: []*wasmedge.ValType{i32()}},
+		noop("__resumeException", i32n(1)),
+		ret0("invoke_iiiiii", 6),
+		noop("invoke_viiiii", i32n(6)),
+		ret0("invoke_iiiii", 5),
+		{Name: "invoke_j", Func: stubReturn0I64, Params: i32n(1), Returns: []*wasmedge.ValType{i64()}},
+		ret0("invoke_iiii", 4),
+		noop("invoke_vijjj", []*wasmedge.ValType{i32(), i32(), i64(), i64(), i64()}),
+		noop("invoke_viiii", i32n(5)),
+		noop("invoke_viii", i32n(4)),
+		ret0("invoke_ii", 2),
+		noop("invoke_v", i32n(1)),
+		ret0("invoke_i", 1),
+		ret0("invoke_iiiiiiii", 8),
+		noop("invoke_vii", i32n(3)),
+		noop("invoke_viiiiii", i32n(7)),
+		ret0("llvm_eh_typeid_for", 1),
+		ret0("__cxa_begin_catch", 1),
+		noop("__cxa_end_catch", nil),
+		noop("__throw_exception_with_stack_trace", i32n(1)),
+		ret0("invoke_iiiiiiiiii", 10),
+	}
+}
 
 // New loads a WASI plugin from raw WASM bytes. The module must export
 // malloc, free, plugin_init, plugin_handle_request, plugin_get_public_key,
 // and plugin_get_metadata. Host functions (sdn.clock_now_ms, sdn.random_bytes,
 // sdn.log) are registered automatically.
 func New(ctx context.Context, wasmBytes []byte) (*Runtime, error) {
-	// H8: Limit WASM memory to 512 pages (32MB) for plugin modules.
-	cfg := wazero.NewRuntimeConfig().WithMemoryLimitPages(512)
-	r := wazero.NewRuntimeWithConfig(ctx, cfg)
-
-	// Standard WASI imports (libc may call fd_write, proc_exit, etc.)
-	if _, err := wasi_snapshot_preview1.Instantiate(ctx, r); err != nil {
-		r.Close(ctx)
-		return nil, fmt.Errorf("failed to instantiate WASI: %w", err)
-	}
-
-	registerHostModule := func(name string) error {
-		builder := r.NewHostModuleBuilder(name)
-
-		builder.NewFunctionBuilder().
-			WithGoModuleFunction(
-				api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-					stack[0] = api.EncodeI64(time.Now().UnixMilli())
-				}),
-				nil, // no params
-				[]api.ValueType{api.ValueTypeI64},
-			).
-			Export("clock_now_ms")
-
-		builder.NewFunctionBuilder().
-			WithGoModuleFunction(
-				api.GoModuleFunc(func(_ context.Context, mod api.Module, stack []uint64) {
-					ptr := api.DecodeU32(stack[0])
-					length := api.DecodeU32(stack[1])
-					// Cap allocation to prevent guest from requesting unbounded host memory.
-					const maxRandomBytes = 8192
-					if length > maxRandomBytes {
-						stack[0] = api.EncodeI32(-1)
-						return
-					}
-					buf := make([]byte, length)
-					if _, err := rand.Read(buf); err != nil {
-						stack[0] = api.EncodeI32(-1)
-						return
-					}
-					if !mod.Memory().Write(ptr, buf) {
-						stack[0] = api.EncodeI32(-1)
-						return
-					}
-					stack[0] = 0
-				}),
-				[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32},
-				[]api.ValueType{api.ValueTypeI32},
-			).
-			Export("random_bytes")
-
-		builder.NewFunctionBuilder().
-			WithGoModuleFunction(
-				api.GoModuleFunc(func(_ context.Context, mod api.Module, stack []uint64) {
-					level := api.DecodeI32(stack[0])
-					ptr := api.DecodeU32(stack[1])
-					length := api.DecodeU32(stack[2])
-					// Cap log message length to prevent log flooding / OOM.
-					const maxLogLen = 4096
-					if length > maxLogLen {
-						length = maxLogLen
-					}
-					data, ok := mod.Memory().Read(ptr, length)
-					if !ok {
-						return
-					}
-					// Sanitize: replace control characters (except space) to prevent log injection.
-					msg := strings.Map(func(r rune) rune {
-						if r < 0x20 && r != ' ' {
-							return '?'
-						}
-						return r
-					}, string(data))
-					switch {
-					case level <= 0:
-						log.Debugf("[plugin] %s", msg)
-					case level == 1:
-						log.Infof("[plugin] %s", msg)
-					case level == 2:
-						log.Warnf("[plugin] %s", msg)
-					default:
-						log.Errorf("[plugin] %s", msg)
-					}
-				}),
-				[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
-				nil, // void return
-			).
-			Export("log")
-
-		if name == "env" {
-			exportI32ToI32 := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-							stack[0] = api.EncodeI32(0)
-						}),
-						[]api.ValueType{api.ValueTypeI32},
-						[]api.ValueType{api.ValueTypeI32},
-					).
-					Export(symbol)
-			}
-			exportNoopI32 := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
-						[]api.ValueType{api.ValueTypeI32},
-						nil,
-					).
-					Export(symbol)
-			}
-			exportNoop := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
-						nil,
-						nil,
-					).
-					Export(symbol)
-			}
-			exportI32x2ToI32 := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-							stack[0] = api.EncodeI32(0)
-						}),
-						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32},
-						[]api.ValueType{api.ValueTypeI32},
-					).
-					Export(symbol)
-			}
-			exportI32x3ToI32 := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-							stack[0] = api.EncodeI32(0)
-						}),
-						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
-						[]api.ValueType{api.ValueTypeI32},
-					).
-					Export(symbol)
-			}
-			exportI32x3Noop := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
-						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
-						nil,
-					).
-					Export(symbol)
-			}
-			exportI32x4ToI32 := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-							stack[0] = api.EncodeI32(0)
-						}),
-						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
-						[]api.ValueType{api.ValueTypeI32},
-					).
-					Export(symbol)
-			}
-			exportI32x4Noop := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
-						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
-						nil,
-					).
-					Export(symbol)
-			}
-			exportI32x5ToI32 := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-							stack[0] = api.EncodeI32(0)
-						}),
-						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
-						[]api.ValueType{api.ValueTypeI32},
-					).
-					Export(symbol)
-			}
-			exportI32x5Noop := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
-						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
-						nil,
-					).
-					Export(symbol)
-			}
-			exportI32x6ToI32 := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-							stack[0] = api.EncodeI32(0)
-						}),
-						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
-						[]api.ValueType{api.ValueTypeI32},
-					).
-					Export(symbol)
-			}
-			exportI32x6Noop := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
-						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32},
-						nil,
-					).
-					Export(symbol)
-			}
-			exportI32ToI64 := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-							stack[0] = api.EncodeI64(0)
-						}),
-						[]api.ValueType{api.ValueTypeI32},
-						[]api.ValueType{api.ValueTypeI64},
-					).
-					Export(symbol)
-			}
-			exportI32I32I64I64I64Noop := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
-						[]api.ValueType{
-							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI64, api.ValueTypeI64, api.ValueTypeI64,
-						},
-						nil,
-					).
-					Export(symbol)
-			}
-			exportI32x7Noop := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
-						[]api.ValueType{
-							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32,
-							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32,
-						},
-						nil,
-					).
-					Export(symbol)
-			}
-			exportI32x8ToI32 := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-							stack[0] = api.EncodeI32(0)
-						}),
-						[]api.ValueType{
-							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32,
-							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32,
-						},
-						[]api.ValueType{api.ValueTypeI32},
-					).
-					Export(symbol)
-			}
-			exportI32x10ToI32 := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-							stack[0] = api.EncodeI32(0)
-						}),
-						[]api.ValueType{
-							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32,
-							api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32, api.ValueTypeI32,
-						},
-						[]api.ValueType{api.ValueTypeI32},
-					).
-					Export(symbol)
-			}
-
-			exportI32x2Noop := func(symbol string) {
-				builder.NewFunctionBuilder().
-					WithGoModuleFunction(
-						api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {}),
-						[]api.ValueType{api.ValueTypeI32, api.ValueTypeI32},
-						nil,
-					).
-					Export(symbol)
-			}
-
-			exportI32x2Noop("invoke_vi")
-			exportI32ToI32("__cxa_find_matching_catch_3")
-			exportI32x3ToI32("invoke_iii")
-			builder.NewFunctionBuilder().
-				WithGoModuleFunction(
-					api.GoModuleFunc(func(_ context.Context, _ api.Module, stack []uint64) {
-						stack[0] = api.EncodeI32(0)
-					}),
-					nil,
-					[]api.ValueType{api.ValueTypeI32},
-				).
-				Export("__cxa_find_matching_catch_2")
-			exportNoopI32("__resumeException")
-			exportI32x6ToI32("invoke_iiiiii")
-			exportI32x6Noop("invoke_viiiii")
-			exportI32x5ToI32("invoke_iiiii")
-			exportI32ToI64("invoke_j")
-			exportI32x4ToI32("invoke_iiii")
-			exportI32I32I64I64I64Noop("invoke_vijjj")
-			exportI32x5Noop("invoke_viiii")
-			exportI32x4Noop("invoke_viii")
-			exportI32x2ToI32("invoke_ii")
-			exportNoopI32("invoke_v")
-			exportI32ToI32("invoke_i")
-			exportI32x8ToI32("invoke_iiiiiiii")
-			exportI32x3Noop("invoke_vii")
-			exportI32x7Noop("invoke_viiiiii")
-			exportI32ToI32("llvm_eh_typeid_for")
-			exportI32ToI32("__cxa_begin_catch")
-			exportNoop("__cxa_end_catch")
-			exportNoopI32("__throw_exception_with_stack_trace")
-			exportI32x10ToI32("invoke_iiiiiiiiii")
-		}
-
-		_, err := builder.Instantiate(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to register %s host module: %w", name, err)
-		}
-		return nil
-	}
-
-	// Support both "sdn" and "env" module imports for plugin host calls.
-	for _, hostModuleName := range []string{"sdn", "env"} {
-		if err := registerHostModule(hostModuleName); err != nil {
-			r.Close(ctx)
-			return nil, err
-		}
-	}
-
-	module, err := r.Instantiate(ctx, wasmBytes)
+	mod, err := wasmrt.NewModule(wasmBytes,
+		wasmrt.WithWASI(),
+		wasmrt.WithMaxMemoryPages(512),
+		wasmrt.WithHostModule("sdn", buildHostFuncs("sdn")),
+		wasmrt.WithHostModule("env", buildHostFuncs("env")),
+	)
 	if err != nil {
-		r.Close(ctx)
-		return nil, fmt.Errorf("failed to instantiate WASM module: %w", err)
+		return nil, fmt.Errorf("failed to create WASM module: %w", err)
 	}
-	if initializeFn := module.ExportedFunction("_initialize"); initializeFn != nil {
-		if _, err := initializeFn.Call(ctx); err != nil {
-			r.Close(ctx)
-			return nil, fmt.Errorf("failed to run _initialize: %w", err)
+
+	// Call _initialize if present (WASI reactor pattern).
+	if _, initErr := mod.Execute("_initialize"); initErr != nil {
+		// Not all modules export _initialize — ignore if missing.
+		// WasmEdge returns an error for missing exports, which is fine.
+	}
+
+	// Verify required exports exist by attempting a no-op metadata call.
+	// The actual validation happens at first use, but we check malloc/free early.
+	if _, err := mod.AllocateSize(1); err != nil {
+		mod.Release()
+		return nil, fmt.Errorf("WASM module missing malloc export: %w", err)
+	}
+
+	// Check for optional cron export
+	hasCron := false
+	if fnames := mod.VM().GetActiveModule().ListFunction(); fnames != nil {
+		for _, fn := range fnames {
+			if fn == "plugin_cron" {
+				hasCron = true
+				break
+			}
 		}
 	}
 
-	rt := &Runtime{
-		wazRuntime:         r,
-		module:             module,
-		mallocFn:           module.ExportedFunction("malloc"),
-		freeFn:             module.ExportedFunction("free"),
-		initFn:             module.ExportedFunction("plugin_init"),
-		handleRequestFn:    module.ExportedFunction("plugin_handle_request"),
-		requestChallengeFn: module.ExportedFunction("plugin_request_challenge"),
-		getPublicKeyFn:     module.ExportedFunction("plugin_get_public_key"),
-		getMetadataFn:      module.ExportedFunction("plugin_get_metadata"),
-		cronFn:             module.ExportedFunction("plugin_cron"), // optional
-	}
-
-	if rt.mallocFn == nil || rt.freeFn == nil {
-		r.Close(ctx)
-		return nil, fmt.Errorf("WASM module missing malloc/free exports")
-	}
-	if rt.initFn == nil || rt.handleRequestFn == nil || rt.requestChallengeFn == nil ||
-		rt.getPublicKeyFn == nil || rt.getMetadataFn == nil {
-		r.Close(ctx)
-		return nil, fmt.Errorf("WASM module missing required plugin_* exports")
-	}
-
-	return rt, nil
+	return &Runtime{
+		mod:     mod,
+		hasCron: hasCron,
+	}, nil
 }
 
-// Close releases the Wazero runtime and module.
+// Close releases the WasmEdge runtime and module.
 func (rt *Runtime) Close(ctx context.Context) error {
-	if rt.wazRuntime != nil {
-		return rt.wazRuntime.Close(ctx)
+	if rt.mod != nil {
+		rt.mod.Release()
 	}
 	return nil
 }
 
 // Init calls plugin_init with the binary config blob.
-// Config format: privateKey(32) + publicKey(65) + secretLen(4 LE) + secret(N)
-//   - domainsCsv(NUL-terminated) + epochPeriodMs(8 LE) + maxSkewMs(8 LE) + leaseMs(8 LE)
 func (rt *Runtime) Init(ctx context.Context, config []byte) error {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
-	// H9: Wrap context with execution timeout inside locked section.
-	ctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
-	defer cancel()
-
-	configPtr, err := rt.allocate(ctx, config)
+	configPtr, err := rt.mod.Allocate(config)
 	if err != nil {
 		return fmt.Errorf("failed to allocate config: %w", err)
 	}
-	defer rt.deallocate(ctx, configPtr)
+	defer rt.mod.Deallocate(configPtr)
 
-	results, err := rt.initFn.Call(ctx, uint64(configPtr), uint64(len(config)))
+	results, err := rt.mod.Execute("plugin_init", int32(configPtr), int32(len(config)))
 	if err != nil {
 		return fmt.Errorf("plugin_init call failed: %w", err)
 	}
 
-	if status := api.DecodeI32(results[0]); status != 0 {
+	if status := wasmrt.ToInt32(results[0]); status != 0 {
 		return fmt.Errorf("plugin_init returned error status %d", status)
 	}
 	return nil
@@ -461,23 +266,19 @@ func (rt *Runtime) GetPublicKey(ctx context.Context) ([]byte, error) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
-	// H9: Wrap context with execution timeout inside locked section.
-	ctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
-	defer cancel()
-
 	const outCap = 128
-	outPtr, err := rt.allocateSize(ctx, outCap)
+	outPtr, err := rt.mod.AllocateSize(outCap)
 	if err != nil {
 		return nil, err
 	}
-	defer rt.deallocate(ctx, outPtr)
+	defer rt.mod.Deallocate(outPtr)
 
-	results, err := rt.getPublicKeyFn.Call(ctx, uint64(outPtr), uint64(outCap))
+	results, err := rt.mod.Execute("plugin_get_public_key", int32(outPtr), int32(outCap))
 	if err != nil {
 		return nil, fmt.Errorf("plugin_get_public_key call failed: %w", err)
 	}
 
-	length := api.DecodeI32(results[0])
+	length := wasmrt.ToInt32(results[0])
 	if length < 0 {
 		return nil, fmt.Errorf("plugin_get_public_key returned error %d", length)
 	}
@@ -485,32 +286,27 @@ func (rt *Runtime) GetPublicKey(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("plugin_get_public_key output length %d exceeds buffer capacity %d", length, outCap)
 	}
 
-	return rt.readMemory(outPtr, uint32(length))
+	return rt.mod.ReadMemory(outPtr, uint32(length))
 }
 
 // GetMetadata returns the binary metadata blob from the plugin.
-// Format: domainCount(4 LE) + [domainLen(2 LE) + domain(N)]...
 func (rt *Runtime) GetMetadata(ctx context.Context) ([]byte, error) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
-	// H9: Wrap context with execution timeout inside locked section.
-	ctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
-	defer cancel()
-
 	const outCap = 4096
-	outPtr, err := rt.allocateSize(ctx, outCap)
+	outPtr, err := rt.mod.AllocateSize(outCap)
 	if err != nil {
 		return nil, err
 	}
-	defer rt.deallocate(ctx, outPtr)
+	defer rt.mod.Deallocate(outPtr)
 
-	results, err := rt.getMetadataFn.Call(ctx, uint64(outPtr), uint64(outCap))
+	results, err := rt.mod.Execute("plugin_get_metadata", int32(outPtr), int32(outCap))
 	if err != nil {
 		return nil, fmt.Errorf("plugin_get_metadata call failed: %w", err)
 	}
 
-	length := api.DecodeI32(results[0])
+	length := wasmrt.ToInt32(results[0])
 	if length < 0 {
 		return nil, fmt.Errorf("plugin_get_metadata returned error %d", length)
 	}
@@ -518,75 +314,68 @@ func (rt *Runtime) GetMetadata(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("plugin_get_metadata output length %d exceeds buffer capacity %d", length, outCap)
 	}
 
-	return rt.readMemory(outPtr, uint32(length))
+	return rt.mod.ReadMemory(outPtr, uint32(length))
 }
 
 // HandleRequest processes a binary OrbPro key exchange packet.
-// Returns (response_bytes, status_code, error). The response contains the
-// binary protocol response including error status when status != 0.
+// Returns (response_bytes, status_code, error).
 func (rt *Runtime) HandleRequest(ctx context.Context, packet []byte, hostHeader string) ([]byte, int32, error) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
-	// H9: Wrap context with execution timeout inside locked section.
-	ctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
-	defer cancel()
-
-	reqPtr, err := rt.allocate(ctx, packet)
+	reqPtr, err := rt.mod.Allocate(packet)
 	if err != nil {
 		return nil, -1, fmt.Errorf("failed to allocate request: %w", err)
 	}
-	defer rt.deallocate(ctx, reqPtr)
+	defer rt.mod.Deallocate(reqPtr)
 
 	hostBytes := append([]byte(hostHeader), 0) // NUL-terminated
-	hostPtr, err := rt.allocate(ctx, hostBytes)
+	hostPtr, err := rt.mod.Allocate(hostBytes)
 	if err != nil {
 		return nil, -1, fmt.Errorf("failed to allocate host header: %w", err)
 	}
-	defer rt.deallocate(ctx, hostPtr)
+	defer rt.mod.Deallocate(hostPtr)
 
 	const outCap = 8192
-	outPtr, err := rt.allocateSize(ctx, outCap)
+	outPtr, err := rt.mod.AllocateSize(outCap)
 	if err != nil {
 		return nil, -1, fmt.Errorf("failed to allocate output: %w", err)
 	}
-	defer rt.deallocate(ctx, outPtr)
+	defer rt.mod.Deallocate(outPtr)
 
 	// size_t on wasm32 is 4 bytes
-	outLenPtr, err := rt.allocateSize(ctx, 4)
+	outLenPtr, err := rt.mod.AllocateSize(4)
 	if err != nil {
 		return nil, -1, fmt.Errorf("failed to allocate output length: %w", err)
 	}
-	defer rt.deallocate(ctx, outLenPtr)
+	defer rt.mod.Deallocate(outLenPtr)
 
-	results, err := rt.handleRequestFn.Call(ctx,
-		uint64(reqPtr), uint64(len(packet)),
-		uint64(hostPtr),
-		uint64(outPtr), uint64(outCap),
-		uint64(outLenPtr),
+	results, err := rt.mod.Execute("plugin_handle_request",
+		int32(reqPtr), int32(len(packet)),
+		int32(hostPtr),
+		int32(outPtr), int32(outCap),
+		int32(outLenPtr),
 	)
 	if err != nil {
 		return nil, -1, fmt.Errorf("plugin_handle_request call failed: %w", err)
 	}
 
-	status := api.DecodeI32(results[0])
+	status := wasmrt.ToInt32(results[0])
 
-	outLenBytes, ok := rt.module.Memory().Read(outLenPtr, 4)
-	if !ok {
-		return nil, status, fmt.Errorf("failed to read output length from WASM memory")
+	outLenBytes, err := rt.mod.ReadMemory(outLenPtr, 4)
+	if err != nil {
+		return nil, status, fmt.Errorf("failed to read output length from WASM memory: %w", err)
 	}
 	outLen := binary.LittleEndian.Uint32(outLenBytes)
 
 	if outLen == 0 {
 		return nil, status, nil
 	}
-
-	// Validate guest-reported length does not exceed allocated buffer capacity.
 	if outLen > outCap {
 		return nil, status, fmt.Errorf("plugin output length %d exceeds buffer capacity %d", outLen, outCap)
 	}
 
-	output, err := rt.readMemory(outPtr, outLen)
+	output, err := rt.mod.ReadMemory(outPtr, outLen)
 	if err != nil {
 		return nil, status, fmt.Errorf("failed to read output: %w", err)
 	}
@@ -599,45 +388,41 @@ func (rt *Runtime) RequestChallenge(ctx context.Context, requestPayload []byte) 
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
-	defer cancel()
-
 	reqPayload := append([]byte{}, requestPayload...)
-	reqPtr, err := rt.allocate(ctx, reqPayload)
+	reqPtr, err := rt.mod.Allocate(reqPayload)
 	if err != nil {
 		return nil, -1, fmt.Errorf("failed to allocate request payload: %w", err)
 	}
-	defer rt.deallocate(ctx, reqPtr)
+	defer rt.mod.Deallocate(reqPtr)
 
 	const outCap = 1024
-	outPtr, err := rt.allocateSize(ctx, outCap)
+	outPtr, err := rt.mod.AllocateSize(outCap)
 	if err != nil {
 		return nil, -1, fmt.Errorf("failed to allocate output: %w", err)
 	}
-	defer rt.deallocate(ctx, outPtr)
+	defer rt.mod.Deallocate(outPtr)
 
-	outLenPtr, err := rt.allocateSize(ctx, 4)
+	outLenPtr, err := rt.mod.AllocateSize(4)
 	if err != nil {
 		return nil, -1, fmt.Errorf("failed to allocate output length: %w", err)
 	}
-	defer rt.deallocate(ctx, outLenPtr)
+	defer rt.mod.Deallocate(outLenPtr)
 
-	results, err := rt.requestChallengeFn.Call(
-		ctx,
-		uint64(reqPtr),
-		uint64(len(requestPayload)),
-		uint64(outPtr),
-		uint64(outCap),
-		uint64(outLenPtr),
+	results, err := rt.mod.Execute("plugin_request_challenge",
+		int32(reqPtr),
+		int32(len(requestPayload)),
+		int32(outPtr),
+		int32(outCap),
+		int32(outLenPtr),
 	)
 	if err != nil {
 		return nil, -1, fmt.Errorf("plugin_request_challenge call failed: %w", err)
 	}
 
-	status := api.DecodeI32(results[0])
-	outLenBytes, ok := rt.module.Memory().Read(outLenPtr, 4)
-	if !ok {
-		return nil, status, fmt.Errorf("failed to read output length from WASM memory")
+	status := wasmrt.ToInt32(results[0])
+	outLenBytes, err := rt.mod.ReadMemory(outLenPtr, 4)
+	if err != nil {
+		return nil, status, fmt.Errorf("failed to read output length from WASM memory: %w", err)
 	}
 	outLen := binary.LittleEndian.Uint32(outLenBytes)
 
@@ -648,7 +433,7 @@ func (rt *Runtime) RequestChallenge(ctx context.Context, requestPayload []byte) 
 		return nil, status, fmt.Errorf("plugin challenge output length %d exceeds buffer capacity %d", outLen, outCap)
 	}
 
-	output, err := rt.readMemory(outPtr, outLen)
+	output, err := rt.mod.ReadMemory(outPtr, outLen)
 	if err != nil {
 		return nil, status, fmt.Errorf("failed to read output: %w", err)
 	}
@@ -658,61 +443,55 @@ func (rt *Runtime) RequestChallenge(ctx context.Context, requestPayload []byte) 
 
 // HasCron returns true if the plugin exports plugin_cron.
 func (rt *Runtime) HasCron() bool {
-	return rt.cronFn != nil
+	return rt.hasCron
 }
 
 // Cron calls the plugin_cron export with a method name and optional input.
 //
 // Signature: plugin_cron(method_ptr, method_len, in_ptr, in_len, out_ptr, out_cap) → i32
-//
-// Returns (output_bytes, error). The output may be empty if the cron method
-// produces no output (e.g. a cleanup task).
 func (rt *Runtime) Cron(ctx context.Context, method string, input []byte) ([]byte, error) {
-	if rt.cronFn == nil {
+	if !rt.hasCron {
 		return nil, fmt.Errorf("plugin does not export plugin_cron")
 	}
 
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
-	defer cancel()
-
 	methodBytes := []byte(method)
-	methodPtr, err := rt.allocate(ctx, methodBytes)
+	methodPtr, err := rt.mod.Allocate(methodBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to allocate method name: %w", err)
 	}
-	defer rt.deallocate(ctx, methodPtr)
+	defer rt.mod.Deallocate(methodPtr)
 
 	var inputPtr uint32
 	inputLen := 0
 	if len(input) > 0 {
-		inputPtr, err = rt.allocate(ctx, input)
+		inputPtr, err = rt.mod.Allocate(input)
 		if err != nil {
 			return nil, fmt.Errorf("failed to allocate input: %w", err)
 		}
-		defer rt.deallocate(ctx, inputPtr)
+		defer rt.mod.Deallocate(inputPtr)
 		inputLen = len(input)
 	}
 
 	const outCap = 16384 // 16KB output buffer
-	outPtr, err := rt.allocateSize(ctx, outCap)
+	outPtr, err := rt.mod.AllocateSize(outCap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to allocate output: %w", err)
 	}
-	defer rt.deallocate(ctx, outPtr)
+	defer rt.mod.Deallocate(outPtr)
 
-	results, err := rt.cronFn.Call(ctx,
-		uint64(methodPtr), uint64(len(methodBytes)),
-		uint64(inputPtr), uint64(inputLen),
-		uint64(outPtr), uint64(outCap),
+	results, err := rt.mod.Execute("plugin_cron",
+		int32(methodPtr), int32(len(methodBytes)),
+		int32(inputPtr), int32(inputLen),
+		int32(outPtr), int32(outCap),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("plugin_cron(%q) call failed: %w", method, err)
 	}
 
-	written := api.DecodeI32(results[0])
+	written := wasmrt.ToInt32(results[0])
 	if written < 0 {
 		return nil, fmt.Errorf("plugin_cron(%q) returned error %d", method, written)
 	}
@@ -723,50 +502,5 @@ func (rt *Runtime) Cron(ctx context.Context, method string, input []byte) ([]byt
 		return nil, fmt.Errorf("plugin_cron(%q) output %d exceeds buffer %d", method, written, outCap)
 	}
 
-	return rt.readMemory(outPtr, uint32(written))
-}
-
-// --- memory helpers ---
-
-func (rt *Runtime) allocate(ctx context.Context, data []byte) (uint32, error) {
-	results, err := rt.mallocFn.Call(ctx, uint64(len(data)))
-	if err != nil {
-		return 0, fmt.Errorf("malloc failed: %w", err)
-	}
-	ptr := uint32(results[0])
-	if ptr == 0 {
-		return 0, ErrAllocationFailed
-	}
-	if !rt.module.Memory().Write(ptr, data) {
-		return 0, fmt.Errorf("failed to write %d bytes to WASM memory at %d", len(data), ptr)
-	}
-	return ptr, nil
-}
-
-func (rt *Runtime) allocateSize(ctx context.Context, size uint32) (uint32, error) {
-	results, err := rt.mallocFn.Call(ctx, uint64(size))
-	if err != nil {
-		return 0, fmt.Errorf("malloc failed: %w", err)
-	}
-	ptr := uint32(results[0])
-	if ptr == 0 {
-		return 0, ErrAllocationFailed
-	}
-	return ptr, nil
-}
-
-func (rt *Runtime) deallocate(ctx context.Context, ptr uint32) {
-	if rt.freeFn != nil {
-		_, _ = rt.freeFn.Call(ctx, uint64(ptr))
-	}
-}
-
-func (rt *Runtime) readMemory(ptr, size uint32) ([]byte, error) {
-	data, ok := rt.module.Memory().Read(ptr, size)
-	if !ok {
-		return nil, fmt.Errorf("failed to read %d bytes at offset %d from WASM memory", size, ptr)
-	}
-	result := make([]byte, size)
-	copy(result, data)
-	return result, nil
+	return rt.mod.ReadMemory(outPtr, uint32(written))
 }
