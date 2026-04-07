@@ -29,6 +29,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
+	"github.com/spacedatanetwork/sdn-server/internal/flowrt/editor"
 	"github.com/spacedatanetwork/sdn-server/internal/frontend"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
@@ -462,10 +463,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			// Flow management API
+			// Flow management API and editor
 			if fm := n.FlowManager(); fm != nil {
 				flowrt.RegisterAPI(adminMux, fm)
 				log.Infof("Flow management API registered at /api/v1/flows/")
+
+				if cfg.Flows.EditorEnabled {
+					editorPath := cfg.Flows.EditorPath
+					if editorPath == "" {
+						editorPath = "/flow-editor"
+					}
+					editor.RegisterEditor(adminMux, editorPath, fm)
+					log.Infof("Flow editor embedded at %s", editorPath)
+				}
 			}
 
 			// Node info API endpoint
