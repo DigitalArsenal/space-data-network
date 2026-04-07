@@ -28,6 +28,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/frontend"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
@@ -459,6 +460,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						log.Infof("Stripe webhook endpoint: %s://%s/api/storefront/payments/stripe/webhook", adminScheme, adminAddr)
 					}
 				}
+			}
+
+			// Flow management API
+			if fm := n.FlowManager(); fm != nil {
+				flowrt.RegisterAPI(adminMux, fm)
+				log.Infof("Flow management API registered at /api/v1/flows/")
 			}
 
 			// Node info API endpoint
