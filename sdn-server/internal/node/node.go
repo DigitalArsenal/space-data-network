@@ -35,6 +35,8 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
+	"github.com/spacedatanetwork/sdn-server/internal/flowrt/capabilities"
 	"github.com/spacedatanetwork/sdn-server/internal/logservice"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
@@ -74,8 +76,9 @@ type Node struct {
 	license    *licenseplugin.Plugin
 	keyBroker  *wasmlicenseplugin.Plugin
 	epmService *epm.Service
-	logService *logservice.Service
-	config     *config.Config
+	logService  *logservice.Service
+	flowManager *flowrt.FlowManager
+	config      *config.Config
 
 	// Trusted peer management
 	peerRegistry *peers.Registry
@@ -421,6 +424,31 @@ func (n *Node) init() error {
 				log.Warnf("Failed to register plugin %q: %v", wasmlicenseplugin.ID, err)
 			} else {
 				log.Infof("OrbPro key broker WASM registered from %s", fallbackWasmPath)
+			}
+		}
+	}
+
+	// Initialize flow runtime manager and load installed flows.
+	if n.config.Flows.Enabled {
+		flowCaps := flowrt.HandlerMap{}
+		if n.config.Admin.IPFSAPIURL != "" {
+			ipfsHandlers := capabilities.NewIPFSHandlers(capabilities.IPFSConfig{
+				APIURL: n.config.Admin.IPFSAPIURL,
+			})
+			flowCaps = flowCaps.Merge(ipfsHandlers)
+		}
+		if n.store != nil {
+			storageHandlers := capabilities.NewStorageHandlers(n.store)
+			flowCaps = flowCaps.Merge(storageHandlers)
+		}
+
+		fm, err := flowrt.NewFlowManager(n.config.Flows, n.plugins, flowCaps)
+		if err != nil {
+			log.Warnf("Failed to create flow manager: %v", err)
+		} else {
+			n.flowManager = fm
+			if err := fm.LoadAll(n.ctx); err != nil {
+				log.Warnf("Failed to load flows: %v", err)
 			}
 		}
 	}
@@ -985,6 +1013,9 @@ func (n *Node) Stop() error {
 			log.Warnf("Error closing storage: %v", err)
 		}
 	}
+	if n.flowManager != nil {
+		n.flowManager.CloseAll()
+	}
 	if n.plugins != nil {
 		if err := n.plugins.Close(); err != nil {
 			log.Warnf("Error closing plugins: %v", err)
@@ -996,6 +1027,11 @@ func (n *Node) Stop() error {
 	}
 
 	return nil
+}
+
+// FlowManager returns the flow runtime manager, or nil if flows are disabled.
+func (n *Node) FlowManager() *flowrt.FlowManager {
+	return n.flowManager
 }
 
 // PeerID returns the node's peer ID.
