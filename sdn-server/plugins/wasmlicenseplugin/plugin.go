@@ -13,6 +13,7 @@ import (
 	"crypto/ecdh"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -106,6 +107,9 @@ func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 	if err != nil {
 		return fmt.Errorf("failed to compute P-256 public key: %w", err)
 	}
+
+	// Make the node's P-256 public key available to any module via sdn_host.
+	wasiplugin.SetNodePublicKey(hex.EncodeToString(pubKey))
 
 	if len(p.wasmData) == 0 && strings.TrimSpace(p.wasmPath) == "" {
 		return fmt.Errorf("no WASM source configured")
