@@ -188,6 +188,26 @@ run_plugin_demo() {
   ensure_npm_deps "$ROOT/plugin-demo/tests"
   pass "plugin-demo npm install"
 
+  # Pre-build the test binary with the correct CGO flags so test-server.mjs
+  # finds an already-built binary and skips the rebuild step.
+  step "plugin-demo pre-build server binary"
+  local GO_CC="${CC:-}"
+  if [[ -z "$GO_CC" && -x /usr/bin/clang ]]; then
+    GO_CC=/usr/bin/clang
+  fi
+  local WASMEDGE_LIB="${WASMEDGE_LIB:-$HOME/.wasmedge/lib}"
+  local WASMEDGE_INC="${WASMEDGE_INC:-$HOME/.wasmedge/include}"
+  local GO_CGO_LDFLAGS="${CGO_LDFLAGS:-}"
+  local GO_CGO_CFLAGS="${CGO_CFLAGS:-}"
+  if [[ -d "$WASMEDGE_LIB" ]]; then
+    GO_CGO_LDFLAGS="-L${WASMEDGE_LIB} -Wl,-rpath,${WASMEDGE_LIB} ${GO_CGO_LDFLAGS}"
+  fi
+  if [[ -d "$WASMEDGE_INC" ]]; then
+    GO_CGO_CFLAGS="-I${WASMEDGE_INC} ${GO_CGO_CFLAGS}"
+  fi
+  (cd "$ROOT/sdn-server" && CC="$GO_CC" CGO_LDFLAGS="$GO_CGO_LDFLAGS" CGO_CFLAGS="$GO_CGO_CFLAGS" GOCACHE="$ROOT/.gocache" go build -o spacedatanetwork-test ./cmd/spacedatanetwork)
+  pass "plugin-demo pre-build server binary"
+
   step "plugin-demo integration tests"
   node "$ROOT/plugin-demo/tests/integration.test.mjs"
   pass "plugin-demo integration tests"
