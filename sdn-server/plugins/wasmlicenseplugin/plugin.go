@@ -156,9 +156,15 @@ func (p *Plugin) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 	off += 8
 	binary.LittleEndian.PutUint32(config[off:], activeKeyVersion)
 
-	if err := rt.Init(ctx, config); err != nil {
-		rt.Close(ctx)
-		return fmt.Errorf("plugin_init failed: %w", err)
+	// Module-sdk plugins use the sdn_host hostcall bridge for configuration
+	// instead of plugin_init with a binary blob. Legacy plugins use plugin_init.
+	if rt.IsModuleSDK() {
+		log.Info("OrbPro key broker using module-sdk ABI (plugin_invoke_stream)")
+	} else {
+		if err := rt.Init(ctx, config); err != nil {
+			rt.Close(ctx)
+			return fmt.Errorf("plugin_init failed: %w", err)
+		}
 	}
 
 	handler := wasiplugin.NewHandler(rt)
