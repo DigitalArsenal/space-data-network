@@ -295,6 +295,16 @@ func buildSdnHostFuncs(rt *Runtime) []wasmrt.HostFunc {
 	}
 }
 
+// nodePublicKey is set by the plugin wrapper when it knows the node's
+// P-256 public key, so the sdn_host bridge can serve it to any module.
+var nodePublicKeyHex string
+
+// SetNodePublicKey sets the node's P-256 public key (hex-encoded) so
+// any module can request it via sdn_host.call_json("node.publicKey").
+func SetNodePublicKey(hexKey string) {
+	nodePublicKeyHex = hexKey
+}
+
 // dispatchHostcall handles a synchronous JSON hostcall operation.
 func dispatchHostcall(operation string, payload []byte) []byte {
 	switch operation {
@@ -331,7 +341,16 @@ func dispatchHostcall(operation string, payload []byte) []byte {
 	case "host.hasCapability":
 		return []byte(`{"ok":true,"result":true}`)
 	case "host.listOperations":
-		return []byte(`{"ok":true,"result":["clock.now","clock.nowIso","clock.monotonicNow","random.bytes","host.runtimeTarget","host.listCapabilities","host.hasCapability"]}`)
+		return []byte(`{"ok":true,"result":["clock.now","clock.nowIso","clock.monotonicNow","random.bytes","host.runtimeTarget","host.listCapabilities","host.hasCapability","node.publicKey","node.peerId"]}`)
+	case "node.publicKey":
+		if nodePublicKeyHex != "" {
+			return []byte(fmt.Sprintf(`{"ok":true,"result":"%s"}`, nodePublicKeyHex))
+		}
+		return []byte(`{"ok":false,"error":{"message":"node public key not available"}}`)
+	case "node.peerId":
+		// PeerID is derived from the signing key, not directly available here.
+		// Return what we have or error.
+		return []byte(`{"ok":false,"error":{"message":"use node.publicKey to derive peerId"}}`)
 	default:
 		return []byte(fmt.Sprintf(`{"ok":false,"error":{"name":"Error","message":"Operation %q not supported","operation":"%s"}}`, operation, operation))
 	}
@@ -475,9 +494,16 @@ func (rt *Runtime) Init(ctx context.Context, config []byte) error {
 }
 
 // GetPublicKey returns the server's P-256 uncompressed public key (65 bytes).
+// For legacy plugins this calls plugin_get_public_key. For module-sdk plugins
+// it calls plugin_invoke_stream with a get-public-key request so the WASM
+// module stays the authority for its own crypto material.
 func (rt *Runtime) GetPublicKey(ctx context.Context) ([]byte, error) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+
+	if rt.isModuleSDK {
+		return rt.getPublicKeyViaInvoke()
+	}
 
 	const outCap = 128
 	outPtr, err := rt.mod.AllocateSize(outCap)
@@ -500,6 +526,50 @@ func (rt *Runtime) GetPublicKey(ctx context.Context) ([]byte, error) {
 	}
 
 	return rt.mod.ReadMemory(outPtr, uint32(length))
+}
+
+// getPublicKeyViaInvoke gets the public key through plugin_invoke_stream.
+// Constructs a minimal PluginInvokeRequest FlatBuffer with method_id
+// "get-public-key" and reads the public key bytes from the response.
+func (rt *Runtime) getPublicKeyViaInvoke() ([]byte, error) {
+	// Build a minimal JSON-encoded invoke request for the public key.
+	// The module-sdk plugin_invoke_stream accepts a FlatBuffer
+	// PluginInvokeRequest, but for simple operations many plugins also
+	// support a raw method-id string prefix convention:
+	//   byte[0..3] = method_id length (LE)
+	//   byte[4..N] = method_id UTF-8
+	methodID := "get-public-key"
+	reqLen := 4 + len(methodID)
+	req := make([]byte, reqLen)
+	binary.LittleEndian.PutUint32(req[0:4], uint32(len(methodID)))
+	copy(req[4:], methodID)
+
+	reqPtr, err := rt.mod.Allocate(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate invoke request: %w", err)
+	}
+	defer rt.mod.SecureDeallocate(reqPtr, uint32(len(req)))
+
+	const outCap = 256
+	outPtr, err := rt.mod.AllocateSize(outCap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate output: %w", err)
+	}
+	defer rt.mod.SecureDeallocate(outPtr, outCap)
+
+	results, err := rt.mod.Execute("plugin_invoke_stream",
+		int32(reqPtr), int32(len(req)), int32(outCap),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("plugin_invoke_stream(get-public-key) failed: %w", err)
+	}
+
+	written := wasmrt.ToInt32(results[0])
+	if written <= 0 {
+		return nil, fmt.Errorf("plugin_invoke_stream(get-public-key) returned %d", written)
+	}
+
+	return rt.mod.ReadMemory(outPtr, uint32(written))
 }
 
 // GetMetadata returns the binary metadata blob from the plugin.
