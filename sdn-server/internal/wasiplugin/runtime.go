@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -29,7 +30,13 @@ var (
 type Runtime struct {
 	mod    *wasmrt.Module
 	mu     sync.Mutex
-	hasCron bool
+	hasCron         bool
+	hasInvokeStream bool // true if module exports plugin_invoke_stream (module-sdk ABI)
+	isModuleSDK     bool // true if using plugin_alloc/plugin_free instead of malloc/free
+
+	// sdn_host JSON hostcall bridge state
+	hostcallLastStatus   int32
+	hostcallResponseBuf  []byte
 }
 
 // pluginCallTimeout is the maximum duration for a single WASI plugin function call.
@@ -186,49 +193,255 @@ func buildExceptionStubs() []wasmrt.HostFunc {
 	}
 }
 
+// buildSdnHostFuncs returns the sdn_host module implementing the
+// space-data-module-sdk JSON hostcall bridge (call_json / response_len /
+// read_response / clear_response / last_status_code).
+func buildSdnHostFuncs(rt *Runtime) []wasmrt.HostFunc {
+	i32 := func() *wasmedge.ValType { return wasmedge.NewValTypeI32() }
+
+	initResponse := func() {
+		rt.hostcallLastStatus = 0
+		rt.hostcallResponseBuf = []byte(`{"ok":true,"result":null}`)
+	}
+	initResponse()
+
+	return []wasmrt.HostFunc{
+		{
+			Name: "call_json",
+			Func: func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+				opPtr := uint32(params[0].(int32))
+				opLen := uint32(params[1].(int32))
+				payloadPtr := uint32(params[2].(int32))
+				payloadLen := uint32(params[3].(int32))
+
+				mem := cf.GetMemoryByIndex(0)
+				if mem == nil {
+					rt.hostcallLastStatus = 1
+					rt.hostcallResponseBuf = []byte(`{"ok":false,"error":{"message":"no memory"}}`)
+					return []interface{}{int32(1)}, wasmedge.Result_Success
+				}
+
+				opBytes, err := mem.GetData(uint(opPtr), uint(opLen))
+				if err != nil {
+					rt.hostcallLastStatus = 1
+					rt.hostcallResponseBuf = []byte(`{"ok":false,"error":{"message":"failed to read operation"}}`)
+					return []interface{}{int32(1)}, wasmedge.Result_Success
+				}
+				operation := string(opBytes)
+
+				var payloadBytes []byte
+				if payloadLen > 0 {
+					payloadBytes, err = mem.GetData(uint(payloadPtr), uint(payloadLen))
+					if err != nil {
+						rt.hostcallLastStatus = 1
+						rt.hostcallResponseBuf = []byte(`{"ok":false,"error":{"message":"failed to read payload"}}`)
+						return []interface{}{int32(1)}, wasmedge.Result_Success
+					}
+				}
+
+				result := dispatchHostcall(operation, payloadBytes)
+				rt.hostcallLastStatus = 0
+				rt.hostcallResponseBuf = result
+				return []interface{}{int32(0)}, wasmedge.Result_Success
+			},
+			Params:  []*wasmedge.ValType{i32(), i32(), i32(), i32()},
+			Returns: []*wasmedge.ValType{i32()},
+		},
+		{
+			Name: "response_len",
+			Func: func(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
+				return []interface{}{int32(len(rt.hostcallResponseBuf))}, wasmedge.Result_Success
+			},
+			Returns: []*wasmedge.ValType{i32()},
+		},
+		{
+			Name: "read_response",
+			Func: func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+				dstPtr := uint32(params[0].(int32))
+				dstLen := uint32(params[1].(int32))
+
+				mem := cf.GetMemoryByIndex(0)
+				if mem == nil {
+					return []interface{}{int32(0)}, wasmedge.Result_Success
+				}
+
+				toCopy := uint32(len(rt.hostcallResponseBuf))
+				if toCopy > dstLen {
+					toCopy = dstLen
+				}
+				if toCopy > 0 {
+					mem.SetData(rt.hostcallResponseBuf[:toCopy], uint(dstPtr), uint(toCopy))
+				}
+				return []interface{}{int32(toCopy)}, wasmedge.Result_Success
+			},
+			Params:  []*wasmedge.ValType{i32(), i32()},
+			Returns: []*wasmedge.ValType{i32()},
+		},
+		{
+			Name: "clear_response",
+			Func: func(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
+				initResponse()
+				return []interface{}{int32(0)}, wasmedge.Result_Success
+			},
+			Returns: []*wasmedge.ValType{i32()},
+		},
+		{
+			Name: "last_status_code",
+			Func: func(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
+				return []interface{}{rt.hostcallLastStatus}, wasmedge.Result_Success
+			},
+			Returns: []*wasmedge.ValType{i32()},
+		},
+	}
+}
+
+// dispatchHostcall handles a synchronous JSON hostcall operation.
+func dispatchHostcall(operation string, payload []byte) []byte {
+	switch operation {
+	case "clock.now":
+		return []byte(fmt.Sprintf(`{"ok":true,"result":%d}`, time.Now().UnixMilli()))
+	case "clock.nowIso":
+		return []byte(fmt.Sprintf(`{"ok":true,"result":"%s"}`, time.Now().UTC().Format(time.RFC3339Nano)))
+	case "clock.monotonicNow":
+		return []byte(fmt.Sprintf(`{"ok":true,"result":%d}`, time.Now().UnixNano()/1e6))
+	case "random.bytes":
+		// Parse length from payload
+		n := 32
+		if len(payload) > 0 {
+			var params struct{ Length int `json:"length"` }
+			if json.Unmarshal(payload, &params) == nil && params.Length > 0 {
+				n = params.Length
+			}
+		}
+		if n > 8192 {
+			n = 8192
+		}
+		buf := make([]byte, n)
+		rand.Read(buf)
+		// Return as base64 encoded
+		encoded := make([]byte, base64Len(n))
+		base64Encode(encoded, buf)
+		return []byte(fmt.Sprintf(`{"ok":true,"result":{"__type":"bytes","base64":"%s"}}`, string(encoded)))
+	case "host.runtimeTarget":
+		return []byte(`{"ok":true,"result":"server"}`)
+	case "host.listCapabilities":
+		return []byte(`{"ok":true,"result":["clock","random","crypto_sign","crypto_verify","crypto_hash"]}`)
+	case "host.listSupportedCapabilities":
+		return []byte(`{"ok":true,"result":["clock","random","crypto_sign","crypto_verify","crypto_hash"]}`)
+	case "host.hasCapability":
+		return []byte(`{"ok":true,"result":true}`)
+	case "host.listOperations":
+		return []byte(`{"ok":true,"result":["clock.now","clock.nowIso","clock.monotonicNow","random.bytes","host.runtimeTarget","host.listCapabilities","host.hasCapability"]}`)
+	default:
+		return []byte(fmt.Sprintf(`{"ok":false,"error":{"name":"Error","message":"Operation %q not supported","operation":"%s"}}`, operation, operation))
+	}
+}
+
+// base64Len returns the base64 encoded length for n bytes.
+func base64Len(n int) int {
+	return ((n + 2) / 3) * 4
+}
+
+// base64Encode encodes src to dst using standard base64.
+func base64Encode(dst, src []byte) {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	di, si := 0, 0
+	n := (len(src) / 3) * 3
+	for si < n {
+		val := uint(src[si+0])<<16 | uint(src[si+1])<<8 | uint(src[si+2])
+		dst[di+0] = alphabet[val>>18&0x3F]
+		dst[di+1] = alphabet[val>>12&0x3F]
+		dst[di+2] = alphabet[val>>6&0x3F]
+		dst[di+3] = alphabet[val&0x3F]
+		si += 3
+		di += 4
+	}
+	remain := len(src) - si
+	if remain == 2 {
+		val := uint(src[si+0])<<16 | uint(src[si+1])<<8
+		dst[di+0] = alphabet[val>>18&0x3F]
+		dst[di+1] = alphabet[val>>12&0x3F]
+		dst[di+2] = alphabet[val>>6&0x3F]
+		dst[di+3] = '='
+	} else if remain == 1 {
+		val := uint(src[si+0]) << 16
+		dst[di+0] = alphabet[val>>18&0x3F]
+		dst[di+1] = alphabet[val>>12&0x3F]
+		dst[di+2] = '='
+		dst[di+3] = '='
+	}
+}
+
 // New loads a WASI plugin from raw WASM bytes. The module must export
 // malloc, free, plugin_init, plugin_handle_request, plugin_get_public_key,
 // and plugin_get_metadata. Host functions (sdn.clock_now_ms, sdn.random_bytes,
 // sdn.log) are registered automatically.
 func New(ctx context.Context, wasmBytes []byte) (*Runtime, error) {
+	rt := &Runtime{}
+
 	mod, err := wasmrt.NewModule(wasmBytes,
 		wasmrt.WithWASI(),
 		wasmrt.WithMaxMemoryPages(512),
 		wasmrt.WithHostModule("sdn", buildHostFuncs("sdn")),
 		wasmrt.WithHostModule("env", buildHostFuncs("env")),
+		wasmrt.WithHostModule("sdn_host", buildSdnHostFuncs(rt)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create WASM module: %w", err)
 	}
 
+	rt.mod = mod
+
 	// Call _initialize if present (WASI reactor pattern).
 	if _, initErr := mod.Execute("_initialize"); initErr != nil {
 		// Not all modules export _initialize — ignore if missing.
-		// WasmEdge returns an error for missing exports, which is fine.
 	}
 
-	// Verify required exports exist by attempting a no-op metadata call.
-	// The actual validation happens at first use, but we check malloc/free early.
+	// Detect module ABI: try malloc first, then plugin_alloc (module-sdk convention).
 	if _, err := mod.AllocateSize(1); err != nil {
+		// Try module-sdk convention: plugin_alloc(size) → ptr,
+		// plugin_free(ptr, size) — note: 2-arg free like secure dealloc.
 		mod.Release()
-		return nil, fmt.Errorf("WASM module missing malloc export: %w", err)
+
+		mod, err = wasmrt.NewModule(wasmBytes,
+			wasmrt.WithWASI(),
+			wasmrt.WithMaxMemoryPages(512),
+			wasmrt.WithMallocName("plugin_alloc"),
+			wasmrt.WithFreeName("plugin_alloc"), // dummy — use SecureDeallocate instead
+			wasmrt.WithSecureDealloc("plugin_free"),
+			wasmrt.WithHostModule("sdn", buildHostFuncs("sdn")),
+			wasmrt.WithHostModule("env", buildHostFuncs("env")),
+			wasmrt.WithHostModule("sdn_host", buildSdnHostFuncs(rt)),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create WASM module: %w", err)
+		}
+		rt.mod = mod
+		rt.isModuleSDK = true
+
+		if _, initErr := mod.Execute("_initialize"); initErr != nil {
+			// ignore
+		}
+
+		if _, err := mod.AllocateSize(1); err != nil {
+			mod.Release()
+			return nil, fmt.Errorf("WASM module missing malloc/plugin_alloc export: %w", err)
+		}
 	}
 
-	// Check for optional cron export
-	hasCron := false
+	// Check for optional exports
 	if fnames := mod.VM().GetActiveModule().ListFunction(); fnames != nil {
 		for _, fn := range fnames {
-			if fn == "plugin_cron" {
-				hasCron = true
-				break
+			switch fn {
+			case "plugin_cron":
+				rt.hasCron = true
+			case "plugin_invoke_stream":
+				rt.hasInvokeStream = true
 			}
 		}
 	}
 
-	return &Runtime{
-		mod:     mod,
-		hasCron: hasCron,
-	}, nil
+	return rt, nil
 }
 
 // Close releases the WasmEdge runtime and module.
@@ -444,6 +657,81 @@ func (rt *Runtime) RequestChallenge(ctx context.Context, requestPayload []byte) 
 // HasCron returns true if the plugin exports plugin_cron.
 func (rt *Runtime) HasCron() bool {
 	return rt.hasCron
+}
+
+// IsModuleSDK returns true if the plugin uses the space-data-module-sdk ABI
+// (plugin_alloc/plugin_free/plugin_invoke_stream) instead of the legacy
+// malloc/free/plugin_init/plugin_handle_request ABI.
+func (rt *Runtime) IsModuleSDK() bool {
+	return rt.isModuleSDK
+}
+
+// HasInvokeStream returns true if the plugin exports plugin_invoke_stream.
+func (rt *Runtime) HasInvokeStream() bool {
+	return rt.hasInvokeStream
+}
+
+// InvokeStream calls plugin_invoke_stream(request_ptr, request_len, response_capacity) → i32.
+// Used for module-sdk ABI plugins. Returns the response bytes.
+func (rt *Runtime) InvokeStream(ctx context.Context, request []byte) ([]byte, error) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	reqPtr, err := rt.mod.Allocate(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate request: %w", err)
+	}
+	defer rt.mod.SecureDeallocate(reqPtr, uint32(len(request)))
+
+	const outCap = 16384
+	outPtr, err := rt.mod.AllocateSize(outCap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate output: %w", err)
+	}
+	defer rt.mod.SecureDeallocate(outPtr, outCap)
+
+	results, err := rt.mod.Execute("plugin_invoke_stream",
+		int32(reqPtr), int32(len(request)), int32(outCap),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("plugin_invoke_stream failed: %w", err)
+	}
+
+	written := wasmrt.ToInt32(results[0])
+	if written <= 0 {
+		return nil, nil
+	}
+	if uint32(written) > outCap {
+		return nil, fmt.Errorf("plugin_invoke_stream output %d exceeds capacity %d", written, outCap)
+	}
+
+	return rt.mod.ReadMemory(outPtr, uint32(written))
+}
+
+// GetManifest reads the embedded FlatBuffer manifest from a module-sdk plugin.
+func (rt *Runtime) GetManifest() ([]byte, error) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+
+	sizeResults, err := rt.mod.Execute("plugin_get_manifest_flatbuffer_size")
+	if err != nil {
+		return nil, fmt.Errorf("plugin_get_manifest_flatbuffer_size: %w", err)
+	}
+	size := wasmrt.ToInt32(sizeResults[0])
+	if size <= 0 {
+		return nil, nil
+	}
+
+	ptrResults, err := rt.mod.Execute("plugin_get_manifest_flatbuffer")
+	if err != nil {
+		return nil, fmt.Errorf("plugin_get_manifest_flatbuffer: %w", err)
+	}
+	ptr := uint32(wasmrt.ToInt32(ptrResults[0]))
+	if ptr == 0 {
+		return nil, nil
+	}
+
+	return rt.mod.ReadMemory(ptr, uint32(size))
 }
 
 // Cron calls the plugin_cron export with a method name and optional input.
