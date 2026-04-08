@@ -3,6 +3,7 @@ package node
 
 import (
 	"context"
+	crypto_ecdh "crypto/ecdh"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -37,6 +38,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/capabilities"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/logservice"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
@@ -47,7 +49,6 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 	"github.com/spacedatanetwork/sdn-server/plugins/licenseplugin"
-	"github.com/spacedatanetwork/sdn-server/plugins/wasmlicenseplugin"
 )
 
 var log = logging.Logger("sdn-node")
@@ -74,7 +75,6 @@ type Node struct {
 	protocol   *protocol.SDSExchangeHandler
 	plugins    *plugins.Manager
 	license    *licenseplugin.Plugin
-	keyBroker  *wasmlicenseplugin.Plugin
 	epmService *epm.Service
 	logService  *logservice.Service
 	flowManager *flowrt.FlowManager
@@ -389,41 +389,52 @@ func (n *Node) init() error {
 				log.Warnf("Plugin catalog runtime startup completed with errors: %v", err)
 			}
 
-			if p, ok := n.getPluginByID(reg, wasmlicenseplugin.ID); ok {
-				// Reuse catalog-provided orbpro key broker instance for status and observability.
-				n.keyBroker = p
+			if _, ok := n.getPluginByID(reg, "com.orbpro.protection-key-server"); ok {
 				registeredFromCatalog = true
 			}
 		}
 	}
 
-	// Register a fallback OrbPro key broker WASM from explicit path.
-	if !registeredFromCatalog && n.keyBroker == nil {
-		fallbackWasmPath := ""
+	// Register a fallback module-sdk WASM from explicit path.
+	// This uses the generic modulert runner — no plugin-type-specific Go code.
+	if !registeredFromCatalog {
 		if wasmPath := n.findKeyBrokerWasmPath(); wasmPath != "" {
-			fallbackWasmPath = wasmPath
 			kbBytes, decryptedEnvelope, loadErr := n.loadKeyBrokerWASMBytes(wasmPath)
 			if loadErr != nil {
-				log.Warnf("Failed to load OrbPro key broker plugin from %s: %v", wasmPath, loadErr)
+				log.Warnf("Failed to load module-sdk WASM from %s: %v", wasmPath, loadErr)
 			} else {
 				kbHash := sha256.Sum256(kbBytes)
 				if decryptedEnvelope {
-					log.Infof(
-						"WASM module loaded (decrypted from envelope): %s (sha256: %s)",
-						wasmPath,
-						hex.EncodeToString(kbHash[:]),
-					)
+					log.Infof("WASM module loaded (decrypted): %s (sha256: %s)", wasmPath, hex.EncodeToString(kbHash[:]))
 				} else {
 					log.Infof("WASM module loaded: %s (sha256: %s)", wasmPath, hex.EncodeToString(kbHash[:]))
 				}
-				n.keyBroker = wasmlicenseplugin.NewFromBytes(kbBytes)
-			}
-		}
-		if n.keyBroker != nil {
-			if err := n.plugins.Register(n.keyBroker); err != nil {
-				log.Warnf("Failed to register plugin %q: %v", wasmlicenseplugin.ID, err)
-			} else {
-				log.Infof("OrbPro key broker WASM registered from %s", fallbackWasmPath)
+
+				// Build node context for the module's hostcall bridge
+				nodeCtx := &modulert.NodeContext{
+					PeerID: n.host.ID().String(),
+				}
+				if n.identity != nil {
+					nodeCtx.EncryptionKey = n.identity.EncryptionKey
+					// Derive P-256 public key hex for node.publicKey hostcall
+					if pk, err := deriveP256PublicKeyHex(n.identity.EncryptionKey); err == nil {
+						nodeCtx.PublicKeyHex = pk
+					}
+				}
+
+				capReg := modulert.NewCapabilityRegistry()
+				// TODO: register SDN capability provisioners (protocol, crypto, ipfs, etc.)
+
+				mod, err := modulert.NewModule(kbBytes, capReg, nodeCtx)
+				if err != nil {
+					log.Warnf("Failed to create module from %s: %v", wasmPath, err)
+				} else {
+					if err := n.plugins.Register(mod); err != nil {
+						log.Warnf("Failed to register module %q: %v", mod.ID(), err)
+					} else {
+						log.Infof("Module-sdk plugin registered from %s", wasmPath)
+					}
+				}
 			}
 		}
 	}
@@ -498,15 +509,22 @@ func (n *Node) registerCatalogPlugins(reg *license.PluginRegistry, pluginCtx plu
 		return nil
 	}
 
+	// Build node context for the generic module runner
+	nodeCtx := &modulert.NodeContext{
+		PeerID: n.host.ID().String(),
+	}
+	if n.identity != nil {
+		nodeCtx.EncryptionKey = n.identity.EncryptionKey
+		if pk, err := deriveP256PublicKeyHex(n.identity.EncryptionKey); err == nil {
+			nodeCtx.PublicKeyHex = pk
+		}
+	}
+	capReg := modulert.NewCapabilityRegistry()
+
 	var errs []error
 	for _, descriptor := range reg.ListPublic() {
 		pluginID := strings.TrimSpace(descriptor.ID)
 		if pluginID == "" {
-			continue
-		}
-
-		if pluginID != wasmlicenseplugin.ID {
-			log.Warnf("Skipping unsupported plugin %q in catalog (no local runtime wrapper)", pluginID)
 			continue
 		}
 
@@ -523,8 +541,16 @@ func (n *Node) registerCatalogPlugins(reg *license.PluginRegistry, pluginCtx plu
 			continue
 		}
 
-		plugin := wasmlicenseplugin.NewFromBytes(wasmBytes)
-		if err := n.plugins.Register(plugin); err != nil {
+		// Use the generic module runner — no plugin-type-specific Go code
+		mod, err := modulert.NewModule(wasmBytes, capReg, nodeCtx)
+		if err != nil {
+			errMsg := fmt.Errorf("plugin %q module load failed: %w", pluginID, err)
+			_ = reg.SetRuntimeStatus(pluginID, "error", errMsg.Error())
+			errs = append(errs, errMsg)
+			continue
+		}
+
+		if err := n.plugins.Register(mod); err != nil {
 			errMsg := fmt.Errorf("plugin %q registration failed: %w", pluginID, err)
 			_ = reg.SetRuntimeStatus(pluginID, "error", errMsg.Error())
 			errs = append(errs, errMsg)
@@ -534,12 +560,7 @@ func (n *Node) registerCatalogPlugins(reg *license.PluginRegistry, pluginCtx plu
 		if err := reg.SetRuntimeStatus(pluginID, "stopped", "registered, waiting for startup"); err != nil {
 			log.Warnf("Unable to update runtime status for plugin %q: %v", pluginID, err)
 		}
-		log.Infof("Registered encrypted catalog plugin %q from runtime registry", pluginID)
-	}
-
-	if plugin, ok := n.getPluginByID(reg, wasmlicenseplugin.ID); ok && pluginCtx.Host != nil && plugin != nil {
-		n.keyBroker = plugin
-		_ = reg.SetRuntimeStatus(wasmlicenseplugin.ID, "running", "registered")
+		log.Infof("Registered catalog plugin %q via generic module runner", pluginID)
 	}
 
 	if len(errs) > 0 {
@@ -548,7 +569,7 @@ func (n *Node) registerCatalogPlugins(reg *license.PluginRegistry, pluginCtx plu
 	return nil
 }
 
-func (n *Node) getPluginByID(reg *license.PluginRegistry, pluginID string) (*wasmlicenseplugin.Plugin, bool) {
+func (n *Node) getPluginByID(reg *license.PluginRegistry, pluginID string) (plugins.Plugin, bool) {
 	pluginID = strings.TrimSpace(pluginID)
 	if pluginID == "" {
 		return nil, false
@@ -561,8 +582,8 @@ func (n *Node) getPluginByID(reg *license.PluginRegistry, pluginID string) (*was
 	if n.plugins == nil {
 		return nil, false
 	}
-	p, ok := n.plugins.Get(pluginID).(*wasmlicenseplugin.Plugin)
-	if !ok || p == nil {
+	p := n.plugins.Get(pluginID)
+	if p == nil {
 		return nil, false
 	}
 	return p, true
@@ -735,6 +756,20 @@ func (n *Node) findHDWalletWasmPath() string {
 		}
 	}
 	return ""
+}
+
+// deriveP256PublicKeyHex derives a P-256 public key from a 32-byte seed and
+// returns it as a hex string. Used to populate node.publicKey in the hostcall bridge.
+func deriveP256PublicKeyHex(seed []byte) (string, error) {
+	if len(seed) < 32 {
+		return "", fmt.Errorf("seed too short")
+	}
+	h := sha256.Sum256(seed)
+	privKey, err := crypto_ecdh.P256().NewPrivateKey(h[:])
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(privKey.PublicKey().Bytes()), nil
 }
 
 func (n *Node) findKeyBrokerWasmPath() string {
