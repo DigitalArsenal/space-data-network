@@ -36,6 +36,9 @@ out/
 # Claude Code
 .claude/
 
+# Git worktrees
+.worktrees/
+
 # Go
 *.test
 coverage.out
@@ -59,6 +62,7 @@ yarn-error.log*
 *.wasm.map
 /sdn-wasi/dist/
 sdn-server/spacedatanetwork
+sdn-server/spacedatanetwork-test
 
 # Legacy vendored packages (removed)
 # packages/emsdk/ - replaced by flatc-wasm npm package
