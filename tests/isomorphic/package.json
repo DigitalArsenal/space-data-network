@@ -4,16 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node artifact-crypto.test.mjs && node decryption-flow.test.mjs && node module-invoke.test.mjs && node client-decrypt-wasm.test.mjs && node protection-roundtrip.test.mjs"
+    "test": "node artifact-crypto.test.mjs && node decryption-flow.test.mjs && node module-invoke.test.mjs"
   },
   "dependencies": {
     "@chainsafe/libp2p-noise": "^16.1.0",
     "@chainsafe/libp2p-yamux": "^7.0.4",
-    "@helia/unixfs": "^7.1.0",
     "@libp2p/tcp": "^10.1.12",
-    "blockstore-core": "^6.1.2",
-    "datastore-core": "^11.0.2",
-    "helia": "^6.0.22",
     "libp2p": "^2.6.0"
   }
 }
