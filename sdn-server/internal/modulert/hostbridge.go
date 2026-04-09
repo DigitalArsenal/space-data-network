@@ -80,10 +80,17 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 		}
 		return okJSON(caps)
 	case "host.listSupportedCapabilities":
-		return okJSON([]string{"clock", "random", "protocol_handle", "protocol_dial",
-			"pubsub", "crypto_hash", "crypto_sign", "crypto_verify", "crypto_encrypt",
-			"crypto_decrypt", "crypto_key_agreement", "crypto_kdf", "ipfs",
-			"storage_query", "storage_write", "http", "schedule_cron"})
+		return okJSON([]string{
+			"clock", "random",
+			"protocol_handle", "protocol_dial",
+			"pubsub",
+			"crypto_hash", "crypto_sign", "crypto_verify",
+			"crypto_encrypt", "crypto_decrypt", "crypto_key_agreement", "crypto_kdf",
+			"ipfs",
+			"storage_query", "storage_write", "storage_adapter",
+			"http",
+			"schedule_cron",
+		})
 	case "host.hasCapability":
 		var p struct{ Capability string `json:"capability"` }
 		json.Unmarshal(payload, &p)
