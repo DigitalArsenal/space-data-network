@@ -1,0 +1,15 @@
+{
+  "name": "@spacedatanetwork/tests-isomorphic",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node artifact-crypto.test.mjs && node decryption-flow.test.mjs"
+  },
+  "dependencies": {
+    "@chainsafe/libp2p-noise": "^16.1.0",
+    "@chainsafe/libp2p-yamux": "^7.0.4",
+    "@libp2p/tcp": "^10.1.12",
+    "libp2p": "^2.6.0"
+  }
+}
