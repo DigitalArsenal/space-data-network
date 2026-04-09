@@ -144,37 +144,53 @@ This validates:
 2. Invalid identifier fixtures fail as expected.
 3. Generated client/server scaffold manifests meet minimum contract shape.
 
-## Runtime Plugin ABI (SDN WASI Host)
+## Runtime Plugin ABI (SDN WasmEdge Host)
 
-For OrbPro key-broker plugins loaded by the SDN WASI runtime, the module must
-export:
+For OrbPro key-broker plugins loaded by the SDN standalone runtime, the module
+must export the canonical `space-data-module-sdk` guest surface:
 
-1. `malloc`
-2. `free`
-3. `plugin_init`
-4. `plugin_get_public_key`
-5. `plugin_handle_request`
-6. `plugin_get_metadata`
+1. `plugin_alloc`
+2. `plugin_free`
+3. `plugin_invoke_stream`
+4. `plugin_get_manifest_flatbuffer`
+5. `plugin_get_manifest_flatbuffer_size`
+
+Optional guest exports:
+
+1. `_initialize`
+2. `_start`
 
 The runtime provides:
 
 1. `wasi_snapshot_preview1.*`
-2. `sdn.clock_now_ms`
-3. `sdn.random_bytes`
+2. `sdn_host.call_json`
+3. `sdn_host.response_len`
+4. `sdn_host.read_response`
+5. `sdn_host.clear_response`
+6. `sdn_host.last_status_code`
 
-The runtime will call `_initialize` when present before invoking plugin APIs.
+Supported hostcall operations:
+
+1. `host.runtimeTarget`
+2. `host.listCapabilities`
+3. `host.listSupportedCapabilities`
+4. `host.listOperations`
+5. `host.hasCapability`
+6. `clock.now`
+7. `clock.monotonicNow`
+8. `clock.nowIso`
+9. `random.bytes`
+
+Binary hostcall responses use the canonical JSON envelope
+`{ "__type": "bytes", "base64": "..." }`.
 
 OrbPro distribution convention for this plugin binary is:
 
 - `orbpro-licensing-server.sdn.plugin`
 
-The artifact is expected to be a single encrypted JSON envelope (not raw
-WASM). Required top-level fields:
-
-1. `format` (`orbpro-key-server-artifact-v3`)
-2. `path` (`dist/orbpro-licensing-server.sdn.plugin`)
-3. `keyEncryption`
-4. `contentEncryption`
+SDN accepts either raw standalone WASM bytes or the OrbPro encrypted JSON
+envelope used by the protected plugin catalog. The runtime contract after load
+is the same in both cases.
 
 ## OrbPro Release Layout Contract
 
@@ -265,7 +281,7 @@ Do not rely on production endpoints during local plugin bring-up.
 Minimum plugin environment for local SDN daemon:
 
 1. `ORBPRO_KEY_BROKER_WASM_PATH` (path to `.sdn.plugin`)
-2. `ORBPRO_SERVER_PRIVATE_KEY_FILE` (path to 32-byte hex private key file)
+2. `ORBPRO_SERVER_PRIVATE_KEY_FILE` (path to file containing P-256 private key, 32 bytes hex)
 3. `DERIVATION_SECRET` (shared secret used by the plugin runtime)
 4. `ORBPRO_KEYSERVER_ALLOWED_DOMAINS` (comma-separated local origins)
 5. `ORBPRO_KEYSERVER_ACTIVE_KEY_VERSION` (optional; defaults from OrbPro version)

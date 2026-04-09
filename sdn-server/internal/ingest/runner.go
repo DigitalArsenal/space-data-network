@@ -2,6 +2,7 @@
 package ingest
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/csv"
@@ -13,6 +14,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -30,10 +32,11 @@ import (
 var log = logging.Logger("ingest")
 
 const (
-	defaultCelestrakCatalogURL = "https://celestrak.org/pub/GP/catalog.csv"
-	defaultCelestrakSatcatURL  = "https://celestrak.org/pub/satcat.csv"
+	defaultCelestrakCatalogURL = "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv"
+	defaultCelestrakSatcatURL  = "https://celestrak.org/pub/satcat.txt"
 	defaultSpaceTrackLoginURL  = "https://www.space-track.org/ajaxauth/login"
 	defaultSpaceTrackQueryTmpl = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/%s--%s/format/csv"
+	minCelestrakFetchInterval  = 3 * time.Hour
 )
 
 // Config controls ingestion worker behavior.
@@ -91,10 +94,16 @@ func NewRunner(cfg Config) (*Runner, error) {
 		cfg.SpaceTrackQueryTmpl = defaultSpaceTrackQueryTmpl
 	}
 	if cfg.CelestrakInterval <= 0 {
-		cfg.CelestrakInterval = time.Hour
+		cfg.CelestrakInterval = minCelestrakFetchInterval
+	}
+	if cfg.CelestrakInterval < minCelestrakFetchInterval {
+		cfg.CelestrakInterval = minCelestrakFetchInterval
 	}
 	if cfg.SatcatInterval <= 0 {
 		cfg.SatcatInterval = 24 * time.Hour
+	}
+	if cfg.SatcatInterval < minCelestrakFetchInterval {
+		cfg.SatcatInterval = minCelestrakFetchInterval
 	}
 	if cfg.SpaceTrackPollInterval <= 0 {
 		cfg.SpaceTrackPollInterval = 30 * time.Minute
@@ -207,13 +216,18 @@ func (r *Runner) runCycle(ctx context.Context) error {
 }
 
 func (r *Runner) syncCelestrakGP(ctx context.Context) error {
-	data, err := r.fetchBytes(ctx, r.cfg.CelestrakCatalogURL)
+	data, fromCache, err := r.fetchWithCache(ctx, r.cfg.CelestrakCatalogURL, "celestrak-gp.csv", minCelestrakFetchInterval)
 	if err != nil {
 		return fmt.Errorf("fetch celestrak catalog: %w", err)
 	}
 
-	if err := r.archiveRaw("celestrak", "catalog.csv", data); err != nil {
-		log.Warnf("Failed to archive CelesTrak catalog.csv: %v", err)
+	if !fromCache {
+		catalogArchiveName := archiveFilenameForURL(r.cfg.CelestrakCatalogURL, "catalog.csv")
+		if err := r.archiveRaw("celestrak", catalogArchiveName, data); err != nil {
+			log.Warnf("Failed to archive CelesTrak %s: %v", catalogArchiveName, err)
+		}
+	} else {
+		log.Infof("Using cached CelesTrak GP payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
 	}
 
 	countOMM, countMPE, err := r.ingestGPData(data, "source:celestrak")
@@ -231,13 +245,18 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 }
 
 func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
-	data, err := r.fetchBytes(ctx, r.cfg.CelestrakSatcatURL)
+	data, fromCache, err := r.fetchWithCache(ctx, r.cfg.CelestrakSatcatURL, "celestrak-satcat.txt", minCelestrakFetchInterval)
 	if err != nil {
 		return fmt.Errorf("fetch celestrak satcat: %w", err)
 	}
 
-	if err := r.archiveRaw("celestrak", "satcat.csv", data); err != nil {
-		log.Warnf("Failed to archive CelesTrak satcat.csv: %v", err)
+	if !fromCache {
+		satcatArchiveName := archiveFilenameForURL(r.cfg.CelestrakSatcatURL, "satcat.txt")
+		if err := r.archiveRaw("celestrak", satcatArchiveName, data); err != nil {
+			log.Warnf("Failed to archive CelesTrak %s: %v", satcatArchiveName, err)
+		}
+	} else {
+		log.Infof("Using cached CelesTrak SATCAT payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
 	}
 
 	countCAT, err := r.ingestSatcatData(data, "source:celestrak")
@@ -446,7 +465,7 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string) (int, int, erro
 }
 
 func (r *Runner) ingestSatcatData(content []byte, sourcePeer string) (int, error) {
-	rows, err := parseCSV(content)
+	rows, err := parseSatcatRows(content)
 	if err != nil {
 		return 0, err
 	}
@@ -492,6 +511,22 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string) (int, error
 	return count, nil
 }
 
+func archiveFilenameForURL(rawURL, fallback string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fallback
+	}
+
+	base := strings.TrimSpace(path.Base(parsed.Path))
+	if base == "" || base == "." || base == "/" {
+		return fallback
+	}
+	if strings.EqualFold(base, "gp.php") {
+		return fallback
+	}
+	return base
+}
+
 func (r *Runner) fetchBytes(ctx context.Context, sourceURL string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
@@ -507,6 +542,58 @@ func (r *Runner) fetchBytes(ctx context.Context, sourceURL string) ([]byte, erro
 		return nil, fmt.Errorf("status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, 100*1024*1024)) // 100MB limit
+}
+
+func (r *Runner) fetchWithCache(ctx context.Context, sourceURL, cacheName string, minInterval time.Duration) ([]byte, bool, error) {
+	cachePath := filepath.Join(r.cfg.RawPath, "cache", cacheName)
+
+	if data, ok, err := readCachedPayload(cachePath, minInterval); err == nil && ok {
+		return data, true, nil
+	} else if err != nil {
+		log.Warnf("Failed reading cache %s: %v", cachePath, err)
+	}
+
+	data, err := r.fetchBytes(ctx, sourceURL)
+	if err != nil {
+		if fallback, ok, cacheErr := readCachedPayload(cachePath, 0); cacheErr == nil && ok {
+			log.Warnf("CelesTrak fetch failed (%v); using stale cache %s", err, cachePath)
+			return fallback, true, nil
+		}
+		return nil, false, err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+		log.Warnf("Failed creating cache directory for %s: %v", cachePath, err)
+		return data, false, nil
+	}
+	if err := os.WriteFile(cachePath, data, 0644); err != nil {
+		log.Warnf("Failed writing cache %s: %v", cachePath, err)
+	}
+
+	return data, false, nil
+}
+
+func readCachedPayload(path string, maxAge time.Duration) ([]byte, bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	if maxAge > 0 && time.Since(info.ModTime()) >= maxAge {
+		return nil, false, nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(data) == 0 {
+		return nil, false, nil
+	}
+	return data, true, nil
 }
 
 func (r *Runner) archiveRaw(source, filename string, data []byte) error {
@@ -595,6 +682,94 @@ func parseCSV(content []byte) ([]map[string]string, error) {
 	}
 
 	return rows, nil
+}
+
+func parseSatcatRows(content []byte) ([]map[string]string, error) {
+	trimmed := bytes.TrimSpace(content)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("empty SATCAT payload")
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(trimmed))
+	firstLine := ""
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		firstLine = line
+		break
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan SATCAT payload: %w", err)
+	}
+	if firstLine == "" {
+		return nil, fmt.Errorf("empty SATCAT payload")
+	}
+	if strings.Contains(firstLine, ",") {
+		return parseCSV(content)
+	}
+
+	return parseSatcatFixedWidth(content)
+}
+
+func parseSatcatFixedWidth(content []byte) ([]map[string]string, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(content))
+	scanner.Buffer(make([]byte, 0, 1024), 1024*1024)
+
+	rows := make([]map[string]string, 0, 8192)
+	for scanner.Scan() {
+		line := strings.TrimRight(scanner.Text(), "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		status := satcatColumn(line, 20, 22)
+		row := map[string]string{
+			"OBJECT_ID":    satcatColumn(line, 1, 11),
+			"NORAD_CAT_ID": satcatColumn(line, 13, 18),
+			"OBJECT_NAME":  satcatColumn(line, 24, 47),
+			"LAUNCH_DATE":  satcatColumn(line, 57, 66),
+			"LAUNCH_SITE":  satcatColumn(line, 69, 73),
+			"DECAY_DATE":   satcatColumn(line, 76, 85),
+			"PERIOD":       satcatColumn(line, 88, 94),
+			"INCLINATION":  satcatColumn(line, 97, 101),
+			"APOGEE":       satcatColumn(line, 105, 109),
+			"PERIGEE":      satcatColumn(line, 113, 117),
+			"RCS":          satcatColumn(line, 121, 127),
+		}
+
+		if parseSatcatManeuverable(status) {
+			row["MANEUVERABLE"] = "true"
+		}
+		rows = append(rows, row)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read SATCAT rows: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("no SATCAT rows parsed")
+	}
+	return rows, nil
+}
+
+func satcatColumn(line string, start, end int) string {
+	if start < 1 || end < start {
+		return ""
+	}
+	if len(line) < start {
+		return ""
+	}
+	if end > len(line) {
+		end = len(line)
+	}
+	return strings.TrimSpace(line[start-1 : end])
+}
+
+func parseSatcatManeuverable(status string) bool {
+	status = strings.ToUpper(strings.TrimSpace(status))
+	return strings.HasPrefix(status, "M")
 }
 
 func normalizeKey(raw string) string {
