@@ -39,6 +39,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/capabilities"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/logservice"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
@@ -422,8 +423,7 @@ func (n *Node) init() error {
 					}
 				}
 
-				capReg := modulert.NewCapabilityRegistry()
-				// TODO: register SDN capability provisioners (protocol, crypto, ipfs, etc.)
+				capReg := n.buildCapRegistry()
 
 				mod, err := modulert.NewModule(kbBytes, capReg, nodeCtx)
 				if err != nil {
@@ -519,7 +519,7 @@ func (n *Node) registerCatalogPlugins(reg *license.PluginRegistry, pluginCtx plu
 			nodeCtx.PublicKeyHex = pk
 		}
 	}
-	capReg := modulert.NewCapabilityRegistry()
+	capReg := n.buildCapRegistry()
 
 	var errs []error
 	for _, descriptor := range reg.ListPublic() {
@@ -567,6 +567,47 @@ func (n *Node) registerCatalogPlugins(reg *license.PluginRegistry, pluginCtx plu
 		return errors.Join(errs...)
 	}
 	return nil
+}
+
+// buildCapRegistry creates a CapabilityRegistry populated with the SDN node's
+// available services. Any module capability that maps to an unavailable service
+// (e.g. IPFS when no Kubo URL is configured) is simply not registered — the
+// module will receive an "operation not supported" error if it tries to use it.
+func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
+	reg := modulert.NewCapabilityRegistry()
+
+	// IPFS capability — requires a configured Kubo RPC endpoint
+	if n.config.Admin.IPFSAPIURL != "" {
+		reg.Register("ipfs", caps.NewIPFSCapFactory(n.config.Admin.IPFSAPIURL, nil))
+	}
+
+	// Storage capabilities — require an initialized FlatSQL store
+	if n.store != nil {
+		storageFac := caps.NewStorageCapFactory(n.store)
+		reg.Register("storage_query", storageFac)
+		reg.Register("storage_write", storageFac)
+		reg.Register("storage_adapter", storageFac)
+	}
+
+	// HTTP outbound capability — always available
+	reg.Register("http", caps.NewHTTPCapFactory())
+
+	// Crypto capabilities — always available (pure Go stdlib)
+	cryptoFac := caps.NewCryptoCapFactory()
+	reg.Register("crypto_hash", cryptoFac)
+	reg.Register("crypto_sign", cryptoFac)
+	reg.Register("crypto_verify", cryptoFac)
+	reg.Register("crypto_encrypt", cryptoFac)
+	reg.Register("crypto_decrypt", cryptoFac)
+	reg.Register("crypto_key_agreement", cryptoFac)
+	reg.Register("crypto_kdf", cryptoFac)
+
+	// PubSub capability — requires libp2p pubsub to be running
+	if n.pubsub != nil {
+		reg.Register("pubsub", caps.NewPubSubCapFactory(n.pubsub))
+	}
+
+	return reg
 }
 
 func (n *Node) getPluginByID(reg *license.PluginRegistry, pluginID string) (plugins.Plugin, bool) {

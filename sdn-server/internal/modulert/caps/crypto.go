@@ -1,0 +1,308 @@
+package caps
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/json"
+	"fmt"
+	"io"
+
+	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"golang.org/x/crypto/ed25519"
+	"golang.org/x/crypto/hkdf"
+)
+
+// NewCryptoCapFactory returns a CapFactory for all crypto_* capabilities.
+// A single factory handles all crypto operations — register it for each capability:
+//
+//	reg.Register("crypto_hash", caps.NewCryptoCapFactory())
+//	reg.Register("crypto_sign", caps.NewCryptoCapFactory())
+//	reg.Register("crypto_verify", caps.NewCryptoCapFactory())
+//	reg.Register("crypto_encrypt", caps.NewCryptoCapFactory())
+//	reg.Register("crypto_decrypt", caps.NewCryptoCapFactory())
+//	reg.Register("crypto_key_agreement", caps.NewCryptoCapFactory())
+//	reg.Register("crypto_kdf", caps.NewCryptoCapFactory())
+//
+// Supported operations (all prefixed "crypto."):
+//
+//	crypto.hash          — {"algorithm":"sha256|sha512", "data":"base64"} → {"hash":"hex"}
+//	crypto.sign          — {"algorithm":"ed25519", "key":"base64 seed", "data":"base64"} → {"signature":"base64"}
+//	crypto.verify        — {"algorithm":"ed25519", "key":"base64 pubkey", "data":"base64", "signature":"base64"} → {"valid":bool}
+//	crypto.encrypt       — {"algorithm":"aes-256-gcm", "key":"base64", "nonce":"base64", "data":"base64"} → {"ciphertext":"base64","nonce":"base64"}
+//	crypto.decrypt       — {"algorithm":"aes-256-gcm", "key":"base64", "nonce":"base64", "ciphertext":"base64"} → {"plaintext":"base64"}
+//	crypto.key_agreement — {"algorithm":"x25519", "private_key":"base64", "public_key":"base64"} → {"shared_secret":"base64"}
+//	crypto.kdf           — {"algorithm":"hkdf-sha256", "ikm":"base64", "salt":"base64", "info":"base64", "length":32} → {"key":"base64"}
+//	crypto.generate_key  — {"algorithm":"ed25519|x25519"} → {"private_key":"base64","public_key":"base64"}
+//	crypto.random        — {"length":32} → {"bytes":"base64"}
+func NewCryptoCapFactory() modulert.CapFactory {
+	return func(_ *modulert.Module) modulert.CapHandler {
+		return cryptoCapHandle
+	}
+}
+
+func cryptoCapHandle(operation string, payload []byte) ([]byte, error) {
+	var p map[string]interface{}
+	if len(payload) > 0 {
+		json.Unmarshal(payload, &p) //nolint:errcheck
+	}
+	str := func(key string) string {
+		if p == nil {
+			return ""
+		}
+		if v, ok := p[key]; ok {
+			return fmt.Sprintf("%v", v)
+		}
+		return ""
+	}
+	intVal := func(key string, def int) int {
+		if p == nil {
+			return def
+		}
+		if v, ok := p[key]; ok {
+			switch vt := v.(type) {
+			case float64:
+				return int(vt)
+			case int:
+				return vt
+			}
+		}
+		return def
+	}
+	bytes64 := func(key string) []byte {
+		return decodeBase64Cap(str(key))
+	}
+
+	switch operation {
+	case "crypto.hash":
+		data := bytes64("data")
+		algo := str("algorithm")
+		switch algo {
+		case "sha256", "":
+			h := sha256.Sum256(data)
+			return okCapJSON(map[string]interface{}{
+				"hash":      encodeBase64Cap(h[:]),
+				"algorithm": "sha256",
+			}), nil
+		case "sha512":
+			h := sha512.Sum512(data)
+			return okCapJSON(map[string]interface{}{
+				"hash":      encodeBase64Cap(h[:]),
+				"algorithm": "sha512",
+			}), nil
+		default:
+			return errCapJSON(fmt.Sprintf("unsupported hash algorithm: %s", algo)), nil
+		}
+
+	case "crypto.sign":
+		algo := str("algorithm")
+		if algo == "" {
+			algo = "ed25519"
+		}
+		if algo != "ed25519" {
+			return errCapJSON(fmt.Sprintf("unsupported sign algorithm: %s", algo)), nil
+		}
+		seed := bytes64("key")
+		data := bytes64("data")
+		if len(seed) != ed25519.SeedSize {
+			return errCapJSON(fmt.Sprintf("ed25519 seed must be %d bytes, got %d", ed25519.SeedSize, len(seed))), nil
+		}
+		privKey := ed25519.NewKeyFromSeed(seed)
+		sig := ed25519.Sign(privKey, data)
+		return okCapJSON(map[string]interface{}{
+			"signature": encodeBase64Cap(sig),
+			"algorithm": "ed25519",
+		}), nil
+
+	case "crypto.verify":
+		algo := str("algorithm")
+		if algo == "" {
+			algo = "ed25519"
+		}
+		if algo != "ed25519" {
+			return errCapJSON(fmt.Sprintf("unsupported verify algorithm: %s", algo)), nil
+		}
+		pubKey := bytes64("key")
+		data := bytes64("data")
+		sig := bytes64("signature")
+		if len(pubKey) != ed25519.PublicKeySize {
+			return errCapJSON(fmt.Sprintf("ed25519 public key must be %d bytes, got %d", ed25519.PublicKeySize, len(pubKey))), nil
+		}
+		valid := ed25519.Verify(ed25519.PublicKey(pubKey), data, sig)
+		return okCapJSON(map[string]interface{}{"valid": valid}), nil
+
+	case "crypto.encrypt":
+		algo := str("algorithm")
+		if algo == "" {
+			algo = "aes-256-gcm"
+		}
+		if algo != "aes-256-gcm" {
+			return errCapJSON(fmt.Sprintf("unsupported encrypt algorithm: %s", algo)), nil
+		}
+		key := bytes64("key")
+		plaintext := bytes64("data")
+		nonce := bytes64("nonce")
+
+		block, err := aes.NewCipher(key)
+		if err != nil {
+			return errCapJSON("invalid key: " + err.Error()), nil
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return errCapJSON("gcm init failed: " + err.Error()), nil
+		}
+		if len(nonce) == 0 {
+			nonce = make([]byte, gcm.NonceSize())
+			if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+				return errCapJSON("nonce generation failed: " + err.Error()), nil
+			}
+		}
+		ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
+		return okCapJSON(map[string]interface{}{
+			"ciphertext": encodeBase64Cap(ciphertext),
+			"nonce":      encodeBase64Cap(nonce),
+			"algorithm":  "aes-256-gcm",
+		}), nil
+
+	case "crypto.decrypt":
+		algo := str("algorithm")
+		if algo == "" {
+			algo = "aes-256-gcm"
+		}
+		if algo != "aes-256-gcm" {
+			return errCapJSON(fmt.Sprintf("unsupported decrypt algorithm: %s", algo)), nil
+		}
+		key := bytes64("key")
+		nonce := bytes64("nonce")
+		ciphertext := bytes64("ciphertext")
+
+		block, err := aes.NewCipher(key)
+		if err != nil {
+			return errCapJSON("invalid key: " + err.Error()), nil
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return errCapJSON("gcm init failed: " + err.Error()), nil
+		}
+		plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+		if err != nil {
+			return errCapJSON("decryption failed: " + err.Error()), nil
+		}
+		return okCapJSON(map[string]interface{}{
+			"plaintext": encodeBase64Cap(plaintext),
+			"algorithm": "aes-256-gcm",
+		}), nil
+
+	case "crypto.key_agreement":
+		algo := str("algorithm")
+		if algo == "" {
+			algo = "x25519"
+		}
+		if algo != "x25519" {
+			return errCapJSON(fmt.Sprintf("unsupported key agreement algorithm: %s", algo)), nil
+		}
+		privKeyBytes := bytes64("private_key")
+		pubKeyBytes := bytes64("public_key")
+
+		curve := ecdh.X25519()
+		privKey, err := curve.NewPrivateKey(privKeyBytes)
+		if err != nil {
+			return errCapJSON("invalid private key: " + err.Error()), nil
+		}
+		pubKey, err := curve.NewPublicKey(pubKeyBytes)
+		if err != nil {
+			return errCapJSON("invalid public key: " + err.Error()), nil
+		}
+		shared, err := privKey.ECDH(pubKey)
+		if err != nil {
+			return errCapJSON("ECDH failed: " + err.Error()), nil
+		}
+		return okCapJSON(map[string]interface{}{
+			"shared_secret": encodeBase64Cap(shared),
+			"algorithm":     "x25519",
+		}), nil
+
+	case "crypto.kdf":
+		algo := str("algorithm")
+		if algo == "" {
+			algo = "hkdf-sha256"
+		}
+		if algo != "hkdf-sha256" {
+			return errCapJSON(fmt.Sprintf("unsupported kdf algorithm: %s", algo)), nil
+		}
+		ikm := bytes64("ikm")
+		salt := bytes64("salt")
+		info := bytes64("info")
+		length := intVal("length", 32)
+		if length <= 0 || length > 512 {
+			return errCapJSON("length must be 1-512"), nil
+		}
+
+		r := hkdf.New(sha256.New, ikm, salt, info)
+		key := make([]byte, length)
+		if _, err := io.ReadFull(r, key); err != nil {
+			return errCapJSON("kdf failed: " + err.Error()), nil
+		}
+		return okCapJSON(map[string]interface{}{
+			"key":       encodeBase64Cap(key),
+			"algorithm": "hkdf-sha256",
+		}), nil
+
+	case "crypto.generate_key":
+		algo := str("algorithm")
+		switch algo {
+		case "ed25519", "":
+			pubKey, privKey, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				return errCapJSON("key generation failed: " + err.Error()), nil
+			}
+			seed := privKey.Seed()
+			return okCapJSON(map[string]interface{}{
+				"private_key": encodeBase64Cap(seed),
+				"public_key":  encodeBase64Cap(pubKey),
+				"algorithm":   "ed25519",
+			}), nil
+		case "x25519":
+			curve := ecdh.X25519()
+			privKey, err := curve.GenerateKey(rand.Reader)
+			if err != nil {
+				return errCapJSON("key generation failed: " + err.Error()), nil
+			}
+			return okCapJSON(map[string]interface{}{
+				"private_key": encodeBase64Cap(privKey.Bytes()),
+				"public_key":  encodeBase64Cap(privKey.PublicKey().Bytes()),
+				"algorithm":   "x25519",
+			}), nil
+		default:
+			return errCapJSON(fmt.Sprintf("unsupported key algorithm: %s", algo)), nil
+		}
+
+	case "crypto.random":
+		length := intVal("length", 32)
+		if length <= 0 || length > 8192 {
+			return errCapJSON("length must be 1-8192"), nil
+		}
+		buf := make([]byte, length)
+		if _, err := io.ReadFull(rand.Reader, buf); err != nil {
+			return errCapJSON("random generation failed: " + err.Error()), nil
+		}
+		return okCapJSON(map[string]interface{}{
+			"__type": "bytes",
+			"base64": encodeBase64Cap(buf),
+		}), nil
+
+	default:
+		return errCapJSON(fmt.Sprintf("unknown crypto operation: %s", operation)), nil
+	}
+}
+
+// hmacSHA256 computes HMAC-SHA256 (used internally, not exported as an operation yet).
+func hmacSHA256(key, data []byte) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(data)
+	return mac.Sum(nil)
+}
