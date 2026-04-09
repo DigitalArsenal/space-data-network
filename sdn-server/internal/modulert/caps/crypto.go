@@ -4,7 +4,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -300,9 +299,3 @@ func cryptoCapHandle(operation string, payload []byte) ([]byte, error) {
 	}
 }
 
-// hmacSHA256 computes HMAC-SHA256 (used internally, not exported as an operation yet).
-func hmacSHA256(key, data []byte) []byte {
-	mac := hmac.New(sha256.New, key)
-	mac.Write(data)
-	return mac.Sum(nil)
-}
