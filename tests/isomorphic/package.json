@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node artifact-crypto.test.mjs && node decryption-flow.test.mjs && node module-invoke.test.mjs"
+    "test": "node artifact-crypto.test.mjs && node decryption-flow.test.mjs && node module-invoke.test.mjs && node client-decrypt-wasm.test.mjs"
   },
   "dependencies": {
     "@chainsafe/libp2p-noise": "^16.1.0",

@@ -135,32 +135,52 @@ async function ensureCryptoppSources(dir) {
   if (explicit) {
     if (fs.existsSync(path.join(explicit, "aes.h"))) {
       console.log(`  Using local Crypto++ from ${explicit}`);
-      return explicit;
+      return setupCryptoppIncludeAlias(explicit);
     }
     if (fs.existsSync(path.join(explicit, "cryptopp", "aes.h"))) {
       console.log(`  Using local Crypto++ from ${explicit}/cryptopp`);
-      return path.join(explicit, "cryptopp");
+      return setupCryptoppIncludeAlias(path.join(explicit, "cryptopp"));
     }
     throw new Error(`CRYPTOPP_SOURCE_DIR does not contain aes.h: ${explicit}`);
   }
 
   if (fs.existsSync(path.join(dir, "aes.h"))) {
     console.log("  Crypto++ already fetched.");
-    return dir;
+    return setupCryptoppIncludeAlias(dir);
   }
 
   console.log("  Cloning Crypto++ 8.9.0...");
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
   run(
     `git clone --depth=1 --branch CRYPTOPP_8_9_0 ` +
       `https://github.com/weidai11/cryptopp.git ${dir}`,
   );
-  return dir;
+  return setupCryptoppIncludeAlias(dir);
+}
+
+/**
+ * Create a "cryptopp" symlink alias next to srcDir so that
+ * #include <cryptopp/aes.h> resolves correctly.
+ * Returns the parent directory to use as an -I include path.
+ */
+function setupCryptoppIncludeAlias(srcDir) {
+  const parentDir = path.dirname(srcDir);
+  const aliasDir = path.join(parentDir, "cryptopp");
+  if (!fs.existsSync(aliasDir)) {
+    try {
+      fs.symlinkSync(srcDir, aliasDir);
+    } catch {
+      // If symlink fails (e.g., already exists or permission issue), ignore
+    }
+  }
+  // Return the parent so both -I${parentDir} (for <cryptopp/x.h>) and
+  // -I${srcDir} (for "x.h" style) work
+  return { srcDir, parentDir };
 }
 
 // ── Compile Crypto++ to .a ────────────────────────────────────────────────────
 
-function compileCryptoppLib(srcDir, objDir, archivePath, extraFlags = []) {
+function compileCryptoppLib(srcDir, parentDir, objDir, archivePath, extraFlags = []) {
   if (fs.existsSync(archivePath)) {
     console.log("  Crypto++ library already compiled, skipping.");
     return;
@@ -188,7 +208,7 @@ function compileCryptoppLib(srcDir, objDir, archivePath, extraFlags = []) {
       run(
         `emcc -O2 -std=c++17 -fignore-exceptions ` +
           `-DCRYPTOPP_DISABLE_ASM=1 -DCRYPTOPP_DISABLE_SSSE3=1 -DCRYPTOPP_DISABLE_AESNI=1 ` +
-          `-I${srcDir} ` +
+          `-I${parentDir} -I${srcDir} ` +
           extraFlags.join(" ") +
           ` -c ${path.join(srcDir, src)} -o ${obj}`,
       );
@@ -202,7 +222,7 @@ function compileCryptoppLib(srcDir, objDir, archivePath, extraFlags = []) {
 
 // ── Build plugin-delivery ─────────────────────────────────────────────────────
 
-async function buildPluginDelivery(cryptoppSrc, fbbHeadersDir, flatbuffersInclude) {
+async function buildPluginDelivery(cryptoppSrc, cryptoppParent, fbbHeadersDir, flatbuffersInclude) {
   console.log("\n=== Building plugin-delivery ===");
   const pluginDir = path.join(PLUGINS_DIR, "plugin-delivery");
   const distDir = path.join(pluginDir, "dist");
@@ -228,25 +248,27 @@ async function buildPluginDelivery(cryptoppSrc, fbbHeadersDir, flatbuffersInclud
     path.join(pluginDir, "src", "plugin_delivery.cpp"),
     "utf8",
   );
-  const srcFinal = srcTemplate.replace("SDN_BAKED_SERVER_PRIVATE_KEY", bakedKeyLiteral);
+  const srcFinal = srcTemplate.replaceAll("SDN_BAKED_SERVER_PRIVATE_KEY", bakedKeyLiteral);
   const buildCppPath = path.join(objDir, "plugin_delivery_build.cpp");
   fs.writeFileSync(buildCppPath, srcFinal, "utf8");
 
   // Compile Crypto++
   const cryptoppObjDir = path.join(BUILD_DIR, "cryptopp-delivery-obj");
   const cryptoppLib = path.join(BUILD_DIR, "libcryptopp-delivery.a");
-  compileCryptoppLib(cryptoppSrc, cryptoppObjDir, cryptoppLib);
+  compileCryptoppLib(cryptoppSrc, cryptoppParent, cryptoppObjDir, cryptoppLib);
 
   // Manifest exports stub
   const manifestExportsPath = path.join(pluginDir, "dist", "manifest-exports.cpp");
   const manifestStub = `
 #include <stddef.h>
 #include <stdint.h>
-#define MODULE_MANIFEST_EXPORT __attribute__((visibility("default")))
-// Minimal stub — full manifest generation is handled by manifest.mjs
 static const uint8_t g_manifest[] = {0x00};
-MODULE_MANIFEST_EXPORT const uint8_t* plugin_get_manifest_flatbuffer() { return g_manifest; }
-MODULE_MANIFEST_EXPORT size_t plugin_get_manifest_flatbuffer_size() { return 0; }
+extern "C" {
+__attribute__((visibility("default")))
+const uint8_t* plugin_get_manifest_flatbuffer() { return g_manifest; }
+__attribute__((visibility("default")))
+uint32_t plugin_get_manifest_flatbuffer_size() { return 0; }
+}
 `;
   fs.writeFileSync(manifestExportsPath, manifestStub, "utf8");
 
@@ -256,13 +278,13 @@ MODULE_MANIFEST_EXPORT size_t plugin_get_manifest_flatbuffer_size() { return 0; 
     `em++ -O2 -std=c++17 -fignore-exceptions ` +
       `-DSDN_WASI_PLUGIN=1 ` +
       `-DCRYPTOPP_DISABLE_ASM=1 -DCRYPTOPP_DISABLE_SSSE3=1 -DCRYPTOPP_DISABLE_AESNI=1 ` +
-      `-I${cryptoppSrc} -I${fbbHeadersDir} -I${flatbuffersInclude} ` +
+      `-I${cryptoppParent} -I${cryptoppSrc} -I${fbbHeadersDir} -I${flatbuffersInclude} ` +
       `${buildCppPath} ${manifestExportsPath} ${cryptoppLib} ` +
       `-sWASM=1 -sSTANDALONE_WASM=1 -sPURE_WASI=1 ` +
       `-sINITIAL_MEMORY=33554432 -sALLOW_MEMORY_GROWTH=1 ` +
       `-sFILESYSTEM=0 -sDISABLE_EXCEPTION_CATCHING=1 ` +
       `-sERROR_ON_UNDEFINED_SYMBOLS=0 ` +
-      `-sEXPORTED_FUNCTIONS="['_plugin_invoke_stream','_plugin_alloc','_plugin_free','_plugin_get_manifest_flatbuffer','_plugin_get_manifest_flatbuffer_size','__start']" ` +
+      `-sEXPORTED_FUNCTIONS="['_plugin_invoke_stream','_plugin_alloc','_plugin_free','_plugin_get_manifest_flatbuffer','_plugin_get_manifest_flatbuffer_size']" ` +
       `--no-entry -o ${outWasm}`,
   );
 
@@ -271,7 +293,7 @@ MODULE_MANIFEST_EXPORT size_t plugin_get_manifest_flatbuffer_size() { return 0; 
 
 // ── Build client-decrypt ──────────────────────────────────────────────────────
 
-async function buildClientDecrypt(cryptoppSrc, fbbHeadersDir, flatbuffersInclude) {
+async function buildClientDecrypt(cryptoppSrc, cryptoppParent, fbbHeadersDir, flatbuffersInclude) {
   console.log("\n=== Building client-decrypt ===");
   const pluginDir = path.join(PLUGINS_DIR, "client-decrypt");
   const distDir = path.join(pluginDir, "dist");
@@ -279,19 +301,22 @@ async function buildClientDecrypt(cryptoppSrc, fbbHeadersDir, flatbuffersInclude
   fs.mkdirSync(distDir, { recursive: true });
   fs.mkdirSync(objDir, { recursive: true });
 
-  // Compile Crypto++
+  // Compile Crypto++ with Wasm exception support for client-decrypt
   const cryptoppObjDir = path.join(BUILD_DIR, "cryptopp-decrypt-obj");
   const cryptoppLib = path.join(BUILD_DIR, "libcryptopp-decrypt.a");
-  compileCryptoppLib(cryptoppSrc, cryptoppObjDir, cryptoppLib);
+  compileCryptoppLib(cryptoppSrc, cryptoppParent, cryptoppObjDir, cryptoppLib, ["-fwasm-exceptions"]);
 
   const manifestExportsPath = path.join(distDir, "manifest-exports.cpp");
   const manifestStub = `
 #include <stddef.h>
 #include <stdint.h>
-#define MODULE_MANIFEST_EXPORT __attribute__((visibility("default")))
 static const uint8_t g_manifest[] = {0x00};
-MODULE_MANIFEST_EXPORT const uint8_t* plugin_get_manifest_flatbuffer() { return g_manifest; }
-MODULE_MANIFEST_EXPORT size_t plugin_get_manifest_flatbuffer_size() { return 0; }
+extern "C" {
+__attribute__((visibility("default")))
+const uint8_t* plugin_get_manifest_flatbuffer() { return g_manifest; }
+__attribute__((visibility("default")))
+uint32_t plugin_get_manifest_flatbuffer_size() { return 0; }
+}
 `;
   fs.writeFileSync(manifestExportsPath, manifestStub, "utf8");
 
@@ -299,15 +324,15 @@ MODULE_MANIFEST_EXPORT size_t plugin_get_manifest_flatbuffer_size() { return 0; 
   const outWasm = path.join(distDir, "client-decrypt.wasm");
 
   run(
-    `em++ -O2 -std=c++17 -fignore-exceptions ` +
+    `em++ -O2 -std=c++17 -fwasm-exceptions ` +
       `-DCRYPTOPP_DISABLE_ASM=1 -DCRYPTOPP_DISABLE_SSSE3=1 -DCRYPTOPP_DISABLE_AESNI=1 ` +
-      `-I${cryptoppSrc} -I${fbbHeadersDir} -I${flatbuffersInclude} ` +
+      `-I${cryptoppParent} -I${cryptoppSrc} -I${fbbHeadersDir} -I${flatbuffersInclude} ` +
       `${srcPath} ${manifestExportsPath} ${cryptoppLib} ` +
       `-sWASM=1 -sSTANDALONE_WASM=1 -sPURE_WASI=1 ` +
       `-sINITIAL_MEMORY=16777216 -sALLOW_MEMORY_GROWTH=1 ` +
-      `-sFILESYSTEM=0 -sDISABLE_EXCEPTION_CATCHING=1 ` +
+      `-sFILESYSTEM=0 ` +
       `-sERROR_ON_UNDEFINED_SYMBOLS=0 ` +
-      `-sEXPORTED_FUNCTIONS="['_plugin_invoke_stream','_plugin_alloc','_plugin_free','_plugin_get_manifest_flatbuffer','_plugin_get_manifest_flatbuffer_size','__start']" ` +
+      `-sEXPORTED_FUNCTIONS="['_plugin_invoke_stream','_plugin_alloc','_plugin_free','_plugin_get_manifest_flatbuffer','_plugin_get_manifest_flatbuffer_size']" ` +
       `--no-entry -o ${outWasm}`,
   );
 
@@ -354,10 +379,10 @@ async function main() {
   );
 
   if (target === "all" || target === "plugin-delivery") {
-    await buildPluginDelivery(cryptoppSrc, fbbHeadersDir, flatbuffersInclude);
+    await buildPluginDelivery(cryptoppSrc.srcDir, cryptoppSrc.parentDir, fbbHeadersDir, flatbuffersInclude);
   }
   if (target === "all" || target === "client-decrypt") {
-    await buildClientDecrypt(cryptoppSrc, fbbHeadersDir, flatbuffersInclude);
+    await buildClientDecrypt(cryptoppSrc.srcDir, cryptoppSrc.parentDir, fbbHeadersDir, flatbuffersInclude);
   }
 
   console.log("\n✓ Build complete.");

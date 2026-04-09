@@ -28,7 +28,6 @@
 #include <cryptopp/aes.h>
 #include <cryptopp/gcm.h>
 #include <cryptopp/hkdf.h>
-#include <cryptopp/osrng.h>
 #include <cryptopp/sha.h>
 #include <cryptopp/xed25519.h>
 #include <cryptopp/secblock.h>
@@ -168,8 +167,6 @@ static DecryptResult decrypt_artifact(
     }
 
     try {
-        CryptoPP::AutoSeededRandomPool rng;
-
         // 1. X25519 ECDH
         CryptoPP::x25519 x25519_scheme;
         CryptoPP::SecByteBlock shared_secret(32);
@@ -255,7 +252,7 @@ static flatbuffers::DetachedBuffer build_error_response(const char* msg) {
     PluginInvokeResponseBuilder rb(fbb);
     rb.add_status_code(1);
     rb.add_error_message(msg_off);
-    fbb.Finish(rb.Finish());
+    FinishPluginInvokeResponseBuffer(fbb, rb.Finish());
     return fbb.Release();
 }
 
@@ -274,7 +271,7 @@ static flatbuffers::DetachedBuffer build_bytes_response(
     rb.add_status_code(0);
     rb.add_output_frames(frames_vec);
     rb.add_payload_arena(arena_vec);
-    fbb.Finish(rb.Finish());
+    FinishPluginInvokeResponseBuffer(fbb, rb.Finish());
     return fbb.Release();
 }
 
