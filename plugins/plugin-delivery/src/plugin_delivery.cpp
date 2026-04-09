@@ -37,10 +37,31 @@
 #include <cryptopp/aes.h>
 #include <cryptopp/gcm.h>
 #include <cryptopp/hkdf.h>
-#include <cryptopp/osrng.h>
 #include <cryptopp/sha.h>
 #include <cryptopp/xed25519.h>
 #include <cryptopp/secblock.h>
+
+// ── WASI-compatible RNG (replaces AutoSeededRandomPool) ─────────────────────
+// In standalone WASM, /dev/urandom is not available. Use WASI random_get
+// which the WASI shim provides.
+
+#ifdef __wasi__
+#include <wasi/api.h>
+#endif
+
+class WasiRNG : public CryptoPP::RandomNumberGenerator {
+public:
+    void GenerateBlock(CryptoPP::byte* output, size_t size) override {
+#ifdef __wasi__
+        __wasi_random_get(output, size);
+#else
+        // Fallback: use stdlib (not cryptographically secure, test only)
+        for (size_t i = 0; i < size; i++)
+            output[i] = static_cast<CryptoPP::byte>(rand());
+#endif
+    }
+    void IncorporateEntropy(const CryptoPP::byte*, size_t) override {}
+};
 
 // ── sdn_host imports ──────────────────────────────────────────────────────────
 // Available when compiled as WASI plugin with -DSDN_WASI_PLUGIN=1
@@ -132,7 +153,7 @@ static EncryptedEnvelope encrypt_artifact(
     }
 
     try {
-        CryptoPP::AutoSeededRandomPool rng;
+        WasiRNG rng;
 
         // 1. Generate ephemeral X25519 key pair
         CryptoPP::x25519 x25519_scheme;
@@ -214,8 +235,16 @@ static EncryptedEnvelope encrypt_artifact(
 
 // ── Server public key derivation ──────────────────────────────────────────────
 
+// NullRNG — deterministic public key derivation doesn't need randomness.
+// AutoSeededRandomPool fails in standalone WASM without filesystem.
+class NullRNG : public CryptoPP::RandomNumberGenerator {
+public:
+    void GenerateBlock(CryptoPP::byte*, size_t) override {}
+    void IncorporateEntropy(const CryptoPP::byte*, size_t) override {}
+};
+
 static void derive_server_public_key(uint8_t out_pub[32]) {
-    CryptoPP::AutoSeededRandomPool rng;
+    NullRNG rng;
     CryptoPP::x25519 x25519_scheme;
     x25519_scheme.GeneratePublicKey(rng, SERVER_PRIVATE_KEY, out_pub);
 }
@@ -244,11 +273,36 @@ static std::string build_envelope_json(const EncryptedEnvelope& env) {
 // ── sdn_host IPFS fetch helper ────────────────────────────────────────────────
 
 #if defined(SDN_WASI_PLUGIN)
+
+// Base64 decode for hostcall response parsing
+static std::vector<uint8_t> b64_decode_vec(const char* in, size_t in_len) {
+    std::vector<uint8_t> out;
+    out.reserve(in_len * 3 / 4);
+    int val = 0, bits = -8;
+    for (size_t i = 0; i < in_len; i++) {
+        char c = in[i];
+        int v;
+        if (c >= 'A' && c <= 'Z') v = c - 'A';
+        else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
+        else if (c >= '0' && c <= '9') v = c - '0' + 52;
+        else if (c == '+' || c == '-') v = 62;
+        else if (c == '/' || c == '_') v = 63;
+        else continue;
+        val = (val << 6) + v;
+        bits += 6;
+        if (bits >= 0) {
+            out.push_back(static_cast<uint8_t>((val >> bits) & 0xff));
+            bits -= 8;
+        }
+    }
+    return out;
+}
+
 static bool fetch_ipfs_bytes(const char* cid, size_t cid_len,
                              std::vector<uint8_t>& out_bytes)
 {
-    // Build JSON payload: {"path":"/ipfs/<cid>"}
-    std::string payload = "{\"path\":\"/ipfs/";
+    // Build JSON payload: {"cid":"<cid>"}
+    std::string payload = "{\"cid\":\"";
     payload.append(cid, cid_len);
     payload += "\"}";
 
@@ -260,10 +314,36 @@ static bool fetch_ipfs_bytes(const char* cid, size_t cid_len,
     int32_t resp_len = sdn_host_response_len();
     if (resp_len <= 0) return false;
 
-    out_bytes.resize((size_t)resp_len);
-    int32_t read = sdn_host_read_response(reinterpret_cast<char*>(out_bytes.data()), resp_len);
+    // Read JSON envelope: {"ok":true,"result":{"__type":"bytes","base64":"..."}}
+    std::vector<char> json_buf((size_t)resp_len);
+    int32_t read = sdn_host_read_response(json_buf.data(), resp_len);
     sdn_host_clear_response();
-    return read == resp_len;
+    if (read != resp_len) return false;
+
+    // Extract the base64 value from the JSON envelope
+    std::string json_str(json_buf.data(), (size_t)resp_len);
+
+    // Check for "ok":true
+    if (json_str.find("\"ok\":true") == std::string::npos &&
+        json_str.find("\"ok\": true") == std::string::npos) {
+        return false;
+    }
+
+    // Find "base64":"<value>"
+    const char* b64_key = "\"base64\":\"";
+    size_t b64_pos = json_str.find(b64_key);
+    if (b64_pos == std::string::npos) {
+        // Fallback: if response doesn't have base64 wrapper, treat as raw bytes
+        out_bytes.assign(json_buf.begin(), json_buf.end());
+        return true;
+    }
+
+    size_t val_start = b64_pos + strlen(b64_key);
+    size_t val_end = json_str.find('"', val_start);
+    if (val_end == std::string::npos) return false;
+
+    out_bytes = b64_decode_vec(json_str.data() + val_start, val_end - val_start);
+    return !out_bytes.empty();
 }
 #else
 // Stub for host-side builds
@@ -282,7 +362,7 @@ static flatbuffers::DetachedBuffer build_error_response(const char* msg) {
     PluginInvokeResponseBuilder rb(fbb);
     rb.add_status_code(1); // error
     rb.add_error_message(msg_off);
-    fbb.Finish(rb.Finish());
+    FinishPluginInvokeResponseBuffer(fbb, rb.Finish());
     return fbb.Release();
 }
 
@@ -304,7 +384,7 @@ static flatbuffers::DetachedBuffer build_bytes_response(
     rb.add_status_code(status);
     rb.add_output_frames(frames_vec);
     rb.add_payload_arena(arena_vec);
-    fbb.Finish(rb.Finish());
+    FinishPluginInvokeResponseBuffer(fbb, rb.Finish());
     return fbb.Release();
 }
 
