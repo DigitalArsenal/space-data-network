@@ -29,8 +29,20 @@ type Module struct {
 	capReg   *CapabilityRegistry
 	mu       sync.Mutex
 
+	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+}
+
+// Context returns the module's lifecycle context. It is set when Start() is called
+// and cancelled when Close() is called. Returns context.Background() before Start().
+func (m *Module) Context() context.Context {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ctx != nil {
+		return m.ctx
+	}
+	return context.Background()
 }
 
 // CapabilityRegistry maps capability strings to provisioner functions.
@@ -165,7 +177,10 @@ func (m *Module) ID() string {
 
 func (m *Module) Start(ctx context.Context, runtime plugins.RuntimeContext) error {
 	ctx, cancel := context.WithCancel(ctx)
+	m.mu.Lock()
+	m.ctx = ctx
 	m.cancel = cancel
+	m.mu.Unlock()
 
 	// Register libp2p stream handlers for declared protocols
 	if runtime.Host != nil {
