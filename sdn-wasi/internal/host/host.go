@@ -6,12 +6,9 @@ package host
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 
-	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/api"
-	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
+	"github.com/second-state/WasmEdge-go/wasmedge"
 )
 
 // NetworkHandler is implemented by the host to provide network capabilities
@@ -29,8 +26,8 @@ type StorageHandler interface {
 
 // Host manages the WASM runtime and module
 type Host struct {
-	runtime wazero.Runtime
-	module  api.Module
+	conf    *wasmedge.Configure
+	vm      *wasmedge.VM
 	network NetworkHandler
 	storage StorageHandler
 	mu      sync.Mutex
@@ -44,205 +41,244 @@ type Config struct {
 
 // New creates a new host runtime
 func New(ctx context.Context, wasmBytes []byte, cfg Config) (*Host, error) {
-	r := wazero.NewRuntime(ctx)
-
-	// Instantiate WASI
-	if _, err := wasi_snapshot_preview1.Instantiate(ctx, r); err != nil {
-		r.Close(ctx)
-		return nil, fmt.Errorf("failed to instantiate WASI: %w", err)
+	conf := wasmedge.NewConfigure(wasmedge.WASI)
+	vm := wasmedge.NewVMWithConfig(conf)
+	if vm == nil {
+		conf.Release()
+		return nil, fmt.Errorf("failed to create WasmEdge VM")
 	}
 
 	h := &Host{
-		runtime: r,
+		conf:    conf,
+		vm:      vm,
 		network: cfg.Network,
 		storage: cfg.Storage,
 	}
 
-	// Define host functions
-	envBuilder := r.NewHostModuleBuilder("env")
+	// Initialize WASI — the VM auto-registers a WASI module when WASI is in the config.
+	wasiMod := vm.GetImportModule(wasmedge.WASI)
+	if wasiMod == nil {
+		h.Release()
+		return nil, fmt.Errorf("failed to get WASI import module")
+	}
+	wasiMod.InitWasi([]string{}, []string{}, []string{})
 
-	envBuilder.NewFunctionBuilder().
-		WithFunc(h.hostLog).
-		Export("host_log")
-
-	envBuilder.NewFunctionBuilder().
-		WithFunc(h.hostSendMessage).
-		Export("host_send_message")
-
-	envBuilder.NewFunctionBuilder().
-		WithFunc(h.hostSubscribe).
-		Export("host_subscribe")
-
-	envBuilder.NewFunctionBuilder().
-		WithFunc(h.hostGetPeerID).
-		Export("host_get_peer_id")
-
-	envBuilder.NewFunctionBuilder().
-		WithFunc(h.hostStoreData).
-		Export("host_store_data")
-
-	envBuilder.NewFunctionBuilder().
-		WithFunc(h.hostLoadData).
-		Export("host_load_data")
-
-	if _, err := envBuilder.Instantiate(ctx); err != nil {
-		r.Close(ctx)
-		return nil, fmt.Errorf("failed to instantiate env module: %w", err)
+	// Build host module with env functions
+	envMod := wasmedge.NewModule("env")
+	if envMod == nil {
+		h.Release()
+		return nil, fmt.Errorf("failed to create env module")
 	}
 
-	// Compile the WASM module
-	compiled, err := r.CompileModule(ctx, wasmBytes)
-	if err != nil {
-		r.Close(ctx)
-		return nil, fmt.Errorf("failed to compile WASM module: %w", err)
+	i32 := func() *wasmedge.ValType { return wasmedge.NewValTypeI32() }
+	i64 := func() *wasmedge.ValType { return wasmedge.NewValTypeI64() }
+
+	// host_log(ptr i32, length i32) -> void
+	addHostFunc(envMod, "host_log", []*wasmedge.ValType{i32(), i32()}, nil,
+		func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+			ptr := uint32(params[0].(int32))
+			length := uint32(params[1].(int32))
+			mem := cf.GetMemoryByIndex(0)
+			if mem == nil {
+				return nil, wasmedge.Result_Success
+			}
+			data, err := mem.GetData(uint(ptr), uint(length))
+			if err != nil {
+				return nil, wasmedge.Result_Success
+			}
+			fmt.Printf("[WASM] %s\n", string(data))
+			return nil, wasmedge.Result_Success
+		})
+
+	// host_send_message(topicPtr i32, topicLen i32, dataPtr i32, dataLen i32) -> i32
+	addHostFunc(envMod, "host_send_message", []*wasmedge.ValType{i32(), i32(), i32(), i32()}, []*wasmedge.ValType{i32()},
+		func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+			topicPtr := uint32(params[0].(int32))
+			topicLen := uint32(params[1].(int32))
+			dataPtr := uint32(params[2].(int32))
+			dataLen := uint32(params[3].(int32))
+			mem := cf.GetMemoryByIndex(0)
+			if mem == nil {
+				return []interface{}{int32(1)}, wasmedge.Result_Success
+			}
+			topic, err := mem.GetData(uint(topicPtr), uint(topicLen))
+			if err != nil {
+				return []interface{}{int32(1)}, wasmedge.Result_Success
+			}
+			data, err := mem.GetData(uint(dataPtr), uint(dataLen))
+			if err != nil {
+				return []interface{}{int32(2)}, wasmedge.Result_Success
+			}
+			if h.network == nil {
+				return []interface{}{int32(3)}, wasmedge.Result_Success
+			}
+			if err := h.network.SendMessage(string(topic), data); err != nil {
+				fmt.Printf("[Host] Send error: %v\n", err)
+				return []interface{}{int32(4)}, wasmedge.Result_Success
+			}
+			return []interface{}{int32(0)}, wasmedge.Result_Success
+		})
+
+	// host_subscribe(topicPtr i32, topicLen i32) -> i32
+	addHostFunc(envMod, "host_subscribe", []*wasmedge.ValType{i32(), i32()}, []*wasmedge.ValType{i32()},
+		func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+			topicPtr := uint32(params[0].(int32))
+			topicLen := uint32(params[1].(int32))
+			mem := cf.GetMemoryByIndex(0)
+			if mem == nil {
+				return []interface{}{int32(1)}, wasmedge.Result_Success
+			}
+			topic, err := mem.GetData(uint(topicPtr), uint(topicLen))
+			if err != nil {
+				return []interface{}{int32(1)}, wasmedge.Result_Success
+			}
+			if h.network == nil {
+				return []interface{}{int32(2)}, wasmedge.Result_Success
+			}
+			if err := h.network.Subscribe(string(topic)); err != nil {
+				fmt.Printf("[Host] Subscribe error: %v\n", err)
+				return []interface{}{int32(3)}, wasmedge.Result_Success
+			}
+			return []interface{}{int32(0)}, wasmedge.Result_Success
+		})
+
+	// host_get_peer_id(bufPtr i32, bufLen i32) -> i32
+	addHostFunc(envMod, "host_get_peer_id", []*wasmedge.ValType{i32(), i32()}, []*wasmedge.ValType{i32()},
+		func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+			bufPtr := uint32(params[0].(int32))
+			bufLen := uint32(params[1].(int32))
+			if h.network == nil {
+				return []interface{}{int32(0)}, wasmedge.Result_Success
+			}
+			peerID := h.network.GetPeerID()
+			if uint32(len(peerID)) > bufLen {
+				return []interface{}{int32(0)}, wasmedge.Result_Success
+			}
+			mem := cf.GetMemoryByIndex(0)
+			if mem == nil {
+				return []interface{}{int32(0)}, wasmedge.Result_Success
+			}
+			mem.SetData([]byte(peerID), uint(bufPtr), uint(len(peerID)))
+			return []interface{}{int32(len(peerID))}, wasmedge.Result_Success
+		})
+
+	// host_store_data(schemaPtr i32, schemaLen i32, dataPtr i32, dataLen i32) -> i64
+	addHostFunc(envMod, "host_store_data", []*wasmedge.ValType{i32(), i32(), i32(), i32()}, []*wasmedge.ValType{i64()},
+		func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+			schemaPtr := uint32(params[0].(int32))
+			schemaLen := uint32(params[1].(int32))
+			dataPtr := uint32(params[2].(int32))
+			dataLen := uint32(params[3].(int32))
+			mem := cf.GetMemoryByIndex(0)
+			if mem == nil {
+				return []interface{}{int64(0)}, wasmedge.Result_Success
+			}
+			schema, err := mem.GetData(uint(schemaPtr), uint(schemaLen))
+			if err != nil {
+				return []interface{}{int64(0)}, wasmedge.Result_Success
+			}
+			data, err := mem.GetData(uint(dataPtr), uint(dataLen))
+			if err != nil {
+				return []interface{}{int64(0)}, wasmedge.Result_Success
+			}
+			if h.storage == nil {
+				return []interface{}{int64(0)}, wasmedge.Result_Success
+			}
+			cid, err := h.storage.Store(string(schema), data)
+			if err != nil {
+				fmt.Printf("[Host] Store error: %v\n", err)
+				return []interface{}{int64(0)}, wasmedge.Result_Success
+			}
+			return []interface{}{int64(cid)}, wasmedge.Result_Success
+		})
+
+	// host_load_data(cidPtr i32, cidLen i32, bufPtr i32, bufLen i32) -> i32
+	addHostFunc(envMod, "host_load_data", []*wasmedge.ValType{i32(), i32(), i32(), i32()}, []*wasmedge.ValType{i32()},
+		func(_ interface{}, cf *wasmedge.CallingFrame, params []interface{}) ([]interface{}, wasmedge.Result) {
+			cidPtr := uint32(params[0].(int32))
+			cidLen := uint32(params[1].(int32))
+			bufPtr := uint32(params[2].(int32))
+			bufLen := uint32(params[3].(int32))
+			mem := cf.GetMemoryByIndex(0)
+			if mem == nil {
+				return []interface{}{int32(0)}, wasmedge.Result_Success
+			}
+			cidBytes, err := mem.GetData(uint(cidPtr), uint(cidLen))
+			if err != nil {
+				return []interface{}{int32(0)}, wasmedge.Result_Success
+			}
+			if h.storage == nil {
+				return []interface{}{int32(0)}, wasmedge.Result_Success
+			}
+			data, err := h.storage.Load(string(cidBytes))
+			if err != nil {
+				fmt.Printf("[Host] Load error: %v\n", err)
+				return []interface{}{int32(0)}, wasmedge.Result_Success
+			}
+			if uint32(len(data)) > bufLen {
+				return []interface{}{int32(0)}, wasmedge.Result_Success
+			}
+			mem.SetData(data, uint(bufPtr), uint(len(data)))
+			return []interface{}{int32(len(data))}, wasmedge.Result_Success
+		})
+
+	if err := vm.RegisterModule(envMod); err != nil {
+		envMod.Release()
+		h.Release()
+		return nil, fmt.Errorf("failed to register env module: %w", err)
 	}
 
-	// Instantiate with _start (required for Go WASI modules to initialize runtime)
-	// The module will initialize and return quickly in library mode
-	config := wazero.NewModuleConfig().
-		WithStdout(os.Stdout).
-		WithStderr(os.Stderr).
-		WithStartFunctions("_start")
-
-	module, err := r.InstantiateModule(ctx, compiled, config)
-	if err != nil {
-		r.Close(ctx)
+	// Load, validate, and instantiate the WASM module.
+	// WasmEdge will run _start automatically for WASI command modules.
+	if err := vm.LoadWasmBuffer(wasmBytes); err != nil {
+		h.Release()
+		return nil, fmt.Errorf("failed to load WASM module: %w", err)
+	}
+	if err := vm.Validate(); err != nil {
+		h.Release()
+		return nil, fmt.Errorf("failed to validate WASM module: %w", err)
+	}
+	if err := vm.Instantiate(); err != nil {
+		h.Release()
 		return nil, fmt.Errorf("failed to instantiate WASM module: %w", err)
 	}
-
-	h.module = module
 
 	return h, nil
 }
 
+// addHostFunc is a helper to register a host function on a module.
+func addHostFunc(mod *wasmedge.Module, name string, params, returns []*wasmedge.ValType,
+	fn func(interface{}, *wasmedge.CallingFrame, []interface{}) ([]interface{}, wasmedge.Result)) {
+	ft := wasmedge.NewFunctionType(params, returns)
+	hostfn := wasmedge.NewFunction(ft, fn, nil, 0)
+	ft.Release()
+	mod.AddFunction(name, hostfn)
+}
+
+// Release frees all WasmEdge resources.
+func (h *Host) Release() {
+	if h.vm != nil {
+		h.vm.Release()
+		h.vm = nil
+	}
+	if h.conf != nil {
+		h.conf.Release()
+		h.conf = nil
+	}
+}
+
 // Close releases resources
 func (h *Host) Close(ctx context.Context) error {
-	return h.runtime.Close(ctx)
-}
-
-// Host function implementations
-
-func (h *Host) hostLog(ctx context.Context, m api.Module, ptr, length uint32) {
-	data, ok := m.Memory().Read(ptr, length)
-	if ok {
-		fmt.Printf("[WASM] %s\n", string(data))
-	}
-}
-
-func (h *Host) hostSendMessage(ctx context.Context, m api.Module, topicPtr, topicLen, dataPtr, dataLen uint32) uint32 {
-	topic, ok := m.Memory().Read(topicPtr, topicLen)
-	if !ok {
-		return 1
-	}
-
-	data, ok := m.Memory().Read(dataPtr, dataLen)
-	if !ok {
-		return 2
-	}
-
-	if h.network == nil {
-		return 3
-	}
-
-	if err := h.network.SendMessage(string(topic), data); err != nil {
-		fmt.Printf("[Host] Send error: %v\n", err)
-		return 4
-	}
-
-	return 0
-}
-
-func (h *Host) hostSubscribe(ctx context.Context, m api.Module, topicPtr, topicLen uint32) uint32 {
-	topic, ok := m.Memory().Read(topicPtr, topicLen)
-	if !ok {
-		return 1
-	}
-
-	if h.network == nil {
-		return 2
-	}
-
-	if err := h.network.Subscribe(string(topic)); err != nil {
-		fmt.Printf("[Host] Subscribe error: %v\n", err)
-		return 3
-	}
-
-	return 0
-}
-
-func (h *Host) hostGetPeerID(ctx context.Context, m api.Module, bufPtr, bufLen uint32) uint32 {
-	if h.network == nil {
-		return 0
-	}
-
-	peerID := h.network.GetPeerID()
-	if uint32(len(peerID)) > bufLen {
-		return 0
-	}
-
-	m.Memory().Write(bufPtr, []byte(peerID))
-	return uint32(len(peerID))
-}
-
-func (h *Host) hostStoreData(ctx context.Context, m api.Module, schemaPtr, schemaLen, dataPtr, dataLen uint32) uint64 {
-	schema, ok := m.Memory().Read(schemaPtr, schemaLen)
-	if !ok {
-		return 0
-	}
-
-	data, ok := m.Memory().Read(dataPtr, dataLen)
-	if !ok {
-		return 0
-	}
-
-	if h.storage == nil {
-		return 0
-	}
-
-	cid, err := h.storage.Store(string(schema), data)
-	if err != nil {
-		fmt.Printf("[Host] Store error: %v\n", err)
-		return 0
-	}
-
-	return cid
-}
-
-func (h *Host) hostLoadData(ctx context.Context, m api.Module, cidPtr, cidLen, bufPtr, bufLen uint32) uint32 {
-	cid, ok := m.Memory().Read(cidPtr, cidLen)
-	if !ok {
-		return 0
-	}
-
-	if h.storage == nil {
-		return 0
-	}
-
-	data, err := h.storage.Load(string(cid))
-	if err != nil {
-		fmt.Printf("[Host] Load error: %v\n", err)
-		return 0
-	}
-
-	if uint32(len(data)) > bufLen {
-		return 0
-	}
-
-	m.Memory().Write(bufPtr, data)
-	return uint32(len(data))
+	h.Release()
+	return nil
 }
 
 // Call invokes an exported function
-func (h *Host) Call(ctx context.Context, name string, args ...uint64) ([]uint64, error) {
+func (h *Host) Call(ctx context.Context, name string, args ...interface{}) ([]interface{}, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	fn := h.module.ExportedFunction(name)
-	if fn == nil {
-		return nil, fmt.Errorf("function not found: %s", name)
-	}
-
-	return fn.Call(ctx, args...)
+	return h.vm.Execute(name, args...)
 }
 
 // WriteString writes a string to module memory and returns the pointer
@@ -250,22 +286,24 @@ func (h *Host) WriteString(ctx context.Context, s string) (uint32, uint32, error
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	// Get buffer pointer from module
-	getPtr := h.module.ExportedFunction("sdn_get_buffer_ptr")
-	if getPtr == nil {
-		return 0, 0, fmt.Errorf("sdn_get_buffer_ptr not found")
-	}
-
-	result, err := getPtr.Call(ctx)
+	results, err := h.vm.Execute("sdn_get_buffer_ptr")
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("sdn_get_buffer_ptr not found: %w", err)
 	}
 
-	ptr := uint32(result[0])
+	ptr := uint32(results[0].(int32))
 	data := []byte(s)
 
-	if !h.module.Memory().Write(ptr, data) {
-		return 0, 0, fmt.Errorf("failed to write to memory")
+	mod := h.vm.GetActiveModule()
+	if mod == nil {
+		return 0, 0, fmt.Errorf("no active module")
+	}
+	mem := mod.FindMemory("memory")
+	if mem == nil {
+		return 0, 0, fmt.Errorf("memory not found")
+	}
+	if err := mem.SetData(data, uint(ptr), uint(len(data))); err != nil {
+		return 0, 0, fmt.Errorf("failed to write to memory: %w", err)
 	}
 
 	return ptr, uint32(len(data)), nil
@@ -276,20 +314,24 @@ func (h *Host) ReadBuffer(ctx context.Context, length uint32) ([]byte, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	getPtr := h.module.ExportedFunction("sdn_get_buffer_ptr")
-	if getPtr == nil {
-		return nil, fmt.Errorf("sdn_get_buffer_ptr not found")
-	}
-
-	result, err := getPtr.Call(ctx)
+	results, err := h.vm.Execute("sdn_get_buffer_ptr")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sdn_get_buffer_ptr not found: %w", err)
 	}
 
-	ptr := uint32(result[0])
-	data, ok := h.module.Memory().Read(ptr, length)
-	if !ok {
-		return nil, fmt.Errorf("failed to read from memory")
+	ptr := uint32(results[0].(int32))
+
+	mod := h.vm.GetActiveModule()
+	if mod == nil {
+		return nil, fmt.Errorf("no active module")
+	}
+	mem := mod.FindMemory("memory")
+	if mem == nil {
+		return nil, fmt.Errorf("memory not found")
+	}
+	data, err := mem.GetData(uint(ptr), uint(length))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read from memory: %w", err)
 	}
 
 	return data, nil
@@ -302,7 +344,7 @@ func (h *Host) Version(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	data, err := h.ReadBuffer(ctx, uint32(result[0]))
+	data, err := h.ReadBuffer(ctx, uint32(result[0].(int32)))
 	if err != nil {
 		return "", err
 	}
@@ -317,42 +359,36 @@ func (h *Host) RegisterSchema(ctx context.Context, name string, content []byte) 
 		return -1, err
 	}
 
-	// For content, we need a separate write
-	// For now, pass 0,0 for empty content
 	result, err := h.Call(ctx, "sdn_register_schema",
-		uint64(namePtr), uint64(nameLen),
-		0, 0,
+		int32(namePtr), int32(nameLen),
+		int32(0), int32(0),
 	)
 	if err != nil {
 		return -1, err
 	}
 
-	return int32(result[0]), nil
+	return result[0].(int32), nil
 }
 
 // ProcessMessage processes an incoming message
 func (h *Host) ProcessMessage(ctx context.Context, schema string, data, signature []byte, from string) error {
-	// Write schema
 	schemaPtr, schemaLen, err := h.WriteString(ctx, schema)
 	if err != nil {
 		return err
 	}
 
-	// For a proper implementation, we'd need multiple buffer areas
-	// This is simplified for demonstration
-
 	result, err := h.Call(ctx, "sdn_process_message",
-		uint64(schemaPtr), uint64(schemaLen),
-		0, 0, // data placeholder
-		0, 0, // signature placeholder
-		0, 0, // from placeholder
+		int32(schemaPtr), int32(schemaLen),
+		int32(0), int32(0), // data placeholder
+		int32(0), int32(0), // signature placeholder
+		int32(0), int32(0), // from placeholder
 	)
 	if err != nil {
 		return err
 	}
 
-	if int32(result[0]) != 0 {
-		return fmt.Errorf("process_message returned error: %d", int32(result[0]))
+	if result[0].(int32) != 0 {
+		return fmt.Errorf("process_message returned error: %d", result[0].(int32))
 	}
 
 	return nil

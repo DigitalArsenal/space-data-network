@@ -9,6 +9,7 @@ import (
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/mr-tron/base58"
+	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 	"golang.org/x/crypto/ripemd160"
 	"golang.org/x/crypto/sha3"
 )
@@ -86,66 +87,58 @@ func (hw *HDWalletModule) deriveSecp256k1PubKeyWASM(ctx context.Context, seed []
 	hw.mu.Lock()
 	defer hw.mu.Unlock()
 
-	if hw.keyFromSeed == nil || hw.keyDerivePath == nil || hw.keyGetPublic == nil || hw.keyDestroy == nil {
-		return nil, ErrHDWalletNoModule
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, wasmCallTimeout)
-	defer cancel()
-
-	seedPtr, err := hw.allocate(ctx, seed)
+	seedPtr, err := hw.mod.Allocate(seed)
 	if err != nil {
 		return nil, err
 	}
-	defer hw.deallocate(ctx, seedPtr, uint32(len(seed)))
+	defer hw.mod.SecureDeallocate(seedPtr, uint32(len(seed)))
 
-	results, err := hw.keyFromSeed.Call(ctx,
-		uint64(seedPtr), uint64(len(seed)),
-		uint64(CurveSecp256k1),
+	results, err := hw.mod.Execute("hd_key_from_seed",
+		int32(seedPtr), int32(len(seed)),
+		int32(CurveSecp256k1),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("key_from_seed failed: %w", err)
 	}
-	masterHandle := results[0]
+	masterHandle := wasmrt.ToInt32(results[0])
 	if masterHandle == 0 {
 		return nil, fmt.Errorf("key_from_seed returned null handle")
 	}
-	defer hw.keyDestroy.Call(ctx, masterHandle)
+	defer hw.mod.Execute("hd_key_destroy", masterHandle)
 
-	pathPtr, err := hw.allocateString(ctx, path)
+	pathPtr, err := hw.mod.AllocateString(path)
 	if err != nil {
 		return nil, err
 	}
-	defer hw.deallocate(ctx, pathPtr, uint32(len(path)+1))
+	defer hw.mod.Deallocate(pathPtr)
 
-	results, err = hw.keyDerivePath.Call(ctx, masterHandle, uint64(pathPtr))
+	results, err = hw.mod.Execute("hd_key_derive_path", masterHandle, int32(pathPtr))
 	if err != nil {
 		return nil, fmt.Errorf("key_derive_path failed: %w", err)
 	}
-	derivedHandle := results[0]
+	derivedHandle := wasmrt.ToInt32(results[0])
 	if derivedHandle == 0 {
 		return nil, fmt.Errorf("key_derive_path returned null handle for path %s", path)
 	}
-	defer hw.keyDestroy.Call(ctx, derivedHandle)
+	defer hw.mod.Execute("hd_key_destroy", derivedHandle)
 
 	pubSize := uint32(33)
-	pubPtr, err := hw.allocateSize(ctx, pubSize)
+	pubPtr, err := hw.mod.AllocateSize(pubSize)
 	if err != nil {
 		return nil, err
 	}
-	defer hw.deallocate(ctx, pubPtr, pubSize)
+	defer hw.mod.Deallocate(pubPtr)
 
-	results, err = hw.keyGetPublic.Call(ctx, derivedHandle, uint64(pubPtr), uint64(pubSize))
+	results, err = hw.mod.Execute("hd_key_get_public", derivedHandle, int32(pubPtr), int32(pubSize))
 	if err != nil {
 		return nil, fmt.Errorf("key_get_public failed: %w", err)
 	}
-	// Return value is an error code (0 = OK, negative = error), not byte count.
-	errCode := int32(results[0])
+	errCode := wasmrt.ToInt32(results[0])
 	if errCode < 0 {
 		return nil, fmt.Errorf("key_get_public error: %d", errCode)
 	}
 
-	return hw.readMemory(ctx, pubPtr, pubSize)
+	return hw.mod.ReadMemory(pubPtr, pubSize)
 }
 
 // ---------------------------------------------------------------------------

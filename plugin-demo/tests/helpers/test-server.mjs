@@ -13,7 +13,7 @@
  */
 
 import { execSync, spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
@@ -57,15 +57,36 @@ async function waitForReady(url, timeoutMs = 30000) {
  */
 function buildServer(serverDir) {
   const binaryPath = join(serverDir, 'spacedatanetwork-test');
+
+  // If the binary already exists (pre-built by CI), skip the rebuild.
+  if (existsSync(binaryPath)) {
+    if (VERBOSE) console.log(`Using pre-built SDN server at ${binaryPath}`);
+    return binaryPath;
+  }
+
   if (VERBOSE) console.log(`Building SDN server → ${binaryPath}`);
 
-  // Use Apple's system clang on macOS to avoid linker issues
+  // Use Apple's system clang on macOS to avoid linker issues with Homebrew LLVM
+  // targeting SDKs that may not be installed (e.g. MacOSX26.sdk).
   const env = { ...process.env };
-  if (process.platform === 'darwin' && !env.CC) {
-    try {
-      execSync('/usr/bin/clang --version', { stdio: 'ignore' });
-      env.CC = '/usr/bin/clang';
-    } catch { /* no system clang, use default */ }
+  if (process.platform === 'darwin') {
+    if (!env.CC) {
+      try {
+        execSync('/usr/bin/clang --version', { stdio: 'ignore' });
+        env.CC = '/usr/bin/clang';
+      } catch { /* no system clang, use default */ }
+    }
+    // Fix CGO sysroot: find the highest installed SDK and set CGO_CFLAGS/CGO_LDFLAGS
+    if (!env.CGO_CFLAGS) {
+      try {
+        const sdk = execSync('xcrun --sdk macosx --show-sdk-path 2>/dev/null', { encoding: 'utf8' }).trim();
+        if (sdk) {
+          const sysrootFlag = `-isysroot ${sdk}`;
+          env.CGO_CFLAGS = (env.CGO_CFLAGS ? env.CGO_CFLAGS + ' ' : '') + sysrootFlag;
+          env.CGO_LDFLAGS = (env.CGO_LDFLAGS ? env.CGO_LDFLAGS + ' ' : '') + sysrootFlag;
+        }
+      } catch { /* xcrun not available, proceed without sysroot fix */ }
+    }
   }
 
   execSync(`go build -o ${binaryPath} ./cmd/spacedatanetwork`, {

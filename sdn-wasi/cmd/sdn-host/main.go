@@ -166,7 +166,7 @@ func runTests(ctx context.Context, h *host.Host) {
 	if err != nil {
 		fmt.Printf("FAIL: %v\n", err)
 	} else {
-		data, _ := h.ReadBuffer(ctx, uint32(result[0]))
+		data, _ := h.ReadBuffer(ctx, uint32(result[0].(int32)))
 		fmt.Printf("PASS (%s)\n", string(data))
 	}
 
