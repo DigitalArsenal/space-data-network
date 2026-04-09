@@ -1,0 +1,16 @@
+{
+  "name": "@spacedatanetwork/client-decrypt",
+  "version": "0.1.0",
+  "description": "SDN client decryption module — decrypts X25519 ECIES artifact envelopes using Crypto++",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../build.mjs client-decrypt",
+    "build:clean": "rm -rf .build dist && node ../build.mjs client-decrypt"
+  },
+  "keywords": ["sdn", "wasm", "decryption", "x25519", "ecies", "aes-gcm"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DigitalArsenal/sdn-client-decrypt"
+  }
+}
