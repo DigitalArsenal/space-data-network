@@ -1,8 +1,5 @@
 module github.com/spacedatanetwork/sdn-wasi
 
-go 1.22
+go 1.24.0
 
-// WASI-compatible module - minimal dependencies
-// No CGO, no network-dependent packages
-
-require github.com/tetratelabs/wazero v1.7.0
+require github.com/second-state/WasmEdge-go v0.14.0

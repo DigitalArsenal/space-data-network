@@ -22,6 +22,29 @@ type Config struct {
 	Users      []UserEntry      `yaml:"users"`
 	Blockchain BlockchainConfig `yaml:"blockchain"`
 	Publishing PublishingConfig `yaml:"publishing"`
+	Flows      FlowsConfig      `yaml:"flows"`
+}
+
+// FlowsConfig controls the flow orchestration runtime.
+type FlowsConfig struct {
+	// Enabled enables flow loading and execution.
+	Enabled bool `yaml:"enabled"`
+
+	// StoragePath is the directory for installed flow artifacts.
+	// Default: {storage.path}/flows
+	StoragePath string `yaml:"storage_path"`
+
+	// MaxFlows is the maximum number of concurrently running flows.
+	MaxFlows int `yaml:"max_flows"`
+
+	// MaxMemoryPages is the WasmEdge memory limit per flow (in 64KB pages).
+	MaxMemoryPages uint32 `yaml:"max_memory_pages"`
+
+	// EditorEnabled serves the sdn-flow visual editor on the admin interface.
+	EditorEnabled bool `yaml:"editor_enabled"`
+
+	// EditorPath is the URL base path for the editor (default: /flow-editor).
+	EditorPath string `yaml:"editor_path"`
 }
 
 // PublishingConfig controls remote data publishing via the API.
@@ -326,6 +349,14 @@ func Default() *Config {
 			MaxRecordBytes:    10 * 1024 * 1024, // 10MB
 			DefaultQuotaBytes: 100 * 1024 * 1024, // 100MB
 			MinTrustLevel:     "standard",
+		},
+		Flows: FlowsConfig{
+			Enabled:        true,
+			StoragePath:    filepath.Join(dataPath, "flows"),
+			MaxFlows:       50,
+			MaxMemoryPages: 1024, // 64MB per flow
+			EditorEnabled:  false,
+			EditorPath:     "/flow-editor",
 		},
 	}
 }

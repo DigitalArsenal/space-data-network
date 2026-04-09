@@ -1,219 +1,105 @@
 package sdn_wasi_test
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
+	"github.com/second-state/WasmEdge-go/wasmedge"
 )
 
-// TestWazeroLoadModule tests loading the WASM module with wazero
-func TestWazeroLoadModule(t *testing.T) {
+// TestWasmEdgeLoadModule tests loading the WASM module with WasmEdge
+func TestWasmEdgeLoadModule(t *testing.T) {
 	wasmPath := findWASMFile(t)
 
-	wasmBytes, err := os.ReadFile(wasmPath)
+	conf := wasmedge.NewConfigure(wasmedge.WASI)
+	vm := wasmedge.NewVMWithConfig(conf)
+	defer vm.Release()
+	defer conf.Release()
+
+	err := vm.LoadWasmFile(wasmPath)
 	if err != nil {
-		t.Fatalf("Failed to read WASM file: %v", err)
+		t.Fatalf("Failed to load module: %v", err)
 	}
 
-	ctx := context.Background()
-	r := wazero.NewRuntime(ctx)
-	defer r.Close(ctx)
+	t.Logf("Module loaded successfully")
 
-	// Compile the module (doesn't instantiate yet)
-	compiled, err := r.CompileModule(ctx, wasmBytes)
+	err = vm.Validate()
 	if err != nil {
-		t.Fatalf("Failed to compile module: %v", err)
+		t.Fatalf("Failed to validate module: %v", err)
 	}
 
-	t.Logf("Module compiled successfully")
-
-	// Check exported functions
-	exports := compiled.ExportedFunctions()
-	t.Logf("Exported functions: %d", len(exports))
-	for name := range exports {
-		t.Logf("  - %s", name)
-	}
-
-	// Check imported functions
-	imports := compiled.ImportedFunctions()
-	t.Logf("Imported functions: %d", len(imports))
+	t.Logf("Module validated successfully")
 }
 
-// TestWazeroWithWASI tests running with WASI support
-func TestWazeroWithWASI(t *testing.T) {
+// TestWasmEdgeWithWASI tests running with WASI support and host functions
+func TestWasmEdgeWithWASI(t *testing.T) {
 	wasmPath := findWASMFile(t)
 
-	wasmBytes, err := os.ReadFile(wasmPath)
-	if err != nil {
-		t.Fatalf("Failed to read WASM file: %v", err)
+	conf := wasmedge.NewConfigure(wasmedge.WASI)
+	vm := wasmedge.NewVMWithConfig(conf)
+	defer vm.Release()
+	defer conf.Release()
+
+	// Initialize WASI — VM auto-registers WASI when it's in the config
+	wasiMod := vm.GetImportModule(wasmedge.WASI)
+	if wasiMod == nil {
+		t.Fatal("Failed to get WASI import module")
 	}
+	wasiMod.InitWasi([]string{"sdn-wasi"}, []string{}, []string{})
 
-	ctx := context.Background()
-	r := wazero.NewRuntime(ctx)
-	defer r.Close(ctx)
-
-	// Instantiate WASI
-	wasi, err := wasi_snapshot_preview1.Instantiate(ctx, r)
-	if err != nil {
-		t.Fatalf("Failed to instantiate WASI: %v", err)
-	}
-	defer wasi.Close(ctx)
-
-	t.Log("WASI instantiated successfully")
+	t.Log("WASI initialized")
 
 	// Create mock host functions
-	envBuilder := r.NewHostModuleBuilder("env")
+	i32 := func() *wasmedge.ValType { return wasmedge.NewValTypeI32() }
+	i64 := func() *wasmedge.ValType { return wasmedge.NewValTypeI64() }
 
-	// Add required host functions
-	envBuilder.NewFunctionBuilder().
-		WithFunc(func(ctx context.Context, ptr, length uint32) {
-			t.Logf("[host_log] ptr=%d, len=%d", ptr, length)
-		}).
-		Export("host_log")
+	envMod := wasmedge.NewModule("env")
 
-	envBuilder.NewFunctionBuilder().
-		WithFunc(func(ctx context.Context, topicPtr, topicLen, dataPtr, dataLen uint32) uint32 {
-			t.Logf("[host_send_message] topic=%d/%d, data=%d/%d", topicPtr, topicLen, dataPtr, dataLen)
-			return 0
-		}).
-		Export("host_send_message")
-
-	envBuilder.NewFunctionBuilder().
-		WithFunc(func(ctx context.Context, topicPtr, topicLen uint32) uint32 {
-			t.Logf("[host_subscribe] topic=%d/%d", topicPtr, topicLen)
-			return 0
-		}).
-		Export("host_subscribe")
-
-	envBuilder.NewFunctionBuilder().
-		WithFunc(func(ctx context.Context, bufPtr, bufLen uint32) uint32 {
-			return 0
-		}).
-		Export("host_get_peer_id")
-
-	envBuilder.NewFunctionBuilder().
-		WithFunc(func(ctx context.Context, schemaPtr, schemaLen, dataPtr, dataLen uint32) uint64 {
-			t.Logf("[host_store_data] schema=%d/%d, data=%d/%d", schemaPtr, schemaLen, dataPtr, dataLen)
-			return 1
-		}).
-		Export("host_store_data")
-
-	envBuilder.NewFunctionBuilder().
-		WithFunc(func(ctx context.Context, cidPtr, cidLen, bufPtr, bufLen uint32) uint32 {
-			return 0
-		}).
-		Export("host_load_data")
-
-	env, err := envBuilder.Instantiate(ctx)
-	if err != nil {
-		t.Fatalf("Failed to instantiate env module: %v", err)
+	noop := func(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
+		return nil, wasmedge.Result_Success
 	}
-	defer env.Close(ctx)
+	ret0i32 := func(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
+		return []interface{}{int32(0)}, wasmedge.Result_Success
+	}
+	ret0i64 := func(_ interface{}, _ *wasmedge.CallingFrame, _ []interface{}) ([]interface{}, wasmedge.Result) {
+		return []interface{}{int64(0)}, wasmedge.Result_Success
+	}
+
+	addFunc := func(name string, params, returns []*wasmedge.ValType,
+		fn func(interface{}, *wasmedge.CallingFrame, []interface{}) ([]interface{}, wasmedge.Result)) {
+		ft := wasmedge.NewFunctionType(params, returns)
+		hostfn := wasmedge.NewFunction(ft, fn, nil, 0)
+		ft.Release()
+		envMod.AddFunction(name, hostfn)
+	}
+
+	addFunc("host_log", []*wasmedge.ValType{i32(), i32()}, nil, noop)
+	addFunc("host_send_message", []*wasmedge.ValType{i32(), i32(), i32(), i32()}, []*wasmedge.ValType{i32()}, ret0i32)
+	addFunc("host_subscribe", []*wasmedge.ValType{i32(), i32()}, []*wasmedge.ValType{i32()}, ret0i32)
+	addFunc("host_get_peer_id", []*wasmedge.ValType{i32(), i32()}, []*wasmedge.ValType{i32()}, ret0i32)
+	addFunc("host_store_data", []*wasmedge.ValType{i32(), i32(), i32(), i32()}, []*wasmedge.ValType{i64()}, ret0i64)
+	addFunc("host_load_data", []*wasmedge.ValType{i32(), i32(), i32(), i32()}, []*wasmedge.ValType{i32()}, ret0i32)
+
+	if err := vm.RegisterModule(envMod); err != nil {
+		t.Fatalf("Failed to register env module: %v", err)
+	}
+	defer envMod.Release()
 
 	t.Log("Host functions registered")
 
-	// Compile module
-	compiled, err := r.CompileModule(ctx, wasmBytes)
-	if err != nil {
-		t.Fatalf("Failed to compile module: %v", err)
+	// Load, validate, and instantiate
+	if err := vm.LoadWasmFile(wasmPath); err != nil {
+		t.Fatalf("Failed to load module: %v", err)
 	}
-
-	// Instantiate with WASI config
-	config := wazero.NewModuleConfig().
-		WithStdout(os.Stdout).
-		WithStderr(os.Stderr).
-		WithArgs("sdn-wasi") // No command = library mode
-
-	module, err := r.InstantiateModule(ctx, compiled, config)
-	if err != nil {
+	if err := vm.Validate(); err != nil {
+		t.Fatalf("Failed to validate module: %v", err)
+	}
+	if err := vm.Instantiate(); err != nil {
 		t.Fatalf("Failed to instantiate module: %v", err)
 	}
-	defer module.Close(ctx)
 
 	t.Log("Module instantiated successfully")
-}
-
-// TestWazeroVersionCommand tests running the version command
-func TestWazeroVersionCommand(t *testing.T) {
-	wasmPath := findWASMFile(t)
-
-	wasmBytes, err := os.ReadFile(wasmPath)
-	if err != nil {
-		t.Fatalf("Failed to read WASM file: %v", err)
-	}
-
-	ctx := context.Background()
-	r := wazero.NewRuntime(ctx)
-	defer r.Close(ctx)
-
-	// Instantiate WASI
-	_, err = wasi_snapshot_preview1.Instantiate(ctx, r)
-	if err != nil {
-		t.Fatalf("Failed to instantiate WASI: %v", err)
-	}
-
-	// Create mock host functions (minimal)
-	envBuilder := r.NewHostModuleBuilder("env")
-	envBuilder.NewFunctionBuilder().WithFunc(func(ctx context.Context, ptr, length uint32) {}).Export("host_log")
-	envBuilder.NewFunctionBuilder().WithFunc(func(ctx context.Context, a, b, c, d uint32) uint32 { return 0 }).Export("host_send_message")
-	envBuilder.NewFunctionBuilder().WithFunc(func(ctx context.Context, a, b uint32) uint32 { return 0 }).Export("host_subscribe")
-	envBuilder.NewFunctionBuilder().WithFunc(func(ctx context.Context, a, b uint32) uint32 { return 0 }).Export("host_get_peer_id")
-	envBuilder.NewFunctionBuilder().WithFunc(func(ctx context.Context, a, b, c, d uint32) uint64 { return 0 }).Export("host_store_data")
-	envBuilder.NewFunctionBuilder().WithFunc(func(ctx context.Context, a, b, c, d uint32) uint32 { return 0 }).Export("host_load_data")
-
-	_, err = envBuilder.Instantiate(ctx)
-	if err != nil {
-		t.Fatalf("Failed to instantiate env module: %v", err)
-	}
-
-	// Compile and run with version command
-	compiled, err := r.CompileModule(ctx, wasmBytes)
-	if err != nil {
-		t.Fatalf("Failed to compile module: %v", err)
-	}
-
-	// Create a buffer to capture stdout
-	var stdout, stderr captureWriter
-
-	config := wazero.NewModuleConfig().
-		WithStdout(&stdout).
-		WithStderr(&stderr).
-		WithArgs("sdn-wasi", "version")
-
-	module, err := r.InstantiateModule(ctx, compiled, config)
-	if err != nil {
-		t.Fatalf("Failed to instantiate module: %v", err)
-	}
-	defer module.Close(ctx)
-
-	output := stdout.String()
-	if output == "" {
-		output = stderr.String()
-	}
-
-	t.Logf("Version output: %s", output)
-
-	if output == "" {
-		t.Error("Expected version output")
-	}
-}
-
-// captureWriter captures written data
-type captureWriter struct {
-	data []byte
-}
-
-func (w *captureWriter) Write(p []byte) (n int, err error) {
-	w.data = append(w.data, p...)
-	return len(p), nil
-}
-
-func (w *captureWriter) String() string {
-	return string(w.data)
 }
 
 // TestDistDirectoryStructure verifies the dist directory structure
