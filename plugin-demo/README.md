@@ -159,8 +159,8 @@ const fileId = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
 
 ## WASM Plugin API
 
-SDN loads plugins as WASI-compiled WebAssembly modules using **Wazero** (pure Go
-WASM runtime). Plugins run in a sandboxed 32MB memory space.
+SDN loads standalone WASI-compatible WebAssembly modules through **WasmEdge**.
+The guest ABI is the canonical `space-data-module-sdk` invoke surface.
 
 ### Required Exports
 
@@ -168,45 +168,61 @@ Your WASM module **must** export these functions:
 
 | Export | Signature | Purpose |
 |--------|-----------|---------|
-| `malloc` | `(size: i32) → ptr: i32` | Allocate memory for host→guest data |
-| `free` | `(ptr: i32)` | Free allocated memory |
-| `plugin_init` | `(seed_ptr: i32, seed_len: i32) → i32` | Initialize with identity seed |
-| `plugin_handle_request` | `(req_ptr: i32, req_len: i32, out_ptr: i32, out_len: i32) → i32` | Handle a request |
-| `plugin_get_public_key` | `(out_ptr: i32, out_len: i32) → i32` | Return plugin's public key |
-| `plugin_get_metadata` | `(out_ptr: i32, out_len: i32) → i32` | Return JSON metadata |
-| `plugin_request_challenge` | `(req_ptr: i32, req_len: i32, out_ptr: i32, out_len: i32) → i32` | Challenge-response auth |
-| `plugin_cron` *(optional)* | `(method_ptr: i32, method_len: i32, in_ptr: i32, in_len: i32, out_ptr: i32, out_cap: i32) → i32` | Scheduled task execution |
+| `plugin_alloc` | `(size: i32) → ptr: i32` | Allocate guest memory for host-written request bytes |
+| `plugin_free` | `(ptr: i32, size: i32)` | Free guest allocations returned through the invoke ABI |
+| `plugin_invoke_stream` | `(req_ptr: i32, req_len: i32, out_len_ptr: i32) → ptr: i32` | Invoke one manifest method using a FlatBuffer request envelope |
+| `plugin_get_manifest_flatbuffer` | `() → ptr: i32` | Return the embedded FlatBuffer manifest bytes |
+| `plugin_get_manifest_flatbuffer_size` | `() → size: i32` | Return the embedded manifest size |
+| `_initialize` *(optional)* | `() -> void` | WASI C/C++ runtime initialization hook |
+| `_start` *(optional)* | `() -> void` | Standalone command entrypoint when the guest exposes one |
 
 ### Host Functions Provided
 
-The SDN runtime provides these imports under the `sdn` namespace:
+The SDN runtime provides these imports under the `sdn_host` namespace:
 
 | Import | Signature | Purpose |
 |--------|-----------|---------|
-| `sdn.clock_now_ms` | `() → i64` | Current time in milliseconds |
-| `sdn.random_bytes` | `(ptr: i32, len: i32) → i32` | Fill buffer with random bytes (max 8192) |
-| `sdn.log` | `(level: i32, ptr: i32, len: i32)` | Log a message (0=debug, 1=info, 2=warn, 3=error) |
+| `call_json` | `(op_ptr: i32, op_len: i32, payload_ptr: i32, payload_len: i32) → status: i32` | Execute one sync hostcall |
+| `response_len` | `() → len: i32` | Length of the last hostcall JSON response envelope |
+| `read_response` | `(dst_ptr: i32, dst_len: i32) → copied: i32` | Copy the last hostcall response envelope into guest memory |
+| `clear_response` | `() → status: i32` | Clear the cached hostcall response |
+| `last_status_code` | `() → status: i32` | Return the previous hostcall status code |
 
-Plus standard `wasi_snapshot_preview1` imports (fd_write, proc_exit, etc.).
+The currently supported hostcall operations are:
+
+- `host.runtimeTarget`
+- `host.listCapabilities`
+- `host.listSupportedCapabilities`
+- `host.listOperations`
+- `host.hasCapability`
+- `clock.now`
+- `clock.monotonicNow`
+- `clock.nowIso`
+- `random.bytes`
+
+Binary hostcall results use the canonical JSON wrapper
+`{ "__type": "bytes", "base64": "..." }`.
+
+Plus standard `wasi_snapshot_preview1` imports.
 
 ### Memory Contract
 
-1. Host calls `malloc(N)` to allocate N bytes in guest memory
+1. Host calls `plugin_alloc(N)` to allocate N bytes in guest memory
 2. Host writes input data at the returned pointer
-3. Host calls the plugin function with (ptr, len)
-4. For output: host allocates an output buffer via `malloc`, passes (out_ptr, out_cap)
-5. Plugin writes response into out_ptr, returns actual bytes written
-6. Host calls `free()` when done
+3. Host encodes a `PluginInvokeRequest` FlatBuffer and passes it to `plugin_invoke_stream`
+4. Guest returns a pointer to a `PluginInvokeResponse` FlatBuffer and writes its size to `out_len_ptr`
+5. Host copies the response bytes, then calls `plugin_free(ptr, size)` on guest-owned allocations
 
 ### Plugin Lifecycle
 
 ```
-1. Load WASM bytes → Wazero runtime
+1. Load standalone WASM bytes into WasmEdge
 2. Call _initialize (if present) — WASI C++ runtime setup
-3. Call plugin_init(seed, seed_len) — pass identity seed
-4. Register libp2p protocol handlers (stream bridge)
-5. Register HTTP handlers (HTTP bridge)
-6. Plugin is now "running" and handles requests
+3. Read the embedded manifest and validate the canonical exports
+4. Invoke manifest methods through `plugin_invoke_stream`
+5. Register libp2p protocol handlers (stream bridge)
+6. Register HTTP handlers (HTTP bridge)
+7. Plugin is now "running" and handles requests
 ```
 
 ### Example Plugin (C)

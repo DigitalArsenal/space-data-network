@@ -37,7 +37,7 @@ if ! $SKIP_BUILD; then
 
   if [ ! -f "$SERVER_BIN" ] || [ "$SERVER_SRC" -nt "$SERVER_BIN" ]; then
     echo -e "${CYAN}Building Go server...${NC}"
-    (cd "$ROOT/sdn-server" && go build -o spacedatanetwork ./cmd/spacedatanetwork)
+    "$ROOT/scripts/go-with-wasmedge.sh" build -o spacedatanetwork ./cmd/spacedatanetwork
     echo -e "${GREEN}Server built.${NC}"
   else
     echo -e "${GREEN}Server binary is up to date.${NC}"

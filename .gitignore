@@ -58,6 +58,7 @@ yarn-error.log*
 # WASM builds
 *.wasm.map
 /sdn-wasi/dist/
+sdn-server/spacedatanetwork
 
 # Legacy vendored packages (removed)
 # packages/emsdk/ - replaced by flatc-wasm npm package
