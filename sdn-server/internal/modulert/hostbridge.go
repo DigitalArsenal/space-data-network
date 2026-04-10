@@ -24,9 +24,9 @@ type CapHandler func(operation string, payload []byte) ([]byte, error)
 // HostBridge is a per-module sdn_host dispatcher. It holds the module's
 // granted capabilities and routes hostcall operations to the appropriate handler.
 type HostBridge struct {
-	granted    map[string]bool
+	granted     map[string]bool
 	capHandlers map[string]CapHandler // capability prefix → handler
-	nodeCtx    *NodeContext
+	nodeCtx     *NodeContext
 
 	// Response buffer for the sdn_host protocol
 	lastStatus  int32
@@ -92,14 +92,29 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 			"schedule_cron",
 		})
 	case "host.hasCapability":
-		var p struct{ Capability string `json:"capability"` }
+		var p struct {
+			Capability string `json:"capability"`
+		}
 		json.Unmarshal(payload, &p)
 		return okJSON(hb.granted[p.Capability])
 	case "host.listOperations":
-		return okJSON([]string{"clock.now", "clock.nowIso", "clock.monotonicNow",
-			"random.bytes", "host.runtimeTarget", "host.listCapabilities",
-			"host.hasCapability", "host.listOperations", "node.publicKey",
-			"node.peerId", "plugin.getConfig"})
+		operations := []string{
+			"clock.now",
+			"clock.nowIso",
+			"clock.monotonicNow",
+			"random.bytes",
+			"host.runtimeTarget",
+			"host.listCapabilities",
+			"host.hasCapability",
+			"host.listOperations",
+			"node.publicKey",
+			"node.peerId",
+			"plugin.getConfig",
+		}
+		if _, ok := hb.capHandlers["protocol"]; ok {
+			operations = append(operations, "protocol.request")
+		}
+		return okJSON(operations)
 	case "node.publicKey":
 		if hb.nodeCtx != nil && hb.nodeCtx.PublicKeyHex != "" {
 			return okJSON(hb.nodeCtx.PublicKeyHex)
@@ -134,7 +149,9 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 func (hb *HostBridge) handleRandomBytes(payload []byte) []byte {
 	n := 32
 	if len(payload) > 0 {
-		var p struct{ Length int `json:"length"` }
+		var p struct {
+			Length int `json:"length"`
+		}
 		if json.Unmarshal(payload, &p) == nil && p.Length > 0 {
 			n = p.Length
 		}

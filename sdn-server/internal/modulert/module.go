@@ -10,6 +10,7 @@ import (
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
@@ -27,6 +28,7 @@ type Module struct {
 	bridge   *HostBridge
 	nodeCtx  *NodeContext
 	capReg   *CapabilityRegistry
+	host     host.Host
 	mu       sync.Mutex
 
 	ctx    context.Context
@@ -180,6 +182,7 @@ func (m *Module) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 	m.mu.Lock()
 	m.ctx = ctx
 	m.cancel = cancel
+	m.host = runtime.Host
 	m.mu.Unlock()
 
 	// Register libp2p stream handlers for declared protocols
@@ -316,6 +319,13 @@ func (m *Module) Manifest() *Manifest { return m.manifest }
 
 // Mod returns the underlying wasmrt.Module.
 func (m *Module) Mod() *wasmrt.Module { return m.mod }
+
+// RuntimeHost returns the module's bound libp2p host once Start() has run.
+func (m *Module) RuntimeHost() host.Host {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.host
+}
 
 // --- Generic protocol stream handler ---
 

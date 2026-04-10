@@ -38,11 +38,11 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/capabilities"
-	"github.com/spacedatanetwork/sdn-server/internal/modulert"
-	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/logservice"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -65,19 +65,19 @@ const (
 
 // Node represents a Space Data Network node.
 type Node struct {
-	host       host.Host
-	dht        *dht.IpfsDHT
-	pubsub     *pubsub.PubSub
-	topics     map[string]*pubsub.Topic
-	flatc      *wasm.FlatcModule
-	hdwallet   *wasm.HDWalletModule
-	identity   *wasm.DerivedIdentity // nil if using random key (no HD wallet)
-	validator  *sds.Validator
-	store      *storage.FlatSQLStore
-	protocol   *protocol.SDSExchangeHandler
-	plugins    *plugins.Manager
-	license    *licenseplugin.Plugin
-	epmService *epm.Service
+	host        host.Host
+	dht         *dht.IpfsDHT
+	pubsub      *pubsub.PubSub
+	topics      map[string]*pubsub.Topic
+	flatc       *wasm.FlatcModule
+	hdwallet    *wasm.HDWalletModule
+	identity    *wasm.DerivedIdentity // nil if using random key (no HD wallet)
+	validator   *sds.Validator
+	store       *storage.FlatSQLStore
+	protocol    *protocol.SDSExchangeHandler
+	plugins     *plugins.Manager
+	license     *licenseplugin.Plugin
+	epmService  *epm.Service
 	logService  *logservice.Service
 	flowManager *flowrt.FlowManager
 	config      *config.Config
@@ -609,6 +609,11 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	// PubSub capability — requires libp2p pubsub to be running
 	if n.pubsub != nil {
 		reg.Register("pubsub", caps.NewPubSubCapFactory(n.pubsub))
+	}
+
+	// Protocol dial capability — requires the node's libp2p host to be running.
+	if n.host != nil {
+		reg.Register("protocol_dial", caps.NewProtocolCapFactory())
 	}
 
 	return reg
