@@ -3,8 +3,9 @@
  *
  * Isomorphic WASM module runner built on the space-data-module-sdk 0.5.22
  * browser harness. Wraps loadModule() / createBrowserModuleHarness() and adds
- * libp2p protocol registration so a module's declared protocols are live the
- * moment the runner starts.
+ * libp2p protocol registration so a module's declared inbound protocols are
+ * live the moment the runner starts. Async client-side transport flows such as
+ * the license exchange belong in sdn-js, not in guest-side protocol hostcalls.
  *
  * Browser:  uses createBrowserModuleHarness (WASI shim + optional sdn_host)
  * Node/CI:  uses WasmEdge via the isomorphic loader

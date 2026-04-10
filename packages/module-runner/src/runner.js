@@ -10,7 +10,7 @@
  *
  *   const runner = await createModuleRunner({
  *     wasmSource: wasmBytes,          // Uint8Array, ArrayBuffer, URL, or path
- *     libp2p: heliaNode.libp2p,       // optional — enables protocol.* hostcalls
+ *     libp2p: heliaNode.libp2p,       // optional — registers inbound module protocols
  *     capabilities: ["http", "crypto_hash"],
  *   });
  *
@@ -31,7 +31,7 @@ import { decodePluginManifest } from "space-data-module-sdk/manifest";
  *
  * @param {object} options
  * @param {Uint8Array|ArrayBuffer|Response|string} options.wasmSource
- * @param {object}  [options.libp2p]      — libp2p / Helia libp2p instance
+ * @param {object}  [options.libp2p]      — libp2p / Helia instance used to register inbound module protocols
  * @param {string[]}[options.capabilities]— capabilities to grant the module
  * @param {string[]}[options.args]         — WASI args
  * @param {object}  [options.env]          — WASI env vars
