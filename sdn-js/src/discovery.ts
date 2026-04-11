@@ -1,69 +1,92 @@
-/**
- * DHT Discovery for SDN services.
- *
- * Enables clients to find servers by their baked-in secp256k1 public key:
- * 1. Client has the server's secp256k1 compressed public key (baked at build time)
- * 2. Derives the server's PeerID from the public key via hd-wallet-wasm
- * 3. Computes a CID from SHA-256(namespace + pubkey)
- * 4. Calls DHT FindProviders(CID) to discover the server's multiaddrs
- * 5. Opens a libp2p stream to the server's PeerID
- *
- * This mirrors the server-side pattern in streambridge.go.
- */
+import { derivePeerIdFromPublicKey } from './crypto/hd-wallet';
 
-import { sha256, derivePeerIdFromPublicKey, derivePeerIdFromXpub } from './crypto/index';
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+const encoder = new TextEncoder();
 
-/** Namespace used for computing the DHT CID. Must match server-side. */
-const KEY_BROKER_CID_NAMESPACE = 'sdn-key-broker-pubkey';
+export const MODULE_DELIVERY_DISCOVERY_NAMESPACE = 'space-data-network/module-delivery/provider-pubkey';
 
-/**
- * Derive a libp2p PeerID from a secp256k1 compressed public key (33 bytes)
- * or from an xpub string.
- */
-export async function deriveServerPeerID(keyOrXpub: Uint8Array | string): Promise<string> {
-  if (typeof keyOrXpub === 'string') {
-    return derivePeerIdFromXpub(keyOrXpub);
-  }
-  if (keyOrXpub.length !== 33) {
-    throw new Error(`Expected 33-byte secp256k1 compressed public key, got ${keyOrXpub.length} bytes`);
-  }
-  return derivePeerIdFromPublicKey(keyOrXpub);
+export async function deriveProviderPeerId(publicKey: Uint8Array): Promise<string> {
+  assertCompressedPublicKey(publicKey);
+  return derivePeerIdFromPublicKey(publicKey);
 }
 
-/**
- * Compute the CID that the server announces to the DHT.
- *
- * This is SHA-256(namespace + pubkey), encoded as a CIDv1 with raw codec.
- * Clients use this CID with FindProviders to locate the server.
- *
- * Returns the raw multihash bytes (SHA-256). The caller is responsible
- * for constructing the full CID if needed for their DHT implementation.
- */
-export async function computeServerCIDHash(
-  pubKey: Uint8Array,
-  namespace: string = KEY_BROKER_CID_NAMESPACE
-): Promise<Uint8Array> {
-  // Concatenate namespace + pubkey, then SHA-256
-  const nsBytes = new TextEncoder().encode(namespace);
-  const input = new Uint8Array(nsBytes.length + pubKey.length);
-  input.set(nsBytes, 0);
-  input.set(pubKey, nsBytes.length);
+export async function computeProviderDiscoveryCID(
+  publicKey: Uint8Array,
+  namespace: string = MODULE_DELIVERY_DISCOVERY_NAMESPACE,
+): Promise<string> {
+  assertCompressedPublicKey(publicKey);
+  const namespaceBytes = encoder.encode(namespace);
+  const input = new Uint8Array(namespaceBytes.length + publicKey.length);
+  input.set(namespaceBytes, 0);
+  input.set(publicKey, namespaceBytes.length);
 
-  return sha256(input);
+  const hash = await sha256(input);
+  return encodeCIDv1Raw(hash);
 }
 
-/**
- * Full discovery flow: derive PeerID and CID hash from a baked public key.
- *
- * Returns both the PeerID string and the SHA-256 hash used for DHT lookup.
- */
-export async function discoverServer(pubKey: Uint8Array): Promise<{
+export async function discoverProvider(publicKey: Uint8Array): Promise<{
   peerId: string;
-  cidHash: Uint8Array;
+  discoveryCID: string;
+  discoveryNamespace: string;
 }> {
-  const [peerId, cidHash] = await Promise.all([
-    deriveServerPeerID(pubKey),
-    computeServerCIDHash(pubKey),
+  const [peerId, discoveryCID] = await Promise.all([
+    deriveProviderPeerId(publicKey),
+    computeProviderDiscoveryCID(publicKey),
   ]);
-  return { peerId, cidHash };
+
+  return {
+    peerId,
+    discoveryCID,
+    discoveryNamespace: MODULE_DELIVERY_DISCOVERY_NAMESPACE,
+  };
+}
+
+function assertCompressedPublicKey(publicKey: Uint8Array): void {
+  if (publicKey.length !== 33) {
+    throw new Error(`Expected 33-byte compressed secp256k1 public key, got ${publicKey.length} bytes`);
+  }
+  if (publicKey[0] !== 0x02 && publicKey[0] !== 0x03) {
+    throw new Error('Expected compressed secp256k1 public key prefix (0x02/0x03)');
+  }
+}
+
+async function sha256(value: Uint8Array): Promise<Uint8Array> {
+  if (globalThis.crypto?.subtle) {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', Uint8Array.from(value));
+    return new Uint8Array(digest);
+  }
+
+  const cryptoModule = await import('node:crypto');
+  return new Uint8Array(cryptoModule.createHash('sha256').update(Buffer.from(value)).digest());
+}
+
+function encodeCIDv1Raw(hash: Uint8Array): string {
+  const cidBytes = new Uint8Array(4 + hash.length);
+  cidBytes[0] = 0x01;
+  cidBytes[1] = 0x55;
+  cidBytes[2] = 0x12;
+  cidBytes[3] = 0x20;
+  cidBytes.set(hash, 4);
+  return `b${base32Encode(cidBytes)}`;
+}
+
+function base32Encode(value: Uint8Array): string {
+  let output = '';
+  let bits = 0;
+  let current = 0;
+
+  for (const byte of value) {
+    current = (current << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      output += BASE32_ALPHABET[(current >>> (bits - 5)) & 0x1f];
+      bits -= 5;
+    }
+  }
+
+  if (bits > 0) {
+    output += BASE32_ALPHABET[(current << (5 - bits)) & 0x1f];
+  }
+
+  return output;
 }

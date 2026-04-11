@@ -1,25 +1,19 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { SDNNode } from './node';
+import { deriveProviderPeerId } from './discovery';
 
-vi.mock('./license', () => ({
-  LICENSE_PROTOCOL_ID: '/space-data-network/license/1.0.0',
-  requestLicenseGrantViaRelay: vi.fn(),
-}));
-
-interface SpaceAwareNodeInfo {
-  peer_id?: unknown;
-  listen_addresses?: unknown;
-}
-
-const SPACEAWARE_NODE_INFO_URL =
-  process.env.SDN_SPACEAWARE_NODE_INFO_URL ?? 'https://spaceaware.io/api/node/info';
-const SPACEAWARE_DNS_RELAY = process.env.SDN_SPACEAWARE_DNS_RELAY ?? 'spaceaware.io';
+const SPACEAWARE_PROVIDER_PUBLIC_KEY = process.env.SDN_SPACEAWARE_PROVIDER_PUBLIC_KEY ?? '';
+const SPACEAWARE_RELAY_CANDIDATES = (process.env.SDN_SPACEAWARE_RELAY_CANDIDATES ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 const runLiveRelayTest = process.env.SDN_RUN_RELAY_TEST === '1';
-const describeLive = runLiveRelayTest ? describe : describe.skip;
+const hasRelayFixture = SPACEAWARE_PROVIDER_PUBLIC_KEY.length > 0 && SPACEAWARE_RELAY_CANDIDATES.length > 0;
+const describeLive = runLiveRelayTest && hasRelayFixture ? describe : describe.skip;
 
 describeLive('spaceaware relay integration', () => {
-  it('dials a live relay address from spaceaware.io deployment', { timeout: 120_000 }, async () => {
+  it('dials a live relay address from a runtime-supplied provider descriptor', { timeout: 120_000 }, async () => {
     const { SDNNode } = await import('./node');
     const { peerId, candidates } = await resolveRelayCandidates();
     expect(candidates.length).toBeGreaterThan(0);
@@ -41,49 +35,21 @@ describeLive('spaceaware relay integration', () => {
 });
 
 async function resolveRelayCandidates(): Promise<{ peerId: string; candidates: string[] }> {
-  const info = await fetchNodeInfo();
-  const peerId = asNonEmptyString(info.peer_id, 'peer_id');
-  const listenAddresses = asStringArray(info.listen_addresses);
-
-  const candidates = new Set<string>();
-  candidates.add(`/dns4/${SPACEAWARE_DNS_RELAY}/tcp/443/wss/p2p/${peerId}`);
-
-  for (const addr of listenAddresses) {
-    if (addr.includes('/ws')) {
-      candidates.add(ensurePeerSuffix(addr, peerId));
-    }
-  }
-
-  return { peerId, candidates: Array.from(candidates) };
+  const peerId = await deriveProviderPeerId(hexToBytes(SPACEAWARE_PROVIDER_PUBLIC_KEY));
+  const candidates = SPACEAWARE_RELAY_CANDIDATES.map((addr) => ensurePeerSuffix(addr, peerId));
+  return { peerId, candidates };
 }
 
-async function fetchNodeInfo(): Promise<SpaceAwareNodeInfo> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
-
-  try {
-    const response = await fetch(SPACEAWARE_NODE_INFO_URL, { signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`spaceaware node info request failed: HTTP ${response.status}`);
-    }
-    return (await response.json()) as SpaceAwareNodeInfo;
-  } finally {
-    clearTimeout(timeout);
+function hexToBytes(hex: string): Uint8Array {
+  const normalized = hex.trim().toLowerCase();
+  if (normalized.length % 2 !== 0) {
+    throw new Error('provider public key must be hex');
   }
-}
-
-function asNonEmptyString(value: unknown, fieldName: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`spaceaware node info missing "${fieldName}"`);
+  const bytes = new Uint8Array(normalized.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(normalized.slice(index * 2, index * 2 + 2), 16);
   }
-  return value;
-}
-
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+  return bytes;
 }
 
 function ensurePeerSuffix(addr: string, peerId: string): string {

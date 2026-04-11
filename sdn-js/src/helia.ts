@@ -22,6 +22,7 @@
  */
 
 import { createHelia, type Helia } from 'helia';
+import { unixfs } from '@helia/unixfs';
 import { createLibp2p, type Libp2p } from 'libp2p';
 import { webSockets } from '@libp2p/websockets';
 import { all as wsFilters } from '@libp2p/websockets/filters';
@@ -34,6 +35,7 @@ import { noise } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { kadDHT } from '@libp2p/kad-dht';
 import { keys } from '@libp2p/crypto';
+import { CID } from 'multiformats/cid';
 
 import type { SDNConfig } from './node';
 import { getBootstrapRelays } from './edge-discovery';
@@ -57,6 +59,21 @@ export interface HeliaSDNNode {
   libp2p: Libp2p;
   /** Stop both Helia and libp2p. */
   stop(): Promise<void>;
+}
+
+export async function createHeliaFromLibp2p(libp2p: Libp2p): Promise<Helia> {
+  return createHelia({ libp2p } as never);
+}
+
+export async function fetchCIDBytesFromHelia(helia: Helia, cid: string): Promise<Uint8Array> {
+  const fs = unixfs(helia);
+  const bytes: Uint8Array[] = [];
+
+  for await (const chunk of fs.cat(CID.parse(cid))) {
+    bytes.push(chunk.slice());
+  }
+
+  return concatBytes(bytes);
 }
 
 /**
@@ -102,7 +119,7 @@ export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaS
   }
 
   const libp2p = await createLibp2p(libp2pOpts);
-  const helia = await createHelia({ libp2p } as any);
+  const helia = await createHeliaFromLibp2p(libp2p);
 
   return {
     helia,
@@ -111,4 +128,22 @@ export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaS
       await helia.stop();
     },
   };
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  if (chunks.length === 0) {
+    return new Uint8Array(0);
+  }
+  if (chunks.length === 1) {
+    return chunks[0];
+  }
+
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
 }

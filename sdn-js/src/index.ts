@@ -8,25 +8,32 @@ export { SDNNode } from './node';
 export { createHeliaSDNNode } from './helia';
 export type { HeliaSDNNode } from './helia';
 export type { SDNConfig, SDNNodeEvents } from './node';
-export { LEGACY_ID_EXCHANGE_PROTOCOL, LICENSE_PROTOCOL_ID, IPFS_BOOTSTRAP_PEERS } from './node';
+export { LEGACY_ID_EXCHANGE_PROTOCOL, IPFS_BOOTSTRAP_PEERS } from './node';
 export {
-  requestLicenseGrantViaRelay,
-  derivePeerIdFromSeed,
-  derivePeerIdFromEd25519Seed,
-  parseLicenseResponse,
-  LicenseProtocolError,
-} from './license';
+  MODULE_DELIVERY_PROTOCOL_ID,
+  ModuleDeliveryProtocolError,
+  fetchEncryptedModuleBundle,
+  requestEncryptedModuleBundle,
+  requestModuleGrant,
+} from './module-delivery';
 export type {
-  LicenseTransport,
-  LicenseChallengeRequest,
-  LicenseChallengeResponse,
-  LicenseProofRequest,
-  LicenseEntitlement,
-  LicenseGrantRequestOptions,
-  LicenseGrantResponse,
-  LicenseGrantResult,
-  LicenseErrorResponse,
-} from './license';
+  DiscoveredProvider,
+  EncryptedModuleBundleResult,
+  ModuleDeliveryTransport,
+  ModuleGrantRequestOptions,
+  ModuleGrantResult,
+  RequesterIdentity,
+} from './module-delivery';
+export {
+  normalizeEPMDescriptor,
+  normalizeServerDescriptor,
+} from './server-descriptor';
+export type {
+  NormalizedServerDescriptor,
+  ServerDescriptor,
+  ServerDescriptorInput,
+  ServerDescriptorResolver,
+} from './server-descriptor';
 export { SDNStorage } from './storage';
 export type { StoredRecord, QueryFilter, LogSyncState } from './storage';
 export { preloadFlatSQLWASI, getFlatSQLWASIPath } from './flatsql';
@@ -105,16 +112,11 @@ export type { WalletMetadata } from './crypto/key-store';
 
 // DHT Discovery + Baked Keys
 export {
-  deriveServerPeerID,
-  computeServerCIDHash,
-  discoverServer,
+  MODULE_DELIVERY_DISCOVERY_NAMESPACE,
+  computeProviderDiscoveryCID,
+  deriveProviderPeerId,
+  discoverProvider,
 } from './discovery';
-export {
-  LICENSE_SERVER_PUBKEY_HEX,
-  LICENSE_SERVER_XPUB,
-  getLicenseServerPubkey,
-  hexToBytes,
-} from './baked-keys';
 
 // EPM Resolution
 export {

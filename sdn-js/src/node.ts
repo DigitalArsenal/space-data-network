@@ -14,6 +14,9 @@ import { noise } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { kadDHT } from '@libp2p/kad-dht';
 import { multiaddr } from '@multiformats/multiaddr';
+import type { Helia } from 'helia';
+import { CID } from 'multiformats/cid';
+import { peerIdFromString } from '@libp2p/peer-id';
 
 import { keys } from '@libp2p/crypto';
 
@@ -23,16 +26,22 @@ import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
 import { initHDWallet } from './crypto/hd-wallet';
 import type { DerivedIdentity } from './crypto/types';
 import {
-  requestLicenseGrantViaRelay,
-  LICENSE_PROTOCOL_ID,
-  type LicenseGrantRequestOptions,
-  type LicenseGrantResult,
-} from './license';
+  fetchCIDBytesFromHelia,
+  createHeliaFromLibp2p,
+} from './helia';
+import {
+  requestEncryptedModuleBundle,
+  requestModuleGrant,
+  type DiscoveredProvider,
+  type ModuleGrantRequestOptions,
+  type ModuleGrantResult,
+  type ModuleDeliveryTransport,
+  type EncryptedModuleBundleResult,
+  MODULE_DELIVERY_PROTOCOL_ID,
+} from './module-delivery';
 
 const TOPIC_PREFIX = '/spacedatanetwork/sds/';
 export const LEGACY_ID_EXCHANGE_PROTOCOL = '/space-data-network/id-exchange/1.0.0';
-export { LICENSE_PROTOCOL_ID };
-
 // Public IPFS bootstrap peers + SDN relay can be combined for browser interop.
 export const IPFS_BOOTSTRAP_PEERS = [
   '/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN',
@@ -69,6 +78,7 @@ export interface SDNNodeEvents {
 
 export class SDNNode {
   private libp2p: Libp2p | null = null;
+  private heliaNode: Helia | null = null;
   private storage: SDNStorage | null = null;
   private config: SDNConfig;
   private events: SDNNodeEvents;
@@ -349,39 +359,50 @@ export class SDNNode {
   /**
    * Dial a specific protocol through a relay circuit and return the first reply chunk.
    */
+  async dialProtocol(
+    targetPeerId: string,
+    protocolId: string,
+    payload: Uint8Array,
+    candidateAddrs: string[] = [],
+  ): Promise<Uint8Array> {
+    if (!this.libp2p) {
+      throw new Error('Node not initialized');
+    }
+
+    const payloadBytes = payload.slice();
+    const dialTargets = candidateAddrs.map((addr) => normalizeDialTarget(addr, targetPeerId));
+    let lastError: unknown = null;
+
+    if (dialTargets.length === 0) {
+      const stream = await this.libp2p.dialProtocol(
+        peerIdFromString(targetPeerId) as unknown as Parameters<Libp2p['dialProtocol']>[0],
+        protocolId,
+      );
+      return exchangeStream(stream, payloadBytes);
+    }
+
+    for (const dialTarget of dialTargets) {
+      try {
+        const stream = await this.libp2p.dialProtocol(multiaddr(dialTarget), protocolId);
+        return await exchangeStream(stream, payloadBytes);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw new Error(
+      `failed to dial ${protocolId} for ${targetPeerId}: ${formatError(lastError)}`,
+    );
+  }
+
   async dialProtocolThroughRelay(
     relayAddr: string,
     targetPeerId: string,
     protocolId: string,
     payload: Uint8Array | string
   ): Promise<Uint8Array> {
-    if (!this.libp2p) {
-      throw new Error('Node not initialized');
-    }
-
-    const relayMa = multiaddr(relayAddr);
-    const circuitAddr = relayMa.encapsulate(`/p2p-circuit/p2p/${targetPeerId}`);
-    const stream = await this.libp2p.dialProtocol(circuitAddr, protocolId);
-
-    try {
-      const payloadBytes = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
-
-      await stream.sink((async function *source() {
-        yield payloadBytes;
-      })());
-
-      const chunks: Uint8Array[] = [];
-      for await (const chunk of stream.source) {
-        chunks.push(chunkToBytes(chunk as StreamChunk));
-      }
-      return concatBytes(chunks);
-    } finally {
-      try {
-        await stream.close();
-      } catch {
-        // Ignore close errors in probe/test path.
-      }
-    }
+    const payloadBytes = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
+    return this.dialProtocol(targetPeerId, protocolId, payloadBytes, [relayAddr]);
   }
 
   /**
@@ -397,11 +418,62 @@ export class SDNNode {
     return new TextDecoder().decode(response);
   }
 
-  /**
-   * Request a capability token from the license service over libp2p relay.
-   */
-  async requestLicenseGrant(options: LicenseGrantRequestOptions): Promise<LicenseGrantResult> {
-    return requestLicenseGrantViaRelay(this, options);
+  async discoverProviders(discoveryCID: string): Promise<DiscoveredProvider[]> {
+    if (!this.libp2p) {
+      throw new Error('Node not initialized');
+    }
+
+    const providers: DiscoveredProvider[] = [];
+    const seen = new Set<string>();
+    const timeout = AbortSignal.timeout(10_000);
+
+    for await (const provider of this.libp2p.contentRouting.findProviders(CID.parse(discoveryCID), { signal: timeout })) {
+      const peerId = provider.id.toString();
+      const multiaddrs = provider.multiaddrs.map((addr) => addr.toString());
+      const key = `${peerId}:${multiaddrs.join(',')}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      providers.push({ peerId, multiaddrs });
+    }
+
+    return providers;
+  }
+
+  async fetchCIDBytes(cid: string): Promise<Uint8Array> {
+    const helia = await this.ensureHelia();
+    return fetchCIDBytesFromHelia(helia, cid);
+  }
+
+  async requestModuleGrant(
+    options: Omit<ModuleGrantRequestOptions, 'requesterIdentity'> & {
+      requesterIdentity?: ModuleGrantRequestOptions['requesterIdentity'];
+    },
+  ): Promise<ModuleGrantResult> {
+    const requesterIdentity = options.requesterIdentity ?? this.config.identity;
+    if (!requesterIdentity) {
+      throw new Error('requester identity is required');
+    }
+    return requestModuleGrant(this as ModuleDeliveryTransport, {
+      ...options,
+      requesterIdentity,
+    });
+  }
+
+  async requestEncryptedModuleBundle(
+    options: Omit<ModuleGrantRequestOptions, 'requesterIdentity'> & {
+      requesterIdentity?: ModuleGrantRequestOptions['requesterIdentity'];
+    },
+  ): Promise<EncryptedModuleBundleResult> {
+    const requesterIdentity = options.requesterIdentity ?? this.config.identity;
+    if (!requesterIdentity) {
+      throw new Error('requester identity is required');
+    }
+    return requestEncryptedModuleBundle(this as ModuleDeliveryTransport, {
+      ...options,
+      requesterIdentity,
+    });
   }
 
   /**
@@ -420,6 +492,11 @@ export class SDNNode {
     // Close storage
     if (this.storage) {
       await this.storage.close();
+    }
+
+    if (this.heliaNode) {
+      await this.heliaNode.stop().catch(() => undefined);
+      this.heliaNode = null;
     }
 
     // Stop libp2p
@@ -445,6 +522,20 @@ export class SDNNode {
   static get ipfsBootstrapPeers(): readonly string[] {
     return IPFS_BOOTSTRAP_PEERS;
   }
+
+  static get moduleDeliveryProtocolId(): string {
+    return MODULE_DELIVERY_PROTOCOL_ID;
+  }
+
+  private async ensureHelia(): Promise<Helia> {
+    if (!this.libp2p) {
+      throw new Error('Node not initialized');
+    }
+    if (!this.heliaNode) {
+      this.heliaNode = await createHeliaFromLibp2p(this.libp2p);
+    }
+    return this.heliaNode;
+  }
 }
 
 function resolveBootstrapList(relays: string[], config: SDNConfig): string[] {
@@ -464,6 +555,53 @@ function chunkToBytes(chunk: StreamChunk): Uint8Array {
     return chunk;
   }
   return chunk.subarray();
+}
+
+async function exchangeStream(
+  stream: Awaited<ReturnType<Libp2p['dialProtocol']>>,
+  payloadBytes: Uint8Array,
+): Promise<Uint8Array> {
+  try {
+    await stream.sink((async function *source() {
+      yield payloadBytes;
+    })());
+
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of stream.source) {
+      chunks.push(chunkToBytes(chunk as StreamChunk));
+    }
+    return concatBytes(chunks);
+  } finally {
+    try {
+      await stream.close();
+    } catch {
+      // Ignore close errors in probe/test path.
+    }
+  }
+}
+
+function normalizeDialTarget(addr: string, targetPeerId: string): string {
+  const trimmed = addr.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (trimmed.includes('/p2p-circuit')) {
+    return trimmed.includes(`/p2p/${targetPeerId}`) ? trimmed : `${trimmed}/p2p/${targetPeerId}`;
+  }
+  if (trimmed.includes(`/p2p/${targetPeerId}`)) {
+    return trimmed;
+  }
+  if (trimmed.includes('/p2p/')) {
+    return `${trimmed}/p2p-circuit/p2p/${targetPeerId}`;
+  }
+  return `${trimmed}/p2p/${targetPeerId}`;
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 /**
