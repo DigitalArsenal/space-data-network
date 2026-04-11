@@ -5,7 +5,7 @@ import {
 } from '@spacedatanetwork/plugin-sdk';
 
 import type { DerivedIdentity, EncryptionKeyPair, KeyPair } from './crypto/types';
-import { sign } from './crypto/hd-wallet';
+import { sha256, sign } from './crypto/hd-wallet';
 import { discoverProvider } from './discovery';
 import {
   normalizeServerDescriptor,
@@ -292,16 +292,6 @@ function cloneBytes(value: Uint8Array): Uint8Array {
 
 function createReqId(): string {
   return `req-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-async function sha256(value: Uint8Array): Promise<Uint8Array> {
-  if (globalThis.crypto?.subtle) {
-    const digest = await globalThis.crypto.subtle.digest('SHA-256', Uint8Array.from(value));
-    return new Uint8Array(digest);
-  }
-
-  const cryptoModule = await import('node:crypto');
-  return new Uint8Array(cryptoModule.createHash('sha256').update(Buffer.from(value)).digest());
 }
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {

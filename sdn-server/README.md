@@ -160,7 +160,7 @@ HTTP endpoints on the admin listener:
 
 - `GET /api/v1/license/verify` verifies bearer tokens and optional scopes
 - `GET/POST/PUT /api/v1/license/entitlements` manages xpub entitlement state
-- `POST /api/v1/plugins/upload` uploads signed encrypted module artifacts into the provider catalog
+- `POST /api/v1/plugins/upload` uploads signed plain WASM bundles into the provider catalog
 
 Runtime plugin architecture:
 
@@ -229,6 +229,20 @@ Example `catalog.json`:
   ]
 }
 ```
+
+For local OrbPro module-delivery seeding, write encrypted bundle bytes and
+per-bundle content keys directly into the catalog root:
+
+```bash
+npm run seed:orbpro-module-catalog -- \
+  --plugin-root /Users/tj/.orbpro/local-sdn/sdn-data/space-data-network-10080-13080-14080/data/dev/license/plugins \
+  --with-conjunction
+```
+
+This helper creates `catalog.json` plus `<slug>.wasm.enc` and `<slug>.key`
+files for the built-in OrbPro remote modules. Use it for the local
+module-delivery provider path; `/api/v1/plugins/upload` is not sufficient for
+the encrypted grant/CID flow because it stores `plain_path` catalog entries.
 
 ## Packages
 

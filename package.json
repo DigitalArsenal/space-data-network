@@ -29,6 +29,7 @@
     "webui:build": "npm --prefix webui run build",
     "build:js": "cd sdn-js && npm run build",
     "plugin-harness": "scripts/run-plugin-harness.sh",
+    "seed:orbpro-module-catalog": "node scripts/seed-orbpro-module-catalog.mjs",
     "lint:js": "cd sdn-js && npm run lint",
     "docker:up": "cd deployment && docker-compose up -d",
     "docker:down": "cd deployment && docker-compose down",
