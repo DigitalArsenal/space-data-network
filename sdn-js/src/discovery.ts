@@ -1,4 +1,4 @@
-import { derivePeerIdFromPublicKey } from './crypto/hd-wallet';
+import { derivePeerIdFromPublicKey, sha256 } from './crypto/hd-wallet';
 
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 const encoder = new TextEncoder();
@@ -48,16 +48,6 @@ function assertCompressedPublicKey(publicKey: Uint8Array): void {
   if (publicKey[0] !== 0x02 && publicKey[0] !== 0x03) {
     throw new Error('Expected compressed secp256k1 public key prefix (0x02/0x03)');
   }
-}
-
-async function sha256(value: Uint8Array): Promise<Uint8Array> {
-  if (globalThis.crypto?.subtle) {
-    const digest = await globalThis.crypto.subtle.digest('SHA-256', Uint8Array.from(value));
-    return new Uint8Array(digest);
-  }
-
-  const cryptoModule = await import('node:crypto');
-  return new Uint8Array(cryptoModule.createHash('sha256').update(Buffer.from(value)).digest());
 }
 
 function encodeCIDv1Raw(hash: Uint8Array): string {
