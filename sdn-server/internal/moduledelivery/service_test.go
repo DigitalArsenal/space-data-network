@@ -31,7 +31,11 @@ func TestServiceHandleMessageChallengeAndGrantFlow(t *testing.T) {
 	t.Parallel()
 
 	baseDir := t.TempDir()
-	writeEncryptedModuleCatalog(t, baseDir, []byte("encrypted-module-bundle"), bytes.Repeat([]byte{0x42}, 32))
+	writeEncryptedModuleCatalog(t, baseDir, encryptedModuleCatalogFixture{
+		RequiredScope:     "orbpro:base",
+		AllowedDomains:    []string{"example.com"},
+		MaxGrantTimeoutMs: 300_000,
+	}, []byte("encrypted-module-bundle"), bytes.Repeat([]byte{0x42}, 32))
 
 	var ipfsAddCalls atomic.Int32
 	ipfsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -67,8 +71,10 @@ func TestServiceHandleMessageChallengeAndGrantFlow(t *testing.T) {
 		ModuleVersion:             "0.5.22",
 		RequesterPeerID:           clientPeerID,
 		RequesterXPub:             "xpub-module-requester",
+		RequesterDomain:           "app.example.com",
 		RequesterSigningPublicKey: clientPub,
 		RequesterEncryptionPubKey: requesterEncryptionPub,
+		RequestedTimeoutMs:        300_000,
 		RequestedAtMilliseconds:   uint64(time.Now().UnixMilli()),
 	}), "remote-peer-1")
 	if err != nil {
@@ -93,8 +99,10 @@ func TestServiceHandleMessageChallengeAndGrantFlow(t *testing.T) {
 		ModuleID:                  "com.space-data-network.fastest-path",
 		ModuleVersion:             "0.5.22",
 		RequesterPeerID:           clientPeerID,
+		RequesterDomain:           "app.example.com",
 		RequesterSigningPublicKey: clientPub,
 		RequesterEncryptionPubKey: requesterEncryptionPub,
+		RequestedTimeoutMs:        300_000,
 		Challenge:                 challenge.ChallengeBytes(),
 		Signature:                 signature,
 		ProvedAtMilliseconds:      uint64(time.Now().UnixMilli()),
@@ -116,6 +124,15 @@ func TestServiceHandleMessageChallengeAndGrantFlow(t *testing.T) {
 	}
 	if got := string(grant.EntitlementStatus()); got != "active" {
 		t.Fatalf("entitlement status = %q", got)
+	}
+	if got := string(grant.GrantedDomain()); got != "app.example.com" {
+		t.Fatalf("granted domain = %q", got)
+	}
+	if got := grant.GrantedTimeoutMs(); got != 300_000 {
+		t.Fatalf("granted timeout = %d", got)
+	}
+	if got := grant.GrantVerifierPublicKeyBytes(); !bytes.Equal(got, svc.LicenseService().PublicKey()) {
+		t.Fatalf("grant verifier public key = %x", got)
 	}
 	if grant.BundleDescriptor(nil) == nil {
 		t.Fatal("expected bundle descriptor")
@@ -154,6 +171,37 @@ func TestServiceHandleMessageChallengeAndGrantFlow(t *testing.T) {
 	if want := bytes.Repeat([]byte{0x42}, 32); !bytes.Equal(unwrappedKey, want) {
 		t.Fatalf("unwrapped bundle key = %x, want %x", unwrappedKey, want)
 	}
+	bundleHash := sha256.Sum256([]byte("encrypted-module-bundle"))
+	payload := canonicalGrantSignaturePayload(
+		"req-123",
+		"active",
+		string(grant.CapabilityToken()),
+		"app.example.com",
+		grant.ExpiresAtMs(),
+		grant.GrantedTimeoutMs(),
+		&license.PluginAsset{
+			ID:           "com.space-data-network.fastest-path",
+			Version:      "0.5.22",
+			ContentType:  "application/wasm+encrypted",
+			BundleSHA256: hex.EncodeToString(bundleHash[:]),
+			SizeBytes:    int64(len("encrypted-module-bundle")),
+		},
+		"bafy-module-cid",
+		&wrappedBundleKey{
+			ephemeralPublicKey: append([]byte(nil), grant.WrappedContentKey(nil).EphemeralPublicKeyBytes()...),
+			nonce:              append([]byte(nil), grant.WrappedContentKey(nil).NonceBytes()...),
+			ciphertext:         append([]byte(nil), grant.WrappedContentKey(nil).CiphertextBytes()...),
+			tag:                append([]byte(nil), grant.WrappedContentKey(nil).TagBytes()...),
+		},
+		append([]byte(nil), grant.WrappedContentKey(nil).RecipientPublicKeyBytes()...),
+	)
+	if !ed25519.Verify(
+		ed25519.PublicKey(grant.GrantVerifierPublicKeyBytes()),
+		payload,
+		grant.GrantSignatureBytes(),
+	) {
+		t.Fatal("grant signature verification failed")
+	}
 	if got := ipfsAddCalls.Load(); got != 1 {
 		t.Fatalf("IPFS add calls = %d, want 1", got)
 	}
@@ -163,7 +211,7 @@ func TestServiceHandleGrantRequestRejectsRequestedModuleVersionMismatch(t *testi
 	t.Parallel()
 
 	baseDir := t.TempDir()
-	writeEncryptedModuleCatalog(t, baseDir, []byte("encrypted-module-bundle"), bytes.Repeat([]byte{0x42}, 32))
+	writeEncryptedModuleCatalog(t, baseDir, encryptedModuleCatalogFixture{}, []byte("encrypted-module-bundle"), bytes.Repeat([]byte{0x42}, 32))
 
 	ipfsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("unexpected IPFS publication for rejected request")
@@ -192,8 +240,10 @@ func TestServiceHandleGrantRequestRejectsRequestedModuleVersionMismatch(t *testi
 		ModuleVersion:             "9.9.9",
 		RequesterPeerID:           clientPeerID,
 		RequesterXPub:             "xpub-module-requester",
+		RequesterDomain:           "app.example.com",
 		RequesterSigningPublicKey: clientPub,
 		RequesterEncryptionPubKey: requesterEncryptionPub,
+		RequestedTimeoutMs:        300_000,
 		RequestedAtMilliseconds:   uint64(time.Now().UnixMilli()),
 	}), "remote-peer-1")
 	if err != nil {
@@ -213,14 +263,216 @@ func TestServiceHandleGrantRequestRejectsRequestedModuleVersionMismatch(t *testi
 	}
 }
 
+func TestServiceHandleGrantRequestRejectsDisallowedDomain(t *testing.T) {
+	t.Parallel()
+
+	baseDir := t.TempDir()
+	writeEncryptedModuleCatalog(t, baseDir, encryptedModuleCatalogFixture{
+		AllowedDomains: []string{"example.com"},
+	}, []byte("encrypted-module-bundle"), bytes.Repeat([]byte{0x42}, 32))
+
+	ipfsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("unexpected IPFS publication for rejected request")
+	}))
+	defer ipfsServer.Close()
+
+	svc, err := NewService(baseDir, "test-module-delivery", "12D3KooWProviderPeer", compressedProviderPublicKey(), ipfsServer.URL)
+	if err != nil {
+		t.Fatalf("NewService failed: %v", err)
+	}
+	defer svc.Close()
+
+	clientPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	_, requesterEncryptionPub := requesterEncryptionKeyPair(t)
+	clientPeerID, err := license.PeerIDFromEd25519PublicKey(clientPub)
+	if err != nil {
+		t.Fatalf("PeerIDFromEd25519PublicKey failed: %v", err)
+	}
+
+	responseBytes, err := svc.handleMessage(encodeGrantRequestEnvelope(t, grantRequestFixture{
+		ReqID:                     "req-domain-mismatch",
+		ModuleID:                  "com.space-data-network.fastest-path",
+		ModuleVersion:             "0.5.22",
+		RequesterPeerID:           clientPeerID,
+		RequesterXPub:             "xpub-module-requester",
+		RequesterDomain:           "app.evil.example.net",
+		RequesterSigningPublicKey: clientPub,
+		RequesterEncryptionPubKey: requesterEncryptionPub,
+		RequestedTimeoutMs:        300_000,
+		RequestedAtMilliseconds:   uint64(time.Now().UnixMilli()),
+	}), "remote-peer-1")
+	if err != nil {
+		t.Fatalf("handleMessage(grant_request) failed: %v", err)
+	}
+
+	message := schema.GetRootAsModuleDeliveryMessage(responseBytes, 0)
+	if got := message.MessageType(); got != schema.ModuleDeliveryMessageTypeERROR_RESPONSE {
+		t.Fatalf("message type = %v, want error response", got)
+	}
+	errResp := message.ErrorResponse(nil)
+	if errResp == nil {
+		t.Fatal("expected error response payload")
+	}
+	if got := string(errResp.Code()); got != "domain_not_allowed" {
+		t.Fatalf("error code = %q", got)
+	}
+}
+
+func TestServiceHandleGrantRequestRejectsStaleTimestamp(t *testing.T) {
+	t.Parallel()
+
+	baseDir := t.TempDir()
+	writeEncryptedModuleCatalog(t, baseDir, encryptedModuleCatalogFixture{}, []byte("encrypted-module-bundle"), bytes.Repeat([]byte{0x42}, 32))
+
+	ipfsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("unexpected IPFS publication for rejected request")
+	}))
+	defer ipfsServer.Close()
+
+	svc, err := NewService(baseDir, "test-module-delivery", "12D3KooWProviderPeer", compressedProviderPublicKey(), ipfsServer.URL)
+	if err != nil {
+		t.Fatalf("NewService failed: %v", err)
+	}
+	defer svc.Close()
+
+	clientPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	_, requesterEncryptionPub := requesterEncryptionKeyPair(t)
+	clientPeerID, err := license.PeerIDFromEd25519PublicKey(clientPub)
+	if err != nil {
+		t.Fatalf("PeerIDFromEd25519PublicKey failed: %v", err)
+	}
+
+	responseBytes, err := svc.handleMessage(encodeGrantRequestEnvelope(t, grantRequestFixture{
+		ReqID:                     "req-stale-request",
+		ModuleID:                  "com.space-data-network.fastest-path",
+		ModuleVersion:             "0.5.22",
+		RequesterPeerID:           clientPeerID,
+		RequesterXPub:             "xpub-module-requester",
+		RequesterDomain:           "app.example.com",
+		RequesterSigningPublicKey: clientPub,
+		RequesterEncryptionPubKey: requesterEncryptionPub,
+		RequestedTimeoutMs:        300_000,
+		RequestedAtMilliseconds:   uint64(time.Now().Add(-10 * time.Minute).UnixMilli()),
+	}), "remote-peer-1")
+	if err != nil {
+		t.Fatalf("handleMessage(grant_request) failed: %v", err)
+	}
+
+	message := schema.GetRootAsModuleDeliveryMessage(responseBytes, 0)
+	if got := message.MessageType(); got != schema.ModuleDeliveryMessageTypeERROR_RESPONSE {
+		t.Fatalf("message type = %v, want error response", got)
+	}
+	errResp := message.ErrorResponse(nil)
+	if errResp == nil {
+		t.Fatal("expected error response payload")
+	}
+	if got := string(errResp.Code()); got != "invalid_timestamp" {
+		t.Fatalf("error code = %q", got)
+	}
+}
+
+func TestServiceHandleGrantProofRejectsInsufficientScope(t *testing.T) {
+	t.Parallel()
+
+	baseDir := t.TempDir()
+	writeEncryptedModuleCatalog(t, baseDir, encryptedModuleCatalogFixture{
+		RequiredScope: "orbpro:premium",
+	}, []byte("encrypted-module-bundle"), bytes.Repeat([]byte{0x42}, 32))
+
+	ipfsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("unexpected IPFS publication for rejected request")
+	}))
+	defer ipfsServer.Close()
+
+	svc, err := NewService(baseDir, "test-module-delivery", "12D3KooWProviderPeer", compressedProviderPublicKey(), ipfsServer.URL)
+	if err != nil {
+		t.Fatalf("NewService failed: %v", err)
+	}
+	defer svc.Close()
+
+	clientPub, clientPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	_, requesterEncryptionPub := requesterEncryptionKeyPair(t)
+	clientPeerID, err := license.PeerIDFromEd25519PublicKey(clientPub)
+	if err != nil {
+		t.Fatalf("PeerIDFromEd25519PublicKey failed: %v", err)
+	}
+
+	challengeBytes, err := svc.handleMessage(encodeGrantRequestEnvelope(t, grantRequestFixture{
+		ReqID:                     "req-insufficient-scope",
+		ModuleID:                  "com.space-data-network.fastest-path",
+		ModuleVersion:             "0.5.22",
+		RequesterPeerID:           clientPeerID,
+		RequesterXPub:             "xpub-module-requester",
+		RequesterDomain:           "app.example.com",
+		RequesterSigningPublicKey: clientPub,
+		RequesterEncryptionPubKey: requesterEncryptionPub,
+		RequestedTimeoutMs:        300_000,
+		RequestedAtMilliseconds:   uint64(time.Now().UnixMilli()),
+	}), "remote-peer-1")
+	if err != nil {
+		t.Fatalf("handleMessage(grant_request) failed: %v", err)
+	}
+
+	challenge := schema.GetRootAsModuleDeliveryMessage(challengeBytes, 0).GrantChallenge(nil)
+	if challenge == nil {
+		t.Fatal("expected challenge payload")
+	}
+	signature := ed25519.Sign(clientPriv, challenge.ChallengeBytes())
+	grantBytes, err := svc.handleMessage(encodeGrantProofEnvelope(t, grantProofFixture{
+		ReqID:                     "req-insufficient-scope",
+		ModuleID:                  "com.space-data-network.fastest-path",
+		ModuleVersion:             "0.5.22",
+		RequesterPeerID:           clientPeerID,
+		RequesterDomain:           "app.example.com",
+		RequesterSigningPublicKey: clientPub,
+		RequesterEncryptionPubKey: requesterEncryptionPub,
+		RequestedTimeoutMs:        300_000,
+		Challenge:                 challenge.ChallengeBytes(),
+		Signature:                 signature,
+		ProvedAtMilliseconds:      uint64(time.Now().UnixMilli()),
+	}), "remote-peer-1")
+	if err != nil {
+		t.Fatalf("handleMessage(grant_proof) failed: %v", err)
+	}
+
+	message := schema.GetRootAsModuleDeliveryMessage(grantBytes, 0)
+	if got := message.MessageType(); got != schema.ModuleDeliveryMessageTypeERROR_RESPONSE {
+		t.Fatalf("message type = %v, want error response", got)
+	}
+	errResp := message.ErrorResponse(nil)
+	if errResp == nil {
+		t.Fatal("expected error response payload")
+	}
+	if got := string(errResp.Code()); got != "grant_denied" {
+		t.Fatalf("error code = %q", got)
+	}
+}
+
+type encryptedModuleCatalogFixture struct {
+	RequiredScope     string
+	AllowedDomains    []string
+	MaxGrantTimeoutMs int64
+}
+
 type grantRequestFixture struct {
 	ReqID                     string
 	ModuleID                  string
 	ModuleVersion             string
 	RequesterPeerID           string
 	RequesterXPub             string
+	RequesterDomain           string
 	RequesterSigningPublicKey []byte
 	RequesterEncryptionPubKey []byte
+	RequestedTimeoutMs        uint64
 	RequestedAtMilliseconds   uint64
 }
 
@@ -229,8 +481,10 @@ type grantProofFixture struct {
 	ModuleID                  string
 	ModuleVersion             string
 	RequesterPeerID           string
+	RequesterDomain           string
 	RequesterSigningPublicKey []byte
 	RequesterEncryptionPubKey []byte
+	RequestedTimeoutMs        uint64
 	Challenge                 []byte
 	Signature                 []byte
 	ProvedAtMilliseconds      uint64
@@ -245,6 +499,7 @@ func encodeGrantRequestEnvelope(t *testing.T, fixture grantRequestFixture) []byt
 	moduleVersion := builder.CreateString(fixture.ModuleVersion)
 	requesterPeerID := builder.CreateString(fixture.RequesterPeerID)
 	requesterXPub := builder.CreateString(fixture.RequesterXPub)
+	requesterDomain := builder.CreateString(fixture.RequesterDomain)
 	signingPub := builder.CreateByteVector(fixture.RequesterSigningPublicKey)
 	encryptionPub := builder.CreateByteVector(fixture.RequesterEncryptionPubKey)
 
@@ -254,8 +509,10 @@ func encodeGrantRequestEnvelope(t *testing.T, fixture grantRequestFixture) []byt
 	schema.GrantRequestAddModuleVersion(builder, moduleVersion)
 	schema.GrantRequestAddRequesterPeerId(builder, requesterPeerID)
 	schema.GrantRequestAddRequesterXpub(builder, requesterXPub)
+	schema.GrantRequestAddRequesterDomain(builder, requesterDomain)
 	schema.GrantRequestAddRequesterSigningPublicKey(builder, signingPub)
 	schema.GrantRequestAddRequesterEncryptionPublicKey(builder, encryptionPub)
+	schema.GrantRequestAddRequestedTimeoutMs(builder, fixture.RequestedTimeoutMs)
 	schema.GrantRequestAddRequestedAtMs(builder, fixture.RequestedAtMilliseconds)
 	requestOffset := schema.GrantRequestEnd(builder)
 
@@ -275,6 +532,7 @@ func encodeGrantProofEnvelope(t *testing.T, fixture grantProofFixture) []byte {
 	moduleID := builder.CreateString(fixture.ModuleID)
 	moduleVersion := builder.CreateString(fixture.ModuleVersion)
 	requesterPeerID := builder.CreateString(fixture.RequesterPeerID)
+	requesterDomain := builder.CreateString(fixture.RequesterDomain)
 	signingPub := builder.CreateByteVector(fixture.RequesterSigningPublicKey)
 	encryptionPub := builder.CreateByteVector(fixture.RequesterEncryptionPubKey)
 	challenge := builder.CreateByteVector(fixture.Challenge)
@@ -285,8 +543,10 @@ func encodeGrantProofEnvelope(t *testing.T, fixture grantProofFixture) []byte {
 	schema.GrantProofAddModuleId(builder, moduleID)
 	schema.GrantProofAddModuleVersion(builder, moduleVersion)
 	schema.GrantProofAddRequesterPeerId(builder, requesterPeerID)
+	schema.GrantProofAddRequesterDomain(builder, requesterDomain)
 	schema.GrantProofAddRequesterSigningPublicKey(builder, signingPub)
 	schema.GrantProofAddRequesterEncryptionPublicKey(builder, encryptionPub)
+	schema.GrantProofAddRequestedTimeoutMs(builder, fixture.RequestedTimeoutMs)
 	schema.GrantProofAddChallenge(builder, challenge)
 	schema.GrantProofAddSignature(builder, signature)
 	schema.GrantProofAddProvedAtMs(builder, fixture.ProvedAtMilliseconds)
@@ -300,7 +560,7 @@ func encodeGrantProofEnvelope(t *testing.T, fixture grantProofFixture) []byte {
 	return builder.FinishedBytes()
 }
 
-func writeEncryptedModuleCatalog(t *testing.T, baseDir string, encryptedBundle, bundleKey []byte) {
+func writeEncryptedModuleCatalog(t *testing.T, baseDir string, fixture encryptedModuleCatalogFixture, encryptedBundle, bundleKey []byte) {
 	t.Helper()
 
 	pluginRoot := filepath.Join(baseDir, "license", "plugins")
@@ -321,12 +581,14 @@ func writeEncryptedModuleCatalog(t *testing.T, baseDir string, encryptedBundle, 
 	catalog := license.PluginCatalogFile{
 		Plugins: []license.PluginCatalogEntry{
 			{
-				ID:            "com.space-data-network.fastest-path",
-				Version:       "0.5.22",
-				RequiredScope: "orbpro:base",
-				EncryptedPath: "fastest-path.wasm.enc",
-				KeyPath:       "fastest-path.key",
-				ContentType:   "application/wasm+encrypted",
+				ID:                "com.space-data-network.fastest-path",
+				Version:           "0.5.22",
+				RequiredScope:     fixture.RequiredScope,
+				EncryptedPath:     "fastest-path.wasm.enc",
+				KeyPath:           "fastest-path.key",
+				ContentType:       "application/wasm+encrypted",
+				AllowedDomains:    fixture.AllowedDomains,
+				MaxGrantTimeoutMs: fixture.MaxGrantTimeoutMs,
 			},
 		},
 	}

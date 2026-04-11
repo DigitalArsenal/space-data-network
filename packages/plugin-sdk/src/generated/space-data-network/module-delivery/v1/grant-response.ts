@@ -61,33 +61,60 @@ expiresAtMs():bigint {
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
-grantSignature(index: number):number|null {
+grantedDomain():string|null
+grantedDomain(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+grantedDomain(optionalEncoding?:any):string|Uint8Array|null {
   const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+grantedTimeoutMs():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
+grantSignature(index: number):number|null {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index) : 0;
 }
 
 grantSignatureLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 grantSignatureArray():Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? new Uint8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
+}
+
+grantVerifierPublicKey(index: number):number|null {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index) : 0;
+}
+
+grantVerifierPublicKeyLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+grantVerifierPublicKeyArray():Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? new Uint8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 bundleDescriptor(obj?:BundleDescriptor):BundleDescriptor|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? (obj || new BundleDescriptor()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 wrappedContentKey(obj?:WrappedContentKey):WrappedContentKey|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
+  const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? (obj || new WrappedContentKey()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 static startGrantResponse(builder:flatbuffers.Builder) {
-  builder.startObject(8);
+  builder.startObject(11);
 }
 
 static addSchemaVersion(builder:flatbuffers.Builder, schemaVersion:number) {
@@ -110,8 +137,16 @@ static addExpiresAtMs(builder:flatbuffers.Builder, expiresAtMs:bigint) {
   builder.addFieldInt64(4, expiresAtMs, BigInt('0'));
 }
 
+static addGrantedDomain(builder:flatbuffers.Builder, grantedDomainOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(5, grantedDomainOffset, 0);
+}
+
+static addGrantedTimeoutMs(builder:flatbuffers.Builder, grantedTimeoutMs:bigint) {
+  builder.addFieldInt64(6, grantedTimeoutMs, BigInt('0'));
+}
+
 static addGrantSignature(builder:flatbuffers.Builder, grantSignatureOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, grantSignatureOffset, 0);
+  builder.addFieldOffset(7, grantSignatureOffset, 0);
 }
 
 static createGrantSignatureVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset {
@@ -126,19 +161,36 @@ static startGrantSignatureVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(1, numElems, 1);
 }
 
+static addGrantVerifierPublicKey(builder:flatbuffers.Builder, grantVerifierPublicKeyOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(8, grantVerifierPublicKeyOffset, 0);
+}
+
+static createGrantVerifierPublicKeyVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset {
+  builder.startVector(1, data.length, 1);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addInt8(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startGrantVerifierPublicKeyVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(1, numElems, 1);
+}
+
 static addBundleDescriptor(builder:flatbuffers.Builder, bundleDescriptorOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, bundleDescriptorOffset, 0);
+  builder.addFieldOffset(9, bundleDescriptorOffset, 0);
 }
 
 static addWrappedContentKey(builder:flatbuffers.Builder, wrappedContentKeyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, wrappedContentKeyOffset, 0);
+  builder.addFieldOffset(10, wrappedContentKeyOffset, 0);
 }
 
 static endGrantResponse(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 6) // req_id
-  builder.requiredField(offset, 16) // bundle_descriptor
-  builder.requiredField(offset, 18) // wrapped_content_key
+  builder.requiredField(offset, 14) // granted_domain
+  builder.requiredField(offset, 22) // bundle_descriptor
+  builder.requiredField(offset, 24) // wrapped_content_key
   return offset;
 }
 

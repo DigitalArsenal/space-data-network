@@ -113,8 +113,16 @@ func (rcv *GrantRequest) RequesterXpub() []byte {
 	return nil
 }
 
-func (rcv *GrantRequest) RequesterSigningPublicKey(j int) byte {
+func (rcv *GrantRequest) RequesterDomain() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *GrantRequest) RequesterSigningPublicKey(j int) byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
@@ -123,7 +131,7 @@ func (rcv *GrantRequest) RequesterSigningPublicKey(j int) byte {
 }
 
 func (rcv *GrantRequest) RequesterSigningPublicKeyLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -131,7 +139,7 @@ func (rcv *GrantRequest) RequesterSigningPublicKeyLength() int {
 }
 
 func (rcv *GrantRequest) RequesterSigningPublicKeyBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -139,7 +147,7 @@ func (rcv *GrantRequest) RequesterSigningPublicKeyBytes() []byte {
 }
 
 func (rcv *GrantRequest) MutateRequesterSigningPublicKey(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
@@ -148,7 +156,7 @@ func (rcv *GrantRequest) MutateRequesterSigningPublicKey(j int, n byte) bool {
 }
 
 func (rcv *GrantRequest) RequesterEncryptionPublicKey(j int) byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
@@ -157,7 +165,7 @@ func (rcv *GrantRequest) RequesterEncryptionPublicKey(j int) byte {
 }
 
 func (rcv *GrantRequest) RequesterEncryptionPublicKeyLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -165,7 +173,7 @@ func (rcv *GrantRequest) RequesterEncryptionPublicKeyLength() int {
 }
 
 func (rcv *GrantRequest) RequesterEncryptionPublicKeyBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -173,7 +181,7 @@ func (rcv *GrantRequest) RequesterEncryptionPublicKeyBytes() []byte {
 }
 
 func (rcv *GrantRequest) MutateRequesterEncryptionPublicKey(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
@@ -181,8 +189,20 @@ func (rcv *GrantRequest) MutateRequesterEncryptionPublicKey(j int, n byte) bool 
 	return false
 }
 
+func (rcv *GrantRequest) RequestedTimeoutMs() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *GrantRequest) MutateRequestedTimeoutMs(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(24, n)
+}
+
 func (rcv *GrantRequest) RequestedAtMs() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
@@ -190,11 +210,11 @@ func (rcv *GrantRequest) RequestedAtMs() uint64 {
 }
 
 func (rcv *GrantRequest) MutateRequestedAtMs(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(22, n)
+	return rcv._tab.MutateUint64Slot(26, n)
 }
 
 func GrantRequestStart(builder *flatbuffers.Builder) {
-	builder.StartObject(10)
+	builder.StartObject(12)
 }
 func GrantRequestAddSchemaVersion(builder *flatbuffers.Builder, schemaVersion uint32) {
 	builder.PrependUint32Slot(0, schemaVersion, 1)
@@ -217,20 +237,26 @@ func GrantRequestAddRequesterPeerId(builder *flatbuffers.Builder, requesterPeerI
 func GrantRequestAddRequesterXpub(builder *flatbuffers.Builder, requesterXpub flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(requesterXpub), 0)
 }
+func GrantRequestAddRequesterDomain(builder *flatbuffers.Builder, requesterDomain flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(requesterDomain), 0)
+}
 func GrantRequestAddRequesterSigningPublicKey(builder *flatbuffers.Builder, requesterSigningPublicKey flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(requesterSigningPublicKey), 0)
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(requesterSigningPublicKey), 0)
 }
 func GrantRequestStartRequesterSigningPublicKeyVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
 func GrantRequestAddRequesterEncryptionPublicKey(builder *flatbuffers.Builder, requesterEncryptionPublicKey flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(requesterEncryptionPublicKey), 0)
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(requesterEncryptionPublicKey), 0)
 }
 func GrantRequestStartRequesterEncryptionPublicKeyVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
+func GrantRequestAddRequestedTimeoutMs(builder *flatbuffers.Builder, requestedTimeoutMs uint64) {
+	builder.PrependUint64Slot(10, requestedTimeoutMs, 0)
+}
 func GrantRequestAddRequestedAtMs(builder *flatbuffers.Builder, requestedAtMs uint64) {
-	builder.PrependUint64Slot(9, requestedAtMs, 0)
+	builder.PrependUint64Slot(11, requestedAtMs, 0)
 }
 func GrantRequestEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

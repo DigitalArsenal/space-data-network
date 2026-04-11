@@ -101,8 +101,28 @@ func (rcv *GrantResponse) MutateExpiresAtMs(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(12, n)
 }
 
-func (rcv *GrantResponse) GrantSignature(j int) byte {
+func (rcv *GrantResponse) GrantedDomain() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *GrantResponse) GrantedTimeoutMs() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *GrantResponse) MutateGrantedTimeoutMs(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(16, n)
+}
+
+func (rcv *GrantResponse) GrantSignature(j int) byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
@@ -111,7 +131,7 @@ func (rcv *GrantResponse) GrantSignature(j int) byte {
 }
 
 func (rcv *GrantResponse) GrantSignatureLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -119,7 +139,7 @@ func (rcv *GrantResponse) GrantSignatureLength() int {
 }
 
 func (rcv *GrantResponse) GrantSignatureBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -127,7 +147,41 @@ func (rcv *GrantResponse) GrantSignatureBytes() []byte {
 }
 
 func (rcv *GrantResponse) MutateGrantSignature(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
+	}
+	return false
+}
+
+func (rcv *GrantResponse) GrantVerifierPublicKey(j int) byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
+	}
+	return 0
+}
+
+func (rcv *GrantResponse) GrantVerifierPublicKeyLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *GrantResponse) GrantVerifierPublicKeyBytes() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *GrantResponse) MutateGrantVerifierPublicKey(j int, n byte) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
@@ -136,7 +190,7 @@ func (rcv *GrantResponse) MutateGrantSignature(j int, n byte) bool {
 }
 
 func (rcv *GrantResponse) BundleDescriptor(obj *BundleDescriptor) *BundleDescriptor {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -149,7 +203,7 @@ func (rcv *GrantResponse) BundleDescriptor(obj *BundleDescriptor) *BundleDescrip
 }
 
 func (rcv *GrantResponse) WrappedContentKey(obj *WrappedContentKey) *WrappedContentKey {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -162,7 +216,7 @@ func (rcv *GrantResponse) WrappedContentKey(obj *WrappedContentKey) *WrappedCont
 }
 
 func GrantResponseStart(builder *flatbuffers.Builder) {
-	builder.StartObject(8)
+	builder.StartObject(11)
 }
 func GrantResponseAddSchemaVersion(builder *flatbuffers.Builder, schemaVersion uint32) {
 	builder.PrependUint32Slot(0, schemaVersion, 1)
@@ -179,17 +233,29 @@ func GrantResponseAddCapabilityToken(builder *flatbuffers.Builder, capabilityTok
 func GrantResponseAddExpiresAtMs(builder *flatbuffers.Builder, expiresAtMs uint64) {
 	builder.PrependUint64Slot(4, expiresAtMs, 0)
 }
+func GrantResponseAddGrantedDomain(builder *flatbuffers.Builder, grantedDomain flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(grantedDomain), 0)
+}
+func GrantResponseAddGrantedTimeoutMs(builder *flatbuffers.Builder, grantedTimeoutMs uint64) {
+	builder.PrependUint64Slot(6, grantedTimeoutMs, 0)
+}
 func GrantResponseAddGrantSignature(builder *flatbuffers.Builder, grantSignature flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(grantSignature), 0)
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(grantSignature), 0)
 }
 func GrantResponseStartGrantSignatureVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
+func GrantResponseAddGrantVerifierPublicKey(builder *flatbuffers.Builder, grantVerifierPublicKey flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(grantVerifierPublicKey), 0)
+}
+func GrantResponseStartGrantVerifierPublicKeyVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(1, numElems, 1)
+}
 func GrantResponseAddBundleDescriptor(builder *flatbuffers.Builder, bundleDescriptor flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(bundleDescriptor), 0)
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(bundleDescriptor), 0)
 }
 func GrantResponseAddWrappedContentKey(builder *flatbuffers.Builder, wrappedContentKey flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(wrappedContentKey), 0)
+	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(wrappedContentKey), 0)
 }
 func GrantResponseEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

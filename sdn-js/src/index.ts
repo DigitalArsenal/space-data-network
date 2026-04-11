@@ -8,7 +8,7 @@ export { SDNNode } from './node';
 export { createHeliaSDNNode } from './helia';
 export type { HeliaSDNNode } from './helia';
 export type { SDNConfig, SDNNodeEvents } from './node';
-export { IPFS_BOOTSTRAP_PEERS } from './node';
+export { IPFS_BOOTSTRAP_PEERS, LEGACY_ID_EXCHANGE_PROTOCOL } from './node';
 export {
   MODULE_DELIVERY_PROTOCOL_ID,
   ModuleDeliveryProtocolError,
@@ -170,40 +170,6 @@ export type {
   SubscriptionEventType,
   SubscriptionEventHandler,
 } from './subscription';
-
-// Storefront / Marketplace
-export {
-  StorefrontClient,
-  createStorefrontClient,
-  AccessType,
-  PaymentMethod,
-  GrantStatus,
-  PurchaseStatus,
-  ReviewStatus,
-} from './storefront';
-export type {
-  StorefrontClientConfig,
-  StorefrontEvents,
-  Listing,
-  AccessGrant,
-  PurchaseRequest,
-  Review,
-  ReviewStats,
-  SearchQuery,
-  SearchResult,
-  SearchFacets,
-  CreditsBalance,
-  PricingTier,
-  DataCoverage,
-  SpatialCoverage,
-  TemporalCoverage,
-  ProviderReputation,
-  DataQualityMetrics,
-  DeliveryMethod,
-  CreateListingRequest,
-  CreatePurchaseRequest,
-  CreateReviewRequest,
-} from './storefront';
 
 // Unified Client
 export { SDNClient, SDNTransportError } from './client';

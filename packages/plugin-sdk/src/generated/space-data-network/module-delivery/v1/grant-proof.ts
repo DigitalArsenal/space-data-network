@@ -61,73 +61,85 @@ requesterPeerId(optionalEncoding?:any):string|Uint8Array|null {
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
-requesterSigningPublicKey(index: number):number|null {
+requesterDomain():string|null
+requesterDomain(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+requesterDomain(optionalEncoding?:any):string|Uint8Array|null {
   const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+requesterSigningPublicKey(index: number):number|null {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
   return offset ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index) : 0;
 }
 
 requesterSigningPublicKeyLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 16);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 requesterSigningPublicKeyArray():Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 16);
   return offset ? new Uint8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 requesterEncryptionPublicKey(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
+  const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index) : 0;
 }
 
 requesterEncryptionPublicKeyLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
+  const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 requesterEncryptionPublicKeyArray():Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
+  const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? new Uint8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
+requestedTimeoutMs():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
 challenge(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index) : 0;
 }
 
 challengeLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 challengeArray():Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? new Uint8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 signature(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
+  const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index) : 0;
 }
 
 signatureLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
+  const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 signatureArray():Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
+  const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? new Uint8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 provedAtMs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
+  const offset = this.bb!.__offset(this.bb_pos, 26);
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
 static startGrantProof(builder:flatbuffers.Builder) {
-  builder.startObject(10);
+  builder.startObject(12);
 }
 
 static addSchemaVersion(builder:flatbuffers.Builder, schemaVersion:number) {
@@ -150,8 +162,12 @@ static addRequesterPeerId(builder:flatbuffers.Builder, requesterPeerIdOffset:fla
   builder.addFieldOffset(4, requesterPeerIdOffset, 0);
 }
 
+static addRequesterDomain(builder:flatbuffers.Builder, requesterDomainOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(5, requesterDomainOffset, 0);
+}
+
 static addRequesterSigningPublicKey(builder:flatbuffers.Builder, requesterSigningPublicKeyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, requesterSigningPublicKeyOffset, 0);
+  builder.addFieldOffset(6, requesterSigningPublicKeyOffset, 0);
 }
 
 static createRequesterSigningPublicKeyVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset {
@@ -167,7 +183,7 @@ static startRequesterSigningPublicKeyVector(builder:flatbuffers.Builder, numElem
 }
 
 static addRequesterEncryptionPublicKey(builder:flatbuffers.Builder, requesterEncryptionPublicKeyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, requesterEncryptionPublicKeyOffset, 0);
+  builder.addFieldOffset(7, requesterEncryptionPublicKeyOffset, 0);
 }
 
 static createRequesterEncryptionPublicKeyVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset {
@@ -182,8 +198,12 @@ static startRequesterEncryptionPublicKeyVector(builder:flatbuffers.Builder, numE
   builder.startVector(1, numElems, 1);
 }
 
+static addRequestedTimeoutMs(builder:flatbuffers.Builder, requestedTimeoutMs:bigint) {
+  builder.addFieldInt64(8, requestedTimeoutMs, BigInt('0'));
+}
+
 static addChallenge(builder:flatbuffers.Builder, challengeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, challengeOffset, 0);
+  builder.addFieldOffset(9, challengeOffset, 0);
 }
 
 static createChallengeVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset {
@@ -199,7 +219,7 @@ static startChallengeVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addSignature(builder:flatbuffers.Builder, signatureOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, signatureOffset, 0);
+  builder.addFieldOffset(10, signatureOffset, 0);
 }
 
 static createSignatureVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset {
@@ -215,16 +235,17 @@ static startSignatureVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addProvedAtMs(builder:flatbuffers.Builder, provedAtMs:bigint) {
-  builder.addFieldInt64(9, provedAtMs, BigInt('0'));
+  builder.addFieldInt64(11, provedAtMs, BigInt('0'));
 }
 
 static endGrantProof(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 6) // req_id
-  builder.requiredField(offset, 14) // requester_signing_public_key
-  builder.requiredField(offset, 16) // requester_encryption_public_key
-  builder.requiredField(offset, 18) // challenge
-  builder.requiredField(offset, 20) // signature
+  builder.requiredField(offset, 14) // requester_domain
+  builder.requiredField(offset, 16) // requester_signing_public_key
+  builder.requiredField(offset, 18) // requester_encryption_public_key
+  builder.requiredField(offset, 22) // challenge
+  builder.requiredField(offset, 24) // signature
   return offset;
 }
 
@@ -236,15 +257,17 @@ static finishSizePrefixedGrantProofBuffer(builder:flatbuffers.Builder, offset:fl
   builder.finish(offset, 'SDGP', true);
 }
 
-static createGrantProof(builder:flatbuffers.Builder, schemaVersion:number, reqIdOffset:flatbuffers.Offset, moduleIdOffset:flatbuffers.Offset, moduleVersionOffset:flatbuffers.Offset, requesterPeerIdOffset:flatbuffers.Offset, requesterSigningPublicKeyOffset:flatbuffers.Offset, requesterEncryptionPublicKeyOffset:flatbuffers.Offset, challengeOffset:flatbuffers.Offset, signatureOffset:flatbuffers.Offset, provedAtMs:bigint):flatbuffers.Offset {
+static createGrantProof(builder:flatbuffers.Builder, schemaVersion:number, reqIdOffset:flatbuffers.Offset, moduleIdOffset:flatbuffers.Offset, moduleVersionOffset:flatbuffers.Offset, requesterPeerIdOffset:flatbuffers.Offset, requesterDomainOffset:flatbuffers.Offset, requesterSigningPublicKeyOffset:flatbuffers.Offset, requesterEncryptionPublicKeyOffset:flatbuffers.Offset, requestedTimeoutMs:bigint, challengeOffset:flatbuffers.Offset, signatureOffset:flatbuffers.Offset, provedAtMs:bigint):flatbuffers.Offset {
   GrantProof.startGrantProof(builder);
   GrantProof.addSchemaVersion(builder, schemaVersion);
   GrantProof.addReqId(builder, reqIdOffset);
   GrantProof.addModuleId(builder, moduleIdOffset);
   GrantProof.addModuleVersion(builder, moduleVersionOffset);
   GrantProof.addRequesterPeerId(builder, requesterPeerIdOffset);
+  GrantProof.addRequesterDomain(builder, requesterDomainOffset);
   GrantProof.addRequesterSigningPublicKey(builder, requesterSigningPublicKeyOffset);
   GrantProof.addRequesterEncryptionPublicKey(builder, requesterEncryptionPublicKeyOffset);
+  GrantProof.addRequestedTimeoutMs(builder, requestedTimeoutMs);
   GrantProof.addChallenge(builder, challengeOffset);
   GrantProof.addSignature(builder, signatureOffset);
   GrantProof.addProvedAtMs(builder, provedAtMs);

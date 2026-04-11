@@ -26,6 +26,8 @@ Supported message variants:
 
 - entitlement or grant status
 - capability token
+- granted domain and timeout policy
+- grant verifier public key
 - `BundleDescriptor`
 - `WrappedContentKey`
 

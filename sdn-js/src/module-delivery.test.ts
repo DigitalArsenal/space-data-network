@@ -58,7 +58,10 @@ describe('module-delivery', () => {
             entitlementStatus: 'active',
             capabilityToken: 'capability-token',
             expiresAtMs: 1_700_003_600_000,
+            grantedDomain: 'app.example.com',
+            grantedTimeoutMs: 300_000,
             grantSignature: new Uint8Array([9, 9, 9]),
+            grantVerifierPublicKey: new Uint8Array(32).fill(5),
             bundleDescriptor: {
               cid: 'bafyencryptedmodule',
               contentHash: new Uint8Array(32).fill(7),
@@ -106,6 +109,8 @@ describe('module-delivery', () => {
       },
       moduleId: 'com.space-data-network.fastest-path',
       moduleVersion: '0.5.22',
+      requesterDomain: 'app.example.com',
+      requestedTimeoutMs: 300_000,
       reqId: 'req-123',
       requestedAtMs: 1_700_000_000_000,
     });
@@ -121,6 +126,8 @@ describe('module-delivery', () => {
           reqId: 'req-123',
           requesterPeerId: 'requester-peer-id',
           requesterXpub: 'xpub-requester',
+          requesterDomain: 'app.example.com',
+          requestedTimeoutMs: 300_000,
         },
       },
     });
@@ -128,6 +135,8 @@ describe('module-delivery', () => {
       type: 'grant_proof',
       payload: {
         reqId: 'req-123',
+        requesterDomain: 'app.example.com',
+        requestedTimeoutMs: 300_000,
         signature: new Uint8Array([0xaa, 0xbb, 0xcc]),
       },
     });
@@ -137,6 +146,9 @@ describe('module-delivery', () => {
       moduleId: 'com.space-data-network.fastest-path',
       moduleVersion: '0.5.22',
     });
+    expect(result.grant.grantedDomain).toBe('app.example.com');
+    expect(result.grant.grantedTimeoutMs).toBe(300_000);
+    expect(result.grant.grantVerifierPublicKey).toEqual(new Uint8Array(32).fill(5));
     expect(result.provider.peerId).toBe('provider-peer-id');
   });
 
@@ -218,7 +230,8 @@ describe('module-delivery', () => {
 
   it('discovers provider relay candidates from the normalized public key and never uses legacy bootstrap helpers', async () => {
     const publicIndex = await fs.readFile(path.join(__dirname, 'index.ts'), 'utf8');
-    expect(publicIndex.includes('LEGACY_ID_EXCHANGE_PROTOCOL')).toBe(false);
+    expect(publicIndex.includes('/api/node/info')).toBe(false);
+    expect(publicIndex.includes('/orbpro/')).toBe(false);
 
     const legacyHttpBootstrap = vi.fn(async () => {
       throw new Error('legacy bootstrap must not run');
@@ -327,6 +340,17 @@ describe('module-delivery', () => {
     expect(result.provider.relayAddresses).toEqual([]);
     expect(legacyHttpBootstrap).not.toHaveBeenCalled();
     expect(MODULE_DELIVERY_DISCOVERY_NAMESPACE).toBe('space-data-network/module-delivery/provider-pubkey');
+  });
+
+  it('keeps the relay probe example on the real module-delivery exchange path', async () => {
+    const exampleSource = await fs.readFile(
+      path.join(__dirname, '..', 'examples', 'ipfs-relay-id-exchange.ts'),
+      'utf8',
+    );
+
+    expect(exampleSource.includes('requestModuleGrant(')).toBe(true);
+    expect(exampleSource.includes('ModuleDeliveryProtocolError')).toBe(true);
+    expect(exampleSource.includes('SDN_MODULE_ID')).toBe(true);
   });
 });
 

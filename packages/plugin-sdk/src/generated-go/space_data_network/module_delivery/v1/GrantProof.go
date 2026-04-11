@@ -97,8 +97,16 @@ func (rcv *GrantProof) RequesterPeerId() []byte {
 	return nil
 }
 
-func (rcv *GrantProof) RequesterSigningPublicKey(j int) byte {
+func (rcv *GrantProof) RequesterDomain() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *GrantProof) RequesterSigningPublicKey(j int) byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
@@ -107,7 +115,7 @@ func (rcv *GrantProof) RequesterSigningPublicKey(j int) byte {
 }
 
 func (rcv *GrantProof) RequesterSigningPublicKeyLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -115,7 +123,7 @@ func (rcv *GrantProof) RequesterSigningPublicKeyLength() int {
 }
 
 func (rcv *GrantProof) RequesterSigningPublicKeyBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -123,7 +131,7 @@ func (rcv *GrantProof) RequesterSigningPublicKeyBytes() []byte {
 }
 
 func (rcv *GrantProof) MutateRequesterSigningPublicKey(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
@@ -132,7 +140,7 @@ func (rcv *GrantProof) MutateRequesterSigningPublicKey(j int, n byte) bool {
 }
 
 func (rcv *GrantProof) RequesterEncryptionPublicKey(j int) byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
@@ -141,7 +149,7 @@ func (rcv *GrantProof) RequesterEncryptionPublicKey(j int) byte {
 }
 
 func (rcv *GrantProof) RequesterEncryptionPublicKeyLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -149,7 +157,7 @@ func (rcv *GrantProof) RequesterEncryptionPublicKeyLength() int {
 }
 
 func (rcv *GrantProof) RequesterEncryptionPublicKeyBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -157,7 +165,7 @@ func (rcv *GrantProof) RequesterEncryptionPublicKeyBytes() []byte {
 }
 
 func (rcv *GrantProof) MutateRequesterEncryptionPublicKey(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
@@ -165,8 +173,20 @@ func (rcv *GrantProof) MutateRequesterEncryptionPublicKey(j int, n byte) bool {
 	return false
 }
 
+func (rcv *GrantProof) RequestedTimeoutMs() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *GrantProof) MutateRequestedTimeoutMs(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(20, n)
+}
+
 func (rcv *GrantProof) Challenge(j int) byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
@@ -175,7 +195,7 @@ func (rcv *GrantProof) Challenge(j int) byte {
 }
 
 func (rcv *GrantProof) ChallengeLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -183,7 +203,7 @@ func (rcv *GrantProof) ChallengeLength() int {
 }
 
 func (rcv *GrantProof) ChallengeBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -191,7 +211,7 @@ func (rcv *GrantProof) ChallengeBytes() []byte {
 }
 
 func (rcv *GrantProof) MutateChallenge(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
@@ -200,7 +220,7 @@ func (rcv *GrantProof) MutateChallenge(j int, n byte) bool {
 }
 
 func (rcv *GrantProof) Signature(j int) byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.GetByte(a + flatbuffers.UOffsetT(j*1))
@@ -209,7 +229,7 @@ func (rcv *GrantProof) Signature(j int) byte {
 }
 
 func (rcv *GrantProof) SignatureLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -217,7 +237,7 @@ func (rcv *GrantProof) SignatureLength() int {
 }
 
 func (rcv *GrantProof) SignatureBytes() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -225,7 +245,7 @@ func (rcv *GrantProof) SignatureBytes() []byte {
 }
 
 func (rcv *GrantProof) MutateSignature(j int, n byte) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		a := rcv._tab.Vector(o)
 		return rcv._tab.MutateByte(a+flatbuffers.UOffsetT(j*1), n)
@@ -234,7 +254,7 @@ func (rcv *GrantProof) MutateSignature(j int, n byte) bool {
 }
 
 func (rcv *GrantProof) ProvedAtMs() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
@@ -242,11 +262,11 @@ func (rcv *GrantProof) ProvedAtMs() uint64 {
 }
 
 func (rcv *GrantProof) MutateProvedAtMs(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(22, n)
+	return rcv._tab.MutateUint64Slot(26, n)
 }
 
 func GrantProofStart(builder *flatbuffers.Builder) {
-	builder.StartObject(10)
+	builder.StartObject(12)
 }
 func GrantProofAddSchemaVersion(builder *flatbuffers.Builder, schemaVersion uint32) {
 	builder.PrependUint32Slot(0, schemaVersion, 1)
@@ -263,32 +283,38 @@ func GrantProofAddModuleVersion(builder *flatbuffers.Builder, moduleVersion flat
 func GrantProofAddRequesterPeerId(builder *flatbuffers.Builder, requesterPeerId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(requesterPeerId), 0)
 }
+func GrantProofAddRequesterDomain(builder *flatbuffers.Builder, requesterDomain flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(requesterDomain), 0)
+}
 func GrantProofAddRequesterSigningPublicKey(builder *flatbuffers.Builder, requesterSigningPublicKey flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(requesterSigningPublicKey), 0)
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(requesterSigningPublicKey), 0)
 }
 func GrantProofStartRequesterSigningPublicKeyVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
 func GrantProofAddRequesterEncryptionPublicKey(builder *flatbuffers.Builder, requesterEncryptionPublicKey flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(requesterEncryptionPublicKey), 0)
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(requesterEncryptionPublicKey), 0)
 }
 func GrantProofStartRequesterEncryptionPublicKeyVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
+func GrantProofAddRequestedTimeoutMs(builder *flatbuffers.Builder, requestedTimeoutMs uint64) {
+	builder.PrependUint64Slot(8, requestedTimeoutMs, 0)
+}
 func GrantProofAddChallenge(builder *flatbuffers.Builder, challenge flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(challenge), 0)
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(challenge), 0)
 }
 func GrantProofStartChallengeVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
 func GrantProofAddSignature(builder *flatbuffers.Builder, signature flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(signature), 0)
+	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(signature), 0)
 }
 func GrantProofStartSignatureVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
 }
 func GrantProofAddProvedAtMs(builder *flatbuffers.Builder, provedAtMs uint64) {
-	builder.PrependUint64Slot(9, provedAtMs, 0)
+	builder.PrependUint64Slot(11, provedAtMs, 0)
 }
 func GrantProofEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

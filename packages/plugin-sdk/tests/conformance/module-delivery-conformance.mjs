@@ -104,12 +104,18 @@ export async function runModuleDeliveryConformance() {
   const errorResponse = decodeErrorResponse(errorResponseBytes);
 
   assert.equal(grantRequest.moduleId, "com.example.echo-module");
+  assert.equal(grantRequest.requesterDomain, "app.example.com");
+  assert.equal(grantRequest.requestedTimeoutMs, 300_000);
   assert.equal(grantChallenge.reqId, grantRequest.reqId);
   assert.equal(grantProof.reqId, grantRequest.reqId);
+  assert.equal(grantProof.requesterDomain, grantRequest.requesterDomain);
   assert.equal(grantResponse.reqId, grantRequest.reqId);
   assert.equal(errorResponse.code, "grant_denied");
   assert.equal(grantResponse.bundleDescriptor.moduleId, grantRequest.moduleId);
   assert.ok(grantResponse.bundleDescriptor.cid.startsWith("bafy"));
+  assert.equal(grantResponse.grantedDomain, grantRequest.requesterDomain);
+  assert.equal(grantResponse.grantedTimeoutMs, grantRequest.requestedTimeoutMs);
+  assert.equal(grantResponse.grantVerifierPublicKey.length, 32);
 
   const envelope = decodeModuleDeliveryMessage(
     encodeModuleDeliveryMessage({
