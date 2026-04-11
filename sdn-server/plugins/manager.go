@@ -22,6 +22,7 @@ type RuntimeContext struct {
 	DHT               *dht.IpfsDHT
 	BaseDataPath      string
 	PeerID            string
+	IPFSAPIURL        string
 	Mode              string
 	NodeEncryptionKey []byte
 }
@@ -102,12 +103,12 @@ type UIProvider interface {
 
 // PluginManifestEntry is the JSON representation of a plugin in the manifest.
 type PluginManifestEntry struct {
-	ID          string            `json:"id"`
-	Version     string            `json:"version,omitempty"`
-	Status      string            `json:"status"`
-	Description string            `json:"description,omitempty"`
-	UI          *UIDescriptor     `json:"ui,omitempty"`
-	Cron        []CronMethodSpec  `json:"cron,omitempty"`
+	ID          string           `json:"id"`
+	Version     string           `json:"version,omitempty"`
+	Status      string           `json:"status"`
+	Description string           `json:"description,omitempty"`
+	UI          *UIDescriptor    `json:"ui,omitempty"`
+	Cron        []CronMethodSpec `json:"cron,omitempty"`
 }
 
 // ─── Manager ───────────────────────────────────────────────────────────────

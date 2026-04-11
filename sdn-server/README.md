@@ -136,36 +136,31 @@ export STRIPE_CANCEL_URL="https://your-domain.example/billing/cancel"
 
 If Stripe env vars are not set, fiat checkout falls back to the existing local stub behavior.
 
-## License Protocol and Capability Tokens
+## Module Delivery And Capability Tokens
 
-The daemon now exposes a libp2p license protocol on full nodes:
+Full nodes now expose generic SDN module delivery over libp2p/IPFS:
 
-- Stream protocol: `/orbpro/license/1.0.0`
-- Flow: `challenge_request` -> `proof_request` -> `grant_response`
-- Token format: Ed25519-signed compact token (JWT-style `header.payload.signature`)
+- Stream protocol: `/space-data-network/module-delivery/1.0.0`
+- Envelope/schema: `space_data_network.module_delivery.v1.ModuleDeliveryMessage`
+- Flow: `GrantRequest -> GrantChallenge -> GrantProof -> GrantResponse`
+- Token format: Ed25519-signed compact capability token (`header.payload.signature`)
+- Browser and node requesters discover providers by compressed secp256k1 public key via the DHT namespace `space-data-network/module-delivery/provider-pubkey`
+- `GrantResponse` returns the signed grant result, encrypted-bundle descriptor, and wrapped content key
+- Requesters fetch the encrypted module bundle separately by CID over IPFS/libp2p and decrypt locally
 
-OrbPro key exchange streams are FlatBuffer-based:
-
-- `/orbpro/public-key/1.0.0` returns `PublicKeyResponse` (file id `OBPK`)
-- `/orbpro/challenge/1.0.0` returns challenge JSON `{protocolVersion, challengeId, challengeToken, keyVersion, expiresAtMs}`
-- `/orbpro/key-broker/1.0.0` accepts `KeyBrokerRequest` (`OBKQ`) and returns `KeyBrokerResponse` (`OBKS`)
-- The stream handlers are transport-only; all challenge and packet validation logic remains in the WASM plugin ABI.
-- Schema source of truth lives at `packages/plugin-sdk/schemas/orbpro/key-broker/`
-- Regenerate plugin SDK + SDN Go bindings with `flatc-wasm` from repo root: `npm run generate:plugin-sdk:key-broker-bindings`
+The public browser-facing `/orbpro/*` key-broker and `/api/node/info` bootstrap flows are not part of the current SDN contract.
 
 HTTP endpoints on the admin listener:
 
-- `GET /api/v1/license/verify` (verify bearer token and optional scopes)
-- `GET/POST/PUT /api/v1/license/entitlements` (xpub entitlement management)
-- `GET /api/v1/plugins/manifest` (encrypted plugin catalog metadata)
-- `GET /api/v1/plugins/{id}/bundle` (cacheable encrypted plugin bytes)
-- `POST /api/v1/plugins/{id}/key-envelope` (auth required; returns wrapped decryption material)
+- `GET /api/v1/license/verify` verifies bearer tokens and optional scopes
+- `GET/POST/PUT /api/v1/license/entitlements` manages xpub entitlement state
+- `POST /api/v1/plugins/upload` uploads signed encrypted module artifacts into the provider catalog
 
 Runtime plugin architecture:
 
 - Plugin manager package: `github.com/spacedatanetwork/sdn-server/plugins`
-- Built-in license plugin package: `github.com/spacedatanetwork/sdn-server/plugins/licenseplugin`
-- The node now installs license functionality through this plugin manager at startup.
+- Built-in module-delivery plugin package: `github.com/spacedatanetwork/sdn-server/plugins/moduledeliveryplugin`
+- The embedded `internal/license` package remains the entitlement and capability-token issuer behind the public module-delivery protocol
 
 Native TLS on admin/API listener (no reverse proxy):
 

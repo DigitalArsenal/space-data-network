@@ -149,6 +149,14 @@ func (s *Service) PluginRegistry() *PluginRegistry {
 	return s.plugins
 }
 
+// Issuer returns the configured capability-token issuer.
+func (s *Service) Issuer() string {
+	if s == nil {
+		return ""
+	}
+	return s.issuer
+}
+
 // PublicKeyHex returns the token verification key for distribution.
 func (s *Service) PublicKeyHex() string {
 	return hex.EncodeToString(s.publicKey)
@@ -162,6 +170,55 @@ func (s *Service) GetEntitlement(xpub string) (*Entitlement, error) {
 // UpsertEntitlement updates entitlement state.
 func (s *Service) UpsertEntitlement(ent *Entitlement) error {
 	return s.store.UpsertEntitlement(ent)
+}
+
+// IssueCapabilityGrant returns the current entitlement and a freshly signed capability token.
+func (s *Service) IssueCapabilityGrant(xpub, peerID string) (*Entitlement, *CapabilityClaims, string, error) {
+	if s == nil {
+		return nil, nil, "", errors.New("license service is nil")
+	}
+
+	now := time.Now().UTC()
+	ent, err := s.store.GetOrCreateEntitlement(strings.TrimSpace(xpub), strings.TrimSpace(peerID))
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("load entitlement: %w", err)
+	}
+	if !ent.IsActive(now) {
+		return nil, nil, "", errors.New("subscription is not active")
+	}
+
+	exp := now.Add(s.tokenTTL)
+	if ent.ExpiresAt > 0 {
+		entExp := time.Unix(ent.ExpiresAt, 0)
+		if entExp.Before(exp) {
+			exp = entExp
+		}
+	}
+
+	claims := &CapabilityClaims{
+		Iss:    s.issuer,
+		Sub:    xpub,
+		PeerID: peerID,
+		Plan:   ent.Plan,
+		Scopes: scopesForPlan(ent.Plan),
+		Iat:    now.Unix(),
+		Exp:    exp.Unix(),
+		JTI:    uuid.NewString(),
+	}
+	token, err := SignCapabilityToken(*claims, s.privateKey)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("sign capability token: %w", err)
+	}
+
+	return ent, claims, token, nil
+}
+
+// Sign signs arbitrary bytes with the service signing key.
+func (s *Service) Sign(payload []byte) ([]byte, error) {
+	if s == nil {
+		return nil, errors.New("license service is nil")
+	}
+	return ed25519.Sign(s.privateKey, payload), nil
 }
 
 // HandleStream handles newline-delimited JSON messages over /orbpro/license/1.0.0.
@@ -355,34 +412,12 @@ func (s *Service) handleProofRequest(req ProofRequest) (*GrantResponse, *ErrorRe
 		return nil, &ErrorResponse{Type: msgTypeErrorResponse, Code: "signature_invalid", Message: "signature verification failed"}
 	}
 
-	ent, err := s.store.GetOrCreateEntitlement(req.XPub, req.PeerID)
+	ent, claims, token, err := s.IssueCapabilityGrant(req.XPub, req.PeerID)
 	if err != nil {
-		return nil, &ErrorResponse{Type: msgTypeErrorResponse, Code: "server_error", Message: "failed to load entitlement"}
-	}
-	if !ent.IsActive(now) {
-		return nil, &ErrorResponse{Type: msgTypeErrorResponse, Code: "entitlement_inactive", Message: "subscription is not active"}
-	}
-
-	exp := now.Add(s.tokenTTL)
-	if ent.ExpiresAt > 0 {
-		entExp := time.Unix(ent.ExpiresAt, 0)
-		if entExp.Before(exp) {
-			exp = entExp
+		if err.Error() == "subscription is not active" {
+			return nil, &ErrorResponse{Type: msgTypeErrorResponse, Code: "entitlement_inactive", Message: err.Error()}
 		}
-	}
-	claims := CapabilityClaims{
-		Iss:    s.issuer,
-		Sub:    req.XPub,
-		PeerID: req.PeerID,
-		Plan:   ent.Plan,
-		Scopes: scopesForPlan(ent.Plan),
-		Iat:    now.Unix(),
-		Exp:    exp.Unix(),
-		JTI:    uuid.NewString(),
-	}
-	token, err := SignCapabilityToken(claims, s.privateKey)
-	if err != nil {
-		return nil, &ErrorResponse{Type: msgTypeErrorResponse, Code: "server_error", Message: "failed to sign capability token"}
+		return nil, &ErrorResponse{Type: msgTypeErrorResponse, Code: "server_error", Message: "failed to issue capability token"}
 	}
 
 	return &GrantResponse{
@@ -441,6 +476,11 @@ func peerIDFromEd25519(raw []byte) (string, error) {
 		return "", err
 	}
 	return id.String(), nil
+}
+
+// PeerIDFromEd25519PublicKey derives a peer ID from a raw Ed25519 public key.
+func PeerIDFromEd25519PublicKey(raw []byte) (string, error) {
+	return peerIDFromEd25519(raw)
 }
 
 func (s *Service) writeResponse(stream network.Stream, payload interface{}) error {
