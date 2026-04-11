@@ -150,6 +150,12 @@ Full nodes now expose generic SDN module delivery over libp2p/IPFS:
 
 The public browser-facing `/orbpro/*` key-broker and `/api/node/info` bootstrap flows are not part of the current SDN contract.
 
+`sdn-server` owns the provider side of this contract:
+
+- `internal/moduledelivery` serves the FlatBuffer grant flow and bundle publication metadata.
+- `plugins/moduledeliveryplugin` is the built-in provider plugin that registers `/space-data-network/module-delivery/1.0.0`.
+- `internal/license` remains an internal entitlement/token dependency and is no longer the public requester-facing protocol surface.
+
 HTTP endpoints on the admin listener:
 
 - `GET /api/v1/license/verify` verifies bearer tokens and optional scopes

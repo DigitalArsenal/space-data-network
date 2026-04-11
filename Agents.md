@@ -11,6 +11,9 @@
 - Provider discovery is anchored by the provider compressed secp256k1 public key and the DHT namespace `space-data-network/module-delivery/provider-pubkey`.
 - Module bundles stay encrypted in transit and at rest, are fetched by CID over IPFS/libp2p, and are decrypted locally after the requester receives the wrapped content key in `GrantResponse`.
 - The older browser-facing `/orbpro/public-key`, `/orbpro/challenge`, `/orbpro/key-broker`, and `/orbpro/license` flows are not the current SDN contract.
+- Ownership boundary:
+  `sdn-server` owns provider-side module delivery, DHT provider-identity advertisement, and the built-in `plugins/moduledeliveryplugin`.
+  `packages/plugin-sdk` owns FlatBuffer schemas/codecs and `sdn-js` owns requester-side discovery and fetch behavior.
 
 ### Why "SDS"
 
