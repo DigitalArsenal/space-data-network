@@ -195,8 +195,15 @@ func (s *Service) handleGrantRequest(request *schema.GrantRequest, remotePeerID 
 	if derivedPeerID != requesterPeerID {
 		return s.encodeErrorResponse(reqID, "peer_id_mismatch", "requester peer id does not match requester signing public key", false), nil
 	}
-	if _, ok := s.registry.PluginRegistry().Get(moduleID); !ok {
+	asset, ok := s.registry.PluginRegistry().Get(moduleID)
+	if !ok {
 		return s.encodeErrorResponse(reqID, "module_not_found", "requested module is not available", false), nil
+	}
+	if requestedVersion := strings.TrimSpace(moduleVersion); requestedVersion != "" {
+		actualVersion := strings.TrimSpace(asset.Version)
+		if actualVersion != "" && actualVersion != requestedVersion {
+			return s.encodeErrorResponse(reqID, "module_version_mismatch", "requested module version does not match provider bundle", false), nil
+		}
 	}
 
 	challenge := make([]byte, 32)

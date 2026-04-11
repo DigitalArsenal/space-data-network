@@ -1012,32 +1012,13 @@ func (n *Node) runMDNS() {
 func (n *Node) runDHTDiscovery() {
 	defer n.wg.Done()
 
-	// Create discovery namespace from version hash using SHA-256
-	// Note: Using SHA-256 instead of Argon2 since this is for deterministic
-	// namespace generation, not password hashing. Argon2 is designed for
-	// password-based key derivation with computational cost, which is
-	// inappropriate for this use case.
-	versionBytes := []byte(SDNVersion)
-	hash := sha256.Sum256(versionBytes)
-	discoveryNS := hex.EncodeToString(hash[:])
-
-	log.Infof("DHT discovery namespace: %s", discoveryNS[:16]+"...")
-
-	var discoveryTargets []cid.Cid
-	if discoveryCID := computeRawCIDV1FromDigest(hash[:]); discoveryCID.Defined() {
-		discoveryTargets = append(discoveryTargets, discoveryCID)
-	}
-	if n.moduleDeliveryDiscovery.Defined() {
-		discoveryTargets = append(discoveryTargets, n.moduleDeliveryDiscovery)
-	}
+	discoveryTargets := moduleDeliveryDiscoveryTargets(n.moduleDeliveryDiscovery)
 	if len(discoveryTargets) == 0 {
 		log.Warn("No DHT discovery targets available")
 		return
 	}
-	if n.moduleDeliveryDiscovery.Defined() {
-		log.Infof("Module delivery discovery namespace: %s", moduleDeliveryDiscoveryNamespace)
-		log.Infof("Module delivery discovery CID: %s", n.moduleDeliveryDiscovery.String())
-	}
+	log.Infof("Module delivery discovery namespace: %s", moduleDeliveryDiscoveryNamespace)
+	log.Infof("Module delivery discovery CID: %s", discoveryTargets[0].String())
 
 	// Announcement interval (every 30 seconds as per Agents.md spec)
 	announceTicker := time.NewTicker(30 * time.Second)
@@ -1069,6 +1050,13 @@ func (n *Node) runDHTDiscovery() {
 			}
 		}
 	}
+}
+
+func moduleDeliveryDiscoveryTargets(discoveryCID cid.Cid) []cid.Cid {
+	if !discoveryCID.Defined() {
+		return nil
+	}
+	return []cid.Cid{discoveryCID}
 }
 
 // announceOnDHT announces our presence in the DHT discovery namespace.
@@ -1203,12 +1191,16 @@ func (n *Node) PluginManager() *plugins.Manager {
 	return n.plugins
 }
 
-// LicenseService returns the local license service (nil in edge mode or if unavailable).
+// LicenseService returns the embedded entitlement/token service (nil in edge mode or if unavailable).
 func (n *Node) LicenseService() *license.Service {
 	if n.moduleDelivery == nil {
 		return nil
 	}
-	return n.moduleDelivery.Service()
+	service := n.moduleDelivery.Service()
+	if service == nil {
+		return nil
+	}
+	return service.LicenseService()
 }
 
 // Identity returns the node's HD wallet identity, or nil if using a random key.
@@ -1229,8 +1221,8 @@ func (n *Node) ModuleDeliveryPlugin() *moduleDeliveryPlugin {
 	return n.moduleDelivery
 }
 
-// ModuleDeliveryService returns the module-delivery service, or nil if unavailable.
-func (n *Node) ModuleDeliveryService() *license.Service {
+// ModuleDeliveryService returns the module-delivery provider service, or nil if unavailable.
+func (n *Node) ModuleDeliveryService() *moduledelivery.Service {
 	if n.moduleDelivery == nil {
 		return nil
 	}
@@ -1328,11 +1320,11 @@ func (p *moduleDeliveryPlugin) Close() error {
 	return p.plugin.Close()
 }
 
-func (p *moduleDeliveryPlugin) Service() *license.Service {
+func (p *moduleDeliveryPlugin) Service() *moduledelivery.Service {
 	if p == nil || p.plugin == nil {
 		return nil
 	}
-	return p.plugin.LicenseService()
+	return p.plugin.Service()
 }
 
 func (p *moduleDeliveryPlugin) TokenVerifier() *license.TokenVerifier {
