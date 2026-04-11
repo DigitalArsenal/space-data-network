@@ -57,6 +57,8 @@ export interface SDNConfig {
   edgeRelays?: string[];
   bootstrapPeers?: string[];
   includeIPFSBootstrap?: boolean;
+  ipfsApiBaseUrl?: string;
+  ipfsFetchTimeoutMs?: number;
   idExchangeProtocol?: string;
   enableStorage?: boolean;
   storeName?: string;
@@ -79,6 +81,7 @@ export interface SDNNodeEvents {
 export class SDNNode {
   private libp2p: Libp2p | null = null;
   private heliaNode: Helia | null = null;
+  private heliaNodePromise: Promise<Helia> | null = null;
   private storage: SDNStorage | null = null;
   private config: SDNConfig;
   private events: SDNNodeEvents;
@@ -110,12 +113,15 @@ export class SDNNode {
   }
 
   private async init(): Promise<void> {
+    const explicitRelays = normalizeConfiguredRelays(this.config.edgeRelays);
+    const hasExplicitRelays = explicitRelays.length > 0;
+
     // Build bootstrap list from SDN relays and IPFS public bootstrappers.
-    const rawRelays = this.config.edgeRelays ?? await getBootstrapRelays();
+    const rawRelays = hasExplicitRelays ? explicitRelays : await getBootstrapRelays();
 
     // Create discovery instance for load-balanced relay selection
     this.discovery = new EdgeDiscovery(rawRelays);
-    if (this.config.enableRelayProbing !== false) {
+    if (shouldProbeRelays(this.config, hasExplicitRelays)) {
       try {
         await this.discovery.probeAllRelays();
       } catch {
@@ -124,8 +130,10 @@ export class SDNNode {
       this.discovery.startProbing(this.config.relayProbeIntervalMs ?? 30_000);
     }
 
-    const relays = this.discovery.getBestRelays(rawRelays.length);
-    const bootstrapList = resolveBootstrapList(relays, this.config);
+    const relays = shouldProbeRelays(this.config, hasExplicitRelays)
+      ? this.discovery.getBestRelays(rawRelays.length)
+      : rawRelays;
+    const bootstrapList = resolveBootstrapList(relays, this.config, hasExplicitRelays);
 
     // Build libp2p options
     const libp2pOpts: Parameters<typeof createLibp2p>[0] = {
@@ -442,8 +450,27 @@ export class SDNNode {
   }
 
   async fetchCIDBytes(cid: string): Promise<Uint8Array> {
-    const helia = await this.ensureHelia();
-    return fetchCIDBytesFromHelia(helia, cid);
+    const apiBaseUrl = normalizeOptionalString(this.config.ipfsApiBaseUrl);
+    if (apiBaseUrl) {
+      return fetchCIDBytesFromIpfsApi(apiBaseUrl, cid);
+    }
+
+    const heliaFetch = (async () => {
+      const helia = await this.ensureHelia();
+      return fetchCIDBytesFromHelia(helia, cid);
+    })();
+
+    try {
+      return await withOptionalTimeout(
+        heliaFetch,
+        resolveIpfsFetchTimeoutMs(this.config, apiBaseUrl),
+      );
+    } catch (error) {
+      if (!apiBaseUrl) {
+        throw error;
+      }
+      return fetchCIDBytesFromIpfsApi(apiBaseUrl, cid);
+    }
   }
 
   async requestModuleGrant(
@@ -498,6 +525,7 @@ export class SDNNode {
       await this.heliaNode.stop().catch(() => undefined);
       this.heliaNode = null;
     }
+    this.heliaNodePromise = null;
 
     // Stop libp2p
     if (this.libp2p) {
@@ -531,15 +559,25 @@ export class SDNNode {
     if (!this.libp2p) {
       throw new Error('Node not initialized');
     }
-    if (!this.heliaNode) {
-      this.heliaNode = await createHeliaFromLibp2p(this.libp2p);
+    if (!this.heliaNodePromise) {
+      this.heliaNodePromise = createHeliaFromLibp2p(this.libp2p)
+        .then((heliaNode) => {
+          this.heliaNode = heliaNode;
+          return heliaNode;
+        })
+        .catch((error) => {
+          this.heliaNodePromise = null;
+          throw error;
+        });
     }
-    return this.heliaNode;
+    return this.heliaNodePromise;
   }
 }
 
-function resolveBootstrapList(relays: string[], config: SDNConfig): string[] {
-  const includeIPFS = config.includeIPFSBootstrap !== false;
+function resolveBootstrapList(relays: string[], config: SDNConfig, hasExplicitRelays: boolean): string[] {
+  const includeIPFS = hasExplicitRelays
+    ? config.includeIPFSBootstrap === true
+    : config.includeIPFSBootstrap !== false;
   const configured = config.bootstrapPeers ?? [];
   const combined = [
     ...(includeIPFS ? IPFS_BOOTSTRAP_PEERS : []),
@@ -548,6 +586,70 @@ function resolveBootstrapList(relays: string[], config: SDNConfig): string[] {
   ];
 
   return Array.from(new Set(combined.filter((addr) => addr.trim().length > 0)));
+}
+
+function normalizeConfiguredRelays(relays?: string[]): string[] {
+  if (!Array.isArray(relays)) {
+    return [];
+  }
+  return relays
+    .map((relay) => String(relay || '').trim())
+    .filter((relay) => relay.length > 0);
+}
+
+function shouldProbeRelays(config: SDNConfig, hasExplicitRelays: boolean): boolean {
+  if (hasExplicitRelays) {
+    return config.enableRelayProbing === true;
+  }
+  return config.enableRelayProbing !== false;
+}
+
+function normalizeOptionalString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolveIpfsFetchTimeoutMs(config: SDNConfig, apiBaseUrl: string): number {
+  const configuredTimeout = Number(config.ipfsFetchTimeoutMs);
+  if (Number.isFinite(configuredTimeout) && configuredTimeout > 0) {
+    return configuredTimeout;
+  }
+  if (apiBaseUrl) {
+    return 5_000;
+  }
+  return 0;
+}
+
+async function withOptionalTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  if (!(timeoutMs > 0)) {
+    return promise;
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`helia fetch timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+async function fetchCIDBytesFromIpfsApi(apiBaseUrl: string, cid: string): Promise<Uint8Array> {
+  const baseUrl = apiBaseUrl.replace(/\/+$/, '');
+  const response = await fetch(`${baseUrl}/cat?arg=${encodeURIComponent(cid)}`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error(`IPFS API cat failed: ${response.status} ${response.statusText}`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
 }
 
 function chunkToBytes(chunk: StreamChunk): Uint8Array {

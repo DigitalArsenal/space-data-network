@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 
 const (
 	defaultChallengeTTL = 60 * time.Second
+	defaultClockSkew    = 2 * time.Minute
 	requestMaxLen       = 64 * 1024
 )
 
@@ -35,8 +37,10 @@ type pendingGrant struct {
 	moduleVersion                string
 	requesterPeerID              string
 	requesterXPub                string
+	requesterDomain              string
 	requesterSigningPublicKey    ed25519.PublicKey
 	requesterEncryptionPublicKey []byte
+	requestedTimeoutMs           uint64
 	challenge                    []byte
 	expiresAt                    time.Time
 	remotePeerID                 string
@@ -49,9 +53,22 @@ type Service struct {
 	providerPeerID    string
 	providerPublicKey []byte
 	challengeTTL      time.Duration
+	clockSkew         time.Duration
 
 	mu      sync.Mutex
 	pending map[string]pendingGrant
+}
+
+func (s *Service) availableModuleIDs() []string {
+	if s == nil || s.registry == nil || s.registry.PluginRegistry() == nil {
+		return nil
+	}
+	descriptors := s.registry.PluginRegistry().ListPublic()
+	ids := make([]string, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		ids = append(ids, descriptor.ID)
+	}
+	return ids
 }
 
 // NewService initializes the module-delivery service on top of the existing entitlement/token store.
@@ -79,6 +96,7 @@ func NewService(baseDataPath, issuer, providerPeerID string, providerPublicKey [
 		providerPeerID:    strings.TrimSpace(providerPeerID),
 		providerPublicKey: append([]byte(nil), providerPublicKey...),
 		challengeTTL:      defaultChallengeTTL,
+		clockSkew:         defaultClockSkew,
 		pending:           make(map[string]pendingGrant),
 	}, nil
 }
@@ -176,11 +194,13 @@ func (s *Service) handleGrantRequest(request *schema.GrantRequest, remotePeerID 
 	moduleVersion := strings.TrimSpace(string(request.ModuleVersion()))
 	requesterPeerID := strings.TrimSpace(string(request.RequesterPeerId()))
 	requesterXPub := strings.TrimSpace(string(request.RequesterXpub()))
+	requesterDomain := strings.TrimSpace(string(request.RequesterDomain()))
 	signingPublicKey := append([]byte(nil), request.RequesterSigningPublicKeyBytes()...)
 	encryptionPublicKey := append([]byte(nil), request.RequesterEncryptionPublicKeyBytes()...)
+	requestedTimeoutMs := request.RequestedTimeoutMs()
 
-	if reqID == "" || moduleID == "" || requesterPeerID == "" || requesterXPub == "" {
-		return s.encodeErrorResponse(reqID, "invalid_request", "req_id, module_id, requester_peer_id, and requester_xpub are required", false), nil
+	if reqID == "" || moduleID == "" || requesterPeerID == "" || requesterXPub == "" || requesterDomain == "" {
+		return s.encodeErrorResponse(reqID, "invalid_request", "req_id, module_id, requester_peer_id, requester_xpub, and requester_domain are required", false), nil
 	}
 	if len(signingPublicKey) != ed25519.PublicKeySize {
 		return s.encodeErrorResponse(reqID, "invalid_request", "requester signing public key must be 32-byte Ed25519", false), nil
@@ -195,9 +215,41 @@ func (s *Service) handleGrantRequest(request *schema.GrantRequest, remotePeerID 
 	if derivedPeerID != requesterPeerID {
 		return s.encodeErrorResponse(reqID, "peer_id_mismatch", "requester peer id does not match requester signing public key", false), nil
 	}
+	normalizedDomain, err := license.NormalizePolicyDomain(requesterDomain)
+	if err != nil {
+		return s.encodeErrorResponse(reqID, "invalid_request", "requester_domain must be a valid host name or IP literal", false), nil
+	}
+	now := time.Now().UTC()
+	if !withinClockSkewMillis(request.RequestedAtMs(), now, s.clockSkew) {
+		return s.encodeErrorResponse(reqID, "invalid_timestamp", "requested_at_ms outside allowable skew", false), nil
+	}
+	fmt.Printf(
+		"module-delivery request req_id=%q module_id=%q version=%q requester_peer=%q remote_peer=%q registry_count=%d\n",
+		reqID,
+		moduleID,
+		moduleVersion,
+		requesterPeerID,
+		remotePeerID,
+		s.registry.Count(),
+	)
 	asset, ok := s.registry.PluginRegistry().Get(moduleID)
 	if !ok {
+		fmt.Printf(
+			"module-delivery miss req_id=%q module_id=%q available=%q\n",
+			reqID,
+			moduleID,
+			s.availableModuleIDs(),
+		)
 		return s.encodeErrorResponse(reqID, "module_not_found", "requested module is not available", false), nil
+	}
+	if !asset.AllowsDomain(normalizedDomain) {
+		return s.encodeErrorResponse(reqID, "domain_not_allowed", "requester domain is not allowed for this module", false), nil
+	}
+	if requestedTimeoutMs == 0 {
+		return s.encodeErrorResponse(reqID, "invalid_request", "requested_timeout_ms must be greater than zero", false), nil
+	}
+	if requestedTimeoutMs > asset.GrantTimeoutLimitMs() {
+		return s.encodeErrorResponse(reqID, "timeout_exceeds_policy", "requested timeout exceeds the module policy", false), nil
 	}
 	if requestedVersion := strings.TrimSpace(moduleVersion); requestedVersion != "" {
 		actualVersion := strings.TrimSpace(asset.Version)
@@ -211,7 +263,6 @@ func (s *Service) handleGrantRequest(request *schema.GrantRequest, remotePeerID 
 		return nil, fmt.Errorf("generate challenge: %w", err)
 	}
 
-	now := time.Now().UTC()
 	s.cleanupPending(now)
 
 	s.mu.Lock()
@@ -221,8 +272,10 @@ func (s *Service) handleGrantRequest(request *schema.GrantRequest, remotePeerID 
 		moduleVersion:                moduleVersion,
 		requesterPeerID:              requesterPeerID,
 		requesterXPub:                requesterXPub,
+		requesterDomain:              normalizedDomain,
 		requesterSigningPublicKey:    ed25519.PublicKey(signingPublicKey),
 		requesterEncryptionPublicKey: encryptionPublicKey,
+		requestedTimeoutMs:           requestedTimeoutMs,
 		challenge:                    challenge,
 		expiresAt:                    now.Add(s.challengeTTL),
 		remotePeerID:                 remotePeerID,
@@ -258,13 +311,15 @@ func (s *Service) handleGrantProof(proof *schema.GrantProof, remotePeerID string
 	moduleID := strings.TrimSpace(string(proof.ModuleId()))
 	moduleVersion := strings.TrimSpace(string(proof.ModuleVersion()))
 	requesterPeerID := strings.TrimSpace(string(proof.RequesterPeerId()))
+	requesterDomain := strings.TrimSpace(string(proof.RequesterDomain()))
 	signingPublicKey := append([]byte(nil), proof.RequesterSigningPublicKeyBytes()...)
 	encryptionPublicKey := append([]byte(nil), proof.RequesterEncryptionPublicKeyBytes()...)
+	requestedTimeoutMs := proof.RequestedTimeoutMs()
 	challenge := append([]byte(nil), proof.ChallengeBytes()...)
 	signature := append([]byte(nil), proof.SignatureBytes()...)
 
-	if reqID == "" || moduleID == "" || requesterPeerID == "" {
-		return s.encodeErrorResponse(reqID, "invalid_request", "req_id, module_id, and requester_peer_id are required", false), nil
+	if reqID == "" || moduleID == "" || requesterPeerID == "" || requesterDomain == "" {
+		return s.encodeErrorResponse(reqID, "invalid_request", "req_id, module_id, requester_peer_id, and requester_domain are required", false), nil
 	}
 	if len(signingPublicKey) != ed25519.PublicKeySize || len(signature) != ed25519.SignatureSize {
 		return s.encodeErrorResponse(reqID, "invalid_request", "invalid requester signature payload", false), nil
@@ -274,6 +329,9 @@ func (s *Service) handleGrantProof(proof *schema.GrantProof, remotePeerID string
 	}
 
 	now := time.Now().UTC()
+	if !withinClockSkewMillis(proof.ProvedAtMs(), now, s.clockSkew) {
+		return s.encodeErrorResponse(reqID, "invalid_timestamp", "proved_at_ms outside allowable skew", false), nil
+	}
 	s.cleanupPending(now)
 
 	s.mu.Lock()
@@ -297,6 +355,9 @@ func (s *Service) handleGrantProof(proof *schema.GrantProof, remotePeerID string
 	if pending.moduleVersion != "" && moduleVersion != "" && pending.moduleVersion != moduleVersion {
 		return s.encodeErrorResponse(reqID, "challenge_mismatch", "module version does not match challenge request", false), nil
 	}
+	if pending.requesterDomain != requesterDomain || pending.requestedTimeoutMs != requestedTimeoutMs {
+		return s.encodeErrorResponse(reqID, "challenge_mismatch", "grant policy context does not match challenge request", false), nil
+	}
 	if !bytes.Equal(signingPublicKey, pending.requesterSigningPublicKey) ||
 		!bytes.Equal(encryptionPublicKey, pending.requesterEncryptionPublicKey) ||
 		!bytes.Equal(challenge, pending.challenge) {
@@ -306,7 +367,11 @@ func (s *Service) handleGrantProof(proof *schema.GrantProof, remotePeerID string
 		return s.encodeErrorResponse(reqID, "invalid_signature", "challenge signature verification failed", false), nil
 	}
 
-	entitlement, claims, capabilityToken, err := s.licenseService.IssueCapabilityGrant(pending.requesterXPub, pending.requesterPeerID)
+	entitlement, claims, capabilityToken, err := s.licenseService.IssueCapabilityGrantWithLimit(
+		pending.requesterXPub,
+		pending.requesterPeerID,
+		time.Duration(pending.requestedTimeoutMs)*time.Millisecond,
+	)
 	if err != nil {
 		return s.encodeErrorResponse(reqID, "grant_denied", err.Error(), false), nil
 	}
@@ -314,6 +379,9 @@ func (s *Service) handleGrantProof(proof *schema.GrantProof, remotePeerID string
 	publicationCID, asset, err := s.registry.EnsurePublicationCID(context.Background(), pending.moduleID)
 	if err != nil {
 		return nil, fmt.Errorf("ensure publication cid: %w", err)
+	}
+	if !claims.HasScope(asset.RequiredScopeOrDefault()) {
+		return s.encodeErrorResponse(reqID, "grant_denied", "entitlement does not include the required module scope", false), nil
 	}
 	contentKey, err := s.registry.PluginRegistry().ReadBundleKey(pending.moduleID)
 	if err != nil {
@@ -323,8 +391,21 @@ func (s *Service) handleGrantProof(proof *schema.GrantProof, remotePeerID string
 	if err != nil {
 		return nil, fmt.Errorf("wrap bundle key: %w", err)
 	}
+	grantVerifierPublicKey := s.licenseService.PublicKey()
+	expiresAtMs := uint64(claims.Exp * 1000)
 
-	grantSignature, err := s.signGrant(reqID, capabilityToken, publicationCID, wrappedKey.ciphertext)
+	grantSignature, err := s.signGrant(
+		reqID,
+		entitlement.Status,
+		capabilityToken,
+		pending.requesterDomain,
+		expiresAtMs,
+		pending.requestedTimeoutMs,
+		asset,
+		publicationCID,
+		wrappedKey,
+		pending.requesterEncryptionPublicKey,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("sign grant response: %w", err)
 	}
@@ -333,7 +414,9 @@ func (s *Service) handleGrantProof(proof *schema.GrantProof, remotePeerID string
 	reqIDOffset := builder.CreateString(reqID)
 	entitlementStatusOffset := builder.CreateString(entitlement.Status)
 	capabilityTokenOffset := builder.CreateString(capabilityToken)
+	grantedDomainOffset := builder.CreateString(pending.requesterDomain)
 	grantSignatureOffset := builder.CreateByteVector(grantSignature)
+	grantVerifierPublicKeyOffset := builder.CreateByteVector(grantVerifierPublicKey)
 	bundleDescriptorOffset := s.buildBundleDescriptor(builder, asset, publicationCID)
 	wrappedKeyOffset := s.buildWrappedContentKey(builder, wrappedKey, pending.requesterEncryptionPublicKey)
 
@@ -342,8 +425,11 @@ func (s *Service) handleGrantProof(proof *schema.GrantProof, remotePeerID string
 	schema.GrantResponseAddReqId(builder, reqIDOffset)
 	schema.GrantResponseAddEntitlementStatus(builder, entitlementStatusOffset)
 	schema.GrantResponseAddCapabilityToken(builder, capabilityTokenOffset)
-	schema.GrantResponseAddExpiresAtMs(builder, uint64(claims.Exp*1000))
+	schema.GrantResponseAddExpiresAtMs(builder, expiresAtMs)
+	schema.GrantResponseAddGrantedDomain(builder, grantedDomainOffset)
+	schema.GrantResponseAddGrantedTimeoutMs(builder, pending.requestedTimeoutMs)
 	schema.GrantResponseAddGrantSignature(builder, grantSignatureOffset)
+	schema.GrantResponseAddGrantVerifierPublicKey(builder, grantVerifierPublicKeyOffset)
 	schema.GrantResponseAddBundleDescriptor(builder, bundleDescriptorOffset)
 	schema.GrantResponseAddWrappedContentKey(builder, wrappedKeyOffset)
 	grantResponseOffset := schema.GrantResponseEnd(builder)
@@ -450,14 +536,36 @@ func wrapBundleKey(contentKey, recipientPublicKey []byte) (*wrappedBundleKey, er
 	}, nil
 }
 
-func (s *Service) signGrant(reqID, capabilityToken, publicationCID string, ciphertext []byte) ([]byte, error) {
-	digest := sha256.Sum256(bytes.Join([][]byte{
-		[]byte(reqID),
-		[]byte(capabilityToken),
-		[]byte(publicationCID),
-		ciphertext,
-	}, []byte{0}))
-	return s.licenseService.Sign(digest[:])
+func (s *Service) signGrant(
+	reqID string,
+	entitlementStatus string,
+	capabilityToken string,
+	grantedDomain string,
+	expiresAtMs uint64,
+	grantedTimeoutMs uint64,
+	asset *license.PluginAsset,
+	publicationCID string,
+	wrappedKey *wrappedBundleKey,
+	recipientPublicKey []byte,
+) ([]byte, error) {
+	contentCodec := strings.TrimSpace(asset.ContentType)
+	if contentCodec == "" {
+		contentCodec = "application/wasm+encrypted"
+	}
+	payload := canonicalGrantSignaturePayload(
+		reqID,
+		entitlementStatus,
+		capabilityToken,
+		grantedDomain,
+		expiresAtMs,
+		grantedTimeoutMs,
+		asset,
+		publicationCID,
+		contentCodec,
+		wrappedKey,
+		recipientPublicKey,
+	)
+	return s.licenseService.Sign(payload)
 }
 
 func (s *Service) buildBundleDescriptor(builder *flatbuffers.Builder, asset *license.PluginAsset, publicationCID string) flatbuffers.UOffsetT {
@@ -491,6 +599,59 @@ func (s *Service) buildBundleDescriptor(builder *flatbuffers.Builder, asset *lic
 	schema.BundleDescriptorAddContentCodec(builder, contentCodecOffset)
 	schema.BundleDescriptorAddEncryptionCodec(builder, encryptionCodecOffset)
 	return schema.BundleDescriptorEnd(builder)
+}
+
+func canonicalGrantSignaturePayload(
+	reqID string,
+	entitlementStatus string,
+	capabilityToken string,
+	grantedDomain string,
+	expiresAtMs uint64,
+	grantedTimeoutMs uint64,
+	asset *license.PluginAsset,
+	publicationCID string,
+	contentCodec string,
+	wrappedKey *wrappedBundleKey,
+	recipientPublicKey []byte,
+) []byte {
+	contentHash, _ := hex.DecodeString(strings.TrimSpace(asset.BundleSHA256))
+	return bytes.Join([][]byte{
+		[]byte(reqID),
+		[]byte(entitlementStatus),
+		[]byte(capabilityToken),
+		[]byte(strconv.FormatUint(expiresAtMs, 10)),
+		[]byte(grantedDomain),
+		[]byte(strconv.FormatUint(grantedTimeoutMs, 10)),
+		[]byte(publicationCID),
+		contentHash,
+		[]byte(strconv.FormatInt(asset.SizeBytes, 10)),
+		[]byte(asset.ID),
+		[]byte(asset.Version),
+		[]byte("wasm"),
+		[]byte("module-sdk/async-host-v1"),
+		[]byte("plugin_invoke_stream"),
+		[]byte(publicationCID),
+		[]byte(contentCodec),
+		[]byte("x25519-hkdf-sha256-aes-256-gcm"),
+		[]byte(wrapAlgorithm),
+		recipientPublicKey,
+		wrappedKey.ephemeralPublicKey,
+		wrappedKey.nonce,
+		wrappedKey.ciphertext,
+		wrappedKey.tag,
+	}, []byte{0})
+}
+
+func withinClockSkewMillis(ts uint64, now time.Time, skew time.Duration) bool {
+	if ts == 0 {
+		return false
+	}
+	actual := time.UnixMilli(int64(ts))
+	diff := now.Sub(actual)
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= skew
 }
 
 func (s *Service) buildWrappedContentKey(builder *flatbuffers.Builder, wrappedKey *wrappedBundleKey, recipientPublicKey []byte) flatbuffers.UOffsetT {

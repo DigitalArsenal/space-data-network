@@ -210,6 +210,11 @@ function createGrantRequestOffset(builder, payload = {}) {
   const moduleVariantOffset = optionalStringOffset(builder, payload.moduleVariant);
   const requesterPeerIdOffset = optionalStringOffset(builder, payload.requesterPeerId);
   const requesterXpubOffset = optionalStringOffset(builder, payload.requesterXpub);
+  const requesterDomainOffset = requiredStringOffset(
+    builder,
+    "requesterDomain",
+    payload.requesterDomain,
+  );
   const requesterSigningPublicKeyOffset = requiredVectorOffset(
     builder,
     GrantRequest,
@@ -241,11 +246,13 @@ function createGrantRequestOffset(builder, payload = {}) {
   if (requesterXpubOffset !== 0) {
     GrantRequest.addRequesterXpub(builder, requesterXpubOffset);
   }
+  GrantRequest.addRequesterDomain(builder, requesterDomainOffset);
   GrantRequest.addRequesterSigningPublicKey(builder, requesterSigningPublicKeyOffset);
   GrantRequest.addRequesterEncryptionPublicKey(
     builder,
     requesterEncryptionPublicKeyOffset,
   );
+  GrantRequest.addRequestedTimeoutMs(builder, toBigInt(payload.requestedTimeoutMs));
   GrantRequest.addRequestedAtMs(builder, toBigInt(payload.requestedAtMs));
   return GrantRequest.endGrantRequest(builder);
 }
@@ -285,6 +292,11 @@ function createGrantProofOffset(builder, payload = {}) {
   const moduleIdOffset = optionalStringOffset(builder, payload.moduleId);
   const moduleVersionOffset = optionalStringOffset(builder, payload.moduleVersion);
   const requesterPeerIdOffset = optionalStringOffset(builder, payload.requesterPeerId);
+  const requesterDomainOffset = requiredStringOffset(
+    builder,
+    "requesterDomain",
+    payload.requesterDomain,
+  );
   const requesterSigningPublicKeyOffset = requiredVectorOffset(
     builder,
     GrantProof,
@@ -326,11 +338,13 @@ function createGrantProofOffset(builder, payload = {}) {
   if (requesterPeerIdOffset !== 0) {
     GrantProof.addRequesterPeerId(builder, requesterPeerIdOffset);
   }
+  GrantProof.addRequesterDomain(builder, requesterDomainOffset);
   GrantProof.addRequesterSigningPublicKey(builder, requesterSigningPublicKeyOffset);
   GrantProof.addRequesterEncryptionPublicKey(
     builder,
     requesterEncryptionPublicKeyOffset,
   );
+  GrantProof.addRequestedTimeoutMs(builder, toBigInt(payload.requestedTimeoutMs));
   GrantProof.addChallenge(builder, challengeOffset);
   GrantProof.addSignature(builder, signatureOffset);
   GrantProof.addProvedAtMs(builder, toBigInt(payload.provedAtMs));
@@ -364,11 +378,24 @@ function createGrantResponseOffset(builder, payload = {}) {
     payload.entitlementStatus,
   );
   const capabilityTokenOffset = optionalStringOffset(builder, payload.capabilityToken);
+  const grantedDomainOffset = requiredStringOffset(
+    builder,
+    "grantedDomain",
+    payload.grantedDomain,
+  );
   const grantSignatureOffset = optionalVectorOffset(
     builder,
     GrantResponse,
     "createGrantSignatureVector",
     payload.grantSignature,
+  );
+  const grantVerifierPublicKeyOffset = requiredVectorOffset(
+    builder,
+    GrantResponse,
+    "createGrantVerifierPublicKeyVector",
+    "grantVerifierPublicKey",
+    payload.grantVerifierPublicKey,
+    32,
   );
   const bundleDescriptorOffset = createBundleDescriptorOffset(
     builder,
@@ -389,9 +416,12 @@ function createGrantResponseOffset(builder, payload = {}) {
     GrantResponse.addCapabilityToken(builder, capabilityTokenOffset);
   }
   GrantResponse.addExpiresAtMs(builder, toBigInt(payload.expiresAtMs));
+  GrantResponse.addGrantedDomain(builder, grantedDomainOffset);
+  GrantResponse.addGrantedTimeoutMs(builder, toBigInt(payload.grantedTimeoutMs));
   if (grantSignatureOffset !== 0) {
     GrantResponse.addGrantSignature(builder, grantSignatureOffset);
   }
+  GrantResponse.addGrantVerifierPublicKey(builder, grantVerifierPublicKeyOffset);
   GrantResponse.addBundleDescriptor(builder, bundleDescriptorOffset);
   GrantResponse.addWrappedContentKey(builder, wrappedContentKeyOffset);
   return GrantResponse.endGrantResponse(builder);
@@ -458,10 +488,12 @@ function decodeGrantRequestFromTable(request) {
     moduleVariant: request.moduleVariant() || "",
     requesterPeerId: request.requesterPeerId() || "",
     requesterXpub: request.requesterXpub() || "",
+    requesterDomain: request.requesterDomain() || "",
     requesterSigningPublicKey: cloneBytes(request.requesterSigningPublicKeyArray()),
     requesterEncryptionPublicKey: cloneBytes(
       request.requesterEncryptionPublicKeyArray(),
     ),
+    requestedTimeoutMs: toNumber(request.requestedTimeoutMs()),
     requestedAtMs: toNumber(request.requestedAtMs()),
   };
 }
@@ -484,10 +516,12 @@ function decodeGrantProofFromTable(proof) {
     moduleId: proof.moduleId() || "",
     moduleVersion: proof.moduleVersion() || "",
     requesterPeerId: proof.requesterPeerId() || "",
+    requesterDomain: proof.requesterDomain() || "",
     requesterSigningPublicKey: cloneBytes(proof.requesterSigningPublicKeyArray()),
     requesterEncryptionPublicKey: cloneBytes(
       proof.requesterEncryptionPublicKeyArray(),
     ),
+    requestedTimeoutMs: toNumber(proof.requestedTimeoutMs()),
     challenge: cloneBytes(proof.challengeArray()),
     signature: cloneBytes(proof.signatureArray()),
     provedAtMs: toNumber(proof.provedAtMs()),
@@ -508,7 +542,10 @@ function decodeGrantResponseFromTable(response) {
     entitlementStatus: response.entitlementStatus() || "",
     capabilityToken: response.capabilityToken() || "",
     expiresAtMs: toNumber(response.expiresAtMs()),
+    grantedDomain: response.grantedDomain() || "",
+    grantedTimeoutMs: toNumber(response.grantedTimeoutMs()),
     grantSignature: cloneBytes(response.grantSignatureArray()),
+    grantVerifierPublicKey: cloneBytes(response.grantVerifierPublicKeyArray()),
     bundleDescriptor,
     bundleDescriptorBytes: encodeBundleDescriptor(bundleDescriptor),
     wrappedContentKey,
@@ -611,7 +648,7 @@ export function decodeGrantProof(messageBytes) {
 }
 
 export function encodeGrantResponse(payload = {}) {
-  const builder = new flatbuffers.Builder(768);
+  const builder = new flatbuffers.Builder(896);
   const root = createGrantResponseOffset(builder, payload);
   return finishBuffer(builder, GrantResponse.finishGrantResponseBuffer, root);
 }

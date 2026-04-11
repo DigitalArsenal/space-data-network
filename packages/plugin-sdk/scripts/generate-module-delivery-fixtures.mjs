@@ -79,12 +79,14 @@ async function main() {
     moduleVariant: "darwin-arm64",
     requesterPeerId: "12D3KooWReqNode123456789ABCDEFGHJKLMNPQRSTUV",
     requesterXpub: "xpub6CUGRUonZSQ4TWtTMmzXdrXDtypWKiKpT2R3N4bKp9t6r5GaJ8V4aHcRUW2YCiMzFxLpyR4UxF3RJTUs63HgNbUsVTNff7kwh28ykVfoCEN",
+    requesterDomain: "app.example.com",
     requesterSigningPublicKey: hexToBytes(
       "11aa22bb33cc44dd55ee66ff77889900aabbccddeeff00112233445566778899",
     ),
     requesterEncryptionPublicKey: hexToBytes(
       "99aa88bb77cc66dd55ee44ff33002211ffeeddccbbaa99887766554433221100",
     ),
+    requestedTimeoutMs: 300_000,
     requestedAtMs: 1830000000123,
   };
 
@@ -107,8 +109,10 @@ async function main() {
     moduleId: grantRequestPayload.moduleId,
     moduleVersion: grantRequestPayload.moduleVersion,
     requesterPeerId: grantRequestPayload.requesterPeerId,
+    requesterDomain: grantRequestPayload.requesterDomain,
     requesterSigningPublicKey: grantRequestPayload.requesterSigningPublicKey,
     requesterEncryptionPublicKey: grantRequestPayload.requesterEncryptionPublicKey,
+    requestedTimeoutMs: grantRequestPayload.requestedTimeoutMs,
     challenge: grantChallengePayload.challenge,
     signature: hexToBytes(
       "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100",
@@ -154,8 +158,13 @@ async function main() {
     entitlementStatus: "active",
     capabilityToken: "grant-token-v1",
     expiresAtMs: 1830003600123,
+    grantedDomain: grantRequestPayload.requesterDomain,
+    grantedTimeoutMs: grantRequestPayload.requestedTimeoutMs,
     grantSignature: hexToBytes(
       "f0e1d2c3b4a5968778695a4b3c2d1e0ff0e1d2c3b4a5968778695a4b3c2d1e0f0011aa22bb33cc44dd55ee66ff7788990011aa22bb33cc44dd55ee66ff778899",
+    ),
+    grantVerifierPublicKey: hexToBytes(
+      "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
     ),
     bundleDescriptor,
     wrappedContentKey,

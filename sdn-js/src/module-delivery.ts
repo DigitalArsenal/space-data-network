@@ -46,6 +46,8 @@ export interface ModuleGrantRequestOptions {
   moduleId: string;
   moduleVersion?: string;
   moduleVariant?: string;
+  requesterDomain: string;
+  requestedTimeoutMs: number;
   reqId?: string;
   requestedAtMs?: number;
 }
@@ -86,6 +88,9 @@ interface WrappedContentKeyPayload {
 
 interface GrantResponsePayload {
   reqId: string;
+  grantedDomain: string;
+  grantedTimeoutMs: number;
+  grantVerifierPublicKey: Uint8Array;
   bundleDescriptor: BundleDescriptorPayload;
   wrappedContentKey: WrappedContentKeyPayload;
 }
@@ -103,6 +108,8 @@ export async function requestModuleGrant(
   const candidateAddrs = await resolveCandidateAddresses(transport, provider, discovery.peerId, discovery.discoveryCID);
   const reqId = normalizeRequiredString(options.reqId || createReqId(), 'reqId');
   const requestedAtMs = options.requestedAtMs ?? Date.now();
+  const requesterDomain = normalizeRequiredString(options.requesterDomain, 'requesterDomain');
+  const requestedTimeoutMs = normalizeRequestedTimeoutMs(options.requestedTimeoutMs);
 
   const challengeResponse = await sendMessage(transport, provider.peerId, candidateAddrs, {
     type: 'grant_request',
@@ -113,10 +120,17 @@ export async function requestModuleGrant(
       moduleVariant: trimOptional(options.moduleVariant),
       requesterPeerId: requesterIdentity.peerId,
       requesterXpub: trimOptional(requesterIdentity.xpub),
+      requesterDomain,
       requesterSigningPublicKey: requesterIdentity.signingKey.publicKey,
       requesterEncryptionPublicKey: requesterIdentity.encryptionKey.publicKey,
+      requestedTimeoutMs,
       requestedAtMs,
     },
+  });
+  console.info('[sdn-js] challenge received', {
+    moduleId: options.moduleId,
+    reqId,
+    responseType: challengeResponse.type,
   });
 
   if (challengeResponse.type === 'error_response') {
@@ -148,12 +162,19 @@ export async function requestModuleGrant(
       moduleId: normalizeRequiredString(options.moduleId, 'moduleId'),
       moduleVersion: trimOptional(options.moduleVersion),
       requesterPeerId: requesterIdentity.peerId,
+      requesterDomain,
       requesterSigningPublicKey: requesterIdentity.signingKey.publicKey,
       requesterEncryptionPublicKey: requesterIdentity.encryptionKey.publicKey,
+      requestedTimeoutMs,
       challenge: challenge.challenge,
       signature,
       provedAtMs: Date.now(),
     },
+  });
+  console.info('[sdn-js] grant response received', {
+    moduleId: options.moduleId,
+    reqId,
+    responseType: grantResponse.type,
   });
 
   if (grantResponse.type === 'error_response') {
@@ -170,6 +191,15 @@ export async function requestModuleGrant(
   if (grant.reqId !== reqId) {
     throw new ModuleDeliveryProtocolError('request_mismatch', 'grant response request id mismatch');
   }
+  if (grant.grantedDomain !== requesterDomain) {
+    throw new ModuleDeliveryProtocolError('grant_policy_mismatch', 'grant domain does not match the requested domain');
+  }
+  if (grant.grantedTimeoutMs <= 0 || grant.grantedTimeoutMs > requestedTimeoutMs) {
+    throw new ModuleDeliveryProtocolError('grant_policy_mismatch', 'grant timeout exceeds the requested timeout');
+  }
+  if (grant.grantVerifierPublicKey.length !== 32) {
+    throw new ModuleDeliveryProtocolError('invalid_grant', 'grant verifier public key must be 32 bytes');
+  }
 
   return { provider, grant };
 }
@@ -178,7 +208,16 @@ export async function fetchEncryptedModuleBundle(
   transport: Pick<ModuleDeliveryTransport, 'fetchCIDBytes'>,
   result: ModuleGrantResult,
 ): Promise<EncryptedModuleBundleResult> {
+  console.info('[sdn-js] fetching encrypted CID', {
+    moduleId: result.grant.bundleDescriptor.moduleId,
+    cid: result.grant.bundleDescriptor.cid,
+  });
   const encryptedBundleBytes = await transport.fetchCIDBytes(result.grant.bundleDescriptor.cid);
+  console.info('[sdn-js] fetched encrypted CID', {
+    moduleId: result.grant.bundleDescriptor.moduleId,
+    cid: result.grant.bundleDescriptor.cid,
+    bytes: encryptedBundleBytes.length,
+  });
   const digest = await sha256(encryptedBundleBytes);
 
   if (
@@ -292,6 +331,13 @@ function cloneBytes(value: Uint8Array): Uint8Array {
 
 function createReqId(): string {
   return `req-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeRequestedTimeoutMs(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error('requestedTimeoutMs must be a positive number');
+  }
+  return Math.trunc(value);
 }
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {

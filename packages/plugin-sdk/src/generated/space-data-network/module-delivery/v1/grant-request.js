@@ -50,36 +50,44 @@ class GrantRequest {
     const offset = this.bb.__offset(this.bb_pos, 16);
     return offset ? this.bb.__string(this.bb_pos + offset, optionalEncoding) : null;
   }
-  requesterSigningPublicKey(index) {
+  requesterDomain(optionalEncoding) {
     const offset = this.bb.__offset(this.bb_pos, 18);
+    return offset ? this.bb.__string(this.bb_pos + offset, optionalEncoding) : null;
+  }
+  requesterSigningPublicKey(index) {
+    const offset = this.bb.__offset(this.bb_pos, 20);
     return offset ? this.bb.readUint8(this.bb.__vector(this.bb_pos + offset) + index) : 0;
   }
   requesterSigningPublicKeyLength() {
-    const offset = this.bb.__offset(this.bb_pos, 18);
+    const offset = this.bb.__offset(this.bb_pos, 20);
     return offset ? this.bb.__vector_len(this.bb_pos + offset) : 0;
   }
   requesterSigningPublicKeyArray() {
-    const offset = this.bb.__offset(this.bb_pos, 18);
+    const offset = this.bb.__offset(this.bb_pos, 20);
     return offset ? new Uint8Array(this.bb.bytes().buffer, this.bb.bytes().byteOffset + this.bb.__vector(this.bb_pos + offset), this.bb.__vector_len(this.bb_pos + offset)) : null;
   }
   requesterEncryptionPublicKey(index) {
-    const offset = this.bb.__offset(this.bb_pos, 20);
+    const offset = this.bb.__offset(this.bb_pos, 22);
     return offset ? this.bb.readUint8(this.bb.__vector(this.bb_pos + offset) + index) : 0;
   }
   requesterEncryptionPublicKeyLength() {
-    const offset = this.bb.__offset(this.bb_pos, 20);
+    const offset = this.bb.__offset(this.bb_pos, 22);
     return offset ? this.bb.__vector_len(this.bb_pos + offset) : 0;
   }
   requesterEncryptionPublicKeyArray() {
-    const offset = this.bb.__offset(this.bb_pos, 20);
+    const offset = this.bb.__offset(this.bb_pos, 22);
     return offset ? new Uint8Array(this.bb.bytes().buffer, this.bb.bytes().byteOffset + this.bb.__vector(this.bb_pos + offset), this.bb.__vector_len(this.bb_pos + offset)) : null;
   }
+  requestedTimeoutMs() {
+    const offset = this.bb.__offset(this.bb_pos, 24);
+    return offset ? this.bb.readUint64(this.bb_pos + offset) : BigInt("0");
+  }
   requestedAtMs() {
-    const offset = this.bb.__offset(this.bb_pos, 22);
+    const offset = this.bb.__offset(this.bb_pos, 26);
     return offset ? this.bb.readUint64(this.bb_pos + offset) : BigInt("0");
   }
   static startGrantRequest(builder) {
-    builder.startObject(10);
+    builder.startObject(12);
   }
   static addSchemaVersion(builder, schemaVersion) {
     builder.addFieldInt32(0, schemaVersion, 1);
@@ -102,8 +110,11 @@ class GrantRequest {
   static addRequesterXpub(builder, requesterXpubOffset) {
     builder.addFieldOffset(6, requesterXpubOffset, 0);
   }
+  static addRequesterDomain(builder, requesterDomainOffset) {
+    builder.addFieldOffset(7, requesterDomainOffset, 0);
+  }
   static addRequesterSigningPublicKey(builder, requesterSigningPublicKeyOffset) {
-    builder.addFieldOffset(7, requesterSigningPublicKeyOffset, 0);
+    builder.addFieldOffset(8, requesterSigningPublicKeyOffset, 0);
   }
   static createRequesterSigningPublicKeyVector(builder, data) {
     builder.startVector(1, data.length, 1);
@@ -116,7 +127,7 @@ class GrantRequest {
     builder.startVector(1, numElems, 1);
   }
   static addRequesterEncryptionPublicKey(builder, requesterEncryptionPublicKeyOffset) {
-    builder.addFieldOffset(8, requesterEncryptionPublicKeyOffset, 0);
+    builder.addFieldOffset(9, requesterEncryptionPublicKeyOffset, 0);
   }
   static createRequesterEncryptionPublicKeyVector(builder, data) {
     builder.startVector(1, data.length, 1);
@@ -128,8 +139,11 @@ class GrantRequest {
   static startRequesterEncryptionPublicKeyVector(builder, numElems) {
     builder.startVector(1, numElems, 1);
   }
+  static addRequestedTimeoutMs(builder, requestedTimeoutMs) {
+    builder.addFieldInt64(10, requestedTimeoutMs, BigInt("0"));
+  }
   static addRequestedAtMs(builder, requestedAtMs) {
-    builder.addFieldInt64(9, requestedAtMs, BigInt("0"));
+    builder.addFieldInt64(11, requestedAtMs, BigInt("0"));
   }
   static endGrantRequest(builder) {
     const offset = builder.endObject();
@@ -137,6 +151,7 @@ class GrantRequest {
     builder.requiredField(offset, 8);
     builder.requiredField(offset, 18);
     builder.requiredField(offset, 20);
+    builder.requiredField(offset, 22);
     return offset;
   }
   static finishGrantRequestBuffer(builder, offset) {
@@ -145,7 +160,7 @@ class GrantRequest {
   static finishSizePrefixedGrantRequestBuffer(builder, offset) {
     builder.finish(offset, "SDGR", true);
   }
-  static createGrantRequest(builder, schemaVersion, reqIdOffset, moduleIdOffset, moduleVersionOffset, moduleVariantOffset, requesterPeerIdOffset, requesterXpubOffset, requesterSigningPublicKeyOffset, requesterEncryptionPublicKeyOffset, requestedAtMs) {
+  static createGrantRequest(builder, schemaVersion, reqIdOffset, moduleIdOffset, moduleVersionOffset, moduleVariantOffset, requesterPeerIdOffset, requesterXpubOffset, requesterDomainOffset, requesterSigningPublicKeyOffset, requesterEncryptionPublicKeyOffset, requestedTimeoutMs, requestedAtMs) {
     GrantRequest.startGrantRequest(builder);
     GrantRequest.addSchemaVersion(builder, schemaVersion);
     GrantRequest.addReqId(builder, reqIdOffset);
@@ -154,8 +169,10 @@ class GrantRequest {
     GrantRequest.addModuleVariant(builder, moduleVariantOffset);
     GrantRequest.addRequesterPeerId(builder, requesterPeerIdOffset);
     GrantRequest.addRequesterXpub(builder, requesterXpubOffset);
+    GrantRequest.addRequesterDomain(builder, requesterDomainOffset);
     GrantRequest.addRequesterSigningPublicKey(builder, requesterSigningPublicKeyOffset);
     GrantRequest.addRequesterEncryptionPublicKey(builder, requesterEncryptionPublicKeyOffset);
+    GrantRequest.addRequestedTimeoutMs(builder, requestedTimeoutMs);
     GrantRequest.addRequestedAtMs(builder, requestedAtMs);
     return GrantRequest.endGrantRequest(builder);
   }

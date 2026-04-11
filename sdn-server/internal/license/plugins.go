@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,6 +38,7 @@ const (
 	defaultPluginContentType      = "application/wasm"
 	defaultPluginCacheControl     = "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400"
 	defaultPluginRequiredScope    = "orbpro:base"
+	defaultMaxGrantTimeoutMs      = int64(300_000)
 	defaultKeyEnvelopeAlgorithm   = "X25519+SHA256+AES-256-GCM"
 	defaultKeyEnvelopeLifetimeSec = int64(120)
 	pluginRuntimeStatusStopped    = "stopped"
@@ -81,14 +83,16 @@ type PluginCatalogFile struct {
 
 // PluginCatalogEntry describes a plugin bundle and its key material location.
 type PluginCatalogEntry struct {
-	ID            string `json:"id"`
-	Version       string `json:"version"`
-	RequiredScope string `json:"required_scope"`
-	EncryptedPath string `json:"encrypted_path,omitempty"`
-	KeyPath       string `json:"key_path,omitempty"`
-	PlainPath     string `json:"plain_path,omitempty"`
-	ContentType   string `json:"content_type,omitempty"`
-	CacheControl  string `json:"cache_control,omitempty"`
+	ID                string   `json:"id"`
+	Version           string   `json:"version"`
+	RequiredScope     string   `json:"required_scope"`
+	EncryptedPath     string   `json:"encrypted_path,omitempty"`
+	KeyPath           string   `json:"key_path,omitempty"`
+	PlainPath         string   `json:"plain_path,omitempty"`
+	ContentType       string   `json:"content_type,omitempty"`
+	CacheControl      string   `json:"cache_control,omitempty"`
+	AllowedDomains    []string `json:"allowed_domains,omitempty"`
+	MaxGrantTimeoutMs int64    `json:"max_grant_timeout_ms,omitempty"`
 
 	// Upload audit fields (set when uploaded via API).
 	SignatureHex    string `json:"signature_hex,omitempty"`
@@ -114,16 +118,18 @@ type PluginDescriptor struct {
 
 // PluginAsset is an in-memory validated plugin metadata record.
 type PluginAsset struct {
-	ID              string
-	Version         string
-	RequiredScope   string
-	ContentType     string
-	CacheControl    string
-	BundleSHA256    string
-	SizeBytes       int64
-	SignatureHex    string
-	SignerPubKeyHex string
-	UploadedAt      string
+	ID                string
+	Version           string
+	RequiredScope     string
+	ContentType       string
+	CacheControl      string
+	BundleSHA256      string
+	SizeBytes         int64
+	AllowedDomains    []string
+	MaxGrantTimeoutMs int64
+	SignatureHex      string
+	SignerPubKeyHex   string
+	UploadedAt        string
 
 	encryptedPath string
 	keyPath       string
@@ -138,7 +144,47 @@ func (a *PluginAsset) clone() *PluginAsset {
 		return nil
 	}
 	cp := *a
+	if len(a.AllowedDomains) > 0 {
+		cp.AllowedDomains = append([]string(nil), a.AllowedDomains...)
+	}
 	return &cp
+}
+
+func (a *PluginAsset) RequiredScopeOrDefault() string {
+	if a == nil {
+		return defaultPluginRequiredScope
+	}
+	requiredScope := strings.TrimSpace(a.RequiredScope)
+	if requiredScope == "" {
+		return defaultPluginRequiredScope
+	}
+	return requiredScope
+}
+
+func (a *PluginAsset) GrantTimeoutLimitMs() uint64 {
+	if a == nil || a.MaxGrantTimeoutMs <= 0 {
+		return uint64(defaultMaxGrantTimeoutMs)
+	}
+	return uint64(a.MaxGrantTimeoutMs)
+}
+
+func (a *PluginAsset) AllowsDomain(requestedDomain string) bool {
+	if a == nil {
+		return false
+	}
+	normalizedRequested, err := normalizePolicyDomain(requestedDomain)
+	if err != nil {
+		return false
+	}
+	if len(a.AllowedDomains) == 0 {
+		return true
+	}
+	for _, allowed := range a.AllowedDomains {
+		if domainMatchesPolicy(normalizedRequested, allowed) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *PluginAsset) Descriptor() PluginDescriptor {
@@ -680,14 +726,23 @@ func validateCatalogEntry(rootAbs string, entry PluginCatalogEntry) (*PluginAsse
 	}
 
 	asset := &PluginAsset{
-		ID:              id,
-		Version:         version,
-		RequiredScope:   requiredScope,
-		ContentType:     contentType,
-		CacheControl:    cacheControl,
-		SignatureHex:    entry.SignatureHex,
-		SignerPubKeyHex: entry.SignerPubKeyHex,
-		UploadedAt:      entry.UploadedAt,
+		ID:                id,
+		Version:           version,
+		RequiredScope:     requiredScope,
+		ContentType:       contentType,
+		CacheControl:      cacheControl,
+		MaxGrantTimeoutMs: entry.MaxGrantTimeoutMs,
+		SignatureHex:      entry.SignatureHex,
+		SignerPubKeyHex:   entry.SignerPubKeyHex,
+		UploadedAt:        entry.UploadedAt,
+	}
+	allowedDomains, err := normalizeAllowedDomains(entry.AllowedDomains)
+	if err != nil {
+		return nil, fmt.Errorf("allowed_domains: %w", err)
+	}
+	asset.AllowedDomains = allowedDomains
+	if asset.MaxGrantTimeoutMs < 0 {
+		return nil, errors.New("max_grant_timeout_ms must be >= 0")
 	}
 
 	// Plain (uploaded) plugins have plain_path; encrypted have encrypted_path + key_path.
@@ -805,14 +860,16 @@ func (r *PluginRegistry) saveCatalogLocked() error {
 	entries := make([]PluginCatalogEntry, 0, len(r.assets))
 	for _, a := range r.assets {
 		entry := PluginCatalogEntry{
-			ID:              a.ID,
-			Version:         a.Version,
-			RequiredScope:   a.RequiredScope,
-			ContentType:     a.ContentType,
-			CacheControl:    a.CacheControl,
-			SignatureHex:    a.SignatureHex,
-			SignerPubKeyHex: a.SignerPubKeyHex,
-			UploadedAt:      a.UploadedAt,
+			ID:                a.ID,
+			Version:           a.Version,
+			RequiredScope:     a.RequiredScope,
+			ContentType:       a.ContentType,
+			CacheControl:      a.CacheControl,
+			AllowedDomains:    append([]string(nil), a.AllowedDomains...),
+			MaxGrantTimeoutMs: a.MaxGrantTimeoutMs,
+			SignatureHex:      a.SignatureHex,
+			SignerPubKeyHex:   a.SignerPubKeyHex,
+			UploadedAt:        a.UploadedAt,
 		}
 		if a.plainPath != "" {
 			rel, err := filepath.Rel(r.rootPath, a.plainPath)
@@ -847,6 +904,74 @@ func (r *PluginRegistry) saveCatalogLocked() error {
 	}
 	catalogPath := filepath.Join(r.rootPath, defaultPluginCatalogFile)
 	return os.WriteFile(catalogPath, data, 0600)
+}
+
+func normalizeAllowedDomains(values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	normalized := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		domain, err := normalizePolicyDomain(value)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[domain]; ok {
+			continue
+		}
+		seen[domain] = struct{}{}
+		normalized = append(normalized, domain)
+	}
+	sort.Strings(normalized)
+	return normalized, nil
+}
+
+func normalizePolicyDomain(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.TrimSuffix(normalized, ".")
+	if normalized == "" {
+		return "", errors.New("domain is required")
+	}
+	if strings.ContainsAny(normalized, "/?#@") {
+		return "", fmt.Errorf("invalid domain %q", value)
+	}
+	if addr, err := netip.ParseAddr(strings.Trim(normalized, "[]")); err == nil {
+		return addr.String(), nil
+	}
+	labels := strings.Split(normalized, ".")
+	for _, label := range labels {
+		if label == "" {
+			return "", fmt.Errorf("invalid domain %q", value)
+		}
+		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return "", fmt.Errorf("invalid domain %q", value)
+		}
+		for _, r := range label {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+				return "", fmt.Errorf("invalid domain %q", value)
+			}
+		}
+	}
+	return normalized, nil
+}
+
+// NormalizePolicyDomain validates and canonicalizes a host name or IP literal for module-delivery policy checks.
+func NormalizePolicyDomain(value string) (string, error) {
+	return normalizePolicyDomain(value)
+}
+
+func domainMatchesPolicy(requestedDomain, allowedDomain string) bool {
+	if requestedDomain == allowedDomain {
+		return true
+	}
+	if allowedDomain == "localhost" {
+		return false
+	}
+	if _, err := netip.ParseAddr(allowedDomain); err != nil {
+		return strings.HasSuffix(requestedDomain, "."+allowedDomain)
+	}
+	return false
 }
 
 func resolveRelativePath(rootAbs, relPath string) (string, error) {

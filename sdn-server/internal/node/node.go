@@ -321,6 +321,7 @@ func (n *Node) init() error {
 
 	// Initialize EPM (Entity Profile Message) service for node identity cards.
 	basePath := filepath.Dir(n.config.Storage.Path)
+	storageBasePath := strings.TrimSpace(n.config.Storage.Path)
 	var xpubStr string
 	if n.hdwallet != nil && n.identity != nil {
 		// Derive xpub from encrypted mnemonic seed for the EPM
@@ -373,7 +374,7 @@ func (n *Node) init() error {
 	pluginCtx := plugins.RuntimeContext{
 		Host:         n.host,
 		DHT:          n.dht,
-		BaseDataPath: basePath,
+		BaseDataPath: storageBasePath,
 		PeerID:       n.host.ID().String(),
 		IPFSAPIURL:   strings.TrimSpace(n.config.Admin.IPFSAPIURL),
 		Mode:         n.config.Mode,
@@ -495,7 +496,7 @@ func (n *Node) init() error {
 }
 
 func (n *Node) loadPluginRegistry() (*license.PluginRegistry, error) {
-	baseDataPath := filepath.Dir(n.config.Storage.Path)
+	baseDataPath := strings.TrimSpace(n.config.Storage.Path)
 	pluginRoot := strings.TrimSpace(os.Getenv("SDN_PLUGIN_ROOT"))
 	if pluginRoot == "" {
 		pluginRoot = license.DefaultPluginRoot(baseDataPath)

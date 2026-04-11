@@ -2,14 +2,12 @@
   "name": "@spacedatanetwork/sdn-js",
   "version": "2.0.0",
   "description": "Space Data Network JavaScript library for browser and Node.js",
-  "main": "dist/index.js",
-  "module": "dist/index.esm.js",
+  "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.esm.js",
-      "require": "./dist/index.js"
+      "import": "./dist/index.mjs"
     }
   },
   "files": [
@@ -17,8 +15,8 @@
     "wasm"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "build": "rm -rf dist && tsc --project tsconfig.build.json --emitDeclarationOnly && node scripts/build-package-entry.mjs",
+    "dev": "tsc --emitDeclarationOnly --watch",
     "test": "vitest",
     "test:relay": "SDN_RUN_RELAY_TEST=1 vitest run src/spaceaware-relay.integration.test.ts",
     "lint": "eslint src --ext .ts",

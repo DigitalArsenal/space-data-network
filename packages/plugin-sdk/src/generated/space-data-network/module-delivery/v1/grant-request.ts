@@ -75,43 +75,55 @@ requesterXpub(optionalEncoding?:any):string|Uint8Array|null {
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
-requesterSigningPublicKey(index: number):number|null {
+requesterDomain():string|null
+requesterDomain(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+requesterDomain(optionalEncoding?:any):string|Uint8Array|null {
   const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+requesterSigningPublicKey(index: number):number|null {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index) : 0;
 }
 
 requesterSigningPublicKeyLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 requesterSigningPublicKeyArray():Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? new Uint8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 requesterEncryptionPublicKey(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? this.bb!.readUint8(this.bb!.__vector(this.bb_pos + offset) + index) : 0;
 }
 
 requesterEncryptionPublicKeyLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 requesterEncryptionPublicKeyArray():Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? new Uint8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
+requestedTimeoutMs():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
 requestedAtMs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
+  const offset = this.bb!.__offset(this.bb_pos, 26);
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
 static startGrantRequest(builder:flatbuffers.Builder) {
-  builder.startObject(10);
+  builder.startObject(12);
 }
 
 static addSchemaVersion(builder:flatbuffers.Builder, schemaVersion:number) {
@@ -142,8 +154,12 @@ static addRequesterXpub(builder:flatbuffers.Builder, requesterXpubOffset:flatbuf
   builder.addFieldOffset(6, requesterXpubOffset, 0);
 }
 
+static addRequesterDomain(builder:flatbuffers.Builder, requesterDomainOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(7, requesterDomainOffset, 0);
+}
+
 static addRequesterSigningPublicKey(builder:flatbuffers.Builder, requesterSigningPublicKeyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, requesterSigningPublicKeyOffset, 0);
+  builder.addFieldOffset(8, requesterSigningPublicKeyOffset, 0);
 }
 
 static createRequesterSigningPublicKeyVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset {
@@ -159,7 +175,7 @@ static startRequesterSigningPublicKeyVector(builder:flatbuffers.Builder, numElem
 }
 
 static addRequesterEncryptionPublicKey(builder:flatbuffers.Builder, requesterEncryptionPublicKeyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, requesterEncryptionPublicKeyOffset, 0);
+  builder.addFieldOffset(9, requesterEncryptionPublicKeyOffset, 0);
 }
 
 static createRequesterEncryptionPublicKeyVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset {
@@ -174,16 +190,21 @@ static startRequesterEncryptionPublicKeyVector(builder:flatbuffers.Builder, numE
   builder.startVector(1, numElems, 1);
 }
 
+static addRequestedTimeoutMs(builder:flatbuffers.Builder, requestedTimeoutMs:bigint) {
+  builder.addFieldInt64(10, requestedTimeoutMs, BigInt('0'));
+}
+
 static addRequestedAtMs(builder:flatbuffers.Builder, requestedAtMs:bigint) {
-  builder.addFieldInt64(9, requestedAtMs, BigInt('0'));
+  builder.addFieldInt64(11, requestedAtMs, BigInt('0'));
 }
 
 static endGrantRequest(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 6) // req_id
   builder.requiredField(offset, 8) // module_id
-  builder.requiredField(offset, 18) // requester_signing_public_key
-  builder.requiredField(offset, 20) // requester_encryption_public_key
+  builder.requiredField(offset, 18) // requester_domain
+  builder.requiredField(offset, 20) // requester_signing_public_key
+  builder.requiredField(offset, 22) // requester_encryption_public_key
   return offset;
 }
 
@@ -195,7 +216,7 @@ static finishSizePrefixedGrantRequestBuffer(builder:flatbuffers.Builder, offset:
   builder.finish(offset, 'SDGR', true);
 }
 
-static createGrantRequest(builder:flatbuffers.Builder, schemaVersion:number, reqIdOffset:flatbuffers.Offset, moduleIdOffset:flatbuffers.Offset, moduleVersionOffset:flatbuffers.Offset, moduleVariantOffset:flatbuffers.Offset, requesterPeerIdOffset:flatbuffers.Offset, requesterXpubOffset:flatbuffers.Offset, requesterSigningPublicKeyOffset:flatbuffers.Offset, requesterEncryptionPublicKeyOffset:flatbuffers.Offset, requestedAtMs:bigint):flatbuffers.Offset {
+static createGrantRequest(builder:flatbuffers.Builder, schemaVersion:number, reqIdOffset:flatbuffers.Offset, moduleIdOffset:flatbuffers.Offset, moduleVersionOffset:flatbuffers.Offset, moduleVariantOffset:flatbuffers.Offset, requesterPeerIdOffset:flatbuffers.Offset, requesterXpubOffset:flatbuffers.Offset, requesterDomainOffset:flatbuffers.Offset, requesterSigningPublicKeyOffset:flatbuffers.Offset, requesterEncryptionPublicKeyOffset:flatbuffers.Offset, requestedTimeoutMs:bigint, requestedAtMs:bigint):flatbuffers.Offset {
   GrantRequest.startGrantRequest(builder);
   GrantRequest.addSchemaVersion(builder, schemaVersion);
   GrantRequest.addReqId(builder, reqIdOffset);
@@ -204,8 +225,10 @@ static createGrantRequest(builder:flatbuffers.Builder, schemaVersion:number, req
   GrantRequest.addModuleVariant(builder, moduleVariantOffset);
   GrantRequest.addRequesterPeerId(builder, requesterPeerIdOffset);
   GrantRequest.addRequesterXpub(builder, requesterXpubOffset);
+  GrantRequest.addRequesterDomain(builder, requesterDomainOffset);
   GrantRequest.addRequesterSigningPublicKey(builder, requesterSigningPublicKeyOffset);
   GrantRequest.addRequesterEncryptionPublicKey(builder, requesterEncryptionPublicKeyOffset);
+  GrantRequest.addRequestedTimeoutMs(builder, requestedTimeoutMs);
   GrantRequest.addRequestedAtMs(builder, requestedAtMs);
   return GrantRequest.endGrantRequest(builder);
 }

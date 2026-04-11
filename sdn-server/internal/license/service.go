@@ -162,6 +162,14 @@ func (s *Service) PublicKeyHex() string {
 	return hex.EncodeToString(s.publicKey)
 }
 
+// PublicKey returns the raw Ed25519 verification key for capability tokens and grant signatures.
+func (s *Service) PublicKey() []byte {
+	if s == nil {
+		return nil
+	}
+	return append([]byte(nil), s.publicKey...)
+}
+
 // GetEntitlement returns entitlement for xpub.
 func (s *Service) GetEntitlement(xpub string) (*Entitlement, error) {
 	return s.store.GetEntitlement(xpub)
@@ -174,6 +182,15 @@ func (s *Service) UpsertEntitlement(ent *Entitlement) error {
 
 // IssueCapabilityGrant returns the current entitlement and a freshly signed capability token.
 func (s *Service) IssueCapabilityGrant(xpub, peerID string) (*Entitlement, *CapabilityClaims, string, error) {
+	return s.issueCapabilityGrant(xpub, peerID, 0)
+}
+
+// IssueCapabilityGrantWithLimit caps token lifetime to the requested maximum when provided.
+func (s *Service) IssueCapabilityGrantWithLimit(xpub, peerID string, maxTTL time.Duration) (*Entitlement, *CapabilityClaims, string, error) {
+	return s.issueCapabilityGrant(xpub, peerID, maxTTL)
+}
+
+func (s *Service) issueCapabilityGrant(xpub, peerID string, maxTTL time.Duration) (*Entitlement, *CapabilityClaims, string, error) {
 	if s == nil {
 		return nil, nil, "", errors.New("license service is nil")
 	}
@@ -188,6 +205,12 @@ func (s *Service) IssueCapabilityGrant(xpub, peerID string) (*Entitlement, *Capa
 	}
 
 	exp := now.Add(s.tokenTTL)
+	if maxTTL > 0 {
+		maxExp := now.Add(maxTTL)
+		if maxExp.Before(exp) {
+			exp = maxExp
+		}
+	}
 	if ent.ExpiresAt > 0 {
 		entExp := time.Unix(ent.ExpiresAt, 0)
 		if entExp.Before(exp) {

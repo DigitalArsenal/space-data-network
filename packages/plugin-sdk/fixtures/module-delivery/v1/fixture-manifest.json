@@ -5,8 +5,8 @@
     {
       "name": "grant_request",
       "file": "grant_request.hex",
-      "bytes": 408,
-      "sha256": "30360c930d783a959ca9c98d430e637317b75cf9ebb40bc1a7fd0b86b50322f9"
+      "bytes": 440,
+      "sha256": "7755b88b68e6ee16fb7738c8b685c39c2482d3204241ba3bbf2f05e7b79a5d5a"
     },
     {
       "name": "grant_challenge",
@@ -17,14 +17,14 @@
     {
       "name": "grant_proof",
       "file": "grant_proof.hex",
-      "bytes": 376,
-      "sha256": "98b078b0549f948846a688533345679bd61d0fe79caa5fa4a9149157168c7b2e"
+      "bytes": 408,
+      "sha256": "304a7b56eddc6f854791edf8ce28f8461d7294ff483e81c28f2f0fe0514d3a86"
     },
     {
       "name": "grant_response",
       "file": "grant_response.hex",
-      "bytes": 864,
-      "sha256": "c82b91a5d7ccf493101dc5211371a7def0dbfe64522fc428a8442510a3aa0127"
+      "bytes": 944,
+      "sha256": "66f4e9aaf1618d140d0ea70c7f0aa0baaee0287333dc4de1eea5b3bc1745ba2f"
     },
     {
       "name": "error_response",
@@ -35,14 +35,14 @@
     {
       "name": "module_delivery_message_grant_response",
       "file": "module_delivery_message_grant_response.hex",
-      "bytes": 888,
-      "sha256": "760c665f67b974c2532679142d28dbccbdac0efc12b7981a39d3e14b8ed933ac"
+      "bytes": 968,
+      "sha256": "eb915d76e2e3b4619718af5e9a653d38fab4a09bb07e4c8775c199b9db2cf75d"
     },
     {
       "name": "grant_request_invalid_identifier",
       "file": "grant_request_invalid_identifier.hex",
-      "bytes": 408,
-      "sha256": "aa11afd3b83170f6ff2ccf485f699b370f6e3cf369423c66d68740103c08a98d",
+      "bytes": 440,
+      "sha256": "d5e7ba9ee8b4beb172b358332297c93ffd1818b60744db74bd3b5b86e4c12038",
       "expectedFailure": "invalid grant request identifier"
     },
     {

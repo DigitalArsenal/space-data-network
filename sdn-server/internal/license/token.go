@@ -52,6 +52,14 @@ type CapabilityClaims struct {
 	JTI    string   `json:"jti"`
 }
 
+// HasScope reports whether the signed claims authorize the requested scope.
+func (c *CapabilityClaims) HasScope(required string) bool {
+	if c == nil {
+		return false
+	}
+	return hasScope(c.Scopes, required)
+}
+
 // VerifyOptions controls claim verification.
 type VerifyOptions struct {
 	Now            time.Time

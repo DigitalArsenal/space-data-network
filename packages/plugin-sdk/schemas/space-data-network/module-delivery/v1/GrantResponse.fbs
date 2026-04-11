@@ -10,7 +10,10 @@ table GrantResponse {
   entitlement_status:string;
   capability_token:string;
   expires_at_ms:ulong;
+  granted_domain:string (required);
+  granted_timeout_ms:ulong;
   grant_signature:[ubyte];
+  grant_verifier_public_key:[ubyte];
   bundle_descriptor:BundleDescriptor (required);
   wrapped_content_key:WrappedContentKey (required);
 }
