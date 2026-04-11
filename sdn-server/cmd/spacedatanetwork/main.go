@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,8 +21,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	logging "github.com/ipfs/go-log/v2"
+	libp2phost "github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/multiformats/go-multiaddr"
 	"github.com/spf13/cobra"
 
 	"github.com/spacedatanetwork/sdn-server/internal/api"
@@ -480,6 +485,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 			// Node info API endpoint
 			adminMux.HandleFunc("/api/node/info", handleNodeInfo(n, torRuntime))
+			adminMux.HandleFunc("/api/module-delivery/provider", handleProviderDescriptor(n))
 
 			// Relay status endpoint (public, used by clients for load balancing)
 			adminMux.HandleFunc("/api/relay/status", handleRelayStatus(n))
@@ -757,6 +763,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 				log.Infof("Peer API available at %s://%s/api/peers", adminScheme, adminAddr)
 				log.Infof("Node info API available at %s://%s/api/node/info", adminScheme, adminAddr)
+				log.Infof("Module delivery provider descriptor available at %s://%s/api/module-delivery/provider", adminScheme, adminAddr)
 				log.Infof("Public data API available at %s://%s/api/v1/data/mpe/bulk", adminScheme, adminAddr)
 				var err error
 				if adminTLS {
@@ -826,6 +833,7 @@ func isPublicAPIPath(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/data/") ||
 		strings.HasPrefix(path, "/api/v1/license/") ||
 		strings.HasPrefix(path, "/api/v1/plugins/manifest") ||
+		strings.HasPrefix(path, "/api/module-delivery/provider") ||
 		strings.HasPrefix(path, "/api/v1/demo/") ||
 		strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook") ||
 		strings.HasPrefix(path, "/api/storefront/listings") ||
@@ -1295,6 +1303,112 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(info)
 	}
+}
+
+type providerDescriptorSource interface {
+	PeerID() peer.ID
+	ListenAddrs() []multiaddr.Multiaddr
+	Host() libp2phost.Host
+}
+
+type providerDescriptorResponse struct {
+	PublicKey      string   `json:"publicKey"`
+	PeerID         string   `json:"peerId"`
+	IPNS           string   `json:"ipns,omitempty"`
+	RelayAddresses []string `json:"relayAddresses,omitempty"`
+}
+
+func handleProviderDescriptor(src providerDescriptorSource) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		payload, err := buildProviderDescriptor(src)
+		if err != nil {
+			http.Error(w, "provider descriptor unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
+	}
+}
+
+func buildProviderDescriptor(src providerDescriptorSource) (*providerDescriptorResponse, error) {
+	if src == nil {
+		return nil, fmt.Errorf("provider descriptor source is nil")
+	}
+
+	publicKeyHex, err := providerPublicKeyHex(src.Host(), src.PeerID())
+	if err != nil {
+		return nil, err
+	}
+
+	peerID := src.PeerID().String()
+	response := &providerDescriptorResponse{
+		PublicKey: publicKeyHex,
+		PeerID:    peerID,
+	}
+	if peerID != "" {
+		response.IPNS = "/ipns/" + peerID
+	}
+
+	for _, addr := range src.ListenAddrs() {
+		if addr == nil {
+			continue
+		}
+		response.RelayAddresses = append(response.RelayAddresses, addr.String())
+	}
+
+	return response, nil
+}
+
+func providerPublicKeyHex(host libp2phost.Host, peerID peer.ID) (string, error) {
+	if host == nil {
+		return "", fmt.Errorf("provider host is required")
+	}
+	if peerID == "" {
+		return "", fmt.Errorf("provider peer id is required")
+	}
+
+	pubKey := host.Peerstore().PubKey(peerID)
+	if pubKey == nil {
+		var err error
+		pubKey, err = peerID.ExtractPublicKey()
+		if err != nil {
+			return "", fmt.Errorf("extract provider public key: %w", err)
+		}
+	}
+	raw, err := pubKey.Raw()
+	if err != nil {
+		return "", fmt.Errorf("marshal provider public key: %w", err)
+	}
+	compressed, err := normalizeCompressedSecp256k1PublicKey(raw)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(compressed), nil
+}
+
+func normalizeCompressedSecp256k1PublicKey(raw []byte) ([]byte, error) {
+	if len(raw) != 33 {
+		return nil, fmt.Errorf("expected 33-byte compressed secp256k1 public key, got %d bytes", len(raw))
+	}
+	pubKey, err := secp256k1.ParsePubKey(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid compressed secp256k1 public key: %w", err)
+	}
+	return pubKey.SerializeCompressed(), nil
 }
 
 // handleRelayStatus returns relay connection load for client-side load balancing.
