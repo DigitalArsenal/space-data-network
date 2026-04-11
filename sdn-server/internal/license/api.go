@@ -37,8 +37,24 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	if h == nil || mux == nil {
 		return
 	}
+	h.RegisterAdminRoutes(mux)
+	h.RegisterPluginRoutes(mux)
+}
+
+// RegisterAdminRoutes mounts only the admin/token endpoints.
+func (h *APIHandler) RegisterAdminRoutes(mux *http.ServeMux) {
+	if h == nil || mux == nil {
+		return
+	}
 	mux.HandleFunc("/api/v1/license/verify", h.handleVerifyToken)
 	mux.HandleFunc("/api/v1/license/entitlements", h.handleEntitlements)
+}
+
+// RegisterPluginRoutes mounts the legacy HTTP plugin delivery endpoints.
+func (h *APIHandler) RegisterPluginRoutes(mux *http.ServeMux) {
+	if h == nil || mux == nil {
+		return
+	}
 	mux.HandleFunc("/api/v1/plugins/manifest", h.handlePluginManifest)
 	mux.HandleFunc("/api/v1/plugins/", h.handlePluginRoute)
 }
@@ -372,7 +388,7 @@ func isTokenError(err error) bool {
 // UploadHandler handles signed WASM plugin uploads.
 type UploadHandler struct {
 	reg         *PluginRegistry
-	keyLookup   func(xpub string) (string, error)    // returns signing_pubkey_hex
+	keyLookup   func(xpub string) (string, error)     // returns signing_pubkey_hex
 	xpubFromReq func(r *http.Request) (string, error) // extracts xpub from session
 }
 

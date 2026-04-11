@@ -4,6 +4,14 @@
 
 **SDS** is a specialized fork of IPFS (Kubo server + IPFS Desktop) tailored for the Space Data Network. It replaces generic content-addressed storage with FlatBuffer-native data handling and SQLite-based structured storage, optimized for space data standards.
 
+## Current SDN Runtime Contract
+
+- Browser and node consumers should use `sdn-js` plus the generic async capability surfaces from `space-data-module-sdk`; they should not bootstrap through `/api/node/info`.
+- Public encrypted module delivery is the FlatBuffer protocol `/space-data-network/module-delivery/1.0.0`.
+- Provider discovery is anchored by the provider compressed secp256k1 public key and the DHT namespace `space-data-network/module-delivery/provider-pubkey`.
+- Module bundles stay encrypted in transit and at rest, are fetched by CID over IPFS/libp2p, and are decrypted locally after the requester receives the wrapped content key in `GrantResponse`.
+- The older browser-facing `/orbpro/public-key`, `/orbpro/challenge`, `/orbpro/key-broker`, and `/orbpro/license` flows are not the current SDN contract.
+
 ### Why "SDS"
 
 A stripped-down, specialized version of IPFS that knows exactly what it's looking for - Space Data Standards - and nothing else.
