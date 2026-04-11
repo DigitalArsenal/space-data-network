@@ -1,16 +1,13 @@
 /**
- * Browser/IPFS compatibility probe based on main_old/javascript/sdn.libp2p.ts.
+ * Browser/IPFS relay probe for the module-delivery requester path.
  *
  * It boots an SDN node from runtime-supplied provider identity metadata,
- * then dials one of the supplied relay candidates.
+ * then dials one of the supplied relay candidates that can carry
+ * `/space-data-network/module-delivery/1.0.0`.
  *
  * Required environment:
  * - SDN_PROVIDER_PUBLIC_KEY: provider compressed secp256k1 public key (hex)
  * - SDN_PROVIDER_RELAYS: comma-separated relay candidate multiaddrs
- *
- * Optional:
- * - SDN_TARGET_PEER_ID: peer to probe via legacy id-exchange. Defaults to the
- *   provider peer id derived from SDN_PROVIDER_PUBLIC_KEY.
  */
 
 import { deriveProviderPeerId } from '../src/discovery';
@@ -21,7 +18,6 @@ const RELAY_CANDIDATES = (process.env.SDN_PROVIDER_RELAYS ?? '')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
-const TARGET_PEER_ID = process.env.SDN_TARGET_PEER_ID ?? '';
 
 async function main(): Promise<void> {
   const { providerPeerId, relayAddr } = await resolveRelayCandidate();
@@ -36,12 +32,8 @@ async function main(): Promise<void> {
   try {
     await node.dial(relayAddr);
     console.log('Connected to relay:', relayAddr);
-
-    const probePeerId = TARGET_PEER_ID || providerPeerId;
-    if (probePeerId) {
-      const response = await node.idExchangeThroughRelay(relayAddr, probePeerId, 'ping');
-      console.log('id-exchange response:', response);
-    }
+    console.log('Provider peer ID:', providerPeerId);
+    console.log('Module delivery protocol:', SDNNode.moduleDeliveryProtocolId);
   } finally {
     await node.stop();
   }
@@ -77,5 +69,5 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 main().catch((err) => {
-  console.error('IPFS relay probe failed:', err);
+  console.error('Module-delivery relay probe failed:', err);
 });

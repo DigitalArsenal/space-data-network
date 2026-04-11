@@ -130,5 +130,8 @@ npm run test:module-delivery-client -- --fixture grant_response --wrap
 
 Older OrbPro key-broker, third-party, and generic HTTP/IPFS helper surfaces
 still exist for internal compatibility during the wider rollout. They are not
-the public `@spacedatanetwork/plugin-sdk` v2 module-delivery contract even
-when their helpers remain exported for other in-repo suites.
+part of the public `@spacedatanetwork/plugin-sdk` v2 root export surface.
+Use the explicit legacy subpaths instead when in-repo tooling still needs them:
+
+- `@spacedatanetwork/plugin-sdk/key-broker-codec`
+- `@spacedatanetwork/plugin-sdk/third-party-codec`

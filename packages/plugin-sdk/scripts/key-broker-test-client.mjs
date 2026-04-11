@@ -7,12 +7,13 @@ import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { multiaddr } from "@multiformats/multiaddr";
 import {
-  KEY_BROKER_PROTOCOL_ID,
-  PUBLIC_KEY_PROTOCOL_ID,
   decodeKeyBrokerResponse,
   decodePublicKeyResponse,
   encodeKeyBrokerRequest,
-} from "../src/index.js";
+} from "../src/key-broker-codec.js";
+
+const KEY_BROKER_PROTOCOL_ID = "/orbpro/key-broker/1.0.0";
+const PUBLIC_KEY_PROTOCOL_ID = "/orbpro/public-key/1.0.0";
 
 const DEFAULT_NODE_INFO_URL = "http://127.0.0.1:5010/api/node/info";
 const DEFAULT_TIMEOUT_MS = 15000;
