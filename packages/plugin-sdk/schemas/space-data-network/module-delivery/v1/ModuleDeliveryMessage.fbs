@@ -1,0 +1,22 @@
+include "ErrorResponse.fbs";
+include "GrantChallenge.fbs";
+include "GrantProof.fbs";
+include "GrantRequest.fbs";
+include "GrantResponse.fbs";
+include "ModuleDeliveryMessageType.fbs";
+
+namespace space_data_network.module_delivery.v1;
+
+// Public stream envelope for the module-delivery v1 protocol.
+table ModuleDeliveryMessage {
+  schema_version:uint = 1;
+  message_type:ModuleDeliveryMessageType = NONE;
+  grant_request:GrantRequest;
+  grant_challenge:GrantChallenge;
+  grant_proof:GrantProof;
+  grant_response:GrantResponse;
+  error_response:ErrorResponse;
+}
+
+root_type ModuleDeliveryMessage;
+file_identifier "SDMD";

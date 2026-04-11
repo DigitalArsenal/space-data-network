@@ -232,8 +232,8 @@ async function runSDSExchangeConformance() {
   const pushPayload = captures[0];
   assert.equal(pushPayload[0], SDS_MESSAGE_TYPES.PUSH_DATA);
   assert.equal(pushPayload[1], 0x00);
-  assert.equal(pushPayload[2], 0x07); // len("OMM.fbs")
-  assert.equal(pushPayload.length, 16); // msgType + schemaLen + schema + dataLen + data
+  assert.equal(pushPayload[2], 0x07);
+  assert.equal(pushPayload.length, 16);
 
   await assert.rejects(
     () =>

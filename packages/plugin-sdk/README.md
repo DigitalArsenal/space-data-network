@@ -1,308 +1,134 @@
 # SDN Plugin SDK
 
-This package is the source of truth for OrbPro key-broker and third-party
-plugin contracts on
-Space Data Network. It defines the wire schemas, generated bindings, protocol
-IDs, and validation tools used by plugin implementers and node operators.
+`@spacedatanetwork/plugin-sdk` v2 is the public contract for Space Data
+Network module delivery over:
 
-## OrbPro v1.0 Contract
+- `/space-data-network/module-delivery/1.0.0`
 
-OrbPro v1.0 key exchange uses libp2p streams with FlatBuffer envelopes only.
-There is no legacy transport fallback in this contract.
+This package owns the canonical FlatBuffer schemas, generated bindings,
+fixtures, and codec helpers for `space_data_network.module_delivery.v1`.
 
-Required protocols:
+## Public Contract
 
-1. `/orbpro/public-key/1.0.0`
-2. `/orbpro/key-broker/1.0.0`
+The stream uses one typed envelope:
 
-Required file identifiers:
+- `ModuleDeliveryMessage`
 
-1. `PublicKeyResponse` -> `OBPK`
-2. `KeyBrokerRequest` -> `OBKQ`
-3. `KeyBrokerResponse` -> `OBKS`
+Supported message variants:
 
-Discovery flow:
+- `GrantRequest`
+- `GrantChallenge`
+- `GrantProof`
+- `GrantResponse`
+- `ErrorResponse`
 
-1. Resolve node data from `GET /api/node/info`
-2. Select a reachable libp2p listen address from node info
-3. Dial `/orbpro/public-key/1.0.0` to fetch server public key
-4. Dial `/orbpro/key-broker/1.0.0` to perform request/response exchange
+`GrantResponse` carries:
+
+- entitlement or grant status
+- capability token
+- `BundleDescriptor`
+- `WrappedContentKey`
+
+The provider never sends a plaintext content key over the wire.
+
+Requester-side loaders normalize provider identity from a descriptor object or
+EPM bytes, but the compressed secp256k1 provider public key remains the trust
+root. `cid` and `ipns` are locators only.
+
+The public browser-facing contract does not use:
+
+- `/api/node/info`
+- `/orbpro/public-key/1.0.0`
+- `/orbpro/challenge/1.0.0`
+- `/orbpro/key-broker/1.0.0`
 
 ## Schema Source Of Truth
 
-Canonical schemas are versioned in this package:
+Canonical schemas live under:
 
-- `schemas/orbpro/key-broker/PublicKeyResponse.fbs`
-- `schemas/orbpro/key-broker/KeyBrokerRequest.fbs`
-- `schemas/orbpro/key-broker/KeyBrokerResponse.fbs`
-- `schemas/orbpro/third-party/v1/ThirdPartyClientLicenseRequest.fbs`
-- `schemas/orbpro/third-party/v1/ThirdPartyClientLicenseResponse.fbs`
-- `schemas/orbpro/third-party/v1/ThirdPartyServerPluginRegistration.fbs`
-- `schemas/orbpro/third-party/v1/ThirdPartyServerPluginGrant.fbs`
+- `schemas/space-data-network/module-delivery/v1/ModuleDeliveryMessage.fbs`
+- `schemas/space-data-network/module-delivery/v1/ModuleDeliveryMessageType.fbs`
+- `schemas/space-data-network/module-delivery/v1/GrantRequest.fbs`
+- `schemas/space-data-network/module-delivery/v1/GrantChallenge.fbs`
+- `schemas/space-data-network/module-delivery/v1/GrantProof.fbs`
+- `schemas/space-data-network/module-delivery/v1/GrantResponse.fbs`
+- `schemas/space-data-network/module-delivery/v1/ErrorResponse.fbs`
+- `schemas/space-data-network/module-delivery/v1/BundleDescriptor.fbs`
+- `schemas/space-data-network/module-delivery/v1/WrappedContentKey.fbs`
 
-Do not maintain parallel or forked schema copies in client/server repos. Update
-the schema here, then regenerate bindings.
+Do not maintain forked schema copies in `sdn-js`, `sdn-server`, or OrbPro.
 
-## Third-Party Plugin Contract (v1)
+## Code Generation
 
-Third-party plugins are account-scoped and split into two roles:
-
-1. Client plugin flow:
-   - `ThirdPartyClientLicenseRequest`
-   - `ThirdPartyClientLicenseResponse`
-2. Server plugin flow:
-   - `ThirdPartyServerPluginRegistration`
-   - `ThirdPartyServerPluginGrant`
-
-Reference protocol IDs exported by `src/index.js`:
-
-- `THIRDPARTY_CLIENT_LICENSE_PROTOCOL_ID`
-- `THIRDPARTY_SERVER_PLUGIN_PROTOCOL_ID`
-
-## Code Generation (`flatc-wasm`)
-
-Generate plugin SDK JS/TS bindings from local schemas:
+Generate JS/TS and Go bindings:
 
 ```bash
-npm run generate:key-broker-bindings
+npm run generate:module-delivery-bindings
 ```
 
-Generated outputs:
+Outputs:
 
-- `src/generated/orbpro/keybroker/*.ts`
-- `src/generated/orbpro/keybroker/*.js`
-
-Generate third-party bindings:
-
-```bash
-npm run generate:third-party-bindings
-```
-
-Generated outputs:
-
-- `src/generated/orbpro/thirdparty/v1/*.ts`
-- `src/generated/orbpro/thirdparty/v1/*.js`
-- `src/generated-go/orbpro/thirdparty/v1/*.go`
+- `src/generated/space-data-network/module-delivery/v1/*.ts`
+- `src/generated/space-data-network/module-delivery/v1/*.js`
+- `src/generated-go/space_data_network/module_delivery/v1/*.go`
 
 Generate deterministic fixture vectors:
 
 ```bash
-npm run generate:third-party-fixtures
+npm run generate:module-delivery-fixtures
 ```
 
-From the `space-data-network` repo root, regenerate both plugin SDK bindings
-and SDN server Go bindings in one step:
+Outputs:
+
+- `fixtures/module-delivery/v1/*.hex`
+- `fixtures/module-delivery/v1/fixture-manifest.json`
+
+From the `space-data-network` repo root:
 
 ```bash
-npm run generate:plugin-sdk:key-broker-bindings
+npm run generate:plugin-sdk:module-delivery-bindings
+npm run generate:plugin-sdk:module-delivery-fixtures
 ```
 
-That command updates:
+## Conformance
 
-1. `packages/plugin-sdk/src/generated/orbpro/keybroker/*`
-2. `sdn-server/internal/wasiplugin/fbs/orbpro/keybroker/*`
-
-## Third-Party Scaffolding
-
-Generate starter projects for external implementers:
+Run the public module-delivery conformance suite:
 
 ```bash
-npm run scaffold:third-party-client -- --name "Example Client Plugin" --vendor-id example
-npm run scaffold:third-party-server -- --name "Example Server Plugin" --vendor-id example
+npm run test:module-delivery
 ```
 
-Templates live in:
-
-- `templates/third-party-client-plugin/`
-- `templates/third-party-server-plugin/`
-
-## Mock Broker + Harness
-
-Start a local mock broker:
+From the repo root:
 
 ```bash
-node scripts/mock-third-party-broker.mjs --host 127.0.0.1 --port 8899
+npm run test:plugin-sdk:module-delivery
+npm run ci:plugin-sdk
 ```
 
-Run both client and server test flows against it:
+The conformance suite validates:
 
-```bash
-node scripts/mock-third-party-plugin-harness.mjs --base-url http://127.0.0.1:8899
-```
-
-## Conformance Suite
-
-Run fixture and scaffold conformance checks:
-
-```bash
-npm run test:conformance
-```
-
-This validates:
-
-1. Golden vectors decode/round-trip correctly.
-2. Invalid identifier fixtures fail as expected.
-3. Generated client/server scaffold manifests meet minimum contract shape.
-
-## Runtime Plugin ABI (SDN WasmEdge Host)
-
-For OrbPro key-broker plugins loaded by the SDN standalone runtime, the module
-must export the canonical `space-data-module-sdk` guest surface:
-
-1. `plugin_alloc`
-2. `plugin_free`
-3. `plugin_invoke_stream`
-4. `plugin_get_manifest_flatbuffer`
-5. `plugin_get_manifest_flatbuffer_size`
-
-Optional guest exports:
-
-1. `_initialize`
-2. `_start`
-
-The runtime provides:
-
-1. `wasi_snapshot_preview1.*`
-2. `sdn_host.call_json`
-3. `sdn_host.response_len`
-4. `sdn_host.read_response`
-5. `sdn_host.clear_response`
-6. `sdn_host.last_status_code`
-
-Supported hostcall operations:
-
-1. `host.runtimeTarget`
-2. `host.listCapabilities`
-3. `host.listSupportedCapabilities`
-4. `host.listOperations`
-5. `host.hasCapability`
-6. `clock.now`
-7. `clock.monotonicNow`
-8. `clock.nowIso`
-9. `random.bytes`
-
-Binary hostcall responses use the canonical JSON envelope
-`{ "__type": "bytes", "base64": "..." }`.
-
-OrbPro distribution convention for this plugin binary is:
-
-- `orbpro-licensing-server.sdn.plugin`
-
-SDN accepts either raw standalone WASM bytes or the OrbPro encrypted JSON
-envelope used by the protected plugin catalog. The runtime contract after load
-is the same in both cases.
-
-## OrbPro Release Layout Contract
-
-For OrbPro release staging, SDN integration expects:
-
-1. `Build/OrbPro/<version>/npm`
-2. `Build/OrbPro/<version>/licensing-server`
-
-The licensing artifact filename is fixed:
-
-- `Build/OrbPro/<version>/licensing-server/orbpro-licensing-server.sdn.plugin`
-
-`<version>` is the OrbPro SemVer version string (with patch as build counter).
-
-`licensing-server/` must contain only this file for release packaging.
-
-## Key Version Contract (Minor-Based)
-
-OrbPro key version is derived from `MAJOR.MINOR`:
-
-1. `keyVersion = MAJOR * 1000 + MINOR`
-2. Patch builds reuse the same key version.
-
-Examples:
-
-1. `1.137.45` -> `1137`
-2. `1.137.46` -> `1137`
-3. `1.138.1` -> `1138`
-
-Operational policy:
-
-1. Mark current minor key version as `active`
-2. Keep previous 11 minor key versions as `grace`
-3. Total rolling retention: last 12 minor key versions
-
-## Sandcastle Local Smoke Example
-
-From the OrbPro repo, a local plugin-init smoke path is:
-
-```bash
-npm run build:key-server
-node scripts/local-sdn-dev.mjs --run npm run start -- --port 8081
-```
-
-Then open:
-
-```text
-http://localhost:8081/Apps/Sandcastle2/index.html?id=key-broker-single-file
-```
-
-Expected milestone in the demo overlay:
-
-1. `Initialize plugins (WASM)` is marked done.
+1. Golden vectors for every public message payload.
+2. Nested descriptor and wrapped-key decode semantics.
+3. Corrupt identifier failure handling.
+4. Unknown envelope message type failure handling.
 
 ## Test Client
 
-Run a protocol smoke test against an SDN node:
+Decode a fixture directly:
 
 ```bash
-npm run test:key-broker-client -- --node-info-url http://127.0.0.1:5010/api/node/info
+npm run test:module-delivery-client -- --fixture grant_response
 ```
 
-Optional key-broker request test (raw protocol packet wrapped in
-`KeyBrokerRequest`):
+Wrap a fixture payload in the public envelope and decode it again:
 
 ```bash
-npm run test:key-broker-client -- --request-hex 01020304
+npm run test:module-delivery-client -- --fixture grant_response --wrap
 ```
 
-Direct multiaddr override:
+## Internal Legacy Tooling
 
-```bash
-npm run test:key-broker-client -- --multiaddr /ip4/127.0.0.1/tcp/8080/ws/p2p/<peer-id>
-```
-
-The test client validates:
-
-1. Node-info discovery and address selection
-2. `/orbpro/public-key/1.0.0` decode via `PublicKeyResponse`
-3. Optional `/orbpro/key-broker/1.0.0` request/response decode
-
-## Local Development Guidance
-
-For local testing, run an SDN node bound to loopback addresses and point
-clients at local `node-info` (for example `127.0.0.1:5001` or `127.0.0.1:5010`).
-Do not rely on production endpoints during local plugin bring-up.
-
-Minimum plugin environment for local SDN daemon:
-
-1. `ORBPRO_KEY_BROKER_WASM_PATH` (path to `.sdn.plugin`)
-2. `ORBPRO_SERVER_PRIVATE_KEY_FILE` (path to file containing P-256 private key, 32 bytes hex)
-3. `DERIVATION_SECRET` (shared secret used by the plugin runtime)
-4. `ORBPRO_KEYSERVER_ALLOWED_DOMAINS` (comma-separated local origins)
-5. `ORBPRO_KEYSERVER_ACTIVE_KEY_VERSION` (optional; defaults from OrbPro version)
-
-Security note:
-
-1. Do not pass private key material in environment variables.
-2. `ORBPRO_SERVER_PRIVATE_KEY_HEX` is forbidden in current runtime config.
-
-Typical local values:
-
-```bash
-ORBPRO_KEYSERVER_ALLOWED_DOMAINS=localhost,127.0.0.1
-```
-
-If local node-info is unavailable, treat this as an environment setup failure
-and fix local SDN startup first before running protocol tests.
-
-## Additional Docs
-
-- `../../docs/plugin-sdk/third-party-schema-policy.md`
-- `../../docs/plugin-sdk/third-party-server-plugins.md`
-- `../../docs/plugin-sdk/third-party-client-plugins.md`
-- `../../docs/plugin-sdk/third-party-custom-clients.md`
+Older OrbPro key-broker, third-party, and generic HTTP/IPFS helper surfaces
+still exist for internal compatibility during the wider rollout. They are not
+the public `@spacedatanetwork/plugin-sdk` v2 module-delivery contract even
+when their helpers remain exported for other in-repo suites.
