@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-10T00:00:00.000Z",
+  "fixtures": [
+    {
+      "name": "grant_request",
+      "file": "grant_request.hex",
+      "bytes": 408,
+      "sha256": "30360c930d783a959ca9c98d430e637317b75cf9ebb40bc1a7fd0b86b50322f9"
+    },
+    {
+      "name": "grant_challenge",
+      "file": "grant_challenge.hex",
+      "bytes": 208,
+      "sha256": "7a6a4b1982573f754d4088615a59d0e70745fefeffb71acdc2f9d0af7f7733ac"
+    },
+    {
+      "name": "grant_proof",
+      "file": "grant_proof.hex",
+      "bytes": 376,
+      "sha256": "98b078b0549f948846a688533345679bd61d0fe79caa5fa4a9149157168c7b2e"
+    },
+    {
+      "name": "grant_response",
+      "file": "grant_response.hex",
+      "bytes": 864,
+      "sha256": "c82b91a5d7ccf493101dc5211371a7def0dbfe64522fc428a8442510a3aa0127"
+    },
+    {
+      "name": "error_response",
+      "file": "error_response.hex",
+      "bytes": 132,
+      "sha256": "5a284a5b5e52c954216f8edd14062cfd645f43c416a11e78f483459ae182c661"
+    },
+    {
+      "name": "module_delivery_message_grant_response",
+      "file": "module_delivery_message_grant_response.hex",
+      "bytes": 888,
+      "sha256": "760c665f67b974c2532679142d28dbccbdac0efc12b7981a39d3e14b8ed933ac"
+    },
+    {
+      "name": "grant_request_invalid_identifier",
+      "file": "grant_request_invalid_identifier.hex",
+      "bytes": 408,
+      "sha256": "aa11afd3b83170f6ff2ccf485f699b370f6e3cf369423c66d68740103c08a98d",
+      "expectedFailure": "invalid grant request identifier"
+    },
+    {
+      "name": "module_delivery_message_invalid_type",
+      "file": "module_delivery_message_invalid_type.hex",
+      "bytes": 24,
+      "sha256": "8d554458c93f6c48260054160a228a0f75bea368ed1d83fb5ea4be674a029fd3",
+      "expectedFailure": "unsupported module-delivery message type: 127"
+    }
+  ]
+}

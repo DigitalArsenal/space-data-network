@@ -1,0 +1,18 @@
+namespace space_data_network.module_delivery.v1;
+
+// Requester -> provider grant initiation for encrypted module delivery.
+table GrantRequest {
+  schema_version:uint = 1;
+  req_id:string (required);
+  module_id:string (required);
+  module_version:string;
+  module_variant:string;
+  requester_peer_id:string;
+  requester_xpub:string;
+  requester_signing_public_key:[ubyte] (required);
+  requester_encryption_public_key:[ubyte] (required);
+  requested_at_ms:ulong;
+}
+
+root_type GrantRequest;
+file_identifier "SDGR";

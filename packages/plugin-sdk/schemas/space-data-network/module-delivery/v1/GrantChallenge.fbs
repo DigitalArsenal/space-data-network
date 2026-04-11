@@ -1,0 +1,14 @@
+namespace space_data_network.module_delivery.v1;
+
+// Provider -> requester challenge proving control of the requester identity.
+table GrantChallenge {
+  schema_version:uint = 1;
+  req_id:string (required);
+  challenge:[ubyte] (required);
+  expires_at_ms:ulong;
+  provider_peer_id:string;
+  provider_public_key:[ubyte] (required);
+}
+
+root_type GrantChallenge;
+file_identifier "SDGC";

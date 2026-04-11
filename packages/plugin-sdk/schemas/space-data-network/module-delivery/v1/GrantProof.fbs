@@ -1,0 +1,18 @@
+namespace space_data_network.module_delivery.v1;
+
+// Requester -> provider signed proof for the issued challenge.
+table GrantProof {
+  schema_version:uint = 1;
+  req_id:string (required);
+  module_id:string;
+  module_version:string;
+  requester_peer_id:string;
+  requester_signing_public_key:[ubyte] (required);
+  requester_encryption_public_key:[ubyte] (required);
+  challenge:[ubyte] (required);
+  signature:[ubyte] (required);
+  proved_at_ms:ulong;
+}
+
+root_type GrantProof;
+file_identifier "SDGP";

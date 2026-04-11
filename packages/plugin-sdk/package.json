@@ -1,23 +1,28 @@
 {
   "name": "@spacedatanetwork/plugin-sdk",
-  "version": "1.0.0",
-  "description": "Plugin SDK contracts and protocol tooling for Space Data Network plugins",
+  "version": "2.0.0",
+  "description": "Module delivery v1 contracts and protocol tooling for Space Data Network",
   "type": "module",
   "main": "src/index.js",
   "exports": {
     ".": "./src/index.js",
+    "./module-delivery-codec": "./src/module-delivery-codec.js",
     "./key-broker-codec": "./src/key-broker-codec.js",
     "./third-party-codec": "./src/third-party-codec.js"
   },
   "scripts": {
-    "generate:key-broker-bindings": "node scripts/generate-key-broker-bindings.mjs",
-    "generate:third-party-bindings": "node scripts/generate-third-party-bindings.mjs",
-    "generate:third-party-fixtures": "node scripts/generate-third-party-fixtures.mjs",
-    "generate:all-bindings": "npm run generate:key-broker-bindings && npm run generate:third-party-bindings && npm run generate:third-party-fixtures",
-    "scaffold:third-party-client": "node scripts/generate-third-party-scaffold.mjs --type client",
-    "scaffold:third-party-server": "node scripts/generate-third-party-scaffold.mjs --type server",
-    "test:key-broker-client": "node scripts/key-broker-test-client.mjs",
-    "test:conformance": "node tests/conformance/run-conformance.mjs"
+    "generate:module-delivery-bindings": "node scripts/generate-module-delivery-bindings.mjs",
+    "generate:module-delivery-fixtures": "node scripts/generate-module-delivery-fixtures.mjs",
+    "generate:all-bindings": "npm run generate:module-delivery-bindings && npm run generate:module-delivery-fixtures",
+    "test:module-delivery": "node scripts/module-delivery-test-client.mjs && node tests/conformance/run-conformance.mjs",
+    "test:conformance": "node tests/conformance/run-conformance.mjs",
+    "test:module-delivery-client": "node scripts/module-delivery-test-client.mjs",
+    "internal:generate:key-broker-bindings": "node scripts/generate-key-broker-bindings.mjs",
+    "internal:generate:third-party-bindings": "node scripts/generate-third-party-bindings.mjs",
+    "internal:generate:third-party-fixtures": "node scripts/generate-third-party-fixtures.mjs",
+    "internal:scaffold:third-party-client": "node scripts/generate-third-party-scaffold.mjs --type client",
+    "internal:scaffold:third-party-server": "node scripts/generate-third-party-scaffold.mjs --type server",
+    "internal:test:key-broker-client": "node scripts/key-broker-test-client.mjs"
   },
   "dependencies": {
     "@chainsafe/libp2p-noise": "^16.1.0",
@@ -43,6 +48,7 @@
     "tests",
     "scripts",
     "README.md",
-    "scripts/key-broker-test-client.mjs"
+    "scripts/key-broker-test-client.mjs",
+    "scripts/module-delivery-test-client.mjs"
   ]
 }
