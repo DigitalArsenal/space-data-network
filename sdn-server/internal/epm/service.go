@@ -987,6 +987,21 @@ func (s *Service) rebuildEPMLocked() error {
 	var keyOffsets []flatbuffers.UOffsetT
 
 	if s.identity != nil {
+		// Identity key (secp256k1) for provider descriptor and direct EPM parsing.
+		identityPubBytes, _ := s.identity.IdentityPubKey.Raw()
+		identityPubHex := hex.EncodeToString(identityPubBytes)
+		identityPubOff := builder.CreateString(identityPubHex)
+		identityAddrTypeOff := builder.CreateString("secp256k1")
+		identityPathOff := builder.CreateString(s.identity.IdentityKeyPath)
+
+		EPM.CryptoKeyStart(builder)
+		EPM.CryptoKeyAddPUBLIC_KEY(builder, identityPubOff)
+		EPM.CryptoKeyAddADDRESS_TYPE(builder, identityAddrTypeOff)
+		EPM.CryptoKeyAddKEY_ADDRESS(builder, identityPathOff)
+		EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
+		identityKeyOff := EPM.CryptoKeyEnd(builder)
+		keyOffsets = append(keyOffsets, identityKeyOff)
+
 		// Signing key (Ed25519)
 		sigPubBytes, _ := s.identity.SigningPubKey.Raw()
 		sigPubHex := hex.EncodeToString(sigPubBytes)
