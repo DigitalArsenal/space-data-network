@@ -447,8 +447,7 @@ communication beyond the standard SDS exchange protocol.
 | `/spacedatanetwork/sds-exchange/1.0.0` | Standard SDS data push/pull/query |
 | `/space-data-network/id-exchange/1.0.0` | Legacy identity exchange |
 | `/spacedatanetwork/epm-exchange/1.0.0` | Entity Profile Manifest exchange |
-| `/orbpro/key-broker/1.0.0` | OrbPro key exchange |
-| `/orbpro/public-key/1.0.0` | OrbPro public key fetch |
+| `/space-data-network/module-delivery/1.0.0` | SDN module delivery |
 
 ### SDS Exchange Message Types
 

@@ -199,7 +199,7 @@ const encryptionKey = epm.getKey(KeyType.ENCRYPTION);
 ### Module Delivery
 
 Requester-side module delivery stays on libp2p plus Helia. The public path
-does not bootstrap through HTTP node-info or `/orbpro/*` broker endpoints.
+does not bootstrap through legacy discovery or browser broker endpoints.
 
 ```typescript
 import { SDNNode } from '@spacedatanetwork/sdn-js';

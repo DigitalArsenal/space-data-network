@@ -37,12 +37,8 @@ Requester-side loaders normalize provider identity from a descriptor object or
 EPM bytes, but the compressed secp256k1 provider public key remains the trust
 root. `cid` and `ipns` are locators only.
 
-The public browser-facing contract does not use:
-
-- `/api/node/info`
-- `/orbpro/public-key/1.0.0`
-- `/orbpro/challenge/1.0.0`
-- `/orbpro/key-broker/1.0.0`
+The public browser-facing contract does not use legacy discovery or browser
+broker endpoints.
 
 ## Schema Source Of Truth
 
@@ -130,10 +126,10 @@ npm run test:module-delivery-client -- --fixture grant_response --wrap
 
 ## Internal Legacy Tooling
 
-Older OrbPro key-broker, third-party, and generic HTTP/IPFS helper surfaces
-still exist for internal compatibility during the wider rollout. They are not
-part of the public `@spacedatanetwork/module-sdk` v2 root export surface.
-Use the explicit legacy subpaths instead when in-repo tooling still needs them:
+Older broker, third-party, and generic HTTP/IPFS helper surfaces still exist
+for internal compatibility during the wider rollout. They are not part of the
+public `@spacedatanetwork/module-sdk` v2 root export surface. Use the explicit
+legacy subpaths instead when in-repo tooling still needs them:
 
-- `@spacedatanetwork/module-sdk/key-broker-codec`
+- `@spacedatanetwork/module-sdk/legacy-broker-codec`
 - `@spacedatanetwork/module-sdk/third-party-codec`

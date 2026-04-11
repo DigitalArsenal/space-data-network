@@ -1,13 +1,15 @@
 # Third-Party Schema Policy
 
 This document defines compatibility and versioning rules for third-party
-plugin/client schemas maintained in `packages/module-sdk/schemas/orbpro`.
+plugin/client schemas consumed by Space Data Network.
 
 ## Source of truth
 
-- All authoritative plugin schemas live in:
-  - `packages/module-sdk/schemas/orbpro/key-broker/`
-  - `packages/module-sdk/schemas/orbpro/third-party/v1/`
+- All authoritative third-party plugin/client schemas live in
+  `spacedatastandards.org`.
+- If FlatBuffer libraries or generated bindings are needed for SDS schemas, use
+  `flatc-wasm` against upstream SDS schema sources or published SDS artifacts.
+- Historical repo-local schema paths are migration debt, not a source of truth.
 - Client, server, and tooling repositories must not maintain forked schema copies.
 
 ## Compatibility model
