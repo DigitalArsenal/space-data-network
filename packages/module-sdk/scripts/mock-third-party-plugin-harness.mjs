@@ -141,6 +141,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`[plugin-sdk harness] ${error.message}`);
+  console.error(`[module-sdk harness] ${error.message}`);
   process.exit(1);
 });

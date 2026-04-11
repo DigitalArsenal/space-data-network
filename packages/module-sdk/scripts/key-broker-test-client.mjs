@@ -321,6 +321,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`[plugin-sdk test-client] ${error.message}`);
+  console.error(`[module-sdk test-client] ${error.message}`);
   process.exit(1);
 });

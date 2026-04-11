@@ -1,13 +1,13 @@
 # Third-Party Schema Policy
 
 This document defines compatibility and versioning rules for third-party
-plugin/client schemas maintained in `packages/plugin-sdk/schemas/orbpro`.
+plugin/client schemas maintained in `packages/module-sdk/schemas/orbpro`.
 
 ## Source of truth
 
 - All authoritative plugin schemas live in:
-  - `packages/plugin-sdk/schemas/orbpro/key-broker/`
-  - `packages/plugin-sdk/schemas/orbpro/third-party/v1/`
+  - `packages/module-sdk/schemas/orbpro/key-broker/`
+  - `packages/module-sdk/schemas/orbpro/third-party/v1/`
 - Client, server, and tooling repositories must not maintain forked schema copies.
 
 ## Compatibility model

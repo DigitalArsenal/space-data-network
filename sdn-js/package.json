@@ -43,7 +43,7 @@
     "url": "https://github.com/DigitalArsenal/space-data-network/issues"
   },
   "dependencies": {
-    "@spacedatanetwork/plugin-sdk": "file:../packages/plugin-sdk",
+    "@spacedatanetwork/module-sdk": "file:../packages/module-sdk",
     "@chainsafe/libp2p-gossipsub": "^13.0.0",
     "@chainsafe/libp2p-noise": "^15.0.0",
     "@chainsafe/libp2p-yamux": "^6.0.0",

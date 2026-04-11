@@ -2,7 +2,7 @@ import {
   MODULE_DELIVERY_PROTOCOL_ID,
   decodeModuleDeliveryMessage,
   encodeModuleDeliveryMessage,
-} from '@spacedatanetwork/plugin-sdk';
+} from '@spacedatanetwork/module-sdk';
 
 import type { DerivedIdentity, EncryptionKeyPair, KeyPair } from './crypto/types';
 import { sha256, sign } from './crypto/hd-wallet';

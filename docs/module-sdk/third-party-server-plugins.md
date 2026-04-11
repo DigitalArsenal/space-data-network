@@ -13,7 +13,7 @@ flows on Space Data Network.
 ## Scaffold starter
 
 ```bash
-npm --prefix packages/plugin-sdk run scaffold:third-party-server -- --name "Acme Server Plugin" --vendor-id acme
+npm --prefix packages/module-sdk run scaffold:third-party-server -- --name "Acme Server Plugin" --vendor-id acme
 ```
 
 ## Required implementation steps
@@ -28,6 +28,6 @@ npm --prefix packages/plugin-sdk run scaffold:third-party-server -- --name "Acme
 ## Validation and test
 
 ```bash
-npm --prefix packages/plugin-sdk run generate:all-bindings
-npm --prefix packages/plugin-sdk run test:conformance
+npm --prefix packages/module-sdk run generate:all-bindings
+npm --prefix packages/module-sdk run test:conformance
 ```

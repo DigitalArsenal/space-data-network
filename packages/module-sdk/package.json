@@ -1,5 +1,5 @@
 {
-  "name": "@spacedatanetwork/plugin-sdk",
+  "name": "@spacedatanetwork/module-sdk",
   "version": "2.0.0",
   "description": "Module delivery v1 contracts and protocol tooling for Space Data Network",
   "type": "module",

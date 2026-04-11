@@ -5,7 +5,7 @@ import {
   MODULE_DELIVERY_PROTOCOL_ID,
   decodeModuleDeliveryMessage,
   encodeModuleDeliveryMessage,
-} from '@spacedatanetwork/plugin-sdk';
+} from '@spacedatanetwork/module-sdk';
 
 vi.mock('./crypto/hd-wallet', async () => {
   const actual = await vi.importActual<typeof import('./crypto/hd-wallet')>('./crypto/hd-wallet');
@@ -280,10 +280,9 @@ describe('module-delivery', () => {
           type: 'grant_response',
           payload: {
             reqId: decoded.payload.reqId,
-            entitlementStatus: 'active',
-            capabilityToken: 'capability-token',
-            expiresAtMs: 1_700_003_600_000,
-            grantSignature: new Uint8Array([9, 9, 9]),
+            grantedDomain: 'example.org',
+            grantedTimeoutMs: 30_000,
+            grantVerifierPublicKey: new Uint8Array(32).fill(10),
             bundleDescriptor: {
               cid: 'bafyencryptedmodule',
               contentHash: new Uint8Array(32).fill(7),
@@ -313,6 +312,7 @@ describe('module-delivery', () => {
       serverDescriptor: {
         publicKey: '02'.padEnd(66, '1'),
       },
+      requesterDomain: 'example.org',
       requesterIdentity: {
         peerId: 'requester-peer-id',
         signingKey: {
@@ -326,6 +326,7 @@ describe('module-delivery', () => {
       },
       moduleId: 'com.space-data-network.fastest-path',
       reqId: 'req-discovery',
+      requestedTimeoutMs: 30_000,
       requestedAtMs: 1_700_000_000_000,
     });
 

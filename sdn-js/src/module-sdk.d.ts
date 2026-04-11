@@ -1,4 +1,4 @@
-declare module '@spacedatanetwork/plugin-sdk' {
+declare module '@spacedatanetwork/module-sdk' {
   export const MODULE_DELIVERY_PROTOCOL_ID: string;
 
   export interface ModuleDeliveryMessageEnvelope {

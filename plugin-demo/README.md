@@ -863,7 +863,7 @@ plugin-demo/
 
 | Path | Description |
 |------|-------------|
-| `packages/plugin-sdk/` | Plugin SDK (schemas, codecs, conformance) |
+| `packages/module-sdk/` | Plugin SDK (schemas, codecs, conformance) |
 | `sdn-server/plugins/manager.go` | Plugin manager (CronProvider, scheduling) |
 | `sdn-server/internal/wasiplugin/` | WASI runtime (Wazero) |
 | `sdn-server/internal/wasm/flatc.go` | flatc-wasm module (JSONToBinary, BinaryToJSON) |

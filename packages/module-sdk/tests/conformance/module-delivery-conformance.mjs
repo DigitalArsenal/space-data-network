@@ -54,19 +54,19 @@ export async function runModuleDeliveryConformance() {
   );
   assert.ok(
     !("KEY_BROKER_PROTOCOL_ID" in publicApi),
-    "plugin-sdk root export must not expose legacy key-broker protocol ids",
+    "module-sdk root export must not expose legacy key-broker protocol ids",
   );
   assert.ok(
     !("PUBLIC_KEY_PROTOCOL_ID" in publicApi),
-    "plugin-sdk root export must not expose legacy public-key protocol ids",
+    "module-sdk root export must not expose legacy public-key protocol ids",
   );
   assert.ok(
     !("decodeKeyBrokerResponse" in publicApi),
-    "plugin-sdk root export must not expose legacy key-broker codecs",
+    "module-sdk root export must not expose legacy key-broker codecs",
   );
   assert.ok(
     !("encodeThirdPartyClientLicenseRequest" in publicApi),
-    "plugin-sdk root export must not expose legacy third-party codecs",
+    "module-sdk root export must not expose legacy third-party codecs",
   );
 
   const manifest = JSON.parse(

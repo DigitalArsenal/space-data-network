@@ -1,7 +1,7 @@
 import {
   decodeThirdPartyClientLicenseResponse,
   encodeThirdPartyClientLicenseRequest,
-} from "plugin-sdk/third-party-codec";
+} from "module-sdk/third-party-codec";
 
 function randomBytes(length) {
   const out = new Uint8Array(length);
