@@ -1,25 +1,30 @@
 /**
  * Browser/IPFS compatibility probe based on main_old/javascript/sdn.libp2p.ts.
  *
- * It boots an SDN node, resolves the live relay deployment from
- * https://spaceaware.io/api/node/info, then dials that relay.
+ * It boots an SDN node from runtime-supplied provider identity metadata,
+ * then dials one of the supplied relay candidates.
  *
- * If SDN_TARGET_PEER_ID is provided, it will also run legacy id-exchange
- * through the relay circuit.
+ * Required environment:
+ * - SDN_PROVIDER_PUBLIC_KEY: provider compressed secp256k1 public key (hex)
+ * - SDN_PROVIDER_RELAYS: comma-separated relay candidate multiaddrs
+ *
+ * Optional:
+ * - SDN_TARGET_PEER_ID: peer to probe via legacy id-exchange. Defaults to the
+ *   provider peer id derived from SDN_PROVIDER_PUBLIC_KEY.
  */
 
+import { deriveProviderPeerId } from '../src/discovery';
 import { SDNNode } from '../src/node';
 
-const NODE_INFO_URL = process.env.SDN_SPACEAWARE_NODE_INFO_URL ?? 'https://spaceaware.io/api/node/info';
-const TARGET_PEER_ID = process.env.SDN_TARGET_PEER_ID;
-
-interface NodeInfoResponse {
-  peer_id?: unknown;
-  listen_addresses?: unknown;
-}
+const PROVIDER_PUBLIC_KEY = process.env.SDN_PROVIDER_PUBLIC_KEY ?? '';
+const RELAY_CANDIDATES = (process.env.SDN_PROVIDER_RELAYS ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+const TARGET_PEER_ID = process.env.SDN_TARGET_PEER_ID ?? '';
 
 async function main(): Promise<void> {
-  const relayAddr = await resolveSpaceawareRelayAddr();
+  const { providerPeerId, relayAddr } = await resolveRelayCandidate();
   console.log('Using relay address:', relayAddr);
 
   const node = await SDNNode.create({
@@ -32,48 +37,43 @@ async function main(): Promise<void> {
     await node.dial(relayAddr);
     console.log('Connected to relay:', relayAddr);
 
-    if (TARGET_PEER_ID) {
-      const response = await node.idExchangeThroughRelay(relayAddr, TARGET_PEER_ID, 'ping');
+    const probePeerId = TARGET_PEER_ID || providerPeerId;
+    if (probePeerId) {
+      const response = await node.idExchangeThroughRelay(relayAddr, probePeerId, 'ping');
       console.log('id-exchange response:', response);
-    } else {
-      console.log('Set SDN_TARGET_PEER_ID to run id-exchange through the relay circuit.');
     }
   } finally {
     await node.stop();
   }
 }
 
-async function resolveSpaceawareRelayAddr(): Promise<string> {
-  const response = await fetch(NODE_INFO_URL);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch node info (${response.status}) from ${NODE_INFO_URL}`);
+async function resolveRelayCandidate(): Promise<{ providerPeerId: string; relayAddr: string }> {
+  if (!PROVIDER_PUBLIC_KEY) {
+    throw new Error('SDN_PROVIDER_PUBLIC_KEY is required');
+  }
+  if (RELAY_CANDIDATES.length === 0) {
+    throw new Error('SDN_PROVIDER_RELAYS must include at least one relay candidate');
   }
 
-  const body = (await response.json()) as NodeInfoResponse;
-  const peerId = asNonEmptyString(body.peer_id, 'peer_id');
-  const listenAddrs = asStringArray(body.listen_addresses).filter((addr) => addr.includes('/ws'));
-
-  // Prefer DNS over TLS for browser/firewall-friendly dial when available.
-  const dnsWss = `/dns4/spaceaware.io/tcp/443/wss/p2p/${peerId}`;
-  if (listenAddrs.length === 0) {
-    return dnsWss;
-  }
-
-  return listenAddrs[0].includes('/p2p/') ? listenAddrs[0] : `${listenAddrs[0]}/p2p/${peerId}`;
+  const providerPeerId = await deriveProviderPeerId(hexToBytes(PROVIDER_PUBLIC_KEY));
+  return {
+    providerPeerId,
+    relayAddr: RELAY_CANDIDATES[0].includes('/p2p/')
+      ? RELAY_CANDIDATES[0]
+      : `${RELAY_CANDIDATES[0]}/p2p/${providerPeerId}`,
+  };
 }
 
-function asNonEmptyString(value: unknown, fieldName: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`Node info missing "${fieldName}"`);
+function hexToBytes(hex: string): Uint8Array {
+  const normalized = hex.trim().toLowerCase();
+  if (normalized.length % 2 !== 0) {
+    throw new Error('SDN_PROVIDER_PUBLIC_KEY must be valid hex');
   }
-  return value;
-}
-
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
+  const bytes = new Uint8Array(normalized.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(normalized.slice(index * 2, index * 2 + 2), 16);
   }
-  return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+  return bytes;
 }
 
 main().catch((err) => {
