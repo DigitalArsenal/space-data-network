@@ -25,6 +25,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`[plugin-sdk conformance] ${error.message}`);
+  console.error(`[module-sdk conformance] ${error.message}`);
   process.exit(1);
 });

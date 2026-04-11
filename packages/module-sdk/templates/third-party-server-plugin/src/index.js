@@ -1,7 +1,7 @@
 import {
   decodeThirdPartyServerPluginGrant,
   encodeThirdPartyServerPluginRegistration,
-} from "plugin-sdk/third-party-codec";
+} from "module-sdk/third-party-codec";
 
 export async function registerServerPlugin({
   brokerFetch,

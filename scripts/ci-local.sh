@@ -3,11 +3,11 @@
 # This script is intentionally aligned with .github/workflows/ci.yml.
 #
 # Usage:
-#   ./scripts/ci-local.sh quick   # default: preflight + go + sdn-js + plugin-sdk
+#   ./scripts/ci-local.sh quick   # default: preflight + go + sdn-js + module-sdk
 #   ./scripts/ci-local.sh full    # quick + encryption tests
 #   ./scripts/ci-local.sh go      # go checks only
 #   ./scripts/ci-local.sh js      # sdn-js checks only
-#   ./scripts/ci-local.sh plugin  # plugin-sdk conformance only
+#   ./scripts/ci-local.sh plugin  # module-sdk conformance only
 #   ./scripts/ci-local.sh demo    # plugin-demo integration tests only
 
 set -euo pipefail
@@ -148,19 +148,19 @@ run_sdn_js() {
 }
 
 run_plugin_sdk() {
-  local volatile_manifest="packages/plugin-sdk/fixtures/third-party/v1/fixture-manifest.json"
+  local volatile_manifest="packages/module-sdk/fixtures/third-party/v1/fixture-manifest.json"
 
-  step "plugin-sdk install"
-  ensure_npm_deps "$ROOT/packages/plugin-sdk"
-  pass "plugin-sdk npm install"
+  step "module-sdk install"
+  ensure_npm_deps "$ROOT/packages/module-sdk"
+  pass "module-sdk npm install"
 
-  step "plugin-sdk generate bindings"
-  (cd "$ROOT/packages/plugin-sdk" && npm_config_cache="$ROOT/.npm-cache" npm run generate:all-bindings)
-  pass "plugin-sdk generate bindings"
+  step "module-sdk generate bindings"
+  (cd "$ROOT/packages/module-sdk" && npm_config_cache="$ROOT/.npm-cache" npm run generate:all-bindings)
+  pass "module-sdk generate bindings"
 
-  step "plugin-sdk conformance"
-  (cd "$ROOT/packages/plugin-sdk" && npm_config_cache="$ROOT/.npm-cache" npm run test:conformance)
-  pass "plugin-sdk conformance"
+  step "module-sdk conformance"
+  (cd "$ROOT/packages/module-sdk" && npm_config_cache="$ROOT/.npm-cache" npm run test:conformance)
+  pass "module-sdk conformance"
 
   # This manifest includes a generated timestamp; restore it to avoid local churn
   # while still validating all deterministic generated outputs.
@@ -168,16 +168,16 @@ run_plugin_sdk() {
     git -C "$ROOT" show "HEAD:$volatile_manifest" > "$ROOT/$volatile_manifest"
   fi
 
-  step "plugin-sdk generated artifacts are committed"
+  step "module-sdk generated artifacts are committed"
   (
     cd "$ROOT"
     git diff --exit-code -- \
-      packages/plugin-sdk/src/generated \
-      packages/plugin-sdk/src/generated-go \
-      packages/plugin-sdk/fixtures \
-      ':(exclude)packages/plugin-sdk/fixtures/third-party/v1/fixture-manifest.json'
+      packages/module-sdk/src/generated \
+      packages/module-sdk/src/generated-go \
+      packages/module-sdk/fixtures \
+      ':(exclude)packages/module-sdk/fixtures/third-party/v1/fixture-manifest.json'
   )
-  pass "plugin-sdk generated artifacts check"
+  pass "module-sdk generated artifacts check"
 }
 
 run_plugin_demo() {

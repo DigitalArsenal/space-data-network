@@ -1,6 +1,6 @@
 # SDN Plugin SDK
 
-`@spacedatanetwork/plugin-sdk` v2 is the public contract for Space Data
+`@spacedatanetwork/module-sdk` v2 is the public contract for Space Data
 Network module delivery over:
 
 - `/space-data-network/module-delivery/1.0.0`
@@ -88,8 +88,8 @@ Outputs:
 From the `space-data-network` repo root:
 
 ```bash
-npm run generate:plugin-sdk:module-delivery-bindings
-npm run generate:plugin-sdk:module-delivery-fixtures
+npm run generate:module-sdk:module-delivery-bindings
+npm run generate:module-sdk:module-delivery-fixtures
 ```
 
 ## Conformance
@@ -103,8 +103,8 @@ npm run test:module-delivery
 From the repo root:
 
 ```bash
-npm run test:plugin-sdk:module-delivery
-npm run ci:plugin-sdk
+npm run test:module-sdk:module-delivery
+npm run ci:module-sdk
 ```
 
 The conformance suite validates:
@@ -132,8 +132,8 @@ npm run test:module-delivery-client -- --fixture grant_response --wrap
 
 Older OrbPro key-broker, third-party, and generic HTTP/IPFS helper surfaces
 still exist for internal compatibility during the wider rollout. They are not
-part of the public `@spacedatanetwork/plugin-sdk` v2 root export surface.
+part of the public `@spacedatanetwork/module-sdk` v2 root export surface.
 Use the explicit legacy subpaths instead when in-repo tooling still needs them:
 
-- `@spacedatanetwork/plugin-sdk/key-broker-codec`
-- `@spacedatanetwork/plugin-sdk/third-party-codec`
+- `@spacedatanetwork/module-sdk/key-broker-codec`
+- `@spacedatanetwork/module-sdk/third-party-codec`

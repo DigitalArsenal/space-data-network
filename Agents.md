@@ -13,7 +13,7 @@
 - The older browser-facing `/orbpro/public-key`, `/orbpro/challenge`, `/orbpro/key-broker`, and `/orbpro/license` flows are not the current SDN contract.
 - Ownership boundary:
   `sdn-server` owns provider-side module delivery, DHT provider-identity advertisement, and the built-in `plugins/moduledeliveryplugin`.
-  `packages/plugin-sdk` owns FlatBuffer schemas/codecs and `sdn-js` owns requester-side discovery and fetch behavior.
+  `packages/module-sdk` owns FlatBuffer schemas/codecs and `sdn-js` owns requester-side discovery and fetch behavior.
 
 ### Why "SDS"
 

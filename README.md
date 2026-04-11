@@ -238,21 +238,21 @@ SDN extends IPFS with space-specific optimizations:
 
 OrbPro licensing/key exchange stream schemas (v1.0) are versioned in the plugin SDK:
 
-- `packages/plugin-sdk/schemas/orbpro/key-broker/PublicKeyResponse.fbs`
-- `packages/plugin-sdk/schemas/orbpro/key-broker/KeyBrokerRequest.fbs`
-- `packages/plugin-sdk/schemas/orbpro/key-broker/KeyBrokerResponse.fbs`
+- `packages/module-sdk/schemas/orbpro/key-broker/PublicKeyResponse.fbs`
+- `packages/module-sdk/schemas/orbpro/key-broker/KeyBrokerRequest.fbs`
+- `packages/module-sdk/schemas/orbpro/key-broker/KeyBrokerResponse.fbs`
 
 Regenerate plugin SDK + SDN Go bindings from these schemas (via `flatc-wasm`):
 
 ```bash
-npm run generate:plugin-sdk:key-broker-bindings
+npm run generate:module-sdk:key-broker-bindings
 npm run generate:module-sdk:go-bindings
 ```
 
 Run the plugin SDK protocol test client:
 
 ```bash
-npm run test:plugin-sdk:key-broker-client -- --node-info-url http://127.0.0.1:5010/api/node/info
+npm run test:module-sdk:key-broker-client -- --node-info-url http://127.0.0.1:5010/api/node/info
 ```
 
 ### Server Packages
