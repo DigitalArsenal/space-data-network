@@ -21,9 +21,9 @@ go build -o spacedatanetwork ./cmd/spacedatanetwork
 runtime by default and route outbound HTTP requests through TOR SOCKS5h.
 
 For daemon mode, a deterministic v3 onion service is created from the node's
-identity key material and published in node metadata:
+identity key material and published in server metadata:
 
-- `/api/node/info` includes `onion_address`
+- server metadata includes `onion_address`
 - EPM `multiformat_address` includes the onion URL
 
 Default config values:
@@ -148,7 +148,7 @@ Full nodes now expose generic SDN module delivery over libp2p/IPFS:
 - `GrantResponse` returns the signed grant result, encrypted-bundle descriptor, and wrapped content key
 - Requesters fetch the encrypted module bundle separately by CID over IPFS/libp2p and decrypt locally
 
-The public browser-facing `/orbpro/*` key-broker and `/api/node/info` bootstrap flows are not part of the current SDN contract.
+The public browser-facing legacy broker and discovery bootstrap flows are not part of the current SDN contract.
 
 `sdn-server` owns the provider side of this contract:
 

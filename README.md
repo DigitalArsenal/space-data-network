@@ -236,23 +236,23 @@ SDN extends IPFS with space-specific optimizations:
 | [plugin-demo](./plugin-demo) | Plugin development guide, WASM API reference, integration tests | C / JS |
 | [kubo](./kubo) | IPFS reference implementation | Go |
 
-OrbPro licensing/key exchange stream schemas (v1.0) are versioned in the plugin SDK:
+OrbPro licensing/key exchange stream schemas (v1.0) are versioned in the module SDK:
 
-- `packages/module-sdk/schemas/orbpro/key-broker/PublicKeyResponse.fbs`
-- `packages/module-sdk/schemas/orbpro/key-broker/KeyBrokerRequest.fbs`
-- `packages/module-sdk/schemas/orbpro/key-broker/KeyBrokerResponse.fbs`
+- `packages/module-sdk/schemas/space-data-network/module-delivery/v1/PublicKeyResponse.fbs`
+- `packages/module-sdk/schemas/space-data-network/module-delivery/v1/KeyBrokerRequest.fbs`
+- `packages/module-sdk/schemas/space-data-network/module-delivery/v1/KeyBrokerResponse.fbs`
 
 Regenerate plugin SDK + SDN Go bindings from these schemas (via `flatc-wasm`):
 
 ```bash
-npm run generate:module-sdk:key-broker-bindings
+npm run generate:module-sdk:module-delivery-bindings
 npm run generate:module-sdk:go-bindings
 ```
 
 Run the plugin SDK protocol test client:
 
 ```bash
-npm run test:module-sdk:key-broker-client -- --node-info-url http://127.0.0.1:5010/api/node/info
+npm run test:module-sdk:module-delivery-client -- --discovery-url http://127.0.0.1:5010
 ```
 
 ### Server Packages
@@ -510,7 +510,7 @@ npm run build:key-server
 
 It then copies/decrypts the generated encrypted artifact, boots SDN with a temporary plugin catalog, and verifies:
 
-- `/api/v1/plugins/manifest` reports the plugin id (default `plugin-key-broker`) as `running`
+- `/api/v1/plugins/manifest` reports the module-delivery plugin id as `running`
 - `/api/v1/plugins/<plugin-id>/bundle` returns 200 and non-empty WASM payload
 
 ### Private repo setup for plugin harness tests
