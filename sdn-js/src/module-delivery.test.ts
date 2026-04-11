@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   MODULE_DELIVERY_PROTOCOL_ID,
@@ -14,6 +16,7 @@ vi.mock('./crypto/hd-wallet', async () => {
   };
 });
 
+import { MODULE_DELIVERY_DISCOVERY_NAMESPACE } from './discovery';
 import { fetchEncryptedModuleBundle, requestModuleGrant } from './module-delivery';
 
 describe('module-delivery', () => {
@@ -211,6 +214,119 @@ describe('module-delivery', () => {
         },
       ),
     ).rejects.toThrow(/hash mismatch/i);
+  });
+
+  it('discovers provider relay candidates from the normalized public key and never uses legacy bootstrap helpers', async () => {
+    const publicIndex = await fs.readFile(path.join(__dirname, 'index.ts'), 'utf8');
+    expect(publicIndex.includes('LEGACY_ID_EXCHANGE_PROTOCOL')).toBe(false);
+
+    const legacyHttpBootstrap = vi.fn(async () => {
+      throw new Error('legacy bootstrap must not run');
+    });
+
+    const transport = {
+      discoveryCalls: [] as string[],
+      dialCalls: [] as Array<{
+        targetPeerId: string;
+        protocolId: string;
+        candidateAddrs: string[];
+        payload: ReturnType<typeof decodeModuleDeliveryMessage>;
+      }>,
+      async discoverProviders(discoveryCID: string) {
+        this.discoveryCalls.push(discoveryCID);
+        return [
+          {
+            peerId: 'provider-peer-id',
+            multiaddrs: ['/dns4/discovered-relay.example/tcp/443/wss/p2p/discovered-relay-peer'],
+          },
+        ];
+      },
+      async dialProtocol(
+        targetPeerId: string,
+        protocolId: string,
+        payload: Uint8Array,
+        candidateAddrs: string[] = [],
+      ) {
+        const decoded = decodeModuleDeliveryMessage(payload);
+        this.dialCalls.push({ targetPeerId, protocolId, candidateAddrs, payload: decoded });
+
+        if (decoded.type === 'grant_request') {
+          return encodeModuleDeliveryMessage({
+            type: 'grant_challenge',
+            payload: {
+              reqId: decoded.payload.reqId,
+              challenge: new Uint8Array([5, 6, 7]),
+              expiresAtMs: 1_700_000_900_000,
+              providerPeerId: 'provider-peer-id',
+              providerPublicKey: hexToBytes('02'.padEnd(66, '1')),
+            },
+          });
+        }
+
+        return encodeModuleDeliveryMessage({
+          type: 'grant_response',
+          payload: {
+            reqId: decoded.payload.reqId,
+            entitlementStatus: 'active',
+            capabilityToken: 'capability-token',
+            expiresAtMs: 1_700_003_600_000,
+            grantSignature: new Uint8Array([9, 9, 9]),
+            bundleDescriptor: {
+              cid: 'bafyencryptedmodule',
+              contentHash: new Uint8Array(32).fill(7),
+              sizeBytes: 4,
+              moduleId: 'com.space-data-network.fastest-path',
+            },
+            wrappedContentKey: {
+              wrappingAlgorithm: 'x25519-xsalsa20poly1305',
+              recipientPublicKey: new Uint8Array(32).fill(8),
+              ephemeralPublicKey: new Uint8Array(32).fill(9),
+              nonce: new Uint8Array(24).fill(3),
+              ciphertext: new Uint8Array([4, 5, 6]),
+              tag: new Uint8Array([7, 8, 9]),
+            },
+          },
+        });
+      },
+      async fetchCIDBytes() {
+        return new Uint8Array([1, 2, 3, 4]);
+      },
+      nodeInfo: legacyHttpBootstrap,
+      fetchNodeInfo: legacyHttpBootstrap,
+      fetchPublicKey: legacyHttpBootstrap,
+    };
+
+    const result = await requestModuleGrant(transport, {
+      serverDescriptor: {
+        publicKey: '02'.padEnd(66, '1'),
+      },
+      requesterIdentity: {
+        peerId: 'requester-peer-id',
+        signingKey: {
+          privateKey: new Uint8Array(32).fill(5),
+          publicKey: new Uint8Array(32).fill(6),
+        },
+        encryptionKey: {
+          privateKey: new Uint8Array(32).fill(7),
+          publicKey: new Uint8Array(32).fill(8),
+        },
+      },
+      moduleId: 'com.space-data-network.fastest-path',
+      reqId: 'req-discovery',
+      requestedAtMs: 1_700_000_000_000,
+    });
+
+    expect(transport.discoveryCalls).toHaveLength(1);
+    expect(transport.discoveryCalls[0].startsWith('b')).toBe(true);
+    expect(transport.dialCalls[0]).toMatchObject({
+      targetPeerId: 'provider-peer-id',
+      protocolId: MODULE_DELIVERY_PROTOCOL_ID,
+      candidateAddrs: ['/dns4/discovered-relay.example/tcp/443/wss/p2p/discovered-relay-peer'],
+    });
+    expect(result.provider.peerId).toBe('provider-peer-id');
+    expect(result.provider.relayAddresses).toEqual([]);
+    expect(legacyHttpBootstrap).not.toHaveBeenCalled();
+    expect(MODULE_DELIVERY_DISCOVERY_NAMESPACE).toBe('space-data-network/module-delivery/provider-pubkey');
   });
 });
 

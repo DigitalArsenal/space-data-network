@@ -8,7 +8,7 @@ export { SDNNode } from './node';
 export { createHeliaSDNNode } from './helia';
 export type { HeliaSDNNode } from './helia';
 export type { SDNConfig, SDNNodeEvents } from './node';
-export { LEGACY_ID_EXCHANGE_PROTOCOL, IPFS_BOOTSTRAP_PEERS } from './node';
+export { IPFS_BOOTSTRAP_PEERS } from './node';
 export {
   MODULE_DELIVERY_PROTOCOL_ID,
   ModuleDeliveryProtocolError,

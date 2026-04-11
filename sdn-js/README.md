@@ -52,9 +52,9 @@ await node.stop();
 - **Edge relay load balancing** -- automatic relay probing with weighted scoring (load, latency, reliability)
 - **40+ space data schemas** -- FlatBuffer-native CCSDS and SDS message types
 - **End-to-end encryption** -- X25519 ECDH key agreement + ChaCha20-Poly1305
+- **Module delivery** -- provider-identity grant exchange over `/space-data-network/module-delivery/1.0.0`
 - **Local storage** -- IndexedDB-backed record store with schema-based queries
 - **Data marketplace** -- storefront client for listing, purchasing, and reviewing space data
-- **License protocol** -- challenge-response license grants over libp2p streams
 - **EPM resolution** -- Entity Profile Manifest discovery and key exchange
 
 ## Configuration
@@ -194,6 +194,27 @@ const epm = await resolver.resolve(xpub);
 // Extract keys
 const signingKey = epm.getKey(KeyType.SIGNING);
 const encryptionKey = epm.getKey(KeyType.ENCRYPTION);
+```
+
+### Module Delivery
+
+Requester-side module delivery stays on libp2p plus Helia. The public path
+does not bootstrap through HTTP node-info or `/orbpro/*` broker endpoints.
+
+```typescript
+import { SDNNode } from '@spacedatanetwork/sdn-js';
+
+const result = await node.requestEncryptedModuleBundle({
+  serverDescriptor: {
+    publicKey: '02...provider-compressed-secp256k1-key...',
+    cid: 'bafy...provider-epm',
+  },
+  moduleId: 'com.example.analytics',
+  moduleVersion: '1.2.3',
+});
+
+console.log(result.grant.bundleDescriptor.cid);
+console.log(result.encryptedBundleBytes.length);
 ```
 
 ### Storefront
