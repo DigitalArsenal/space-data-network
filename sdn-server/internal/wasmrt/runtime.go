@@ -107,6 +107,8 @@ func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
 	}
 
 	conf := wasmedge.NewConfigure()
+	conf.AddConfig(wasmedge.THREADS)
+	conf.AddConfig(wasmedge.EXCEPTION_HANDLING)
 	if cfg.enableWASI {
 		conf.AddConfig(wasmedge.WASI)
 	}
