@@ -1,11 +1,18 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import * as flatbuffers from 'flatbuffers';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  MODULE_DELIVERY_PROTOCOL_ID,
-  decodeModuleDeliveryMessage,
-  encodeModuleDeliveryMessage,
-} from '@spacedatanetwork/module-sdk';
+import { LCH } from '../../../spacedatastandards.org/lib/js/REC/LCH.js';
+import { LGR } from '../../../spacedatastandards.org/lib/js/REC/LGR.js';
+import { LPF } from '../../../spacedatastandards.org/lib/js/REC/LPF.js';
+import { LWK } from '../../../spacedatastandards.org/lib/js/REC/LWK.js';
+import { PLG } from '../../../spacedatastandards.org/lib/js/REC/PLG.js';
+import { licensingChallengeMessageType } from '../../../spacedatastandards.org/lib/js/REC/licensingChallengeMessageType.js';
+import { licensingChallengeRole } from '../../../spacedatastandards.org/lib/js/REC/licensingChallengeRole.js';
+import { licensingGrantMessageType } from '../../../spacedatastandards.org/lib/js/REC/licensingGrantMessageType.js';
+import { licensingProofMessageType } from '../../../spacedatastandards.org/lib/js/REC/licensingProofMessageType.js';
+import { licensingWrappedKeyAlgorithm } from '../../../spacedatastandards.org/lib/js/REC/licensingWrappedKeyAlgorithm.js';
+import { pluginType } from '../../../spacedatastandards.org/lib/js/PLG/pluginType.js';
 
 vi.mock('./crypto/hd-wallet', async () => {
   const actual = await vi.importActual<typeof import('./crypto/hd-wallet')>('./crypto/hd-wallet');
@@ -17,15 +24,19 @@ vi.mock('./crypto/hd-wallet', async () => {
 });
 
 import { MODULE_DELIVERY_DISCOVERY_NAMESPACE } from './discovery';
-import { fetchEncryptedModuleBundle, requestModuleGrant } from './module-delivery';
+import {
+  MODULE_DELIVERY_PROTOCOL_ID,
+  fetchEncryptedModuleBundle,
+  requestModuleGrant,
+} from './module-delivery';
 
 describe('module-delivery', () => {
-  it('performs the FlatBuffer challenge and proof exchange over the module delivery protocol', async () => {
+  it('performs the raw SDS challenge and proof exchange over the module delivery protocol', async () => {
     const transport = {
       calls: [] as Array<{
         targetPeerId: string;
         protocolId: string;
-        payload: ReturnType<typeof decodeModuleDeliveryMessage>;
+        payload: Uint8Array;
         candidateAddrs: string[];
       }>,
       async dialProtocol(
@@ -34,55 +45,37 @@ describe('module-delivery', () => {
         payload: Uint8Array,
         candidateAddrs: string[] = [],
       ) {
-        const decoded = decodeModuleDeliveryMessage(payload);
-        this.calls.push({ targetPeerId, protocolId, payload: decoded, candidateAddrs });
+        this.calls.push({ targetPeerId, protocolId, payload, candidateAddrs });
 
-        if (decoded.type === 'grant_request') {
-          return encodeModuleDeliveryMessage({
-            type: 'grant_challenge',
-            payload: {
-              reqId: decoded.payload.reqId,
-              challenge: new Uint8Array([1, 2, 3, 4]),
-              expiresAtMs: 1_700_000_900_000,
-              providerPeerId: 'provider-peer-id',
-              providerPublicKey: hexToBytes('02'.padEnd(66, '1')),
-            },
+        if (isLCH(payload)) {
+          const request = decodeLCH(payload);
+          expect(request.MESSAGE_TYPE()).toBe(licensingChallengeMessageType.Request);
+          expect(request.ROLE()).toBe(licensingChallengeRole.Requester);
+          return encodeChallengeResponse({
+            reqId: request.REQUEST_ID() ?? '',
+            moduleId: request.MODULE_ID() ?? '',
+            moduleVersion: request.MODULE_VERSION() ?? undefined,
+            providerPeerId: 'provider-peer-id',
+            challengeNonce: new Uint8Array([1, 2, 3, 4]),
+            expiresAtMs: 1_700_000_900_000n,
           });
         }
 
-        expect(decoded.type).toBe('grant_proof');
-        return encodeModuleDeliveryMessage({
-          type: 'grant_response',
-          payload: {
-            reqId: decoded.payload.reqId,
-            entitlementStatus: 'active',
-            capabilityToken: 'capability-token',
-            expiresAtMs: 1_700_003_600_000,
-            grantedDomain: 'app.example.com',
-            grantedTimeoutMs: 300_000,
-            grantSignature: new Uint8Array([9, 9, 9]),
-            grantVerifierPublicKey: new Uint8Array(32).fill(5),
-            bundleDescriptor: {
-              cid: 'bafyencryptedmodule',
-              contentHash: new Uint8Array(32).fill(7),
-              sizeBytes: 4,
-              moduleId: 'com.space-data-network.fastest-path',
-              moduleVersion: '0.5.22',
-              runtime: 'wasm32',
-              abi: 'sdk-0.5.22',
-              contentCodec: 'application/wasm+encrypted',
-              encryptionCodec: 'xchacha20poly1305',
-            },
-            wrappedContentKey: {
-              wrappingAlgorithm: 'x25519-xsalsa20poly1305',
-              recipientKeyId: 'requester-encryption-key',
-              recipientPublicKey: new Uint8Array(32).fill(8),
-              ephemeralPublicKey: new Uint8Array(32).fill(9),
-              nonce: new Uint8Array(24).fill(3),
-              ciphertext: new Uint8Array([4, 5, 6]),
-              tag: new Uint8Array([7, 8, 9]),
-            },
-          },
+        expect(isLPF(payload)).toBe(true);
+        const proof = decodeLPF(payload);
+        expect(proof.MESSAGE_TYPE()).toBe(licensingProofMessageType.ProofRequest);
+        return encodeGrantResponse({
+          reqId: proof.REQUEST_ID() ?? '',
+          moduleId: proof.MODULE_ID() ?? '',
+          moduleVersion: proof.MODULE_VERSION() ?? undefined,
+          requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+          requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+          requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
+          requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          grantedDomain: 'app.example.com',
+          grantedTimeoutMs: 300_000n,
+          expiresAtMs: 1_700_003_600_000n,
+          contentHash: new Uint8Array(32).fill(7),
         });
       },
       async fetchCIDBytes() {
@@ -120,26 +113,21 @@ describe('module-delivery', () => {
       targetPeerId: 'provider-peer-id',
       protocolId: MODULE_DELIVERY_PROTOCOL_ID,
       candidateAddrs: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
-      payload: {
-        type: 'grant_request',
-        payload: {
-          reqId: 'req-123',
-          requesterPeerId: 'requester-peer-id',
-          requesterXpub: 'xpub-requester',
-          requesterDomain: 'app.example.com',
-          requestedTimeoutMs: 300_000,
-        },
-      },
     });
-    expect(transport.calls[1].payload).toMatchObject({
-      type: 'grant_proof',
-      payload: {
-        reqId: 'req-123',
-        requesterDomain: 'app.example.com',
-        requestedTimeoutMs: 300_000,
-        signature: new Uint8Array([0xaa, 0xbb, 0xcc]),
-      },
-    });
+    const challengeRequest = decodeLCH(transport.calls[0].payload);
+    expect(challengeRequest.REQUEST_ID()).toBe('req-123');
+    expect(challengeRequest.REQUESTER_PEER_ID()).toBe('requester-peer-id');
+    expect(challengeRequest.REQUESTER_XPUB()).toBe('xpub-requester');
+    expect(challengeRequest.REQUESTED_DOMAIN()).toBe('app.example.com');
+    expect(challengeRequest.REQUESTED_TIMEOUT_MS()).toBe(300_000n);
+    expect(challengeRequest.requesterSigningPubkeyArray()).toEqual(new Uint8Array(32).fill(6));
+    expect(challengeRequest.requesterEphemeralPubkeyArray()).toEqual(new Uint8Array(32).fill(8));
+
+    const proofRequest = decodeLPF(transport.calls[1].payload);
+    expect(proofRequest.REQUEST_ID()).toBe('req-123');
+    expect(proofRequest.REQUESTED_DOMAIN()).toBe('app.example.com');
+    expect(proofRequest.REQUESTED_TIMEOUT_MS()).toBe(300_000n);
+    expect(proofRequest.signatureArray()).toEqual(new Uint8Array([0xaa, 0xbb, 0xcc]));
 
     expect(result.grant.bundleDescriptor).toMatchObject({
       cid: 'bafyencryptedmodule',
@@ -243,7 +231,7 @@ describe('module-delivery', () => {
         targetPeerId: string;
         protocolId: string;
         candidateAddrs: string[];
-        payload: ReturnType<typeof decodeModuleDeliveryMessage>;
+        payload: Uint8Array;
       }>,
       async discoverProviders(discoveryCID: string) {
         this.discoveryCalls.push(discoveryCID);
@@ -260,44 +248,33 @@ describe('module-delivery', () => {
         payload: Uint8Array,
         candidateAddrs: string[] = [],
       ) {
-        const decoded = decodeModuleDeliveryMessage(payload);
-        this.dialCalls.push({ targetPeerId, protocolId, candidateAddrs, payload: decoded });
+        this.dialCalls.push({ targetPeerId, protocolId, candidateAddrs, payload });
 
-        if (decoded.type === 'grant_request') {
-          return encodeModuleDeliveryMessage({
-            type: 'grant_challenge',
-            payload: {
-              reqId: decoded.payload.reqId,
-              challenge: new Uint8Array([5, 6, 7]),
-              expiresAtMs: 1_700_000_900_000,
-              providerPeerId: 'provider-peer-id',
-              providerPublicKey: hexToBytes('02'.padEnd(66, '1')),
-            },
+        if (isLCH(payload)) {
+          const request = decodeLCH(payload);
+          return encodeChallengeResponse({
+            reqId: request.REQUEST_ID() ?? '',
+            moduleId: request.MODULE_ID() ?? '',
+            moduleVersion: request.MODULE_VERSION() ?? undefined,
+            providerPeerId: 'provider-peer-id',
+            challengeNonce: new Uint8Array([5, 6, 7]),
+            expiresAtMs: 1_700_000_900_000n,
           });
         }
 
-        return encodeModuleDeliveryMessage({
-          type: 'grant_response',
-          payload: {
-            reqId: decoded.payload.reqId,
-            grantedDomain: 'example.org',
-            grantedTimeoutMs: 30_000,
-            grantVerifierPublicKey: new Uint8Array(32).fill(10),
-            bundleDescriptor: {
-              cid: 'bafyencryptedmodule',
-              contentHash: new Uint8Array(32).fill(7),
-              sizeBytes: 4,
-              moduleId: 'com.space-data-network.fastest-path',
-            },
-            wrappedContentKey: {
-              wrappingAlgorithm: 'x25519-xsalsa20poly1305',
-              recipientPublicKey: new Uint8Array(32).fill(8),
-              ephemeralPublicKey: new Uint8Array(32).fill(9),
-              nonce: new Uint8Array(24).fill(3),
-              ciphertext: new Uint8Array([4, 5, 6]),
-              tag: new Uint8Array([7, 8, 9]),
-            },
-          },
+        const proof = decodeLPF(payload);
+        return encodeGrantResponse({
+          reqId: proof.REQUEST_ID() ?? '',
+          moduleId: proof.MODULE_ID() ?? '',
+          moduleVersion: proof.MODULE_VERSION() ?? undefined,
+          requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+          requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+          requestedDomain: 'example.org',
+          requestedTimeoutMs: 30_000n,
+          grantedDomain: 'example.org',
+          grantedTimeoutMs: 30_000n,
+          expiresAtMs: 1_700_003_600_000n,
+          contentHash: new Uint8Array(32).fill(7),
         });
       },
       async fetchCIDBytes() {
@@ -354,6 +331,206 @@ describe('module-delivery', () => {
     expect(exampleSource.includes('SDN_MODULE_ID')).toBe(true);
   });
 });
+
+function isLCH(payload: Uint8Array): boolean {
+  return LCH.bufferHasIdentifier(new flatbuffers.ByteBuffer(payload));
+}
+
+function isLPF(payload: Uint8Array): boolean {
+  return LPF.bufferHasIdentifier(new flatbuffers.ByteBuffer(payload));
+}
+
+function decodeLCH(payload: Uint8Array): LCH {
+  return LCH.getRootAsLCH(new flatbuffers.ByteBuffer(payload));
+}
+
+function decodeLPF(payload: Uint8Array): LPF {
+  return LPF.getRootAsLPF(new flatbuffers.ByteBuffer(payload));
+}
+
+function encodeChallengeResponse(options: {
+  reqId: string;
+  moduleId: string;
+  moduleVersion?: string;
+  providerPeerId: string;
+  challengeNonce: Uint8Array;
+  expiresAtMs: bigint;
+}): Uint8Array {
+  const builder = new flatbuffers.Builder(256);
+  const reqIdOffset = builder.createString(options.reqId);
+  const moduleIdOffset = builder.createString(options.moduleId);
+  const moduleVersionOffset = options.moduleVersion ? builder.createString(options.moduleVersion) : 0;
+  const providerPeerIdOffset = builder.createString(options.providerPeerId);
+  const challengeNonceOffset = LCH.createChallengeNonceVector(builder, options.challengeNonce);
+  const root = LCH.createLCH(
+    builder,
+    licensingChallengeMessageType.Response,
+    licensingChallengeRole.Provider,
+    reqIdOffset,
+    moduleIdOffset,
+    moduleVersionOffset,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0n,
+    0n,
+    challengeNonceOffset,
+    options.expiresAtMs,
+    providerPeerIdOffset,
+    0,
+    0,
+  );
+  LCH.finishLCHBuffer(builder, root);
+  return builder.asUint8Array();
+}
+
+function encodeGrantResponse(options: {
+  reqId: string;
+  moduleId: string;
+  moduleVersion?: string;
+  requesterPeerId?: string;
+  requesterXpub?: string;
+  requestedDomain: string;
+  requestedTimeoutMs: bigint;
+  grantedDomain: string;
+  grantedTimeoutMs: bigint;
+  expiresAtMs: bigint;
+  contentHash: Uint8Array;
+}): Uint8Array {
+  const builder = new flatbuffers.Builder(1024);
+  const reqIdOffset = builder.createString(options.reqId);
+  const moduleIdOffset = builder.createString(options.moduleId);
+  const moduleVersionOffset = options.moduleVersion ? builder.createString(options.moduleVersion) : 0;
+  const requesterPeerIdOffset = options.requesterPeerId ? builder.createString(options.requesterPeerId) : 0;
+  const requesterXpubOffset = options.requesterXpub ? builder.createString(options.requesterXpub) : 0;
+  const requestedDomainOffset = builder.createString(options.requestedDomain);
+  const grantedDomainOffset = builder.createString(options.grantedDomain);
+  const requiredScopeOffset = builder.createString('orbpro.default');
+  const grantStatusOffset = builder.createString('active');
+  const capabilityTokenOffset = LGR.createCapabilityTokenVector(builder, new Uint8Array([1, 2, 3]));
+  const moduleDescriptorOffset = createModuleDescriptorOffset(builder, options.contentHash);
+  const wrappedContentKeyOffset = createWrappedContentKeyOffset(builder, options);
+  const verifierPubkeyOffset = LGR.createGrantVerifierPubkeyVector(builder, new Uint8Array(32).fill(5));
+  const providerSignatureOffset = LGR.createProviderSignatureVector(builder, new Uint8Array([9, 9, 9]));
+
+  LGR.startLGR(builder);
+  LGR.addMessageType(builder, licensingGrantMessageType.Granted);
+  LGR.addRequestId(builder, reqIdOffset);
+  LGR.addModuleId(builder, moduleIdOffset);
+  if (moduleVersionOffset !== 0) {
+    LGR.addModuleVersion(builder, moduleVersionOffset);
+  }
+  if (requesterPeerIdOffset !== 0) {
+    LGR.addRequesterPeerId(builder, requesterPeerIdOffset);
+  }
+  if (requesterXpubOffset !== 0) {
+    LGR.addRequesterXpub(builder, requesterXpubOffset);
+  }
+  LGR.addRequestedDomain(builder, requestedDomainOffset);
+  LGR.addRequestedTimeoutMs(builder, options.requestedTimeoutMs);
+  LGR.addGrantedDomain(builder, grantedDomainOffset);
+  LGR.addGrantedTimeoutMs(builder, options.grantedTimeoutMs);
+  LGR.addExpiresAt(builder, options.expiresAtMs);
+  LGR.addRequiredScope(builder, requiredScopeOffset);
+  LGR.addGrantStatus(builder, grantStatusOffset);
+  LGR.addCapabilityToken(builder, capabilityTokenOffset);
+  LGR.addModuleDescriptor(builder, moduleDescriptorOffset);
+  LGR.addWrappedContentKey(builder, wrappedContentKeyOffset);
+  LGR.addGrantVerifierPubkey(builder, verifierPubkeyOffset);
+  LGR.addProviderSignature(builder, providerSignatureOffset);
+  const root = LGR.endLGR(builder);
+  LGR.finishLGRBuffer(builder, root);
+  return builder.asUint8Array();
+}
+
+function createModuleDescriptorOffset(
+  builder: flatbuffers.Builder,
+  contentHash: Uint8Array,
+): flatbuffers.Offset {
+  const moduleId = 'com.space-data-network.fastest-path';
+  const moduleVersion = '0.5.22';
+  const pluginIdOffset = builder.createString(moduleId);
+  const nameOffset = builder.createString(moduleId);
+  const versionOffset = builder.createString(moduleVersion);
+  const descriptionOffset = builder.createString('Protected module fixture');
+  const wasmHashOffset = PLG.createWasmHashVector(builder, contentHash);
+  const wasmCidOffset = builder.createString('bafyencryptedmodule');
+  const requiredScopeOffset = builder.createString('orbpro.default');
+  const keyIdOffset = builder.createString(`${moduleId}:${moduleVersion}`);
+  const allowedDomainsOffset = PLG.createAllowedDomainsVector(
+    builder,
+    [builder.createString('app.example.com')],
+  );
+
+  return PLG.createPLG(
+    builder,
+    pluginIdOffset,
+    nameOffset,
+    versionOffset,
+    descriptionOffset,
+    pluginType.Analysis,
+    1,
+    wasmHashOffset,
+    4n,
+    wasmCidOffset,
+    0,
+    0n,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    true,
+    requiredScopeOffset,
+    keyIdOffset,
+    allowedDomainsOffset,
+    300_000n,
+    0,
+    0n,
+    0n,
+    0,
+    0,
+    0,
+    0,
+  );
+}
+
+function createWrappedContentKeyOffset(
+  builder: flatbuffers.Builder,
+  options: { reqId: string; moduleId: string; moduleVersion?: string; expiresAtMs: bigint },
+): flatbuffers.Offset {
+  const reqIdOffset = builder.createString(options.reqId);
+  const moduleIdOffset = builder.createString(options.moduleId);
+  const moduleVersionOffset = options.moduleVersion ? builder.createString(options.moduleVersion) : 0;
+  const contentKeyIdOffset = builder.createString(`${options.moduleId}:${options.moduleVersion ?? 'latest'}`);
+  const recipientKeyIdOffset = builder.createString('requester-encryption-key');
+  const requesterEphemeralOffset = LWK.createRequesterEphemeralPubkeyVector(builder, new Uint8Array(32).fill(8));
+  const providerEphemeralOffset = LWK.createProviderEphemeralPubkeyVector(builder, new Uint8Array(32).fill(9));
+  const hkdfSaltOffset = LWK.createHkdfSaltVector(builder, new Uint8Array(32).fill(3));
+  const ivOffset = LWK.createIvVector(builder, new Uint8Array(12).fill(4));
+  const ciphertextOffset = LWK.createCiphertextVector(builder, new Uint8Array([4, 5, 6]));
+  const tagOffset = LWK.createTagVector(builder, new Uint8Array([7, 8, 9]));
+
+  return LWK.createLWK(
+    builder,
+    reqIdOffset,
+    moduleIdOffset,
+    moduleVersionOffset,
+    contentKeyIdOffset,
+    recipientKeyIdOffset,
+    licensingWrappedKeyAlgorithm.X25519_HKDF_SHA256_AES_256_GCM,
+    requesterEphemeralOffset,
+    providerEphemeralOffset,
+    hkdfSaltOffset,
+    ivOffset,
+    ciphertextOffset,
+    tagOffset,
+    options.expiresAtMs,
+  );
+}
 
 function hexToBytes(hex: string): Uint8Array {
   const normalized = hex.trim().toLowerCase();
