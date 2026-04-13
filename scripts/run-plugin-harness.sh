@@ -18,7 +18,7 @@ Options:
                                  Path to file containing artifact private key hex.
   --server-private-key-file <path>
                                  Path to file containing server private key hex.
-  --plugin-id <id>              Plugin id expected in SDN manifest. Default: plugin-key-broker.
+  --plugin-id <id>              Plugin id expected in SDN manifest. Default: licensing.
   --skip-build                  Do not run the plugin build command.
   --derivation-secret <hex>      Optional derivation secret (64 hex chars).
   --keep-workspace              Keep temporary workspace on exit.
@@ -29,7 +29,7 @@ Environment:
   PLUGIN_KEY_SERVER_ARTIFACT_PUBLIC_KEY_HEX
                               X25519 public key used to stage encrypted artifacts.
                               If omitted, an ephemeral keypair is generated for the run.
-  PLUGIN_HARNESS_PLUGIN_ID              Plugin id expected in SDN manifest. Default: plugin-key-broker.
+  PLUGIN_HARNESS_PLUGIN_ID              Plugin id expected in SDN manifest. Default: licensing.
   PLUGIN_HARNESS_REQUIRED_SCOPE          Scope written into generated catalog entry. Default: plugin:base.
   PLUGIN_HARNESS_PUBLIC_KEY_PATH          Expected public-key API suffix on plugin endpoint. Default: /v1/public-key.
   PLUGIN_HARNESS_BUILD_COMMAND           Command to build the plugin artifact. Default: npm run build:key-server
@@ -109,7 +109,7 @@ ARTIFACT_DIR=""
 ADMIN_ADDR="127.0.0.1:5010"
 SKIP_BUILD=false
 KEEP_WORKSPACE=false
-PLUGIN_ID="${PLUGIN_HARNESS_PLUGIN_ID:-plugin-key-broker}"
+PLUGIN_ID="${PLUGIN_HARNESS_PLUGIN_ID:-licensing}"
 PLUGIN_REQUIRED_SCOPE="${PLUGIN_HARNESS_REQUIRED_SCOPE:-plugin:base}"
 PLUGIN_PUBLIC_KEY_PATH="${PLUGIN_HARNESS_PUBLIC_KEY_PATH:-/v1/public-key}"
 PLUGIN_PUBLIC_KEY_PATH="/${PLUGIN_PUBLIC_KEY_PATH#/}"
@@ -278,7 +278,7 @@ CONFIG_PATH="$WORKSPACE_DIR/config.yaml"
 LOG_PATH="$WORKSPACE_DIR/sdn.log"
 MANIFEST_PATH="$WORKSPACE_DIR/manifest.json"
 BUNDLE_PATH="$WORKSPACE_DIR/plugin-bundle.wasm"
-PUBKEY_PATH="$WORKSPACE_DIR/key-broker-public-key.json"
+PUBKEY_PATH="$WORKSPACE_DIR/licensing-public-key.json"
 
 if [[ "$SKIP_BUILD" == "false" ]]; then
   echo "[harness] building encrypted licensing artifacts with public key: ${PUBLIC_KEY:0:8}..."
@@ -311,10 +311,7 @@ if [[ ! -f "$PLUGIN_MANIFEST" ]]; then
   fail "missing manifest in artifact dir: $PLUGIN_MANIFEST"
 fi
 
-if [[ -z "$LOADER_PATH" ]]; then
-  fail "set PLUGIN_HARNESS_LOADER_PATH to the plugin loader module (for example: path to protection-key-server/index.js)"
-fi
-if [[ ! -f "$LOADER_PATH" ]]; then
+if [[ -n "$LOADER_PATH" && ! -f "$LOADER_PATH" ]]; then
   fail "loader path not found: $LOADER_PATH"
 fi
 
@@ -323,11 +320,15 @@ if [[ ! -f "$DECRYPT_HELPER" ]]; then
 fi
 
 echo "[harness] decrypting plugin licensing artifact"
-node "$DECRYPT_HELPER" \
-  --artifact-dir "$STAGE_DIR" \
-  --private-key "$PRIVATE_KEY" \
-  --output "$DECRYPTED_WASM" \
-  --loader-path "$LOADER_PATH"
+DECRYPT_ARGS=(
+  --artifact-dir "$STAGE_DIR"
+  --private-key "$PRIVATE_KEY"
+  --output "$DECRYPTED_WASM"
+)
+if [[ -n "$LOADER_PATH" ]]; then
+  DECRYPT_ARGS+=(--loader-path "$LOADER_PATH")
+fi
+node "$DECRYPT_HELPER" "${DECRYPT_ARGS[@]}"
 
 if [[ ! -f "$DECRYPTED_WASM" ]] || [[ ! -s "$DECRYPTED_WASM" ]]; then
   fail "decrypted plugin missing or empty: $DECRYPTED_WASM"
