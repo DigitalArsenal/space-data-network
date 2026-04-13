@@ -2,16 +2,22 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import * as flatbuffers from 'flatbuffers';
 import { describe, expect, it, vi } from 'vitest';
+import { ENC } from '../../../spacedatastandards.org/lib/js/REC/ENC.js';
+import { KDF } from '../../../spacedatastandards.org/lib/js/REC/KDF.js';
+import { KMF } from '../../../spacedatastandards.org/lib/js/REC/KMF.js';
+import { KeyExchange } from '../../../spacedatastandards.org/lib/js/REC/KeyExchange.js';
 import { LCH } from '../../../spacedatastandards.org/lib/js/REC/LCH.js';
 import { LGR } from '../../../spacedatastandards.org/lib/js/REC/LGR.js';
 import { LPF } from '../../../spacedatastandards.org/lib/js/REC/LPF.js';
-import { LWK } from '../../../spacedatastandards.org/lib/js/REC/LWK.js';
 import { PLG } from '../../../spacedatastandards.org/lib/js/REC/PLG.js';
+import { SymmetricAlgo } from '../../../spacedatastandards.org/lib/js/REC/SymmetricAlgo.js';
 import { licensingChallengeMessageType } from '../../../spacedatastandards.org/lib/js/REC/licensingChallengeMessageType.js';
 import { licensingChallengeRole } from '../../../spacedatastandards.org/lib/js/REC/licensingChallengeRole.js';
 import { licensingGrantMessageType } from '../../../spacedatastandards.org/lib/js/REC/licensingGrantMessageType.js';
 import { licensingProofMessageType } from '../../../spacedatastandards.org/lib/js/REC/licensingProofMessageType.js';
-import { licensingWrappedKeyAlgorithm } from '../../../spacedatastandards.org/lib/js/REC/licensingWrappedKeyAlgorithm.js';
+import { keyMaterialAlgorithm } from '../../../spacedatastandards.org/lib/js/REC/keyMaterialAlgorithm.js';
+import { keyMaterialEncoding } from '../../../spacedatastandards.org/lib/js/REC/keyMaterialEncoding.js';
+import { keyMaterialRole } from '../../../spacedatastandards.org/lib/js/REC/keyMaterialRole.js';
 import { pluginType } from '../../../spacedatastandards.org/lib/js/PLG/pluginType.js';
 
 vi.mock('./crypto/hd-wallet', async () => {
@@ -137,7 +143,107 @@ describe('module-delivery', () => {
     expect(result.grant.grantedDomain).toBe('app.example.com');
     expect(result.grant.grantedTimeoutMs).toBe(300_000);
     expect(result.grant.grantVerifierPublicKey).toEqual(new Uint8Array(32).fill(5));
+    expect(result.grant.wrappedContentKey.header?.rootType).toBe('$KMF');
+    expect(result.grant.wrappedContentKey.nonce).toEqual(new Uint8Array(12).fill(4));
+    expect(result.grant.wrappedContentKey.ciphertext.length).toBeGreaterThan(0);
     expect(result.provider.peerId).toBe('provider-peer-id');
+  });
+
+  it('treats descriptor relay addresses as authoritative and skips discovery plus legacy bootstrap helpers', async () => {
+    const legacyHttpBootstrap = vi.fn(async () => {
+      throw new Error('legacy bootstrap must not run');
+    });
+    const discoverProviders = vi.fn(async () => [
+      {
+        peerId: 'provider-peer-id',
+        multiaddrs: ['/dns4/discovered-relay.example/tcp/443/wss/p2p/discovered-relay-peer'],
+      },
+    ]);
+    const transport = {
+      dialCalls: [] as Array<{
+        targetPeerId: string;
+        protocolId: string;
+        candidateAddrs: string[];
+        payload: Uint8Array;
+      }>,
+      discoverProviders,
+      async dialProtocol(
+        targetPeerId: string,
+        protocolId: string,
+        payload: Uint8Array,
+        candidateAddrs: string[] = [],
+      ) {
+        this.dialCalls.push({ targetPeerId, protocolId, candidateAddrs, payload });
+
+        if (isLCH(payload)) {
+          const request = decodeLCH(payload);
+          return encodeChallengeResponse({
+            reqId: request.REQUEST_ID() ?? '',
+            moduleId: request.MODULE_ID() ?? '',
+            moduleVersion: request.MODULE_VERSION() ?? undefined,
+            providerPeerId: 'provider-peer-id',
+            challengeNonce: new Uint8Array([8, 7, 6, 5]),
+            expiresAtMs: 1_700_000_900_000n,
+          });
+        }
+
+        const proof = decodeLPF(payload);
+        return encodeGrantResponse({
+          reqId: proof.REQUEST_ID() ?? '',
+          moduleId: proof.MODULE_ID() ?? '',
+          moduleVersion: proof.MODULE_VERSION() ?? undefined,
+          requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+          requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+          requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
+          requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          grantedDomain: 'app.example.com',
+          grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          expiresAtMs: 1_700_003_600_000n,
+          contentHash: new Uint8Array(32).fill(7),
+        });
+      },
+      async fetchCIDBytes() {
+        return new Uint8Array([1, 2, 3, 4]);
+      },
+      nodeInfo: legacyHttpBootstrap,
+      fetchNodeInfo: legacyHttpBootstrap,
+      fetchPublicKey: legacyHttpBootstrap,
+    };
+
+    const explicitRelay = '/dns4/relay.example/tcp/443/wss/p2p/relay-peer';
+    const result = await requestModuleGrant(transport, {
+      serverDescriptor: {
+        publicKey: '02'.padEnd(66, '1'),
+        relayAddresses: [explicitRelay],
+      },
+      requesterIdentity: {
+        peerId: 'requester-peer-id',
+        xpub: 'xpub-requester',
+        signingKey: {
+          privateKey: new Uint8Array(32).fill(5),
+          publicKey: new Uint8Array(32).fill(6),
+        },
+        encryptionKey: {
+          privateKey: new Uint8Array(32).fill(7),
+          publicKey: new Uint8Array(32).fill(8),
+        },
+      },
+      moduleId: 'com.space-data-network.fastest-path',
+      moduleVersion: '0.5.22',
+      requesterDomain: 'app.example.com',
+      requestedTimeoutMs: 30_000,
+      reqId: 'req-explicit-relay',
+      requestedAtMs: 1_700_000_000_000,
+    });
+
+    expect(discoverProviders).not.toHaveBeenCalled();
+    expect(transport.dialCalls[0]).toMatchObject({
+      targetPeerId: 'provider-peer-id',
+      protocolId: MODULE_DELIVERY_PROTOCOL_ID,
+      candidateAddrs: [explicitRelay],
+    });
+    expect(legacyHttpBootstrap).not.toHaveBeenCalled();
+    expect(result.provider.relayAddresses).toEqual([explicitRelay]);
   });
 
   it('fetches the encrypted bundle bytes by CID and verifies the declared content hash', async () => {
@@ -320,6 +426,75 @@ describe('module-delivery', () => {
     expect(MODULE_DELIVERY_DISCOVERY_NAMESPACE).toBe('space-data-network/module-delivery/provider-pubkey');
   });
 
+  it('rejects a grant that exceeds the requested timeout', async () => {
+    const transport = {
+      async dialProtocol(
+        _targetPeerId: string,
+        _protocolId: string,
+        payload: Uint8Array,
+      ) {
+        if (isLCH(payload)) {
+          const request = decodeLCH(payload);
+          return encodeChallengeResponse({
+            reqId: request.REQUEST_ID() ?? '',
+            moduleId: request.MODULE_ID() ?? '',
+            moduleVersion: request.MODULE_VERSION() ?? undefined,
+            providerPeerId: 'provider-peer-id',
+            challengeNonce: new Uint8Array([1, 2, 3, 4]),
+            expiresAtMs: 1_700_000_900_000n,
+          });
+        }
+
+        const proof = decodeLPF(payload);
+        return encodeGrantResponse({
+          reqId: proof.REQUEST_ID() ?? '',
+          moduleId: proof.MODULE_ID() ?? '',
+          moduleVersion: proof.MODULE_VERSION() ?? undefined,
+          requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+          requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+          requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
+          requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          grantedDomain: 'app.example.com',
+          grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS() + 1n,
+          expiresAtMs: 1_700_003_600_000n,
+          contentHash: new Uint8Array(32).fill(7),
+        });
+      },
+      async fetchCIDBytes() {
+        return new Uint8Array([1, 2, 3, 4]);
+      },
+    };
+
+    await expect(
+      requestModuleGrant(transport, {
+        serverDescriptor: {
+          publicKey: '02'.padEnd(66, '1'),
+          relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
+        },
+        requesterIdentity: {
+          peerId: 'requester-peer-id',
+          xpub: 'xpub-requester',
+          signingKey: {
+            privateKey: new Uint8Array(32).fill(5),
+            publicKey: new Uint8Array(32).fill(6),
+          },
+          encryptionKey: {
+            privateKey: new Uint8Array(32).fill(7),
+            publicKey: new Uint8Array(32).fill(8),
+          },
+        },
+        moduleId: 'com.space-data-network.fastest-path',
+        moduleVersion: '0.5.22',
+        requesterDomain: 'app.example.com',
+        requestedTimeoutMs: 30_000,
+        reqId: 'req-timeout-overgrant',
+        requestedAtMs: 1_700_000_000_000,
+      }),
+    ).rejects.toMatchObject({
+      code: 'grant_policy_mismatch',
+    });
+  });
+
   it('keeps the relay probe example on the real module-delivery exchange path', async () => {
     const exampleSource = await fs.readFile(
       path.join(__dirname, '..', 'examples', 'ipfs-relay-id-exchange.ts'),
@@ -411,7 +586,8 @@ function encodeGrantResponse(options: {
   const grantStatusOffset = builder.createString('active');
   const capabilityTokenOffset = LGR.createCapabilityTokenVector(builder, new Uint8Array([1, 2, 3]));
   const moduleDescriptorOffset = createModuleDescriptorOffset(builder, options.contentHash);
-  const wrappedContentKeyOffset = createWrappedContentKeyOffset(builder, options);
+  const wrappedContentKeyHeaderOffset = createWrappedContentKeyHeaderOffset(builder, options);
+  const wrappedContentKeyPayloadOffset = createWrappedContentKeyPayloadOffset(builder, options);
   const verifierPubkeyOffset = LGR.createGrantVerifierPubkeyVector(builder, new Uint8Array(32).fill(5));
   const providerSignatureOffset = LGR.createProviderSignatureVector(builder, new Uint8Array([9, 9, 9]));
 
@@ -437,7 +613,8 @@ function encodeGrantResponse(options: {
   LGR.addGrantStatus(builder, grantStatusOffset);
   LGR.addCapabilityToken(builder, capabilityTokenOffset);
   LGR.addModuleDescriptor(builder, moduleDescriptorOffset);
-  LGR.addWrappedContentKey(builder, wrappedContentKeyOffset);
+  LGR.addWrappedContentKeyHeader(builder, wrappedContentKeyHeaderOffset);
+  LGR.addWrappedContentKeyPayload(builder, wrappedContentKeyPayloadOffset);
   LGR.addGrantVerifierPubkey(builder, verifierPubkeyOffset);
   LGR.addProviderSignature(builder, providerSignatureOffset);
   const root = LGR.endLGR(builder);
@@ -498,38 +675,56 @@ function createModuleDescriptorOffset(
   );
 }
 
-function createWrappedContentKeyOffset(
+function createWrappedContentKeyHeaderOffset(
   builder: flatbuffers.Builder,
   options: { reqId: string; moduleId: string; moduleVersion?: string; expiresAtMs: bigint },
 ): flatbuffers.Offset {
-  const reqIdOffset = builder.createString(options.reqId);
-  const moduleIdOffset = builder.createString(options.moduleId);
-  const moduleVersionOffset = options.moduleVersion ? builder.createString(options.moduleVersion) : 0;
-  const contentKeyIdOffset = builder.createString(`${options.moduleId}:${options.moduleVersion ?? 'latest'}`);
-  const recipientKeyIdOffset = builder.createString('requester-encryption-key');
-  const requesterEphemeralOffset = LWK.createRequesterEphemeralPubkeyVector(builder, new Uint8Array(32).fill(8));
-  const providerEphemeralOffset = LWK.createProviderEphemeralPubkeyVector(builder, new Uint8Array(32).fill(9));
-  const hkdfSaltOffset = LWK.createHkdfSaltVector(builder, new Uint8Array(32).fill(3));
-  const ivOffset = LWK.createIvVector(builder, new Uint8Array(12).fill(4));
-  const ciphertextOffset = LWK.createCiphertextVector(builder, new Uint8Array([4, 5, 6]));
-  const tagOffset = LWK.createTagVector(builder, new Uint8Array([7, 8, 9]));
-
-  return LWK.createLWK(
+  const ephemeralPublicKeyOffset = ENC.createEphemeralPublicKeyVector(builder, new Uint8Array(32).fill(9));
+  const nonceStartOffset = ENC.createNonceStartVector(builder, new Uint8Array(12).fill(4));
+  const recipientKeyIdOffset = ENC.createRecipientKeyIdVector(
     builder,
-    reqIdOffset,
-    moduleIdOffset,
-    moduleVersionOffset,
-    contentKeyIdOffset,
+    new TextEncoder().encode('requester-encryption-key'),
+  );
+  const contextOffset = builder.createString(
+    `license-grant:${options.moduleId}:${options.moduleVersion ?? 'latest'}`,
+  );
+  const rootTypeOffset = builder.createString('$KMF');
+
+  return ENC.createENC(
+    builder,
+    1,
+    KeyExchange.X25519,
+    SymmetricAlgo.AES_256_CTR,
+    KDF.HKDF_SHA256,
+    ephemeralPublicKeyOffset,
+    nonceStartOffset,
     recipientKeyIdOffset,
-    licensingWrappedKeyAlgorithm.X25519_HKDF_SHA256_AES_256_GCM,
-    requesterEphemeralOffset,
-    providerEphemeralOffset,
-    hkdfSaltOffset,
-    ivOffset,
-    ciphertextOffset,
-    tagOffset,
+    contextOffset,
+    0,
+    rootTypeOffset,
     options.expiresAtMs,
   );
+}
+
+function createWrappedContentKeyPayloadOffset(
+  builder: flatbuffers.Builder,
+  options: { moduleId: string; moduleVersion?: string; expiresAtMs: bigint },
+): flatbuffers.Offset {
+  const kmfBuilder = new flatbuffers.Builder(256);
+  const keyIdOffset = kmfBuilder.createString(`${options.moduleId}:${options.moduleVersion ?? 'latest'}`);
+  const keyBytesOffset = KMF.createKeyBytesVector(kmfBuilder, new Uint8Array([4, 5, 6]));
+  const kmfOffset = KMF.createKMF(
+    kmfBuilder,
+    keyIdOffset,
+    keyMaterialRole.PublicationContent,
+    keyMaterialAlgorithm.Aes256Gcm,
+    keyMaterialEncoding.RawBytes,
+    keyBytesOffset,
+    1,
+    options.expiresAtMs,
+  );
+  KMF.finishKMFBuffer(kmfBuilder, kmfOffset);
+  return LGR.createWrappedContentKeyPayloadVector(builder, kmfBuilder.asUint8Array());
 }
 
 function hexToBytes(hex: string): Uint8Array {

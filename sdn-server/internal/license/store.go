@@ -175,17 +175,3 @@ ON CONFLICT(xpub) DO UPDATE SET
 	}
 	return nil
 }
-
-// IsActive returns true if entitlement status and expiry allow access.
-func (e *Entitlement) IsActive(now time.Time) bool {
-	if e == nil {
-		return false
-	}
-	if e.Status != entitlementStatusActive {
-		return false
-	}
-	if e.ExpiresAt <= 0 {
-		return true
-	}
-	return now.Unix() < e.ExpiresAt
-}

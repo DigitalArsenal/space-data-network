@@ -154,6 +154,8 @@ func capPrefixFromName(cap string) string {
 	switch cap {
 	case "protocol_handle", "protocol_dial":
 		return "protocol"
+	case "wallet_sign":
+		return "keyslot"
 	case "storage_query", "storage_write", "storage_adapter":
 		return "storage"
 	case "crypto_hash", "crypto_sign", "crypto_verify", "crypto_encrypt",
@@ -326,6 +328,9 @@ func (m *Module) RuntimeHost() host.Host {
 	defer m.mu.Unlock()
 	return m.host
 }
+
+// NodeContext returns the module's bound node context.
+func (m *Module) NodeContext() *NodeContext { return m.nodeCtx }
 
 // --- Generic protocol stream handler ---
 

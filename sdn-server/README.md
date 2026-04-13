@@ -138,35 +138,31 @@ If Stripe env vars are not set, fiat checkout falls back to the existing local s
 
 ## Module Delivery And Capability Tokens
 
-Full nodes now expose generic SDN module delivery over libp2p/IPFS:
+Full nodes still expose the public provider identity/discovery surface used by
+the canonical SDN requester flow:
 
-- Stream protocol: `/space-data-network/module-delivery/1.0.0`
-- Envelope/schema: `space_data_network.module_delivery.v1.ModuleDeliveryMessage`
-- Flow: `GrantRequest -> GrantChallenge -> GrantProof -> GrantResponse`
-- Token format: Ed25519-signed compact capability token (`header.payload.signature`)
 - Browser and node requesters discover providers by compressed secp256k1 public key via the DHT namespace `space-data-network/module-delivery/provider-pubkey`
-- `GrantResponse` returns the signed grant result, encrypted-bundle descriptor, and wrapped content key
-- Requesters fetch the encrypted module bundle separately by CID over IPFS/libp2p and decrypt locally
+- Full nodes publish `GET /api/module-delivery/provider` so requesters can
+  learn the provider's compressed secp256k1 public key, peer ID, IPNS name,
+  and relay addresses.
+- Requesters fetch encrypted module bundles by CID over IPFS/libp2p and
+  decrypt locally inside the unified wasm `licensing` module.
 
-The public browser-facing legacy broker and discovery bootstrap flows are not part of the current SDN contract.
+The public browser-facing legacy broker/bootstrap flows are not part of the
+current SDN contract.
 
-`sdn-server` owns the provider side of this contract:
+`sdn-server` now owns only the generic host/runtime side of that contract:
 
-- `internal/moduledelivery` serves the FlatBuffer grant flow and bundle publication metadata.
-- `plugins/moduledeliveryplugin` is the built-in provider plugin that registers `/space-data-network/module-delivery/1.0.0`.
-- `internal/license` remains an internal entitlement/token dependency and is no longer the public requester-facing protocol surface.
+- generic module runtime loading through `modulert`
+- provider descriptor/discovery support
+- plugin catalog metadata, staged-artifact decrypt helpers, and signed plugin
+  upload plumbing
+- shared host ABI capabilities used by wasm modules
 
 HTTP endpoints on the admin listener:
 
-- `GET /api/v1/license/verify` verifies bearer tokens and optional scopes
-- `GET/POST/PUT /api/v1/license/entitlements` manages xpub entitlement state
+- `GET /api/module-delivery/provider` returns the public provider descriptor
 - `POST /api/v1/plugins/upload` uploads signed plain WASM bundles into the provider catalog
-
-Runtime plugin architecture:
-
-- Plugin manager package: `github.com/spacedatanetwork/sdn-server/plugins`
-- Built-in module-delivery plugin package: `github.com/spacedatanetwork/sdn-server/plugins/moduledeliveryplugin`
-- The embedded `internal/license` package remains the entitlement and capability-token issuer behind the public module-delivery protocol
 
 Native TLS on admin/API listener (no reverse proxy):
 
