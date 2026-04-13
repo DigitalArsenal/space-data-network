@@ -1,13 +1,16 @@
 import * as flatbuffers from 'flatbuffers';
+import { ENC } from 'spacedatastandards.org/lib/js/REC/ENC.js';
+import { KDF } from 'spacedatastandards.org/lib/js/REC/KDF.js';
+import { KeyExchange } from 'spacedatastandards.org/lib/js/REC/KeyExchange.js';
 import { LCH } from 'spacedatastandards.org/lib/js/REC/LCH.js';
 import { LGR } from 'spacedatastandards.org/lib/js/REC/LGR.js';
 import { LPF } from 'spacedatastandards.org/lib/js/REC/LPF.js';
 import { PLG } from 'spacedatastandards.org/lib/js/REC/PLG.js';
+import { SymmetricAlgo } from 'spacedatastandards.org/lib/js/REC/SymmetricAlgo.js';
 import { licensingChallengeMessageType } from 'spacedatastandards.org/lib/js/REC/licensingChallengeMessageType.js';
 import { licensingChallengeRole } from 'spacedatastandards.org/lib/js/REC/licensingChallengeRole.js';
 import { licensingGrantMessageType } from 'spacedatastandards.org/lib/js/REC/licensingGrantMessageType.js';
 import { licensingProofMessageType } from 'spacedatastandards.org/lib/js/REC/licensingProofMessageType.js';
-import { licensingWrappedKeyAlgorithm } from 'spacedatastandards.org/lib/js/REC/licensingWrappedKeyAlgorithm.js';
 
 import type { DerivedIdentity, EncryptionKeyPair, KeyPair } from './crypto/types';
 import { sha256, sign } from './crypto/hd-wallet';
@@ -105,6 +108,25 @@ interface WrappedContentKeyPayload {
   recipientPublicKey: Uint8Array;
   ephemeralPublicKey: Uint8Array;
   nonce: Uint8Array;
+  header?: WrappedContentKeyHeaderPayload;
+  encryptedPayload?: Uint8Array;
+  recipientKeyIdBytes?: Uint8Array;
+  schemaHash?: Uint8Array;
+  keyMaterialRootType?: string;
+}
+
+interface WrappedContentKeyHeaderPayload {
+  version: number;
+  keyExchange: string;
+  symmetric: string;
+  keyDerivation: string;
+  ephemeralPublicKey: Uint8Array;
+  nonceStart: Uint8Array;
+  recipientKeyId: Uint8Array;
+  context?: string;
+  schemaHash: Uint8Array;
+  rootType?: string;
+  timestamp?: number;
 }
 
 interface GrantResponsePayload {
@@ -480,11 +502,12 @@ function decodeGrantResponse(bytes: Uint8Array): GrantResponsePayload {
   }
 
   const moduleDescriptor = grant.MODULE_DESCRIPTOR();
-  const wrappedContentKey = grant.WRAPPED_CONTENT_KEY();
-  if (!moduleDescriptor || !wrappedContentKey) {
+  const wrappedContentKeyHeader = grant.WRAPPED_CONTENT_KEY_HEADER();
+  const wrappedContentKeyPayload = cloneOptionalBytes(grant.wrappedContentKeyPayloadArray());
+  if (!moduleDescriptor || !wrappedContentKeyHeader || wrappedContentKeyPayload.length === 0) {
     throw new ModuleDeliveryProtocolError(
       'invalid_grant',
-      'grant response is missing the module descriptor or wrapped content key',
+      'grant response is missing the module descriptor or wrapped content key payload',
     );
   }
 
@@ -501,22 +524,31 @@ function decodeGrantResponse(bytes: Uint8Array): GrantResponsePayload {
     : numberFromUint64(moduleDescriptor.WASM_SIZE(), 'moduleDescriptor.WASM_SIZE');
   const allowedDomains = readAllowedDomains(moduleDescriptor);
 
-  const requesterEphemeralPublicKey = cloneOptionalBytes(wrappedContentKey.requesterEphemeralPubkeyArray());
-  const providerEphemeralPublicKey = cloneOptionalBytes(wrappedContentKey.providerEphemeralPubkeyArray());
-  const hkdfSalt = cloneOptionalBytes(wrappedContentKey.hkdfSaltArray());
-  const iv = cloneOptionalBytes(wrappedContentKey.ivArray());
-  const ciphertext = cloneOptionalBytes(wrappedContentKey.ciphertextArray());
-  const tag = cloneOptionalBytes(wrappedContentKey.tagArray());
-  if (
-    requesterEphemeralPublicKey.length === 0 ||
-    providerEphemeralPublicKey.length === 0 ||
-    hkdfSalt.length === 0 ||
-    iv.length === 0 ||
-    ciphertext.length === 0 ||
-    tag.length === 0
-  ) {
-    throw new ModuleDeliveryProtocolError('invalid_grant', 'wrapped content key is incomplete');
+  const providerEphemeralPublicKey = cloneOptionalBytes(wrappedContentKeyHeader.ephemeralPublicKeyArray());
+  const nonceStart = cloneOptionalBytes(wrappedContentKeyHeader.nonceStartArray());
+  const recipientKeyIdBytes = cloneOptionalBytes(wrappedContentKeyHeader.recipientKeyIdArray());
+  const schemaHash = cloneOptionalBytes(wrappedContentKeyHeader.schemaHashArray());
+  if (providerEphemeralPublicKey.length === 0 || nonceStart.length === 0) {
+    throw new ModuleDeliveryProtocolError('invalid_grant', 'wrapped content key header is incomplete');
   }
+
+  const grantExpiresAtMs = numberFromUint64(grant.EXPIRES_AT(), 'grant.EXPIRES_AT');
+  const wrappedContentKeyHeaderPayload: WrappedContentKeyHeaderPayload = {
+    version: wrappedContentKeyHeader.VERSION(),
+    keyExchange: keyExchangeName(wrappedContentKeyHeader.KEY_EXCHANGE()),
+    symmetric: symmetricAlgorithmName(wrappedContentKeyHeader.SYMMETRIC()),
+    keyDerivation: keyDerivationName(wrappedContentKeyHeader.KEY_DERIVATION()),
+    ephemeralPublicKey: providerEphemeralPublicKey,
+    nonceStart,
+    recipientKeyId: recipientKeyIdBytes,
+    context: trimOptional(wrappedContentKeyHeader.CONTEXT()),
+    schemaHash,
+    rootType: trimOptional(wrappedContentKeyHeader.ROOT_TYPE()),
+    timestamp:
+      wrappedContentKeyHeader.TIMESTAMP() > 0n
+        ? numberFromUint64(wrappedContentKeyHeader.TIMESTAMP(), 'wrappedContentKeyHeader.TIMESTAMP')
+        : undefined,
+  };
 
   return {
     reqId: requestId,
@@ -526,7 +558,7 @@ function decodeGrantResponse(bytes: Uint8Array): GrantResponsePayload {
     requestedTimeoutMs: numberFromUint64(grant.REQUESTED_TIMEOUT_MS(), 'grant.REQUESTED_TIMEOUT_MS'),
     grantedDomain: normalizeRequiredString(grant.GRANTED_DOMAIN() || '', 'grant.GRANTED_DOMAIN'),
     grantedTimeoutMs: numberFromUint64(grant.GRANTED_TIMEOUT_MS(), 'grant.GRANTED_TIMEOUT_MS'),
-    expiresAtMs: numberFromUint64(grant.EXPIRES_AT(), 'grant.EXPIRES_AT'),
+    expiresAtMs: grantExpiresAtMs,
     requiredScope: trimOptional(grant.REQUIRED_SCOPE()),
     grantStatus: trimOptional(grant.GRANT_STATUS()),
     capabilityToken: cloneOptionalBytes(grant.capabilityTokenArray()),
@@ -544,19 +576,24 @@ function decodeGrantResponse(bytes: Uint8Array): GrantResponsePayload {
       encrypted: Boolean(moduleDescriptor.ENCRYPTED()),
     },
     wrappedContentKey: {
-      wrappingAlgorithm: wrappedKeyAlgorithmName(wrappedContentKey.ALGORITHM()),
-      contentKeyId: trimOptional(wrappedContentKey.CONTENT_KEY_ID()),
-      recipientKeyId: trimOptional(wrappedContentKey.RECIPIENT_KEY_ID()),
-      requesterEphemeralPublicKey,
+      wrappingAlgorithm: wrappedContentKeySchemeName(wrappedContentKeyHeader),
+      contentKeyId: undefined,
+      recipientKeyId: recipientKeyIdBytes.length > 0 ? bytesToHex(recipientKeyIdBytes) : undefined,
+      requesterEphemeralPublicKey: new Uint8Array(0),
       providerEphemeralPublicKey,
-      hkdfSalt,
-      iv,
-      ciphertext,
-      tag,
-      expiresAtMs: numberFromUint64(wrappedContentKey.EXPIRES_AT(), 'wrappedContentKey.EXPIRES_AT'),
-      recipientPublicKey: requesterEphemeralPublicKey,
+      hkdfSalt: new Uint8Array(0),
+      iv: nonceStart,
+      ciphertext: wrappedContentKeyPayload,
+      tag: new Uint8Array(0),
+      expiresAtMs: grantExpiresAtMs,
+      recipientPublicKey: new Uint8Array(0),
       ephemeralPublicKey: providerEphemeralPublicKey,
-      nonce: iv,
+      nonce: nonceStart,
+      header: wrappedContentKeyHeaderPayload,
+      encryptedPayload: wrappedContentKeyPayload,
+      recipientKeyIdBytes,
+      schemaHash,
+      keyMaterialRootType: wrappedContentKeyHeaderPayload.rootType,
     },
   };
 }
@@ -653,13 +690,55 @@ function normalizeProtocolCode(value: string | null | undefined, fallback: strin
   return normalized || fallback;
 }
 
-function wrappedKeyAlgorithmName(value: licensingWrappedKeyAlgorithm): string {
+function wrappedContentKeySchemeName(value: ENC): string {
+  if (
+    value.KEY_EXCHANGE() === KeyExchange.X25519 &&
+    value.KEY_DERIVATION() === KDF.HKDF_SHA256 &&
+    value.SYMMETRIC() === SymmetricAlgo.AES_256_CTR
+  ) {
+    return 'x25519-hkdf-sha256-aes-256-ctr-rec';
+  }
+  return [
+    keyExchangeName(value.KEY_EXCHANGE()),
+    keyDerivationName(value.KEY_DERIVATION()),
+    symmetricAlgorithmName(value.SYMMETRIC()),
+    'rec',
+  ].join('-').toLowerCase();
+}
+
+function keyExchangeName(value: KeyExchange): string {
   switch (value) {
-    case licensingWrappedKeyAlgorithm.X25519_HKDF_SHA256_AES_256_GCM:
-      return 'X25519_HKDF_SHA256_AES_256_GCM';
+    case KeyExchange.X25519:
+      return 'X25519';
+    case KeyExchange.Secp256k1:
+      return 'Secp256k1';
+    case KeyExchange.P256:
+      return 'P256';
     default:
       return `UNKNOWN_${value}`;
   }
+}
+
+function symmetricAlgorithmName(value: SymmetricAlgo): string {
+  switch (value) {
+    case SymmetricAlgo.AES_256_CTR:
+      return 'AES_256_CTR';
+    default:
+      return `UNKNOWN_${value}`;
+  }
+}
+
+function keyDerivationName(value: KDF): string {
+  switch (value) {
+    case KDF.HKDF_SHA256:
+      return 'HKDF_SHA256';
+    default:
+      return `UNKNOWN_${value}`;
+  }
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
 }
 
 function readAllowedDomains(descriptor: PLG): string[] {

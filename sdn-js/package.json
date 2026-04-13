@@ -17,7 +17,7 @@
   "scripts": {
     "build": "rm -rf dist && tsc --project tsconfig.build.json --emitDeclarationOnly && node scripts/build-package-entry.mjs",
     "dev": "tsc --emitDeclarationOnly --watch",
-    "test": "vitest",
+    "test": "npm run build && vitest run",
     "test:relay": "SDN_RUN_RELAY_TEST=1 vitest run src/spaceaware-relay.integration.test.ts",
     "lint": "eslint src --ext .ts",
     "prepublishOnly": "npm run build"

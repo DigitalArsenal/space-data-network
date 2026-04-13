@@ -15,6 +15,7 @@ type NodeContext struct {
 	PeerID        string
 	PublicKeyHex  string
 	EncryptionKey []byte
+	KeySlots      map[string][]byte
 	Config        map[string]interface{}
 }
 
@@ -86,6 +87,7 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 			"pubsub",
 			"crypto_hash", "crypto_sign", "crypto_verify",
 			"crypto_encrypt", "crypto_decrypt", "crypto_key_agreement", "crypto_kdf",
+			"wallet_sign",
 			"ipfs",
 			"storage_query", "storage_write", "storage_adapter",
 			"http",
@@ -113,6 +115,12 @@ func (hb *HostBridge) Dispatch(operation string, payload []byte) []byte {
 		}
 		if _, ok := hb.capHandlers["protocol"]; ok {
 			operations = append(operations, "protocol.request")
+		}
+		if _, ok := hb.capHandlers["ipfs"]; ok {
+			operations = append(operations, "ipfs.add", "ipfs.cat")
+		}
+		if _, ok := hb.capHandlers["keyslot"]; ok {
+			operations = append(operations, "keyslot.get")
 		}
 		return okJSON(operations)
 	case "node.publicKey":

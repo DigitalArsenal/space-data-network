@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,7 +42,6 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/logservice"
-	"github.com/spacedatanetwork/sdn-server/internal/moduledelivery"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -53,7 +51,6 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 	"github.com/spacedatanetwork/sdn-server/plugins/ailogplugin"
-	"github.com/spacedatanetwork/sdn-server/plugins/moduledeliveryplugin"
 )
 
 var log = logging.Logger("sdn-node")
@@ -88,7 +85,7 @@ type Node struct {
 	peerRegistry *peers.Registry
 	peerGater    *peers.TrustedConnectionGater
 
-	moduleDelivery          *moduleDeliveryPlugin
+	pluginRegistry          *license.PluginRegistry
 	moduleDeliveryDiscovery cid.Cid
 
 	ctx    context.Context
@@ -96,7 +93,6 @@ type Node struct {
 	wg     sync.WaitGroup
 }
 
-const moduleDeliveryPluginID = "spaceaware-module-delivery"
 const licensingModuleID = "licensing"
 
 // New creates a new SDN node.
@@ -363,11 +359,6 @@ func (n *Node) init() error {
 
 	// Initialize runtime plugins.
 	n.plugins = plugins.New()
-	n.moduleDelivery = newModuleDeliveryPlugin()
-	n.moduleDelivery.setDiscoveryCID(n.moduleDeliveryDiscovery)
-	if err := n.plugins.Register(n.moduleDelivery); err != nil {
-		log.Warnf("Failed to register plugin %q: %v", n.moduleDelivery.ID(), err)
-	}
 	if err := n.plugins.Register(ailogplugin.New()); err != nil {
 		log.Warnf("Failed to register plugin %q: %v", ailogplugin.ID, err)
 	}
@@ -399,22 +390,21 @@ func (n *Node) init() error {
 	// Register WASI-based OrbPro key broker plugin from encrypted catalog (if configured),
 	// then fall back to configured static wasm path.
 	registeredFromCatalog := false
-	if n.moduleDelivery != nil {
-		if reg, regErr := n.loadPluginRegistry(); regErr != nil {
-			log.Warnf("Plugin registry unavailable: %v", regErr)
-		} else if reg != nil {
-			recipientKey, keyErr := n.findPluginDecryptPrivateKey()
-			if keyErr != nil {
-				log.Warnf("Plugin decryption key invalid: %v", keyErr)
-			}
+	if reg, regErr := n.loadPluginRegistry(); regErr != nil {
+		log.Warnf("Plugin registry unavailable: %v", regErr)
+	} else if reg != nil {
+		n.pluginRegistry = reg
+		recipientKey, keyErr := n.findPluginDecryptPrivateKey()
+		if keyErr != nil {
+			log.Warnf("Plugin decryption key invalid: %v", keyErr)
+		}
 
-			if err := n.registerCatalogPlugins(reg, pluginCtx, recipientKey); err != nil {
-				log.Warnf("Plugin catalog runtime startup completed with errors: %v", err)
-			}
+		if err := n.registerCatalogPlugins(reg, pluginCtx, recipientKey); err != nil {
+			log.Warnf("Plugin catalog runtime startup completed with errors: %v", err)
+		}
 
-			if n.hasCatalogLicensingModule(reg) {
-				registeredFromCatalog = true
-			}
+		if n.hasCatalogLicensingModule(reg) {
+			registeredFromCatalog = true
 		}
 	}
 
@@ -488,9 +478,6 @@ func (n *Node) init() error {
 
 	if err := n.plugins.StartAll(n.ctx, pluginCtx); err != nil {
 		log.Warnf("Plugin startup completed with errors: %v", err)
-	}
-	if n.moduleDelivery != nil && n.moduleDelivery.Service() != nil {
-		log.Infof("Plugin enabled: %s (%s)", n.moduleDelivery.ID(), moduledelivery.ProtocolID)
 	}
 
 	return nil
@@ -623,6 +610,7 @@ func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	reg.Register("crypto_decrypt", cryptoFac)
 	reg.Register("crypto_key_agreement", cryptoFac)
 	reg.Register("crypto_kdf", cryptoFac)
+	reg.Register("wallet_sign", caps.NewKeyslotCapFactory())
 
 	// PubSub capability — requires libp2p pubsub to be running
 	if n.pubsub != nil {
@@ -1206,55 +1194,19 @@ func (n *Node) PluginManager() *plugins.Manager {
 	return n.plugins
 }
 
-// LicenseService returns the embedded entitlement/token service (nil in edge mode or if unavailable).
-func (n *Node) LicenseService() *license.Service {
-	if n.moduleDelivery == nil {
-		return nil
-	}
-	service := n.moduleDelivery.Service()
-	if service == nil {
-		return nil
-	}
-	return service.LicenseService()
-}
-
 // Identity returns the node's HD wallet identity, or nil if using a random key.
 func (n *Node) Identity() *wasm.DerivedIdentity {
 	return n.identity
 }
 
-// TokenVerifier returns the capability-token verifier from the license plugin.
-func (n *Node) TokenVerifier() *license.TokenVerifier {
-	if n.moduleDelivery == nil {
-		return nil
-	}
-	return n.moduleDelivery.TokenVerifier()
-}
-
-// ModuleDeliveryPlugin returns the node's module-delivery plugin wrapper.
-func (n *Node) ModuleDeliveryPlugin() *moduleDeliveryPlugin {
-	return n.moduleDelivery
-}
-
-// ModuleDeliveryService returns the module-delivery provider service, or nil if unavailable.
-func (n *Node) ModuleDeliveryService() *moduledelivery.Service {
-	if n.moduleDelivery == nil {
-		return nil
-	}
-	return n.moduleDelivery.Service()
-}
-
-// ModuleDeliveryTokenVerifier returns the module-delivery token verifier, or nil if unavailable.
-func (n *Node) ModuleDeliveryTokenVerifier() *license.TokenVerifier {
-	if n.moduleDelivery == nil {
-		return nil
-	}
-	return n.moduleDelivery.TokenVerifier()
-}
-
 // ModuleDeliveryDiscoveryCID returns the provider-identity discovery CID.
 func (n *Node) ModuleDeliveryDiscoveryCID() cid.Cid {
 	return n.moduleDeliveryDiscovery
+}
+
+// PluginRegistry returns the loaded plugin registry metadata, if available.
+func (n *Node) PluginRegistry() *license.PluginRegistry {
+	return n.pluginRegistry
 }
 
 // DHT returns the Kademlia DHT instance for content routing.
@@ -1308,64 +1260,22 @@ func (n *Node) IdentityKeyMaterial() []byte {
 	return out
 }
 
-type moduleDeliveryPlugin struct {
-	plugin       *moduledeliveryplugin.Plugin
-	discoveryCID cid.Cid
-}
-
-func newModuleDeliveryPlugin() *moduleDeliveryPlugin {
-	return &moduleDeliveryPlugin{
-		plugin: moduledeliveryplugin.New(),
-	}
-}
-
-func (p *moduleDeliveryPlugin) ID() string {
-	return moduleDeliveryPluginID
-}
-
-func (p *moduleDeliveryPlugin) Start(ctx context.Context, runtime plugins.RuntimeContext) error {
-	return p.plugin.Start(ctx, runtime)
-}
-
-func (p *moduleDeliveryPlugin) RegisterRoutes(mux *http.ServeMux) {
-	p.plugin.RegisterRoutes(mux)
-}
-
-func (p *moduleDeliveryPlugin) Close() error {
-	return p.plugin.Close()
-}
-
-func (p *moduleDeliveryPlugin) Service() *moduledelivery.Service {
-	if p == nil || p.plugin == nil {
-		return nil
-	}
-	return p.plugin.Service()
-}
-
-func (p *moduleDeliveryPlugin) TokenVerifier() *license.TokenVerifier {
-	if p == nil || p.plugin == nil {
-		return nil
-	}
-	return p.plugin.TokenVerifier()
-}
-
-func (p *moduleDeliveryPlugin) DiscoveryCID() string {
-	if p == nil || !p.discoveryCID.Defined() {
-		return ""
-	}
-	return p.discoveryCID.String()
-}
-
-func (p *moduleDeliveryPlugin) setDiscoveryCID(discoveryCID cid.Cid) {
-	if p != nil {
-		p.discoveryCID = discoveryCID
-	}
-}
-
 const moduleDeliveryDiscoveryNamespace = "space-data-network/module-delivery/provider-pubkey"
 
 func computeModuleDeliveryDiscoveryCID(providerPublicKey []byte) (cid.Cid, error) {
-	return moduledelivery.ComputeDiscoveryCID(providerPublicKey)
+	if err := validateModuleDeliveryProviderPublicKey(providerPublicKey); err != nil {
+		return cid.Undef, err
+	}
+	input := make([]byte, 0, len(moduleDeliveryDiscoveryNamespace)+len(providerPublicKey))
+	input = append(input, []byte(moduleDeliveryDiscoveryNamespace)...)
+	input = append(input, providerPublicKey...)
+
+	sum := sha256.Sum256(input)
+	multihash, err := mh.Encode(sum[:], mh.SHA2_256)
+	if err != nil {
+		return cid.Undef, fmt.Errorf("encode discovery multihash: %w", err)
+	}
+	return cid.NewCidV1(cid.Raw, multihash), nil
 }
 
 func computeRawCIDV1FromDigest(digest []byte) cid.Cid {
@@ -1411,4 +1321,14 @@ func normalizeCompressedSecp256k1PublicKey(raw []byte) ([]byte, error) {
 		return nil, fmt.Errorf("unexpected compressed secp256k1 public key length: %d", len(compressed))
 	}
 	return compressed, nil
+}
+
+func validateModuleDeliveryProviderPublicKey(providerPublicKey []byte) error {
+	if len(providerPublicKey) != 33 {
+		return fmt.Errorf("provider public key must be 33-byte compressed secp256k1, got %d bytes", len(providerPublicKey))
+	}
+	if providerPublicKey[0] != 0x02 && providerPublicKey[0] != 0x03 {
+		return fmt.Errorf("provider public key must use compressed secp256k1 prefix 0x02/0x03")
+	}
+	return nil
 }

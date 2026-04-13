@@ -319,15 +319,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			if n.PluginManager() != nil {
 				n.PluginManager().RegisterRoutes(adminMux)
 			}
-			tokenVerifier := n.TokenVerifier()
-			if tokenVerifier != nil {
-				log.Infof("License verification API available at %s://%s/api/v1/license/verify", adminScheme, adminAddr)
-				log.Infof("License entitlement admin API available at %s://%s/api/v1/license/entitlements", adminScheme, adminAddr)
-				log.Infof("Plugin manifest API available at %s://%s/api/v1/plugins/manifest", adminScheme, adminAddr)
-			}
-
 			// Data API routes
-			dataAPI := api.NewDataQueryHandler(n.Store(), tokenVerifier)
+			dataAPI := api.NewDataQueryHandler(n.Store(), nil)
 			dataAPI.RegisterRoutes(adminMux)
 
 			// Log API routes (publication log queries)
@@ -576,31 +569,29 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Plugin upload API (admin-only, requires auth + license plugin)
 			// ----------------------------------------------------------------
 			if authHandler != nil {
-				if licSvc := n.LicenseService(); licSvc != nil {
-					if reg := licSvc.PluginRegistry(); reg != nil {
-						uploadHandler := license.NewUploadHandler(
-							reg,
-							func(xpub string) (string, error) {
-								user, err := authHandler.UserStore().GetUser(xpub)
-								if err != nil {
-									return "", err
-								}
-								if user == nil {
-									return "", fmt.Errorf("user not found")
-								}
-								return user.SigningPubKeyHex, nil
-							},
-							func(r *http.Request) (string, error) {
-								session := auth.SessionFromContext(r.Context())
-								if session == nil {
-									return "", fmt.Errorf("no session")
-								}
-								return session.XPub, nil
-							},
-						)
-						adminMux.HandleFunc("/api/v1/plugins/upload", uploadHandler.ServeHTTP)
-						log.Infof("Plugin upload API at %s://%s/api/v1/plugins/upload", adminScheme, adminAddr)
-					}
+				if reg := n.PluginRegistry(); reg != nil {
+					uploadHandler := license.NewUploadHandler(
+						reg,
+						func(xpub string) (string, error) {
+							user, err := authHandler.UserStore().GetUser(xpub)
+							if err != nil {
+								return "", err
+							}
+							if user == nil {
+								return "", fmt.Errorf("user not found")
+							}
+							return user.SigningPubKeyHex, nil
+						},
+						func(r *http.Request) (string, error) {
+							session := auth.SessionFromContext(r.Context())
+							if session == nil {
+								return "", fmt.Errorf("no session")
+							}
+							return session.XPub, nil
+						},
+					)
+					adminMux.HandleFunc("/api/v1/plugins/upload", uploadHandler.ServeHTTP)
+					log.Infof("Plugin upload API at %s://%s/api/v1/plugins/upload", adminScheme, adminAddr)
 				}
 			}
 
@@ -831,8 +822,6 @@ func resolveBuildAssetsDir(homepageFile string) string {
 
 func isPublicAPIPath(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/data/") ||
-		strings.HasPrefix(path, "/api/v1/license/") ||
-		strings.HasPrefix(path, "/api/v1/plugins/manifest") ||
 		strings.HasPrefix(path, "/api/module-delivery/provider") ||
 		strings.HasPrefix(path, "/api/v1/demo/") ||
 		strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook") ||
