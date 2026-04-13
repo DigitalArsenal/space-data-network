@@ -164,17 +164,8 @@ describe('SDNNode relay bootstrap', () => {
     await node.stop();
   });
 
-  it('falls back to the configured IPFS API when Helia CID fetch fails', async () => {
+  it('uses Helia CID fetches even when an IPFS API base URL is configured', async () => {
     createHeliaFromLibp2pMock.mockResolvedValue({ stop: vi.fn(async () => undefined) });
-    fetchCIDBytesFromHeliaMock.mockRejectedValueOnce(new Error('helia failed'));
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(
-        new Response(Uint8Array.from([9, 8, 7]), {
-          status: 200,
-          headers: { 'Content-Type': 'application/octet-stream' },
-        }),
-      );
 
     const { SDNNode } = await import('./node');
     const node = await SDNNode.create({
@@ -183,58 +174,24 @@ describe('SDNNode relay bootstrap', () => {
       ipfsApiBaseUrl: '/api/v0',
     });
 
-    const result = await node.fetchCIDBytes('bafkreifallbackcid');
+    const result = await node.fetchCIDBytes('bafkreicidviahelia');
 
-    expect(result).toEqual(Uint8Array.from([9, 8, 7]));
-    expect(fetchMock).toHaveBeenCalledWith('/api/v0/cat?arg=bafkreifallbackcid', {
-      method: 'POST',
-    });
-
-    await node.stop();
-  });
-
-  it('prefers the configured IPFS API over Helia CID fetches when an API base URL is available', async () => {
-    createHeliaFromLibp2pMock.mockResolvedValue({ stop: vi.fn(async () => undefined) });
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(
-        new Response(Uint8Array.from([2, 4, 6]), {
-          status: 200,
-          headers: { 'Content-Type': 'application/octet-stream' },
-        }),
-      );
-
-    const { SDNNode } = await import('./node');
-    const node = await SDNNode.create({
-      edgeRelays: ['/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider'],
-      enableStorage: false,
-      ipfsApiBaseUrl: '/api/v0',
-    });
-
-    const result = await node.fetchCIDBytes('bafkreiapipreferredcid');
-
-    expect(result).toEqual(Uint8Array.from([2, 4, 6]));
-    expect(fetchCIDBytesFromHeliaMock).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledWith('/api/v0/cat?arg=bafkreiapipreferredcid', {
-      method: 'POST',
-    });
+    expect(result).toEqual(Uint8Array.from([1, 2, 3]));
+    expect(fetchCIDBytesFromHeliaMock).toHaveBeenCalledTimes(1);
+    expect(fetchCIDBytesFromHeliaMock).toHaveBeenCalledWith(
+      expect.objectContaining({ stop: expect.any(Function) }),
+      'bafkreicidviahelia',
+    );
 
     await node.stop();
   });
 
-  it('falls back to the configured IPFS API when Helia CID fetch does not resolve before the timeout', async () => {
+  it('does not downgrade to HTTP when a Helia CID fetch times out', async () => {
     createHeliaFromLibp2pMock.mockResolvedValue({ stop: vi.fn(async () => undefined) });
     fetchCIDBytesFromHeliaMock.mockImplementationOnce(
       () => new Promise(() => undefined),
     );
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(
-        new Response(Uint8Array.from([4, 5, 6]), {
-          status: 200,
-          headers: { 'Content-Type': 'application/octet-stream' },
-        }),
-      );
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
 
     const { SDNNode } = await import('./node');
     const node = await SDNNode.create({
@@ -244,12 +201,8 @@ describe('SDNNode relay bootstrap', () => {
       ipfsFetchTimeoutMs: 1,
     });
 
-    const result = await node.fetchCIDBytes('bafkreiheliahangcid');
-
-    expect(result).toEqual(Uint8Array.from([4, 5, 6]));
-    expect(fetchMock).toHaveBeenCalledWith('/api/v0/cat?arg=bafkreiheliahangcid', {
-      method: 'POST',
-    });
+    await expect(node.fetchCIDBytes('bafkreiheliahangcid')).rejects.toThrow(/timed out/i);
+    expect(fetchMock).not.toHaveBeenCalled();
 
     await node.stop();
   });
