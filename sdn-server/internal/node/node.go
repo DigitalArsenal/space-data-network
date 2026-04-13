@@ -97,6 +97,7 @@ type Node struct {
 }
 
 const moduleDeliveryPluginID = "spaceaware-module-delivery"
+const licensingModuleID = "licensing"
 
 // New creates a new SDN node.
 func New(ctx context.Context, cfg *config.Config) (*Node, error) {
@@ -411,7 +412,7 @@ func (n *Node) init() error {
 				log.Warnf("Plugin catalog runtime startup completed with errors: %v", err)
 			}
 
-			if _, ok := n.getPluginByID(reg, "com.orbpro.protection-key-server"); ok {
+			if n.hasCatalogLicensingModule(reg) {
 				registeredFromCatalog = true
 			}
 		}
@@ -656,6 +657,11 @@ func (n *Node) getPluginByID(reg *license.PluginRegistry, pluginID string) (plug
 	return p, true
 }
 
+func (n *Node) hasCatalogLicensingModule(reg *license.PluginRegistry) bool {
+	_, ok := n.getPluginByID(reg, licensingModuleID)
+	return ok
+}
+
 func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 	keyDir := filepath.Join(filepath.Dir(n.config.Storage.Path), "keys")
 	keyPath := filepath.Join(keyDir, "node.key")
@@ -840,12 +846,20 @@ func deriveP256PublicKeyHex(seed []byte) (string, error) {
 }
 
 func (n *Node) findKeyBrokerWasmPath() string {
+	if envPath := os.Getenv("ORBPRO_LICENSING_WASM_PATH"); envPath != "" {
+		if _, err := os.Stat(envPath); err == nil {
+			return envPath
+		}
+	}
 	if envPath := os.Getenv("ORBPRO_KEY_BROKER_WASM_PATH"); envPath != "" {
 		if _, err := os.Stat(envPath); err == nil {
 			return envPath
 		}
 	}
 	paths := []string{
+		"packages/space-data-network-plugins/packages/licensing/dist/isomorphic/module.wasm",
+		"../space-data-network-plugins/packages/licensing/dist/isomorphic/module.wasm",
+		"../../space-data-network-plugins/packages/licensing/dist/isomorphic/module.wasm",
 		"../../packages/sdn-license-plugin/build-wasi/sdn-license-plugin.wasm",
 		"../packages/sdn-license-plugin/build-wasi/sdn-license-plugin.wasm",
 		"/usr/local/lib/sdn-license-plugin.wasm",

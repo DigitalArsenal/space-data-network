@@ -287,11 +287,16 @@ function findEncryptedArtifactEntry(manifest) {
   return (
     manifest.files.find((entry) =>
       [
+        "licensing.sdn.plugin",
         "plugin-licensing-server.sdn.plugin",
         "orbpro-licensing-server.sdn.plugin",
       ].includes(String(entry?.outputFile || "")),
     ) ||
     manifest.files.find((entry) =>
+      String(entry?.path || "") === "dist/module.wasm" ||
+      String(entry?.path || "").endsWith("/module.wasm") ||
+      String(entry?.path || "") === "dist/licensing.wasm" ||
+      String(entry?.path || "").endsWith("/licensing.wasm") ||
       String(entry?.path || "") === "dist/protection-key-server.wasm" ||
       String(entry?.path || "").endsWith("/protection-key-server.wasm") ||
       String(entry?.path || "") === "dist/orbpro-licensing-server.sdn.plugin" ||
@@ -302,6 +307,10 @@ function findEncryptedArtifactEntry(manifest) {
 }
 
 async function decryptWithLegacyFactory(artifactDir, privateKey, loaderPath, outputPath) {
+  if (!loaderPath || !fs.existsSync(loaderPath)) {
+    return false;
+  }
+
   const loaderModule = await import(pathToFileURL(loaderPath).href);
   const fn = loaderModule.loadModuleFactoryFromEncryptedArtifacts;
   if (typeof fn !== "function") {
@@ -312,8 +321,22 @@ async function decryptWithLegacyFactory(artifactDir, privateKey, loaderPath, out
   let cleanup = null;
   try {
     cleanup = factory.cleanup || null;
-    const decryptedPluginPath = path.resolve(factory.locateFile("protection-key-server.wasm"));
-    if (!fs.existsSync(decryptedPluginPath)) {
+    const locateCandidates = [
+      "module.wasm",
+      "licensing.wasm",
+      "protection-key-server.wasm",
+    ];
+    const locatedPath = locateCandidates
+      .map((candidate) => {
+        try {
+          return path.resolve(factory.locateFile(candidate));
+        } catch {
+          return null;
+        }
+      })
+      .find((candidatePath) => candidatePath && fs.existsSync(candidatePath));
+    const decryptedPluginPath = locatedPath;
+    if (!decryptedPluginPath || !fs.existsSync(decryptedPluginPath)) {
       throw new Error(`decrypted module not found: ${decryptedPluginPath}`);
     }
 
@@ -341,7 +364,7 @@ function decryptWithDirectManifest(artifactDir, privateKey, outputPath, manifest
   const fileEntry = findEncryptedArtifactEntry(manifest);
   if (!fileEntry) {
     throw new Error(
-      "missing plugin artifact entry (plugin-licensing-server.sdn.plugin or orbpro-licensing-server.sdn.plugin)",
+      "missing plugin artifact entry (licensing.sdn.plugin, plugin-licensing-server.sdn.plugin, or orbpro-licensing-server.sdn.plugin)",
     );
   }
 
@@ -390,21 +413,29 @@ async function main() {
     throw new Error(`unsupported manifest format in ${manifestPath}`);
   }
 
+  const defaultLoaderCandidates = [
+    path.join(
+      artifactDir,
+      "..",
+      "..",
+      "packages",
+      "plugins",
+      "licensing",
+      "index.js",
+    ),
+    path.join(
+      artifactDir,
+      "..",
+      "..",
+      "packages",
+      "plugins",
+      "protection-key-server",
+      "index.js",
+    ),
+  ];
   const loaderPath = args.loaderPath
     ? path.resolve(args.loaderPath)
-    : path.join(
-        artifactDir,
-        "..",
-        "..",
-        "packages",
-        "plugins",
-        "protection-key-server",
-        "index.js",
-      );
-
-  if (!fs.existsSync(loaderPath)) {
-    throw new Error(`loader not found: ${loaderPath}`);
-  }
+    : defaultLoaderCandidates.find((candidate) => fs.existsSync(candidate)) || "";
 
   const usedLegacyFlow = await decryptWithLegacyFactory(
     artifactDir,
