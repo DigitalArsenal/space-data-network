@@ -450,27 +450,15 @@ export class SDNNode {
   }
 
   async fetchCIDBytes(cid: string): Promise<Uint8Array> {
-    const apiBaseUrl = normalizeOptionalString(this.config.ipfsApiBaseUrl);
-    if (apiBaseUrl) {
-      return fetchCIDBytesFromIpfsApi(apiBaseUrl, cid);
-    }
-
     const heliaFetch = (async () => {
       const helia = await this.ensureHelia();
       return fetchCIDBytesFromHelia(helia, cid);
     })();
 
-    try {
-      return await withOptionalTimeout(
-        heliaFetch,
-        resolveIpfsFetchTimeoutMs(this.config, apiBaseUrl),
-      );
-    } catch (error) {
-      if (!apiBaseUrl) {
-        throw error;
-      }
-      return fetchCIDBytesFromIpfsApi(apiBaseUrl, cid);
-    }
+    return withOptionalTimeout(
+      heliaFetch,
+      resolveHeliaFetchTimeoutMs(this.config),
+    );
   }
 
   async requestModuleGrant(
@@ -604,17 +592,10 @@ function shouldProbeRelays(config: SDNConfig, hasExplicitRelays: boolean): boole
   return config.enableRelayProbing !== false;
 }
 
-function normalizeOptionalString(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function resolveIpfsFetchTimeoutMs(config: SDNConfig, apiBaseUrl: string): number {
+function resolveHeliaFetchTimeoutMs(config: SDNConfig): number {
   const configuredTimeout = Number(config.ipfsFetchTimeoutMs);
   if (Number.isFinite(configuredTimeout) && configuredTimeout > 0) {
     return configuredTimeout;
-  }
-  if (apiBaseUrl) {
-    return 5_000;
   }
   return 0;
 }
@@ -639,17 +620,6 @@ async function withOptionalTimeout<T>(promise: Promise<T>, timeoutMs: number): P
       clearTimeout(timeoutId);
     }
   }
-}
-
-async function fetchCIDBytesFromIpfsApi(apiBaseUrl: string, cid: string): Promise<Uint8Array> {
-  const baseUrl = apiBaseUrl.replace(/\/+$/, '');
-  const response = await fetch(`${baseUrl}/cat?arg=${encodeURIComponent(cid)}`, {
-    method: 'POST',
-  });
-  if (!response.ok) {
-    throw new Error(`IPFS API cat failed: ${response.status} ${response.statusText}`);
-  }
-  return new Uint8Array(await response.arrayBuffer());
 }
 
 function chunkToBytes(chunk: StreamChunk): Uint8Array {
