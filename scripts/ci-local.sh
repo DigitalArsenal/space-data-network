@@ -3,12 +3,13 @@
 # This script is intentionally aligned with .github/workflows/ci.yml.
 #
 # Usage:
-#   ./scripts/ci-local.sh quick   # default: preflight + go + sdn-js + module-sdk
-#   ./scripts/ci-local.sh full    # quick + encryption tests
-#   ./scripts/ci-local.sh go      # go checks only
-#   ./scripts/ci-local.sh js      # sdn-js checks only
-#   ./scripts/ci-local.sh plugin  # module-sdk conformance only
-#   ./scripts/ci-local.sh demo    # plugin-demo integration tests only
+#   ./scripts/ci-local.sh quick     # default: preflight + go + sdn-js + module-delivery + plugin-demo
+#   ./scripts/ci-local.sh full      # quick + encryption tests
+#   ./scripts/ci-local.sh go        # go checks only
+#   ./scripts/ci-local.sh js        # sdn-js checks only
+#   ./scripts/ci-local.sh delivery  # focused module-delivery compatibility checks
+#   ./scripts/ci-local.sh plugin    # legacy alias for delivery
+#   ./scripts/ci-local.sh demo      # plugin-demo integration tests only
 
 set -euo pipefail
 
@@ -147,37 +148,15 @@ run_sdn_js() {
   pass "sdn-js build"
 }
 
-run_plugin_sdk() {
-  local volatile_manifest="packages/module-sdk/fixtures/third-party/v1/fixture-manifest.json"
+run_module_delivery_compat() {
+  step "module-delivery compatibility deps"
+  ensure_npm_deps "$ROOT"
+  ensure_npm_deps "$ROOT/sdn-js" eslint vitest tsup
+  pass "module-delivery compatibility deps"
 
-  step "module-sdk install"
-  ensure_npm_deps "$ROOT/packages/module-sdk"
-  pass "module-sdk npm install"
-
-  step "module-sdk generate bindings"
-  (cd "$ROOT/packages/module-sdk" && npm_config_cache="$ROOT/.npm-cache" npm run generate:all-bindings)
-  pass "module-sdk generate bindings"
-
-  step "module-sdk conformance"
-  (cd "$ROOT/packages/module-sdk" && npm_config_cache="$ROOT/.npm-cache" npm run test:conformance)
-  pass "module-sdk conformance"
-
-  # This manifest includes a generated timestamp; restore it to avoid local churn
-  # while still validating all deterministic generated outputs.
-  if git -C "$ROOT" cat-file -e "HEAD:$volatile_manifest" >/dev/null 2>&1; then
-    git -C "$ROOT" show "HEAD:$volatile_manifest" > "$ROOT/$volatile_manifest"
-  fi
-
-  step "module-sdk generated artifacts are committed"
-  (
-    cd "$ROOT"
-    git diff --exit-code -- \
-      packages/module-sdk/src/generated \
-      packages/module-sdk/src/generated-go \
-      packages/module-sdk/fixtures \
-      ':(exclude)packages/module-sdk/fixtures/third-party/v1/fixture-manifest.json'
-  )
-  pass "module-sdk generated artifacts check"
+  step "module-delivery compatibility"
+  (cd "$ROOT" && npm_config_cache="$ROOT/.npm-cache" npm run test:module-delivery)
+  pass "module-delivery compatibility"
 }
 
 run_plugin_demo() {
@@ -212,14 +191,14 @@ case "$MODE" in
     run_preflight
     run_go
     run_sdn_js
-    run_plugin_sdk
+    run_module_delivery_compat
     run_plugin_demo
     ;;
   full|all)
     run_preflight
     run_go
     run_sdn_js
-    run_plugin_sdk
+    run_module_delivery_compat
     run_plugin_demo
     run_encryption
     ;;
@@ -229,14 +208,14 @@ case "$MODE" in
   js)
     run_sdn_js
     ;;
-  plugin)
-    run_plugin_sdk
+  delivery|module-delivery|plugin)
+    run_module_delivery_compat
     ;;
   demo|plugin-demo)
     run_plugin_demo
     ;;
   *)
-    echo -e "${RED}Usage: $0 [quick|full|go|js|plugin|demo]${NC}"
+    echo -e "${RED}Usage: $0 [quick|full|go|js|delivery|plugin|demo]${NC}"
     exit 1
     ;;
 esac

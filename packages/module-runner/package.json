@@ -1,6 +1,6 @@
 {
   "name": "@spacedatanetwork/module-runner",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Isomorphic WASM module runner using the space-data-module-sdk browser harness",
   "type": "module",
   "main": "src/index.js",
@@ -11,7 +11,7 @@
     "test": "node --experimental-vm-modules tests/runner.test.mjs"
   },
   "dependencies": {
-    "space-data-module-sdk": "^0.5.22"
+    "space-data-module-sdk": "^0.7.0"
   },
   "engines": {
     "node": ">=20.0.0"

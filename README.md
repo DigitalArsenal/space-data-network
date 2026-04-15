@@ -236,23 +236,14 @@ SDN extends IPFS with space-specific optimizations:
 | [plugin-demo](./plugin-demo) | Plugin development guide, WASM API reference, integration tests | C / JS |
 | [kubo](./kubo) | IPFS reference implementation | Go |
 
-OrbPro licensing/key exchange stream schemas (v1.0) are versioned in the module SDK:
+Canonical module-delivery records live in `spacedatastandards.org`, and SDN consumes the shared runtime helpers from `space-data-module-sdk`. SDN does not ship a separate module-spec tree anymore.
 
-- `packages/module-sdk/schemas/space-data-network/module-delivery/v1/PublicKeyResponse.fbs`
-- `packages/module-sdk/schemas/space-data-network/module-delivery/v1/KeyBrokerRequest.fbs`
-- `packages/module-sdk/schemas/space-data-network/module-delivery/v1/KeyBrokerResponse.fbs`
+The live licensing/module-delivery flow is carried by the SDS families `LCH`, `LPF`, `LGR`, `LWK`, `LMR`, `PLG`, and `REC`.
 
-Regenerate plugin SDK + SDN Go bindings from these schemas (via `flatc-wasm`):
+Run the focused module-delivery compatibility checks:
 
 ```bash
-npm run generate:module-sdk:module-delivery-bindings
-npm run generate:module-sdk:go-bindings
-```
-
-Run the plugin SDK protocol test client:
-
-```bash
-npm run test:module-sdk:module-delivery-client -- --discovery-url http://127.0.0.1:5010
+npm run test:module-delivery
 ```
 
 ### Server Packages

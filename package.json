@@ -1,6 +1,6 @@
 {
   "name": "space-data-network",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Space Data Network - Decentralized peer-to-peer network for space situational awareness data",
   "scripts": {
@@ -40,18 +40,8 @@
     "precommit": "npm run check:versions && npm run test",
     "prepare": "husky",
     "test:plugin-harness": "scripts/run-plugin-harness.sh",
-    "generate:module-sdk:module-delivery-bindings": "node packages/module-sdk/scripts/generate-module-delivery-bindings.mjs",
-    "generate:module-sdk:module-delivery-fixtures": "node packages/module-sdk/scripts/generate-module-delivery-fixtures.mjs",
-    "generate:module-sdk:key-broker-bindings": "node packages/module-sdk/scripts/generate-key-broker-bindings.mjs",
-    "generate:module-sdk:third-party-bindings": "node packages/module-sdk/scripts/generate-third-party-bindings.mjs",
-    "generate:module-sdk:third-party-fixtures": "node packages/module-sdk/scripts/generate-third-party-fixtures.mjs",
-    "generate:module-sdk:go-bindings": "node scripts/generate-module-sdk-bindings.mjs",
-    "generate:module-sdk:all-bindings": "npm run generate:module-sdk:module-delivery-bindings && npm run generate:module-sdk:module-delivery-fixtures",
-    "test:module-sdk:module-delivery": "node packages/module-sdk/tests/conformance/run-conformance.mjs",
-    "test:module-sdk:key-broker-client": "node packages/module-sdk/scripts/key-broker-test-client.mjs",
-    "test:module-sdk:conformance": "node packages/module-sdk/tests/conformance/run-conformance.mjs",
-    "test:module-sdk:mock-harness": "node packages/module-sdk/scripts/mock-third-party-plugin-harness.mjs",
-    "ci:module-sdk": "npm run generate:module-sdk:module-delivery-bindings && npm run generate:module-sdk:module-delivery-fixtures && npm run test:module-sdk:module-delivery",
+    "test:module-delivery": "npm --prefix sdn-js test -- src/module-delivery.test.ts src/module-delivery-sdk-compat.test.ts && node tests/isomorphic/module-invoke.test.mjs",
+    "ci:module-delivery": "npm run test:module-delivery",
     "ci:local": "scripts/ci-local.sh quick",
     "ci:local:full": "scripts/ci-local.sh full"
   },
@@ -74,6 +64,7 @@
   "license": "MIT",
   "devDependencies": {
     "baseline-browser-mapping": "^2.10.0",
-    "flatc-wasm": "^25.12.19-wasm.43"
+    "flatc-wasm": "^25.12.19-wasm.43",
+    "space-data-module-sdk": "^0.7.0"
   }
 }
