@@ -17,7 +17,7 @@ import {
   decodePluginInvokeRequest,
   encodePluginInvokeResponse,
   decodePluginInvokeResponse,
-} from "../../packages/module-runner/node_modules/space-data-module-sdk/src/invoke/codec.js";
+} from "space-data-module-sdk/invoke";
 
 const PASS = "\x1b[32mPASS\x1b[0m";
 const FAIL = "\x1b[31mFAIL\x1b[0m";

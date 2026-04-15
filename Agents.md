@@ -12,8 +12,10 @@
 - Module bundles stay encrypted in transit and at rest, are fetched by CID over IPFS/libp2p, and are decrypted locally after the requester receives the wrapped content key in `GrantResponse`.
 - The older browser-facing broker flows are not the current SDN contract.
 - Ownership boundary:
-  `sdn-server` owns provider-side module delivery, DHT provider-identity advertisement, and the built-in `plugins/moduledeliveryplugin`.
-  `packages/module-sdk` owns FlatBuffer schemas/codecs and `sdn-js` owns requester-side discovery and fetch behavior.
+  `spacedatastandards.org` owns the canonical FlatBuffer schemas.
+  `space-data-module-sdk` owns shared invoke/licensing helpers and the generic runtime host surfaces.
+  `sdn-server` owns the provider-side host bridge and unified licensing-module runtime loading path.
+  `sdn-js` owns requester-side discovery, relay selection, and encrypted bundle fetch behavior.
 
 ### Why "SDS"
 

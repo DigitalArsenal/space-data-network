@@ -1,18 +1,20 @@
-import * as flatbuffers from 'flatbuffers';
-import { ENC } from 'spacedatastandards.org/lib/js/REC/ENC.js';
-import { KDF } from 'spacedatastandards.org/lib/js/REC/KDF.js';
-import { KeyExchange } from 'spacedatastandards.org/lib/js/REC/KeyExchange.js';
-import { LCH } from 'spacedatastandards.org/lib/js/REC/LCH.js';
-import { LGR } from 'spacedatastandards.org/lib/js/REC/LGR.js';
-import { LPF } from 'spacedatastandards.org/lib/js/REC/LPF.js';
-import { PLG } from 'spacedatastandards.org/lib/js/REC/PLG.js';
-import { SymmetricAlgo } from 'spacedatastandards.org/lib/js/REC/SymmetricAlgo.js';
-import { licensingChallengeMessageType } from 'spacedatastandards.org/lib/js/REC/licensingChallengeMessageType.js';
-import { licensingChallengeRole } from 'spacedatastandards.org/lib/js/REC/licensingChallengeRole.js';
-import { licensingGrantMessageType } from 'spacedatastandards.org/lib/js/REC/licensingGrantMessageType.js';
-import { licensingProofMessageType } from 'spacedatastandards.org/lib/js/REC/licensingProofMessageType.js';
+import {
+  LicensingProtocolError,
+  decodeLicensingChallengeMessage,
+  decodeLicensingGrant,
+  encodeLicensingChallengeRequest,
+  encodeLicensingProof,
+  extractGrantModuleDescriptor,
+  extractWrappedContentKey,
+  validateLicensingGrant,
+} from 'space-data-module-sdk/licensing';
 
 import type { DerivedIdentity, EncryptionKeyPair, KeyPair } from './crypto/types';
+import type {
+  LicensingGrantMessage,
+  LicensingGrantModuleDescriptor,
+  LicensingWrappedContentKey,
+} from 'space-data-module-sdk/licensing';
 import { sha256, sign } from './crypto/hd-wallet';
 import { discoverProvider } from './discovery';
 import {
@@ -91,12 +93,18 @@ interface BundleDescriptorPayload {
   keyId?: string;
   requiredScope?: string;
   allowedDomains: string[];
+  maxGrantTimeoutMs: number;
   encrypted: boolean;
 }
 
 interface WrappedContentKeyPayload {
   wrappingAlgorithm: string;
   contentKeyId?: string;
+  contentKeyRole?: string;
+  contentKeyAlgorithm?: string;
+  contentKeyEncoding?: string;
+  keyBytes: Uint8Array;
+  contentKeyVersion?: number;
   recipientKeyId?: string;
   requesterEphemeralPublicKey: Uint8Array;
   providerEphemeralPublicKey: Uint8Array;
@@ -232,41 +240,19 @@ export async function requestModuleGrant(
     proofBytes,
     candidateAddrs,
   );
-  const grant = decodeGrantResponse(grantResponseBytes);
+  const grant = decodeGrantResponse(grantResponseBytes, {
+    reqId,
+    moduleId,
+    moduleVersion,
+    expectedDomain: requesterDomain,
+    requestedTimeoutMs,
+  });
   console.info('[sdn-js] grant response received', {
     moduleId,
     reqId,
     grantedDomain: grant.grantedDomain,
     grantedTimeoutMs: grant.grantedTimeoutMs,
   });
-
-  if (grant.reqId !== reqId) {
-    throw new ModuleDeliveryProtocolError('request_mismatch', 'grant response request id mismatch');
-  }
-  if (grant.moduleId !== moduleId) {
-    throw new ModuleDeliveryProtocolError('request_mismatch', 'grant response module id mismatch');
-  }
-  if (moduleVersion && grant.moduleVersion && grant.moduleVersion !== moduleVersion) {
-    throw new ModuleDeliveryProtocolError('request_mismatch', 'grant response module version mismatch');
-  }
-  if (grant.grantedDomain !== requesterDomain) {
-    throw new ModuleDeliveryProtocolError(
-      'grant_policy_mismatch',
-      'grant domain does not match the requested domain',
-    );
-  }
-  if (grant.grantedTimeoutMs <= 0 || grant.grantedTimeoutMs > requestedTimeoutMs) {
-    throw new ModuleDeliveryProtocolError(
-      'grant_policy_mismatch',
-      'grant timeout exceeds the requested timeout',
-    );
-  }
-  if (grant.grantVerifierPublicKey.length !== 32) {
-    throw new ModuleDeliveryProtocolError(
-      'invalid_grant',
-      'grant verifier public key must be 32 bytes',
-    );
-  }
 
   return { provider, grant };
 }
@@ -325,6 +311,22 @@ export class ModuleDeliveryProtocolError extends Error {
   }
 }
 
+function asModuleDeliveryProtocolError(
+  error: unknown,
+  fallbackCode: string,
+): ModuleDeliveryProtocolError {
+  if (error instanceof ModuleDeliveryProtocolError) {
+    return error;
+  }
+  if (error instanceof LicensingProtocolError) {
+    return new ModuleDeliveryProtocolError(error.code || fallbackCode, error.message);
+  }
+  if (error instanceof Error) {
+    return new ModuleDeliveryProtocolError(fallbackCode, error.message);
+  }
+  return new ModuleDeliveryProtocolError(fallbackCode, String(error));
+}
+
 function encodeChallengeRequest(options: {
   reqId: string;
   moduleId: string;
@@ -338,44 +340,7 @@ function encodeChallengeRequest(options: {
   requestedAtMs: number;
   providerPeerId: string;
 }): Uint8Array {
-  const builder = new flatbuffers.Builder(512);
-  const reqIdOffset = builder.createString(options.reqId);
-  const moduleIdOffset = builder.createString(options.moduleId);
-  const moduleVersionOffset = options.moduleVersion ? builder.createString(options.moduleVersion) : 0;
-  const requesterPeerIdOffset = builder.createString(options.requesterPeerId);
-  const requesterXpubOffset = options.requesterXpub ? builder.createString(options.requesterXpub) : 0;
-  const requesterSigningPubkeyOffset = LCH.createRequesterSigningPubkeyVector(
-    builder,
-    options.requesterSigningPublicKey,
-  );
-  const requesterEphemeralPubkeyOffset = LCH.createRequesterEphemeralPubkeyVector(
-    builder,
-    options.requesterEphemeralPublicKey,
-  );
-  const requesterDomainOffset = builder.createString(options.requesterDomain);
-  const providerPeerIdOffset = builder.createString(options.providerPeerId);
-  const root = LCH.createLCH(
-    builder,
-    licensingChallengeMessageType.Request,
-    licensingChallengeRole.Requester,
-    reqIdOffset,
-    moduleIdOffset,
-    moduleVersionOffset,
-    requesterPeerIdOffset,
-    requesterXpubOffset,
-    requesterSigningPubkeyOffset,
-    requesterEphemeralPubkeyOffset,
-    requesterDomainOffset,
-    BigInt(options.requestedTimeoutMs),
-    BigInt(options.requestedAtMs),
-    0,
-    0n,
-    providerPeerIdOffset,
-    0,
-    0,
-  );
-  LCH.finishLCHBuffer(builder, root);
-  return builder.asUint8Array();
+  return encodeLicensingChallengeRequest(options);
 }
 
 function encodeGrantProof(options: {
@@ -394,207 +359,143 @@ function encodeGrantProof(options: {
   requesterSigningPublicKey: Uint8Array;
   timestampMs: number;
 }): Uint8Array {
-  const builder = new flatbuffers.Builder(512);
-  const reqIdOffset = builder.createString(options.reqId);
-  const moduleIdOffset = builder.createString(options.moduleId);
-  const moduleVersionOffset = options.moduleVersion ? builder.createString(options.moduleVersion) : 0;
-  const requesterPeerIdOffset = builder.createString(options.requesterPeerId);
-  const requesterXpubOffset = options.requesterXpub ? builder.createString(options.requesterXpub) : 0;
-  const requesterDomainOffset = builder.createString(options.requesterDomain);
-  const requesterEphemeralPubkeyOffset = LPF.createRequesterEphemeralPubkeyVector(
-    builder,
-    options.requesterEphemeralPublicKey,
-  );
-  const challengeNonceOffset = LPF.createChallengeNonceVector(builder, options.challengeNonce);
-  const providerPeerIdOffset = builder.createString(options.providerPeerId);
-  const signatureOffset = LPF.createSignatureVector(builder, options.signature);
-  const signingPubkeyOffset = LPF.createSigningPubkeyVector(builder, options.requesterSigningPublicKey);
-  const root = LPF.createLPF(
-    builder,
-    licensingProofMessageType.ProofRequest,
-    reqIdOffset,
-    moduleIdOffset,
-    moduleVersionOffset,
-    requesterPeerIdOffset,
-    requesterXpubOffset,
-    requesterDomainOffset,
-    BigInt(options.requestedTimeoutMs),
-    requesterEphemeralPubkeyOffset,
-    challengeNonceOffset,
-    BigInt(options.challengeExpiresAtMs),
-    providerPeerIdOffset,
-    signatureOffset,
-    signingPubkeyOffset,
-    BigInt(options.timestampMs),
-    0,
-    0,
-  );
-  LPF.finishLPFBuffer(builder, root);
-  return builder.asUint8Array();
+  return encodeLicensingProof(options);
 }
 
 function decodeChallengeResponse(bytes: Uint8Array): GrantChallengePayload {
-  const bb = new flatbuffers.ByteBuffer(bytes);
-  if (!LCH.bufferHasIdentifier(bb)) {
-    throw new ModuleDeliveryProtocolError('invalid_response', 'invalid licensing challenge identifier');
-  }
+  try {
+    const message = decodeLicensingChallengeMessage(bytes);
+    if (message.messageType === 'error') {
+      throw new ModuleDeliveryProtocolError(
+        normalizeProtocolCode(message.errorCode, 'challenge_rejected'),
+        message.errorMessage || 'licensing challenge rejected',
+      );
+    }
+    if (message.messageType !== 'response' || message.role !== 'provider') {
+      throw new ModuleDeliveryProtocolError('unexpected_response', 'expected licensing challenge response');
+    }
 
-  const message = LCH.getRootAsLCH(bb);
-  const requestId = message.REQUEST_ID();
-  const moduleId = message.MODULE_ID();
-  if (!requestId || !moduleId) {
-    throw new ModuleDeliveryProtocolError('invalid_response', 'challenge response is missing required identifiers');
+    return {
+      reqId: message.reqId,
+      moduleId: message.moduleId,
+      moduleVersion: trimOptional(message.moduleVersion),
+      requestedDomain: trimOptional(message.requestedDomain),
+      requestedTimeoutMs: message.requestedTimeoutMs ?? 0,
+      requestedAtMs: message.requestedAtMs ?? 0,
+      challengeNonce: cloneOptionalBytes(message.challengeNonce),
+      expiresAtMs: message.expiresAtMs ?? 0,
+      providerPeerId: trimOptional(message.providerPeerId) || '',
+      rawBytes: cloneBytes(message.rawBytes),
+    };
+  } catch (error) {
+    throw asModuleDeliveryProtocolError(error, 'invalid_response');
   }
+}
 
-  if (message.MESSAGE_TYPE() === licensingChallengeMessageType.Error) {
-    throw new ModuleDeliveryProtocolError(
-      normalizeProtocolCode(message.ERROR_CODE(), 'challenge_rejected'),
-      message.ERROR_MESSAGE() || 'licensing challenge rejected',
-    );
-  }
-  if (
-    message.MESSAGE_TYPE() !== licensingChallengeMessageType.Response ||
-    message.ROLE() !== licensingChallengeRole.Provider
-  ) {
-    throw new ModuleDeliveryProtocolError('unexpected_response', 'expected licensing challenge response');
-  }
+function decodeGrantResponse(
+  bytes: Uint8Array,
+  options: {
+    reqId: string;
+    moduleId: string;
+    moduleVersion?: string;
+    expectedDomain: string;
+    requestedTimeoutMs: number;
+  },
+): GrantResponsePayload {
+  try {
+    const decodedGrant = decodeLicensingGrant(bytes);
+    const validatedGrant = validateLicensingGrant(decodedGrant, options);
+    const bundleDescriptor = extractGrantModuleDescriptor(validatedGrant);
+    const wrappedContentKey = extractWrappedContentKey(validatedGrant);
 
-  const challengeNonce = cloneOptionalBytes(message.challengeNonceArray());
-  if (challengeNonce.length === 0) {
-    throw new ModuleDeliveryProtocolError('invalid_response', 'challenge response is missing the challenge nonce');
+    return mapLicensingGrant(validatedGrant, bundleDescriptor, wrappedContentKey);
+  } catch (error) {
+    throw asModuleDeliveryProtocolError(error, 'invalid_grant');
   }
+}
 
+function mapLicensingGrant(
+  grant: LicensingGrantMessage,
+  bundleDescriptor: LicensingGrantModuleDescriptor,
+  wrappedContentKey: LicensingWrappedContentKey,
+): GrantResponsePayload {
   return {
-    reqId: requestId,
-    moduleId,
-    moduleVersion: trimOptional(message.MODULE_VERSION()),
-    requestedDomain: trimOptional(message.REQUESTED_DOMAIN()),
-    requestedTimeoutMs: numberFromUint64(message.REQUESTED_TIMEOUT_MS(), 'challenge.REQUESTED_TIMEOUT_MS'),
-    requestedAtMs: numberFromUint64(message.REQUESTED_AT(), 'challenge.REQUESTED_AT'),
-    challengeNonce,
-    expiresAtMs: numberFromUint64(message.EXPIRES_AT(), 'challenge.EXPIRES_AT'),
-    providerPeerId: trimOptional(message.PROVIDER_PEER_ID()) || '',
-    rawBytes: cloneBytes(bytes),
+    reqId: grant.reqId,
+    moduleId: grant.moduleId,
+    moduleVersion: trimOptional(grant.moduleVersion),
+    requestedDomain: trimOptional(grant.requestedDomain),
+    requestedTimeoutMs: grant.requestedTimeoutMs,
+    grantedDomain: normalizeRequiredString(grant.grantedDomain || '', 'grant.grantedDomain'),
+    grantedTimeoutMs: grant.grantedTimeoutMs,
+    expiresAtMs: grant.expiresAtMs,
+    requiredScope: trimOptional(grant.requiredScope),
+    grantStatus: trimOptional(grant.grantStatus),
+    capabilityToken: cloneOptionalBytes(grant.capabilityToken),
+    grantVerifierPublicKey: cloneOptionalBytes(grant.grantVerifierPublicKey),
+    providerSignature: cloneOptionalBytes(grant.providerSignature),
+    bundleDescriptor: mapBundleDescriptor(bundleDescriptor),
+    wrappedContentKey: mapWrappedContentKey(wrappedContentKey),
   };
 }
 
-function decodeGrantResponse(bytes: Uint8Array): GrantResponsePayload {
-  const bb = new flatbuffers.ByteBuffer(bytes);
-  if (!LGR.bufferHasIdentifier(bb)) {
-    throw new ModuleDeliveryProtocolError('invalid_response', 'invalid licensing grant identifier');
-  }
-
-  const grant = LGR.getRootAsLGR(bb);
-  const requestId = grant.REQUEST_ID();
-  const moduleId = grant.MODULE_ID();
-  if (!requestId || !moduleId) {
-    throw new ModuleDeliveryProtocolError('invalid_response', 'grant response is missing required identifiers');
-  }
-
-  if (grant.MESSAGE_TYPE() === licensingGrantMessageType.Denied) {
-    throw new ModuleDeliveryProtocolError(
-      normalizeProtocolCode(grant.GRANT_STATUS(), 'grant_denied'),
-      grant.DENIAL_REASON() || 'grant request denied',
-    );
-  }
-  if (grant.MESSAGE_TYPE() !== licensingGrantMessageType.Granted) {
-    throw new ModuleDeliveryProtocolError('unexpected_response', 'expected licensing grant response');
-  }
-
-  const moduleDescriptor = grant.MODULE_DESCRIPTOR();
-  const wrappedContentKeyHeader = grant.WRAPPED_CONTENT_KEY_HEADER();
-  const wrappedContentKeyPayload = cloneOptionalBytes(grant.wrappedContentKeyPayloadArray());
-  if (!moduleDescriptor || !wrappedContentKeyHeader || wrappedContentKeyPayload.length === 0) {
-    throw new ModuleDeliveryProtocolError(
-      'invalid_grant',
-      'grant response is missing the module descriptor or wrapped content key payload',
-    );
-  }
-
-  const cid = moduleDescriptor.WASM_CID();
-  if (!cid) {
-    throw new ModuleDeliveryProtocolError('invalid_grant', 'grant response is missing the published CID');
-  }
-
-  const contentHash = moduleDescriptor.ENCRYPTED()
-    ? cloneOptionalBytes(moduleDescriptor.encryptedWasmHashArray() ?? moduleDescriptor.wasmHashArray())
-    : cloneOptionalBytes(moduleDescriptor.wasmHashArray());
-  const sizeBytes = moduleDescriptor.ENCRYPTED() && moduleDescriptor.ENCRYPTED_WASM_SIZE() > 0n
-    ? numberFromUint64(moduleDescriptor.ENCRYPTED_WASM_SIZE(), 'moduleDescriptor.ENCRYPTED_WASM_SIZE')
-    : numberFromUint64(moduleDescriptor.WASM_SIZE(), 'moduleDescriptor.WASM_SIZE');
-  const allowedDomains = readAllowedDomains(moduleDescriptor);
-
-  const providerEphemeralPublicKey = cloneOptionalBytes(wrappedContentKeyHeader.ephemeralPublicKeyArray());
-  const nonceStart = cloneOptionalBytes(wrappedContentKeyHeader.nonceStartArray());
-  const recipientKeyIdBytes = cloneOptionalBytes(wrappedContentKeyHeader.recipientKeyIdArray());
-  const schemaHash = cloneOptionalBytes(wrappedContentKeyHeader.schemaHashArray());
-  if (providerEphemeralPublicKey.length === 0 || nonceStart.length === 0) {
-    throw new ModuleDeliveryProtocolError('invalid_grant', 'wrapped content key header is incomplete');
-  }
-
-  const grantExpiresAtMs = numberFromUint64(grant.EXPIRES_AT(), 'grant.EXPIRES_AT');
-  const wrappedContentKeyHeaderPayload: WrappedContentKeyHeaderPayload = {
-    version: wrappedContentKeyHeader.VERSION(),
-    keyExchange: keyExchangeName(wrappedContentKeyHeader.KEY_EXCHANGE()),
-    symmetric: symmetricAlgorithmName(wrappedContentKeyHeader.SYMMETRIC()),
-    keyDerivation: keyDerivationName(wrappedContentKeyHeader.KEY_DERIVATION()),
-    ephemeralPublicKey: providerEphemeralPublicKey,
-    nonceStart,
-    recipientKeyId: recipientKeyIdBytes,
-    context: trimOptional(wrappedContentKeyHeader.CONTEXT()),
-    schemaHash,
-    rootType: trimOptional(wrappedContentKeyHeader.ROOT_TYPE()),
-    timestamp:
-      wrappedContentKeyHeader.TIMESTAMP() > 0n
-        ? numberFromUint64(wrappedContentKeyHeader.TIMESTAMP(), 'wrappedContentKeyHeader.TIMESTAMP')
-        : undefined,
-  };
-
+function mapBundleDescriptor(descriptor: LicensingGrantModuleDescriptor): BundleDescriptorPayload {
   return {
-    reqId: requestId,
-    moduleId,
-    moduleVersion: trimOptional(grant.MODULE_VERSION()),
-    requestedDomain: trimOptional(grant.REQUESTED_DOMAIN()),
-    requestedTimeoutMs: numberFromUint64(grant.REQUESTED_TIMEOUT_MS(), 'grant.REQUESTED_TIMEOUT_MS'),
-    grantedDomain: normalizeRequiredString(grant.GRANTED_DOMAIN() || '', 'grant.GRANTED_DOMAIN'),
-    grantedTimeoutMs: numberFromUint64(grant.GRANTED_TIMEOUT_MS(), 'grant.GRANTED_TIMEOUT_MS'),
-    expiresAtMs: grantExpiresAtMs,
-    requiredScope: trimOptional(grant.REQUIRED_SCOPE()),
-    grantStatus: trimOptional(grant.GRANT_STATUS()),
-    capabilityToken: cloneOptionalBytes(grant.capabilityTokenArray()),
-    grantVerifierPublicKey: cloneOptionalBytes(grant.grantVerifierPubkeyArray()),
-    providerSignature: cloneOptionalBytes(grant.providerSignatureArray()),
-    bundleDescriptor: {
-      cid,
-      contentHash,
-      sizeBytes,
-      moduleId: normalizeRequiredString(moduleDescriptor.PLUGIN_ID() || '', 'moduleDescriptor.PLUGIN_ID'),
-      moduleVersion: trimOptional(moduleDescriptor.VERSION()),
-      keyId: trimOptional(moduleDescriptor.KEY_ID()),
-      requiredScope: trimOptional(moduleDescriptor.REQUIRED_SCOPE()),
-      allowedDomains,
-      encrypted: Boolean(moduleDescriptor.ENCRYPTED()),
-    },
-    wrappedContentKey: {
-      wrappingAlgorithm: wrappedContentKeySchemeName(wrappedContentKeyHeader),
-      contentKeyId: undefined,
-      recipientKeyId: recipientKeyIdBytes.length > 0 ? bytesToHex(recipientKeyIdBytes) : undefined,
-      requesterEphemeralPublicKey: new Uint8Array(0),
-      providerEphemeralPublicKey,
-      hkdfSalt: new Uint8Array(0),
-      iv: nonceStart,
-      ciphertext: wrappedContentKeyPayload,
-      tag: new Uint8Array(0),
-      expiresAtMs: grantExpiresAtMs,
-      recipientPublicKey: new Uint8Array(0),
-      ephemeralPublicKey: providerEphemeralPublicKey,
-      nonce: nonceStart,
-      header: wrappedContentKeyHeaderPayload,
-      encryptedPayload: wrappedContentKeyPayload,
-      recipientKeyIdBytes,
-      schemaHash,
-      keyMaterialRootType: wrappedContentKeyHeaderPayload.rootType,
-    },
+    cid: descriptor.cid,
+    contentHash: cloneOptionalBytes(descriptor.contentHash),
+    sizeBytes: descriptor.sizeBytes,
+    moduleId: normalizeRequiredString(descriptor.moduleId, 'bundleDescriptor.moduleId'),
+    moduleVersion: trimOptional(descriptor.moduleVersion),
+    keyId: trimOptional(descriptor.keyId),
+    requiredScope: trimOptional(descriptor.requiredScope),
+    allowedDomains: descriptor.allowedDomains.slice(),
+    maxGrantTimeoutMs: descriptor.maxGrantTimeoutMs,
+    encrypted: descriptor.encrypted,
+  };
+}
+
+function mapWrappedContentKey(key: LicensingWrappedContentKey): WrappedContentKeyPayload {
+  return {
+    wrappingAlgorithm: key.wrappingAlgorithm,
+    contentKeyId: trimOptional(key.contentKeyId),
+    contentKeyRole: trimOptional(key.contentKeyRole),
+    contentKeyAlgorithm: trimOptional(key.contentKeyAlgorithm),
+    contentKeyEncoding: trimOptional(key.contentKeyEncoding),
+    keyBytes: cloneOptionalBytes(key.keyBytes),
+    contentKeyVersion: key.contentKeyVersion,
+    recipientKeyId: trimOptional(key.recipientKeyId),
+    requesterEphemeralPublicKey: cloneOptionalBytes(key.requesterEphemeralPublicKey),
+    providerEphemeralPublicKey: cloneOptionalBytes(key.providerEphemeralPublicKey),
+    hkdfSalt: cloneOptionalBytes(key.hkdfSalt),
+    iv: cloneOptionalBytes(key.iv),
+    ciphertext: cloneOptionalBytes(key.ciphertext),
+    tag: cloneOptionalBytes(key.tag),
+    expiresAtMs: key.expiresAtMs,
+    recipientPublicKey: cloneOptionalBytes(key.recipientPublicKey),
+    ephemeralPublicKey: cloneOptionalBytes(key.ephemeralPublicKey),
+    nonce: cloneOptionalBytes(key.nonce),
+    header: mapWrappedContentKeyHeader(key.header),
+    encryptedPayload: cloneOptionalBytes(key.encryptedPayload),
+    recipientKeyIdBytes: cloneOptionalBytes(key.recipientKeyIdBytes),
+    schemaHash: cloneOptionalBytes(key.schemaHash),
+    keyMaterialRootType: trimOptional(key.keyMaterialRootType),
+  };
+}
+
+function mapWrappedContentKeyHeader(
+  header: LicensingWrappedContentKey['header'],
+): WrappedContentKeyHeaderPayload {
+  return {
+    version: header.version,
+    keyExchange: header.keyExchange,
+    symmetric: header.symmetric,
+    keyDerivation: header.keyDerivation,
+    ephemeralPublicKey: cloneOptionalBytes(header.ephemeralPublicKey),
+    nonceStart: cloneOptionalBytes(header.nonceStart),
+    recipientKeyId: cloneOptionalBytes(header.recipientKeyId),
+    context: trimOptional(header.context),
+    schemaHash: cloneOptionalBytes(header.schemaHash),
+    rootType: trimOptional(header.rootType),
+    timestamp: header.timestamp,
   };
 }
 
@@ -678,76 +579,7 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   return true;
 }
 
-function numberFromUint64(value: bigint, name: string): number {
-  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new ModuleDeliveryProtocolError('invalid_response', `${name} exceeds JavaScript safe integer range`);
-  }
-  return Number(value);
-}
-
 function normalizeProtocolCode(value: string | null | undefined, fallback: string): string {
   const normalized = String(value || '').trim();
   return normalized || fallback;
-}
-
-function wrappedContentKeySchemeName(value: ENC): string {
-  if (
-    value.KEY_EXCHANGE() === KeyExchange.X25519 &&
-    value.KEY_DERIVATION() === KDF.HKDF_SHA256 &&
-    value.SYMMETRIC() === SymmetricAlgo.AES_256_CTR
-  ) {
-    return 'x25519-hkdf-sha256-aes-256-ctr-rec';
-  }
-  return [
-    keyExchangeName(value.KEY_EXCHANGE()),
-    keyDerivationName(value.KEY_DERIVATION()),
-    symmetricAlgorithmName(value.SYMMETRIC()),
-    'rec',
-  ].join('-').toLowerCase();
-}
-
-function keyExchangeName(value: KeyExchange): string {
-  switch (value) {
-    case KeyExchange.X25519:
-      return 'X25519';
-    case KeyExchange.Secp256k1:
-      return 'Secp256k1';
-    case KeyExchange.P256:
-      return 'P256';
-    default:
-      return `UNKNOWN_${value}`;
-  }
-}
-
-function symmetricAlgorithmName(value: SymmetricAlgo): string {
-  switch (value) {
-    case SymmetricAlgo.AES_256_CTR:
-      return 'AES_256_CTR';
-    default:
-      return `UNKNOWN_${value}`;
-  }
-}
-
-function keyDerivationName(value: KDF): string {
-  switch (value) {
-    case KDF.HKDF_SHA256:
-      return 'HKDF_SHA256';
-    default:
-      return `UNKNOWN_${value}`;
-  }
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
-}
-
-function readAllowedDomains(descriptor: PLG): string[] {
-  const allowedDomains: string[] = [];
-  for (let index = 0; index < descriptor.allowedDomainsLength(); index += 1) {
-    const domain = descriptor.ALLOWED_DOMAINS(index);
-    if (domain) {
-      allowedDomains.push(domain);
-    }
-  }
-  return allowedDomains;
 }
