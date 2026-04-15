@@ -77,6 +77,35 @@ func cryptoCapHandle(operation string, payload []byte) ([]byte, error) {
 	}
 
 	switch operation {
+	case "crypto.ed25519.publicKeyFromSeed":
+		seed := bytes64("seed")
+		if len(seed) != ed25519.SeedSize {
+			return errCapJSON(fmt.Sprintf("ed25519 seed must be %d bytes, got %d", ed25519.SeedSize, len(seed))), nil
+		}
+		pubKey := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+		return okCapRaw(pubKey), nil
+
+	case "crypto.ed25519.sign":
+		seed := bytes64("seed")
+		message := bytes64("message")
+		if len(seed) != ed25519.SeedSize {
+			return errCapJSON(fmt.Sprintf("ed25519 seed must be %d bytes, got %d", ed25519.SeedSize, len(seed))), nil
+		}
+		signature := ed25519.Sign(ed25519.NewKeyFromSeed(seed), message)
+		return okCapRaw(signature), nil
+
+	case "crypto.ed25519.verify":
+		message := bytes64("message")
+		signature := bytes64("signature")
+		publicKey := bytes64("publicKey")
+		if len(publicKey) != ed25519.PublicKeySize {
+			return errCapJSON(fmt.Sprintf("ed25519 public key must be %d bytes, got %d", ed25519.PublicKeySize, len(publicKey))), nil
+		}
+		if len(signature) != ed25519.SignatureSize {
+			return errCapJSON(fmt.Sprintf("ed25519 signature must be %d bytes, got %d", ed25519.SignatureSize, len(signature))), nil
+		}
+		return okCapJSON(ed25519.Verify(ed25519.PublicKey(publicKey), message, signature)), nil
+
 	case "crypto.hash":
 		data := bytes64("data")
 		algo := str("algorithm")
@@ -298,4 +327,3 @@ func cryptoCapHandle(operation string, payload []byte) ([]byte, error) {
 		return errCapJSON(fmt.Sprintf("unknown crypto operation: %s", operation)), nil
 	}
 }
-

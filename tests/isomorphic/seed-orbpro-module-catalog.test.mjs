@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import sgp4PackageJson from "../../../space-data-network-plugins/packages/sgp4/package.json" with { type: "json" };
 
 import {
   encryptBundleBytes,
@@ -144,6 +145,38 @@ await test("seedOrbproModuleCatalog upserts requested modules and preserves unre
     content_type: "application/wasm+encrypted",
     cache_control: "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
   });
+});
+
+await test("seedOrbproModuleCatalog uses the shipped plugin version for built-in modules by default", async () => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sdn-seed-orbpro-builtins-"),
+  );
+  const pluginRoot = path.join(tempRoot, "license", "plugins");
+  await fs.mkdir(pluginRoot, { recursive: true });
+
+  const summary = await seedOrbproModuleCatalog({
+    pluginRoot,
+    modules: [
+      {
+        slug: "sgp4",
+        moduleId: "com.orbpro.sgp4",
+        wasmPath:
+          "packages/space-data-network-plugins/packages/sgp4/dist/sgp4.wasm",
+      },
+    ],
+  });
+
+  assert.equal(summary.seeded.length, 1);
+  assert.equal(summary.seeded[0].moduleId, "com.orbpro.sgp4");
+
+  const catalog = JSON.parse(
+    await fs.readFile(path.join(pluginRoot, "catalog.json"), "utf8"),
+  );
+  const seededEntry = catalog.plugins.find(
+    (entry) => entry.id === "com.orbpro.sgp4",
+  );
+
+  assert.equal(seededEntry?.version, sgp4PackageJson.version);
 });
 
 console.log("\nDone.");
