@@ -363,17 +363,23 @@ func (n *Node) init() error {
 		log.Warnf("Failed to register plugin %q: %v", ailogplugin.ID, err)
 	}
 
+	runtimeIPFSAPIURL := n.resolveRuntimeIPFSAPIURL()
+	if runtimeIPFSAPIURL != "" && strings.TrimSpace(n.config.Admin.IPFSAPIURL) == "" {
+		log.Infof("Using detected local Kubo API for module runtime capabilities: %s", runtimeIPFSAPIURL)
+	}
+
 	pluginCtx := plugins.RuntimeContext{
 		Host:         n.host,
 		DHT:          n.dht,
 		BaseDataPath: storageBasePath,
 		PeerID:       n.host.ID().String(),
-		IPFSAPIURL:   strings.TrimSpace(n.config.Admin.IPFSAPIURL),
+		IPFSAPIURL:   runtimeIPFSAPIURL,
 		Mode:         n.config.Mode,
 	}
-	if n.identity != nil && len(n.identity.EncryptionKey) == 32 {
-		pluginCtx.NodeEncryptionKey = make([]byte, len(n.identity.EncryptionKey))
-		copy(pluginCtx.NodeEncryptionKey, n.identity.EncryptionKey)
+	if _, wrappingKey, err := n.moduleRuntimeKeySlots(); err != nil {
+		log.Warnf("Module runtime encryption key unavailable: %v", err)
+	} else if len(wrappingKey) == 32 {
+		pluginCtx.NodeEncryptionKey = wrappingKey
 	} else {
 		if envNodeEncKey := strings.TrimSpace(os.Getenv("SDN_DEV_NODE_ENCRYPTION_KEY_HEX")); envNodeEncKey != "" {
 			if decoded, err := hex.DecodeString(envNodeEncKey); err != nil {
@@ -387,9 +393,9 @@ func (n *Node) init() error {
 		}
 	}
 
-	// Register WASI-based OrbPro key broker plugin from encrypted catalog (if configured),
-	// then fall back to configured static wasm path.
-	registeredFromCatalog := false
+	// Register the unified licensing runtime, then publish encrypted catalog
+	// modules through it so the delivery path matches the browser shim flow.
+	var licensingModule *modulert.Module
 	if reg, regErr := n.loadPluginRegistry(); regErr != nil {
 		log.Warnf("Plugin registry unavailable: %v", regErr)
 	} else if reg != nil {
@@ -399,18 +405,27 @@ func (n *Node) init() error {
 			log.Warnf("Plugin decryption key invalid: %v", keyErr)
 		}
 
-		if err := n.registerCatalogPlugins(reg, pluginCtx, recipientKey); err != nil {
-			log.Warnf("Plugin catalog runtime startup completed with errors: %v", err)
-		}
-
-		if n.hasCatalogLicensingModule(reg) {
-			registeredFromCatalog = true
+		if asset, ok := reg.Get(licensingModuleID); ok && asset != nil {
+			nodeCtx, err := n.buildModuleNodeContext()
+			if err != nil {
+				log.Warnf("Failed to build module node context: %v", err)
+			} else {
+				capReg := n.buildCapRegistry()
+				wasmBytes, err := reg.DecryptBundle(licensingModuleID, recipientKey)
+				if err != nil {
+					log.Warnf("Licensing module decryption failed: %v", err)
+				} else if mod, err := modulert.NewModule(wasmBytes, capReg, nodeCtx); err != nil {
+					log.Warnf("Licensing module load failed: %v", err)
+				} else {
+					licensingModule = mod
+				}
+			}
 		}
 	}
 
 	// Register a fallback module-sdk WASM from explicit path.
 	// This uses the generic modulert runner — no plugin-type-specific Go code.
-	if !registeredFromCatalog {
+	if licensingModule == nil {
 		if wasmPath := n.findKeyBrokerWasmPath(); wasmPath != "" {
 			kbBytes, decryptedEnvelope, loadErr := n.loadKeyBrokerWASMBytes(wasmPath)
 			if loadErr != nil {
@@ -423,31 +438,33 @@ func (n *Node) init() error {
 					log.Infof("WASM module loaded: %s (sha256: %s)", wasmPath, hex.EncodeToString(kbHash[:]))
 				}
 
-				// Build node context for the module's hostcall bridge
-				nodeCtx := &modulert.NodeContext{
-					PeerID: n.host.ID().String(),
-				}
-				if n.identity != nil {
-					nodeCtx.EncryptionKey = n.identity.EncryptionKey
-					// Derive P-256 public key hex for node.publicKey hostcall
-					if pk, err := deriveP256PublicKeyHex(n.identity.EncryptionKey); err == nil {
-						nodeCtx.PublicKeyHex = pk
-					}
-				}
-
-				capReg := n.buildCapRegistry()
-
-				mod, err := modulert.NewModule(kbBytes, capReg, nodeCtx)
+				nodeCtx, err := n.buildModuleNodeContext()
 				if err != nil {
-					log.Warnf("Failed to create module from %s: %v", wasmPath, err)
+					log.Warnf("Failed to build module node context: %v", err)
 				} else {
-					if err := n.plugins.Register(mod); err != nil {
-						log.Warnf("Failed to register module %q: %v", mod.ID(), err)
+					capReg := n.buildCapRegistry()
+					mod, err := modulert.NewModule(kbBytes, capReg, nodeCtx)
+					if err != nil {
+						log.Warnf("Failed to create module from %s: %v", wasmPath, err)
 					} else {
-						log.Infof("Module-sdk plugin registered from %s", wasmPath)
+						licensingModule = mod
+						log.Infof("Unified licensing module loaded from %s", wasmPath)
 					}
 				}
 			}
+		}
+	}
+
+	if licensingModule != nil {
+		if n.pluginRegistry != nil {
+			if err := bootstrapLicensingModule(licensingModule, n.pluginRegistry); err != nil {
+				log.Warnf("Licensing module bootstrap completed with errors: %v", err)
+			}
+		}
+		if err := n.plugins.Register(licensingModule); err != nil {
+			log.Warnf("Failed to register module %q: %v", licensingModule.ID(), err)
+		} else {
+			log.Infof("Unified licensing module registered")
 		}
 	}
 
@@ -504,10 +521,12 @@ func (n *Node) loadPluginRegistry() (*license.PluginRegistry, error) {
 }
 
 func (n *Node) findPluginDecryptPrivateKey() ([]byte, error) {
-	if n.identity != nil && len(n.identity.EncryptionKey) == 32 {
-		key := make([]byte, len(n.identity.EncryptionKey))
-		copy(key, n.identity.EncryptionKey)
-		return key, nil
+	_, wrappingKey, err := n.moduleRuntimeKeySlots()
+	if err != nil {
+		return nil, err
+	}
+	if len(wrappingKey) == 32 {
+		return wrappingKey, nil
 	}
 
 	return nil, nil
@@ -518,15 +537,9 @@ func (n *Node) registerCatalogPlugins(reg *license.PluginRegistry, pluginCtx plu
 		return nil
 	}
 
-	// Build node context for the generic module runner
-	nodeCtx := &modulert.NodeContext{
-		PeerID: n.host.ID().String(),
-	}
-	if n.identity != nil {
-		nodeCtx.EncryptionKey = n.identity.EncryptionKey
-		if pk, err := deriveP256PublicKeyHex(n.identity.EncryptionKey); err == nil {
-			nodeCtx.PublicKeyHex = pk
-		}
+	nodeCtx, err := n.buildModuleNodeContext()
+	if err != nil {
+		return fmt.Errorf("build module node context: %w", err)
 	}
 	capReg := n.buildCapRegistry()
 
@@ -585,9 +598,9 @@ func (n *Node) registerCatalogPlugins(reg *license.PluginRegistry, pluginCtx plu
 func (n *Node) buildCapRegistry() *modulert.CapabilityRegistry {
 	reg := modulert.NewCapabilityRegistry()
 
-	// IPFS capability — requires a configured Kubo RPC endpoint
-	if n.config.Admin.IPFSAPIURL != "" {
-		reg.Register("ipfs", caps.NewIPFSCapFactory(n.config.Admin.IPFSAPIURL, nil))
+	// IPFS capability — prefer configured Kubo RPC, but fall back to a detected local daemon in dev.
+	if runtimeIPFSAPIURL := n.resolveRuntimeIPFSAPIURL(); runtimeIPFSAPIURL != "" {
+		reg.Register("ipfs", caps.NewIPFSCapFactory(runtimeIPFSAPIURL, nil))
 	}
 
 	// Storage capabilities — require an initialized FlatSQL store

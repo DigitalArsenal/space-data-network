@@ -5,6 +5,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import viewshedShaderPackageJson from "../../space-data-network-plugins/packages/viewshed-shader/package.json" with { type: "json" };
+import sensorShadersPackageJson from "../../space-data-network-plugins/packages/sensor-shaders/package.json" with { type: "json" };
+import sgp4PackageJson from "../../space-data-network-plugins/packages/sgp4/package.json" with { type: "json" };
+import fastestPathPackageJson from "../../space-data-network-plugins/packages/fastest-path/package.json" with { type: "json" };
+import hpopPackageJson from "../../space-data-network-plugins/packages/hpop/package.json" with { type: "json" };
+import conjunctionAssessmentPackageJson from "../../space-data-network-plugins/packages/conjunction-assessment/package.json" with { type: "json" };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(__dirname, "..");
@@ -19,34 +25,34 @@ const DEFAULT_ORBPRO_MODULES = Object.freeze([
   Object.freeze({
     slug: "viewshed-shader",
     moduleId: "com.orbpro.viewshed-shader",
-    version: defaultVersion,
+    version: viewshedShaderPackageJson.version,
     wasmPath:
       "packages/space-data-network-plugins/packages/viewshed-shader/dist/viewshed-shader.wasm",
   }),
   Object.freeze({
     slug: "sensor-shaders",
     moduleId: "com.orbpro.sensor-shaders",
-    version: defaultVersion,
+    version: sensorShadersPackageJson.version,
     wasmPath:
       "packages/space-data-network-plugins/packages/sensor-shaders/dist/isomorphic/module.wasm",
   }),
   Object.freeze({
     slug: "sgp4",
     moduleId: "com.orbpro.sgp4",
-    version: defaultVersion,
+    version: sgp4PackageJson.version,
     wasmPath: "packages/space-data-network-plugins/packages/sgp4/dist/sgp4.wasm",
   }),
   Object.freeze({
     slug: "fastest-path",
     moduleId: "com.orbpro.fastest-path",
-    version: defaultVersion,
+    version: fastestPathPackageJson.version,
     wasmPath:
       "packages/space-data-network-plugins/packages/fastest-path/dist/isomorphic/module.wasm",
   }),
   Object.freeze({
     slug: "hpop",
     moduleId: "com.orbpro.hpop",
-    version: defaultVersion,
+    version: hpopPackageJson.version,
     wasmPath:
       "packages/space-data-network-plugins/packages/hpop/dist/isomorphic/module.wasm",
   }),
@@ -56,11 +62,47 @@ const OPTIONAL_ORBPRO_MODULES = Object.freeze([
   Object.freeze({
     slug: "conjunction-assessment",
     moduleId: "org.spacedata.analysis.conjunction.assessment",
-    version: defaultVersion,
+    version: conjunctionAssessmentPackageJson.version,
     wasmPath:
       "packages/space-data-network-plugins/packages/conjunction-assessment/dist/isomorphic/module.wasm",
   }),
 ]);
+
+const BUILT_IN_MODULE_VERSIONS = Object.freeze(
+  new Map([
+    ["viewshed-shader", viewshedShaderPackageJson.version],
+    ["com.orbpro.viewshed-shader", viewshedShaderPackageJson.version],
+    ["sensor-shaders", sensorShadersPackageJson.version],
+    ["com.orbpro.sensor-shaders", sensorShadersPackageJson.version],
+    ["sgp4", sgp4PackageJson.version],
+    ["com.orbpro.sgp4", sgp4PackageJson.version],
+    ["fastest-path", fastestPathPackageJson.version],
+    ["com.orbpro.fastest-path", fastestPathPackageJson.version],
+    ["hpop", hpopPackageJson.version],
+    ["com.orbpro.hpop", hpopPackageJson.version],
+    [
+      "conjunction-assessment",
+      conjunctionAssessmentPackageJson.version,
+    ],
+    [
+      "org.spacedata.analysis.conjunction.assessment",
+      conjunctionAssessmentPackageJson.version,
+    ],
+  ]),
+);
+
+function resolveModuleVersion(moduleSpec, slug, moduleId) {
+  const explicitVersion = String(moduleSpec?.version || "").trim();
+  if (explicitVersion) {
+    return explicitVersion;
+  }
+
+  return (
+    BUILT_IN_MODULE_VERSIONS.get(moduleId) ??
+    BUILT_IN_MODULE_VERSIONS.get(slug) ??
+    defaultVersion
+  );
+}
 
 function usage() {
   console.error(`Usage:
@@ -204,7 +246,7 @@ function normalizeModuleSpec(moduleSpec) {
     ...moduleSpec,
     slug,
     moduleId,
-    version: String(moduleSpec?.version || defaultVersion).trim() || defaultVersion,
+    version: resolveModuleVersion(moduleSpec, slug, moduleId),
     wasmPath: resolveModulePath(moduleSpec?.wasmPath),
   };
 }

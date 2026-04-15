@@ -61,8 +61,48 @@ export interface HeliaSDNNode {
   stop(): Promise<void>;
 }
 
+type IncomingStreamData = {
+  stream: unknown;
+  connection: unknown;
+};
+
+type CompatLibp2p = Libp2p & {
+  __heliaStreamHandlerCompatApplied?: boolean;
+};
+
+// Helia 6 registers some stream handlers as `(stream, connection)`, while the
+// libp2p instance resolved in this workspace invokes handlers with a single
+// `{ stream, connection }` object. Adapt only the two-argument form.
+function withHeliaStreamHandlerCompat(libp2p: Libp2p): Libp2p {
+  const candidate = libp2p as CompatLibp2p;
+  if (candidate.__heliaStreamHandlerCompatApplied === true) {
+    return candidate;
+  }
+
+  const originalHandle = candidate.handle?.bind(candidate);
+  if (typeof originalHandle !== 'function') {
+    return candidate;
+  }
+
+  candidate.handle = (async (protocols, handler, options) => {
+    if (typeof handler === 'function' && handler.length >= 2) {
+      const twoArgHandler = handler as any;
+      return originalHandle(
+        protocols,
+        (incoming: IncomingStreamData) =>
+          twoArgHandler(incoming?.stream, incoming?.connection),
+        options,
+      );
+    }
+    return originalHandle(protocols, handler, options);
+  }) as Libp2p['handle'];
+  candidate.__heliaStreamHandlerCompatApplied = true;
+
+  return candidate;
+}
+
 export async function createHeliaFromLibp2p(libp2p: Libp2p): Promise<Helia> {
-  return createHelia({ libp2p } as never);
+  return createHelia({ libp2p: withHeliaStreamHandlerCompat(libp2p) } as never);
 }
 
 export async function fetchCIDBytesFromHelia(helia: Helia, cid: string): Promise<Uint8Array> {

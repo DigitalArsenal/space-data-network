@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -193,12 +194,22 @@ func (m *Module) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 			if !proto.AutoInstall {
 				continue
 			}
-			pid := protocol.ID(proto.ProtocolID)
+			streamProtocolID := strings.TrimSpace(proto.WireID)
+			if streamProtocolID == "" {
+				streamProtocolID = proto.ProtocolID
+			}
+			pid := protocol.ID(streamProtocolID)
 			methodID := proto.MethodID
 			runtime.Host.SetStreamHandler(pid, func(s network.Stream) {
 				m.handleProtocolStream(s, methodID)
 			})
-			log.Infof("Module %q: registered protocol handler %s → %s", m.manifest.PluginID, proto.ProtocolID, methodID)
+			log.Infof(
+				"Module %q: registered protocol handler %s (%s) → %s",
+				m.manifest.PluginID,
+				streamProtocolID,
+				proto.ProtocolID,
+				methodID,
+			)
 		}
 	}
 
@@ -264,6 +275,16 @@ func (m *Module) UIDescriptor() plugins.UIDescriptor {
 
 // InvokeMethod calls plugin_invoke_stream with the given method ID and payload.
 func (m *Module) InvokeMethod(ctx context.Context, methodID string, payload []byte) ([]byte, error) {
+	return m.InvokeMethodFrames(ctx, methodID, []InvokeInputFrame{
+		{
+			PortID:  "request",
+			Payload: payload,
+		},
+	})
+}
+
+// InvokeMethodFrames calls plugin_invoke_stream with an SDK-style multi-port input request.
+func (m *Module) InvokeMethodFrames(ctx context.Context, methodID string, inputFrames []InvokeInputFrame) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -271,18 +292,9 @@ func (m *Module) InvokeMethod(ctx context.Context, methodID string, payload []by
 		return nil, fmt.Errorf("module not loaded")
 	}
 
-	// Build a simple invoke envelope: 4-byte method length + method + payload
-	// This matches the PluginInvokeRequest convention used by plugin_invoke_stream.
-	methodBytes := []byte(methodID)
-	reqLen := 4 + len(methodBytes) + len(payload)
-	req := make([]byte, reqLen)
-	req[0] = byte(len(methodBytes))
-	req[1] = byte(len(methodBytes) >> 8)
-	req[2] = byte(len(methodBytes) >> 16)
-	req[3] = byte(len(methodBytes) >> 24)
-	copy(req[4:], methodBytes)
-	if len(payload) > 0 {
-		copy(req[4+len(methodBytes):], payload)
+	req, err := encodePluginInvokeRequestFrames(methodID, inputFrames)
+	if err != nil {
+		return nil, fmt.Errorf("encode invoke request: %w", err)
 	}
 
 	reqPtr, err := m.mod.Allocate(req)
@@ -291,29 +303,51 @@ func (m *Module) InvokeMethod(ctx context.Context, methodID string, payload []by
 	}
 	defer m.mod.SecureDeallocate(reqPtr, uint32(len(req)))
 
-	const outCap = 16384
-	outPtr, err := m.mod.AllocateSize(outCap)
+	responseLenPtr, err := m.mod.AllocateSize(4)
 	if err != nil {
-		return nil, fmt.Errorf("allocate output: %w", err)
+		return nil, fmt.Errorf("allocate response length: %w", err)
 	}
-	defer m.mod.SecureDeallocate(outPtr, outCap)
+	defer m.mod.SecureDeallocate(responseLenPtr, 4)
+
+	if err := m.mod.WriteMemory(responseLenPtr, []byte{0, 0, 0, 0}); err != nil {
+		return nil, fmt.Errorf("zero response length: %w", err)
+	}
 
 	results, err := m.mod.Execute("plugin_invoke_stream",
-		int32(reqPtr), int32(len(req)), int32(outCap),
+		int32(reqPtr), int32(len(req)), int32(responseLenPtr),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("plugin_invoke_stream(%s): %w", methodID, err)
 	}
 
-	written := wasmrt.ToInt32(results[0])
-	if written <= 0 {
-		return nil, nil
+	responsePtr := uint32(wasmrt.ToInt32(results[0]))
+	responseLenBytes, err := m.mod.ReadMemory(responseLenPtr, 4)
+	if err != nil {
+		return nil, fmt.Errorf("read response length: %w", err)
 	}
-	if uint32(written) > outCap {
-		return nil, fmt.Errorf("output %d exceeds capacity %d", written, outCap)
+	responseLen, err := decodeUint32LE(responseLenBytes)
+	if err != nil {
+		return nil, fmt.Errorf("decode response length: %w", err)
+	}
+	if responseLen == 0 {
+		return nil, fmt.Errorf("plugin_invoke_stream(%s) returned an empty response", methodID)
+	}
+	if responsePtr == 0 {
+		return nil, fmt.Errorf("plugin_invoke_stream(%s) returned a null response pointer", methodID)
+	}
+	defer m.mod.SecureDeallocate(responsePtr, responseLen)
+
+	responseBytes, err := m.mod.ReadMemory(responsePtr, responseLen)
+	if err != nil {
+		return nil, fmt.Errorf("read invoke response: %w", err)
 	}
 
-	return m.mod.ReadMemory(outPtr, uint32(written))
+	response, err := decodePluginInvokeResponseBytes(responseBytes)
+	if err != nil {
+		return nil, fmt.Errorf("decode invoke response: %w", err)
+	}
+
+	return extractPluginInvokePayload(response, "response")
 }
 
 // Manifest returns the parsed manifest.
@@ -339,14 +373,19 @@ func (m *Module) handleProtocolStream(s network.Stream, methodID string) {
 
 	s.SetReadDeadline(time.Now().Add(15 * time.Second))
 
-	// Read request bytes from stream (max 16KB)
-	reqBytes := make([]byte, 16384)
-	n, err := io.ReadAtLeast(s, reqBytes, 1)
-	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+	// Read the full bounded request payload before invoking the module.
+	reqBytes, err := io.ReadAll(io.LimitReader(s, 16385))
+	if err != nil {
 		log.Debugf("Module %q protocol %s: read error: %v", m.manifest.PluginID, methodID, err)
 		return
 	}
-	reqBytes = reqBytes[:n]
+	if len(reqBytes) == 0 {
+		return
+	}
+	if len(reqBytes) > 16384 {
+		log.Debugf("Module %q protocol %s: request exceeds 16KB limit", m.manifest.PluginID, methodID)
+		return
+	}
 
 	// Invoke the module's method
 	resp, err := m.InvokeMethod(context.Background(), methodID, reqBytes)

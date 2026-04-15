@@ -13,8 +13,8 @@
  */
 
 import { execSync, spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync, statSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 
@@ -49,6 +49,48 @@ async function waitForReady(url, timeoutMs = 30000) {
     await new Promise(r => setTimeout(r, 300));
   }
   throw new Error(`Server not ready at ${url} after ${timeoutMs}ms`);
+}
+
+function spawnServerProcess(binary, configPath, cwd) {
+  let stdout = '';
+  let stderr = '';
+  const proc = spawn(binary, ['daemon', '-c', configPath], {
+    cwd,
+    env: { ...process.env, SDN_KEY_PASSWORD: 'test-password-123' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  proc.stdout.on('data', (chunk) => {
+    const text = String(chunk);
+    stdout += text;
+    if (VERBOSE) process.stdout.write(text);
+  });
+  proc.stderr.on('data', (chunk) => {
+    const text = String(chunk);
+    stderr += text;
+    if (VERBOSE) process.stderr.write(text);
+  });
+
+  return {
+    proc,
+    stdoutRef: () => stdout,
+    stderrRef: () => stderr,
+  };
+}
+
+async function stopServerProcess(proc) {
+  if (!proc || proc.exitCode !== null) {
+    return;
+  }
+
+  proc.kill('SIGTERM');
+  await new Promise((resolve) => {
+    proc.once('exit', resolve);
+    setTimeout(() => {
+      proc.kill('SIGKILL');
+      resolve();
+    }, 5000);
+  });
 }
 
 /**
@@ -112,8 +154,9 @@ function buildServer(serverDir) {
  *   - configPath: path to test config
  */
 export async function startTestServer(opts = {}) {
-  const repoRoot = opts.repoRoot || join(import.meta.dirname, '..', '..', '..');
-  const serverDir = join(repoRoot, 'sdn-server');
+  const repoRoot = resolve(opts.repoRoot || join(import.meta.dirname, '..', '..', '..'));
+  const serverDir = resolve(repoRoot, 'sdn-server');
+  const workspaceRoot = resolve(repoRoot, '..', '..');
 
   // Build server
   const binary = buildServer(serverDir);
@@ -127,6 +170,7 @@ export async function startTestServer(opts = {}) {
 
   // Create temp data directory
   const dataDir = mkdtempSync(join(tmpdir(), 'sdn-test-'));
+  const storageDir = join(dataDir, 'storage');
 
   // Write test config — auth disabled, TOR disabled, publishing enabled
   const config = {
@@ -142,9 +186,12 @@ export async function startTestServer(opts = {}) {
       enable_relay: false,
     },
     storage: {
-      path: dataDir,
+      path: storageDir,
       max_size: '100MB',
       gc_interval: '1h',
+    },
+    setup: {
+      data_path: dataDir,
     },
     schemas: {
       validate: false,  // Don't require flatc WASM for validation
@@ -187,19 +234,14 @@ export async function startTestServer(opts = {}) {
     console.log(`WS: /ip4/127.0.0.1/tcp/${wsPort}/ws`);
   }
 
-  // Start server
-  const proc = spawn(binary, ['daemon', '-c', configPath], {
-    env: { ...process.env, SDN_KEY_PASSWORD: 'test-password-123' },
-    stdio: VERBOSE ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'ignore', 'ignore'],
-  });
-
   const adminUrl = `http://127.0.0.1:${adminPort}`;
+  let processHandle = spawnServerProcess(binary, configPath, workspaceRoot);
+  let proc = processHandle.proc;
 
   try {
-    // Wait for server readiness
     await waitForReady(`${adminUrl}/api/node/info`, 30000);
   } catch (err) {
-    proc.kill('SIGTERM');
+    await stopServerProcess(proc);
     throw new Error(`Failed to start test server: ${err.message}`);
   }
 
@@ -212,6 +254,8 @@ export async function startTestServer(opts = {}) {
     process: proc,
     configPath,
     binary,
+    stdoutRef: processHandle.stdoutRef,
+    stderrRef: processHandle.stderrRef,
   };
 }
 
@@ -219,17 +263,7 @@ export async function startTestServer(opts = {}) {
  * Stop a test server and clean up temp files.
  */
 export async function stopTestServer(server) {
-  if (server.process) {
-    server.process.kill('SIGTERM');
-    // Wait for process to exit
-    await new Promise(resolve => {
-      server.process.on('exit', resolve);
-      setTimeout(() => {
-        server.process.kill('SIGKILL');
-        resolve();
-      }, 5000);
-    });
-  }
+  await stopServerProcess(server.process);
 
   // Clean up temp directory
   try {

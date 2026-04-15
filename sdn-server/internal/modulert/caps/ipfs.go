@@ -5,6 +5,7 @@ package caps
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -84,11 +85,17 @@ func (c *ipfsCapClient) handle(operation string, payload []byte) ([]byte, error)
 
 	case "ipfs.add":
 		var content []byte
-		if raw := str("data"); raw != "" {
+		if raw := str("base64"); raw != "" {
+			decoded, err := base64.StdEncoding.DecodeString(raw)
+			if err != nil {
+				return errCapJSON("invalid base64 payload"), nil
+			}
+			content = decoded
+		} else if raw := str("data"); raw != "" {
 			content = []byte(raw)
 		}
 		if len(content) == 0 {
-			return errCapJSON("missing data"), nil
+			return errCapJSON("missing base64 or data"), nil
 		}
 		var buf bytes.Buffer
 		w := multipart.NewWriter(&buf)
