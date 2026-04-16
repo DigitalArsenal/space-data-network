@@ -81,11 +81,15 @@ jobs:
       - name: Publish to npm
         if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
         working-directory: sdn-js
+        env:
+          NODE_AUTH_TOKEN: ''
         run: npm publish --provenance --access public --tag ${{ steps.tag.outputs.tag }}
 
       - name: Publish dry run
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         working-directory: sdn-js
+        env:
+          NODE_AUTH_TOKEN: ''
         run: |
           echo "=== DRY RUN ==="
           npm publish --dry-run --access public
