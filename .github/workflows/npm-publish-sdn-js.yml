@@ -56,7 +56,7 @@ jobs:
           npm pack --dry-run 2>&1
           echo ""
           echo "=== Checking required files ==="
-          for f in dist/index.js dist/index.esm.js dist/index.d.ts; do
+          for f in dist/index.mjs dist/index.d.ts; do
             if [ ! -f "$f" ]; then
               echo "ERROR: Missing $f"
               exit 1
@@ -82,8 +82,6 @@ jobs:
         if: ${{ github.event_name == 'release' || inputs.dry_run != 'true' }}
         working-directory: sdn-js
         run: npm publish --provenance --access public --tag ${{ steps.tag.outputs.tag }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish dry run
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true' }}
