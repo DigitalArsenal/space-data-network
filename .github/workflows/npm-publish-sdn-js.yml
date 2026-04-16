@@ -79,12 +79,12 @@ jobs:
           fi
 
       - name: Publish to npm
-        if: ${{ github.event_name == 'release' || inputs.dry_run != 'true' }}
+        if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
         working-directory: sdn-js
         run: npm publish --provenance --access public --tag ${{ steps.tag.outputs.tag }}
 
       - name: Publish dry run
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         working-directory: sdn-js
         run: |
           echo "=== DRY RUN ==="
