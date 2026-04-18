@@ -9,6 +9,7 @@ import StrokeWeb from '../icons/StrokeWeb.js'
 import StrokeCube from '../icons/StrokeCube.js'
 import StrokeSettings from '../icons/StrokeSettings.js'
 import StrokeIpld from '../icons/StrokeIpld.js'
+import StrokeLab from '../icons/StrokeLab.js'
 
 // Styles
 import './NavBar.css'
@@ -37,10 +38,10 @@ const NavLink = ({
   const anchorClass = classnames({
     'bg-white-10 navbar-item-active': active,
     'o-50 no-pointer-events': disabled
-  }, ['navbar-item dib db-l pt1 pb2 pv1-l white no-underline f5 hover-bg-white-10 tc bb bw2 bw0-l b--navy'])
+  }, ['navbar-item dib db-l pt2 pb3 pv1-l white no-underline f5 hover-bg-white-10 tc bb bw2 bw0-l b--navy'])
   const svgClass = classnames({
     'o-100': active,
-    'o-70': !active
+    'o-50': !active
   }, ['fill-current-color'])
 
   return (
@@ -48,9 +49,9 @@ const NavLink = ({
     <a href={disabled ? undefined : href} onClick={(e) => e.currentTarget.blur()} className={anchorClass} role='menuitem' title={children}>
       <div className='db ph2 pv1'>
         <div className='db'>
-          <Svg width='36' role='presentation' className={svgClass} />
+          <Svg width='46' role='presentation' className={svgClass} />
         </div>
-        <div className={`${active ? 'o-100' : 'o-70'} db f7 tc montserrat ttu fw1 navbar-item-label`}>
+        <div className={`${active ? 'o-100' : 'o-50'} db f6 tc montserrat ttu fw1 navbar-item-label`}>
           {children}
         </div>
       </div>
@@ -82,6 +83,7 @@ export const NavBar = ({ t }) => {
           <NavLink to='/explore' icon={StrokeIpld}>{t('explore:tabName')}</NavLink>
           <NavLink to='/peers' icon={StrokeCube}>{t('peers:title')}</NavLink>
           <NavLink to='/settings' icon={StrokeSettings}>{t('settings:title')}</NavLink>
+          <NavLink to='/diagnostics' icon={StrokeLab}>{t('diagnostics:title')}</NavLink>
         </div>
       </div>
       <div className='dn db-l navbar-footer mb2 tc center f7 o-80 glow'>

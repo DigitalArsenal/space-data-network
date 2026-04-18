@@ -1,323 +1,370 @@
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState
-} from 'react'
+import React, { createContext, useContext, useReducer, useEffect, useCallback, useMemo, useRef, useState } from 'react'
+import { logsReducer, initLogsState } from './reducer'
+import { parseLogEntry, getLogLevels, setLogLevelsBatch as setLogLevelsBatchApi } from './api'
+import { useBatchProcessor } from './use-batch-processor'
+import { logStorage } from './log-storage'
+import { useBridgeSelector } from '../../helpers/context-bridge'
+import { calculateGologLevelString } from '../../lib/golog-level-utils'
+import type { KuboRPCClient } from 'kubo-rpc-client'
+import type { LogEntry } from './api'
+import type { LogBufferConfig, LogRateState } from './reducer'
+import type { LogStorageStats } from './log-storage'
+import { useAgentVersionMinimum } from '../../lib/hooks/use-agent-version-minimum'
 
-import type {
-  LogEntry,
-  LogRateState,
-  LogStorageStats,
-  LogSubsystemState
-} from './api'
-import {
-  DEFAULT_LOG_BUFFER_CONFIG,
-  sanitizeLogBufferConfig,
-  type LogBufferConfig
-} from './reducer'
-import { calculateGologLevelString, subsystemsToActualLevels, type LogSubsystem } from '../../lib/golog-level-utils'
+interface LogsProviderProps {
+  children: React.ReactNode
+  ipfs?: KuboRPCClient
+  ipfsConnected?: boolean
+}
 
-const BUFFER_CONFIG_STORAGE_KEY = 'sdn:webui:logs-buffer-config'
-
-const DEFAULT_SUBSYSTEM_NAMES = [
-  'bitswap',
-  'dht',
-  'swarm',
-  'provider',
-  'relay',
-  'pubsub'
-]
-
-const SAMPLE_MESSAGES = [
-  'peer routing table refreshed',
-  'bitswap session tick',
-  'provider announcement completed',
-  'swarm connection stabilized',
-  'content retrieval diagnostic event'
-]
-
-interface LogsContextValue {
+/**
+ * Logs context value
+ */
+export interface LogsContextValue {
+  // Log entries and streaming
   entries: LogEntry[]
   isStreaming: boolean
+
+  // Log levels
+  subsystemLevels: Record<string, string>
+  actualLogLevels: Record<string, string>
+  isLoadingLevels: boolean
+
+  // Configuration and monitoring
   bufferConfig: LogBufferConfig
   rateState: LogRateState
   storageStats: LogStorageStats | null
+
+  // Computed values
   gologLevelString: string | null
-  subsystems: LogSubsystemState[]
+  subsystems: Array<{ name: string; level: string }>
   isAgentVersionSupported: boolean
+
+  // Actions
   startStreaming: () => void
   stopStreaming: () => void
   clearEntries: () => void
+  setLogLevelsBatch: (levels: Array<{ subsystem: string; level: string }>) => Promise<void>
+  updateBufferConfig: (config: Partial<LogBufferConfig>) => void
+
+  fetchLogLevels: () => void
+  updateStorageStats: () => void
   showWarning: () => void
-  updateBufferConfig: (config: LogBufferConfig) => void
-  setLogLevelsBatch: (levels: Array<{ subsystem: string, level: string }>) => Promise<void>
 }
 
+/**
+ * Logs context
+ */
 const LogsContext = createContext<LogsContextValue | undefined>(undefined)
+LogsContext.displayName = 'LogsContext'
 
-function loadInitialBufferConfig(): LogBufferConfig {
-  if (typeof window === 'undefined') {
-    return DEFAULT_LOG_BUFFER_CONFIG
-  }
+/**
+ * Streamlined logs provider component with performance optimizations
+ */
+export const LogsProvider: React.FC<LogsProviderProps> = ({ children }) => {
+  // Use lazy initialization to avoid recreating deep objects on every render
+  const [state, dispatch] = useReducer(logsReducer, undefined, initLogsState)
+  const [bootstrapped, setBootstrapped] = useState(false)
+  const streamControllerRef = useRef<AbortController | null>(null)
+  const ipfs = useBridgeSelector('selectIpfs') as KuboRPCClient
+  const ipfsConnected = useBridgeSelector('selectIpfsConnected') as boolean
 
-  try {
-    const raw = window.localStorage.getItem(BUFFER_CONFIG_STORAGE_KEY)
-    if (!raw) {
-      return DEFAULT_LOG_BUFFER_CONFIG
-    }
-    return sanitizeLogBufferConfig(JSON.parse(raw))
-  } catch {
-    return DEFAULT_LOG_BUFFER_CONFIG
-  }
-}
-
-function createBaseSubsystems(globalLevel: string): LogSubsystemState[] {
-  return DEFAULT_SUBSYSTEM_NAMES.map((name) => ({ name, level: globalLevel }))
-}
-
-function randomSample<T>(values: T[]): T {
-  const index = Math.floor(Math.random() * values.length)
-  return values[index]
-}
-
-export const LogsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [entries, setEntries] = useState<LogEntry[]>([])
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [bufferConfig, setBufferConfig] = useState<LogBufferConfig>(() => loadInitialBufferConfig())
-  const [rateState, setRateState] = useState<LogRateState>({
-    currentRate: 0,
-    hasWarned: false,
-    autoDisabled: false
+  /**
+   * Kubo only adds support for getting log levels in version 0.37.0 and later.
+   *
+   * Kubo fixed log tailing in version 0.36.0 and later.
+   * @see https://github.com/ipfs/kubo/issues/10867
+   */
+  const { ok: isAgentVersionSupported } = useAgentVersionMinimum({
+    minimumVersion: '0.37.0',
+    requiredAgent: 'kubo'
   })
-  const [gologLevelString, setGologLevelString] = useState<string>('error')
-  const [subsystems, setSubsystems] = useState<LogSubsystemState[]>(() => createBaseSubsystems('error'))
 
-  const nextEntryIdRef = useRef(1)
-  const streamTimerRef = useRef<number | null>(null)
-  const timestampsRef = useRef<number[]>([])
-  const bufferConfigRef = useRef(bufferConfig)
+  // Use ref for mount status to avoid stale closures
+  const isMounted = useRef(true)
+  const addBatch = useCallback(async (entryCount: number) => {
+    // we always pull from storage to ensure we have the properly set logEntry with id
+    const entries = await logStorage.getRecentLogs(entryCount)
+    dispatch({ type: 'ADD_BATCH', entries })
+  }, [dispatch])
+  const onRateUpdate = useCallback((currentRate: number, recentCounts: Array<{ second: number; count: number }>, stats?: any) => {
+    dispatch({
+      type: 'UPDATE_RATE_STATE',
+      rateState: { currentRate, recentCounts }
+    })
 
-  useEffect(() => {
-    bufferConfigRef.current = bufferConfig
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(BUFFER_CONFIG_STORAGE_KEY, JSON.stringify(bufferConfig))
+    // Update storage stats if provided
+    if (stats != null) {
+      dispatch({ type: 'UPDATE_STORAGE_STATS', stats })
     }
-  }, [bufferConfig])
+  }, [])
+  const onAutoDisable = useCallback(() => {
+    dispatch({ type: 'AUTO_DISABLE' })
+    streamControllerRef.current?.abort()
+  }, [])
+
+  // Use the improved batch processor hook
+  const batchProcessor = useBatchProcessor(
+    addBatch,
+    state.bufferConfig,
+    logStorage,
+    onRateUpdate,
+    onAutoDisable
+  )
+
+  const fetchLogLevelsInternal = useCallback(async () => {
+    if (!ipfsConnected || !ipfs) return
+    const controller = new AbortController()
+
+    try {
+      dispatch({ type: 'FETCH_LEVELS' })
+      const logLevels = await getLogLevels(ipfs, controller.signal)
+      dispatch({ type: 'UPDATE_LEVELS', levels: logLevels })
+    } catch (error: unknown) {
+      console.error('Failed to fetch log levels:', error)
+      dispatch({ type: 'UPDATE_LEVELS', levels: {} })
+    }
+    return () => {
+      controller.abort()
+    }
+  }, [ipfs, ipfsConnected])
+
+  const setLogLevelsBatch = useCallback(async (levels: Array<{ subsystem: string; level: string }>) => {
+    if (!ipfsConnected || !ipfs) return
+
+    try {
+      // Set all levels in batch and get the final state
+      const finalLevels = await setLogLevelsBatchApi(ipfs, levels)
+
+      // Update the state with the final levels from the API response
+      dispatch({ type: 'UPDATE_LEVELS', levels: finalLevels })
+    } catch (error) {
+      console.error('Failed to set log levels in batch:', error)
+      throw error
+    }
+  }, [ipfs, ipfsConnected])
+
+  const processStream = useCallback(async (stream: AsyncIterable<any>) => {
+    try {
+      for await (const entry of stream) {
+        if (streamControllerRef.current?.signal.aborted) break
+        const logEntry = parseLogEntry(entry)
+        if (logEntry) {
+          batchProcessor.addEntry(logEntry)
+        }
+      }
+    } catch (error) {
+      if (!streamControllerRef.current?.signal.aborted) {
+        console.error('Log streaming error:', error)
+        streamControllerRef.current?.abort()
+        dispatch({ type: 'STOP_STREAMING' })
+      }
+    }
+  }, [batchProcessor, dispatch])
 
   const stopStreaming = useCallback(() => {
-    if (streamTimerRef.current !== null && typeof window !== 'undefined') {
-      window.clearInterval(streamTimerRef.current)
-      streamTimerRef.current = null
+    dispatch({ type: 'STOP_STREAMING' })
+    streamControllerRef.current?.abort()
+    batchProcessor.stop()
+  }, [batchProcessor, dispatch])
+
+  const startStreaming = useCallback(async () => {
+    if (!ipfsConnected || !ipfs) {
+      console.error('IPFS instance not available')
+      return
     }
-    setIsStreaming(false)
-    setRateState((current) => ({
-      ...current,
-      currentRate: 0
-    }))
-    timestampsRef.current = []
-  }, [])
 
-  const pushEntry = useCallback((entry: Omit<LogEntry, 'id'>) => {
-    const now = Date.now()
-    timestampsRef.current.push(now)
-    timestampsRef.current = timestampsRef.current.filter((timestamp) => now - timestamp <= 1000)
+    const controller = new AbortController()
+    streamControllerRef.current = controller
+    dispatch({ type: 'START_STREAMING' })
+    batchProcessor.start(streamControllerRef)
 
-    const currentRate = timestampsRef.current.length
-    const thresholdConfig = bufferConfigRef.current
-    const autoDisabled = currentRate > thresholdConfig.autoDisableThreshold
+    try {
+      await logStorage.init()
 
-    setEntries((current) => {
-      const next: LogEntry[] = [
-        ...current,
-        {
-          ...entry,
-          id: nextEntryIdRef.current++
+      // Load recent logs from storage
+      try {
+        const recentLogs = await logStorage.getRecentLogs(state.bufferConfig.memory)
+        if (recentLogs.length > 0) {
+          dispatch({ type: 'ADD_BATCH', entries: recentLogs })
         }
-      ]
 
-      if (next.length > thresholdConfig.memory) {
-        return next.slice(next.length - thresholdConfig.memory)
+        const stats = await logStorage.getStorageStats()
+        dispatch({ type: 'UPDATE_STORAGE_STATS', stats })
+      } catch (error) {
+        console.warn('Failed to load recent logs from storage:', error)
       }
-      return next
-    })
 
-    setRateState((current) => ({
-      ...current,
-      currentRate,
-      autoDisabled: current.autoDisabled || autoDisabled
-    }))
+      const stream = ipfs.log.tail({ signal: controller.signal })
 
-    if (autoDisabled) {
+      if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
+        void processStream(stream)
+      } else {
+        throw new Error('Log streaming not supported')
+      }
+    } catch (error) {
+      console.error('Failed to start log streaming:', error)
       stopStreaming()
     }
-  }, [stopStreaming])
+  }, [ipfsConnected, ipfs, batchProcessor, state.bufferConfig.memory, processStream, stopStreaming])
 
-  const startStreaming = useCallback(() => {
-    if (streamTimerRef.current !== null || typeof window === 'undefined') {
-      setIsStreaming(true)
-      return
+  const clearEntries = useCallback(async () => {
+    try {
+      await logStorage.clearAllLogs()
+    } catch (error) {
+      console.warn('Failed to clear IndexedDB logs:', error)
     }
+    dispatch({ type: 'CLEAR_ENTRIES' })
+  }, [])
 
-    setIsStreaming(true)
-    setRateState((current) => ({
-      ...current,
-      autoDisabled: false
-    }))
+  const updateBufferConfig = useCallback((config: Partial<LogBufferConfig>) => {
+    dispatch({ type: 'UPDATE_BUFFER_CONFIG', config })
+    if (config.indexedDB != null) {
+      logStorage.updateConfig({ maxEntries: config.indexedDB })
+    }
+  }, [])
 
-    streamTimerRef.current = window.setInterval(() => {
-      const timestamp = new Date().toISOString()
-      const subsystem = randomSample(DEFAULT_SUBSYSTEM_NAMES)
-      const level = randomSample(['info', 'warn', 'error', 'debug'])
-      const message = randomSample(SAMPLE_MESSAGES)
-      pushEntry({
-        timestamp,
-        level,
-        subsystem,
-        message
-      })
-    }, 1000)
-  }, [pushEntry])
+  const updateStorageStatsInternal = useCallback(async () => {
+    try {
+      const stats = await logStorage.getStorageStats()
+      dispatch({ type: 'UPDATE_STORAGE_STATS', stats })
+    } catch (error) {
+      console.error('Failed to update storage stats:', error)
+    }
+  }, [])
 
-  useEffect(() => {
-    return () => {
-      if (streamTimerRef.current !== null && typeof window !== 'undefined') {
-        window.clearInterval(streamTimerRef.current)
+  const loadExistingEntries = useCallback(async () => {
+    try {
+      await logStorage.init()
+      const recentLogs = await logStorage.getRecentLogs(state.bufferConfig.memory)
+      if (recentLogs.length > 0) {
+        dispatch({ type: 'ADD_BATCH', entries: recentLogs })
       }
+    } catch (error) {
+      console.warn('Failed to load existing log entries:', error)
     }
-  }, [])
-
-  const clearEntries = useCallback(() => {
-    setEntries([])
-    timestampsRef.current = []
-    setRateState((current) => ({
-      ...current,
-      currentRate: 0,
-      autoDisabled: false
-    }))
-  }, [])
+  }, [state.bufferConfig.memory])
 
   const showWarning = useCallback(() => {
-    setRateState((current) => ({
-      ...current,
-      hasWarned: true
-    }))
+    dispatch({ type: 'SHOW_WARNING' })
   }, [])
 
-  const updateBufferConfig = useCallback((nextConfig: LogBufferConfig) => {
-    setBufferConfig(sanitizeLogBufferConfig(nextConfig))
-  }, [])
+  // Compute GOLOG_LOG_LEVEL equivalent string
+  const gologLevelString = useMemo(() => {
+    // Only calculate if log levels have been loaded
+    if (state.isLoadingLevels || Object.keys(state.actualLogLevels).length === 0) {
+      return null
+    }
 
-  const setLogLevelsBatch = useCallback(async (levels: Array<{ subsystem: string, level: string }>) => {
-    const normalized = levels
-      .map((level) => ({
-        subsystem: String(level.subsystem || '').trim(),
-        level: String(level.level || '').trim().toLowerCase()
+    return calculateGologLevelString(state.actualLogLevels)
+  }, [state.isLoadingLevels, state.actualLogLevels])
+
+  // Compute subsystems list from actual log levels
+  const subsystems = useMemo(() => {
+    return Object.entries(state.actualLogLevels)
+      .filter(([name]) => name !== '(default)')
+      .map(([name, level]) => ({
+        name,
+        level: level || 'info'
       }))
-      .filter((level) => level.subsystem.length > 0 && level.level.length > 0)
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [state.actualLogLevels])
 
-    if (normalized.length === 0) {
-      return
+  useEffect(() => {
+    // Update storage config with current buffer settings
+    logStorage.updateConfig({ maxEntries: state.bufferConfig.indexedDB })
+  }, [state.bufferConfig.indexedDB])
+
+  // Cleanup effect - stops streaming on unmount
+  useEffect(() => {
+    isMounted.current = true
+    return () => {
+      stopStreaming()
+      isMounted.current = false
     }
-
-    let globalLevel = 'error'
-    for (const { subsystem, level } of normalized) {
-      if (subsystem === '*' || subsystem === '(default)') {
-        globalLevel = level
-      }
-    }
-
-    setSubsystems((current) => {
-      const levelsBySubsystem = new Map<string, string>()
-      for (const item of current) {
-        levelsBySubsystem.set(item.name, item.level)
-      }
-
-      for (const item of normalized) {
-        if (item.subsystem === '*' || item.subsystem === '(default)') {
-          continue
-        }
-        levelsBySubsystem.set(item.subsystem, item.level)
-      }
-
-      const merged = [...levelsBySubsystem.entries()]
-        .map(([name, level]) => ({ name, level }))
-        .sort((a, b) => a.name.localeCompare(b.name))
-
-      const gologInput: LogSubsystem[] = [
-        { subsystem: '*', level: globalLevel },
-        ...merged.map((item) => ({ subsystem: item.name, level: item.level }))
-      ]
-
-      const nextGologValue = calculateGologLevelString(subsystemsToActualLevels(gologInput))
-      setGologLevelString(nextGologValue ?? globalLevel)
-      return merged
-    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const storageStats = useMemo<LogStorageStats>(() => {
-    const estimatedSize = entries.reduce((sum, entry) => {
-      return (
-        sum +
-        entry.timestamp.length +
-        entry.level.length +
-        entry.subsystem.length +
-        entry.message.length +
-        16
-      )
-    }, 0)
+  // Initialize log storage and bootstrap data
+  useEffect(() => {
+    if (bootstrapped || !isAgentVersionSupported) return
 
-    return {
-      totalEntries: entries.length,
-      estimatedSize
+    async function bootstrap () {
+      if (!isMounted.current) return
+
+      try {
+        await logStorage.init()
+      } catch (error) {
+        console.warn('Failed to initialize log storage:', error)
+      }
+
+      if (!isMounted.current) return
+
+      // Load initial data in parallel when IPFS is connected
+      if (ipfsConnected && ipfs) {
+        await Promise.allSettled([
+          fetchLogLevelsInternal(),
+          updateStorageStatsInternal(),
+          loadExistingEntries()
+        ]).then(() => {
+          setBootstrapped(true)
+        })
+      }
     }
-  }, [entries])
 
-  const value = useMemo<LogsContextValue>(() => ({
-    entries,
-    isStreaming,
-    bufferConfig,
-    rateState,
-    storageStats,
-    gologLevelString,
-    subsystems,
-    isAgentVersionSupported: true,
+    bootstrap()
+  }, [ipfsConnected, ipfs, fetchLogLevelsInternal, updateStorageStatsInternal, loadExistingEntries, bootstrapped, isAgentVersionSupported])
+
+  // Group related actions for cleaner context value assembly
+  const logActions = useMemo(() => ({
     startStreaming,
     stopStreaming,
     clearEntries,
-    showWarning,
+    setLogLevelsBatch,
     updateBufferConfig,
-    setLogLevelsBatch
+    fetchLogLevels: fetchLogLevelsInternal,
+    updateStorageStats: updateStorageStatsInternal,
+    loadExistingEntries,
+    showWarning
   }), [
-    entries,
-    isStreaming,
-    bufferConfig,
-    rateState,
-    storageStats,
-    gologLevelString,
-    subsystems,
     startStreaming,
     stopStreaming,
     clearEntries,
-    showWarning,
+    setLogLevelsBatch,
     updateBufferConfig,
-    setLogLevelsBatch
+    fetchLogLevelsInternal,
+    updateStorageStatsInternal,
+    loadExistingEntries,
+    showWarning
   ])
 
+  // Ensure we have safe defaults for arrays
+  const safeLogEntries = useMemo(() => Array.from(state.entries.values()), [state.entries])
+
+  // Combine state, computed values, and actions - React will optimize this automatically
+  const contextValue: LogsContextValue = {
+    ...state,
+    ...logActions,
+    entries: safeLogEntries,
+    gologLevelString,
+    subsystems,
+    isAgentVersionSupported
+  }
+
   return (
-    <LogsContext.Provider value={value}>
+    <LogsContext.Provider value={contextValue}>
       {children}
     </LogsContext.Provider>
   )
 }
 
-export function useLogs(): LogsContextValue {
+/**
+ * Hook to consume the logs context
+ */
+export function useLogs (): LogsContextValue {
   const context = useContext(LogsContext)
-  if (!context) {
-    throw new Error('useLogs must be used inside LogsProvider')
+  if (context === undefined) {
+    throw new Error('useLogs must be used within a LogsProvider')
   }
   return context
 }

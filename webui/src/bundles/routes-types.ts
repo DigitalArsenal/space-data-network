@@ -16,11 +16,13 @@ export interface RouteInfo {
   page: React.ReactNode
 
   params: {
+    // if you are on #/diagnostics/logs, this will be equal to '/logs'
     path: string
   }
 
   /**
    * This will match whatever key is set in src/bundles/routes.js for the page that is currently active.
+   * For the diagnostics page, this will be equal to '/diagnostics*'
    */
   pattern: string
 
