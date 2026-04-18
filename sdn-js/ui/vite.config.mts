@@ -8,6 +8,7 @@ const packageRoot = path.resolve(__dirname, '..');
 
 export default defineConfig({
   root: __dirname,
+  base: './',
   resolve: {
     alias: [
       {
