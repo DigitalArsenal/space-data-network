@@ -8,6 +8,9 @@ Browser and Node.js SDK for the [Space Data Network](https://github.com/DigitalA
 npm install @spacedatanetwork/sdn-js
 ```
 
+The package root exports the core SDN SDK. The browser UI/runtime surface is
+published separately at `@spacedatanetwork/sdn-js/ui`.
+
 ## Quick Start
 
 ```typescript
@@ -56,6 +59,19 @@ await node.stop();
 - **Local storage** -- IndexedDB-backed record store with schema-based queries
 - **Data marketplace** -- storefront client for listing, purchasing, and reviewing space data
 - **EPM resolution** -- Entity Profile Manifest discovery and key exchange
+
+## Browser UI Runtime
+
+Use the explicit UI subpath when embedding the SDN browser UI/runtime helpers in
+your own app.
+
+```typescript
+import {
+  ObservedPeerIndex,
+  SDNUIEventBus,
+  mountWalletUI,
+} from '@spacedatanetwork/sdn-js/ui';
+```
 
 ## Configuration
 

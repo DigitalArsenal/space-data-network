@@ -120,7 +120,7 @@ Resume behavior is checkpointed at:
 
 ## Stripe Subscription Billing (Storefront)
 
-The daemon now mounts storefront routes on the admin HTTP listener, including Stripe-backed checkout and webhook handling:
+The daemon now mounts storefront routes on the admin HTTP listener, including Stripe-backed checkout and webhook handling. The IPFS WebUI is mounted separately at `/webui`, while `/admin` remains reserved for admin/auth flows:
 
 - `POST /api/storefront/purchases/{request_id}/pay-fiat`
 - `POST /api/storefront/payments/stripe/webhook`

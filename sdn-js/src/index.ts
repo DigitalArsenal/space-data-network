@@ -19,6 +19,9 @@ export {
 export type {
   DiscoveredProvider,
   EncryptedModuleBundleResult,
+  ModuleDeliveryEvent,
+  ModuleDeliveryObserver,
+  ModuleDeliveryStage,
   ModuleDeliveryTransport,
   ModuleGrantRequestOptions,
   ModuleGrantResult,

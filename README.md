@@ -34,6 +34,18 @@ Space Data Network enables real-time sharing of space situational awareness data
 - **Cryptographic Verification** - Ed25519 signatures on all data
 - **Cross-Platform** - Server (Go), Browser (TypeScript), Desktop, Edge Relay support
 
+## Current UI Surfaces
+
+- `/` is the browser-first SDN UI.
+- `/webui` is the upstream-style IPFS WebUI.
+- `/admin` is reserved for admin and auth flows.
+
+The SDN browser path uses `sdn-js` plus the generic async capability surfaces from `space-data-module-sdk` and the existing `hd-wallet-wasm` and `hd-wallet-ui` identity stack. It does not use a helper service or the old broker/bootstrap browser flow.
+
+## Marketplace Direction
+
+Marketplace discovery is driven by the canonical `PLG` manifest from `spacedatastandards.org`. There is exactly one signed listing per `PLUGIN_ID + VERSION`, and schema changes must land upstream before they are consumed here.
+
 ---
 
 ## Quick Start

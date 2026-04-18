@@ -1,0 +1,1 @@
+export const HD_WALLET_SDN_PLUGIN_MANIFEST = '';

@@ -8,12 +8,8 @@ import AnalyticsPage from '../settings/AnalyticsPage.js'
 import WelcomePage from '../welcome/LoadableWelcomePage.js'
 import BlankPage from '../blank/BlankPage.js'
 import ExplorePageRenderer from '../explore/explore-page-renderer.jsx'
-import SchemasPage from '../schemas/LoadableSchemasPage.js'
-import PluginsPage from '../plugins/LoadablePluginsPage.js'
 
 export default createRouteBundle({
-  '/plugins*': PluginsPage,
-  '/schemas': SchemasPage,
   '/explore': ExplorePageRenderer,
   '/explore*': ExplorePageRenderer,
   '/files*': FilesPage,

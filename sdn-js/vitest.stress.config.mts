@@ -1,7 +1,7 @@
 /**
  * Vitest configuration for stress tests only.
  *
- * Run with: npx vitest run --config vitest.stress.config.ts
+ * Run with: npx vitest run --config vitest.stress.config.mts
  */
 import { defineConfig } from 'vitest/config';
 

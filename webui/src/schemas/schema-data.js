@@ -1,6 +1,6 @@
 /**
  * Space Data Standards - Schema Registry Data
- * Copied from spacedatastandards-site/schemas.js and app.js for use in WebUI
+ * Shared registry data consumed by the WebUI.
  */
 
 export const SCHEMA_CATEGORIES = {
