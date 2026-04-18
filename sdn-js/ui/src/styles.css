@@ -95,6 +95,34 @@ pre {
   padding: 1.5rem;
 }
 
+.sdn-account-dialog[hidden] {
+  display: none;
+}
+
+.sdn-account-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.sdn-account-dialog__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(19, 32, 48, 0.42);
+}
+
+.sdn-account-dialog__panel {
+  position: relative;
+  z-index: 1;
+  width: min(32rem, calc(100vw - 2rem));
+  margin: 5rem 1rem 0 auto;
+  padding: 1.25rem;
+  border: 1px solid var(--sdn-line);
+  border-radius: 1.4rem;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 1.4rem 3rem rgba(19, 32, 48, 0.18);
+}
+
 .sdn-admin-topbar {
   display: flex;
   justify-content: space-between;
@@ -368,6 +396,99 @@ pre {
   background: linear-gradient(120deg, var(--sdn-accent), var(--sdn-accent-strong));
 }
 
+.sdn-frontend-shell {
+  display: grid;
+  grid-template-columns: minmax(18rem, 26rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.sdn-frontend-shell__sidebar,
+.sdn-frontend-shell__editor {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--sdn-line);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.sdn-frontend-shell__sidebar {
+  resize: horizontal;
+  overflow: auto;
+}
+
+.sdn-frontend-shell__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+  margin-bottom: 0.8rem;
+}
+
+.sdn-frontend-tree__list {
+  list-style: none;
+  margin: 0;
+  padding-left: 0.85rem;
+}
+
+.sdn-frontend-tree__node + .sdn-frontend-tree__node {
+  margin-top: 0.35rem;
+}
+
+.sdn-frontend-tree__item {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 0.8rem;
+  padding: 0.55rem 0.7rem;
+  background: transparent;
+  color: var(--sdn-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sdn-frontend-tree__item:hover,
+.sdn-frontend-tree__item--active {
+  border-color: rgba(18, 86, 196, 0.15);
+  background: rgba(18, 86, 196, 0.08);
+}
+
+.sdn-frontend-tree__badge {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  min-width: 3rem;
+  border-radius: 999px;
+  padding: 0.15rem 0.45rem;
+  background: rgba(18, 86, 196, 0.1);
+  color: var(--sdn-accent-strong);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.sdn-frontend-editor {
+  min-height: 32rem;
+  border: 1px solid var(--sdn-line);
+  border-radius: 1rem;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.sdn-frontend-editor__fallback {
+  width: 100%;
+  min-height: 32rem;
+  border: 0;
+  padding: 1rem;
+  font: 500 0.95rem/1.6 "IBM Plex Mono", "SFMono-Regular", monospace;
+  color: var(--sdn-code);
+  background: transparent;
+  resize: none;
+}
+
 .sdn-error {
   margin: 0;
   padding: 2rem;
@@ -396,5 +517,18 @@ pre {
 
   .sdn-admin-topbar {
     flex-direction: column;
+  }
+
+  .sdn-account-dialog__panel {
+    margin: 1rem;
+    width: auto;
+  }
+
+  .sdn-frontend-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sdn-frontend-shell__sidebar {
+    resize: none;
   }
 }

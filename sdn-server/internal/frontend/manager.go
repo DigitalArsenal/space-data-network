@@ -48,6 +48,7 @@ func (m *Manager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/frontend/files", m.handleFiles)
 	mux.HandleFunc("/api/admin/frontend/files/", m.handleFilePath)
 	mux.HandleFunc("/api/admin/frontend/upload", m.handleUpload)
+	mux.HandleFunc("/api/admin/frontend/move", m.handleMove)
 	mux.HandleFunc("/api/admin/frontend/git-import", m.handleGitImport)
 }
 
@@ -212,6 +213,65 @@ func (m *Manager) deleteFile(w http.ResponseWriter, _ *http.Request, fullPath, r
 	})
 }
 
+func (m *Manager) handleMove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8*1024)).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	fromPath, fromRel, err := m.resolvePath(body.From)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	toPath, toRel, err := m.resolvePath(body.To)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if _, err := os.Stat(fromPath); err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "source not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(toPath), 0o755); err != nil {
+		http.Error(w, fmt.Sprintf("failed to prepare target: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if err := os.Rename(fromPath, toPath); err != nil {
+		if cpErr := copyRecursive(fromPath, toPath); cpErr != nil {
+			http.Error(w, fmt.Sprintf("failed to move: %v", cpErr), http.StatusInternalServerError)
+			return
+		}
+		if rmErr := os.RemoveAll(fromPath); rmErr != nil {
+			http.Error(w, fmt.Sprintf("failed to clean source: %v", rmErr), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+		"from":   fromRel,
+		"to":     toRel,
+	})
+}
+
 // handleUpload handles multipart file uploads to the frontend directory.
 func (m *Manager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -280,6 +340,26 @@ func saveUploadedFile(header *multipart.FileHeader, targetDir string) error {
 
 	_, err = io.Copy(dst, src)
 	return err
+}
+
+func (m *Manager) resolvePath(relPath string) (string, string, error) {
+	trimmed := strings.TrimSpace(relPath)
+	if trimmed == "" {
+		return "", "", fmt.Errorf("path required")
+	}
+
+	clean := filepath.Clean(trimmed)
+	if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+		return "", "", fmt.Errorf("invalid path")
+	}
+	fullPath := filepath.Join(m.dir, filepath.FromSlash(clean))
+
+	absDir, _ := filepath.Abs(m.dir)
+	absPath, _ := filepath.Abs(fullPath)
+	if !strings.HasPrefix(absPath, absDir+string(os.PathSeparator)) && absPath != absDir {
+		return "", "", fmt.Errorf("invalid path")
+	}
+	return fullPath, filepath.ToSlash(clean), nil
 }
 
 // handleGitImport clones a git repository into the frontend directory.

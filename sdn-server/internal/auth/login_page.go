@@ -522,42 +522,151 @@ func buildLoginPage(jsFile, cssFile string) string {
 func serveFallbackLogin(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write([]byte(fallbackLoginHTML))
+	w.Write([]byte(buildFallbackLoginPage()))
 }
 
-const fallbackLoginHTML = `<!doctype html>
+const (
+	fallbackWalletUIModuleURL = "https://unpkg.com/hd-wallet-ui@2.0.2/src/app.js?module"
+	fallbackWalletUICSSURL    = "https://unpkg.com/hd-wallet-ui@2.0.2/styles/widget.css"
+)
+
+func buildFallbackLoginPage() string {
+	return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Space Data Network — Login</title>
+  <link rel="stylesheet" href="` + fallbackWalletUICSSURL + `">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background: #0d1117; color: #c9d1d9;
-      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem;
     }
-    .container { max-width: 480px; width: 100%; padding: 2rem; text-align: center; }
+    .container {
+      max-width: 520px; width: 100%; padding: 2rem; text-align: center;
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 1rem;
+      background: rgba(255,255,255,0.04); box-shadow: 0 1rem 2rem rgba(0,0,0,0.24);
+    }
     h1 { font-size: 1.5rem; font-weight: 300; color: #e6edf6; margin-bottom: 1rem; }
     p { color: #8b949e; margin-bottom: 1.5rem; line-height: 1.6; }
-    a { color: #58a6ff; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    button {
+      border: 0; border-radius: 999px; padding: 0.9rem 1.4rem; cursor: pointer;
+      font: inherit; font-weight: 600; color: #0d1117; background: #f5f5f7;
+    }
+    button:disabled { opacity: 0.45; cursor: default; }
+    .status {
+      min-height: 1.5rem; margin-top: 1rem; color: #8b949e;
+    }
+    .status.success { color: #6ee7b7; }
+    .status.error { color: #fca5a5; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>SPACE DATA NETWORK</h1>
     <p>
-      Authentication requires the HD Wallet UI.<br>
-      The server administrator needs to configure <code>wallet_ui_path</code> in the
-      server config to point to the wallet-ui dist directory.
+      Sign in with your HD Wallet to access the SDN admin interface.
+      This fallback page loads <code>hd-wallet-ui</code> directly from the published package.
     </p>
-    <p>
-      <a href="https://github.com/DigitalArsenal/hd-wallet-wasm" target="_blank">
-        Get HD Wallet UI &rarr;
-      </a>
-    </p>
+    <button id="sdn-sign-in" type="button" disabled>Sign In</button>
+    <div id="sdn-auth-status" class="status">Loading wallet interface…</div>
   </div>
+  <script>
+    window.__sdnOnLogin = async function(identity) {
+      var button = document.getElementById('sdn-sign-in');
+      var status = document.getElementById('sdn-auth-status');
+      var setStatus = function(message, cls) {
+        if (!status) return;
+        status.className = 'status' + (cls ? ' ' + cls : '');
+        status.textContent = message;
+      };
+
+      try {
+        setStatus('Requesting challenge…');
+        var pubKeyHex = Array.from(identity.signingPublicKey)
+          .map(function(byte){ return byte.toString(16).padStart(2, '0'); })
+          .join('');
+        var challengeResp = await fetch('/api/auth/challenge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            xpub: identity.xpub,
+            client_pubkey_hex: pubKeyHex,
+            ts: Math.floor(Date.now() / 1000)
+          })
+        });
+        var challengeData = await challengeResp.json();
+        if (!challengeResp.ok) throw new Error(challengeData.message || 'Challenge failed');
+
+        setStatus('Signing challenge…');
+        var challenge = challengeData.challenge;
+        while (challenge.length % 4 !== 0) challenge += '=';
+        var binary = atob(challenge);
+        var challengeBytes = new Uint8Array(binary.length);
+        for (var index = 0; index < binary.length; index += 1) challengeBytes[index] = binary.charCodeAt(index);
+        var signature = await identity.sign(challengeBytes);
+        var sigHex = Array.from(signature)
+          .map(function(byte){ return byte.toString(16).padStart(2, '0'); })
+          .join('');
+
+        setStatus('Verifying session…');
+        var verifyResp = await fetch('/api/auth/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            challenge_id: challengeData.challenge_id,
+            xpub: identity.xpub,
+            client_pubkey_hex: pubKeyHex,
+            challenge: challengeData.challenge,
+            signature_hex: sigHex
+          })
+        });
+        var verifyData = await verifyResp.json();
+        if (!verifyResp.ok) throw new Error(verifyData.message || 'Authentication failed');
+
+        setStatus('Authenticated. Redirecting…', 'success');
+        if (button) {
+          button.textContent = verifyData.user && verifyData.user.name ? verifyData.user.name : 'Signed In';
+          button.disabled = true;
+        }
+        setTimeout(function(){ window.location.href = '/admin/'; }, 400);
+      } catch (error) {
+        setStatus((error && error.message) || 'Authentication failed', 'error');
+        if (button) button.disabled = false;
+      }
+    };
+
+    window.__sdnWalletReady = function(ui) {
+      var button = document.getElementById('sdn-sign-in');
+      var status = document.getElementById('sdn-auth-status');
+      if (status) status.textContent = 'Ready to authenticate.';
+      if (!button) return;
+      button.disabled = false;
+      button.addEventListener('click', function() {
+        ui.openLogin();
+      });
+    };
+  </script>
+  <script type="module">
+    import { createWalletUI } from '` + fallbackWalletUIModuleURL + `';
+
+    const status = document.getElementById('sdn-auth-status');
+    try {
+      const ui = await createWalletUI(document.body, {
+        onLogin: window.__sdnOnLogin,
+        openAccountAfterLogin: false,
+      });
+      window.__sdnWalletReady(ui);
+    } catch (error) {
+      if (status) {
+        status.className = 'status error';
+        status.textContent = (error && error.message) || 'Failed to load wallet interface.';
+      }
+    }
+  </script>
 </body>
 </html>`
+}

@@ -1,15 +1,30 @@
 import { createMarketplaceIndex, canonicalListingKey } from '../../src/ui/runtime/marketplace';
-import { decodeCanonicalPlgListing } from '../../src/ui/runtime/plg-listings';
+import { loadMarketplaceListingsFromServer } from '../../src/ui/runtime/marketplace-source';
 import { ObservedPeerIndex } from '../../src/ui/runtime/observed-peers';
 import type { CanonicalListing, ObservedPeerSource } from '../../src/ui/runtime/types';
 import { mountWalletUI } from '../../src/ui/runtime/wallet-ui';
+import {
+  createAccountMenuController,
+  type AccountMenuController,
+} from '../../src/ui/runtime/account-menu';
 import {
   createAdminState,
   type AdminState,
   type AdminSnapshot,
 } from '../../src/ui/runtime/admin-state';
+import {
+  createFrontendWorkspace,
+  createLocalFrontendTransport,
+  createServerFrontendTransport,
+  type FrontendUploadFile,
+  type FrontendWorkspace,
+} from '../../src/ui/runtime/frontend-workspace';
 import { createLocalAdapter } from '../../src/ui/runtime/local-adapter';
 import { createServerAdapter } from '../../src/ui/runtime/server-adapter';
+import {
+  createBrowserEditorController,
+  type FrontendEditorController,
+} from './frontend-editor';
 import { parseFirstBrowserBundle } from './browser-bundle';
 import { renderAppShell } from './app';
 import './styles.css';
@@ -127,6 +142,21 @@ const state = {
   node: null as RuntimeNodeLike | null,
   identity: null as RuntimeIdentityLike | null,
   admin: null as AdminState | null,
+  accountMenu: null as AccountMenuController | null,
+  frontendWorkspace: null as FrontendWorkspace | null,
+  frontendWorkspaceKey: null as string | null,
+  frontendEditor: null as FrontendEditorController | null,
+  localFrontendTransport: createLocalFrontendTransport({
+    'index.html': [
+      '<!doctype html>',
+      '<html lang="en">',
+      '<head><meta charset="utf-8"><title>SDN Local Frontend</title></head>',
+      '<body><h1>Space Data Network</h1><p>Local browser-backed workspace.</p></body>',
+      '</html>',
+    ].join(''),
+    'src/main.ts': 'console.log("Space Data Network local frontend");\n',
+    'styles/site.css': 'body { font-family: "IBM Plex Sans", sans-serif; }\n',
+  }),
   marketplace: createMarketplaceIndex(),
   observedPeers: new ObservedPeerIndex(),
   deliveryEvents: [] as ModuleDeliveryEventLike[],
@@ -164,6 +194,28 @@ async function bootstrap(): Promise<void> {
         initialServerTarget,
       }
       : {}),
+  });
+  state.accountMenu = createAccountMenuController({
+    mountWalletUI: async () => {
+      const host = query<HTMLElement>(root, '#sdn-account-wallet-panel');
+      if (!host) {
+        return undefined;
+      }
+      return mountWalletUI(host);
+    },
+    onSignOut: async () => {
+      const snapshot = requireAdminState().snapshot();
+      if (snapshot.mode !== 'server' || !snapshot.serverTarget?.baseUrl) {
+        return;
+      }
+      const response = await fetch(`${snapshot.serverTarget.baseUrl}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error(`logout failed (${response.status})`);
+      }
+    },
   });
 
   bindUI(root);
@@ -225,6 +277,61 @@ function bindUI(root: HTMLElement): void {
   });
   query<HTMLButtonElement>(root, '#sdn-address-lookup-run')?.addEventListener('click', () => {
     void runAddressLookup(root);
+  });
+  query<HTMLButtonElement>(root, '#sdn-account-button')?.addEventListener('click', () => {
+    void openAccountDialog(root);
+  });
+  query<HTMLButtonElement>(root, '#sdn-account-close')?.addEventListener('click', () => {
+    closeAccountDialog(root);
+  });
+  query<HTMLElement>(root, '[data-account-dismiss="backdrop"]')?.addEventListener('click', () => {
+    closeAccountDialog(root);
+  });
+  query<HTMLButtonElement>(root, '#sdn-account-open-wallet')?.addEventListener('click', () => {
+    void openAccountWallet(root);
+  });
+  query<HTMLButtonElement>(root, '#sdn-account-signout')?.addEventListener('click', () => {
+    void signOutAccount(root);
+  });
+  query<HTMLButtonElement>(root, '#sdn-frontend-upload')?.addEventListener('click', () => {
+    query<HTMLInputElement>(root, '#sdn-frontend-upload-input')?.click();
+  });
+  query<HTMLInputElement>(root, '#sdn-frontend-upload-input')?.addEventListener('change', (event) => {
+    void uploadFrontendFiles(root, event.currentTarget as HTMLInputElement | null);
+  });
+  query<HTMLButtonElement>(root, '#sdn-frontend-save')?.addEventListener('click', () => {
+    void saveFrontendFile(root);
+  });
+  query<HTMLButtonElement>(root, '#sdn-frontend-move')?.addEventListener('click', () => {
+    void moveFrontendFile(root);
+  });
+  query<HTMLButtonElement>(root, '#sdn-frontend-delete')?.addEventListener('click', () => {
+    void deleteFrontendFile(root);
+  });
+  query<HTMLElement>(root, '#sdn-frontend-tree')?.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const button = target.closest('[data-frontend-path]');
+    if (!(button instanceof HTMLElement)) {
+      return;
+    }
+    const path = button.getAttribute('data-frontend-path');
+    if (path) {
+      void selectFrontendFile(root, path);
+    }
+  });
+  const frontendWorkspace = query<HTMLElement>(root, '#sdn-frontend-workspace');
+  frontendWorkspace?.addEventListener('dragover', (event) => {
+    event.preventDefault();
+  });
+  frontendWorkspace?.addEventListener('drop', (event) => {
+    event.preventDefault();
+    const files = [...(event.dataTransfer?.files ?? [])];
+    if (files.length > 0) {
+      void uploadFrontendFileList(root, files);
+    }
   });
 }
 
@@ -300,22 +407,7 @@ async function refreshMarketplace(root: HTMLElement): Promise<void> {
   const baseUrl = inferCatalogBaseUrl(root);
 
   try {
-    const response = await fetch(
-      `${baseUrl}/api/v1/data/query/PLG?include_data=true&format=json&limit=25`,
-    );
-    if (!response.ok) {
-      throw new Error(`listing query failed (${response.status})`);
-    }
-
-    const payload = await response.json() as {
-      results?: Array<{ data_base64?: string; timestamp?: string }>;
-    };
-    const listings = (payload.results ?? [])
-      .map((entry) => entry.data_base64 ? decodeCanonicalPlgListing(base64ToBytes(entry.data_base64), {
-        observedAt: entry.timestamp ? Date.parse(entry.timestamp) : Date.now(),
-      }) : null)
-      .filter((listing): listing is CanonicalListing => Boolean(listing));
-
+    const listings = await loadMarketplaceListingsFromServer(baseUrl);
     state.marketplace = createMarketplaceIndex(listings);
     for (const listing of state.marketplace.values()) {
       if (listing.publisherPeerId) {
@@ -749,13 +841,14 @@ async function toggleAdminMode(root: HTMLElement): Promise<void> {
   const admin = requireAdminState();
   const snapshot = admin.snapshot();
   if (snapshot.mode === 'local') {
-    if (snapshot.serverTarget?.baseUrl) {
+    try {
       applyAdminSnapshot(root, await admin.setMode('server'));
       await refreshProviderDescriptor(root);
       return;
+    } catch {
+      await promptAndConnectServer(root);
+      return;
     }
-    await promptAndConnectServer(root);
-    return;
   }
 
   applyAdminSnapshot(root, await admin.setMode('local'));
@@ -790,9 +883,12 @@ async function setWorkspace(root: HTMLElement, workspaceId: string): Promise<voi
 }
 
 function applyAdminSnapshot(root: HTMLElement, snapshot: AdminSnapshot): void {
+  state.accountMenu?.setAdminSnapshot(snapshot);
   renderShellMeta(root, snapshot);
+  renderAccountDialog(root);
   setActiveWorkspace(root, snapshot.workspace.activeId);
   void refreshDirectoryPanel(root);
+  void refreshFrontendWorkspace(root);
 }
 
 function inferProviderDescriptorUrl(root: HTMLElement): string {
@@ -900,6 +996,269 @@ async function refreshDirectoryPanel(root: HTMLElement): Promise<void> {
   }
 }
 
+async function openAccountDialog(root: HTMLElement): Promise<void> {
+  const accountMenu = state.accountMenu;
+  if (!accountMenu) {
+    return;
+  }
+  accountMenu.setAdminSnapshot(requireAdminState().snapshot());
+  await accountMenu.open();
+  renderAccountDialog(root);
+}
+
+function closeAccountDialog(root: HTMLElement): void {
+  state.accountMenu?.close();
+  renderAccountDialog(root);
+}
+
+async function openAccountWallet(root: HTMLElement): Promise<void> {
+  const accountMenu = state.accountMenu;
+  if (!accountMenu) {
+    return;
+  }
+  await accountMenu.openWalletAccount();
+  renderAccountDialog(root);
+}
+
+async function signOutAccount(root: HTMLElement): Promise<void> {
+  const accountMenu = state.accountMenu;
+  const admin = state.admin;
+  if (!accountMenu || !admin) {
+    return;
+  }
+  await accountMenu.signOut();
+  renderAccountDialog(root);
+  const snapshot = admin.snapshot();
+  if (snapshot.mode === 'server') {
+    applyAdminSnapshot(root, await admin.refresh());
+    await refreshProviderDescriptor(root);
+  }
+}
+
+function renderAccountDialog(root: HTMLElement): void {
+  const dialog = query<HTMLElement>(root, '#sdn-account-dialog');
+  const meta = query<HTMLElement>(root, '#sdn-account-meta');
+  const signOutButton = query<HTMLButtonElement>(root, '#sdn-account-signout');
+  const accountMenu = state.accountMenu;
+  if (!dialog || !meta || !accountMenu) {
+    return;
+  }
+
+  const snapshot = accountMenu.snapshot();
+  dialog.hidden = !snapshot.isOpen;
+  dialog.setAttribute('aria-hidden', String(!snapshot.isOpen));
+  meta.innerHTML = `
+    <div class="sdn-stack">
+      <strong>${escapeHtml(snapshot.title)}</strong>
+      <span>Mode: ${escapeHtml(snapshot.mode)}</span>
+      <span>Role: ${escapeHtml(snapshot.role)}</span>
+      <span>${escapeHtml(snapshot.subtitle)}</span>
+    </div>
+  `;
+  if (signOutButton) {
+    signOutButton.hidden = !snapshot.canSignOut;
+    signOutButton.disabled = !snapshot.canSignOut;
+  }
+}
+
+async function refreshFrontendWorkspace(root: HTMLElement): Promise<void> {
+  const admin = state.admin;
+  const statusNode = query<HTMLElement>(root, '#sdn-frontend-status');
+  if (!admin || !statusNode) {
+    return;
+  }
+
+  const adminSnapshot = admin.snapshot();
+  if (
+    adminSnapshot.mode === 'server'
+    && (
+      !adminSnapshot.serverTarget?.baseUrl
+      || !adminSnapshot.permissions.authenticated
+      || adminSnapshot.permissions.role !== 'admin'
+    )
+  ) {
+    state.frontendWorkspace = null;
+    state.frontendWorkspaceKey = null;
+    renderFrontendPlaceholder(
+      root,
+      'Connect as an admin on the selected server to manage the public frontend.',
+    );
+    return;
+  }
+
+  const workspaceKey = adminSnapshot.mode === 'server'
+    ? `server:${adminSnapshot.serverTarget?.baseUrl ?? ''}`
+    : 'local';
+
+  if (!state.frontendWorkspace || state.frontendWorkspaceKey !== workspaceKey) {
+    state.frontendWorkspace = createFrontendWorkspace({
+      mode: adminSnapshot.mode,
+      transport: adminSnapshot.mode === 'server' && adminSnapshot.serverTarget?.baseUrl
+        ? createServerFrontendTransport({ baseUrl: adminSnapshot.serverTarget.baseUrl })
+        : state.localFrontendTransport,
+    });
+    state.frontendWorkspaceKey = workspaceKey;
+    await state.frontendWorkspace.connect();
+  }
+
+  await ensureFrontendEditor(root);
+  renderFrontendWorkspace(root, state.frontendWorkspace.snapshot());
+}
+
+async function ensureFrontendEditor(root: HTMLElement): Promise<void> {
+  if (state.frontendEditor) {
+    return;
+  }
+  const host = query<HTMLElement>(root, '#sdn-frontend-editor');
+  if (!host) {
+    return;
+  }
+  state.frontendEditor = await createBrowserEditorController(host, (value) => {
+    if (!state.frontendWorkspace) {
+      return;
+    }
+    const snapshot = state.frontendWorkspace.editContent(value);
+    renderFrontendStatus(root, snapshot);
+  });
+}
+
+function renderFrontendWorkspace(root: HTMLElement, snapshot: ReturnType<FrontendWorkspace['snapshot']>): void {
+  const pathInput = query<HTMLInputElement>(root, '#sdn-frontend-path');
+  const tree = query<HTMLElement>(root, '#sdn-frontend-tree');
+  const editor = state.frontendEditor;
+  if (pathInput) {
+    pathInput.value = snapshot.selectedPath ?? '';
+  }
+  renderFrontendStatus(root, snapshot);
+  if (tree) {
+    tree.innerHTML = snapshot.tree.length === 0
+      ? '<div class="sdn-empty">No frontend files available.</div>'
+      : `<ul class="sdn-frontend-tree__list">${renderFrontendTreeNodes(snapshot.tree, snapshot.selectedPath)}</ul>`;
+  }
+  editor?.setDocument(snapshot.editor.value, snapshot.editor.language);
+}
+
+function renderFrontendStatus(root: HTMLElement, snapshot: ReturnType<FrontendWorkspace['snapshot']>): void {
+  const statusNode = query<HTMLElement>(root, '#sdn-frontend-status');
+  const saveButton = query<HTMLButtonElement>(root, '#sdn-frontend-save');
+  const deleteButton = query<HTMLButtonElement>(root, '#sdn-frontend-delete');
+  const moveButton = query<HTMLButtonElement>(root, '#sdn-frontend-move');
+  if (statusNode) {
+    statusNode.textContent = snapshot.editor.dirty
+      ? `${snapshot.status} · unsaved`
+      : snapshot.status;
+  }
+  if (saveButton) {
+    saveButton.disabled = !snapshot.selectedPath || !snapshot.editor.dirty;
+  }
+  if (deleteButton) {
+    deleteButton.disabled = !snapshot.selectedPath;
+  }
+  if (moveButton) {
+    moveButton.disabled = !snapshot.selectedPath;
+  }
+}
+
+function renderFrontendPlaceholder(root: HTMLElement, message: string): void {
+  const tree = query<HTMLElement>(root, '#sdn-frontend-tree');
+  const status = query<HTMLElement>(root, '#sdn-frontend-status');
+  const pathInput = query<HTMLInputElement>(root, '#sdn-frontend-path');
+  if (tree) {
+    tree.innerHTML = `<div class="sdn-empty">${escapeHtml(message)}</div>`;
+  }
+  if (status) {
+    status.textContent = message;
+  }
+  if (pathInput) {
+    pathInput.value = '';
+  }
+  state.frontendEditor?.setDocument('', 'plaintext');
+}
+
+function renderFrontendTreeNodes(
+  nodes: Array<{ name: string; path: string; isDir: boolean; children?: Array<{ name: string; path: string; isDir: boolean; children?: unknown[] }> }>,
+  selectedPath: string | null,
+): string {
+  return nodes.map((node) => `
+    <li class="sdn-frontend-tree__node">
+      <button
+        type="button"
+        class="sdn-frontend-tree__item${node.path === selectedPath ? ' sdn-frontend-tree__item--active' : ''}"
+        data-frontend-path="${escapeHtml(node.path)}"
+      >
+        <span class="sdn-frontend-tree__badge">${node.isDir ? 'DIR' : 'FILE'}</span>
+        <span>${escapeHtml(node.name)}</span>
+      </button>
+      ${node.children?.length
+        ? `<ul class="sdn-frontend-tree__list">${renderFrontendTreeNodes(node.children as never, selectedPath)}</ul>`
+        : ''}
+    </li>
+  `).join('');
+}
+
+async function selectFrontendFile(root: HTMLElement, path: string): Promise<void> {
+  if (!state.frontendWorkspace) {
+    return;
+  }
+  renderFrontendWorkspace(root, await state.frontendWorkspace.selectPath(path));
+  state.frontendEditor?.focus();
+}
+
+async function saveFrontendFile(root: HTMLElement): Promise<void> {
+  if (!state.frontendWorkspace) {
+    return;
+  }
+  renderFrontendWorkspace(root, await state.frontendWorkspace.save());
+}
+
+async function moveFrontendFile(root: HTMLElement): Promise<void> {
+  if (!state.frontendWorkspace) {
+    return;
+  }
+  const targetPath = query<HTMLInputElement>(root, '#sdn-frontend-path')?.value.trim() ?? '';
+  if (!targetPath) {
+    return;
+  }
+  renderFrontendWorkspace(root, await state.frontendWorkspace.moveSelection(targetPath));
+}
+
+async function deleteFrontendFile(root: HTMLElement): Promise<void> {
+  if (!state.frontendWorkspace) {
+    return;
+  }
+  renderFrontendWorkspace(root, await state.frontendWorkspace.deleteSelection());
+}
+
+async function uploadFrontendFiles(root: HTMLElement, input: HTMLInputElement | null): Promise<void> {
+  const files = [...(input?.files ?? [])];
+  if (files.length === 0) {
+    return;
+  }
+  await uploadFrontendFileList(root, files);
+  if (input) {
+    input.value = '';
+  }
+}
+
+async function uploadFrontendFileList(root: HTMLElement, files: File[]): Promise<void> {
+  if (!state.frontendWorkspace) {
+    return;
+  }
+  const uploads = await Promise.all(files.map(async (file) => ({
+    name: file.name,
+    text: await file.text(),
+  } satisfies FrontendUploadFile)));
+  const directory = frontendSelectedDirectory(state.frontendWorkspace.snapshot().selectedPath);
+  renderFrontendWorkspace(root, await state.frontendWorkspace.upload(uploads, directory));
+}
+
+function frontendSelectedDirectory(selectedPath: string | null): string {
+  if (!selectedPath || !selectedPath.includes('/')) {
+    return '';
+  }
+  return selectedPath.split('/').slice(0, -1).join('/');
+}
+
 function requireAdminState(): AdminState {
   if (!state.admin) {
     throw new Error('admin state not initialized');
@@ -909,15 +1268,6 @@ function requireAdminState(): AdminState {
 
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean))];
-}
-
-function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
 }
 
 function hexToBytes(value: string): Uint8Array {

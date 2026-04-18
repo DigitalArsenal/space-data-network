@@ -19,6 +19,7 @@ export function createLocalAdapter(deps: LocalAdapterDeps = {}): AdminAdapter {
     mode: 'local',
     workspace: {
       activeId: deps.initialWorkspace ?? 'network',
+      available: [],
     },
   });
 

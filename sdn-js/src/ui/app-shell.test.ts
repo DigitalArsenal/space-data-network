@@ -19,6 +19,7 @@ describe('renderAppShell', () => {
     expect(root.innerHTML).toContain('id="sdn-mode-switch"');
     expect(root.innerHTML).toContain('id="sdn-connect-server"');
     expect(root.innerHTML).toContain('id="sdn-account-button"');
+    expect(root.innerHTML).toContain('id="sdn-account-dialog"');
     expect(root.innerHTML).toContain('data-nav="ipfs-dashboard"');
     expect(root.innerHTML).toContain('id="sdn-wallet-panel"');
     expect(root.innerHTML).toContain('id="sdn-provider-url"');
@@ -26,6 +27,10 @@ describe('renderAppShell', () => {
     expect(root.innerHTML).toContain('id="sdn-run-live-flow"');
     expect(root.innerHTML).toContain('id="sdn-address-lookup-value"');
     expect(root.innerHTML).toContain('id="sdn-wallet-load"');
+    expect(root.innerHTML).toContain('id="sdn-frontend-tree"');
+    expect(root.innerHTML).toContain('id="sdn-frontend-editor"');
+    expect(root.innerHTML).toContain('id="sdn-frontend-upload"');
+    expect(root.innerHTML).toContain('id="sdn-frontend-save"');
     expect(mountWalletUI).not.toHaveBeenCalled();
   });
 
