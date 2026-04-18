@@ -2,22 +2,15 @@ package modulert
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
+
+	"github.com/spacedatanetwork/sdn-server/internal/testsupport"
 )
 
 func TestNewModuleLoadsUnifiedLicensingArtifact(t *testing.T) {
 	t.Parallel()
 
-	wasmPath := filepath.Clean(filepath.Join(
-		"..", "..", "..", "..",
-		"space-data-network-plugins",
-		"packages",
-		"licensing",
-		"dist",
-		"isomorphic",
-		"module.wasm",
-	))
+	wasmPath := testsupport.MustFindLicensingModuleWasmPath(t)
 	wasmBytes, err := os.ReadFile(wasmPath)
 	if err != nil {
 		t.Fatalf("ReadFile(%q) failed: %v", wasmPath, err)

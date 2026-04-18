@@ -1,7 +1,9 @@
 package node
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -34,8 +36,13 @@ const (
 	keyReferenceAlgorithmX25519      = 3
 
 	keyMaterialRolePublicationContent = 1
+	keyMaterialRoleDecryptKey         = 4
+	keyMaterialAlgorithmX25519Private = 3
 	keyMaterialAlgorithmAes256Gcm     = 5
 	keyMaterialEncodingRawBytes       = 1
+
+	publicationTrailerFooterLength = 8
+	publicationTrailerMagicText    = "$REC"
 
 	pluginTypeAnalysis = 3
 )
@@ -245,7 +252,7 @@ func bootstrapLicensingModule(mod *modulert.Module, reg *license.PluginRegistry)
 			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
 			continue
 		}
-		keyFrame, err := buildPublicationContentKeyFrame(asset, contentKey)
+		keyFrame, err := buildPublicationContentKeyFrame(asset, protectedContent, contentKey)
 		if err != nil {
 			publishErrs = append(publishErrs, fmt.Errorf("build publication key frame for %q: %w", asset.ID, err))
 			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
@@ -378,13 +385,14 @@ func buildKeyReferenceFrame(
 	return lcf.KRFEnd(builder)
 }
 
-func buildPublicationContentKeyFrame(asset *license.PluginAsset, keyBytes []byte) ([]byte, error) {
+func buildPublicationContentKeyFrame(asset *license.PluginAsset, protectedContent []byte, keyBytes []byte) ([]byte, error) {
 	if asset == nil {
 		return nil, fmt.Errorf("publication asset is required")
 	}
 	if len(keyBytes) == 0 {
 		return nil, fmt.Errorf("publication content key is required")
 	}
+	useDecryptKey := hasEncryptedPublicationRecordCollection(protectedContent)
 
 	builder := flatbuffers.NewBuilder(128 + len(keyBytes))
 	keyIDOffset := builder.CreateString(publicationKeyID(asset))
@@ -392,8 +400,13 @@ func buildPublicationContentKeyFrame(asset *license.PluginAsset, keyBytes []byte
 
 	kmf.KMFStart(builder)
 	kmf.KMFAddKEY_ID(builder, keyIDOffset)
-	kmf.KMFAddROLE(builder, keyMaterialRolePublicationContent)
-	kmf.KMFAddALGORITHM(builder, keyMaterialAlgorithmAes256Gcm)
+	if useDecryptKey {
+		kmf.KMFAddROLE(builder, keyMaterialRoleDecryptKey)
+		kmf.KMFAddALGORITHM(builder, keyMaterialAlgorithmX25519Private)
+	} else {
+		kmf.KMFAddROLE(builder, keyMaterialRolePublicationContent)
+		kmf.KMFAddALGORITHM(builder, keyMaterialAlgorithmAes256Gcm)
+	}
 	kmf.KMFAddENCODING(builder, keyMaterialEncodingRawBytes)
 	kmf.KMFAddKEY_BYTES(builder, keyBytesOffset)
 	kmf.KMFAddVERSION(builder, 0)
@@ -401,6 +414,62 @@ func buildPublicationContentKeyFrame(asset *license.PluginAsset, keyBytes []byte
 	root := kmf.KMFEnd(builder)
 	kmf.FinishKMFBuffer(builder, root)
 	return builder.FinishedBytes(), nil
+}
+
+func hasEncryptedPublicationRecordCollection(protectedContent []byte) bool {
+	recordCollectionBytes, ok := extractPublicationRecordCollectionBytes(protectedContent)
+	if !ok {
+		return false
+	}
+	if !flatbuffers.BufferHasIdentifier(recordCollectionBytes, publicationTrailerMagicText) {
+		return false
+	}
+
+	recordCollectionRoot := flatbuffers.GetUOffsetT(recordCollectionBytes)
+	recordCollectionTable := flatbuffers.Table{
+		Bytes: recordCollectionBytes,
+		Pos:   recordCollectionRoot,
+	}
+	recordsOffset := flatbuffers.UOffsetT(recordCollectionTable.Offset(6))
+	if recordsOffset == 0 {
+		return false
+	}
+
+	recordsVector := recordCollectionTable.Vector(recordsOffset)
+	for recordIndex := 0; recordIndex < recordCollectionTable.VectorLen(recordsOffset); recordIndex++ {
+		recordOffset := recordsVector + flatbuffers.UOffsetT(recordIndex*4)
+		recordTable := flatbuffers.Table{
+			Bytes: recordCollectionBytes,
+			Pos:   recordCollectionTable.Indirect(recordOffset),
+		}
+		standardOffset := flatbuffers.UOffsetT(recordTable.Offset(8))
+		if standardOffset == 0 {
+			continue
+		}
+		if bytes.Equal(recordTable.ByteVector(standardOffset+recordTable.Pos), []byte("ENC")) {
+			return true
+		}
+	}
+	return false
+}
+
+func extractPublicationRecordCollectionBytes(protectedContent []byte) ([]byte, bool) {
+	if len(protectedContent) < publicationTrailerFooterLength {
+		return nil, false
+	}
+
+	footerOffset := len(protectedContent) - publicationTrailerFooterLength
+	if string(protectedContent[footerOffset+4:]) != publicationTrailerMagicText {
+		return nil, false
+	}
+
+	recordCollectionLength := int(binary.LittleEndian.Uint32(protectedContent[footerOffset : footerOffset+4]))
+	recordCollectionOffset := footerOffset - recordCollectionLength
+	if recordCollectionLength <= 0 || recordCollectionOffset < 0 {
+		return nil, false
+	}
+
+	return protectedContent[recordCollectionOffset:footerOffset], true
 }
 
 func buildPublicationDescriptorFrame(asset *license.PluginAsset) ([]byte, error) {

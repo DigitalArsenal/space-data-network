@@ -1,10 +1,10 @@
 /**
  * Stress tests for streaming FlatBuffer data reception from SDN nodes.
  *
- * These tests are EXCLUDED from normal test runs via vitest.config.ts.
+ * These tests are EXCLUDED from normal test runs via vitest.config.mts.
  *
  * Run explicitly with:
- *   npx vitest run --config vitest.stress.config.ts
+ *   npx vitest run --config vitest.stress.config.mts
  *
  * Environment variables:
  *   - STRESS_NODE_ADDR: SDN node multiaddr to connect to

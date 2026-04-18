@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/libp2p/go-libp2p"
@@ -89,6 +91,54 @@ func TestHandleProviderDescriptorReturnsBrowserSafeDescriptor(t *testing.T) {
 	if len(payload.RelayAddresses) != 1 || payload.RelayAddresses[0] != addr.String() {
 		t.Fatalf("relayAddresses = %#v", payload.RelayAddresses)
 	}
+}
+
+func TestMakeWebUIHandlerServesIndexAndAssetsUnderWebUI(t *testing.T) {
+	t.Parallel()
+
+	buildDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(buildDir, "index.html"), []byte("<!doctype html><html><body>webui</body></html>"), 0o644); err != nil {
+		t.Fatalf("write index.html failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(buildDir, "assets"), 0o755); err != nil {
+		t.Fatalf("mkdir assets failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(buildDir, "assets", "main.js"), []byte("console.log('ok')"), 0o644); err != nil {
+		t.Fatalf("write asset failed: %v", err)
+	}
+
+	handler, err := makeWebUIHandler(buildDir, "/webui")
+	if err != nil {
+		t.Fatalf("makeWebUIHandler failed: %v", err)
+	}
+
+	t.Run("serves index at mount root", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/webui/", nil)
+
+		http.StripPrefix("/webui", handler).ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", recorder.Code)
+		}
+		if got := recorder.Body.String(); got != "<!doctype html><html><body>webui</body></html>" {
+			t.Fatalf("body = %q, want index.html contents", got)
+		}
+	})
+
+	t.Run("serves static assets", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/webui/assets/main.js", nil)
+
+		http.StripPrefix("/webui", handler).ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", recorder.Code)
+		}
+		if got := recorder.Body.String(); got != "console.log('ok')" {
+			t.Fatalf("body = %q, want asset contents", got)
+		}
+	})
 }
 
 type fakeProviderDescriptorSource struct {

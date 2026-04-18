@@ -3,17 +3,20 @@ package node
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	kmf "github.com/DigitalArsenal/spacedatastandards.org/lib/go/KMF"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
+	"github.com/spacedatanetwork/sdn-server/internal/testsupport"
 )
 
 func TestCatalogPublicationAssetsSkipsLicensingRuntimeModule(t *testing.T) {
@@ -140,6 +143,29 @@ func TestBuildModuleNodeContextFallsBackToServerIdentity(t *testing.T) {
 	}
 }
 
+func TestBuildPublicationContentKeyFrameUsesDecryptKeyForRecProtectedArtifacts(t *testing.T) {
+	t.Parallel()
+
+	asset := &license.PluginAsset{
+		ID:      "com.orbpro.rec-protected",
+		Version: "2.0.0",
+	}
+	keyBytes := bytes.Repeat([]byte{0x7b}, 32)
+
+	frame, err := buildPublicationContentKeyFrame(asset, buildRecProtectedContentFixture(t), keyBytes)
+	if err != nil {
+		t.Fatalf("buildPublicationContentKeyFrame() failed: %v", err)
+	}
+
+	keyMaterial := kmf.GetRootAsKMF(frame, 0)
+	if got := keyMaterial.ROLE(); got != keyMaterialRoleDecryptKey {
+		t.Fatalf("KMF ROLE = %d, want %d (DecryptKey)", got, keyMaterialRoleDecryptKey)
+	}
+	if got := keyMaterial.ALGORITHM(); got != keyMaterialAlgorithmX25519Private {
+		t.Fatalf("KMF ALGORITHM = %d, want %d (X25519Private)", got, keyMaterialAlgorithmX25519Private)
+	}
+}
+
 func TestFindPluginDecryptPrivateKeyFallsBackToServerIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -173,15 +199,7 @@ func TestFindPluginDecryptPrivateKeyFallsBackToServerIdentity(t *testing.T) {
 func newLicensingTestModule(t *testing.T) *modulert.Module {
 	t.Helper()
 
-	wasmPath := filepath.Clean(filepath.Join(
-		"..", "..", "..", "..",
-		"space-data-network-plugins",
-		"packages",
-		"licensing",
-		"dist",
-		"isomorphic",
-		"module.wasm",
-	))
+	wasmPath := testsupport.MustFindLicensingModuleWasmPath(t)
 	wasmBytes, err := os.ReadFile(wasmPath)
 	if err != nil {
 		t.Fatalf("ReadFile(%q) failed: %v", wasmPath, err)
@@ -305,4 +323,36 @@ func decodeChallengeHeader(t *testing.T, data []byte) (byte, byte) {
 	}
 
 	return messageType, role
+}
+
+func buildRecProtectedContentFixture(t *testing.T) []byte {
+	t.Helper()
+
+	recordBuilder := flatbuffers.NewBuilder(128)
+	versionOffset := recordBuilder.CreateString("1.0.0")
+	standardOffset := recordBuilder.CreateString("ENC")
+
+	recordBuilder.StartObject(3)
+	recordBuilder.PrependByteSlot(0, 0, 0)
+	recordBuilder.PrependUOffsetTSlot(2, standardOffset, 0)
+	recordOffset := recordBuilder.EndObject()
+
+	recordsOffset := recordBuilder.CreateVectorOfTables([]flatbuffers.UOffsetT{recordOffset})
+
+	recordBuilder.StartObject(2)
+	recordBuilder.PrependUOffsetTSlot(0, versionOffset, 0)
+	recordBuilder.PrependUOffsetTSlot(1, recordsOffset, 0)
+	recOffset := recordBuilder.EndObject()
+	recordBuilder.FinishWithFileIdentifier(recOffset, []byte(publicationTrailerMagicText))
+
+	recordCollectionBytes := recordBuilder.FinishedBytes()
+	payloadBytes := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
+	footer := make([]byte, publicationTrailerFooterLength)
+	binary.LittleEndian.PutUint32(footer[:4], uint32(len(recordCollectionBytes)))
+	copy(footer[4:], []byte(publicationTrailerMagicText))
+
+	protectedContent := append([]byte{}, payloadBytes...)
+	protectedContent = append(protectedContent, recordCollectionBytes...)
+	protectedContent = append(protectedContent, footer...)
+	return protectedContent
 }

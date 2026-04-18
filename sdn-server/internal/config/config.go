@@ -227,8 +227,8 @@ type AdminConfig struct {
 	HomepageFile string `yaml:"homepage_file"`
 
 	// WebuiPath is the filesystem path to an IPFS WebUI build directory (webui/build).
-	// When set, the IPFS WebUI is served at "/admin" behind admin authentication.
-	// If empty, the admin panel uses the built-in admin UI.
+	// When set, the IPFS WebUI is served at "/webui".
+	// If empty, the admin panel uses the built-in admin UI and /webui is not mounted.
 	WebuiPath string `yaml:"webui_path"`
 
 	// IPFSAPIURL is the base URL of an upstream Kubo RPC API endpoint (no path),
