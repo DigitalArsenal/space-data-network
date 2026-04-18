@@ -89,6 +89,85 @@ describe('loadMarketplaceListingsFromServer', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('returns an empty marketplace instead of throwing when storefront is empty and the PLG route is unavailable', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            listings: null,
+            total: 0,
+            facets: {
+              data_types: null,
+              price_ranges: null,
+              providers: null,
+              access_types: null,
+            },
+          };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      });
+
+    await expect(
+      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
+    ).resolves.toEqual([]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to canonical PLG listings when storefront succeeds but has no listings', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            listings: [],
+            total: 0,
+          };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            results: [
+              {
+                data_base64: Buffer.from(createPlgBytes({
+                  pluginId: 'com.space-data-network.orbital-demo',
+                  version: '2.0.0',
+                  name: 'Orbital Demo From PLG',
+                  description: 'PLG fallback record',
+                })).toString('base64'),
+                timestamp: '2026-04-18T18:45:00Z',
+              },
+            ],
+          };
+        },
+      });
+
+    await expect(
+      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        pluginId: 'com.space-data-network.orbital-demo',
+        version: '2.0.0',
+        name: 'Orbital Demo From PLG',
+        description: 'PLG fallback record',
+      }),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 function createPlgBytes(options: {

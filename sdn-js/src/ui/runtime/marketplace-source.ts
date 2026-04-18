@@ -40,6 +40,7 @@ export async function loadMarketplaceListingsFromServer(
   fetchImpl: MarketplaceFetchLike = fetch,
 ): Promise<CanonicalListing[]> {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  let storefrontError: Error | null = null;
 
   const storefrontResponse = await fetchImpl(
     `${normalizedBaseUrl}/api/storefront/listings`,
@@ -55,10 +56,8 @@ export async function loadMarketplaceListingsFromServer(
     if (listings.length > 0) {
       return listings;
     }
-  }
-
-  if (storefrontResponse.status !== 404) {
-    throw new Error(`storefront listing query failed (${storefrontResponse.status})`);
+  } else if (storefrontResponse.status !== 404) {
+    storefrontError = new Error(`storefront listing query failed (${storefrontResponse.status})`);
   }
 
   const plgResponse = await fetchImpl(
@@ -67,6 +66,12 @@ export async function loadMarketplaceListingsFromServer(
   );
 
   if (!plgResponse.ok) {
+    if (plgResponse.status === 404) {
+      if (storefrontResponse.ok || storefrontResponse.status === 404) {
+        return [];
+      }
+      throw storefrontError ?? new Error(`listing query failed (${plgResponse.status})`);
+    }
     throw new Error(`listing query failed (${plgResponse.status})`);
   }
 

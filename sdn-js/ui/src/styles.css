@@ -20,6 +20,8 @@
   --sdn-surface: #ffffff;
   --sdn-surface-muted: #f0f6fa;
   --sdn-shadow: 0 12px 28px rgba(17, 47, 65, 0.08);
+  --sdn-control-height: 3.35rem;
+  --sdn-control-radius: 0.95rem;
 }
 
 * {
@@ -212,7 +214,7 @@ pre {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
-  align-items: flex-start;
+  align-items: stretch;
   padding: 1.25rem 1.5rem;
   background: var(--sdn-surface-muted);
   border-bottom: 1px solid var(--sdn-border);
@@ -227,12 +229,12 @@ pre {
 
 .sdn-command-bar {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 0.85rem;
-  min-height: 3.5rem;
-  padding: 0.45rem 0.55rem;
+  min-height: var(--sdn-control-height);
+  padding: 0.3rem 0.4rem;
   border: 1px solid var(--sdn-border);
-  border-radius: 999px;
+  border-radius: var(--sdn-control-radius);
   background: var(--sdn-surface);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset;
 }
@@ -251,6 +253,8 @@ pre {
 .sdn-command-bar input {
   flex: 1;
   min-width: 0;
+  min-height: calc(var(--sdn-control-height) - 0.6rem);
+  padding: 0 0.15rem;
   border: 0;
   background: transparent;
   color: var(--sdn-text);
@@ -264,12 +268,17 @@ pre {
 .sdn-command-bar__action {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.45rem;
-  padding: 0.7rem 0.95rem;
+  min-height: calc(var(--sdn-control-height) - 0.6rem);
+  margin: 0.05rem 0;
+  padding: 0.7rem 1rem;
   border: 1px solid var(--sdn-border-strong);
-  border-radius: 999px;
+  border-radius: calc(var(--sdn-control-radius) - 0.1rem);
   background: var(--sdn-surface-muted);
   color: var(--sdn-text);
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .sdn-command-bar__action svg {
@@ -282,6 +291,7 @@ pre {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: stretch;
   gap: 0.65rem;
 }
 
@@ -290,6 +300,11 @@ pre {
   display: flex;
   flex-wrap: wrap;
   gap: 0.65rem;
+}
+
+.sdn-action-row {
+  align-items: center;
+  margin-top: 0.35rem;
 }
 
 .sdn-chip {
@@ -311,10 +326,19 @@ pre {
   align-items: center;
   justify-content: center;
   gap: 0.45rem;
-  min-height: 2.8rem;
+  min-height: var(--sdn-control-height);
+  margin: 0.05rem 0;
   padding: 0.7rem 1rem;
-  border-radius: 999px;
+  border-radius: var(--sdn-control-radius);
   text-decoration: none;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.sdn-admin-topbar__actions > .sdn-button,
+.sdn-admin-topbar__actions > .sdn-ghost-button,
+.sdn-admin-topbar__actions > .sdn-account-button {
+  min-height: var(--sdn-control-height);
 }
 
 .sdn-button {
@@ -344,7 +368,7 @@ pre {
 }
 
 .sdn-account-button {
-  width: 2.8rem;
+  width: var(--sdn-control-height);
   padding: 0;
   border: 1px solid var(--sdn-border-strong);
   background: var(--sdn-surface);
@@ -508,6 +532,11 @@ pre {
   border-radius: 0.8rem;
   background: var(--sdn-surface);
   color: var(--sdn-text);
+}
+
+.sdn-field input,
+.sdn-field select {
+  min-height: var(--sdn-control-height);
 }
 
 .sdn-field input:focus,
