@@ -23,7 +23,7 @@
 
 @media only screen and (min-width: 60em) {
   .navbar-container {
-    width: 8rem;
+    width: 9.25rem;
   }
   .navbar-item-active {
     border-left: 5px solid rgba(201, 210, 215, 0.4);
@@ -33,15 +33,15 @@
 
 @media only screen and (min-height: 49em) and (min-width: 60em) {
   .navbar-logo-vert {
-    padding-bottom: 0.5rem;
+    padding-bottom: 1rem;
   }
   .navbar-item {
-    padding-top: 0.5rem;
-    padding-bottom: 0.5rem;
+    padding-top: 1rem;
+    padding-bottom: 1rem;
   }
   .navbar-footer {
-    margin-top: 0.5rem;
-    margin-bottom: 0.5rem;
+    margin-top: 1rem;
+    margin-bottom: 1rem;
   }
 }
 
@@ -57,8 +57,4 @@
 
 .navbar-item:focus:not(:focus-visible) {
   background-color: transparent;
-}
-
-.sdn-logo:hover {
-  filter: drop-shadow(0 0 6px #58a6ff);
 }

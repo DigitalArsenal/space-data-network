@@ -40,6 +40,11 @@ export const files = {
   contextMenuButton: (page, name) => page.locator(`button[aria-label="View more options for ${name}"]`),
   contextMenuItem: (page, text) => page.locator('button[role="menuitem"]').filter({ hasText: text }),
 
+  // Search filter
+  searchToggle: (page) => page.getByRole('button', { name: 'Click to show search filter' }),
+  searchInput: (page) => page.locator('input[aria-label="Filter by name or CID…"]'),
+  searchClearButton: (page) => page.getByRole('button', { name: 'Clear search' }),
+
   // Dialogs
   dialog: (page) => page.locator('div[role="dialog"]'),
   dialogInput: (page, name) => page.locator(`div[role="dialog"] input[name="${name}"]`),
@@ -65,7 +70,8 @@ export const peers = {
   modal: (page) => page.getByTestId('ipfs-modal'),
   multiAddrInput: (page) => page.locator('input[name="maddr"]'),
   successIndicator: (page) => page.locator('.bg-green'),
-  localNetwork: (page) => page.getByText('Local Network')
+  localNetwork: (page) => page.getByText('Local Network'),
+  filterInput: (page) => page.locator('#peers-filter-input')
 }
 
 // Explore page locators
@@ -104,4 +110,22 @@ export const modal = {
   closeButton: (page) => page.getByRole('button', { name: 'Close' }),
   confirmButton: (page, text = 'Confirm') => page.getByRole('button', { name: text }),
   input: (page) => page.locator('input.modal-input')
+}
+
+// Import notification locators and helper
+export const importNotification = {
+  container: (page) => page.locator('.fileImportStatus'),
+  closeButton: (page) => page.locator('.fileImportStatusCancel')
+}
+
+/**
+ * Dismiss the import notification if visible.
+ * Useful when the notification overlay can block clicks on other UI elements.
+ */
+export async function dismissImportNotification (page) {
+  const closeBtn = importNotification.closeButton(page)
+  if (await closeBtn.isVisible({ timeout: 500 }).catch(() => false)) {
+    await closeBtn.click()
+    await importNotification.container(page).waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {})
+  }
 }
