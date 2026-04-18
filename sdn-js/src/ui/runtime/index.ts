@@ -23,6 +23,12 @@ export {
   type AdminStateOptions,
 } from './admin-state';
 export {
+  createAccountMenuController,
+  type AccountMenuController,
+  type AccountMenuControllerOptions,
+  type AccountMenuSnapshot,
+} from './account-menu';
+export {
   SDNUIEventBus,
   type DeliveryTimelineEvent,
   type RuntimeEventMap,
@@ -38,6 +44,7 @@ export {
   createMarketplaceIndex,
   MarketplaceIndex,
 } from './marketplace';
+export { loadMarketplaceListingsFromServer } from './marketplace-source';
 export {
   decodeCanonicalPlgListing,
   type DecodeCanonicalPlgListingOptions,
@@ -53,6 +60,21 @@ export {
   createServerAdminAdapter,
   type ServerAdapterDeps,
 } from './server-adapter';
+export {
+  buildFrontendTree,
+  createLocalFrontendTransport,
+  createServerFrontendTransport,
+  createFrontendWorkspace,
+  type FrontendFileDocument,
+  type FrontendFileEntry,
+  type FrontendTreeNode,
+  type FrontendUploadFile,
+  type FrontendWorkspace,
+  type FrontendWorkspaceOptions,
+  type FrontendWorkspaceSnapshot,
+  type FrontendWorkspaceTransport,
+  type ServerFrontendTransportOptions,
+} from './frontend-workspace';
 export {
   decryptEncryptedModuleBundle,
   invokeLoadedModule,

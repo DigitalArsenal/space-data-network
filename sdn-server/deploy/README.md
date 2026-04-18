@@ -98,6 +98,29 @@ sudo systemctl enable spacedatanetwork
 sudo systemctl start spacedatanetwork
 ```
 
+### Hosted Admin Shell and IPFS WebUI
+
+The current full-node packaging expects these hosted assets:
+
+- `/opt/spacedatanetwork/admin-ui` for the shared SDN `/admin` shell
+- `/opt/spacedatanetwork/webui` for the IPFS dashboard mounted at `/webui`
+
+For Linux VM installs, generate the bundle with:
+
+```bash
+./deployment/scripts/package-linux-vm-bundle.sh
+```
+
+Install it on the target host with:
+
+```bash
+sudo ./deployment/scripts/install-vm-bundle.sh dist/linux-vm/spacedatanetwork-linux-vm-<version>.tar.gz
+sudo systemctl restart spacedatanetwork
+```
+
+The VM config template lives at `/etc/spacedatanetwork/config.yaml` and points
+the service at `/opt/spacedatanetwork/admin-ui` and `/opt/spacedatanetwork/webui`.
+
 ## Environment Variables
 
 | Variable | Description | Default |

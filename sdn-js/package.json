@@ -68,6 +68,7 @@
     "helia": "^6.0.22",
     "idb": "^8.0.0",
     "libp2p": "^1.2.0",
+    "monaco-editor": "^0.55.1",
     "multiformats": "^13.3.7",
     "qrcode": "^1.5.3",
     "space-data-module-sdk": "^0.8.0",

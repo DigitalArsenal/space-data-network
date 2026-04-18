@@ -41,6 +41,7 @@ export function createAdminState(options: AdminStateOptions): AdminState {
     serverTarget: lastServerTarget,
     workspace: {
       activeId: initialWorkspace,
+      available: [],
     },
   });
 

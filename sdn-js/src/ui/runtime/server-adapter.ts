@@ -45,10 +45,14 @@ export function createServerAdapter(deps: ServerAdapterDeps): AdminAdapter {
     serverTarget: target,
     nodeContext: {
       displayName: target.label ?? target.baseUrl,
+      peerId: null,
+      xpub: null,
       transport: 'https',
+      descriptorUrl: `${target.baseUrl}/api/module-delivery/provider`,
     },
     workspace: {
       activeId: deps.initialWorkspace ?? 'network',
+      available: [],
     },
   });
 

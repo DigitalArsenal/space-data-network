@@ -45,6 +45,27 @@ export async function renderAppShell(
           </div>
         </header>
 
+        <section id="sdn-account-dialog" class="sdn-account-dialog" hidden aria-hidden="true">
+          <div class="sdn-account-dialog__backdrop" data-account-dismiss="backdrop"></div>
+          <div class="sdn-account-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="sdn-account-title">
+            <div class="sdn-panel__header">
+              <div>
+                <p class="sdn-kicker">Wallet + Account</p>
+                <h2 id="sdn-account-title">Session</h2>
+              </div>
+              <button id="sdn-account-close" type="button" class="sdn-ghost-button">Close</button>
+            </div>
+            <div class="sdn-stack">
+              <div id="sdn-account-meta" class="sdn-empty">Wallet state will appear here.</div>
+              <div class="sdn-action-row">
+                <button id="sdn-account-open-wallet" type="button" class="sdn-button">Open wallet account</button>
+                <button id="sdn-account-signout" type="button" class="sdn-ghost-button">Sign out</button>
+              </div>
+              <div id="sdn-account-wallet-panel"></div>
+            </div>
+          </div>
+        </section>
+
         <section class="sdn-admin-workspace sdn-admin-workspace--active" data-workspace="network">
           <div class="sdn-grid">
             <article class="sdn-panel">
@@ -207,10 +228,26 @@ export async function renderAppShell(
             <p class="sdn-copy">
               Monaco, file tree, drag-drop upload, and wallet-backed git will land on this shared workspace surface.
             </p>
-            <div id="sdn-frontend-workspace" class="sdn-stack">
-              <div class="sdn-empty">
-                Foundation slice: the hosted admin shell is live, and the dedicated IDE workspace lands next.
-              </div>
+            <div id="sdn-frontend-workspace" class="sdn-frontend-shell">
+              <aside class="sdn-frontend-shell__sidebar">
+                <div class="sdn-frontend-shell__toolbar">
+                  <button id="sdn-frontend-upload" type="button" class="sdn-button">Upload</button>
+                  <input id="sdn-frontend-upload-input" type="file" multiple hidden />
+                  <button id="sdn-frontend-save" type="button" class="sdn-ghost-button">Save</button>
+                </div>
+                <div id="sdn-frontend-status" class="sdn-empty">Connect to a backend to manage the public frontend.</div>
+                <div id="sdn-frontend-tree" class="sdn-frontend-tree" aria-label="Frontend file tree"></div>
+              </aside>
+              <section class="sdn-frontend-shell__editor">
+                <div class="sdn-frontend-shell__toolbar">
+                  <input id="sdn-frontend-path" type="text" placeholder="path/to/file.ts" />
+                  <button id="sdn-frontend-move" type="button" class="sdn-ghost-button">Move</button>
+                  <button id="sdn-frontend-delete" type="button" class="sdn-ghost-button">Delete</button>
+                </div>
+                <div id="sdn-frontend-editor" class="sdn-frontend-editor">
+                  <div class="sdn-empty">Select a file to open the editor.</div>
+                </div>
+              </section>
             </div>
           </article>
         </section>
@@ -236,8 +273,7 @@ export async function renderAppShell(
 
   const walletHost = root.querySelector('#sdn-wallet-panel');
   const walletLoadButton = root.querySelector('#sdn-wallet-load');
-  const accountButton = root.querySelector('#sdn-account-button');
-  if (walletHost && (walletLoadButton || accountButton)) {
+  if (walletHost && walletLoadButton) {
     const mountWalletUI = options.mountWalletUI;
     let mountedWallet: Promise<MountedWalletUI | void> | null = null;
     const ensureWalletMounted = async (): Promise<MountedWalletUI | void> => {
@@ -252,12 +288,6 @@ export async function renderAppShell(
     if (mountWalletUI && walletLoadButton && 'addEventListener' in walletLoadButton) {
       walletLoadButton.addEventListener('click', async () => {
         await ensureWalletMounted();
-      });
-    }
-    if (mountWalletUI && accountButton && 'addEventListener' in accountButton) {
-      accountButton.addEventListener('click', async () => {
-        const wallet = await ensureWalletMounted();
-        await wallet?.openAccount?.();
       });
     }
   }

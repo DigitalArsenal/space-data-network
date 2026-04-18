@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -347,5 +348,30 @@ func TestAuth_TOFU_BindsSigningKeyOnFirstLogin(t *testing.T) {
 
 	if ver2Rec.Code != http.StatusForbidden {
 		t.Fatalf("attacker verify status: got %d want %d (key should be bound now)", ver2Rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestLoginPage_UsesCDNWalletUIFallbackWhenNoLocalDistIsConfigured(t *testing.T) {
+	t.Parallel()
+
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleLoginPage(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status: got %d want %d", rec.Code, http.StatusOK)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "https://unpkg.com/hd-wallet-ui@2.0.2/src/app.js?module") {
+		t.Fatalf("login page missing CDN wallet-ui module: %s", body)
+	}
+	if !strings.Contains(body, "https://unpkg.com/hd-wallet-ui@2.0.2/styles/widget.css") {
+		t.Fatalf("login page missing CDN wallet-ui stylesheet: %s", body)
+	}
+	if !strings.Contains(body, "createWalletUI") {
+		t.Fatalf("login page missing wallet initialization hook: %s", body)
 	}
 }
