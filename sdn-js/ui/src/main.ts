@@ -111,6 +111,8 @@ const state = {
   provider: null as ProviderDescriptor | null,
   node: null as RuntimeNodeLike | null,
   identity: null as RuntimeIdentityLike | null,
+  mode: 'local' as 'local' | 'server',
+  serverBaseUrl: '' as string,
   marketplace: createMarketplaceIndex(),
   observedPeers: new ObservedPeerIndex(),
   deliveryEvents: [] as ModuleDeliveryEventLike[],
@@ -156,6 +158,7 @@ async function loadRuntimeModules(): Promise<RuntimeModules> {
 }
 
 function bindUI(root: HTMLElement): void {
+  bindShell(root);
   query<HTMLInputElement>(root, '#sdn-provider-url')?.addEventListener('change', () => {
     void refreshProviderDescriptor(root);
   });
@@ -175,6 +178,43 @@ function bindUI(root: HTMLElement): void {
   query<HTMLButtonElement>(root, '#sdn-address-lookup-run')?.addEventListener('click', () => {
     void runAddressLookup(root);
   });
+}
+
+function bindShell(root: HTMLElement): void {
+  query<HTMLButtonElement>(root, '#sdn-mode-switch')?.addEventListener('click', () => {
+    state.mode = state.mode === 'local' ? 'server' : 'local';
+    renderShellMeta(root);
+  });
+  query<HTMLButtonElement>(root, '#sdn-connect-server')?.addEventListener('click', () => {
+    const candidate = window.prompt(
+      'Enter the admin base URL for the remote SDN node:',
+      state.serverBaseUrl || 'https://sdn.spaceaware.io',
+    );
+    if (!candidate) {
+      return;
+    }
+    state.serverBaseUrl = candidate.replace(/\/+$/, '');
+    state.mode = 'server';
+    const providerUrl = query<HTMLInputElement>(root, '#sdn-provider-url');
+    if (providerUrl) {
+      providerUrl.value = `${state.serverBaseUrl}/api/module-delivery/provider`;
+    }
+    renderShellMeta(root);
+    void refreshProviderDescriptor(root);
+  });
+  queryAll(root, '[data-nav]').forEach((item) => {
+    if (!('addEventListener' in item)) {
+      return;
+    }
+    item.addEventListener('click', () => {
+      const target = item.getAttribute('data-nav');
+      if (!target || target === 'ipfs-dashboard') {
+        return;
+      }
+      setActiveWorkspace(root, target);
+    });
+  });
+  renderShellMeta(root);
 }
 
 async function refreshProviderDescriptor(root: HTMLElement): Promise<void> {
@@ -622,6 +662,8 @@ function inferCatalogBaseUrl(root: HTMLElement): string {
 function setConnectionStatus(root: HTMLElement, status: string): void {
   const node = query<HTMLElement>(root, '#sdn-connection-status');
   node && (node.textContent = status);
+  const topbar = query<HTMLElement>(root, '#sdn-connection-status-top');
+  topbar && (topbar.textContent = status);
 }
 
 function recordObservedPeer(peerId: string, source: ObservedPeerSource, detail?: string): void {
@@ -630,6 +672,28 @@ function recordObservedPeer(peerId: string, source: ObservedPeerSource, detail?:
 
 function query<TElement extends HTMLElement>(root: ParentNode, selector: string): TElement | null {
   return root.querySelector(selector) as TElement | null;
+}
+
+function queryAll(root: ParentNode, selector: string): Element[] {
+  return Array.from(root.querySelectorAll(selector));
+}
+
+function setActiveWorkspace(root: HTMLElement, workspaceId: string): void {
+  queryAll(root, '[data-nav]').forEach((item) => {
+    item.classList.toggle('sdn-admin-nav__item--active', item.getAttribute('data-nav') === workspaceId);
+  });
+  queryAll(root, '[data-workspace]').forEach((panel) => {
+    panel.classList.toggle('sdn-admin-workspace--active', panel.getAttribute('data-workspace') === workspaceId);
+  });
+}
+
+function renderShellMeta(root: HTMLElement): void {
+  const activeTarget = query<HTMLElement>(root, '#sdn-active-target');
+  const modeSwitch = query<HTMLElement>(root, '#sdn-mode-switch');
+  activeTarget && (activeTarget.textContent = state.mode === 'local'
+    ? 'Local backend'
+    : (state.serverBaseUrl ? `Server · ${state.serverBaseUrl}` : 'Server backend'));
+  modeSwitch && (modeSwitch.textContent = state.mode === 'local' ? 'Local' : 'Server');
 }
 
 function uniqueStrings(values: Array<string | null | undefined>): string[] {

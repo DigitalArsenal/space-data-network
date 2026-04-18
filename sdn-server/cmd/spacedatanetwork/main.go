@@ -29,6 +29,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"github.com/spf13/cobra"
 
+	"github.com/spacedatanetwork/sdn-server/internal/adminui"
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
@@ -159,6 +160,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			cfg.Admin.WalletUIPath = envPath
 		}
 	}
+	if cfg.Admin.AdminUIPath == "" {
+		if envPath := os.Getenv("SDN_ADMIN_UI_PATH"); envPath != "" {
+			cfg.Admin.AdminUIPath = envPath
+		}
+	}
 	if cfg.Admin.WebuiPath == "" {
 		if envPath := os.Getenv("SDN_WEBUI_PATH"); envPath != "" {
 			cfg.Admin.WebuiPath = envPath
@@ -272,9 +278,30 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	var storefrontStore *storefront.Store
 	var storefrontDelivery *storefront.DeliveryService
 	if cfg.Admin.Enabled {
-		adminUI, err := peers.NewAdminUI(n.PeerRegistry(), n.PeerGater())
-		if err != nil {
-			log.Warnf("Failed to create admin UI: %v", err)
+		var (
+			adminUIHandler http.Handler
+			legacyAdminUI  *peers.AdminUI
+		)
+		if adminUIPath := resolveAdminUIPath(cfg.Admin.AdminUIPath); adminUIPath != "" {
+			host, hostErr := adminui.NewHost(adminUIPath)
+			if hostErr != nil {
+				log.Warnf("Failed to create hosted admin UI from %q: %v", adminUIPath, hostErr)
+			} else {
+				adminUIHandler = host
+				log.Infof("Hosted admin UI available at /admin from %s", adminUIPath)
+			}
+		}
+		if adminUIHandler == nil {
+			legacyAdminUI, err = peers.NewAdminUI(n.PeerRegistry(), n.PeerGater())
+			if err != nil {
+				log.Warnf("Failed to create legacy admin UI: %v", err)
+			} else {
+				adminUIHandler = legacyAdminUI
+				log.Warn("Falling back to legacy inline admin UI because no hosted admin build was found")
+			}
+		}
+		if adminUIHandler == nil {
+			log.Warn("Admin UI disabled because no hosted or legacy admin handler could be created")
 		} else {
 			adminAddr := cfg.Admin.ListenAddr
 			if adminAddr == "" {
@@ -572,10 +599,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					log.Infof("Wallet UI served at %s://%s/wallet-ui/ from %s", adminScheme, adminAddr, walletUIPath)
 				}
 
-				// Discover wallet-ui assets and pass to admin UI for the Wallet tab
+				// Discover wallet-ui assets for the login page and the legacy admin UI fallback.
 				auth.DiscoverWalletAssets(cfg.Admin.WalletUIPath)
-				if jsFile, cssFile := auth.WalletAssets(); jsFile != "" {
-					adminUI.SetWalletAssets(jsFile, cssFile)
+				if legacyAdminUI != nil {
+					if jsFile, cssFile := auth.WalletAssets(); jsFile != "" {
+						legacyAdminUI.SetWalletAssets(jsFile, cssFile)
+					}
 				}
 			}
 
@@ -631,19 +660,32 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// ----------------------------------------------------------------
 			// Admin panel at /admin — admin/auth surface only
 			// ----------------------------------------------------------------
-			if cfg.Admin.RequireAuth {
-				if authHandler == nil {
-					return fmt.Errorf("admin authentication required but handler is unavailable")
-				}
-				adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, func(w http.ResponseWriter, r *http.Request) {
+			adminUISubtree := http.StripPrefix("/admin", adminUIHandler)
+			serveAdminUI := func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/admin" {
 					http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
-				}))
-				adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
-			} else {
-				// No auth: admin panel open (local development mode)
-				adminMux.HandleFunc("/admin", adminUI.ServeHTTP)
-				adminMux.HandleFunc("/admin/", adminUI.ServeHTTP)
+					return
+				}
+				if !strings.HasPrefix(r.URL.Path, "/admin/") {
+					http.NotFound(w, r)
+					return
+				}
+
+				serve := func(w http.ResponseWriter, r *http.Request) {
+					adminUISubtree.ServeHTTP(w, r)
+				}
+				if cfg.Admin.RequireAuth {
+					if authHandler == nil {
+						http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+						return
+					}
+					authHandler.RequireAuth(peers.Admin, serve)(w, r)
+					return
+				}
+				serve(w, r)
 			}
+			adminMux.HandleFunc("/admin", serveAdminUI)
+			adminMux.HandleFunc("/admin/", serveAdminUI)
 
 			// ----------------------------------------------------------------
 			// Public frontend at / — configurable static file server
@@ -653,7 +695,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if err != nil {
 					log.Warnf("Frontend disabled (falling back to built-in landing): %v", err)
 					landingHTML := loadLandingPageFallback(cfg.Admin.HomepageFile)
-					adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
+					adminMux.Handle("/", adminLandingHandler(http.HandlerFunc(serveAdminUI), landingHTML))
 				} else {
 					adminMux.Handle("/", frontendHandler)
 					log.Infof("Public frontend at %s://%s/ from %s", adminScheme, adminAddr, frontendPath)
@@ -664,7 +706,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
 					log.Infof("Static build assets at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
 				}
-				adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
+				adminMux.Handle("/", adminLandingHandler(http.HandlerFunc(serveAdminUI), landingHTML))
 			}
 
 			adminServer = &http.Server{
@@ -1048,6 +1090,28 @@ func makeWebUIHandler(buildDir string, _ string) (http.Handler, error) {
 
 		http.ServeFile(w, r, indexPath)
 	}), nil
+}
+
+func resolveAdminUIPath(configuredPath string) string {
+	candidates := []string{
+		strings.TrimSpace(configuredPath),
+		config.DefaultAdminUIPath(),
+		"/opt/spacedatanetwork/admin-ui",
+		filepath.Join("sdn-js", "ui", "dist"),
+		filepath.Join("..", "sdn-js", "ui", "dist"),
+		filepath.Join("..", "..", "sdn-js", "ui", "dist"),
+	}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(candidate, "index.html"))
+		if err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // provisionFrontendDir creates the frontend directory with a default index.html

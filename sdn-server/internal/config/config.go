@@ -221,6 +221,11 @@ type AdminConfig struct {
 	// Override with SDN_FRONTEND_PATH env var or set explicitly in config.
 	FrontendPath string `yaml:"frontend_path"`
 
+	// AdminUIPath is the filesystem path to the built isomorphic SDN admin client.
+	// When set and valid, it is served at "/admin" instead of the legacy inline admin UI.
+	// Override with SDN_ADMIN_UI_PATH env var or set explicitly in config.
+	AdminUIPath string `yaml:"admin_ui_path"`
+
 	// HomepageFile is an optional single-file HTML app served at "/" and "/index.html".
 	// Deprecated: use frontend_path instead. If frontend_path is set, this is ignored.
 	// If empty, the built-in default landing page is served.
@@ -328,6 +333,7 @@ func Default() *Config {
 			TLSCertFile:   "",
 			TLSKeyFile:    "",
 			FrontendPath:  "",
+			AdminUIPath:   "",
 			HomepageFile:  "",
 			WebuiPath:     "",
 			IPFSAPIURL:    "",
@@ -346,7 +352,7 @@ func Default() *Config {
 		Publishing: PublishingConfig{
 			Enabled:           true,
 			AllowedSchemas:    []string{},
-			MaxRecordBytes:    10 * 1024 * 1024, // 10MB
+			MaxRecordBytes:    10 * 1024 * 1024,  // 10MB
 			DefaultQuotaBytes: 100 * 1024 * 1024, // 100MB
 			MinTrustLevel:     "standard",
 		},
@@ -371,6 +377,12 @@ func DefaultPath() string {
 func DefaultFrontendPath() string {
 	homeDir, _ := os.UserHomeDir()
 	return filepath.Join(homeDir, ".spacedatanetwork", "frontend")
+}
+
+// DefaultAdminUIPath returns the standard admin UI directory path.
+func DefaultAdminUIPath() string {
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".spacedatanetwork", "admin-ui")
 }
 
 // Load loads the configuration from a file.
