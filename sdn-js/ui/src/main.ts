@@ -3,6 +3,13 @@ import { decodeCanonicalPlgListing } from '../../src/ui/runtime/plg-listings';
 import { ObservedPeerIndex } from '../../src/ui/runtime/observed-peers';
 import type { CanonicalListing, ObservedPeerSource } from '../../src/ui/runtime/types';
 import { mountWalletUI } from '../../src/ui/runtime/wallet-ui';
+import {
+  createAdminState,
+  type AdminState,
+  type AdminSnapshot,
+} from '../../src/ui/runtime/admin-state';
+import { createLocalAdapter } from '../../src/ui/runtime/local-adapter';
+import { createServerAdapter } from '../../src/ui/runtime/server-adapter';
 import { parseFirstBrowserBundle } from './browser-bundle';
 import { renderAppShell } from './app';
 import './styles.css';
@@ -96,6 +103,14 @@ interface RuntimeModules {
   ) => Promise<Uint8Array>;
 }
 
+interface DirectoryUserLike {
+  xpub: string;
+  name?: string;
+  trust_level?: string;
+  source?: string;
+  last_login?: string;
+}
+
 let runtimeModulesPromise: Promise<RuntimeModules> | null = null;
 
 const DEFAULT_PROVIDER_DESCRIPTOR: ProviderDescriptor = {
@@ -111,8 +126,7 @@ const state = {
   provider: null as ProviderDescriptor | null,
   node: null as RuntimeNodeLike | null,
   identity: null as RuntimeIdentityLike | null,
-  mode: 'local' as 'local' | 'server',
-  serverBaseUrl: '' as string,
+  admin: null as AdminState | null,
   marketplace: createMarketplaceIndex(),
   observedPeers: new ObservedPeerIndex(),
   deliveryEvents: [] as ModuleDeliveryEventLike[],
@@ -125,8 +139,42 @@ async function bootstrap(): Promise<void> {
   }
 
   await renderAppShell(root, { mountWalletUI });
+  const initialServerTarget = inferInitialServerTarget();
+  state.admin = createAdminState({
+    localAdapter: () => createLocalAdapter({
+      getNodeContext: async () => ({
+        displayName: state.identity ? 'Local Helia requester' : 'Local Helia backend',
+        xpub: null,
+        transport: 'helia',
+        descriptorUrl: inferProviderDescriptorUrl(root),
+      }),
+      getPermissions: async () => ({
+        authenticated: Boolean(state.identity),
+        role: 'local',
+        canManageUsers: true,
+        canManageFrontend: true,
+        canManageStore: true,
+        canOpenWallet: true,
+      }),
+    }),
+    serverAdapter: (target) => createServerAdapter({ target }),
+    ...(initialServerTarget
+      ? {
+        initialMode: 'server' as const,
+        initialServerTarget,
+      }
+      : {}),
+  });
 
   bindUI(root);
+  const initialSnapshot = initialServerTarget
+    ? await state.admin.connectServer(initialServerTarget)
+    : await state.admin.connectLocal();
+  applyAdminSnapshot(root, initialSnapshot);
+  const providerUrl = query<HTMLInputElement>(root, '#sdn-provider-url');
+  if (providerUrl && initialSnapshot.serverTarget?.baseUrl) {
+    providerUrl.value = `${initialSnapshot.serverTarget.baseUrl}/api/module-delivery/provider`;
+  }
   await refreshProviderDescriptor(root);
   await refreshMarketplace(root);
 }
@@ -182,25 +230,10 @@ function bindUI(root: HTMLElement): void {
 
 function bindShell(root: HTMLElement): void {
   query<HTMLButtonElement>(root, '#sdn-mode-switch')?.addEventListener('click', () => {
-    state.mode = state.mode === 'local' ? 'server' : 'local';
-    renderShellMeta(root);
+    void toggleAdminMode(root);
   });
   query<HTMLButtonElement>(root, '#sdn-connect-server')?.addEventListener('click', () => {
-    const candidate = window.prompt(
-      'Enter the admin base URL for the remote SDN node:',
-      state.serverBaseUrl || 'https://sdn.spaceaware.io',
-    );
-    if (!candidate) {
-      return;
-    }
-    state.serverBaseUrl = candidate.replace(/\/+$/, '');
-    state.mode = 'server';
-    const providerUrl = query<HTMLInputElement>(root, '#sdn-provider-url');
-    if (providerUrl) {
-      providerUrl.value = `${state.serverBaseUrl}/api/module-delivery/provider`;
-    }
-    renderShellMeta(root);
-    void refreshProviderDescriptor(root);
+    void promptAndConnectServer(root);
   });
   queryAll(root, '[data-nav]').forEach((item) => {
     if (!('addEventListener' in item)) {
@@ -211,10 +244,10 @@ function bindShell(root: HTMLElement): void {
       if (!target || target === 'ipfs-dashboard') {
         return;
       }
-      setActiveWorkspace(root, target);
+      void setWorkspace(root, target);
     });
   });
-  renderShellMeta(root);
+  renderShellMeta(root, state.admin?.snapshot());
 }
 
 async function refreshProviderDescriptor(root: HTMLElement): Promise<void> {
@@ -223,6 +256,7 @@ async function refreshProviderDescriptor(root: HTMLElement): Promise<void> {
   const providerUrl = query<HTMLInputElement>(root, '#sdn-provider-url');
   const candidates = uniqueStrings([
     providerUrl?.value,
+    inferProviderDescriptorUrl(root),
     `${window.location.origin}/api/module-delivery/provider`,
   ]);
 
@@ -359,6 +393,10 @@ async function ensureRuntime(root: HTMLElement): Promise<{
       renderObservedPeers(root);
     } catch {
       renderObservedPeers(root);
+    }
+
+    if (state.admin?.snapshot().mode === 'local') {
+      applyAdminSnapshot(root, await state.admin.refresh());
     }
   }
 
@@ -656,6 +694,10 @@ function inferCatalogBaseUrl(root: HTMLElement): string {
       // Fall back to same origin below.
     }
   }
+  const serverBaseUrl = state.admin?.snapshot().serverTarget?.baseUrl;
+  if (serverBaseUrl) {
+    return serverBaseUrl;
+  }
   return window.location.origin;
 }
 
@@ -687,13 +729,182 @@ function setActiveWorkspace(root: HTMLElement, workspaceId: string): void {
   });
 }
 
-function renderShellMeta(root: HTMLElement): void {
+function renderShellMeta(root: HTMLElement, snapshot = state.admin?.snapshot()): void {
   const activeTarget = query<HTMLElement>(root, '#sdn-active-target');
   const modeSwitch = query<HTMLElement>(root, '#sdn-mode-switch');
-  activeTarget && (activeTarget.textContent = state.mode === 'local'
+  if (!snapshot) {
+    activeTarget && (activeTarget.textContent = 'Local backend');
+    modeSwitch && (modeSwitch.textContent = 'Local');
+    return;
+  }
+  activeTarget && (activeTarget.textContent = snapshot.mode === 'local'
     ? 'Local backend'
-    : (state.serverBaseUrl ? `Server · ${state.serverBaseUrl}` : 'Server backend'));
-  modeSwitch && (modeSwitch.textContent = state.mode === 'local' ? 'Local' : 'Server');
+    : (snapshot.serverTarget?.label
+      ? `Server · ${snapshot.serverTarget.label}`
+      : (snapshot.serverTarget?.baseUrl ? `Server · ${snapshot.serverTarget.baseUrl}` : 'Server backend')));
+  modeSwitch && (modeSwitch.textContent = snapshot.mode === 'local' ? 'Local' : 'Server');
+}
+
+async function toggleAdminMode(root: HTMLElement): Promise<void> {
+  const admin = requireAdminState();
+  const snapshot = admin.snapshot();
+  if (snapshot.mode === 'local') {
+    if (snapshot.serverTarget?.baseUrl) {
+      applyAdminSnapshot(root, await admin.setMode('server'));
+      await refreshProviderDescriptor(root);
+      return;
+    }
+    await promptAndConnectServer(root);
+    return;
+  }
+
+  applyAdminSnapshot(root, await admin.setMode('local'));
+  await refreshProviderDescriptor(root);
+}
+
+async function promptAndConnectServer(root: HTMLElement): Promise<void> {
+  const admin = requireAdminState();
+  const currentTarget = admin.snapshot().serverTarget?.baseUrl ?? 'https://sdn.spaceaware.io';
+  const candidate = window.prompt(
+    'Enter the admin base URL for the remote SDN node:',
+    currentTarget,
+  );
+  if (!candidate) {
+    return;
+  }
+
+  const snapshot = await admin.connectServer({
+    baseUrl: candidate,
+  });
+  applyAdminSnapshot(root, snapshot);
+  const providerUrl = query<HTMLInputElement>(root, '#sdn-provider-url');
+  if (providerUrl && snapshot.serverTarget?.baseUrl) {
+    providerUrl.value = `${snapshot.serverTarget.baseUrl}/api/module-delivery/provider`;
+  }
+  await refreshProviderDescriptor(root);
+}
+
+async function setWorkspace(root: HTMLElement, workspaceId: string): Promise<void> {
+  const admin = requireAdminState();
+  applyAdminSnapshot(root, await admin.setWorkspace(workspaceId));
+}
+
+function applyAdminSnapshot(root: HTMLElement, snapshot: AdminSnapshot): void {
+  renderShellMeta(root, snapshot);
+  setActiveWorkspace(root, snapshot.workspace.activeId);
+  void refreshDirectoryPanel(root);
+}
+
+function inferProviderDescriptorUrl(root: HTMLElement): string {
+  const serverBaseUrl = state.admin?.snapshot().serverTarget?.baseUrl;
+  if (serverBaseUrl) {
+    return `${serverBaseUrl}/api/module-delivery/provider`;
+  }
+  const providerUrl = query<HTMLInputElement>(root, '#sdn-provider-url')?.value.trim();
+  if (providerUrl) {
+    return providerUrl;
+  }
+  return `${window.location.origin}/api/module-delivery/provider`;
+}
+
+function inferInitialServerTarget() {
+  if (!window.location.pathname.startsWith('/admin')) {
+    return null;
+  }
+  return {
+    baseUrl: window.location.origin,
+    label: 'Current server',
+  };
+}
+
+async function refreshDirectoryPanel(root: HTMLElement): Promise<void> {
+  const panel = query<HTMLElement>(root, '#sdn-directory-panel');
+  const admin = state.admin;
+  if (!panel || !admin) {
+    return;
+  }
+
+  const snapshot = admin.snapshot();
+  const summary = `
+    <div class="sdn-stack">
+      <strong>${escapeHtml(snapshot.nodeContext.displayName)}</strong>
+      <span>Mode: ${escapeHtml(snapshot.mode)}</span>
+      <span>Role: ${escapeHtml(snapshot.permissions.role)}</span>
+      <span>Transport: ${escapeHtml(snapshot.nodeContext.transport)}</span>
+      <span>Peer ID: ${escapeHtml(snapshot.nodeContext.peerId ?? '<unknown>')}</span>
+      <span>Server: ${escapeHtml(snapshot.serverTarget?.baseUrl ?? '<browser-local>')}</span>
+    </div>
+  `;
+
+  if (snapshot.mode === 'local') {
+    panel.innerHTML = `
+      ${summary}
+      <div class="sdn-empty">
+        Local mode uses the browser-owned Helia backend. Switch to Server to inspect the live node directory and user roster.
+      </div>
+    `;
+    return;
+  }
+
+  if (!snapshot.permissions.authenticated || !snapshot.serverTarget?.baseUrl) {
+    panel.innerHTML = `
+      ${summary}
+      <div class="sdn-empty">
+        Sign in on the selected server to inspect node membership and permissions.
+      </div>
+    `;
+    return;
+  }
+
+  if (snapshot.permissions.role !== 'admin') {
+    panel.innerHTML = `
+      ${summary}
+      <div class="sdn-empty">
+        Connected as ${escapeHtml(snapshot.permissions.role)}. Admin-only user management data is hidden for this session.
+      </div>
+    `;
+    return;
+  }
+
+  panel.innerHTML = `
+    ${summary}
+    <div class="sdn-empty">Loading live server users…</div>
+  `;
+
+  try {
+    const response = await fetch(`${snapshot.serverTarget.baseUrl}/api/auth/users`, {
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      throw new Error(`user query failed (${response.status})`);
+    }
+    const users = await response.json() as DirectoryUserLike[];
+    panel.innerHTML = `
+      ${summary}
+      <div class="sdn-stack">
+        <strong>Server users (${users.length})</strong>
+        ${users.map((user) => `
+          <div class="sdn-sighting">
+            <strong>${escapeHtml(user.name ?? user.xpub)}</strong>
+            <span>${escapeHtml(user.trust_level ?? 'unknown')} · ${escapeHtml(user.source ?? 'server')}</span>
+            <span>${escapeHtml(user.xpub)}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } catch (error) {
+    panel.innerHTML = `
+      ${summary}
+      <div class="sdn-empty">${escapeHtml(formatError(error))}</div>
+    `;
+  }
+}
+
+function requireAdminState(): AdminState {
+  if (!state.admin) {
+    throw new Error('admin state not initialized');
+  }
+  return state.admin;
 }
 
 function uniqueStrings(values: Array<string | null | undefined>): string[] {

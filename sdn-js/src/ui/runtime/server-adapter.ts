@@ -1,0 +1,173 @@
+import {
+  cloneAdminSnapshot,
+  createAdminSnapshot,
+  normalizeServerTarget,
+  type AdminAdapter,
+  type AdminPermissions,
+  type AdminServerTarget,
+  type AdminSnapshot,
+  type AdminWorkspaceId,
+} from './admin-adapter';
+
+interface ResponseLike {
+  ok: boolean;
+  status: number;
+  json(): Promise<unknown>;
+}
+
+type FetchLike = (input: string, init?: RequestInit) => Promise<ResponseLike>;
+
+export interface ServerAdapterDeps {
+  target: AdminServerTarget;
+  fetch?: FetchLike;
+  initialWorkspace?: AdminWorkspaceId;
+}
+
+interface AuthStatusResponse {
+  wallet_ui_configured?: boolean;
+}
+
+interface AuthMeResponse {
+  xpub?: string;
+  name?: string;
+  trust_level?: string;
+}
+
+export function createServerAdapter(deps: ServerAdapterDeps): AdminAdapter {
+  const target = normalizeServerTarget(deps.target);
+  if (!target) {
+    throw new Error('server target baseUrl is required');
+  }
+
+  const fetcher = deps.fetch ?? (globalThis.fetch.bind(globalThis) as FetchLike);
+  let currentSnapshot = createAdminSnapshot({
+    mode: 'server',
+    serverTarget: target,
+    nodeContext: {
+      displayName: target.label ?? target.baseUrl,
+      transport: 'https',
+    },
+    workspace: {
+      activeId: deps.initialWorkspace ?? 'network',
+    },
+  });
+
+  return {
+    mode: 'server',
+
+    async connect(): Promise<AdminSnapshot> {
+      const [nodeInfo, authStatus, authMe] = await Promise.all([
+        readJson(fetcher, `${target.baseUrl}/api/node/info`),
+        readJson(fetcher, `${target.baseUrl}/api/auth/status`),
+        readJson(fetcher, `${target.baseUrl}/api/auth/me`, { allowUnauthorized: true }),
+      ]);
+
+      currentSnapshot = createAdminSnapshot({
+        mode: 'server',
+        serverTarget: target,
+        nodeContext: {
+          displayName: pickString(nodeInfo, [
+            'DISPLAY_NAME',
+            'display_name',
+            'name',
+          ]) ?? target.label ?? target.baseUrl,
+          peerId: pickString(nodeInfo, ['peer_id', 'peerId']),
+          xpub: pickString(authMe, ['xpub']),
+          transport: 'https',
+          descriptorUrl: `${target.baseUrl}/api/module-delivery/provider`,
+        },
+        permissions: buildPermissions(authStatus as AuthStatusResponse, authMe as AuthMeResponse | null),
+        workspace: currentSnapshot.workspace,
+      });
+      return cloneAdminSnapshot(currentSnapshot);
+    },
+
+    async snapshot(): Promise<AdminSnapshot> {
+      return cloneAdminSnapshot(currentSnapshot);
+    },
+
+    async setWorkspace(workspaceId: AdminWorkspaceId): Promise<AdminSnapshot> {
+      currentSnapshot = createAdminSnapshot({
+        ...currentSnapshot,
+        mode: 'server',
+        serverTarget: target,
+        workspace: {
+          activeId: workspaceId,
+          available: currentSnapshot.workspace.available,
+        },
+      });
+      return cloneAdminSnapshot(currentSnapshot);
+    },
+  };
+}
+
+export const createServerAdminAdapter = createServerAdapter;
+
+async function readJson(
+  fetcher: FetchLike,
+  url: string,
+  options: { allowUnauthorized?: boolean } = {},
+): Promise<Record<string, unknown> | null> {
+  const response = await fetcher(url, {
+    credentials: 'include',
+  });
+  if (options.allowUnauthorized && response.status === 401) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`request failed (${response.status}) for ${url}`);
+  }
+  const payload = await response.json();
+  return isRecord(payload) ? payload : {};
+}
+
+function buildPermissions(
+  authStatus: AuthStatusResponse | null,
+  authMe: AuthMeResponse | null,
+): AdminPermissions {
+  const role = normalizeRole(authMe?.trust_level);
+  const authenticated = Boolean(authMe && role !== 'guest');
+  return {
+    authenticated,
+    role,
+    canManageUsers: role === 'admin',
+    canManageFrontend: role === 'admin',
+    canManageStore: role === 'admin' || role === 'trusted',
+    canOpenWallet: Boolean(authStatus?.wallet_ui_configured ?? true),
+  };
+}
+
+function normalizeRole(value?: string): AdminPermissions['role'] {
+  switch ((value ?? '').trim().toLowerCase()) {
+    case 'admin':
+      return 'admin';
+    case 'trusted':
+      return 'trusted';
+    case 'standard':
+      return 'standard';
+    case 'limited':
+      return 'limited';
+    default:
+      return 'guest';
+  }
+}
+
+function pickString(
+  payload: Record<string, unknown> | null,
+  keys: string[],
+): string | null {
+  if (!payload) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
