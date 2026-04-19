@@ -196,3 +196,7 @@ export { HttpTransport } from './transport/http';
 export type { LogEntry, LogHeadInfo } from './transport/http';
 export { SessionAuth } from './transport/auth';
 export type { AuthProvider } from './transport/auth';
+
+// UI — isomorphic admin UI components (also exported via ./ui sub-path)
+export { SDNConnection, mountAdminUI, wireToAdminTemplate } from './ui/index';
+export type { ConnectionMode, NodeInfo, PeerEntry, StoreListingEntry, SDNConnectionOptions } from './ui/index';
