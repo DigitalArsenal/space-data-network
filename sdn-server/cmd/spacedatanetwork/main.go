@@ -615,35 +615,43 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			}))
 
 			// ----------------------------------------------------------------
-			// Admin panel at /admin — IPFS WebUI (if configured) behind admin auth
+			// SDN admin panel at /admin — always uses the built-in SDN admin UI.
 			// ----------------------------------------------------------------
 			if cfg.Admin.RequireAuth {
 				if authHandler == nil {
 					return fmt.Errorf("admin authentication required but handler is unavailable")
 				}
-				if webuiPath := strings.TrimSpace(cfg.Admin.WebuiPath); webuiPath != "" {
-					webuiHandler, err := makeWebUIHandler(webuiPath, "/admin")
-					if err != nil {
-						log.Warnf("IPFS WebUI disabled at /admin: %v", err)
-						adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
-						adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
-					} else {
-						// Redirect /admin → /admin/ so the React SPA's relative asset
-						// paths (homepage: "./") resolve under /admin/ not site root.
-						adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, func(w http.ResponseWriter, r *http.Request) {
-							http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
-						}))
-						adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, http.StripPrefix("/admin", webuiHandler).ServeHTTP))
-						log.Infof("IPFS WebUI at %s://%s/admin (requires admin auth) from %s", adminScheme, adminAddr, webuiPath)
-					}
-				} else {
-					adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
-					adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
-				}
+				adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
+				adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
 			} else {
 				// No auth: admin panel open (local development mode)
 				adminMux.HandleFunc("/admin", adminUI.ServeHTTP)
 				adminMux.HandleFunc("/admin/", adminUI.ServeHTTP)
+			}
+
+			// ----------------------------------------------------------------
+			// IPFS WebUI at /webui — upstream-style IPFS dashboard (if configured)
+			// ----------------------------------------------------------------
+			if webuiPath := strings.TrimSpace(cfg.Admin.WebuiPath); webuiPath != "" {
+				webuiHandler, err := makeWebUIHandler(webuiPath, "/webui")
+				if err != nil {
+					log.Warnf("IPFS WebUI disabled at /webui: %v", err)
+				} else {
+					// Redirect /webui → /webui/ so the React SPA's relative asset
+					// paths resolve under /webui/ not site root.
+					if cfg.Admin.RequireAuth && authHandler != nil {
+						adminMux.HandleFunc("/webui", authHandler.RequireAuth(peers.Admin, func(w http.ResponseWriter, r *http.Request) {
+							http.Redirect(w, r, "/webui/", http.StatusMovedPermanently)
+						}))
+						adminMux.HandleFunc("/webui/", authHandler.RequireAuth(peers.Admin, http.StripPrefix("/webui", webuiHandler).ServeHTTP))
+					} else {
+						adminMux.HandleFunc("/webui", func(w http.ResponseWriter, r *http.Request) {
+							http.Redirect(w, r, "/webui/", http.StatusMovedPermanently)
+						})
+						adminMux.HandleFunc("/webui/", http.StripPrefix("/webui", webuiHandler).ServeHTTP)
+					}
+					log.Infof("IPFS WebUI at %s://%s/webui from %s", adminScheme, adminAddr, webuiPath)
+				}
 			}
 
 			// ----------------------------------------------------------------
