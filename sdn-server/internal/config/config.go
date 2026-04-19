@@ -227,8 +227,8 @@ type AdminConfig struct {
 	HomepageFile string `yaml:"homepage_file"`
 
 	// WebuiPath is the filesystem path to an IPFS WebUI build directory (webui/build).
-	// When set, the IPFS WebUI is served at "/admin" behind admin authentication.
-	// If empty, the admin panel uses the built-in admin UI.
+	// When set, the upstream IPFS WebUI is served at "/webui" behind admin authentication.
+	// The SDN admin panel is always served at "/admin" using the built-in SDN admin UI.
 	WebuiPath string `yaml:"webui_path"`
 
 	// IPFSAPIURL is the base URL of an upstream Kubo RPC API endpoint (no path),
@@ -346,7 +346,7 @@ func Default() *Config {
 		Publishing: PublishingConfig{
 			Enabled:           true,
 			AllowedSchemas:    []string{},
-			MaxRecordBytes:    10 * 1024 * 1024, // 10MB
+			MaxRecordBytes:    10 * 1024 * 1024,  // 10MB
 			DefaultQuotaBytes: 100 * 1024 * 1024, // 100MB
 			MinTrustLevel:     "standard",
 		},
