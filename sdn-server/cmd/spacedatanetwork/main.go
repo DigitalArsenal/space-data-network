@@ -1420,13 +1420,32 @@ type providerDescriptorSource interface {
 	PeerID() peer.ID
 	ListenAddrs() []multiaddr.Multiaddr
 	Host() libp2phost.Host
+	EPMService() *epm.Service
+}
+
+type providerDescriptorIdentityAddress struct {
+	Chain     string `json:"chain"`
+	Address   string `json:"address"`
+	KeyPath   string `json:"keyPath,omitempty"`
+	PublicKey string `json:"publicKey,omitempty"`
+}
+
+type providerDescriptorIdentityResponse struct {
+	XPub                string                              `json:"xpub,omitempty"`
+	IdentityPublicKey   string                              `json:"identityPublicKey,omitempty"`
+	SigningPublicKey    string                              `json:"signingPublicKey,omitempty"`
+	EncryptionPublicKey string                              `json:"encryptionPublicKey,omitempty"`
+	IPNSEntries         []string                            `json:"ipnsEntries,omitempty"`
+	ENSNames            []string                            `json:"ensNames,omitempty"`
+	Addresses           []providerDescriptorIdentityAddress `json:"addresses,omitempty"`
 }
 
 type providerDescriptorResponse struct {
-	PublicKey      string   `json:"publicKey"`
-	PeerID         string   `json:"peerId"`
-	IPNS           string   `json:"ipns,omitempty"`
-	RelayAddresses []string `json:"relayAddresses,omitempty"`
+	PublicKey      string                              `json:"publicKey"`
+	PeerID         string                              `json:"peerId"`
+	IPNS           string                              `json:"ipns,omitempty"`
+	RelayAddresses []string                            `json:"relayAddresses,omitempty"`
+	Identity       *providerDescriptorIdentityResponse `json:"identity,omitempty"`
 }
 
 func handleProviderDescriptor(src providerDescriptorSource) http.HandlerFunc {
@@ -1469,6 +1488,7 @@ func buildProviderDescriptor(src providerDescriptorSource) (*providerDescriptorR
 	response := &providerDescriptorResponse{
 		PublicKey: publicKeyHex,
 		PeerID:    peerID,
+		Identity:  buildProviderDescriptorIdentity(src, publicKeyHex, peerID),
 	}
 	if peerID != "" {
 		response.IPNS = "/ipns/" + peerID
@@ -1482,6 +1502,181 @@ func buildProviderDescriptor(src providerDescriptorSource) (*providerDescriptorR
 	}
 
 	return response, nil
+}
+
+func buildProviderDescriptorIdentity(src providerDescriptorSource, defaultPublicKeyHex, peerID string) *providerDescriptorIdentityResponse {
+	identity := &providerDescriptorIdentityResponse{}
+	if strings.TrimSpace(defaultPublicKeyHex) != "" {
+		identity.IdentityPublicKey = defaultPublicKeyHex
+	}
+	if strings.TrimSpace(peerID) != "" {
+		identity.IPNSEntries = []string{"/ipns/" + peerID}
+	}
+	if src == nil || src.EPMService() == nil {
+		return identity
+	}
+
+	info := src.EPMService().GetNodeEPMJSON()
+	if len(info) == 0 {
+		return identity
+	}
+
+	if xpub := nodeInfoStringValue(info["xpub"]); xpub != "" {
+		identity.XPub = xpub
+	}
+	if value := nodeInfoStringValue(info["identity_pubkey_hex"]); value != "" {
+		identity.IdentityPublicKey = value
+	}
+	if value := nodeInfoStringValue(info["signing_pubkey_hex"]); value != "" {
+		identity.SigningPublicKey = value
+	}
+	if value := nodeInfoStringValue(info["encryption_pubkey_hex"]); value != "" {
+		identity.EncryptionPublicKey = value
+	}
+
+	identity.IPNSEntries = uniqueTrimmedStrings(append(identity.IPNSEntries, providerDescriptorIPNSEntries(info)...))
+	identity.ENSNames = uniqueTrimmedStrings(providerDescriptorENSNames(info))
+	identity.Addresses = providerDescriptorIdentityAddresses(info)
+
+	return identity
+}
+
+func providerDescriptorIPNSEntries(info map[string]interface{}) []string {
+	entries := make([]string, 0)
+	for _, value := range nodeInfoStringEntries(info["multiformat_address"]) {
+		if strings.HasPrefix(strings.TrimSpace(value), "/ipns/") {
+			entries = append(entries, value)
+		}
+	}
+	return entries
+}
+
+func providerDescriptorENSNames(info map[string]interface{}) []string {
+	candidates := []string{
+		nodeInfoStringValue(info["dn"]),
+		nodeInfoStringValue(info["legal_name"]),
+	}
+	candidates = append(candidates, nodeInfoStringEntries(info["alternate_names"])...)
+	candidates = append(candidates, nodeInfoStringEntries(info["multiformat_address"])...)
+
+	ensNames := make([]string, 0)
+	for _, candidate := range candidates {
+		if ensName := normalizeENSName(candidate); ensName != "" {
+			ensNames = append(ensNames, ensName)
+		}
+	}
+	return ensNames
+}
+
+func providerDescriptorIdentityAddresses(info map[string]interface{}) []providerDescriptorIdentityAddress {
+	proofsByChain := make(map[string]providerDescriptorIdentityAddress)
+	for _, proof := range nodeInfoObjectEntries(info["chain_proofs"]) {
+		chain := strings.ToLower(strings.TrimSpace(nodeInfoStringValue(proof["chain"])))
+		if chain == "" {
+			continue
+		}
+		entry := proofsByChain[chain]
+		entry.Chain = chain
+		if entry.Address == "" {
+			entry.Address = nodeInfoStringValue(proof["address"])
+		}
+		if entry.KeyPath == "" {
+			entry.KeyPath = nodeInfoStringValue(proof["key_path"])
+		}
+		if entry.PublicKey == "" {
+			entry.PublicKey = nodeInfoStringValue(proof["public_key"])
+		}
+		proofsByChain[chain] = entry
+	}
+
+	chainOrder := []string{"bitcoin", "ethereum", "solana"}
+	addresses := make([]providerDescriptorIdentityAddress, 0, len(chainOrder))
+	for _, chain := range chainOrder {
+		entry := proofsByChain[chain]
+		entry.Chain = chain
+		if entry.Address == "" {
+			entry.Address = nodeInfoStringValue(info[chain+"_address"])
+		}
+		if entry.KeyPath == "" {
+			entry.KeyPath = nodeInfoStringValue(info[chain+"_key_path"])
+		}
+		if strings.TrimSpace(entry.Address) == "" {
+			continue
+		}
+		addresses = append(addresses, entry)
+	}
+	return addresses
+}
+
+func nodeInfoObjectEntries(raw interface{}) []map[string]interface{} {
+	switch entries := raw.(type) {
+	case []map[string]interface{}:
+		return append([]map[string]interface{}(nil), entries...)
+	case []interface{}:
+		ret := make([]map[string]interface{}, 0, len(entries))
+		for _, entry := range entries {
+			if value, ok := entry.(map[string]interface{}); ok {
+				ret = append(ret, value)
+			}
+		}
+		return ret
+	default:
+		return nil
+	}
+}
+
+func nodeInfoStringEntries(raw interface{}) []string {
+	switch entries := raw.(type) {
+	case []string:
+		return append([]string(nil), entries...)
+	case []interface{}:
+		ret := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			if value, ok := entry.(string); ok {
+				ret = append(ret, value)
+			}
+		}
+		return ret
+	default:
+		return nil
+	}
+}
+
+func uniqueTrimmedStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	ret := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		ret = append(ret, trimmed)
+	}
+	return ret
+}
+
+func normalizeENSName(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return ""
+	}
+
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Hostname() != "" {
+		trimmed = strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	}
+
+	trimmed = strings.Trim(trimmed, "[](){}<>\"'.,;")
+	if strings.HasSuffix(trimmed, ".eth") {
+		return trimmed
+	}
+	return ""
 }
 
 func providerPublicKeyHex(host libp2phost.Host, peerID peer.ID) (string, error) {
