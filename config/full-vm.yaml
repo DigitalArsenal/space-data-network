@@ -1,0 +1,21 @@
+mode: full
+
+storage:
+  path: /var/lib/spacedatanetwork/data
+  max_size: 10GB
+  gc_interval: 1h
+
+admin:
+  enabled: true
+  listen_addr: 0.0.0.0:5001
+  require_auth: true
+  session_expiry: 24h
+  totp_required: false
+  tls_enabled: false
+  frontend_path: /var/lib/spacedatanetwork/frontend
+  admin_ui_path: /opt/spacedatanetwork/admin-ui
+  webui_path: /opt/spacedatanetwork/webui
+
+setup:
+  token_expiry: 10m
+  data_path: /var/lib/spacedatanetwork/data

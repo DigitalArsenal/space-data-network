@@ -20,12 +20,14 @@ import { keyMaterialEncoding } from 'spacedatastandards.org/lib/js/REC/keyMateri
 import { keyMaterialRole } from 'spacedatastandards.org/lib/js/REC/keyMaterialRole.js';
 import { pluginType } from 'spacedatastandards.org/lib/js/PLG/pluginType.js';
 
-vi.mock('./crypto/hd-wallet', async () => {
-  const actual = await vi.importActual<typeof import('./crypto/hd-wallet')>('./crypto/hd-wallet');
+vi.mock('./crypto/hd-wallet', () => {
   return {
-    ...actual,
     derivePeerIdFromPublicKey: vi.fn(async () => 'provider-peer-id'),
     sign: vi.fn(async () => new Uint8Array([0xaa, 0xbb, 0xcc])),
+    sha256: vi.fn(async (value: Uint8Array) => {
+      const digest = await crypto.subtle.digest('SHA-256', value);
+      return new Uint8Array(digest);
+    }),
   };
 });
 
@@ -641,38 +643,22 @@ function createModuleDescriptorOffset(
     [builder.createString('app.example.com')],
   );
 
-  return PLG.createPLG(
-    builder,
-    pluginIdOffset,
-    nameOffset,
-    versionOffset,
-    descriptionOffset,
-    pluginType.Analysis,
-    1,
-    wasmHashOffset,
-    4n,
-    wasmCidOffset,
-    0,
-    0n,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    true,
-    requiredScopeOffset,
-    keyIdOffset,
-    allowedDomainsOffset,
-    300_000n,
-    0,
-    0n,
-    0n,
-    0,
-    0,
-    0,
-    0,
-  );
+  PLG.startPLG(builder);
+  PLG.addPluginId(builder, pluginIdOffset);
+  PLG.addName(builder, nameOffset);
+  PLG.addVersion(builder, versionOffset);
+  PLG.addDescription(builder, descriptionOffset);
+  PLG.addPluginType(builder, pluginType.Analysis);
+  PLG.addAbiVersion(builder, 1);
+  PLG.addWasmHash(builder, wasmHashOffset);
+  PLG.addWasmSize(builder, 4n);
+  PLG.addWasmCid(builder, wasmCidOffset);
+  PLG.addEncrypted(builder, true);
+  PLG.addRequiredScope(builder, requiredScopeOffset);
+  PLG.addKeyId(builder, keyIdOffset);
+  PLG.addAllowedDomains(builder, allowedDomainsOffset);
+  PLG.addMaxGrantTimeoutMs(builder, 300_000n);
+  return PLG.endPLG(builder);
 }
 
 function createWrappedContentKeyHeaderOffset(

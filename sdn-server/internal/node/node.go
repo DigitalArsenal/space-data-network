@@ -405,7 +405,7 @@ func (n *Node) init() error {
 			log.Warnf("Plugin decryption key invalid: %v", keyErr)
 		}
 
-		if asset, ok := reg.Get(licensingModuleID); ok && asset != nil {
+		if n.shouldLoadLicensingFromCatalog(reg) {
 			nodeCtx, err := n.buildModuleNodeContext()
 			if err != nil {
 				log.Warnf("Failed to build module node context: %v", err)
@@ -518,6 +518,16 @@ func (n *Node) loadPluginRegistry() (*license.PluginRegistry, error) {
 		log.Infof("Loaded %d plugin catalog entry(s) from %s", reg.Count(), pluginRoot)
 	}
 	return reg, nil
+}
+
+func (n *Node) shouldLoadLicensingFromCatalog(reg *license.PluginRegistry) bool {
+	if reg == nil {
+		return false
+	}
+	if _, ok := reg.Get(licensingModuleID); !ok {
+		return false
+	}
+	return strings.TrimSpace(n.findKeyBrokerWasmPath()) == ""
 }
 
 func (n *Node) findPluginDecryptPrivateKey() ([]byte, error) {

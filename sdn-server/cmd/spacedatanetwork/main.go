@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -29,6 +30,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"github.com/spf13/cobra"
 
+	"github.com/spacedatanetwork/sdn-server/internal/adminui"
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
@@ -159,6 +161,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			cfg.Admin.WalletUIPath = envPath
 		}
 	}
+	if cfg.Admin.AdminUIPath == "" {
+		if envPath := os.Getenv("SDN_ADMIN_UI_PATH"); envPath != "" {
+			cfg.Admin.AdminUIPath = envPath
+		}
+	}
 	if cfg.Admin.WebuiPath == "" {
 		if envPath := os.Getenv("SDN_WEBUI_PATH"); envPath != "" {
 			cfg.Admin.WebuiPath = envPath
@@ -272,9 +279,30 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	var storefrontStore *storefront.Store
 	var storefrontDelivery *storefront.DeliveryService
 	if cfg.Admin.Enabled {
-		adminUI, err := peers.NewAdminUI(n.PeerRegistry(), n.PeerGater())
-		if err != nil {
-			log.Warnf("Failed to create admin UI: %v", err)
+		var (
+			adminUIHandler http.Handler
+			legacyAdminUI  *peers.AdminUI
+		)
+		if adminUIPath := resolveAdminUIPath(cfg.Admin.AdminUIPath); adminUIPath != "" {
+			host, hostErr := adminui.NewHost(adminUIPath)
+			if hostErr != nil {
+				log.Warnf("Failed to create hosted admin UI from %q: %v", adminUIPath, hostErr)
+			} else {
+				adminUIHandler = host
+				log.Infof("Hosted admin UI available at /admin from %s", adminUIPath)
+			}
+		}
+		if adminUIHandler == nil {
+			legacyAdminUI, err = peers.NewAdminUI(n.PeerRegistry(), n.PeerGater())
+			if err != nil {
+				log.Warnf("Failed to create legacy admin UI: %v", err)
+			} else {
+				adminUIHandler = legacyAdminUI
+				log.Warn("Falling back to legacy inline admin UI because no hosted admin build was found")
+			}
+		}
+		if adminUIHandler == nil {
+			log.Warn("Admin UI disabled because no hosted or legacy admin handler could be created")
 		} else {
 			adminAddr := cfg.Admin.ListenAddr
 			if adminAddr == "" {
@@ -412,6 +440,20 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				}
 			}
 
+			// Public IPFS WebUI mount.
+			if webuiPath := strings.TrimSpace(cfg.Admin.WebuiPath); webuiPath != "" {
+				webuiHandler, err := makeWebUIHandler(webuiPath, "/webui")
+				if err != nil {
+					log.Warnf("IPFS WebUI disabled at /webui: %v", err)
+				} else {
+					adminMux.HandleFunc("/webui", func(w http.ResponseWriter, r *http.Request) {
+						http.Redirect(w, r, "/webui/", http.StatusMovedPermanently)
+					})
+					adminMux.Handle("/webui/", http.StripPrefix("/webui", webuiHandler))
+					log.Infof("IPFS WebUI at %s://%s/webui from %s", adminScheme, adminAddr, webuiPath)
+				}
+			}
+
 			// Trusted peer registry management (admin UI React app consumes these endpoints).
 			adminMux.Handle("/api/", peers.NewAPIHandler(n.PeerRegistry(), n.PeerGater()))
 
@@ -479,6 +521,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Node info API endpoint
 			adminMux.HandleFunc("/api/node/info", handleNodeInfo(n, torRuntime))
 			adminMux.HandleFunc("/api/module-delivery/provider", handleProviderDescriptor(n))
+			adminMux.HandleFunc("/api/module-delivery/listings", handleModuleDeliveryListings(n.PluginRegistry()))
 
 			// Relay status endpoint (public, used by clients for load balancing)
 			adminMux.HandleFunc("/api/relay/status", handleRelayStatus(n))
@@ -558,10 +601,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					log.Infof("Wallet UI served at %s://%s/wallet-ui/ from %s", adminScheme, adminAddr, walletUIPath)
 				}
 
-				// Discover wallet-ui assets and pass to admin UI for the Wallet tab
+				// Discover wallet-ui assets for the login page and the legacy admin UI fallback.
 				auth.DiscoverWalletAssets(cfg.Admin.WalletUIPath)
-				if jsFile, cssFile := auth.WalletAssets(); jsFile != "" {
-					adminUI.SetWalletAssets(jsFile, cssFile)
+				if legacyAdminUI != nil {
+					if jsFile, cssFile := auth.WalletAssets(); jsFile != "" {
+						legacyAdminUI.SetWalletAssets(jsFile, cssFile)
+					}
 				}
 			}
 
@@ -615,36 +660,34 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			}))
 
 			// ----------------------------------------------------------------
-			// Admin panel at /admin — IPFS WebUI (if configured) behind admin auth
+			// Admin panel at /admin — admin/auth surface only
 			// ----------------------------------------------------------------
-			if cfg.Admin.RequireAuth {
-				if authHandler == nil {
-					return fmt.Errorf("admin authentication required but handler is unavailable")
+			adminUISubtree := http.StripPrefix("/admin", adminUIHandler)
+			serveAdminUI := func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/admin" {
+					http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
+					return
 				}
-				if webuiPath := strings.TrimSpace(cfg.Admin.WebuiPath); webuiPath != "" {
-					webuiHandler, err := makeWebUIHandler(webuiPath, "/admin")
-					if err != nil {
-						log.Warnf("IPFS WebUI disabled at /admin: %v", err)
-						adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
-						adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
-					} else {
-						// Redirect /admin → /admin/ so the React SPA's relative asset
-						// paths (homepage: "./") resolve under /admin/ not site root.
-						adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, func(w http.ResponseWriter, r *http.Request) {
-							http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
-						}))
-						adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, http.StripPrefix("/admin", webuiHandler).ServeHTTP))
-						log.Infof("IPFS WebUI at %s://%s/admin (requires admin auth) from %s", adminScheme, adminAddr, webuiPath)
+				if !strings.HasPrefix(r.URL.Path, "/admin/") {
+					http.NotFound(w, r)
+					return
+				}
+
+				serve := func(w http.ResponseWriter, r *http.Request) {
+					adminUISubtree.ServeHTTP(w, r)
+				}
+				if cfg.Admin.RequireAuth {
+					if authHandler == nil {
+						http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+						return
 					}
-				} else {
-					adminMux.HandleFunc("/admin", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
-					adminMux.HandleFunc("/admin/", authHandler.RequireAuth(peers.Admin, adminUI.ServeHTTP))
+					authHandler.RequireAuth(peers.Admin, serve)(w, r)
+					return
 				}
-			} else {
-				// No auth: admin panel open (local development mode)
-				adminMux.HandleFunc("/admin", adminUI.ServeHTTP)
-				adminMux.HandleFunc("/admin/", adminUI.ServeHTTP)
+				serve(w, r)
 			}
+			adminMux.HandleFunc("/admin", serveAdminUI)
+			adminMux.HandleFunc("/admin/", serveAdminUI)
 
 			// ----------------------------------------------------------------
 			// Public frontend at / — configurable static file server
@@ -654,7 +697,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if err != nil {
 					log.Warnf("Frontend disabled (falling back to built-in landing): %v", err)
 					landingHTML := loadLandingPageFallback(cfg.Admin.HomepageFile)
-					adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
+					adminMux.Handle("/", adminLandingHandler(http.HandlerFunc(serveAdminUI), landingHTML))
 				} else {
 					adminMux.Handle("/", frontendHandler)
 					log.Infof("Public frontend at %s://%s/ from %s", adminScheme, adminAddr, frontendPath)
@@ -665,7 +708,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
 					log.Infof("Static build assets at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
 				}
-				adminMux.Handle("/", adminLandingHandler(adminUI, landingHTML))
+				adminMux.Handle("/", adminLandingHandler(http.HandlerFunc(serveAdminUI), landingHTML))
 			}
 
 			adminServer = &http.Server{
@@ -823,6 +866,7 @@ func resolveBuildAssetsDir(homepageFile string) string {
 func isPublicAPIPath(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/data/") ||
 		strings.HasPrefix(path, "/api/module-delivery/provider") ||
+		strings.HasPrefix(path, "/api/module-delivery/listings") ||
 		strings.HasPrefix(path, "/api/v1/demo/") ||
 		strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook") ||
 		strings.HasPrefix(path, "/api/storefront/listings") ||
@@ -1051,6 +1095,28 @@ func makeWebUIHandler(buildDir string, _ string) (http.Handler, error) {
 	}), nil
 }
 
+func resolveAdminUIPath(configuredPath string) string {
+	candidates := []string{
+		strings.TrimSpace(configuredPath),
+		config.DefaultAdminUIPath(),
+		"/opt/spacedatanetwork/admin-ui",
+		filepath.Join("sdn-js", "ui", "dist"),
+		filepath.Join("..", "sdn-js", "ui", "dist"),
+		filepath.Join("..", "..", "sdn-js", "ui", "dist"),
+	}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(candidate, "index.html"))
+		if err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
 // provisionFrontendDir creates the frontend directory with a default index.html
 // if it doesn't already exist.
 func provisionFrontendDir(dir string) error {
@@ -1272,6 +1338,7 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		if info == nil {
 			info = make(map[string]interface{})
 		}
+		promoteNodeInfoKeyFields(info)
 
 		// Overlay runtime metadata
 		info["peer_id"] = n.PeerID().String()
@@ -1294,17 +1361,106 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 	}
 }
 
+func promoteNodeInfoKeyFields(info map[string]interface{}) {
+	if info == nil {
+		return
+	}
+
+	keys, ok := info["keys"]
+	if !ok {
+		return
+	}
+
+	for _, key := range nodeInfoKeyEntries(keys) {
+		keyType := strings.ToLower(strings.TrimSpace(nodeInfoStringValue(key["key_type"])))
+		if keyType == "" {
+			continue
+		}
+
+		pubKeyField := keyType + "_pubkey_hex"
+		keyPathField := keyType + "_key_path"
+		publicKey := nodeInfoStringValue(key["public_key"])
+		keyPath := nodeInfoStringValue(key["key_path"])
+		if keyPath == "" {
+			keyPath = nodeInfoStringValue(key["key_address"])
+		}
+
+		if publicKey != "" && nodeInfoStringValue(info[pubKeyField]) == "" {
+			info[pubKeyField] = publicKey
+		}
+		if keyPath != "" && nodeInfoStringValue(info[keyPathField]) == "" {
+			info[keyPathField] = keyPath
+		}
+		if xpub := nodeInfoStringValue(key["xpub"]); xpub != "" && nodeInfoStringValue(info["xpub"]) == "" {
+			info["xpub"] = xpub
+		}
+	}
+}
+
+func nodeInfoKeyEntries(raw interface{}) []map[string]interface{} {
+	switch keys := raw.(type) {
+	case []map[string]interface{}:
+		return append([]map[string]interface{}(nil), keys...)
+	case []interface{}:
+		entries := make([]map[string]interface{}, 0, len(keys))
+		for _, entry := range keys {
+			if key, ok := entry.(map[string]interface{}); ok {
+				entries = append(entries, key)
+			}
+		}
+		return entries
+	default:
+		return nil
+	}
+}
+
+func nodeInfoStringValue(value interface{}) string {
+	text, _ := value.(string)
+	return text
+}
+
 type providerDescriptorSource interface {
 	PeerID() peer.ID
 	ListenAddrs() []multiaddr.Multiaddr
 	Host() libp2phost.Host
+	EPMService() *epm.Service
+}
+
+type providerDescriptorIdentityAddress struct {
+	Chain     string `json:"chain"`
+	Address   string `json:"address"`
+	KeyPath   string `json:"keyPath,omitempty"`
+	PublicKey string `json:"publicKey,omitempty"`
+}
+
+type providerDescriptorIdentityResponse struct {
+	XPub                string                              `json:"xpub,omitempty"`
+	IdentityPublicKey   string                              `json:"identityPublicKey,omitempty"`
+	SigningPublicKey    string                              `json:"signingPublicKey,omitempty"`
+	EncryptionPublicKey string                              `json:"encryptionPublicKey,omitempty"`
+	IPNSEntries         []string                            `json:"ipnsEntries,omitempty"`
+	ENSNames            []string                            `json:"ensNames,omitempty"`
+	Addresses           []providerDescriptorIdentityAddress `json:"addresses,omitempty"`
 }
 
 type providerDescriptorResponse struct {
-	PublicKey      string   `json:"publicKey"`
-	PeerID         string   `json:"peerId"`
-	IPNS           string   `json:"ipns,omitempty"`
-	RelayAddresses []string `json:"relayAddresses,omitempty"`
+	PublicKey      string                              `json:"publicKey"`
+	PeerID         string                              `json:"peerId"`
+	IPNS           string                              `json:"ipns,omitempty"`
+	RelayAddresses []string                            `json:"relayAddresses,omitempty"`
+	Identity       *providerDescriptorIdentityResponse `json:"identity,omitempty"`
+}
+
+type moduleDeliveryListingsResult struct {
+	PluginID   string `json:"plugin_id,omitempty"`
+	Version    string `json:"version,omitempty"`
+	DataBase64 string `json:"data_base64"`
+	Timestamp  string `json:"timestamp,omitempty"`
+}
+
+type moduleDeliveryListingsResponse struct {
+	Results []moduleDeliveryListingsResult `json:"results"`
+	Count   int                            `json:"count"`
 }
 
 func handleProviderDescriptor(src providerDescriptorSource) http.HandlerFunc {
@@ -1333,6 +1489,45 @@ func handleProviderDescriptor(src providerDescriptorSource) http.HandlerFunc {
 	}
 }
 
+func handleModuleDeliveryListings(reg *license.PluginRegistry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		listings, err := node.BuildModuleDeliveryListings(reg)
+		if err != nil {
+			http.Error(w, "module-delivery listings unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		results := make([]moduleDeliveryListingsResult, 0, len(listings))
+		for _, listing := range listings {
+			results = append(results, moduleDeliveryListingsResult{
+				PluginID:   listing.PluginID,
+				Version:    listing.Version,
+				DataBase64: base64.StdEncoding.EncodeToString(listing.Payload),
+				Timestamp:  listing.Timestamp,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(moduleDeliveryListingsResponse{
+			Results: results,
+			Count:   len(results),
+		})
+	}
+}
+
 func buildProviderDescriptor(src providerDescriptorSource) (*providerDescriptorResponse, error) {
 	if src == nil {
 		return nil, fmt.Errorf("provider descriptor source is nil")
@@ -1347,6 +1542,7 @@ func buildProviderDescriptor(src providerDescriptorSource) (*providerDescriptorR
 	response := &providerDescriptorResponse{
 		PublicKey: publicKeyHex,
 		PeerID:    peerID,
+		Identity:  buildProviderDescriptorIdentity(src, publicKeyHex, peerID),
 	}
 	if peerID != "" {
 		response.IPNS = "/ipns/" + peerID
@@ -1360,6 +1556,181 @@ func buildProviderDescriptor(src providerDescriptorSource) (*providerDescriptorR
 	}
 
 	return response, nil
+}
+
+func buildProviderDescriptorIdentity(src providerDescriptorSource, defaultPublicKeyHex, peerID string) *providerDescriptorIdentityResponse {
+	identity := &providerDescriptorIdentityResponse{}
+	if strings.TrimSpace(defaultPublicKeyHex) != "" {
+		identity.IdentityPublicKey = defaultPublicKeyHex
+	}
+	if strings.TrimSpace(peerID) != "" {
+		identity.IPNSEntries = []string{"/ipns/" + peerID}
+	}
+	if src == nil || src.EPMService() == nil {
+		return identity
+	}
+
+	info := src.EPMService().GetNodeEPMJSON()
+	if len(info) == 0 {
+		return identity
+	}
+
+	if xpub := nodeInfoStringValue(info["xpub"]); xpub != "" {
+		identity.XPub = xpub
+	}
+	if value := nodeInfoStringValue(info["identity_pubkey_hex"]); value != "" {
+		identity.IdentityPublicKey = value
+	}
+	if value := nodeInfoStringValue(info["signing_pubkey_hex"]); value != "" {
+		identity.SigningPublicKey = value
+	}
+	if value := nodeInfoStringValue(info["encryption_pubkey_hex"]); value != "" {
+		identity.EncryptionPublicKey = value
+	}
+
+	identity.IPNSEntries = uniqueTrimmedStrings(append(identity.IPNSEntries, providerDescriptorIPNSEntries(info)...))
+	identity.ENSNames = uniqueTrimmedStrings(providerDescriptorENSNames(info))
+	identity.Addresses = providerDescriptorIdentityAddresses(info)
+
+	return identity
+}
+
+func providerDescriptorIPNSEntries(info map[string]interface{}) []string {
+	entries := make([]string, 0)
+	for _, value := range nodeInfoStringEntries(info["multiformat_address"]) {
+		if strings.HasPrefix(strings.TrimSpace(value), "/ipns/") {
+			entries = append(entries, value)
+		}
+	}
+	return entries
+}
+
+func providerDescriptorENSNames(info map[string]interface{}) []string {
+	candidates := []string{
+		nodeInfoStringValue(info["dn"]),
+		nodeInfoStringValue(info["legal_name"]),
+	}
+	candidates = append(candidates, nodeInfoStringEntries(info["alternate_names"])...)
+	candidates = append(candidates, nodeInfoStringEntries(info["multiformat_address"])...)
+
+	ensNames := make([]string, 0)
+	for _, candidate := range candidates {
+		if ensName := normalizeENSName(candidate); ensName != "" {
+			ensNames = append(ensNames, ensName)
+		}
+	}
+	return ensNames
+}
+
+func providerDescriptorIdentityAddresses(info map[string]interface{}) []providerDescriptorIdentityAddress {
+	proofsByChain := make(map[string]providerDescriptorIdentityAddress)
+	for _, proof := range nodeInfoObjectEntries(info["chain_proofs"]) {
+		chain := strings.ToLower(strings.TrimSpace(nodeInfoStringValue(proof["chain"])))
+		if chain == "" {
+			continue
+		}
+		entry := proofsByChain[chain]
+		entry.Chain = chain
+		if entry.Address == "" {
+			entry.Address = nodeInfoStringValue(proof["address"])
+		}
+		if entry.KeyPath == "" {
+			entry.KeyPath = nodeInfoStringValue(proof["key_path"])
+		}
+		if entry.PublicKey == "" {
+			entry.PublicKey = nodeInfoStringValue(proof["public_key"])
+		}
+		proofsByChain[chain] = entry
+	}
+
+	chainOrder := []string{"bitcoin", "ethereum", "solana"}
+	addresses := make([]providerDescriptorIdentityAddress, 0, len(chainOrder))
+	for _, chain := range chainOrder {
+		entry := proofsByChain[chain]
+		entry.Chain = chain
+		if entry.Address == "" {
+			entry.Address = nodeInfoStringValue(info[chain+"_address"])
+		}
+		if entry.KeyPath == "" {
+			entry.KeyPath = nodeInfoStringValue(info[chain+"_key_path"])
+		}
+		if strings.TrimSpace(entry.Address) == "" {
+			continue
+		}
+		addresses = append(addresses, entry)
+	}
+	return addresses
+}
+
+func nodeInfoObjectEntries(raw interface{}) []map[string]interface{} {
+	switch entries := raw.(type) {
+	case []map[string]interface{}:
+		return append([]map[string]interface{}(nil), entries...)
+	case []interface{}:
+		ret := make([]map[string]interface{}, 0, len(entries))
+		for _, entry := range entries {
+			if value, ok := entry.(map[string]interface{}); ok {
+				ret = append(ret, value)
+			}
+		}
+		return ret
+	default:
+		return nil
+	}
+}
+
+func nodeInfoStringEntries(raw interface{}) []string {
+	switch entries := raw.(type) {
+	case []string:
+		return append([]string(nil), entries...)
+	case []interface{}:
+		ret := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			if value, ok := entry.(string); ok {
+				ret = append(ret, value)
+			}
+		}
+		return ret
+	default:
+		return nil
+	}
+}
+
+func uniqueTrimmedStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	ret := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		ret = append(ret, trimmed)
+	}
+	return ret
+}
+
+func normalizeENSName(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return ""
+	}
+
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Hostname() != "" {
+		trimmed = strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	}
+
+	trimmed = strings.Trim(trimmed, "[](){}<>\"'.,;")
+	if strings.HasSuffix(trimmed, ".eth") {
+		return trimmed
+	}
+	return ""
 }
 
 func providerPublicKeyHex(host libp2phost.Host, peerID peer.ID) (string, error) {

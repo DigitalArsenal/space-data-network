@@ -1,11 +1,26 @@
 # SDN Full Node
-# Provides full storage, DHT participation, and relay services
+# Provides the sdn-server daemon plus the hosted /admin and /webui assets.
 
-FROM golang:1.24-alpine AS builder
+FROM golang:1.24-bookworm AS builder
 
-RUN apk add --no-cache gcc musl-dev sqlite-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    build-essential \
+    ca-certificates \
+    curl \
+    libsqlite3-dev \
+    pkg-config \
+  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
+
+COPY scripts/install-wasmedge.sh ./scripts/install-wasmedge.sh
+RUN chmod +x ./scripts/install-wasmedge.sh && ./scripts/install-wasmedge.sh
+
+ENV WASMEDGE_DIR=/root/.wasmedge
+ENV CGO_CFLAGS="-I/root/.wasmedge/include"
+ENV CGO_LDFLAGS="-L/root/.wasmedge/lib -Wl,-rpath,/root/.wasmedge/lib"
+
 COPY sdn-server/go.mod sdn-server/go.sum ./sdn-server/
 WORKDIR /build/sdn-server
 RUN go mod download
@@ -16,30 +31,35 @@ COPY sdn-server/ ./sdn-server/
 WORKDIR /build/sdn-server
 RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/spacedatanetwork ./cmd/spacedatanetwork
 
-# Runtime image
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
-RUN apk add --no-cache ca-certificates sqlite-libs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libsqlite3-0 \
+  && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN adduser -D -u 1000 sdn
-USER sdn
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin sdn
 
 WORKDIR /app
-COPY --from=builder /out/spacedatanetwork /app/
 
-# Data directory
-RUN mkdir -p /home/sdn/.spacedatanetwork/data
-VOLUME /home/sdn/.spacedatanetwork
+COPY --from=builder /out/spacedatanetwork /app/spacedatanetwork
+COPY --from=builder /root/.wasmedge /opt/wasmedge
+COPY sdn-js/ui/dist/ /app/admin-ui/
+COPY webui/build/ /app/webui/
+COPY config/full-docker.yaml /app/config/full-docker.yaml
 
-# Expose ports:
-# 4001 - TCP libp2p
-# 4001/udp - QUIC
-# 8080 - WebSocket
-EXPOSE 4001 4001/udp 8080
+RUN mkdir -p /app/data && chown -R sdn:sdn /app
 
-ENV SDN_MODE=full
-ENV SDN_LISTEN="/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/tcp/8080/ws,/ip4/0.0.0.0/udp/4001/quic-v1"
+USER sdn
+
+EXPOSE 5001 4001 4001/udp 8080
+
+ENV WASMEDGE_DIR=/opt/wasmedge
+ENV LD_LIBRARY_PATH=/opt/wasmedge/lib
+ENV SDN_ADMIN_UI_PATH=/app/admin-ui
+ENV SDN_WEBUI_PATH=/app/webui
+
+VOLUME /app/data
 
 ENTRYPOINT ["/app/spacedatanetwork"]
-CMD ["daemon"]
+CMD ["daemon", "--config", "/app/config/full-docker.yaml"]

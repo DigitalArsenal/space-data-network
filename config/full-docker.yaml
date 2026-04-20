@@ -1,0 +1,20 @@
+mode: full
+
+storage:
+  path: /app/data
+  max_size: 10GB
+  gc_interval: 1h
+
+admin:
+  enabled: true
+  listen_addr: 0.0.0.0:5001
+  require_auth: true
+  session_expiry: 24h
+  totp_required: false
+  tls_enabled: false
+  admin_ui_path: /app/admin-ui
+  webui_path: /app/webui
+
+setup:
+  token_expiry: 10m
+  data_path: /app/data

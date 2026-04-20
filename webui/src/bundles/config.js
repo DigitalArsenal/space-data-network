@@ -40,13 +40,6 @@ const bundle = createAsyncResourceBundle({
     }
 
     if (!await checkIfGatewayUrlIsAccessible(url)) {
-      // When running behind the SDN reverse proxy, /ipfs/* is proxied at the
-      // same origin — try it before falling back to a public gateway.
-      const sameOrigin = window.location.origin
-      if (await checkIfGatewayUrlIsAccessible(sameOrigin)) {
-        store.doSetAvailableGateway(sameOrigin)
-        return conf
-      }
       store.doSetAvailableGateway(publicGateway)
     }
 
