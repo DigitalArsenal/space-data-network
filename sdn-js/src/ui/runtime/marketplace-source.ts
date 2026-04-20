@@ -1,4 +1,4 @@
-import { decodeCanonicalPlgListing } from './plg-listings';
+import { decodeCanonicalPlgListing, inferStandardsUsed } from './plg-listings';
 import type { CanonicalListing, ListingStatus } from './types';
 
 export interface MarketplaceFetchLikeResponse {
@@ -99,8 +99,14 @@ function decodeStorefrontListing(listing: unknown): CanonicalListing | null {
       pickTrimmedString(listing, 'updated_at'),
       pickTrimmedString(listing, 'created_at'),
     ),
-    status: decodeStorefrontStatus(listing.active),
+    status: decodeStorefrontStatus(typeof listing.active === 'boolean' ? listing.active : undefined),
     tags: normalizeTags(listing.tags),
+    standardsUsed: inferStandardsUsed(
+      pluginId,
+      name,
+      description,
+      normalizeTags(listing.tags),
+    ),
   };
 }
 

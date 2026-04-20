@@ -17,7 +17,7 @@ describe('decodeCanonicalPlgListing', () => {
       tagline: 'Live orbital data',
       publisherName: 'Space Ops',
       publisherHandle: '@spaceops',
-      tags: ['orbit', 'demo'],
+      tags: ['orbit', 'OMM', 'demo'],
       listingStatus: listingStatus.Unlisted,
     });
 
@@ -33,7 +33,8 @@ describe('decodeCanonicalPlgListing', () => {
       publisherHandle: '@spaceops',
       observedAt: 1_700_000_000_000,
       status: 'unlisted',
-      tags: ['orbit', 'demo'],
+      tags: ['orbit', 'OMM', 'demo'],
+      standardsUsed: ['OMM'],
     });
   });
 

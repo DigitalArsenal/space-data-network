@@ -4,10 +4,13 @@ import {
   brandMarkSvg,
   connectIconSvg,
   directoryIconSvg,
+  featureCarouselArrowSvg,
   frontendIconSvg,
   ipfsDashboardIconSvg,
   networkIconSvg,
+  pinningIconSvg,
   refreshIconSvg,
+  searchIconSvg,
   storeIconSvg,
   walletIconSvg,
 } from './icons';
@@ -40,6 +43,7 @@ const navItems: NavItem[] = [
   { id: 'network', label: 'Network', icon: networkIconSvg },
   { id: 'directory', label: 'Directory', icon: directoryIconSvg },
   { id: 'store', label: 'Store', icon: storeIconSvg },
+  { id: 'pinning', label: 'Pinning', icon: pinningIconSvg },
   { id: 'frontend', label: 'Frontend', icon: frontendIconSvg },
   { id: 'wallet', label: 'Wallet', icon: walletIconSvg },
   { id: 'ipfs-dashboard', label: 'IPFS', icon: ipfsDashboardIconSvg, href: '/webui/' },
@@ -47,13 +51,13 @@ const navItems: NavItem[] = [
 
 const featureSlides: FeatureSlide[] = [
   {
-    id: 'delivery',
-    title: 'Encrypted Module Delivery',
+    id: 'marketplace',
+    title: 'Marketplace Search',
     summary:
-      'Request signed WASM modules from live providers, receive grants, fetch encrypted bundles by CID, unwrap keys locally, and load them in the browser or on a node.',
+      'Search live authors, plugins, and SDS-linked data references from signed PLG metadata instead of a parallel listing format.',
     links: [
       { label: 'Open Store', workspaceId: 'store' },
-      { label: 'Inspect Network', workspaceId: 'network' },
+      { label: 'Open Pinning', workspaceId: 'pinning' },
     ],
   },
   {
@@ -67,12 +71,12 @@ const featureSlides: FeatureSlide[] = [
     ],
   },
   {
-    id: 'storefront',
-    title: 'Distributed Storefront',
+    id: 'pinning',
+    title: 'Pinning Rules',
     summary:
-      'Browse canonical signed PLG manifests for modules and linked SDS data, then fetch, pin, and verify them through SDN and IPFS without a second listing format.',
+      'Apply schema-aware pinning policy by SDS standard, publisher, and node role so live operators can retain what matters without manual block micromanagement.',
     links: [
-      { label: 'Browse Store', workspaceId: 'store' },
+      { label: 'Open Pinning', workspaceId: 'pinning' },
       { label: 'Open IPFS Dashboard', href: '/webui/' },
     ],
   },
@@ -172,44 +176,44 @@ export async function renderAppShell(
                   verify, run, and manage space software and data without a central broker.
                 </p>
                 <section id="sdn-feature-carousel" class="sdn-feature-carousel" aria-label="Space Data Network feature tour">
-                  <div class="sdn-feature-carousel__header">
-                    <span class="sdn-chip">Feature tour</span>
-                    <div class="sdn-feature-carousel__controls">
-                      <button type="button" class="sdn-ghost-button sdn-feature-carousel__button" data-feature-prev aria-label="Previous feature">Prev</button>
-                      <div class="sdn-feature-carousel__dots" role="tablist" aria-label="Feature slides">
-                        ${featureSlides.map((slide, index) => `
-                          <button
-                            type="button"
-                            class="sdn-feature-carousel__dot${index === 0 ? ' sdn-feature-carousel__dot--active' : ''}"
-                            data-feature-target="${slide.id}"
-                            role="tab"
-                            aria-selected="${index === 0 ? 'true' : 'false'}"
-                            aria-controls="sdn-feature-slide-${slide.id}"
-                          >
-                            ${slide.title}
-                          </button>
-                        `).join('')}
-                      </div>
-                      <button type="button" class="sdn-ghost-button sdn-feature-carousel__button" data-feature-next aria-label="Next feature">Next</button>
+                  <div class="sdn-feature-carousel__viewport">
+                    <button type="button" class="sdn-feature-carousel__arrow sdn-feature-carousel__arrow--prev" data-feature-prev aria-label="Previous feature">
+                      ${featureCarouselArrowSvg}
+                    </button>
+                    <div class="sdn-feature-carousel__slides">
+                      ${featureSlides.map((slide, index) => `
+                        <article
+                          id="sdn-feature-slide-${slide.id}"
+                          class="sdn-feature-slide${index === 0 ? ' sdn-feature-slide--active' : ''}"
+                          data-feature-slide="${slide.id}"
+                          role="tabpanel"
+                          aria-hidden="${index === 0 ? 'false' : 'true'}"
+                        >
+                          <div class="sdn-feature-slide__body">
+                            <h2>${slide.title}</h2>
+                            <p>${slide.summary}</p>
+                          </div>
+                          <div class="sdn-feature-slide__links">
+                            ${slide.links.map((link) => renderFeatureLink(link)).join('')}
+                          </div>
+                        </article>
+                      `).join('')}
                     </div>
+                    <button type="button" class="sdn-feature-carousel__arrow sdn-feature-carousel__arrow--next" data-feature-next aria-label="Next feature">
+                      ${featureCarouselArrowSvg}
+                    </button>
                   </div>
-                  <div class="sdn-feature-carousel__slides">
+                  <div class="sdn-feature-carousel__indicators" role="tablist" aria-label="Feature slides">
                     ${featureSlides.map((slide, index) => `
-                      <article
-                        id="sdn-feature-slide-${slide.id}"
-                        class="sdn-feature-slide${index === 0 ? ' sdn-feature-slide--active' : ''}"
-                        data-feature-slide="${slide.id}"
-                        role="tabpanel"
-                        aria-hidden="${index === 0 ? 'false' : 'true'}"
-                      >
-                        <div class="sdn-feature-slide__body">
-                          <h2>${slide.title}</h2>
-                          <p>${slide.summary}</p>
-                        </div>
-                        <div class="sdn-feature-slide__links">
-                          ${slide.links.map((link) => renderFeatureLink(link)).join('')}
-                        </div>
-                      </article>
+                      <button
+                        type="button"
+                        class="sdn-feature-carousel__indicator${index === 0 ? ' sdn-feature-carousel__indicator--active' : ''}"
+                        data-feature-target="${slide.id}"
+                        role="tab"
+                        aria-label="Go to feature ${index + 1}"
+                        aria-selected="${index === 0 ? 'true' : 'false'}"
+                        aria-controls="sdn-feature-slide-${slide.id}"
+                      ></button>
                     `).join('')}
                   </div>
                 </section>
@@ -280,6 +284,26 @@ export async function renderAppShell(
                 </div>
                 <pre id="sdn-raw-event-detail" class="sdn-code">Waiting for live protocol events.</pre>
               </article>
+
+              <article class="sdn-panel">
+                <div class="sdn-panel__header">
+                  <h2>Module Workflow</h2>
+                  <span class="sdn-chip">Live comms</span>
+                </div>
+                <div id="sdn-delivery-timeline" class="sdn-empty">
+                  Challenge, grant, fetch, decrypt, load, and invoke events appear in order.
+                </div>
+              </article>
+
+              <article class="sdn-panel">
+                <div class="sdn-panel__header">
+                  <h2>Completion State</h2>
+                  <span class="sdn-chip">Browser + node</span>
+                </div>
+                <div id="sdn-completion-state" class="sdn-empty">
+                  Select a plugin in the Store and run the live workflow to stream completion state here.
+                </div>
+              </article>
             </div>
           </section>
 
@@ -302,86 +326,129 @@ export async function renderAppShell(
 
           <section class="sdn-admin-workspace" data-workspace="store">
             <div class="sdn-grid sdn-grid--store">
-              <article class="sdn-panel">
+              <article class="sdn-panel sdn-panel--store-results">
                 <div class="sdn-panel__header">
                   <h2>Store</h2>
                   <span class="sdn-chip">Steam-style</span>
                 </div>
                 <p class="sdn-copy">
-                  Canonical marketplace listings come from signed PLG metadata, not a second listing object.
+                  Canonical storefront search comes from signed PLG metadata. Search across authors, plugins, and SDS-linked data references from live manifests.
+                </p>
+                <div class="sdn-store-toolbar">
+                  <label class="sdn-store-search" aria-label="Search the live store">
+                    <span class="sdn-store-search__icon">${searchIconSvg}</span>
+                    <input
+                      id="sdn-store-search"
+                      type="search"
+                      placeholder="Search by author, plugin, data, or SDS standard"
+                    />
+                  </label>
+                  <button id="sdn-refresh-marketplace" type="button" class="sdn-button">Refresh listings</button>
+                </div>
+                <div id="sdn-store-results" class="sdn-store-results">
+                  <section class="sdn-store-section">
+                    <div class="sdn-store-section__header">
+                      <h3>Authors</h3>
+                      <span class="sdn-chip">Publishers</span>
+                    </div>
+                    <div id="sdn-store-author-results" class="sdn-stack">
+                      <div class="sdn-empty">Publisher results will populate from live PLG manifests.</div>
+                    </div>
+                  </section>
+                  <section class="sdn-store-section">
+                    <div class="sdn-store-section__header">
+                      <h3>Plugins</h3>
+                      <span class="sdn-chip">Signed modules</span>
+                    </div>
+                    <div id="sdn-store-plugin-results" class="sdn-stack">
+                      <div class="sdn-empty">Plugin results will populate from live PLG manifests.</div>
+                    </div>
+                  </section>
+                  <section class="sdn-store-section">
+                    <div class="sdn-store-section__header">
+                      <h3>Data</h3>
+                      <span class="sdn-chip">SDS linked</span>
+                    </div>
+                    <div id="sdn-store-data-results" class="sdn-stack">
+                      <div class="sdn-empty">SDS-linked data references will populate from live PLG metadata.</div>
+                    </div>
+                  </section>
+                </div>
+              </article>
+
+              <article class="sdn-panel sdn-panel--store-detail">
+                <div class="sdn-panel__header">
+                  <h2>Selection Detail</h2>
+                  <span class="sdn-chip">Author + plugin + data</span>
+                </div>
+                <div id="sdn-store-detail" class="sdn-stack">
+                  <div class="sdn-empty">
+                    Select an author, plugin, or SDS data standard to inspect its live metadata, related standards, and available actions.
+                  </div>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="sdn-admin-workspace" data-workspace="pinning">
+            <div class="sdn-grid sdn-grid--pinning">
+              <article class="sdn-panel">
+                <div class="sdn-panel__header">
+                  <h2>Pinning Rules</h2>
+                  <span class="sdn-chip">Schema + source</span>
+                </div>
+                <p class="sdn-copy">
+                  Pinning policy should be driven by Space Data Standards, publisher identity, and node context instead of arbitrary CID bookkeeping.
                 </p>
                 <div class="sdn-control-grid">
                   <label class="sdn-field">
-                    <span>Live module listings</span>
-                    <select id="sdn-marketplace-select">
-                      <option value="">No live PLG listings loaded</option>
+                    <span>SDS standard</span>
+                    <select id="sdn-pinning-standard">
+                      <option value="OMM">OMM</option>
+                      <option value="OEM">OEM</option>
+                      <option value="CDM">CDM</option>
+                      <option value="TDM">TDM</option>
                     </select>
                   </label>
-                  <div class="sdn-action-row">
-                    <button id="sdn-refresh-marketplace" type="button" class="sdn-button">Refresh listings</button>
-                  </div>
+                  <label class="sdn-field">
+                    <span>Publisher or peer</span>
+                    <input id="sdn-pinning-peer" type="text" placeholder="16Uiu2..., xpub..., or publisher handle" />
+                  </label>
+                  <label class="sdn-field">
+                    <span>Rule action</span>
+                    <select id="sdn-pinning-action">
+                      <option value="pin">Pin and retain</option>
+                      <option value="cache">Cache until expiry</option>
+                      <option value="ignore">Observe only</option>
+                    </select>
+                  </label>
+                  <label class="sdn-field">
+                    <span>Retention TTL</span>
+                    <input id="sdn-pinning-ttl" type="text" value="168h" />
+                  </label>
                 </div>
-                <div id="sdn-marketplace-panel" class="sdn-stack">
-                  <div class="sdn-empty">Publisher and module listings will populate from live PLG manifests.</div>
+                <div class="sdn-action-row">
+                  <button type="button" class="sdn-button" data-workspace-link="store">Browse store references</button>
+                  <a class="sdn-ghost-button sdn-ghost-button--link" href="/webui/" target="_blank" rel="noreferrer">
+                    <span>Open IPFS Dashboard</span>
+                  </a>
                 </div>
-              </article>
-
-              <article class="sdn-panel">
-                <div class="sdn-panel__header">
-                  <h2>Distributed Store</h2>
-                  <span class="sdn-chip">Modules + Data</span>
-                </div>
-                <div id="sdn-data-store-panel" class="sdn-stack">
+                <div id="sdn-pinning-rules" class="sdn-stack">
                   <div class="sdn-empty">
-                    SDS-linked data listings, download actions, and pinning hooks will appear here.
+                    No live pinning rules loaded. Rules will scope by SDS standard, publisher identity, and server/local node context.
                   </div>
-                </div>
-                <div class="sdn-panel__divider"></div>
-                <h3>Module metadata</h3>
-                <div id="sdn-module-metadata" class="sdn-empty">
-                  Canonical PLG metadata, publisher details, and related data listings will appear here.
                 </div>
               </article>
 
               <article class="sdn-panel">
                 <div class="sdn-panel__header">
-                  <h2>Delivery</h2>
-                  <span class="sdn-chip">Real comms</span>
+                  <h2>Rule Model</h2>
+                  <span class="sdn-chip">Policy</span>
                 </div>
-                <div id="sdn-delivery-panel" class="sdn-stack">
-                  <section class="sdn-control-grid">
-                    <label class="sdn-field">
-                      <span>Requester domain</span>
-                      <input id="sdn-requester-domain" type="text" value="app.example.com" />
-                    </label>
-                    <label class="sdn-field">
-                      <span>Grant timeout (ms)</span>
-                      <input id="sdn-request-timeout" type="number" min="1000" step="1000" value="300000" />
-                    </label>
-                    <label class="sdn-field">
-                      <span>Invoke method</span>
-                      <input id="sdn-invoke-method" type="text" value="echo" />
-                    </label>
-                    <label class="sdn-field">
-                      <span>Invoke payload</span>
-                      <textarea id="sdn-invoke-payload" rows="3">live browser request</textarea>
-                    </label>
-                  </section>
-                  <div class="sdn-action-row">
-                    <button id="sdn-run-live-flow" type="button" class="sdn-button">Run live flow</button>
-                  </div>
-                  <section>
-                    <h3>Timeline</h3>
-                    <div id="sdn-delivery-timeline" class="sdn-empty">
-                      Challenge, grant, fetch, decrypt, load, and invoke events appear in order.
-                    </div>
-                  </section>
-                  <section>
-                    <h3>Completion state</h3>
-                    <div id="sdn-completion-state" class="sdn-empty">
-                      Decrypt, SDK load, and invoke results will stream here.
-                    </div>
-                  </section>
+                <div class="sdn-stack">
+                  <div class="sdn-empty">Prioritize schema-aware rules first, then source-specific overrides, then node-default retention.</div>
+                  <div class="sdn-empty">Use the Store to discover which plugins and publishers reference OMM, OEM, CDM, TDM, and other SDS records before creating retention policy.</div>
+                  <div class="sdn-empty">The IPFS dashboard remains available for raw block inspection, pin status, and lower-level operational detail.</div>
                 </div>
               </article>
             </div>

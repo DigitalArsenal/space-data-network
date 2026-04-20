@@ -19,7 +19,7 @@ describe('loadMarketplaceListingsFromServer', () => {
               provider_peer_id: '16Uiu2HAmDemo',
               title: 'Orbital Demo',
               description: 'Storefront record',
-              tags: ['orbit', 'demo'],
+              tags: ['orbit', 'OMM', 'demo'],
               version: 7,
               active: true,
               updated_at: '2026-04-18T15:00:00Z',
@@ -40,7 +40,8 @@ describe('loadMarketplaceListingsFromServer', () => {
         publisherPeerId: '16Uiu2HAmDemo',
         observedAt: Date.parse('2026-04-18T15:00:00Z'),
         status: 'public',
-        tags: ['orbit', 'demo'],
+        tags: ['orbit', 'OMM', 'demo'],
+        standardsUsed: ['OMM'],
       },
     ]);
 

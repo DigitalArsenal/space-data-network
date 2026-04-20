@@ -36,6 +36,7 @@ export interface CanonicalListing {
   observedAt?: number;
   status?: ListingStatus;
   tags?: string[];
+  standardsUsed?: string[];
 }
 
 export type AddressLookupChain = 'bitcoin' | 'ethereum' | 'solana' | (string & {});

@@ -1,3 +1,4 @@
+import { SUPPORTED_SCHEMAS } from '../../schemas';
 import * as flatbuffers from 'flatbuffers';
 import { PLG } from 'spacedatastandards.org/lib/js/REC/PLG.js';
 import { listingStatus } from 'spacedatastandards.org/lib/js/PLG/listingStatus.js';
@@ -58,7 +59,29 @@ export function decodeCanonicalPlgListing(
     listing.tags = tags;
   }
 
+  const standardsUsed = inferStandardsUsed(
+    listing.pluginId,
+    name,
+    description,
+    tagline,
+    tags,
+  );
+  if (standardsUsed) {
+    listing.standardsUsed = standardsUsed;
+  }
+
   return listing;
+}
+
+export function inferStandardsUsed(
+  ...sources: Array<string | string[] | undefined>
+): string[] | undefined {
+  const values = sources.flatMap((source) => Array.isArray(source) ? source : (source ? [source] : []));
+  const matches = SUPPORTED_SCHEMAS
+    .map((schemaName) => schemaName.replace(/\.fbs$/i, ''))
+    .filter((schema) => values.some((value) => matchesSchemaToken(value, schema)));
+
+  return matches.length > 0 ? matches : undefined;
 }
 
 function normalizeRequiredString(
@@ -106,4 +129,9 @@ function decodeListingStatus(status: listingStatus): ListingStatus {
     default:
       throw new Error(`unknown PLG listing status: ${status}`);
   }
+}
+
+function matchesSchemaToken(value: string, schema: string): boolean {
+  const escapedSchema = schema.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^A-Za-z0-9])${escapedSchema}(?:\\.fbs)?($|[^A-Za-z0-9])`, 'i').test(value);
 }

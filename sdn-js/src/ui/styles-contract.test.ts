@@ -25,4 +25,10 @@ describe('sdn admin layout css contract', () => {
     expect(styles).toMatch(/\.sdn-command-bar\s*\{[^}]*height:\s*var\(--sdn-control-height\);/s);
     expect(styles).toMatch(/\.sdn-admin-topbar__actions\s*>\s*\.sdn-button,\s*\.sdn-admin-topbar__actions\s*>\s*\.sdn-ghost-button,\s*\.sdn-admin-topbar__actions\s*>\s*\.sdn-account-button\s*\{[^}]*height:\s*var\(--sdn-control-height\);/s);
   });
+
+  it('uses overlay carousel arrows with unlabeled indicators below a compact viewport', () => {
+    expect(styles).toMatch(/\.sdn-feature-carousel__viewport\s*\{[^}]*position:\s*relative;[^}]*min-height:\s*10\.5rem;/s);
+    expect(styles).toMatch(/\.sdn-feature-carousel__arrow\s*\{[^}]*position:\s*absolute;[^}]*top:\s*50%;[^}]*border-radius:\s*999px;/s);
+    expect(styles).toMatch(/\.sdn-feature-carousel__indicators\s*\{[^}]*justify-content:\s*center;/s);
+  });
 });
