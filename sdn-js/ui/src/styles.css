@@ -31,12 +31,13 @@
 html,
 body,
 #app {
+  height: 100%;
   min-height: 100%;
+  overflow: hidden;
 }
 
 body {
   margin: 0;
-  overflow-y: scroll;
   background: #f7fafc;
   color: var(--sdn-text);
 }
@@ -73,17 +74,20 @@ pre {
 }
 
 .sdn-admin-shell {
-  min-height: 100vh;
+  height: 100vh;
   display: grid;
   grid-template-columns: 9.25rem minmax(0, 1fr);
   grid-template-areas: "rail main";
+  overflow: hidden;
 }
 
 .sdn-admin-main {
   grid-area: main;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .sdn-admin-rail {
@@ -96,6 +100,7 @@ pre {
   justify-content: space-between;
   background: linear-gradient(180deg, var(--sdn-navy) 0%, var(--sdn-navy-deep) 100%);
   color: #fff;
+  overflow: auto;
 }
 
 .sdn-admin-brand {
@@ -383,15 +388,25 @@ pre {
 }
 
 .sdn-admin-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
   padding: 1.5rem;
+  overflow: hidden;
 }
 
 .sdn-admin-workspace {
   display: none;
+  min-width: 0;
+  min-height: 0;
 }
 
 .sdn-admin-workspace--active {
   display: block;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.25rem;
 }
 
 .sdn-hero {
@@ -751,6 +766,7 @@ pre {
 @media (max-width: 70rem) {
   .sdn-admin-shell {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
     grid-template-areas:
       "rail"
       "main";
@@ -760,6 +776,7 @@ pre {
     position: static;
     min-height: auto;
     order: -1;
+    overflow: visible;
   }
 
   .sdn-admin-brand {

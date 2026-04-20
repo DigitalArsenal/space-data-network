@@ -51,6 +51,42 @@ func TestGetNodeEPMJSONIncludesSecp256k1IdentitySigningKey(t *testing.T) {
 	t.Fatal("expected secp256k1 signing key in EPM keys")
 }
 
+func TestGetNodeEPMJSONProjectsRuntimeIdentityFields(t *testing.T) {
+	t.Parallel()
+
+	identity, err := testDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testDerivedIdentity failed: %v", err)
+	}
+
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "xpub-test", t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	info := service.GetNodeEPMJSON()
+	signingPubBytes, err := identity.SigningPubKey.Raw()
+	if err != nil {
+		t.Fatalf("SigningPubKey.Raw failed: %v", err)
+	}
+
+	if got, want := info["signing_pubkey_hex"], hex.EncodeToString(signingPubBytes); got != want {
+		t.Fatalf("signing_pubkey_hex = %v, want %q", got, want)
+	}
+	if got, want := info["signing_key_path"], identity.SigningKeyPath; got != want {
+		t.Fatalf("signing_key_path = %v, want %q", got, want)
+	}
+	if got, want := info["encryption_pubkey_hex"], hex.EncodeToString(identity.EncryptionPub); got != want {
+		t.Fatalf("encryption_pubkey_hex = %v, want %q", got, want)
+	}
+	if got, want := info["encryption_key_path"], identity.EncryptionKeyPath; got != want {
+		t.Fatalf("encryption_key_path = %v, want %q", got, want)
+	}
+	if got, want := info["xpub"], "xpub-test"; got != want {
+		t.Fatalf("xpub = %v, want %q", got, want)
+	}
+}
+
 func testDerivedIdentity() (*wasm.DerivedIdentity, error) {
 	identityPrivKey, _, err := crypto.GenerateSecp256k1Key(bytes.NewReader(bytes.Repeat([]byte{0x11}, 64)))
 	if err != nil {

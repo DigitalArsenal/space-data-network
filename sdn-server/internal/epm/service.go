@@ -835,7 +835,95 @@ func (s *Service) GetNodeEPMJSON() map[string]interface{} {
 		result["chain_proofs"] = proofs
 	}
 
+	s.overlayRuntimeIdentityFields(result)
+
 	return result
+}
+
+func (s *Service) overlayRuntimeIdentityFields(result map[string]interface{}) {
+	if result == nil || s.identity == nil {
+		return
+	}
+
+	info := s.identity.Info()
+
+	if strings.TrimSpace(info.IdentityPubKeyHex) != "" && result["identity_pubkey_hex"] == nil {
+		result["identity_pubkey_hex"] = info.IdentityPubKeyHex
+	}
+	if strings.TrimSpace(info.SigningPubKeyHex) != "" && result["signing_pubkey_hex"] == nil {
+		result["signing_pubkey_hex"] = info.SigningPubKeyHex
+	}
+	if strings.TrimSpace(info.EncryptionPubHex) != "" && result["encryption_pubkey_hex"] == nil {
+		result["encryption_pubkey_hex"] = info.EncryptionPubHex
+	}
+	if strings.TrimSpace(info.IdentityKeyPath) != "" && result["identity_key_path"] == nil {
+		result["identity_key_path"] = info.IdentityKeyPath
+	}
+	if strings.TrimSpace(info.SigningKeyPath) != "" && result["signing_key_path"] == nil {
+		result["signing_key_path"] = info.SigningKeyPath
+	}
+	if strings.TrimSpace(info.EncryptionKeyPath) != "" && result["encryption_key_path"] == nil {
+		result["encryption_key_path"] = info.EncryptionKeyPath
+	}
+	if strings.TrimSpace(s.xpub) != "" && result["xpub"] == nil {
+		result["xpub"] = s.xpub
+	}
+
+	if keys := runtimeIdentityKeys(info, s.xpub); len(keys) > 0 && runtimeKeysMissing(result["keys"]) {
+		result["keys"] = keys
+	}
+}
+
+func runtimeIdentityKeys(info wasm.IdentityInfo, xpub string) []map[string]interface{} {
+	if strings.TrimSpace(info.IdentityPubKeyHex) == "" &&
+		strings.TrimSpace(info.SigningPubKeyHex) == "" &&
+		strings.TrimSpace(info.EncryptionPubHex) == "" {
+		return nil
+	}
+
+	keys := make([]map[string]interface{}, 0, 3)
+	if strings.TrimSpace(info.IdentityPubKeyHex) != "" {
+		keys = append(keys, map[string]interface{}{
+			"public_key":   info.IdentityPubKeyHex,
+			"address_type": "secp256k1",
+			"key_address":  info.IdentityKeyPath,
+			"key_type":     "signing",
+		})
+	}
+	if strings.TrimSpace(info.SigningPubKeyHex) != "" {
+		signingKey := map[string]interface{}{
+			"public_key":   info.SigningPubKeyHex,
+			"address_type": "ed25519",
+			"key_address":  info.SigningKeyPath,
+			"key_type":     "signing",
+		}
+		if strings.TrimSpace(xpub) != "" {
+			signingKey["xpub"] = xpub
+		}
+		keys = append(keys, signingKey)
+	}
+	if strings.TrimSpace(info.EncryptionPubHex) != "" {
+		keys = append(keys, map[string]interface{}{
+			"public_key":   info.EncryptionPubHex,
+			"address_type": "x25519",
+			"key_address":  info.EncryptionKeyPath,
+			"key_type":     "encryption",
+		})
+	}
+	return keys
+}
+
+func runtimeKeysMissing(value interface{}) bool {
+	switch keys := value.(type) {
+	case nil:
+		return true
+	case []map[string]interface{}:
+		return len(keys) == 0
+	case []interface{}:
+		return len(keys) == 0
+	default:
+		return true
+	}
 }
 
 // GetIdentityAttestation returns the node identity attestation for key binding.

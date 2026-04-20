@@ -141,6 +141,36 @@ func TestMakeWebUIHandlerServesIndexAndAssetsUnderWebUI(t *testing.T) {
 	})
 }
 
+func TestPromoteNodeInfoKeyFieldsPromotesSigningAndEncryptionKeys(t *testing.T) {
+	t.Parallel()
+
+	info := map[string]interface{}{
+		"keys": []interface{}{
+			map[string]interface{}{
+				"key_type":    "signing",
+				"public_key":  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample",
+				"key_address": "sdn@node",
+			},
+			map[string]interface{}{
+				"key_type":   "encryption",
+				"public_key": "302a300506032b6570032100feedface",
+			},
+		},
+	}
+
+	promoteNodeInfoKeyFields(info)
+
+	if got, want := info["signing_pubkey_hex"], "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample"; got != want {
+		t.Fatalf("signing_pubkey_hex = %#v, want %q", got, want)
+	}
+	if got, want := info["signing_key_path"], "sdn@node"; got != want {
+		t.Fatalf("signing_key_path = %#v, want %q", got, want)
+	}
+	if got, want := info["encryption_pubkey_hex"], "302a300506032b6570032100feedface"; got != want {
+		t.Fatalf("encryption_pubkey_hex = %#v, want %q", got, want)
+	}
+}
+
 type fakeProviderDescriptorSource struct {
 	host  libp2phost.Host
 	peer  peer.ID

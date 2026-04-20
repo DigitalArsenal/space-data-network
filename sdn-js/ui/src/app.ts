@@ -5,6 +5,7 @@ import {
   connectIconSvg,
   directoryIconSvg,
   frontendIconSvg,
+  ipfsDashboardIconSvg,
   networkIconSvg,
   refreshIconSvg,
   storeIconSvg,
@@ -28,7 +29,7 @@ const navItems: NavItem[] = [
   { id: 'store', label: 'Store', icon: storeIconSvg },
   { id: 'frontend', label: 'Frontend', icon: frontendIconSvg },
   { id: 'wallet', label: 'Wallet', icon: walletIconSvg },
-  { id: 'ipfs-dashboard', label: 'IPFS', icon: connectIconSvg, href: '/webui/' },
+  { id: 'ipfs-dashboard', label: 'IPFS', icon: ipfsDashboardIconSvg, href: '/webui/' },
 ];
 
 export async function renderAppShell(

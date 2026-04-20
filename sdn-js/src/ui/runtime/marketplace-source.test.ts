@@ -90,7 +90,7 @@ describe('loadMarketplaceListingsFromServer', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('returns an empty marketplace instead of throwing when storefront is empty and the PLG route is unavailable', async () => {
+  it('returns an empty marketplace from a successful empty storefront response without probing the PLG route', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
@@ -107,32 +107,62 @@ describe('loadMarketplaceListingsFromServer', () => {
             },
           };
         },
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        async json() {
-          return {};
-        },
       });
 
     await expect(
       loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
     ).resolves.toEqual([]);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to canonical PLG listings when storefront succeeds but has no listings', async () => {
+  it('keeps the empty storefront state quiet when the storefront route succeeds with no listings', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          listings: [],
+          total: 0,
+        };
+      },
+    });
+
+    await expect(
+      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
+    ).resolves.toEqual([]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores malformed storefront listing payloads instead of crashing or probing PLG', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          listings: {
+            unexpected: true,
+          },
+          total: 1,
+        };
+      },
+    });
+
+    await expect(
+      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
+    ).resolves.toEqual([]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores malformed PLG query payloads instead of crashing', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
+        ok: false,
+        status: 404,
         async json() {
-          return {
-            listings: [],
-            total: 0,
-          };
+          return {};
         },
       })
       .mockResolvedValueOnce({
@@ -140,31 +170,16 @@ describe('loadMarketplaceListingsFromServer', () => {
         status: 200,
         async json() {
           return {
-            results: [
-              {
-                data_base64: Buffer.from(createPlgBytes({
-                  pluginId: 'com.space-data-network.orbital-demo',
-                  version: '2.0.0',
-                  name: 'Orbital Demo From PLG',
-                  description: 'PLG fallback record',
-                })).toString('base64'),
-                timestamp: '2026-04-18T18:45:00Z',
-              },
-            ],
+            results: {
+              unexpected: true,
+            },
           };
         },
       });
 
     await expect(
       loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        pluginId: 'com.space-data-network.orbital-demo',
-        version: '2.0.0',
-        name: 'Orbital Demo From PLG',
-        description: 'PLG fallback record',
-      }),
-    ]);
+    ).resolves.toEqual([]);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
