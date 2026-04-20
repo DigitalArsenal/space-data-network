@@ -1335,6 +1335,7 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		if info == nil {
 			info = make(map[string]interface{})
 		}
+		promoteNodeInfoKeyFields(info)
 
 		// Overlay runtime metadata
 		info["peer_id"] = n.PeerID().String()
@@ -1355,6 +1356,64 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(info)
 	}
+}
+
+func promoteNodeInfoKeyFields(info map[string]interface{}) {
+	if info == nil {
+		return
+	}
+
+	keys, ok := info["keys"]
+	if !ok {
+		return
+	}
+
+	for _, key := range nodeInfoKeyEntries(keys) {
+		keyType := strings.ToLower(strings.TrimSpace(nodeInfoStringValue(key["key_type"])))
+		if keyType == "" {
+			continue
+		}
+
+		pubKeyField := keyType + "_pubkey_hex"
+		keyPathField := keyType + "_key_path"
+		publicKey := nodeInfoStringValue(key["public_key"])
+		keyPath := nodeInfoStringValue(key["key_path"])
+		if keyPath == "" {
+			keyPath = nodeInfoStringValue(key["key_address"])
+		}
+
+		if publicKey != "" && nodeInfoStringValue(info[pubKeyField]) == "" {
+			info[pubKeyField] = publicKey
+		}
+		if keyPath != "" && nodeInfoStringValue(info[keyPathField]) == "" {
+			info[keyPathField] = keyPath
+		}
+		if xpub := nodeInfoStringValue(key["xpub"]); xpub != "" && nodeInfoStringValue(info["xpub"]) == "" {
+			info["xpub"] = xpub
+		}
+	}
+}
+
+func nodeInfoKeyEntries(raw interface{}) []map[string]interface{} {
+	switch keys := raw.(type) {
+	case []map[string]interface{}:
+		return append([]map[string]interface{}(nil), keys...)
+	case []interface{}:
+		entries := make([]map[string]interface{}, 0, len(keys))
+		for _, entry := range keys {
+			if key, ok := entry.(map[string]interface{}); ok {
+				entries = append(entries, key)
+			}
+		}
+		return entries
+	default:
+		return nil
+	}
+}
+
+func nodeInfoStringValue(value interface{}) string {
+	text, _ := value.(string)
+	return text
 }
 
 type providerDescriptorSource interface {

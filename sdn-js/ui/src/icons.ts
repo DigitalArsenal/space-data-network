@@ -1,8 +1,12 @@
-const strokeIcon = (paths: string): string => `
-  <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-    ${paths}
-  </svg>
-`;
+import strokeBasketSource from '../../../webui/src/icons/StrokeBasket.tsx?raw';
+import strokeCodeSource from '../../../webui/src/icons/StrokeCode.tsx?raw';
+import strokeCubeSource from '../../../webui/src/icons/StrokeCube.tsx?raw';
+import strokeFolderSource from '../../../webui/src/icons/StrokeFolder.tsx?raw';
+import strokePeersSmallSource from '../../../webui/src/icons/StrokePeersSmall.tsx?raw';
+import strokeSearchSource from '../../../webui/src/icons/StrokeSearch.tsx?raw';
+import strokeServerSource from '../../../webui/src/icons/StrokeServer.tsx?raw';
+import strokeUserSource from '../../../webui/src/icons/StrokeUser.tsx?raw';
+import strokeWalletSource from '../../../webui/src/icons/StrokeWallet.tsx?raw';
 
 export const brandMarkSvg = `
   <svg viewBox="0 0 512 512" aria-hidden="true" focusable="false">
@@ -22,40 +26,46 @@ export const brandMarkSvg = `
   </svg>
 `;
 
-export const networkIconSvg = strokeIcon(`
-  <path d="M76.595 19.785h-52.93a3.93 3.93 0 0 0-3.92 3.92v39.12a5.74 5.74 0 0 0 5.73 5.73h23.79v6.25h-9.67a4 4 0 0 0-4 4 3.6 3.6 0 0 0 .08.81l.12.6h28.49l.13-.6a4.3 4.3 0 0 0 .08-.81 4 4 0 0 0-4-4h-9.73v-6.25h25.83a3.67 3.67 0 0 0 3.66-3.67v-41.44a3.67 3.67 0 0 0-3.66-3.66m-13.61 58.94h-25.95a2.52 2.52 0 0 1 2.56-2.42h20.88a2.51 2.51 0 0 1 2.51 2.42m-39.32-55.94h52.93a.66.66 0 0 1 .66.66v5.56h-54.51v-5.3a.92.92 0 0 1 .92-.92m52.93 42.77h-51.12a2.73 2.73 0 0 1-2.73-2.73v-32.29h54.53v34.35a.67.67 0 0 1-.68.67" />
-  <path d="M68.315 35.735a3.61 3.61 0 0 0-3.61 3.61 3.58 3.58 0 0 0 .74 2.17l-9.77 10.38a3.5 3.5 0 0 0-4.13.46l-7.4-5a3.61 3.61 0 1 0-6.9-1.48 3.6 3.6 0 0 0 .41 1.63l-.06-.05-4.54 5.55a3.6 3.6 0 0 0-1.35-.27 3.62 3.62 0 1 0 2.6 1.11l4.29-5.21a3.53 3.53 0 0 0 2.3.86 3.62 3.62 0 0 0 2.39-.92l7.41 5a3.5 3.5 0 0 0-.37 1.43 3.635 3.635 0 1 0 7.27 0 3.57 3.57 0 0 0-.74-2.16l9.74-10.35a3.5 3.5 0 0 0 1.73.46 3.61 3.61 0 0 0 0-7.22zM31.705 58.455a2.11 2.11 0 1 1 2.11-2.11 2.12 2.12 0 0 1-2.11 2.11m9.15-10.45a2.11 2.11 0 1 1 2.11-2.11 2.12 2.12 0 0 1-2.11 2.11m13.08 9.15a2.11 2.11 0 1 1 2.11-2.15 2.11 2.11 0 0 1-2.11 2.14zm14.38-15.7a2.11 2.11 0 1 1 2.11-2.11 2.11 2.11 0 0 1-2.11 2.11" />
-`);
+export const networkIconSvg = iconFromWebuiComponent(strokePeersSmallSource);
+export const directoryIconSvg = iconFromWebuiComponent(strokeFolderSource);
+export const storeIconSvg = iconFromWebuiComponent(strokeBasketSource);
+export const frontendIconSvg = iconFromWebuiComponent(strokeCodeSource);
+export const walletIconSvg = iconFromWebuiComponent(strokeWalletSource);
+export const accountIconSvg = iconFromWebuiComponent(strokeUserSource);
+export const connectIconSvg = iconFromWebuiComponent(strokeServerSource);
+export const ipfsDashboardIconSvg = iconFromWebuiComponent(strokeCubeSource);
+export const refreshIconSvg = iconFromWebuiComponent(strokeSearchSource);
 
-export const directoryIconSvg = strokeIcon(`
-  <path d="M84.173 64.865v-29.1a4.48 4.48 0 1 0-4.4-7.63l-25.35-14.61a4.7 4.7 0 0 0 0-1.5 4.485 4.485 0 0 0-8.86 1.4v.17l-25 14.85a4.48 4.48 0 1 0-4.74 7.32v29.08a4.48 4.48 0 0 0 1.5 8.71 4 4 0 0 0 .7-.06 4.2 4.2 0 0 0 1.51-.5l26 14.72v.27a4.49 4.49 0 0 0 4.49 3.76 4 4 0 0 0 .7 0 4.5 4.5 0 0 0 3.78-4.19l25-15.32a4.48 4.48 0 0 0 3.2 1.37 4 4 0 0 0 .7-.06 4.47 4.47 0 0 0 .8-8.63zm-5.15 1.56a4.42 4.42 0 0 0-.82 3l-24.63 15.13a4.5 4.5 0 0 0-2.55-1.66v-28.55a4.48 4.48 0 0 0 3.44-5l25-14.77a4.46 4.46 0 0 0 1.74 1.15v29.12a4.46 4.46 0 0 0-2.18 1.58m-32.67 18.27-24.81-14a4.34 4.34 0 0 0 .26-2.3 4.44 4.44 0 0 0-2.93-3.5v-29.13a4.6 4.6 0 0 0 1.44-.85l25.33 14.16a4.4 4.4 0 0 0 0 1.62 4.48 4.48 0 0 0 3.38 3.66v28.55a4.52 4.52 0 0 0-2.67 1.79m3.67-67.48a4 4 0 0 0 .7-.06 4.33 4.33 0 0 0 2.2-1l25.35 14.58a4.8 4.8 0 0 0 0 1.51 4 4 0 0 0 .17.66l-24.71 14.59a4.46 4.46 0 0 0-7.25-.24l-25-14a4.3 4.3 0 0 0 .33-2.06l25.34-15a4.48 4.48 0 0 0 2.87 1.02" />
-`);
+function iconFromWebuiComponent(source: string): string {
+  const svgMatch = source.match(/<svg\b([\s\S]*?)>([\s\S]*?)<\/svg>/);
+  if (!svgMatch) {
+    throw new Error('expected upstream webui icon source to contain an <svg> root');
+  }
 
-export const storeIconSvg = strokeIcon(`
-  <path d="M36 33.4h14.21a1 1 0 0 0 0-2H36a1 1 0 0 0 0 2m0 8.84h14.21a1 1 0 0 0 0-2H36a1 1 0 0 0 0 2m30.08 7.57a1 1 0 0 0-.07-.19v-.07l-.08-.08-.14-.15-.15-.1-.18-.08h-.2a.4.4 0 0 0-.11 0H36a1 1 0 0 0-1 1v17.68a.7.7 0 0 0 0 .2.6.6 0 0 0 .06.18.4.4 0 0 1 0 .07.7.7 0 0 0 .13.16 1.3 1.3 0 0 0 .28.19h.08a1 1 0 0 0 .34.07h29.24a1 1 0 0 0 1-1V50a2 2 0 0 0-.05-.19M61.56 51.07 37 66V51.07zm-22 15.68 24.52-14.9v14.9z" />
-  <path d="M75.13 37.17v-.05L56.55 17.8H30a5.51 5.51 0 0 0-5.5 5.5v53.4a5.51 5.51 0 0 0 5.5 5.5h40a5.51 5.51 0 0 0 5.5-5.5V37.51zM56.91 22.51l14 14.61h-7.08c-4 0-6.92-2.53-6.92-6zM70 79.2H30a2.5 2.5 0 0 1-2.5-2.5V23.3a2.5 2.5 0 0 1 2.5-2.5h24.91v10.31c0 4.64 3.75 8 8.92 8h8.63V76.7A2.5 2.5 0 0 1 70 79.2" />
-`);
+  const rawAttributes = normalizeSvgMarkup(svgMatch[1]).replace(/\sxmlns="[^"]*"/g, '').trim();
+  const body = normalizeSvgMarkup(svgMatch[2]).trim();
 
-export const frontendIconSvg = strokeIcon(`
-  <path d="M77.84 19.06H22.16a4.71 4.71 0 0 0-4.7 4.7v40.65a4.71 4.71 0 0 0 4.7 4.7h24.45V76h-9.95a4.89 4.89 0 0 0-4.88 4.88v.06h36.44v-.06A4.89 4.89 0 0 0 63.34 76h-9.95v-6.89h24.45a4.71 4.71 0 0 0 4.7-4.7V23.76a4.71 4.71 0 0 0-4.7-4.7m1.7 45.35a1.7 1.7 0 0 1-1.7 1.7H22.16a1.7 1.7 0 0 1-1.7-1.7V23.76a1.7 1.7 0 0 1 1.7-1.7h55.68a1.7 1.7 0 0 1 1.7 1.7Z" />
-  <path d="M35.68 54.93a1.52 1.52 0 0 0 1.08-.45 1.5 1.5 0 0 0 0-2.12L31.4 47l5.36-5.37A1.5 1.5 0 1 0 34.64 39l-6.42 6.42a2.19 2.19 0 0 0 0 3.09l6.42 6.42a1.5 1.5 0 0 0 1.04.44zm28.1-.45 6.42-6.42a2.19 2.19 0 0 0 0-3.09L63.78 38.55A1.5 1.5 0 0 0 61.66 40l5.36 5.37-5.36 5.36a1.5 1.5 0 1 0 2.12 2.12zm-20.28 4.2a1.49 1.49 0 0 0 .54.1 1.5 1.5 0 0 0 1.4-1l10.08-26.2a1.5 1.5 0 1 0-2.8-1.08L42.64 56.7a1.5 1.5 0 0 0 .86 1.98z" />
-`);
+  return `
+  <svg${rawAttributes ? ` ${rawAttributes}` : ''} aria-hidden="true" focusable="false">
+    ${body}
+  </svg>
+`;
+}
 
-export const walletIconSvg = strokeIcon(`
-  <path d="M85 39.72h-3V29c0-4.56-2.28-10-13-10H19.88v62H69c11.69 0 13-7.72 13-11v-9.72h3zM79 70a11 11 0 0 1-.16 1.86h-5.56v1h5.27C77.46 76.26 74.22 78 69 78H22.88V28.14h7.28v-1h-7.28V22H69c7.15 0 9.25 2.48 9.79 5.18h-7.11v1h7.25v11.54H61.42c-4.45 0-8.21 4.65-8.21 10.16v.37c0 5.44 3.76 10 8.21 10H79zm3-12.72H61.42c-2.77 0-5.21-3.28-5.21-7v-.37c0-3.75 2.48-7.16 5.21-7.16H82z" />
-  <path d="M34.96 27.14h7.98v1h-7.98zm12.77 0h7.99v1h-7.99zm11.18 0h7.98v1h-7.98zM23.78 71.86h7.98v1h-7.98zm12.77 0h7.98v1h-7.98zm12.78 0h7.98v1h-7.98zm11.18 0h7.99v1h-7.99zm-1.23-22.24a3.52 3.52 0 1 0 3.52-3.51 3.53 3.53 0 0 0-3.52 3.51m3.52-2a2 2 0 1 1-2 2 2 2 0 0 1 2-2.01z" />
-`);
-
-export const accountIconSvg = strokeIcon(`
-  <path d="M50 16.67a15.63 15.63 0 1 0 15.63 15.62A15.64 15.64 0 0 0 50 16.67zm0 28.25a12.63 12.63 0 1 1 12.63-12.63A12.64 12.64 0 0 1 50 44.92z" />
-  <path d="M50 49.85c-14.83 0-26.9 10.41-26.9 23.2v7.62h53.8v-7.62c0-12.79-12.07-23.2-26.9-23.2zm23.9 27.82H26.1v-4.62c0-11.14 10.72-20.2 23.9-20.2s23.9 9.06 23.9 20.2z" />
-`);
-
-export const connectIconSvg = strokeIcon(`
-  <path d="M70.64 28.54H29.36a4.16 4.16 0 0 0-4.16 4.16v34.6a4.16 4.16 0 0 0 4.16 4.16h41.28a4.16 4.16 0 0 0 4.16-4.16V32.7a4.16 4.16 0 0 0-4.16-4.16zm1.16 38.76a1.16 1.16 0 0 1-1.16 1.16H29.36a1.16 1.16 0 0 1-1.16-1.16V32.7a1.16 1.16 0 0 1 1.16-1.16h41.28a1.16 1.16 0 0 1 1.16 1.16z" />
-  <path d="M39.74 59.86a1.5 1.5 0 0 0 2.12 0L52.5 49.22a2.18 2.18 0 0 0 0-3.09L41.86 35.49a1.5 1.5 0 1 0-2.12 2.12L49.32 47l-9.58 9.64a1.5 1.5 0 0 0 0 2.12zm18.4-1.5h-12a1.5 1.5 0 0 0 0 3h12a1.5 1.5 0 0 0 0-3z" />
-`);
-
-export const refreshIconSvg = strokeIcon(`
-  <path d="M50 20.09a29.88 29.88 0 0 0-21.14 8.76l-2.43-4a1.5 1.5 0 1 0-2.57 1.53l4.54 7.61a1.48 1.48 0 0 0 1.94.59l7.93-3.65a1.5 1.5 0 1 0-1.25-2.73l-5 2.31A26.89 26.89 0 1 1 24.57 57a1.5 1.5 0 0 0-2.91.7A29.89 29.89 0 1 0 50 20.09z" />
-`);
+function normalizeSvgMarkup(markup: string): string {
+  return markup
+    .replace(/\{\.\.\.props\}/g, '')
+    .replace(/className=/g, 'class=')
+    .replace(/(\s[\w:-]+)=\{([^}]+)\}/g, (_match, attribute, value) => {
+      const trimmed = value.trim();
+      if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+        return `${attribute}="${trimmed}"`;
+      }
+      if (/^['"][\s\S]*['"]$/.test(trimmed)) {
+        return `${attribute}=${trimmed}`;
+      }
+      return '';
+    })
+    .replace(/\s+/g, ' ')
+    .replace(/\s+\/>/g, ' />');
+}

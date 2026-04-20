@@ -13,14 +13,11 @@ export type MarketplaceFetchLike = (
 ) => Promise<MarketplaceFetchLikeResponse>;
 
 interface PlgQueryResponse {
-  results?: Array<{
-    data_base64?: string;
-    timestamp?: string;
-  }>;
+  results?: unknown;
 }
 
 interface StorefrontListingResponse {
-  listings?: StorefrontListing[];
+  listings?: unknown;
 }
 
 interface StorefrontListing {
@@ -48,14 +45,10 @@ export async function loadMarketplaceListingsFromServer(
   );
 
   if (storefrontResponse.ok) {
-    const payload = await storefrontResponse.json() as StorefrontListingResponse;
-    const listings = (payload.listings ?? [])
+    const payload = asRecord(await storefrontResponse.json()) as StorefrontListingResponse | null;
+    return normalizeStorefrontListings(payload?.listings)
       .map((listing) => decodeStorefrontListing(listing))
       .filter((listing): listing is CanonicalListing => Boolean(listing));
-
-    if (listings.length > 0) {
-      return listings;
-    }
   } else if (storefrontResponse.status !== 404) {
     storefrontError = new Error(`storefront listing query failed (${storefrontResponse.status})`);
   }
@@ -75,36 +68,43 @@ export async function loadMarketplaceListingsFromServer(
     throw new Error(`listing query failed (${plgResponse.status})`);
   }
 
-  const payload = await plgResponse.json() as PlgQueryResponse;
-  return (payload.results ?? [])
+  const payload = asRecord(await plgResponse.json()) as PlgQueryResponse | null;
+  return normalizePlgQueryResults(payload?.results)
     .map((entry) => entry.data_base64 ? decodeCanonicalPlgListing(base64ToBytes(entry.data_base64), {
       observedAt: entry.timestamp ? Date.parse(entry.timestamp) : Date.now(),
     }) : null)
     .filter((listing): listing is CanonicalListing => Boolean(listing));
 }
 
-function decodeStorefrontListing(listing: StorefrontListing): CanonicalListing | null {
-  const pluginId = listing.listing_id?.trim();
+function decodeStorefrontListing(listing: unknown): CanonicalListing | null {
+  if (!isRecord(listing)) {
+    return null;
+  }
+
+  const pluginId = pickTrimmedString(listing, 'listing_id');
   if (!pluginId) {
     return null;
   }
 
-  const name = listing.title?.trim();
-  const description = listing.description?.trim();
+  const name = pickTrimmedString(listing, 'title');
+  const description = pickTrimmedString(listing, 'description');
 
   return {
     pluginId,
     version: normalizeStorefrontVersion(listing.version),
     name: name || pluginId,
     description: description || undefined,
-    publisherPeerId: listing.provider_peer_id?.trim() || undefined,
-    observedAt: parseObservedAt(listing.updated_at, listing.created_at),
+    publisherPeerId: pickTrimmedString(listing, 'provider_peer_id') || undefined,
+    observedAt: parseObservedAt(
+      pickTrimmedString(listing, 'updated_at'),
+      pickTrimmedString(listing, 'created_at'),
+    ),
     status: decodeStorefrontStatus(listing.active),
     tags: normalizeTags(listing.tags),
   };
 }
 
-function normalizeStorefrontVersion(value: number | string | undefined): string {
+function normalizeStorefrontVersion(value: unknown): string {
   if (typeof value === 'string' && value.trim()) {
     return value.trim();
   }
@@ -118,9 +118,13 @@ function decodeStorefrontStatus(active: boolean | undefined): ListingStatus {
   return active === false ? 'retired' : 'public';
 }
 
-function normalizeTags(tags: string[] | undefined): string[] | undefined {
+function normalizeTags(tags: unknown): string[] | undefined {
+  if (!Array.isArray(tags)) {
+    return undefined;
+  }
   const normalized = tags
-    ?.map((tag) => tag.trim())
+    .filter((tag): tag is string => typeof tag === 'string')
+    .map((tag) => tag.trim())
     .filter((tag) => Boolean(tag));
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
@@ -143,4 +147,34 @@ function base64ToBytes(value: string): Uint8Array {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function normalizeStorefrontListings(value: unknown): StorefrontListing[] {
+  return Array.isArray(value) ? value.filter((entry): entry is StorefrontListing => isRecord(entry)) : [];
+}
+
+function normalizePlgQueryResults(value: unknown): Array<{
+  data_base64?: string;
+  timestamp?: string;
+}> {
+  return Array.isArray(value) ? value.filter((entry): entry is {
+    data_base64?: string;
+    timestamp?: string;
+  } => isRecord(entry)) : [];
+}
+
+function pickTrimmedString(
+  payload: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = payload[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
 }
