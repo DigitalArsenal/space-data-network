@@ -30,7 +30,7 @@ func (h *Handler) RequireAuth(minTrust peers.TrustLevel, next http.HandlerFunc) 
 			if wantsJSON(r) {
 				writeJSON(w, http.StatusForbidden, errorResponse{Code: "forbidden", Message: "insufficient permissions"})
 			} else {
-				http.Error(w, "Forbidden: insufficient trust level", http.StatusForbidden)
+				http.Redirect(w, r, "/login?unauthorized=1", http.StatusFound)
 			}
 			return
 		}

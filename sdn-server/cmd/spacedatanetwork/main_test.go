@@ -18,6 +18,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
@@ -27,6 +28,14 @@ func TestIsPublicAPIPathAllowsProviderDescriptorRoute(t *testing.T) {
 
 	if !isPublicAPIPath("/api/module-delivery/provider") {
 		t.Fatal("expected provider descriptor route to be public")
+	}
+}
+
+func TestIsPublicAPIPathAllowsModuleDeliveryListingsRoute(t *testing.T) {
+	t.Parallel()
+
+	if !isPublicAPIPath("/api/module-delivery/listings") {
+		t.Fatal("expected module-delivery listings route to be public")
 	}
 }
 
@@ -115,6 +124,54 @@ func TestHandleProviderDescriptorReturnsBrowserSafeDescriptor(t *testing.T) {
 	}
 	if len(payload.Identity.Addresses) != 0 {
 		t.Fatalf("identity.addresses = %#v, want empty for source without published wallet identity", payload.Identity.Addresses)
+	}
+}
+
+func TestHandleModuleDeliveryListingsReturnsCanonicalPlgListings(t *testing.T) {
+	t.Parallel()
+
+	reg := writeMainTestPluginRegistry(
+		t,
+		license.PluginCatalogEntry{
+			ID:            "licensing",
+			Version:       "0.1.0",
+			RequiredScope: "orbpro:runtime",
+			EncryptedPath: "licensing.wasm.enc",
+			KeyPath:       "licensing.key",
+			ContentType:   "application/wasm+encrypted",
+		},
+		license.PluginCatalogEntry{
+			ID:            "com.orbpro.sgp4",
+			Version:       "1.0.0",
+			RequiredScope: "orbpro:base",
+			EncryptedPath: "sgp4.wasm.enc",
+			KeyPath:       "sgp4.key",
+			ContentType:   "application/wasm+encrypted",
+		},
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/module-delivery/listings", nil)
+	recorder := httptest.NewRecorder()
+
+	handleModuleDeliveryListings(reg)(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+
+	var payload struct {
+		Results []struct {
+			DataBase64 string `json:"data_base64"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("json decode failed: %v", err)
+	}
+	if len(payload.Results) != 2 {
+		t.Fatalf("results len = %d, want 2", len(payload.Results))
+	}
+	if payload.Results[0].DataBase64 == "" || payload.Results[1].DataBase64 == "" {
+		t.Fatalf("results = %#v, want base64-encoded PLG bytes", payload.Results)
 	}
 }
 
@@ -258,6 +315,37 @@ func TestPromoteNodeInfoKeyFieldsPromotesSigningAndEncryptionKeys(t *testing.T) 
 	if got, want := info["encryption_pubkey_hex"], "302a300506032b6570032100feedface"; got != want {
 		t.Fatalf("encryption_pubkey_hex = %#v, want %q", got, want)
 	}
+}
+
+func writeMainTestPluginRegistry(t *testing.T, entries ...license.PluginCatalogEntry) *license.PluginRegistry {
+	t.Helper()
+
+	root := t.TempDir()
+	rawCatalog, err := json.Marshal(map[string]any{
+		"plugins": entries,
+	})
+	if err != nil {
+		t.Fatalf("Marshal catalog failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "catalog.json"), rawCatalog, 0o600); err != nil {
+		t.Fatalf("WriteFile(catalog.json) failed: %v", err)
+	}
+	for _, entry := range entries {
+		encryptedPath := filepath.Join(root, entry.EncryptedPath)
+		keyPath := filepath.Join(root, entry.KeyPath)
+		if err := os.WriteFile(encryptedPath, []byte{0x00, 0x61, 0x73, 0x6d}, 0o600); err != nil {
+			t.Fatalf("WriteFile(%s) failed: %v", encryptedPath, err)
+		}
+		if err := os.WriteFile(keyPath, bytes.Repeat([]byte("a"), 64), 0o600); err != nil {
+			t.Fatalf("WriteFile(%s) failed: %v", keyPath, err)
+		}
+	}
+
+	reg, err := license.LoadPluginRegistry(root)
+	if err != nil {
+		t.Fatalf("LoadPluginRegistry failed: %v", err)
+	}
+	return reg
 }
 
 type fakeProviderDescriptorSource struct {

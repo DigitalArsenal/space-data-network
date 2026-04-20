@@ -15,7 +15,10 @@ import {
   extractPublicationRecordCollection,
 } from "space-data-module-sdk/transport";
 
-import { seedOrbproModuleCatalog } from "../../scripts/seed-orbpro-module-catalog.mjs";
+import {
+  DEFAULT_ORBPRO_MODULES,
+  seedOrbproModuleCatalog,
+} from "../../scripts/seed-orbpro-module-catalog.mjs";
 
 const PASS = "\x1b[32mPASS\x1b[0m";
 const FAIL = "\x1b[31mFAIL\x1b[0m";
@@ -176,6 +179,13 @@ await test("seedOrbproModuleCatalog uses the shipped plugin version for built-in
   );
 
   assert.equal(seededEntry?.version, sgp4Manifest.version);
+});
+
+await test("DEFAULT_ORBPRO_MODULES includes the licensing runtime", async () => {
+  assert.equal(
+    DEFAULT_ORBPRO_MODULES.some((entry) => entry.moduleId === "licensing"),
+    true,
+  );
 });
 
 console.log("\nDone.");

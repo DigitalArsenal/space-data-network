@@ -27,7 +27,7 @@ func (h *Handler) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Already authenticated → redirect to admin.
-	if session, err := h.sessionFromRequest(r); err == nil && session != nil {
+	if session, err := h.sessionFromRequest(r); err == nil && session != nil && !loginPageRequiresWalletAccount(r) {
 		http.Redirect(w, r, "/admin/", http.StatusFound)
 		return
 	}
@@ -47,6 +47,10 @@ func (h *Handler) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Write([]byte(html))
+}
+
+func loginPageRequiresWalletAccount(r *http.Request) bool {
+	return strings.TrimSpace(r.URL.Query().Get("unauthorized")) == "1"
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +170,7 @@ func buildLoginPage(jsFile, cssFile string) string {
     }
     .sdn-logo{display:flex;align-items:center;gap:14px;color:var(--text-primary);font-weight:600;font-size:18px;letter-spacing:.06em;white-space:nowrap}
     .sdn-logo svg{width:36px;height:36px;flex-shrink:0;opacity:0.9}
+    .sdn-header-actions{display:flex;align-items:center;gap:12px}
     .sdn-sign-in{
       padding:10px 28px;border:none;border-radius:980px;cursor:pointer;
       font-family:var(--font-sans);font-size:15px;font-weight:600;
@@ -176,6 +181,14 @@ func buildLoginPage(jsFile, cssFile string) string {
     }
     .sdn-sign-in:hover{opacity:.85;transform:scale(1.02)}
     .sdn-sign-in:disabled{opacity:.3;cursor:default;transform:none}
+    .sdn-wallet-button{
+      padding:10px 22px;border-radius:980px;cursor:pointer;
+      font-family:var(--font-sans);font-size:15px;font-weight:600;
+      border:1px solid rgba(255,255,255,0.14);
+      background:rgba(255,255,255,0.06);color:var(--text-primary);
+      transition:all .2s;letter-spacing:.02em;
+    }
+    .sdn-wallet-button:hover{background:rgba(255,255,255,0.12)}
     .sdn-header-right{display:flex;align-items:center;gap:16px}
     .sdn-trust-badge{
       display:none;align-items:center;gap:8px;
@@ -257,6 +270,13 @@ func buildLoginPage(jsFile, cssFile string) string {
   // Runs BEFORE the deferred wallet-ui module script.
   window.__sdnAutoOpen = false;
   window.__sdnOpenAccountAfterLogin = false;
+  window.__sdnWalletUI = null;
+  window.__sdnWalletQuery = new URLSearchParams(window.location.search);
+  window.__sdnOpenWalletAccount = function() {
+    if (window.__sdnWalletUI && typeof window.__sdnWalletUI.openAccount === 'function') {
+      window.__sdnWalletUI.openAccount();
+    }
+  };
 
   window.__sdnOnLogin = async function(identity) {
     var statusEl = document.getElementById('sdn-auth-status');
@@ -339,6 +359,7 @@ func buildLoginPage(jsFile, cssFile string) string {
         // Auth failed — user not in config. Show "unregistered" badge, update banner.
         updateBannerIdentity(xpub);
         showTrustBadge('untrusted', 'not in server config');
+        window.__sdnOpenWalletAccount();
         hide();
         var btn = document.getElementById('sdn-sign-in');
         if (btn) { btn.textContent = 'Sign In'; btn.disabled = false; }
@@ -358,6 +379,7 @@ func buildLoginPage(jsFile, cssFile string) string {
         setTimeout(function(){ window.location.href = '/admin/'; }, 600);
       } else {
         // Non-admin — stay on page, show their level
+        window.__sdnOpenWalletAccount();
         var btn = document.getElementById('sdn-sign-in');
         if (btn) { btn.textContent = verifyData.user.name || 'Signed In'; btn.disabled = true; }
       }
@@ -367,14 +389,23 @@ func buildLoginPage(jsFile, cssFile string) string {
       showTrustBadge('untrusted', err.message);
       hide();
       if (typeof xpub !== 'undefined' && xpub) updateBannerIdentity(xpub);
+      window.__sdnOpenWalletAccount();
     }
   };
 
   window.__sdnWalletReady = function(ui) {
+    window.__sdnWalletUI = ui;
     var btn = document.getElementById('sdn-sign-in');
+    var walletBtn = document.getElementById('sdn-open-wallet');
     if (btn) {
       btn.disabled = false;
       btn.addEventListener('click', function(){ ui.openLogin(); });
+    }
+    if (walletBtn) {
+      walletBtn.addEventListener('click', function(){ ui.openAccount(); });
+    }
+    if (window.__sdnWalletQuery.get('unauthorized') === '1') {
+      window.__sdnOpenWalletAccount();
     }
   };
   </script>
@@ -394,7 +425,10 @@ func buildLoginPage(jsFile, cssFile string) string {
     </div>
     <div class="sdn-header-right">
       <div id="sdn-trust-badge" class="sdn-trust-badge"></div>
-      <button id="sdn-sign-in" class="sdn-sign-in" disabled>Sign In</button>
+      <div class="sdn-header-actions">
+        <button id="sdn-open-wallet" class="sdn-wallet-button" type="button">Open Wallet</button>
+        <button id="sdn-sign-in" class="sdn-sign-in" disabled>Sign In</button>
+      </div>
     </div>
   </header>
 
@@ -556,7 +590,13 @@ func buildFallbackLoginPage() string {
       border: 0; border-radius: 999px; padding: 0.9rem 1.4rem; cursor: pointer;
       font: inherit; font-weight: 600; color: #0d1117; background: #f5f5f7;
     }
+    button.secondary {
+      color: #e6edf6;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+    }
     button:disabled { opacity: 0.45; cursor: default; }
+    .actions { display: flex; align-items: center; justify-content: center; gap: 0.75rem; }
     .status {
       min-height: 1.5rem; margin-top: 1rem; color: #8b949e;
     }
@@ -571,10 +611,21 @@ func buildFallbackLoginPage() string {
       Sign in with your HD Wallet to access the SDN admin interface.
       This fallback page loads <code>hd-wallet-ui</code> directly from the published package.
     </p>
-    <button id="sdn-sign-in" type="button" disabled>Sign In</button>
+    <div class="actions">
+      <button id="sdn-open-wallet" type="button" class="secondary">Open Wallet</button>
+      <button id="sdn-sign-in" type="button" disabled>Sign In</button>
+    </div>
     <div id="sdn-auth-status" class="status">Loading wallet interface…</div>
   </div>
   <script>
+    window.__sdnWalletUI = null;
+    window.__sdnWalletQuery = new URLSearchParams(window.location.search);
+    window.__sdnOpenWalletAccount = function() {
+      if (window.__sdnWalletUI && typeof window.__sdnWalletUI.openAccount === 'function') {
+        window.__sdnWalletUI.openAccount();
+      }
+    };
+
     window.__sdnOnLogin = async function(identity) {
       var button = document.getElementById('sdn-sign-in');
       var status = document.getElementById('sdn-auth-status');
@@ -625,14 +676,28 @@ func buildFallbackLoginPage() string {
           })
         });
         var verifyData = await verifyResp.json();
-        if (!verifyResp.ok) throw new Error(verifyData.message || 'Authentication failed');
+        if (!verifyResp.ok) {
+          window.__sdnOpenWalletAccount();
+          throw new Error(verifyData.message || 'Authentication failed');
+        }
 
-        setStatus('Authenticated. Redirecting…', 'success');
+        var trustLevel = verifyData.user && verifyData.user.trust_level ? String(verifyData.user.trust_level).toLowerCase() : '';
+        if (trustLevel === 'admin') {
+          setStatus('Authenticated. Redirecting…', 'success');
+          if (button) {
+            button.textContent = verifyData.user && verifyData.user.name ? verifyData.user.name : 'Signed In';
+            button.disabled = true;
+          }
+          setTimeout(function(){ window.location.href = '/admin/'; }, 400);
+          return;
+        }
+
+        setStatus('Authenticated with limited access.', 'success');
         if (button) {
           button.textContent = verifyData.user && verifyData.user.name ? verifyData.user.name : 'Signed In';
           button.disabled = true;
         }
-        setTimeout(function(){ window.location.href = '/admin/'; }, 400);
+        window.__sdnOpenWalletAccount();
       } catch (error) {
         setStatus((error && error.message) || 'Authentication failed', 'error');
         if (button) button.disabled = false;
@@ -640,14 +705,25 @@ func buildFallbackLoginPage() string {
     };
 
     window.__sdnWalletReady = function(ui) {
+      window.__sdnWalletUI = ui;
       var button = document.getElementById('sdn-sign-in');
+      var walletButton = document.getElementById('sdn-open-wallet');
       var status = document.getElementById('sdn-auth-status');
       if (status) status.textContent = 'Ready to authenticate.';
-      if (!button) return;
-      button.disabled = false;
-      button.addEventListener('click', function() {
-        ui.openLogin();
-      });
+      if (button) {
+        button.disabled = false;
+        button.addEventListener('click', function() {
+          ui.openLogin();
+        });
+      }
+      if (walletButton) {
+        walletButton.addEventListener('click', function() {
+          ui.openAccount();
+        });
+      }
+      if (window.__sdnWalletQuery.get('unauthorized') === '1') {
+        window.__sdnOpenWalletAccount();
+      }
     };
   </script>
   <script type="module">

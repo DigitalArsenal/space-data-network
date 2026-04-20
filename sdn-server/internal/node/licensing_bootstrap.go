@@ -47,6 +47,15 @@ const (
 	pluginTypeAnalysis = 3
 )
 
+// ModuleDeliveryListing is a canonical $PLG listing generated from a published
+// module catalog asset.
+type ModuleDeliveryListing struct {
+	PluginID  string
+	Version   string
+	Payload   []byte
+	Timestamp string
+}
+
 func catalogPublicationAssets(reg *license.PluginRegistry) []*license.PluginAsset {
 	if reg == nil {
 		return nil
@@ -56,7 +65,7 @@ func catalogPublicationAssets(reg *license.PluginRegistry) []*license.PluginAsse
 	assets := make([]*license.PluginAsset, 0, len(descriptors))
 	for _, descriptor := range descriptors {
 		pluginID := strings.TrimSpace(descriptor.ID)
-		if pluginID == "" || pluginID == licensingModuleID {
+		if pluginID == "" {
 			continue
 		}
 		asset, ok := reg.Get(pluginID)
@@ -66,6 +75,27 @@ func catalogPublicationAssets(reg *license.PluginRegistry) []*license.PluginAsse
 		assets = append(assets, asset)
 	}
 	return assets
+}
+
+// BuildModuleDeliveryListings materializes canonical $PLG listings for the
+// current plugin catalog so browser clients can browse signed module metadata
+// without depending on the legacy storefront API.
+func BuildModuleDeliveryListings(reg *license.PluginRegistry) ([]ModuleDeliveryListing, error) {
+	assets := catalogPublicationAssets(reg)
+	listings := make([]ModuleDeliveryListing, 0, len(assets))
+	for _, asset := range assets {
+		payload, err := buildPublicationDescriptorFrame(asset)
+		if err != nil {
+			return nil, fmt.Errorf("build publication descriptor for %q: %w", asset.ID, err)
+		}
+		listings = append(listings, ModuleDeliveryListing{
+			PluginID:  strings.TrimSpace(asset.ID),
+			Version:   strings.TrimSpace(asset.Version),
+			Payload:   payload,
+			Timestamp: strings.TrimSpace(asset.UploadedAt),
+		})
+	}
+	return listings, nil
 }
 
 func (n *Node) buildModuleNodeContext() (*modulert.NodeContext, error) {

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -520,6 +521,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Node info API endpoint
 			adminMux.HandleFunc("/api/node/info", handleNodeInfo(n, torRuntime))
 			adminMux.HandleFunc("/api/module-delivery/provider", handleProviderDescriptor(n))
+			adminMux.HandleFunc("/api/module-delivery/listings", handleModuleDeliveryListings(n.PluginRegistry()))
 
 			// Relay status endpoint (public, used by clients for load balancing)
 			adminMux.HandleFunc("/api/relay/status", handleRelayStatus(n))
@@ -864,6 +866,7 @@ func resolveBuildAssetsDir(homepageFile string) string {
 func isPublicAPIPath(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/data/") ||
 		strings.HasPrefix(path, "/api/module-delivery/provider") ||
+		strings.HasPrefix(path, "/api/module-delivery/listings") ||
 		strings.HasPrefix(path, "/api/v1/demo/") ||
 		strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook") ||
 		strings.HasPrefix(path, "/api/storefront/listings") ||
@@ -1448,6 +1451,18 @@ type providerDescriptorResponse struct {
 	Identity       *providerDescriptorIdentityResponse `json:"identity,omitempty"`
 }
 
+type moduleDeliveryListingsResult struct {
+	PluginID   string `json:"plugin_id,omitempty"`
+	Version    string `json:"version,omitempty"`
+	DataBase64 string `json:"data_base64"`
+	Timestamp  string `json:"timestamp,omitempty"`
+}
+
+type moduleDeliveryListingsResponse struct {
+	Results []moduleDeliveryListingsResult `json:"results"`
+	Count   int                            `json:"count"`
+}
+
 func handleProviderDescriptor(src providerDescriptorSource) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -1471,6 +1486,45 @@ func handleProviderDescriptor(src providerDescriptorSource) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(payload)
+	}
+}
+
+func handleModuleDeliveryListings(reg *license.PluginRegistry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		listings, err := node.BuildModuleDeliveryListings(reg)
+		if err != nil {
+			http.Error(w, "module-delivery listings unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		results := make([]moduleDeliveryListingsResult, 0, len(listings))
+		for _, listing := range listings {
+			results = append(results, moduleDeliveryListingsResult{
+				PluginID:   listing.PluginID,
+				Version:    listing.Version,
+				DataBase64: base64.StdEncoding.EncodeToString(listing.Payload),
+				Timestamp:  listing.Timestamp,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(moduleDeliveryListingsResponse{
+			Results: results,
+			Count:   len(results),
+		})
 	}
 }
 

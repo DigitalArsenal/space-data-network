@@ -696,20 +696,25 @@ pre {
   gap: 1rem;
 }
 
-.sdn-store-section {
+.sdn-store-spotlight {
   display: grid;
   gap: 0.75rem;
 }
 
-.sdn-store-section__header {
+.sdn-store-spotlight__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
 }
 
-.sdn-store-section__header h3 {
+.sdn-store-spotlight__header h3 {
   margin: 0;
+}
+
+.sdn-store-feed {
+  display: grid;
+  gap: 0.75rem;
 }
 
 .sdn-store-card {
@@ -761,6 +766,13 @@ pre {
   border-radius: 0.85rem;
   background: #fbfdfe;
   color: var(--sdn-muted);
+}
+
+.sdn-wallet-modal-host {
+  position: relative;
+  width: 0;
+  height: 0;
+  z-index: 1200;
 }
 
 .sdn-store-chip-row {

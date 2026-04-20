@@ -1,4 +1,3 @@
-import type { MountedWalletUI } from '../../src/ui/runtime/wallet-ui';
 import {
   accountIconSvg,
   brandMarkSvg,
@@ -16,7 +15,7 @@ import {
 } from './icons';
 
 export interface RenderAppShellOptions {
-  mountWalletUI?: (host: HTMLElement) => MountedWalletUI | void | Promise<MountedWalletUI | void>;
+  mountWalletUI?: (host: HTMLElement) => unknown;
 }
 
 interface NavItem {
@@ -106,6 +105,7 @@ export async function renderAppShell(
   root: HTMLElement,
   options: RenderAppShellOptions = {},
 ): Promise<void> {
+  void options;
   root.innerHTML = `
     <main class="sdn-admin-shell">
       <section class="sdn-admin-main">
@@ -142,27 +142,6 @@ export async function renderAppShell(
             </button>
           </div>
         </header>
-
-        <section id="sdn-account-dialog" class="sdn-account-dialog" hidden aria-hidden="true">
-          <div class="sdn-account-dialog__backdrop" data-account-dismiss="backdrop"></div>
-          <div class="sdn-account-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="sdn-account-title">
-            <div class="sdn-panel__header">
-              <div>
-                <p class="sdn-kicker">Wallet + Account</p>
-                <h2 id="sdn-account-title">Session</h2>
-              </div>
-              <button id="sdn-account-close" type="button" class="sdn-ghost-button">Close</button>
-            </div>
-            <div class="sdn-stack">
-              <div id="sdn-account-meta" class="sdn-empty">Wallet state will appear here.</div>
-              <div class="sdn-action-row">
-                <button id="sdn-account-open-wallet" type="button" class="sdn-button">Open wallet account</button>
-                <button id="sdn-account-signout" type="button" class="sdn-ghost-button">Sign out</button>
-              </div>
-              <div id="sdn-account-wallet-panel"></div>
-            </div>
-          </div>
-        </section>
 
         <div class="sdn-admin-page">
           <section class="sdn-admin-workspace sdn-admin-workspace--active" data-workspace="network">
@@ -346,33 +325,8 @@ export async function renderAppShell(
                   <button id="sdn-refresh-marketplace" type="button" class="sdn-button">Refresh listings</button>
                 </div>
                 <div id="sdn-store-results" class="sdn-store-results">
-                  <section class="sdn-store-section">
-                    <div class="sdn-store-section__header">
-                      <h3>Authors</h3>
-                      <span class="sdn-chip">Publishers</span>
-                    </div>
-                    <div id="sdn-store-author-results" class="sdn-stack">
-                      <div class="sdn-empty">Publisher results will populate from live PLG manifests.</div>
-                    </div>
-                  </section>
-                  <section class="sdn-store-section">
-                    <div class="sdn-store-section__header">
-                      <h3>Plugins</h3>
-                      <span class="sdn-chip">Signed modules</span>
-                    </div>
-                    <div id="sdn-store-plugin-results" class="sdn-stack">
-                      <div class="sdn-empty">Plugin results will populate from live PLG manifests.</div>
-                    </div>
-                  </section>
-                  <section class="sdn-store-section">
-                    <div class="sdn-store-section__header">
-                      <h3>Data</h3>
-                      <span class="sdn-chip">SDS linked</span>
-                    </div>
-                    <div id="sdn-store-data-results" class="sdn-stack">
-                      <div class="sdn-empty">SDS-linked data references will populate from live PLG metadata.</div>
-                    </div>
-                  </section>
+                  <div id="sdn-store-spotlight" class="sdn-stack"></div>
+                  <div id="sdn-store-feed" class="sdn-stack"></div>
                 </div>
               </article>
 
@@ -486,23 +440,9 @@ export async function renderAppShell(
               </div>
             </article>
           </section>
-
-          <section class="sdn-admin-workspace" data-workspace="wallet">
-            <article class="sdn-panel">
-              <div class="sdn-panel__header">
-                <h2>Wallet</h2>
-                <span class="sdn-chip">hd-wallet-ui</span>
-              </div>
-              <p class="sdn-copy">
-                Address lookup, signatures, deterministic SSH identities, and the vCard flow reuse the canonical wallet UI directly.
-              </p>
-              <div class="sdn-action-row">
-                <button id="sdn-wallet-load" type="button" class="sdn-button">Open wallet identity</button>
-              </div>
-              <div id="sdn-wallet-panel"></div>
-            </article>
-          </section>
         </div>
+
+        <div id="sdn-wallet-modal-host" class="sdn-wallet-modal-host" aria-hidden="true"></div>
       </section>
 
       <aside class="sdn-admin-rail">
@@ -523,27 +463,6 @@ export async function renderAppShell(
       </aside>
     </main>
   `;
-
-  const walletHost = root.querySelector('#sdn-wallet-panel');
-  const walletLoadButton = root.querySelector('#sdn-wallet-load');
-  if (walletHost && walletLoadButton) {
-    const mountWalletUI = options.mountWalletUI;
-    let mountedWallet: Promise<MountedWalletUI | void> | null = null;
-    const ensureWalletMounted = async (): Promise<MountedWalletUI | void> => {
-      if (!mountWalletUI) {
-        return undefined;
-      }
-      if (!mountedWallet) {
-        mountedWallet = Promise.resolve(mountWalletUI(walletHost as HTMLElement));
-      }
-      return mountedWallet;
-    };
-    if (mountWalletUI && walletLoadButton && 'addEventListener' in walletLoadButton) {
-      walletLoadButton.addEventListener('click', async () => {
-        await ensureWalletMounted();
-      });
-    }
-  }
 }
 
 function renderNavItem(item: NavItem): string {
