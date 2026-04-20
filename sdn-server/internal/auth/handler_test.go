@@ -375,3 +375,76 @@ func TestLoginPage_UsesCDNWalletUIFallbackWhenNoLocalDistIsConfigured(t *testing
 		t.Fatalf("login page missing wallet initialization hook: %s", body)
 	}
 }
+
+func TestLoginPage_BuildersExposeWalletAccountSurfaceForUnauthorizedUsers(t *testing.T) {
+	t.Parallel()
+
+	pages := []struct {
+		name string
+		html string
+	}{
+		{
+			name: "hosted wallet dist page",
+			html: buildLoginPage("wallet.js", "wallet.css"),
+		},
+		{
+			name: "fallback CDN page",
+			html: buildFallbackLoginPage(),
+		},
+	}
+
+	for _, page := range pages {
+		page := page
+		t.Run(page.name, func(t *testing.T) {
+			if !strings.Contains(page.html, "Open Wallet") {
+				t.Fatalf("page missing explicit wallet button: %s", page.html)
+			}
+			if !strings.Contains(page.html, "ui.openAccount") {
+				t.Fatalf("page missing wallet account modal hook: %s", page.html)
+			}
+			if !strings.Contains(page.html, "get('unauthorized') === '1'") {
+				t.Fatalf("page missing unauthorized wallet trigger: %s", page.html)
+			}
+		})
+	}
+}
+
+func TestLoginPage_AllowsUnauthorizedSessionsToReachWalletSurface(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer sdb.Close()
+
+	sessions, err := NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+	token, err := sessions.CreateSession(
+		"xpub-standard-user",
+		peers.Standard,
+		"127.0.0.1",
+		"test-agent",
+		time.Hour,
+	)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	h := NewHandler(nil, sessions, time.Hour, "", "")
+	req := httptest.NewRequest(http.MethodGet, "/login?unauthorized=1", nil)
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+	rec := httptest.NewRecorder()
+
+	h.handleLoginPage(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if location := rec.Header().Get("Location"); location != "" {
+		t.Fatalf("unexpected redirect to %q", location)
+	}
+}

@@ -22,6 +22,15 @@ const defaultVersion = "local-dev";
 
 const DEFAULT_ORBPRO_MODULES = Object.freeze([
   Object.freeze({
+    slug: "licensing",
+    moduleId: "licensing",
+    wasmPath:
+      "../space-data-network-plugins/packages/licensing/dist/isomorphic/module.wasm",
+    manifestPath:
+      "../space-data-network-plugins/packages/licensing/plugin-manifest.json",
+    requiredScope: "orbpro:runtime",
+  }),
+  Object.freeze({
     slug: "viewshed-shader",
     moduleId: "com.orbpro.viewshed-shader",
     wasmPath:

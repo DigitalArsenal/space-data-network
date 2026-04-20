@@ -7,27 +7,71 @@ import { pluginType } from 'spacedatastandards.org/lib/js/PLG/pluginType.js';
 import { loadMarketplaceListingsFromServer } from './marketplace-source';
 
 describe('loadMarketplaceListingsFromServer', () => {
-  it('prefers storefront listings when that API is available', async () => {
+  it('prefers module-delivery PLG listings when that API is available', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       status: 200,
       async json() {
         return {
-          listings: [
+          results: [
             {
-              listing_id: 'com.space-data-network.orbital-demo',
-              provider_peer_id: '16Uiu2HAmDemo',
-              title: 'Orbital Demo',
-              description: 'Storefront record',
-              tags: ['orbit', 'OMM', 'demo'],
-              version: 7,
-              active: true,
-              updated_at: '2026-04-18T15:00:00Z',
+              data_base64: Buffer.from(createPlgBytes({
+                pluginId: 'com.space-data-network.orbital-demo',
+                version: '1.2.3',
+                name: 'Orbital Demo',
+                description: 'Canonical PLG record',
+              })).toString('base64'),
+              timestamp: '2026-04-18T15:00:00Z',
             },
           ],
         };
       },
     }));
+
+    await expect(
+      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        pluginId: 'com.space-data-network.orbital-demo',
+        version: '1.2.3',
+        name: 'Orbital Demo',
+        description: 'Canonical PLG record',
+        observedAt: Date.parse('2026-04-18T15:00:00Z'),
+      }),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to storefront listings when the module-delivery route is unavailable', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            listings: [
+              {
+                listing_id: 'com.space-data-network.orbital-demo',
+                provider_peer_id: '16Uiu2HAmDemo',
+                title: 'Orbital Demo',
+                description: 'Storefront record',
+                tags: ['orbit', 'OMM', 'demo'],
+                version: 7,
+                active: true,
+                updated_at: '2026-04-18T15:00:00Z',
+              },
+            ],
+          };
+        },
+      });
 
     await expect(
       loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
@@ -45,67 +89,18 @@ describe('loadMarketplaceListingsFromServer', () => {
       },
     ]);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('falls back to canonical PLG listings when the storefront route is unavailable', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        async json() {
-          return {};
-        },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        async json() {
-          return {
-            results: [
-              {
-                data_base64: Buffer.from(createPlgBytes({
-                  pluginId: 'com.space-data-network.orbital-demo',
-                  version: '1.2.3',
-                  name: 'Orbital Demo',
-                  description: 'Synthetic orbital demo',
-                })).toString('base64'),
-                timestamp: '2026-04-18T15:00:00Z',
-              },
-            ],
-          };
-        },
-      });
-
-    await expect(
-      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        pluginId: 'com.space-data-network.orbital-demo',
-        version: '1.2.3',
-        name: 'Orbital Demo',
-        description: 'Synthetic orbital demo',
-      }),
-    ]);
-
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('returns an empty marketplace from a successful empty storefront response without probing the PLG route', async () => {
+  it('returns an empty marketplace from a successful empty module-delivery response without probing fallback routes', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
         async json() {
           return {
-            listings: null,
-            total: 0,
-            facets: {
-              data_types: null,
-              price_ranges: null,
-              providers: null,
-              access_types: null,
-            },
+            results: null,
+            count: 0,
           };
         },
       });

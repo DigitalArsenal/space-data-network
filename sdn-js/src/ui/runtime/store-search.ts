@@ -37,6 +37,13 @@ export interface StoreSearchResults {
   data: StoreDataResult[];
 }
 
+export type StoreFeedEntry = StoreAuthorResult | StorePluginResult | StoreDataResult;
+
+export interface StoreFeed {
+  mode: 'popular' | 'search';
+  entries: StoreFeedEntry[];
+}
+
 export function searchStoreListings(
   listings: CanonicalListing[],
   query = '',
@@ -118,6 +125,31 @@ export function searchStoreListings(
     .sort((left, right) => left.standard.localeCompare(right.standard));
 
   return { authors, plugins, data };
+}
+
+export function buildStoreFeed(
+  results: StoreSearchResults,
+  query = '',
+): StoreFeed {
+  const normalizedQuery = normalizeSearch(query);
+  if (normalizedQuery) {
+    return {
+      mode: 'search',
+      entries: [
+        ...results.plugins,
+        ...results.data,
+        ...results.authors,
+      ],
+    };
+  }
+
+  return {
+    mode: 'popular',
+    entries: [
+      ...results.plugins.slice(0, 4),
+      ...results.data.slice(0, 4),
+    ],
+  };
 }
 
 function matchesStoreQuery(

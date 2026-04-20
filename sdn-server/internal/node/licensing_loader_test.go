@@ -51,6 +51,28 @@ func TestHasCatalogLicensingModuleRequiresRegisteredUnifiedModule(t *testing.T) 
 	}
 }
 
+func TestShouldLoadLicensingFromCatalogSkipsCatalogWhenExplicitRuntimeWasmConfigured(t *testing.T) {
+	reg := writeTestPluginRegistry(t, license.PluginCatalogEntry{
+		ID:            licensingModuleID,
+		Version:       "0.1.0",
+		RequiredScope: "orbpro:runtime",
+		EncryptedPath: "licensing.wasm.enc",
+		KeyPath:       "licensing.key",
+		ContentType:   "application/wasm+encrypted",
+	})
+
+	explicitPath := filepath.Join(t.TempDir(), "licensing-runtime.wasm")
+	if err := os.WriteFile(explicitPath, []byte("runtime"), 0o600); err != nil {
+		t.Fatalf("WriteFile(explicitPath) failed: %v", err)
+	}
+	t.Setenv("ORBPRO_LICENSING_WASM_PATH", explicitPath)
+
+	n := &Node{}
+	if n.shouldLoadLicensingFromCatalog(reg) {
+		t.Fatal("expected explicit runtime wasm path to bypass catalog licensing load")
+	}
+}
+
 func TestFindKeyBrokerWasmPathPrefersLicensingEnvVar(t *testing.T) {
 	legacyPath := filepath.Join(t.TempDir(), "legacy.wasm")
 	if err := os.WriteFile(legacyPath, []byte("legacy"), 0o600); err != nil {

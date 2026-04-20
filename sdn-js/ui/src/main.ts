@@ -2,17 +2,19 @@ import { createMarketplaceIndex } from '../../src/ui/runtime/marketplace';
 import { loadMarketplaceListingsFromServer } from '../../src/ui/runtime/marketplace-source';
 import { ObservedPeerIndex } from '../../src/ui/runtime/observed-peers';
 import {
+  buildStoreFeed,
   searchStoreListings,
   type StoreAuthorResult,
+  type StoreFeedEntry,
   type StoreDataResult,
   type StorePluginResult,
 } from '../../src/ui/runtime/store-search';
 import type { CanonicalListing, ObservedPeerSource } from '../../src/ui/runtime/types';
 import { mountWalletUI } from '../../src/ui/runtime/wallet-ui';
 import {
-  createAccountMenuController,
-  type AccountMenuController,
-} from '../../src/ui/runtime/account-menu';
+  createWalletModalController,
+  type WalletModalController,
+} from '../../src/ui/runtime/wallet-modal';
 import {
   createAdminState,
   type AdminState,
@@ -167,7 +169,7 @@ const state = {
   node: null as RuntimeNodeLike | null,
   identity: null as RuntimeIdentityLike | null,
   admin: null as AdminState | null,
-  accountMenu: null as AccountMenuController | null,
+  walletModal: null as WalletModalController | null,
   frontendWorkspace: null as FrontendWorkspace | null,
   frontendWorkspaceKey: null as string | null,
   frontendEditor: null as FrontendEditorController | null,
@@ -195,6 +197,13 @@ async function bootstrap(): Promise<void> {
   }
 
   await renderAppShell(root, { mountWalletUI });
+  const walletModalHost = query<HTMLElement>(root, '#sdn-wallet-modal-host');
+  if (!walletModalHost) {
+    throw new Error('wallet modal host element not found');
+  }
+  state.walletModal = createWalletModalController({
+    mountWalletUI: async () => mountWalletUI(walletModalHost),
+  });
   const initialServerTarget = inferInitialServerTarget();
   state.admin = createAdminState({
     localAdapter: () => createLocalAdapter({
@@ -220,28 +229,6 @@ async function bootstrap(): Promise<void> {
         initialServerTarget,
       }
       : {}),
-  });
-  state.accountMenu = createAccountMenuController({
-    mountWalletUI: async () => {
-      const host = query<HTMLElement>(root, '#sdn-account-wallet-panel');
-      if (!host) {
-        return undefined;
-      }
-      return mountWalletUI(host);
-    },
-    onSignOut: async () => {
-      const snapshot = requireAdminState().snapshot();
-      if (snapshot.mode !== 'server' || !snapshot.serverTarget?.baseUrl) {
-        return;
-      }
-      const response = await fetch(`${snapshot.serverTarget.baseUrl}/api/auth/logout`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-      if (!response.ok) {
-        throw new Error(`logout failed (${response.status})`);
-      }
-    },
   });
 
   bindUI(root);
@@ -337,19 +324,7 @@ function bindUI(root: HTMLElement): void {
     void runAddressLookup(root);
   });
   query<HTMLButtonElement>(root, '#sdn-account-button')?.addEventListener('click', () => {
-    void openAccountDialog(root);
-  });
-  query<HTMLButtonElement>(root, '#sdn-account-close')?.addEventListener('click', () => {
-    closeAccountDialog(root);
-  });
-  query<HTMLElement>(root, '[data-account-dismiss="backdrop"]')?.addEventListener('click', () => {
-    closeAccountDialog(root);
-  });
-  query<HTMLButtonElement>(root, '#sdn-account-open-wallet')?.addEventListener('click', () => {
-    void openAccountWallet(root);
-  });
-  query<HTMLButtonElement>(root, '#sdn-account-signout')?.addEventListener('click', () => {
-    void signOutAccount(root);
+    void openWalletAccount(root);
   });
   query<HTMLButtonElement>(root, '#sdn-frontend-upload')?.addEventListener('click', () => {
     query<HTMLInputElement>(root, '#sdn-frontend-upload-input')?.click();
@@ -409,6 +384,10 @@ function bindShell(root: HTMLElement): void {
       if (!target || target === 'ipfs-dashboard') {
         return;
       }
+      if (target === 'wallet') {
+        void openWalletAccount(root);
+        return;
+      }
       void setWorkspace(root, target);
     });
   });
@@ -420,6 +399,10 @@ function bindShell(root: HTMLElement): void {
       event.preventDefault();
       const target = item.getAttribute('data-workspace-link');
       if (!target) {
+        return;
+      }
+      if (target === 'wallet') {
+        void openWalletAccount(root);
         return;
       }
       void setWorkspace(root, target);
@@ -485,17 +468,15 @@ async function refreshProviderDescriptor(root: HTMLElement): Promise<void> {
 }
 
 async function refreshMarketplace(root: HTMLElement): Promise<void> {
-  const pluginPanel = query<HTMLElement>(root, '#sdn-store-plugin-results');
-  const authorPanel = query<HTMLElement>(root, '#sdn-store-author-results');
-  const dataPanel = query<HTMLElement>(root, '#sdn-store-data-results');
+  const spotlightPanel = query<HTMLElement>(root, '#sdn-store-spotlight');
+  const feedPanel = query<HTMLElement>(root, '#sdn-store-feed');
   const detailPanel = query<HTMLElement>(root, '#sdn-store-detail');
-  if (!pluginPanel || !authorPanel || !dataPanel || !detailPanel) {
+  if (!spotlightPanel || !feedPanel || !detailPanel) {
     return;
   }
 
-  pluginPanel.innerHTML = '<div class="sdn-empty">Refreshing live PLG listings…</div>';
-  authorPanel.innerHTML = '<div class="sdn-empty">Refreshing live publisher results…</div>';
-  dataPanel.innerHTML = '<div class="sdn-empty">Refreshing SDS-linked data references…</div>';
+  spotlightPanel.innerHTML = '';
+  feedPanel.innerHTML = '<div class="sdn-empty">Refreshing live PLG listings…</div>';
   detailPanel.innerHTML = '<div class="sdn-empty">Refreshing live store detail…</div>';
   const baseUrl = inferCatalogBaseUrl(root);
 
@@ -509,9 +490,8 @@ async function refreshMarketplace(root: HTMLElement): Promise<void> {
     }
     renderMarketplace(root);
   } catch (error) {
-    pluginPanel.innerHTML = `<div class="sdn-empty">${escapeHtml(formatError(error))}</div>`;
-    authorPanel.innerHTML = `<div class="sdn-empty">${escapeHtml(formatError(error))}</div>`;
-    dataPanel.innerHTML = `<div class="sdn-empty">${escapeHtml(formatError(error))}</div>`;
+    spotlightPanel.innerHTML = '';
+    feedPanel.innerHTML = `<div class="sdn-empty">${escapeHtml(formatError(error))}</div>`;
     detailPanel.innerHTML = `<div class="sdn-empty">${escapeHtml(formatError(error))}</div>`;
   }
 }
@@ -782,31 +762,29 @@ function renderObservedPeers(root: HTMLElement): void {
 }
 
 function renderMarketplace(root: HTMLElement): void {
-  const pluginPanel = query<HTMLElement>(root, '#sdn-store-plugin-results');
-  const authorPanel = query<HTMLElement>(root, '#sdn-store-author-results');
-  const dataPanel = query<HTMLElement>(root, '#sdn-store-data-results');
+  const spotlightPanel = query<HTMLElement>(root, '#sdn-store-spotlight');
+  const feedPanel = query<HTMLElement>(root, '#sdn-store-feed');
   const detailPanel = query<HTMLElement>(root, '#sdn-store-detail');
-  if (!pluginPanel || !authorPanel || !dataPanel || !detailPanel) {
+  if (!spotlightPanel || !feedPanel || !detailPanel) {
     return;
   }
 
   const listings = state.marketplace.values();
   if (listings.length === 0) {
-    pluginPanel.innerHTML = '<div class="sdn-empty">No live PLG listings loaded.</div>';
-    authorPanel.innerHTML = '<div class="sdn-empty">No live publisher results loaded.</div>';
-    dataPanel.innerHTML = '<div class="sdn-empty">No live SDS-linked data references loaded.</div>';
-    detailPanel.innerHTML = '<div class="sdn-empty">Select an author, plugin, or SDS data standard to inspect live metadata.</div>';
+    spotlightPanel.innerHTML = '';
+    feedPanel.innerHTML = '';
+    detailPanel.innerHTML = '';
     state.storeSelection = null;
     return;
   }
 
   const searchQuery = query<HTMLInputElement>(root, '#sdn-store-search')?.value ?? '';
   const results = searchStoreListings(listings, searchQuery);
+  const feed = buildStoreFeed(results, searchQuery);
   const selection = resolveStoreSelection(results);
 
-  pluginPanel.innerHTML = renderPluginResults(results.plugins, selection);
-  authorPanel.innerHTML = renderAuthorResults(results.authors, selection);
-  dataPanel.innerHTML = renderDataResults(results.data, selection);
+  spotlightPanel.innerHTML = renderStoreSpotlight(results, selection, searchQuery);
+  feedPanel.innerHTML = renderStoreFeed(feed.entries, selection, searchQuery);
   detailPanel.innerHTML = renderStoreDetail(results, selection);
 }
 
@@ -960,74 +938,97 @@ function hasStoreSelection(
   }
 }
 
-function renderAuthorResults(
-  authors: StoreAuthorResult[],
+function renderStoreSpotlight(
+  results: ReturnType<typeof searchStoreListings>,
   selection: StoreSelection | null,
+  searchQuery: string,
 ): string {
-  if (authors.length === 0) {
-    return '<div class="sdn-empty">No authors matched this store search.</div>';
+  if (searchQuery.trim()) {
+    return '';
   }
-
-  return authors.map((author) => `
-    <button
-      type="button"
-      class="sdn-store-card${selection?.kind === 'author' && selection.key === author.key ? ' sdn-store-card--active' : ''}"
-      data-store-result-kind="author"
-      data-store-result-key="${escapeHtml(author.key)}"
-    >
-      <span class="sdn-store-card__meta">Author</span>
-      <strong>${escapeHtml(author.name)}</strong>
-      <span>${escapeHtml(author.handle ?? author.peerId ?? `${author.moduleCount} linked modules`)}</span>
-      ${renderStoreChipRow(author.standardsUsed)}
-    </button>
-  `).join('');
+  const featured = [
+    ...results.plugins.slice(0, 2),
+    ...results.data.slice(0, 2),
+  ];
+  if (featured.length === 0) {
+    return '';
+  }
+  return `
+    <section class="sdn-store-spotlight">
+      <div class="sdn-store-spotlight__header">
+        <h3>Popular now</h3>
+      </div>
+      <div class="sdn-store-feed">
+        ${featured.map((entry) => renderStoreFeedEntry(entry, selection)).join('')}
+      </div>
+    </section>
+  `;
 }
 
-function renderPluginResults(
-  plugins: StorePluginResult[],
+function renderStoreFeed(
+  entries: StoreFeedEntry[],
   selection: StoreSelection | null,
+  searchQuery: string,
 ): string {
-  if (plugins.length === 0) {
-    return '<div class="sdn-empty">No plugins matched this store search.</div>';
+  if (entries.length === 0) {
+    return searchQuery.trim()
+      ? '<div class="sdn-empty">No live store results matched this search.</div>'
+      : '';
   }
 
-  return plugins.map((plugin) => `
-    <button
-      type="button"
-      class="sdn-store-card${selection?.kind === 'plugin' && selection.key === plugin.key ? ' sdn-store-card--active' : ''}"
-      data-store-result-kind="plugin"
-      data-store-result-key="${escapeHtml(plugin.key)}"
-    >
-      <span class="sdn-store-card__meta">Plugin</span>
-      <strong>${escapeHtml(plugin.listing.name ?? plugin.listing.pluginId)}</strong>
-      <span>${escapeHtml(plugin.publisherLabel)} · v${escapeHtml(plugin.listing.version)}</span>
-      <span>${escapeHtml(plugin.listing.tagline ?? plugin.listing.description ?? 'Signed marketplace listing')}</span>
-      ${renderStoreChipRow(plugin.standardsUsed)}
-    </button>
-  `).join('');
+  return `<div class="sdn-store-feed">${entries.map((entry) => renderStoreFeedEntry(entry, selection)).join('')}</div>`;
 }
 
-function renderDataResults(
-  dataResults: StoreDataResult[],
+function renderStoreFeedEntry(
+  entry: StoreFeedEntry,
   selection: StoreSelection | null,
 ): string {
-  if (dataResults.length === 0) {
-    return '<div class="sdn-empty">No SDS-linked data references matched this store search.</div>';
+  switch (entry.kind) {
+    case 'author':
+      return `
+        <button
+          type="button"
+          class="sdn-store-card${selection?.kind === 'author' && selection.key === entry.key ? ' sdn-store-card--active' : ''}"
+          data-store-result-kind="author"
+          data-store-result-key="${escapeHtml(entry.key)}"
+        >
+          <span class="sdn-store-card__meta">Author</span>
+          <strong>${escapeHtml(entry.name)}</strong>
+          <span>${escapeHtml(entry.handle ?? entry.peerId ?? `${entry.moduleCount} linked modules`)}</span>
+          ${renderStoreChipRow(entry.standardsUsed)}
+        </button>
+      `;
+    case 'plugin':
+      return `
+        <button
+          type="button"
+          class="sdn-store-card${selection?.kind === 'plugin' && selection.key === entry.key ? ' sdn-store-card--active' : ''}"
+          data-store-result-kind="plugin"
+          data-store-result-key="${escapeHtml(entry.key)}"
+        >
+          <span class="sdn-store-card__meta">Plugin</span>
+          <strong>${escapeHtml(entry.listing.name ?? entry.listing.pluginId)}</strong>
+          <span>${escapeHtml(entry.publisherLabel)} · v${escapeHtml(entry.listing.version)}</span>
+          <span>${escapeHtml(entry.listing.tagline ?? entry.listing.description ?? 'Signed marketplace listing')}</span>
+          ${renderStoreChipRow(entry.standardsUsed)}
+        </button>
+      `;
+    case 'data':
+      return `
+        <button
+          type="button"
+          class="sdn-store-card${selection?.kind === 'data' && selection.key === entry.key ? ' sdn-store-card--active' : ''}"
+          data-store-result-kind="data"
+          data-store-result-key="${escapeHtml(entry.key)}"
+        >
+          <span class="sdn-store-card__meta">Data</span>
+          <strong>${escapeHtml(entry.standard)}</strong>
+          <span>${escapeHtml(entry.description)}</span>
+          <span>${escapeHtml(`${entry.moduleCount} linked modules · ${entry.publisherNames.length} publishers`)}</span>
+          ${renderStoreChipRow([entry.standard])}
+        </button>
+      `;
   }
-
-  return dataResults.map((entry) => `
-    <button
-      type="button"
-      class="sdn-store-card${selection?.kind === 'data' && selection.key === entry.key ? ' sdn-store-card--active' : ''}"
-      data-store-result-kind="data"
-      data-store-result-key="${escapeHtml(entry.key)}"
-    >
-      <span class="sdn-store-card__meta">Data</span>
-      <strong>${escapeHtml(entry.standard)}</strong>
-      <span>${escapeHtml(entry.description)}</span>
-      <span>${escapeHtml(`${entry.moduleCount} linked modules · ${entry.publisherNames.length} publishers`)}</span>
-    </button>
-  `).join('');
 }
 
 function renderStoreDetail(
@@ -1201,14 +1202,16 @@ async function promptAndConnectServer(root: HTMLElement): Promise<void> {
 }
 
 async function setWorkspace(root: HTMLElement, workspaceId: string): Promise<void> {
+  if (workspaceId === 'wallet') {
+    await openWalletAccount(root);
+    return;
+  }
   const admin = requireAdminState();
   applyAdminSnapshot(root, await admin.setWorkspace(workspaceId));
 }
 
 function applyAdminSnapshot(root: HTMLElement, snapshot: AdminSnapshot): void {
-  state.accountMenu?.setAdminSnapshot(snapshot);
   renderShellMeta(root, snapshot);
-  renderAccountDialog(root);
   setActiveWorkspace(root, snapshot.workspace.activeId);
   void refreshDirectoryPanel(root);
   void refreshFrontendWorkspace(root);
@@ -1319,69 +1322,9 @@ async function refreshDirectoryPanel(root: HTMLElement): Promise<void> {
   }
 }
 
-async function openAccountDialog(root: HTMLElement): Promise<void> {
-  const accountMenu = state.accountMenu;
-  if (!accountMenu) {
-    return;
-  }
-  accountMenu.setAdminSnapshot(requireAdminState().snapshot());
-  await accountMenu.open();
-  renderAccountDialog(root);
-}
-
-function closeAccountDialog(root: HTMLElement): void {
-  state.accountMenu?.close();
-  renderAccountDialog(root);
-}
-
-async function openAccountWallet(root: HTMLElement): Promise<void> {
-  const accountMenu = state.accountMenu;
-  if (!accountMenu) {
-    return;
-  }
-  await accountMenu.openWalletAccount();
-  renderAccountDialog(root);
-}
-
-async function signOutAccount(root: HTMLElement): Promise<void> {
-  const accountMenu = state.accountMenu;
-  const admin = state.admin;
-  if (!accountMenu || !admin) {
-    return;
-  }
-  await accountMenu.signOut();
-  renderAccountDialog(root);
-  const snapshot = admin.snapshot();
-  if (snapshot.mode === 'server') {
-    applyAdminSnapshot(root, await admin.refresh());
-    await refreshProviderDescriptor(root);
-  }
-}
-
-function renderAccountDialog(root: HTMLElement): void {
-  const dialog = query<HTMLElement>(root, '#sdn-account-dialog');
-  const meta = query<HTMLElement>(root, '#sdn-account-meta');
-  const signOutButton = query<HTMLButtonElement>(root, '#sdn-account-signout');
-  const accountMenu = state.accountMenu;
-  if (!dialog || !meta || !accountMenu) {
-    return;
-  }
-
-  const snapshot = accountMenu.snapshot();
-  dialog.hidden = !snapshot.isOpen;
-  dialog.setAttribute('aria-hidden', String(!snapshot.isOpen));
-  meta.innerHTML = `
-    <div class="sdn-stack">
-      <strong>${escapeHtml(snapshot.title)}</strong>
-      <span>Mode: ${escapeHtml(snapshot.mode)}</span>
-      <span>Role: ${escapeHtml(snapshot.role)}</span>
-      <span>${escapeHtml(snapshot.subtitle)}</span>
-    </div>
-  `;
-  if (signOutButton) {
-    signOutButton.hidden = !snapshot.canSignOut;
-    signOutButton.disabled = !snapshot.canSignOut;
-  }
+async function openWalletAccount(root: HTMLElement): Promise<void> {
+  void root;
+  await state.walletModal?.openAccount();
 }
 
 async function refreshFrontendWorkspace(root: HTMLElement): Promise<void> {

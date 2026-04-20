@@ -16,6 +16,10 @@ interface PlgQueryResponse {
   results?: unknown;
 }
 
+interface ModuleDeliveryListingResponse {
+  results?: unknown;
+}
+
 interface StorefrontListingResponse {
   listings?: unknown;
 }
@@ -37,6 +41,20 @@ export async function loadMarketplaceListingsFromServer(
   fetchImpl: MarketplaceFetchLike = fetch,
 ): Promise<CanonicalListing[]> {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  const moduleDeliveryResponse = await fetchImpl(
+    `${normalizedBaseUrl}/api/module-delivery/listings`,
+    { credentials: 'include' },
+  );
+
+  if (moduleDeliveryResponse.ok) {
+    const payload = asRecord(await moduleDeliveryResponse.json()) as ModuleDeliveryListingResponse | null;
+    return normalizePlgQueryResults(payload?.results)
+      .map((entry) => entry.data_base64 ? decodeCanonicalPlgListing(base64ToBytes(entry.data_base64), {
+        observedAt: entry.timestamp ? Date.parse(entry.timestamp) : Date.now(),
+      }) : null)
+      .filter((listing): listing is CanonicalListing => Boolean(listing));
+  }
+
   let storefrontError: Error | null = null;
 
   const storefrontResponse = await fetchImpl(

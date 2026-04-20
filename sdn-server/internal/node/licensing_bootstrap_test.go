@@ -19,7 +19,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/testsupport"
 )
 
-func TestCatalogPublicationAssetsSkipsLicensingRuntimeModule(t *testing.T) {
+func TestCatalogPublicationAssetsIncludesLicensingRuntimeModule(t *testing.T) {
 	t.Parallel()
 
 	reg := writeTestPluginRegistry(
@@ -45,11 +45,14 @@ func TestCatalogPublicationAssetsSkipsLicensingRuntimeModule(t *testing.T) {
 	)
 
 	assets := catalogPublicationAssets(reg)
-	if len(assets) != 1 {
-		t.Fatalf("catalogPublicationAssets() count = %d, want 1", len(assets))
+	if len(assets) != 2 {
+		t.Fatalf("catalogPublicationAssets() count = %d, want 2", len(assets))
 	}
 	if got := assets[0].ID; got != "com.orbpro.sgp4" {
 		t.Fatalf("catalogPublicationAssets()[0].ID = %q, want com.orbpro.sgp4", got)
+	}
+	if got := assets[1].ID; got != licensingModuleID {
+		t.Fatalf("catalogPublicationAssets()[1].ID = %q, want %q", got, licensingModuleID)
 	}
 }
 
