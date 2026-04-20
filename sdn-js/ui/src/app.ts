@@ -23,6 +23,19 @@ interface NavItem {
   href?: string;
 }
 
+interface FeatureSlideLink {
+  label: string;
+  workspaceId?: string;
+  href?: string;
+}
+
+interface FeatureSlide {
+  id: string;
+  title: string;
+  summary: string;
+  links: FeatureSlideLink[];
+}
+
 const navItems: NavItem[] = [
   { id: 'network', label: 'Network', icon: networkIconSvg },
   { id: 'directory', label: 'Directory', icon: directoryIconSvg },
@@ -30,6 +43,59 @@ const navItems: NavItem[] = [
   { id: 'frontend', label: 'Frontend', icon: frontendIconSvg },
   { id: 'wallet', label: 'Wallet', icon: walletIconSvg },
   { id: 'ipfs-dashboard', label: 'IPFS', icon: ipfsDashboardIconSvg, href: '/webui/' },
+];
+
+const featureSlides: FeatureSlide[] = [
+  {
+    id: 'delivery',
+    title: 'Encrypted Module Delivery',
+    summary:
+      'Request signed WASM modules from live providers, receive grants, fetch encrypted bundles by CID, unwrap keys locally, and load them in the browser or on a node.',
+    links: [
+      { label: 'Open Store', workspaceId: 'store' },
+      { label: 'Inspect Network', workspaceId: 'network' },
+    ],
+  },
+  {
+    id: 'directory',
+    title: 'Active Directory + Trust',
+    summary:
+      'Track peers, users, runtime roles, and node context through wallet-backed identity, server rosters, and observed SDN discovery evidence.',
+    links: [
+      { label: 'Open Directory', workspaceId: 'directory' },
+      { label: 'Open Wallet', workspaceId: 'wallet' },
+    ],
+  },
+  {
+    id: 'storefront',
+    title: 'Distributed Storefront',
+    summary:
+      'Browse canonical signed PLG manifests for modules and linked SDS data, then fetch, pin, and verify them through SDN and IPFS without a second listing format.',
+    links: [
+      { label: 'Browse Store', workspaceId: 'store' },
+      { label: 'Open IPFS Dashboard', href: '/webui/' },
+    ],
+  },
+  {
+    id: 'workspace',
+    title: 'Browser Workspace',
+    summary:
+      'Edit the public frontend with Monaco, drag-drop uploads, and the same shell against either the browser-local Helia backend or a connected server node.',
+    links: [
+      { label: 'Open Frontend', workspaceId: 'frontend' },
+      { label: 'Open Network', workspaceId: 'network' },
+    ],
+  },
+  {
+    id: 'identity',
+    title: 'Wallet + Identity',
+    summary:
+      'Reuse hd-wallet-wasm for addresses, deterministic SSH material, signatures, vCards, node lookup, and the shared account surface across local and server modes.',
+    links: [
+      { label: 'Open Wallet', workspaceId: 'wallet' },
+      { label: 'Open Directory', workspaceId: 'directory' },
+    ],
+  },
 ];
 
 export async function renderAppShell(
@@ -99,10 +165,54 @@ export async function renderAppShell(
             <div class="sdn-hero">
               <div class="sdn-hero__copy">
                 <p class="sdn-kicker">Space Data Network</p>
-                <h1>Run SDN from the browser or attach to a live node.</h1>
+                <h1>A peer-to-peer control plane for space data, software modules, and signed identity.</h1>
                 <p class="sdn-copy">
-                  Real module-delivery comms, peer census, provider discovery, and browser-first identity in one shell.
+                  Space Data Network combines SDS records, libp2p and IPFS transport, encrypted WASM module delivery,
+                  wallet-backed identity, and isomorphic browser/server operation so operators can publish, discover,
+                  verify, run, and manage space software and data without a central broker.
                 </p>
+                <section id="sdn-feature-carousel" class="sdn-feature-carousel" aria-label="Space Data Network feature tour">
+                  <div class="sdn-feature-carousel__header">
+                    <span class="sdn-chip">Feature tour</span>
+                    <div class="sdn-feature-carousel__controls">
+                      <button type="button" class="sdn-ghost-button sdn-feature-carousel__button" data-feature-prev aria-label="Previous feature">Prev</button>
+                      <div class="sdn-feature-carousel__dots" role="tablist" aria-label="Feature slides">
+                        ${featureSlides.map((slide, index) => `
+                          <button
+                            type="button"
+                            class="sdn-feature-carousel__dot${index === 0 ? ' sdn-feature-carousel__dot--active' : ''}"
+                            data-feature-target="${slide.id}"
+                            role="tab"
+                            aria-selected="${index === 0 ? 'true' : 'false'}"
+                            aria-controls="sdn-feature-slide-${slide.id}"
+                          >
+                            ${slide.title}
+                          </button>
+                        `).join('')}
+                      </div>
+                      <button type="button" class="sdn-ghost-button sdn-feature-carousel__button" data-feature-next aria-label="Next feature">Next</button>
+                    </div>
+                  </div>
+                  <div class="sdn-feature-carousel__slides">
+                    ${featureSlides.map((slide, index) => `
+                      <article
+                        id="sdn-feature-slide-${slide.id}"
+                        class="sdn-feature-slide${index === 0 ? ' sdn-feature-slide--active' : ''}"
+                        data-feature-slide="${slide.id}"
+                        role="tabpanel"
+                        aria-hidden="${index === 0 ? 'false' : 'true'}"
+                      >
+                        <div class="sdn-feature-slide__body">
+                          <h2>${slide.title}</h2>
+                          <p>${slide.summary}</p>
+                        </div>
+                        <div class="sdn-feature-slide__links">
+                          ${slide.links.map((link) => renderFeatureLink(link)).join('')}
+                        </div>
+                      </article>
+                    `).join('')}
+                  </div>
+                </section>
               </div>
               <div class="sdn-hero__summary">
                 <div class="sdn-metric-card">
@@ -123,7 +233,8 @@ export async function renderAppShell(
                   <span class="sdn-chip">Seed + DHT</span>
                 </div>
                 <p class="sdn-copy">
-                  The live provider descriptor drives the real requester flow. Clients seed from the advertised relay and expand from there.
+                  The live provider descriptor carries the transport trust root plus the node&apos;s published identity:
+                  peer routing, major chain addresses, IPNS entries, and any ENS names surfaced through the node&apos;s SDS identity data.
                 </p>
                 <pre id="sdn-provider-descriptor" class="sdn-code">Awaiting live discovery</pre>
               </article>
@@ -394,6 +505,22 @@ function renderNavItem(item: NavItem): string {
     >
       <span class="sdn-admin-nav__icon">${item.icon}</span>
       <span class="sdn-admin-nav__label">${item.label}</span>
+    </button>
+  `;
+}
+
+function renderFeatureLink(link: FeatureSlideLink): string {
+  if (link.href) {
+    return `
+      <a class="sdn-link-pill" href="${link.href}" target="_blank" rel="noreferrer">
+        ${link.label}
+      </a>
+    `;
+  }
+
+  return `
+    <button type="button" class="sdn-link-pill" data-workspace-link="${link.workspaceId}">
+      ${link.label}
     </button>
   `;
 }

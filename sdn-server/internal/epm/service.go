@@ -868,6 +868,32 @@ func (s *Service) overlayRuntimeIdentityFields(result map[string]interface{}) {
 	if strings.TrimSpace(s.xpub) != "" && result["xpub"] == nil {
 		result["xpub"] = s.xpub
 	}
+	if info.Addresses != nil {
+		if info.Addresses.Bitcoin != nil {
+			if strings.TrimSpace(info.Addresses.Bitcoin.Address) != "" && result["bitcoin_address"] == nil {
+				result["bitcoin_address"] = info.Addresses.Bitcoin.Address
+			}
+			if strings.TrimSpace(info.Addresses.Bitcoin.Path) != "" && result["bitcoin_key_path"] == nil {
+				result["bitcoin_key_path"] = info.Addresses.Bitcoin.Path
+			}
+		}
+		if info.Addresses.Ethereum != nil {
+			if strings.TrimSpace(info.Addresses.Ethereum.Address) != "" && result["ethereum_address"] == nil {
+				result["ethereum_address"] = info.Addresses.Ethereum.Address
+			}
+			if strings.TrimSpace(info.Addresses.Ethereum.Path) != "" && result["ethereum_key_path"] == nil {
+				result["ethereum_key_path"] = info.Addresses.Ethereum.Path
+			}
+		}
+		if info.Addresses.Solana != nil {
+			if strings.TrimSpace(info.Addresses.Solana.Address) != "" && result["solana_address"] == nil {
+				result["solana_address"] = info.Addresses.Solana.Address
+			}
+			if strings.TrimSpace(info.Addresses.Solana.Path) != "" && result["solana_key_path"] == nil {
+				result["solana_key_path"] = info.Addresses.Solana.Path
+			}
+		}
+	}
 
 	if keys := runtimeIdentityKeys(info, s.xpub); len(keys) > 0 && runtimeKeysMissing(result["keys"]) {
 		result["keys"] = keys

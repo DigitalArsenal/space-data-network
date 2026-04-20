@@ -85,6 +85,24 @@ func TestGetNodeEPMJSONProjectsRuntimeIdentityFields(t *testing.T) {
 	if got, want := info["xpub"], "xpub-test"; got != want {
 		t.Fatalf("xpub = %v, want %q", got, want)
 	}
+	if got, want := info["bitcoin_address"], "bc1qtestidentityaddress0000000000000000000000"; got != want {
+		t.Fatalf("bitcoin_address = %v, want %q", got, want)
+	}
+	if got, want := info["bitcoin_key_path"], identity.BitcoinKeyPath; got != want {
+		t.Fatalf("bitcoin_key_path = %v, want %q", got, want)
+	}
+	if got, want := info["ethereum_address"], "0x1234567890abcdef1234567890ABCDEF12345678"; got != want {
+		t.Fatalf("ethereum_address = %v, want %q", got, want)
+	}
+	if got, want := info["ethereum_key_path"], identity.EthereumKeyPath; got != want {
+		t.Fatalf("ethereum_key_path = %v, want %q", got, want)
+	}
+	if got, want := info["solana_address"], "So1anaAddressForIdentityProjection11111111111111"; got != want {
+		t.Fatalf("solana_address = %v, want %q", got, want)
+	}
+	if got, want := info["solana_key_path"], identity.SolanaKeyPath; got != want {
+		t.Fatalf("solana_key_path = %v, want %q", got, want)
+	}
 }
 
 func testDerivedIdentity() (*wasm.DerivedIdentity, error) {
@@ -118,5 +136,19 @@ func testDerivedIdentity() (*wasm.DerivedIdentity, error) {
 		EthereumPrivateKey: bytes.Repeat([]byte{0x66}, 32),
 		SolanaKeyPath:      "m/44'/501'/0'/0'",
 		SolanaPrivateKey:   bytes.Repeat([]byte{0x77}, 32),
+		Addresses: &wasm.CoinAddresses{
+			Bitcoin: &wasm.CoinAddress{
+				Address: "bc1qtestidentityaddress0000000000000000000000",
+				Path:    "m/44'/0'/0'/0/0",
+			},
+			Ethereum: &wasm.CoinAddress{
+				Address: "0x1234567890abcdef1234567890ABCDEF12345678",
+				Path:    "m/44'/60'/0'/0/0",
+			},
+			Solana: &wasm.CoinAddress{
+				Address: "So1anaAddressForIdentityProjection11111111111111",
+				Path:    "m/44'/501'/0'/0'",
+			},
+		},
 	}, nil
 }

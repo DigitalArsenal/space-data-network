@@ -20,4 +20,9 @@ describe('sdn admin layout css contract', () => {
     expect(styles).toMatch(/\.sdn-admin-page\s*\{[^}]*overflow:\s*hidden;/s);
     expect(styles).toMatch(/\.sdn-admin-workspace--active\s*\{[^}]*overflow:\s*auto;/s);
   });
+
+  it('uses one shared explicit topbar control height for the URL bar and right-side actions', () => {
+    expect(styles).toMatch(/\.sdn-command-bar\s*\{[^}]*height:\s*var\(--sdn-control-height\);/s);
+    expect(styles).toMatch(/\.sdn-admin-topbar__actions\s*>\s*\.sdn-button,\s*\.sdn-admin-topbar__actions\s*>\s*\.sdn-ghost-button,\s*\.sdn-admin-topbar__actions\s*>\s*\.sdn-account-button\s*\{[^}]*height:\s*var\(--sdn-control-height\);/s);
+  });
 });

@@ -34,6 +34,20 @@ interface ProviderDescriptor {
   peerId: string;
   relayAddresses: string[];
   ipns?: string;
+  identity?: {
+    xpub?: string;
+    identityPublicKey?: string;
+    signingPublicKey?: string;
+    encryptionPublicKey?: string;
+    ipnsEntries?: string[];
+    ensNames?: string[];
+    addresses?: Array<{
+      chain: string;
+      address: string;
+      keyPath?: string;
+      publicKey?: string;
+    }>;
+  };
 }
 
 interface ModuleDeliveryEventLike {
@@ -354,7 +368,36 @@ function bindShell(root: HTMLElement): void {
       void setWorkspace(root, target);
     });
   });
+  queryAll(root, '[data-workspace-link]').forEach((item) => {
+    if (!('addEventListener' in item)) {
+      return;
+    }
+    item.addEventListener('click', (event) => {
+      event.preventDefault();
+      const target = item.getAttribute('data-workspace-link');
+      if (!target) {
+        return;
+      }
+      void setWorkspace(root, target);
+    });
+  });
+  query<HTMLButtonElement>(root, '[data-feature-prev]')?.addEventListener('click', () => {
+    shiftFeatureSlide(root, -1);
+  });
+  query<HTMLButtonElement>(root, '[data-feature-next]')?.addEventListener('click', () => {
+    shiftFeatureSlide(root, 1);
+  });
+  queryAll(root, '[data-feature-target]').forEach((item) => {
+    if (!('addEventListener' in item)) {
+      return;
+    }
+    item.addEventListener('click', () => {
+      const target = item.getAttribute('data-feature-target');
+      target && setFeatureSlide(root, target);
+    });
+  });
   renderShellMeta(root, state.admin?.snapshot());
+  initializeFeatureCarousel(root);
 }
 
 async function refreshProviderDescriptor(root: HTMLElement): Promise<void> {
@@ -662,11 +705,24 @@ function renderProviderDescriptor(root: HTMLElement, provider: ProviderDescripto
   if (!node) {
     return;
   }
-  node.textContent = JSON.stringify({
+  const payload: Record<string, unknown> = {
     publicKey: provider.publicKey,
     peerId: provider.peerId,
+    ipns: provider.ipns,
     relayAddresses: provider.relayAddresses,
-  }, null, 2);
+  };
+  if (provider.identity) {
+    payload.identity = {
+      xpub: provider.identity.xpub,
+      identityPublicKey: provider.identity.identityPublicKey,
+      signingPublicKey: provider.identity.signingPublicKey,
+      encryptionPublicKey: provider.identity.encryptionPublicKey,
+      ipnsEntries: provider.identity.ipnsEntries,
+      ensNames: provider.identity.ensNames,
+      addresses: provider.identity.addresses,
+    };
+  }
+  node.textContent = JSON.stringify(payload, null, 2);
   renderObservedPeers(root);
 }
 
@@ -818,6 +874,41 @@ function setActiveWorkspace(root: HTMLElement, workspaceId: string): void {
   });
   queryAll(root, '[data-workspace]').forEach((panel) => {
     panel.classList.toggle('sdn-admin-workspace--active', panel.getAttribute('data-workspace') === workspaceId);
+  });
+}
+
+function initializeFeatureCarousel(root: HTMLElement): void {
+  const first = query<HTMLElement>(root, '[data-feature-slide]');
+  if (!first) {
+    return;
+  }
+  const firstId = first.getAttribute('data-feature-slide');
+  firstId && setFeatureSlide(root, firstId);
+}
+
+function shiftFeatureSlide(root: HTMLElement, delta: number): void {
+  const slides = queryAll(root, '[data-feature-slide]');
+  if (slides.length === 0) {
+    return;
+  }
+  const currentIndex = slides.findIndex((slide) => slide.classList.contains('sdn-feature-slide--active'));
+  const nextIndex = currentIndex === -1
+    ? 0
+    : (currentIndex + delta + slides.length) % slides.length;
+  const nextId = slides[nextIndex]?.getAttribute('data-feature-slide');
+  nextId && setFeatureSlide(root, nextId);
+}
+
+function setFeatureSlide(root: HTMLElement, featureId: string): void {
+  queryAll(root, '[data-feature-slide]').forEach((slide) => {
+    const active = slide.getAttribute('data-feature-slide') === featureId;
+    slide.classList.toggle('sdn-feature-slide--active', active);
+    slide.setAttribute('aria-hidden', active ? 'false' : 'true');
+  });
+  queryAll(root, '[data-feature-target]').forEach((button) => {
+    const active = button.getAttribute('data-feature-target') === featureId;
+    button.classList.toggle('sdn-feature-carousel__dot--active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
   });
 }
 
