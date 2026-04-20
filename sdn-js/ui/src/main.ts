@@ -35,6 +35,7 @@ import {
 } from './frontend-editor';
 import { parseFirstBrowserBundle } from './browser-bundle';
 import { renderAppShell } from './app';
+import { readDefaultProviderDescriptorUrl } from '../../src/ui/runtime/runtime-config';
 import './styles.css';
 
 interface ProviderDescriptor {
@@ -149,6 +150,7 @@ interface DirectoryUserLike {
 }
 
 let runtimeModulesPromise: Promise<RuntimeModules> | null = null;
+const defaultProviderDescriptorUrl = readDefaultProviderDescriptorUrl(import.meta.env);
 
 type StoreSelection =
   | { kind: 'author'; key: string }
@@ -237,8 +239,12 @@ async function bootstrap(): Promise<void> {
     : await state.admin.connectLocal();
   applyAdminSnapshot(root, initialSnapshot);
   const providerUrl = query<HTMLInputElement>(root, '#sdn-provider-url');
-  if (providerUrl && initialSnapshot.serverTarget?.baseUrl) {
-    providerUrl.value = `${initialSnapshot.serverTarget.baseUrl}/api/module-delivery/provider`;
+  const initialProviderUrl = defaultProviderDescriptorUrl
+    ?? (initialSnapshot.serverTarget?.baseUrl
+      ? `${initialSnapshot.serverTarget.baseUrl}/api/module-delivery/provider`
+      : null);
+  if (providerUrl && initialProviderUrl) {
+    providerUrl.value = initialProviderUrl;
   }
   await refreshProviderDescriptor(root);
   await refreshMarketplace(root);
@@ -1218,13 +1224,16 @@ function applyAdminSnapshot(root: HTMLElement, snapshot: AdminSnapshot): void {
 }
 
 function inferProviderDescriptorUrl(root: HTMLElement): string {
-  const serverBaseUrl = state.admin?.snapshot().serverTarget?.baseUrl;
-  if (serverBaseUrl) {
-    return `${serverBaseUrl}/api/module-delivery/provider`;
-  }
   const providerUrl = query<HTMLInputElement>(root, '#sdn-provider-url')?.value.trim();
   if (providerUrl) {
     return providerUrl;
+  }
+  if (defaultProviderDescriptorUrl) {
+    return defaultProviderDescriptorUrl;
+  }
+  const serverBaseUrl = state.admin?.snapshot().serverTarget?.baseUrl;
+  if (serverBaseUrl) {
+    return `${serverBaseUrl}/api/module-delivery/provider`;
   }
   return `${window.location.origin}/api/module-delivery/provider`;
 }
