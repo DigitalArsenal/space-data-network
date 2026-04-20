@@ -18,6 +18,21 @@ ui_pid=""
 
 mkdir -p "${tmp_root}" "${storage_path}" "${plugin_root}"
 
+ensure_sdn_js_dependencies() {
+  local vite_pkg="${repo_root}/sdn-js/node_modules/vite/package.json"
+  local monaco_pkg="${repo_root}/sdn-js/node_modules/monaco-editor/package.json"
+  local sds_rec="${repo_root}/sdn-js/node_modules/spacedatastandards.org/lib/js/REC/REC.js"
+  local sds_plg="${repo_root}/sdn-js/node_modules/spacedatastandards.org/lib/js/PLG/PLG.js"
+  local sdk_enc="${repo_root}/sdn-js/node_modules/spacedatastandards.org/lib/js/ENC/main.js"
+
+  if [[ -f "${vite_pkg}" && -f "${monaco_pkg}" && -f "${sds_rec}" && -f "${sds_plg}" && -f "${sdk_enc}" ]]; then
+    return
+  fi
+
+  echo "Installing sdn-js dependencies..."
+  (cd "${repo_root}/sdn-js" && npm install >/dev/null)
+}
+
 if [[ -z "${wallet_ui_path}" ]]; then
   candidate="${repo_root}/sdn-js/node_modules/hd-wallet-ui/dist"
   if [[ -d "${candidate}" ]]; then
@@ -114,6 +129,8 @@ if [[ -f "${repo_root}/../space-data-network-plugins/packages/licensing/package.
     fi
   fi
 fi
+
+ensure_sdn_js_dependencies
 
 echo "Starting local sdn-server on ${server_base_url} ..."
 (
