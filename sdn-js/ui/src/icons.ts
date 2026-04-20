@@ -3,8 +3,10 @@ import strokeCodeSource from '../../../webui/src/icons/StrokeCode.tsx?raw';
 import strokeCubeSource from '../../../webui/src/icons/StrokeCube.tsx?raw';
 import strokeFolderSource from '../../../webui/src/icons/StrokeFolder.tsx?raw';
 import strokePeersSmallSource from '../../../webui/src/icons/StrokePeersSmall.tsx?raw';
+import strokePinSource from '../../../webui/src/icons/StrokePin.tsx?raw';
 import strokeSearchSource from '../../../webui/src/icons/StrokeSearch.tsx?raw';
 import strokeServerSource from '../../../webui/src/icons/StrokeServer.tsx?raw';
+import strokeSmallArrowSource from '../../../webui/src/icons/StrokeSmallArrow.tsx?raw';
 import strokeUserSource from '../../../webui/src/icons/StrokeUser.tsx?raw';
 import strokeWalletSource from '../../../webui/src/icons/StrokeWallet.tsx?raw';
 
@@ -29,12 +31,15 @@ export const brandMarkSvg = `
 export const networkIconSvg = iconFromWebuiComponent(strokePeersSmallSource);
 export const directoryIconSvg = iconFromWebuiComponent(strokeFolderSource);
 export const storeIconSvg = iconFromWebuiComponent(strokeBasketSource);
+export const pinningIconSvg = iconFromWebuiComponent(strokePinSource);
 export const frontendIconSvg = iconFromWebuiComponent(strokeCodeSource);
 export const walletIconSvg = iconFromWebuiComponent(strokeWalletSource);
 export const accountIconSvg = iconFromWebuiComponent(strokeUserSource);
 export const connectIconSvg = iconFromWebuiComponent(strokeServerSource);
 export const ipfsDashboardIconSvg = iconFromWebuiComponent(strokeCubeSource);
 export const refreshIconSvg = iconFromWebuiComponent(strokeSearchSource);
+export const searchIconSvg = iconFromWebuiComponent(strokeSearchSource);
+export const featureCarouselArrowSvg = iconFromWebuiComponent(strokeSmallArrowSource);
 
 function iconFromWebuiComponent(source: string): string {
   const svgMatch = source.match(/<svg\b([\s\S]*?)>([\s\S]*?)<\/svg>/);

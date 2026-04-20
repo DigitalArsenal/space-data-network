@@ -1,6 +1,12 @@
-import { createMarketplaceIndex, canonicalListingKey } from '../../src/ui/runtime/marketplace';
+import { createMarketplaceIndex } from '../../src/ui/runtime/marketplace';
 import { loadMarketplaceListingsFromServer } from '../../src/ui/runtime/marketplace-source';
 import { ObservedPeerIndex } from '../../src/ui/runtime/observed-peers';
+import {
+  searchStoreListings,
+  type StoreAuthorResult,
+  type StoreDataResult,
+  type StorePluginResult,
+} from '../../src/ui/runtime/store-search';
 import type { CanonicalListing, ObservedPeerSource } from '../../src/ui/runtime/types';
 import { mountWalletUI } from '../../src/ui/runtime/wallet-ui';
 import {
@@ -142,6 +148,11 @@ interface DirectoryUserLike {
 
 let runtimeModulesPromise: Promise<RuntimeModules> | null = null;
 
+type StoreSelection =
+  | { kind: 'author'; key: string }
+  | { kind: 'plugin'; key: string }
+  | { kind: 'data'; key: string };
+
 const DEFAULT_PROVIDER_DESCRIPTOR: ProviderDescriptor = {
   publicKey: '0257d9a39fac79d4c36e017b3b6913f60684586605ebb9370cf417ef44bf0f7cd2',
   peerId: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
@@ -174,6 +185,7 @@ const state = {
   marketplace: createMarketplaceIndex(),
   observedPeers: new ObservedPeerIndex(),
   deliveryEvents: [] as ModuleDeliveryEventLike[],
+  storeSelection: null as StoreSelection | null,
 };
 
 async function bootstrap(): Promise<void> {
@@ -282,12 +294,44 @@ function bindUI(root: HTMLElement): void {
   query<HTMLButtonElement>(root, '#sdn-refresh-marketplace')?.addEventListener('click', () => {
     void refreshMarketplace(root);
   });
-  query<HTMLSelectElement>(root, '#sdn-marketplace-select')?.addEventListener('change', () => {
+  query<HTMLInputElement>(root, '#sdn-store-search')?.addEventListener('input', () => {
     renderMarketplace(root);
-    renderModuleMetadata(root);
   });
-  query<HTMLButtonElement>(root, '#sdn-run-live-flow')?.addEventListener('click', () => {
-    void runLiveFlow(root);
+  query<HTMLElement>(root, '#sdn-store-results')?.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const button = target.closest<HTMLElement>('[data-store-result-kind][data-store-result-key]');
+    if (!button) {
+      return;
+    }
+    const kind = button.getAttribute('data-store-result-kind');
+    const key = button.getAttribute('data-store-result-key');
+    if (!kind || !key) {
+      return;
+    }
+    state.storeSelection = kind === 'plugin'
+      ? { kind: 'plugin', key }
+      : kind === 'author'
+        ? { kind: 'author', key }
+        : { kind: 'data', key };
+    renderMarketplace(root);
+  });
+  query<HTMLElement>(root, '#sdn-store-detail')?.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (target.closest('#sdn-run-live-flow')) {
+      void setWorkspace(root, 'network').then(() => runLiveFlow(root));
+      return;
+    }
+    const workspaceButton = target.closest<HTMLElement>('[data-store-open-workspace]');
+    const workspaceId = workspaceButton?.getAttribute('data-store-open-workspace');
+    if (workspaceId) {
+      void setWorkspace(root, workspaceId);
+    }
   });
   query<HTMLButtonElement>(root, '#sdn-address-lookup-run')?.addEventListener('click', () => {
     void runAddressLookup(root);
@@ -441,12 +485,18 @@ async function refreshProviderDescriptor(root: HTMLElement): Promise<void> {
 }
 
 async function refreshMarketplace(root: HTMLElement): Promise<void> {
-  const marketplacePanel = query<HTMLElement>(root, '#sdn-marketplace-panel');
-  if (!marketplacePanel) {
+  const pluginPanel = query<HTMLElement>(root, '#sdn-store-plugin-results');
+  const authorPanel = query<HTMLElement>(root, '#sdn-store-author-results');
+  const dataPanel = query<HTMLElement>(root, '#sdn-store-data-results');
+  const detailPanel = query<HTMLElement>(root, '#sdn-store-detail');
+  if (!pluginPanel || !authorPanel || !dataPanel || !detailPanel) {
     return;
   }
 
-  marketplacePanel.innerHTML = '<div class="sdn-empty">Refreshing live PLG listings…</div>';
+  pluginPanel.innerHTML = '<div class="sdn-empty">Refreshing live PLG listings…</div>';
+  authorPanel.innerHTML = '<div class="sdn-empty">Refreshing live publisher results…</div>';
+  dataPanel.innerHTML = '<div class="sdn-empty">Refreshing SDS-linked data references…</div>';
+  detailPanel.innerHTML = '<div class="sdn-empty">Refreshing live store detail…</div>';
   const baseUrl = inferCatalogBaseUrl(root);
 
   try {
@@ -458,9 +508,11 @@ async function refreshMarketplace(root: HTMLElement): Promise<void> {
       }
     }
     renderMarketplace(root);
-    renderModuleMetadata(root);
   } catch (error) {
-    marketplacePanel.innerHTML = `<div class="sdn-empty">${escapeHtml(formatError(error))}</div>`;
+    pluginPanel.innerHTML = `<div class="sdn-empty">${escapeHtml(formatError(error))}</div>`;
+    authorPanel.innerHTML = `<div class="sdn-empty">${escapeHtml(formatError(error))}</div>`;
+    dataPanel.innerHTML = `<div class="sdn-empty">${escapeHtml(formatError(error))}</div>`;
+    detailPanel.innerHTML = `<div class="sdn-empty">${escapeHtml(formatError(error))}</div>`;
   }
 }
 
@@ -547,9 +599,9 @@ async function runLiveFlow(root: HTMLElement): Promise<void> {
 
   try {
     const runtime = await loadRuntimeModules();
-    const selectedListing = getSelectedListing(root);
+    const selectedListing = getSelectedPluginListing(root);
     if (!selectedListing) {
-      throw new Error('select a live PLG listing first');
+      throw new Error('select a live plugin listing first');
     }
 
     const requesterDomain = query<HTMLInputElement>(root, '#sdn-requester-domain')?.value.trim() || 'app.example.com';
@@ -558,13 +610,6 @@ async function runLiveFlow(root: HTMLElement): Promise<void> {
     const invokePayload = query<HTMLTextAreaElement>(root, '#sdn-invoke-payload')?.value ?? '';
 
     const { node, identity, provider } = await ensureRuntime(root);
-    renderModuleMetadata(root, {
-      pluginId: selectedListing.pluginId,
-      version: selectedListing.version,
-      providerPeerId: provider.peerId,
-      relayAddresses: provider.relayAddresses,
-    });
-
     const grant = await node.requestModuleGrant({
       serverDescriptor: provider,
       moduleId: selectedListing.pluginId,
@@ -599,14 +644,6 @@ async function runLiveFlow(root: HTMLElement): Promise<void> {
       decryptedBundle,
       delivery.encryptedBundleBytes,
     ]);
-    renderModuleMetadata(root, {
-      pluginId: selectedListing.pluginId,
-      version: selectedListing.version,
-      providerPeerId: provider.peerId,
-      cid: delivery.grant.bundleDescriptor.cid,
-      manifest: parsedBundle.manifest,
-      canonicalModuleHashHex: parsedBundle.canonicalModuleHashHex,
-    });
 
     const harness = await runtime.loadDecryptedModule(decryptedBundle, {
       onEvent(event) {
@@ -745,54 +782,32 @@ function renderObservedPeers(root: HTMLElement): void {
 }
 
 function renderMarketplace(root: HTMLElement): void {
-  const select = query<HTMLSelectElement>(root, '#sdn-marketplace-select');
-  const panel = query<HTMLElement>(root, '#sdn-marketplace-panel');
-  if (!select || !panel) {
+  const pluginPanel = query<HTMLElement>(root, '#sdn-store-plugin-results');
+  const authorPanel = query<HTMLElement>(root, '#sdn-store-author-results');
+  const dataPanel = query<HTMLElement>(root, '#sdn-store-data-results');
+  const detailPanel = query<HTMLElement>(root, '#sdn-store-detail');
+  if (!pluginPanel || !authorPanel || !dataPanel || !detailPanel) {
     return;
   }
 
   const listings = state.marketplace.values();
   if (listings.length === 0) {
-    select.innerHTML = '<option value="">No live PLG listings loaded</option>';
-    panel.innerHTML = '<div class="sdn-empty">Publisher and module listings will populate from live PLG manifests.</div>';
+    pluginPanel.innerHTML = '<div class="sdn-empty">No live PLG listings loaded.</div>';
+    authorPanel.innerHTML = '<div class="sdn-empty">No live publisher results loaded.</div>';
+    dataPanel.innerHTML = '<div class="sdn-empty">No live SDS-linked data references loaded.</div>';
+    detailPanel.innerHTML = '<div class="sdn-empty">Select an author, plugin, or SDS data standard to inspect live metadata.</div>';
+    state.storeSelection = null;
     return;
   }
 
-  const currentValue = select.value || canonicalListingKey(listings[0]);
-  select.innerHTML = listings.map((listing) => `
-    <option value="${escapeHtml(canonicalListingKey(listing))}">
-      ${escapeHtml(listing.name ?? listing.pluginId)} (${escapeHtml(listing.version)})
-    </option>
-  `).join('');
-  select.value = listings.some((listing) => canonicalListingKey(listing) === currentValue)
-    ? currentValue
-    : canonicalListingKey(listings[0]);
+  const searchQuery = query<HTMLInputElement>(root, '#sdn-store-search')?.value ?? '';
+  const results = searchStoreListings(listings, searchQuery);
+  const selection = resolveStoreSelection(results);
 
-  const selectedListing = getSelectedListing(root);
-  panel.innerHTML = selectedListing ? `
-    <div class="sdn-stack">
-      <strong>${escapeHtml(selectedListing.name ?? selectedListing.pluginId)}</strong>
-      <span>${escapeHtml(selectedListing.tagline ?? selectedListing.description ?? 'Canonical PLG listing')}</span>
-      <span>Publisher: ${escapeHtml(selectedListing.publisherName ?? selectedListing.publisherHandle ?? 'Unknown')}</span>
-      <span>Status: ${escapeHtml(selectedListing.status ?? 'public')}</span>
-      <span>Tags: ${escapeHtml((selectedListing.tags ?? []).join(', ') || '<none>')}</span>
-    </div>
-  ` : '<div class="sdn-empty">No live PLG listing selected.</div>';
-}
-
-function renderModuleMetadata(root: HTMLElement, override?: Record<string, unknown>): void {
-  const moduleMetadata = query<HTMLElement>(root, '#sdn-module-metadata');
-  if (!moduleMetadata) {
-    return;
-  }
-  const selectedListing = getSelectedListing(root);
-  const payload = {
-    pluginId: selectedListing?.pluginId,
-    version: selectedListing?.version,
-    publisher: selectedListing?.publisherName ?? selectedListing?.publisherHandle,
-    ...override,
-  };
-  moduleMetadata.innerHTML = `<pre class="sdn-code">${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`;
+  pluginPanel.innerHTML = renderPluginResults(results.plugins, selection);
+  authorPanel.innerHTML = renderAuthorResults(results.authors, selection);
+  dataPanel.innerHTML = renderDataResults(results.data, selection);
+  detailPanel.innerHTML = renderStoreDetail(results, selection);
 }
 
 function renderTimeline(root: HTMLElement): void {
@@ -823,13 +838,16 @@ function resetDelivery(root: HTMLElement): void {
   completionState && (completionState.innerHTML = '<div class="sdn-empty">Running live module-delivery flow…</div>');
 }
 
-function getSelectedListing(root: HTMLElement): CanonicalListing | undefined {
-  const select = query<HTMLSelectElement>(root, '#sdn-marketplace-select');
-  if (!select || !select.value) {
-    return state.marketplace.values()[0];
+function getSelectedPluginListing(root: HTMLElement): CanonicalListing | undefined {
+  const listings = searchStoreListings(
+    state.marketplace.values(),
+    query<HTMLInputElement>(root, '#sdn-store-search')?.value ?? '',
+  );
+  const selection = resolveStoreSelection(listings);
+  if (!selection || selection.kind !== 'plugin') {
+    return listings.plugins[0]?.listing;
   }
-  const [pluginId, version] = select.value.split('@');
-  return state.marketplace.get(pluginId, version);
+  return listings.plugins.find((result) => result.key === selection.key)?.listing ?? listings.plugins[0]?.listing;
 }
 
 function inferCatalogBaseUrl(root: HTMLElement): string {
@@ -907,9 +925,223 @@ function setFeatureSlide(root: HTMLElement, featureId: string): void {
   });
   queryAll(root, '[data-feature-target]').forEach((button) => {
     const active = button.getAttribute('data-feature-target') === featureId;
-    button.classList.toggle('sdn-feature-carousel__dot--active', active);
+    button.classList.toggle('sdn-feature-carousel__indicator--active', active);
     button.setAttribute('aria-selected', active ? 'true' : 'false');
   });
+}
+
+function resolveStoreSelection(results: ReturnType<typeof searchStoreListings>): StoreSelection | null {
+  const selection = state.storeSelection;
+  if (selection && hasStoreSelection(results, selection)) {
+    return selection;
+  }
+  const fallback = results.plugins[0]
+    ? { kind: 'plugin', key: results.plugins[0].key } as const
+    : results.authors[0]
+      ? { kind: 'author', key: results.authors[0].key } as const
+      : results.data[0]
+        ? { kind: 'data', key: results.data[0].key } as const
+        : null;
+  state.storeSelection = fallback;
+  return fallback;
+}
+
+function hasStoreSelection(
+  results: ReturnType<typeof searchStoreListings>,
+  selection: StoreSelection,
+): boolean {
+  switch (selection.kind) {
+    case 'plugin':
+      return results.plugins.some((result) => result.key === selection.key);
+    case 'author':
+      return results.authors.some((result) => result.key === selection.key);
+    case 'data':
+      return results.data.some((result) => result.key === selection.key);
+  }
+}
+
+function renderAuthorResults(
+  authors: StoreAuthorResult[],
+  selection: StoreSelection | null,
+): string {
+  if (authors.length === 0) {
+    return '<div class="sdn-empty">No authors matched this store search.</div>';
+  }
+
+  return authors.map((author) => `
+    <button
+      type="button"
+      class="sdn-store-card${selection?.kind === 'author' && selection.key === author.key ? ' sdn-store-card--active' : ''}"
+      data-store-result-kind="author"
+      data-store-result-key="${escapeHtml(author.key)}"
+    >
+      <span class="sdn-store-card__meta">Author</span>
+      <strong>${escapeHtml(author.name)}</strong>
+      <span>${escapeHtml(author.handle ?? author.peerId ?? `${author.moduleCount} linked modules`)}</span>
+      ${renderStoreChipRow(author.standardsUsed)}
+    </button>
+  `).join('');
+}
+
+function renderPluginResults(
+  plugins: StorePluginResult[],
+  selection: StoreSelection | null,
+): string {
+  if (plugins.length === 0) {
+    return '<div class="sdn-empty">No plugins matched this store search.</div>';
+  }
+
+  return plugins.map((plugin) => `
+    <button
+      type="button"
+      class="sdn-store-card${selection?.kind === 'plugin' && selection.key === plugin.key ? ' sdn-store-card--active' : ''}"
+      data-store-result-kind="plugin"
+      data-store-result-key="${escapeHtml(plugin.key)}"
+    >
+      <span class="sdn-store-card__meta">Plugin</span>
+      <strong>${escapeHtml(plugin.listing.name ?? plugin.listing.pluginId)}</strong>
+      <span>${escapeHtml(plugin.publisherLabel)} · v${escapeHtml(plugin.listing.version)}</span>
+      <span>${escapeHtml(plugin.listing.tagline ?? plugin.listing.description ?? 'Signed marketplace listing')}</span>
+      ${renderStoreChipRow(plugin.standardsUsed)}
+    </button>
+  `).join('');
+}
+
+function renderDataResults(
+  dataResults: StoreDataResult[],
+  selection: StoreSelection | null,
+): string {
+  if (dataResults.length === 0) {
+    return '<div class="sdn-empty">No SDS-linked data references matched this store search.</div>';
+  }
+
+  return dataResults.map((entry) => `
+    <button
+      type="button"
+      class="sdn-store-card${selection?.kind === 'data' && selection.key === entry.key ? ' sdn-store-card--active' : ''}"
+      data-store-result-kind="data"
+      data-store-result-key="${escapeHtml(entry.key)}"
+    >
+      <span class="sdn-store-card__meta">Data</span>
+      <strong>${escapeHtml(entry.standard)}</strong>
+      <span>${escapeHtml(entry.description)}</span>
+      <span>${escapeHtml(`${entry.moduleCount} linked modules · ${entry.publisherNames.length} publishers`)}</span>
+    </button>
+  `).join('');
+}
+
+function renderStoreDetail(
+  results: ReturnType<typeof searchStoreListings>,
+  selection: StoreSelection | null,
+): string {
+  if (!selection) {
+    return '<div class="sdn-empty">No store result selected.</div>';
+  }
+
+  if (selection.kind === 'plugin') {
+    const plugin = results.plugins.find((entry) => entry.key === selection.key);
+    if (!plugin) {
+      return '<div class="sdn-empty">No plugin selected.</div>';
+    }
+    const listing = plugin.listing;
+    return `
+      <div class="sdn-store-detail">
+        <p class="sdn-kicker">Plugin</p>
+        <h3>${escapeHtml(listing.name ?? listing.pluginId)}</h3>
+        <p class="sdn-copy">${escapeHtml(listing.description ?? listing.tagline ?? 'Signed PLG marketplace listing.')}</p>
+        ${renderStoreChipRow(plugin.standardsUsed)}
+        <div class="sdn-store-detail__facts">
+          <span>Publisher: ${escapeHtml(plugin.publisherLabel)}</span>
+          <span>Plugin ID: ${escapeHtml(listing.pluginId)}</span>
+          <span>Version: ${escapeHtml(listing.version)}</span>
+          <span>Status: ${escapeHtml(listing.status ?? 'public')}</span>
+        </div>
+        <section class="sdn-control-grid">
+          <label class="sdn-field">
+            <span>Requester domain</span>
+            <input id="sdn-requester-domain" type="text" value="app.example.com" />
+          </label>
+          <label class="sdn-field">
+            <span>Grant timeout (ms)</span>
+            <input id="sdn-request-timeout" type="number" min="1000" step="1000" value="300000" />
+          </label>
+          <label class="sdn-field">
+            <span>Invoke method</span>
+            <input id="sdn-invoke-method" type="text" value="echo" />
+          </label>
+          <label class="sdn-field">
+            <span>Invoke payload</span>
+            <textarea id="sdn-invoke-payload" rows="3">live browser request</textarea>
+          </label>
+        </section>
+        <div class="sdn-action-row">
+          <button id="sdn-run-live-flow" type="button" class="sdn-button">Run live workflow</button>
+          <button type="button" class="sdn-ghost-button" data-store-open-workspace="pinning">Open pinning rules</button>
+        </div>
+      </div>
+    `;
+  }
+
+  if (selection.kind === 'author') {
+    const author = results.authors.find((entry) => entry.key === selection.key);
+    if (!author) {
+      return '<div class="sdn-empty">No author selected.</div>';
+    }
+    return `
+      <div class="sdn-store-detail">
+        <p class="sdn-kicker">Author</p>
+        <h3>${escapeHtml(author.name)}</h3>
+        <div class="sdn-store-detail__facts">
+          <span>Handle: ${escapeHtml(author.handle ?? '<none>')}</span>
+          <span>Peer ID: ${escapeHtml(author.peerId ?? '<unknown>')}</span>
+          <span>Linked plugins: ${escapeHtml(String(author.moduleCount))}</span>
+        </div>
+        ${renderStoreChipRow(author.standardsUsed)}
+        <pre class="sdn-code">${escapeHtml(JSON.stringify({
+          pluginIds: author.pluginIds,
+          standardsUsed: author.standardsUsed,
+        }, null, 2))}</pre>
+        <div class="sdn-action-row">
+          <button type="button" class="sdn-ghost-button" data-store-open-workspace="pinning">Open pinning rules</button>
+        </div>
+      </div>
+    `;
+  }
+
+  const dataEntry = results.data.find((entry) => entry.key === selection.key);
+  if (!dataEntry) {
+    return '<div class="sdn-empty">No SDS-linked data result selected.</div>';
+  }
+  return `
+    <div class="sdn-store-detail">
+      <p class="sdn-kicker">Data</p>
+      <h3>${escapeHtml(dataEntry.standard)}</h3>
+      <p class="sdn-copy">${escapeHtml(dataEntry.description)}</p>
+      ${renderStoreChipRow([dataEntry.standard])}
+      <div class="sdn-store-detail__facts">
+        <span>Linked plugins: ${escapeHtml(String(dataEntry.moduleCount))}</span>
+        <span>Publishers: ${escapeHtml(dataEntry.publisherNames.join(', ') || '<none>')}</span>
+      </div>
+      <pre class="sdn-code">${escapeHtml(JSON.stringify({
+        pluginIds: dataEntry.pluginIds,
+        publisherNames: dataEntry.publisherNames,
+      }, null, 2))}</pre>
+      <div class="sdn-action-row">
+        <button type="button" class="sdn-ghost-button" data-store-open-workspace="pinning">Open pinning rules</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderStoreChipRow(values: string[]): string {
+  if (values.length === 0) {
+    return '<span class="sdn-store-chip-row__empty">No SDS standards referenced</span>';
+  }
+  return `
+    <div class="sdn-store-chip-row">
+      ${values.map((value) => `<span class="sdn-chip">${escapeHtml(value)}</span>`).join('')}
+    </div>
+  `;
 }
 
 function renderShellMeta(root: HTMLElement, snapshot = state.admin?.snapshot()): void {
