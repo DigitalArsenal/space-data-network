@@ -1,0 +1,43 @@
+name: Build Linux VM Bundle
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-vm-bundle:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sdn-server/go.mod
+          cache-dependency-path: sdn-server/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: sdn-js/package-lock.json
+
+      - name: Install sdn-js dependencies
+        working-directory: sdn-js
+        run: npm ci
+
+      - name: Install WasmEdge
+        run: ./scripts/install-wasmedge.sh
+
+      - name: Build Linux VM bundle
+        run: ./deployment/scripts/package-linux-vm-bundle.sh
+
+      - name: Upload Linux VM bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-vm-bundle
+          path: dist/linux-vm/*.tar.gz

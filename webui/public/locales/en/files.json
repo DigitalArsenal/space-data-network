@@ -66,6 +66,7 @@
     "copy": "Copy selected item(s)",
     "paste": "Paste item(s)",
     "cut": "Cut selected item(s)",
+    "toggleSearch": "Toggle search filter",
     "showShortcuts": "Show keyboard shortcuts"
   },
   "pinningModal": {
@@ -192,6 +193,9 @@
   "noPinsInProgress": "All done, no remote pins in progress.",
   "remotePinningInProgress": "Remote pinning in progress:",
   "selectAllEntries": "Select all entries",
+  "searchFiles": "Filter by name or CID…",
+  "clearSearch": "Clear search",
+  "noFilesMatchFilter": "No files match your search",
   "previewNotFound": {
     "title": "Unable to load this path",
     "errorPrefix": "Error:",
@@ -202,5 +206,7 @@
     "helpListItemForums": "Visit the <1>Discussion Forums</1> to ask for help.",
     "backButton": "Go to Files"
   },
-  "inspectResolveFailed": "Failed to resolve path: {{path}}"
+  "inspectResolveFailed": "Failed to resolve path: {{path}}",
+  "showSearch": "Click to show search filter",
+  "hideSearch": "Click to hide search filter"
 }

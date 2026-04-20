@@ -198,3 +198,31 @@ func TestCreateSubdirectoryFile(t *testing.T) {
 		t.Errorf("css/main.css not found in listing: %+v", files)
 	}
 }
+
+func TestMoveFile(t *testing.T) {
+	_, mux := setupTestManager(t)
+
+	body := `{"from":"index.html","to":"pages/home.html"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/frontend/move", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	oldReq := httptest.NewRequest(http.MethodGet, "/api/admin/frontend/files/index.html", nil)
+	oldRec := httptest.NewRecorder()
+	mux.ServeHTTP(oldRec, oldReq)
+	if oldRec.Code != http.StatusNotFound {
+		t.Fatalf("expected old path to be gone, got %d: %s", oldRec.Code, oldRec.Body.String())
+	}
+
+	newReq := httptest.NewRequest(http.MethodGet, "/api/admin/frontend/files/pages/home.html", nil)
+	newRec := httptest.NewRecorder()
+	mux.ServeHTTP(newRec, newReq)
+	if newRec.Code != http.StatusOK {
+		t.Fatalf("expected new path to exist, got %d: %s", newRec.Code, newRec.Body.String())
+	}
+}

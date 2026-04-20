@@ -26,6 +26,43 @@ import {
 
 export const MODULE_DELIVERY_PROTOCOL_ID = '/space-data-network/module-delivery/1.0.0';
 
+export type ModuleDeliveryStage =
+  | 'provider-discovery'
+  | 'challenge-sent'
+  | 'challenge-received'
+  | 'grant-received'
+  | 'cid-fetch-start'
+  | 'cid-fetch-complete'
+  | 'cid-fetch-validated'
+  | 'cid-fetch-error'
+  | 'unwrap-start'
+  | 'unwrap-complete'
+  | 'decrypt-start'
+  | 'decrypt-complete'
+  | 'sdk-load-start'
+  | 'sdk-load-complete'
+  | 'invoke-start'
+  | 'invoke-result'
+  | 'invoke-error';
+
+export interface ModuleDeliveryEvent {
+  stage: ModuleDeliveryStage;
+  timestamp: number;
+  moduleId?: string;
+  moduleVersion?: string;
+  providerPeerId?: string;
+  cid?: string;
+  bytes?: number;
+  detail?: string;
+  error?: string;
+  candidateAddrs?: string[];
+  discoveryCID?: string;
+}
+
+export interface ModuleDeliveryObserver {
+  onEvent?: (event: ModuleDeliveryEvent) => void;
+}
+
 export interface ModuleDeliveryTransport {
   dialProtocol(
     targetPeerId: string,
@@ -60,6 +97,7 @@ export interface ModuleGrantRequestOptions {
   requestedTimeoutMs: number;
   reqId?: string;
   requestedAtMs?: number;
+  observer?: ModuleDeliveryObserver;
 }
 
 export interface ModuleGrantResult {
@@ -177,6 +215,18 @@ export async function requestModuleGrant(
   const requestedTimeoutMs = normalizeRequestedTimeoutMs(options.requestedTimeoutMs);
   const moduleId = normalizeRequiredString(options.moduleId, 'moduleId');
   const moduleVersion = trimOptional(options.moduleVersion);
+  const observer = options.observer;
+
+  emitModuleDeliveryEvent(observer, {
+    stage: 'provider-discovery',
+    timestamp: Date.now(),
+    moduleId,
+    moduleVersion,
+    providerPeerId: provider.peerId,
+    candidateAddrs: candidateAddrs.slice(),
+    discoveryCID: discovery.discoveryCID,
+    detail: provider.relayAddresses.length > 0 ? 'descriptor-relays' : 'dht-discovery',
+  });
 
   const challengeRequestBytes = encodeChallengeRequest({
     reqId,
@@ -191,6 +241,14 @@ export async function requestModuleGrant(
     requestedAtMs,
     providerPeerId: provider.peerId,
   });
+  emitModuleDeliveryEvent(observer, {
+    stage: 'challenge-sent',
+    timestamp: Date.now(),
+    moduleId,
+    moduleVersion,
+    providerPeerId: provider.peerId,
+    candidateAddrs: candidateAddrs.slice(),
+  });
   const challengeResponseBytes = await transport.dialProtocol(
     provider.peerId,
     MODULE_DELIVERY_PROTOCOL_ID,
@@ -202,6 +260,14 @@ export async function requestModuleGrant(
     moduleId,
     reqId,
     expiresAtMs: challenge.expiresAtMs,
+  });
+  emitModuleDeliveryEvent(observer, {
+    stage: 'challenge-received',
+    timestamp: Date.now(),
+    moduleId,
+    moduleVersion,
+    providerPeerId: challenge.providerPeerId || provider.peerId,
+    detail: `expiresAt=${challenge.expiresAtMs}`,
   });
 
   if (challenge.reqId !== reqId) {
@@ -253,6 +319,15 @@ export async function requestModuleGrant(
     grantedDomain: grant.grantedDomain,
     grantedTimeoutMs: grant.grantedTimeoutMs,
   });
+  emitModuleDeliveryEvent(observer, {
+    stage: 'grant-received',
+    timestamp: Date.now(),
+    moduleId,
+    moduleVersion,
+    providerPeerId: provider.peerId,
+    cid: grant.bundleDescriptor.cid,
+    detail: `grantedDomain=${grant.grantedDomain}`,
+  });
 
   return { provider, grant };
 }
@@ -260,14 +335,32 @@ export async function requestModuleGrant(
 export async function fetchEncryptedModuleBundle(
   transport: Pick<ModuleDeliveryTransport, 'fetchCIDBytes'>,
   result: ModuleGrantResult,
+  observer?: ModuleDeliveryObserver,
 ): Promise<EncryptedModuleBundleResult> {
   console.info('[sdn-js] fetching encrypted CID', {
     moduleId: result.grant.bundleDescriptor.moduleId,
     cid: result.grant.bundleDescriptor.cid,
   });
+  emitModuleDeliveryEvent(observer, {
+    stage: 'cid-fetch-start',
+    timestamp: Date.now(),
+    moduleId: result.grant.bundleDescriptor.moduleId,
+    moduleVersion: result.grant.bundleDescriptor.moduleVersion,
+    providerPeerId: result.provider.peerId,
+    cid: result.grant.bundleDescriptor.cid,
+  });
   const encryptedBundleBytes = await transport.fetchCIDBytes(result.grant.bundleDescriptor.cid);
   console.info('[sdn-js] fetched encrypted CID', {
     moduleId: result.grant.bundleDescriptor.moduleId,
+    cid: result.grant.bundleDescriptor.cid,
+    bytes: encryptedBundleBytes.length,
+  });
+  emitModuleDeliveryEvent(observer, {
+    stage: 'cid-fetch-complete',
+    timestamp: Date.now(),
+    moduleId: result.grant.bundleDescriptor.moduleId,
+    moduleVersion: result.grant.bundleDescriptor.moduleVersion,
+    providerPeerId: result.provider.peerId,
     cid: result.grant.bundleDescriptor.cid,
     bytes: encryptedBundleBytes.length,
   });
@@ -277,6 +370,15 @@ export async function fetchEncryptedModuleBundle(
     result.grant.bundleDescriptor.contentHash.length > 0 &&
     !equalBytes(digest, result.grant.bundleDescriptor.contentHash)
   ) {
+    emitModuleDeliveryEvent(observer, {
+      stage: 'cid-fetch-error',
+      timestamp: Date.now(),
+      moduleId: result.grant.bundleDescriptor.moduleId,
+      moduleVersion: result.grant.bundleDescriptor.moduleVersion,
+      providerPeerId: result.provider.peerId,
+      cid: result.grant.bundleDescriptor.cid,
+      error: 'encrypted bundle hash mismatch',
+    });
     throw new ModuleDeliveryProtocolError('hash_mismatch', 'encrypted bundle hash mismatch');
   }
 
@@ -284,8 +386,26 @@ export async function fetchEncryptedModuleBundle(
     result.grant.bundleDescriptor.sizeBytes > 0 &&
     encryptedBundleBytes.length !== result.grant.bundleDescriptor.sizeBytes
   ) {
+    emitModuleDeliveryEvent(observer, {
+      stage: 'cid-fetch-error',
+      timestamp: Date.now(),
+      moduleId: result.grant.bundleDescriptor.moduleId,
+      moduleVersion: result.grant.bundleDescriptor.moduleVersion,
+      providerPeerId: result.provider.peerId,
+      cid: result.grant.bundleDescriptor.cid,
+      error: 'encrypted bundle size mismatch',
+    });
     throw new ModuleDeliveryProtocolError('size_mismatch', 'encrypted bundle size mismatch');
   }
+  emitModuleDeliveryEvent(observer, {
+    stage: 'cid-fetch-validated',
+    timestamp: Date.now(),
+    moduleId: result.grant.bundleDescriptor.moduleId,
+    moduleVersion: result.grant.bundleDescriptor.moduleVersion,
+    providerPeerId: result.provider.peerId,
+    cid: result.grant.bundleDescriptor.cid,
+    bytes: encryptedBundleBytes.length,
+  });
 
   return {
     ...result,
@@ -298,7 +418,7 @@ export async function requestEncryptedModuleBundle(
   options: ModuleGrantRequestOptions,
 ): Promise<EncryptedModuleBundleResult> {
   const grant = await requestModuleGrant(transport, options);
-  return fetchEncryptedModuleBundle(transport, grant);
+  return fetchEncryptedModuleBundle(transport, grant, options.observer);
 }
 
 export class ModuleDeliveryProtocolError extends Error {
@@ -565,6 +685,13 @@ function normalizeRequestedTimeoutMs(value: number): number {
     throw new Error('requestedTimeoutMs must be a positive number');
   }
   return Math.trunc(value);
+}
+
+function emitModuleDeliveryEvent(
+  observer: ModuleDeliveryObserver | undefined,
+  event: ModuleDeliveryEvent,
+): void {
+  observer?.onEvent?.(event);
 }
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {

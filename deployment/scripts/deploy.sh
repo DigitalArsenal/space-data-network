@@ -86,6 +86,31 @@ scp_cmd() {
     scp -i "$SSH_KEY" -o StrictHostKeyChecking=no "$src" "${SSH_USER}@${ip}:${dest}"
 }
 
+# Rsync a directory or file to a server
+rsync_cmd() {
+    local src=$1
+    local ip=$2
+    local dest=$3
+    rsync -az --delete -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=10" "$src" "${SSH_USER}@${ip}:${dest}"
+}
+
+service_name() {
+    case "$1" in
+        full) echo "spacedatanetwork" ;;
+        *) echo "sdn-$1" ;;
+    esac
+}
+
+prepare_full_node_assets() {
+    log_info "Building shared admin shell assets..."
+    (cd "${PROJECT_ROOT}/sdn-js" && npm run build:ui)
+
+    if [[ ! -f "${PROJECT_ROOT}/webui/build/index.html" ]]; then
+        log_error "webui/build is missing. Build the IPFS WebUI before deploying a full node."
+        exit 1
+    fi
+}
+
 # Deploy Docker container to server
 deploy_docker() {
     local ip=$1
@@ -93,6 +118,39 @@ deploy_docker() {
     local name=$3
 
     log_info "Deploying $type to $ip ($name)..."
+
+    if [[ "$type" == "full" ]]; then
+        prepare_full_node_assets
+
+        ssh_cmd "$ip" "rm -rf /opt/sdn && mkdir -p /opt/sdn/deployment/docker /opt/sdn/sdn-server /opt/sdn/sdn-js/ui/dist /opt/sdn/webui/build /opt/sdn/config /opt/sdn/scripts"
+
+        rsync_cmd "${PROJECT_ROOT}/deployment/docker/Dockerfile.full" "$ip" "/opt/sdn/deployment/docker/Dockerfile.full"
+        rsync_cmd "${PROJECT_ROOT}/sdn-server/" "$ip" "/opt/sdn/sdn-server/"
+        rsync_cmd "${PROJECT_ROOT}/sdn-js/ui/dist/" "$ip" "/opt/sdn/sdn-js/ui/dist/"
+        rsync_cmd "${PROJECT_ROOT}/webui/build/" "$ip" "/opt/sdn/webui/build/"
+        rsync_cmd "${PROJECT_ROOT}/config/full-docker.yaml" "$ip" "/opt/sdn/config/full-docker.yaml"
+        rsync_cmd "${PROJECT_ROOT}/scripts/install-wasmedge.sh" "$ip" "/opt/sdn/scripts/install-wasmedge.sh"
+
+        cat << EOF | ssh_cmd "$ip" "cat > /opt/sdn/docker-compose.yaml"
+version: '3.8'
+services:
+  sdn-full:
+    build:
+      context: /opt/sdn
+      dockerfile: deployment/docker/Dockerfile.full
+    container_name: sdn-full
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - sdn-data:/app/data
+volumes:
+  sdn-data:
+EOF
+
+        ssh_cmd "$ip" "cd /opt/sdn && docker compose up -d --build"
+        log_success "Deployed full to $ip"
+        return
+    fi
 
     # Create deployment directory
     ssh_cmd "$ip" "mkdir -p /opt/sdn"
@@ -129,6 +187,25 @@ deploy_binary() {
     local type=$2
     local name=$3
     local binary
+
+    if [[ "$type" == "full" ]]; then
+        prepare_full_node_assets
+        log_info "Deploying full node bundle to $ip ($name)..."
+
+        ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/bin /opt/spacedatanetwork/admin-ui /opt/spacedatanetwork/webui /opt/spacedatanetwork/sdn-server /opt/spacedatanetwork/scripts /etc/spacedatanetwork /var/lib/spacedatanetwork/frontend /var/lib/spacedatanetwork/data && id -u sdn >/dev/null 2>&1 || useradd --system --home /var/lib/spacedatanetwork --shell /usr/sbin/nologin sdn"
+
+        rsync_cmd "${PROJECT_ROOT}/sdn-server/" "$ip" "/opt/spacedatanetwork/sdn-server/"
+        rsync_cmd "${PROJECT_ROOT}/scripts/" "$ip" "/opt/spacedatanetwork/scripts/"
+        rsync_cmd "${PROJECT_ROOT}/sdn-js/ui/dist/" "$ip" "/opt/spacedatanetwork/admin-ui/"
+        rsync_cmd "${PROJECT_ROOT}/webui/build/" "$ip" "/opt/spacedatanetwork/webui/"
+        rsync_cmd "${PROJECT_ROOT}/config/full-vm.yaml" "$ip" "/etc/spacedatanetwork/config.yaml"
+        rsync_cmd "${PROJECT_ROOT}/sdn-server/deploy/spacedatanetwork.service" "$ip" "/etc/systemd/system/spacedatanetwork.service"
+
+        ssh_cmd "$ip" "chmod +x /opt/spacedatanetwork/scripts/install-wasmedge.sh /opt/spacedatanetwork/scripts/go-with-wasmedge.sh && /opt/spacedatanetwork/scripts/go-with-wasmedge.sh build -o /opt/spacedatanetwork/bin/spacedatanetwork ./cmd/spacedatanetwork && chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork && systemctl daemon-reload && systemctl enable spacedatanetwork && systemctl restart spacedatanetwork"
+
+        log_success "Deployed full node bundle to $ip"
+        return
+    fi
 
     case $type in
         full) binary="spacedatanetwork" ;;
@@ -179,7 +256,7 @@ check_status() {
 
     if ssh_cmd "$ip" "docker ps --filter name=sdn-${type} --format '{{.Status}}'" 2>/dev/null | grep -q "Up"; then
         echo -e "${GREEN}●${NC} $name ($ip) - Running"
-    elif ssh_cmd "$ip" "systemctl is-active sdn-${type}" 2>/dev/null | grep -q "active"; then
+    elif ssh_cmd "$ip" "systemctl is-active $(service_name "$type")" 2>/dev/null | grep -q "active"; then
         echo -e "${GREEN}●${NC} $name ($ip) - Running (systemd)"
     else
         echo -e "${RED}●${NC} $name ($ip) - Stopped/Unreachable"
@@ -194,7 +271,7 @@ get_logs() {
 
     log_info "Fetching logs from $ip..."
     ssh_cmd "$ip" "docker logs --tail $lines sdn-${type} 2>&1" 2>/dev/null || \
-    ssh_cmd "$ip" "journalctl -u sdn-${type} -n $lines --no-pager" 2>/dev/null
+    ssh_cmd "$ip" "journalctl -u $(service_name "$type") -n $lines --no-pager" 2>/dev/null
 }
 
 # Main deployment function
@@ -313,7 +390,7 @@ case $COMMAND in
                 if [[ "$line" =~ ip:\ *([0-9.]+) ]]; then
                     local ip="${BASH_REMATCH[1]}"
                     ssh_cmd "$ip" "docker compose -f /opt/sdn/docker-compose.yaml $COMMAND" 2>/dev/null || \
-                    ssh_cmd "$ip" "systemctl $COMMAND sdn-${t}" 2>/dev/null
+                    ssh_cmd "$ip" "systemctl $COMMAND $(service_name "$t")" 2>/dev/null
                 fi
             done < <(sed -n "/^${yaml_key}:/,/^[a-z]/p" "$CONFIG_FILE")
         done

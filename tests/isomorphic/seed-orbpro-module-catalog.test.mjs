@@ -9,15 +9,22 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import sgp4PackageJson from "../../../space-data-network-plugins/packages/sgp4/package.json" with { type: "json" };
+import { fileURLToPath } from "node:url";
+import {
+  decryptProtectedBytes,
+  extractPublicationRecordCollection,
+} from "space-data-module-sdk/transport";
 
 import {
-  encryptBundleBytes,
+  DEFAULT_ORBPRO_MODULES,
   seedOrbproModuleCatalog,
 } from "../../scripts/seed-orbpro-module-catalog.mjs";
 
 const PASS = "\x1b[32mPASS\x1b[0m";
 const FAIL = "\x1b[31mFAIL\x1b[0m";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, "..", "..");
+const workspaceRoot = path.resolve(repoRoot, "..", "..", "..");
 
 async function test(name, fn) {
   try {
@@ -29,36 +36,6 @@ async function test(name, fn) {
     process.exitCode = 1;
   }
 }
-
-await test("encryptBundleBytes returns decryptable AES-256-GCM payload bytes", async () => {
-  const plaintext = new Uint8Array([
-    0x00,
-    0x61,
-    0x73,
-    0x6d,
-    0x01,
-    0x00,
-    0x00,
-    0x00,
-    ...crypto.randomBytes(64),
-  ]);
-  const contentKey = crypto.randomBytes(32);
-
-  const encrypted = encryptBundleBytes(plaintext, contentKey);
-
-  assert.equal(encrypted.length, plaintext.length + 12 + 16);
-  const iv = encrypted.subarray(0, 12);
-  const ciphertext = encrypted.subarray(12, encrypted.length - 16);
-  const tag = encrypted.subarray(encrypted.length - 16);
-  const decipher = crypto.createDecipheriv("aes-256-gcm", contentKey, iv);
-  decipher.setAuthTag(tag);
-  const decrypted = Buffer.concat([
-    decipher.update(ciphertext),
-    decipher.final(),
-  ]);
-
-  assert.deepEqual(new Uint8Array(decrypted), plaintext);
-});
 
 await test("seedOrbproModuleCatalog upserts requested modules and preserves unrelated entries", async () => {
   const tempRoot = await fs.mkdtemp(
@@ -87,6 +64,7 @@ await test("seedOrbproModuleCatalog upserts requested modules and preserves unre
   );
 
   const wasmPath = path.join(tempRoot, "fastest-path.module.wasm");
+  const manifestPath = path.join(tempRoot, "fastest-path.plugin-manifest.json");
   const wasmBytes = new Uint8Array([
     0x00,
     0x61,
@@ -96,9 +74,12 @@ await test("seedOrbproModuleCatalog upserts requested modules and preserves unre
     0x00,
     0x00,
     0x00,
-    ...crypto.randomBytes(48),
   ]);
   await fs.writeFile(wasmPath, wasmBytes);
+  await fs.writeFile(
+    manifestPath,
+    JSON.stringify(createTestManifest("com.orbpro.fastest-path", "local-dev"), null, 2),
+  );
 
   const summary = await seedOrbproModuleCatalog({
     pluginRoot,
@@ -108,6 +89,7 @@ await test("seedOrbproModuleCatalog upserts requested modules and preserves unre
         moduleId: "com.orbpro.fastest-path",
         version: "local-dev",
         wasmPath,
+        manifestPath,
       },
     ],
   });
@@ -115,6 +97,9 @@ await test("seedOrbproModuleCatalog upserts requested modules and preserves unre
   assert.equal(summary.seeded.length, 1);
   assert.equal(summary.seeded[0].moduleId, "com.orbpro.fastest-path");
   assert.equal(summary.seeded[0].contentKeyHex.length, 64);
+  assert.equal(summary.seeded[0].hasMbl, true);
+  assert.equal(summary.seeded[0].hasEnc, true);
+  assert.equal(summary.seeded[0].hasPnm, true);
 
   const encryptedPath = path.join(pluginRoot, "fastest-path.wasm.enc");
   const keyPath = path.join(pluginRoot, "fastest-path.key");
@@ -124,10 +109,19 @@ await test("seedOrbproModuleCatalog upserts requested modules and preserves unre
     fs.readFile(path.join(pluginRoot, "catalog.json"), "utf8"),
   ]);
   const catalog = JSON.parse(catalogRaw);
+  const publication = extractPublicationRecordCollection(encryptedBytes);
 
   assert.ok(encryptedBytes.length > wasmBytes.length);
   assert.equal(keyHex.trim().length, 64);
   assert.equal(catalog.plugins.length, 2);
+  assert.equal(Boolean(publication?.mbl), true);
+  assert.equal(Boolean(publication?.enc), true);
+  assert.equal(Boolean(publication?.pnm), true);
+  const decrypted = await decryptProtectedBytes({
+    protectedBytes: new Uint8Array(encryptedBytes),
+    recipientPrivateKey: Uint8Array.from(Buffer.from(keyHex.trim(), "hex")),
+  });
+  assert.deepEqual(decrypted, wasmBytes);
   assert.deepEqual(
     catalog.plugins.map((entry) => entry.id).sort(),
     ["com.orbpro.fastest-path", "existing.module"],
@@ -160,8 +154,7 @@ await test("seedOrbproModuleCatalog uses the shipped plugin version for built-in
       {
         slug: "sgp4",
         moduleId: "com.orbpro.sgp4",
-        wasmPath:
-          "packages/space-data-network-plugins/packages/sgp4/dist/sgp4.wasm",
+        wasmPath: "../space-data-network-plugins/packages/sgp4/dist/sgp4.wasm",
       },
     ],
   });
@@ -172,11 +165,76 @@ await test("seedOrbproModuleCatalog uses the shipped plugin version for built-in
   const catalog = JSON.parse(
     await fs.readFile(path.join(pluginRoot, "catalog.json"), "utf8"),
   );
+  const sgp4Manifest = JSON.parse(
+    await fs.readFile(
+      path.resolve(
+        workspaceRoot,
+        "space-data-network-plugins/packages/sgp4/dist/manifest.json",
+      ),
+      "utf8",
+    ),
+  );
   const seededEntry = catalog.plugins.find(
     (entry) => entry.id === "com.orbpro.sgp4",
   );
 
-  assert.equal(seededEntry?.version, sgp4PackageJson.version);
+  assert.equal(seededEntry?.version, sgp4Manifest.version);
+});
+
+await test("DEFAULT_ORBPRO_MODULES includes the licensing runtime", async () => {
+  assert.equal(
+    DEFAULT_ORBPRO_MODULES.some((entry) => entry.moduleId === "licensing"),
+    true,
+  );
 });
 
 console.log("\nDone.");
+
+function createTestManifest(pluginId, version) {
+  return {
+    pluginId,
+    name: pluginId,
+    version,
+    pluginFamily: "analysis",
+    capabilities: [],
+    externalInterfaces: [],
+    runtimeTargets: ["browser", "wasmedge"],
+    invokeSurfaces: ["command"],
+    methods: [
+      {
+        methodId: "echo",
+        displayName: "echo",
+        inputPorts: [
+          {
+            portId: "request",
+            acceptedTypeSets: [
+              {
+                setId: "request-any",
+                allowedTypes: [{ acceptsAnyFlatbuffer: true }],
+              },
+            ],
+            minStreams: 1,
+            maxStreams: 1,
+            required: true,
+          },
+        ],
+        outputPorts: [
+          {
+            portId: "response",
+            acceptedTypeSets: [
+              {
+                setId: "response-any",
+                allowedTypes: [{ acceptsAnyFlatbuffer: true }],
+              },
+            ],
+            minStreams: 0,
+            maxStreams: 1,
+            required: false,
+          },
+        ],
+        maxBatch: 1,
+        drainPolicy: "single-shot",
+      },
+    ],
+  };
+}

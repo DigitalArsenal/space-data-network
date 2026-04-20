@@ -1,6 +1,7 @@
 import { test, expect } from './setup/coverage.js'
 import { fixtureData } from './fixtures/index.js'
-import { files, explore } from './setup/locators.js'
+import { files, explore, nav, dismissImportNotification } from './setup/locators.js'
+import { selectViewMode, toggleSearchFilter } from '../helpers/grid'
 import all from 'it-all'
 import filesize from 'filesize'
 import * as kuboRpcModule from 'kubo-rpc-client'
@@ -8,6 +9,8 @@ import * as kuboRpcModule from 'kubo-rpc-client'
 test.describe('Files screen', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/#/files')
+    // dismiss any lingering import notification from previous tests
+    await dismissImportNotification(page)
   })
 
   test('should have the active Add menu', async ({ page }) => {
@@ -294,5 +297,265 @@ test.describe('Files screen', () => {
 
     // confirm navigation back to files root
     await page.waitForURL('/#/files')
+  })
+
+  test.describe('Search filter', () => {
+    // inline CIDs for small text content (no network needed)
+    const orangeCid = 'bafkqaddjnzzxazldoqwxizltoq'
+    const appleCid = 'bafkqac3imvwgy3zao5xxe3de'
+    const orangeFile = 'search-orange.txt'
+    const appleFile = 'search-apple.txt'
+
+    /**
+     * Import a file via "Add by path" using an inline CID.
+     */
+    async function importByPath (page, cid, filename) {
+      await files.importButton(page).click()
+      await expect(files.addByPathOption(page)).toBeVisible()
+      await files.addByPathOption(page).click()
+
+      const pathInput = files.dialogInput(page, 'path')
+      await expect(pathInput).toBeVisible()
+      await pathInput.fill(`/ipfs/${cid}`)
+      await files.dialogInput(page, 'name').fill(filename)
+      await page.keyboard.press('Enter')
+
+      // wait for dialog to close
+      await expect(pathInput).not.toBeVisible({ timeout: 10000 })
+    }
+
+    test.beforeEach(async ({ page }) => {
+      test.slow()
+
+      // import two files with distinct names
+      await importByPath(page, orangeCid, orangeFile)
+      await dismissImportNotification(page)
+      await importByPath(page, appleCid, appleFile)
+      await dismissImportNotification(page)
+
+      // verify both files are visible before each test
+      await expect(page.getByTestId('file-row').filter({ hasText: orangeFile })).toBeVisible({ timeout: 30000 })
+      await expect(page.getByTestId('file-row').filter({ hasText: appleFile })).toBeVisible({ timeout: 30000 })
+    })
+
+    test('search is hidden by default', async ({ page }) => {
+      await expect(files.searchInput(page)).not.toBeVisible()
+
+      await files.searchToggle(page).click()
+      await expect(files.searchInput(page)).toBeVisible()
+    })
+
+    test('filter by name in list view', async ({ page }) => {
+      await selectViewMode(page, 'list')
+      await toggleSearchFilter(page, true)
+
+      await files.searchInput(page).fill('orange')
+
+      // only the orange file should be visible
+      await expect(page.getByTestId('file-row').filter({ hasText: orangeFile })).toBeVisible()
+      await expect(page.getByTestId('file-row').filter({ hasText: appleFile })).not.toBeVisible()
+
+      // filtered count should show "1 /"
+      await expect(page.getByText(/^1\s*\/\s*\d+$/)).toBeVisible()
+    })
+
+    test('filter by CID in list view', async ({ page }) => {
+      await selectViewMode(page, 'list')
+      await toggleSearchFilter(page, true)
+
+      // get the CID from the orange file row
+      const orangeRow = page.getByTestId('file-row').filter({ hasText: orangeFile })
+      const cidText = await orangeRow.locator('div.monospace').textContent()
+      // use last 10 chars of the CID to avoid shared prefix between inline CIDs
+      const trimmed = cidText.trim()
+      const cidFragment = trimmed.slice(-10)
+
+      await files.searchInput(page).fill(cidFragment)
+
+      await expect(page.getByTestId('file-row').filter({ hasText: orangeFile })).toBeVisible()
+      await expect(page.getByTestId('file-row').filter({ hasText: appleFile })).not.toBeVisible()
+    })
+
+    test('filter by name in grid view', async ({ page }) => {
+      await selectViewMode(page, 'grid')
+      await toggleSearchFilter(page, true)
+
+      await files.searchInput(page).fill('apple')
+
+      // only the apple file should be visible
+      await expect(files.gridFileByName(page, appleFile)).toBeVisible()
+      await expect(files.gridFileByName(page, orangeFile)).not.toBeVisible()
+    })
+
+    test('hiding search clears filter', async ({ page }) => {
+      await selectViewMode(page, 'list')
+      await toggleSearchFilter(page, true)
+
+      await files.searchInput(page).fill('orange')
+      // only orange visible
+      await expect(page.getByTestId('file-row').filter({ hasText: appleFile })).not.toBeVisible()
+
+      // hide the search filter
+      await toggleSearchFilter(page, false)
+
+      await expect(files.searchInput(page)).not.toBeVisible()
+      // both files should be visible again
+      await expect(page.getByTestId('file-row').filter({ hasText: orangeFile })).toBeVisible()
+      await expect(page.getByTestId('file-row').filter({ hasText: appleFile })).toBeVisible()
+    })
+
+    test('pressing Escape clears the filter', async ({ page }) => {
+      await selectViewMode(page, 'list')
+      await toggleSearchFilter(page, true)
+
+      await files.searchInput(page).fill('orange')
+
+      // only the orange file should be visible
+      await expect(page.getByTestId('file-row').filter({ hasText: orangeFile })).toBeVisible()
+      await expect(page.getByTestId('file-row').filter({ hasText: appleFile })).not.toBeVisible()
+
+      // press Escape while focused on the search input
+      await files.searchInput(page).press('Escape')
+
+      // filter should be cleared and both files visible again
+      await expect(files.searchInput(page)).toHaveValue('')
+      await expect(page.getByTestId('file-row').filter({ hasText: orangeFile })).toBeVisible()
+      await expect(page.getByTestId('file-row').filter({ hasText: appleFile })).toBeVisible()
+    })
+
+    test('pressing / opens search and auto-focuses input', async ({ page }) => {
+      await selectViewMode(page, 'list')
+
+      // search should be hidden initially
+      await expect(files.searchInput(page)).not.toBeVisible()
+
+      // press / to open search (focus must not be in an input)
+      await page.keyboard.press('/')
+
+      // search input should appear and be focused
+      await expect(files.searchInput(page)).toBeVisible()
+      await expect(files.searchInput(page)).toBeFocused()
+
+      // type a filter term directly (input is focused)
+      await page.keyboard.type('orange')
+      await expect(page.getByTestId('file-row').filter({ hasText: orangeFile })).toBeVisible()
+      await expect(page.getByTestId('file-row').filter({ hasText: appleFile })).not.toBeVisible()
+    })
+
+    test('pressing / re-focuses input when search is visible but not focused', async ({ page }) => {
+      await selectViewMode(page, 'list')
+      await toggleSearchFilter(page, true)
+
+      await files.searchInput(page).fill('orange')
+      await expect(page.getByTestId('file-row').filter({ hasText: orangeFile })).toBeVisible()
+
+      // move focus out of the search input
+      await files.searchInput(page).blur()
+      await expect(files.searchInput(page)).not.toBeFocused()
+
+      // press / should re-focus the input, not hide search
+      await page.keyboard.press('/')
+      await expect(files.searchInput(page)).toBeVisible()
+      await expect(files.searchInput(page)).toBeFocused()
+
+      // filter text should still be intact
+      await expect(files.searchInput(page)).toHaveValue('orange')
+    })
+
+    test('pressing / focuses search after navigating away and back', async ({ page }) => {
+      await selectViewMode(page, 'list')
+      await toggleSearchFilter(page, true)
+
+      // confirm search input is visible
+      await expect(files.searchInput(page)).toBeVisible()
+
+      // navigate to Status page
+      await nav.status(page).click()
+      await page.waitForURL('/#/')
+
+      // navigate back to Files
+      await nav.files(page).click()
+      await page.waitForURL('/#/files')
+
+      // search input should still be visible (persisted in localStorage)
+      await expect(files.searchInput(page)).toBeVisible()
+
+      // but it should NOT be focused on page load
+      await expect(files.searchInput(page)).not.toBeFocused()
+
+      // press / to focus the search input
+      await page.keyboard.press('/')
+      await expect(files.searchInput(page)).toBeFocused()
+    })
+
+    test('no matches message', async ({ page }) => {
+      await toggleSearchFilter(page, true)
+
+      await files.searchInput(page).fill('nonexistent-file-xyz')
+
+      await expect(page.getByText('No files match your search')).toBeVisible()
+    })
+
+    test('select all only selects filtered files in grid view', async ({ page }) => {
+      await selectViewMode(page, 'grid')
+      await toggleSearchFilter(page, true)
+
+      // filter to show only the orange file
+      await files.searchInput(page).fill('orange')
+      await expect(files.gridFileByName(page, orangeFile)).toBeVisible()
+      await expect(files.gridFileByName(page, appleFile)).not.toBeVisible()
+
+      // click "Select all entries" checkbox (use label text since the input is absolutely positioned)
+      const selectAllLabel = page.getByText('Select all entries')
+      await expect(selectAllLabel).toBeVisible()
+      await selectAllLabel.click()
+
+      // the selected actions bar should show "1" (only the filtered file)
+      const selectedActions = page.locator('.selectedActions')
+      await expect(selectedActions).toBeVisible()
+      await expect(selectedActions.getByText('Item selected')).toBeVisible()
+    })
+
+    test('select all only selects filtered files in list view', async ({ page }) => {
+      await selectViewMode(page, 'list')
+      await toggleSearchFilter(page, true)
+
+      // filter to show only the orange file
+      await files.searchInput(page).fill('orange')
+      await expect(page.getByTestId('file-row').filter({ hasText: orangeFile })).toBeVisible()
+      await expect(page.getByTestId('file-row').filter({ hasText: appleFile })).not.toBeVisible()
+
+      // click "Select all entries" checkbox via its parent label (input is absolutely positioned)
+      const selectAllCheckbox = page.getByRole('checkbox', { name: 'Select all entries' })
+      await expect(selectAllCheckbox).toBeVisible()
+      await selectAllCheckbox.dispatchEvent('click')
+
+      // the selected actions bar should show "1" (only the filtered file)
+      const selectedActions = page.locator('.selectedActions')
+      await expect(selectedActions).toBeVisible()
+      await expect(selectedActions.getByText('Item selected')).toBeVisible()
+    })
+
+    test('filter persists when switching between list and grid view', async ({ page }) => {
+      await selectViewMode(page, 'list')
+      await toggleSearchFilter(page, true)
+
+      await files.searchInput(page).fill('orange')
+      await expect(page.getByTestId('file-row').filter({ hasText: orangeFile })).toBeVisible()
+      await expect(page.getByTestId('file-row').filter({ hasText: appleFile })).not.toBeVisible()
+
+      // switch to grid view -- filter should persist
+      await selectViewMode(page, 'grid')
+      await expect(files.searchInput(page)).toBeVisible()
+      await expect(files.searchInput(page)).toHaveValue('orange')
+      await expect(files.gridFileByName(page, orangeFile)).toBeVisible()
+      await expect(files.gridFileByName(page, appleFile)).not.toBeVisible()
+
+      // switch back to list view -- filter should still persist
+      await selectViewMode(page, 'list')
+      await expect(files.searchInput(page)).toHaveValue('orange')
+      await expect(page.getByTestId('file-row').filter({ hasText: orangeFile })).toBeVisible()
+      await expect(page.getByTestId('file-row').filter({ hasText: appleFile })).not.toBeVisible()
+    })
   })
 })

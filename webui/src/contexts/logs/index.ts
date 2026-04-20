@@ -1,3 +1,7 @@
+// Export the context provider and hook
 export { LogsProvider, useLogs } from './logs-context'
-export type { LogEntry, LogRateState, LogStorageStats, LogSubsystemState } from './api'
-export type { LogBufferConfig } from './reducer'
+
+// Export utilities (optional, for advanced usage)
+export { getLogLevels, parseLogEntry } from './api'
+export { logsReducer, initLogsState } from './reducer'
+export { useBatchProcessor } from './use-batch-processor'

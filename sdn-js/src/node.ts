@@ -33,6 +33,8 @@ import {
   requestEncryptedModuleBundle,
   requestModuleGrant,
   type DiscoveredProvider,
+  type ModuleDeliveryEvent,
+  type ModuleDeliveryObserver,
   type ModuleGrantRequestOptions,
   type ModuleGrantResult,
   type ModuleDeliveryTransport,
@@ -76,6 +78,7 @@ export interface SDNNodeEvents {
   onMessage?: (schema: SchemaName, data: unknown, from: string) => void;
   onPeerConnected?: (peerId: string) => void;
   onPeerDisconnected?: (peerId: string) => void;
+  onModuleDeliveryEvent?: (event: ModuleDeliveryEvent) => void;
 }
 
 export class SDNNode {
@@ -470,9 +473,11 @@ export class SDNNode {
     if (!requesterIdentity) {
       throw new Error('requester identity is required');
     }
+    const observer = resolveModuleDeliveryObserver(options.observer, this.events);
     return requestModuleGrant(this as ModuleDeliveryTransport, {
       ...options,
       requesterIdentity,
+      observer,
     });
   }
 
@@ -485,9 +490,11 @@ export class SDNNode {
     if (!requesterIdentity) {
       throw new Error('requester identity is required');
     }
+    const observer = resolveModuleDeliveryObserver(options.observer, this.events);
     return requestEncryptedModuleBundle(this as ModuleDeliveryTransport, {
       ...options,
       requesterIdentity,
+      observer,
     });
   }
 
@@ -667,6 +674,23 @@ function normalizeDialTarget(addr: string, targetPeerId: string): string {
     return `${trimmed}/p2p-circuit/p2p/${targetPeerId}`;
   }
   return `${trimmed}/p2p/${targetPeerId}`;
+}
+
+function resolveModuleDeliveryObserver(
+  observer: ModuleDeliveryObserver | undefined,
+  events: SDNNodeEvents,
+): ModuleDeliveryObserver | undefined {
+  if (observer) {
+    return observer;
+  }
+  if (!events.onModuleDeliveryEvent) {
+    return undefined;
+  }
+  return {
+    onEvent(event) {
+      events.onModuleDeliveryEvent?.(event);
+    },
+  };
 }
 
 function formatError(error: unknown): string {

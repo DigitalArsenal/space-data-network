@@ -15,6 +15,7 @@ import FilePreview from './file-preview/FilePreview.js'
 import FilesList from './files-list/FilesList.js'
 import FilesGrid from './files-grid/files-grid.js'
 import { ViewList, ViewModule } from '../icons/stroke-icons.js'
+import GlyphSearch from '../icons/GlyphSearch.tsx'
 import FileNotFound from './file-not-found/index.tsx'
 import { getJoyrideLocales } from '../helpers/i8n.js'
 import SortDropdown from './sort-dropdown/SortDropdown.js'
@@ -26,7 +27,6 @@ import Header from './header/Header.js'
 import FileImportStatus from './file-import-status/FileImportStatus.js'
 import { useExplore } from 'ipld-explorer-components/providers'
 import SelectedActions from './selected-actions/SelectedActions.js'
-import Checkbox from '../components/checkbox/Checkbox.js'
 
 const FilesPage = ({
   doFetchPinningServices, doFilesFetch, doPinsFetch, doFilesSizeGet, doFilesDownloadLink, doFilesDownloadCarLink, doFilesWrite, doAddCarFile, doFilesBulkCidImport, doFilesAddPath, doUpdateHash,
@@ -44,12 +44,20 @@ const FilesPage = ({
     file: null
   })
   const [viewMode, setViewMode] = useState(() => readSetting('files.viewMode') || 'list')
+  const [showSearch, setShowSearch] = useState(() => readSetting('files.showSearch') || false)
+  const filterRef = useRef('')
   const [selected, setSelected] = useState([])
 
   const toggleViewMode = () => {
     const newMode = viewMode === 'list' ? 'grid' : 'list'
     setViewMode(newMode)
   }
+
+  // Toggle search filter visibility. When hiding, clear the filter text.
+  const toggleSearch = useCallback(() => setShowSearch(prev => {
+    if (prev) filterRef.current = ''
+    return !prev
+  }), [])
 
   useEffect(() => {
     doFetchPinningServices()
@@ -74,16 +82,35 @@ const FilesPage = ({
         e.preventDefault()
         showModal(SHORTCUTS)
       }
+
+      if (e.key === '/') {
+        e.preventDefault()
+        if (showSearch) {
+          // Search is visible but input lost focus, re-focus it.
+          document.getElementById('search-filter-input')?.focus()
+        } else {
+          // Open search and focus the input after React renders it.
+          toggleSearch()
+          requestAnimationFrame(() => {
+            document.getElementById('search-filter-input')?.focus()
+          })
+        }
+      }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [toggleSearch, showSearch])
 
   // Persist view mode changes to localStorage
   useEffect(() => {
     writeSetting('files.viewMode', viewMode)
   }, [viewMode])
+
+  // Persist search visibility to localStorage
+  useEffect(() => {
+    writeSetting('files.showSearch', showSearch)
+  }, [showSearch])
 
   /* TODO: uncomment below if we ever want automatic remote pin check
   *  (it was disabled for now due to https://github.com/ipfs/ipfs-desktop/issues/1954)
@@ -134,7 +161,7 @@ const FilesPage = ({
   const onInspect = (cid) => doUpdateHash(`/explore/${cid}`)
   const onCheckRetrieval = (cid) => {
     doFilesCidProvide(cid) // Trigger background provide
-    doUpdateHash(`/diagnostics/retrieval-check/${cid}`)
+    doUpdateHash(`/diagnostics/retrieval/${cid}`)
   }
   const showModal = (modal, files = null) => setModals({ show: modal, files })
   const hideModal = () => setModals({})
@@ -263,8 +290,8 @@ const FilesPage = ({
 
     return <>
       {viewMode === 'list'
-        ? <FilesList {...commonProps} />
-        : <FilesGrid {...commonProps} />}
+        ? <FilesList {...commonProps} showSearch={showSearch} filterRef={filterRef} />
+        : <FilesGrid {...commonProps} showSearch={showSearch} filterRef={filterRef} />}
 
       {selectedFiles.length !== 0 && <SelectedActions
         className={'fixed bottom-0 right-0'}
@@ -364,30 +391,18 @@ const FilesPage = ({
           >
             {viewMode === 'list' ? <ViewList width="24" height="24" /> : <ViewModule width="24" height="24" />}
           </button>
+          <button
+            className="pointer selected-item ml2"
+            onClick={toggleSearch}
+            title={showSearch ? t('hideSearch') : t('showSearch')}
+            aria-label={showSearch ? t('hideSearch') : t('showSearch')}
+            aria-pressed={showSearch}
+            style={{ height: '24px' }}
+          >
+            <GlyphSearch width="24" height="24" fill="currentColor" aria-hidden="true" />
+          </button>
         </div>
       </Header>
-
-      {(files && files.type !== 'file') && <div className="flex items-center justify-between">
-        <div>
-          {viewMode === 'grid' && files?.content?.length > 0
-            ? (
-                <Checkbox
-                  className='pv3 pl3 pr1 bg-white flex-none'
-                  onChange={(checked) => {
-                    if (checked) {
-                      setSelected(files.content.map(f => f.name))
-                    } else {
-                      setSelected([])
-                    }
-                  }}
-                  checked={files?.content?.length > 0 && selected.length === files.content.length}
-                  label={<span className='fw5 f6'>{t('selectAllEntries')}</span>}
-                />
-              )
-            : null
-          }
-        </div>
-      </div>}
 
       <MainView t={t} files={files} remotePins={remotePins} pendingPins={pendingPins} failedPins={failedPins} doExploreUserProvidedPath={doExploreUserProvidedPath}/>
 
