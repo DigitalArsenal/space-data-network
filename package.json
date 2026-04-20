@@ -18,6 +18,7 @@
     "stress:js": "cd sdn-js && npx vitest run --config vitest.stress.config.ts",
     "stress:quick": "STRESS_TARGET_SIZE=1073741824 ./scripts/go-with-wasmedge.sh test -v -tags=stress -timeout=1h ./internal/stress/...",
     "server": "./scripts/go-with-wasmedge.sh run ./cmd/spacedatanetwork",
+    "admin:dev": "./scripts/admin-dev.sh",
     "server:edge": "./scripts/go-with-wasmedge.sh run ./cmd/spacedatanetwork-edge",
     "server:build": "./scripts/go-with-wasmedge.sh build -o bin/spacedatanetwork ./cmd/spacedatanetwork && ./scripts/go-with-wasmedge.sh build -tags edge -o bin/spacedatanetwork-edge ./cmd/spacedatanetwork-edge",
     "desktop": "test -d desktop/node_modules || (echo 'Desktop dependencies not installed. Run: npm run install:desktop' && exit 1) && npm run webui:build && npm --prefix desktop start",
