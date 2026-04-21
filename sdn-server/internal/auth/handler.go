@@ -32,19 +32,19 @@ const (
 
 // Handler serves HTTP authentication endpoints using Ed25519 challenge-response.
 type Handler struct {
-	userStore    *UserStore
-	sessions     *SessionStore
-	challenges   map[string]pendingChallenge
-	mu           sync.Mutex
-	challengeTTL time.Duration
-	sessionTTL   time.Duration
-	clockSkew    time.Duration
-	walletUIPath string // filesystem path to hd-wallet-ui dist, or empty for CDN
-	configPath   string // filesystem path to config.yaml for setup instructions
+	userStore        *UserStore
+	sessions         *SessionStore
+	challenges       map[string]pendingChallenge
+	mu               sync.Mutex
+	challengeTTL     time.Duration
+	sessionTTL       time.Duration
+	clockSkew        time.Duration
+	walletUIPath     string // filesystem path to hd-wallet-ui package root or dist, or empty for CDN
+	configPath       string // filesystem path to config.yaml for setup instructions
 	nodeAttestations map[string]epm.IdentityAttestation
-	attestMu    sync.RWMutex
-	rateMu       sync.Mutex
-	rates        map[string]rateEntry
+	attestMu         sync.RWMutex
+	rateMu           sync.Mutex
+	rates            map[string]rateEntry
 }
 
 type pendingChallenge struct {
@@ -102,16 +102,16 @@ type errorResponse struct {
 // NewHandler creates a new auth handler.
 func NewHandler(userStore *UserStore, sessions *SessionStore, sessionTTL time.Duration, walletUIPath, configPath string) *Handler {
 	return &Handler{
-		userStore:    userStore,
-		sessions:     sessions,
-		challenges:   make(map[string]pendingChallenge),
-		challengeTTL: 60 * time.Second,
-		sessionTTL:   sessionTTL,
-		clockSkew:    2 * time.Minute,
-		walletUIPath: walletUIPath,
-		configPath:   configPath,
+		userStore:        userStore,
+		sessions:         sessions,
+		challenges:       make(map[string]pendingChallenge),
+		challengeTTL:     60 * time.Second,
+		sessionTTL:       sessionTTL,
+		clockSkew:        2 * time.Minute,
+		walletUIPath:     walletUIPath,
+		configPath:       configPath,
 		nodeAttestations: make(map[string]epm.IdentityAttestation),
-		rates:        make(map[string]rateEntry),
+		rates:            make(map[string]rateEntry),
 	}
 }
 

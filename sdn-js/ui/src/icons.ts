@@ -6,7 +6,6 @@ import strokePeersSmallSource from '../../../webui/src/icons/StrokePeersSmall.ts
 import strokePinSource from '../../../webui/src/icons/StrokePin.tsx?raw';
 import strokeSearchSource from '../../../webui/src/icons/StrokeSearch.tsx?raw';
 import strokeServerSource from '../../../webui/src/icons/StrokeServer.tsx?raw';
-import strokeSmallArrowSource from '../../../webui/src/icons/StrokeSmallArrow.tsx?raw';
 import strokeUserSource from '../../../webui/src/icons/StrokeUser.tsx?raw';
 import strokeWalletSource from '../../../webui/src/icons/StrokeWallet.tsx?raw';
 
@@ -39,7 +38,14 @@ export const connectIconSvg = iconFromWebuiComponent(strokeServerSource);
 export const ipfsDashboardIconSvg = iconFromWebuiComponent(strokeCubeSource);
 export const refreshIconSvg = iconFromWebuiComponent(strokeSearchSource);
 export const searchIconSvg = iconFromWebuiComponent(strokeSearchSource);
-export const featureCarouselArrowSvg = iconFromWebuiComponent(strokeSmallArrowSource);
+export const featureCarouselArrowSvg = `
+  <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+    <path
+      d="M61 18 29 50l32 32 10-10-22-22 22-22z"
+      fill="currentColor"
+    />
+  </svg>
+`;
 
 function iconFromWebuiComponent(source: string): string {
   const svgMatch = source.match(/<svg\b([\s\S]*?)>([\s\S]*?)<\/svg>/);

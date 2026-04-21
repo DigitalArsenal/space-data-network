@@ -453,25 +453,30 @@ pre {
 
 .sdn-feature-carousel__viewport {
   position: relative;
-  min-height: 10.5rem;
-  padding: 0 3.25rem;
+  width: min(100%, 48rem);
+  margin: 0 auto;
+  padding: 0 4.5rem;
+  min-height: 21rem;
+  box-sizing: border-box;
 }
 
 .sdn-feature-carousel__slides {
+  display: grid;
+  align-items: center;
   position: relative;
-  min-height: 10.5rem;
+  min-height: 21rem;
 }
 
 .sdn-feature-carousel__arrow {
   position: absolute;
   top: 50%;
   z-index: 1;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 3.75rem;
+  height: 3.75rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(11, 58, 83, 0.16);
+  border: 2px solid rgba(11, 58, 83, 0.2);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.94);
   color: var(--sdn-navy);
@@ -485,8 +490,8 @@ pre {
 }
 
 .sdn-feature-carousel__arrow svg {
-  width: 1rem;
-  height: 1rem;
+  width: 1.5rem;
+  height: 1.5rem;
   fill: currentColor;
 }
 
@@ -525,10 +530,12 @@ pre {
 .sdn-feature-slide {
   display: none;
   grid-template-columns: minmax(0, 1fr);
-  gap: 0.85rem;
-  align-items: start;
-  min-height: 10.5rem;
-  padding: 0.2rem 0;
+  gap: 1.1rem;
+  align-items: center;
+  align-content: center;
+  width: 100%;
+  min-height: 21rem;
+  padding: 0.75rem 0;
 }
 
 .sdn-feature-slide--active {

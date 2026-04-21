@@ -51,7 +51,38 @@ func TestRequireAuth_RedirectsBrowserForbiddenToWalletLogin(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
 	}
-	if location := rec.Header().Get("Location"); location != "/login?unauthorized=1" {
-		t.Fatalf("Location = %q, want %q", location, "/login?unauthorized=1")
+	if location := rec.Header().Get("Location"); location != "/login?next=%2Fadmin%2F&unauthorized=1" {
+		t.Fatalf("Location = %q, want %q", location, "/login?next=%2Fadmin%2F&unauthorized=1")
+	}
+}
+
+func TestRequireAuth_RedirectsBrowserUnauthenticatedWebUIToWalletLogin(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer sdb.Close()
+
+	sessions, err := NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+
+	h := NewHandler(nil, sessions, time.Hour, "", "")
+	req := httptest.NewRequest(http.MethodGet, "/webui/", nil)
+	rec := httptest.NewRecorder()
+
+	h.RequireAuth(peers.Standard, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
+	}
+	if location := rec.Header().Get("Location"); location != "/login?next=%2Fwebui%2F" {
+		t.Fatalf("Location = %q, want %q", location, "/login?next=%2Fwebui%2F")
 	}
 }

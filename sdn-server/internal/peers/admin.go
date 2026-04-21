@@ -36,7 +36,7 @@ func NewAdminUI(registry *Registry, gater *TrustedConnectionGater) (*AdminUI, er
 	return ui, nil
 }
 
-// SetWalletAssets sets the wallet-ui JS and CSS file names for the admin template.
+// SetWalletAssets sets the wallet-ui JS and CSS asset paths for the admin template.
 func (ui *AdminUI) SetWalletAssets(jsFile, cssFile string) {
 	ui.walletJSFile = jsFile
 	ui.walletCSSFile = cssFile
@@ -329,7 +329,7 @@ const adminTemplate = `<!DOCTYPE html>
             border-bottom: 1px solid var(--border-color);
         }
     </style>
-    {{if .WalletCSSFile}}<link rel="stylesheet" crossorigin href="/wallet-ui/assets/{{.WalletCSSFile}}">{{end}}
+    {{if .WalletCSSFile}}<link rel="stylesheet" crossorigin href="/wallet-ui/{{.WalletCSSFile}}">{{end}}
 </head>
 <body>
     <div class="container">
@@ -1231,7 +1231,7 @@ const adminTemplate = `<!DOCTYPE html>
             const script = document.createElement('script');
             script.type = 'module';
             script.crossOrigin = 'anonymous';
-            script.src = '/wallet-ui/assets/' + jsFile;
+            script.src = '/wallet-ui/' + jsFile;
             document.body.appendChild(script);
         });
 

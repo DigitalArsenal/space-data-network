@@ -111,6 +111,32 @@ prepare_full_node_assets() {
     fi
 }
 
+load_tracked_dev_wallet() {
+    local wallet_config="${PROJECT_ROOT}/config/dev-wallet.env"
+    if [[ ! -f "${wallet_config}" ]]; then
+        return
+    fi
+
+    # shellcheck disable=SC1090
+    source "${wallet_config}"
+}
+
+assert_prod_config_excludes_tracked_dev_wallet() {
+    local config_path=$1
+    local config_label=$2
+
+    load_tracked_dev_wallet
+
+    if [[ -z "${SDN_TRACKED_DEV_ADMIN_XPUB:-}" ]]; then
+        return
+    fi
+
+    if grep -Fq "${SDN_TRACKED_DEV_ADMIN_XPUB}" "${config_path}"; then
+        log_error "Refusing to deploy ${config_label}: it contains the tracked local dev wallet xpub from config/dev-wallet.env"
+        exit 1
+    fi
+}
+
 # Deploy Docker container to server
 deploy_docker() {
     local ip=$1
@@ -121,6 +147,7 @@ deploy_docker() {
 
     if [[ "$type" == "full" ]]; then
         prepare_full_node_assets
+        assert_prod_config_excludes_tracked_dev_wallet "${PROJECT_ROOT}/config/full-docker.yaml" "config/full-docker.yaml"
 
         ssh_cmd "$ip" "rm -rf /opt/sdn && mkdir -p /opt/sdn/deployment/docker /opt/sdn/sdn-server /opt/sdn/sdn-js/ui/dist /opt/sdn/webui/build /opt/sdn/config /opt/sdn/scripts"
 
@@ -190,6 +217,7 @@ deploy_binary() {
 
     if [[ "$type" == "full" ]]; then
         prepare_full_node_assets
+        assert_prod_config_excludes_tracked_dev_wallet "${PROJECT_ROOT}/config/full-vm.yaml" "config/full-vm.yaml"
         log_info "Deploying full node bundle to $ip ($name)..."
 
         ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/bin /opt/spacedatanetwork/admin-ui /opt/spacedatanetwork/webui /opt/spacedatanetwork/sdn-server /opt/spacedatanetwork/scripts /etc/spacedatanetwork /var/lib/spacedatanetwork/frontend /var/lib/spacedatanetwork/data && id -u sdn >/dev/null 2>&1 || useradd --system --home /var/lib/spacedatanetwork --shell /usr/sbin/nologin sdn"

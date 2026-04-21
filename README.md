@@ -578,6 +578,12 @@ cd sdn-server && go test ./...
 cd sdn-js && npm test
 ```
 
+### Local Admin Dev Wallet
+
+`npm run admin:dev`, [`config/dev.yaml`](./config/dev.yaml), and [`config/dev-docker.yaml`](./config/dev-docker.yaml) all use the tracked local-only wallet in [`config/dev-wallet.env`](./config/dev-wallet.env).
+
+That file contains the mnemonic, xpub, and derivation path for the local dev admin identity. It is meant only for local development, and the production deploy script refuses to deploy if that xpub appears in a production config.
+
 ---
 
 ## Documentation

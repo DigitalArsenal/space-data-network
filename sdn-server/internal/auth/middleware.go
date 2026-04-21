@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -21,7 +22,7 @@ func (h *Handler) RequireAuth(minTrust peers.TrustLevel, next http.HandlerFunc) 
 			if wantsJSON(r) {
 				writeJSON(w, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
 			} else {
-				http.Redirect(w, r, "/login", http.StatusFound)
+				http.Redirect(w, r, loginPagePath(r.URL.RequestURI(), false), http.StatusFound)
 			}
 			return
 		}
@@ -30,7 +31,7 @@ func (h *Handler) RequireAuth(minTrust peers.TrustLevel, next http.HandlerFunc) 
 			if wantsJSON(r) {
 				writeJSON(w, http.StatusForbidden, errorResponse{Code: "forbidden", Message: "insufficient permissions"})
 			} else {
-				http.Redirect(w, r, "/login?unauthorized=1", http.StatusFound)
+				http.Redirect(w, r, loginPagePath(r.URL.RequestURI(), true), http.StatusFound)
 			}
 			return
 		}
@@ -64,4 +65,47 @@ func wantsJSON(r *http.Request) bool {
 	accept := r.Header.Get("Accept")
 	return strings.Contains(accept, "application/json") ||
 		r.Header.Get("Content-Type") == "application/json"
+}
+
+func loginPagePath(next string, unauthorized bool) string {
+	query := url.Values{}
+	if safeNext := sanitizePostLoginPath(next); safeNext != "" {
+		query.Set("next", safeNext)
+	}
+	if unauthorized {
+		query.Set("unauthorized", "1")
+	}
+	if encoded := query.Encode(); encoded != "" {
+		return "/login?" + encoded
+	}
+	return "/login"
+}
+
+func sanitizePostLoginPath(next string) string {
+	next = strings.TrimSpace(next)
+	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		return ""
+	}
+
+	parsed, err := url.Parse(next)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" {
+		return ""
+	}
+
+	switch {
+	case parsed.Path == "/admin" || strings.HasPrefix(parsed.Path, "/admin/"):
+		if parsed.Path == "/admin" {
+			parsed.Path = "/admin/"
+		}
+		return parsed.RequestURI()
+	case parsed.Path == "/webui" || strings.HasPrefix(parsed.Path, "/webui/"):
+		if parsed.Path == "/webui" {
+			parsed.Path = "/webui/"
+		}
+		return parsed.RequestURI()
+	case parsed.Path == "/":
+		return parsed.RequestURI()
+	default:
+		return ""
+	}
 }

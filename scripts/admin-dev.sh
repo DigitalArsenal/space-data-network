@@ -10,8 +10,10 @@ remote_provider_url="${SDN_DEV_PROVIDER_URL:-https://sdn.spaceaware.io/api/modul
 remote_bootstrap_addr="${SDN_DEV_BOOTSTRAP_ADDR:-/ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45}"
 storage_path="${SDN_DEV_STORAGE_PATH:-${repo_root}/data/admin-dev}"
 plugin_root="${SDN_PLUGIN_ROOT:-${storage_path}/license/plugins}"
+webui_path="${SDN_WEBUI_PATH:-}"
 wallet_ui_path="${SDN_WALLET_UI_PATH:-}"
 licensing_wasm_path="${ORBPRO_LICENSING_WASM_PATH:-}"
+dev_wallet_config_path="${SDN_DEV_WALLET_CONFIG:-${repo_root}/config/dev-wallet.env}"
 config_path="${tmp_root}/admin-dev.yaml"
 server_pid=""
 ui_pid=""
@@ -34,9 +36,27 @@ ensure_sdn_js_dependencies() {
 }
 
 if [[ -z "${wallet_ui_path}" ]]; then
-  candidate="${repo_root}/sdn-js/node_modules/hd-wallet-ui/dist"
-  if [[ -d "${candidate}" ]]; then
-    wallet_ui_path="${candidate}"
+  for candidate in \
+    "${repo_root}/../hd-wallet-wasm/wallet-ui" \
+    "${repo_root}/sdn-js/node_modules/hd-wallet-ui" \
+    "${repo_root}/../hd-wallet-wasm/wallet-ui/dist" \
+    "${repo_root}/sdn-js/node_modules/hd-wallet-ui/dist"
+  do
+    if [[ -f "${candidate}/src/app.js" && -f "${candidate}/styles/widget.css" ]]; then
+      wallet_ui_path="${candidate}"
+      break
+    fi
+    if [[ -f "${candidate}/index.html" ]]; then
+      wallet_ui_path="${candidate}"
+      break
+    fi
+  done
+fi
+
+if [[ -z "${webui_path}" ]]; then
+  candidate="${repo_root}/webui/build"
+  if [[ -f "${candidate}/index.html" ]]; then
+    webui_path="${candidate}"
   fi
 fi
 
@@ -45,6 +65,24 @@ if [[ -z "${licensing_wasm_path}" ]]; then
   if [[ -f "${candidate}" ]]; then
     licensing_wasm_path="${candidate}"
   fi
+fi
+
+if [[ -f "${dev_wallet_config_path}" ]]; then
+  # shellcheck disable=SC1090
+  source "${dev_wallet_config_path}"
+fi
+
+dev_admin_name="${SDN_DEV_ADMIN_NAME:-${SDN_TRACKED_DEV_ADMIN_NAME:-}}"
+dev_admin_xpub="${SDN_DEV_ADMIN_XPUB:-${SDN_TRACKED_DEV_ADMIN_XPUB:-}}"
+
+if [[ -z "${dev_admin_name}" || -z "${dev_admin_xpub}" ]]; then
+  echo "admin-dev requires a tracked dev wallet config or SDN_DEV_ADMIN_NAME/SDN_DEV_ADMIN_XPUB overrides" >&2
+  exit 1
+fi
+
+webui_yaml=""
+if [[ -n "${webui_path}" ]]; then
+  webui_yaml="  webui_path: \"${webui_path}\""
 fi
 
 wallet_ui_yaml=""
@@ -93,17 +131,23 @@ admin:
   session_expiry: 24h
   totp_required: false
   tls_enabled: false
+${webui_yaml}
 ${wallet_ui_yaml}
 
 users:
-  - xpub: "xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj"
+  - xpub: "${dev_admin_xpub}"
     trust_level: "admin"
-    name: "Dev Admin"
+    name: "${dev_admin_name}"
 
 setup:
   token_expiry: 10m
   data_path: "${storage_path}"
 EOF
+
+if [[ "${SDN_ADMIN_DEV_NO_RUN:-}" == "1" ]]; then
+  echo "Wrote ${config_path}"
+  exit 0
+fi
 
 cleanup() {
   local exit_code=$?
@@ -119,19 +163,9 @@ cleanup() {
 
 trap cleanup INT TERM EXIT
 
-if [[ -f "${repo_root}/../space-data-network-plugins/packages/licensing/package.json" ]]; then
-  echo "Building licensing runtime..."
-  (cd "${repo_root}" && npm run build:licensing >/dev/null)
-  if [[ -z "${licensing_wasm_path}" ]]; then
-    candidate="${repo_root}/../space-data-network-plugins/packages/licensing/dist/isomorphic/module.wasm"
-    if [[ -f "${candidate}" ]]; then
-      licensing_wasm_path="${candidate}"
-    fi
-  fi
-fi
-
 ensure_sdn_js_dependencies
 
+echo "Using tracked dev wallet config: ${dev_wallet_config_path}"
 echo "Starting local sdn-server on ${server_base_url} ..."
 (
   cd "${repo_root}"

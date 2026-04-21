@@ -1,5 +1,5 @@
 # Docker development configuration
-# Test mnemonic: abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about
+# Local dev admin wallet is tracked in ./dev-wallet.env
 
 mode: full
 
@@ -42,9 +42,9 @@ admin:
   webui_path: /app/webui
   wallet_ui_path: /app/wallet-ui
 
-# Test wallet: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+# Local dev admin wallet: see ./dev-wallet.env
 users:
-  - xpub: "xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj"
+  - xpub: "xpub6DHm9a1bDz4qPHGMQqQ386E76KFhxsx4ZmVjm1K9HfiCVh2jNc77AgFtWtEScGRKNqArC7gEjRW8iPFJSgroCAB8tdZpkoXQj2hkZgRiENw"
     trust_level: "admin"
     name: "Dev Admin"
 

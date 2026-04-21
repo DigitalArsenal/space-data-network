@@ -7,29 +7,41 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
 )
 
-// handleLoginPage serves a branded SDN login page that loads the wallet-ui
-// as a module.  A header bar shows the SDN logo and a "Sign In" button;
-// below it the page displays live node information fetched from /api/node/info.
+// handleLoginPage serves the wallet-gated SDN landing page used by /login,
+// /admin, and /webui. The page presents a centered SDN shell, shows a brief
+// network summary plus live detected-node count, and only opens the wallet UI
+// when the user clicks "Login".
 //
-// Clicking "Sign In" opens the wallet-ui login modal.  After the user
-// authenticates with their HD wallet the injected window.__sdnOnLogin
-// callback performs an Ed25519 challenge-response against /api/auth/*
-// and redirects to /admin on success.
+// After wallet authentication, window.__sdnOnLogin performs the Ed25519
+// challenge-response against /api/auth/* and redirects only when the signed-in
+// user has permission for the requested protected surface.
 //
-// If no local wallet-ui dist is available the handler returns a minimal
-// fallback page.
+// If no local wallet-ui dist is available the handler returns a fallback page.
 func (h *Handler) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Already authenticated → redirect to admin.
-	if session, err := h.sessionFromRequest(r); err == nil && session != nil && !loginPageRequiresWalletAccount(r) {
-		http.Redirect(w, r, "/admin/", http.StatusFound)
-		return
+	if session, err := h.sessionFromRequest(r); err == nil && session != nil {
+		if target := authorizedPostLoginPath(session.TrustLevel, r.URL.Query().Get("next")); target != "" && !loginPageRequiresWalletAccount(r) {
+			http.Redirect(w, r, target, http.StatusFound)
+			return
+		}
+		if session.TrustLevel >= peers.Admin && !loginPageRequiresWalletAccount(r) {
+			http.Redirect(w, r, "/admin/", http.StatusFound)
+			return
+		}
+		if loginPageRequiresWalletAccount(r) {
+			if target := authorizedPostLoginPath(session.TrustLevel, r.URL.Query().Get("next")); target != "" && !strings.HasPrefix(target, "/admin/") {
+				http.Redirect(w, r, target, http.StatusFound)
+				return
+			}
+		}
 	}
 
 	walletUI := strings.TrimSpace(h.walletUIPath)
@@ -53,6 +65,28 @@ func loginPageRequiresWalletAccount(r *http.Request) bool {
 	return strings.TrimSpace(r.URL.Query().Get("unauthorized")) == "1"
 }
 
+func authorizedPostLoginPath(trust peers.TrustLevel, next string) string {
+	target := sanitizePostLoginPath(next)
+	if target == "" {
+		return ""
+	}
+
+	switch {
+	case target == "/admin/" || strings.HasPrefix(target, "/admin/"):
+		if trust >= peers.Admin {
+			return target
+		}
+	case target == "/webui/" || strings.HasPrefix(target, "/webui/"):
+		if trust >= peers.Standard {
+			return target
+		}
+	case target == "/":
+		return target
+	}
+
+	return ""
+}
+
 // ---------------------------------------------------------------------------
 // Login page builder
 // ---------------------------------------------------------------------------
@@ -68,8 +102,20 @@ var (
 	reCSSHref   = regexp.MustCompile(`href="\.\/assets\/(main-[^"]+\.css)"`)
 )
 
-// DiscoverWalletAssets scans the wallet-ui dist for asset filenames and caches them.
-// Call this at startup to make WalletAssets() available immediately.
+const loginPageSummaryHTML = `A decentralized peer-to-peer network for standardized space data exchange, built on <a class="sdn-summary-link" href="https://ipfs.tech/" target="_blank" rel="noreferrer">IPFS</a> and <a class="sdn-summary-link" href="https://libp2p.io/" target="_blank" rel="noreferrer">libp2p</a> for real-time collaboration without a central server.`
+
+// WalletUIStaticRoot resolves the filesystem root that should be mounted at
+// /wallet-ui/. When a config points at wallet-ui/dist, this prefers the package
+// root so the daemon can serve both packaged assets and any bundled dist files.
+func WalletUIStaticRoot(walletUIPath string) string {
+	if root := resolveWalletUIPackageRoot(walletUIPath); root != "" {
+		return root
+	}
+	return strings.TrimSpace(walletUIPath)
+}
+
+// DiscoverWalletAssets discovers any legacy wallet-ui dist assets and caches the
+// rendered login page when a local bundled wallet-ui build is available.
 func DiscoverWalletAssets(walletUIPath string) {
 	if walletUIPath == "" {
 		return
@@ -77,50 +123,183 @@ func DiscoverWalletAssets(walletUIPath string) {
 	cachedLoginPage(walletUIPath)
 }
 
-// WalletAssets returns the discovered wallet-ui JS and CSS filenames.
+// WalletAssets returns relative legacy wallet-ui asset paths for admin fallbacks.
 func WalletAssets() (jsFile, cssFile string) {
 	return walletJSFile, walletCSSFile
 }
 
-// cachedLoginPage reads the wallet-ui dist/index.html once to discover asset
-// filenames, then builds and caches a custom branded login page.
+// cachedLoginPage discovers a local wallet-ui package once, caches the login
+// page, and records any dist asset paths needed by legacy admin fallbacks.
 func cachedLoginPage(walletUIPath string) string {
 	loginPageOnce.Do(func() {
-		indexPath := filepath.Join(walletUIPath, "index.html")
-		raw, err := os.ReadFile(indexPath)
-		if err != nil {
-			return
-		}
-		src := string(raw)
-
-		// Extract hashed asset filenames from the dist HTML.
-		jsMatch := reScriptSrc.FindStringSubmatch(src)
-		cssMatch := reCSSHref.FindStringSubmatch(src)
-
-		jsFile := ""
-		cssFile := ""
-		if len(jsMatch) > 1 {
-			jsFile = jsMatch[1]
-		}
-		if len(cssMatch) > 1 {
-			cssFile = cssMatch[1]
-		}
-		if jsFile == "" {
+		staticRoot := WalletUIStaticRoot(walletUIPath)
+		if staticRoot == "" {
 			return
 		}
 
-		walletJSFile = jsFile
-		walletCSSFile = cssFile
-		loginPageCache = buildLoginPage(jsFile, cssFile)
+		if jsPath, cssPath := discoverLegacyWalletAssets(staticRoot, walletUIPath); jsPath != "" {
+			walletJSFile = jsPath
+			walletCSSFile = cssPath
+		}
+
+		if jsPath, cssPath := walletJSFile, walletCSSFile; jsPath != "" && cssPath != "" {
+			loginPageCache = buildLoginPage("/wallet-ui/"+jsPath, "/wallet-ui/"+cssPath)
+			return
+		}
 	})
 	return loginPageCache
 }
 
-// buildLoginPage returns the full HTML for the SDN login page.
-func buildLoginPage(jsFile, cssFile string) string {
-	cssLink := ""
-	if cssFile != "" {
-		cssLink = `<link rel="stylesheet" crossorigin href="/wallet-ui/assets/` + cssFile + `">`
+func resolveWalletUIPackageRoot(walletUIPath string) string {
+	trimmed := strings.TrimSpace(walletUIPath)
+	if trimmed == "" {
+		return ""
+	}
+
+	for _, candidate := range uniqueNonEmptyPaths(trimmed, filepath.Dir(trimmed)) {
+		if fileExists(filepath.Join(candidate, "src", "app.js")) && fileExists(filepath.Join(candidate, "styles", "widget.css")) {
+			return candidate
+		}
+	}
+
+	return ""
+}
+
+func resolveWalletUIDistRoot(walletUIPath string) string {
+	trimmed := strings.TrimSpace(walletUIPath)
+	if trimmed == "" {
+		return ""
+	}
+
+	candidates := uniqueNonEmptyPaths(
+		trimmed,
+		filepath.Join(trimmed, "dist"),
+		filepath.Join(filepath.Dir(trimmed), "dist"),
+	)
+
+	for _, candidate := range candidates {
+		if fileExists(filepath.Join(candidate, "index.html")) && dirExists(filepath.Join(candidate, "assets")) {
+			return candidate
+		}
+	}
+
+	return ""
+}
+
+func discoverLegacyWalletAssets(staticRoot, walletUIPath string) (jsPath, cssPath string) {
+	distRoot := resolveWalletUIDistRoot(walletUIPath)
+	if distRoot == "" || staticRoot == "" {
+		return "", ""
+	}
+
+	raw, err := os.ReadFile(filepath.Join(distRoot, "index.html"))
+	if err != nil {
+		return "", ""
+	}
+	src := string(raw)
+
+	jsMatch := reScriptSrc.FindStringSubmatch(src)
+	cssMatch := reCSSHref.FindStringSubmatch(src)
+
+	if len(jsMatch) > 1 {
+		jsPath = relativeAssetPath(staticRoot, filepath.Join(distRoot, "assets", jsMatch[1]))
+	}
+	if len(cssMatch) > 1 {
+		cssPath = relativeAssetPath(staticRoot, filepath.Join(distRoot, "assets", cssMatch[1]))
+	}
+
+	return jsPath, cssPath
+}
+
+func relativeAssetPath(staticRoot, assetPath string) string {
+	if staticRoot == "" || assetPath == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(staticRoot, assetPath)
+	if err != nil {
+		return ""
+	}
+	return filepath.ToSlash(rel)
+}
+
+func fileExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func dirExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func uniqueNonEmptyPaths(paths ...string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	result := make([]string, 0, len(paths))
+	for _, path := range paths {
+		trimmed := strings.TrimSpace(path)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+// buildLoginPage returns the full HTML for the SDN login page using bundled
+// wallet-ui dist artifacts that auto-initialize and call window.__sdnWalletReady.
+func buildLoginPage(moduleURL, cssURL string) string {
+	return buildWalletLoginPage(moduleURL, cssURL, true)
+}
+
+func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool) string {
+	walletLoader := `
+  window.__sdnEnsureWalletUI = async function() {
+    if (window.__sdnWalletUI) return window.__sdnWalletUI;
+    if (window.__sdnWalletInitPromise) return window.__sdnWalletInitPromise;
+    window.__sdnWalletInitPromise = (async function() {
+      await window.__sdnEnsureWalletUIStyles();
+      var ready = window.__sdnAwaitWalletReady();
+      await import('` + moduleURL + `');
+      return await ready;
+    })().catch(function(err) {
+      window.__sdnWalletInitPromise = null;
+      throw err;
+    });
+    return window.__sdnWalletInitPromise;
+  };`
+	if !bundledAutoInit {
+		walletLoader = `
+  window.__sdnEnsureWalletUI = async function() {
+    if (window.__sdnWalletUI) return window.__sdnWalletUI;
+    if (window.__sdnWalletInitPromise) return window.__sdnWalletInitPromise;
+    window.__sdnWalletInitPromise = (async function() {
+      await window.__sdnEnsureWalletUIStyles();
+      var walletModule = await import('` + moduleURL + `');
+      if (!walletModule || typeof walletModule.createWalletUI !== 'function') {
+        throw new Error('Wallet UI module is unavailable.');
+      }
+      var ui = await walletModule.createWalletUI(document.body, {
+        onLogin: window.__sdnOnLogin,
+        openAccountAfterLogin: false
+      });
+      window.__sdnWalletReady(ui);
+      return ui;
+    })().catch(function(err) {
+      window.__sdnWalletInitPromise = null;
+      throw err;
+    });
+    return window.__sdnWalletInitPromise;
+  };`
 	}
 
 	return `<!doctype html>
@@ -129,190 +308,467 @@ func buildLoginPage(jsFile, cssFile string) string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Space Data Network — Login</title>
-  ` + cssLink + `
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     :root{
-      --bg:#000;
-      --text-primary:#F5F5F7;
-      --text-secondary:rgba(255,255,255,0.8);
-      --text-muted:rgba(134,134,139,1.0);
-      --ui-bg:rgba(42,42,45,0.72);
-      --ui-border:rgba(134,134,139,0.3);
-      --ui-border-hover:rgba(134,134,139,0.5);
-      --nav-bg:rgba(22,22,23,0.95);
-      --font-sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-      --font-mono:'JetBrains Mono','SF Mono','Fira Code',monospace;
-      --radius:16px;
+      --bg:#04131f;
+      --panel:rgba(11,58,83,0.38);
+      --panel-border:rgba(101,194,203,0.42);
+      --panel-border-strong:rgba(55,128,133,0.55);
+      --text:#f4fbfd;
+      --muted:rgba(221,239,242,0.78);
+      --cyan:#65c2cb;
+      --teal:#378085;
+      --danger:#ff7a9f;
+      --font-sans:'Space Grotesk','Avenir Next','Helvetica Neue',sans-serif;
+      --font-mono:'IBM Plex Mono','SFMono-Regular','Consolas',monospace;
     }
-    *,*::before,*::after{box-sizing:border-box}
-    html,body{height:100%;margin:0;padding:0}
+    html,body{height:100%}
     body{
+      min-height:100vh;
+      overflow-x:hidden;
+      overflow-y:auto;
+      padding:24px;
+      color:var(--text);
       font-family:var(--font-sans);
-      background:var(--bg);color:var(--text-primary);
-      display:flex;flex-direction:column;
+      background:
+        radial-gradient(circle at 50% 16%, rgba(101,194,203,0.24), transparent 24%),
+        radial-gradient(circle at 50% 84%, rgba(55,128,133,0.18), transparent 28%),
+        linear-gradient(180deg, #0a1a28 0%, #0b2233 48%, #04131f 100%);
       -webkit-font-smoothing:antialiased;
       -moz-osx-font-smoothing:grayscale;
     }
-
-    /* ---- Header ---- */
-    .sdn-header{
-      position:sticky;top:0;z-index:900;
-      display:flex;align-items:center;justify-content:space-between;
-      padding:20px 48px;
-      background:linear-gradient(180deg, rgba(22,22,23,0.98) 0%, rgba(22,22,23,0.92) 100%);
-      backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
-      border-bottom:1px solid rgba(255,255,255,0.08);
-      box-shadow:0 1px 12px rgba(0,0,0,0.3);
+    body::before{
+      content:"";
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      opacity:0.18;
+      background-image:
+        linear-gradient(rgba(101,194,203,0.18) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(101,194,203,0.18) 1px, transparent 1px);
+      background-size:42px 42px;
+      mask-image:radial-gradient(circle at center, black 26%, transparent 78%);
+      -webkit-mask-image:radial-gradient(circle at center, black 26%, transparent 78%);
     }
-    .sdn-logo{display:flex;align-items:center;gap:14px;color:var(--text-primary);font-weight:600;font-size:18px;letter-spacing:.06em;white-space:nowrap}
-    .sdn-logo svg{width:36px;height:36px;flex-shrink:0;opacity:0.9}
-    .sdn-header-actions{display:flex;align-items:center;gap:12px}
-    .sdn-sign-in{
-      padding:10px 28px;border:none;border-radius:980px;cursor:pointer;
-      font-family:var(--font-sans);font-size:15px;font-weight:600;
-      background:var(--text-primary);color:var(--bg);
-      transition:all .2s;letter-spacing:.02em;
-      align-self:center;height:auto;line-height:1;
-      flex-shrink:0;
+    body::after{
+      content:"";
+      position:fixed;
+      inset:18px;
+      pointer-events:none;
+      border:1px solid rgba(101,194,203,0.1);
+      border-radius:32px;
+      box-shadow:0 0 0 1px rgba(101,194,203,0.03) inset;
     }
-    .sdn-sign-in:hover{opacity:.85;transform:scale(1.02)}
-    .sdn-sign-in:disabled{opacity:.3;cursor:default;transform:none}
-    .sdn-wallet-button{
-      padding:10px 22px;border-radius:980px;cursor:pointer;
-      font-family:var(--font-sans);font-size:15px;font-weight:600;
-      border:1px solid rgba(255,255,255,0.14);
-      background:rgba(255,255,255,0.06);color:var(--text-primary);
-      transition:all .2s;letter-spacing:.02em;
+    .sdn-stage{
+      min-height:calc(100vh - 48px);
+      width:100%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
     }
-    .sdn-wallet-button:hover{background:rgba(255,255,255,0.12)}
-    .sdn-header-right{display:flex;align-items:center;gap:16px}
-    .sdn-trust-badge{
-      display:none;align-items:center;gap:8px;
-      font-size:13px;color:var(--text-muted);font-family:var(--font-mono);
+    .sdn-shell{
+      position:relative;
+      width:min(440px,100%);
+      padding:56px 36px 32px;
+      border-radius:28px;
+      background:linear-gradient(180deg, rgba(12,33,49,0.96), rgba(7,22,34,0.92));
+      border:1px solid var(--panel-border);
+      box-shadow:
+        0 24px 80px rgba(0,0,0,0.55),
+        inset 0 1px 0 rgba(255,255,255,0.04),
+        0 0 44px rgba(101,194,203,0.1);
+      backdrop-filter:blur(18px);
+      -webkit-backdrop-filter:blur(18px);
+      text-align:center;
+      isolation:isolate;
     }
-    .sdn-trust-badge .trust-level{
-      padding:4px 12px;border-radius:980px;font-size:12px;font-weight:600;
-      letter-spacing:.04em;text-transform:uppercase;
+    .sdn-shell::before{
+      content:"";
+      position:absolute;
+      inset:-1px;
+      border-radius:28px;
+      padding:1px;
+      background:linear-gradient(135deg, rgba(101,194,203,0.75), rgba(55,128,133,0.42), rgba(101,194,203,0.12));
+      -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+      -webkit-mask-composite:xor;
+      mask-composite:exclude;
+      opacity:0.72;
+      pointer-events:none;
     }
-    .sdn-trust-badge .trust-level.admin{background:rgba(52,211,153,.15);color:#6ee7b7;border:1px solid rgba(52,211,153,.3)}
-    .sdn-trust-badge .trust-level.trusted{background:rgba(96,165,250,.15);color:#93bbfd;border:1px solid rgba(96,165,250,.3)}
-    .sdn-trust-badge .trust-level.standard{background:rgba(251,191,36,.15);color:#fcd34d;border:1px solid rgba(251,191,36,.3)}
-    .sdn-trust-badge .trust-level.limited{background:rgba(248,113,113,.15);color:#fca5a5;border:1px solid rgba(248,113,113,.3)}
-    .sdn-trust-badge .trust-level.untrusted{background:rgba(134,134,139,.15);color:#a1a1a6;border:1px solid rgba(134,134,139,.3)}
-    .sdn-trust-badge .trust-desc{color:var(--text-muted);font-family:var(--font-sans);font-size:12px}
-
-    /* ---- Main ---- */
-    .sdn-main{flex:1;display:flex;flex-direction:column;align-items:center;padding:60px 24px 80px}
-    .sdn-hero{text-align:center;margin-bottom:48px}
-    .sdn-hero h1{font-size:32px;font-weight:300;letter-spacing:.02em;margin-bottom:10px}
-    .sdn-hero p{color:var(--text-muted);font-size:15px;line-height:1.7;max-width:520px;margin:0 auto}
-
-    /* ---- Node info cards ---- */
-    .sdn-cards{
-      display:flex;flex-wrap:wrap;gap:16px;justify-content:center;
-      width:100%;max-width:880px;
-    }
-    .sdn-card{
-      background:var(--ui-bg);border:1px solid var(--ui-border);
-      border-radius:var(--radius);padding:24px;width:100%;max-width:420px;
-      backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-    }
-    .sdn-card h3{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);margin-bottom:14px;font-weight:600}
-    .sdn-card .val{
+    .sdn-title{
       font-family:var(--font-mono);
-      font-size:13px;word-break:break-all;line-height:1.7;color:var(--text-primary);
+      font-size:clamp(1.7rem,4vw,2.4rem);
+      line-height:1.1;
+      letter-spacing:0.24em;
+      text-transform:uppercase;
+      color:var(--text);
+      text-wrap:balance;
+      text-shadow:0 0 24px rgba(101,194,203,0.16);
     }
-    .sdn-card .val.accent{color:rgba(255,255,255,0.95)}
-    .sdn-card .label{font-size:12px;color:var(--text-muted);margin-top:12px;margin-bottom:2px;font-weight:500}
-    .sdn-card .chip{
-      display:inline-block;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:500;
-      background:rgba(255,255,255,0.08);color:var(--text-secondary);margin:2px 4px 2px 0;
-      border:1px solid rgba(255,255,255,0.06);
+    .sdn-summary{
+      margin:18px auto 0;
+      max-width:320px;
+      color:var(--muted);
+      font-size:0.98rem;
+      line-height:1.65;
+    }
+    .sdn-summary-link{
+      color:#9be6ec;
+      text-decoration:none;
+      border-bottom:1px solid rgba(155,230,236,0.34);
+      transition:border-color .18s ease, color .18s ease;
+    }
+    .sdn-summary-link:hover{
+      color:#dffbfe;
+      border-bottom-color:rgba(223,251,254,0.72);
+    }
+    .sdn-techs{
+      margin-top:20px;
+      padding-top:18px;
+      border-top:1px solid rgba(101,194,203,0.14);
+    }
+    .sdn-tech-label{
+      color:var(--muted);
       font-family:var(--font-mono);
+      font-size:0.72rem;
+      letter-spacing:0.14em;
+      text-transform:uppercase;
     }
-    .sdn-placeholder{text-align:center;padding:48px 0;color:var(--text-muted);font-size:14px}
-
-    /* ---- Setup banner ---- */
-    .sdn-setup{
-      max-width:640px;width:100%;margin:0 auto 32px;
-      background:rgba(234,179,8,0.08);border:1px solid rgba(234,179,8,0.25);
-      border-radius:var(--radius);padding:24px 28px;
+    .sdn-tech-list{
+      list-style:none;
+      margin-top:12px;
+      display:flex;
+      flex-wrap:wrap;
+      justify-content:center;
+      gap:10px;
     }
-    .sdn-setup h2{font-size:15px;font-weight:600;color:#fbbf24;margin-bottom:8px;display:flex;align-items:center;gap:8px}
-    .sdn-setup p{font-size:13px;color:var(--text-secondary);line-height:1.7;margin-bottom:16px}
-    .sdn-setup code{
-      display:block;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);
-      border-radius:8px;padding:12px 16px;margin:12px 0 16px;font-family:var(--font-mono);
-      font-size:12px;line-height:1.8;color:var(--text-secondary);white-space:pre;overflow-x:auto;
+    .sdn-tech-link{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-height:34px;
+      padding:0 14px;
+      border-radius:999px;
+      border:1px solid rgba(101,194,203,0.18);
+      background:rgba(101,194,203,0.08);
+      color:var(--text);
+      font-size:0.82rem;
+      text-decoration:none;
+      transition:transform .18s ease, border-color .18s ease, background .18s ease, color .18s ease;
     }
-    .sdn-setup .step{color:var(--text-muted);font-size:12px;margin-top:16px}
-
-    /* ---- Auth toast ---- */
+    .sdn-tech-link:hover{
+      transform:translateY(-1px);
+      border-color:rgba(101,194,203,0.34);
+      background:rgba(101,194,203,0.14);
+      color:#dffbfe;
+    }
+    .sdn-metric{
+      margin-top:18px;
+      padding-top:18px;
+      border-top:1px solid rgba(101,194,203,0.14);
+      font-family:var(--font-mono);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+      color:var(--muted);
+      font-size:0.78rem;
+      letter-spacing:0.1em;
+      text-transform:uppercase;
+    }
+    .sdn-metric-value{
+      color:var(--text);
+      font-size:0.92rem;
+      letter-spacing:0.14em;
+    }
+    .sdn-login{
+      width:100%;
+      margin-top:26px;
+      border:0;
+      border-radius:999px;
+      padding:15px 22px;
+      cursor:pointer;
+      font-family:var(--font-mono);
+      font-size:0.95rem;
+      font-weight:500;
+      letter-spacing:0.22em;
+      text-transform:uppercase;
+      color:#041018;
+      background:linear-gradient(135deg, var(--cyan), var(--teal));
+      box-shadow:0 14px 30px rgba(109,220,255,0.18);
+      transition:transform .18s ease, box-shadow .18s ease, opacity .18s ease;
+    }
+    .sdn-login:hover:not(:disabled){
+      transform:translateY(-1px);
+      box-shadow:0 18px 34px rgba(109,220,255,0.24);
+    }
+    .sdn-login:disabled{
+      opacity:0.62;
+      cursor:default;
+      transform:none;
+      box-shadow:none;
+    }
+    .sdn-home{
+      margin-top:18px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      color:#9be6ec;
+      text-decoration:none;
+      font-size:0.84rem;
+      letter-spacing:0.08em;
+      text-transform:uppercase;
+      border-bottom:1px solid rgba(155,230,236,0.34);
+      transition:border-color .18s ease, color .18s ease;
+    }
+    .sdn-home:hover{
+      color:#dffbfe;
+      border-bottom-color:rgba(223,251,254,0.72);
+    }
     .sdn-auth-status{
-      display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
-      padding:12px 28px;background:rgba(30,30,35,.95);color:#F5F5F7;
-      border:1px solid var(--ui-border);border-radius:14px;
-      font-size:14px;font-weight:500;z-index:100000;
-      backdrop-filter:blur(12px);text-align:center;max-width:90vw;
-      box-shadow:0 8px 32px rgba(0,0,0,.6);
-      font-family:var(--font-sans);
+      min-height:18px;
+      margin-top:16px;
+      font-family:var(--font-mono);
+      font-size:11px;
+      letter-spacing:0.12em;
+      text-transform:uppercase;
+      color:var(--muted);
+      opacity:0;
+      transform:translateY(6px);
+      transition:opacity .2s ease, transform .2s ease;
     }
-    .sdn-auth-status.success{border-color:rgba(52,211,153,.5);color:#6ee7b7}
-    .sdn-auth-status.error{border-color:rgba(248,113,113,.5);color:#fca5a5}
+    .sdn-auth-status[data-visible="true"]{
+      opacity:1;
+      transform:none;
+    }
+    .sdn-auth-status.success{color:var(--teal)}
+    .sdn-auth-status.error{color:var(--danger)}
+    @media (max-width: 640px){
+      body{padding:16px}
+      .sdn-stage{min-height:calc(100vh - 32px)}
+      .sdn-shell{padding:46px 24px 24px}
+      .sdn-title{letter-spacing:0.16em}
+      .sdn-summary{font-size:0.92rem}
+      .sdn-metric{flex-direction:column;gap:6px}
+    }
   </style>
 
   <script>
-  // --- SDN Auth Hook ---
-  // Runs BEFORE the deferred wallet-ui module script.
   window.__sdnAutoOpen = false;
   window.__sdnOpenAccountAfterLogin = false;
   window.__sdnWalletUI = null;
+  window.__sdnWalletInitPromise = null;
+  window.__sdnWalletWaiters = [];
   window.__sdnWalletQuery = new URLSearchParams(window.location.search);
+  window.__sdnResolveNextPath = function() {
+    var raw = window.__sdnWalletQuery.get('next') || '';
+    if (!raw || raw.charAt(0) !== '/' || raw.indexOf('//') === 0) return '';
+    if (raw === '/admin') return '/admin/';
+    if (raw === '/webui') return '/webui/';
+    if (raw === '/' || raw.indexOf('/admin/') === 0 || raw.indexOf('/webui/') === 0) return raw;
+    return '';
+  };
+  window.__sdnSetStatus = function(message, cls) {
+    var statusEl = document.getElementById('sdn-auth-status');
+    if (!statusEl) return;
+    if (!message) {
+      statusEl.textContent = '';
+      statusEl.className = 'sdn-auth-status';
+      statusEl.setAttribute('data-visible', 'false');
+      return;
+    }
+    statusEl.className = 'sdn-auth-status' + (cls ? ' ' + cls : '');
+    statusEl.textContent = message;
+    statusEl.setAttribute('data-visible', 'true');
+  };
+  window.__sdnShouldDisablePasskeys = function() {
+    var host = window.location.hostname || '';
+    if (!host) return true;
+    if (host === 'localhost' || host.slice(-10) === '.localhost') return false;
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return true;
+    if (host.indexOf(':') !== -1) return true;
+    return false;
+  };
+  window.__sdnNormalizeWalletLoginUI = function() {
+    if (!window.__sdnShouldDisablePasskeys()) return;
+    var storedTab = document.getElementById('stored-tab');
+    var storedMethod = document.getElementById('stored-method');
+    var seedTab = document.querySelector('.method-tab[data-method="seed"]');
+    var seedMethod = document.getElementById('seed-method');
+    ['password', 'seed'].forEach(function(target) {
+      var pinBtn = document.querySelector('.remember-method-btn[data-target="' + target + '"][data-method="pin"]');
+      var passkeyBtn = document.querySelector('.remember-method-btn[data-target="' + target + '"][data-method="passkey"]');
+      var passkeyInfo = document.getElementById('passkey-info-' + target);
+      if (pinBtn && !pinBtn.classList.contains('active')) {
+        pinBtn.click();
+      }
+      if (passkeyBtn) {
+        passkeyBtn.style.display = 'none';
+      }
+      if (passkeyInfo) {
+        passkeyInfo.style.display = 'none';
+      }
+    });
+    var storedPasskeySection = document.getElementById('stored-passkey-section');
+    if (storedPasskeySection) {
+      storedPasskeySection.style.display = 'none';
+    }
+    var unlockPasskeyButton = document.getElementById('unlock-with-passkey');
+    if (unlockPasskeyButton) {
+      unlockPasskeyButton.style.display = 'none';
+    }
+    if (storedTab) {
+      var storedTabWasActive = storedTab.classList.contains('active');
+      storedTab.style.display = 'none';
+      storedTab.classList.remove('active');
+      if (storedTabWasActive && storedMethod) {
+        storedMethod.classList.remove('active');
+        if (seedTab) seedTab.classList.add('active');
+        if (seedMethod) seedMethod.classList.add('active');
+      }
+    }
+  };
   window.__sdnOpenWalletAccount = function() {
     if (window.__sdnWalletUI && typeof window.__sdnWalletUI.openAccount === 'function') {
       window.__sdnWalletUI.openAccount();
     }
   };
+  window.__sdnRefreshNodeCount = async function() {
+    var countEl = document.getElementById('sdn-node-count');
+    if (!countEl) return;
+    try {
+      var response = await fetch('/api/relay/status', {
+        headers: { 'Accept': 'application/json' }
+      });
+      if (!response.ok) return;
+      var payload = await response.json();
+      if (typeof payload.connections === 'number') {
+        countEl.textContent = String(payload.connections);
+      }
+    } catch (err) {}
+  };
+  window.__sdnWalletThemeCSS = [
+    '#hd-wallet-ui-container{',
+    '  --black:#04131f;',
+    '  --white:#f4fbfd;',
+    '  --white-90:rgba(244,251,253,0.9);',
+    '  --white-80:rgba(244,251,253,0.8);',
+    '  --white-70:rgba(221,239,242,0.78);',
+    '  --white-60:rgba(221,239,242,0.62);',
+    '  --white-50:rgba(221,239,242,0.5);',
+    '  --white-40:rgba(221,239,242,0.4);',
+    '  --white-30:rgba(221,239,242,0.3);',
+    '  --white-25:rgba(221,239,242,0.25);',
+    '  --white-20:rgba(221,239,242,0.2);',
+    '  --white-15:rgba(221,239,242,0.15);',
+    '  --white-10:rgba(221,239,242,0.1);',
+    '  --white-08:rgba(221,239,242,0.08);',
+    '  --white-05:rgba(221,239,242,0.05);',
+    '  --white-03:rgba(221,239,242,0.03);',
+    '  --muted:rgba(173,212,221,0.82);',
+    '  --glass-bg:rgba(11,58,83,0.42);',
+    '  --glass-hover:rgba(16,75,106,0.52);',
+    '  --glass-border:rgba(101,194,203,0.22);',
+    '  --glass-blur:blur(20px);',
+    '  --weapon:#65c2cb;',
+    '  --galaxy:#2a6f97;',
+    '  --success:#71d8ce;',
+    '  --monster:#ff7a9f;',
+    '  --font-sans:"Space Grotesk","Avenir Next","Helvetica Neue",sans-serif;',
+    '  --font-mono:"IBM Plex Mono","SFMono-Regular","Consolas",monospace;',
+    '}',
+    '#hd-wallet-ui-container .blurred-background{',
+    '  background:',
+    '    radial-gradient(ellipse at 20% 50%, rgba(101,194,203,0.22) 0%, transparent 50%),',
+    '    radial-gradient(ellipse at 80% 20%, rgba(42,111,151,0.18) 0%, transparent 50%),',
+    '    radial-gradient(ellipse at 50% 80%, rgba(113,216,206,0.12) 0%, transparent 50%),',
+    '    linear-gradient(to bottom, rgba(4,19,31,0.18) 0%, rgba(4,19,31,0.56) 50%, rgba(4,19,31,0.92) 100%);',
+    '}'
+  ].join('\n');
+  window.__sdnEnsureWalletUIStyles = function() {
+    if (!document.getElementById('sdn-wallet-theme')) {
+      var theme = document.createElement('style');
+      theme.id = 'sdn-wallet-theme';
+      theme.textContent = window.__sdnWalletThemeCSS;
+      document.head.appendChild(theme);
+    }
+    if (document.getElementById('sdn-wallet-ui-css')) {
+      return Promise.resolve();
+    }
+    return new Promise(function(resolve, reject) {
+      var link = document.createElement('link');
+      link.id = 'sdn-wallet-ui-css';
+      link.rel = 'stylesheet';
+      link.href = '` + cssURL + `';
+      link.onload = function() { resolve(); };
+      link.onerror = function() { reject(new Error('Failed to load wallet styles.')); };
+      document.head.appendChild(link);
+    });
+  };
+  window.__sdnAwaitWalletReady = function() {
+    if (window.__sdnWalletUI) return Promise.resolve(window.__sdnWalletUI);
+    return new Promise(function(resolve, reject) {
+      var done = false;
+      var timeout = setTimeout(function() {
+        if (done) return;
+        done = true;
+        reject(new Error('Wallet UI did not finish loading.'));
+      }, 20000);
+      window.__sdnWalletWaiters.push(function(ui) {
+        if (done) return;
+        done = true;
+        clearTimeout(timeout);
+        resolve(ui);
+      });
+    });
+  };
+` + walletLoader + `
+  window.__sdnOpenLogin = async function() {
+    var button = document.getElementById('sdn-sign-in');
+    try {
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Loading';
+      }
+      window.__sdnSetStatus('Loading wallet...');
+      var ui = await window.__sdnEnsureWalletUI();
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Login';
+      }
+      window.__sdnNormalizeWalletLoginUI();
+      window.__sdnSetStatus('', '');
+      ui.openLogin();
+    } catch (err) {
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Login';
+      }
+      window.__sdnSetStatus((err && err.message) || 'Failed to load wallet interface.', 'error');
+    }
+  };
+  window.__sdnInitializeLoginButton = function() {
+    var button = document.getElementById('sdn-sign-in');
+    if (!button) return;
+    button.disabled = false;
+    button.textContent = 'Login';
+    button.addEventListener('click', window.__sdnOpenLogin);
+  };
 
   window.__sdnOnLogin = async function(identity) {
-    var statusEl = document.getElementById('sdn-auth-status');
-    var show = function(msg, cls) {
-      if (!statusEl) return;
-      statusEl.className = 'sdn-auth-status ' + (cls || '');
-      statusEl.textContent = msg;
-      statusEl.style.display = 'block';
-    };
-    var hide = function() { if (statusEl) statusEl.style.display = 'none'; };
+    var button = document.getElementById('sdn-sign-in');
+    var nextPath = window.__sdnResolveNextPath();
 
-    var trustDescriptions = {
-      admin: 'full access',
-      trusted: 'elevated privileges',
-      standard: 'basic access',
-      limited: 'read-only',
-      untrusted: 'no access'
-    };
-
-    function showTrustBadge(trustName, desc) {
-      var badge = document.getElementById('sdn-trust-badge');
-      if (!badge) return;
-      badge.innerHTML = '<span class="trust-level ' + trustName + '">' + trustName + '</span>' +
-        '<span class="trust-desc">(' + desc + ')</span>';
-      badge.style.display = 'flex';
-    }
-
-    function updateBannerIdentity(xpub) {
-      var banner = document.getElementById('sdn-setup-banner');
-      if (!banner) return;
-      var codes = banner.querySelectorAll('code');
-      for (var i = 0; i < codes.length; i++) {
-        if (xpub && codes[i].textContent.indexOf('YOUR_XPUB_HERE') !== -1) {
-          codes[i].textContent = codes[i].textContent.replace('YOUR_XPUB_HERE', xpub);
-        }
-      }
+    function resetButton() {
+      if (!button) return;
+      button.disabled = false;
+      button.textContent = 'Login';
     }
 
     try {
@@ -320,7 +776,11 @@ func buildLoginPage(jsFile, cssFile string) string {
         .map(function(b){return b.toString(16).padStart(2,'0')}).join('');
       var xpub = identity.xpub;
 
-      show('Requesting challenge\u2026');
+      window.__sdnSetStatus('Requesting challenge...');
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Authorizing';
+      }
 
       var challengeResp = await fetch('/api/auth/challenge', {
         method: 'POST',
@@ -330,7 +790,7 @@ func buildLoginPage(jsFile, cssFile string) string {
       var challengeData = await challengeResp.json();
       if (!challengeResp.ok) throw new Error(challengeData.message || 'Challenge failed');
 
-      show('Signing challenge\u2026');
+      window.__sdnSetStatus('Signing challenge...');
 
       var b64 = challengeData.challenge;
       while (b64.length % 4 !== 0) b64 += '=';
@@ -342,7 +802,7 @@ func buildLoginPage(jsFile, cssFile string) string {
       var sigHex = Array.from(signature)
         .map(function(b){return b.toString(16).padStart(2,'0')}).join('');
 
-      show('Verifying\u2026');
+      window.__sdnSetStatus('Verifying session...');
 
       var verifyResp = await fetch('/api/auth/verify', {
         method: 'POST',
@@ -356,193 +816,74 @@ func buildLoginPage(jsFile, cssFile string) string {
       var verifyData = await verifyResp.json();
 
       if (!verifyResp.ok) {
-        // Auth failed — user not in config. Show "unregistered" badge, update banner.
-        updateBannerIdentity(xpub);
-        showTrustBadge('untrusted', 'not in server config');
+        resetButton();
+        window.__sdnSetStatus('Wallet unlocked. Access not granted.', 'success');
         window.__sdnOpenWalletAccount();
-        hide();
-        var btn = document.getElementById('sdn-sign-in');
-        if (btn) { btn.textContent = 'Sign In'; btn.disabled = false; }
         return;
       }
 
       var trustName = (verifyData.user.trust_level || 'unknown').toLowerCase();
-      var trustDesc = trustDescriptions[trustName] || '';
 
-      // Show trust badge in header
-      showTrustBadge(trustName, trustDesc);
-      hide();
-
+      if ((nextPath.indexOf('/admin/') === 0 && trustName === 'admin') ||
+          (nextPath.indexOf('/webui/') === 0 && ['standard', 'trusted', 'admin'].indexOf(trustName) !== -1) ||
+          nextPath === '/') {
+        window.__sdnSetStatus('Redirecting...', 'success');
+        setTimeout(function(){ window.location.href = nextPath; }, 600);
+        return;
+      }
       if (trustName === 'admin') {
-        // Admin — redirect to admin panel
-        show('Redirecting to admin panel\u2026', 'success');
+        window.__sdnSetStatus('Redirecting...', 'success');
         setTimeout(function(){ window.location.href = '/admin/'; }, 600);
       } else {
-        // Non-admin — stay on page, show their level
+        resetButton();
+        window.__sdnSetStatus('Wallet unlocked.', 'success');
         window.__sdnOpenWalletAccount();
-        var btn = document.getElementById('sdn-sign-in');
-        if (btn) { btn.textContent = verifyData.user.name || 'Signed In'; btn.disabled = true; }
       }
 
     } catch (err) {
-      // Network or unexpected error — show badge, not a toast
-      showTrustBadge('untrusted', err.message);
-      hide();
-      if (typeof xpub !== 'undefined' && xpub) updateBannerIdentity(xpub);
-      window.__sdnOpenWalletAccount();
+      resetButton();
+      window.__sdnSetStatus((err && err.message) || 'Authentication failed.', 'error');
     }
   };
 
   window.__sdnWalletReady = function(ui) {
     window.__sdnWalletUI = ui;
-    var btn = document.getElementById('sdn-sign-in');
-    var walletBtn = document.getElementById('sdn-open-wallet');
-    if (btn) {
-      btn.disabled = false;
-      btn.addEventListener('click', function(){ ui.openLogin(); });
+    window.__sdnNormalizeWalletLoginUI();
+    if (Array.isArray(window.__sdnWalletWaiters) && window.__sdnWalletWaiters.length > 0) {
+      var waiters = window.__sdnWalletWaiters.slice();
+      window.__sdnWalletWaiters = [];
+      waiters.forEach(function(resolve) { resolve(ui); });
     }
-    if (walletBtn) {
-      walletBtn.addEventListener('click', function(){ ui.openAccount(); });
-    }
-    if (window.__sdnWalletQuery.get('unauthorized') === '1') {
-      window.__sdnOpenWalletAccount();
-    }
+    window.__sdnSetStatus('', '');
   };
   </script>
 </head>
 <body>
-
-  <header class="sdn-header">
-    <div class="sdn-logo">
-      <svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="4">
-        <circle cx="50" cy="50" r="45"/>
-        <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2"/>
-        <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(60 50 50)"/>
-        <ellipse cx="50" cy="50" rx="45" ry="18" stroke-width="2" transform="rotate(120 50 50)"/>
-        <circle cx="50" cy="50" r="8" fill="currentColor" stroke="none"/>
-      </svg>
-      <span>SPACE DATA NETWORK</span>
-    </div>
-    <div class="sdn-header-right">
-      <div id="sdn-trust-badge" class="sdn-trust-badge"></div>
-      <div class="sdn-header-actions">
-        <button id="sdn-open-wallet" class="sdn-wallet-button" type="button">Open Wallet</button>
-        <button id="sdn-sign-in" class="sdn-sign-in" disabled>Sign In</button>
+  <div class="sdn-stage">
+    <main class="sdn-shell" aria-label="Space Data Network login">
+      <h1 class="sdn-title">SPACE DATA NETWORK</h1>
+      <p class="sdn-summary">` + loginPageSummaryHTML + `</p>
+      <div class="sdn-metric">
+        <span>Nodes detected</span>
+        <span id="sdn-node-count" class="sdn-metric-value">--</span>
       </div>
-    </div>
-  </header>
-
-  <main class="sdn-main">
-    <div id="sdn-setup-banner"></div>
-
-    <section class="sdn-hero">
-      <h1>Node Dashboard</h1>
-      <p>Sign in with your HD Wallet to access the admin panel.<br>
-         Authentication uses Ed25519 challenge-response &mdash; your keys never leave your browser.</p>
-    </section>
-
-    <section class="sdn-cards" id="sdn-node-info">
-      <div class="sdn-placeholder">Loading node information&hellip;</div>
-    </section>
-  </main>
-
-  <div id="sdn-auth-status" class="sdn-auth-status"></div>
-
-  <script type="module" crossorigin src="/wallet-ui/assets/` + jsFile + `"></script>
+      <div class="sdn-techs" aria-label="Built on">
+        <div class="sdn-tech-label">Built On</div>
+        <ul class="sdn-tech-list">
+          <li><a class="sdn-tech-link" href="https://digitalarsenal.github.io/flatbuffers/" target="_blank" rel="noreferrer">FlatBuffers</a></li>
+          <li><a class="sdn-tech-link" href="https://digitalarsenal.github.io/flatsql/" target="_blank" rel="noreferrer">FlatSQL</a></li>
+          <li><a class="sdn-tech-link" href="https://spacedatastandards.org/" target="_blank" rel="noreferrer">Space Data Standards</a></li>
+        </ul>
+      </div>
+      <button id="sdn-sign-in" class="sdn-login" type="button" disabled>Login</button>
+      <a class="sdn-home" href="https://spacedatanet.org/" target="_blank" rel="noreferrer">Homepage</a>
+      <div id="sdn-auth-status" class="sdn-auth-status" data-visible="false" aria-live="polite"></div>
+    </main>
+  </div>
 
   <script>
-  (function(){
-    // Check if admin is configured — show setup banner if not
-    fetch('/api/auth/status').then(function(r){return r.json()}).then(function(s){
-      if (s.admin_configured) return;
-      var banner = document.getElementById('sdn-setup-banner');
-      if (!banner) return;
-      var cfgPath = s.config_path || 'config.yaml';
-      banner.innerHTML =
-        '<div class="sdn-setup">' +
-          '<h2>\u26a0 Admin Setup Required</h2>' +
-          '<p>No administrator account is configured. Add your SDN <strong>extended public key (xpub)</strong> to:</p>' +
-          '<code>' + esc(cfgPath) + '</code>' +
-          '<p style="margin-top:12px">Add the following block:</p>' +
-          '<code>users:\n  - xpub: "YOUR_XPUB_HERE"\n    trust_level: "admin"\n    name: "Operator"</code>' +
-          '<p>Click <strong>Sign In</strong> to open your wallet \u2014 your xpub will be auto-filled above.</p>' +
-          '<p class="step">After editing, restart the server:</p>' +
-          '<code>sudo systemctl restart spacedatanetwork</code>' +
-        '</div>';
-    }).catch(function(){});
-
-    fetch('/api/node/info').then(function(r){return r.json()}).then(function(info){
-      var el = document.getElementById('sdn-node-info');
-      if (!el) return;
-
-      var addrs = (info.listen_addresses||[]).map(function(a){
-        return '<span class="chip">' + esc(a) + '</span>';
-      }).join(' ');
-
-      var cards = '';
-
-      // Identity card
-      cards += '<div class="sdn-card">';
-      cards += '<h3>Node Identity</h3>';
-      cards += '<div class="val accent">' + esc(info.peer_id) + '</div>';
-      cards += '<div class="label">Mode</div><div class="val">' + esc(info.mode) + '</div>';
-      cards += '<div class="label">Version</div><div class="val">' + esc(info.version) + '</div>';
-      if (addrs) { cards += '<div class="label">Listen Addresses</div><div style="margin-top:4px">' + addrs + '</div>'; }
-      cards += '</div>';
-
-      // Crypto card
-      if (info.signing_pubkey_hex || info.encryption_pubkey_hex) {
-        cards += '<div class="sdn-card">';
-        cards += '<h3>Cryptographic Keys</h3>';
-        if (info.signing_pubkey_hex) {
-          cards += '<div class="label">Signing (Ed25519)</div>';
-          cards += '<div class="val">' + esc(info.signing_pubkey_hex) + '</div>';
-          if (info.signing_key_path) cards += '<div class="val" style="color:var(--text-muted);font-size:12px">' + esc(info.signing_key_path) + '</div>';
-        }
-        if (info.encryption_pubkey_hex) {
-          cards += '<div class="label" style="margin-top:12px">Encryption (X25519)</div>';
-          cards += '<div class="val">' + esc(info.encryption_pubkey_hex) + '</div>';
-          if (info.encryption_key_path) cards += '<div class="val" style="color:var(--text-muted);font-size:12px">' + esc(info.encryption_key_path) + '</div>';
-        }
-        cards += '</div>';
-      }
-
-      // Blockchain addresses card
-      var a = info.addresses;
-      if (a && (a.bitcoin || a.ethereum || a.solana)) {
-        cards += '<div class="sdn-card">';
-        cards += '<h3>Blockchain Addresses</h3>';
-        if (a.bitcoin) {
-          cards += '<div class="label">Bitcoin (P2WPKH)</div>';
-          cards += '<div class="val accent">' + esc(a.bitcoin.address) + '</div>';
-          cards += '<div class="val" style="color:var(--text-muted);font-size:12px">' + esc(a.bitcoin.path) + '</div>';
-        }
-        if (a.ethereum) {
-          cards += '<div class="label" style="margin-top:12px">Ethereum</div>';
-          cards += '<div class="val accent">' + esc(a.ethereum.address) + '</div>';
-          cards += '<div class="val" style="color:var(--text-muted);font-size:12px">' + esc(a.ethereum.path) + '</div>';
-        }
-        if (a.solana) {
-          cards += '<div class="label" style="margin-top:12px">Solana</div>';
-          cards += '<div class="val accent">' + esc(a.solana.address) + '</div>';
-          cards += '<div class="val" style="color:var(--text-muted);font-size:12px">' + esc(a.solana.path) + '</div>';
-        }
-        cards += '</div>';
-      }
-
-      el.innerHTML = cards;
-    }).catch(function(){
-      var el = document.getElementById('sdn-node-info');
-      if (el) el.innerHTML = '<div class="sdn-placeholder">Unable to load node information.</div>';
-    });
-
-    function esc(s) {
-      if (!s) return '';
-      var d = document.createElement('div');
-      d.textContent = s;
-      return d.innerHTML;
-    }
-  })();
+    window.__sdnInitializeLoginButton();
+    window.__sdnRefreshNodeCount();
   </script>
 
 </body>
@@ -565,184 +906,5 @@ const (
 )
 
 func buildFallbackLoginPage() string {
-	return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Space Data Network — Login</title>
-  <link rel="stylesheet" href="` + fallbackWalletUICSSURL + `">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0d1117; color: #c9d1d9;
-      min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem;
-    }
-    .container {
-      max-width: 520px; width: 100%; padding: 2rem; text-align: center;
-      border: 1px solid rgba(255,255,255,0.1); border-radius: 1rem;
-      background: rgba(255,255,255,0.04); box-shadow: 0 1rem 2rem rgba(0,0,0,0.24);
-    }
-    h1 { font-size: 1.5rem; font-weight: 300; color: #e6edf6; margin-bottom: 1rem; }
-    p { color: #8b949e; margin-bottom: 1.5rem; line-height: 1.6; }
-    button {
-      border: 0; border-radius: 999px; padding: 0.9rem 1.4rem; cursor: pointer;
-      font: inherit; font-weight: 600; color: #0d1117; background: #f5f5f7;
-    }
-    button.secondary {
-      color: #e6edf6;
-      background: rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.12);
-    }
-    button:disabled { opacity: 0.45; cursor: default; }
-    .actions { display: flex; align-items: center; justify-content: center; gap: 0.75rem; }
-    .status {
-      min-height: 1.5rem; margin-top: 1rem; color: #8b949e;
-    }
-    .status.success { color: #6ee7b7; }
-    .status.error { color: #fca5a5; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>SPACE DATA NETWORK</h1>
-    <p>
-      Sign in with your HD Wallet to access the SDN admin interface.
-      This fallback page loads <code>hd-wallet-ui</code> directly from the published package.
-    </p>
-    <div class="actions">
-      <button id="sdn-open-wallet" type="button" class="secondary">Open Wallet</button>
-      <button id="sdn-sign-in" type="button" disabled>Sign In</button>
-    </div>
-    <div id="sdn-auth-status" class="status">Loading wallet interface…</div>
-  </div>
-  <script>
-    window.__sdnWalletUI = null;
-    window.__sdnWalletQuery = new URLSearchParams(window.location.search);
-    window.__sdnOpenWalletAccount = function() {
-      if (window.__sdnWalletUI && typeof window.__sdnWalletUI.openAccount === 'function') {
-        window.__sdnWalletUI.openAccount();
-      }
-    };
-
-    window.__sdnOnLogin = async function(identity) {
-      var button = document.getElementById('sdn-sign-in');
-      var status = document.getElementById('sdn-auth-status');
-      var setStatus = function(message, cls) {
-        if (!status) return;
-        status.className = 'status' + (cls ? ' ' + cls : '');
-        status.textContent = message;
-      };
-
-      try {
-        setStatus('Requesting challenge…');
-        var pubKeyHex = Array.from(identity.signingPublicKey)
-          .map(function(byte){ return byte.toString(16).padStart(2, '0'); })
-          .join('');
-        var challengeResp = await fetch('/api/auth/challenge', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            xpub: identity.xpub,
-            client_pubkey_hex: pubKeyHex,
-            ts: Math.floor(Date.now() / 1000)
-          })
-        });
-        var challengeData = await challengeResp.json();
-        if (!challengeResp.ok) throw new Error(challengeData.message || 'Challenge failed');
-
-        setStatus('Signing challenge…');
-        var challenge = challengeData.challenge;
-        while (challenge.length % 4 !== 0) challenge += '=';
-        var binary = atob(challenge);
-        var challengeBytes = new Uint8Array(binary.length);
-        for (var index = 0; index < binary.length; index += 1) challengeBytes[index] = binary.charCodeAt(index);
-        var signature = await identity.sign(challengeBytes);
-        var sigHex = Array.from(signature)
-          .map(function(byte){ return byte.toString(16).padStart(2, '0'); })
-          .join('');
-
-        setStatus('Verifying session…');
-        var verifyResp = await fetch('/api/auth/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            challenge_id: challengeData.challenge_id,
-            xpub: identity.xpub,
-            client_pubkey_hex: pubKeyHex,
-            challenge: challengeData.challenge,
-            signature_hex: sigHex
-          })
-        });
-        var verifyData = await verifyResp.json();
-        if (!verifyResp.ok) {
-          window.__sdnOpenWalletAccount();
-          throw new Error(verifyData.message || 'Authentication failed');
-        }
-
-        var trustLevel = verifyData.user && verifyData.user.trust_level ? String(verifyData.user.trust_level).toLowerCase() : '';
-        if (trustLevel === 'admin') {
-          setStatus('Authenticated. Redirecting…', 'success');
-          if (button) {
-            button.textContent = verifyData.user && verifyData.user.name ? verifyData.user.name : 'Signed In';
-            button.disabled = true;
-          }
-          setTimeout(function(){ window.location.href = '/admin/'; }, 400);
-          return;
-        }
-
-        setStatus('Authenticated with limited access.', 'success');
-        if (button) {
-          button.textContent = verifyData.user && verifyData.user.name ? verifyData.user.name : 'Signed In';
-          button.disabled = true;
-        }
-        window.__sdnOpenWalletAccount();
-      } catch (error) {
-        setStatus((error && error.message) || 'Authentication failed', 'error');
-        if (button) button.disabled = false;
-      }
-    };
-
-    window.__sdnWalletReady = function(ui) {
-      window.__sdnWalletUI = ui;
-      var button = document.getElementById('sdn-sign-in');
-      var walletButton = document.getElementById('sdn-open-wallet');
-      var status = document.getElementById('sdn-auth-status');
-      if (status) status.textContent = 'Ready to authenticate.';
-      if (button) {
-        button.disabled = false;
-        button.addEventListener('click', function() {
-          ui.openLogin();
-        });
-      }
-      if (walletButton) {
-        walletButton.addEventListener('click', function() {
-          ui.openAccount();
-        });
-      }
-      if (window.__sdnWalletQuery.get('unauthorized') === '1') {
-        window.__sdnOpenWalletAccount();
-      }
-    };
-  </script>
-  <script type="module">
-    import { createWalletUI } from '` + fallbackWalletUIModuleURL + `';
-
-    const status = document.getElementById('sdn-auth-status');
-    try {
-      const ui = await createWalletUI(document.body, {
-        onLogin: window.__sdnOnLogin,
-        openAccountAfterLogin: false,
-      });
-      window.__sdnWalletReady(ui);
-    } catch (error) {
-      if (status) {
-        status.className = 'status error';
-        status.textContent = (error && error.message) || 'Failed to load wallet interface.';
-      }
-    }
-  </script>
-</body>
-</html>`
+	return buildWalletLoginPage(fallbackWalletUIModuleURL, fallbackWalletUICSSURL, false)
 }
