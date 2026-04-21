@@ -1,23 +1,21 @@
 #!/usr/bin/env node
 /**
- * check-version-consistency.js
- *
- * Verifies that shared dependency versions are consistent across all
- * package.json and go.mod files in the Space Data Network monorepo.
- *
- * Exit code 0 = all consistent, 1 = mismatch found.
+ * Verifies that shared dependency and suite versions are consistent across the
+ * Space Data Network monorepo.
  */
 
 const fs = require("fs");
 const path = require("path");
 
 const REPO_ROOT = path.resolve(__dirname, "..");
+const SUITE_MANIFEST_PATH = path.join(REPO_ROOT, "suite.versions.json");
 
-// Files to check
-const PACKAGE_JSON_PATHS = [
-  "schemas/sds/package.json",
-  "schemas/sds/lib/js/package.json",
-  "schemas/sds/packages/standards-explorer/package.json",
+const ROOT_PACKAGE_JSON = "package.json";
+const SDN_JS_PACKAGE_JSON = "sdn-js/package.json";
+const WEBUI_PACKAGE_JSON = "webui/package.json";
+const SDN_SERVER_GO_MOD = "sdn-server/go.mod";
+
+const OWNED_PACKAGE_JSON_PATHS = [
   "sdn-js/package.json",
 ];
 
@@ -48,11 +46,10 @@ function skip(msg) {
   console.log(`  SKIP: ${msg}`);
 }
 
-/**
- * Read a package.json and return the dep version for a given package,
- * checking both dependencies and devDependencies.
- * Returns null if file or dep not found.
- */
+function readJSON(relPath) {
+  return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, relPath), "utf8"));
+}
+
 function getPkgDepVersion(relPath, depName) {
   const fullPath = path.join(REPO_ROOT, relPath);
   if (!fs.existsSync(fullPath)) return null;
@@ -65,10 +62,17 @@ function getPkgDepVersion(relPath, depName) {
   }
 }
 
-/**
- * Read a go.mod and extract the version for a given module path.
- * Returns null if not found.
- */
+function getPkgVersion(relPath) {
+  const fullPath = path.join(REPO_ROOT, relPath);
+  if (!fs.existsSync(fullPath)) return null;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(fullPath, "utf8"));
+    return pkg.version || null;
+  } catch {
+    return null;
+  }
+}
+
 function getGoModVersion(relPath, modulePath) {
   const fullPath = path.join(REPO_ROOT, relPath);
   if (!fs.existsSync(fullPath)) return null;
@@ -82,25 +86,80 @@ function getGoModVersion(relPath, modulePath) {
   }
 }
 
-/**
- * Strip semver range prefixes (^, ~, >=, etc.) to get the raw version.
- */
 function stripRange(v) {
   if (!v) return v;
   return v.replace(/^[\^~>=<]+/, "");
 }
 
-// ============================================================================
-// Check: flatbuffers version consistency
-// ============================================================================
+function normalizeGoVersion(v) {
+  return stripRange(v).replace(/\+incompatible$/, "").replace(/^v/, "");
+}
+
+const suiteManifest = readJSON("suite.versions.json");
+
+heading("suite manifest consistency");
+
+const rootPackageVersion = getPkgVersion(ROOT_PACKAGE_JSON);
+if (rootPackageVersion === suiteManifest.suiteVersion) {
+  pass(`root package version matches suite.versions.json: ${rootPackageVersion}`);
+} else {
+  fail(`root package version mismatch: package.json=${rootPackageVersion} suite.versions.json=${suiteManifest.suiteVersion}`);
+}
+
+const webuiVersion = getPkgVersion(WEBUI_PACKAGE_JSON);
+if (webuiVersion === suiteManifest.dependencies.ipfsWebUI) {
+  pass(`webui version matches suite.versions.json: ${webuiVersion}`);
+} else {
+  fail(`webui version mismatch: webui/package.json=${webuiVersion} suite.versions.json=${suiteManifest.dependencies.ipfsWebUI}`);
+}
+
+heading("spacedatastandards.org version consistency");
+
+const expectedSDS = suiteManifest.dependencies.spacedatastandards;
+const jsSDS = stripRange(getPkgDepVersion(SDN_JS_PACKAGE_JSON, "spacedatastandards.org"));
+const goSDS = normalizeGoVersion(getGoModVersion(SDN_SERVER_GO_MOD, "github.com/DigitalArsenal/spacedatastandards.org/lib/go"));
+
+if (jsSDS === expectedSDS) {
+  pass(`sdn-js spacedatastandards.org matches suite manifest: ${jsSDS}`);
+} else {
+  fail(`sdn-js spacedatastandards.org mismatch: sdn-js/package.json=${jsSDS} suite.versions.json=${expectedSDS}`);
+}
+
+if (goSDS === expectedSDS) {
+  pass(`sdn-server Go spacedatastandards.org matches suite manifest: ${goSDS}`);
+} else {
+  fail(`sdn-server Go spacedatastandards.org mismatch: sdn-server/go.mod=${goSDS} suite.versions.json=${expectedSDS}`);
+}
+
+heading("wallet version consistency");
+
+const expectedHDWalletWasm = suiteManifest.dependencies.hdWalletWasm;
+const expectedHDWalletUI = suiteManifest.dependencies.hdWalletUI;
+const jsHDWalletWasm = stripRange(getPkgDepVersion(SDN_JS_PACKAGE_JSON, "hd-wallet-wasm"));
+const jsHDWalletUI = stripRange(getPkgDepVersion(SDN_JS_PACKAGE_JSON, "hd-wallet-ui"));
+
+if (jsHDWalletWasm === expectedHDWalletWasm) {
+  pass(`sdn-js hd-wallet-wasm matches suite manifest: ${jsHDWalletWasm}`);
+} else {
+  fail(`sdn-js hd-wallet-wasm mismatch: sdn-js/package.json=${jsHDWalletWasm} suite.versions.json=${expectedHDWalletWasm}`);
+}
+
+if (jsHDWalletUI === expectedHDWalletUI) {
+  pass(`sdn-js hd-wallet-ui matches suite manifest: ${jsHDWalletUI}`);
+} else {
+  fail(`sdn-js hd-wallet-ui mismatch: sdn-js/package.json=${jsHDWalletUI} suite.versions.json=${expectedHDWalletUI}`);
+}
+
 heading("flatbuffers version consistency");
 
-const fbVersions = {};
+const fbJSVersions = {};
+const fbGoVersions = {};
+const fbSubmodule = {};
 
-for (const p of PACKAGE_JSON_PATHS) {
+for (const p of OWNED_PACKAGE_JSON_PATHS) {
   const v = getPkgDepVersion(p, "flatbuffers");
   if (v !== null) {
-    fbVersions[p] = v;
+    fbJSVersions[p] = v;
     console.log(`  ${p}: flatbuffers = ${v}`);
   }
 }
@@ -108,73 +167,57 @@ for (const p of PACKAGE_JSON_PATHS) {
 for (const p of GO_MOD_PATHS) {
   const v = getGoModVersion(p, "github.com/google/flatbuffers");
   if (v !== null) {
-    fbVersions[p] = v;
+    if (p.startsWith("schemas/sds/")) {
+      fbSubmodule[p] = v;
+    } else {
+      fbGoVersions[p] = v;
+    }
     console.log(`  ${p}: flatbuffers = ${v}`);
   }
 }
 
-// Compare: we strip range prefixes and +incompatible suffixes for comparison
-// Note: schemas/sds is an external submodule with its own version pins.
-// We only enforce consistency among files we control (non-submodule).
-const fbNormalized = {};
-const fbSubmodule = {};
-for (const [file, ver] of Object.entries(fbVersions)) {
-  const norm = stripRange(ver).replace(/\+incompatible$/, "").replace(/^v/, "");
-  if (file.startsWith("schemas/sds/")) {
-    fbSubmodule[file] = norm;
-  } else {
-    fbNormalized[file] = norm;
-  }
-}
-const fbOwnVersions = [...new Set(Object.values(fbNormalized))];
-const fbSubVersions = [...new Set(Object.values(fbSubmodule))];
-
-if (fbOwnVersions.length <= 1 && fbOwnVersions.length > 0) {
-  pass(`flatbuffers version consistent in owned files: ${fbOwnVersions[0]}`);
-} else if (fbOwnVersions.length > 1) {
-  fail(`flatbuffers version mismatch in owned files: ${JSON.stringify(fbNormalized, null, 2)}`);
-} else {
-  skip("flatbuffers not found in owned files");
-}
-
-if (fbSubVersions.length > 0 && fbOwnVersions.length > 0 && fbSubVersions[0] !== fbOwnVersions[0]) {
-  console.log(`  INFO: schemas/sds submodule uses flatbuffers ${fbSubVersions[0]} (external, cannot change)`);
-}
-
-// ============================================================================
-// Check: hd-wallet-wasm version consistency
-// ============================================================================
-heading("hd-wallet-wasm version consistency");
-
-const hdVersions = {};
-for (const p of PACKAGE_JSON_PATHS) {
-  const v = getPkgDepVersion(p, "hd-wallet-wasm");
-  if (v !== null) {
-    hdVersions[p] = v;
-    console.log(`  ${p}: hd-wallet-wasm = ${v}`);
-  }
-}
-
-const hdNormalized = Object.fromEntries(
-  Object.entries(hdVersions).map(([f, v]) => [f, stripRange(v)])
+const fbNormalizedJS = Object.fromEntries(
+  Object.entries(fbJSVersions).map(([file, ver]) => [file, stripRange(ver)])
 );
-const hdUnique = [...new Set(Object.values(hdNormalized))];
+const fbNormalizedGo = Object.fromEntries(
+  Object.entries(fbGoVersions).map(([file, ver]) => [file, normalizeGoVersion(ver)])
+);
+const fbNormalizedSubmodule = Object.fromEntries(
+  Object.entries(fbSubmodule).map(([file, ver]) => [file, normalizeGoVersion(ver)])
+);
 
-if (hdUnique.length <= 1 && Object.keys(hdVersions).length > 0) {
-  pass(`hd-wallet-wasm version is consistent: ${hdUnique[0]}`);
-} else if (hdUnique.length > 1) {
-  fail(`hd-wallet-wasm version mismatch: ${JSON.stringify(hdNormalized, null, 2)}`);
+const fbUniqueJS = [...new Set(Object.values(fbNormalizedJS))];
+const fbUniqueGo = [...new Set(Object.values(fbNormalizedGo))];
+const fbUniqueSubmodule = [...new Set(Object.values(fbNormalizedSubmodule))];
+
+if (fbUniqueJS.length <= 1 && fbUniqueJS.length > 0) {
+  pass(`flatbuffers JS version consistent in owned files: ${fbUniqueJS[0]}`);
+} else if (fbUniqueJS.length > 1) {
+  fail(`flatbuffers JS version mismatch in owned files: ${JSON.stringify(fbNormalizedJS, null, 2)}`);
 } else {
-  skip("hd-wallet-wasm not found in any checked files");
+  skip("flatbuffers not found in owned JS files");
 }
 
-// ============================================================================
-// Check: flatc-wasm version consistency
-// ============================================================================
+if (fbUniqueGo.length <= 1 && fbUniqueGo.length > 0) {
+  pass(`flatbuffers Go version consistent in owned files: ${fbUniqueGo[0]}`);
+} else if (fbUniqueGo.length > 1) {
+  fail(`flatbuffers Go version mismatch in owned files: ${JSON.stringify(fbNormalizedGo, null, 2)}`);
+} else {
+  skip("flatbuffers not found in owned Go files");
+}
+
+if (fbUniqueJS.length > 0 && fbUniqueGo.length > 0 && fbUniqueJS[0] !== fbUniqueGo[0]) {
+  console.log(`  INFO: flatbuffers JS (${fbUniqueJS[0]}) and Go (${fbUniqueGo[0]}) differ across ecosystems`);
+}
+
+if (fbUniqueSubmodule.length > 0) {
+  console.log(`  INFO: schemas/sds submodule uses flatbuffers ${fbUniqueSubmodule[0]} (external, cannot change)`);
+}
+
 heading("flatc-wasm version consistency");
 
 const fcVersions = {};
-for (const p of PACKAGE_JSON_PATHS) {
+for (const p of OWNED_PACKAGE_JSON_PATHS) {
   const v = getPkgDepVersion(p, "flatc-wasm");
   if (v !== null) {
     fcVersions[p] = v;
@@ -192,12 +235,9 @@ if (fcUnique.length <= 1 && Object.keys(fcVersions).length > 0) {
 } else if (fcUnique.length > 1) {
   fail(`flatc-wasm version mismatch: ${JSON.stringify(fcNormalized, null, 2)}`);
 } else {
-  skip("flatc-wasm not found in any checked files");
+  skip("flatc-wasm not found in owned files");
 }
 
-// ============================================================================
-// Summary
-// ============================================================================
 console.log("\n=======================================");
 console.log(`  Checks run: ${checks}`);
 console.log(`  Passed:     ${checks - errors}`);

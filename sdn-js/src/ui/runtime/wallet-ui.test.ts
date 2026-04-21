@@ -1,20 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const { createWalletUI } = vi.hoisted(() => ({
+const { createWalletUI, styleModuleLoaded } = vi.hoisted(() => ({
   createWalletUI: vi.fn(async () => ({
     openLogin: vi.fn(),
     openAccount: vi.fn(),
     destroy: vi.fn(),
   })),
+  styleModuleLoaded: { current: false },
 }));
 
 vi.mock('hd-wallet-ui', () => ({
   createWalletUI,
 }));
 
+vi.mock('hd-wallet-ui/styles', () => {
+  styleModuleLoaded.current = true;
+  return {};
+});
+
 import { mountWalletUI } from './wallet-ui';
 
 describe('mountWalletUI', () => {
+  it('loads the hd-wallet-ui widget styles for hosted modal rendering', () => {
+    expect(styleModuleLoaded.current).toBe(true);
+  });
+
   it('wires the embedded hd-wallet-ui controls into the identity host', async () => {
     const host = new FakeWalletHost();
 

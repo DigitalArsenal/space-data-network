@@ -1,11 +1,9 @@
-import { escapeHtml } from './dom/escape';
-import { bootstrapAdminApp } from './bootstrap';
-import './styles.css';
+import { renderUpstreamWebUiBaseline } from './upstream-webui/index.js';
 
-bootstrapAdminApp().catch((error) => {
-  const root = document.querySelector('#app');
+renderUpstreamWebUiBaseline().catch((error) => {
+  const root = document.querySelector('#root');
   if (root instanceof HTMLElement) {
-    root.innerHTML = `<pre class="sdn-error">${escapeHtml(String(error))}</pre>`;
+    root.textContent = String(error);
   }
-  console.error('[sdn-ui] bootstrap failed', error);
+  console.error('[sdn-dashboard] upstream webui cutover failed', error);
 });

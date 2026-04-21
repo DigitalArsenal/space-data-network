@@ -121,6 +121,61 @@ func (ss *SessionStore) ValidateSession(token string) (*Session, error) {
 	return &s, nil
 }
 
+// RotateSession revokes the current session token and replaces it with a new
+// opaque token carrying the same identity and trust level with a fresh expiry.
+func (ss *SessionStore) RotateSession(token string, ttl time.Duration) (string, *Session, error) {
+	current, err := ss.ValidateSession(token)
+	if err != nil {
+		return "", nil, err
+	}
+
+	newTokenBytes := make([]byte, sessionTokenLength)
+	if _, err := rand.Read(newTokenBytes); err != nil {
+		return "", nil, fmt.Errorf("failed to generate replacement session token: %w", err)
+	}
+	newToken := base64.URLEncoding.EncodeToString(newTokenBytes)
+
+	now := time.Now()
+	refreshed := &Session{
+		Token:      hashToken(newToken),
+		XPub:       current.XPub,
+		TrustLevel: current.TrustLevel,
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(ttl),
+		IPAddress:  current.IPAddress,
+		UserAgent:  current.UserAgent,
+	}
+
+	tx, err := ss.db.Begin()
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to begin session rotation transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(
+		"INSERT INTO sessions (token, xpub, trust_level, created_at, expires_at, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		refreshed.Token,
+		refreshed.XPub,
+		int(refreshed.TrustLevel),
+		refreshed.CreatedAt.Unix(),
+		refreshed.ExpiresAt.Unix(),
+		refreshed.IPAddress,
+		refreshed.UserAgent,
+	); err != nil {
+		return "", nil, fmt.Errorf("failed to insert replacement session: %w", err)
+	}
+
+	if _, err := tx.Exec("UPDATE sessions SET revoked = 1 WHERE token = ?", hashToken(token)); err != nil {
+		return "", nil, fmt.Errorf("failed to revoke prior session: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", nil, fmt.Errorf("failed to commit session rotation: %w", err)
+	}
+
+	return newToken, refreshed, nil
+}
+
 // RevokeSession invalidates a session token.
 func (ss *SessionStore) RevokeSession(token string) error {
 	_, err := ss.db.Exec("UPDATE sessions SET revoked = 1 WHERE token = ?", hashToken(token))

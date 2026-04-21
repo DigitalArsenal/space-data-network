@@ -1,0 +1,18 @@
+{
+  "suiteVersion": "1.0.2",
+  "dependencies": {
+    "spacedatastandards": "1.85.0",
+    "hdWalletWasm": "2.0.2",
+    "hdWalletUI": "2.0.2",
+    "ipfsWebUI": "4.12.0"
+  },
+  "advertisement": {
+    "currentFlag": "spacedatanetwork/1.0.0",
+    "supportedFlags": [
+      "spacedatanetwork/1.0.0"
+    ]
+  },
+  "updates": {
+    "defaultChannel": "stable"
+  }
+}

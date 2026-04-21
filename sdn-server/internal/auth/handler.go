@@ -17,6 +17,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/tlsmgr"
 )
 
 const (
@@ -28,6 +29,7 @@ const (
 	maxVerifyPerMinutePerIP      = 120
 	maxVerifyPerMinutePerXPub    = 60
 	maxXPubLength                = 256
+	sessionRefreshThresholdRatio = 2
 )
 
 // Handler serves HTTP authentication endpoints using Ed25519 challenge-response.
@@ -45,6 +47,8 @@ type Handler struct {
 	attestMu         sync.RWMutex
 	rateMu           sync.Mutex
 	rates            map[string]rateEntry
+	cookieSecureOverride *bool
+	tlsManager            *tlsmgr.Manager
 }
 
 type pendingChallenge struct {
@@ -83,8 +87,13 @@ type verifyRequest struct {
 }
 
 type verifyResponse struct {
-	User      User  `json:"user"`
+	User      authSessionUser `json:"user"`
 	ExpiresAt int64 `json:"expires_at"`
+}
+
+type authSessionUser struct {
+	Name       string           `json:"name,omitempty"`
+	TrustLevel peers.TrustLevel `json:"trust_level"`
 }
 
 type addUserRequest struct {
@@ -136,6 +145,10 @@ func (h *Handler) SetNodeSigningAttestation(attestation *epm.IdentityAttestation
 	h.nodeAttestations[attestation.XPub] = *attestation
 }
 
+func (h *Handler) SetTLSManager(manager *tlsmgr.Manager) {
+	h.tlsManager = manager
+}
+
 // RegisterRoutes registers all auth routes on the provided mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/challenge", h.handleChallenge)
@@ -146,6 +159,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/users", h.handleUsers)
 	mux.HandleFunc("/api/auth/users/", h.handleUserByXPub)
 	mux.HandleFunc("/login", h.handleLoginPage)
+	mux.HandleFunc("/bootstrap.crt", h.handleBootstrapCert)
 }
 
 func (h *Handler) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +176,25 @@ func (h *Handler) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 		"wallet_js_file":       jsFile,
 		"wallet_css_file":      cssFile,
 	})
+}
+
+func (h *Handler) handleBootstrapCert(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.tlsManager == nil {
+		http.NotFound(w, r)
+		return
+	}
+	raw, err := h.tlsManager.BootstrapCertPEM()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Content-Disposition", `attachment; filename="sdn-bootstrap.crt"`)
+	w.Write(raw)
 }
 
 // UserStore returns the underlying user store for external use.
@@ -189,8 +222,8 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	req.XPub = strings.TrimSpace(req.XPub)
 	req.ClientPubKeyHex = strings.TrimPrefix(strings.TrimSpace(req.ClientPubKeyHex), "0x")
 
-	if req.XPub == "" || req.ClientPubKeyHex == "" {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "xpub and client_pubkey_hex are required"})
+	if req.ClientPubKeyHex == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "client_pubkey_hex is required"})
 		return
 	}
 	if len(req.XPub) > maxXPubLength {
@@ -199,8 +232,12 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	clientIP := clientIPForRequest(r)
+	rateKey := "challenge:pubkey:" + strings.ToLower(req.ClientPubKeyHex)
+	if req.XPub != "" {
+		rateKey = "challenge:xpub:" + strings.ToLower(req.XPub)
+	}
 	if !h.allowRateLimited("challenge:ip:"+clientIP, maxChallengePerMinutePerIP, now) ||
-		!h.allowRateLimited("challenge:xpub:"+strings.ToLower(req.XPub), maxChallengePerMinutePerXPub, now) {
+		!h.allowRateLimited(rateKey, maxChallengePerMinutePerXPub, now) {
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{Code: "too_many_requests", Message: "rate limit exceeded"})
 		return
 	}
@@ -223,8 +260,17 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if user exists
-	user, err := h.userStore.GetUser(req.XPub)
+	var user *User
+	if req.XPub != "" {
+		user, err = h.userStore.GetUser(req.XPub)
+	} else {
+		user, err = h.userStore.GetUserBySigningPubKey(req.ClientPubKeyHex)
+		if user == nil {
+			if attestedXPub := h.getNodeAttestedXPubBySigningKey(pubRaw); attestedXPub != "" {
+				user, err = h.userStore.GetUser(attestedXPub)
+			}
+		}
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Code: "server_error", Message: "failed to look up user"})
 		return
@@ -239,32 +285,38 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	shouldStore := false
 	expectedPubKey := []byte(nil)
 	if user != nil {
-		normalized, nerr := normalizeEd25519PubKeyHex(user.SigningPubKeyHex)
-		if nerr != nil || normalized == "" {
-			if attested := h.getNodeAttestedSigningKey(req.XPub); len(attested) > 0 {
-				if !bytes.Equal(attested, pubRaw) {
-					log.Warnf("Auth challenge for xpub %q: client_pubkey_hex does not match node attestation", req.XPub)
+		if req.XPub == "" {
+			req.XPub = user.XPub
+			shouldStore = true
+			expectedPubKey = pubRaw
+		} else {
+			normalized, nerr := normalizeEd25519PubKeyHex(user.SigningPubKeyHex)
+			if nerr != nil || normalized == "" {
+				if attested := h.getNodeAttestedSigningKey(req.XPub); len(attested) > 0 {
+					if !bytes.Equal(attested, pubRaw) {
+						log.Warnf("Auth challenge for xpub %q: client_pubkey_hex does not match node attestation", req.XPub)
+					} else {
+						shouldStore = true
+						expectedPubKey = attested
+						log.Infof("Auth challenge for xpub %q: using attested signing key", req.XPub)
+					}
 				} else {
+					// TOFU: no signing key bound yet — accept the presented key.
+					// The key will be permanently bound on first successful verify.
 					shouldStore = true
-					expectedPubKey = attested
-					log.Infof("Auth challenge for xpub %q: using attested signing key", req.XPub)
+					expectedPubKey = pubRaw
+					log.Infof("Auth challenge for xpub %q: no signing key bound, TOFU mode", req.XPub)
 				}
 			} else {
-				// TOFU: no signing key bound yet — accept the presented key.
-				// The key will be permanently bound on first successful verify.
-				shouldStore = true
-				expectedPubKey = pubRaw
-				log.Infof("Auth challenge for xpub %q: no signing key bound, TOFU mode", req.XPub)
-			}
-		} else {
-			expRaw, derr := hex.DecodeString(normalized)
-			if derr != nil || len(expRaw) != ed25519.PublicKeySize {
-				log.Warnf("Auth challenge for xpub %q: failed to decode signing_pubkey_hex: %v", req.XPub, derr)
-			} else if bytes.Equal(expRaw, pubRaw) {
-				shouldStore = true
-				expectedPubKey = expRaw
-			} else {
-				log.Warnf("Auth challenge for xpub %q: client_pubkey_hex mismatch", req.XPub)
+				expRaw, derr := hex.DecodeString(normalized)
+				if derr != nil || len(expRaw) != ed25519.PublicKeySize {
+					log.Warnf("Auth challenge for xpub %q: failed to decode signing_pubkey_hex: %v", req.XPub, derr)
+				} else if bytes.Equal(expRaw, pubRaw) {
+					shouldStore = true
+					expectedPubKey = expRaw
+				} else {
+					log.Warnf("Auth challenge for xpub %q: client_pubkey_hex mismatch", req.XPub)
+				}
 			}
 		}
 	}
@@ -328,7 +380,7 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	req.SignatureHex = strings.TrimPrefix(strings.TrimSpace(req.SignatureHex), "0x")
 	req.Challenge = strings.TrimSpace(req.Challenge)
 
-	if req.ChallengeID == "" || req.XPub == "" || req.ClientPubKeyHex == "" || req.SignatureHex == "" || req.Challenge == "" {
+	if req.ChallengeID == "" || req.ClientPubKeyHex == "" || req.SignatureHex == "" || req.Challenge == "" {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_request", Message: "all fields are required"})
 		return
 	}
@@ -338,8 +390,12 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	clientIP := clientIPForRequest(r)
+	rateKey := "verify:pubkey:" + strings.ToLower(req.ClientPubKeyHex)
+	if req.XPub != "" {
+		rateKey = "verify:xpub:" + strings.ToLower(req.XPub)
+	}
 	if !h.allowRateLimited("verify:ip:"+clientIP, maxVerifyPerMinutePerIP, now) ||
-		!h.allowRateLimited("verify:xpub:"+strings.ToLower(req.XPub), maxVerifyPerMinutePerXPub, now) {
+		!h.allowRateLimited(rateKey, maxVerifyPerMinutePerXPub, now) {
 		writeJSON(w, http.StatusTooManyRequests, errorResponse{Code: "too_many_requests", Message: "rate limit exceeded"})
 		return
 	}
@@ -353,6 +409,11 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	signature, err := hex.DecodeString(req.SignatureHex)
 	if err != nil || len(signature) != ed25519.SignatureSize {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_signature", Message: "signature_hex must be 64-byte Ed25519 signature hex"})
+		return
+	}
+	pubRaw, err := hex.DecodeString(req.ClientPubKeyHex)
+	if err != nil || len(pubRaw) != ed25519.PublicKeySize {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Code: "invalid_public_key", Message: "client_pubkey_hex must be 32-byte Ed25519 hex"})
 		return
 	}
 
@@ -374,7 +435,11 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 		h.writeAuthenticationFailure(w)
 		return
 	}
-	if pending.xpub != req.XPub {
+	if req.XPub != "" && pending.xpub != req.XPub {
+		h.writeAuthenticationFailure(w)
+		return
+	}
+	if !bytes.Equal(pending.pubKey, pubRaw) {
 		h.writeAuthenticationFailure(w)
 		return
 	}
@@ -390,7 +455,7 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Look up user trust level
-	user, err := h.userStore.GetUser(req.XPub)
+	user, err := h.userStore.GetUser(pending.xpub)
 	if err != nil || user == nil {
 		h.writeAuthenticationFailure(w)
 		return
@@ -405,8 +470,8 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 		}
 
 		sigHex := hex.EncodeToString(pending.pubKey)
-		if err := h.userStore.UpdateSigningPubKey(req.XPub, sigHex); err != nil {
-			log.Warnf("failed to bind signing key for %q: %v", req.XPub, err)
+		if err := h.userStore.UpdateSigningPubKey(pending.xpub, sigHex); err != nil {
+			log.Warnf("failed to bind signing key for %q: %v", pending.xpub, err)
 		} else {
 			log.Infof("Bound signing key %s for user %q", sigHex, user.Name)
 			user.SigningPubKeyHex = sigHex
@@ -415,33 +480,25 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 
 	// Create session
 	ip := clientIPForRequest(r)
-	token, err := h.sessions.CreateSession(req.XPub, user.TrustLevel, ip, r.UserAgent(), h.sessionTTL)
+	token, err := h.sessions.CreateSession(pending.xpub, user.TrustLevel, ip, r.UserAgent(), h.sessionTTL)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorResponse{Code: "server_error", Message: "failed to create session"})
 		return
 	}
 
 	// Record login
-	_ = h.userStore.RecordLogin(req.XPub)
+	_ = h.userStore.RecordLogin(pending.xpub)
 
 	// Detect TLS: direct TLS or behind a TLS-terminating reverse proxy.
-	isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-
-	// Set session cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     "sdn_wallet_session",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   isSecure,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int(h.sessionTTL.Seconds()),
-	})
+	h.setSessionCookie(w, r, token, time.Now().Add(h.sessionTTL))
 
 	log.Infof("User authenticated: %s (trust=%s) from %s", user.Name, user.TrustLevel, ip)
 
 	writeJSON(w, http.StatusOK, verifyResponse{
-		User:      *user,
+		User: authSessionUser{
+			Name:       user.Name,
+			TrustLevel: user.TrustLevel,
+		},
 		ExpiresAt: time.Now().Add(h.sessionTTL).Unix(),
 	})
 }
@@ -457,18 +514,16 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		_ = h.sessions.RevokeSession(cookie.Value)
 	}
 
-	// Detect TLS for Secure flag.
-	isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-
 	// Clear cookie with matching security flags.
 	http.SetCookie(w, &http.Cookie{
 		Name:     "sdn_wallet_session",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isSecure,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   h.cookieSecure(r),
+		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
 	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "logged_out"})
@@ -485,6 +540,7 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, errorResponse{Code: "unauthorized", Message: "not authenticated"})
 		return
 	}
+	session = h.maybeRefreshSessionCookie(w, r, session)
 
 	user, err := h.userStore.GetUser(session.XPub)
 	if err != nil || user == nil {
@@ -492,7 +548,10 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, user)
+	writeJSON(w, http.StatusOK, authSessionUser{
+		Name:       user.Name,
+		TrustLevel: user.TrustLevel,
+	})
 }
 
 func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
@@ -502,6 +561,7 @@ func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorResponse{Code: "forbidden", Message: "admin access required"})
 		return
 	}
+	session = h.maybeRefreshSessionCookie(w, r, session)
 
 	switch r.Method {
 	case http.MethodGet:
@@ -550,6 +610,7 @@ func (h *Handler) handleUserByXPub(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errorResponse{Code: "forbidden", Message: "admin access required"})
 		return
 	}
+	session = h.maybeRefreshSessionCookie(w, r, session)
 
 	// Extract xpub from URL path: /api/auth/users/{xpub}
 	xpub := strings.TrimPrefix(r.URL.Path, "/api/auth/users/")
@@ -615,6 +676,58 @@ func (h *Handler) sessionFromRequest(r *http.Request) (*Session, error) {
 	return h.sessions.ValidateSession(cookie.Value)
 }
 
+func requestUsesHTTPS(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+func (h *Handler) cookieSecure(r *http.Request) bool {
+	if h != nil && h.cookieSecureOverride != nil {
+		return *h.cookieSecureOverride
+	}
+	return requestUsesHTTPS(r)
+}
+
+func (h *Handler) setSessionCookie(w http.ResponseWriter, r *http.Request, token string, expiresAt time.Time) {
+	maxAge := int(time.Until(expiresAt).Seconds())
+	if maxAge < 1 {
+		maxAge = 1
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "sdn_wallet_session",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   h.cookieSecure(r),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   maxAge,
+		Expires:  expiresAt,
+	})
+}
+
+func (h *Handler) maybeRefreshSessionCookie(w http.ResponseWriter, r *http.Request, session *Session) *Session {
+	if session == nil || h.sessionTTL <= 0 {
+		return session
+	}
+	refreshThreshold := h.sessionTTL / sessionRefreshThresholdRatio
+	if refreshThreshold <= 0 || time.Until(session.ExpiresAt) > refreshThreshold {
+		return session
+	}
+
+	cookie, err := r.Cookie("sdn_wallet_session")
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return session
+	}
+
+	newToken, rotated, err := h.sessions.RotateSession(cookie.Value, h.sessionTTL)
+	if err != nil {
+		log.Warnf("failed to rotate auth session for %q: %v", session.XPub, err)
+		return session
+	}
+
+	h.setSessionCookie(w, r, newToken, rotated.ExpiresAt)
+	return rotated
+}
+
 func (h *Handler) cleanupChallenges(now time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -643,6 +756,31 @@ func (h *Handler) getNodeAttestedSigningKey(xpub string) []byte {
 		return nil
 	}
 	return raw
+}
+
+func (h *Handler) getNodeAttestedXPubBySigningKey(pubKey []byte) string {
+	if len(pubKey) != ed25519.PublicKeySize {
+		return ""
+	}
+
+	h.attestMu.RLock()
+	defer h.attestMu.RUnlock()
+
+	for xpub, att := range h.nodeAttestations {
+		normalized, err := normalizeEd25519PubKeyHex(att.SigningPubKeyHex)
+		if err != nil || normalized == "" {
+			continue
+		}
+		raw, err := hex.DecodeString(normalized)
+		if err != nil || len(raw) != ed25519.PublicKeySize {
+			continue
+		}
+		if bytes.Equal(raw, pubKey) {
+			return xpub
+		}
+	}
+
+	return ""
 }
 
 func (h *Handler) allowRateLimited(key string, limit int, now time.Time) bool {

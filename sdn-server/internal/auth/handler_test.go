@@ -20,7 +20,94 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/tlsmgr"
 )
+
+func TestSessionCookieIsSecureWhenNativeTLSActive(t *testing.T) {
+	t.Parallel()
+
+	secure := true
+	h := &Handler{cookieSecureOverride: &secure}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
+
+	h.setSessionCookie(rec, req, "token", time.Now().Add(time.Hour))
+
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookie count = %d, want 1", len(cookies))
+	}
+	if !cookies[0].Secure {
+		t.Fatal("expected secure session cookie")
+	}
+}
+
+func TestLoginPage_RendersBootstrapTLSStatusBlock(t *testing.T) {
+	t.Parallel()
+
+	html := buildLoginPageWithTLSStatus(
+		"/wallet-ui/dist/assets/wallet.js",
+		"/wallet-ui/dist/assets/wallet.css",
+		tlsmgr.Status{
+			Mode:                  tlsmgr.ModeManaged,
+			ActiveCertificateType: "bootstrap",
+			FingerprintSHA256:     "AA:BB:CC",
+			PeerID:                "12D3KooWTestPeer",
+			EncryptionPublicKey:   "001122",
+			ProofStatus:           "verified",
+			BootstrapCertURL:      "/bootstrap.crt",
+		},
+	)
+
+	if !strings.Contains(html, "Bootstrap self-signed certificate") {
+		t.Fatalf("missing bootstrap certificate label: %s", html)
+	}
+	if !strings.Contains(html, "/bootstrap.crt") {
+		t.Fatalf("missing bootstrap cert link: %s", html)
+	}
+	if !strings.Contains(html, "AA:BB:CC") {
+		t.Fatalf("missing fingerprint: %s", html)
+	}
+	if !strings.Contains(html, "12D3KooWTestPeer") {
+		t.Fatalf("missing peer id: %s", html)
+	}
+}
+
+func TestHandleBootstrapCert_ReturnsPEMWhenManagedTLSEnabled(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	manager, err := tlsmgr.New(config.AdminConfig{
+		TLSMode:     tlsmgr.ModeManaged,
+		TLSCacheDir: dir,
+	})
+	if err != nil {
+		t.Fatalf("tlsmgr.New() error = %v", err)
+	}
+	if err := manager.ConfigureBootstrap(tlsmgr.BootstrapIdentityInput{
+		PeerID:                     "12D3KooWTestPeer",
+		EncryptionPath:             "m/44'/0'/0'/1'/0'",
+		EncryptionX25519PublicKey:  bytes.Repeat([]byte{1}, 32),
+		EncryptionProofEd25519Seed: bytes.Repeat([]byte{2}, 32),
+		Hosts:                      []string{"localhost"},
+	}); err != nil {
+		t.Fatalf("ConfigureBootstrap() error = %v", err)
+	}
+
+	h := &Handler{}
+	h.SetTLSManager(manager)
+
+	req := httptest.NewRequest(http.MethodGet, "/bootstrap.crt", nil)
+	rec := httptest.NewRecorder()
+	h.handleBootstrapCert(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(rec.Body.String(), "BEGIN CERTIFICATE") {
+		t.Fatalf("body missing PEM certificate: %s", rec.Body.String())
+	}
+}
 
 func TestAuth_ChallengeVerify_SucceedsWithBoundKey(t *testing.T) {
 	t.Parallel()
@@ -109,21 +196,286 @@ func TestAuth_ChallengeVerify_SucceedsWithBoundKey(t *testing.T) {
 	if cookie := verRec.Header().Get("Set-Cookie"); cookie == "" {
 		t.Fatalf("expected Set-Cookie to be set")
 	}
+	var sessionCookie *http.Cookie
+	for _, cookie := range verRec.Result().Cookies() {
+		if cookie.Name == "sdn_wallet_session" {
+			sessionCookie = cookie
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatalf("expected sdn_wallet_session cookie")
+	}
+	if !sessionCookie.HttpOnly {
+		t.Fatalf("expected HttpOnly session cookie")
+	}
+	if sessionCookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("expected SameSite=Lax, got %v", sessionCookie.SameSite)
+	}
+	if sessionCookie.Expires.IsZero() {
+		t.Fatalf("expected persistent session cookie expiry to be set")
+	}
+	if sessionCookie.MaxAge <= 0 {
+		t.Fatalf("expected persistent session cookie Max-Age to be set, got %d", sessionCookie.MaxAge)
+	}
 
 	var verResp struct {
 		User struct {
-			XPub       string           `json:"xpub"`
+			Name       string           `json:"name"`
 			TrustLevel peers.TrustLevel `json:"trust_level"`
 		} `json:"user"`
 	}
 	if err := json.Unmarshal(verRec.Body.Bytes(), &verResp); err != nil {
 		t.Fatalf("unmarshal verify: %v", err)
 	}
-	if verResp.User.XPub != "xpub-test-admin" {
-		t.Fatalf("unexpected xpub: %q", verResp.User.XPub)
+	if strings.Contains(verRec.Body.String(), "\"xpub\"") {
+		t.Fatalf("verify response leaked xpub: %s", verRec.Body.String())
+	}
+	if verResp.User.Name != "Test Admin" {
+		t.Fatalf("unexpected name: %q", verResp.User.Name)
 	}
 	if verResp.User.TrustLevel < peers.Admin {
 		t.Fatalf("unexpected trust level: %v", verResp.User.TrustLevel)
+	}
+}
+
+func TestAuth_ChallengeVerify_SucceedsWithoutXPubWhenSigningKeyIsBound(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	pubHex := hex.EncodeToString(pub)
+
+	dir := t.TempDir()
+	userStore, err := NewUserStore(filepath.Join(dir, "users.db"), []config.UserEntry{
+		{
+			XPub:             "xpub-bound-signing-key",
+			SigningPubKeyHex: pubHex,
+			TrustLevel:       "admin",
+			Name:             "Signing Key Admin",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewUserStore: %v", err)
+	}
+	defer userStore.Close()
+
+	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer sdb.Close()
+
+	sessions, err := NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+
+	h := NewHandler(userStore, sessions, 24*time.Hour, "", "")
+
+	chReqBody, _ := json.Marshal(map[string]any{
+		"client_pubkey_hex": pubHex,
+		"ts":                time.Now().Unix(),
+	})
+	chReq := httptest.NewRequest(http.MethodPost, "/api/auth/challenge", bytes.NewReader(chReqBody))
+	chReq.RemoteAddr = "127.0.0.1:12345"
+	chRec := httptest.NewRecorder()
+	h.handleChallenge(chRec, chReq)
+
+	if chRec.Code != http.StatusOK {
+		t.Fatalf("challenge status without xpub: got %d want %d: %s", chRec.Code, http.StatusOK, chRec.Body.String())
+	}
+
+	var chResp struct {
+		ChallengeID string `json:"challenge_id"`
+		Challenge   string `json:"challenge"`
+	}
+	if err := json.Unmarshal(chRec.Body.Bytes(), &chResp); err != nil {
+		t.Fatalf("unmarshal challenge: %v", err)
+	}
+
+	challengeBytes, err := base64.RawStdEncoding.DecodeString(chResp.Challenge)
+	if err != nil {
+		t.Fatalf("decode challenge: %v", err)
+	}
+
+	sig := ed25519.Sign(priv, challengeBytes)
+	verReqBody, _ := json.Marshal(map[string]any{
+		"challenge_id":      chResp.ChallengeID,
+		"client_pubkey_hex": pubHex,
+		"challenge":         chResp.Challenge,
+		"signature_hex":     hex.EncodeToString(sig),
+	})
+	verReq := httptest.NewRequest(http.MethodPost, "/api/auth/verify", bytes.NewReader(verReqBody))
+	verReq.RemoteAddr = "127.0.0.1:12345"
+	verRec := httptest.NewRecorder()
+	h.handleVerify(verRec, verReq)
+
+	if verRec.Code != http.StatusOK {
+		t.Fatalf("verify status without xpub: got %d want %d: %s", verRec.Code, http.StatusOK, verRec.Body.String())
+	}
+
+	var verResp struct {
+		User struct {
+			Name string `json:"name"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(verRec.Body.Bytes(), &verResp); err != nil {
+		t.Fatalf("unmarshal verify: %v", err)
+	}
+	if strings.Contains(verRec.Body.String(), "\"xpub\"") {
+		t.Fatalf("verify response leaked xpub: %s", verRec.Body.String())
+	}
+	if verResp.User.Name != "Signing Key Admin" {
+		t.Fatalf("unexpected resolved user: %q", verResp.User.Name)
+	}
+}
+
+func TestAuth_Me_DoesNotExposeXPub(t *testing.T) {
+	t.Parallel()
+
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	pubHex := hex.EncodeToString(pub)
+
+	dir := t.TempDir()
+	userStore, err := NewUserStore(filepath.Join(dir, "users.db"), []config.UserEntry{
+		{
+			XPub:             "xpub-session-redacted",
+			SigningPubKeyHex: pubHex,
+			TrustLevel:       "admin",
+			Name:             "Redacted Admin",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewUserStore: %v", err)
+	}
+	defer userStore.Close()
+
+	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer sdb.Close()
+
+	sessions, err := NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+
+	token, err := sessions.CreateSession("xpub-session-redacted", peers.Admin, "127.0.0.1", "test-agent", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	h := NewHandler(userStore, sessions, 24*time.Hour, "", "")
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+	rec := httptest.NewRecorder()
+
+	h.handleMe(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("me status: got %d want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "\"xpub\"") {
+		t.Fatalf("auth/me response leaked xpub: %s", rec.Body.String())
+	}
+
+	var body struct {
+		Name       string           `json:"name"`
+		TrustLevel peers.TrustLevel `json:"trust_level"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal auth/me: %v", err)
+	}
+	if body.Name != "Redacted Admin" {
+		t.Fatalf("unexpected auth/me name: %q", body.Name)
+	}
+	if body.TrustLevel != peers.Admin {
+		t.Fatalf("unexpected auth/me trust level: %v", body.TrustLevel)
+	}
+}
+
+func TestAuth_ChallengeVerify_FailsWithoutXPubForUnboundTOFUUser(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	pubHex := hex.EncodeToString(pub)
+
+	dir := t.TempDir()
+	userStore, err := NewUserStore(filepath.Join(dir, "users.db"), []config.UserEntry{
+		{
+			XPub:       "xpub-tofu-requires-identity",
+			TrustLevel: "admin",
+			Name:       "TOFU Admin",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewUserStore: %v", err)
+	}
+	defer userStore.Close()
+
+	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer sdb.Close()
+
+	sessions, err := NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+
+	h := NewHandler(userStore, sessions, 24*time.Hour, "", "")
+
+	chReqBody, _ := json.Marshal(map[string]any{
+		"client_pubkey_hex": pubHex,
+		"ts":                time.Now().Unix(),
+	})
+	chReq := httptest.NewRequest(http.MethodPost, "/api/auth/challenge", bytes.NewReader(chReqBody))
+	chReq.RemoteAddr = "127.0.0.1:12345"
+	chRec := httptest.NewRecorder()
+	h.handleChallenge(chRec, chReq)
+
+	if chRec.Code != http.StatusOK {
+		t.Fatalf("challenge status without xpub: got %d want %d: %s", chRec.Code, http.StatusOK, chRec.Body.String())
+	}
+
+	var chResp struct {
+		ChallengeID string `json:"challenge_id"`
+		Challenge   string `json:"challenge"`
+	}
+	if err := json.Unmarshal(chRec.Body.Bytes(), &chResp); err != nil {
+		t.Fatalf("unmarshal challenge: %v", err)
+	}
+
+	challengeBytes, err := base64.RawStdEncoding.DecodeString(chResp.Challenge)
+	if err != nil {
+		t.Fatalf("decode challenge: %v", err)
+	}
+
+	sig := ed25519.Sign(priv, challengeBytes)
+	verReqBody, _ := json.Marshal(map[string]any{
+		"challenge_id":      chResp.ChallengeID,
+		"client_pubkey_hex": pubHex,
+		"challenge":         chResp.Challenge,
+		"signature_hex":     hex.EncodeToString(sig),
+	})
+	verReq := httptest.NewRequest(http.MethodPost, "/api/auth/verify", bytes.NewReader(verReqBody))
+	verReq.RemoteAddr = "127.0.0.1:12345"
+	verRec := httptest.NewRecorder()
+	h.handleVerify(verRec, verReq)
+
+	if verRec.Code != http.StatusForbidden {
+		t.Fatalf("verify status without xpub for TOFU user: got %d want %d: %s", verRec.Code, http.StatusForbidden, verRec.Body.String())
 	}
 }
 
@@ -391,7 +743,7 @@ func TestLoginPage_BuildersExposeWalletAccountSurfaceForUnauthorizedUsers(t *tes
 		},
 		{
 			name: "fallback CDN page",
-			html: buildFallbackLoginPage(),
+			html: buildFallbackLoginPage(tlsmgr.Status{}),
 		},
 	}
 
@@ -497,6 +849,22 @@ func TestLoginPage_BuildersDisablePasskeyStorageOnLocalIPHosts(t *testing.T) {
 	}
 	if !strings.Contains(html, "window.__sdnNormalizeWalletLoginUI") {
 		t.Fatalf("login page missing wallet login normalization hook: %s", html)
+	}
+}
+
+func TestLoginPage_UsesSigningKeyOnlyForBrowserAuthRequests(t *testing.T) {
+	t.Parallel()
+
+	html := buildLoginPage("/wallet-ui/dist/assets/wallet.js", "/wallet-ui/dist/assets/wallet.css")
+
+	if strings.Contains(html, "identity.xpub") {
+		t.Fatalf("login page should not read xpub from wallet identity: %s", html)
+	}
+	if strings.Contains(html, "xpub: xpub") {
+		t.Fatalf("login page should not post xpub in auth requests: %s", html)
+	}
+	if !strings.Contains(html, "client_pubkey_hex") {
+		t.Fatalf("login page missing signing-key auth payload: %s", html)
 	}
 }
 

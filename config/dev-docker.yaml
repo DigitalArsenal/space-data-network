@@ -35,16 +35,19 @@ peers:
 admin:
   enabled: true
   listen_addr: 0.0.0.0:5001
+  http_challenge_addr: 0.0.0.0:5080
   require_auth: true
   session_expiry: 24h
   totp_required: false
-  tls_enabled: false
+  tls_mode: managed
+  tls_cache_dir: /app/data/tls
   webui_path: /app/webui
   wallet_ui_path: /app/wallet-ui
 
 # Local dev admin wallet: see ./dev-wallet.env
 users:
   - xpub: "xpub6DHm9a1bDz4qPHGMQqQ386E76KFhxsx4ZmVjm1K9HfiCVh2jNc77AgFtWtEScGRKNqArC7gEjRW8iPFJSgroCAB8tdZpkoXQj2hkZgRiENw"
+    signing_pubkey_hex: "de65b6a3c2ddbe3593d96782bb3195931fdc1b5cfdcf31a019ba6bee8d4d5720"
     trust_level: "admin"
     name: "Dev Admin"
 

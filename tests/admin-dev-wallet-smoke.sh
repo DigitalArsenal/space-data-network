@@ -39,3 +39,5 @@ fi
 
 grep -F "xpub: \"${SDN_TRACKED_DEV_ADMIN_XPUB}\"" "${generated_config_path}" >/dev/null
 grep -F "name: \"${SDN_TRACKED_DEV_ADMIN_NAME}\"" "${generated_config_path}" >/dev/null
+grep -F "frontend_path: \"${repo_root}/sdn-js/ui/dist\"" "${generated_config_path}" >/dev/null
+grep -F "webui_path: \"${repo_root}/webui/build\"" "${generated_config_path}" >/dev/null

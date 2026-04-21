@@ -4,6 +4,7 @@
  * A browser-compatible P2P library for space data standards.
  */
 
+export * from './version-info.generated';
 export { SDNNode } from './node';
 export { createHeliaSDNNode } from './helia';
 export type { HeliaSDNNode } from './helia';

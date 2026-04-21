@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"html"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/tlsmgr"
 )
 
 // handleLoginPage serves the wallet-gated SDN landing page used by /login,
@@ -28,6 +30,7 @@ func (h *Handler) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if session, err := h.sessionFromRequest(r); err == nil && session != nil {
+		session = h.maybeRefreshSessionCookie(w, r, session)
 		if target := authorizedPostLoginPath(session.TrustLevel, r.URL.Query().Get("next")); target != "" && !loginPageRequiresWalletAccount(r) {
 			http.Redirect(w, r, target, http.StatusFound)
 			return
@@ -44,21 +47,25 @@ func (h *Handler) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	tlsStatus := tlsmgr.Status{}
+	if h.tlsManager != nil {
+		tlsStatus = h.tlsManager.Status()
+	}
+
 	walletUI := strings.TrimSpace(h.walletUIPath)
 	if walletUI == "" {
-		serveFallbackLogin(w)
+		serveFallbackLogin(w, tlsStatus)
 		return
 	}
 
-	html := cachedLoginPage(walletUI)
-	if html == "" {
-		serveFallbackLogin(w)
+	if cachedLoginPage(walletUI) == "" || walletJSFile == "" || walletCSSFile == "" {
+		serveFallbackLogin(w, tlsStatus)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write([]byte(html))
+	w.Write([]byte(buildLoginPageWithTLSStatus("/wallet-ui/"+walletJSFile, "/wallet-ui/"+walletCSSFile, tlsStatus)))
 }
 
 func loginPageRequiresWalletAccount(r *http.Request) bool {
@@ -258,10 +265,14 @@ func uniqueNonEmptyPaths(paths ...string) []string {
 // buildLoginPage returns the full HTML for the SDN login page using bundled
 // wallet-ui dist artifacts that auto-initialize and call window.__sdnWalletReady.
 func buildLoginPage(moduleURL, cssURL string) string {
-	return buildWalletLoginPage(moduleURL, cssURL, true)
+	return buildWalletLoginPage(moduleURL, cssURL, true, tlsmgr.Status{})
 }
 
-func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool) string {
+func buildLoginPageWithTLSStatus(moduleURL, cssURL string, status tlsmgr.Status) string {
+	return buildWalletLoginPage(moduleURL, cssURL, true, status)
+}
+
+func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, tlsStatus tlsmgr.Status) string {
 	walletLoader := `
   window.__sdnEnsureWalletUI = async function() {
     if (window.__sdnWalletUI) return window.__sdnWalletUI;
@@ -467,6 +478,59 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool) string
       border-color:rgba(101,194,203,0.34);
       background:rgba(101,194,203,0.14);
       color:#dffbfe;
+    }
+    .sdn-tls{
+      margin-top:18px;
+      padding:18px;
+      border-radius:18px;
+      border:1px solid rgba(101,194,203,0.16);
+      background:rgba(3,19,31,0.42);
+      text-align:left;
+    }
+    .sdn-tls-label{
+      color:var(--muted);
+      font-family:var(--font-mono);
+      font-size:0.7rem;
+      letter-spacing:0.14em;
+      text-transform:uppercase;
+    }
+    .sdn-tls-title{
+      margin-top:8px;
+      font-size:0.98rem;
+      color:var(--text);
+    }
+    .sdn-tls-grid{
+      margin-top:12px;
+      display:grid;
+      grid-template-columns:minmax(0,110px) minmax(0,1fr);
+      gap:8px 12px;
+      font-size:0.8rem;
+      color:var(--muted);
+    }
+    .sdn-tls-grid dt{
+      font-family:var(--font-mono);
+      text-transform:uppercase;
+      letter-spacing:0.08em;
+    }
+    .sdn-tls-grid dd{
+      min-width:0;
+      overflow-wrap:anywhere;
+    }
+    .sdn-tls-grid code{
+      color:#dffbfe;
+      font-family:var(--font-mono);
+      font-size:0.76rem;
+    }
+    .sdn-tls-download{
+      margin-top:14px;
+      display:inline-flex;
+      color:#9be6ec;
+      text-decoration:none;
+      border-bottom:1px solid rgba(155,230,236,0.34);
+    }
+    .sdn-tls-download:hover{
+      color:#dffbfe;
+      border-bottom-color:rgba(223,251,254,0.72);
     }
     .sdn-metric{
       margin-top:18px;
@@ -774,7 +838,6 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool) string
     try {
       var pubKeyHex = Array.from(identity.signingPublicKey)
         .map(function(b){return b.toString(16).padStart(2,'0')}).join('');
-      var xpub = identity.xpub;
 
       window.__sdnSetStatus('Requesting challenge...');
       if (button) {
@@ -785,7 +848,8 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool) string
       var challengeResp = await fetch('/api/auth/challenge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ xpub: xpub, client_pubkey_hex: pubKeyHex, ts: Math.floor(Date.now()/1000) })
+        credentials: 'same-origin',
+        body: JSON.stringify({ client_pubkey_hex: pubKeyHex, ts: Math.floor(Date.now()/1000) })
       });
       var challengeData = await challengeResp.json();
       if (!challengeResp.ok) throw new Error(challengeData.message || 'Challenge failed');
@@ -807,9 +871,10 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool) string
       var verifyResp = await fetch('/api/auth/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({
           challenge_id: challengeData.challenge_id,
-          xpub: xpub, client_pubkey_hex: pubKeyHex,
+          client_pubkey_hex: pubKeyHex,
           challenge: challengeData.challenge, signature_hex: sigHex
         })
       });
@@ -875,6 +940,7 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool) string
           <li><a class="sdn-tech-link" href="https://spacedatastandards.org/" target="_blank" rel="noreferrer">Space Data Standards</a></li>
         </ul>
       </div>
+      ` + buildTLSStatusMarkup(tlsStatus) + `
       <button id="sdn-sign-in" class="sdn-login" type="button" disabled>Login</button>
       <a class="sdn-home" href="https://spacedatanet.org/" target="_blank" rel="noreferrer">Homepage</a>
       <div id="sdn-auth-status" class="sdn-auth-status" data-visible="false" aria-live="polite"></div>
@@ -894,10 +960,10 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool) string
 // Fallback login page (no local wallet-ui dist)
 // ---------------------------------------------------------------------------
 
-func serveFallbackLogin(w http.ResponseWriter) {
+func serveFallbackLogin(w http.ResponseWriter, status tlsmgr.Status) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write([]byte(buildFallbackLoginPage()))
+	w.Write([]byte(buildFallbackLoginPage(status)))
 }
 
 const (
@@ -905,6 +971,43 @@ const (
 	fallbackWalletUICSSURL    = "https://unpkg.com/hd-wallet-ui@2.0.2/styles/widget.css"
 )
 
-func buildFallbackLoginPage() string {
-	return buildWalletLoginPage(fallbackWalletUIModuleURL, fallbackWalletUICSSURL, false)
+func buildFallbackLoginPage(status tlsmgr.Status) string {
+	return buildWalletLoginPage(fallbackWalletUIModuleURL, fallbackWalletUICSSURL, false, status)
+}
+
+func buildTLSStatusMarkup(status tlsmgr.Status) string {
+	if strings.TrimSpace(status.Mode) == "" {
+		return ""
+	}
+
+	var download string
+	if strings.TrimSpace(status.BootstrapCertURL) != "" {
+		download = `<a class="sdn-tls-download" href="` + html.EscapeString(status.BootstrapCertURL) + `">Download bootstrap certificate</a>`
+	}
+
+	return `<section class="sdn-tls" aria-label="TLS identity">` +
+		`<div class="sdn-tls-label">TLS identity</div>` +
+		`<div class="sdn-tls-title">` + html.EscapeString(loginPageCertificateLabel(status)) + `</div>` +
+		`<dl class="sdn-tls-grid">` +
+		`<dt>Mode</dt><dd>` + html.EscapeString(status.Mode) + `</dd>` +
+		`<dt>Fingerprint</dt><dd><code>` + html.EscapeString(status.FingerprintSHA256) + `</code></dd>` +
+		`<dt>Peer ID</dt><dd><code>` + html.EscapeString(status.PeerID) + `</code></dd>` +
+		`<dt>Encryption</dt><dd><code>` + html.EscapeString(status.EncryptionPublicKey) + `</code></dd>` +
+		`<dt>Proof</dt><dd>` + html.EscapeString(status.ProofStatus) + `</dd>` +
+		`</dl>` +
+		download +
+		`</section>`
+}
+
+func loginPageCertificateLabel(status tlsmgr.Status) string {
+	switch status.ActiveCertificateType {
+	case "bootstrap":
+		return "Bootstrap self-signed certificate"
+	case "static":
+		return "Static operator certificate"
+	case "managed":
+		return "Managed public certificate"
+	default:
+		return "TLS certificate"
+	}
 }

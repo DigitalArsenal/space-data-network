@@ -1,19 +1,86 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import fs from 'node:fs';
+import { defineConfig, transformWithEsbuild } from 'vite';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const packageRoot = path.resolve(__dirname, '..');
+const repoRoot = path.resolve(packageRoot, '..');
+const upstreamWebUiRoot = path.resolve(repoRoot, 'webui');
 const proxyTarget = process.env.SDN_UI_PROXY_TARGET?.trim();
+const browserProcessShimBanner = [
+  'var process = globalThis.process || (globalThis.process = {',
+  'env: {},',
+  'browser: true,',
+  'versions: {},',
+  'release: {},',
+  'platform: "browser",',
+  'arch: "browser",',
+  'version: "",',
+  'pid: 1,',
+  '__nwjs: false,',
+  'type: undefined,',
+  'cwd: () => "/",',
+  'nextTick: (fn, ...args) => queueMicrotask(() => fn(...args)),',
+  'noDeprecation: false,',
+  'throwDeprecation: false,',
+  'traceDeprecation: false',
+  '});',
+  'var global = globalThis;',
+].join('');
 
 export default defineConfig({
   root: __dirname,
+  publicDir: path.resolve(upstreamWebUiRoot, 'public'),
   base: './',
+  plugins: [
+    {
+      name: 'sdn-upstream-webui-jsx',
+      async transform(code, id) {
+        if (
+          id.endsWith('.js') && (
+            id.includes('/webui/src/') ||
+            id.includes('/sdn-js/ui/src/upstream-webui/')
+          )
+        ) {
+          return transformWithEsbuild(code, id, {
+            loader: 'jsx',
+            jsxFactory: 'React.createElement',
+            jsxFragment: 'React.Fragment',
+          });
+        }
+        return null;
+      },
+    },
+    {
+      name: 'sdn-upstream-webui-extension-alias',
+      resolveId(source, importer) {
+        if (!importer || source.startsWith('/') || !source.startsWith('.')) {
+          return null;
+        }
+        const sourcePath = path.resolve(path.dirname(importer), source);
+        const candidates = source.endsWith('.jsx')
+          ? [sourcePath.replace(/\.jsx$/, '.tsx'), sourcePath.replace(/\.jsx$/, '.ts')]
+          : source.endsWith('.js')
+            ? [sourcePath.replace(/\.js$/, '.tsx'), sourcePath.replace(/\.js$/, '.ts')]
+            : [];
+        for (const candidate of candidates) {
+          if (fs.existsSync(candidate)) {
+            return candidate;
+          }
+        }
+        return null;
+      },
+    },
+  ],
   server: proxyTarget
     ? {
       host: '127.0.0.1',
       port: Number.parseInt(process.env.SDN_ADMIN_UI_PORT ?? '5173', 10),
+      fs: {
+        allow: [repoRoot],
+      },
       proxy: {
         '/api': {
           target: proxyTarget,
@@ -43,11 +110,40 @@ export default defineConfig({
       },
     }
     : undefined,
+  define: {
+    'process.env.REACT_APP_VERSION': JSON.stringify(process.env.REACT_APP_VERSION ?? process.env.npm_package_version ?? 'dev'),
+    'process.env.REACT_APP_GIT_REV': JSON.stringify(process.env.REACT_APP_GIT_REV ?? 'local'),
+    'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'development'),
+  },
   resolve: {
     alias: [
       {
         find: '@sds',
         replacement: path.resolve(packageRoot, 'node_modules/spacedatastandards.org'),
+      },
+      {
+        find: /^react$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react'),
+      },
+      {
+        find: /^react-dom$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-dom'),
+      },
+      {
+        find: /^redux-bundler-react$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/redux-bundler-react'),
+      },
+      {
+        find: /^react-i18next$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-i18next'),
+      },
+      {
+        find: /^react-dnd$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-dnd'),
+      },
+      {
+        find: /^react-virtualized\/styles\.css$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-virtualized/styles.css'),
       },
       {
         find: /^\.\/sdn-plugin\.mjs$/,
@@ -64,6 +160,7 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
+        banner: browserProcessShimBanner,
         manualChunks(id) {
           if (!id.includes('node_modules')) {
             return undefined;

@@ -16,6 +16,38 @@ async function fakePeer () {
 
 const fakePeers = (count = 5) => Promise.all(Array(count).fill(0).map(fakePeer))
 
+async function waitForExpectation (assertFn, { timeout = 1000, interval = 10 } = {}) {
+  const deadline = Date.now() + timeout
+  let lastError
+
+  while (Date.now() < deadline) {
+    try {
+      await assertFn()
+      return
+    } catch (err) {
+      lastError = err
+      await sleep(interval)
+    }
+  }
+
+  if (lastError) {
+    throw lastError
+  }
+
+  throw new Error('Timed out waiting for expectation')
+}
+
+async function waitForPeerSync (store, peers, options) {
+  await waitForExpectation(() => {
+    const bwPeers = store.selectPeerBandwidthPeers()
+    expect(bwPeers.length).toBe(peers.length)
+
+    bwPeers.forEach(({ id }) => {
+      expect(peers.some(p => p.peer === id)).toBe(true)
+    })
+  }, options)
+}
+
 function createMockIpfsBundle (ipfs) {
   return {
     name: 'ipfs',
@@ -74,14 +106,10 @@ it('should sync added peers', async () => {
 
   // Add the peers
   store.doUpdateMockPeers(nextPeers)
-  await sleep() // Wait for the reactions to happen
+  await waitForPeerSync(store, nextPeers) // Wait for the reactions to happen
   bwPeers = store.selectPeerBandwidthPeers()
 
   expect(bwPeers.length).toBe(totalPeers)
-
-  bwPeers.forEach(({ id }) => {
-    expect(nextPeers.some(p => p.peer === id)).toBe(true)
-  })
 })
 
 it('should sync removed peers', async () => {
@@ -99,30 +127,22 @@ it('should sync removed peers', async () => {
   })
 
   // Wait for the bundle to initially sync peers
-  await sleep()
+  await waitForPeerSync(store, peers)
 
   expect(store.selectPeers()).toEqual(peers)
 
   let bwPeers = store.selectPeerBandwidthPeers()
   expect(bwPeers.length).toBe(peers.length)
 
-  bwPeers.forEach(({ id }) => {
-    expect(peers.some(p => p.peer === id)).toBe(true)
-  })
-
   const nextTotalPeers = randomInt(1, totalPeers)
   const nextPeers = peers.slice(0, nextTotalPeers)
 
   // Remove the peers
   store.doUpdateMockPeers(nextPeers)
-  await sleep(50)
+  await waitForPeerSync(store, nextPeers, { timeout: 1500 })
   bwPeers = store.selectPeerBandwidthPeers()
 
   expect(bwPeers.length).toBe(nextPeers.length)
-
-  bwPeers.forEach(({ id }) => {
-    expect(nextPeers.some(p => p.peer === id)).toBe(true)
-  })
 })
 
 it('should sync added and removed peers', async () => {
@@ -140,16 +160,12 @@ it('should sync added and removed peers', async () => {
   })
 
   // Wait for the bundle to initially sync peers
-  await sleep()
+  await waitForPeerSync(store, peers)
 
   expect(store.selectPeers()).toEqual(peers)
 
   let bwPeers = store.selectPeerBandwidthPeers()
   expect(bwPeers.length).toBe(peers.length)
-
-  bwPeers.forEach(({ id }) => {
-    expect(peers.some(p => p.peer === id)).toBe(true)
-  })
 
   const totalAddedPeers = randomInt(1, 100)
   const totalRemovedPeers = randomInt(1, totalPeers)
@@ -160,14 +176,10 @@ it('should sync added and removed peers', async () => {
 
   // Add and remove the peers
   store.doUpdateMockPeers(nextPeers)
-  await sleep()
+  await waitForPeerSync(store, nextPeers, { timeout: 1500 })
   bwPeers = store.selectPeerBandwidthPeers()
 
   expect(bwPeers.length).toBe(nextPeers.length)
-
-  bwPeers.forEach(({ id }) => {
-    expect(nextPeers.some(p => p.peer === id)).toBe(true)
-  })
 })
 
 it('should get bandwidth for added peers', async () => {
@@ -188,7 +200,7 @@ it('should get bandwidth for added peers', async () => {
   })
 
   // Wait for the bundle to initially sync peers
-  await sleep(10)
+  await waitForPeerSync(store, peers)
 
   // Now the peers should be synced, but not yet updated with bandwidth stats
   let bwPeers = store.selectPeerBandwidthPeers()
@@ -228,7 +240,7 @@ it('should periodically update bandwidth for peers', async () => {
     peers: { data: peers }
   })
 
-  await sleep(50)
+  await waitForPeerSync(store, peers)
 
   // Now all the peers should be synced and have had their bandwidth updated
   const bwPeers = store.selectPeerBandwidthPeers()
@@ -270,13 +282,22 @@ it('should update peer bandwidth according to concurrency option', async () => {
     peers: { data: peers }
   })
 
-  await sleep(50)
+  await waitForExpectation(() => {
+    expect(store.selectPeerBandwidthUpdatingPeerIds().length).toBe(peerUpdateConcurrency)
+  }, { timeout: 1000 })
 
   // We should now be updating peerUpdateConcurrency peers
   let updatingPeerIds = store.selectPeerBandwidthUpdatingPeerIds()
   expect(updatingPeerIds.length).toBe(peerUpdateConcurrency)
 
-  await sleep(150)
+  await waitForExpectation(() => {
+    const bwPeers = store.selectPeerBandwidthPeers()
+    updatingPeerIds.forEach(id => {
+      const peer = bwPeers.find(p => p.id === id)
+      expect(peer).toBeTruthy()
+      expect(peer.bw).toBeTruthy()
+    })
+  }, { timeout: 1000 })
 
   // We should now have updated peerUpdateConcurrency peers
   let bwPeers = store.selectPeerBandwidthPeers()
@@ -289,10 +310,20 @@ it('should update peer bandwidth according to concurrency option', async () => {
   })
 
   // Assert we're updating the rest of the peers now
+  await waitForExpectation(() => {
+    expect(store.selectPeerBandwidthUpdatingPeerIds().length).toBe(totalPeers - peerUpdateConcurrency)
+  }, { timeout: 1000 })
   updatingPeerIds = store.selectPeerBandwidthUpdatingPeerIds()
   expect(updatingPeerIds.length).toBe(totalPeers - peerUpdateConcurrency)
 
-  await sleep(150)
+  await waitForExpectation(() => {
+    const nextBwPeers = store.selectPeerBandwidthPeers()
+    updatingPeerIds.forEach(id => {
+      const peer = nextBwPeers.find(p => p.id === id)
+      expect(peer).toBeTruthy()
+      expect(peer.bw).toBeTruthy()
+    })
+  }, { timeout: 1000 })
 
   // We should now have updated all peers
   bwPeers = store.selectPeerBandwidthPeers()

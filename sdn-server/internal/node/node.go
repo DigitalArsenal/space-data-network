@@ -48,6 +48,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 	"github.com/spacedatanetwork/sdn-server/plugins"
 	"github.com/spacedatanetwork/sdn-server/plugins/ailogplugin"
@@ -57,7 +58,7 @@ var log = logging.Logger("sdn-node")
 
 const (
 	// SDNVersion is the current version used for discovery namespace
-	SDNVersion = "spacedatanetwork/1.0.0"
+	SDNVersion = versioninfo.CurrentAdvertisementFlag
 
 	// mDNS service name
 	MDNSServiceName = "space-data-network-mdns"
@@ -87,6 +88,10 @@ type Node struct {
 
 	pluginRegistry          *license.PluginRegistry
 	moduleDeliveryDiscovery cid.Cid
+	sdnAdvertisementTarget  sdnAdvertisementDiscoveryTarget
+	sdnDiscoveryTargets     []sdnAdvertisementDiscoveryTarget
+	sdnDiscoveryMu          sync.RWMutex
+	sdnDiscoveryFlagsByPeer map[peer.ID]map[string]time.Time
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -100,10 +105,11 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 	nodeCtx, cancel := context.WithCancel(ctx)
 
 	n := &Node{
-		topics: make(map[string]*pubsub.Topic),
-		config: cfg,
-		ctx:    nodeCtx,
-		cancel: cancel,
+		topics:                  make(map[string]*pubsub.Topic),
+		config:                  cfg,
+		ctx:                     nodeCtx,
+		cancel:                  cancel,
+		sdnDiscoveryFlagsByPeer: make(map[peer.ID]map[string]time.Time),
 	}
 
 	if err := n.init(); err != nil {
@@ -154,6 +160,12 @@ func (n *Node) init() error {
 		log.Warnf("Module delivery discovery CID unavailable: %v", err)
 	} else {
 		n.moduleDeliveryDiscovery = discoveryCID
+	}
+	if currentTarget, discoverTargets, err := sdnAdvertisementDiscoveryTargets(versioninfo.CurrentAdvertisementFlag, versioninfo.CopySupportedAdvertisementFlags()); err != nil {
+		log.Warnf("SDN advertisement discovery targets unavailable: %v", err)
+	} else {
+		n.sdnAdvertisementTarget = currentTarget
+		n.sdnDiscoveryTargets = discoverTargets
 	}
 
 	// Initialize trusted peer registry
@@ -918,6 +930,7 @@ func (n *Node) Start(ctx context.Context) error {
 			if err := n.host.Connect(ctx, peerInfo.AddrInfo); err != nil {
 				log.Warnf("Failed to connect to bootstrap peer %s: %v", peerInfo.AddrInfo.ID, err)
 			} else {
+				n.recordCurrentSDNAdvertisementDiscovery(peerInfo.AddrInfo.ID)
 				log.Infof("Connected to bootstrap peer %s (peer ID verified)", peerInfo.AddrInfo.ID)
 			}
 		}(p)
@@ -991,23 +1004,27 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 
 // mdnsNotifee handles mDNS peer discovery events.
 type mdnsNotifee struct {
-	host host.Host
-	ctx  context.Context
+	node *Node
 }
 
 // HandlePeerFound is called when a peer is discovered via mDNS.
 func (m *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
+	if m == nil || m.node == nil || m.node.host == nil {
+		return
+	}
+
 	// Don't connect to ourselves
-	if pi.ID == m.host.ID() {
+	if pi.ID == m.node.host.ID() {
 		return
 	}
 
 	log.Debugf("mDNS discovered peer: %s", pi.ID)
 
 	// Connect to the discovered peer
-	if err := m.host.Connect(m.ctx, pi); err != nil {
+	if err := m.node.host.Connect(m.node.ctx, pi); err != nil {
 		log.Debugf("Failed to connect to mDNS peer %s: %v", pi.ID, err)
 	} else {
+		m.node.recordCurrentSDNAdvertisementDiscovery(pi.ID)
 		log.Infof("Connected to mDNS peer: %s", pi.ID)
 	}
 }
@@ -1016,8 +1033,7 @@ func (n *Node) runMDNS() {
 	defer n.wg.Done()
 
 	notifee := &mdnsNotifee{
-		host: n.host,
-		ctx:  n.ctx,
+		node: n,
 	}
 
 	// Create mDNS service with our custom service name
@@ -1038,13 +1054,19 @@ func (n *Node) runMDNS() {
 func (n *Node) runDHTDiscovery() {
 	defer n.wg.Done()
 
-	discoveryTargets := moduleDeliveryDiscoveryTargets(n.moduleDeliveryDiscovery)
-	if len(discoveryTargets) == 0 {
+	moduleTargets := moduleDeliveryDiscoveryTargets(n.moduleDeliveryDiscovery)
+	if len(moduleTargets) == 0 && len(n.sdnDiscoveryTargets) == 0 {
 		log.Warn("No DHT discovery targets available")
 		return
 	}
-	log.Infof("Module delivery discovery namespace: %s", moduleDeliveryDiscoveryNamespace)
-	log.Infof("Module delivery discovery CID: %s", discoveryTargets[0].String())
+	if len(moduleTargets) > 0 {
+		log.Infof("Module delivery discovery namespace: %s", moduleDeliveryDiscoveryNamespace)
+		log.Infof("Module delivery discovery CID: %s", moduleTargets[0].String())
+	}
+	if n.sdnAdvertisementTarget.CID.Defined() {
+		log.Infof("SDN advertisement namespace: %s", sdnAdvertisementDiscoveryNamespace)
+		log.Infof("SDN advertisement flag: %s", n.sdnAdvertisementTarget.Flag)
+	}
 
 	// Announcement interval (every 30 seconds as per Agents.md spec)
 	announceTicker := time.NewTicker(30 * time.Second)
@@ -1055,8 +1077,11 @@ func (n *Node) runDHTDiscovery() {
 	defer discoveryTicker.Stop()
 
 	// Initial announcement
-	for _, target := range discoveryTargets {
+	for _, target := range moduleTargets {
 		n.announceOnDHT(target)
+	}
+	if n.sdnAdvertisementTarget.CID.Defined() {
+		n.announceOnDHT(n.sdnAdvertisementTarget.CID)
 	}
 
 	for {
@@ -1066,13 +1091,19 @@ func (n *Node) runDHTDiscovery() {
 			return
 
 		case <-announceTicker.C:
-			for _, target := range discoveryTargets {
+			for _, target := range moduleTargets {
 				n.announceOnDHT(target)
+			}
+			if n.sdnAdvertisementTarget.CID.Defined() {
+				n.announceOnDHT(n.sdnAdvertisementTarget.CID)
 			}
 
 		case <-discoveryTicker.C:
-			for _, target := range discoveryTargets {
+			for _, target := range moduleTargets {
 				n.discoverPeers(target)
+			}
+			for _, target := range n.sdnDiscoveryTargets {
+				n.discoverSDNAdvertisementPeers(target)
 			}
 		}
 	}
@@ -1128,6 +1159,36 @@ func (n *Node) discoverPeers(discoveryCID cid.Cid) {
 				log.Infof("Connected to discovered SDN peer: %s", pi.ID)
 			}
 		}(peerInfo)
+	}
+}
+
+func (n *Node) discoverSDNAdvertisementPeers(target sdnAdvertisementDiscoveryTarget) {
+	ctx, cancel := context.WithTimeout(n.ctx, 30*time.Second)
+	defer cancel()
+
+	peerChan := n.dht.FindProvidersAsync(ctx, target.CID, 20)
+
+	for peerInfo := range peerChan {
+		if peerInfo.ID == n.host.ID() {
+			continue
+		}
+
+		n.recordSDNAdvertisementDiscovery(peerInfo.ID, target.Flag)
+
+		if n.host.Network().Connectedness(peerInfo.ID) == 2 {
+			continue
+		}
+
+		go func(pi peer.AddrInfo, flag string) {
+			connectCtx, connectCancel := context.WithTimeout(n.ctx, 10*time.Second)
+			defer connectCancel()
+
+			if err := n.host.Connect(connectCtx, pi); err != nil {
+				log.Debugf("Failed to connect to discovered SDN advertisement peer %s (%s): %v", pi.ID, flag, err)
+			} else {
+				log.Infof("Connected to discovered SDN advertisement peer: %s (%s)", pi.ID, flag)
+			}
+		}(peerInfo, target.Flag)
 	}
 }
 

@@ -108,12 +108,13 @@ echo -e "${CYAN}═════════════════════�
 echo -e "  ${GREEN}Space Data Network — Local Dev Server${NC}"
 echo -e "${CYAN}═══════════════════════════════════════════════════════${NC}"
 echo ""
-echo -e "  Admin:     ${GREEN}http://localhost:5001/admin${NC}"
-echo -e "  Login:     ${GREEN}http://localhost:5001/login${NC}"
-echo -e "  Data API:  ${GREEN}http://localhost:5001/api/v1/data/health${NC}"
+echo -e "  Admin:     ${GREEN}https://localhost:5010/admin${NC}"
+echo -e "  Login:     ${GREEN}https://localhost:5010/login${NC}"
+echo -e "  Cert:      ${GREEN}https://localhost:5010/bootstrap.crt${NC}"
+echo -e "  Data API:  ${GREEN}https://localhost:5010/api/v1/data/health${NC}"
 if [ -f "$DEMO_PAYLOAD" ]; then
-  echo -e "  Demo:      ${GREEN}http://localhost:5001/demo${NC}"
-  echo -e "  Demo API:  ${GREEN}http://localhost:5001/api/v1/demo/payload${NC}"
+  echo -e "  Demo:      ${GREEN}https://localhost:5010/demo${NC}"
+  echo -e "  Demo API:  ${GREEN}https://localhost:5010/api/v1/demo/payload${NC}"
 fi
 echo ""
 echo -e "  ${YELLOW}Test mnemonic:${NC}"

@@ -19,6 +19,7 @@ const logger = require('./common/logger')
 const setupProtocolHandlers = require('./protocol-handlers')
 const setupI18n = require('./i18n')
 const setupDaemon = require('./daemon')
+const setupDashboard = require('./dashboard')
 const setupWebUI = require('./webui')
 const setupAutoLaunch = require('./auto-launch')
 const setupAutoGc = require('./automatic-gc')
@@ -72,6 +73,7 @@ async function run () {
       setupI18n(),
       setupAppMenu(),
 
+      setupDashboard(), // ctx.dashboard, launchDashboard
       setupWebUI(), // ctx.webui, launchWebUI
       setupAutoUpdater(), // ctx.manualCheckForUpdates
       setupTray(), // ctx.tray
@@ -87,9 +89,9 @@ async function run () {
     const submitAppReady = () => {
       logger.addAnalyticsEvent({ withAnalytics: analyticsKeys.APP_READY, dur: getSecondsSinceAppStart() })
     }
-    const webui = await getCtx().getProp('webui')
-    if (webui.webContents.isLoading()) {
-      webui.webContents.once('dom-ready', submitAppReady)
+    const dashboard = await getCtx().getProp('dashboard')
+    if (dashboard.webContents.isLoading()) {
+      dashboard.webContents.once('dom-ready', submitAppReady)
     } else {
       submitAppReady()
     }

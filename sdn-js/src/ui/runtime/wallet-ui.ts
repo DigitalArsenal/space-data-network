@@ -1,3 +1,5 @@
+import 'hd-wallet-ui/styles';
+
 export interface WalletUIOptions {
   [key: string]: unknown;
 }

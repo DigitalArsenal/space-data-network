@@ -43,6 +43,7 @@ async function buildMenu () {
   const restartIpfs = ctx.getFn('restartIpfs')
   const startIpfs = ctx.getFn('startIpfs')
   const stopIpfs = ctx.getFn('stopIpfs')
+  const launchDashboard = ctx.getFn('launchDashboard')
   const launchWebUI = ctx.getFn('launchWebUI')
   const manualCheckForUpdates = ctx.getFn('manualCheckForUpdates')
   /**
@@ -97,7 +98,7 @@ async function buildMenu () {
     {
       id: 'webuiStatus',
       label: i18n.t('status'),
-      click: () => { launchWebUI('/') }
+      click: () => { launchDashboard('/') }
     },
     // @ts-ignore
     {
@@ -309,7 +310,8 @@ module.exports = async function () {
     tray.on('click', popupMenu)
   }
   tray.on('right-click', popupMenu)
-  tray.on('double-click', async () => launchWebUI('/'))
+  const launchDashboard = ctx.getFn('launchDashboard')
+  tray.on('double-click', async () => launchDashboard('/'))
 
   ctx.setProp('tray.update-menu', async () => {
     logger.fileLogger.debug('[tray.update-menu] updating tray menu')
