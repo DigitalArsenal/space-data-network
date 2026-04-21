@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -45,7 +46,9 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/storefront"
+	"github.com/spacedatanetwork/sdn-server/internal/tlsmgr"
 	"github.com/spacedatanetwork/sdn-server/internal/tor"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
@@ -217,7 +220,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 	hiddenServicePort := cfg.Tor.HiddenServicePort
 	if hiddenServicePort <= 0 {
-		if cfg.Admin.TLSEnabled {
+		if cfg.Admin.EffectiveTLSMode() != tlsmgr.ModeDisabled {
 			hiddenServicePort = 443
 		} else {
 			hiddenServicePort = 80
@@ -254,7 +257,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		log.Infof("Outbound HTTP proxying enabled via TOR (%s)", torRuntime.ProxyURL())
 
 		if epmSvc := n.EPMService(); epmSvc != nil && torRuntime.OnionHost() != "" {
-			useTLS := cfg.Admin.TLSEnabled || hiddenServicePort == 443
+			useTLS := cfg.Admin.EffectiveTLSMode() != tlsmgr.ModeDisabled || hiddenServicePort == 443
 			if err := epmSvc.SetRuntimeAddresses([]string{torRuntime.OnionURL(useTLS)}); err != nil {
 				log.Warnf("Failed to inject onion metadata into EPM: %v", err)
 			}
@@ -274,6 +277,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	// Start admin server if enabled
 	var adminServer *http.Server
+	var httpChallengeServer *http.Server
 	var authHandler *auth.Handler
 	var storefrontSvc *storefront.Service
 	var storefrontStore *storefront.Store
@@ -308,11 +312,32 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			if adminAddr == "" {
 				adminAddr = "127.0.0.1:5001"
 			}
-			adminTLS := cfg.Admin.TLSEnabled
-			adminCertFile := strings.TrimSpace(cfg.Admin.TLSCertFile)
-			adminKeyFile := strings.TrimSpace(cfg.Admin.TLSKeyFile)
-			if adminTLS && (adminCertFile == "" || adminKeyFile == "") {
-				return fmt.Errorf("admin TLS is enabled but tls_cert_file or tls_key_file is empty")
+			tlsManager, err := tlsmgr.New(cfg.Admin)
+			if err != nil {
+				return fmt.Errorf("configure admin tls: %w", err)
+			}
+			adminTLS := tlsManager.UsesNativeTLS()
+
+			if tlsManager.Mode() == tlsmgr.ModeManaged {
+				identity := n.Identity()
+				if identity == nil {
+					return fmt.Errorf("managed tls requires an HD wallet-derived node identity")
+				}
+				info := identity.Info()
+				bootstrapHosts := make([]string, 0, 1)
+				host, _, splitErr := net.SplitHostPort(adminAddr)
+				if splitErr == nil && host != "" {
+					bootstrapHosts = append(bootstrapHosts, host)
+				}
+				if err := tlsManager.ConfigureBootstrap(tlsmgr.BootstrapIdentityInput{
+					PeerID:                     info.PeerID,
+					EncryptionPath:             info.EncryptionKeyPath,
+					EncryptionX25519PublicKey:  append([]byte(nil), identity.EncryptionPub...),
+					EncryptionProofEd25519Seed: append([]byte(nil), identity.EncryptionKey...),
+					Hosts:                      bootstrapHosts,
+				}); err != nil {
+					return fmt.Errorf("configure bootstrap tls: %w", err)
+				}
 			}
 
 			adminScheme := "http"
@@ -554,6 +579,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/api/node/epm", handleNodeEPM(n))
 
 			// Peer graph API endpoints
+			adminMux.HandleFunc("/api/peers/sdn", handleObservedSDNPeers(n))
 			adminMux.HandleFunc("/api/peers/graph", handlePeerGraph(n))
 			adminMux.HandleFunc("/api/peers/graph/schema", handlePeerGraphSchema)
 
@@ -592,6 +618,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					cfgDisplayPath = config.DefaultPath()
 				}
 				authHandler = auth.NewHandler(userStore, sessionStore, sessionTTL, cfg.Admin.WalletUIPath, cfgDisplayPath)
+				authHandler.SetTLSManager(tlsManager)
 				if epmSvc := n.EPMService(); epmSvc != nil {
 					if att := epmSvc.GetIdentityAttestation(); att != nil {
 						authHandler.SetNodeSigningAttestation(att)
@@ -722,9 +749,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if err != nil {
 					log.Warnf("Frontend disabled (falling back to built-in landing): %v", err)
 					landingHTML := loadLandingPageFallback(cfg.Admin.HomepageFile)
-					adminMux.Handle("/", adminLandingHandler(http.HandlerFunc(serveAdminUI), landingHTML))
+					adminMux.Handle("/", makeFrontendSurfaceHandler(
+						adminLandingHandler(http.HandlerFunc(serveAdminUI), landingHTML),
+						authHandler,
+						cfg.Admin.RequireAuth,
+					))
 				} else {
-					adminMux.Handle("/", frontendHandler)
+					adminMux.Handle("/", makeFrontendSurfaceHandler(frontendHandler, authHandler, cfg.Admin.RequireAuth))
 					log.Infof("Public frontend at %s://%s/ from %s", adminScheme, adminAddr, frontendPath)
 				}
 			} else {
@@ -733,7 +764,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
 					log.Infof("Static build assets at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
 				}
-				adminMux.Handle("/", adminLandingHandler(http.HandlerFunc(serveAdminUI), landingHTML))
+				adminMux.Handle("/", makeFrontendSurfaceHandler(
+					adminLandingHandler(http.HandlerFunc(serveAdminUI), landingHTML),
+					authHandler,
+					cfg.Admin.RequireAuth,
+				))
 			}
 
 			adminServer = &http.Server{
@@ -756,7 +791,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 					// Cross-origin isolation headers are set by the frontend handler
 					// (makeFrontendHandler) for OrbPro routes that need SharedArrayBuffer.
-					if adminTLS {
+					if tlsManager.Mode() == tlsmgr.ModeStatic {
 						w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 					}
 
@@ -826,7 +861,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Infof("Public data API available at %s://%s/api/v1/data/mpe/bulk", adminScheme, adminAddr)
 				var err error
 				if adminTLS {
-					err = adminServer.ListenAndServeTLS(adminCertFile, adminKeyFile)
+					adminServer.TLSConfig = tlsManager.TLSConfig()
+					err = adminServer.ListenAndServeTLS("", "")
 				} else {
 					err = adminServer.ListenAndServe()
 				}
@@ -834,6 +870,22 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					log.Warnf("Admin server error: %v", err)
 				}
 			}()
+
+			if tlsManager.Mode() == tlsmgr.ModeManaged {
+				challengeAddr := strings.TrimSpace(cfg.Admin.HTTPChallengeAddr)
+				if challengeAddr == "" {
+					challengeAddr = "127.0.0.1:5080"
+				}
+				httpChallengeServer = &http.Server{
+					Addr:    challengeAddr,
+					Handler: tlsManager.HTTPHandler(adminAddr),
+				}
+				go func() {
+					if err := httpChallengeServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+						log.Warnf("HTTP challenge server error: %v", err)
+					}
+				}()
+			}
 		}
 	}
 
@@ -847,6 +899,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// Shutdown admin server
 	if adminServer != nil {
 		adminServer.Shutdown(ctx)
+	}
+	if httpChallengeServer != nil {
+		httpChallengeServer.Shutdown(ctx)
 	}
 	if storefrontSvc != nil {
 		if err := storefrontSvc.Close(); err != nil {
@@ -1206,13 +1261,6 @@ func makeFrontendHandler(frontendDir string) (http.Handler, error) {
 		return nil, fmt.Errorf("frontend_path %q: missing index.html: %w", frontendDir, err)
 	}
 
-	// Read index.html and inject key broker URL configuration
-	indexHTML, err := os.ReadFile(indexPath)
-	if err != nil {
-		return nil, fmt.Errorf("frontend_path %q: read index.html: %w", frontendDir, err)
-	}
-	injectedHTML := injectFrontendConfig(indexHTML)
-
 	fs := http.FileServer(http.Dir(frontendDir))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -1226,8 +1274,13 @@ func makeFrontendHandler(frontendDir string) (http.Handler, error) {
 
 		// Serve index.html with injected config for "/" and "/index.html"
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			injectedHTML, err := loadInjectedFrontendIndex(indexPath)
+			if err != nil {
+				http.Error(w, "frontend unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "public, max-age=120")
+			w.Header().Set("Cache-Control", "no-store")
 			w.WriteHeader(http.StatusOK)
 			if r.Method != http.MethodHead {
 				_, _ = w.Write(injectedHTML)
@@ -1254,8 +1307,13 @@ func makeFrontendHandler(frontendDir string) (http.Handler, error) {
 		}
 
 		// SPA fallback — serve injected index.html
+		injectedHTML, err := loadInjectedFrontendIndex(indexPath)
+		if err != nil {
+			http.Error(w, "frontend unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "public, max-age=120")
+		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
 			_, _ = w.Write(injectedHTML)
@@ -1263,12 +1321,36 @@ func makeFrontendHandler(frontendDir string) (http.Handler, error) {
 	}), nil
 }
 
+func loadInjectedFrontendIndex(indexPath string) ([]byte, error) {
+	indexHTML, err := os.ReadFile(indexPath)
+	if err != nil {
+		return nil, err
+	}
+	return injectFrontendConfig(indexHTML), nil
+}
+
+func makeFrontendSurfaceHandler(frontendHandler http.Handler, authHandler *auth.Handler, requireAuth bool) http.Handler {
+	serve := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		frontendHandler.ServeHTTP(w, r)
+	})
+	if !requireAuth {
+		return serve
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if authHandler == nil {
+			http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		authHandler.RequireAuth(peers.Standard, serve)(w, r)
+	})
+}
+
 // injectFrontendConfig injects SDN runtime configuration into index.html.
 // This adds a <script> block before the closing </head> tag with the node's
 // IPFS peer info so the frontend can connect over libp2p for key exchange.
 // Plugin key exchange happens over encrypted IPFS/libp2p, NOT HTTP.
 func injectFrontendConfig(html []byte) []byte {
-	configScript := []byte(`<script>window.__SDN_CONFIG__={apiBase:"/api/v1"};</script>`)
+	configScript := []byte(`<script>window.__SDN_CONFIG__={apiBase:"/api/v1",serverBaseUrl:window.location.origin,ipfsDashboardUrl:"/webui/"};</script>`)
 	// Try to inject before </head>
 	if idx := bytes.Index(html, []byte("</head>")); idx >= 0 {
 		result := make([]byte, 0, len(html)+len(configScript))
@@ -1368,7 +1450,7 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		// Overlay runtime metadata
 		info["peer_id"] = n.PeerID().String()
 		info["mode"] = n.Config().Mode
-		info["version"] = "spacedatanetwork/1.0.0"
+		info["version"] = versioninfo.CurrentAdvertisementFlag
 
 		addrs := n.ListenAddrs()
 		addrStrings := make([]string, len(addrs))
@@ -1839,7 +1921,7 @@ func handleRelayStatus(n *node.Node) http.HandlerFunc {
 			MaxConnections: maxConns,
 			Load:           load,
 			Mode:           n.Config().Mode,
-			Version:        "spacedatanetwork/1.0.0",
+			Version:        versioninfo.CurrentAdvertisementFlag,
 			UptimeSeconds:  int64(time.Since(processStartTime).Seconds()),
 		}
 
@@ -1971,6 +2053,30 @@ func handlePeerGraph(n *node.Node) http.HandlerFunc {
 		}
 
 		data, err := epm.GraphSnapshotJSON(n.Host(), n.PeerRegistry())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
+	}
+}
+
+// handleObservedSDNPeers returns the SDN-only peer list consumed by the root dashboard.
+func handleObservedSDNPeers(n *node.Node) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		snapshot := epm.BuildGraphSnapshot(n.Host(), n.PeerRegistry())
+		var registryPeers []*peers.TrustedPeer
+		if registry := n.PeerRegistry(); registry != nil {
+			registryPeers = registry.ListPeers()
+		}
+		data, err := json.Marshal(epm.BuildObservedSDNPeers(snapshot, registryPeers, n.SDNAdvertisementFlagsByPeer()))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ipfs/go-cid"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 func TestComputeModuleDeliveryDiscoveryCID(t *testing.T) {
@@ -57,5 +58,66 @@ func TestModuleDeliveryDiscoveryTargetsUseProviderIdentityOnly(t *testing.T) {
 		if target == cid.Undef {
 			t.Fatal("discovery target must be defined")
 		}
+	}
+}
+
+func TestSDNAdvertisementDiscoveryTargetsUseSupportedFlagWindow(t *testing.T) {
+	t.Parallel()
+
+	announce, discover, err := sdnAdvertisementDiscoveryTargets(
+		"spacedatanetwork/1.2.0",
+		[]string{
+			"spacedatanetwork/1.2.0",
+			"spacedatanetwork/1.1.0",
+			"spacedatanetwork/1.0.0",
+			"spacedatanetwork/1.2.0",
+		},
+	)
+	if err != nil {
+		t.Fatalf("sdnAdvertisementDiscoveryTargets failed: %v", err)
+	}
+
+	if announce.Flag != "spacedatanetwork/1.2.0" {
+		t.Fatalf("announce flag = %q, want current flag", announce.Flag)
+	}
+	if announce.CID == cid.Undef {
+		t.Fatal("announce CID must be defined")
+	}
+
+	if len(discover) != 3 {
+		t.Fatalf("discover target count = %d, want 3 unique flags", len(discover))
+	}
+	if discover[0].Flag != "spacedatanetwork/1.2.0" {
+		t.Fatalf("discover[0] flag = %q, want current flag first", discover[0].Flag)
+	}
+	if discover[1].Flag != "spacedatanetwork/1.1.0" {
+		t.Fatalf("discover[1] flag = %q, want previous supported flag", discover[1].Flag)
+	}
+	if discover[2].Flag != "spacedatanetwork/1.0.0" {
+		t.Fatalf("discover[2] flag = %q, want oldest supported flag", discover[2].Flag)
+	}
+	for _, target := range discover {
+		if target.CID == cid.Undef {
+			t.Fatalf("discover target %q must have a defined CID", target.Flag)
+		}
+	}
+}
+
+func TestRecordCurrentSDNAdvertisementDiscoveryUsesAnnouncedFlag(t *testing.T) {
+	n := &Node{
+		sdnAdvertisementTarget: sdnAdvertisementDiscoveryTarget{Flag: "spacedatanetwork/1.2.3"},
+	}
+
+	pid, err := peer.Decode("12D3KooWJQvxYjnF8UARVq8hdD2WmT9N4xJm9kMumZ5qX6Ch12yv")
+	if err != nil {
+		t.Fatalf("decode peer id: %v", err)
+	}
+
+	n.recordCurrentSDNAdvertisementDiscovery(pid)
+
+	flagsByPeer := n.SDNAdvertisementFlagsByPeer()
+	flags := flagsByPeer[pid.String()]
+	if len(flags) != 1 || flags[0] != "spacedatanetwork/1.2.3" {
+		t.Fatalf("recorded advertisement flags = %v, want [spacedatanetwork/1.2.3]", flags)
 	}
 }

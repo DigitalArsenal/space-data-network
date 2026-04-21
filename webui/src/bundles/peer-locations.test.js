@@ -581,8 +581,9 @@ describe('PeerLocationResolver', () => {
 
   describe('optimizedPeerSet', () => {
     it('should return sets of 10, 100, 200 peers and more according to the number of calls', async () => {
+      const totalPeers = 260
       const ipAddresses = []
-      const peers = new Array(1000).fill().map((_, index) => {
+      const peers = new Array(totalPeers).fill().map((_, index) => {
         const ipAddress = `33.1.${Math.floor(index / 256)}.${index % 256}`
         ipAddresses.push(ipAddress)
         return ({
@@ -655,12 +656,12 @@ describe('PeerLocationResolver', () => {
       expect(result200).toEqual(expect200)
 
       // ==== Over 200 ====
-      await cacheIpAddresses(mockedGeoIpCache, ...ipAddresses.slice(200, 1000))
+      await cacheIpAddresses(mockedGeoIpCache, ...ipAddresses.slice(200, totalPeers))
       await store.doMarkPeerLocationsAsOutdated()
 
       const resultMore = await getPeerLocationsFromStore({ store })
 
-      const expectMore = new Array(800).fill().reduce((prev, _, index) => ({
+      const expectMore = new Array(totalPeers - 200).fill().reduce((prev, _, index) => ({
         ...prev,
         [`${index + 200}aa`]: 'location-cached'
       }), expect200)

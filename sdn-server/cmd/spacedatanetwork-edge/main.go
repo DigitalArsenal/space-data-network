@@ -30,6 +30,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 var (
@@ -158,8 +159,8 @@ func NewEdgeNode(ctx context.Context, cfg EdgeConfig) (*EdgeNode, error) {
 
 	// Create connection manager
 	connMgr, err := connmgr.NewConnManager(
-		1000,                // low water
-		cfg.MaxConnections,  // high water
+		1000,               // low water
+		cfg.MaxConnections, // high water
 		connmgr.WithGracePeriod(time.Minute),
 	)
 	if err != nil {
@@ -339,8 +340,8 @@ func startHealthServer(port int, edge *EdgeNode) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"peer_id":"%s","connections":%d,"max_connections":%d,"load":%.6f,"mode":"edge","version":"spacedatanetwork/1.0.0","uptime_seconds":%d}`,
-			edge.PeerID(), conns, maxC, load, int64(time.Since(edgeStartTime).Seconds()))
+		fmt.Fprintf(w, `{"peer_id":"%s","connections":%d,"max_connections":%d,"load":%.6f,"mode":"edge","version":"%s","uptime_seconds":%d}`,
+			edge.PeerID(), conns, maxC, load, versioninfo.CurrentAdvertisementFlag, int64(time.Since(edgeStartTime).Seconds()))
 	})
 
 	addr := fmt.Sprintf(":%d", port)

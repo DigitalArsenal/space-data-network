@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -196,6 +197,10 @@ type AdminConfig struct {
 	// ListenAddr is the address for the admin interface (default: 127.0.0.1:5001).
 	ListenAddr string `yaml:"listen_addr"`
 
+	// HTTPChallengeAddr is the HTTP listener used for ACME HTTP-01 challenges
+	// and HTTPS redirects when managed TLS is enabled.
+	HTTPChallengeAddr string `yaml:"http_challenge_addr"`
+
 	// RequireAuth requires authentication for the admin interface.
 	RequireAuth bool `yaml:"require_auth"`
 
@@ -213,6 +218,16 @@ type AdminConfig struct {
 
 	// TLSKeyFile is the PEM-encoded private key path.
 	TLSKeyFile string `yaml:"tls_key_file"`
+
+	// TLSMode selects native server TLS behavior: disabled, static, or managed.
+	// When empty, the legacy tls_enabled + cert/key fields are backfilled.
+	TLSMode string `yaml:"tls_mode"`
+
+	// TLSCacheDir is the writable directory used for bootstrap and ACME TLS state.
+	TLSCacheDir string `yaml:"tls_cache_dir"`
+
+	// TLSHosts is the list of explicit hostnames allowed for managed certificate issuance.
+	TLSHosts []string `yaml:"tls_hosts"`
 
 	// FrontendPath is the filesystem path to the public-facing frontend directory.
 	// This directory is served at "/" as a static file server with SPA fallback.
@@ -256,6 +271,21 @@ type AdminConfig struct {
 	// the server will trust X-Forwarded-Proto from this IP for cookie Secure flag.
 	// Set to "loopback" to trust any loopback address (127.0.0.0/8, ::1).
 	TrustedProxy string `yaml:"trusted_proxy"`
+}
+
+// EffectiveTLSMode backfills the new tls_mode setting from legacy config.
+func (a AdminConfig) EffectiveTLSMode() string {
+	mode := strings.ToLower(strings.TrimSpace(a.TLSMode))
+	if mode != "" {
+		return mode
+	}
+	if !a.TLSEnabled {
+		return "disabled"
+	}
+	if strings.TrimSpace(a.TLSCertFile) != "" && strings.TrimSpace(a.TLSKeyFile) != "" {
+		return "static"
+	}
+	return "managed"
 }
 
 // SetupConfig contains first-time setup settings.
@@ -324,20 +354,24 @@ func Default() *Config {
 			TrustBasedRateLimiting: true,
 		},
 		Admin: AdminConfig{
-			Enabled:       true,
-			ListenAddr:    "127.0.0.1:5001",
-			RequireAuth:   true, // Require authentication by default
-			SessionExpiry: "24h",
-			TOTPRequired:  false,
-			TLSEnabled:    false,
-			TLSCertFile:   "",
-			TLSKeyFile:    "",
-			FrontendPath:  "",
-			AdminUIPath:   "",
-			HomepageFile:  "",
-			WebuiPath:     "",
-			IPFSAPIURL:    "",
-			WalletUIPath:  "",
+			Enabled:           true,
+			ListenAddr:        "127.0.0.1:5001",
+			HTTPChallengeAddr: "127.0.0.1:5080",
+			RequireAuth:       true, // Require authentication by default
+			SessionExpiry:     "24h",
+			TOTPRequired:      false,
+			TLSEnabled:        false,
+			TLSCertFile:       "",
+			TLSKeyFile:        "",
+			TLSMode:           "managed",
+			TLSCacheDir:       filepath.Join(dataPath, "tls"),
+			TLSHosts:          nil,
+			FrontendPath:      "",
+			AdminUIPath:       "",
+			HomepageFile:      "",
+			WebuiPath:         "",
+			IPFSAPIURL:        "",
+			WalletUIPath:      "",
 		},
 		Users: []UserEntry{},
 		Setup: SetupConfig{

@@ -18,8 +18,6 @@ const Countly = require('countly-sdk-nodejs')
 const { analyticsKeys } = require('../analytics/keys')
 const ipcMainEvents = require('../common/ipc-main-events')
 const getCtx = require('../context')
-const { STATUS } = require('../daemon/consts')
-
 // Use local webui build from the webui/ directory at project root
 serve({ scheme: 'webui', directory: join(__dirname, '../../../webui/build') })
 
@@ -127,11 +125,7 @@ module.exports = async function () {
   const ctx = getCtx()
 
   if (store.get(CONFIG_KEY, null) === null) {
-    // First time running this. Enable opening ipfs-webui at app launch.
-    // This accounts for users on OSes who may have extensions for
-    // decluttering system menus/trays, and thus have no initial "way in" to
-    // Desktop upon install:
-    // https://github.com/ipfs-shipyard/ipfs-desktop/issues/1741
+    // First time running this. Enable opening the primary dashboard at app launch.
     store.safeSet(CONFIG_KEY, true)
   }
 
@@ -176,10 +170,8 @@ module.exports = async function () {
   }
 
   const getIpfsd = ctx.getFn('getIpfsd')
-  let ipfsdStatus = null
   ipcMain.on(ipcMainEvents.IPFSD, async (status) => {
     const ipfsd = await getIpfsd(true)
-    ipfsdStatus = status
 
     if (ipfsd && ipfsd.apiAddr !== apiAddress) {
       apiAddress = ipfsd.apiAddr
@@ -195,48 +187,11 @@ module.exports = async function () {
     callback({ cancel: false, requestHeaders: details.requestHeaders }) // eslint-disable-line
   })
 
-  const launchWebUI = ctx.getFn('launchWebUI')
-  const splashScreen = await ctx.getProp('splashScreen')
-  if (store.get(CONFIG_KEY)) {
-    // we're supposed to show the window on startup, display the splash screen
-    splashScreen.show()
-  } else {
-    // we don't need the splash screen, ignore it.
-    splashScreen.destroy()
-  }
-  let splashScreenTimeoutId = null
-  window.on('close', () => {
-    if (splashScreenTimeoutId) {
-      clearTimeout(splashScreenTimeoutId)
-      splashScreenTimeoutId = null
-    }
-  })
-  const handleSplashScreen = async () => {
-    if ([null, STATUS.STARTING_STARTED].includes(ipfsdStatus)) {
-      splashScreenTimeoutId = setTimeout(handleSplashScreen, 500)
-      return
-    }
-
-    await launchWebUI('/')
-    try {
-      splashScreen.destroy()
-    } catch (err) {
-      logger.error('[web ui] failed to hide splash screen')
-      logger.error(err)
-    }
-  }
-
   return /** @type {Promise<void>} */(new Promise(resolve => {
-    if (store.get(CONFIG_KEY)) {
-      logger.info('[web ui] waiting for ipfsd to start')
-      window.once('ready-to-show', async () => {
-        logger.info('[web ui] window ready')
-
-        handleSplashScreen()
-
-        resolve()
-      })
-    }
+    window.once('ready-to-show', () => {
+      logger.info('[web ui] window ready')
+      resolve()
+    })
 
     updateLanguage()
     window.loadURL(url.toString())

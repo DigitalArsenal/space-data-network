@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -10,13 +11,16 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	libp2phost "github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/multiformats/go-multiaddr"
 
+	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -221,6 +225,158 @@ func TestMakeWebUIHandlerServesIndexAndAssetsUnderWebUI(t *testing.T) {
 			t.Fatalf("body = %q, want asset contents", got)
 		}
 	})
+}
+
+func TestMakeFrontendSurfaceHandlerRedirectsUnauthenticatedRootToWalletLogin(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer sdb.Close()
+
+	sessions, err := auth.NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+
+	handler := makeFrontendSurfaceHandler(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		auth.NewHandler(nil, sessions, time.Hour, "", ""),
+		true,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
+	}
+	if location := rec.Header().Get("Location"); location != "/login?next=%2F" {
+		t.Fatalf("Location = %q, want %q", location, "/login?next=%2F")
+	}
+}
+
+func TestMakeFrontendSurfaceHandlerServesFrontendWhenAuthenticated(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer sdb.Close()
+
+	sessions, err := auth.NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+
+	token, err := sessions.CreateSession(
+		"xpub-standard-user",
+		peers.Standard,
+		"127.0.0.1",
+		"test-agent",
+		time.Hour,
+	)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	handler := makeFrontendSurfaceHandler(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("frontend"))
+		}),
+		auth.NewHandler(nil, sessions, time.Hour, "", ""),
+		true,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if body := rec.Body.String(); body != "frontend" {
+		t.Fatalf("body = %q, want %q", body, "frontend")
+	}
+}
+
+func TestMakeFrontendHandlerReloadsIndexAfterBuildChange(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	indexPath := filepath.Join(dir, "index.html")
+	firstHTML := []byte(`<!doctype html><html><head><script type="module" src="./assets/index-old.js"></script></head><body><div id="app"></div></body></html>`)
+	if err := os.WriteFile(indexPath, firstHTML, 0o644); err != nil {
+		t.Fatalf("write initial index.html failed: %v", err)
+	}
+
+	handler, err := makeFrontendHandler(dir)
+	if err != nil {
+		t.Fatalf("makeFrontendHandler failed: %v", err)
+	}
+
+	firstReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	firstRec := httptest.NewRecorder()
+	handler.ServeHTTP(firstRec, firstReq)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("initial status = %d, want 200", firstRec.Code)
+	}
+	if !bytes.Contains(firstRec.Body.Bytes(), []byte("index-old.js")) {
+		t.Fatalf("initial body = %q, want old asset reference", firstRec.Body.String())
+	}
+
+	secondHTML := []byte(`<!doctype html><html><head><script type="module" src="./assets/index-new.js"></script></head><body><div id="app"></div></body></html>`)
+	if err := os.WriteFile(indexPath, secondHTML, 0o644); err != nil {
+		t.Fatalf("write updated index.html failed: %v", err)
+	}
+
+	secondReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	secondRec := httptest.NewRecorder()
+	handler.ServeHTTP(secondRec, secondReq)
+	if secondRec.Code != http.StatusOK {
+		t.Fatalf("updated status = %d, want 200", secondRec.Code)
+	}
+	if !bytes.Contains(secondRec.Body.Bytes(), []byte("index-new.js")) {
+		t.Fatalf("updated body = %q, want new asset reference after rebuild", secondRec.Body.String())
+	}
+}
+
+func TestMakeFrontendHandlerDoesNotCacheHTMLEntryPoints(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(`<!doctype html><html><body><div id="app"></div></body></html>`), 0o644); err != nil {
+		t.Fatalf("write index.html failed: %v", err)
+	}
+
+	handler, err := makeFrontendHandler(dir)
+	if err != nil {
+		t.Fatalf("makeFrontendHandler failed: %v", err)
+	}
+
+	for _, requestPath := range []string{"/", "/network"} {
+		t.Run(requestPath, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, requestPath, nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want %q", got, "no-store")
+			}
+		})
+	}
 }
 
 func TestBuildProviderDescriptorIncludesPublishedIdentityAddresses(t *testing.T) {

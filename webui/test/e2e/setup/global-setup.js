@@ -31,7 +31,7 @@ const ensureKuboDaemon = async (apiOpts) => {
 const globalSetup = async config => {
   const backendJsonPath = path.join(__dirname, 'ipfs-backend.json')
 
-  let port = await getPort(5001, '0.0.0.0')
+  let port = await getPort(5001, '127.0.0.1')
 
   if (process.env.E2E_API_URL) {
     const url = new URL(process.env.E2E_API_URL)

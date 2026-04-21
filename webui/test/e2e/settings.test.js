@@ -22,12 +22,15 @@ test.describe('Settings screen', () => {
   })
 
   test('should show config of IPFS node', async ({ page }) => {
-    await expect(page.getByText('Addresses')).toBeVisible()
-    await expect(page.getByText('Bootstrap')).toBeVisible()
-    await expect(page.getByText('PeerID')).toBeVisible()
+    const configEditor = page.locator('.bg-navy .ace_content')
+
+    await expect(configEditor).toBeVisible()
+    await expect(configEditor).toContainText('"Addresses"')
+    await expect(configEditor).toContainText('"Bootstrap"')
+    await expect(configEditor).toContainText('"PeerID"')
     // check PeerID in config to confirm it comes from expected instance
     const id = process.env.IPFS_RPC_ID
-    await expect(page.getByText(id)).toBeVisible()
+    await expect(configEditor).toContainText(id)
   })
 
   test('Submit/Reset Public Subdomain Gateway', async ({ page }) => {

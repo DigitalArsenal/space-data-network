@@ -35,7 +35,7 @@ test.describe('Remote RPC API tests', () => {
   let rpcId
 
   test.beforeAll(async () => {
-    rpcPort = await getPort(55055, '0.0.0.0')
+    rpcPort = await getPort(55055, '127.0.0.1')
     rpcAddr = `/ip4/127.0.0.1/tcp/${rpcPort}`
     // spawn an ephemeral local node to ensure we connect to a different, remote node
     ipfsd = await createNode({

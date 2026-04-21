@@ -28,7 +28,6 @@ interface AuthStatusResponse {
 }
 
 interface AuthMeResponse {
-  xpub?: string;
   name?: string;
   trust_level?: string;
 }
@@ -76,7 +75,7 @@ export function createServerAdapter(deps: ServerAdapterDeps): AdminAdapter {
             'name',
           ]) ?? target.label ?? target.baseUrl,
           peerId: pickString(nodeInfo, ['peer_id', 'peerId']),
-          xpub: pickString(authMe, ['xpub']),
+          xpub: null,
           transport: 'https',
           descriptorUrl: `${target.baseUrl}/api/module-delivery/provider`,
         },

@@ -36,6 +36,8 @@ func (h *Handler) RequireAuth(minTrust peers.TrustLevel, next http.HandlerFunc) 
 			return
 		}
 
+		session = h.maybeRefreshSessionCookie(w, r, session)
+
 		// Store session in request context
 		ctx := context.WithValue(r.Context(), sessionContextKey, session)
 		next(w, r.WithContext(ctx))
@@ -47,6 +49,7 @@ func (h *Handler) OptionalAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		session, err := h.sessionFromRequest(r)
 		if err == nil && session != nil {
+			session = h.maybeRefreshSessionCookie(w, r, session)
 			ctx := context.WithValue(r.Context(), sessionContextKey, session)
 			r = r.WithContext(ctx)
 		}

@@ -2,9 +2,9 @@
  * Session Auth — Ed25519 challenge-response authentication for SDN server.
  *
  * Implements the challenge-response flow matching sdn-server/internal/auth/handler.go:
- * 1. POST /api/auth/challenge with { xpub, client_pubkey_hex, ts }
+ * 1. POST /api/auth/challenge with { client_pubkey_hex, ts }
  * 2. Sign the returned challenge bytes with Ed25519
- * 3. POST /api/auth/verify with { challenge_id, xpub, client_pubkey_hex, challenge, signature_hex }
+ * 3. POST /api/auth/verify with { challenge_id, client_pubkey_hex, challenge, signature_hex }
  * 4. Server sets session cookie for subsequent requests
  */
 
@@ -31,7 +31,6 @@ interface ChallengeResponse {
 /** Verify response from the server. */
 interface VerifyResponse {
   user: {
-    xpub: string;
     name: string;
     trust_level: string;
   };
@@ -74,7 +73,6 @@ export class SessionAuth implements AuthProvider {
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify({
-        xpub: this.identity.xpub,
         client_pubkey_hex: pubKeyHex,
         ts: Math.floor(Date.now() / 1000),
       }),
@@ -100,7 +98,6 @@ export class SessionAuth implements AuthProvider {
       credentials: 'include',
       body: JSON.stringify({
         challenge_id: challenge.challenge_id,
-        xpub: this.identity.xpub,
         client_pubkey_hex: pubKeyHex,
         challenge: challenge.challenge,
         signature_hex: signatureHex,

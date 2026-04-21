@@ -584,6 +584,35 @@ cd sdn-js && npm test
 
 That file contains the mnemonic, xpub, and derivation path for the local dev admin identity. It is meant only for local development, and the production deploy script refuses to deploy if that xpub appears in a production config.
 
+### Suite Version Pinning
+
+The suite-wide version contract lives in [`suite.versions.json`](./suite.versions.json).
+
+That manifest is the canonical source for:
+
+- the suite release version
+- the pinned `spacedatastandards.org` version
+- the pinned `hd-wallet-wasm` and `hd-wallet-ui` versions
+- the pinned IPFS WebUI version
+- the current advertised SDN protocol flag
+
+Generated readers are checked into:
+
+- [`sdn-js/src/version-info.generated.ts`](./sdn-js/src/version-info.generated.ts)
+- [`sdn-server/internal/versioninfo/generated.go`](./sdn-server/internal/versioninfo/generated.go)
+
+When the manifest changes, regenerate those files with:
+
+```bash
+npm run generate:versions
+```
+
+And verify repo-wide consistency with:
+
+```bash
+npm run check:versions
+```
+
 ---
 
 ## Documentation

@@ -20,7 +20,6 @@ describe('createServerAdapter', () => {
       }
       if (input.endsWith('/api/auth/me')) {
         return jsonResponse(200, {
-          xpub: 'xpub-remote-admin',
           name: 'Remote Admin',
           trust_level: 'admin',
         });

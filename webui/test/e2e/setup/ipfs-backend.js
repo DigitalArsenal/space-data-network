@@ -25,7 +25,7 @@ async function run (rpcPort) {
   if (endpoint) {
     ipfs = create(endpoint)
   } else {
-    gatewayPort = await getPort(gatewayPort, '0.0.0.0')
+    gatewayPort = await getPort(gatewayPort, '127.0.0.1')
 
     const kuboBinPath = process.env.IPFS_GO_EXEC || kuboPath()
 

@@ -14,6 +14,6 @@ module.exports = async function () {
       return
     }
 
-    await ctx.getFn('launchWebUI')()
+    await ctx.getFn('launchDashboard')()
   })
 }

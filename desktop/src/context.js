@@ -3,7 +3,7 @@ const pDefer = require('p-defer')
 const logger = require('./common/logger')
 
 /**
- * @typedef { 'tray' | 'tray.update-menu' | 'countlyDeviceId' | 'manualCheckForUpdates' | 'startIpfs' | 'stopIpfs' | 'restartIpfs' | 'getIpfsd' | 'launchWebUI' | 'webui' | 'splashScreen' | 'i18n.initDone' } ContextProperties
+ * @typedef { 'tray' | 'tray.update-menu' | 'countlyDeviceId' | 'manualCheckForUpdates' | 'startIpfs' | 'stopIpfs' | 'restartIpfs' | 'getIpfsd' | 'launchWebUI' | 'launchDashboard' | 'webui' | 'dashboard' | 'splashScreen' | 'i18n.initDone' } ContextProperties
  */
 
 /**
@@ -27,6 +27,7 @@ const logger = require('./common/logger')
  *
  * @extends {Record<string, unknown>}
  * @property {function} launchWebUI
+ * @property {function} launchDashboard
  */
 class Context {
   constructor () {

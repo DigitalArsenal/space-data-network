@@ -167,6 +167,33 @@ func (s *UserStore) GetUser(xpub string) (*User, error) {
 	return nil, nil
 }
 
+// GetUserBySigningPubKey resolves a user by a bound Ed25519 signing public key.
+// Config overrides are applied so the returned user matches the authoritative
+// runtime view used by auth/session handling.
+func (s *UserStore) GetUserBySigningPubKey(signingPubKeyHex string) (*User, error) {
+	normalized, err := normalizeEd25519PubKeyHex(signingPubKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("invalid signing_pubkey_hex: %w", err)
+	}
+	if normalized == "" {
+		return nil, nil
+	}
+
+	users, err := s.ListUsers()
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range users {
+		if strings.EqualFold(strings.TrimSpace(users[i].SigningPubKeyHex), normalized) {
+			u := users[i]
+			return &u, nil
+		}
+	}
+
+	return nil, nil
+}
+
 // ListUsers returns all users from both config and database.
 func (s *UserStore) ListUsers() ([]User, error) {
 	s.mu.RLock()
