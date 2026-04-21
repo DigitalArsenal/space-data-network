@@ -1,6 +1,6 @@
 import type { CanonicalListing, ObservedPeerSource } from '../../../src/ui/runtime/types';
 import { query } from '../dom/query';
-import { escapeHtml, formatError, hexToBytes, uniqueStrings } from '../dom/escape';
+import { escapeHtml, hexToBytes, uniqueStrings } from '../dom/escape';
 import type { AppState } from '../state/app-state';
 import type {
   ModuleDeliveryEventLike,
@@ -39,17 +39,6 @@ export function createNetworkWorkspaceController(options: NetworkWorkspaceContro
     root,
     state,
   } = options;
-
-  function setConnectionStatus(status: string): void {
-    const node = query<HTMLElement>(root, '#sdn-connection-status');
-    if (node) {
-      node.textContent = status;
-    }
-    const topbar = query<HTMLElement>(root, '#sdn-connection-status-top');
-    if (topbar) {
-      topbar.textContent = status;
-    }
-  }
 
   function recordObservedPeer(peerId: string, source: ObservedPeerSource, detail?: string): void {
     state.observedPeers.record({ peerId, source, detail });
@@ -110,8 +99,6 @@ export function createNetworkWorkspaceController(options: NetworkWorkspaceContro
   }
 
   async function refreshProviderDescriptor(): Promise<void> {
-    setConnectionStatus('Loading provider descriptor');
-
     const providerUrl = query<HTMLInputElement>(root, '#sdn-provider-url');
     const candidates = uniqueStrings(getProviderDescriptorCandidates());
 
@@ -129,7 +116,6 @@ export function createNetworkWorkspaceController(options: NetworkWorkspaceContro
           state.provider = payload;
           recordObservedPeer(payload.peerId, 'provider', payload.relayAddresses[0] ?? candidate);
           renderProviderDescriptor(payload);
-          setConnectionStatus('Provider descriptor loaded');
           return;
         }
       } catch {
@@ -144,7 +130,6 @@ export function createNetworkWorkspaceController(options: NetworkWorkspaceContro
       defaultProviderDescriptor.relayAddresses[0],
     );
     renderProviderDescriptor(defaultProviderDescriptor);
-    setConnectionStatus('Using seeded live provider descriptor');
   }
 
   async function ensureRuntime(): Promise<{
@@ -182,7 +167,6 @@ export function createNetworkWorkspaceController(options: NetworkWorkspaceContro
           onPeerConnected(peerId) {
             recordObservedPeer(peerId, 'protocol', 'libp2p connection');
             renderObservedPeers();
-            setConnectionStatus(`Connected to ${peerId}`);
           },
           onPeerDisconnected(peerId) {
             recordObservedPeer(peerId, 'protocol', 'peer disconnected');
@@ -197,9 +181,8 @@ export function createNetworkWorkspaceController(options: NetworkWorkspaceContro
       try {
         await state.node.dial(state.provider.relayAddresses[0]);
         recordObservedPeer(state.provider.peerId, 'seed', state.provider.relayAddresses[0]);
-        setConnectionStatus(`Seeded from ${state.provider.peerId}`);
-      } catch (error) {
-        setConnectionStatus(`Seed dial failed: ${formatError(error)}`);
+      } catch (_error) {
+        // Discovery should still proceed from the seeded descriptor even if the first relay dial fails.
       }
 
       try {
@@ -364,6 +347,5 @@ export function createNetworkWorkspaceController(options: NetworkWorkspaceContro
     resetDelivery,
     runAddressLookup,
     runLiveFlow,
-    setConnectionStatus,
   };
 }

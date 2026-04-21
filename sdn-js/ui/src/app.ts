@@ -50,6 +50,16 @@ const navItems: NavItem[] = [
 
 const featureSlides: FeatureSlide[] = [
   {
+    id: 'overview',
+    title: 'Space Data Network',
+    summary:
+      'Space Data Network combines SDS records, libp2p and IPFS transport, encrypted WASM module delivery, wallet-backed identity, and isomorphic browser/server operation so operators can publish, discover, verify, run, and manage space software and data without a central broker.',
+    links: [
+      { label: 'Inspect Network', workspaceId: 'network' },
+      { label: 'Open Store', workspaceId: 'store' },
+    ],
+  },
+  {
     id: 'marketplace',
     title: 'Marketplace Search',
     summary:
@@ -125,7 +135,6 @@ export async function renderAppShell(
             </label>
             <div class="sdn-admin-meta">
               <span class="sdn-chip" id="sdn-active-target">Local backend</span>
-              <span class="sdn-chip" id="sdn-connection-status-top">Idle</span>
             </div>
           </div>
           <div class="sdn-admin-topbar__actions">
@@ -148,12 +157,6 @@ export async function renderAppShell(
             <div class="sdn-hero">
               <div class="sdn-hero__copy">
                 <p class="sdn-kicker">Space Data Network</p>
-                <h1>A peer-to-peer control plane for space data, software modules, and signed identity.</h1>
-                <p class="sdn-copy">
-                  Space Data Network combines SDS records, libp2p and IPFS transport, encrypted WASM module delivery,
-                  wallet-backed identity, and isomorphic browser/server operation so operators can publish, discover,
-                  verify, run, and manage space software and data without a central broker.
-                </p>
                 <section id="sdn-feature-carousel" class="sdn-feature-carousel" aria-label="Space Data Network feature tour">
                   <div class="sdn-feature-carousel__viewport">
                     <button type="button" class="sdn-feature-carousel__arrow sdn-feature-carousel__arrow--prev" data-feature-prev aria-label="Previous feature">
@@ -199,12 +202,8 @@ export async function renderAppShell(
               </div>
               <div class="sdn-hero__summary">
                 <div class="sdn-metric-card">
-                  <span class="sdn-metric-card__label">Observed SDN peers</span>
+                  <span class="sdn-metric-card__label">Peers</span>
                   <strong id="sdn-observed-peer-count">0</strong>
-                </div>
-                <div class="sdn-metric-card">
-                  <span class="sdn-metric-card__label">Connection status</span>
-                  <strong id="sdn-connection-status">Idle</strong>
                 </div>
               </div>
             </div>
@@ -224,35 +223,31 @@ export async function renderAppShell(
 
               <article class="sdn-panel">
                 <div class="sdn-panel__header">
-                  <h2>Recent Sightings</h2>
-                  <span class="sdn-chip">Observed SDN peers</span>
+                  <h2>Search SDN Peers</h2>
+                  <span class="sdn-chip">EPM + address lookup</span>
                 </div>
-                <div id="sdn-sightings" class="sdn-stack">
-                  <div class="sdn-empty">DHT, provider, and protocol evidence will stream here.</div>
-                </div>
-              </article>
-
-              <article class="sdn-panel">
-                <div class="sdn-panel__header">
-                  <h2>Lookup Node</h2>
-                  <span class="sdn-chip">Address-based</span>
-                </div>
+                <p class="sdn-copy">
+                  Search the live SDN discovery graph by EPM identity fields, bitcoin address, ethereum address, solana address, or other registered lookup namespaces.
+                </p>
                 <div class="sdn-control-grid">
                   <label class="sdn-field">
-                    <span>Lookup chain</span>
+                    <span>Lookup type</span>
                     <select id="sdn-address-lookup-chain">
+                      <option value="epm">epm</option>
                       <option value="bitcoin">bitcoin</option>
                       <option value="ethereum">ethereum</option>
                       <option value="solana">solana</option>
+                      <option value="peerid">peerid</option>
+                      <option value="xpub">xpub</option>
                     </select>
                   </label>
                   <label class="sdn-field">
-                    <span>Blockchain address</span>
-                    <input id="sdn-address-lookup-value" type="text" placeholder="bc1..., 0x..., or sol..." />
+                    <span>Search value</span>
+                    <input id="sdn-address-lookup-value" type="text" placeholder="EPM handle, bitcoin address, peer ID, or xpub" />
                   </label>
                 </div>
                 <div class="sdn-action-row">
-                  <button id="sdn-address-lookup-run" type="button" class="sdn-button">Lookup node</button>
+                  <button id="sdn-address-lookup-run" type="button" class="sdn-button">Search peers</button>
                 </div>
               </article>
 

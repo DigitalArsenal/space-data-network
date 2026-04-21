@@ -30,6 +30,16 @@ export default defineConfig({
           changeOrigin: true,
           secure: false,
         },
+        '/webui': {
+          target: proxyTarget,
+          changeOrigin: true,
+          secure: false,
+        },
+        '/ipfs': {
+          target: proxyTarget,
+          changeOrigin: true,
+          secure: false,
+        },
       },
     }
     : undefined,

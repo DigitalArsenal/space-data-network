@@ -446,10 +446,31 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if err != nil {
 					log.Warnf("IPFS WebUI disabled at /webui: %v", err)
 				} else {
-					adminMux.HandleFunc("/webui", func(w http.ResponseWriter, r *http.Request) {
-						http.Redirect(w, r, "/webui/", http.StatusMovedPermanently)
-					})
-					adminMux.Handle("/webui/", http.StripPrefix("/webui", webuiHandler))
+					serveWebUI := func(w http.ResponseWriter, r *http.Request) {
+						if r.URL.Path == "/webui" {
+							http.Redirect(w, r, "/webui/", http.StatusMovedPermanently)
+							return
+						}
+						if !strings.HasPrefix(r.URL.Path, "/webui/") {
+							http.NotFound(w, r)
+							return
+						}
+
+						serve := func(w http.ResponseWriter, r *http.Request) {
+							http.StripPrefix("/webui", webuiHandler).ServeHTTP(w, r)
+						}
+						if cfg.Admin.RequireAuth {
+							if authHandler == nil {
+								http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+								return
+							}
+							authHandler.RequireAuth(peers.Standard, serve)(w, r)
+							return
+						}
+						serve(w, r)
+					}
+					adminMux.HandleFunc("/webui", serveWebUI)
+					adminMux.HandleFunc("/webui/", serveWebUI)
 					log.Infof("IPFS WebUI at %s://%s/webui from %s", adminScheme, adminAddr, webuiPath)
 				}
 			}
@@ -597,8 +618,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 				// Serve wallet-ui static files if configured
 				if walletUIPath := strings.TrimSpace(cfg.Admin.WalletUIPath); walletUIPath != "" {
-					adminMux.Handle("/wallet-ui/", http.StripPrefix("/wallet-ui/", http.FileServer(http.Dir(walletUIPath))))
-					log.Infof("Wallet UI served at %s://%s/wallet-ui/ from %s", adminScheme, adminAddr, walletUIPath)
+					serveRoot := auth.WalletUIStaticRoot(walletUIPath)
+					if serveRoot == "" {
+						serveRoot = walletUIPath
+					}
+					adminMux.Handle("/wallet-ui/", http.StripPrefix("/wallet-ui/", http.FileServer(http.Dir(serveRoot))))
+					log.Infof("Wallet UI served at %s://%s/wallet-ui/ from %s", adminScheme, adminAddr, serveRoot)
 				}
 
 				// Discover wallet-ui assets for the login page and the legacy admin UI fallback.

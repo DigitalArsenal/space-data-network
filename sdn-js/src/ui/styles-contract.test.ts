@@ -26,8 +26,8 @@ describe('sdn admin layout css contract', () => {
     expect(styles).toMatch(/\.sdn-admin-topbar__actions\s*>\s*\.sdn-button,\s*\.sdn-admin-topbar__actions\s*>\s*\.sdn-ghost-button,\s*\.sdn-admin-topbar__actions\s*>\s*\.sdn-account-button\s*\{[^}]*height:\s*var\(--sdn-control-height\);/s);
   });
 
-  it('uses overlay carousel arrows with unlabeled indicators below a compact viewport', () => {
-    expect(styles).toMatch(/\.sdn-feature-carousel__viewport\s*\{[^}]*position:\s*relative;[^}]*min-height:\s*10\.5rem;/s);
+  it('uses overlay carousel arrows with unlabeled indicators below a taller centered viewport', () => {
+    expect(styles).toMatch(/\.sdn-feature-carousel__viewport\s*\{[^}]*position:\s*relative;[^}]*width:\s*min\(100%,\s*48rem\);[^}]*margin:\s*0 auto;[^}]*padding:\s*0 4\.5rem;[^}]*min-height:\s*21rem;/s);
     expect(styles).toMatch(/\.sdn-feature-carousel__arrow\s*\{[^}]*position:\s*absolute;[^}]*top:\s*50%;[^}]*border-radius:\s*999px;/s);
     expect(styles).toMatch(/\.sdn-feature-carousel__indicators\s*\{[^}]*justify-content:\s*center;/s);
   });

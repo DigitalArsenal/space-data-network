@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -385,7 +387,7 @@ func TestLoginPage_BuildersExposeWalletAccountSurfaceForUnauthorizedUsers(t *tes
 	}{
 		{
 			name: "hosted wallet dist page",
-			html: buildLoginPage("wallet.js", "wallet.css"),
+			html: buildLoginPage("/wallet-ui/dist/assets/wallet.js", "/wallet-ui/dist/assets/wallet.css"),
 		},
 		{
 			name: "fallback CDN page",
@@ -396,16 +398,159 @@ func TestLoginPage_BuildersExposeWalletAccountSurfaceForUnauthorizedUsers(t *tes
 	for _, page := range pages {
 		page := page
 		t.Run(page.name, func(t *testing.T) {
-			if !strings.Contains(page.html, "Open Wallet") {
-				t.Fatalf("page missing explicit wallet button: %s", page.html)
+			if !strings.Contains(page.html, ">Login<") {
+				t.Fatalf("page missing explicit login button: %s", page.html)
 			}
-			if !strings.Contains(page.html, "ui.openAccount") {
+			if !strings.Contains(page.html, "window.__sdnOpenWalletAccount") {
 				t.Fatalf("page missing wallet account modal hook: %s", page.html)
 			}
-			if !strings.Contains(page.html, "get('unauthorized') === '1'") {
-				t.Fatalf("page missing unauthorized wallet trigger: %s", page.html)
+			if !strings.Contains(page.html, "window.__sdnResolveNextPath") {
+				t.Fatalf("page missing shared post-login target helper: %s", page.html)
+			}
+			if !strings.Contains(page.html, "SPACE DATA NETWORK") {
+				t.Fatalf("page missing SDN title: %s", page.html)
+			}
+			if !strings.Contains(page.html, `href="https://ipfs.tech/"`) {
+				t.Fatalf("page missing IPFS summary link: %s", page.html)
+			}
+			if !strings.Contains(page.html, `href="https://libp2p.io/"`) {
+				t.Fatalf("page missing libp2p summary link: %s", page.html)
+			}
+			if !strings.Contains(page.html, "Nodes detected") {
+				t.Fatalf("page missing detected node metric: %s", page.html)
+			}
+			if !strings.Contains(page.html, "window.__sdnRefreshNodeCount") {
+				t.Fatalf("page missing node-count refresh hook: %s", page.html)
+			}
+			if !strings.Contains(page.html, "digitalarsenal.github.io/flatbuffers") {
+				t.Fatalf("page missing FlatBuffers technology link: %s", page.html)
+			}
+			if !strings.Contains(page.html, "digitalarsenal.github.io/flatsql") {
+				t.Fatalf("page missing FlatSQL technology link: %s", page.html)
+			}
+			if !strings.Contains(page.html, "spacedatastandards.org") {
+				t.Fatalf("page missing Space Data Standards technology link: %s", page.html)
+			}
+			if !strings.Contains(page.html, `href="https://spacedatanet.org/"`) {
+				t.Fatalf("page missing SDN homepage link: %s", page.html)
+			}
+			if !strings.Contains(page.html, "window.__sdnEnsureWalletUI") {
+				t.Fatalf("page missing lazy wallet loader hook: %s", page.html)
+			}
+			if strings.Contains(page.html, `/wallet-ui/src/app.js`) {
+				t.Fatalf("page should not reference the source wallet module on initial render: %s", page.html)
+			}
+			if strings.Contains(page.html, "Open Wallet") {
+				t.Fatalf("page should not expose a separate wallet button: %s", page.html)
+			}
+			if strings.Contains(page.html, "Protected Surfaces") {
+				t.Fatalf("page should not render the protected surfaces card: %s", page.html)
+			}
+			if strings.Contains(page.html, "window.__sdnWalletQuery.get('unauthorized') === '1'") {
+				t.Fatalf("page should not auto-open the wallet modal by default: %s", page.html)
 			}
 		})
+	}
+}
+
+func TestLoginPage_BuildersWrapShellInCenteredStage(t *testing.T) {
+	t.Parallel()
+
+	html := buildLoginPage("/wallet-ui/dist/assets/wallet.js", "/wallet-ui/dist/assets/wallet.css")
+
+	if !strings.Contains(html, ".sdn-stage{") {
+		t.Fatalf("login page missing dedicated stage styles: %s", html)
+	}
+	if !strings.Contains(html, "display:flex") {
+		t.Fatalf("login page missing flex stage layout: %s", html)
+	}
+	if !strings.Contains(html, "align-items:center") {
+		t.Fatalf("login page missing vertical centering: %s", html)
+	}
+	if !strings.Contains(html, "justify-content:center") {
+		t.Fatalf("login page missing horizontal centering: %s", html)
+	}
+	if !strings.Contains(html, `<div class="sdn-stage">`) {
+		t.Fatalf("login page missing stage wrapper: %s", html)
+	}
+	if !strings.Contains(html, `<main class="sdn-shell" aria-label="Space Data Network login">`) {
+		t.Fatalf("login page missing SDN shell main element: %s", html)
+	}
+}
+
+func TestLoginPage_BuildersDisablePasskeyStorageOnLocalIPHosts(t *testing.T) {
+	t.Parallel()
+
+	html := buildLoginPage("/wallet-ui/dist/assets/wallet.js", "/wallet-ui/dist/assets/wallet.css")
+
+	if !strings.Contains(html, "window.__sdnShouldDisablePasskeys") {
+		t.Fatalf("login page missing local passkey guard helper: %s", html)
+	}
+	if !strings.Contains(html, "window.location.hostname") {
+		t.Fatalf("login page missing hostname-based passkey guard: %s", html)
+	}
+	if !strings.Contains(html, ".remember-method-btn[data-target=\"") {
+		t.Fatalf("login page missing embedded wallet remember-method pin selector hook: %s", html)
+	}
+	if !strings.Contains(html, "unlock-with-passkey") {
+		t.Fatalf("login page missing stored passkey suppression hook: %s", html)
+	}
+	if !strings.Contains(html, "window.__sdnNormalizeWalletLoginUI") {
+		t.Fatalf("login page missing wallet login normalization hook: %s", html)
+	}
+}
+
+func TestCachedLoginPage_UsesBundledWalletDistArtifactsInsteadOfSourceModules(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatalf("MkdirAll src: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "styles"), 0o755); err != nil {
+		t.Fatalf("MkdirAll styles: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "dist", "assets"), 0o755); err != nil {
+		t.Fatalf("MkdirAll assets: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "src", "app.js"), []byte("export function createWalletUI(){}"), 0o644); err != nil {
+		t.Fatalf("WriteFile src/app.js: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "styles", "widget.css"), []byte("#hd-wallet-ui-container{}"), 0o644); err != nil {
+		t.Fatalf("WriteFile styles/widget.css: %v", err)
+	}
+	indexHTML := `<!doctype html><html><head><link rel="stylesheet" crossorigin href="./assets/main-test.css"></head><body><script type="module" crossorigin src="./assets/main-test.js"></script></body></html>`
+	if err := os.WriteFile(filepath.Join(dir, "dist", "index.html"), []byte(indexHTML), 0o644); err != nil {
+		t.Fatalf("WriteFile dist/index.html: %v", err)
+	}
+
+	prevOnce := loginPageOnce
+	prevCache := loginPageCache
+	prevJS := walletJSFile
+	prevCSS := walletCSSFile
+	loginPageOnce = sync.Once{}
+	loginPageCache = ""
+	walletJSFile = ""
+	walletCSSFile = ""
+	defer func() {
+		loginPageOnce = prevOnce
+		loginPageCache = prevCache
+		walletJSFile = prevJS
+		walletCSSFile = prevCSS
+	}()
+
+	html := cachedLoginPage(dir)
+	if !strings.Contains(html, "/wallet-ui/dist/assets/main-test.js") {
+		t.Fatalf("cached login page missing bundled wallet JS path: %s", html)
+	}
+	if !strings.Contains(html, "/wallet-ui/dist/assets/main-test.css") {
+		t.Fatalf("cached login page missing bundled wallet CSS path: %s", html)
+	}
+	if strings.Contains(html, "/wallet-ui/src/app.js") {
+		t.Fatalf("cached login page should not reference source wallet module: %s", html)
+	}
+	if strings.Contains(html, "/wallet-ui/styles/widget.css") {
+		t.Fatalf("cached login page should not reference source wallet stylesheet: %s", html)
 	}
 }
 
@@ -446,5 +591,45 @@ func TestLoginPage_AllowsUnauthorizedSessionsToReachWalletSurface(t *testing.T) 
 	}
 	if location := rec.Header().Get("Location"); location != "" {
 		t.Fatalf("unexpected redirect to %q", location)
+	}
+}
+
+func TestLoginPage_RedirectsAuthenticatedStandardUsersToRequestedWebUI(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer sdb.Close()
+
+	sessions, err := NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+	token, err := sessions.CreateSession(
+		"xpub-standard-user",
+		peers.Standard,
+		"127.0.0.1",
+		"test-agent",
+		time.Hour,
+	)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	h := NewHandler(nil, sessions, time.Hour, "", "")
+	req := httptest.NewRequest(http.MethodGet, "/login?next=/webui/", nil)
+	req.AddCookie(&http.Cookie{Name: "sdn_wallet_session", Value: token})
+	rec := httptest.NewRecorder()
+
+	h.handleLoginPage(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
+	}
+	if location := rec.Header().Get("Location"); location != "/webui/" {
+		t.Fatalf("Location = %q, want %q", location, "/webui/")
 	}
 }
