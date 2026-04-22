@@ -941,7 +941,6 @@ func (n *Node) Start(ctx context.Context) error {
 				log.Warnf("Failed to connect to bootstrap peer %s: %v", peerInfo.AddrInfo.ID, err)
 			} else {
 				n.enqueueAutoRelayCandidate(peerInfo.AddrInfo)
-				n.recordCurrentSDNAdvertisementPeerInfo(peerInfo.AddrInfo)
 				log.Infof("Connected to bootstrap peer %s (peer ID verified)", peerInfo.AddrInfo.ID)
 			}
 		}(p)
@@ -1036,7 +1035,6 @@ func (m *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 		log.Debugf("Failed to connect to mDNS peer %s: %v", pi.ID, err)
 	} else {
 		m.node.enqueueAutoRelayCandidate(pi)
-		m.node.recordCurrentSDNAdvertisementPeerInfo(pi)
 		log.Infof("Connected to mDNS peer: %s", pi.ID)
 	}
 }

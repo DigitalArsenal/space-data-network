@@ -73,6 +73,34 @@ describe('upstream webui peer source', () => {
     ]);
   });
 
+  it('derives agentVersion from the SDN advertisement flag when no explicit agent version is present', () => {
+    expect(trustedPeerListToPeerLocationsForSwarm([
+      {
+        id: '12D3KooWFlagOnly',
+        addrs: ['/dns4/sdn.example/tcp/443/wss/p2p/12D3KooWFlagOnly'],
+        trust_level: 'standard',
+        metadata: {
+          advertisement_flags: 'spacedatanetwork/1.0.0',
+        },
+      },
+    ])).toEqual([
+      {
+        address: '/dns4/sdn.example/tcp/443/wss/p2p/12D3KooWFlagOnly',
+        agentVersion: 'spacedatanetwork/1.0.0',
+        connection: 'wss',
+        coordinates: null,
+        direction: null,
+        flagCode: null,
+        isNearby: false,
+        isPrivate: false,
+        latency: null,
+        location: null,
+        peerId: '12D3KooWFlagOnly',
+        protocols: '',
+      },
+    ]);
+  });
+
   it('derives an upstream connection label from an SDN multiaddr', () => {
     expect(formatPeerConnection('/ip4/127.0.0.1/tcp/14080/ws/p2p/12D3KooWExample')).toBe('ws');
     expect(formatPeerConnection('/dns4/relay.example/tcp/443/wss/p2p/12D3KooWExample')).toBe('wss');
@@ -180,6 +208,7 @@ describe('upstream webui peer source', () => {
               addrs: ['/dns4/sdn.example/tcp/443/wss/p2p/12D3KooWAdvertised'],
               trust_level: 'trusted',
               metadata: {
+                agent_version: 'spacedatanetwork/1.0.0',
                 protocols: '/space-data-network/module-delivery/1.0.0',
                 advertisement_flags: 'spacedatanetwork/1.0.0',
               },
@@ -221,6 +250,7 @@ describe('upstream webui peer source', () => {
         addrs: ['/dns4/sdn.example/tcp/443/wss/p2p/12D3KooWAdvertised'],
         trust_level: 'trusted',
         metadata: {
+          agent_version: 'spacedatanetwork/1.0.0',
           protocols: '/space-data-network/module-delivery/1.0.0',
           advertisement_flags: 'spacedatanetwork/1.0.0',
         },

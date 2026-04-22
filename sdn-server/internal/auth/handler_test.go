@@ -60,7 +60,7 @@ func TestLoginPage_RendersLocalBootstrapTLSInfoAsModalLinkOnLoopback(t *testing.
 		},
 	)
 
-	if !strings.Contains(html, "View local certificate info") {
+	if !strings.Contains(html, ">TLS identity</a>") {
 		t.Fatalf("missing localhost certificate trigger: %s", html)
 	}
 	if !strings.Contains(html, `id="sdn-tls-modal"`) {
@@ -98,7 +98,7 @@ func TestLoginPage_HidesTLSInfoOnRemoteHosts(t *testing.T) {
 		},
 	)
 
-	if strings.Contains(html, "View local certificate info") {
+	if strings.Contains(html, ">TLS identity</a>") {
 		t.Fatalf("remote login page should hide certificate trigger: %s", html)
 	}
 	if strings.Contains(html, `id="sdn-tls-modal"`) {
