@@ -66,6 +66,40 @@ const NavLink = ({
 }
 
 /**
+ * Root-only escape hatch into the untouched upstream IPFS dashboard.
+ *
+ * @param {Object} props
+ * @param {string} props.href
+ * @param {React.ComponentType<React.SVGProps<SVGSVGElement>>} props.icon
+ * @param {boolean} [props.disabled]
+ * @param {string} props.children
+ */
+const ExternalNavLink = ({
+  href,
+  icon,
+  disabled,
+  children
+}) => {
+  const Svg = icon
+  const anchorClass = classnames({
+    'o-50 no-pointer-events': disabled
+  }, ['navbar-item dib db-l pt2 pb3 pv1-l white no-underline f5 hover-bg-white-10 tc bb bw2 bw0-l b--navy'])
+
+  return (
+    <a href={disabled ? undefined : href} onClick={(e) => e.currentTarget.blur()} className={anchorClass} role='menuitem' title={children}>
+      <div className='db ph2 pv1'>
+        <div className='db'>
+          <Svg width='46' role='presentation' className='fill-current-color o-50' />
+        </div>
+        <div className='o-50 db f6 tc montserrat ttu fw1 navbar-item-label'>
+          {children}
+        </div>
+      </div>
+    </a>
+  )
+}
+
+/**
  * @param {Object} props
  * @param {import('i18next').TFunction} props.t
  */
@@ -89,7 +123,7 @@ export const NavBar = ({ t }) => {
           <NavLink to='/explore' icon={StrokeIpld}>{t('explore:tabName')}</NavLink>
           <NavLink to='/peers' icon={StrokeCube}>{t('peers:title')}</NavLink>
           <NavLink to='/settings' icon={StrokeSettings}>{t('settings:title')}</NavLink>
-          <NavLink to='/diagnostics' icon={StrokeLab}>{t('diagnostics:title')}</NavLink>
+          <ExternalNavLink href='/webui' icon={StrokeLab}>IPFS</ExternalNavLink>
         </div>
       </div>
       <div className='dn db-l navbar-footer mb2 tc center f7 o-80 glow'>
