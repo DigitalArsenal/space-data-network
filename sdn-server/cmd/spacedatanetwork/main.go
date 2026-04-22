@@ -2076,7 +2076,12 @@ func handleObservedSDNPeers(n *node.Node) http.HandlerFunc {
 		if registry := n.PeerRegistry(); registry != nil {
 			registryPeers = registry.ListPeers()
 		}
-		data, err := json.Marshal(epm.BuildObservedSDNPeers(snapshot, registryPeers, n.SDNAdvertisementFlagsByPeer()))
+		data, err := json.Marshal(epm.BuildObservedSDNPeers(
+			snapshot,
+			registryPeers,
+			n.SDNAdvertisementFlagsByPeer(),
+			n.SDNAdvertisementAddrsByPeer(),
+		))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

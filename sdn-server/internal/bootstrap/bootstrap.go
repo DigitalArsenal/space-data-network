@@ -8,12 +8,15 @@ import (
 	"strings"
 
 	logging "github.com/ipfs/go-log/v2"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 )
 
 var log = logging.Logger("sdn-bootstrap")
+
+const approvedDemoRelayBootstrap = "/ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45"
 
 // PeerInfo represents a bootstrap peer with its address and expected peer ID.
 type PeerInfo struct {
@@ -212,4 +215,50 @@ func RequirePinnedPeerIDs(peers []PeerInfo) []PeerInfo {
 		}
 	}
 	return pinned
+}
+
+// DefaultBootstrapAddresses returns the default bootstrap set used when the
+// configured list is empty or invalid. The approved demo relay is seeded first,
+// then the libp2p DHT defaults are appended.
+func DefaultBootstrapAddresses() []string {
+	out := make([]string, 0, len(dht.DefaultBootstrapPeers)+1)
+	seen := make(map[string]struct{}, len(dht.DefaultBootstrapPeers)+1)
+
+	appendAddr := func(addr string) {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			return
+		}
+		if _, exists := seen[addr]; exists {
+			return
+		}
+		seen[addr] = struct{}{}
+		out = append(out, addr)
+	}
+
+	appendAddr(approvedDemoRelayBootstrap)
+	for _, addr := range dht.DefaultBootstrapPeers {
+		appendAddr(addr.String())
+	}
+
+	return out
+}
+
+// ResolveBootstrapPeers parses the configured bootstrap list and falls back to
+// the built-in defaults if no valid pinned peers remain.
+func ResolveBootstrapPeers(addresses []string) ([]PeerInfo, bool, error) {
+	parsed, err := ParseBootstrapAddresses(addresses)
+	if err != nil {
+		return nil, false, err
+	}
+	pinned := RequirePinnedPeerIDs(parsed)
+	if len(pinned) > 0 {
+		return pinned, false, nil
+	}
+
+	fallback, err := ParseBootstrapAddresses(DefaultBootstrapAddresses())
+	if err != nil {
+		return nil, true, err
+	}
+	return RequirePinnedPeerIDs(fallback), true, nil
 }

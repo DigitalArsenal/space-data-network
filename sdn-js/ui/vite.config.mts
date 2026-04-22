@@ -180,6 +180,22 @@ export default defineConfig({
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-dnd'),
       },
       {
+        find: /^react-dnd-html5-backend$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-dnd-html5-backend'),
+      },
+      {
+        find: /^react-joyride$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-joyride'),
+      },
+      {
+        find: /^prop-types$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/prop-types'),
+      },
+      {
+        find: /^internal-nav-helper$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/internal-nav-helper'),
+      },
+      {
         find: /^classnames$/,
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/classnames'),
       },

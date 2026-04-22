@@ -39,4 +39,27 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).not.toContain("to='/diagnostics'");
     expect(source).not.toContain("href='#/diagnostics'");
   });
+
+  it('uses a standalone centered SDN logo mark asset instead of baked text logo SVGs', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/navigation/NavBar.js'),
+      'utf8',
+    );
+
+    expect(source).toContain("import sdnLogoMark from './sdn-logo-mark.svg'");
+    expect(source).not.toContain('sdn-logo-text-vert.svg');
+    expect(source).not.toContain('sdn-logo-text-horiz.svg');
+  });
+
+  it('adds a root-only account control that opens the wallet UI and supports logout', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/App.js'),
+      'utf8',
+    );
+
+    expect(source).toContain('StrokeUser');
+    expect(source).toContain('StrokePower');
+    expect(source).toContain('/api/auth/logout');
+    expect(source).toContain('mountWalletUI');
+  });
 });

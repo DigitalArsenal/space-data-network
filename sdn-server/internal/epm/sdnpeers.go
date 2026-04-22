@@ -12,7 +12,7 @@ import (
 
 // BuildObservedSDNPeers projects the peer graph plus advertisement discovery
 // evidence into the trusted-peer JSON shape consumed by the SDN dashboard.
-func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.TrustedPeer, advertisementFlagsByPeer map[string][]string) []*peers.TrustedPeer {
+func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.TrustedPeer, advertisementFlagsByPeer map[string][]string, advertisementAddrsByPeer map[string][]string) []*peers.TrustedPeer {
 	if snapshot == nil || len(advertisementFlagsByPeer) == 0 {
 		return nil
 	}
@@ -25,11 +25,19 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 		registryByID[tp.ID.String()] = tp
 	}
 	protocolsByPeer := buildEdgeProtocolMap(snapshot)
-
-	out := make([]*peers.TrustedPeer, 0)
+	nodesByID := make(map[string]PeerNode, len(snapshot.Nodes))
 	for _, node := range snapshot.Nodes {
 		peerID := strings.TrimSpace(node.PeerID)
-		if peerID == "" || peerID == snapshot.LocalPeerID || !node.IsOnline {
+		if peerID == "" {
+			continue
+		}
+		nodesByID[peerID] = node
+	}
+
+	out := make([]*peers.TrustedPeer, 0)
+	candidatePeerIDs := uniqueStrings(peerIDs(advertisementFlagsByPeer))
+	for _, peerID := range candidatePeerIDs {
+		if peerID == "" || peerID == snapshot.LocalPeerID {
 			continue
 		}
 
@@ -43,10 +51,11 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 			continue
 		}
 
+		node := nodesByID[peerID]
 		registryPeer := registryByID[peerID]
 		entry := &peers.TrustedPeer{
 			ID:           decodedPeerID,
-			Addrs:        mergePeerAddrs(node.MultiformatAddress, registryPeer),
+			Addrs:        mergePeerAddrs(node.MultiformatAddress, registryPeer, advertisementAddrsByPeer[peerID]),
 			TrustLevel:   resolveTrustLevel(node.TrustLevel, registryPeer),
 			Name:         firstNonEmpty(node.DN, peerName(registryPeer)),
 			Organization: firstNonEmpty(node.Organization, peerOrganization(registryPeer)),
@@ -65,6 +74,17 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 	return out
 }
 
+func peerIDs(values map[string][]string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for peerID := range values {
+		out = append(out, peerID)
+	}
+	return out
+}
+
 func buildEdgeProtocolMap(snapshot *PeerGraphSnapshot) map[string][]string {
 	protocolsByPeer := make(map[string][]string)
 	for _, edge := range snapshot.Edges {
@@ -77,7 +97,7 @@ func buildEdgeProtocolMap(snapshot *PeerGraphSnapshot) map[string][]string {
 	return protocolsByPeer
 }
 
-func mergePeerAddrs(nodeAddrs []string, registryPeer *peers.TrustedPeer) []multiaddr.Multiaddr {
+func mergePeerAddrs(nodeAddrs []string, registryPeer *peers.TrustedPeer, discoveredAddrs []string) []multiaddr.Multiaddr {
 	seen := make(map[string]struct{})
 	addrs := make([]multiaddr.Multiaddr, 0)
 
@@ -97,6 +117,12 @@ func mergePeerAddrs(nodeAddrs []string, registryPeer *peers.TrustedPeer) []multi
 	}
 
 	for _, addr := range nodeAddrs {
+		parsed, err := multiaddr.NewMultiaddr(addr)
+		if err == nil {
+			appendAddr(parsed)
+		}
+	}
+	for _, addr := range discoveredAddrs {
 		parsed, err := multiaddr.NewMultiaddr(addr)
 		if err == nil {
 			appendAddr(parsed)

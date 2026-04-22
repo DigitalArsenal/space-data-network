@@ -7,7 +7,7 @@ import { DndProvider } from 'react-dnd';
 import { HeliaProvider, ExploreProvider } from '../../../../webui/node_modules/ipld-explorer-components/dist/providers/index.js';
 
 import '../../../../webui/src/index.css';
-import App from '../../../../webui/src/App.js';
+import App from './overrides/App.js';
 import { installRootDocumentTitleSync } from './branding.js';
 import getStore from './bundles/index.js';
 import bundleCache from '../../../../webui/src/lib/bundle-cache.js';

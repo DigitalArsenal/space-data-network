@@ -27,13 +27,13 @@ describe('sdn upstream webui cutover contract', () => {
       'upstream-webui/bundles/peer-locations.js',
       'upstream-webui/bundles/peers.js',
       'upstream-webui/index.js',
+      'upstream-webui/overrides/App.js',
       'upstream-webui/overrides/components/about-ipfs/AboutIpfs.js',
       'upstream-webui/overrides/components/about-webui/AboutWebUI.js',
       'upstream-webui/overrides/components/connected/Connected.js',
       'upstream-webui/overrides/components/is-connected/IsConnected.js',
       'upstream-webui/overrides/navigation/NavBar.js',
-      'upstream-webui/overrides/navigation/sdn-logo-text-horiz.svg',
-      'upstream-webui/overrides/navigation/sdn-logo-text-vert.svg',
+      'upstream-webui/overrides/navigation/sdn-logo-mark.svg',
       'upstream-webui/overrides/status/StatusConnected.js',
       'upstream-webui/peer-source.js',
       'upstream-webui/vendor/components/about-ipfs/AboutIpfs.js',
@@ -57,7 +57,7 @@ describe('sdn upstream webui cutover contract', () => {
     const upstreamEntryPath = path.join(uiSrcPath, 'upstream-webui', 'index.js');
     const source = await fs.readFile(upstreamEntryPath, 'utf8');
 
-    expect(source).toContain("import App from '../../../../webui/src/App.js'");
+    expect(source).toContain("import App from './overrides/App.js'");
     expect(source).toContain("import getStore from './bundles/index.js'");
     expect(source).toContain("import { installRootDocumentTitleSync } from './branding.js'");
     expect(source).toContain("import { I18nextProvider } from 'react-i18next'");

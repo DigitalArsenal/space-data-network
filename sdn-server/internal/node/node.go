@@ -26,6 +26,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
@@ -92,6 +93,8 @@ type Node struct {
 	sdnDiscoveryTargets     []sdnAdvertisementDiscoveryTarget
 	sdnDiscoveryMu          sync.RWMutex
 	sdnDiscoveryFlagsByPeer map[peer.ID]map[string]time.Time
+	sdnDiscoveryAddrsByPeer map[peer.ID][]string
+	autoRelayPeerChan       chan peer.AddrInfo
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -110,6 +113,8 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 		ctx:                     nodeCtx,
 		cancel:                  cancel,
 		sdnDiscoveryFlagsByPeer: make(map[peer.ID]map[string]time.Time),
+		sdnDiscoveryAddrsByPeer: make(map[peer.ID][]string),
+		autoRelayPeerChan:       make(chan peer.AddrInfo, 64),
 	}
 
 	if err := n.init(); err != nil {
@@ -239,6 +244,12 @@ func (n *Node) init() error {
 		libp2p.EnableHolePunching(),
 		libp2p.EnableRelay(),
 		libp2p.EnableRelayService(),
+		libp2p.EnableAutoRelayWithPeerSource(
+			func(ctx context.Context, _ int) <-chan peer.AddrInfo {
+				return n.autoRelayPeerChan
+			},
+			autorelay.WithMinInterval(0),
+		),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
 			var err error
 			dhtRouting, err = dht.New(n.ctx, h,
@@ -254,6 +265,7 @@ func (n *Node) init() error {
 		return fmt.Errorf("failed to create libp2p host: %w", err)
 	}
 	n.dht = dhtRouting
+	go n.feedAutoRelayCandidates(n.ctx)
 
 	// Create GossipSub
 	n.pubsub, err = pubsub.NewGossipSub(n.ctx, n.host)
@@ -909,17 +921,15 @@ func (n *Node) Start(ctx context.Context) error {
 		}
 	}
 
-	// Parse and validate bootstrap addresses with peer ID pinning
-	bootstrapPeers, err := bootstrap.ParseBootstrapAddresses(n.config.Network.Bootstrap)
+	// Parse and validate bootstrap addresses with peer ID pinning. If the
+	// configured set is empty or invalid, fall back to the built-in default
+	// peers so DHT discovery still comes up.
+	pinnedPeers, usedFallback, err := bootstrap.ResolveBootstrapPeers(n.config.Network.Bootstrap)
 	if err != nil {
-		log.Warnf("Error parsing bootstrap addresses: %v", err)
+		log.Warnf("Error resolving bootstrap addresses: %v", err)
 	}
-
-	// Filter to only peers with pinned IDs for security
-	pinnedPeers := bootstrap.RequirePinnedPeerIDs(bootstrapPeers)
-	if len(pinnedPeers) < len(bootstrapPeers) {
-		log.Warnf("Skipping %d bootstrap peers without peer IDs (peer ID pinning required)",
-			len(bootstrapPeers)-len(pinnedPeers))
+	if usedFallback {
+		log.Warn("Configured bootstrap peers were empty or invalid; falling back to built-in defaults")
 	}
 
 	// Connect to bootstrap peers asynchronously with peer ID verification
@@ -930,7 +940,8 @@ func (n *Node) Start(ctx context.Context) error {
 			if err := n.host.Connect(ctx, peerInfo.AddrInfo); err != nil {
 				log.Warnf("Failed to connect to bootstrap peer %s: %v", peerInfo.AddrInfo.ID, err)
 			} else {
-				n.recordCurrentSDNAdvertisementDiscovery(peerInfo.AddrInfo.ID)
+				n.enqueueAutoRelayCandidate(peerInfo.AddrInfo)
+				n.recordCurrentSDNAdvertisementPeerInfo(peerInfo.AddrInfo)
 				log.Infof("Connected to bootstrap peer %s (peer ID verified)", peerInfo.AddrInfo.ID)
 			}
 		}(p)
@@ -1024,7 +1035,8 @@ func (m *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	if err := m.node.host.Connect(m.node.ctx, pi); err != nil {
 		log.Debugf("Failed to connect to mDNS peer %s: %v", pi.ID, err)
 	} else {
-		m.node.recordCurrentSDNAdvertisementDiscovery(pi.ID)
+		m.node.enqueueAutoRelayCandidate(pi)
+		m.node.recordCurrentSDNAdvertisementPeerInfo(pi)
 		log.Infof("Connected to mDNS peer: %s", pi.ID)
 	}
 }
@@ -1156,6 +1168,7 @@ func (n *Node) discoverPeers(discoveryCID cid.Cid) {
 			if err := n.host.Connect(connectCtx, pi); err != nil {
 				log.Debugf("Failed to connect to discovered peer %s: %v", pi.ID, err)
 			} else {
+				n.enqueueAutoRelayCandidate(pi)
 				log.Infof("Connected to discovered SDN peer: %s", pi.ID)
 			}
 		}(peerInfo)
@@ -1173,7 +1186,7 @@ func (n *Node) discoverSDNAdvertisementPeers(target sdnAdvertisementDiscoveryTar
 			continue
 		}
 
-		n.recordSDNAdvertisementDiscovery(peerInfo.ID, target.Flag)
+		n.recordSDNAdvertisementPeerInfo(peerInfo, target.Flag)
 
 		if n.host.Network().Connectedness(peerInfo.ID) == 2 {
 			continue
@@ -1186,6 +1199,7 @@ func (n *Node) discoverSDNAdvertisementPeers(target sdnAdvertisementDiscoveryTar
 			if err := n.host.Connect(connectCtx, pi); err != nil {
 				log.Debugf("Failed to connect to discovered SDN advertisement peer %s (%s): %v", pi.ID, flag, err)
 			} else {
+				n.enqueueAutoRelayCandidate(pi)
 				log.Infof("Connected to discovered SDN advertisement peer: %s (%s)", pi.ID, flag)
 			}
 		}(peerInfo, target.Flag)

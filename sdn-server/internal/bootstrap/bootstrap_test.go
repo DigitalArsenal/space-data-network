@@ -2,6 +2,8 @@ package bootstrap
 
 import (
 	"testing"
+
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 )
 
 func TestParseBootstrapAddress_WithPeerID(t *testing.T) {
@@ -204,5 +206,62 @@ func TestParseBootstrapAddress_WebSocket(t *testing.T) {
 
 	if !info.HasPinnedID {
 		t.Error("expected HasPinnedID to be true for WebSocket")
+	}
+}
+
+func TestDefaultBootstrapAddresses_UsesRealPinnedPeers(t *testing.T) {
+	addresses := DefaultBootstrapAddresses()
+	if len(addresses) == 0 {
+		t.Fatal("DefaultBootstrapAddresses returned no peers")
+	}
+
+	foundApprovedSeed := false
+	for _, addr := range addresses {
+		if addr == "/ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45" {
+			foundApprovedSeed = true
+		}
+		if addr == "/dnsaddr/bootstrap.digitalarsenal.io/p2p/QmBootstrap1" {
+			t.Fatalf("placeholder bootstrap address leaked into defaults: %s", addr)
+		}
+		if _, err := ParseBootstrapAddress(addr); err != nil {
+			t.Fatalf("DefaultBootstrapAddresses contained invalid peer %q: %v", addr, err)
+		}
+	}
+
+	if !foundApprovedSeed {
+		t.Fatal("DefaultBootstrapAddresses did not include the approved demo relay seed")
+	}
+}
+
+func TestResolveBootstrapPeers_FallsBackToDefaultsWhenConfiguredListIsInvalid(t *testing.T) {
+	peers, usedFallback, err := ResolveBootstrapPeers([]string{
+		"/dnsaddr/bootstrap.digitalarsenal.io/p2p/QmBootstrap1",
+	})
+	if err != nil {
+		t.Fatalf("ResolveBootstrapPeers failed: %v", err)
+	}
+	if !usedFallback {
+		t.Fatal("ResolveBootstrapPeers did not fall back to defaults for invalid config")
+	}
+	if len(peers) == 0 {
+		t.Fatal("ResolveBootstrapPeers returned no fallback peers")
+	}
+}
+
+func TestResolveBootstrapPeers_PreservesConfiguredPinnedPeers(t *testing.T) {
+	configured := dht.DefaultBootstrapPeers[0].String()
+
+	peers, usedFallback, err := ResolveBootstrapPeers([]string{configured})
+	if err != nil {
+		t.Fatalf("ResolveBootstrapPeers failed: %v", err)
+	}
+	if usedFallback {
+		t.Fatal("ResolveBootstrapPeers unexpectedly used fallback for valid configured peer")
+	}
+	if len(peers) != 1 {
+		t.Fatalf("ResolveBootstrapPeers peer count = %d, want 1", len(peers))
+	}
+	if peers[0].RawAddress != configured {
+		t.Fatalf("ResolveBootstrapPeers peer address = %q, want %q", peers[0].RawAddress, configured)
 	}
 }

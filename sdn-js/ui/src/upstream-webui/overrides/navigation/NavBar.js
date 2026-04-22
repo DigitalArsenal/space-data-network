@@ -2,8 +2,7 @@ import React from 'react'
 import { connect } from 'redux-bundler-react'
 import { withTranslation } from 'react-i18next'
 import classnames from 'classnames'
-import sdnLogoTextVert from './sdn-logo-text-vert.svg'
-import sdnLogoTextHoriz from './sdn-logo-text-horiz.svg'
+import sdnLogoMark from './sdn-logo-mark.svg'
 import StrokeMarketing from '../../../../../../webui/src/icons/StrokeMarketing.js'
 import StrokeWeb from '../../../../../../webui/src/icons/StrokeWeb.js'
 import StrokeCube from '../../../../../../webui/src/icons/StrokeCube.js'
@@ -112,9 +111,8 @@ export const NavBar = ({ t }) => {
     <div className='h-100 fixed-l flex flex-column justify-between' style={{ overflowY: 'auto', width: 'inherit' }}>
       <div className='flex flex-column'>
         <a href="#/welcome" role='menuitem' title={t('welcome:description')}>
-          <div className='pt3 pb1 pb2-l'>
-            <img className='navbar-logo-vert center db-l dn pt3 pb1' style={{ height: 94 }} src={sdnLogoTextVert} alt='Space Data Network' />
-            <img className='navbar-logo-horiz center db dn-l' style={{ height: 70 }} src={sdnLogoTextHoriz} alt='Space Data Network' />
+          <div className='pt3 pb1 pb2-l tc'>
+            <img className='center db pt3 pb1' style={{ height: 76 }} src={sdnLogoMark} alt='Space Data Network' />
           </div>
         </a>
         <div className='db overflow-x-scroll overflow-x-hidden-l nowrap tc' role='menubar'>

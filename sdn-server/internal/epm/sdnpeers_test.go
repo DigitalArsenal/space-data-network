@@ -77,6 +77,7 @@ func TestBuildObservedSDNPeersFiltersToAdvertisementEvidence(t *testing.T) {
 		map[string][]string{
 			trustedID.String(): {"spacedatanetwork/1.0.0"},
 		},
+		nil,
 	)
 
 	if len(out) != 1 {
@@ -87,6 +88,51 @@ func TestBuildObservedSDNPeersFiltersToAdvertisementEvidence(t *testing.T) {
 	}
 	if out[0].Metadata["protocols"] != "/space-data-network/module-delivery/1.0.0" {
 		t.Fatalf("protocol metadata = %q", out[0].Metadata["protocols"])
+	}
+	if out[0].Metadata["advertisement_flags"] != "spacedatanetwork/1.0.0" {
+		t.Fatalf("advertisement_flags metadata = %q", out[0].Metadata["advertisement_flags"])
+	}
+}
+
+func TestBuildObservedSDNPeersIncludesAdvertisementOnlyPeersWithKnownAddresses(t *testing.T) {
+	t.Parallel()
+
+	localID := mustPeerID(t)
+	discoveredID := mustPeerID(t)
+
+	discoveredAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/dns4/relay.example/tcp/443/wss/p2p/%s", discoveredID))
+	if err != nil {
+		t.Fatalf("multiaddr.NewMultiaddr failed: %v", err)
+	}
+
+	out := BuildObservedSDNPeers(
+		&PeerGraphSnapshot{
+			LocalPeerID: localID.String(),
+			Nodes: []PeerNode{
+				{
+					PeerID:             localID.String(),
+					IsOnline:           true,
+					MultiformatAddress: []string{fmt.Sprintf("/ip4/127.0.0.1/tcp/14001/p2p/%s", localID)},
+				},
+			},
+		},
+		nil,
+		map[string][]string{
+			discoveredID.String(): {"spacedatanetwork/1.0.0"},
+		},
+		map[string][]string{
+			discoveredID.String(): {discoveredAddr.String()},
+		},
+	)
+
+	if len(out) != 1 {
+		t.Fatalf("observed SDN peer count = %d, want 1", len(out))
+	}
+	if out[0].ID != discoveredID {
+		t.Fatalf("observed peer ID = %s, want %s", out[0].ID, discoveredID)
+	}
+	if len(out[0].Addrs) != 1 || out[0].Addrs[0].String() != discoveredAddr.String() {
+		t.Fatalf("observed peer addrs = %v, want [%s]", out[0].Addrs, discoveredAddr)
 	}
 	if out[0].Metadata["advertisement_flags"] != "spacedatanetwork/1.0.0" {
 		t.Fatalf("advertisement_flags metadata = %q", out[0].Metadata["advertisement_flags"])

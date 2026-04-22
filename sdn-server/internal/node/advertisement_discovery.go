@@ -100,11 +100,34 @@ func (n *Node) recordSDNAdvertisementDiscovery(pid peer.ID, flag string) {
 	flags[flag] = time.Now().UTC()
 }
 
+func (n *Node) recordSDNAdvertisementPeerInfo(info peer.AddrInfo, flag string) {
+	if n == nil || info.ID == "" {
+		return
+	}
+
+	n.recordSDNAdvertisementDiscovery(info.ID, flag)
+
+	n.sdnDiscoveryMu.Lock()
+	defer n.sdnDiscoveryMu.Unlock()
+
+	if n.sdnDiscoveryAddrsByPeer == nil {
+		n.sdnDiscoveryAddrsByPeer = make(map[peer.ID][]string)
+	}
+	n.sdnDiscoveryAddrsByPeer[info.ID] = uniqueNonEmptyStrings(append(n.sdnDiscoveryAddrsByPeer[info.ID], addrInfoStrings(info)...))
+}
+
 func (n *Node) recordCurrentSDNAdvertisementDiscovery(pid peer.ID) {
 	if n == nil {
 		return
 	}
 	n.recordSDNAdvertisementDiscovery(pid, n.sdnAdvertisementTarget.Flag)
+}
+
+func (n *Node) recordCurrentSDNAdvertisementPeerInfo(info peer.AddrInfo) {
+	if n == nil {
+		return
+	}
+	n.recordSDNAdvertisementPeerInfo(info, n.sdnAdvertisementTarget.Flag)
 }
 
 func (n *Node) SDNAdvertisementFlagsByPeer() map[string][]string {
@@ -131,5 +154,65 @@ func (n *Node) SDNAdvertisementFlagsByPeer() map[string][]string {
 		sort.Strings(ordered)
 		out[peerID.String()] = ordered
 	}
+	return out
+}
+
+func (n *Node) SDNAdvertisementAddrsByPeer() map[string][]string {
+	if n == nil {
+		return nil
+	}
+
+	n.sdnDiscoveryMu.RLock()
+	defer n.sdnDiscoveryMu.RUnlock()
+
+	if len(n.sdnDiscoveryAddrsByPeer) == 0 {
+		return nil
+	}
+
+	out := make(map[string][]string, len(n.sdnDiscoveryAddrsByPeer))
+	for peerID, addrs := range n.sdnDiscoveryAddrsByPeer {
+		addrs = uniqueNonEmptyStrings(addrs)
+		if len(addrs) == 0 {
+			continue
+		}
+		out[peerID.String()] = addrs
+	}
+	return out
+}
+
+func addrInfoStrings(info peer.AddrInfo) []string {
+	if len(info.Addrs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(info.Addrs))
+	for _, addr := range info.Addrs {
+		if addr == nil {
+			continue
+		}
+		if value := strings.TrimSpace(addr.String()); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
 	return out
 }
