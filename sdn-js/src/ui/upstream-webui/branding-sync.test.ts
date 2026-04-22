@@ -35,8 +35,9 @@ describe('sdn upstream webui branding sync', () => {
     expect(aboutIpfsOverride).toContain('What is Space Data Network?');
     expect(aboutIpfsOverride).toContain('space situational awareness');
     expect(statusOverride).toContain('Connected to the Space Data Network');
-    expect(navOverride).toContain('sdn-logo-text-vert.svg');
-    expect(navOverride).toContain('sdn-logo-text-horiz.svg');
+    expect(navOverride).toContain('sdn-logo-mark.svg');
+    expect(navOverride).not.toContain('sdn-logo-text-vert.svg');
+    expect(navOverride).not.toContain('sdn-logo-text-horiz.svg');
     expect(connectedOverride).toContain('Connected to the Space Data Network');
   });
 });
