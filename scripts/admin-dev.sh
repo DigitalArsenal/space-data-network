@@ -271,14 +271,15 @@ mode: full
 
 network:
   listen:
-    - /ip4/127.0.0.1/tcp/14001
-    - /ip4/127.0.0.1/tcp/14080/ws
+    - /ip4/0.0.0.0/tcp/14001
+    - /ip4/0.0.0.0/tcp/14080/ws
+    - /ip4/0.0.0.0/udp/14001/quic-v1
   bootstrap:
     - "${remote_bootstrap_addr}"
   edge_relays:
     - "${remote_bootstrap_addr}"
   max_connections: 100
-  enable_relay: false
+  enable_relay: true
   max_message_size: 10485760
   max_schema_name: 256
   max_query_size: 4096
