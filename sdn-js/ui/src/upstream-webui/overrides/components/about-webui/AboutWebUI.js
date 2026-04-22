@@ -16,7 +16,7 @@ export const AboutWebUI = () => {
         <li className='mb2'><a href='#/files' className='link blue u b'>Browse and manage data</a> in the node, including content addressed files, IPLD-backed structures, and imported assets</li>
         <li className='mb2'><a href='#/explore' className='link blue b'>Inspect linked data</a> and explore the underlying content graph that SDN builds on top of IPFS primitives</li>
         <li className='mb2'><a href='#/peers' className='link blue b'>See observed SDN peers</a> so the main dashboard only reflects nodes participating in the Space Data Network</li>
-        <li className='mb2'><a href='/webui/' className='link blue b'>Open the full IPFS dashboard</a> whenever you need the unmodified upstream WebUI and all of its current capabilities</li>
+        <li className='mb2'><a href='/webui' className='link blue b'>Open the full IPFS dashboard</a> whenever you need the unmodified upstream WebUI and all of its current capabilities</li>
         <li className='f5'><a href='https://github.com/DigitalArsenal/space-data-network' className='link blue b' target='_blank' rel='noopener noreferrer'>Review the SDN source</a>, track suite changes, or report an issue as the dashboard evolves alongside upstream IPFS</li>
       </ul>
     </Box>
