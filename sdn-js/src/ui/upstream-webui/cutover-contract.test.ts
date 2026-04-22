@@ -22,11 +22,26 @@ describe('sdn upstream webui cutover contract', () => {
   it('keeps ui/src limited to the upstream webui entry tree', async () => {
     await expect(listFilesRecursively(uiSrcPath)).resolves.toEqual([
       'main.ts',
+      'upstream-webui/branding.js',
       'upstream-webui/bundles/index.js',
       'upstream-webui/bundles/peer-locations.js',
       'upstream-webui/bundles/peers.js',
       'upstream-webui/index.js',
+      'upstream-webui/overrides/components/about-ipfs/AboutIpfs.js',
+      'upstream-webui/overrides/components/about-webui/AboutWebUI.js',
+      'upstream-webui/overrides/components/connected/Connected.js',
+      'upstream-webui/overrides/components/is-connected/IsConnected.js',
+      'upstream-webui/overrides/navigation/NavBar.js',
+      'upstream-webui/overrides/navigation/sdn-logo-text-horiz.svg',
+      'upstream-webui/overrides/navigation/sdn-logo-text-vert.svg',
+      'upstream-webui/overrides/status/StatusConnected.js',
       'upstream-webui/peer-source.js',
+      'upstream-webui/vendor/components/about-ipfs/AboutIpfs.js',
+      'upstream-webui/vendor/components/about-webui/AboutWebUI.js',
+      'upstream-webui/vendor/components/connected/Connected.js',
+      'upstream-webui/vendor/components/is-connected/IsConnected.js',
+      'upstream-webui/vendor/navigation/NavBar.js',
+      'upstream-webui/vendor/status/StatusConnected.js',
     ]);
   });
 
@@ -44,8 +59,11 @@ describe('sdn upstream webui cutover contract', () => {
 
     expect(source).toContain("import App from '../../../../webui/src/App.js'");
     expect(source).toContain("import getStore from './bundles/index.js'");
+    expect(source).toContain("import { installRootDocumentTitleSync } from './branding.js'");
     expect(source).toContain("import { I18nextProvider } from 'react-i18next'");
+    expect(source).toContain('installRootDocumentTitleSync();');
     expect(source).toContain('ReactDOM.render(');
     expect(source).toContain('<DndProvider backend={DndBackend}>');
+    expect(source).not.toContain('<RootDocumentTitleSync />');
   });
 });

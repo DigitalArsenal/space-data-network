@@ -8,7 +8,34 @@ const __dirname = path.dirname(__filename);
 const packageRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(packageRoot, '..');
 const upstreamWebUiRoot = path.resolve(repoRoot, 'webui');
+const sdnUpstreamWebUiRoot = path.resolve(__dirname, 'src', 'upstream-webui');
 const proxyTarget = process.env.SDN_UI_PROXY_TARGET?.trim();
+const rootBrandingOverrides = new Map([
+  [
+    path.resolve(upstreamWebUiRoot, 'src', 'components', 'about-ipfs', 'AboutIpfs.js'),
+    path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'components', 'about-ipfs', 'AboutIpfs.js'),
+  ],
+  [
+    path.resolve(upstreamWebUiRoot, 'src', 'components', 'about-webui', 'AboutWebUI.js'),
+    path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'components', 'about-webui', 'AboutWebUI.js'),
+  ],
+  [
+    path.resolve(upstreamWebUiRoot, 'src', 'components', 'connected', 'Connected.js'),
+    path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'components', 'connected', 'Connected.js'),
+  ],
+  [
+    path.resolve(upstreamWebUiRoot, 'src', 'components', 'is-connected', 'IsConnected.js'),
+    path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'components', 'is-connected', 'IsConnected.js'),
+  ],
+  [
+    path.resolve(upstreamWebUiRoot, 'src', 'navigation', 'NavBar.js'),
+    path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'navigation', 'NavBar.js'),
+  ],
+  [
+    path.resolve(upstreamWebUiRoot, 'src', 'status', 'StatusConnected.js'),
+    path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'status', 'StatusConnected.js'),
+  ],
+]);
 const browserProcessShimBanner = [
   'var process = globalThis.process || (globalThis.process = {',
   'env: {},',
@@ -51,6 +78,17 @@ export default defineConfig({
           });
         }
         return null;
+      },
+    },
+    {
+      name: 'sdn-upstream-webui-root-overrides',
+      enforce: 'pre',
+      resolveId(source, importer) {
+        if (!importer || source.startsWith('/') || !source.startsWith('.')) {
+          return null;
+        }
+        const sourcePath = path.resolve(path.dirname(importer), source);
+        return rootBrandingOverrides.get(sourcePath) ?? null;
       },
     },
     {
@@ -140,6 +178,10 @@ export default defineConfig({
       {
         find: /^react-dnd$/,
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-dnd'),
+      },
+      {
+        find: /^classnames$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/classnames'),
       },
       {
         find: /^react-virtualized\/styles\.css$/,

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 220" role="img" aria-labelledby="sdnLogoTitleHoriz">
+  <title id="sdnLogoTitleHoriz">Space Data Network</title>
+  <defs>
+    <linearGradient id="sdnOrbitGlowHoriz" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6acad1" />
+      <stop offset="100%" stop-color="#469ea2" />
+    </linearGradient>
+  </defs>
+  <g transform="translate(22 30)">
+    <circle cx="72" cy="80" r="42" fill="none" stroke="#ffffff" stroke-width="8" opacity="0.95" />
+    <ellipse cx="72" cy="80" rx="60" ry="24" fill="none" stroke="url(#sdnOrbitGlowHoriz)" stroke-width="8" opacity="0.9" />
+    <ellipse cx="72" cy="80" rx="24" ry="60" fill="none" stroke="url(#sdnOrbitGlowHoriz)" stroke-width="8" opacity="0.8" transform="rotate(-24 72 80)" />
+    <circle cx="28" cy="65" r="7" fill="#6acad1" />
+    <circle cx="111" cy="111" r="7" fill="#6acad1" />
+    <circle cx="87" cy="28" r="6" fill="#ffffff" />
+  </g>
+  <g fill="#ffffff" font-family="Montserrat, Avenir Next, Arial, sans-serif" font-weight="700" letter-spacing="5">
+    <text x="166" y="86" font-size="42">SPACE DATA</text>
+    <text x="166" y="138" font-size="42">NETWORK</text>
+  </g>
+</svg>

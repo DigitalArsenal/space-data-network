@@ -8,6 +8,7 @@ import { HeliaProvider, ExploreProvider } from '../../../../webui/node_modules/i
 
 import '../../../../webui/src/index.css';
 import App from '../../../../webui/src/App.js';
+import { installRootDocumentTitleSync } from './branding.js';
 import getStore from './bundles/index.js';
 import bundleCache from '../../../../webui/src/lib/bundle-cache.js';
 import i18n from '../../../../webui/src/i18n.js';
@@ -34,6 +35,7 @@ export async function renderUpstreamWebUiBaseline() {
   );
 
   const store = getStore(initialData);
+  installRootDocumentTitleSync();
   ReactDOM.render(
     <Provider store={store}>
       <ContextBridgeProvider>

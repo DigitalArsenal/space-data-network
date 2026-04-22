@@ -44,6 +44,8 @@ out/
 coverage.out
 coverage.html
 vendor/
+!sdn-js/ui/src/upstream-webui/vendor/
+!sdn-js/ui/src/upstream-webui/vendor/**
 go.work
 go.work.sum
 .gocache/
