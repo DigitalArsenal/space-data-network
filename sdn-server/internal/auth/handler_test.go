@@ -42,12 +42,13 @@ func TestSessionCookieIsSecureWhenNativeTLSActive(t *testing.T) {
 	}
 }
 
-func TestLoginPage_RendersBootstrapTLSStatusBlock(t *testing.T) {
+func TestLoginPage_RendersLocalBootstrapTLSInfoAsModalLinkOnLoopback(t *testing.T) {
 	t.Parallel()
 
 	html := buildLoginPageWithTLSStatus(
 		"/wallet-ui/dist/assets/wallet.js",
 		"/wallet-ui/dist/assets/wallet.css",
+		"localhost",
 		tlsmgr.Status{
 			Mode:                  tlsmgr.ModeManaged,
 			ActiveCertificateType: "bootstrap",
@@ -59,17 +60,52 @@ func TestLoginPage_RendersBootstrapTLSStatusBlock(t *testing.T) {
 		},
 	)
 
-	if !strings.Contains(html, "Bootstrap self-signed certificate") {
-		t.Fatalf("missing bootstrap certificate label: %s", html)
+	if !strings.Contains(html, "View local certificate info") {
+		t.Fatalf("missing localhost certificate trigger: %s", html)
 	}
-	if !strings.Contains(html, "/bootstrap.crt") {
-		t.Fatalf("missing bootstrap cert link: %s", html)
+	if !strings.Contains(html, `id="sdn-tls-modal"`) {
+		t.Fatalf("missing certificate modal markup: %s", html)
 	}
 	if !strings.Contains(html, "AA:BB:CC") {
 		t.Fatalf("missing fingerprint: %s", html)
 	}
 	if !strings.Contains(html, "12D3KooWTestPeer") {
 		t.Fatalf("missing peer id: %s", html)
+	}
+	if !strings.Contains(html, "/bootstrap.crt") {
+		t.Fatalf("missing bootstrap cert link: %s", html)
+	}
+	if strings.Contains(html, "<section class=\"sdn-tls\"") {
+		t.Fatalf("certificate info should not render inline by default: %s", html)
+	}
+}
+
+func TestLoginPage_HidesTLSInfoOnRemoteHosts(t *testing.T) {
+	t.Parallel()
+
+	html := buildLoginPageWithTLSStatus(
+		"/wallet-ui/dist/assets/wallet.js",
+		"/wallet-ui/dist/assets/wallet.css",
+		"sdn.spaceaware.io",
+		tlsmgr.Status{
+			Mode:                  tlsmgr.ModeManaged,
+			ActiveCertificateType: "bootstrap",
+			FingerprintSHA256:     "AA:BB:CC",
+			PeerID:                "12D3KooWTestPeer",
+			EncryptionPublicKey:   "001122",
+			ProofStatus:           "verified",
+			BootstrapCertURL:      "/bootstrap.crt",
+		},
+	)
+
+	if strings.Contains(html, "View local certificate info") {
+		t.Fatalf("remote login page should hide certificate trigger: %s", html)
+	}
+	if strings.Contains(html, `id="sdn-tls-modal"`) {
+		t.Fatalf("remote login page should hide certificate modal: %s", html)
+	}
+	if strings.Contains(html, "AA:BB:CC") {
+		t.Fatalf("remote login page should hide certificate details: %s", html)
 	}
 }
 
@@ -743,7 +779,7 @@ func TestLoginPage_BuildersExposeWalletAccountSurfaceForUnauthorizedUsers(t *tes
 		},
 		{
 			name: "fallback CDN page",
-			html: buildFallbackLoginPage(tlsmgr.Status{}),
+			html: buildFallbackLoginPage("", tlsmgr.Status{}),
 		},
 	}
 
