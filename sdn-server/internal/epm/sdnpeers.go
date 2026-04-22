@@ -67,6 +67,9 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 			entry.Metadata["protocols"] = strings.Join(protocols, ",")
 		}
 		entry.Metadata["advertisement_flags"] = strings.Join(flags, ",")
+		if strings.TrimSpace(entry.Metadata["agent_version"]) == "" {
+			entry.Metadata["agent_version"] = flags[0]
+		}
 
 		out = append(out, entry)
 	}

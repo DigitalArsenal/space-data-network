@@ -1089,7 +1089,7 @@ func buildTLSStatusMarkup(status tlsmgr.Status, showLocalTLSInfo bool) string {
 		download = `<a class="sdn-tls-download" href="` + html.EscapeString(status.BootstrapCertURL) + `">Download bootstrap certificate</a>`
 	}
 
-	return `<div class="sdn-tls"><a id="sdn-tls-trigger" class="sdn-tls-trigger" href="#sdn-tls-modal">View local certificate info</a></div>` +
+	return `<div class="sdn-tls"><a id="sdn-tls-trigger" class="sdn-tls-trigger" href="#sdn-tls-modal" aria-haspopup="dialog" aria-controls="sdn-tls-modal">TLS identity</a></div>` +
 		`<div id="sdn-tls-modal" class="sdn-modal" aria-hidden="true" hidden>` +
 		`<div class="sdn-modal-card" role="dialog" aria-modal="true" aria-labelledby="sdn-tls-modal-title">` +
 		`<div class="sdn-modal-head">` +

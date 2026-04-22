@@ -11,7 +11,7 @@ const SDN_PROTOCOL_PREFIXES = ['/space-data-network/', '/spacedatanetwork/'];
 export function normalizeTrustedPeerToSwarmPeer (peer) {
   const addrs = Array.isArray(peer?.addrs) ? peer.addrs.filter(Boolean) : [];
   const protocols = splitProtocols(peer?.metadata?.protocols);
-  const agentVersion = stringOrNull(peer?.metadata?.agent_version);
+  const agentVersion = inferAgentVersion(peer?.metadata);
 
   return {
     peer: String(peer?.id ?? '').trim(),
@@ -116,7 +116,7 @@ export function buildObservedSdnPeers (snapshot, registryPeers = []) {
         ...asStringArray(registryPeer?.addrs),
       ]);
       const metadata = {};
-      const agentVersion = stringOrNull(registryPeer?.metadata?.agent_version);
+      const agentVersion = inferAgentVersion(registryPeer?.metadata);
       if (agentVersion) {
         metadata.agent_version = agentVersion;
       }
@@ -199,6 +199,15 @@ function splitProtocols (value) {
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+function inferAgentVersion (metadata) {
+  const explicit = stringOrNull(metadata?.agent_version);
+  if (explicit) {
+    return explicit;
+  }
+
+  return splitProtocols(metadata?.advertisement_flags)[0] ?? null;
 }
 
 function buildEdgeProtocolMap (edges, localPeerId) {

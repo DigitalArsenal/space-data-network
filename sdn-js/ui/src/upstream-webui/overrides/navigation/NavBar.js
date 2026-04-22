@@ -3,12 +3,12 @@ import { connect } from 'redux-bundler-react'
 import { withTranslation } from 'react-i18next'
 import classnames from 'classnames'
 import sdnLogoMark from './sdn-logo-mark.svg'
+import ipfsLogoMark from '../../../../../../webui/src/navigation/ipfs-logo.svg'
 import StrokeMarketing from '../../../../../../webui/src/icons/StrokeMarketing.js'
 import StrokeWeb from '../../../../../../webui/src/icons/StrokeWeb.js'
 import StrokeCube from '../../../../../../webui/src/icons/StrokeCube.js'
 import StrokeSettings from '../../../../../../webui/src/icons/StrokeSettings.js'
 import StrokeIpld from '../../../../../../webui/src/icons/StrokeIpld.js'
-import StrokeLab from '../../../../../../webui/src/icons/StrokeLab.js'
 
 // Styles
 import '../../../../../../webui/src/navigation/NavBar.css'
@@ -70,12 +70,14 @@ const NavLink = ({
  * @param {Object} props
  * @param {string} props.href
  * @param {React.ComponentType<React.SVGProps<SVGSVGElement>>} props.icon
+ * @param {string} [props.iconSrc]
  * @param {boolean} [props.disabled]
  * @param {string} props.children
  */
 const ExternalNavLink = ({
   href,
   icon,
+  iconSrc,
   disabled,
   children
 }) => {
@@ -85,10 +87,12 @@ const ExternalNavLink = ({
   }, ['navbar-item dib db-l pt2 pb3 pv1-l white no-underline f5 hover-bg-white-10 tc bb bw2 bw0-l b--navy'])
 
   return (
-    <a href={disabled ? undefined : href} onClick={(e) => e.currentTarget.blur()} className={anchorClass} role='menuitem' title={children}>
+    <a href={disabled ? undefined : href} onClick={(e) => e.currentTarget.blur()} className={anchorClass} role='menuitem' title={children} target='_blank' rel='noopener noreferrer'>
       <div className='db ph2 pv1'>
         <div className='db'>
-          <Svg width='46' role='presentation' className='fill-current-color o-50' />
+          {iconSrc
+            ? <img width='46' height='46' role='presentation' className='o-50' src={iconSrc} alt='' aria-hidden='true' />
+            : <Svg width='46' role='presentation' className='fill-current-color o-50' />}
         </div>
         <div className='o-50 db f6 tc montserrat ttu fw1 navbar-item-label'>
           {children}
@@ -121,7 +125,7 @@ export const NavBar = ({ t }) => {
           <NavLink to='/explore' icon={StrokeIpld}>{t('explore:tabName')}</NavLink>
           <NavLink to='/peers' icon={StrokeCube}>{t('peers:title')}</NavLink>
           <NavLink to='/settings' icon={StrokeSettings}>{t('settings:title')}</NavLink>
-          <ExternalNavLink href='/webui' icon={StrokeLab}>IPFS</ExternalNavLink>
+          <ExternalNavLink href='/webui' iconSrc={ipfsLogoMark}>IPFS</ExternalNavLink>
         </div>
       </div>
       <div className='dn db-l navbar-footer mb2 tc center f7 o-80 glow'>

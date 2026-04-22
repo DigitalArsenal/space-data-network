@@ -200,6 +200,10 @@ export default defineConfig({
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/classnames'),
       },
       {
+        find: /^hd-wallet-wasm$/,
+        replacement: path.resolve(packageRoot, 'node_modules/hd-wallet-wasm/src/index.mjs'),
+      },
+      {
         find: /^react-virtualized\/styles\.css$/,
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-virtualized/styles.css'),
       },
