@@ -2,6 +2,7 @@ package auth
 
 import (
 	"html"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -54,18 +55,18 @@ func (h *Handler) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 
 	walletUI := strings.TrimSpace(h.walletUIPath)
 	if walletUI == "" {
-		serveFallbackLogin(w, tlsStatus)
+		serveFallbackLogin(w, r, tlsStatus)
 		return
 	}
 
 	if cachedLoginPage(walletUI) == "" || walletJSFile == "" || walletCSSFile == "" {
-		serveFallbackLogin(w, tlsStatus)
+		serveFallbackLogin(w, r, tlsStatus)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write([]byte(buildLoginPageWithTLSStatus("/wallet-ui/"+walletJSFile, "/wallet-ui/"+walletCSSFile, tlsStatus)))
+	w.Write([]byte(buildLoginPageWithTLSStatus("/wallet-ui/"+walletJSFile, "/wallet-ui/"+walletCSSFile, loginPageHost(r), tlsStatus)))
 }
 
 func loginPageRequiresWalletAccount(r *http.Request) bool {
@@ -265,14 +266,15 @@ func uniqueNonEmptyPaths(paths ...string) []string {
 // buildLoginPage returns the full HTML for the SDN login page using bundled
 // wallet-ui dist artifacts that auto-initialize and call window.__sdnWalletReady.
 func buildLoginPage(moduleURL, cssURL string) string {
-	return buildWalletLoginPage(moduleURL, cssURL, true, tlsmgr.Status{})
+	return buildWalletLoginPage(moduleURL, cssURL, true, "", tlsmgr.Status{})
 }
 
-func buildLoginPageWithTLSStatus(moduleURL, cssURL string, status tlsmgr.Status) string {
-	return buildWalletLoginPage(moduleURL, cssURL, true, status)
+func buildLoginPageWithTLSStatus(moduleURL, cssURL, host string, status tlsmgr.Status) string {
+	return buildWalletLoginPage(moduleURL, cssURL, true, host, status)
 }
 
-func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, tlsStatus tlsmgr.Status) string {
+func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, host string, tlsStatus tlsmgr.Status) string {
+	showLocalTLSInfo := shouldRenderLocalTLSInfo(host)
 	walletLoader := `
   window.__sdnEnsureWalletUI = async function() {
     if (window.__sdnWalletUI) return window.__sdnWalletUI;
@@ -480,6 +482,78 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, tlsSta
       color:#dffbfe;
     }
     .sdn-tls{
+      margin-top:18px;
+      display:flex;
+      justify-content:center;
+    }
+    .sdn-tls-trigger{
+      color:#9be6ec;
+      text-decoration:none;
+      font-size:0.84rem;
+      letter-spacing:0.05em;
+      border-bottom:1px solid rgba(155,230,236,0.34);
+      transition:border-color .18s ease, color .18s ease;
+    }
+    .sdn-tls-trigger:hover{
+      color:#dffbfe;
+      border-bottom-color:rgba(223,251,254,0.72);
+    }
+    .sdn-modal[hidden]{
+      display:none;
+    }
+    .sdn-modal{
+      position:fixed;
+      inset:0;
+      z-index:40;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:20px;
+      background:rgba(1,10,18,0.72);
+      backdrop-filter:blur(14px);
+      -webkit-backdrop-filter:blur(14px);
+    }
+    .sdn-modal-card{
+      width:min(560px,100%);
+      max-height:min(80vh,720px);
+      overflow:auto;
+      padding:24px 22px 20px;
+      border-radius:22px;
+      border:1px solid rgba(101,194,203,0.18);
+      background:linear-gradient(180deg, rgba(12,33,49,0.98), rgba(7,22,34,0.96));
+      box-shadow:0 24px 80px rgba(0,0,0,0.48);
+      text-align:left;
+    }
+    .sdn-modal-head{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:16px;
+    }
+    .sdn-modal-title{
+      font-size:1.02rem;
+      color:var(--text);
+    }
+    .sdn-modal-copy{
+      margin-top:6px;
+      color:var(--muted);
+      font-size:0.84rem;
+      line-height:1.55;
+    }
+    .sdn-modal-close{
+      border:0;
+      background:transparent;
+      color:var(--muted);
+      cursor:pointer;
+      font-family:var(--font-mono);
+      font-size:0.78rem;
+      letter-spacing:0.1em;
+      text-transform:uppercase;
+    }
+    .sdn-modal-close:hover{
+      color:var(--text);
+    }
+    .sdn-tls-panel{
       margin-top:18px;
       padding:18px;
       border-radius:18px;
@@ -702,6 +776,35 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, tlsSta
     if (window.__sdnWalletUI && typeof window.__sdnWalletUI.openAccount === 'function') {
       window.__sdnWalletUI.openAccount();
     }
+  };
+  window.__sdnInitializeTLSInfoModal = function() {
+    var trigger = document.getElementById('sdn-tls-trigger');
+    var modal = document.getElementById('sdn-tls-modal');
+    if (!trigger || !modal) return;
+    var closeButton = document.getElementById('sdn-tls-close');
+    var setOpen = function(open) {
+      modal.hidden = !open;
+      modal.setAttribute('aria-hidden', open ? 'false' : 'true');
+    };
+    trigger.addEventListener('click', function(event) {
+      event.preventDefault();
+      setOpen(true);
+    });
+    if (closeButton) {
+      closeButton.addEventListener('click', function() {
+        setOpen(false);
+      });
+    }
+    modal.addEventListener('click', function(event) {
+      if (event.target === modal) {
+        setOpen(false);
+      }
+    });
+    document.addEventListener('keydown', function(event) {
+      if (event.key === 'Escape' && !modal.hidden) {
+        setOpen(false);
+      }
+    });
   };
   window.__sdnRefreshNodeCount = async function() {
     var countEl = document.getElementById('sdn-node-count');
@@ -940,7 +1043,7 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, tlsSta
           <li><a class="sdn-tech-link" href="https://spacedatastandards.org/" target="_blank" rel="noreferrer">Space Data Standards</a></li>
         </ul>
       </div>
-      ` + buildTLSStatusMarkup(tlsStatus) + `
+      ` + buildTLSStatusMarkup(tlsStatus, showLocalTLSInfo) + `
       <button id="sdn-sign-in" class="sdn-login" type="button" disabled>Login</button>
       <a class="sdn-home" href="https://spacedatanet.org/" target="_blank" rel="noreferrer">Homepage</a>
       <div id="sdn-auth-status" class="sdn-auth-status" data-visible="false" aria-live="polite"></div>
@@ -949,6 +1052,7 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, tlsSta
 
   <script>
     window.__sdnInitializeLoginButton();
+    window.__sdnInitializeTLSInfoModal();
     window.__sdnRefreshNodeCount();
   </script>
 
@@ -960,10 +1064,10 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, tlsSta
 // Fallback login page (no local wallet-ui dist)
 // ---------------------------------------------------------------------------
 
-func serveFallbackLogin(w http.ResponseWriter, status tlsmgr.Status) {
+func serveFallbackLogin(w http.ResponseWriter, r *http.Request, status tlsmgr.Status) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write([]byte(buildFallbackLoginPage(status)))
+	w.Write([]byte(buildFallbackLoginPage(loginPageHost(r), status)))
 }
 
 const (
@@ -971,12 +1075,12 @@ const (
 	fallbackWalletUICSSURL    = "https://unpkg.com/hd-wallet-ui@2.0.2/styles/widget.css"
 )
 
-func buildFallbackLoginPage(status tlsmgr.Status) string {
-	return buildWalletLoginPage(fallbackWalletUIModuleURL, fallbackWalletUICSSURL, false, status)
+func buildFallbackLoginPage(host string, status tlsmgr.Status) string {
+	return buildWalletLoginPage(fallbackWalletUIModuleURL, fallbackWalletUICSSURL, false, host, status)
 }
 
-func buildTLSStatusMarkup(status tlsmgr.Status) string {
-	if strings.TrimSpace(status.Mode) == "" {
+func buildTLSStatusMarkup(status tlsmgr.Status, showLocalTLSInfo bool) string {
+	if !showLocalTLSInfo || strings.TrimSpace(status.Mode) == "" {
 		return ""
 	}
 
@@ -985,7 +1089,17 @@ func buildTLSStatusMarkup(status tlsmgr.Status) string {
 		download = `<a class="sdn-tls-download" href="` + html.EscapeString(status.BootstrapCertURL) + `">Download bootstrap certificate</a>`
 	}
 
-	return `<section class="sdn-tls" aria-label="TLS identity">` +
+	return `<div class="sdn-tls"><a id="sdn-tls-trigger" class="sdn-tls-trigger" href="#sdn-tls-modal">View local certificate info</a></div>` +
+		`<div id="sdn-tls-modal" class="sdn-modal" aria-hidden="true" hidden>` +
+		`<div class="sdn-modal-card" role="dialog" aria-modal="true" aria-labelledby="sdn-tls-modal-title">` +
+		`<div class="sdn-modal-head">` +
+		`<div>` +
+		`<div id="sdn-tls-modal-title" class="sdn-modal-title">Local TLS certificate</div>` +
+		`<p class="sdn-modal-copy">This loopback node is using a local certificate so you can verify and optionally trust it during development.</p>` +
+		`</div>` +
+		`<button id="sdn-tls-close" class="sdn-modal-close" type="button">Close</button>` +
+		`</div>` +
+		`<section class="sdn-tls-panel" aria-label="TLS identity">` +
 		`<div class="sdn-tls-label">TLS identity</div>` +
 		`<div class="sdn-tls-title">` + html.EscapeString(loginPageCertificateLabel(status)) + `</div>` +
 		`<dl class="sdn-tls-grid">` +
@@ -996,7 +1110,32 @@ func buildTLSStatusMarkup(status tlsmgr.Status) string {
 		`<dt>Proof</dt><dd>` + html.EscapeString(status.ProofStatus) + `</dd>` +
 		`</dl>` +
 		download +
-		`</section>`
+		`</section>` +
+		`</div>` +
+		`</div>`
+}
+
+func loginPageHost(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.Host)
+}
+
+func shouldRenderLocalTLSInfo(host string) bool {
+	hostname := strings.TrimSpace(host)
+	if hostname == "" {
+		return false
+	}
+	if parsedHost, _, err := net.SplitHostPort(hostname); err == nil {
+		hostname = parsedHost
+	}
+	hostname = strings.Trim(hostname, "[]")
+	if hostname == "localhost" || strings.HasSuffix(hostname, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(hostname)
+	return ip != nil && ip.IsLoopback()
 }
 
 func loginPageCertificateLabel(status tlsmgr.Status) string {

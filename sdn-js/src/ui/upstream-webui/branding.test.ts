@@ -40,6 +40,16 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).not.toContain("href='#/diagnostics'");
   });
 
+  it('leaves the upstream /webui diagnostics sidebar item untouched', async () => {
+    const source = await fs.readFile(
+      path.resolve(__dirname, '../../../../webui/src/navigation/NavBar.js'),
+      'utf8',
+    );
+
+    expect(source).toContain("to='/diagnostics'");
+    expect(source).not.toContain("href='/webui'");
+  });
+
   it('uses a standalone centered SDN logo mark asset instead of baked text logo SVGs', async () => {
     const source = await fs.readFile(
       path.join(uiSrcPath, 'overrides/navigation/NavBar.js'),
