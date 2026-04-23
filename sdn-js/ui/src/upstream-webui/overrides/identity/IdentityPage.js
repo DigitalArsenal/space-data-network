@@ -1,72 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { createHeliaDirectoryAdapter } from '../../../../src/ui/runtime/helia-directory.js'
-import { createServerDirectoryAdapter } from '../../../../src/ui/runtime/server-directory.js'
-
-function createUiDirectoryAdapter() {
-  const config = window.__SDN_CONFIG__ ?? {}
-  const serverBaseUrl = typeof config.serverBaseUrl === 'string' && config.serverBaseUrl.trim()
-    ? config.serverBaseUrl.trim()
-    : null
-
-  if (serverBaseUrl) {
-    return createServerDirectoryAdapter({
-      baseUrl: serverBaseUrl,
-      fetch: window.fetch.bind(window),
-    })
-  }
-
-  if (window.__SDN_DIRECTORY__?.listDirectoryRecords || Array.isArray(window.__SDN_DIRECTORY__?.records)) {
-    return createHeliaDirectoryAdapter({
-      listDirectoryRecords: async () => await normalizeLocalDirectoryRecords(window.__SDN_DIRECTORY__),
-    })
-  }
-
-  return createServerDirectoryAdapter({
-    baseUrl: window.location.origin,
-    fetch: window.fetch.bind(window),
-  })
-}
-
-function normalizeLocalDirectoryRecords(source) {
-  if (!source) {
-    return []
-  }
-
-  if (Array.isArray(source.records)) {
-    return source.records
-  }
-
-  if (typeof source.listDirectoryRecords === 'function') {
-    return source.listDirectoryRecords()
-  }
-
-  return []
-}
-
-function pickString(payload, keys) {
-  if (!payload || typeof payload !== 'object') {
-    return null
-  }
-  for (const key of keys) {
-    const value = payload[key]
-    if (typeof value === 'string' && value.trim()) {
-      return value.trim()
-    }
-  }
-  return null
-}
-
-function normalizeNodeInfo(payload) {
-  return {
-    displayName: pickString(payload, ['DISPLAY_NAME', 'display_name', 'name']) ?? 'Unknown node',
-    peerId: pickString(payload, ['peer_id', 'peerId']),
-    transport: pickString(payload, ['transport']) ?? 'helia',
-    descriptorUrl: pickString(payload, ['descriptor_url', 'descriptorUrl']),
-  }
-}
+import { createUiRuntimeAdapter } from '../../../../src/ui/runtime/server-adapter.js'
 
 function IdentityPage() {
-  const adapterRef = useRef(null)
+  const runtimeRef = useRef(null)
   const [status, setStatus] = useState('loading')
   const [nodeInfo, setNodeInfo] = useState({
     displayName: 'Loading node identity...',
@@ -77,8 +13,11 @@ function IdentityPage() {
   const [snapshot, setSnapshot] = useState({ query: '', nodes: [], users: [] })
   const [error, setError] = useState(null)
 
-  if (!adapterRef.current) {
-    adapterRef.current = createUiDirectoryAdapter()
+  if (!runtimeRef.current) {
+    runtimeRef.current = createUiRuntimeAdapter({
+      config: window.__SDN_CONFIG__ ?? null,
+      listDirectoryRecords: resolveLocalDirectoryRecords,
+    })
   }
 
   useEffect(() => {
@@ -89,17 +28,10 @@ function IdentityPage() {
       setError(null)
 
       try {
-        const response = await fetch('/api/node/info', {
-          credentials: 'include',
-        })
-        if (!response.ok) {
-          throw new Error(`node info request failed (${response.status})`)
-        }
-
-        const payload = await response.json()
-        const nextNodeInfo = normalizeNodeInfo(payload)
+        const connected = await runtimeRef.current.connect()
+        const nextNodeInfo = connected.nodeContext
         const query = nextNodeInfo.peerId || nextNodeInfo.displayName || ''
-        const directorySnapshot = await adapterRef.current.search(query)
+        const directorySnapshot = await runtimeRef.current.directory.search(query)
 
         if (!cancelled) {
           setNodeInfo(nextNodeInfo)
@@ -129,7 +61,7 @@ function IdentityPage() {
       <header className='mb3'>
         <h1 className='f2 f1-l mv0'>Identity</h1>
         <p className='mt2 mb0 f4 lh-copy black-70'>
-          Node identity, EPM evidence, and directory matches from the {adapterRef.current.mode} runtime adapter.
+          Node identity, EPM evidence, and directory matches from the {runtimeRef.current.mode} runtime adapter.
         </p>
       </header>
 
@@ -154,7 +86,7 @@ function IdentityPage() {
           </div>
         </dl>
         <div className='f6 black-60 mt3'>
-          {status === 'loading' ? 'Loading node identity...' : 'Node identity loaded from the live daemon.'}
+          {status === 'loading' ? 'Loading node identity...' : 'Node identity loaded from the shared runtime adapter.'}
         </div>
         {error && <div className='mt2 dark-red'>{error}</div>}
       </section>
@@ -208,6 +140,20 @@ function IdentityPage() {
       </section>
     </main>
   )
+}
+
+function resolveLocalDirectoryRecords() {
+  const source = window.__SDN_DIRECTORY__
+  if (!source) {
+    return Promise.resolve([])
+  }
+  if (Array.isArray(source.records)) {
+    return Promise.resolve(source.records)
+  }
+  if (typeof source.listDirectoryRecords === 'function') {
+    return Promise.resolve(source.listDirectoryRecords())
+  }
+  return Promise.resolve([])
 }
 
 export default IdentityPage

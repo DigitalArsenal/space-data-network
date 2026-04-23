@@ -8,8 +8,11 @@ import {
   type AdminSnapshot,
   type AdminWorkspaceId,
 } from './admin-adapter';
+import { createLocalAdapter } from './local-adapter';
 import type { DirectoryAdapter } from './directory';
+import { createHeliaDirectoryAdapter } from './helia-directory';
 import { createServerDirectoryAdapter } from './server-directory';
+import { readHostedServerBaseUrl, type HostedRuntimeConfigWindow } from './runtime-config';
 
 interface ResponseLike {
   ok: boolean;
@@ -26,6 +29,17 @@ export interface ServerAdapterDeps {
 }
 
 export interface ServerRuntimeAdapter extends AdminAdapter {
+  directory: DirectoryAdapter;
+}
+
+export interface UiRuntimeAdapterDeps {
+  config?: HostedRuntimeConfigWindow | null;
+  fetch?: FetchLike;
+  initialWorkspace?: AdminWorkspaceId;
+  listDirectoryRecords?: () => Promise<Array<Record<string, unknown>>>;
+}
+
+export interface UiRuntimeAdapter extends AdminAdapter {
   directory: DirectoryAdapter;
 }
 
@@ -116,6 +130,33 @@ export function createServerAdapter(deps: ServerAdapterDeps): ServerRuntimeAdapt
 }
 
 export const createServerAdminAdapter = createServerAdapter;
+
+export function createUiRuntimeAdapter(deps: UiRuntimeAdapterDeps = {}): UiRuntimeAdapter {
+  const serverBaseUrl = readHostedServerBaseUrl(deps.config);
+  if (serverBaseUrl) {
+    const serverAdapter = createServerAdapter({
+      target: { baseUrl: serverBaseUrl },
+      fetch: deps.fetch,
+      initialWorkspace: deps.initialWorkspace,
+    });
+    return serverAdapter;
+  }
+
+  const localAdapter = createLocalAdapter({
+    initialWorkspace: deps.initialWorkspace,
+  });
+  const directory = createHeliaDirectoryAdapter({
+    listDirectoryRecords: deps.listDirectoryRecords ?? (async () => []),
+  });
+
+  return {
+    mode: localAdapter.mode,
+    directory,
+    connect: () => localAdapter.connect(),
+    snapshot: () => localAdapter.snapshot(),
+    setWorkspace: (workspaceId: AdminWorkspaceId) => localAdapter.setWorkspace(workspaceId),
+  };
+}
 
 async function readJson(
   fetcher: FetchLike,
