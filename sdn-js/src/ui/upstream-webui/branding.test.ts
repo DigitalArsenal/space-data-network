@@ -42,6 +42,19 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).toContain("import ipfsLogoMark from '../../../../../../webui/src/navigation/ipfs-logo.svg'");
   });
 
+  it('adds root-only directory and identity nav entries without removing the IPFS escape hatch', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/navigation/NavBar.js'),
+      'utf8',
+    );
+
+    expect(source).toContain("to='/directory'");
+    expect(source).toContain("to='/identity'");
+    expect(source).toContain('>Directory<');
+    expect(source).toContain('>Identity<');
+    expect(source).toContain("href='/webui'");
+  });
+
   it('leaves the upstream /webui diagnostics sidebar item untouched', async () => {
     const source = await fs.readFile(
       path.resolve(__dirname, '../../../../webui/src/navigation/NavBar.js'),
@@ -61,6 +74,18 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).toContain("import sdnLogoMark from './sdn-logo-mark.svg'");
     expect(source).not.toContain('sdn-logo-text-vert.svg');
     expect(source).not.toContain('sdn-logo-text-horiz.svg');
+  });
+
+  it('defines root-only directory and identity route pages in the SDN override tree', async () => {
+    const routes = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/bundles/routes.js'),
+      'utf8',
+    );
+
+    expect(routes).toContain('../directory/DirectoryPage.js');
+    expect(routes).toContain('../identity/IdentityPage.js');
+    expect(routes).toContain("'/directory'");
+    expect(routes).toContain("'/identity'");
   });
 
   it('adds a single root-only account control that opens the wallet UI account surface', async () => {

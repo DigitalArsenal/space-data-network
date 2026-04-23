@@ -12,6 +12,10 @@ const sdnUpstreamWebUiRoot = path.resolve(__dirname, 'src', 'upstream-webui');
 const proxyTarget = process.env.SDN_UI_PROXY_TARGET?.trim();
 const rootBrandingOverrides = new Map([
   [
+    path.resolve(upstreamWebUiRoot, 'src', 'bundles', 'routes.js'),
+    path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'bundles', 'routes.js'),
+  ],
+  [
     path.resolve(upstreamWebUiRoot, 'src', 'components', 'about-ipfs', 'AboutIpfs.js'),
     path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'components', 'about-ipfs', 'AboutIpfs.js'),
   ],
