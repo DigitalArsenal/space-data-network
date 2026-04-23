@@ -836,8 +836,15 @@ func (s *Service) GetNodeEPMJSON() map[string]interface{} {
 	}
 
 	s.overlayRuntimeIdentityFields(result)
+	result["directory_kind"] = "node"
+	result["peer_id"] = s.peerID.String()
 
 	return result
+}
+
+// DirectoryRecordJSON returns the node EPM in a directory-friendly JSON shape.
+func (s *Service) DirectoryRecordJSON() map[string]any {
+	return s.GetNodeEPMJSON()
 }
 
 func (s *Service) overlayRuntimeIdentityFields(result map[string]interface{}) {

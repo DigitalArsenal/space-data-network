@@ -12,6 +12,10 @@ const sdnUpstreamWebUiRoot = path.resolve(__dirname, 'src', 'upstream-webui');
 const proxyTarget = process.env.SDN_UI_PROXY_TARGET?.trim();
 const rootBrandingOverrides = new Map([
   [
+    path.resolve(upstreamWebUiRoot, 'src', 'bundles', 'routes.js'),
+    path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'bundles', 'routes.js'),
+  ],
+  [
     path.resolve(upstreamWebUiRoot, 'src', 'components', 'about-ipfs', 'AboutIpfs.js'),
     path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'components', 'about-ipfs', 'AboutIpfs.js'),
   ],
@@ -30,6 +34,10 @@ const rootBrandingOverrides = new Map([
   [
     path.resolve(upstreamWebUiRoot, 'src', 'navigation', 'NavBar.js'),
     path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'navigation', 'NavBar.js'),
+  ],
+  [
+    path.resolve(upstreamWebUiRoot, 'src', 'status', 'NodeInfo.js'),
+    path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'status', 'NodeInfo.js'),
   ],
   [
     path.resolve(upstreamWebUiRoot, 'src', 'status', 'StatusConnected.js'),
@@ -172,6 +180,10 @@ export default defineConfig({
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/redux-bundler-react'),
       },
       {
+        find: /^redux-bundler$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/redux-bundler/dist/redux-bundler.js'),
+      },
+      {
         find: /^react-i18next$/,
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-i18next'),
       },
@@ -202,6 +214,34 @@ export default defineConfig({
       {
         find: /^hd-wallet-wasm$/,
         replacement: path.resolve(packageRoot, 'node_modules/hd-wallet-wasm/src/index.mjs'),
+      },
+      {
+        find: /^@noble\/curves\/(.*)$/,
+        replacement: path.resolve(packageRoot, 'node_modules/@noble/curves') + '/$1',
+      },
+      {
+        find: /^@noble\/hashes\/(.*)$/,
+        replacement: path.resolve(packageRoot, 'node_modules/@noble/hashes') + '/$1',
+      },
+      {
+        find: /^buffer$/,
+        replacement: path.resolve(packageRoot, 'node_modules/buffer/index.js'),
+      },
+      {
+        find: /^qrcode$/,
+        replacement: path.resolve(packageRoot, 'node_modules/qrcode'),
+      },
+      {
+        find: /^vcard-cryptoperson$/,
+        replacement: path.resolve(packageRoot, 'node_modules/vcard-cryptoperson/dist/index.js'),
+      },
+      {
+        find: /^flatbuffers$/,
+        replacement: path.resolve(packageRoot, 'node_modules/flatbuffers/js/flatbuffers.js'),
+      },
+      {
+        find: /^@scure\/base$/,
+        replacement: path.resolve(packageRoot, 'node_modules/@scure/base/lib/index.js'),
       },
       {
         find: /^react-virtualized\/styles\.css$/,
