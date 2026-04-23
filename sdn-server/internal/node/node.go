@@ -700,81 +700,33 @@ func (n *Node) hasCatalogLicensingModule(reg *license.PluginRegistry) bool {
 func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 	keyDir := filepath.Join(filepath.Dir(n.config.Storage.Path), "keys")
 	keyPath := filepath.Join(keyDir, "node.key")
-	mnemonicPath := filepath.Join(keyDir, "mnemonic")
 
-	// If HD wallet is available, prefer mnemonic-based identity
 	if n.hdwallet != nil {
-		if err := os.MkdirAll(keyDir, 0700); err != nil {
-			return nil, fmt.Errorf("failed to create key directory: %w", err)
-		}
-
-		// Resolve key password: env var > config > machine-derived default
-		keyPassword := n.resolveKeyPassword()
-
-		var mnemonic string
-
-		// Try to load existing mnemonic (encrypted or plaintext)
-		if data, err := os.ReadFile(mnemonicPath); err == nil {
-			if keys.IsMnemonicEncrypted(data) {
-				// Decrypt encrypted mnemonic
-				mnemonic, err = keys.DecryptMnemonic(data, keyPassword)
-				if err != nil {
-					return nil, fmt.Errorf("failed to decrypt mnemonic from %s: %w", mnemonicPath, err)
-				}
-				log.Infof("Loaded encrypted mnemonic from %s", mnemonicPath)
-			} else {
-				// Plaintext mnemonic found — migrate to encrypted format
-				mnemonic = string(data)
-				log.Warnf("Found plaintext mnemonic at %s — migrating to encrypted storage", mnemonicPath)
-				encrypted, err := keys.EncryptMnemonic(mnemonic, keyPassword)
-				if err != nil {
-					return nil, fmt.Errorf("failed to encrypt mnemonic during migration: %w", err)
-				}
-				if err := os.WriteFile(mnemonicPath, encrypted, 0600); err != nil {
-					return nil, fmt.Errorf("failed to write encrypted mnemonic: %w", err)
-				}
-				log.Infof("Mnemonic migrated to encrypted storage at %s", mnemonicPath)
-			}
-		} else {
-			// Generate new mnemonic
-			newMnemonic, _, err := n.hdwallet.GenerateNewIdentity(n.ctx, 24)
-			if err != nil {
-				log.Warnf("HD wallet mnemonic generation failed, falling back to random key: %v", err)
-				return n.generateRandomKey(keyDir, keyPath)
-			}
-			mnemonic = newMnemonic
-
-			// Save encrypted mnemonic to disk
-			encrypted, err := keys.EncryptMnemonic(mnemonic, keyPassword)
-			if err != nil {
-				return nil, fmt.Errorf("failed to encrypt mnemonic: %w", err)
-			}
-			if err := os.WriteFile(mnemonicPath, encrypted, 0600); err != nil {
-				return nil, fmt.Errorf("failed to save encrypted mnemonic: %w", err)
-			}
-			log.Infof("Generated and saved encrypted mnemonic to %s", mnemonicPath)
-		}
-
-		// Derive identity from mnemonic
-		identity, err := n.hdwallet.IdentityFromMnemonic(n.ctx, mnemonic, "", 0)
+		bundle, err := n.loadOrCreateIdentityBundle()
 		if err != nil {
 			log.Warnf("HD wallet identity derivation failed, falling back to random key: %v", err)
 			return n.generateRandomKey(keyDir, keyPath)
 		}
 
-		n.identity = identity
-		info := identity.Info()
+		n.identity = bundle.Identity
+		info := bundle.Identity.Info()
 		log.Infof("HD wallet identity derived: PeerID=%s IdentityPath=%s SigningPath=%s EncryptionPath=%s",
 			info.PeerID, info.IdentityKeyPath, info.SigningKeyPath, info.EncryptionKeyPath)
 
+		if repoPath := strings.TrimSpace(os.Getenv("IPFS_PATH")); repoPath != "" {
+			if err := EnsureManagedIPFSRepoIdentity(repoPath, bundle); err != nil {
+				log.Warnf("Managed IPFS repo identity sync failed: %v", err)
+			}
+		}
+
 		// Also save the serialized key for backward compatibility
-		keyData, err := identity.MarshalPrivateKey()
+		keyData, err := bundle.Identity.MarshalPrivateKey()
 		if err == nil {
 			_ = os.WriteFile(keyPath, keyData, 0600)
 		}
 
 		// Return secp256k1 identity key for libp2p PeerID
-		return identity.IdentityPrivKey, nil
+		return bundle.Identity.IdentityPrivKey, nil
 	}
 
 	// Fallback: load existing key or generate random one
