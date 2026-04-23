@@ -80,8 +80,8 @@ func TestSDNAdvertisementDiscoveryTargetsUseSupportedFlagWindow(t *testing.T) {
 	if announce.Flag != "spacedatanetwork/1.2.0" {
 		t.Fatalf("announce flag = %q, want current flag", announce.Flag)
 	}
-	if announce.CID == cid.Undef {
-		t.Fatal("announce CID must be defined")
+	if announce.Namespace != "space-data-network/discovery/advertisement-flag/spacedatanetwork/1.2.0" {
+		t.Fatalf("announce namespace = %q", announce.Namespace)
 	}
 
 	if len(discover) != 3 {
@@ -97,8 +97,8 @@ func TestSDNAdvertisementDiscoveryTargetsUseSupportedFlagWindow(t *testing.T) {
 		t.Fatalf("discover[2] flag = %q, want oldest supported flag", discover[2].Flag)
 	}
 	for _, target := range discover {
-		if target.CID == cid.Undef {
-			t.Fatalf("discover target %q must have a defined CID", target.Flag)
+		if target.Namespace == "" {
+			t.Fatalf("discover target %q must have a namespace", target.Flag)
 		}
 	}
 }

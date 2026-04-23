@@ -143,7 +143,12 @@ webui_build_contains_embedded_auth() {
   if [[ ! -d "${repo_root}/webui/build/static/js" ]]; then
     return 1
   fi
-  rg -q "sdnAuth|selectAuthUser|client_pubkey_hex|walletIdentity" "${repo_root}/webui/build/static/js"
+  if command -v rg >/dev/null 2>&1; then
+    rg -q "sdnAuth|selectAuthUser|client_pubkey_hex|walletIdentity" "${repo_root}/webui/build/static/js"
+    return $?
+  fi
+
+  grep -R -E -q "sdnAuth|selectAuthUser|client_pubkey_hex|walletIdentity" "${repo_root}/webui/build/static/js"
 }
 
 ensure_sdn_ui_build() {
