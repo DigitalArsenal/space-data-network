@@ -2,6 +2,7 @@ package node
 
 import (
 	"encoding/hex"
+	"errors"
 	"os"
 	"testing"
 
@@ -257,6 +258,51 @@ func TestIndexFetchedDiscoveredNodeEPMSkipsStaleRegistryDataWhenFetchReturnsNoCo
 	if len(nodes) != 0 {
 		t.Fatalf("SearchNodes returned %d records, want 0 when fetch returned no content", len(nodes))
 	}
+}
+
+func TestIndexFetchedDiscoveredNodeEPMCachesRegistryDataWhenDirectoryIndexingFails(t *testing.T) {
+	registry := peers.NewRegistry(false, nil)
+
+	peerID, err := peer.Decode("12D3KooWJQvxYjnF8UARVq8hdD2WmT9N4xJm9kMumZ5qX6Ch12yv")
+	if err != nil {
+		t.Fatalf("peer.Decode failed: %v", err)
+	}
+
+	epmBytes := buildDiscoveredEPMFixture(t, "Discovery Node", "Discovery Node LLC", "bc1qdiscoverwallet0000000000000000000000000")
+	if err := registry.AddPeer(&peers.TrustedPeer{ID: peerID}); err != nil {
+		t.Fatalf("AddPeer failed: %v", err)
+	}
+
+	n := &Node{
+		directorySvc: directory.NewService(failingDirectoryStore{}),
+		peerRegistry: registry,
+	}
+
+	n.indexFetchedDiscoveredNodeEPM(peerID, "dht-discovery", epmBytes)
+
+	tp, err := registry.GetPeer(peerID)
+	if err != nil {
+		t.Fatalf("GetPeer failed: %v", err)
+	}
+	if tp == nil {
+		t.Fatal("expected trusted peer to be cached")
+	}
+	if string(tp.EPMData) != string(epmBytes) {
+		t.Fatalf("cached EPMData mismatch")
+	}
+	if tp.VCardData == "" {
+		t.Fatal("expected VCardData to be populated")
+	}
+}
+
+type failingDirectoryStore struct{}
+
+func (failingDirectoryStore) UpsertDirectoryRecord(storage.DirectoryRecord) error {
+	return errors.New("directory unavailable")
+}
+
+func (failingDirectoryStore) QueryDirectory(storage.DirectoryQuery) ([]storage.DirectoryRecord, error) {
+	return nil, nil
 }
 
 func buildDiscoveredEPMFixture(t *testing.T, dn, legalName, bitcoinAddress string) []byte {
