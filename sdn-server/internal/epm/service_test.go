@@ -85,6 +85,12 @@ func TestGetNodeEPMJSONProjectsRuntimeIdentityFields(t *testing.T) {
 	if got, want := info["xpub"], "xpub-test"; got != want {
 		t.Fatalf("xpub = %v, want %q", got, want)
 	}
+	if got, want := info["directory_kind"], "node"; got != want {
+		t.Fatalf("directory_kind = %v, want %q", got, want)
+	}
+	if got, want := info["peer_id"], identity.PeerID.String(); got != want {
+		t.Fatalf("peer_id = %v, want %q", got, want)
+	}
 	if got, want := info["bitcoin_address"], "bc1qtestidentityaddress0000000000000000000000"; got != want {
 		t.Fatalf("bitcoin_address = %v, want %q", got, want)
 	}

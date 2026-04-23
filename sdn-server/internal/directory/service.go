@@ -73,17 +73,24 @@ func normalizeRecord(kind string, epmJSON map[string]any, epmCID, source string)
 		return storage.DirectoryRecord{}, fmt.Errorf("directory kind is required")
 	}
 
-	copied := make(map[string]any, len(epmJSON)+3)
-	for k, v := range epmJSON {
-		copied[k] = v
-	}
-	copied["directory_kind"] = normalizedKind
-
 	peerID := firstString(epmJSON, "peer_id", "peerID", "peerid", "id")
 	if peerID == "" {
 		return storage.DirectoryRecord{}, fmt.Errorf("peer_id is required for %s directory record", normalizedKind)
 	}
-	copied["peer_id"] = peerID
+
+	canonical := map[string]any{
+		"directory_kind": normalizedKind,
+		"peer_id":        peerID,
+	}
+	if dn := firstString(epmJSON, "dn", "DN"); dn != "" {
+		canonical["dn"] = dn
+	}
+	if legalName := firstString(epmJSON, "legal_name", "LEGAL_NAME"); legalName != "" {
+		canonical["legal_name"] = legalName
+	}
+	if bitcoinAddress := firstString(epmJSON, "bitcoin_address", "BITCOIN_ADDRESS"); bitcoinAddress != "" {
+		canonical["bitcoin_address"] = bitcoinAddress
+	}
 
 	record := storage.DirectoryRecord{
 		Kind:           normalizedKind,
@@ -99,7 +106,7 @@ func normalizeRecord(kind string, epmJSON map[string]any, epmCID, source string)
 		record.Source = "unknown"
 	}
 
-	rawJSON, err := json.Marshal(copied)
+	rawJSON, err := json.Marshal(canonical)
 	if err != nil {
 		return storage.DirectoryRecord{}, fmt.Errorf("marshal directory record json: %w", err)
 	}
