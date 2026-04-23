@@ -2,8 +2,10 @@ package node
 
 import (
 	"context"
+	"encoding/binary"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -12,6 +14,10 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/peer"
 	mh "github.com/multiformats/go-multihash"
+
+	"github.com/spacedatanetwork/sdn-server/internal/epm"
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/vcard"
 )
 
 const sdnAdvertisementDiscoveryNamespace = "space-data-network/discovery/advertisement-flag"
@@ -136,32 +142,72 @@ func (n *Node) fetchAndIndexDiscoveredNodeEPM(pid peer.ID, source string) {
 	if n == nil || pid == "" {
 		return
 	}
-	if n.epmService == nil || n.directorySvc == nil || n.peerRegistry == nil || n.host == nil {
+	if n.directorySvc == nil || n.peerRegistry == nil || n.host == nil {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(n.ctx, 30*time.Second)
-	defer cancel()
-
-	if err := n.epmService.RequestPeerEPM(ctx, n.host, pid); err != nil {
+	epmBytes, err := n.fetchDiscoveredNodeEPM(pid)
+	if err != nil {
 		log.Debugf("Failed to fetch EPM for discovered peer %s: %v", pid, err)
 		return
 	}
+	if len(epmBytes) == 0 {
+		return
+	}
 
-	n.indexKnownDiscoveredNodeEPM(pid, source)
+	n.indexFetchedDiscoveredNodeEPM(pid, source, epmBytes)
 }
 
-func (n *Node) indexKnownDiscoveredNodeEPM(pid peer.ID, source string) {
+func (n *Node) fetchDiscoveredNodeEPM(pid peer.ID) ([]byte, error) {
+	if n == nil || pid == "" || n.host == nil {
+		return nil, nil
+	}
+
+	ctx, cancel := context.WithTimeout(n.ctx, 45*time.Second)
+	defer cancel()
+
+	stream, err := n.host.NewStream(ctx, pid, epm.EPMExchangeProtocolID)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+
+	if err := stream.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return nil, err
+	}
+	header := make([]byte, 4)
+	binary.LittleEndian.PutUint32(header, 0)
+	if _, err := stream.Write(header); err != nil {
+		return nil, err
+	}
+
+	if err := stream.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil {
+		return nil, err
+	}
+	var respHeader [8]byte
+	if _, err := io.ReadFull(stream, respHeader[:]); err != nil {
+		return nil, err
+	}
+
+	status := binary.LittleEndian.Uint32(respHeader[0:4])
+	dataLen := binary.LittleEndian.Uint32(respHeader[4:8])
+	if status != 0 || dataLen == 0 || dataLen > 64*1024 {
+		return nil, nil
+	}
+
+	epmBytes := make([]byte, dataLen)
+	if _, err := io.ReadFull(stream, epmBytes); err != nil {
+		return nil, err
+	}
+	return epmBytes, nil
+}
+
+func (n *Node) indexFetchedDiscoveredNodeEPM(pid peer.ID, source string, epmBytes []byte) {
 	if n == nil || pid == "" || n.directorySvc == nil || n.peerRegistry == nil {
 		return
 	}
 
-	tp, err := n.peerRegistry.GetPeer(pid)
-	if err != nil || tp == nil || len(tp.EPMData) == 0 {
-		return
-	}
-
-	info, err := discoveredNodeEPMJSON(tp.EPMData, pid)
+	info, err := discoveredNodeEPMJSON(epmBytes, pid)
 	if err != nil {
 		log.Debugf("Failed to normalize discovered EPM for peer %s: %v", pid, err)
 		return
@@ -169,6 +215,26 @@ func (n *Node) indexKnownDiscoveredNodeEPM(pid peer.ID, source string) {
 
 	if err := n.directorySvc.UpsertNodeEPMJSON(info, "", source); err != nil {
 		log.Debugf("Failed to index discovered EPM for peer %s: %v", pid, err)
+		return
+	}
+
+	tp, err := n.peerRegistry.GetPeer(pid)
+	if err != nil {
+		return
+	}
+	if tp == nil {
+		tp = &peers.TrustedPeer{ID: pid, TrustLevel: peers.Standard}
+		if addErr := n.peerRegistry.AddPeer(tp); addErr != nil && addErr != peers.ErrPeerAlreadyExists {
+			return
+		}
+		tp, _ = n.peerRegistry.GetPeer(pid)
+	}
+	if tp != nil {
+		tp.EPMData = append([]byte(nil), epmBytes...)
+		if vcardStr, err := vcard.EPMToVCard(epmBytes); err == nil {
+			tp.VCardData = vcardStr
+		}
+		_ = n.peerRegistry.UpdatePeer(tp)
 	}
 }
 
