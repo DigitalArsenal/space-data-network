@@ -81,4 +81,16 @@ describe('sdn upstream webui branding helper', () => {
       source.indexOf("<SessionControls className='ml1' />"),
     );
   });
+
+  it('uses SDN node info for the root status node identity instead of upstream identity context', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/status/NodeInfo.js'),
+      'utf8',
+    );
+
+    expect(source).toContain("fetch('/api/node/info'");
+    expect(source).toContain('peer_id');
+    expect(source).toContain('spacedatanetwork/');
+    expect(source).not.toContain('useIdentity');
+  });
 });

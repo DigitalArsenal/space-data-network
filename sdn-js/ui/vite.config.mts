@@ -32,6 +32,10 @@ const rootBrandingOverrides = new Map([
     path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'navigation', 'NavBar.js'),
   ],
   [
+    path.resolve(upstreamWebUiRoot, 'src', 'status', 'NodeInfo.js'),
+    path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'status', 'NodeInfo.js'),
+  ],
+  [
     path.resolve(upstreamWebUiRoot, 'src', 'status', 'StatusConnected.js'),
     path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'status', 'StatusConnected.js'),
   ],
