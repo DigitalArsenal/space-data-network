@@ -142,7 +142,7 @@ func (n *Node) fetchAndIndexDiscoveredNodeEPM(pid peer.ID, source string) {
 	if n == nil || pid == "" {
 		return
 	}
-	if n.directorySvc == nil || n.peerRegistry == nil || n.host == nil {
+	if n.peerRegistry == nil || n.host == nil {
 		return
 	}
 
