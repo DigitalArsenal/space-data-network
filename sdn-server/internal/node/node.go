@@ -689,8 +689,7 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 	if n.hdwallet != nil {
 		bundle, err := n.loadOrCreateIdentityBundle()
 		if err != nil {
-			log.Warnf("HD wallet identity derivation failed, falling back to random key: %v", err)
-			return n.generateRandomKey(keyDir, keyPath)
+			return nil, fmt.Errorf("hd wallet identity derivation failed: %w", err)
 		}
 
 		n.identity = bundle.Identity
