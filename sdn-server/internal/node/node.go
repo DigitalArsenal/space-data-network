@@ -25,6 +25,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
+	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	dutil "github.com/libp2p/go-libp2p/p2p/discovery/util"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
@@ -1073,9 +1075,10 @@ func (n *Node) runDHTDiscovery() {
 		log.Infof("Module delivery discovery namespace: %s", moduleDeliveryDiscoveryNamespace)
 		log.Infof("Module delivery discovery CID: %s", moduleTargets[0].String())
 	}
-	if n.sdnAdvertisementTarget.CID.Defined() {
+	if strings.TrimSpace(n.sdnAdvertisementTarget.Namespace) != "" {
 		log.Infof("SDN advertisement namespace: %s", sdnAdvertisementDiscoveryNamespace)
 		log.Infof("SDN advertisement flag: %s", n.sdnAdvertisementTarget.Flag)
+		log.Infof("SDN advertisement rendezvous: %s", n.sdnAdvertisementTarget.Namespace)
 	}
 
 	// Announcement interval (every 30 seconds as per Agents.md spec)
@@ -1090,8 +1093,8 @@ func (n *Node) runDHTDiscovery() {
 	for _, target := range moduleTargets {
 		n.announceOnDHT(target)
 	}
-	if n.sdnAdvertisementTarget.CID.Defined() {
-		n.announceOnDHT(n.sdnAdvertisementTarget.CID)
+	if strings.TrimSpace(n.sdnAdvertisementTarget.Namespace) != "" {
+		n.announceSDNAdvertisement(n.sdnAdvertisementTarget)
 	}
 
 	for {
@@ -1104,8 +1107,8 @@ func (n *Node) runDHTDiscovery() {
 			for _, target := range moduleTargets {
 				n.announceOnDHT(target)
 			}
-			if n.sdnAdvertisementTarget.CID.Defined() {
-				n.announceOnDHT(n.sdnAdvertisementTarget.CID)
+			if strings.TrimSpace(n.sdnAdvertisementTarget.Namespace) != "" {
+				n.announceSDNAdvertisement(n.sdnAdvertisementTarget)
 			}
 
 		case <-discoveryTicker.C:
@@ -1124,6 +1127,19 @@ func moduleDeliveryDiscoveryTargets(discoveryCID cid.Cid) []cid.Cid {
 		return nil
 	}
 	return []cid.Cid{discoveryCID}
+}
+
+func (n *Node) announceSDNAdvertisement(target sdnAdvertisementDiscoveryTarget) {
+	if strings.TrimSpace(target.Namespace) == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+	defer cancel()
+
+	routingDiscovery := drouting.NewRoutingDiscovery(n.dht)
+	dutil.Advertise(ctx, routingDiscovery, target.Namespace)
+	log.Debugf("SDN advertisement announce started for %s", target.Flag)
 }
 
 // announceOnDHT announces our presence in the DHT discovery namespace.
@@ -1174,10 +1190,19 @@ func (n *Node) discoverPeers(discoveryCID cid.Cid) {
 }
 
 func (n *Node) discoverSDNAdvertisementPeers(target sdnAdvertisementDiscoveryTarget) {
+	if strings.TrimSpace(target.Namespace) == "" {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(n.ctx, 30*time.Second)
 	defer cancel()
 
-	peerChan := n.dht.FindProvidersAsync(ctx, target.CID, 20)
+	routingDiscovery := drouting.NewRoutingDiscovery(n.dht)
+	peerChan, err := routingDiscovery.FindPeers(ctx, target.Namespace)
+	if err != nil {
+		log.Debugf("Failed to query SDN advertisement peers for %s: %v", target.Flag, err)
+		return
+	}
 
 	for peerInfo := range peerChan {
 		if peerInfo.ID == n.host.ID() {

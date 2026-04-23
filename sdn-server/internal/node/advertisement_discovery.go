@@ -1,40 +1,19 @@
 package node
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/peer"
-	mh "github.com/multiformats/go-multihash"
 )
 
 const sdnAdvertisementDiscoveryNamespace = "space-data-network/discovery/advertisement-flag"
 
 type sdnAdvertisementDiscoveryTarget struct {
-	Flag string
-	CID  cid.Cid
-}
-
-func computeSDNAdvertisementDiscoveryCID(flag string) (cid.Cid, error) {
-	flag = strings.TrimSpace(flag)
-	if flag == "" {
-		return cid.Undef, fmt.Errorf("advertisement flag is required")
-	}
-
-	input := make([]byte, 0, len(sdnAdvertisementDiscoveryNamespace)+len(flag))
-	input = append(input, []byte(sdnAdvertisementDiscoveryNamespace)...)
-	input = append(input, []byte(flag)...)
-
-	sum := sha256.Sum256(input)
-	multihash, err := mh.Encode(sum[:], mh.SHA2_256)
-	if err != nil {
-		return cid.Undef, fmt.Errorf("encode advertisement discovery multihash: %w", err)
-	}
-	return cid.NewCidV1(cid.Raw, multihash), nil
+	Flag      string
+	Namespace string
 }
 
 func sdnAdvertisementDiscoveryTargets(currentFlag string, supportedFlags []string) (sdnAdvertisementDiscoveryTarget, []sdnAdvertisementDiscoveryTarget, error) {
@@ -64,13 +43,9 @@ func sdnAdvertisementDiscoveryTargets(currentFlag string, supportedFlags []strin
 
 	discoverTargets := make([]sdnAdvertisementDiscoveryTarget, 0, len(orderedFlags))
 	for _, flag := range orderedFlags {
-		discoveryCID, err := computeSDNAdvertisementDiscoveryCID(flag)
-		if err != nil {
-			return sdnAdvertisementDiscoveryTarget{}, nil, err
-		}
 		discoverTargets = append(discoverTargets, sdnAdvertisementDiscoveryTarget{
-			Flag: flag,
-			CID:  discoveryCID,
+			Flag:      flag,
+			Namespace: fmt.Sprintf("%s/%s", sdnAdvertisementDiscoveryNamespace, flag),
 		})
 	}
 
