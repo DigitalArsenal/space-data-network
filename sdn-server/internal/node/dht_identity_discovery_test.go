@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
@@ -156,10 +158,7 @@ func TestIndexKnownDiscoveredNodeEPMStoresDirectoryRecord(t *testing.T) {
 		t.Fatalf("peer.Decode failed: %v", err)
 	}
 
-	epmBytes := sds.NewEPMBuilder().
-		WithDN("Discovery Node").
-		WithLegalName("Discovery Node LLC").
-		Build()
+	epmBytes := buildDiscoveredEPMFixture(t, "Discovery Node", "Discovery Node LLC", "bc1qdiscoverwallet0000000000000000000000000")
 
 	if err := registry.AddPeer(&peers.TrustedPeer{
 		ID:      peerID,
@@ -175,7 +174,7 @@ func TestIndexKnownDiscoveredNodeEPMStoresDirectoryRecord(t *testing.T) {
 
 	n.indexKnownDiscoveredNodeEPM(peerID, "dht-discovery")
 
-	nodes, err := dirSvc.SearchNodes("Discovery Node")
+	nodes, err := dirSvc.SearchNodes("Discovery Node", 10)
 	if err != nil {
 		t.Fatalf("SearchNodes failed: %v", err)
 	}
@@ -195,4 +194,55 @@ func TestIndexKnownDiscoveredNodeEPMStoresDirectoryRecord(t *testing.T) {
 	if got.Source != "dht-discovery" {
 		t.Fatalf("Source = %q, want %q", got.Source, "dht-discovery")
 	}
+	if got.BitcoinAddress != "bc1qdiscoverwallet0000000000000000000000000" {
+		t.Fatalf("BitcoinAddress = %q, want %q", got.BitcoinAddress, "bc1qdiscoverwallet0000000000000000000000000")
+	}
+	nodesByAddress, err := dirSvc.SearchNodes("bc1qdiscoverwallet0000000000000000000000000", 10)
+	if err != nil {
+		t.Fatalf("SearchNodes by bitcoin address failed: %v", err)
+	}
+	if len(nodesByAddress) != 1 {
+		t.Fatalf("SearchNodes by bitcoin address returned %d records, want 1", len(nodesByAddress))
+	}
+}
+
+func buildDiscoveredEPMFixture(t *testing.T, dn, legalName, bitcoinAddress string) []byte {
+	t.Helper()
+
+	builder := flatbuffers.NewBuilder(256)
+
+	dnOffset := builder.CreateString(dn)
+	legalNameOffset := builder.CreateString(legalName)
+	chainOffset := builder.CreateString("bitcoin")
+	addressOffset := builder.CreateString(bitcoinAddress)
+	publicKeyOffset := builder.CreateString("021111111111111111111111111111111111111111111111111111111111111111")
+	keyPathOffset := builder.CreateString("m/44'/0'/0'/0/0")
+	signatureOffset := builder.CreateString("00")
+	payloadOffset := builder.CreateString("00")
+	algorithmOffset := builder.CreateString("secp256k1-compact-bitcoin")
+	encodingOffset := builder.CreateString("compact")
+
+	EPM.ChainProofStart(builder)
+	EPM.ChainProofAddCHAIN(builder, chainOffset)
+	EPM.ChainProofAddADDRESS(builder, addressOffset)
+	EPM.ChainProofAddPUBLIC_KEY(builder, publicKeyOffset)
+	EPM.ChainProofAddKEY_PATH(builder, keyPathOffset)
+	EPM.ChainProofAddSIGNATURE(builder, signatureOffset)
+	EPM.ChainProofAddSIGNED_PAYLOAD(builder, payloadOffset)
+	EPM.ChainProofAddALGORITHM(builder, algorithmOffset)
+	EPM.ChainProofAddENCODING(builder, encodingOffset)
+	chainProofOffset := EPM.ChainProofEnd(builder)
+
+	EPM.EPMStartCHAIN_PROOFSVector(builder, 1)
+	builder.PrependUOffsetT(chainProofOffset)
+	chainProofsOffset := builder.EndVector(1)
+
+	EPM.EPMStart(builder)
+	EPM.EPMAddDN(builder, dnOffset)
+	EPM.EPMAddLEGAL_NAME(builder, legalNameOffset)
+	EPM.EPMAddCHAIN_PROOFS(builder, chainProofsOffset)
+	epmOffset := EPM.EPMEnd(builder)
+	EPM.FinishSizePrefixedEPMBuffer(builder, epmOffset)
+
+	return append([]byte(nil), builder.FinishedBytes()...)
 }
