@@ -2,6 +2,7 @@ package directory
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -53,7 +54,7 @@ func TestDirectoryService_IndexesNodeEPMJSON(t *testing.T) {
 		t.Fatalf("UpsertNodeEPMJSON failed: %v", err)
 	}
 
-	nodes, err := svc.SearchNodes("bc1qexample")
+	nodes, err := svc.SearchNodes("bc1qexample", 10)
 	if err != nil {
 		t.Fatalf("SearchNodes failed: %v", err)
 	}
@@ -103,13 +104,15 @@ func TestHTTPHandler_ServesNodeAndUserSearches(t *testing.T) {
 	store := mustNewDirectoryStore(t)
 	svc := NewService(store)
 
-	if err := svc.UpsertNodeEPMJSON(map[string]any{
-		"peer_id":         "16Uiu2HAmNode",
-		"dn":              "Discovery Node",
-		"legal_name":      "Discovery Node LLC",
-		"bitcoin_address": "bc1qnodeexample",
-	}, "bafy-node", "dht-discovery"); err != nil {
-		t.Fatalf("UpsertNodeEPMJSON failed: %v", err)
+	for i := 0; i < 120; i++ {
+		if err := svc.UpsertNodeEPMJSON(map[string]any{
+			"peer_id":         fmt.Sprintf("16Uiu2HAmNode%03d", i),
+			"dn":              "Discovery Node",
+			"legal_name":      "Discovery Node LLC",
+			"bitcoin_address": fmt.Sprintf("bc1qnodeexample%03d", i),
+		}, fmt.Sprintf("bafy-node-%03d", i), "dht-discovery"); err != nil {
+			t.Fatalf("UpsertNodeEPMJSON failed: %v", err)
+		}
 	}
 	if err := svc.UpsertUserEPMJSON(map[string]any{
 		"peer_id":    "16Uiu2HAmUser",
@@ -123,7 +126,7 @@ func TestHTTPHandler_ServesNodeAndUserSearches(t *testing.T) {
 
 	t.Run("nodes", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/directory/nodes?q=Discovery&limit=10", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/directory/nodes?q=Discovery&limit=120", nil)
 		handler.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
@@ -145,14 +148,14 @@ func TestHTTPHandler_ServesNodeAndUserSearches(t *testing.T) {
 		if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
 			t.Fatalf("json decode failed: %v", err)
 		}
-		if payload.Count != 1 {
-			t.Fatalf("count = %d, want 1", payload.Count)
+		if payload.Count != 120 {
+			t.Fatalf("count = %d, want 120", payload.Count)
 		}
-		if len(payload.Results) != 1 {
-			t.Fatalf("results len = %d, want 1", len(payload.Results))
+		if len(payload.Results) != 120 {
+			t.Fatalf("results len = %d, want 120", len(payload.Results))
 		}
 		got := payload.Results[0]
-		if got.Kind != "node" || got.PeerID != "16Uiu2HAmNode" {
+		if got.Kind != "node" || got.PeerID != "16Uiu2HAmNode000" {
 			t.Fatalf("unexpected node result: %#v", got)
 		}
 		if got.DN != "Discovery Node" || got.LegalName != "Discovery Node LLC" {
@@ -195,4 +198,28 @@ func TestHTTPHandler_ServesNodeAndUserSearches(t *testing.T) {
 			t.Fatalf("unexpected user fields: %#v", got)
 		}
 	})
+}
+
+func TestSearchNodesHonorsRequestedLimit(t *testing.T) {
+	store := mustNewDirectoryStore(t)
+	svc := NewService(store)
+
+	for i := 0; i < 120; i++ {
+		if err := svc.UpsertNodeEPMJSON(map[string]any{
+			"peer_id":         fmt.Sprintf("16Uiu2HAmNode%03d", i),
+			"dn":              "Discovery Node",
+			"legal_name":      "Discovery Node LLC",
+			"bitcoin_address": fmt.Sprintf("bc1qnodeexample%03d", i),
+		}, fmt.Sprintf("bafy-node-%03d", i), "dht-discovery"); err != nil {
+			t.Fatalf("UpsertNodeEPMJSON failed: %v", err)
+		}
+	}
+
+	nodes, err := svc.SearchNodes("Discovery", 120)
+	if err != nil {
+		t.Fatalf("SearchNodes failed: %v", err)
+	}
+	if len(nodes) != 120 {
+		t.Fatalf("SearchNodes returned %d records, want 120", len(nodes))
+	}
 }

@@ -31,24 +31,26 @@ func (s *Service) UpsertUserEPMJSON(epmJSON map[string]any, epmCID, source strin
 }
 
 // SearchNodes returns matching node directory records.
-func (s *Service) SearchNodes(search string) ([]storage.DirectoryRecord, error) {
+func (s *Service) SearchNodes(search string, limit int) ([]storage.DirectoryRecord, error) {
 	if s == nil || s.store == nil {
 		return nil, errors.New("directory store is not configured")
 	}
 	return s.store.QueryDirectory(storage.DirectoryQuery{
 		Kind:   KindNode,
 		Search: search,
+		Limit:  limit,
 	})
 }
 
 // SearchUsers returns matching user directory records.
-func (s *Service) SearchUsers(search string) ([]storage.DirectoryRecord, error) {
+func (s *Service) SearchUsers(search string, limit int) ([]storage.DirectoryRecord, error) {
 	if s == nil || s.store == nil {
 		return nil, errors.New("directory store is not configured")
 	}
 	return s.store.QueryDirectory(storage.DirectoryQuery{
 		Kind:   KindUser,
 		Search: search,
+		Limit:  limit,
 	})
 }
 

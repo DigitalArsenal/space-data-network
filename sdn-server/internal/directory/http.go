@@ -41,18 +41,18 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) handleNodes(w http.ResponseWriter, r *http.Request) {
-	h.handleSearch(w, r, KindNode, func(search string) ([]storage.DirectoryRecord, error) {
-		return h.svc.SearchNodes(search)
+	h.handleSearch(w, r, KindNode, func(search string, limit int) ([]storage.DirectoryRecord, error) {
+		return h.svc.SearchNodes(search, limit)
 	})
 }
 
 func (h *HTTPHandler) handleUsers(w http.ResponseWriter, r *http.Request) {
-	h.handleSearch(w, r, KindUser, func(search string) ([]storage.DirectoryRecord, error) {
-		return h.svc.SearchUsers(search)
+	h.handleSearch(w, r, KindUser, func(search string, limit int) ([]storage.DirectoryRecord, error) {
+		return h.svc.SearchUsers(search, limit)
 	})
 }
 
-func (h *HTTPHandler) handleSearch(w http.ResponseWriter, r *http.Request, kind string, searchFn func(string) ([]storage.DirectoryRecord, error)) {
+func (h *HTTPHandler) handleSearch(w http.ResponseWriter, r *http.Request, kind string, searchFn func(string, int) ([]storage.DirectoryRecord, error)) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -69,13 +69,10 @@ func (h *HTTPHandler) handleSearch(w http.ResponseWriter, r *http.Request, kind 
 		return
 	}
 
-	records, err := searchFn(search)
+	records, err := searchFn(search, limit)
 	if err != nil {
 		http.Error(w, "directory search unavailable", http.StatusServiceUnavailable)
 		return
-	}
-	if limit >= 0 && limit < len(records) {
-		records = records[:limit]
 	}
 
 	w.Header().Set("Content-Type", "application/json")
