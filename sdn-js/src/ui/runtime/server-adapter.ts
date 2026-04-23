@@ -8,6 +8,8 @@ import {
   type AdminSnapshot,
   type AdminWorkspaceId,
 } from './admin-adapter';
+import type { DirectoryAdapter } from './directory';
+import { createServerDirectoryAdapter } from './server-directory';
 
 interface ResponseLike {
   ok: boolean;
@@ -23,6 +25,10 @@ export interface ServerAdapterDeps {
   initialWorkspace?: AdminWorkspaceId;
 }
 
+export interface ServerRuntimeAdapter extends AdminAdapter {
+  directory: DirectoryAdapter;
+}
+
 interface AuthStatusResponse {
   wallet_ui_configured?: boolean;
 }
@@ -32,13 +38,17 @@ interface AuthMeResponse {
   trust_level?: string;
 }
 
-export function createServerAdapter(deps: ServerAdapterDeps): AdminAdapter {
+export function createServerAdapter(deps: ServerAdapterDeps): ServerRuntimeAdapter {
   const target = normalizeServerTarget(deps.target);
   if (!target) {
     throw new Error('server target baseUrl is required');
   }
 
   const fetcher = deps.fetch ?? (globalThis.fetch.bind(globalThis) as FetchLike);
+  const directory = createServerDirectoryAdapter({
+    baseUrl: target.baseUrl,
+    fetch: fetcher,
+  });
   let currentSnapshot = createAdminSnapshot({
     mode: 'server',
     serverTarget: target,
@@ -57,6 +67,7 @@ export function createServerAdapter(deps: ServerAdapterDeps): AdminAdapter {
 
   return {
     mode: 'server',
+    directory,
 
     async connect(): Promise<AdminSnapshot> {
       const [nodeInfo, authStatus, authMe] = await Promise.all([
