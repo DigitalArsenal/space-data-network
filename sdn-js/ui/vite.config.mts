@@ -180,6 +180,10 @@ export default defineConfig({
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/redux-bundler-react'),
       },
       {
+        find: /^redux-bundler$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/redux-bundler/dist/redux-bundler.js'),
+      },
+      {
         find: /^react-i18next$/,
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-i18next'),
       },

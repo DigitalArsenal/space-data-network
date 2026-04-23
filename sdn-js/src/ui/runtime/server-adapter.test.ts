@@ -1,6 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createServerAdapter, createUiRuntimeAdapter } from './server-adapter';
+import {
+  createServerAdapter,
+  createUiRuntimeAdapter,
+  getSharedUiRuntimeAdapter,
+  resetSharedUiRuntimeAdapterForTests,
+} from './server-adapter';
+
+afterEach(() => {
+  resetSharedUiRuntimeAdapterForTests();
+});
 
 describe('createServerAdapter', () => {
   it('maps an authenticated admin session from the server APIs', async () => {
@@ -149,6 +158,64 @@ describe('createServerAdapter', () => {
     expect(snapshot.mode).toBe('local');
     expect(directory.nodes[0]?.dn).toBe('Local Node Example');
     expect(directory.users[0]?.dn).toBe('Local Operator Example');
+  });
+
+  it('shares one hosted runtime adapter across pages without rebuilding local globals in each page', async () => {
+    const listDirectoryRecords = vi.fn(async () => [
+      {
+        kind: 'node',
+        peer_id: '16Uiu2HAmSharedNode',
+        dn: 'Shared Node',
+      },
+      {
+        kind: 'user',
+        peer_id: '16Uiu2HAmSharedUser',
+        dn: 'Shared User',
+      },
+    ]);
+    const fetch = vi.fn(async (input: string) => {
+      if (input.endsWith('/api/node/info')) {
+        return jsonResponse(200, {
+          peer_id: '12D3KooWConfigured',
+          DISPLAY_NAME: 'Configured Node',
+        });
+      }
+      if (input.endsWith('/api/auth/status')) {
+        return jsonResponse(200, { wallet_ui_configured: true });
+      }
+      if (input.endsWith('/api/auth/me')) {
+        return jsonResponse(401, { code: 'unauthorized' });
+      }
+      if (input.endsWith('/api/directory/nodes?q=Configured%20Node')) {
+        return jsonResponse(200, [{ peer_id: '12D3KooWConfigured', dn: 'Configured Node' }]);
+      }
+      if (input.endsWith('/api/directory/users?q=Configured%20Node')) {
+        return jsonResponse(200, [{ peer_id: '12D3KooWConfigured', dn: 'Configured Operator' }]);
+      }
+      throw new Error(`unexpected fetch ${input}`);
+    });
+
+    const first = getSharedUiRuntimeAdapter({
+      source: {
+        __SDN_CONFIG__: {
+          serverBaseUrl: 'https://configured.example',
+        },
+        __SDN_DIRECTORY__: {
+          listDirectoryRecords,
+        },
+      },
+      fetch,
+    });
+    const second = getSharedUiRuntimeAdapter();
+
+    expect(second).toBe(first);
+
+    const connected = await first.connect();
+    const directory = await second.directory.search('Configured Node');
+
+    expect(connected.nodeContext.peerId).toBe('12D3KooWConfigured');
+    expect(directory.nodes[0]?.dn).toBe('Configured Node');
+    expect(listDirectoryRecords).not.toHaveBeenCalled();
   });
 });
 

@@ -43,6 +43,21 @@ export interface UiRuntimeAdapter extends AdminAdapter {
   directory: DirectoryAdapter;
 }
 
+export interface HostedDirectoryWindow {
+  __SDN_DIRECTORY__?: {
+    records?: Array<Record<string, unknown>>;
+    listDirectoryRecords?: () =>
+      | Array<Record<string, unknown>>
+      | Promise<Array<Record<string, unknown>>>;
+  };
+}
+
+export interface SharedUiRuntimeAdapterDeps {
+  source?: (HostedRuntimeConfigWindow & HostedDirectoryWindow) | null;
+  fetch?: FetchLike;
+  initialWorkspace?: AdminWorkspaceId;
+}
+
 interface AuthStatusResponse {
   wallet_ui_configured?: boolean;
 }
@@ -51,6 +66,8 @@ interface AuthMeResponse {
   name?: string;
   trust_level?: string;
 }
+
+let sharedUiRuntimeAdapter: UiRuntimeAdapter | null = null;
 
 export function createServerAdapter(deps: ServerAdapterDeps): ServerRuntimeAdapter {
   const target = normalizeServerTarget(deps.target);
@@ -151,11 +168,30 @@ export function createUiRuntimeAdapter(deps: UiRuntimeAdapterDeps = {}): UiRunti
 
   return {
     mode: localAdapter.mode,
-    directory,
-    connect: () => localAdapter.connect(),
-    snapshot: () => localAdapter.snapshot(),
-    setWorkspace: (workspaceId: AdminWorkspaceId) => localAdapter.setWorkspace(workspaceId),
+      directory,
+      connect: () => localAdapter.connect(),
+      snapshot: () => localAdapter.snapshot(),
+      setWorkspace: (workspaceId: AdminWorkspaceId) => localAdapter.setWorkspace(workspaceId),
   };
+}
+
+export function getSharedUiRuntimeAdapter(
+  deps: SharedUiRuntimeAdapterDeps = {},
+): UiRuntimeAdapter {
+  if (!sharedUiRuntimeAdapter) {
+    const source = deps.source ?? readHostedUiRuntimeWindow();
+    sharedUiRuntimeAdapter = createUiRuntimeAdapter({
+      config: source,
+      fetch: deps.fetch,
+      initialWorkspace: deps.initialWorkspace,
+      listDirectoryRecords: createHostedDirectoryRecordLister(source),
+    });
+  }
+  return sharedUiRuntimeAdapter;
+}
+
+export function resetSharedUiRuntimeAdapterForTests(): void {
+  sharedUiRuntimeAdapter = null;
 }
 
 async function readJson(
@@ -225,4 +261,29 @@ function pickString(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
+}
+
+function readHostedUiRuntimeWindow(): (HostedRuntimeConfigWindow & HostedDirectoryWindow) | null {
+  return typeof globalThis === 'object'
+    ? (globalThis as HostedRuntimeConfigWindow & HostedDirectoryWindow)
+    : null;
+}
+
+function createHostedDirectoryRecordLister(
+  source: (HostedRuntimeConfigWindow & HostedDirectoryWindow) | null | undefined,
+): () => Promise<Array<Record<string, unknown>>> {
+  return async () => {
+    const directorySource = source?.__SDN_DIRECTORY__;
+    if (!directorySource) {
+      return [];
+    }
+    if (Array.isArray(directorySource.records)) {
+      return directorySource.records;
+    }
+    if (typeof directorySource.listDirectoryRecords === 'function') {
+      const records = await directorySource.listDirectoryRecords();
+      return Array.isArray(records) ? records : [];
+    }
+    return [];
+  };
 }
