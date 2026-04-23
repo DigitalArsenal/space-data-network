@@ -1,57 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { createHeliaDirectoryAdapter } from '../../../../src/ui/runtime/helia-directory.js'
-import { createServerDirectoryAdapter } from '../../../../src/ui/runtime/server-directory.js'
-
-function createUiDirectoryAdapter() {
-  const config = window.__SDN_CONFIG__ ?? {}
-  const serverBaseUrl = typeof config.serverBaseUrl === 'string' && config.serverBaseUrl.trim()
-    ? config.serverBaseUrl.trim()
-    : null
-
-  if (serverBaseUrl) {
-    return createServerDirectoryAdapter({
-      baseUrl: serverBaseUrl,
-      fetch: window.fetch.bind(window),
-    })
-  }
-
-  if (window.__SDN_DIRECTORY__?.listDirectoryRecords || Array.isArray(window.__SDN_DIRECTORY__?.records)) {
-    return createHeliaDirectoryAdapter({
-      listDirectoryRecords: async () => await normalizeLocalDirectoryRecords(window.__SDN_DIRECTORY__),
-    })
-  }
-
-  return createServerDirectoryAdapter({
-    baseUrl: window.location.origin,
-    fetch: window.fetch.bind(window),
-  })
-}
-
-function normalizeLocalDirectoryRecords(source) {
-  if (!source) {
-    return []
-  }
-
-  if (Array.isArray(source.records)) {
-    return source.records
-  }
-
-  if (typeof source.listDirectoryRecords === 'function') {
-    return source.listDirectoryRecords()
-  }
-
-  return []
-}
+import { createUiRuntimeAdapter } from '../../../../src/ui/runtime/server-adapter.js'
 
 function DirectoryPage() {
-  const adapterRef = useRef(null)
+  const runtimeRef = useRef(null)
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('loading')
   const [snapshot, setSnapshot] = useState({ query: '', nodes: [], users: [] })
   const [error, setError] = useState(null)
 
-  if (!adapterRef.current) {
-    adapterRef.current = createUiDirectoryAdapter()
+  if (!runtimeRef.current) {
+    runtimeRef.current = createUiRuntimeAdapter({
+      config: window.__SDN_CONFIG__ ?? null,
+      listDirectoryRecords: resolveLocalDirectoryRecords,
+    })
   }
 
   useEffect(() => {
@@ -62,7 +23,7 @@ function DirectoryPage() {
       setError(null)
 
       try {
-        const nextSnapshot = await adapterRef.current.search(query)
+        const nextSnapshot = await runtimeRef.current.directory.search(query)
         if (!cancelled) {
           setSnapshot(nextSnapshot)
           setStatus('ready')
@@ -87,7 +48,7 @@ function DirectoryPage() {
       <header className='mb3'>
         <h1 className='f2 f1-l mv0'>Directory</h1>
         <p className='mt2 mb0 f4 lh-copy black-70'>
-          Shared directory results from the {adapterRef.current.mode} runtime adapter.
+          Shared directory results from the {runtimeRef.current.mode} runtime adapter.
         </p>
       </header>
 
@@ -166,6 +127,20 @@ function DirectoryPage() {
       </section>
     </main>
   )
+}
+
+function resolveLocalDirectoryRecords() {
+  const source = window.__SDN_DIRECTORY__
+  if (!source) {
+    return Promise.resolve([])
+  }
+  if (Array.isArray(source.records)) {
+    return Promise.resolve(source.records)
+  }
+  if (typeof source.listDirectoryRecords === 'function') {
+    return Promise.resolve(source.listDirectoryRecords())
+  }
+  return Promise.resolve([])
 }
 
 export default DirectoryPage
