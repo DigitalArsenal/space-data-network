@@ -1,12 +1,14 @@
 package node
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/peer"
 	mh "github.com/multiformats/go-multihash"
@@ -128,6 +130,121 @@ func (n *Node) recordCurrentSDNAdvertisementPeerInfo(info peer.AddrInfo) {
 		return
 	}
 	n.recordSDNAdvertisementPeerInfo(info, n.sdnAdvertisementTarget.Flag)
+}
+
+func (n *Node) fetchAndIndexDiscoveredNodeEPM(pid peer.ID, source string) {
+	if n == nil || pid == "" {
+		return
+	}
+	if n.epmService == nil || n.directorySvc == nil || n.peerRegistry == nil || n.host == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(n.ctx, 30*time.Second)
+	defer cancel()
+
+	if err := n.epmService.RequestPeerEPM(ctx, n.host, pid); err != nil {
+		log.Debugf("Failed to fetch EPM for discovered peer %s: %v", pid, err)
+		return
+	}
+
+	n.indexKnownDiscoveredNodeEPM(pid, source)
+}
+
+func (n *Node) indexKnownDiscoveredNodeEPM(pid peer.ID, source string) {
+	if n == nil || pid == "" || n.directorySvc == nil || n.peerRegistry == nil {
+		return
+	}
+
+	tp, err := n.peerRegistry.GetPeer(pid)
+	if err != nil || tp == nil || len(tp.EPMData) == 0 {
+		return
+	}
+
+	info, err := discoveredNodeEPMJSON(tp.EPMData, pid)
+	if err != nil {
+		log.Debugf("Failed to normalize discovered EPM for peer %s: %v", pid, err)
+		return
+	}
+
+	if err := n.directorySvc.UpsertNodeEPMJSON(info, "", source); err != nil {
+		log.Debugf("Failed to index discovered EPM for peer %s: %v", pid, err)
+	}
+}
+
+func discoveredNodeEPMJSON(epmBytes []byte, pid peer.ID) (map[string]any, error) {
+	if len(epmBytes) == 0 {
+		return nil, fmt.Errorf("empty EPM data")
+	}
+	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmBytes) {
+		return nil, fmt.Errorf("invalid EPM data")
+	}
+
+	epmRecord := EPM.GetSizePrefixedRootAsEPM(epmBytes, 0)
+	info := map[string]any{
+		"directory_kind": "node",
+		"peer_id":        pid.String(),
+	}
+
+	if dn := epmRecord.DN(); dn != nil {
+		info["dn"] = string(dn)
+	}
+	if legalName := epmRecord.LEGAL_NAME(); legalName != nil {
+		info["legal_name"] = string(legalName)
+	}
+	if familyName := epmRecord.FAMILY_NAME(); familyName != nil {
+		info["family_name"] = string(familyName)
+	}
+	if givenName := epmRecord.GIVEN_NAME(); givenName != nil {
+		info["given_name"] = string(givenName)
+	}
+
+	if n := epmRecord.KEYSLength(); n > 0 {
+		keys := make([]map[string]any, 0, n)
+		key := new(EPM.CryptoKey)
+		for i := 0; i < n; i++ {
+			if !epmRecord.KEYS(key, i) {
+				continue
+			}
+			entry := make(map[string]any)
+			if value := key.PUBLIC_KEY(); value != nil {
+				entry["public_key"] = string(value)
+			}
+			if value := key.XPUB(); value != nil {
+				entry["xpub"] = string(value)
+			}
+			if value := key.KEY_ADDRESS(); value != nil {
+				entry["key_address"] = string(value)
+			}
+			if value := key.ADDRESS_TYPE(); value != nil {
+				entry["address_type"] = string(value)
+			}
+			switch key.KEY_TYPE() {
+			case EPM.KeyTypeSigning:
+				entry["key_type"] = "signing"
+			case EPM.KeyTypeEncryption:
+				entry["key_type"] = "encryption"
+			}
+			keys = append(keys, entry)
+		}
+		if len(keys) > 0 {
+			info["keys"] = keys
+		}
+	}
+
+	if n := epmRecord.MULTIFORMAT_ADDRESSLength(); n > 0 {
+		addrs := make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			if value := epmRecord.MULTIFORMAT_ADDRESS(i); value != nil {
+				addrs = append(addrs, string(value))
+			}
+		}
+		if len(addrs) > 0 {
+			info["multiformat_address"] = addrs
+		}
+	}
+
+	return info, nil
 }
 
 func (n *Node) SDNAdvertisementFlagsByPeer() map[string][]string {

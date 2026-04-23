@@ -43,6 +43,17 @@ func TestIsPublicAPIPathAllowsModuleDeliveryListingsRoute(t *testing.T) {
 	}
 }
 
+func TestIsPublicAPIPathAllowsDirectoryRoutes(t *testing.T) {
+	t.Parallel()
+
+	if !isPublicAPIPath("/api/directory/nodes") {
+		t.Fatal("expected directory nodes route to be public")
+	}
+	if !isPublicAPIPath("/api/directory/users") {
+		t.Fatal("expected directory users route to be public")
+	}
+}
+
 func TestHandleProviderDescriptorReturnsBrowserSafeDescriptor(t *testing.T) {
 	t.Parallel()
 

@@ -35,6 +35,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/api"
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/editor"
@@ -568,6 +569,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/api/node/info", handleNodeInfo(n, torRuntime))
 			adminMux.HandleFunc("/api/module-delivery/provider", handleProviderDescriptor(n))
 			adminMux.HandleFunc("/api/module-delivery/listings", handleModuleDeliveryListings(n.PluginRegistry()))
+			adminMux.Handle("/api/directory/", directory.NewHTTPHandler(n.DirectoryService()))
 
 			// Relay status endpoint (public, used by clients for load balancing)
 			adminMux.HandleFunc("/api/relay/status", handleRelayStatus(n))
@@ -947,6 +949,7 @@ func isPublicAPIPath(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/data/") ||
 		strings.HasPrefix(path, "/api/module-delivery/provider") ||
 		strings.HasPrefix(path, "/api/module-delivery/listings") ||
+		strings.HasPrefix(path, "/api/directory/") ||
 		strings.HasPrefix(path, "/api/v1/demo/") ||
 		strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook") ||
 		strings.HasPrefix(path, "/api/storefront/listings") ||
