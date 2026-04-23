@@ -215,6 +215,12 @@ SDN reuses the standard [BIP-44](https://github.com/bitcoin/bips/blob/master/bip
 
 The **xpub** (extended public key) serves as the master network identity. Anyone with the xpub can derive the node's public signing and encryption keys without access to private key material.
 
+### Managed Node Identity
+
+- The node mnemonic under `data/<node>/keys/mnemonic` is the single root secret for a managed node.
+- The SDN node identity and the managed IPFS identity are both derived from that root instead of being stored as separate long-lived key sources.
+- `/api/directory/nodes` and `/api/directory/users` expose the local FlatSQL-backed EPM directory index used by the SDN dashboard and shared runtime adapters.
+
 ---
 
 ## Built on IPFS

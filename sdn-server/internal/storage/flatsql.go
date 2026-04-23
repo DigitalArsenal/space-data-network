@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -118,6 +119,39 @@ func (s *FlatSQLStore) initTables() error {
 		ON sdn_record_index (schema_name, entity_id, source_timestamp DESC)
 	`); err != nil {
 		return fmt.Errorf("failed to create entity index: %w", err)
+	}
+
+	// Directory index for node/user EPM records.
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS sdn_directory (
+			kind TEXT NOT NULL,
+			peer_id TEXT NOT NULL,
+			dn TEXT,
+			legal_name TEXT,
+			bitcoin_address TEXT,
+			epm_cid TEXT,
+			source TEXT NOT NULL,
+			updated_at INTEGER NOT NULL,
+			epm_json TEXT NOT NULL,
+			PRIMARY KEY (kind, peer_id)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create directory table: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_sdn_directory_search
+		ON sdn_directory (kind, dn, legal_name, bitcoin_address)
+	`); err != nil {
+		return fmt.Errorf("failed to create directory search index: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_sdn_directory_updated
+		ON sdn_directory (kind, updated_at DESC)
+	`); err != nil {
+		return fmt.Errorf("failed to create directory updated index: %w", err)
 	}
 
 	// Publication log index for PLG hash-chained logs.
@@ -491,6 +525,172 @@ type Record struct {
 	Timestamp time.Time
 	Data      []byte
 	Signature []byte
+}
+
+// DirectoryRecord represents a normalized EPM directory entry.
+type DirectoryRecord struct {
+	Kind           string
+	PeerID         string
+	DN             string
+	LegalName      string
+	BitcoinAddress string
+	EPMCID         string
+	Source         string
+	EPMJSON        string
+	UpdatedAt      int64
+}
+
+// DirectoryQuery filters directory records.
+type DirectoryQuery struct {
+	Kind   string
+	PeerID string
+	Source string
+	Search string
+	Limit  int
+}
+
+// UpsertDirectoryRecord inserts or updates a directory record.
+func (s *FlatSQLStore) UpsertDirectoryRecord(record DirectoryRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	kind := strings.TrimSpace(strings.ToLower(record.Kind))
+	peerID := strings.TrimSpace(record.PeerID)
+	if kind == "" {
+		return errors.New("directory record kind is required")
+	}
+	if peerID == "" {
+		return errors.New("directory record peer_id is required")
+	}
+
+	source := strings.TrimSpace(record.Source)
+	if source == "" {
+		source = "unknown"
+	}
+	updatedAt := record.UpdatedAt
+	if updatedAt == 0 {
+		updatedAt = time.Now().Unix()
+	}
+
+	epmJSON := strings.TrimSpace(record.EPMJSON)
+	if epmJSON == "" {
+		epmJSON = "{}"
+	} else {
+		var canonical any
+		if err := json.Unmarshal([]byte(epmJSON), &canonical); err == nil {
+			if b, err := json.Marshal(canonical); err == nil {
+				epmJSON = string(b)
+			}
+		}
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO sdn_directory (
+			kind, peer_id, dn, legal_name, bitcoin_address, epm_cid, source, updated_at, epm_json
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(kind, peer_id) DO UPDATE SET
+			dn = excluded.dn,
+			legal_name = excluded.legal_name,
+			bitcoin_address = excluded.bitcoin_address,
+			epm_cid = excluded.epm_cid,
+			source = excluded.source,
+			updated_at = excluded.updated_at,
+			epm_json = excluded.epm_json
+	`, kind, peerID, strings.TrimSpace(record.DN), strings.TrimSpace(record.LegalName), strings.TrimSpace(record.BitcoinAddress), strings.TrimSpace(record.EPMCID), source, updatedAt, epmJSON)
+	if err != nil {
+		return fmt.Errorf("failed to upsert directory record: %w", err)
+	}
+
+	return nil
+}
+
+// QueryDirectory queries directory records using indexed filters and free-text search.
+func (s *FlatSQLStore) QueryDirectory(query DirectoryQuery) ([]DirectoryRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	kind := strings.TrimSpace(strings.ToLower(query.Kind))
+	peerID := strings.TrimSpace(query.PeerID)
+	source := strings.TrimSpace(query.Source)
+	search := strings.TrimSpace(query.Search)
+
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	sqlBuilder := strings.Builder{}
+	sqlBuilder.WriteString(`
+		SELECT kind, peer_id, dn, legal_name, bitcoin_address, epm_cid, source, updated_at, epm_json
+		FROM sdn_directory
+		WHERE 1=1
+	`)
+	args := make([]any, 0, 6)
+
+	if kind != "" {
+		sqlBuilder.WriteString(` AND kind = ?`)
+		args = append(args, kind)
+	}
+	if peerID != "" {
+		sqlBuilder.WriteString(` AND peer_id = ?`)
+		args = append(args, peerID)
+	}
+	if source != "" {
+		sqlBuilder.WriteString(` AND source = ?`)
+		args = append(args, source)
+	}
+	if search != "" {
+		needle := "%" + strings.ToLower(search) + "%"
+		sqlBuilder.WriteString(` AND (
+			lower(COALESCE(peer_id, '')) LIKE ? OR
+			lower(COALESCE(dn, '')) LIKE ? OR
+			lower(COALESCE(legal_name, '')) LIKE ? OR
+			lower(COALESCE(bitcoin_address, '')) LIKE ? OR
+			lower(COALESCE(epm_cid, '')) LIKE ? OR
+			lower(COALESCE(source, '')) LIKE ? OR
+			lower(COALESCE(epm_json, '')) LIKE ?
+		)`)
+		for i := 0; i < 7; i++ {
+			args = append(args, needle)
+		}
+	}
+
+	sqlBuilder.WriteString(` ORDER BY updated_at DESC, peer_id ASC LIMIT ?`)
+	args = append(args, limit)
+
+	rows, err := s.db.Query(sqlBuilder.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query directory: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]DirectoryRecord, 0, limit)
+	for rows.Next() {
+		var record DirectoryRecord
+		if err := rows.Scan(
+			&record.Kind,
+			&record.PeerID,
+			&record.DN,
+			&record.LegalName,
+			&record.BitcoinAddress,
+			&record.EPMCID,
+			&record.Source,
+			&record.UpdatedAt,
+			&record.EPMJSON,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan directory record: %w", err)
+		}
+		results = append(results, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("directory query iteration failed: %w", err)
+	}
+
+	return results, nil
 }
 
 // RebuildIndex scans all schema tables and repopulates sdn_record_index.

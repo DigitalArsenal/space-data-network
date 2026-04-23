@@ -8,6 +8,11 @@ import {
   type AdminSnapshot,
   type AdminWorkspaceId,
 } from './admin-adapter';
+import { createLocalAdapter } from './local-adapter';
+import type { DirectoryAdapter } from './directory';
+import { createHeliaDirectoryAdapter } from './helia-directory';
+import { createServerDirectoryAdapter } from './server-directory';
+import { readHostedServerBaseUrl, type HostedRuntimeConfigWindow } from './runtime-config';
 
 interface ResponseLike {
   ok: boolean;
@@ -23,6 +28,36 @@ export interface ServerAdapterDeps {
   initialWorkspace?: AdminWorkspaceId;
 }
 
+export interface ServerRuntimeAdapter extends AdminAdapter {
+  directory: DirectoryAdapter;
+}
+
+export interface UiRuntimeAdapterDeps {
+  config?: HostedRuntimeConfigWindow | null;
+  fetch?: FetchLike;
+  initialWorkspace?: AdminWorkspaceId;
+  listDirectoryRecords?: () => Promise<Array<Record<string, unknown>>>;
+}
+
+export interface UiRuntimeAdapter extends AdminAdapter {
+  directory: DirectoryAdapter;
+}
+
+export interface HostedDirectoryWindow {
+  __SDN_DIRECTORY__?: {
+    records?: Array<Record<string, unknown>>;
+    listDirectoryRecords?: () =>
+      | Array<Record<string, unknown>>
+      | Promise<Array<Record<string, unknown>>>;
+  };
+}
+
+export interface SharedUiRuntimeAdapterDeps {
+  source?: (HostedRuntimeConfigWindow & HostedDirectoryWindow) | null;
+  fetch?: FetchLike;
+  initialWorkspace?: AdminWorkspaceId;
+}
+
 interface AuthStatusResponse {
   wallet_ui_configured?: boolean;
 }
@@ -32,13 +67,19 @@ interface AuthMeResponse {
   trust_level?: string;
 }
 
-export function createServerAdapter(deps: ServerAdapterDeps): AdminAdapter {
+let sharedUiRuntimeAdapter: UiRuntimeAdapter | null = null;
+
+export function createServerAdapter(deps: ServerAdapterDeps): ServerRuntimeAdapter {
   const target = normalizeServerTarget(deps.target);
   if (!target) {
     throw new Error('server target baseUrl is required');
   }
 
   const fetcher = deps.fetch ?? (globalThis.fetch.bind(globalThis) as FetchLike);
+  const directory = createServerDirectoryAdapter({
+    baseUrl: target.baseUrl,
+    fetch: fetcher,
+  });
   let currentSnapshot = createAdminSnapshot({
     mode: 'server',
     serverTarget: target,
@@ -57,6 +98,7 @@ export function createServerAdapter(deps: ServerAdapterDeps): AdminAdapter {
 
   return {
     mode: 'server',
+    directory,
 
     async connect(): Promise<AdminSnapshot> {
       const [nodeInfo, authStatus, authMe] = await Promise.all([
@@ -105,6 +147,52 @@ export function createServerAdapter(deps: ServerAdapterDeps): AdminAdapter {
 }
 
 export const createServerAdminAdapter = createServerAdapter;
+
+export function createUiRuntimeAdapter(deps: UiRuntimeAdapterDeps = {}): UiRuntimeAdapter {
+  const serverBaseUrl = readHostedServerBaseUrl(deps.config);
+  if (serverBaseUrl) {
+    const serverAdapter = createServerAdapter({
+      target: { baseUrl: serverBaseUrl },
+      fetch: deps.fetch,
+      initialWorkspace: deps.initialWorkspace,
+    });
+    return serverAdapter;
+  }
+
+  const localAdapter = createLocalAdapter({
+    initialWorkspace: deps.initialWorkspace,
+  });
+  const directory = createHeliaDirectoryAdapter({
+    listDirectoryRecords: deps.listDirectoryRecords ?? (async () => []),
+  });
+
+  return {
+    mode: localAdapter.mode,
+      directory,
+      connect: () => localAdapter.connect(),
+      snapshot: () => localAdapter.snapshot(),
+      setWorkspace: (workspaceId: AdminWorkspaceId) => localAdapter.setWorkspace(workspaceId),
+  };
+}
+
+export function getSharedUiRuntimeAdapter(
+  deps: SharedUiRuntimeAdapterDeps = {},
+): UiRuntimeAdapter {
+  if (!sharedUiRuntimeAdapter) {
+    const source = deps.source ?? readHostedUiRuntimeWindow();
+    sharedUiRuntimeAdapter = createUiRuntimeAdapter({
+      config: source,
+      fetch: deps.fetch,
+      initialWorkspace: deps.initialWorkspace,
+      listDirectoryRecords: createHostedDirectoryRecordLister(source),
+    });
+  }
+  return sharedUiRuntimeAdapter;
+}
+
+export function resetSharedUiRuntimeAdapterForTests(): void {
+  sharedUiRuntimeAdapter = null;
+}
 
 async function readJson(
   fetcher: FetchLike,
@@ -173,4 +261,29 @@ function pickString(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
+}
+
+function readHostedUiRuntimeWindow(): (HostedRuntimeConfigWindow & HostedDirectoryWindow) | null {
+  return typeof globalThis === 'object'
+    ? (globalThis as HostedRuntimeConfigWindow & HostedDirectoryWindow)
+    : null;
+}
+
+function createHostedDirectoryRecordLister(
+  source: (HostedRuntimeConfigWindow & HostedDirectoryWindow) | null | undefined,
+): () => Promise<Array<Record<string, unknown>>> {
+  return async () => {
+    const directorySource = source?.__SDN_DIRECTORY__;
+    if (!directorySource) {
+      return [];
+    }
+    if (Array.isArray(directorySource.records)) {
+      return directorySource.records;
+    }
+    if (typeof directorySource.listDirectoryRecords === 'function') {
+      const records = await directorySource.listDirectoryRecords();
+      return Array.isArray(records) ? records : [];
+    }
+    return [];
+  };
 }

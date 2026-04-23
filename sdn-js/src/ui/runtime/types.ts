@@ -48,6 +48,40 @@ export interface AddressLookupKey {
   discoveryCID: string;
 }
 
+export type DirectoryRecordKind = 'node' | 'user';
+
+export interface DirectoryRecordBase {
+  kind: DirectoryRecordKind;
+  peer_id: string;
+  dn?: string;
+  legal_name?: string;
+  bitcoin_address?: string;
+  epm_cid?: string;
+  source?: string;
+  updated_at?: number;
+}
+
+export interface DirectoryNodeRecord extends DirectoryRecordBase {
+  kind: 'node';
+  peer_id: string;
+}
+
+export interface DirectoryUserRecord extends DirectoryRecordBase {
+  kind: 'user';
+  peer_id: string;
+}
+
+export interface DirectorySnapshot {
+  query: string;
+  nodes: DirectoryNodeRecord[];
+  users: DirectoryUserRecord[];
+}
+
+export interface DirectoryAdapter {
+  readonly mode: 'server' | 'helia';
+  search(query: string): Promise<DirectorySnapshot>;
+}
+
 export const APP_SECTIONS = [
   'network',
   'marketplace',

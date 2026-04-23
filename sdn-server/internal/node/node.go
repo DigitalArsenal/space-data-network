@@ -25,9 +25,9 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/routing"
+	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	dutil "github.com/libp2p/go-libp2p/p2p/discovery/util"
-	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
@@ -39,6 +39,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/capabilities"
@@ -69,21 +70,23 @@ const (
 
 // Node represents a Space Data Network node.
 type Node struct {
-	host        host.Host
-	dht         *dht.IpfsDHT
-	pubsub      *pubsub.PubSub
-	topics      map[string]*pubsub.Topic
-	flatc       *wasm.FlatcModule
-	hdwallet    *wasm.HDWalletModule
-	identity    *wasm.DerivedIdentity // nil if using random key (no HD wallet)
-	validator   *sds.Validator
-	store       *storage.FlatSQLStore
-	protocol    *protocol.SDSExchangeHandler
-	plugins     *plugins.Manager
-	epmService  *epm.Service
-	logService  *logservice.Service
-	flowManager *flowrt.FlowManager
-	config      *config.Config
+	host           host.Host
+	dht            *dht.IpfsDHT
+	pubsub         *pubsub.PubSub
+	topics         map[string]*pubsub.Topic
+	flatc          *wasm.FlatcModule
+	hdwallet       *wasm.HDWalletModule
+	identity       *wasm.DerivedIdentity // nil if using random key (no HD wallet)
+	validator      *sds.Validator
+	store          *storage.FlatSQLStore
+	protocol       *protocol.SDSExchangeHandler
+	plugins        *plugins.Manager
+	epmService     *epm.Service
+	directorySvc   *directory.Service
+	logService     *logservice.Service
+	flowManager    *flowrt.FlowManager
+	config         *config.Config
+	identityBundle *IdentityBundle
 
 	// Trusted peer management
 	peerRegistry *peers.Registry
@@ -346,24 +349,8 @@ func (n *Node) init() error {
 	basePath := filepath.Dir(n.config.Storage.Path)
 	storageBasePath := strings.TrimSpace(n.config.Storage.Path)
 	var xpubStr string
-	if n.hdwallet != nil && n.identity != nil {
-		// Derive xpub from encrypted mnemonic seed for the EPM
-		mnemonicPath := filepath.Join(basePath, "keys", "mnemonic")
-		if mnemonicData, err := os.ReadFile(mnemonicPath); err == nil {
-			var mnemonic string
-			if keys.IsMnemonicEncrypted(mnemonicData) {
-				mnemonic, _ = keys.DecryptMnemonic(mnemonicData, n.resolveKeyPassword())
-			} else {
-				mnemonic = string(mnemonicData)
-			}
-			if mnemonic != "" {
-				if seed, err := n.hdwallet.MnemonicToSeed(n.ctx, mnemonic, ""); err == nil {
-					if xpub, err := n.hdwallet.DeriveXPub(n.ctx, seed, 0); err == nil {
-						xpubStr = xpub
-					}
-				}
-			}
-		}
+	if n.identityBundle != nil {
+		xpubStr = n.identityBundle.XPub
 	}
 	// Initialize publication log service for PLG/PLH hash-chained logs.
 	var signingKey crypto.PrivKey
@@ -381,6 +368,9 @@ func (n *Node) init() error {
 		log.Warnf("EPM service initialization failed (non-fatal): %v", err)
 	} else {
 		n.epmService.RegisterProtocol(n.host)
+	}
+	if n.store != nil {
+		n.directorySvc = directory.NewService(n.store)
 	}
 
 	// Initialize runtime plugins.
@@ -702,81 +692,33 @@ func (n *Node) hasCatalogLicensingModule(reg *license.PluginRegistry) bool {
 func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 	keyDir := filepath.Join(filepath.Dir(n.config.Storage.Path), "keys")
 	keyPath := filepath.Join(keyDir, "node.key")
-	mnemonicPath := filepath.Join(keyDir, "mnemonic")
 
-	// If HD wallet is available, prefer mnemonic-based identity
 	if n.hdwallet != nil {
-		if err := os.MkdirAll(keyDir, 0700); err != nil {
-			return nil, fmt.Errorf("failed to create key directory: %w", err)
-		}
-
-		// Resolve key password: env var > config > machine-derived default
-		keyPassword := n.resolveKeyPassword()
-
-		var mnemonic string
-
-		// Try to load existing mnemonic (encrypted or plaintext)
-		if data, err := os.ReadFile(mnemonicPath); err == nil {
-			if keys.IsMnemonicEncrypted(data) {
-				// Decrypt encrypted mnemonic
-				mnemonic, err = keys.DecryptMnemonic(data, keyPassword)
-				if err != nil {
-					return nil, fmt.Errorf("failed to decrypt mnemonic from %s: %w", mnemonicPath, err)
-				}
-				log.Infof("Loaded encrypted mnemonic from %s", mnemonicPath)
-			} else {
-				// Plaintext mnemonic found — migrate to encrypted format
-				mnemonic = string(data)
-				log.Warnf("Found plaintext mnemonic at %s — migrating to encrypted storage", mnemonicPath)
-				encrypted, err := keys.EncryptMnemonic(mnemonic, keyPassword)
-				if err != nil {
-					return nil, fmt.Errorf("failed to encrypt mnemonic during migration: %w", err)
-				}
-				if err := os.WriteFile(mnemonicPath, encrypted, 0600); err != nil {
-					return nil, fmt.Errorf("failed to write encrypted mnemonic: %w", err)
-				}
-				log.Infof("Mnemonic migrated to encrypted storage at %s", mnemonicPath)
-			}
-		} else {
-			// Generate new mnemonic
-			newMnemonic, _, err := n.hdwallet.GenerateNewIdentity(n.ctx, 24)
-			if err != nil {
-				log.Warnf("HD wallet mnemonic generation failed, falling back to random key: %v", err)
-				return n.generateRandomKey(keyDir, keyPath)
-			}
-			mnemonic = newMnemonic
-
-			// Save encrypted mnemonic to disk
-			encrypted, err := keys.EncryptMnemonic(mnemonic, keyPassword)
-			if err != nil {
-				return nil, fmt.Errorf("failed to encrypt mnemonic: %w", err)
-			}
-			if err := os.WriteFile(mnemonicPath, encrypted, 0600); err != nil {
-				return nil, fmt.Errorf("failed to save encrypted mnemonic: %w", err)
-			}
-			log.Infof("Generated and saved encrypted mnemonic to %s", mnemonicPath)
-		}
-
-		// Derive identity from mnemonic
-		identity, err := n.hdwallet.IdentityFromMnemonic(n.ctx, mnemonic, "", 0)
+		bundle, err := n.loadOrCreateIdentityBundle()
 		if err != nil {
-			log.Warnf("HD wallet identity derivation failed, falling back to random key: %v", err)
-			return n.generateRandomKey(keyDir, keyPath)
+			return nil, fmt.Errorf("hd wallet identity derivation failed: %w", err)
 		}
 
-		n.identity = identity
-		info := identity.Info()
+		n.identity = bundle.Identity
+		n.identityBundle = bundle
+		info := bundle.Identity.Info()
 		log.Infof("HD wallet identity derived: PeerID=%s IdentityPath=%s SigningPath=%s EncryptionPath=%s",
 			info.PeerID, info.IdentityKeyPath, info.SigningKeyPath, info.EncryptionKeyPath)
 
+		if repoPath := strings.TrimSpace(os.Getenv("IPFS_PATH")); repoPath != "" {
+			if err := EnsureManagedIPFSRepoIdentity(repoPath, bundle); err != nil {
+				return nil, fmt.Errorf("managed IPFS repo identity sync: %w", err)
+			}
+		}
+
 		// Also save the serialized key for backward compatibility
-		keyData, err := identity.MarshalPrivateKey()
+		keyData, err := bundle.Identity.MarshalPrivateKey()
 		if err == nil {
 			_ = os.WriteFile(keyPath, keyData, 0600)
 		}
 
 		// Return secp256k1 identity key for libp2p PeerID
-		return identity.IdentityPrivKey, nil
+		return bundle.Identity.IdentityPrivKey, nil
 	}
 
 	// Fallback: load existing key or generate random one
@@ -1183,6 +1125,7 @@ func (n *Node) discoverPeers(discoveryCID cid.Cid) {
 				log.Debugf("Failed to connect to discovered peer %s: %v", pi.ID, err)
 			} else {
 				n.enqueueAutoRelayCandidate(pi)
+				n.fetchAndIndexDiscoveredNodeEPM(pi.ID, "dht-discovery")
 				log.Infof("Connected to discovered SDN peer: %s", pi.ID)
 			}
 		}(peerInfo)
@@ -1223,6 +1166,7 @@ func (n *Node) discoverSDNAdvertisementPeers(target sdnAdvertisementDiscoveryTar
 				log.Debugf("Failed to connect to discovered SDN advertisement peer %s (%s): %v", pi.ID, flag, err)
 			} else {
 				n.enqueueAutoRelayCandidate(pi)
+				n.fetchAndIndexDiscoveredNodeEPM(pi.ID, "sdn-advertisement-discovery")
 				log.Infof("Connected to discovered SDN advertisement peer: %s (%s)", pi.ID, flag)
 			}
 		}(peerInfo, target.Flag)
@@ -1348,6 +1292,11 @@ func (n *Node) PubSub() *pubsub.PubSub {
 // EPMService returns the node's EPM service for identity card management.
 func (n *Node) EPMService() *epm.Service {
 	return n.epmService
+}
+
+// DirectoryService returns the node's directory index service.
+func (n *Node) DirectoryService() *directory.Service {
+	return n.directorySvc
 }
 
 // SigningKey returns the node's Ed25519 signing private key bytes, or nil if unavailable.
