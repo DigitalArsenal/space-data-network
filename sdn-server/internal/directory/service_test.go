@@ -1,6 +1,7 @@
 package directory
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -40,13 +41,13 @@ func TestDirectoryService_IndexesNodeEPMJSON(t *testing.T) {
 	svc := NewService(store)
 
 	info := map[string]any{
-		"peer_id":         "16Uiu2HAmExample",
-		"dn":              "SDN Node Example",
-		"legal_name":      "Space Data Node Example LLC",
-		"bitcoin_address": "bc1qexample",
+		"peerID":          "16Uiu2HAmExample",
+		"DN":              "SDN Node Example",
+		"LEGAL_NAME":      "Space Data Node Example LLC",
+		"BITCOIN_ADDRESS": "bc1qexample",
 	}
 
-	if err := svc.UpsertNodeEPMJSON(info, "bafyexample", "local"); err != nil {
+	if err := svc.UpsertNodeEPMJSON(info, "bafyexample", ""); err != nil {
 		t.Fatalf("UpsertNodeEPMJSON failed: %v", err)
 	}
 
@@ -67,5 +68,31 @@ func TestDirectoryService_IndexesNodeEPMJSON(t *testing.T) {
 	}
 	if got.BitcoinAddress != "bc1qexample" {
 		t.Fatalf("BitcoinAddress = %q, want %q", got.BitcoinAddress, "bc1qexample")
+	}
+	if got.Source != "unknown" {
+		t.Fatalf("Source = %q, want %q", got.Source, "unknown")
+	}
+
+	var canonical map[string]any
+	if err := json.Unmarshal([]byte(got.EPMJSON), &canonical); err != nil {
+		t.Fatalf("failed to unmarshal canonical JSON: %v", err)
+	}
+	if canonical["directory_kind"] != "node" {
+		t.Fatalf("directory_kind = %v, want %q", canonical["directory_kind"], "node")
+	}
+	if canonical["peer_id"] != "16Uiu2HAmExample" {
+		t.Fatalf("peer_id = %v, want %q", canonical["peer_id"], "16Uiu2HAmExample")
+	}
+	if canonical["dn"] != "SDN Node Example" {
+		t.Fatalf("dn = %v, want %q", canonical["dn"], "SDN Node Example")
+	}
+	if canonical["legal_name"] != "Space Data Node Example LLC" {
+		t.Fatalf("legal_name = %v, want %q", canonical["legal_name"], "Space Data Node Example LLC")
+	}
+	if canonical["bitcoin_address"] != "bc1qexample" {
+		t.Fatalf("bitcoin_address = %v, want %q", canonical["bitcoin_address"], "bc1qexample")
+	}
+	if _, ok := canonical["DN"]; ok {
+		t.Fatal("canonical JSON should not retain uppercase DN key")
 	}
 }

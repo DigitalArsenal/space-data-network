@@ -52,9 +52,21 @@ func TestFlatSQLStore_UpsertAndQueryDirectoryRecord(t *testing.T) {
 		t.Fatalf("UpsertDirectoryRecord failed: %v", err)
 	}
 
+	updated := record
+	updated.DN = "SDN Node Example v2"
+	updated.BitcoinAddress = "bc1qupdated"
+	updated.EPMCID = "bafyupdated"
+	updated.Source = "remote"
+	updated.EPMJSON = `{"bitcoin_address":"bc1qupdated","dn":"SDN Node Example v2","peer_id":"16Uiu2HAmExample"}`
+	updated.UpdatedAt = 1700000100
+
+	if err := store.UpsertDirectoryRecord(updated); err != nil {
+		t.Fatalf("second UpsertDirectoryRecord failed: %v", err)
+	}
+
 	results, err := store.QueryDirectory(DirectoryQuery{
 		Kind:   "node",
-		Search: "bc1qexample",
+		Search: "bc1qupdated",
 	})
 	if err != nil {
 		t.Fatalf("QueryDirectory failed: %v", err)
@@ -62,7 +74,17 @@ func TestFlatSQLStore_UpsertAndQueryDirectoryRecord(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("QueryDirectory returned %d records, want 1", len(results))
 	}
-	if got := results[0]; got.PeerID != record.PeerID || got.EPMCID != record.EPMCID || got.Source != record.Source {
+	got := results[0]
+	if got.PeerID != updated.PeerID || got.EPMCID != updated.EPMCID || got.Source != updated.Source {
 		t.Fatalf("unexpected record: %+v", got)
+	}
+	if got.DN != updated.DN {
+		t.Fatalf("DN = %q, want %q", got.DN, updated.DN)
+	}
+	if got.BitcoinAddress != updated.BitcoinAddress {
+		t.Fatalf("BitcoinAddress = %q, want %q", got.BitcoinAddress, updated.BitcoinAddress)
+	}
+	if got.UpdatedAt != updated.UpdatedAt {
+		t.Fatalf("UpdatedAt = %d, want %d", got.UpdatedAt, updated.UpdatedAt)
 	}
 }

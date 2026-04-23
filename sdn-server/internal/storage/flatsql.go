@@ -686,6 +686,9 @@ func (s *FlatSQLStore) QueryDirectory(query DirectoryQuery) ([]DirectoryRecord, 
 		}
 		results = append(results, record)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("directory query iteration failed: %w", err)
+	}
 
 	return results, nil
 }
