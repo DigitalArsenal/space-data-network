@@ -172,7 +172,7 @@ func TestIndexKnownDiscoveredNodeEPMStoresDirectoryRecord(t *testing.T) {
 		peerRegistry: registry,
 	}
 
-	n.indexKnownDiscoveredNodeEPM(peerID, "dht-discovery")
+	n.indexFetchedDiscoveredNodeEPM(peerID, "dht-discovery", epmBytes)
 
 	nodes, err := dirSvc.SearchNodes("Discovery Node", 10)
 	if err != nil {
@@ -203,6 +203,59 @@ func TestIndexKnownDiscoveredNodeEPMStoresDirectoryRecord(t *testing.T) {
 	}
 	if len(nodesByAddress) != 1 {
 		t.Fatalf("SearchNodes by bitcoin address returned %d records, want 1", len(nodesByAddress))
+	}
+}
+
+func TestIndexFetchedDiscoveredNodeEPMSkipsStaleRegistryDataWhenFetchReturnsNoContent(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "node-directory-stale-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(tmpDir)
+	})
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+
+	dirSvc := directory.NewService(store)
+	registry := peers.NewRegistry(false, nil)
+
+	peerID, err := peer.Decode("12D3KooWJQvxYjnF8UARVq8hdD2WmT9N4xJm9kMumZ5qX6Ch12yv")
+	if err != nil {
+		t.Fatalf("peer.Decode failed: %v", err)
+	}
+
+	staleEPM := buildDiscoveredEPMFixture(t, "Stale Node", "Stale Node LLC", "bc1qstalewallet00000000000000000000000000")
+	if err := registry.AddPeer(&peers.TrustedPeer{
+		ID:      peerID,
+		EPMData: staleEPM,
+	}); err != nil {
+		t.Fatalf("AddPeer failed: %v", err)
+	}
+
+	n := &Node{
+		directorySvc: dirSvc,
+		peerRegistry: registry,
+	}
+
+	n.indexFetchedDiscoveredNodeEPM(peerID, "dht-discovery", nil)
+
+	nodes, err := dirSvc.SearchNodes("Stale Node", 10)
+	if err != nil {
+		t.Fatalf("SearchNodes failed: %v", err)
+	}
+	if len(nodes) != 0 {
+		t.Fatalf("SearchNodes returned %d records, want 0 when fetch returned no content", len(nodes))
 	}
 }
 
