@@ -59,9 +59,11 @@ func (n *Node) loadOrCreateIdentityBundle() (*IdentityBundle, error) {
 		bundle.BitcoinKeyPath = identity.Addresses.Bitcoin.Path
 	}
 
-	if xpub, err := n.deriveIdentityBundleXPub(mnemonic); err == nil {
-		bundle.XPub = xpub
+	xpub, err := n.deriveIdentityBundleXPub(mnemonic)
+	if err != nil {
+		return nil, fmt.Errorf("derive identity bundle xpub: %w", err)
 	}
+	bundle.XPub = xpub
 
 	if identity.IdentityPrivKey != nil {
 		keyData, err := identity.MarshalPrivateKey()
