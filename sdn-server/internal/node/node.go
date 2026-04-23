@@ -37,6 +37,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt/capabilities"
@@ -79,6 +80,7 @@ type Node struct {
 	protocol       *protocol.SDSExchangeHandler
 	plugins        *plugins.Manager
 	epmService     *epm.Service
+	directorySvc   *directory.Service
 	logService     *logservice.Service
 	flowManager    *flowrt.FlowManager
 	config         *config.Config
@@ -364,6 +366,9 @@ func (n *Node) init() error {
 		log.Warnf("EPM service initialization failed (non-fatal): %v", err)
 	} else {
 		n.epmService.RegisterProtocol(n.host)
+	}
+	if n.store != nil {
+		n.directorySvc = directory.NewService(n.store)
 	}
 
 	// Initialize runtime plugins.
@@ -1104,6 +1109,7 @@ func (n *Node) discoverPeers(discoveryCID cid.Cid) {
 				log.Debugf("Failed to connect to discovered peer %s: %v", pi.ID, err)
 			} else {
 				n.enqueueAutoRelayCandidate(pi)
+				n.fetchAndIndexDiscoveredNodeEPM(pi.ID, "dht-discovery")
 				log.Infof("Connected to discovered SDN peer: %s", pi.ID)
 			}
 		}(peerInfo)
@@ -1135,6 +1141,7 @@ func (n *Node) discoverSDNAdvertisementPeers(target sdnAdvertisementDiscoveryTar
 				log.Debugf("Failed to connect to discovered SDN advertisement peer %s (%s): %v", pi.ID, flag, err)
 			} else {
 				n.enqueueAutoRelayCandidate(pi)
+				n.fetchAndIndexDiscoveredNodeEPM(pi.ID, "sdn-advertisement-discovery")
 				log.Infof("Connected to discovered SDN advertisement peer: %s (%s)", pi.ID, flag)
 			}
 		}(peerInfo, target.Flag)
@@ -1260,6 +1267,11 @@ func (n *Node) PubSub() *pubsub.PubSub {
 // EPMService returns the node's EPM service for identity card management.
 func (n *Node) EPMService() *epm.Service {
 	return n.epmService
+}
+
+// DirectoryService returns the node's directory index service.
+func (n *Node) DirectoryService() *directory.Service {
+	return n.directorySvc
 }
 
 // SigningKey returns the node's Ed25519 signing private key bytes, or nil if unavailable.

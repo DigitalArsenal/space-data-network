@@ -2,6 +2,8 @@ package directory
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -95,4 +97,102 @@ func TestDirectoryService_IndexesNodeEPMJSON(t *testing.T) {
 	if _, ok := canonical["DN"]; ok {
 		t.Fatal("canonical JSON should not retain uppercase DN key")
 	}
+}
+
+func TestHTTPHandler_ServesNodeAndUserSearches(t *testing.T) {
+	store := mustNewDirectoryStore(t)
+	svc := NewService(store)
+
+	if err := svc.UpsertNodeEPMJSON(map[string]any{
+		"peer_id":         "16Uiu2HAmNode",
+		"dn":              "Discovery Node",
+		"legal_name":      "Discovery Node LLC",
+		"bitcoin_address": "bc1qnodeexample",
+	}, "bafy-node", "dht-discovery"); err != nil {
+		t.Fatalf("UpsertNodeEPMJSON failed: %v", err)
+	}
+	if err := svc.UpsertUserEPMJSON(map[string]any{
+		"peer_id":    "16Uiu2HAmUser",
+		"dn":         "Alice Example",
+		"legal_name": "Alice Example",
+	}, "bafy-user", "manual"); err != nil {
+		t.Fatalf("UpsertUserEPMJSON failed: %v", err)
+	}
+
+	handler := NewHTTPHandler(svc)
+
+	t.Run("nodes", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/directory/nodes?q=Discovery&limit=10", nil)
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+
+		var payload struct {
+			Results []struct {
+				Kind           string `json:"kind"`
+				PeerID         string `json:"peer_id"`
+				DN             string `json:"dn"`
+				LegalName      string `json:"legal_name"`
+				BitcoinAddress string `json:"bitcoin_address"`
+				EPMCID         string `json:"epm_cid"`
+				Source         string `json:"source"`
+			} `json:"results"`
+			Count int `json:"count"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+			t.Fatalf("json decode failed: %v", err)
+		}
+		if payload.Count != 1 {
+			t.Fatalf("count = %d, want 1", payload.Count)
+		}
+		if len(payload.Results) != 1 {
+			t.Fatalf("results len = %d, want 1", len(payload.Results))
+		}
+		got := payload.Results[0]
+		if got.Kind != "node" || got.PeerID != "16Uiu2HAmNode" {
+			t.Fatalf("unexpected node result: %#v", got)
+		}
+		if got.DN != "Discovery Node" || got.LegalName != "Discovery Node LLC" {
+			t.Fatalf("unexpected node fields: %#v", got)
+		}
+		if got.Source != "dht-discovery" {
+			t.Fatalf("Source = %q, want %q", got.Source, "dht-discovery")
+		}
+	})
+
+	t.Run("users", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/directory/users?q=Alice", nil)
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+
+		var payload struct {
+			Results []struct {
+				Kind      string `json:"kind"`
+				PeerID    string `json:"peer_id"`
+				DN        string `json:"dn"`
+				LegalName string `json:"legal_name"`
+			} `json:"results"`
+			Count int `json:"count"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+			t.Fatalf("json decode failed: %v", err)
+		}
+		if payload.Count != 1 || len(payload.Results) != 1 {
+			t.Fatalf("unexpected payload: %#v", payload)
+		}
+		got := payload.Results[0]
+		if got.Kind != "user" || got.PeerID != "16Uiu2HAmUser" {
+			t.Fatalf("unexpected user result: %#v", got)
+		}
+		if got.DN != "Alice Example" || got.LegalName != "Alice Example" {
+			t.Fatalf("unexpected user fields: %#v", got)
+		}
+	})
 }

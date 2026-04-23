@@ -2,10 +2,15 @@ package node
 
 import (
 	"encoding/hex"
+	"os"
 	"testing"
 
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/spacedatanetwork/sdn-server/internal/directory"
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 func TestComputeModuleDeliveryDiscoveryCID(t *testing.T) {
@@ -119,5 +124,75 @@ func TestRecordCurrentSDNAdvertisementDiscoveryUsesAnnouncedFlag(t *testing.T) {
 	flags := flagsByPeer[pid.String()]
 	if len(flags) != 1 || flags[0] != "spacedatanetwork/1.2.3" {
 		t.Fatalf("recorded advertisement flags = %v, want [spacedatanetwork/1.2.3]", flags)
+	}
+}
+
+func TestIndexKnownDiscoveredNodeEPMStoresDirectoryRecord(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "node-directory-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(tmpDir)
+	})
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+
+	dirSvc := directory.NewService(store)
+	registry := peers.NewRegistry(false, nil)
+
+	peerID, err := peer.Decode("12D3KooWJQvxYjnF8UARVq8hdD2WmT9N4xJm9kMumZ5qX6Ch12yv")
+	if err != nil {
+		t.Fatalf("peer.Decode failed: %v", err)
+	}
+
+	epmBytes := sds.NewEPMBuilder().
+		WithDN("Discovery Node").
+		WithLegalName("Discovery Node LLC").
+		Build()
+
+	if err := registry.AddPeer(&peers.TrustedPeer{
+		ID:      peerID,
+		EPMData: epmBytes,
+	}); err != nil {
+		t.Fatalf("AddPeer failed: %v", err)
+	}
+
+	n := &Node{
+		directorySvc: dirSvc,
+		peerRegistry: registry,
+	}
+
+	n.indexKnownDiscoveredNodeEPM(peerID, "dht-discovery")
+
+	nodes, err := dirSvc.SearchNodes("Discovery Node")
+	if err != nil {
+		t.Fatalf("SearchNodes failed: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("SearchNodes returned %d records, want 1", len(nodes))
+	}
+	got := nodes[0]
+	if got.PeerID != peerID.String() {
+		t.Fatalf("PeerID = %q, want %q", got.PeerID, peerID.String())
+	}
+	if got.DN != "Discovery Node" {
+		t.Fatalf("DN = %q, want %q", got.DN, "Discovery Node")
+	}
+	if got.LegalName != "Discovery Node LLC" {
+		t.Fatalf("LegalName = %q, want %q", got.LegalName, "Discovery Node LLC")
+	}
+	if got.Source != "dht-discovery" {
+		t.Fatalf("Source = %q, want %q", got.Source, "dht-discovery")
 	}
 }
