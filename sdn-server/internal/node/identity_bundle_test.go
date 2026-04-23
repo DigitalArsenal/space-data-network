@@ -30,6 +30,9 @@ func TestLoadOrCreateIdentityBundle_ReusesEncryptedMnemonic(t *testing.T) {
 	if first.BitcoinAddress == "" {
 		t.Fatal("bitcoin address missing")
 	}
+	if first.XPub == "" {
+		t.Fatal("xpub missing")
+	}
 	if got, want := first.IdentityKeyPath, second.IdentityKeyPath; got != want {
 		t.Fatalf("identity key path = %q, want %q", got, want)
 	}

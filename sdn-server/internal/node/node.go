@@ -701,7 +701,7 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 
 		if repoPath := strings.TrimSpace(os.Getenv("IPFS_PATH")); repoPath != "" {
 			if err := EnsureManagedIPFSRepoIdentity(repoPath, bundle); err != nil {
-				log.Warnf("Managed IPFS repo identity sync failed: %v", err)
+				return nil, fmt.Errorf("managed IPFS repo identity sync: %w", err)
 			}
 		}
 
