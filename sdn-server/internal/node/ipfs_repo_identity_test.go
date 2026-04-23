@@ -1,11 +1,14 @@
 package node
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/libp2p/go-libp2p/core/crypto"
 )
 
 func TestEnsureManagedIPFSRepoIdentity_WritesDerivedSecp256k1Identity(t *testing.T) {
@@ -28,8 +31,18 @@ func TestEnsureManagedIPFSRepoIdentity_WritesDerivedSecp256k1Identity(t *testing
 	if err != nil {
 		t.Fatalf("decode private key: %v", err)
 	}
-	if len(keyBytes) == 0 {
-		t.Fatal("decoded private key is empty")
+	if got, want := keyBytes, mustBundlePrivateKeyBytes(t, bundle); !bytes.Equal(got, want) {
+		t.Fatalf("private key bytes mismatch\n got: %x\nwant: %x", got, want)
+	}
+
+	privKey, err := crypto.UnmarshalPrivateKey(keyBytes)
+	if err != nil {
+		t.Fatalf("unmarshal private key: %v", err)
+	}
+	if raw, err := privKey.Raw(); err != nil {
+		t.Fatalf("raw private key: %v", err)
+	} else if len(raw) == 0 {
+		t.Fatal("decoded private key raw bytes are empty")
 	}
 }
 
@@ -64,4 +77,14 @@ func mustReadKuboConfig(t *testing.T, repoPath string) *managedKuboConfig {
 		t.Fatalf("unmarshal kubo config %s: %v", cfgPath, err)
 	}
 	return &cfg
+}
+
+func mustBundlePrivateKeyBytes(t *testing.T, bundle *IdentityBundle) []byte {
+	t.Helper()
+
+	raw, err := bundle.Identity.MarshalPrivateKey()
+	if err != nil {
+		t.Fatalf("marshal bundle private key: %v", err)
+	}
+	return raw
 }
