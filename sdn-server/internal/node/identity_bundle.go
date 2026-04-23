@@ -20,6 +20,7 @@ type IdentityBundle struct {
 	Mnemonic          string
 	Identity          *wasm.DerivedIdentity
 	PeerID            peer.ID
+	XPub              string
 	BitcoinAddress    string
 	BitcoinKeyPath    string
 	IdentityKeyPath   string
@@ -58,6 +59,10 @@ func (n *Node) loadOrCreateIdentityBundle() (*IdentityBundle, error) {
 		bundle.BitcoinKeyPath = identity.Addresses.Bitcoin.Path
 	}
 
+	if xpub, err := n.deriveIdentityBundleXPub(mnemonic); err == nil {
+		bundle.XPub = xpub
+	}
+
 	if identity.IdentityPrivKey != nil {
 		keyData, err := identity.MarshalPrivateKey()
 		if err == nil {
@@ -67,6 +72,17 @@ func (n *Node) loadOrCreateIdentityBundle() (*IdentityBundle, error) {
 	}
 
 	return bundle, nil
+}
+
+func (n *Node) deriveIdentityBundleXPub(mnemonic string) (string, error) {
+	if n == nil || n.hdwallet == nil {
+		return "", errors.New("hd wallet not available")
+	}
+	seed, err := n.hdwallet.MnemonicToSeed(n.ctx, mnemonic, "")
+	if err != nil {
+		return "", err
+	}
+	return n.hdwallet.DeriveXPub(n.ctx, seed, 0)
 }
 
 func (n *Node) loadOrCreateMnemonic(mnemonicPath, keyDir string) (string, error) {

@@ -67,21 +67,22 @@ const (
 
 // Node represents a Space Data Network node.
 type Node struct {
-	host        host.Host
-	dht         *dht.IpfsDHT
-	pubsub      *pubsub.PubSub
-	topics      map[string]*pubsub.Topic
-	flatc       *wasm.FlatcModule
-	hdwallet    *wasm.HDWalletModule
-	identity    *wasm.DerivedIdentity // nil if using random key (no HD wallet)
-	validator   *sds.Validator
-	store       *storage.FlatSQLStore
-	protocol    *protocol.SDSExchangeHandler
-	plugins     *plugins.Manager
-	epmService  *epm.Service
-	logService  *logservice.Service
-	flowManager *flowrt.FlowManager
-	config      *config.Config
+	host           host.Host
+	dht            *dht.IpfsDHT
+	pubsub         *pubsub.PubSub
+	topics         map[string]*pubsub.Topic
+	flatc          *wasm.FlatcModule
+	hdwallet       *wasm.HDWalletModule
+	identity       *wasm.DerivedIdentity // nil if using random key (no HD wallet)
+	validator      *sds.Validator
+	store          *storage.FlatSQLStore
+	protocol       *protocol.SDSExchangeHandler
+	plugins        *plugins.Manager
+	epmService     *epm.Service
+	logService     *logservice.Service
+	flowManager    *flowrt.FlowManager
+	config         *config.Config
+	identityBundle *IdentityBundle
 
 	// Trusted peer management
 	peerRegistry *peers.Registry
@@ -344,24 +345,8 @@ func (n *Node) init() error {
 	basePath := filepath.Dir(n.config.Storage.Path)
 	storageBasePath := strings.TrimSpace(n.config.Storage.Path)
 	var xpubStr string
-	if n.hdwallet != nil && n.identity != nil {
-		// Derive xpub from encrypted mnemonic seed for the EPM
-		mnemonicPath := filepath.Join(basePath, "keys", "mnemonic")
-		if mnemonicData, err := os.ReadFile(mnemonicPath); err == nil {
-			var mnemonic string
-			if keys.IsMnemonicEncrypted(mnemonicData) {
-				mnemonic, _ = keys.DecryptMnemonic(mnemonicData, n.resolveKeyPassword())
-			} else {
-				mnemonic = string(mnemonicData)
-			}
-			if mnemonic != "" {
-				if seed, err := n.hdwallet.MnemonicToSeed(n.ctx, mnemonic, ""); err == nil {
-					if xpub, err := n.hdwallet.DeriveXPub(n.ctx, seed, 0); err == nil {
-						xpubStr = xpub
-					}
-				}
-			}
-		}
+	if n.identityBundle != nil {
+		xpubStr = n.identityBundle.XPub
 	}
 	// Initialize publication log service for PLG/PLH hash-chained logs.
 	var signingKey crypto.PrivKey
@@ -709,6 +694,7 @@ func (n *Node) loadOrCreateKey() (crypto.PrivKey, error) {
 		}
 
 		n.identity = bundle.Identity
+		n.identityBundle = bundle
 		info := bundle.Identity.Info()
 		log.Infof("HD wallet identity derived: PeerID=%s IdentityPath=%s SigningPath=%s EncryptionPath=%s",
 			info.PeerID, info.IdentityKeyPath, info.SigningKeyPath, info.EncryptionKeyPath)
