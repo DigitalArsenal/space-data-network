@@ -51,10 +51,12 @@ describe('admin vite config', () => {
     const alias = Array.isArray(resolve?.alias) ? resolve.alias : [];
 
     const reactAlias = alias.find((entry) => entry && typeof entry === 'object' && 'find' in entry && String(entry.find) === '/^react$/');
+    const reduxBundlerAlias = alias.find((entry) => entry && typeof entry === 'object' && 'find' in entry && String(entry.find) === '/^redux-bundler$/');
     const bundlerAlias = alias.find((entry) => entry && typeof entry === 'object' && 'find' in entry && String(entry.find) === '/^redux-bundler-react$/');
     const walletWasmAlias = alias.find((entry) => entry && typeof entry === 'object' && 'find' in entry && String(entry.find) === '/^hd-wallet-wasm$/');
 
     expect(String(reactAlias?.replacement)).toContain('/webui/node_modules/react');
+    expect(String(reduxBundlerAlias?.replacement)).toContain('/webui/node_modules/redux-bundler');
     expect(String(bundlerAlias?.replacement)).toContain('/webui/node_modules/redux-bundler-react');
     expect(String(walletWasmAlias?.replacement)).toContain('/sdn-js/node_modules/hd-wallet-wasm/src/index.mjs');
   });

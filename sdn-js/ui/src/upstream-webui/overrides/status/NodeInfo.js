@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import VersionLink from '../../../../../webui/src/components/version-link/version-link.jsx'
-import { Definition, DefinitionList } from '../../../../../webui/src/components/definition/Definition.js'
+import VersionLink from '../../../../../../webui/src/components/version-link/version-link.jsx'
+import { Definition, DefinitionList } from '../../../../../../webui/src/components/definition/Definition.js'
 
 function normalizeNodeInfo(payload) {
   const peerId = pickString(payload, ['peer_id', 'peerId'])

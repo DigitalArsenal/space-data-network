@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { createUiRuntimeAdapter } from '../../../../src/ui/runtime/server-adapter.js'
+import { getSharedUiRuntimeAdapter } from '../../../../../src/ui/runtime/server-adapter.js'
 
 function DirectoryPage() {
   const runtimeRef = useRef(null)
@@ -9,10 +9,7 @@ function DirectoryPage() {
   const [error, setError] = useState(null)
 
   if (!runtimeRef.current) {
-    runtimeRef.current = createUiRuntimeAdapter({
-      config: window.__SDN_CONFIG__ ?? null,
-      listDirectoryRecords: resolveLocalDirectoryRecords,
-    })
+    runtimeRef.current = getSharedUiRuntimeAdapter()
   }
 
   useEffect(() => {
@@ -127,20 +124,6 @@ function DirectoryPage() {
       </section>
     </main>
   )
-}
-
-function resolveLocalDirectoryRecords() {
-  const source = window.__SDN_DIRECTORY__
-  if (!source) {
-    return Promise.resolve([])
-  }
-  if (Array.isArray(source.records)) {
-    return Promise.resolve(source.records)
-  }
-  if (typeof source.listDirectoryRecords === 'function') {
-    return Promise.resolve(source.listDirectoryRecords())
-  }
-  return Promise.resolve([])
 }
 
 export default DirectoryPage
