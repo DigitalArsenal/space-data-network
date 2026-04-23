@@ -2,8 +2,8 @@ package node
 
 import (
 	"context"
-	"encoding/binary"
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"sort"
@@ -203,7 +203,7 @@ func (n *Node) fetchDiscoveredNodeEPM(pid peer.ID) ([]byte, error) {
 }
 
 func (n *Node) indexFetchedDiscoveredNodeEPM(pid peer.ID, source string, epmBytes []byte) {
-	if n == nil || pid == "" || n.directorySvc == nil || n.peerRegistry == nil {
+	if n == nil || pid == "" || n.peerRegistry == nil {
 		return
 	}
 
@@ -213,19 +213,27 @@ func (n *Node) indexFetchedDiscoveredNodeEPM(pid peer.ID, source string, epmByte
 		return
 	}
 
-	if err := n.directorySvc.UpsertNodeEPMJSON(info, "", source); err != nil {
-		log.Debugf("Failed to index discovered EPM for peer %s: %v", pid, err)
-		return
+	if err := n.cacheFetchedDiscoveredNodeEPM(pid, epmBytes); err != nil {
+		log.Debugf("Failed to cache discovered EPM for peer %s: %v", pid, err)
 	}
 
+	if n.directorySvc == nil {
+		return
+	}
+	if err := n.directorySvc.UpsertNodeEPMJSON(info, "", source); err != nil {
+		log.Debugf("Failed to index discovered EPM for peer %s: %v", pid, err)
+	}
+}
+
+func (n *Node) cacheFetchedDiscoveredNodeEPM(pid peer.ID, epmBytes []byte) error {
 	tp, err := n.peerRegistry.GetPeer(pid)
 	if err != nil {
-		return
+		return err
 	}
 	if tp == nil {
 		tp = &peers.TrustedPeer{ID: pid, TrustLevel: peers.Standard}
 		if addErr := n.peerRegistry.AddPeer(tp); addErr != nil && addErr != peers.ErrPeerAlreadyExists {
-			return
+			return addErr
 		}
 		tp, _ = n.peerRegistry.GetPeer(pid)
 	}
@@ -234,8 +242,9 @@ func (n *Node) indexFetchedDiscoveredNodeEPM(pid peer.ID, source string, epmByte
 		if vcardStr, err := vcard.EPMToVCard(epmBytes); err == nil {
 			tp.VCardData = vcardStr
 		}
-		_ = n.peerRegistry.UpdatePeer(tp)
+		return n.peerRegistry.UpdatePeer(tp)
 	}
+	return nil
 }
 
 func discoveredNodeEPMJSON(epmBytes []byte, pid peer.ID) (map[string]any, error) {
