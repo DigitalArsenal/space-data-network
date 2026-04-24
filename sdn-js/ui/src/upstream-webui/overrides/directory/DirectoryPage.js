@@ -11,6 +11,13 @@ const directorySortKeys = {
   source: 'source',
 }
 
+const directoryPagerButtonStyle = {
+  alignItems: 'center',
+  display: 'inline-flex',
+  justifyContent: 'center',
+  textAlign: 'center',
+}
+
 function DirectoryPage() {
   const runtimeRef = useRef(null)
   const importFileRef = useRef(null)
@@ -242,6 +249,7 @@ function DirectoryPage() {
               color='blue'
               fill='fill-blue'
               className='ba b--black-20'
+              style={directoryPagerButtonStyle}
               disabled={currentPage <= 1}
               onClick={() => setPage(currentPage - 1)}
               buttonType='button'
@@ -257,6 +265,7 @@ function DirectoryPage() {
               color='blue'
               fill='fill-blue'
               className='ba b--black-20'
+              style={directoryPagerButtonStyle}
               disabled={currentPage >= totalPages}
               onClick={() => setPage(currentPage + 1)}
               buttonType='button'
