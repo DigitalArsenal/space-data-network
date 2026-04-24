@@ -362,7 +362,7 @@ func Default() *Config {
 			TLSEnabled:        false,
 			TLSCertFile:       "",
 			TLSKeyFile:        "",
-			TLSMode:           "managed",
+			TLSMode:           "",
 			TLSCacheDir:       filepath.Join(dataPath, "tls"),
 			TLSHosts:          nil,
 			FrontendPath:      "",

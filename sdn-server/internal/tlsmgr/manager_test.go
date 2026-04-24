@@ -18,6 +18,17 @@ func TestConfigTLSMode_BackfillsManagedModeFromLegacyTLSEnabled(t *testing.T) {
 	}
 }
 
+func TestConfigTLSMode_DefaultsToDisabledWhenLegacyTLSDisabled(t *testing.T) {
+	cfg := config.Default()
+	cfg.Admin.TLSEnabled = false
+	cfg.Admin.TLSCertFile = ""
+	cfg.Admin.TLSKeyFile = ""
+
+	if got := cfg.Admin.EffectiveTLSMode(); got != ModeDisabled {
+		t.Fatalf("EffectiveTLSMode() = %q, want %q", got, ModeDisabled)
+	}
+}
+
 func TestConfigTLSMode_BackfillsStaticModeWhenLegacyFilesPresent(t *testing.T) {
 	cfg := config.Default()
 	cfg.Admin.TLSMode = ""
