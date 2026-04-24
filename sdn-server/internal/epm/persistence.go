@@ -23,6 +23,7 @@ type Profile struct {
 	Occupation      string   `json:"occupation,omitempty"`
 	Email           string   `json:"email,omitempty"`
 	Telephone       string   `json:"telephone,omitempty"`
+	PhotoDataURL    string   `json:"photo_data_url,omitempty"`
 	Address         *Address `json:"address,omitempty"`
 	AlternateNames  []string `json:"alternate_names,omitempty"`
 }

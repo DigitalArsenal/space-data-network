@@ -40,6 +40,10 @@ const rootBrandingOverrides = new Map([
     path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'status', 'NodeInfo.js'),
   ],
   [
+    path.resolve(upstreamWebUiRoot, 'src', 'status', 'NodeInfoAdvanced.js'),
+    path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'status', 'NodeInfoAdvanced.js'),
+  ],
+  [
     path.resolve(upstreamWebUiRoot, 'src', 'status', 'StatusConnected.js'),
     path.resolve(sdnUpstreamWebUiRoot, 'overrides', 'status', 'StatusConnected.js'),
   ],
@@ -181,7 +185,7 @@ export default defineConfig({
       },
       {
         find: /^redux-bundler$/,
-        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/redux-bundler/dist/redux-bundler.js'),
+        replacement: path.resolve(__dirname, 'shims/redux-bundler-bound-timers.js'),
       },
       {
         find: /^react-i18next$/,

@@ -3,7 +3,10 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { brandUpstreamDocumentTitle } from '../../../ui/src/upstream-webui/branding.js';
+import {
+  brandUpstreamDocumentTitle,
+  rootOnlyDocumentTitleForHash,
+} from '../../../ui/src/upstream-webui/branding.js';
 
 const uiSrcPath = path.resolve(__dirname, '../../../ui/src/upstream-webui');
 
@@ -16,6 +19,13 @@ describe('sdn upstream webui branding helper', () => {
 
   it('leaves already branded titles untouched', () => {
     expect(brandUpstreamDocumentTitle('Space Data Network Dashboard')).toBe('Space Data Network Dashboard');
+  });
+
+  it('sets document titles for root-only SDN routes', () => {
+    expect(rootOnlyDocumentTitleForHash('#/directory')).toBe('Directory | Space Data Network');
+    expect(rootOnlyDocumentTitleForHash('#/identity')).toBeNull();
+    expect(rootOnlyDocumentTitleForHash('#/peers')).toBeNull();
+    expect(brandUpstreamDocumentTitle('Peers | Space Data Network', '#/directory')).toBe('Directory | Space Data Network');
   });
 
   it('routes the SDN welcome page IPFS callout to the standalone /webui surface', async () => {
@@ -42,16 +52,16 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).toContain("import ipfsLogoMark from '../../../../../../webui/src/navigation/ipfs-logo.svg'");
   });
 
-  it('adds root-only directory and identity nav entries without removing the IPFS escape hatch', async () => {
+  it('adds the root-only directory nav entry without a separate identity menu', async () => {
     const source = await fs.readFile(
       path.join(uiSrcPath, 'overrides/navigation/NavBar.js'),
       'utf8',
     );
 
     expect(source).toContain("to='/directory'");
-    expect(source).toContain("to='/identity'");
     expect(source).toContain('>Directory<');
-    expect(source).toContain('>Identity<');
+    expect(source).not.toContain("to='/identity'");
+    expect(source).not.toContain('>Identity<');
     expect(source).toContain("href='/webui'");
   });
 
@@ -76,16 +86,62 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).not.toContain('sdn-logo-text-horiz.svg');
   });
 
-  it('defines root-only directory and identity route pages in the SDN override tree', async () => {
+  it('defines the root-only directory route without a separate identity route', async () => {
     const routes = await fs.readFile(
       path.join(uiSrcPath, 'overrides/bundles/routes.js'),
       'utf8',
     );
 
     expect(routes).toContain('../directory/DirectoryPage.js');
-    expect(routes).toContain('../identity/IdentityPage.js');
     expect(routes).toContain("'/directory'");
-    expect(routes).toContain("'/identity'");
+    expect(routes).not.toContain('../identity/IdentityPage.js');
+    expect(routes).not.toContain("'/identity'");
+  });
+
+  it('keeps Directory focused on full-width search, import, and result surfaces', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/directory/DirectoryPage.js'),
+      'utf8',
+    );
+
+    expect(source).toContain("className='sdn-directory-page w-100 ph3 ph4-l pv3'");
+    expect(source).toContain('Directory records');
+    expect(source).toContain('Type');
+    expect(source).toContain('sortableDirectoryHeader');
+    expect(source).toContain('recordTypeFilter');
+    expect(source).toContain('pageSize');
+    expect(source).toContain('Upload vCard / EPM');
+    expect(source).toContain('overflow-auto');
+    expect(source).not.toContain('Matched directory node');
+    expect(source).not.toContain('Matched directory user');
+    expect(source).not.toContain('<h2 className=\'f4 mt0 mb3\'>Nodes</h2>');
+    expect(source).not.toContain('<h2 className=\'f4 mt0 mb3\'>Users</h2>');
+    expect(source).not.toContain('measure-wide');
+    expect(source).not.toContain('Node profile');
+    expect(source).not.toContain('runtimeRef.current.connect');
+  });
+
+  it('folds the SDN node profile into the Status advanced disclosure', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/status/NodeInfoAdvanced.js'),
+      'utf8',
+    );
+
+    expect(source).toContain('Node profile');
+    expect(source).toContain('runtimeRef.current.connect');
+    expect(source).toContain('Descriptor URL');
+    expect(source).toContain('summaryText={t(\'app:terms.advanced\')}');
+  });
+
+  it('lets Directory import vCard or EPM records through the shared adapter', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/directory/DirectoryPage.js'),
+      'utf8',
+    );
+
+    expect(source).toContain('directory.importRecord');
+    expect(source).toContain('accept=\'.vcf,.vcard,.json,application/json,text/vcard,text/x-vcard\'');
+    expect(source).toContain('Upload vCard / EPM');
   });
 
   it('adds a single root-only account control that opens the wallet UI account surface', async () => {

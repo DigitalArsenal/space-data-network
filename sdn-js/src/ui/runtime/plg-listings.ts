@@ -1,7 +1,7 @@
 import { SUPPORTED_SCHEMAS } from '../../schemas';
 import * as flatbuffers from 'flatbuffers';
 import { PLG } from 'spacedatastandards.org/lib/js/REC/PLG.js';
-import { listingStatus } from 'spacedatastandards.org/lib/js/PLG/listingStatus.js';
+import { publicationState } from 'spacedatastandards.org/lib/js/PLG/publicationState.js';
 
 import type { CanonicalListing, ListingStatus } from './types';
 
@@ -118,13 +118,13 @@ function normalizeStringList(
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
-function decodeListingStatus(status: listingStatus): ListingStatus {
+function decodeListingStatus(status: publicationState): ListingStatus {
   switch (status) {
-    case listingStatus.Public:
+    case publicationState.Public:
       return 'public';
-    case listingStatus.Unlisted:
+    case publicationState.Unlisted:
       return 'unlisted';
-    case listingStatus.Retired:
+    case publicationState.Retired:
       return 'retired';
     default:
       throw new Error(`unknown PLG listing status: ${status}`);

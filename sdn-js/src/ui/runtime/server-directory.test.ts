@@ -53,6 +53,79 @@ describe('createServerDirectoryAdapter', () => {
     expect(snapshot.nodes[0]?.bitcoin_address).toBe('bc1qexample');
     expect(snapshot.users[0]?.dn).toBe('Example Operator');
   });
+
+  it('imports directory records through the authenticated daemon API', async () => {
+    const fetch = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.endsWith('/api/v1/admin/directory/import')) {
+        expect(init?.method).toBe('POST');
+        expect(init?.credentials).toBe('include');
+        expect(JSON.parse(String(init?.body))).toEqual({
+          kind: 'node',
+          epm_json: {
+            peer_id: '16Uiu2HAmUploaded',
+            dn: 'Uploaded Node',
+          },
+        });
+        return jsonResponse(200, {
+          imported: 1,
+          nodes: [{ kind: 'node', peer_id: '16Uiu2HAmUploaded', dn: 'Uploaded Node' }],
+          users: [],
+        });
+      }
+      throw new Error(`unexpected fetch ${input}`);
+    });
+
+    const adapter = createServerDirectoryAdapter({
+      baseUrl: 'https://node.example',
+      fetch,
+    });
+
+    const result = await adapter.importRecord({
+      kind: 'node',
+      epm_json: {
+        peer_id: '16Uiu2HAmUploaded',
+        dn: 'Uploaded Node',
+      },
+    });
+
+    expect(result.imported).toBe(1);
+    expect(result.nodes[0]?.peer_id).toBe('16Uiu2HAmUploaded');
+  });
+
+  it('does not require a selector kind when importing entity typed EPM JSON', async () => {
+    const fetch = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.endsWith('/api/v1/admin/directory/import')) {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          epm_json: {
+            entity_type: 'node',
+            peer_id: '16Uiu2HAmEntityTypedNode',
+            dn: 'Entity Typed Node',
+          },
+        });
+        return jsonResponse(200, {
+          imported: 1,
+          nodes: [{ kind: 'node', peer_id: '16Uiu2HAmEntityTypedNode', dn: 'Entity Typed Node' }],
+          users: [],
+        });
+      }
+      throw new Error(`unexpected fetch ${input}`);
+    });
+
+    const adapter = createServerDirectoryAdapter({
+      baseUrl: 'https://node.example',
+      fetch,
+    });
+
+    const result = await adapter.importRecord({
+      epm_json: {
+        entity_type: 'node',
+        peer_id: '16Uiu2HAmEntityTypedNode',
+        dn: 'Entity Typed Node',
+      },
+    });
+
+    expect(result.nodes[0]?.peer_id).toBe('16Uiu2HAmEntityTypedNode');
+  });
 });
 
 function jsonResponse(status: number, payload: unknown) {

@@ -629,6 +629,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				authHandler.RegisterRoutes(adminMux)
 				log.Infof("HD wallet authentication enabled at %s://%s/login", adminScheme, adminAddr)
 
+				if n.DirectoryService() != nil {
+					adminDirectoryHandler := directory.NewAdminHTTPHandler(n.DirectoryService())
+					adminMux.HandleFunc("/api/v1/admin/directory/import", authHandler.RequireAuth(peers.Standard, adminDirectoryHandler.ServeHTTP))
+					log.Infof("Directory import API available at %s://%s/api/v1/admin/directory/import", adminScheme, adminAddr)
+				}
+
 				// Publish API (requires auth)
 				if n.Store() != nil && cfg.Publishing.Enabled {
 					quotas := api.NewStorageQuotaManager(n.Store(), cfg.Publishing.DefaultQuotaBytes)
@@ -2035,6 +2041,10 @@ func handleNodeEPM(n *node.Node) http.HandlerFunc {
 				return
 			}
 			if err := epmSvc.UpdateProfile(&profile); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err := n.IndexLocalNodeEPM(); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}

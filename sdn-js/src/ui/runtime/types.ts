@@ -77,9 +77,25 @@ export interface DirectorySnapshot {
   users: DirectoryUserRecord[];
 }
 
+export interface DirectoryImportRequest {
+  kind?: DirectoryRecordKind;
+  source?: string;
+  epm_cid?: string;
+  epm_json?: Record<string, unknown>;
+  record?: Record<string, unknown>;
+  vcard?: string;
+}
+
+export interface DirectoryImportResult {
+  imported: number;
+  nodes: DirectoryNodeRecord[];
+  users: DirectoryUserRecord[];
+}
+
 export interface DirectoryAdapter {
   readonly mode: 'server' | 'helia';
   search(query: string): Promise<DirectorySnapshot>;
+  importRecord(record: DirectoryImportRequest): Promise<DirectoryImportResult>;
 }
 
 export const APP_SECTIONS = [
