@@ -10,8 +10,13 @@ import (
 	"strings"
 	"testing"
 
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
 func mustNewDirectoryStore(t *testing.T) *storage.FlatSQLStore {
@@ -410,6 +415,79 @@ func TestAdminHTTPHandler_ImportsDirectoryVCard(t *testing.T) {
 	}
 	if nodes[0].EPMCID != "bafy-vcard-node" {
 		t.Fatalf("EPMCID = %q, want %q", nodes[0].EPMCID, "bafy-vcard-node")
+	}
+}
+
+func TestAdminHTTPHandler_ImportsEmbeddedSignedEPMFromVCard(t *testing.T) {
+	store := mustNewDirectoryStore(t)
+	svc := NewService(store)
+	handler := NewAdminHTTPHandler(svc)
+
+	identityPriv, _, err := libp2pcrypto.GenerateSecp256k1Key(bytes.NewReader(bytes.Repeat([]byte{0x71}, 64)))
+	if err != nil {
+		t.Fatalf("GenerateSecp256k1Key failed: %v", err)
+	}
+	signingPriv, signingPub, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x72}, 64)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key failed: %v", err)
+	}
+	peerID, err := peer.IDFromPublicKey(identityPriv.GetPublic())
+	if err != nil {
+		t.Fatalf("IDFromPublicKey failed: %v", err)
+	}
+	identity := &wasm.DerivedIdentity{
+		IdentityPrivKey:   identityPriv,
+		IdentityPubKey:    identityPriv.GetPublic(),
+		SigningPrivKey:    signingPriv,
+		SigningPubKey:     signingPub,
+		EncryptionPub:     bytes.Repeat([]byte{0x73}, 32),
+		PeerID:            peerID,
+		IdentityKeyPath:   "m/44'/0'/0'",
+		SigningKeyPath:    "m/44'/0'/0'/0'/0'",
+		EncryptionKeyPath: "m/44'/0'/0'/1'/0'",
+	}
+	epmSvc := epm.NewService(identity, nil, peerID, "xpub-test", t.TempDir())
+	if err := epmSvc.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	if err := epmSvc.UpdateProfile(&epm.Profile{DN: "Trusted Node"}); err != nil {
+		t.Fatalf("UpdateProfile failed: %v", err)
+	}
+	vcard, err := epmSvc.GetNodeVCard()
+	if err != nil {
+		t.Fatalf("GetNodeVCard failed: %v", err)
+	}
+	spoofed := strings.Replace(vcard, "FN:Trusted Node", "FN:Spoofed Node", 1)
+	body, err := json.Marshal(map[string]string{
+		"source": "manual-vcard-upload",
+		"vcard":  spoofed,
+	})
+	if err != nil {
+		t.Fatalf("json marshal failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/directory/import", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	nodes, err := svc.SearchNodes(peerID.String(), 10)
+	if err != nil {
+		t.Fatalf("SearchNodes failed: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("SearchNodes returned %d records, want 1", len(nodes))
+	}
+	if got, want := nodes[0].DN, "Trusted Node"; got != want {
+		t.Fatalf("DN = %q, want signed EPM value %q", got, want)
+	}
+	if strings.Contains(nodes[0].EPMJSON, "Spoofed Node") {
+		t.Fatalf("directory stored spoofed vCard fields instead of signed EPM: %s", nodes[0].EPMJSON)
 	}
 }
 

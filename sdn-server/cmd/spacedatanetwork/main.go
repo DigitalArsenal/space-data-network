@@ -2060,6 +2060,9 @@ func handleNodeEPM(n *node.Node) http.HandlerFunc {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			if err := epmSvc.PublishEPM(r.Context(), n); err != nil {
+				log.Warnf("Failed to publish updated EPM PNM: %v", err)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(epmSvc.GetNodeEPMJSON())
 

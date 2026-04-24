@@ -629,6 +629,7 @@
           <li><a href="#identity-overview">Key Derivation</a></li>
           <li><a href="#identity-secp256k1">Secp256k1 Identity</a></li>
           <li><a href="#identity-signing">Signing & Auth</a></li>
+          <li><a href="#identity-epm-vcard">Signed EPM/vCards</a></li>
           <li><a href="#identity-encryption">Encryption</a></li>
           <li><a href="#key-security">Key Security</a></li>
           <li><a href="#identity-pinning">IPFS Pinning</a></li>
@@ -1605,6 +1606,47 @@ console.log(valid); // true</code></pre>
 sig, _ := identity.Sign([]byte("ISS conjunction alert"))
 ok, _  := identity.Verify([]byte("ISS conjunction alert"), sig)
 // ok == true</code></pre>
+      </section>
+
+      <section id="identity-epm-vcard" class="doc-section">
+        <h3>Signed EPMs and Portable vCards</h3>
+        <p>Entity Profile Messages (EPMs) are portable identity records for nodes and users. Because EPMs can be exported as vCards and stored in ordinary contact systems, the contact itself must carry a tamper-evident signature.</p>
+
+        <h4>Embedded EPM Signature</h4>
+        <p>Each node EPM includes an embedded Ed25519 signature and signature timestamp. The signature covers a deterministic canonical payload built from the EPM fields, excluding only the signature field itself. The signature timestamp is included in the signed payload so it cannot be changed without invalidating the record.</p>
+        <pre><code>canonical EPM fields + SIGNATURE_TIMESTAMP
+  -> Ed25519 signature using m/44'/0'/account'/0'/0'
+  -> EPM.SIGNATURE</code></pre>
+
+        <h4>vCard Export</h4>
+        <p>When SDN exports a node profile as a vCard, it includes both human-readable contact fields and SDN verification extensions:</p>
+        <table>
+          <thead><tr><th>vCard Field</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>X-SDN-EPM-B64</code></td><td>Complete signed EPM FlatBuffer payload, base64 encoded.</td></tr>
+            <tr><td><code>X-SDN-EPM-CID</code></td><td>Raw CIDv1 SHA-256 content identifier for the exact EPM bytes.</td></tr>
+            <tr><td><code>X-SDN-EPM-SIGNATURE</code></td><td>Embedded EPM Ed25519 signature.</td></tr>
+            <tr><td><code>X-SDN-EPM-SIGNATURE-TIMESTAMP</code></td><td>Signed Unix timestamp for the EPM content.</td></tr>
+            <tr><td><code>X-SDN-PEER-ID</code></td><td>Expected SDN/libp2p peer identity.</td></tr>
+          </tbody>
+        </table>
+        <p>On import, SDN prefers the embedded signed EPM payload over spoofable vCard display fields. A modified <code>FN</code> or <code>ORG</code> line does not change the trusted identity record unless the embedded EPM also verifies.</p>
+
+        <h4>PNM Announcement</h4>
+        <p>PNM remains the network announcement layer. Every time a node EPM is updated, the node computes a new EPM CID and publishes a PNM with <code>FILE_ID=EPM</code>. The PNM signature signs the CID announcement, while the embedded EPM signature signs the portable identity content.</p>
+        <pre><code>EPM bytes
+  -> EPM CID
+  -> PNM { FILE_ID: "EPM", CID, SIGNATURE: sign(CID) }</code></pre>
+
+        <h4>Verification Order</h4>
+        <ol>
+          <li>Decode the EPM from vCard, EPM exchange, or CID fetch.</li>
+          <li>Verify the embedded EPM signature over canonical EPM content.</li>
+          <li>Confirm the signed EPM advertises the expected peer ID for network discovery.</li>
+          <li>Compute the EPM CID from the exact bytes.</li>
+          <li>Verify the PNM signature over that CID when the record arrived via PubSub.</li>
+          <li>Store the verified record in the FlatSQL-backed directory.</li>
+        </ol>
       </section>
 
       <section id="identity-encryption" class="doc-section">

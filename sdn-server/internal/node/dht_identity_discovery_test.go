@@ -1,6 +1,7 @@
 package node
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/ipfs/go-cid"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	sdnepm "github.com/spacedatanetwork/sdn-server/internal/epm"
@@ -155,12 +157,7 @@ func TestIndexKnownDiscoveredNodeEPMStoresDirectoryRecord(t *testing.T) {
 	dirSvc := directory.NewService(store)
 	registry := peers.NewRegistry(false, nil)
 
-	peerID, err := peer.Decode("12D3KooWJQvxYjnF8UARVq8hdD2WmT9N4xJm9kMumZ5qX6Ch12yv")
-	if err != nil {
-		t.Fatalf("peer.Decode failed: %v", err)
-	}
-
-	epmBytes := buildDiscoveredEPMFixture(t, "Discovery Node", "Discovery Node LLC", "bc1qdiscoverwallet0000000000000000000000000")
+	peerID, epmBytes := buildDiscoveredEPMFixture(t, "Discovery Node", "Discovery Node LLC", "bc1qdiscoverwallet0000000000000000000000000")
 
 	if err := registry.AddPeer(&peers.TrustedPeer{
 		ID:      peerID,
@@ -239,12 +236,7 @@ func TestIndexFetchedDiscoveredNodeEPMSkipsStaleRegistryDataWhenFetchReturnsNoCo
 	dirSvc := directory.NewService(store)
 	registry := peers.NewRegistry(false, nil)
 
-	peerID, err := peer.Decode("12D3KooWJQvxYjnF8UARVq8hdD2WmT9N4xJm9kMumZ5qX6Ch12yv")
-	if err != nil {
-		t.Fatalf("peer.Decode failed: %v", err)
-	}
-
-	staleEPM := buildDiscoveredEPMFixture(t, "Stale Node", "Stale Node LLC", "bc1qstalewallet00000000000000000000000000")
+	peerID, staleEPM := buildDiscoveredEPMFixture(t, "Stale Node", "Stale Node LLC", "bc1qstalewallet00000000000000000000000000")
 	if err := registry.AddPeer(&peers.TrustedPeer{
 		ID:      peerID,
 		EPMData: staleEPM,
@@ -271,12 +263,7 @@ func TestIndexFetchedDiscoveredNodeEPMSkipsStaleRegistryDataWhenFetchReturnsNoCo
 func TestIndexFetchedDiscoveredNodeEPMCachesRegistryDataWhenDirectoryIndexingFails(t *testing.T) {
 	registry := peers.NewRegistry(false, nil)
 
-	peerID, err := peer.Decode("12D3KooWJQvxYjnF8UARVq8hdD2WmT9N4xJm9kMumZ5qX6Ch12yv")
-	if err != nil {
-		t.Fatalf("peer.Decode failed: %v", err)
-	}
-
-	epmBytes := buildDiscoveredEPMFixture(t, "Discovery Node", "Discovery Node LLC", "bc1qdiscoverwallet0000000000000000000000000")
+	peerID, epmBytes := buildDiscoveredEPMFixture(t, "Discovery Node", "Discovery Node LLC", "bc1qdiscoverwallet0000000000000000000000000")
 	if err := registry.AddPeer(&peers.TrustedPeer{ID: peerID}); err != nil {
 		t.Fatalf("AddPeer failed: %v", err)
 	}
@@ -306,12 +293,7 @@ func TestIndexFetchedDiscoveredNodeEPMCachesRegistryDataWhenDirectoryIndexingFai
 func TestIndexFetchedDiscoveredNodeEPMAutoAddsUnknownPeerToRegistry(t *testing.T) {
 	registry := peers.NewRegistry(false, nil)
 
-	peerID, err := peer.Decode("12D3KooWJQvxYjnF8UARVq8hdD2WmT9N4xJm9kMumZ5qX6Ch12yv")
-	if err != nil {
-		t.Fatalf("peer.Decode failed: %v", err)
-	}
-
-	epmBytes := buildDiscoveredEPMFixture(t, "Discovery Node", "Discovery Node LLC", "bc1qdiscoverwallet0000000000000000000000000")
+	peerID, epmBytes := buildDiscoveredEPMFixture(t, "Discovery Node", "Discovery Node LLC", "bc1qdiscoverwallet0000000000000000000000000")
 
 	n := &Node{
 		peerRegistry: registry,
@@ -347,10 +329,51 @@ func (failingDirectoryStore) QueryDirectory(storage.DirectoryQuery) ([]storage.D
 	return nil, nil
 }
 
-func buildDiscoveredEPMFixture(t *testing.T, dn, legalName, bitcoinAddress string) []byte {
+func buildDiscoveredEPMFixture(t *testing.T, dn, legalName, bitcoinAddress string) (peer.ID, []byte) {
 	t.Helper()
 
-	builder := flatbuffers.NewBuilder(256)
+	identityPriv, _, err := libp2pcrypto.GenerateSecp256k1Key(bytes.NewReader(bytes.Repeat([]byte{0x41}, 64)))
+	if err != nil {
+		t.Fatalf("GenerateSecp256k1Key failed: %v", err)
+	}
+	signingPriv, signingPub, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x42}, 64)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key failed: %v", err)
+	}
+	peerID, err := peer.IDFromPublicKey(identityPriv.GetPublic())
+	if err != nil {
+		t.Fatalf("IDFromPublicKey failed: %v", err)
+	}
+	identityPubRaw, err := identityPriv.GetPublic().Raw()
+	if err != nil {
+		t.Fatalf("identity public Raw failed: %v", err)
+	}
+	signingPubRaw, err := signingPub.Raw()
+	if err != nil {
+		t.Fatalf("signing public Raw failed: %v", err)
+	}
+	timestamp := int64(1777000000)
+
+	unsigned := buildDiscoveredEPMBuffer(t, dn, legalName, bitcoinAddress, peerID.String(), hex.EncodeToString(identityPubRaw), hex.EncodeToString(signingPubRaw), timestamp, "")
+	payload, err := sdnepm.EPMSigningPayload(unsigned)
+	if err != nil {
+		t.Fatalf("EPMSigningPayload failed: %v", err)
+	}
+	signature, err := signingPriv.Sign(payload)
+	if err != nil {
+		t.Fatalf("Sign failed: %v", err)
+	}
+	signed := buildDiscoveredEPMBuffer(t, dn, legalName, bitcoinAddress, peerID.String(), hex.EncodeToString(identityPubRaw), hex.EncodeToString(signingPubRaw), timestamp, hex.EncodeToString(signature))
+	if err := sdnepm.VerifyEPMSignature(signed); err != nil {
+		t.Fatalf("fixture VerifyEPMSignature failed: %v", err)
+	}
+	return peerID, signed
+}
+
+func buildDiscoveredEPMBuffer(t *testing.T, dn, legalName, bitcoinAddress, peerID, identityPubHex, signingPubHex string, timestamp int64, signatureHex string) []byte {
+	t.Helper()
+
+	builder := flatbuffers.NewBuilder(1024)
 
 	dnOffset := builder.CreateString(dn)
 	legalNameOffset := builder.CreateString(legalName)
@@ -358,7 +381,7 @@ func buildDiscoveredEPMFixture(t *testing.T, dn, legalName, bitcoinAddress strin
 	addressOffset := builder.CreateString(bitcoinAddress)
 	publicKeyOffset := builder.CreateString("021111111111111111111111111111111111111111111111111111111111111111")
 	keyPathOffset := builder.CreateString("m/44'/0'/0'/0/0")
-	signatureOffset := builder.CreateString("00")
+	chainSignatureOffset := builder.CreateString("00")
 	payloadOffset := builder.CreateString("00")
 	algorithmOffset := builder.CreateString("secp256k1-compact-bitcoin")
 	encodingOffset := builder.CreateString("compact")
@@ -368,7 +391,7 @@ func buildDiscoveredEPMFixture(t *testing.T, dn, legalName, bitcoinAddress strin
 	EPM.ChainProofAddADDRESS(builder, addressOffset)
 	EPM.ChainProofAddPUBLIC_KEY(builder, publicKeyOffset)
 	EPM.ChainProofAddKEY_PATH(builder, keyPathOffset)
-	EPM.ChainProofAddSIGNATURE(builder, signatureOffset)
+	EPM.ChainProofAddSIGNATURE(builder, chainSignatureOffset)
 	EPM.ChainProofAddSIGNED_PAYLOAD(builder, payloadOffset)
 	EPM.ChainProofAddALGORITHM(builder, algorithmOffset)
 	EPM.ChainProofAddENCODING(builder, encodingOffset)
@@ -378,10 +401,63 @@ func buildDiscoveredEPMFixture(t *testing.T, dn, legalName, bitcoinAddress strin
 	builder.PrependUOffsetT(chainProofOffset)
 	chainProofsOffset := builder.EndVector(1)
 
+	identityPubOffset := builder.CreateString(identityPubHex)
+	identityTypeOffset := builder.CreateString("secp256k1")
+	identityPathOffset := builder.CreateString("m/44'/0'/0'")
+	EPM.CryptoKeyStart(builder)
+	EPM.CryptoKeyAddPUBLIC_KEY(builder, identityPubOffset)
+	EPM.CryptoKeyAddADDRESS_TYPE(builder, identityTypeOffset)
+	EPM.CryptoKeyAddKEY_ADDRESS(builder, identityPathOffset)
+	EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
+	identityKey := EPM.CryptoKeyEnd(builder)
+
+	signingPubOffset := builder.CreateString(signingPubHex)
+	signingTypeOffset := builder.CreateString("ed25519")
+	signingPathOffset := builder.CreateString("m/44'/0'/0'/0'/0'")
+	EPM.CryptoKeyStart(builder)
+	EPM.CryptoKeyAddPUBLIC_KEY(builder, signingPubOffset)
+	EPM.CryptoKeyAddADDRESS_TYPE(builder, signingTypeOffset)
+	EPM.CryptoKeyAddKEY_ADDRESS(builder, signingPathOffset)
+	EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
+	signingKey := EPM.CryptoKeyEnd(builder)
+
+	encryptionPubOffset := builder.CreateString("4343434343434343434343434343434343434343434343434343434343434343")
+	encryptionTypeOffset := builder.CreateString("x25519")
+	encryptionPathOffset := builder.CreateString("m/44'/0'/0'/1'/0'")
+	EPM.CryptoKeyStart(builder)
+	EPM.CryptoKeyAddPUBLIC_KEY(builder, encryptionPubOffset)
+	EPM.CryptoKeyAddADDRESS_TYPE(builder, encryptionTypeOffset)
+	EPM.CryptoKeyAddKEY_ADDRESS(builder, encryptionPathOffset)
+	EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeEncryption)
+	encryptionKey := EPM.CryptoKeyEnd(builder)
+
+	EPM.EPMStartKEYSVector(builder, 3)
+	builder.PrependUOffsetT(encryptionKey)
+	builder.PrependUOffsetT(signingKey)
+	builder.PrependUOffsetT(identityKey)
+	keysOffset := builder.EndVector(3)
+
+	addrOffset := builder.CreateString("/ipns/" + peerID)
+	EPM.EPMStartMULTIFORMAT_ADDRESSVector(builder, 1)
+	builder.PrependUOffsetT(addrOffset)
+	addressesOffset := builder.EndVector(1)
+
+	var signatureOffset flatbuffers.UOffsetT
+	if signatureHex != "" {
+		signatureOffset = builder.CreateString(signatureHex)
+	}
+
 	EPM.EPMStart(builder)
 	EPM.EPMAddDN(builder, dnOffset)
 	EPM.EPMAddLEGAL_NAME(builder, legalNameOffset)
+	EPM.EPMAddKEYS(builder, keysOffset)
+	EPM.EPMAddMULTIFORMAT_ADDRESS(builder, addressesOffset)
+	EPM.EPMAddSIGNATURE_TIMESTAMP(builder, timestamp)
+	if signatureOffset != 0 {
+		EPM.EPMAddSIGNATURE(builder, signatureOffset)
+	}
 	EPM.EPMAddCHAIN_PROOFS(builder, chainProofsOffset)
+	EPM.EPMAddENTITY_TYPE(builder, EPM.EntityTypeNode)
 	epmOffset := EPM.EPMEnd(builder)
 	EPM.FinishSizePrefixedEPMBuffer(builder, epmOffset)
 

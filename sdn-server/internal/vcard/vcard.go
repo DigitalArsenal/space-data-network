@@ -3,7 +3,9 @@
 package vcard
 
 import (
+	"encoding/base64"
 	"errors"
+	"strconv"
 	"strings"
 
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -17,6 +19,12 @@ var (
 	ErrEmptyEPM   = errors.New("EPM data is empty")
 	ErrEmptyVCard = errors.New("vCard data is empty")
 	ErrInvalidEPM = errors.New("invalid EPM data")
+)
+
+const (
+	FieldSDNEPMBase64             = "X-SDN-EPM-B64"
+	FieldSDNEPMSignature          = "X-SDN-EPM-SIGNATURE"
+	FieldSDNEPMSignatureTimestamp = "X-SDN-EPM-SIGNATURE-TIMESTAMP"
 )
 
 // EPMToVCard converts an EPM FlatBuffer to a vCard 4.0 string.
@@ -130,6 +138,14 @@ func EPMToVCard(epmBytes []byte) (string, error) {
 		}
 	}
 
+	if signature := epm.SIGNATURE(); signature != nil {
+		card.Add(FieldSDNEPMSignature, &vcard.Field{Value: string(signature)})
+	}
+	if ts := epm.SIGNATURE_TIMESTAMP(); ts != 0 {
+		card.Add(FieldSDNEPMSignatureTimestamp, &vcard.Field{Value: strconv.FormatInt(ts, 10)})
+	}
+	card.Add(FieldSDNEPMBase64, &vcard.Field{Value: base64.StdEncoding.EncodeToString(epmBytes)})
+
 	// Encode to string
 	var b strings.Builder
 	enc := vcard.NewEncoder(&b)
@@ -150,6 +166,11 @@ func VCardToEPM(vcardStr string) ([]byte, error) {
 	card, err := dec.Decode()
 	if err != nil {
 		return nil, err
+	}
+	if embedded, err := EmbeddedEPMFromCard(card); err != nil {
+		return nil, err
+	} else if len(embedded) > 0 {
+		return embedded, nil
 	}
 
 	builder := flatbuffers.NewBuilder(1024)
@@ -385,6 +406,37 @@ func VCardToEPM(vcardStr string) ([]byte, error) {
 	result := make([]byte, len(builder.FinishedBytes()))
 	copy(result, builder.FinishedBytes())
 	return result, nil
+}
+
+// EmbeddedEPMFromVCard extracts a complete signed EPM payload from an SDN vCard
+// extension. A nil slice means the vCard has no embedded EPM payload.
+func EmbeddedEPMFromVCard(vcardStr string) ([]byte, error) {
+	if strings.TrimSpace(vcardStr) == "" {
+		return nil, ErrEmptyVCard
+	}
+	dec := vcard.NewDecoder(strings.NewReader(vcardStr))
+	card, err := dec.Decode()
+	if err != nil {
+		return nil, err
+	}
+	return EmbeddedEPMFromCard(card)
+}
+
+// EmbeddedEPMFromCard extracts a complete signed EPM payload from a parsed card.
+func EmbeddedEPMFromCard(card vcard.Card) ([]byte, error) {
+	field := card.Get(FieldSDNEPMBase64)
+	if field == nil || strings.TrimSpace(field.Value) == "" {
+		return nil, nil
+	}
+	payload := strings.Join(strings.Fields(field.Value), "")
+	epmBytes, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return nil, err
+	}
+	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmBytes) {
+		return nil, ErrInvalidEPM
+	}
+	return epmBytes, nil
 }
 
 // safeString converts a byte slice to string, returning empty string for nil.
