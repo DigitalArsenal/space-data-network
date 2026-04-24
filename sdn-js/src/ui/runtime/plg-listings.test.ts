@@ -1,7 +1,7 @@
 import * as flatbuffers from 'flatbuffers';
 import { PLG } from 'spacedatastandards.org/lib/js/REC/PLG.js';
-import { listingStatus } from 'spacedatastandards.org/lib/js/PLG/listingStatus.js';
-import { pluginType } from 'spacedatastandards.org/lib/js/PLG/pluginType.js';
+import { publicationState as listingStatus } from 'spacedatastandards.org/lib/js/PLG/publicationState.js';
+import { pluginCategory as pluginType } from 'spacedatastandards.org/lib/js/PLG/pluginCategory.js';
 import { describe, expect, it } from 'vitest';
 
 import { createMarketplaceIndex } from './marketplace';

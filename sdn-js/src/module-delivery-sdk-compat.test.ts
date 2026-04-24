@@ -20,7 +20,7 @@ import { licensingProofMessageType } from 'spacedatastandards.org/lib/js/REC/lic
 import { keyMaterialAlgorithm } from 'spacedatastandards.org/lib/js/REC/keyMaterialAlgorithm.js';
 import { keyMaterialEncoding } from 'spacedatastandards.org/lib/js/REC/keyMaterialEncoding.js';
 import { keyMaterialRole } from 'spacedatastandards.org/lib/js/REC/keyMaterialRole.js';
-import { pluginType } from 'spacedatastandards.org/lib/js/PLG/pluginType.js';
+import { pluginCategory as pluginType } from 'spacedatastandards.org/lib/js/PLG/pluginCategory.js';
 import {
   decodeLicensingChallengeMessage,
   decodeLicensingGrant,
