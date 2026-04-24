@@ -96,9 +96,19 @@ rsync_cmd() {
 
 service_name() {
     case "$1" in
-        full) echo "spacedatanetwork" ;;
+        full) echo "space-data-network" ;;
         *) echo "sdn-$1" ;;
     esac
+}
+
+full_node_service_name() {
+    local ip=$1
+
+    if ssh_cmd "$ip" "systemctl list-unit-files space-data-network.service >/dev/null 2>&1 || test -f /etc/systemd/system/space-data-network.service" >/dev/null 2>&1; then
+        echo "space-data-network"
+    else
+        echo "spacedatanetwork"
+    fi
 }
 
 prepare_full_node_assets() {
@@ -220,16 +230,26 @@ deploy_binary() {
         assert_prod_config_excludes_tracked_dev_wallet "${PROJECT_ROOT}/config/full-vm.yaml" "config/full-vm.yaml"
         log_info "Deploying full node bundle to $ip ($name)..."
 
-        ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/bin /opt/spacedatanetwork/admin-ui /opt/spacedatanetwork/webui /opt/spacedatanetwork/sdn-server /opt/spacedatanetwork/scripts /etc/spacedatanetwork /var/lib/spacedatanetwork/frontend /var/lib/spacedatanetwork/data && id -u sdn >/dev/null 2>&1 || useradd --system --home /var/lib/spacedatanetwork --shell /usr/sbin/nologin sdn"
+        local full_service
+        local config_dir
+        full_service="$(full_node_service_name "$ip")"
+        config_dir="/etc/spacedatanetwork"
+        if [[ "$full_service" == "space-data-network" ]]; then
+            config_dir="/etc/space-data-network"
+        fi
+
+        ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/bin /opt/spacedatanetwork/admin-ui /opt/spacedatanetwork/webui /opt/spacedatanetwork/sdn-server /opt/spacedatanetwork/scripts ${config_dir} /var/lib/spacedatanetwork/frontend /var/lib/spacedatanetwork/data && id -u sdn >/dev/null 2>&1 || useradd --system --home /var/lib/spacedatanetwork --shell /usr/sbin/nologin sdn"
 
         rsync_cmd "${PROJECT_ROOT}/sdn-server/" "$ip" "/opt/spacedatanetwork/sdn-server/"
         rsync_cmd "${PROJECT_ROOT}/scripts/" "$ip" "/opt/spacedatanetwork/scripts/"
         rsync_cmd "${PROJECT_ROOT}/sdn-js/ui/dist/" "$ip" "/opt/spacedatanetwork/admin-ui/"
         rsync_cmd "${PROJECT_ROOT}/webui/build/" "$ip" "/opt/spacedatanetwork/webui/"
-        rsync_cmd "${PROJECT_ROOT}/config/full-vm.yaml" "$ip" "/etc/spacedatanetwork/config.yaml"
-        rsync_cmd "${PROJECT_ROOT}/sdn-server/deploy/spacedatanetwork.service" "$ip" "/etc/systemd/system/spacedatanetwork.service"
+        rsync_cmd "${PROJECT_ROOT}/config/full-vm.yaml" "$ip" "${config_dir}/config.yaml"
+        if [[ "$full_service" == "spacedatanetwork" ]]; then
+            rsync_cmd "${PROJECT_ROOT}/sdn-server/deploy/spacedatanetwork.service" "$ip" "/etc/systemd/system/spacedatanetwork.service"
+        fi
 
-        ssh_cmd "$ip" "chmod 755 /etc/spacedatanetwork && chown root:root /etc/spacedatanetwork/config.yaml && chmod 644 /etc/spacedatanetwork/config.yaml && chmod +x /opt/spacedatanetwork/scripts/install-wasmedge.sh /opt/spacedatanetwork/scripts/go-with-wasmedge.sh && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge /opt/spacedatanetwork/scripts/go-with-wasmedge.sh build -o /opt/spacedatanetwork/bin/spacedatanetwork ./cmd/spacedatanetwork && chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork && systemctl daemon-reload && systemctl enable spacedatanetwork && systemctl restart spacedatanetwork"
+        ssh_cmd "$ip" "chmod 755 ${config_dir} && chown root:root ${config_dir}/config.yaml && chmod 644 ${config_dir}/config.yaml && chmod +x /opt/spacedatanetwork/scripts/install-wasmedge.sh /opt/spacedatanetwork/scripts/go-with-wasmedge.sh && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge /opt/spacedatanetwork/scripts/go-with-wasmedge.sh build -o /opt/spacedatanetwork/bin/spacedatanetwork ./cmd/spacedatanetwork && chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork && systemctl daemon-reload && systemctl enable ${full_service} && systemctl restart ${full_service} && if [ '${full_service}' = 'space-data-network' ]; then systemctl disable --now spacedatanetwork >/dev/null 2>&1 || true; fi"
 
         log_success "Deployed full node bundle to $ip"
         return
@@ -284,7 +304,7 @@ check_status() {
 
     if ssh_cmd "$ip" "docker ps --filter name=sdn-${type} --format '{{.Status}}'" 2>/dev/null | grep -q "Up"; then
         echo -e "${GREEN}●${NC} $name ($ip) - Running"
-    elif ssh_cmd "$ip" "systemctl is-active $(service_name "$type")" 2>/dev/null | grep -q "active"; then
+    elif ssh_cmd "$ip" "systemctl is-active $(service_name "$type") || { [ '$type' = full ] && systemctl is-active spacedatanetwork; }" 2>/dev/null | grep -q "active"; then
         echo -e "${GREEN}●${NC} $name ($ip) - Running (systemd)"
     else
         echo -e "${RED}●${NC} $name ($ip) - Stopped/Unreachable"
@@ -299,7 +319,7 @@ get_logs() {
 
     log_info "Fetching logs from $ip..."
     ssh_cmd "$ip" "docker logs --tail $lines sdn-${type} 2>&1" 2>/dev/null || \
-    ssh_cmd "$ip" "journalctl -u $(service_name "$type") -n $lines --no-pager" 2>/dev/null
+    ssh_cmd "$ip" "journalctl -u $(service_name "$type") -n $lines --no-pager || { [ '$type' = full ] && journalctl -u spacedatanetwork -n $lines --no-pager; }" 2>/dev/null
 }
 
 # Main deployment function
