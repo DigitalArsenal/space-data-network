@@ -34,18 +34,15 @@ func (s *Service) PublishEPM(ctx context.Context, publisher TopicPublisher) erro
 		return fmt.Errorf("no EPM data to publish")
 	}
 
-	// Compute CID from EPM data
-	hash := sha256.Sum256(epmData)
-	multihash, err := mh.Encode(hash[:], mh.SHA2_256)
+	epmCIDStr, err := ComputeEPMCID(epmData)
 	if err != nil {
-		return fmt.Errorf("failed to encode multihash: %w", err)
+		return err
 	}
-	epmCID := cid.NewCidV1(cid.Raw, multihash)
 
 	// Sign the CID with Ed25519 signing key (via libp2p crypto.PrivKey)
 	var signatureHex string
 	if identity != nil && identity.SigningPrivKey != nil {
-		sigBytes, err := identity.SigningPrivKey.Sign([]byte(epmCID.String()))
+		sigBytes, err := identity.SigningPrivKey.Sign([]byte(epmCIDStr))
 		if err != nil {
 			log.Warnf("Failed to sign EPM CID: %v", err)
 		} else {
@@ -56,7 +53,7 @@ func (s *Service) PublishEPM(ctx context.Context, publisher TopicPublisher) erro
 	// Build PNM FlatBuffer
 	builder := flatbuffers.NewBuilder(512)
 
-	cidOffset := builder.CreateString(epmCID.String())
+	cidOffset := builder.CreateString(epmCIDStr)
 	fileIDOffset := builder.CreateString("EPM")
 	tsOffset := builder.CreateString(time.Now().UTC().Format(time.RFC3339))
 	addrOffset := builder.CreateString(fmt.Sprintf("/p2p/%s", peerID.String()))
@@ -80,8 +77,22 @@ func (s *Service) PublishEPM(ctx context.Context, publisher TopicPublisher) erro
 		return fmt.Errorf("failed to publish EPM PNM: %w", err)
 	}
 
-	log.Infof("Published EPM to PubSub (CID: %s)", epmCID)
+	log.Infof("Published EPM to PubSub (CID: %s)", epmCIDStr)
 	return nil
+}
+
+// ComputeEPMCID returns the deterministic raw CIDv1 used to identify an EPM
+// payload in directory records and EPM PubSub announcements.
+func ComputeEPMCID(epmData []byte) (string, error) {
+	if len(epmData) == 0 {
+		return "", fmt.Errorf("no EPM data to publish")
+	}
+	hash := sha256.Sum256(epmData)
+	multihash, err := mh.Encode(hash[:], mh.SHA2_256)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode multihash: %w", err)
+	}
+	return cid.NewCidV1(cid.Raw, multihash).String(), nil
 }
 
 // HandlePNMEPM processes an incoming PNM with FILE_ID="EPM".

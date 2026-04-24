@@ -110,6 +110,10 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).toContain('sortableDirectoryHeader');
     expect(source).toContain('pageSize');
     expect(source).toContain('directoryPagerButtonStyle');
+    expect(source).toContain('bitcoinBalanceURL');
+    expect(source).toContain('https://mempool.space/address/');
+    expect(source).toContain("target='_blank'");
+    expect(source).toContain("rel='noreferrer'");
     expect(source).toContain('Upload vCard / EPM');
     expect(source).toContain('overflow-auto');
     expect(source).not.toContain('recordTypeFilter');

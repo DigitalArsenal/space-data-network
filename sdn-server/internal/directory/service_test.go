@@ -102,6 +102,53 @@ func TestDirectoryService_IndexesNodeEPMJSON(t *testing.T) {
 	}
 }
 
+func TestDirectoryService_SearchNodesExcludesSelfAndGenericPeerConnectRows(t *testing.T) {
+	store := mustNewDirectoryStore(t)
+	svc := NewService(store)
+	svc.SetLocalPeerID("16Uiu2HAmSelf")
+
+	records := []struct {
+		peerID string
+		name   string
+		source string
+	}{
+		{
+			peerID: "16Uiu2HAmSelf",
+			name:   "This node",
+			source: "local-node",
+		},
+		{
+			peerID: "16Uiu2HAmAdvertised",
+			name:   "Advertised peer",
+			source: "sdn-advertisement-discovery",
+		},
+		{
+			peerID: "16Uiu2HAmGenericConnect",
+			name:   "Generic libp2p connect",
+			source: "peer-connect",
+		},
+	}
+	for _, record := range records {
+		if err := svc.UpsertNodeEPMJSON(map[string]any{
+			"peer_id": record.peerID,
+			"dn":      record.name,
+		}, "bafy-"+record.peerID, record.source); err != nil {
+			t.Fatalf("UpsertNodeEPMJSON(%s) failed: %v", record.peerID, err)
+		}
+	}
+
+	nodes, err := svc.SearchNodes("", 10)
+	if err != nil {
+		t.Fatalf("SearchNodes failed: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("SearchNodes returned %d records, want 1: %#v", len(nodes), nodes)
+	}
+	if nodes[0].PeerID != "16Uiu2HAmAdvertised" {
+		t.Fatalf("PeerID = %q, want advertised peer", nodes[0].PeerID)
+	}
+}
+
 func TestHTTPHandler_ServesNodeAndUserSearches(t *testing.T) {
 	store := mustNewDirectoryStore(t)
 	svc := NewService(store)

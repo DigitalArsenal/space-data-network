@@ -113,6 +113,17 @@ func (n *Node) recordCurrentSDNAdvertisementPeerInfo(info peer.AddrInfo) {
 	n.recordSDNAdvertisementPeerInfo(info, n.sdnAdvertisementTarget.Flag)
 }
 
+func (n *Node) hasSDNAdvertisementPeer(pid peer.ID) bool {
+	if n == nil || pid == "" {
+		return false
+	}
+
+	n.sdnDiscoveryMu.RLock()
+	defer n.sdnDiscoveryMu.RUnlock()
+
+	return len(n.sdnDiscoveryFlagsByPeer[pid]) > 0
+}
+
 func (n *Node) fetchAndIndexDiscoveredNodeEPM(pid peer.ID, source string) {
 	if n == nil || pid == "" {
 		return
@@ -195,7 +206,11 @@ func (n *Node) indexFetchedDiscoveredNodeEPM(pid peer.ID, source string, epmByte
 	if n.directorySvc == nil {
 		return
 	}
-	if err := n.directorySvc.UpsertNodeEPMJSON(info, "", source); err != nil {
+	epmCID, err := epm.ComputeEPMCID(epmBytes)
+	if err != nil {
+		log.Debugf("Failed to compute discovered EPM CID for peer %s: %v", pid, err)
+	}
+	if err := n.directorySvc.UpsertNodeEPMJSON(info, epmCID, source); err != nil {
 		log.Debugf("Failed to index discovered EPM for peer %s: %v", pid, err)
 	}
 }

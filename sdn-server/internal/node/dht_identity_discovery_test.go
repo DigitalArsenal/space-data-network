@@ -11,6 +11,7 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
+	sdnepm "github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -194,6 +195,13 @@ func TestIndexKnownDiscoveredNodeEPMStoresDirectoryRecord(t *testing.T) {
 	}
 	if got.Source != "dht-discovery" {
 		t.Fatalf("Source = %q, want %q", got.Source, "dht-discovery")
+	}
+	expectedCID, err := sdnepm.ComputeEPMCID(epmBytes)
+	if err != nil {
+		t.Fatalf("ComputeEPMCID failed: %v", err)
+	}
+	if got.EPMCID != expectedCID {
+		t.Fatalf("EPMCID = %q, want %q", got.EPMCID, expectedCID)
 	}
 	if got.BitcoinAddress != "bc1qdiscoverwallet0000000000000000000000000" {
 		t.Fatalf("BitcoinAddress = %q, want %q", got.BitcoinAddress, "bc1qdiscoverwallet0000000000000000000000000")

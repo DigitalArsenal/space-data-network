@@ -63,4 +63,11 @@ func TestIndexLocalNodeEPMStoresNodeProfileInDirectory(t *testing.T) {
 	if records[0].Kind != directory.KindNode {
 		t.Fatalf("Kind = %q, want %q", records[0].Kind, directory.KindNode)
 	}
+	expectedCID, err := epmSvc.GetNodeEPMCID()
+	if err != nil {
+		t.Fatalf("GetNodeEPMCID failed: %v", err)
+	}
+	if records[0].EPMCID != expectedCID {
+		t.Fatalf("EPMCID = %q, want %q", records[0].EPMCID, expectedCID)
+	}
 }
