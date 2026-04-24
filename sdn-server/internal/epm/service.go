@@ -622,6 +622,11 @@ func (s *Service) GetNodeEPM() []byte {
 	return out
 }
 
+// GetNodeEPMCID returns the deterministic CID for the current node EPM.
+func (s *Service) GetNodeEPMCID() (string, error) {
+	return ComputeEPMCID(s.GetNodeEPM())
+}
+
 // GetNodeVCard returns the node's EPM as a vCard 4.0 string.
 func (s *Service) GetNodeVCard() (string, error) {
 	s.mu.RLock()

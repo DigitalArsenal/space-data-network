@@ -375,6 +375,7 @@ func (n *Node) init() error {
 	}
 	if n.store != nil {
 		n.directorySvc = directory.NewService(n.store)
+		n.directorySvc.SetLocalPeerID(n.host.ID().String())
 		if err := n.indexLocalNodeEPM(); err != nil {
 			log.Warnf("Failed to index local node EPM: %v", err)
 		}
@@ -1321,7 +1322,13 @@ func (n *Node) indexLocalNodeEPM() error {
 	if n == nil || n.epmService == nil || n.directorySvc == nil {
 		return nil
 	}
-	return n.directorySvc.UpsertNodeEPMJSON(n.epmService.DirectoryRecordJSON(), "", "local-node")
+	epmCID := ""
+	if cid, err := n.epmService.GetNodeEPMCID(); err == nil {
+		epmCID = cid
+	} else {
+		log.Debugf("Failed to compute local node EPM CID: %v", err)
+	}
+	return n.directorySvc.UpsertNodeEPMJSON(n.epmService.DirectoryRecordJSON(), epmCID, "local-node")
 }
 
 // SigningKey returns the node's Ed25519 signing private key bytes, or nil if unavailable.

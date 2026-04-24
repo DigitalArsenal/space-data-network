@@ -542,11 +542,13 @@ type DirectoryRecord struct {
 
 // DirectoryQuery filters directory records.
 type DirectoryQuery struct {
-	Kind   string
-	PeerID string
-	Source string
-	Search string
-	Limit  int
+	Kind           string
+	PeerID         string
+	Source         string
+	ExcludePeerID  string
+	ExcludeSources []string
+	Search         string
+	Limit          int
 }
 
 // UpsertDirectoryRecord inserts or updates a directory record.
@@ -613,6 +615,7 @@ func (s *FlatSQLStore) QueryDirectory(query DirectoryQuery) ([]DirectoryRecord, 
 	kind := strings.TrimSpace(strings.ToLower(query.Kind))
 	peerID := strings.TrimSpace(query.PeerID)
 	source := strings.TrimSpace(query.Source)
+	excludePeerID := strings.TrimSpace(query.ExcludePeerID)
 	search := strings.TrimSpace(query.Search)
 
 	limit := query.Limit
@@ -639,9 +642,30 @@ func (s *FlatSQLStore) QueryDirectory(query DirectoryQuery) ([]DirectoryRecord, 
 		sqlBuilder.WriteString(` AND peer_id = ?`)
 		args = append(args, peerID)
 	}
+	if excludePeerID != "" {
+		sqlBuilder.WriteString(` AND peer_id <> ?`)
+		args = append(args, excludePeerID)
+	}
 	if source != "" {
 		sqlBuilder.WriteString(` AND source = ?`)
 		args = append(args, source)
+	}
+	excludeSources := make([]string, 0, len(query.ExcludeSources))
+	for _, excludeSource := range query.ExcludeSources {
+		if trimmed := strings.TrimSpace(excludeSource); trimmed != "" {
+			excludeSources = append(excludeSources, trimmed)
+		}
+	}
+	if len(excludeSources) > 0 {
+		sqlBuilder.WriteString(` AND source NOT IN (`)
+		for i, excludeSource := range excludeSources {
+			if i > 0 {
+				sqlBuilder.WriteString(`, `)
+			}
+			sqlBuilder.WriteString(`?`)
+			args = append(args, excludeSource)
+		}
+		sqlBuilder.WriteString(`)`)
 	}
 	if search != "" {
 		needle := "%" + strings.ToLower(search) + "%"

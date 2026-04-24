@@ -1,6 +1,7 @@
 package node
 
 import (
+	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -40,10 +41,25 @@ func (n *Node) requestEPMFromConnectedPeers(source string) {
 }
 
 func (n *Node) requestConnectedPeerEPM(pid peer.ID, source string) {
+	source = n.directoryEPMSourceForPeer(pid, source)
+	if source == "" {
+		return
+	}
 	if !n.reserveConnectedPeerEPMRequest(pid) {
 		return
 	}
 	go n.fetchAndIndexDiscoveredNodeEPM(pid, source)
+}
+
+func (n *Node) directoryEPMSourceForPeer(pid peer.ID, source string) string {
+	source = strings.TrimSpace(source)
+	if source != "peer-connect" {
+		return source
+	}
+	if n.hasSDNAdvertisementPeer(pid) {
+		return "sdn-advertisement-discovery"
+	}
+	return ""
 }
 
 func (n *Node) reserveConnectedPeerEPMRequest(pid peer.ID) bool {

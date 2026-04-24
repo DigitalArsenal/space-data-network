@@ -227,7 +227,7 @@ function DirectoryPage() {
                     </td>
                     <td className='bt b--black-10 pa3 fw6 charcoal'>{record.name}</td>
                     <td className='bt b--black-10 pa3 break-word monospace'>{record.peerId}</td>
-                    <td className='bt b--black-10 pa3 break-word monospace'>{record.bitcoin}</td>
+                    <td className='bt b--black-10 pa3 break-word monospace'>{renderBitcoinAddress(record.bitcoinAddress)}</td>
                     <td className='bt b--black-10 pa3 break-word monospace'>{record.epmCid}</td>
                     <td className='bt b--black-10 pa3'>{record.source}</td>
                   </tr>
@@ -280,14 +280,32 @@ function DirectoryPage() {
 }
 
 function directoryRecordRow(record, type) {
+  const bitcoinAddress = record.bitcoin_address ?? ''
   return {
     type,
     name: record.dn ?? record.legal_name ?? 'Unknown',
     peerId: record.peer_id || '—',
-    bitcoin: record.bitcoin_address ?? '—',
+    bitcoin: bitcoinAddress || '—',
+    bitcoinAddress,
     epmCid: record.epm_cid ?? '—',
     source: record.source ?? 'Unknown',
   }
+}
+
+function renderBitcoinAddress(address) {
+  const trimmed = String(address ?? '').trim()
+  if (!trimmed) {
+    return '—'
+  }
+  return (
+    <a className='blue link underline-hover' href={bitcoinBalanceURL(trimmed)} target='_blank' rel='noreferrer'>
+      {trimmed}
+    </a>
+  )
+}
+
+function bitcoinBalanceURL(address) {
+  return `https://mempool.space/address/${encodeURIComponent(address)}`
 }
 
 function sortableDirectoryHeader(label, key, sortKey, sortDirection, onSort) {

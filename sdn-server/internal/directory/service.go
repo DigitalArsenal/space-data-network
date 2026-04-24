@@ -12,12 +12,23 @@ import (
 
 // Service normalizes EPM JSON into indexed directory records.
 type Service struct {
-	store Store
+	store       Store
+	localPeerID string
 }
 
 // NewService creates a directory service.
 func NewService(store Store) *Service {
 	return &Service{store: store}
+}
+
+// SetLocalPeerID configures the node peer ID that should be hidden from
+// directory search results. The local node still keeps its EPM indexed for
+// exports and profile management, but it is not a search result.
+func (s *Service) SetLocalPeerID(peerID string) {
+	if s == nil {
+		return
+	}
+	s.localPeerID = strings.TrimSpace(peerID)
 }
 
 // UpsertNodeEPMJSON indexes a node EPM JSON payload.
@@ -36,9 +47,11 @@ func (s *Service) SearchNodes(search string, limit int) ([]storage.DirectoryReco
 		return nil, errors.New("directory store is not configured")
 	}
 	return s.store.QueryDirectory(storage.DirectoryQuery{
-		Kind:   KindNode,
-		Search: search,
-		Limit:  limit,
+		Kind:           KindNode,
+		ExcludePeerID:  s.localPeerID,
+		ExcludeSources: []string{"peer-connect"},
+		Search:         search,
+		Limit:          limit,
 	})
 }
 
@@ -48,9 +61,10 @@ func (s *Service) SearchUsers(search string, limit int) ([]storage.DirectoryReco
 		return nil, errors.New("directory store is not configured")
 	}
 	return s.store.QueryDirectory(storage.DirectoryQuery{
-		Kind:   KindUser,
-		Search: search,
-		Limit:  limit,
+		Kind:          KindUser,
+		ExcludePeerID: s.localPeerID,
+		Search:        search,
+		Limit:         limit,
 	})
 }
 
