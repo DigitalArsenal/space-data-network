@@ -114,6 +114,7 @@ export function createServerAdapter(deps: ServerAdapterDeps): ServerRuntimeAdapt
           displayName: pickString(nodeInfo, [
             'DISPLAY_NAME',
             'display_name',
+            'dn',
             'name',
           ]) ?? target.label ?? target.baseUrl,
           peerId: pickString(nodeInfo, ['peer_id', 'peerId']),
