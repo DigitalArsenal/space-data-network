@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,8 +37,15 @@ func TestNewHostServesIndexAndAssetsUnderAdmin(t *testing.T) {
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200", recorder.Code)
 		}
-		if got := recorder.Body.String(); got != "<!doctype html><html><body>admin-ui</body></html>" {
-			t.Fatalf("body = %q, want index.html contents", got)
+		body := recorder.Body.String()
+		if !strings.Contains(body, "window.__SDN_CONFIG__") {
+			t.Fatalf("body = %q, want injected SDN runtime config", body)
+		}
+		if !strings.Contains(body, "serverBaseUrl:window.location.origin") {
+			t.Fatalf("body = %q, want same-origin server runtime config", body)
+		}
+		if !strings.Contains(body, "<body>admin-ui</body>") {
+			t.Fatalf("body = %q, want index.html contents preserved", body)
 		}
 	})
 

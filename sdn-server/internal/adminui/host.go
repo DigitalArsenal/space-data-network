@@ -1,6 +1,7 @@
 package adminui
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"os"
@@ -46,8 +47,33 @@ func NewHost(buildDir string) (http.Handler, error) {
 			return
 		}
 
+		indexHTML, err := os.ReadFile(indexPath)
+		if err != nil {
+			http.Error(w, "admin ui unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		indexHTML = injectRuntimeConfig(indexHTML)
+
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "public, max-age=120")
-		http.ServeFile(w, r, indexPath)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write(indexHTML)
+		}
 	}), nil
+}
+
+func injectRuntimeConfig(html []byte) []byte {
+	configScript := []byte(`<script>window.__SDN_CONFIG__={apiBase:"/api/v1",serverBaseUrl:window.location.origin,ipfsDashboardUrl:"/webui/"};</script>`)
+	if bytes.Contains(html, []byte("window.__SDN_CONFIG__")) {
+		return html
+	}
+	if idx := bytes.Index(html, []byte("</head>")); idx >= 0 {
+		result := make([]byte, 0, len(html)+len(configScript))
+		result = append(result, html[:idx]...)
+		result = append(result, configScript...)
+		result = append(result, html[idx:]...)
+		return result
+	}
+	return append(configScript, html...)
 }
