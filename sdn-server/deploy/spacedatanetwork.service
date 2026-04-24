@@ -19,7 +19,7 @@ Environment=WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge
 WorkingDirectory=/opt/spacedatanetwork
 
 # Main executable
-ExecStart=/opt/spacedatanetwork/bin/spacedatanetwork \
+ExecStart=/opt/spacedatanetwork/bin/spacedatanetwork daemon \
     --config ${SDN_CONFIG}
 
 # Restart policy
