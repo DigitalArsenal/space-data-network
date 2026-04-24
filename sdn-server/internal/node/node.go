@@ -99,6 +99,8 @@ type Node struct {
 	sdnDiscoveryMu          sync.RWMutex
 	sdnDiscoveryFlagsByPeer map[peer.ID]map[string]time.Time
 	sdnDiscoveryAddrsByPeer map[peer.ID][]string
+	epmExchangeMu           sync.Mutex
+	epmExchangeLastRequest  map[peer.ID]time.Time
 	autoRelayPeerChan       chan peer.AddrInfo
 
 	ctx    context.Context
@@ -119,6 +121,7 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 		cancel:                  cancel,
 		sdnDiscoveryFlagsByPeer: make(map[peer.ID]map[string]time.Time),
 		sdnDiscoveryAddrsByPeer: make(map[peer.ID][]string),
+		epmExchangeLastRequest:  make(map[peer.ID]time.Time),
 		autoRelayPeerChan:       make(chan peer.AddrInfo, 64),
 	}
 
@@ -376,6 +379,8 @@ func (n *Node) init() error {
 			log.Warnf("Failed to index local node EPM: %v", err)
 		}
 	}
+	n.host.Network().Notify(&epmExchangeNotifee{node: n})
+	n.requestEPMFromConnectedPeers("peer-connect")
 
 	// Initialize runtime plugins.
 	n.plugins = plugins.New()
@@ -889,6 +894,7 @@ func (n *Node) Start(ctx context.Context) error {
 				log.Warnf("Failed to connect to bootstrap peer %s: %v", peerInfo.AddrInfo.ID, err)
 			} else {
 				n.enqueueAutoRelayCandidate(peerInfo.AddrInfo)
+				n.requestConnectedPeerEPM(peerInfo.AddrInfo.ID, "bootstrap")
 				log.Infof("Connected to bootstrap peer %s (peer ID verified)", peerInfo.AddrInfo.ID)
 			}
 		}(p)
@@ -983,6 +989,7 @@ func (m *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 		log.Debugf("Failed to connect to mDNS peer %s: %v", pi.ID, err)
 	} else {
 		m.node.enqueueAutoRelayCandidate(pi)
+		m.node.requestConnectedPeerEPM(pi.ID, "mdns")
 		log.Infof("Connected to mDNS peer: %s", pi.ID)
 	}
 }
@@ -1117,6 +1124,7 @@ func (n *Node) discoverPeers(discoveryCID cid.Cid) {
 
 		// Skip if already connected
 		if n.host.Network().Connectedness(peerInfo.ID) == 2 { // Connected
+			n.requestConnectedPeerEPM(peerInfo.ID, "dht-discovery")
 			continue
 		}
 
@@ -1129,7 +1137,7 @@ func (n *Node) discoverPeers(discoveryCID cid.Cid) {
 				log.Debugf("Failed to connect to discovered peer %s: %v", pi.ID, err)
 			} else {
 				n.enqueueAutoRelayCandidate(pi)
-				n.fetchAndIndexDiscoveredNodeEPM(pi.ID, "dht-discovery")
+				n.requestConnectedPeerEPM(pi.ID, "dht-discovery")
 				log.Infof("Connected to discovered SDN peer: %s", pi.ID)
 			}
 		}(peerInfo)
@@ -1159,6 +1167,7 @@ func (n *Node) discoverSDNAdvertisementPeers(target sdnAdvertisementDiscoveryTar
 		n.recordSDNAdvertisementPeerInfo(peerInfo, target.Flag)
 
 		if n.host.Network().Connectedness(peerInfo.ID) == 2 {
+			n.requestConnectedPeerEPM(peerInfo.ID, "sdn-advertisement-discovery")
 			continue
 		}
 
@@ -1170,7 +1179,7 @@ func (n *Node) discoverSDNAdvertisementPeers(target sdnAdvertisementDiscoveryTar
 				log.Debugf("Failed to connect to discovered SDN advertisement peer %s (%s): %v", pi.ID, flag, err)
 			} else {
 				n.enqueueAutoRelayCandidate(pi)
-				n.fetchAndIndexDiscoveredNodeEPM(pi.ID, "sdn-advertisement-discovery")
+				n.requestConnectedPeerEPM(pi.ID, "sdn-advertisement-discovery")
 				log.Infof("Connected to discovered SDN advertisement peer: %s (%s)", pi.ID, flag)
 			}
 		}(peerInfo, target.Flag)

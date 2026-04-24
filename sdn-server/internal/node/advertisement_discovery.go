@@ -202,10 +202,10 @@ func (n *Node) indexFetchedDiscoveredNodeEPM(pid peer.ID, source string, epmByte
 
 func (n *Node) cacheFetchedDiscoveredNodeEPM(pid peer.ID, epmBytes []byte) error {
 	tp, err := n.peerRegistry.GetPeer(pid)
-	if err != nil {
+	if err != nil && err != peers.ErrPeerNotFound {
 		return err
 	}
-	if tp == nil {
+	if tp == nil || err == peers.ErrPeerNotFound {
 		tp = &peers.TrustedPeer{ID: pid, TrustLevel: peers.Standard}
 		if addErr := n.peerRegistry.AddPeer(tp); addErr != nil && addErr != peers.ErrPeerAlreadyExists {
 			return addErr
