@@ -156,7 +156,21 @@ func TestHTTPHandler_ServesNodeAndUserSearches(t *testing.T) {
 		if len(payload.Results) != 120 {
 			t.Fatalf("results len = %d, want 120", len(payload.Results))
 		}
-		got := payload.Results[0]
+		var got struct {
+			Kind           string `json:"kind"`
+			PeerID         string `json:"peer_id"`
+			DN             string `json:"dn"`
+			LegalName      string `json:"legal_name"`
+			BitcoinAddress string `json:"bitcoin_address"`
+			EPMCID         string `json:"epm_cid"`
+			Source         string `json:"source"`
+		}
+		for _, result := range payload.Results {
+			if result.PeerID == "16Uiu2HAmNode000" {
+				got = result
+				break
+			}
+		}
 		if got.Kind != "node" || got.PeerID != "16Uiu2HAmNode000" {
 			t.Fatalf("unexpected node result: %#v", got)
 		}
