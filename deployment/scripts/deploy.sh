@@ -229,7 +229,7 @@ deploy_binary() {
         rsync_cmd "${PROJECT_ROOT}/config/full-vm.yaml" "$ip" "/etc/spacedatanetwork/config.yaml"
         rsync_cmd "${PROJECT_ROOT}/sdn-server/deploy/spacedatanetwork.service" "$ip" "/etc/systemd/system/spacedatanetwork.service"
 
-        ssh_cmd "$ip" "chmod +x /opt/spacedatanetwork/scripts/install-wasmedge.sh /opt/spacedatanetwork/scripts/go-with-wasmedge.sh && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge /opt/spacedatanetwork/scripts/go-with-wasmedge.sh build -o /opt/spacedatanetwork/bin/spacedatanetwork ./cmd/spacedatanetwork && chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork && systemctl daemon-reload && systemctl enable spacedatanetwork && systemctl restart spacedatanetwork"
+        ssh_cmd "$ip" "chmod 755 /etc/spacedatanetwork && chown root:root /etc/spacedatanetwork/config.yaml && chmod 644 /etc/spacedatanetwork/config.yaml && chmod +x /opt/spacedatanetwork/scripts/install-wasmedge.sh /opt/spacedatanetwork/scripts/go-with-wasmedge.sh && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge /opt/spacedatanetwork/scripts/go-with-wasmedge.sh build -o /opt/spacedatanetwork/bin/spacedatanetwork ./cmd/spacedatanetwork && chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork && systemctl daemon-reload && systemctl enable spacedatanetwork && systemctl restart spacedatanetwork"
 
         log_success "Deployed full node bundle to $ip"
         return
