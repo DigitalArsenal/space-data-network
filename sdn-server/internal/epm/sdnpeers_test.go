@@ -40,6 +40,7 @@ func TestBuildObservedSDNPeersFiltersToAdvertisementEvidence(t *testing.T) {
 					Organization:       "Space Data Network",
 					TrustLevel:         "trusted",
 					IsOnline:           true,
+					AgentVersion:       "spacedatanetwork/1.0.3",
 					MultiformatAddress: []string{trustedAddr.String()},
 					LastSeen:           time.Now().UTC().Format(time.RFC3339),
 				},
@@ -92,7 +93,7 @@ func TestBuildObservedSDNPeersFiltersToAdvertisementEvidence(t *testing.T) {
 	if out[0].Metadata["advertisement_flags"] != "spacedatanetwork/1.0.0" {
 		t.Fatalf("advertisement_flags metadata = %q", out[0].Metadata["advertisement_flags"])
 	}
-	if out[0].Metadata["agent_version"] != "sdn-server/2.0.2" {
+	if out[0].Metadata["agent_version"] != "spacedatanetwork/1.0.3" {
 		t.Fatalf("agent_version metadata = %q", out[0].Metadata["agent_version"])
 	}
 }

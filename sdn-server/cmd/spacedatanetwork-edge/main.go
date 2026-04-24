@@ -172,6 +172,7 @@ func NewEdgeNode(ctx context.Context, cfg EdgeConfig) (*EdgeNode, error) {
 	var dhtRouting *dht.IpfsDHT
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
+		libp2p.UserAgent(versioninfo.AgentVersion),
 		libp2p.ListenAddrs(listenMAs...),
 
 		// Default transports (TCP, QUIC, WebSocket)
@@ -340,8 +341,8 @@ func startHealthServer(port int, edge *EdgeNode) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"peer_id":"%s","connections":%d,"max_connections":%d,"load":%.6f,"mode":"edge","version":"%s","uptime_seconds":%d}`,
-			edge.PeerID(), conns, maxC, load, versioninfo.CurrentAdvertisementFlag, int64(time.Since(edgeStartTime).Seconds()))
+		fmt.Fprintf(w, `{"peer_id":"%s","connections":%d,"max_connections":%d,"load":%.6f,"mode":"edge","version":"%s","agent_version":"%s","suite_version":"%s","standards_version":"%s","advertisement_flag":"%s","uptime_seconds":%d}`,
+			edge.PeerID(), conns, maxC, load, versioninfo.AgentVersion, versioninfo.AgentVersion, versioninfo.SuiteVersion, versioninfo.SpaceDataStandardsVersion, versioninfo.CurrentAdvertisementFlag, int64(time.Since(edgeStartTime).Seconds()))
 	})
 
 	addr := fmt.Sprintf(":%d", port)

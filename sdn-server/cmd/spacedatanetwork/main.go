@@ -1459,7 +1459,11 @@ func handleNodeInfo(n *node.Node, torRuntime *tor.Runtime) http.HandlerFunc {
 		// Overlay runtime metadata
 		info["peer_id"] = n.PeerID().String()
 		info["mode"] = n.Config().Mode
-		info["version"] = versioninfo.CurrentAdvertisementFlag
+		info["version"] = versioninfo.AgentVersion
+		info["agent_version"] = versioninfo.AgentVersion
+		info["suite_version"] = versioninfo.SuiteVersion
+		info["standards_version"] = versioninfo.SpaceDataStandardsVersion
+		info["advertisement_flag"] = versioninfo.CurrentAdvertisementFlag
 
 		addrs := n.ListenAddrs()
 		addrStrings := make([]string, len(addrs))
@@ -1890,13 +1894,17 @@ func normalizeCompressedSecp256k1PublicKey(raw []byte) ([]byte, error) {
 // handleRelayStatus returns relay connection load for client-side load balancing.
 func handleRelayStatus(n *node.Node) http.HandlerFunc {
 	type relayStatusResponse struct {
-		PeerID         string  `json:"peer_id"`
-		Connections    int     `json:"connections"`
-		MaxConnections int     `json:"max_connections"`
-		Load           float64 `json:"load"`
-		Mode           string  `json:"mode"`
-		Version        string  `json:"version"`
-		UptimeSeconds  int64   `json:"uptime_seconds"`
+		PeerID            string  `json:"peer_id"`
+		Connections       int     `json:"connections"`
+		MaxConnections    int     `json:"max_connections"`
+		Load              float64 `json:"load"`
+		Mode              string  `json:"mode"`
+		Version           string  `json:"version"`
+		AgentVersion      string  `json:"agent_version"`
+		SuiteVersion      string  `json:"suite_version"`
+		StandardsVersion  string  `json:"standards_version"`
+		AdvertisementFlag string  `json:"advertisement_flag"`
+		UptimeSeconds     int64   `json:"uptime_seconds"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1925,13 +1933,17 @@ func handleRelayStatus(n *node.Node) http.HandlerFunc {
 		}
 
 		status := relayStatusResponse{
-			PeerID:         n.PeerID().String(),
-			Connections:    len(peers),
-			MaxConnections: maxConns,
-			Load:           load,
-			Mode:           n.Config().Mode,
-			Version:        versioninfo.CurrentAdvertisementFlag,
-			UptimeSeconds:  int64(time.Since(processStartTime).Seconds()),
+			PeerID:            n.PeerID().String(),
+			Connections:       len(peers),
+			MaxConnections:    maxConns,
+			Load:              load,
+			Mode:              n.Config().Mode,
+			Version:           versioninfo.AgentVersion,
+			AgentVersion:      versioninfo.AgentVersion,
+			SuiteVersion:      versioninfo.SuiteVersion,
+			StandardsVersion:  versioninfo.SpaceDataStandardsVersion,
+			AdvertisementFlag: versioninfo.CurrentAdvertisementFlag,
+			UptimeSeconds:     int64(time.Since(processStartTime).Seconds()),
 		}
 
 		w.Header().Set("Content-Type", "application/json")

@@ -239,6 +239,7 @@ func (n *Node) init() error {
 	var dhtRouting *dht.IpfsDHT
 	n.host, err = libp2p.New(
 		libp2p.Identity(privKey),
+		libp2p.UserAgent(versioninfo.AgentVersion),
 		libp2p.ListenAddrs(listenAddrs...),
 		libp2p.Transport(tcp.NewTCPTransport),
 		libp2p.Transport(websocket.New),

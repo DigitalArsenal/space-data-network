@@ -11,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
@@ -129,6 +130,18 @@ func TestNodeEPMIdentifiesAsNodeEntityType(t *testing.T) {
 	info := service.GetNodeEPMJSON()
 	if got, want := info["entity_type"], "node"; got != want {
 		t.Fatalf("entity_type = %v, want %q", got, want)
+	}
+	if got, want := info["agent_version"], versioninfo.AgentVersion; got != want {
+		t.Fatalf("agent_version = %v, want %q", got, want)
+	}
+	if got, want := info["suite_version"], versioninfo.SuiteVersion; got != want {
+		t.Fatalf("suite_version = %v, want %q", got, want)
+	}
+	if got, want := info["standards_version"], versioninfo.SpaceDataStandardsVersion; got != want {
+		t.Fatalf("standards_version = %v, want %q", got, want)
+	}
+	if got, want := info["advertisement_flag"], versioninfo.CurrentAdvertisementFlag; got != want {
+		t.Fatalf("advertisement_flag = %v, want %q", got, want)
 	}
 
 	epm := EPM.GetSizePrefixedRootAsEPM(service.GetNodeEPM(), 0)

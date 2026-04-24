@@ -2,6 +2,7 @@ package epm
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
@@ -9,6 +10,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 )
 
 // ConnectionType mirrors the PGR.fbs enum.
@@ -39,6 +41,7 @@ type PeerNode struct {
 	Organization       string   `json:"organization,omitempty"`
 	TrustLevel         string   `json:"trust_level,omitempty"`
 	Role               PeerRole `json:"role"`
+	AgentVersion       string   `json:"agent_version,omitempty"`
 	MultiformatAddress []string `json:"multiformat_address,omitempty"`
 	LastSeen           string   `json:"last_seen,omitempty"`
 	IsOnline           bool     `json:"is_online"`
@@ -57,11 +60,11 @@ type PeerEdge struct {
 
 // PeerGraphSnapshot is a point-in-time snapshot of the network graph.
 type PeerGraphSnapshot struct {
-	Timestamp   string      `json:"timestamp"`
-	LocalPeerID string      `json:"local_peer_id"`
-	Nodes       []PeerNode  `json:"nodes"`
-	Edges       []PeerEdge  `json:"edges"`
-	Metadata    string      `json:"metadata,omitempty"`
+	Timestamp   string     `json:"timestamp"`
+	LocalPeerID string     `json:"local_peer_id"`
+	Nodes       []PeerNode `json:"nodes"`
+	Edges       []PeerEdge `json:"edges"`
+	Metadata    string     `json:"metadata,omitempty"`
 }
 
 // BuildGraphSnapshot creates a PeerGraphSnapshot from the current network state.
@@ -81,9 +84,10 @@ func BuildGraphSnapshot(h host.Host, registry *peers.Registry) *PeerGraphSnapsho
 
 	// Build the local node entry
 	localNode := PeerNode{
-		PeerID:   localID.String(),
-		Role:     RoleStandard,
-		IsOnline: true,
+		PeerID:       localID.String(),
+		Role:         RoleStandard,
+		AgentVersion: versioninfo.AgentVersion,
+		IsOnline:     true,
 	}
 	localAddrs := h.Addrs()
 	for _, a := range localAddrs {
@@ -99,12 +103,13 @@ func BuildGraphSnapshot(h host.Host, registry *peers.Registry) *PeerGraphSnapsho
 		for _, tp := range registry.ListPeers() {
 			seen[tp.ID] = true
 			node := PeerNode{
-				PeerID:     tp.ID.String(),
-				DN:         tp.Name,
+				PeerID:       tp.ID.String(),
+				DN:           tp.Name,
 				Organization: tp.Organization,
-				TrustLevel: tp.TrustLevel.String(),
-				Role:       RoleStandard,
-				IsOnline:   connectedPeers[tp.ID],
+				TrustLevel:   tp.TrustLevel.String(),
+				Role:         RoleStandard,
+				AgentVersion: peerstoreAgentVersion(h, tp.ID),
+				IsOnline:     connectedPeers[tp.ID],
 			}
 			if !tp.LastSeen.IsZero() {
 				node.LastSeen = tp.LastSeen.Format(time.RFC3339)
@@ -136,9 +141,10 @@ func BuildGraphSnapshot(h host.Host, registry *peers.Registry) *PeerGraphSnapsho
 			continue
 		}
 		node := PeerNode{
-			PeerID:   pid.String(),
-			Role:     RoleStandard,
-			IsOnline: true,
+			PeerID:       pid.String(),
+			Role:         RoleStandard,
+			AgentVersion: peerstoreAgentVersion(h, pid),
+			IsOnline:     true,
 		}
 		snapshot.Nodes = append(snapshot.Nodes, node)
 
@@ -154,6 +160,21 @@ func BuildGraphSnapshot(h host.Host, registry *peers.Registry) *PeerGraphSnapsho
 	}
 
 	return snapshot
+}
+
+func peerstoreAgentVersion(h host.Host, pid peer.ID) string {
+	if h == nil {
+		return ""
+	}
+	value, err := h.Peerstore().Get(pid, "AgentVersion")
+	if err != nil {
+		return ""
+	}
+	version, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(version)
 }
 
 // GraphSnapshotJSON returns the snapshot as JSON bytes.
