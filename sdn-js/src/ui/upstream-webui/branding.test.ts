@@ -108,10 +108,11 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).toContain('Directory records');
     expect(source).toContain('Type');
     expect(source).toContain('sortableDirectoryHeader');
-    expect(source).toContain('recordTypeFilter');
     expect(source).toContain('pageSize');
     expect(source).toContain('Upload vCard / EPM');
     expect(source).toContain('overflow-auto');
+    expect(source).not.toContain('recordTypeFilter');
+    expect(source).not.toContain('sdn-directory-record-type-filter');
     expect(source).not.toContain('Matched directory node');
     expect(source).not.toContain('Matched directory user');
     expect(source).not.toContain('<h2 className=\'f4 mt0 mb3\'>Nodes</h2>');
@@ -128,6 +129,7 @@ describe('sdn upstream webui branding helper', () => {
     );
 
     expect(source).toContain('Node profile');
+    expect(source).toContain("fetch('/api/node/info'");
     expect(source).toContain('runtimeRef.current.connect');
     expect(source).toContain('Descriptor URL');
     expect(source).toContain('summaryText={t(\'app:terms.advanced\')}');

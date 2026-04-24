@@ -33,10 +33,44 @@ function pickString(payload, keys) {
 
 function normalizeNodeProfile(context) {
   return {
-    displayName: pickString(context, ['displayName', 'display_name', 'name']),
+    displayName: pickString(context, ['displayName', 'display_name', 'DISPLAY_NAME', 'dn', 'name']),
     peerId: pickString(context, ['peerId', 'peer_id']),
     transport: pickString(context, ['transport']),
     descriptorUrl: pickString(context, ['descriptorUrl', 'descriptor_url']),
+  }
+}
+
+function serverNodeProfileFromPayload(payload) {
+  const origin = typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : ''
+  const protocol = typeof window !== 'undefined' && window.location?.protocol
+    ? window.location.protocol.replace(/:$/, '')
+    : 'https'
+  return {
+    displayName: pickString(payload, ['displayName', 'display_name', 'DISPLAY_NAME', 'dn', 'name']) ?? (origin || null),
+    peerId: pickString(payload, ['peerId', 'peer_id']),
+    transport: pickString(payload, ['transport']) ?? protocol,
+    descriptorUrl: pickString(payload, ['descriptorUrl', 'descriptor_url']) ?? (origin ? `${origin}/api/module-delivery/provider` : null),
+  }
+}
+
+async function loadSameOriginNodeProfile() {
+  if (typeof fetch !== 'function') {
+    return null
+  }
+
+  try {
+    const response = await fetch('/api/node/info', {
+      credentials: 'include',
+    })
+    if (!response.ok) {
+      return null
+    }
+    const payload = await response.json()
+    return serverNodeProfileFromPayload(payload)
+  } catch (_) {
+    return null
   }
 }
 
@@ -69,6 +103,15 @@ const NodeInfoAdvanced = ({ t, ipfsProvider, ipfsApiAddress, gatewayUrl, isNodeI
       setNodeProfileError(null)
 
       try {
+        const serverProfile = await loadSameOriginNodeProfile()
+        if (serverProfile?.peerId) {
+          if (!cancelled) {
+            setNodeProfile(serverProfile)
+            setNodeProfileStatus('ready')
+          }
+          return
+        }
+
         const connected = await runtimeRef.current.connect()
         if (!cancelled) {
           setNodeProfile(normalizeNodeProfile(connected.nodeContext))
@@ -113,7 +156,7 @@ const NodeInfoAdvanced = ({ t, ipfsProvider, ipfsApiAddress, gatewayUrl, isNodeI
 
   const nodeProfileDescription = nodeProfileStatus === 'loading'
     ? loadingString
-    : 'Node identity loaded from the SDN runtime adapter.'
+    : 'Node identity loaded from the SDN node API.'
 
   return (
     <Details className='mt3 f6' summaryText={t('app:terms.advanced')} open={isNodeInfoOpen} onClick={handleSummaryClick}>

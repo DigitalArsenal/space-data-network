@@ -20,7 +20,6 @@ function DirectoryPage() {
   const [error, setError] = useState(null)
   const [importStatus, setImportStatus] = useState('idle')
   const [importError, setImportError] = useState(null)
-  const [recordTypeFilter, setRecordTypeFilter] = useState('all')
   const [sortKey, setSortKey] = useState(directorySortKeys.name)
   const [sortDirection, setSortDirection] = useState('asc')
   const [page, setPage] = useState(1)
@@ -60,7 +59,7 @@ function DirectoryPage() {
 
   useEffect(() => {
     setPage(1)
-  }, [query, recordTypeFilter, sortKey, sortDirection, pageSize])
+  }, [query, sortKey, sortDirection, pageSize])
 
   const directoryRecords = useMemo(() => {
     return [
@@ -69,19 +68,12 @@ function DirectoryPage() {
     ]
   }, [snapshot])
 
-  const filteredRecords = useMemo(() => {
-    if (recordTypeFilter === 'all') {
-      return directoryRecords
-    }
-    return directoryRecords.filter((record) => record.type === recordTypeFilter)
-  }, [directoryRecords, recordTypeFilter])
-
   const sortedRecords = useMemo(() => {
     const direction = sortDirection === 'asc' ? 1 : -1
-    return [...filteredRecords].sort((left, right) => {
+    return [...directoryRecords].sort((left, right) => {
       return compareDirectoryValues(left[sortKey], right[sortKey]) * direction
     })
-  }, [filteredRecords, sortDirection, sortKey])
+  }, [directoryRecords, sortDirection, sortKey])
 
   const totalPages = Math.max(1, Math.ceil(sortedRecords.length / pageSize))
   const currentPage = Math.min(page, totalPages)
@@ -158,23 +150,9 @@ function DirectoryPage() {
           </div>
 
           <div className='w-100 w-third-l pl0 pl4-l bl-l b--black-10 mb3 mb0-l'>
-            <label className='db mb3'>
-              <span className='db f6 ttu tracked black-60 mb1'>Type filter</span>
-              <select
-                id='sdn-directory-record-type-filter'
-                name='sdn-directory-record-type-filter'
-                className='input-reset ba b--black-20 pa2 br2 bg-white w-100'
-                value={recordTypeFilter}
-                onChange={(event) => setRecordTypeFilter(event.target.value)}
-              >
-                <option value='all'>All records</option>
-                <option value='node'>Node</option>
-                <option value='user'>User</option>
-              </select>
-            </label>
             <h2 className='f4 mt0 mb2'>Upload vCard / EPM</h2>
             <p className='mt0 mb3 f6 lh-copy black-60'>
-              Import trusted vCard or EPM JSON records, then search for people or nodes.
+              Import trusted vCard or EPM JSON records. The record type is read from the file.
             </p>
             <input
               id='sdn-directory-import-file'
