@@ -57,6 +57,7 @@ export interface DirectoryRecordBase {
   legal_name?: string;
   bitcoin_address?: string;
   epm_cid?: string;
+  epm_json?: string | Record<string, unknown>;
   source?: string;
   updated_at?: number;
 }

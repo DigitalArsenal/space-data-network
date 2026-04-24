@@ -3,10 +3,13 @@ package vcard
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"image"
 	"image/png"
+	"strings"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/makiuchi-d/gozxing"
 	"github.com/makiuchi-d/gozxing/qrcode"
 	qrgen "github.com/skip2/go-qrcode"
@@ -74,10 +77,27 @@ func QRToVCard(pngData []byte) (string, error) {
 
 // EPMToQR converts an EPM FlatBuffer directly to a QR code PNG.
 func EPMToQR(epmBytes []byte, size int) ([]byte, error) {
-	vcardStr, err := EPMToVCard(epmBytes)
-	if err != nil {
-		return nil, err
+	if size > 0 && size < 1024 {
+		size = 1024
 	}
+	if len(epmBytes) == 0 {
+		return nil, ErrEmptyEPM
+	}
+	if !EPM.SizePrefixedEPMBufferHasIdentifier(epmBytes) {
+		return nil, ErrInvalidEPM
+	}
+	epm := EPM.GetSizePrefixedRootAsEPM(epmBytes, 0)
+	displayName := strings.TrimSpace(string(epm.DN()))
+	if displayName == "" {
+		displayName = "Space Data Network EPM"
+	}
+	vcardStr := strings.Join([]string{
+		"BEGIN:VCARD",
+		"VERSION:3.0",
+		"FN:" + escapeVCardText(displayName),
+		foldVCardLine(FieldSDNEPMBase64 + ":" + base64.StdEncoding.EncodeToString(epmBytes)),
+		"END:VCARD",
+	}, "\r\n") + "\r\n"
 	return VCardToQR(vcardStr, size)
 }
 
