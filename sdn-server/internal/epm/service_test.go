@@ -150,6 +150,34 @@ func TestNodeEPMIdentifiesAsNodeEntityType(t *testing.T) {
 	}
 }
 
+func TestNodeEPMSignatureVerifiesAndCoversTimestamp(t *testing.T) {
+	t.Parallel()
+
+	identity, err := testDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testDerivedIdentity failed: %v", err)
+	}
+
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "xpub-test", t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	epmBytes := service.GetNodeEPM()
+	if err := VerifyEPMSignature(epmBytes); err != nil {
+		t.Fatalf("VerifyEPMSignature failed: %v", err)
+	}
+
+	tampered := append([]byte(nil), epmBytes...)
+	epmRecord := EPM.GetSizePrefixedRootAsEPM(tampered, 0)
+	if !epmRecord.MutateSIGNATURE_TIMESTAMP(epmRecord.SIGNATURE_TIMESTAMP() + 1) {
+		t.Fatal("failed to mutate signature timestamp")
+	}
+	if err := VerifyEPMSignature(tampered); err == nil {
+		t.Fatal("VerifyEPMSignature accepted tampered signature timestamp")
+	}
+}
+
 func TestNodeVCardIncludesDirectoryMetadataAndPhoto(t *testing.T) {
 	t.Parallel()
 
@@ -181,6 +209,38 @@ func TestNodeVCardIncludesDirectoryMetadataAndPhoto(t *testing.T) {
 	}
 	if !strings.Contains(vcard, "PHOTO;ENCODING=b;MEDIATYPE=image/png:iVBORw0KGgo=") {
 		t.Fatalf("vCard missing profile photo: %s", vcard)
+	}
+}
+
+func TestNodeVCardIncludesSignedEPMPayload(t *testing.T) {
+	t.Parallel()
+
+	identity, err := testDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testDerivedIdentity failed: %v", err)
+	}
+
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "xpub-test", t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	vcard, err := service.GetNodeVCard()
+	if err != nil {
+		t.Fatalf("GetNodeVCard failed: %v", err)
+	}
+
+	if !strings.Contains(vcard, "X-SDN-EPM-CID:") {
+		t.Fatalf("vCard missing EPM CID: %s", vcard)
+	}
+	if !strings.Contains(vcard, "X-SDN-EPM-SIGNATURE:") {
+		t.Fatalf("vCard missing EPM signature: %s", vcard)
+	}
+	if !strings.Contains(vcard, "X-SDN-EPM-SIGNATURE-TIMESTAMP:") {
+		t.Fatalf("vCard missing EPM signature timestamp: %s", vcard)
+	}
+	if !strings.Contains(vcard, "X-SDN-EPM-B64:") {
+		t.Fatalf("vCard missing embedded EPM payload: %s", vcard)
 	}
 }
 

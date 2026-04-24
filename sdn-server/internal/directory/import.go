@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/emersion/go-vcard"
+	govcard "github.com/emersion/go-vcard"
 
+	sdnepm "github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
+	sdnvcard "github.com/spacedatanetwork/sdn-server/internal/vcard"
 )
 
 const (
@@ -43,13 +45,31 @@ func (s *Service) ImportRecord(req ImportRecordRequest) (ImportRecordResult, err
 
 	epmCID := strings.TrimSpace(req.EPMCID)
 	if strings.TrimSpace(req.VCard) != "" {
-		record, vcardCID, err := directoryRecordFromVCard(req.VCard)
-		if err != nil {
+		if embeddedEPM, err := sdnvcard.EmbeddedEPMFromVCard(req.VCard); err != nil {
 			return ImportRecordResult{}, err
-		}
-		epmJSON = record
-		if epmCID == "" {
-			epmCID = vcardCID
+		} else if len(embeddedEPM) > 0 {
+			if err := sdnepm.VerifyEPMSignature(embeddedEPM); err != nil {
+				return ImportRecordResult{}, fmt.Errorf("verify embedded EPM signature: %w", err)
+			}
+			record, err := sdnepm.DirectoryRecordJSONFromEPM(embeddedEPM, "")
+			if err != nil {
+				return ImportRecordResult{}, err
+			}
+			epmJSON = record
+			if computedCID, err := sdnepm.ComputeEPMCID(embeddedEPM); err != nil {
+				return ImportRecordResult{}, err
+			} else {
+				epmCID = computedCID
+			}
+		} else {
+			record, vcardCID, err := directoryRecordFromVCard(req.VCard)
+			if err != nil {
+				return ImportRecordResult{}, err
+			}
+			epmJSON = record
+			if epmCID == "" {
+				epmCID = vcardCID
+			}
 		}
 	}
 	if epmJSON == nil {
@@ -95,7 +115,7 @@ func (s *Service) importEPMJSON(kind string, epmJSON map[string]any, epmCID, sou
 }
 
 func directoryRecordFromVCard(vcardData string) (map[string]any, string, error) {
-	dec := vcard.NewDecoder(strings.NewReader(vcardData))
+	dec := govcard.NewDecoder(strings.NewReader(vcardData))
 	card, err := dec.Decode()
 	if err != nil {
 		return nil, "", fmt.Errorf("parse vcard: %w", err)
@@ -107,14 +127,14 @@ func directoryRecordFromVCard(vcardData string) (map[string]any, string, error) 
 	}
 	if peerID := firstNonEmpty(
 		vcardField(card, vCardPropPeerID),
-		vcardField(card, vcard.FieldUID),
+		vcardField(card, govcard.FieldUID),
 	); peerID != "" {
 		record["peer_id"] = peerID
 	}
-	if dn := vcardField(card, vcard.FieldFormattedName); dn != "" {
+	if dn := vcardField(card, govcard.FieldFormattedName); dn != "" {
 		record["dn"] = dn
 	}
-	if legalName := vcardField(card, vcard.FieldOrganization); legalName != "" {
+	if legalName := vcardField(card, govcard.FieldOrganization); legalName != "" {
 		record["legal_name"] = legalName
 	}
 	if bitcoinAddress := firstNonEmpty(
@@ -127,7 +147,7 @@ func directoryRecordFromVCard(vcardData string) (map[string]any, string, error) 
 	return record, vcardField(card, vCardPropEPMCID), nil
 }
 
-func vcardField(card vcard.Card, name string) string {
+func vcardField(card govcard.Card, name string) string {
 	field := card.Get(name)
 	if field == nil {
 		return ""

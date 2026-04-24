@@ -655,6 +655,9 @@ func (s *Service) decorateNodeVCardLocked(vcardStr string) string {
 		"X-SDN-DIRECTORY-KIND:node",
 		"X-SDN-PEER-ID:" + s.peerID.String(),
 	}
+	if cid, err := ComputeEPMCID(s.epmBytes); err == nil && strings.TrimSpace(cid) != "" {
+		lines = append(lines, "X-SDN-EPM-CID:"+cid)
+	}
 	if s.identity != nil && s.identity.Addresses != nil && s.identity.Addresses.Bitcoin != nil {
 		if address := strings.TrimSpace(s.identity.Addresses.Bitcoin.Address); address != "" {
 			lines = append(lines, "X-SDN-BITCOIN-ADDRESS:"+address)
@@ -1309,10 +1312,7 @@ func (s *Service) rebuildEPMLocked() error {
 	var signatureOff flatbuffers.UOffsetT
 	if s.identity != nil {
 		canonicalContent := s.buildCanonicalSigningContent(signatureTimestamp)
-		sigPrivBytes, err := s.identity.SigningPrivKey.Raw()
-		if err == nil && len(sigPrivBytes) >= ed25519.SeedSize {
-			privKey := ed25519.NewKeyFromSeed(sigPrivBytes[:ed25519.SeedSize])
-			sig := ed25519.Sign(privKey, canonicalContent)
+		if sig, err := s.identity.SigningPrivKey.Sign(canonicalContent); err == nil {
 			signatureOff = builder.CreateString(hex.EncodeToString(sig))
 		}
 	}
@@ -1384,7 +1384,7 @@ func (s *Service) rebuildEPMLocked() error {
 }
 
 // buildCanonicalSigningContent builds the canonical JSON of all EPM fields
-// except SIGNATURE and SIGNATURE_TIMESTAMP for content signing.
+// except SIGNATURE for content signing.
 // This matches the JS buildEPMSigningContent() output.
 func (s *Service) buildCanonicalSigningContent(signatureTimestamp int64) []byte {
 	content := make(map[string]interface{})
@@ -1427,6 +1427,30 @@ func (s *Service) buildCanonicalSigningContent(signatureTimestamp int64) []byte 
 	if p.Telephone != "" {
 		content["TELEPHONE"] = p.Telephone
 	}
+	if p.Address != nil && !p.Address.IsEmpty() {
+		address := make(map[string]interface{})
+		if p.Address.Country != "" {
+			address["COUNTRY"] = p.Address.Country
+		}
+		if p.Address.Region != "" {
+			address["REGION"] = p.Address.Region
+		}
+		if p.Address.Locality != "" {
+			address["LOCALITY"] = p.Address.Locality
+		}
+		if p.Address.PostalCode != "" {
+			address["POSTAL_CODE"] = p.Address.PostalCode
+		}
+		if p.Address.Street != "" {
+			address["STREET"] = p.Address.Street
+		}
+		if p.Address.POBox != "" {
+			address["POST_OFFICE_BOX_NUMBER"] = p.Address.POBox
+		}
+		if len(address) > 0 {
+			content["ADDRESS"] = address
+		}
+	}
 	if len(p.AlternateNames) > 0 {
 		content["ALTERNATE_NAMES"] = p.AlternateNames
 	}
@@ -1434,16 +1458,24 @@ func (s *Service) buildCanonicalSigningContent(signatureTimestamp int64) []byte 
 	// Keys
 	if s.identity != nil {
 		var keys []map[string]interface{}
-		sigPubBytes, _ := s.identity.SigningPubKey.Raw()
+		identityPubBytes, _ := s.identity.IdentityPubKey.Raw()
 		keys = append(keys, map[string]interface{}{
+			"PUBLIC_KEY":   hex.EncodeToString(identityPubBytes),
+			"ADDRESS_TYPE": "secp256k1",
+			"KEY_ADDRESS":  s.identity.IdentityKeyPath,
+			"KEY_TYPE":     "Signing",
+		})
+		sigPubBytes, _ := s.identity.SigningPubKey.Raw()
+		signingKey := map[string]interface{}{
 			"PUBLIC_KEY":   hex.EncodeToString(sigPubBytes),
 			"ADDRESS_TYPE": "ed25519",
 			"KEY_ADDRESS":  s.identity.SigningKeyPath,
 			"KEY_TYPE":     "Signing",
-		})
-		if s.xpub != "" {
-			keys[0]["XPUB"] = s.xpub
 		}
+		if s.xpub != "" {
+			signingKey["XPUB"] = s.xpub
+		}
+		keys = append(keys, signingKey)
 		keys = append(keys, map[string]interface{}{
 			"PUBLIC_KEY":   hex.EncodeToString(s.identity.EncryptionPub),
 			"ADDRESS_TYPE": "x25519",
@@ -1462,6 +1494,7 @@ func (s *Service) buildCanonicalSigningContent(signatureTimestamp int64) []byte 
 		content["MULTIFORMAT_ADDRESS"] = addresses
 	}
 	content["ENTITY_TYPE"] = "Node"
+	content["SIGNATURE_TIMESTAMP"] = signatureTimestamp
 
 	// Chain proofs
 	if s.identityAttestation != nil && len(s.identityAttestation.ChainProofs) > 0 {
@@ -1481,8 +1514,7 @@ func (s *Service) buildCanonicalSigningContent(signatureTimestamp int64) []byte 
 		content["CHAIN_PROOFS"] = proofs
 	}
 
-	// json.Marshal sorts map keys alphabetically
-	canonical, _ := json.Marshal(content)
+	canonical, _ := marshalEPMSigningContent(content)
 	return canonical
 }
 

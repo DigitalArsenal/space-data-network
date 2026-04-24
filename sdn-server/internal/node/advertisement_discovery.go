@@ -192,6 +192,14 @@ func (n *Node) indexFetchedDiscoveredNodeEPM(pid peer.ID, source string, epmByte
 	if n == nil || pid == "" || n.peerRegistry == nil {
 		return
 	}
+	if err := epm.VerifyEPMSignature(epmBytes); err != nil {
+		log.Debugf("Skipping unverified discovered EPM for peer %s: %v", pid, err)
+		return
+	}
+	if epmPeerID, err := epm.PeerIDFromEPM(epmBytes); err == nil && epmPeerID != "" && epmPeerID != pid.String() {
+		log.Debugf("Skipping discovered EPM for peer %s: signed EPM advertises peer %s", pid, epmPeerID)
+		return
+	}
 
 	info, err := discoveredNodeEPMJSON(epmBytes, pid)
 	if err != nil {
