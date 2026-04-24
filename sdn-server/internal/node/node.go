@@ -371,6 +371,9 @@ func (n *Node) init() error {
 	}
 	if n.store != nil {
 		n.directorySvc = directory.NewService(n.store)
+		if err := n.indexLocalNodeEPM(); err != nil {
+			log.Warnf("Failed to index local node EPM: %v", err)
+		}
 	}
 
 	// Initialize runtime plugins.
@@ -1297,6 +1300,18 @@ func (n *Node) EPMService() *epm.Service {
 // DirectoryService returns the node's directory index service.
 func (n *Node) DirectoryService() *directory.Service {
 	return n.directorySvc
+}
+
+// IndexLocalNodeEPM writes the current node EPM profile into the local directory.
+func (n *Node) IndexLocalNodeEPM() error {
+	return n.indexLocalNodeEPM()
+}
+
+func (n *Node) indexLocalNodeEPM() error {
+	if n == nil || n.epmService == nil || n.directorySvc == nil {
+		return nil
+	}
+	return n.directorySvc.UpsertNodeEPMJSON(n.epmService.DirectoryRecordJSON(), "", "local-node")
 }
 
 // SigningKey returns the node's Ed25519 signing private key bytes, or nil if unavailable.

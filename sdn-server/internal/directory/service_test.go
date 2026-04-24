@@ -1,11 +1,13 @@
 package directory
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -198,6 +200,156 @@ func TestHTTPHandler_ServesNodeAndUserSearches(t *testing.T) {
 			t.Fatalf("unexpected user fields: %#v", got)
 		}
 	})
+}
+
+func TestAdminHTTPHandler_ImportsDirectoryEPMJSON(t *testing.T) {
+	store := mustNewDirectoryStore(t)
+	svc := NewService(store)
+	handler := NewAdminHTTPHandler(svc)
+
+	body := `{
+		"kind": "node",
+		"source": "manual-upload",
+		"epm_cid": "bafy-uploaded-node",
+		"epm_json": {
+			"peer_id": "16Uiu2HAmUploaded",
+			"dn": "Uploaded Node",
+			"bitcoin_address": "bc1quploaded"
+		}
+	}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/directory/import", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"imported":1`) {
+		t.Fatalf("response missing import count: %s", rec.Body.String())
+	}
+
+	nodes, err := svc.SearchNodes("bc1quploaded", 10)
+	if err != nil {
+		t.Fatalf("SearchNodes failed: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("SearchNodes returned %d records, want 1", len(nodes))
+	}
+	if nodes[0].PeerID != "16Uiu2HAmUploaded" || nodes[0].EPMCID != "bafy-uploaded-node" {
+		t.Fatalf("unexpected imported node: %#v", nodes[0])
+	}
+}
+
+func TestAdminHTTPHandler_InfersImportedEPMKindFromEntityType(t *testing.T) {
+	store := mustNewDirectoryStore(t)
+	svc := NewService(store)
+	handler := NewAdminHTTPHandler(svc)
+
+	body := `{
+		"source": "manual-upload",
+		"epm_cid": "bafy-uploaded-node-entity-type",
+		"epm_json": {
+			"entity_type": "node",
+			"peer_id": "16Uiu2HAmEntityTypedNode",
+			"dn": "Entity Typed Node",
+			"bitcoin_address": "bc1qentitytypednode"
+		}
+	}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/directory/import", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	nodes, err := svc.SearchNodes("entitytypednode", 10)
+	if err != nil {
+		t.Fatalf("SearchNodes failed: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("SearchNodes returned %d records, want 1", len(nodes))
+	}
+	if nodes[0].Kind != KindNode {
+		t.Fatalf("Kind = %q, want %q", nodes[0].Kind, KindNode)
+	}
+	if nodes[0].PeerID != "16Uiu2HAmEntityTypedNode" {
+		t.Fatalf("PeerID = %q, want %q", nodes[0].PeerID, "16Uiu2HAmEntityTypedNode")
+	}
+}
+
+func TestAdminHTTPHandler_DefaultsImportedEPMKindToUser(t *testing.T) {
+	store := mustNewDirectoryStore(t)
+	svc := NewService(store)
+	handler := NewAdminHTTPHandler(svc)
+
+	body := `{
+		"source": "manual-upload",
+		"epm_json": {
+			"peer_id": "16Uiu2HAmDefaultUser",
+			"dn": "Default User",
+			"legal_name": "Default User"
+		}
+	}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/directory/import", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	users, err := svc.SearchUsers("Default User", 10)
+	if err != nil {
+		t.Fatalf("SearchUsers failed: %v", err)
+	}
+	if len(users) != 1 {
+		t.Fatalf("SearchUsers returned %d records, want 1", len(users))
+	}
+	if users[0].Kind != KindUser {
+		t.Fatalf("Kind = %q, want %q", users[0].Kind, KindUser)
+	}
+}
+
+func TestAdminHTTPHandler_ImportsDirectoryVCard(t *testing.T) {
+	store := mustNewDirectoryStore(t)
+	svc := NewService(store)
+	handler := NewAdminHTTPHandler(svc)
+
+	body := `{
+		"kind": "node",
+		"source": "manual-vcard-upload",
+		"vcard": "BEGIN:VCARD\nVERSION:4.0\nFN:Uploaded vCard Node\nORG:Space Data Directory\nX-SDN-PEER-ID:16Uiu2HAmVCard\nX-SDN-BITCOIN-ADDRESS:bc1qvcard\nX-SDN-EPM-CID:bafy-vcard-node\nEND:VCARD"
+	}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/directory/import", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	nodes, err := svc.SearchNodes("bc1qvcard", 10)
+	if err != nil {
+		t.Fatalf("SearchNodes failed: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("SearchNodes returned %d records, want 1", len(nodes))
+	}
+	if nodes[0].PeerID != "16Uiu2HAmVCard" || nodes[0].DN != "Uploaded vCard Node" {
+		t.Fatalf("unexpected imported node: %#v", nodes[0])
+	}
+	if nodes[0].EPMCID != "bafy-vcard-node" {
+		t.Fatalf("EPMCID = %q, want %q", nodes[0].EPMCID, "bafy-vcard-node")
+	}
 }
 
 func TestSearchNodesHonorsRequestedLimit(t *testing.T) {

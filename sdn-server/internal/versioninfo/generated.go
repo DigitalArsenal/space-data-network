@@ -3,8 +3,8 @@
 package versioninfo
 
 const (
-	SuiteVersion = "1.0.2"
-	SpaceDataStandardsVersion = "1.85.0"
+	SuiteVersion = "1.0.3"
+	SpaceDataStandardsVersion = "1.93.1"
 	HDWalletWasmVersion = "2.0.2"
 	HDWalletUIVersion = "2.0.2"
 	IPFSWebUIVersion = "4.12.0"

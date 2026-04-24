@@ -43,7 +43,7 @@ describe('admin vite config', () => {
     expect(String(banner)).toContain('browser: true');
   });
 
-  it('pins copied upstream bootstrap dependencies to the upstream webui package tree', async () => {
+  it('pins copied upstream bootstrap dependencies and root-only browser shims', async () => {
     vi.resetModules();
 
     const { default: config } = await import('../../ui/vite.config.mts');
@@ -63,7 +63,7 @@ describe('admin vite config', () => {
     const scureBaseAlias = findAliasFor(alias, '@scure/base');
 
     expect(String(reactAlias?.replacement)).toContain('/webui/node_modules/react');
-    expect(String(reduxBundlerAlias?.replacement)).toContain('/webui/node_modules/redux-bundler');
+    expect(String(reduxBundlerAlias?.replacement)).toContain('/sdn-js/ui/shims/redux-bundler-bound-timers.js');
     expect(String(bundlerAlias?.replacement)).toContain('/webui/node_modules/redux-bundler-react');
     expect(String(walletWasmAlias?.replacement)).toContain('/sdn-js/node_modules/hd-wallet-wasm/src/index.mjs');
     expect(String(nobleCurvesAlias?.replacement)).toContain('/sdn-js/node_modules/@noble/curves/$1');
@@ -101,6 +101,10 @@ describe('admin vite config', () => {
       './NodeInfo.js',
       statusPageImporter,
     );
+    const nodeInfoAdvancedOverride = await brandingPlugin?.resolveId?.(
+      './NodeInfoAdvanced.js',
+      statusPageImporter,
+    );
     const connectedOverride = await brandingPlugin?.resolveId?.(
       './components/connected/Connected.js',
       appImporter,
@@ -125,6 +129,7 @@ describe('admin vite config', () => {
     expect(String(navOverride)).toContain('/sdn-js/ui/src/upstream-webui/overrides/navigation/NavBar.js');
     expect(String(statusOverride)).toContain('/sdn-js/ui/src/upstream-webui/overrides/status/StatusConnected.js');
     expect(String(nodeInfoOverride)).toContain('/sdn-js/ui/src/upstream-webui/overrides/status/NodeInfo.js');
+    expect(String(nodeInfoAdvancedOverride)).toContain('/sdn-js/ui/src/upstream-webui/overrides/status/NodeInfoAdvanced.js');
     expect(String(connectedOverride)).toContain('/sdn-js/ui/src/upstream-webui/overrides/components/connected/Connected.js');
     expect(String(routesOverride)).toContain('/sdn-js/ui/src/upstream-webui/overrides/bundles/routes.js');
     expect(String(welcomeConnectedOverride)).toContain('/sdn-js/ui/src/upstream-webui/overrides/components/is-connected/IsConnected.js');

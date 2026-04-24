@@ -3,8 +3,10 @@ package epm
 import (
 	"bytes"
 	"encoding/hex"
+	"strings"
 	"testing"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 
@@ -108,6 +110,64 @@ func TestGetNodeEPMJSONProjectsRuntimeIdentityFields(t *testing.T) {
 	}
 	if got, want := info["solana_key_path"], identity.SolanaKeyPath; got != want {
 		t.Fatalf("solana_key_path = %v, want %q", got, want)
+	}
+}
+
+func TestNodeEPMIdentifiesAsNodeEntityType(t *testing.T) {
+	t.Parallel()
+
+	identity, err := testDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testDerivedIdentity failed: %v", err)
+	}
+
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "xpub-test", t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	info := service.GetNodeEPMJSON()
+	if got, want := info["entity_type"], "node"; got != want {
+		t.Fatalf("entity_type = %v, want %q", got, want)
+	}
+
+	epm := EPM.GetSizePrefixedRootAsEPM(service.GetNodeEPM(), 0)
+	if got, want := epm.ENTITY_TYPE(), EPM.EntityTypeNode; got != want {
+		t.Fatalf("ENTITY_TYPE = %v, want %v", got, want)
+	}
+}
+
+func TestNodeVCardIncludesDirectoryMetadataAndPhoto(t *testing.T) {
+	t.Parallel()
+
+	peerID, err := peer.Decode("16Uiu2HAm9RZz2EQx8eTsnNCD4v3HVzPf1EfBxqPLqYMXeCQFjaoz")
+	if err != nil {
+		t.Fatalf("peer.Decode failed: %v", err)
+	}
+
+	service := NewService(nil, peers.NewRegistry(false, nil), peerID, "", t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	if err := service.UpdateProfile(&Profile{
+		DN:           "SpaceAware Node",
+		PhotoDataURL: "data:image/png;base64,iVBORw0KGgo=",
+	}); err != nil {
+		t.Fatalf("UpdateProfile failed: %v", err)
+	}
+
+	vcard, err := service.GetNodeVCard()
+	if err != nil {
+		t.Fatalf("GetNodeVCard failed: %v", err)
+	}
+	if !strings.Contains(vcard, "X-SDN-DIRECTORY-KIND:node") {
+		t.Fatalf("vCard missing directory kind: %s", vcard)
+	}
+	if !strings.Contains(vcard, "X-SDN-PEER-ID:"+peerID.String()) {
+		t.Fatalf("vCard missing peer ID: %s", vcard)
+	}
+	if !strings.Contains(vcard, "PHOTO;ENCODING=b;MEDIATYPE=image/png:iVBORw0KGgo=") {
+		t.Fatalf("vCard missing profile photo: %s", vcard)
 	}
 }
 

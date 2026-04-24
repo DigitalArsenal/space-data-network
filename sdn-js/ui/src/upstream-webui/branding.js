@@ -1,4 +1,23 @@
-export function brandUpstreamDocumentTitle(title) {
+const rootOnlyRouteTitles = new Map([
+  ['/directory', 'Directory | Space Data Network'],
+])
+
+export function rootOnlyDocumentTitleForHash(hash) {
+  const route = String(hash ?? '').replace(/^#/, '')
+  for (const [prefix, title] of rootOnlyRouteTitles) {
+    if (route === prefix || route.startsWith(`${prefix}/`)) {
+      return title
+    }
+  }
+  return null
+}
+
+export function brandUpstreamDocumentTitle(title, hash = '') {
+  const rootOnlyTitle = rootOnlyDocumentTitleForHash(hash)
+  if (rootOnlyTitle) {
+    return rootOnlyTitle
+  }
+
   const trimmedTitle = String(title ?? '').trim()
   if (!trimmedTitle) {
     return 'Space Data Network'
@@ -18,7 +37,7 @@ export function installRootDocumentTitleSync() {
   }
 
   const applyBranding = () => {
-    const brandedTitle = brandUpstreamDocumentTitle(document.title)
+    const brandedTitle = brandUpstreamDocumentTitle(document.title, window.location.hash)
     if (document.title !== brandedTitle) {
       document.title = brandedTitle
     }

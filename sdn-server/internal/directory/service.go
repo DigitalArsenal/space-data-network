@@ -72,7 +72,13 @@ func (s *Service) upsertEPMJSON(kind string, epmJSON map[string]any, epmCID, sou
 func normalizeRecord(kind string, epmJSON map[string]any, epmCID, source string) (storage.DirectoryRecord, error) {
 	normalizedKind := strings.TrimSpace(strings.ToLower(kind))
 	if normalizedKind == "" {
-		return storage.DirectoryRecord{}, fmt.Errorf("directory kind is required")
+		normalizedKind = InferKind(epmJSON)
+	}
+	if normalizedKind == "" {
+		normalizedKind = KindUser
+	}
+	if normalizedKind != KindNode && normalizedKind != KindUser {
+		return storage.DirectoryRecord{}, fmt.Errorf("unsupported directory kind %q", normalizedKind)
 	}
 
 	peerID := firstString(epmJSON, "peer_id", "peerID", "peerid", "id")
@@ -124,6 +130,87 @@ func firstString(m map[string]any, keys ...string) string {
 				if trimmed := strings.TrimSpace(s); trimmed != "" {
 					return trimmed
 				}
+			}
+		}
+	}
+	return ""
+}
+
+// InferKind resolves the directory record kind from canonical EPM fields.
+func InferKind(epmJSON map[string]any) string {
+	if epmJSON == nil {
+		return ""
+	}
+
+	if kind := normalizeKindValue(firstAny(epmJSON, "directory_kind", "kind")); kind != "" {
+		return kind
+	}
+	if kind := normalizeEntityTypeValue(firstAny(epmJSON, "entity_type", "ENTITY_TYPE", "entityType")); kind != "" {
+		return kind
+	}
+	if firstString(epmJSON, "bitcoin_address", "BITCOIN_ADDRESS", "epm_cid", "EPM_CID") != "" {
+		return KindNode
+	}
+	return KindUser
+}
+
+func firstAny(m map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value, ok := m[key]; ok {
+			return value
+		}
+	}
+	return nil
+}
+
+func normalizeKindValue(value any) string {
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case KindNode:
+		return KindNode
+	case KindUser:
+		return KindUser
+	default:
+		return ""
+	}
+}
+
+func normalizeEntityTypeValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case KindNode, "1":
+			return KindNode
+		case KindUser, "0":
+			return KindUser
+		default:
+			return ""
+		}
+	case float64:
+		if typed == 1 {
+			return KindNode
+		}
+		if typed == 0 {
+			return KindUser
+		}
+	case int:
+		if typed == 1 {
+			return KindNode
+		}
+		if typed == 0 {
+			return KindUser
+		}
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err == nil {
+			if parsed == 1 {
+				return KindNode
+			}
+			if parsed == 0 {
+				return KindUser
 			}
 		}
 	}

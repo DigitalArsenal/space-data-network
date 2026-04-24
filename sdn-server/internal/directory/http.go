@@ -26,10 +26,20 @@ func NewHTTPHandler(svc *Service) *HTTPHandler {
 	return h
 }
 
+// NewAdminHTTPHandler creates the authenticated directory mutation handler.
+func NewAdminHTTPHandler(svc *Service) *HTTPHandler {
+	h := &HTTPHandler{
+		svc: svc,
+		mux: http.NewServeMux(),
+	}
+	h.mux.HandleFunc("/api/v1/admin/directory/import", h.handleImport)
+	return h
+}
+
 // ServeHTTP implements http.Handler.
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Max-Age", "86400")
 
 	if r.Method == http.MethodOptions {
@@ -49,6 +59,36 @@ func (h *HTTPHandler) handleNodes(w http.ResponseWriter, r *http.Request) {
 func (h *HTTPHandler) handleUsers(w http.ResponseWriter, r *http.Request) {
 	h.handleSearch(w, r, KindUser, func(search string, limit int) ([]storage.DirectoryRecord, error) {
 		return h.svc.SearchUsers(search, limit)
+	})
+}
+
+func (h *HTTPHandler) handleImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h == nil || h.svc == nil {
+		http.Error(w, "directory service not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req ImportRecordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid directory import payload", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.svc.ImportRecord(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(directoryImportResponse{
+		Imported: result.Imported,
+		Nodes:    toAPIRecords(result.Nodes),
+		Users:    toAPIRecords(result.Users),
 	})
 }
 
@@ -102,6 +142,12 @@ type directorySearchResponse struct {
 	Kind    string             `json:"kind"`
 	Count   int                `json:"count"`
 	Results []directoryAPIItem `json:"results"`
+}
+
+type directoryImportResponse struct {
+	Imported int                `json:"imported"`
+	Nodes    []directoryAPIItem `json:"nodes"`
+	Users    []directoryAPIItem `json:"users"`
 }
 
 type directoryAPIItem struct {

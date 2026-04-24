@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -593,6 +594,9 @@ func (s *Service) Init() error {
 	if err != nil {
 		log.Infof("No existing EPM profile, creating default")
 		profile = s.defaultProfile()
+		if saveErr := SaveProfile(s.dataDir, profile); saveErr != nil {
+			log.Warnf("Failed to persist default EPM profile: %v", saveErr)
+		}
 	}
 	s.profile = profile
 
@@ -624,17 +628,73 @@ func (s *Service) GetNodeVCard() (string, error) {
 	if s.epmBytes == nil {
 		return "", fmt.Errorf("no EPM available")
 	}
-	return vcard.EPMToVCard(s.epmBytes)
+	vcardStr, err := vcard.EPMToVCard(s.epmBytes)
+	if err != nil {
+		return "", err
+	}
+	return s.decorateNodeVCardLocked(vcardStr), nil
 }
 
 // GetNodeQR returns a QR code PNG of the node's vCard.
 func (s *Service) GetNodeQR(size int) ([]byte, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.epmBytes == nil {
-		return nil, fmt.Errorf("no EPM available")
+	vcardStr, err := s.GetNodeVCard()
+	if err != nil {
+		return nil, err
 	}
-	return vcard.EPMToQR(s.epmBytes, size)
+	return vcard.VCardToQR(vcardStr, size)
+}
+
+func (s *Service) decorateNodeVCardLocked(vcardStr string) string {
+	lines := []string{
+		"X-SDN-DIRECTORY-KIND:node",
+		"X-SDN-PEER-ID:" + s.peerID.String(),
+	}
+	if s.identity != nil && s.identity.Addresses != nil && s.identity.Addresses.Bitcoin != nil {
+		if address := strings.TrimSpace(s.identity.Addresses.Bitcoin.Address); address != "" {
+			lines = append(lines, "X-SDN-BITCOIN-ADDRESS:"+address)
+		}
+	}
+	if s.profile != nil {
+		if photoLine := vcardPhotoLine(s.profile.PhotoDataURL); photoLine != "" {
+			lines = append(lines, photoLine)
+		}
+	}
+	return insertVCardLines(vcardStr, lines)
+}
+
+func insertVCardLines(vcardStr string, lines []string) string {
+	if len(lines) == 0 {
+		return vcardStr
+	}
+	normalized := strings.ReplaceAll(strings.TrimSpace(vcardStr), "\r\n", "\n")
+	insert := strings.Join(lines, "\r\n")
+	if strings.Contains(normalized, "\nEND:VCARD") {
+		return strings.Replace(normalized, "\nEND:VCARD", "\r\n"+insert+"\r\nEND:VCARD", 1) + "\r\n"
+	}
+	return strings.TrimRight(normalized, "\n") + "\r\n" + insert + "\r\nEND:VCARD\r\n"
+}
+
+func vcardPhotoLine(dataURL string) string {
+	raw := strings.TrimSpace(dataURL)
+	if raw == "" {
+		return ""
+	}
+	mediaType := "image/png"
+	payload := raw
+	if strings.HasPrefix(raw, "data:") {
+		header, body, ok := strings.Cut(raw, ",")
+		if !ok || strings.TrimSpace(body) == "" {
+			return ""
+		}
+		payload = body
+		if media, _, ok := strings.Cut(strings.TrimPrefix(header, "data:"), ";"); ok && strings.TrimSpace(media) != "" {
+			mediaType = strings.TrimSpace(media)
+		}
+	}
+	if _, err := base64.StdEncoding.DecodeString(payload); err != nil {
+		return ""
+	}
+	return "PHOTO;ENCODING=b;MEDIATYPE=" + mediaType + ":" + payload
 }
 
 // GetNodeProfile returns the current editable profile.
@@ -708,6 +768,9 @@ func (s *Service) GetNodeEPMJSON() map[string]interface{} {
 	}
 	if tel := epm.TELEPHONE(); tel != nil {
 		result["telephone"] = string(tel)
+	}
+	if s.profile != nil && strings.TrimSpace(s.profile.PhotoDataURL) != "" {
+		result["photo_data_url"] = s.profile.PhotoDataURL
 	}
 
 	// Address
@@ -837,6 +900,7 @@ func (s *Service) GetNodeEPMJSON() map[string]interface{} {
 
 	s.overlayRuntimeIdentityFields(result)
 	result["directory_kind"] = "node"
+	result["entity_type"] = "node"
 	result["peer_id"] = s.peerID.String()
 
 	return result
@@ -1244,6 +1308,7 @@ func (s *Service) rebuildEPMLocked() error {
 
 	// Build EPM table
 	EPM.EPMStart(builder)
+	EPM.EPMAddENTITY_TYPE(builder, EPM.EntityTypeNode)
 	if dnOff != 0 {
 		EPM.EPMAddDN(builder, dnOff)
 	}
@@ -1385,6 +1450,7 @@ func (s *Service) buildCanonicalSigningContent(signatureTimestamp int64) []byte 
 	if len(addresses) > 0 {
 		content["MULTIFORMAT_ADDRESS"] = addresses
 	}
+	content["ENTITY_TYPE"] = "Node"
 
 	// Chain proofs
 	if s.identityAttestation != nil && len(s.identityAttestation.ChainProofs) > 0 {

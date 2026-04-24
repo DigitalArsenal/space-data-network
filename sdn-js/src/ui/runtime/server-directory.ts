@@ -1,10 +1,13 @@
 import {
   cloneDirectorySnapshot,
   createDirectorySnapshot,
+  normalizeDirectoryImportResult,
   normalizeDirectoryQuery,
   normalizeDirectoryRecord,
   pickDirectoryItems,
   type DirectoryAdapter,
+  type DirectoryImportRequest,
+  type DirectoryImportResult,
   type DirectoryNodeRecord,
   type DirectorySnapshot,
   type DirectoryUserRecord,
@@ -52,6 +55,18 @@ export function createServerDirectoryAdapter(
       });
       return cloneDirectorySnapshot(currentSnapshot);
     },
+
+    async importRecord(record: DirectoryImportRequest): Promise<DirectoryImportResult> {
+      const payload = await readJson(fetcher, `${baseUrl}/api/v1/admin/directory/import`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(record),
+      });
+      return normalizeDirectoryImportResult(payload);
+    },
   };
 }
 
@@ -68,15 +83,19 @@ function normalizeDirectoryItems(
   kind: 'node' | 'user',
 ): Array<DirectoryNodeRecord | DirectoryUserRecord> {
   return pickDirectoryItems(payload)
-    .map((record) => normalizeDirectoryRecord(record, kind));
+    .map((record) => kind === 'node'
+      ? normalizeDirectoryRecord(record, 'node')
+      : normalizeDirectoryRecord(record, 'user'));
 }
 
 async function readJson(
   fetcher: FetchLike,
   url: string,
+  init?: RequestInit,
 ): Promise<unknown> {
   const response = await fetcher(url, {
     credentials: 'include',
+    ...init,
   });
   if (!response.ok) {
     throw new Error(`request failed (${response.status}) for ${url}`);
