@@ -30,6 +30,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/EPM"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/vcard"
+	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
@@ -902,6 +903,11 @@ func (s *Service) GetNodeEPMJSON() map[string]interface{} {
 	result["directory_kind"] = "node"
 	result["entity_type"] = "node"
 	result["peer_id"] = s.peerID.String()
+	result["version"] = versioninfo.AgentVersion
+	result["agent_version"] = versioninfo.AgentVersion
+	result["suite_version"] = versioninfo.SuiteVersion
+	result["standards_version"] = versioninfo.SpaceDataStandardsVersion
+	result["advertisement_flag"] = versioninfo.CurrentAdvertisementFlag
 
 	return result
 }
