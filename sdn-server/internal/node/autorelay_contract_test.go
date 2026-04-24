@@ -39,3 +39,23 @@ func TestNodeSourceDoesNotTreatBootstrapOrMDNSPeersAsAdvertisementDiscovered(t *
 		t.Fatalf("mDNS peer path should not mark peers as SDN advertisement-discovered")
 	}
 }
+
+func TestNodeSourceRequestsEPMWhenPeersConnect(t *testing.T) {
+	t.Parallel()
+
+	nodeSource, err := os.ReadFile(filepath.Join(".", "node.go"))
+	if err != nil {
+		t.Fatalf("os.ReadFile(node.go) failed: %v", err)
+	}
+	source := string(nodeSource)
+	if !strings.Contains(source, "Network().Notify(&epmExchangeNotifee{node: n})") {
+		t.Fatalf("node host must request/index peer EPMs from the libp2p connected-peer path")
+	}
+
+	if !strings.Contains(source, `requestConnectedPeerEPM(peerInfo.ID, "dht-discovery")`) {
+		t.Fatalf("DHT discovery must request/index EPMs for peers that are already connected")
+	}
+	if !strings.Contains(source, `requestConnectedPeerEPM(peerInfo.ID, "sdn-advertisement-discovery")`) {
+		t.Fatalf("SDN advertisement discovery must request/index EPMs for peers that are already connected")
+	}
+}

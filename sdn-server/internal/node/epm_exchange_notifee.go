@@ -1,0 +1,74 @@
+package node
+
+import (
+	"time"
+
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
+)
+
+const peerEPMRequestCooldown = 5 * time.Minute
+
+type epmExchangeNotifee struct {
+	node *Node
+}
+
+func (e *epmExchangeNotifee) Listen(network.Network, multiaddr.Multiaddr)      {}
+func (e *epmExchangeNotifee) ListenClose(network.Network, multiaddr.Multiaddr) {}
+func (e *epmExchangeNotifee) OpenedStream(network.Network, network.Stream)     {}
+func (e *epmExchangeNotifee) ClosedStream(network.Network, network.Stream)     {}
+func (e *epmExchangeNotifee) Disconnected(network.Network, network.Conn)       {}
+
+func (e *epmExchangeNotifee) Connected(_ network.Network, conn network.Conn) {
+	if e == nil || e.node == nil || conn == nil {
+		return
+	}
+	e.node.requestConnectedPeerEPM(conn.RemotePeer(), "peer-connect")
+}
+
+func (n *Node) requestEPMFromConnectedPeers(source string) {
+	if n == nil || n.host == nil {
+		return
+	}
+	for _, conn := range n.host.Network().Conns() {
+		if conn == nil {
+			continue
+		}
+		n.requestConnectedPeerEPM(conn.RemotePeer(), source)
+	}
+}
+
+func (n *Node) requestConnectedPeerEPM(pid peer.ID, source string) {
+	if !n.reserveConnectedPeerEPMRequest(pid) {
+		return
+	}
+	go n.fetchAndIndexDiscoveredNodeEPM(pid, source)
+}
+
+func (n *Node) reserveConnectedPeerEPMRequest(pid peer.ID) bool {
+	if n == nil || pid == "" || n.host == nil || n.ctx == nil {
+		return false
+	}
+	if pid == n.host.ID() {
+		return false
+	}
+	select {
+	case <-n.ctx.Done():
+		return false
+	default:
+	}
+
+	now := time.Now().UTC()
+	n.epmExchangeMu.Lock()
+	defer n.epmExchangeMu.Unlock()
+
+	if n.epmExchangeLastRequest == nil {
+		n.epmExchangeLastRequest = make(map[peer.ID]time.Time)
+	}
+	if last, ok := n.epmExchangeLastRequest[pid]; ok && now.Sub(last) < peerEPMRequestCooldown {
+		return false
+	}
+	n.epmExchangeLastRequest[pid] = now
+	return true
+}
