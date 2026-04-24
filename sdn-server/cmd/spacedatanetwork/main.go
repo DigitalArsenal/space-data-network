@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -1219,35 +1220,8 @@ func provisionFrontendDir(dir string) error {
 	return os.WriteFile(indexPath, []byte(defaultFrontendHTML), 0644)
 }
 
-const defaultFrontendHTML = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Space Data Network Node</title>
-  <style>
-    body { margin:0; font-family:system-ui,sans-serif; background:#0b1020; color:#e6edf6; }
-    main { max-width:760px; margin:6rem auto; padding:0 1rem; }
-    h1 { margin:0 0 .5rem; font-size:2rem; }
-    p { color:#a6b0c3; line-height:1.5; }
-    .card { margin-top:1.5rem; background:#11182c; border:1px solid #27314d; border-radius:10px; padding:1rem; }
-    a { color:#7ec8ff; text-decoration:none; }
-    code { background:#18233e; border:1px solid #27314d; border-radius:6px; padding:.15rem .35rem; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Space Data Network Node</h1>
-    <p>This node is online. Customize this page from the <a href="/admin">admin panel</a>.</p>
-    <div class="card">
-      <p><a href="/api/v1/data/health">GET /api/v1/data/health</a></p>
-      <p><a href="/api/v1/data/mpe/bulk?limit=5">GET /api/v1/data/mpe/bulk</a></p>
-      <p><a href="/api/v1/data/cat/bulk?limit=5">GET /api/v1/data/cat/bulk</a></p>
-      <p><a href="/admin">Admin Panel</a></p>
-    </div>
-  </main>
-</body>
-</html>`
+//go:embed default_frontend.html
+var defaultFrontendHTML string
 
 // makeFrontendHandler creates a static file server for the public frontend
 // directory with SPA fallback and cross-origin isolation headers for OrbPro.

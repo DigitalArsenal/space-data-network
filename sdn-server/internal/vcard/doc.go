@@ -1,5 +1,5 @@
 // Package vcard provides bidirectional conversion between EPM (Entity Profile Message)
-// FlatBuffers, vCard 4.0 format, and QR codes.
+// FlatBuffers, iPhone-compatible vCard format, and QR codes.
 //
 // This package enables interoperability between Space Data Network entity profiles
 // and standard contact management systems. It supports the full roundtrip:
@@ -11,7 +11,7 @@
 //
 // # Field Mapping
 //
-// The following EPM fields are mapped to vCard 4.0 properties:
+// The following EPM fields are mapped to vCard properties:
 //
 //	EPM Field              vCard Property
 //	---------              --------------
@@ -30,6 +30,7 @@
 //	MULTIFORMAT_ADDRESS    URL (IPNS addresses)
 //	KEYS (Signing)         X-SIGNING-KEY
 //	KEYS (Encryption)      X-ENCRYPTION-KEY
+//	KEYS / chain proofs    itemN.X-ABRELATEDNAMES and EMAIL aliases
 //	ALTERNATE_NAMES        X-ALTERNATE-NAME
 //
 // # vCard Conversion
@@ -46,7 +47,7 @@
 //
 // Generate a QR code PNG from an EPM:
 //
-//	pngData, err := vcard.EPMToQR(epmBytes, 256) // 256x256 pixels
+//	pngData, err := vcard.EPMToQR(epmBytes, 1024) // dense EPM payloads need large QR images
 //
 // Scan a QR code PNG and recover the EPM:
 //
@@ -59,9 +60,10 @@
 //
 // # QR Code Size
 //
-// The default QR code size is 256x256 pixels. The maximum supported size is
-// 4096x4096 pixels. Larger QR codes can encode more data but require more
-// storage space. For typical entity profiles, 256-512 pixels is sufficient.
+// The default QR code size is 256x256 pixels for plain vCards. EPM QR output
+// is rendered at a minimum of 1024x1024 pixels because the embedded signed EPM
+// payload is dense. Product QR flows should prefer compact vCards that carry an
+// EPM CID and visible identity aliases instead of a full binary EPM payload.
 //
 // # Thread Safety
 //

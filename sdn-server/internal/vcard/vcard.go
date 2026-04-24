@@ -1,5 +1,5 @@
 // Package vcard provides bidirectional conversion between EPM (Entity Profile Message)
-// FlatBuffers and vCard 4.0 format.
+// FlatBuffers and iPhone-compatible vCard format.
 package vcard
 
 import (
@@ -27,7 +27,17 @@ const (
 	FieldSDNEPMSignatureTimestamp = "X-SDN-EPM-SIGNATURE-TIMESTAMP"
 )
 
-// EPMToVCard converts an EPM FlatBuffer to a vCard 4.0 string.
+const (
+	iphoneVCardProdID       = "-//Apple Inc.//iPhone OS 15.1.1//EN"
+	signingAliasDomain      = "signing.digitalarsenal.io"
+	encryptionAliasDomain   = "encryption.digitalarsenal.io"
+	bitcoinAliasDomain      = "bitcoin.digitalarsenal.io"
+	ethereumAliasDomain     = "ethereum.digitalarsenal.io"
+	solanaAliasDomain       = "solana.digitalarsenal.io"
+	vcardFoldLineLimitBytes = 74
+)
+
+// EPMToVCard converts an EPM FlatBuffer to an iPhone-compatible vCard 3.0 string.
 func EPMToVCard(epmBytes []byte) (string, error) {
 	if len(epmBytes) == 0 {
 		return "", ErrEmptyEPM
@@ -41,7 +51,11 @@ func EPMToVCard(epmBytes []byte) (string, error) {
 	epm := EPM.GetSizePrefixedRootAsEPM(epmBytes, 0)
 
 	card := vcard.Card{}
-	card.Set("VERSION", &vcard.Field{Value: "4.0"})
+	card.Set("VERSION", &vcard.Field{Value: "3.0"})
+	card.Set("PRODID", &vcard.Field{
+		Value:  iphoneVCardProdID,
+		Params: vcard.Params{"VALUE": []string{"TEXT"}},
+	})
 
 	// Distinguished Name -> FN (Formatted Name)
 	if dn := epm.DN(); dn != nil {
@@ -153,7 +167,257 @@ func EPMToVCard(epmBytes []byte) (string, error) {
 		return "", err
 	}
 
-	return b.String(), nil
+	return insertRawVCardLines(b.String(), AppleIdentityLinesFromEPM(epm, epmBytes, true)), nil
+}
+
+type appleIdentityLine struct {
+	Label       string
+	Value       string
+	EmailType   string
+	EmailDomain string
+}
+
+// AppleIdentityLinesFromEPM mirrors cryptographic EPM fields into the same
+// vCard 3.0 itemN.X-ABRELATEDNAMES shape used by hd-wallet-wasm. iOS Contacts
+// preserves these fields, unlike arbitrary X-SDN custom fields.
+func AppleIdentityLinesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM bool) []string {
+	if epm == nil {
+		return nil
+	}
+	entries := appleIdentityEntriesFromEPM(epm, epmBytes, includeBinaryEPM)
+	if len(entries) == 0 {
+		return nil
+	}
+
+	lines := make([]string, 0, len(entries)*3)
+	for _, entry := range entries {
+		if entry.EmailDomain == "" || entry.EmailType == "" || !isSafeEmailLocalPart(entry.Value) {
+			continue
+		}
+		lines = append(lines, foldVCardLine("EMAIL;type=INTERNET;type="+entry.EmailType+":"+entry.Value+"@"+entry.EmailDomain))
+	}
+
+	item := 1
+	for _, entry := range entries {
+		value := strings.TrimSpace(entry.Value)
+		if value == "" {
+			continue
+		}
+		lines = append(lines,
+			foldVCardLine("item"+strconv.Itoa(item)+".X-ABLabel:"+escapeVCardText(entry.Label)),
+			foldVCardLine("item"+strconv.Itoa(item)+".X-ABRELATEDNAMES:"+escapeVCardText(value)),
+		)
+		item++
+	}
+
+	return lines
+}
+
+// AppleIdentityEmailAliasLinesFromEPM returns only the iPhone-visible email
+// aliases for EPM public keys and chain addresses. This is intentionally
+// smaller than AppleIdentityLinesFromEPM for QR payloads.
+func AppleIdentityEmailAliasLinesFromEPM(epm *EPM.EPM) []string {
+	if epm == nil {
+		return nil
+	}
+	entries := appleIdentityEntriesFromEPM(epm, nil, false)
+	if len(entries) == 0 {
+		return nil
+	}
+
+	lines := make([]string, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if entry.EmailDomain == "" || entry.EmailType == "" || !isSafeEmailLocalPart(entry.Value) {
+			continue
+		}
+		line := foldVCardLine("EMAIL;type=INTERNET;type=" + entry.EmailType + ":" + entry.Value + "@" + entry.EmailDomain)
+		if _, ok := seen[line]; ok {
+			continue
+		}
+		seen[line] = struct{}{}
+		lines = append(lines, line)
+	}
+
+	return lines
+}
+
+func appleIdentityEntriesFromEPM(epm *EPM.EPM, epmBytes []byte, includeBinaryEPM bool) []appleIdentityLine {
+	var entries []appleIdentityLine
+
+	key := new(EPM.CryptoKey)
+	for i := 0; i < epm.KEYSLength(); i++ {
+		if !epm.KEYS(key, i) {
+			continue
+		}
+		publicKey := strings.TrimSpace(string(key.PUBLIC_KEY()))
+		if publicKey == "" {
+			continue
+		}
+
+		addressType := strings.TrimSpace(string(key.ADDRESS_TYPE()))
+		keyPath := strings.TrimSpace(string(key.KEY_ADDRESS()))
+		switch key.KEY_TYPE() {
+		case EPM.KeyTypeSigning:
+			entries = append(entries, appleIdentityLine{
+				Label:       joinedLabel("Public Key Signing", addressType, keyPath),
+				Value:       publicKey,
+				EmailType:   "signing",
+				EmailDomain: signingAliasDomain,
+			})
+		case EPM.KeyTypeEncryption:
+			entries = append(entries, appleIdentityLine{
+				Label:       joinedLabel("Public Key Encryption", addressType, keyPath),
+				Value:       publicKey,
+				EmailType:   "encryption",
+				EmailDomain: encryptionAliasDomain,
+			})
+		default:
+			entries = append(entries, appleIdentityLine{
+				Label: joinedLabel("Public Key", addressType, keyPath),
+				Value: publicKey,
+			})
+		}
+
+		if xpub := strings.TrimSpace(string(key.XPUB())); xpub != "" {
+			entries = append(entries, appleIdentityLine{
+				Label: joinedLabel("Extended Public Key", addressType, keyPath),
+				Value: xpub,
+			})
+		}
+	}
+
+	proof := new(EPM.ChainProof)
+	for i := 0; i < epm.CHAIN_PROOFSLength(); i++ {
+		if !epm.CHAIN_PROOFS(proof, i) {
+			continue
+		}
+		chain := strings.ToLower(strings.TrimSpace(string(proof.CHAIN())))
+		address := strings.TrimSpace(string(proof.ADDRESS()))
+		if chain == "" || address == "" {
+			continue
+		}
+		emailDomain := chainAddressAliasDomain(chain)
+		entries = append(entries, appleIdentityLine{
+			Label:       joinedLabel(chainDisplayName(chain)+" Address", strings.TrimSpace(string(proof.KEY_PATH()))),
+			Value:       address,
+			EmailType:   chain,
+			EmailDomain: emailDomain,
+		})
+	}
+
+	if signature := strings.TrimSpace(string(epm.SIGNATURE())); signature != "" {
+		entries = append(entries, appleIdentityLine{
+			Label: "EPM Signature",
+			Value: signature,
+		})
+	}
+	if ts := epm.SIGNATURE_TIMESTAMP(); ts != 0 {
+		entries = append(entries, appleIdentityLine{
+			Label: "EPM Signature Timestamp",
+			Value: strconv.FormatInt(ts, 10),
+		})
+	}
+	if includeBinaryEPM && len(epmBytes) > 0 {
+		entries = append(entries, appleIdentityLine{
+			Label: "Binary EPM",
+			Value: base64.StdEncoding.EncodeToString(epmBytes),
+		})
+	}
+
+	return entries
+}
+
+func chainAddressAliasDomain(chain string) string {
+	switch chain {
+	case "bitcoin":
+		return bitcoinAliasDomain
+	case "ethereum":
+		return ethereumAliasDomain
+	case "solana":
+		return solanaAliasDomain
+	default:
+		return ""
+	}
+}
+
+func chainDisplayName(chain string) string {
+	switch chain {
+	case "bitcoin":
+		return "Bitcoin"
+	case "ethereum":
+		return "Ethereum"
+	case "solana":
+		return "Solana"
+	default:
+		return chain
+	}
+}
+
+func joinedLabel(parts ...string) string {
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			kept = append(kept, trimmed)
+		}
+	}
+	return strings.Join(kept, " ")
+}
+
+func isSafeEmailLocalPart(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			continue
+		}
+		switch r {
+		case '.', '_', '-', '+':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func insertRawVCardLines(vcardStr string, lines []string) string {
+	if len(lines) == 0 {
+		return vcardStr
+	}
+	normalized := strings.ReplaceAll(strings.TrimSpace(vcardStr), "\r\n", "\n")
+	insert := strings.Join(lines, "\r\n")
+	if strings.Contains(normalized, "\nEND:VCARD") {
+		return strings.Replace(normalized, "\nEND:VCARD", "\r\n"+insert+"\r\nEND:VCARD", 1) + "\r\n"
+	}
+	return strings.TrimRight(normalized, "\n") + "\r\n" + insert + "\r\nEND:VCARD\r\n"
+}
+
+func foldVCardLine(line string) string {
+	if len(line) <= vcardFoldLineLimitBytes {
+		return line
+	}
+	var b strings.Builder
+	for len(line) > vcardFoldLineLimitBytes {
+		b.WriteString(line[:vcardFoldLineLimitBytes])
+		b.WriteString("\r\n ")
+		line = line[vcardFoldLineLimitBytes:]
+	}
+	b.WriteString(line)
+	return b.String()
+}
+
+func escapeVCardText(value string) string {
+	return strings.NewReplacer(
+		"\\", "\\\\",
+		"\r\n", "\\n",
+		"\n", "\\n",
+		"\r", "\\n",
+		",", "\\,",
+		";", "\\;",
+	).Replace(value)
 }
 
 // VCardToEPM converts a vCard string to an EPM FlatBuffer.

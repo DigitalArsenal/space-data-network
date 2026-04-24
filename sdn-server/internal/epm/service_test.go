@@ -2,6 +2,7 @@ package epm
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	sdnvcard "github.com/spacedatanetwork/sdn-server/internal/vcard"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
@@ -23,7 +25,7 @@ func TestGetNodeEPMJSONIncludesSecp256k1IdentitySigningKey(t *testing.T) {
 		t.Fatalf("testDerivedIdentity failed: %v", err)
 	}
 
-	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "xpub-test", t.TempDir())
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "xpub6DEcA45Z68pwH3NrnV1Tee1pLNfJYruoQkKZJxmeRdBaQAtZg9Vf5LzHVZoBR5dGpmHxWzUXTGo8w1nRS13AvmhbRcBVzduCL3TGsCsj9Mm", t.TempDir())
 	if err := service.Init(); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
@@ -229,6 +231,7 @@ func TestNodeVCardIncludesSignedEPMPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetNodeVCard failed: %v", err)
 	}
+	unfolded := unfoldVCardForTest(vcard)
 
 	if !strings.Contains(vcard, "X-SDN-EPM-CID:") {
 		t.Fatalf("vCard missing EPM CID: %s", vcard)
@@ -241,6 +244,113 @@ func TestNodeVCardIncludesSignedEPMPayload(t *testing.T) {
 	}
 	if !strings.Contains(vcard, "X-SDN-EPM-B64:") {
 		t.Fatalf("vCard missing embedded EPM payload: %s", vcard)
+	}
+	signingPubBytes, err := identity.SigningPubKey.Raw()
+	if err != nil {
+		t.Fatalf("SigningPubKey.Raw failed: %v", err)
+	}
+	if !strings.Contains(unfolded, hex.EncodeToString(signingPubBytes)+"@signing.digitalarsenal.io") {
+		t.Fatalf("vCard missing iPhone-visible signing public key alias: %s", vcard)
+	}
+	if !strings.Contains(unfolded, hex.EncodeToString(identity.EncryptionPub)+"@encryption.digitalarsenal.io") {
+		t.Fatalf("vCard missing iPhone-visible encryption public key alias: %s", vcard)
+	}
+	if !strings.Contains(unfolded, identity.Addresses.Bitcoin.Address+"@bitcoin.digitalarsenal.io") {
+		t.Fatalf("vCard missing iPhone-visible bitcoin address alias: %s", vcard)
+	}
+	if !strings.Contains(unfolded, identity.Addresses.Ethereum.Address+"@ethereum.digitalarsenal.io") {
+		t.Fatalf("vCard missing iPhone-visible ethereum address alias: %s", vcard)
+	}
+	if !strings.Contains(unfolded, identity.Addresses.Solana.Address+"@solana.digitalarsenal.io") {
+		t.Fatalf("vCard missing iPhone-visible solana address alias: %s", vcard)
+	}
+	if !strings.Contains(vcard, "X-ABLabel:Binary EPM") {
+		t.Fatalf("vCard missing Apple related-name binary EPM label: %s", vcard)
+	}
+}
+
+func TestDirectoryRecordJSONEmbedsBinaryEPMForVCFExport(t *testing.T) {
+	t.Parallel()
+
+	identity, err := testDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testDerivedIdentity failed: %v", err)
+	}
+
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "xpub-test", t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	epmBytes := service.GetNodeEPM()
+	info, err := DirectoryRecordJSONFromEPM(epmBytes, "")
+	if err != nil {
+		t.Fatalf("DirectoryRecordJSONFromEPM failed: %v", err)
+	}
+	payload, ok := info["epm_base64"].(string)
+	if !ok || strings.TrimSpace(payload) == "" {
+		t.Fatalf("directory record missing epm_base64: %#v", info)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		t.Fatalf("epm_base64 is not valid base64: %v", err)
+	}
+	if !bytes.Equal(decoded, epmBytes) {
+		t.Fatalf("epm_base64 payload does not match source EPM")
+	}
+}
+
+func TestNodeQRUsesCompactVCardWithoutEmbeddedEPMPayload(t *testing.T) {
+	t.Parallel()
+
+	identity, err := testDerivedIdentity()
+	if err != nil {
+		t.Fatalf("testDerivedIdentity failed: %v", err)
+	}
+
+	service := NewService(identity, peers.NewRegistry(false, nil), identity.PeerID, "xpub-test", t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	pngData, err := service.GetNodeQR(320)
+	if err != nil {
+		t.Fatalf("GetNodeQR failed: %v", err)
+	}
+	vcard, err := sdnvcard.QRToVCard(pngData)
+	if err != nil {
+		t.Fatalf("QRToVCard failed: %v", err)
+	}
+	unfolded := unfoldVCardForTest(vcard)
+
+	if strings.Contains(vcard, "X-SDN-EPM-B64:") {
+		t.Fatalf("QR vCard should not embed the full binary EPM payload: %s", vcard)
+	}
+	if strings.Contains(vcard, "Binary EPM") {
+		t.Fatalf("QR vCard should not include an Apple related-name binary EPM payload: %s", vcard)
+	}
+	if !strings.Contains(vcard, "VERSION:3.0") {
+		t.Fatalf("QR vCard should use iPhone-compatible vCard 3.0: %s", vcard)
+	}
+	if !strings.Contains(vcard, "X-SDN-EPM-CID:") {
+		t.Fatalf("QR vCard missing EPM CID: %s", vcard)
+	}
+	if !strings.Contains(vcard, "X-SDN-EPM-SIGNATURE:") {
+		t.Fatalf("QR vCard missing EPM signature: %s", vcard)
+	}
+	if !strings.Contains(unfolded, "@signing.digitalarsenal.io") {
+		t.Fatalf("QR vCard missing iPhone-visible signing key alias: %s", vcard)
+	}
+	if !strings.Contains(unfolded, "@encryption.digitalarsenal.io") {
+		t.Fatalf("QR vCard missing iPhone-visible encryption key alias: %s", vcard)
+	}
+	if !strings.Contains(unfolded, "@bitcoin.digitalarsenal.io") ||
+		!strings.Contains(unfolded, "@ethereum.digitalarsenal.io") ||
+		!strings.Contains(unfolded, "@solana.digitalarsenal.io") {
+		t.Fatalf("QR vCard missing iPhone-visible chain address aliases: %s", vcard)
+	}
+	if !strings.Contains(vcard, "X-ABRELATEDNAMES:") {
+		t.Fatalf("QR vCard missing Apple related-name fields: %s", vcard)
 	}
 }
 
@@ -290,4 +400,17 @@ func testDerivedIdentity() (*wasm.DerivedIdentity, error) {
 			},
 		},
 	}, nil
+}
+
+func unfoldVCardForTest(vcardStr string) string {
+	lines := strings.Split(strings.ReplaceAll(vcardStr, "\r\n", "\n"), "\n")
+	unfolded := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, " ") && len(unfolded) > 0 {
+			unfolded[len(unfolded)-1] += strings.TrimPrefix(line, " ")
+			continue
+		}
+		unfolded = append(unfolded, line)
+	}
+	return strings.Join(unfolded, "\n")
 }

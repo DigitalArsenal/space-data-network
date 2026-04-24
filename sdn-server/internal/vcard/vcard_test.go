@@ -21,8 +21,11 @@ func TestEPMToVCard(t *testing.T) {
 	if !strings.Contains(vcardStr, "BEGIN:VCARD") {
 		t.Error("vCard missing BEGIN")
 	}
-	if !strings.Contains(vcardStr, "VERSION:4.0") {
-		t.Error("vCard missing VERSION:4.0")
+	if !strings.Contains(vcardStr, "VERSION:3.0") {
+		t.Error("vCard missing VERSION:3.0")
+	}
+	if !strings.Contains(vcardStr, "PRODID;VALUE=TEXT:-//Apple Inc.//iPhone OS 15.1.1//EN") {
+		t.Error("vCard missing iPhone-compatible PRODID")
 	}
 	if !strings.Contains(vcardStr, "END:VCARD") {
 		t.Error("vCard missing END")
@@ -87,6 +90,34 @@ func TestEPMToVCardKeys(t *testing.T) {
 	}
 	if !strings.Contains(vcardStr, "X-ENCRYPTION-KEY:0xencryptionkey456") {
 		t.Errorf("vCard missing X-ENCRYPTION-KEY, got:\n%s", vcardStr)
+	}
+}
+
+func TestEPMToVCardAddsIOSVisibleIdentityFields(t *testing.T) {
+	epm := createTestEPM()
+
+	vcardStr, err := EPMToVCard(epm)
+	if err != nil {
+		t.Fatalf("EPMToVCard failed: %v", err)
+	}
+	unfolded := unfoldVCardForTest(vcardStr)
+
+	if !strings.Contains(unfolded, "EMAIL;type=INTERNET;type=signing:0xsigningkey123@signing.digitalarsenal.io") {
+		t.Errorf("vCard missing iOS-visible signing email alias, got:\n%s", vcardStr)
+	}
+	if !strings.Contains(unfolded, "EMAIL;type=INTERNET;type=encryption:0xencryptionkey456@encryption.digitalarsenal.io") {
+		t.Errorf("vCard missing iOS-visible encryption email alias, got:\n%s", vcardStr)
+	}
+	if !strings.Contains(vcardStr, "X-ABLabel:Public Key Signing") ||
+		!strings.Contains(vcardStr, "X-ABRELATEDNAMES:0xsigningkey123") {
+		t.Errorf("vCard missing Apple related-name signing key fields, got:\n%s", vcardStr)
+	}
+	if !strings.Contains(vcardStr, "X-ABLabel:Public Key Encryption") ||
+		!strings.Contains(vcardStr, "X-ABRELATEDNAMES:0xencryptionkey456") {
+		t.Errorf("vCard missing Apple related-name encryption key fields, got:\n%s", vcardStr)
+	}
+	if !strings.Contains(vcardStr, "X-ABLabel:Binary EPM") {
+		t.Errorf("vCard missing iOS-visible binary EPM label, got:\n%s", vcardStr)
 	}
 }
 
@@ -417,6 +448,19 @@ func createTestEPM() []byte {
 	result := make([]byte, len(builder.FinishedBytes()))
 	copy(result, builder.FinishedBytes())
 	return result
+}
+
+func unfoldVCardForTest(vcardStr string) string {
+	lines := strings.Split(strings.ReplaceAll(vcardStr, "\r\n", "\n"), "\n")
+	unfolded := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, " ") && len(unfolded) > 0 {
+			unfolded[len(unfolded)-1] += strings.TrimPrefix(line, " ")
+			continue
+		}
+		unfolded = append(unfolded, line)
+	}
+	return strings.Join(unfolded, "\n")
 }
 
 func BenchmarkEPMToVCard(b *testing.B) {

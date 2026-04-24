@@ -100,19 +100,7 @@ func normalizeRecord(kind string, epmJSON map[string]any, epmCID, source string)
 		return storage.DirectoryRecord{}, fmt.Errorf("peer_id is required for %s directory record", normalizedKind)
 	}
 
-	canonical := map[string]any{
-		"directory_kind": normalizedKind,
-		"peer_id":        peerID,
-	}
-	if dn := firstString(epmJSON, "dn", "DN"); dn != "" {
-		canonical["dn"] = dn
-	}
-	if legalName := firstString(epmJSON, "legal_name", "LEGAL_NAME"); legalName != "" {
-		canonical["legal_name"] = legalName
-	}
-	if bitcoinAddress := firstString(epmJSON, "bitcoin_address", "BITCOIN_ADDRESS"); bitcoinAddress != "" {
-		canonical["bitcoin_address"] = bitcoinAddress
-	}
+	canonical := canonicalDirectoryEPMJSON(normalizedKind, peerID, epmJSON)
 
 	record := storage.DirectoryRecord{
 		Kind:           normalizedKind,
@@ -135,6 +123,101 @@ func normalizeRecord(kind string, epmJSON map[string]any, epmCID, source string)
 	record.EPMJSON = string(rawJSON)
 
 	return record, nil
+}
+
+func canonicalDirectoryEPMJSON(kind, peerID string, epmJSON map[string]any) map[string]any {
+	canonical := make(map[string]any, len(epmJSON)+3)
+	for key, value := range epmJSON {
+		normalizedKey := normalizeDirectoryJSONKey(key)
+		if normalizedKey == "" || containsPrivateKeyMaterial(normalizedKey) {
+			continue
+		}
+		canonical[normalizedKey] = sanitizeDirectoryJSONValue(value)
+	}
+	canonical["directory_kind"] = kind
+	canonical["entity_type"] = kind
+	canonical["peer_id"] = peerID
+	if dn := firstString(epmJSON, "dn", "DN"); dn != "" {
+		canonical["dn"] = dn
+	}
+	if legalName := firstString(epmJSON, "legal_name", "LEGAL_NAME"); legalName != "" {
+		canonical["legal_name"] = legalName
+	}
+	if bitcoinAddress := firstString(epmJSON, "bitcoin_address", "BITCOIN_ADDRESS"); bitcoinAddress != "" {
+		canonical["bitcoin_address"] = bitcoinAddress
+	}
+	return canonical
+}
+
+func normalizeDirectoryJSONKey(key string) string {
+	switch strings.TrimSpace(key) {
+	case "":
+		return ""
+	case "DN":
+		return "dn"
+	case "LEGAL_NAME":
+		return "legal_name"
+	case "FAMILY_NAME":
+		return "family_name"
+	case "GIVEN_NAME":
+		return "given_name"
+	case "ADDITIONAL_NAME":
+		return "additional_name"
+	case "HONORIFIC_PREFIX":
+		return "honorific_prefix"
+	case "HONORIFIC_SUFFIX":
+		return "honorific_suffix"
+	case "JOB_TITLE":
+		return "job_title"
+	case "OCCUPATION":
+		return "occupation"
+	case "EMAIL":
+		return "email"
+	case "TELEPHONE":
+		return "telephone"
+	case "BITCOIN_ADDRESS":
+		return "bitcoin_address"
+	case "PEER_ID", "peerID", "peerId", "peerid", "id":
+		return "peer_id"
+	case "ENTITY_TYPE":
+		return "entity_type"
+	default:
+		return strings.TrimSpace(key)
+	}
+}
+
+func sanitizeDirectoryJSONValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			normalizedKey := normalizeDirectoryJSONKey(key)
+			if normalizedKey == "" || containsPrivateKeyMaterial(normalizedKey) {
+				continue
+			}
+			out[normalizedKey] = sanitizeDirectoryJSONValue(nested)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, nested := range typed {
+			out = append(out, sanitizeDirectoryJSONValue(nested))
+		}
+		return out
+	case []map[string]any:
+		out := make([]any, 0, len(typed))
+		for _, nested := range typed {
+			out = append(out, sanitizeDirectoryJSONValue(nested))
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func containsPrivateKeyMaterial(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	return normalized == "private_key" || normalized == "xpriv"
 }
 
 func firstString(m map[string]any, keys ...string) string {

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Space Data Network</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --panel: rgba(255, 255, 255, 0.06);
+      --line: rgba(255, 255, 255, 0.14);
+      --text: #eef5ff;
+      --muted: #aebbd0;
+      --accent: #78d4ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 50% 0%, rgba(120, 212, 255, 0.18), transparent 34rem),
+        linear-gradient(180deg, #081527 0%, var(--bg) 62%, #040910 100%);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      padding: 2rem;
+    }
+    main {
+      width: min(100%, 42rem);
+      padding: clamp(2rem, 6vw, 4rem);
+      border: 1px solid var(--line);
+      background: var(--panel);
+      backdrop-filter: blur(18px);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+    }
+    .eyebrow {
+      margin: 0 0 1rem;
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(2.5rem, 8vw, 5.4rem);
+      line-height: 0.92;
+      font-weight: 750;
+    }
+    p {
+      max-width: 32rem;
+      margin: 1.4rem 0 0;
+      color: var(--muted);
+      font-size: 1.02rem;
+      line-height: 1.7;
+    }
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.8rem;
+      margin-top: 2rem;
+    }
+    a {
+      color: var(--text);
+      border: 1px solid var(--line);
+      padding: 0.78rem 1rem;
+      text-decoration: none;
+      font-weight: 650;
+      transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+    }
+    a:hover,
+    a:focus-visible {
+      background: rgba(120, 212, 255, 0.12);
+      border-color: rgba(120, 212, 255, 0.72);
+      transform: translateY(-1px);
+      outline: none;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Network node</p>
+    <h1>Space Data Network</h1>
+    <p>This public page is intentionally minimal while the interactive network application is being prepared.</p>
+    <nav aria-label="Primary links">
+      <a href="/admin/">Admin</a>
+      <a href="https://spacedatanet.org">Documentation</a>
+    </nav>
+  </main>
+</body>
+</html>

@@ -61,6 +61,7 @@ export function normalizeDirectoryRecord(
     legal_name: pickString(input, ['legal_name', 'legalName']) ?? undefined,
     bitcoin_address: pickString(input, ['bitcoin_address', 'bitcoinAddress']) ?? undefined,
     epm_cid: pickString(input, ['epm_cid', 'epmCid']) ?? undefined,
+    epm_json: pickEPMJSON(input),
     source: pickString(input, ['source']) ?? undefined,
     updated_at: pickNumber(input, ['updated_at', 'updatedAt']) ?? undefined,
   };
@@ -82,6 +83,7 @@ export function matchesDirectoryRecord(
     record.legal_name,
     record.bitcoin_address,
     record.epm_cid,
+    typeof record.epm_json === 'string' ? record.epm_json : JSON.stringify(record.epm_json ?? ''),
     record.source,
   ].some((value) => String(value ?? '').toLowerCase().includes(normalizedQuery));
 }
@@ -210,6 +212,19 @@ function normalizeDirectoryImportItems(
       : normalizeDirectoryRecord(record, 'user'));
 }
 
+function pickEPMJSON(input: Record<string, unknown>): string | Record<string, unknown> | undefined {
+  for (const key of ['epm_json', 'epmJson']) {
+    const value = input[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+    if (isRecord(value)) {
+      return { ...value };
+    }
+  }
+  return undefined;
+}
+
 function parseDirectoryVCard(vcard: string): {
   kind?: DirectoryRecordKind;
   epm_cid?: string;
@@ -222,6 +237,10 @@ function parseDirectoryVCard(vcard: string): {
   setIfPresent(record, 'dn', fields.get('FN'));
   setIfPresent(record, 'legal_name', fields.get('ORG'));
   setIfPresent(record, 'bitcoin_address', fields.get('X-SDN-BITCOIN-ADDRESS') ?? fields.get('X-BITCOIN-ADDRESS'));
+  const epmBase64 = fields.get('X-SDN-EPM-B64');
+  if (epmBase64?.trim()) {
+    record.epm_json = { epm_base64: epmBase64.trim() };
+  }
   return {
     kind: isDirectoryRecordKind(kind) ? kind : undefined,
     epm_cid: fields.get('X-SDN-EPM-CID'),

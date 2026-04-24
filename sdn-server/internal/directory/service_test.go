@@ -55,6 +55,14 @@ func TestDirectoryService_IndexesNodeEPMJSON(t *testing.T) {
 		"DN":              "SDN Node Example",
 		"LEGAL_NAME":      "Space Data Node Example LLC",
 		"BITCOIN_ADDRESS": "bc1qexample",
+		"photo_data_url":  "data:image/png;base64,iVBORw0KGgo=",
+		"signature":       "abcdef",
+		"keys": []map[string]any{
+			{
+				"key_type":   "signing",
+				"public_key": "ed25519-public",
+			},
+		},
 	}
 
 	if err := svc.UpsertNodeEPMJSON(info, "bafyexample", ""); err != nil {
@@ -101,6 +109,16 @@ func TestDirectoryService_IndexesNodeEPMJSON(t *testing.T) {
 	}
 	if canonical["bitcoin_address"] != "bc1qexample" {
 		t.Fatalf("bitcoin_address = %v, want %q", canonical["bitcoin_address"], "bc1qexample")
+	}
+	if canonical["photo_data_url"] != "data:image/png;base64,iVBORw0KGgo=" {
+		t.Fatalf("photo_data_url = %v, want embedded profile image", canonical["photo_data_url"])
+	}
+	if canonical["signature"] != "abcdef" {
+		t.Fatalf("signature = %v, want embedded EPM signature", canonical["signature"])
+	}
+	keys, ok := canonical["keys"].([]any)
+	if !ok || len(keys) != 1 {
+		t.Fatalf("keys = %#v, want one preserved key", canonical["keys"])
 	}
 	if _, ok := canonical["DN"]; ok {
 		t.Fatal("canonical JSON should not retain uppercase DN key")

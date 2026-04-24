@@ -238,6 +238,35 @@ func TestMakeWebUIHandlerServesIndexAndAssetsUnderWebUI(t *testing.T) {
 	})
 }
 
+func TestDefaultFrontendHTMLIsCleanLandingPage(t *testing.T) {
+	t.Parallel()
+
+	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(">Space Data Network<")) {
+		t.Fatal("default frontend should present Space Data Network as the primary page title")
+	}
+	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="/admin/"`)) {
+		t.Fatal("default frontend should link to the admin page")
+	}
+	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="https://spacedatanet.org"`)) {
+		t.Fatal("default frontend should link to spacedatanet.org documentation")
+	}
+	if bytes.Contains([]byte(defaultFrontendHTML), []byte("/api/v1/data/")) {
+		t.Fatal("default frontend should not expose API sample links")
+	}
+}
+
+func TestDesktopIntroMatchesDefaultFrontendHTML(t *testing.T) {
+	t.Parallel()
+
+	desktopIntro, err := os.ReadFile(filepath.Join("..", "..", "..", "desktop", "assets", "pages", "sdn-intro.html"))
+	if err != nil {
+		t.Fatalf("read desktop intro failed: %v", err)
+	}
+	if !bytes.Equal(bytes.TrimSpace(desktopIntro), bytes.TrimSpace([]byte(defaultFrontendHTML))) {
+		t.Fatal("desktop intro page must match the server default frontend exactly")
+	}
+}
+
 func TestMakeFrontendSurfaceHandlerRedirectsUnauthenticatedRootToWalletLogin(t *testing.T) {
 	t.Parallel()
 

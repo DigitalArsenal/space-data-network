@@ -1,6 +1,7 @@
 package epm
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -33,6 +34,7 @@ func DirectoryRecordJSONFromEPM(epmBytes []byte, fallbackPeerID string) (map[str
 	info := map[string]any{
 		"directory_kind": kind,
 		"entity_type":    kind,
+		"epm_base64":     base64.StdEncoding.EncodeToString(epmBytes),
 		"peer_id":        peerID,
 	}
 

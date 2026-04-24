@@ -10,6 +10,20 @@ const dock = require('../utils/dock')
 const getCtx = require('../context')
 
 serve({ scheme: 'sdn', directory: join(__dirname, '../../../sdn-js/ui/dist') })
+const introPath = join(__dirname, '../../assets/pages/sdn-intro.html')
+
+function isIntroRoute (path) {
+  return !path || path === '/'
+}
+
+function isIntroAdminNavigation (targetUrl) {
+  try {
+    const parsed = new URL(targetUrl)
+    return parsed.protocol === 'file:' && (parsed.pathname === '/admin' || parsed.pathname === '/admin/')
+  } catch {
+    return false
+  }
+}
 
 const createWindow = () => {
   logger.info('[dashboard] creating window')
@@ -29,6 +43,17 @@ const createWindow = () => {
       enableRemoteModule: process.env.NODE_ENV === 'test',
       nodeIntegration: process.env.NODE_ENV === 'test'
     }
+  })
+
+  window.webContents.on('will-navigate', (event, targetUrl) => {
+    if (!isIntroAdminNavigation(targetUrl)) {
+      return
+    }
+
+    event.preventDefault()
+    const url = new URL('/', 'sdn://-')
+    url.hash = '/'
+    window.webContents.loadURL(url.toString())
   })
 
   window.on('resize', () => {
@@ -58,6 +83,11 @@ module.exports = async function () {
   ctx.setProp('dashboard', window)
 
   const url = new URL('/', 'sdn://-')
+  const loadIntroPage = () => window.loadFile(introPath)
+  const loadDashboardApp = (path) => {
+    url.hash = path || '/'
+    window.webContents.loadURL(url.toString())
+  }
 
   ctx.setProp('launchDashboard', async (path, { focus = true, forceRefresh = false } = {}) => {
     if (window.isDestroyed()) {
@@ -69,8 +99,11 @@ module.exports = async function () {
       window.webContents.reload()
     }
 
-    url.hash = path || '/'
-    window.webContents.loadURL(url.toString())
+    if (isIntroRoute(path)) {
+      loadIntroPage()
+    } else {
+      loadDashboardApp(path)
+    }
 
     if (focus) {
       window.show()
@@ -102,6 +135,6 @@ module.exports = async function () {
       resolve()
     })
 
-    window.loadURL(url.toString())
+    loadIntroPage()
   }))
 }

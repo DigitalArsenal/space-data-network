@@ -4,7 +4,26 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_root="${repo_root}/.tmp"
 server_port="${SDN_DEV_SERVER_PORT:-${SDN_ADMIN_UI_PORT:-5173}}"
-server_base_url="${SDN_DEV_SERVER_BASE_URL:-https://127.0.0.1:${server_port}}"
+dev_tls_mode="${SDN_ADMIN_DEV_TLS_MODE:-${SDN_DEV_TLS_MODE:-managed}}"
+case "${dev_tls_mode}" in
+  disabled|managed|static)
+    ;;
+  http)
+    dev_tls_mode="disabled"
+    ;;
+  https)
+    dev_tls_mode="managed"
+    ;;
+  *)
+    echo "Unsupported SDN_ADMIN_DEV_TLS_MODE=${dev_tls_mode}; expected managed, static, disabled, http, or https" >&2
+    exit 1
+    ;;
+esac
+server_scheme="https"
+if [[ "${dev_tls_mode}" == "disabled" ]]; then
+  server_scheme="http"
+fi
+server_base_url="${SDN_DEV_SERVER_BASE_URL:-${server_scheme}://127.0.0.1:${server_port}}"
 http_challenge_port="${SDN_DEV_HTTP_CHALLENGE_PORT:-5080}"
 remote_provider_url="${SDN_DEV_PROVIDER_URL:-https://sdn.spaceaware.io/api/module-delivery/provider}"
 remote_bootstrap_addr="${SDN_DEV_BOOTSTRAP_ADDR:-/ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45}"
@@ -313,7 +332,7 @@ admin:
   require_auth: true
   session_expiry: 24h
   totp_required: false
-  tls_mode: managed
+  tls_mode: ${dev_tls_mode}
   tls_cache_dir: "${storage_path}/tls"
   frontend_path: "${frontend_path}"
 ${webui_yaml}
