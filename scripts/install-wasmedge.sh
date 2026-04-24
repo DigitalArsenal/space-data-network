@@ -41,16 +41,20 @@ if has_installation; then
   log "found WasmEdge ${CURRENT_VERSION:-unknown} at ${WASMEDGE_DIR}; reinstalling ${WASMEDGE_VERSION}"
 fi
 
-if [[ "$WASMEDGE_DIR" != "$WASMEDGE_DEFAULT_DIR" ]]; then
-  fail "automatic install only supports WASMEDGE_DIR=${WASMEDGE_DEFAULT_DIR}; current value is ${WASMEDGE_DIR}"
-fi
-
 if ! command -v curl >/dev/null 2>&1; then
   fail "curl is required to install WasmEdge"
 fi
 
 log "installing WasmEdge ${WASMEDGE_VERSION} into ${WASMEDGE_DIR}"
-curl -sSf "$WASMEDGE_INSTALL_SCRIPT_URL" | bash -s -- -v "$WASMEDGE_VERSION"
+if [[ "$WASMEDGE_DIR" == "$WASMEDGE_DEFAULT_DIR" ]]; then
+  curl -sSf "$WASMEDGE_INSTALL_SCRIPT_URL" | bash -s -- -v "$WASMEDGE_VERSION"
+else
+  if [[ "$(basename "$WASMEDGE_DIR")" != ".wasmedge" ]]; then
+    fail "custom automatic install paths must end in .wasmedge; current value is ${WASMEDGE_DIR}"
+  fi
+  mkdir -p "$(dirname "$WASMEDGE_DIR")"
+  curl -sSf "$WASMEDGE_INSTALL_SCRIPT_URL" | HOME="$(dirname "$WASMEDGE_DIR")" bash -s -- -v "$WASMEDGE_VERSION"
+fi
 
 if ! has_installation; then
   fail "WasmEdge installation completed without the expected headers and libraries"
