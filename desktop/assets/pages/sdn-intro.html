@@ -4,90 +4,300 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Space Data Network</title>
+  <link rel="icon" href="data:,">
   <style>
     :root {
       color-scheme: dark;
-      --bg: #07111f;
-      --panel: rgba(255, 255, 255, 0.06);
-      --line: rgba(255, 255, 255, 0.14);
-      --text: #eef5ff;
-      --muted: #aebbd0;
-      --accent: #78d4ff;
+      --bg: #050b13;
+      --panel: rgba(6, 18, 28, 0.72);
+      --line: rgba(139, 226, 238, 0.24);
+      --text: #f4fbff;
+      --muted: #b4c3ce;
+      --accent: #81e6ee;
+      --accent-strong: #e7fbff;
+      --admin: #96edf2;
     }
+
     * { box-sizing: border-box; }
+
+    html, body { min-height: 100%; }
+
     body {
-      min-height: 100vh;
       margin: 0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow-x: hidden;
+      font-family: "Avenir Next", "Montserrat", "Trebuchet MS", sans-serif;
       background:
-        radial-gradient(circle at 50% 0%, rgba(120, 212, 255, 0.18), transparent 34rem),
-        linear-gradient(180deg, #081527 0%, var(--bg) 62%, #040910 100%);
+        radial-gradient(circle at 73% 38%, rgba(91, 191, 216, 0.22), transparent 26rem),
+        radial-gradient(circle at 18% 16%, rgba(60, 124, 151, 0.28), transparent 28rem),
+        linear-gradient(140deg, #02070d 0%, #071723 48%, #02070d 100%);
       color: var(--text);
-      display: grid;
-      place-items: center;
-      padding: 2rem;
     }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -3;
+      background-image:
+        linear-gradient(rgba(129, 230, 238, 0.055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(129, 230, 238, 0.055) 1px, transparent 1px);
+      background-size: 54px 54px;
+      mask-image: linear-gradient(90deg, transparent 0%, #000 16%, #000 84%, transparent 100%);
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      background: linear-gradient(90deg, rgba(2, 7, 13, 0.94) 0%, rgba(2, 7, 13, 0.64) 38%, rgba(2, 7, 13, 0.16) 100%);
+      pointer-events: none;
+    }
+
+    .globe-visual {
+      position: fixed;
+      right: max(-10vw, -8rem);
+      top: 50%;
+      z-index: -1;
+      width: min(76vw, 58rem);
+      aspect-ratio: 1;
+      border-radius: 50%;
+      transform: translateY(-50%);
+      background:
+        radial-gradient(circle at 36% 32%, rgba(255, 255, 255, 0.28), transparent 0.5rem),
+        radial-gradient(circle at 40% 40%, rgba(170, 246, 255, 0.44), transparent 18%),
+        radial-gradient(circle at 48% 45%, rgba(58, 158, 186, 0.52), transparent 44%),
+        radial-gradient(circle at 62% 58%, rgba(8, 36, 58, 0.96), rgba(2, 9, 16, 0.98) 72%);
+      box-shadow:
+        inset 3rem -2rem 7rem rgba(0, 0, 0, 0.78),
+        inset -2rem 2rem 3rem rgba(153, 248, 255, 0.18),
+        0 0 5rem rgba(81, 211, 229, 0.24);
+      opacity: 0.95;
+    }
+
+    .globe-visual::before,
+    .globe-visual::after {
+      content: "";
+      position: absolute;
+      inset: 8%;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .globe-visual::before {
+      background:
+        repeating-linear-gradient(0deg, transparent 0 8.3%, rgba(185, 251, 255, 0.18) 8.6%, transparent 9.1%),
+        repeating-linear-gradient(90deg, transparent 0 9.5%, rgba(185, 251, 255, 0.16) 9.8%, transparent 10.3%);
+      mix-blend-mode: screen;
+      opacity: 0.62;
+      transform: rotate(-16deg) scaleX(0.74);
+      filter: blur(0.2px);
+    }
+
+    .globe-visual::after {
+      inset: -2.5%;
+      border: 1px solid rgba(167, 246, 255, 0.32);
+      box-shadow:
+        0 0 0 1.8rem rgba(111, 223, 235, 0.018),
+        0 0 0 4rem rgba(111, 223, 235, 0.012);
+    }
+
+    .orbit {
+      position: fixed;
+      right: max(-8vw, -6rem);
+      top: 50%;
+      z-index: -1;
+      width: min(78vw, 60rem);
+      aspect-ratio: 1;
+      border: 1px solid rgba(159, 244, 255, 0.22);
+      border-radius: 50%;
+      transform: translateY(-50%) rotate(-18deg) scaleY(0.32);
+      box-shadow: 0 0 2rem rgba(80, 214, 230, 0.14);
+    }
+
+    .page {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      padding: clamp(1.5rem, 5vw, 5rem);
+    }
+
     main {
-      width: min(100%, 42rem);
-      padding: clamp(2rem, 6vw, 4rem);
+      width: min(100%, 44rem);
+      padding: clamp(1.5rem, 4vw, 3.5rem);
       border: 1px solid var(--line);
+      border-radius: 28px;
       background: var(--panel);
+      box-shadow: 0 2rem 7rem rgba(0, 0, 0, 0.45);
       backdrop-filter: blur(18px);
-      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
     }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 2rem;
+      color: var(--accent);
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.24em;
+      text-transform: uppercase;
+    }
+
+    .brand-mark {
+      width: 2.35rem;
+      height: 2.35rem;
+      border: 2px solid currentColor;
+      border-radius: 50%;
+      position: relative;
+      box-shadow: 0 0 1.4rem rgba(129, 230, 238, 0.34);
+    }
+
+    .brand-mark::before,
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      inset: 0.42rem -0.42rem;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      transform: rotate(28deg);
+    }
+
+    .brand-mark::after {
+      transform: rotate(-28deg);
+    }
+
     .eyebrow {
       margin: 0 0 1rem;
       color: var(--accent);
-      font-size: 0.78rem;
-      font-weight: 700;
-      letter-spacing: 0.14em;
+      font-size: 0.76rem;
+      font-weight: 800;
+      letter-spacing: 0.18em;
       text-transform: uppercase;
     }
+
     h1 {
+      max-width: 12ch;
       margin: 0;
-      font-size: clamp(2.5rem, 8vw, 5.4rem);
-      line-height: 0.92;
-      font-weight: 750;
+      color: var(--accent-strong);
+      font-size: clamp(3.1rem, 10vw, 7rem);
+      line-height: 0.88;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
     }
-    p {
-      max-width: 32rem;
-      margin: 1.4rem 0 0;
+
+    .lede {
+      max-width: 36rem;
+      margin: 1.45rem 0 0;
       color: var(--muted);
-      font-size: 1.02rem;
-      line-height: 1.7;
+      font-size: clamp(1.05rem, 2vw, 1.28rem);
+      line-height: 1.72;
     }
+
     nav {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.8rem;
-      margin-top: 2rem;
+      gap: 0.85rem;
+      margin-top: 2.35rem;
     }
+
     a {
+      display: inline-flex;
+      min-height: 3rem;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(129, 230, 238, 0.34);
+      border-radius: 999px;
+      padding: 0.9rem 1.2rem;
       color: var(--text);
-      border: 1px solid var(--line);
-      padding: 0.78rem 1rem;
+      background: rgba(255, 255, 255, 0.045);
+      font-weight: 800;
       text-decoration: none;
-      font-weight: 650;
-      transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
     }
+
+    a.primary {
+      color: #041014;
+      background: var(--admin);
+      border-color: var(--admin);
+    }
+
     a:hover,
     a:focus-visible {
-      background: rgba(120, 212, 255, 0.12);
-      border-color: rgba(120, 212, 255, 0.72);
-      transform: translateY(-1px);
+      transform: translateY(-2px);
+      border-color: rgba(231, 251, 255, 0.86);
+      background: rgba(129, 230, 238, 0.14);
       outline: none;
+    }
+
+    a.primary:hover,
+    a.primary:focus-visible {
+      background: #d9fbff;
+    }
+
+    .note {
+      margin-top: 2rem;
+      color: rgba(244, 251, 255, 0.56);
+      font-size: 0.82rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    @media (max-width: 760px) {
+      body::after {
+        background: linear-gradient(180deg, rgba(2, 7, 13, 0.48), rgba(2, 7, 13, 0.96) 52%);
+      }
+
+      .globe-visual {
+        top: 16rem;
+        right: 50%;
+        width: 34rem;
+        max-width: 120vw;
+        transform: translate(50%, -50%);
+        opacity: 0.5;
+      }
+
+      .orbit {
+        top: 16rem;
+        right: 50%;
+        width: 36rem;
+        max-width: 124vw;
+        transform: translate(50%, -50%) rotate(-18deg) scaleY(0.32);
+      }
+
+      .page {
+        align-items: flex-end;
+        padding-top: 16rem;
+      }
+
+      main {
+        border-radius: 22px;
+      }
+
+      nav a {
+        width: 100%;
+      }
     }
   </style>
 </head>
 <body>
-  <main>
-    <p class="eyebrow">Network node</p>
-    <h1>Space Data Network</h1>
-    <p>This public page is intentionally minimal while the interactive network application is being prepared.</p>
-    <nav aria-label="Primary links">
-      <a href="/admin/">Admin</a>
-      <a href="https://spacedatanet.org">Documentation</a>
-    </nav>
-  </main>
+  <div class="globe-visual" aria-hidden="true"></div>
+  <div class="orbit" aria-hidden="true"></div>
+  <div class="page">
+    <main>
+      <div class="brand" aria-label="Space Data Network">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>SDN Node</span>
+      </div>
+      <p class="eyebrow">Public network homepage</p>
+      <h1>Space Data Network</h1>
+      <p class="lede">A decentralized peer-to-peer network for trusted space data exchange, built for live discovery, signed identity records, and resilient data delivery.</p>
+      <nav aria-label="Primary links">
+        <a class="primary" href="/admin/">Open Admin Portal</a>
+        <a href="https://spacedatanet.org">Visit spacedatanet.org</a>
+      </nav>
+      <p class="note">Interactive 3D globe coming soon</p>
+    </main>
+  </div>
 </body>
 </html>

@@ -250,6 +250,9 @@ func TestDefaultFrontendHTMLIsCleanLandingPage(t *testing.T) {
 	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="https://spacedatanet.org"`)) {
 		t.Fatal("default frontend should link to spacedatanet.org documentation")
 	}
+	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`class="globe-visual"`)) {
+		t.Fatal("default frontend should include the static globe background")
+	}
 	if bytes.Contains([]byte(defaultFrontendHTML), []byte("/api/v1/data/")) {
 		t.Fatal("default frontend should not expose API sample links")
 	}
@@ -267,26 +270,15 @@ func TestDesktopIntroMatchesDefaultFrontendHTML(t *testing.T) {
 	}
 }
 
-func TestMakeFrontendSurfaceHandlerRedirectsUnauthenticatedRootToWalletLogin(t *testing.T) {
+func TestMakeFrontendSurfaceHandlerServesUnauthenticatedRoot(t *testing.T) {
 	t.Parallel()
-
-	dir := t.TempDir()
-	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
-	defer sdb.Close()
-
-	sessions, err := auth.NewSessionStore(sdb)
-	if err != nil {
-		t.Fatalf("NewSessionStore: %v", err)
-	}
 
 	handler := makeFrontendSurfaceHandler(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNoContent)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("public frontend"))
 		}),
-		auth.NewHandler(nil, sessions, time.Hour, "", ""),
+		nil,
 		true,
 	)
 
@@ -294,11 +286,11 @@ func TestMakeFrontendSurfaceHandlerRedirectsUnauthenticatedRootToWalletLogin(t *
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusFound {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusFound)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if location := rec.Header().Get("Location"); location != "/login?next=%2F" {
-		t.Fatalf("Location = %q, want %q", location, "/login?next=%2F")
+	if body := rec.Body.String(); body != "public frontend" {
+		t.Fatalf("body = %q, want %q", body, "public frontend")
 	}
 }
 
