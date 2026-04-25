@@ -41,6 +41,7 @@ import {
 describe('module-delivery', () => {
   it('performs the raw SDS challenge and proof exchange over the module delivery protocol', async () => {
     const transport = {
+      grantResponseBytes: new Uint8Array(),
       calls: [] as Array<{
         targetPeerId: string;
         protocolId: string;
@@ -72,7 +73,7 @@ describe('module-delivery', () => {
         expect(isLPF(payload)).toBe(true);
         const proof = decodeLPF(payload);
         expect(proof.MESSAGE_TYPE()).toBe(licensingProofMessageType.ProofRequest);
-        return encodeGrantResponse({
+        const grantResponseBytes = encodeGrantResponse({
           reqId: proof.REQUEST_ID() ?? '',
           moduleId: proof.MODULE_ID() ?? '',
           moduleVersion: proof.MODULE_VERSION() ?? undefined,
@@ -85,6 +86,8 @@ describe('module-delivery', () => {
           expiresAtMs: 1_700_003_600_000n,
           contentHash: new Uint8Array(32).fill(7),
         });
+        this.grantResponseBytes = grantResponseBytes;
+        return grantResponseBytes;
       },
       async fetchCIDBytes() {
         return new Uint8Array([1, 2, 3, 4]);
@@ -149,6 +152,7 @@ describe('module-delivery', () => {
     expect(result.grant.wrappedContentKey.nonce).toEqual(new Uint8Array(12).fill(4));
     expect(result.grant.wrappedContentKey.ciphertext.length).toBeGreaterThan(0);
     expect(result.provider.peerId).toBe('provider-peer-id');
+    expect(result.grantResponseBytes).toEqual(transport.grantResponseBytes);
   });
 
   it('treats descriptor relay addresses as authoritative and skips discovery plus legacy bootstrap helpers', async () => {

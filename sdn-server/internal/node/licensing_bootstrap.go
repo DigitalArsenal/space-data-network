@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -130,6 +132,9 @@ func (n *Node) buildModuleNodeContext() (*modulert.NodeContext, error) {
 }
 
 func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
+	envSigningSeed := readDevRuntimeKeySlotEnv("SDN_DEV_PROVIDER_SIGNING_SEED_HEX")
+	envWrappingKey := readDevRuntimeKeySlotEnv("SDN_DEV_NODE_ENCRYPTION_KEY_HEX")
+
 	if n != nil && n.identity != nil {
 		rawSigningKey, err := n.identity.RawSigningKey()
 		if err != nil {
@@ -140,6 +145,12 @@ func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
 		if len(n.identity.EncryptionKey) > 0 {
 			wrappingKey = append([]byte(nil), n.identity.EncryptionKey...)
 		}
+		if len(rawSigningKey) != 32 && len(envSigningSeed) == 32 {
+			rawSigningKey = append([]byte(nil), envSigningSeed...)
+		}
+		if len(wrappingKey) != 32 && len(envWrappingKey) == 32 {
+			wrappingKey = append([]byte(nil), envWrappingKey...)
+		}
 		return append([]byte(nil), rawSigningKey...), wrappingKey, nil
 	}
 
@@ -148,7 +159,7 @@ func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 	if identity == nil {
-		return nil, nil, nil
+		return envSigningSeed, envWrappingKey, nil
 	}
 
 	var signingSeed []byte
@@ -160,8 +171,27 @@ func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
 	if identity.EncryptionKey != nil && len(identity.EncryptionKey.PrivateKey) > 0 {
 		wrappingKey = append([]byte(nil), identity.EncryptionKey.PrivateKey...)
 	}
+	if len(signingSeed) != 32 && len(envSigningSeed) == 32 {
+		signingSeed = append([]byte(nil), envSigningSeed...)
+	}
+	if len(wrappingKey) != 32 && len(envWrappingKey) == 32 {
+		wrappingKey = append([]byte(nil), envWrappingKey...)
+	}
 
 	return signingSeed, wrappingKey, nil
+}
+
+func readDevRuntimeKeySlotEnv(name string) []byte {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	raw = strings.TrimPrefix(strings.ToLower(raw), "0x")
+	decoded, err := hex.DecodeString(raw)
+	if err != nil || len(decoded) != 32 {
+		return nil
+	}
+	return decoded
 }
 
 func (n *Node) loadLegacyServerIdentity() (*keys.Identity, error) {

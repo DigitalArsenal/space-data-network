@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { protectModuleArtifact } from "space-data-module-sdk";
 import {
   extractPublicationRecordCollection,
@@ -19,53 +20,106 @@ const defaultCacheControl =
 const defaultContentType = "application/wasm+encrypted";
 const defaultRequiredScope = "orbpro:base";
 const defaultVersion = "local-dev";
+const orbproProtectedContextPrefix = "orbpro.plugin/";
+const moduleIdPattern = /^[A-Za-z0-9._-]+$/;
+const staleManagedModuleIds = Object.freeze([
+  "licensing",
+  "conjunction-assessment",
+]);
 
 const DEFAULT_ORBPRO_MODULES = Object.freeze([
   Object.freeze({
-    slug: "licensing",
-    moduleId: "licensing",
-    wasmPath:
-      "../space-data-network-plugins/packages/licensing/dist/isomorphic/module.wasm",
-    manifestPath:
-      "../space-data-network-plugins/packages/licensing/plugin-manifest.json",
-    requiredScope: "orbpro:runtime",
+    slug: "viewshed-shader",
+    protectedModulePath:
+      "packages/orbpro-integration/viewshed-shader/dist/viewshed-shader-data.js",
+    protectedExports: Object.freeze([
+      Object.freeze({ exportName: "encryptedData", slug: "viewshed-shader" }),
+    ]),
+    keyExport: "recipientPrivateKeyHex",
   }),
   Object.freeze({
-    slug: "viewshed-shader",
-    moduleId: "com.orbpro.viewshed-shader",
-    wasmPath:
-      "../space-data-network-plugins/packages/viewshed-shader/dist/viewshed-shader.wasm",
-    manifestPath:
-      "../space-data-network-plugins/packages/viewshed-shader/dist/manifest.json",
+    slug: "viewshed-shader-assets",
+    protectedModulePath:
+      "packages/orbpro-integration/viewshed-shader/dist/viewshed-shader-encrypted.js",
+    protectedExports: Object.freeze([
+      Object.freeze({
+        exportName: "vertexFragments",
+        slugPrefix: "viewshed-shader-vertex-fragment",
+      }),
+      Object.freeze({
+        exportName: "fragmentFragments",
+        slugPrefix: "viewshed-shader-fragment-fragment",
+      }),
+      Object.freeze({
+        exportName: "frustumVertexFragments",
+        slugPrefix: "viewshed-shader-frustum-vertex-fragment",
+      }),
+      Object.freeze({
+        exportName: "frustumFragmentFragments",
+        slugPrefix: "viewshed-shader-frustum-fragment-fragment",
+      }),
+      Object.freeze({
+        exportName: "encryptedUniforms",
+        slug: "viewshed-shader-uniforms",
+      }),
+    ]),
+    keyExport: "recipientPrivateKeyHex",
   }),
   Object.freeze({
     slug: "sensor-shaders",
-    moduleId: "com.orbpro.sensor-shaders",
-    wasmPath:
-      "../space-data-network-plugins/packages/sensor-shaders/dist/isomorphic/module.wasm",
-    manifestPath:
-      "../space-data-network-plugins/packages/sensor-shaders/plugin-manifest.json",
+    protectedModulePath:
+      "packages/orbpro-integration/shader.sensor-shaders/dist/sensor-shaders-data.js",
+    protectedExports: Object.freeze([
+      Object.freeze({ exportName: "encryptedData", slug: "sensor-shaders" }),
+    ]),
+    keyExport: "recipientPrivateKeyHex",
+  }),
+  Object.freeze({
+    slug: "sensor-shaders-assets",
+    protectedModulePath:
+      "packages/orbpro-integration/shader.sensor-shaders/dist/sensor-shaders-encrypted.js",
+    protectedExports: Object.freeze([
+      Object.freeze({
+        exportName: "encryptedData",
+        slug: "sensor-shaders-glsl-bundle",
+      }),
+    ]),
+    keyExport: "recipientPrivateKeyHex",
   }),
   Object.freeze({
     slug: "sgp4",
-    moduleId: "com.orbpro.sgp4",
-    wasmPath: "../space-data-network-plugins/packages/sgp4/dist/sgp4.wasm",
-    manifestPath: "../space-data-network-plugins/packages/sgp4/dist/manifest.json",
+    protectedModulePath:
+      "packages/orbpro-integration/propagator.sgp4/dist/sgp4-encrypted.js",
+    protectedExports: Object.freeze([
+      Object.freeze({ exportName: "encryptedData", slug: "sgp4" }),
+    ]),
+    keyExport: "recipientPrivateKeyHex",
   }),
   Object.freeze({
     slug: "fastest-path",
-    moduleId: "com.orbpro.fastest-path",
-    wasmPath:
-      "../space-data-network-plugins/packages/fastest-path/dist/isomorphic/module.wasm",
-    manifestPath:
-      "../space-data-network-plugins/packages/fastest-path/plugin-manifest.json",
+    protectedModulePath:
+      "packages/orbpro-integration/analysis.fastest-path/dist/fastest-path-encrypted.js",
+    protectedExports: Object.freeze([
+      Object.freeze({ exportName: "encryptedData", slug: "fastest-path" }),
+    ]),
+    keyExport: "recipientPrivateKeyHex",
   }),
   Object.freeze({
     slug: "hpop",
-    moduleId: "com.orbpro.hpop",
+    protectedModulePath:
+      "packages/orbpro-integration/propagator.hpop/dist/hpop-encrypted.js",
+    protectedExports: Object.freeze([
+      Object.freeze({ exportName: "encryptedData", slug: "hpop" }),
+    ]),
+    keyExport: "recipientPrivateKeyHex",
+  }),
+  Object.freeze({
+    slug: "access",
+    moduleId: "com.orbpro.access",
     wasmPath:
-      "../space-data-network-plugins/packages/hpop/dist/isomorphic/module.wasm",
-    manifestPath: "../space-data-network-plugins/packages/hpop/plugin-manifest.json",
+      "packages/space-data-network-modules/analysis/access/dist/isomorphic/module.wasm",
+    manifestPath:
+      "packages/space-data-network-modules/analysis/access/plugin-manifest.json",
   }),
 ]);
 
@@ -74,9 +128,9 @@ const OPTIONAL_ORBPRO_MODULES = Object.freeze([
     slug: "conjunction-assessment",
     moduleId: "org.spacedata.analysis.conjunction.assessment",
     wasmPath:
-      "../space-data-network-plugins/packages/conjunction-assessment/dist/isomorphic/module.wasm",
+      "packages/space-data-network-modules/analysis/conjunction-assessment/dist/isomorphic/module.wasm",
     manifestPath:
-      "../space-data-network-plugins/packages/conjunction-assessment/plugin-manifest.json",
+      "packages/space-data-network-modules/analysis/conjunction-assessment/plugin-manifest.json",
   }),
 ]);
 function resolveModuleVersion(moduleSpec, manifest) {
@@ -158,10 +212,10 @@ function resolvePluginRoot({ pluginRoot, storagePath } = {}) {
   );
 }
 
-function resolveModulePath(relativeOrAbsolutePath) {
+function resolveModulePath(relativeOrAbsolutePath, label = "Module path") {
   const rawPath = String(relativeOrAbsolutePath || "").trim();
   if (!rawPath) {
-    throw new Error("Module wasmPath is required.");
+    throw new Error(`${label} is required.`);
   }
   if (path.isAbsolute(rawPath)) {
     return rawPath;
@@ -170,23 +224,34 @@ function resolveModulePath(relativeOrAbsolutePath) {
     path.resolve(repoRoot, rawPath),
     path.resolve(workspaceRoot, rawPath),
   ];
-  return candidatePaths[0];
+  const existingPath = candidatePaths.find((candidatePath) =>
+    fsSync.existsSync(candidatePath),
+  );
+  if (existingPath) {
+    return existingPath;
+  }
+  throw new Error(
+    `${label} not found for "${rawPath}". Tried ${candidatePaths.join(", ")}`,
+  );
 }
 
 function resolveManifestPath(moduleSpec) {
   const explicitPath = String(moduleSpec?.manifestPath || "").trim();
   if (explicitPath) {
-    return resolveModulePath(explicitPath);
+    return resolveModulePath(explicitPath, "Plugin manifest path");
   }
 
-  const wasmPath = resolveModulePath(moduleSpec?.wasmPath);
+  const wasmPath = resolveModulePath(moduleSpec?.wasmPath, "Module wasmPath");
   const candidatePaths = [
     path.resolve(path.dirname(wasmPath), "manifest.json"),
     path.resolve(path.dirname(wasmPath), "..", "manifest.json"),
     path.resolve(path.dirname(wasmPath), "..", "plugin-manifest.json"),
     path.resolve(path.dirname(wasmPath), "..", "..", "plugin-manifest.json"),
   ];
-  return candidatePaths[0];
+  return (
+    candidatePaths.find((candidatePath) => fsSync.existsSync(candidatePath)) ||
+    candidatePaths[0]
+  );
 }
 
 async function readCatalog(pluginRoot) {
@@ -240,9 +305,191 @@ function normalizeModuleSpec(moduleSpec) {
     ...moduleSpec,
     slug,
     moduleId,
-    wasmPath: resolveModulePath(moduleSpec?.wasmPath),
+    wasmPath: resolveModulePath(moduleSpec?.wasmPath, "Module wasmPath"),
     manifestPath: resolveManifestPath(moduleSpec),
   };
+}
+
+function decodeBase64Bytes(value, context) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${context} must be a non-empty base64 string.`);
+  }
+  return Buffer.from(value, "base64");
+}
+
+function normalizeCatalogModuleId(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const withoutPrefix = raw.startsWith(orbproProtectedContextPrefix)
+    ? raw.slice(orbproProtectedContextPrefix.length)
+    : raw;
+  const normalized = withoutPrefix
+    .replace(/[\\/]+/g, ".")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/\.+/g, ".")
+    .replace(/^[.-]+|[.-]+$/g, "");
+  return moduleIdPattern.test(normalized) ? normalized : "";
+}
+
+function normalizeArtifactSlug(value, fallback) {
+  const raw = String(value || fallback || "").trim();
+  const slug = raw
+    .replace(/[\\/]+/g, "-")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "");
+  if (!slug) {
+    throw new Error("Protected artifact slug resolved to an empty value.");
+  }
+  return slug;
+}
+
+function resolveProtectedVersion(moduleSpec, exportSpec, publication) {
+  const explicitVersion = String(
+    exportSpec?.version || moduleSpec?.version || "",
+  ).trim();
+  if (explicitVersion) {
+    return explicitVersion;
+  }
+  const publicationVersion = String(publication?.version || "").trim();
+  return publicationVersion || defaultVersion;
+}
+
+function resolveProtectedModuleId(moduleSpec, exportSpec, publication, slug) {
+  const explicit = normalizeCatalogModuleId(
+    exportSpec?.moduleId || moduleSpec?.moduleId || "",
+  );
+  if (explicit) {
+    return explicit;
+  }
+  const publicationContext = normalizeCatalogModuleId(
+    publication?.enc?.context || publication?.pnm?.fileId || "",
+  );
+  if (publicationContext) {
+    return publicationContext;
+  }
+  throw new Error(
+    `Unable to derive SDN module id for protected artifact "${slug}".`,
+  );
+}
+
+function normalizeRecipientPrivateKeyHex(value, context) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error(`${context} must export a 32-byte X25519 private key hex string.`);
+  }
+  return normalized;
+}
+
+function resolveProtectedExportArtifacts(exportSpec, exportedValue, moduleSpec) {
+  if (Array.isArray(exportedValue)) {
+    const slugPrefix = normalizeArtifactSlug(
+      exportSpec?.slugPrefix || exportSpec?.slug,
+      `${moduleSpec.slug}-${exportSpec.exportName}`,
+    );
+    return exportedValue.map((value, index) => ({
+      value,
+      index,
+      slug: normalizeArtifactSlug(`${slugPrefix}-${index}`, ""),
+    }));
+  }
+
+  return [
+    {
+      value: exportedValue,
+      index: null,
+      slug: normalizeArtifactSlug(
+        exportSpec?.slug || exportSpec?.slugPrefix,
+        `${moduleSpec.slug}-${exportSpec.exportName}`,
+      ),
+    },
+  ];
+}
+
+async function expandProtectedModuleSpec(rawModuleSpec) {
+  const slug = normalizeArtifactSlug(rawModuleSpec?.slug, "");
+  const protectedModulePath = resolveModulePath(
+    rawModuleSpec?.protectedModulePath,
+    "Protected module path",
+  );
+  const protectedModule = await import(pathToFileURL(protectedModulePath).href);
+  const keyExport = String(rawModuleSpec?.keyExport || "").trim();
+  if (!keyExport) {
+    throw new Error(`Protected module "${slug}" requires keyExport.`);
+  }
+  const keyHex = normalizeRecipientPrivateKeyHex(
+    protectedModule[keyExport],
+    `${protectedModulePath} export ${keyExport}`,
+  );
+  const protectedExports = Array.isArray(rawModuleSpec?.protectedExports)
+    ? rawModuleSpec.protectedExports
+    : [];
+  if (protectedExports.length === 0) {
+    throw new Error(`Protected module "${slug}" has no protectedExports.`);
+  }
+
+  const expanded = [];
+  for (const exportSpec of protectedExports) {
+    const exportName = String(exportSpec?.exportName || "").trim();
+    if (!exportName) {
+      throw new Error(`Protected module "${slug}" has an export with no exportName.`);
+    }
+    if (!Object.hasOwn(protectedModule, exportName)) {
+      throw new Error(
+        `Protected module "${protectedModulePath}" is missing export "${exportName}".`,
+      );
+    }
+
+    const artifacts = resolveProtectedExportArtifacts(
+      exportSpec,
+      protectedModule[exportName],
+      { ...rawModuleSpec, slug },
+    );
+    for (const artifact of artifacts) {
+      const encryptedBytes = decodeBase64Bytes(
+        artifact.value,
+        `${protectedModulePath} export ${exportName}`,
+      );
+      const publication = extractPublicationRecordCollection(encryptedBytes);
+      const moduleId = resolveProtectedModuleId(
+        rawModuleSpec,
+        exportSpec,
+        publication,
+        artifact.slug,
+      );
+      expanded.push({
+        ...rawModuleSpec,
+        kind: "protected",
+        slug: artifact.slug,
+        moduleId,
+        version: resolveProtectedVersion(rawModuleSpec, exportSpec, publication),
+        protectedModulePath,
+        exportName,
+        artifactIndex: artifact.index,
+        encryptedBytes,
+        keyHex,
+        publication,
+      });
+    }
+  }
+
+  return expanded;
+}
+
+async function expandModuleSpecs(modules) {
+  const expanded = [];
+  for (const rawModule of modules) {
+    if (rawModule?.protectedModulePath) {
+      expanded.push(...(await expandProtectedModuleSpec(rawModule)));
+    } else {
+      expanded.push({ ...normalizeModuleSpec(rawModule), kind: "raw" });
+    }
+  }
+  return expanded;
 }
 
 async function loadModuleManifest(moduleSpec) {
@@ -283,11 +530,49 @@ export async function seedOrbproModuleCatalog({
   const { catalogPath, plugins: existingPlugins } = await readCatalog(
     resolvedPluginRoot,
   );
-  let plugins = [...existingPlugins];
   const seeded = [];
+  const expandedModules = await expandModuleSpecs(modules);
+  const managedModuleIds = new Set([
+    ...staleManagedModuleIds,
+    ...expandedModules.map((moduleSpec) => moduleSpec.moduleId),
+  ]);
+  let plugins = existingPlugins.filter(
+    (entry) => !managedModuleIds.has(String(entry?.id || "").trim()),
+  );
 
-  for (const rawModule of modules) {
-    const moduleSpec = normalizeModuleSpec(rawModule);
+  for (const moduleSpec of expandedModules) {
+    if (moduleSpec.kind === "protected") {
+      const entry = buildCatalogEntry(moduleSpec);
+      const encryptedPath = path.join(
+        resolvedPluginRoot,
+        entry.encrypted_path,
+      );
+      const keyPath = path.join(resolvedPluginRoot, entry.key_path);
+
+      await fs.writeFile(encryptedPath, moduleSpec.encryptedBytes, {
+        mode: 0o600,
+      });
+      await fs.writeFile(keyPath, moduleSpec.keyHex, { mode: 0o600 });
+
+      plugins = upsertCatalogEntry(plugins, entry);
+      seeded.push({
+        slug: moduleSpec.slug,
+        moduleId: moduleSpec.moduleId,
+        version: entry.version,
+        protectedModulePath: moduleSpec.protectedModulePath,
+        exportName: moduleSpec.exportName,
+        artifactIndex: moduleSpec.artifactIndex,
+        encryptedPath,
+        keyPath,
+        encryptedSizeBytes: moduleSpec.encryptedBytes.length,
+        contentKeyHex: moduleSpec.keyHex,
+        hasMbl: Boolean(moduleSpec.publication?.mbl),
+        hasEnc: Boolean(moduleSpec.publication?.enc),
+        hasPnm: Boolean(moduleSpec.publication?.pnm),
+      });
+      continue;
+    }
+
     const [wasmBytes, manifest, keypair] = await Promise.all([
       fs.readFile(moduleSpec.wasmPath),
       loadModuleManifest(moduleSpec),
