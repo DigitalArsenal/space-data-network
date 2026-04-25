@@ -103,6 +103,7 @@ export interface ModuleGrantRequestOptions {
 export interface ModuleGrantResult {
   provider: NormalizedServerDescriptor;
   grant: GrantResponsePayload;
+  grantResponseBytes: Uint8Array;
 }
 
 export interface EncryptedModuleBundleResult extends ModuleGrantResult {
@@ -329,7 +330,7 @@ export async function requestModuleGrant(
     detail: `grantedDomain=${grant.grantedDomain}`,
   });
 
-  return { provider, grant };
+  return { provider, grant, grantResponseBytes: grantResponseBytes.slice() };
 }
 
 export async function fetchEncryptedModuleBundle(

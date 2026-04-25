@@ -20,10 +20,11 @@
     "ui/dist"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc --project tsconfig.build.json --emitDeclarationOnly && node scripts/build-package-entry.mjs && npm run build:ui",
+    "build": "npm run build:core && npm run build:ui",
+    "build:core": "rm -rf dist && tsc --project tsconfig.build.json --emitDeclarationOnly && node scripts/build-package-entry.mjs",
     "build:ui": "vite build --config ui/vite.config.mts",
     "dev": "tsc --emitDeclarationOnly --watch",
-    "test": "npm run build && vitest run",
+    "test": "npm run build:core && vitest run",
     "test:relay": "SDN_RUN_RELAY_TEST=1 vitest run src/spaceaware-relay.integration.test.ts",
     "lint": "eslint src --ext .ts",
     "prepublishOnly": "npm run build"
@@ -58,7 +59,7 @@
     "@libp2p/crypto": "^4.1.9",
     "@libp2p/identify": "^2.0.0",
     "@libp2p/kad-dht": "^12.0.0",
-    "@libp2p/peer-id": "^5.1.8",
+    "@libp2p/peer-id": "^4.2.4",
     "@libp2p/websockets": "^8.0.0",
     "@libp2p/webtransport": "^4.0.0",
     "@multiformats/multiaddr": "^12.1.0",

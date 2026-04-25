@@ -26,6 +26,23 @@ import {
   buildEncryptionPath,
 } from './types';
 
+interface HDWalletSlip10Module extends HDWalletModule {
+  slip10?: {
+    deriveEd25519Path(seed: Uint8Array, path: string): DerivedKey;
+  };
+}
+
+interface HDWalletCurveExtensions extends HDWalletModule {
+  curves: HDWalletModule['curves'] & {
+    ed25519?: HDWalletModule['curves']['ed25519'] & {
+      publicKeyFromSeed?(seed: Uint8Array): Uint8Array;
+    };
+    x25519?: HDWalletModule['curves']['x25519'] & {
+      publicKey?(privateKey: Uint8Array): Uint8Array;
+    };
+  };
+}
+
 // Module state
 let hdWalletModule: HDWalletModule | null = null;
 let moduleReady: Promise<void> | null = null;
@@ -147,10 +164,14 @@ export async function deriveEd25519Key(
   seed: Uint8Array,
   path: string
 ): Promise<DerivedKey> {
-  const module = getModule();
+  const module = getModule() as HDWalletSlip10Module;
 
   if (seed.length !== 64) {
     throw new Error('Seed must be 64 bytes');
+  }
+
+  if (typeof module.slip10?.deriveEd25519Path === 'function') {
+    return module.slip10.deriveEd25519Path(seed, path);
   }
 
   const masterKey = module.hdkey.fromSeed(seed, Curve.ED25519);
@@ -172,10 +193,14 @@ export async function deriveEd25519Key(
  * Derive Ed25519 public key from a 32-byte seed
  */
 export async function ed25519PublicKey(seed: Uint8Array): Promise<Uint8Array> {
-  const module = getModule();
+  const module = getModule() as HDWalletCurveExtensions;
 
   if (seed.length !== 32) {
     throw new Error('Seed must be 32 bytes');
+  }
+
+  if (typeof module.curves.ed25519?.publicKeyFromSeed === 'function') {
+    return module.curves.ed25519.publicKeyFromSeed(seed);
   }
 
   return module.curves.publicKeyFromPrivate(seed, Curve.ED25519);
@@ -201,10 +226,14 @@ export async function deriveEd25519KeyPair(
  * Derive X25519 public key from private key
  */
 export async function x25519PublicKey(privateKey: Uint8Array): Promise<Uint8Array> {
-  const module = getModule();
+  const module = getModule() as HDWalletCurveExtensions;
 
   if (privateKey.length !== 32) {
     throw new Error('Private key must be 32 bytes');
+  }
+
+  if (typeof module.curves.x25519?.publicKey === 'function') {
+    return module.curves.x25519.publicKey(privateKey);
   }
 
   return module.curves.publicKeyFromPrivate(privateKey, Curve.X25519);

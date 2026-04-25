@@ -16,7 +16,7 @@ import { kadDHT } from '@libp2p/kad-dht';
 import { multiaddr } from '@multiformats/multiaddr';
 import type { Helia } from 'helia';
 import { CID } from 'multiformats/cid';
-import { peerIdFromString } from '@libp2p/peer-id';
+import { peerIdFromKeys, peerIdFromString } from '@libp2p/peer-id';
 
 import { keys } from '@libp2p/crypto';
 
@@ -167,7 +167,10 @@ export class SDNNode {
     // If an HD wallet identity is provided, use its secp256k1 key for deterministic PeerID
     if (this.config.identity?.identityKey) {
       const rawKey = this.config.identity.identityKey.privateKey;
-      libp2pOpts.privateKey = await keys.unmarshalPrivateKey(marshalSecp256k1PrivateKey(rawKey));
+      const privateKeyBytes = marshalSecp256k1PrivateKey(rawKey);
+      const publicKeyBytes = marshalSecp256k1PublicKey(this.config.identity.identityKey.publicKey);
+      libp2pOpts.peerId = await peerIdFromKeys(publicKeyBytes, privateKeyBytes);
+      libp2pOpts.privateKey = await keys.unmarshalPrivateKey(privateKeyBytes);
       // Also set the Ed25519 signing key for message auth
       if (!this.privateKey) {
         this.privateKey = this.config.identity.signingKey.privateKey;
@@ -453,13 +456,16 @@ export class SDNNode {
   }
 
   async fetchCIDBytes(cid: string): Promise<Uint8Array> {
-    const heliaFetch = (async () => {
-      const helia = await this.ensureHelia();
-      return fetchCIDBytesFromHelia(helia, cid);
-    })();
+    const ipfsApiBaseUrl = normalizeOptionalString(this.config.ipfsApiBaseUrl);
+    const fetchPromise = ipfsApiBaseUrl
+      ? fetchCIDBytesFromIPFSApi(ipfsApiBaseUrl, cid)
+      : (async () => {
+          const helia = await this.ensureHelia();
+          return fetchCIDBytesFromHelia(helia, cid);
+        })();
 
     return withOptionalTimeout(
-      heliaFetch,
+      fetchPromise,
       resolveHeliaFetchTimeoutMs(this.config),
     );
   }
@@ -607,6 +613,29 @@ function resolveHeliaFetchTimeoutMs(config: SDNConfig): number {
   return 0;
 }
 
+function normalizeOptionalString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+async function fetchCIDBytesFromIPFSApi(baseUrl: string, cid: string): Promise<Uint8Array> {
+  if (typeof fetch !== 'function') {
+    throw new Error('IPFS API CID fetch requires fetch().');
+  }
+  const endpoint = new URL(
+    `${baseUrl.replace(/\/+$/g, '')}/cat`,
+    typeof location !== 'undefined' ? location.href : 'http://localhost',
+  );
+  endpoint.searchParams.set('arg', cid);
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { accept: 'application/octet-stream' },
+  });
+  if (!response.ok) {
+    throw new Error(`IPFS API CID fetch failed: ${response.status} ${response.statusText}`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
 async function withOptionalTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   if (!(timeoutMs > 0)) {
     return promise;
@@ -710,6 +739,20 @@ function marshalSecp256k1PrivateKey(rawKey: Uint8Array): Uint8Array {
   buf[1] = 0x02; // KeyType.Secp256k1
   buf[2] = 0x12; // field 2 tag
   buf[3] = 0x20; // length = 32
+  buf.set(rawKey, 4);
+  return buf;
+}
+
+/**
+ * Marshal a 33-byte compressed secp256k1 public key into the libp2p protobuf format.
+ * KeyType=2 (Secp256k1), Data=33-byte compressed public key.
+ */
+function marshalSecp256k1PublicKey(rawKey: Uint8Array): Uint8Array {
+  const buf = new Uint8Array(37);
+  buf[0] = 0x08; // field 1 tag
+  buf[1] = 0x02; // KeyType.Secp256k1
+  buf[2] = 0x12; // field 2 tag
+  buf[3] = 0x21; // length = 33
   buf.set(rawKey, 4);
   return buf;
 }
