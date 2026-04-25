@@ -751,34 +751,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/admin/", serveAdminUI)
 
 			// ----------------------------------------------------------------
-			// Public frontend at / — configurable static file server
+			// Public homepage at / — intentionally separate from /admin.
 			// ----------------------------------------------------------------
-			if frontendPath := strings.TrimSpace(cfg.Admin.FrontendPath); frontendPath != "" {
-				frontendHandler, err := makeFrontendHandler(frontendPath)
-				if err != nil {
-					log.Warnf("Frontend disabled (falling back to built-in landing): %v", err)
-					landingHTML := loadLandingPageFallback(cfg.Admin.HomepageFile)
-					adminMux.Handle("/", makeFrontendSurfaceHandler(
-						adminLandingHandler(http.HandlerFunc(serveAdminUI), landingHTML),
-						authHandler,
-						cfg.Admin.RequireAuth,
-					))
-				} else {
-					adminMux.Handle("/", makeFrontendSurfaceHandler(frontendHandler, authHandler, cfg.Admin.RequireAuth))
-					log.Infof("Public frontend at %s://%s/ from %s", adminScheme, adminAddr, frontendPath)
-				}
-			} else {
-				landingHTML := loadLandingPageFallback(cfg.Admin.HomepageFile)
-				if buildAssetsDir := resolveBuildAssetsDir(cfg.Admin.HomepageFile); buildAssetsDir != "" {
-					adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
-					log.Infof("Static build assets at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
-				}
-				adminMux.Handle("/", makeFrontendSurfaceHandler(
-					adminLandingHandler(http.HandlerFunc(serveAdminUI), landingHTML),
-					authHandler,
-					cfg.Admin.RequireAuth,
-				))
+			landingHTML := loadLandingPageFallback(cfg.Admin.HomepageFile)
+			if buildAssetsDir := resolveBuildAssetsDir(cfg.Admin.HomepageFile); buildAssetsDir != "" {
+				adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
+				log.Infof("Static build assets at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
 			}
+			adminMux.Handle("/", makeFrontendSurfaceHandler(
+				adminLandingHandler(http.NotFoundHandler(), landingHTML),
+				authHandler,
+				cfg.Admin.RequireAuth,
+			))
+			log.Infof("Public homepage at %s://%s/ (admin portal remains at /admin)", adminScheme, adminAddr)
 
 			adminServer = &http.Server{
 				Addr:              adminAddr,
@@ -931,7 +916,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 func loadLandingPage(customPath string) ([]byte, error) {
 	if strings.TrimSpace(customPath) == "" {
-		return []byte(defaultLandingPageHTML), nil
+		return []byte(defaultFrontendHTML), nil
 	}
 
 	content, err := os.ReadFile(customPath)
@@ -1312,20 +1297,11 @@ func loadInjectedFrontendIndex(indexPath string) ([]byte, error) {
 	return injectFrontendConfig(indexHTML), nil
 }
 
-func makeFrontendSurfaceHandler(frontendHandler http.Handler, authHandler *auth.Handler, requireAuth bool) http.Handler {
+func makeFrontendSurfaceHandler(frontendHandler http.Handler, _ *auth.Handler, _ bool) http.Handler {
 	serve := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		frontendHandler.ServeHTTP(w, r)
 	})
-	if !requireAuth {
-		return serve
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if authHandler == nil {
-			http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		authHandler.RequireAuth(peers.Standard, serve)(w, r)
-	})
+	return serve
 }
 
 // injectFrontendConfig injects SDN runtime configuration into index.html.
@@ -1353,7 +1329,7 @@ func loadLandingPageFallback(homepageFile string) []byte {
 		if strings.TrimSpace(homepageFile) != "" {
 			log.Warnf("Falling back to built-in landing page: %v", err)
 		}
-		return []byte(defaultLandingPageHTML)
+		return []byte(defaultFrontendHTML)
 	}
 	return html
 }
@@ -2104,60 +2080,6 @@ func handlePeerGraphSchema(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(epm.PGRSchema))
 }
-
-const defaultLandingPageHTML = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>SpaceAware API</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      background: #0b1020;
-      color: #e6edf6;
-    }
-    main {
-      max-width: 760px;
-      margin: 6rem auto;
-      padding: 0 1rem;
-    }
-    h1 { margin: 0 0 .5rem 0; font-size: 2rem; }
-    p { color: #a6b0c3; line-height: 1.5; }
-    .card {
-      margin-top: 1.5rem;
-      background: #11182c;
-      border: 1px solid #27314d;
-      border-radius: 10px;
-      padding: 1rem;
-    }
-    a {
-      color: #7ec8ff;
-      text-decoration: none;
-    }
-    code {
-      background: #18233e;
-      border: 1px solid #27314d;
-      border-radius: 6px;
-      padding: .15rem .35rem;
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>SpaceAware API is online</h1>
-    <p>This origin serves Space Data Network APIs over HTTPS.</p>
-    <div class="card">
-      <p><a href="/api/v1/data/health">GET /api/v1/data/health</a></p>
-      <p><a href="/api/v1/data/mpe/bulk?day=2026-02-11&amp;limit=5">GET /api/v1/data/mpe/bulk</a> (FlatBuffers default)</p>
-      <p><a href="/api/v1/data/mpe/bulk?day=2026-02-11&amp;limit=5&amp;format=json">GET /api/v1/data/mpe/bulk?format=json</a></p>
-      <p><a href="/api/v1/data/cat/bulk?limit=5">GET /api/v1/data/cat/bulk</a></p>
-      <p><a href="/api/v1/data/cat/bulk?limit=5&amp;format=json">GET /api/v1/data/cat/bulk?format=json</a></p>
-    </div>
-	</main>
-</body>
-</html>`
 
 var defaultFaviconPNG = []byte{
 	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
