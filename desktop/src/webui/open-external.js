@@ -59,13 +59,13 @@ module.exports = function () {
 
       if (target === 'webui') {
         event.preventDefault()
-        void launchWebUI(normalizeInternalPath(parsedUrl))
+        launchWebUI(normalizeInternalPath(parsedUrl))
         return
       }
 
       if (target === 'sdn') {
         event.preventDefault()
-        void launchDashboard(normalizeInternalPath(parsedUrl))
+        launchDashboard(normalizeInternalPath(parsedUrl))
         return
       }
 
@@ -78,12 +78,12 @@ module.exports = function () {
       const parsedUrl = new URL(url)
       const target = appTargetForUrl(parsedUrl)
       if (target === 'webui') {
-        void launchWebUI(normalizeInternalPath(parsedUrl))
+        launchWebUI(normalizeInternalPath(parsedUrl))
         return { action: 'deny' }
       }
 
       if (target === 'sdn') {
-        void launchDashboard(normalizeInternalPath(parsedUrl))
+        launchDashboard(normalizeInternalPath(parsedUrl))
         return { action: 'deny' }
       }
 
