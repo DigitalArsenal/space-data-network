@@ -456,10 +456,13 @@ export class SDNNode {
   }
 
   async fetchCIDBytes(cid: string): Promise<Uint8Array> {
-    const fetchPromise = (async () => {
-      const helia = await this.ensureHelia();
-      return fetchCIDBytesFromHelia(helia, cid);
-    })();
+    const ipfsApiBaseUrl = normalizeOptionalString(this.config.ipfsApiBaseUrl);
+    const fetchPromise = ipfsApiBaseUrl
+      ? fetchCIDBytesFromIPFSApi(ipfsApiBaseUrl, cid)
+      : (async () => {
+          const helia = await this.ensureHelia();
+          return fetchCIDBytesFromHelia(helia, cid);
+        })();
 
     return withOptionalTimeout(
       fetchPromise,
@@ -608,6 +611,29 @@ function resolveHeliaFetchTimeoutMs(config: SDNConfig): number {
     return configuredTimeout;
   }
   return 0;
+}
+
+function normalizeOptionalString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+async function fetchCIDBytesFromIPFSApi(baseUrl: string, cid: string): Promise<Uint8Array> {
+  if (typeof fetch !== 'function') {
+    throw new Error('IPFS API CID fetch requires fetch().');
+  }
+  const endpoint = new URL(
+    `${baseUrl.replace(/\/+$/g, '')}/cat`,
+    typeof location !== 'undefined' ? location.href : 'http://localhost',
+  );
+  endpoint.searchParams.set('arg', cid);
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { accept: 'application/octet-stream' },
+  });
+  if (!response.ok) {
+    throw new Error(`IPFS API CID fetch failed: ${response.status} ${response.statusText}`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
 }
 
 async function withOptionalTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
