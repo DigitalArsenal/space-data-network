@@ -16,6 +16,7 @@
 - Data storefront listings use `STF`. Module/plugin storefront listings use `PLG`. Do not create a second module listing record.
 - Search and discovery derive from signed canonical records, not sidecar shadow records.
 - No repo-local `.fbs` files or shadow bindings should be introduced for new schema work. Schema changes start in `../spacedatastandards.org`, are published, and are then consumed here.
+- Data REST API contracts are generated OpenAPI documents. Request and response schemas must be derived from the `flatc-wasm` generated FlatBuffers annotated JSON Schema, including the special datatype annotations needed to preserve integer widths, unsigned values, vectors, byte arrays, enums, unions, tables, structs, binary FlatBuffer payloads, and canonical JSON representations.
 - EPM remains the canonical signed entity profile. Node identity and user identity remain separate.
 - PNMs announce signed publication state. They are not the database. The durable source of truth is immutable content plus signed log heads.
 - Mutable append files are not the right primitive for IPFS. Use immutable shards and update signed manifests/log heads that point to those shards.
@@ -33,6 +34,7 @@
 - Authenticated publish APIs currently start in `sdn-server/internal/api/publish.go`.
 - Publication log APIs currently start in `sdn-server/internal/api/log.go`.
 - FlatSQL persistence currently starts in `sdn-server/internal/storage/flatsql.go`.
+- Generated Data REST API contracts should be served by the daemon and checked into generated artifacts only when they are deterministic. The source of truth remains `spacedatastandards.org` schemas plus `flatc-wasm` annotated JSON Schema output.
 - PNM queue and policy currently start in `sdn-server/internal/pubsub/tipqueue.go` and `sdn-server/internal/pubsub/config.go`.
 - EPM directory exchange currently starts in `sdn-server/internal/node/epm_exchange_notifee.go` and `sdn-server/internal/directory/`.
 - Module-delivery client flow currently starts in `sdn-js/src/module-delivery.ts` and `sdn-js/src/ui/runtime/live-delivery.ts`.
@@ -187,9 +189,14 @@ git add sdn-js/ui/src/upstream-webui/overrides sdn-js/src/ui/upstream-webui/bran
 git commit -m "Add SDN data and modules navigation"
 ```
 
-### Task 3: Align Data Runtime Adapters And Server APIs
+### Task 3: Align Data Runtime Adapters, Server APIs, And Generated OpenAPI
 
 **Files:**
+- Create: `scripts/generate-data-openapi.mjs`
+- Create: `sdn-server/internal/api/openapi.go`
+- Create: `sdn-server/internal/api/openapi_test.go`
+- Create: `sdn-server/internal/api/openapi/data.openapi.json`
+- Create: `sdn-server/internal/api/openapi/schemas/`
 - Create: `sdn-js/src/ui/runtime/data.ts`
 - Create: `sdn-js/src/ui/runtime/data.test.ts`
 - Modify: `sdn-js/src/ui/runtime/server-adapter.ts`
@@ -197,6 +204,7 @@ git commit -m "Add SDN data and modules navigation"
 - Modify: `sdn-js/src/ui/runtime/helia-directory.ts`
 - Modify: `sdn-server/internal/api/data.go`
 - Modify: `sdn-server/internal/api/catalog.go`
+- Modify: `package.json`
 - Test: `sdn-js/src/ui/runtime/data.test.ts`
 - Test: `sdn-server/internal/api`
 
@@ -204,32 +212,81 @@ git commit -m "Add SDN data and modules navigation"
 
 Expose catalog summary, schema capabilities, query request, query result, publication head, ruleset, pin decision, and verification status from `sdn-js/src/ui/runtime/data.ts`.
 
-- [ ] **Step 2: Add server adapter methods**
+- [ ] **Step 2: Generate annotated JSON Schema with `flatc-wasm`**
 
-Map UI calls to `GET /api/v1/catalog`, `GET /api/v1/data/query/{schema}`, `GET /api/v1/log/heads`, and ruleset endpoints added in later tasks.
+Create `scripts/generate-data-openapi.mjs` so it loads the published `spacedatastandards.org` FlatBuffer schemas and calls `flatc-wasm` to emit annotated JSON Schema. The generated schema must preserve the FlatBuffer datatype metadata rather than collapsing everything into generic JSON numbers and strings.
 
-- [ ] **Step 3: Add Helia-compatible fallback behavior**
+The generator output must distinguish at least:
 
-For browser-only Helia clients, support local imported records, local FlatSQL/WASM indexes when available, and remote signed head discovery. Return explicit capability flags when server-only operations are unavailable.
+- `int8`, `uint8`, `int16`, `uint16`, `int32`, `uint32`, `int64`, `uint64`, `float32`, `float64`, `bool`, and `string`.
+- `byte` vectors and binary FlatBuffer payloads.
+- vectors, enums, unions, tables, structs, required fields, defaults, and deprecated fields.
+- canonical JSON encodings for integer widths that are unsafe in JavaScript numbers.
+- REST transport wrappers such as publish requests, query responses, error envelopes, pagination, and verification status.
 
-- [ ] **Step 4: Add server query endpoint parity**
+- [ ] **Step 3: Generate OpenAPI from annotated schema**
 
-Add `GET /api/v1/data/query/{schema}` if missing, with schema allowlist validation, pagination, sorting, and filter parsing backed by FlatSQL.
+Generate `sdn-server/internal/api/openapi/data.openapi.json` from the annotated JSON Schema. The OpenAPI document must include:
 
-- [ ] **Step 5: Verify adapters and API**
+- `GET /api/v1/catalog`
+- `GET /api/v1/data/query/{schema}`
+- `GET /api/v1/data/{schema}/{cid}`
+- `POST /api/v1/data/publish/{schema}`
+- `POST /api/v1/data/publish/batch/{schema}`
+- `GET /api/v1/log/heads`
+- `GET /api/v1/log/entries`
+- later ruleset and pinning endpoints added by Task 4
+
+Each operation must reference generated schema components, not handwritten DTO copies, and must clearly mark whether the body is canonical JSON, NDJSON, or binary `application/x-flatbuffers`.
+
+- [ ] **Step 4: Serve OpenAPI from the daemon**
+
+Expose the generated OpenAPI document from `sdn-server/internal/api/openapi.go` at a stable authenticated admin/docs endpoint, and expose the schema hash/version through `GET /api/v1/catalog` so UI clients can detect contract drift.
+
+- [ ] **Step 5: Add OpenAPI determinism tests**
+
+Add `sdn-server/internal/api/openapi_test.go` to verify:
+
+- the checked-in OpenAPI file is byte-for-byte identical to generator output.
+- generated schemas include FlatBuffer datatype annotations.
+- `POST /api/v1/data/publish/{schema}` accepts both canonical JSON and `application/x-flatbuffers` for schemas that support both modes.
+- unsafe integer widths are represented with the documented canonical JSON encoding.
 
 Run:
 
 ```bash
+cd /Users/tj/software/space-data-network
+node scripts/generate-data-openapi.mjs --check
+cd sdn-server && go test ./internal/api -run 'OpenAPI|Catalog|Data' -count=1
+```
+
+- [ ] **Step 6: Add server adapter methods**
+
+Map UI calls to `GET /api/v1/catalog`, `GET /api/v1/data/query/{schema}`, `GET /api/v1/log/heads`, and ruleset endpoints added in later tasks.
+
+- [ ] **Step 7: Add Helia-compatible fallback behavior**
+
+For browser-only Helia clients, support local imported records, local FlatSQL/WASM indexes when available, and remote signed head discovery. Return explicit capability flags when server-only operations are unavailable.
+
+- [ ] **Step 8: Add server query endpoint parity**
+
+Add `GET /api/v1/data/query/{schema}` if missing, with schema allowlist validation, pagination, sorting, and filter parsing backed by FlatSQL.
+
+- [ ] **Step 9: Verify adapters, OpenAPI, and API**
+
+Run:
+
+```bash
+cd /Users/tj/software/space-data-network && node scripts/generate-data-openapi.mjs --check
 cd /Users/tj/software/space-data-network/sdn-js && npx vitest run src/ui/runtime/data.test.ts src/ui/runtime/server-adapter.test.ts src/ui/runtime/local-adapter.test.ts
 cd /Users/tj/software/space-data-network/sdn-server && go test ./internal/api -count=1
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 cd /Users/tj/software/space-data-network
-git add sdn-js/src/ui/runtime sdn-server/internal/api
+git add package.json scripts/generate-data-openapi.mjs sdn-js/src/ui/runtime sdn-server/internal/api
 git commit -m "Add shared data runtime adapter"
 ```
 
