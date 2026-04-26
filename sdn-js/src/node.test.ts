@@ -164,8 +164,11 @@ describe('SDNNode relay bootstrap', () => {
     await node.stop();
   });
 
-  it('uses Helia CID fetches even when an IPFS API base URL is configured', async () => {
-    createHeliaFromLibp2pMock.mockResolvedValue({ stop: vi.fn(async () => undefined) });
+  it('uses the configured IPFS API for CID fetches without starting Helia', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => Uint8Array.from([9, 8, 7]).buffer,
+    } as Response);
 
     const { SDNNode } = await import('./node');
     const node = await SDNNode.create({
@@ -174,24 +177,28 @@ describe('SDNNode relay bootstrap', () => {
       ipfsApiBaseUrl: '/api/v0',
     });
 
-    const result = await node.fetchCIDBytes('bafkreicidviahelia');
+    const result = await node.fetchCIDBytes('bafkreicidviahttp');
 
-    expect(result).toEqual(Uint8Array.from([1, 2, 3]));
-    expect(fetchCIDBytesFromHeliaMock).toHaveBeenCalledTimes(1);
-    expect(fetchCIDBytesFromHeliaMock).toHaveBeenCalledWith(
-      expect.objectContaining({ stop: expect.any(Function) }),
-      'bafkreicidviahelia',
+    expect(result).toEqual(Uint8Array.from([9, 8, 7]));
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        href: 'http://localhost/api/v0/cat?arg=bafkreicidviahttp',
+      }),
+      expect.objectContaining({
+        method: 'POST',
+        headers: { accept: 'application/octet-stream' },
+      }),
     );
+    expect(createHeliaFromLibp2pMock).not.toHaveBeenCalled();
+    expect(fetchCIDBytesFromHeliaMock).not.toHaveBeenCalled();
 
     await node.stop();
   });
 
-  it('does not downgrade to HTTP when a Helia CID fetch times out', async () => {
-    createHeliaFromLibp2pMock.mockResolvedValue({ stop: vi.fn(async () => undefined) });
-    fetchCIDBytesFromHeliaMock.mockImplementationOnce(
-      () => new Promise(() => undefined),
-    );
-    const fetchMock = vi.spyOn(globalThis, 'fetch');
+  it('times out a configured IPFS API CID fetch without starting Helia', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementationOnce(() => new Promise(() => undefined));
 
     const { SDNNode } = await import('./node');
     const node = await SDNNode.create({
@@ -201,8 +208,10 @@ describe('SDNNode relay bootstrap', () => {
       ipfsFetchTimeoutMs: 1,
     });
 
-    await expect(node.fetchCIDBytes('bafkreiheliahangcid')).rejects.toThrow(/timed out/i);
-    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(node.fetchCIDBytes('bafkreihttphangcid')).rejects.toThrow(/timed out/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(createHeliaFromLibp2pMock).not.toHaveBeenCalled();
+    expect(fetchCIDBytesFromHeliaMock).not.toHaveBeenCalled();
 
     await node.stop();
   });
