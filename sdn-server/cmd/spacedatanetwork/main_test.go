@@ -250,8 +250,14 @@ func TestDefaultFrontendHTMLIsCleanLandingPage(t *testing.T) {
 	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="https://spacedatanet.org"`)) {
 		t.Fatal("default frontend should link to spacedatanet.org documentation")
 	}
-	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`class="globe-visual"`)) {
-		t.Fatal("default frontend should include the static globe background")
+	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`class="landing-card"`)) {
+		t.Fatal("default frontend should use a single simple landing content block")
+	}
+	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`data:image/svg+xml`)) {
+		t.Fatal("default frontend should include an inline static globe background image")
+	}
+	if bytes.Contains([]byte(defaultFrontendHTML), []byte(`class="orbit"`)) {
+		t.Fatal("default frontend should not include extra decorative orbit markup")
 	}
 	if bytes.Contains([]byte(defaultFrontendHTML), []byte("/api/v1/data/")) {
 		t.Fatal("default frontend should not expose API sample links")
@@ -267,6 +273,14 @@ func TestDesktopIntroMatchesDefaultFrontendHTML(t *testing.T) {
 	}
 	if !bytes.Equal(bytes.TrimSpace(desktopIntro), bytes.TrimSpace([]byte(defaultFrontendHTML))) {
 		t.Fatal("desktop intro page must match the server default frontend exactly")
+	}
+}
+
+func TestPublicHomepageFileIgnoresDeprecatedHomepageWhenFrontendPathIsSet(t *testing.T) {
+	t.Parallel()
+
+	if got := publicHomepageFile("/var/lib/spacedatanetwork/frontend", "/opt/spacedatanetwork/spaceaware/index.html"); got != "" {
+		t.Fatalf("public homepage file = %q, want embedded default landing page", got)
 	}
 }
 

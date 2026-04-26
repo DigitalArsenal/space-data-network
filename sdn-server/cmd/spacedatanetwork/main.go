@@ -753,8 +753,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// ----------------------------------------------------------------
 			// Public homepage at / — intentionally separate from /admin.
 			// ----------------------------------------------------------------
-			landingHTML := loadLandingPageFallback(cfg.Admin.HomepageFile)
-			if buildAssetsDir := resolveBuildAssetsDir(cfg.Admin.HomepageFile); buildAssetsDir != "" {
+			homepageFile := publicHomepageFile(cfg.Admin.FrontendPath, cfg.Admin.HomepageFile)
+			landingHTML := loadLandingPageFallback(homepageFile)
+			if buildAssetsDir := resolveBuildAssetsDir(homepageFile); buildAssetsDir != "" {
 				adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
 				log.Infof("Static build assets at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
 			}
@@ -935,6 +936,15 @@ func resolveBuildAssetsDir(homepageFile string) string {
 		return ""
 	}
 	return filepath.Join(filepath.Dir(path), "Build")
+}
+
+func publicHomepageFile(frontendPath string, homepageFile string) string {
+	// homepage_file is a legacy single-file override. frontend_path supersedes it,
+	// so preserve the documented behavior and fall back to the embedded landing page.
+	if strings.TrimSpace(frontendPath) != "" {
+		return ""
+	}
+	return strings.TrimSpace(homepageFile)
 }
 
 func isPublicAPIPath(path string) bool {
