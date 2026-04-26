@@ -72,7 +72,7 @@
     "monaco-editor": "^0.55.1",
     "multiformats": "^13.3.7",
     "qrcode": "^1.5.3",
-    "space-data-module-sdk": "^0.8.0",
+    "space-data-module-sdk": "git+https://github.com/DigitalArsenal/space-data-module-sdk.git#v0.8.1",
     "spacedatastandards.org": "1.93.1",
     "uint8arrays": "^5.0.0",
     "vcard-cryptoperson": "^1.1.10"
