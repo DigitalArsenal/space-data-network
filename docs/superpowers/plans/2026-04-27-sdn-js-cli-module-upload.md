@@ -195,48 +195,30 @@
 
   Use the existing module SDK fixture or smallest repo fixture that can be encrypted and delivered as `com.spaceaware.test-protocol`.
 
-- [ ] **Step 3: Live `sdn.spaceaware.io` smoke**
+- [x] **Step 3: Live `sdn.spaceaware.io` smoke**
 
-  Status on 2026-04-27: blocked at live authorization for uploading a new test
-  module. The live node exposes
-  `https://sdn.spaceaware.io/api/module-delivery/provider` and
-  `https://sdn.spaceaware.io/api/module-delivery/listings`, and the isolated CLI
-  test wallet/package flow works locally. `sdn auth login --node
-  https://sdn.spaceaware.io` for a newly generated test wallet returns
-  `403 {"code":"authentication_failed","message":"authentication failed"}`
-  because the wallet is not yet in the live node's admin user store. SSH to
-  `root@sdn.spaceaware.io` and `sdn@sdn.spaceaware.io` on port 22 also fails
-  with `No route to host`, so this session cannot add the key server-side.
-  Durable test wallet created locally at
-  `/Users/tj/.spacedatanetwork/sdn-js-live-upload-test-20260427` with xpub
-  `xpub6CXdUKPC5Wdj3h5fJcuodPJordBem8HubXwrf5WhPzXNiBBxvADDuWCkV6tNTgN8jEzWqUPAWLyKct5Ns2cAimQJEnVbGGSAFxgdoFXi6CN`
-  and signing key
-  `bdad02b46ee6efa2ce9e8796b4d4da03074daf7550b4c2fabee00188c83d1c27`.
-  Read-only protocol query did succeed with the durable test wallet against the
-  existing `com.orbpro.fastest-path@1.0.0` listing: the CLI received challenge
-  and grant over `/space-data-network/module-delivery/1.0.0`, fetched CID
-  `QmaaZcY2aewMChPaNzKsZDeeNugKetVfEnFsjzVkKS2jw4` through Helia/libp2p, and
-  locally decrypted 95,793 encrypted bytes to 91,097 WASM bytes.
+  Completed on 2026-04-27. `~/.ssh/config` now aliases
+  `sdn.spaceaware.io` to the existing `space-data-network-01` host at
+  `159.203.150.8` as `root`. The durable test wallet at
+  `/Users/tj/.spacedatanetwork/sdn-js-live-upload-test-20260427` was added to
+  the live node as upload-capable, and `sdn auth login --node
+  https://sdn.spaceaware.io` returns an admin session for
+  `SDN Add Two Upload Test`.
 
-  Commands to run with `SDN_WALLET_PASSWORD` set:
+  The live daemon was updated with the plugin-module upload/list API after a
+  startup fix for sanitized SDS SQLite table names. Uploading
+  `com.spaceaware.test.add-two@0.0.1` succeeded with encrypted bundle SHA-256
+  `9c7a70d909dd54fdd1a5dc1b5c2a54a2e252c43d6477d2312cd08945d8c1426a`.
+  The module appears in `/api/v1/plugin-modules` and in the public
+  `/api/module-delivery/listings` PLG feed.
 
-  ```bash
-  npm --prefix sdn-js run build:core
-  node sdn-js/dist/cli/index.mjs wallet init --name "SDN Upload Test"
-  node sdn-js/dist/cli/index.mjs wallet info
-  node sdn-js/dist/cli/index.mjs auth login --node https://sdn.spaceaware.io
-  node sdn-js/dist/cli/index.mjs auth add-current-wallet --node https://sdn.spaceaware.io --trust admin
-  node sdn-js/dist/cli/index.mjs module publish --node https://sdn.spaceaware.io --wasm <test.wasm> --module-id com.spaceaware.test-protocol --version 0.0.1 --allow-domain spaceaware.io
-  node sdn-js/dist/cli/index.mjs module list --node https://sdn.spaceaware.io
-  node sdn-js/dist/cli/index.mjs module query --node https://sdn.spaceaware.io --module-id com.spaceaware.test-protocol --requester-domain spaceaware.io
-  ```
-
-  Expected:
-  - wallet info prints test xpub and signing key.
-  - add-current-wallet returns created/updated.
-  - publish returns bundle sha256 and module descriptor.
-  - list includes `com.spaceaware.test-protocol`.
-  - query reaches `/space-data-network/module-delivery/1.0.0` and returns decrypted bytes.
+  Public `sdn-js` imports completed the round trip:
+  challenge/grant over `/space-data-network/module-delivery/1.0.0`, IPFS CID
+  fetch through `https://sdn.spaceaware.io/api/v0/cat`, grant-key unwrap,
+  decrypt, SDK browser harness load, and `add_two` invoke. The delivered CID
+  was `QmX4CmBGMWfGN4574rvqUPw7fUEYcxCkhc4Vb3Qcw8eG5y`; encrypted size was
+  79,146 bytes, decrypted WASM size was 79,118 bytes, and invoking `add_two`
+  with `[40, 2]` returned `42` with status code `0`.
 
 ## Task 6: Final Verification
 
@@ -253,6 +235,6 @@
 
   Mark completed steps with `[x]` and leave any blocked live deployment step unchecked with the exact blocker.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
   Commit once focused verification passes.
