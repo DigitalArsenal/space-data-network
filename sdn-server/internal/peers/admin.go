@@ -363,6 +363,7 @@ const adminTemplate = `<!DOCTYPE html>
             <button class="tab" data-tab="blocklist">Blocklist</button>
             <button class="tab" data-tab="settings">Settings</button>
             <button class="tab" data-tab="users">Users</button>
+            <button class="tab" data-tab="plugin-modules">Plugin Modules</button>
             <button class="tab" data-tab="node">Node</button>
             <button class="tab" data-tab="frontend">Frontend</button>
             <button class="tab" data-tab="wallet">Wallet</button>
@@ -491,6 +492,31 @@ const adminTemplate = `<!DOCTYPE html>
                     </thead>
                     <tbody id="usersTable">
                         <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="tab-content" id="plugin-modules-tab">
+            <div class="panel">
+                <div class="panel-header">
+                    <h2>Plugin Modules</h2>
+                    <button class="btn" onclick="fetchPluginModules()">Refresh</button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th>Module</th>
+                            <th>Version</th>
+                            <th>Scope</th>
+                            <th>Size</th>
+                            <th>Uploaded</th>
+                            <th>Manifest</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pluginModulesTable">
+                        <tr><td colspan="7" class="empty-state">Loading...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -1156,6 +1182,73 @@ const adminTemplate = `<!DOCTYPE html>
             }
         }
 
+        // Plugin modules
+        async function fetchPluginModules() {
+            try {
+                const res = await fetch('/api/v1/plugin-modules');
+                if (!res.ok) {
+                    document.getElementById('pluginModulesTable').innerHTML = '<tr><td colspan="7" class="empty-state">Plugin module API not enabled or not authorized</td></tr>';
+                    return;
+                }
+                const payload = await res.json();
+                renderPluginModules(Array.isArray(payload.modules) ? payload.modules : []);
+            } catch (e) {
+                document.getElementById('pluginModulesTable').innerHTML = '<tr><td colspan="7" class="empty-state">Could not load plugin modules</td></tr>';
+            }
+        }
+
+        function renderPluginModules(modules) {
+            const tbody = document.getElementById('pluginModulesTable');
+            if (!modules || modules.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No plugin modules installed</td></tr>';
+                return;
+            }
+            tbody.innerHTML = modules.map(m => {
+                const status = m.status || 'stopped';
+                const statusTitle = m.status_message ? ' title="' + escapeHtml(m.status_message) + '"' : '';
+                const moduleName = escapeHtml(m.id || '-');
+                const version = escapeHtml(m.version || '-');
+                const scope = escapeHtml(m.required_scope || '-');
+                const size = typeof m.size_bytes === 'number' ? formatBytes(m.size_bytes) : '-';
+                const uploaded = m.uploaded_at ? new Date(m.uploaded_at).toLocaleString() : '-';
+                const domains = Array.isArray(m.allowed_domains) && m.allowed_domains.length > 0
+                    ? m.allowed_domains
+                    : ['*'];
+                const manifest = {
+                    id: m.id || '',
+                    version: m.version || '',
+                    required_scope: m.required_scope || '',
+                    allowed_domains: domains,
+                    max_grant_timeout_ms: m.max_grant_timeout_ms || 0,
+                    bundle_sha256: m.bundle_sha256 || '',
+                    signer_pubkey_hex: m.signer_pubkey_hex || '',
+                    status
+                };
+                return '<tr>' +
+                    '<td><span class="trust-badge trust-' + escapeHtml(status === 'running' ? 'trusted' : status === 'error' ? 'untrusted' : 'standard') + '"' + statusTitle + '>' + escapeHtml(status) + '</span></td>' +
+                    '<td class="peer-id" title="' + moduleName + '">' + moduleName + '</td>' +
+                    '<td>' + version + '</td>' +
+                    '<td>' + scope + '</td>' +
+                    '<td>' + size + '</td>' +
+                    '<td>' + escapeHtml(uploaded) + '</td>' +
+                    '<td><details><summary>Manifest</summary><pre style="white-space:pre-wrap;word-break:break-word;max-width:520px;font-size:11px;color:var(--text-secondary);">' + escapeHtml(JSON.stringify(manifest, null, 2)) + '</pre></details></td>' +
+                    '</tr>';
+            }).join('');
+        }
+
+        function escapeHtml(value) {
+            const div = document.createElement('div');
+            div.textContent = value == null ? '' : String(value);
+            return div.innerHTML;
+        }
+
+        function formatBytes(value) {
+            if (!Number.isFinite(value)) return '-';
+            if (value < 1024) return value + ' B';
+            if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KB';
+            return (value / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
         // Node info
         async function fetchNodeInfo() {
             try {
@@ -1411,6 +1504,9 @@ const adminTemplate = `<!DOCTYPE html>
         document.querySelector('[data-tab="frontend"]').addEventListener('click', function() {
             fetchFrontendFiles();
         });
+        document.querySelector('[data-tab="plugin-modules"]').addEventListener('click', function() {
+            fetchPluginModules();
+        });
 
         // Initial load
         fetchPeers();
@@ -1418,6 +1514,7 @@ const adminTemplate = `<!DOCTYPE html>
         fetchBlocklist();
         fetchSettings();
         fetchUsers();
+        fetchPluginModules();
         fetchNodeInfo();
         fetchCurrentUser();
 

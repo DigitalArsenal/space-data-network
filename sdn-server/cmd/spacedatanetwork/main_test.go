@@ -43,6 +43,17 @@ func TestIsPublicAPIPathAllowsModuleDeliveryListingsRoute(t *testing.T) {
 	}
 }
 
+func TestPluginModuleUploadRouteRequiresAdminAuth(t *testing.T) {
+	t.Parallel()
+
+	if isPublicAPIPath("/api/v1/plugin-modules/upload") {
+		t.Fatal("plugin-module upload must not be public")
+	}
+	if !isAdminOnlyAPIPath("/api/v1/plugin-modules/upload") {
+		t.Fatal("plugin-module upload should require admin auth")
+	}
+}
+
 func TestIsPublicAPIPathAllowsDirectoryRoutes(t *testing.T) {
 	t.Parallel()
 

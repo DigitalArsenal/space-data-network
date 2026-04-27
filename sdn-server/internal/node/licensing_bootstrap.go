@@ -293,66 +293,82 @@ func bootstrapLicensingModule(mod *modulert.Module, reg *license.PluginRegistry)
 
 	var publishErrs []error
 	for _, asset := range catalogPublicationAssets(reg) {
-		protectedContent, _, err := reg.ReadEncryptedBundle(asset.ID)
-		if err != nil {
-			publishErrs = append(publishErrs, fmt.Errorf("read encrypted bundle for %q: %w", asset.ID, err))
-			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
-			continue
-		}
-		contentKey, err := reg.ReadBundleKey(asset.ID)
-		if err != nil {
-			publishErrs = append(publishErrs, fmt.Errorf("read bundle key for %q: %w", asset.ID, err))
-			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
-			continue
-		}
-
-		descriptorFrame, err := buildPublicationDescriptorFrame(asset)
-		if err != nil {
-			publishErrs = append(publishErrs, fmt.Errorf("build publication descriptor for %q: %w", asset.ID, err))
-			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
-			continue
-		}
-		keyFrame, err := buildPublicationContentKeyFrame(asset, protectedContent, contentKey)
-		if err != nil {
-			publishErrs = append(publishErrs, fmt.Errorf("build publication key frame for %q: %w", asset.ID, err))
-			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
-			continue
-		}
-
-		publishResponse, err := mod.InvokeMethodFrames(context.Background(), "server_publish_module", []modulert.InvokeInputFrame{
-			{
-				PortID:         "module_descriptor",
-				FileIdentifier: "$PLG",
-				Payload:        descriptorFrame,
-			},
-			{
-				PortID:  "protected_content",
-				Payload: protectedContent,
-			},
-			{
-				PortID:         "content_key",
-				FileIdentifier: "$KMF",
-				Payload:        keyFrame,
-			},
-		})
-		if err != nil {
-			publishErrs = append(publishErrs, fmt.Errorf("publish module %q: %w", asset.ID, err))
-			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
-			continue
-		}
-		if !flatbuffers.BufferHasIdentifier(publishResponse, "$PLG") {
-			err := fmt.Errorf("publish module %q returned %d bytes without $PLG identifier", asset.ID, len(publishResponse))
+		if err := publishCatalogAsset(mod, reg, asset); err != nil {
 			publishErrs = append(publishErrs, err)
-			_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
-			continue
-		}
-
-		if err := reg.SetRuntimeStatus(asset.ID, "stopped", "published via licensing runtime"); err != nil {
-			log.Warnf("Unable to update runtime status for plugin %q: %v", asset.ID, err)
 		}
 	}
 
 	return errors.Join(publishErrs...)
+}
+
+func publishCatalogAsset(mod *modulert.Module, reg *license.PluginRegistry, asset *license.PluginAsset) error {
+	if mod == nil {
+		return fmt.Errorf("licensing module is required")
+	}
+	if reg == nil {
+		return fmt.Errorf("plugin registry is required")
+	}
+	if asset == nil {
+		return fmt.Errorf("plugin asset is required")
+	}
+
+	protectedContent, _, err := reg.ReadEncryptedBundle(asset.ID)
+	if err != nil {
+		err := fmt.Errorf("read encrypted bundle for %q: %w", asset.ID, err)
+		_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+		return err
+	}
+	contentKey, err := reg.ReadBundleKey(asset.ID)
+	if err != nil {
+		err := fmt.Errorf("read bundle key for %q: %w", asset.ID, err)
+		_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+		return err
+	}
+
+	descriptorFrame, err := buildPublicationDescriptorFrame(asset)
+	if err != nil {
+		err := fmt.Errorf("build publication descriptor for %q: %w", asset.ID, err)
+		_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+		return err
+	}
+	keyFrame, err := buildPublicationContentKeyFrame(asset, protectedContent, contentKey)
+	if err != nil {
+		err := fmt.Errorf("build publication key frame for %q: %w", asset.ID, err)
+		_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+		return err
+	}
+
+	publishResponse, err := mod.InvokeMethodFrames(context.Background(), "server_publish_module", []modulert.InvokeInputFrame{
+		{
+			PortID:         "module_descriptor",
+			FileIdentifier: "$PLG",
+			Payload:        descriptorFrame,
+		},
+		{
+			PortID:  "protected_content",
+			Payload: protectedContent,
+		},
+		{
+			PortID:         "content_key",
+			FileIdentifier: "$KMF",
+			Payload:        keyFrame,
+		},
+	})
+	if err != nil {
+		err := fmt.Errorf("publish module %q: %w", asset.ID, err)
+		_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+		return err
+	}
+	if !flatbuffers.BufferHasIdentifier(publishResponse, "$PLG") {
+		err := fmt.Errorf("publish module %q returned %d bytes without $PLG identifier", asset.ID, len(publishResponse))
+		_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+		return err
+	}
+
+	if err := reg.SetRuntimeStatus(asset.ID, "stopped", "published via licensing runtime"); err != nil {
+		log.Warnf("Unable to update runtime status for plugin %q: %v", asset.ID, err)
+	}
+	return nil
 }
 
 func buildLicensingRuntimeConfigFrame(nodeCtx *modulert.NodeContext) ([]byte, error) {

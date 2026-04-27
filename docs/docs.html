@@ -1473,6 +1473,30 @@ const result = await invokeLoadedModule(harness, {
 });
 harness.destroy?.();</code></pre>
 
+        <h3>Publisher CLI</h3>
+        <p>The public <code>sdn</code> CLI creates an encrypted local wallet, authenticates to an SDN node, packages encrypted and signed WASM bytes, uploads them as plugin-module catalog entries, and verifies delivery through the same registered module-delivery protocol used by browser clients.</p>
+        <pre><code>npm install -g @spacedatanetwork/sdn-js
+export SDN_WALLET_PASSWORD='use-a-real-local-password'
+
+sdn wallet init --name "OrbPro Publisher"
+sdn auth login --node https://sdn.spaceaware.io
+sdn auth add-current-wallet --node https://sdn.spaceaware.io --trust admin
+
+sdn module publish \
+  --node https://sdn.spaceaware.io \
+  --wasm ./dist/orbpro-license.wasm \
+  --module-id com.orbpro.licensing \
+  --version 1.0.0 \
+  --required-scope orbpro:base \
+  --allow-domain spaceaware.io \
+  --allow-domain www.spaceaware.io
+
+sdn module query \
+  --node https://sdn.spaceaware.io \
+  --module-id com.orbpro.licensing \
+  --requester-domain spaceaware.io</code></pre>
+        <p>The CLI wallet is encrypted under <code>~/.spacedatanetwork/sdn-js</code> by default. OrbPro and SpaceAware clients should use <code>https://sdn.spaceaware.io/api/module-delivery/provider</code> as the provider descriptor URL.</p>
+
         <h3>Protocol Boundaries</h3>
         <ul>
           <li>Public encrypted module delivery stays on <code>/space-data-network/module-delivery/1.0.0</code>.</li>

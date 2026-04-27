@@ -275,6 +275,40 @@ discover a PLG listing, purchase it through the storefront client, request the
 encrypted WASM bundle through `SDNNode`, unwrap and decrypt locally, load with
 the SDK browser harness, and invoke the module.
 
+Publishers can install the public CLI and upload encrypted/signed module
+artifacts to an authorized node without importing from `src/*`:
+
+```bash
+npm install -g @spacedatanetwork/sdn-js
+export SDN_WALLET_PASSWORD='use-a-real-local-password'
+
+sdn wallet init --name "OrbPro Publisher"
+sdn auth login --node https://sdn.spaceaware.io
+sdn auth add-current-wallet --node https://sdn.spaceaware.io --trust admin
+
+sdn module publish \
+  --node https://sdn.spaceaware.io \
+  --wasm ./dist/orbpro-license.wasm \
+  --module-id com.orbpro.licensing \
+  --version 1.0.0 \
+  --required-scope orbpro:base \
+  --allow-domain spaceaware.io \
+  --allow-domain www.spaceaware.io
+
+sdn module query \
+  --node https://sdn.spaceaware.io \
+  --module-id com.orbpro.licensing \
+  --requester-domain spaceaware.io
+```
+
+The CLI wallet lives in `~/.spacedatanetwork/sdn-js` by default. The upload API
+stores `encrypted_path` and `key_path` catalog entries, publishes the new module
+through the live licensing runtime, and keeps browser requesters on
+`/space-data-network/module-delivery/1.0.0`. Deployed OrbPro and SpaceAware
+clients should use
+`https://sdn.spaceaware.io/api/module-delivery/provider` as the module-delivery
+provider descriptor.
+
 Run the focused module-delivery compatibility checks:
 
 ```bash

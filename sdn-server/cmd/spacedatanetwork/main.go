@@ -676,28 +676,34 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// ----------------------------------------------------------------
 			if authHandler != nil {
 				if reg := n.PluginRegistry(); reg != nil {
-					uploadHandler := license.NewUploadHandler(
-						reg,
-						func(xpub string) (string, error) {
-							user, err := authHandler.UserStore().GetUser(xpub)
-							if err != nil {
-								return "", err
-							}
-							if user == nil {
-								return "", fmt.Errorf("user not found")
-							}
-							return user.SigningPubKeyHex, nil
-						},
-						func(r *http.Request) (string, error) {
-							session := auth.SessionFromContext(r.Context())
-							if session == nil {
-								return "", fmt.Errorf("no session")
-							}
-							return session.XPub, nil
-						},
-					)
+					signingKeyLookup := func(xpub string) (string, error) {
+						user, err := authHandler.UserStore().GetUser(xpub)
+						if err != nil {
+							return "", err
+						}
+						if user == nil {
+							return "", fmt.Errorf("user not found")
+						}
+						return user.SigningPubKeyHex, nil
+					}
+					xpubFromRequest := func(r *http.Request) (string, error) {
+						session := auth.SessionFromContext(r.Context())
+						if session == nil {
+							return "", fmt.Errorf("no session")
+						}
+						return session.XPub, nil
+					}
+					uploadHandler := license.NewUploadHandler(reg, signingKeyLookup, xpubFromRequest)
 					adminMux.HandleFunc("/api/v1/plugins/upload", uploadHandler.ServeHTTP)
 					log.Infof("Plugin upload API at %s://%s/api/v1/plugins/upload", adminScheme, adminAddr)
+
+					moduleUploadHandler := license.NewModuleUploadHandler(reg, signingKeyLookup, xpubFromRequest)
+					moduleUploadHandler.SetAfterUpload(func(asset *license.PluginAsset) error {
+						return n.PublishCatalogModule(asset.ID)
+					})
+					adminMux.HandleFunc("/api/v1/plugin-modules", moduleUploadHandler.ServeHTTP)
+					adminMux.HandleFunc("/api/v1/plugin-modules/upload", moduleUploadHandler.ServeHTTP)
+					log.Infof("Plugin module API at %s://%s/api/v1/plugin-modules", adminScheme, adminAddr)
 				}
 			}
 
@@ -1094,7 +1100,8 @@ func isAdminOnlyAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/export") ||
 		strings.HasPrefix(path, "/api/import") ||
 		strings.HasPrefix(path, "/api/admin/") ||
-		path == "/api/v1/plugins/upload"
+		path == "/api/v1/plugins/upload" ||
+		path == "/api/v1/plugin-modules/upload"
 }
 
 func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {

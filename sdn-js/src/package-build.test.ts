@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 const DIST_INDEX_PATH = path.resolve(__dirname, '../dist/index.mjs');
 const DIST_UI_INDEX_PATH = path.resolve(__dirname, '../dist/ui/index.mjs');
 const DIST_STOREFRONT_INDEX_PATH = path.resolve(__dirname, '../dist/storefront/index.mjs');
+const DIST_CLI_INDEX_PATH = path.resolve(__dirname, '../dist/cli/index.mjs');
 const DIST_CHUNKS_PATH = path.resolve(__dirname, '../dist/chunks');
 const PACKAGE_JSON_PATH = path.resolve(__dirname, '../package.json');
 
@@ -77,6 +78,7 @@ describe('sdn-js package build', () => {
     expect(packageJson.exports?.['./ui']?.types).toBe('./dist/ui/index.d.ts');
     expect(packageJson.exports?.['./storefront']?.import).toBe('./dist/storefront/index.mjs');
     expect(packageJson.exports?.['./storefront']?.types).toBe('./dist/storefront/index.d.ts');
+    expect(packageJson.bin?.sdn).toBe('dist/cli/index.mjs');
     expect(
       Object.keys(packageJson.scripts ?? {}).some((name) =>
         name.includes('runtime-browser'),
@@ -89,6 +91,14 @@ describe('sdn-js package build', () => {
 
     expect(packageJson.scripts?.build).toContain('build:ui');
     expect(packageJson.scripts?.prepublishOnly).toBe('npm run build');
+  });
+
+  it('ships a Node CLI entrypoint for global npm installs', async () => {
+    const source = await fs.readFile(DIST_CLI_INDEX_PATH, 'utf8');
+
+    expect(source.startsWith('#!/usr/bin/env node')).toBe(true);
+    expect(source).toContain('wallet');
+    expect(source).toContain('module');
   });
 
   it(
