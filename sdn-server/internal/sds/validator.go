@@ -37,6 +37,10 @@ var (
 // validSchemaNameRegex matches valid schema names: alphanumeric, dots, and underscores only
 var validSchemaNameRegex = regexp.MustCompile(`^[a-zA-Z0-9._]+$`)
 
+// schemaTableNameInvalidChars matches characters that are valid in schema names
+// but unsafe in unquoted SQLite identifiers.
+var schemaTableNameInvalidChars = regexp.MustCompile(`[^a-z0-9_]+`)
+
 // ValidateSchemaName validates a schema name to prevent path traversal attacks,
 // SQL injection through table names, and other security issues.
 // Valid schema names:
@@ -293,7 +297,12 @@ func SchemaNameToTable(schemaName string) (string, error) {
 	if err := ValidateSchemaName(schemaName); err != nil {
 		return "", fmt.Errorf("invalid schema name for table: %w", err)
 	}
-	name := strings.TrimSuffix(schemaName, ".fbs")
-	name = strings.ToLower(name)
+	name := strings.ToLower(schemaName)
+	name = strings.TrimSuffix(name, ".fbs")
+	name = schemaTableNameInvalidChars.ReplaceAllString(name, "_")
+	name = strings.Trim(name, "_")
+	if name == "" {
+		return "", fmt.Errorf("invalid schema name for table: %w", ErrSchemaNameInvalidChars)
+	}
 	return "sds_" + name, nil
 }

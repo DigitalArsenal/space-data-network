@@ -140,6 +140,8 @@ func TestSchemaNameToTable(t *testing.T) {
 		{"CDM.fbs", "sds_cdm"},
 		{"EPM.fbs", "sds_epm"},
 		{"CUSTOM", "sds_custom"},
+		{".PUR.fbs", "sds_pur"},
+		{"schema.v1.fbs", "sds_schema_v1"},
 	}
 
 	for _, test := range tests {
