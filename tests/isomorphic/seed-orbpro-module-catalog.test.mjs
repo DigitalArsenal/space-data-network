@@ -17,6 +17,7 @@ import {
 
 import {
   DEFAULT_ORBPRO_MODULES,
+  OPTIONAL_ORBPRO_MODULES,
   seedOrbproModuleCatalog,
 } from "../../scripts/seed-orbpro-module-catalog.mjs";
 
@@ -186,6 +187,13 @@ await test("DEFAULT_ORBPRO_MODULES includes the licensing runtime", async () => 
     DEFAULT_ORBPRO_MODULES.some((entry) => entry.moduleId === "licensing"),
     true,
   );
+});
+
+await test("OPTIONAL_ORBPRO_MODULES pins conjunction to the current SDN module tag", async () => {
+  const conjunctionModule = OPTIONAL_ORBPRO_MODULES.find(
+    (entry) => entry.slug === "conjunction-assessment",
+  );
+  assert.equal(conjunctionModule?.version, "0.1.0-0.8.2");
 });
 
 console.log("\nDone.");

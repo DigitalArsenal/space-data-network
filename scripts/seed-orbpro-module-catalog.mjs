@@ -20,6 +20,7 @@ const defaultCacheControl =
 const defaultContentType = "application/wasm+encrypted";
 const defaultRequiredScope = "orbpro:base";
 const defaultVersion = "local-dev";
+const currentSpaceDataNetworkModulesVersion = "0.1.0-0.8.2";
 const orbproProtectedContextPrefix = "orbpro.plugin/";
 const moduleIdPattern = /^[A-Za-z0-9._-]+$/;
 const staleManagedModuleIds = Object.freeze([
@@ -127,6 +128,7 @@ const OPTIONAL_ORBPRO_MODULES = Object.freeze([
   Object.freeze({
     slug: "conjunction-assessment",
     moduleId: "org.spacedata.analysis.conjunction.assessment",
+    version: currentSpaceDataNetworkModulesVersion,
     wasmPath:
       "packages/space-data-network-modules/analysis/conjunction-assessment/dist/isomorphic/module.wasm",
     manifestPath:
