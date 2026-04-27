@@ -39,6 +39,16 @@ import {
 } from './module-delivery';
 
 describe('module-delivery', () => {
+  it('keeps the module-delivery requester API on the public root package export', async () => {
+    const sdn = await import('@spacedatanetwork/sdn-js');
+
+    expect(typeof sdn.SDNNode).toBe('function');
+    expect(typeof sdn.requestEncryptedModuleBundle).toBe('function');
+    expect(typeof sdn.requestModuleGrant).toBe('function');
+    expect(typeof sdn.fetchEncryptedModuleBundle).toBe('function');
+    expect(sdn.MODULE_DELIVERY_PROTOCOL_ID).toBe(MODULE_DELIVERY_PROTOCOL_ID);
+  });
+
   it('performs the raw SDS challenge and proof exchange over the module delivery protocol', async () => {
     const transport = {
       grantResponseBytes: new Uint8Array(),

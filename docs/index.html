@@ -3706,6 +3706,9 @@
       <p class="vision-intro">
         SDN includes a <strong>commercial layer</strong> enabling data providers to sell access to premium data products. Encryption ensures only paying customers can access purchased content.
       </p>
+      <p class="chart-note" style="margin-bottom: 32px;">
+        Third-party apps use public <code>@spacedatanetwork/sdn-js</code>, <code>@spacedatanetwork/sdn-js/ui</code>, and <code>@spacedatanetwork/sdn-js/storefront</code> imports to discover PLG listings, purchase access, request encrypted WASM delivery, decrypt locally, load through the SDK browser harness, and invoke modules.
+      </p>
 
       <div class="marketplace-flow">
         <div class="marketplace-step">
@@ -3715,8 +3718,8 @@
               <polyline points="14 2 14 8 20 8"/>
             </svg>
           </div>
-          <h4>1. Publish Data</h4>
-          <p>Provider uploads premium data product (high-precision ephemeris, analysis results, etc.)</p>
+          <h4>1. Publish PLG Listing</h4>
+          <p>Provider publishes one canonical PLG listing for the module version and stores the encrypted WASM bundle by CID.</p>
         </div>
         <div class="marketplace-arrow">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3730,8 +3733,8 @@
               <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
             </svg>
           </div>
-          <h4>2. Per-Customer Encryption</h4>
-          <p>Data encrypted with each customer's public key using ECIES. Only key holder can decrypt.</p>
+          <h4>2. Purchase Access</h4>
+          <p>Requester buys the listing through the public storefront client using credits, crypto, card, or a free grant path.</p>
         </div>
         <div class="marketplace-arrow">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3745,8 +3748,8 @@
               <line x1="1" y1="10" x2="23" y2="10"/>
             </svg>
           </div>
-          <h4>3. Payment</h4>
-          <p>Customer pays via credit card through integrated payment gateway. Automatic revenue distribution.</p>
+          <h4>3. Grant & Fetch</h4>
+          <p>SDNNode requests a module-delivery grant, fetches the encrypted bundle CID, and receives wrapped content-key material.</p>
         </div>
         <div class="marketplace-arrow">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3761,8 +3764,8 @@
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
           </div>
-          <h4>4. Access Granted</h4>
-          <p>Customer receives encrypted data. Decrypts locally with their private key.</p>
+          <h4>4. Decrypt & Run</h4>
+          <p>The app unwraps the grant key locally, decrypts the WASM bytes, loads the SDK browser harness, and invokes the module.</p>
         </div>
       </div>
 
@@ -3785,6 +3788,7 @@
             <li>Format converters</li>
             <li>Integration connectors</li>
             <li>Custom propagators</li>
+            <li>Encrypted WASM delivery</li>
           </ul>
         </div>
         <div class="marketplace-feature-card">
@@ -3800,6 +3804,9 @@
       </div>
 
       <p class="chart-note" style="margin-top: 40px;">The marketplace operates on top of the free, open network. Core SSA data exchange remains free and open. Commercial layer is opt-in for premium products.</p>
+      <p class="chart-note">
+        Public API details and the end-to-end TypeScript example are documented in <a href="docs.html#sdk-storefront-delivery">Storefront &amp; Encrypted Module Delivery</a>.
+      </p>
     </div>
   </section>
 

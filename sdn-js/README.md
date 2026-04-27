@@ -8,8 +8,9 @@ Browser and Node.js SDK for the [Space Data Network](https://github.com/DigitalA
 npm install @spacedatanetwork/sdn-js
 ```
 
-The package root exports the core SDN SDK. The browser UI/runtime surface is
-published separately at `@spacedatanetwork/sdn-js/ui`.
+The package root exports the core SDN SDK. Browser UI/runtime helpers are
+published at `@spacedatanetwork/sdn-js/ui`, and marketplace purchase helpers are
+published at `@spacedatanetwork/sdn-js/storefront`.
 
 ## Quick Start
 
@@ -67,6 +68,11 @@ your own app.
 
 ```typescript
 import {
+  loadMarketplaceListingsFromServer,
+  unwrapGrantContentKey,
+  decryptEncryptedModuleBundle,
+  loadDecryptedModule,
+  invokeLoadedModule,
   ObservedPeerIndex,
   SDNUIEventBus,
   mountWalletUI,
@@ -218,7 +224,13 @@ Requester-side module delivery stays on libp2p plus Helia. The public path
 does not bootstrap through legacy discovery or browser broker endpoints.
 
 ```typescript
-import { SDNNode } from '@spacedatanetwork/sdn-js';
+import {
+  MODULE_DELIVERY_PROTOCOL_ID,
+  SDNNode,
+  fetchEncryptedModuleBundle,
+  requestEncryptedModuleBundle,
+  requestModuleGrant,
+} from '@spacedatanetwork/sdn-js';
 
 const result = await node.requestEncryptedModuleBundle({
   serverDescriptor: {
@@ -227,33 +239,117 @@ const result = await node.requestEncryptedModuleBundle({
   },
   moduleId: 'com.example.analytics',
   moduleVersion: '1.2.3',
+  requesterDomain: globalThis.location.origin,
+  requestedTimeoutMs: 300_000,
 });
 
 console.log(result.grant.bundleDescriptor.cid);
 console.log(result.encryptedBundleBytes.length);
 ```
 
+`SDNNode.requestEncryptedModuleBundle(...)` is the high-level requester path.
+The lower-level `requestModuleGrant(...)`, `fetchEncryptedModuleBundle(...)`,
+`requestEncryptedModuleBundle(...)`, and `MODULE_DELIVERY_PROTOCOL_ID` exports
+are also public for apps that provide their own transport implementation.
+
 ### Storefront
 
 Client for the SDN data marketplace.
 
 ```typescript
-import { createStorefrontClient, AccessType, PaymentMethod } from '@spacedatanetwork/sdn-js';
+import {
+  AccessType,
+  GrantStatus,
+  PaymentMethod,
+  PurchaseStatus,
+  createStorefrontClient,
+} from '@spacedatanetwork/sdn-js/storefront';
 
 const client = createStorefrontClient({
-  baseUrl: 'https://spaceaware.io',
+  apiBaseUrl: 'https://spaceaware.io',
+  peerId: '12D3KooWRequester...',
 });
 
 // Browse listings
-const results = await client.search({ query: 'conjunction', schemaType: 'CDM.fbs' });
+const results = await client.searchListings({
+  searchText: 'conjunction',
+  dataTypes: ['CDM'],
+  accessTypes: [AccessType.Subscription],
+});
 
 // Purchase data access
-await client.purchase({
-  listingId: 'listing-123',
-  paymentMethod: PaymentMethod.CREDITS,
-  accessType: AccessType.SUBSCRIPTION,
+const purchase = await client.createPurchase({
+  listingId: results.listings[0].listingId,
+  tierName: 'Pro',
+  paymentMethod: PaymentMethod.SDNCredits,
 });
 ```
+
+### Purchase, Deliver, Decrypt, Run
+
+The browser end-to-end path uses only public package exports:
+
+```typescript
+import { SDNNode, identityFromMnemonic, initHDWallet } from '@spacedatanetwork/sdn-js';
+import {
+  decryptEncryptedModuleBundle,
+  invokeLoadedModule,
+  loadDecryptedModule,
+  loadMarketplaceListingsFromServer,
+  unwrapGrantContentKey,
+} from '@spacedatanetwork/sdn-js/ui';
+import { PaymentMethod, createStorefrontClient } from '@spacedatanetwork/sdn-js/storefront';
+
+await initHDWallet();
+const identity = await identityFromMnemonic(mnemonic);
+const node = await SDNNode.create({ identity, enableRelayProbing: true });
+
+const [listing] = await loadMarketplaceListingsFromServer('https://spaceaware.io');
+const storefront = createStorefrontClient({
+  apiBaseUrl: 'https://spaceaware.io',
+  peerId: identity.peerId,
+  encryptionPubkey: identity.encryptionKey.publicKey,
+  keyAlgorithm: 'x25519',
+});
+
+const purchase = await storefront.createPurchase({
+  listingId: listing.pluginId,
+  tierName: 'default',
+  paymentMethod: PaymentMethod.SDNCredits,
+  encryptionPubkey: identity.encryptionKey.publicKey,
+  keyAlgorithm: 'x25519',
+  preferredDeliveryMethod: 'IPFSPin',
+});
+await storefront.payWithCredits(purchase.requestId);
+
+const delivery = await node.requestEncryptedModuleBundle({
+  serverDescriptor: {
+    publicKey: providerPublicKey,
+    relayAddresses: providerRelayAddresses,
+  },
+  moduleId: listing.pluginId,
+  moduleVersion: listing.version,
+  requesterDomain: globalThis.location.origin,
+  requestedTimeoutMs: 300_000,
+});
+
+const contentKey = await unwrapGrantContentKey(
+  delivery.grant.wrappedContentKey,
+  identity.encryptionKey.privateKey,
+);
+const wasmBytes = await decryptEncryptedModuleBundle(
+  delivery.encryptedBundleBytes,
+  contentKey,
+);
+const harness = await loadDecryptedModule(wasmBytes);
+const result = await invokeLoadedModule(harness, {
+  methodId: 'invoke',
+  inputs: [],
+});
+```
+
+A fuller documented example lives at
+[`examples/purchase-encrypted-wasm-delivery.ts`](./examples/purchase-encrypted-wasm-delivery.ts).
 
 ### Subscriptions
 

@@ -41,6 +41,8 @@ import { requestModuleGrant } from './module-delivery';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const DIRECT_INVOKE_WASM_BASE64 =
+  'AGFzbQEAAAABEgNgAX8Bf2ACf38AYAN/f38BfwMEAwABAgUDAQABBz4EBm1lbW9yeQIADHBsdWdpbl9hbGxvYwAAC3BsdWdpbl9mcmVlAAEUcGx1Z2luX2ludm9rZV9zdHJlYW0AAgoYAwUAQYAgCwIACw0AIAJB9AA2AgBBgAgLC3sBAEGACAt0GAAAAFBJTlMAAA4ADAAAAAAAAAAIAAQADgAAAAgAAAAYAAAAEAAAAHB1YmxpYy1oZWxwZXItb2sBAAAAFAAAAAAADgAOAAgAAAAAAAAABAAOAAAAEAAAABAAAAAAAAoACAAAAAAABAAKAAAABAAAAAAAAAA=';
 
 describe('module-delivery SDK compatibility', () => {
   it('declares the SDK as a direct dependency of sdn-js', async () => {
@@ -52,6 +54,102 @@ describe('module-delivery SDK compatibility', () => {
     };
 
     expect(packageJson.dependencies?.['space-data-module-sdk']).toBeTruthy();
+  });
+
+  it('keeps the browser runtime delivery helpers on the public UI package subpath', async () => {
+    const ui = await import('@spacedatanetwork/sdn-js/ui');
+
+    expect(typeof ui.loadMarketplaceListingsFromServer).toBe('function');
+    expect(typeof ui.unwrapGrantContentKey).toBe('function');
+    expect(typeof ui.decryptEncryptedModuleBundle).toBe('function');
+    expect(typeof ui.loadDecryptedModule).toBe('function');
+    expect(typeof ui.invokeLoadedModule).toBe('function');
+  });
+
+  it('decrypts fetched encrypted bundle bytes and invokes the module through public package helpers', async () => {
+    const [{ fetchEncryptedModuleBundle }, ui] = await Promise.all([
+      import('@spacedatanetwork/sdn-js'),
+      import('@spacedatanetwork/sdn-js/ui'),
+    ]);
+    const contentKey = new Uint8Array(32).fill(0x37);
+    const wasmBytes = Uint8Array.from(Buffer.from(DIRECT_INVOKE_WASM_BASE64, 'base64'));
+    const encryptedBundleBytes = await encryptBundleBytes(wasmBytes, contentKey);
+    const contentHash = await sha256(encryptedBundleBytes);
+    const fetched = await fetchEncryptedModuleBundle(
+      {
+        async fetchCIDBytes(cid: string) {
+          expect(cid).toBe('bafypublichelpers');
+          return encryptedBundleBytes;
+        },
+      },
+      {
+        provider: {
+          peerId: 'provider-peer-id',
+          publicKey: new Uint8Array(33).fill(2),
+          publicKeyHex: '02'.padEnd(66, '1'),
+          relayAddresses: ['/ip4/104.131.11.220/tcp/4001/ws/p2p/provider-peer-id'],
+          source: 'descriptor',
+        },
+        grant: {
+          reqId: 'req-public-helper-flow',
+          moduleId: 'com.example.public-helper',
+          requestedTimeoutMs: 300_000,
+          grantedDomain: 'app.example.com',
+          grantedTimeoutMs: 300_000,
+          expiresAtMs: 1_700_003_600_000,
+          capabilityToken: new Uint8Array(),
+          grantVerifierPublicKey: new Uint8Array(),
+          providerSignature: new Uint8Array(),
+          bundleDescriptor: {
+            cid: 'bafypublichelpers',
+            contentHash,
+            sizeBytes: encryptedBundleBytes.length,
+            moduleId: 'com.example.public-helper',
+            moduleVersion: '1.0.0',
+            allowedDomains: ['app.example.com'],
+            maxGrantTimeoutMs: 300_000,
+            encrypted: true,
+          },
+          wrappedContentKey: {
+            wrappingAlgorithm: 'direct-test-fixture',
+            keyBytes: contentKey,
+            requesterEphemeralPublicKey: new Uint8Array(),
+            providerEphemeralPublicKey: new Uint8Array(),
+            hkdfSalt: new Uint8Array(),
+            iv: new Uint8Array(),
+            ciphertext: new Uint8Array(),
+            tag: new Uint8Array(),
+            expiresAtMs: 1_700_003_600_000,
+            recipientPublicKey: new Uint8Array(),
+            ephemeralPublicKey: new Uint8Array(),
+            nonce: new Uint8Array(),
+          },
+        },
+        grantResponseBytes: new Uint8Array(),
+      },
+    );
+
+    const unwrappedKey = await ui.unwrapGrantContentKey(
+      fetched.grant.wrappedContentKey,
+      new Uint8Array(32),
+    );
+    const decryptedWasm = await ui.decryptEncryptedModuleBundle(
+      fetched.encryptedBundleBytes,
+      unwrappedKey,
+    );
+    const harness = await ui.loadDecryptedModule(decryptedWasm);
+    const response = await ui.invokeLoadedModule<{
+      statusCode: number;
+      outputs: Array<{ payload: Uint8Array }>;
+    }>(harness, {
+      methodId: 'echo',
+      inputs: [],
+    });
+
+    expect(decryptedWasm).toEqual(wasmBytes);
+    expect(response.statusCode).toBe(0);
+    expect(new TextDecoder().decode(response.outputs[0].payload)).toBe('public-helper-ok');
+    harness.destroy?.();
   });
 
   it('emits requester bytes and consumes grant bytes that remain valid under the SDK licensing helpers', async () => {
@@ -383,4 +481,29 @@ function createWrappedContentKeyPayload(
   );
   KMF.finishKMFBuffer(kmfBuilder, kmfOffset);
   return LGR.createWrappedContentKeyPayloadVector(builder, kmfBuilder.asUint8Array());
+}
+
+async function sha256(value: Uint8Array): Promise<Uint8Array> {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', value);
+  return new Uint8Array(digest);
+}
+
+async function encryptBundleBytes(plaintext: Uint8Array, contentKey: Uint8Array): Promise<Uint8Array> {
+  const iv = new Uint8Array(12).fill(1);
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    contentKey,
+    'AES-GCM',
+    false,
+    ['encrypt'],
+  );
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    cryptoKey,
+    plaintext,
+  );
+  const encrypted = new Uint8Array(iv.length + ciphertext.byteLength);
+  encrypted.set(iv, 0);
+  encrypted.set(new Uint8Array(ciphertext), iv.length);
+  return encrypted;
 }
