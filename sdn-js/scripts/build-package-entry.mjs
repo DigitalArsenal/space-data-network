@@ -13,7 +13,7 @@ const hdWalletShims = new Map([
   ],
 ]);
 
-const sharedBuildOptions = {
+const sharedBrowserBuildOptions = {
   absWorkingDir: packageRoot,
   bundle: true,
   format: 'esm',
@@ -46,7 +46,7 @@ const sharedBuildOptions = {
 };
 
 await build({
-  ...sharedBuildOptions,
+  ...sharedBrowserBuildOptions,
   entryPoints: [
     path.join(packageRoot, 'src/index.ts'),
     path.join(packageRoot, 'src/ui/index.ts'),
@@ -60,4 +60,19 @@ await build({
   outExtension: {
     '.js': '.mjs',
   },
+});
+
+await build({
+  absWorkingDir: packageRoot,
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  target: 'node18',
+  sourcemap: false,
+  logLevel: 'info',
+  packages: 'external',
+  entryPoints: [
+    path.join(packageRoot, 'src/cli/index.ts'),
+  ],
+  outfile: path.join(packageRoot, 'dist/cli/index.mjs'),
 });

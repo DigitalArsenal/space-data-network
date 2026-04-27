@@ -1,0 +1,258 @@
+# SDN JS CLI Module Upload Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add a public `sdn` CLI that creates an encrypted local wallet, packages encrypted/signed WASM module artifacts, uploads them to an authorized SDN node, and verifies delivery through the public module-delivery protocol.
+
+**Architecture:** `sdn-js` owns the Node CLI, encrypted file wallet, authenticated node session, module packaging, and protocol query command. `sdn-server` owns the encrypted plugin-module upload/list API and catalog persistence; uploaded artifacts become standard module-delivery catalog entries so the existing `/space-data-network/module-delivery/1.0.0` flow serves them. The first live path uses existing wallet challenge auth for upload permissions, then a test protocol query using `SDNNode.requestEncryptedModuleBundle(...)`.
+
+**Tech Stack:** TypeScript ESM, Node 18+, Vitest, `hd-wallet-wasm`, `space-data-module-sdk`, Go `net/http`, existing SDN auth/session middleware, existing encrypted plugin catalog/runtime bootstrap.
+
+---
+
+## Assumptions
+
+- CLI command name is `sdn`.
+- CLI wallet home is `~/.spacedatanetwork/sdn-js` unless `SDN_CLI_HOME` is set.
+- Upload permission maps to existing SDN auth trust level `admin` for this iteration.
+- The live `https://sdn.spaceaware.io` node already has or can receive an admin wallet session capable of adding the generated test wallet.
+- Encrypted bundle bytes stay encrypted at rest and in transit; the content key is accepted only over HTTPS from an authenticated admin upload and is stored as the existing catalog `key_path`.
+- Hot upload publishes the artifact into the licensing runtime when a licensing module is already loaded; full hot-replacement of the licensing runtime itself is a separate follow-up.
+
+## Files
+
+- Create: `sdn-js/src/cli/index.ts` for command dispatch.
+- Create: `sdn-js/src/cli/wallet.ts` for encrypted file wallet storage.
+- Create: `sdn-js/src/cli/auth.ts` for challenge/verify login and admin user registration.
+- Create: `sdn-js/src/cli/module-package.ts` for encrypted artifact packaging and signing.
+- Create: `sdn-js/src/cli/module-upload.ts` for encrypted upload/list/status/query commands.
+- Create: `sdn-js/src/cli/cli.test.ts` for CLI wallet/package/auth command smoke tests.
+- Modify: `sdn-js/package.json` to expose `bin.sdn`.
+- Modify: `sdn-js/scripts/build-package-entry.mjs` to build the CLI as Node ESM.
+- Modify: `sdn-js/src/package-build.test.ts` to assert the CLI dist entry exists.
+- Modify: `sdn-server/internal/license/plugins.go` to add encrypted catalog insertion.
+- Create: `sdn-server/internal/license/module_upload.go` for encrypted upload/list handler.
+- Create: `sdn-server/internal/license/module_upload_test.go` for upload/list/permission tests.
+- Modify: `sdn-server/cmd/spacedatanetwork/main.go` to register `/api/v1/plugin-modules` and `/api/v1/plugin-modules/upload`.
+- Modify: `sdn-server/cmd/spacedatanetwork/main_test.go` to assert plugin-module route protection and public module-delivery compatibility.
+- Modify: `sdn-server/internal/peers/admin.go` to add a Plugin Modules admin tab backed by `/api/v1/plugin-modules`.
+- Modify: `sdn-server/internal/node/licensing_bootstrap.go` to publish one uploaded catalog asset through the existing licensing runtime helper.
+- Modify: `sdn-server/internal/node/node.go` to retain the licensing module reference for post-upload publishing.
+- Modify: `sdn-js/README.md` and root `README.md` for CLI wallet/package/upload/query examples.
+
+## Task 1: CLI Package Surface And Wallet
+
+- [x] **Step 1: Write failing tests**
+
+  Add `sdn-js/src/cli/cli.test.ts` tests that use `SDN_CLI_HOME` in a temp directory and verify:
+  - `createWallet({ password, name })` creates `wallet.json` below the hidden CLI home.
+  - `loadWallet({ password })` returns `xpub`, `peerId`, and `signingPublicKeyHex`.
+  - loading with a wrong password rejects.
+  - package build emits `dist/cli/index.mjs`.
+
+  Run: `npm --prefix sdn-js test -- src/cli/cli.test.ts src/package-build.test.ts`
+  Expected: FAIL because CLI modules and bin entry do not exist yet.
+
+- [x] **Step 2: Implement encrypted wallet and CLI entry**
+
+  Implement `sdn-js/src/cli/wallet.ts` with AES-256-GCM + PBKDF2/SHA-256 using Node `crypto.webcrypto`, `fs/promises`, and `os.homedir()`. Store only public metadata unencrypted; encrypt mnemonic and derived key material. Enforce directory mode `0700` and file mode `0600`.
+
+  Implement `sdn-js/src/cli/index.ts` commands:
+  - `sdn wallet init --password-env SDN_WALLET_PASSWORD`
+  - `sdn wallet info --password-env SDN_WALLET_PASSWORD`
+
+  Modify `sdn-js/package.json` with `"bin": { "sdn": "./dist/cli/index.mjs" }`.
+
+  Modify `sdn-js/scripts/build-package-entry.mjs` so browser package entries stay browser-targeted and CLI builds as `platform: "node"`.
+
+- [x] **Step 3: Verify wallet tests**
+
+  Run: `npm --prefix sdn-js test -- src/cli/cli.test.ts src/package-build.test.ts`
+  Expected: PASS.
+
+## Task 2: CLI Node Auth And Test Wallet Registration
+
+- [x] **Step 1: Write failing auth tests**
+
+  Extend `sdn-js/src/cli/cli.test.ts` with fetch-mocked tests for:
+  - `loginToNode` posts `/api/auth/challenge`, signs the returned challenge with wallet signing key, posts `/api/auth/verify`, and stores the `sdn_wallet_session` cookie per node.
+  - `addUploadUser` posts `/api/auth/users` with `trust_level: "admin"` and the wallet `signing_pubkey_hex`.
+
+  Run: `npm --prefix sdn-js test -- src/cli/cli.test.ts`
+  Expected: FAIL because auth helpers do not exist yet.
+
+- [x] **Step 2: Implement auth helpers and commands**
+
+  Implement `sdn-js/src/cli/auth.ts`:
+  - `loginToNode({ nodeUrl, wallet, fetchImpl })`
+  - `addUploadUser({ nodeUrl, sessionCookie, walletInfo, trustLevel })`
+  - session cookie persistence under `~/.spacedatanetwork/sdn-js/sessions.json`.
+
+  Add CLI commands:
+  - `sdn auth login --node https://sdn.spaceaware.io`
+  - `sdn auth add-current-wallet --node https://sdn.spaceaware.io --trust admin`
+
+- [x] **Step 3: Verify auth tests**
+
+  Run: `npm --prefix sdn-js test -- src/cli/cli.test.ts`
+  Expected: PASS.
+
+## Task 3: Server Encrypted Plugin-Module Upload API
+
+- [x] **Step 1: Write failing Go tests**
+
+  Add `sdn-server/internal/license/module_upload_test.go` for:
+  - unauthenticated upload returns 401/403 through handler xpub lookup.
+  - authenticated upload accepts `bundle`, `content_key_hex`, `metadata`, and `signature_hex`.
+  - registry stores `encrypted_path` and `key_path`, not `plain_path`.
+  - `GET /api/v1/plugin-modules` returns public descriptors without key material.
+
+  Run: `go test ./sdn-server/internal/license`
+  Expected: FAIL because encrypted upload API is not implemented.
+
+- [x] **Step 2: Implement encrypted catalog insertion and handler**
+
+  Add `PluginRegistry.AddEncryptedPlugin(...)` in `plugins.go`. It writes:
+  - `<plugin-id>/bundle.wasm.enc`
+  - `<plugin-id>/bundle.key`
+  - `catalog.json` entry with normalized `allowed_domains`, `required_scope`, `content_type`, `cache_control`, `max_grant_timeout_ms`, signature audit fields.
+
+  Add `module_upload.go` handler:
+  - `GET /api/v1/plugin-modules`
+  - `POST /api/v1/plugin-modules/upload`
+  - verify Ed25519 signature over `sha256(encryptedBundleBytes)`
+  - require the session xpub to resolve to a bound signing key.
+  - return a public manifest descriptor with status, allowed domains, grant timeout, hash, and audit fields but no key paths.
+
+- [x] **Step 3: Register protected routes**
+
+  Update `main.go`:
+  - register `/api/v1/plugin-modules`
+  - register `/api/v1/plugin-modules/upload`
+  - classify upload as admin-only.
+  - keep `/api/module-delivery/provider` and `/api/module-delivery/listings` public.
+
+  Update `/admin`:
+  - add a dedicated Plugin Modules tab.
+  - list installed/running module status and public manifest fields from `/api/v1/plugin-modules`.
+
+- [x] **Step 4: Verify Go API tests**
+
+  Run: `go test ./sdn-server/internal/license ./sdn-server/cmd/spacedatanetwork`
+  Expected: PASS.
+
+## Task 4: CLI Package, Upload, List, And Protocol Query
+
+- [x] **Step 1: Write failing CLI packaging tests**
+
+  Extend `sdn-js/src/cli/cli.test.ts` for:
+  - `packageModule` encrypts bytes using a generated 32-byte content key.
+  - `packageModule` signs `sha256(encryptedBundleBytes)`.
+  - `uploadModule` posts multipart fields accepted by the server handler.
+  - `listModules` reads `/api/v1/plugin-modules`.
+
+  Run: `npm --prefix sdn-js test -- src/cli/cli.test.ts`
+  Expected: FAIL because package/upload helpers do not exist yet.
+
+- [x] **Step 2: Implement packaging and upload commands**
+
+  Implement `module-package.ts` and `module-upload.ts`.
+
+  Add CLI commands:
+  - `sdn module package --wasm ./module.wasm --module-id com.example.test --version 0.0.1 --allow-domain spaceaware.io --out ./dist`
+  - `sdn module upload --node https://sdn.spaceaware.io --package ./dist/com.example.test-0.0.1.sdn-module.json`
+  - `sdn module publish` as package + upload.
+  - `sdn module list --node https://sdn.spaceaware.io`.
+
+- [x] **Step 3: Implement protocol query command**
+
+  Add `sdn module query --node https://sdn.spaceaware.io --module-id com.example.test --requester-domain spaceaware.io`.
+
+  The command:
+  - loads wallet identity,
+  - creates `SDNNode`,
+  - calls `requestEncryptedModuleBundle` through `MODULE_DELIVERY_PROTOCOL_ID`,
+  - unwraps/decrypts with public UI helpers,
+  - reports encrypted bytes, decrypted bytes, module id, version, and CID.
+
+- [x] **Step 4: Verify CLI tests**
+
+  Run: `npm --prefix sdn-js test -- src/cli/cli.test.ts src/module-delivery.test.ts src/module-delivery-sdk-compat.test.ts`
+  Expected: PASS.
+
+## Task 5: Docs And Live Test Protocol
+
+- [x] **Step 1: Document commands**
+
+  Update `sdn-js/README.md` and root `README.md` with:
+  - global install
+  - wallet init/info/login
+  - admin adds test wallet as upload capable
+  - module package/upload/list/query
+  - OrbPro/SpaceAware target provider URL `https://sdn.spaceaware.io/api/module-delivery/provider`.
+
+- [x] **Step 2: Build a tiny test WASM payload**
+
+  Use the existing module SDK fixture or smallest repo fixture that can be encrypted and delivered as `com.spaceaware.test-protocol`.
+
+- [ ] **Step 3: Live `sdn.spaceaware.io` smoke**
+
+  Status on 2026-04-27: blocked at live authorization for uploading a new test
+  module. The live node exposes
+  `https://sdn.spaceaware.io/api/module-delivery/provider` and
+  `https://sdn.spaceaware.io/api/module-delivery/listings`, and the isolated CLI
+  test wallet/package flow works locally. `sdn auth login --node
+  https://sdn.spaceaware.io` for a newly generated test wallet returns
+  `403 {"code":"authentication_failed","message":"authentication failed"}`
+  because the wallet is not yet in the live node's admin user store. SSH to
+  `root@sdn.spaceaware.io` and `sdn@sdn.spaceaware.io` on port 22 also fails
+  with `No route to host`, so this session cannot add the key server-side.
+  Durable test wallet created locally at
+  `/Users/tj/.spacedatanetwork/sdn-js-live-upload-test-20260427` with xpub
+  `xpub6CXdUKPC5Wdj3h5fJcuodPJordBem8HubXwrf5WhPzXNiBBxvADDuWCkV6tNTgN8jEzWqUPAWLyKct5Ns2cAimQJEnVbGGSAFxgdoFXi6CN`
+  and signing key
+  `bdad02b46ee6efa2ce9e8796b4d4da03074daf7550b4c2fabee00188c83d1c27`.
+  Read-only protocol query did succeed with the durable test wallet against the
+  existing `com.orbpro.fastest-path@1.0.0` listing: the CLI received challenge
+  and grant over `/space-data-network/module-delivery/1.0.0`, fetched CID
+  `QmaaZcY2aewMChPaNzKsZDeeNugKetVfEnFsjzVkKS2jw4` through Helia/libp2p, and
+  locally decrypted 95,793 encrypted bytes to 91,097 WASM bytes.
+
+  Commands to run with `SDN_WALLET_PASSWORD` set:
+
+  ```bash
+  npm --prefix sdn-js run build:core
+  node sdn-js/dist/cli/index.mjs wallet init --name "SDN Upload Test"
+  node sdn-js/dist/cli/index.mjs wallet info
+  node sdn-js/dist/cli/index.mjs auth login --node https://sdn.spaceaware.io
+  node sdn-js/dist/cli/index.mjs auth add-current-wallet --node https://sdn.spaceaware.io --trust admin
+  node sdn-js/dist/cli/index.mjs module publish --node https://sdn.spaceaware.io --wasm <test.wasm> --module-id com.spaceaware.test-protocol --version 0.0.1 --allow-domain spaceaware.io
+  node sdn-js/dist/cli/index.mjs module list --node https://sdn.spaceaware.io
+  node sdn-js/dist/cli/index.mjs module query --node https://sdn.spaceaware.io --module-id com.spaceaware.test-protocol --requester-domain spaceaware.io
+  ```
+
+  Expected:
+  - wallet info prints test xpub and signing key.
+  - add-current-wallet returns created/updated.
+  - publish returns bundle sha256 and module descriptor.
+  - list includes `com.spaceaware.test-protocol`.
+  - query reaches `/space-data-network/module-delivery/1.0.0` and returns decrypted bytes.
+
+## Task 6: Final Verification
+
+- [x] **Step 1: Run focused tests**
+
+  ```bash
+  npm --prefix sdn-js test -- src/cli/cli.test.ts src/module-delivery.test.ts src/module-delivery-sdk-compat.test.ts src/storefront/storefront.test.ts
+  ../scripts/go-with-wasmedge.sh test ./internal/license ./internal/peers ./internal/node ./cmd/spacedatanetwork -count=1
+  npm run check:versions
+  git diff --check
+  ```
+
+- [x] **Step 2: Update this checklist**
+
+  Mark completed steps with `[x]` and leave any blocked live deployment step unchecked with the exact blocker.
+
+- [ ] **Step 3: Commit**
+
+  Commit once focused verification passes.

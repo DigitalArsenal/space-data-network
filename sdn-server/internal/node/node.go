@@ -70,23 +70,24 @@ const (
 
 // Node represents a Space Data Network node.
 type Node struct {
-	host           host.Host
-	dht            *dht.IpfsDHT
-	pubsub         *pubsub.PubSub
-	topics         map[string]*pubsub.Topic
-	flatc          *wasm.FlatcModule
-	hdwallet       *wasm.HDWalletModule
-	identity       *wasm.DerivedIdentity // nil if using random key (no HD wallet)
-	validator      *sds.Validator
-	store          *storage.FlatSQLStore
-	protocol       *protocol.SDSExchangeHandler
-	plugins        *plugins.Manager
-	epmService     *epm.Service
-	directorySvc   *directory.Service
-	logService     *logservice.Service
-	flowManager    *flowrt.FlowManager
-	config         *config.Config
-	identityBundle *IdentityBundle
+	host            host.Host
+	dht             *dht.IpfsDHT
+	pubsub          *pubsub.PubSub
+	topics          map[string]*pubsub.Topic
+	flatc           *wasm.FlatcModule
+	hdwallet        *wasm.HDWalletModule
+	identity        *wasm.DerivedIdentity // nil if using random key (no HD wallet)
+	validator       *sds.Validator
+	store           *storage.FlatSQLStore
+	protocol        *protocol.SDSExchangeHandler
+	plugins         *plugins.Manager
+	epmService      *epm.Service
+	directorySvc    *directory.Service
+	logService      *logservice.Service
+	flowManager     *flowrt.FlowManager
+	config          *config.Config
+	identityBundle  *IdentityBundle
+	licensingModule *modulert.Module
 
 	// Trusted peer management
 	peerRegistry *peers.Registry
@@ -482,6 +483,7 @@ func (n *Node) init() error {
 	}
 
 	if licensingModule != nil {
+		n.licensingModule = licensingModule
 		if n.pluginRegistry != nil {
 			if err := bootstrapLicensingModule(licensingModule, n.pluginRegistry); err != nil {
 				log.Warnf("Licensing module bootstrap completed with errors: %v", err)
@@ -1286,6 +1288,26 @@ func (n *Node) ModuleDeliveryDiscoveryCID() cid.Cid {
 // PluginRegistry returns the loaded plugin registry metadata, if available.
 func (n *Node) PluginRegistry() *license.PluginRegistry {
 	return n.pluginRegistry
+}
+
+// PublishCatalogModule publishes a catalog asset through the live licensing
+// runtime so it becomes available on the module-delivery protocol immediately
+// after upload.
+func (n *Node) PublishCatalogModule(pluginID string) error {
+	if n == nil {
+		return fmt.Errorf("node is nil")
+	}
+	if n.licensingModule == nil {
+		return fmt.Errorf("licensing module runtime is unavailable")
+	}
+	if n.pluginRegistry == nil {
+		return fmt.Errorf("plugin registry is unavailable")
+	}
+	asset, ok := n.pluginRegistry.Get(pluginID)
+	if !ok {
+		return fmt.Errorf("plugin %q not found in registry", pluginID)
+	}
+	return publishCatalogAsset(n.licensingModule, n.pluginRegistry, asset)
 }
 
 // DHT returns the Kademlia DHT instance for content routing.

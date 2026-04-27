@@ -102,18 +102,20 @@ type PluginCatalogEntry struct {
 
 // PluginDescriptor is safe to return publicly (no key path information).
 type PluginDescriptor struct {
-	ID              string `json:"id"`
-	Version         string `json:"version"`
-	RequiredScope   string `json:"required_scope"`
-	ContentType     string `json:"content_type"`
-	CacheControl    string `json:"cache_control"`
-	BundleSHA256    string `json:"bundle_sha256"`
-	SizeBytes       int64  `json:"size_bytes"`
-	SignatureHex    string `json:"signature_hex,omitempty"`
-	SignerPubKeyHex string `json:"signer_pubkey_hex,omitempty"`
-	UploadedAt      string `json:"uploaded_at,omitempty"`
-	Status          string `json:"status"`
-	StatusMessage   string `json:"status_message,omitempty"`
+	ID                string   `json:"id"`
+	Version           string   `json:"version"`
+	RequiredScope     string   `json:"required_scope"`
+	ContentType       string   `json:"content_type"`
+	CacheControl      string   `json:"cache_control"`
+	AllowedDomains    []string `json:"allowed_domains,omitempty"`
+	MaxGrantTimeoutMs int64    `json:"max_grant_timeout_ms,omitempty"`
+	BundleSHA256      string   `json:"bundle_sha256"`
+	SizeBytes         int64    `json:"size_bytes"`
+	SignatureHex      string   `json:"signature_hex,omitempty"`
+	SignerPubKeyHex   string   `json:"signer_pubkey_hex,omitempty"`
+	UploadedAt        string   `json:"uploaded_at,omitempty"`
+	Status            string   `json:"status"`
+	StatusMessage     string   `json:"status_message,omitempty"`
 }
 
 // PluginAsset is an in-memory validated plugin metadata record.
@@ -137,6 +139,22 @@ type PluginAsset struct {
 
 	runtimeStatus string
 	statusMessage string
+}
+
+// EncryptedPluginUpload describes encrypted module bytes and content key
+// material accepted by the plugin-module upload API.
+type EncryptedPluginUpload struct {
+	ID                string
+	Version           string
+	RequiredScope     string
+	EncryptedBundle   []byte
+	ContentKey        []byte
+	ContentType       string
+	CacheControl      string
+	AllowedDomains    []string
+	MaxGrantTimeoutMs int64
+	SignatureHex      string
+	SignerPubKeyHex   string
 }
 
 func (a *PluginAsset) clone() *PluginAsset {
@@ -193,18 +211,20 @@ func (a *PluginAsset) Descriptor() PluginDescriptor {
 		status = pluginRuntimeStatusStopped
 	}
 	return PluginDescriptor{
-		ID:              a.ID,
-		Version:         a.Version,
-		RequiredScope:   a.RequiredScope,
-		ContentType:     a.ContentType,
-		CacheControl:    a.CacheControl,
-		BundleSHA256:    a.BundleSHA256,
-		SizeBytes:       a.SizeBytes,
-		SignatureHex:    a.SignatureHex,
-		SignerPubKeyHex: a.SignerPubKeyHex,
-		UploadedAt:      a.UploadedAt,
-		Status:          status,
-		StatusMessage:   strings.TrimSpace(a.statusMessage),
+		ID:                a.ID,
+		Version:           a.Version,
+		RequiredScope:     a.RequiredScope,
+		ContentType:       a.ContentType,
+		CacheControl:      a.CacheControl,
+		AllowedDomains:    append([]string(nil), a.AllowedDomains...),
+		MaxGrantTimeoutMs: a.MaxGrantTimeoutMs,
+		BundleSHA256:      a.BundleSHA256,
+		SizeBytes:         a.SizeBytes,
+		SignatureHex:      a.SignatureHex,
+		SignerPubKeyHex:   a.SignerPubKeyHex,
+		UploadedAt:        a.UploadedAt,
+		Status:            status,
+		StatusMessage:     strings.TrimSpace(a.statusMessage),
 	}
 }
 
@@ -849,6 +869,96 @@ func (r *PluginRegistry) AddPlugin(id, version string, wasmData []byte, signatur
 		// Roll back on catalog save failure.
 		delete(r.assets, id)
 		_ = os.Remove(bundlePath)
+		return nil, fmt.Errorf("save catalog: %w", err)
+	}
+	return asset.clone(), nil
+}
+
+// AddEncryptedPlugin writes encrypted WASM bytes and content key material to
+// the registry using the module-delivery catalog format.
+func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*PluginAsset, error) {
+	if r == nil {
+		return nil, errors.New("plugin registry is nil")
+	}
+	id := strings.TrimSpace(upload.ID)
+	if id == "" {
+		return nil, errors.New("plugin id is required")
+	}
+	if !pluginIDPattern.MatchString(id) {
+		return nil, errors.New("plugin id contains invalid characters")
+	}
+	version := strings.TrimSpace(upload.Version)
+	if version == "" {
+		return nil, errors.New("version is required")
+	}
+	if len(upload.EncryptedBundle) == 0 {
+		return nil, errors.New("encrypted bundle is required")
+	}
+	if len(upload.ContentKey) != 32 {
+		return nil, fmt.Errorf("content key must be 32 bytes, got %d", len(upload.ContentKey))
+	}
+	requiredScope := strings.TrimSpace(upload.RequiredScope)
+	if requiredScope == "" {
+		requiredScope = defaultPluginRequiredScope
+	}
+	contentType := strings.TrimSpace(upload.ContentType)
+	if contentType == "" {
+		contentType = defaultPluginContentType
+	}
+	cacheControl := strings.TrimSpace(upload.CacheControl)
+	if cacheControl == "" {
+		cacheControl = defaultPluginCacheControl
+	}
+	allowedDomains, err := normalizeAllowedDomains(upload.AllowedDomains)
+	if err != nil {
+		return nil, fmt.Errorf("allowed_domains: %w", err)
+	}
+	if upload.MaxGrantTimeoutMs < 0 {
+		return nil, errors.New("max_grant_timeout_ms must be >= 0")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	pluginDir := filepath.Join(r.rootPath, id)
+	if err := os.MkdirAll(pluginDir, 0700); err != nil {
+		return nil, fmt.Errorf("create plugin directory: %w", err)
+	}
+
+	bundlePath := filepath.Join(pluginDir, "bundle.wasm.enc")
+	keyPath := filepath.Join(pluginDir, "bundle.key")
+	if err := os.WriteFile(bundlePath, upload.EncryptedBundle, 0600); err != nil {
+		return nil, fmt.Errorf("write encrypted plugin bundle: %w", err)
+	}
+	if err := os.WriteFile(keyPath, []byte(hex.EncodeToString(upload.ContentKey)), 0600); err != nil {
+		_ = os.Remove(bundlePath)
+		return nil, fmt.Errorf("write plugin content key: %w", err)
+	}
+
+	h := sha256.Sum256(upload.EncryptedBundle)
+	asset := &PluginAsset{
+		ID:                id,
+		Version:           version,
+		RequiredScope:     requiredScope,
+		ContentType:       contentType,
+		CacheControl:      cacheControl,
+		BundleSHA256:      hex.EncodeToString(h[:]),
+		SizeBytes:         int64(len(upload.EncryptedBundle)),
+		AllowedDomains:    allowedDomains,
+		MaxGrantTimeoutMs: upload.MaxGrantTimeoutMs,
+		SignatureHex:      strings.TrimSpace(upload.SignatureHex),
+		SignerPubKeyHex:   strings.TrimSpace(upload.SignerPubKeyHex),
+		UploadedAt:        time.Now().UTC().Format(time.RFC3339),
+		encryptedPath:     bundlePath,
+		keyPath:           keyPath,
+		runtimeStatus:     pluginRuntimeStatusStopped,
+	}
+
+	r.assets[id] = asset
+	if err := r.saveCatalogLocked(); err != nil {
+		delete(r.assets, id)
+		_ = os.Remove(bundlePath)
+		_ = os.Remove(keyPath)
 		return nil, fmt.Errorf("save catalog: %w", err)
 	}
 	return asset.clone(), nil

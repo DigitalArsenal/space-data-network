@@ -8,6 +8,18 @@ Browser and Node.js SDK for the [Space Data Network](https://github.com/DigitalA
 npm install @spacedatanetwork/sdn-js
 ```
 
+For operator and publisher workflows, install the CLI globally:
+
+```bash
+npm install -g @spacedatanetwork/sdn-js
+sdn wallet init --name "SDN Upload Test"
+sdn wallet info
+```
+
+The CLI stores its encrypted wallet under `~/.spacedatanetwork/sdn-js` by
+default. Set `SDN_CLI_HOME` to use a different hidden home and set
+`SDN_WALLET_PASSWORD` when running non-interactively.
+
 The package root exports the core SDN SDK. Browser UI/runtime helpers are
 published at `@spacedatanetwork/sdn-js/ui`, and marketplace purchase helpers are
 published at `@spacedatanetwork/sdn-js/storefront`.
@@ -350,6 +362,44 @@ const result = await invokeLoadedModule(harness, {
 
 A fuller documented example lives at
 [`examples/purchase-encrypted-wasm-delivery.ts`](./examples/purchase-encrypted-wasm-delivery.ts).
+
+## CLI Wallet And Module Publishing
+
+The `sdn` CLI lets a publisher create an encrypted local wallet, authenticate to
+an SDN node, package encrypted/signed WASM module bytes, upload them into the
+node plugin-module catalog, and verify delivery through the public module
+delivery protocol.
+
+```bash
+export SDN_WALLET_PASSWORD='use-a-real-local-password'
+
+sdn wallet init --name "OrbPro Publisher"
+sdn auth login --node https://sdn.spaceaware.io
+sdn auth add-current-wallet --node https://sdn.spaceaware.io --trust admin
+
+sdn module publish \
+  --node https://sdn.spaceaware.io \
+  --wasm ./dist/orbpro-license.wasm \
+  --module-id com.orbpro.licensing \
+  --version 1.0.0 \
+  --required-scope orbpro:base \
+  --allow-domain spaceaware.io \
+  --allow-domain www.spaceaware.io \
+  --allow-domain orbpro-sandcastle.example.com
+
+sdn module list --node https://sdn.spaceaware.io
+sdn module query \
+  --node https://sdn.spaceaware.io \
+  --module-id com.orbpro.licensing \
+  --requester-domain spaceaware.io
+```
+
+`sdn module query` uses `SDNNode.requestEncryptedModuleBundle(...)` on
+`/space-data-network/module-delivery/1.0.0`, unwraps the grant content key, and
+decrypts locally through the public `@spacedatanetwork/sdn-js/ui` helpers. A
+deployed OrbPro or SpaceAware client should use
+`https://sdn.spaceaware.io/api/module-delivery/provider` as its provider
+descriptor URL.
 
 ### Subscriptions
 
