@@ -30,6 +30,7 @@ export interface WrappedContentKeyLike {
 
 export interface LoadedModuleHarnessLike {
   invoke: (request: unknown) => Promise<unknown>;
+  destroy?: () => void;
 }
 
 function cloneBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {

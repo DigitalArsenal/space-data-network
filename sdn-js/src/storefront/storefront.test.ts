@@ -169,6 +169,17 @@ describe('Listing Card', () => {
 });
 
 describe('Storefront Client Configuration', () => {
+  it('exposes the storefront client and purchase/grant types from the public package subpath', async () => {
+    const storefront = await import('@spacedatanetwork/sdn-js/storefront');
+
+    expect(typeof storefront.createStorefrontClient).toBe('function');
+    expect(typeof storefront.StorefrontClient).toBe('function');
+    expect(storefront.AccessType.Subscription).toBe(1);
+    expect(storefront.PaymentMethod.SDNCredits).toBe(4);
+    expect(storefront.GrantStatus.Active).toBe(0);
+    expect(storefront.PurchaseStatus.Completed).toBe(3);
+  });
+
   it('should export StorefrontClient', async () => {
     const { StorefrontClient } = await import('./client');
     expect(StorefrontClient).toBeDefined();

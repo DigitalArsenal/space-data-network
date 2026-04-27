@@ -258,6 +258,23 @@ Canonical module-delivery records live in `spacedatastandards.org`, and SDN cons
 
 The live licensing/module-delivery flow is carried by the SDS families `LCH`, `LPF`, `LGR`, `LWK`, `LMR`, `PLG`, and `REC`.
 
+Browser and Node apps use public `sdn-js` package surfaces for marketplace
+purchase and encrypted module delivery:
+
+- `@spacedatanetwork/sdn-js` for `SDNNode`, `requestModuleGrant`,
+  `fetchEncryptedModuleBundle`, `requestEncryptedModuleBundle`, and
+  `MODULE_DELIVERY_PROTOCOL_ID`
+- `@spacedatanetwork/sdn-js/ui` for PLG listing discovery, grant content-key
+  unwrap, encrypted bundle decrypt, SDK browser harness load, and module invoke
+- `@spacedatanetwork/sdn-js/storefront` for `createStorefrontClient`, purchase
+  request types, payment enums, grant status, and purchase status
+
+The documented third-party flow is in
+[`sdn-js/examples/purchase-encrypted-wasm-delivery.ts`](./sdn-js/examples/purchase-encrypted-wasm-delivery.ts):
+discover a PLG listing, purchase it through the storefront client, request the
+encrypted WASM bundle through `SDNNode`, unwrap and decrypt locally, load with
+the SDK browser harness, and invoke the module.
+
 Run the focused module-delivery compatibility checks:
 
 ```bash

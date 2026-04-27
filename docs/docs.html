@@ -619,6 +619,7 @@
         <ul class="sidebar-links">
           <li><a href="#sdk-install">Installation</a></li>
           <li><a href="#sdk-usage">Usage</a></li>
+          <li><a href="#sdk-storefront-delivery">Storefront & Module Delivery</a></li>
           <li><a href="#sdk-identity">Identity</a></li>
           <li><a href="#sdk-astrodynamics">Astrodynamics</a></li>
         </ul>
@@ -1395,6 +1396,92 @@ const stats = await node.getStats();</code></pre>
 node.on('disconnected', () => console.log('Disconnected'));
 node.on('peer:connect', (peerId) => console.log(`Peer: ${peerId}`));
 node.on('error', (error) => console.error(error));</code></pre>
+      </section>
+
+      <section id="sdk-storefront-delivery" class="doc-section">
+        <h2>Storefront & Encrypted Module Delivery</h2>
+        <p>Third-party browser and Node applications can discover a PLG marketplace listing, purchase access, request encrypted WASM delivery, decrypt locally, load the module through the SDK browser harness, and invoke it using only public <code>sdn-js</code> package exports. No <code>src/*</code> imports, helper service, or legacy broker/bootstrap path is required.</p>
+
+        <h3>Public Package Surfaces</h3>
+        <table>
+          <thead><tr><th>Import</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>@spacedatanetwork/sdn-js</code></td><td><code>SDNNode</code>, <code>requestModuleGrant</code>, <code>fetchEncryptedModuleBundle</code>, <code>requestEncryptedModuleBundle</code>, and <code>MODULE_DELIVERY_PROTOCOL_ID</code></td></tr>
+            <tr><td><code>@spacedatanetwork/sdn-js/ui</code></td><td>PLG listing discovery, grant content-key unwrap, encrypted bundle decrypt, SDK browser harness load, and module invoke helpers</td></tr>
+            <tr><td><code>@spacedatanetwork/sdn-js/storefront</code></td><td><code>createStorefrontClient</code>, purchase request types, payment enums, grant status, and purchase status</td></tr>
+          </tbody>
+        </table>
+
+        <h3>End-to-End Browser Flow</h3>
+        <pre><code>import { SDNNode, identityFromMnemonic, initHDWallet } from '@spacedatanetwork/sdn-js';
+import {
+  decryptEncryptedModuleBundle,
+  invokeLoadedModule,
+  loadDecryptedModule,
+  loadMarketplaceListingsFromServer,
+  unwrapGrantContentKey,
+} from '@spacedatanetwork/sdn-js/ui';
+import { PaymentMethod, createStorefrontClient } from '@spacedatanetwork/sdn-js/storefront';
+
+await initHDWallet();
+const identity = await identityFromMnemonic(mnemonic);
+const node = await SDNNode.create({ identity, enableRelayProbing: true });
+
+const listings = await loadMarketplaceListingsFromServer('https://spaceaware.io');
+const listing = listings.find((entry) =&gt; entry.pluginId === 'com.example.analytics');
+
+const storefront = createStorefrontClient({
+  apiBaseUrl: 'https://spaceaware.io',
+  peerId: identity.peerId,
+  encryptionPubkey: identity.encryptionKey.publicKey,
+  keyAlgorithm: 'x25519',
+});
+
+const purchase = await storefront.createPurchase({
+  listingId: listing.pluginId,
+  tierName: 'default',
+  paymentMethod: PaymentMethod.SDNCredits,
+  encryptionPubkey: identity.encryptionKey.publicKey,
+  keyAlgorithm: 'x25519',
+  preferredDeliveryMethod: 'IPFSPin',
+});
+await storefront.payWithCredits(purchase.requestId);
+
+const delivery = await node.requestEncryptedModuleBundle({
+  serverDescriptor: {
+    publicKey: providerPublicKey,
+    relayAddresses: providerRelayAddresses,
+  },
+  moduleId: listing.pluginId,
+  moduleVersion: listing.version,
+  requesterDomain: globalThis.location.origin,
+  requestedTimeoutMs: 300000,
+});
+
+const contentKey = await unwrapGrantContentKey(
+  delivery.grant.wrappedContentKey,
+  identity.encryptionKey.privateKey,
+);
+const wasmBytes = await decryptEncryptedModuleBundle(
+  delivery.encryptedBundleBytes,
+  contentKey,
+);
+const harness = await loadDecryptedModule(wasmBytes);
+const result = await invokeLoadedModule(harness, {
+  methodId: 'invoke',
+  inputs: [],
+});
+harness.destroy?.();</code></pre>
+
+        <h3>Protocol Boundaries</h3>
+        <ul>
+          <li>Public encrypted module delivery stays on <code>/space-data-network/module-delivery/1.0.0</code>.</li>
+          <li>Provider discovery is anchored by the provider compressed secp256k1 public key and the DHT namespace <code>space-data-network/module-delivery/provider-pubkey</code>.</li>
+          <li>Clients trust relay addresses advertised by the provider descriptor, seed from the approved demo relay, and expand discovery with libp2p and the DHT.</li>
+          <li>Module bundles remain encrypted in transit and at rest, and decrypt only locally after the requester receives the wrapped content key in the grant response.</li>
+        </ul>
+
+        <p>See the complete TypeScript example in <code>sdn-js/examples/purchase-encrypted-wasm-delivery.ts</code>.</p>
       </section>
 
       <section id="sdk-identity" class="doc-section">

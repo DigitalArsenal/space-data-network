@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 const DIST_INDEX_PATH = path.resolve(__dirname, '../dist/index.mjs');
 const DIST_UI_INDEX_PATH = path.resolve(__dirname, '../dist/ui/index.mjs');
+const DIST_STOREFRONT_INDEX_PATH = path.resolve(__dirname, '../dist/storefront/index.mjs');
 const DIST_CHUNKS_PATH = path.resolve(__dirname, '../dist/chunks');
 const PACKAGE_JSON_PATH = path.resolve(__dirname, '../package.json');
 
@@ -50,6 +51,12 @@ describe('sdn-js package build', () => {
     expect(collectBareSpecifiers(source)).toEqual([]);
   });
 
+  it('ships a canonical bundled storefront subpath entry without bare module specifiers', async () => {
+    const source = await fs.readFile(DIST_STOREFRONT_INDEX_PATH, 'utf8');
+    expect(source.length).toBeGreaterThan(0);
+    expect(collectBareSpecifiers(source)).toEqual([]);
+  });
+
   it('shares bundled chunks between the root and UI entries to avoid duplicated browser runtime code', async () => {
     const [rootSource, uiSource, chunkNames] = await Promise.all([
       fs.readFile(DIST_INDEX_PATH, 'utf8'),
@@ -62,12 +69,14 @@ describe('sdn-js package build', () => {
     expect(uiSource).toContain('./chunks/');
   });
 
-  it('exports the canonical root and UI subpath surfaces from package.json', async () => {
+  it('exports the canonical root, UI, and storefront subpath surfaces from package.json', async () => {
     const packageJson = JSON.parse(await fs.readFile(PACKAGE_JSON_PATH, 'utf8'));
 
     expect(packageJson.exports?.['.']?.import).toBe('./dist/index.mjs');
     expect(packageJson.exports?.['./ui']?.import).toBe('./dist/ui/index.mjs');
     expect(packageJson.exports?.['./ui']?.types).toBe('./dist/ui/index.d.ts');
+    expect(packageJson.exports?.['./storefront']?.import).toBe('./dist/storefront/index.mjs');
+    expect(packageJson.exports?.['./storefront']?.types).toBe('./dist/storefront/index.d.ts');
     expect(
       Object.keys(packageJson.scripts ?? {}).some((name) =>
         name.includes('runtime-browser'),
@@ -102,6 +111,18 @@ describe('sdn-js package build', () => {
 
     expect(typeof runtime.mountWalletUI).toBe('function');
     expect(typeof runtime.ObservedPeerIndex).toBe('function');
+    },
+  );
+
+  it(
+    'imports the built canonical storefront subpath entry successfully',
+    { timeout: 60_000 },
+    async () => {
+    const runtime = await import(pathToFileURL(DIST_STOREFRONT_INDEX_PATH).href);
+
+    expect(typeof runtime.createStorefrontClient).toBe('function');
+    expect(runtime.PaymentMethod.SDNCredits).toBe(4);
+    expect(runtime.GrantStatus.Active).toBe(0);
     },
   );
 });

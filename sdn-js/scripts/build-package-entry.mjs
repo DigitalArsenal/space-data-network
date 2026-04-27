@@ -50,6 +50,7 @@ await build({
   entryPoints: [
     path.join(packageRoot, 'src/index.ts'),
     path.join(packageRoot, 'src/ui/index.ts'),
+    path.join(packageRoot, 'src/storefront/index.ts'),
   ],
   outdir: path.join(packageRoot, 'dist'),
   outbase: path.join(packageRoot, 'src'),
