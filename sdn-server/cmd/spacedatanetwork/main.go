@@ -1530,13 +1530,26 @@ type providerDescriptorIdentityResponse struct {
 	Addresses           []providerDescriptorIdentityAddress `json:"addresses,omitempty"`
 }
 
-type providerDescriptorResponse struct {
-	PublicKey      string                              `json:"publicKey"`
-	PeerID         string                              `json:"peerId"`
-	IPNS           string                              `json:"ipns,omitempty"`
-	RelayAddresses []string                            `json:"relayAddresses,omitempty"`
-	Identity       *providerDescriptorIdentityResponse `json:"identity,omitempty"`
+type providerDescriptorModuleUploadResponse struct {
+	ProtocolID           string   `json:"protocolId"`
+	ProviderX25519PubKey string   `json:"providerX25519PubKey"`
+	RelayAddresses       []string `json:"relayAddresses,omitempty"`
 }
+
+type providerDescriptorResponse struct {
+	PublicKey      string                                  `json:"publicKey"`
+	PeerID         string                                  `json:"peerId"`
+	IPNS           string                                  `json:"ipns,omitempty"`
+	RelayAddresses []string                                `json:"relayAddresses,omitempty"`
+	ModuleUpload   *providerDescriptorModuleUploadResponse `json:"moduleUpload,omitempty"`
+	Identity       *providerDescriptorIdentityResponse     `json:"identity,omitempty"`
+}
+
+type providerDescriptorModuleUploadKeySource interface {
+	ModuleUploadProviderX25519PublicKey() []byte
+}
+
+const moduleUploadProtocolID = "/space-data-network/plugin-module-upload/1.0.0"
 
 type moduleDeliveryListingsResult struct {
 	PluginID   string `json:"plugin_id,omitempty"`
@@ -1641,8 +1654,42 @@ func buildProviderDescriptor(src providerDescriptorSource) (*providerDescriptorR
 		}
 		response.RelayAddresses = append(response.RelayAddresses, addr.String())
 	}
+	response.ModuleUpload = buildProviderDescriptorModuleUpload(src, response.RelayAddresses)
 
 	return response, nil
+}
+
+func buildProviderDescriptorModuleUpload(src providerDescriptorSource, relayAddresses []string) *providerDescriptorModuleUploadResponse {
+	providerKey := providerDescriptorModuleUploadPublicKey(src)
+	if len(providerKey) != 32 {
+		return nil
+	}
+	return &providerDescriptorModuleUploadResponse{
+		ProtocolID:           moduleUploadProtocolID,
+		ProviderX25519PubKey: base64.RawURLEncoding.EncodeToString(providerKey),
+		RelayAddresses:       append([]string(nil), relayAddresses...),
+	}
+}
+
+func providerDescriptorModuleUploadPublicKey(src providerDescriptorSource) []byte {
+	if src == nil {
+		return nil
+	}
+	if keySource, ok := src.(providerDescriptorModuleUploadKeySource); ok {
+		if publicKey := keySource.ModuleUploadProviderX25519PublicKey(); len(publicKey) == 32 {
+			return append([]byte(nil), publicKey...)
+		}
+	}
+	if src.EPMService() == nil {
+		return nil
+	}
+	if value := nodeInfoStringValue(src.EPMService().GetNodeEPMJSON()["encryption_pubkey_hex"]); value != "" {
+		decoded, err := hex.DecodeString(strings.TrimPrefix(strings.TrimSpace(value), "0x"))
+		if err == nil && len(decoded) == 32 {
+			return decoded
+		}
+	}
+	return nil
 }
 
 func buildProviderDescriptorIdentity(src providerDescriptorSource, defaultPublicKeyHex, peerID string) *providerDescriptorIdentityResponse {

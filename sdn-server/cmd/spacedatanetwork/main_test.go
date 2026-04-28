@@ -152,11 +152,13 @@ func TestHandleProviderDescriptorReturnsBrowserSafeDescriptor(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodGet, "/api/module-delivery/provider", nil)
 	recorder := httptest.NewRecorder()
+	moduleUploadPubKey := bytes.Repeat([]byte{0x5a}, 32)
 
 	handleProviderDescriptor(fakeProviderDescriptorSource{
-		host:  host,
-		peer:  host.ID(),
-		addrs: []multiaddr.Multiaddr{addr},
+		host:                     host,
+		peer:                     host.ID(),
+		addrs:                    []multiaddr.Multiaddr{addr},
+		moduleUploadX25519PubKey: moduleUploadPubKey,
 	})(recorder, request)
 
 	if recorder.Code != http.StatusOK {
@@ -171,7 +173,12 @@ func TestHandleProviderDescriptorReturnsBrowserSafeDescriptor(t *testing.T) {
 		PeerID         string   `json:"peerId"`
 		IPNS           string   `json:"ipns"`
 		RelayAddresses []string `json:"relayAddresses"`
-		Identity       struct {
+		ModuleUpload   struct {
+			ProtocolID           string   `json:"protocolId"`
+			ProviderX25519PubKey string   `json:"providerX25519PubKey"`
+			RelayAddresses       []string `json:"relayAddresses"`
+		} `json:"moduleUpload"`
+		Identity struct {
 			IdentityPublicKey string   `json:"identityPublicKey"`
 			XPub              string   `json:"xpub"`
 			IPNSEntries       []string `json:"ipnsEntries"`
@@ -207,6 +214,15 @@ func TestHandleProviderDescriptorReturnsBrowserSafeDescriptor(t *testing.T) {
 	}
 	if len(payload.RelayAddresses) != 1 || payload.RelayAddresses[0] != addr.String() {
 		t.Fatalf("relayAddresses = %#v", payload.RelayAddresses)
+	}
+	if payload.ModuleUpload.ProtocolID != "/space-data-network/plugin-module-upload/1.0.0" {
+		t.Fatalf("module upload protocol = %q", payload.ModuleUpload.ProtocolID)
+	}
+	if payload.ModuleUpload.ProviderX25519PubKey == "" {
+		t.Fatal("missing module upload provider encryption key")
+	}
+	if len(payload.ModuleUpload.RelayAddresses) == 0 {
+		t.Fatal("missing module upload relay addresses")
 	}
 	if got, want := payload.Identity.IdentityPublicKey, hex.EncodeToString(rawPubKey); got != want {
 		t.Fatalf("identity.identityPublicKey = %q, want %q", got, want)
@@ -628,10 +644,11 @@ func writeMainTestPluginRegistry(t *testing.T, entries ...license.PluginCatalogE
 }
 
 type fakeProviderDescriptorSource struct {
-	host       libp2phost.Host
-	peer       peer.ID
-	addrs      []multiaddr.Multiaddr
-	epmService *epm.Service
+	host                     libp2phost.Host
+	peer                     peer.ID
+	addrs                    []multiaddr.Multiaddr
+	epmService               *epm.Service
+	moduleUploadX25519PubKey []byte
 }
 
 func (f fakeProviderDescriptorSource) PeerID() peer.ID {
@@ -648,6 +665,10 @@ func (f fakeProviderDescriptorSource) Host() libp2phost.Host {
 
 func (f fakeProviderDescriptorSource) EPMService() *epm.Service {
 	return f.epmService
+}
+
+func (f fakeProviderDescriptorSource) ModuleUploadProviderX25519PublicKey() []byte {
+	return append([]byte(nil), f.moduleUploadX25519PubKey...)
 }
 
 func testProviderDerivedIdentity() (*wasm.DerivedIdentity, error) {
