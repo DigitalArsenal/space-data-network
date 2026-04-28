@@ -297,4 +297,58 @@ describe('SDNNode relay bootstrap', () => {
     await node.stop();
     vi.useRealTimers();
   });
+
+  it('half-closes protocol request streams before reading the response', async () => {
+    const responseBytes = Uint8Array.from([4, 5, 6]);
+    const sink = vi.fn(async (source: AsyncIterable<Uint8Array>) => {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of source) {
+        chunks.push(chunk);
+      }
+      expect(chunks).toEqual([Uint8Array.from([1, 2, 3])]);
+    });
+    const closeWrite = vi.fn(async () => undefined);
+    const close = vi.fn(async () => undefined);
+    const stream = {
+      sink,
+      closeWrite,
+      close,
+      source: (async function *source() {
+        yield responseBytes;
+      })(),
+    };
+    const dialProtocol = vi.fn(async () => stream);
+
+    createLibp2pMock.mockResolvedValueOnce({
+      peerId: { toString: () => 'test-peer-id' },
+      services: {},
+      addEventListener: vi.fn(),
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      getPeers: vi.fn(() => []),
+      dialProtocol,
+    });
+
+    const { SDNNode } = await import('./node');
+    const node = await SDNNode.create({
+      edgeRelays: ['/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider'],
+      enableStorage: false,
+    });
+
+    const result = await node.dialProtocol(
+      '16Uiu2HAm9xJ3JeeWsvLKGdyM7H6SKApGCV55zGfA9di4J5NaKdsf',
+      '/space-data-network/module-delivery/1.0.0',
+      Uint8Array.from([1, 2, 3]),
+      ['/ip4/127.0.0.1/tcp/14080/ws'],
+    );
+
+    expect(result).toEqual(responseBytes);
+    expect(closeWrite).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(closeWrite.mock.invocationCallOrder[0]).toBeLessThan(
+      close.mock.invocationCallOrder[0],
+    );
+
+    await node.stop();
+  });
 });
