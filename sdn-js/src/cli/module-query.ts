@@ -77,7 +77,12 @@ export async function queryModuleDelivery(
       result.grant.wrappedContentKey,
       options.wallet.identity.encryptionKey.privateKey,
     );
-    const decryptedBundle = await decrypt(result.encryptedBundleBytes, contentKey);
+    let decryptedBundle: Uint8Array;
+    try {
+      decryptedBundle = await decrypt(result.encryptedBundleBytes, contentKey);
+    } finally {
+      contentKey.fill(0);
+    }
     return {
       protocol_id: MODULE_DELIVERY_PROTOCOL_ID,
       provider_peer_id: result.provider.peerId ?? '',

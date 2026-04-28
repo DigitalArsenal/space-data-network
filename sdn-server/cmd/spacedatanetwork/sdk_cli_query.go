@@ -125,6 +125,7 @@ func sdkQueryModuleDelivery(ctx context.Context, options sdkModuleQueryOptions) 
 	if err != nil {
 		return nil, err
 	}
+	defer sdkZeroBytes(contentKey)
 	encryptedBundleBytes, err := sdkFetchCIDBytes(ctx, nodeOrigin, grant.CID)
 	if err != nil {
 		return nil, err

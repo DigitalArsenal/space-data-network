@@ -130,6 +130,12 @@ describe('module-delivery', () => {
     });
 
     expect(transport.calls).toHaveLength(2);
+    expect(transport.calls.map((call) => call.protocolId)).toEqual([
+      MODULE_DELIVERY_PROTOCOL_ID,
+      MODULE_DELIVERY_PROTOCOL_ID,
+    ]);
+    expect(isLCH(transport.calls[0].payload)).toBe(true);
+    expect(isLPF(transport.calls[1].payload)).toBe(true);
     expect(transport.calls[0]).toMatchObject({
       targetPeerId: 'provider-peer-id',
       protocolId: MODULE_DELIVERY_PROTOCOL_ID,
@@ -265,11 +271,12 @@ describe('module-delivery', () => {
   it('fetches the encrypted bundle bytes by CID and verifies the declared content hash', async () => {
     const content = new Uint8Array([10, 20, 30, 40]);
     const contentHash = await sha256(content);
+    const fetchCIDBytes = vi.fn(async (cid: string) => {
+      expect(cid).toBe('bafyencryptedmodule');
+      return content;
+    });
     const transport = {
-      async fetchCIDBytes(cid: string) {
-        expect(cid).toBe('bafyencryptedmodule');
-        return content;
-      },
+      fetchCIDBytes,
     };
 
     const bundle = await fetchEncryptedModuleBundle(transport, {
@@ -299,6 +306,7 @@ describe('module-delivery', () => {
     });
 
     expect(bundle.encryptedBundleBytes).toEqual(content);
+    expect(fetchCIDBytes).toHaveBeenCalledTimes(1);
   });
 
   it('fails when the fetched bundle hash does not match the grant descriptor', async () => {

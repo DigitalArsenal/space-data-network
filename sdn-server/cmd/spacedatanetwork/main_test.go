@@ -130,6 +130,28 @@ func TestIsPublicAPIPathAllowsModuleDeliveryListingsRoute(t *testing.T) {
 	}
 }
 
+func TestModuleDeliveryHTTPRoutesDoNotExposeGrantOrEntitlementPayloads(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{
+		"/api/module-delivery/grant",
+		"/api/module-delivery/content-key",
+		"/api/module-delivery/entitlements",
+		"/api/module-delivery/provider/grant",
+		"/api/module-delivery/listings/content-key",
+	} {
+		if isPublicAPIPath(path) {
+			t.Fatalf("%s must not be a public HTTP API path", path)
+		}
+	}
+	if !isPublicAPIPath("/api/v0/cat") {
+		t.Fatal("IPFS API remains public for encrypted CID bytes")
+	}
+	if !isPublicAPIPath("/ipfs/bafyencryptedmodule") {
+		t.Fatal("IPFS gateway remains public for encrypted CID bytes")
+	}
+}
+
 func assertSubcommandPath(t *testing.T, command *cobra.Command, path ...string) *cobra.Command {
 	t.Helper()
 	current := command
