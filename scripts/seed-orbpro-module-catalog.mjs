@@ -2,6 +2,7 @@
 
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import crypto from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -20,15 +21,42 @@ const defaultCacheControl =
 const defaultContentType = "application/wasm+encrypted";
 const defaultRequiredScope = "orbpro:base";
 const defaultVersion = "local-dev";
+const defaultLocalSignerPublicKeyHex = "6c".repeat(32);
 const currentSpaceDataNetworkModulesVersion = "0.1.0-0.8.2";
 const orbproProtectedContextPrefix = "orbpro.plugin/";
 const moduleIdPattern = /^[A-Za-z0-9._-]+$/;
+const providerContentKeyEnvelopeContext =
+  "space-data-network/plugin-module/content-key/v1";
+const providerContentKeyEnvelopeAlgorithm =
+  "X25519-HKDF-SHA256-AES-256-GCM";
+const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
+const X25519_PKCS8_PREFIX = Buffer.from(
+  "302e020100300506032b656e04220420",
+  "hex",
+);
+const defaultAllowedDomains = Object.freeze([
+  "localhost",
+  "127.0.0.1",
+  "spaceaware.io",
+  "www.spaceaware.io",
+  "digitalarsenal.io",
+  "www.digitalarsenal.io",
+]);
 const staleManagedModuleIds = Object.freeze([
   "licensing",
   "conjunction-assessment",
 ]);
 
 const DEFAULT_ORBPRO_MODULES = Object.freeze([
+  Object.freeze({
+    slug: "orbpro-licensing",
+    moduleId: "com.orbpro.licensing",
+    requiredScope: "orbpro:license",
+    wasmPath:
+      "../space-data-network-plugins/packages/licensing/dist/isomorphic/module.wasm",
+    manifestPath:
+      "../space-data-network-plugins/packages/licensing/plugin-manifest.json",
+  }),
   Object.freeze({
     slug: "viewshed-shader",
     protectedModulePath:
@@ -150,11 +178,13 @@ function usage() {
   node scripts/seed-orbpro-module-catalog.mjs --storage-path <path>
 
 Options:
-  --plugin-root <path>      Exact plugin root (catalog.json lives here)
-  --storage-path <path>     Storage root; helper writes to <storage>/license/plugins
-  --with-conjunction        Include the standalone conjunction plugin
-  --json                    Print the final summary JSON only
-  --help                    Show this message
+  --plugin-root <path>              Exact plugin root (catalog.json lives here)
+  --storage-path <path>             Storage root; helper writes to <storage>/license/plugins
+  --provider-x25519-pubkey <key>    Provider module upload X25519 public key, base64url
+  --provider-peer-id <peer-id>      Provider libp2p peer id
+  --with-conjunction                Include the standalone conjunction plugin
+  --json                            Print the final summary JSON only
+  --help                            Show this message
 `);
 }
 
@@ -162,6 +192,8 @@ function parseArgs(argv) {
   const options = {
     pluginRoot: "",
     storagePath: "",
+    providerX25519PubKey: "",
+    providerPeerID: "",
     withConjunction: false,
     json: false,
   };
@@ -175,6 +207,14 @@ function parseArgs(argv) {
         break;
       case "--storage-path":
         options.storagePath = argv[index + 1] ?? "";
+        index += 1;
+        break;
+      case "--provider-x25519-pubkey":
+        options.providerX25519PubKey = argv[index + 1] ?? "";
+        index += 1;
+        break;
+      case "--provider-peer-id":
+        options.providerPeerID = argv[index + 1] ?? "";
         index += 1;
         break;
       case "--with-conjunction":
@@ -283,14 +323,21 @@ function upsertCatalogEntry(entries, nextEntry) {
 }
 
 function buildCatalogEntry(moduleSpec) {
+  const moduleID = String(moduleSpec.moduleId || "").trim();
+  const version = String(moduleSpec.version || defaultVersion).trim();
+  const allowedDomains = normalizeAllowedDomains(moduleSpec.allowedDomains);
   return {
-    id: moduleSpec.moduleId,
-    version: moduleSpec.version || defaultVersion,
+    id: moduleID,
+    version,
     required_scope: moduleSpec.requiredScope || defaultRequiredScope,
-    encrypted_path: `${moduleSpec.slug}.wasm.enc`,
-    key_path: `${moduleSpec.slug}.key`,
+    encrypted_path: `${moduleID}/bundle.wasm.enc`,
+    key_envelope_path: `${moduleID}/bundle.key-envelope.json`,
     content_type: moduleSpec.contentType || defaultContentType,
     cache_control: moduleSpec.cacheControl || defaultCacheControl,
+    allowed_domains: allowedDomains,
+    signer_pubkey_hex:
+      normalizeHex32(moduleSpec.signerPublicKeyHex, "signer public key") ||
+      defaultLocalSignerPublicKeyHex,
   };
 }
 
@@ -378,13 +425,221 @@ function resolveProtectedModuleId(moduleSpec, exportSpec, publication, slug) {
 }
 
 function normalizeRecipientPrivateKeyHex(value, context) {
-  const normalized = String(value || "")
-    .trim()
-    .toLowerCase();
+  const normalized = normalizeHex(value);
   if (!/^[0-9a-f]{64}$/.test(normalized)) {
     throw new Error(`${context} must export a 32-byte X25519 private key hex string.`);
   }
   return normalized;
+}
+
+function normalizeHex(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^0x/, "");
+}
+
+function normalizeHex32(value, context) {
+  const normalized = normalizeHex(value);
+  if (!normalized) {
+    return "";
+  }
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error(`${context} must be a 32-byte hex string.`);
+  }
+  return normalized;
+}
+
+function normalizeAllowedDomains(value) {
+  const source = Array.isArray(value) && value.length > 0
+    ? value
+    : defaultAllowedDomains;
+  return Array.from(
+    new Set(
+      source
+        .map((entry) => String(entry || "").trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function normalizeProviderEnvelopeConfig({
+  providerX25519PubKey,
+  providerPeerID,
+  required = false,
+} = {}) {
+  const peerID = String(providerPeerID || "").trim();
+  const encodedPublicKey = String(providerX25519PubKey || "").trim();
+  if (!peerID || !encodedPublicKey) {
+    if (!required) {
+      return null;
+    }
+    throw new Error(
+      "Provider X25519 public key and peer ID are required. Pass --provider-x25519-pubkey and --provider-peer-id.",
+    );
+  }
+  const publicKey = Buffer.from(encodedPublicKey, "base64url");
+  if (publicKey.length !== 32) {
+    throw new Error("--provider-x25519-pubkey must decode to 32 bytes.");
+  }
+  return {
+    providerPeerID: peerID,
+    providerPublicKey: publicKey,
+    providerPublicKeyBase64URL: publicKey.toString("base64url"),
+  };
+}
+
+async function writeSeededEncryptedModule({
+  pluginRoot,
+  moduleSpec,
+  encryptedBytes,
+  keyHex,
+  publication,
+  providerConfig,
+}) {
+  if (!providerConfig) {
+    throw new Error("Provider envelope config is required.");
+  }
+  const entry = buildCatalogEntry(moduleSpec);
+  const keyBytes = Buffer.from(normalizeRecipientPrivateKeyHex(
+    keyHex,
+    `${moduleSpec.moduleId} content key`,
+  ), "hex");
+  const bundleSHA256 = crypto
+    .createHash("sha256")
+    .update(encryptedBytes)
+    .digest("hex");
+  const envelope = wrapProviderContentKey(keyBytes, providerConfig, {
+    moduleID: entry.id,
+    version: entry.version,
+    bundleSHA256,
+    signerPublicKeyHex: entry.signer_pubkey_hex,
+  });
+  keyBytes.fill(0);
+
+  const encryptedPath = path.join(pluginRoot, entry.encrypted_path);
+  const keyEnvelopePath = path.join(pluginRoot, entry.key_envelope_path);
+  await fs.mkdir(path.dirname(encryptedPath), { recursive: true, mode: 0o700 });
+  await fs.writeFile(encryptedPath, encryptedBytes, { mode: 0o600 });
+  await fs.writeFile(
+    keyEnvelopePath,
+    `${JSON.stringify(envelope, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  await removeLegacySeedFiles(pluginRoot, moduleSpec);
+
+  return {
+    entry,
+    summary: {
+      moduleId: entry.id,
+      version: entry.version,
+      encryptedPath,
+      keyEnvelopePath,
+      encryptedSizeBytes: encryptedBytes.length,
+      bundleSHA256,
+      allowedDomains: entry.allowed_domains.slice(),
+      hasMbl: Boolean(publication?.mbl),
+      hasEnc: Boolean(publication?.enc),
+      hasPnm: Boolean(publication?.pnm),
+    },
+  };
+}
+
+function wrapProviderContentKey(contentKey, providerConfig, aadInput) {
+  if (contentKey.length !== 32) {
+    throw new Error(`content key must be 32 bytes, got ${contentKey.length}`);
+  }
+  const aad = {
+    module_id: aadInput.moduleID,
+    version: aadInput.version,
+    bundle_sha256: aadInput.bundleSHA256,
+    signer_public_key_hex: aadInput.signerPublicKeyHex,
+    provider_peer_id: providerConfig.providerPeerID,
+  };
+  const aadBytes = Buffer.from(JSON.stringify(aad), "utf8");
+  const ephemeralPrivateRaw = crypto.randomBytes(32);
+  let sharedSecret = null;
+  let wrapKey = null;
+  try {
+    const ephemeralPrivateKey = createX25519PrivateKey(ephemeralPrivateRaw);
+    const ephemeralPublicKey = crypto.createPublicKey(ephemeralPrivateKey);
+    const ephemeralPublicRaw = exportRawX25519PublicKey(ephemeralPublicKey);
+    const providerPublicKey = createX25519PublicKey(providerConfig.providerPublicKey);
+    sharedSecret = crypto.diffieHellman({
+      privateKey: ephemeralPrivateKey,
+      publicKey: providerPublicKey,
+    });
+    wrapKey = Buffer.from(crypto.hkdfSync(
+      "sha256",
+      sharedSecret,
+      Buffer.alloc(0),
+      Buffer.from(providerContentKeyEnvelopeContext, "utf8"),
+      32,
+    ));
+    const nonce = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", wrapKey, nonce);
+    cipher.setAAD(aadBytes);
+    const ciphertext = Buffer.concat([
+      cipher.update(contentKey),
+      cipher.final(),
+      cipher.getAuthTag(),
+    ]);
+
+    return {
+      version: 1,
+      alg: providerContentKeyEnvelopeAlgorithm,
+      context: providerContentKeyEnvelopeContext,
+      provider_x25519_pubkey: providerConfig.providerPublicKeyBase64URL,
+      ephemeral_x25519_pubkey: ephemeralPublicRaw.toString("base64url"),
+      nonce: nonce.toString("base64url"),
+      aad: aadBytes.toString("base64url"),
+      ciphertext: ciphertext.toString("base64url"),
+    };
+  } finally {
+    ephemeralPrivateRaw.fill(0);
+    sharedSecret?.fill?.(0);
+    wrapKey?.fill?.(0);
+  }
+}
+
+function createX25519PrivateKey(rawPrivateKey) {
+  return crypto.createPrivateKey({
+    key: Buffer.concat([X25519_PKCS8_PREFIX, rawPrivateKey]),
+    format: "der",
+    type: "pkcs8",
+  });
+}
+
+function createX25519PublicKey(rawPublicKey) {
+  return crypto.createPublicKey({
+    key: Buffer.concat([X25519_SPKI_PREFIX, rawPublicKey]),
+    format: "der",
+    type: "spki",
+  });
+}
+
+function exportRawX25519PublicKey(publicKey) {
+  const der = publicKey.export({ format: "der", type: "spki" });
+  return Buffer.from(der.subarray(-32));
+}
+
+async function removeLegacySeedFiles(pluginRoot, moduleSpec) {
+  const candidates = [
+    path.join(pluginRoot, `${moduleSpec.slug}.key`),
+    path.join(pluginRoot, `${moduleSpec.slug}.wasm.enc`),
+    path.join(pluginRoot, moduleSpec.moduleId, "bundle.key"),
+  ];
+  await Promise.all(candidates.map(removeFileIfExists));
+}
+
+async function removeFileIfExists(filePath) {
+  try {
+    await fs.rm(filePath, { force: true });
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
 }
 
 function resolveProtectedExportArtifacts(exportSpec, exportedValue, moduleSpec) {
@@ -525,6 +780,8 @@ export async function seedOrbproModuleCatalog({
   pluginRoot,
   storagePath,
   modules = DEFAULT_ORBPRO_MODULES,
+  providerX25519PubKey,
+  providerPeerID,
 } = {}) {
   const resolvedPluginRoot = resolvePluginRoot({ pluginRoot, storagePath });
   await fs.mkdir(resolvedPluginRoot, { recursive: true });
@@ -534,6 +791,11 @@ export async function seedOrbproModuleCatalog({
   );
   const seeded = [];
   const expandedModules = await expandModuleSpecs(modules);
+  const providerConfig = normalizeProviderEnvelopeConfig({
+    providerX25519PubKey,
+    providerPeerID,
+    required: expandedModules.length > 0,
+  });
   const managedModuleIds = new Set([
     ...staleManagedModuleIds,
     ...expandedModules.map((moduleSpec) => moduleSpec.moduleId),
@@ -544,33 +806,22 @@ export async function seedOrbproModuleCatalog({
 
   for (const moduleSpec of expandedModules) {
     if (moduleSpec.kind === "protected") {
-      const entry = buildCatalogEntry(moduleSpec);
-      const encryptedPath = path.join(
-        resolvedPluginRoot,
-        entry.encrypted_path,
-      );
-      const keyPath = path.join(resolvedPluginRoot, entry.key_path);
-
-      await fs.writeFile(encryptedPath, moduleSpec.encryptedBytes, {
-        mode: 0o600,
+      const { entry, summary } = await writeSeededEncryptedModule({
+        pluginRoot: resolvedPluginRoot,
+        moduleSpec,
+        encryptedBytes: Buffer.from(moduleSpec.encryptedBytes),
+        keyHex: moduleSpec.keyHex,
+        publication: moduleSpec.publication,
+        providerConfig,
       });
-      await fs.writeFile(keyPath, moduleSpec.keyHex, { mode: 0o600 });
 
       plugins = upsertCatalogEntry(plugins, entry);
       seeded.push({
+        ...summary,
         slug: moduleSpec.slug,
-        moduleId: moduleSpec.moduleId,
-        version: entry.version,
         protectedModulePath: moduleSpec.protectedModulePath,
         exportName: moduleSpec.exportName,
         artifactIndex: moduleSpec.artifactIndex,
-        encryptedPath,
-        keyPath,
-        encryptedSizeBytes: moduleSpec.encryptedBytes.length,
-        contentKeyHex: moduleSpec.keyHex,
-        hasMbl: Boolean(moduleSpec.publication?.mbl),
-        hasEnc: Boolean(moduleSpec.publication?.enc),
-        hasPnm: Boolean(moduleSpec.publication?.pnm),
       });
       continue;
     }
@@ -599,33 +850,24 @@ export async function seedOrbproModuleCatalog({
     const publication = extractPublicationRecordCollection(
       protectedArtifact.protectedArtifactBytes,
     );
-    const entry = buildCatalogEntry({
-      ...moduleSpec,
-      version: resolvedVersion,
+    const { entry, summary } = await writeSeededEncryptedModule({
+      pluginRoot: resolvedPluginRoot,
+      moduleSpec: {
+        ...moduleSpec,
+        version: resolvedVersion,
+      },
+      encryptedBytes,
+      keyHex,
+      publication,
+      providerConfig,
     });
-    const encryptedPath = path.join(
-      resolvedPluginRoot,
-      entry.encrypted_path,
-    );
-    const keyPath = path.join(resolvedPluginRoot, entry.key_path);
-
-    await fs.writeFile(encryptedPath, encryptedBytes, { mode: 0o600 });
-    await fs.writeFile(keyPath, keyHex, { mode: 0o600 });
 
     plugins = upsertCatalogEntry(plugins, entry);
     seeded.push({
+      ...summary,
       slug: moduleSpec.slug,
-      moduleId: moduleSpec.moduleId,
-      version: entry.version,
       wasmPath: moduleSpec.wasmPath,
       manifestPath: moduleSpec.manifestPath,
-      encryptedPath,
-      keyPath,
-      encryptedSizeBytes: encryptedBytes.length,
-      contentKeyHex: keyHex,
-      hasMbl: Boolean(publication?.mbl),
-      hasEnc: Boolean(publication?.enc),
-      hasPnm: Boolean(publication?.pnm),
     });
   }
 
@@ -654,6 +896,8 @@ async function main() {
   const summary = await seedOrbproModuleCatalog({
     pluginRoot,
     modules: resolveDefaultModules(args),
+    providerX25519PubKey: args.providerX25519PubKey,
+    providerPeerID: args.providerPeerID,
   });
 
   if (args.json) {
@@ -666,8 +910,10 @@ async function main() {
   console.log(`Catalog: ${summary.catalogPath}`);
   for (const seeded of summary.seeded) {
     console.log(
-      `- ${seeded.moduleId} -> ${seeded.encryptedPath} (${seeded.encryptedSizeBytes} bytes)`,
+      `- ${seeded.moduleId} -> ${seeded.encryptedPath} (${seeded.encryptedSizeBytes} bytes, sha256 ${seeded.bundleSHA256})`,
     );
+    console.log(`  key envelope: ${seeded.keyEnvelopePath}`);
+    console.log(`  allowed domains: ${seeded.allowedDomains.join(", ")}`);
   }
 }
 
