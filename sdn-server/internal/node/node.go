@@ -1290,6 +1290,28 @@ func (n *Node) PluginRegistry() *license.PluginRegistry {
 	return n.pluginRegistry
 }
 
+// RegisterModuleUploadProtocol registers the Noise-protected libp2p upload
+// protocol for encrypted plugin-module publication.
+func (n *Node) RegisterModuleUploadProtocol(keyLookup func(string) (string, error)) error {
+	if n == nil {
+		return fmt.Errorf("node is nil")
+	}
+	if n.host == nil {
+		return fmt.Errorf("libp2p host is unavailable")
+	}
+	if n.pluginRegistry == nil {
+		return fmt.Errorf("plugin registry is unavailable")
+	}
+	service := &ModuleUploadProtocolService{
+		Registry:       n.pluginRegistry,
+		KeyLookup:      keyLookup,
+		ProviderPeerID: n.host.ID().String(),
+		AfterUpload:    n.PublishCatalogModule,
+	}
+	service.Register(n.host)
+	return nil
+}
+
 // PublishCatalogModule publishes a catalog asset through the live licensing
 // runtime so it becomes available on the module-delivery protocol immediately
 // after upload.
