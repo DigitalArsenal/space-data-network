@@ -182,19 +182,19 @@ type sdkPackagedModule struct {
 func init() {
 	addSDKPasswordFlag(sdkWalletInitCmd)
 	sdkWalletInitCmd.Flags().String("name", "SDN CLI Wallet", "wallet display name")
-	sdkWalletInitCmd.Flags().String("wasm", "", "path to hd-wallet.wasm")
+	addSDKWalletRuntimeFlags(sdkWalletInitCmd)
 
 	addSDKPasswordFlag(sdkWalletInfoCmd)
-	sdkWalletInfoCmd.Flags().String("wasm", "", "path to hd-wallet.wasm")
+	addSDKWalletRuntimeFlags(sdkWalletInfoCmd)
 
 	addSDKPasswordFlag(sdkAuthLoginCmd)
 	sdkAuthLoginCmd.Flags().String("node", "", "SDN node origin")
-	sdkAuthLoginCmd.Flags().String("wasm", "", "path to hd-wallet.wasm")
+	addSDKWalletRuntimeFlags(sdkAuthLoginCmd)
 
 	addSDKPasswordFlag(sdkAuthAddCurrentWalletCmd)
 	sdkAuthAddCurrentWalletCmd.Flags().String("node", "", "SDN node origin")
 	sdkAuthAddCurrentWalletCmd.Flags().String("trust", "admin", "trust level: admin, trusted, or standard")
-	sdkAuthAddCurrentWalletCmd.Flags().String("wasm", "", "path to hd-wallet.wasm")
+	addSDKWalletRuntimeFlags(sdkAuthAddCurrentWalletCmd)
 
 	addSDKPasswordFlag(sdkModulePackageCmd)
 	addSDKModulePackageFlags(sdkModulePackageCmd)
@@ -214,7 +214,7 @@ func init() {
 	sdkModuleQueryCmd.Flags().String("version", "", "module version")
 	sdkModuleQueryCmd.Flags().String("requester-domain", "", "requester domain")
 	sdkModuleQueryCmd.Flags().Int64("requested-timeout-ms", 300000, "requested grant timeout in milliseconds")
-	sdkModuleQueryCmd.Flags().String("wasm", "", "path to hd-wallet.wasm")
+	addSDKWalletRuntimeFlags(sdkModuleQueryCmd)
 
 	sdkWalletCmd.AddCommand(sdkWalletInitCmd, sdkWalletInfoCmd)
 	sdkAuthCmd.AddCommand(sdkAuthLoginCmd, sdkAuthAddCurrentWalletCmd)
@@ -230,6 +230,12 @@ func init() {
 
 func addSDKPasswordFlag(cmd *cobra.Command) {
 	cmd.Flags().String("password-env", sdkCLIDefaultPassword, "environment variable containing the wallet password")
+}
+
+func addSDKWalletRuntimeFlags(cmd *cobra.Command) {
+	cmd.Flags().String("wallet-wasm", "", "path to hd-wallet.wasm")
+	cmd.Flags().String("wasm", "", "deprecated alias for --wallet-wasm")
+	_ = cmd.Flags().MarkHidden("wasm")
 }
 
 func addSDKModulePackageFlags(cmd *cobra.Command) {
@@ -255,7 +261,7 @@ func runSDKWalletInit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	wasmPath, err := sdkWalletWasmFlag(cmd, "wasm")
+	wasmPath, err := sdkWalletRuntimePathFromCommand(cmd)
 	if err != nil {
 		return err
 	}
@@ -473,7 +479,7 @@ func sdkLoadWalletFromCommand(cmd *cobra.Command) (*sdkLoadedWallet, error) {
 		return nil, err
 	}
 	if cmd.Flags().Lookup("wallet-wasm") != nil {
-		wasmPath, err := sdkWalletWasmFlag(cmd, "wallet-wasm")
+		wasmPath, err := sdkWalletRuntimePathFromCommand(cmd)
 		if err != nil {
 			return nil, err
 		}
@@ -1149,6 +1155,17 @@ func sdkWalletWasmFlag(cmd *cobra.Command, name string) (string, error) {
 	return cmd.Flags().GetString(name)
 }
 
+func sdkWalletRuntimePathFromCommand(cmd *cobra.Command) (string, error) {
+	walletWasm, err := sdkWalletWasmFlag(cmd, "wallet-wasm")
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(walletWasm) != "" {
+		return walletWasm, nil
+	}
+	return sdkWalletWasmFlag(cmd, "wasm")
+}
+
 func sdkResolveHDWalletWasmPath(explicitPath string) (string, error) {
 	candidates := make([]string, 0, 8)
 	if trimmed := strings.TrimSpace(explicitPath); trimmed != "" {
@@ -1186,7 +1203,7 @@ func sdkResolveHDWalletWasmPath(explicitPath string) (string, error) {
 			return resolved, nil
 		}
 	}
-	return "", fmt.Errorf("WASI-compatible hd-wallet.wasm not found (set --wasm, --wallet-wasm, or HD_WALLET_WASM_PATH)")
+	return "", fmt.Errorf("WASI-compatible hd-wallet.wasm not found (set --wallet-wasm or HD_WALLET_WASM_PATH)")
 }
 
 func sdkCLIHome() string {

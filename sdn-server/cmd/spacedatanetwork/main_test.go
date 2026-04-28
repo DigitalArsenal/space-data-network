@@ -51,6 +51,34 @@ func TestRootCommandIncludesIsomorphicSDKCLI(t *testing.T) {
 	assertSubcommandPath(t, rootCmd, "module", "query")
 }
 
+func TestSDKCLIWalletRuntimeFlagDoesNotShadowModuleWASMFlag(t *testing.T) {
+	t.Parallel()
+
+	walletInit := assertSubcommandPath(t, rootCmd, "wallet", "init")
+	if flag := walletInit.Flags().Lookup("wallet-wasm"); flag == nil {
+		t.Fatal("wallet init missing --wallet-wasm")
+	}
+	if flag := walletInit.Flags().Lookup("wasm"); flag == nil || !flag.Hidden {
+		t.Fatal("wallet init should keep --wasm only as a hidden deprecated alias")
+	}
+
+	modulePackage := assertSubcommandPath(t, rootCmd, "module", "package")
+	if flag := modulePackage.Flags().Lookup("wasm"); flag == nil || flag.Hidden {
+		t.Fatal("module package should expose --wasm for the plugin payload")
+	}
+	if flag := modulePackage.Flags().Lookup("wallet-wasm"); flag == nil {
+		t.Fatal("module package missing --wallet-wasm")
+	}
+
+	moduleQuery := assertSubcommandPath(t, rootCmd, "module", "query")
+	if flag := moduleQuery.Flags().Lookup("wallet-wasm"); flag == nil {
+		t.Fatal("module query missing --wallet-wasm")
+	}
+	if flag := moduleQuery.Flags().Lookup("wasm"); flag == nil || !flag.Hidden {
+		t.Fatal("module query should keep --wasm only as a hidden deprecated alias")
+	}
+}
+
 func TestIsPublicAPIPathAllowsModuleDeliveryListingsRoute(t *testing.T) {
 	t.Parallel()
 
@@ -59,7 +87,7 @@ func TestIsPublicAPIPathAllowsModuleDeliveryListingsRoute(t *testing.T) {
 	}
 }
 
-func assertSubcommandPath(t *testing.T, command *cobra.Command, path ...string) {
+func assertSubcommandPath(t *testing.T, command *cobra.Command, path ...string) *cobra.Command {
 	t.Helper()
 	current := command
 	for _, name := range path {
@@ -69,6 +97,7 @@ func assertSubcommandPath(t *testing.T, command *cobra.Command, path ...string) 
 		}
 		current = next
 	}
+	return current
 }
 
 func findSubcommand(command *cobra.Command, name string) *cobra.Command {
