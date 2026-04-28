@@ -218,27 +218,29 @@ Example `catalog.json`:
       "id": "orbpro-core",
       "version": "2026.02.11",
       "required_scope": "orbpro:premium",
-      "encrypted_path": "orbpro-core.wasm.enc",
-      "key_path": "orbpro-core.key",
+      "encrypted_path": "orbpro-core/bundle.wasm.enc",
+      "key_envelope_path": "orbpro-core/bundle.key-envelope.json",
       "content_type": "application/wasm"
     }
   ]
 }
 ```
 
-For local OrbPro module-delivery seeding, write encrypted bundle bytes and
-per-bundle content keys directly into the catalog root:
+For local OrbPro module-delivery seeding, fetch the local provider descriptor
+first, then write encrypted bundle bytes and provider-wrapped key envelopes:
 
 ```bash
 npm run seed:orbpro-module-catalog -- \
   --plugin-root /Users/tj/.orbpro/local-sdn/sdn-data/space-data-network-10080-13080-14080/data/dev/license/plugins \
+  --provider-x25519-pubkey "$LOCAL_PROVIDER_X25519_PUBKEY" \
+  --provider-peer-id "$LOCAL_PROVIDER_PEER_ID" \
   --with-conjunction
 ```
 
-This helper creates `catalog.json` plus `<slug>.wasm.enc` and `<slug>.key`
-files for the built-in OrbPro remote modules. Use it for the local
-module-delivery provider path; `/api/v1/plugins/upload` is not sufficient for
-the encrypted grant/CID flow because it stores `plain_path` catalog entries.
+This helper creates `catalog.json`, `<module-id>/bundle.wasm.enc`, and
+`<module-id>/bundle.key-envelope.json` for the built-in OrbPro remote modules.
+It does not write raw key files such as `<slug>.key`, `bundle.key`, or catalog
+`key_path` entries.
 
 ## Packages
 
