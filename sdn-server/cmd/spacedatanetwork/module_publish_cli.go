@@ -335,13 +335,15 @@ func resolveModulePublishWalletWASM(explicitPath string) (string, error) {
 		candidates = append(candidates, envPath)
 	}
 	candidates = append(candidates,
-		"node_modules/hd-wallet-wasm/dist/hd-wallet.wasm",
-		"sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet.wasm",
-		"packages/space-data-network/node_modules/hd-wallet-wasm/dist/hd-wallet.wasm",
-		"packages/space-data-network/sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet.wasm",
-		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
+		"hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
+		"hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
 		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
-		"../hd-wallet-wasm/build-wasm/wasm/hd-wallet.wasm",
+		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
+		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
+		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
+		"../hd-wallet-wasm/build-wasi-pure/hd-wallet.wasm",
+		"../../hd-wallet-wasm/build-wasi-pure/hd-wallet.wasm",
+		"/opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm",
 		"/opt/spacedatanetwork/wasm/hd-wallet.wasm",
 	)
 	for _, candidate := range candidates {
