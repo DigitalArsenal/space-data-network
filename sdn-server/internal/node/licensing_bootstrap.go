@@ -21,6 +21,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/keys"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/modulert"
+	"golang.org/x/crypto/curve25519"
 )
 
 const (
@@ -179,6 +180,20 @@ func (n *Node) moduleRuntimeKeySlots() ([]byte, []byte, error) {
 	}
 
 	return signingSeed, wrappingKey, nil
+}
+
+// ModuleUploadProviderX25519PublicKey returns the persistent provider wrapping
+// public key advertised for encrypted module uploads.
+func (n *Node) ModuleUploadProviderX25519PublicKey() []byte {
+	_, wrappingKey, err := n.moduleRuntimeKeySlots()
+	if err != nil || len(wrappingKey) != 32 {
+		return nil
+	}
+	publicKey, err := curve25519.X25519(wrappingKey, curve25519.Basepoint)
+	if err != nil {
+		return nil
+	}
+	return publicKey
 }
 
 func readDevRuntimeKeySlotEnv(name string) []byte {
