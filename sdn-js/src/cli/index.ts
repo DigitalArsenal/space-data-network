@@ -151,6 +151,9 @@ async function modulePackage(args: string[]): Promise<void> {
 async function moduleUpload(args: string[]): Promise<void> {
   const options = parseOptions(args);
   const nodeUrl = requiredOption(options, 'node');
+  const wallet = await loadWallet({
+    password: readPassword(options),
+  });
   const sessionCookie = await readSessionCookie(nodeUrl);
   if (!sessionCookie) {
     throw new Error(`no session for ${nodeUrl}; run sdn auth login first`);
@@ -159,6 +162,7 @@ async function moduleUpload(args: string[]): Promise<void> {
     nodeUrl,
     packagePath: requiredOption(options, 'package'),
     sessionCookie,
+    wallet,
   });
   printJSON(result);
 }
@@ -187,6 +191,7 @@ async function modulePublish(args: string[]): Promise<void> {
     nodeUrl,
     packagePath: packaged.packagePath,
     sessionCookie,
+    wallet,
   });
   printJSON({
     package_path: packaged.packagePath,
