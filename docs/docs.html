@@ -1474,7 +1474,7 @@ const result = await invokeLoadedModule(harness, {
 harness.destroy?.();</code></pre>
 
         <h3>Publisher CLI</h3>
-        <p>The public <code>sdn</code> CLI creates an encrypted local wallet, authenticates to an SDN node, packages encrypted and signed WASM bytes, uploads them as plugin-module catalog entries, and verifies delivery through the same registered module-delivery protocol used by browser clients.</p>
+        <p>The public npm <code>sdn</code> CLI and the Go <code>spacedatanetwork</code> binary expose the same <code>wallet</code>, <code>auth</code>, and <code>module</code> command groups. Both create an encrypted local wallet, authenticate to an SDN node, package encrypted and signed WASM bytes, upload them as plugin-module catalog entries, and verify delivery through the same registered module-delivery protocol used by browser clients.</p>
         <pre><code>npm install -g @spacedatanetwork/sdn-js
 export SDN_WALLET_PASSWORD='use-a-real-local-password'
 
@@ -1495,7 +1495,8 @@ sdn module query \
   --node https://sdn.spaceaware.io \
   --module-id com.orbpro.licensing \
   --requester-domain spaceaware.io</code></pre>
-        <p>The CLI wallet is encrypted under <code>~/.spacedatanetwork/sdn-js</code> by default. OrbPro and SpaceAware clients should use <code>https://sdn.spaceaware.io/api/module-delivery/provider</code> as the provider descriptor URL.</p>
+        <p>The equivalent Go binary calls replace <code>sdn</code> with <code>spacedatanetwork</code>. On local source builds, set <code>HD_WALLET_WASM_PATH</code> or keep the sibling <code>hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm</code> available so the Go CLI can decrypt the encrypted wallet.</p>
+        <p>The CLI wallet is encrypted under <code>~/.spacedatanetwork/sdn-js</code> by default. OrbPro and SpaceAware clients should use <code>https://sdn.spaceaware.io/api/module-delivery/provider</code> as the provider descriptor URL. Encrypted CID fetches use the node IPFS API and gateway when configured, with direct libp2p/Helia as the public requester fallback.</p>
 
         <h3>Protocol Boundaries</h3>
         <ul>

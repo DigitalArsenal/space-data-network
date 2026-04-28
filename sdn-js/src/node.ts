@@ -60,6 +60,7 @@ export interface SDNConfig {
   bootstrapPeers?: string[];
   includeIPFSBootstrap?: boolean;
   ipfsApiBaseUrl?: string;
+  ipfsGatewayBaseUrl?: string;
   ipfsFetchTimeoutMs?: number;
   idExchangeProtocol?: string;
   enableStorage?: boolean;
@@ -457,17 +458,42 @@ export class SDNNode {
 
   async fetchCIDBytes(cid: string): Promise<Uint8Array> {
     const ipfsApiBaseUrl = normalizeOptionalString(this.config.ipfsApiBaseUrl);
-    const fetchPromise = ipfsApiBaseUrl
-      ? fetchCIDBytesFromIPFSApi(ipfsApiBaseUrl, cid)
-      : (async () => {
-          const helia = await this.ensureHelia();
-          return fetchCIDBytesFromHelia(helia, cid);
-        })();
+    const ipfsGatewayBaseUrl = normalizeOptionalString(this.config.ipfsGatewayBaseUrl);
+    const timeoutMs = resolveIPFSFetchTimeoutMs(this.config);
+    const errors: string[] = [];
 
-    return withOptionalTimeout(
-      fetchPromise,
-      resolveHeliaFetchTimeoutMs(this.config),
-    );
+    if (ipfsApiBaseUrl) {
+      try {
+        return await withOptionalTimeout(
+          fetchCIDBytesFromIPFSApi(ipfsApiBaseUrl, cid),
+          timeoutMs,
+        );
+      } catch (error) {
+        errors.push(formatError(error));
+        if (!ipfsGatewayBaseUrl) {
+          throw new Error(`failed to fetch CID ${cid}: ${errors.join('; ')}`);
+        }
+      }
+    }
+
+    if (ipfsGatewayBaseUrl) {
+      try {
+        return await withOptionalTimeout(
+          fetchCIDBytesFromIPFSGateway(ipfsGatewayBaseUrl, cid),
+          timeoutMs,
+        );
+      } catch (error) {
+        errors.push(formatError(error));
+      }
+    }
+
+    try {
+      const helia = await this.ensureHelia();
+      return await withOptionalTimeout(fetchCIDBytesFromHelia(helia, cid), timeoutMs);
+    } catch (error) {
+      errors.push(formatError(error));
+      throw new Error(`failed to fetch CID ${cid}: ${errors.join('; ')}`);
+    }
   }
 
   async requestModuleGrant(
@@ -605,12 +631,12 @@ function shouldProbeRelays(config: SDNConfig, hasExplicitRelays: boolean): boole
   return config.enableRelayProbing !== false;
 }
 
-function resolveHeliaFetchTimeoutMs(config: SDNConfig): number {
+function resolveIPFSFetchTimeoutMs(config: SDNConfig): number {
   const configuredTimeout = Number(config.ipfsFetchTimeoutMs);
   if (Number.isFinite(configuredTimeout) && configuredTimeout > 0) {
     return configuredTimeout;
   }
-  return 0;
+  return 60_000;
 }
 
 function normalizeOptionalString(value: unknown): string {
@@ -632,6 +658,24 @@ async function fetchCIDBytesFromIPFSApi(baseUrl: string, cid: string): Promise<U
   });
   if (!response.ok) {
     throw new Error(`IPFS API CID fetch failed: ${response.status} ${response.statusText}`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function fetchCIDBytesFromIPFSGateway(baseUrl: string, cid: string): Promise<Uint8Array> {
+  if (typeof fetch !== 'function') {
+    throw new Error('IPFS gateway CID fetch requires fetch().');
+  }
+  const endpoint = new URL(
+    `${baseUrl.replace(/\/+$/g, '')}/${encodeURIComponent(cid)}`,
+    typeof location !== 'undefined' ? location.href : 'http://localhost',
+  );
+  const response = await fetch(endpoint, {
+    method: 'GET',
+    headers: { accept: 'application/octet-stream' },
+  });
+  if (!response.ok) {
+    throw new Error(`IPFS gateway CID fetch failed: ${response.status} ${response.statusText}`);
   }
   return new Uint8Array(await response.arrayBuffer());
 }

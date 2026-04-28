@@ -286,8 +286,12 @@ sdn module query --node https://sdn.spaceaware.io --module-id com.example.test -
 `);
 }
 
-main(process.argv.slice(2)).catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`sdn: ${message}\n`);
-  process.exitCode = 1;
-});
+main(process.argv.slice(2))
+  .then(() => {
+    process.exit(process.exitCode ?? 0);
+  })
+  .catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`sdn: ${message}\n`);
+    process.exit(1);
+  });

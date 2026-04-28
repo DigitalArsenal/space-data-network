@@ -13,7 +13,10 @@ import {
   packageModule,
   uploadModule,
 } from './module-upload';
-import { queryModuleDelivery } from './module-query';
+import {
+  createDefaultQueryDeliveryNode,
+  queryModuleDelivery,
+} from './module-query';
 import {
   createWallet,
   loadWallet,
@@ -23,6 +26,7 @@ import {
   sha256,
   verify,
 } from '../crypto/hd-wallet';
+import { SDNNode } from '../node';
 
 let originalCliHome: string | undefined;
 let cliHome: string;
@@ -383,6 +387,32 @@ describe('sdn CLI module packaging and upload', () => {
 
     expect(requestEncryptedModuleBundle).toHaveBeenCalledTimes(1);
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('configures default query transport fetches from the node origin', async () => {
+    const wallet = await createWallet({
+      password: 'query transport password',
+      name: 'SDN Upload Test',
+    });
+    const fakeNode = {
+      requestEncryptedModuleBundle: vi.fn(),
+      stop: vi.fn(),
+    } as unknown as SDNNode;
+    const createSpy = vi.spyOn(SDNNode, 'create').mockResolvedValue(fakeNode);
+    try {
+      await expect(createDefaultQueryDeliveryNode(
+        wallet,
+        'https://sdn.spaceaware.io',
+      )).resolves.toBe(fakeNode);
+      expect(createSpy).toHaveBeenCalledWith({
+        identity: wallet.identity,
+        enableStorage: false,
+        ipfsApiBaseUrl: 'https://sdn.spaceaware.io/api/v0',
+        ipfsGatewayBaseUrl: 'https://sdn.spaceaware.io/ipfs',
+      });
+    } finally {
+      createSpy.mockRestore();
+    }
   });
 });
 

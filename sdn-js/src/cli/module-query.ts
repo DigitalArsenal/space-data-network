@@ -61,7 +61,7 @@ export async function queryModuleDelivery(
     ?? await fetchProviderDescriptor(nodeOrigin, options.fetchImpl ?? fetch);
   const node = options.nodeFactory
     ? await options.nodeFactory()
-    : await createDefaultNode(options.wallet, nodeOrigin);
+    : await createDefaultQueryDeliveryNode(options.wallet, nodeOrigin);
   try {
     const result = await node.requestEncryptedModuleBundle({
       serverDescriptor,
@@ -92,11 +92,15 @@ export async function queryModuleDelivery(
   }
 }
 
-async function createDefaultNode(wallet: LoadedWallet, nodeOrigin: string): Promise<QueryDeliveryNode> {
-  void nodeOrigin;
+export async function createDefaultQueryDeliveryNode(
+  wallet: LoadedWallet,
+  nodeOrigin: string,
+): Promise<QueryDeliveryNode> {
   return SDNNode.create({
     identity: wallet.identity,
     enableStorage: false,
+    ipfsApiBaseUrl: `${nodeOrigin}/api/v0`,
+    ipfsGatewayBaseUrl: `${nodeOrigin}/ipfs`,
   }) as Promise<QueryDeliveryNode>;
 }
 
