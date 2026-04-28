@@ -9,8 +9,8 @@ import (
 
 var licensingWasmPathSuffix = []string{
 	"space-data-network-plugins",
-	"packages",
 	"licensing",
+	"core",
 	"dist",
 	"isomorphic",
 	"module.wasm",

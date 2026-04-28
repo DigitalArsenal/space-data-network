@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strings"
 
+	plg "github.com/DigitalArsenal/spacedatastandards.org/lib/go/PLG"
 	"github.com/spacedatanetwork/sdn-server/internal/wasmrt"
 )
 
@@ -107,16 +108,19 @@ func ReadManifest(mod *wasmrt.Module) (*Manifest, error) {
 	return parseManifestFlatBuffer(buf)
 }
 
-// parseManifestFlatBuffer parses a PluginManifest FlatBuffer (file_identifier "PMAN").
-// This is a manual parser that reads the FlatBuffer wire format directly,
-// avoiding a dependency on generated FlatBuffer Go code.
+// parseManifestFlatBuffer parses either the current SDS PLG FlatBuffer
+// (file_identifier "$PLG") or the older internal PluginManifest FlatBuffer
+// (file_identifier "PMAN").
 func parseManifestFlatBuffer(buf []byte) (*Manifest, error) {
 	if len(buf) < 8 {
 		return nil, errors.New("manifest too small")
 	}
-	// Verify file identifier
-	if string(buf[4:8]) != "PMAN" {
-		return nil, fmt.Errorf("unexpected file identifier: %q", string(buf[4:8]))
+	switch identifier := string(buf[4:8]); identifier {
+	case "$PLG":
+		return parsePLGManifestFlatBuffer(buf)
+	case "PMAN":
+	default:
+		return nil, fmt.Errorf("unexpected file identifier: %q", identifier)
 	}
 
 	m := &Manifest{}
@@ -175,6 +179,118 @@ func parseManifestFlatBuffer(buf []byte) (*Manifest, error) {
 	}
 
 	return m, nil
+}
+
+func parsePLGManifestFlatBuffer(buf []byte) (*Manifest, error) {
+	if !plg.PLGBufferHasIdentifier(buf) {
+		return nil, fmt.Errorf("unexpected file identifier: %q", string(buf[4:8]))
+	}
+
+	root := plg.GetRootAsPLG(buf, 0)
+	m := &Manifest{
+		PluginID:     string(root.PLUGIN_ID()),
+		Name:         string(root.NAME()),
+		Version:      string(root.VERSION()),
+		PluginFamily: pluginFamilyFromPLGType(fmt.Sprint(root.PLUGIN_TYPE())),
+	}
+
+	var entry plg.EntryFunction
+	for i := 0; i < root.ENTRY_FUNCTIONSLength(); i++ {
+		if !root.ENTRY_FUNCTIONS(&entry, i) {
+			continue
+		}
+		methodID := strings.TrimSpace(string(entry.NAME()))
+		if methodID == "" {
+			continue
+		}
+		m.Methods = append(m.Methods, ManifestMethod{
+			MethodID:    methodID,
+			DisplayName: methodID,
+			Description: string(entry.DESCRIPTION()),
+		})
+	}
+
+	var capability plg.PluginCapability
+	seenCapabilities := map[string]bool{}
+	for i := 0; i < root.CAPABILITIESLength(); i++ {
+		if !root.CAPABILITIES(&capability, i) {
+			continue
+		}
+		name := strings.TrimSpace(string(capability.NAME()))
+		if name == "" || seenCapabilities[name] {
+			continue
+		}
+		seenCapabilities[name] = true
+		m.Capabilities = append(m.Capabilities, name)
+	}
+
+	attachKnownPLGProtocols(m)
+	return m, nil
+}
+
+func attachKnownPLGProtocols(m *Manifest) {
+	if m == nil || m.PluginID != "licensing" {
+		return
+	}
+	if !manifestHasMethod(m, "server_handle_message") || !manifestHasCapability(m, "protocol_handle") {
+		return
+	}
+	m.Protocols = append(m.Protocols, ProtocolDecl{
+		ProtocolID:    "module-delivery",
+		MethodID:      "server_handle_message",
+		InputPortID:   "request",
+		OutputPortID:  "response",
+		Description:   "Handle the canonical SDS module-delivery licensing flow.",
+		WireID:        "/space-data-network/module-delivery/1.0.0",
+		TransportKind: "libp2p",
+		Role:          "handle",
+		AutoInstall:   true,
+		Advertise:     false,
+		DiscoveryKey:  "module-delivery",
+	})
+}
+
+func manifestHasMethod(m *Manifest, methodID string) bool {
+	for _, method := range m.Methods {
+		if method.MethodID == methodID {
+			return true
+		}
+	}
+	return false
+}
+
+func manifestHasCapability(m *Manifest, capability string) bool {
+	for _, candidate := range m.Capabilities {
+		if candidate == capability {
+			return true
+		}
+	}
+	return false
+}
+
+func pluginFamilyFromPLGType(value string) string {
+	switch strings.TrimSpace(value) {
+	case "Sensor":
+		return "SENSOR"
+	case "Propagator":
+		return "PROPAGATOR"
+	case "Renderer":
+		return "RENDERER"
+	case "Analysis":
+		return "ANALYSIS"
+	case "DataSource":
+		return "DATA_SOURCE"
+	case "EW":
+		return "EW"
+	case "Comms":
+		return "COMMS"
+	case "Physics":
+		return "PHYSICS"
+	case "Shader":
+		return "SHADER"
+	default:
+		return strings.ToUpper(strings.TrimSpace(value))
+	}
 }
 
 // FlatBuffer wire format helpers
