@@ -94,6 +94,7 @@ type Node struct {
 
 	pluginRegistry          *license.PluginRegistry
 	licensingModule         *modulert.Module
+	modulePublishAuthorizer license.ModulePublishAuthorizer
 	moduleDeliveryDiscovery cid.Cid
 	sdnAdvertisementTarget  sdnAdvertisementDiscoveryTarget
 	sdnDiscoveryTargets     []sdnAdvertisementDiscoveryTarget

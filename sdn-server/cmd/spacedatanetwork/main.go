@@ -628,6 +628,20 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					}
 				}
 				authHandler.RegisterRoutes(adminMux)
+				n.SetModulePublishAuthorizer(func(xpub string) (license.ModulePublishPrincipal, error) {
+					user, err := authHandler.UserStore().GetUser(xpub)
+					if err != nil {
+						return license.ModulePublishPrincipal{}, err
+					}
+					if user == nil {
+						return license.ModulePublishPrincipal{}, nil
+					}
+					return license.ModulePublishPrincipal{
+						XPub:             user.XPub,
+						SigningPubKeyHex: user.SigningPubKeyHex,
+						Admin:            user.TrustLevel >= peers.Admin,
+					}, nil
+				})
 				log.Infof("HD wallet authentication enabled at %s://%s/login", adminScheme, adminAddr)
 
 				if n.DirectoryService() != nil {

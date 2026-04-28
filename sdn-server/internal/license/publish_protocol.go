@@ -1,8 +1,7 @@
 package license
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +19,18 @@ const (
 	maxModulePublishJSONBytes = 256 << 20
 )
 
+// ModulePublishPrincipal is the wallet identity authorized to publish modules.
+// The provider checks this against its local admin user store.
+type ModulePublishPrincipal struct {
+	XPub             string
+	SigningPubKeyHex string
+	Admin            bool
+}
+
+// ModulePublishAuthorizer resolves a signer xpub to the provider's local
+// authorization state. It must return Admin=true only for admin-trusted wallets.
+type ModulePublishAuthorizer func(xpub string) (ModulePublishPrincipal, error)
+
 // ModulePublishEntry is one encrypted module artifact in a publish request.
 // Byte slices are encoded as base64 by encoding/json.
 type ModulePublishEntry struct {
@@ -36,14 +47,17 @@ type ModulePublishEntry struct {
 	SignerPubKeyHex   string   `json:"signer_pubkey_hex,omitempty"`
 }
 
-// ModulePublishRequest is signed with an HMAC shared by deployment automation
-// and the provider node. The deployment token is never sent on the wire.
+// ModulePublishRequest is signed by an admin wallet. The signer xpub is the
+// stable wallet identity and SignerPubKeyHex is the Ed25519 key bound to that
+// xpub by the provider's admin auth store.
 type ModulePublishRequest struct {
-	Type         string               `json:"type"`
-	IssuedAtMs   int64                `json:"issued_at_ms"`
-	Nonce        string               `json:"nonce"`
-	Modules      []ModulePublishEntry `json:"modules"`
-	SignatureHex string               `json:"signature_hex"`
+	Type            string               `json:"type"`
+	IssuedAtMs      int64                `json:"issued_at_ms"`
+	Nonce           string               `json:"nonce"`
+	Modules         []ModulePublishEntry `json:"modules"`
+	SignerXPub      string               `json:"signer_xpub"`
+	SignerPubKeyHex string               `json:"signer_pubkey_hex"`
+	SignatureHex    string               `json:"signature_hex"`
 }
 
 // ModulePublishResult reports one catalog replacement.
@@ -64,11 +78,11 @@ type ModulePublishResponse struct {
 // ApplyModulePublishRequest verifies req and replaces the matching encrypted
 // catalog entries in reg. It returns a wire-safe response instead of exposing
 // partial filesystem errors to stream callers.
-func ApplyModulePublishRequest(reg *PluginRegistry, req ModulePublishRequest, token string) ModulePublishResponse {
+func ApplyModulePublishRequest(reg *PluginRegistry, req ModulePublishRequest, authorizer ModulePublishAuthorizer) ModulePublishResponse {
 	if reg == nil {
 		return ModulePublishResponse{OK: false, Error: "plugin registry is unavailable"}
 	}
-	if err := VerifyModulePublishRequest(req, token); err != nil {
+	if err := VerifyModulePublishRequest(req, authorizer); err != nil {
 		return ModulePublishResponse{OK: false, Error: err.Error()}
 	}
 
@@ -105,7 +119,7 @@ func ApplyModulePublishRequest(reg *PluginRegistry, req ModulePublishRequest, to
 // ApplyModulePublishJSON decodes one JSON publish request from r and applies it
 // to reg. The caller owns response timing so it can refresh runtime state before
 // acknowledging success.
-func ApplyModulePublishJSON(r io.Reader, reg *PluginRegistry, token string) ModulePublishResponse {
+func ApplyModulePublishJSON(r io.Reader, reg *PluginRegistry, authorizer ModulePublishAuthorizer) ModulePublishResponse {
 	var req ModulePublishRequest
 	data, err := io.ReadAll(io.LimitReader(r, maxModulePublishJSONBytes+1))
 	if err != nil {
@@ -117,14 +131,14 @@ func ApplyModulePublishJSON(r io.Reader, reg *PluginRegistry, token string) Modu
 	if err := json.Unmarshal(data, &req); err != nil {
 		return ModulePublishResponse{OK: false, Error: "decode request: " + err.Error()}
 	}
-	return ApplyModulePublishRequest(reg, req, token)
+	return ApplyModulePublishRequest(reg, req, authorizer)
 }
 
 // ServeModulePublishJSON decodes one JSON publish request from r and writes one
 // JSON response to w. It is intentionally transport-agnostic so HTTP tests,
 // libp2p streams, and future CLI integrations use identical request handling.
-func ServeModulePublishJSON(r io.Reader, w io.Writer, reg *PluginRegistry, token string) {
-	WriteModulePublishResponse(w, ApplyModulePublishJSON(r, reg, token))
+func ServeModulePublishJSON(r io.Reader, w io.Writer, reg *PluginRegistry, authorizer ModulePublishAuthorizer) {
+	WriteModulePublishResponse(w, ApplyModulePublishJSON(r, reg, authorizer))
 }
 
 // WriteModulePublishResponse writes a newline-terminated JSON response.
@@ -132,47 +146,80 @@ func WriteModulePublishResponse(w io.Writer, resp ModulePublishResponse) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// SignModulePublishRequest signs req in place using HMAC-SHA256.
-func SignModulePublishRequest(req *ModulePublishRequest, token string) error {
+// SignModulePublishRequest signs req in place using the admin wallet's Ed25519
+// signing key.
+func SignModulePublishRequest(req *ModulePublishRequest, signerXPub string, signingPubKey ed25519.PublicKey, signingPrivateKey ed25519.PrivateKey) error {
 	if req == nil {
 		return errors.New("module publish request is required")
 	}
-	if strings.TrimSpace(req.Type) == "" {
-		req.Type = modulePublishRequestType
+	if len(signingPubKey) != ed25519.PublicKeySize {
+		return errors.New("signing public key must be 32 bytes")
 	}
-	mac, err := modulePublishMAC(*req, token)
+	if len(signingPrivateKey) == ed25519.SeedSize {
+		signingPrivateKey = ed25519.NewKeyFromSeed(signingPrivateKey)
+	}
+	if len(signingPrivateKey) != ed25519.PrivateKeySize {
+		return errors.New("signing private key must be 32-byte seed or 64-byte Ed25519 private key")
+	}
+	req.SignerXPub = strings.TrimSpace(signerXPub)
+	req.SignerPubKeyHex = hex.EncodeToString(signingPubKey)
+	payload, err := modulePublishSigningPayload(*req)
 	if err != nil {
 		return err
 	}
-	req.SignatureHex = hex.EncodeToString(mac)
+	req.SignatureHex = hex.EncodeToString(ed25519.Sign(signingPrivateKey, payload))
 	return nil
 }
 
-// VerifyModulePublishRequest checks the request HMAC without mutating req.
-func VerifyModulePublishRequest(req ModulePublishRequest, token string) error {
+// VerifyModulePublishRequest checks the request's wallet signature and confirms
+// the signer is an admin in the provider's local auth store.
+func VerifyModulePublishRequest(req ModulePublishRequest, authorizer ModulePublishAuthorizer) error {
 	got := strings.TrimSpace(req.SignatureHex)
 	if got == "" {
 		return errors.New("signature_hex is required")
 	}
-	expected, err := modulePublishMAC(req, token)
-	if err != nil {
-		return err
+	if authorizer == nil {
+		return errors.New("module publish authorizer is required")
 	}
 	gotBytes, err := hex.DecodeString(got)
 	if err != nil {
 		return errors.New("signature_hex must be hex")
 	}
-	if !hmac.Equal(gotBytes, expected) {
+	if len(gotBytes) != ed25519.SignatureSize {
+		return errors.New("signature_hex must be 64-byte Ed25519 signature")
+	}
+	signerXPub := strings.TrimSpace(req.SignerXPub)
+	if signerXPub == "" {
+		return errors.New("signer_xpub is required")
+	}
+	principal, err := authorizer(signerXPub)
+	if err != nil {
+		return err
+	}
+	if !principal.Admin {
+		return errors.New("module publish signer is not an admin")
+	}
+	if strings.TrimSpace(principal.SigningPubKeyHex) == "" {
+		return errors.New("module publish signer has no bound signing key")
+	}
+	if !strings.EqualFold(strings.TrimSpace(principal.SigningPubKeyHex), strings.TrimSpace(req.SignerPubKeyHex)) {
+		return errors.New("module publish signer key is not bound to the signer xpub")
+	}
+	pubKey, err := hex.DecodeString(strings.TrimSpace(req.SignerPubKeyHex))
+	if err != nil || len(pubKey) != ed25519.PublicKeySize {
+		return errors.New("signer_pubkey_hex must be 32-byte Ed25519 public key")
+	}
+	payload, err := modulePublishSigningPayload(req)
+	if err != nil {
+		return err
+	}
+	if !ed25519.Verify(ed25519.PublicKey(pubKey), payload, gotBytes) {
 		return errors.New("module publish signature mismatch")
 	}
 	return nil
 }
 
-func modulePublishMAC(req ModulePublishRequest, token string) ([]byte, error) {
-	secret := strings.TrimSpace(token)
-	if secret == "" {
-		return nil, errors.New("module publish token is required")
-	}
+func modulePublishSigningPayload(req ModulePublishRequest) ([]byte, error) {
 	req.SignatureHex = ""
 	if strings.TrimSpace(req.Type) == "" {
 		req.Type = modulePublishRequestType
@@ -185,6 +232,15 @@ func modulePublishMAC(req ModulePublishRequest, token string) ([]byte, error) {
 	}
 	if strings.TrimSpace(req.Nonce) == "" {
 		return nil, errors.New("nonce is required")
+	}
+	if strings.TrimSpace(req.SignerXPub) == "" {
+		return nil, errors.New("signer_xpub is required")
+	}
+	if strings.TrimSpace(req.SignerPubKeyHex) == "" {
+		return nil, errors.New("signer_pubkey_hex is required")
+	}
+	if pubKey, err := hex.DecodeString(strings.TrimSpace(req.SignerPubKeyHex)); err != nil || len(pubKey) != ed25519.PublicKeySize {
+		return nil, errors.New("signer_pubkey_hex must be 32-byte Ed25519 public key")
 	}
 	if len(req.Modules) == 0 {
 		return nil, errors.New("at least one module is required")
@@ -203,11 +259,5 @@ func modulePublishMAC(req ModulePublishRequest, token string) ([]byte, error) {
 			return nil, errors.New("key material is required")
 		}
 	}
-	canonical, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	h := hmac.New(sha256.New, []byte(secret))
-	_, _ = h.Write(canonical)
-	return h.Sum(nil), nil
+	return json.Marshal(req)
 }

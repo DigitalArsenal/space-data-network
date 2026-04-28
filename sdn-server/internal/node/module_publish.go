@@ -2,14 +2,21 @@ package node
 
 import (
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	libp2pprotocol "github.com/libp2p/go-libp2p/core/protocol"
 
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 )
+
+// SetModulePublishAuthorizer sets the wallet-admin lookup used by the libp2p
+// module publish protocol.
+func (n *Node) SetModulePublishAuthorizer(authorizer license.ModulePublishAuthorizer) {
+	if n == nil {
+		return
+	}
+	n.modulePublishAuthorizer = authorizer
+}
 
 func (n *Node) registerModulePublishHandler() {
 	if n == nil || n.host == nil || n.pluginRegistry == nil {
@@ -25,11 +32,10 @@ func (n *Node) registerModulePublishHandler() {
 func (n *Node) handleModulePublishStream(stream network.Stream) {
 	defer stream.Close()
 
-	token := modulePublishToken()
-	if strings.TrimSpace(token) == "" {
+	if n.modulePublishAuthorizer == nil {
 		license.WriteModulePublishResponse(stream, license.ModulePublishResponse{
 			OK:    false,
-			Error: "module publish token is not configured",
+			Error: "module publish wallet authorizer is unavailable",
 		})
 		return
 	}
@@ -48,7 +54,7 @@ func (n *Node) handleModulePublishStream(stream network.Stream) {
 		return
 	}
 
-	response := license.ApplyModulePublishJSON(stream, n.pluginRegistry, token)
+	response := license.ApplyModulePublishJSON(stream, n.pluginRegistry, n.modulePublishAuthorizer)
 	if response.OK {
 		if err := bootstrapLicensingModule(n.licensingModule, n.pluginRegistry); err != nil {
 			response = license.ModulePublishResponse{
@@ -58,11 +64,4 @@ func (n *Node) handleModulePublishStream(stream network.Stream) {
 		}
 	}
 	license.WriteModulePublishResponse(stream, response)
-}
-
-func modulePublishToken() string {
-	if token := strings.TrimSpace(os.Getenv("SDN_MODULE_PUBLISH_TOKEN")); token != "" {
-		return token
-	}
-	return strings.TrimSpace(os.Getenv("SDN_LICENSE_ADMIN_TOKEN"))
 }
