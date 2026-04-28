@@ -232,8 +232,10 @@ const encryptionKey = epm.getKey(KeyType.ENCRYPTION);
 
 ### Module Delivery
 
-Requester-side module delivery stays on libp2p plus Helia. The public path
-does not bootstrap through legacy discovery or browser broker endpoints.
+Requester-side module delivery stays on public SDK transports. `SDNNode`
+can fetch encrypted CIDs through a node IPFS API, a gateway URL, or direct
+libp2p/Helia fallback. The public path does not bootstrap through legacy
+discovery or browser broker endpoints.
 
 ```typescript
 import {
@@ -396,7 +398,10 @@ sdn module query \
 
 `sdn module query` uses `SDNNode.requestEncryptedModuleBundle(...)` on
 `/space-data-network/module-delivery/1.0.0`, unwraps the grant content key, and
-decrypts locally through the public `@spacedatanetwork/sdn-js/ui` helpers. A
+decrypts locally through the public `@spacedatanetwork/sdn-js/ui` helpers. When
+given `--node https://sdn.spaceaware.io`, it configures CID fetches through
+`https://sdn.spaceaware.io/api/v0` and `https://sdn.spaceaware.io/ipfs` before
+falling back to direct Helia. A
 deployed OrbPro or SpaceAware client should use
 `https://sdn.spaceaware.io/api/module-delivery/provider` as its provider
 descriptor URL.

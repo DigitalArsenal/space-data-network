@@ -215,4 +215,86 @@ describe('SDNNode relay bootstrap', () => {
 
     await node.stop();
   });
+
+  it('falls back from IPFS API to gateway fetch before starting Helia', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        statusText: 'Bad Gateway',
+        text: async () => 'api unavailable',
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        arrayBuffer: async () => Uint8Array.from([4, 2]).buffer,
+      } as Response);
+
+    const { SDNNode } = await import('./node');
+    const node = await SDNNode.create({
+      edgeRelays: ['/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider'],
+      enableStorage: false,
+      ipfsApiBaseUrl: 'https://provider.example/api/v0',
+      ipfsGatewayBaseUrl: 'https://provider.example/ipfs',
+      ipfsFetchTimeoutMs: 1_000,
+    });
+
+    const result = await node.fetchCIDBytes('bafkreifallbackcid');
+
+    expect(result).toEqual(Uint8Array.from([4, 2]));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String((fetchMock.mock.calls[0]?.[0] as URL).href)).toBe(
+      'https://provider.example/api/v0/cat?arg=bafkreifallbackcid',
+    );
+    expect(String((fetchMock.mock.calls[1]?.[0] as URL).href)).toBe(
+      'https://provider.example/ipfs/bafkreifallbackcid',
+    );
+    expect(createHeliaFromLibp2pMock).not.toHaveBeenCalled();
+
+    await node.stop();
+  });
+
+  it('falls back from gateway fetch to Helia when HTTP transports fail', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 504,
+      statusText: 'Gateway Timeout',
+      text: async () => 'gateway timeout',
+    } as Response);
+    fetchCIDBytesFromHeliaMock.mockResolvedValueOnce(Uint8Array.from([7, 7, 7]));
+
+    const { SDNNode } = await import('./node');
+    const node = await SDNNode.create({
+      edgeRelays: ['/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider'],
+      enableStorage: false,
+      ipfsGatewayBaseUrl: 'https://provider.example/ipfs',
+      ipfsFetchTimeoutMs: 1_000,
+    });
+
+    const result = await node.fetchCIDBytes('bafkreiheliacid');
+
+    expect(result).toEqual(Uint8Array.from([7, 7, 7]));
+    expect(createHeliaFromLibp2pMock).toHaveBeenCalledTimes(1);
+    expect(fetchCIDBytesFromHeliaMock).toHaveBeenCalledTimes(1);
+
+    await node.stop();
+  });
+
+  it('applies a finite default timeout to Helia CID fetches', async () => {
+    vi.useFakeTimers();
+    fetchCIDBytesFromHeliaMock.mockImplementationOnce(() => new Promise(() => undefined));
+
+    const { SDNNode } = await import('./node');
+    const node = await SDNNode.create({
+      edgeRelays: ['/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider'],
+      enableStorage: false,
+    });
+
+    const fetchPromise = expect(node.fetchCIDBytes('bafkreiheliadefaulttimeout')).rejects.toThrow(/timed out after 60000ms/i);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await fetchPromise;
+
+    await node.stop();
+    vi.useRealTimers();
+  });
 });

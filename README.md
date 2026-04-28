@@ -275,8 +275,10 @@ discover a PLG listing, purchase it through the storefront client, request the
 encrypted WASM bundle through `SDNNode`, unwrap and decrypt locally, load with
 the SDK browser harness, and invoke the module.
 
-Publishers can install the public CLI and upload encrypted/signed module
-artifacts to an authorized node without importing from `src/*`:
+Publishers can use either CLI entrypoint with the same `wallet`, `auth`, and
+`module` command groups. The npm CLI is installed as `sdn`; the Go node binary
+exposes the same surface as `spacedatanetwork`. Both upload encrypted/signed
+module artifacts to an authorized node without importing from `src/*`:
 
 ```bash
 npm install -g @spacedatanetwork/sdn-js
@@ -301,13 +303,19 @@ sdn module query \
   --requester-domain spaceaware.io
 ```
 
+The equivalent Go binary calls are the same after replacing `sdn` with
+`spacedatanetwork`. On local source builds, set `HD_WALLET_WASM_PATH` or keep
+the sibling `hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm` available so
+the Go CLI can decrypt the encrypted wallet.
+
 The CLI wallet lives in `~/.spacedatanetwork/sdn-js` by default. The upload API
 stores `encrypted_path` and `key_path` catalog entries, publishes the new module
 through the live licensing runtime, and keeps browser requesters on
 `/space-data-network/module-delivery/1.0.0`. Deployed OrbPro and SpaceAware
 clients should use
 `https://sdn.spaceaware.io/api/module-delivery/provider` as the module-delivery
-provider descriptor.
+provider descriptor. Encrypted CID fetches use the node IPFS API and gateway
+when configured, with direct libp2p/Helia as the public requester fallback.
 
 Run the focused module-delivery compatibility checks:
 

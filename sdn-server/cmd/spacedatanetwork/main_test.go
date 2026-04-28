@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/multiformats/go-multiaddr"
+	"github.com/spf13/cobra"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
@@ -35,12 +37,47 @@ func TestIsPublicAPIPathAllowsProviderDescriptorRoute(t *testing.T) {
 	}
 }
 
+func TestRootCommandIncludesIsomorphicSDKCLI(t *testing.T) {
+	t.Parallel()
+
+	assertSubcommandPath(t, rootCmd, "wallet", "init")
+	assertSubcommandPath(t, rootCmd, "wallet", "info")
+	assertSubcommandPath(t, rootCmd, "auth", "login")
+	assertSubcommandPath(t, rootCmd, "auth", "add-current-wallet")
+	assertSubcommandPath(t, rootCmd, "module", "package")
+	assertSubcommandPath(t, rootCmd, "module", "publish")
+	assertSubcommandPath(t, rootCmd, "module", "upload")
+	assertSubcommandPath(t, rootCmd, "module", "list")
+	assertSubcommandPath(t, rootCmd, "module", "query")
+}
+
 func TestIsPublicAPIPathAllowsModuleDeliveryListingsRoute(t *testing.T) {
 	t.Parallel()
 
 	if !isPublicAPIPath("/api/module-delivery/listings") {
 		t.Fatal("expected module-delivery listings route to be public")
 	}
+}
+
+func assertSubcommandPath(t *testing.T, command *cobra.Command, path ...string) {
+	t.Helper()
+	current := command
+	for _, name := range path {
+		next := findSubcommand(current, name)
+		if next == nil {
+			t.Fatalf("missing command path %q under %q", strings.Join(path, " "), current.CommandPath())
+		}
+		current = next
+	}
+}
+
+func findSubcommand(command *cobra.Command, name string) *cobra.Command {
+	for _, candidate := range command.Commands() {
+		if candidate.Name() == name {
+			return candidate
+		}
+	}
+	return nil
 }
 
 func TestPluginModuleUploadRouteRequiresAdminAuth(t *testing.T) {
