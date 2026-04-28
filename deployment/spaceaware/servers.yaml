@@ -1,0 +1,25 @@
+# Production deployment target for the first SDN module-delivery/licensing node.
+#
+# The host value is intentionally the SSH config alias, not a raw IP address.
+# Configure it in ~/.ssh/config, for example:
+#
+#   Host space-data-network-01 sdn.spaceaware.io
+#       HostName <server-address>
+#       User root
+#
+# Deploy from the repository root with:
+#
+#   ./deployment/scripts/deploy.sh \
+#     -c deployment/spaceaware/servers.yaml \
+#     -u root \
+#     -b \
+#     deploy full
+
+ssh:
+  user: root
+  port: 22
+
+full_nodes:
+  - host: sdn.spaceaware.io
+    region: nyc
+    name: sdn-spaceaware

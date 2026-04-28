@@ -65,9 +65,16 @@ get_servers() {
     local type=$1
     # Using yq if available, otherwise basic grep
     if command -v yq &> /dev/null; then
-        yq e ".${type}[] | .ip" "$CONFIG_FILE" 2>/dev/null
+        yq e ".${type}[] | .host // .ip" "$CONFIG_FILE" 2>/dev/null
     else
-        grep -A 100 "^${type}:" "$CONFIG_FILE" | grep "ip:" | head -20 | awk '{print $2}'
+        grep -A 100 "^${type}:" "$CONFIG_FILE" | grep -E "^[[:space:]]+(host|ip):" | head -20 | awk '{print $2}'
+    fi
+}
+
+parse_server_endpoint() {
+    local line=$1
+    if [[ "$line" =~ (host|ip):[[:space:]]*([^[:space:]]+) ]]; then
+        printf '%s\n' "${BASH_REMATCH[2]}"
     fi
 }
 
@@ -75,7 +82,11 @@ get_servers() {
 ssh_cmd() {
     local ip=$1
     shift
-    ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=10 "${SSH_USER}@${ip}" "$@"
+    local ssh_opts=(-o StrictHostKeyChecking=no -o ConnectTimeout=10)
+    if [[ -n "${SSH_KEY:-}" && -f "$SSH_KEY" ]]; then
+        ssh_opts=(-i "$SSH_KEY" "${ssh_opts[@]}")
+    fi
+    ssh "${ssh_opts[@]}" "${SSH_USER}@${ip}" "$@"
 }
 
 # SCP to a server
@@ -83,7 +94,11 @@ scp_cmd() {
     local src=$1
     local ip=$2
     local dest=$3
-    scp -i "$SSH_KEY" -o StrictHostKeyChecking=no "$src" "${SSH_USER}@${ip}:${dest}"
+    local ssh_opts=(-o StrictHostKeyChecking=no)
+    if [[ -n "${SSH_KEY:-}" && -f "$SSH_KEY" ]]; then
+        ssh_opts=(-i "$SSH_KEY" "${ssh_opts[@]}")
+    fi
+    scp "${ssh_opts[@]}" "$src" "${SSH_USER}@${ip}:${dest}"
 }
 
 # Rsync a directory or file to a server
@@ -91,7 +106,11 @@ rsync_cmd() {
     local src=$1
     local ip=$2
     local dest=$3
-    rsync -az --delete -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=10" "$src" "${SSH_USER}@${ip}:${dest}"
+    local transport="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10"
+    if [[ -n "${SSH_KEY:-}" && -f "$SSH_KEY" ]]; then
+        transport="ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o ConnectTimeout=10"
+    fi
+    rsync -az --delete -e "$transport" "$src" "${SSH_USER}@${ip}:${dest}"
 }
 
 service_name() {
@@ -347,17 +366,18 @@ do_deploy() {
 
         # Get servers (simplified - in production use proper YAML parser)
         while IFS= read -r line; do
-            if [[ "$line" =~ ip:\ *([0-9.]+) ]]; then
-                local ip="${BASH_REMATCH[1]}"
-                local name="sdn-${t}-${ip##*.}"
+            local endpoint
+            endpoint="$(parse_server_endpoint "$line")"
+            if [[ -n "$endpoint" ]]; then
+                local name="sdn-${t}-${endpoint##*.}"
 
                 if [[ "$DRY_RUN" == "true" ]]; then
-                    log_info "[DRY-RUN] Would deploy $t to $ip"
+                    log_info "[DRY-RUN] Would deploy $t to $endpoint"
                 else
                     if [[ "$USE_DOCKER" == "true" ]]; then
-                        deploy_docker "$ip" "$t" "$name"
+                        deploy_docker "$endpoint" "$t" "$name"
                     else
-                        deploy_binary "$ip" "$t" "$name"
+                        deploy_binary "$endpoint" "$t" "$name"
                     fi
                 fi
             fi
@@ -402,7 +422,7 @@ case $COMMAND in
     status)
         log_info "Checking server status..."
         for t in full edge registry; do
-            local yaml_key
+            yaml_key=""
             case $t in
                 full) yaml_key="full_nodes" ;;
                 edge) yaml_key="edge_relays" ;;
@@ -411,8 +431,9 @@ case $COMMAND in
 
             echo -e "\n${BLUE}=== ${t^^} NODES ===${NC}"
             while IFS= read -r line; do
-                if [[ "$line" =~ ip:\ *([0-9.]+) ]]; then
-                    check_status "${BASH_REMATCH[1]}" "$t" "sdn-${t}"
+                endpoint="$(parse_server_endpoint "$line")"
+                if [[ -n "$endpoint" ]]; then
+                    check_status "$endpoint" "$t" "sdn-${t}"
                 fi
             done < <(sed -n "/^${yaml_key}:/,/^[a-z]/p" "$CONFIG_FILE")
         done
@@ -431,7 +452,7 @@ case $COMMAND in
     stop|restart)
         log_info "${COMMAND^}ing services..."
         for t in full edge registry; do
-            local yaml_key
+            yaml_key=""
             case $t in
                 full) yaml_key="full_nodes" ;;
                 edge) yaml_key="edge_relays" ;;
@@ -439,10 +460,10 @@ case $COMMAND in
             esac
 
             while IFS= read -r line; do
-                if [[ "$line" =~ ip:\ *([0-9.]+) ]]; then
-                    local ip="${BASH_REMATCH[1]}"
-                    ssh_cmd "$ip" "docker compose -f /opt/sdn/docker-compose.yaml $COMMAND" 2>/dev/null || \
-                    ssh_cmd "$ip" "systemctl $COMMAND $(service_name "$t")" 2>/dev/null
+                endpoint="$(parse_server_endpoint "$line")"
+                if [[ -n "$endpoint" ]]; then
+                    ssh_cmd "$endpoint" "docker compose -f /opt/sdn/docker-compose.yaml $COMMAND" 2>/dev/null || \
+                    ssh_cmd "$endpoint" "systemctl $COMMAND $(service_name "$t")" 2>/dev/null
                 fi
             done < <(sed -n "/^${yaml_key}:/,/^[a-z]/p" "$CONFIG_FILE")
         done
