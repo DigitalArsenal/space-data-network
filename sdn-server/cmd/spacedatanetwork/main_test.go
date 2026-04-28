@@ -27,6 +27,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
+	"golang.org/x/crypto/curve25519"
 )
 
 func TestIsPublicAPIPathAllowsProviderDescriptorRoute(t *testing.T) {
@@ -76,6 +77,48 @@ func TestSDKCLIWalletRuntimeFlagDoesNotShadowModuleWASMFlag(t *testing.T) {
 	}
 	if flag := moduleQuery.Flags().Lookup("wasm"); flag == nil || !flag.Hidden {
 		t.Fatal("module query should keep --wasm only as a hidden deprecated alias")
+	}
+}
+
+func TestSDKCLIModulePackageWritesV2LocalEnvelope(t *testing.T) {
+	t.Parallel()
+
+	wallet := testSDKLoadedWallet(t)
+	wasmPath := filepath.Join(t.TempDir(), "test.wasm")
+	if err := os.WriteFile(wasmPath, []byte{0, 97, 115, 109, 1, 0, 0, 0}, 0o600); err != nil {
+		t.Fatalf("WriteFile(wasm) failed: %v", err)
+	}
+	packaged, err := sdkPackageModule(sdkPackageModuleOptions{
+		WasmPath:       wasmPath,
+		OutDir:         filepath.Join(t.TempDir(), "dist"),
+		ModuleID:       "com.spaceaware.test-protocol",
+		Version:        "0.0.1",
+		AllowedDomains: []string{"spaceaware.io"},
+		RequiredScope:  "spaceaware:test",
+		Wallet:         wallet,
+	})
+	if err != nil {
+		t.Fatalf("sdkPackageModule failed: %v", err)
+	}
+	rawPackage, err := os.ReadFile(packaged.PackagePath)
+	if err != nil {
+		t.Fatalf("ReadFile(package) failed: %v", err)
+	}
+	if strings.Contains(string(rawPackage), "content_key_hex") {
+		t.Fatalf("package leaked content_key_hex: %s", rawPackage)
+	}
+	if !strings.Contains(string(rawPackage), "local_content_key_envelope") {
+		t.Fatalf("package missing local_content_key_envelope: %s", rawPackage)
+	}
+	var packageFile sdkModulePackageFile
+	if err := json.Unmarshal(rawPackage, &packageFile); err != nil {
+		t.Fatalf("json.Unmarshal(package) failed: %v", err)
+	}
+	if packageFile.PackageVersion != 2 {
+		t.Fatalf("package version = %d, want 2", packageFile.PackageVersion)
+	}
+	if packageFile.LocalContentKeyEnvelope.Version != 1 || packageFile.LocalContentKeyEnvelope.Algorithm != "AES-256-GCM" {
+		t.Fatalf("local envelope = %+v", packageFile.LocalContentKeyEnvelope)
 	}
 }
 
@@ -669,6 +712,48 @@ func (f fakeProviderDescriptorSource) EPMService() *epm.Service {
 
 func (f fakeProviderDescriptorSource) ModuleUploadProviderX25519PublicKey() []byte {
 	return append([]byte(nil), f.moduleUploadX25519PubKey...)
+}
+
+func testSDKLoadedWallet(t *testing.T) *sdkLoadedWallet {
+	t.Helper()
+
+	identityPrivKey, _, err := crypto.GenerateSecp256k1Key(bytes.NewReader(bytes.Repeat([]byte{0x51}, 64)))
+	if err != nil {
+		t.Fatalf("GenerateSecp256k1Key failed: %v", err)
+	}
+	signingPrivKey, signingPubKey, err := crypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x52}, 64)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key failed: %v", err)
+	}
+	signingPubRaw, err := signingPubKey.Raw()
+	if err != nil {
+		t.Fatalf("signing pub raw failed: %v", err)
+	}
+	peerID, err := peer.IDFromPrivateKey(identityPrivKey)
+	if err != nil {
+		t.Fatalf("IDFromPrivateKey failed: %v", err)
+	}
+	encryptionKey := bytes.Repeat([]byte{0x53}, 32)
+	encryptionPub, err := curve25519.X25519(encryptionKey, curve25519.Basepoint)
+	if err != nil {
+		t.Fatalf("derive encryption public key failed: %v", err)
+	}
+
+	return &sdkLoadedWallet{
+		Name:                   "SDN CLI Test",
+		XPub:                   "xpub-test-upload",
+		PeerID:                 peerID.String(),
+		SigningPublicKeyHex:    hex.EncodeToString(signingPubRaw),
+		EncryptionPublicKeyHex: hex.EncodeToString(encryptionPub),
+		Identity: &wasm.DerivedIdentity{
+			IdentityPrivKey: identityPrivKey,
+			SigningPrivKey:  signingPrivKey,
+			SigningPubKey:   signingPubKey,
+			EncryptionKey:   encryptionKey,
+			EncryptionPub:   encryptionPub,
+			PeerID:          peerID,
+		},
+	}
 }
 
 func testProviderDerivedIdentity() (*wasm.DerivedIdentity, error) {

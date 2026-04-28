@@ -12,9 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
-	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -29,12 +27,13 @@ import (
 )
 
 const (
-	sdkCLIWalletFileName    = "wallet.json"
-	sdkCLISessionFileName   = "sessions.json"
-	sdkCLIWalletVersion     = 1
-	sdkCLIKDFIterations     = 310000
-	sdkCLIModulePackageVers = 1
-	sdkCLIDefaultPassword   = "SDN_WALLET_PASSWORD"
+	sdkCLIWalletFileName                 = "wallet.json"
+	sdkCLISessionFileName                = "sessions.json"
+	sdkCLIWalletVersion                  = 1
+	sdkCLIKDFIterations                  = 310000
+	sdkCLIModulePackageVers              = 2
+	sdkCLIDefaultPassword                = "SDN_WALLET_PASSWORD"
+	sdkCLILocalContentKeyEnvelopeContext = "sdn-js/module-package/local-content-key/v1"
 )
 
 var sdkModuleSlugPattern = regexp.MustCompile(`[^A-Za-z0-9._-]`)
@@ -161,15 +160,22 @@ type sdkModulePackageMetadata struct {
 }
 
 type sdkModulePackageFile struct {
-	PackageVersion      int                      `json:"package_version"`
-	Metadata            sdkModulePackageMetadata `json:"metadata"`
-	EncryptedBundlePath string                   `json:"encrypted_bundle_path"`
-	ContentKeyHex       string                   `json:"content_key_hex"`
-	SignatureHex        string                   `json:"signature_hex"`
-	SignerPublicKeyHex  string                   `json:"signer_public_key_hex"`
-	BundleSHA256        string                   `json:"bundle_sha256"`
-	SizeBytes           int                      `json:"size_bytes"`
-	CreatedAt           string                   `json:"created_at"`
+	PackageVersion          int                        `json:"package_version"`
+	Metadata                sdkModulePackageMetadata   `json:"metadata"`
+	EncryptedBundlePath     string                     `json:"encrypted_bundle_path"`
+	LocalContentKeyEnvelope sdkLocalContentKeyEnvelope `json:"local_content_key_envelope"`
+	SignatureHex            string                     `json:"signature_hex"`
+	SignerPublicKeyHex      string                     `json:"signer_public_key_hex"`
+	BundleSHA256            string                     `json:"bundle_sha256"`
+	SizeBytes               int                        `json:"size_bytes"`
+	CreatedAt               string                     `json:"created_at"`
+}
+
+type sdkLocalContentKeyEnvelope struct {
+	Version    int    `json:"version"`
+	Algorithm  string `json:"alg"`
+	Nonce      string `json:"nonce"`
+	Ciphertext string `json:"ciphertext"`
 }
 
 type sdkPackagedModule struct {
@@ -199,8 +205,10 @@ func init() {
 	addSDKPasswordFlag(sdkModulePackageCmd)
 	addSDKModulePackageFlags(sdkModulePackageCmd)
 
+	addSDKPasswordFlag(sdkModuleUploadCmd)
 	sdkModuleUploadCmd.Flags().String("node", "", "SDN node origin")
 	sdkModuleUploadCmd.Flags().String("package", "", "path to .sdn-module.json package")
+	addSDKWalletRuntimeFlags(sdkModuleUploadCmd)
 
 	addSDKPasswordFlag(sdkModulePublishCmd)
 	sdkModulePublishCmd.Flags().String("node", "", "SDN node origin")
@@ -374,6 +382,10 @@ func runSDKModuleUpload(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	wallet, err := sdkLoadWalletFromCommand(cmd)
+	if err != nil {
+		return err
+	}
 	cookie, err := sdkReadSessionCookie(nodeURL)
 	if err != nil {
 		return err
@@ -381,7 +393,7 @@ func runSDKModuleUpload(cmd *cobra.Command, args []string) error {
 	if cookie == "" {
 		return fmt.Errorf("no session for %s; run spacedatanetwork auth login first", nodeURL)
 	}
-	result, err := sdkUploadModule(cmd.Context(), nodeURL, packagePath, cookie)
+	result, err := sdkUploadModule(cmd.Context(), nodeURL, packagePath, cookie, wallet)
 	if err != nil {
 		return err
 	}
@@ -409,7 +421,7 @@ func runSDKModulePublish(cmd *cobra.Command, args []string) error {
 	if cookie == "" {
 		return fmt.Errorf("no session for %s; run spacedatanetwork auth login first", nodeURL)
 	}
-	uploadResult, err := sdkUploadModule(cmd.Context(), nodeURL, packaged.PackagePath, cookie)
+	uploadResult, err := sdkUploadModule(cmd.Context(), nodeURL, packaged.PackagePath, cookie, wallet)
 	if err != nil {
 		return err
 	}
@@ -813,6 +825,11 @@ func sdkPackageModule(options sdkPackageModuleOptions) (*sdkPackagedModule, erro
 	if err != nil {
 		return nil, fmt.Errorf("sign bundle digest: %w", err)
 	}
+	localContentKeyEnvelope, err := sdkEncryptLocalContentKeyEnvelope(contentKey, options.Wallet)
+	sdkZeroBytes(contentKey)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt local content key envelope: %w", err)
+	}
 
 	slug := sdkModuleSlugPattern.ReplaceAllString(moduleID+"-"+version, "_")
 	outDir, err := filepath.Abs(strings.TrimSpace(options.OutDir))
@@ -834,15 +851,15 @@ func sdkPackageModule(options sdkPackageModuleOptions) (*sdkPackagedModule, erro
 		MaxGrantTimeoutMs: options.MaxGrantTimeoutMs,
 	}
 	packageFile := sdkModulePackageFile{
-		PackageVersion:      sdkCLIModulePackageVers,
-		Metadata:            metadata,
-		EncryptedBundlePath: filepath.Base(encryptedBundlePath),
-		ContentKeyHex:       hex.EncodeToString(contentKey),
-		SignatureHex:        hex.EncodeToString(signature),
-		SignerPublicKeyHex:  options.Wallet.SigningPublicKeyHex,
-		BundleSHA256:        hex.EncodeToString(bundleDigest[:]),
-		SizeBytes:           len(encryptedBundleBytes),
-		CreatedAt:           time.Now().UTC().Format(time.RFC3339Nano),
+		PackageVersion:          sdkCLIModulePackageVers,
+		Metadata:                metadata,
+		EncryptedBundlePath:     filepath.Base(encryptedBundlePath),
+		LocalContentKeyEnvelope: localContentKeyEnvelope,
+		SignatureHex:            hex.EncodeToString(signature),
+		SignerPublicKeyHex:      options.Wallet.SigningPublicKeyHex,
+		BundleSHA256:            hex.EncodeToString(bundleDigest[:]),
+		SizeBytes:               len(encryptedBundleBytes),
+		CreatedAt:               time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if err := os.WriteFile(encryptedBundlePath, encryptedBundleBytes, 0600); err != nil {
 		return nil, fmt.Errorf("write encrypted bundle: %w", err)
@@ -883,54 +900,18 @@ func sdkReadModulePackage(packagePath string) (*sdkPackagedModule, error) {
 	}, nil
 }
 
-func sdkUploadModule(ctx context.Context, nodeURL, packagePath, sessionCookie string) (map[string]any, error) {
+func sdkUploadModule(ctx context.Context, nodeURL, packagePath, sessionCookie string, wallet *sdkLoadedWallet) (map[string]any, error) {
+	_ = sessionCookie
 	packaged, err := sdkReadModulePackage(packagePath)
 	if err != nil {
 		return nil, err
 	}
-	nodeOrigin := sdkNormalizeNodeOrigin(nodeURL)
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	partHeader := make(textproto.MIMEHeader)
-	partHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="bundle"; filename="%s"`, filepath.Base(packaged.EncryptedBundlePath)))
-	contentType := strings.TrimSpace(packaged.PackageFile.Metadata.ContentType)
-	if contentType == "" {
-		contentType = "application/wasm"
-	}
-	partHeader.Set("Content-Type", contentType)
-	part, err := writer.CreatePart(partHeader)
+	contentKey, err := sdkDecryptLocalContentKeyEnvelope(packaged.PackageFile.LocalContentKeyEnvelope, wallet)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := part.Write(packaged.EncryptedBundleBytes); err != nil {
-		return nil, err
-	}
-	metadataBytes, err := json.Marshal(packaged.PackageFile.Metadata)
-	if err != nil {
-		return nil, err
-	}
-	if err := writer.WriteField("metadata", string(metadataBytes)); err != nil {
-		return nil, err
-	}
-	if err := writer.WriteField("content_key_hex", packaged.PackageFile.ContentKeyHex); err != nil {
-		return nil, err
-	}
-	if err := writer.WriteField("signature_hex", packaged.PackageFile.SignatureHex); err != nil {
-		return nil, err
-	}
-	if err := writer.Close(); err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, nodeOrigin+"/api/v1/plugin-modules/upload", &body)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Cookie", sessionCookie)
-	req.Header.Set("X-Requested-With", "sdn-cli")
-	return sdkDoJSON(req)
+	defer sdkZeroBytes(contentKey)
+	return sdkUploadModuleOverProtocol(ctx, sdkNormalizeNodeOrigin(nodeURL), packaged, contentKey, wallet)
 }
 
 func sdkListModules(ctx context.Context, nodeURL, sessionCookie string) (map[string]any, error) {
@@ -1106,6 +1087,103 @@ func sdkEncryptAESGCM(key, iv, plaintext []byte) ([]byte, error) {
 	result = append(result, iv...)
 	result = append(result, encrypted...)
 	return result, nil
+}
+
+func sdkEncryptLocalContentKeyEnvelope(contentKey []byte, wallet *sdkLoadedWallet) (sdkLocalContentKeyEnvelope, error) {
+	var envelope sdkLocalContentKeyEnvelope
+	key, err := sdkDeriveLocalContentKeyWrappingKey(wallet)
+	if err != nil {
+		return envelope, err
+	}
+	defer sdkZeroBytes(key)
+	nonce := make([]byte, 12)
+	if _, err := cryptorand.Read(nonce); err != nil {
+		return envelope, err
+	}
+	ciphertext, err := sdkSealAESGCM(key, nonce, contentKey, nil)
+	if err != nil {
+		return envelope, err
+	}
+	return sdkLocalContentKeyEnvelope{
+		Version:    1,
+		Algorithm:  "AES-256-GCM",
+		Nonce:      base64.RawURLEncoding.EncodeToString(nonce),
+		Ciphertext: base64.RawURLEncoding.EncodeToString(ciphertext),
+	}, nil
+}
+
+func sdkDecryptLocalContentKeyEnvelope(envelope sdkLocalContentKeyEnvelope, wallet *sdkLoadedWallet) ([]byte, error) {
+	if envelope.Version != 1 || envelope.Algorithm != "AES-256-GCM" {
+		return nil, fmt.Errorf("unsupported local content key envelope")
+	}
+	key, err := sdkDeriveLocalContentKeyWrappingKey(wallet)
+	if err != nil {
+		return nil, err
+	}
+	defer sdkZeroBytes(key)
+	nonce, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(envelope.Nonce))
+	if err != nil {
+		return nil, fmt.Errorf("decode local content key nonce: %w", err)
+	}
+	ciphertext, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(envelope.Ciphertext))
+	if err != nil {
+		return nil, fmt.Errorf("decode local content key ciphertext: %w", err)
+	}
+	contentKey, err := sdkOpenAESGCM(key, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt local content key envelope: %w", err)
+	}
+	if len(contentKey) != 32 {
+		sdkZeroBytes(contentKey)
+		return nil, fmt.Errorf("local content key must be 32 bytes, got %d", len(contentKey))
+	}
+	return contentKey, nil
+}
+
+func sdkDeriveLocalContentKeyWrappingKey(wallet *sdkLoadedWallet) ([]byte, error) {
+	if wallet == nil || wallet.Identity == nil || len(wallet.Identity.EncryptionKey) != 32 {
+		return nil, fmt.Errorf("wallet encryption key is required")
+	}
+	h := sha256.New()
+	_, _ = h.Write([]byte(sdkCLILocalContentKeyEnvelopeContext))
+	_, _ = h.Write(wallet.Identity.EncryptionKey)
+	return h.Sum(nil), nil
+}
+
+func sdkSealAESGCM(key, nonce, plaintext, aad []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	if len(nonce) != gcm.NonceSize() {
+		return nil, fmt.Errorf("invalid gcm nonce length: expected %d, got %d", gcm.NonceSize(), len(nonce))
+	}
+	return gcm.Seal(nil, nonce, plaintext, aad), nil
+}
+
+func sdkOpenAESGCM(key, nonce, ciphertext, aad []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	if len(nonce) != gcm.NonceSize() {
+		return nil, fmt.Errorf("invalid gcm nonce length: expected %d, got %d", gcm.NonceSize(), len(nonce))
+	}
+	return gcm.Open(nil, nonce, ciphertext, aad)
+}
+
+func sdkZeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }
 
 func sdkDeriveWalletKey(password string, salt []byte, iterations int) []byte {
