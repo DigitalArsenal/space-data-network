@@ -17,15 +17,18 @@ From the `space-data-network` repository root:
   deploy full
 ```
 
-The server must have these production secrets configured for OrbPro module
-publishing:
+The provider authorizes OrbPro module publishing with SDN wallet admin state,
+not a shared publish token. The deployment wallet that signs `plugins
+publish-orbpro` must be present as an admin in the live auth store
+(`/opt/data/sdn/auth.db`) or configured as an admin user before the provider is
+started.
+
+The server must have the encrypted plugin catalog root configured:
 
 ```bash
-SDN_LICENSE_ADMIN_TOKEN=<shared admin token>
-SDN_MODULE_PUBLISH_TOKEN=<CI publish token>
 SDN_PLUGIN_ROOT=/var/lib/spacedatanetwork/data/license/plugins
 ```
 
-`SDN_MODULE_PUBLISH_TOKEN` is the token the OrbPro GitHub Pages workflow uses to
-sign libp2p module-publish requests. If it is not set, the provider falls back
-to `SDN_LICENSE_ADMIN_TOKEN`.
+The OrbPro GitHub Pages workflow signs libp2p module-publish requests with an
+HD-wallet signing key. The provider verifies the Ed25519 signature against the
+signer xpub and accepts the update only when that xpub is an admin.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -26,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/spacedatanetwork/sdn-server/internal/license"
+	"github.com/spacedatanetwork/sdn-server/internal/wasm"
 )
 
 const defaultModulePublishProviderURL = "https://sdn.spaceaware.io/api/module-delivery/provider"
@@ -34,7 +36,9 @@ var (
 	modulePublishPluginRoot   string
 	modulePublishProviderURL  string
 	modulePublishTargetAddr   string
-	modulePublishTokenEnv     string
+	modulePublishWalletEnv    string
+	modulePublishWalletWASM   string
+	modulePublishWalletAcct   uint32
 	modulePublishModules      []string
 	modulePublishAllowDomains []string
 	modulePublishTimeout      time.Duration
@@ -50,8 +54,9 @@ var pluginsPublishOrbProCmd = &cobra.Command{
 	Short: "Publish encrypted OrbPro module artifacts over libp2p",
 	Long: `Publish encrypted OrbPro module artifacts from a generated catalog root to an
 SDN provider using the /space-data-network/module-publish/1.0.0 libp2p
-protocol. The publish request is authenticated with an HMAC token read from
-SDN_MODULE_PUBLISH_TOKEN by default.`,
+protocol. The publish request is authenticated with an admin HD-wallet
+signature. The provider accepts the request only when the signer xpub is an
+admin in the provider's wallet auth store.`,
 	RunE: runPluginsPublishOrbPro,
 }
 
@@ -59,7 +64,9 @@ func init() {
 	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishPluginRoot, "plugin-root", "", "plugin root containing catalog.json plus encrypted module artifacts")
 	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishProviderURL, "provider-url", defaultModulePublishProviderURL, "provider descriptor URL used to resolve peer id when --target is omitted")
 	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishTargetAddr, "target", "", "explicit provider multiaddr including /p2p/<peer-id>")
-	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishTokenEnv, "token-env", "SDN_MODULE_PUBLISH_TOKEN", "environment variable containing the module publish token")
+	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishWalletEnv, "wallet-env", "", "wallet env file containing the admin mnemonic used to sign the publish request")
+	pluginsPublishOrbProCmd.Flags().StringVar(&modulePublishWalletWASM, "wallet-wasm", "", "HD wallet WASM path used to derive the signing key")
+	pluginsPublishOrbProCmd.Flags().Uint32Var(&modulePublishWalletAcct, "wallet-account", 0, "HD wallet account index used to derive the signing key")
 	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishModules, "module", nil, "module id to publish; repeat to publish a subset")
 	pluginsPublishOrbProCmd.Flags().StringArrayVar(&modulePublishAllowDomains, "allowed-domain", nil, "allowed requester domain to apply to every published module; repeat for multiple domains")
 	pluginsPublishOrbProCmd.Flags().DurationVar(&modulePublishTimeout, "timeout", 60*time.Second, "publish timeout")
@@ -86,13 +93,16 @@ func runPluginsPublishOrbPro(cmd *cobra.Command, args []string) error {
 	}
 	applyPublishAllowedDomains(&req, modulePublishAllowDomains)
 
-	token := resolveModulePublishToken(modulePublishTokenEnv)
-	if err := license.SignModulePublishRequest(&req, token); err != nil {
-		return err
-	}
-
 	ctx, cancel := context.WithTimeout(cmd.Context(), modulePublishTimeout)
 	defer cancel()
+
+	signer, err := loadModulePublishSigner(ctx, modulePublishWalletEnv, modulePublishWalletWASM, modulePublishWalletAcct)
+	if err != nil {
+		return err
+	}
+	if err := license.SignModulePublishRequest(&req, signer.XPub, signer.SigningPubKey, signer.SigningPrivateKey); err != nil {
+		return err
+	}
 
 	target, err := resolveModulePublishTarget(ctx, modulePublishProviderURL, modulePublishTargetAddr)
 	if err != nil {
@@ -229,16 +239,157 @@ func applyPublishAllowedDomains(req *license.ModulePublishRequest, domains []str
 	}
 }
 
-func resolveModulePublishToken(envName string) string {
-	if name := strings.TrimSpace(envName); name != "" {
-		if token := strings.TrimSpace(os.Getenv(name)); token != "" {
-			return token
+type modulePublishSigner struct {
+	XPub              string
+	SigningPubKey     ed25519.PublicKey
+	SigningPrivateKey ed25519.PrivateKey
+}
+
+func loadModulePublishSigner(ctx context.Context, walletEnvPath, walletWASMPath string, account uint32) (*modulePublishSigner, error) {
+	envPath, err := resolveModulePublishWalletEnv(walletEnvPath)
+	if err != nil {
+		return nil, err
+	}
+	envValues, err := readModulePublishEnvFile(envPath)
+	if err != nil {
+		return nil, err
+	}
+	mnemonic := firstNonEmptyEnvValue(envValues,
+		"SDN_TRACKED_DEV_ADMIN_MNEMONIC",
+		"SDN_MODULE_PUBLISH_MNEMONIC",
+	)
+	if strings.TrimSpace(mnemonic) == "" {
+		return nil, fmt.Errorf("wallet env file %s is missing SDN_TRACKED_DEV_ADMIN_MNEMONIC", envPath)
+	}
+	wasmPath, err := resolveModulePublishWalletWASM(walletWASMPath)
+	if err != nil {
+		return nil, err
+	}
+
+	hw, err := wasm.NewHDWalletModule(ctx, wasmPath)
+	if err != nil {
+		return nil, fmt.Errorf("load HD wallet WASM: %w", err)
+	}
+	defer hw.Close(ctx)
+
+	identity, err := hw.IdentityFromMnemonic(ctx, mnemonic, "", account)
+	if err != nil {
+		return nil, fmt.Errorf("derive wallet identity: %w", err)
+	}
+	seed, err := hw.MnemonicToSeed(ctx, mnemonic, "")
+	if err != nil {
+		return nil, fmt.Errorf("derive wallet seed: %w", err)
+	}
+	defer zeroBytes(seed)
+	xpub, err := hw.DeriveXPub(ctx, seed, account)
+	if err != nil {
+		return nil, fmt.Errorf("derive wallet xpub: %w", err)
+	}
+	pubRaw, err := identity.SigningPubKey.Raw()
+	if err != nil {
+		return nil, fmt.Errorf("derive signing public key: %w", err)
+	}
+	privRaw, err := identity.SigningPrivKey.Raw()
+	if err != nil {
+		return nil, fmt.Errorf("derive signing private key: %w", err)
+	}
+	signingPrivateKey := append(ed25519.PrivateKey(nil), privRaw...)
+	if len(signingPrivateKey) == ed25519.SeedSize {
+		signingPrivateKey = ed25519.NewKeyFromSeed(signingPrivateKey)
+	}
+	defer zeroBytes(privRaw)
+
+	return &modulePublishSigner{
+		XPub:              xpub,
+		SigningPubKey:     append(ed25519.PublicKey(nil), pubRaw...),
+		SigningPrivateKey: signingPrivateKey,
+	}, nil
+}
+
+func resolveModulePublishWalletEnv(explicitPath string) (string, error) {
+	candidates := []string{}
+	if trimmed := strings.TrimSpace(explicitPath); trimmed != "" {
+		candidates = append(candidates, trimmed)
+	}
+	if envPath := strings.TrimSpace(os.Getenv("SDN_MODULE_PUBLISH_WALLET_ENV")); envPath != "" {
+		candidates = append(candidates, envPath)
+	}
+	candidates = append(candidates,
+		"config/dev-wallet.env",
+		"packages/space-data-network/config/dev-wallet.env",
+	)
+	for _, candidate := range candidates {
+		if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
+			return candidate, nil
 		}
 	}
-	if token := strings.TrimSpace(os.Getenv("SDN_MODULE_PUBLISH_TOKEN")); token != "" {
-		return token
+	return "", errors.New("module publish wallet env file not found; pass --wallet-env")
+}
+
+func resolveModulePublishWalletWASM(explicitPath string) (string, error) {
+	candidates := []string{}
+	if trimmed := strings.TrimSpace(explicitPath); trimmed != "" {
+		candidates = append(candidates, trimmed)
 	}
-	return strings.TrimSpace(os.Getenv("SDN_LICENSE_ADMIN_TOKEN"))
+	if envPath := strings.TrimSpace(os.Getenv("HD_WALLET_WASM_PATH")); envPath != "" {
+		candidates = append(candidates, envPath)
+	}
+	candidates = append(candidates,
+		"node_modules/hd-wallet-wasm/dist/hd-wallet.wasm",
+		"sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet.wasm",
+		"packages/space-data-network/node_modules/hd-wallet-wasm/dist/hd-wallet.wasm",
+		"packages/space-data-network/sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet.wasm",
+		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
+		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
+		"../hd-wallet-wasm/build-wasm/wasm/hd-wallet.wasm",
+		"/opt/spacedatanetwork/wasm/hd-wallet.wasm",
+	)
+	for _, candidate := range candidates {
+		if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("HD wallet WASM not found; pass --wallet-wasm or set HD_WALLET_WASM_PATH")
+}
+
+func readModulePublishEnvFile(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]string)
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(trimmed, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"'`)
+		if key != "" {
+			values[key] = value
+		}
+	}
+	return values, nil
+}
+
+func firstNonEmptyEnvValue(values map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(values[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func zeroBytes(bytes []byte) {
+	for i := range bytes {
+		bytes[i] = 0
+	}
 }
 
 func resolveModulePublishTarget(ctx context.Context, providerURL, explicitTarget string) (string, error) {
