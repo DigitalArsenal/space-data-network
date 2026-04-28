@@ -25,8 +25,8 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-// zeroBytes overwrites a byte slice with zeros to clear sensitive key material.
-func zeroBytes(b []byte) {
+// ZeroBytes overwrites a byte slice with zeros to clear sensitive key material.
+func ZeroBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
@@ -87,6 +87,7 @@ type PluginCatalogEntry struct {
 	Version           string   `json:"version"`
 	RequiredScope     string   `json:"required_scope"`
 	EncryptedPath     string   `json:"encrypted_path,omitempty"`
+	KeyEnvelopePath   string   `json:"key_envelope_path,omitempty"`
 	KeyPath           string   `json:"key_path,omitempty"`
 	PlainPath         string   `json:"plain_path,omitempty"`
 	ContentType       string   `json:"content_type,omitempty"`
@@ -133,9 +134,10 @@ type PluginAsset struct {
 	SignerPubKeyHex   string
 	UploadedAt        string
 
-	encryptedPath string
-	keyPath       string
-	plainPath     string
+	encryptedPath   string
+	keyEnvelopePath string
+	keyPath         string
+	plainPath       string
 
 	runtimeStatus string
 	statusMessage string
@@ -144,17 +146,18 @@ type PluginAsset struct {
 // EncryptedPluginUpload describes encrypted module bytes and content key
 // material accepted by the plugin-module upload API.
 type EncryptedPluginUpload struct {
-	ID                string
-	Version           string
-	RequiredScope     string
-	EncryptedBundle   []byte
-	ContentKey        []byte
-	ContentType       string
-	CacheControl      string
-	AllowedDomains    []string
-	MaxGrantTimeoutMs int64
-	SignatureHex      string
-	SignerPubKeyHex   string
+	ID                 string
+	Version            string
+	RequiredScope      string
+	EncryptedBundle    []byte
+	ContentKeyEnvelope *ProviderContentKeyEnvelope
+	ProviderPeerID     string
+	ContentType        string
+	CacheControl       string
+	AllowedDomains     []string
+	MaxGrantTimeoutMs  int64
+	SignatureHex       string
+	SignerPubKeyHex    string
 }
 
 func (a *PluginAsset) clone() *PluginAsset {
@@ -281,7 +284,7 @@ func (r *PluginRegistry) IsEncrypted(id string) (bool, error) {
 	if !ok {
 		return false, os.ErrNotExist
 	}
-	return strings.TrimSpace(asset.keyPath) != "", nil
+	return strings.TrimSpace(asset.keyEnvelopePath) != "" || strings.TrimSpace(asset.keyPath) != "", nil
 }
 
 // PluginKeyEnvelope is returned by /api/v1/plugins/{id}/key-envelope.
@@ -509,7 +512,7 @@ func DecryptStagedArtifactEnvelope(envelopeJSON []byte, recipientPrivateKey []by
 	if err != nil {
 		return nil, fmt.Errorf("derive envelope shared secret: %w", err)
 	}
-	defer zeroBytes(sharedSecret)
+	defer ZeroBytes(sharedSecret)
 
 	hkdfSalt, err := decodeBase64Loose(envelope.KeyEncryption.HKDFSaltB64)
 	if err != nil {
@@ -538,7 +541,7 @@ func DecryptStagedArtifactEnvelope(envelopeJSON []byte, recipientPrivateKey []by
 		}
 
 		key, unwrapErr := decryptAESGCM(candidateWrapKey, wrapIV, wrappedKey, wrappedKeyTag, nil)
-		zeroBytes(candidateWrapKey)
+		ZeroBytes(candidateWrapKey)
 		if unwrapErr != nil {
 			lastWrapErr = unwrapErr
 			continue
@@ -552,7 +555,7 @@ func DecryptStagedArtifactEnvelope(envelopeJSON []byte, recipientPrivateKey []by
 		}
 		return nil, fmt.Errorf("unwrap envelope content key: %w", lastWrapErr)
 	}
-	defer zeroBytes(contentKey)
+	defer ZeroBytes(contentKey)
 
 	contentIV, err := decodeBase64Loose(envelope.ContentEncryption.IvB64)
 	if err != nil {
@@ -574,11 +577,54 @@ func DecryptStagedArtifactEnvelope(envelopeJSON []byte, recipientPrivateKey []by
 	return plaintext, nil
 }
 
-// ReadBundleKey reads and normalizes the plugin's symmetric content key.
+// ReadBundleKey reads a legacy plaintext plugin key. Provider-envelope catalog
+// entries must be read with ReadBundleKeyWithProviderKey.
 func (r *PluginRegistry) ReadBundleKey(id string) ([]byte, error) {
 	asset, ok := r.Get(id)
 	if !ok {
 		return nil, os.ErrNotExist
+	}
+	if strings.TrimSpace(asset.keyEnvelopePath) != "" {
+		return nil, fmt.Errorf("plugin %q stores provider-wrapped key material; use ReadBundleKeyWithProviderKey", id)
+	}
+	return r.readLegacyBundleKey(asset, id)
+}
+
+// ReadBundleKeyWithProviderKey unwraps the plugin content key with the
+// provider's persistent X25519 wrapping key.
+func (r *PluginRegistry) ReadBundleKeyWithProviderKey(id string, providerPrivateKey []byte, providerPeerID string) ([]byte, error) {
+	asset, ok := r.Get(id)
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	if strings.TrimSpace(asset.keyEnvelopePath) != "" {
+		raw, err := os.ReadFile(asset.keyEnvelopePath)
+		if err != nil {
+			return nil, fmt.Errorf("read key envelope for plugin %q: %w", id, err)
+		}
+		envelope, err := ParseProviderContentKeyEnvelopeJSON(raw)
+		if err != nil {
+			return nil, fmt.Errorf("parse key envelope for plugin %q: %w", id, err)
+		}
+		aad := providerContentKeyAADForAsset(asset, providerPeerID)
+		key, err := UnwrapProviderContentKey(envelope, providerPrivateKey, aad)
+		if err != nil {
+			return nil, fmt.Errorf("unwrap key envelope for plugin %q: %w", id, err)
+		}
+		return key, nil
+	}
+	if strings.TrimSpace(asset.keyPath) != "" {
+		if os.Getenv("SDN_ALLOW_LEGACY_PLAINTEXT_PLUGIN_KEYS") != "1" {
+			return nil, fmt.Errorf("plugin %q uses legacy plaintext key_path; migrate it to key_envelope_path or set SDN_ALLOW_LEGACY_PLAINTEXT_PLUGIN_KEYS=1 for migration", id)
+		}
+		return r.readLegacyBundleKey(asset, id)
+	}
+	return nil, fmt.Errorf("plugin %q has no key envelope path", id)
+}
+
+func (r *PluginRegistry) readLegacyBundleKey(asset *PluginAsset, id string) ([]byte, error) {
+	if asset == nil || strings.TrimSpace(asset.keyPath) == "" {
+		return nil, fmt.Errorf("plugin %q has no legacy key path", id)
 	}
 	raw, err := os.ReadFile(asset.keyPath)
 	if err != nil {
@@ -589,6 +635,52 @@ func (r *PluginRegistry) ReadBundleKey(id string) ([]byte, error) {
 		return nil, fmt.Errorf("invalid key material for plugin %q: %w", id, err)
 	}
 	return key, nil
+}
+
+func providerContentKeyAADForAsset(asset *PluginAsset, providerPeerID string) ProviderContentKeyAAD {
+	if asset == nil {
+		return ProviderContentKeyAAD{}
+	}
+	return ProviderContentKeyAAD{
+		ModuleID:           asset.ID,
+		Version:            asset.Version,
+		BundleSHA256:       asset.BundleSHA256,
+		SignerPublicKeyHex: strings.TrimSpace(asset.SignerPubKeyHex),
+		ProviderPeerID:     strings.TrimSpace(providerPeerID),
+	}
+}
+
+func providerContentKeyAADFromEnvelope(envelope *ProviderContentKeyEnvelope) (ProviderContentKeyAAD, error) {
+	raw, err := decodeBase64URLEncodedField("aad", envelope.AssociatedData, 0)
+	if err != nil {
+		return ProviderContentKeyAAD{}, err
+	}
+	var aad ProviderContentKeyAAD
+	if err := json.Unmarshal(raw, &aad); err != nil {
+		return ProviderContentKeyAAD{}, fmt.Errorf("decode provider content key envelope aad: %w", err)
+	}
+	canonical, err := MarshalProviderContentKeyAAD(aad)
+	if err != nil {
+		return ProviderContentKeyAAD{}, err
+	}
+	if string(raw) != string(canonical) {
+		return ProviderContentKeyAAD{}, errors.New("provider content key envelope aad is not canonical JSON")
+	}
+	return aad, nil
+}
+
+func validateProviderContentKeyEnvelopeAAD(envelope *ProviderContentKeyEnvelope, expected ProviderContentKeyAAD) error {
+	if err := validateProviderContentKeyEnvelope(envelope); err != nil {
+		return err
+	}
+	actual, err := providerContentKeyAADFromEnvelope(envelope)
+	if err != nil {
+		return err
+	}
+	if actual != expected {
+		return fmt.Errorf("provider content key envelope aad mismatch: got %+v, want %+v", actual, expected)
+	}
+	return nil
 }
 
 // ParseX25519PublicKey accepts 32-byte X25519 public keys in hex or base64 form.
@@ -652,7 +744,7 @@ func BuildPluginKeyEnvelope(asset *PluginAsset, pluginKey, clientX25519Pub []byt
 		return nil, fmt.Errorf("generate ephemeral server key: %w", err)
 	}
 	// H10: Zero ephemeral private key when done.
-	defer zeroBytes(serverPriv)
+	defer ZeroBytes(serverPriv)
 	clampX25519PrivateKey(serverPriv)
 
 	serverPub, err := curve25519.X25519(serverPriv, curve25519.Basepoint)
@@ -664,7 +756,7 @@ func BuildPluginKeyEnvelope(asset *PluginAsset, pluginKey, clientX25519Pub []byt
 		return nil, fmt.Errorf("derive shared secret: %w", err)
 	}
 	// H10: Zero shared secret when done.
-	defer zeroBytes(sharedSecret)
+	defer ZeroBytes(sharedSecret)
 
 	aad := buildPluginEnvelopeAAD(asset, claims, issuer, exp)
 	wrapKey := derivePluginWrapKey(sharedSecret, aad)
@@ -765,7 +857,9 @@ func validateCatalogEntry(rootAbs string, entry PluginCatalogEntry) (*PluginAsse
 		return nil, errors.New("max_grant_timeout_ms must be >= 0")
 	}
 
-	// Plain (uploaded) plugins have plain_path; encrypted have encrypted_path + key_path.
+	// Plain (uploaded) plugins have plain_path; encrypted entries have
+	// encrypted_path plus a provider-wrapped key envelope. key_path is retained
+	// only for loading legacy local development catalogs.
 	if plainRel := strings.TrimSpace(entry.PlainPath); plainRel != "" {
 		plainPath, err := resolveRelativePath(rootAbs, plainRel)
 		if err != nil {
@@ -792,10 +886,6 @@ func validateCatalogEntry(rootAbs string, entry PluginCatalogEntry) (*PluginAsse
 	if err != nil {
 		return nil, fmt.Errorf("encrypted_path: %w", err)
 	}
-	keyPath, err := resolveRelativePath(rootAbs, entry.KeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("key_path: %w", err)
-	}
 
 	info, err := os.Stat(encryptedPath)
 	if err != nil {
@@ -808,13 +898,38 @@ func validateCatalogEntry(rootAbs string, entry PluginCatalogEntry) (*PluginAsse
 	if err != nil {
 		return nil, fmt.Errorf("hash encrypted_path: %w", err)
 	}
-	if keyInfo, err := os.Stat(keyPath); err != nil {
-		return nil, fmt.Errorf("stat key_path: %w", err)
-	} else if keyInfo.IsDir() {
-		return nil, errors.New("key_path must be a file")
+
+	var keyEnvelopePath string
+	if keyEnvelopeRel := strings.TrimSpace(entry.KeyEnvelopePath); keyEnvelopeRel != "" {
+		keyEnvelopePath, err = resolveRelativePath(rootAbs, keyEnvelopeRel)
+		if err != nil {
+			return nil, fmt.Errorf("key_envelope_path: %w", err)
+		}
+		if keyEnvelopeInfo, err := os.Stat(keyEnvelopePath); err != nil {
+			return nil, fmt.Errorf("stat key_envelope_path: %w", err)
+		} else if keyEnvelopeInfo.IsDir() {
+			return nil, errors.New("key_envelope_path must be a file")
+		}
+	}
+
+	var keyPath string
+	if keyRel := strings.TrimSpace(entry.KeyPath); keyRel != "" {
+		keyPath, err = resolveRelativePath(rootAbs, keyRel)
+		if err != nil {
+			return nil, fmt.Errorf("key_path: %w", err)
+		}
+		if keyInfo, err := os.Stat(keyPath); err != nil {
+			return nil, fmt.Errorf("stat key_path: %w", err)
+		} else if keyInfo.IsDir() {
+			return nil, errors.New("key_path must be a file")
+		}
+	}
+	if keyEnvelopePath == "" && keyPath == "" {
+		return nil, errors.New("key_envelope_path is required for encrypted entries")
 	}
 
 	asset.encryptedPath = encryptedPath
+	asset.keyEnvelopePath = keyEnvelopePath
 	asset.keyPath = keyPath
 	asset.BundleSHA256 = sum
 	asset.SizeBytes = info.Size()
@@ -894,8 +1009,8 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 	if len(upload.EncryptedBundle) == 0 {
 		return nil, errors.New("encrypted bundle is required")
 	}
-	if len(upload.ContentKey) != 32 {
-		return nil, fmt.Errorf("content key must be 32 bytes, got %d", len(upload.ContentKey))
+	if upload.ContentKeyEnvelope == nil {
+		return nil, errors.New("content key envelope is required")
 	}
 	requiredScope := strings.TrimSpace(upload.RequiredScope)
 	if requiredScope == "" {
@@ -916,6 +1031,30 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 	if upload.MaxGrantTimeoutMs < 0 {
 		return nil, errors.New("max_grant_timeout_ms must be >= 0")
 	}
+	providerPeerID := strings.TrimSpace(upload.ProviderPeerID)
+	if providerPeerID == "" {
+		return nil, errors.New("provider peer id is required")
+	}
+	signerPubKeyHex := strings.TrimSpace(upload.SignerPubKeyHex)
+	if signerPubKeyHex == "" {
+		return nil, errors.New("signer public key hex is required")
+	}
+	bundleHash := sha256.Sum256(upload.EncryptedBundle)
+	bundleSHA256 := hex.EncodeToString(bundleHash[:])
+	expectedAAD := ProviderContentKeyAAD{
+		ModuleID:           id,
+		Version:            version,
+		BundleSHA256:       bundleSHA256,
+		SignerPublicKeyHex: signerPubKeyHex,
+		ProviderPeerID:     providerPeerID,
+	}
+	if err := validateProviderContentKeyEnvelopeAAD(upload.ContentKeyEnvelope, expectedAAD); err != nil {
+		return nil, fmt.Errorf("content key envelope: %w", err)
+	}
+	envelopeJSON, err := json.Marshal(upload.ContentKeyEnvelope)
+	if err != nil {
+		return nil, fmt.Errorf("marshal content key envelope: %w", err)
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -926,31 +1065,30 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 	}
 
 	bundlePath := filepath.Join(pluginDir, "bundle.wasm.enc")
-	keyPath := filepath.Join(pluginDir, "bundle.key")
+	keyEnvelopePath := filepath.Join(pluginDir, "bundle.key-envelope.json")
 	if err := os.WriteFile(bundlePath, upload.EncryptedBundle, 0600); err != nil {
 		return nil, fmt.Errorf("write encrypted plugin bundle: %w", err)
 	}
-	if err := os.WriteFile(keyPath, []byte(hex.EncodeToString(upload.ContentKey)), 0600); err != nil {
+	if err := os.WriteFile(keyEnvelopePath, envelopeJSON, 0600); err != nil {
 		_ = os.Remove(bundlePath)
-		return nil, fmt.Errorf("write plugin content key: %w", err)
+		return nil, fmt.Errorf("write plugin content key envelope: %w", err)
 	}
 
-	h := sha256.Sum256(upload.EncryptedBundle)
 	asset := &PluginAsset{
 		ID:                id,
 		Version:           version,
 		RequiredScope:     requiredScope,
 		ContentType:       contentType,
 		CacheControl:      cacheControl,
-		BundleSHA256:      hex.EncodeToString(h[:]),
+		BundleSHA256:      bundleSHA256,
 		SizeBytes:         int64(len(upload.EncryptedBundle)),
 		AllowedDomains:    allowedDomains,
 		MaxGrantTimeoutMs: upload.MaxGrantTimeoutMs,
 		SignatureHex:      strings.TrimSpace(upload.SignatureHex),
-		SignerPubKeyHex:   strings.TrimSpace(upload.SignerPubKeyHex),
+		SignerPubKeyHex:   signerPubKeyHex,
 		UploadedAt:        time.Now().UTC().Format(time.RFC3339),
 		encryptedPath:     bundlePath,
-		keyPath:           keyPath,
+		keyEnvelopePath:   keyEnvelopePath,
 		runtimeStatus:     pluginRuntimeStatusStopped,
 	}
 
@@ -958,7 +1096,7 @@ func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*Plug
 	if err := r.saveCatalogLocked(); err != nil {
 		delete(r.assets, id)
 		_ = os.Remove(bundlePath)
-		_ = os.Remove(keyPath)
+		_ = os.Remove(keyEnvelopePath)
 		return nil, fmt.Errorf("save catalog: %w", err)
 	}
 	return asset.clone(), nil
@@ -994,6 +1132,13 @@ func (r *PluginRegistry) saveCatalogLocked() error {
 					return fmt.Errorf("relativize encrypted path for %q: %w", a.ID, err)
 				}
 				entry.EncryptedPath = rel
+			}
+			if a.keyEnvelopePath != "" {
+				rel, err := filepath.Rel(r.rootPath, a.keyEnvelopePath)
+				if err != nil {
+					return fmt.Errorf("relativize key envelope path for %q: %w", a.ID, err)
+				}
+				entry.KeyEnvelopePath = rel
 			}
 			if a.keyPath != "" {
 				rel, err := filepath.Rel(r.rootPath, a.keyPath)
@@ -1155,13 +1300,13 @@ func decryptPluginBundleV2(encrypted []byte, recipientPrivateKey []byte, context
 	if err != nil {
 		return nil, fmt.Errorf("derive shared secret: %w", err)
 	}
-	defer zeroBytes(sharedSecret)
+	defer ZeroBytes(sharedSecret)
 
 	symmetricKey, err := derivePluginBundleKey(sharedSecret, context)
 	if err != nil {
 		return nil, fmt.Errorf("derive symmetric key: %w", err)
 	}
-	defer zeroBytes(symmetricKey)
+	defer ZeroBytes(symmetricKey)
 
 	block, err := aes.NewCipher(symmetricKey)
 	if err != nil {
@@ -1193,13 +1338,13 @@ func decryptPluginBundleV1(encrypted []byte, recipientPrivateKey []byte, context
 	if err != nil {
 		return nil, fmt.Errorf("derive shared secret: %w", err)
 	}
-	defer zeroBytes(sharedSecret)
+	defer ZeroBytes(sharedSecret)
 
 	symmetricKey, err := derivePluginBundleKey(sharedSecret, context)
 	if err != nil {
 		return nil, fmt.Errorf("derive symmetric key: %w", err)
 	}
-	defer zeroBytes(symmetricKey)
+	defer ZeroBytes(symmetricKey)
 
 	authData := make([]byte, len(encrypted)-48)
 	copy(authData, ephemeralPublic)

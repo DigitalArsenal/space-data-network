@@ -120,14 +120,20 @@ func (h *ModuleUploadHandler) handleUpload(w http.ResponseWriter, r *http.Reques
 		})
 		return
 	}
-	contentKey, err := parseBundleKey([]byte(r.FormValue("content_key_hex")))
+	contentKeyEnvelope, err := ParseProviderContentKeyEnvelopeJSON([]byte(r.FormValue("content_key_envelope")))
 	if err != nil {
 		writeLicenseJSON(w, http.StatusBadRequest, ErrorResponse{
-			Type: errorResponseType, Code: "bad_request", Message: "invalid content_key_hex: " + err.Error(),
+			Type: errorResponseType, Code: "bad_request", Message: "invalid content_key_envelope: " + err.Error(),
 		})
 		return
 	}
-	defer zeroBytes(contentKey)
+	envelopeAAD, err := providerContentKeyAADFromEnvelope(contentKeyEnvelope)
+	if err != nil {
+		writeLicenseJSON(w, http.StatusBadRequest, ErrorResponse{
+			Type: errorResponseType, Code: "bad_request", Message: "invalid content_key_envelope aad: " + err.Error(),
+		})
+		return
+	}
 
 	sigHex := strings.TrimSpace(r.FormValue("signature_hex"))
 	signature, err := hex.DecodeString(sigHex)
@@ -168,17 +174,18 @@ func (h *ModuleUploadHandler) handleUpload(w http.ResponseWriter, r *http.Reques
 	}
 
 	asset, err := h.reg.AddEncryptedPlugin(EncryptedPluginUpload{
-		ID:                meta.ID,
-		Version:           meta.Version,
-		RequiredScope:     meta.RequiredScope,
-		EncryptedBundle:   encryptedBundle,
-		ContentKey:        contentKey,
-		ContentType:       meta.ContentType,
-		CacheControl:      meta.CacheControl,
-		AllowedDomains:    meta.AllowedDomains,
-		MaxGrantTimeoutMs: meta.MaxGrantTimeoutMs,
-		SignatureHex:      sigHex,
-		SignerPubKeyHex:   strings.TrimSpace(pubKeyHex),
+		ID:                 meta.ID,
+		Version:            meta.Version,
+		RequiredScope:      meta.RequiredScope,
+		EncryptedBundle:    encryptedBundle,
+		ContentKeyEnvelope: contentKeyEnvelope,
+		ProviderPeerID:     envelopeAAD.ProviderPeerID,
+		ContentType:        meta.ContentType,
+		CacheControl:       meta.CacheControl,
+		AllowedDomains:     meta.AllowedDomains,
+		MaxGrantTimeoutMs:  meta.MaxGrantTimeoutMs,
+		SignatureHex:       sigHex,
+		SignerPubKeyHex:    strings.TrimSpace(pubKeyHex),
 	})
 	if err != nil {
 		writeLicenseJSON(w, http.StatusInternalServerError, ErrorResponse{

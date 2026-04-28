@@ -318,12 +318,19 @@ func publishCatalogAsset(mod *modulert.Module, reg *license.PluginRegistry, asse
 		_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
 		return err
 	}
-	contentKey, err := reg.ReadBundleKey(asset.ID)
+	nodeCtx := mod.NodeContext()
+	if nodeCtx == nil {
+		err := fmt.Errorf("licensing module node context is required")
+		_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
+		return err
+	}
+	contentKey, err := reg.ReadBundleKeyWithProviderKey(asset.ID, nodeCtx.EncryptionKey, nodeCtx.PeerID)
 	if err != nil {
 		err := fmt.Errorf("read bundle key for %q: %w", asset.ID, err)
 		_ = reg.SetRuntimeStatus(asset.ID, "error", err.Error())
 		return err
 	}
+	defer license.ZeroBytes(contentKey)
 
 	descriptorFrame, err := buildPublicationDescriptorFrame(asset)
 	if err != nil {

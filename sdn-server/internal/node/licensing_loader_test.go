@@ -2,15 +2,19 @@ package node
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/plugins"
+	"golang.org/x/crypto/curve25519"
 )
 
 type fakePlugin struct {
@@ -110,15 +114,44 @@ func writeTestPluginRegistry(t *testing.T, entries ...license.PluginCatalogEntry
 	t.Helper()
 
 	root := t.TempDir()
-	for _, entry := range entries {
+	for i := range entries {
+		entry := &entries[i]
+		encryptedBundle := []byte("encrypted-bundle")
 		if encryptedPath := filepath.Join(root, entry.EncryptedPath); entry.EncryptedPath != "" {
-			if err := os.WriteFile(encryptedPath, []byte("encrypted-bundle"), 0o600); err != nil {
+			if err := os.WriteFile(encryptedPath, encryptedBundle, 0o600); err != nil {
 				t.Fatalf("WriteFile(encrypted bundle) failed: %v", err)
 			}
 		}
 		if keyPath := filepath.Join(root, entry.KeyPath); entry.KeyPath != "" {
 			if err := os.WriteFile(keyPath, []byte(base64.RawStdEncoding.EncodeToString(make([]byte, 32))), 0o600); err != nil {
 				t.Fatalf("WriteFile(bundle key) failed: %v", err)
+			}
+		}
+		if keyEnvelopePath := filepath.Join(root, entry.KeyEnvelopePath); entry.KeyEnvelopePath != "" {
+			if entry.SignerPubKeyHex == "" {
+				entry.SignerPubKeyHex = strings.Repeat("a", 64)
+			}
+			bundleHash := sha256.Sum256(encryptedBundle)
+			envelope, err := license.WrapProviderContentKey(
+				make([]byte, 32),
+				licensingTestProviderWrappingPublicKey(t),
+				license.ProviderContentKeyAAD{
+					ModuleID:           entry.ID,
+					Version:            entry.Version,
+					BundleSHA256:       hex.EncodeToString(bundleHash[:]),
+					SignerPublicKeyHex: entry.SignerPubKeyHex,
+					ProviderPeerID:     licensingTestProviderPeerID,
+				},
+			)
+			if err != nil {
+				t.Fatalf("WrapProviderContentKey failed: %v", err)
+			}
+			rawEnvelope, err := json.Marshal(envelope)
+			if err != nil {
+				t.Fatalf("json.Marshal(key envelope) failed: %v", err)
+			}
+			if err := os.WriteFile(keyEnvelopePath, rawEnvelope, 0o600); err != nil {
+				t.Fatalf("WriteFile(key envelope) failed: %v", err)
 			}
 		}
 	}
@@ -137,4 +170,25 @@ func writeTestPluginRegistry(t *testing.T, entries ...license.PluginCatalogEntry
 		t.Fatalf("LoadPluginRegistry failed: %v", err)
 	}
 	return reg
+}
+
+const licensingTestProviderPeerID = "provider.orbpro.test"
+
+func licensingTestProviderWrappingKey() []byte {
+	return []byte{
+		32, 31, 30, 29, 28, 27, 26, 25,
+		24, 23, 22, 21, 20, 19, 18, 17,
+		16, 15, 14, 13, 12, 11, 10, 9,
+		8, 7, 6, 5, 4, 3, 2, 1,
+	}
+}
+
+func licensingTestProviderWrappingPublicKey(t *testing.T) []byte {
+	t.Helper()
+
+	pub, err := curve25519.X25519(licensingTestProviderWrappingKey(), curve25519.Basepoint)
+	if err != nil {
+		t.Fatalf("derive provider wrapping public key: %v", err)
+	}
+	return pub
 }

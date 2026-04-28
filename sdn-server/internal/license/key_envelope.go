@@ -55,7 +55,7 @@ func WrapProviderContentKey(contentKey, providerPublicKey []byte, aad ProviderCo
 	if _, err := io.ReadFull(rand.Reader, ephemeralPrivateKey); err != nil {
 		return nil, fmt.Errorf("generate ephemeral x25519 private key: %w", err)
 	}
-	defer zeroBytes(ephemeralPrivateKey)
+	defer ZeroBytes(ephemeralPrivateKey)
 	clampX25519PrivateKey(ephemeralPrivateKey)
 
 	ephemeralPublicKey, err := curve25519.X25519(ephemeralPrivateKey, curve25519.Basepoint)
@@ -66,13 +66,13 @@ func WrapProviderContentKey(contentKey, providerPublicKey []byte, aad ProviderCo
 	if err != nil {
 		return nil, fmt.Errorf("derive provider shared secret: %w", err)
 	}
-	defer zeroBytes(sharedSecret)
+	defer ZeroBytes(sharedSecret)
 
 	wrapKey, err := deriveHKDFSHA256(sharedSecret, nil, []byte(providerContentKeyEnvelopeContext), 32)
 	if err != nil {
 		return nil, fmt.Errorf("derive provider content key wrap key: %w", err)
 	}
-	defer zeroBytes(wrapKey)
+	defer ZeroBytes(wrapKey)
 
 	block, err := aes.NewCipher(wrapKey)
 	if err != nil {
@@ -151,13 +151,13 @@ func UnwrapProviderContentKey(envelope *ProviderContentKeyEnvelope, providerPriv
 	if err != nil {
 		return nil, fmt.Errorf("derive provider shared secret: %w", err)
 	}
-	defer zeroBytes(sharedSecret)
+	defer ZeroBytes(sharedSecret)
 
 	wrapKey, err := deriveHKDFSHA256(sharedSecret, nil, []byte(providerContentKeyEnvelopeContext), 32)
 	if err != nil {
 		return nil, fmt.Errorf("derive provider content key wrap key: %w", err)
 	}
-	defer zeroBytes(wrapKey)
+	defer ZeroBytes(wrapKey)
 
 	block, err := aes.NewCipher(wrapKey)
 	if err != nil {
@@ -172,7 +172,7 @@ func UnwrapProviderContentKey(envelope *ProviderContentKeyEnvelope, providerPriv
 		return nil, fmt.Errorf("unwrap provider content key: %w", err)
 	}
 	if len(plaintext) != 32 {
-		zeroBytes(plaintext)
+		ZeroBytes(plaintext)
 		return nil, fmt.Errorf("unwrapped content key must be 32 bytes, got %d", len(plaintext))
 	}
 	return plaintext, nil

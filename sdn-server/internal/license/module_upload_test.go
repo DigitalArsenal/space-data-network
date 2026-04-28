@@ -58,13 +58,17 @@ func TestModuleUploadHandlerStoresEncryptedCatalogEntry(t *testing.T) {
 	contentKey := bytes.Repeat([]byte{0x5a}, 32)
 	bundleHash := sha256.Sum256(encryptedBundle)
 	signatureHex := hex.EncodeToString(ed25519.Sign(priv, bundleHash[:]))
-	body, contentType := moduleUploadMultipart(t, moduleUploadMetadata{
+	providerPrivateKey, providerPublicKey := testX25519KeyPair(t)
+	providerPeerID := "provider.orbpro.test"
+	metadata := moduleUploadMetadata{
 		ID:                "com.spaceaware.test-protocol",
 		Version:           "0.0.1",
 		RequiredScope:     "spaceaware:test",
 		AllowedDomains:    []string{"SpaceAware.io", "www.spaceaware.io"},
 		MaxGrantTimeoutMs: 120_000,
-	}, encryptedBundle, contentKey, signatureHex)
+	}
+	contentKeyEnvelope := testProviderContentKeyEnvelopeForUpload(t, contentKey, providerPublicKey, metadata, encryptedBundle, pubHex, providerPeerID)
+	body, contentType := moduleUploadMultipart(t, metadata, encryptedBundle, contentKeyEnvelope, signatureHex)
 	handler := NewModuleUploadHandler(
 		reg,
 		func(gotXPub string) (string, error) {
@@ -116,8 +120,8 @@ func TestModuleUploadHandlerStoresEncryptedCatalogEntry(t *testing.T) {
 	} else if !bytes.Equal(got, encryptedBundle) {
 		t.Fatalf("encrypted bundle bytes changed")
 	}
-	if got, err := reg.ReadBundleKey("com.spaceaware.test-protocol"); err != nil {
-		t.Fatalf("ReadBundleKey failed: %v", err)
+	if got, err := reg.ReadBundleKeyWithProviderKey("com.spaceaware.test-protocol", providerPrivateKey, providerPeerID); err != nil {
+		t.Fatalf("ReadBundleKeyWithProviderKey failed: %v", err)
 	} else if !bytes.Equal(got, contentKey) {
 		t.Fatalf("content key bytes changed")
 	}
@@ -129,8 +133,58 @@ func TestModuleUploadHandlerStoresEncryptedCatalogEntry(t *testing.T) {
 	if strings.Contains(string(rawCatalog), "plain_path") {
 		t.Fatalf("catalog should not contain plain_path: %s", rawCatalog)
 	}
-	if !strings.Contains(string(rawCatalog), "encrypted_path") || !strings.Contains(string(rawCatalog), "key_path") {
-		t.Fatalf("catalog should contain encrypted_path and key_path: %s", rawCatalog)
+	if strings.Contains(string(rawCatalog), "key_path") {
+		t.Fatalf("catalog should not contain key_path: %s", rawCatalog)
+	}
+	if !strings.Contains(string(rawCatalog), "encrypted_path") || !strings.Contains(string(rawCatalog), "key_envelope_path") {
+		t.Fatalf("catalog should contain encrypted_path and key_envelope_path: %s", rawCatalog)
+	}
+	if _, err := os.Stat(filepath.Join(root, "com.spaceaware.test-protocol", "bundle.key")); !os.IsNotExist(err) {
+		t.Fatalf("bundle.key must not exist")
+	}
+	if strings.Contains(string(rawCatalog), hex.EncodeToString(contentKey)) {
+		t.Fatalf("catalog leaked content key: %s", rawCatalog)
+	}
+}
+
+func TestPluginRegistryReadBundleKeyUnwrapsProviderEnvelope(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	reg, err := LoadPluginRegistry(root)
+	if err != nil {
+		t.Fatalf("LoadPluginRegistry failed: %v", err)
+	}
+	providerPrivateKey, providerPublicKey := testX25519KeyPair(t)
+	providerPeerID := "provider.orbpro.test"
+	encryptedBundle := []byte("encrypted wasm bundle bytes")
+	contentKey := bytes.Repeat([]byte{0x6c}, 32)
+	signerPubKeyHex := strings.Repeat("d", 64)
+	metadata := moduleUploadMetadata{
+		ID:            "com.spaceaware.test-protocol",
+		Version:       "0.0.1",
+		RequiredScope: "spaceaware:test",
+	}
+	contentKeyEnvelope := testProviderContentKeyEnvelopeForUpload(t, contentKey, providerPublicKey, metadata, encryptedBundle, signerPubKeyHex, providerPeerID)
+
+	if _, err := reg.AddEncryptedPlugin(EncryptedPluginUpload{
+		ID:                 metadata.ID,
+		Version:            metadata.Version,
+		RequiredScope:      metadata.RequiredScope,
+		EncryptedBundle:    encryptedBundle,
+		ContentKeyEnvelope: contentKeyEnvelope,
+		ProviderPeerID:     providerPeerID,
+		SignerPubKeyHex:    signerPubKeyHex,
+	}); err != nil {
+		t.Fatalf("AddEncryptedPlugin failed: %v", err)
+	}
+
+	got, err := reg.ReadBundleKeyWithProviderKey(metadata.ID, providerPrivateKey, providerPeerID)
+	if err != nil {
+		t.Fatalf("ReadBundleKeyWithProviderKey failed: %v", err)
+	}
+	if !bytes.Equal(got, contentKey) {
+		t.Fatalf("content key bytes changed")
 	}
 }
 
@@ -141,14 +195,28 @@ func TestModuleUploadHandlerListsPublicDescriptorsWithoutKeyMaterial(t *testing.
 	if err != nil {
 		t.Fatalf("LoadPluginRegistry failed: %v", err)
 	}
+	providerPeerID := "provider.orbpro.test"
+	_, providerPublicKey := testX25519KeyPair(t)
+	encryptedBundle := []byte("encrypted")
+	contentKeyEnvelope := testProviderContentKeyEnvelopeForUpload(
+		t,
+		bytes.Repeat([]byte{0x11}, 32),
+		providerPublicKey,
+		moduleUploadMetadata{ID: "com.spaceaware.test-protocol", Version: "0.0.1"},
+		encryptedBundle,
+		strings.Repeat("e", 64),
+		providerPeerID,
+	)
 	if _, err := reg.AddEncryptedPlugin(EncryptedPluginUpload{
-		ID:                "com.spaceaware.test-protocol",
-		Version:           "0.0.1",
-		EncryptedBundle:   []byte("encrypted"),
-		ContentKey:        bytes.Repeat([]byte{0x11}, 32),
-		RequiredScope:     "spaceaware:test",
-		AllowedDomains:    []string{"spaceaware.io"},
-		MaxGrantTimeoutMs: 120_000,
+		ID:                 "com.spaceaware.test-protocol",
+		Version:            "0.0.1",
+		EncryptedBundle:    encryptedBundle,
+		ContentKeyEnvelope: contentKeyEnvelope,
+		ProviderPeerID:     providerPeerID,
+		RequiredScope:      "spaceaware:test",
+		AllowedDomains:     []string{"spaceaware.io"},
+		MaxGrantTimeoutMs:  120_000,
+		SignerPubKeyHex:    strings.Repeat("e", 64),
 	}); err != nil {
 		t.Fatalf("AddEncryptedPlugin failed: %v", err)
 	}
@@ -194,7 +262,7 @@ func moduleUploadMultipart(
 	t *testing.T,
 	meta moduleUploadMetadata,
 	encryptedBundle []byte,
-	contentKey []byte,
+	contentKeyEnvelope *ProviderContentKeyEnvelope,
 	signatureHex string,
 ) (*bytes.Buffer, string) {
 	t.Helper()
@@ -215,8 +283,12 @@ func moduleUploadMultipart(
 	if err := writer.WriteField("metadata", string(metaJSON)); err != nil {
 		t.Fatalf("WriteField(metadata): %v", err)
 	}
-	if err := writer.WriteField("content_key_hex", hex.EncodeToString(contentKey)); err != nil {
-		t.Fatalf("WriteField(content_key_hex): %v", err)
+	envelopeJSON, err := json.Marshal(contentKeyEnvelope)
+	if err != nil {
+		t.Fatalf("marshal content key envelope: %v", err)
+	}
+	if err := writer.WriteField("content_key_envelope", string(envelopeJSON)); err != nil {
+		t.Fatalf("WriteField(content_key_envelope): %v", err)
 	}
 	if err := writer.WriteField("signature_hex", signatureHex); err != nil {
 		t.Fatalf("WriteField(signature_hex): %v", err)
@@ -225,4 +297,29 @@ func moduleUploadMultipart(
 		t.Fatalf("multipart close: %v", err)
 	}
 	return body, writer.FormDataContentType()
+}
+
+func testProviderContentKeyEnvelopeForUpload(
+	t *testing.T,
+	contentKey []byte,
+	providerPublicKey []byte,
+	meta moduleUploadMetadata,
+	encryptedBundle []byte,
+	signerPubKeyHex string,
+	providerPeerID string,
+) *ProviderContentKeyEnvelope {
+	t.Helper()
+
+	bundleHash := sha256.Sum256(encryptedBundle)
+	envelope, err := WrapProviderContentKey(contentKey, providerPublicKey, ProviderContentKeyAAD{
+		ModuleID:           meta.ID,
+		Version:            meta.Version,
+		BundleSHA256:       hex.EncodeToString(bundleHash[:]),
+		SignerPublicKeyHex: signerPubKeyHex,
+		ProviderPeerID:     providerPeerID,
+	})
+	if err != nil {
+		t.Fatalf("WrapProviderContentKey failed: %v", err)
+	}
+	return envelope
 }
