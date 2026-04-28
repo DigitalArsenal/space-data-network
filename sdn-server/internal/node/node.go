@@ -846,9 +846,8 @@ func (n *Node) findKeyBrokerWasmPath() string {
 		}
 	}
 	paths := []string{
-		"packages/space-data-network-plugins/packages/licensing/dist/isomorphic/module.wasm",
-		"../space-data-network-plugins/packages/licensing/dist/isomorphic/module.wasm",
-		"../../space-data-network-plugins/packages/licensing/dist/isomorphic/module.wasm",
+		"../space-data-network-plugins/licensing/core/dist/isomorphic/module.wasm",
+		"../../space-data-network-plugins/licensing/core/dist/isomorphic/module.wasm",
 		"../../packages/sdn-license-plugin/build-wasi/sdn-license-plugin.wasm",
 		"../packages/sdn-license-plugin/build-wasi/sdn-license-plugin.wasm",
 		"/usr/local/lib/sdn-license-plugin.wasm",

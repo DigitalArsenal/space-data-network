@@ -236,7 +236,7 @@ if [[ -z "${webui_path}" ]]; then
 fi
 
 if [[ -z "${licensing_wasm_path}" ]]; then
-  candidate="${repo_root}/../space-data-network-plugins/packages/licensing/dist/isomorphic/module.wasm"
+  candidate="${repo_root}/../space-data-network-plugins/licensing/core/dist/isomorphic/module.wasm"
   if [[ -f "${candidate}" ]]; then
     licensing_wasm_path="${candidate}"
   fi
