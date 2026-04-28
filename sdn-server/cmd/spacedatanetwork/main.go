@@ -704,6 +704,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					adminMux.HandleFunc("/api/v1/plugin-modules", moduleUploadHandler.ServeHTTP)
 					adminMux.HandleFunc("/api/v1/plugin-modules/upload", moduleUploadHandler.ServeHTTP)
 					log.Infof("Plugin module API at %s://%s/api/v1/plugin-modules", adminScheme, adminAddr)
+					if err := n.RegisterModuleUploadProtocol(signingKeyLookup); err != nil {
+						log.Warnf("Plugin module libp2p upload protocol unavailable: %v", err)
+					} else {
+						log.Infof("Plugin module libp2p upload protocol registered: %s", node.PluginModuleUploadProtocolID)
+					}
 				}
 			}
 
