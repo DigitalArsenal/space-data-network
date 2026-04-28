@@ -16,6 +16,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(packageRoot, "..", "..");
 const workspaceRoot = path.resolve(repoRoot, "..");
+const activeOrbProRoot = path.resolve(workspaceRoot, "OrbPro");
+const spaceawareOrbProRoot = path.resolve(workspaceRoot, "spaceaware.io", "packages", "OrbPro");
 const defaultCacheControl =
   "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400";
 const defaultContentType = "application/wasm+encrypted";
@@ -51,6 +53,7 @@ const DEFAULT_ORBPRO_MODULES = Object.freeze([
   Object.freeze({
     slug: "orbpro-licensing",
     moduleId: "com.orbpro.licensing",
+    version: defaultVersion,
     requiredScope: "orbpro:license",
     wasmPath:
       "../space-data-network-plugins/packages/licensing/dist/isomorphic/module.wasm",
@@ -265,6 +268,8 @@ function resolveModulePath(relativeOrAbsolutePath, label = "Module path") {
   const candidatePaths = [
     path.resolve(repoRoot, rawPath),
     path.resolve(workspaceRoot, rawPath),
+    path.resolve(activeOrbProRoot, rawPath),
+    path.resolve(spaceawareOrbProRoot, rawPath),
   ];
   const existingPath = candidatePaths.find((candidatePath) =>
     fsSync.existsSync(candidatePath),

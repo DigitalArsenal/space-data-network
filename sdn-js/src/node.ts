@@ -73,6 +73,8 @@ export interface SDNConfig {
   enableRelayProbing?: boolean;
   /** Interval between relay probes in ms (default: 30000) */
   relayProbeIntervalMs?: number;
+  /** Allow browser dials to loopback/private addresses for same-machine dev nodes. */
+  allowPrivateAddresses?: boolean;
 }
 
 export interface SDNNodeEvents {
@@ -176,6 +178,12 @@ export class SDNNode {
       if (!this.privateKey) {
         this.privateKey = this.config.identity.signingKey.privateKey;
       }
+    }
+
+    if (this.config.allowPrivateAddresses === true) {
+      libp2pOpts.connectionGater = {
+        denyDialMultiaddr: async () => false,
+      };
     }
 
     // Initialize libp2p
@@ -717,6 +725,9 @@ async function exchangeStream(
     await stream.sink((async function *source() {
       yield payloadBytes;
     })());
+    if (typeof stream.closeWrite === 'function') {
+      await stream.closeWrite();
+    }
 
     const chunks: Uint8Array[] = [];
     for await (const chunk of stream.source) {
