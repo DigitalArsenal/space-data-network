@@ -133,9 +133,11 @@ func TestModuleUploadProtocolStoresEnvelopeBackedModule(t *testing.T) {
 	}
 
 	var response struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error,omitempty"`
-		ID    string `json:"id,omitempty"`
+		OK                 bool   `json:"ok"`
+		Error              string `json:"error,omitempty"`
+		ID                 string `json:"id,omitempty"`
+		ContentKeyHex      string `json:"content_key_hex,omitempty"`
+		ContentKeyEnvelope string `json:"content_key_envelope,omitempty"`
 	}
 	if err := json.NewDecoder(stream).Decode(&response); err != nil {
 		t.Fatalf("decode upload response: %v", err)
@@ -145,6 +147,9 @@ func TestModuleUploadProtocolStoresEnvelopeBackedModule(t *testing.T) {
 	}
 	if response.ID != "com.spaceaware.test-protocol" {
 		t.Fatalf("response id = %q", response.ID)
+	}
+	if response.ContentKeyHex != "" || response.ContentKeyEnvelope != "" {
+		t.Fatalf("upload response exposed content key material: %+v", response)
 	}
 	select {
 	case got := <-publishedID:

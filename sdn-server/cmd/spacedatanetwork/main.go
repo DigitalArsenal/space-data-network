@@ -960,8 +960,8 @@ func publicHomepageFile(frontendPath string, homepageFile string) string {
 
 func isPublicAPIPath(path string) bool {
 	return strings.HasPrefix(path, "/api/v1/data/") ||
-		strings.HasPrefix(path, "/api/module-delivery/provider") ||
-		strings.HasPrefix(path, "/api/module-delivery/listings") ||
+		path == "/api/module-delivery/provider" ||
+		path == "/api/module-delivery/listings" ||
 		strings.HasPrefix(path, "/api/directory/") ||
 		strings.HasPrefix(path, "/api/v1/demo/") ||
 		strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook") ||

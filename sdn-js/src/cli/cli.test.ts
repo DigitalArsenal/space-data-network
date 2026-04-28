@@ -390,6 +390,7 @@ describe('sdn CLI module packaging and upload', () => {
       };
     });
     const stop = vi.fn(async () => undefined);
+    const unwrappedContentKey = new Uint8Array(32).fill(0x22);
 
     await expect(queryModuleDelivery({
       nodeUrl: 'https://sdn.spaceaware.io',
@@ -398,8 +399,12 @@ describe('sdn CLI module packaging and upload', () => {
       wallet,
       providerDescriptor: { publicKey: '02'.padEnd(66, '0') },
       nodeFactory: async () => ({ requestEncryptedModuleBundle, stop }),
-      unwrapContentKey: async () => new Uint8Array(32).fill(0x22),
-      decryptBundle: async () => new Uint8Array([0, 97, 115, 109]),
+      unwrapContentKey: async () => unwrappedContentKey,
+      decryptBundle: async (_encryptedBundleBytes, contentKey) => {
+        expect(contentKey).toBe(unwrappedContentKey);
+        expect(contentKey[0]).toBe(0x22);
+        return new Uint8Array([0, 97, 115, 109]);
+      },
     })).resolves.toEqual({
       protocol_id: '/space-data-network/module-delivery/1.0.0',
       provider_peer_id: 'provider-peer',
@@ -411,6 +416,12 @@ describe('sdn CLI module packaging and upload', () => {
     });
 
     expect(requestEncryptedModuleBundle).toHaveBeenCalledTimes(1);
+    expect(requestEncryptedModuleBundle).toHaveBeenCalledWith(expect.objectContaining({
+      moduleId: 'com.spaceaware.test-protocol',
+      requesterDomain: 'spaceaware.io',
+      requestedTimeoutMs: 300_000,
+    }));
+    expect(unwrappedContentKey.every((byte) => byte === 0)).toBe(true);
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
