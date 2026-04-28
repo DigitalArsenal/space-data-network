@@ -238,3 +238,32 @@
 - [x] **Step 3: Commit**
 
   Commit once focused verification passes.
+
+## Task 7: Transport And Go CLI Parity Tightening
+
+- [x] **Step 1: Add non-Helia content fetch fallbacks**
+
+  `SDNNode` now supports encrypted CID fetch through a configured node IPFS API
+  and gateway before falling back to direct Helia/libp2p. The CLI query path
+  configures `https://sdn.spaceaware.io/api/v0` and
+  `https://sdn.spaceaware.io/ipfs` from the supplied node origin.
+
+- [x] **Step 2: Make the Go binary CLI isomorphic**
+
+  The Go `spacedatanetwork` binary exposes the same wallet, auth, and module
+  command groups as the npm `sdn` CLI. Go-only wallet runtime selection is
+  exposed as `--wallet-wasm`; deprecated `--wasm` aliases for wallet runtime
+  are hidden so `--wasm` remains the plugin payload flag on module packaging.
+
+- [x] **Step 3: Verify live delivery after tightening**
+
+  A rebuilt `sdn` CLI queried `com.spaceaware.test.add-two@0.0.1` from
+  `https://sdn.spaceaware.io`, received a grant over
+  `/space-data-network/module-delivery/1.0.0`, fetched CID
+  `QmX4CmBGMWfGN4574rvqUPw7fUEYcxCkhc4Vb3Qcw8eG5y` through the node IPFS path,
+  and decrypted 79,146 encrypted bytes to 79,118 WASM bytes.
+
+- [x] **Step 4: Publish npm package**
+
+  Published `@spacedatanetwork/sdn-js@2.0.8` with npm `latest` through the
+  GitHub trusted publishing workflow.

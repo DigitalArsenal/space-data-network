@@ -31,6 +31,11 @@ const handlers: Record<string, CommandHandler> = {
 };
 
 async function main(argv: string[]): Promise<void> {
+  if (hasHelpFlag(argv)) {
+    printUsage();
+    process.exitCode = 0;
+    return;
+  }
   const [group, command, ...args] = argv;
   const key = `${group ?? ''}:${command ?? ''}`;
   const handler = handlers[key];
@@ -40,6 +45,10 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
   await handler(args);
+}
+
+function hasHelpFlag(args: string[]): boolean {
+  return args.some((arg) => arg === '--help' || arg === '-h');
 }
 
 async function walletInit(args: string[]): Promise<void> {

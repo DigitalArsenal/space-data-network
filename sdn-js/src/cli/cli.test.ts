@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -27,6 +29,8 @@ import {
   verify,
 } from '../crypto/hd-wallet';
 import { SDNNode } from '../node';
+
+const execFileAsync = promisify(execFile);
 
 let originalCliHome: string | undefined;
 let cliHome: string;
@@ -413,6 +417,21 @@ describe('sdn CLI module packaging and upload', () => {
     } finally {
       createSpy.mockRestore();
     }
+  });
+});
+
+describe('sdn CLI command surface', () => {
+  it('prints usage for nested --help without requiring a wallet password', async () => {
+    const cliPath = path.join(process.cwd(), 'dist', 'cli', 'index.mjs');
+    const { stdout } = await execFileAsync(process.execPath, [
+      cliPath,
+      'module',
+      'query',
+      '--help',
+    ]);
+
+    expect(stdout).toContain('sdn wallet init');
+    expect(stdout).toContain('sdn module query');
   });
 });
 
