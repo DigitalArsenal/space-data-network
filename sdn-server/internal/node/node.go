@@ -93,6 +93,7 @@ type Node struct {
 	peerGater    *peers.TrustedConnectionGater
 
 	pluginRegistry          *license.PluginRegistry
+	licensingModule         *modulert.Module
 	moduleDeliveryDiscovery cid.Cid
 	sdnAdvertisementTarget  sdnAdvertisementDiscoveryTarget
 	sdnDiscoveryTargets     []sdnAdvertisementDiscoveryTarget
@@ -493,6 +494,8 @@ func (n *Node) init() error {
 			log.Infof("Unified licensing module registered")
 		}
 	}
+	n.licensingModule = licensingModule
+	n.registerModulePublishHandler()
 
 	// Initialize flow runtime manager and load installed flows.
 	if n.config.Flows.Enabled {

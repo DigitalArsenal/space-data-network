@@ -139,6 +139,24 @@ type PluginAsset struct {
 	statusMessage string
 }
 
+// EncryptedPluginUpload describes a module-delivery artifact that has already
+// been protected for remote delivery and should replace the current catalog
+// entry for the same plugin ID.
+type EncryptedPluginUpload struct {
+	ID                 string
+	Version            string
+	RequiredScope      string
+	EncryptedBundle    []byte
+	KeyMaterial        []byte
+	ContentType        string
+	CacheControl       string
+	AllowedDomains     []string
+	MaxGrantTimeoutMs  int64
+	SignatureHex       string
+	SignerPubKeyHex    string
+	UploadedAtOverride string
+}
+
 func (a *PluginAsset) clone() *PluginAsset {
 	if a == nil {
 		return nil
@@ -854,6 +872,101 @@ func (r *PluginRegistry) AddPlugin(id, version string, wasmData []byte, signatur
 	return asset.clone(), nil
 }
 
+// AddEncryptedPlugin atomically writes an encrypted module artifact and its key
+// material, replacing any current catalog entry with the same ID.
+func (r *PluginRegistry) AddEncryptedPlugin(upload EncryptedPluginUpload) (*PluginAsset, error) {
+	if r == nil {
+		return nil, errors.New("plugin registry is nil")
+	}
+	id := strings.TrimSpace(upload.ID)
+	if id == "" {
+		return nil, errors.New("plugin id is required")
+	}
+	if !pluginIDPattern.MatchString(id) {
+		return nil, errors.New("plugin id contains invalid characters")
+	}
+	version := strings.TrimSpace(upload.Version)
+	if version == "" {
+		return nil, errors.New("version is required")
+	}
+	if len(upload.EncryptedBundle) == 0 {
+		return nil, errors.New("encrypted bundle is required")
+	}
+	if _, err := parseBundleKey(upload.KeyMaterial); err != nil {
+		return nil, fmt.Errorf("key material: %w", err)
+	}
+	requiredScope := strings.TrimSpace(upload.RequiredScope)
+	if requiredScope == "" {
+		requiredScope = defaultPluginRequiredScope
+	}
+	contentType := strings.TrimSpace(upload.ContentType)
+	if contentType == "" {
+		contentType = defaultPluginContentType
+	}
+	cacheControl := strings.TrimSpace(upload.CacheControl)
+	if cacheControl == "" {
+		cacheControl = defaultPluginCacheControl
+	}
+	allowedDomains, err := normalizeAllowedDomains(upload.AllowedDomains)
+	if err != nil {
+		return nil, fmt.Errorf("allowed_domains: %w", err)
+	}
+	if upload.MaxGrantTimeoutMs < 0 {
+		return nil, errors.New("max_grant_timeout_ms must be >= 0")
+	}
+	uploadedAt := strings.TrimSpace(upload.UploadedAtOverride)
+	if uploadedAt == "" {
+		uploadedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	pluginDir := filepath.Join(r.rootPath, id)
+	if err := os.MkdirAll(pluginDir, 0700); err != nil {
+		return nil, fmt.Errorf("create plugin directory: %w", err)
+	}
+
+	encryptedPath := filepath.Join(pluginDir, "bundle.wasm.enc")
+	keyPath := filepath.Join(pluginDir, "bundle.key")
+	if err := writeFileAtomic(encryptedPath, upload.EncryptedBundle, 0600); err != nil {
+		return nil, fmt.Errorf("write encrypted bundle: %w", err)
+	}
+	if err := writeFileAtomic(keyPath, upload.KeyMaterial, 0600); err != nil {
+		return nil, fmt.Errorf("write key material: %w", err)
+	}
+
+	h := sha256.Sum256(upload.EncryptedBundle)
+	previous := r.assets[id]
+	asset := &PluginAsset{
+		ID:                id,
+		Version:           version,
+		RequiredScope:     requiredScope,
+		ContentType:       contentType,
+		CacheControl:      cacheControl,
+		BundleSHA256:      hex.EncodeToString(h[:]),
+		SizeBytes:         int64(len(upload.EncryptedBundle)),
+		AllowedDomains:    allowedDomains,
+		MaxGrantTimeoutMs: upload.MaxGrantTimeoutMs,
+		SignatureHex:      strings.TrimSpace(upload.SignatureHex),
+		SignerPubKeyHex:   strings.TrimSpace(upload.SignerPubKeyHex),
+		UploadedAt:        uploadedAt,
+		encryptedPath:     encryptedPath,
+		keyPath:           keyPath,
+	}
+
+	r.assets[id] = asset
+	if err := r.saveCatalogLocked(); err != nil {
+		if previous == nil {
+			delete(r.assets, id)
+		} else {
+			r.assets[id] = previous
+		}
+		return nil, err
+	}
+	return asset.clone(), nil
+}
+
 // saveCatalogLocked writes catalog.json from the current in-memory assets.
 // Caller must hold r.mu.
 func (r *PluginRegistry) saveCatalogLocked() error {
@@ -1006,6 +1119,30 @@ func hashFileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		_ = os.Remove(tmpName)
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func parseBundleKey(raw []byte) ([]byte, error) {
