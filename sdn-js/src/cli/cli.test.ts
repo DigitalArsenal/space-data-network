@@ -245,7 +245,10 @@ describe('sdn CLI module packaging and upload', () => {
 
     expect(packaged.moduleId).toBe('com.spaceaware.test-protocol');
     expect(packaged.version).toBe('0.0.1');
-    expect(packaged.contentKeyHex).toMatch(/^[0-9a-f]{64}$/);
+    expect(packaged.localContentKeyEnvelope).toMatchObject({
+      version: 1,
+      alg: 'AES-256-GCM',
+    });
     expect(packaged.signatureHex).toMatch(/^[0-9a-f]{128}$/);
     expect(packaged.encryptedBundleBytes).not.toEqual(sourceBytes);
     expect(await fs.readFile(packaged.encryptedBundlePath)).toEqual(
@@ -260,6 +263,8 @@ describe('sdn CLI module packaging and upload', () => {
     )).resolves.toBe(true);
 
     const packageJSON = JSON.parse(await fs.readFile(packaged.packagePath, 'utf8'));
+    expect(JSON.stringify(packageJSON)).not.toContain('content_key_hex');
+    expect(JSON.stringify(packageJSON)).toContain('local_content_key_envelope');
     expect(packageJSON.metadata).toMatchObject({
       id: 'com.spaceaware.test-protocol',
       version: '0.0.1',
@@ -269,7 +274,7 @@ describe('sdn CLI module packaging and upload', () => {
     expect(packageJSON.signer_public_key_hex).toBe(wallet.signingPublicKeyHex);
   });
 
-  it('uploads a packaged encrypted module through the server multipart API', async () => {
+  it('uploads a packaged encrypted module through the Noise upload protocol', async () => {
     const wallet = await createWallet({
       password: 'upload password',
       name: 'SDN Upload Test',
@@ -284,24 +289,26 @@ describe('sdn CLI module packaging and upload', () => {
       allowedDomains: ['spaceaware.io'],
       wallet,
     });
-    const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
-      expect(String(input)).toBe('https://sdn.spaceaware.io/api/v1/plugin-modules/upload');
-      expect(init?.method).toBe('POST');
-      expect(init?.headers).toMatchObject({
-        Accept: 'application/json',
-        Cookie: 'sdn_wallet_session=session-token',
-        'X-Requested-With': 'sdn-cli',
-      });
-      const form = init?.body as FormData;
-      expect(form.get('metadata')).toContain('com.spaceaware.test-protocol');
-      expect(form.get('content_key_hex')).toBe(packaged.contentKeyHex);
-      expect(form.get('signature_hex')).toBe(packaged.signatureHex);
-      expect(form.get('bundle')).toBeInstanceOf(Blob);
-      return jsonResponse({
+    const uploadTransport = {
+      dialProtocol: vi.fn(async () => new TextEncoder().encode(JSON.stringify({
+        ok: true,
         id: 'com.spaceaware.test-protocol',
         version: '0.0.1',
         bundle_sha256: packaged.bundleSHA256,
         size_bytes: packaged.encryptedBundleBytes.length,
+      }))),
+      stop: vi.fn(async () => undefined),
+    };
+    const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('https://sdn.spaceaware.io/api/module-delivery/provider');
+      expect(init?.method).toBe('GET');
+      return jsonResponse({
+        peerId: 'provider-peer',
+        moduleUpload: {
+          protocolId: '/space-data-network/plugin-module-upload/1.0.0',
+          providerX25519PubKey: Buffer.from(new Uint8Array(32).fill(0x33)).toString('base64url'),
+          relayAddresses: ['/dns4/relay.example.com/tcp/443/wss/p2p/provider-peer'],
+        },
       });
     });
 
@@ -309,11 +316,25 @@ describe('sdn CLI module packaging and upload', () => {
       nodeUrl: 'https://sdn.spaceaware.io',
       packagePath: packaged.packagePath,
       sessionCookie: 'sdn_wallet_session=session-token',
+      wallet,
       fetchImpl,
+      nodeFactory: async () => uploadTransport,
     })).resolves.toMatchObject({
       id: 'com.spaceaware.test-protocol',
       version: '0.0.1',
     });
+    expect(uploadTransport.dialProtocol).toHaveBeenCalledWith(
+      'provider-peer',
+      '/space-data-network/plugin-module-upload/1.0.0',
+      expect.any(Uint8Array),
+      expect.arrayContaining(['/dns4/relay.example.com/tcp/443/wss/p2p/provider-peer']),
+    );
+    const payloadBytes = uploadTransport.dialProtocol.mock.calls[0][2] as Uint8Array;
+    const payload = JSON.parse(new TextDecoder().decode(payloadBytes));
+    expect(payload.content_key_envelope).toBeDefined();
+    expect(payload.content_key_hex).toBeUndefined();
+    expect(JSON.stringify(payload)).not.toContain('content_key_hex');
+    expect(uploadTransport.stop).toHaveBeenCalledTimes(1);
   });
 
   it('lists plugin modules with the stored node session', async () => {
