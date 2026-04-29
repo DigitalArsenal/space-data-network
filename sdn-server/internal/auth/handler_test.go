@@ -755,10 +755,10 @@ func TestLoginPage_UsesCDNWalletUIFallbackWhenNoLocalDistIsConfigured(t *testing
 	}
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "https://unpkg.com/hd-wallet-ui@2.0.5/src/app.js?module") {
+	if !strings.Contains(body, "https://unpkg.com/hd-wallet-ui@2.0.6/src/app.js?module") {
 		t.Fatalf("login page missing CDN wallet-ui module: %s", body)
 	}
-	if !strings.Contains(body, "https://unpkg.com/hd-wallet-ui@2.0.5/styles/widget.css") {
+	if !strings.Contains(body, "https://unpkg.com/hd-wallet-ui@2.0.6/styles/widget.css") {
 		t.Fatalf("login page missing CDN wallet-ui stylesheet: %s", body)
 	}
 	if !strings.Contains(body, "createWalletUI") {

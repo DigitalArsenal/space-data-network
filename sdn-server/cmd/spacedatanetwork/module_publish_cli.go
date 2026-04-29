@@ -335,16 +335,12 @@ func resolveModulePublishWalletWASM(explicitPath string) (string, error) {
 		candidates = append(candidates, envPath)
 	}
 	candidates = append(candidates,
+		"sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
+		"node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
 		"hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
-		"hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
 		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
-		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
 		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
-		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
-		"../hd-wallet-wasm/build-wasi-pure/hd-wallet.wasm",
-		"../../hd-wallet-wasm/build-wasi-pure/hd-wallet.wasm",
 		"/opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm",
-		"/opt/spacedatanetwork/wasm/hd-wallet.wasm",
 	)
 	for _, candidate := range candidates {
 		if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {

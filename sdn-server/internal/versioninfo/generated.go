@@ -5,8 +5,8 @@ package versioninfo
 const (
 	SuiteVersion = "1.0.3"
 	SpaceDataStandardsVersion = "1.93.3"
-	HDWalletWasmVersion = "2.0.5"
-	HDWalletUIVersion = "2.0.5"
+	HDWalletWasmVersion = "2.0.6"
+	HDWalletUIVersion = "2.0.6"
 	IPFSWebUIVersion = "4.12.0"
 	DefaultUpdateChannel = "stable"
 	CurrentAdvertisementFlag = "spacedatanetwork/1.0.0"

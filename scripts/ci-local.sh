@@ -24,6 +24,17 @@ NC='\033[0m'
 step() { echo -e "\n${CYAN}=== $1 ===${NC}"; }
 pass() { echo -e "${GREEN}PASS${NC}: $1"; }
 
+existing_file() {
+  local candidate
+  for candidate in "$@"; do
+    if [[ -n "$candidate" && -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 ensure_npm_deps() {
   local dir="$1"
   shift || true
@@ -69,6 +80,46 @@ ensure_npm_deps() {
   echo "Using existing dependencies in $dir/node_modules"
 }
 
+prepare_go_wasm_artifacts() {
+  step "Go WASM artifacts"
+
+  if [[ -z "${HD_WALLET_WASM_PATH:-}" || ! -f "${HD_WALLET_WASM_PATH:-}" ]]; then
+    local hd_wallet_path
+    if hd_wallet_path="$(existing_file \
+      "$ROOT/sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm" \
+      "$ROOT/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm" \
+      "$ROOT/../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm" \
+      "$ROOT/../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm" \
+      "$ROOT/../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm")"; then
+      export HD_WALLET_WASM_PATH="$hd_wallet_path"
+    else
+      echo "Pure HD wallet WASI artifact not found; artifact-dependent Go tests will skip."
+    fi
+  fi
+
+  if [[ -f "${HD_WALLET_WASM_PATH:-}" ]]; then
+    echo "HD_WALLET_WASM_PATH=$HD_WALLET_WASM_PATH"
+  fi
+
+  if [[ -z "${ORBPRO_LICENSING_WASM_PATH:-}" || ! -f "${ORBPRO_LICENSING_WASM_PATH:-}" ]]; then
+    local licensing_path
+    if licensing_path="$(existing_file \
+      "$ROOT/../space-data-network-plugins/licensing/core/dist/isomorphic/module.wasm" \
+      "$ROOT/../space-data-network-modules/licensing/core/dist/isomorphic/module.wasm" \
+      "$ROOT/../../space-data-network-plugins/licensing/core/dist/isomorphic/module.wasm" \
+      "$ROOT/../../space-data-network-modules/licensing/core/dist/isomorphic/module.wasm")"; then
+      export ORBPRO_LICENSING_WASM_PATH="$licensing_path"
+      echo "ORBPRO_LICENSING_WASM_PATH=$ORBPRO_LICENSING_WASM_PATH"
+    else
+      echo "Licensing WASM artifact not found; artifact-dependent Go tests will skip."
+    fi
+  else
+    echo "ORBPRO_LICENSING_WASM_PATH=$ORBPRO_LICENSING_WASM_PATH"
+  fi
+
+  pass "go wasm artifacts"
+}
+
 run_preflight() {
   step "OSS preflight"
   (cd "$ROOT" && ./scripts/oss-preflight.sh)
@@ -76,6 +127,8 @@ run_preflight() {
 }
 
 run_go() {
+  prepare_go_wasm_artifacts
+
   step "WasmEdge"
   "$ROOT/scripts/install-wasmedge.sh"
   pass "wasmedge install"

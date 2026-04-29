@@ -805,16 +805,14 @@ func (n *Node) findHDWalletWasmPath() string {
 			return envPath
 		}
 	}
-	// Look for hd-wallet WASM binary. Prefer the hardened Emscripten WASI build
-	// (hd-wallet-wasi.wasm) which includes Crypto++ with constant-time operations,
-	// HMAC-DRBG entropy, and SecureAllocator. Fall back to legacy wasi-sdk build.
+	// Look for the pure WASI wallet artifact. The browser hd-wallet.wasm package
+	// artifact imports Emscripten JS glue and cannot be used by Go/WASI hosts.
 	paths := []string{
+		"sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
+		"node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
 		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
 		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
 		"/usr/local/lib/hd-wallet-wasi.wasm",
-		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
-		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
-		"/usr/local/lib/hd-wallet.wasm",
 	}
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {

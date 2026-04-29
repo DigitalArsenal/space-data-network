@@ -122,9 +122,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug logging")
 
 	daemonCmd.Flags().StringVarP(&listenAddr, "listen", "l", "", "override listen address")
-	deriveXPubCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet.wasm (default: $HD_WALLET_WASM_PATH or ../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm)")
+	deriveXPubCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet-wasi.wasm (default: $HD_WALLET_WASM_PATH or ../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm)")
 	showIdentityCmd.Flags().BoolVar(&showMnemonic, "show-mnemonic", false, "display the decrypted mnemonic phrase (SENSITIVE)")
-	showIdentityCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet.wasm")
+	showIdentityCmd.Flags().StringVar(&wasmPath, "wasm", "", "path to hd-wallet-wasi.wasm")
 
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(initCmd)
@@ -2229,10 +2229,10 @@ func runDeriveXPub(cmd *cobra.Command, args []string) error {
 		wp = os.Getenv("HD_WALLET_WASM_PATH")
 	}
 	if wp == "" {
-		wp = "../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm"
+		wp = "../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm"
 	}
 	if _, err := os.Stat(wp); err != nil {
-		return fmt.Errorf("hd-wallet.wasm not found at %q (set --wasm or HD_WALLET_WASM_PATH)", wp)
+		return fmt.Errorf("hd-wallet-wasi.wasm not found at %q (set --wasm or HD_WALLET_WASM_PATH)", wp)
 	}
 
 	ctx := context.Background()
@@ -2327,10 +2327,10 @@ func runShowIdentity(cmd *cobra.Command, args []string) error {
 		wp = os.Getenv("HD_WALLET_WASM_PATH")
 	}
 	if wp == "" {
-		wp = "../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm"
+		wp = "../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm"
 	}
 	if _, err := os.Stat(wp); err != nil {
-		return fmt.Errorf("hd-wallet.wasm not found at %q (set --wasm or HD_WALLET_WASM_PATH)", wp)
+		return fmt.Errorf("hd-wallet-wasi.wasm not found at %q (set --wasm or HD_WALLET_WASM_PATH)", wp)
 	}
 
 	ctx := context.Background()

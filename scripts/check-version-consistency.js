@@ -14,6 +14,7 @@ const ROOT_PACKAGE_JSON = "package.json";
 const SDN_JS_PACKAGE_JSON = "sdn-js/package.json";
 const WEBUI_PACKAGE_JSON = "webui/package.json";
 const SDN_SERVER_GO_MOD = "sdn-server/go.mod";
+const SDS_SUBMODULE_PACKAGE_JSON = "schemas/sds/package.json";
 
 const OWNED_PACKAGE_JSON_PATHS = [
   "sdn-js/package.json",
@@ -95,6 +96,10 @@ function normalizeGoVersion(v) {
   return stripRange(v).replace(/\+incompatible$/, "").replace(/^v/, "");
 }
 
+function normalizePackageVersion(v) {
+  return stripRange(v).replace(/\+.*/, "");
+}
+
 const suiteManifest = readJSON("suite.versions.json");
 
 heading("suite manifest consistency");
@@ -118,6 +123,7 @@ heading("spacedatastandards.org version consistency");
 const expectedSDS = suiteManifest.dependencies.spacedatastandards;
 const jsSDS = stripRange(getPkgDepVersion(SDN_JS_PACKAGE_JSON, "spacedatastandards.org"));
 const goSDS = normalizeGoVersion(getGoModVersion(SDN_SERVER_GO_MOD, "github.com/DigitalArsenal/spacedatastandards.org/lib/go"));
+const submoduleSDS = normalizePackageVersion(getPkgVersion(SDS_SUBMODULE_PACKAGE_JSON));
 
 if (jsSDS === expectedSDS) {
   pass(`sdn-js spacedatastandards.org matches suite manifest: ${jsSDS}`);
@@ -129,6 +135,12 @@ if (goSDS === expectedSDS) {
   pass(`sdn-server Go spacedatastandards.org matches suite manifest: ${goSDS}`);
 } else {
   fail(`sdn-server Go spacedatastandards.org mismatch: sdn-server/go.mod=${goSDS} suite.versions.json=${expectedSDS}`);
+}
+
+if (submoduleSDS === expectedSDS) {
+  pass(`schemas/sds checkout matches suite manifest: ${submoduleSDS}`);
+} else {
+  fail(`schemas/sds checkout mismatch: schemas/sds/package.json=${submoduleSDS} suite.versions.json=${expectedSDS}`);
 }
 
 heading("wallet version consistency");

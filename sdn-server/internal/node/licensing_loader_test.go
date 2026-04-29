@@ -99,6 +99,7 @@ func TestFindKeyBrokerWasmPathFallsBackToLegacyEnvVar(t *testing.T) {
 	}
 
 	t.Setenv("ORBPRO_KEY_BROKER_WASM_PATH", legacyPath)
+	t.Setenv("ORBPRO_LICENSING_WASM_PATH", "")
 
 	n := &Node{}
 	if got := n.findKeyBrokerWasmPath(); got != legacyPath {

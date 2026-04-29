@@ -10,7 +10,7 @@ import (
 func TestNewModuleLoadsUnifiedLicensingArtifact(t *testing.T) {
 	t.Parallel()
 
-	wasmPath := testsupport.MustFindLicensingModuleWasmPath(t)
+	wasmPath := testsupport.SkipIfNoLicensingModuleWasm(t)
 	wasmBytes, err := os.ReadFile(wasmPath)
 	if err != nil {
 		t.Fatalf("ReadFile(%q) failed: %v", wasmPath, err)
