@@ -7,7 +7,6 @@ const DIST_INDEX_PATH = path.resolve(__dirname, '../dist/index.mjs');
 const DIST_UI_INDEX_PATH = path.resolve(__dirname, '../dist/ui/index.mjs');
 const DIST_STOREFRONT_INDEX_PATH = path.resolve(__dirname, '../dist/storefront/index.mjs');
 const DIST_PATH = path.resolve(__dirname, '../dist');
-const DIST_CHUNKS_PATH = path.resolve(__dirname, '../dist/chunks');
 const PACKAGE_JSON_PATH = path.resolve(__dirname, '../package.json');
 
 function collectBareSpecifiers(source: string): string[] {
@@ -31,6 +30,28 @@ function collectBareSpecifiers(source: string): string[] {
         !specifier.startsWith('http:') &&
         !specifier.startsWith('https:')
       ) {
+        specifiers.add(specifier);
+      }
+    }
+  }
+
+  return [...specifiers].sort();
+}
+
+function collectRelativeModuleSpecifiers(source: string): string[] {
+  const withoutComments = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  const specifiers = new Set<string>();
+  const patterns = [
+    /^\s*(?:import|export)\s+(?:[^("'`].*?\s+from\s+)?['"]([^'"]+)['"]/gm,
+    /\bimport\(\s*['"]([^'"]+)['"]\s*\)/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of withoutComments.matchAll(pattern)) {
+      const specifier = match[1];
+      if (specifier.startsWith('./') || specifier.startsWith('../')) {
         specifiers.add(specifier);
       }
     }
@@ -88,16 +109,25 @@ describe('sdn-js package build', () => {
     expect(offenders).toEqual({});
   });
 
-  it('shares bundled chunks between the root and UI entries to avoid duplicated browser runtime code', async () => {
-    const [rootSource, uiSource, chunkNames] = await Promise.all([
-      fs.readFile(DIST_INDEX_PATH, 'utf8'),
-      fs.readFile(DIST_UI_INDEX_PATH, 'utf8'),
-      fs.readdir(DIST_CHUNKS_PATH),
-    ]);
+  it('ships self-contained browser entry bundles without shared JS chunks', async () => {
+    const modules = await collectDistModulePaths();
+    const relativeImports: Record<string, string[]> = {};
 
-    expect(chunkNames.some((name) => name.endsWith('.mjs'))).toBe(true);
-    expect(rootSource).toContain('./chunks/');
-    expect(uiSource).toContain('./chunks/');
+    for (const modulePath of modules) {
+      const source = await fs.readFile(modulePath, 'utf8');
+      const specifiers = collectRelativeModuleSpecifiers(source);
+      if (specifiers.length > 0) {
+        relativeImports[path.relative(DIST_PATH, modulePath)] = specifiers;
+      }
+    }
+
+    await expect(fs.access(path.resolve(DIST_PATH, 'chunks'))).rejects.toThrow();
+    expect(modules.map((modulePath) => path.relative(DIST_PATH, modulePath))).toEqual([
+      'index.mjs',
+      'storefront/index.mjs',
+      'ui/index.mjs',
+    ]);
+    expect(relativeImports).toEqual({});
   });
 
   it('exports the canonical root, UI, and storefront subpath surfaces from package.json', async () => {
