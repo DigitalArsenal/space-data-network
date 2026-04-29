@@ -17,6 +17,7 @@ const hdWalletShims = new Map([
 const sharedBuildOptions = {
   absWorkingDir: packageRoot,
   bundle: true,
+  packages: 'external',
   format: 'esm',
   platform: 'browser',
   target: 'es2022',

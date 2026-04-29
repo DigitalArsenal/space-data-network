@@ -43,6 +43,13 @@ interface HDWalletCurveExtensions extends HDWalletModule {
   };
 }
 
+interface HDWalletNativeCryptoExtensions extends HDWalletModule {
+  aesCtr?: {
+    encrypt(key: Uint8Array, plaintext: Uint8Array, iv: Uint8Array): Uint8Array;
+    decrypt(key: Uint8Array, ciphertext: Uint8Array, iv: Uint8Array): Uint8Array;
+  };
+}
+
 // Module state
 let hdWalletModule: HDWalletModule | null = null;
 let moduleReady: Promise<void> | null = null;
@@ -92,6 +99,38 @@ function getModule(): HDWalletModule {
     throw new Error('HD Wallet WASM module not loaded - call initHDWallet() first');
   }
   return hdWalletModule;
+}
+
+async function getNativeCryptoModule(): Promise<HDWalletNativeCryptoExtensions> {
+  const ready = await initHDWallet();
+  if (!ready) {
+    throw new Error('HD Wallet WASM native crypto module failed to initialize');
+  }
+  return getModule() as HDWalletNativeCryptoExtensions;
+}
+
+function concatBytes(...chunks: Uint8Array[]): Uint8Array {
+  const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+function splitCiphertextAndTag(ciphertextAndTag: Uint8Array): {
+  ciphertext: Uint8Array;
+  tag: Uint8Array;
+} {
+  if (ciphertextAndTag.length < 16) {
+    throw new Error('AES-GCM payload must include a 16-byte authentication tag');
+  }
+  return {
+    ciphertext: ciphertextAndTag.slice(0, ciphertextAndTag.length - 16),
+    tag: ciphertextAndTag.slice(ciphertextAndTag.length - 16),
+  };
 }
 
 /**
@@ -452,67 +491,21 @@ export async function x25519ECDH(
 }
 
 /**
- * Encrypt data using AES-GCM (uses Web Crypto API)
+ * Encrypt data using AES-GCM in the HD wallet WASM native crypto backend.
  */
 export async function encrypt(key: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-
-  const keyBuffer = new ArrayBuffer(key.length);
-  new Uint8Array(keyBuffer).set(key);
-
-  const plaintextBuffer = new ArrayBuffer(plaintext.length);
-  new Uint8Array(plaintextBuffer).set(plaintext);
-
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    keyBuffer,
-    { name: 'AES-GCM' },
-    false,
-    ['encrypt']
-  );
-
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    cryptoKey,
-    plaintextBuffer
-  );
-
-  // Prepend IV to ciphertext
-  const result = new Uint8Array(iv.length + encrypted.byteLength);
-  result.set(iv, 0);
-  result.set(new Uint8Array(encrypted), iv.length);
-
-  return result;
+  const iv = randomBytes(12);
+  const encrypted = await aesGcmEncryptWithIv(key, plaintext, iv);
+  return concatBytes(iv, encrypted);
 }
 
 /**
- * Decrypt data using AES-GCM (uses Web Crypto API)
+ * Decrypt data using AES-GCM in the HD wallet WASM native crypto backend.
  */
 export async function decrypt(key: Uint8Array, ciphertext: Uint8Array): Promise<Uint8Array> {
   const iv = ciphertext.slice(0, 12);
   const encrypted = ciphertext.slice(12);
-
-  const keyBuffer = new ArrayBuffer(key.length);
-  new Uint8Array(keyBuffer).set(key);
-
-  const encryptedBuffer = new ArrayBuffer(encrypted.length);
-  new Uint8Array(encryptedBuffer).set(encrypted);
-
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    keyBuffer,
-    { name: 'AES-GCM' },
-    false,
-    ['decrypt']
-  );
-
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv },
-    cryptoKey,
-    encryptedBuffer
-  );
-
-  return new Uint8Array(decrypted);
+  return aesGcmDecryptWithIv(key, encrypted, iv);
 }
 
 /**
@@ -563,9 +556,84 @@ export function generateKey(): Uint8Array {
  * Compute SHA-256 hash
  */
 export async function sha256(data: Uint8Array): Promise<Uint8Array> {
-  const dataBuffer = new ArrayBuffer(data.length);
-  new Uint8Array(dataBuffer).set(data);
+  const module = await getNativeCryptoModule();
+  return module.utils.sha256(data);
+}
 
-  const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
-  return new Uint8Array(hashBuffer);
+/**
+ * Compute SHA-512 hash.
+ */
+export async function sha512(data: Uint8Array): Promise<Uint8Array> {
+  const module = await getNativeCryptoModule();
+  return module.utils.sha512(data);
+}
+
+/**
+ * Derive bytes with HKDF-SHA256 in the native WASM backend.
+ */
+export async function hkdfSha256(
+  inputKeyMaterial: Uint8Array,
+  salt: Uint8Array,
+  info: Uint8Array,
+  length: number,
+): Promise<Uint8Array> {
+  const module = await getNativeCryptoModule();
+  return module.utils.hkdf(inputKeyMaterial, salt, info, length);
+}
+
+/**
+ * Derive bytes with PBKDF2-SHA256 in the native WASM backend.
+ */
+export async function pbkdf2Sha256(
+  password: Uint8Array,
+  salt: Uint8Array,
+  iterations: number,
+  length: number,
+): Promise<Uint8Array> {
+  const module = await getNativeCryptoModule();
+  return module.utils.pbkdf2(password, salt, iterations, length);
+}
+
+/**
+ * Encrypt using AES-GCM with a caller-provided IV in the native WASM backend.
+ * The returned bytes are ciphertext || tag.
+ */
+export async function aesGcmEncryptWithIv(
+  key: Uint8Array,
+  plaintext: Uint8Array,
+  iv: Uint8Array,
+  aad = new Uint8Array(0),
+): Promise<Uint8Array> {
+  const module = await getNativeCryptoModule();
+  const encrypted = module.utils.aesGcm.encrypt(key, plaintext, iv, aad);
+  return concatBytes(encrypted.ciphertext, encrypted.tag);
+}
+
+/**
+ * Decrypt ciphertext || tag with AES-GCM in the native WASM backend.
+ */
+export async function aesGcmDecryptWithIv(
+  key: Uint8Array,
+  ciphertextAndTag: Uint8Array,
+  iv: Uint8Array,
+  aad = new Uint8Array(0),
+): Promise<Uint8Array> {
+  const module = await getNativeCryptoModule();
+  const { ciphertext, tag } = splitCiphertextAndTag(ciphertextAndTag);
+  return module.utils.aesGcm.decrypt(key, ciphertext, tag, iv, aad);
+}
+
+/**
+ * Decrypt AES-CTR bytes in the native WASM backend.
+ */
+export async function aesCtrDecryptWithIv(
+  key: Uint8Array,
+  ciphertext: Uint8Array,
+  iv: Uint8Array,
+): Promise<Uint8Array> {
+  const module = await getNativeCryptoModule();
+  if (typeof module.aesCtr?.decrypt !== 'function') {
+    throw new Error('HD Wallet WASM AES-CTR decrypt API is unavailable');
+  }
+  return module.aesCtr.decrypt(key, ciphertext, iv);
 }

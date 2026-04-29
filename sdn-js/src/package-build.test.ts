@@ -9,6 +9,22 @@ const DIST_STOREFRONT_INDEX_PATH = path.resolve(__dirname, '../dist/storefront/i
 const DIST_CHUNKS_PATH = path.resolve(__dirname, '../dist/chunks');
 const PACKAGE_JSON_PATH = path.resolve(__dirname, '../package.json');
 
+function packageNameFromSpecifier(specifier: string): string {
+  if (specifier.startsWith('@')) {
+    const [scope, name] = specifier.split('/');
+    return `${scope}/${name}`;
+  }
+  return specifier.split('/')[0];
+}
+
+async function readDeclaredDependencyNames(): Promise<Set<string>> {
+  const packageJson = JSON.parse(await fs.readFile(PACKAGE_JSON_PATH, 'utf8'));
+  return new Set([
+    ...Object.keys(packageJson.dependencies ?? {}),
+    ...Object.keys(packageJson.peerDependencies ?? {}),
+  ]);
+}
+
 function collectBareSpecifiers(source: string): string[] {
   const withoutComments = source
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -39,22 +55,34 @@ function collectBareSpecifiers(source: string): string[] {
 }
 
 describe('sdn-js package build', () => {
-  it('ships a canonical bundled root entry without bare module specifiers', async () => {
+  it('ships a canonical root entry with only declared external package imports', async () => {
     const source = await fs.readFile(DIST_INDEX_PATH, 'utf8');
+    const declaredDependencies = await readDeclaredDependencyNames();
+    const undeclared = collectBareSpecifiers(source).filter(
+      (specifier) => !declaredDependencies.has(packageNameFromSpecifier(specifier)),
+    );
     expect(source.length).toBeGreaterThan(0);
-    expect(collectBareSpecifiers(source)).toEqual([]);
+    expect(undeclared).toEqual([]);
   });
 
-  it('ships a canonical bundled UI subpath entry without bare module specifiers', async () => {
+  it('ships a canonical UI subpath entry with only declared external package imports', async () => {
     const source = await fs.readFile(DIST_UI_INDEX_PATH, 'utf8');
+    const declaredDependencies = await readDeclaredDependencyNames();
+    const undeclared = collectBareSpecifiers(source).filter(
+      (specifier) => !declaredDependencies.has(packageNameFromSpecifier(specifier)),
+    );
     expect(source.length).toBeGreaterThan(0);
-    expect(collectBareSpecifiers(source)).toEqual([]);
+    expect(undeclared).toEqual([]);
   });
 
-  it('ships a canonical bundled storefront subpath entry without bare module specifiers', async () => {
+  it('ships a canonical storefront subpath entry with only declared external package imports', async () => {
     const source = await fs.readFile(DIST_STOREFRONT_INDEX_PATH, 'utf8');
+    const declaredDependencies = await readDeclaredDependencyNames();
+    const undeclared = collectBareSpecifiers(source).filter(
+      (specifier) => !declaredDependencies.has(packageNameFromSpecifier(specifier)),
+    );
     expect(source.length).toBeGreaterThan(0);
-    expect(collectBareSpecifiers(source)).toEqual([]);
+    expect(undeclared).toEqual([]);
   });
 
   it('shares bundled chunks between the root and UI entries to avoid duplicated browser runtime code', async () => {

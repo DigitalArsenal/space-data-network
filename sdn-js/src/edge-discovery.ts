@@ -1,3 +1,5 @@
+import { sha256, sha512 } from './crypto/hd-wallet';
+
 /**
  * Edge Relay Discovery - Loads edge relay addresses for bootstrapping
  * Features:
@@ -231,12 +233,20 @@ async function verifySri(data: ArrayBuffer, expectedSri: string): Promise<boolea
       return false;
     }
 
-    const algorithm = `SHA-${match[1]}`;
+    const algorithm = match[1];
     const expectedHash = match[2];
 
-    // Compute hash of the data
-    const hashBuffer = await crypto.subtle.digest(algorithm, data);
-    const hashArray = new Uint8Array(hashBuffer);
+    const bytes = new Uint8Array(data);
+    const hashArray =
+      algorithm === '256'
+        ? await sha256(bytes)
+        : algorithm === '512'
+          ? await sha512(bytes)
+          : null;
+    if (!hashArray) {
+      console.warn('Unsupported WASM-native SRI algorithm:', `sha${algorithm}`);
+      return false;
+    }
     const actualHash = btoa(String.fromCharCode(...hashArray));
 
     // Compare hashes

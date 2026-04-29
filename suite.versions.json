@@ -1,9 +1,9 @@
 {
   "suiteVersion": "1.0.3",
   "dependencies": {
-    "spacedatastandards": "1.93.1",
-    "hdWalletWasm": "2.0.2",
-    "hdWalletUI": "2.0.2",
+    "spacedatastandards": "1.93.3",
+    "hdWalletWasm": "2.0.5",
+    "hdWalletUI": "2.0.5",
     "ipfsWebUI": "4.12.0"
   },
   "advertisement": {

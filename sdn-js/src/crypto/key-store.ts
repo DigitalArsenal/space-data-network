@@ -7,6 +7,11 @@
  */
 
 import { openDB, type IDBPDatabase } from 'idb';
+import {
+  aesGcmDecryptWithIv,
+  aesGcmEncryptWithIv,
+  pbkdf2Sha256,
+} from './hd-wallet';
 
 const DB_NAME = 'sdn-keystore';
 const DB_VERSION = 1;
@@ -15,7 +20,7 @@ const PBKDF2_ITERATIONS = 600_000;
 
 interface StoredWallet {
   id: string;
-  encryptedMnemonic: ArrayBuffer;
+  encryptedMnemonic: Uint8Array;
   iv: Uint8Array;
   salt: Uint8Array;
   account: number;
@@ -72,11 +77,7 @@ export class HDKeyStore {
 
     const aesKey = await deriveAesKey(pin, salt);
     const encoded = new TextEncoder().encode(mnemonic);
-    const encryptedMnemonic = await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv },
-      aesKey,
-      encoded,
-    );
+    const encryptedMnemonic = await aesGcmEncryptWithIv(aesKey, encoded, iv);
 
     const entry: StoredWallet = {
       id,
@@ -104,10 +105,10 @@ export class HDKeyStore {
     if (!entry) throw new Error('Wallet not found');
 
     const aesKey = await deriveAesKey(pin, entry.salt);
-    const decrypted = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: entry.iv.buffer as ArrayBuffer },
+    const decrypted = await aesGcmDecryptWithIv(
       aesKey,
-      entry.encryptedMnemonic,
+      new Uint8Array(entry.encryptedMnemonic),
+      entry.iv,
     );
 
     return new TextDecoder().decode(decrypted);
@@ -161,22 +162,9 @@ export class HDKeyStore {
   }
 }
 
-async function deriveAesKey(pin: string, salt: Uint8Array): Promise<CryptoKey> {
+async function deriveAesKey(pin: string, salt: Uint8Array): Promise<Uint8Array> {
   const pinBytes = new TextEncoder().encode(pin);
-  const baseKey = await crypto.subtle.importKey(
-    'raw',
-    pinBytes,
-    'PBKDF2',
-    false,
-    ['deriveBits', 'deriveKey'],
-  );
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: salt.buffer as ArrayBuffer, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
-    baseKey,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt'],
-  );
+  return pbkdf2Sha256(pinBytes, salt, PBKDF2_ITERATIONS, 32);
 }
 
 function generateId(): string {
