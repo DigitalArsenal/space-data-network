@@ -65,6 +65,36 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).toContain("href='/webui'");
   });
 
+  it('adds a root-only modules dashboard route and nav entry', async () => {
+    const nav = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/navigation/NavBar.js'),
+      'utf8',
+    );
+    const routes = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/bundles/routes.js'),
+      'utf8',
+    );
+
+    expect(nav).toContain("to='/modules'");
+    expect(nav).toContain('>Modules<');
+    expect(routes).toContain('../modules/ModulesPage.js');
+    expect(routes).toContain("'/modules'");
+  });
+
+  it('allows the root-only modules dashboard to render before IPFS is ready', async () => {
+    const app = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/App.js'),
+      'utf8',
+    );
+    const redirects = await fs.readFile(
+      path.join(uiSrcPath, 'bundles/redirects.js'),
+      'utf8',
+    );
+
+    expect(app).toContain("url === '/modules'");
+    expect(redirects).toContain("hash === '/modules'");
+  });
+
   it('leaves the upstream /webui diagnostics sidebar item untouched', async () => {
     const source = await fs.readFile(
       path.resolve(__dirname, '../../../../webui/src/navigation/NavBar.js'),

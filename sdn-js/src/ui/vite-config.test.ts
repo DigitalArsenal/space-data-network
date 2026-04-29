@@ -26,6 +26,15 @@ describe('admin vite config', () => {
     expect(proxy).toHaveProperty('/ipfs');
   });
 
+  it('allows serving sibling upstream webui assets in dev without a proxy target', async () => {
+    vi.resetModules();
+
+    const { default: config } = await import('../../ui/vite.config.mts');
+    const server = typeof config.server === 'function' ? config.server({} as never) : config.server;
+
+    expect(server?.fs?.allow).toContain(repoRoot);
+  });
+
   it('injects a browser process shim for upstream webui dependencies', async () => {
     vi.resetModules();
 
@@ -41,6 +50,45 @@ describe('admin vite config', () => {
     expect(String(banner)).toContain('var process = globalThis.process');
     expect(String(banner)).toContain('cwd: () => "/"');
     expect(String(banner)).toContain('browser: true');
+  });
+
+  it('uses JSX parsing for upstream JavaScript during dev dependency scanning', async () => {
+    vi.resetModules();
+
+    const { default: config } = await import('../../ui/vite.config.mts');
+    const optimizeDeps = typeof config.optimizeDeps === 'function'
+      ? config.optimizeDeps({} as never)
+      : config.optimizeDeps;
+    const loader = optimizeDeps?.esbuildOptions?.loader;
+
+    expect(loader).toBeDefined();
+    expect(loader?.['.js']).toBe('jsx');
+  });
+
+  it('patches the upstream react-virtualized proptype-only import for Vite', async () => {
+    vi.resetModules();
+
+    const { default: config } = await import('../../ui/vite.config.mts');
+    const plugins = Array.isArray(config.plugins) ? config.plugins : [];
+    const patchPlugin = plugins.find((plugin) => plugin && typeof plugin === 'object' && plugin.name === 'sdn-react-virtualized-window-scroller-patch');
+    const onScrollPath = path.join(repoRoot, 'webui', 'node_modules', 'react-virtualized', 'dist', 'es', 'WindowScroller', 'utils', 'onScroll.js');
+    const source = [
+      "export function registerScrollListener() {}",
+      'import { bpfrpt_proptype_WindowScroller } from "../WindowScroller.js";',
+    ].join('\n');
+
+    expect(patchPlugin).toBeDefined();
+    expect(typeof patchPlugin?.transform).toBe('function');
+
+    const result = await patchPlugin?.transform?.(source, onScrollPath);
+    const code = typeof result === 'string'
+      ? result
+      : result && typeof result === 'object' && 'code' in result
+        ? result.code
+        : '';
+
+    expect(code).toContain('registerScrollListener');
+    expect(code).not.toContain('bpfrpt_proptype_WindowScroller');
   });
 
   it('pins copied upstream bootstrap dependencies and root-only browser shims', async () => {
@@ -61,6 +109,8 @@ describe('admin vite config', () => {
     const vcardAlias = alias.find((entry) => entry && typeof entry === 'object' && 'find' in entry && String(entry.find) === '/^vcard-cryptoperson$/');
     const flatbuffersAlias = alias.find((entry) => entry && typeof entry === 'object' && 'find' in entry && String(entry.find) === '/^flatbuffers$/');
     const scureBaseAlias = findAliasFor(alias, '@scure/base');
+    const ipldProvidersAlias = findAliasFor(alias, 'ipld-explorer-components/providers');
+    const millisecondsAlias = findAliasFor(alias, 'milliseconds');
 
     expect(String(reactAlias?.replacement)).toContain('/webui/node_modules/react');
     expect(String(reduxBundlerAlias?.replacement)).toContain('/sdn-js/ui/shims/redux-bundler-bound-timers.js');
@@ -73,6 +123,8 @@ describe('admin vite config', () => {
     expect(String(vcardAlias?.replacement)).toContain('/sdn-js/node_modules/vcard-cryptoperson');
     expect(String(flatbuffersAlias?.replacement)).toContain('/sdn-js/node_modules/flatbuffers');
     expect(String(scureBaseAlias?.replacement)).toContain('/sdn-js/node_modules/@scure/base');
+    expect(String(ipldProvidersAlias?.replacement)).toContain('/webui/node_modules/ipld-explorer-components/dist/providers/index.js');
+    expect(String(millisecondsAlias?.replacement)).toContain('/sdn-js/ui/shims/milliseconds.js');
   });
 
   it('routes root-only upstream branding modules to SDN-local overrides', async () => {

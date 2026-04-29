@@ -10,6 +10,7 @@ import BlankPage from '../../../../../../webui/src/blank/BlankPage.js'
 import ExplorePageRenderer from '../../../../../../webui/src/explore/explore-page-renderer.jsx'
 import DiagnosticsPage from '../../../../../../webui/src/diagnostics/loadable-diagnostics-page'
 import DirectoryPage from '../directory/DirectoryPage.js'
+import ModulesPage from '../modules/ModulesPage.js'
 
 export default createRouteBundle({
   '/explore': ExplorePageRenderer,
@@ -25,6 +26,7 @@ export default createRouteBundle({
   '/blank': BlankPage,
   '/diagnostics*': DiagnosticsPage,
   '/directory': DirectoryPage,
+  '/modules': ModulesPage,
   '/status*': StatusPage,
   '/': StatusPage,
   '': StatusPage

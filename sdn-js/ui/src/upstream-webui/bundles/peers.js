@@ -1,5 +1,5 @@
-import { createAsyncResourceBundle, createSelector } from '../../../../../webui/node_modules/redux-bundler/dist/redux-bundler.js';
-import ms from '../../../../../webui/node_modules/milliseconds/milliseconds.js';
+import { createAsyncResourceBundle, createSelector } from 'redux-bundler';
+import ms from 'milliseconds';
 
 import { createHostedRegistryPeerSource, normalizeTrustedPeerToSwarmPeer } from '../peer-source.js';
 

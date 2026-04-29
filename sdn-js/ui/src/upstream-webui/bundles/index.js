@@ -1,4 +1,4 @@
-import { composeBundles, createCacheBundle, createSelector } from '../../../../../webui/node_modules/redux-bundler/dist/redux-bundler.js';
+import { composeBundles, createCacheBundle, createSelector } from 'redux-bundler';
 import ipfsProvider from '../../../../../webui/src/bundles/ipfs-provider.js';
 import appIdle from '../../../../../webui/src/bundles/app-idle.js';
 import nodeBandwidthChartBundle from '../../../../../webui/src/bundles/node-bandwidth-chart.js';
@@ -7,7 +7,7 @@ import peersBundle from './peers.js';
 import peerLocationsBundle from './peer-locations.js';
 import pinningBundle from '../../../../../webui/src/bundles/pinning.js';
 import routesBundle from '../../../../../webui/src/bundles/routes.js';
-import redirectsBundle from '../../../../../webui/src/bundles/redirects.js';
+import redirectsBundle from './redirects.js';
 import filesBundle from '../../../../../webui/src/bundles/files/index.js';
 import configBundle from '../../../../../webui/src/bundles/config.js';
 import configSaveBundle from '../../../../../webui/src/bundles/config-save.js';

@@ -44,6 +44,20 @@ export {
   createMarketplaceIndex,
   MarketplaceIndex,
 } from './marketplace';
+export {
+  emptyModuleRuntimeSnapshot,
+  loadModuleRuntimeSnapshotFromServer,
+  type ModuleRuntimeCatalog,
+  type ModuleRuntimeEntry,
+  type ModuleRuntimeFetchLike,
+  type ModuleRuntimeManifest,
+  type ModuleRuntimeMethod,
+  type ModuleRuntimeOption,
+  type ModuleRuntimeProtocol,
+  type ModuleRuntimeSnapshot,
+  type ModuleRuntimeStats,
+  type ModuleRuntimeTimer,
+} from './modules';
 export { loadMarketplaceListingsFromServer } from './marketplace-source';
 export {
   decodeCanonicalPlgListing,

@@ -1,4 +1,4 @@
-import { createSelector } from '../../../../../webui/node_modules/redux-bundler/dist/redux-bundler.js';
+import { createSelector } from 'redux-bundler';
 
 import { trustedPeerListToPeerLocationsForSwarm } from '../peer-source.js';
 

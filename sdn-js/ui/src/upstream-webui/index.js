@@ -4,7 +4,7 @@ import { Provider } from 'redux-bundler-react';
 import 'react-virtualized/styles.css';
 import { I18nextProvider } from 'react-i18next';
 import { DndProvider } from 'react-dnd';
-import { HeliaProvider, ExploreProvider } from '../../../../webui/node_modules/ipld-explorer-components/dist/providers/index.js';
+import { HeliaProvider, ExploreProvider } from 'ipld-explorer-components/providers';
 
 import '../../../../webui/src/index.css';
 import App from './overrides/App.js';

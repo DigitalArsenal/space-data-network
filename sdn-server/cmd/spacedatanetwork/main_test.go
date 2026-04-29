@@ -25,6 +25,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
+	"github.com/spacedatanetwork/sdn-server/plugins"
 )
 
 func TestIsPublicAPIPathAllowsProviderDescriptorRoute(t *testing.T) {
@@ -187,6 +188,56 @@ func TestHandleModuleDeliveryListingsReturnsCanonicalPlgListings(t *testing.T) {
 	}
 	if payload.Results[0].DataBase64 == "" || payload.Results[1].DataBase64 == "" {
 		t.Fatalf("results = %#v, want base64-encoded PLG bytes", payload.Results)
+	}
+}
+
+func TestHandleModuleRuntimeSnapshotMergesCatalogOnlyModules(t *testing.T) {
+	t.Parallel()
+
+	reg := writeMainTestPluginRegistry(
+		t,
+		license.PluginCatalogEntry{
+			ID:            "com.space-data-network.analysis",
+			Version:       "1.0.0",
+			RequiredScope: "orbpro:base",
+			EncryptedPath: "analysis.wasm.enc",
+			KeyPath:       "analysis.key",
+			ContentType:   "application/wasm+encrypted",
+		},
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/modules/runtime", nil)
+	recorder := httptest.NewRecorder()
+
+	handleModuleRuntimeSnapshot(plugins.New(), reg)(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+
+	var payload struct {
+		Count   int `json:"count"`
+		Modules []struct {
+			ID      string `json:"id"`
+			Version string `json:"version"`
+			Status  string `json:"status"`
+			Catalog struct {
+				RequiredScope string `json:"requiredScope"`
+				ContentType   string `json:"contentType"`
+			} `json:"catalog"`
+		} `json:"modules"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&payload); err != nil {
+		t.Fatalf("json decode failed: %v", err)
+	}
+	if payload.Count != 1 || len(payload.Modules) != 1 {
+		t.Fatalf("payload count/modules = %d/%d, want 1/1", payload.Count, len(payload.Modules))
+	}
+	if got, want := payload.Modules[0].ID, "com.space-data-network.analysis"; got != want {
+		t.Fatalf("module id = %q, want %q", got, want)
+	}
+	if got, want := payload.Modules[0].Catalog.RequiredScope, "orbpro:base"; got != want {
+		t.Fatalf("required scope = %q, want %q", got, want)
 	}
 }
 

@@ -32,9 +32,10 @@ type Module struct {
 	host     host.Host
 	mu       sync.Mutex
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
+	startedAt time.Time
+	wg        sync.WaitGroup
 }
 
 // Context returns the module's lifecycle context. It is set when Start() is called
@@ -186,6 +187,7 @@ func (m *Module) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 	m.ctx = ctx
 	m.cancel = cancel
 	m.host = runtime.Host
+	m.startedAt = time.Now().UTC()
 	m.mu.Unlock()
 
 	// Register libp2p stream handlers for declared protocols
@@ -353,6 +355,30 @@ func (m *Module) InvokeMethodFrames(ctx context.Context, methodID string, inputF
 // Manifest returns the parsed manifest.
 func (m *Module) Manifest() *Manifest { return m.manifest }
 
+// RuntimeDescriptor returns a dashboard-safe summary of this module.
+func (m *Module) RuntimeDescriptor() plugins.RuntimeModuleDescriptor {
+	descriptor := plugins.RuntimeModuleDescriptor{
+		Manifest: runtimeManifestDescriptor(m.manifest),
+	}
+	if m != nil && m.mod != nil {
+		if stats, err := m.mod.MemoryStats(); err == nil {
+			descriptor.Stats.MemoryPages = stats.Pages
+			descriptor.Stats.MemoryBytes = stats.Bytes
+			descriptor.Stats.MaxMemoryPages = stats.MaxPages
+			descriptor.Stats.MaxMemoryBytes = stats.MaxBytes
+		}
+	}
+	if m != nil {
+		m.mu.Lock()
+		startedAt := m.startedAt
+		m.mu.Unlock()
+		if !startedAt.IsZero() {
+			descriptor.Stats.UptimeMs = time.Since(startedAt).Milliseconds()
+		}
+	}
+	return descriptor
+}
+
 // Mod returns the underlying wasmrt.Module.
 func (m *Module) Mod() *wasmrt.Module { return m.mod }
 
@@ -365,6 +391,50 @@ func (m *Module) RuntimeHost() host.Host {
 
 // NodeContext returns the module's bound node context.
 func (m *Module) NodeContext() *NodeContext { return m.nodeCtx }
+
+func runtimeManifestDescriptor(manifest *Manifest) *plugins.RuntimeModuleManifest {
+	if manifest == nil {
+		return nil
+	}
+	out := &plugins.RuntimeModuleManifest{
+		PluginID:     manifest.PluginID,
+		Name:         manifest.Name,
+		Version:      manifest.Version,
+		PluginFamily: manifest.PluginFamily,
+		Capabilities: append([]string(nil), manifest.Capabilities...),
+	}
+	for _, method := range manifest.Methods {
+		out.Methods = append(out.Methods, plugins.RuntimeModuleMethod{
+			MethodID:    method.MethodID,
+			DisplayName: method.DisplayName,
+			Description: method.Description,
+		})
+	}
+	for _, protocolDecl := range manifest.Protocols {
+		out.Protocols = append(out.Protocols, plugins.RuntimeModuleProtocol{
+			ProtocolID:    protocolDecl.ProtocolID,
+			MethodID:      protocolDecl.MethodID,
+			InputPortID:   protocolDecl.InputPortID,
+			OutputPortID:  protocolDecl.OutputPortID,
+			Description:   protocolDecl.Description,
+			WireID:        protocolDecl.WireID,
+			TransportKind: protocolDecl.TransportKind,
+			Role:          protocolDecl.Role,
+			AutoInstall:   protocolDecl.AutoInstall,
+			Advertise:     protocolDecl.Advertise,
+			DiscoveryKey:  protocolDecl.DiscoveryKey,
+		})
+	}
+	for _, timer := range manifest.Timers {
+		out.Timers = append(out.Timers, plugins.RuntimeModuleTimer{
+			TimerID:           timer.TimerID,
+			MethodID:          timer.MethodID,
+			DefaultIntervalMs: timer.DefaultIntervalMs,
+			Description:       timer.Description,
+		})
+	}
+	return out
+}
 
 // --- Generic protocol stream handler ---
 

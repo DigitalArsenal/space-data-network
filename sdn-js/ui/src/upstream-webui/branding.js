@@ -1,5 +1,6 @@
 const rootOnlyRouteTitles = new Map([
   ['/directory', 'Directory | Space Data Network'],
+  ['/modules', 'Modules | Space Data Network'],
 ])
 
 export function rootOnlyDocumentTitleForHash(hash) {
