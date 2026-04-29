@@ -56,7 +56,7 @@
     "@chainsafe/libp2p-gossipsub": "^13.0.0",
     "@chainsafe/libp2p-noise": "^15.0.0",
     "@chainsafe/libp2p-yamux": "^6.0.0",
-    "@helia/unixfs": "^7.1.0",
+    "@helia/unixfs": "^7.2.1",
     "@libp2p/bootstrap": "^10.0.0",
     "@libp2p/circuit-relay-v2": "^1.0.0",
     "@libp2p/crypto": "^4.1.9",
@@ -71,7 +71,7 @@
     "flatsql": "^0.4.2",
     "hd-wallet-ui": "^2.0.5",
     "hd-wallet-wasm": "^2.0.5",
-    "helia": "^6.0.22",
+    "helia": "^6.1.4",
     "idb": "^8.0.0",
     "libp2p": "^1.2.0",
     "monaco-editor": "^0.55.1",
@@ -79,8 +79,8 @@
     "qrcode": "^1.5.3",
     "space-data-module-sdk": "^0.8.3",
     "spacedatastandards.org": "^1.93.3",
-    "uint8arraylist": "^2.4.8",
-    "uint8arrays": "^5.0.0",
+    "uint8arraylist": "^2.4.9",
+    "uint8arrays": "^5.1.1",
     "vcard-cryptoperson": "^1.1.10"
   },
   "devDependencies": {
