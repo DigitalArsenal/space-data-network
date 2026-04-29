@@ -144,32 +144,18 @@ describe("SDNNode relay bootstrap", () => {
     await node.stop();
   });
 
-  it("reuses the in-flight helia initialization across concurrent CID fetches", async () => {
-    let resolveHelia: ((value: { stop: () => Promise<void> }) => void) | null =
-      null;
-    createHeliaFromLibp2pMock.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveHelia = resolve;
-        }),
-    );
-
+  it("requires an HTTP CID fetch endpoint in the browser bundle", async () => {
     const { SDNNode } = await import("./node");
     const node = await SDNNode.create({
       edgeRelays: ["/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider"],
       enableStorage: false,
     });
 
-    const firstFetch = node.fetchCIDBytes("bafkreicidone");
-    const secondFetch = node.fetchCIDBytes("bafkreicidtwo");
-
-    expect(createHeliaFromLibp2pMock).toHaveBeenCalledTimes(1);
-
-    resolveHelia?.({ stop: vi.fn(async () => undefined) });
-    await Promise.all([firstFetch, secondFetch]);
-
-    expect(createHeliaFromLibp2pMock).toHaveBeenCalledTimes(1);
-    expect(fetchCIDBytesFromHeliaMock).toHaveBeenCalledTimes(2);
+    await expect(node.fetchCIDBytes("bafkreicidone")).rejects.toThrow(
+      /ipfsApiBaseUrl or ipfsGatewayBaseUrl/i,
+    );
+    expect(createHeliaFromLibp2pMock).not.toHaveBeenCalled();
+    expect(fetchCIDBytesFromHeliaMock).not.toHaveBeenCalled();
 
     await node.stop();
   });

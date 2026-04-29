@@ -1,6 +1,6 @@
 {
   "name": "@spacedatanetwork/sdn-js",
-  "version": "2.0.9",
+  "version": "2.0.10",
   "description": "Space Data Network JavaScript library for browser and Node.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -46,7 +46,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DigitalArsenal/space-data-network.git",
+    "url": "git+https://github.com/DigitalArsenal/space-data-network.git",
     "directory": "sdn-js"
   },
   "homepage": "https://github.com/DigitalArsenal/space-data-network/tree/main/sdn-js#readme",
@@ -68,6 +68,7 @@
     "@libp2p/websockets": "^8.0.0",
     "@libp2p/webtransport": "^4.0.0",
     "@multiformats/multiaddr": "^12.1.0",
+    "@noble/curves": "^1.9.7",
     "flatbuffers": "^25.9.23",
     "flatsql": "^0.4.2",
     "hd-wallet-ui": "^2.0.5",

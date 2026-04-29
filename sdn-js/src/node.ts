@@ -15,19 +15,17 @@ import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { kadDHT } from "@libp2p/kad-dht";
 import { multiaddr } from "@multiformats/multiaddr";
-import type { Helia } from "helia";
 import { CID } from "multiformats/cid";
 import { peerIdFromKeys, peerIdFromString } from "@libp2p/peer-id";
 import { isUint8ArrayList, Uint8ArrayList } from "uint8arraylist";
 
-import { keys } from "@libp2p/crypto";
+import { unmarshalPrivateKey } from "@libp2p/crypto/keys";
 
 import { SDNStorage, StoredRecord } from "./storage";
 import { getBootstrapRelays, EdgeDiscovery } from "./edge-discovery";
 import { SchemaName, SUPPORTED_SCHEMAS } from "./schemas";
 import { initHDWallet } from "./crypto/hd-wallet";
 import type { DerivedIdentity } from "./crypto/types";
-import { fetchCIDBytesFromHelia, createHeliaFromLibp2p } from "./helia";
 import {
   requestEncryptedModuleBundle,
   requestModuleGrant,
@@ -93,8 +91,6 @@ export interface SDNNodeEvents {
 
 export class SDNNode {
   private libp2p: Libp2p | null = null;
-  private heliaNode: Helia | null = null;
-  private heliaNodePromise: Promise<Helia> | null = null;
   private storage: SDNStorage | null = null;
   private config: SDNConfig;
   private events: SDNNodeEvents;
@@ -198,7 +194,7 @@ export class SDNNode {
         this.config.identity.identityKey.publicKey,
       );
       libp2pOpts.peerId = await peerIdFromKeys(publicKeyBytes, privateKeyBytes);
-      libp2pOpts.privateKey = await keys.unmarshalPrivateKey(privateKeyBytes);
+      libp2pOpts.privateKey = await unmarshalPrivateKey(privateKeyBytes);
       // Also set the Ed25519 signing key for message auth
       if (!this.privateKey) {
         this.privateKey = this.config.identity.signingKey.privateKey;
@@ -535,10 +531,9 @@ export class SDNNode {
     } else if (ipfsGatewayBaseUrl) {
       fetchPromise = fetchCIDBytesFromIPFSGateway(ipfsGatewayBaseUrl, cid);
     } else {
-      fetchPromise = (async () => {
-        const helia = await this.ensureHelia();
-        return fetchCIDBytesFromHelia(helia, cid);
-      })();
+      throw new Error(
+        "CID fetch requires ipfsApiBaseUrl or ipfsGatewayBaseUrl in the browser bundle",
+      );
     }
 
     return withOptionalTimeout(
@@ -605,12 +600,6 @@ export class SDNNode {
       await this.storage.close();
     }
 
-    if (this.heliaNode) {
-      await this.heliaNode.stop().catch(() => undefined);
-      this.heliaNode = null;
-    }
-    this.heliaNodePromise = null;
-
     // Stop libp2p
     if (this.libp2p) {
       await this.libp2p.stop();
@@ -637,24 +626,6 @@ export class SDNNode {
 
   static get moduleDeliveryProtocolId(): string {
     return MODULE_DELIVERY_PROTOCOL_ID;
-  }
-
-  private async ensureHelia(): Promise<Helia> {
-    if (!this.libp2p) {
-      throw new Error("Node not initialized");
-    }
-    if (!this.heliaNodePromise) {
-      this.heliaNodePromise = createHeliaFromLibp2p(this.libp2p)
-        .then((heliaNode) => {
-          this.heliaNode = heliaNode;
-          return heliaNode;
-        })
-        .catch((error) => {
-          this.heliaNodePromise = null;
-          throw error;
-        });
-    }
-    return this.heliaNodePromise;
   }
 }
 
