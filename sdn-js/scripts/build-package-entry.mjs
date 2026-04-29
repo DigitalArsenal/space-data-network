@@ -94,9 +94,8 @@ await build({
   ],
   outdir: path.join(packageRoot, 'dist'),
   outbase: path.join(packageRoot, 'src'),
-  splitting: true,
+  splitting: false,
   entryNames: '[dir]/[name]',
-  chunkNames: 'chunks/[name]-[hash]',
   outExtension: {
     '.js': '.mjs',
   },
