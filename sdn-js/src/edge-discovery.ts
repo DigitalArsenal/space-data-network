@@ -31,7 +31,7 @@ const SPACEAWARE_RELAY_PEER_ID = '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3
 
 export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [
   // Primary relay for the current production deployment.
-  `/dns4/spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`,
+  `/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`,
   // Direct websocket fallback from the node's advertised listen address.
   `/ip4/104.131.11.220/tcp/8080/ws/p2p/${SPACEAWARE_RELAY_PEER_ID}`,
 ];
@@ -40,9 +40,9 @@ export const DEFAULT_EDGE_RELAYS = getEnvRelays() ?? [
  * Fallback relays for regional availability
  */
 export const REGIONAL_FALLBACK_RELAYS: Record<string, string[]> = {
-  'us-east': [`/dns4/spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
+  'us-east': [`/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
   'eu-west': [`/ip4/104.131.11.220/tcp/8080/ws/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
-  'ap-southeast': [`/dns4/spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
+  'ap-southeast': [`/dns4/sdn.spaceaware.io/tcp/443/wss/p2p/${SPACEAWARE_RELAY_PEER_ID}`],
 };
 
 let edgeRelaysModule: EdgeRelaysModule | null = null;
