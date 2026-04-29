@@ -24,6 +24,7 @@
 import { createHelia, type Helia } from 'helia';
 import { unixfs } from '@helia/unixfs';
 import { createLibp2p, type Libp2p } from 'libp2p';
+import { serviceCapabilities } from '@libp2p/interface';
 import { webSockets } from '@libp2p/websockets';
 import { all as wsFilters } from '@libp2p/websockets/filters';
 import { webTransport } from '@libp2p/webtransport';
@@ -69,6 +70,13 @@ type IncomingStreamData = {
 type CompatLibp2p = Libp2p & {
   __heliaStreamHandlerCompatApplied?: boolean;
 };
+
+function identifyCapabilityOnly() {
+  return () => ({
+    [serviceCapabilities]: ['@libp2p/identify'],
+    [Symbol.toStringTag]: 'sdn-js-identify-capability',
+  });
+}
 
 // Helia 6 registers some stream handlers as `(stream, connection)`, while the
 // libp2p instance resolved in this workspace invokes handlers with a single
@@ -130,6 +138,16 @@ export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaS
   const rawRelays = config.edgeRelays ?? await getBootstrapRelays();
   const bootstrapList = rawRelays.length > 0 ? rawRelays : [];
 
+  const services: NonNullable<Parameters<typeof createLibp2p>[0]>['services'] = {
+    pubsub: gossipsub({
+      allowPublishToZeroTopicPeers: true,
+      emitSelf: false,
+    }),
+    dht: kadDHT({ clientMode: true }),
+  };
+  services.identify =
+    config.enableIdentify === true ? identify() : identifyCapabilityOnly();
+
   const libp2pOpts: Parameters<typeof createLibp2p>[0] = {
     transports: [
       webSockets({ filter: wsFilters }),
@@ -141,14 +159,7 @@ export async function createHeliaSDNNode(config: SDNConfig = {}): Promise<HeliaS
     peerDiscovery: bootstrapList.length
       ? [bootstrap({ list: bootstrapList })]
       : [],
-    services: {
-      identify: identify(),
-      pubsub: gossipsub({
-        allowPublishToZeroTopicPeers: true,
-        emitSelf: false,
-      }),
-      dht: kadDHT({ clientMode: true }),
-    },
+    services,
   };
 
   if (config.identity?.identityKey) {

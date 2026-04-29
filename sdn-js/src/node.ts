@@ -2,33 +2,32 @@
  * SDN Node - Main P2P node implementation for browsers
  */
 
-import { createLibp2p, Libp2p } from 'libp2p';
-import { webSockets } from '@libp2p/websockets';
-import { all as wsFilters } from '@libp2p/websockets/filters';
-import { webTransport } from '@libp2p/webtransport';
-import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
-import { bootstrap } from '@libp2p/bootstrap';
-import { identify } from '@libp2p/identify';
-import { gossipsub, GossipSub } from '@chainsafe/libp2p-gossipsub';
-import { noise } from '@chainsafe/libp2p-noise';
-import { yamux } from '@chainsafe/libp2p-yamux';
-import { kadDHT } from '@libp2p/kad-dht';
-import { multiaddr } from '@multiformats/multiaddr';
-import type { Helia } from 'helia';
-import { CID } from 'multiformats/cid';
-import { peerIdFromKeys, peerIdFromString } from '@libp2p/peer-id';
+import { createLibp2p, Libp2p } from "libp2p";
+import { serviceCapabilities } from "@libp2p/interface";
+import { webSockets } from "@libp2p/websockets";
+import { all as wsFilters } from "@libp2p/websockets/filters";
+import { webTransport } from "@libp2p/webtransport";
+import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
+import { bootstrap } from "@libp2p/bootstrap";
+import { identify } from "@libp2p/identify";
+import { gossipsub, GossipSub } from "@chainsafe/libp2p-gossipsub";
+import { noise } from "@chainsafe/libp2p-noise";
+import { yamux } from "@chainsafe/libp2p-yamux";
+import { kadDHT } from "@libp2p/kad-dht";
+import { multiaddr } from "@multiformats/multiaddr";
+import type { Helia } from "helia";
+import { CID } from "multiformats/cid";
+import { peerIdFromKeys, peerIdFromString } from "@libp2p/peer-id";
+import { isUint8ArrayList, Uint8ArrayList } from "uint8arraylist";
 
-import { keys } from '@libp2p/crypto';
+import { keys } from "@libp2p/crypto";
 
-import { SDNStorage, StoredRecord } from './storage';
-import { getBootstrapRelays, EdgeDiscovery } from './edge-discovery';
-import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
-import { initHDWallet } from './crypto/hd-wallet';
-import type { DerivedIdentity } from './crypto/types';
-import {
-  fetchCIDBytesFromHelia,
-  createHeliaFromLibp2p,
-} from './helia';
+import { SDNStorage, StoredRecord } from "./storage";
+import { getBootstrapRelays, EdgeDiscovery } from "./edge-discovery";
+import { SchemaName, SUPPORTED_SCHEMAS } from "./schemas";
+import { initHDWallet } from "./crypto/hd-wallet";
+import type { DerivedIdentity } from "./crypto/types";
+import { fetchCIDBytesFromHelia, createHeliaFromLibp2p } from "./helia";
 import {
   requestEncryptedModuleBundle,
   requestModuleGrant,
@@ -40,26 +39,37 @@ import {
   type ModuleDeliveryTransport,
   type EncryptedModuleBundleResult,
   MODULE_DELIVERY_PROTOCOL_ID,
-} from './module-delivery';
+} from "./module-delivery";
 
-const TOPIC_PREFIX = '/spacedatanetwork/sds/';
-export const LEGACY_ID_EXCHANGE_PROTOCOL = '/space-data-network/id-exchange/1.0.0';
+const TOPIC_PREFIX = "/spacedatanetwork/sds/";
+export const LEGACY_ID_EXCHANGE_PROTOCOL =
+  "/space-data-network/id-exchange/1.0.0";
 // Public IPFS bootstrap peers + SDN relay can be combined for browser interop.
 export const IPFS_BOOTSTRAP_PEERS = [
-  '/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN',
-  '/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb',
-  '/dnsaddr/bootstrap.libp2p.io/p2p/QmZa1sAxajnQjVM8WjWXoMbmPd7NsWhfKsPkErzpm9wGkp',
-  '/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa',
-  '/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt',
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmZa1sAxajnQjVM8WjWXoMbmPd7NsWhfKsPkErzpm9wGkp",
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
 ] as const;
 
-type StreamChunk = Uint8Array | { subarray: (start?: number, end?: number) => Uint8Array };
+function identifyCapabilityOnly() {
+  return () => ({
+    [serviceCapabilities]: ["@libp2p/identify"],
+    [Symbol.toStringTag]: "sdn-js-identify-capability",
+  });
+}
+
+type StreamChunk = Uint8Array | Uint8ArrayList | ArrayBufferView | ArrayBuffer;
 
 export interface SDNConfig {
   edgeRelays?: string[];
   bootstrapPeers?: string[];
   includeIPFSBootstrap?: boolean;
+  /** Enable libp2p Identify service. Disabled by default for lean browser module delivery. */
+  enableIdentify?: boolean;
   ipfsApiBaseUrl?: string;
+  ipfsGatewayBaseUrl?: string;
   ipfsFetchTimeoutMs?: number;
   idExchangeProtocol?: string;
   enableStorage?: boolean;
@@ -102,13 +112,18 @@ export class SDNNode {
   /**
    * Create and start a new SDN node
    */
-  static async create(config: SDNConfig = {}, events: SDNNodeEvents = {}): Promise<SDNNode> {
+  static async create(
+    config: SDNConfig = {},
+    events: SDNNodeEvents = {},
+  ): Promise<SDNNode> {
     const node = new SDNNode(config, events);
 
     // Try to load HD wallet module for signing
     node.cryptoReady = await initHDWallet();
     if (!node.cryptoReady) {
-      console.warn('HD Wallet WASM not loaded - auth challenge signing unavailable');
+      console.warn(
+        "HD Wallet WASM not loaded - auth challenge signing unavailable",
+      );
     }
 
     await node.init();
@@ -120,7 +135,9 @@ export class SDNNode {
     const hasExplicitRelays = explicitRelays.length > 0;
 
     // Build bootstrap list from SDN relays and IPFS public bootstrappers.
-    const rawRelays = hasExplicitRelays ? explicitRelays : await getBootstrapRelays();
+    const rawRelays = hasExplicitRelays
+      ? explicitRelays
+      : await getBootstrapRelays();
 
     // Create discovery instance for load-balanced relay selection
     this.discovery = new EdgeDiscovery(rawRelays);
@@ -136,9 +153,29 @@ export class SDNNode {
     const relays = shouldProbeRelays(this.config, hasExplicitRelays)
       ? this.discovery.getBestRelays(rawRelays.length)
       : rawRelays;
-    const bootstrapList = resolveBootstrapList(relays, this.config, hasExplicitRelays);
+    const bootstrapList = resolveBootstrapList(
+      relays,
+      this.config,
+      hasExplicitRelays,
+    );
 
     // Build libp2p options
+    const services: NonNullable<
+      Parameters<typeof createLibp2p>[0]
+    >["services"] = {
+      pubsub: gossipsub({
+        allowPublishToZeroTopicPeers: true,
+        emitSelf: false,
+      }),
+      dht: kadDHT({
+        clientMode: true,
+      }),
+    };
+    services.identify =
+      this.config.enableIdentify === true
+        ? identify()
+        : identifyCapabilityOnly();
+
     const libp2pOpts: Parameters<typeof createLibp2p>[0] = {
       transports: [
         webSockets({ filter: wsFilters }),
@@ -149,26 +186,17 @@ export class SDNNode {
       ],
       connectionEncryption: [noise()],
       streamMuxers: [yamux()],
-      peerDiscovery: [
-        bootstrap({ list: bootstrapList }),
-      ],
-      services: {
-        identify: identify(),
-        pubsub: gossipsub({
-          allowPublishToZeroTopicPeers: true,
-          emitSelf: false,
-        }),
-        dht: kadDHT({
-          clientMode: true,
-        }),
-      },
+      peerDiscovery: [bootstrap({ list: bootstrapList })],
+      services,
     };
 
     // If an HD wallet identity is provided, use its secp256k1 key for deterministic PeerID
     if (this.config.identity?.identityKey) {
       const rawKey = this.config.identity.identityKey.privateKey;
       const privateKeyBytes = marshalSecp256k1PrivateKey(rawKey);
-      const publicKeyBytes = marshalSecp256k1PublicKey(this.config.identity.identityKey.publicKey);
+      const publicKeyBytes = marshalSecp256k1PublicKey(
+        this.config.identity.identityKey.publicKey,
+      );
       libp2pOpts.peerId = await peerIdFromKeys(publicKeyBytes, privateKeyBytes);
       libp2pOpts.privateKey = await keys.unmarshalPrivateKey(privateKeyBytes);
       // Also set the Ed25519 signing key for message auth
@@ -182,16 +210,18 @@ export class SDNNode {
 
     // Initialize storage if enabled
     if (this.config.enableStorage !== false) {
-      this.storage = await SDNStorage.open(this.config.storeName || 'sdn-store');
+      this.storage = await SDNStorage.open(
+        this.config.storeName || "sdn-store",
+      );
     }
 
     // Setup event handlers
-    this.libp2p.addEventListener('peer:connect', (evt) => {
+    this.libp2p.addEventListener("peer:connect", (evt) => {
       const peerId = evt.detail.toString();
       this.events.onPeerConnected?.(peerId);
     });
 
-    this.libp2p.addEventListener('peer:disconnect', (evt) => {
+    this.libp2p.addEventListener("peer:disconnect", (evt) => {
       const peerId = evt.detail.toString();
       this.events.onPeerDisconnected?.(peerId);
     });
@@ -204,14 +234,14 @@ export class SDNNode {
    * Get the node's peer ID
    */
   get peerId(): string {
-    return this.libp2p?.peerId.toString() ?? '';
+    return this.libp2p?.peerId.toString() ?? "";
   }
 
   /**
    * Get list of connected peers
    */
   get peers(): string[] {
-    return this.libp2p?.getPeers().map(p => p.toString()) ?? [];
+    return this.libp2p?.getPeers().map((p) => p.toString()) ?? [];
   }
 
   /**
@@ -219,7 +249,7 @@ export class SDNNode {
    */
   async publish(schema: SchemaName, data: object): Promise<string> {
     if (!this.libp2p) {
-      throw new Error('Node not initialized');
+      throw new Error("Node not initialized");
     }
 
     // Convert to binary (in production, use FlatBuffers via WASM)
@@ -232,9 +262,14 @@ export class SDNNode {
     await pubsub.publish(topicName, binary);
 
     // Store locally
-    let cid = '';
+    let cid = "";
     if (this.storage) {
-      cid = await this.storage.store(schema, binary, this.peerId, new Uint8Array(0));
+      cid = await this.storage.store(
+        schema,
+        binary,
+        this.peerId,
+        new Uint8Array(0),
+      );
     }
 
     return cid;
@@ -245,7 +280,9 @@ export class SDNNode {
    */
   setPrivateKey(key: Uint8Array): void {
     if (key.length !== 32 && key.length !== 64) {
-      throw new Error('Invalid private key length - expected 32 (seed) or 64 bytes');
+      throw new Error(
+        "Invalid private key length - expected 32 (seed) or 64 bytes",
+      );
     }
     this.privateKey = key.length === 64 ? key.slice(0, 32) : key;
   }
@@ -260,9 +297,12 @@ export class SDNNode {
   /**
    * Subscribe to a schema topic
    */
-  async subscribe(schema: SchemaName, handler?: (data: unknown, from: string) => void): Promise<void> {
+  async subscribe(
+    schema: SchemaName,
+    handler?: (data: unknown, from: string) => void,
+  ): Promise<void> {
     if (!this.libp2p) {
-      throw new Error('Node not initialized');
+      throw new Error("Node not initialized");
     }
 
     const topicName = TOPIC_PREFIX + schema;
@@ -276,33 +316,39 @@ export class SDNNode {
     this.subscriptions.set(schema, controller);
 
     // Listen for messages
-    pubsub.addEventListener('message', (evt: CustomEvent) => {
-      if (evt.detail.topic !== topicName) return;
+    pubsub.addEventListener(
+      "message",
+      (evt: CustomEvent) => {
+        if (evt.detail.topic !== topicName) return;
 
-      const msgData = evt.detail.data;
-      if (msgData.length === 0) return;
+        const msgData = evt.detail.data;
+        if (msgData.length === 0) return;
 
-      // Decode JSON (in production, use FlatBuffers via WASM)
-      const jsonStr = new TextDecoder().decode(msgData);
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(jsonStr);
-      } catch {
-        console.warn('Failed to parse message');
-        return;
-      }
+        // Decode JSON (in production, use FlatBuffers via WASM)
+        const jsonStr = new TextDecoder().decode(msgData);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(jsonStr);
+        } catch {
+          console.warn("Failed to parse message");
+          return;
+        }
 
-      const from = evt.detail.from.toString();
+        const from = evt.detail.from.toString();
 
-      // Store locally
-      if (this.storage) {
-        this.storage.store(schema, msgData, from, new Uint8Array(0)).catch(console.error);
-      }
+        // Store locally
+        if (this.storage) {
+          this.storage
+            .store(schema, msgData, from, new Uint8Array(0))
+            .catch(console.error);
+        }
 
-      // Call handlers
-      handler?.(parsed, from);
-      this.events.onMessage?.(schema, parsed, from);
-    }, { signal: controller.signal });
+        // Call handlers
+        handler?.(parsed, from);
+        this.events.onMessage?.(schema, parsed, from);
+      },
+      { signal: controller.signal },
+    );
   }
 
   /**
@@ -326,9 +372,12 @@ export class SDNNode {
   /**
    * Query local storage for records
    */
-  async query(schema: SchemaName, filter?: { peerId?: string; since?: Date }): Promise<StoredRecord[]> {
+  async query(
+    schema: SchemaName,
+    filter?: { peerId?: string; since?: Date },
+  ): Promise<StoredRecord[]> {
     if (!this.storage) {
-      throw new Error('Storage not enabled');
+      throw new Error("Storage not enabled");
     }
 
     return this.storage.query(schema, filter);
@@ -339,7 +388,7 @@ export class SDNNode {
    */
   async get(schema: SchemaName, cid: string): Promise<StoredRecord | null> {
     if (!this.storage) {
-      throw new Error('Storage not enabled');
+      throw new Error("Storage not enabled");
     }
 
     return this.storage.get(schema, cid);
@@ -350,7 +399,7 @@ export class SDNNode {
    */
   async dial(addr: string): Promise<void> {
     if (!this.libp2p) {
-      throw new Error('Node not initialized');
+      throw new Error("Node not initialized");
     }
 
     const ma = multiaddr(addr);
@@ -360,9 +409,12 @@ export class SDNNode {
   /**
    * Dial through a relay to reach a peer behind a firewall
    */
-  async dialThroughRelay(relayAddr: string, targetPeerId: string): Promise<void> {
+  async dialThroughRelay(
+    relayAddr: string,
+    targetPeerId: string,
+  ): Promise<void> {
     if (!this.libp2p) {
-      throw new Error('Node not initialized');
+      throw new Error("Node not initialized");
     }
 
     const relayMa = multiaddr(relayAddr);
@@ -380,16 +432,20 @@ export class SDNNode {
     candidateAddrs: string[] = [],
   ): Promise<Uint8Array> {
     if (!this.libp2p) {
-      throw new Error('Node not initialized');
+      throw new Error("Node not initialized");
     }
 
     const payloadBytes = payload.slice();
-    const dialTargets = candidateAddrs.map((addr) => normalizeDialTarget(addr, targetPeerId));
+    const dialTargets = candidateAddrs.map((addr) =>
+      normalizeDialTarget(addr, targetPeerId),
+    );
     let lastError: unknown = null;
 
     if (dialTargets.length === 0) {
       const stream = await this.libp2p.dialProtocol(
-        peerIdFromString(targetPeerId) as unknown as Parameters<Libp2p['dialProtocol']>[0],
+        peerIdFromString(targetPeerId) as unknown as Parameters<
+          Libp2p["dialProtocol"]
+        >[0],
         protocolId,
       );
       return exchangeStream(stream, payloadBytes);
@@ -397,7 +453,10 @@ export class SDNNode {
 
     for (const dialTarget of dialTargets) {
       try {
-        const stream = await this.libp2p.dialProtocol(multiaddr(dialTarget), protocolId);
+        const stream = await this.libp2p.dialProtocol(
+          multiaddr(dialTarget),
+          protocolId,
+        );
         return await exchangeStream(stream, payloadBytes);
       } catch (error) {
         lastError = error;
@@ -413,16 +472,23 @@ export class SDNNode {
     relayAddr: string,
     targetPeerId: string,
     protocolId: string,
-    payload: Uint8Array | string
+    payload: Uint8Array | string,
   ): Promise<Uint8Array> {
-    const payloadBytes = typeof payload === 'string' ? new TextEncoder().encode(payload) : payload;
-    return this.dialProtocol(targetPeerId, protocolId, payloadBytes, [relayAddr]);
+    const payloadBytes =
+      typeof payload === "string" ? new TextEncoder().encode(payload) : payload;
+    return this.dialProtocol(targetPeerId, protocolId, payloadBytes, [
+      relayAddr,
+    ]);
   }
 
   /**
    * Compatibility helper for the historical id-exchange relay probe script.
    */
-  async idExchangeThroughRelay(relayAddr: string, targetPeerId: string, message = 'ping'): Promise<string> {
+  async idExchangeThroughRelay(
+    relayAddr: string,
+    targetPeerId: string,
+    message = "ping",
+  ): Promise<string> {
     const response = await this.dialProtocolThroughRelay(
       relayAddr,
       targetPeerId,
@@ -434,17 +500,20 @@ export class SDNNode {
 
   async discoverProviders(discoveryCID: string): Promise<DiscoveredProvider[]> {
     if (!this.libp2p) {
-      throw new Error('Node not initialized');
+      throw new Error("Node not initialized");
     }
 
     const providers: DiscoveredProvider[] = [];
     const seen = new Set<string>();
     const timeout = AbortSignal.timeout(10_000);
 
-    for await (const provider of this.libp2p.contentRouting.findProviders(CID.parse(discoveryCID), { signal: timeout })) {
+    for await (const provider of this.libp2p.contentRouting.findProviders(
+      CID.parse(discoveryCID),
+      { signal: timeout },
+    )) {
       const peerId = provider.id.toString();
       const multiaddrs = provider.multiaddrs.map((addr) => addr.toString());
-      const key = `${peerId}:${multiaddrs.join(',')}`;
+      const key = `${peerId}:${multiaddrs.join(",")}`;
       if (seen.has(key)) {
         continue;
       }
@@ -457,12 +526,20 @@ export class SDNNode {
 
   async fetchCIDBytes(cid: string): Promise<Uint8Array> {
     const ipfsApiBaseUrl = normalizeOptionalString(this.config.ipfsApiBaseUrl);
-    const fetchPromise = ipfsApiBaseUrl
-      ? fetchCIDBytesFromIPFSApi(ipfsApiBaseUrl, cid)
-      : (async () => {
-          const helia = await this.ensureHelia();
-          return fetchCIDBytesFromHelia(helia, cid);
-        })();
+    const ipfsGatewayBaseUrl = normalizeOptionalString(
+      this.config.ipfsGatewayBaseUrl,
+    );
+    let fetchPromise: Promise<Uint8Array>;
+    if (ipfsApiBaseUrl) {
+      fetchPromise = fetchCIDBytesFromIPFSApi(ipfsApiBaseUrl, cid);
+    } else if (ipfsGatewayBaseUrl) {
+      fetchPromise = fetchCIDBytesFromIPFSGateway(ipfsGatewayBaseUrl, cid);
+    } else {
+      fetchPromise = (async () => {
+        const helia = await this.ensureHelia();
+        return fetchCIDBytesFromHelia(helia, cid);
+      })();
+    }
 
     return withOptionalTimeout(
       fetchPromise,
@@ -471,15 +548,18 @@ export class SDNNode {
   }
 
   async requestModuleGrant(
-    options: Omit<ModuleGrantRequestOptions, 'requesterIdentity'> & {
-      requesterIdentity?: ModuleGrantRequestOptions['requesterIdentity'];
+    options: Omit<ModuleGrantRequestOptions, "requesterIdentity"> & {
+      requesterIdentity?: ModuleGrantRequestOptions["requesterIdentity"];
     },
   ): Promise<ModuleGrantResult> {
     const requesterIdentity = options.requesterIdentity ?? this.config.identity;
     if (!requesterIdentity) {
-      throw new Error('requester identity is required');
+      throw new Error("requester identity is required");
     }
-    const observer = resolveModuleDeliveryObserver(options.observer, this.events);
+    const observer = resolveModuleDeliveryObserver(
+      options.observer,
+      this.events,
+    );
     return requestModuleGrant(this as ModuleDeliveryTransport, {
       ...options,
       requesterIdentity,
@@ -488,15 +568,18 @@ export class SDNNode {
   }
 
   async requestEncryptedModuleBundle(
-    options: Omit<ModuleGrantRequestOptions, 'requesterIdentity'> & {
-      requesterIdentity?: ModuleGrantRequestOptions['requesterIdentity'];
+    options: Omit<ModuleGrantRequestOptions, "requesterIdentity"> & {
+      requesterIdentity?: ModuleGrantRequestOptions["requesterIdentity"];
     },
   ): Promise<EncryptedModuleBundleResult> {
     const requesterIdentity = options.requesterIdentity ?? this.config.identity;
     if (!requesterIdentity) {
-      throw new Error('requester identity is required');
+      throw new Error("requester identity is required");
     }
-    const observer = resolveModuleDeliveryObserver(options.observer, this.events);
+    const observer = resolveModuleDeliveryObserver(
+      options.observer,
+      this.events,
+    );
     return requestEncryptedModuleBundle(this as ModuleDeliveryTransport, {
       ...options,
       requesterIdentity,
@@ -558,7 +641,7 @@ export class SDNNode {
 
   private async ensureHelia(): Promise<Helia> {
     if (!this.libp2p) {
-      throw new Error('Node not initialized');
+      throw new Error("Node not initialized");
     }
     if (!this.heliaNodePromise) {
       this.heliaNodePromise = createHeliaFromLibp2p(this.libp2p)
@@ -575,7 +658,11 @@ export class SDNNode {
   }
 }
 
-function resolveBootstrapList(relays: string[], config: SDNConfig, hasExplicitRelays: boolean): string[] {
+function resolveBootstrapList(
+  relays: string[],
+  config: SDNConfig,
+  hasExplicitRelays: boolean,
+): string[] {
   const includeIPFS = hasExplicitRelays
     ? config.includeIPFSBootstrap === true
     : config.includeIPFSBootstrap !== false;
@@ -594,11 +681,14 @@ function normalizeConfiguredRelays(relays?: string[]): string[] {
     return [];
   }
   return relays
-    .map((relay) => String(relay || '').trim())
+    .map((relay) => String(relay || "").trim())
     .filter((relay) => relay.length > 0);
 }
 
-function shouldProbeRelays(config: SDNConfig, hasExplicitRelays: boolean): boolean {
+function shouldProbeRelays(
+  config: SDNConfig,
+  hasExplicitRelays: boolean,
+): boolean {
   if (hasExplicitRelays) {
     return config.enableRelayProbing === true;
   }
@@ -614,29 +704,60 @@ function resolveHeliaFetchTimeoutMs(config: SDNConfig): number {
 }
 
 function normalizeOptionalString(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
+  return typeof value === "string" ? value.trim() : "";
 }
 
-async function fetchCIDBytesFromIPFSApi(baseUrl: string, cid: string): Promise<Uint8Array> {
-  if (typeof fetch !== 'function') {
-    throw new Error('IPFS API CID fetch requires fetch().');
+async function fetchCIDBytesFromIPFSApi(
+  baseUrl: string,
+  cid: string,
+): Promise<Uint8Array> {
+  if (typeof fetch !== "function") {
+    throw new Error("IPFS API CID fetch requires fetch().");
   }
   const endpoint = new URL(
-    `${baseUrl.replace(/\/+$/g, '')}/cat`,
-    typeof location !== 'undefined' ? location.href : 'http://localhost',
+    `${baseUrl.replace(/\/+$/g, "")}/cat`,
+    typeof location !== "undefined" ? location.href : "http://localhost",
   );
-  endpoint.searchParams.set('arg', cid);
+  endpoint.searchParams.set("arg", cid);
   const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { accept: 'application/octet-stream' },
+    method: "POST",
+    headers: { accept: "application/octet-stream" },
   });
   if (!response.ok) {
-    throw new Error(`IPFS API CID fetch failed: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `IPFS API CID fetch failed: ${response.status} ${response.statusText}`,
+    );
   }
   return new Uint8Array(await response.arrayBuffer());
 }
 
-async function withOptionalTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+async function fetchCIDBytesFromIPFSGateway(
+  baseUrl: string,
+  cid: string,
+): Promise<Uint8Array> {
+  if (typeof fetch !== "function") {
+    throw new Error("IPFS gateway CID fetch requires fetch().");
+  }
+  const endpoint = new URL(
+    `${baseUrl.replace(/\/+$/g, "")}/${encodeURIComponent(cid)}`,
+    typeof location !== "undefined" ? location.href : "http://localhost",
+  );
+  const response = await fetch(endpoint, {
+    method: "GET",
+    headers: { accept: "application/octet-stream" },
+  });
+  if (!response.ok) {
+    throw new Error(
+      `IPFS gateway CID fetch failed: ${response.status} ${response.statusText}`,
+    );
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function withOptionalTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
   if (!(timeoutMs > 0)) {
     return promise;
   }
@@ -658,25 +779,38 @@ async function withOptionalTimeout<T>(promise: Promise<T>, timeoutMs: number): P
   }
 }
 
-function chunkToBytes(chunk: StreamChunk): Uint8Array {
+function cloneToLocalUint8Array(chunk: StreamChunk): Uint8Array {
   if (chunk instanceof Uint8Array) {
-    return chunk;
+    return new Uint8Array(chunk);
   }
-  return chunk.subarray();
+  if (isUint8ArrayList(chunk)) {
+    return new Uint8Array(chunk.subarray());
+  }
+  if (chunk instanceof ArrayBuffer) {
+    return new Uint8Array(chunk.slice(0));
+  }
+  if (ArrayBuffer.isView(chunk)) {
+    return new Uint8Array(
+      chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength),
+    );
+  }
+  throw new Error("stream chunk must be Uint8Array-compatible bytes");
 }
 
 async function exchangeStream(
-  stream: Awaited<ReturnType<Libp2p['dialProtocol']>>,
+  stream: Awaited<ReturnType<Libp2p["dialProtocol"]>>,
   payloadBytes: Uint8Array,
 ): Promise<Uint8Array> {
   try {
-    await stream.sink((async function *source() {
-      yield payloadBytes;
-    })());
+    await stream.sink(
+      (async function* source() {
+        yield cloneToLocalUint8Array(payloadBytes);
+      })(),
+    );
 
     const chunks: Uint8Array[] = [];
     for await (const chunk of stream.source) {
-      chunks.push(chunkToBytes(chunk as StreamChunk));
+      chunks.push(cloneToLocalUint8Array(chunk as StreamChunk));
     }
     return concatBytes(chunks);
   } finally {
@@ -693,13 +827,15 @@ function normalizeDialTarget(addr: string, targetPeerId: string): string {
   if (!trimmed) {
     return trimmed;
   }
-  if (trimmed.includes('/p2p-circuit')) {
-    return trimmed.includes(`/p2p/${targetPeerId}`) ? trimmed : `${trimmed}/p2p/${targetPeerId}`;
+  if (trimmed.includes("/p2p-circuit")) {
+    return trimmed.includes(`/p2p/${targetPeerId}`)
+      ? trimmed
+      : `${trimmed}/p2p/${targetPeerId}`;
   }
   if (trimmed.includes(`/p2p/${targetPeerId}`)) {
     return trimmed;
   }
-  if (trimmed.includes('/p2p/')) {
+  if (trimmed.includes("/p2p/")) {
     return `${trimmed}/p2p-circuit/p2p/${targetPeerId}`;
   }
   return `${trimmed}/p2p/${targetPeerId}`;
