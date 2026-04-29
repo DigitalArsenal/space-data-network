@@ -1071,8 +1071,8 @@ func serveFallbackLogin(w http.ResponseWriter, r *http.Request, status tlsmgr.St
 }
 
 const (
-	fallbackWalletUIModuleURL = "https://unpkg.com/hd-wallet-ui@2.0.5/src/app.js?module"
-	fallbackWalletUICSSURL    = "https://unpkg.com/hd-wallet-ui@2.0.5/styles/widget.css"
+	fallbackWalletUIModuleURL = "https://unpkg.com/hd-wallet-ui@2.0.6/src/app.js?module"
+	fallbackWalletUICSSURL    = "https://unpkg.com/hd-wallet-ui@2.0.6/styles/widget.css"
 )
 
 func buildFallbackLoginPage(host string, status tlsmgr.Status) string {

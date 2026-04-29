@@ -100,11 +100,12 @@ func mustFindHDWalletWasmPath(t *testing.T) string {
 
 	candidates := []string{
 		os.Getenv("HD_WALLET_WASM_PATH"),
-		"/Users/tj/software/hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
-		"/Users/tj/software/hd-wallet-wasm/build/wasm/hd-wallet-wasi.wasm",
-		"/Users/tj/software/hd-wallet-wasm/build-wasi-pure/hd-wallet.wasm",
-		"/Users/tj/software/hd-wallet-wasm/build-wasm/wasm/hd-wallet.wasm",
-		"/Users/tj/software/hd-wallet-wasm/build/wasm/hd-wallet.wasm",
+		"sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
+		"../../sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
+		"../../../sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
+		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
+		"../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
+		"../../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
 	}
 	for _, candidate := range candidates {
 		if candidate == "" {
@@ -115,6 +116,6 @@ func mustFindHDWalletWasmPath(t *testing.T) string {
 		}
 	}
 
-	t.Fatal("could not find hd-wallet wasm artifact")
+	t.Skip("pure HD wallet WASI artifact not available in this checkout")
 	return ""
 }

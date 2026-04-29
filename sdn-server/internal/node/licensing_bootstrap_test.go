@@ -202,7 +202,7 @@ func TestFindPluginDecryptPrivateKeyFallsBackToServerIdentity(t *testing.T) {
 func newLicensingTestModule(t *testing.T) *modulert.Module {
 	t.Helper()
 
-	wasmPath := testsupport.MustFindLicensingModuleWasmPath(t)
+	wasmPath := testsupport.SkipIfNoLicensingModuleWasm(t)
 	wasmBytes, err := os.ReadFile(wasmPath)
 	if err != nil {
 		t.Fatalf("ReadFile(%q) failed: %v", wasmPath, err)

@@ -27,10 +27,10 @@ func testHDWalletModule(t *testing.T) *HDWalletModule {
 	// Look for hd-wallet WASM binary. Prefer hardened Emscripten WASI build.
 	wasmPaths := []string{
 		os.Getenv("HD_WALLET_WASM_PATH"),
+		"../../sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
+		"../../../sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
 		"../../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
 		"../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
-		"../../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
-		"../../../hd-wallet-wasm/build-wasi/wasm/hd-wallet.wasm",
 	}
 
 	var wasmPath string
@@ -45,7 +45,7 @@ func testHDWalletModule(t *testing.T) *HDWalletModule {
 	}
 
 	if wasmPath == "" {
-		t.Skip("HD wallet WASM not found - set HD_WALLET_WASM_PATH or build with emcmake")
+		t.Skip("pure HD wallet WASI artifact not found - set HD_WALLET_WASM_PATH or build with emcmake")
 	}
 
 	ctx := context.Background()
