@@ -140,6 +140,40 @@ prepare_full_node_assets() {
     fi
 }
 
+find_licensing_module_wasm() {
+    local candidates=(
+        "${PROJECT_ROOT}/../space-data-network-plugins/licensing/core/dist/isomorphic/module.wasm"
+        "${PROJECT_ROOT}/../space-data-network-modules/licensing/core/dist/isomorphic/module.wasm"
+    )
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+deploy_full_node_licensing_module() {
+    local ip=$1
+    local service=$2
+    local module_path
+
+    if ! module_path="$(find_licensing_module_wasm)"; then
+        log_warn "Licensing module wasm not found; leaving existing remote ORBPRO_LICENSING_WASM_PATH artifact unchanged."
+        return
+    fi
+
+    log_info "Deploying licensing module wasm from ${module_path}..."
+    ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/wasm /etc/systemd/system/${service}.service.d"
+    scp_cmd "$module_path" "$ip" "/opt/spacedatanetwork/wasm/licensing-module.wasm"
+    ssh_cmd "$ip" "chown sdn:sdn /opt/spacedatanetwork/wasm/licensing-module.wasm && chmod 644 /opt/spacedatanetwork/wasm/licensing-module.wasm && cat > /etc/systemd/system/${service}.service.d/licensing.conf <<'EOF'
+[Service]
+Environment=ORBPRO_LICENSING_WASM_PATH=/opt/spacedatanetwork/wasm/licensing-module.wasm
+EOF"
+}
+
 load_tracked_dev_wallet() {
     local wallet_config="${PROJECT_ROOT}/config/dev-wallet.env"
     if [[ ! -f "${wallet_config}" ]]; then
@@ -263,6 +297,7 @@ deploy_binary() {
         rsync_cmd "${PROJECT_ROOT}/scripts/" "$ip" "/opt/spacedatanetwork/scripts/"
         rsync_cmd "${PROJECT_ROOT}/sdn-js/ui/dist/" "$ip" "/opt/spacedatanetwork/admin-ui/"
         rsync_cmd "${PROJECT_ROOT}/webui/build/" "$ip" "/opt/spacedatanetwork/webui/"
+        deploy_full_node_licensing_module "$ip" "$full_service"
         if [[ "$full_service" == "spacedatanetwork" ]] || ! ssh_cmd "$ip" "test -f ${config_dir}/config.yaml" >/dev/null 2>&1; then
             rsync_cmd "${PROJECT_ROOT}/config/full-vm.yaml" "$ip" "${config_dir}/config.yaml"
         else
