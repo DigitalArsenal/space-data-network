@@ -1,6 +1,6 @@
-import * as reduxBundler from '../../../webui/node_modules/redux-bundler/dist/redux-bundler.js';
+import * as reduxBundler from '../../../webui/node_modules/redux-bundler/dist/redux-bundler.m.js';
 
-export * from '../../../webui/node_modules/redux-bundler/dist/redux-bundler.js';
+export * from '../../../webui/node_modules/redux-bundler/dist/redux-bundler.m.js';
 
 const fallbackTimer = (fn) => globalThis.setTimeout(fn, 0);
 

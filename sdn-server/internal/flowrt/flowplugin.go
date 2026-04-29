@@ -22,11 +22,11 @@ type FlowProgram struct {
 
 // FlowTrigger describes a trigger from the flow JSON.
 type FlowTrigger struct {
-	TriggerID        string `json:"triggerId"`
-	Kind             string `json:"kind"`
-	Source           string `json:"source"`
-	DefaultIntervalMs int   `json:"defaultIntervalMs"`
-	HTTPPath         string `json:"httpPath,omitempty"`
+	TriggerID         string `json:"triggerId"`
+	Kind              string `json:"kind"`
+	Source            string `json:"source"`
+	DefaultIntervalMs int    `json:"defaultIntervalMs"`
+	HTTPPath          string `json:"httpPath,omitempty"`
 }
 
 // FlowPlugin wraps a FlowRuntime to implement the SDN plugin manager interfaces.
@@ -38,9 +38,9 @@ type FlowPlugin struct {
 	handlers HandlerMap
 	wasmPath string
 
-	mu       sync.Mutex
-	cancel   context.CancelFunc
-	stopped  bool
+	mu      sync.Mutex
+	cancel  context.CancelFunc
+	stopped bool
 }
 
 // NewFlowPlugin creates a FlowPlugin from a loaded runtime and its program definition.
@@ -181,3 +181,42 @@ func (fp *FlowPlugin) Runtime() *FlowRuntime { return fp.runtime }
 
 // Program returns the flow program metadata.
 func (fp *FlowPlugin) Program() FlowProgram { return fp.program }
+
+// RuntimeDescriptor returns a dashboard-safe summary of this flow module.
+func (fp *FlowPlugin) RuntimeDescriptor() plugins.RuntimeModuleDescriptor {
+	descriptor := plugins.RuntimeModuleDescriptor{
+		Manifest: &plugins.RuntimeModuleManifest{
+			PluginID:     fp.program.ProgramID,
+			Name:         fp.program.Name,
+			Version:      fp.program.Version,
+			PluginFamily: "FLOW",
+		},
+	}
+	for _, trigger := range fp.program.Triggers {
+		if trigger.Kind != "timer" {
+			continue
+		}
+		descriptor.Manifest.Timers = append(descriptor.Manifest.Timers, plugins.RuntimeModuleTimer{
+			TimerID:           trigger.TriggerID,
+			MethodID:          trigger.TriggerID,
+			DefaultIntervalMs: uint64(nonNegativeInt(trigger.DefaultIntervalMs)),
+			Description:       fmt.Sprintf("%s trigger: %s", trigger.Kind, trigger.TriggerID),
+		})
+	}
+	if fp.runtime != nil && fp.runtime.Module() != nil {
+		if stats, err := fp.runtime.Module().MemoryStats(); err == nil {
+			descriptor.Stats.MemoryPages = stats.Pages
+			descriptor.Stats.MemoryBytes = stats.Bytes
+			descriptor.Stats.MaxMemoryPages = stats.MaxPages
+			descriptor.Stats.MaxMemoryBytes = stats.MaxBytes
+		}
+	}
+	return descriptor
+}
+
+func nonNegativeInt(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
+}

@@ -95,6 +95,14 @@ type Module struct {
 	secureDeallocName string
 }
 
+// MemoryStats describes the module's current default linear memory size.
+type MemoryStats struct {
+	Pages    uint64
+	Bytes    uint64
+	MaxPages uint64
+	MaxBytes uint64
+}
+
 // NewModule creates a WasmEdge VM, optionally enables WASI and host modules,
 // loads the WASM bytes, and instantiates the module.
 func NewModule(wasmBytes []byte, opts ...Option) (*Module, error) {
@@ -218,6 +226,29 @@ func (m *Module) memory() (*wasmedge.Memory, error) {
 		return nil, fmt.Errorf("%w: no 'memory' export found", ErrMemory)
 	}
 	return mem, nil
+}
+
+// MemoryStats returns the current and configured maximum linear memory sizes.
+func (m *Module) MemoryStats() (MemoryStats, error) {
+	if m == nil || m.vm == nil {
+		return MemoryStats{}, ErrNoModule
+	}
+	mem, err := m.memory()
+	if err != nil {
+		return MemoryStats{}, err
+	}
+	pages := uint64(mem.GetPageSize())
+	maxPages := uint64(0)
+	if m.conf != nil {
+		maxPages = uint64(m.conf.GetMaxMemoryPage())
+	}
+	const wasmPageSize = uint64(65536)
+	return MemoryStats{
+		Pages:    pages,
+		Bytes:    pages * wasmPageSize,
+		MaxPages: maxPages,
+		MaxBytes: maxPages * wasmPageSize,
+	}, nil
 }
 
 // ReadMemory copies bytes from WASM linear memory at [offset, offset+length).

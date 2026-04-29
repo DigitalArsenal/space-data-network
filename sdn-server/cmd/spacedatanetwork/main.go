@@ -52,6 +52,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/tor"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
+	"github.com/spacedatanetwork/sdn-server/plugins"
 )
 
 var (
@@ -570,6 +571,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/api/node/info", handleNodeInfo(n, torRuntime))
 			adminMux.HandleFunc("/api/module-delivery/provider", handleProviderDescriptor(n))
 			adminMux.HandleFunc("/api/module-delivery/listings", handleModuleDeliveryListings(n.PluginRegistry()))
+			adminMux.HandleFunc("/api/v1/modules/runtime", handleModuleRuntimeSnapshot(n.PluginManager(), n.PluginRegistry()))
 			adminMux.Handle("/api/directory/", directory.NewHTTPHandler(n.DirectoryService()))
 
 			// Relay status endpoint (public, used by clients for load balancing)
@@ -1618,6 +1620,69 @@ func handleModuleDeliveryListings(reg *license.PluginRegistry) http.HandlerFunc 
 		_ = json.NewEncoder(w).Encode(moduleDeliveryListingsResponse{
 			Results: results,
 			Count:   len(results),
+		})
+	}
+}
+
+func handleModuleRuntimeSnapshot(mgr *plugins.Manager, reg *license.PluginRegistry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		snapshot := plugins.RuntimeSnapshot{
+			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+			Modules:     []plugins.RuntimeModuleEntry{},
+		}
+		if mgr != nil {
+			snapshot = mgr.RuntimeSnapshot()
+		}
+		mergeModuleRuntimeCatalog(&snapshot, reg)
+		snapshot.Count = len(snapshot.Modules)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache")
+		_ = json.NewEncoder(w).Encode(snapshot)
+	}
+}
+
+func mergeModuleRuntimeCatalog(snapshot *plugins.RuntimeSnapshot, reg *license.PluginRegistry) {
+	if snapshot == nil || reg == nil {
+		return
+	}
+	seen := make(map[string]int, len(snapshot.Modules))
+	for index, module := range snapshot.Modules {
+		seen[module.ID] = index
+	}
+	for _, descriptor := range reg.ListPublic() {
+		catalog := &plugins.RuntimeModuleCatalog{
+			RequiredScope:   descriptor.RequiredScope,
+			ContentType:     descriptor.ContentType,
+			CacheControl:    descriptor.CacheControl,
+			BundleSHA256:    descriptor.BundleSHA256,
+			SizeBytes:       descriptor.SizeBytes,
+			SignatureHex:    descriptor.SignatureHex,
+			SignerPubKeyHex: descriptor.SignerPubKeyHex,
+			UploadedAt:      descriptor.UploadedAt,
+		}
+		if index, ok := seen[descriptor.ID]; ok {
+			snapshot.Modules[index].Catalog = catalog
+			if snapshot.Modules[index].Version == "" {
+				snapshot.Modules[index].Version = descriptor.Version
+			}
+			if snapshot.Modules[index].Status == "" || snapshot.Modules[index].Status == "registered" {
+				snapshot.Modules[index].Status = descriptor.Status
+				snapshot.Modules[index].StatusMessage = descriptor.StatusMessage
+			}
+			continue
+		}
+		snapshot.Modules = append(snapshot.Modules, plugins.RuntimeModuleEntry{
+			ID:            descriptor.ID,
+			Version:       descriptor.Version,
+			Status:        descriptor.Status,
+			StatusMessage: descriptor.StatusMessage,
+			Catalog:       catalog,
 		})
 	}
 }

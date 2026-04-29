@@ -10,6 +10,18 @@ const repoRoot = path.resolve(packageRoot, '..');
 const upstreamWebUiRoot = path.resolve(repoRoot, 'webui');
 const sdnUpstreamWebUiRoot = path.resolve(__dirname, 'src', 'upstream-webui');
 const proxyTarget = process.env.SDN_UI_PROXY_TARGET?.trim();
+const reactVirtualizedWindowScrollerOnScrollPath = path.resolve(
+  upstreamWebUiRoot,
+  'node_modules',
+  'react-virtualized',
+  'dist',
+  'es',
+  'WindowScroller',
+  'utils',
+  'onScroll.js',
+);
+const reactVirtualizedWindowScrollerProptypeImportPattern =
+  /^\s*import\s+\{\s*bpfrpt_proptype_WindowScroller\s*\}\s+from\s+['"]\.\.\/WindowScroller\.js['"];\s*$/gm;
 const rootBrandingOverrides = new Map([
   [
     path.resolve(upstreamWebUiRoot, 'src', 'bundles', 'routes.js'),
@@ -69,11 +81,27 @@ const browserProcessShimBanner = [
   'var global = globalThis;',
 ].join('');
 
+function stripReactVirtualizedWindowScrollerProptypeImport(code: string): string {
+  return code.replace(reactVirtualizedWindowScrollerProptypeImportPattern, '');
+}
+
 export default defineConfig({
   root: __dirname,
   publicDir: path.resolve(upstreamWebUiRoot, 'public'),
   base: './',
   plugins: [
+    {
+      name: 'sdn-react-virtualized-window-scroller-patch',
+      transform(code, id) {
+        if (path.resolve(id.split('?')[0]) === reactVirtualizedWindowScrollerOnScrollPath) {
+          return {
+            code: stripReactVirtualizedWindowScrollerProptypeImport(code),
+            map: null,
+          };
+        }
+        return null;
+      },
+    },
     {
       name: 'sdn-upstream-webui-jsx',
       async transform(code, id) {
@@ -124,14 +152,15 @@ export default defineConfig({
       },
     },
   ],
-  server: proxyTarget
-    ? {
-      host: '127.0.0.1',
-      port: Number.parseInt(process.env.SDN_ADMIN_UI_PORT ?? '5173', 10),
-      fs: {
-        allow: [repoRoot],
-      },
-      proxy: {
+  server: {
+    host: '127.0.0.1',
+    port: Number.parseInt(process.env.SDN_ADMIN_UI_PORT ?? '5173', 10),
+    fs: {
+      allow: [repoRoot],
+    },
+    ...(proxyTarget
+      ? {
+        proxy: {
         '/api': {
           target: proxyTarget,
           changeOrigin: true,
@@ -157,9 +186,31 @@ export default defineConfig({
           changeOrigin: true,
           secure: false,
         },
+        },
+      }
+      : {}),
+  },
+  optimizeDeps: {
+    esbuildOptions: {
+      loader: {
+        '.js': 'jsx',
       },
-    }
-    : undefined,
+      plugins: [
+        {
+          name: 'sdn-react-virtualized-window-scroller-patch',
+          setup(build) {
+            build.onLoad({ filter: /react-virtualized\/dist\/es\/WindowScroller\/utils\/onScroll\.js$/ }, async (args) => {
+              const code = await fs.promises.readFile(args.path, 'utf8');
+              return {
+                contents: stripReactVirtualizedWindowScrollerProptypeImport(code),
+                loader: 'js',
+              };
+            });
+          },
+        },
+      ],
+    },
+  },
   define: {
     'process.env.REACT_APP_VERSION': JSON.stringify(process.env.REACT_APP_VERSION ?? process.env.npm_package_version ?? 'dev'),
     'process.env.REACT_APP_GIT_REV': JSON.stringify(process.env.REACT_APP_GIT_REV ?? 'local'),
@@ -188,6 +239,22 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'shims/redux-bundler-bound-timers.js'),
       },
       {
+        find: /^ipld-explorer-components$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/ipld-explorer-components/dist/index.js'),
+      },
+      {
+        find: /^ipld-explorer-components\/providers$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/ipld-explorer-components/dist/providers/index.js'),
+      },
+      {
+        find: /^ipld-explorer-components\/pages$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/ipld-explorer-components/dist/pages.js'),
+      },
+      {
+        find: /^ipld-explorer-components\/css$/,
+        replacement: path.resolve(upstreamWebUiRoot, 'node_modules/ipld-explorer-components/dist/style.css'),
+      },
+      {
         find: /^react-i18next$/,
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/react-i18next'),
       },
@@ -210,6 +277,10 @@ export default defineConfig({
       {
         find: /^internal-nav-helper$/,
         replacement: path.resolve(upstreamWebUiRoot, 'node_modules/internal-nav-helper'),
+      },
+      {
+        find: /^milliseconds$/,
+        replacement: path.resolve(__dirname, 'shims/milliseconds.js'),
       },
       {
         find: /^classnames$/,
