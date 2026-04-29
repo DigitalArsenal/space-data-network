@@ -1,4 +1,5 @@
 import type { AddressLookupChain, AddressLookupKey } from './types';
+import { sha256 } from '../../crypto/hd-wallet';
 
 const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 const encoder = new TextEncoder();
@@ -79,11 +80,4 @@ function base32Encode(value: Uint8Array): string {
   }
 
   return output;
-}
-
-async function sha256(data: Uint8Array): Promise<Uint8Array> {
-  const copy = new Uint8Array(data.byteLength);
-  copy.set(data);
-  const digest = await crypto.subtle.digest('SHA-256', copy);
-  return new Uint8Array(digest);
 }

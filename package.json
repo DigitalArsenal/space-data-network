@@ -65,7 +65,7 @@
   "license": "MIT",
   "devDependencies": {
     "baseline-browser-mapping": "^2.10.0",
-    "flatc-wasm": "^25.12.19-wasm.43",
-    "space-data-module-sdk": "git+https://github.com/DigitalArsenal/space-data-module-sdk.git#v0.8.1"
+    "flatc-wasm": "^26.1.32",
+    "space-data-module-sdk": "^0.8.3"
   }
 }

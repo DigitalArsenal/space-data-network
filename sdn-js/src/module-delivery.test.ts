@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import * as flatbuffers from 'flatbuffers';
 import { describe, expect, it, vi } from 'vitest';
 import { ENC } from 'spacedatastandards.org/lib/js/REC/ENC.js';
@@ -25,8 +26,7 @@ vi.mock('./crypto/hd-wallet', () => {
     derivePeerIdFromPublicKey: vi.fn(async () => 'provider-peer-id'),
     sign: vi.fn(async () => new Uint8Array([0xaa, 0xbb, 0xcc])),
     sha256: vi.fn(async (value: Uint8Array) => {
-      const digest = await crypto.subtle.digest('SHA-256', value);
-      return new Uint8Array(digest);
+      return new Uint8Array(createHash('sha256').update(value).digest());
     }),
   };
 });
@@ -737,6 +737,5 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 async function sha256(value: Uint8Array): Promise<Uint8Array> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', value);
-  return new Uint8Array(digest);
+  return new Uint8Array(createHash('sha256').update(value).digest());
 }

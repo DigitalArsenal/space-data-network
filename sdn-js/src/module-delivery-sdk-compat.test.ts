@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { createCipheriv, createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -484,26 +485,20 @@ function createWrappedContentKeyPayload(
 }
 
 async function sha256(value: Uint8Array): Promise<Uint8Array> {
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', value);
-  return new Uint8Array(digest);
+  return new Uint8Array(createHash('sha256').update(value).digest());
 }
 
 async function encryptBundleBytes(plaintext: Uint8Array, contentKey: Uint8Array): Promise<Uint8Array> {
-  const iv = new Uint8Array(12).fill(1);
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    contentKey,
-    'AES-GCM',
-    false,
-    ['encrypt'],
-  );
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    cryptoKey,
-    plaintext,
-  );
-  const encrypted = new Uint8Array(iv.length + ciphertext.byteLength);
+  const iv = Buffer.alloc(12, 1);
+  const cipher = createCipheriv('aes-256-gcm', Buffer.from(contentKey), iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(Buffer.from(plaintext)),
+    cipher.final(),
+  ]);
+  const tag = cipher.getAuthTag();
+  const encrypted = new Uint8Array(iv.length + ciphertext.length + tag.length);
   encrypted.set(iv, 0);
-  encrypted.set(new Uint8Array(ciphertext), iv.length);
+  encrypted.set(ciphertext, iv.length);
+  encrypted.set(tag, iv.length + ciphertext.length);
   return encrypted;
 }

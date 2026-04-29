@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 const licensingMocks = vi.hoisted(() => ({
@@ -74,8 +75,7 @@ const cryptoMocks = vi.hoisted(() => ({
   derivePeerIdFromPublicKey: vi.fn(async () => 'provider-peer-id'),
   sign: vi.fn(async () => new Uint8Array([0xaa, 0xbb, 0xcc])),
   sha256: vi.fn(async (value: Uint8Array) => {
-    const digest = await crypto.subtle.digest('SHA-256', value);
-    return new Uint8Array(digest);
+    return new Uint8Array(createHash('sha256').update(value).digest());
   }),
 }));
 
@@ -111,7 +111,7 @@ import {
 describe('module-delivery observers', () => {
   it('emits provider discovery, challenge/grant, and CID fetch lifecycle events', async () => {
     const content = new Uint8Array([10, 20, 30, 40]);
-    const contentHash = await crypto.subtle.digest('SHA-256', content);
+    const contentHash = createHash('sha256').update(content).digest();
     licensingMocks.extractGrantModuleDescriptor.mockReturnValueOnce({
       cid: 'bafyencryptedmodule',
       contentHash: new Uint8Array(contentHash),

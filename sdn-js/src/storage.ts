@@ -3,6 +3,7 @@
  */
 
 import { openDB, IDBPDatabase, DBSchema } from 'idb';
+import { sha256 } from './crypto/hd-wallet';
 import { SchemaName, SUPPORTED_SCHEMAS } from './schemas';
 import { preloadFlatSQLWASI } from './flatsql';
 
@@ -111,10 +112,7 @@ export class SDNStorage {
       throw new Error('Database not initialized');
     }
 
-    // Compute CID (SHA-256 hash)
-    // Compute CID using ArrayBuffer copy
-    const hashBuffer = await crypto.subtle.digest('SHA-256', new Uint8Array(data));
-    const hashArray = new Uint8Array(hashBuffer);
+    const hashArray = await sha256(new Uint8Array(data));
     const cid = Array.from(hashArray)
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
