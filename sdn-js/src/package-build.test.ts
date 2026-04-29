@@ -6,24 +6,9 @@ import { describe, expect, it } from 'vitest';
 const DIST_INDEX_PATH = path.resolve(__dirname, '../dist/index.mjs');
 const DIST_UI_INDEX_PATH = path.resolve(__dirname, '../dist/ui/index.mjs');
 const DIST_STOREFRONT_INDEX_PATH = path.resolve(__dirname, '../dist/storefront/index.mjs');
+const DIST_PATH = path.resolve(__dirname, '../dist');
 const DIST_CHUNKS_PATH = path.resolve(__dirname, '../dist/chunks');
 const PACKAGE_JSON_PATH = path.resolve(__dirname, '../package.json');
-
-function packageNameFromSpecifier(specifier: string): string {
-  if (specifier.startsWith('@')) {
-    const [scope, name] = specifier.split('/');
-    return `${scope}/${name}`;
-  }
-  return specifier.split('/')[0];
-}
-
-async function readDeclaredDependencyNames(): Promise<Set<string>> {
-  const packageJson = JSON.parse(await fs.readFile(PACKAGE_JSON_PATH, 'utf8'));
-  return new Set([
-    ...Object.keys(packageJson.dependencies ?? {}),
-    ...Object.keys(packageJson.peerDependencies ?? {}),
-  ]);
-}
 
 function collectBareSpecifiers(source: string): string[] {
   const withoutComments = source
@@ -54,35 +39,53 @@ function collectBareSpecifiers(source: string): string[] {
   return [...specifiers].sort();
 }
 
+async function collectDistModulePaths(dir = DIST_PATH): Promise<string[]> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const paths = await Promise.all(
+    entries.map(async (entry) => {
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        return collectDistModulePaths(entryPath);
+      }
+      return entry.name.endsWith('.mjs') ? [entryPath] : [];
+    }),
+  );
+  return paths.flat().sort();
+}
+
 describe('sdn-js package build', () => {
-  it('ships a canonical root entry with only declared external package imports', async () => {
+  it('ships a canonical root entry without unresolved package imports', async () => {
     const source = await fs.readFile(DIST_INDEX_PATH, 'utf8');
-    const declaredDependencies = await readDeclaredDependencyNames();
-    const undeclared = collectBareSpecifiers(source).filter(
-      (specifier) => !declaredDependencies.has(packageNameFromSpecifier(specifier)),
-    );
     expect(source.length).toBeGreaterThan(0);
-    expect(undeclared).toEqual([]);
+    expect(collectBareSpecifiers(source)).toEqual([]);
   });
 
-  it('ships a canonical UI subpath entry with only declared external package imports', async () => {
+  it('ships a canonical UI subpath entry without unresolved package imports', async () => {
     const source = await fs.readFile(DIST_UI_INDEX_PATH, 'utf8');
-    const declaredDependencies = await readDeclaredDependencyNames();
-    const undeclared = collectBareSpecifiers(source).filter(
-      (specifier) => !declaredDependencies.has(packageNameFromSpecifier(specifier)),
-    );
     expect(source.length).toBeGreaterThan(0);
-    expect(undeclared).toEqual([]);
+    expect(collectBareSpecifiers(source)).toEqual([]);
   });
 
-  it('ships a canonical storefront subpath entry with only declared external package imports', async () => {
+  it('ships a canonical storefront subpath entry without unresolved package imports', async () => {
     const source = await fs.readFile(DIST_STOREFRONT_INDEX_PATH, 'utf8');
-    const declaredDependencies = await readDeclaredDependencyNames();
-    const undeclared = collectBareSpecifiers(source).filter(
-      (specifier) => !declaredDependencies.has(packageNameFromSpecifier(specifier)),
-    );
     expect(source.length).toBeGreaterThan(0);
-    expect(undeclared).toEqual([]);
+    expect(collectBareSpecifiers(source)).toEqual([]);
+  });
+
+  it('inlines package imports across every published browser module', async () => {
+    const modules = await collectDistModulePaths();
+    const offenders: Record<string, string[]> = {};
+
+    for (const modulePath of modules) {
+      const source = await fs.readFile(modulePath, 'utf8');
+      const bareSpecifiers = collectBareSpecifiers(source);
+      if (bareSpecifiers.length > 0) {
+        offenders[path.relative(DIST_PATH, modulePath)] = bareSpecifiers;
+      }
+    }
+
+    expect(modules.length).toBeGreaterThan(0);
+    expect(offenders).toEqual({});
   });
 
   it('shares bundled chunks between the root and UI entries to avoid duplicated browser runtime code', async () => {

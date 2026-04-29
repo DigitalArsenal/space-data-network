@@ -17,7 +17,6 @@ const hdWalletShims = new Map([
 const sharedBuildOptions = {
   absWorkingDir: packageRoot,
   bundle: true,
-  packages: 'external',
   format: 'esm',
   platform: 'browser',
   target: 'es2022',
@@ -27,6 +26,14 @@ const sharedBuildOptions = {
   conditions: ['browser', 'import', 'module'],
   alias: {
     '@sds': path.join(packageRoot, 'node_modules/spacedatastandards.org'),
+    '@libp2p/crypto/ciphers': path.join(packageRoot, 'src/shims/libp2p-crypto-ciphers.ts'),
+    '@libp2p/crypto/webcrypto': path.join(packageRoot, 'src/shims/libp2p-crypto-webcrypto.ts'),
+    '@libp2p/crypto/keys': path.join(packageRoot, 'src/shims/libp2p-crypto-keys.ts'),
+    '@libp2p/crypto': path.join(packageRoot, 'src/shims/libp2p-crypto.ts'),
+    '@libp2p/keychain': path.join(packageRoot, 'src/shims/libp2p-keychain.ts'),
+    'multiformats/basics': path.join(packageRoot, 'src/shims/multiformats-basics-native.ts'),
+    'multiformats/hashes/sha1': path.join(packageRoot, 'src/shims/multiformats-sha1-disabled.ts'),
+    'multiformats/hashes/sha2': path.join(packageRoot, 'src/shims/multiformats-sha2-native.ts'),
   },
   plugins: [
     {
