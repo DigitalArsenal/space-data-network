@@ -34,9 +34,9 @@ jobs:
           submodules: recursive
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
           cache-dependency-path: sdn-js/package-lock.json
@@ -81,15 +81,11 @@ jobs:
       - name: Publish to npm
         if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
         working-directory: sdn-js
-        env:
-          NODE_AUTH_TOKEN: ''
         run: npm publish --provenance --access public --tag ${{ steps.tag.outputs.tag }}
 
       - name: Publish dry run
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         working-directory: sdn-js
-        env:
-          NODE_AUTH_TOKEN: ''
         run: |
           echo "=== DRY RUN ==="
           npm publish --dry-run --access public
