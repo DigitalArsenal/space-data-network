@@ -24,13 +24,14 @@
   ],
   "scripts": {
     "build": "npm run build:core && npm run build:ui",
+    "build:package": "npm run build:core",
     "build:core": "rm -rf dist && tsc --project tsconfig.build.json --emitDeclarationOnly && node scripts/build-package-entry.mjs",
     "build:ui": "vite build --config ui/vite.config.mts",
     "dev": "tsc --emitDeclarationOnly --watch",
     "test": "npm run build:core && vitest run",
     "test:relay": "SDN_RUN_RELAY_TEST=1 vitest run src/spaceaware-relay.integration.test.ts",
     "lint": "eslint src --ext .ts",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build:package"
   },
   "keywords": [
     "space",

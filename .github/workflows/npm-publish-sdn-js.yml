@@ -47,7 +47,7 @@ jobs:
 
       - name: Build
         working-directory: sdn-js
-        run: npm run build
+        run: npm run build:package
 
       - name: Verify package contents
         working-directory: sdn-js

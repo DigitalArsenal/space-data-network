@@ -112,11 +112,12 @@ describe('sdn-js package build', () => {
     ).toBe(false);
   });
 
-  it('includes the UI build step in the package build and publish lifecycle', async () => {
+  it('keeps the full UI build separate from the package publish build', async () => {
     const packageJson = JSON.parse(await fs.readFile(PACKAGE_JSON_PATH, 'utf8'));
 
     expect(packageJson.scripts?.build).toContain('build:ui');
-    expect(packageJson.scripts?.prepublishOnly).toBe('npm run build');
+    expect(packageJson.scripts?.buildPackage ?? packageJson.scripts?.['build:package']).toContain('build:core');
+    expect(packageJson.scripts?.prepublishOnly).toBe('npm run build:package');
   });
 
   it(
