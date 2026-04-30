@@ -1,12 +1,5 @@
-// Package editor embeds the sdn-flow visual editor into the Go binary
-// and provides an HTTP handler that serves it along with the required
-// API endpoints. The editor is a Node-RED fork customized for sdn-flow.
-//
-// Build the embedded assets before compiling:
-//
-//	node internal/flowrt/editor/extract-assets.mjs /path/to/sdn-flow
-//
-//go:generate node extract-assets.mjs
+// Package editor embeds the SDN visual runtime editor into the Go binary and
+// provides an HTTP handler that serves it with the required API endpoints.
 package editor
 
 import (
@@ -25,7 +18,7 @@ import (
 //go:embed dist
 var editorFS embed.FS
 
-// Handler returns an http.Handler that serves the embedded sdn-flow editor
+// Handler returns an http.Handler that serves the embedded SDN runtime editor
 // and implements the backend API the editor expects. All routes are served
 // under basePath (e.g. "/flow-editor").
 func Handler(basePath string, mgr *flowrt.FlowManager) http.Handler {
@@ -41,7 +34,7 @@ func Handler(basePath string, mgr *flowrt.FlowManager) http.Handler {
 
 	mux.HandleFunc(basePath+"/api/bootstrap", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{
-			"title":       "sdn-flow Editor",
+			"title":       "SDN Runtime Editor",
 			"engineLabel": "Space Data Network",
 			"api": map[string]string{
 				"bootstrapUrl":      basePath + "/api/bootstrap",
@@ -62,7 +55,7 @@ func Handler(basePath string, mgr *flowrt.FlowManager) http.Handler {
 		}
 		writeJSON(w, map[string]interface{}{
 			"version":            "0.3.9",
-			"user":               map[string]interface{}{"anonymous": false, "username": "sdn-flow", "permissions": "*"},
+			"user":               map[string]interface{}{"anonymous": false, "username": "sdn-runtime", "permissions": "*"},
 			"httpNodeRoot":       "/",
 			"paletteCategories":  []string{"common", "function", "network", "sequence", "parser", "storage"},
 			"editorTheme":       map[string]interface{}{},
@@ -81,8 +74,8 @@ func Handler(basePath string, mgr *flowrt.FlowManager) http.Handler {
 	mux.HandleFunc(basePath+"/theme", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{
 			"header": map[string]interface{}{
-				"title": "sdn-flow Editor",
-				"url":   "https://github.com/DigitalArsenal/sdn-flow",
+				"title": "SDN Runtime Editor",
+				"url":   "https://github.com/DigitalArsenal/space-data-network",
 			},
 		})
 	})

@@ -1,6 +1,4 @@
-// Package flowrt provides a Go host for compiled sdn-flow WASM artifacts.
-// Struct layouts are ported from sdn-flow/src/generated/runtimeAbiLayouts.js
-// which is auto-generated from schemas/FlowRuntimeAbi.fbs.
+// Package flowrt provides a Go host for compiled SDN runtime WASM artifacts.
 package flowrt
 
 import (
