@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react'
 
 import {
   emptyModuleRuntimeSnapshot,
-  loadModuleRuntimeSnapshotFromServer
+  loadModuleRuntimeSnapshotFromServer,
+  runModuleRuntimeAction,
+  updateModuleRuntimeOption
 } from '../../../../../src/ui/runtime/modules.js'
 
 function ModulesPage() {
@@ -156,7 +158,7 @@ function ModulesPage() {
         </div>
 
         <div className='w-100 w-60-l'>
-          {selectedModule ? <ModuleDetail module={selectedModule} /> : <EmptyDetail />}
+          {selectedModule ? <ModuleDetail module={selectedModule} onRefresh={refreshModules} /> : <EmptyDetail />}
         </div>
       </section>
     </main>
@@ -172,7 +174,7 @@ function SummaryMetric({ label, value }) {
   )
 }
 
-function ModuleDetail({ module }) {
+function ModuleDetail({ module, onRefresh }) {
   const manifest = module.manifest
   return (
     <section className='ba b--black-10 br2 bg-white'>
@@ -195,7 +197,35 @@ function ModuleDetail({ module }) {
             <KeyValue label='Memory pages' value={formatNumber(module.stats?.memoryPages ?? 0)} />
             <KeyValue label='Memory bytes' value={formatBytes(module.stats?.memoryBytes ?? 0)} />
             <KeyValue label='Memory limit' value={formatBytes(module.stats?.maxMemoryBytes ?? 0)} />
+            <KeyValue label='Host RSS' value={formatBytes(module.stats?.hostRssBytes ?? 0)} />
             <KeyValue label='Uptime' value={formatDuration(module.stats?.uptimeMs ?? 0)} />
+            <KeyValue label='Invokes' value={formatNumber(module.stats?.invokeCount ?? 0)} />
+            <KeyValue label='Errors' value={formatNumber(module.stats?.errorCount ?? 0)} />
+            <KeyValue label='Avg latency' value={`${formatNumber(module.stats?.averageLatencyMs ?? 0)} ms`} />
+            <KeyValue label='Timers' value={formatNumber(module.stats?.timerRunCount ?? 0)} />
+          </div>
+        </DetailSection>
+
+        <DetailSection title='Lifecycle'>
+          <div className='flex flex-wrap'>
+            {(module.actions ?? []).map((action) => (
+              <button
+                key={action.actionId}
+                type='button'
+                className='button-reset ba b--black-20 bg-white br2 pv2 ph3 mr2 mb2 pointer hover-bg-near-white disabled'
+                disabled={!action.enabled}
+                title={action.description || action.label}
+                onClick={async () => {
+                  await runModuleRuntimeAction(runtimeBaseUrl(), module.id, action.actionId)
+                  await onRefresh()
+                }}
+              >
+                {action.label}
+              </button>
+            ))}
+            {(!module.actions || module.actions.length === 0) && (
+              <span className='black-60'>No lifecycle actions reported.</span>
+            )}
           </div>
         </DetailSection>
 
@@ -214,19 +244,38 @@ function ModuleDetail({ module }) {
           {module.options.length > 0 ? (
             <div className='flex flex-column'>
               {module.options.map((option) => (
-                <label key={option.key} className='db mb3'>
-                  <span className='db f6 ttu tracked black-60 mb1'>{option.label}</span>
-                  <input
-                    className='input-reset ba b--black-20 br2 pa2 w-100'
-                    value={option.value || ''}
-                    readOnly
-                  />
-                </label>
+                <ModuleOptionControl
+                  key={option.key}
+                  moduleId={module.id}
+                  option={option}
+                  onRefresh={onRefresh}
+                />
               ))}
             </div>
           ) : (
             <div className='black-60'>No runtime options reported.</div>
           )}
+        </DetailSection>
+
+        <DetailSection title='Recent status'>
+          <SimpleList
+            empty='No status history reported.'
+            items={(module.statusHistory ?? []).map((event, index) => ({
+              key: `${event.status}-${event.at || index}`,
+              primary: event.status,
+              secondary: [event.message, event.at ? formatDateTime(event.at) : ''].filter(Boolean).join(' | ')
+            }))}
+          />
+        </DetailSection>
+
+        <DetailSection title='Links'>
+          <div className='flex flex-wrap'>
+            {module.links?.logsUrl && <RuntimeLink href={module.links.logsUrl} label='Logs' />}
+            {module.links?.eventsUrl && <RuntimeLink href={module.links.eventsUrl} label='Events' />}
+            {!module.links?.logsUrl && !module.links?.eventsUrl && (
+              <span className='black-60'>No runtime links reported.</span>
+            )}
+          </div>
         </DetailSection>
 
         <DetailSection title='Protocols'>
@@ -254,6 +303,58 @@ function ModuleDetail({ module }) {
         </DetailSection>
       </div>
     </section>
+  )
+}
+
+function ModuleOptionControl({ moduleId, option, onRefresh }) {
+  const [value, setValue] = useState(option.value || '')
+  const [status, setStatus] = useState('')
+
+  useEffect(() => {
+    setValue(option.value || '')
+    setStatus('')
+  }, [option.key, option.value])
+
+  return (
+    <label className='db mb3'>
+      <span className='db f6 ttu tracked black-60 mb1'>{option.label}</span>
+      <div className='flex'>
+        <input
+          className='input-reset ba b--black-20 br2 pa2 w-100'
+          value={value}
+          readOnly={option.readOnly}
+          min={option.min}
+          max={option.max}
+          title={option.description || option.key}
+          onChange={(event) => setValue(event.target.value)}
+        />
+        {!option.readOnly && (
+          <button
+            type='button'
+            className='button-reset ba b--black-20 bg-white br2 pv2 ph3 ml2 pointer hover-bg-near-white'
+            onClick={async () => {
+              setStatus('saving')
+              await updateModuleRuntimeOption(runtimeBaseUrl(), moduleId, option.key, value)
+              setStatus('saved')
+              await onRefresh()
+            }}
+          >
+            Apply
+          </button>
+        )}
+      </div>
+      <span className='db f6 black-60 mt1'>
+        {[option.units, option.persistence, option.restartRequired ? 'restart required' : '', status].filter(Boolean).join(' | ')}
+      </span>
+    </label>
+  )
+}
+
+function RuntimeLink({ href, label }) {
+  return (
+    <a className='dib br2 bg-near-white ba b--black-10 f6 pv1 ph2 mr2 mb2 link black' href={href}>
+      {label}
+    </a>
   )
 }
 
@@ -353,6 +454,16 @@ function formatDuration(ms) {
 
 function formatClock(timestamp) {
   return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function formatDateTime(timestamp) {
+  return new Date(timestamp).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
 }
 
 const summaryGridStyle = {
