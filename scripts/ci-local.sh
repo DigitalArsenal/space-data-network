@@ -5,7 +5,8 @@
 # Usage:
 #   ./scripts/ci-local.sh quick     # default: preflight + go + sdn-js + module-delivery + plugin-demo
 #   ./scripts/ci-local.sh full      # quick + encryption tests
-#   ./scripts/ci-local.sh go        # go checks only
+#   ./scripts/ci-local.sh go        # fast go checks only
+#   ./scripts/ci-local.sh race      # CI-only/full race suite
 #   ./scripts/ci-local.sh js        # sdn-js checks only
 #   ./scripts/ci-local.sh delivery  # focused module-delivery compatibility checks
 #   ./scripts/ci-local.sh plugin    # legacy alias for delivery
@@ -126,7 +127,7 @@ run_preflight() {
   pass "oss-preflight"
 }
 
-run_go() {
+prepare_go_toolchain() {
   prepare_go_wasm_artifacts
 
   step "WasmEdge"
@@ -148,10 +149,26 @@ run_go() {
   step "Go deps"
   "$ROOT/scripts/go-with-wasmedge.sh" mod download
   pass "go mod download"
+}
+
+run_go() {
+  prepare_go_toolchain
+
+  step "Go tests"
+  "$ROOT/scripts/go-with-wasmedge.sh" test -count=1 ./...
+  pass "go test"
+}
+
+run_go_race() {
+  prepare_go_toolchain
 
   step "Go tests (race)"
   "$ROOT/scripts/go-with-wasmedge.sh" test -race -count=1 ./...
   pass "go test -race"
+}
+
+run_go_builds() {
+  prepare_go_toolchain
 
   step "Go build (full node)"
   "$ROOT/scripts/go-with-wasmedge.sh" build -o /tmp/spacedatanetwork ./cmd/spacedatanetwork
@@ -243,6 +260,7 @@ case "$MODE" in
   quick)
     run_preflight
     run_go
+    run_go_builds
     run_sdn_js
     run_module_delivery_compat
     run_plugin_demo
@@ -250,6 +268,8 @@ case "$MODE" in
   full|all)
     run_preflight
     run_go
+    run_go_race
+    run_go_builds
     run_sdn_js
     run_module_delivery_compat
     run_plugin_demo
@@ -257,6 +277,9 @@ case "$MODE" in
     ;;
   go)
     run_go
+    ;;
+  race)
+    run_go_race
     ;;
   js)
     run_sdn_js
@@ -268,7 +291,7 @@ case "$MODE" in
     run_plugin_demo
     ;;
   *)
-    echo -e "${RED}Usage: $0 [quick|full|go|js|delivery|plugin|demo]${NC}"
+    echo -e "${RED}Usage: $0 [quick|full|go|race|js|delivery|plugin|demo]${NC}"
     exit 1
     ;;
 esac

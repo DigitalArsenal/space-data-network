@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -116,11 +117,18 @@ type PluginManifestEntry struct {
 // RuntimeModuleStats contains runtime metrics that are safe to expose to the
 // dashboard. WASM memory is reported as linear-memory pages, not process RSS.
 type RuntimeModuleStats struct {
-	MemoryPages    uint64 `json:"memoryPages,omitempty"`
-	MemoryBytes    uint64 `json:"memoryBytes,omitempty"`
-	MaxMemoryPages uint64 `json:"maxMemoryPages,omitempty"`
-	MaxMemoryBytes uint64 `json:"maxMemoryBytes,omitempty"`
-	UptimeMs       int64  `json:"uptimeMs,omitempty"`
+	MemoryPages      uint64  `json:"memoryPages,omitempty"`
+	MemoryBytes      uint64  `json:"memoryBytes,omitempty"`
+	MaxMemoryPages   uint64  `json:"maxMemoryPages,omitempty"`
+	MaxMemoryBytes   uint64  `json:"maxMemoryBytes,omitempty"`
+	UptimeMs         int64   `json:"uptimeMs,omitempty"`
+	HostRSSBytes     uint64  `json:"hostRssBytes,omitempty"`
+	InvokeCount      uint64  `json:"invokeCount,omitempty"`
+	ErrorCount       uint64  `json:"errorCount,omitempty"`
+	LastInvokeAt     string  `json:"lastInvokeAt,omitempty"`
+	AverageLatencyMs float64 `json:"averageLatencyMs,omitempty"`
+	TimerRunCount    uint64  `json:"timerRunCount,omitempty"`
+	LastTimerStatus  string  `json:"lastTimerStatus,omitempty"`
 }
 
 // RuntimeModuleMethod describes an invokable method surfaced by the module
@@ -170,12 +178,41 @@ type RuntimeModuleManifest struct {
 // dashboard. Custom module settings should come from canonical manifests, not a
 // repo-local schema.
 type RuntimeModuleOption struct {
-	Key         string `json:"key"`
+	Key             string  `json:"key"`
+	Label           string  `json:"label"`
+	Type            string  `json:"type"`
+	Value           string  `json:"value,omitempty"`
+	Description     string  `json:"description,omitempty"`
+	ReadOnly        bool    `json:"readOnly,omitempty"`
+	Units           string  `json:"units,omitempty"`
+	Min             float64 `json:"min,omitempty"`
+	Max             float64 `json:"max,omitempty"`
+	DefaultValue    string  `json:"defaultValue,omitempty"`
+	RestartRequired bool    `json:"restartRequired,omitempty"`
+	Persistence     string  `json:"persistence,omitempty"`
+	Mutable         bool    `json:"mutable,omitempty"`
+}
+
+// RuntimeModuleAction describes a lifecycle control surfaced by the dashboard.
+type RuntimeModuleAction struct {
+	ActionID    string `json:"actionId"`
 	Label       string `json:"label"`
-	Type        string `json:"type"`
-	Value       string `json:"value,omitempty"`
 	Description string `json:"description,omitempty"`
-	ReadOnly    bool   `json:"readOnly,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	Destructive bool   `json:"destructive,omitempty"`
+}
+
+// RuntimeModuleStatusEvent records a recent runtime state transition.
+type RuntimeModuleStatusEvent struct {
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+	At      string `json:"at"`
+}
+
+// RuntimeModuleLinks exposes dashboard-safe detail links for module logs/events.
+type RuntimeModuleLinks struct {
+	LogsURL   string `json:"logsUrl,omitempty"`
+	EventsURL string `json:"eventsUrl,omitempty"`
 }
 
 // RuntimeModuleCatalog contains public catalog metadata when this runtime
@@ -196,21 +233,26 @@ type RuntimeModuleCatalog struct {
 type RuntimeModuleDescriptor struct {
 	Manifest *RuntimeModuleManifest `json:"manifest,omitempty"`
 	Stats    RuntimeModuleStats     `json:"stats,omitempty"`
+	Actions  []RuntimeModuleAction  `json:"actions,omitempty"`
+	Links    RuntimeModuleLinks     `json:"links,omitempty"`
 }
 
 // RuntimeModuleEntry is one row in the dashboard runtime snapshot.
 type RuntimeModuleEntry struct {
-	ID            string                 `json:"id"`
-	Version       string                 `json:"version,omitempty"`
-	Status        string                 `json:"status"`
-	StatusMessage string                 `json:"statusMessage,omitempty"`
-	Description   string                 `json:"description,omitempty"`
-	UI            *UIDescriptor          `json:"ui,omitempty"`
-	Cron          []CronMethodSpec       `json:"cron,omitempty"`
-	Manifest      *RuntimeModuleManifest `json:"manifest,omitempty"`
-	Stats         RuntimeModuleStats     `json:"stats,omitempty"`
-	Options       []RuntimeModuleOption  `json:"options,omitempty"`
-	Catalog       *RuntimeModuleCatalog  `json:"catalog,omitempty"`
+	ID            string                     `json:"id"`
+	Version       string                     `json:"version,omitempty"`
+	Status        string                     `json:"status"`
+	StatusMessage string                     `json:"statusMessage,omitempty"`
+	Description   string                     `json:"description,omitempty"`
+	UI            *UIDescriptor              `json:"ui,omitempty"`
+	Cron          []CronMethodSpec           `json:"cron,omitempty"`
+	Manifest      *RuntimeModuleManifest     `json:"manifest,omitempty"`
+	Stats         RuntimeModuleStats         `json:"stats,omitempty"`
+	Options       []RuntimeModuleOption      `json:"options,omitempty"`
+	Actions       []RuntimeModuleAction      `json:"actions,omitempty"`
+	StatusHistory []RuntimeModuleStatusEvent `json:"statusHistory,omitempty"`
+	Links         *RuntimeModuleLinks        `json:"links,omitempty"`
+	Catalog       *RuntimeModuleCatalog      `json:"catalog,omitempty"`
 }
 
 // RuntimeSnapshot is the top-level dashboard payload.
@@ -229,6 +271,7 @@ type pluginRuntimeState struct {
 	message   string
 	startedAt time.Time
 	updatedAt time.Time
+	history   []RuntimeModuleStatusEvent
 }
 
 // ─── Manager ───────────────────────────────────────────────────────────────
@@ -242,6 +285,7 @@ type Manager struct {
 	// Cron scheduler state.
 	cronCancel context.CancelFunc
 	cronWg     sync.WaitGroup
+	runtimeCtx context.Context
 
 	// Per-plugin cron config (plugin ID → method → schedule).
 	// Set via SetCronConfig before StartAll, or updated at runtime via API.
@@ -293,6 +337,12 @@ func (m *Manager) Register(plugin Plugin) error {
 	m.states[id] = pluginRuntimeState{
 		status:    "registered",
 		updatedAt: time.Now().UTC(),
+		history: []RuntimeModuleStatusEvent{
+			{
+				Status: "registered",
+				At:     time.Now().UTC().Format(time.RFC3339),
+			},
+		},
 	}
 	return nil
 }
@@ -317,6 +367,7 @@ func (m *Manager) StartAll(ctx context.Context, runtime RuntimeContext) error {
 	// Start cron methods in a shared cancellable context.
 	cronCtx, cancel := context.WithCancel(ctx)
 	m.cronCancel = cancel
+	m.runtimeCtx = ctx
 
 	for _, plugin := range registered {
 		if status, _ := m.pluginStatus(plugin.ID()); status != "running" {
@@ -487,11 +538,22 @@ func (m *Manager) RuntimeSnapshot() RuntimeSnapshot {
 			descriptor := rp.RuntimeDescriptor()
 			entry.Manifest = descriptor.Manifest
 			entry.Stats = descriptor.Stats
+			entry.Actions = append(entry.Actions, descriptor.Actions...)
+			if descriptor.Links.LogsURL != "" || descriptor.Links.EventsURL != "" {
+				links := descriptor.Links
+				entry.Links = &links
+			}
 			if entry.Version == "" && descriptor.Manifest != nil {
 				entry.Version = descriptor.Manifest.Version
 			}
 		}
-		entry.Options = buildRuntimeModuleOptions(entry.Manifest, entry.Cron)
+		entry.Options = m.buildRuntimeModuleOptions(id, entry.Manifest, entry.Cron)
+		entry.Actions = mergeRuntimeModuleActions(entry.Actions, buildRuntimeModuleActions(entry.Status))
+		entry.StatusHistory = m.pluginStatusHistory(id)
+		if entry.Links == nil {
+			links := defaultRuntimeModuleLinks(id)
+			entry.Links = &links
+		}
 		modules = append(modules, entry)
 	}
 
@@ -499,6 +561,95 @@ func (m *Manager) RuntimeSnapshot() RuntimeSnapshot {
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Count:       len(modules),
 		Modules:     modules,
+	}
+}
+
+// UpdateRuntimeModuleOption mutates a dashboard-exposed runtime option. Timer
+// and cron interval options are live-only: they update this manager's in-memory
+// schedule config and restart cron goroutines, but they do not rewrite config
+// files on disk.
+func (m *Manager) UpdateRuntimeModuleOption(ctx context.Context, moduleID, key, value string) (RuntimeModuleOption, error) {
+	if m == nil {
+		return RuntimeModuleOption{}, errors.New("plugin manager is nil")
+	}
+	plugin := m.Get(moduleID)
+	if plugin == nil {
+		return RuntimeModuleOption{}, fmt.Errorf("module %q not found", moduleID)
+	}
+	manifest, cron := runtimeDescriptorAndCron(plugin)
+	options := buildRuntimeModuleOptionsForConfig(manifest, cron, nil)
+	var selected RuntimeModuleOption
+	var targetMethod string
+	for _, option := range options {
+		if option.Key != key {
+			continue
+		}
+		selected = option
+		targetMethod = runtimeOptionMethodForKey(key, manifest, cron)
+		break
+	}
+	if selected.Key == "" {
+		return RuntimeModuleOption{}, fmt.Errorf("module %q option %q not found", moduleID, key)
+	}
+	if selected.ReadOnly {
+		return RuntimeModuleOption{}, fmt.Errorf("module %q option %q is read-only", moduleID, key)
+	}
+	if targetMethod == "" {
+		return RuntimeModuleOption{}, fmt.Errorf("module %q option %q cannot be applied", moduleID, key)
+	}
+
+	canonicalValue, cronInterval, err := normalizeRuntimeOptionValue(selected, value)
+	if err != nil {
+		return RuntimeModuleOption{}, err
+	}
+
+	m.cronConfigMu.Lock()
+	if m.cronConfig == nil {
+		m.cronConfig = make(map[string]map[string]CronScheduleConfig)
+	}
+	if m.cronConfig[moduleID] == nil {
+		m.cronConfig[moduleID] = make(map[string]CronScheduleConfig)
+	}
+	m.cronConfig[moduleID][targetMethod] = CronScheduleConfig{
+		Enabled:  true,
+		Interval: cronInterval,
+	}
+	m.cronConfigMu.Unlock()
+
+	m.restartCron(ctx)
+
+	selected.Value = canonicalValue
+	return selected, nil
+}
+
+// RunRuntimeModuleAction executes a supported module lifecycle action.
+func (m *Manager) RunRuntimeModuleAction(ctx context.Context, moduleID, actionID string) error {
+	if m == nil {
+		return errors.New("plugin manager is nil")
+	}
+	plugin := m.Get(moduleID)
+	if plugin == nil {
+		return fmt.Errorf("module %q not found", moduleID)
+	}
+	switch actionID {
+	case "clear-error":
+		status, _ := m.pluginStatus(moduleID)
+		if status != "error" {
+			return nil
+		}
+		m.setPluginState(moduleID, "registered", "error cleared", time.Time{})
+		return nil
+	case "stop":
+		if err := plugin.Close(); err != nil {
+			m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+			return err
+		}
+		m.setPluginState(moduleID, "stopped", "", time.Time{})
+		return nil
+	case "start", "restart", "reload-manifest":
+		return fmt.Errorf("module action %q is not supported by this runtime", actionID)
+	default:
+		return fmt.Errorf("unknown module action %q", actionID)
 	}
 }
 
@@ -579,12 +730,18 @@ func (m *Manager) setPluginState(id, status, message string, startedAt time.Time
 	defer m.pluginMu.Unlock()
 	m.ensureStateMapLocked()
 	state := m.states[id]
+	now := time.Now().UTC()
 	state.status = status
 	state.message = message
 	if !startedAt.IsZero() {
 		state.startedAt = startedAt
 	}
-	state.updatedAt = time.Now().UTC()
+	state.updatedAt = now
+	state.history = appendRuntimeStatusHistory(state.history, RuntimeModuleStatusEvent{
+		Status:  status,
+		Message: message,
+		At:      now.Format(time.RFC3339),
+	})
 	m.states[id] = state
 }
 
@@ -601,7 +758,26 @@ func (m *Manager) pluginStatus(id string) (string, string) {
 	return state.status, state.message
 }
 
-func buildRuntimeModuleOptions(manifest *RuntimeModuleManifest, cron []CronMethodSpec) []RuntimeModuleOption {
+func (m *Manager) pluginStatusHistory(id string) []RuntimeModuleStatusEvent {
+	if m == nil {
+		return nil
+	}
+	m.pluginMu.RLock()
+	defer m.pluginMu.RUnlock()
+	return append([]RuntimeModuleStatusEvent(nil), m.states[id].history...)
+}
+
+func (m *Manager) buildRuntimeModuleOptions(pluginID string, manifest *RuntimeModuleManifest, cron []CronMethodSpec) []RuntimeModuleOption {
+	var pluginConfig map[string]CronScheduleConfig
+	if m != nil {
+		m.cronConfigMu.RLock()
+		pluginConfig = cloneCronConfig(m.cronConfig[pluginID])
+		m.cronConfigMu.RUnlock()
+	}
+	return buildRuntimeModuleOptionsForConfig(manifest, cron, pluginConfig)
+}
+
+func buildRuntimeModuleOptionsForConfig(manifest *RuntimeModuleManifest, cron []CronMethodSpec, pluginConfig map[string]CronScheduleConfig) []RuntimeModuleOption {
 	options := make([]RuntimeModuleOption, 0)
 	seen := map[string]bool{}
 	if manifest != nil {
@@ -611,12 +787,23 @@ func buildRuntimeModuleOptions(manifest *RuntimeModuleManifest, cron []CronMetho
 			}
 			key := "timer." + timer.TimerID + ".interval"
 			seen[key] = true
+			defaultValue := fmt.Sprintf("%d", timer.DefaultIntervalMs)
+			methodID := strings.TrimSpace(timer.MethodID)
+			if methodID == "" {
+				methodID = timer.TimerID
+			}
 			options = append(options, RuntimeModuleOption{
-				Key:         key,
-				Label:       timerOptionLabel(timer.TimerID),
-				Type:        "duration-ms",
-				Value:       fmt.Sprintf("%d", timer.DefaultIntervalMs),
-				Description: timer.Description,
+				Key:          key,
+				Label:        timerOptionLabel(timer.TimerID),
+				Type:         "duration-ms",
+				Value:        timerIntervalValue(pluginConfig[methodID].Interval, defaultValue),
+				Description:  timer.Description,
+				Units:        "ms",
+				Min:          1000,
+				Max:          86400000,
+				DefaultValue: defaultValue,
+				Persistence:  "live-only",
+				Mutable:      true,
 			})
 		}
 	}
@@ -629,14 +816,242 @@ func buildRuntimeModuleOptions(manifest *RuntimeModuleManifest, cron []CronMetho
 			continue
 		}
 		options = append(options, RuntimeModuleOption{
-			Key:         key,
-			Label:       timerOptionLabel(spec.Method),
-			Type:        "duration",
-			Value:       spec.DefaultInterval,
-			Description: spec.Description,
+			Key:          key,
+			Label:        timerOptionLabel(spec.Method),
+			Type:         "duration",
+			Value:        cronIntervalValue(pluginConfig[spec.Method].Interval, spec.DefaultInterval),
+			Description:  spec.Description,
+			Units:        "duration",
+			DefaultValue: spec.DefaultInterval,
+			Persistence:  "live-only",
+			Mutable:      true,
 		})
 	}
 	return options
+}
+
+func runtimeDescriptorAndCron(plugin Plugin) (*RuntimeModuleManifest, []CronMethodSpec) {
+	var manifest *RuntimeModuleManifest
+	if rp, ok := plugin.(runtimeDescriptorProvider); ok {
+		manifest = rp.RuntimeDescriptor().Manifest
+	}
+	var cron []CronMethodSpec
+	if cp, ok := plugin.(CronProvider); ok {
+		cron = cp.CronMethods()
+	}
+	return manifest, cron
+}
+
+func runtimeOptionMethodForKey(key string, manifest *RuntimeModuleManifest, cron []CronMethodSpec) string {
+	if strings.HasPrefix(key, "timer.") && strings.HasSuffix(key, ".interval") && manifest != nil {
+		timerID := strings.TrimSuffix(strings.TrimPrefix(key, "timer."), ".interval")
+		for _, timer := range manifest.Timers {
+			if timer.TimerID != timerID {
+				continue
+			}
+			if strings.TrimSpace(timer.MethodID) != "" {
+				return strings.TrimSpace(timer.MethodID)
+			}
+			return timer.TimerID
+		}
+	}
+	if strings.HasPrefix(key, "cron.") && strings.HasSuffix(key, ".interval") {
+		method := strings.TrimSuffix(strings.TrimPrefix(key, "cron."), ".interval")
+		for _, spec := range cron {
+			if spec.Method == method {
+				return method
+			}
+		}
+	}
+	return ""
+}
+
+func normalizeRuntimeOptionValue(option RuntimeModuleOption, rawValue string) (displayValue string, cronInterval string, err error) {
+	value := strings.TrimSpace(rawValue)
+	if value == "" {
+		return "", "", fmt.Errorf("option %q value is required", option.Key)
+	}
+	switch option.Type {
+	case "duration-ms":
+		duration, parseErr := parseRuntimeDurationMS(value)
+		if parseErr != nil {
+			return "", "", fmt.Errorf("option %q value is not a valid duration in milliseconds: %w", option.Key, parseErr)
+		}
+		ms := duration.Milliseconds()
+		if option.Min > 0 && float64(ms) < option.Min {
+			return "", "", fmt.Errorf("option %q value must be at least %.0f %s", option.Key, option.Min, option.Units)
+		}
+		if option.Max > 0 && float64(ms) > option.Max {
+			return "", "", fmt.Errorf("option %q value must be at most %.0f %s", option.Key, option.Max, option.Units)
+		}
+		return fmt.Sprintf("%d", ms), fmt.Sprintf("%dms", ms), nil
+	case "duration":
+		duration, parseErr := time.ParseDuration(value)
+		if parseErr != nil {
+			return "", "", fmt.Errorf("option %q value is not a valid duration: %w", option.Key, parseErr)
+		}
+		if duration < time.Second {
+			return "", "", fmt.Errorf("option %q value must be at least 1s", option.Key)
+		}
+		return duration.String(), duration.String(), nil
+	default:
+		return "", "", fmt.Errorf("option %q type %q is not mutable", option.Key, option.Type)
+	}
+}
+
+func parseRuntimeDurationMS(value string) (time.Duration, error) {
+	if ms, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if ms <= 0 {
+			return 0, fmt.Errorf("duration must be positive")
+		}
+		return time.Duration(ms) * time.Millisecond, nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, err
+	}
+	if duration <= 0 {
+		return 0, fmt.Errorf("duration must be positive")
+	}
+	return duration, nil
+}
+
+func timerIntervalValue(interval, defaultValue string) string {
+	duration, err := time.ParseDuration(strings.TrimSpace(interval))
+	if err != nil || duration <= 0 {
+		return defaultValue
+	}
+	return fmt.Sprintf("%d", duration.Milliseconds())
+}
+
+func cronIntervalValue(interval, defaultValue string) string {
+	duration, err := time.ParseDuration(strings.TrimSpace(interval))
+	if err != nil || duration <= 0 {
+		return defaultValue
+	}
+	return duration.String()
+}
+
+func cloneCronConfig(config map[string]CronScheduleConfig) map[string]CronScheduleConfig {
+	if len(config) == 0 {
+		return nil
+	}
+	out := make(map[string]CronScheduleConfig, len(config))
+	for key, value := range config {
+		out[key] = value
+	}
+	return out
+}
+
+func (m *Manager) restartCron(ctx context.Context) {
+	if m == nil {
+		return
+	}
+	if m.cronCancel != nil {
+		m.cronCancel()
+		m.cronWg.Wait()
+	}
+	if ctx == nil {
+		ctx = m.runtimeCtx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cronCtx, cancel := context.WithCancel(ctx)
+	m.cronCancel = cancel
+	m.runtimeCtx = ctx
+	for _, plugin := range m.registeredPlugins() {
+		if status, _ := m.pluginStatus(plugin.ID()); status != "running" {
+			continue
+		}
+		cp, ok := plugin.(CronProvider)
+		if !ok {
+			continue
+		}
+		m.scheduleCronMethods(cronCtx, plugin.ID(), cp)
+	}
+}
+
+func buildRuntimeModuleActions(status string) []RuntimeModuleAction {
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	return []RuntimeModuleAction{
+		{
+			ActionID:    "start",
+			Label:       "Start",
+			Description: "Start this module when the runtime supports hot start.",
+			Enabled:     false,
+		},
+		{
+			ActionID:    "stop",
+			Label:       "Stop",
+			Description: "Stop this module runtime.",
+			Enabled:     normalized == "running",
+			Destructive: true,
+		},
+		{
+			ActionID:    "restart",
+			Label:       "Restart",
+			Description: "Restart this module when the runtime supports hot reload.",
+			Enabled:     false,
+			Destructive: true,
+		},
+		{
+			ActionID:    "reload-manifest",
+			Label:       "Reload manifest",
+			Description: "Reload manifest metadata when the runtime supports it.",
+			Enabled:     false,
+		},
+		{
+			ActionID:    "clear-error",
+			Label:       "Clear error",
+			Description: "Clear the current error state after the operator has reviewed it.",
+			Enabled:     normalized == "error",
+		},
+	}
+}
+
+func mergeRuntimeModuleActions(primary, fallback []RuntimeModuleAction) []RuntimeModuleAction {
+	if len(primary) == 0 {
+		return fallback
+	}
+	out := append([]RuntimeModuleAction(nil), primary...)
+	seen := make(map[string]bool, len(out))
+	for _, action := range out {
+		seen[action.ActionID] = true
+	}
+	for _, action := range fallback {
+		if seen[action.ActionID] {
+			continue
+		}
+		out = append(out, action)
+	}
+	return out
+}
+
+func defaultRuntimeModuleLinks(id string) RuntimeModuleLinks {
+	escaped := strings.ReplaceAll(id, "/", "%2F")
+	return RuntimeModuleLinks{
+		LogsURL:   "/api/v1/modules/runtime/" + escaped + "/logs",
+		EventsURL: "/api/v1/modules/runtime/" + escaped + "/events",
+	}
+}
+
+func appendRuntimeStatusHistory(history []RuntimeModuleStatusEvent, event RuntimeModuleStatusEvent) []RuntimeModuleStatusEvent {
+	if event.Status == "" {
+		return history
+	}
+	if len(history) > 0 {
+		last := history[len(history)-1]
+		if last.Status == event.Status && last.Message == event.Message {
+			history[len(history)-1] = event
+			return history
+		}
+	}
+	history = append(history, event)
+	if len(history) > 20 {
+		history = append([]RuntimeModuleStatusEvent(nil), history[len(history)-20:]...)
+	}
+	return history
 }
 
 func timerOptionLabel(id string) string {

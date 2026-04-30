@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -238,6 +239,63 @@ func TestHandleModuleRuntimeSnapshotMergesCatalogOnlyModules(t *testing.T) {
 	}
 	if got, want := payload.Modules[0].Catalog.RequiredScope, "orbpro:base"; got != want {
 		t.Fatalf("required scope = %q, want %q", got, want)
+	}
+}
+
+func TestHandleModuleRuntimeMutationUpdatesOptionsAndRunsActions(t *testing.T) {
+	t.Parallel()
+
+	mgr := plugins.New()
+	plugin := &runtimeMutationTestPlugin{
+		id: "licensing",
+		descriptor: plugins.RuntimeModuleDescriptor{
+			Manifest: &plugins.RuntimeModuleManifest{
+				PluginID: "licensing",
+				Timers: []plugins.RuntimeModuleTimer{
+					{
+						TimerID:           "refresh-grants",
+						MethodID:          "refresh_grants",
+						DefaultIntervalMs: 30000,
+					},
+				},
+			},
+		},
+	}
+	if err := mgr.Register(plugin); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if err := mgr.StartAll(context.Background(), plugins.RuntimeContext{Mode: "test"}); err != nil {
+		t.Fatalf("StartAll failed: %v", err)
+	}
+
+	optionReq := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/modules/runtime/licensing/options/timer.refresh-grants.interval",
+		bytes.NewBufferString(`{"value":"45000"}`),
+	)
+	optionRecorder := httptest.NewRecorder()
+	handleModuleRuntimeMutation(mgr)(optionRecorder, optionReq)
+	if optionRecorder.Code != http.StatusOK {
+		t.Fatalf("option status = %d, body = %s", optionRecorder.Code, optionRecorder.Body.String())
+	}
+	var optionPayload struct {
+		Key         string `json:"key"`
+		Value       string `json:"value"`
+		Persistence string `json:"persistence"`
+	}
+	if err := json.NewDecoder(optionRecorder.Body).Decode(&optionPayload); err != nil {
+		t.Fatalf("decode option payload: %v", err)
+	}
+	if optionPayload.Key != "timer.refresh-grants.interval" || optionPayload.Value != "45000" || optionPayload.Persistence != "live-only" {
+		t.Fatalf("option payload = %#v", optionPayload)
+	}
+
+	mgr.RunRuntimeModuleAction(context.Background(), "licensing", "stop")
+	actionReq := httptest.NewRequest(http.MethodPost, "/api/v1/modules/runtime/licensing/actions/clear-error", nil)
+	actionRecorder := httptest.NewRecorder()
+	handleModuleRuntimeMutation(mgr)(actionRecorder, actionReq)
+	if actionRecorder.Code != http.StatusOK {
+		t.Fatalf("action status = %d, body = %s", actionRecorder.Code, actionRecorder.Body.String())
 	}
 }
 
@@ -599,6 +657,41 @@ func writeMainTestPluginRegistry(t *testing.T, entries ...license.PluginCatalogE
 		t.Fatalf("LoadPluginRegistry failed: %v", err)
 	}
 	return reg
+}
+
+type runtimeMutationTestPlugin struct {
+	id         string
+	descriptor plugins.RuntimeModuleDescriptor
+}
+
+func (p *runtimeMutationTestPlugin) ID() string { return p.id }
+
+func (p *runtimeMutationTestPlugin) Start(context.Context, plugins.RuntimeContext) error {
+	return nil
+}
+
+func (p *runtimeMutationTestPlugin) RegisterRoutes(*http.ServeMux) {}
+
+func (p *runtimeMutationTestPlugin) Close() error { return nil }
+
+func (p *runtimeMutationTestPlugin) RuntimeDescriptor() plugins.RuntimeModuleDescriptor {
+	return p.descriptor
+}
+
+func (p *runtimeMutationTestPlugin) CronMethods() []plugins.CronMethodSpec {
+	return []plugins.CronMethodSpec{
+		{
+			Method:          "refresh_grants",
+			Description:     "Refresh grant cache",
+			DefaultInterval: "30s",
+			Input:           "none",
+			Output:          "json",
+		},
+	}
+}
+
+func (p *runtimeMutationTestPlugin) InvokeCron(context.Context, string, []byte) ([]byte, error) {
+	return nil, nil
 }
 
 type fakeProviderDescriptorSource struct {

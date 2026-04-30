@@ -36,6 +36,13 @@ type Module struct {
 	cancel    context.CancelFunc
 	startedAt time.Time
 	wg        sync.WaitGroup
+
+	invokeCount     uint64
+	errorCount      uint64
+	totalLatency    time.Duration
+	lastInvokeAt    time.Time
+	timerRunCount   uint64
+	lastTimerStatus string
 }
 
 // Context returns the module's lifecycle context. It is set when Start() is called
@@ -258,7 +265,9 @@ func (m *Module) CronMethods() []plugins.CronMethodSpec {
 }
 
 func (m *Module) InvokeCron(ctx context.Context, method string, input []byte) ([]byte, error) {
-	return m.InvokeMethod(ctx, method, input)
+	output, err := m.InvokeMethod(ctx, method, input)
+	m.recordTimerResult(err)
+	return output, err
 }
 
 // --- plugins.UIProvider interface ---
@@ -286,7 +295,12 @@ func (m *Module) InvokeMethod(ctx context.Context, methodID string, payload []by
 }
 
 // InvokeMethodFrames calls plugin_invoke_stream with an SDK-style multi-port input request.
-func (m *Module) InvokeMethodFrames(ctx context.Context, methodID string, inputFrames []InvokeInputFrame) ([]byte, error) {
+func (m *Module) InvokeMethodFrames(ctx context.Context, methodID string, inputFrames []InvokeInputFrame) (payload []byte, err error) {
+	started := time.Now()
+	defer func() {
+		m.recordInvokeResult(started, err)
+	}()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -371,12 +385,56 @@ func (m *Module) RuntimeDescriptor() plugins.RuntimeModuleDescriptor {
 	if m != nil {
 		m.mu.Lock()
 		startedAt := m.startedAt
+		invokeCount := m.invokeCount
+		errorCount := m.errorCount
+		totalLatency := m.totalLatency
+		lastInvokeAt := m.lastInvokeAt
+		timerRunCount := m.timerRunCount
+		lastTimerStatus := m.lastTimerStatus
 		m.mu.Unlock()
 		if !startedAt.IsZero() {
 			descriptor.Stats.UptimeMs = time.Since(startedAt).Milliseconds()
 		}
+		descriptor.Stats.InvokeCount = invokeCount
+		descriptor.Stats.ErrorCount = errorCount
+		if !lastInvokeAt.IsZero() {
+			descriptor.Stats.LastInvokeAt = lastInvokeAt.UTC().Format(time.RFC3339)
+		}
+		if invokeCount > 0 {
+			descriptor.Stats.AverageLatencyMs = float64(totalLatency.Microseconds()) / 1000.0 / float64(invokeCount)
+		}
+		descriptor.Stats.TimerRunCount = timerRunCount
+		descriptor.Stats.LastTimerStatus = lastTimerStatus
 	}
 	return descriptor
+}
+
+func (m *Module) recordInvokeResult(started time.Time, err error) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.invokeCount++
+	m.totalLatency += time.Since(started)
+	m.lastInvokeAt = time.Now().UTC()
+	if err != nil {
+		m.errorCount++
+	}
+}
+
+func (m *Module) recordTimerResult(err error) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.timerRunCount++
+	if err != nil {
+		m.lastTimerStatus = "error"
+		return
+	}
+	m.lastTimerStatus = "ok"
 }
 
 // Mod returns the underlying wasmrt.Module.

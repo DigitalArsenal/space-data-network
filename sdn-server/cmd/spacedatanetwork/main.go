@@ -572,6 +572,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			adminMux.HandleFunc("/api/module-delivery/provider", handleProviderDescriptor(n))
 			adminMux.HandleFunc("/api/module-delivery/listings", handleModuleDeliveryListings(n.PluginRegistry()))
 			adminMux.HandleFunc("/api/v1/modules/runtime", handleModuleRuntimeSnapshot(n.PluginManager(), n.PluginRegistry()))
+			adminMux.HandleFunc("/api/v1/modules/runtime/", handleModuleRuntimeMutation(n.PluginManager()))
 			adminMux.Handle("/api/directory/", directory.NewHTTPHandler(n.DirectoryService()))
 
 			// Relay status endpoint (public, used by clients for load balancing)
@@ -1645,6 +1646,91 @@ func handleModuleRuntimeSnapshot(mgr *plugins.Manager, reg *license.PluginRegist
 		w.Header().Set("Cache-Control", "no-cache")
 		_ = json.NewEncoder(w).Encode(snapshot)
 	}
+}
+
+func handleModuleRuntimeMutation(mgr *plugins.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if mgr == nil {
+			http.Error(w, "module runtime unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		moduleID, kind, key, ok := parseModuleRuntimeMutationPath(r.URL.Path)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+
+		switch kind {
+		case "options":
+			if r.Method != http.MethodPatch && r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			var payload struct {
+				Value string `json:"value"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "invalid option payload", http.StatusBadRequest)
+				return
+			}
+			option, err := mgr.UpdateRuntimeModuleOption(r.Context(), moduleID, key, payload.Value)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-cache")
+			_ = json.NewEncoder(w).Encode(option)
+		case "actions":
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if err := mgr.RunRuntimeModuleAction(r.Context(), moduleID, key); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-cache")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"ok":       true,
+				"moduleId": moduleID,
+				"actionId": key,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}
+}
+
+func parseModuleRuntimeMutationPath(pathValue string) (moduleID, kind, key string, ok bool) {
+	rest := strings.TrimPrefix(pathValue, "/api/v1/modules/runtime/")
+	if rest == pathValue || strings.TrimSpace(rest) == "" {
+		return "", "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) < 3 {
+		return "", "", "", false
+	}
+	decodedModuleID, err := url.PathUnescape(parts[0])
+	if err != nil {
+		return "", "", "", false
+	}
+	decodedKey, err := url.PathUnescape(strings.Join(parts[2:], "/"))
+	if err != nil {
+		return "", "", "", false
+	}
+	kind = strings.TrimSpace(parts[1])
+	if kind != "options" && kind != "actions" {
+		return "", "", "", false
+	}
+	moduleID = strings.TrimSpace(decodedModuleID)
+	key = strings.TrimSpace(decodedKey)
+	if moduleID == "" || key == "" {
+		return "", "", "", false
+	}
+	return moduleID, kind, key, true
 }
 
 func mergeModuleRuntimeCatalog(snapshot *plugins.RuntimeSnapshot, reg *license.PluginRegistry) {

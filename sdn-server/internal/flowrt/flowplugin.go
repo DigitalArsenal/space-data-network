@@ -38,9 +38,16 @@ type FlowPlugin struct {
 	handlers HandlerMap
 	wasmPath string
 
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	stopped bool
+	mu              sync.Mutex
+	cancel          context.CancelFunc
+	stopped         bool
+	startedAt       time.Time
+	invokeCount     uint64
+	errorCount      uint64
+	totalLatency    time.Duration
+	lastInvokeAt    time.Time
+	timerRunCount   uint64
+	lastTimerStatus string
 }
 
 // NewFlowPlugin creates a FlowPlugin from a loaded runtime and its program definition.
@@ -64,6 +71,7 @@ func (fp *FlowPlugin) Start(ctx context.Context, runtime plugins.RuntimeContext)
 	ctx, cancel := context.WithCancel(ctx)
 	fp.cancel = cancel
 	fp.stopped = false
+	fp.startedAt = time.Now().UTC()
 
 	log.Infof("Flow plugin %q started (%d triggers)", fp.program.ProgramID, len(fp.program.Triggers))
 	return nil
@@ -125,9 +133,11 @@ func (fp *FlowPlugin) CronMethods() []plugins.CronMethodSpec {
 }
 
 func (fp *FlowPlugin) InvokeCron(ctx context.Context, method string, input []byte) ([]byte, error) {
+	started := time.Now()
 	fp.mu.Lock()
 	if fp.stopped || fp.runtime == nil {
 		fp.mu.Unlock()
+		fp.recordInvokeResult(started, true, true)
 		return nil, fmt.Errorf("flow plugin %q is stopped", fp.program.ProgramID)
 	}
 	fp.mu.Unlock()
@@ -138,12 +148,15 @@ func (fp *FlowPlugin) InvokeCron(ctx context.Context, method string, input []byt
 			fp.runtime.EnqueueTrigger(uint32(i))
 			result, err := fp.runtime.DrainOnce(ctx, fp.handlers)
 			if err != nil {
+				fp.recordInvokeResult(started, true, true)
 				return nil, err
 			}
 			resp, _ := json.Marshal(result)
+			fp.recordInvokeResult(started, true, false)
 			return resp, nil
 		}
 	}
+	fp.recordInvokeResult(started, true, true)
 	return nil, fmt.Errorf("unknown cron method %q", method)
 }
 
@@ -165,12 +178,15 @@ func (fp *FlowPlugin) handleHTTPTrigger(w http.ResponseWriter, r *http.Request, 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
+	started := time.Now()
 	fp.runtime.EnqueueTrigger(triggerIndex)
 	result, err := fp.runtime.DrainOnce(ctx, fp.handlers)
 	if err != nil {
+		fp.recordInvokeResult(started, false, true)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	fp.recordInvokeResult(started, false, false)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
@@ -211,7 +227,48 @@ func (fp *FlowPlugin) RuntimeDescriptor() plugins.RuntimeModuleDescriptor {
 			descriptor.Stats.MaxMemoryBytes = stats.MaxBytes
 		}
 	}
+	fp.mu.Lock()
+	startedAt := fp.startedAt
+	invokeCount := fp.invokeCount
+	errorCount := fp.errorCount
+	totalLatency := fp.totalLatency
+	lastInvokeAt := fp.lastInvokeAt
+	timerRunCount := fp.timerRunCount
+	lastTimerStatus := fp.lastTimerStatus
+	fp.mu.Unlock()
+	if !startedAt.IsZero() {
+		descriptor.Stats.UptimeMs = time.Since(startedAt).Milliseconds()
+	}
+	descriptor.Stats.InvokeCount = invokeCount
+	descriptor.Stats.ErrorCount = errorCount
+	if !lastInvokeAt.IsZero() {
+		descriptor.Stats.LastInvokeAt = lastInvokeAt.UTC().Format(time.RFC3339)
+	}
+	if invokeCount > 0 {
+		descriptor.Stats.AverageLatencyMs = float64(totalLatency.Microseconds()) / 1000.0 / float64(invokeCount)
+	}
+	descriptor.Stats.TimerRunCount = timerRunCount
+	descriptor.Stats.LastTimerStatus = lastTimerStatus
 	return descriptor
+}
+
+func (fp *FlowPlugin) recordInvokeResult(started time.Time, timer bool, failed bool) {
+	fp.mu.Lock()
+	defer fp.mu.Unlock()
+	fp.invokeCount++
+	fp.totalLatency += time.Since(started)
+	fp.lastInvokeAt = time.Now().UTC()
+	if failed {
+		fp.errorCount++
+	}
+	if timer {
+		fp.timerRunCount++
+		if failed {
+			fp.lastTimerStatus = "error"
+		} else {
+			fp.lastTimerStatus = "ok"
+		}
+	}
 }
 
 func nonNegativeInt(value int) int {
