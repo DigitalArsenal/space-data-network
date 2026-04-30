@@ -42,7 +42,7 @@ type FlowsConfig struct {
 	// MaxMemoryPages is the WasmEdge memory limit per flow (in 64KB pages).
 	MaxMemoryPages uint32 `yaml:"max_memory_pages"`
 
-	// EditorEnabled serves the sdn-flow visual editor on the admin interface.
+	// EditorEnabled serves the SDN runtime editor on the admin interface.
 	EditorEnabled bool `yaml:"editor_enabled"`
 
 	// EditorPath is the URL base path for the editor (default: /flow-editor).

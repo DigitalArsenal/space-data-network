@@ -12,7 +12,7 @@ import (
 
 var log = logging.Logger("flowrt")
 
-// FlowRuntime hosts a compiled sdn-flow WASM artifact. It binds the flow
+// FlowRuntime hosts a compiled SDN runtime WASM artifact. It binds the flow
 // runtime ABI exports and provides a drain loop that dispatches node
 // invocations to registered handlers.
 type FlowRuntime struct {
