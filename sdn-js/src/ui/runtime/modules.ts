@@ -127,6 +127,37 @@ export interface ModuleRuntimeLinks {
   eventsUrl?: string;
 }
 
+export interface ModuleRuntimeInputValue {
+  methodId: string;
+  portId: string;
+  wireFormat?: string;
+  encoding?: string;
+  schemaName?: string;
+  fileIdentifier?: string;
+  schemaVersion?: string;
+  rootType?: string;
+  value?: string;
+  updatedAt?: string;
+}
+
+export interface ModuleRuntimeCommandHistoryEntry {
+  id: string;
+  at: string;
+  command: string;
+  moduleId?: string;
+  methodId?: string;
+  portId?: string;
+  status: string;
+  summary?: string;
+  inputValues: ModuleRuntimeInputValue[];
+}
+
+export interface SaveModuleRuntimeInputValuesResult {
+  moduleId: string;
+  restartPending: boolean;
+  inputValues: ModuleRuntimeInputValue[];
+}
+
 export interface ModuleRuntimeCatalog {
   requiredScope?: string;
   contentType?: string;
@@ -151,6 +182,9 @@ export interface ModuleRuntimeEntry {
   statusHistory: ModuleRuntimeStatusEvent[];
   links?: ModuleRuntimeLinks;
   catalog?: ModuleRuntimeCatalog;
+  inputValues: ModuleRuntimeInputValue[];
+  restartPending: boolean;
+  commandHistory: ModuleRuntimeCommandHistoryEntry[];
 }
 
 export interface ModuleRuntimeSnapshot {
@@ -228,6 +262,38 @@ export async function updateModuleRuntimeOption(
   return option;
 }
 
+export async function saveModuleRuntimeInputValues(
+  baseUrl: string,
+  moduleId: string,
+  values: ModuleRuntimeInputValue[],
+  fetchImpl: ModuleRuntimeFetchLike = globalThis.fetch.bind(
+    globalThis,
+  ) as ModuleRuntimeFetchLike,
+): Promise<SaveModuleRuntimeInputValuesResult> {
+  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  const response = await fetchImpl(
+    `${normalizedBaseUrl}/api/v1/modules/runtime/${encodeURIComponent(moduleId)}/inputs`,
+    {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json',
+        'x-requested-with': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({ values }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`module input update failed (${response.status})`);
+  }
+  const payload = asRecord(await response.json());
+  return {
+    moduleId: pickTrimmedString(payload, 'moduleId') ?? moduleId,
+    restartPending: payload?.restartPending === true,
+    inputValues: normalizeInputValues(payload?.inputValues),
+  };
+}
+
 export async function runModuleRuntimeAction(
   baseUrl: string,
   moduleId: string,
@@ -265,6 +331,23 @@ export function emptyModuleRuntimeSnapshot(): ModuleRuntimeSnapshot {
   };
 }
 
+export function resolveSelectedModuleId(
+  selectedId: string,
+  modules: Array<Pick<ModuleRuntimeEntry, 'id'>>,
+): string {
+  if (modules.length === 0) {
+    return '';
+  }
+  const normalizedSelectedId = selectedId.trim();
+  if (
+    normalizedSelectedId &&
+    modules.some((module) => module.id === normalizedSelectedId)
+  ) {
+    return normalizedSelectedId;
+  }
+  return modules[0]?.id ?? '';
+}
+
 function normalizeModuleEntries(value: unknown): ModuleRuntimeEntry[] {
   if (!Array.isArray(value)) {
     return [];
@@ -293,6 +376,9 @@ function normalizeModuleEntry(value: unknown): ModuleRuntimeEntry | null {
     statusHistory: normalizeStatusHistory(entry?.statusHistory),
     links: normalizeLinks(entry?.links),
     catalog: normalizeCatalog(entry?.catalog),
+    inputValues: normalizeInputValues(entry?.inputValues),
+    restartPending: entry?.restartPending === true,
+    commandHistory: normalizeCommandHistory(entry?.commandHistory),
   };
 }
 
@@ -446,6 +532,63 @@ function normalizeProtocols(value: unknown): ModuleRuntimeProtocol[] {
         autoInstall: record?.autoInstall === true,
         advertise: record?.advertise === true,
         discoveryKey: pickTrimmedString(record, 'discoveryKey'),
+      },
+    ];
+  });
+}
+
+function normalizeInputValues(value: unknown): ModuleRuntimeInputValue[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((inputValue) => {
+    const record = asRecord(inputValue);
+    const methodId = pickTrimmedString(record, 'methodId');
+    const portId = pickTrimmedString(record, 'portId');
+    if (!methodId || !portId) {
+      return [];
+    }
+    return [
+      {
+        methodId,
+        portId,
+        wireFormat: pickTrimmedString(record, 'wireFormat'),
+        encoding: pickTrimmedString(record, 'encoding'),
+        schemaName: pickTrimmedString(record, 'schemaName'),
+        fileIdentifier: pickTrimmedString(record, 'fileIdentifier'),
+        schemaVersion: pickTrimmedString(record, 'schemaVersion'),
+        rootType: pickTrimmedString(record, 'rootType'),
+        value: pickTrimmedString(record, 'value'),
+        updatedAt: pickTrimmedString(record, 'updatedAt'),
+      },
+    ];
+  });
+}
+
+function normalizeCommandHistory(value: unknown): ModuleRuntimeCommandHistoryEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entryValue) => {
+    const record = asRecord(entryValue);
+    const id = pickTrimmedString(record, 'id');
+    const at = pickTrimmedString(record, 'at');
+    const command = pickTrimmedString(record, 'command');
+    const status = pickTrimmedString(record, 'status');
+    if (!id || !at || !command || !status) {
+      return [];
+    }
+    return [
+      {
+        id,
+        at,
+        command,
+        moduleId: pickTrimmedString(record, 'moduleId'),
+        methodId: pickTrimmedString(record, 'methodId'),
+        portId: pickTrimmedString(record, 'portId'),
+        status,
+        summary: pickTrimmedString(record, 'summary'),
+        inputValues: normalizeInputValues(record?.inputValues),
       },
     ];
   });

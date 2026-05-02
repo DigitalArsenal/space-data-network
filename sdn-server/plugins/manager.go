@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -260,6 +262,43 @@ type RuntimeModuleLinks struct {
 	EventsURL string `json:"eventsUrl,omitempty"`
 }
 
+// RuntimeModuleInputValue is an operator-saved method input value. Values are
+// keyed by module, method, and port, then applied by runtimes that implement
+// RuntimeModuleInputApplier when the module is restarted.
+type RuntimeModuleInputValue struct {
+	MethodID       string `json:"methodId"`
+	PortID         string `json:"portId"`
+	WireFormat     string `json:"wireFormat,omitempty"`
+	Encoding       string `json:"encoding,omitempty"`
+	SchemaName     string `json:"schemaName,omitempty"`
+	FileIdentifier string `json:"fileIdentifier,omitempty"`
+	SchemaVersion  string `json:"schemaVersion,omitempty"`
+	RootType       string `json:"rootType,omitempty"`
+	Value          string `json:"value,omitempty"`
+	UpdatedAt      string `json:"updatedAt,omitempty"`
+}
+
+// RuntimeModuleCommandHistoryEntry records dashboard commands that change
+// module runtime inputs or apply them through lifecycle actions.
+type RuntimeModuleCommandHistoryEntry struct {
+	ID          string                    `json:"id"`
+	At          string                    `json:"at"`
+	Command     string                    `json:"command"`
+	ModuleID    string                    `json:"moduleId,omitempty"`
+	MethodID    string                    `json:"methodId,omitempty"`
+	PortID      string                    `json:"portId,omitempty"`
+	Status      string                    `json:"status"`
+	Summary     string                    `json:"summary,omitempty"`
+	InputValues []RuntimeModuleInputValue `json:"inputValues,omitempty"`
+}
+
+// RuntimeModuleInputState is the persisted dashboard state for one module.
+type RuntimeModuleInputState struct {
+	Values         []RuntimeModuleInputValue          `json:"values,omitempty"`
+	RestartPending bool                               `json:"restartPending,omitempty"`
+	CommandHistory []RuntimeModuleCommandHistoryEntry `json:"commandHistory,omitempty"`
+}
+
 // RuntimeModuleCatalog contains public catalog metadata when this runtime
 // module came from the module-delivery catalog.
 type RuntimeModuleCatalog struct {
@@ -284,20 +323,23 @@ type RuntimeModuleDescriptor struct {
 
 // RuntimeModuleEntry is one row in the dashboard runtime snapshot.
 type RuntimeModuleEntry struct {
-	ID            string                     `json:"id"`
-	Version       string                     `json:"version,omitempty"`
-	Status        string                     `json:"status"`
-	StatusMessage string                     `json:"statusMessage,omitempty"`
-	Description   string                     `json:"description,omitempty"`
-	UI            *UIDescriptor              `json:"ui,omitempty"`
-	Cron          []CronMethodSpec           `json:"cron,omitempty"`
-	Manifest      *RuntimeModuleManifest     `json:"manifest,omitempty"`
-	Stats         RuntimeModuleStats         `json:"stats,omitempty"`
-	Options       []RuntimeModuleOption      `json:"options,omitempty"`
-	Actions       []RuntimeModuleAction      `json:"actions,omitempty"`
-	StatusHistory []RuntimeModuleStatusEvent `json:"statusHistory,omitempty"`
-	Links         *RuntimeModuleLinks        `json:"links,omitempty"`
-	Catalog       *RuntimeModuleCatalog      `json:"catalog,omitempty"`
+	ID             string                             `json:"id"`
+	Version        string                             `json:"version,omitempty"`
+	Status         string                             `json:"status"`
+	StatusMessage  string                             `json:"statusMessage,omitempty"`
+	Description    string                             `json:"description,omitempty"`
+	UI             *UIDescriptor                      `json:"ui,omitempty"`
+	Cron           []CronMethodSpec                   `json:"cron,omitempty"`
+	Manifest       *RuntimeModuleManifest             `json:"manifest,omitempty"`
+	Stats          RuntimeModuleStats                 `json:"stats,omitempty"`
+	Options        []RuntimeModuleOption              `json:"options,omitempty"`
+	Actions        []RuntimeModuleAction              `json:"actions,omitempty"`
+	StatusHistory  []RuntimeModuleStatusEvent         `json:"statusHistory,omitempty"`
+	Links          *RuntimeModuleLinks                `json:"links,omitempty"`
+	Catalog        *RuntimeModuleCatalog              `json:"catalog,omitempty"`
+	InputValues    []RuntimeModuleInputValue          `json:"inputValues,omitempty"`
+	RestartPending bool                               `json:"restartPending,omitempty"`
+	CommandHistory []RuntimeModuleCommandHistoryEntry `json:"commandHistory,omitempty"`
 }
 
 // RuntimeSnapshot is the top-level dashboard payload.
@@ -309,6 +351,12 @@ type RuntimeSnapshot struct {
 
 type runtimeDescriptorProvider interface {
 	RuntimeDescriptor() RuntimeModuleDescriptor
+}
+
+// RuntimeModuleInputApplier is implemented by runtimes that can apply saved
+// dashboard input values after a lifecycle restart.
+type RuntimeModuleInputApplier interface {
+	ApplyRuntimeModuleInputs(ctx context.Context, values []RuntimeModuleInputValue) error
 }
 
 type pluginRuntimeState struct {
@@ -337,6 +385,9 @@ type Manager struct {
 	// Set via SetCronConfig before StartAll, or updated at runtime via API.
 	cronConfig   map[string]map[string]CronScheduleConfig
 	cronConfigMu sync.RWMutex
+
+	inputState   map[string]RuntimeModuleInputState
+	inputStateMu sync.RWMutex
 }
 
 // New creates an empty plugin manager.
@@ -345,6 +396,7 @@ func New() *Manager {
 		plugins:    make([]Plugin, 0),
 		states:     make(map[string]pluginRuntimeState),
 		cronConfig: make(map[string]map[string]CronScheduleConfig),
+		inputState: make(map[string]RuntimeModuleInputState),
 	}
 }
 
@@ -399,6 +451,9 @@ func (m *Manager) StartAll(ctx context.Context, runtime RuntimeContext) error {
 	if m == nil {
 		return nil
 	}
+	m.runtime = runtime
+	m.loadRuntimeModuleInputState(runtime.BaseDataPath)
+
 	var errs []error
 	registered := m.registeredPlugins()
 	for _, plugin := range registered {
@@ -414,7 +469,6 @@ func (m *Manager) StartAll(ctx context.Context, runtime RuntimeContext) error {
 	cronCtx, cancel := context.WithCancel(ctx)
 	m.cronCancel = cancel
 	m.runtimeCtx = ctx
-	m.runtime = runtime
 
 	for _, plugin := range registered {
 		if status, _ := m.pluginStatus(plugin.ID()); status != "running" {
@@ -595,6 +649,16 @@ func (m *Manager) RuntimeSnapshot() RuntimeSnapshot {
 			}
 		}
 		entry.Options = m.buildRuntimeModuleOptions(id, entry.Manifest, entry.Cron)
+		inputState := m.runtimeModuleInputState(id)
+		entry.InputValues = inputState.Values
+		entry.RestartPending = inputState.RestartPending
+		entry.CommandHistory = inputState.CommandHistory
+		if entry.RestartPending && entry.Status != "error" {
+			entry.Status = "updated"
+			if entry.StatusMessage == "" {
+				entry.StatusMessage = "input values updated; restart to apply"
+			}
+		}
 		entry.Actions = mergeRuntimeModuleActions(entry.Actions, buildRuntimeModuleActions(entry.Status))
 		entry.StatusHistory = m.pluginStatusHistory(id)
 		if entry.Links == nil {
@@ -609,6 +673,77 @@ func (m *Manager) RuntimeSnapshot() RuntimeSnapshot {
 		Count:       len(modules),
 		Modules:     modules,
 	}
+}
+
+// SaveRuntimeModuleInputValues stores operator-supplied method inputs and marks
+// the module as needing a restart before the new values are applied.
+func (m *Manager) SaveRuntimeModuleInputValues(ctx context.Context, moduleID string, values []RuntimeModuleInputValue) ([]RuntimeModuleInputValue, error) {
+	if m == nil {
+		return nil, errors.New("plugin manager is nil")
+	}
+	moduleID = strings.TrimSpace(moduleID)
+	if moduleID == "" {
+		return nil, errors.New("module id is required")
+	}
+	plugin := m.Get(moduleID)
+	if plugin == nil {
+		return nil, fmt.Errorf("module %q not found", moduleID)
+	}
+	manifest, _ := runtimeDescriptorAndCron(plugin)
+	normalized, err := normalizeRuntimeModuleInputValues(values, manifest)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	for index := range normalized {
+		normalized[index].UpdatedAt = now.Format(time.RFC3339)
+	}
+
+	m.inputStateMu.Lock()
+	if m.inputState == nil {
+		m.inputState = make(map[string]RuntimeModuleInputState)
+	}
+	state := m.inputState[moduleID]
+	state.Values = mergeRuntimeModuleInputValues(state.Values, normalized)
+	state.RestartPending = true
+	state.CommandHistory = appendRuntimeModuleCommandHistory(state.CommandHistory, RuntimeModuleCommandHistoryEntry{
+		ID:          runtimeModuleCommandID(now, len(state.CommandHistory)+1),
+		At:          now.Format(time.RFC3339),
+		Command:     "save-inputs",
+		ModuleID:    moduleID,
+		MethodID:    firstRuntimeInputMethodID(normalized),
+		PortID:      firstRuntimeInputPortID(normalized),
+		Status:      "updated",
+		Summary:     fmt.Sprintf("Saved %d input value%s", len(normalized), pluralSuffix(len(normalized))),
+		InputValues: cloneRuntimeModuleInputValues(normalized),
+	})
+	m.inputState[moduleID] = state
+	saved := cloneRuntimeModuleInputValues(state.Values)
+	m.inputStateMu.Unlock()
+
+	m.persistRuntimeModuleInputState()
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return saved, nil
+}
+
+// RuntimeModuleCommandHistory returns dashboard command history for a module.
+func (m *Manager) RuntimeModuleCommandHistory(moduleID string) ([]RuntimeModuleCommandHistoryEntry, error) {
+	if m == nil {
+		return nil, errors.New("plugin manager is nil")
+	}
+	moduleID = strings.TrimSpace(moduleID)
+	if moduleID == "" {
+		return nil, errors.New("module id is required")
+	}
+	if m.Get(moduleID) == nil {
+		return nil, fmt.Errorf("module %q not found", moduleID)
+	}
+	state := m.runtimeModuleInputState(moduleID)
+	return cloneRuntimeModuleCommandHistory(state.CommandHistory), nil
 }
 
 // UpdateRuntimeModuleOption mutates a dashboard-exposed runtime option. Timer
@@ -756,15 +891,33 @@ func (m *Manager) RunRuntimeModuleAction(ctx context.Context, moduleID, actionID
 		m.restartCron(ctx)
 		return nil
 	case "restart":
+		pendingInputs := m.runtimeModuleInputState(moduleID).Values
 		if err := plugin.Close(); err != nil {
 			m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+			m.recordRuntimeModuleCommand(moduleID, "restart", "failed", err.Error(), pendingInputs)
 			return err
 		}
 		if err := plugin.Start(m.moduleStartContext(ctx), m.runtime); err != nil {
 			m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+			m.recordRuntimeModuleCommand(moduleID, "restart", "failed", err.Error(), pendingInputs)
 			return err
 		}
+		if len(pendingInputs) > 0 {
+			applier, ok := plugin.(RuntimeModuleInputApplier)
+			if !ok {
+				err := fmt.Errorf("module %q does not support runtime input application", moduleID)
+				m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+				m.recordRuntimeModuleCommand(moduleID, "restart", "failed", err.Error(), pendingInputs)
+				return err
+			}
+			if err := applier.ApplyRuntimeModuleInputs(ctx, pendingInputs); err != nil {
+				m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+				m.recordRuntimeModuleCommand(moduleID, "restart", "failed", err.Error(), pendingInputs)
+				return err
+			}
+		}
 		m.setPluginState(moduleID, "running", "", time.Now().UTC())
+		m.markRuntimeModuleInputsApplied(moduleID, pendingInputs)
 		m.restartCron(ctx)
 		return nil
 	case "reload-manifest":
@@ -910,6 +1063,73 @@ func (m *Manager) pluginStatusHistory(id string) []RuntimeModuleStatusEvent {
 	m.pluginMu.RLock()
 	defer m.pluginMu.RUnlock()
 	return append([]RuntimeModuleStatusEvent(nil), m.states[id].history...)
+}
+
+func (m *Manager) runtimeModuleInputState(moduleID string) RuntimeModuleInputState {
+	if m == nil {
+		return RuntimeModuleInputState{}
+	}
+	m.inputStateMu.RLock()
+	defer m.inputStateMu.RUnlock()
+	state := m.inputState[moduleID]
+	return RuntimeModuleInputState{
+		Values:         cloneRuntimeModuleInputValues(state.Values),
+		RestartPending: state.RestartPending,
+		CommandHistory: cloneRuntimeModuleCommandHistory(state.CommandHistory),
+	}
+}
+
+func (m *Manager) markRuntimeModuleInputsApplied(moduleID string, values []RuntimeModuleInputValue) {
+	if m == nil {
+		return
+	}
+	now := time.Now().UTC()
+	m.inputStateMu.Lock()
+	if m.inputState == nil {
+		m.inputState = make(map[string]RuntimeModuleInputState)
+	}
+	state := m.inputState[moduleID]
+	state.RestartPending = false
+	state.CommandHistory = appendRuntimeModuleCommandHistory(state.CommandHistory, RuntimeModuleCommandHistoryEntry{
+		ID:          runtimeModuleCommandID(now, len(state.CommandHistory)+1),
+		At:          now.Format(time.RFC3339),
+		Command:     "restart",
+		ModuleID:    moduleID,
+		MethodID:    firstRuntimeInputMethodID(values),
+		PortID:      firstRuntimeInputPortID(values),
+		Status:      "applied",
+		Summary:     fmt.Sprintf("Restart applied %d input value%s", len(values), pluralSuffix(len(values))),
+		InputValues: cloneRuntimeModuleInputValues(values),
+	})
+	m.inputState[moduleID] = state
+	m.inputStateMu.Unlock()
+	m.persistRuntimeModuleInputState()
+}
+
+func (m *Manager) recordRuntimeModuleCommand(moduleID, command, status, summary string, values []RuntimeModuleInputValue) {
+	if m == nil {
+		return
+	}
+	now := time.Now().UTC()
+	m.inputStateMu.Lock()
+	if m.inputState == nil {
+		m.inputState = make(map[string]RuntimeModuleInputState)
+	}
+	state := m.inputState[moduleID]
+	state.CommandHistory = appendRuntimeModuleCommandHistory(state.CommandHistory, RuntimeModuleCommandHistoryEntry{
+		ID:          runtimeModuleCommandID(now, len(state.CommandHistory)+1),
+		At:          now.Format(time.RFC3339),
+		Command:     command,
+		ModuleID:    moduleID,
+		MethodID:    firstRuntimeInputMethodID(values),
+		PortID:      firstRuntimeInputPortID(values),
+		Status:      status,
+		Summary:     summary,
+		InputValues: cloneRuntimeModuleInputValues(values),
+	})
+	m.inputState[moduleID] = state
+	m.inputStateMu.Unlock()
+	m.persistRuntimeModuleInputState()
 }
 
 func (m *Manager) buildRuntimeModuleOptions(pluginID string, manifest *RuntimeModuleManifest, cron []CronMethodSpec) []RuntimeModuleOption {
@@ -1137,9 +1357,9 @@ func buildRuntimeModuleActions(status string) []RuntimeModuleAction {
 	normalized := strings.ToLower(strings.TrimSpace(status))
 	canLoad := normalized == "unloaded" || normalized == "stopped"
 	canStart := normalized == "registered" || normalized == "stopped" || normalized == "unloaded" || normalized == "paused"
-	canUnload := normalized == "running" || normalized == "paused" || normalized == "registered" || normalized == "stopped"
-	canRestart := normalized == "running" || normalized == "paused" || normalized == "registered" || normalized == "stopped"
-	canReloadManifest := normalized == "running" || normalized == "paused" || normalized == "registered" || normalized == "stopped"
+	canUnload := normalized == "running" || normalized == "paused" || normalized == "registered" || normalized == "stopped" || normalized == "updated"
+	canRestart := normalized == "running" || normalized == "paused" || normalized == "registered" || normalized == "stopped" || normalized == "updated"
+	canReloadManifest := normalized == "running" || normalized == "paused" || normalized == "registered" || normalized == "stopped" || normalized == "updated"
 	return []RuntimeModuleAction{
 		{
 			ActionID:    "load",
@@ -1158,7 +1378,7 @@ func buildRuntimeModuleActions(status string) []RuntimeModuleAction {
 			ActionID:    "pause",
 			Label:       "Pause",
 			Description: "Pause module invocation while keeping the artifact loaded.",
-			Enabled:     normalized == "running",
+			Enabled:     normalized == "running" || normalized == "updated",
 		},
 		{
 			ActionID:    "start",
@@ -1170,7 +1390,7 @@ func buildRuntimeModuleActions(status string) []RuntimeModuleAction {
 			ActionID:    "stop",
 			Label:       "Stop",
 			Description: "Stop this module runtime.",
-			Enabled:     normalized == "running",
+			Enabled:     normalized == "running" || normalized == "updated",
 			Destructive: true,
 		},
 		{
@@ -1237,6 +1457,219 @@ func appendRuntimeStatusHistory(history []RuntimeModuleStatusEvent, event Runtim
 		history = append([]RuntimeModuleStatusEvent(nil), history[len(history)-20:]...)
 	}
 	return history
+}
+
+func normalizeRuntimeModuleInputValues(values []RuntimeModuleInputValue, manifest *RuntimeModuleManifest) ([]RuntimeModuleInputValue, error) {
+	if len(values) == 0 {
+		return nil, errors.New("at least one input value is required")
+	}
+	normalized := make([]RuntimeModuleInputValue, 0, len(values))
+	for _, value := range values {
+		next := RuntimeModuleInputValue{
+			MethodID:       strings.TrimSpace(value.MethodID),
+			PortID:         strings.TrimSpace(value.PortID),
+			WireFormat:     strings.TrimSpace(value.WireFormat),
+			Encoding:       normalizeRuntimeInputEncoding(value.Encoding, value.WireFormat),
+			SchemaName:     strings.TrimSpace(value.SchemaName),
+			FileIdentifier: strings.TrimSpace(value.FileIdentifier),
+			SchemaVersion:  strings.TrimSpace(value.SchemaVersion),
+			RootType:       strings.TrimSpace(value.RootType),
+			Value:          strings.TrimSpace(value.Value),
+		}
+		if next.MethodID == "" {
+			return nil, errors.New("input value methodId is required")
+		}
+		if next.PortID == "" {
+			return nil, fmt.Errorf("input value %q portId is required", next.MethodID)
+		}
+		if next.Value == "" {
+			return nil, fmt.Errorf("input value %q/%q value is required", next.MethodID, next.PortID)
+		}
+		if err := validateRuntimeInputValueAgainstManifest(next, manifest); err != nil {
+			return nil, err
+		}
+		normalized = append(normalized, next)
+	}
+	return normalized, nil
+}
+
+func normalizeRuntimeInputEncoding(encoding, wireFormat string) string {
+	normalized := strings.ToLower(strings.TrimSpace(encoding))
+	switch normalized {
+	case "base64", "hex", "json", "text":
+		return normalized
+	}
+	if strings.Contains(strings.ToUpper(wireFormat), "JSON") {
+		return "json"
+	}
+	return "text"
+}
+
+func validateRuntimeInputValueAgainstManifest(value RuntimeModuleInputValue, manifest *RuntimeModuleManifest) error {
+	if manifest == nil {
+		return nil
+	}
+	for _, method := range manifest.Methods {
+		if method.MethodID != value.MethodID {
+			continue
+		}
+		if len(method.InputPorts) == 0 {
+			return nil
+		}
+		for _, port := range method.InputPorts {
+			if port.PortID == value.PortID {
+				return nil
+			}
+		}
+		return fmt.Errorf("module input port %q not found on method %q", value.PortID, value.MethodID)
+	}
+	return fmt.Errorf("module input method %q not found", value.MethodID)
+}
+
+func mergeRuntimeModuleInputValues(existing, updates []RuntimeModuleInputValue) []RuntimeModuleInputValue {
+	out := cloneRuntimeModuleInputValues(existing)
+	indexes := make(map[string]int, len(out))
+	for index, value := range out {
+		indexes[runtimeInputValueKey(value)] = index
+	}
+	for _, value := range updates {
+		key := runtimeInputValueKey(value)
+		if index, ok := indexes[key]; ok {
+			out[index] = value
+			continue
+		}
+		indexes[key] = len(out)
+		out = append(out, value)
+	}
+	return out
+}
+
+func runtimeInputValueKey(value RuntimeModuleInputValue) string {
+	return value.MethodID + "\x00" + value.PortID
+}
+
+func cloneRuntimeModuleInputValues(values []RuntimeModuleInputValue) []RuntimeModuleInputValue {
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]RuntimeModuleInputValue(nil), values...)
+}
+
+func cloneRuntimeModuleCommandHistory(history []RuntimeModuleCommandHistoryEntry) []RuntimeModuleCommandHistoryEntry {
+	if len(history) == 0 {
+		return nil
+	}
+	out := append([]RuntimeModuleCommandHistoryEntry(nil), history...)
+	for index := range out {
+		out[index].InputValues = cloneRuntimeModuleInputValues(out[index].InputValues)
+	}
+	return out
+}
+
+func appendRuntimeModuleCommandHistory(history []RuntimeModuleCommandHistoryEntry, entry RuntimeModuleCommandHistoryEntry) []RuntimeModuleCommandHistoryEntry {
+	if entry.Command == "" {
+		return history
+	}
+	entry.InputValues = cloneRuntimeModuleInputValues(entry.InputValues)
+	history = append(history, entry)
+	if len(history) > 50 {
+		history = append([]RuntimeModuleCommandHistoryEntry(nil), history[len(history)-50:]...)
+	}
+	return history
+}
+
+func runtimeModuleCommandID(at time.Time, index int) string {
+	return fmt.Sprintf("%d-%06d", at.UnixNano(), index)
+}
+
+func firstRuntimeInputMethodID(values []RuntimeModuleInputValue) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0].MethodID
+}
+
+func firstRuntimeInputPortID(values []RuntimeModuleInputValue) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0].PortID
+}
+
+func pluralSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func (m *Manager) loadRuntimeModuleInputState(baseDataPath string) {
+	if m == nil || strings.TrimSpace(baseDataPath) == "" {
+		return
+	}
+	path := runtimeModuleInputStatePath(baseDataPath)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Warnf("read runtime module input state: %v", err)
+		}
+		return
+	}
+	var state map[string]RuntimeModuleInputState
+	if err := json.Unmarshal(data, &state); err != nil {
+		log.Warnf("decode runtime module input state: %v", err)
+		return
+	}
+	m.inputStateMu.Lock()
+	defer m.inputStateMu.Unlock()
+	if m.inputState == nil {
+		m.inputState = make(map[string]RuntimeModuleInputState)
+	}
+	for moduleID, moduleState := range state {
+		if _, exists := m.inputState[moduleID]; exists {
+			continue
+		}
+		moduleState.Values = cloneRuntimeModuleInputValues(moduleState.Values)
+		moduleState.CommandHistory = cloneRuntimeModuleCommandHistory(moduleState.CommandHistory)
+		m.inputState[moduleID] = moduleState
+	}
+}
+
+func (m *Manager) persistRuntimeModuleInputState() {
+	if m == nil || strings.TrimSpace(m.runtime.BaseDataPath) == "" {
+		return
+	}
+	path := runtimeModuleInputStatePath(m.runtime.BaseDataPath)
+	m.inputStateMu.RLock()
+	state := make(map[string]RuntimeModuleInputState, len(m.inputState))
+	for moduleID, moduleState := range m.inputState {
+		if len(moduleState.Values) == 0 && len(moduleState.CommandHistory) == 0 {
+			continue
+		}
+		state[moduleID] = RuntimeModuleInputState{
+			Values:         cloneRuntimeModuleInputValues(moduleState.Values),
+			RestartPending: moduleState.RestartPending,
+			CommandHistory: cloneRuntimeModuleCommandHistory(moduleState.CommandHistory),
+		}
+	}
+	m.inputStateMu.RUnlock()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		log.Warnf("create runtime module input state directory: %v", err)
+		return
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		log.Warnf("encode runtime module input state: %v", err)
+		return
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		log.Warnf("write runtime module input state: %v", err)
+	}
+}
+
+func runtimeModuleInputStatePath(baseDataPath string) string {
+	return filepath.Join(baseDataPath, "modules", "runtime-inputs.json")
 }
 
 func timerOptionLabel(id string) string {

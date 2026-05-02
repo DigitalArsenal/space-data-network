@@ -81,6 +81,34 @@ describe('sdn upstream webui branding helper', () => {
     expect(routes).toContain("'/modules'");
   });
 
+  it('keeps the Modules dashboard selection stable across polling refreshes', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/modules/ModulesPage.js'),
+      'utf8',
+    );
+
+    expect(source).toContain('resolveSelectedModuleId');
+    expect(source).toContain('setSelectedId((previousSelectedId) =>');
+    expect(source).not.toContain('if (!selectedId && nextSnapshot.modules[0])');
+  });
+
+  it('renders Modules with fixed scrolling panels, help links, input forms, and command history', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/modules/ModulesPage.js'),
+      'utf8',
+    );
+
+    expect(source).toContain('moduleListBodyStyle');
+    expect(source).toContain('detailPanelBodyStyle');
+    expect(source).toContain('ModulesHelp');
+    expect(source).toContain('LifecycleActionBar');
+    expect(source).toContain('MethodInputForm');
+    expect(source).toContain('CommandHistory');
+    expect(source).toContain('saveModuleRuntimeInputValues');
+    expect(source).toContain('https://github.com/DigitalArsenal/space-data-module-sdk/blob/main/README.md');
+    expect(source).toContain('https://github.com/DigitalArsenal/space-data-network/blob/main/docs/module-runtime-dashboard.md');
+  });
+
   it('allows the root-only modules dashboard to render before IPFS is ready', async () => {
     const app = await fs.readFile(
       path.join(uiSrcPath, 'overrides/App.js'),

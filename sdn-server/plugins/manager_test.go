@@ -149,6 +149,108 @@ func TestUpdateRuntimeModuleOptionAppliesLiveCronOverride(t *testing.T) {
 	}
 }
 
+func TestRuntimeModuleInputValuesMarkModuleUpdatedAndRestartAppliesHistory(t *testing.T) {
+	mgr := New()
+	plugin := &fakeRuntimePlugin{
+		id: "licensing",
+		descriptor: RuntimeModuleDescriptor{
+			Manifest: &RuntimeModuleManifest{
+				PluginID: "licensing",
+				Methods: []RuntimeModuleMethod{
+					{
+						MethodID: "server_configure_runtime",
+						InputPorts: []RuntimeModulePort{
+							{
+								PortID:      "request",
+								DisplayName: "Request",
+								Required:    true,
+								AcceptedTypeSets: []RuntimeModuleAcceptedTypeSet{
+									{
+										SetID:              "licensing-config",
+										AllowedWireFormats: []string{"FLATBUFFER_JSON", "JSON"},
+										AllowedTypes: []RuntimeModuleTypeRef{
+											{
+												SchemaName:     "MODULE.fbs",
+												FileIdentifier: "MODL",
+												SchemaVersion:  "1.0.0",
+												RootType:       "ConfigureRuntimeRequest",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := mgr.Register(plugin); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if err := mgr.StartAll(context.Background(), RuntimeContext{Mode: "test"}); err != nil {
+		t.Fatalf("StartAll failed: %v", err)
+	}
+
+	values, err := mgr.SaveRuntimeModuleInputValues(context.Background(), "licensing", []RuntimeModuleInputValue{
+		{
+			MethodID:       "server_configure_runtime",
+			PortID:         "request",
+			WireFormat:     "FLATBUFFER_JSON",
+			Encoding:       "json",
+			SchemaName:     "MODULE.fbs",
+			FileIdentifier: "MODL",
+			SchemaVersion:  "1.0.0",
+			RootType:       "ConfigureRuntimeRequest",
+			Value:          `{"refreshIntervalMs":45000}`,
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveRuntimeModuleInputValues failed: %v", err)
+	}
+	if len(values) != 1 || values[0].UpdatedAt == "" {
+		t.Fatalf("saved values = %#v, want timestamped value", values)
+	}
+
+	snapshot := mgr.RuntimeSnapshot()
+	module := snapshot.Modules[0]
+	if got, want := module.Status, "updated"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if !module.RestartPending {
+		t.Fatalf("restartPending = false, want true")
+	}
+	if len(module.InputValues) != 1 || module.InputValues[0].Value == "" {
+		t.Fatalf("input values = %#v, want saved input value", module.InputValues)
+	}
+	if len(module.CommandHistory) == 0 || module.CommandHistory[len(module.CommandHistory)-1].Command != "save-inputs" {
+		t.Fatalf("command history = %#v, want save-inputs entry", module.CommandHistory)
+	}
+
+	if err := mgr.RunRuntimeModuleAction(context.Background(), "licensing", "restart"); err != nil {
+		t.Fatalf("RunRuntimeModuleAction(restart) failed: %v", err)
+	}
+
+	snapshot = mgr.RuntimeSnapshot()
+	module = snapshot.Modules[0]
+	if got, want := module.Status, "running"; got != want {
+		t.Fatalf("status after restart = %q, want %q", got, want)
+	}
+	if module.RestartPending {
+		t.Fatalf("restartPending after restart = true, want false")
+	}
+	if got, want := plugin.appliedInputCalls, 1; got != want {
+		t.Fatalf("applied input calls = %d, want %d", got, want)
+	}
+	if len(plugin.appliedInputs) != 1 || plugin.appliedInputs[0].MethodID != "server_configure_runtime" {
+		t.Fatalf("applied inputs = %#v, want saved configure input", plugin.appliedInputs)
+	}
+	last := module.CommandHistory[len(module.CommandHistory)-1]
+	if last.Command != "restart" || last.Status != "applied" {
+		t.Fatalf("last command = %#v, want applied restart", last)
+	}
+}
+
 func TestRunRuntimeModuleActionClearErrorRecordsHistory(t *testing.T) {
 	mgr := New()
 	plugin := &fakeRuntimePlugin{
@@ -279,6 +381,9 @@ type fakeRuntimePlugin struct {
 	pauseCalls  int
 	resumeCalls int
 	closeCalls  int
+
+	appliedInputCalls int
+	appliedInputs     []RuntimeModuleInputValue
 }
 
 func (p *fakeRuntimePlugin) ID() string { return p.id }
@@ -312,4 +417,10 @@ func (p *fakeRuntimePlugin) Close() error {
 
 func (p *fakeRuntimePlugin) RuntimeDescriptor() RuntimeModuleDescriptor {
 	return p.descriptor
+}
+
+func (p *fakeRuntimePlugin) ApplyRuntimeModuleInputs(_ context.Context, values []RuntimeModuleInputValue) error {
+	p.appliedInputCalls++
+	p.appliedInputs = append([]RuntimeModuleInputValue(nil), values...)
+	return nil
 }

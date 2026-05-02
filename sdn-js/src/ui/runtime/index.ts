@@ -47,13 +47,17 @@ export {
 export {
   emptyModuleRuntimeSnapshot,
   loadModuleRuntimeSnapshotFromServer,
+  resolveSelectedModuleId,
   runModuleRuntimeAction,
+  saveModuleRuntimeInputValues,
   updateModuleRuntimeOption,
   type ModuleRuntimeAcceptedTypeSet,
   type ModuleRuntimeAction,
   type ModuleRuntimeCatalog,
+  type ModuleRuntimeCommandHistoryEntry,
   type ModuleRuntimeEntry,
   type ModuleRuntimeFetchLike,
+  type ModuleRuntimeInputValue,
   type ModuleRuntimeManifest,
   type ModuleRuntimeMethod,
   type ModuleRuntimeOption,
@@ -65,6 +69,7 @@ export {
   type ModuleRuntimeStatusEvent,
   type ModuleRuntimeTimer,
   type ModuleRuntimeTypeRef,
+  type SaveModuleRuntimeInputValuesResult,
 } from './modules';
 export { loadMarketplaceListingsFromServer } from './marketplace-source';
 export {

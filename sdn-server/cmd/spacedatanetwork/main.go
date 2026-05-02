@@ -1682,6 +1682,46 @@ func handleModuleRuntimeMutation(mgr *plugins.Manager) http.HandlerFunc {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Cache-Control", "no-cache")
 			_ = json.NewEncoder(w).Encode(option)
+		case "inputs":
+			if r.Method != http.MethodPatch && r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			var payload struct {
+				Values []plugins.RuntimeModuleInputValue `json:"values"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "invalid input payload", http.StatusBadRequest)
+				return
+			}
+			values, err := mgr.SaveRuntimeModuleInputValues(r.Context(), moduleID, payload.Values)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-cache")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"moduleId":       moduleID,
+				"restartPending": true,
+				"inputValues":    values,
+			})
+		case "history":
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			history, err := mgr.RuntimeModuleCommandHistory(moduleID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-cache")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"moduleId": moduleID,
+				"history":  history,
+			})
 		case "actions":
 			if r.Method != http.MethodPost {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1710,22 +1750,31 @@ func parseModuleRuntimeMutationPath(pathValue string) (moduleID, kind, key strin
 		return "", "", "", false
 	}
 	parts := strings.Split(rest, "/")
-	if len(parts) < 3 {
+	if len(parts) < 2 {
 		return "", "", "", false
 	}
 	decodedModuleID, err := url.PathUnescape(parts[0])
 	if err != nil {
 		return "", "", "", false
 	}
+	kind = strings.TrimSpace(parts[1])
+	if kind != "options" && kind != "actions" && kind != "inputs" && kind != "history" {
+		return "", "", "", false
+	}
+	moduleID = strings.TrimSpace(decodedModuleID)
+	if kind == "inputs" || kind == "history" {
+		if len(parts) != 2 || moduleID == "" {
+			return "", "", "", false
+		}
+		return moduleID, kind, "", true
+	}
+	if len(parts) < 3 {
+		return "", "", "", false
+	}
 	decodedKey, err := url.PathUnescape(strings.Join(parts[2:], "/"))
 	if err != nil {
 		return "", "", "", false
 	}
-	kind = strings.TrimSpace(parts[1])
-	if kind != "options" && kind != "actions" {
-		return "", "", "", false
-	}
-	moduleID = strings.TrimSpace(decodedModuleID)
 	key = strings.TrimSpace(decodedKey)
 	if moduleID == "" || key == "" {
 		return "", "", "", false
