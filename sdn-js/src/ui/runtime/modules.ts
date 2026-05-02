@@ -30,6 +30,34 @@ export interface ModuleRuntimeMethod {
   methodId: string;
   displayName?: string;
   description?: string;
+  inputPorts: ModuleRuntimePort[];
+  outputPorts: ModuleRuntimePort[];
+  maxBatch: number;
+  drainPolicy?: string;
+}
+
+export interface ModuleRuntimePort {
+  portId: string;
+  displayName?: string;
+  acceptedTypeSets: ModuleRuntimeAcceptedTypeSet[];
+  minStreams: number;
+  maxStreams: number;
+  required: boolean;
+  description?: string;
+}
+
+export interface ModuleRuntimeAcceptedTypeSet {
+  setId?: string;
+  allowedTypes: ModuleRuntimeTypeRef[];
+  allowedWireFormats: string[];
+  description?: string;
+}
+
+export interface ModuleRuntimeTypeRef {
+  schemaName?: string;
+  fileIdentifier?: string;
+  schemaVersion?: string;
+  rootType?: string;
 }
 
 export interface ModuleRuntimeProtocol {
@@ -133,12 +161,17 @@ export interface ModuleRuntimeSnapshot {
 
 export async function loadModuleRuntimeSnapshotFromServer(
   baseUrl: string,
-  fetchImpl: ModuleRuntimeFetchLike = globalThis.fetch.bind(globalThis) as ModuleRuntimeFetchLike,
+  fetchImpl: ModuleRuntimeFetchLike = globalThis.fetch.bind(
+    globalThis,
+  ) as ModuleRuntimeFetchLike,
 ): Promise<ModuleRuntimeSnapshot> {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
-  const response = await fetchImpl(`${normalizedBaseUrl}/api/v1/modules/runtime`, {
-    credentials: 'include',
-  });
+  const response = await fetchImpl(
+    `${normalizedBaseUrl}/api/v1/modules/runtime`,
+    {
+      credentials: 'include',
+    },
+  );
   if (!response.ok) {
     if (response.status === 404) {
       return emptyModuleRuntimeSnapshot();
@@ -156,7 +189,8 @@ export async function loadModuleRuntimeSnapshotFromServer(
   const payload = asRecord(await response.json());
   const modules = normalizeModuleEntries(payload?.modules);
   return {
-    generatedAt: pickTrimmedString(payload, 'generatedAt') ?? new Date().toISOString(),
+    generatedAt:
+      pickTrimmedString(payload, 'generatedAt') ?? new Date().toISOString(),
     count: modules.length,
     modules,
   };
@@ -167,7 +201,9 @@ export async function updateModuleRuntimeOption(
   moduleId: string,
   optionKey: string,
   value: string,
-  fetchImpl: ModuleRuntimeFetchLike = globalThis.fetch.bind(globalThis) as ModuleRuntimeFetchLike,
+  fetchImpl: ModuleRuntimeFetchLike = globalThis.fetch.bind(
+    globalThis,
+  ) as ModuleRuntimeFetchLike,
 ): Promise<ModuleRuntimeOption> {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
   const response = await fetchImpl(
@@ -196,7 +232,9 @@ export async function runModuleRuntimeAction(
   baseUrl: string,
   moduleId: string,
   actionId: string,
-  fetchImpl: ModuleRuntimeFetchLike = globalThis.fetch.bind(globalThis) as ModuleRuntimeFetchLike,
+  fetchImpl: ModuleRuntimeFetchLike = globalThis.fetch.bind(
+    globalThis,
+  ) as ModuleRuntimeFetchLike,
 ): Promise<{ ok: boolean; actionId: string }> {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
   const response = await fetchImpl(
@@ -304,11 +342,84 @@ function normalizeMethods(value: unknown): ModuleRuntimeMethod[] {
     if (!methodId) {
       return [];
     }
-    return [{
-      methodId,
-      displayName: pickTrimmedString(record, 'displayName'),
-      description: pickTrimmedString(record, 'description'),
-    }];
+    return [
+      {
+        methodId,
+        displayName: pickTrimmedString(record, 'displayName'),
+        description: pickTrimmedString(record, 'description'),
+        inputPorts: normalizePorts(record?.inputPorts),
+        outputPorts: normalizePorts(record?.outputPorts),
+        maxBatch: pickFiniteNumber(record, 'maxBatch'),
+        drainPolicy: pickTrimmedString(record, 'drainPolicy'),
+      },
+    ];
+  });
+}
+
+function normalizePorts(value: unknown): ModuleRuntimePort[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((port) => {
+    const record = asRecord(port);
+    const portId = pickTrimmedString(record, 'portId');
+    if (!portId) {
+      return [];
+    }
+    return [
+      {
+        portId,
+        displayName: pickTrimmedString(record, 'displayName'),
+        acceptedTypeSets: normalizeAcceptedTypeSets(record?.acceptedTypeSets),
+        minStreams: pickFiniteNumber(record, 'minStreams'),
+        maxStreams: pickFiniteNumber(record, 'maxStreams'),
+        required: record?.required === true,
+        description: pickTrimmedString(record, 'description'),
+      },
+    ];
+  });
+}
+
+function normalizeAcceptedTypeSets(
+  value: unknown,
+): ModuleRuntimeAcceptedTypeSet[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((set) => {
+    const record = asRecord(set);
+    return [
+      {
+        setId: pickTrimmedString(record, 'setId'),
+        allowedTypes: normalizeTypeRefs(record?.allowedTypes),
+        allowedWireFormats: normalizeStringArray(record?.allowedWireFormats),
+        description: pickTrimmedString(record, 'description'),
+      },
+    ];
+  });
+}
+
+function normalizeTypeRefs(value: unknown): ModuleRuntimeTypeRef[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((typeRef) => {
+    const record = asRecord(typeRef);
+    const normalized = {
+      schemaName: pickTrimmedString(record, 'schemaName'),
+      fileIdentifier: pickTrimmedString(record, 'fileIdentifier'),
+      schemaVersion: pickTrimmedString(record, 'schemaVersion'),
+      rootType: pickTrimmedString(record, 'rootType'),
+    };
+    if (
+      !normalized.schemaName &&
+      !normalized.fileIdentifier &&
+      !normalized.schemaVersion &&
+      !normalized.rootType
+    ) {
+      return [];
+    }
+    return [normalized];
   });
 }
 
@@ -322,19 +433,21 @@ function normalizeProtocols(value: unknown): ModuleRuntimeProtocol[] {
     if (!protocolId) {
       return [];
     }
-    return [{
-      protocolId,
-      methodId: pickTrimmedString(record, 'methodId'),
-      inputPortId: pickTrimmedString(record, 'inputPortId'),
-      outputPortId: pickTrimmedString(record, 'outputPortId'),
-      description: pickTrimmedString(record, 'description'),
-      wireId: pickTrimmedString(record, 'wireId'),
-      transportKind: pickTrimmedString(record, 'transportKind'),
-      role: pickTrimmedString(record, 'role'),
-      autoInstall: record?.autoInstall === true,
-      advertise: record?.advertise === true,
-      discoveryKey: pickTrimmedString(record, 'discoveryKey'),
-    }];
+    return [
+      {
+        protocolId,
+        methodId: pickTrimmedString(record, 'methodId'),
+        inputPortId: pickTrimmedString(record, 'inputPortId'),
+        outputPortId: pickTrimmedString(record, 'outputPortId'),
+        description: pickTrimmedString(record, 'description'),
+        wireId: pickTrimmedString(record, 'wireId'),
+        transportKind: pickTrimmedString(record, 'transportKind'),
+        role: pickTrimmedString(record, 'role'),
+        autoInstall: record?.autoInstall === true,
+        advertise: record?.advertise === true,
+        discoveryKey: pickTrimmedString(record, 'discoveryKey'),
+      },
+    ];
   });
 }
 
@@ -348,12 +461,14 @@ function normalizeTimers(value: unknown): ModuleRuntimeTimer[] {
     if (!timerId) {
       return [];
     }
-    return [{
-      timerId,
-      methodId: pickTrimmedString(record, 'methodId'),
-      defaultIntervalMs: pickFiniteNumber(record, 'defaultIntervalMs'),
-      description: pickTrimmedString(record, 'description'),
-    }];
+    return [
+      {
+        timerId,
+        methodId: pickTrimmedString(record, 'methodId'),
+        defaultIntervalMs: pickFiniteNumber(record, 'defaultIntervalMs'),
+        description: pickTrimmedString(record, 'description'),
+      },
+    ];
   });
 }
 
@@ -402,13 +517,15 @@ function normalizeActions(value: unknown): ModuleRuntimeAction[] {
     if (!actionId || !label) {
       return [];
     }
-    return [{
-      actionId,
-      label,
-      description: pickTrimmedString(record, 'description'),
-      enabled: record?.enabled === true,
-      destructive: record?.destructive === true,
-    }];
+    return [
+      {
+        actionId,
+        label,
+        description: pickTrimmedString(record, 'description'),
+        enabled: record?.enabled === true,
+        destructive: record?.destructive === true,
+      },
+    ];
   });
 }
 
@@ -422,11 +539,13 @@ function normalizeStatusHistory(value: unknown): ModuleRuntimeStatusEvent[] {
     if (!status) {
       return [];
     }
-    return [{
-      status,
-      message: pickTrimmedString(record, 'message'),
-      at: pickTrimmedString(record, 'at'),
-    }];
+    return [
+      {
+        status,
+        message: pickTrimmedString(record, 'message'),
+        at: pickTrimmedString(record, 'at'),
+      },
+    ];
   });
 }
 
@@ -469,7 +588,10 @@ function normalizeStringArray(value: unknown): string[] {
     .filter(Boolean);
 }
 
-function pickFiniteNumber(payload: Record<string, unknown> | null, key: string): number {
+function pickFiniteNumber(
+  payload: Record<string, unknown> | null,
+  key: string,
+): number {
   const value = payload?.[key];
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return 0;
@@ -497,5 +619,7 @@ function pickTrimmedString(
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return Boolean(value) && typeof value === 'object' ? value as Record<string, unknown> : null;
+  return Boolean(value) && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : null;
 }

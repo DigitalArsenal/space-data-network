@@ -37,6 +37,19 @@ type Plugin interface {
 	Close() error
 }
 
+// RuntimeModuleLoader is implemented by modules that can load their runtime
+// artifact without starting execution.
+type RuntimeModuleLoader interface {
+	Load(ctx context.Context) error
+}
+
+// RuntimeModulePausable is implemented by modules that can pause/resume
+// invocation without unloading their runtime artifact.
+type RuntimeModulePausable interface {
+	Pause(ctx context.Context) error
+	Resume(ctx context.Context) error
+}
+
 // ─── WASM Cron Types ───────────────────────────────────────────────────────
 
 // CronMethodSpec describes a single cron-eligible method declared by a WASM
@@ -134,9 +147,41 @@ type RuntimeModuleStats struct {
 // RuntimeModuleMethod describes an invokable method surfaced by the module
 // manifest.
 type RuntimeModuleMethod struct {
-	MethodID    string `json:"methodId"`
-	DisplayName string `json:"displayName,omitempty"`
-	Description string `json:"description,omitempty"`
+	MethodID    string              `json:"methodId"`
+	DisplayName string              `json:"displayName,omitempty"`
+	Description string              `json:"description,omitempty"`
+	InputPorts  []RuntimeModulePort `json:"inputPorts,omitempty"`
+	OutputPorts []RuntimeModulePort `json:"outputPorts,omitempty"`
+	MaxBatch    uint32              `json:"maxBatch,omitempty"`
+	DrainPolicy string              `json:"drainPolicy,omitempty"`
+}
+
+// RuntimeModulePort describes one input or output stream port for a method.
+type RuntimeModulePort struct {
+	PortID           string                         `json:"portId"`
+	DisplayName      string                         `json:"displayName,omitempty"`
+	AcceptedTypeSets []RuntimeModuleAcceptedTypeSet `json:"acceptedTypeSets,omitempty"`
+	MinStreams       uint16                         `json:"minStreams,omitempty"`
+	MaxStreams       uint16                         `json:"maxStreams,omitempty"`
+	Required         bool                           `json:"required,omitempty"`
+	Description      string                         `json:"description,omitempty"`
+}
+
+// RuntimeModuleAcceptedTypeSet describes the schema and wire formats accepted
+// by a method port.
+type RuntimeModuleAcceptedTypeSet struct {
+	SetID              string                 `json:"setId,omitempty"`
+	AllowedTypes       []RuntimeModuleTypeRef `json:"allowedTypes,omitempty"`
+	AllowedWireFormats []string               `json:"allowedWireFormats,omitempty"`
+	Description        string                 `json:"description,omitempty"`
+}
+
+// RuntimeModuleTypeRef identifies a FlatBuffer payload type accepted by a port.
+type RuntimeModuleTypeRef struct {
+	SchemaName     string `json:"schemaName,omitempty"`
+	FileIdentifier string `json:"fileIdentifier,omitempty"`
+	SchemaVersion  string `json:"schemaVersion,omitempty"`
+	RootType       string `json:"rootType,omitempty"`
 }
 
 // RuntimeModuleProtocol describes a network protocol declared by the module.
@@ -286,6 +331,7 @@ type Manager struct {
 	cronCancel context.CancelFunc
 	cronWg     sync.WaitGroup
 	runtimeCtx context.Context
+	runtime    RuntimeContext
 
 	// Per-plugin cron config (plugin ID → method → schedule).
 	// Set via SetCronConfig before StartAll, or updated at runtime via API.
@@ -368,6 +414,7 @@ func (m *Manager) StartAll(ctx context.Context, runtime RuntimeContext) error {
 	cronCtx, cancel := context.WithCancel(ctx)
 	m.cronCancel = cancel
 	m.runtimeCtx = ctx
+	m.runtime = runtime
 
 	for _, plugin := range registered {
 		if status, _ := m.pluginStatus(plugin.ID()); status != "running" {
@@ -631,6 +678,9 @@ func (m *Manager) RunRuntimeModuleAction(ctx context.Context, moduleID, actionID
 	if plugin == nil {
 		return fmt.Errorf("module %q not found", moduleID)
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	switch actionID {
 	case "clear-error":
 		status, _ := m.pluginStatus(moduleID)
@@ -639,15 +689,110 @@ func (m *Manager) RunRuntimeModuleAction(ctx context.Context, moduleID, actionID
 		}
 		m.setPluginState(moduleID, "registered", "error cleared", time.Time{})
 		return nil
+	case "load":
+		loader, ok := plugin.(RuntimeModuleLoader)
+		if !ok {
+			return fmt.Errorf("module action %q is not supported by this runtime", actionID)
+		}
+		if err := loader.Load(ctx); err != nil {
+			m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+			return err
+		}
+		m.setPluginState(moduleID, "registered", "", time.Time{})
+		m.restartCron(ctx)
+		return nil
+	case "unload":
+		if err := plugin.Close(); err != nil {
+			m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+			return err
+		}
+		m.setPluginState(moduleID, "unloaded", "", time.Time{})
+		m.restartCron(ctx)
+		return nil
+	case "pause":
+		status, _ := m.pluginStatus(moduleID)
+		if status != "running" {
+			return nil
+		}
+		pausable, ok := plugin.(RuntimeModulePausable)
+		if !ok {
+			return fmt.Errorf("module action %q is not supported by this runtime", actionID)
+		}
+		if err := pausable.Pause(ctx); err != nil {
+			m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+			return err
+		}
+		m.setPluginState(moduleID, "paused", "", time.Time{})
+		m.restartCron(ctx)
+		return nil
+	case "start":
+		status, _ := m.pluginStatus(moduleID)
+		if status == "paused" {
+			pausable, ok := plugin.(RuntimeModulePausable)
+			if !ok {
+				return fmt.Errorf("module action %q is not supported by this runtime", actionID)
+			}
+			if err := pausable.Resume(ctx); err != nil {
+				m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+				return err
+			}
+			m.setPluginState(moduleID, "running", "", time.Now().UTC())
+			m.restartCron(ctx)
+			return nil
+		}
+		if err := plugin.Start(m.moduleStartContext(ctx), m.runtime); err != nil {
+			m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+			return err
+		}
+		m.setPluginState(moduleID, "running", "", time.Now().UTC())
+		m.restartCron(ctx)
+		return nil
 	case "stop":
 		if err := plugin.Close(); err != nil {
 			m.setPluginState(moduleID, "error", err.Error(), time.Time{})
 			return err
 		}
 		m.setPluginState(moduleID, "stopped", "", time.Time{})
+		m.restartCron(ctx)
 		return nil
-	case "start", "restart", "reload-manifest":
-		return fmt.Errorf("module action %q is not supported by this runtime", actionID)
+	case "restart":
+		if err := plugin.Close(); err != nil {
+			m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+			return err
+		}
+		if err := plugin.Start(m.moduleStartContext(ctx), m.runtime); err != nil {
+			m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+			return err
+		}
+		m.setPluginState(moduleID, "running", "", time.Now().UTC())
+		m.restartCron(ctx)
+		return nil
+	case "reload-manifest":
+		loader, ok := plugin.(RuntimeModuleLoader)
+		if !ok {
+			return fmt.Errorf("module action %q is not supported by this runtime", actionID)
+		}
+		status, _ := m.pluginStatus(moduleID)
+		if err := plugin.Close(); err != nil {
+			m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+			return err
+		}
+		if err := loader.Load(ctx); err != nil {
+			m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+			return err
+		}
+		if status == "running" {
+			if err := plugin.Start(m.moduleStartContext(ctx), m.runtime); err != nil {
+				m.setPluginState(moduleID, "error", err.Error(), time.Time{})
+				return err
+			}
+			m.setPluginState(moduleID, "running", "manifest reloaded", time.Now().UTC())
+			m.restartCron(ctx)
+			return nil
+		}
+		m.setPluginState(moduleID, "registered", "manifest reloaded", time.Time{})
+		m.restartCron(ctx)
+		return nil
 	default:
 		return fmt.Errorf("unknown module action %q", actionID)
 	}
@@ -972,14 +1117,54 @@ func (m *Manager) restartCron(ctx context.Context) {
 	}
 }
 
+func (m *Manager) moduleStartContext(fallback context.Context) context.Context {
+	if m == nil {
+		if fallback != nil {
+			return fallback
+		}
+		return context.Background()
+	}
+	if m.runtimeCtx != nil {
+		return m.runtimeCtx
+	}
+	if fallback != nil {
+		return fallback
+	}
+	return context.Background()
+}
+
 func buildRuntimeModuleActions(status string) []RuntimeModuleAction {
 	normalized := strings.ToLower(strings.TrimSpace(status))
+	canLoad := normalized == "unloaded" || normalized == "stopped"
+	canStart := normalized == "registered" || normalized == "stopped" || normalized == "unloaded" || normalized == "paused"
+	canUnload := normalized == "running" || normalized == "paused" || normalized == "registered" || normalized == "stopped"
+	canRestart := normalized == "running" || normalized == "paused" || normalized == "registered" || normalized == "stopped"
+	canReloadManifest := normalized == "running" || normalized == "paused" || normalized == "registered" || normalized == "stopped"
 	return []RuntimeModuleAction{
+		{
+			ActionID:    "load",
+			Label:       "Load",
+			Description: "Load this module artifact without starting it.",
+			Enabled:     canLoad,
+		},
+		{
+			ActionID:    "unload",
+			Label:       "Unload",
+			Description: "Unload this module artifact from the runtime.",
+			Enabled:     canUnload,
+			Destructive: true,
+		},
+		{
+			ActionID:    "pause",
+			Label:       "Pause",
+			Description: "Pause module invocation while keeping the artifact loaded.",
+			Enabled:     normalized == "running",
+		},
 		{
 			ActionID:    "start",
 			Label:       "Start",
-			Description: "Start this module when the runtime supports hot start.",
-			Enabled:     false,
+			Description: "Start or resume this module runtime.",
+			Enabled:     canStart,
 		},
 		{
 			ActionID:    "stop",
@@ -991,15 +1176,15 @@ func buildRuntimeModuleActions(status string) []RuntimeModuleAction {
 		{
 			ActionID:    "restart",
 			Label:       "Restart",
-			Description: "Restart this module when the runtime supports hot reload.",
-			Enabled:     false,
+			Description: "Restart this module runtime.",
+			Enabled:     canRestart,
 			Destructive: true,
 		},
 		{
 			ActionID:    "reload-manifest",
 			Label:       "Reload manifest",
-			Description: "Reload manifest metadata when the runtime supports it.",
-			Enabled:     false,
+			Description: "Reload manifest metadata from the module artifact.",
+			Enabled:     canReloadManifest,
 		},
 		{
 			ActionID:    "clear-error",

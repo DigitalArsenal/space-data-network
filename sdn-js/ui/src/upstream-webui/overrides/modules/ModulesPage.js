@@ -16,24 +16,30 @@ function ModulesPage() {
 
   const modules = snapshot.modules
   const selectedModule = useMemo(() => {
-    return modules.find((module) => module.id === selectedId) ?? modules[0] ?? null
+    return (
+      modules.find((module) => module.id === selectedId) ?? modules[0] ?? null
+    )
   }, [modules, selectedId])
 
   const counts = useMemo(() => {
-    return modules.reduce((acc, module) => {
-      acc.total += 1
-      if (module.status === 'running') acc.running += 1
-      if (module.status === 'error') acc.error += 1
-      acc.memoryBytes += module.stats?.memoryBytes ?? 0
-      return acc
-    }, { total: 0, running: 0, error: 0, memoryBytes: 0 })
+    return modules.reduce(
+      (acc, module) => {
+        acc.total += 1
+        if (module.status === 'running') acc.running += 1
+        if (module.status === 'error') acc.error += 1
+        acc.memoryBytes += module.stats?.memoryBytes ?? 0
+        return acc
+      },
+      { total: 0, running: 0, error: 0, memoryBytes: 0 }
+    )
   }, [modules])
 
   async function refreshModules() {
     setStatus('loading')
     setError(null)
     try {
-      const nextSnapshot = await loadModuleRuntimeSnapshotFromServer(runtimeBaseUrl())
+      const nextSnapshot =
+        await loadModuleRuntimeSnapshotFromServer(runtimeBaseUrl())
       setSnapshot(nextSnapshot)
       setLastRefresh(Date.now())
       setStatus('ready')
@@ -53,7 +59,8 @@ function ModulesPage() {
       setStatus('loading')
       setError(null)
       try {
-        const nextSnapshot = await loadModuleRuntimeSnapshotFromServer(runtimeBaseUrl())
+        const nextSnapshot =
+          await loadModuleRuntimeSnapshotFromServer(runtimeBaseUrl())
         if (!cancelled) {
           setSnapshot(nextSnapshot)
           setLastRefresh(Date.now())
@@ -84,7 +91,9 @@ function ModulesPage() {
         <div className='pr4-l'>
           <h1 className='f2 f1-l mv0'>Modules</h1>
           <p className='mt2 mb0 f4 lh-copy black-70'>
-            {status === 'loading' && modules.length === 0 ? 'Loading runtime snapshot...' : `${counts.running} running of ${counts.total} loaded`}
+            {status === 'loading' && modules.length === 0
+              ? 'Loading runtime snapshot...'
+              : `${counts.running} running of ${counts.total} loaded`}
           </p>
         </div>
         <div className='mt3 mt0-l flex items-center'>
@@ -104,11 +113,17 @@ function ModulesPage() {
         </section>
       )}
 
-      <section className='grid modules-summary-grid mb3' style={summaryGridStyle}>
+      <section
+        className='grid modules-summary-grid mb3'
+        style={summaryGridStyle}
+      >
         <SummaryMetric label='Loaded' value={counts.total} />
         <SummaryMetric label='Running' value={counts.running} />
         <SummaryMetric label='Errors' value={counts.error} />
-        <SummaryMetric label='WASM memory' value={formatBytes(counts.memoryBytes)} />
+        <SummaryMetric
+          label='WASM memory'
+          value={formatBytes(counts.memoryBytes)}
+        />
       </section>
 
       <section className='flex flex-column flex-row-l'>
@@ -116,7 +131,9 @@ function ModulesPage() {
           <section className='ba b--black-10 br2 bg-white overflow-hidden'>
             <div className='pa3 bb b--black-10 flex items-center justify-between'>
               <h2 className='f4 mv0'>Runtime modules</h2>
-              <span className='f6 black-60'>{lastRefresh ? formatClock(lastRefresh) : ''}</span>
+              <span className='f6 black-60'>
+                {lastRefresh ? formatClock(lastRefresh) : ''}
+              </span>
             </div>
             <div className='overflow-auto'>
               <table className='collapse w-100'>
@@ -135,8 +152,14 @@ function ModulesPage() {
                       onClick={() => setSelectedId(module.id)}
                     >
                       <td className='pa2 bb b--black-05'>
-                        <div className='fw6 truncate' title={module.id}>{module.manifest?.name || module.id}</div>
-                        <div className='f6 black-60 truncate'>{module.version || module.manifest?.version || 'unversioned'}</div>
+                        <div className='fw6 truncate' title={module.id}>
+                          {module.manifest?.name || module.id}
+                        </div>
+                        <div className='f6 black-60 truncate'>
+                          {module.version ||
+                            module.manifest?.version ||
+                            'unversioned'}
+                        </div>
                       </td>
                       <td className='pa2 bb b--black-05'>
                         <StatusPill status={module.status} />
@@ -148,7 +171,9 @@ function ModulesPage() {
                   ))}
                   {modules.length === 0 && (
                     <tr>
-                      <td className='pa3 black-60' colSpan={3}>No runtime modules reported.</td>
+                      <td className='pa3 black-60' colSpan={3}>
+                        No runtime modules reported.
+                      </td>
                     </tr>
                   )}
                 </tbody>
@@ -158,7 +183,11 @@ function ModulesPage() {
         </div>
 
         <div className='w-100 w-60-l'>
-          {selectedModule ? <ModuleDetail module={selectedModule} onRefresh={refreshModules} /> : <EmptyDetail />}
+          {selectedModule ? (
+            <ModuleDetail module={selectedModule} onRefresh={refreshModules} />
+          ) : (
+            <EmptyDetail />
+          )}
         </div>
       </section>
     </main>
@@ -182,27 +211,59 @@ function ModuleDetail({ module, onRefresh }) {
         <div className='flex flex-column flex-row-l justify-between-l items-start-l'>
           <div className='pr3-l'>
             <h2 className='f3 mv0'>{manifest?.name || module.id}</h2>
-            <div className='f6 black-60 mt1'>{module.id}{module.version ? ` @ ${module.version}` : ''}</div>
+            <div className='f6 black-60 mt1'>
+              {module.id}
+              {module.version ? ` @ ${module.version}` : ''}
+            </div>
           </div>
           <div className='mt2 mt0-l'>
             <StatusPill status={module.status} />
           </div>
         </div>
-        {module.statusMessage && <div className='mt2 dark-red'>{module.statusMessage}</div>}
+        {module.statusMessage && (
+          <div className='mt2 dark-red'>{module.statusMessage}</div>
+        )}
       </header>
 
       <div className='pa3'>
         <DetailSection title='Stats'>
           <div className='grid' style={detailGridStyle}>
-            <KeyValue label='Memory pages' value={formatNumber(module.stats?.memoryPages ?? 0)} />
-            <KeyValue label='Memory bytes' value={formatBytes(module.stats?.memoryBytes ?? 0)} />
-            <KeyValue label='Memory limit' value={formatBytes(module.stats?.maxMemoryBytes ?? 0)} />
-            <KeyValue label='Host RSS' value={formatBytes(module.stats?.hostRssBytes ?? 0)} />
-            <KeyValue label='Uptime' value={formatDuration(module.stats?.uptimeMs ?? 0)} />
-            <KeyValue label='Invokes' value={formatNumber(module.stats?.invokeCount ?? 0)} />
-            <KeyValue label='Errors' value={formatNumber(module.stats?.errorCount ?? 0)} />
-            <KeyValue label='Avg latency' value={`${formatNumber(module.stats?.averageLatencyMs ?? 0)} ms`} />
-            <KeyValue label='Timers' value={formatNumber(module.stats?.timerRunCount ?? 0)} />
+            <KeyValue
+              label='Memory pages'
+              value={formatNumber(module.stats?.memoryPages ?? 0)}
+            />
+            <KeyValue
+              label='Memory bytes'
+              value={formatBytes(module.stats?.memoryBytes ?? 0)}
+            />
+            <KeyValue
+              label='Memory limit'
+              value={formatBytes(module.stats?.maxMemoryBytes ?? 0)}
+            />
+            <KeyValue
+              label='Host RSS'
+              value={formatBytes(module.stats?.hostRssBytes ?? 0)}
+            />
+            <KeyValue
+              label='Uptime'
+              value={formatDuration(module.stats?.uptimeMs ?? 0)}
+            />
+            <KeyValue
+              label='Invokes'
+              value={formatNumber(module.stats?.invokeCount ?? 0)}
+            />
+            <KeyValue
+              label='Errors'
+              value={formatNumber(module.stats?.errorCount ?? 0)}
+            />
+            <KeyValue
+              label='Avg latency'
+              value={`${formatNumber(module.stats?.averageLatencyMs ?? 0)} ms`}
+            />
+            <KeyValue
+              label='Timers'
+              value={formatNumber(module.stats?.timerRunCount ?? 0)}
+            />
           </div>
         </DetailSection>
 
@@ -216,7 +277,11 @@ function ModuleDetail({ module, onRefresh }) {
                 disabled={!action.enabled}
                 title={action.description || action.label}
                 onClick={async () => {
-                  await runModuleRuntimeAction(runtimeBaseUrl(), module.id, action.actionId)
+                  await runModuleRuntimeAction(
+                    runtimeBaseUrl(),
+                    module.id,
+                    action.actionId
+                  )
                   await onRefresh()
                 }}
               >
@@ -230,14 +295,7 @@ function ModuleDetail({ module, onRefresh }) {
         </DetailSection>
 
         <DetailSection title='Methods'>
-          <SimpleList
-            empty='No methods reported.'
-            items={(manifest?.methods ?? []).map((method) => ({
-              key: method.methodId,
-              primary: method.displayName || method.methodId,
-              secondary: method.description
-            }))}
-          />
+          <MethodList methods={manifest?.methods ?? []} />
         </DetailSection>
 
         <DetailSection title='Options'>
@@ -263,15 +321,24 @@ function ModuleDetail({ module, onRefresh }) {
             items={(module.statusHistory ?? []).map((event, index) => ({
               key: `${event.status}-${event.at || index}`,
               primary: event.status,
-              secondary: [event.message, event.at ? formatDateTime(event.at) : ''].filter(Boolean).join(' | ')
+              secondary: [
+                event.message,
+                event.at ? formatDateTime(event.at) : ''
+              ]
+                .filter(Boolean)
+                .join(' | ')
             }))}
           />
         </DetailSection>
 
         <DetailSection title='Links'>
           <div className='flex flex-wrap'>
-            {module.links?.logsUrl && <RuntimeLink href={module.links.logsUrl} label='Logs' />}
-            {module.links?.eventsUrl && <RuntimeLink href={module.links.eventsUrl} label='Events' />}
+            {module.links?.logsUrl && (
+              <RuntimeLink href={module.links.logsUrl} label='Logs' />
+            )}
+            {module.links?.eventsUrl && (
+              <RuntimeLink href={module.links.eventsUrl} label='Events' />
+            )}
             {!module.links?.logsUrl && !module.links?.eventsUrl && (
               <span className='black-60'>No runtime links reported.</span>
             )}
@@ -292,11 +359,15 @@ function ModuleDetail({ module, onRefresh }) {
         <DetailSection title='Capabilities'>
           <div className='flex flex-wrap'>
             {(manifest?.capabilities ?? []).map((capability) => (
-              <span key={capability} className='dib br2 bg-near-white ba b--black-10 f6 pv1 ph2 mr2 mb2'>
+              <span
+                key={capability}
+                className='dib br2 bg-near-white ba b--black-10 f6 pv1 ph2 mr2 mb2'
+              >
                 {capability}
               </span>
             ))}
-            {(!manifest?.capabilities || manifest.capabilities.length === 0) && (
+            {(!manifest?.capabilities ||
+              manifest.capabilities.length === 0) && (
               <span className='black-60'>No capabilities reported.</span>
             )}
           </div>
@@ -334,7 +405,12 @@ function ModuleOptionControl({ moduleId, option, onRefresh }) {
             className='button-reset ba b--black-20 bg-white br2 pv2 ph3 ml2 pointer hover-bg-near-white'
             onClick={async () => {
               setStatus('saving')
-              await updateModuleRuntimeOption(runtimeBaseUrl(), moduleId, option.key, value)
+              await updateModuleRuntimeOption(
+                runtimeBaseUrl(),
+                moduleId,
+                option.key,
+                value
+              )
               setStatus('saved')
               await onRefresh()
             }}
@@ -344,7 +420,14 @@ function ModuleOptionControl({ moduleId, option, onRefresh }) {
         )}
       </div>
       <span className='db f6 black-60 mt1'>
-        {[option.units, option.persistence, option.restartRequired ? 'restart required' : '', status].filter(Boolean).join(' | ')}
+        {[
+          option.units,
+          option.persistence,
+          option.restartRequired ? 'restart required' : '',
+          status
+        ]
+          .filter(Boolean)
+          .join(' | ')}
       </span>
     </label>
   )
@@ -352,7 +435,10 @@ function ModuleOptionControl({ moduleId, option, onRefresh }) {
 
 function RuntimeLink({ href, label }) {
   return (
-    <a className='dib br2 bg-near-white ba b--black-10 f6 pv1 ph2 mr2 mb2 link black' href={href}>
+    <a
+      className='dib br2 bg-near-white ba b--black-10 f6 pv1 ph2 mr2 mb2 link black'
+      href={href}
+    >
       {label}
     </a>
   )
@@ -371,7 +457,9 @@ function KeyValue({ label, value }) {
   return (
     <div className='pa2 ba b--black-10 br2'>
       <div className='f6 ttu tracked black-60'>{label}</div>
-      <div className='fw6 mt1 truncate' title={String(value)}>{value}</div>
+      <div className='fw6 mt1 truncate' title={String(value)}>
+        {value}
+      </div>
     </div>
   )
 }
@@ -384,8 +472,118 @@ function SimpleList({ items, empty }) {
     <div className='ba b--black-10 br2 overflow-hidden'>
       {items.map((item) => (
         <div key={item.key} className='pa2 bb b--black-05'>
-          <div className='fw6 truncate' title={item.primary}>{item.primary}</div>
-          {item.secondary && <div className='f6 black-60 truncate' title={item.secondary}>{item.secondary}</div>}
+          <div className='fw6 truncate' title={item.primary}>
+            {item.primary}
+          </div>
+          {item.secondary && (
+            <div className='f6 black-60 truncate' title={item.secondary}>
+              {item.secondary}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function MethodList({ methods }) {
+  if (!methods.length) {
+    return <div className='black-60'>No methods reported.</div>
+  }
+  return (
+    <div className='ba b--black-10 br2 overflow-hidden'>
+      {methods.map((method) => (
+        <div key={method.methodId} className='pa2 bb b--black-05'>
+          <div className='flex flex-column flex-row-l justify-between-l'>
+            <div className='pr3-l'>
+              <div
+                className='fw6 truncate'
+                title={method.displayName || method.methodId}
+              >
+                {method.displayName || method.methodId}
+              </div>
+              {method.description && (
+                <div
+                  className='f6 black-60 truncate'
+                  title={method.description}
+                >
+                  {method.description}
+                </div>
+              )}
+            </div>
+            <div className='f6 black-60 mt1 mt0-l tr-l'>
+              {[
+                method.drainPolicy,
+                method.maxBatch ? `batch ${method.maxBatch}` : ''
+              ]
+                .filter(Boolean)
+                .join(' | ')}
+            </div>
+          </div>
+          <PortGroup label='Inputs' ports={method.inputPorts ?? []} />
+          <PortGroup label='Outputs' ports={method.outputPorts ?? []} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function PortGroup({ label, ports }) {
+  if (!ports.length) {
+    return null
+  }
+  return (
+    <div className='mt2'>
+      <div className='f6 ttu tracked black-60 mb1'>{label}</div>
+      <div className='grid' style={portGridStyle}>
+        {ports.map((port) => (
+          <div
+            key={port.portId}
+            className='pa2 br2 bg-near-white ba b--black-10'
+          >
+            <div
+              className='fw6 f6 truncate'
+              title={port.displayName || port.portId}
+            >
+              {port.displayName || port.portId}
+            </div>
+            <div className='f7 black-60 mt1'>
+              {[
+                port.required ? 'required' : '',
+                port.minStreams || port.maxStreams
+                  ? `${port.minStreams || 0}-${port.maxStreams || '*'}`
+                  : ''
+              ]
+                .filter(Boolean)
+                .join(' | ')}
+            </div>
+            <TypeSetList sets={port.acceptedTypeSets ?? []} />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function TypeSetList({ sets }) {
+  if (!sets.length) {
+    return null
+  }
+  return (
+    <div className='mt2'>
+      {sets.map((set, index) => (
+        <div key={set.setId || index} className='f7 black-70 mb1'>
+          <div className='truncate' title={formatTypeSet(set)}>
+            {formatTypeSet(set)}
+          </div>
+          {set.allowedWireFormats?.length > 0 && (
+            <div
+              className='black-50 truncate'
+              title={set.allowedWireFormats.join(', ')}
+            >
+              {set.allowedWireFormats.join(', ')}
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -402,11 +600,12 @@ function EmptyDetail() {
 
 function StatusPill({ status }) {
   const normalized = String(status || 'unknown').toLowerCase()
-  const className = normalized === 'running'
-    ? 'bg-washed-green dark-green b--green'
-    : normalized === 'error'
-      ? 'bg-washed-red dark-red b--red'
-      : 'bg-near-white black-60 b--black-20'
+  const className =
+    normalized === 'running'
+      ? 'bg-washed-green dark-green b--green'
+      : normalized === 'error'
+        ? 'bg-washed-red dark-red b--red'
+        : 'bg-near-white black-60 b--black-20'
   return (
     <span className={`dib br-pill ba f6 pv1 ph2 ${className}`}>
       {normalized}
@@ -415,9 +614,8 @@ function StatusPill({ status }) {
 }
 
 function runtimeBaseUrl() {
-  const configured = typeof window !== 'undefined'
-    ? window.__SDN_CONFIG__?.serverBaseUrl
-    : ''
+  const configured =
+    typeof window !== 'undefined' ? window.__SDN_CONFIG__?.serverBaseUrl : ''
   return String(configured || window.location.origin || '').replace(/\/+$/, '')
 }
 
@@ -453,7 +651,11 @@ function formatDuration(ms) {
 }
 
 function formatClock(timestamp) {
-  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
 }
 
 function formatDateTime(timestamp) {
@@ -476,6 +678,24 @@ const detailGridStyle = {
   display: 'grid',
   gap: '0.75rem',
   gridTemplateColumns: 'repeat(auto-fit, minmax(9rem, 1fr))'
+}
+
+const portGridStyle = {
+  display: 'grid',
+  gap: '0.5rem',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(12rem, 1fr))'
+}
+
+function formatTypeSet(set) {
+  const types = (set.allowedTypes ?? [])
+    .map((typeRef) => {
+      return [typeRef.schemaName, typeRef.rootType].filter(Boolean).join(':')
+    })
+    .filter(Boolean)
+  if (types.length > 0) {
+    return types.join(', ')
+  }
+  return set.setId || 'untyped'
 }
 
 export default ModulesPage
