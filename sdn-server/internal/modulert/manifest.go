@@ -33,6 +33,37 @@ type ManifestMethod struct {
 	MethodID    string
 	DisplayName string
 	Description string
+	InputPorts  []ManifestPort
+	OutputPorts []ManifestPort
+	MaxBatch    uint32
+	DrainPolicy string
+}
+
+// ManifestPort describes one input or output stream port for a method.
+type ManifestPort struct {
+	PortID           string
+	DisplayName      string
+	AcceptedTypeSets []ManifestAcceptedTypeSet
+	MinStreams       uint16
+	MaxStreams       uint16
+	Required         bool
+	Description      string
+}
+
+// ManifestAcceptedTypeSet describes accepted schemas and wire formats for a port.
+type ManifestAcceptedTypeSet struct {
+	SetID              string
+	AllowedTypes       []ManifestFlatBufferTypeRef
+	AllowedWireFormats []string
+	Description        string
+}
+
+// ManifestFlatBufferTypeRef identifies an accepted FlatBuffer payload type.
+type ManifestFlatBufferTypeRef struct {
+	SchemaName     string
+	FileIdentifier string
+	SchemaVersion  string
+	RootType       string
 }
 
 // ProtocolDecl describes a libp2p protocol the module serves.
@@ -194,20 +225,27 @@ func parsePLGManifestFlatBuffer(buf []byte) (*Manifest, error) {
 		PluginFamily: pluginFamilyFromPLGType(fmt.Sprint(root.PLUGIN_TYPE())),
 	}
 
-	var entry plg.EntryFunction
-	for i := 0; i < root.ENTRY_FUNCTIONSLength(); i++ {
-		if !root.ENTRY_FUNCTIONS(&entry, i) {
-			continue
+	if root.METHODSLength() > 0 {
+		m.Methods = readPLGMethodManifests(root)
+	} else {
+		var entry plg.EntryFunction
+		for i := 0; i < root.ENTRY_FUNCTIONSLength(); i++ {
+			if !root.ENTRY_FUNCTIONS(&entry, i) {
+				continue
+			}
+			methodID := strings.TrimSpace(string(entry.NAME()))
+			if methodID == "" {
+				continue
+			}
+			m.Methods = append(m.Methods, ManifestMethod{
+				MethodID:    methodID,
+				DisplayName: methodID,
+				Description: string(entry.DESCRIPTION()),
+				InputPorts:  entryInputPorts(&entry),
+				OutputPorts: entryOutputPorts(&entry),
+				MaxBatch:    1,
+			})
 		}
-		methodID := strings.TrimSpace(string(entry.NAME()))
-		if methodID == "" {
-			continue
-		}
-		m.Methods = append(m.Methods, ManifestMethod{
-			MethodID:    methodID,
-			DisplayName: methodID,
-			Description: string(entry.DESCRIPTION()),
-		})
 	}
 
 	var capability plg.PluginCapability
@@ -226,6 +264,162 @@ func parsePLGManifestFlatBuffer(buf []byte) (*Manifest, error) {
 
 	attachKnownPLGProtocols(m)
 	return m, nil
+}
+
+func readPLGMethodManifests(root *plg.PLG) []ManifestMethod {
+	methods := make([]ManifestMethod, 0, root.METHODSLength())
+	var method plg.PLGMethodManifest
+	for i := 0; i < root.METHODSLength(); i++ {
+		if !root.METHODS(&method, i) {
+			continue
+		}
+		methodID := strings.TrimSpace(string(method.METHOD_ID()))
+		if methodID == "" {
+			continue
+		}
+		displayName := strings.TrimSpace(string(method.DISPLAY_NAME()))
+		if displayName == "" {
+			displayName = methodID
+		}
+		methods = append(methods, ManifestMethod{
+			MethodID:    methodID,
+			DisplayName: displayName,
+			Description: string(method.DESCRIPTION()),
+			InputPorts:  readPLGPorts(&method, true),
+			OutputPorts: readPLGPorts(&method, false),
+			MaxBatch:    method.MAX_BATCH(),
+			DrainPolicy: fmt.Sprint(method.DRAIN_POLICY()),
+		})
+	}
+	return methods
+}
+
+func readPLGPorts(method *plg.PLGMethodManifest, input bool) []ManifestPort {
+	count := method.OUTPUT_PORTSLength()
+	if input {
+		count = method.INPUT_PORTSLength()
+	}
+	ports := make([]ManifestPort, 0, count)
+	var port plg.PLGPortManifest
+	for i := 0; i < count; i++ {
+		ok := method.OUTPUT_PORTS(&port, i)
+		if input {
+			ok = method.INPUT_PORTS(&port, i)
+		}
+		if !ok {
+			continue
+		}
+		portID := strings.TrimSpace(string(port.PORT_ID()))
+		if portID == "" {
+			continue
+		}
+		ports = append(ports, ManifestPort{
+			PortID:           portID,
+			DisplayName:      strings.TrimSpace(string(port.DISPLAY_NAME())),
+			AcceptedTypeSets: readPLGAcceptedTypeSets(&port),
+			MinStreams:       port.MIN_STREAMS(),
+			MaxStreams:       port.MAX_STREAMS(),
+			Required:         port.REQUIRED(),
+			Description:      string(port.DESCRIPTION()),
+		})
+	}
+	return ports
+}
+
+func readPLGAcceptedTypeSets(port *plg.PLGPortManifest) []ManifestAcceptedTypeSet {
+	sets := make([]ManifestAcceptedTypeSet, 0, port.ACCEPTED_TYPE_SETSLength())
+	var accepted plg.PLGAcceptedTypeSet
+	for i := 0; i < port.ACCEPTED_TYPE_SETSLength(); i++ {
+		if !port.ACCEPTED_TYPE_SETS(&accepted, i) {
+			continue
+		}
+		sets = append(sets, ManifestAcceptedTypeSet{
+			SetID:              strings.TrimSpace(string(accepted.SET_ID())),
+			AllowedTypes:       readPLGAllowedTypes(&accepted),
+			AllowedWireFormats: readPLGAllowedWireFormats(&accepted),
+			Description:        string(accepted.DESCRIPTION()),
+		})
+	}
+	return sets
+}
+
+func readPLGAllowedTypes(accepted *plg.PLGAcceptedTypeSet) []ManifestFlatBufferTypeRef {
+	types := make([]ManifestFlatBufferTypeRef, 0, accepted.ALLOWED_TYPESLength())
+	var typeRef plg.FlatBufferTypeRef
+	for i := 0; i < accepted.ALLOWED_TYPESLength(); i++ {
+		if !accepted.ALLOWED_TYPES(&typeRef, i) {
+			continue
+		}
+		types = append(types, ManifestFlatBufferTypeRef{
+			SchemaName:     strings.TrimSpace(string(typeRef.SCHEMA_NAME())),
+			FileIdentifier: strings.TrimSpace(string(typeRef.FILE_IDENTIFIER())),
+			SchemaVersion:  strings.TrimSpace(string(typeRef.SCHEMA_VERSION())),
+			RootType:       strings.TrimSpace(string(typeRef.ROOT_TYPE())),
+		})
+	}
+	return types
+}
+
+func readPLGAllowedWireFormats(accepted *plg.PLGAcceptedTypeSet) []string {
+	formats := make([]string, 0, accepted.ALLOWED_WIRE_FORMATSLength())
+	for i := 0; i < accepted.ALLOWED_WIRE_FORMATSLength(); i++ {
+		formats = append(formats, fmt.Sprint(accepted.ALLOWED_WIRE_FORMATS(i)))
+	}
+	return formats
+}
+
+func entryInputPorts(entry *plg.EntryFunction) []ManifestPort {
+	if entry.INPUT_SCHEMASLength() == 0 {
+		return nil
+	}
+	sets := make([]ManifestAcceptedTypeSet, 0, entry.INPUT_SCHEMASLength())
+	for i := 0; i < entry.INPUT_SCHEMASLength(); i++ {
+		schemaName := strings.TrimSpace(string(entry.INPUT_SCHEMAS(i)))
+		if schemaName == "" {
+			continue
+		}
+		sets = append(sets, ManifestAcceptedTypeSet{
+			SetID:              schemaName,
+			AllowedTypes:       []ManifestFlatBufferTypeRef{{SchemaName: schemaName}},
+			AllowedWireFormats: []string{"FLATBUFFER"},
+		})
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	return []ManifestPort{
+		{
+			PortID:           "request",
+			DisplayName:      "Request",
+			AcceptedTypeSets: sets,
+			MinStreams:       1,
+			MaxStreams:       1,
+			Required:         true,
+		},
+	}
+}
+
+func entryOutputPorts(entry *plg.EntryFunction) []ManifestPort {
+	schemaName := strings.TrimSpace(string(entry.OUTPUT_SCHEMA()))
+	if schemaName == "" {
+		return nil
+	}
+	return []ManifestPort{
+		{
+			PortID:      "response",
+			DisplayName: "Response",
+			AcceptedTypeSets: []ManifestAcceptedTypeSet{
+				{
+					SetID:              schemaName,
+					AllowedTypes:       []ManifestFlatBufferTypeRef{{SchemaName: schemaName}},
+					AllowedWireFormats: []string{"FLATBUFFER"},
+				},
+			},
+			MinStreams: 1,
+			MaxStreams: 1,
+			Required:   true,
+		},
+	}
 }
 
 func attachKnownPLGProtocols(m *Manifest) {

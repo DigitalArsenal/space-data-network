@@ -49,6 +49,7 @@ export {
   loadModuleRuntimeSnapshotFromServer,
   runModuleRuntimeAction,
   updateModuleRuntimeOption,
+  type ModuleRuntimeAcceptedTypeSet,
   type ModuleRuntimeAction,
   type ModuleRuntimeCatalog,
   type ModuleRuntimeEntry,
@@ -56,12 +57,14 @@ export {
   type ModuleRuntimeManifest,
   type ModuleRuntimeMethod,
   type ModuleRuntimeOption,
+  type ModuleRuntimePort,
   type ModuleRuntimeProtocol,
   type ModuleRuntimeLinks,
   type ModuleRuntimeSnapshot,
   type ModuleRuntimeStats,
   type ModuleRuntimeStatusEvent,
   type ModuleRuntimeTimer,
+  type ModuleRuntimeTypeRef,
 } from './modules';
 export { loadMarketplaceListingsFromServer } from './marketplace-source';
 export {

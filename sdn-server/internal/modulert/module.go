@@ -3,6 +3,7 @@ package modulert
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,13 +25,15 @@ var log = logging.Logger("modulert")
 // WASM binary, reads its manifest, provisions declared capabilities, and
 // implements the SDN plugin interfaces (Plugin, CronProvider, UIProvider).
 type Module struct {
-	mod      *wasmrt.Module
-	manifest *Manifest
-	bridge   *HostBridge
-	nodeCtx  *NodeContext
-	capReg   *CapabilityRegistry
-	host     host.Host
-	mu       sync.Mutex
+	mod       *wasmrt.Module
+	wasmBytes []byte
+	manifest  *Manifest
+	bridge    *HostBridge
+	nodeCtx   *NodeContext
+	capReg    *CapabilityRegistry
+	host      host.Host
+	paused    bool
+	mu        sync.Mutex
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -81,15 +84,69 @@ func (r *CapabilityRegistry) Register(capability string, factory CapFactory) {
 // per-module host bridge, and provisions declared capabilities.
 func NewModule(wasmBytes []byte, capReg *CapabilityRegistry, nodeCtx *NodeContext) (*Module, error) {
 	m := &Module{
-		nodeCtx: nodeCtx,
-		capReg:  capReg,
+		wasmBytes: append([]byte(nil), wasmBytes...),
+		nodeCtx:   nodeCtx,
+		capReg:    capReg,
 	}
 
+	if err := m.Load(context.Background()); err != nil {
+		return nil, err
+	}
+
+	return m, nil
+}
+
+// Load instantiates the module artifact and refreshes the manifest without
+// starting protocol handlers or timers.
+func (m *Module) Load(ctx context.Context) error {
+	if m == nil {
+		return errors.New("module is nil")
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	if m.mod != nil {
+		m.mu.Unlock()
+		return nil
+	}
+	wasmBytes := append([]byte(nil), m.wasmBytes...)
+	m.mu.Unlock()
+	if len(wasmBytes) == 0 {
+		return errors.New("module artifact is empty")
+	}
+
+	mod, bridge, manifest, err := m.instantiateWASM(wasmBytes)
+	if err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	if m.mod != nil {
+		m.mu.Unlock()
+		mod.Release()
+		return nil
+	}
+	m.mod = mod
+	m.bridge = bridge
+	m.manifest = manifest
+	m.paused = false
+	m.mu.Unlock()
+
+	log.Infof("Module loaded: %s v%s (%s) — %d methods, %d protocols, %d capabilities",
+		manifest.PluginID, manifest.Version, manifest.PluginFamily,
+		len(manifest.Methods), len(manifest.Protocols), len(manifest.Capabilities))
+
+	return nil
+}
+
+func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge, *Manifest, error) {
 	// Create the per-module host bridge (needs manifest first for capabilities,
 	// but we need the WASM loaded to read the manifest — chicken-and-egg.
 	// Solution: create bridge with all capabilities initially, then restrict after manifest parse.)
-	bridge := NewHostBridge(nodeCtx, nil)
-	m.bridge = bridge
+	bridge := NewHostBridge(m.nodeCtx, nil)
 
 	// Build WasmEdge module with shared host functions + per-module sdn_host bridge
 	logFunc := func(level int32, msg string) {
@@ -116,9 +173,8 @@ func NewModule(wasmBytes []byte, capReg *CapabilityRegistry, nodeCtx *NodeContex
 		wasmrt.WithHostModule("sdn_host", bridge.BuildWasmEdgeHostFuncs()),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create WASM module: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create WASM module: %w", err)
 	}
-	m.mod = mod
 
 	// Call _initialize
 	mod.Execute("_initialize")
@@ -127,9 +183,8 @@ func NewModule(wasmBytes []byte, capReg *CapabilityRegistry, nodeCtx *NodeContex
 	manifest, err := ReadManifest(mod)
 	if err != nil {
 		mod.Release()
-		return nil, fmt.Errorf("failed to read manifest: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to read manifest: %w", err)
 	}
-	m.manifest = manifest
 
 	// Now restrict the bridge to only granted capabilities
 	granted := make(map[string]bool, len(manifest.Capabilities))
@@ -139,23 +194,19 @@ func NewModule(wasmBytes []byte, capReg *CapabilityRegistry, nodeCtx *NodeContex
 	bridge.granted = granted
 
 	// Provision capabilities from registry
-	if capReg != nil {
-		capReg.mu.RLock()
+	if m.capReg != nil {
+		m.capReg.mu.RLock()
 		for _, cap := range manifest.Capabilities {
-			if factory, ok := capReg.factories[cap]; ok {
+			if factory, ok := m.capReg.factories[cap]; ok {
 				handler := factory(m)
 				bridge.RegisterCapHandler(capPrefixFromName(cap), handler)
 				log.Debugf("Module %q: provisioned capability %q", manifest.PluginID, cap)
 			}
 		}
-		capReg.mu.RUnlock()
+		m.capReg.mu.RUnlock()
 	}
 
-	log.Infof("Module loaded: %s v%s (%s) — %d methods, %d protocols, %d capabilities",
-		manifest.PluginID, manifest.Version, manifest.PluginFamily,
-		len(manifest.Methods), len(manifest.Protocols), len(manifest.Capabilities))
-
-	return m, nil
+	return mod, bridge, manifest, nil
 }
 
 // capPrefixFromName maps a capability string to the hostcall operation prefix.
@@ -189,17 +240,39 @@ func (m *Module) ID() string {
 }
 
 func (m *Module) Start(ctx context.Context, runtime plugins.RuntimeContext) error {
+	if m == nil {
+		return errors.New("module is nil")
+	}
+	m.mu.Lock()
+	loaded := m.mod != nil
+	m.mu.Unlock()
+	if !loaded {
+		if err := m.Load(ctx); err != nil {
+			return err
+		}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	m.mu.Lock()
+	if m.cancel != nil {
+		m.cancel()
+	}
 	m.ctx = ctx
 	m.cancel = cancel
 	m.host = runtime.Host
+	m.paused = false
 	m.startedAt = time.Now().UTC()
+	manifest := m.manifest
 	m.mu.Unlock()
+	if manifest == nil {
+		return errors.New("module manifest is not loaded")
+	}
 
 	// Register libp2p stream handlers for declared protocols
 	if runtime.Host != nil {
-		for _, proto := range m.manifest.Protocols {
+		for _, proto := range manifest.Protocols {
 			if !proto.AutoInstall {
 				continue
 			}
@@ -214,7 +287,7 @@ func (m *Module) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 			})
 			log.Infof(
 				"Module %q: registered protocol handler %s (%s) → %s",
-				m.manifest.PluginID,
+				manifest.PluginID,
 				streamProtocolID,
 				proto.ProtocolID,
 				methodID,
@@ -222,7 +295,7 @@ func (m *Module) Start(ctx context.Context, runtime plugins.RuntimeContext) erro
 		}
 	}
 
-	log.Infof("Module %q started", m.manifest.PluginID)
+	log.Infof("Module %q started", manifest.PluginID)
 	return nil
 }
 
@@ -232,15 +305,84 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func (m *Module) Close() error {
-	if m.cancel != nil {
-		m.cancel()
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	cancel := m.cancel
+	mod := m.mod
+	runtimeHost := m.host
+	manifest := m.manifest
+	m.cancel = nil
+	m.ctx = nil
+	m.mod = nil
+	m.host = nil
+	m.paused = false
+	m.startedAt = time.Time{}
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 	m.wg.Wait()
-	if m.mod != nil {
-		m.mod.Release()
-		m.mod = nil
+	if runtimeHost != nil && manifest != nil {
+		for _, proto := range manifest.Protocols {
+			if !proto.AutoInstall {
+				continue
+			}
+			streamProtocolID := strings.TrimSpace(proto.WireID)
+			if streamProtocolID == "" {
+				streamProtocolID = proto.ProtocolID
+			}
+			if streamProtocolID != "" {
+				runtimeHost.RemoveStreamHandler(protocol.ID(streamProtocolID))
+			}
+		}
 	}
-	log.Infof("Module %q closed", m.manifest.PluginID)
+	if mod != nil {
+		mod.Release()
+	}
+	if manifest != nil {
+		log.Infof("Module %q closed", manifest.PluginID)
+	}
+	return nil
+}
+
+// Pause prevents method invocation while keeping the runtime artifact loaded.
+func (m *Module) Pause(ctx context.Context) error {
+	if m == nil {
+		return errors.New("module is nil")
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.mod == nil {
+		return errors.New("module not loaded")
+	}
+	m.paused = true
+	return nil
+}
+
+// Resume allows method invocation after a pause. If the artifact was unloaded,
+// it is loaded first but protocol handlers are left to Start.
+func (m *Module) Resume(ctx context.Context) error {
+	if m == nil {
+		return errors.New("module is nil")
+	}
+	m.mu.Lock()
+	loaded := m.mod != nil
+	m.mu.Unlock()
+	if !loaded {
+		if err := m.Load(ctx); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	m.paused = false
+	m.mu.Unlock()
 	return nil
 }
 
@@ -306,6 +448,9 @@ func (m *Module) InvokeMethodFrames(ctx context.Context, methodID string, inputF
 
 	if m.mod == nil {
 		return nil, fmt.Errorf("module not loaded")
+	}
+	if m.paused {
+		return nil, fmt.Errorf("module paused")
 	}
 
 	req, err := encodePluginInvokeRequestFrames(methodID, inputFrames)
@@ -466,6 +611,10 @@ func runtimeManifestDescriptor(manifest *Manifest) *plugins.RuntimeModuleManifes
 			MethodID:    method.MethodID,
 			DisplayName: method.DisplayName,
 			Description: method.Description,
+			InputPorts:  runtimeManifestPorts(method.InputPorts),
+			OutputPorts: runtimeManifestPorts(method.OutputPorts),
+			MaxBatch:    method.MaxBatch,
+			DrainPolicy: method.DrainPolicy,
 		})
 	}
 	for _, protocolDecl := range manifest.Protocols {
@@ -489,6 +638,57 @@ func runtimeManifestDescriptor(manifest *Manifest) *plugins.RuntimeModuleManifes
 			MethodID:          timer.MethodID,
 			DefaultIntervalMs: timer.DefaultIntervalMs,
 			Description:       timer.Description,
+		})
+	}
+	return out
+}
+
+func runtimeManifestPorts(ports []ManifestPort) []plugins.RuntimeModulePort {
+	if len(ports) == 0 {
+		return nil
+	}
+	out := make([]plugins.RuntimeModulePort, 0, len(ports))
+	for _, port := range ports {
+		out = append(out, plugins.RuntimeModulePort{
+			PortID:           port.PortID,
+			DisplayName:      port.DisplayName,
+			AcceptedTypeSets: runtimeManifestAcceptedTypeSets(port.AcceptedTypeSets),
+			MinStreams:       port.MinStreams,
+			MaxStreams:       port.MaxStreams,
+			Required:         port.Required,
+			Description:      port.Description,
+		})
+	}
+	return out
+}
+
+func runtimeManifestAcceptedTypeSets(sets []ManifestAcceptedTypeSet) []plugins.RuntimeModuleAcceptedTypeSet {
+	if len(sets) == 0 {
+		return nil
+	}
+	out := make([]plugins.RuntimeModuleAcceptedTypeSet, 0, len(sets))
+	for _, set := range sets {
+		out = append(out, plugins.RuntimeModuleAcceptedTypeSet{
+			SetID:              set.SetID,
+			AllowedTypes:       runtimeManifestTypeRefs(set.AllowedTypes),
+			AllowedWireFormats: append([]string(nil), set.AllowedWireFormats...),
+			Description:        set.Description,
+		})
+	}
+	return out
+}
+
+func runtimeManifestTypeRefs(typeRefs []ManifestFlatBufferTypeRef) []plugins.RuntimeModuleTypeRef {
+	if len(typeRefs) == 0 {
+		return nil
+	}
+	out := make([]plugins.RuntimeModuleTypeRef, 0, len(typeRefs))
+	for _, typeRef := range typeRefs {
+		out = append(out, plugins.RuntimeModuleTypeRef{
+			SchemaName:     typeRef.SchemaName,
+			FileIdentifier: typeRef.FileIdentifier,
+			SchemaVersion:  typeRef.SchemaVersion,
+			RootType:       typeRef.RootType,
 		})
 	}
 	return out

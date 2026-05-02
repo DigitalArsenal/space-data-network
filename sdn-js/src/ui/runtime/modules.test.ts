@@ -22,9 +22,49 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
               pluginId: 'licensing',
               name: 'Licensing',
               pluginFamily: 'INFRASTRUCTURE',
-              methods: [{ methodId: 'server_handle_message' }],
+              methods: [
+                {
+                  methodId: 'server_handle_message',
+                  maxBatch: 4,
+                  drainPolicy: 'DRAIN_UNTIL_YIELD',
+                  inputPorts: [
+                    {
+                      portId: 'request',
+                      displayName: 'Request',
+                      minStreams: 1,
+                      maxStreams: 1,
+                      required: true,
+                      acceptedTypeSets: [
+                        {
+                          setId: 'module-delivery-request',
+                          allowedTypes: [
+                            {
+                              schemaName: 'MODULE.fbs',
+                              fileIdentifier: 'MODL',
+                              schemaVersion: '1.0.0',
+                              rootType: 'ModuleDeliveryRequest',
+                            },
+                          ],
+                          allowedWireFormats: ['FLATBUFFER'],
+                        },
+                      ],
+                    },
+                  ],
+                  outputPorts: [
+                    {
+                      portId: 'response',
+                      required: true,
+                    },
+                  ],
+                },
+              ],
               capabilities: ['protocol_handle'],
-              protocols: [{ protocolId: 'module-delivery', wireId: '/space-data-network/module-delivery/1.0.0' }],
+              protocols: [
+                {
+                  protocolId: 'module-delivery',
+                  wireId: '/space-data-network/module-delivery/1.0.0',
+                },
+              ],
               timers: [{ timerId: 'refresh-grants', defaultIntervalMs: 30000 }],
             },
             stats: {
@@ -76,7 +116,10 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
       });
     });
 
-    const snapshot = await loadModuleRuntimeSnapshotFromServer('https://node.example/', fetch);
+    const snapshot = await loadModuleRuntimeSnapshotFromServer(
+      'https://node.example/',
+      fetch,
+    );
 
     expect(snapshot.count).toBe(1);
     expect(snapshot.modules[0]).toMatchObject({
@@ -85,7 +128,26 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
       status: 'running',
       manifest: {
         pluginId: 'licensing',
-        methods: [{ methodId: 'server_handle_message' }],
+        methods: [
+          {
+            methodId: 'server_handle_message',
+            maxBatch: 4,
+            drainPolicy: 'DRAIN_UNTIL_YIELD',
+            inputPorts: [
+              {
+                portId: 'request',
+                required: true,
+                acceptedTypeSets: [
+                  {
+                    allowedTypes: [{ rootType: 'ModuleDeliveryRequest' }],
+                    allowedWireFormats: ['FLATBUFFER'],
+                  },
+                ],
+              },
+            ],
+            outputPorts: [{ portId: 'response', required: true }],
+          },
+        ],
       },
       stats: {
         memoryBytes: 458752,
@@ -105,13 +167,17 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
     });
     expect(snapshot.modules[0]?.actions[0]?.actionId).toBe('clear-error');
     expect(snapshot.modules[0]?.statusHistory[0]?.status).toBe('registered');
-    expect(snapshot.modules[0]?.links?.logsUrl).toBe('/api/v1/modules/runtime/licensing/logs');
+    expect(snapshot.modules[0]?.links?.logsUrl).toBe(
+      '/api/v1/modules/runtime/licensing/logs',
+    );
   });
 
   it('returns an empty snapshot for unavailable module runtime APIs', async () => {
     const fetch = vi.fn(async () => jsonResponse(404, { code: 'not_found' }));
 
-    await expect(loadModuleRuntimeSnapshotFromServer('https://node.example', fetch)).resolves.toMatchObject({
+    await expect(
+      loadModuleRuntimeSnapshotFromServer('https://node.example', fetch),
+    ).resolves.toMatchObject({
       count: 0,
       modules: [],
     });
@@ -120,7 +186,9 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
   it('returns an empty snapshot for dev-server HTML fallbacks', async () => {
     const fetch = vi.fn(async () => htmlResponse(200, '<!doctype html>'));
 
-    await expect(loadModuleRuntimeSnapshotFromServer('http://127.0.0.1:5174', fetch)).resolves.toMatchObject({
+    await expect(
+      loadModuleRuntimeSnapshotFromServer('http://127.0.0.1:5174', fetch),
+    ).resolves.toMatchObject({
       count: 0,
       modules: [],
     });
@@ -130,7 +198,9 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
 describe('module runtime mutations', () => {
   it('updates runtime options through the server mutation API', async () => {
     const fetch = vi.fn(async (input: string, init?: RequestInit) => {
-      expect(input).toBe('https://node.example/api/v1/modules/runtime/licensing/options/timer.refresh-grants.interval');
+      expect(input).toBe(
+        'https://node.example/api/v1/modules/runtime/licensing/options/timer.refresh-grants.interval',
+      );
       expect(init?.method).toBe('PATCH');
       expect(init?.credentials).toBe('include');
       expect(init?.headers).toMatchObject({
@@ -148,13 +218,15 @@ describe('module runtime mutations', () => {
       });
     });
 
-    await expect(updateModuleRuntimeOption(
-      'https://node.example/',
-      'licensing',
-      'timer.refresh-grants.interval',
-      '45000',
-      fetch,
-    )).resolves.toMatchObject({
+    await expect(
+      updateModuleRuntimeOption(
+        'https://node.example/',
+        'licensing',
+        'timer.refresh-grants.interval',
+        '45000',
+        fetch,
+      ),
+    ).resolves.toMatchObject({
       key: 'timer.refresh-grants.interval',
       value: '45000',
       units: 'ms',
@@ -163,7 +235,9 @@ describe('module runtime mutations', () => {
 
   it('runs lifecycle actions through the server action API', async () => {
     const fetch = vi.fn(async (input: string, init?: RequestInit) => {
-      expect(input).toBe('https://node.example/api/v1/modules/runtime/licensing/actions/clear-error');
+      expect(input).toBe(
+        'https://node.example/api/v1/modules/runtime/licensing/actions/clear-error',
+      );
       expect(init?.method).toBe('POST');
       expect(init?.credentials).toBe('include');
       expect(init?.headers).toMatchObject({
@@ -172,12 +246,14 @@ describe('module runtime mutations', () => {
       return jsonResponse(200, { ok: true, actionId: 'clear-error' });
     });
 
-    await expect(runModuleRuntimeAction(
-      'https://node.example/',
-      'licensing',
-      'clear-error',
-      fetch,
-    )).resolves.toMatchObject({ ok: true, actionId: 'clear-error' });
+    await expect(
+      runModuleRuntimeAction(
+        'https://node.example/',
+        'licensing',
+        'clear-error',
+        fetch,
+      ),
+    ).resolves.toMatchObject({ ok: true, actionId: 'clear-error' });
   });
 });
 

@@ -174,19 +174,141 @@ func TestRunRuntimeModuleActionClearErrorRecordsHistory(t *testing.T) {
 	}
 }
 
+func TestRunRuntimeModuleActionControlsModuleLifecycle(t *testing.T) {
+	mgr := New()
+	plugin := &fakeRuntimePlugin{id: "licensing"}
+	if err := mgr.Register(plugin); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if err := mgr.StartAll(context.Background(), RuntimeContext{Mode: "test"}); err != nil {
+		t.Fatalf("StartAll failed: %v", err)
+	}
+
+	for _, actionID := range []string{"pause", "start", "stop", "load", "start", "restart", "reload-manifest", "unload"} {
+		if err := mgr.RunRuntimeModuleAction(context.Background(), "licensing", actionID); err != nil {
+			t.Fatalf("RunRuntimeModuleAction(%q) failed: %v", actionID, err)
+		}
+	}
+
+	if got, want := plugin.startCalls, 4; got != want {
+		t.Fatalf("start calls = %d, want %d", got, want)
+	}
+	if got, want := plugin.loadCalls, 2; got != want {
+		t.Fatalf("load calls = %d, want %d", got, want)
+	}
+	if got, want := plugin.pauseCalls, 1; got != want {
+		t.Fatalf("pause calls = %d, want %d", got, want)
+	}
+	if got, want := plugin.resumeCalls, 1; got != want {
+		t.Fatalf("resume calls = %d, want %d", got, want)
+	}
+	if got, want := plugin.closeCalls, 4; got != want {
+		t.Fatalf("close calls = %d, want %d", got, want)
+	}
+
+	snapshot := mgr.RuntimeSnapshot()
+	if got, want := snapshot.Modules[0].Status, "unloaded"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+}
+
+func TestRuntimeSnapshotEnablesLifecycleActionsForCurrentStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  string
+		enabled map[string]bool
+	}{
+		{
+			name:   "running",
+			status: "running",
+			enabled: map[string]bool{
+				"pause":           true,
+				"stop":            true,
+				"restart":         true,
+				"reload-manifest": true,
+				"unload":          true,
+			},
+		},
+		{
+			name:   "paused",
+			status: "paused",
+			enabled: map[string]bool{
+				"start":           true,
+				"restart":         true,
+				"reload-manifest": true,
+				"unload":          true,
+			},
+		},
+		{
+			name:   "unloaded",
+			status: "unloaded",
+			enabled: map[string]bool{
+				"load":  true,
+				"start": true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actions := buildRuntimeModuleActions(tt.status)
+			seen := make(map[string]RuntimeModuleAction, len(actions))
+			for _, action := range actions {
+				seen[action.ActionID] = action
+			}
+			for _, actionID := range []string{"load", "unload", "pause", "start", "stop", "restart", "reload-manifest", "clear-error"} {
+				action, ok := seen[actionID]
+				if !ok {
+					t.Fatalf("action %q missing from %#v", actionID, actions)
+				}
+				if got, want := action.Enabled, tt.enabled[actionID]; got != want {
+					t.Fatalf("action %q enabled = %t, want %t for status %q", actionID, got, want, tt.status)
+				}
+			}
+		})
+	}
+}
+
 type fakeRuntimePlugin struct {
 	id         string
 	startErr   error
 	descriptor RuntimeModuleDescriptor
+
+	loadCalls   int
+	startCalls  int
+	pauseCalls  int
+	resumeCalls int
+	closeCalls  int
 }
 
 func (p *fakeRuntimePlugin) ID() string { return p.id }
 
-func (p *fakeRuntimePlugin) Start(context.Context, RuntimeContext) error { return p.startErr }
+func (p *fakeRuntimePlugin) Load(context.Context) error {
+	p.loadCalls++
+	return nil
+}
+
+func (p *fakeRuntimePlugin) Start(context.Context, RuntimeContext) error {
+	p.startCalls++
+	return p.startErr
+}
+
+func (p *fakeRuntimePlugin) Pause(context.Context) error {
+	p.pauseCalls++
+	return nil
+}
+
+func (p *fakeRuntimePlugin) Resume(context.Context) error {
+	p.resumeCalls++
+	return nil
+}
 
 func (p *fakeRuntimePlugin) RegisterRoutes(*http.ServeMux) {}
 
-func (p *fakeRuntimePlugin) Close() error { return nil }
+func (p *fakeRuntimePlugin) Close() error {
+	p.closeCalls++
+	return nil
+}
 
 func (p *fakeRuntimePlugin) RuntimeDescriptor() RuntimeModuleDescriptor {
 	return p.descriptor
