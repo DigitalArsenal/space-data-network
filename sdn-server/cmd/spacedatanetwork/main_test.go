@@ -299,6 +299,75 @@ func TestHandleModuleRuntimeMutationUpdatesOptionsAndRunsActions(t *testing.T) {
 	}
 }
 
+func TestHandleModuleRuntimeMutationSavesInputsAndReturnsHistory(t *testing.T) {
+	t.Parallel()
+
+	mgr := plugins.New()
+	plugin := &runtimeMutationTestPlugin{
+		id: "licensing",
+		descriptor: plugins.RuntimeModuleDescriptor{
+			Manifest: &plugins.RuntimeModuleManifest{
+				PluginID: "licensing",
+				Methods: []plugins.RuntimeModuleMethod{
+					{
+						MethodID: "server_configure_runtime",
+						InputPorts: []plugins.RuntimeModulePort{
+							{
+								PortID: "request",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := mgr.Register(plugin); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if err := mgr.StartAll(context.Background(), plugins.RuntimeContext{Mode: "test"}); err != nil {
+		t.Fatalf("StartAll failed: %v", err)
+	}
+
+	inputReq := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/modules/runtime/licensing/inputs",
+		bytes.NewBufferString(`{"values":[{"methodId":"server_configure_runtime","portId":"request","wireFormat":"FLATBUFFER_JSON","encoding":"json","schemaName":"MODULE.fbs","rootType":"ConfigureRuntimeRequest","value":"{\"refreshIntervalMs\":45000}"}]}`),
+	)
+	inputRecorder := httptest.NewRecorder()
+	handleModuleRuntimeMutation(mgr)(inputRecorder, inputReq)
+	if inputRecorder.Code != http.StatusOK {
+		t.Fatalf("input status = %d, body = %s", inputRecorder.Code, inputRecorder.Body.String())
+	}
+	var inputPayload struct {
+		ModuleID       string                            `json:"moduleId"`
+		RestartPending bool                              `json:"restartPending"`
+		InputValues    []plugins.RuntimeModuleInputValue `json:"inputValues"`
+	}
+	if err := json.NewDecoder(inputRecorder.Body).Decode(&inputPayload); err != nil {
+		t.Fatalf("decode input payload: %v", err)
+	}
+	if inputPayload.ModuleID != "licensing" || !inputPayload.RestartPending || len(inputPayload.InputValues) != 1 {
+		t.Fatalf("input payload = %#v", inputPayload)
+	}
+
+	historyReq := httptest.NewRequest(http.MethodGet, "/api/v1/modules/runtime/licensing/history", nil)
+	historyRecorder := httptest.NewRecorder()
+	handleModuleRuntimeMutation(mgr)(historyRecorder, historyReq)
+	if historyRecorder.Code != http.StatusOK {
+		t.Fatalf("history status = %d, body = %s", historyRecorder.Code, historyRecorder.Body.String())
+	}
+	var historyPayload struct {
+		ModuleID string                                     `json:"moduleId"`
+		History  []plugins.RuntimeModuleCommandHistoryEntry `json:"history"`
+	}
+	if err := json.NewDecoder(historyRecorder.Body).Decode(&historyPayload); err != nil {
+		t.Fatalf("decode history payload: %v", err)
+	}
+	if historyPayload.ModuleID != "licensing" || len(historyPayload.History) != 1 || historyPayload.History[0].Command != "save-inputs" {
+		t.Fatalf("history payload = %#v", historyPayload)
+	}
+}
+
 func TestMakeWebUIHandlerServesIndexAndAssetsUnderWebUI(t *testing.T) {
 	t.Parallel()
 

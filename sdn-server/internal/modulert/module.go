@@ -2,6 +2,8 @@ package modulert
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -384,6 +386,66 @@ func (m *Module) Resume(ctx context.Context) error {
 	m.paused = false
 	m.mu.Unlock()
 	return nil
+}
+
+// ApplyRuntimeModuleInputs applies dashboard-saved method input values after a
+// restart. Values are grouped by method and passed through the SDK stream
+// invocation ABI as port frames.
+func (m *Module) ApplyRuntimeModuleInputs(ctx context.Context, values []plugins.RuntimeModuleInputValue) error {
+	if len(values) == 0 {
+		return nil
+	}
+	grouped := make(map[string][]InvokeInputFrame)
+	order := make([]string, 0)
+	for _, value := range values {
+		methodID := strings.TrimSpace(value.MethodID)
+		if methodID == "" {
+			return errors.New("runtime input method id is required")
+		}
+		payload, err := decodeRuntimeModuleInputPayload(value)
+		if err != nil {
+			return fmt.Errorf("%s/%s: %w", value.MethodID, value.PortID, err)
+		}
+		if _, exists := grouped[methodID]; !exists {
+			order = append(order, methodID)
+		}
+		grouped[methodID] = append(grouped[methodID], InvokeInputFrame{
+			PortID:         value.PortID,
+			Payload:        payload,
+			SchemaName:     value.SchemaName,
+			FileIdentifier: value.FileIdentifier,
+			RootTypeName:   value.RootType,
+			WireFormat:     runtimeModuleInputWireFormat(value),
+		})
+	}
+	for _, methodID := range order {
+		if _, err := m.InvokeMethodFrames(ctx, methodID, grouped[methodID]); err != nil {
+			return fmt.Errorf("apply runtime input method %q: %w", methodID, err)
+		}
+	}
+	return nil
+}
+
+func decodeRuntimeModuleInputPayload(value plugins.RuntimeModuleInputValue) ([]byte, error) {
+	raw := strings.TrimSpace(value.Value)
+	switch strings.ToLower(strings.TrimSpace(value.Encoding)) {
+	case "base64":
+		return base64.StdEncoding.DecodeString(raw)
+	case "hex":
+		return hex.DecodeString(raw)
+	case "json", "text", "":
+		return []byte(raw), nil
+	default:
+		return nil, fmt.Errorf("unsupported encoding %q", value.Encoding)
+	}
+}
+
+func runtimeModuleInputWireFormat(value plugins.RuntimeModuleInputValue) byte {
+	normalized := strings.ToUpper(strings.TrimSpace(value.WireFormat))
+	if strings.Contains(normalized, "ALIGNED") || strings.Contains(normalized, "JSON") || strings.Contains(normalized, "TEXT") {
+		return payloadWireFormatAlignedBinary
+	}
+	return payloadWireFormatFlatbuffer
 }
 
 // --- plugins.CronProvider interface ---
