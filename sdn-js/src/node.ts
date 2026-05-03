@@ -26,6 +26,8 @@ import { getBootstrapRelays, EdgeDiscovery } from "./edge-discovery";
 import { SchemaName, SUPPORTED_SCHEMAS } from "./schemas";
 import { initHDWallet } from "./crypto/hd-wallet";
 import type { DerivedIdentity } from "./crypto/types";
+import { createHeliaFromLibp2p, fetchCIDBytesFromHelia } from "./helia";
+import type { Helia } from "helia";
 import {
   requestEncryptedModuleBundle,
   requestModuleGrant,
@@ -91,6 +93,7 @@ export interface SDNNodeEvents {
 
 export class SDNNode {
   private libp2p: Libp2p | null = null;
+  private helia: Helia | null = null;
   private storage: SDNStorage | null = null;
   private config: SDNConfig;
   private events: SDNNodeEvents;
@@ -531,15 +534,23 @@ export class SDNNode {
     } else if (ipfsGatewayBaseUrl) {
       fetchPromise = fetchCIDBytesFromIPFSGateway(ipfsGatewayBaseUrl, cid);
     } else {
-      throw new Error(
-        "CID fetch requires ipfsApiBaseUrl or ipfsGatewayBaseUrl in the browser bundle",
-      );
+      fetchPromise = this.fetchCIDBytesFromContentRouting(cid);
     }
 
     return withOptionalTimeout(
       fetchPromise,
       resolveHeliaFetchTimeoutMs(this.config),
     );
+  }
+
+  private async fetchCIDBytesFromContentRouting(
+    cid: string,
+  ): Promise<Uint8Array> {
+    if (!this.libp2p) {
+      throw new Error("CID fetch requires a started SDN libp2p node");
+    }
+    this.helia ??= await createHeliaFromLibp2p(this.libp2p);
+    return fetchCIDBytesFromHelia(this.helia, cid);
   }
 
   async requestModuleGrant(
@@ -600,10 +611,14 @@ export class SDNNode {
       await this.storage.close();
     }
 
-    // Stop libp2p
-    if (this.libp2p) {
+    // Stop Helia when it owns the libp2p wrapper, otherwise stop libp2p directly.
+    if (this.helia) {
+      await this.helia.stop();
+      this.helia = null;
+    } else if (this.libp2p) {
       await this.libp2p.stop();
     }
+    this.libp2p = null;
   }
 
   /**
