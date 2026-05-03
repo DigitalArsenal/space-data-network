@@ -117,6 +117,8 @@ export class App extends Component {
   render() {
     const { t, route: Page, ipfsReady, doFilesNavigateTo, routeInfo: { url }, connectDropTarget, canDrop, isOver, showTooltip } = this.props
     const canRenderWithoutIpfs = url === '/welcome' || url.startsWith('/settings') || url === '/modules'
+    const isModulesRoute = url === '/modules'
+    const mainClassName = isModulesRoute ? 'bg-white overflow-hidden' : 'bg-white pv3 pa3 pa4-l'
     return connectDropTarget(
       <div className='sans-serif h-100 relative' onClick={getNavHelper(this.props.doUpdateUrl)}>
         { canDrop && isOver && <div className='h-100 top-0 right-0 fixed appOverlay' style={{ background: 'rgba(99, 202, 210, 0.2)' }} /> }
@@ -132,7 +134,7 @@ export class App extends Component {
                 <SessionControls className='ml1' />
               </div>
             </div>
-            <main className='bg-white pv3 pa3 pa4-l'>
+            <main className={mainClassName} style={isModulesRoute ? moduleMainStyle : undefined}>
               { (ipfsReady || canRenderWithoutIpfs)
                 ? <Page />
                 : <ComponentLoader />
@@ -158,6 +160,12 @@ export class App extends Component {
       </div>
     )
   }
+}
+
+const moduleMainStyle = {
+  height: 'calc(100vh - 75px)',
+  overflow: 'hidden',
+  padding: 0
 }
 
 const dropTarget = {

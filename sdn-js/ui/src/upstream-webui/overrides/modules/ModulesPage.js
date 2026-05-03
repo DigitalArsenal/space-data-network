@@ -41,6 +41,8 @@ function ModulesPage() {
     )
   }, [modules])
 
+  useEffect(lockModulesBodyScroll, [])
+
   async function refreshModules({ silent = false } = {}) {
     if (!silent) {
       setStatus('loading')
@@ -130,9 +132,9 @@ function ModulesPage() {
         <SummaryMetric label='WASM memory' value={formatBytes(counts.memoryBytes)} />
       </section>
 
-      <section className='flex flex-column flex-row-l' style={contentLayoutStyle}>
+      <section className='sdn-modules-content flex flex-column flex-row-l' style={contentLayoutStyle}>
         <section
-          className='w-100 w-40-l ba b--black-10 br2 bg-white overflow-hidden mr0 mr3-l mb3 mb0-l'
+          className='sdn-modules-list-panel w-100 w-40-l ba b--black-10 br2 bg-white overflow-hidden'
           style={moduleListPanelStyle}
         >
           <div className='pa3 bb b--black-10 flex items-center justify-between' style={panelHeaderStyle}>
@@ -190,7 +192,7 @@ function ModulesPage() {
           </div>
         </section>
 
-        <section className='w-100 w-60-l' style={moduleDetailPanelStyle}>
+        <section className='sdn-modules-detail-panel w-100 w-60-l' style={moduleDetailPanelStyle}>
           {selectedModule ? (
             <ModuleDetail module={selectedModule} onRefresh={refreshModules} />
           ) : (
@@ -200,6 +202,34 @@ function ModulesPage() {
       </section>
     </main>
   )
+}
+
+function lockModulesBodyScroll() {
+  if (
+    typeof document === 'undefined' ||
+    !document.body ||
+    !document.documentElement
+  ) {
+    return undefined
+  }
+
+  const previousBodyOverflow = document.body.style.overflow
+  const previousDocumentOverflow = document.documentElement.style.overflow
+  const previousBodyOverscroll = document.body.style.overscrollBehavior
+  const previousDocumentOverscroll = document.documentElement.style.overscrollBehavior
+
+  document.body.style.overflow = 'hidden'
+  document.documentElement.style.overflow = 'hidden'
+  document.body.style.overscrollBehavior = 'none'
+  document.documentElement.style.overscrollBehavior = 'none'
+
+  return () => {
+    document.body.style.overflow = previousBodyOverflow
+    document.documentElement.style.overflow = previousDocumentOverflow
+    document.body.style.overscrollBehavior = previousBodyOverscroll
+    document.documentElement.style.overscrollBehavior =
+      previousDocumentOverscroll
+  }
 }
 
 function ModulesHelp() {
@@ -970,22 +1000,32 @@ function formatDateTime(timestamp) {
 }
 
 const pageStyle = {
-  height: 'calc(100vh - 1.5rem)',
-  minHeight: '42rem',
+  width: '100%',
+  height: 'calc(100vh - 75px)',
+  maxHeight: 'calc(100vh - 75px)',
+  minHeight: 0,
+  boxSizing: 'border-box',
   overflow: 'hidden',
+  overflowX: 'hidden',
   display: 'flex',
   flexDirection: 'column'
 }
 
 const contentLayoutStyle = {
+  width: '100%',
   minHeight: 0,
-  flex: '1 1 auto'
+  flex: '1 1 auto',
+  overflow: 'hidden',
+  gap: '1rem'
 }
 
 const moduleListPanelStyle = {
+  width: '100%',
+  minWidth: 0,
   minHeight: 0,
   display: 'flex',
-  flexDirection: 'column'
+  flexDirection: 'column',
+  flex: '0 0 min(32rem, 40%)'
 }
 
 const panelHeaderStyle = {
@@ -995,17 +1035,24 @@ const panelHeaderStyle = {
 const moduleListBodyStyle = {
   flex: '1 1 auto',
   minHeight: 0,
+  overflowX: 'hidden',
   overflowY: 'auto'
 }
 
 const moduleDetailPanelStyle = {
+  width: '100%',
+  minWidth: 0,
   minHeight: 0,
-  display: 'flex'
+  display: 'flex',
+  flex: '1 1 0'
 }
 
 const detailPanelStyle = {
+  width: '100%',
   height: '100%',
   minHeight: 0,
+  boxSizing: 'border-box',
+  overflow: 'hidden',
   display: 'flex',
   flexDirection: 'column'
 }
@@ -1017,6 +1064,7 @@ const detailPanelHeaderStyle = {
 const detailPanelBodyStyle = {
   flex: '1 1 auto',
   minHeight: 0,
+  overflowX: 'hidden',
   overflowY: 'auto'
 }
 
