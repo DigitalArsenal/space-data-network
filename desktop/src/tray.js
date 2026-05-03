@@ -279,7 +279,7 @@ module.exports = async function () {
   const ctx = getCtx()
   logger.info('[tray] starting')
   tray = new Tray(icon(off))
-  tray.setToolTip('IPFS Desktop')
+  tray.setToolTip('Space Data Network')
 
   const launchWebUI = ctx.getFn('launchWebUI')
 

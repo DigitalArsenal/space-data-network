@@ -2,8 +2,8 @@
   "name": "ipfs-desktop",
   "private": true,
   "version": "0.47.0",
-  "productName": "IPFS Desktop",
-  "description": "IPFS Native Application",
+  "productName": "Space Data Network",
+  "description": "Space Data Network desktop application",
   "main": "src/index.js",
   "scripts": {
     "start": "cross-env NODE_ENV=development electron .",

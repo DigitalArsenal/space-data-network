@@ -819,8 +819,11 @@ func TestLoginPage_BuildersExposeWalletAccountSurfaceForUnauthorizedUsers(t *tes
 			if !strings.Contains(page.html, "spacedatastandards.org") {
 				t.Fatalf("page missing Space Data Standards technology link: %s", page.html)
 			}
-			if !strings.Contains(page.html, `href="https://spacedatanet.org/"`) {
+			if !strings.Contains(page.html, `href="https://spacedatanetwork.org/"`) {
 				t.Fatalf("page missing SDN homepage link: %s", page.html)
+			}
+			if strings.Contains(page.html, `spacedatanet.org`) {
+				t.Fatalf("page should not reference retired spacedatanet.org domain: %s", page.html)
 			}
 			if !strings.Contains(page.html, "window.__sdnEnsureWalletUI") {
 				t.Fatalf("page missing lazy wallet loader hook: %s", page.html)

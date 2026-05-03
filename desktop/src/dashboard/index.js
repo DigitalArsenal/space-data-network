@@ -2,14 +2,14 @@
 const { screen, BrowserWindow, app } = require('electron')
 const { join } = require('path')
 const { URL } = require('url')
-const serve = require('electron-serve')
 const logger = require('../common/logger')
 const store = require('../common/store')
 const { OPEN_WEBUI_LAUNCH: CONFIG_KEY } = require('../common/config-keys')
 const dock = require('../utils/dock')
 const getCtx = require('../context')
+const registerStaticScheme = require('../static-scheme')
 
-serve({ scheme: 'sdn', directory: join(__dirname, '../../../sdn-js/ui/dist') })
+registerStaticScheme({ scheme: 'sdn', directory: join(__dirname, '../../../sdn-js/ui/dist') })
 const introPath = join(__dirname, '../../assets/pages/sdn-intro.html')
 
 function isIntroRoute (path) {

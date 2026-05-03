@@ -1,6 +1,6 @@
 {
-  "short_name": "IPFS WebUI",
-  "name": "IPFS Web UI",
+  "short_name": "SDN",
+  "name": "Space Data Network",
   "icons": [
      {
       "src": "ipfs-logo-512-ice.png",
