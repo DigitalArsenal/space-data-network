@@ -425,8 +425,20 @@ func TestDefaultFrontendHTMLIsCleanLandingPage(t *testing.T) {
 	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="/admin/"`)) {
 		t.Fatal("default frontend should link to the admin page")
 	}
-	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="https://spacedatanet.org"`)) {
-		t.Fatal("default frontend should link to spacedatanet.org documentation")
+	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="https://spacedatanetwork.org"`)) {
+		t.Fatal("default frontend should link to spacedatanetwork.org documentation")
+	}
+	if bytes.Contains([]byte(defaultFrontendHTML), []byte(`spacedatanet.org`)) {
+		t.Fatal("default frontend should not link to the retired spacedatanet.org domain")
+	}
+	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`border-radius: 2px;`)) {
+		t.Fatal("default frontend intro buttons should use square IPFS-style corners")
+	}
+	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`font-weight: 500;`)) {
+		t.Fatal("default frontend intro buttons should use regular-weight labels")
+	}
+	if bytes.Contains([]byte(defaultFrontendHTML), []byte(`border-radius: 999px;`)) {
+		t.Fatal("default frontend intro buttons should not be pill shaped")
 	}
 	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`class="landing-card"`)) {
 		t.Fatal("default frontend should use a single simple landing content block")

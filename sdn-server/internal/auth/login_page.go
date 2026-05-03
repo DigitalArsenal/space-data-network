@@ -1045,7 +1045,7 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, host s
       </div>
       ` + buildTLSStatusMarkup(tlsStatus, showLocalTLSInfo) + `
       <button id="sdn-sign-in" class="sdn-login" type="button" disabled>Login</button>
-      <a class="sdn-home" href="https://spacedatanet.org/" target="_blank" rel="noreferrer">Homepage</a>
+      <a class="sdn-home" href="https://spacedatanetwork.org/" target="_blank" rel="noreferrer">Homepage</a>
       <div id="sdn-auth-status" class="sdn-auth-status" data-visible="false" aria-live="polite"></div>
     </main>
   </div>

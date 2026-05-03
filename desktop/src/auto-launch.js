@@ -18,7 +18,7 @@ function isSupported () {
 }
 
 function getDesktopFile () {
-  return path.join(untildify('~/.config/autostart/'), 'ipfs-desktop.desktop')
+  return path.join(untildify('~/.config/autostart/'), 'space-data-network.desktop')
 }
 
 async function enable () {
@@ -30,10 +30,10 @@ async function enable () {
   const desktop = `[Desktop Entry]
 Type=Application
 Version=1.0
-Name=IPFS Desktop
-Comment=IPFS Desktop Startup Script
+Name=Space Data Network
+Comment=Space Data Network Startup Script
 Exec="${process.execPath}"
-Icon=ipfs-desktop
+Icon=space-data-network
 StartupNotify=false
 Terminal=false`
 

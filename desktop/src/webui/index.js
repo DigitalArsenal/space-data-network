@@ -2,7 +2,6 @@
 const { screen, BrowserWindow, ipcMain, app, session } = require('electron')
 const { join } = require('path')
 const { URL } = require('url')
-const serve = require('electron-serve')
 const i18n = require('i18next')
 const openExternal = require('./open-external')
 const logger = require('../common/logger')
@@ -18,8 +17,9 @@ const Countly = require('countly-sdk-nodejs')
 const { analyticsKeys } = require('../analytics/keys')
 const ipcMainEvents = require('../common/ipc-main-events')
 const getCtx = require('../context')
+const registerStaticScheme = require('../static-scheme')
 // Use local webui build from the webui/ directory at project root
-serve({ scheme: 'webui', directory: join(__dirname, '../../../webui/build') })
+registerStaticScheme({ scheme: 'webui', directory: join(__dirname, '../../../webui/build') })
 
 /**
  *
@@ -30,7 +30,7 @@ const createWindow = () => {
   const dimensions = screen.getPrimaryDisplay()
 
   const window = new BrowserWindow({
-    title: 'IPFS Desktop',
+    title: 'Space Data Network',
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: 'hiddenInset',

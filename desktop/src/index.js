@@ -3,7 +3,30 @@ const { registerAppStartTime, getSecondsSinceAppStart } = require('./metrics/app
 registerAppStartTime()
 require('v8-compile-cache')
 
-const { app, dialog } = require('electron')
+const { app, dialog, protocol } = require('electron')
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'sdn',
+    privileges: {
+      standard: true,
+      secure: true,
+      allowServiceWorkers: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
+  },
+  {
+    scheme: 'webui',
+    privileges: {
+      standard: true,
+      secure: true,
+      allowServiceWorkers: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
+  }
+])
 
 if (process.env.NODE_ENV === 'test') {
   const path = require('path')
@@ -40,7 +63,7 @@ const createSplashScreen = require('./splash/create-splash-screen')
 if (app.dock) app.dock.hide()
 
 // Sets User Model Id so notifications work on Windows 10
-app.setAppUserModelId('io.ipfs.desktop')
+app.setAppUserModelId('org.spacedatanetwork.desktop')
 
 // Fixes $PATH on macOS
 fixPath()

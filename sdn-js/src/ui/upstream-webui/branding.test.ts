@@ -144,6 +144,23 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).not.toContain('sdn-logo-text-horiz.svg');
   });
 
+  it('uses the approved monochrome SDN outline mark for root branding', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/navigation/sdn-logo-mark.svg'),
+      'utf8',
+    );
+
+    expect(source).toContain('aria-label="Space Data Network"');
+    expect(source).toContain('data-sdn-mark="primary-outline-dot"');
+    expect(source).toContain('stroke="currentColor"');
+    expect(source).toContain('<circle cx="64" cy="64" r="52"');
+    expect(source).toContain('<path d="M64 116 L19 38 L109 38 Z"');
+    expect(source).toContain('<circle cx="64" cy="64" r="7" fill="currentColor"');
+    expect(source).not.toContain('<ellipse');
+    expect(source).not.toContain('linearGradient');
+    expect(source).not.toContain('<text');
+  });
+
   it('defines the root-only directory route without a separate identity route', async () => {
     const routes = await fs.readFile(
       path.join(uiSrcPath, 'overrides/bundles/routes.js'),
