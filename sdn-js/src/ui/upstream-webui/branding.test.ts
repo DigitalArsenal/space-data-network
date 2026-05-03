@@ -109,6 +109,31 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).toContain('https://github.com/DigitalArsenal/space-data-network/blob/main/docs/module-runtime-dashboard.md');
   });
 
+  it('keeps the Modules dashboard body fixed while list and detail panels own scrolling', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/modules/ModulesPage.js'),
+      'utf8',
+    );
+    const app = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/App.js'),
+      'utf8',
+    );
+
+    expect(source).toContain('lockModulesBodyScroll');
+    expect(source).toContain("document.body.style.overflow = 'hidden'");
+    expect(source).toContain("document.documentElement.style.overflow = 'hidden'");
+    expect(source).toContain("width: '100%'");
+    expect(source).toContain("height: 'calc(100vh - 75px)'");
+    expect(source).toContain("maxHeight: 'calc(100vh - 75px)'");
+    expect(source).toContain("overflowX: 'hidden'");
+    expect(source).toContain("overflowY: 'auto'");
+    expect(source).toContain("moduleDetailPanelStyle =");
+    expect(source).toContain("flex: '1 1 0'");
+    expect(app).toContain("const isModulesRoute = url === '/modules'");
+    expect(app).toContain("isModulesRoute ? 'bg-white overflow-hidden' : 'bg-white pv3 pa3 pa4-l'");
+    expect(app).toContain('style={isModulesRoute ? moduleMainStyle : undefined}');
+  });
+
   it('allows the root-only modules dashboard to render before IPFS is ready', async () => {
     const app = await fs.readFile(
       path.join(uiSrcPath, 'overrides/App.js'),

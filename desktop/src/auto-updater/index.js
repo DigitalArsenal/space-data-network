@@ -10,9 +10,25 @@ const getCtx = require('../context')
 const store = require('../common/store')
 const CONFIG_KEYS = require('../common/config-keys')
 
+const SDN_RELEASES_URL =
+  'https://github.com/DigitalArsenal/space-data-network/releases/latest'
+
+function isSpaceDataNetworkBuild () {
+  const appName = typeof app.getName === 'function' ? app.getName() : ''
+  return appName === 'Space Data Network' ||
+    String(process.execPath || '').includes('Space Data Network.app')
+}
+
 function isAutoUpdateSupported () {
   if (store.get(CONFIG_KEYS.DISABLE_AUTO_UPDATE, false)) {
     logger.info('[updater] auto update explicitly disabled, not checking for updates automatically')
+    return false
+  }
+  if (
+    isSpaceDataNetworkBuild() &&
+    process.env.SDN_ENABLE_UPSTREAM_AUTO_UPDATE !== '1'
+  ) {
+    logger.info('[updater] upstream IPFS auto update disabled for Space Data Network builds')
     return false
   }
   // atm only macOS, windows and AppImage builds support autoupdate mechanism,
@@ -199,7 +215,7 @@ module.exports = async function () {
   }
   if (!isAutoUpdateSupported()) {
     getCtx().setProp('manualCheckForUpdates', () => {
-      shell.openExternal('https://github.com/ipfs/ipfs-desktop/releases/latest')
+      shell.openExternal(SDN_RELEASES_URL)
     })
     return
   }
@@ -216,3 +232,7 @@ module.exports = async function () {
     checkForUpdates()
   })
 }
+
+module.exports._isAutoUpdateSupported = isAutoUpdateSupported
+module.exports._isSpaceDataNetworkBuild = isSpaceDataNetworkBuild
+module.exports.SDN_RELEASES_URL = SDN_RELEASES_URL
