@@ -144,18 +144,21 @@ describe("SDNNode relay bootstrap", () => {
     await node.stop();
   });
 
-  it("requires an HTTP CID fetch endpoint in the browser bundle", async () => {
+  it("fetches CIDs through Helia content routing when no HTTP endpoint is configured", async () => {
     const { SDNNode } = await import("./node");
     const node = await SDNNode.create({
       edgeRelays: ["/ip4/127.0.0.1/tcp/14080/ws/p2p/local-provider"],
       enableStorage: false,
     });
 
-    await expect(node.fetchCIDBytes("bafkreicidone")).rejects.toThrow(
-      /ipfsApiBaseUrl or ipfsGatewayBaseUrl/i,
+    const result = await node.fetchCIDBytes("bafkreicidone");
+
+    expect(result).toEqual(Uint8Array.from([1, 2, 3]));
+    expect(createHeliaFromLibp2pMock).toHaveBeenCalledTimes(1);
+    expect(fetchCIDBytesFromHeliaMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "bafkreicidone",
     );
-    expect(createHeliaFromLibp2pMock).not.toHaveBeenCalled();
-    expect(fetchCIDBytesFromHeliaMock).not.toHaveBeenCalled();
 
     await node.stop();
   });

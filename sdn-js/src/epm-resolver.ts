@@ -8,7 +8,7 @@
  * - Support multiple key types (X25519, secp256k1, P-256)
  */
 
-import type { Libp2p } from 'libp2p';
+import type { Libp2p } from "libp2p";
 
 // Key type enum matching FlatBuffers schema
 export enum KeyType {
@@ -17,7 +17,7 @@ export enum KeyType {
 }
 
 // Supported key exchange algorithms
-export type KeyExchangeAlgorithm = 'x25519' | 'secp256k1' | 'p256';
+export type KeyExchangeAlgorithm = "x25519" | "secp256k1" | "p256";
 
 // EPM key information
 export interface EPMKey {
@@ -82,23 +82,27 @@ export interface EPMResolverOptions {
 }
 
 // Default options
-const DEFAULT_OPTIONS: Required<EPMResolverOptions> = {
+type NormalizedEPMResolverOptions = Required<
+  Omit<EPMResolverOptions, "ipfsGateway">
+> &
+  Pick<EPMResolverOptions, "ipfsGateway">;
+
+const DEFAULT_OPTIONS: NormalizedEPMResolverOptions = {
   cacheTTL: 5 * 60 * 1000, // 5 minutes
   maxCacheSize: 1000,
-  ipfsGateway: 'https://ipfs.io/ipfs/',
-  pnmTopic: '/sdn/pnm/1.0.0',
+  pnmTopic: "/sdn/pnm/1.0.0",
 };
 
 /**
  * EPM File Identifier for FlatBuffers
  */
-const EPM_FILE_ID = '$EPM';
+const EPM_FILE_ID = "$EPM";
 
 /**
  * Parse hex string to Uint8Array
  */
 function hexToBytes(hex: string): Uint8Array {
-  const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
+  const cleanHex = hex.startsWith("0x") ? hex.slice(2) : hex;
   const bytes = new Uint8Array(cleanHex.length / 2);
   for (let i = 0; i < bytes.length; i++) {
     bytes[i] = parseInt(cleanHex.substr(i * 2, 2), 16);
@@ -111,8 +115,8 @@ function hexToBytes(hex: string): Uint8Array {
  */
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /**
@@ -123,27 +127,41 @@ function bytesToHex(bytes: Uint8Array): string {
  *
  * Note: Distinguishing secp256k1 from P-256 requires additional metadata
  */
-function detectKeyAlgorithm(publicKey: Uint8Array, hint?: string): KeyExchangeAlgorithm {
+function detectKeyAlgorithm(
+  publicKey: Uint8Array,
+  hint?: string,
+): KeyExchangeAlgorithm {
   if (hint) {
     const normalizedHint = hint.toLowerCase();
-    if (normalizedHint.includes('x25519') || normalizedHint.includes('curve25519')) {
-      return 'x25519';
+    if (
+      normalizedHint.includes("x25519") ||
+      normalizedHint.includes("curve25519")
+    ) {
+      return "x25519";
     }
-    if (normalizedHint.includes('secp256k1') || normalizedHint.includes('ethereum') || normalizedHint.includes('bitcoin')) {
-      return 'secp256k1';
+    if (
+      normalizedHint.includes("secp256k1") ||
+      normalizedHint.includes("ethereum") ||
+      normalizedHint.includes("bitcoin")
+    ) {
+      return "secp256k1";
     }
-    if (normalizedHint.includes('p256') || normalizedHint.includes('p-256') || normalizedHint.includes('nist')) {
-      return 'p256';
+    if (
+      normalizedHint.includes("p256") ||
+      normalizedHint.includes("p-256") ||
+      normalizedHint.includes("nist")
+    ) {
+      return "p256";
     }
   }
 
   // Default detection by key length
   if (publicKey.length === 32) {
-    return 'x25519';
+    return "x25519";
   }
   // For 33/65 byte keys, default to secp256k1 (most common for blockchain)
   // Applications should use ADDRESS_TYPE hint for P-256
-  return 'secp256k1';
+  return "secp256k1";
 }
 
 /**
@@ -172,11 +190,11 @@ function parseEPMBuffer(data: Uint8Array): ParsedEPM | null {
       data[offset + 4],
       data[offset + 5],
       data[offset + 6],
-      data[offset + 7]
+      data[offset + 7],
     );
 
     if (fileId !== EPM_FILE_ID) {
-      console.warn('Invalid EPM file identifier:', fileId);
+      console.warn("Invalid EPM file identifier:", fileId);
       return null;
     }
 
@@ -191,7 +209,7 @@ function parseEPMBuffer(data: Uint8Array): ParsedEPM | null {
       timestamp: Date.now(),
     };
   } catch (err) {
-    console.error('Failed to parse EPM buffer:', err);
+    console.error("Failed to parse EPM buffer:", err);
     return null;
   }
 }
@@ -201,7 +219,7 @@ function parseEPMBuffer(data: Uint8Array): ParsedEPM | null {
  */
 export class EPMResolver {
   private cache: Map<string, CacheEntry> = new Map();
-  private options: Required<EPMResolverOptions>;
+  private options: NormalizedEPMResolverOptions;
   private libp2pNode?: Libp2p;
   private pnmSubscribed = false;
 
@@ -227,14 +245,14 @@ export class EPMResolver {
       const services = this.libp2pNode.services as any;
       const pubsub = services?.pubsub;
       if (!pubsub) {
-        console.warn('PubSub not available on libp2p node');
+        console.warn("PubSub not available on libp2p node");
         return;
       }
 
       await pubsub.subscribe(this.options.pnmTopic);
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      pubsub.addEventListener('message', (evt: any) => {
+      pubsub.addEventListener("message", (evt: any) => {
         if (evt.detail.topic === this.options.pnmTopic) {
           this.handlePNM(evt.detail.data);
         }
@@ -242,7 +260,7 @@ export class EPMResolver {
 
       this.pnmSubscribed = true;
     } catch (err) {
-      console.error('Failed to subscribe to PNM topic:', err);
+      console.error("Failed to subscribe to PNM topic:", err);
     }
   }
 
@@ -254,9 +272,9 @@ export class EPMResolver {
       // Parse PNM to extract CID and FILE_ID
       // If FILE_ID === "EPM", fetch and cache the EPM
       // This would use the PNM FlatBuffer parser
-      console.debug('Received PNM announcement');
+      console.debug("Received PNM announcement");
     } catch (err) {
-      console.error('Failed to handle PNM:', err);
+      console.error("Failed to handle PNM:", err);
     }
   }
 
@@ -282,7 +300,7 @@ export class EPMResolver {
           return epm;
         }
       } catch (err) {
-        console.debug('IPNS resolution failed:', err);
+        console.debug("IPNS resolution failed:", err);
       }
     }
 
@@ -296,6 +314,9 @@ export class EPMResolver {
     // Check cache first
     const cached = this.getFromCache(`cid:${cid}`);
     if (cached) return cached;
+    if (!this.options.ipfsGateway) {
+      return null;
+    }
 
     try {
       // Try IPFS gateway
@@ -314,7 +335,7 @@ export class EPMResolver {
         return epm;
       }
     } catch (err) {
-      console.error('Failed to resolve EPM by CID:', err);
+      console.error("Failed to resolve EPM by CID:", err);
     }
 
     return null;
@@ -351,33 +372,39 @@ export class EPMResolver {
   /**
    * Add parsed EPM data directly (for when parsing is done externally)
    */
-  addParsedEPM(key: string, data: {
-    keys: Array<{
-      publicKey: string | Uint8Array;
-      keyType: KeyType;
-      algorithm?: KeyExchangeAlgorithm;
-      keyAddress?: string;
-      addressType?: string;
-    }>;
-    multiformatAddresses?: string[];
-    dn?: string;
-    legalName?: string;
-    email?: string;
-    peerID?: string;
-    cid?: string;
-  }): ParsedEPM {
-    const keys: EPMKey[] = data.keys.map(k => {
-      const pubKeyBytes = typeof k.publicKey === 'string'
-        ? hexToBytes(k.publicKey)
-        : k.publicKey;
+  addParsedEPM(
+    key: string,
+    data: {
+      keys: Array<{
+        publicKey: string | Uint8Array;
+        keyType: KeyType;
+        algorithm?: KeyExchangeAlgorithm;
+        keyAddress?: string;
+        addressType?: string;
+      }>;
+      multiformatAddresses?: string[];
+      dn?: string;
+      legalName?: string;
+      email?: string;
+      peerID?: string;
+      cid?: string;
+    },
+  ): ParsedEPM {
+    const keys: EPMKey[] = data.keys.map((k) => {
+      const pubKeyBytes =
+        typeof k.publicKey === "string" ? hexToBytes(k.publicKey) : k.publicKey;
 
       return {
         publicKey: pubKeyBytes,
-        publicKeyHex: typeof k.publicKey === 'string'
-          ? (k.publicKey.startsWith('0x') ? k.publicKey.slice(2) : k.publicKey)
-          : bytesToHex(pubKeyBytes),
+        publicKeyHex:
+          typeof k.publicKey === "string"
+            ? k.publicKey.startsWith("0x")
+              ? k.publicKey.slice(2)
+              : k.publicKey
+            : bytesToHex(pubKeyBytes),
         keyType: k.keyType,
-        algorithm: k.algorithm || detectKeyAlgorithm(pubKeyBytes, k.addressType),
+        algorithm:
+          k.algorithm || detectKeyAlgorithm(pubKeyBytes, k.addressType),
         keyAddress: k.keyAddress,
         addressType: k.addressType,
       };
@@ -408,7 +435,7 @@ export class EPMResolver {
    */
   async getEncryptionKey(
     peerID: string,
-    preferredAlgorithm?: KeyExchangeAlgorithm
+    preferredAlgorithm?: KeyExchangeAlgorithm,
   ): Promise<EPMKey | null> {
     const epm = await this.resolveByPeerID(peerID);
     if (!epm) return null;
@@ -421,16 +448,20 @@ export class EPMResolver {
    */
   extractEncryptionKey(
     epm: ParsedEPM,
-    preferredAlgorithm?: KeyExchangeAlgorithm
+    preferredAlgorithm?: KeyExchangeAlgorithm,
   ): EPMKey | null {
     // Filter to encryption keys only
-    const encryptionKeys = epm.keys.filter(k => k.keyType === KeyType.Encryption);
+    const encryptionKeys = epm.keys.filter(
+      (k) => k.keyType === KeyType.Encryption,
+    );
 
     if (encryptionKeys.length === 0) return null;
 
     // If preferred algorithm specified, try to find matching key
     if (preferredAlgorithm) {
-      const matching = encryptionKeys.find(k => k.algorithm === preferredAlgorithm);
+      const matching = encryptionKeys.find(
+        (k) => k.algorithm === preferredAlgorithm,
+      );
       if (matching) return matching;
     }
 
@@ -438,11 +469,14 @@ export class EPMResolver {
     // Sort by algorithm preference: x25519 > secp256k1 > p256
     const sorted = encryptionKeys.sort((a, b) => {
       const order: Record<KeyExchangeAlgorithm, number> = {
-        'x25519': 0,
-        'secp256k1': 1,
-        'p256': 2,
+        x25519: 0,
+        secp256k1: 1,
+        p256: 2,
       };
-      return (order[a.algorithm || 'secp256k1'] || 1) - (order[b.algorithm || 'secp256k1'] || 1);
+      return (
+        (order[a.algorithm || "secp256k1"] || 1) -
+        (order[b.algorithm || "secp256k1"] || 1)
+      );
     });
 
     return sorted[0];
@@ -462,7 +496,7 @@ export class EPMResolver {
    * Extract signing key from EPM
    */
   extractSigningKey(epm: ParsedEPM): EPMKey | null {
-    const signingKeys = epm.keys.filter(k => k.keyType === KeyType.Signing);
+    const signingKeys = epm.keys.filter((k) => k.keyType === KeyType.Signing);
     return signingKeys[0] || null;
   }
 

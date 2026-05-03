@@ -7,43 +7,48 @@ import {
   extractGrantModuleDescriptor,
   extractWrappedContentKey,
   validateLicensingGrant,
-} from 'space-data-module-sdk/licensing';
+} from "space-data-module-sdk/licensing";
 
-import type { DerivedIdentity, EncryptionKeyPair, KeyPair } from './crypto/types';
+import type {
+  DerivedIdentity,
+  EncryptionKeyPair,
+  KeyPair,
+} from "./crypto/types";
 import type {
   LicensingGrantMessage,
   LicensingGrantModuleDescriptor,
   LicensingWrappedContentKey,
-} from 'space-data-module-sdk/licensing';
-import { sha256, sign } from './crypto/hd-wallet';
-import { discoverProvider } from './discovery';
+} from "space-data-module-sdk/licensing";
+import { sha256, sign } from "./crypto/hd-wallet";
+import { discoverProvider } from "./discovery";
 import {
   normalizeServerDescriptor,
   type NormalizedServerDescriptor,
   type ServerDescriptorInput,
   type ServerDescriptorResolver,
-} from './server-descriptor';
+} from "./server-descriptor";
 
-export const MODULE_DELIVERY_PROTOCOL_ID = '/space-data-network/module-delivery/1.0.0';
+export const MODULE_DELIVERY_PROTOCOL_ID =
+  "/space-data-network/module-delivery/1.0.0";
 
 export type ModuleDeliveryStage =
-  | 'provider-discovery'
-  | 'challenge-sent'
-  | 'challenge-received'
-  | 'grant-received'
-  | 'cid-fetch-start'
-  | 'cid-fetch-complete'
-  | 'cid-fetch-validated'
-  | 'cid-fetch-error'
-  | 'unwrap-start'
-  | 'unwrap-complete'
-  | 'decrypt-start'
-  | 'decrypt-complete'
-  | 'sdk-load-start'
-  | 'sdk-load-complete'
-  | 'invoke-start'
-  | 'invoke-result'
-  | 'invoke-error';
+  | "provider-discovery"
+  | "challenge-sent"
+  | "challenge-received"
+  | "grant-received"
+  | "cid-fetch-start"
+  | "cid-fetch-complete"
+  | "cid-fetch-validated"
+  | "cid-fetch-error"
+  | "unwrap-start"
+  | "unwrap-complete"
+  | "decrypt-start"
+  | "decrypt-complete"
+  | "sdk-load-start"
+  | "sdk-load-complete"
+  | "invoke-start"
+  | "invoke-result"
+  | "invoke-error";
 
 export interface ModuleDeliveryEvent {
   stage: ModuleDeliveryStage;
@@ -82,14 +87,16 @@ export interface DiscoveredProvider {
 export interface RequesterIdentity {
   peerId: string;
   xpub?: string;
-  signingKey: Pick<KeyPair, 'privateKey' | 'publicKey'>;
-  encryptionKey: Pick<EncryptionKeyPair, 'privateKey' | 'publicKey'>;
+  signingKey: Pick<KeyPair, "privateKey" | "publicKey">;
+  encryptionKey: Pick<EncryptionKeyPair, "privateKey" | "publicKey">;
 }
 
 export interface ModuleGrantRequestOptions {
   serverDescriptor: ServerDescriptorInput;
   descriptorResolver?: ServerDescriptorResolver;
-  requesterIdentity: Pick<DerivedIdentity, 'peerId' | 'xpub' | 'signingKey' | 'encryptionKey'> | RequesterIdentity;
+  requesterIdentity:
+    | Pick<DerivedIdentity, "peerId" | "xpub" | "signingKey" | "encryptionKey">
+    | RequesterIdentity;
   moduleId: string;
   moduleVersion?: string;
   moduleVariant?: string;
@@ -202,31 +209,49 @@ export async function requestModuleGrant(
     options.serverDescriptor,
     options.descriptorResolver,
   );
-  const requesterIdentity = normalizeRequesterIdentity(options.requesterIdentity);
-  const discovery = await discoverProvider(provider.publicKey);
+  const requesterIdentity = normalizeRequesterIdentity(
+    options.requesterIdentity,
+  );
+  const discoveredProvider = await discoverProvider(provider.publicKey);
+  const discovery = {
+    ...discoveredProvider,
+    discoveryCID: provider.discoveryCID || discoveredProvider.discoveryCID,
+  };
   const candidateAddrs = await resolveCandidateAddresses(
     transport,
     provider,
     discovery.peerId,
     discovery.discoveryCID,
   );
-  const reqId = normalizeRequiredString(options.reqId || createReqId(), 'reqId');
+  const reqId = normalizeRequiredString(
+    options.reqId || createReqId(),
+    "reqId",
+  );
   const requestedAtMs = options.requestedAtMs ?? Date.now();
-  const requesterDomain = normalizeRequiredString(options.requesterDomain, 'requesterDomain');
-  const requestedTimeoutMs = normalizeRequestedTimeoutMs(options.requestedTimeoutMs);
-  const moduleId = normalizeRequiredString(options.moduleId, 'moduleId');
+  const requesterDomain = normalizeRequiredString(
+    options.requesterDomain,
+    "requesterDomain",
+  );
+  const requestedTimeoutMs = normalizeRequestedTimeoutMs(
+    options.requestedTimeoutMs,
+  );
+  const moduleId = normalizeRequiredString(options.moduleId, "moduleId");
   const moduleVersion = trimOptional(options.moduleVersion);
   const observer = options.observer;
 
   emitModuleDeliveryEvent(observer, {
-    stage: 'provider-discovery',
+    stage: "provider-discovery",
     timestamp: Date.now(),
     moduleId,
     moduleVersion,
     providerPeerId: provider.peerId,
     candidateAddrs: candidateAddrs.slice(),
     discoveryCID: discovery.discoveryCID,
-    detail: provider.relayAddresses.length > 0 ? 'descriptor-relays' : 'dht-discovery',
+    detail: provider.discoveryCID
+      ? "license-bootstrap-cid"
+      : provider.relayAddresses.length > 0
+        ? "descriptor-relays"
+        : "dht-discovery",
   });
 
   const challengeRequestBytes = encodeChallengeRequest({
@@ -243,7 +268,7 @@ export async function requestModuleGrant(
     providerPeerId: provider.peerId,
   });
   emitModuleDeliveryEvent(observer, {
-    stage: 'challenge-sent',
+    stage: "challenge-sent",
     timestamp: Date.now(),
     moduleId,
     moduleVersion,
@@ -257,13 +282,13 @@ export async function requestModuleGrant(
     candidateAddrs,
   );
   const challenge = decodeChallengeResponse(challengeResponseBytes);
-  console.info('[sdn-js] challenge received', {
+  console.info("[sdn-js] challenge received", {
     moduleId,
     reqId,
     expiresAtMs: challenge.expiresAtMs,
   });
   emitModuleDeliveryEvent(observer, {
-    stage: 'challenge-received',
+    stage: "challenge-received",
     timestamp: Date.now(),
     moduleId,
     moduleVersion,
@@ -272,19 +297,41 @@ export async function requestModuleGrant(
   });
 
   if (challenge.reqId !== reqId) {
-    throw new ModuleDeliveryProtocolError('request_mismatch', 'grant challenge request id mismatch');
+    throw new ModuleDeliveryProtocolError(
+      "request_mismatch",
+      "grant challenge request id mismatch",
+    );
   }
   if (challenge.moduleId !== moduleId) {
-    throw new ModuleDeliveryProtocolError('request_mismatch', 'grant challenge module id mismatch');
+    throw new ModuleDeliveryProtocolError(
+      "request_mismatch",
+      "grant challenge module id mismatch",
+    );
   }
-  if (moduleVersion && challenge.moduleVersion && challenge.moduleVersion !== moduleVersion) {
-    throw new ModuleDeliveryProtocolError('request_mismatch', 'grant challenge module version mismatch');
+  if (
+    moduleVersion &&
+    challenge.moduleVersion &&
+    challenge.moduleVersion !== moduleVersion
+  ) {
+    throw new ModuleDeliveryProtocolError(
+      "request_mismatch",
+      "grant challenge module version mismatch",
+    );
   }
-  if (challenge.providerPeerId && challenge.providerPeerId !== provider.peerId) {
-    throw new ModuleDeliveryProtocolError('provider_mismatch', 'provider peer id mismatch');
+  if (
+    challenge.providerPeerId &&
+    challenge.providerPeerId !== provider.peerId
+  ) {
+    throw new ModuleDeliveryProtocolError(
+      "provider_mismatch",
+      "provider peer id mismatch",
+    );
   }
 
-  const signature = await sign(requesterIdentity.signingKey.privateKey, challenge.rawBytes);
+  const signature = await sign(
+    requesterIdentity.signingKey.privateKey,
+    challenge.rawBytes,
+  );
   const proofBytes = encodeGrantProof({
     reqId,
     moduleId,
@@ -314,14 +361,14 @@ export async function requestModuleGrant(
     expectedDomain: requesterDomain,
     requestedTimeoutMs,
   });
-  console.info('[sdn-js] grant response received', {
+  console.info("[sdn-js] grant response received", {
     moduleId,
     reqId,
     grantedDomain: grant.grantedDomain,
     grantedTimeoutMs: grant.grantedTimeoutMs,
   });
   emitModuleDeliveryEvent(observer, {
-    stage: 'grant-received',
+    stage: "grant-received",
     timestamp: Date.now(),
     moduleId,
     moduleVersion,
@@ -334,30 +381,32 @@ export async function requestModuleGrant(
 }
 
 export async function fetchEncryptedModuleBundle(
-  transport: Pick<ModuleDeliveryTransport, 'fetchCIDBytes'>,
+  transport: Pick<ModuleDeliveryTransport, "fetchCIDBytes">,
   result: ModuleGrantResult,
   observer?: ModuleDeliveryObserver,
 ): Promise<EncryptedModuleBundleResult> {
-  console.info('[sdn-js] fetching encrypted CID', {
+  console.info("[sdn-js] fetching encrypted CID", {
     moduleId: result.grant.bundleDescriptor.moduleId,
     cid: result.grant.bundleDescriptor.cid,
   });
   emitModuleDeliveryEvent(observer, {
-    stage: 'cid-fetch-start',
+    stage: "cid-fetch-start",
     timestamp: Date.now(),
     moduleId: result.grant.bundleDescriptor.moduleId,
     moduleVersion: result.grant.bundleDescriptor.moduleVersion,
     providerPeerId: result.provider.peerId,
     cid: result.grant.bundleDescriptor.cid,
   });
-  const encryptedBundleBytes = await transport.fetchCIDBytes(result.grant.bundleDescriptor.cid);
-  console.info('[sdn-js] fetched encrypted CID', {
+  const encryptedBundleBytes = await transport.fetchCIDBytes(
+    result.grant.bundleDescriptor.cid,
+  );
+  console.info("[sdn-js] fetched encrypted CID", {
     moduleId: result.grant.bundleDescriptor.moduleId,
     cid: result.grant.bundleDescriptor.cid,
     bytes: encryptedBundleBytes.length,
   });
   emitModuleDeliveryEvent(observer, {
-    stage: 'cid-fetch-complete',
+    stage: "cid-fetch-complete",
     timestamp: Date.now(),
     moduleId: result.grant.bundleDescriptor.moduleId,
     moduleVersion: result.grant.bundleDescriptor.moduleVersion,
@@ -372,15 +421,18 @@ export async function fetchEncryptedModuleBundle(
     !equalBytes(digest, result.grant.bundleDescriptor.contentHash)
   ) {
     emitModuleDeliveryEvent(observer, {
-      stage: 'cid-fetch-error',
+      stage: "cid-fetch-error",
       timestamp: Date.now(),
       moduleId: result.grant.bundleDescriptor.moduleId,
       moduleVersion: result.grant.bundleDescriptor.moduleVersion,
       providerPeerId: result.provider.peerId,
       cid: result.grant.bundleDescriptor.cid,
-      error: 'encrypted bundle hash mismatch',
+      error: "encrypted bundle hash mismatch",
     });
-    throw new ModuleDeliveryProtocolError('hash_mismatch', 'encrypted bundle hash mismatch');
+    throw new ModuleDeliveryProtocolError(
+      "hash_mismatch",
+      "encrypted bundle hash mismatch",
+    );
   }
 
   if (
@@ -388,18 +440,21 @@ export async function fetchEncryptedModuleBundle(
     encryptedBundleBytes.length !== result.grant.bundleDescriptor.sizeBytes
   ) {
     emitModuleDeliveryEvent(observer, {
-      stage: 'cid-fetch-error',
+      stage: "cid-fetch-error",
       timestamp: Date.now(),
       moduleId: result.grant.bundleDescriptor.moduleId,
       moduleVersion: result.grant.bundleDescriptor.moduleVersion,
       providerPeerId: result.provider.peerId,
       cid: result.grant.bundleDescriptor.cid,
-      error: 'encrypted bundle size mismatch',
+      error: "encrypted bundle size mismatch",
     });
-    throw new ModuleDeliveryProtocolError('size_mismatch', 'encrypted bundle size mismatch');
+    throw new ModuleDeliveryProtocolError(
+      "size_mismatch",
+      "encrypted bundle size mismatch",
+    );
   }
   emitModuleDeliveryEvent(observer, {
-    stage: 'cid-fetch-validated',
+    stage: "cid-fetch-validated",
     timestamp: Date.now(),
     moduleId: result.grant.bundleDescriptor.moduleId,
     moduleVersion: result.grant.bundleDescriptor.moduleVersion,
@@ -427,7 +482,7 @@ export class ModuleDeliveryProtocolError extends Error {
 
   constructor(code: string, message: string) {
     super(message);
-    this.name = 'ModuleDeliveryProtocolError';
+    this.name = "ModuleDeliveryProtocolError";
     this.code = code;
   }
 }
@@ -440,7 +495,10 @@ function asModuleDeliveryProtocolError(
     return error;
   }
   if (error instanceof LicensingProtocolError) {
-    return new ModuleDeliveryProtocolError(error.code || fallbackCode, error.message);
+    return new ModuleDeliveryProtocolError(
+      error.code || fallbackCode,
+      error.message,
+    );
   }
   if (error instanceof Error) {
     return new ModuleDeliveryProtocolError(fallbackCode, error.message);
@@ -486,14 +544,17 @@ function encodeGrantProof(options: {
 function decodeChallengeResponse(bytes: Uint8Array): GrantChallengePayload {
   try {
     const message = decodeLicensingChallengeMessage(bytes);
-    if (message.messageType === 'error') {
+    if (message.messageType === "error") {
       throw new ModuleDeliveryProtocolError(
-        normalizeProtocolCode(message.errorCode, 'challenge_rejected'),
-        message.errorMessage || 'licensing challenge rejected',
+        normalizeProtocolCode(message.errorCode, "challenge_rejected"),
+        message.errorMessage || "licensing challenge rejected",
       );
     }
-    if (message.messageType !== 'response' || message.role !== 'provider') {
-      throw new ModuleDeliveryProtocolError('unexpected_response', 'expected licensing challenge response');
+    if (message.messageType !== "response" || message.role !== "provider") {
+      throw new ModuleDeliveryProtocolError(
+        "unexpected_response",
+        "expected licensing challenge response",
+      );
     }
 
     return {
@@ -505,11 +566,11 @@ function decodeChallengeResponse(bytes: Uint8Array): GrantChallengePayload {
       requestedAtMs: message.requestedAtMs ?? 0,
       challengeNonce: cloneOptionalBytes(message.challengeNonce),
       expiresAtMs: message.expiresAtMs ?? 0,
-      providerPeerId: trimOptional(message.providerPeerId) || '',
+      providerPeerId: trimOptional(message.providerPeerId) || "",
       rawBytes: cloneBytes(message.rawBytes),
     };
   } catch (error) {
-    throw asModuleDeliveryProtocolError(error, 'invalid_response');
+    throw asModuleDeliveryProtocolError(error, "invalid_response");
   }
 }
 
@@ -529,9 +590,13 @@ function decodeGrantResponse(
     const bundleDescriptor = extractGrantModuleDescriptor(validatedGrant);
     const wrappedContentKey = extractWrappedContentKey(validatedGrant);
 
-    return mapLicensingGrant(validatedGrant, bundleDescriptor, wrappedContentKey);
+    return mapLicensingGrant(
+      validatedGrant,
+      bundleDescriptor,
+      wrappedContentKey,
+    );
   } catch (error) {
-    throw asModuleDeliveryProtocolError(error, 'invalid_grant');
+    throw asModuleDeliveryProtocolError(error, "invalid_grant");
   }
 }
 
@@ -546,7 +611,10 @@ function mapLicensingGrant(
     moduleVersion: trimOptional(grant.moduleVersion),
     requestedDomain: trimOptional(grant.requestedDomain),
     requestedTimeoutMs: grant.requestedTimeoutMs,
-    grantedDomain: normalizeRequiredString(grant.grantedDomain || '', 'grant.grantedDomain'),
+    grantedDomain: normalizeRequiredString(
+      grant.grantedDomain || "",
+      "grant.grantedDomain",
+    ),
     grantedTimeoutMs: grant.grantedTimeoutMs,
     expiresAtMs: grant.expiresAtMs,
     requiredScope: trimOptional(grant.requiredScope),
@@ -559,12 +627,17 @@ function mapLicensingGrant(
   };
 }
 
-function mapBundleDescriptor(descriptor: LicensingGrantModuleDescriptor): BundleDescriptorPayload {
+function mapBundleDescriptor(
+  descriptor: LicensingGrantModuleDescriptor,
+): BundleDescriptorPayload {
   return {
     cid: descriptor.cid,
     contentHash: cloneOptionalBytes(descriptor.contentHash),
     sizeBytes: descriptor.sizeBytes,
-    moduleId: normalizeRequiredString(descriptor.moduleId, 'bundleDescriptor.moduleId'),
+    moduleId: normalizeRequiredString(
+      descriptor.moduleId,
+      "bundleDescriptor.moduleId",
+    ),
     moduleVersion: trimOptional(descriptor.moduleVersion),
     keyId: trimOptional(descriptor.keyId),
     requiredScope: trimOptional(descriptor.requiredScope),
@@ -574,7 +647,9 @@ function mapBundleDescriptor(descriptor: LicensingGrantModuleDescriptor): Bundle
   };
 }
 
-function mapWrappedContentKey(key: LicensingWrappedContentKey): WrappedContentKeyPayload {
+function mapWrappedContentKey(
+  key: LicensingWrappedContentKey,
+): WrappedContentKeyPayload {
   return {
     wrappingAlgorithm: key.wrappingAlgorithm,
     contentKeyId: trimOptional(key.contentKeyId),
@@ -584,8 +659,12 @@ function mapWrappedContentKey(key: LicensingWrappedContentKey): WrappedContentKe
     keyBytes: cloneOptionalBytes(key.keyBytes),
     contentKeyVersion: key.contentKeyVersion,
     recipientKeyId: trimOptional(key.recipientKeyId),
-    requesterEphemeralPublicKey: cloneOptionalBytes(key.requesterEphemeralPublicKey),
-    providerEphemeralPublicKey: cloneOptionalBytes(key.providerEphemeralPublicKey),
+    requesterEphemeralPublicKey: cloneOptionalBytes(
+      key.requesterEphemeralPublicKey,
+    ),
+    providerEphemeralPublicKey: cloneOptionalBytes(
+      key.providerEphemeralPublicKey,
+    ),
     hkdfSalt: cloneOptionalBytes(key.hkdfSalt),
     iv: cloneOptionalBytes(key.iv),
     ciphertext: cloneOptionalBytes(key.ciphertext),
@@ -603,7 +682,7 @@ function mapWrappedContentKey(key: LicensingWrappedContentKey): WrappedContentKe
 }
 
 function mapWrappedContentKeyHeader(
-  header: LicensingWrappedContentKey['header'],
+  header: LicensingWrappedContentKey["header"],
 ): WrappedContentKeyHeaderPayload {
   return {
     version: header.version,
@@ -626,6 +705,16 @@ async function resolveCandidateAddresses(
   peerId: string,
   discoveryCID: string,
 ): Promise<string[]> {
+  if (provider.discoveryCID && transport.discoverProviders) {
+    const discovered = await discoverProviderAddresses(
+      transport.discoverProviders.bind(transport),
+      peerId,
+      discoveryCID,
+    );
+    if (discovered.length > 0) {
+      return discovered;
+    }
+  }
   if (provider.relayAddresses.length > 0) {
     return provider.relayAddresses;
   }
@@ -633,17 +722,34 @@ async function resolveCandidateAddresses(
     return [];
   }
 
-  const candidates = await transport.discoverProviders(discoveryCID);
+  return discoverProviderAddresses(
+    transport.discoverProviders.bind(transport),
+    peerId,
+    discoveryCID,
+  );
+}
+
+async function discoverProviderAddresses(
+  discoverProviders: NonNullable<ModuleDeliveryTransport["discoverProviders"]>,
+  peerId: string,
+  discoveryCID: string,
+): Promise<string[]> {
+  const candidates = await discoverProviders(discoveryCID);
   return candidates
     .filter((candidate) => candidate.peerId === peerId)
     .flatMap((candidate) => candidate.multiaddrs);
 }
 
 function normalizeRequesterIdentity(
-  identity: Pick<DerivedIdentity, 'peerId' | 'xpub' | 'signingKey' | 'encryptionKey'> | RequesterIdentity,
+  identity:
+    | Pick<DerivedIdentity, "peerId" | "xpub" | "signingKey" | "encryptionKey">
+    | RequesterIdentity,
 ): RequesterIdentity {
   return {
-    peerId: normalizeRequiredString(identity.peerId, 'requesterIdentity.peerId'),
+    peerId: normalizeRequiredString(
+      identity.peerId,
+      "requesterIdentity.peerId",
+    ),
     xpub: trimOptional(identity.xpub),
     signingKey: {
       privateKey: cloneBytes(identity.signingKey.privateKey),
@@ -665,7 +771,7 @@ function normalizeRequiredString(value: string, name: string): string {
 }
 
 function trimOptional(value: string | undefined | null): string | undefined {
-  const normalized = String(value || '').trim();
+  const normalized = String(value || "").trim();
   return normalized || undefined;
 }
 
@@ -683,7 +789,7 @@ function createReqId(): string {
 
 function normalizeRequestedTimeoutMs(value: number): number {
   if (!Number.isFinite(value) || value <= 0) {
-    throw new Error('requestedTimeoutMs must be a positive number');
+    throw new Error("requestedTimeoutMs must be a positive number");
   }
   return Math.trunc(value);
 }
@@ -707,7 +813,10 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   return true;
 }
 
-function normalizeProtocolCode(value: string | null | undefined, fallback: string): string {
-  const normalized = String(value || '').trim();
+function normalizeProtocolCode(
+  value: string | null | undefined,
+  fallback: string,
+): string {
+  const normalized = String(value || "").trim();
   return normalized || fallback;
 }
