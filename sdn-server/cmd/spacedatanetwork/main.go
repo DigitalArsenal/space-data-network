@@ -460,6 +460,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						req.Header.Del("Referer")
 						req.Header.Del("User-Agent")
 					}
+					gwProxy.ModifyResponse = func(resp *http.Response) error {
+						normalizeIPFSGatewayCORSHeaders(resp.Header)
+						return nil
+					}
 					gwProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 						http.Error(w, "upstream IPFS gateway unavailable", http.StatusBadGateway)
 					}
@@ -1412,6 +1416,17 @@ export const SDN_LISTEN_ADDRS = %s;
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Write([]byte(js))
 	}
+}
+
+func normalizeIPFSGatewayCORSHeaders(header http.Header) {
+	header.Del("Access-Control-Allow-Origin")
+	header.Del("Access-Control-Allow-Methods")
+	header.Del("Access-Control-Allow-Headers")
+	header.Del("Access-Control-Expose-Headers")
+	header.Set("Access-Control-Allow-Origin", "*")
+	header.Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	header.Set("Access-Control-Allow-Headers", "Content-Type, Range, User-Agent, X-Requested-With")
+	header.Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, X-Chunked-Output, X-Ipfs-Path, X-Ipfs-Roots, X-Stream-Output")
 }
 
 // handleNodeInfo returns an HTTP handler that serves the node's public identity info.

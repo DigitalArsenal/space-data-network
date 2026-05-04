@@ -56,6 +56,33 @@ func TestIsPublicAPIPathAllowsDirectoryRoutes(t *testing.T) {
 	}
 }
 
+func TestNormalizeIPFSGatewayCORSHeadersDeduplicatesUpstreamHeaders(t *testing.T) {
+	t.Parallel()
+
+	header := http.Header{}
+	header.Add("Access-Control-Allow-Origin", "*")
+	header.Add("Access-Control-Allow-Origin", "*")
+	header.Add("Access-Control-Allow-Methods", "GET, HEAD")
+	header.Add("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	header.Add("Access-Control-Allow-Headers", "Range")
+	header.Add("Access-Control-Allow-Headers", "Content-Type")
+
+	normalizeIPFSGatewayCORSHeaders(header)
+
+	if got := header.Values("Access-Control-Allow-Origin"); len(got) != 1 || got[0] != "*" {
+		t.Fatalf("Access-Control-Allow-Origin values = %#v, want single '*'", got)
+	}
+	if got := header.Values("Access-Control-Allow-Methods"); len(got) != 1 || got[0] != "GET, HEAD, OPTIONS" {
+		t.Fatalf("Access-Control-Allow-Methods values = %#v", got)
+	}
+	if got := header.Values("Access-Control-Allow-Headers"); len(got) != 1 || got[0] != "Content-Type, Range, User-Agent, X-Requested-With" {
+		t.Fatalf("Access-Control-Allow-Headers values = %#v", got)
+	}
+	if got := header.Get("Access-Control-Expose-Headers"); got == "" {
+		t.Fatal("expected Access-Control-Expose-Headers to be set")
+	}
+}
+
 func TestHandleProviderDescriptorReturnsBrowserSafeDescriptor(t *testing.T) {
 	t.Parallel()
 
