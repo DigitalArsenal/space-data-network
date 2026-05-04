@@ -194,6 +194,115 @@ describe("SDNNode relay bootstrap", () => {
     await node.stop();
   });
 
+  it("half-closes protocol streams after writing a request payload", async () => {
+    const events: string[] = [];
+    let payload: Uint8Array | undefined;
+    const stream = {
+      sink: vi.fn(async (source: AsyncIterable<Uint8Array>) => {
+        for await (const chunk of source) {
+          payload = chunk.slice();
+        }
+        events.push("sink");
+      }),
+      closeWrite: vi.fn(async () => undefined),
+      source: (async function* () {
+        events.push("source");
+        yield new Uint8Array([9, 8, 7]);
+      })(),
+      close: vi.fn(async () => undefined),
+    };
+    createLibp2pMock.mockResolvedValue({
+      peerId: { toString: () => "test-peer-id" },
+      services: {},
+      addEventListener: vi.fn(),
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      getPeers: vi.fn(() => []),
+      dialProtocol: vi.fn(async () => stream),
+    });
+    const { SDNNode } = await import("./node");
+    const node = await SDNNode.create({
+      edgeRelays: ["/dns4/provider.test/tcp/443/wss/p2p/provider"],
+      enableStorage: false,
+    });
+
+    const response = await node.dialProtocol(
+      "provider",
+      "/space-data-network/test/1.0.0",
+      new Uint8Array([1, 2, 3]),
+      ["/dns4/provider.test/tcp/443/wss/p2p/provider"],
+    );
+
+    expect(Array.from(payload ?? [])).toEqual([1, 2, 3]);
+    expect(Array.from(response)).toEqual([9, 8, 7]);
+    expect(events).toContain("sink");
+    expect(events).toContain("source");
+
+    await node.stop();
+  });
+
+  it("reads protocol responses while the outbound sink is finishing", async () => {
+    const events: string[] = [];
+    let releaseSink: (() => void) | undefined;
+    let sinkSawPayload = false;
+    const stream = {
+      sink: vi.fn(async (source: AsyncIterable<Uint8Array>) => {
+        for await (const chunk of source) {
+          expect(Array.from(chunk)).toEqual([1, 2, 3]);
+          sinkSawPayload = true;
+          events.push("sinkPayload");
+        }
+        await new Promise<void>((resolve) => {
+          releaseSink = resolve;
+        });
+        events.push("sinkComplete");
+      }),
+      closeWrite: vi.fn(async () => {
+        events.push("closeWrite");
+      }),
+      source: (async function* () {
+        while (!sinkSawPayload) {
+          await Promise.resolve();
+        }
+        events.push("source");
+        yield new Uint8Array([9, 8, 7]);
+        releaseSink?.();
+      })(),
+      close: vi.fn(async () => undefined),
+    };
+    createLibp2pMock.mockResolvedValue({
+      peerId: { toString: () => "test-peer-id" },
+      services: {},
+      addEventListener: vi.fn(),
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      getPeers: vi.fn(() => []),
+      dialProtocol: vi.fn(async () => stream),
+    });
+    const { SDNNode } = await import("./node");
+    const node = await SDNNode.create({
+      edgeRelays: ["/dns4/provider.test/tcp/443/wss/p2p/provider"],
+      enableStorage: false,
+    });
+
+    const response = await Promise.race([
+      node.dialProtocol(
+        "provider",
+        "/space-data-network/test/1.0.0",
+        new Uint8Array([1, 2, 3]),
+        ["/dns4/provider.test/tcp/443/wss/p2p/provider"],
+      ),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("dial timed out")), 50),
+      ),
+    ]);
+
+    expect(Array.from(response)).toEqual([9, 8, 7]);
+    expect(events).toEqual(["sinkPayload", "source", "sinkComplete"]);
+
+    await node.stop();
+  });
+
   it("uses the configured IPFS gateway for CID fetches without starting Helia", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,

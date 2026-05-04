@@ -705,16 +705,6 @@ async function resolveCandidateAddresses(
   peerId: string,
   discoveryCID: string,
 ): Promise<string[]> {
-  if (provider.discoveryCID && transport.discoverProviders) {
-    const discovered = await discoverProviderAddresses(
-      transport.discoverProviders.bind(transport),
-      peerId,
-      discoveryCID,
-    );
-    if (discovered.length > 0) {
-      return discovered;
-    }
-  }
   if (provider.relayAddresses.length > 0) {
     return provider.relayAddresses;
   }
