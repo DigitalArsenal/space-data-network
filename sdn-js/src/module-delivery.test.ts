@@ -477,7 +477,7 @@ describe("module-delivery", () => {
     );
   });
 
-  it("prefers an explicit license bootstrap discovery CID over descriptor relay addresses", async () => {
+  it("prefers descriptor relay addresses over an explicit license bootstrap discovery CID", async () => {
     const licenseBootstrapCID =
       "bafkreiceqr2v4fvjqddussy5wydruetwmupxzvlett4ezl3zywg4ndl2di";
     const descriptorRelay =
@@ -568,10 +568,10 @@ describe("module-delivery", () => {
       requestedTimeoutMs: 300_000,
     });
 
-    expect(transport.discoveryCalls).toEqual([licenseBootstrapCID]);
+    expect(transport.discoveryCalls).toEqual([]);
     expect(transport.dialCalls).toHaveLength(2);
-    expect(transport.dialCalls[0]?.candidateAddrs).toEqual([discoveredRelay]);
-    expect(transport.dialCalls[1]?.candidateAddrs).toEqual([discoveredRelay]);
+    expect(transport.dialCalls[0]?.candidateAddrs).toEqual([descriptorRelay]);
+    expect(transport.dialCalls[1]?.candidateAddrs).toEqual([descriptorRelay]);
   });
 
   it("rejects a grant that exceeds the requested timeout", async () => {

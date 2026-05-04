@@ -758,13 +758,15 @@ func runtimeManifestTypeRefs(typeRefs []ManifestFlatBufferTypeRef) []plugins.Run
 
 // --- Generic protocol stream handler ---
 
+const maxProtocolRequestBytes = 16 * 1024
+
 func (m *Module) handleProtocolStream(s network.Stream, methodID string) {
 	defer s.Close()
 
 	s.SetReadDeadline(time.Now().Add(15 * time.Second))
+	log.Debugf("Module %q protocol %s: stream opened from %s", m.manifest.PluginID, methodID, s.Conn().RemotePeer().ShortString())
 
-	// Read the full bounded request payload before invoking the module.
-	reqBytes, err := io.ReadAll(io.LimitReader(s, 16385))
+	reqBytes, err := readProtocolRequest(s, maxProtocolRequestBytes)
 	if err != nil {
 		log.Debugf("Module %q protocol %s: read error: %v", m.manifest.PluginID, methodID, err)
 		return
@@ -772,10 +774,7 @@ func (m *Module) handleProtocolStream(s network.Stream, methodID string) {
 	if len(reqBytes) == 0 {
 		return
 	}
-	if len(reqBytes) > 16384 {
-		log.Debugf("Module %q protocol %s: request exceeds 16KB limit", m.manifest.PluginID, methodID)
-		return
-	}
+	log.Debugf("Module %q protocol %s: read %d request bytes", m.manifest.PluginID, methodID, len(reqBytes))
 
 	// Invoke the module's method
 	resp, err := m.InvokeMethod(context.Background(), methodID, reqBytes)
@@ -783,6 +782,7 @@ func (m *Module) handleProtocolStream(s network.Stream, methodID string) {
 		log.Warnf("Module %q protocol %s: invoke error: %v", m.manifest.PluginID, methodID, err)
 		return
 	}
+	log.Debugf("Module %q protocol %s: writing %d response bytes", m.manifest.PluginID, methodID, len(resp))
 
 	if len(resp) > 0 {
 		s.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -790,6 +790,24 @@ func (m *Module) handleProtocolStream(s network.Stream, methodID string) {
 			log.Debugf("Module %q protocol %s: write error: %v", m.manifest.PluginID, methodID, err)
 		}
 	}
+}
+
+func readProtocolRequest(r io.Reader, maxBytes int) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("protocol request byte limit must be positive")
+	}
+	buf := make([]byte, maxBytes+1)
+	n, err := r.Read(buf)
+	if n > maxBytes {
+		return nil, fmt.Errorf("request exceeds %d byte limit", maxBytes)
+	}
+	if n > 0 {
+		return append([]byte(nil), buf[:n]...), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 // --- JSON helper for debug output ---

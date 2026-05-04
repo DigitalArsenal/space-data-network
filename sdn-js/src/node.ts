@@ -787,16 +787,24 @@ async function exchangeStream(
   stream: Awaited<ReturnType<Libp2p["dialProtocol"]>>,
   payloadBytes: Uint8Array,
 ): Promise<Uint8Array> {
-  try {
-    await stream.sink(
+  let sinkError: unknown;
+  const sinkPromise = stream
+    .sink(
       (async function* source() {
         yield cloneToLocalUint8Array(payloadBytes);
       })(),
-    );
-
+    )
+    .catch((error: unknown) => {
+      sinkError = error;
+    });
+  try {
     const chunks: Uint8Array[] = [];
     for await (const chunk of stream.source) {
       chunks.push(cloneToLocalUint8Array(chunk as StreamChunk));
+    }
+    await sinkPromise;
+    if (sinkError) {
+      throw sinkError;
     }
     return concatBytes(chunks);
   } finally {
