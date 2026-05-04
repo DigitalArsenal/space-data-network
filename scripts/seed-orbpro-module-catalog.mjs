@@ -88,6 +88,15 @@ const DEFAULT_ORBPRO_MODULES = Object.freeze([
     keyExport: "recipientPrivateKeyHex",
   }),
   Object.freeze({
+    slug: "wasm-engine",
+    protectedModulePath:
+      "packages/wasm-engine/dist/wasm-engine-encrypted.js",
+    protectedExports: Object.freeze([
+      Object.freeze({ exportName: "encryptedData", slug: "wasm-engine" }),
+    ]),
+    keyExport: "recipientPrivateKeyHex",
+  }),
+  Object.freeze({
     slug: "sgp4",
     protectedModulePath:
       "packages/orbpro-integration/propagator.sgp4/dist/sgp4-encrypted.js",
