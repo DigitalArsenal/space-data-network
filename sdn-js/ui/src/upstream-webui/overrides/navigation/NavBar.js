@@ -2,7 +2,6 @@ import React from 'react'
 import { connect } from 'redux-bundler-react'
 import { withTranslation } from 'react-i18next'
 import classnames from 'classnames'
-import sdnLogoMark from './sdn-logo-mark.svg'
 import ipfsLogoMark from '../../../../../../webui/src/navigation/ipfs-logo.svg'
 import StrokeMarketing from '../../../../../../webui/src/icons/StrokeMarketing.js'
 import StrokeWeb from '../../../../../../webui/src/icons/StrokeWeb.js'
@@ -117,7 +116,7 @@ export const NavBar = ({ t }) => {
       <div className='flex flex-column'>
         <a href="#/welcome" role='menuitem' title={t('welcome:description')}>
           <div className='pt3 pb1 pb2-l tc'>
-            <img className='center db pt3 pb1' style={{ height: 76 }} src={sdnLogoMark} alt='Space Data Network' />
+            <img className='center db pt3 pb1' style={{ height: 76 }} src={ipfsLogoMark} alt='IPFS' />
           </div>
         </a>
         <div className='db overflow-x-scroll overflow-x-hidden-l nowrap tc' role='menubar'>
