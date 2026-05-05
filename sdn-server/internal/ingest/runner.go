@@ -578,6 +578,9 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string) (int, int, stri
 		countMPE++
 	}
 
+	if countOMM == 0 {
+		return 0, countMPE, "", fmt.Errorf("no OMM rows parsed")
+	}
 	return countOMM, countMPE, hex.EncodeToString(normalized.Sum(nil)), nil
 }
 
@@ -628,6 +631,9 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string) (int, strin
 		count++
 	}
 
+	if count == 0 {
+		return 0, "", fmt.Errorf("no CAT rows parsed")
+	}
 	return count, hex.EncodeToString(normalized.Sum(nil)), nil
 }
 

@@ -611,6 +611,19 @@ func TestIngestGPDataStoresOMMAndMPEFlatBuffers(t *testing.T) {
 	}
 }
 
+func TestIngestGPDataRejectsParseCountAnomaly(t *testing.T) {
+	runner := newTestRunner(t)
+	fixture := []byte("NORAD_CAT_ID,OBJECT_NAME,EPOCH\n,NO ID,2026-01-01T00:00:00Z\n")
+
+	countOMM, countMPE, _, err := runner.ingestGPData(fixture, "source:celestrak")
+	if err == nil {
+		t.Fatalf("ingestGPData returned nil error with OMM=%d MPE=%d", countOMM, countMPE)
+	}
+	if !strings.Contains(err.Error(), "no OMM rows parsed") {
+		t.Fatalf("error = %v, want no OMM rows parsed", err)
+	}
+}
+
 func TestIngestSatcatDataStoresCATFlatBuffers(t *testing.T) {
 	runner := newTestRunner(t)
 	fixture, err := os.ReadFile("testdata/celestrak-satcat.txt")
@@ -657,6 +670,19 @@ func TestIngestSatcatDataStoresCATFlatBuffers(t *testing.T) {
 	}
 	if got, want := iss.Maneuverable(), true; got != want {
 		t.Fatalf("MANEUVERABLE = %t, want %t", got, want)
+	}
+}
+
+func TestIngestSatcatDataRejectsParseCountAnomaly(t *testing.T) {
+	runner := newTestRunner(t)
+	fixture := []byte("NORAD_CAT_ID,OBJECT_NAME,OBJECT_ID\n,NO ID,1998-067A\n")
+
+	count, _, err := runner.ingestSatcatData(fixture, "source:celestrak")
+	if err == nil {
+		t.Fatalf("ingestSatcatData returned nil error with CAT=%d", count)
+	}
+	if !strings.Contains(err.Error(), "no CAT rows parsed") {
+		t.Fatalf("error = %v, want no CAT rows parsed", err)
 	}
 }
 
