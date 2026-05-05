@@ -49,12 +49,14 @@ test.describe('SDN dashboard window', () => {
 
   test('points desktop application update fallbacks at SDN releases', () => {
     const autoUpdaterSource = fs.readFileSync(path.join(__dirname, '../../src/auto-updater/index.js'), 'utf8')
+    const runtimeFeedsSource = fs.readFileSync(path.join(__dirname, '../../src/sdn-updater/runtime-feeds.js'), 'utf8')
 
-    expect(autoUpdaterSource).toContain("const SDN_RELEASES_URL = 'https://github.com/DigitalArsenal/space-data-network/releases/latest'")
-    expect(autoUpdaterSource).toContain('const SDN_RELEASE_VERSION_URL = version =>')
-    expect(autoUpdaterSource).toContain('https://github.com/DigitalArsenal/space-data-network/releases/tag/desktop-v')
-    expect(autoUpdaterSource).toContain('shell.openExternal(SDN_RELEASES_URL)')
-    expect(autoUpdaterSource).toContain('shell.openExternal(SDN_RELEASE_VERSION_URL(version))')
+    expect(autoUpdaterSource).toContain('SDN_DESKTOP_RELEASES_URL')
+    expect(autoUpdaterSource).toContain('sdnDesktopReleaseVersionUrl')
+    expect(runtimeFeedsSource).toContain("const SDN_DESKTOP_RELEASES_URL = 'https://github.com/DigitalArsenal/space-data-network/releases/latest'")
+    expect(runtimeFeedsSource).toContain('https://github.com/DigitalArsenal/space-data-network/releases/tag/desktop-v')
+    expect(autoUpdaterSource).toContain('shell.openExternal(SDN_DESKTOP_RELEASES_URL)')
+    expect(autoUpdaterSource).toContain('shell.openExternal(sdnDesktopReleaseVersionUrl(version))')
     expect(autoUpdaterSource).not.toContain('github.com/ipfs/ipfs-desktop')
     expect(autoUpdaterSource).not.toContain('github.com/ipfs-shipyard/ipfs-desktop')
   })
