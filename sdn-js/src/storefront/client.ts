@@ -238,6 +238,8 @@ export class StorefrontClient {
         body: JSON.stringify({
           chain: request.chain,
           asset: request.asset,
+          asset_contract: request.assetContract,
+          native_asset: request.nativeAsset,
           recipient: request.recipient,
           method: request.method,
           expires_at: request.expiresAt?.toISOString(),
@@ -267,6 +269,8 @@ export class StorefrontClient {
           recipientAddress: request.recipientAddress,
           amount: request.amount,
           currency: request.currency,
+          assetContract: request.assetContract,
+          nativeAsset: request.nativeAsset,
           senderAddress: request.senderAddress,
         }),
       });
@@ -699,6 +703,8 @@ function normalizeCryptoBuyerIntent(value: unknown): CryptoBuyerIntent {
     requestId: stringField(record, 'request_id') || stringField(record, 'requestId') || '',
     chain: stringField(record, 'chain') || '',
     asset: stringField(record, 'asset') || '',
+    assetContract: stringField(record, 'asset_contract') || stringField(record, 'assetContract'),
+    nativeAsset: booleanField(record, 'native_asset') ?? booleanField(record, 'nativeAsset'),
     amount: numberField(record, 'amount') ?? 0,
     recipient: stringField(record, 'recipient') || '',
     method: numberField(record, 'method') as PaymentMethod | undefined,
@@ -706,6 +712,8 @@ function normalizeCryptoBuyerIntent(value: unknown): CryptoBuyerIntent {
     expiresAt: dateField(record, 'expires_at') ?? dateField(record, 'expiresAt'),
     usedAt: dateField(record, 'used_at') ?? dateField(record, 'usedAt'),
     txHash: stringField(record, 'tx_hash') || stringField(record, 'txHash'),
+    intentDigest: stringField(record, 'intent_digest') || stringField(record, 'intentDigest'),
+    intentSignature: stringField(record, 'intent_signature') || stringField(record, 'intentSignature'),
   };
 }
 
@@ -717,6 +725,11 @@ function stringField(record: Record<string, unknown>, key: string): string | und
 function numberField(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
   return typeof value === 'number' ? value : undefined;
+}
+
+function booleanField(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
 }
 
 function dateField(record: Record<string, unknown>, key: string): Date | undefined {

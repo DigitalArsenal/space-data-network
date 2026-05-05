@@ -354,8 +354,12 @@ describe('Storefront Client Configuration', () => {
         request_id: 'purchase-1',
         chain: 'ethereum',
         asset: 'eth',
+        asset_contract: '',
+        native_asset: true,
         amount: 4900,
         recipient: '0xProviderWallet',
+        intent_digest: 'digest-1',
+        intent_signature: 'sig-1',
       }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -370,10 +374,14 @@ describe('Storefront Client Configuration', () => {
     const intent = await client.createCryptoBuyerIntent('purchase-1', {
       chain: 'ethereum',
       asset: 'ETH',
+      nativeAsset: true,
       recipient: '0xProviderWallet',
     });
 
     expect(intent.reference).toBe('crypto:purchase-1:abc123');
+    expect(intent.nativeAsset).toBe(true);
+    expect(intent.intentDigest).toBe('digest-1');
+    expect(intent.intentSignature).toBe('sig-1');
     expect(fetchMock).toHaveBeenCalledWith(
       'https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/pay-crypto',
       expect.objectContaining({
@@ -381,6 +389,7 @@ describe('Storefront Client Configuration', () => {
         body: JSON.stringify({
           chain: 'ethereum',
           asset: 'ETH',
+          native_asset: true,
           recipient: '0xProviderWallet',
         }),
       }),
@@ -403,6 +412,7 @@ describe('Storefront Client Configuration', () => {
       recipientAddress: '0xProviderWallet',
       amount: 4900,
       currency: 'ETH',
+      nativeAsset: true,
       senderAddress: '0xBuyerWallet',
     });
 
@@ -417,6 +427,7 @@ describe('Storefront Client Configuration', () => {
           recipientAddress: '0xProviderWallet',
           amount: 4900,
           currency: 'ETH',
+          nativeAsset: true,
           senderAddress: '0xBuyerWallet',
         }),
       }),
