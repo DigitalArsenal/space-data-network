@@ -137,6 +137,75 @@ func TestIngestSpaceWeatherDataStoresSPWFlatBuffers(t *testing.T) {
 	}
 }
 
+func TestIngestSpaceWeatherDataRejectsSchemaMismatch(t *testing.T) {
+	runner := newTestRunner(t)
+	fixture := []byte("NORAD_CAT_ID,OBJECT_NAME,OBJECT_ID\n25544,ISS (ZARYA),1998-067A\n")
+
+	count, _, err := runner.ingestSpaceWeatherData(fixture, "source:celestrak")
+	if err == nil {
+		t.Fatalf("ingestSpaceWeatherData returned nil error with SPW=%d", count)
+	}
+	if !strings.Contains(err.Error(), "schema mismatch") {
+		t.Fatalf("error = %v, want schema mismatch", err)
+	}
+}
+
+func TestIngestGPDataRejectsMalformedEpoch(t *testing.T) {
+	runner := newTestRunner(t)
+	fixture := []byte("NORAD_CAT_ID,OBJECT_NAME,EPOCH,MEAN_MOTION\n25544,ISS (ZARYA),not-a-date,15.5\n")
+
+	countOMM, countMPE, _, err := runner.ingestGPData(fixture, "source:celestrak")
+	if err == nil {
+		t.Fatalf("ingestGPData returned nil error with OMM=%d MPE=%d", countOMM, countMPE)
+	}
+	if !strings.Contains(err.Error(), "malformed EPOCH") {
+		t.Fatalf("error = %v, want malformed EPOCH", err)
+	}
+}
+
+func TestSyncCelestrakSpaceWeatherStopsAndAlertsOnStaleSourceTimestamp(t *testing.T) {
+	stalePayload := []byte("DATE,BSRN,ND,KP1\n2026-01-01,2600,1,10\n")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Last-Modified", "Tue, 05 May 2026 00:00:00 GMT")
+		w.Header().Set("Content-Type", "text/csv")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(stalePayload); err != nil {
+			t.Fatalf("write stale response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	runner, err := NewRunner(Config{
+		StoragePath:              filepath.Join(dir, "store"),
+		RawPath:                  filepath.Join(dir, "raw"),
+		CelestrakSpaceWeatherURL: server.URL + "/SW-All.csv",
+		SpaceTrackPollInterval:   time.Hour,
+		CelestrakInterval:        minCelestrakFetchInterval,
+		SatcatInterval:           minCelestrakFetchInterval,
+		SpaceWeatherInterval:     minCelestrakFetchInterval,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner failed: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	err = runner.syncCelestrakSpaceWeather(context.Background())
+	if err == nil {
+		t.Fatalf("syncCelestrakSpaceWeather returned nil error for stale payload")
+	}
+	if !strings.Contains(err.Error(), "stale source timestamp") {
+		t.Fatalf("error = %v, want stale source timestamp", err)
+	}
+	if got := runner.checkpoints.getString("ingest_human_review_required_celestrak_space_weather"); got == "" {
+		t.Fatalf("ingest human review checkpoint is empty")
+	}
+}
+
 func TestSyncCelestrakSpaceWeatherRecordsBatchProvenance(t *testing.T) {
 	fixture, err := os.ReadFile("testdata/celestrak-sw-all.csv")
 	if err != nil {
