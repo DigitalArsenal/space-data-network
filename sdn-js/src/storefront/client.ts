@@ -66,7 +66,10 @@ export class StorefrontClient {
   private eventHandlers: Map<string, Set<EventHandler<unknown>>> = new Map();
 
   constructor(config: StorefrontClientConfig) {
-    this.config = config;
+    this.config = {
+      ...config,
+      apiBaseUrl: normalizeStorefrontAPIBaseUrl(config.apiBaseUrl),
+    };
   }
 
   /**
@@ -563,4 +566,16 @@ export class StorefrontClient {
  */
 export function createStorefrontClient(config: StorefrontClientConfig): StorefrontClient {
   return new StorefrontClient(config);
+}
+
+function normalizeStorefrontAPIBaseUrl(apiBaseUrl: string | undefined): string | undefined {
+  if (!apiBaseUrl) {
+    return undefined;
+  }
+
+  const trimmed = apiBaseUrl.replace(/\/+$/u, '');
+  if (trimmed.endsWith('/api')) {
+    return trimmed;
+  }
+  return `${trimmed}/api`;
 }
