@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	CATFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
+	OMMFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	SPWFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
 )
 
@@ -82,5 +84,153 @@ func TestIngestSpaceWeatherDataStoresSPWFlatBuffers(t *testing.T) {
 	}
 	if got, want := older.F107Obs(), float32(150.5); got != want {
 		t.Fatalf("F107_OBS = %f, want %f", got, want)
+	}
+}
+
+func TestIngestGPDataStoresOMMAndMPEFlatBuffers(t *testing.T) {
+	runner := newTestRunner(t)
+	fixture, err := os.ReadFile("testdata/celestrak-gp-omm.csv")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	countOMM, countMPE, err := runner.ingestGPData(fixture, "source:celestrak")
+	if err != nil {
+		t.Fatalf("ingestGPData failed: %v", err)
+	}
+	if countOMM != 2 || countMPE != 2 {
+		t.Fatalf("ingestGPData stored OMM=%d MPE=%d, want 2 each", countOMM, countMPE)
+	}
+
+	ommRecords, err := runner.store.QueryAll("OMM.fbs", 10)
+	if err != nil {
+		t.Fatalf("QueryAll OMM failed: %v", err)
+	}
+	if len(ommRecords) != 2 {
+		t.Fatalf("QueryAll OMM returned %d records, want 2", len(ommRecords))
+	}
+	mpeRecords, err := runner.store.QueryAll("MPE.fbs", 10)
+	if err != nil {
+		t.Fatalf("QueryAll MPE failed: %v", err)
+	}
+	if len(mpeRecords) != 2 {
+		t.Fatalf("QueryAll MPE returned %d records, want 2", len(mpeRecords))
+	}
+
+	byNorad := make(map[uint32]*OMMFB.OMM, len(ommRecords))
+	for _, record := range ommRecords {
+		omm := OMMFB.GetSizePrefixedRootAsOMM(record, 0)
+		byNorad[omm.NoradCatId()] = omm
+	}
+	iss := byNorad[25544]
+	if iss == nil {
+		t.Fatalf("missing OMM record for NORAD 25544")
+	}
+	if got, want := string(iss.ObjectName()), "ISS (ZARYA)"; got != want {
+		t.Fatalf("OBJECT_NAME = %q, want %q", got, want)
+	}
+	if got, want := string(iss.ObjectId()), "1998-067A"; got != want {
+		t.Fatalf("OBJECT_ID = %q, want %q", got, want)
+	}
+	if got, want := iss.MeanMotion(), 15.48962367; got != want {
+		t.Fatalf("MEAN_MOTION = %.8f, want %.8f", got, want)
+	}
+	if got, want := iss.Eccentricity(), 0.0006703; got != want {
+		t.Fatalf("ECCENTRICITY = %.7f, want %.7f", got, want)
+	}
+}
+
+func TestIngestSatcatDataStoresCATFlatBuffers(t *testing.T) {
+	runner := newTestRunner(t)
+	fixture, err := os.ReadFile("testdata/celestrak-satcat.txt")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	count, err := runner.ingestSatcatData(fixture, "source:celestrak")
+	if err != nil {
+		t.Fatalf("ingestSatcatData failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("ingestSatcatData stored %d records, want 2", count)
+	}
+
+	stored, err := runner.store.QueryAll("CAT.fbs", 10)
+	if err != nil {
+		t.Fatalf("QueryAll CAT failed: %v", err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("QueryAll CAT returned %d records, want 2", len(stored))
+	}
+
+	byNorad := make(map[uint32]*CATFB.CAT, len(stored))
+	for _, record := range stored {
+		cat := CATFB.GetSizePrefixedRootAsCAT(record, 0)
+		byNorad[cat.NoradCatId()] = cat
+	}
+	iss := byNorad[25544]
+	if iss == nil {
+		t.Fatalf("missing CAT record for NORAD 25544")
+	}
+	if got, want := string(iss.ObjectName()), "ISS (ZARYA)"; got != want {
+		t.Fatalf("OBJECT_NAME = %q, want %q", got, want)
+	}
+	if got, want := string(iss.ObjectId()), "1998-067A"; got != want {
+		t.Fatalf("OBJECT_ID = %q, want %q", got, want)
+	}
+	if got, want := string(iss.LaunchDate()), "1998-11-20"; got != want {
+		t.Fatalf("LAUNCH_DATE = %q, want %q", got, want)
+	}
+	if got, want := iss.Period(), 92.68; got != want {
+		t.Fatalf("PERIOD = %.2f, want %.2f", got, want)
+	}
+	if got, want := iss.Maneuverable(), true; got != want {
+		t.Fatalf("MANEUVERABLE = %t, want %t", got, want)
+	}
+}
+
+func TestIngestSatcatCSVDataStoresCATFlatBuffers(t *testing.T) {
+	runner := newTestRunner(t)
+	fixture, err := os.ReadFile("testdata/celestrak-satcat.csv")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	count, err := runner.ingestSatcatData(fixture, "source:celestrak")
+	if err != nil {
+		t.Fatalf("ingestSatcatData failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("ingestSatcatData stored %d records, want 2", count)
+	}
+
+	stored, err := runner.store.QueryAll("CAT.fbs", 10)
+	if err != nil {
+		t.Fatalf("QueryAll CAT failed: %v", err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("QueryAll CAT returned %d records, want 2", len(stored))
+	}
+
+	byNorad := make(map[uint32]*CATFB.CAT, len(stored))
+	for _, record := range stored {
+		cat := CATFB.GetSizePrefixedRootAsCAT(record, 0)
+		byNorad[cat.NoradCatId()] = cat
+	}
+	starlink := byNorad[40909]
+	if starlink == nil {
+		t.Fatalf("missing CAT record for NORAD 40909")
+	}
+	if got, want := string(starlink.ObjectName()), "STARLINK-1001"; got != want {
+		t.Fatalf("OBJECT_NAME = %q, want %q", got, want)
+	}
+	if got, want := string(starlink.ObjectId()), "2015-049A"; got != want {
+		t.Fatalf("OBJECT_ID = %q, want %q", got, want)
+	}
+	if got, want := starlink.Mass(), 260.5; got != want {
+		t.Fatalf("MASS = %.1f, want %.1f", got, want)
+	}
+	if got, want := starlink.Maneuverable(), false; got != want {
+		t.Fatalf("MANEUVERABLE = %t, want %t", got, want)
 	}
 }
