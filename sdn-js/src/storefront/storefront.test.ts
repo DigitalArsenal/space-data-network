@@ -345,6 +345,83 @@ describe('Storefront Client Configuration', () => {
     expect(events[0].eventType).toBe('payment_confirmed');
     expect(fetchMock).toHaveBeenCalledWith('https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/audit');
   });
+
+  it('creates a crypto buyer intent for a purchase', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        reference: 'crypto:purchase-1:abc123',
+        request_id: 'purchase-1',
+        chain: 'ethereum',
+        asset: 'eth',
+        amount: 4900,
+        recipient: '0xProviderWallet',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io',
+      peerId: 'buyer-peer',
+    });
+
+    const intent = await client.createCryptoBuyerIntent('purchase-1', {
+      chain: 'ethereum',
+      asset: 'ETH',
+      recipient: '0xProviderWallet',
+    });
+
+    expect(intent.reference).toBe('crypto:purchase-1:abc123');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/pay-crypto',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          chain: 'ethereum',
+          asset: 'ETH',
+          recipient: '0xProviderWallet',
+        }),
+      }),
+    );
+  });
+
+  it('submits crypto payment references with expected recipient and amount', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io/api',
+      peerId: 'buyer-peer',
+    });
+
+    await client.submitCryptoPayment('purchase-1', {
+      txHash: '0xabc',
+      chain: 'ethereum',
+      reference: 'crypto:purchase-1:abc123',
+      recipientAddress: '0xProviderWallet',
+      amount: 4900,
+      currency: 'ETH',
+      senderAddress: '0xBuyerWallet',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/confirm',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          txHash: '0xabc',
+          chain: 'ethereum',
+          reference: 'crypto:purchase-1:abc123',
+          recipientAddress: '0xProviderWallet',
+          amount: 4900,
+          currency: 'ETH',
+          senderAddress: '0xBuyerWallet',
+        }),
+      }),
+    );
+  });
 });
 
 // --- Phase 14.2: Discovery types ---
