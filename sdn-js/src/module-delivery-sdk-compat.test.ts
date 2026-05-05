@@ -35,6 +35,12 @@ vi.mock('./crypto/hd-wallet', async () => {
     ...actual,
     derivePeerIdFromPublicKey: vi.fn(async () => 'provider-peer-id'),
     sign: vi.fn(async () => new Uint8Array([0xaa, 0xbb, 0xcc])),
+    verify: vi.fn(async (publicKey: Uint8Array, message: Uint8Array, signature: Uint8Array) => (
+      publicKey.length === 32 &&
+      message.length > 0 &&
+      signature.length === 64 &&
+      signature.every((byte) => byte === 0x99)
+    )),
   };
 });
 
