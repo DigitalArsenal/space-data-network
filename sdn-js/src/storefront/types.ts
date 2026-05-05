@@ -15,10 +15,9 @@ export enum PaymentMethod {
   CryptoETH = 0,
   CryptoSOL = 1,
   CryptoBTC = 2,
-  CryptoUSDC = 3,
-  SDNCredits = 4,
-  FiatStripe = 5,
-  Free = 6,
+  SDNCredits = 3,
+  FiatStripe = 4,
+  Free = 5,
 }
 
 /** Grant status */
