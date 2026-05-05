@@ -20,6 +20,7 @@ log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+uppercase() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
 
 usage() {
     cat << EOF
@@ -464,7 +465,7 @@ case $COMMAND in
                 registry) yaml_key="registry_builders" ;;
             esac
 
-            echo -e "\n${BLUE}=== ${t^^} NODES ===${NC}"
+            echo -e "\n${BLUE}=== $(uppercase "$t") NODES ===${NC}"
             while IFS= read -r line; do
                 endpoint="$(parse_server_endpoint "$line")"
                 if [[ -n "$endpoint" ]]; then
