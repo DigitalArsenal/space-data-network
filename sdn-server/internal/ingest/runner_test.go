@@ -499,6 +499,65 @@ func TestFetchWithCacheUsesConditionalValidatorsForStaleCache(t *testing.T) {
 	}
 }
 
+func TestFetchWithCacheRetriesTransientServerFailures(t *testing.T) {
+	runner := newTestRunner(t)
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			http.Error(w, "temporary upstream error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("ETag", `"retry-success"`)
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte("fresh payload")); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	data, metadata, err := runner.fetchWithCache(context.Background(), server.URL+"/gp.csv", "celestrak-gp.csv", minCelestrakFetchInterval)
+	if err != nil {
+		t.Fatalf("fetchWithCache failed: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	if got, want := string(data), "fresh payload"; got != want {
+		t.Fatalf("data = %q, want %q", got, want)
+	}
+	if metadata.HTTPStatus != http.StatusOK {
+		t.Fatalf("metadata.HTTPStatus = %d, want 200", metadata.HTTPStatus)
+	}
+	if failureCount := runner.checkpoints.getString("fetch_failure_count_celestrak_gp_csv"); failureCount != "" {
+		t.Fatalf("failure checkpoint = %q, want cleared", failureCount)
+	}
+}
+
+func TestFetchWithCacheMarksHumanReviewAfterRetryBudgetExhausted(t *testing.T) {
+	runner := newTestRunner(t)
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, "temporary upstream error", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	data, metadata, err := runner.fetchWithCache(context.Background(), server.URL+"/gp.csv", "celestrak-gp.csv", minCelestrakFetchInterval)
+	if err == nil {
+		t.Fatalf("fetchWithCache returned nil error with data=%q metadata=%+v", data, metadata)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	if got, want := runner.checkpoints.getString("fetch_failure_count_celestrak_gp_csv"), "3"; got != want {
+		t.Fatalf("failure count checkpoint = %q, want %q", got, want)
+	}
+	if got := runner.checkpoints.getString("fetch_human_review_required_celestrak_gp_csv"); got == "" {
+		t.Fatalf("human review checkpoint is empty")
+	}
+}
+
 func TestIngestGPDataStoresOMMAndMPEFlatBuffers(t *testing.T) {
 	runner := newTestRunner(t)
 	fixture, err := os.ReadFile("testdata/celestrak-gp-omm.csv")
