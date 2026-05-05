@@ -354,6 +354,8 @@ export interface CryptoPaymentRequest {
   txHash: string;
   chain: 'ethereum' | 'solana' | 'bitcoin';
   senderAddress?: string;
+  recipientAddress?: string;
+  reference?: string;
   amount: number;
   currency: string;
 }
@@ -363,6 +365,41 @@ export interface CryptoPaymentResult {
   verified: boolean;
   confirmationBlock?: number;
   error?: string;
+}
+
+/** Crypto buyer intent creation request */
+export interface CreateCryptoIntentRequest {
+  chain?: 'ethereum' | 'solana' | 'bitcoin';
+  asset?: string;
+  recipient?: string;
+  method?: PaymentMethod;
+  expiresAt?: Date;
+}
+
+/** Server-authored crypto payment intent */
+export interface CryptoBuyerIntent {
+  reference: string;
+  requestId: string;
+  chain: string;
+  asset: string;
+  amount: number;
+  recipient: string;
+  method?: PaymentMethod;
+  createdAt?: Date;
+  expiresAt?: Date;
+  usedAt?: Date;
+  txHash?: string;
+}
+
+/** Crypto transaction submission payload */
+export interface SubmitCryptoPaymentRequest {
+  txHash: string;
+  chain: 'ethereum' | 'solana' | 'bitcoin';
+  senderAddress?: string;
+  recipientAddress: string;
+  reference: string;
+  amount: number;
+  currency: string;
 }
 
 /** Fiat gateway request */

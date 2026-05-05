@@ -312,6 +312,42 @@ func (s *Store) initTables() error {
 		return fmt.Errorf("failed to create payment audit table: %w", err)
 	}
 
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_payment_webhook_events (
+			event_id TEXT PRIMARY KEY,
+			provider TEXT NOT NULL,
+			request_id TEXT,
+			event_type TEXT NOT NULL,
+			processed_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_payment_webhook_request ON storefront_payment_webhook_events(request_id, processed_at);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create payment webhook event table: %w", err)
+	}
+
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_crypto_intents (
+			reference TEXT PRIMARY KEY,
+			request_id TEXT NOT NULL,
+			chain TEXT NOT NULL,
+			asset TEXT NOT NULL,
+			amount INTEGER NOT NULL,
+			recipient TEXT NOT NULL,
+			method INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL,
+			used_at INTEGER DEFAULT 0,
+			tx_hash TEXT DEFAULT '',
+			UNIQUE(request_id, reference)
+		);
+		CREATE INDEX IF NOT EXISTS idx_crypto_intents_request ON storefront_crypto_intents(request_id);
+		CREATE INDEX IF NOT EXISTS idx_crypto_intents_tx ON storefront_crypto_intents(tx_hash);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create crypto intent table: %w", err)
+	}
+
 	log.Info("Storefront index tables initialized (FlatSQL-backed)")
 	return nil
 }
@@ -880,6 +916,102 @@ func (s *Store) GetPaymentAuditEvents(requestID string) ([]*PaymentAuditEvent, e
 		events = append(events, &event)
 	}
 	return events, nil
+}
+
+func (s *Store) RecordPaymentWebhookEvent(provider, eventID, requestID, eventType string) (bool, error) {
+	eventID = strings.TrimSpace(eventID)
+	if eventID == "" {
+		return true, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec(`
+		INSERT OR IGNORE INTO storefront_payment_webhook_events (
+			event_id, provider, request_id, event_type, processed_at
+		) VALUES (?, ?, ?, ?, ?)
+	`, eventID, provider, requestID, eventType, time.Now().Unix())
+	if err != nil {
+		return false, fmt.Errorf("failed to record webhook event: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read webhook event insert result: %w", err)
+	}
+	return affected == 1, nil
+}
+
+func (s *Store) CreateCryptoBuyerIntent(intent *CryptoBuyerIntent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO storefront_crypto_intents (
+			reference, request_id, chain, asset, amount, recipient, method,
+			created_at, expires_at, used_at, tx_hash
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, intent.Reference, intent.RequestID, intent.Chain, intent.Asset, intent.Amount,
+		intent.Recipient, intent.Method, intent.CreatedAt.Unix(), intent.ExpiresAt.Unix(),
+		unixOrZero(intent.UsedAt), intent.TxHash)
+	if err != nil {
+		return fmt.Errorf("failed to create crypto intent: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetCryptoBuyerIntent(reference string) (*CryptoBuyerIntent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var intent CryptoBuyerIntent
+	var createdAt, expiresAt, usedAt int64
+	err := s.db.QueryRow(`
+		SELECT reference, request_id, chain, asset, amount, recipient, method,
+			created_at, expires_at, used_at, tx_hash
+		FROM storefront_crypto_intents WHERE reference = ?
+	`, reference).Scan(&intent.Reference, &intent.RequestID, &intent.Chain,
+		&intent.Asset, &intent.Amount, &intent.Recipient, &intent.Method,
+		&createdAt, &expiresAt, &usedAt, &intent.TxHash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get crypto intent: %w", err)
+	}
+	intent.CreatedAt = time.Unix(createdAt, 0)
+	intent.ExpiresAt = time.Unix(expiresAt, 0)
+	intent.UsedAt = time.Unix(usedAt, 0)
+	return &intent, nil
+}
+
+func (s *Store) MarkCryptoBuyerIntentUsed(reference, requestID, txHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec(`
+		UPDATE storefront_crypto_intents
+		SET used_at = ?, tx_hash = ?
+		WHERE reference = ? AND request_id = ? AND COALESCE(used_at, 0) = 0
+	`, time.Now().Unix(), txHash, reference, requestID)
+	if err != nil {
+		return fmt.Errorf("failed to mark crypto intent used: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to read crypto intent update result: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("crypto payment reference reused or not found")
+	}
+	return nil
+}
+
+func unixOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 // CreateReview creates a new review. Stores through FlatSQL.
