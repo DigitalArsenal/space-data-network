@@ -290,6 +290,7 @@ describe('Storefront Client Configuration', () => {
         total_records: 0,
         delivery_topic: '/sdn/data/protected-wasm-1/buyer-peer',
         provider_signature: 'CQkJ',
+        grant_response_base64: 'AQIDBA==',
         provider_peer_id: 'provider-peer',
       }), {
         status: 200,
@@ -319,6 +320,7 @@ describe('Storefront Client Configuration', () => {
     expect(grant.grantId).toBe('grant-1');
     expect(grant.deliveryTopic).toBe('/sdn/data/protected-wasm-1/buyer-peer');
     expect(grant.providerSignature).toEqual(new Uint8Array([9, 9, 9]));
+    expect(grant.grantResponseBase64).toBe('AQIDBA==');
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
       'https://sdn.spaceaware.io/api/storefront/purchases',
@@ -373,6 +375,8 @@ describe('Storefront Client Configuration', () => {
           totalRequests: 0,
           totalRecords: 0,
           providerPeerId: 'provider-peer',
+          provider_signature: 'CQkJ',
+          grant_response_base64: 'AQIDBA==',
         },
       }), {
         status: 200,
@@ -393,6 +397,8 @@ describe('Storefront Client Configuration', () => {
 
     expect(result.mode).toBe('manual-dev');
     expect(result.grant.grantId).toBe('grant-1');
+    expect(result.grant.providerSignature).toEqual(new Uint8Array([9, 9, 9]));
+    expect(result.grant.grantResponseBase64).toBe('AQIDBA==');
     expect(fetchMock).toHaveBeenCalledWith(
       'https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/manual-dev-paid',
       expect.objectContaining({

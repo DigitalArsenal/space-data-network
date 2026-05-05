@@ -173,6 +173,7 @@ export interface AccessGrant {
   lastAccess?: Date;
   deliveryTopic?: string;
   providerSignature?: Uint8Array;
+  grantResponseBase64?: string;
   providerPeerId: string;
 }
 
