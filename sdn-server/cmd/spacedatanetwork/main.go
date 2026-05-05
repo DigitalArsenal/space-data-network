@@ -882,7 +882,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Infof("Peer API available at %s://%s/api/peers", adminScheme, adminAddr)
 				log.Infof("Node info API available at %s://%s/api/node/info", adminScheme, adminAddr)
 				log.Infof("Module delivery provider descriptor available at %s://%s/api/module-delivery/provider", adminScheme, adminAddr)
-				log.Infof("Public data API available at %s://%s/api/v1/data/mpe/bulk", adminScheme, adminAddr)
+				log.Infof("Public data API available at %s://%s/api/v1/data/omm/bulk", adminScheme, adminAddr)
 				var err error
 				if adminTLS {
 					adminServer.TLSConfig = tlsManager.TLSConfig()
