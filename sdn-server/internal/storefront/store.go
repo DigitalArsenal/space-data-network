@@ -1,7 +1,9 @@
 package storefront
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -310,6 +312,35 @@ func (s *Store) initTables() error {
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create payment audit table: %w", err)
+	}
+
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_group_members (
+			membership_id TEXT PRIMARY KEY,
+			group_id TEXT NOT NULL,
+			listing_id TEXT NOT NULL,
+			grant_id TEXT NOT NULL,
+			member_peer_id TEXT NOT NULL,
+			member_key_id TEXT NOT NULL,
+			grant_scope TEXT,
+			key_epoch TEXT NOT NULL,
+			wrapped_key_envelope BLOB,
+			envelope_cid TEXT DEFAULT '',
+			signer_peer_id TEXT,
+			status TEXT NOT NULL,
+			added_at INTEGER NOT NULL,
+			removed_at INTEGER DEFAULT 0,
+			removal_reason TEXT DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(group_id, member_peer_id, member_key_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_group_members_group_status ON storefront_group_members(group_id, status);
+		CREATE INDEX IF NOT EXISTS idx_group_members_member ON storefront_group_members(member_peer_id);
+		CREATE INDEX IF NOT EXISTS idx_group_members_grant ON storefront_group_members(grant_id);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create group members table: %w", err)
 	}
 
 	_, err = s.db.Exec(`
@@ -1655,6 +1686,189 @@ func (s *Store) GetPurchaseRequestByGrantID(grantID string) (*PurchaseRequest, e
 	defer s.mu.RUnlock()
 
 	return s.getPurchaseRequestByWhereLocked("grant_id = ?", grantID)
+}
+
+// UpsertGroupMember creates or reactivates a private group-member key envelope.
+func (s *Store) UpsertGroupMember(member *GroupMember) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	if member.MembershipID == "" {
+		member.MembershipID = uuidFromParts(member.GroupID, member.MemberPeerID, member.MemberKeyID)
+	}
+	if member.Status == "" {
+		member.Status = GroupMemberStatusActive
+	}
+	if member.AddedAt.IsZero() {
+		member.AddedAt = now
+	}
+	if member.CreatedAt.IsZero() {
+		member.CreatedAt = now
+	}
+	member.UpdatedAt = now
+	removedAt := int64(0)
+	if !member.RemovedAt.IsZero() {
+		removedAt = member.RemovedAt.Unix()
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO storefront_group_members (
+			membership_id, group_id, listing_id, grant_id, member_peer_id, member_key_id,
+			grant_scope, key_epoch, wrapped_key_envelope, envelope_cid, signer_peer_id,
+			status, added_at, removed_at, removal_reason, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(group_id, member_peer_id, member_key_id) DO UPDATE SET
+			listing_id = excluded.listing_id,
+			grant_id = excluded.grant_id,
+			grant_scope = excluded.grant_scope,
+			key_epoch = excluded.key_epoch,
+			wrapped_key_envelope = CASE
+				WHEN storefront_group_members.status = ? THEN excluded.wrapped_key_envelope
+				ELSE storefront_group_members.wrapped_key_envelope
+			END,
+			envelope_cid = CASE
+				WHEN storefront_group_members.status = ? THEN excluded.envelope_cid
+				ELSE storefront_group_members.envelope_cid
+			END,
+			signer_peer_id = excluded.signer_peer_id,
+			status = excluded.status,
+			added_at = CASE
+				WHEN storefront_group_members.status = ? THEN excluded.added_at
+				ELSE storefront_group_members.added_at
+			END,
+			removed_at = 0,
+			removal_reason = '',
+			updated_at = excluded.updated_at
+	`, member.MembershipID, member.GroupID, member.ListingID, member.GrantID, member.MemberPeerID,
+		member.MemberKeyID, member.GrantScope, member.KeyEpoch, member.WrappedKeyEnvelope,
+		member.EnvelopeCID, member.SignerPeerID, member.Status, member.AddedAt.Unix(),
+		removedAt, member.RemovalReason, member.CreatedAt.Unix(), member.UpdatedAt.Unix(),
+		GroupMemberStatusRemoved, GroupMemberStatusRemoved, GroupMemberStatusRemoved)
+	if err != nil {
+		return fmt.Errorf("failed to upsert group member: %w", err)
+	}
+	return nil
+}
+
+// RemoveGroupMember marks a group member removed so future wraps skip it.
+func (s *Store) RemoveGroupMember(groupID, memberPeerID, memberKeyID, reason string, removedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if removedAt.IsZero() {
+		removedAt = time.Now()
+	}
+	result, err := s.db.Exec(`
+		UPDATE storefront_group_members
+		SET status = ?,
+			removed_at = ?,
+			removal_reason = ?,
+			updated_at = ?
+		WHERE group_id = ? AND member_peer_id = ? AND member_key_id = ?
+	`, GroupMemberStatusRemoved, removedAt.Unix(), reason, removedAt.Unix(), groupID, memberPeerID, memberKeyID)
+	if err != nil {
+		return fmt.Errorf("failed to remove group member: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to read group member removal result: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("group member not found")
+	}
+	return nil
+}
+
+// GetGroupMembers retrieves group members, optionally filtered by status.
+func (s *Store) GetGroupMembers(groupID string, status GroupMemberStatus) ([]*GroupMember, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `
+		SELECT membership_id, group_id, listing_id, grant_id, member_peer_id, member_key_id,
+			grant_scope, key_epoch, wrapped_key_envelope, envelope_cid, signer_peer_id,
+			status, added_at, removed_at, removal_reason, created_at, updated_at
+		FROM storefront_group_members
+		WHERE group_id = ?
+	`
+	args := []interface{}{groupID}
+	if status != "" {
+		query += " AND status = ?"
+		args = append(args, status)
+	}
+	query += " ORDER BY member_peer_id, member_key_id"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query group members: %w", err)
+	}
+	defer rows.Close()
+
+	var members []*GroupMember
+	for rows.Next() {
+		member, err := scanGroupMember(rows)
+		if err != nil {
+			return nil, err
+		}
+		members = append(members, member)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
+// GetRequesterGroupMember returns only the requester's group envelope.
+func (s *Store) GetRequesterGroupMember(groupID, memberPeerID, memberKeyID string) (*GroupMember, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	row := s.db.QueryRow(`
+		SELECT membership_id, group_id, listing_id, grant_id, member_peer_id, member_key_id,
+			grant_scope, key_epoch, wrapped_key_envelope, envelope_cid, signer_peer_id,
+			status, added_at, removed_at, removal_reason, created_at, updated_at
+		FROM storefront_group_members
+		WHERE group_id = ? AND member_peer_id = ? AND member_key_id = ? AND status = ?
+	`, groupID, memberPeerID, memberKeyID, GroupMemberStatusActive)
+	member, err := scanGroupMember(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return member, nil
+}
+
+type groupMemberScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanGroupMember(scanner groupMemberScanner) (*GroupMember, error) {
+	var member GroupMember
+	var addedAt, removedAt, createdAt, updatedAt int64
+	if err := scanner.Scan(
+		&member.MembershipID, &member.GroupID, &member.ListingID, &member.GrantID,
+		&member.MemberPeerID, &member.MemberKeyID, &member.GrantScope, &member.KeyEpoch,
+		&member.WrappedKeyEnvelope, &member.EnvelopeCID, &member.SignerPeerID,
+		&member.Status, &addedAt, &removedAt, &member.RemovalReason,
+		&createdAt, &updatedAt,
+	); err != nil {
+		return nil, err
+	}
+	member.AddedAt = time.Unix(addedAt, 0)
+	if removedAt > 0 {
+		member.RemovedAt = time.Unix(removedAt, 0)
+	}
+	member.CreatedAt = time.Unix(createdAt, 0)
+	member.UpdatedAt = time.Unix(updatedAt, 0)
+	return &member, nil
+}
+
+func uuidFromParts(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:16])
 }
 
 // UpdateListingReputation updates the reputation snapshot on a listing.
