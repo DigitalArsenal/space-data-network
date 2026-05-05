@@ -27,9 +27,10 @@ const licensingMocks = vi.hoisted(() => ({
     grantedDomain: 'app.example.com',
     grantedTimeoutMs: 30_000,
     expiresAtMs: 1_700_003_600_000,
+    grantStatus: 'active',
     capabilityToken: new Uint8Array([1, 2, 3]),
     grantVerifierPublicKey: new Uint8Array(32).fill(5),
-    providerSignature: new Uint8Array([9, 9, 9]),
+    providerSignature: new Uint8Array(64).fill(9),
   })),
   validateLicensingGrant: vi.fn((grant) => grant),
   extractGrantModuleDescriptor: vi.fn(() => ({

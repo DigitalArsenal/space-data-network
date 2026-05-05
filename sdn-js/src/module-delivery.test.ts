@@ -511,6 +511,92 @@ describe('module-delivery', () => {
     });
   });
 
+  it('rejects grants with tampered provider signatures, stale expiry, or revoked status', async () => {
+    const makeTransport = (grantOverrides: Partial<GrantFixtureOptions>) => ({
+      async dialProtocol(
+        _targetPeerId: string,
+        _protocolId: string,
+        payload: Uint8Array,
+      ) {
+        if (isLCH(payload)) {
+          const request = decodeLCH(payload);
+          return encodeChallengeResponse({
+            reqId: request.REQUEST_ID() ?? '',
+            moduleId: request.MODULE_ID() ?? '',
+            moduleVersion: request.MODULE_VERSION() ?? undefined,
+            providerPeerId: 'provider-peer-id',
+            challengeNonce: new Uint8Array([1, 2, 3, 4]),
+            expiresAtMs: 1_700_000_900_000n,
+          });
+        }
+
+        const proof = decodeLPF(payload);
+        return encodeGrantResponse({
+          reqId: proof.REQUEST_ID() ?? '',
+          moduleId: proof.MODULE_ID() ?? '',
+          moduleVersion: proof.MODULE_VERSION() ?? undefined,
+          requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+          requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+          requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
+          requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          grantedDomain: 'app.example.com',
+          grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          expiresAtMs: 1_700_003_600_000n,
+          contentHash: new Uint8Array(32).fill(7),
+          ...grantOverrides,
+        });
+      },
+      async fetchCIDBytes() {
+        return new Uint8Array([1, 2, 3, 4]);
+      },
+    });
+    const request = {
+      serverDescriptor: {
+        publicKey: '02'.padEnd(66, '1'),
+        relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
+      },
+      requesterIdentity: {
+        peerId: 'requester-peer-id',
+        xpub: 'xpub-requester',
+        signingKey: {
+          privateKey: new Uint8Array(32).fill(5),
+          publicKey: new Uint8Array(32).fill(6),
+        },
+        encryptionKey: {
+          privateKey: new Uint8Array(32).fill(7),
+          publicKey: new Uint8Array(32).fill(8),
+        },
+      },
+      moduleId: 'com.space-data-network.fastest-path',
+      moduleVersion: '0.5.22',
+      requesterDomain: 'app.example.com',
+      requestedTimeoutMs: 30_000,
+      reqId: 'req-invalid-grant',
+      requestedAtMs: 1_700_000_000_000,
+    };
+
+    await expect(
+      requestModuleGrant(makeTransport({ providerSignature: new Uint8Array(63).fill(9) }), request),
+    ).rejects.toMatchObject({
+      code: 'invalid_grant',
+    });
+    await expect(
+      requestModuleGrant(makeTransport({ providerSignature: new Uint8Array(64) }), request),
+    ).rejects.toMatchObject({
+      code: 'invalid_grant',
+    });
+    await expect(
+      requestModuleGrant(makeTransport({ expiresAtMs: 1_699_999_999_999n }), request),
+    ).rejects.toMatchObject({
+      code: 'grant_expired',
+    });
+    await expect(
+      requestModuleGrant(makeTransport({ grantStatus: 'revoked' }), request),
+    ).rejects.toMatchObject({
+      code: 'grant_revoked',
+    });
+  });
+
   it('keeps the relay probe example on the real module-delivery exchange path', async () => {
     const exampleSource = await fs.readFile(
       path.join(__dirname, '..', 'examples', 'ipfs-relay-id-exchange.ts'),
@@ -589,6 +675,8 @@ function encodeGrantResponse(options: {
   grantedTimeoutMs: bigint;
   expiresAtMs: bigint;
   contentHash: Uint8Array;
+  grantStatus?: string;
+  providerSignature?: Uint8Array;
 }): Uint8Array {
   const builder = new flatbuffers.Builder(1024);
   const reqIdOffset = builder.createString(options.reqId);
@@ -599,13 +687,16 @@ function encodeGrantResponse(options: {
   const requestedDomainOffset = builder.createString(options.requestedDomain);
   const grantedDomainOffset = builder.createString(options.grantedDomain);
   const requiredScopeOffset = builder.createString('orbpro.default');
-  const grantStatusOffset = builder.createString('active');
+  const grantStatusOffset = builder.createString(options.grantStatus ?? 'active');
   const capabilityTokenOffset = LGR.createCapabilityTokenVector(builder, new Uint8Array([1, 2, 3]));
   const moduleDescriptorOffset = createModuleDescriptorOffset(builder, options.contentHash);
   const wrappedContentKeyHeaderOffset = createWrappedContentKeyHeaderOffset(builder, options);
   const wrappedContentKeyPayloadOffset = createWrappedContentKeyPayloadOffset(builder, options);
   const verifierPubkeyOffset = LGR.createGrantVerifierPubkeyVector(builder, new Uint8Array(32).fill(5));
-  const providerSignatureOffset = LGR.createProviderSignatureVector(builder, new Uint8Array([9, 9, 9]));
+  const providerSignatureOffset = LGR.createProviderSignatureVector(
+    builder,
+    options.providerSignature ?? new Uint8Array(64).fill(9),
+  );
 
   LGR.startLGR(builder);
   LGR.addMessageType(builder, licensingGrantMessageType.Granted);
@@ -637,6 +728,8 @@ function encodeGrantResponse(options: {
   LGR.finishLGRBuffer(builder, root);
   return builder.asUint8Array();
 }
+
+type GrantFixtureOptions = Parameters<typeof encodeGrantResponse>[0];
 
 function createModuleDescriptorOffset(
   builder: flatbuffers.Builder,
