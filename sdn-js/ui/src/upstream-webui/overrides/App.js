@@ -116,7 +116,7 @@ export class App extends Component {
 
   render() {
     const { t, route: Page, ipfsReady, doFilesNavigateTo, routeInfo: { url }, connectDropTarget, canDrop, isOver, showTooltip } = this.props
-    const canRenderWithoutIpfs = url === '/welcome' || url.startsWith('/settings') || url === '/modules'
+    const canRenderWithoutIpfs = url === '/welcome' || url.startsWith('/settings') || url === '/modules' || url === '/marketplace'
     return connectDropTarget(
       <div className='sans-serif h-100 relative' onClick={getNavHelper(this.props.doUpdateUrl)}>
         { canDrop && isOver && <div className='h-100 top-0 right-0 fixed appOverlay' style={{ background: 'rgba(99, 202, 210, 0.2)' }} /> }

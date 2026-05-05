@@ -19,6 +19,7 @@ export function decodeCanonicalPlgListing(
   const manifest = PLG.getRootAsPLG(new flatbuffers.ByteBuffer(bytes));
   const unpacked = manifest.unpack();
   const listing: CanonicalListing = {
+    listingKind: 'module',
     pluginId: normalizeRequiredString(unpacked.PLUGIN_ID, 'pluginId'),
     version: normalizeRequiredString(unpacked.VERSION, 'version'),
     observedAt: options.observedAt ?? 0,
