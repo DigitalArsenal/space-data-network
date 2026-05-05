@@ -63,6 +63,12 @@ func SessionFromContext(ctx context.Context) *Session {
 	return s
 }
 
+// ContextWithSession returns a context carrying an authenticated session.
+// It is primarily useful for focused handler tests that bypass middleware.
+func ContextWithSession(ctx context.Context, session *Session) context.Context {
+	return context.WithValue(ctx, sessionContextKey, session)
+}
+
 // wantsJSON returns true if the request prefers JSON over HTML.
 func wantsJSON(r *http.Request) bool {
 	accept := r.Header.Get("Accept")
