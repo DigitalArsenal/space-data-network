@@ -96,5 +96,8 @@ describe('marketplace page layout', () => {
     expect(source).toContain('/api/storefront/purchases/${encodeURIComponent(requestId)}/pay-credits');
     expect(source).toContain('Delivery topic');
     expect(source).toContain('Grant issued');
+    expect(source).toContain('Verify encrypted delivery');
+    expect(source).toContain('__SDN_MARKETPLACE_CLIENT_DECRYPT__');
+    expect(source).toContain('Decrypt/load complete');
   });
 });

@@ -24,7 +24,7 @@ func TestOMMBulkReturnsFullCatalogFlatBufferStream(t *testing.T) {
 	mux := http.NewServeMux()
 	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/omm/bulk?day="+day+"&limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/omm/bulk?limit=10", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

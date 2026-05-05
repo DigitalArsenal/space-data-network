@@ -99,7 +99,7 @@ func (h *DataQueryHandler) handleOMMBulk(w http.ResponseWriter, r *http.Request)
 	includeData := parseBool(r, "include_data")
 	format := requestedDataFormat(r)
 
-	records, err := h.store.QueryByIndexedFields("OMM.fbs", day, nil, "", limit)
+	records, err := h.bulkRecords("OMM.fbs", day, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -244,7 +244,7 @@ func (h *DataQueryHandler) handleMPEBulk(w http.ResponseWriter, r *http.Request)
 	includeData := parseBool(r, "include_data")
 	format := requestedDataFormat(r)
 
-	records, err := h.store.QueryByIndexedFields("MPE.fbs", day, nil, "", limit)
+	records, err := h.bulkRecords("MPE.fbs", day, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -374,7 +374,7 @@ func (h *DataQueryHandler) handleCATBulk(w http.ResponseWriter, r *http.Request)
 	includeData := parseBool(r, "include_data")
 	format := requestedDataFormat(r)
 
-	records, err := h.store.QueryByIndexedFields("CAT.fbs", "", nil, "", limit)
+	records, err := h.bulkRecords("CAT.fbs", "", limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -445,6 +445,13 @@ func (h *DataQueryHandler) ensureStore(w http.ResponseWriter) bool {
 		return false
 	}
 	return true
+}
+
+func (h *DataQueryHandler) bulkRecords(schemaName, day string, limit int) ([]*storage.Record, error) {
+	if strings.TrimSpace(day) != "" {
+		return h.store.QueryByIndexedFields(schemaName, day, nil, "", limit)
+	}
+	return h.store.QueryRecentRecords(schemaName, limit)
 }
 
 func requiredDay(r *http.Request, key string) (string, error) {

@@ -1086,6 +1086,49 @@ func (s *FlatSQLStore) QueryByIndexedFields(schemaName, day string, noradCatID *
 	})
 }
 
+// QueryRecentRecords returns recent records directly from the schema table.
+// It avoids the materialized index join for unfiltered bulk consumers that need
+// the latest catalog stream and do not require day/object predicates.
+func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Record, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schema name: %w", err)
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 250000 {
+		limit = 250000
+	}
+
+	query := fmt.Sprintf(`
+		SELECT cid, peer_id, timestamp, data, signature
+		FROM %s
+		ORDER BY rowid DESC
+		LIMIT ?
+	`, tableName)
+	rows, err := s.db.Query(query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("recent records query failed: %w", err)
+	}
+	defer rows.Close()
+
+	var records []*Record
+	for rows.Next() {
+		rec := &Record{}
+		var ts int64
+		if err := rows.Scan(&rec.CID, &rec.PeerID, &ts, &rec.Data, &rec.Signature); err != nil {
+			return nil, fmt.Errorf("failed scanning recent row: %w", err)
+		}
+		rec.Timestamp = time.Unix(ts, 0).UTC()
+		records = append(records, rec)
+	}
+	return records, nil
+}
+
 // QueryIndexedRecords returns records using materialized catalog/source indexes.
 func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record, error) {
 	s.mu.RLock()

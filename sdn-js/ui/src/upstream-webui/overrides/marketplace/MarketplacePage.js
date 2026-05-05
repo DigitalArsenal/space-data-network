@@ -350,11 +350,15 @@ function PurchaseAccessPanel({ listing }) {
   const [error, setError] = useState('')
   const [purchase, setPurchase] = useState(null)
   const [grant, setGrant] = useState(null)
+  const [deliveryStatus, setDeliveryStatus] = useState('idle')
+  const [deliveryResult, setDeliveryResult] = useState(null)
 
   async function createPurchase() {
     setStatus('creating')
     setError('')
     setGrant(null)
+    setDeliveryStatus('idle')
+    setDeliveryResult(null)
     try {
       const payload = {
         listing_id: listing.pluginId,
@@ -407,9 +411,61 @@ function PurchaseAccessPanel({ listing }) {
       const nextGrant = await response.json()
       setGrant(nextGrant)
       setStatus('grant-issued')
+      setDeliveryStatus('ready')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setStatus('error')
+    }
+  }
+
+  async function verifyEncryptedDelivery() {
+    const encryptedCid = listing.protectedDelivery?.encryptedCid || listing.sampleCid
+    const clientDecrypt = marketplaceClientDecrypt()
+    setDeliveryStatus('verifying')
+    setError('')
+    setDeliveryResult(null)
+    try {
+      if (!grant) {
+        throw new Error('Grant is required before encrypted delivery verification')
+      }
+      if (!encryptedCid) {
+        throw new Error('Encrypted CID is required before encrypted delivery verification')
+      }
+      if (!clientDecrypt || typeof clientDecrypt.decryptArtifact !== 'function') {
+        throw new Error('Browser client-decrypt adapter is unavailable')
+      }
+      const encryptedBundleBytes = await fetchMarketplaceEncryptedBundle(clientDecrypt, {
+        cid: encryptedCid,
+        listing,
+        purchase,
+        grant
+      })
+      const grantResponseBytes = decodeBase64Bytes(
+        grant.grant_response_base64 || grant.grantResponseBase64 || ''
+      )
+      const decryptedBytes = await clientDecrypt.decryptArtifact({
+        listing,
+        purchase,
+        grant,
+        grantResponseBytes,
+        encryptedBundleBytes
+      })
+      const loadResult = typeof clientDecrypt.loadModule === 'function'
+        ? await clientDecrypt.loadModule({
+          listing,
+          purchase,
+          grant,
+          bytes: decryptedBytes
+        })
+        : null
+      setDeliveryResult({
+        decryptedBytes: byteLength(decryptedBytes),
+        loadLabel: loadResultLabel(loadResult)
+      })
+      setDeliveryStatus('verified')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setDeliveryStatus('error')
     }
   }
 
@@ -511,6 +567,25 @@ function PurchaseAccessPanel({ listing }) {
           <KeyLine label='Grant ID' value={grant.grant_id || grant.grantId} />
           <KeyLine label='Delivery topic' value={grant.delivery_topic || grant.deliveryTopic} />
           <KeyLine label='Encrypted CID' value={listing.protectedDelivery?.encryptedCid || listing.sampleCid} />
+          <button
+            type='button'
+            className='button-reset ba b--dark-blue bg-white dark-blue br2 pv2 ph3 mt3 pointer hover-bg-near-white'
+            onClick={verifyEncryptedDelivery}
+            disabled={deliveryStatus === 'verifying'}
+          >
+            Verify encrypted delivery
+          </button>
+          {deliveryStatus !== 'idle' && (
+            <div className='mt2 f6 black-70'>
+              {deliveryStatusLabel(deliveryStatus)}
+            </div>
+          )}
+          {deliveryResult && (
+            <div className='mt2 f6 black-80'>
+              <div>Decrypted bytes: {deliveryResult.decryptedBytes}</div>
+              {deliveryResult.loadLabel && <div>Loaded {deliveryResult.loadLabel}</div>}
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -751,6 +826,75 @@ function defaultDeliveryMethod(listing) {
     return 'PubSubStream'
   }
   return 'IPFSPin'
+}
+
+function marketplaceClientDecrypt() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  return window.__SDN_MARKETPLACE_CLIENT_DECRYPT__ || window.__SDN_CLIENT_DECRYPT__ || null
+}
+
+async function fetchMarketplaceEncryptedBundle(clientDecrypt, request) {
+  if (typeof clientDecrypt.fetchEncryptedBundle === 'function') {
+    const bytes = await clientDecrypt.fetchEncryptedBundle(request)
+    return normalizeBytes(bytes)
+  }
+  throw new Error('Encrypted bundle fetch adapter is unavailable')
+}
+
+function decodeBase64Bytes(value) {
+  if (!value) {
+    return new Uint8Array()
+  }
+  const binary = atob(String(value).replace(/-/g, '+').replace(/_/g, '/'))
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index)
+  }
+  return bytes
+}
+
+function normalizeBytes(value) {
+  if (value instanceof Uint8Array) {
+    return value
+  }
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value)
+  }
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+  }
+  throw new Error('Encrypted bundle adapter must return bytes')
+}
+
+function byteLength(value) {
+  if (value instanceof Uint8Array || value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+    return value.byteLength
+  }
+  return 0
+}
+
+function loadResultLabel(result) {
+  if (!result || typeof result !== 'object') {
+    return ''
+  }
+  return result.operation || result.operationName || result.moduleId || ''
+}
+
+function deliveryStatusLabel(status) {
+  switch (status) {
+    case 'ready':
+      return 'Encrypted delivery ready'
+    case 'verifying':
+      return 'Decrypt/load running'
+    case 'verified':
+      return 'Decrypt/load complete'
+    case 'error':
+      return 'Decrypt/load blocked'
+    default:
+      return ''
+  }
 }
 
 function statusLabel(status) {
