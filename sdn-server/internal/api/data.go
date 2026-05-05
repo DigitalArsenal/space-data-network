@@ -39,6 +39,7 @@ func NewDataQueryHandler(store *storage.FlatSQLStore, verifier *license.TokenVer
 func (h *DataQueryHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/data/health", h.handleHealth)
 	mux.HandleFunc("/api/v1/data/omm", h.handleOMM)
+	mux.HandleFunc("/api/v1/data/omm/bulk", h.handleOMMBulk)
 	mux.HandleFunc("/api/v1/data/mpe", h.handleMPE)
 	mux.HandleFunc("/api/v1/data/mpe/bulk", h.handleMPEBulk)
 	mux.HandleFunc("/api/v1/data/cat", h.handleCAT)
@@ -77,6 +78,75 @@ func (h *DataQueryHandler) handleSecureOMM(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	h.writeOMMResponse(w, r, false)
+}
+
+func (h *DataQueryHandler) handleOMMBulk(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+
+	day, err := optionalDay(r, "day")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	limit := parseLimit(r, 50000, 250000)
+	includeData := parseBool(r, "include_data")
+	format := requestedDataFormat(r)
+
+	records, err := h.store.QueryByIndexedFields("OMM.fbs", day, nil, "", limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	setCachePolicy(w, day)
+	if handleConditionalCache(w, r, "OMM.fbs", day, "bulk", records) {
+		return
+	}
+
+	if format == dataFormatFlatBuffers {
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", ommBulkFilename(day)))
+		writeFlatBufferStream(w, "OMM.fbs", records)
+		return
+	}
+
+	results := make([]map[string]interface{}, 0, len(records))
+	for _, rec := range records {
+		row := map[string]interface{}{
+			"cid":       rec.CID,
+			"peer_id":   rec.PeerID,
+			"timestamp": rec.Timestamp.UTC().Format(time.RFC3339),
+		}
+		if omm, err := decodeOMM(rec.Data); err == nil {
+			row["norad_cat_id"] = omm.NORAD_CAT_ID()
+			row["object_name"] = string(omm.OBJECT_NAME())
+			row["object_id"] = string(omm.OBJECT_ID())
+			row["epoch"] = string(omm.EPOCH())
+			row["mean_motion"] = omm.MEAN_MOTION()
+			row["eccentricity"] = omm.ECCENTRICITY()
+			row["inclination"] = omm.INCLINATION()
+		}
+		if includeData {
+			row["data_base64"] = base64.StdEncoding.EncodeToString(rec.Data)
+		}
+		results = append(results, row)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"schema": "OMM.fbs",
+		"query": map[string]interface{}{
+			"day":   day,
+			"limit": limit,
+		},
+		"count":   len(results),
+		"results": results,
+	})
 }
 
 func (h *DataQueryHandler) handleMPE(w http.ResponseWriter, r *http.Request) {
@@ -626,6 +696,13 @@ func mpeBulkFilename(day string) string {
 		return "mpe-bulk.fbsstream"
 	}
 	return fmt.Sprintf("mpe-%s.fbsstream", day)
+}
+
+func ommBulkFilename(day string) string {
+	if strings.TrimSpace(day) == "" {
+		return "omm-bulk.fbsstream"
+	}
+	return fmt.Sprintf("omm-%s.fbsstream", day)
 }
 
 func decodeOMM(data []byte) (*OMM.OMM, error) {
