@@ -68,6 +68,7 @@ describe('module-delivery SDK compatibility', () => {
 
     expect(typeof ui.loadMarketplaceListingsFromServer).toBe('function');
     expect(typeof ui.unwrapGrantContentKey).toBe('function');
+    expect(typeof ui.decryptGrantProtectedModuleBundle).toBe('function');
     expect(typeof ui.decryptEncryptedModuleBundle).toBe('function');
     expect(typeof ui.loadDecryptedModule).toBe('function');
     expect(typeof ui.invokeLoadedModule).toBe('function');
