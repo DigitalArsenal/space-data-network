@@ -421,7 +421,10 @@ describe('sdn upstream webui branding helper', () => {
     );
 
     expect(source).toContain("fetch('/api/node/info'");
+    expect(source).toContain('/api/v0/id');
+    expect(source).toContain('kuboRpcIdentityUrl');
     expect(source).toContain('peer_id');
+    expect(source).toContain('AgentVersion');
     expect(source).toContain('spacedatanetwork/');
     expect(source).not.toContain('useIdentity');
   });

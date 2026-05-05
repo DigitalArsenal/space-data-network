@@ -109,6 +109,25 @@ test.describe('SDN dashboard window', () => {
     expect(packageJson.scripts['build:webui:download']).toBeUndefined()
   })
 
+  test('redirects extensionless desktop static app routes so relative assets resolve', () => {
+    const staticServerSource = fs.readFileSync(path.join(__dirname, '../../src/static-http-server.js'), 'utf8')
+
+    expect(staticServerSource).toContain('redirectBareAppRoute')
+    expect(staticServerSource).toContain("parsed.pathname !== `/${routeName}`")
+    expect(staticServerSource).toContain("res.writeHead(301, { Location: `/${routeName}/${parsed.search}${parsed.hash}` })")
+  })
+
+  test('keeps local Kubo bootstrapped to upstream defaults and SDN seed nodes', () => {
+    const daemonConfigSource = fs.readFileSync(path.join(__dirname, '../../src/daemon/config.js'), 'utf8')
+
+    expect(daemonConfigSource).toContain("const DESKTOP_BOOTSTRAP_PEERS = Object.freeze([")
+    expect(daemonConfigSource).toContain("'auto'")
+    expect(daemonConfigSource).toContain('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
+    expect(daemonConfigSource).toContain('/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
+    expect(daemonConfigSource).toContain('ensureDesktopBootstrapPeers')
+    expect(daemonConfigSource).toContain('config.Bootstrap = nextBootstrap')
+  })
+
   test('syncs the live Kubo RPC address before the SDN dashboard app first loads', () => {
     const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/dashboard/index.js'), 'utf8')
 
