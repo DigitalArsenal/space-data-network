@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,6 +47,26 @@ type DatasetPublicationManifest struct {
 type DatasetPublicationPNMOptions struct {
 	FileName    string
 	PublishedAt time.Time
+	SigningKey  ed25519.PrivateKey
+}
+
+// DatasetPublicationReplayOptions controls replay verification for a PNM/DPM publication.
+type DatasetPublicationReplayOptions struct {
+	PNM               []byte
+	ProviderPublicKey ed25519.PublicKey
+	FetchByCID        func(context.Context, string) ([]byte, error)
+	WorkDir           string
+}
+
+// DatasetPublicationReplayResult summarizes a verified publication replay.
+type DatasetPublicationReplayResult struct {
+	ManifestCID  string
+	ShardCID     string
+	IndexCID     string
+	SchemaName   string
+	RecordCount  int
+	QuerySHA256  string
+	ResultSHA256 string
 }
 
 // BuildDatasetPublicationPNM creates one PNM announcing a signed DPM manifest CID.
@@ -66,7 +89,11 @@ func BuildDatasetPublicationPNM(manifest *DatasetPublicationManifest, opts Datas
 	cidOffset := builder.CreateString(manifest.CID)
 	fileName := builder.CreateString(opts.FileName)
 	fileID := builder.CreateString("DPM")
-	signature := builder.CreateString(hex.EncodeToString(manifest.Signature))
+	signatureBytes := manifest.Signature
+	if len(opts.SigningKey) == ed25519.PrivateKeySize {
+		signatureBytes = ed25519.Sign(opts.SigningKey, datasetPublicationPNMSignaturePayload(manifest.CID, "DPM"))
+	}
+	signature := builder.CreateString(hex.EncodeToString(signatureBytes))
 	signatureType := builder.CreateString("Ed25519")
 
 	PNM.PNMStart(builder)
@@ -80,6 +107,131 @@ func BuildDatasetPublicationPNM(manifest *DatasetPublicationManifest, opts Datas
 	pnm := PNM.PNMEnd(builder)
 	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
 	return append([]byte(nil), builder.FinishedBytes()...), nil
+}
+
+func datasetPublicationPNMSignaturePayload(manifestCID, fileID string) []byte {
+	payload := make([]byte, 0, len(manifestCID)+len(fileID)+18)
+	payload = append(payload, []byte("SDN-DPM-PNM\x00")...)
+	payload = append(payload, fileID...)
+	payload = append(payload, 0)
+	payload = append(payload, manifestCID...)
+	return payload
+}
+
+// VerifyDatasetPublicationReplay verifies a signed PNM/DPM publication, resolves
+// the referenced immutable bytes, replays the canonical FlatSQL query, and
+// byte-compares the advertised result shard.
+func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions) (*DatasetPublicationReplayResult, error) {
+	if store == nil {
+		return nil, fmt.Errorf("store is required")
+	}
+	if len(opts.PNM) == 0 {
+		return nil, fmt.Errorf("PNM bytes are required")
+	}
+	if len(opts.ProviderPublicKey) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("ed25519 provider public key is required")
+	}
+	if opts.FetchByCID == nil {
+		return nil, fmt.Errorf("CID fetcher is required")
+	}
+	if strings.TrimSpace(opts.WorkDir) == "" {
+		return nil, fmt.Errorf("work dir is required")
+	}
+	if !PNM.SizePrefixedPNMBufferHasIdentifier(opts.PNM) {
+		return nil, fmt.Errorf("PNM buffer missing identifier")
+	}
+
+	pnm := PNM.GetSizePrefixedRootAsPNM(opts.PNM, 0)
+	manifestCID := strings.TrimSpace(string(pnm.CID()))
+	fileID := strings.TrimSpace(string(pnm.FILE_ID()))
+	if manifestCID == "" {
+		return nil, fmt.Errorf("PNM missing manifest CID")
+	}
+	if fileID != "DPM" {
+		return nil, fmt.Errorf("PNM FILE_ID = %q, want DPM", fileID)
+	}
+	if sigType := strings.TrimSpace(string(pnm.SIGNATURE_TYPE())); sigType != "Ed25519" {
+		return nil, fmt.Errorf("PNM SIGNATURE_TYPE = %q, want Ed25519", sigType)
+	}
+	pnmSignature, err := hex.DecodeString(strings.TrimSpace(string(pnm.SIGNATURE())))
+	if err != nil {
+		return nil, fmt.Errorf("decode PNM signature: %w", err)
+	}
+	if !ed25519.Verify(opts.ProviderPublicKey, datasetPublicationPNMSignaturePayload(manifestCID, fileID), pnmSignature) {
+		return nil, fmt.Errorf("invalid PNM signature")
+	}
+
+	manifestBytes, err := opts.FetchByCID(ctx, manifestCID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch manifest CID %s: %w", manifestCID, err)
+	}
+	if err := verifyBytesCIDAndHash("manifest", manifestBytes, manifestCID, ""); err != nil {
+		return nil, err
+	}
+	manifest, unsignedManifest, err := parseAndVerifyDatasetManifest(manifestBytes, opts.ProviderPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	_ = unsignedManifest
+
+	assetMap, err := manifestAssetMap(manifest)
+	if err != nil {
+		return nil, err
+	}
+	shardAsset, ok := assetMap["DATA_SHARD"]
+	if !ok {
+		return nil, fmt.Errorf("DPM missing DATA_SHARD asset")
+	}
+	indexAsset, ok := assetMap["QUERY_INDEX"]
+	if !ok {
+		return nil, fmt.Errorf("DPM missing QUERY_INDEX asset")
+	}
+	shardBytes, err := opts.FetchByCID(ctx, shardAsset.CID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, err)
+	}
+	if err := verifyBytesCIDAndHash("shard", shardBytes, shardAsset.CID, shardAsset.SHA256); err != nil {
+		return nil, err
+	}
+	indexBytes, err := opts.FetchByCID(ctx, indexAsset.CID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, err)
+	}
+	if err := verifyBytesCIDAndHash("index", indexBytes, indexAsset.CID, indexAsset.SHA256); err != nil {
+		return nil, err
+	}
+
+	query := manifest.QUERY(nil)
+	if query == nil {
+		return nil, fmt.Errorf("DPM missing query binding")
+	}
+	filter, err := indexedRecordQueryFromCanonicalJSON(query.CANONICAL_QUERY())
+	if err != nil {
+		return nil, fmt.Errorf("parse canonical query: %w", err)
+	}
+	replayed, err := store.ExportDatasetWindow(opts.WorkDir, filter)
+	if err != nil {
+		return nil, fmt.Errorf("replay export: %w", err)
+	}
+	replayedBytes, err := os.ReadFile(replayed.ShardPath)
+	if err != nil {
+		return nil, fmt.Errorf("read replay shard: %w", err)
+	}
+	if !bytes.Equal(replayedBytes, shardBytes) {
+		return nil, fmt.Errorf("replayed result bytes do not match advertised shard")
+	}
+	if replayed.ResultSHA256 != string(query.RESULT_SHA256()) {
+		return nil, fmt.Errorf("replayed result hash %s does not match DPM %s", replayed.ResultSHA256, string(query.RESULT_SHA256()))
+	}
+	return &DatasetPublicationReplayResult{
+		ManifestCID:  manifestCID,
+		ShardCID:     shardAsset.CID,
+		IndexCID:     indexAsset.CID,
+		SchemaName:   replayed.SchemaName,
+		RecordCount:  replayed.RecordCount,
+		QuerySHA256:  replayed.QuerySHA256,
+		ResultSHA256: replayed.ResultSHA256,
+	}, nil
 }
 
 // BuildSignedDatasetPublicationManifest writes a signed SDS DPM manifest that
@@ -328,6 +480,208 @@ func queryWindowFromCanonical(canonical string) (string, string) {
 	// fields are optional DPM conveniences, so leave them empty here rather than
 	// parsing the canonical document a second time.
 	return "", ""
+}
+
+type publicationAsset struct {
+	Kind   string
+	CID    string
+	File   string
+	SHA256 string
+	Bytes  uint64
+	Schema string
+}
+
+func parseAndVerifyDatasetManifest(manifestBytes []byte, providerPublicKey ed25519.PublicKey) (*dpm.DPM, []byte, error) {
+	if !dpm.DPMBufferHasIdentifier(manifestBytes) {
+		return nil, nil, fmt.Errorf("DPM buffer missing identifier")
+	}
+	manifest := dpm.GetRootAsDPM(manifestBytes, 0)
+	if sigType := strings.TrimSpace(string(manifest.SIGNATURE_TYPE())); sigType != "Ed25519" {
+		return nil, nil, fmt.Errorf("DPM SIGNATURE_TYPE = %q, want Ed25519", sigType)
+	}
+	signature := manifest.PROVIDER_SIGNATUREBytes()
+	if len(signature) != ed25519.SignatureSize {
+		return nil, nil, fmt.Errorf("DPM provider signature length = %d, want %d", len(signature), ed25519.SignatureSize)
+	}
+	unsigned, err := rebuildUnsignedDatasetManifest(manifest)
+	if err != nil {
+		return nil, nil, err
+	}
+	payloadHash := sha256.Sum256(unsigned)
+	if !ed25519.Verify(providerPublicKey, payloadHash[:], signature) {
+		return nil, nil, fmt.Errorf("invalid DPM provider signature")
+	}
+	return manifest, unsigned, nil
+}
+
+func rebuildUnsignedDatasetManifest(manifest *dpm.DPM) ([]byte, error) {
+	query := manifest.QUERY(nil)
+	if query == nil {
+		return nil, fmt.Errorf("DPM missing query binding")
+	}
+	assetMap, err := manifestAssetMap(manifest)
+	if err != nil {
+		return nil, err
+	}
+	shard, ok := assetMap["DATA_SHARD"]
+	if !ok {
+		return nil, fmt.Errorf("DPM missing DATA_SHARD asset")
+	}
+	index, ok := assetMap["QUERY_INDEX"]
+	if !ok {
+		return nil, fmt.Errorf("DPM missing QUERY_INDEX asset")
+	}
+	publishedAt, err := time.Parse(time.RFC3339Nano, string(manifest.PUBLISH_TIMESTAMP()))
+	if err != nil {
+		return nil, fmt.Errorf("parse DPM publish timestamp: %w", err)
+	}
+	sourceBatches := make([]DatasetExportSourceBatch, 0, manifest.SOURCESLength())
+	for i := 0; i < manifest.SOURCESLength(); i++ {
+		var source dpm.DPMSourceBatch
+		if !manifest.SOURCES(&source, i) {
+			continue
+		}
+		sourceBatches = append(sourceBatches, DatasetExportSourceBatch{
+			ProviderID:       string(manifest.PROVIDER_PEER_ID()),
+			SourceName:       string(source.SOURCE_NAME()),
+			SourceURL:        string(source.SOURCE_URL()),
+			SourceSHA256:     string(source.SOURCE_SHA256()),
+			HTTPETag:         string(source.HTTP_ETAG()),
+			HTTPLastModified: string(source.HTTP_LAST_MODIFIED()),
+			RetrievedAt:      string(source.RETRIEVED_AT()),
+			ParserVersion:    string(source.PARSER_VERSION()),
+			RecordCount:      source.RECORD_COUNT(),
+		})
+	}
+	export := &DatasetExport{
+		SchemaName:     shard.Schema,
+		CanonicalQuery: string(query.CANONICAL_QUERY()),
+		QuerySHA256:    string(query.QUERY_SHA256()),
+		ResultSHA256:   string(query.RESULT_SHA256()),
+		ShardPath:      shard.File,
+		ShardSHA256:    shard.SHA256,
+		ShardCID:       shard.CID,
+		ShardBytes:     int64(shard.Bytes),
+		IndexPath:      index.File,
+		IndexSHA256:    index.SHA256,
+		IndexCID:       index.CID,
+		IndexBytes:     int64(index.Bytes),
+		SourceBatches:  sourceBatches,
+	}
+	if enc := manifest.ENCRYPTION(nil); enc != nil {
+		export.ContentKeyID = string(enc.CONTENT_KEY_ID())
+		export.EncryptionPolicy = string(enc.POLICY_ID())
+	}
+	return buildDatasetPublicationManifestBytes(DatasetPublicationManifestOptions{
+		Export:          export,
+		DatasetID:       string(manifest.DATASET_ID()),
+		UpdateID:        string(manifest.UPDATE_ID()),
+		ProviderPeerID:  string(manifest.PROVIDER_PEER_ID()),
+		ProviderEPMCID:  string(manifest.PROVIDER_EPM_CID()),
+		PublishedAt:     publishedAt,
+		SchemaHash:      shardSchemaHash(manifest, shard.Kind),
+		QueryEngine:     string(query.QUERY_ENGINE()),
+		QueryEngineVers: string(query.QUERY_ENGINE_VERSION()),
+	}, nil, "")
+}
+
+func shardSchemaHash(manifest *dpm.DPM, kind string) string {
+	for i := 0; i < manifest.ASSETSLength(); i++ {
+		var asset dpm.DPMAsset
+		if manifest.ASSETS(&asset, i) && asset.ASSET_KIND().String() == kind {
+			return string(asset.SCHEMA_HASH())
+		}
+	}
+	return ""
+}
+
+func manifestAssetMap(manifest *dpm.DPM) (map[string]publicationAsset, error) {
+	assets := make(map[string]publicationAsset, manifest.ASSETSLength())
+	for i := 0; i < manifest.ASSETSLength(); i++ {
+		var asset dpm.DPMAsset
+		if !manifest.ASSETS(&asset, i) {
+			continue
+		}
+		kind := asset.ASSET_KIND().String()
+		cidValue := strings.TrimSpace(string(asset.CID()))
+		if cidValue == "" {
+			return nil, fmt.Errorf("DPM %s asset missing CID", kind)
+		}
+		assets[kind] = publicationAsset{
+			Kind:   kind,
+			CID:    cidValue,
+			File:   strings.TrimSpace(string(asset.FILE_NAME())),
+			SHA256: strings.TrimSpace(string(asset.BYTE_SHA256())),
+			Bytes:  asset.BYTE_LENGTH(),
+			Schema: strings.TrimSpace(string(asset.SCHEMA_NAME())),
+		}
+	}
+	return assets, nil
+}
+
+func verifyBytesCIDAndHash(label string, data []byte, expectedCID, expectedSHA string) error {
+	localCID, err := cidV1RawSHA256(data)
+	if err != nil {
+		return fmt.Errorf("compute %s CID: %w", label, err)
+	}
+	if localCID != expectedCID {
+		return fmt.Errorf("%s CID %s does not match expected CID %s", label, localCID, expectedCID)
+	}
+	if expectedSHA != "" && sha256Hex(data) != expectedSHA {
+		return fmt.Errorf("%s SHA-256 does not match expected hash", label)
+	}
+	return nil
+}
+
+func indexedRecordQueryFromCanonicalJSON(data []byte) (IndexedRecordQuery, error) {
+	var payload struct {
+		SchemaName         string  `json:"schemaName"`
+		Day                string  `json:"day,omitempty"`
+		NoradCatID         *uint32 `json:"noradCatId,omitempty"`
+		EntityID           string  `json:"entityId,omitempty"`
+		ObjectType         string  `json:"objectType,omitempty"`
+		OpsStatusCode      string  `json:"opsStatusCode,omitempty"`
+		ActivePayloads     bool    `json:"activePayloads,omitempty"`
+		CAReadyResidentSet bool    `json:"caReadyResidentSet,omitempty"`
+		From               string  `json:"from,omitempty"`
+		To                 string  `json:"to,omitempty"`
+		ProviderID         string  `json:"providerId,omitempty"`
+		SourceName         string  `json:"sourceName,omitempty"`
+		BatchID            string  `json:"batchId,omitempty"`
+		Limit              int     `json:"limit,omitempty"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return IndexedRecordQuery{}, err
+	}
+	filter := IndexedRecordQuery{
+		SchemaName:         payload.SchemaName,
+		Day:                payload.Day,
+		NoradCatID:         payload.NoradCatID,
+		EntityID:           payload.EntityID,
+		ObjectType:         payload.ObjectType,
+		OpsStatusCode:      payload.OpsStatusCode,
+		ActivePayloads:     payload.ActivePayloads,
+		CAReadyResidentSet: payload.CAReadyResidentSet,
+		ProviderID:         payload.ProviderID,
+		SourceName:         payload.SourceName,
+		BatchID:            payload.BatchID,
+		Limit:              payload.Limit,
+	}
+	if payload.From != "" {
+		from, err := time.Parse(time.RFC3339Nano, payload.From)
+		if err != nil {
+			return IndexedRecordQuery{}, fmt.Errorf("parse from: %w", err)
+		}
+		filter.From = &from
+	}
+	if payload.To != "" {
+		to, err := time.Parse(time.RFC3339Nano, payload.To)
+		if err != nil {
+			return IndexedRecordQuery{}, fmt.Errorf("parse to: %w", err)
+		}
+		filter.To = &to
+	}
+	return filter, nil
 }
 
 func readManifestBytes(path string) ([]byte, error) {
