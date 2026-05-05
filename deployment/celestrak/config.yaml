@@ -1,0 +1,48 @@
+mode: full
+
+network:
+  listen:
+    - /ip4/0.0.0.0/tcp/4001
+    - /ip4/0.0.0.0/tcp/8080/ws
+    - /ip4/0.0.0.0/udp/4001/quic-v1
+  bootstrap:
+    - /ip4/104.131.11.220/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
+    - /ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
+  max_connections: 1000
+  enable_relay: true
+
+storage:
+  path: /var/lib/spacedatanetwork/data
+  max_size: 35GB
+  gc_interval: 1h
+
+schemas:
+  validate: true
+  strict: true
+
+admin:
+  enabled: true
+  listen_addr: 127.0.0.1:5001
+  require_auth: false
+  session_expiry: 24h
+  totp_required: false
+  tls_enabled: false
+  frontend_path: /var/lib/spacedatanetwork/frontend
+  admin_ui_path: /opt/spacedatanetwork/admin-ui
+  webui_path: /opt/spacedatanetwork/webui
+  ipfs_api_url: http://127.0.0.1:5002
+  ipfs_gateway_url: http://127.0.0.1:8081
+
+setup:
+  token_expiry: 10m
+  data_path: /var/lib/spacedatanetwork/data
+
+tor:
+  enabled: false
+
+peers:
+  enable_dht: true
+  enable_mdns: false
+  trusted_peers:
+    - /ip4/104.131.11.220/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
+    - /ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45

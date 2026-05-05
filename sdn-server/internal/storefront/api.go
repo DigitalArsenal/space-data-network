@@ -275,6 +275,12 @@ func (h *APIHandler) handlePurchaseByID(w http.ResponseWriter, r *http.Request) 
 		case "pay-fiat":
 			h.handlePayWithFiat(w, r, requestID)
 			return
+		case "manual-dev-paid":
+			h.handleManualDevPaid(w, r, requestID)
+			return
+		case "audit":
+			h.handlePurchaseAudit(w, r, requestID)
+			return
 		}
 	}
 
@@ -289,6 +295,52 @@ func (h *APIHandler) handlePurchaseByID(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, purchase)
+}
+
+func (h *APIHandler) handleManualDevPaid(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	var body ManualDevPaymentConfirmation
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	grant, err := h.service.CompleteManualDevPayment(r.Context(), requestID, body)
+	if err != nil {
+		http.Error(w, "failed to complete manual/dev payment", http.StatusInternalServerError)
+		return
+	}
+	purchase, err := h.service.store.GetPurchaseRequest(requestID)
+	if err != nil {
+		http.Error(w, "failed to load purchase", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"mode":     "manual-dev",
+		"purchase": purchase,
+		"grant":    grant,
+	})
+}
+
+func (h *APIHandler) handlePurchaseAudit(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	events, err := h.service.store.GetPaymentAuditEvents(requestID)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"events": events,
+	})
 }
 
 func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request, requestID string) {
@@ -360,6 +412,12 @@ func (h *APIHandler) handlePayWithCredits(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
+	}
+	if err := h.service.store.UpdatePurchaseGrant(requestID, grant.GrantID); err != nil {
+		log.Warnf("Failed to attach credits grant to purchase %s: %v", requestID, err)
+	}
+	if err := h.service.recordPaymentAudit(requestID, PaymentAuditGrantIssued, purchase.ProviderPeerID, grant.GrantID, "Grant issued after credits payment", PurchaseStatusCompleted); err != nil {
+		log.Warnf("Failed to record credits grant audit event for %s: %v", requestID, err)
 	}
 
 	writeJSON(w, http.StatusOK, grant)

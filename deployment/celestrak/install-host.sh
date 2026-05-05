@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE_ROOT="${SOURCE_ROOT:-/opt/spacedatanetwork/source}"
+ASSET_DIR="${ASSET_DIR:-${SOURCE_ROOT}/deployment/celestrak}"
+if [ ! -f "${ASSET_DIR}/config.yaml" ] && [ -f "${SOURCE_ROOT}/celestrak/config.yaml" ]; then
+  ASSET_DIR="${SOURCE_ROOT}/celestrak"
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "run as root" >&2
+  exit 1
+fi
+
+if [ ! -f "${ASSET_DIR}/config.yaml" ]; then
+  echo "missing ${ASSET_DIR}/config.yaml" >&2
+  exit 1
+fi
+
+if ! id -u sdn >/dev/null 2>&1; then
+  useradd --system --home /var/lib/spacedatanetwork --shell /usr/sbin/nologin sdn
+fi
+if ! id -u ipfs >/dev/null 2>&1; then
+  useradd --system --home /var/lib/kubo --shell /usr/sbin/nologin ipfs
+fi
+
+mkdir -p \
+  /opt/spacedatanetwork/bin \
+  /opt/spacedatanetwork/admin-ui \
+  /opt/spacedatanetwork/webui \
+  /etc/spacedatanetwork \
+  /var/lib/spacedatanetwork/data \
+  /var/lib/spacedatanetwork/raw \
+  /var/lib/spacedatanetwork/frontend \
+  /var/lib/kubo
+
+install -m 0644 "${ASSET_DIR}/config.yaml" /etc/spacedatanetwork/config.yaml
+install -m 0644 "${ASSET_DIR}/kubo.service" /etc/systemd/system/kubo.service
+install -m 0644 "${SOURCE_ROOT}/sdn-server/deploy/spacedatanetwork.service" /etc/systemd/system/spacedatanetwork.service
+install -m 0644 "${ASSET_DIR}/spacedatanetwork-ingest.service" /etc/systemd/system/spacedatanetwork-ingest.service
+
+if [ -d "${SOURCE_ROOT}/sdn-js/ui/dist" ]; then
+  rsync -a --delete "${SOURCE_ROOT}/sdn-js/ui/dist/" /opt/spacedatanetwork/admin-ui/
+elif [ -d "${SOURCE_ROOT}/dist" ]; then
+  rsync -a --delete "${SOURCE_ROOT}/dist/" /opt/spacedatanetwork/admin-ui/
+fi
+if [ -d "${SOURCE_ROOT}/webui/build" ]; then
+  rsync -a --delete "${SOURCE_ROOT}/webui/build/" /opt/spacedatanetwork/webui/
+elif [ -d "${SOURCE_ROOT}/build" ]; then
+  rsync -a --delete "${SOURCE_ROOT}/build/" /opt/spacedatanetwork/webui/
+fi
+
+chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork
+chown -R ipfs:ipfs /var/lib/kubo
+
+if command -v ipfs >/dev/null 2>&1 && [ ! -f /var/lib/kubo/config ]; then
+  runuser -u ipfs -- env IPFS_PATH=/var/lib/kubo ipfs init --profile=server
+  runuser -u ipfs -- env IPFS_PATH=/var/lib/kubo ipfs config Addresses.API /ip4/127.0.0.1/tcp/5002
+  runuser -u ipfs -- env IPFS_PATH=/var/lib/kubo ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/8081
+  runuser -u ipfs -- env IPFS_PATH=/var/lib/kubo ipfs config --json Addresses.Swarm '["/ip4/0.0.0.0/tcp/4002","/ip4/0.0.0.0/udp/4002/quic-v1"]'
+fi
+
+systemctl daemon-reload
+systemctl enable kubo spacedatanetwork spacedatanetwork-ingest

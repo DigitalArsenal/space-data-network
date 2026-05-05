@@ -218,6 +218,7 @@ function PluginListingCard({ result }) {
       <KeyLine label='Pricing' value={formatPricing(listing)} />
       <KeyLine label='Payments' value={(listing.acceptedPaymentMethods ?? []).join(', ') || 'not specified'} />
       <KeyLine label='Scope' value={listing.requiredScope || 'not specified'} />
+      <ProtectedDeliveryDetails listing={listing} />
       <ChipList values={result.standardsUsed} empty='No SDS schemas advertised.' />
     </article>
   )
@@ -241,8 +242,23 @@ function DataListingCard({ listing }) {
       <KeyLine label='Payments' value={(listing.acceptedPaymentMethods ?? []).join(', ') || 'not specified'} />
       <KeyLine label='Access' value={listing.accessType || 'not specified'} />
       <KeyLine label='Sample CID' value={listing.sampleCid || 'not specified'} />
+      <ProtectedDeliveryDetails listing={listing} />
       <ChipList values={listing.standardsUsed} empty='No SDS data types advertised.' />
     </article>
+  )
+}
+
+function ProtectedDeliveryDetails({ listing }) {
+  if (!listing.encryptionRequired && !listing.protectedDelivery) {
+    return null
+  }
+  const protectedDelivery = listing.protectedDelivery || {}
+  return (
+    <div className='mt3 pt2 bt b--black-10'>
+      <KeyLine label='Encrypted CID' value={protectedDelivery.encryptedCid || listing.sampleCid || 'not specified'} />
+      <KeyLine label='License module' value={protectedDelivery.licenseModuleId || 'licensing/core'} />
+      <KeyLine label='Manifest CID' value={protectedDelivery.manifestCid || 'not specified'} />
+    </div>
   )
 }
 

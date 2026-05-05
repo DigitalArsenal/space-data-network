@@ -1,0 +1,28 @@
+[Unit]
+Description=Kubo IPFS node for SDN CelesTrak provider
+Documentation=https://docs.ipfs.tech/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ipfs
+Group=ipfs
+Environment=IPFS_PATH=/var/lib/kubo
+ExecStart=/usr/local/bin/ipfs daemon --migrate=true --enable-gc --agent-version-suffix=sdn-celestrak
+Restart=always
+RestartSec=10
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/kubo
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kubo
+
+[Install]
+WantedBy=multi-user.target

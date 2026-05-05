@@ -14,6 +14,29 @@ const (
 	AccessTypeQuery
 )
 
+// ListingKind distinguishes protected data-stream listings from protected WASM module listings.
+type ListingKind string
+
+const (
+	ListingKindDataStream ListingKind = "data_stream"
+	ListingKindWASMModule ListingKind = "wasm_module"
+)
+
+// ProtectedDelivery records the immutable encrypted artifact/window metadata
+// that a grant entitles the buyer to unwrap through the existing licensing flow.
+type ProtectedDelivery struct {
+	EncryptedCID     string   `json:"encrypted_cid"`
+	ManifestCID      string   `json:"manifest_cid"`
+	ContentHash      string   `json:"content_hash"`
+	ContentKeyID     string   `json:"content_key_id"`
+	LicenseModuleID  string   `json:"license_module_id"`
+	ModuleID         string   `json:"module_id"`
+	ModuleVersion    string   `json:"module_version"`
+	RequiredScopes   []string `json:"required_scopes"`
+	GrantScope       string   `json:"grant_scope"`
+	DeliveryProtocol string   `json:"delivery_protocol"`
+}
+
 // PaymentMethod represents supported payment methods
 type PaymentMethod int
 
@@ -24,6 +47,13 @@ const (
 	PaymentMethodSDNCredits
 	PaymentMethodFiatStripe
 	PaymentMethodFree
+)
+
+const (
+	PaymentAuditPurchaseCreated  = "purchase_created"
+	PaymentAuditPaymentDetected  = "payment_detected"
+	PaymentAuditPaymentConfirmed = "payment_confirmed"
+	PaymentAuditGrantIssued      = "grant_issued"
 )
 
 // GrantStatus represents the status of an access grant
@@ -114,6 +144,7 @@ type ProviderReputation struct {
 // Listing represents a storefront listing (STF)
 type Listing struct {
 	ListingID          string             `json:"listing_id"`
+	ListingKind        ListingKind        `json:"listing_kind"`
 	ProviderPeerID     string             `json:"provider_peer_id"`
 	ProviderEPMCID     string             `json:"provider_epm_cid"`
 	Title              string             `json:"title"`
@@ -126,6 +157,7 @@ type Listing struct {
 	AccessType         AccessType         `json:"access_type"`
 	EncryptionRequired bool               `json:"encryption_required"`
 	DeliveryMethods    []string           `json:"delivery_methods"`
+	ProtectedDelivery  ProtectedDelivery  `json:"protected_delivery"`
 	Pricing            []PricingTier      `json:"pricing"`
 	AcceptedPayments   []PaymentMethod    `json:"accepted_payments"`
 	Reputation         ProviderReputation `json:"reputation"`
@@ -205,6 +237,27 @@ type PurchaseRequest struct {
 	WebhookURL              string         `json:"webhook_url"`
 	BuyerSignature          []byte         `json:"buyer_signature"`
 	ProviderSignature       []byte         `json:"provider_signature"`
+}
+
+// ManualDevPaymentConfirmation records an explicit out-of-band paid state for
+// local/dev operations when production checkout providers are not configured.
+type ManualDevPaymentConfirmation struct {
+	OperatorPeerID string    `json:"operator_peer_id"`
+	Reference      string    `json:"reference"`
+	Note           string    `json:"note"`
+	PaidAt         time.Time `json:"paid_at"`
+}
+
+// PaymentAuditEvent captures payment and grant transitions for a purchase.
+type PaymentAuditEvent struct {
+	EventID        string         `json:"event_id"`
+	RequestID      string         `json:"request_id"`
+	EventType      string         `json:"event_type"`
+	ActorPeerID    string         `json:"actor_peer_id"`
+	Reference      string         `json:"reference"`
+	Message        string         `json:"message"`
+	PurchaseStatus PurchaseStatus `json:"purchase_status"`
+	CreatedAt      time.Time      `json:"created_at"`
 }
 
 // DataQualityMetrics represents data quality assessment

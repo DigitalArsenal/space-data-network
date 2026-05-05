@@ -370,6 +370,158 @@ func TestPurchaseFlow(t *testing.T) {
 	}
 }
 
+func TestProtectedWASMListingRoundTrips(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	listing := testListing()
+	listing.Title = "Protected OD WASM"
+	listing.DataTypes = []string{"WASM", "OMM"}
+	listing.ListingKind = ListingKindWASMModule
+	listing.AccessType = AccessTypeSubscription
+	listing.EncryptionRequired = true
+	listing.DeliveryMethods = []string{"IPFSPin"}
+	listing.ProtectedDelivery = ProtectedDelivery{
+		EncryptedCID:     "bafybeiencryptedwasm",
+		ManifestCID:      "bafybeimanifest",
+		ContentHash:      "sha256:artifact-hash",
+		ContentKeyID:     "ck-2026-05",
+		LicenseModuleID:  "licensing/core",
+		ModuleID:         "com.space-data-network.protected-od",
+		ModuleVersion:    "1.2.3",
+		RequiredScopes:   []string{"module:invoke", "dataset:omm:read"},
+		GrantScope:       "module:invoke:protected-od",
+		DeliveryProtocol: "/space-data-network/module-delivery/1.0.0",
+	}
+
+	if err := svc.CreateListing(ctx, listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+
+	got, err := svc.GetListing(ctx, listing.ListingID)
+	if err != nil {
+		t.Fatalf("GetListing failed: %v", err)
+	}
+	if got == nil {
+		t.Fatal("listing should not be nil")
+	}
+	if got.ListingKind != ListingKindWASMModule {
+		t.Fatalf("ListingKind = %q, want %q", got.ListingKind, ListingKindWASMModule)
+	}
+	if got.ProtectedDelivery.EncryptedCID != "bafybeiencryptedwasm" {
+		t.Fatalf("EncryptedCID = %q", got.ProtectedDelivery.EncryptedCID)
+	}
+	if got.ProtectedDelivery.LicenseModuleID != "licensing/core" {
+		t.Fatalf("LicenseModuleID = %q", got.ProtectedDelivery.LicenseModuleID)
+	}
+	if len(got.ProtectedDelivery.RequiredScopes) != 2 {
+		t.Fatalf("RequiredScopes len = %d, want 2", len(got.ProtectedDelivery.RequiredScopes))
+	}
+}
+
+func TestIssueGrantRejectsPendingPaidPurchase(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	listing := testListing()
+	if err := svc.CreateListing(ctx, listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+
+	req := &PurchaseRequest{
+		ListingID:     listing.ListingID,
+		TierName:      "Basic",
+		BuyerPeerID:   "buyer-peer-123",
+		PaymentMethod: PaymentMethodFiatStripe,
+	}
+	if err := svc.CreatePurchaseRequest(ctx, req); err != nil {
+		t.Fatalf("CreatePurchaseRequest failed: %v", err)
+	}
+
+	if _, err := svc.IssueGrant(ctx, req.RequestID); err == nil {
+		t.Fatal("IssueGrant should reject pending paid purchases")
+	}
+}
+
+func TestManualDevPaymentIssuesGrantAndAudit(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	listing := testListing()
+	listing.ListingKind = ListingKindDataStream
+	listing.AccessType = AccessTypeStreaming
+	listing.EncryptionRequired = true
+	listing.ProtectedDelivery = ProtectedDelivery{
+		EncryptedCID:     "bafybeistreamwindow",
+		ContentHash:      "sha256:stream-window",
+		ContentKeyID:     "stream-window-2026-05-05T00",
+		LicenseModuleID:  "licensing/core",
+		RequiredScopes:   []string{"stream:read:omm"},
+		GrantScope:       "stream:read:omm",
+		DeliveryProtocol: "/space-data-network/module-delivery/1.0.0",
+	}
+	if err := svc.CreateListing(ctx, listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+
+	req := &PurchaseRequest{
+		ListingID:               listing.ListingID,
+		TierName:                "Basic",
+		BuyerPeerID:             "buyer-peer-123",
+		BuyerEncryptionPubkey:   []byte("buyer-public-key"),
+		KeyAlgorithm:            "x25519",
+		PaymentMethod:           PaymentMethodFiatStripe,
+		PreferredDeliveryMethod: "PubSubStream",
+	}
+	if err := svc.CreatePurchaseRequest(ctx, req); err != nil {
+		t.Fatalf("CreatePurchaseRequest failed: %v", err)
+	}
+
+	grant, err := svc.CompleteManualDevPayment(ctx, req.RequestID, ManualDevPaymentConfirmation{
+		OperatorPeerID: "provider-admin-peer",
+		Reference:      "manual-dev-receipt-1",
+		Note:           "dev checkout verified out of band",
+	})
+	if err != nil {
+		t.Fatalf("CompleteManualDevPayment failed: %v", err)
+	}
+
+	if grant.Status != GrantStatusActive {
+		t.Fatalf("Grant status = %d, want active", grant.Status)
+	}
+	if grant.BuyerPeerID != req.BuyerPeerID {
+		t.Fatalf("Grant buyer = %q, want %q", grant.BuyerPeerID, req.BuyerPeerID)
+	}
+	if grant.DeliveryTopic != "/sdn/data/"+listing.ListingID+"/"+req.BuyerPeerID {
+		t.Fatalf("DeliveryTopic = %q", grant.DeliveryTopic)
+	}
+
+	purchase, err := svc.store.GetPurchaseRequest(req.RequestID)
+	if err != nil {
+		t.Fatalf("GetPurchaseRequest failed: %v", err)
+	}
+	if purchase.Status != PurchaseStatusCompleted {
+		t.Fatalf("Purchase status = %d, want completed", purchase.Status)
+	}
+	if purchase.GrantID != grant.GrantID {
+		t.Fatalf("Purchase grant = %q, want %q", purchase.GrantID, grant.GrantID)
+	}
+	if purchase.PaymentTxHash != "manual-dev:manual-dev-receipt-1" {
+		t.Fatalf("PaymentTxHash = %q", purchase.PaymentTxHash)
+	}
+
+	events, err := svc.store.GetPaymentAuditEvents(req.RequestID)
+	if err != nil {
+		t.Fatalf("GetPaymentAuditEvents failed: %v", err)
+	}
+	if len(events) < 3 {
+		t.Fatalf("audit events len = %d, want at least 3", len(events))
+	}
+	if events[len(events)-1].EventType != PaymentAuditGrantIssued {
+		t.Fatalf("last audit event = %q, want %q", events[len(events)-1].EventType, PaymentAuditGrantIssued)
+	}
+}
+
 func TestAccessVerification(t *testing.T) {
 	svc, _ := newTestService(t)
 	ctx := context.Background()

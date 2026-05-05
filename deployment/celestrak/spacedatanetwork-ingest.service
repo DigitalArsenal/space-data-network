@@ -1,7 +1,7 @@
 [Unit]
-Description=Space Data Network Full Node
-Documentation=https://github.com/spacedatanetwork/sdn-server
-After=network-online.target
+Description=Space Data Network CelesTrak Ingestion Worker
+Documentation=https://github.com/DigitalArsenal/space-data-network
+After=network-online.target spacedatanetwork.service
 Wants=network-online.target
 StartLimitIntervalSec=60
 StartLimitBurst=3
@@ -11,28 +11,31 @@ Type=simple
 User=sdn
 Group=sdn
 
-# Environment configuration
-Environment=SDN_MODE=full
 Environment=SDN_CONFIG=/etc/spacedatanetwork/config.yaml
-Environment=SDN_DATA_DIR=/var/lib/spacedatanetwork
+Environment=SDN_STORAGE_PATH=/var/lib/spacedatanetwork/data
+Environment=SDN_RAW_PATH=/var/lib/spacedatanetwork/raw
+Environment=SPACETRACK_IDENTITY=
+Environment=SPACETRACK_PASSWORD=
 Environment=WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge
 
-# Working directory
 WorkingDirectory=/opt/spacedatanetwork
 
-# Main executable
-ExecStart=/opt/spacedatanetwork/bin/spacedatanetwork daemon \
-    --config ${SDN_CONFIG}
+ExecStart=/opt/spacedatanetwork/bin/spacedatanetwork \
+    --config ${SDN_CONFIG} \
+    ingest \
+    --storage-path ${SDN_STORAGE_PATH} \
+    --raw-path ${SDN_RAW_PATH} \
+    --celestrak-interval 3h \
+    --satcat-interval 24h \
+    --spacetrack-enabled=false \
+    --http-timeout 120s
 
-# Restart policy
 Restart=always
 RestartSec=10
 
-# Resource limits
 LimitNOFILE=65536
 LimitNPROC=4096
 
-# Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -41,21 +44,14 @@ PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
-
-# Read-write paths for data storage
 ReadWritePaths=/var/lib/spacedatanetwork
 
-# Allow binding to privileged ports if needed
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-
-# Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=spacedatanetwork
+SyslogIdentifier=spacedatanetwork-ingest
 
 [Install]
 WantedBy=multi-user.target
