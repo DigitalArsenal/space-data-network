@@ -2,7 +2,6 @@
 const { screen, BrowserWindow, ipcMain, app, session } = require('electron')
 const { join } = require('path')
 const { URL } = require('url')
-const serve = require('electron-serve')
 const i18n = require('i18next')
 const openExternal = require('./open-external')
 const logger = require('../common/logger')
@@ -18,8 +17,8 @@ const Countly = require('countly-sdk-nodejs')
 const { analyticsKeys } = require('../analytics/keys')
 const ipcMainEvents = require('../common/ipc-main-events')
 const getCtx = require('../context')
-// Use local webui build from the webui/ directory at project root
-serve({ scheme: 'webui', directory: join(__dirname, '../../../webui/build') })
+const registerStaticScheme = require('../static-scheme')
+registerStaticScheme({ scheme: 'webui', directory: join(__dirname, '../../assets/webui') })
 
 /**
  *
@@ -30,7 +29,7 @@ const createWindow = () => {
   const dimensions = screen.getPrimaryDisplay()
 
   const window = new BrowserWindow({
-    title: 'IPFS Desktop',
+    title: 'Space Data Network',
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: 'hiddenInset',
@@ -170,7 +169,7 @@ module.exports = async function () {
   }
 
   const getIpfsd = ctx.getFn('getIpfsd')
-  ipcMain.on(ipcMainEvents.IPFSD, async (status) => {
+  async function syncIpfsApiAddress () {
     const ipfsd = await getIpfsd(true)
 
     if (ipfsd && ipfsd.apiAddr !== apiAddress) {
@@ -178,8 +177,13 @@ module.exports = async function () {
       url.searchParams.set('api', apiAddress.toString())
       updateLanguage()
       window.loadURL(url.toString())
+      return true
     }
-  })
+
+    return false
+  }
+
+  ipcMain.on(ipcMainEvents.IPFSD, syncIpfsApiAddress)
 
   // Set user agent
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -194,6 +198,13 @@ module.exports = async function () {
     })
 
     updateLanguage()
-    window.loadURL(url.toString())
+    ;(async () => {
+      const apiAddressSynced = await syncIpfsApiAddress()
+      if (!apiAddressSynced) window.loadURL(url.toString())
+    })().catch((err) => {
+      logger.error('[web ui] failed to sync Kubo RPC address before initial load')
+      logger.error(err)
+      window.loadURL(url.toString())
+    })
   }))
 }

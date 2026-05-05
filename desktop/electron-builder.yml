@@ -1,4 +1,4 @@
-appId: io.ipfs.desktop
+appId: org.spacedatanetwork.desktop
 generateUpdatesFilesForAllChannels: true
 
 files:
@@ -73,13 +73,13 @@ portable:
 
 linux:
   artifactName: ${name}-${version}-${os}-${arch}.${ext}
-  executableName: ipfs-desktop
+  executableName: space-data-network
   executableArgs:
     - --no-sandbox
-  icon: ipfs-desktop
+  icon: space-data-network
   category: Network;FileTransfer;P2P
-  synopsis: A desktop client for IPFS
-  maintainer: gui@ipfs.tech
+  synopsis: Space Data Network desktop client
+  maintainer: release@spacedatanetwork.org
   target:
     - tar.xz
     - AppImage
