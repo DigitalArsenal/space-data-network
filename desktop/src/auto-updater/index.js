@@ -12,6 +12,9 @@ const getCtx = require('../context')
 const store = require('../common/store')
 const CONFIG_KEYS = require('../common/config-keys')
 
+const SDN_RELEASES_URL = 'https://github.com/DigitalArsenal/space-data-network/releases/latest'
+const SDN_RELEASE_VERSION_URL = version => `https://github.com/DigitalArsenal/space-data-network/releases/tag/desktop-v${version}`
+
 function isAutoUpdateSupported () {
   if (store.get(CONFIG_KEYS.DISABLE_AUTO_UPDATE, false)) {
     logger.info('[updater] auto update explicitly disabled, not checking for updates automatically')
@@ -58,7 +61,7 @@ function setup () {
     })
 
     if (opt === 1) {
-      shell.openExternal('https://github.com/ipfs/ipfs-desktop/releases/latest')
+      shell.openExternal(SDN_RELEASES_URL)
     }
 
     if (!feedback) {
@@ -95,7 +98,7 @@ function setup () {
     })
 
     if (opt === 1) {
-      shell.openExternal(`https://github.com/ipfs-shipyard/ipfs-desktop/releases/v${version}`)
+      shell.openExternal(SDN_RELEASE_VERSION_URL(version))
     }
   })
 
@@ -209,7 +212,7 @@ module.exports = async function () {
   }
   if (!isAutoUpdateSupported()) {
     getCtx().setProp('manualCheckForUpdates', () => {
-      shell.openExternal('https://github.com/ipfs/ipfs-desktop/releases/latest')
+      shell.openExternal(SDN_RELEASES_URL)
     })
     return
   }
