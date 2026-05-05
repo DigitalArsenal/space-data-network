@@ -66,7 +66,7 @@ Create `scripts/update-upstream-ipfs.sh` to fetch selected upstream IPFS WebUI a
 
 Support `--check` so CI can verify the mirrors, generated vendor files, and overlays are current without modifying files.
 
-- [ ] **Step 3: Verify check-only mode fails on stale generated files**
+- [x] **Step 3: Verify check-only mode fails on stale generated files**
 
 Run:
 
@@ -89,7 +89,9 @@ Expected: upstream mirror refresh, generated vendor snapshot refresh, patch appl
 2026-05-05 note: added `scripts/update-upstream-ipfs.sh`; update mode calls
 the WebUI and Desktop subtree refreshes, refreshes the SDN vendor snapshot, and
 runs focused mirror tests. `--check` runs the vendor snapshot check and focused
-boundary/branding tests without mutating files.
+boundary/branding tests without mutating files. A temporary stale marker in
+`sdn-js/ui/src/upstream-webui/vendor/navigation/NavBar.js` made `--check` fail
+with the expected stale-file report, then the file was restored.
 
 ### Task 3: Document And Enforce The Update Process
 
