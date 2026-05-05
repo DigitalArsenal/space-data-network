@@ -124,6 +124,38 @@ test('purchases a protected storefront listing and exercises browser decrypt/loa
       }),
     });
   });
+  await page.route('**/api/storefront/purchases/purchase-browser-e2e/manual-dev-paid', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        mode: 'manual-dev',
+        purchase: {
+          request_id: 'purchase-browser-e2e',
+          listing_id: fixtureListing.listing_id,
+          tier_name: 'Basic',
+          buyer_peer_id: 'buyer-peer-e2e',
+          status: 3,
+          grant_id: 'grant-browser-e2e',
+        },
+        grant: {
+          grant_id: 'grant-browser-e2e',
+          listing_id: fixtureListing.listing_id,
+          tier_name: 'Basic',
+          buyer_peer_id: 'buyer-peer-e2e',
+          access_type: 1,
+          status: 0,
+          payment_method: 4,
+          payment_amount: 500,
+          payment_currency: 'SDN_CREDITS',
+          delivery_topic: '/sdn/data/protected-od-browser-e2e/buyer-peer-e2e',
+          provider_peer_id: 'provider-peer-e2e',
+          provider_signature: 'CQkJ',
+          grant_response_base64: 'AQIDBA==',
+        },
+      }),
+    });
+  });
   await page.goto('/storefront-marketplace-e2e.html');
   await expect(page.getByRole('heading', { name: 'Marketplace' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Protected OD Browser Fixture' }).first()).toBeVisible();
@@ -133,7 +165,7 @@ test('purchases a protected storefront listing and exercises browser decrypt/loa
 
   await page.getByRole('button', { name: 'Create purchase' }).click();
   await expect(page.getByText('purchase-browser-e2e')).toBeVisible();
-  await page.getByRole('button', { name: 'Pay with credits' }).click();
+  await page.getByRole('button', { name: 'Mark manual/dev paid' }).click();
   await expect(page.getByText('grant-browser-e2e')).toBeVisible();
   await expect(page.getByText('/sdn/data/protected-od-browser-e2e/buyer-peer-e2e')).toBeVisible();
 

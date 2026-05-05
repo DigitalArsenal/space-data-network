@@ -418,6 +418,40 @@ function PurchaseAccessPanel({ listing }) {
     }
   }
 
+  async function markManualDevPaid() {
+    const requestId = purchase?.request_id || purchase?.requestId
+    if (!requestId) {
+      return
+    }
+    setStatus('paying')
+    setError('')
+    try {
+      const response = await fetch(`${runtimeBaseUrl()}/api/storefront/purchases/${encodeURIComponent(requestId)}/manual-dev-paid`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reference: `browser-fixture-${Date.now()}`,
+          note: 'Browser marketplace manual/dev settlement verification'
+        })
+      })
+      if (!response.ok) {
+        throw new Error(`Manual/dev settlement failed (${response.status})`)
+      }
+      const payload = await response.json()
+      const nextGrant = payload?.grant || payload
+      if (payload?.purchase) {
+        setPurchase(payload.purchase)
+      }
+      setGrant(nextGrant)
+      setStatus('grant-issued')
+      setDeliveryStatus('ready')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setStatus('error')
+    }
+  }
+
   async function verifyEncryptedDelivery() {
     const encryptedCid = listing.protectedDelivery?.encryptedCid || listing.sampleCid
     const clientDecrypt = marketplaceClientDecrypt()
@@ -553,6 +587,14 @@ function PurchaseAccessPanel({ listing }) {
           disabled={!purchase || status === 'paying'}
         >
           Pay with credits
+        </button>
+        <button
+          type='button'
+          className='button-reset ba b--dark-blue bg-white dark-blue br2 pv2 ph3 mb2 ml2-l pointer hover-bg-near-white'
+          onClick={markManualDevPaid}
+          disabled={!purchase || status === 'paying'}
+        >
+          Mark manual/dev paid
         </button>
       </div>
       {error && <div className='mt2 dark-red f6'>{error}</div>}
