@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -807,6 +808,33 @@ func TestPromoteNodeInfoKeyFieldsPromotesSigningAndEncryptionKeys(t *testing.T) 
 	}
 	if got, want := info["encryption_pubkey_hex"], "302a300506032b6570032100feedface"; got != want {
 		t.Fatalf("encryption_pubkey_hex = %#v, want %q", got, want)
+	}
+}
+
+func TestStorefrontSigningKeyFromRawAcceptsSeedOrPrivateKey(t *testing.T) {
+	t.Parallel()
+
+	seed := bytes.Repeat([]byte{0x51}, ed25519.SeedSize)
+	privateKey := ed25519.NewKeyFromSeed(seed)
+
+	fromSeed, err := storefrontSigningKeyFromRaw(seed)
+	if err != nil {
+		t.Fatalf("storefrontSigningKeyFromRaw(seed) failed: %v", err)
+	}
+	if !bytes.Equal(fromSeed, privateKey) {
+		t.Fatal("storefrontSigningKeyFromRaw(seed) did not expand to the expected private key")
+	}
+
+	fromPrivate, err := storefrontSigningKeyFromRaw(privateKey)
+	if err != nil {
+		t.Fatalf("storefrontSigningKeyFromRaw(privateKey) failed: %v", err)
+	}
+	if !bytes.Equal(fromPrivate, privateKey) {
+		t.Fatal("storefrontSigningKeyFromRaw(privateKey) changed key bytes")
+	}
+
+	if _, err := storefrontSigningKeyFromRaw([]byte{1, 2, 3}); err == nil {
+		t.Fatal("storefrontSigningKeyFromRaw should reject invalid key lengths")
 	}
 }
 

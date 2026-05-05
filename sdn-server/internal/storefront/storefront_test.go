@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"os"
 	"testing"
 	"time"
 
+	lgr "github.com/DigitalArsenal/spacedatastandards.org/lib/go/LGR"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -781,6 +783,39 @@ func TestAccessVerification(t *testing.T) {
 	_, err = svc.VerifyGrant(ctx, grant.GrantID, "wrong-buyer")
 	if err == nil {
 		t.Error("VerifyGrant should fail with wrong buyer")
+	}
+}
+
+func TestIssuedGrantIncludesSignedLGRResponseBytes(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	grant, err := svc.IssueGrant(ctx, "test-purchase-id")
+	if err != nil {
+		t.Fatalf("IssueGrant failed: %v", err)
+	}
+	if len(grant.ProviderSignature) != ed25519.SignatureSize {
+		t.Fatalf("ProviderSignature length = %d, want %d", len(grant.ProviderSignature), ed25519.SignatureSize)
+	}
+	if grant.GrantResponseBase64 == "" {
+		t.Fatal("GrantResponseBase64 is empty")
+	}
+	raw, err := base64.StdEncoding.DecodeString(grant.GrantResponseBase64)
+	if err != nil {
+		t.Fatalf("GrantResponseBase64 is invalid: %v", err)
+	}
+	if len(raw) == 0 || !lgr.LGRBufferHasIdentifier(raw) {
+		t.Fatalf("grant response is not an $LGR FlatBuffer, len=%d", len(raw))
+	}
+	root := lgr.GetRootAsLGR(raw, 0)
+	if got := string(root.REQUEST_ID()); got != grant.GrantID {
+		t.Fatalf("LGR request id = %q, want %q", got, grant.GrantID)
+	}
+	if got := root.PROVIDER_SIGNATURELength(); got != ed25519.SignatureSize {
+		t.Fatalf("LGR provider signature length = %d, want %d", got, ed25519.SignatureSize)
+	}
+	if got := root.GRANT_VERIFIER_PUBKEYLength(); got != ed25519.PublicKeySize {
+		t.Fatalf("LGR verifier pubkey length = %d, want %d", got, ed25519.PublicKeySize)
 	}
 }
 
