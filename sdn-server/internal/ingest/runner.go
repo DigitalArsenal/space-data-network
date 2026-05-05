@@ -1,4 +1,4 @@
-// Package ingest provides data source sync workers for OMM/MPE/CAT ingestion.
+// Package ingest provides data source sync workers for OMM/MPE/CAT/SPW ingestion.
 package ingest
 
 import (
@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	MPEFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
+	SPWFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
 	flatbuffers "github.com/google/flatbuffers/go"
 	logging "github.com/ipfs/go-log/v2"
 
@@ -32,11 +34,12 @@ import (
 var log = logging.Logger("ingest")
 
 const (
-	defaultCelestrakCatalogURL = "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv"
-	defaultCelestrakSatcatURL  = "https://celestrak.org/pub/satcat.txt"
-	defaultSpaceTrackLoginURL  = "https://www.space-track.org/ajaxauth/login"
-	defaultSpaceTrackQueryTmpl = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/%s--%s/format/csv"
-	minCelestrakFetchInterval  = 3 * time.Hour
+	defaultCelestrakCatalogURL      = "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv"
+	defaultCelestrakSatcatURL       = "https://celestrak.org/pub/satcat.txt"
+	defaultCelestrakSpaceWeatherURL = "https://celestrak.org/SpaceData/SW-All.csv"
+	defaultSpaceTrackLoginURL       = "https://www.space-track.org/ajaxauth/login"
+	defaultSpaceTrackQueryTmpl      = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/%s--%s/format/csv"
+	minCelestrakFetchInterval       = 3 * time.Hour
 )
 
 // Config controls ingestion worker behavior.
@@ -45,10 +48,12 @@ type Config struct {
 	RawPath     string
 	Once        bool
 
-	CelestrakCatalogURL string
-	CelestrakSatcatURL  string
-	CelestrakInterval   time.Duration
-	SatcatInterval      time.Duration
+	CelestrakCatalogURL      string
+	CelestrakSatcatURL       string
+	CelestrakSpaceWeatherURL string
+	CelestrakInterval        time.Duration
+	SatcatInterval           time.Duration
+	SpaceWeatherInterval     time.Duration
 
 	SpaceTrackEnabled      bool
 	SpaceTrackIdentity     string
@@ -87,6 +92,9 @@ func NewRunner(cfg Config) (*Runner, error) {
 	if cfg.CelestrakSatcatURL == "" {
 		cfg.CelestrakSatcatURL = defaultCelestrakSatcatURL
 	}
+	if cfg.CelestrakSpaceWeatherURL == "" {
+		cfg.CelestrakSpaceWeatherURL = defaultCelestrakSpaceWeatherURL
+	}
 	if cfg.SpaceTrackLoginURL == "" {
 		cfg.SpaceTrackLoginURL = defaultSpaceTrackLoginURL
 	}
@@ -104,6 +112,12 @@ func NewRunner(cfg Config) (*Runner, error) {
 	}
 	if cfg.SatcatInterval < minCelestrakFetchInterval {
 		cfg.SatcatInterval = minCelestrakFetchInterval
+	}
+	if cfg.SpaceWeatherInterval <= 0 {
+		cfg.SpaceWeatherInterval = minCelestrakFetchInterval
+	}
+	if cfg.SpaceWeatherInterval < minCelestrakFetchInterval {
+		cfg.SpaceWeatherInterval = minCelestrakFetchInterval
 	}
 	if cfg.SpaceTrackPollInterval <= 0 {
 		cfg.SpaceTrackPollInterval = 30 * time.Minute
@@ -173,9 +187,11 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	gpTicker := time.NewTicker(r.cfg.CelestrakInterval)
 	satTicker := time.NewTicker(r.cfg.SatcatInterval)
+	spwTicker := time.NewTicker(r.cfg.SpaceWeatherInterval)
 	stTicker := time.NewTicker(r.cfg.SpaceTrackPollInterval)
 	defer gpTicker.Stop()
 	defer satTicker.Stop()
+	defer spwTicker.Stop()
 	defer stTicker.Stop()
 
 	for {
@@ -189,6 +205,10 @@ func (r *Runner) Run(ctx context.Context) error {
 		case <-satTicker.C:
 			if err := r.syncCelestrakSatcat(ctx); err != nil {
 				log.Warnf("CelesTrak SATCAT sync failed: %v", err)
+			}
+		case <-spwTicker.C:
+			if err := r.syncCelestrakSpaceWeather(ctx); err != nil {
+				log.Warnf("CelesTrak space weather sync failed: %v", err)
 			}
 		case <-stTicker.C:
 			if err := r.syncSpaceTrackGapFill(ctx); err != nil {
@@ -204,6 +224,9 @@ func (r *Runner) runCycle(ctx context.Context) error {
 		errs = append(errs, err.Error())
 	}
 	if err := r.syncCelestrakSatcat(ctx); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := r.syncCelestrakSpaceWeather(ctx); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if err := r.syncSpaceTrackGapFill(ctx); err != nil {
@@ -270,6 +293,35 @@ func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
 	}
 
 	log.Infof("CelesTrak SATCAT sync complete: CAT=%d", countCAT)
+	return nil
+}
+
+func (r *Runner) syncCelestrakSpaceWeather(ctx context.Context) error {
+	data, fromCache, err := r.fetchWithCache(ctx, r.cfg.CelestrakSpaceWeatherURL, "celestrak-space-weather.csv", minCelestrakFetchInterval)
+	if err != nil {
+		return fmt.Errorf("fetch celestrak space weather: %w", err)
+	}
+
+	if !fromCache {
+		archiveName := archiveFilenameForURL(r.cfg.CelestrakSpaceWeatherURL, "SW-All.csv")
+		if err := r.archiveRaw("celestrak", archiveName, data); err != nil {
+			log.Warnf("Failed to archive CelesTrak %s: %v", archiveName, err)
+		}
+	} else {
+		log.Infof("Using cached CelesTrak space weather payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
+	}
+
+	countSPW, err := r.ingestSpaceWeatherData(data, "source:celestrak")
+	if err != nil {
+		return fmt.Errorf("ingest celestrak space weather: %w", err)
+	}
+
+	r.checkpoints.setString("celestrak_space_weather_last_success", time.Now().UTC().Format(time.RFC3339))
+	if err := r.checkpoints.save(); err != nil {
+		log.Warnf("Failed to persist checkpoints: %v", err)
+	}
+
+	log.Infof("CelesTrak space weather sync complete: SPW=%d", countSPW)
 	return nil
 }
 
@@ -511,6 +563,31 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string) (int, error
 	return count, nil
 }
 
+func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string) (int, error) {
+	rows, err := parseCSV(content)
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	for _, row := range rows {
+		spwDate := normalizeSpaceWeatherDate(getValue(row, "DATE"))
+		if spwDate == "" {
+			continue
+		}
+
+		spwBytes := buildSPW(row, spwDate)
+		if _, err := r.store.Store("SPW.fbs", spwBytes, sourcePeer, nil); err != nil {
+			return count, err
+		}
+		count++
+	}
+	if count == 0 {
+		return 0, fmt.Errorf("no SPW rows parsed")
+	}
+	return count, nil
+}
+
 func archiveFilenameForURL(rawURL, fallback string) string {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
@@ -637,6 +714,50 @@ func buildMPE(entityID string, epochUnix int64, meanMotion, ecc, incl, raan, arg
 	}
 	mpe := MPEFB.MPEEnd(builder)
 	MPEFB.FinishSizePrefixedMPEBuffer(builder, mpe)
+
+	out := make([]byte, len(builder.FinishedBytes()))
+	copy(out, builder.FinishedBytes())
+	return out
+}
+
+func buildSPW(row map[string]string, spwDate string) []byte {
+	builder := flatbuffers.NewBuilder(256)
+	dateOffset := builder.CreateString(spwDate)
+
+	SPWFB.SPWStart(builder)
+	SPWFB.SPWAddDATE(builder, dateOffset)
+	SPWFB.SPWAddBSRN(builder, parseInt32OrZero(getValue(row, "BSRN")))
+	SPWFB.SPWAddND(builder, parseInt32OrZero(getValue(row, "ND")))
+	SPWFB.SPWAddKP1(builder, parseKpTenthsOrZero(getValue(row, "KP1")))
+	SPWFB.SPWAddKP2(builder, parseKpTenthsOrZero(getValue(row, "KP2")))
+	SPWFB.SPWAddKP3(builder, parseKpTenthsOrZero(getValue(row, "KP3")))
+	SPWFB.SPWAddKP4(builder, parseKpTenthsOrZero(getValue(row, "KP4")))
+	SPWFB.SPWAddKP5(builder, parseKpTenthsOrZero(getValue(row, "KP5")))
+	SPWFB.SPWAddKP6(builder, parseKpTenthsOrZero(getValue(row, "KP6")))
+	SPWFB.SPWAddKP7(builder, parseKpTenthsOrZero(getValue(row, "KP7")))
+	SPWFB.SPWAddKP8(builder, parseKpTenthsOrZero(getValue(row, "KP8")))
+	SPWFB.SPWAddKP_SUM(builder, parseKpTenthsOrZero(getValue(row, "KP_SUM")))
+	SPWFB.SPWAddAP1(builder, parseInt32OrZero(getValue(row, "AP1")))
+	SPWFB.SPWAddAP2(builder, parseInt32OrZero(getValue(row, "AP2")))
+	SPWFB.SPWAddAP3(builder, parseInt32OrZero(getValue(row, "AP3")))
+	SPWFB.SPWAddAP4(builder, parseInt32OrZero(getValue(row, "AP4")))
+	SPWFB.SPWAddAP5(builder, parseInt32OrZero(getValue(row, "AP5")))
+	SPWFB.SPWAddAP6(builder, parseInt32OrZero(getValue(row, "AP6")))
+	SPWFB.SPWAddAP7(builder, parseInt32OrZero(getValue(row, "AP7")))
+	SPWFB.SPWAddAP8(builder, parseInt32OrZero(getValue(row, "AP8")))
+	SPWFB.SPWAddAP_AVG(builder, parseInt32OrZero(getValue(row, "AP_AVG")))
+	SPWFB.SPWAddCP(builder, parseFloat32OrZero(getValue(row, "CP")))
+	SPWFB.SPWAddC9(builder, parseInt32OrZero(getValue(row, "C9")))
+	SPWFB.SPWAddISN(builder, parseInt32OrZero(getValue(row, "ISN")))
+	SPWFB.SPWAddF107_OBS(builder, parseFloat32OrZero(getValue(row, "F10.7_OBS", "F107_OBS")))
+	SPWFB.SPWAddF107_ADJ(builder, parseFloat32OrZero(getValue(row, "F10.7_ADJ", "F107_ADJ")))
+	SPWFB.SPWAddF107_DATA_TYPE(builder, parseF107DataType(getValue(row, "F10.7_DATA_TYPE", "F107_DATA_TYPE")))
+	SPWFB.SPWAddF107_OBS_CENTER81(builder, parseFloat32OrZero(getValue(row, "F10.7_OBS_CENTER81", "F107_OBS_CENTER81")))
+	SPWFB.SPWAddF107_OBS_LAST81(builder, parseFloat32OrZero(getValue(row, "F10.7_OBS_LAST81", "F107_OBS_LAST81")))
+	SPWFB.SPWAddF107_ADJ_CENTER81(builder, parseFloat32OrZero(getValue(row, "F10.7_ADJ_CENTER81", "F107_ADJ_CENTER81")))
+	SPWFB.SPWAddF107_ADJ_LAST81(builder, parseFloat32OrZero(getValue(row, "F10.7_ADJ_LAST81", "F107_ADJ_LAST81")))
+	spw := SPWFB.SPWEnd(builder)
+	SPWFB.FinishSizePrefixedSPWBuffer(builder, spw)
 
 	out := make([]byte, len(builder.FinishedBytes()))
 	copy(out, builder.FinishedBytes())
@@ -815,6 +936,52 @@ func parseFloatOrZero(raw string) float64 {
 	return 0
 }
 
+func parseFloat32OrZero(raw string) float32 {
+	if f, ok := parseFloat(raw); ok {
+		return float32(f)
+	}
+	return 0
+}
+
+func parseInt32OrZero(raw string) int32 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	v, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return int32(v)
+}
+
+func parseKpTenthsOrZero(raw string) int32 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	if strings.Contains(raw, ".") {
+		if f, err := strconv.ParseFloat(raw, 64); err == nil {
+			return int32(math.Round(f * 10))
+		}
+		return 0
+	}
+	return parseInt32OrZero(raw)
+}
+
+func parseF107DataType(raw string) SPWFB.F107DataType {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "INT":
+		return SPWFB.F107DataTypeINT
+	case "PRD":
+		return SPWFB.F107DataTypePRD
+	case "PRM":
+		return SPWFB.F107DataTypePRM
+	default:
+		return SPWFB.F107DataTypeOBS
+	}
+}
+
 func parseUint32(raw string) (uint32, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -844,6 +1011,17 @@ func normalizeEpoch(raw string) string {
 	}
 	if t, err := parseEpoch(raw); err == nil {
 		return t.UTC().Format(time.RFC3339)
+	}
+	return raw
+}
+
+func normalizeSpaceWeatherDate(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if t, err := parseEpoch(raw); err == nil {
+		return t.UTC().Format("2006-01-02")
 	}
 	return raw
 }
