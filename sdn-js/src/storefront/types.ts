@@ -358,12 +358,23 @@ export interface CryptoPaymentRequest {
   reference?: string;
   amount: number;
   currency: string;
+  assetContract?: string;
+  nativeAsset?: boolean;
 }
 
 /** Crypto payment verification result */
 export interface CryptoPaymentResult {
   verified: boolean;
   confirmationBlock?: number;
+  currentBlock?: number;
+  confirmations?: number;
+  chain?: string;
+  asset?: string;
+  assetContract?: string;
+  nativeAsset?: boolean;
+  amount?: number;
+  recipientAddress?: string;
+  senderAddress?: string;
   error?: string;
 }
 
@@ -371,6 +382,8 @@ export interface CryptoPaymentResult {
 export interface CreateCryptoIntentRequest {
   chain?: 'ethereum' | 'solana' | 'bitcoin';
   asset?: string;
+  assetContract?: string;
+  nativeAsset?: boolean;
   recipient?: string;
   method?: PaymentMethod;
   expiresAt?: Date;
@@ -382,6 +395,8 @@ export interface CryptoBuyerIntent {
   requestId: string;
   chain: string;
   asset: string;
+  assetContract?: string;
+  nativeAsset?: boolean;
   amount: number;
   recipient: string;
   method?: PaymentMethod;
@@ -389,6 +404,8 @@ export interface CryptoBuyerIntent {
   expiresAt?: Date;
   usedAt?: Date;
   txHash?: string;
+  intentDigest?: string;
+  intentSignature?: string;
 }
 
 /** Crypto transaction submission payload */
@@ -400,6 +417,8 @@ export interface SubmitCryptoPaymentRequest {
   reference: string;
   amount: number;
   currency: string;
+  assetContract?: string;
+  nativeAsset?: boolean;
 }
 
 /** Fiat gateway request */

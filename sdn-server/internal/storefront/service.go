@@ -303,6 +303,58 @@ func (s *Service) ProcessPayment(ctx context.Context, requestID string, txHash s
 	return nil
 }
 
+// CompleteCryptoPayment finalizes a verifier-approved on-chain payment and
+// issues the purchase grant exactly once.
+func (s *Service) CompleteCryptoPayment(ctx context.Context, requestID string, result *CryptoPaymentResult) (*AccessGrant, error) {
+	purchase, err := s.store.GetPurchaseRequest(requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load purchase request: %w", err)
+	}
+	if purchase == nil {
+		return nil, fmt.Errorf("purchase not found: %s", requestID)
+	}
+	if purchase.Status == PurchaseStatusCompleted && purchase.GrantID != "" {
+		existing, err := s.store.GetGrant(purchase.GrantID)
+		if err == nil && existing != nil {
+			return existing, nil
+		}
+	}
+
+	txHash := purchase.PaymentTxHash
+	chain := purchase.PaymentChain
+	block := purchase.ConfirmationBlock
+	if result != nil {
+		if result.Chain != "" {
+			chain = result.Chain
+		}
+		if result.ConfirmationBlock > 0 {
+			block = result.ConfirmationBlock
+		}
+	}
+	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusPaymentConfirmed, fmt.Sprintf("Crypto payment confirmed on %s at block %d", chain, block)); err != nil {
+		return nil, fmt.Errorf("failed to confirm crypto payment: %w", err)
+	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditPaymentConfirmed, s.peerID, txHash, "Crypto payment confirmed on "+chain, PurchaseStatusPaymentConfirmed); err != nil {
+		log.Warnf("Failed to record crypto payment audit event for %s: %v", requestID, err)
+	}
+
+	grant, err := s.IssueGrant(ctx, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to issue grant: %w", err)
+	}
+	if err := s.store.UpdatePurchaseGrant(requestID, grant.GrantID); err != nil {
+		log.Warnf("Failed to attach crypto grant to purchase %s: %v", requestID, err)
+	}
+	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusCompleted, fmt.Sprintf("Crypto payment complete; grant issued: %s", grant.GrantID)); err != nil {
+		log.Warnf("Failed to set crypto purchase completed for %s: %v", requestID, err)
+	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, s.peerID, grant.GrantID, "Grant issued after crypto payment", PurchaseStatusCompleted); err != nil {
+		log.Warnf("Failed to record crypto grant audit event for %s: %v", requestID, err)
+	}
+
+	return grant, nil
+}
+
 // ProcessCreditsPayment processes a payment using SDN credits
 func (s *Service) ProcessCreditsPayment(ctx context.Context, requestID string, buyerPeerID string) error {
 	// TODO: Get actual amount from purchase request

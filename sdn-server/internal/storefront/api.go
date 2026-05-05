@@ -361,6 +361,8 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 		Reference        string `json:"reference"`
 		Amount           uint64 `json:"amount"`
 		Currency         string `json:"currency"`
+		AssetContract    string `json:"assetContract"`
+		NativeAsset      bool   `json:"nativeAsset"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -377,6 +379,8 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 			Reference:        body.Reference,
 			Amount:           body.Amount,
 			Currency:         body.Currency,
+			AssetContract:    body.AssetContract,
+			NativeAsset:      body.NativeAsset,
 		}
 		var result *CryptoPaymentResult
 		var err error
@@ -391,6 +395,18 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 		}
 		if !result.Verified {
 			http.Error(w, "payment not verified: "+result.Error, http.StatusPaymentRequired)
+			return
+		}
+		if strings.TrimSpace(body.Reference) != "" {
+			grant, err := h.service.CompleteCryptoPayment(r.Context(), requestID, result)
+			if err != nil {
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"payment": result,
+				"grant":   grant,
+			})
 			return
 		}
 	}

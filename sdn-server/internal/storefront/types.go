@@ -264,27 +264,33 @@ type PaymentAuditEvent struct {
 // CreateCryptoIntentRequest describes the expected on-chain payment a buyer
 // must make before submitting a transaction reference.
 type CreateCryptoIntentRequest struct {
-	RequestID string        `json:"request_id"`
-	Chain     string        `json:"chain"`
-	Asset     string        `json:"asset"`
-	Recipient string        `json:"recipient"`
-	Method    PaymentMethod `json:"method"`
-	ExpiresAt time.Time     `json:"expires_at"`
+	RequestID     string        `json:"request_id"`
+	Chain         string        `json:"chain"`
+	Asset         string        `json:"asset"`
+	AssetContract string        `json:"asset_contract"`
+	NativeAsset   bool          `json:"native_asset"`
+	Recipient     string        `json:"recipient"`
+	Method        PaymentMethod `json:"method"`
+	ExpiresAt     time.Time     `json:"expires_at"`
 }
 
 // CryptoBuyerIntent records the server-authored expected crypto payment.
 type CryptoBuyerIntent struct {
-	Reference string        `json:"reference"`
-	RequestID string        `json:"request_id"`
-	Chain     string        `json:"chain"`
-	Asset     string        `json:"asset"`
-	Amount    uint64        `json:"amount"`
-	Recipient string        `json:"recipient"`
-	Method    PaymentMethod `json:"method"`
-	CreatedAt time.Time     `json:"created_at"`
-	ExpiresAt time.Time     `json:"expires_at"`
-	UsedAt    time.Time     `json:"used_at"`
-	TxHash    string        `json:"tx_hash"`
+	Reference     string        `json:"reference"`
+	RequestID     string        `json:"request_id"`
+	Chain         string        `json:"chain"`
+	Asset         string        `json:"asset"`
+	AssetContract string        `json:"asset_contract"`
+	NativeAsset   bool          `json:"native_asset"`
+	Amount        uint64        `json:"amount"`
+	Recipient     string        `json:"recipient"`
+	Method        PaymentMethod `json:"method"`
+	CreatedAt     time.Time     `json:"created_at"`
+	ExpiresAt     time.Time     `json:"expires_at"`
+	UsedAt        time.Time     `json:"used_at"`
+	TxHash        string        `json:"tx_hash"`
+	IntentDigest  string        `json:"intent_digest"`
+	IntentSig     string        `json:"intent_signature"`
 }
 
 // DataQualityMetrics represents data quality assessment

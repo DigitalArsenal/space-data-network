@@ -332,6 +332,8 @@ func (s *Store) initTables() error {
 			request_id TEXT NOT NULL,
 			chain TEXT NOT NULL,
 			asset TEXT NOT NULL,
+			asset_contract TEXT DEFAULT '',
+			native_asset INTEGER DEFAULT 0,
 			amount INTEGER NOT NULL,
 			recipient TEXT NOT NULL,
 			method INTEGER NOT NULL,
@@ -339,6 +341,8 @@ func (s *Store) initTables() error {
 			expires_at INTEGER NOT NULL,
 			used_at INTEGER DEFAULT 0,
 			tx_hash TEXT DEFAULT '',
+			intent_digest TEXT DEFAULT '',
+			intent_signature TEXT DEFAULT '',
 			UNIQUE(request_id, reference)
 		);
 		CREATE INDEX IF NOT EXISTS idx_crypto_intents_request ON storefront_crypto_intents(request_id);
@@ -347,6 +351,10 @@ func (s *Store) initTables() error {
 	if err != nil {
 		return fmt.Errorf("failed to create crypto intent table: %w", err)
 	}
+	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN asset_contract TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN native_asset INTEGER DEFAULT 0`)
+	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN intent_digest TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN intent_signature TEXT DEFAULT ''`)
 
 	log.Info("Storefront index tables initialized (FlatSQL-backed)")
 	return nil
@@ -948,12 +956,14 @@ func (s *Store) CreateCryptoBuyerIntent(intent *CryptoBuyerIntent) error {
 
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO storefront_crypto_intents (
-			reference, request_id, chain, asset, amount, recipient, method,
-			created_at, expires_at, used_at, tx_hash
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, intent.Reference, intent.RequestID, intent.Chain, intent.Asset, intent.Amount,
-		intent.Recipient, intent.Method, intent.CreatedAt.Unix(), intent.ExpiresAt.Unix(),
-		unixOrZero(intent.UsedAt), intent.TxHash)
+			reference, request_id, chain, asset, asset_contract, native_asset,
+			amount, recipient, method, created_at, expires_at, used_at, tx_hash,
+			intent_digest, intent_signature
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, intent.Reference, intent.RequestID, intent.Chain, intent.Asset, intent.AssetContract,
+		intent.NativeAsset, intent.Amount, intent.Recipient, intent.Method,
+		intent.CreatedAt.Unix(), intent.ExpiresAt.Unix(), unixOrZero(intent.UsedAt),
+		intent.TxHash, intent.IntentDigest, intent.IntentSig)
 	if err != nil {
 		return fmt.Errorf("failed to create crypto intent: %w", err)
 	}
@@ -966,13 +976,16 @@ func (s *Store) GetCryptoBuyerIntent(reference string) (*CryptoBuyerIntent, erro
 
 	var intent CryptoBuyerIntent
 	var createdAt, expiresAt, usedAt int64
+	var nativeAsset int
 	err := s.db.QueryRow(`
-		SELECT reference, request_id, chain, asset, amount, recipient, method,
-			created_at, expires_at, used_at, tx_hash
+		SELECT reference, request_id, chain, asset, asset_contract, native_asset,
+			amount, recipient, method, created_at, expires_at, used_at, tx_hash,
+			intent_digest, intent_signature
 		FROM storefront_crypto_intents WHERE reference = ?
 	`, reference).Scan(&intent.Reference, &intent.RequestID, &intent.Chain,
-		&intent.Asset, &intent.Amount, &intent.Recipient, &intent.Method,
-		&createdAt, &expiresAt, &usedAt, &intent.TxHash)
+		&intent.Asset, &intent.AssetContract, &nativeAsset, &intent.Amount,
+		&intent.Recipient, &intent.Method, &createdAt, &expiresAt, &usedAt,
+		&intent.TxHash, &intent.IntentDigest, &intent.IntentSig)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -982,6 +995,7 @@ func (s *Store) GetCryptoBuyerIntent(reference string) (*CryptoBuyerIntent, erro
 	intent.CreatedAt = time.Unix(createdAt, 0)
 	intent.ExpiresAt = time.Unix(expiresAt, 0)
 	intent.UsedAt = time.Unix(usedAt, 0)
+	intent.NativeAsset = nativeAsset != 0
 	return &intent, nil
 }
 
@@ -1251,6 +1265,22 @@ func (s *Store) UpdatePurchasePayment(requestID, txHash, chain, senderAddress st
 	`, txHash, chain, senderAddress, time.Now().Unix(), requestID)
 	if err != nil {
 		return fmt.Errorf("failed to update purchase payment: %w", err)
+	}
+	return nil
+}
+
+// UpdatePurchaseConfirmationBlock records the chain block/slot at which payment settled.
+func (s *Store) UpdatePurchaseConfirmationBlock(requestID string, confirmationBlock uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		UPDATE storefront_purchases
+		SET confirmation_block = ?, updated_at = ?
+		WHERE request_id = ?
+	`, confirmationBlock, time.Now().Unix(), requestID)
+	if err != nil {
+		return fmt.Errorf("failed to update purchase confirmation block: %w", err)
 	}
 	return nil
 }
