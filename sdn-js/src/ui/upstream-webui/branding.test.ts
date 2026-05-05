@@ -133,13 +133,16 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).not.toContain("href='/webui'");
   });
 
-  it('uses a standalone centered SDN logo mark asset instead of baked text logo SVGs', async () => {
+  it('uses the actual IPFS logo in the root sidebar brand slot', async () => {
     const source = await fs.readFile(
       path.join(uiSrcPath, 'overrides/navigation/NavBar.js'),
       'utf8',
     );
 
-    expect(source).toContain("import sdnLogoMark from './sdn-logo-mark.svg'");
+    expect(source).toContain("import ipfsLogoMark from '../../../../../../webui/src/navigation/ipfs-logo.svg'");
+    expect(source).toContain("src={ipfsLogoMark} alt='IPFS'");
+    expect(source).not.toContain("src={sdnLogoMark}");
+    expect(source).not.toContain("import sdnLogoMark from './sdn-logo-mark.svg'");
     expect(source).not.toContain('sdn-logo-text-vert.svg');
     expect(source).not.toContain('sdn-logo-text-horiz.svg');
   });
