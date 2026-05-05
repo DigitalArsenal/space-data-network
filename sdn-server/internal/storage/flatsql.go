@@ -238,6 +238,10 @@ func (s *FlatSQLStore) initTables() error {
 		if err != nil {
 			return fmt.Errorf("invalid schema name %q: %w", schemaName, err)
 		}
+		tableExisted, err := s.tableExists(tableName)
+		if err != nil {
+			return err
+		}
 
 		// Main data table
 		createSQL := fmt.Sprintf(`
@@ -257,18 +261,52 @@ func (s *FlatSQLStore) initTables() error {
 		}
 
 		// Create index on peer_id and timestamp
-		indexSQL := fmt.Sprintf(`
-			CREATE INDEX IF NOT EXISTS idx_%s_peer_time ON %s (peer_id, timestamp)
-		`, tableName, tableName)
-
-		if _, err := s.db.Exec(indexSQL); err != nil {
-			log.Warnf("Failed to create index for %s: %v", tableName, err)
+		indexName := fmt.Sprintf("idx_%s_peer_time", tableName)
+		indexExists, err := s.indexExists(indexName)
+		if err != nil {
+			return err
+		}
+		if !indexExists {
+			if tableExisted {
+				log.Warnf("Skipping synchronous startup creation of missing index %s on existing table %s; rebuild indexes during maintenance", indexName, tableName)
+			} else {
+				indexSQL := fmt.Sprintf(`
+					CREATE INDEX IF NOT EXISTS %s ON %s (peer_id, timestamp)
+				`, indexName, tableName)
+				if _, err := s.db.Exec(indexSQL); err != nil {
+					log.Warnf("Failed to create index for %s: %v", tableName, err)
+				}
+			}
 		}
 
 		log.Debugf("Initialized table: %s", tableName)
 	}
 
 	return nil
+}
+
+func (s *FlatSQLStore) tableExists(tableName string) (bool, error) {
+	var name string
+	err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, tableName).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to inspect table %s: %w", tableName, err)
+	}
+	return true, nil
+}
+
+func (s *FlatSQLStore) indexExists(indexName string) (bool, error) {
+	var name string
+	err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, indexName).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to inspect index %s: %w", indexName, err)
+	}
+	return true, nil
 }
 
 func (s *FlatSQLStore) ensureColumn(tableName, columnName, columnType string) error {
