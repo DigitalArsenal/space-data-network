@@ -13,7 +13,7 @@ import (
 // BuildObservedSDNPeers projects the peer graph plus advertisement discovery
 // evidence into the trusted-peer JSON shape consumed by the SDN dashboard.
 func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.TrustedPeer, advertisementFlagsByPeer map[string][]string, advertisementAddrsByPeer map[string][]string) []*peers.TrustedPeer {
-	if snapshot == nil || len(advertisementFlagsByPeer) == 0 {
+	if snapshot == nil {
 		return nil
 	}
 
@@ -35,14 +35,15 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 	}
 
 	out := make([]*peers.TrustedPeer, 0)
-	candidatePeerIDs := uniqueStrings(peerIDs(advertisementFlagsByPeer))
+	candidatePeerIDs := uniqueStrings(append(peerIDs(advertisementFlagsByPeer), sdnPeerIDsFromSnapshot(snapshot, registryByID)...))
 	for _, peerID := range candidatePeerIDs {
 		if peerID == "" || peerID == snapshot.LocalPeerID {
 			continue
 		}
 
 		flags := uniqueStrings(advertisementFlagsByPeer[peerID])
-		if len(flags) == 0 {
+		node := nodesByID[peerID]
+		if len(flags) == 0 && !isConnectedSDNPeer(node, protocolsByPeer[peerID], registryByID[peerID]) {
 			continue
 		}
 
@@ -51,7 +52,6 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 			continue
 		}
 
-		node := nodesByID[peerID]
 		registryPeer := registryByID[peerID]
 		entry := &peers.TrustedPeer{
 			ID:           decodedPeerID,
@@ -70,7 +70,7 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 		if strings.TrimSpace(node.AgentVersion) != "" {
 			entry.Metadata["agent_version"] = strings.TrimSpace(node.AgentVersion)
 		}
-		if strings.TrimSpace(entry.Metadata["agent_version"]) == "" {
+		if strings.TrimSpace(entry.Metadata["agent_version"]) == "" && len(flags) > 0 {
 			entry.Metadata["agent_version"] = flags[0]
 		}
 
@@ -78,6 +78,62 @@ func BuildObservedSDNPeers(snapshot *PeerGraphSnapshot, registryPeers []*peers.T
 	}
 
 	return out
+}
+
+func sdnPeerIDsFromSnapshot(snapshot *PeerGraphSnapshot, registryByID map[string]*peers.TrustedPeer) []string {
+	if snapshot == nil {
+		return nil
+	}
+	protocolsByPeer := buildEdgeProtocolMap(snapshot)
+	out := make([]string, 0)
+	for _, node := range snapshot.Nodes {
+		peerID := strings.TrimSpace(node.PeerID)
+		if peerID == "" || peerID == snapshot.LocalPeerID {
+			continue
+		}
+		if isConnectedSDNPeer(node, protocolsByPeer[peerID], registryByID[peerID]) {
+			out = append(out, peerID)
+		}
+	}
+	return out
+}
+
+func isConnectedSDNPeer(node PeerNode, protocols []string, registryPeer *peers.TrustedPeer) bool {
+	if !node.IsOnline {
+		return false
+	}
+	if isSDNAgentVersion(node.AgentVersion) {
+		return true
+	}
+	if hasSDNProtocol(protocols) {
+		return true
+	}
+	if registryPeer != nil {
+		if isSDNAgentVersion(registryPeer.Metadata["agent_version"]) || isSDNAgentVersion(registryPeer.Metadata["advertisement_flags"]) {
+			return true
+		}
+		if hasSDNProtocol(strings.Split(registryPeer.Metadata["protocols"], ",")) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSDNAgentVersion(agentVersion string) bool {
+	value := strings.ToLower(strings.TrimSpace(agentVersion))
+	return strings.Contains(value, "spacedatanetwork") ||
+		strings.Contains(value, "space-data-network") ||
+		strings.Contains(value, "sdn-desktop")
+}
+
+func hasSDNProtocol(protocols []string) bool {
+	for _, protocol := range protocols {
+		value := strings.TrimSpace(protocol)
+		if strings.HasPrefix(value, "/space-data-network/") || strings.HasPrefix(value, "/spacedatanetwork/") {
+			return true
+		}
+	}
+	return false
 }
 
 func peerIDs(values map[string][]string) []string {

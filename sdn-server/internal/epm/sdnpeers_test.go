@@ -146,6 +146,51 @@ func TestBuildObservedSDNPeersIncludesAdvertisementOnlyPeersWithKnownAddresses(t
 	}
 }
 
+func TestBuildObservedSDNPeersIncludesConnectedSDNDesktopWithoutAdvertisement(t *testing.T) {
+	t.Parallel()
+
+	localID := mustPeerID(t)
+	desktopID := mustPeerID(t)
+
+	out := BuildObservedSDNPeers(
+		&PeerGraphSnapshot{
+			LocalPeerID: localID.String(),
+			Nodes: []PeerNode{
+				{
+					PeerID:   localID.String(),
+					IsOnline: true,
+				},
+				{
+					PeerID:             desktopID.String(),
+					IsOnline:           true,
+					AgentVersion:       "kubo/0.39.0/sdn-desktop",
+					MultiformatAddress: []string{fmt.Sprintf("/ip4/203.0.113.20/tcp/4001/p2p/%s", desktopID)},
+				},
+			},
+			Edges: []PeerEdge{
+				{
+					SourcePeerID: localID.String(),
+					TargetPeerID: desktopID.String(),
+					Protocols:    []string{"/ipfs/id/1.0.0"},
+				},
+			},
+		},
+		nil,
+		nil,
+		nil,
+	)
+
+	if len(out) != 1 {
+		t.Fatalf("observed SDN peer count = %d, want 1", len(out))
+	}
+	if out[0].ID != desktopID {
+		t.Fatalf("observed peer ID = %s, want %s", out[0].ID, desktopID)
+	}
+	if out[0].Metadata["agent_version"] != "kubo/0.39.0/sdn-desktop" {
+		t.Fatalf("agent_version metadata = %q", out[0].Metadata["agent_version"])
+	}
+}
+
 func mustPeerID(t *testing.T) peer.ID {
 	t.Helper()
 
