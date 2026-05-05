@@ -549,6 +549,11 @@ func (h *APIHandler) handleStripeWebhook(w http.ResponseWriter, r *http.Request)
 func (h *APIHandler) handleGrants(w http.ResponseWriter, r *http.Request) {
 	buyerID := r.URL.Query().Get("buyer")
 	if buyerID != "" {
+		var ok bool
+		buyerID, ok = authorizeStorefrontPeerQuery(w, r, buyerID, "buyer")
+		if !ok {
+			return
+		}
 		grants, err := h.service.GetBuyerGrants(r.Context(), buyerID)
 		if err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -560,6 +565,11 @@ func (h *APIHandler) handleGrants(w http.ResponseWriter, r *http.Request) {
 
 	providerID := r.URL.Query().Get("provider")
 	if providerID != "" {
+		var ok bool
+		providerID, ok = authorizeStorefrontPeerQuery(w, r, providerID, "provider")
+		if !ok {
+			return
+		}
 		limit := queryInt(r, "limit", 50)
 		offset := queryInt(r, "offset", 0)
 		grants, total, err := h.service.store.GetProviderGrants(providerID, limit, offset)
@@ -586,6 +596,11 @@ func (h *APIHandler) handleGrantByID(w http.ResponseWriter, r *http.Request) {
 
 	if len(parts) > 1 && parts[1] == "verify" {
 		buyerID := r.URL.Query().Get("buyer")
+		var ok bool
+		buyerID, ok = authorizeStorefrontPeerQuery(w, r, buyerID, "buyer")
+		if !ok {
+			return
+		}
 		grant, err := h.service.VerifyGrant(r.Context(), grantID, buyerID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
@@ -755,8 +770,9 @@ type SellerDashboardResponse struct {
 
 func (h *APIHandler) handleSellerDashboard(w http.ResponseWriter, r *http.Request) {
 	providerID := r.URL.Query().Get("peerId")
-	if providerID == "" {
-		http.Error(w, "peerId required", http.StatusBadRequest)
+	var ok bool
+	providerID, ok = authorizeStorefrontPeerQuery(w, r, providerID, "peerId")
+	if !ok {
 		return
 	}
 
@@ -807,8 +823,9 @@ type BuyerDashboardResponse struct {
 
 func (h *APIHandler) handleBuyerDashboard(w http.ResponseWriter, r *http.Request) {
 	buyerID := r.URL.Query().Get("peerId")
-	if buyerID == "" {
-		http.Error(w, "peerId required", http.StatusBadRequest)
+	var ok bool
+	buyerID, ok = authorizeStorefrontPeerQuery(w, r, buyerID, "peerId")
+	if !ok {
 		return
 	}
 
@@ -828,6 +845,26 @@ func (h *APIHandler) handleBuyerDashboard(w http.ResponseWriter, r *http.Request
 }
 
 // Helper functions
+
+func authorizeStorefrontPeerQuery(w http.ResponseWriter, r *http.Request, requestedPeerID string, fieldName string) (string, bool) {
+	requestedPeerID = strings.TrimSpace(requestedPeerID)
+	session := auth.SessionFromContext(r.Context())
+	if session == nil {
+		if requestedPeerID == "" {
+			http.Error(w, fieldName+" required", http.StatusBadRequest)
+			return "", false
+		}
+		return requestedPeerID, true
+	}
+	if requestedPeerID == "" {
+		requestedPeerID = session.XPub
+	}
+	if session.TrustLevel >= peers.Admin || requestedPeerID == session.XPub {
+		return requestedPeerID, true
+	}
+	http.Error(w, "forbidden: cannot access another peer's storefront data", http.StatusForbidden)
+	return "", false
+}
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
