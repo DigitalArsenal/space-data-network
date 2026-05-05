@@ -254,6 +254,7 @@ func (s *Service) CompleteManualDevPayment(ctx context.Context, requestID string
 	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, actor, grant.GrantID, "Grant issued after manual/dev paid state", PurchaseStatusCompleted); err != nil {
 		log.Warnf("Failed to record grant audit event for %s: %v", requestID, err)
 	}
+	s.recordGrantDeliveryAudit(requestID, actor, grant, PurchaseStatusCompleted)
 
 	return grant, nil
 }
@@ -299,6 +300,7 @@ func (s *Service) ProcessPayment(ctx context.Context, requestID string, txHash s
 	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, s.peerID, grant.GrantID, "Grant issued after payment confirmation", PurchaseStatusCompleted); err != nil {
 		log.Warnf("Failed to record grant audit event for %s: %v", requestID, err)
 	}
+	s.recordGrantDeliveryAudit(requestID, s.peerID, grant, PurchaseStatusCompleted)
 
 	return nil
 }
@@ -351,6 +353,7 @@ func (s *Service) CompleteCryptoPayment(ctx context.Context, requestID string, r
 	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, s.peerID, grant.GrantID, "Grant issued after crypto payment", PurchaseStatusCompleted); err != nil {
 		log.Warnf("Failed to record crypto grant audit event for %s: %v", requestID, err)
 	}
+	s.recordGrantDeliveryAudit(requestID, s.peerID, grant, PurchaseStatusCompleted)
 
 	return grant, nil
 }
@@ -391,6 +394,7 @@ func (s *Service) ProcessCreditsPayment(ctx context.Context, requestID string, b
 	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, s.peerID, grant.GrantID, "Grant issued after credits payment", PurchaseStatusCompleted); err != nil {
 		log.Warnf("Failed to record grant audit event for %s: %v", requestID, err)
 	}
+	s.recordGrantDeliveryAudit(requestID, s.peerID, grant, PurchaseStatusCompleted)
 
 	return nil
 }
@@ -431,6 +435,7 @@ func (s *Service) CompleteCreditsPayment(ctx context.Context, requestID string) 
 	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, s.peerID, grant.GrantID, "Grant issued after SDN credits payment", PurchaseStatusCompleted); err != nil {
 		log.Warnf("Failed to record credits grant audit event for %s: %v", requestID, err)
 	}
+	s.recordGrantDeliveryAudit(requestID, s.peerID, grant, PurchaseStatusCompleted)
 
 	return grant, nil
 }
@@ -486,6 +491,7 @@ func (s *Service) CompleteStripeCheckout(ctx context.Context, requestID, session
 	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, s.peerID, grant.GrantID, "Grant issued after Stripe checkout", PurchaseStatusCompleted); err != nil {
 		log.Warnf("Failed to record Stripe grant audit event for %s: %v", requestID, err)
 	}
+	s.recordGrantDeliveryAudit(requestID, s.peerID, grant, PurchaseStatusCompleted)
 
 	return grant, nil
 }
@@ -656,6 +662,64 @@ func (s *Service) recordPaymentAudit(requestID, eventType, actorPeerID, referenc
 	})
 }
 
+func (s *Service) recordGrantDeliveryAudit(requestID, actorPeerID string, grant *AccessGrant, status PurchaseStatus) {
+	if grant == nil {
+		return
+	}
+	listing, err := s.store.GetListing(grant.ListingID)
+	if err != nil {
+		log.Warnf("Failed to load listing for grant delivery audit %s: %v", grant.GrantID, err)
+	}
+	if shouldAuditKeyWrap(grant, listing) {
+		msg := "Grant-specific wrapped key issued"
+		if listing != nil && strings.TrimSpace(listing.ProtectedDelivery.ContentKeyID) != "" {
+			msg += " for content key " + strings.TrimSpace(listing.ProtectedDelivery.ContentKeyID)
+		}
+		if err := s.recordPaymentAudit(requestID, PaymentAuditKeyWrapIssued, actorPeerID, grant.GrantID, msg, status); err != nil {
+			log.Warnf("Failed to record key-wrap audit event for %s: %v", requestID, err)
+		}
+	}
+	if shouldAuditDeliveryReady(grant, listing) {
+		msg := "Protected delivery ready"
+		if grant.DeliveryTopic != "" {
+			msg += " on " + grant.DeliveryTopic
+		}
+		if err := s.recordPaymentAudit(requestID, PaymentAuditDeliveryReady, actorPeerID, grant.GrantID, msg, status); err != nil {
+			log.Warnf("Failed to record delivery audit event for %s: %v", requestID, err)
+		}
+	}
+}
+
+func shouldAuditKeyWrap(grant *AccessGrant, listing *Listing) bool {
+	if grant == nil || len(grant.BuyerEncryptionPubkey) == 0 {
+		return false
+	}
+	if listing == nil {
+		return true
+	}
+	protected := listing.ProtectedDelivery
+	return listing.EncryptionRequired ||
+		strings.TrimSpace(protected.ContentKeyID) != "" ||
+		strings.TrimSpace(protected.EncryptedCID) != "" ||
+		strings.TrimSpace(protected.ManifestCID) != ""
+}
+
+func shouldAuditDeliveryReady(grant *AccessGrant, listing *Listing) bool {
+	if grant == nil {
+		return false
+	}
+	if strings.TrimSpace(grant.DeliveryTopic) != "" {
+		return true
+	}
+	if listing == nil {
+		return false
+	}
+	protected := listing.ProtectedDelivery
+	return strings.TrimSpace(protected.DeliveryProtocol) != "" ||
+		strings.TrimSpace(protected.EncryptedCID) != "" ||
+		strings.TrimSpace(protected.ManifestCID) != ""
+}
+
 func inferListingKind(listing *Listing) ListingKind {
 	for _, dataType := range listing.DataTypes {
 		if strings.EqualFold(strings.TrimSpace(dataType), "WASM") {
@@ -686,6 +750,48 @@ func findPricingTierByName(listing *Listing, tierName string) *PricingTier {
 		}
 	}
 	return nil
+}
+
+// RevokeGrant records a grant revocation and prevents future access checks from succeeding.
+func (s *Service) RevokeGrant(ctx context.Context, grantID, buyerPeerID, actorPeerID, reason string) (*AccessGrant, error) {
+	_ = ctx
+	grant, err := s.store.GetGrant(grantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get grant: %w", err)
+	}
+	if grant == nil {
+		return nil, fmt.Errorf("grant not found: %s", grantID)
+	}
+	if strings.TrimSpace(buyerPeerID) != "" && grant.BuyerPeerID != buyerPeerID {
+		return nil, fmt.Errorf("buyer mismatch")
+	}
+	if grant.Status == GrantStatusRevoked {
+		return grant, nil
+	}
+	actor := strings.TrimSpace(actorPeerID)
+	if actor == "" {
+		actor = s.peerID
+	}
+	note := strings.TrimSpace(reason)
+	if note == "" {
+		note = "Grant revoked"
+	}
+	if err := s.store.UpdateGrantStatus(grantID, GrantStatusRevoked, note); err != nil {
+		return nil, err
+	}
+	grant.Status = GrantStatusRevoked
+	grant.Notes = note
+	grant.UpdatedAt = time.Now()
+
+	if purchase, err := s.store.GetPurchaseRequestByGrantID(grantID); err == nil && purchase != nil {
+		if err := s.recordPaymentAudit(purchase.RequestID, PaymentAuditGrantRevoked, actor, grantID, note, purchase.Status); err != nil {
+			log.Warnf("Failed to record revocation audit event for %s: %v", purchase.RequestID, err)
+		}
+	} else if err != nil {
+		log.Warnf("Failed to load purchase for grant revocation audit %s: %v", grantID, err)
+	}
+
+	return grant, nil
 }
 
 // VerifyGrant verifies an access grant

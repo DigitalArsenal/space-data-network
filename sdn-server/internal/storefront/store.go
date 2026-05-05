@@ -1242,6 +1242,10 @@ func (s *Store) GetPurchaseRequest(requestID string) (*PurchaseRequest, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	return s.getPurchaseRequestByWhereLocked("request_id = ?", requestID)
+}
+
+func (s *Store) getPurchaseRequestByWhereLocked(where string, arg interface{}) (*PurchaseRequest, error) {
 	var req PurchaseRequest
 	var createdAt, updatedAt, paymentDeadline, paymentConfirmedAt, grantIssuedAt, providerAcknowledgedAt int64
 
@@ -1253,8 +1257,8 @@ func (s *Store) GetPurchaseRequest(requestID string) (*PurchaseRequest, error) {
 			created_at, updated_at, payment_deadline, payment_confirmed_at,
 			grant_issued_at, grant_id, provider_peer_id, provider_acknowledged_at,
 			preferred_delivery_method, webhook_url, buyer_signature, provider_signature
-		FROM storefront_purchases WHERE request_id = ?
-	`, requestID).Scan(
+		FROM storefront_purchases WHERE `+where+`
+	`, arg).Scan(
 		&req.RequestID, &req.ListingID, &req.TierName, &req.BuyerPeerID,
 		&req.BuyerEncryptionPubkey, &req.KeyAlgorithm, &req.BuyerEmail,
 		&req.PaymentMethod, &req.PaymentAmount, &req.PaymentCurrency,
@@ -1625,6 +1629,32 @@ func (s *Store) UpdateGrantUsage(grantID string, requestsIncrement, recordsIncre
 		return fmt.Errorf("failed to update grant usage: %w", err)
 	}
 	return nil
+}
+
+// UpdateGrantStatus updates the lifecycle status for a grant.
+func (s *Store) UpdateGrantStatus(grantID string, status GrantStatus, note string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		UPDATE storefront_grants
+		SET status = ?,
+			notes = ?,
+			updated_at = ?
+		WHERE grant_id = ?
+	`, status, note, time.Now().Unix(), grantID)
+	if err != nil {
+		return fmt.Errorf("failed to update grant status: %w", err)
+	}
+	return nil
+}
+
+// GetPurchaseRequestByGrantID retrieves the purchase request that issued a grant.
+func (s *Store) GetPurchaseRequestByGrantID(grantID string) (*PurchaseRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.getPurchaseRequestByWhereLocked("grant_id = ?", grantID)
 }
 
 // UpdateListingReputation updates the reputation snapshot on a listing.

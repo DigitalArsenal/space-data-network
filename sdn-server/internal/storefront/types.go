@@ -55,6 +55,9 @@ const (
 	PaymentAuditPaymentConfirmed = "payment_confirmed"
 	PaymentAuditPaymentFailed    = "payment_failed"
 	PaymentAuditGrantIssued      = "grant_issued"
+	PaymentAuditKeyWrapIssued    = "key_wrap_issued"
+	PaymentAuditDeliveryReady    = "delivery_ready"
+	PaymentAuditGrantRevoked     = "grant_revoked"
 )
 
 // GrantStatus represents the status of an access grant
