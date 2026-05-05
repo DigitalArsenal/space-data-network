@@ -133,6 +133,8 @@ test.describe.serial('Application launch', async () => {
     // ensure app has migrated config
     expect(config.API.HTTPHeaders['Access-Control-Allow-Origin']).toEqual([
       'https://127.0.0.1:4040',
+      'sdn://-',
+      'webui://-',
       'https://webui.ipfs.io',
       'http://webui.ipfs.io.ipns.localhost:0' // ipfsd 'test' profile uses '/ip4/127.0.0.1/tcp/0'
     ])
@@ -153,6 +155,8 @@ test.describe.serial('Application launch', async () => {
     const config = fs.readJsonSync(configPath)
     // ensure app has migrated config
     expect(config.API.HTTPHeaders['Access-Control-Allow-Origin']).toEqual([
+      'sdn://-',
+      'webui://-',
       'https://webui.ipfs.io',
       'http://webui.ipfs.io.ipns.localhost:0' // ipfsd 'test' profile uses '/ip4/127.0.0.1/tcp/0'
     ])
@@ -173,6 +177,8 @@ test.describe.serial('Application launch', async () => {
     const config = fs.readJsonSync(configPath)
     // ensure app has migrated config
     expect(config.API.HTTPHeaders['Access-Control-Allow-Origin']).toEqual([
+      'sdn://-',
+      'webui://-',
       'https://webui.ipfs.io',
       'http://webui.ipfs.io.ipns.localhost:0' // ipfsd 'test' profile uses '/ip4/127.0.0.1/tcp/0'
     ])

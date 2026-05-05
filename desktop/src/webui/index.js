@@ -18,7 +18,7 @@ const { analyticsKeys } = require('../analytics/keys')
 const ipcMainEvents = require('../common/ipc-main-events')
 const getCtx = require('../context')
 const registerStaticScheme = require('../static-scheme')
-registerStaticScheme({ scheme: 'webui', directory: join(__dirname, '../../assets/webui') })
+registerStaticScheme({ scheme: 'webui', directory: 'assets/webui' })
 
 /**
  *

@@ -153,7 +153,7 @@ const getGatewayPort = (config) => getHttpPort(config.Addresses.Gateway)
  */
 function migrateConfig (ipfsd) {
   // Bump revision number when new migration rule is added
-  const REVISION = 6
+  const REVISION = 7
   const REVISION_KEY = 'daemonConfigRevision'
   const CURRENT_REVISION = store.get(REVISION_KEY, 0)
 
@@ -171,6 +171,34 @@ function migrateConfig (ipfsd) {
     return
   }
 
+  const ensureCorsOrigins = (...origins) => {
+    const api = config.API || {}
+    const httpHeaders = api.HTTPHeaders || {}
+    let accessControlAllowOrigin = httpHeaders['Access-Control-Allow-Origin'] || []
+
+    if (!Array.isArray(accessControlAllowOrigin)) {
+      accessControlAllowOrigin = typeof accessControlAllowOrigin === 'string'
+        ? [accessControlAllowOrigin]
+        : []
+    }
+
+    const originAdded = origins.reduce((didAdd, origin) => {
+      if (accessControlAllowOrigin.includes(origin)) {
+        return didAdd
+      }
+
+      accessControlAllowOrigin.push(origin)
+      return true
+    }, false)
+
+    if (originAdded) {
+      httpHeaders['Access-Control-Allow-Origin'] = accessControlAllowOrigin
+      api.HTTPHeaders = httpHeaders
+      config.API = api
+      changed = true
+    }
+  }
+
   if (CURRENT_REVISION < 1) {
     // Cleanup https://github.com/ipfs-shipyard/ipfs-desktop/issues/1631
     if (config.Discovery && config.Discovery.MDNS && config.Discovery.MDNS.enabled) {
@@ -181,35 +209,12 @@ function migrateConfig (ipfsd) {
   }
 
   if (CURRENT_REVISION < 3) {
-    const api = config.API || {}
-    const httpHeaders = api.HTTPHeaders || {}
-    let accessControlAllowOrigin = httpHeaders['Access-Control-Allow-Origin'] || []
-
-    // Ensure accessControlAllowOrigin is an array
-    if (!Array.isArray(accessControlAllowOrigin)) {
-      // Convert string to array, or create empty array for other types
-      accessControlAllowOrigin = typeof accessControlAllowOrigin === 'string'
-        ? [accessControlAllowOrigin]
-        : []
-    }
-
-    const addURL = url => {
-      if (!accessControlAllowOrigin.includes(url)) {
-        accessControlAllowOrigin.push(url)
-        return true
-      }
-      return false
-    }
-
-    const addedWebUI = addURL('https://webui.ipfs.io')
-    const addedGw = addURL(`http://webui.ipfs.io.ipns.localhost:${getGatewayPort(config)}`)
-
-    if (addedWebUI || addedGw) {
-      httpHeaders['Access-Control-Allow-Origin'] = accessControlAllowOrigin
-      api.HTTPHeaders = httpHeaders
-      config.API = api
-      changed = true
-    }
+    ensureCorsOrigins(
+      'sdn://-',
+      'webui://-',
+      'https://webui.ipfs.io',
+      `http://webui.ipfs.io.ipns.localhost:${getGatewayPort(config)}`
+    )
   }
 
   if (CURRENT_REVISION < 4) {
@@ -252,6 +257,10 @@ function migrateConfig (ipfsd) {
       config.AutoTLS.Enabled = true
       changed = true
     }
+  }
+
+  if (CURRENT_REVISION < 7) {
+    ensureCorsOrigins('sdn://-', 'webui://-')
   }
 
   if (changed) {
