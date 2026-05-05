@@ -395,6 +395,46 @@ func (s *Service) ProcessCreditsPayment(ctx context.Context, requestID string, b
 	return nil
 }
 
+// CompleteCreditsPayment finalizes a confirmed SDN credits purchase and issues
+// the grant exactly once.
+func (s *Service) CompleteCreditsPayment(ctx context.Context, requestID string) (*AccessGrant, error) {
+	purchase, err := s.store.GetPurchaseRequest(requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load purchase request: %w", err)
+	}
+	if purchase == nil {
+		return nil, fmt.Errorf("purchase not found: %s", requestID)
+	}
+	if purchase.Status == PurchaseStatusCompleted && purchase.GrantID != "" {
+		existing, err := s.store.GetGrant(purchase.GrantID)
+		if err == nil && existing != nil {
+			return existing, nil
+		}
+	}
+	if purchase.Status != PurchaseStatusPaymentConfirmed {
+		return nil, fmt.Errorf("credits payment not confirmed for purchase: %s", requestID)
+	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditPaymentConfirmed, purchase.BuyerPeerID, purchase.CreditsTransactionID, "SDN credits payment confirmed", PurchaseStatusPaymentConfirmed); err != nil {
+		log.Warnf("Failed to record credits payment audit event for %s: %v", requestID, err)
+	}
+
+	grant, err := s.IssueGrant(ctx, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to issue grant: %w", err)
+	}
+	if err := s.store.UpdatePurchaseGrant(requestID, grant.GrantID); err != nil {
+		log.Warnf("Failed to attach credits grant to purchase %s: %v", requestID, err)
+	}
+	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusCompleted, fmt.Sprintf("SDN credits payment complete; grant issued: %s", grant.GrantID)); err != nil {
+		log.Warnf("Failed to set credits purchase completed for %s: %v", requestID, err)
+	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, s.peerID, grant.GrantID, "Grant issued after SDN credits payment", PurchaseStatusCompleted); err != nil {
+		log.Warnf("Failed to record credits grant audit event for %s: %v", requestID, err)
+	}
+
+	return grant, nil
+}
+
 // CompleteStripeCheckout finalizes a Stripe checkout flow and issues access.
 func (s *Service) CompleteStripeCheckout(ctx context.Context, requestID, sessionID, subscriptionID, customerID string) (*AccessGrant, error) {
 	purchase, err := s.store.GetPurchaseRequest(requestID)

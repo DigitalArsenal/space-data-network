@@ -456,6 +456,13 @@ func (h *APIHandler) handlePayWithCredits(w http.ResponseWriter, r *http.Request
 		http.Error(w, "purchase not found", http.StatusNotFound)
 		return
 	}
+	if purchase.Status == PurchaseStatusCompleted && purchase.GrantID != "" {
+		grant, err := h.service.store.GetGrant(purchase.GrantID)
+		if err == nil && grant != nil {
+			writeJSON(w, http.StatusOK, grant)
+			return
+		}
+	}
 
 	if h.payment != nil {
 		err = h.payment.ProcessCredits(r.Context(), requestID, purchase.BuyerPeerID, purchase.PaymentAmount, purchase.ProviderPeerID)
@@ -467,17 +474,10 @@ func (h *APIHandler) handlePayWithCredits(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Issue grant
-	grant, err := h.service.IssueGrant(r.Context(), requestID)
+	grant, err := h.service.CompleteCreditsPayment(r.Context(), requestID)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
-	}
-	if err := h.service.store.UpdatePurchaseGrant(requestID, grant.GrantID); err != nil {
-		log.Warnf("Failed to attach credits grant to purchase %s: %v", requestID, err)
-	}
-	if err := h.service.recordPaymentAudit(requestID, PaymentAuditGrantIssued, purchase.ProviderPeerID, grant.GrantID, "Grant issued after credits payment", PurchaseStatusCompleted); err != nil {
-		log.Warnf("Failed to record credits grant audit event for %s: %v", requestID, err)
 	}
 
 	writeJSON(w, http.StatusOK, grant)

@@ -10,7 +10,7 @@ import (
 func TestCryptoBuyerIntentIsSignedAndTamperRejected(t *testing.T) {
 	svc, store := newTestService(t)
 	ctx := context.Background()
-	purchase := createCryptoPurchaseForTest(t, svc, PaymentMethodCryptoETH)
+	purchase := createStorefrontPurchaseForTest(t, svc, PaymentMethodCryptoETH)
 
 	pp := NewPaymentProcessor(store, "test-peer-id", &mockChainVerifier{
 		chain:  "ethereum",
@@ -48,7 +48,7 @@ func TestCryptoBuyerIntentIsSignedAndTamperRejected(t *testing.T) {
 func TestCryptoPaymentCompletionIssuesGrantAndIsIdempotent(t *testing.T) {
 	svc, store := newTestService(t)
 	ctx := context.Background()
-	purchase := createCryptoPurchaseForTest(t, svc, PaymentMethodCryptoETH)
+	purchase := createStorefrontPurchaseForTest(t, svc, PaymentMethodCryptoETH)
 
 	pp := NewPaymentProcessor(store, "test-peer-id", &mockChainVerifier{
 		chain:  "ethereum",
@@ -132,7 +132,7 @@ func TestCryptoVerifierPolicyRejectsOnChainMismatches(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			purchase := createCryptoPurchaseForTest(t, svc, PaymentMethodCryptoETH)
+			purchase := createStorefrontPurchaseForTest(t, svc, PaymentMethodCryptoETH)
 			pp := NewPaymentProcessor(store, "test-peer-id", &mockChainVerifier{
 				chain:  "ethereum",
 				result: tt.result,
@@ -320,7 +320,7 @@ func ptrCryptoSubmission(req CryptoPaymentRequest) *CryptoPaymentRequest {
 	return &req
 }
 
-func createCryptoPurchaseForTest(t *testing.T, svc *Service, method PaymentMethod) *PurchaseRequest {
+func createStorefrontPurchaseForTest(t *testing.T, svc *Service, method PaymentMethod) *PurchaseRequest {
 	t.Helper()
 	listing := testListing()
 	listing.ListingID = ""
