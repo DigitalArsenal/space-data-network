@@ -1,6 +1,7 @@
 const { KUBO_VERSION } = require('../common/consts')
 
 const SDN_DESKTOP_RELEASES_URL = 'https://github.com/DigitalArsenal/space-data-network/releases/latest'
+const SDN_DESKTOP_AUTO_UPDATES_ENABLED = false
 const KUBO_RELEASES_API_URL = 'https://api.github.com/repos/ipfs/kubo/releases'
 const KUBO_RELEASES_URL = 'https://github.com/ipfs/kubo/releases'
 
@@ -25,6 +26,7 @@ function kuboRuntimeUpdateFeed (version = KUBO_VERSION) {
 module.exports = {
   KUBO_RELEASES_API_URL,
   KUBO_RELEASES_URL,
+  SDN_DESKTOP_AUTO_UPDATES_ENABLED,
   SDN_DESKTOP_RELEASES_URL,
   kuboRuntimeUpdateFeed,
   normalizeKuboVersion,

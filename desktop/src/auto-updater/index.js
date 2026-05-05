@@ -12,11 +12,16 @@ const getCtx = require('../context')
 const store = require('../common/store')
 const CONFIG_KEYS = require('../common/config-keys')
 const {
+  SDN_DESKTOP_AUTO_UPDATES_ENABLED,
   SDN_DESKTOP_RELEASES_URL,
   sdnDesktopReleaseVersionUrl
 } = require('../sdn-updater/runtime-feeds')
 
 function isAutoUpdateSupported () {
+  if (!SDN_DESKTOP_AUTO_UPDATES_ENABLED) {
+    logger.info('[updater] SDN desktop auto updates disabled until the SDN patch/update server is available')
+    return false
+  }
   if (store.get(CONFIG_KEYS.DISABLE_AUTO_UPDATE, false)) {
     logger.info('[updater] auto update explicitly disabled, not checking for updates automatically')
     return false
@@ -50,7 +55,14 @@ function setup () {
       logger.error(`[updater] stack: ${err.stack}`)
     }
 
-    // Show dialog for all errors (background and manual checks)
+    if (!feedback) {
+      return
+    }
+
+    feedback = false
+
+    // Show dialogs only for explicit user-requested update checks. Background
+    // updater errors must not block the main process that serves desktop UI.
     const opt = showDialog({
       title: i18n.t('autoUpdateError.title'),
       message: i18n.t('autoUpdateError.message'),
@@ -64,12 +76,6 @@ function setup () {
     if (opt === 1) {
       shell.openExternal(SDN_DESKTOP_RELEASES_URL)
     }
-
-    if (!feedback) {
-      return
-    }
-
-    feedback = false
   })
 
   autoUpdater.on('update-available', async ({ version, releaseNotes }) => {
@@ -220,9 +226,9 @@ module.exports = async function () {
 
   setup()
 
-  checkForUpdates() // background check
+  checkForUpdates()
 
-  setInterval(checkForUpdates, 43200000) // every 12 hours
+  setInterval(checkForUpdates, 43200000)
 
   // enable on-demand check via About submenu
   getCtx().setProp('manualCheckForUpdates', () => {
