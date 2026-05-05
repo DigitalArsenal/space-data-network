@@ -2,7 +2,7 @@
  * Tests for the Storefront client
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   AccessType,
   PaymentMethod,
@@ -19,6 +19,10 @@ import {
   renderListingCardHTML,
 } from './components';
 import type { Listing, PricingTier } from './types';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('Storefront Types', () => {
   it('should have correct enum values', () => {
@@ -204,6 +208,44 @@ describe('Storefront Client Configuration', () => {
       peerId: 'test-peer-id',
     });
     expect(client).toBeDefined();
+  });
+
+  it('normalizes a site root API base URL to the SDN server storefront route prefix', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ listingId: 'listing-1' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io/',
+      peerId: 'test-peer-id',
+    });
+
+    await client.getListing('listing-1');
+
+    expect(fetchMock).toHaveBeenCalledWith('https://sdn.spaceaware.io/api/storefront/listings/listing-1');
+  });
+
+  it('does not duplicate the API prefix when the API base URL already includes it', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ listingId: 'listing-1' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io/api/',
+      peerId: 'test-peer-id',
+    });
+
+    await client.getListing('listing-1');
+
+    expect(fetchMock).toHaveBeenCalledWith('https://sdn.spaceaware.io/api/storefront/listings/listing-1');
   });
 });
 
