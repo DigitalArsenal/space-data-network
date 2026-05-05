@@ -56,6 +56,34 @@ func TestIsPublicAPIPathAllowsDirectoryRoutes(t *testing.T) {
 	}
 }
 
+func TestApplyPublicAPICORSHeadersUsesRequestOrigin(t *testing.T) {
+	t.Parallel()
+
+	header := http.Header{}
+	applyPublicAPICORSHeaders(header, "https://spaceaware.io")
+
+	if got := header.Get("Access-Control-Allow-Origin"); got != "https://spaceaware.io" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+	if got := header.Get("Access-Control-Allow-Methods"); got != "GET, POST, PUT, PATCH, DELETE, OPTIONS" {
+		t.Fatalf("Access-Control-Allow-Methods = %q", got)
+	}
+	if got := header.Get("Vary"); got != "Origin" {
+		t.Fatalf("Vary = %q", got)
+	}
+}
+
+func TestApplyPublicAPICORSHeadersFallsBackToWildcard(t *testing.T) {
+	t.Parallel()
+
+	header := http.Header{}
+	applyPublicAPICORSHeaders(header, "")
+
+	if got := header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+}
+
 func TestNormalizeIPFSGatewayCORSHeadersCollapsesDuplicateValues(t *testing.T) {
 	t.Parallel()
 
