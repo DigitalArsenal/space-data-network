@@ -50,6 +50,7 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/modulert/caps"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
 	"github.com/spacedatanetwork/sdn-server/internal/protocol"
+	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
@@ -1237,6 +1238,12 @@ func (n *Node) Publish(schema string, data []byte) error {
 	}
 
 	return topic.Publish(n.ctx, data)
+}
+
+// PublishDatasetUpdatePNM announces one signed dataset-publication PNM on the
+// PNM topic and every affected dataset schema topic.
+func (n *Node) PublishDatasetUpdatePNM(ctx context.Context, ann sdnpubsub.DatasetUpdateAnnouncement) error {
+	return sdnpubsub.PublishDatasetUpdatePNM(ctx, n, ann)
 }
 
 // PeerRegistry returns the trusted peer registry.

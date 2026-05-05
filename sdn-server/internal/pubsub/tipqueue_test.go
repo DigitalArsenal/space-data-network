@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -50,6 +51,20 @@ func (m *mockFetcher) WasFetched(cid string) bool {
 type mockPinner struct {
 	mu     sync.Mutex
 	pinned map[string]time.Duration
+}
+
+type recordingSchemaPublisher struct {
+	published []string
+	payloads  map[string][]byte
+}
+
+func (p *recordingSchemaPublisher) Publish(schema string, data []byte) error {
+	if p.payloads == nil {
+		p.payloads = make(map[string][]byte)
+	}
+	p.published = append(p.published, schema)
+	p.payloads[schema] = append([]byte(nil), data...)
+	return nil
 }
 
 func newMockPinner() *mockPinner {
@@ -429,6 +444,62 @@ func TestBuildPNMMessage(t *testing.T) {
 	if string(parsed.FILE_ID()) != "OMM" {
 		t.Errorf("FILE_ID mismatch: got %s", parsed.FILE_ID())
 	}
+}
+
+func TestPublishDatasetUpdatePNMPublishesSchemaAndCombinedCelesTrakTopics(t *testing.T) {
+	pnmBytes := buildTestPNM(t, "bafymanifest", "DPM")
+	publisher := &recordingSchemaPublisher{}
+
+	err := PublishDatasetUpdatePNM(context.Background(), publisher, DatasetUpdateAnnouncement{
+		PNM:               pnmBytes,
+		Schemas:           []string{"CAT.fbs", "OMM", "CAT.fbs"},
+		CombinedCelesTrak: true,
+	})
+	if err != nil {
+		t.Fatalf("PublishDatasetUpdatePNM failed: %v", err)
+	}
+
+	want := []string{"PNM.fbs", "CAT.fbs", "OMM.fbs", "SPW.fbs"}
+	if !reflect.DeepEqual(publisher.published, want) {
+		t.Fatalf("published schemas = %#v, want %#v", publisher.published, want)
+	}
+	for _, schema := range want {
+		if !reflect.DeepEqual(publisher.payloads[schema], pnmBytes) {
+			t.Fatalf("payload for %s did not match original PNM", schema)
+		}
+	}
+}
+
+func TestPublishDatasetUpdatePNMRejectsInvalidPNM(t *testing.T) {
+	publisher := &recordingSchemaPublisher{}
+
+	err := PublishDatasetUpdatePNM(context.Background(), publisher, DatasetUpdateAnnouncement{
+		PNM:     []byte("not a pnm"),
+		Schemas: []string{"OMM.fbs"},
+	})
+	if err == nil {
+		t.Fatalf("expected invalid PNM error")
+	}
+	if len(publisher.published) != 0 {
+		t.Fatalf("published invalid PNM to %#v", publisher.published)
+	}
+}
+
+func buildTestPNM(t *testing.T, cid, fileID string) []byte {
+	t.Helper()
+
+	builder := flatbuffers.NewBuilder(256)
+	cidOffset := builder.CreateString(cid)
+	fileIDOffset := builder.CreateString(fileID)
+	timestampOffset := builder.CreateString(time.Now().UTC().Format(time.RFC3339))
+
+	PNM.PNMStart(builder)
+	PNM.PNMAddCID(builder, cidOffset)
+	PNM.PNMAddFILE_ID(builder, fileIDOffset)
+	PNM.PNMAddPUBLISH_TIMESTAMP(builder, timestampOffset)
+	pnm := PNM.PNMEnd(builder)
+	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
+	return append([]byte(nil), builder.FinishedBytes()...)
 }
 
 func TestTipQueueClose(t *testing.T) {
