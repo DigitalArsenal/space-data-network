@@ -1120,7 +1120,7 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 		args = append(args, batchID)
 	}
 
-	query += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) DESC LIMIT ?`
+	query += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) DESC, d.cid ASC LIMIT ?`
 	args = append(args, filter.Limit)
 
 	rows, err := s.db.Query(query, args...)
