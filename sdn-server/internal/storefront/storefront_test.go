@@ -726,6 +726,36 @@ func TestGroupMemberEnvelopeLifecycle(t *testing.T) {
 	if latestEpoch == nil || latestEpoch.EpochID != epoch.EpochID {
 		t.Fatalf("latest epoch = %#v, want %s", latestEpoch, epoch.EpochID)
 	}
+	if _, err := svc.AddGroupMember(ctx, &GroupMember{
+		GroupID:            "group-celestrak-ops",
+		ListingID:          listing.ListingID,
+		GrantID:            grant.GrantID,
+		MemberPeerID:       "peer-beta",
+		MemberKeyID:        "key-beta-rotated",
+		GrantScope:         "stream:read:omm",
+		KeyEpoch:           "epoch-2026-05-05T00",
+		WrappedKeyEnvelope: []byte("stale-epoch-envelope"),
+		SignerPeerID:       "provider-admin-peer",
+	}); err == nil {
+		t.Fatal("AddGroupMember should reject envelopes for a stale group key epoch after removal")
+	}
+	rotatedBeta, err := svc.AddGroupMember(ctx, &GroupMember{
+		GroupID:            "group-celestrak-ops",
+		ListingID:          listing.ListingID,
+		GrantID:            grant.GrantID,
+		MemberPeerID:       "peer-beta",
+		MemberKeyID:        "key-beta-rotated",
+		GrantScope:         "stream:read:omm",
+		KeyEpoch:           "epoch-2026-05-05T01",
+		WrappedKeyEnvelope: []byte("rotated-epoch-envelope"),
+		SignerPeerID:       "provider-admin-peer",
+	})
+	if err != nil {
+		t.Fatalf("AddGroupMember rotated epoch failed: %v", err)
+	}
+	if rotatedBeta.KeyEpoch != "epoch-2026-05-05T01" || rotatedBeta.Status != GroupMemberStatusActive {
+		t.Fatalf("rotated beta member = %#v", rotatedBeta)
+	}
 }
 
 func TestAccessVerification(t *testing.T) {

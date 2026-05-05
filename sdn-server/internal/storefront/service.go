@@ -830,6 +830,13 @@ func (s *Service) AddGroupMember(ctx context.Context, member *GroupMember) (*Gro
 	if grant.Status != GrantStatusActive {
 		return nil, fmt.Errorf("grant not active: %v", grant.Status)
 	}
+	latestEpoch, err := s.store.GetLatestGroupKeyEpoch(member.GroupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load group key epoch: %w", err)
+	}
+	if latestEpoch != nil && latestEpoch.PreviousEpoch == member.KeyEpoch {
+		return nil, fmt.Errorf("group key epoch is stale after rotation")
+	}
 	if existing, err := s.store.GetRequesterGroupMember(member.GroupID, member.MemberPeerID, member.MemberKeyID); err != nil {
 		return nil, err
 	} else if existing != nil {
