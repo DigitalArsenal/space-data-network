@@ -56,6 +56,35 @@ func TestIsPublicAPIPathAllowsDirectoryRoutes(t *testing.T) {
 	}
 }
 
+func TestNormalizeIPFSGatewayCORSHeadersCollapsesDuplicateValues(t *testing.T) {
+	t.Parallel()
+
+	header := http.Header{}
+	header.Add("Access-Control-Allow-Origin", "*")
+	header.Add("Access-Control-Allow-Origin", "*")
+	header.Add("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	header.Add("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	header.Add("Access-Control-Allow-Headers", "Content-Type, Range, User-Agent, X-Requested-With")
+	header.Add("Access-Control-Allow-Headers", "Content-Type, Range, User-Agent, X-Requested-With")
+	header.Add("Access-Control-Expose-Headers", "Content-Length, Content-Range, X-Chunked-Output")
+	header.Add("Access-Control-Expose-Headers", "Content-Length, Content-Range")
+
+	normalizeIPFSGatewayCORSHeaders(header)
+
+	if got := header.Values("Access-Control-Allow-Origin"); len(got) != 1 || got[0] != "*" {
+		t.Fatalf("Access-Control-Allow-Origin values = %#v, want one wildcard", got)
+	}
+	if got := header.Values("Access-Control-Allow-Methods"); len(got) != 1 || got[0] != "GET, HEAD, OPTIONS" {
+		t.Fatalf("Access-Control-Allow-Methods values = %#v", got)
+	}
+	if got := header.Values("Access-Control-Allow-Headers"); len(got) != 1 || got[0] != "Content-Type, Range, User-Agent, X-Requested-With" {
+		t.Fatalf("Access-Control-Allow-Headers values = %#v", got)
+	}
+	if got := header.Values("Access-Control-Expose-Headers"); len(got) != 1 || got[0] != "Content-Length, Content-Range, X-Chunked-Output, X-Ipfs-Path, X-Ipfs-Roots, X-Stream-Output" {
+		t.Fatalf("Access-Control-Expose-Headers values = %#v", got)
+	}
+}
+
 func TestHandleProviderDescriptorReturnsBrowserSafeDescriptor(t *testing.T) {
 	t.Parallel()
 
