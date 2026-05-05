@@ -37,7 +37,7 @@ func TestSchemaRegistryHas(t *testing.T) {
 	}
 
 	// Test schemas that should exist
-	expectedSchemas := []string{"OMM.fbs", "CDM.fbs", "EPM.fbs", "CAT.fbs"}
+	expectedSchemas := []string{"OMM.fbs", "CDM.fbs", "EPM.fbs", "CAT.fbs", "SPW.fbs"}
 	for _, schema := range expectedSchemas {
 		if !registry.Has(schema) {
 			t.Errorf("Expected schema %s to exist", schema)
