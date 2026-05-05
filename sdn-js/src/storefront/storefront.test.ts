@@ -248,6 +248,100 @@ describe('Storefront Client Configuration', () => {
     expect(fetchMock).toHaveBeenCalledWith('https://sdn.spaceaware.io/api/storefront/listings/listing-1');
   });
 
+  it('creates purchases with the Go storefront JSON contract and normalizes returned grant delivery state', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const encryptionPubkey = new Uint8Array([1, 2, 3, 4]);
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        request_id: 'purchase-1',
+        listing_id: 'protected-wasm-1',
+        tier_name: 'Basic',
+        buyer_peer_id: 'buyer-peer',
+        buyer_encryption_pubkey: 'AQIDBA==',
+        key_algorithm: 'x25519',
+        payment_method: PaymentMethod.SDNCredits,
+        payment_amount: 500,
+        payment_currency: 'SDN',
+        status: PurchaseStatus.Pending,
+        created_at: '2026-05-05T12:00:00Z',
+        updated_at: '2026-05-05T12:00:00Z',
+        preferred_delivery_method: 'IPFSPin',
+      }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    ).mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        grant_id: 'grant-1',
+        listing_id: 'protected-wasm-1',
+        tier_name: 'Basic',
+        buyer_peer_id: 'buyer-peer',
+        buyer_encryption_pubkey: 'AQIDBA==',
+        key_algorithm: 'x25519',
+        access_type: AccessType.Subscription,
+        granted_at: '2026-05-05T12:01:00Z',
+        status: GrantStatus.Active,
+        payment_method: PaymentMethod.SDNCredits,
+        payment_amount: 500,
+        payment_currency: 'SDN',
+        auto_renew: true,
+        renewal_count: 0,
+        total_requests: 0,
+        total_records: 0,
+        delivery_topic: '/sdn/data/protected-wasm-1/buyer-peer',
+        provider_signature: 'CQkJ',
+        provider_peer_id: 'provider-peer',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io',
+      peerId: 'buyer-peer',
+      encryptionPubkey,
+      keyAlgorithm: 'x25519',
+    });
+
+    const purchase = await client.createPurchase({
+      listingId: 'protected-wasm-1',
+      tierName: 'Basic',
+      paymentMethod: PaymentMethod.SDNCredits,
+      preferredDeliveryMethod: 'IPFSPin',
+    });
+    const grant = await client.payWithCredits(purchase.requestId);
+
+    expect(purchase.requestId).toBe('purchase-1');
+    expect(purchase.listingId).toBe('protected-wasm-1');
+    expect(purchase.buyerEncryptionPubkey).toEqual(encryptionPubkey);
+    expect(purchase.createdAt.toISOString()).toBe('2026-05-05T12:00:00.000Z');
+    expect(grant.grantId).toBe('grant-1');
+    expect(grant.deliveryTopic).toBe('/sdn/data/protected-wasm-1/buyer-peer');
+    expect(grant.providerSignature).toEqual(new Uint8Array([9, 9, 9]));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://sdn.spaceaware.io/api/storefront/purchases',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          listing_id: 'protected-wasm-1',
+          tier_name: 'Basic',
+          buyer_peer_id: 'buyer-peer',
+          buyer_encryption_pubkey: 'AQIDBA==',
+          key_algorithm: 'x25519',
+          payment_method: PaymentMethod.SDNCredits,
+          preferred_delivery_method: 'IPFSPin',
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/pay-credits',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
   it('posts explicit manual/dev paid confirmation and returns purchase plus grant state', async () => {
     const { createStorefrontClient } = await import('./client');
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
