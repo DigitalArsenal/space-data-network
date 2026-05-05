@@ -730,6 +730,27 @@ func inferListingKind(listing *Listing) ListingKind {
 }
 
 func (s *Service) signGrant(grant *AccessGrant) ([]byte, error) {
+	return ed25519.Sign(s.signingKey, s.grantSignaturePayload(grant)), nil
+}
+
+func (s *Service) verifyGrantProviderSignature(grant *AccessGrant) error {
+	if grant == nil || s.signingKey == nil || grant.ProviderPeerID != s.peerID {
+		return nil
+	}
+	publicKey, ok := s.signingKey.Public().(ed25519.PublicKey)
+	if !ok || len(publicKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("provider signing public key unavailable")
+	}
+	if len(grant.ProviderSignature) != ed25519.SignatureSize {
+		return fmt.Errorf("provider signature missing or invalid")
+	}
+	if !ed25519.Verify(publicKey, s.grantSignaturePayload(grant), grant.ProviderSignature) {
+		return fmt.Errorf("provider signature invalid")
+	}
+	return nil
+}
+
+func (s *Service) grantSignaturePayload(grant *AccessGrant) []byte {
 	data := fmt.Sprintf("%s:%s:%s:%s:%d",
 		grant.GrantID,
 		grant.ListingID,
@@ -737,7 +758,7 @@ func (s *Service) signGrant(grant *AccessGrant) ([]byte, error) {
 		grant.ProviderPeerID,
 		grant.GrantedAt.Unix(),
 	)
-	return ed25519.Sign(s.signingKey, []byte(data)), nil
+	return []byte(data)
 }
 
 func findPricingTierByName(listing *Listing, tierName string) *PricingTier {
@@ -922,6 +943,10 @@ func (s *Service) VerifyGrant(ctx context.Context, grantID string, buyerPeerID s
 	// Check expiration
 	if !grant.ExpiresAt.IsZero() && time.Now().After(grant.ExpiresAt) {
 		return nil, fmt.Errorf("grant expired")
+	}
+
+	if err := s.verifyGrantProviderSignature(grant); err != nil {
+		return nil, err
 	}
 
 	return grant, nil

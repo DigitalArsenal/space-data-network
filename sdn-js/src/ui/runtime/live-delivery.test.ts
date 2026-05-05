@@ -62,6 +62,7 @@ describe('live-delivery', () => {
     const decryptedBundle = await decryptEncryptedModuleBundle(
       encryptedBundleBytes,
       contentKey,
+      new TextEncoder().encode('listing=protected-od;grant=g1;epoch=e1'),
       {
         onEvent(event) {
           deliveryEvents.push(event.stage);
@@ -74,6 +75,7 @@ describe('live-delivery', () => {
       contentKey,
       new Uint8Array(20).fill(2),
       new Uint8Array(12).fill(1),
+      new TextEncoder().encode('listing=protected-od;grant=g1;epoch=e1'),
     );
 
     const harness = await loadDecryptedModule(new Uint8Array([0, 97, 115, 109]), {
@@ -160,8 +162,29 @@ describe('live-delivery', () => {
       decryptEncryptedModuleBundle(
         new Uint8Array(28),
         new Uint8Array(32).fill(4),
+        undefined,
       ),
     ).rejects.toThrow(/iv and authentication tag/);
     expect(aesGcmDecryptWithIv).not.toHaveBeenCalled();
+  });
+
+  it('passes canonical grant AAD into AES-GCM so tampered delivery metadata fails closed', async () => {
+    const encryptedBundleBytes = new Uint8Array(12 + 4 + 16);
+    const aad = new TextEncoder().encode('listing=protected-od;grant=g1;epoch=e1');
+    aesGcmDecryptWithIv.mockRejectedValueOnce(new Error('authentication failed'));
+
+    await expect(
+      decryptEncryptedModuleBundle(
+        encryptedBundleBytes,
+        new Uint8Array(32).fill(4),
+        aad,
+      ),
+    ).rejects.toThrow(/authentication failed/);
+    expect(aesGcmDecryptWithIv).toHaveBeenCalledWith(
+      new Uint8Array(32).fill(4),
+      new Uint8Array(20),
+      new Uint8Array(12),
+      aad,
+    );
   });
 });
