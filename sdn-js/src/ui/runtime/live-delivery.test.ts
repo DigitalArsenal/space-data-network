@@ -157,6 +157,32 @@ describe('live-delivery', () => {
     expect(events).toEqual(['unwrap-start', 'decrypt-start', 'decrypt-complete']);
   });
 
+  it('fails closed when client-decrypt rejects a tampered grant envelope', async () => {
+    const decryptArtifact = vi.fn(async () => {
+      throw new Error('invalid grant envelope authentication tag');
+    });
+    const events: string[] = [];
+
+    await expect(
+      decryptGrantProtectedModuleBundle(
+        {
+          grantResponseBytes: new Uint8Array([1, 2, 3, 4]),
+          encryptedBundleBytes: new Uint8Array([5, 6, 7, 8]),
+        },
+        new Uint8Array(32).fill(7),
+        { decryptArtifact },
+        {
+          onEvent(event) {
+            events.push(event.stage);
+          },
+        },
+      ),
+    ).rejects.toThrow(/invalid grant envelope authentication tag/);
+
+    expect(decryptArtifact).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(['unwrap-start', 'decrypt-start']);
+  });
+
   it('rejects undersized encrypted bundle payloads before decrypting', async () => {
     await expect(
       decryptEncryptedModuleBundle(
