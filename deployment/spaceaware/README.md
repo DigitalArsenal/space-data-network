@@ -22,12 +22,16 @@ tool is running so the bundled desktop/Kubo integration is healthy in the same
 checkout:
 
 ```bash
+./scripts/update-upstream-ipfs.sh --check
 test -d desktop/node_modules || npm run install:desktop
 npm --prefix desktop start
 ```
 
-Keep that process open while you smoke-test the deployed node. In a second
-terminal, verify the production service after deploy:
+When a deploy touches `webui/`, `desktop/`, or `sdn-js/ui/src/upstream-webui/`,
+also rebuild/relaunch the packaged desktop app and verify Kubo RPC from the
+desktop-selected HTTP origin before production deploy. Keep the desktop process
+open while you smoke-test the deployed node. In a second terminal, verify the
+production service after deploy:
 
 ```bash
 ./deployment/scripts/deploy.sh \

@@ -58,11 +58,11 @@ passes.
 - Modify: `scripts/sync-upstream-webui-into-sdn-js.mjs`
 - Create: `scripts/update-upstream-ipfs.sh`
 
-- [ ] **Step 1: Add the orchestration script**
+- [x] **Step 1: Add the orchestration script**
 
 Create `scripts/update-upstream-ipfs.sh` to fetch selected upstream IPFS WebUI and IPFS Desktop revisions, run subtree refreshes, refresh SDN vendor snapshots, apply SDN patch files, and run focused tests.
 
-- [ ] **Step 2: Add check-only mode**
+- [x] **Step 2: Add check-only mode**
 
 Support `--check` so CI can verify the mirrors, generated vendor files, and overlays are current without modifying files.
 
@@ -86,6 +86,11 @@ scripts/update-upstream-ipfs.sh
 
 Expected: upstream mirror refresh, generated vendor snapshot refresh, patch application, and focused tests.
 
+2026-05-05 note: added `scripts/update-upstream-ipfs.sh`; update mode calls
+the WebUI and Desktop subtree refreshes, refreshes the SDN vendor snapshot, and
+runs focused mirror tests. `--check` runs the vendor snapshot check and focused
+boundary/branding tests without mutating files.
+
 ### Task 3: Document And Enforce The Update Process
 
 **Files:**
@@ -93,15 +98,15 @@ Expected: upstream mirror refresh, generated vendor snapshot refresh, patch appl
 - Modify: `deployment/spaceaware/README.md`
 - Modify: `.github/workflows/*` if a suitable CI workflow exists
 
-- [ ] **Step 1: Keep AGENTS rules authoritative**
+- [x] **Step 1: Keep AGENTS rules authoritative**
 
 Ensure `AGENTS.md` states that `webui/` and `desktop/` are upstream mirrors and SDN changes must live in overlays, vendor snapshots, patches, or adapters.
 
-- [ ] **Step 2: Add deployment preflight instructions**
+- [x] **Step 2: Add deployment preflight instructions**
 
 Document that deploys touching IPFS WebUI/Desktop must run the upstream mirror check and desktop launch verification before production deploy.
 
-- [ ] **Step 3: Add CI coverage**
+- [x] **Step 3: Add CI coverage**
 
 Wire `scripts/update-upstream-ipfs.sh --check` into the relevant JS/UI CI path.
 
@@ -116,3 +121,9 @@ npm --prefix sdn-js exec vitest run src/ui/upstream-webui/branding.test.ts src/u
 ```
 
 Expected: all checks pass.
+
+2026-05-05 note: `AGENTS.md` already contains the upstream mirror and custom
+CORS-origin rules. `deployment/spaceaware/README.md` now requires
+`scripts/update-upstream-ipfs.sh --check` and desktop launch verification before
+deploys that touch WebUI/Desktop. `scripts/ci-local.sh js` runs the mirror check,
+which is covered by `.github/workflows/ci.yml` through `ci-local.sh quick`.

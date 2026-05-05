@@ -209,6 +209,10 @@ run_sdn_js() {
     echo "Skipping sdn-js lint (no ESLint config found in sdn-js)"
   fi
 
+  step "Upstream IPFS mirror check"
+  (cd "$ROOT" && ./scripts/update-upstream-ipfs.sh --check)
+  pass "upstream ipfs mirror check"
+
   step "sdn-js tests"
   (cd "$ROOT/sdn-js" && npm_config_cache="$ROOT/.npm-cache" npm test -- --run)
   pass "sdn-js test"

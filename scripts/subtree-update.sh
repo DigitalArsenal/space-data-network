@@ -3,8 +3,9 @@
 #
 # Usage:
 #   ./scripts/subtree-update.sh kubo    # Update Kubo subtree
+#   ./scripts/subtree-update.sh webui   # Update IPFS WebUI subtree
 #   ./scripts/subtree-update.sh desktop # Update IPFS Desktop subtree
-#   ./scripts/subtree-update.sh all     # Update both subtrees
+#   ./scripts/subtree-update.sh all     # Update all subtrees
 
 set -e
 
@@ -51,6 +52,29 @@ update_kubo() {
     git subtree pull --prefix=kubo kubo-upstream "$BRANCH" --squash -m "Update Kubo subtree from upstream $BRANCH"
 
     log_info "Kubo subtree updated successfully!"
+}
+
+update_webui() {
+    log_info "Updating IPFS WebUI subtree from upstream..."
+
+    # Ensure remote exists
+    if ! git remote get-url webui-upstream &>/dev/null; then
+        log_info "Adding webui-upstream remote..."
+        git remote add webui-upstream https://github.com/ipfs/ipfs-webui.git
+    fi
+
+    # Fetch latest
+    log_info "Fetching from webui-upstream..."
+    git fetch webui-upstream
+
+    # Get current branch for reference
+    BRANCH=${WEBUI_BRANCH:-main}
+
+    # Pull subtree changes
+    log_info "Pulling subtree changes from webui-upstream/$BRANCH..."
+    git subtree pull --prefix=webui webui-upstream "$BRANCH" --squash -m "Update IPFS WebUI subtree from upstream $BRANCH"
+
+    log_info "IPFS WebUI subtree updated successfully!"
 }
 
 update_desktop() {
@@ -102,18 +126,23 @@ show_usage() {
     echo ""
     echo "Commands:"
     echo "  kubo      Update Kubo subtree from upstream"
+    echo "  webui     Update IPFS WebUI subtree from upstream"
     echo "  desktop   Update IPFS Desktop subtree from upstream"
     echo "  schemas   Update schemas submodule and copy to sdn-server"
     echo "  all       Update all subtrees and submodules"
     echo ""
     echo "Environment variables:"
     echo "  KUBO_BRANCH     Branch to pull from kubo-upstream (default: master)"
+    echo "  WEBUI_BRANCH    Branch to pull from webui-upstream (default: main)"
     echo "  DESKTOP_BRANCH  Branch to pull from desktop-upstream (default: main)"
 }
 
 case "$1" in
     kubo)
         update_kubo
+        ;;
+    webui)
+        update_webui
         ;;
     desktop)
         update_desktop
@@ -123,6 +152,7 @@ case "$1" in
         ;;
     all)
         update_kubo
+        update_webui
         update_desktop
         update_schemas
         ;;
