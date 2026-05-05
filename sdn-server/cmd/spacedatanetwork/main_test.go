@@ -397,6 +397,62 @@ func TestHandleModuleRuntimeMutationSavesInputsAndReturnsHistory(t *testing.T) {
 	}
 }
 
+func TestHandleModuleRuntimeMutationSavesAndRunsSchedule(t *testing.T) {
+	t.Parallel()
+
+	mgr := plugins.New()
+	plugin := &runtimeMutationTestPlugin{id: "celestrak-provider"}
+	if err := mgr.Register(plugin); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if err := mgr.StartAll(context.Background(), plugins.RuntimeContext{Mode: "test"}); err != nil {
+		t.Fatalf("StartAll failed: %v", err)
+	}
+
+	scheduleReq := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog",
+		bytes.NewBufferString(`{"enabled":true,"interval":"45m","timezone":"UTC"}`),
+	)
+	scheduleRecorder := httptest.NewRecorder()
+	handleModuleRuntimeMutation(mgr)(scheduleRecorder, scheduleReq)
+	if scheduleRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("short cadence status = %d, body = %s, want 400", scheduleRecorder.Code, scheduleRecorder.Body.String())
+	}
+
+	scheduleReq = httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog",
+		bytes.NewBufferString(`{"enabled":true,"interval":"3h","cronExpression":"0 */3 * * *","timezone":"UTC","retryBudget":2,"maxRuntime":"30m"}`),
+	)
+	scheduleRecorder = httptest.NewRecorder()
+	handleModuleRuntimeMutation(mgr)(scheduleRecorder, scheduleReq)
+	if scheduleRecorder.Code != http.StatusOK {
+		t.Fatalf("schedule status = %d, body = %s", scheduleRecorder.Code, scheduleRecorder.Body.String())
+	}
+	var schedulePayload plugins.RuntimeModuleSchedule
+	if err := json.NewDecoder(scheduleRecorder.Body).Decode(&schedulePayload); err != nil {
+		t.Fatalf("decode schedule payload: %v", err)
+	}
+	if schedulePayload.MethodID != "sync_full_catalog" || schedulePayload.Interval != "3h0m0s" || schedulePayload.MinInterval != "3h0m0s" {
+		t.Fatalf("schedule payload = %#v", schedulePayload)
+	}
+
+	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog/run", nil)
+	runRecorder := httptest.NewRecorder()
+	handleModuleRuntimeMutation(mgr)(runRecorder, runReq)
+	if runRecorder.Code != http.StatusOK {
+		t.Fatalf("run status = %d, body = %s", runRecorder.Code, runRecorder.Body.String())
+	}
+	var runPayload plugins.RuntimeModuleScheduleRun
+	if err := json.NewDecoder(runRecorder.Body).Decode(&runPayload); err != nil {
+		t.Fatalf("decode run payload: %v", err)
+	}
+	if runPayload.MethodID != "sync_full_catalog" || runPayload.Trigger != "manual" || runPayload.Status != "ok" {
+		t.Fatalf("run payload = %#v", runPayload)
+	}
+}
+
 func TestMakeWebUIHandlerServesIndexAndAssetsUnderWebUI(t *testing.T) {
 	t.Parallel()
 
@@ -777,6 +833,17 @@ func (p *runtimeMutationTestPlugin) RuntimeDescriptor() plugins.RuntimeModuleDes
 }
 
 func (p *runtimeMutationTestPlugin) CronMethods() []plugins.CronMethodSpec {
+	if p.id == "celestrak-provider" {
+		return []plugins.CronMethodSpec{
+			{
+				Method:          "sync_full_catalog",
+				Description:     "Sync CelesTrak full catalog",
+				DefaultInterval: "3h",
+				Input:           "json",
+				Output:          "json",
+			},
+		}
+	}
 	return []plugins.CronMethodSpec{
 		{
 			Method:          "refresh_grants",

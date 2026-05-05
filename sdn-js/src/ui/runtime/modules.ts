@@ -108,6 +108,42 @@ export interface ModuleRuntimeOption {
   mutable: boolean;
 }
 
+export interface ModuleRuntimeScheduleConfig {
+  enabled: boolean;
+  interval?: string;
+  cronExpression?: string;
+  timezone?: string;
+  jitter?: string;
+  backoff?: string;
+  retryBudget?: number;
+  maxRuntime?: string;
+}
+
+export interface ModuleRuntimeScheduleRun {
+  id: string;
+  methodId: string;
+  trigger: string;
+  startedAt: string;
+  finishedAt?: string;
+  status: string;
+  message?: string;
+  outputSize?: number;
+}
+
+export interface ModuleRuntimeSchedule extends ModuleRuntimeScheduleConfig {
+  methodId: string;
+  description?: string;
+  interval: string;
+  timezone: string;
+  timezoneDisplay?: string;
+  utcDisplay?: string;
+  minInterval?: string;
+  intervalPresets: string[];
+  lastRunAt?: string;
+  nextRunAt?: string;
+  runHistory: ModuleRuntimeScheduleRun[];
+}
+
 export interface ModuleRuntimeAction {
   actionId: string;
   label: string;
@@ -178,6 +214,7 @@ export interface ModuleRuntimeEntry {
   manifest?: ModuleRuntimeManifest;
   stats: ModuleRuntimeStats;
   options: ModuleRuntimeOption[];
+  schedules: ModuleRuntimeSchedule[];
   actions: ModuleRuntimeAction[];
   statusHistory: ModuleRuntimeStatusEvent[];
   links?: ModuleRuntimeLinks;
@@ -294,6 +331,67 @@ export async function saveModuleRuntimeInputValues(
   };
 }
 
+export async function saveModuleRuntimeSchedule(
+  baseUrl: string,
+  moduleId: string,
+  methodId: string,
+  config: ModuleRuntimeScheduleConfig,
+  fetchImpl: ModuleRuntimeFetchLike = globalThis.fetch.bind(
+    globalThis,
+  ) as ModuleRuntimeFetchLike,
+): Promise<ModuleRuntimeSchedule> {
+  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  const response = await fetchImpl(
+    `${normalizedBaseUrl}/api/v1/modules/runtime/${encodeURIComponent(moduleId)}/schedules/${encodeURIComponent(methodId)}`,
+    {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/json',
+        'x-requested-with': 'XMLHttpRequest',
+      },
+      body: JSON.stringify(config),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`module schedule update failed (${response.status})`);
+  }
+  const schedule = normalizeSchedule(await response.json());
+  if (!schedule) {
+    throw new Error('module schedule update returned an invalid schedule');
+  }
+  return schedule;
+}
+
+export async function runModuleRuntimeScheduleNow(
+  baseUrl: string,
+  moduleId: string,
+  methodId: string,
+  fetchImpl: ModuleRuntimeFetchLike = globalThis.fetch.bind(
+    globalThis,
+  ) as ModuleRuntimeFetchLike,
+): Promise<ModuleRuntimeScheduleRun> {
+  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  const response = await fetchImpl(
+    `${normalizedBaseUrl}/api/v1/modules/runtime/${encodeURIComponent(moduleId)}/schedules/${encodeURIComponent(methodId)}/run`,
+    {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'x-requested-with': 'XMLHttpRequest',
+      },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`module schedule run failed (${response.status})`);
+  }
+  const run = normalizeScheduleRuns([await response.json()])[0];
+  if (!run) {
+    throw new Error('module schedule run returned an invalid result');
+  }
+  return run;
+}
+
 export async function runModuleRuntimeAction(
   baseUrl: string,
   moduleId: string,
@@ -372,6 +470,7 @@ function normalizeModuleEntry(value: unknown): ModuleRuntimeEntry | null {
     manifest: normalizeManifest(entry?.manifest),
     stats: normalizeStats(entry?.stats),
     options: normalizeOptions(entry?.options),
+    schedules: normalizeSchedules(entry?.schedules),
     actions: normalizeActions(entry?.actions),
     statusHistory: normalizeStatusHistory(entry?.statusHistory),
     links: normalizeLinks(entry?.links),
@@ -620,6 +719,70 @@ function normalizeOptions(value: unknown): ModuleRuntimeOption[] {
     return [];
   }
   return value.flatMap((option) => normalizeOption(option) ?? []);
+}
+
+function normalizeSchedules(value: unknown): ModuleRuntimeSchedule[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((schedule) => normalizeSchedule(schedule) ?? []);
+}
+
+function normalizeSchedule(value: unknown): ModuleRuntimeSchedule | null {
+  const record = asRecord(value);
+  const methodId = pickTrimmedString(record, 'methodId');
+  const interval = pickTrimmedString(record, 'interval');
+  if (!methodId || !interval) {
+    return null;
+  }
+  return {
+    methodId,
+    description: pickTrimmedString(record, 'description'),
+    enabled: record?.enabled === true,
+    interval,
+    cronExpression: pickTrimmedString(record, 'cronExpression'),
+    timezone: pickTrimmedString(record, 'timezone') ?? 'UTC',
+    timezoneDisplay: pickTrimmedString(record, 'timezoneDisplay'),
+    utcDisplay: pickTrimmedString(record, 'utcDisplay'),
+    jitter: pickTrimmedString(record, 'jitter'),
+    backoff: pickTrimmedString(record, 'backoff'),
+    retryBudget: pickOptionalFiniteNumber(record, 'retryBudget'),
+    maxRuntime: pickTrimmedString(record, 'maxRuntime'),
+    minInterval: pickTrimmedString(record, 'minInterval'),
+    intervalPresets: normalizeStringArray(record?.intervalPresets),
+    lastRunAt: pickTrimmedString(record, 'lastRunAt'),
+    nextRunAt: pickTrimmedString(record, 'nextRunAt'),
+    runHistory: normalizeScheduleRuns(record?.runHistory),
+  };
+}
+
+function normalizeScheduleRuns(value: unknown): ModuleRuntimeScheduleRun[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((run) => {
+    const record = asRecord(run);
+    const id = pickTrimmedString(record, 'id');
+    const methodId = pickTrimmedString(record, 'methodId');
+    const trigger = pickTrimmedString(record, 'trigger');
+    const startedAt = pickTrimmedString(record, 'startedAt');
+    const status = pickTrimmedString(record, 'status');
+    if (!id || !methodId || !trigger || !startedAt || !status) {
+      return [];
+    }
+    return [
+      {
+        id,
+        methodId,
+        trigger,
+        startedAt,
+        finishedAt: pickTrimmedString(record, 'finishedAt'),
+        status,
+        message: pickTrimmedString(record, 'message'),
+        outputSize: pickOptionalFiniteNumber(record, 'outputSize'),
+      },
+    ];
+  });
 }
 
 function normalizeOption(value: unknown): ModuleRuntimeOption | null {
