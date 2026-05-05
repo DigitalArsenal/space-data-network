@@ -46,6 +46,8 @@ const (
 	parserVersionCelestrakSatcat    = "celestrak-satcat/v1"
 	parserVersionCelestrakSPW       = "celestrak-space-weather/v1"
 	parserVersionSpaceTrackGP       = "spacetrack-gp-history/v1"
+	fetchRetryBudget                = 3
+	fetchRetryBackoff               = 10 * time.Millisecond
 )
 
 type fetchMetadata struct {
@@ -726,10 +728,11 @@ func (r *Runner) fetchWithCache(ctx context.Context, sourceURL, cacheName string
 	}
 
 	validators := readCachedFetchMetadata(cachePath)
-	data, metadata, err := r.fetchBytesWithMetadata(ctx, sourceURL, validators)
+	data, metadata, attempts, err := r.fetchBytesWithRetry(ctx, sourceURL, validators)
 	if err != nil {
 		if metadata.HTTPStatus == http.StatusNotModified {
 			if fallback, modTime, ok, cacheErr := readCachedPayload(cachePath, 0); cacheErr == nil && ok {
+				r.clearFetchFailure(cacheName)
 				metadata.SourceURL = sourceURL
 				metadata.RetrievedAt = firstNonZeroTime(validators.RetrievedAt, modTime.UTC())
 				metadata.ETag = firstNonEmptyString(metadata.ETag, validators.ETag)
@@ -742,10 +745,12 @@ func (r *Runner) fetchWithCache(ctx context.Context, sourceURL, cacheName string
 			return nil, metadata, err
 		}
 		if isFetchHardStopStatus(metadata.HTTPStatus) {
+			r.recordFetchFailureForReview(cacheName, sourceURL, metadata, attempts, err)
 			return nil, metadata, err
 		}
 		if fallback, modTime, ok, cacheErr := readCachedPayload(cachePath, 0); cacheErr == nil && ok {
 			log.Warnf("CelesTrak fetch failed (%v); using stale cache %s", err, cachePath)
+			r.recordFetchFailure(cacheName, attempts)
 			cachedMetadata := readCachedFetchMetadata(cachePath)
 			cachedMetadata.SourceURL = sourceURL
 			cachedMetadata.RetrievedAt = firstNonZeroTime(cachedMetadata.RetrievedAt, modTime.UTC())
@@ -753,8 +758,10 @@ func (r *Runner) fetchWithCache(ctx context.Context, sourceURL, cacheName string
 			cachedMetadata.CachePath = cachePath
 			return fallback, cachedMetadata, nil
 		}
+		r.recordFetchFailureForReview(cacheName, sourceURL, metadata, attempts, err)
 		return nil, metadata, err
 	}
+	r.clearFetchFailure(cacheName)
 
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
 		log.Warnf("Failed creating cache directory for %s: %v", cachePath, err)
@@ -768,6 +775,35 @@ func (r *Runner) fetchWithCache(ctx context.Context, sourceURL, cacheName string
 	}
 
 	return data, metadata, nil
+}
+
+func (r *Runner) fetchBytesWithRetry(ctx context.Context, sourceURL string, validators fetchMetadata) ([]byte, fetchMetadata, int, error) {
+	var (
+		data     []byte
+		metadata fetchMetadata
+		err      error
+	)
+	for attempt := 1; attempt <= fetchRetryBudget; attempt++ {
+		data, metadata, err = r.fetchBytesWithMetadata(ctx, sourceURL, validators)
+		if err == nil || !shouldRetryFetch(ctx, metadata, err) || attempt == fetchRetryBudget {
+			return data, metadata, attempt, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, metadata, attempt, ctx.Err()
+		case <-time.After(fetchRetryBackoff * time.Duration(attempt)):
+		}
+	}
+	return data, metadata, fetchRetryBudget, err
+}
+
+func shouldRetryFetch(ctx context.Context, metadata fetchMetadata, err error) bool {
+	if err == nil || ctx.Err() != nil || metadata.HTTPStatus == http.StatusNotModified || isFetchHardStopStatus(metadata.HTTPStatus) {
+		return false
+	}
+	return metadata.HTTPStatus == 0 ||
+		metadata.HTTPStatus == http.StatusTooManyRequests ||
+		metadata.HTTPStatus >= http.StatusInternalServerError
 }
 
 func firstNonZeroTime(values ...time.Time) time.Time {
@@ -819,6 +855,54 @@ func writeCachedFetchMetadata(cachePath string, metadata fetchMetadata) error {
 		return err
 	}
 	return os.WriteFile(cacheMetadataPath(cachePath), payload, 0644)
+}
+
+func (r *Runner) recordFetchFailure(cacheName string, attempts int) {
+	key := fetchFailureKey(cacheName)
+	r.checkpoints.setString(key, strconv.Itoa(attempts))
+	if err := r.checkpoints.save(); err != nil {
+		log.Warnf("Failed to persist fetch failure checkpoint %s: %v", key, err)
+	}
+}
+
+func (r *Runner) recordFetchFailureForReview(cacheName, sourceURL string, metadata fetchMetadata, attempts int, err error) {
+	r.recordFetchFailure(cacheName, attempts)
+	reviewKey := fetchHumanReviewKey(cacheName)
+	value := time.Now().UTC().Format(time.RFC3339)
+	r.checkpoints.setString(reviewKey, value)
+	if saveErr := r.checkpoints.save(); saveErr != nil {
+		log.Warnf("Failed to persist human-review checkpoint %s: %v", reviewKey, saveErr)
+	}
+	log.Errorf("Human review required for ingest fetch %s after %d attempt(s): url=%s status=%d error=%v",
+		cacheName, attempts, sourceURL, metadata.HTTPStatus, err)
+}
+
+func (r *Runner) clearFetchFailure(cacheName string) {
+	r.checkpoints.delete(fetchFailureKey(cacheName))
+	r.checkpoints.delete(fetchHumanReviewKey(cacheName))
+	if err := r.checkpoints.save(); err != nil {
+		log.Warnf("Failed to clear fetch failure checkpoints for %s: %v", cacheName, err)
+	}
+}
+
+func fetchFailureKey(cacheName string) string {
+	return "fetch_failure_count_" + checkpointSafeKey(cacheName)
+}
+
+func fetchHumanReviewKey(cacheName string) string {
+	return "fetch_human_review_required_" + checkpointSafeKey(cacheName)
+}
+
+func checkpointSafeKey(value string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(value) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return strings.Trim(b.String(), "_")
 }
 
 func readCachedPayload(path string, maxAge time.Duration) ([]byte, time.Time, bool, error) {
@@ -1366,4 +1450,10 @@ func (c *checkpointStore) setString(key, value string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.state[key] = value
+}
+
+func (c *checkpointStore) delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.state, key)
 }
