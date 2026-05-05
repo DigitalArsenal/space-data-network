@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -277,6 +278,10 @@ func TestPublishDatasetPublicationManifestToIPFSPinsManifestCID(t *testing.T) {
 }
 
 func TestBuildDatasetPublicationPNMAnnouncesSignedManifestCID(t *testing.T) {
+	_, signingKey, err := ed25519.GenerateKey(bytes.NewReader(bytes.Repeat([]byte{0x24}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
 	publishedAt := time.Unix(1700000000, 0).UTC()
 	manifest := &DatasetPublicationManifest{
 		Path:      "/tmp/cat-active.dpm",
@@ -286,6 +291,7 @@ func TestBuildDatasetPublicationPNMAnnouncesSignedManifestCID(t *testing.T) {
 	pnmBytes, err := BuildDatasetPublicationPNM(manifest, DatasetPublicationPNMOptions{
 		FileName:    "cat-active.dpm",
 		PublishedAt: publishedAt,
+		SigningKey:  signingKey,
 	})
 	if err != nil {
 		t.Fatalf("BuildDatasetPublicationPNM failed: %v", err)
@@ -306,8 +312,160 @@ func TestBuildDatasetPublicationPNMAnnouncesSignedManifestCID(t *testing.T) {
 	if got := string(root.SIGNATURE_TYPE()); got != "Ed25519" {
 		t.Fatalf("SIGNATURE_TYPE = %q", got)
 	}
+	pnmSignature, err := hex.DecodeString(string(root.SIGNATURE()))
+	if err != nil {
+		t.Fatalf("decode PNM signature: %v", err)
+	}
+	if !ed25519.Verify(signingKey.Public().(ed25519.PublicKey), datasetPublicationPNMSignaturePayload(manifest.CID, "DPM"), pnmSignature) {
+		t.Fatalf("PNM signature does not verify over manifest CID announcement")
+	}
 	if got := string(root.PUBLISH_TIMESTAMP()); got != publishedAt.Format(time.RFC3339) {
 		t.Fatalf("PUBLISH_TIMESTAMP = %q", got)
+	}
+}
+
+func TestVerifyDatasetPublicationReplayVerifiesPNMManifestAssetsAndQuery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-dpm-replay-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	_, signingKey, err := ed25519.GenerateKey(bytes.NewReader(bytes.Repeat([]byte{0x63}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	providerPublicKey := signingKey.Public().(ed25519.PublicKey)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(tmpDir, "db"), validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-satcat-csv",
+		SourceURL:    "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV",
+		BatchID:      "source-sha-001",
+		ContentKeyID: "public",
+	}
+	recordA := sds.NewCATBuilder().
+		WithNoradCatID(25544).
+		WithObjectName("ISS (ZARYA)").
+		WithObjectID("1998-067A").
+		WithObjectType("PAYLOAD").
+		WithOpsStatus("OPERATIONAL").
+		Build()
+	recordB := sds.NewCATBuilder().
+		WithNoradCatID(40909).
+		WithObjectName("STARLINK-1001").
+		WithObjectID("2015-049A").
+		WithObjectType("PAYLOAD").
+		WithOpsStatus("OPERATIONAL").
+		Build()
+	if _, err := store.StoreWithSourceTags("CAT.fbs", recordA, "source:celestrak", nil, tags); err != nil {
+		t.Fatalf("store record A failed: %v", err)
+	}
+	if _, err := store.StoreWithSourceTags("CAT.fbs", recordB, "source:celestrak", nil, tags); err != nil {
+		t.Fatalf("store record B failed: %v", err)
+	}
+
+	from := time.Now().Add(-time.Hour)
+	to := time.Now().Add(time.Hour)
+	export, err := store.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
+		SchemaName:         "CAT.fbs",
+		ProviderID:         "space-data-network-02",
+		SourceName:         "celestrak-satcat-csv",
+		BatchID:            "source-sha-001",
+		CAReadyResidentSet: true,
+		From:               &from,
+		To:                 &to,
+		Limit:              10,
+	})
+	if err != nil {
+		t.Fatalf("ExportDatasetWindow failed: %v", err)
+	}
+	publishedAt := time.Unix(1700000000, 0).UTC()
+	manifest, err := BuildSignedDatasetPublicationManifest(filepath.Join(tmpDir, "publish"), DatasetPublicationManifestOptions{
+		Export:          export,
+		DatasetID:       "cat-active",
+		UpdateID:        "source-sha-001",
+		ProviderPeerID:  "space-data-network-02",
+		ProviderEPMCID:  "bafy-provider-epm",
+		PublishedAt:     publishedAt,
+		SigningKey:      signingKey,
+		SchemaHash:      "cat-schema-hash",
+		QueryEngine:     "FlatSQL",
+		QueryEngineVers: "sdn-index-v1",
+	})
+	if err != nil {
+		t.Fatalf("BuildSignedDatasetPublicationManifest failed: %v", err)
+	}
+	pnmBytes, err := BuildDatasetPublicationPNM(manifest, DatasetPublicationPNMOptions{
+		FileName:    filepath.Base(manifest.Path),
+		PublishedAt: publishedAt,
+		SigningKey:  signingKey,
+	})
+	if err != nil {
+		t.Fatalf("BuildDatasetPublicationPNM failed: %v", err)
+	}
+
+	shardBytes, err := os.ReadFile(export.ShardPath)
+	if err != nil {
+		t.Fatalf("read shard: %v", err)
+	}
+	indexBytes, err := os.ReadFile(export.IndexPath)
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	objects := map[string][]byte{
+		manifest.CID:    manifest.Bytes,
+		export.ShardCID: shardBytes,
+		export.IndexCID: indexBytes,
+	}
+	result, err := VerifyDatasetPublicationReplay(context.Background(), store, DatasetPublicationReplayOptions{
+		PNM:               pnmBytes,
+		ProviderPublicKey: providerPublicKey,
+		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
+			data, ok := objects[cid]
+			if !ok {
+				return nil, os.ErrNotExist
+			}
+			return append([]byte(nil), data...), nil
+		},
+		WorkDir: filepath.Join(tmpDir, "replay"),
+	})
+	if err != nil {
+		t.Fatalf("VerifyDatasetPublicationReplay failed: %v", err)
+	}
+	if result.ManifestCID != manifest.CID || result.ShardCID != export.ShardCID || result.IndexCID != export.IndexCID {
+		t.Fatalf("unexpected replay result: %+v", result)
+	}
+	if result.RecordCount != export.RecordCount || result.ResultSHA256 != export.ResultSHA256 {
+		t.Fatalf("unexpected replay result metadata: %+v", result)
+	}
+
+	pnmRoot := PNM.GetSizePrefixedRootAsPNM(pnmBytes, 0)
+	signatureHex := string(pnmRoot.SIGNATURE())
+	tamperedSignatureHex := "0" + signatureHex[1:]
+	if tamperedSignatureHex == signatureHex {
+		tamperedSignatureHex = "1" + signatureHex[1:]
+	}
+	tamperedPNM := bytes.Replace(append([]byte(nil), pnmBytes...), []byte(signatureHex), []byte(tamperedSignatureHex), 1)
+	if _, err := VerifyDatasetPublicationReplay(context.Background(), store, DatasetPublicationReplayOptions{
+		PNM:               tamperedPNM,
+		ProviderPublicKey: providerPublicKey,
+		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
+			return objects[cid], nil
+		},
+		WorkDir: filepath.Join(tmpDir, "tampered"),
+	}); err == nil {
+		t.Fatalf("tampered PNM must fail replay verification")
 	}
 }
 
