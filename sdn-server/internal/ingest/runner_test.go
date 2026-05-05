@@ -67,6 +67,17 @@ func TestNewRunnerEnforcesCelesTrakMinimumCadence(t *testing.T) {
 	}
 }
 
+func TestNewRunnerDefaultsToValidCelestrakSatcatCSVQuery(t *testing.T) {
+	runner := newTestRunner(t)
+
+	if !strings.Contains(runner.cfg.CelestrakSatcatCSVURL, "GROUP=active") {
+		t.Fatalf("CelestrakSatcatCSVURL = %q, want GROUP=active query", runner.cfg.CelestrakSatcatCSVURL)
+	}
+	if !strings.Contains(runner.cfg.CelestrakSatcatCSVURL, "FORMAT=CSV") {
+		t.Fatalf("CelestrakSatcatCSVURL = %q, want FORMAT=CSV query", runner.cfg.CelestrakSatcatCSVURL)
+	}
+}
+
 func TestIngestSpaceWeatherDataStoresSPWFlatBuffers(t *testing.T) {
 	runner := newTestRunner(t)
 	fixture, err := os.ReadFile("testdata/celestrak-sw-all.csv")
@@ -367,6 +378,9 @@ func TestSyncCelestrakSatcatFetchesLegacyAndCSV(t *testing.T) {
 			}
 		case "/satcat/records.php":
 			csvRequests++
+			if got, want := r.URL.Query().Get("GROUP"), "active"; got != want {
+				t.Fatalf("GROUP query = %q, want %q", got, want)
+			}
 			if got, want := r.URL.Query().Get("FORMAT"), "CSV"; got != want {
 				t.Fatalf("FORMAT query = %q, want %q", got, want)
 			}
@@ -386,7 +400,7 @@ func TestSyncCelestrakSatcatFetchesLegacyAndCSV(t *testing.T) {
 		StoragePath:            filepath.Join(dir, "store"),
 		RawPath:                filepath.Join(dir, "raw"),
 		CelestrakSatcatURL:     server.URL + "/pub/satcat.txt",
-		CelestrakSatcatCSVURL:  server.URL + "/satcat/records.php?FORMAT=CSV",
+		CelestrakSatcatCSVURL:  server.URL + "/satcat/records.php?GROUP=active&FORMAT=CSV",
 		SatcatInterval:         minCelestrakFetchInterval,
 		SpaceTrackPollInterval: time.Hour,
 	})
