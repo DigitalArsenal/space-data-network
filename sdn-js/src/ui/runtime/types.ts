@@ -24,8 +24,10 @@ export interface ObservedPeerRecord {
 
 export type ListingStatus = 'public' | 'unlisted' | 'retired';
 export type ListingPaymentModel = 'free' | 'one-time' | 'subscription';
+export type CanonicalListingKind = 'module' | 'data';
 
 export interface CanonicalListing {
+  listingKind?: CanonicalListingKind;
   pluginId: string;
   version: string;
   name?: string;
@@ -44,6 +46,10 @@ export interface CanonicalListing {
   acceptedPaymentMethods?: string[];
   requiredScope?: string;
   standardsUsed?: string[];
+  providerEpmCid?: string;
+  sampleCid?: string;
+  accessType?: string;
+  encryptionRequired?: boolean;
 }
 
 export type AddressLookupChain = 'bitcoin' | 'ethereum' | 'solana' | (string & {});

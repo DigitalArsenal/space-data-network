@@ -11,6 +11,7 @@ import ExplorePageRenderer from '../../../../../../webui/src/explore/explore-pag
 import DiagnosticsPage from '../../../../../../webui/src/diagnostics/loadable-diagnostics-page'
 import DirectoryPage from '../directory/DirectoryPage.js'
 import ModulesPage from '../modules/ModulesPage.js'
+import MarketplacePage from '../marketplace/MarketplacePage.js'
 
 export default createRouteBundle({
   '/explore': ExplorePageRenderer,
@@ -27,6 +28,7 @@ export default createRouteBundle({
   '/diagnostics*': DiagnosticsPage,
   '/directory': DirectoryPage,
   '/modules': ModulesPage,
+  '/marketplace': MarketplacePage,
   '/status*': StatusPage,
   '/': StatusPage,
   '': StatusPage

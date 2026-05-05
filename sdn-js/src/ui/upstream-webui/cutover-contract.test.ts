@@ -35,6 +35,7 @@ describe('sdn upstream webui cutover contract', () => {
       'upstream-webui/overrides/components/connected/Connected.js',
       'upstream-webui/overrides/components/is-connected/IsConnected.js',
       'upstream-webui/overrides/directory/DirectoryPage.js',
+      'upstream-webui/overrides/marketplace/MarketplacePage.js',
       'upstream-webui/overrides/modules/ModulesPage.js',
       'upstream-webui/overrides/navigation/NavBar.js',
       'upstream-webui/overrides/navigation/sdn-logo-mark.svg',

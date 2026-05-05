@@ -127,6 +127,7 @@ export const NavBar = ({ t }) => {
           <NavLink to='/peers' icon={StrokeCube}>{t('peers:title')}</NavLink>
           <NavLink to='/directory' icon={StrokeWeb}>Directory</NavLink>
           <NavLink to='/modules' icon={StrokeData}>Modules</NavLink>
+          <NavLink to='/marketplace' icon={StrokeData}>Marketplace</NavLink>
           <NavLink to='/settings' icon={StrokeSettings}>{t('settings:title')}</NavLink>
           <ExternalNavLink href='/webui' iconSrc={ipfsLogoMark}>IPFS</ExternalNavLink>
         </div>

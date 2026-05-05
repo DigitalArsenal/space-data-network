@@ -1,4 +1,5 @@
 import { decodeCanonicalPlgListing, inferStandardsUsed } from './plg-listings';
+import { decodeCanonicalStfListing } from './stf-listings';
 import type { CanonicalListing, ListingStatus } from './types';
 
 export interface MarketplaceFetchLikeResponse {
@@ -41,6 +42,7 @@ export async function loadMarketplaceListingsFromServer(
   fetchImpl: MarketplaceFetchLike = fetch,
 ): Promise<CanonicalListing[]> {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  const listings: CanonicalListing[] = [];
   const moduleDeliveryResponse = await fetchImpl(
     `${normalizedBaseUrl}/api/module-delivery/listings`,
     { credentials: 'include' },
@@ -48,11 +50,15 @@ export async function loadMarketplaceListingsFromServer(
 
   if (moduleDeliveryResponse.ok) {
     const payload = asRecord(await moduleDeliveryResponse.json()) as ModuleDeliveryListingResponse | null;
-    return normalizePlgQueryResults(payload?.results)
+    listings.push(...normalizeFlatbufferQueryResults(payload?.results)
       .map((entry) => entry.data_base64 ? decodeCanonicalPlgListing(base64ToBytes(entry.data_base64), {
         observedAt: entry.timestamp ? Date.parse(entry.timestamp) : Date.now(),
       }) : null)
-      .filter((listing): listing is CanonicalListing => Boolean(listing));
+      .filter((listing): listing is CanonicalListing => Boolean(listing)));
+    return [
+      ...listings,
+      ...await loadStfListings(normalizedBaseUrl, fetchImpl),
+    ];
   }
 
   let storefrontError: Error | null = null;
@@ -64,9 +70,13 @@ export async function loadMarketplaceListingsFromServer(
 
   if (storefrontResponse.ok) {
     const payload = asRecord(await storefrontResponse.json()) as StorefrontListingResponse | null;
-    return normalizeStorefrontListings(payload?.listings)
+    listings.push(...normalizeStorefrontListings(payload?.listings)
       .map((listing) => decodeStorefrontListing(listing))
-      .filter((listing): listing is CanonicalListing => Boolean(listing));
+      .filter((listing): listing is CanonicalListing => Boolean(listing)));
+    return [
+      ...listings,
+      ...await loadStfListings(normalizedBaseUrl, fetchImpl),
+    ];
   } else if (storefrontResponse.status !== 404) {
     storefrontError = new Error(`storefront listing query failed (${storefrontResponse.status})`);
   }
@@ -87,11 +97,16 @@ export async function loadMarketplaceListingsFromServer(
   }
 
   const payload = asRecord(await plgResponse.json()) as PlgQueryResponse | null;
-  return normalizePlgQueryResults(payload?.results)
+  listings.push(...normalizeFlatbufferQueryResults(payload?.results)
     .map((entry) => entry.data_base64 ? decodeCanonicalPlgListing(base64ToBytes(entry.data_base64), {
       observedAt: entry.timestamp ? Date.parse(entry.timestamp) : Date.now(),
     }) : null)
-    .filter((listing): listing is CanonicalListing => Boolean(listing));
+    .filter((listing): listing is CanonicalListing => Boolean(listing)));
+
+  return [
+    ...listings,
+    ...await loadStfListings(normalizedBaseUrl, fetchImpl),
+  ];
 }
 
 function decodeStorefrontListing(listing: unknown): CanonicalListing | null {
@@ -108,6 +123,7 @@ function decodeStorefrontListing(listing: unknown): CanonicalListing | null {
   const description = pickTrimmedString(listing, 'description');
 
   return {
+    listingKind: 'data',
     pluginId,
     version: normalizeStorefrontVersion(listing.version),
     name: name || pluginId,
@@ -126,6 +142,30 @@ function decodeStorefrontListing(listing: unknown): CanonicalListing | null {
       normalizeTags(listing.tags),
     ),
   };
+}
+
+async function loadStfListings(
+  normalizedBaseUrl: string,
+  fetchImpl: MarketplaceFetchLike,
+): Promise<CanonicalListing[]> {
+  const response = await fetchImpl(
+    `${normalizedBaseUrl}/api/v1/data/query/STF?include_data=true&format=json&limit=25`,
+    { credentials: 'include' },
+  );
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return [];
+    }
+    throw new Error(`STF listing query failed (${response.status})`);
+  }
+
+  const payload = asRecord(await response.json()) as PlgQueryResponse | null;
+  return normalizeFlatbufferQueryResults(payload?.results)
+    .map((entry) => entry.data_base64 ? decodeCanonicalStfListing(base64ToBytes(entry.data_base64), {
+      observedAt: entry.timestamp ? Date.parse(entry.timestamp) : Date.now(),
+    }) : null)
+    .filter((listing): listing is CanonicalListing => Boolean(listing));
 }
 
 function normalizeStorefrontVersion(value: unknown): string {
@@ -177,7 +217,7 @@ function normalizeStorefrontListings(value: unknown): StorefrontListing[] {
   return Array.isArray(value) ? value.filter((entry): entry is StorefrontListing => isRecord(entry)) : [];
 }
 
-function normalizePlgQueryResults(value: unknown): Array<{
+function normalizeFlatbufferQueryResults(value: unknown): Array<{
   data_base64?: string;
   timestamp?: string;
 }> {
