@@ -87,6 +87,58 @@ func TestNewFlatSQLStoreDoesNotSynchronouslyIndexExistingSchemaTables(t *testing
 	}
 }
 
+func TestNewFlatSQLStoreDoesNotSynchronouslyIndexExistingGlobalTables(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-existing-global-index-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	db, err := sql.Open("sqlite3", filepath.Join(tmpDir, "sdn.db"))
+	if err != nil {
+		t.Fatalf("open sqlite db failed: %v", err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE sdn_record_index (
+			schema_name TEXT NOT NULL,
+			cid TEXT NOT NULL,
+			norad_cat_id INTEGER,
+			entity_id TEXT,
+			object_type TEXT,
+			ops_status_code TEXT,
+			epoch_unix INTEGER,
+			epoch_day TEXT,
+			source_timestamp INTEGER NOT NULL,
+			created_at INTEGER DEFAULT (strftime('%s', 'now')),
+			PRIMARY KEY (schema_name, cid)
+		)
+	`); err != nil {
+		t.Fatalf("create existing record index table failed: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite db failed: %v", err)
+	}
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_sdn_record_index_time_window'`).Scan(&count); err != nil {
+		t.Fatalf("index lookup failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("existing global table index should be deferred, count=%d", count)
+	}
+}
+
 func TestFlatSQLStoreQueryIndexedRecordsCommonCatalogFilters(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-indexed-test-*")
 	if err != nil {

@@ -83,6 +83,10 @@ func (s *FlatSQLStore) initTables() error {
 	}
 
 	// Fast lookup index for API queries (schema/day/object filters).
+	recordIndexExisted, err := s.tableExists("sdn_record_index")
+	if err != nil {
+		return err
+	}
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS sdn_record_index (
 			schema_name TEXT NOT NULL,
@@ -108,41 +112,45 @@ func (s *FlatSQLStore) initTables() error {
 		return err
 	}
 
-	if _, err := s.db.Exec(`
+	if err := s.createStartupIndex("sdn_record_index", "idx_sdn_record_index_lookup", recordIndexExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_lookup
 		ON sdn_record_index (schema_name, epoch_day, norad_cat_id, entity_id, source_timestamp DESC)
 	`); err != nil {
 		return fmt.Errorf("failed to create composite index: %w", err)
 	}
 
-	if _, err := s.db.Exec(`
+	if err := s.createStartupIndex("sdn_record_index", "idx_sdn_record_index_norad", recordIndexExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_norad
 		ON sdn_record_index (schema_name, norad_cat_id, source_timestamp DESC)
 	`); err != nil {
 		return fmt.Errorf("failed to create norad index: %w", err)
 	}
 
-	if _, err := s.db.Exec(`
+	if err := s.createStartupIndex("sdn_record_index", "idx_sdn_record_index_entity", recordIndexExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_entity
 		ON sdn_record_index (schema_name, entity_id, source_timestamp DESC)
 	`); err != nil {
 		return fmt.Errorf("failed to create entity index: %w", err)
 	}
 
-	if _, err := s.db.Exec(`
+	if err := s.createStartupIndex("sdn_record_index", "idx_sdn_record_index_catalog_filters", recordIndexExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_catalog_filters
 		ON sdn_record_index (schema_name, object_type, ops_status_code, norad_cat_id)
 	`); err != nil {
 		return fmt.Errorf("failed to create catalog filter index: %w", err)
 	}
 
-	if _, err := s.db.Exec(`
+	if err := s.createStartupIndex("sdn_record_index", "idx_sdn_record_index_time_window", recordIndexExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_time_window
 		ON sdn_record_index (schema_name, epoch_unix, source_timestamp DESC)
 	`); err != nil {
 		return fmt.Errorf("failed to create time window index: %w", err)
 	}
 
+	sourceTagsExisted, err := s.tableExists("sdn_record_source_tags")
+	if err != nil {
+		return err
+	}
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS sdn_record_source_tags (
 			schema_name TEXT NOT NULL,
@@ -160,7 +168,7 @@ func (s *FlatSQLStore) initTables() error {
 		return fmt.Errorf("failed to create source tags table: %w", err)
 	}
 
-	if _, err := s.db.Exec(`
+	if err := s.createStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_lookup", sourceTagsExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_lookup
 		ON sdn_record_source_tags (schema_name, provider_id, source_name, batch_id)
 	`); err != nil {
@@ -168,6 +176,10 @@ func (s *FlatSQLStore) initTables() error {
 	}
 
 	// Directory index for node/user EPM records.
+	directoryExisted, err := s.tableExists("sdn_directory")
+	if err != nil {
+		return err
+	}
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS sdn_directory (
 			kind TEXT NOT NULL,
@@ -186,14 +198,14 @@ func (s *FlatSQLStore) initTables() error {
 		return fmt.Errorf("failed to create directory table: %w", err)
 	}
 
-	if _, err := s.db.Exec(`
+	if err := s.createStartupIndex("sdn_directory", "idx_sdn_directory_search", directoryExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_directory_search
 		ON sdn_directory (kind, dn, legal_name, bitcoin_address)
 	`); err != nil {
 		return fmt.Errorf("failed to create directory search index: %w", err)
 	}
 
-	if _, err := s.db.Exec(`
+	if err := s.createStartupIndex("sdn_directory", "idx_sdn_directory_updated", directoryExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_directory_updated
 		ON sdn_directory (kind, updated_at DESC)
 	`); err != nil {
@@ -201,6 +213,10 @@ func (s *FlatSQLStore) initTables() error {
 	}
 
 	// Publication log index for PLG hash-chained logs.
+	logIndexExisted, err := s.tableExists("sdn_log_index")
+	if err != nil {
+		return err
+	}
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS sdn_log_index (
 			publisher_peer_id TEXT NOT NULL,
@@ -218,14 +234,14 @@ func (s *FlatSQLStore) initTables() error {
 		return fmt.Errorf("failed to create log index table: %w", err)
 	}
 
-	if _, err := s.db.Exec(`
+	if err := s.createStartupIndex("sdn_log_index", "idx_sdn_log_index_head", logIndexExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_log_index_head
 		ON sdn_log_index (publisher_peer_id, schema_type, sequence DESC)
 	`); err != nil {
 		return fmt.Errorf("failed to create log head index: %w", err)
 	}
 
-	if _, err := s.db.Exec(`
+	if err := s.createStartupIndex("sdn_log_index", "idx_sdn_log_index_epoch", logIndexExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_log_index_epoch
 		ON sdn_log_index (schema_type, epoch_day, timestamp DESC)
 	`); err != nil {
@@ -262,26 +278,37 @@ func (s *FlatSQLStore) initTables() error {
 
 		// Create index on peer_id and timestamp
 		indexName := fmt.Sprintf("idx_%s_peer_time", tableName)
-		indexExists, err := s.indexExists(indexName)
-		if err != nil {
-			return err
-		}
-		if !indexExists {
+		indexSQL := fmt.Sprintf(`
+			CREATE INDEX IF NOT EXISTS %s ON %s (peer_id, timestamp)
+		`, indexName, tableName)
+		if err := s.createStartupIndex(tableName, indexName, tableExisted, indexSQL); err != nil {
 			if tableExisted {
-				log.Warnf("Skipping synchronous startup creation of missing index %s on existing table %s; rebuild indexes during maintenance", indexName, tableName)
-			} else {
-				indexSQL := fmt.Sprintf(`
-					CREATE INDEX IF NOT EXISTS %s ON %s (peer_id, timestamp)
-				`, indexName, tableName)
-				if _, err := s.db.Exec(indexSQL); err != nil {
-					log.Warnf("Failed to create index for %s: %v", tableName, err)
-				}
+				return err
 			}
+			log.Warnf("Failed to create index for %s: %v", tableName, err)
 		}
 
 		log.Debugf("Initialized table: %s", tableName)
 	}
 
+	return nil
+}
+
+func (s *FlatSQLStore) createStartupIndex(tableName, indexName string, tableExisted bool, createSQL string) error {
+	indexExists, err := s.indexExists(indexName)
+	if err != nil {
+		return err
+	}
+	if indexExists {
+		return nil
+	}
+	if tableExisted {
+		log.Warnf("Skipping synchronous startup creation of missing index %s on existing table %s; rebuild indexes during maintenance", indexName, tableName)
+		return nil
+	}
+	if _, err := s.db.Exec(createSQL); err != nil {
+		return err
+	}
 	return nil
 }
 
