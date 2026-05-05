@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	CATFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	OMMFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
@@ -27,6 +28,35 @@ func newTestRunner(t *testing.T) *Runner {
 		}
 	})
 	return runner
+}
+
+func TestNewRunnerEnforcesCelesTrakMinimumCadence(t *testing.T) {
+	dir := t.TempDir()
+	runner, err := NewRunner(Config{
+		StoragePath:          filepath.Join(dir, "store"),
+		RawPath:              filepath.Join(dir, "raw"),
+		CelestrakInterval:    time.Minute,
+		SatcatInterval:       time.Minute,
+		SpaceWeatherInterval: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner failed: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	if got, want := runner.cfg.CelestrakInterval, minCelestrakFetchInterval; got != want {
+		t.Fatalf("CelestrakInterval = %s, want %s", got, want)
+	}
+	if got, want := runner.cfg.SatcatInterval, minCelestrakFetchInterval; got != want {
+		t.Fatalf("SatcatInterval = %s, want %s", got, want)
+	}
+	if got, want := runner.cfg.SpaceWeatherInterval, minCelestrakFetchInterval; got != want {
+		t.Fatalf("SpaceWeatherInterval = %s, want %s", got, want)
+	}
 }
 
 func TestIngestSpaceWeatherDataStoresSPWFlatBuffers(t *testing.T) {
