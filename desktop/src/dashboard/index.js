@@ -9,6 +9,7 @@ const dock = require('../utils/dock')
 const getCtx = require('../context')
 const registerStaticScheme = require('../static-scheme')
 const ipcMainEvents = require('../common/ipc-main-events')
+const { getDesktopStaticUrl } = require('../static-http-server')
 
 registerStaticScheme({ scheme: 'sdn', directory: 'assets/sdn-ui' })
 const introPath = join(__dirname, '../../assets/pages/sdn-intro.html')
@@ -72,7 +73,7 @@ module.exports = async function () {
   const window = createWindow()
   ctx.setProp('dashboard', window)
 
-  const url = new URL('/', 'sdn://-')
+  const url = await getDesktopStaticUrl('sdn')
   let apiAddress = null
   const loadIntroPage = () => window.loadFile(introPath)
   const getIpfsd = ctx.getFn('getIpfsd')
