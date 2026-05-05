@@ -8,6 +8,10 @@ import {
   extractWrappedContentKey,
   validateLicensingGrant,
 } from 'space-data-module-sdk/licensing';
+import * as flatbuffers from 'flatbuffers';
+import { LGR } from 'spacedatastandards.org/lib/js/REC/LGR.js';
+import { PLG } from 'spacedatastandards.org/lib/js/REC/PLG.js';
+import { licensingGrantMessageType } from 'spacedatastandards.org/lib/js/REC/licensingGrantMessageType.js';
 
 import type { DerivedIdentity, EncryptionKeyPair, KeyPair } from './crypto/types';
 import type {
@@ -15,7 +19,7 @@ import type {
   LicensingGrantModuleDescriptor,
   LicensingWrappedContentKey,
 } from 'space-data-module-sdk/licensing';
-import { sha256, sign } from './crypto/hd-wallet';
+import { sha256, sign, verify } from './crypto/hd-wallet';
 import { discoverProvider } from './discovery';
 import {
   normalizeServerDescriptor,
@@ -307,7 +311,7 @@ export async function requestModuleGrant(
     proofBytes,
     candidateAddrs,
   );
-  const grant = decodeGrantResponse(grantResponseBytes, {
+  const grant = await decodeGrantResponse(grantResponseBytes, {
     reqId,
     moduleId,
     moduleVersion,
@@ -514,7 +518,7 @@ function decodeChallengeResponse(bytes: Uint8Array): GrantChallengePayload {
   }
 }
 
-function decodeGrantResponse(
+async function decodeGrantResponse(
   bytes: Uint8Array,
   options: {
     reqId: string;
@@ -524,11 +528,11 @@ function decodeGrantResponse(
     requestedTimeoutMs: number;
     requestedAtMs: number;
   },
-): GrantResponsePayload {
+): Promise<GrantResponsePayload> {
   try {
     const decodedGrant = decodeLicensingGrant(bytes);
     const validatedGrant = validateLicensingGrant(decodedGrant, options);
-    validateGrantEnvelope(validatedGrant, options.requestedAtMs);
+    await validateGrantEnvelope(validatedGrant, options.requestedAtMs);
     const bundleDescriptor = extractGrantModuleDescriptor(validatedGrant);
     const wrappedContentKey = extractWrappedContentKey(validatedGrant);
 
@@ -538,7 +542,7 @@ function decodeGrantResponse(
   }
 }
 
-function validateGrantEnvelope(grant: LicensingGrantMessage, requestedAtMs: number): void {
+async function validateGrantEnvelope(grant: LicensingGrantMessage, requestedAtMs: number): Promise<void> {
   const providerSignature = cloneOptionalBytes(grant.providerSignature);
   if (providerSignature.length !== 64) {
     throw new ModuleDeliveryProtocolError(
@@ -567,6 +571,280 @@ function validateGrantEnvelope(grant: LicensingGrantMessage, requestedAtMs: numb
       `licensing grant status is not active: ${status}`,
     );
   }
+
+  const unsignedGrant = encodeUnsignedGrantForProviderSignature(grant);
+  const signatureValid = await verify(
+    cloneOptionalBytes(grant.grantVerifierPublicKey),
+    unsignedGrant,
+    providerSignature,
+  );
+  if (!signatureValid) {
+    throw new ModuleDeliveryProtocolError(
+      'invalid_grant_signature',
+      'licensing grant provider signature verification failed',
+    );
+  }
+}
+
+function encodeUnsignedGrantForProviderSignature(grant: LicensingGrantMessage): Uint8Array {
+  const rawBytes = cloneOptionalBytes(grant.rawBytes);
+  if (rawBytes.length === 0) {
+    return encodeUnsignedGrantFromDecodedMessage(grant);
+  }
+
+  const root = LGR.getRootAsLGR(new flatbuffers.ByteBuffer(rawBytes));
+  if (root.MESSAGE_TYPE() !== licensingGrantMessageType.Granted) {
+    throw new ModuleDeliveryProtocolError('invalid_grant', 'expected granted licensing record');
+  }
+
+  const builder = new flatbuffers.Builder(Math.max(2048, rawBytes.length));
+  const requestIdOffset = builder.createString(root.REQUEST_ID() || '');
+  const moduleIdOffset = builder.createString(root.MODULE_ID() || '');
+  const moduleVersionOffset = createOptionalString(builder, root.MODULE_VERSION());
+  const requesterPeerIdOffset = createOptionalString(builder, root.REQUESTER_PEER_ID());
+  const requesterXpubOffset = createOptionalString(builder, root.REQUESTER_XPUB());
+  const requestedDomainOffset = createOptionalString(builder, root.REQUESTED_DOMAIN());
+  const grantedDomainOffset = createOptionalString(builder, root.GRANTED_DOMAIN());
+  const requiredScopeOffset = createOptionalString(builder, root.REQUIRED_SCOPE());
+  const grantStatusOffset = createOptionalString(builder, root.GRANT_STATUS());
+  const denialReasonOffset = createOptionalString(builder, root.DENIAL_REASON());
+  const capabilityTokenOffset = createOptionalVector(
+    builder,
+    LGR.createCapabilityTokenVector,
+    root.capabilityTokenArray(),
+  );
+  const moduleDescriptor = root.MODULE_DESCRIPTOR();
+  const moduleDescriptorOffset = moduleDescriptor
+    ? createModuleDescriptorForSignature(builder, moduleDescriptor)
+    : 0;
+  const wrappedHeaderOffset = root.WRAPPED_CONTENT_KEY_HEADER()?.unpack().pack(builder) ?? 0;
+  const wrappedPayloadOffset = createOptionalVector(
+    builder,
+    LGR.createWrappedContentKeyPayloadVector,
+    root.wrappedContentKeyPayloadArray(),
+  );
+  const verifierPubkeyOffset = createOptionalVector(
+    builder,
+    LGR.createGrantVerifierPubkeyVector,
+    root.grantVerifierPubkeyArray(),
+  );
+
+  LGR.startLGR(builder);
+  LGR.addMessageType(builder, licensingGrantMessageType.Granted);
+  LGR.addRequestId(builder, requestIdOffset);
+  LGR.addModuleId(builder, moduleIdOffset);
+  if (moduleVersionOffset !== 0) {
+    LGR.addModuleVersion(builder, moduleVersionOffset);
+  }
+  if (requesterPeerIdOffset !== 0) {
+    LGR.addRequesterPeerId(builder, requesterPeerIdOffset);
+  }
+  if (requesterXpubOffset !== 0) {
+    LGR.addRequesterXpub(builder, requesterXpubOffset);
+  }
+  if (requestedDomainOffset !== 0) {
+    LGR.addRequestedDomain(builder, requestedDomainOffset);
+  }
+  LGR.addRequestedTimeoutMs(builder, root.REQUESTED_TIMEOUT_MS());
+  if (grantedDomainOffset !== 0) {
+    LGR.addGrantedDomain(builder, grantedDomainOffset);
+  }
+  LGR.addGrantedTimeoutMs(builder, root.GRANTED_TIMEOUT_MS());
+  LGR.addExpiresAt(builder, root.EXPIRES_AT());
+  if (requiredScopeOffset !== 0) {
+    LGR.addRequiredScope(builder, requiredScopeOffset);
+  }
+  if (grantStatusOffset !== 0) {
+    LGR.addGrantStatus(builder, grantStatusOffset);
+  }
+  if (denialReasonOffset !== 0) {
+    LGR.addDenialReason(builder, denialReasonOffset);
+  }
+  if (capabilityTokenOffset !== 0) {
+    LGR.addCapabilityToken(builder, capabilityTokenOffset);
+  }
+  if (moduleDescriptorOffset !== 0) {
+    LGR.addModuleDescriptor(builder, moduleDescriptorOffset);
+  }
+  if (wrappedHeaderOffset !== 0) {
+    LGR.addWrappedContentKeyHeader(builder, wrappedHeaderOffset);
+  }
+  if (wrappedPayloadOffset !== 0) {
+    LGR.addWrappedContentKeyPayload(builder, wrappedPayloadOffset);
+  }
+  if (verifierPubkeyOffset !== 0) {
+    LGR.addGrantVerifierPubkey(builder, verifierPubkeyOffset);
+  }
+  const rootOffset = LGR.endLGR(builder);
+  LGR.finishLGRBuffer(builder, rootOffset);
+  return builder.asUint8Array();
+}
+
+function createModuleDescriptorForSignature(
+  builder: flatbuffers.Builder,
+  descriptor: PLG,
+): flatbuffers.Offset {
+  const pluginIdOffset = builder.createString(descriptor.PLUGIN_ID() || '');
+  const nameOffset = createOptionalString(builder, descriptor.NAME());
+  const versionOffset = createOptionalString(builder, descriptor.VERSION());
+  const descriptionOffset = createOptionalString(builder, descriptor.DESCRIPTION());
+  const wasmHashOffset = createOptionalVector(
+    builder,
+    PLG.createWasmHashVector,
+    descriptor.wasmHashArray(),
+  );
+  const wasmCidOffset = createOptionalString(builder, descriptor.WASM_CID());
+  const encryptedWasmHashOffset = createOptionalVector(
+    builder,
+    PLG.createEncryptedWasmHashVector,
+    descriptor.encryptedWasmHashArray(),
+  );
+  const requiredScopeOffset = createOptionalString(builder, descriptor.REQUIRED_SCOPE());
+  const keyIdOffset = createOptionalString(builder, descriptor.KEY_ID());
+  const allowedDomainsOffset = createOptionalStringVector(
+    builder,
+    PLG.createAllowedDomainsVector,
+    descriptor.allowedDomainsLength(),
+    (index) => descriptor.ALLOWED_DOMAINS(index),
+  );
+
+  PLG.startPLG(builder);
+  PLG.addPluginId(builder, pluginIdOffset);
+  if (nameOffset !== 0) {
+    PLG.addName(builder, nameOffset);
+  }
+  if (versionOffset !== 0) {
+    PLG.addVersion(builder, versionOffset);
+  }
+  if (descriptionOffset !== 0) {
+    PLG.addDescription(builder, descriptionOffset);
+  }
+  PLG.addPluginType(builder, descriptor.PLUGIN_TYPE());
+  PLG.addAbiVersion(builder, descriptor.ABI_VERSION());
+  if (wasmHashOffset !== 0) {
+    PLG.addWasmHash(builder, wasmHashOffset);
+  }
+  PLG.addWasmSize(builder, descriptor.WASM_SIZE());
+  if (wasmCidOffset !== 0) {
+    PLG.addWasmCid(builder, wasmCidOffset);
+  }
+  if (encryptedWasmHashOffset !== 0) {
+    PLG.addEncryptedWasmHash(builder, encryptedWasmHashOffset);
+  }
+  PLG.addEncryptedWasmSize(builder, descriptor.ENCRYPTED_WASM_SIZE());
+  PLG.addEncrypted(builder, descriptor.ENCRYPTED());
+  if (requiredScopeOffset !== 0) {
+    PLG.addRequiredScope(builder, requiredScopeOffset);
+  }
+  if (keyIdOffset !== 0) {
+    PLG.addKeyId(builder, keyIdOffset);
+  }
+  if (allowedDomainsOffset !== 0) {
+    PLG.addAllowedDomains(builder, allowedDomainsOffset);
+  }
+  PLG.addMaxGrantTimeoutMs(builder, descriptor.MAX_GRANT_TIMEOUT_MS());
+  return PLG.endPLG(builder);
+}
+
+function encodeUnsignedGrantFromDecodedMessage(grant: LicensingGrantMessage): Uint8Array {
+  const builder = new flatbuffers.Builder(512);
+  const requestIdOffset = builder.createString(grant.reqId);
+  const moduleIdOffset = builder.createString(grant.moduleId);
+  const moduleVersionOffset = createOptionalString(builder, grant.moduleVersion);
+  const requesterPeerIdOffset = createOptionalString(builder, grant.requesterPeerId);
+  const requesterXpubOffset = createOptionalString(builder, grant.requesterXpub);
+  const requestedDomainOffset = createOptionalString(builder, grant.requestedDomain);
+  const grantedDomainOffset = createOptionalString(builder, grant.grantedDomain);
+  const requiredScopeOffset = createOptionalString(builder, grant.requiredScope);
+  const grantStatusOffset = createOptionalString(builder, grant.grantStatus);
+  const denialReasonOffset = createOptionalString(builder, grant.denialReason);
+  const capabilityTokenOffset = createOptionalVector(
+    builder,
+    LGR.createCapabilityTokenVector,
+    grant.capabilityToken,
+  );
+  const verifierPubkeyOffset = createOptionalVector(
+    builder,
+    LGR.createGrantVerifierPubkeyVector,
+    grant.grantVerifierPublicKey,
+  );
+
+  LGR.startLGR(builder);
+  LGR.addMessageType(builder, licensingGrantMessageType.Granted);
+  LGR.addRequestId(builder, requestIdOffset);
+  LGR.addModuleId(builder, moduleIdOffset);
+  if (moduleVersionOffset !== 0) {
+    LGR.addModuleVersion(builder, moduleVersionOffset);
+  }
+  if (requesterPeerIdOffset !== 0) {
+    LGR.addRequesterPeerId(builder, requesterPeerIdOffset);
+  }
+  if (requesterXpubOffset !== 0) {
+    LGR.addRequesterXpub(builder, requesterXpubOffset);
+  }
+  if (requestedDomainOffset !== 0) {
+    LGR.addRequestedDomain(builder, requestedDomainOffset);
+  }
+  LGR.addRequestedTimeoutMs(builder, BigInt(grant.requestedTimeoutMs));
+  if (grantedDomainOffset !== 0) {
+    LGR.addGrantedDomain(builder, grantedDomainOffset);
+  }
+  LGR.addGrantedTimeoutMs(builder, BigInt(grant.grantedTimeoutMs));
+  LGR.addExpiresAt(builder, BigInt(grant.expiresAtMs));
+  if (requiredScopeOffset !== 0) {
+    LGR.addRequiredScope(builder, requiredScopeOffset);
+  }
+  if (grantStatusOffset !== 0) {
+    LGR.addGrantStatus(builder, grantStatusOffset);
+  }
+  if (denialReasonOffset !== 0) {
+    LGR.addDenialReason(builder, denialReasonOffset);
+  }
+  if (capabilityTokenOffset !== 0) {
+    LGR.addCapabilityToken(builder, capabilityTokenOffset);
+  }
+  if (verifierPubkeyOffset !== 0) {
+    LGR.addGrantVerifierPubkey(builder, verifierPubkeyOffset);
+  }
+  const rootOffset = LGR.endLGR(builder);
+  LGR.finishLGRBuffer(builder, rootOffset);
+  return builder.asUint8Array();
+}
+
+function createOptionalString(
+  builder: flatbuffers.Builder,
+  value: string | null | undefined,
+): flatbuffers.Offset {
+  const normalized = trimOptional(value);
+  return normalized ? builder.createString(normalized) : 0;
+}
+
+function createOptionalVector(
+  builder: flatbuffers.Builder,
+  createVector: (builder: flatbuffers.Builder, data: Uint8Array) => flatbuffers.Offset,
+  value: Uint8Array | null | undefined,
+): flatbuffers.Offset {
+  const bytes = cloneOptionalBytes(value);
+  return bytes.length > 0 ? createVector(builder, bytes) : 0;
+}
+
+function createOptionalStringVector(
+  builder: flatbuffers.Builder,
+  createVector: (builder: flatbuffers.Builder, data: flatbuffers.Offset[]) => flatbuffers.Offset,
+  length: number,
+  readValue: (index: number) => string | null,
+): flatbuffers.Offset {
+  if (length <= 0) {
+    return 0;
+  }
+  const offsets: flatbuffers.Offset[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const value = trimOptional(readValue(index));
+    if (value) {
+      offsets.push(builder.createString(value));
+    }
+  }
+  return offsets.length > 0 ? createVector(builder, offsets) : 0;
 }
 
 function mapLicensingGrant(

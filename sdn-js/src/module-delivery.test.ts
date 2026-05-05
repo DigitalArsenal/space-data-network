@@ -21,12 +21,29 @@ import { keyMaterialEncoding } from 'spacedatastandards.org/lib/js/REC/keyMateri
 import { keyMaterialRole } from 'spacedatastandards.org/lib/js/REC/keyMaterialRole.js';
 import { pluginCategory as pluginType } from 'spacedatastandards.org/lib/js/PLG/pluginCategory.js';
 
+function mockProviderSignature(message: Uint8Array): Uint8Array {
+  const digest = new Uint8Array(createHash('sha256').update(message).digest());
+  const signature = new Uint8Array(64);
+  signature.set(digest, 0);
+  signature.set(digest, digest.length);
+  return signature;
+}
+
 vi.mock('./crypto/hd-wallet', () => {
   return {
     derivePeerIdFromPublicKey: vi.fn(async () => 'provider-peer-id'),
     sign: vi.fn(async () => new Uint8Array([0xaa, 0xbb, 0xcc])),
     sha256: vi.fn(async (value: Uint8Array) => {
       return new Uint8Array(createHash('sha256').update(value).digest());
+    }),
+    verify: vi.fn(async (publicKey: Uint8Array, message: Uint8Array, signature: Uint8Array) => {
+      return (
+        publicKey.length === 32 &&
+        publicKey.every((byte) => byte === 5) &&
+        message.length > 0 &&
+        signature.length === 64 &&
+        !signature.every((byte) => byte === 8)
+      );
     }),
   };
 });
@@ -586,6 +603,11 @@ describe('module-delivery', () => {
       code: 'invalid_grant',
     });
     await expect(
+      requestModuleGrant(makeTransport({ providerSignature: new Uint8Array(64).fill(8) }), request),
+    ).rejects.toMatchObject({
+      code: 'invalid_grant_signature',
+    });
+    await expect(
       requestModuleGrant(makeTransport({ expiresAtMs: 1_699_999_999_999n }), request),
     ).rejects.toMatchObject({
       code: 'grant_expired',
@@ -676,8 +698,19 @@ function encodeGrantResponse(options: {
   expiresAtMs: bigint;
   contentHash: Uint8Array;
   grantStatus?: string;
-  providerSignature?: Uint8Array;
+  providerSignature?: Uint8Array | null;
 }): Uint8Array {
+  if (options.providerSignature === undefined) {
+    const unsignedGrant = encodeGrantResponse({
+      ...options,
+      providerSignature: null,
+    });
+    return encodeGrantResponse({
+      ...options,
+      providerSignature: mockProviderSignature(unsignedGrant),
+    });
+  }
+
   const builder = new flatbuffers.Builder(1024);
   const reqIdOffset = builder.createString(options.reqId);
   const moduleIdOffset = builder.createString(options.moduleId);
@@ -693,10 +726,10 @@ function encodeGrantResponse(options: {
   const wrappedContentKeyHeaderOffset = createWrappedContentKeyHeaderOffset(builder, options);
   const wrappedContentKeyPayloadOffset = createWrappedContentKeyPayloadOffset(builder, options);
   const verifierPubkeyOffset = LGR.createGrantVerifierPubkeyVector(builder, new Uint8Array(32).fill(5));
-  const providerSignatureOffset = LGR.createProviderSignatureVector(
-    builder,
-    options.providerSignature ?? new Uint8Array(64).fill(9),
-  );
+  const providerSignatureOffset =
+    options.providerSignature === null
+      ? 0
+      : LGR.createProviderSignatureVector(builder, options.providerSignature);
 
   LGR.startLGR(builder);
   LGR.addMessageType(builder, licensingGrantMessageType.Granted);
@@ -723,7 +756,9 @@ function encodeGrantResponse(options: {
   LGR.addWrappedContentKeyHeader(builder, wrappedContentKeyHeaderOffset);
   LGR.addWrappedContentKeyPayload(builder, wrappedContentKeyPayloadOffset);
   LGR.addGrantVerifierPubkey(builder, verifierPubkeyOffset);
-  LGR.addProviderSignature(builder, providerSignatureOffset);
+  if (providerSignatureOffset !== 0) {
+    LGR.addProviderSignature(builder, providerSignatureOffset);
+  }
   const root = LGR.endLGR(builder);
   LGR.finishLGRBuffer(builder, root);
   return builder.asUint8Array();

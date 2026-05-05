@@ -78,6 +78,7 @@ const cryptoMocks = vi.hoisted(() => ({
   sha256: vi.fn(async (value: Uint8Array) => {
     return new Uint8Array(createHash('sha256').update(value).digest());
   }),
+  verify: vi.fn(async () => true),
 }));
 
 vi.mock('space-data-module-sdk/licensing', () => ({
@@ -102,6 +103,7 @@ vi.mock('./crypto/hd-wallet', () => ({
   derivePeerIdFromPublicKey: cryptoMocks.derivePeerIdFromPublicKey,
   sign: cryptoMocks.sign,
   sha256: cryptoMocks.sha256,
+  verify: cryptoMocks.verify,
 }));
 
 import {
