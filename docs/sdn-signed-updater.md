@@ -151,3 +151,111 @@ verification, staging, commit, rollback, and failures. Each record includes:
 
 The desktop UI should surface this history in the update/settings area before
 automatic installation is enabled.
+
+## SDN Update Feed
+
+The SDN-owned update feed origin is:
+
+```text
+https://updates.spacedatanetwork.org
+```
+
+Desktop application payloads are indexed under:
+
+```text
+/desktop/<channel>/<platform>/<arch>/index.json
+/desktop/<channel>/<platform>/<arch>/<version>/manifest.json
+/desktop/<channel>/<platform>/<arch>/<version>/update.wasm
+```
+
+Runtime and module-delivery payloads use their target kind in place of
+`desktop`, for example:
+
+```text
+/kubo-runtime/<channel>/<platform>/<arch>/index.json
+/module-delivery/<channel>/<platform>/<arch>/index.json
+```
+
+The feed index schema is `org.spacedatanetwork.update.index.v1`. It contains
+only SDN-owned manifest and carrier URLs plus the manifest identity fields a
+client needs before downloading a payload. The signed manifest remains the
+authority for install decisions.
+
+Feed assembly is implemented as static artifact tooling:
+
+```sh
+node deployment/release/build-sdn-update-feed.js \
+  --out-dir dist/release/update-feed \
+  --entry path/to/manifest.json:path/to/update.wasm
+```
+
+`deployment/release/assemble-release-artifacts.sh` also accepts
+`SDN_UPDATE_FEED_ENTRIES` as a comma-separated list of
+`manifest.json:update.wasm` pairs and writes the feed under
+`dist/release/update-feed` by default. Publication to
+`updates.spacedatanetwork.org` is a release-operations step after artifact
+verification; the tooling intentionally does not claim a live deployment.
+
+## Electron Application Update Path
+
+Branded SDN Desktop builds must use the SDN update feed origin for application
+updates. Inherited IPFS Desktop GitHub release feeds are not accepted for SDN
+application update metadata.
+
+Manual update fallbacks may still open the SDN GitHub release page while
+automatic SDN Desktop app updates remain disabled, but any Electron automatic
+update feed must resolve to:
+
+```text
+https://updates.spacedatanetwork.org/desktop/<channel>/<platform>/<arch>
+```
+
+Kubo runtime checks are separate from Electron app updates and may inspect
+upstream `ipfs/kubo` release metadata only to select an explicit runtime
+payload. They must never point the Electron app updater at upstream IPFS
+Desktop releases.
+
+## Upstream Refresh Process
+
+Use this process for an upstream IPFS Desktop/WebUI/Kubo refresh:
+
+1. Pin selected upstream revisions in the release notes or refresh manifest:
+   IPFS Desktop commit/tag, IPFS WebUI commit/tag, and Kubo version/tag.
+2. Refresh upstream mirror directories from those exact revisions without
+   product edits in the mirror refresh commit.
+3. Reapply SDN overlays, patches, generated vendor snapshots, branding,
+   networking defaults, bootstrap policy, and SDN update feed configuration.
+4. Run overlay application tests and focused updater tests proving inherited
+   IPFS Desktop app update feeds are still disabled.
+5. Build desktop/runtime/module payloads, sign manifests, verify payload hashes,
+   and assemble the static SDN feed index.
+6. Publish the feed tree to `updates.spacedatanetwork.org`.
+7. Publish the signed manifest through the SDN network release path so clients
+   consume SDN-owned metadata only.
+
+The upstream mirror refresh and SDN overlay reapplication should remain
+separate commits where practical. That keeps future refresh failures easy to
+attribute to upstream drift or SDN overlay drift.
+
+## Rollback And Emergency Disable
+
+Rollback uses a signed rollback manifest with `rollback.reason` and
+`rollback.previous_sequence`. Clients reject rollback manifests that are
+unsigned, expired, outside policy, or below the allowed rollback floor.
+
+Emergency disable for a bad manifest or bad upstream refresh:
+
+1. Remove or quarantine the affected `index.json` entry at
+   `updates.spacedatanetwork.org`.
+2. Publish a corrected index that points clients at the last known-good signed
+   manifest, or publish no update for that target while investigation is open.
+3. Add the bad manifest sequence, update id, and signing key id to the
+   revocation/policy store when key or signing-policy compromise is suspected.
+4. Publish a signed rollback payload only after the rollback bundle has passed
+   the same manifest, hash, target, and health checks as a forward update.
+5. Record the incident in updater audit history and release notes, including
+   the disabled sequence and the replacement sequence.
+
+Do not delete audit records or mutate an already-published manifest in place.
+Disable through the feed index and signed policy metadata so clients can retain
+a verifiable history of what happened.
