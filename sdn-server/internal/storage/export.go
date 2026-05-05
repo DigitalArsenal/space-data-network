@@ -17,18 +17,22 @@ import (
 
 // DatasetExport describes a deterministic local dataset export.
 type DatasetExport struct {
-	SchemaName   string
-	RecordCount  int
-	QuerySHA256  string
-	ResultSHA256 string
-	ShardPath    string
-	ShardSHA256  string
-	ShardCID     string
-	ShardBytes   int64
-	IndexPath    string
-	IndexSHA256  string
-	IndexCID     string
-	IndexBytes   int64
+	SchemaName       string
+	RecordCount      int
+	CanonicalQuery   string
+	QuerySHA256      string
+	ResultSHA256     string
+	ShardPath        string
+	ShardSHA256      string
+	ShardCID         string
+	ShardBytes       int64
+	IndexPath        string
+	IndexSHA256      string
+	IndexCID         string
+	IndexBytes       int64
+	SourceBatches    []DatasetExportSourceBatch
+	ContentKeyID     string
+	EncryptionPolicy string
 }
 
 // DatasetExportIndex is the replayable query/index sidecar for a shard.
@@ -46,6 +50,20 @@ type DatasetExportIndex struct {
 	RecordCount  int                          `json:"recordCount"`
 	Records      []DatasetExportIndexRecord   `json:"records"`
 	Indexes      DatasetExportMaterializedMap `json:"indexes"`
+}
+
+// DatasetExportSourceBatch summarizes one source batch used by an export.
+type DatasetExportSourceBatch struct {
+	ProviderID       string `json:"providerId,omitempty"`
+	SourceName       string `json:"sourceName,omitempty"`
+	SourceURL        string `json:"sourceUrl,omitempty"`
+	SourceSHA256     string `json:"sourceSha256,omitempty"`
+	HTTPETag         string `json:"httpEtag,omitempty"`
+	HTTPLastModified string `json:"httpLastModified,omitempty"`
+	RetrievedAt      string `json:"retrievedAt,omitempty"`
+	ParserVersion    string `json:"parserVersion,omitempty"`
+	ContentKeyID     string `json:"contentKeyId,omitempty"`
+	RecordCount      uint64 `json:"recordCount"`
 }
 
 // DatasetExportIndexRecord records byte offsets and indexed fields for one shard entry.
@@ -90,10 +108,11 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 		return nil, fmt.Errorf("no records match export query")
 	}
 
-	querySHA, err := hashCanonicalQuery(filter)
+	queryJSON, err := canonicalQueryJSON(filter)
 	if err != nil {
 		return nil, err
 	}
+	querySHA := sha256Hex(queryJSON)
 
 	shard := bytes.Buffer{}
 	indexRecords := make([]DatasetExportIndexRecord, 0, len(records))
@@ -170,19 +189,58 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 	}
 
 	return &DatasetExport{
-		SchemaName:   filter.SchemaName,
-		RecordCount:  len(records),
-		QuerySHA256:  querySHA,
-		ResultSHA256: shardSHA,
-		ShardPath:    shardPath,
-		ShardSHA256:  shardSHA,
-		ShardCID:     shardCID,
-		ShardBytes:   int64(len(shardBytes)),
-		IndexPath:    indexPath,
-		IndexSHA256:  indexSHA,
-		IndexCID:     indexCID,
-		IndexBytes:   int64(len(indexBytes)),
+		SchemaName:     filter.SchemaName,
+		RecordCount:    len(records),
+		CanonicalQuery: string(queryJSON),
+		QuerySHA256:    querySHA,
+		ResultSHA256:   shardSHA,
+		ShardPath:      shardPath,
+		ShardSHA256:    shardSHA,
+		ShardCID:       shardCID,
+		ShardBytes:     int64(len(shardBytes)),
+		IndexPath:      indexPath,
+		IndexSHA256:    indexSHA,
+		IndexCID:       indexCID,
+		IndexBytes:     int64(len(indexBytes)),
+		SourceBatches:  summarizeExportSourceBatches(indexRecords),
 	}, nil
+}
+
+func summarizeExportSourceBatches(records []DatasetExportIndexRecord) []DatasetExportSourceBatch {
+	type key struct {
+		providerID string
+		sourceName string
+		sourceURL  string
+		batchID    string
+		contentKey string
+	}
+	ordered := make([]key, 0)
+	counts := map[key]uint64{}
+	for _, record := range records {
+		k := key{
+			providerID: record.SourceTags.ProviderID,
+			sourceName: record.SourceTags.SourceName,
+			sourceURL:  record.SourceTags.SourceURL,
+			batchID:    record.SourceTags.BatchID,
+			contentKey: record.SourceTags.ContentKeyID,
+		}
+		if _, ok := counts[k]; !ok {
+			ordered = append(ordered, k)
+		}
+		counts[k]++
+	}
+	batches := make([]DatasetExportSourceBatch, 0, len(ordered))
+	for _, k := range ordered {
+		batches = append(batches, DatasetExportSourceBatch{
+			ProviderID:   k.providerID,
+			SourceName:   k.sourceName,
+			SourceURL:    k.sourceURL,
+			SourceSHA256: k.batchID,
+			ContentKeyID: k.contentKey,
+			RecordCount:  counts[k],
+		})
+	}
+	return batches
 }
 
 func buildDatasetExportIndexes(records []DatasetExportIndexRecord) DatasetExportMaterializedMap {
@@ -225,7 +283,7 @@ func isActiveCatalogOpsStatus(status string) bool {
 	}
 }
 
-func hashCanonicalQuery(filter IndexedRecordQuery) (string, error) {
+func canonicalQueryJSON(filter IndexedRecordQuery) ([]byte, error) {
 	payload := struct {
 		SchemaName         string  `json:"schemaName"`
 		Day                string  `json:"day,omitempty"`
@@ -261,7 +319,11 @@ func hashCanonicalQuery(filter IndexedRecordQuery) (string, error) {
 	if filter.To != nil {
 		payload.To = filter.To.UTC().Format(time.RFC3339Nano)
 	}
-	data, err := json.Marshal(payload)
+	return json.Marshal(payload)
+}
+
+func hashCanonicalQuery(filter IndexedRecordQuery) (string, error) {
+	data, err := canonicalQueryJSON(filter)
 	if err != nil {
 		return "", err
 	}
