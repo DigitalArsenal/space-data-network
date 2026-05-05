@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	lgr "github.com/DigitalArsenal/spacedatastandards.org/lib/go/LGR"
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/google/uuid"
 	ps "github.com/libp2p/go-libp2p-pubsub"
 )
@@ -572,6 +575,9 @@ func (s *Service) IssueGrant(ctx context.Context, requestID string) (*AccessGran
 			}
 			grant.ProviderSignature = signature
 		}
+		if err := s.attachGrantResponse(grant); err != nil {
+			return nil, err
+		}
 		if err := s.store.CreateGrant(grant); err != nil {
 			return nil, fmt.Errorf("failed to store grant: %w", err)
 		}
@@ -640,6 +646,9 @@ func (s *Service) IssueGrant(ctx context.Context, requestID string) (*AccessGran
 			return nil, fmt.Errorf("failed to sign grant: %w", err)
 		}
 		grant.ProviderSignature = signature
+	}
+	if err := s.attachGrantResponse(grant); err != nil {
+		return nil, err
 	}
 
 	if err := s.store.CreateGrant(grant); err != nil {
@@ -731,6 +740,66 @@ func inferListingKind(listing *Listing) ListingKind {
 
 func (s *Service) signGrant(grant *AccessGrant) ([]byte, error) {
 	return ed25519.Sign(s.signingKey, s.grantSignaturePayload(grant)), nil
+}
+
+func (s *Service) attachGrantResponse(grant *AccessGrant) error {
+	if grant == nil || len(grant.ProviderSignature) == 0 {
+		return nil
+	}
+	responseBytes, err := s.encodeGrantResponse(grant)
+	if err != nil {
+		return fmt.Errorf("failed to encode grant response: %w", err)
+	}
+	grant.GrantResponseBase64 = base64.StdEncoding.EncodeToString(responseBytes)
+	return nil
+}
+
+func (s *Service) encodeGrantResponse(grant *AccessGrant) ([]byte, error) {
+	builder := flatbuffers.NewBuilder(256)
+	requestID := builder.CreateByteString([]byte(grant.GrantID))
+	moduleID := builder.CreateByteString([]byte(grant.ListingID))
+	moduleVersion := builder.CreateByteString([]byte(grant.TierName))
+	requesterPeerID := builder.CreateByteString([]byte(grant.BuyerPeerID))
+	requestedDomain := builder.CreateByteString([]byte(fmt.Sprintf("access:%d", grant.AccessType)))
+	grantedDomain := builder.CreateByteString([]byte(fmt.Sprintf("access:%d", grant.AccessType)))
+	requiredScope := builder.CreateByteString([]byte(grant.TierName))
+	grantStatus := builder.CreateByteString([]byte(fmt.Sprintf("status:%d", grant.Status)))
+	capabilityToken := builder.CreateByteVector([]byte(grant.GrantID))
+	providerSignature := builder.CreateByteVector(grant.ProviderSignature)
+
+	var verifierPubkey flatbuffers.UOffsetT
+	if s.signingKey != nil {
+		publicKey, ok := s.signingKey.Public().(ed25519.PublicKey)
+		if !ok || len(publicKey) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("provider signing public key unavailable")
+		}
+		verifierPubkey = builder.CreateByteVector(publicKey)
+	}
+
+	var expiresAt uint64
+	if !grant.ExpiresAt.IsZero() {
+		expiresAt = uint64(grant.ExpiresAt.UnixMilli())
+	}
+
+	lgr.LGRStart(builder)
+	lgr.LGRAddMessageType(builder, 1)
+	lgr.LGRAddRequestId(builder, requestID)
+	lgr.LGRAddModuleId(builder, moduleID)
+	lgr.LGRAddModuleVersion(builder, moduleVersion)
+	lgr.LGRAddRequesterPeerId(builder, requesterPeerID)
+	lgr.LGRAddRequestedDomain(builder, requestedDomain)
+	lgr.LGRAddGrantedDomain(builder, grantedDomain)
+	lgr.LGRAddExpiresAt(builder, expiresAt)
+	lgr.LGRAddRequiredScope(builder, requiredScope)
+	lgr.LGRAddGrantStatus(builder, grantStatus)
+	lgr.LGRAddCapabilityToken(builder, capabilityToken)
+	if verifierPubkey != 0 {
+		lgr.LGRAddGrantVerifierPubkey(builder, verifierPubkey)
+	}
+	lgr.LGRAddProviderSignature(builder, providerSignature)
+	root := lgr.LGREnd(builder)
+	lgr.FinishLGRBuffer(builder, root)
+	return append([]byte(nil), builder.FinishedBytes()...), nil
 }
 
 func (s *Service) verifyGrantProviderSignature(grant *AccessGrant) error {

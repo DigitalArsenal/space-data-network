@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	_ "embed"
 	"encoding/base64"
@@ -517,7 +518,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if err != nil {
 					log.Warnf("Failed to initialize storefront store: %v", err)
 				} else {
-					sfSvc, err := storefront.NewService(sfStore, n.PeerID().String(), nil, nil)
+					sfSigningKey, err := storefrontSigningKeyFromRaw(n.SigningKey())
+					if err != nil {
+						log.Warnf("Storefront grants will be unsigned; node signing key unavailable: %v", err)
+					}
+					sfSvc, err := storefront.NewService(sfStore, n.PeerID().String(), sfSigningKey, nil)
 					if err != nil {
 						log.Warnf("Failed to initialize storefront service: %v", err)
 						_ = sfStore.Close()
@@ -974,6 +979,19 @@ func publicHomepageFile(frontendPath string, homepageFile string) string {
 		return ""
 	}
 	return strings.TrimSpace(homepageFile)
+}
+
+func storefrontSigningKeyFromRaw(raw []byte) (ed25519.PrivateKey, error) {
+	switch len(raw) {
+	case 0:
+		return nil, fmt.Errorf("empty signing key")
+	case ed25519.SeedSize:
+		return ed25519.NewKeyFromSeed(raw), nil
+	case ed25519.PrivateKeySize:
+		return append(ed25519.PrivateKey(nil), raw...), nil
+	default:
+		return nil, fmt.Errorf("unexpected signing key length %d", len(raw))
+	}
 }
 
 func isPublicAPIPath(path string) bool {

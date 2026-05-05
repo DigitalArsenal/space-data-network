@@ -207,6 +207,7 @@ type AccessGrant struct {
 	Notes                 string        `json:"notes"`
 	ProviderSignature     []byte        `json:"provider_signature"`
 	ProviderPeerID        string        `json:"provider_peer_id"`
+	GrantResponseBase64   string        `json:"grant_response_base64,omitempty"`
 }
 
 // GroupMemberStatus represents the lifecycle status for a group grant member.
