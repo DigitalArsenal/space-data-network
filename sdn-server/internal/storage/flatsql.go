@@ -121,6 +121,30 @@ func (s *FlatSQLStore) initTables() error {
 		return fmt.Errorf("failed to create entity index: %w", err)
 	}
 
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS sdn_record_source_tags (
+			schema_name TEXT NOT NULL,
+			cid TEXT NOT NULL,
+			provider_id TEXT NOT NULL,
+			source_name TEXT NOT NULL,
+			source_url TEXT,
+			batch_id TEXT,
+			content_key_id TEXT,
+			created_at INTEGER DEFAULT (strftime('%s', 'now')),
+			PRIMARY KEY (schema_name, cid)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create source tags table: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_lookup
+		ON sdn_record_source_tags (schema_name, provider_id, source_name, batch_id)
+	`); err != nil {
+		return fmt.Errorf("failed to create source tags lookup index: %w", err)
+	}
+
 	// Directory index for node/user EPM records.
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS sdn_directory (
@@ -259,6 +283,163 @@ func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, sign
 
 	log.Debugf("Stored %s record with CID: %s", schemaName, cid[:16]+"...")
 	return cid, nil
+}
+
+// SourceTags records source provenance needed for provider/batch-aware queries.
+type SourceTags struct {
+	ProviderID   string
+	SourceName   string
+	SourceURL    string
+	BatchID      string
+	ContentKeyID string
+}
+
+// SourceTagQuery filters stored records by source tags.
+type SourceTagQuery struct {
+	SchemaName string
+	ProviderID string
+	SourceName string
+	BatchID    string
+	Limit      int
+}
+
+// StoreWithSourceTags stores a FlatBuffer record and attaches provider/source metadata.
+func (s *FlatSQLStore) StoreWithSourceTags(schemaName string, data []byte, peerID string, signature []byte, tags SourceTags) (string, error) {
+	cid, err := s.Store(schemaName, data, peerID, signature)
+	if err != nil {
+		return "", err
+	}
+	if err := s.UpsertSourceTags(schemaName, cid, tags); err != nil {
+		return "", err
+	}
+	return cid, nil
+}
+
+// UpsertSourceTags attaches or updates source tags for an existing record.
+func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags) error {
+	if err := ValidateSourceTags(tags); err != nil {
+		return err
+	}
+	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
+		return fmt.Errorf("invalid schema name: %w", err)
+	}
+	if strings.TrimSpace(cid) == "" {
+		return errors.New("cid is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`
+		INSERT INTO sdn_record_source_tags (
+			schema_name, cid, provider_id, source_name, source_url, batch_id, content_key_id
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(schema_name, cid) DO UPDATE SET
+			provider_id = excluded.provider_id,
+			source_name = excluded.source_name,
+			source_url = excluded.source_url,
+			batch_id = excluded.batch_id,
+			content_key_id = excluded.content_key_id
+	`, schemaName, cid, strings.TrimSpace(tags.ProviderID), strings.TrimSpace(tags.SourceName), strings.TrimSpace(tags.SourceURL), strings.TrimSpace(tags.BatchID), strings.TrimSpace(tags.ContentKeyID))
+	if err != nil {
+		return fmt.Errorf("failed to upsert source tags: %w", err)
+	}
+	return nil
+}
+
+// GetSourceTags returns provider/source tags for a stored record.
+func (s *FlatSQLStore) GetSourceTags(schemaName, cid string) (SourceTags, error) {
+	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
+		return SourceTags{}, fmt.Errorf("invalid schema name: %w", err)
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var tags SourceTags
+	err := s.db.QueryRow(`
+		SELECT provider_id, source_name, source_url, batch_id, content_key_id
+		FROM sdn_record_source_tags
+		WHERE schema_name = ? AND cid = ?
+	`, schemaName, cid).Scan(&tags.ProviderID, &tags.SourceName, &tags.SourceURL, &tags.BatchID, &tags.ContentKeyID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return SourceTags{}, fmt.Errorf("source tags not found: %s/%s", schemaName, cid)
+		}
+		return SourceTags{}, fmt.Errorf("failed to get source tags: %w", err)
+	}
+	return tags, nil
+}
+
+// QuerySourceTaggedRecords returns records matching provider/source/batch tags.
+func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record, error) {
+	if query.Limit <= 0 {
+		query.Limit = 100
+	}
+	if query.Limit > 1000 {
+		query.Limit = 1000
+	}
+	tableName, err := sds.SchemaNameToTable(query.SchemaName)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schema name: %w", err)
+	}
+
+	conditions := []string{"tags.schema_name = ?"}
+	args := []interface{}{query.SchemaName, query.SchemaName}
+	if providerID := strings.TrimSpace(query.ProviderID); providerID != "" {
+		conditions = append(conditions, "tags.provider_id = ?")
+		args = append(args, providerID)
+	}
+	if sourceName := strings.TrimSpace(query.SourceName); sourceName != "" {
+		conditions = append(conditions, "tags.source_name = ?")
+		args = append(args, sourceName)
+	}
+	if batchID := strings.TrimSpace(query.BatchID); batchID != "" {
+		conditions = append(conditions, "tags.batch_id = ?")
+		args = append(args, batchID)
+	}
+	args = append(args, query.Limit)
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(fmt.Sprintf(`
+		SELECT records.cid, records.peer_id, records.timestamp, records.data, records.signature
+		FROM %s records
+		INNER JOIN sdn_record_source_tags tags
+			ON tags.schema_name = ? AND tags.cid = records.cid
+		WHERE %s
+		ORDER BY records.timestamp DESC
+		LIMIT ?
+	`, tableName, strings.Join(conditions, " AND ")), args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query source tagged records: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]*Record, 0, query.Limit)
+	for rows.Next() {
+		var record Record
+		var ts int64
+		if err := rows.Scan(&record.CID, &record.PeerID, &ts, &record.Data, &record.Signature); err != nil {
+			return nil, fmt.Errorf("failed to scan source tagged record: %w", err)
+		}
+		record.Timestamp = time.Unix(ts, 0)
+		records = append(records, &record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("source tagged record rows: %w", err)
+	}
+	return records, nil
+}
+
+// ValidateSourceTags checks required provider/source fields.
+func ValidateSourceTags(tags SourceTags) error {
+	if strings.TrimSpace(tags.ProviderID) == "" {
+		return errors.New("provider_id is required")
+	}
+	if strings.TrimSpace(tags.SourceName) == "" {
+		return errors.New("source_name is required")
+	}
+	return nil
 }
 
 // Get retrieves data by CID.
