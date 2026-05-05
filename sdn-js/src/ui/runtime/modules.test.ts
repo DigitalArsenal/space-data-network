@@ -4,7 +4,9 @@ import {
   loadModuleRuntimeSnapshotFromServer,
   resolveSelectedModuleId,
   runModuleRuntimeAction,
+  runModuleRuntimeScheduleNow,
   saveModuleRuntimeInputValues,
+  saveModuleRuntimeSchedule,
   updateModuleRuntimeOption,
 } from './modules';
 
@@ -94,6 +96,37 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
                 defaultValue: '30000',
                 restartRequired: false,
                 persistence: 'live-only',
+              },
+            ],
+            schedules: [
+              {
+                methodId: 'sync_full_catalog',
+                description: 'Sync CelesTrak full catalog',
+                enabled: true,
+                interval: '3h0m0s',
+                cronExpression: '0 */3 * * *',
+                timezone: 'America/New_York',
+                timezoneDisplay: '2026-04-30 08:00 EDT',
+                utcDisplay: '2026-04-30 12:00 UTC',
+                jitter: '5m0s',
+                backoff: 'exponential',
+                retryBudget: 3,
+                maxRuntime: '30m0s',
+                minInterval: '3h0m0s',
+                intervalPresets: ['3h0m0s', '6h0m0s'],
+                lastRunAt: '2026-04-30T09:00:00Z',
+                nextRunAt: '2026-04-30T15:00:00Z',
+                runHistory: [
+                  {
+                    id: 'run-1',
+                    methodId: 'sync_full_catalog',
+                    trigger: 'manual',
+                    startedAt: '2026-04-30T09:00:00Z',
+                    finishedAt: '2026-04-30T09:01:00Z',
+                    status: 'ok',
+                    outputSize: 128,
+                  },
+                ],
               },
             ],
             actions: [
@@ -204,6 +237,16 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
       units: 'ms',
       defaultValue: '30000',
       persistence: 'live-only',
+    });
+    expect(snapshot.modules[0]?.schedules[0]).toMatchObject({
+      methodId: 'sync_full_catalog',
+      enabled: true,
+      interval: '3h0m0s',
+      cronExpression: '0 */3 * * *',
+      timezone: 'America/New_York',
+      minInterval: '3h0m0s',
+      intervalPresets: ['3h0m0s', '6h0m0s'],
+      runHistory: [{ trigger: 'manual', status: 'ok' }],
     });
     expect(snapshot.modules[0]?.actions[0]?.actionId).toBe('clear-error');
     expect(snapshot.modules[0]?.statusHistory[0]?.status).toBe('registered');
@@ -387,6 +430,95 @@ describe('module runtime mutations', () => {
           rootType: 'ConfigureRuntimeRequest',
         },
       ],
+    });
+  });
+
+  it('saves provider schedules through the server schedule API', async () => {
+    const fetch = vi.fn(async (input: string, init?: RequestInit) => {
+      expect(input).toBe(
+        'https://node.example/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog',
+      );
+      expect(init?.method).toBe('PATCH');
+      expect(init?.credentials).toBe('include');
+      expect(init?.headers).toMatchObject({
+        'content-type': 'application/json',
+        'x-requested-with': 'XMLHttpRequest',
+      });
+      expect(JSON.parse(String(init?.body))).toEqual({
+        enabled: true,
+        interval: '3h',
+        cronExpression: '0 */3 * * *',
+        timezone: 'UTC',
+        jitter: '5m',
+        backoff: 'exponential',
+        retryBudget: 3,
+        maxRuntime: '30m',
+      });
+      return jsonResponse(200, {
+        methodId: 'sync_full_catalog',
+        enabled: true,
+        interval: '3h0m0s',
+        timezone: 'UTC',
+        minInterval: '3h0m0s',
+      });
+    });
+
+    await expect(
+      saveModuleRuntimeSchedule(
+        'https://node.example/',
+        'celestrak-provider',
+        'sync_full_catalog',
+        {
+          enabled: true,
+          interval: '3h',
+          cronExpression: '0 */3 * * *',
+          timezone: 'UTC',
+          jitter: '5m',
+          backoff: 'exponential',
+          retryBudget: 3,
+          maxRuntime: '30m',
+        },
+        fetch,
+      ),
+    ).resolves.toMatchObject({
+      methodId: 'sync_full_catalog',
+      interval: '3h0m0s',
+      minInterval: '3h0m0s',
+    });
+  });
+
+  it('runs provider schedules manually through the server schedule API', async () => {
+    const fetch = vi.fn(async (input: string, init?: RequestInit) => {
+      expect(input).toBe(
+        'https://node.example/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog/run',
+      );
+      expect(init?.method).toBe('POST');
+      expect(init?.credentials).toBe('include');
+      expect(init?.headers).toMatchObject({
+        'x-requested-with': 'XMLHttpRequest',
+      });
+      return jsonResponse(200, {
+        id: 'run-1',
+        methodId: 'sync_full_catalog',
+        trigger: 'manual',
+        startedAt: '2026-04-30T09:00:00Z',
+        finishedAt: '2026-04-30T09:01:00Z',
+        status: 'ok',
+        outputSize: 128,
+      });
+    });
+
+    await expect(
+      runModuleRuntimeScheduleNow(
+        'https://node.example/',
+        'celestrak-provider',
+        'sync_full_catalog',
+        fetch,
+      ),
+    ).resolves.toMatchObject({
+      methodId: 'sync_full_catalog',
+      trigger: 'manual',
+      status: 'ok',
     });
   });
 });
