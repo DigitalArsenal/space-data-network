@@ -89,9 +89,12 @@ export async function unwrapGrantContentKey(
 export async function decryptEncryptedModuleBundle(
   encryptedBundleBytes: Uint8Array,
   contentKey: Uint8Array,
+  aadOrObserver?: Uint8Array | ModuleDeliveryObserver,
   observer?: ModuleDeliveryObserver,
 ): Promise<Uint8Array> {
-  emit(observer, {
+  const aadBytes = aadOrObserver instanceof Uint8Array ? aadOrObserver : undefined;
+  const deliveryObserver = aadOrObserver instanceof Uint8Array ? observer : aadOrObserver;
+  emit(deliveryObserver, {
     stage: 'decrypt-start',
     timestamp: Date.now(),
     bytes: encryptedBundleBytes.length,
@@ -110,8 +113,9 @@ export async function decryptEncryptedModuleBundle(
     cloneBytes(contentKey),
     cloneBytes(ciphertext),
     cloneBytes(iv),
+    aadBytes ? cloneBytes(aadBytes) : undefined,
   );
-  emit(observer, {
+  emit(deliveryObserver, {
     stage: 'decrypt-complete',
     timestamp: Date.now(),
     bytes: decryptedBundle.length,

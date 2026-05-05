@@ -784,6 +784,38 @@ func TestAccessVerification(t *testing.T) {
 	}
 }
 
+func TestVerifyGrantRejectsExpiredAndTamperedProviderSignature(t *testing.T) {
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	grant, err := svc.IssueGrant(ctx, "test-purchase-id")
+	if err != nil {
+		t.Fatalf("IssueGrant failed: %v", err)
+	}
+	if _, err := svc.VerifyGrant(ctx, grant.GrantID, grant.BuyerPeerID); err != nil {
+		t.Fatalf("VerifyGrant active grant failed: %v", err)
+	}
+
+	expiredAt := time.Now().Add(-time.Hour).Unix()
+	if _, err := store.db.Exec(`UPDATE storefront_grants SET expires_at = ? WHERE grant_id = ?`, expiredAt, grant.GrantID); err != nil {
+		t.Fatalf("failed to expire grant: %v", err)
+	}
+	if _, err := svc.VerifyGrant(ctx, grant.GrantID, grant.BuyerPeerID); err == nil {
+		t.Fatal("VerifyGrant should reject expired grant")
+	}
+
+	grant, err = svc.IssueGrant(ctx, "another-test-purchase-id")
+	if err != nil {
+		t.Fatalf("IssueGrant second grant failed: %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE storefront_grants SET provider_signature = ? WHERE grant_id = ?`, []byte("tampered-signature"), grant.GrantID); err != nil {
+		t.Fatalf("failed to tamper provider signature: %v", err)
+	}
+	if _, err := svc.VerifyGrant(ctx, grant.GrantID, grant.BuyerPeerID); err == nil {
+		t.Fatal("VerifyGrant should reject a tampered provider signature")
+	}
+}
+
 // --- 14.4 Payment Integration Tests ---
 
 func TestCreditsPayment(t *testing.T) {
