@@ -24,6 +24,7 @@ vi.mock('../../crypto/hd-wallet', () => {
 });
 
 import {
+  decryptGrantProtectedModuleBundle,
   decryptEncryptedModuleBundle,
   invokeLoadedModule,
   loadDecryptedModule,
@@ -120,6 +121,38 @@ describe('live-delivery', () => {
         new Uint8Array(32).fill(7),
       ),
     ).rejects.toThrow(/WASM client-decrypt module/);
+  });
+
+  it('routes encrypted REC/KMF grants through client-decrypt for browser artifact decryption', async () => {
+    const decryptArtifact = vi.fn(async () => new TextEncoder().encode('protected wasm'));
+    const grantResponseBytes = new Uint8Array([1, 2, 3, 4]);
+    const encryptedBundleBytes = new Uint8Array([5, 6, 7, 8]);
+    const recipientPrivateKey = new Uint8Array(32).fill(7);
+    const events: string[] = [];
+
+    const decrypted = await decryptGrantProtectedModuleBundle(
+      {
+        grantResponseBytes,
+        encryptedBundleBytes,
+      },
+      recipientPrivateKey,
+      { decryptArtifact },
+      {
+        onEvent(event) {
+          events.push(event.stage);
+        },
+      },
+    );
+
+    expect(new TextDecoder().decode(decrypted)).toBe('protected wasm');
+    expect(decryptArtifact).toHaveBeenCalledWith(
+      {
+        grantResponseBytes,
+        encryptedBundleBytes,
+      },
+      recipientPrivateKey,
+    );
+    expect(events).toEqual(['unwrap-start', 'decrypt-start', 'decrypt-complete']);
   });
 
   it('rejects undersized encrypted bundle payloads before decrypting', async () => {

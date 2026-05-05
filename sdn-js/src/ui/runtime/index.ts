@@ -103,10 +103,13 @@ export {
   type ServerFrontendTransportOptions,
 } from './frontend-workspace';
 export {
+  decryptGrantProtectedModuleBundle,
   decryptEncryptedModuleBundle,
   invokeLoadedModule,
   loadDecryptedModule,
   unwrapGrantContentKey,
+  type ClientDecryptLike,
+  type GrantProtectedModuleBundleInput,
   type LoadedModuleHarnessLike,
   type WrappedContentKeyLike,
 } from './live-delivery';
