@@ -14,6 +14,11 @@ const STALE_RANDOM_GATEWAY_WEBUI_ORIGIN = 'http://webui.ipfs.io.ipns.localhost:0
 const DEFAULT_API_ADDR = '/ip4/127.0.0.1/tcp/5001'
 const DEFAULT_GATEWAY_ADDR = '/ip4/127.0.0.1/tcp/8080'
 const DESKTOP_API_CORS_METHODS = Object.freeze(['PUT', 'POST'])
+const DESKTOP_BOOTSTRAP_PEERS = Object.freeze([
+  'auto',
+  '/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+  '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45'
+])
 
 /**
  * Get repository configuration file path.
@@ -109,6 +114,7 @@ function applyDefaults (ipfsd) {
 
   config.AutoTLS = config.AutoTLS ?? {}
   config.AutoTLS.Enabled = true
+  ensureDesktopBootstrapPeers(config)
 
   writeConfigFile(ipfsd, config)
 }
@@ -239,6 +245,28 @@ function ensureCorsMethodsForConfig (config, methods = DESKTOP_API_CORS_METHODS)
   return changed
 }
 
+function ensureDesktopBootstrapPeers (config) {
+  const existingBootstrap = Array.isArray(config.Bootstrap)
+    ? config.Bootstrap.map(entry => String(entry ?? '').trim()).filter(Boolean)
+    : []
+  const nextBootstrap = existingBootstrap.slice()
+
+  for (const peer of DESKTOP_BOOTSTRAP_PEERS) {
+    if (!nextBootstrap.includes(peer)) {
+      nextBootstrap.push(peer)
+    }
+  }
+
+  const changed = nextBootstrap.length !== existingBootstrap.length ||
+    nextBootstrap.some((peer, index) => peer !== existingBootstrap[index])
+
+  if (changed) {
+    config.Bootstrap = nextBootstrap
+  }
+
+  return changed
+}
+
 /**
  * Keep local desktop RPC access on an upstream-compatible HTTP origin.
  *
@@ -253,8 +281,9 @@ function configureDesktopCors (ipfsd, desktopWebOrigin) {
     `http://webui.ipfs.io.ipns.localhost:${getGatewayPort(config)}`
   ])
   const methodsChanged = ensureCorsMethodsForConfig(config)
+  const bootstrapChanged = ensureDesktopBootstrapPeers(config)
 
-  if (originsChanged || methodsChanged) {
+  if (originsChanged || methodsChanged || bootstrapChanged) {
     writeConfigFile(ipfsd, config)
   }
 }

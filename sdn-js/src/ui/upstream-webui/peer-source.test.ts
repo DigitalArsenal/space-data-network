@@ -308,4 +308,67 @@ describe('upstream webui peer source', () => {
     expect(fetch).toHaveBeenNthCalledWith(2, 'https://node.example/api/peers/graph');
     expect(fetch).toHaveBeenNthCalledWith(3, 'https://node.example/api/peers');
   });
+
+  it('falls back to Kubo swarm peers on the desktop static origin', async () => {
+    const fetch = vi.fn(async (url, init) => {
+      if (url === 'http://127.0.0.1:17890/api/peers/sdn' ||
+        url === 'http://127.0.0.1:17890/api/peers/graph' ||
+        url === 'http://127.0.0.1:17890/api/peers') {
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ message: 'not found' }),
+        };
+      }
+      if (url === 'http://127.0.0.1:5001/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms') {
+        expect(init).toEqual({ method: 'POST' });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            Peers: [
+              {
+                Addr: '/ip4/159.203.150.8/tcp/4001',
+                Peer: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+                Identify: {
+                  AgentVersion: 'spacedatanetwork/1.0.3',
+                  Protocols: [
+                    '/ipfs/id/1.0.0',
+                    '/space-data-network/module-delivery/1.0.0',
+                  ],
+                },
+              },
+              {
+                Addr: '/ip4/203.0.113.20/tcp/4001',
+                Peer: '12D3KooWIpfsOnly',
+                Identify: {
+                  AgentVersion: 'kubo/0.39.0',
+                  Protocols: ['/ipfs/id/1.0.0'],
+                },
+              },
+            ],
+          }),
+        };
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const source = createHostedRegistryPeerSource({
+      baseUrl: 'http://127.0.0.1:17890',
+      kuboApiBaseUrl: 'http://127.0.0.1:5001',
+      fetchImpl: fetch,
+    });
+
+    await expect(source.listPeers()).resolves.toEqual([
+      {
+        id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+        addrs: ['/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45'],
+        metadata: {
+          agent_version: 'spacedatanetwork/1.0.3',
+          protocols: '/ipfs/id/1.0.0,/space-data-network/module-delivery/1.0.0',
+        },
+      },
+    ]);
+    expect(fetch).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:5001/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms', { method: 'POST' });
+  });
 });

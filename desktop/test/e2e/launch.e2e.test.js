@@ -90,6 +90,14 @@ test.describe.serial('Application launch', async () => {
     expect(methods).toEqual(expect.arrayContaining(['PUT', 'POST']))
   }
 
+  function expectDesktopBootstrapPeers (peers) {
+    expect(peers).toEqual(expect.arrayContaining([
+      'auto',
+      '/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+      '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45'
+    ]))
+  }
+
   function getConfigHttpPort (addrs) {
     const addr = Array.isArray(addrs)
       ? addrs.find(addr => addr.includes('127.0.0.1'))
@@ -110,6 +118,7 @@ test.describe.serial('Application launch', async () => {
     // ensure CORS is limited to upstream-compatible WebUI origins.
     expectDesktopCorsOrigins(config.API.HTTPHeaders['Access-Control-Allow-Origin'])
     expectDesktopCorsMethods(config.API.HTTPHeaders['Access-Control-Allow-Methods'])
+    expectDesktopBootstrapPeers(config.Bootstrap)
     expect(config.Discovery.MDNS.Enabled).toBeTruthy()
   })
 

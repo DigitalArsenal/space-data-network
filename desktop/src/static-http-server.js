@@ -51,6 +51,19 @@ function routeForUrl (requestUrl) {
   return path.join(root, 'index.html')
 }
 
+function redirectBareAppRoute (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  const [, routeName] = parsed.pathname.split('/')
+
+  if (parsed.pathname !== `/${routeName}` || !ROUTES[routeName]) {
+    return false
+  }
+
+  res.writeHead(301, { Location: `/${routeName}/${parsed.search}${parsed.hash}` })
+  res.end()
+  return true
+}
+
 function serveFile (res, filePath) {
   fs.readFile(filePath, (err, body) => {
     if (err) {
@@ -75,6 +88,10 @@ async function startDesktopStaticServer () {
   serverPromise = (async () => {
     const port = await portfinder.getPortPromise({ port: START_PORT })
     const server = http.createServer((req, res) => {
+      if (redirectBareAppRoute(req, res)) {
+        return
+      }
+
       const filePath = routeForUrl(req.url || '/')
 
       if (!filePath) {
