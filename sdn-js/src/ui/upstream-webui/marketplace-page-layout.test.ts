@@ -59,5 +59,8 @@ describe('marketplace page layout', () => {
     expect(source).toContain('acceptedPaymentMethods');
     expect(source).toContain('requiredScope');
     expect(source).toContain('standardsUsed');
+    expect(source).toContain('protectedDelivery');
+    expect(source).toContain('Encrypted CID');
+    expect(source).toContain('licensing/core');
   });
 });

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,6 +65,9 @@ func (s *Service) CreateListing(ctx context.Context, listing *Listing) error {
 	// Generate listing ID if not provided
 	if listing.ListingID == "" {
 		listing.ListingID = uuid.New().String()
+	}
+	if listing.ListingKind == "" {
+		listing.ListingKind = inferListingKind(listing)
 	}
 
 	// Set provider info
@@ -176,6 +180,9 @@ func (s *Service) CreatePurchaseRequest(ctx context.Context, req *PurchaseReques
 	if err := s.store.CreatePurchaseRequest(req); err != nil {
 		return fmt.Errorf("failed to store purchase request: %w", err)
 	}
+	if err := s.recordPaymentAudit(req.RequestID, PaymentAuditPurchaseCreated, req.BuyerPeerID, "", "Purchase request created", req.Status); err != nil {
+		log.Warnf("Failed to record purchase audit event for %s: %v", req.RequestID, err)
+	}
 
 	// Publish to provider's topic
 	if s.purchaseTopic != nil {
@@ -186,11 +193,84 @@ func (s *Service) CreatePurchaseRequest(ctx context.Context, req *PurchaseReques
 	return nil
 }
 
+// CompleteManualDevPayment marks an out-of-band local/dev payment as paid and
+// issues the corresponding storefront grant. It is intentionally explicit so
+// callers cannot confuse it with Stripe or on-chain settlement.
+func (s *Service) CompleteManualDevPayment(ctx context.Context, requestID string, confirmation ManualDevPaymentConfirmation) (*AccessGrant, error) {
+	purchase, err := s.store.GetPurchaseRequest(requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load purchase request: %w", err)
+	}
+	if purchase == nil {
+		return nil, fmt.Errorf("purchase not found: %s", requestID)
+	}
+	if purchase.Status == PurchaseStatusCompleted && purchase.GrantID != "" {
+		existing, err := s.store.GetGrant(purchase.GrantID)
+		if err == nil && existing != nil {
+			return existing, nil
+		}
+	}
+
+	reference := strings.TrimSpace(confirmation.Reference)
+	if reference == "" {
+		reference = generateToken(8)
+	}
+	actor := strings.TrimSpace(confirmation.OperatorPeerID)
+	if actor == "" {
+		actor = s.peerID
+	}
+	note := strings.TrimSpace(confirmation.Note)
+	if note == "" {
+		note = "Manual/dev payment marked paid out of band"
+	}
+	txRef := "manual-dev:" + reference
+
+	if err := s.store.UpdatePurchasePayment(requestID, txRef, "manual-dev", actor); err != nil {
+		return nil, fmt.Errorf("failed to record manual/dev payment reference: %w", err)
+	}
+	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusPaymentDetected, "Manual/dev payment detected: "+reference); err != nil {
+		return nil, fmt.Errorf("failed to set payment detected: %w", err)
+	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditPaymentDetected, actor, reference, note, PurchaseStatusPaymentDetected); err != nil {
+		log.Warnf("Failed to record payment detected audit event for %s: %v", requestID, err)
+	}
+	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusPaymentConfirmed, "Manual/dev payment confirmed: "+reference); err != nil {
+		return nil, fmt.Errorf("failed to set payment confirmed: %w", err)
+	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditPaymentConfirmed, actor, reference, note, PurchaseStatusPaymentConfirmed); err != nil {
+		log.Warnf("Failed to record payment confirmed audit event for %s: %v", requestID, err)
+	}
+
+	grant, err := s.IssueGrant(ctx, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to issue grant: %w", err)
+	}
+	if err := s.store.UpdatePurchaseGrant(requestID, grant.GrantID); err != nil {
+		log.Warnf("Failed to attach grant to purchase %s: %v", requestID, err)
+	}
+	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusCompleted, fmt.Sprintf("Manual/dev payment complete; grant issued: %s", grant.GrantID)); err != nil {
+		log.Warnf("Failed to set purchase completed for %s: %v", requestID, err)
+	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, actor, grant.GrantID, "Grant issued after manual/dev paid state", PurchaseStatusCompleted); err != nil {
+		log.Warnf("Failed to record grant audit event for %s: %v", requestID, err)
+	}
+
+	return grant, nil
+}
+
 // ProcessPayment processes a payment confirmation
 func (s *Service) ProcessPayment(ctx context.Context, requestID string, txHash string, chain string) error {
+	if txHash != "" || chain != "" {
+		if err := s.store.UpdatePurchasePayment(requestID, txHash, chain, ""); err != nil {
+			return err
+		}
+	}
 	// Update purchase status
 	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusPaymentDetected, "Payment detected"); err != nil {
 		return err
+	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditPaymentDetected, s.peerID, txHash, "Payment detected on "+chain, PurchaseStatusPaymentDetected); err != nil {
+		log.Warnf("Failed to record payment detected audit event for %s: %v", requestID, err)
 	}
 
 	// TODO: Verify payment on chain
@@ -198,6 +278,9 @@ func (s *Service) ProcessPayment(ctx context.Context, requestID string, txHash s
 
 	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusPaymentConfirmed, "Payment confirmed"); err != nil {
 		return err
+	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditPaymentConfirmed, s.peerID, txHash, "Payment confirmed on "+chain, PurchaseStatusPaymentConfirmed); err != nil {
+		log.Warnf("Failed to record payment confirmed audit event for %s: %v", requestID, err)
 	}
 
 	// Issue access grant
@@ -212,6 +295,9 @@ func (s *Service) ProcessPayment(ctx context.Context, requestID string, txHash s
 	}
 	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusCompleted, fmt.Sprintf("Grant issued: %s", grant.GrantID)); err != nil {
 		log.Warnf("Failed to set purchase completed for %s: %v", requestID, err)
+	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, s.peerID, grant.GrantID, "Grant issued after payment confirmation", PurchaseStatusCompleted); err != nil {
+		log.Warnf("Failed to record grant audit event for %s: %v", requestID, err)
 	}
 
 	return nil
@@ -249,6 +335,9 @@ func (s *Service) ProcessCreditsPayment(ctx context.Context, requestID string, b
 	}
 	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusCompleted, fmt.Sprintf("Grant issued: %s", grant.GrantID)); err != nil {
 		log.Warnf("Failed to set purchase completed for %s: %v", requestID, err)
+	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, s.peerID, grant.GrantID, "Grant issued after credits payment", PurchaseStatusCompleted); err != nil {
+		log.Warnf("Failed to record grant audit event for %s: %v", requestID, err)
 	}
 
 	return nil
@@ -288,6 +377,9 @@ func (s *Service) CompleteStripeCheckout(ctx context.Context, requestID, session
 	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusPaymentConfirmed, msg); err != nil {
 		return nil, fmt.Errorf("failed to update purchase status: %w", err)
 	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditPaymentConfirmed, s.peerID, sessionID, msg, PurchaseStatusPaymentConfirmed); err != nil {
+		log.Warnf("Failed to record Stripe payment audit event for %s: %v", requestID, err)
+	}
 
 	grant, err := s.IssueGrant(ctx, requestID)
 	if err != nil {
@@ -298,6 +390,9 @@ func (s *Service) CompleteStripeCheckout(ctx context.Context, requestID, session
 	}
 	if err := s.store.UpdatePurchaseStatus(requestID, PurchaseStatusCompleted, fmt.Sprintf("Grant issued: %s", grant.GrantID)); err != nil {
 		log.Warnf("Failed to set purchase completed for %s: %v", requestID, err)
+	}
+	if err := s.recordPaymentAudit(requestID, PaymentAuditGrantIssued, s.peerID, grant.GrantID, "Grant issued after Stripe checkout", PurchaseStatusCompleted); err != nil {
+		log.Warnf("Failed to record Stripe grant audit event for %s: %v", requestID, err)
 	}
 
 	return grant, nil
@@ -349,6 +444,11 @@ func (s *Service) IssueGrant(ctx context.Context, requestID string) (*AccessGran
 	tier := findPricingTierByName(listing, purchase.TierName)
 	if tier == nil {
 		return nil, fmt.Errorf("tier not found: %s", purchase.TierName)
+	}
+	if purchase.PaymentAmount > 0 && purchase.PaymentMethod != PaymentMethodFree &&
+		purchase.Status != PurchaseStatusPaymentConfirmed &&
+		purchase.Status != PurchaseStatusCompleted {
+		return nil, fmt.Errorf("payment not confirmed for purchase: %s", requestID)
 	}
 
 	grant := &AccessGrant{
@@ -402,6 +502,28 @@ func (s *Service) IssueGrant(ctx context.Context, requestID string) (*AccessGran
 	}
 
 	return grant, nil
+}
+
+func (s *Service) recordPaymentAudit(requestID, eventType, actorPeerID, reference, message string, status PurchaseStatus) error {
+	return s.store.CreatePaymentAuditEvent(&PaymentAuditEvent{
+		EventID:        uuid.New().String(),
+		RequestID:      requestID,
+		EventType:      eventType,
+		ActorPeerID:    actorPeerID,
+		Reference:      reference,
+		Message:        message,
+		PurchaseStatus: status,
+		CreatedAt:      time.Now(),
+	})
+}
+
+func inferListingKind(listing *Listing) ListingKind {
+	for _, dataType := range listing.DataTypes {
+		if strings.EqualFold(strings.TrimSpace(dataType), "WASM") {
+			return ListingKindWASMModule
+		}
+	}
+	return ListingKindDataStream
 }
 
 func (s *Service) signGrant(grant *AccessGrant) ([]byte, error) {

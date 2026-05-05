@@ -80,6 +80,7 @@ func (s *Store) initTables() error {
 		CREATE TABLE IF NOT EXISTS storefront_listings (
 			listing_id TEXT PRIMARY KEY,
 			cid TEXT DEFAULT '',
+			listing_kind TEXT DEFAULT 'data_stream',
 			provider_peer_id TEXT NOT NULL,
 			provider_epm_cid TEXT,
 			title TEXT NOT NULL,
@@ -92,6 +93,7 @@ func (s *Store) initTables() error {
 			access_type INTEGER DEFAULT 0,
 			encryption_required INTEGER DEFAULT 1,
 			delivery_methods TEXT,
+			protected_delivery TEXT,
 			pricing TEXT,
 			accepted_payments TEXT,
 			reputation TEXT,
@@ -117,6 +119,8 @@ func (s *Store) initTables() error {
 
 	// Migration: add cid and source_peer_id columns to existing tables
 	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN cid TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN listing_kind TEXT DEFAULT 'data_stream'`)
+	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN protected_delivery TEXT`)
 	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN source_peer_id TEXT DEFAULT ''`)
 
 	// Full-text search for listings
@@ -291,6 +295,23 @@ func (s *Store) initTables() error {
 		return fmt.Errorf("failed to create credits transactions table: %w", err)
 	}
 
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_payment_audit (
+			event_id TEXT PRIMARY KEY,
+			request_id TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			actor_peer_id TEXT,
+			reference TEXT,
+			message TEXT,
+			purchase_status INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_payment_audit_request ON storefront_payment_audit(request_id, created_at);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create payment audit table: %w", err)
+	}
+
 	log.Info("Storefront index tables initialized (FlatSQL-backed)")
 	return nil
 }
@@ -330,25 +351,26 @@ func (s *Store) CreateListing(listing *Listing) error {
 	tagsJSON, _ := json.Marshal(listing.Tags)
 	coverageJSON, _ := json.Marshal(listing.Coverage)
 	deliveryMethodsJSON, _ := json.Marshal(listing.DeliveryMethods)
+	protectedDeliveryJSON, _ := json.Marshal(listing.ProtectedDelivery)
 	pricingJSON, _ := json.Marshal(listing.Pricing)
 	acceptedPaymentsJSON, _ := json.Marshal(listing.AcceptedPayments)
 	reputationJSON, _ := json.Marshal(listing.Reputation)
 
 	_, err = s.db.Exec(`
 		INSERT OR REPLACE INTO storefront_listings (
-			listing_id, cid, provider_peer_id, provider_epm_cid, title, description,
+			listing_id, cid, listing_kind, provider_peer_id, provider_epm_cid, title, description,
 			data_types, tags, coverage, sample_cid, sample_record_count,
-			access_type, encryption_required, delivery_methods, pricing,
+			access_type, encryption_required, delivery_methods, protected_delivery, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
 			active, expires_at, terms_cid, license, signature, source_peer_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		listing.ListingID, cid, listing.ProviderPeerID, listing.ProviderEPMCID,
+		listing.ListingID, cid, listing.ListingKind, listing.ProviderPeerID, listing.ProviderEPMCID,
 		listing.Title, listing.Description,
 		string(dataTypesJSON), string(tagsJSON), string(coverageJSON),
 		listing.SampleCID, listing.SampleRecordCount,
 		listing.AccessType, listing.EncryptionRequired,
-		string(deliveryMethodsJSON), string(pricingJSON),
+		string(deliveryMethodsJSON), string(protectedDeliveryJSON), string(pricingJSON),
 		string(acceptedPaymentsJSON), string(reputationJSON),
 		listing.CreatedAt.Unix(), listing.UpdatedAt.Unix(),
 		listing.Version, listing.Active, listing.ExpiresAt.Unix(),
@@ -378,9 +400,9 @@ func (s *Store) GetListing(listingID string) (*Listing, error) {
 	defer s.mu.RUnlock()
 
 	row := s.db.QueryRow(`
-		SELECT listing_id, provider_peer_id, provider_epm_cid, title, description,
+		SELECT listing_id, listing_kind, provider_peer_id, provider_epm_cid, title, description,
 			data_types, tags, coverage, sample_cid, sample_record_count,
-			access_type, encryption_required, delivery_methods, pricing,
+			access_type, encryption_required, delivery_methods, protected_delivery, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
 			active, expires_at, terms_cid, license, signature
 		FROM storefront_listings WHERE listing_id = ?
@@ -392,16 +414,16 @@ func (s *Store) GetListing(listingID string) (*Listing, error) {
 func (s *Store) scanListing(row *sql.Row) (*Listing, error) {
 	var listing Listing
 	var dataTypesJSON, tagsJSON, coverageJSON, deliveryMethodsJSON string
-	var pricingJSON, acceptedPaymentsJSON, reputationJSON string
+	var protectedDeliveryJSON, pricingJSON, acceptedPaymentsJSON, reputationJSON string
 	var createdAt, updatedAt, expiresAt int64
 
 	err := row.Scan(
-		&listing.ListingID, &listing.ProviderPeerID, &listing.ProviderEPMCID,
+		&listing.ListingID, &listing.ListingKind, &listing.ProviderPeerID, &listing.ProviderEPMCID,
 		&listing.Title, &listing.Description,
 		&dataTypesJSON, &tagsJSON, &coverageJSON,
 		&listing.SampleCID, &listing.SampleRecordCount,
 		&listing.AccessType, &listing.EncryptionRequired,
-		&deliveryMethodsJSON, &pricingJSON,
+		&deliveryMethodsJSON, &protectedDeliveryJSON, &pricingJSON,
 		&acceptedPaymentsJSON, &reputationJSON,
 		&createdAt, &updatedAt, &listing.Version,
 		&listing.Active, &expiresAt,
@@ -418,12 +440,16 @@ func (s *Store) scanListing(row *sql.Row) (*Listing, error) {
 	json.Unmarshal([]byte(tagsJSON), &listing.Tags)
 	json.Unmarshal([]byte(coverageJSON), &listing.Coverage)
 	json.Unmarshal([]byte(deliveryMethodsJSON), &listing.DeliveryMethods)
+	json.Unmarshal([]byte(protectedDeliveryJSON), &listing.ProtectedDelivery)
 	json.Unmarshal([]byte(pricingJSON), &listing.Pricing)
 	json.Unmarshal([]byte(acceptedPaymentsJSON), &listing.AcceptedPayments)
 	json.Unmarshal([]byte(reputationJSON), &listing.Reputation)
 	listing.CreatedAt = time.Unix(createdAt, 0)
 	listing.UpdatedAt = time.Unix(updatedAt, 0)
 	listing.ExpiresAt = time.Unix(expiresAt, 0)
+	if listing.ListingKind == "" {
+		listing.ListingKind = ListingKindDataStream
+	}
 
 	return &listing, nil
 }
@@ -530,9 +556,9 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 	}
 
 	querySQL := fmt.Sprintf(`
-		SELECT listing_id, provider_peer_id, provider_epm_cid, title, description,
+		SELECT listing_id, listing_kind, provider_peer_id, provider_epm_cid, title, description,
 			data_types, tags, coverage, sample_cid, sample_record_count,
-			access_type, encryption_required, delivery_methods, pricing,
+			access_type, encryption_required, delivery_methods, protected_delivery, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
 			active, expires_at, terms_cid, license, signature
 		FROM storefront_listings WHERE %s ORDER BY %s LIMIT ? OFFSET ?
@@ -549,16 +575,16 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 	for rows.Next() {
 		var listing Listing
 		var dataTypesJSON, tagsJSON, coverageJSON, deliveryMethodsJSON string
-		var pricingJSON, acceptedPaymentsJSON, reputationJSON string
+		var protectedDeliveryJSON, pricingJSON, acceptedPaymentsJSON, reputationJSON string
 		var createdAt, updatedAt, expiresAt int64
 
 		err := rows.Scan(
-			&listing.ListingID, &listing.ProviderPeerID, &listing.ProviderEPMCID,
+			&listing.ListingID, &listing.ListingKind, &listing.ProviderPeerID, &listing.ProviderEPMCID,
 			&listing.Title, &listing.Description,
 			&dataTypesJSON, &tagsJSON, &coverageJSON,
 			&listing.SampleCID, &listing.SampleRecordCount,
 			&listing.AccessType, &listing.EncryptionRequired,
-			&deliveryMethodsJSON, &pricingJSON,
+			&deliveryMethodsJSON, &protectedDeliveryJSON, &pricingJSON,
 			&acceptedPaymentsJSON, &reputationJSON,
 			&createdAt, &updatedAt, &listing.Version,
 			&listing.Active, &expiresAt,
@@ -573,12 +599,16 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 		json.Unmarshal([]byte(tagsJSON), &listing.Tags)
 		json.Unmarshal([]byte(coverageJSON), &listing.Coverage)
 		json.Unmarshal([]byte(deliveryMethodsJSON), &listing.DeliveryMethods)
+		json.Unmarshal([]byte(protectedDeliveryJSON), &listing.ProtectedDelivery)
 		json.Unmarshal([]byte(pricingJSON), &listing.Pricing)
 		json.Unmarshal([]byte(acceptedPaymentsJSON), &listing.AcceptedPayments)
 		json.Unmarshal([]byte(reputationJSON), &listing.Reputation)
 		listing.CreatedAt = time.Unix(createdAt, 0)
 		listing.UpdatedAt = time.Unix(updatedAt, 0)
 		listing.ExpiresAt = time.Unix(expiresAt, 0)
+		if listing.ListingKind == "" {
+			listing.ListingKind = ListingKindDataStream
+		}
 
 		listings = append(listings, listing)
 	}
@@ -776,15 +806,80 @@ func (s *Store) UpdatePurchaseStatus(requestID string, status PurchaseStatus, me
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := time.Now().Unix()
+	if status == PurchaseStatusPaymentConfirmed || status == PurchaseStatusCompleted {
+		_, err := s.db.Exec(`
+			UPDATE storefront_purchases
+			SET status = ?, status_message = ?, payment_confirmed_at = CASE
+					WHEN payment_confirmed_at IS NULL OR payment_confirmed_at = 0 THEN ?
+					ELSE payment_confirmed_at
+				END,
+				updated_at = ?
+			WHERE request_id = ?
+		`, status, message, now, now, requestID)
+		if err != nil {
+			return fmt.Errorf("failed to update purchase status: %w", err)
+		}
+		return nil
+	}
+
 	_, err := s.db.Exec(`
 		UPDATE storefront_purchases SET status = ?, status_message = ?, updated_at = ?
 		WHERE request_id = ?
-	`, status, message, time.Now().Unix(), requestID)
+	`, status, message, now, requestID)
 	if err != nil {
 		return fmt.Errorf("failed to update purchase status: %w", err)
 	}
 
 	return nil
+}
+
+func (s *Store) CreatePaymentAuditEvent(event *PaymentAuditEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		INSERT INTO storefront_payment_audit (
+			event_id, request_id, event_type, actor_peer_id, reference,
+			message, purchase_status, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, event.EventID, event.RequestID, event.EventType, event.ActorPeerID,
+		event.Reference, event.Message, event.PurchaseStatus, event.CreatedAt.Unix())
+	if err != nil {
+		return fmt.Errorf("failed to insert payment audit event: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetPaymentAuditEvents(requestID string) ([]*PaymentAuditEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT event_id, request_id, event_type, actor_peer_id, reference,
+			message, purchase_status, created_at
+		FROM storefront_payment_audit
+		WHERE request_id = ?
+		ORDER BY created_at ASC, rowid ASC
+	`, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query payment audit events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*PaymentAuditEvent
+	for rows.Next() {
+		var event PaymentAuditEvent
+		var createdAt int64
+		if err := rows.Scan(&event.EventID, &event.RequestID, &event.EventType,
+			&event.ActorPeerID, &event.Reference, &event.Message,
+			&event.PurchaseStatus, &createdAt); err != nil {
+			return nil, fmt.Errorf("failed to scan payment audit event: %w", err)
+		}
+		event.CreatedAt = time.Unix(createdAt, 0)
+		events = append(events, &event)
+	}
+	return events, nil
 }
 
 // CreateReview creates a new review. Stores through FlatSQL.

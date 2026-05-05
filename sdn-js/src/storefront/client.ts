@@ -28,6 +28,9 @@ import type {
   SellerDashboard,
   BuyerDashboard,
   TrustScore,
+  ManualDevPaymentConfirmation,
+  ManualDevPaymentResult,
+  PaymentAuditEvent,
 } from './types';
 
 /** Storefront client configuration */
@@ -425,6 +428,46 @@ export class StorefrontClient {
   }
 
   /**
+   * Complete a purchase with an explicit manual/dev paid state.
+   */
+  async completeManualDevPayment(
+    requestId: string,
+    confirmation: ManualDevPaymentConfirmation = {},
+  ): Promise<ManualDevPaymentResult> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(`${this.config.apiBaseUrl}/storefront/purchases/${requestId}/manual-dev-paid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operator_peer_id: confirmation.operatorPeerId,
+          reference: confirmation.reference,
+          note: confirmation.note,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to complete manual/dev payment: ${response.statusText}`);
+      }
+      return response.json();
+    }
+    throw new Error('API URL required');
+  }
+
+  /**
+   * Get payment/grant audit history for a purchase.
+   */
+  async getPurchaseAudit(requestId: string): Promise<PaymentAuditEvent[]> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(`${this.config.apiBaseUrl}/storefront/purchases/${requestId}/audit`);
+      if (!response.ok) {
+        throw new Error(`Failed to get purchase audit: ${response.statusText}`);
+      }
+      const payload = await response.json() as { events?: unknown[] };
+      return Array.isArray(payload.events) ? payload.events.map(normalizePaymentAuditEvent) : [];
+    }
+    throw new Error('API URL required');
+  }
+
+  /**
    * Get credits transaction history
    */
   async getCreditsTransactions(limit = 50, offset = 0): Promise<CreditsTransaction[]> {
@@ -578,4 +621,41 @@ function normalizeStorefrontAPIBaseUrl(apiBaseUrl: string | undefined): string |
     return trimmed;
   }
   return `${trimmed}/api`;
+}
+
+function normalizePaymentAuditEvent(value: unknown): PaymentAuditEvent {
+  const record = isRecord(value) ? value : {};
+  return {
+    eventId: stringField(record, 'event_id') || stringField(record, 'eventId') || '',
+    requestId: stringField(record, 'request_id') || stringField(record, 'requestId') || '',
+    eventType: stringField(record, 'event_type') || stringField(record, 'eventType') || '',
+    actorPeerId: stringField(record, 'actor_peer_id') || stringField(record, 'actorPeerId'),
+    reference: stringField(record, 'reference'),
+    message: stringField(record, 'message'),
+    purchaseStatus: numberField(record, 'purchase_status') ?? numberField(record, 'purchaseStatus') ?? 0,
+    createdAt: dateField(record, 'created_at') ?? dateField(record, 'createdAt'),
+  };
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function numberField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function dateField(record: Record<string, unknown>, key: string): Date | undefined {
+  const value = record[key];
+  if (typeof value !== 'string' || !value) {
+    return undefined;
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
 }

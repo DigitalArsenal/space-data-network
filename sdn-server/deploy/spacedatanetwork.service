@@ -3,6 +3,8 @@ Description=Space Data Network Full Node
 Documentation=https://github.com/spacedatanetwork/sdn-server
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
@@ -25,8 +27,6 @@ ExecStart=/opt/spacedatanetwork/bin/spacedatanetwork daemon \
 # Restart policy
 Restart=always
 RestartSec=10
-StartLimitIntervalSec=60
-StartLimitBurst=3
 
 # Resource limits
 LimitNOFILE=65536

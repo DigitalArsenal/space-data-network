@@ -125,6 +125,7 @@ func (pp *PaymentProcessor) ProcessCredits(ctx context.Context, requestID string
 
 	// Update purchase with credits tx ID
 	pp.store.UpdatePurchaseCreditsTransaction(requestID, txID)
+	pp.store.UpdatePurchaseStatus(requestID, PurchaseStatusPaymentConfirmed, "Credits payment confirmed")
 
 	return nil
 }

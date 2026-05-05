@@ -134,6 +134,47 @@ full_node_service_name() {
     fi
 }
 
+full_node_config_dir() {
+    local ip=$1
+    local service=$2
+
+    if [[ "$service" == "space-data-network" ]]; then
+        echo "/etc/space-data-network"
+        return
+    fi
+
+    if ssh_cmd "$ip" "test -f /etc/space-data-network/config.yaml" >/dev/null 2>&1; then
+        echo "/etc/space-data-network"
+        return
+    fi
+
+    echo "/etc/spacedatanetwork"
+}
+
+configure_full_node_systemd_overrides() {
+    local ip=$1
+    local service=$2
+    local config_dir=$3
+    local override_dir="/etc/systemd/system/${service}.service.d"
+
+    ssh_cmd "$ip" "mkdir -p ${override_dir}"
+
+    if [[ "$config_dir" == "/etc/space-data-network" ]]; then
+        ssh_cmd "$ip" "cat > ${override_dir}/config-path.conf <<'EOF'
+[Service]
+Environment=SDN_CONFIG=/etc/space-data-network/config.yaml
+EOF
+cat > ${override_dir}/spaceaware-runtime.conf <<'EOF'
+[Service]
+User=root
+Group=root
+ReadWritePaths=/opt/data /var/lib/spacedatanetwork
+EOF"
+    else
+        ssh_cmd "$ip" "rm -f ${override_dir}/config-path.conf ${override_dir}/spaceaware-runtime.conf"
+    fi
+}
+
 prepare_full_node_assets() {
     log_info "Building shared admin shell assets..."
     (cd "${PROJECT_ROOT}/sdn-js" && npm run build:ui)
@@ -290,10 +331,7 @@ deploy_binary() {
         local full_service
         local config_dir
         full_service="$(full_node_service_name "$ip")"
-        config_dir="/etc/spacedatanetwork"
-        if [[ "$full_service" == "space-data-network" ]]; then
-            config_dir="/etc/space-data-network"
-        fi
+        config_dir="$(full_node_config_dir "$ip" "$full_service")"
 
         ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/bin /opt/spacedatanetwork/admin-ui /opt/spacedatanetwork/webui /opt/spacedatanetwork/sdn-server /opt/spacedatanetwork/scripts ${config_dir} /var/lib/spacedatanetwork/frontend /var/lib/spacedatanetwork/data && id -u sdn >/dev/null 2>&1 || useradd --system --home /var/lib/spacedatanetwork --shell /usr/sbin/nologin sdn"
 
@@ -302,7 +340,7 @@ deploy_binary() {
         rsync_cmd "${PROJECT_ROOT}/sdn-js/ui/dist/" "$ip" "/opt/spacedatanetwork/admin-ui/"
         rsync_cmd "${PROJECT_ROOT}/webui/build/" "$ip" "/opt/spacedatanetwork/webui/"
         deploy_full_node_licensing_module "$ip" "$full_service"
-        if [[ "$full_service" == "spacedatanetwork" ]] || ! ssh_cmd "$ip" "test -f ${config_dir}/config.yaml" >/dev/null 2>&1; then
+        if ! ssh_cmd "$ip" "test -f ${config_dir}/config.yaml" >/dev/null 2>&1; then
             rsync_cmd "${PROJECT_ROOT}/config/full-vm.yaml" "$ip" "${config_dir}/config.yaml"
         else
             log_info "Preserving existing full-node config at ${config_dir}/config.yaml"
@@ -310,6 +348,7 @@ deploy_binary() {
         if [[ "$full_service" == "spacedatanetwork" ]]; then
             rsync_cmd "${PROJECT_ROOT}/sdn-server/deploy/spacedatanetwork.service" "$ip" "/etc/systemd/system/spacedatanetwork.service"
         fi
+        configure_full_node_systemd_overrides "$ip" "$full_service" "$config_dir"
 
         ssh_cmd "$ip" "chmod 755 ${config_dir} && chown root:root ${config_dir}/config.yaml && chmod 644 ${config_dir}/config.yaml && chmod +x /opt/spacedatanetwork/scripts/install-wasmedge.sh /opt/spacedatanetwork/scripts/go-with-wasmedge.sh && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge /opt/spacedatanetwork/scripts/go-with-wasmedge.sh build -o /opt/spacedatanetwork/bin/spacedatanetwork ./cmd/spacedatanetwork && chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork && systemctl daemon-reload && systemctl enable ${full_service} && systemctl restart ${full_service} && if [ '${full_service}' = 'space-data-network' ]; then systemctl disable --now spacedatanetwork >/dev/null 2>&1 || true; fi"
 

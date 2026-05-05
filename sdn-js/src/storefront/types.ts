@@ -10,6 +10,23 @@ export enum AccessType {
   Query = 3,
 }
 
+/** Storefront listing kind */
+export type ListingKind = 'data_stream' | 'wasm_module';
+
+/** Protected delivery metadata for encrypted WASM or data stream listings */
+export interface ProtectedDelivery {
+  encryptedCid?: string;
+  manifestCid?: string;
+  contentHash?: string;
+  contentKeyId?: string;
+  licenseModuleId?: string;
+  moduleId?: string;
+  moduleVersion?: string;
+  requiredScopes?: string[];
+  grantScope?: string;
+  deliveryProtocol?: string;
+}
+
 /** Payment methods supported */
 export enum PaymentMethod {
   CryptoETH = 0,
@@ -102,6 +119,7 @@ export interface ProviderReputation {
 /** Storefront listing (STF) */
 export interface Listing {
   listingId: string;
+  listingKind?: ListingKind;
   providerPeerId: string;
   providerEpmCid?: string;
   title: string;
@@ -114,6 +132,7 @@ export interface Listing {
   accessType: AccessType;
   encryptionRequired: boolean;
   deliveryMethods: DeliveryMethod[];
+  protectedDelivery?: ProtectedDelivery;
   pricing: PricingTier[];
   acceptedPayments: PaymentMethod[];
   reputation?: ProviderReputation;
@@ -276,6 +295,7 @@ export interface CreditsBalance {
 
 /** Create listing request */
 export interface CreateListingRequest {
+  listingKind?: ListingKind;
   title: string;
   description?: string;
   dataTypes: string[];
@@ -285,6 +305,7 @@ export interface CreateListingRequest {
   accessType: AccessType;
   encryptionRequired?: boolean;
   deliveryMethods: DeliveryMethod[];
+  protectedDelivery?: ProtectedDelivery;
   pricing: PricingTier[];
   acceptedPayments: PaymentMethod[];
   termsCid?: string;
@@ -375,6 +396,32 @@ export interface CreditsTransaction {
   reference: string;
   createdAt: Date;
   status: string;
+}
+
+/** Manual/dev payment confirmation for out-of-band paid state */
+export interface ManualDevPaymentConfirmation {
+  operatorPeerId?: string;
+  reference?: string;
+  note?: string;
+}
+
+/** Manual/dev payment completion response */
+export interface ManualDevPaymentResult {
+  mode: 'manual-dev';
+  purchase: PurchaseRequest;
+  grant: AccessGrant;
+}
+
+/** Payment audit event */
+export interface PaymentAuditEvent {
+  eventId: string;
+  requestId: string;
+  eventType: string;
+  actorPeerId?: string;
+  reference?: string;
+  message?: string;
+  purchaseStatus: PurchaseStatus;
+  createdAt?: Date;
 }
 
 // --- 14.5 Delivery types ---

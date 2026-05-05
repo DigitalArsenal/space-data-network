@@ -183,6 +183,93 @@ describe('loadMarketplaceListingsFromServer', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it('decodes protected WASM storefront listings into module marketplace entries', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            listings: [
+              {
+                listing_id: 'protected-wasm-od',
+                listing_kind: 'wasm_module',
+                provider_peer_id: '16Uiu2HProvider',
+                title: 'Protected OD Module',
+                description: 'Encrypted WASM OD workflow',
+                data_types: ['WASM', 'OMM'],
+                tags: ['wasm', 'orbit-determination'],
+                sample_cid: 'bafybeisample',
+                access_type: 1,
+                encryption_required: true,
+                pricing: [
+                  {
+                    name: 'Basic',
+                    price_amount: 9900,
+                    price_currency: 'USD',
+                    duration_days: 30,
+                  },
+                ],
+                accepted_payments: [4],
+                protected_delivery: {
+                  encrypted_cid: 'bafybeiencryptedwasm',
+                  manifest_cid: 'bafybeimanifest',
+                  content_hash: 'sha256:artifact',
+                  content_key_id: 'ck-1',
+                  license_module_id: 'licensing/core',
+                  module_id: 'com.space-data-network.protected-od',
+                  module_version: '1.2.3',
+                  required_scopes: ['module:invoke'],
+                  grant_scope: 'module:invoke:protected-od',
+                  delivery_protocol: '/space-data-network/module-delivery/1.0.0',
+                },
+                active: true,
+                updated_at: '2026-05-05T12:00:00Z',
+              },
+            ],
+          };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      });
+
+    await expect(
+      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        listingKind: 'module',
+        pluginId: 'protected-wasm-od',
+        name: 'Protected OD Module',
+        paymentModel: 'subscription',
+        priceUsdCents: 9900,
+        subscriptionPeriodDays: 30,
+        acceptedPaymentMethods: ['Fiat_Stripe'],
+        requiredScope: 'module:invoke:protected-od',
+        standardsUsed: ['OMM', 'WASM'],
+        sampleCid: 'bafybeisample',
+        accessType: 'subscription',
+        encryptionRequired: true,
+        protectedDelivery: expect.objectContaining({
+          encryptedCid: 'bafybeiencryptedwasm',
+          licenseModuleId: 'licensing/core',
+          moduleId: 'com.space-data-network.protected-od',
+        }),
+      }),
+    ]);
+  });
+
   it('returns an empty marketplace from successful empty module-delivery and STF responses without probing legacy fallback routes', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({

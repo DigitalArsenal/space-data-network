@@ -247,6 +247,104 @@ describe('Storefront Client Configuration', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('https://sdn.spaceaware.io/api/storefront/listings/listing-1');
   });
+
+  it('posts explicit manual/dev paid confirmation and returns purchase plus grant state', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        mode: 'manual-dev',
+        purchase: {
+          requestId: 'purchase-1',
+          listingId: 'protected-wasm-1',
+          tierName: 'Basic',
+          buyerPeerId: 'buyer-peer',
+          paymentMethod: PaymentMethod.FiatStripe,
+          paymentAmount: 4900,
+          paymentCurrency: 'USD',
+          status: PurchaseStatus.Completed,
+          grantId: 'grant-1',
+        },
+        grant: {
+          grantId: 'grant-1',
+          listingId: 'protected-wasm-1',
+          tierName: 'Basic',
+          buyerPeerId: 'buyer-peer',
+          accessType: AccessType.Subscription,
+          status: GrantStatus.Active,
+          paymentMethod: PaymentMethod.FiatStripe,
+          paymentAmount: 4900,
+          paymentCurrency: 'USD',
+          autoRenew: true,
+          renewalCount: 0,
+          totalRequests: 0,
+          totalRecords: 0,
+          providerPeerId: 'provider-peer',
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io',
+      peerId: 'buyer-peer',
+    });
+
+    const result = await client.completeManualDevPayment('purchase-1', {
+      operatorPeerId: 'provider-admin',
+      reference: 'receipt-1',
+      note: 'verified out of band',
+    });
+
+    expect(result.mode).toBe('manual-dev');
+    expect(result.grant.grantId).toBe('grant-1');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/manual-dev-paid',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          operator_peer_id: 'provider-admin',
+          reference: 'receipt-1',
+          note: 'verified out of band',
+        }),
+      }),
+    );
+  });
+
+  it('loads purchase payment audit events', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        events: [
+          {
+            event_id: 'event-1',
+            request_id: 'purchase-1',
+            event_type: 'payment_confirmed',
+            actor_peer_id: 'provider-admin',
+            reference: 'receipt-1',
+            message: 'Manual/dev payment confirmed',
+            purchase_status: PurchaseStatus.PaymentConfirmed,
+            created_at: '2026-05-05T12:00:00Z',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io/api',
+      peerId: 'buyer-peer',
+    });
+
+    const events = await client.getPurchaseAudit('purchase-1');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe('payment_confirmed');
+    expect(fetchMock).toHaveBeenCalledWith('https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/audit');
+  });
 });
 
 // --- Phase 14.2: Discovery types ---
