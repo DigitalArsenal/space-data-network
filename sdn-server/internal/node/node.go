@@ -1240,10 +1240,41 @@ func (n *Node) Publish(schema string, data []byte) error {
 	return topic.Publish(n.ctx, data)
 }
 
+// PublishToTopic publishes data to an explicit pub/sub topic, joining it first
+// if this node has not used the topic yet.
+func (n *Node) PublishToTopic(ctx context.Context, topicName string, data []byte) error {
+	if n.pubsub == nil {
+		return errors.New("pubsub is not running")
+	}
+	if ctx == nil {
+		ctx = n.ctx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	topic, ok := n.topics[topicName]
+	if !ok {
+		joined, err := n.pubsub.Join(topicName)
+		if err != nil {
+			return fmt.Errorf("join topic %s: %w", topicName, err)
+		}
+		topic = joined
+		n.topics[topicName] = topic
+	}
+	return topic.Publish(ctx, data)
+}
+
 // PublishDatasetUpdatePNM announces one signed dataset-publication PNM on the
 // PNM topic and every affected dataset schema topic.
 func (n *Node) PublishDatasetUpdatePNM(ctx context.Context, ann sdnpubsub.DatasetUpdateAnnouncement) error {
 	return sdnpubsub.PublishDatasetUpdatePNM(ctx, n, ann)
+}
+
+// PublishCAResultSummary publishes a signed CA result summary to the private
+// result channel for a managed private node.
+func (n *Node) PublishCAResultSummary(ctx context.Context, publication sdnpubsub.CAResultPublication) error {
+	return sdnpubsub.PublishCAResultSummary(ctx, n, publication)
 }
 
 // PeerRegistry returns the trusted peer registry.
