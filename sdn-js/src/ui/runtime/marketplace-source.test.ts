@@ -270,7 +270,7 @@ describe('loadMarketplaceListingsFromServer', () => {
     ]);
   });
 
-  it('returns an empty marketplace from successful empty module-delivery and STF responses without probing legacy fallback routes', async () => {
+  it('falls back to storefront listings when module-delivery is available but empty', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
@@ -279,6 +279,24 @@ describe('loadMarketplaceListingsFromServer', () => {
           return {
             results: null,
             count: 0,
+          };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            listings: [
+              {
+                listing_id: 'protected-live-daemon-e2e',
+                listing_kind: 'wasm_module',
+                provider_peer_id: '16Uiu2HAmLive',
+                title: 'Protected Live Daemon Fixture',
+                data_types: ['WASM', 'OMM'],
+                active: true,
+              },
+            ],
           };
         },
       })
@@ -292,9 +310,17 @@ describe('loadMarketplaceListingsFromServer', () => {
 
     await expect(
       loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual([
+      expect.objectContaining({
+        listingKind: 'module',
+        pluginId: 'protected-live-daemon-e2e',
+        name: 'Protected Live Daemon Fixture',
+        publisherPeerId: '16Uiu2HAmLive',
+        standardsUsed: ['OMM', 'WASM'],
+      }),
+    ]);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('keeps the empty storefront state quiet when the storefront route succeeds with no listings', async () => {

@@ -25,6 +25,11 @@ interface StorefrontListingResponse {
   listings?: unknown;
 }
 
+interface StorefrontListingLoadResult {
+  listings: CanonicalListing[] | null;
+  status: number;
+}
+
 interface StorefrontListing {
   listing_id?: string;
   listing_kind?: string;
@@ -63,6 +68,12 @@ export async function loadMarketplaceListingsFromServer(
         observedAt: entry.timestamp ? Date.parse(entry.timestamp) : Date.now(),
       }) : null)
       .filter((listing): listing is CanonicalListing => Boolean(listing)));
+    if (listings.length === 0) {
+      const storefront = await loadStorefrontListings(normalizedBaseUrl, fetchImpl);
+      if (storefront.listings !== null) {
+        listings.push(...storefront.listings);
+      }
+    }
     return [
       ...listings,
       ...await loadStfListings(normalizedBaseUrl, fetchImpl),
@@ -71,22 +82,17 @@ export async function loadMarketplaceListingsFromServer(
 
   let storefrontError: Error | null = null;
 
-  const storefrontResponse = await fetchImpl(
-    `${normalizedBaseUrl}/api/storefront/listings`,
-    { credentials: 'include' },
-  );
-
-  if (storefrontResponse.ok) {
-    const payload = asRecord(await storefrontResponse.json()) as StorefrontListingResponse | null;
-    listings.push(...normalizeStorefrontListings(payload?.listings)
-      .map((listing) => decodeStorefrontListing(listing))
-      .filter((listing): listing is CanonicalListing => Boolean(listing)));
+  const storefront = await loadStorefrontListings(normalizedBaseUrl, fetchImpl);
+  if (storefront.listings !== null) {
+    listings.push(...storefront.listings);
     return [
       ...listings,
       ...await loadStfListings(normalizedBaseUrl, fetchImpl),
     ];
-  } else if (storefrontResponse.status !== 404) {
-    storefrontError = new Error(`storefront listing query failed (${storefrontResponse.status})`);
+  }
+
+  if (storefront.status !== 404) {
+    storefrontError = new Error(`storefront listing query failed (${storefront.status})`);
   }
 
   const plgResponse = await fetchImpl(
@@ -96,7 +102,7 @@ export async function loadMarketplaceListingsFromServer(
 
   if (!plgResponse.ok) {
     if (plgResponse.status === 404) {
-      if (storefrontResponse.ok || storefrontResponse.status === 404) {
+      if (storefront.status === 404) {
         return [];
       }
       throw storefrontError ?? new Error(`listing query failed (${plgResponse.status})`);
@@ -115,6 +121,31 @@ export async function loadMarketplaceListingsFromServer(
     ...listings,
     ...await loadStfListings(normalizedBaseUrl, fetchImpl),
   ];
+}
+
+async function loadStorefrontListings(
+  normalizedBaseUrl: string,
+  fetchImpl: MarketplaceFetchLike,
+): Promise<StorefrontListingLoadResult> {
+  const storefrontResponse = await fetchImpl(
+    `${normalizedBaseUrl}/api/storefront/listings`,
+    { credentials: 'include' },
+  );
+
+  if (!storefrontResponse.ok) {
+    return {
+      listings: null,
+      status: storefrontResponse.status,
+    };
+  }
+
+  const payload = asRecord(await storefrontResponse.json()) as StorefrontListingResponse | null;
+  return {
+    listings: normalizeStorefrontListings(payload?.listings)
+      .map((listing) => decodeStorefrontListing(listing))
+      .filter((listing): listing is CanonicalListing => Boolean(listing)),
+    status: storefrontResponse.status,
+  };
 }
 
 function decodeStorefrontListing(listing: unknown): CanonicalListing | null {
