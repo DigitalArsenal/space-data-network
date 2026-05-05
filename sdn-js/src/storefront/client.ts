@@ -31,6 +31,9 @@ import type {
   ManualDevPaymentConfirmation,
   ManualDevPaymentResult,
   PaymentAuditEvent,
+  CreateCryptoIntentRequest,
+  CryptoBuyerIntent,
+  SubmitCryptoPaymentRequest,
 } from './types';
 
 /** Storefront client configuration */
@@ -217,6 +220,58 @@ export class StorefrontClient {
       });
       if (!response.ok) {
         throw new Error(`Failed to confirm payment: ${response.statusText}`);
+      }
+      return;
+    }
+
+    throw new Error('API URL required');
+  }
+
+  /**
+   * Create a server-authored crypto buyer intent for a purchase.
+   */
+  async createCryptoBuyerIntent(requestId: string, request: CreateCryptoIntentRequest): Promise<CryptoBuyerIntent> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(`${this.config.apiBaseUrl}/storefront/purchases/${requestId}/pay-crypto`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chain: request.chain,
+          asset: request.asset,
+          recipient: request.recipient,
+          method: request.method,
+          expires_at: request.expiresAt?.toISOString(),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to create crypto payment intent: ${response.statusText}`);
+      }
+      return normalizeCryptoBuyerIntent(await response.json());
+    }
+
+    throw new Error('API URL required');
+  }
+
+  /**
+   * Submit a crypto transaction reference against a server-created buyer intent.
+   */
+  async submitCryptoPayment(requestId: string, request: SubmitCryptoPaymentRequest): Promise<void> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(`${this.config.apiBaseUrl}/storefront/purchases/${requestId}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          txHash: request.txHash,
+          chain: request.chain,
+          reference: request.reference,
+          recipientAddress: request.recipientAddress,
+          amount: request.amount,
+          currency: request.currency,
+          senderAddress: request.senderAddress,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to submit crypto payment: ${response.statusText}`);
       }
       return;
     }
@@ -634,6 +689,23 @@ function normalizePaymentAuditEvent(value: unknown): PaymentAuditEvent {
     message: stringField(record, 'message'),
     purchaseStatus: numberField(record, 'purchase_status') ?? numberField(record, 'purchaseStatus') ?? 0,
     createdAt: dateField(record, 'created_at') ?? dateField(record, 'createdAt'),
+  };
+}
+
+function normalizeCryptoBuyerIntent(value: unknown): CryptoBuyerIntent {
+  const record = isRecord(value) ? value : {};
+  return {
+    reference: stringField(record, 'reference') || '',
+    requestId: stringField(record, 'request_id') || stringField(record, 'requestId') || '',
+    chain: stringField(record, 'chain') || '',
+    asset: stringField(record, 'asset') || '',
+    amount: numberField(record, 'amount') ?? 0,
+    recipient: stringField(record, 'recipient') || '',
+    method: numberField(record, 'method') as PaymentMethod | undefined,
+    createdAt: dateField(record, 'created_at') ?? dateField(record, 'createdAt'),
+    expiresAt: dateField(record, 'expires_at') ?? dateField(record, 'expiresAt'),
+    usedAt: dateField(record, 'used_at') ?? dateField(record, 'usedAt'),
+    txHash: stringField(record, 'tx_hash') || stringField(record, 'txHash'),
   };
 }
 

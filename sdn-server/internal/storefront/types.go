@@ -53,6 +53,7 @@ const (
 	PaymentAuditPurchaseCreated  = "purchase_created"
 	PaymentAuditPaymentDetected  = "payment_detected"
 	PaymentAuditPaymentConfirmed = "payment_confirmed"
+	PaymentAuditPaymentFailed    = "payment_failed"
 	PaymentAuditGrantIssued      = "grant_issued"
 )
 
@@ -258,6 +259,32 @@ type PaymentAuditEvent struct {
 	Message        string         `json:"message"`
 	PurchaseStatus PurchaseStatus `json:"purchase_status"`
 	CreatedAt      time.Time      `json:"created_at"`
+}
+
+// CreateCryptoIntentRequest describes the expected on-chain payment a buyer
+// must make before submitting a transaction reference.
+type CreateCryptoIntentRequest struct {
+	RequestID string        `json:"request_id"`
+	Chain     string        `json:"chain"`
+	Asset     string        `json:"asset"`
+	Recipient string        `json:"recipient"`
+	Method    PaymentMethod `json:"method"`
+	ExpiresAt time.Time     `json:"expires_at"`
+}
+
+// CryptoBuyerIntent records the server-authored expected crypto payment.
+type CryptoBuyerIntent struct {
+	Reference string        `json:"reference"`
+	RequestID string        `json:"request_id"`
+	Chain     string        `json:"chain"`
+	Asset     string        `json:"asset"`
+	Amount    uint64        `json:"amount"`
+	Recipient string        `json:"recipient"`
+	Method    PaymentMethod `json:"method"`
+	CreatedAt time.Time     `json:"created_at"`
+	ExpiresAt time.Time     `json:"expires_at"`
+	UsedAt    time.Time     `json:"used_at"`
+	TxHash    string        `json:"tx_hash"`
 }
 
 // DataQualityMetrics represents data quality assessment

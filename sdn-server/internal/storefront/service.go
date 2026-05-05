@@ -398,6 +398,53 @@ func (s *Service) CompleteStripeCheckout(ctx context.Context, requestID, session
 	return grant, nil
 }
 
+// ApplyStripeWebhookAction applies a validated Stripe webhook exactly once.
+func (s *Service) ApplyStripeWebhookAction(ctx context.Context, action *StripeWebhookAction) (*AccessGrant, error) {
+	if action == nil || strings.TrimSpace(action.RequestID) == "" {
+		return nil, nil
+	}
+
+	firstSeen, err := s.store.RecordPaymentWebhookEvent("stripe", action.EventID, action.RequestID, action.EventType)
+	if err != nil {
+		return nil, err
+	}
+	if !firstSeen {
+		action.Processed = true
+		purchase, err := s.store.GetPurchaseRequest(action.RequestID)
+		if err == nil && purchase != nil && purchase.GrantID != "" {
+			return s.store.GetGrant(purchase.GrantID)
+		}
+		return nil, err
+	}
+
+	if action.Failed || strings.Contains(action.EventType, "failed") || strings.Contains(action.EventType, "expired") {
+		msg := strings.TrimSpace(action.FailureReason)
+		if msg == "" {
+			msg = action.EventType
+		}
+		if err := s.store.UpdatePurchaseStatus(action.RequestID, PurchaseStatusFailed, "Stripe checkout failed: "+msg); err != nil {
+			return nil, err
+		}
+		if err := s.recordPaymentAudit(action.RequestID, PaymentAuditPaymentFailed, s.peerID, action.SessionID, msg, PurchaseStatusFailed); err != nil {
+			log.Warnf("Failed to record Stripe failure audit event for %s: %v", action.RequestID, err)
+		}
+		action.Processed = true
+		return nil, nil
+	}
+
+	if action.Paid {
+		grant, err := s.CompleteStripeCheckout(ctx, action.RequestID, action.SessionID, action.SubscriptionID, action.CustomerID)
+		if err != nil {
+			return nil, err
+		}
+		action.Processed = true
+		return grant, nil
+	}
+
+	action.Processed = true
+	return nil, nil
+}
+
 // IssueGrant issues an access grant for a purchase
 func (s *Service) IssueGrant(ctx context.Context, requestID string) (*AccessGrant, error) {
 	now := time.Now()

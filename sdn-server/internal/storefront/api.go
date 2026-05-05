@@ -275,6 +275,9 @@ func (h *APIHandler) handlePurchaseByID(w http.ResponseWriter, r *http.Request) 
 		case "pay-fiat":
 			h.handlePayWithFiat(w, r, requestID)
 			return
+		case "pay-crypto":
+			h.handleCreateCryptoIntent(w, r, requestID)
+			return
 		case "manual-dev-paid":
 			h.handleManualDevPaid(w, r, requestID)
 			return
@@ -351,9 +354,13 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 
 	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 	var body struct {
-		TxHash        string `json:"txHash"`
-		Chain         string `json:"chain"`
-		SenderAddress string `json:"senderAddress"`
+		TxHash           string `json:"txHash"`
+		Chain            string `json:"chain"`
+		SenderAddress    string `json:"senderAddress"`
+		RecipientAddress string `json:"recipientAddress"`
+		Reference        string `json:"reference"`
+		Amount           uint64 `json:"amount"`
+		Currency         string `json:"currency"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -361,12 +368,23 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 	}
 
 	if h.payment != nil {
-		result, err := h.payment.VerifyCryptoPayment(r.Context(), &CryptoPaymentRequest{
-			RequestID:     requestID,
-			TxHash:        body.TxHash,
-			Chain:         body.Chain,
-			SenderAddress: body.SenderAddress,
-		})
+		req := &CryptoPaymentRequest{
+			RequestID:        requestID,
+			TxHash:           body.TxHash,
+			Chain:            body.Chain,
+			SenderAddress:    body.SenderAddress,
+			RecipientAddress: body.RecipientAddress,
+			Reference:        body.Reference,
+			Amount:           body.Amount,
+			Currency:         body.Currency,
+		}
+		var result *CryptoPaymentResult
+		var err error
+		if strings.TrimSpace(body.Reference) != "" {
+			result, err = h.payment.SubmitCryptoPayment(r.Context(), req)
+		} else {
+			result, err = h.payment.VerifyCryptoPayment(r.Context(), req)
+		}
 		if err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
@@ -383,6 +401,32 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *APIHandler) handleCreateCryptoIntent(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.payment == nil {
+		http.Error(w, "crypto payments not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	var body CreateCryptoIntentRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	body.RequestID = requestID
+
+	intent, err := h.payment.CreateCryptoBuyerIntent(r.Context(), &body)
+	if err != nil {
+		http.Error(w, "failed to create crypto intent", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, intent)
 }
 
 func (h *APIHandler) handlePayWithCredits(w http.ResponseWriter, r *http.Request, requestID string) {
@@ -473,8 +517,8 @@ func (h *APIHandler) handleStripeWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if action != nil && action.Paid && action.RequestID != "" && h.service != nil {
-		if _, err := h.service.CompleteStripeCheckout(r.Context(), action.RequestID, action.SessionID, action.SubscriptionID, action.CustomerID); err != nil {
+	if action != nil && h.service != nil {
+		if _, err := h.service.ApplyStripeWebhookAction(r.Context(), action); err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
