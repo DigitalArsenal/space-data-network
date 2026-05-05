@@ -1,5 +1,5 @@
 // @ts-check
-const { screen, BrowserWindow, app } = require('electron')
+const { screen, BrowserWindow, app, ipcMain } = require('electron')
 const { join } = require('path')
 const { URL } = require('url')
 const logger = require('../common/logger')
@@ -8,8 +8,9 @@ const { OPEN_WEBUI_LAUNCH: CONFIG_KEY } = require('../common/config-keys')
 const dock = require('../utils/dock')
 const getCtx = require('../context')
 const registerStaticScheme = require('../static-scheme')
+const ipcMainEvents = require('../common/ipc-main-events')
 
-registerStaticScheme({ scheme: 'sdn', directory: join(__dirname, '../../../sdn-js/ui/dist') })
+registerStaticScheme({ scheme: 'sdn', directory: 'assets/sdn-ui' })
 const introPath = join(__dirname, '../../assets/pages/sdn-intro.html')
 
 function isIntroRoute (path) {
@@ -45,17 +46,6 @@ const createWindow = () => {
     }
   })
 
-  window.webContents.on('will-navigate', (event, targetUrl) => {
-    if (!isIntroAdminNavigation(targetUrl)) {
-      return
-    }
-
-    event.preventDefault()
-    const url = new URL('/', 'sdn://-')
-    url.hash = '/'
-    window.webContents.loadURL(url.toString())
-  })
-
   window.on('resize', () => {
     const dim = window.getSize()
     store.safeSet('window.width', dim[0])
@@ -83,11 +73,39 @@ module.exports = async function () {
   ctx.setProp('dashboard', window)
 
   const url = new URL('/', 'sdn://-')
+  let apiAddress = null
   const loadIntroPage = () => window.loadFile(introPath)
-  const loadDashboardApp = (path) => {
-    url.hash = path || '/'
-    window.webContents.loadURL(url.toString())
+  const getIpfsd = ctx.getFn('getIpfsd')
+
+  async function syncIpfsApiAddress () {
+    const ipfsd = await getIpfsd(true)
+
+    if (ipfsd && ipfsd.apiAddr !== apiAddress) {
+      apiAddress = ipfsd.apiAddr
+      url.searchParams.set('api', apiAddress.toString())
+      window.webContents.loadURL(url.toString())
+      return true
+    }
+
+    return false
   }
+
+  ipcMain.on(ipcMainEvents.IPFSD, syncIpfsApiAddress)
+
+  const loadDashboardApp = async (path) => {
+    url.hash = path || '/'
+    const apiAddressSynced = await syncIpfsApiAddress()
+    if (!apiAddressSynced) window.webContents.loadURL(url.toString())
+  }
+
+  window.webContents.on('will-navigate', (event, targetUrl) => {
+    if (!isIntroAdminNavigation(targetUrl)) {
+      return
+    }
+
+    event.preventDefault()
+    loadDashboardApp('/')
+  })
 
   ctx.setProp('launchDashboard', async (path, { focus = true, forceRefresh = false } = {}) => {
     if (window.isDestroyed()) {
@@ -102,7 +120,7 @@ module.exports = async function () {
     if (isIntroRoute(path)) {
       loadIntroPage()
     } else {
-      loadDashboardApp(path)
+      await loadDashboardApp(path)
     }
 
     if (focus) {

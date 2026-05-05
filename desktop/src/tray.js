@@ -104,7 +104,7 @@ async function buildMenu () {
     {
       id: 'webuiStatus',
       label: i18n.t('status'),
-      click: () => { launchWebUI('/') }
+      click: () => { launchDashboard('/status') }
     },
     // @ts-ignore
     {

@@ -60,9 +60,19 @@ test.describe('SDN dashboard window', () => {
     expect(indexSource.match(/registerSchemesAsPrivileged/g)).toHaveLength(1)
     expect(dashboardSource).toContain("registerStaticScheme({ scheme: 'sdn'")
     expect(webuiSource).toContain("registerStaticScheme({ scheme: 'webui'")
-    expect(webuiSource).toContain('../../assets/webui')
+    expect(dashboardSource).toContain("directory: 'assets/sdn-ui'")
+    expect(webuiSource).toContain("directory: 'assets/webui'")
     expect(dashboardSource).not.toContain("require('electron-serve')")
     expect(webuiSource).not.toContain("require('electron-serve')")
+  })
+
+  test('syncs the live Kubo RPC address before the SDN dashboard app first loads', () => {
+    const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/dashboard/index.js'), 'utf8')
+
+    expect(dashboardSource).toContain('async function syncIpfsApiAddress')
+    expect(dashboardSource).toContain('ipcMain.on(ipcMainEvents.IPFSD, syncIpfsApiAddress)')
+    expect(dashboardSource).toContain('const apiAddressSynced = await syncIpfsApiAddress()')
+    expect(dashboardSource).toContain('if (!apiAddressSynced) window.webContents.loadURL(url.toString())')
   })
 
   test('syncs the live Kubo RPC address before the desktop Web UI first loads', () => {
@@ -81,7 +91,8 @@ test.describe('SDN dashboard window', () => {
     expect(traySource).toContain("label: 'SDN UI'")
     expect(traySource).toContain("click: () => { launchDashboard('/') }")
     expect(traySource).toContain("id: 'webuiStatus'")
-    expect(traySource).toContain("click: () => { launchWebUI('/') }")
+    expect(traySource).toContain("click: () => { launchDashboard('/status') }")
+    expect(traySource).not.toContain("click: () => { launchWebUI('/') }")
     expect(traySource).not.toContain("id: 'webuiStatus',\n      label: i18n.t('status'),\n      click: () => { launchDashboard('/') }")
   })
 
