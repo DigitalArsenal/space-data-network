@@ -1733,6 +1733,44 @@ func handleModuleRuntimeMutation(mgr *plugins.Manager) http.HandlerFunc {
 				"moduleId": moduleID,
 				"history":  history,
 			})
+		case "schedules":
+			if key == "" {
+				http.NotFound(w, r)
+				return
+			}
+			if strings.HasSuffix(key, "/run") {
+				if r.Method != http.MethodPost {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+					return
+				}
+				methodID := strings.TrimSuffix(key, "/run")
+				run, err := mgr.RunRuntimeModuleScheduleNow(r.Context(), moduleID, methodID)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-cache")
+				_ = json.NewEncoder(w).Encode(run)
+				return
+			}
+			if r.Method != http.MethodPatch && r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			var payload plugins.RuntimeModuleScheduleConfig
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "invalid schedule payload", http.StatusBadRequest)
+				return
+			}
+			schedule, err := mgr.SaveRuntimeModuleSchedule(r.Context(), moduleID, key, payload)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-cache")
+			_ = json.NewEncoder(w).Encode(schedule)
 		case "actions":
 			if r.Method != http.MethodPost {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1769,7 +1807,7 @@ func parseModuleRuntimeMutationPath(pathValue string) (moduleID, kind, key strin
 		return "", "", "", false
 	}
 	kind = strings.TrimSpace(parts[1])
-	if kind != "options" && kind != "actions" && kind != "inputs" && kind != "history" {
+	if kind != "options" && kind != "actions" && kind != "inputs" && kind != "history" && kind != "schedules" {
 		return "", "", "", false
 	}
 	moduleID = strings.TrimSpace(decodedModuleID)

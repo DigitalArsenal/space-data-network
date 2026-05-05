@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestRuntimeSnapshotReportsModuleDescriptorStatsAndOptions(t *testing.T) {
@@ -97,8 +98,8 @@ func TestRuntimeSnapshotReportsModuleDescriptorStatsAndOptions(t *testing.T) {
 		t.Fatalf("options = %#v, want timer interval option", snapshot.Modules[0].Options)
 	}
 	option := snapshot.Modules[0].Options[0]
-	if option.ReadOnly || option.Persistence != "live-only" || option.Units != "ms" || option.DefaultValue != "30000" {
-		t.Fatalf("option metadata = %#v, want mutable live-only millisecond timer option", option)
+	if option.ReadOnly || option.Persistence != "persisted" || option.Units != "ms" || option.DefaultValue != "30000" {
+		t.Fatalf("option metadata = %#v, want mutable persisted millisecond timer option", option)
 	}
 	if len(snapshot.Modules[0].Actions) == 0 {
 		t.Fatalf("actions = %#v, want lifecycle actions", snapshot.Modules[0].Actions)
@@ -139,13 +140,131 @@ func TestUpdateRuntimeModuleOptionAppliesLiveCronOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateRuntimeModuleOption failed: %v", err)
 	}
-	if updated.Value != "45000" || updated.Persistence != "live-only" || updated.Units != "ms" {
-		t.Fatalf("updated option = %#v, want live millisecond override", updated)
+	if updated.Value != "45000" || updated.Persistence != "persisted" || updated.Units != "ms" {
+		t.Fatalf("updated option = %#v, want persisted millisecond override", updated)
 	}
 
 	snapshot := mgr.RuntimeSnapshot()
 	if got, want := snapshot.Modules[0].Options[0].Value, "45000"; got != want {
 		t.Fatalf("snapshot option value = %q, want %q", got, want)
+	}
+}
+
+func TestSaveRuntimeModuleSchedulePersistsCadenceAndHistory(t *testing.T) {
+	dir := t.TempDir()
+	mgr := New()
+	plugin := &fakeRuntimePlugin{
+		id: "celestrak-provider",
+		descriptor: RuntimeModuleDescriptor{
+			Manifest: &RuntimeModuleManifest{
+				PluginID: "celestrak-provider",
+				Name:     "CelesTrak Provider",
+			},
+		},
+		cron: []CronMethodSpec{
+			{
+				Method:          "sync_full_catalog",
+				Description:     "Sync CelesTrak full catalog",
+				DefaultInterval: "3h",
+				Input:           "json",
+				Output:          "json",
+			},
+		},
+	}
+	if err := mgr.Register(plugin); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if err := mgr.StartAll(context.Background(), RuntimeContext{Mode: "test", BaseDataPath: dir}); err != nil {
+		t.Fatalf("StartAll failed: %v", err)
+	}
+
+	_, err := mgr.SaveRuntimeModuleSchedule(context.Background(), "celestrak-provider", "sync_full_catalog", RuntimeModuleScheduleConfig{
+		Enabled:        true,
+		Interval:       "45m",
+		CronExpression: "*/45 * * * *",
+		Timezone:       "America/New_York",
+		RetryBudget:    2,
+		MaxRuntime:     "10m",
+	})
+	if err == nil {
+		t.Fatal("SaveRuntimeModuleSchedule accepted 45m CelesTrak cadence, want minimum cadence error")
+	}
+
+	schedule, err := mgr.SaveRuntimeModuleSchedule(context.Background(), "celestrak-provider", "sync_full_catalog", RuntimeModuleScheduleConfig{
+		Enabled:        true,
+		Interval:       "3h",
+		CronExpression: "0 */3 * * *",
+		Timezone:       "America/New_York",
+		Jitter:         "5m",
+		Backoff:        "exponential",
+		RetryBudget:    3,
+		MaxRuntime:     "30m",
+	})
+	if err != nil {
+		t.Fatalf("SaveRuntimeModuleSchedule failed: %v", err)
+	}
+	if schedule.Interval != "3h0m0s" || schedule.Timezone != "America/New_York" || schedule.MinInterval != "3h0m0s" {
+		t.Fatalf("schedule = %#v, want normalized 3h CelesTrak schedule", schedule)
+	}
+	if schedule.NextRunAt == "" || len(schedule.IntervalPresets) == 0 {
+		t.Fatalf("schedule next/presets = %#v, want next run and presets", schedule)
+	}
+
+	history, err := mgr.RuntimeModuleCommandHistory("celestrak-provider")
+	if err != nil {
+		t.Fatalf("RuntimeModuleCommandHistory failed: %v", err)
+	}
+	if len(history) != 1 || history[0].Command != "save-schedule" || history[0].MethodID != "sync_full_catalog" {
+		t.Fatalf("history = %#v, want save-schedule entry", history)
+	}
+
+	restored := New()
+	restoredPlugin := &fakeRuntimePlugin{
+		id:   "celestrak-provider",
+		cron: plugin.cron,
+	}
+	if err := restored.Register(restoredPlugin); err != nil {
+		t.Fatalf("Register restored failed: %v", err)
+	}
+	if err := restored.StartAll(context.Background(), RuntimeContext{Mode: "test", BaseDataPath: dir}); err != nil {
+		t.Fatalf("StartAll restored failed: %v", err)
+	}
+	restoredSnapshot := restored.RuntimeSnapshot()
+	if got := restoredSnapshot.Modules[0].Schedules[0].CronExpression; got != "0 */3 * * *" {
+		t.Fatalf("restored cron expression = %q, want persisted expression", got)
+	}
+}
+
+func TestRunRuntimeModuleScheduleNowRecordsRunHistory(t *testing.T) {
+	mgr := New()
+	plugin := &fakeRuntimePlugin{
+		id: "provider",
+		cron: []CronMethodSpec{
+			{Method: "sync", DefaultInterval: "2h", Input: "none", Output: "json"},
+		},
+	}
+	if err := mgr.Register(plugin); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if err := mgr.StartAll(context.Background(), RuntimeContext{Mode: "test"}); err != nil {
+		t.Fatalf("StartAll failed: %v", err)
+	}
+
+	result, err := mgr.RunRuntimeModuleScheduleNow(context.Background(), "provider", "sync")
+	if err != nil {
+		t.Fatalf("RunRuntimeModuleScheduleNow failed: %v", err)
+	}
+	if result.Status != "ok" || result.StartedAt == "" || result.FinishedAt == "" {
+		t.Fatalf("manual run result = %#v, want ok timestamps", result)
+	}
+	if got, want := plugin.cronCalls, 1; got != want {
+		t.Fatalf("cron calls = %d, want %d", got, want)
+	}
+
+	snapshot := mgr.RuntimeSnapshot()
+	schedule := snapshot.Modules[0].Schedules[0]
+	if schedule.LastRunAt == "" || len(schedule.RunHistory) != 1 || schedule.RunHistory[0].Trigger != "manual" {
+		t.Fatalf("schedule run state = %#v, want manual run history", schedule)
 	}
 }
 
@@ -375,12 +494,14 @@ type fakeRuntimePlugin struct {
 	id         string
 	startErr   error
 	descriptor RuntimeModuleDescriptor
+	cron       []CronMethodSpec
 
 	loadCalls   int
 	startCalls  int
 	pauseCalls  int
 	resumeCalls int
 	closeCalls  int
+	cronCalls   int
 
 	appliedInputCalls int
 	appliedInputs     []RuntimeModuleInputValue
@@ -423,4 +544,14 @@ func (p *fakeRuntimePlugin) ApplyRuntimeModuleInputs(_ context.Context, values [
 	p.appliedInputCalls++
 	p.appliedInputs = append([]RuntimeModuleInputValue(nil), values...)
 	return nil
+}
+
+func (p *fakeRuntimePlugin) CronMethods() []CronMethodSpec {
+	return append([]CronMethodSpec(nil), p.cron...)
+}
+
+func (p *fakeRuntimePlugin) InvokeCron(context.Context, string, []byte) ([]byte, error) {
+	p.cronCalls++
+	time.Sleep(time.Millisecond)
+	return []byte(`{"ok":true}`), nil
 }

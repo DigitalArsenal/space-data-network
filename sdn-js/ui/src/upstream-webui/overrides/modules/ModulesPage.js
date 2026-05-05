@@ -4,7 +4,9 @@ import {
   emptyModuleRuntimeSnapshot,
   loadModuleRuntimeSnapshotFromServer,
   resolveSelectedModuleId,
+  runModuleRuntimeScheduleNow,
   runModuleRuntimeAction,
+  saveModuleRuntimeSchedule,
   updateModuleRuntimeOption
 } from '../../../../../src/ui/runtime/modules.js'
 
@@ -319,6 +321,13 @@ function ModuleDetail({ module, onRefresh }) {
           )}
         </DetailSection>
 
+        <DetailSection title='Provider schedules'>
+          <ProviderSchedules
+            module={module}
+            onRefresh={onRefresh}
+          />
+        </DetailSection>
+
         <DetailSection title='Command history'>
           <CommandHistory history={module.commandHistory ?? []} />
         </DetailSection>
@@ -554,6 +563,209 @@ function ModuleOptionControl({ moduleId, option, onRefresh }) {
           .filter(Boolean)
           .join(' | ')}
       </span>
+    </label>
+  )
+}
+
+function ProviderSchedules({ module, onRefresh }) {
+  const schedules = module.schedules ?? []
+  if (schedules.length === 0) {
+    return <div className='black-60'>No provider schedules reported.</div>
+  }
+  return (
+    <div className='flex flex-column'>
+      {schedules.map((schedule) => (
+        <ProviderScheduleControl
+          key={schedule.methodId}
+          moduleId={module.id}
+          schedule={schedule}
+          onRefresh={onRefresh}
+        />
+      ))}
+    </div>
+  )
+}
+
+function ProviderScheduleControl({ moduleId, schedule, onRefresh }) {
+  const [enabled, setEnabled] = useState(schedule.enabled === true)
+  const [interval, setInterval] = useState(schedule.interval || '')
+  const [cronExpression, setCronExpression] = useState(schedule.cronExpression || '')
+  const [timezone, setTimezone] = useState(schedule.timezone || 'UTC')
+  const [jitter, setJitter] = useState(schedule.jitter || '')
+  const [backoff, setBackoff] = useState(schedule.backoff || 'fixed')
+  const [retryBudget, setRetryBudget] = useState(String(schedule.retryBudget ?? 0))
+  const [maxRuntime, setMaxRuntime] = useState(schedule.maxRuntime || '')
+  const [status, setStatus] = useState('')
+
+  useEffect(() => {
+    setEnabled(schedule.enabled === true)
+    setInterval(schedule.interval || '')
+    setCronExpression(schedule.cronExpression || '')
+    setTimezone(schedule.timezone || 'UTC')
+    setJitter(schedule.jitter || '')
+    setBackoff(schedule.backoff || 'fixed')
+    setRetryBudget(String(schedule.retryBudget ?? 0))
+    setMaxRuntime(schedule.maxRuntime || '')
+    setStatus('')
+  }, [
+    schedule.methodId,
+    schedule.enabled,
+    schedule.interval,
+    schedule.cronExpression,
+    schedule.timezone,
+    schedule.jitter,
+    schedule.backoff,
+    schedule.retryBudget,
+    schedule.maxRuntime
+  ])
+
+  async function saveSchedule() {
+    setStatus('saving')
+    try {
+      await saveModuleRuntimeSchedule(runtimeBaseUrl(), moduleId, schedule.methodId, {
+        enabled,
+        interval,
+        cronExpression,
+        timezone,
+        jitter,
+        backoff,
+        retryBudget: Number.parseInt(retryBudget, 10) || 0,
+        maxRuntime
+      })
+      setStatus('saved')
+      await onRefresh()
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function runNow() {
+    setStatus('running')
+    try {
+      await runModuleRuntimeScheduleNow(runtimeBaseUrl(), moduleId, schedule.methodId)
+      setStatus('run complete')
+      await onRefresh()
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  return (
+    <section className='ba b--black-10 br2 pa3 mb3'>
+      <div className='flex flex-column flex-row-l justify-between-l'>
+        <div className='pr3-l'>
+          <div className='fw6'>{schedule.methodId}</div>
+          {schedule.description && (
+            <div className='f6 black-60 mt1'>{schedule.description}</div>
+          )}
+        </div>
+        <div className='mt2 mt0-l flex items-center'>
+          <label className='f6 black-70 mr3'>
+            <input
+              type='checkbox'
+              checked={enabled}
+              onChange={(event) => setEnabled(event.target.checked)}
+            />{' '}
+            Enabled
+          </label>
+          <button
+            type='button'
+            className='button-reset ba b--black-20 bg-white br2 pv2 ph3 pointer hover-bg-near-white'
+            onClick={runNow}
+          >
+            Run now
+          </button>
+        </div>
+      </div>
+
+      <div className='grid mt3' style={scheduleGridStyle}>
+        <label className='db'>
+          <span className='db f6 ttu tracked black-60 mb2'>Interval</span>
+          <select
+            className='input-reset ba b--black-20 br2 pa2 w-100 bg-white'
+            value={interval}
+            onChange={(event) => setInterval(event.target.value)}
+          >
+            {[interval, ...(schedule.intervalPresets ?? [])]
+              .filter(Boolean)
+              .filter((value, index, values) => values.indexOf(value) === index)
+              .map((value) => (
+                <option key={value} value={value}>{value}</option>
+              ))}
+          </select>
+        </label>
+        <ScheduleInput label='Custom interval' value={interval} onChange={setInterval} />
+        <ScheduleInput label='Cron' value={cronExpression} onChange={setCronExpression} />
+        <ScheduleInput label='Timezone' value={timezone} onChange={setTimezone} />
+        <ScheduleInput label='Jitter' value={jitter} onChange={setJitter} />
+        <label className='db'>
+          <span className='db f6 ttu tracked black-60 mb2'>Backoff</span>
+          <select
+            className='input-reset ba b--black-20 br2 pa2 w-100 bg-white'
+            value={backoff}
+            onChange={(event) => setBackoff(event.target.value)}
+          >
+            <option value='fixed'>fixed</option>
+            <option value='linear'>linear</option>
+            <option value='exponential'>exponential</option>
+          </select>
+        </label>
+        <label className='db'>
+          <span className='db f6 ttu tracked black-60 mb2'>Retries</span>
+          <input
+            className='input-reset ba b--black-20 br2 pa2 w-100'
+            min='0'
+            max='10'
+            type='number'
+            value={retryBudget}
+            onChange={(event) => setRetryBudget(event.target.value)}
+          />
+        </label>
+        <ScheduleInput label='Max runtime' value={maxRuntime} onChange={setMaxRuntime} />
+      </div>
+
+      <div className='mt3 flex flex-column flex-row-l justify-between-l items-start-l'>
+        <div className='f6 black-70 lh-copy'>
+          <div>Minimum cadence: {schedule.minInterval || 'not reported'}</div>
+          <div>UTC: {schedule.utcDisplay || 'not reported'}</div>
+          <div>Local: {schedule.timezoneDisplay || 'not reported'}</div>
+          <div>Last run: {schedule.lastRunAt ? formatDateTime(schedule.lastRunAt) : 'never'}</div>
+          <div>Next run: {schedule.nextRunAt ? formatDateTime(schedule.nextRunAt) : 'not scheduled'}</div>
+        </div>
+        <button
+          type='button'
+          className='button-reset ba b--black-20 bg-white br2 pv2 ph3 mt3 mt0-l pointer hover-bg-near-white'
+          onClick={saveSchedule}
+        >
+          Save schedule
+        </button>
+      </div>
+      {status && <div className='f6 black-60 mt2'>{status}</div>}
+      <SimpleList
+        empty='No runs recorded.'
+        items={(schedule.runHistory ?? []).slice(-5).reverse().map((run) => ({
+          key: run.id,
+          primary: `${run.trigger} | ${run.status}`,
+          secondary: [
+            run.startedAt ? formatDateTime(run.startedAt) : '',
+            run.outputSize ? `${run.outputSize} bytes` : '',
+            run.message || ''
+          ].filter(Boolean).join(' | ')
+        }))}
+      />
+    </section>
+  )
+}
+
+function ScheduleInput({ label, value, onChange }) {
+  return (
+    <label className='db'>
+      <span className='db f6 ttu tracked black-60 mb2'>{label}</span>
+      <input
+        className='input-reset ba b--black-20 br2 pa2 w-100'
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
     </label>
   )
 }
@@ -810,6 +1022,12 @@ const detailGridStyle = {
   display: 'grid',
   gap: '0.75rem',
   gridTemplateColumns: 'repeat(auto-fit, minmax(9rem, 1fr))'
+}
+
+const scheduleGridStyle = {
+  display: 'grid',
+  gap: '0.75rem',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(11rem, 1fr))'
 }
 
 const helpButtonStyle = {
