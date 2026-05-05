@@ -360,6 +360,27 @@ func isNativePaymentAsset(chain, asset, contract string) bool {
 
 // ProcessCredits processes a payment using SDN credits atomically.
 func (pp *PaymentProcessor) ProcessCredits(ctx context.Context, requestID string, buyerPeerID string, amount uint64, providerPeerID string) error {
+	if purchase, err := pp.store.GetPurchaseRequest(requestID); err != nil {
+		return fmt.Errorf("failed to load purchase: %w", err)
+	} else if purchase != nil {
+		if purchase.CreditsTransactionID != "" &&
+			(purchase.Status == PurchaseStatusPaymentConfirmed || purchase.Status == PurchaseStatusCompleted) {
+			return nil
+		}
+		if purchase.BuyerPeerID != buyerPeerID {
+			return fmt.Errorf("credits buyer mismatch for purchase %s", requestID)
+		}
+		if purchase.ProviderPeerID != "" && purchase.ProviderPeerID != providerPeerID {
+			return fmt.Errorf("credits provider mismatch for purchase %s", requestID)
+		}
+		if purchase.PaymentAmount != amount {
+			return fmt.Errorf("credits amount mismatch for purchase %s: got %d want %d", requestID, amount, purchase.PaymentAmount)
+		}
+		if purchase.PaymentMethod != PaymentMethodSDNCredits {
+			return fmt.Errorf("purchase %s is not an SDN credits payment", requestID)
+		}
+	}
+
 	txID := uuid.New().String()
 
 	// Use atomic deduction to prevent double-spend race conditions.
