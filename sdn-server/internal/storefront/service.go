@@ -794,6 +794,77 @@ func (s *Service) RevokeGrant(ctx context.Context, grantID, buyerPeerID, actorPe
 	return grant, nil
 }
 
+// AddGroupMember creates the missing private wrapped-key envelope for one group
+// member. Existing active members are returned unchanged so add-member retries do
+// not mint duplicate envelopes.
+func (s *Service) AddGroupMember(ctx context.Context, member *GroupMember) (*GroupMember, error) {
+	_ = ctx
+	if member == nil {
+		return nil, fmt.Errorf("group member required")
+	}
+	member.GroupID = strings.TrimSpace(member.GroupID)
+	member.ListingID = strings.TrimSpace(member.ListingID)
+	member.GrantID = strings.TrimSpace(member.GrantID)
+	member.MemberPeerID = strings.TrimSpace(member.MemberPeerID)
+	member.MemberKeyID = strings.TrimSpace(member.MemberKeyID)
+	member.KeyEpoch = strings.TrimSpace(member.KeyEpoch)
+	member.GrantScope = strings.TrimSpace(member.GrantScope)
+	member.SignerPeerID = strings.TrimSpace(member.SignerPeerID)
+	if member.GroupID == "" || member.ListingID == "" || member.GrantID == "" ||
+		member.MemberPeerID == "" || member.MemberKeyID == "" || member.KeyEpoch == "" {
+		return nil, fmt.Errorf("group_id, listing_id, grant_id, member_peer_id, member_key_id, and key_epoch are required")
+	}
+	if len(member.WrappedKeyEnvelope) == 0 && strings.TrimSpace(member.EnvelopeCID) == "" {
+		return nil, fmt.Errorf("wrapped key envelope or envelope CID required")
+	}
+	grant, err := s.store.GetGrant(member.GrantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load grant: %w", err)
+	}
+	if grant == nil {
+		return nil, fmt.Errorf("grant not found: %s", member.GrantID)
+	}
+	if grant.ListingID != member.ListingID {
+		return nil, fmt.Errorf("grant listing mismatch")
+	}
+	if grant.Status != GrantStatusActive {
+		return nil, fmt.Errorf("grant not active: %v", grant.Status)
+	}
+	if existing, err := s.store.GetRequesterGroupMember(member.GroupID, member.MemberPeerID, member.MemberKeyID); err != nil {
+		return nil, err
+	} else if existing != nil {
+		return existing, nil
+	}
+	if member.SignerPeerID == "" {
+		member.SignerPeerID = s.peerID
+	}
+	member.Status = GroupMemberStatusActive
+	if err := s.store.UpsertGroupMember(member); err != nil {
+		return nil, err
+	}
+	return s.store.GetRequesterGroupMember(member.GroupID, member.MemberPeerID, member.MemberKeyID)
+}
+
+// RemoveGroupMember removes a member from future group wraps. Existing artifact
+// versions stay single-copy; callers rotate content keys for future windows by
+// adding members under a new key epoch.
+func (s *Service) RemoveGroupMember(ctx context.Context, groupID, memberPeerID, memberKeyID, reason string) error {
+	_ = ctx
+	groupID = strings.TrimSpace(groupID)
+	memberPeerID = strings.TrimSpace(memberPeerID)
+	memberKeyID = strings.TrimSpace(memberKeyID)
+	if groupID == "" || memberPeerID == "" || memberKeyID == "" {
+		return fmt.Errorf("group_id, member_peer_id, and member_key_id are required")
+	}
+	return s.store.RemoveGroupMember(groupID, memberPeerID, memberKeyID, strings.TrimSpace(reason), time.Now())
+}
+
+// GetRequesterGroupEnvelope returns only the active requester-specific envelope.
+func (s *Service) GetRequesterGroupEnvelope(ctx context.Context, groupID, memberPeerID, memberKeyID string) (*GroupMember, error) {
+	_ = ctx
+	return s.store.GetRequesterGroupMember(strings.TrimSpace(groupID), strings.TrimSpace(memberPeerID), strings.TrimSpace(memberKeyID))
+}
+
 // VerifyGrant verifies an access grant
 func (s *Service) VerifyGrant(ctx context.Context, grantID string, buyerPeerID string) (*AccessGrant, error) {
 	grant, err := s.store.GetGrant(grantID)

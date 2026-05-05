@@ -1,6 +1,7 @@
 package storefront
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -582,6 +583,134 @@ func TestRevokeGrantRecordsAuditAndBlocksVerification(t *testing.T) {
 	}
 	if events[len(events)-1].Message != "buyer subscription cancelled" {
 		t.Fatalf("revocation message = %q", events[len(events)-1].Message)
+	}
+}
+
+func TestGroupMemberEnvelopeLifecycle(t *testing.T) {
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	listing := testListing()
+	listing.AccessType = AccessTypeSubscription
+	listing.ProtectedDelivery = ProtectedDelivery{
+		ContentKeyID: "dataset-window-2026-05-05",
+		GrantScope:   "stream:read:omm",
+	}
+	if err := svc.CreateListing(ctx, listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+	req := &PurchaseRequest{
+		ListingID:               listing.ListingID,
+		TierName:                "Basic",
+		BuyerPeerID:             "buyer-group-admin",
+		BuyerEncryptionPubkey:   []byte("buyer-public-key"),
+		KeyAlgorithm:            "x25519",
+		PaymentMethod:           PaymentMethodFiatStripe,
+		PreferredDeliveryMethod: "PubSubStream",
+	}
+	if err := svc.CreatePurchaseRequest(ctx, req); err != nil {
+		t.Fatalf("CreatePurchaseRequest failed: %v", err)
+	}
+	grant, err := svc.CompleteManualDevPayment(ctx, req.RequestID, ManualDevPaymentConfirmation{
+		OperatorPeerID: "provider-admin-peer",
+		Reference:      "group-receipt-1",
+	})
+	if err != nil {
+		t.Fatalf("CompleteManualDevPayment failed: %v", err)
+	}
+
+	alphaEnvelope := []byte("wrapped-key-alpha")
+	alpha, err := svc.AddGroupMember(ctx, &GroupMember{
+		GroupID:            "group-celestrak-ops",
+		ListingID:          listing.ListingID,
+		GrantID:            grant.GrantID,
+		MemberPeerID:       "peer-alpha",
+		MemberKeyID:        "key-alpha",
+		GrantScope:         "stream:read:omm",
+		KeyEpoch:           "epoch-2026-05-05T00",
+		WrappedKeyEnvelope: alphaEnvelope,
+		SignerPeerID:       "provider-admin-peer",
+	})
+	if err != nil {
+		t.Fatalf("AddGroupMember alpha failed: %v", err)
+	}
+	if alpha.Status != GroupMemberStatusActive {
+		t.Fatalf("alpha status = %q", alpha.Status)
+	}
+	if !bytes.Equal(alpha.WrappedKeyEnvelope, alphaEnvelope) {
+		t.Fatalf("alpha envelope was not stored")
+	}
+
+	retried, err := svc.AddGroupMember(ctx, &GroupMember{
+		GroupID:            "group-celestrak-ops",
+		ListingID:          listing.ListingID,
+		GrantID:            grant.GrantID,
+		MemberPeerID:       "peer-alpha",
+		MemberKeyID:        "key-alpha",
+		GrantScope:         "stream:read:omm",
+		KeyEpoch:           "epoch-2026-05-05T00",
+		WrappedKeyEnvelope: []byte("replacement-should-not-be-used"),
+		SignerPeerID:       "provider-admin-peer",
+	})
+	if err != nil {
+		t.Fatalf("AddGroupMember retry failed: %v", err)
+	}
+	if !bytes.Equal(retried.WrappedKeyEnvelope, alphaEnvelope) {
+		t.Fatalf("retry minted a replacement envelope: %q", string(retried.WrappedKeyEnvelope))
+	}
+
+	if _, err := svc.AddGroupMember(ctx, &GroupMember{
+		GroupID:            "group-celestrak-ops",
+		ListingID:          listing.ListingID,
+		GrantID:            grant.GrantID,
+		MemberPeerID:       "peer-beta",
+		MemberKeyID:        "key-beta",
+		GrantScope:         "stream:read:omm",
+		KeyEpoch:           "epoch-2026-05-05T00",
+		WrappedKeyEnvelope: []byte("wrapped-key-beta"),
+		SignerPeerID:       "provider-admin-peer",
+	}); err != nil {
+		t.Fatalf("AddGroupMember beta failed: %v", err)
+	}
+
+	active, err := store.GetGroupMembers("group-celestrak-ops", GroupMemberStatusActive)
+	if err != nil {
+		t.Fatalf("GetGroupMembers active failed: %v", err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("active members = %d, want 2", len(active))
+	}
+	requesterOnly, err := svc.GetRequesterGroupEnvelope(ctx, "group-celestrak-ops", "peer-alpha", "key-alpha")
+	if err != nil {
+		t.Fatalf("GetRequesterGroupEnvelope failed: %v", err)
+	}
+	if requesterOnly == nil || requesterOnly.MemberPeerID != "peer-alpha" {
+		t.Fatalf("requester envelope = %#v", requesterOnly)
+	}
+
+	if err := svc.RemoveGroupMember(ctx, "group-celestrak-ops", "peer-beta", "key-beta", "operator removed member before next key epoch"); err != nil {
+		t.Fatalf("RemoveGroupMember failed: %v", err)
+	}
+	active, err = store.GetGroupMembers("group-celestrak-ops", GroupMemberStatusActive)
+	if err != nil {
+		t.Fatalf("GetGroupMembers active after remove failed: %v", err)
+	}
+	if len(active) != 1 || active[0].MemberPeerID != "peer-alpha" {
+		t.Fatalf("active after remove = %#v", active)
+	}
+	removed, err := store.GetGroupMembers("group-celestrak-ops", GroupMemberStatusRemoved)
+	if err != nil {
+		t.Fatalf("GetGroupMembers removed failed: %v", err)
+	}
+	if len(removed) != 1 || removed[0].MemberPeerID != "peer-beta" || removed[0].RemovedAt.IsZero() {
+		t.Fatalf("removed members = %#v", removed)
+	}
+	betaEnvelope, err := svc.GetRequesterGroupEnvelope(ctx, "group-celestrak-ops", "peer-beta", "key-beta")
+	if err != nil {
+		t.Fatalf("GetRequesterGroupEnvelope beta failed: %v", err)
+	}
+	if betaEnvelope != nil {
+		t.Fatalf("removed member still has active requester envelope: %#v", betaEnvelope)
 	}
 }
 

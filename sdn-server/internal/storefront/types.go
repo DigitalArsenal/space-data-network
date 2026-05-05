@@ -209,6 +209,37 @@ type AccessGrant struct {
 	ProviderPeerID        string        `json:"provider_peer_id"`
 }
 
+// GroupMemberStatus represents the lifecycle status for a group grant member.
+type GroupMemberStatus string
+
+const (
+	GroupMemberStatusActive  GroupMemberStatus = "active"
+	GroupMemberStatusRemoved GroupMemberStatus = "removed"
+)
+
+// GroupMember records the private, provider-side key-wrap envelope for one
+// member of a group entitlement. Online grant responses should expose only the
+// requester-specific envelope, not the full member set.
+type GroupMember struct {
+	MembershipID       string            `json:"membership_id"`
+	GroupID            string            `json:"group_id"`
+	ListingID          string            `json:"listing_id"`
+	GrantID            string            `json:"grant_id"`
+	MemberPeerID       string            `json:"member_peer_id"`
+	MemberKeyID        string            `json:"member_key_id"`
+	GrantScope         string            `json:"grant_scope"`
+	KeyEpoch           string            `json:"key_epoch"`
+	WrappedKeyEnvelope []byte            `json:"wrapped_key_envelope,omitempty"`
+	EnvelopeCID        string            `json:"envelope_cid,omitempty"`
+	SignerPeerID       string            `json:"signer_peer_id"`
+	Status             GroupMemberStatus `json:"status"`
+	AddedAt            time.Time         `json:"added_at"`
+	RemovedAt          time.Time         `json:"removed_at,omitempty"`
+	RemovalReason      string            `json:"removal_reason,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
+}
+
 // PurchaseRequest represents a purchase request (PUR)
 type PurchaseRequest struct {
 	RequestID               string         `json:"request_id"`
