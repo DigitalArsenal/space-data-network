@@ -16,6 +16,7 @@ describe('schemas', () => {
       expect(SUPPORTED_SCHEMAS).toContain('EPM.fbs');
       expect(SUPPORTED_SCHEMAS).toContain('PNM.fbs');
       expect(SUPPORTED_SCHEMAS).toContain('OEM.fbs');
+      expect(SUPPORTED_SCHEMAS).toContain('SPW.fbs');
     });
 
     it('should have unique values', () => {
@@ -42,6 +43,7 @@ describe('schemas', () => {
       expect(SCHEMA_DESCRIPTIONS['OMM.fbs']).toContain('Orbit');
       expect(SCHEMA_DESCRIPTIONS['CDM.fbs']).toContain('Conjunction');
       expect(SCHEMA_DESCRIPTIONS['EPM.fbs']).toContain('Entity');
+      expect(SCHEMA_DESCRIPTIONS['SPW.fbs']).toContain('Space Weather');
     });
   });
 

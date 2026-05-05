@@ -115,6 +115,7 @@ var SupportedSchemas = []string{
 	"ROC.fbs",  // Re-entry Operations Corridor
 	"SCM.fbs",  // Spacecraft Message
 	"SIT.fbs",  // Satellite Impact Table
+	"SPW.fbs",  // Space Weather Data Record
 	"STF.fbs",  // Storefront Listing - Marketplace listings
 	"TDM.fbs",  // Tracking Data Message
 	"TIM.fbs",  // Time Message
