@@ -313,6 +313,7 @@ export async function requestModuleGrant(
     moduleVersion,
     expectedDomain: requesterDomain,
     requestedTimeoutMs,
+    requestedAtMs,
   });
   console.info('[sdn-js] grant response received', {
     moduleId,
@@ -521,17 +522,50 @@ function decodeGrantResponse(
     moduleVersion?: string;
     expectedDomain: string;
     requestedTimeoutMs: number;
+    requestedAtMs: number;
   },
 ): GrantResponsePayload {
   try {
     const decodedGrant = decodeLicensingGrant(bytes);
     const validatedGrant = validateLicensingGrant(decodedGrant, options);
+    validateGrantEnvelope(validatedGrant, options.requestedAtMs);
     const bundleDescriptor = extractGrantModuleDescriptor(validatedGrant);
     const wrappedContentKey = extractWrappedContentKey(validatedGrant);
 
     return mapLicensingGrant(validatedGrant, bundleDescriptor, wrappedContentKey);
   } catch (error) {
     throw asModuleDeliveryProtocolError(error, 'invalid_grant');
+  }
+}
+
+function validateGrantEnvelope(grant: LicensingGrantMessage, requestedAtMs: number): void {
+  const providerSignature = cloneOptionalBytes(grant.providerSignature);
+  if (providerSignature.length !== 64) {
+    throw new ModuleDeliveryProtocolError(
+      'invalid_grant',
+      'licensing grant provider signature must be 64 bytes',
+    );
+  }
+  if (providerSignature.every((byte) => byte === 0)) {
+    throw new ModuleDeliveryProtocolError(
+      'invalid_grant',
+      'licensing grant provider signature must not be all zeroes',
+    );
+  }
+
+  if (grant.expiresAtMs > 0 && grant.expiresAtMs <= requestedAtMs) {
+    throw new ModuleDeliveryProtocolError('grant_expired', 'licensing grant has expired');
+  }
+
+  const status = trimOptional(grant.grantStatus)?.toLowerCase();
+  if (status === 'revoked') {
+    throw new ModuleDeliveryProtocolError('grant_revoked', 'licensing grant has been revoked');
+  }
+  if (status && status !== 'active' && status !== 'granted') {
+    throw new ModuleDeliveryProtocolError(
+      'grant_status_invalid',
+      `licensing grant status is not active: ${status}`,
+    );
   }
 }
 

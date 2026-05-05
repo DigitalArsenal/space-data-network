@@ -3,6 +3,7 @@ package ecies
 import (
 	"bytes"
 	"crypto/rand"
+	"fmt"
 	"testing"
 )
 
@@ -332,6 +333,59 @@ func TestCrossKeyExchange(t *testing.T) {
 		if string(decrypted) != msg {
 			t.Errorf("Message %d mismatch: got %q, want %q", i+1, decrypted, msg)
 		}
+	}
+}
+
+func TestMultiRecipientContentKeyWrapping(t *testing.T) {
+	for _, recipientCount := range []int{50, 100} {
+		t.Run(fmt.Sprintf("%d-recipients", recipientCount), func(t *testing.T) {
+			contentKey := make([]byte, 32)
+			if _, err := rand.Read(contentKey); err != nil {
+				t.Fatalf("Failed to generate content key: %v", err)
+			}
+
+			wrappedKeys := make(map[string]struct{}, recipientCount)
+			recipients := make([]*KeyPair, 0, recipientCount)
+
+			for i := 0; i < recipientCount; i++ {
+				recipient, err := GenerateKeyPair(CurveX25519)
+				if err != nil {
+					t.Fatalf("Failed to generate recipient %d key pair: %v", i, err)
+				}
+				recipients = append(recipients, recipient)
+
+				wrapped, err := Encrypt(recipient.PublicKey, contentKey, CurveX25519)
+				if err != nil {
+					t.Fatalf("Failed to wrap content key for recipient %d: %v", i, err)
+				}
+
+				serialized := string(wrapped.Serialize())
+				if _, exists := wrappedKeys[serialized]; exists {
+					t.Fatalf("Recipient %d received a duplicate wrapped key", i)
+				}
+				wrappedKeys[serialized] = struct{}{}
+
+				unwrapped, err := Decrypt(recipient.PrivateKey, wrapped)
+				if err != nil {
+					t.Fatalf("Failed to unwrap content key for recipient %d: %v", i, err)
+				}
+				if !bytes.Equal(unwrapped, contentKey) {
+					t.Fatalf("Recipient %d unwrapped the wrong content key", i)
+				}
+
+				wrongRecipientIndex := (i + 1) % len(recipients)
+				wrongRecipient := recipients[wrongRecipientIndex]
+				if wrongRecipient != recipient {
+					if _, err := Decrypt(wrongRecipient.PrivateKey, wrapped); err == nil {
+						t.Fatalf("Recipient %d unwrapped recipient %d's content key", wrongRecipientIndex, i)
+					}
+				}
+			}
+
+			if len(wrappedKeys) != recipientCount {
+				t.Fatalf("Expected %d distinct wrapped keys, got %d", recipientCount, len(wrappedKeys))
+			}
+		})
 	}
 }
 

@@ -264,7 +264,7 @@ describe('module-delivery SDK compatibility', () => {
     expect(result.grant.grantedDomain).toBe('app.example.com');
     expect(result.grant.grantedTimeoutMs).toBe(300_000);
     expect(result.grant.grantVerifierPublicKey).toEqual(new Uint8Array(32).fill(5));
-    expect(result.grant.providerSignature).toEqual(new Uint8Array([0x99, 0x98]));
+    expect(result.grant.providerSignature).toEqual(new Uint8Array(64).fill(0x99));
     expect(result.grant.wrappedContentKey.wrappingAlgorithm).toBe(
       'x25519-hkdf-sha256-aes-256-ctr-rec',
     );
@@ -360,7 +360,7 @@ function encodeGrantResponse(options: {
   const grantStatusOffset = builder.createString('granted');
   const capabilityTokenOffset = LGR.createCapabilityTokenVector(builder, new Uint8Array([0x42]));
   const grantVerifierPubkeyOffset = LGR.createGrantVerifierPubkeyVector(builder, new Uint8Array(32).fill(5));
-  const providerSignatureOffset = LGR.createProviderSignatureVector(builder, new Uint8Array([0x99, 0x98]));
+  const providerSignatureOffset = LGR.createProviderSignatureVector(builder, new Uint8Array(64).fill(0x99));
 
   const moduleDescriptorOffset = createModuleDescriptor(builder, options);
   const wrappedContentKeyHeaderOffset = createWrappedContentKeyHeader(builder);
