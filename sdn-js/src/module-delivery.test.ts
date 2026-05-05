@@ -619,6 +619,83 @@ describe('module-delivery', () => {
     });
   });
 
+  it('rejects grants whose verifier key is not advertised by the resolved provider EPM', async () => {
+    const transport = {
+      async dialProtocol(
+        _targetPeerId: string,
+        _protocolId: string,
+        payload: Uint8Array,
+      ) {
+        if (isLCH(payload)) {
+          const request = decodeLCH(payload);
+          return encodeChallengeResponse({
+            reqId: request.REQUEST_ID() ?? '',
+            moduleId: request.MODULE_ID() ?? '',
+            moduleVersion: request.MODULE_VERSION() ?? undefined,
+            providerPeerId: 'provider-peer-id',
+            challengeNonce: new Uint8Array([1, 2, 3, 4]),
+            expiresAtMs: 1_700_000_900_000n,
+          });
+        }
+
+        const proof = decodeLPF(payload);
+        return encodeGrantResponse({
+          reqId: proof.REQUEST_ID() ?? '',
+          moduleId: proof.MODULE_ID() ?? '',
+          moduleVersion: proof.MODULE_VERSION() ?? undefined,
+          requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+          requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+          requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
+          requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          grantedDomain: 'app.example.com',
+          grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          expiresAtMs: 1_700_003_600_000n,
+          contentHash: new Uint8Array(32).fill(7),
+          grantVerifierPublicKey: new Uint8Array(32).fill(5),
+        });
+      },
+      async fetchCIDBytes() {
+        return new Uint8Array([1, 2, 3, 4]);
+      },
+    };
+
+    await expect(
+      requestModuleGrant(transport, {
+        serverDescriptor: {
+          publicKey: '02'.padEnd(66, '1'),
+          cid: 'bafyproviderdescriptor',
+          relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
+        },
+        descriptorResolver: {
+          resolveCID: async () => buildProviderEPM({
+            providerPublicKeyHex: '02'.padEnd(66, '1'),
+            grantVerifierPublicKey: new Uint8Array(32).fill(6),
+          }),
+        },
+        requesterIdentity: {
+          peerId: 'requester-peer-id',
+          xpub: 'xpub-requester',
+          signingKey: {
+            privateKey: new Uint8Array(32).fill(5),
+            publicKey: new Uint8Array(32).fill(6),
+          },
+          encryptionKey: {
+            privateKey: new Uint8Array(32).fill(7),
+            publicKey: new Uint8Array(32).fill(8),
+          },
+        },
+        moduleId: 'com.space-data-network.fastest-path',
+        moduleVersion: '0.5.22',
+        requesterDomain: 'app.example.com',
+        requestedTimeoutMs: 30_000,
+        reqId: 'req-epm-verifier',
+        requestedAtMs: 1_700_000_000_000,
+      }),
+    ).rejects.toMatchObject({
+      code: 'invalid_grant_verifier',
+    });
+  });
+
   it('keeps the relay probe example on the real module-delivery exchange path', async () => {
     const exampleSource = await fs.readFile(
       path.join(__dirname, '..', 'examples', 'ipfs-relay-id-exchange.ts'),
@@ -699,6 +776,7 @@ function encodeGrantResponse(options: {
   contentHash: Uint8Array;
   grantStatus?: string;
   providerSignature?: Uint8Array | null;
+  grantVerifierPublicKey?: Uint8Array;
 }): Uint8Array {
   if (options.providerSignature === undefined) {
     const unsignedGrant = encodeGrantResponse({
@@ -725,7 +803,10 @@ function encodeGrantResponse(options: {
   const moduleDescriptorOffset = createModuleDescriptorOffset(builder, options.contentHash);
   const wrappedContentKeyHeaderOffset = createWrappedContentKeyHeaderOffset(builder, options);
   const wrappedContentKeyPayloadOffset = createWrappedContentKeyPayloadOffset(builder, options);
-  const verifierPubkeyOffset = LGR.createGrantVerifierPubkeyVector(builder, new Uint8Array(32).fill(5));
+  const verifierPubkeyOffset = LGR.createGrantVerifierPubkeyVector(
+    builder,
+    options.grantVerifierPublicKey ?? new Uint8Array(32).fill(5),
+  );
   const providerSignatureOffset =
     options.providerSignature === null
       ? 0
@@ -765,6 +846,44 @@ function encodeGrantResponse(options: {
 }
 
 type GrantFixtureOptions = Parameters<typeof encodeGrantResponse>[0];
+
+function buildProviderEPM(input: {
+  providerPublicKeyHex: string;
+  grantVerifierPublicKey: Uint8Array;
+}): Uint8Array {
+  const builder = new flatbuffers.Builder(256);
+  const providerPublicKeyOffset = builder.createString(input.providerPublicKeyHex);
+  const secpAddressTypeOffset = builder.createString('secp256k1');
+
+  builder.startObject(7);
+  builder.addFieldOffset(0, providerPublicKeyOffset, 0);
+  builder.addFieldOffset(5, secpAddressTypeOffset, 0);
+  builder.addFieldInt8(6, 0, 0);
+  const providerKeyOffset = builder.endObject();
+
+  const grantVerifierKeyOffset = builder.createString(bytesToHex(input.grantVerifierPublicKey));
+  const ed25519AddressTypeOffset = builder.createString('ed25519');
+  builder.startObject(7);
+  builder.addFieldOffset(0, grantVerifierKeyOffset, 0);
+  builder.addFieldOffset(5, ed25519AddressTypeOffset, 0);
+  builder.addFieldInt8(6, 0, 0);
+  const grantVerifierOffset = builder.endObject();
+
+  const keysOffset = createOffsetVector(builder, [providerKeyOffset, grantVerifierOffset]);
+  builder.startObject(15);
+  builder.addFieldOffset(13, keysOffset, 0);
+  const epmOffset = builder.endObject();
+  builder.finish(epmOffset, '$EPM');
+  return builder.asUint8Array();
+}
+
+function createOffsetVector(builder: flatbuffers.Builder, offsets: number[]): number {
+  builder.startVector(4, offsets.length, 4);
+  for (let index = offsets.length - 1; index >= 0; index -= 1) {
+    builder.addOffset(offsets[index]);
+  }
+  return builder.endVector();
+}
 
 function createModuleDescriptorOffset(
   builder: flatbuffers.Builder,
@@ -862,6 +981,12 @@ function hexToBytes(hex: string): Uint8Array {
     bytes[index] = Number.parseInt(normalized.slice(index * 2, index * 2 + 2), 16);
   }
   return bytes;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 async function sha256(value: Uint8Array): Promise<Uint8Array> {
