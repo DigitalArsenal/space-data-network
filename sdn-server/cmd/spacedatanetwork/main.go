@@ -460,6 +460,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						req.Header.Del("Referer")
 						req.Header.Del("User-Agent")
 					}
+					gwProxy.ModifyResponse = func(resp *http.Response) error {
+						normalizeIPFSGatewayCORSHeaders(resp.Header)
+						return nil
+					}
 					gwProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 						http.Error(w, "upstream IPFS gateway unavailable", http.StatusBadGateway)
 					}
@@ -1156,6 +1160,13 @@ func serveFavicon(w http.ResponseWriter, r *http.Request, candidatePaths []strin
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(defaultFaviconPNG)
 	}
+}
+
+func normalizeIPFSGatewayCORSHeaders(header http.Header) {
+	header.Set("Access-Control-Allow-Origin", "*")
+	header.Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	header.Set("Access-Control-Allow-Headers", "Content-Type, Range, User-Agent, X-Requested-With")
+	header.Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, X-Chunked-Output, X-Ipfs-Path, X-Ipfs-Roots, X-Stream-Output")
 }
 
 func makeWebUIHandler(buildDir string, _ string) (http.Handler, error) {
