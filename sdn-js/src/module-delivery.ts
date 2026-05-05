@@ -318,6 +318,7 @@ export async function requestModuleGrant(
     expectedDomain: requesterDomain,
     requestedTimeoutMs,
     requestedAtMs,
+    trustedGrantVerifierPublicKeys: provider.grantVerifierPublicKeys,
   });
   console.info('[sdn-js] grant response received', {
     moduleId,
@@ -527,12 +528,13 @@ async function decodeGrantResponse(
     expectedDomain: string;
     requestedTimeoutMs: number;
     requestedAtMs: number;
+    trustedGrantVerifierPublicKeys?: Uint8Array[];
   },
 ): Promise<GrantResponsePayload> {
   try {
     const decodedGrant = decodeLicensingGrant(bytes);
     const validatedGrant = validateLicensingGrant(decodedGrant, options);
-    await validateGrantEnvelope(validatedGrant, options.requestedAtMs);
+    await validateGrantEnvelope(validatedGrant, options.requestedAtMs, options.trustedGrantVerifierPublicKeys);
     const bundleDescriptor = extractGrantModuleDescriptor(validatedGrant);
     const wrappedContentKey = extractWrappedContentKey(validatedGrant);
 
@@ -542,7 +544,11 @@ async function decodeGrantResponse(
   }
 }
 
-async function validateGrantEnvelope(grant: LicensingGrantMessage, requestedAtMs: number): Promise<void> {
+async function validateGrantEnvelope(
+  grant: LicensingGrantMessage,
+  requestedAtMs: number,
+  trustedGrantVerifierPublicKeys: Uint8Array[] = [],
+): Promise<void> {
   const providerSignature = cloneOptionalBytes(grant.providerSignature);
   if (providerSignature.length !== 64) {
     throw new ModuleDeliveryProtocolError(
@@ -572,9 +578,20 @@ async function validateGrantEnvelope(grant: LicensingGrantMessage, requestedAtMs
     );
   }
 
+  const grantVerifierPublicKey = cloneOptionalBytes(grant.grantVerifierPublicKey);
+  if (
+    trustedGrantVerifierPublicKeys.length > 0 &&
+    !trustedGrantVerifierPublicKeys.some((trustedKey) => equalBytes(trustedKey, grantVerifierPublicKey))
+  ) {
+    throw new ModuleDeliveryProtocolError(
+      'invalid_grant_verifier',
+      'licensing grant verifier public key is not advertised by the provider EPM',
+    );
+  }
+
   const unsignedGrant = encodeUnsignedGrantForProviderSignature(grant);
   const signatureValid = await verify(
-    cloneOptionalBytes(grant.grantVerifierPublicKey),
+    grantVerifierPublicKey,
     unsignedGrant,
     providerSignature,
   );

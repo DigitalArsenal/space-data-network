@@ -16,6 +16,7 @@ export interface ServerDescriptor {
   ipns?: string;
   peerId?: string;
   relayAddresses?: string[];
+  grantVerifierPublicKeys?: Array<string | Uint8Array>;
 }
 
 export interface ServerDescriptorResolver {
@@ -30,6 +31,7 @@ export interface NormalizedServerDescriptor {
   cid?: string;
   ipns?: string;
   relayAddresses: string[];
+  grantVerifierPublicKeys: Uint8Array[];
   rawEpmBytes?: Uint8Array;
   source: 'descriptor' | 'epm';
 }
@@ -40,6 +42,7 @@ interface ParsedEPMDescriptor {
   publicKey: Uint8Array;
   publicKeyHex: string;
   relayAddresses: string[];
+  grantVerifierPublicKeys: Uint8Array[];
 }
 
 export async function normalizeServerDescriptor(
@@ -66,6 +69,7 @@ export async function normalizeServerDescriptor(
     cid: trimOptional(input.cid),
     ipns: trimOptional(input.ipns),
     relayAddresses: normalizeRelayAddresses(input.relayAddresses),
+    grantVerifierPublicKeys: normalizePublicKeyList(input.grantVerifierPublicKeys),
     source: 'descriptor',
   };
 
@@ -79,6 +83,9 @@ export async function normalizeServerDescriptor(
     if (normalized.relayAddresses.length === 0) {
       normalized.relayAddresses = parsed.relayAddresses;
     }
+    if (normalized.grantVerifierPublicKeys.length === 0) {
+      normalized.grantVerifierPublicKeys = parsed.grantVerifierPublicKeys;
+    }
   }
 
   return normalized;
@@ -91,6 +98,7 @@ export async function normalizeEPMDescriptor(epmBytes: Uint8Array): Promise<Norm
     publicKeyHex: parsed.publicKeyHex,
     peerId: await derivePeerIdFromPublicKey(parsed.publicKey),
     relayAddresses: parsed.relayAddresses,
+    grantVerifierPublicKeys: parsed.grantVerifierPublicKeys,
     rawEpmBytes: epmBytes.slice(),
     source: 'epm',
   };
@@ -103,11 +111,19 @@ function parseEPMDescriptor(epmBytes: Uint8Array): ParsedEPMDescriptor {
   let selectedKey: Uint8Array | null = null;
   let selectedKeyHex = '';
   let selectedPriority = Number.POSITIVE_INFINITY;
+  const grantVerifierPublicKeys: Uint8Array[] = [];
 
   for (const keyTable of keys) {
     const publicKeyHex = readStringField(keyTable, CRYPTO_KEY_PUBLIC_KEY_FIELD_INDEX);
     if (!publicKeyHex) {
       continue;
+    }
+
+    const keyType = readByteField(keyTable, CRYPTO_KEY_TYPE_FIELD_INDEX, EPM_KEY_TYPE_SIGNING);
+    const addressType = readStringField(keyTable, CRYPTO_KEY_ADDRESS_TYPE_FIELD_INDEX).toLowerCase();
+    const rawPublicKey = hexToBytes(publicKeyHex);
+    if (keyType === EPM_KEY_TYPE_SIGNING && isEd25519Key(rawPublicKey, addressType)) {
+      grantVerifierPublicKeys.push(rawPublicKey);
     }
 
     let publicKey: Uint8Array;
@@ -117,8 +133,6 @@ function parseEPMDescriptor(epmBytes: Uint8Array): ParsedEPMDescriptor {
       continue;
     }
 
-    const keyType = readByteField(keyTable, CRYPTO_KEY_TYPE_FIELD_INDEX, EPM_KEY_TYPE_SIGNING);
-    const addressType = readStringField(keyTable, CRYPTO_KEY_ADDRESS_TYPE_FIELD_INDEX).toLowerCase();
     const priority = keyPriority(keyType, addressType);
     if (priority < selectedPriority) {
       selectedKey = publicKey;
@@ -138,7 +152,12 @@ function parseEPMDescriptor(epmBytes: Uint8Array): ParsedEPMDescriptor {
     publicKey: selectedKey,
     publicKeyHex: selectedKeyHex,
     relayAddresses,
+    grantVerifierPublicKeys,
   };
+}
+
+function isEd25519Key(publicKey: Uint8Array, addressType: string): boolean {
+  return publicKey.length === 32 && addressType.includes('ed25519');
 }
 
 function keyPriority(keyType: number, addressType: string): number {
@@ -188,6 +207,13 @@ function normalizeRelayAddresses(values: string[] | undefined): string[] {
   return values
     .map((value) => String(value).trim())
     .filter((value) => value.length > 0);
+}
+
+function normalizePublicKeyList(values: Array<string | Uint8Array> | undefined): Uint8Array[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return values.map((value) => (typeof value === 'string' ? hexToBytes(value) : value.slice()));
 }
 
 function trimOptional(value: string | undefined): string | undefined {
