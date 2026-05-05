@@ -51,6 +51,7 @@ test.describe('SDN dashboard window', () => {
     const indexSource = fs.readFileSync(path.join(__dirname, '../../src/index.js'), 'utf8')
     const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/dashboard/index.js'), 'utf8')
     const webuiSource = fs.readFileSync(path.join(__dirname, '../../src/webui/index.js'), 'utf8')
+    const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf8'))
 
     expect(indexSource).toContain('protocol.registerSchemesAsPrivileged')
     expect(indexSource).toContain("scheme: 'sdn'")
@@ -64,6 +65,9 @@ test.describe('SDN dashboard window', () => {
     expect(webuiSource).toContain("directory: 'assets/webui'")
     expect(dashboardSource).not.toContain("require('electron-serve')")
     expect(webuiSource).not.toContain("require('electron-serve')")
+    expect(packageJson.scripts['build:webui:build']).toBe('npm --prefix ../webui run build')
+    expect(packageJson.scripts['build:webui:copy']).toBe('shx rm -rf assets/webui && shx cp -r ../webui/build assets/webui')
+    expect(packageJson.scripts['build:webui:download']).toBeUndefined()
   })
 
   test('syncs the live Kubo RPC address before the SDN dashboard app first loads', () => {
