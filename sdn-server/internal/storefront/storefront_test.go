@@ -688,8 +688,15 @@ func TestGroupMemberEnvelopeLifecycle(t *testing.T) {
 		t.Fatalf("requester envelope = %#v", requesterOnly)
 	}
 
-	if err := svc.RemoveGroupMember(ctx, "group-celestrak-ops", "peer-beta", "key-beta", "operator removed member before next key epoch"); err != nil {
+	epoch, err := svc.RemoveGroupMember(ctx, "group-celestrak-ops", "peer-beta", "key-beta", "operator removed member before next key epoch")
+	if err != nil {
 		t.Fatalf("RemoveGroupMember failed: %v", err)
+	}
+	if epoch == nil || epoch.PreviousEpoch != "epoch-2026-05-05T00" || epoch.ListingID != listing.ListingID {
+		t.Fatalf("rotation epoch = %#v", epoch)
+	}
+	if epoch.PolicyID != "stream:read:omm" {
+		t.Fatalf("rotation policy = %q", epoch.PolicyID)
 	}
 	active, err = store.GetGroupMembers("group-celestrak-ops", GroupMemberStatusActive)
 	if err != nil {
@@ -711,6 +718,13 @@ func TestGroupMemberEnvelopeLifecycle(t *testing.T) {
 	}
 	if betaEnvelope != nil {
 		t.Fatalf("removed member still has active requester envelope: %#v", betaEnvelope)
+	}
+	latestEpoch, err := store.GetLatestGroupKeyEpoch("group-celestrak-ops")
+	if err != nil {
+		t.Fatalf("GetLatestGroupKeyEpoch failed: %v", err)
+	}
+	if latestEpoch == nil || latestEpoch.EpochID != epoch.EpochID {
+		t.Fatalf("latest epoch = %#v, want %s", latestEpoch, epoch.EpochID)
 	}
 }
 

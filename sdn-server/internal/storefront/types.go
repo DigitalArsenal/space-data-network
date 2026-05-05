@@ -240,6 +240,20 @@ type GroupMember struct {
 	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
+// GroupKeyEpoch records a content-key rotation boundary for future group
+// artifact versions or live-feed windows after membership changes.
+type GroupKeyEpoch struct {
+	EpochID       string    `json:"epoch_id"`
+	GroupID       string    `json:"group_id"`
+	ListingID     string    `json:"listing_id"`
+	PreviousEpoch string    `json:"previous_epoch,omitempty"`
+	PolicyID      string    `json:"policy_id,omitempty"`
+	RotatedAt     time.Time `json:"rotated_at"`
+	RotatedBy     string    `json:"rotated_by"`
+	Reason        string    `json:"reason,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 // PurchaseRequest represents a purchase request (PUR)
 type PurchaseRequest struct {
 	RequestID               string         `json:"request_id"`

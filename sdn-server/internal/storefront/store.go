@@ -344,6 +344,24 @@ func (s *Store) initTables() error {
 	}
 
 	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_group_key_epochs (
+			epoch_id TEXT PRIMARY KEY,
+			group_id TEXT NOT NULL,
+			listing_id TEXT NOT NULL,
+			previous_epoch TEXT DEFAULT '',
+			policy_id TEXT DEFAULT '',
+			rotated_at INTEGER NOT NULL,
+			rotated_by TEXT,
+			reason TEXT DEFAULT '',
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_group_key_epochs_group ON storefront_group_key_epochs(group_id, rotated_at DESC);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create group key epochs table: %w", err)
+	}
+
+	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS storefront_payment_webhook_events (
 			event_id TEXT PRIMARY KEY,
 			provider TEXT NOT NULL,
@@ -1841,6 +1859,57 @@ func (s *Store) GetRequesterGroupMember(groupID, memberPeerID, memberKeyID strin
 	return member, nil
 }
 
+// CreateGroupKeyEpoch records a content-key rotation boundary for future versions/windows.
+func (s *Store) CreateGroupKeyEpoch(epoch *GroupKeyEpoch) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	if epoch.EpochID == "" {
+		epoch.EpochID = uuidFromParts(epoch.GroupID, epoch.ListingID, epoch.PreviousEpoch, epoch.RotatedAt.String(), epoch.Reason)
+	}
+	if epoch.RotatedAt.IsZero() {
+		epoch.RotatedAt = now
+	}
+	if epoch.CreatedAt.IsZero() {
+		epoch.CreatedAt = now
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO storefront_group_key_epochs (
+			epoch_id, group_id, listing_id, previous_epoch, policy_id,
+			rotated_at, rotated_by, reason, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, epoch.EpochID, epoch.GroupID, epoch.ListingID, epoch.PreviousEpoch, epoch.PolicyID,
+		epoch.RotatedAt.Unix(), epoch.RotatedBy, epoch.Reason, epoch.CreatedAt.Unix())
+	if err != nil {
+		return fmt.Errorf("failed to create group key epoch: %w", err)
+	}
+	return nil
+}
+
+// GetLatestGroupKeyEpoch retrieves the latest rotation boundary for a group.
+func (s *Store) GetLatestGroupKeyEpoch(groupID string) (*GroupKeyEpoch, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	row := s.db.QueryRow(`
+		SELECT epoch_id, group_id, listing_id, previous_epoch, policy_id,
+			rotated_at, rotated_by, reason, created_at
+		FROM storefront_group_key_epochs
+		WHERE group_id = ?
+		ORDER BY rotated_at DESC, created_at DESC
+		LIMIT 1
+	`, groupID)
+	epoch, err := scanGroupKeyEpoch(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return epoch, nil
+}
+
 type groupMemberScanner interface {
 	Scan(dest ...interface{}) error
 }
@@ -1864,6 +1933,20 @@ func scanGroupMember(scanner groupMemberScanner) (*GroupMember, error) {
 	member.CreatedAt = time.Unix(createdAt, 0)
 	member.UpdatedAt = time.Unix(updatedAt, 0)
 	return &member, nil
+}
+
+func scanGroupKeyEpoch(scanner groupMemberScanner) (*GroupKeyEpoch, error) {
+	var epoch GroupKeyEpoch
+	var rotatedAt, createdAt int64
+	if err := scanner.Scan(
+		&epoch.EpochID, &epoch.GroupID, &epoch.ListingID, &epoch.PreviousEpoch,
+		&epoch.PolicyID, &rotatedAt, &epoch.RotatedBy, &epoch.Reason, &createdAt,
+	); err != nil {
+		return nil, err
+	}
+	epoch.RotatedAt = time.Unix(rotatedAt, 0)
+	epoch.CreatedAt = time.Unix(createdAt, 0)
+	return &epoch, nil
 }
 
 func uuidFromParts(parts ...string) string {
