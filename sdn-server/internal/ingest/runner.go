@@ -625,7 +625,9 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string, tags ...sto
 		builder := sds.NewCATBuilder().
 			WithNoradCatID(norad).
 			WithObjectName(valueOr(getValue(row, "OBJECT_NAME", "SATNAME", "NAME"), fmt.Sprintf("SAT-%d", norad))).
-			WithObjectID(valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad)))
+			WithObjectID(valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad))).
+			WithObjectType(normalizeSatcatObjectType(getValue(row, "OBJECT_TYPE"))).
+			WithOpsStatus(normalizeSatcatOpsStatus(getValue(row, "OPS_STATUS_CODE", "OPS_STATUS", "STATUS")))
 
 		if launchDate := strings.TrimSpace(getValue(row, "LAUNCH_DATE", "LAUNCH")); launchDate != "" {
 			builder = builder.WithLaunchDate(launchDate)
@@ -1229,6 +1231,7 @@ func parseSatcatFixedWidth(content []byte) ([]map[string]string, error) {
 		row := map[string]string{
 			"OBJECT_ID":    satcatColumn(line, 1, 11),
 			"NORAD_CAT_ID": satcatColumn(line, 13, 18),
+			"OPS_STATUS":   status,
 			"OBJECT_NAME":  satcatColumn(line, 24, 47),
 			"LAUNCH_DATE":  satcatColumn(line, 57, 66),
 			"LAUNCH_SITE":  satcatColumn(line, 69, 73),
@@ -1243,6 +1246,7 @@ func parseSatcatFixedWidth(content []byte) ([]map[string]string, error) {
 		if parseSatcatManeuverable(status) {
 			row["MANEUVERABLE"] = "true"
 		}
+		row["OBJECT_TYPE"] = inferFixedWidthSatcatObjectType(row["OBJECT_NAME"])
 		rows = append(rows, row)
 	}
 
@@ -1271,6 +1275,60 @@ func satcatColumn(line string, start, end int) string {
 func parseSatcatManeuverable(status string) bool {
 	status = strings.ToUpper(strings.TrimSpace(status))
 	return strings.HasPrefix(status, "M")
+}
+
+func normalizeSatcatObjectType(value string) string {
+	switch normalizeKey(value) {
+	case "PAYLOAD", "P":
+		return "PAYLOAD"
+	case "ROCKET_BODY", "ROCKETBODY", "ROCKET", "R/B", "RB":
+		return "ROCKET_BODY"
+	case "DEBRIS", "DEB":
+		return "DEBRIS"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func inferFixedWidthSatcatObjectType(objectName string) string {
+	name := strings.ToUpper(strings.TrimSpace(objectName))
+	switch {
+	case strings.Contains(name, " DEB"), strings.HasSuffix(name, "DEB"), strings.Contains(name, "DEBRIS"):
+		return "DEBRIS"
+	case strings.Contains(name, "R/B"), strings.Contains(name, "ROCKET BODY"):
+		return "ROCKET_BODY"
+	case name != "":
+		return "PAYLOAD"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func normalizeSatcatOpsStatus(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "+":
+		return "OPERATIONAL"
+	case "-":
+		return "NONOPERATIONAL"
+	case "P":
+		return "PARTIALLY_OPERATIONAL"
+	case "B":
+		return "BACKUP_STANDBY"
+	case "S":
+		return "SPARE"
+	case "X":
+		return "EXTENDED_MISSION"
+	case "D":
+		return "DECAYED"
+	default:
+		key := normalizeKey(value)
+		switch key {
+		case "OPERATIONAL", "NONOPERATIONAL", "NON_OPERATIONAL", "PARTIALLY_OPERATIONAL", "BACKUP_STANDBY", "SPARE", "EXTENDED_MISSION", "DECAYED":
+			return key
+		default:
+			return "UNKNOWN"
+		}
+	}
 }
 
 func normalizeKey(raw string) string {

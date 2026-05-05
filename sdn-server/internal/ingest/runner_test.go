@@ -850,4 +850,10 @@ func TestIngestSatcatCSVDataStoresCATFlatBuffers(t *testing.T) {
 	if got, want := starlink.Maneuverable(), false; got != want {
 		t.Fatalf("MANEUVERABLE = %t, want %t", got, want)
 	}
+	if got, want := starlink.ObjectType().String(), "PAYLOAD"; got != want {
+		t.Fatalf("OBJECT_TYPE = %q, want %q", got, want)
+	}
+	if got, want := starlink.OpsStatusCode().String(), "OPERATIONAL"; got != want {
+		t.Fatalf("OPS_STATUS_CODE = %q, want %q", got, want)
+	}
 }

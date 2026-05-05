@@ -2,6 +2,7 @@
 package sds
 
 import (
+	"strings"
 	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -14,40 +15,40 @@ import (
 
 // OMMBuilder creates OMM (Orbit Mean-Elements Message) FlatBuffers for testing.
 type OMMBuilder struct {
-	builder           *flatbuffers.Builder
-	objectName        string
-	objectID          string
-	noradCatID        uint32
-	epoch             string
-	meanMotion        float64
-	eccentricity      float64
-	inclination       float64
-	raOfAscNode       float64
-	argOfPericenter   float64
-	meanAnomaly       float64
-	centerName        string
-	creationDate      string
-	originator        string
+	builder            *flatbuffers.Builder
+	objectName         string
+	objectID           string
+	noradCatID         uint32
+	epoch              string
+	meanMotion         float64
+	eccentricity       float64
+	inclination        float64
+	raOfAscNode        float64
+	argOfPericenter    float64
+	meanAnomaly        float64
+	centerName         string
+	creationDate       string
+	originator         string
 	classificationType string
 }
 
 // NewOMMBuilder creates a new OMM builder with default values.
 func NewOMMBuilder() *OMMBuilder {
 	return &OMMBuilder{
-		builder:           flatbuffers.NewBuilder(1024),
-		objectName:        "TEST-SAT",
-		objectID:          "2024-001A",
-		noradCatID:        99999,
-		epoch:             time.Now().UTC().Format(time.RFC3339),
-		meanMotion:        15.5,
-		eccentricity:      0.0001,
-		inclination:       51.6,
-		raOfAscNode:       180.0,
-		argOfPericenter:   90.0,
-		meanAnomaly:       0.0,
-		centerName:        "EARTH",
-		creationDate:      time.Now().UTC().Format(time.RFC3339),
-		originator:        "SDN-TEST",
+		builder:            flatbuffers.NewBuilder(1024),
+		objectName:         "TEST-SAT",
+		objectID:           "2024-001A",
+		noradCatID:         99999,
+		epoch:              time.Now().UTC().Format(time.RFC3339),
+		meanMotion:         15.5,
+		eccentricity:       0.0001,
+		inclination:        51.6,
+		raOfAscNode:        180.0,
+		argOfPericenter:    90.0,
+		meanAnomaly:        0.0,
+		centerName:         "EARTH",
+		creationDate:       time.Now().UTC().Format(time.RFC3339),
+		originator:         "SDN-TEST",
 		classificationType: "U",
 	}
 }
@@ -378,16 +379,16 @@ func (b *EPMBuilder) Build() []byte {
 
 // PNMBuilder creates PNM (Publish Notification Message) FlatBuffers for testing.
 type PNMBuilder struct {
-	builder             *flatbuffers.Builder
-	multiformatAddress  string
-	publishTimestamp    string
-	cid                 string
-	fileName            string
-	fileID              string
-	signature           string
-	timestampSignature  string
-	signatureType       string
-	timestampSigType    string
+	builder            *flatbuffers.Builder
+	multiformatAddress string
+	publishTimestamp   string
+	cid                string
+	fileName           string
+	fileID             string
+	signature          string
+	timestampSignature string
+	signatureType      string
+	timestampSigType   string
 }
 
 // NewPNMBuilder creates a new PNM builder with default values.
@@ -488,6 +489,8 @@ type CATBuilder struct {
 	objectName   string
 	objectID     string
 	noradCatID   uint32
+	objectType   string
+	opsStatus    string
 	launchDate   string
 	launchSite   string
 	decayDate    string
@@ -509,6 +512,8 @@ func NewCATBuilder() *CATBuilder {
 		objectName:   "ISS (ZARYA)",
 		objectID:     "1998-067A",
 		noradCatID:   25544,
+		objectType:   "UNKNOWN",
+		opsStatus:    "UNKNOWN",
 		launchDate:   "1998-11-20",
 		launchSite:   "TYMSC",
 		decayDate:    "",
@@ -539,6 +544,18 @@ func (b *CATBuilder) WithObjectID(id string) *CATBuilder {
 // WithNoradCatID sets the NORAD catalog ID.
 func (b *CATBuilder) WithNoradCatID(id uint32) *CATBuilder {
 	b.noradCatID = id
+	return b
+}
+
+// WithObjectType sets the SDS CAT object class.
+func (b *CATBuilder) WithObjectType(objectType string) *CATBuilder {
+	b.objectType = objectType
+	return b
+}
+
+// WithOpsStatus sets the SDS CAT operational status.
+func (b *CATBuilder) WithOpsStatus(status string) *CATBuilder {
+	b.opsStatus = status
 	return b
 }
 
@@ -590,6 +607,8 @@ func (b *CATBuilder) Build() []byte {
 	CAT.CATAddOBJECT_NAME(b.builder, objectNameOffset)
 	CAT.CATAddOBJECT_ID(b.builder, objectIDOffset)
 	CAT.CATAddNORAD_CAT_ID(b.builder, b.noradCatID)
+	addCATObjectType(b.builder, b.objectType)
+	addCATOpsStatus(b.builder, b.opsStatus)
 	CAT.CATAddLAUNCH_DATE(b.builder, launchDateOffset)
 	CAT.CATAddLAUNCH_SITE(b.builder, launchSiteOffset)
 	CAT.CATAddDECAY_DATE(b.builder, decayDateOffset)
@@ -610,4 +629,45 @@ func (b *CATBuilder) Build() []byte {
 	result := make([]byte, len(b.builder.FinishedBytes()))
 	copy(result, b.builder.FinishedBytes())
 	return result
+}
+
+func addCATObjectType(builder *flatbuffers.Builder, objectType string) {
+	switch normalizeCATEnum(objectType) {
+	case "PAYLOAD", "PAYLOAD_STATUS":
+		CAT.CATAddOBJECT_TYPE(builder, 0)
+	case "ROCKET_BODY", "ROCKET", "ROCKETBODY":
+		CAT.CATAddOBJECT_TYPE(builder, 1)
+	case "DEBRIS":
+		CAT.CATAddOBJECT_TYPE(builder, 2)
+	default:
+		CAT.CATAddOBJECT_TYPE(builder, 3)
+	}
+}
+
+func addCATOpsStatus(builder *flatbuffers.Builder, status string) {
+	switch normalizeCATEnum(status) {
+	case "OPERATIONAL", "+":
+		CAT.CATAddOPS_STATUS_CODE(builder, 0)
+	case "NONOPERATIONAL", "NON_OPERATIONAL", "-":
+		CAT.CATAddOPS_STATUS_CODE(builder, 1)
+	case "PARTIALLY_OPERATIONAL", "PARTIAL", "P":
+		CAT.CATAddOPS_STATUS_CODE(builder, 2)
+	case "BACKUP_STANDBY", "BACKUP", "B":
+		CAT.CATAddOPS_STATUS_CODE(builder, 3)
+	case "SPARE", "S":
+		CAT.CATAddOPS_STATUS_CODE(builder, 4)
+	case "EXTENDED_MISSION", "EXTENDED", "X":
+		CAT.CATAddOPS_STATUS_CODE(builder, 5)
+	case "DECAYED", "D":
+		CAT.CATAddOPS_STATUS_CODE(builder, 6)
+	default:
+		CAT.CATAddOPS_STATUS_CODE(builder, 7)
+	}
+}
+
+func normalizeCATEnum(value string) string {
+	normalized := strings.TrimSpace(strings.ToUpper(value))
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	return normalized
 }
