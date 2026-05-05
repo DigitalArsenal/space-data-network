@@ -128,6 +128,14 @@ test.describe('SDN dashboard window', () => {
     expect(daemonConfigSource).toContain('config.Bootstrap = nextBootstrap')
   })
 
+  test('advertises the packaged Kubo daemon as SDN Desktop', () => {
+    const storeSource = fs.readFileSync(path.join(__dirname, '../../src/common/store.js'), 'utf8')
+
+    expect(storeSource).toContain('--agent-version-suffix=sdn-desktop')
+    expect(storeSource).toContain('set /sdn-desktop')
+    expect(storeSource).not.toContain('--agent-version-suffix=desktop')
+  })
+
   test('syncs the live Kubo RPC address before the SDN dashboard app first loads', () => {
     const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/dashboard/index.js'), 'utf8')
 
