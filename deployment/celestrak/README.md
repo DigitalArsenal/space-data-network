@@ -88,3 +88,34 @@ The ingest worker is configured for CelesTrak-only fetches by default. Enable
 Space-Track gap-fill only through a private systemd drop-in that sets
 `SPACETRACK_IDENTITY` and `SPACETRACK_PASSWORD`, then changes the service
 argument to `--spacetrack-enabled true`.
+
+## CelesTrak Source Controls
+
+The checked-in service uses public CelesTrak sources and does not require
+private credentials:
+
+- GP full catalog:
+  `https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv`
+- SATCAT legacy text:
+  `https://celestrak.org/pub/satcat.txt`
+- SATCAT CSV production records:
+  `https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV`
+- Space weather:
+  `https://celestrak.org/SpaceData/SW-All.csv`
+
+For readiness tests or source migrations, override these without editing the
+systemd unit by adding an `ExecStart=` replacement in a private drop-in with
+the corresponding `spacedatanetwork ingest` flags:
+
+```sh
+--celestrak-catalog-url ...
+--celestrak-satcat-url ...
+--celestrak-satcat-csv-url ...
+--celestrak-space-weather-url ...
+--celestrak-space-weather-interval 3h
+```
+
+Keep GP and space-weather intervals at or above the CelesTrak-safe minimum
+enforced by the SDN ingest runner. Faster production polling requires a private
+provider agreement and should be recorded in the host runbook, not in this
+public deployment directory.

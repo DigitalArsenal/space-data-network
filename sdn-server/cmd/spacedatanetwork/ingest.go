@@ -30,8 +30,11 @@ var (
 	ingestOnce                 bool
 	ingestCelestrakInterval    time.Duration
 	ingestSatcatInterval       time.Duration
+	ingestSpaceWeatherInterval time.Duration
 	ingestCatalogURL           string
 	ingestSatcatURL            string
+	ingestSatcatCSVURL         string
+	ingestSpaceWeatherURL      string
 	ingestSpaceTrackEnabled    bool
 	ingestSpaceTrackIdentity   string
 	ingestSpaceTrackPassword   string
@@ -51,8 +54,11 @@ func init() {
 
 	ingestCmd.Flags().DurationVar(&ingestCelestrakInterval, "celestrak-interval", 3*time.Hour, "CelesTrak GP sync interval (minimum 3h)")
 	ingestCmd.Flags().DurationVar(&ingestSatcatInterval, "satcat-interval", 24*time.Hour, "CelesTrak SATCAT sync interval")
+	ingestCmd.Flags().DurationVar(&ingestSpaceWeatherInterval, "celestrak-space-weather-interval", 3*time.Hour, "CelesTrak space-weather sync interval (minimum 3h)")
 	ingestCmd.Flags().StringVar(&ingestCatalogURL, "celestrak-catalog-url", "", "override CelesTrak GP catalog CSV URL")
 	ingestCmd.Flags().StringVar(&ingestSatcatURL, "celestrak-satcat-url", "", "override CelesTrak SATCAT URL (txt or csv)")
+	ingestCmd.Flags().StringVar(&ingestSatcatCSVURL, "celestrak-satcat-csv-url", "", "override CelesTrak SATCAT CSV records URL")
+	ingestCmd.Flags().StringVar(&ingestSpaceWeatherURL, "celestrak-space-weather-url", "", "override CelesTrak space-weather CSV URL")
 
 	ingestCmd.Flags().BoolVar(&ingestSpaceTrackEnabled, "spacetrack-enabled", true, "enable Space-Track gap-fill worker")
 	ingestCmd.Flags().StringVar(&ingestSpaceTrackIdentity, "spacetrack-identity", "", "Space-Track login identity (or SPACETRACK_IDENTITY env)")
@@ -140,10 +146,13 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		RawPath:     rawPath,
 		Once:        ingestOnce,
 
-		CelestrakCatalogURL: ingestCatalogURL,
-		CelestrakSatcatURL:  ingestSatcatURL,
-		CelestrakInterval:   ingestCelestrakInterval,
-		SatcatInterval:      ingestSatcatInterval,
+		CelestrakCatalogURL:      ingestCatalogURL,
+		CelestrakSatcatURL:       ingestSatcatURL,
+		CelestrakSatcatCSVURL:    ingestSatcatCSVURL,
+		CelestrakSpaceWeatherURL: ingestSpaceWeatherURL,
+		CelestrakInterval:        ingestCelestrakInterval,
+		SatcatInterval:           ingestSatcatInterval,
+		SpaceWeatherInterval:     ingestSpaceWeatherInterval,
 
 		SpaceTrackEnabled:      ingestSpaceTrackEnabled,
 		SpaceTrackIdentity:     identity,
