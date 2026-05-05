@@ -696,6 +696,79 @@ describe('module-delivery', () => {
     });
   });
 
+  it('rejects signed grants with malformed wrapped content key payloads', async () => {
+    const makeTransport = (grantOverrides: Partial<GrantFixtureOptions>) => ({
+      async dialProtocol(
+        _targetPeerId: string,
+        _protocolId: string,
+        payload: Uint8Array,
+      ) {
+        if (isLCH(payload)) {
+          const request = decodeLCH(payload);
+          return encodeChallengeResponse({
+            reqId: request.REQUEST_ID() ?? '',
+            moduleId: request.MODULE_ID() ?? '',
+            moduleVersion: request.MODULE_VERSION() ?? undefined,
+            providerPeerId: 'provider-peer-id',
+            challengeNonce: new Uint8Array([1, 2, 3, 4]),
+            expiresAtMs: 1_700_000_900_000n,
+          });
+        }
+
+        const proof = decodeLPF(payload);
+        return encodeGrantResponse({
+          reqId: proof.REQUEST_ID() ?? '',
+          moduleId: proof.MODULE_ID() ?? '',
+          moduleVersion: proof.MODULE_VERSION() ?? undefined,
+          requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+          requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+          requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
+          requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          grantedDomain: 'app.example.com',
+          grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          expiresAtMs: 1_700_003_600_000n,
+          contentHash: new Uint8Array(32).fill(7),
+          ...grantOverrides,
+        });
+      },
+      async fetchCIDBytes() {
+        return new Uint8Array([1, 2, 3, 4]);
+      },
+    });
+
+    await expect(
+      requestModuleGrant(
+        makeTransport({ wrappedContentKeyPayload: new Uint8Array([1, 2, 3, 4]) }),
+        {
+          serverDescriptor: {
+            publicKey: '02'.padEnd(66, '1'),
+            relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
+          },
+          requesterIdentity: {
+            peerId: 'requester-peer-id',
+            xpub: 'xpub-requester',
+            signingKey: {
+              privateKey: new Uint8Array(32).fill(5),
+              publicKey: new Uint8Array(32).fill(6),
+            },
+            encryptionKey: {
+              privateKey: new Uint8Array(32).fill(7),
+              publicKey: new Uint8Array(32).fill(8),
+            },
+          },
+          moduleId: 'com.space-data-network.fastest-path',
+          moduleVersion: '0.5.22',
+          requesterDomain: 'app.example.com',
+          requestedTimeoutMs: 30_000,
+          reqId: 'req-malformed-wrap',
+          requestedAtMs: 1_700_000_000_000,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 'invalid_grant',
+    });
+  });
+
   it('keeps the relay probe example on the real module-delivery exchange path', async () => {
     const exampleSource = await fs.readFile(
       path.join(__dirname, '..', 'examples', 'ipfs-relay-id-exchange.ts'),
@@ -777,6 +850,7 @@ function encodeGrantResponse(options: {
   grantStatus?: string;
   providerSignature?: Uint8Array | null;
   grantVerifierPublicKey?: Uint8Array;
+  wrappedContentKeyPayload?: Uint8Array;
 }): Uint8Array {
   if (options.providerSignature === undefined) {
     const unsignedGrant = encodeGrantResponse({
@@ -802,7 +876,10 @@ function encodeGrantResponse(options: {
   const capabilityTokenOffset = LGR.createCapabilityTokenVector(builder, new Uint8Array([1, 2, 3]));
   const moduleDescriptorOffset = createModuleDescriptorOffset(builder, options.contentHash);
   const wrappedContentKeyHeaderOffset = createWrappedContentKeyHeaderOffset(builder, options);
-  const wrappedContentKeyPayloadOffset = createWrappedContentKeyPayloadOffset(builder, options);
+  const wrappedContentKeyPayloadOffset = LGR.createWrappedContentKeyPayloadVector(
+    builder,
+    options.wrappedContentKeyPayload ?? createWrappedContentKeyPayload(options),
+  );
   const verifierPubkeyOffset = LGR.createGrantVerifierPubkeyVector(
     builder,
     options.grantVerifierPublicKey ?? new Uint8Array(32).fill(5),
@@ -953,10 +1030,9 @@ function createWrappedContentKeyHeaderOffset(
   );
 }
 
-function createWrappedContentKeyPayloadOffset(
-  builder: flatbuffers.Builder,
+function createWrappedContentKeyPayload(
   options: { moduleId: string; moduleVersion?: string; expiresAtMs: bigint },
-): flatbuffers.Offset {
+): Uint8Array {
   const kmfBuilder = new flatbuffers.Builder(256);
   const keyIdOffset = kmfBuilder.createString(`${options.moduleId}:${options.moduleVersion ?? 'latest'}`);
   const keyBytesOffset = KMF.createKeyBytesVector(kmfBuilder, new Uint8Array([4, 5, 6]));
@@ -971,7 +1047,7 @@ function createWrappedContentKeyPayloadOffset(
     options.expiresAtMs,
   );
   KMF.finishKMFBuffer(kmfBuilder, kmfOffset);
-  return LGR.createWrappedContentKeyPayloadVector(builder, kmfBuilder.asUint8Array());
+  return kmfBuilder.asUint8Array();
 }
 
 function hexToBytes(hex: string): Uint8Array {

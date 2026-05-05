@@ -9,6 +9,7 @@ import {
   validateLicensingGrant,
 } from 'space-data-module-sdk/licensing';
 import * as flatbuffers from 'flatbuffers';
+import { KMF } from 'spacedatastandards.org/lib/js/REC/KMF.js';
 import { LGR } from 'spacedatastandards.org/lib/js/REC/LGR.js';
 import { PLG } from 'spacedatastandards.org/lib/js/REC/PLG.js';
 import { licensingGrantMessageType } from 'spacedatastandards.org/lib/js/REC/licensingGrantMessageType.js';
@@ -537,6 +538,7 @@ async function decodeGrantResponse(
     await validateGrantEnvelope(validatedGrant, options.requestedAtMs, options.trustedGrantVerifierPublicKeys);
     const bundleDescriptor = extractGrantModuleDescriptor(validatedGrant);
     const wrappedContentKey = extractWrappedContentKey(validatedGrant);
+    validateWrappedContentKeyEnvelope(wrappedContentKey);
 
     return mapLicensingGrant(validatedGrant, bundleDescriptor, wrappedContentKey);
   } catch (error) {
@@ -599,6 +601,23 @@ async function validateGrantEnvelope(
     throw new ModuleDeliveryProtocolError(
       'invalid_grant_signature',
       'licensing grant provider signature verification failed',
+    );
+  }
+}
+
+function validateWrappedContentKeyEnvelope(wrappedContentKey: LicensingWrappedContentKey): void {
+  const rootType = trimOptional(
+    wrappedContentKey.header?.rootType ?? wrappedContentKey.keyMaterialRootType,
+  )?.replace(/^\$/, '').toUpperCase();
+  if (rootType !== 'KMF') {
+    return;
+  }
+
+  const payload = cloneOptionalBytes(wrappedContentKey.encryptedPayload);
+  if (!KMF.bufferHasIdentifier(new flatbuffers.ByteBuffer(payload))) {
+    throw new ModuleDeliveryProtocolError(
+      'invalid_grant',
+      'wrapped content key payload is not a valid KMF envelope',
     );
   }
 }
