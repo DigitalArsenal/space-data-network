@@ -811,6 +811,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 					}
 
+					if isPublicAPIPath(r.URL.Path) {
+						applyPublicAPICORSHeaders(w.Header(), r.Header.Get("Origin"))
+						if r.Method == http.MethodOptions {
+							w.WriteHeader(http.StatusNoContent)
+							return
+						}
+					}
+
 					// CSRF protection: for state-changing requests using cookie auth,
 					// require same-origin Origin/Referer, or X-Requested-With.
 					if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
@@ -989,6 +997,17 @@ func isPublicAPIPath(path string) bool {
 
 func isWebhookPath(path string) bool {
 	return strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook")
+}
+
+func applyPublicAPICORSHeaders(header http.Header, origin string) {
+	allowedOrigin := strings.TrimSpace(origin)
+	if allowedOrigin == "" {
+		allowedOrigin = "*"
+	}
+	header.Set("Access-Control-Allow-Origin", allowedOrigin)
+	header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+	header.Set("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization")
+	header.Set("Vary", "Origin")
 }
 
 func hasSessionCookie(r *http.Request) bool {
