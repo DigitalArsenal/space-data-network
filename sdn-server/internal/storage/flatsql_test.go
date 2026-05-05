@@ -247,6 +247,45 @@ func TestFlatSQLStoreQueryIndexedRecordsCommonCatalogFilters(t *testing.T) {
 	}
 }
 
+func TestFlatSQLStoreQueryRecentRecordsAvoidsIndexJoin(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-recent-records-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	first := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
+	second := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build()
+	if _, err := store.Store("OMM.fbs", first, "source:celestrak", nil); err != nil {
+		t.Fatalf("store first OMM failed: %v", err)
+	}
+	if _, err := store.Store("OMM.fbs", second, "source:celestrak", nil); err != nil {
+		t.Fatalf("store second OMM failed: %v", err)
+	}
+
+	records, err := store.QueryRecentRecords("OMM.fbs", 1)
+	if err != nil {
+		t.Fatalf("QueryRecentRecords failed: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("len(records) = %d, want 1", len(records))
+	}
+	if string(records[0].Data) == string(first) {
+		t.Fatalf("QueryRecentRecords returned oldest record first")
+	}
+}
+
 func TestFlatSQLStoreStoreAndGet(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-test-*")
 	if err != nil {
