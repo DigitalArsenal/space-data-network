@@ -848,15 +848,42 @@ func (s *Service) AddGroupMember(ctx context.Context, member *GroupMember) (*Gro
 // RemoveGroupMember removes a member from future group wraps. Existing artifact
 // versions stay single-copy; callers rotate content keys for future windows by
 // adding members under a new key epoch.
-func (s *Service) RemoveGroupMember(ctx context.Context, groupID, memberPeerID, memberKeyID, reason string) error {
+func (s *Service) RemoveGroupMember(ctx context.Context, groupID, memberPeerID, memberKeyID, reason string) (*GroupKeyEpoch, error) {
 	_ = ctx
 	groupID = strings.TrimSpace(groupID)
 	memberPeerID = strings.TrimSpace(memberPeerID)
 	memberKeyID = strings.TrimSpace(memberKeyID)
 	if groupID == "" || memberPeerID == "" || memberKeyID == "" {
-		return fmt.Errorf("group_id, member_peer_id, and member_key_id are required")
+		return nil, fmt.Errorf("group_id, member_peer_id, and member_key_id are required")
 	}
-	return s.store.RemoveGroupMember(groupID, memberPeerID, memberKeyID, strings.TrimSpace(reason), time.Now())
+	member, err := s.store.GetRequesterGroupMember(groupID, memberPeerID, memberKeyID)
+	if err != nil {
+		return nil, err
+	}
+	if member == nil {
+		return nil, fmt.Errorf("group member not found")
+	}
+	note := strings.TrimSpace(reason)
+	if note == "" {
+		note = "Group member removed"
+	}
+	removedAt := time.Now()
+	if err := s.store.RemoveGroupMember(groupID, memberPeerID, memberKeyID, note, removedAt); err != nil {
+		return nil, err
+	}
+	epoch := &GroupKeyEpoch{
+		GroupID:       groupID,
+		ListingID:     member.ListingID,
+		PreviousEpoch: member.KeyEpoch,
+		PolicyID:      member.GrantScope,
+		RotatedAt:     removedAt,
+		RotatedBy:     s.peerID,
+		Reason:        note,
+	}
+	if err := s.store.CreateGroupKeyEpoch(epoch); err != nil {
+		return nil, err
+	}
+	return epoch, nil
 }
 
 // GetRequesterGroupEnvelope returns only the active requester-specific envelope.
