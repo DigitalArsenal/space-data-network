@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,6 +36,54 @@ func TestNewFlatSQLStore(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "sdn.db")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Error("Database file was not created")
+	}
+}
+
+func TestNewFlatSQLStoreDoesNotSynchronouslyIndexExistingSchemaTables(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-existing-table-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	db, err := sql.Open("sqlite3", filepath.Join(tmpDir, "sdn.db"))
+	if err != nil {
+		t.Fatalf("open sqlite db failed: %v", err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE sds_omm (
+			cid TEXT PRIMARY KEY,
+			peer_id TEXT NOT NULL,
+			timestamp INTEGER NOT NULL,
+			data BLOB NOT NULL,
+			signature BLOB,
+			created_at INTEGER DEFAULT (strftime('%s', 'now')),
+			UNIQUE(cid)
+		)
+	`); err != nil {
+		t.Fatalf("create existing schema table failed: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite db failed: %v", err)
+	}
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_sds_omm_peer_time'`).Scan(&count); err != nil {
+		t.Fatalf("index lookup failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("existing schema table peer/time index should be deferred, count=%d", count)
 	}
 }
 
