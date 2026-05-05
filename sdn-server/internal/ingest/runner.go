@@ -38,12 +38,14 @@ var log = logging.Logger("ingest")
 const (
 	defaultCelestrakCatalogURL      = "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv"
 	defaultCelestrakSatcatURL       = "https://celestrak.org/pub/satcat.txt"
+	defaultCelestrakSatcatCSVURL    = "https://celestrak.org/satcat/records.php?FORMAT=CSV"
 	defaultCelestrakSpaceWeatherURL = "https://celestrak.org/SpaceData/SW-All.csv"
 	defaultSpaceTrackLoginURL       = "https://www.space-track.org/ajaxauth/login"
 	defaultSpaceTrackQueryTmpl      = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/%s--%s/format/csv"
 	minCelestrakFetchInterval       = 3 * time.Hour
 	parserVersionCelestrakGP        = "celestrak-gp/v1"
 	parserVersionCelestrakSatcat    = "celestrak-satcat/v1"
+	parserVersionCelestrakSatcatCSV = "celestrak-satcat-csv/v1"
 	parserVersionCelestrakSPW       = "celestrak-space-weather/v1"
 	parserVersionSpaceTrackGP       = "spacetrack-gp-history/v1"
 	fetchRetryBudget                = 3
@@ -87,6 +89,7 @@ type Config struct {
 
 	CelestrakCatalogURL      string
 	CelestrakSatcatURL       string
+	CelestrakSatcatCSVURL    string
 	CelestrakSpaceWeatherURL string
 	CelestrakInterval        time.Duration
 	SatcatInterval           time.Duration
@@ -128,6 +131,9 @@ func NewRunner(cfg Config) (*Runner, error) {
 	}
 	if cfg.CelestrakSatcatURL == "" {
 		cfg.CelestrakSatcatURL = defaultCelestrakSatcatURL
+	}
+	if cfg.CelestrakSatcatCSVURL == "" {
+		cfg.CelestrakSatcatCSVURL = defaultCelestrakSatcatCSVURL
 	}
 	if cfg.CelestrakSpaceWeatherURL == "" {
 		cfg.CelestrakSpaceWeatherURL = defaultCelestrakSpaceWeatherURL
@@ -314,13 +320,32 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 }
 
 func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
-	data, metadata, err := r.fetchWithCache(ctx, r.cfg.CelestrakSatcatURL, "celestrak-satcat.txt", minCelestrakFetchInterval)
+	legacyCount, err := r.syncCelestrakSatcatSource(ctx, r.cfg.CelestrakSatcatURL, "celestrak-satcat.txt", "satcat.txt", "celestrak-satcat", parserVersionCelestrakSatcat)
 	if err != nil {
-		return fmt.Errorf("fetch celestrak satcat: %w", err)
+		return err
+	}
+	csvCount, err := r.syncCelestrakSatcatSource(ctx, r.cfg.CelestrakSatcatCSVURL, "celestrak-satcat.csv", "satcat.csv", "celestrak-satcat-csv", parserVersionCelestrakSatcatCSV)
+	if err != nil {
+		return err
+	}
+
+	r.checkpoints.setString("celestrak_satcat_last_success", time.Now().UTC().Format(time.RFC3339))
+	if err := r.checkpoints.save(); err != nil {
+		log.Warnf("Failed to persist checkpoints: %v", err)
+	}
+
+	log.Infof("CelesTrak SATCAT sync complete: legacy_CAT=%d csv_CAT=%d", legacyCount, csvCount)
+	return nil
+}
+
+func (r *Runner) syncCelestrakSatcatSource(ctx context.Context, sourceURL, cacheName, archiveFallback, provenanceSource, parserVersion string) (int, error) {
+	data, metadata, err := r.fetchWithCache(ctx, sourceURL, cacheName, minCelestrakFetchInterval)
+	if err != nil {
+		return 0, fmt.Errorf("fetch celestrak satcat: %w", err)
 	}
 
 	if !metadata.FromCache {
-		satcatArchiveName := archiveFilenameForURL(r.cfg.CelestrakSatcatURL, "satcat.txt")
+		satcatArchiveName := archiveFilenameForURL(sourceURL, archiveFallback)
 		if err := r.archiveRaw("celestrak", satcatArchiveName, data); err != nil {
 			log.Warnf("Failed to archive CelesTrak %s: %v", satcatArchiveName, err)
 		}
@@ -330,21 +355,14 @@ func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
 
 	countCAT, normalizedHash, err := r.ingestSatcatData(data, "source:celestrak")
 	if err != nil {
-		return fmt.Errorf("ingest celestrak satcat: %w", err)
+		return 0, fmt.Errorf("ingest celestrak satcat: %w", err)
 	}
-	if err := r.recordIngestBatchProvenance("celestrak-satcat", data, metadata, parserVersionCelestrakSatcat, normalizedHash, map[string]int{
+	if err := r.recordIngestBatchProvenance(provenanceSource, data, metadata, parserVersion, normalizedHash, map[string]int{
 		"CAT.fbs": countCAT,
 	}, warningsForFetch(metadata)); err != nil {
 		log.Warnf("Failed to record CelesTrak SATCAT provenance: %v", err)
 	}
-
-	r.checkpoints.setString("celestrak_satcat_last_success", time.Now().UTC().Format(time.RFC3339))
-	if err := r.checkpoints.save(); err != nil {
-		log.Warnf("Failed to persist checkpoints: %v", err)
-	}
-
-	log.Infof("CelesTrak SATCAT sync complete: CAT=%d", countCAT)
-	return nil
+	return countCAT, nil
 }
 
 func (r *Runner) syncCelestrakSpaceWeather(ctx context.Context) error {

@@ -345,6 +345,87 @@ func TestSyncSpaceTrackGapFillRecordsBatchProvenance(t *testing.T) {
 	}
 }
 
+func TestSyncCelestrakSatcatFetchesLegacyAndCSV(t *testing.T) {
+	legacyFixture, err := os.ReadFile("testdata/celestrak-satcat.txt")
+	if err != nil {
+		t.Fatalf("read legacy fixture: %v", err)
+	}
+	csvFixture, err := os.ReadFile("testdata/celestrak-satcat.csv")
+	if err != nil {
+		t.Fatalf("read CSV fixture: %v", err)
+	}
+
+	var legacyRequests, csvRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/pub/satcat.txt":
+			legacyRequests++
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write(legacyFixture); err != nil {
+				t.Fatalf("write legacy fixture response: %v", err)
+			}
+		case "/satcat/records.php":
+			csvRequests++
+			if got, want := r.URL.Query().Get("FORMAT"), "CSV"; got != want {
+				t.Fatalf("FORMAT query = %q, want %q", got, want)
+			}
+			w.Header().Set("Content-Type", "text/csv")
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write(csvFixture); err != nil {
+				t.Fatalf("write CSV fixture response: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	runner, err := NewRunner(Config{
+		StoragePath:            filepath.Join(dir, "store"),
+		RawPath:                filepath.Join(dir, "raw"),
+		CelestrakSatcatURL:     server.URL + "/pub/satcat.txt",
+		CelestrakSatcatCSVURL:  server.URL + "/satcat/records.php?FORMAT=CSV",
+		SatcatInterval:         minCelestrakFetchInterval,
+		SpaceTrackPollInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner failed: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	if err := runner.syncCelestrakSatcat(context.Background()); err != nil {
+		t.Fatalf("syncCelestrakSatcat failed: %v", err)
+	}
+	if legacyRequests != 1 {
+		t.Fatalf("legacyRequests = %d, want 1", legacyRequests)
+	}
+	if csvRequests != 1 {
+		t.Fatalf("csvRequests = %d, want 1", csvRequests)
+	}
+
+	stored, err := runner.store.QueryAll("CAT.fbs", 10)
+	if err != nil {
+		t.Fatalf("QueryAll CAT failed: %v", err)
+	}
+	if len(stored) != 4 {
+		t.Fatalf("stored CAT records = %d, want 4", len(stored))
+	}
+
+	matches, err := filepath.Glob(filepath.Join(dir, "raw", "provenance", "celestrak-satcat-csv", "*.json"))
+	if err != nil {
+		t.Fatalf("glob CSV provenance: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("CSV provenance files = %d, want 1: %v", len(matches), matches)
+	}
+}
+
 func TestFetchWithCacheHardStopsOnForbiddenInsteadOfUsingStaleCache(t *testing.T) {
 	runner := newTestRunner(t)
 	cachePath := filepath.Join(runner.cfg.RawPath, "cache", "celestrak-gp.csv")
