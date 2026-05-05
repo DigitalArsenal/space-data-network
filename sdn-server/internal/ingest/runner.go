@@ -52,6 +52,7 @@ const (
 	parserVersionSpaceTrackGP       = "spacetrack-gp-history/v1"
 	fetchRetryBudget                = 3
 	fetchRetryBackoff               = 10 * time.Millisecond
+	sourceTimestampStaleThreshold   = 7 * 24 * time.Hour
 )
 
 type fetchMetadata struct {
@@ -304,6 +305,7 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 	tags := sourceTags(celestrakProviderID, "celestrak-gp", metadata.SourceURL, data)
 	countOMM, countMPE, normalizedHash, err := r.ingestGPData(data, "source:celestrak", tags)
 	if err != nil {
+		r.recordIngestFailureForReview("celestrak-gp", err)
 		return fmt.Errorf("ingest celestrak catalog: %w", err)
 	}
 	if err := r.recordIngestBatchProvenance("celestrak-gp", data, metadata, parserVersionCelestrakGP, normalizedHash, map[string]int{
@@ -359,6 +361,7 @@ func (r *Runner) syncCelestrakSatcatSource(ctx context.Context, sourceURL, cache
 	tags := sourceTags(celestrakProviderID, provenanceSource, metadata.SourceURL, data)
 	countCAT, normalizedHash, err := r.ingestSatcatData(data, "source:celestrak", tags)
 	if err != nil {
+		r.recordIngestFailureForReview(provenanceSource, err)
 		return 0, fmt.Errorf("ingest celestrak satcat: %w", err)
 	}
 	if err := r.recordIngestBatchProvenance(provenanceSource, data, metadata, parserVersion, normalizedHash, map[string]int{
@@ -384,9 +387,18 @@ func (r *Runner) syncCelestrakSpaceWeather(ctx context.Context) error {
 		log.Infof("Using cached CelesTrak space weather payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
 	}
 
+	if latest, err := latestTimestampFromCSV(data, "DATE"); err != nil {
+		r.recordIngestFailureForReview("celestrak-space-weather", err)
+		return fmt.Errorf("validate celestrak space weather timestamp: %w", err)
+	} else if err := validateFreshSourceTimestamp("celestrak-space-weather", latest, sourceReferenceTime(metadata)); err != nil {
+		r.recordIngestFailureForReview("celestrak-space-weather", err)
+		return fmt.Errorf("validate celestrak space weather timestamp: %w", err)
+	}
+
 	tags := sourceTags(celestrakProviderID, "celestrak-space-weather", metadata.SourceURL, data)
 	countSPW, normalizedHash, err := r.ingestSpaceWeatherData(data, "source:celestrak", tags)
 	if err != nil {
+		r.recordIngestFailureForReview("celestrak-space-weather", err)
 		return fmt.Errorf("ingest celestrak space weather: %w", err)
 	}
 	if err := r.recordIngestBatchProvenance("celestrak-space-weather", data, metadata, parserVersionCelestrakSPW, normalizedHash, map[string]int{
@@ -537,11 +549,25 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage
 	if err != nil {
 		return 0, 0, "", err
 	}
+	if err := requireCSVColumn(rows, "GP", "NORAD_CAT_ID", "NORAD_CAT_NUM"); err != nil {
+		return 0, 0, "", err
+	}
+	if err := requireCSVColumn(rows, "GP", "EPOCH", "EPOCH_UTC"); err != nil {
+		return 0, 0, "", err
+	}
 
 	for _, row := range rows {
 		norad, ok := parseUint32(getValue(row, "NORAD_CAT_ID", "NORAD_CAT_NUM"))
 		if !ok || norad == 0 {
 			continue
+		}
+		var parsedEpoch time.Time
+		if rawEpoch := getValue(row, "EPOCH", "EPOCH_UTC"); strings.TrimSpace(rawEpoch) != "" {
+			var err error
+			parsedEpoch, err = parseEpoch(rawEpoch)
+			if err != nil {
+				return countOMM, countMPE, "", fmt.Errorf("malformed EPOCH for NORAD_CAT_ID=%d: %w", norad, err)
+			}
 		}
 
 		builder := sds.NewOMMBuilder().
@@ -549,8 +575,8 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage
 			WithObjectName(valueOr(getValue(row, "OBJECT_NAME", "SATNAME", "NAME"), fmt.Sprintf("SAT-%d", norad))).
 			WithObjectID(valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad)))
 
-		if epoch := normalizeEpoch(getValue(row, "EPOCH", "EPOCH_UTC")); epoch != "" {
-			builder = builder.WithEpoch(epoch)
+		if !parsedEpoch.IsZero() {
+			builder = builder.WithEpoch(parsedEpoch.UTC().Format(time.RFC3339))
 		}
 		if v, ok := parseFloat(getValue(row, "MEAN_MOTION", "N")); ok {
 			builder = builder.WithMeanMotion(v)
@@ -579,10 +605,8 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage
 		countOMM++
 
 		epochUnix := int64(0)
-		if epoch := normalizeEpoch(getValue(row, "EPOCH", "EPOCH_UTC")); epoch != "" {
-			if t, err := parseEpoch(epoch); err == nil {
-				epochUnix = t.Unix()
-			}
+		if !parsedEpoch.IsZero() {
+			epochUnix = parsedEpoch.Unix()
 		}
 		mpeBytes := buildMPE(
 			valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad)),
@@ -668,14 +692,22 @@ func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string, tags 
 	if err != nil {
 		return 0, "", err
 	}
+	if err := requireCSVColumn(rows, "SPW", "DATE"); err != nil {
+		return 0, "", err
+	}
 
 	count := 0
 	normalized := sha256.New()
 	for _, row := range rows {
-		spwDate := normalizeSpaceWeatherDate(getValue(row, "DATE"))
-		if spwDate == "" {
+		rawDate := getValue(row, "DATE")
+		if strings.TrimSpace(rawDate) == "" {
 			continue
 		}
+		parsedDate, err := parseEpoch(rawDate)
+		if err != nil {
+			return count, "", fmt.Errorf("malformed DATE %q: %w", rawDate, err)
+		}
+		spwDate := parsedDate.UTC().Format("2006-01-02")
 
 		spwBytes := buildSPW(row, spwDate)
 		if _, err := r.storeIngestRecord("SPW.fbs", spwBytes, sourcePeer, tags...); err != nil {
@@ -931,6 +963,16 @@ func (r *Runner) recordFetchFailureForReview(cacheName, sourceURL string, metada
 		cacheName, attempts, sourceURL, metadata.HTTPStatus, err)
 }
 
+func (r *Runner) recordIngestFailureForReview(source string, err error) {
+	reviewKey := ingestHumanReviewKey(source)
+	value := time.Now().UTC().Format(time.RFC3339)
+	r.checkpoints.setString(reviewKey, value)
+	if saveErr := r.checkpoints.save(); saveErr != nil {
+		log.Warnf("Failed to persist ingest human-review checkpoint %s: %v", reviewKey, saveErr)
+	}
+	log.Errorf("Human review required for ingest source %s: %v", source, err)
+}
+
 func (r *Runner) clearFetchFailure(cacheName string) {
 	r.checkpoints.delete(fetchFailureKey(cacheName))
 	r.checkpoints.delete(fetchHumanReviewKey(cacheName))
@@ -945,6 +987,10 @@ func fetchFailureKey(cacheName string) string {
 
 func fetchHumanReviewKey(cacheName string) string {
 	return "fetch_human_review_required_" + checkpointSafeKey(cacheName)
+}
+
+func ingestHumanReviewKey(source string) string {
+	return "ingest_human_review_required_" + checkpointSafeKey(source)
 }
 
 func checkpointSafeKey(value string) string {
@@ -1185,6 +1231,67 @@ func parseCSV(content []byte) ([]map[string]string, error) {
 	}
 
 	return rows, nil
+}
+
+func requireCSVColumn(rows []map[string]string, source string, columns ...string) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	for _, column := range columns {
+		if _, ok := rows[0][normalizeKey(column)]; ok {
+			return nil
+		}
+	}
+	return fmt.Errorf("schema mismatch for %s: missing one of %s", source, strings.Join(columns, ", "))
+}
+
+func latestTimestampFromCSV(content []byte, column string) (time.Time, error) {
+	rows, err := parseCSV(content)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if err := requireCSVColumn(rows, "source timestamp", column); err != nil {
+		return time.Time{}, err
+	}
+
+	var latest time.Time
+	for _, row := range rows {
+		raw := getValue(row, column)
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		parsed, err := parseEpoch(raw)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("malformed %s %q: %w", column, raw, err)
+		}
+		if latest.IsZero() || parsed.After(latest) {
+			latest = parsed
+		}
+	}
+	return latest, nil
+}
+
+func sourceReferenceTime(metadata fetchMetadata) time.Time {
+	if strings.TrimSpace(metadata.LastModified) != "" {
+		if parsed, err := http.ParseTime(metadata.LastModified); err == nil {
+			return parsed.UTC()
+		}
+	}
+	return metadata.RetrievedAt.UTC()
+}
+
+func validateFreshSourceTimestamp(source string, latest, reference time.Time) error {
+	if latest.IsZero() || reference.IsZero() {
+		return nil
+	}
+	if latest.Before(reference.Add(-sourceTimestampStaleThreshold)) {
+		return fmt.Errorf("stale source timestamp for %s: latest=%s reference=%s threshold=%s",
+			source,
+			latest.UTC().Format(time.RFC3339),
+			reference.UTC().Format(time.RFC3339),
+			sourceTimestampStaleThreshold)
+	}
+	return nil
 }
 
 func parseSatcatRows(content []byte) ([]map[string]string, error) {
