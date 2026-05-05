@@ -23,6 +23,7 @@ export interface ObservedPeerRecord {
 }
 
 export type ListingStatus = 'public' | 'unlisted' | 'retired';
+export type ListingPaymentModel = 'free' | 'one-time' | 'subscription';
 
 export interface CanonicalListing {
   pluginId: string;
@@ -36,6 +37,12 @@ export interface CanonicalListing {
   observedAt?: number;
   status?: ListingStatus;
   tags?: string[];
+  screenshotUrls?: string[];
+  paymentModel?: ListingPaymentModel;
+  priceUsdCents?: number;
+  subscriptionPeriodDays?: number;
+  acceptedPaymentMethods?: string[];
+  requiredScope?: string;
   standardsUsed?: string[];
 }
 

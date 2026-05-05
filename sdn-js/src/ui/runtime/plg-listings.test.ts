@@ -2,6 +2,7 @@ import * as flatbuffers from 'flatbuffers';
 import { PLG } from 'spacedatastandards.org/lib/js/REC/PLG.js';
 import { publicationState as listingStatus } from 'spacedatastandards.org/lib/js/PLG/publicationState.js';
 import { pluginCategory as pluginType } from 'spacedatastandards.org/lib/js/PLG/pluginCategory.js';
+import { purchaseTier as paymentModel } from 'spacedatastandards.org/lib/js/PLG/purchaseTier.js';
 import { describe, expect, it } from 'vitest';
 
 import { createMarketplaceIndex } from './marketplace';
@@ -18,6 +19,15 @@ describe('decodeCanonicalPlgListing', () => {
       publisherName: 'Space Ops',
       publisherHandle: '@spaceops',
       tags: ['orbit', 'OMM', 'demo'],
+      screenshotUrls: [
+        'https://cdn.example.test/orbital-demo/screen-1.png',
+        'https://cdn.example.test/orbital-demo/screen-2.png',
+      ],
+      paymentModel: paymentModel.Subscription,
+      priceUsdCents: 1299,
+      subscriptionPeriodDays: 30,
+      acceptedPaymentMethods: ['stripe', 'eth'],
+      requiredScope: 'module:com.space-data-network.orbital-demo:run',
       listingStatus: listingStatus.Unlisted,
     });
 
@@ -34,6 +44,15 @@ describe('decodeCanonicalPlgListing', () => {
       observedAt: 1_700_000_000_000,
       status: 'unlisted',
       tags: ['orbit', 'OMM', 'demo'],
+      screenshotUrls: [
+        'https://cdn.example.test/orbital-demo/screen-1.png',
+        'https://cdn.example.test/orbital-demo/screen-2.png',
+      ],
+      paymentModel: 'subscription',
+      priceUsdCents: 1299,
+      subscriptionPeriodDays: 30,
+      acceptedPaymentMethods: ['stripe', 'eth'],
+      requiredScope: 'module:com.space-data-network.orbital-demo:run',
       standardsUsed: ['OMM'],
     });
   });
@@ -79,6 +98,12 @@ function createPlgBytes(options: {
   publisherName?: string;
   publisherHandle?: string;
   tags?: string[];
+  screenshotUrls?: string[];
+  paymentModel?: paymentModel;
+  priceUsdCents?: number;
+  subscriptionPeriodDays?: number;
+  acceptedPaymentMethods?: string[];
+  requiredScope?: string;
   listingStatus?: listingStatus;
 }): Uint8Array {
   const builder = new flatbuffers.Builder(256);
@@ -92,54 +117,37 @@ function createPlgBytes(options: {
   const tagsOffset = options.tags?.length
     ? PLG.createTagsVector(builder, options.tags.map((tag) => builder.createString(tag)))
     : 0;
+  const screenshotUrlsOffset = options.screenshotUrls?.length
+    ? PLG.createScreenshotUrlsVector(builder, options.screenshotUrls.map((url) => builder.createString(url)))
+    : 0;
+  const acceptedPaymentMethodsOffset = options.acceptedPaymentMethods?.length
+    ? PLG.createAcceptedPaymentMethodsVector(
+      builder,
+      options.acceptedPaymentMethods.map((method) => builder.createString(method)),
+    )
+    : 0;
+  const requiredScopeOffset = options.requiredScope ? builder.createString(options.requiredScope) : 0;
 
-  const root = PLG.createPLG(
-    builder,
-    pluginIdOffset,
-    nameOffset,
-    versionOffset,
-    descriptionOffset,
-    taglineOffset,
-    pluginType.Analysis,
-    publisherNameOffset,
-    publisherHandleOffset,
-    0,
-    0,
-    tagsOffset,
-    0,
-    0,
-    0,
-    1,
-    0,
-    0n,
-    0,
-    0,
-    0n,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    true,
-    0,
-    0,
-    0,
-    0n,
-    0,
-    0n,
-    0n,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    options.listingStatus ?? listingStatus.Public,
-    0,
-  );
+  PLG.startPLG(builder);
+  PLG.addPluginId(builder, pluginIdOffset);
+  PLG.addName(builder, nameOffset);
+  PLG.addVersion(builder, versionOffset);
+  PLG.addDescription(builder, descriptionOffset);
+  PLG.addTagline(builder, taglineOffset);
+  PLG.addPluginType(builder, pluginType.Analysis);
+  PLG.addPublisherName(builder, publisherNameOffset);
+  PLG.addPublisherHandle(builder, publisherHandleOffset);
+  PLG.addTags(builder, tagsOffset);
+  PLG.addScreenshotUrls(builder, screenshotUrlsOffset);
+  PLG.addAbiVersion(builder, 1);
+  PLG.addEncrypted(builder, true);
+  PLG.addRequiredScope(builder, requiredScopeOffset);
+  PLG.addPaymentModel(builder, options.paymentModel ?? paymentModel.Free);
+  PLG.addPriceUsdCents(builder, options.priceUsdCents ?? 0);
+  PLG.addSubscriptionPeriodDays(builder, options.subscriptionPeriodDays ?? 0);
+  PLG.addAcceptedPaymentMethods(builder, acceptedPaymentMethodsOffset);
+  PLG.addListingStatus(builder, options.listingStatus ?? listingStatus.Public);
+  const root = PLG.endPLG(builder);
 
   PLG.finishPLGBuffer(builder, root);
   return builder.asUint8Array();
