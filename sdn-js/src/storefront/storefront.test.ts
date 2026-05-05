@@ -28,8 +28,12 @@ describe('Storefront Types', () => {
     expect(AccessType.Query).toBe(3);
 
     expect(PaymentMethod.CryptoETH).toBe(0);
-    expect(PaymentMethod.SDNCredits).toBe(4);
-    expect(PaymentMethod.Free).toBe(6);
+    expect(PaymentMethod.CryptoSOL).toBe(1);
+    expect(PaymentMethod.CryptoBTC).toBe(2);
+    expect(PaymentMethod.SDNCredits).toBe(3);
+    expect(PaymentMethod.FiatStripe).toBe(4);
+    expect(PaymentMethod.Free).toBe(5);
+    expect('CryptoUSDC' in PaymentMethod).toBe(false);
 
     expect(GrantStatus.Active).toBe(0);
     expect(GrantStatus.Revoked).toBe(1);
@@ -175,7 +179,10 @@ describe('Storefront Client Configuration', () => {
     expect(typeof storefront.createStorefrontClient).toBe('function');
     expect(typeof storefront.StorefrontClient).toBe('function');
     expect(storefront.AccessType.Subscription).toBe(1);
-    expect(storefront.PaymentMethod.SDNCredits).toBe(4);
+    expect(storefront.PaymentMethod.SDNCredits).toBe(3);
+    expect(storefront.PaymentMethod.FiatStripe).toBe(4);
+    expect(storefront.PaymentMethod.Free).toBe(5);
+    expect('CryptoUSDC' in storefront.PaymentMethod).toBe(false);
     expect(storefront.GrantStatus.Active).toBe(0);
     expect(storefront.PurchaseStatus.Completed).toBe(3);
   });

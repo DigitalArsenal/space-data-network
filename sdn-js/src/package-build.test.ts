@@ -183,7 +183,10 @@ describe('sdn-js package build', () => {
     const runtime = await import(pathToFileURL(DIST_STOREFRONT_INDEX_PATH).href);
 
     expect(typeof runtime.createStorefrontClient).toBe('function');
-    expect(runtime.PaymentMethod.SDNCredits).toBe(4);
+    expect(runtime.PaymentMethod.SDNCredits).toBe(3);
+    expect(runtime.PaymentMethod.FiatStripe).toBe(4);
+    expect(runtime.PaymentMethod.Free).toBe(5);
+    expect('CryptoUSDC' in runtime.PaymentMethod).toBe(false);
     expect(runtime.GrantStatus.Active).toBe(0);
     },
   );

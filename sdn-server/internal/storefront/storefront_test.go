@@ -100,6 +100,29 @@ func testListing() *Listing {
 	}
 }
 
+func TestPaymentMethodValuesMatchSTFSchema(t *testing.T) {
+	tests := []struct {
+		name string
+		got  PaymentMethod
+		want PaymentMethod
+	}{
+		{name: "Crypto_ETH", got: PaymentMethodCryptoETH, want: 0},
+		{name: "Crypto_SOL", got: PaymentMethodCryptoSOL, want: 1},
+		{name: "Crypto_BTC", got: PaymentMethodCryptoBTC, want: 2},
+		{name: "SDN_Credits", got: PaymentMethodSDNCredits, want: 3},
+		{name: "Fiat_Stripe", got: PaymentMethodFiatStripe, want: 4},
+		{name: "Free", got: PaymentMethodFree, want: 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Fatalf("%s = %d, want %d", tt.name, tt.got, tt.want)
+			}
+		})
+	}
+}
+
 // --- 14.1 Data Listing Model Tests ---
 
 func TestCreateListing(t *testing.T) {
