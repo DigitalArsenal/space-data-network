@@ -10,6 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/ipfs/go-cid"
+	mh "github.com/multiformats/go-multihash"
 )
 
 // DatasetExport describes a deterministic local dataset export.
@@ -20,9 +23,11 @@ type DatasetExport struct {
 	ResultSHA256 string
 	ShardPath    string
 	ShardSHA256  string
+	ShardCID     string
 	ShardBytes   int64
 	IndexPath    string
 	IndexSHA256  string
+	IndexCID     string
 	IndexBytes   int64
 }
 
@@ -36,6 +41,7 @@ type DatasetExportIndex struct {
 	QuerySHA256  string                       `json:"querySha256"`
 	ResultSHA256 string                       `json:"resultSha256"`
 	ShardSHA256  string                       `json:"shardSha256"`
+	ShardCID     string                       `json:"shardCid"`
 	ShardFile    string                       `json:"shardFile"`
 	RecordCount  int                          `json:"recordCount"`
 	Records      []DatasetExportIndexRecord   `json:"records"`
@@ -124,6 +130,10 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 
 	shardBytes := shard.Bytes()
 	shardSHA := sha256Hex(shardBytes)
+	shardCID, err := cidV1RawSHA256(shardBytes)
+	if err != nil {
+		return nil, fmt.Errorf("compute shard CID: %w", err)
+	}
 	index := DatasetExportIndex{
 		Version:      1,
 		SchemaName:   filter.SchemaName,
@@ -133,6 +143,7 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 		QuerySHA256:  querySHA,
 		ResultSHA256: shardSHA,
 		ShardSHA256:  shardSHA,
+		ShardCID:     shardCID,
 		ShardFile:    fmt.Sprintf("%s-%s.fbshard", querySHA[:16], shardSHA[:16]),
 		RecordCount:  len(indexRecords),
 		Records:      indexRecords,
@@ -144,6 +155,10 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 	}
 	indexBytes = append(indexBytes, '\n')
 	indexSHA := sha256Hex(indexBytes)
+	indexCID, err := cidV1RawSHA256(indexBytes)
+	if err != nil {
+		return nil, fmt.Errorf("compute index CID: %w", err)
+	}
 
 	shardPath := filepath.Join(outputDir, "shards", index.ShardFile)
 	indexPath := filepath.Join(outputDir, "indexes", fmt.Sprintf("%s-%s.index.json", querySHA[:16], indexSHA[:16]))
@@ -161,9 +176,11 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 		ResultSHA256: shardSHA,
 		ShardPath:    shardPath,
 		ShardSHA256:  shardSHA,
+		ShardCID:     shardCID,
 		ShardBytes:   int64(len(shardBytes)),
 		IndexPath:    indexPath,
 		IndexSHA256:  indexSHA,
+		IndexCID:     indexCID,
 		IndexBytes:   int64(len(indexBytes)),
 	}, nil
 }
@@ -286,4 +303,12 @@ func writeImmutableExportFile(path string, data []byte) error {
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+func cidV1RawSHA256(data []byte) (string, error) {
+	hash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		return "", err
+	}
+	return cid.NewCidV1(cid.Raw, hash).String(), nil
 }
