@@ -195,6 +195,9 @@ func NewRunner(cfg Config) (*Runner, error) {
 		httpClient: &http.Client{
 			Timeout: cfg.HTTPTimeout,
 			Jar:     jar,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		checkpoints: cp,
 	}, nil
@@ -674,10 +677,18 @@ func (r *Runner) fetchBytes(ctx context.Context, sourceURL string) ([]byte, erro
 	return data, err
 }
 
-func (r *Runner) fetchBytesWithMetadata(ctx context.Context, sourceURL string) ([]byte, fetchMetadata, error) {
+func (r *Runner) fetchBytesWithMetadata(ctx context.Context, sourceURL string, validators ...fetchMetadata) ([]byte, fetchMetadata, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
 		return nil, fetchMetadata{}, err
+	}
+	if len(validators) > 0 {
+		if etag := strings.TrimSpace(validators[0].ETag); etag != "" {
+			req.Header.Set("If-None-Match", etag)
+		}
+		if lastModified := strings.TrimSpace(validators[0].LastModified); lastModified != "" {
+			req.Header.Set("If-Modified-Since", lastModified)
+		}
 	}
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
@@ -704,26 +715,43 @@ func (r *Runner) fetchWithCache(ctx context.Context, sourceURL, cacheName string
 	cachePath := filepath.Join(r.cfg.RawPath, "cache", cacheName)
 
 	if data, modTime, ok, err := readCachedPayload(cachePath, minInterval); err == nil && ok {
-		return data, fetchMetadata{
-			SourceURL:   sourceURL,
-			RetrievedAt: modTime.UTC(),
-			FromCache:   true,
-			CachePath:   cachePath,
-		}, nil
+		metadata := readCachedFetchMetadata(cachePath)
+		metadata.SourceURL = sourceURL
+		metadata.RetrievedAt = firstNonZeroTime(metadata.RetrievedAt, modTime.UTC())
+		metadata.FromCache = true
+		metadata.CachePath = cachePath
+		return data, metadata, nil
 	} else if err != nil {
 		log.Warnf("Failed reading cache %s: %v", cachePath, err)
 	}
 
-	data, metadata, err := r.fetchBytesWithMetadata(ctx, sourceURL)
+	validators := readCachedFetchMetadata(cachePath)
+	data, metadata, err := r.fetchBytesWithMetadata(ctx, sourceURL, validators)
 	if err != nil {
+		if metadata.HTTPStatus == http.StatusNotModified {
+			if fallback, modTime, ok, cacheErr := readCachedPayload(cachePath, 0); cacheErr == nil && ok {
+				metadata.SourceURL = sourceURL
+				metadata.RetrievedAt = firstNonZeroTime(validators.RetrievedAt, modTime.UTC())
+				metadata.ETag = firstNonEmptyString(metadata.ETag, validators.ETag)
+				metadata.LastModified = firstNonEmptyString(metadata.LastModified, validators.LastModified)
+				metadata.ContentType = firstNonEmptyString(metadata.ContentType, validators.ContentType)
+				metadata.FromCache = true
+				metadata.CachePath = cachePath
+				return fallback, metadata, nil
+			}
+			return nil, metadata, err
+		}
+		if isFetchHardStopStatus(metadata.HTTPStatus) {
+			return nil, metadata, err
+		}
 		if fallback, modTime, ok, cacheErr := readCachedPayload(cachePath, 0); cacheErr == nil && ok {
 			log.Warnf("CelesTrak fetch failed (%v); using stale cache %s", err, cachePath)
-			return fallback, fetchMetadata{
-				SourceURL:   sourceURL,
-				RetrievedAt: modTime.UTC(),
-				FromCache:   true,
-				CachePath:   cachePath,
-			}, nil
+			cachedMetadata := readCachedFetchMetadata(cachePath)
+			cachedMetadata.SourceURL = sourceURL
+			cachedMetadata.RetrievedAt = firstNonZeroTime(cachedMetadata.RetrievedAt, modTime.UTC())
+			cachedMetadata.FromCache = true
+			cachedMetadata.CachePath = cachePath
+			return fallback, cachedMetadata, nil
 		}
 		return nil, metadata, err
 	}
@@ -735,8 +763,62 @@ func (r *Runner) fetchWithCache(ctx context.Context, sourceURL, cacheName string
 	if err := os.WriteFile(cachePath, data, 0644); err != nil {
 		log.Warnf("Failed writing cache %s: %v", cachePath, err)
 	}
+	if err := writeCachedFetchMetadata(cachePath, metadata); err != nil {
+		log.Warnf("Failed writing cache metadata %s: %v", cacheMetadataPath(cachePath), err)
+	}
 
 	return data, metadata, nil
+}
+
+func firstNonZeroTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Now().UTC()
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func isFetchHardStopStatus(status int) bool {
+	return status == http.StatusForbidden ||
+		status == http.StatusNotFound ||
+		(status >= http.StatusMultipleChoices && status < http.StatusBadRequest && status != http.StatusNotModified)
+}
+
+func cacheMetadataPath(cachePath string) string {
+	return cachePath + ".metadata.json"
+}
+
+func readCachedFetchMetadata(cachePath string) fetchMetadata {
+	data, err := os.ReadFile(cacheMetadataPath(cachePath))
+	if err != nil || len(data) == 0 {
+		return fetchMetadata{}
+	}
+	var metadata fetchMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		log.Warnf("Failed parsing cache metadata %s: %v", cacheMetadataPath(cachePath), err)
+		return fetchMetadata{}
+	}
+	return metadata
+}
+
+func writeCachedFetchMetadata(cachePath string, metadata fetchMetadata) error {
+	metadata.FromCache = false
+	metadata.CachePath = ""
+	payload, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(cacheMetadataPath(cachePath), payload, 0644)
 }
 
 func readCachedPayload(path string, maxAge time.Duration) ([]byte, time.Time, bool, error) {

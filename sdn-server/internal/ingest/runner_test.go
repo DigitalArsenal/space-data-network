@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -341,6 +342,160 @@ func TestSyncSpaceTrackGapFillRecordsBatchProvenance(t *testing.T) {
 	}
 	if provenance.SchemaHashes["MPE.fbs"] == "" {
 		t.Fatalf("MPE.fbs schema hash is empty")
+	}
+}
+
+func TestFetchWithCacheHardStopsOnForbiddenInsteadOfUsingStaleCache(t *testing.T) {
+	runner := newTestRunner(t)
+	cachePath := filepath.Join(runner.cfg.RawPath, "cache", "celestrak-gp.csv")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+		t.Fatalf("mkdir cache: %v", err)
+	}
+	if err := os.WriteFile(cachePath, []byte("stale payload"), 0644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	old := time.Now().Add(-2 * minCelestrakFetchInterval)
+	if err := os.Chtimes(cachePath, old, old); err != nil {
+		t.Fatalf("age cache: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	data, metadata, err := runner.fetchWithCache(context.Background(), server.URL+"/gp.csv", "celestrak-gp.csv", minCelestrakFetchInterval)
+	if err == nil {
+		t.Fatalf("fetchWithCache returned nil error with data=%q metadata=%+v", data, metadata)
+	}
+	if metadata.FromCache {
+		t.Fatalf("metadata.FromCache = true, want false for 403 hard stop")
+	}
+	if metadata.HTTPStatus != http.StatusForbidden {
+		t.Fatalf("metadata.HTTPStatus = %d, want %d", metadata.HTTPStatus, http.StatusForbidden)
+	}
+}
+
+func TestFetchWithCacheHardStopsOnRedirectInsteadOfUsingStaleCache(t *testing.T) {
+	runner := newTestRunner(t)
+	cachePath := filepath.Join(runner.cfg.RawPath, "cache", "celestrak-gp.csv")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+		t.Fatalf("mkdir cache: %v", err)
+	}
+	if err := os.WriteFile(cachePath, []byte("stale payload"), 0644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	old := time.Now().Add(-2 * minCelestrakFetchInterval)
+	if err := os.Chtimes(cachePath, old, old); err != nil {
+		t.Fatalf("age cache: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/login", http.StatusFound)
+	}))
+	defer server.Close()
+
+	data, metadata, err := runner.fetchWithCache(context.Background(), server.URL+"/gp.csv", "celestrak-gp.csv", minCelestrakFetchInterval)
+	if err == nil {
+		t.Fatalf("fetchWithCache returned nil error with data=%q metadata=%+v", data, metadata)
+	}
+	if metadata.FromCache {
+		t.Fatalf("metadata.FromCache = true, want false for redirect hard stop")
+	}
+	if metadata.HTTPStatus != http.StatusFound {
+		t.Fatalf("metadata.HTTPStatus = %d, want %d", metadata.HTTPStatus, http.StatusFound)
+	}
+}
+
+func TestFetchWithCacheHardStopsOnNotFoundInsteadOfUsingStaleCache(t *testing.T) {
+	runner := newTestRunner(t)
+	cachePath := filepath.Join(runner.cfg.RawPath, "cache", "celestrak-satcat.txt")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+		t.Fatalf("mkdir cache: %v", err)
+	}
+	if err := os.WriteFile(cachePath, []byte("stale payload"), 0644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	old := time.Now().Add(-2 * minCelestrakFetchInterval)
+	if err := os.Chtimes(cachePath, old, old); err != nil {
+		t.Fatalf("age cache: %v", err)
+	}
+
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+
+	data, metadata, err := runner.fetchWithCache(context.Background(), server.URL+"/satcat.txt", "celestrak-satcat.txt", minCelestrakFetchInterval)
+	if err == nil {
+		t.Fatalf("fetchWithCache returned nil error with data=%q metadata=%+v", data, metadata)
+	}
+	if metadata.FromCache {
+		t.Fatalf("metadata.FromCache = true, want false for 404 hard stop")
+	}
+	if metadata.HTTPStatus != http.StatusNotFound {
+		t.Fatalf("metadata.HTTPStatus = %d, want %d", metadata.HTTPStatus, http.StatusNotFound)
+	}
+}
+
+func TestFetchWithCacheUsesConditionalValidatorsForStaleCache(t *testing.T) {
+	runner := newTestRunner(t)
+	cacheName := "celestrak-space-weather.csv"
+	cachePath := filepath.Join(runner.cfg.RawPath, "cache", cacheName)
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+		t.Fatalf("mkdir cache: %v", err)
+	}
+	cachedPayload := []byte("cached payload")
+	if err := os.WriteFile(cachePath, cachedPayload, 0644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	old := time.Now().Add(-2 * minCelestrakFetchInterval)
+	if err := os.Chtimes(cachePath, old, old); err != nil {
+		t.Fatalf("age cache: %v", err)
+	}
+	cacheMetadata := fetchMetadata{
+		SourceURL:    "https://celestrak.example/SW-All.csv",
+		HTTPStatus:   http.StatusOK,
+		ETag:         `"fixture-etag"`,
+		LastModified: "Fri, 02 Jan 2026 03:04:05 GMT",
+		RetrievedAt:  old,
+	}
+	metadataBytes, err := json.Marshal(cacheMetadata)
+	if err != nil {
+		t.Fatalf("marshal cache metadata: %v", err)
+	}
+	if err := os.WriteFile(cachePath+".metadata.json", metadataBytes, 0644); err != nil {
+		t.Fatalf("write cache metadata: %v", err)
+	}
+
+	sawConditionalHeaders := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == `"fixture-etag"` &&
+			r.Header.Get("If-Modified-Since") == "Fri, 02 Jan 2026 03:04:05 GMT" {
+			sawConditionalHeaders = true
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		http.Error(w, "missing conditional headers", http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	data, metadata, err := runner.fetchWithCache(context.Background(), server.URL+"/SW-All.csv", cacheName, minCelestrakFetchInterval)
+	if err != nil {
+		t.Fatalf("fetchWithCache failed: %v", err)
+	}
+	if !sawConditionalHeaders {
+		t.Fatalf("server did not receive If-None-Match and If-Modified-Since")
+	}
+	if !bytes.Equal(data, cachedPayload) {
+		t.Fatalf("data = %q, want cached payload %q", data, cachedPayload)
+	}
+	if !metadata.FromCache {
+		t.Fatalf("metadata.FromCache = false, want true for 304")
+	}
+	if metadata.HTTPStatus != http.StatusNotModified {
+		t.Fatalf("metadata.HTTPStatus = %d, want %d", metadata.HTTPStatus, http.StatusNotModified)
+	}
+	if metadata.ETag != `"fixture-etag"` {
+		t.Fatalf("metadata.ETag = %q, want fixture etag", metadata.ETag)
 	}
 }
 
