@@ -5,7 +5,6 @@ import {
   loadModuleRuntimeSnapshotFromServer,
   resolveSelectedModuleId,
   runModuleRuntimeAction,
-  saveModuleRuntimeInputValues,
   updateModuleRuntimeOption
 } from '../../../../../src/ui/runtime/modules.js'
 
@@ -20,8 +19,13 @@ function ModulesPage() {
   const [error, setError] = useState(null)
   const [selectedId, setSelectedId] = useState('')
   const [lastRefresh, setLastRefresh] = useState(null)
+  const [moduleSearch, setModuleSearch] = useState('')
 
   const modules = snapshot.modules
+  const filteredModules = useMemo(
+    () => modules.filter((module) => filterModuleBySearch(module, moduleSearch)),
+    [modules, moduleSearch]
+  )
   const selectedModule = useMemo(() => {
     const nextSelectedId = resolveSelectedModuleId(selectedId, modules)
     return modules.find((module) => module.id === nextSelectedId) ?? null
@@ -135,32 +139,47 @@ function ModulesPage() {
           className='w-100 w-40-l ba b--black-10 br2 bg-white overflow-hidden mr0 mr3-l mb3 mb0-l'
           style={moduleListPanelStyle}
         >
-          <div className='pa3 bb b--black-10 flex items-center justify-between' style={panelHeaderStyle}>
-            <div className='flex items-center'>
-              <h2 className='f4 mv0 mr2'>Modules</h2>
-              <ModulesHelp />
+          <div className='pa3 bb b--black-10' style={panelHeaderStyle}>
+            <div className='flex items-center justify-between mb3'>
+              <div className='flex items-center'>
+                <h2 className='f4 mv0 mr2'>Modules</h2>
+                <ModulesHelp />
+              </div>
+              <span className='f6 black-60'>
+                {lastRefresh ? formatClock(lastRefresh) : ''}
+              </span>
             </div>
-            <span className='f6 black-60'>
-              {lastRefresh ? formatClock(lastRefresh) : ''}
-            </span>
+            <input
+              aria-label='Search modules'
+              className='input-reset ba b--black-20 br2 pa2 w-100 bg-white'
+              placeholder='Search modules'
+              type='search'
+              value={moduleSearch}
+              onChange={(event) => setModuleSearch(event.target.value)}
+            />
           </div>
           <div className='overflow-auto' style={moduleListBodyStyle}>
-            <table className='collapse w-100'>
+            <table className='collapse w-100' style={modulesTableStyle}>
+              <colgroup>
+                <col style={moduleNameColumnStyle} />
+                <col style={moduleStatusColumnStyle} />
+                <col style={moduleMemoryColumnStyle} />
+              </colgroup>
               <thead style={stickyTableHeaderStyle}>
                 <tr className='tl f6 ttu tracked black-60 bg-white'>
-                  <th className='pa2 fw6'>Module</th>
-                  <th className='pa2 fw6'>Status</th>
-                  <th className='pa2 fw6 tr'>Memory</th>
+                  <th className='pa2 fw6' style={moduleNameCellStyle}>Module</th>
+                  <th className='pa2 fw6' style={moduleStatusCellStyle}>Status</th>
+                  <th className='pa2 fw6 tr' style={moduleMemoryCellStyle}>Memory</th>
                 </tr>
               </thead>
               <tbody>
-                {modules.map((module) => (
+                {filteredModules.map((module) => (
                   <tr
                     key={module.id}
                     className={`${selectedModule?.id === module.id ? 'bg-lightest-blue' : 'bg-white'} pointer hover-bg-near-white`}
                     onClick={() => setSelectedId(module.id)}
                   >
-                    <td className='pa2 bb b--black-05'>
+                    <td className='pa2 bb b--black-05' style={moduleNameCellStyle}>
                       <div className='fw6 truncate' title={module.id}>
                         {module.manifest?.name || module.id}
                       </div>
@@ -170,18 +189,20 @@ function ModulesPage() {
                           'unversioned'}
                       </div>
                     </td>
-                    <td className='pa2 bb b--black-05'>
+                    <td className='pa2 bb b--black-05' style={moduleStatusCellStyle}>
                       <StatusPill status={module.status} />
                     </td>
-                    <td className='pa2 bb b--black-05 tr'>
+                    <td className='pa2 bb b--black-05 tr' style={moduleMemoryCellStyle}>
                       {formatBytes(module.stats?.memoryBytes ?? 0)}
                     </td>
                   </tr>
                 ))}
-                {modules.length === 0 && (
+                {filteredModules.length === 0 && (
                   <tr>
                     <td className='pa3 black-60' colSpan={3}>
-                      No runtime modules reported.
+                      {modules.length === 0
+                        ? 'No runtime modules reported.'
+                        : 'No modules match the current search.'}
                     </td>
                   </tr>
                 )}
@@ -250,14 +271,16 @@ function ModuleDetail({ module, onRefresh }) {
               {module.version ? ` @ ${module.version}` : ''}
             </div>
           </div>
-          <div className='mt2 mt0-l'>
+          <div className='mt3 mt0-l flex flex-column items-start items-end-l' style={detailActionPanelStyle}>
             <StatusPill status={module.status} />
+            <div className='mt2'>
+              <LifecycleActionBar module={module} onRefresh={onRefresh} />
+            </div>
           </div>
         </div>
         {module.statusMessage && (
           <div className='mb3 dark-red'>{module.statusMessage}</div>
         )}
-        <LifecycleActionBar module={module} onRefresh={onRefresh} />
       </header>
 
       <div className='pa3' style={detailPanelBodyStyle}>
@@ -275,8 +298,8 @@ function ModuleDetail({ module, onRefresh }) {
           </div>
         </DetailSection>
 
-        <DetailSection title='Methods'>
-          <MethodList module={module} methods={manifest?.methods ?? []} onRefresh={onRefresh} />
+        <DetailSection title='Configure'>
+          <ConfigureModuleButton module={module} />
         </DetailSection>
 
         <DetailSection title='Options'>
@@ -370,12 +393,12 @@ function LifecycleActionBar({ module, onRefresh }) {
     return <div className='black-60'>No lifecycle actions reported.</div>
   }
   return (
-    <div className='flex flex-wrap items-center'>
+    <div className='flex items-center justify-end' style={lifecycleActionBarStyle}>
       {actions.map((action) => (
         <button
           key={action.actionId}
           type='button'
-          className='button-reset ba br2 pv2 ph3 mr2 mb2 pointer disabled'
+          className='button-reset ba br2 pv2 ph3 ml2 pointer disabled'
           disabled={!action.enabled}
           title={action.description || action.label}
           style={lifecycleActionButtonStyle(action)}
@@ -413,6 +436,7 @@ function lifecycleActionButtonStyle(action) {
   const disabled = !action.enabled
   const palette = lifecycleActionPalette(action.actionId)
   return {
+    ...lifecycleActionButtonBaseStyle,
     borderColor: palette.border,
     backgroundColor: disabled ? '#f4f4f4' : palette.background,
     color: disabled ? '#777777' : palette.color,
@@ -423,257 +447,34 @@ function lifecycleActionButtonStyle(action) {
 
 function lifecycleActionPalette(actionId) {
   if (actionId === 'restart' || actionId === 'reload-manifest') {
-    return { background: '#fff7ed', border: '#f97316', color: '#9a3412' }
+    return { background: '#d9480f', border: '#b7390b', color: '#ffffff' }
   }
   if (actionId === 'start' || actionId === 'load') {
-    return { background: '#ecfdf5', border: '#10b981', color: '#065f46' }
+    return { background: '#0b6b70', border: '#064f54', color: '#ffffff' }
   }
   if (actionId === 'pause') {
-    return { background: '#fefce8', border: '#eab308', color: '#713f12' }
+    return { background: '#8a6d1d', border: '#6f5615', color: '#ffffff' }
   }
   if (actionId === 'stop' || actionId === 'unload') {
-    return { background: '#fef2f2', border: '#ef4444', color: '#991b1b' }
+    return { background: '#c92a2a', border: '#9f1f1f', color: '#ffffff' }
   }
   if (actionId === 'clear-error') {
-    return { background: '#eff6ff', border: '#3b82f6', color: '#1d4ed8' }
+    return { background: '#2f80a7', border: '#236681', color: '#ffffff' }
   }
   return { background: '#ffffff', border: '#d0d0d0', color: '#111111' }
 }
 
-function MethodList({ module, methods, onRefresh }) {
-  if (!methods.length) {
-    return <div className='black-60'>No methods reported.</div>
-  }
+function ConfigureModuleButton({ module }) {
   return (
-    <div>
-      {methods.map((method) => (
-        <details key={method.methodId} className='ba b--black-10 br2 bg-white mb3' open>
-          <summary className='pa3 pointer bg-near-white bb b--black-10'>
-            <div className='flex flex-column flex-row-l justify-between-l'>
-              <div className='pr3-l'>
-                <span className='dib f7 ttu tracked br2 bg-black-80 white pv1 ph2 mr2'>
-                  METHOD
-                </span>
-                <span className='fw6'>{method.displayName || method.methodId}</span>
-                {method.description && (
-                  <div className='f6 black-60 mt2' title={method.description}>
-                    {method.description}
-                  </div>
-                )}
-              </div>
-              <div className='f6 black-60 mt2 mt0-l tr-l'>
-                {[
-                  method.drainPolicy,
-                  method.maxBatch ? `batch ${method.maxBatch}` : ''
-                ]
-                  .filter(Boolean)
-                  .join(' | ')}
-              </div>
-            </div>
-          </summary>
-          <div className='pa3'>
-            <div className='grid' style={operationGridStyle}>
-              <div>
-                <h4 className='f5 mt0 mb3'>Inputs</h4>
-                <MethodInputForm module={module} method={method} onRefresh={onRefresh} />
-              </div>
-              <div>
-                <h4 className='f5 mt0 mb3'>Outputs</h4>
-                <PortSchemaList ports={method.outputPorts ?? []} empty='No output ports reported.' />
-              </div>
-            </div>
-          </div>
-        </details>
-      ))}
-    </div>
-  )
-}
-
-function MethodInputForm({ module, method, onRefresh }) {
-  const ports = method.inputPorts ?? []
-  const [drafts, setDrafts] = useState(() => buildInitialInputDrafts(module, method))
-  const [status, setStatus] = useState('')
-
-  useEffect(() => {
-    setDrafts(buildInitialInputDrafts(module, method))
-    setStatus('')
-  }, [module.id, module.inputValues, method.methodId])
-
-  if (!ports.length) {
-    return <div className='black-60'>No input ports reported.</div>
-  }
-
-  const values = ports.map((port) => drafts[port.portId]).filter(Boolean)
-  const canSave = values.some((value) => String(value.value || '').trim() !== '')
-
-  return (
-    <form
-      onSubmit={async (event) => {
-        event.preventDefault()
-        setStatus('saving')
-        await saveModuleRuntimeInputValues(runtimeBaseUrl(), module.id, values)
-        setStatus('saved')
-        await onRefresh()
-      }}
+    <a
+      className='dib button-reset ba br2 pv2 ph3 pointer link'
+      href={moduleConfigureUrl(module)}
+      rel='noreferrer'
+      style={configureButtonStyle}
+      target='_blank'
     >
-      {ports.map((port) => {
-        const draft = drafts[port.portId] ?? buildInputDraft(module, method, port)
-        const wireFormats = acceptedWireFormats(port)
-        return (
-          <section key={port.portId} className='ba b--black-10 br2 mb3 overflow-hidden'>
-            <header className='pa2 bg-near-white bb b--black-10'>
-              <div className='fw6'>{port.displayName || port.portId}</div>
-              <div className='f7 black-60 mt1'>
-                {[port.required ? 'required' : 'optional', cardinalityLabel(port)]
-                  .filter(Boolean)
-                  .join(' | ')}
-              </div>
-            </header>
-            <div className='pa3'>
-              <PortSchemaList ports={[port]} empty='' compact />
-              <div className='grid mt3' style={formGridStyle}>
-                <label className='db'>
-                  <span className='db f7 ttu tracked black-60 mb1'>Wire format</span>
-                  <select
-                    className='input-reset ba b--black-20 br2 pa2 w-100 bg-white'
-                    value={draft.wireFormat}
-                    onChange={(event) =>
-                      updateDraft(setDrafts, port.portId, {
-                        wireFormat: event.target.value,
-                        encoding: defaultEncodingForWireFormat(event.target.value)
-                      })
-                    }
-                  >
-                    {wireFormats.map((format) => (
-                      <option key={format} value={format}>
-                        {format}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className='db'>
-                  <span className='db f7 ttu tracked black-60 mb1'>Encoding</span>
-                  <select
-                    className='input-reset ba b--black-20 br2 pa2 w-100 bg-white'
-                    value={draft.encoding}
-                    onChange={(event) =>
-                      updateDraft(setDrafts, port.portId, {
-                        encoding: event.target.value
-                      })
-                    }
-                  >
-                    <option value='json'>json</option>
-                    <option value='text'>text</option>
-                    <option value='base64'>base64</option>
-                    <option value='hex'>hex</option>
-                  </select>
-                </label>
-              </div>
-              <label className='db mt3'>
-                <span className='db f7 ttu tracked black-60 mb1'>Value</span>
-                <textarea
-                  className='input-reset ba b--black-20 br2 pa2 w-100 code'
-                  rows={6}
-                  value={draft.value}
-                  onChange={(event) =>
-                    updateDraft(setDrafts, port.portId, {
-                      value: event.target.value
-                    })
-                  }
-                  placeholder={defaultValuePlaceholder(draft)}
-                />
-              </label>
-            </div>
-          </section>
-        )
-      })}
-      <div className='flex items-center'>
-        <button
-          type='submit'
-          className='button-reset ba b--blue bg-white blue br2 pv2 ph3 pointer hover-bg-near-white'
-          disabled={!canSave || status === 'saving'}
-        >
-          Save inputs
-        </button>
-        <span className='ml3 f6 black-60'>
-          {status === 'saving'
-            ? 'Saving...'
-            : status === 'saved'
-              ? 'Saved. Restart to apply.'
-              : module.restartPending
-                ? 'Restart pending.'
-                : ''}
-        </span>
-      </div>
-    </form>
-  )
-}
-
-function PortSchemaList({ ports, empty, compact = false }) {
-  if (!ports.length) {
-    return empty ? <div className='black-60'>{empty}</div> : null
-  }
-  return (
-    <div className='flex flex-column'>
-      {ports.map((port) => (
-        <section key={port.portId} className={compact ? 'mb2' : 'ba b--black-10 br2 mb3 overflow-hidden'}>
-          {!compact && (
-            <header className='pa2 bg-near-white bb b--black-10'>
-              <div className='fw6'>{port.displayName || port.portId}</div>
-              <div className='f7 black-60 mt1'>
-                {[port.required ? 'required' : 'optional', cardinalityLabel(port)]
-                  .filter(Boolean)
-                  .join(' | ')}
-              </div>
-            </header>
-          )}
-          <div className={compact ? '' : 'pa3'}>
-            {port.description && <div className='f6 black-70 mb2'>{port.description}</div>}
-            {(port.acceptedTypeSets ?? []).length > 0 ? (
-              (port.acceptedTypeSets ?? []).map((set, index) => (
-                <div key={set.setId || index} className='mb2'>
-                  <div className='flex flex-wrap'>
-                    {(set.allowedWireFormats ?? []).map((format) => (
-                      <span key={format} className='dib br2 bg-lightest-blue blue ba b--blue f7 pv1 ph2 mr2 mb2'>
-                        {format}
-                      </span>
-                    ))}
-                    {set.setId && (
-                      <span className='dib br2 bg-near-white ba b--black-10 f7 pv1 ph2 mr2 mb2'>
-                        {set.setId}
-                      </span>
-                    )}
-                  </div>
-                  {(set.allowedTypes ?? []).map((typeRef, typeIndex) => (
-                    <div key={`${typeRef.schemaName || ''}-${typeRef.rootType || ''}-${typeIndex}`} className='pa2 bg-near-white br2 mb2'>
-                      <SchemaKeyValue label='Schema' value={typeRef.schemaName} />
-                      <SchemaKeyValue label='Root type' value={typeRef.rootType} />
-                      <SchemaKeyValue label='File id' value={typeRef.fileIdentifier} />
-                      <SchemaKeyValue label='Version' value={typeRef.schemaVersion} />
-                    </div>
-                  ))}
-                  {set.description && <div className='f7 black-60'>{set.description}</div>}
-                </div>
-              ))
-            ) : (
-              <div className='black-60'>No schema metadata reported.</div>
-            )}
-          </div>
-        </section>
-      ))}
-    </div>
-  )
-}
-
-function SchemaKeyValue({ label, value }) {
-  if (!value) {
-    return null
-  }
-  return (
-    <div className='flex justify-between f7 mb1'>
-      <span className='black-60 mr2'>{label}</span>
-      <span className='code tr truncate' title={value}>{value}</span>
-    </div>
+      Configure module
+    </a>
   )
 }
 
@@ -699,85 +500,6 @@ function CommandHistory({ history }) {
       ))}
     </div>
   )
-}
-
-function buildInitialInputDrafts(module, method) {
-  return (method.inputPorts ?? []).reduce((acc, port) => {
-    acc[port.portId] = buildInputDraft(module, method, port)
-    return acc
-  }, {})
-}
-
-function buildInputDraft(module, method, port) {
-  const saved = (module.inputValues ?? []).find(
-    (value) => value.methodId === method.methodId && value.portId === port.portId
-  )
-  const typeRef = firstAcceptedType(port)
-  const wireFormat = saved?.wireFormat || acceptedWireFormats(port)[0] || 'JSON'
-  return {
-    methodId: method.methodId,
-    portId: port.portId,
-    wireFormat,
-    encoding: saved?.encoding || defaultEncodingForWireFormat(wireFormat),
-    schemaName: saved?.schemaName || typeRef?.schemaName || '',
-    fileIdentifier: saved?.fileIdentifier || typeRef?.fileIdentifier || '',
-    schemaVersion: saved?.schemaVersion || typeRef?.schemaVersion || '',
-    rootType: saved?.rootType || typeRef?.rootType || '',
-    value: saved?.value || defaultInputValueForWireFormat(wireFormat)
-  }
-}
-
-function updateDraft(setDrafts, portId, patch) {
-  setDrafts((previous) => ({
-    ...previous,
-    [portId]: {
-      ...previous[portId],
-      ...patch
-    }
-  }))
-}
-
-function acceptedWireFormats(port) {
-  const formats = (port.acceptedTypeSets ?? []).flatMap(
-    (set) => set.allowedWireFormats ?? []
-  )
-  return formats.length > 0 ? Array.from(new Set(formats)) : ['JSON']
-}
-
-function firstAcceptedType(port) {
-  for (const set of port.acceptedTypeSets ?? []) {
-    const typeRef = set.allowedTypes?.[0]
-    if (typeRef) return typeRef
-  }
-  return null
-}
-
-function defaultEncodingForWireFormat(wireFormat) {
-  return String(wireFormat || '').toUpperCase().includes('JSON') ? 'json' : 'text'
-}
-
-function defaultInputValueForWireFormat(wireFormat) {
-  return String(wireFormat || '').toUpperCase().includes('JSON') ? '{}' : ''
-}
-
-function defaultValuePlaceholder(draft) {
-  if (draft.encoding === 'json') {
-    return '{ "field": "value" }'
-  }
-  if (draft.encoding === 'base64') {
-    return 'base64 payload'
-  }
-  if (draft.encoding === 'hex') {
-    return '00ff'
-  }
-  return 'value'
-}
-
-function cardinalityLabel(port) {
-  if (!port.minStreams && !port.maxStreams) {
-    return ''
-  }
-  return `${port.minStreams || 0}-${port.maxStreams || '*'} streams`
 }
 
 function ModuleOptionControl({ moduleId, option, onRefresh }) {
@@ -908,10 +630,28 @@ function StatusPill({ status }) {
           ? 'bg-washed-red dark-red b--red'
           : 'bg-near-white black-60 b--black-20'
   return (
-    <span className={`dib br-pill ba f6 pv1 ph2 ${className}`}>
+    <span className={`dib br-pill ba ${className}`} style={statusPillStyle}>
       {normalized}
     </span>
   )
+}
+
+function filterModuleBySearch(module, search) {
+  const query = String(search || '').trim().toLowerCase()
+  if (!query) return true
+  return [
+    module.id,
+    module.status,
+    module.version,
+    module.manifest?.name,
+    module.manifest?.version
+  ]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(query))
+}
+
+function moduleConfigureUrl(module) {
+  return `/modules/${encodeURIComponent(module.id)}/configure`
 }
 
 function runtimeBaseUrl() {
@@ -998,6 +738,34 @@ const moduleListBodyStyle = {
   overflowY: 'auto'
 }
 
+const modulesTableStyle = {
+  tableLayout: 'fixed'
+}
+
+const moduleNameColumnStyle = {
+  width: 'auto'
+}
+
+const moduleStatusColumnStyle = {
+  width: '5.75rem'
+}
+
+const moduleMemoryColumnStyle = {
+  width: '5.5rem'
+}
+
+const moduleNameCellStyle = {
+  minWidth: 0
+}
+
+const moduleStatusCellStyle = {
+  whiteSpace: 'nowrap'
+}
+
+const moduleMemoryCellStyle = {
+  whiteSpace: 'nowrap'
+}
+
 const moduleDetailPanelStyle = {
   minHeight: 0,
   display: 'flex'
@@ -1012,6 +780,11 @@ const detailPanelStyle = {
 
 const detailPanelHeaderStyle = {
   flex: '0 0 auto'
+}
+
+const detailActionPanelStyle = {
+  maxWidth: '100%',
+  overflowX: 'auto'
 }
 
 const detailPanelBodyStyle = {
@@ -1039,18 +812,6 @@ const detailGridStyle = {
   gridTemplateColumns: 'repeat(auto-fit, minmax(9rem, 1fr))'
 }
 
-const operationGridStyle = {
-  display: 'grid',
-  gap: '1rem',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(16rem, 1fr))'
-}
-
-const formGridStyle = {
-  display: 'grid',
-  gap: '0.75rem',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(10rem, 1fr))'
-}
-
 const helpButtonStyle = {
   width: '1.5rem',
   height: '1.5rem',
@@ -1061,6 +822,33 @@ const helpPopoverStyle = {
   width: '18rem',
   left: 0,
   top: '2rem'
+}
+
+const lifecycleActionBarStyle = {
+  flexWrap: 'nowrap',
+  maxWidth: '100%',
+  overflowX: 'auto',
+  paddingBottom: '0.125rem'
+}
+
+const lifecycleActionButtonBaseStyle = {
+  flex: '0 0 auto',
+  fontWeight: 600,
+  whiteSpace: 'nowrap'
+}
+
+const configureButtonStyle = {
+  borderColor: '#0b6b70',
+  backgroundColor: '#0b6b70',
+  color: '#ffffff',
+  fontWeight: 600
+}
+
+const statusPillStyle = {
+  fontSize: '0.7rem',
+  lineHeight: 1,
+  padding: '0.18rem 0.45rem',
+  whiteSpace: 'nowrap'
 }
 
 export default ModulesPage

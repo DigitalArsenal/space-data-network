@@ -92,7 +92,7 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).not.toContain('if (!selectedId && nextSnapshot.modules[0])');
   });
 
-  it('renders Modules with fixed scrolling panels, help links, input forms, and command history', async () => {
+  it('renders Modules with fixed scrolling panels, help links, configuration, and command history', async () => {
     const source = await fs.readFile(
       path.join(uiSrcPath, 'overrides/modules/ModulesPage.js'),
       'utf8',
@@ -102,9 +102,9 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).toContain('detailPanelBodyStyle');
     expect(source).toContain('ModulesHelp');
     expect(source).toContain('LifecycleActionBar');
-    expect(source).toContain('MethodInputForm');
+    expect(source).toContain('ConfigureModuleButton');
     expect(source).toContain('CommandHistory');
-    expect(source).toContain('saveModuleRuntimeInputValues');
+    expect(source).toContain('moduleConfigureUrl(module)');
     expect(source).toContain('https://github.com/DigitalArsenal/space-data-module-sdk/blob/main/README.md');
     expect(source).toContain('https://github.com/DigitalArsenal/space-data-network/blob/main/docs/module-runtime-dashboard.md');
   });
