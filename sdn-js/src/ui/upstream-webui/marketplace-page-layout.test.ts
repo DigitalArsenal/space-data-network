@@ -79,4 +79,22 @@ describe('marketplace page layout', () => {
     expect(source).toContain('Manifest CID');
     expect(source).toContain('verificationState');
   });
+
+  it('provides a purchase-to-grant panel using the Go storefront JSON contract', async () => {
+    const source = await readFile(marketplacePagePath, 'utf8');
+
+    expect(source).toContain('PurchaseAccessPanel');
+    expect(source).toContain('Purchase access');
+    expect(source).toContain("`${runtimeBaseUrl()}/api/storefront/purchases`");
+    expect(source).toContain('listing_id: listing.pluginId');
+    expect(source).toContain('tier_name: tierName.trim()');
+    expect(source).toContain('buyer_peer_id: buyerPeerId.trim()');
+    expect(source).toContain('buyer_encryption_pubkey: encryptionPubkey.trim()');
+    expect(source).toContain("key_algorithm: 'x25519'");
+    expect(source).toContain('payment_method: paymentMethodValue(paymentMethod)');
+    expect(source).toContain('preferred_delivery_method: preferredDeliveryMethod');
+    expect(source).toContain('/api/storefront/purchases/${encodeURIComponent(requestId)}/pay-credits');
+    expect(source).toContain('Delivery topic');
+    expect(source).toContain('Grant issued');
+  });
 });

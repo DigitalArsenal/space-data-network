@@ -335,6 +335,184 @@ function ListingDetailView({ listing }) {
           ))}
       </div>
       <ChipList values={listing.tags} empty='No listing tags advertised.' />
+      <PurchaseAccessPanel listing={listing} />
+    </section>
+  )
+}
+
+function PurchaseAccessPanel({ listing }) {
+  const [buyerPeerId, setBuyerPeerId] = useState(defaultBuyerPeerId())
+  const [encryptionPubkey, setEncryptionPubkey] = useState(defaultEncryptionPubkey())
+  const [tierName, setTierName] = useState('Basic')
+  const [paymentMethod, setPaymentMethod] = useState(defaultPaymentMethod(listing))
+  const [preferredDeliveryMethod, setPreferredDeliveryMethod] = useState(defaultDeliveryMethod(listing))
+  const [status, setStatus] = useState('idle')
+  const [error, setError] = useState('')
+  const [purchase, setPurchase] = useState(null)
+  const [grant, setGrant] = useState(null)
+
+  async function createPurchase() {
+    setStatus('creating')
+    setError('')
+    setGrant(null)
+    try {
+      const payload = {
+        listing_id: listing.pluginId,
+        tier_name: tierName.trim() || 'Basic',
+        buyer_peer_id: buyerPeerId.trim(),
+        buyer_encryption_pubkey: encryptionPubkey.trim(),
+        key_algorithm: 'x25519',
+        payment_method: paymentMethodValue(paymentMethod),
+        preferred_delivery_method: preferredDeliveryMethod
+      }
+      if (!payload.buyer_peer_id) {
+        throw new Error('Buyer peer ID is required')
+      }
+      if (!payload.buyer_encryption_pubkey) {
+        throw new Error('Buyer encryption public key is required')
+      }
+      const response = await fetch(`${runtimeBaseUrl()}/api/storefront/purchases`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      if (!response.ok) {
+        throw new Error(`Purchase request failed (${response.status})`)
+      }
+      const nextPurchase = await response.json()
+      setPurchase(nextPurchase)
+      setStatus('purchase-created')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setStatus('error')
+    }
+  }
+
+  async function payWithCredits() {
+    const requestId = purchase?.request_id || purchase?.requestId
+    if (!requestId) {
+      return
+    }
+    setStatus('paying')
+    setError('')
+    try {
+      const response = await fetch(`${runtimeBaseUrl()}/api/storefront/purchases/${encodeURIComponent(requestId)}/pay-credits`, {
+        method: 'POST',
+        credentials: 'include'
+      })
+      if (!response.ok) {
+        throw new Error(`Credits payment failed (${response.status})`)
+      }
+      const nextGrant = await response.json()
+      setGrant(nextGrant)
+      setStatus('grant-issued')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setStatus('error')
+    }
+  }
+
+  return (
+    <section className='mt4 pa3 ba b--black-10 br2 bg-near-white'>
+      <div className='flex flex-column flex-row-l justify-between-l items-start-l'>
+        <div className='pr3-l'>
+          <h3 className='f4 mt0 mb1'>Purchase access</h3>
+          <div className='f6 black-60'>
+            Creates a storefront purchase for this listing and records encrypted delivery state when a grant is issued.
+          </div>
+        </div>
+        <span className='dib br2 bg-white ba b--black-10 f6 pv1 ph2 mt2 mt0-l'>
+          {statusLabel(status)}
+        </span>
+      </div>
+      <div className='grid mt3' style={purchaseGridStyle}>
+        <label className='db'>
+          <span className='db f6 ttu tracked black-60 mb2'>Buyer peer ID</span>
+          <input
+            aria-label='Buyer peer ID'
+            className='input-reset ba b--black-20 br2 pa2 w-100 bg-white'
+            value={buyerPeerId}
+            onChange={(event) => setBuyerPeerId(event.target.value)}
+          />
+        </label>
+        <label className='db'>
+          <span className='db f6 ttu tracked black-60 mb2'>Encryption public key</span>
+          <input
+            aria-label='Buyer encryption public key'
+            className='input-reset ba b--black-20 br2 pa2 w-100 bg-white'
+            value={encryptionPubkey}
+            onChange={(event) => setEncryptionPubkey(event.target.value)}
+          />
+        </label>
+        <label className='db'>
+          <span className='db f6 ttu tracked black-60 mb2'>Tier</span>
+          <input
+            aria-label='Tier name'
+            className='input-reset ba b--black-20 br2 pa2 w-100 bg-white'
+            value={tierName}
+            onChange={(event) => setTierName(event.target.value)}
+          />
+        </label>
+        <label className='db'>
+          <span className='db f6 ttu tracked black-60 mb2'>Payment</span>
+          <select
+            aria-label='Payment method'
+            className='input-reset ba b--black-20 br2 pa2 w-100 bg-white'
+            value={paymentMethod}
+            onChange={(event) => setPaymentMethod(event.target.value)}
+          >
+            {paymentOptions(listing).map((method) => (
+              <option key={method} value={method}>{method}</option>
+            ))}
+          </select>
+        </label>
+        <label className='db'>
+          <span className='db f6 ttu tracked black-60 mb2'>Delivery</span>
+          <select
+            aria-label='Preferred delivery method'
+            className='input-reset ba b--black-20 br2 pa2 w-100 bg-white'
+            value={preferredDeliveryMethod}
+            onChange={(event) => setPreferredDeliveryMethod(event.target.value)}
+          >
+            {['IPFSPin', 'PubSubStream', 'DirectTransfer', 'WebhookPush'].map((method) => (
+              <option key={method} value={method}>{method}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className='mt3 flex flex-wrap'>
+        <button
+          type='button'
+          className='button-reset ba b--blue bg-blue white br2 pv2 ph3 mr2 mb2 pointer hover-bg-dark-blue'
+          onClick={createPurchase}
+          disabled={status === 'creating' || status === 'paying'}
+        >
+          Create purchase
+        </button>
+        <button
+          type='button'
+          className='button-reset ba b--green bg-green white br2 pv2 ph3 mb2 pointer hover-bg-dark-green'
+          onClick={payWithCredits}
+          disabled={!purchase || status === 'paying'}
+        >
+          Pay with credits
+        </button>
+      </div>
+      {error && <div className='mt2 dark-red f6'>{error}</div>}
+      {purchase && (
+        <div className='mt3 pa2 bg-white ba b--black-10 br2'>
+          <KeyLine label='Purchase ID' value={purchase.request_id || purchase.requestId} />
+          <KeyLine label='Purchase status' value={String(purchase.status ?? 'pending')} />
+        </div>
+      )}
+      {grant && (
+        <div className='mt3 pa2 bg-white ba b--black-10 br2'>
+          <KeyLine label='Grant ID' value={grant.grant_id || grant.grantId} />
+          <KeyLine label='Delivery topic' value={grant.delivery_topic || grant.deliveryTopic} />
+          <KeyLine label='Encrypted CID' value={listing.protectedDelivery?.encryptedCid || listing.sampleCid} />
+        </div>
+      )}
     </section>
   )
 }
@@ -516,6 +694,82 @@ function runtimeBaseUrl() {
   return String(configured || window.location.origin || '').replace(/\/+$/, '')
 }
 
+function defaultBuyerPeerId() {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+  return window.__SDN_CONFIG__?.peerId || window.__SDN_CONFIG__?.nodePeerId || ''
+}
+
+function defaultEncryptionPubkey() {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+  return window.__SDN_CONFIG__?.encryptionPublicKey || ''
+}
+
+function paymentOptions(listing) {
+  const methods = listing.acceptedPaymentMethods?.length
+    ? listing.acceptedPaymentMethods
+    : [listing.paymentModel === 'free' ? 'Free' : 'SDN_Credits']
+  return uniqueSorted(methods)
+}
+
+function defaultPaymentMethod(listing) {
+  return paymentOptions(listing)[0] || 'SDN_Credits'
+}
+
+function paymentMethodValue(method) {
+  switch (String(method || '').toLowerCase()) {
+    case 'crypto_eth':
+    case 'eth':
+      return 0
+    case 'crypto_sol':
+    case 'sol':
+      return 1
+    case 'crypto_btc':
+    case 'btc':
+      return 2
+    case 'sdn_credits':
+    case 'credits':
+      return 3
+    case 'fiat_stripe':
+    case 'stripe':
+      return 4
+    case 'free':
+      return 5
+    default:
+      return 3
+  }
+}
+
+function defaultDeliveryMethod(listing) {
+  if (listing.protectedDelivery?.deliveryProtocol) {
+    return 'IPFSPin'
+  }
+  if (listing.accessType === 'streaming' || listing.accessType === 'subscription') {
+    return 'PubSubStream'
+  }
+  return 'IPFSPin'
+}
+
+function statusLabel(status) {
+  switch (status) {
+    case 'creating':
+      return 'Creating purchase'
+    case 'purchase-created':
+      return 'Purchase created'
+    case 'paying':
+      return 'Completing payment'
+    case 'grant-issued':
+      return 'Grant issued'
+    case 'error':
+      return 'Action needed'
+    default:
+      return 'Ready'
+  }
+}
+
 const pageStyle = {
   minHeight: 'calc(100vh - 1.5rem)'
 }
@@ -545,6 +799,12 @@ const cardStyle = {
 const detailGridStyle = {
   display: 'grid',
   gap: '0 1rem',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(14rem, 1fr))'
+}
+
+const purchaseGridStyle = {
+  display: 'grid',
+  gap: '0.75rem',
   gridTemplateColumns: 'repeat(auto-fit, minmax(14rem, 1fr))'
 }
 
