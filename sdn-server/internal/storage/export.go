@@ -1,0 +1,289 @@
+package storage
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+// DatasetExport describes a deterministic local dataset export.
+type DatasetExport struct {
+	SchemaName   string
+	RecordCount  int
+	QuerySHA256  string
+	ResultSHA256 string
+	ShardPath    string
+	ShardSHA256  string
+	ShardBytes   int64
+	IndexPath    string
+	IndexSHA256  string
+	IndexBytes   int64
+}
+
+// DatasetExportIndex is the replayable query/index sidecar for a shard.
+type DatasetExportIndex struct {
+	Version      int                          `json:"version"`
+	SchemaName   string                       `json:"schemaName"`
+	ProviderID   string                       `json:"providerId,omitempty"`
+	SourceName   string                       `json:"sourceName,omitempty"`
+	BatchID      string                       `json:"batchId,omitempty"`
+	QuerySHA256  string                       `json:"querySha256"`
+	ResultSHA256 string                       `json:"resultSha256"`
+	ShardSHA256  string                       `json:"shardSha256"`
+	ShardFile    string                       `json:"shardFile"`
+	RecordCount  int                          `json:"recordCount"`
+	Records      []DatasetExportIndexRecord   `json:"records"`
+	Indexes      DatasetExportMaterializedMap `json:"indexes"`
+}
+
+// DatasetExportIndexRecord records byte offsets and indexed fields for one shard entry.
+type DatasetExportIndexRecord struct {
+	CID           string     `json:"cid"`
+	Offset        int64      `json:"offset"`
+	Length        int64      `json:"length"`
+	NoradCatID    *uint32    `json:"noradCatId,omitempty"`
+	EntityID      string     `json:"entityId,omitempty"`
+	ObjectType    string     `json:"objectType,omitempty"`
+	OpsStatusCode string     `json:"opsStatusCode,omitempty"`
+	EpochUnix     *int64     `json:"epochUnix,omitempty"`
+	EpochDay      string     `json:"epochDay,omitempty"`
+	SourceTags    SourceTags `json:"sourceTags"`
+}
+
+// DatasetExportMaterializedMap stores compact query indexes for shard consumers.
+type DatasetExportMaterializedMap struct {
+	ByNORAD         map[string][]int `json:"byNorad,omitempty"`
+	ByEntityID      map[string][]int `json:"byEntityId,omitempty"`
+	ByObjectType    map[string][]int `json:"byObjectType,omitempty"`
+	ByOpsStatusCode map[string][]int `json:"byOpsStatusCode,omitempty"`
+	CAReadyResident []int            `json:"caReadyResident,omitempty"`
+	ActivePayloads  []int            `json:"activePayloads,omitempty"`
+}
+
+// ExportDatasetWindow writes length-prefixed FlatBuffer shard bytes and a
+// deterministic materialized index for an indexed FlatSQL query.
+func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecordQuery) (*DatasetExport, error) {
+	if outputDir == "" {
+		return nil, fmt.Errorf("output dir is required")
+	}
+	if filter.SchemaName == "" {
+		return nil, fmt.Errorf("schema name is required")
+	}
+
+	records, err := s.QueryIndexedRecords(filter)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return nil, fmt.Errorf("no records match export query")
+	}
+
+	querySHA, err := hashCanonicalQuery(filter)
+	if err != nil {
+		return nil, err
+	}
+
+	shard := bytes.Buffer{}
+	indexRecords := make([]DatasetExportIndexRecord, 0, len(records))
+	for _, record := range records {
+		if len(record.Data) > int(^uint32(0)) {
+			return nil, fmt.Errorf("record %s exceeds uint32 shard frame length", record.CID)
+		}
+		offset := int64(shard.Len())
+		if err := binary.Write(&shard, binary.BigEndian, uint32(len(record.Data))); err != nil {
+			return nil, fmt.Errorf("write shard length: %w", err)
+		}
+		if _, err := shard.Write(record.Data); err != nil {
+			return nil, fmt.Errorf("write shard record: %w", err)
+		}
+
+		fields, err := extractIndexedFields(filter.SchemaName, record.Data)
+		if err != nil {
+			return nil, fmt.Errorf("extract index fields for %s: %w", record.CID, err)
+		}
+		tags, _ := s.GetSourceTags(filter.SchemaName, record.CID)
+		indexRecords = append(indexRecords, DatasetExportIndexRecord{
+			CID:           record.CID,
+			Offset:        offset,
+			Length:        int64(len(record.Data)),
+			NoradCatID:    fields.noradCatID,
+			EntityID:      fields.entityID,
+			ObjectType:    fields.objectType,
+			OpsStatusCode: fields.opsStatusCode,
+			EpochUnix:     fields.epochUnix,
+			EpochDay:      fields.epochDay,
+			SourceTags:    tags,
+		})
+	}
+
+	shardBytes := shard.Bytes()
+	shardSHA := sha256Hex(shardBytes)
+	index := DatasetExportIndex{
+		Version:      1,
+		SchemaName:   filter.SchemaName,
+		ProviderID:   filter.ProviderID,
+		SourceName:   filter.SourceName,
+		BatchID:      filter.BatchID,
+		QuerySHA256:  querySHA,
+		ResultSHA256: shardSHA,
+		ShardSHA256:  shardSHA,
+		ShardFile:    fmt.Sprintf("%s-%s.fbshard", querySHA[:16], shardSHA[:16]),
+		RecordCount:  len(indexRecords),
+		Records:      indexRecords,
+		Indexes:      buildDatasetExportIndexes(indexRecords),
+	}
+	indexBytes, err := json.MarshalIndent(index, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal dataset export index: %w", err)
+	}
+	indexBytes = append(indexBytes, '\n')
+	indexSHA := sha256Hex(indexBytes)
+
+	shardPath := filepath.Join(outputDir, "shards", index.ShardFile)
+	indexPath := filepath.Join(outputDir, "indexes", fmt.Sprintf("%s-%s.index.json", querySHA[:16], indexSHA[:16]))
+	if err := writeImmutableExportFile(shardPath, shardBytes); err != nil {
+		return nil, err
+	}
+	if err := writeImmutableExportFile(indexPath, indexBytes); err != nil {
+		return nil, err
+	}
+
+	return &DatasetExport{
+		SchemaName:   filter.SchemaName,
+		RecordCount:  len(records),
+		QuerySHA256:  querySHA,
+		ResultSHA256: shardSHA,
+		ShardPath:    shardPath,
+		ShardSHA256:  shardSHA,
+		ShardBytes:   int64(len(shardBytes)),
+		IndexPath:    indexPath,
+		IndexSHA256:  indexSHA,
+		IndexBytes:   int64(len(indexBytes)),
+	}, nil
+}
+
+func buildDatasetExportIndexes(records []DatasetExportIndexRecord) DatasetExportMaterializedMap {
+	indexes := DatasetExportMaterializedMap{
+		ByNORAD:         map[string][]int{},
+		ByEntityID:      map[string][]int{},
+		ByObjectType:    map[string][]int{},
+		ByOpsStatusCode: map[string][]int{},
+	}
+	for i, record := range records {
+		if record.NoradCatID != nil {
+			key := fmt.Sprintf("%d", *record.NoradCatID)
+			indexes.ByNORAD[key] = append(indexes.ByNORAD[key], i)
+		}
+		if record.EntityID != "" {
+			indexes.ByEntityID[record.EntityID] = append(indexes.ByEntityID[record.EntityID], i)
+		}
+		if record.ObjectType != "" {
+			indexes.ByObjectType[record.ObjectType] = append(indexes.ByObjectType[record.ObjectType], i)
+		}
+		if record.OpsStatusCode != "" {
+			indexes.ByOpsStatusCode[record.OpsStatusCode] = append(indexes.ByOpsStatusCode[record.OpsStatusCode], i)
+		}
+		if record.NoradCatID != nil && record.ObjectType == "PAYLOAD" {
+			indexes.CAReadyResident = append(indexes.CAReadyResident, i)
+		}
+		if record.ObjectType == "PAYLOAD" && isActiveCatalogOpsStatus(record.OpsStatusCode) {
+			indexes.ActivePayloads = append(indexes.ActivePayloads, i)
+		}
+	}
+	return indexes
+}
+
+func isActiveCatalogOpsStatus(status string) bool {
+	switch status {
+	case "OPERATIONAL", "PARTIALLY_OPERATIONAL", "BACKUP_STANDBY", "SPARE", "EXTENDED_MISSION", "UNKNOWN", "":
+		return true
+	default:
+		return false
+	}
+}
+
+func hashCanonicalQuery(filter IndexedRecordQuery) (string, error) {
+	payload := struct {
+		SchemaName         string  `json:"schemaName"`
+		Day                string  `json:"day,omitempty"`
+		NoradCatID         *uint32 `json:"noradCatId,omitempty"`
+		EntityID           string  `json:"entityId,omitempty"`
+		ObjectType         string  `json:"objectType,omitempty"`
+		OpsStatusCode      string  `json:"opsStatusCode,omitempty"`
+		ActivePayloads     bool    `json:"activePayloads,omitempty"`
+		CAReadyResidentSet bool    `json:"caReadyResidentSet,omitempty"`
+		From               string  `json:"from,omitempty"`
+		To                 string  `json:"to,omitempty"`
+		ProviderID         string  `json:"providerId,omitempty"`
+		SourceName         string  `json:"sourceName,omitempty"`
+		BatchID            string  `json:"batchId,omitempty"`
+		Limit              int     `json:"limit,omitempty"`
+	}{
+		SchemaName:         filter.SchemaName,
+		Day:                filter.Day,
+		NoradCatID:         filter.NoradCatID,
+		EntityID:           filter.EntityID,
+		ObjectType:         filter.ObjectType,
+		OpsStatusCode:      filter.OpsStatusCode,
+		ActivePayloads:     filter.ActivePayloads,
+		CAReadyResidentSet: filter.CAReadyResidentSet,
+		ProviderID:         filter.ProviderID,
+		SourceName:         filter.SourceName,
+		BatchID:            filter.BatchID,
+		Limit:              filter.Limit,
+	}
+	if filter.From != nil {
+		payload.From = filter.From.UTC().Format(time.RFC3339Nano)
+	}
+	if filter.To != nil {
+		payload.To = filter.To.UTC().Format(time.RFC3339Nano)
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return sha256Hex(data), nil
+}
+
+func writeImmutableExportFile(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("create export directory: %w", err)
+	}
+	if existing, err := os.ReadFile(path); err == nil {
+		if bytes.Equal(existing, data) {
+			return nil
+		}
+		return fmt.Errorf("refusing to overwrite immutable export file %s with different bytes", path)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read existing export file %s: %w", path, err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create export temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write export temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close export temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("commit export file: %w", err)
+	}
+	return nil
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
