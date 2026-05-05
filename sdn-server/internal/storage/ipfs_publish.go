@@ -14,8 +14,9 @@ import (
 
 // PublishedDatasetExport records the IPFS CIDs returned for exported bytes.
 type PublishedDatasetExport struct {
-	ShardCID string
-	IndexCID string
+	ShardCID    string
+	IndexCID    string
+	ManifestCID string
 }
 
 // PublishDatasetExportToIPFS pins exported shard and index bytes through a Kubo RPC API.
@@ -39,6 +40,18 @@ func PublishDatasetExportToIPFS(ctx context.Context, ipfsAPIURL string, export *
 		ShardCID: shardCID,
 		IndexCID: indexCID,
 	}, nil
+}
+
+// PublishDatasetPublicationManifestToIPFS pins a signed dataset manifest through a Kubo RPC API.
+func PublishDatasetPublicationManifestToIPFS(ctx context.Context, ipfsAPIURL string, manifest *DatasetPublicationManifest) (string, error) {
+	if manifest == nil {
+		return "", fmt.Errorf("dataset publication manifest is required")
+	}
+	manifestCID, err := pinRawBlock(ctx, ipfsAPIURL, manifest.Path, manifest.CID)
+	if err != nil {
+		return "", fmt.Errorf("pin manifest: %w", err)
+	}
+	return manifestCID, nil
 }
 
 func pinRawBlock(ctx context.Context, ipfsAPIURL, path, expectedCID string) (string, error) {
