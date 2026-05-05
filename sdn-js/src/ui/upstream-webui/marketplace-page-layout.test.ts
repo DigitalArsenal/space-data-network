@@ -63,4 +63,20 @@ describe('marketplace page layout', () => {
     expect(source).toContain('Encrypted CID');
     expect(source).toContain('licensing/core');
   });
+
+  it('renders listing detail views with provider, terms, schema, verification, and CID evidence', async () => {
+    const source = await readFile(marketplacePagePath, 'utf8');
+
+    expect(source).toContain('ListingDetailView');
+    expect(source).toContain('selectedListingKey');
+    expect(source).toContain('View details');
+    expect(source).toContain('Provider identity');
+    expect(source).toContain('Provider peer ID');
+    expect(source).toContain('Terms');
+    expect(source).toContain('Supported schemas');
+    expect(source).toContain('Verification state');
+    expect(source).toContain('Sample CID');
+    expect(source).toContain('Manifest CID');
+    expect(source).toContain('verificationState');
+  });
 });

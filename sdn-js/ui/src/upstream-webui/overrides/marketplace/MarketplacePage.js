@@ -14,6 +14,7 @@ function MarketplacePage() {
   const [providerFilter, setProviderFilter] = useState(ALL_VALUE)
   const [paymentFilter, setPaymentFilter] = useState(ALL_VALUE)
   const [statusFilter, setStatusFilter] = useState(ALL_VALUE)
+  const [selectedListingKey, setSelectedListingKey] = useState(null)
 
   async function refreshMarketplace() {
     setStatus('loading')
@@ -64,6 +65,23 @@ function MarketplacePage() {
     () => buildStoreFeed(searchResults, search),
     [searchResults, search]
   )
+  const visibleListings = useMemo(
+    () => [
+      ...searchResults.plugins.map((result) => result.listing),
+      ...dataListings
+    ],
+    [searchResults.plugins, dataListings]
+  )
+  const selectedListing = useMemo(
+    () => visibleListings.find((listing) => listingKey(listing) === selectedListingKey) || visibleListings[0] || null,
+    [selectedListingKey, visibleListings]
+  )
+
+  useEffect(() => {
+    if (selectedListingKey && !visibleListings.some((listing) => listingKey(listing) === selectedListingKey)) {
+      setSelectedListingKey(null)
+    }
+  }, [selectedListingKey, visibleListings])
 
   return (
     <main className='sdn-marketplace-page w-100 ph3 ph4-l pv3' style={pageStyle}>
@@ -140,7 +158,12 @@ function MarketplacePage() {
           <h2 className='f4 mt0 mb3'>Modules</h2>
           <div className='grid' style={cardGridStyle}>
             {searchResults.plugins.map((result) => (
-              <PluginListingCard key={result.key} result={result} />
+              <PluginListingCard
+                key={result.key}
+                result={result}
+                selected={selectedListing && listingKey(result.listing) === listingKey(selectedListing)}
+                onSelect={() => setSelectedListingKey(listingKey(result.listing))}
+              />
             ))}
             {searchResults.plugins.length === 0 && (
               <EmptyState text='No module listings match these filters.' />
@@ -152,7 +175,12 @@ function MarketplacePage() {
           <h2 className='f4 mt0 mb3'>Data</h2>
           <div className='grid' style={cardGridStyle}>
             {dataListings.map((listing) => (
-              <DataListingCard key={`${listing.pluginId}@${listing.version}`} listing={listing} />
+              <DataListingCard
+                key={listingKey(listing)}
+                listing={listing}
+                selected={selectedListing && listingKey(listing) === listingKey(selectedListing)}
+                onSelect={() => setSelectedListingKey(listingKey(listing))}
+              />
             ))}
             {searchResults.data.map((result) => (
               <DataStandardCard key={result.key} result={result} />
@@ -163,6 +191,10 @@ function MarketplacePage() {
           </div>
         </section>
       </section>
+
+      {selectedListing && (
+        <ListingDetailView listing={selectedListing} />
+      )}
 
       <section className='mt3'>
         <h2 className='f5 mt0 mb2'>{feed.mode === 'search' ? 'Search feed' : 'Popular feed'}</h2>
@@ -199,10 +231,10 @@ function SelectFilter({ label, ariaLabel, value, options, onChange }) {
   )
 }
 
-function PluginListingCard({ result }) {
+function PluginListingCard({ result, selected, onSelect }) {
   const listing = result.listing
   return (
-    <article className='ba b--black-10 br2 bg-white pa3' style={cardStyle}>
+    <article className={`ba br2 bg-white pa3 ${selected ? 'b--blue shadow-1' : 'b--black-10'}`} style={cardStyle}>
       <div className='flex items-start justify-between mb2'>
         <div className='pr3'>
           <h3 className='f5 mv0'>{listing.name || listing.pluginId}</h3>
@@ -220,13 +252,20 @@ function PluginListingCard({ result }) {
       <KeyLine label='Scope' value={listing.requiredScope || 'not specified'} />
       <ProtectedDeliveryDetails listing={listing} />
       <ChipList values={result.standardsUsed} empty='No SDS schemas advertised.' />
+      <button
+        type='button'
+        className='button-reset ba b--blue bg-blue white br2 pv2 ph3 mt3 pointer hover-bg-dark-blue'
+        onClick={onSelect}
+      >
+        View details
+      </button>
     </article>
   )
 }
 
-function DataListingCard({ listing }) {
+function DataListingCard({ listing, selected, onSelect }) {
   return (
-    <article className='ba b--black-10 br2 bg-white pa3' style={cardStyle}>
+    <article className={`ba br2 bg-white pa3 ${selected ? 'b--blue shadow-1' : 'b--black-10'}`} style={cardStyle}>
       <div className='flex items-start justify-between mb2'>
         <div className='pr3'>
           <h3 className='f5 mv0'>{listing.name || listing.pluginId}</h3>
@@ -244,7 +283,59 @@ function DataListingCard({ listing }) {
       <KeyLine label='Sample CID' value={listing.sampleCid || 'not specified'} />
       <ProtectedDeliveryDetails listing={listing} />
       <ChipList values={listing.standardsUsed} empty='No SDS data types advertised.' />
+      <button
+        type='button'
+        className='button-reset ba b--blue bg-blue white br2 pv2 ph3 mt3 pointer hover-bg-dark-blue'
+        onClick={onSelect}
+      >
+        View details
+      </button>
     </article>
+  )
+}
+
+function ListingDetailView({ listing }) {
+  const protectedDelivery = listing.protectedDelivery || {}
+  const detailRows = [
+    ['Provider identity', providerLabel(listing)],
+    ['Provider peer ID', listing.publisherPeerId],
+    ['Provider EPM CID', listing.providerEpmCid],
+    ['Terms', formatTerms(listing)],
+    ['Pricing', formatPricing(listing)],
+    ['Payment methods', (listing.acceptedPaymentMethods ?? []).join(', ')],
+    ['Supported schemas', (listing.standardsUsed ?? []).join(', ')],
+    ['Verification state', verificationState(listing)],
+    ['Sample CID', listing.sampleCid],
+    ['Encrypted CID', protectedDelivery.encryptedCid],
+    ['Manifest CID', protectedDelivery.manifestCid],
+    ['Content hash', protectedDelivery.contentHash],
+    ['License module', protectedDelivery.licenseModuleId || (listing.encryptionRequired ? 'licensing/core' : '')],
+    ['Grant scope', listing.requiredScope || protectedDelivery.grantScope],
+    ['Delivery protocol', protectedDelivery.deliveryProtocol]
+  ]
+
+  return (
+    <section className='mt4 pt3 bt b--black-10'>
+      <div className='flex flex-column flex-row-l justify-between-l items-start-l mb3'>
+        <div className='pr4-l'>
+          <h2 className='f3 mt0 mb1'>{listing.name || listing.pluginId}</h2>
+          <div className='f6 black-60'>{listing.pluginId} @ {listing.version}</div>
+        </div>
+        <ListingStatus status={listing.status} />
+      </div>
+      {listing.description && <p className='measure-wide black-70 mt0 mb3'>{listing.description}</p>}
+      <div className='grid' style={detailGridStyle}>
+        {detailRows
+          .filter(([, value]) => value)
+          .map(([label, value]) => (
+            <div key={label} className='pv2 bb b--black-10'>
+              <div className='f7 ttu tracked black-50'>{label}</div>
+              <div className='f6 black-80 mt1 break-word'>{value}</div>
+            </div>
+          ))}
+      </div>
+      <ChipList values={listing.tags} empty='No listing tags advertised.' />
+    </section>
   )
 }
 
@@ -385,6 +476,30 @@ function formatPricing(listing) {
   return `${price} one-time`
 }
 
+function formatTerms(listing) {
+  const access = listing.accessType || listing.listingKind || 'listing'
+  const payment = listing.paymentModel || 'free'
+  const period = listing.subscriptionPeriodDays ? `${listing.subscriptionPeriodDays} day term` : ''
+  return [access, payment, period].filter(Boolean).join(' / ')
+}
+
+function verificationState(listing) {
+  if (listing.status === 'retired') {
+    return 'Retired by provider'
+  }
+  if (listing.publisherPeerId && (listing.protectedDelivery?.encryptedCid || listing.sampleCid)) {
+    return listing.encryptionRequired ? 'Provider-bound encrypted artifact' : 'Provider-bound listing'
+  }
+  if (listing.publisherPeerId) {
+    return 'Provider identity present'
+  }
+  return 'Metadata only'
+}
+
+function listingKey(listing) {
+  return `${listing.listingKind || 'listing'}:${listing.pluginId}:${listing.version}`
+}
+
 function feedEntryLabel(entry) {
   if (entry.kind === 'plugin') {
     return entry.listing.name || entry.listing.pluginId
@@ -425,6 +540,12 @@ const cardGridStyle = {
 
 const cardStyle = {
   minWidth: 0
+}
+
+const detailGridStyle = {
+  display: 'grid',
+  gap: '0 1rem',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(14rem, 1fr))'
 }
 
 export default MarketplacePage
