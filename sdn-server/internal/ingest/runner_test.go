@@ -17,6 +17,7 @@ import (
 	CATFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	OMMFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	SPWFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
 func newTestRunner(t *testing.T) *Runner {
@@ -243,6 +244,30 @@ func TestSyncCelestrakSpaceWeatherRecordsBatchProvenance(t *testing.T) {
 	}
 	if len(provenance.Warnings) != 0 {
 		t.Fatalf("warnings = %v, want none", provenance.Warnings)
+	}
+
+	tagged, err := runner.store.QuerySourceTaggedRecords(storage.SourceTagQuery{
+		SchemaName: "SPW.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-space-weather",
+		BatchID:    provenance.SourceSHA256,
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("QuerySourceTaggedRecords failed: %v", err)
+	}
+	if len(tagged) != 2 {
+		t.Fatalf("tagged SPW records = %d, want 2", len(tagged))
+	}
+	gotTags, err := runner.store.GetSourceTags("SPW.fbs", tagged[0].CID)
+	if err != nil {
+		t.Fatalf("GetSourceTags failed: %v", err)
+	}
+	if gotTags.SourceURL != server.URL+"/SW-All.csv" {
+		t.Fatalf("tag SourceURL = %q, want %q", gotTags.SourceURL, server.URL+"/SW-All.csv")
+	}
+	if gotTags.ContentKeyID != "public" {
+		t.Fatalf("tag ContentKeyID = %q, want public", gotTags.ContentKeyID)
 	}
 }
 

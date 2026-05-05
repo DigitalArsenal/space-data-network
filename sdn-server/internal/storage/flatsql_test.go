@@ -81,6 +81,79 @@ func TestFlatSQLStoreStoreAndGet(t *testing.T) {
 	}
 }
 
+func TestFlatSQLStoreStoreWithSourceTags(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-tags-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	testData := []byte(`{"satellite": "ISS", "norad_id": 25544}`)
+	tags := SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		BatchID:      "20260505T120000Z",
+		ContentKeyID: "public",
+	}
+
+	cid, err := store.StoreWithSourceTags("OMM.fbs", testData, "source:celestrak", nil, tags)
+	if err != nil {
+		t.Fatalf("StoreWithSourceTags failed: %v", err)
+	}
+
+	gotTags, err := store.GetSourceTags("OMM.fbs", cid)
+	if err != nil {
+		t.Fatalf("GetSourceTags failed: %v", err)
+	}
+	if gotTags.ProviderID != tags.ProviderID {
+		t.Fatalf("ProviderID = %q, want %q", gotTags.ProviderID, tags.ProviderID)
+	}
+	if gotTags.SourceName != tags.SourceName {
+		t.Fatalf("SourceName = %q, want %q", gotTags.SourceName, tags.SourceName)
+	}
+	if gotTags.SourceURL != tags.SourceURL {
+		t.Fatalf("SourceURL = %q, want %q", gotTags.SourceURL, tags.SourceURL)
+	}
+	if gotTags.BatchID != tags.BatchID {
+		t.Fatalf("BatchID = %q, want %q", gotTags.BatchID, tags.BatchID)
+	}
+	if gotTags.ContentKeyID != tags.ContentKeyID {
+		t.Fatalf("ContentKeyID = %q, want %q", gotTags.ContentKeyID, tags.ContentKeyID)
+	}
+
+	matches, err := store.QuerySourceTaggedRecords(SourceTagQuery{
+		SchemaName: "OMM.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-gp",
+		BatchID:    "20260505T120000Z",
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("QuerySourceTaggedRecords failed: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("QuerySourceTaggedRecords returned %d records, want 1", len(matches))
+	}
+	if matches[0].CID != cid {
+		t.Fatalf("matched CID = %q, want %q", matches[0].CID, cid)
+	}
+	if string(matches[0].Data) != string(testData) {
+		t.Fatalf("matched data = %s, want %s", matches[0].Data, testData)
+	}
+}
+
 func TestFlatSQLStoreGetNotFound(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-test-*")
 	if err != nil {

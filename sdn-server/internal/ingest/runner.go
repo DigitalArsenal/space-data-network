@@ -43,6 +43,8 @@ const (
 	defaultSpaceTrackLoginURL       = "https://www.space-track.org/ajaxauth/login"
 	defaultSpaceTrackQueryTmpl      = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/%s--%s/format/csv"
 	minCelestrakFetchInterval       = 3 * time.Hour
+	celestrakProviderID             = "space-data-network-02"
+	publicContentKeyID              = "public"
 	parserVersionCelestrakGP        = "celestrak-gp/v1"
 	parserVersionCelestrakSatcat    = "celestrak-satcat/v1"
 	parserVersionCelestrakSatcatCSV = "celestrak-satcat-csv/v1"
@@ -299,7 +301,8 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 		log.Infof("Using cached CelesTrak GP payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
 	}
 
-	countOMM, countMPE, normalizedHash, err := r.ingestGPData(data, "source:celestrak")
+	tags := sourceTags(celestrakProviderID, "celestrak-gp", metadata.SourceURL, data)
+	countOMM, countMPE, normalizedHash, err := r.ingestGPData(data, "source:celestrak", tags)
 	if err != nil {
 		return fmt.Errorf("ingest celestrak catalog: %w", err)
 	}
@@ -353,7 +356,8 @@ func (r *Runner) syncCelestrakSatcatSource(ctx context.Context, sourceURL, cache
 		log.Infof("Using cached CelesTrak SATCAT payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
 	}
 
-	countCAT, normalizedHash, err := r.ingestSatcatData(data, "source:celestrak")
+	tags := sourceTags(celestrakProviderID, provenanceSource, metadata.SourceURL, data)
+	countCAT, normalizedHash, err := r.ingestSatcatData(data, "source:celestrak", tags)
 	if err != nil {
 		return 0, fmt.Errorf("ingest celestrak satcat: %w", err)
 	}
@@ -380,7 +384,8 @@ func (r *Runner) syncCelestrakSpaceWeather(ctx context.Context) error {
 		log.Infof("Using cached CelesTrak space weather payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
 	}
 
-	countSPW, normalizedHash, err := r.ingestSpaceWeatherData(data, "source:celestrak")
+	tags := sourceTags(celestrakProviderID, "celestrak-space-weather", metadata.SourceURL, data)
+	countSPW, normalizedHash, err := r.ingestSpaceWeatherData(data, "source:celestrak", tags)
 	if err != nil {
 		return fmt.Errorf("ingest celestrak space weather: %w", err)
 	}
@@ -446,7 +451,8 @@ func (r *Runner) syncSpaceTrackGapFill(ctx context.Context) error {
 			log.Warnf("Failed to archive Space-Track data %s: %v", archiveName, err)
 		}
 
-		countOMM, countMPE, normalizedHash, err := r.ingestGPData(data, "source:spacetrack")
+		tags := sourceTags("space-track", "spacetrack-gp-history", metadata.SourceURL, data)
+		countOMM, countMPE, normalizedHash, err := r.ingestGPData(data, "source:spacetrack", tags)
 		if err != nil {
 			return fmt.Errorf("ingest spacetrack range %s..%s: %w", batchStart.Format("2006-01-02"), batchEnd.Format("2006-01-02"), err)
 		}
@@ -523,7 +529,7 @@ func (r *Runner) spaceTrackLogin(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runner) ingestGPData(content []byte, sourcePeer string) (int, int, string, error) {
+func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage.SourceTags) (int, int, string, error) {
 	var countOMM, countMPE int
 	normalized := sha256.New()
 
@@ -566,7 +572,7 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string) (int, int, stri
 		}
 
 		ommBytes := builder.Build()
-		if _, err := r.store.Store("OMM.fbs", ommBytes, sourcePeer, nil); err != nil {
+		if _, err := r.storeIngestRecord("OMM.fbs", ommBytes, sourcePeer, tags...); err != nil {
 			return countOMM, countMPE, "", err
 		}
 		writeNormalizedHashRecord(normalized, "OMM.fbs", ommBytes)
@@ -589,7 +595,7 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string) (int, int, stri
 			parseFloatOrZero(getValue(row, "MEAN_ANOMALY", "MA")),
 			parseFloatOrZero(getValue(row, "BSTAR", "B_STAR")),
 		)
-		if _, err := r.store.Store("MPE.fbs", mpeBytes, sourcePeer, nil); err != nil {
+		if _, err := r.storeIngestRecord("MPE.fbs", mpeBytes, sourcePeer, tags...); err != nil {
 			return countOMM, countMPE, "", err
 		}
 		writeNormalizedHashRecord(normalized, "MPE.fbs", mpeBytes)
@@ -602,7 +608,7 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string) (int, int, stri
 	return countOMM, countMPE, hex.EncodeToString(normalized.Sum(nil)), nil
 }
 
-func (r *Runner) ingestSatcatData(content []byte, sourcePeer string) (int, string, error) {
+func (r *Runner) ingestSatcatData(content []byte, sourcePeer string, tags ...storage.SourceTags) (int, string, error) {
 	rows, err := parseSatcatRows(content)
 	if err != nil {
 		return 0, "", err
@@ -642,7 +648,7 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string) (int, strin
 		}
 
 		catBytes := builder.Build()
-		if _, err := r.store.Store("CAT.fbs", catBytes, sourcePeer, nil); err != nil {
+		if _, err := r.storeIngestRecord("CAT.fbs", catBytes, sourcePeer, tags...); err != nil {
 			return count, "", err
 		}
 		writeNormalizedHashRecord(normalized, "CAT.fbs", catBytes)
@@ -655,7 +661,7 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string) (int, strin
 	return count, hex.EncodeToString(normalized.Sum(nil)), nil
 }
 
-func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string) (int, string, error) {
+func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string, tags ...storage.SourceTags) (int, string, error) {
 	rows, err := parseCSV(content)
 	if err != nil {
 		return 0, "", err
@@ -670,7 +676,7 @@ func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string) (int,
 		}
 
 		spwBytes := buildSPW(row, spwDate)
-		if _, err := r.store.Store("SPW.fbs", spwBytes, sourcePeer, nil); err != nil {
+		if _, err := r.storeIngestRecord("SPW.fbs", spwBytes, sourcePeer, tags...); err != nil {
 			return count, "", err
 		}
 		writeNormalizedHashRecord(normalized, "SPW.fbs", spwBytes)
@@ -680,6 +686,28 @@ func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string) (int,
 		return 0, "", fmt.Errorf("no SPW rows parsed")
 	}
 	return count, hex.EncodeToString(normalized.Sum(nil)), nil
+}
+
+func (r *Runner) storeIngestRecord(schemaName string, data []byte, sourcePeer string, tags ...storage.SourceTags) (string, error) {
+	if len(tags) == 0 {
+		return r.store.Store(schemaName, data, sourcePeer, nil)
+	}
+	return r.store.StoreWithSourceTags(schemaName, data, sourcePeer, nil, tags[0])
+}
+
+func sourceTags(providerID, sourceName, sourceURL string, data []byte) storage.SourceTags {
+	return storage.SourceTags{
+		ProviderID:   providerID,
+		SourceName:   sourceName,
+		SourceURL:    sourceURL,
+		BatchID:      sourceSHA256(data),
+		ContentKeyID: publicContentKeyID,
+	}
+}
+
+func sourceSHA256(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func archiveFilenameForURL(rawURL, fallback string) string {
