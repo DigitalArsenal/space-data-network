@@ -16,11 +16,11 @@
 - Modify: `sdn-js/src/ui/upstream-webui/branding.test.ts`
 - Create: `sdn-js/src/ui/upstream-webui/upstream-mirror-boundary.test.ts`
 
-- [ ] **Step 1: Add a failing mirror boundary test**
+- [x] **Step 1: Add a failing mirror boundary test**
 
 Create `sdn-js/src/ui/upstream-webui/upstream-mirror-boundary.test.ts` with assertions that `webui/src/navigation/NavBar.js` does not import SDN assets or link `/webui`, and that desktop WebUI loading does not depend on `webui://-` in Kubo CORS instructions.
 
-- [ ] **Step 2: Verify the test fails on current drift**
+- [x] **Step 2: Verify the test fails on current drift**
 
 Run:
 
@@ -30,11 +30,11 @@ npm --prefix sdn-js exec vitest run src/ui/upstream-webui/upstream-mirror-bounda
 
 Expected: fail if SDN-specific behavior remains in mirror files or custom scheme CORS is required.
 
-- [ ] **Step 3: Move mirror drift into overlays or patch files**
+- [x] **Step 3: Move mirror drift into overlays or patch files**
 
 Move SDN behavior out of `webui/` and `desktop/` mirror paths into SDN-owned overlay or patch files. Keep upstream mirror files as close to upstream as possible.
 
-- [ ] **Step 4: Verify the boundary test passes**
+- [x] **Step 4: Verify the boundary test passes**
 
 Run:
 
@@ -43,6 +43,13 @@ npm --prefix sdn-js exec vitest run src/ui/upstream-webui/upstream-mirror-bounda
 ```
 
 Expected: pass.
+
+2026-05-05 verification note: the new boundary test failed against the previous
+desktop CORS migration because `desktop/src/daemon/config.js` and launch e2e
+tests required `sdn://-` / `webui://-`. Desktop now serves bundled SDN UI and
+WebUI assets from a local HTTP origin and configures Kubo CORS for that origin.
+`npm --prefix sdn-js exec vitest run src/ui/upstream-webui/upstream-mirror-boundary.test.ts`
+passes.
 
 ### Task 2: Add One Upstream Update Command
 

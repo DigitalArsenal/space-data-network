@@ -74,6 +74,18 @@ test.describe.serial('Application launch', async () => {
     return { peerId }
   }
 
+  function expectDesktopCorsOrigins (origins, extraOrigins = []) {
+    expect(origins).toEqual(expect.arrayContaining([
+      ...extraOrigins,
+      'https://webui.ipfs.io'
+    ]))
+    expect(origins.some(origin => /^http:\/\/127\.0\.0\.1:\d+$/.test(origin))).toBe(true)
+    expect(origins.some(origin => /^http:\/\/webui\.ipfs\.io\.ipns\.localhost:\d+$/.test(origin))).toBe(true)
+    for (const origin of ['sdn', 'webui'].map(scheme => `${scheme}://-`)) {
+      expect(origins).not.toContain(origin)
+    }
+  }
+
   test('creates a repository on startup', async () => {
     const { app, repoPath } = await startApp({})
     const { peerId } = await daemonReady(app)
@@ -83,8 +95,8 @@ test.describe.serial('Application launch', async () => {
     expect(config).toBeDefined()
     // confirm PeerID is matching one from repoPath/config
     expect(config.Identity.PeerID).toBe(peerId)
-    // ensure strict CORS checking is enabled
-    expect(config.API.HTTPHeaders).toEqual({})
+    // ensure CORS is limited to upstream-compatible WebUI origins.
+    expectDesktopCorsOrigins(config.API.HTTPHeaders['Access-Control-Allow-Origin'])
     expect(config.Discovery.MDNS.Enabled).toBeTruthy()
   })
 
@@ -131,13 +143,7 @@ test.describe.serial('Application launch', async () => {
 
     const config = fs.readJsonSync(configPath)
     // ensure app has migrated config
-    expect(config.API.HTTPHeaders['Access-Control-Allow-Origin']).toEqual([
-      'https://127.0.0.1:4040',
-      'sdn://-',
-      'webui://-',
-      'https://webui.ipfs.io',
-      'http://webui.ipfs.io.ipns.localhost:0' // ipfsd 'test' profile uses '/ip4/127.0.0.1/tcp/0'
-    ])
+    expectDesktopCorsOrigins(config.API.HTTPHeaders['Access-Control-Allow-Origin'], ['https://127.0.0.1:4040'])
   })
 
   test('applies config migration (Web UI CORS 2)', async () => {
@@ -154,12 +160,7 @@ test.describe.serial('Application launch', async () => {
 
     const config = fs.readJsonSync(configPath)
     // ensure app has migrated config
-    expect(config.API.HTTPHeaders['Access-Control-Allow-Origin']).toEqual([
-      'sdn://-',
-      'webui://-',
-      'https://webui.ipfs.io',
-      'http://webui.ipfs.io.ipns.localhost:0' // ipfsd 'test' profile uses '/ip4/127.0.0.1/tcp/0'
-    ])
+    expectDesktopCorsOrigins(config.API.HTTPHeaders['Access-Control-Allow-Origin'])
   })
 
   test('applies config migration (Web UI CORS 3)', async () => {
@@ -176,12 +177,7 @@ test.describe.serial('Application launch', async () => {
 
     const config = fs.readJsonSync(configPath)
     // ensure app has migrated config
-    expect(config.API.HTTPHeaders['Access-Control-Allow-Origin']).toEqual([
-      'sdn://-',
-      'webui://-',
-      'https://webui.ipfs.io',
-      'http://webui.ipfs.io.ipns.localhost:0' // ipfsd 'test' profile uses '/ip4/127.0.0.1/tcp/0'
-    ])
+    expectDesktopCorsOrigins(config.API.HTTPHeaders['Access-Control-Allow-Origin'])
   })
 
   test('applies config migration v4 (old custom ConnMgr)', async () => {

@@ -8,6 +8,9 @@ const store = require('../common/store')
 const logger = require('../common/logger')
 const dialogs = require('./dialogs')
 
+const CUSTOM_SCHEME_ORIGIN_SUFFIX = '://-'
+const SDN_CUSTOM_SCHEME_ORIGINS = Object.freeze(['sdn', 'webui'].map(scheme => `${scheme}${CUSTOM_SCHEME_ORIGIN_SUFFIX}`))
+
 /**
  * Get repository configuration file path.
  *
@@ -145,6 +148,59 @@ function getHttpPort (addrs) {
  */
 const getGatewayPort = (config) => getHttpPort(config.Addresses.Gateway)
 
+function normalizeCorsOrigins (origins) {
+  if (Array.isArray(origins)) {
+    return origins
+  }
+
+  return typeof origins === 'string'
+    ? [origins]
+    : []
+}
+
+function ensureCorsOriginsForConfig (config, origins) {
+  const api = config.API || {}
+  const httpHeaders = api.HTTPHeaders || {}
+  const existingOrigins = normalizeCorsOrigins(httpHeaders['Access-Control-Allow-Origin'])
+  const nextOrigins = existingOrigins.filter(origin => !SDN_CUSTOM_SCHEME_ORIGINS.includes(origin))
+
+  for (const origin of origins.filter(Boolean)) {
+    if (!nextOrigins.includes(origin)) {
+      nextOrigins.push(origin)
+    }
+  }
+
+  const changed = nextOrigins.length !== existingOrigins.length ||
+    nextOrigins.some((origin, index) => origin !== existingOrigins[index])
+
+  if (changed) {
+    httpHeaders['Access-Control-Allow-Origin'] = nextOrigins
+    api.HTTPHeaders = httpHeaders
+    config.API = api
+  }
+
+  return changed
+}
+
+/**
+ * Keep local desktop RPC access on an upstream-compatible HTTP origin.
+ *
+ * @param {import('ipfsd-ctl').Controller} ipfsd
+ * @param {string} desktopWebOrigin
+ */
+function configureDesktopCors (ipfsd, desktopWebOrigin) {
+  const config = readConfigFile(ipfsd)
+  const changed = ensureCorsOriginsForConfig(config, [
+    desktopWebOrigin,
+    'https://webui.ipfs.io',
+    `http://webui.ipfs.io.ipns.localhost:${getGatewayPort(config)}`
+  ])
+
+  if (changed) {
+    writeConfigFile(ipfsd, config)
+  }
+}
+
 /**
  * Apply one-time updates to the config of IPFS node. This is the place
  * where we execute fixes and performance tweaks for existing users.
@@ -171,34 +227,6 @@ function migrateConfig (ipfsd) {
     return
   }
 
-  const ensureCorsOrigins = (...origins) => {
-    const api = config.API || {}
-    const httpHeaders = api.HTTPHeaders || {}
-    let accessControlAllowOrigin = httpHeaders['Access-Control-Allow-Origin'] || []
-
-    if (!Array.isArray(accessControlAllowOrigin)) {
-      accessControlAllowOrigin = typeof accessControlAllowOrigin === 'string'
-        ? [accessControlAllowOrigin]
-        : []
-    }
-
-    const originAdded = origins.reduce((didAdd, origin) => {
-      if (accessControlAllowOrigin.includes(origin)) {
-        return didAdd
-      }
-
-      accessControlAllowOrigin.push(origin)
-      return true
-    }, false)
-
-    if (originAdded) {
-      httpHeaders['Access-Control-Allow-Origin'] = accessControlAllowOrigin
-      api.HTTPHeaders = httpHeaders
-      config.API = api
-      changed = true
-    }
-  }
-
   if (CURRENT_REVISION < 1) {
     // Cleanup https://github.com/ipfs-shipyard/ipfs-desktop/issues/1631
     if (config.Discovery && config.Discovery.MDNS && config.Discovery.MDNS.enabled) {
@@ -209,12 +237,10 @@ function migrateConfig (ipfsd) {
   }
 
   if (CURRENT_REVISION < 3) {
-    ensureCorsOrigins(
-      'sdn://-',
-      'webui://-',
+    changed = ensureCorsOriginsForConfig(config, [
       'https://webui.ipfs.io',
       `http://webui.ipfs.io.ipns.localhost:${getGatewayPort(config)}`
-    )
+    ]) || changed
   }
 
   if (CURRENT_REVISION < 4) {
@@ -257,10 +283,6 @@ function migrateConfig (ipfsd) {
       config.AutoTLS.Enabled = true
       changed = true
     }
-  }
-
-  if (CURRENT_REVISION < 7) {
-    ensureCorsOrigins('sdn://-', 'webui://-')
   }
 
   if (changed) {
@@ -496,6 +518,7 @@ module.exports = Object.freeze({
   removeApiFile,
   applyDefaults,
   migrateConfig,
+  configureDesktopCors,
   checkPorts,
   checkRepositoryAndConfiguration
 })

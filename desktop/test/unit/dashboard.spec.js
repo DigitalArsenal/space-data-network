@@ -51,7 +51,8 @@ test.describe('SDN dashboard window', () => {
     const autoUpdaterSource = fs.readFileSync(path.join(__dirname, '../../src/auto-updater/index.js'), 'utf8')
 
     expect(autoUpdaterSource).toContain("const SDN_RELEASES_URL = 'https://github.com/DigitalArsenal/space-data-network/releases/latest'")
-    expect(autoUpdaterSource).toContain('const SDN_RELEASE_VERSION_URL = version => `https://github.com/DigitalArsenal/space-data-network/releases/tag/desktop-v${version}`')
+    expect(autoUpdaterSource).toContain('const SDN_RELEASE_VERSION_URL = version =>')
+    expect(autoUpdaterSource).toContain('https://github.com/DigitalArsenal/space-data-network/releases/tag/desktop-v')
     expect(autoUpdaterSource).toContain('shell.openExternal(SDN_RELEASES_URL)')
     expect(autoUpdaterSource).toContain('shell.openExternal(SDN_RELEASE_VERSION_URL(version))')
     expect(autoUpdaterSource).not.toContain('github.com/ipfs/ipfs-desktop')

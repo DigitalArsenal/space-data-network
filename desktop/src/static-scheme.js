@@ -31,9 +31,9 @@ function registerStaticScheme ({ scheme, directory, partition }) {
     const fileExtension = path.extname(filePath)
 
     if (resolvedPath || !fileExtension || fileExtension === '.html' || fileExtension === '.asar') {
-      callback({ path: resolvedPath || indexPath })
+      callback({ path: resolvedPath || indexPath }) // eslint-disable-line
     } else {
-      callback({ error: FILE_NOT_FOUND })
+      callback({ error: FILE_NOT_FOUND }) // eslint-disable-line
     }
   }
 

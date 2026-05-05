@@ -1,7 +1,6 @@
 // @ts-check
 const { screen, BrowserWindow, ipcMain, app, session } = require('electron')
 const { join } = require('path')
-const { URL } = require('url')
 const i18n = require('i18next')
 const openExternal = require('./open-external')
 const logger = require('../common/logger')
@@ -18,6 +17,7 @@ const { analyticsKeys } = require('../analytics/keys')
 const ipcMainEvents = require('../common/ipc-main-events')
 const getCtx = require('../context')
 const registerStaticScheme = require('../static-scheme')
+const { getDesktopStaticUrl } = require('../static-http-server')
 registerStaticScheme({ scheme: 'webui', directory: 'assets/webui' })
 
 /**
@@ -138,8 +138,7 @@ module.exports = async function () {
   ctx.setProp('webui', window)
   let apiAddress = null
 
-  const url = new URL('/', 'webui://-')
-  url.hash = '/blank'
+  const url = await getDesktopStaticUrl('webui', '/blank')
   url.searchParams.set('deviceId', await ctx.getProp('countlyDeviceId'))
 
   ctx.setProp('launchWebUI', async (path, { focus = true, forceRefresh = false } = {}) => {

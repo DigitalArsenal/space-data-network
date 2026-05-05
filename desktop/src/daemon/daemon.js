@@ -1,10 +1,11 @@
 const Ctl = require('ipfsd-ctl')
 const logger = require('../common/logger')
 const { getCustomBinary } = require('../custom-ipfs-binary')
-const { applyDefaults, migrateConfig, checkPorts, configExists, checkRepositoryAndConfiguration, removeApiFile, apiFileExists } = require('./config')
+const { applyDefaults, migrateConfig, configureDesktopCors, checkPorts, configExists, checkRepositoryAndConfiguration, removeApiFile, apiFileExists } = require('./config')
 const showMigrationPrompt = require('./migration-prompt')
 const dialogs = require('./dialogs')
 const { app } = require('electron')
+const { getDesktopStaticOrigin } = require('../static-http-server')
 
 /**
  * Get the IPFS binary file path.
@@ -30,6 +31,7 @@ function getIpfsBinPath () {
  */
 async function getIpfsd (flags, path) {
   const ipfsBin = getIpfsBinPath()
+  const desktopWebOrigin = await getDesktopStaticOrigin()
 
   const ipfsd = await Ctl.createController({
     ipfsHttpModule: require('ipfs-http-client'),
@@ -66,6 +68,8 @@ async function getIpfsd (flags, path) {
   }
 
   if (!isRemote) {
+    configureDesktopCors(ipfsd, desktopWebOrigin)
+
     // Check if ports are free and we're clear to start IPFS.
     // If not, we return null.
     if (!await checkPorts(ipfsd)) {
