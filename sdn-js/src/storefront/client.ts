@@ -772,6 +772,7 @@ function normalizeAccessGrant(value: unknown): AccessGrant {
     lastAccess: dateField(record, 'last_access') ?? dateField(record, 'lastAccess'),
     deliveryTopic: stringField(record, 'delivery_topic') || stringField(record, 'deliveryTopic'),
     providerSignature: bytesField(record, 'provider_signature') ?? bytesField(record, 'providerSignature'),
+    grantResponseBase64: stringField(record, 'grant_response_base64') || stringField(record, 'grantResponseBase64'),
     providerPeerId: stringField(record, 'provider_peer_id') || stringField(record, 'providerPeerId') || '',
   };
 }

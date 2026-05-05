@@ -49,9 +49,10 @@ test('purchases a protected storefront listing and exercises browser decrypt/loa
         window.__SDN_MARKETPLACE_E2E_FETCHED_CID__ = cid;
         return new TextEncoder().encode('encrypted module fixture bytes');
       },
-      async decryptArtifact({ grant, encryptedBundleBytes }) {
+      async decryptArtifact({ grant, grantResponseBytes, encryptedBundleBytes }) {
         window.__SDN_MARKETPLACE_E2E_DECRYPTED__ = {
           grantId: grant.grant_id,
+          grantResponseBytes: grantResponseBytes.byteLength,
           encryptedBytes: encryptedBundleBytes.byteLength,
         };
         return new TextEncoder().encode('decrypted wasm fixture');
@@ -185,6 +186,11 @@ test('purchases a protected storefront listing and exercises browser decrypt/loa
   await expect.poll(async () => page.evaluate(() => window.__SDN_MARKETPLACE_E2E_FETCHED_CID__)).toBe(
     'bafy-encrypted-browser-e2e',
   );
+  await expect.poll(async () => page.evaluate(() => window.__SDN_MARKETPLACE_E2E_DECRYPTED__)).toEqual({
+    grantId: 'grant-browser-e2e',
+    grantResponseBytes: 4,
+    encryptedBytes: 30,
+  });
   await expect.poll(async () => page.evaluate(() => window.__SDN_MARKETPLACE_E2E_LOADED__)).toEqual({
     listingId: fixtureListing.listing_id,
     bytes: 22,
