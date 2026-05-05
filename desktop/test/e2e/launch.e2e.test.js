@@ -86,6 +86,14 @@ test.describe.serial('Application launch', async () => {
     }
   }
 
+  function getConfigHttpPort (addrs) {
+    const addr = Array.isArray(addrs)
+      ? addrs.find(addr => addr.includes('127.0.0.1'))
+      : addrs
+    const [, port] = addr.match(/\/tcp\/(\d+)/) || []
+    return Number(port)
+  }
+
   test('creates a repository on startup', async () => {
     const { app, repoPath } = await startApp({})
     const { peerId } = await daemonReady(app)
@@ -238,6 +246,24 @@ test.describe.serial('Application launch', async () => {
     const config = fs.readJsonSync(configPath)
     // ensure ipfs-desktop migrated default Kubo config to explicitly enable AutoTLS
     expect(config.AutoTLS.Enabled).toEqual(true)
+  })
+
+  test('migrates local random API and gateway ports to stable desktop RPC ports', async () => {
+    const { repoPath, configPath, peerId: expectedId } = await makeRepository({ start: false })
+
+    const initConfig = fs.readJsonSync(configPath)
+    initConfig.Addresses.API = ['/ip4/127.0.0.1/tcp/0']
+    initConfig.Addresses.Gateway = ['/ip4/127.0.0.1/tcp/0']
+    fs.writeJsonSync(configPath, initConfig, { spaces: 2 })
+
+    const { app } = await startApp({ repoPath })
+    const { peerId } = await daemonReady(app)
+    expect(peerId).toBe(expectedId)
+
+    const config = fs.readJsonSync(configPath)
+    expect(getConfigHttpPort(config.Addresses.API)).toBe(5001)
+    expect(getConfigHttpPort(config.Addresses.Gateway)).toBeGreaterThan(0)
+    expectDesktopCorsOrigins(config.API.HTTPHeaders['Access-Control-Allow-Origin'])
   })
 
   test('starts with repository with "IPFS_PATH/api" file and no daemon running', async () => {

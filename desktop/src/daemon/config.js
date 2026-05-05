@@ -10,6 +10,9 @@ const dialogs = require('./dialogs')
 
 const CUSTOM_SCHEME_ORIGIN_SUFFIX = '://-'
 const SDN_CUSTOM_SCHEME_ORIGINS = Object.freeze(['sdn', 'webui'].map(scheme => `${scheme}${CUSTOM_SCHEME_ORIGIN_SUFFIX}`))
+const STALE_RANDOM_GATEWAY_WEBUI_ORIGIN = 'http://webui.ipfs.io.ipns.localhost:0'
+const DEFAULT_API_ADDR = '/ip4/127.0.0.1/tcp/5001'
+const DEFAULT_GATEWAY_ADDR = '/ip4/127.0.0.1/tcp/8080'
 
 /**
  * Get repository configuration file path.
@@ -148,6 +151,32 @@ function getHttpPort (addrs) {
  */
 const getGatewayPort = (config) => getHttpPort(config.Addresses.Gateway)
 
+function normalizeSingleLocalRandomPortAddress (addrs, fallbackAddr) {
+  if (!Array.isArray(addrs) || addrs.length !== 1) {
+    return addrs
+  }
+
+  const ma = parseMultiaddr(addrs[0])
+  const { address, port } = ma.nodeAddress()
+
+  return address === '127.0.0.1' && port === 0
+    ? fallbackAddr
+    : addrs
+}
+
+function normalizeDesktopRandomPorts (config) {
+  const apiAddr = normalizeSingleLocalRandomPortAddress(config.Addresses.API, DEFAULT_API_ADDR)
+  const gatewayAddr = normalizeSingleLocalRandomPortAddress(config.Addresses.Gateway, DEFAULT_GATEWAY_ADDR)
+  const changed = apiAddr !== config.Addresses.API || gatewayAddr !== config.Addresses.Gateway
+
+  if (changed) {
+    config.Addresses.API = apiAddr
+    config.Addresses.Gateway = gatewayAddr
+  }
+
+  return changed
+}
+
 function normalizeCorsOrigins (origins) {
   if (Array.isArray(origins)) {
     return origins
@@ -162,7 +191,10 @@ function ensureCorsOriginsForConfig (config, origins) {
   const api = config.API || {}
   const httpHeaders = api.HTTPHeaders || {}
   const existingOrigins = normalizeCorsOrigins(httpHeaders['Access-Control-Allow-Origin'])
-  const nextOrigins = existingOrigins.filter(origin => !SDN_CUSTOM_SCHEME_ORIGINS.includes(origin))
+  const nextOrigins = existingOrigins.filter(origin => {
+    return !SDN_CUSTOM_SCHEME_ORIGINS.includes(origin) &&
+      origin !== STALE_RANDOM_GATEWAY_WEBUI_ORIGIN
+  })
 
   for (const origin of origins.filter(Boolean)) {
     if (!nextOrigins.includes(origin)) {
@@ -209,7 +241,7 @@ function configureDesktopCors (ipfsd, desktopWebOrigin) {
  */
 function migrateConfig (ipfsd) {
   // Bump revision number when new migration rule is added
-  const REVISION = 7
+  const REVISION = 8
   const REVISION_KEY = 'daemonConfigRevision'
   const CURRENT_REVISION = store.get(REVISION_KEY, 0)
 
@@ -234,6 +266,10 @@ function migrateConfig (ipfsd) {
       delete config.Discovery.MDNS.enabled
       changed = true
     }
+  }
+
+  if (CURRENT_REVISION < 8) {
+    changed = normalizeDesktopRandomPorts(config) || changed
   }
 
   if (CURRENT_REVISION < 3) {
