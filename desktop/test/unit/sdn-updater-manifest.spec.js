@@ -2,6 +2,8 @@ const crypto = require('crypto')
 const { test, expect } = require('@playwright/test')
 const {
   canonicalManifestBytes,
+  sha256Hex,
+  verifyDownloadedUpdatePayload,
   validateUpdateManifest
 } = require('../../src/sdn-updater/manifest')
 
@@ -73,6 +75,19 @@ function validate (manifest, publicKey) {
     bundleHash: 'a'.repeat(64),
     now: new Date('2026-05-06T00:00:00Z')
   })
+}
+
+function payloadOptions (publicKey, overrides = {}) {
+  return {
+    trustedRoots: {
+      'release-2026q2': publicKeyBase64(publicKey)
+    },
+    platform: 'darwin',
+    arch: 'arm64',
+    currentSequence: 41,
+    now: new Date('2026-05-06T00:00:00Z'),
+    ...overrides
+  }
 }
 
 test.describe('SDN signed updater manifest verifier', () => {
@@ -160,5 +175,140 @@ test.describe('SDN signed updater manifest verifier', () => {
     })
 
     expect(() => validate(manifest, publicKey)).toThrow('update rollback sequence rejected')
+  })
+
+  test('accepts signed downloaded WASM carrier and bundle bytes', () => {
+    const { publicKey, privateKey } = keyPair()
+    const wasmBytes = Buffer.from('sdn wasm carrier')
+    const bundleBytes = Buffer.from('sdn desktop update bundle')
+    const manifest = signedManifest({
+      privateKey,
+      publicKey,
+      overrides: {
+        bundle: {
+          hash: sha256Hex(bundleBytes),
+          size: bundleBytes.byteLength,
+          format: 'tar.zst'
+        },
+        wasm: {
+          hash: sha256Hex(wasmBytes)
+        }
+      }
+    })
+
+    expect(verifyDownloadedUpdatePayload({
+      manifest,
+      wasmBytes,
+      bundleBytes,
+      ...payloadOptions(publicKey)
+    })).toEqual({
+      ok: true,
+      updateId: 'desktop-stable-2026-05-05',
+      sequence: 42,
+      targetKind: 'desktop-app',
+      bundleHash: sha256Hex(bundleBytes),
+      wasmHash: sha256Hex(wasmBytes),
+      bundleSize: bundleBytes.byteLength
+    })
+  })
+
+  test('rejects downloaded updates without a bundle payload', () => {
+    const { publicKey, privateKey } = keyPair()
+    const wasmBytes = Buffer.from('sdn wasm carrier')
+    const manifest = signedManifest({
+      privateKey,
+      publicKey,
+      overrides: {
+        wasm: {
+          hash: sha256Hex(wasmBytes)
+        }
+      }
+    })
+
+    expect(() => verifyDownloadedUpdatePayload({
+      manifest,
+      wasmBytes,
+      ...payloadOptions(publicKey)
+    })).toThrow('missing update bundle payload')
+  })
+
+  test('rejects downloaded updates with mismatched WASM bytes', () => {
+    const { publicKey, privateKey } = keyPair()
+    const bundleBytes = Buffer.from('sdn desktop update bundle')
+    const manifest = signedManifest({
+      privateKey,
+      publicKey,
+      overrides: {
+        bundle: {
+          hash: sha256Hex(bundleBytes),
+          size: bundleBytes.byteLength,
+          format: 'tar.zst'
+        },
+        wasm: {
+          hash: 'c'.repeat(64)
+        }
+      }
+    })
+
+    expect(() => verifyDownloadedUpdatePayload({
+      manifest,
+      wasmBytes: Buffer.from('unexpected wasm carrier'),
+      bundleBytes,
+      ...payloadOptions(publicKey)
+    })).toThrow('update wasm hash mismatch')
+  })
+
+  test('rejects downloaded updates with mismatched bundle size', () => {
+    const { publicKey, privateKey } = keyPair()
+    const wasmBytes = Buffer.from('sdn wasm carrier')
+    const bundleBytes = Buffer.from('sdn desktop update bundle')
+    const manifest = signedManifest({
+      privateKey,
+      publicKey,
+      overrides: {
+        bundle: {
+          hash: sha256Hex(bundleBytes),
+          size: bundleBytes.byteLength + 1,
+          format: 'tar.zst'
+        },
+        wasm: {
+          hash: sha256Hex(wasmBytes)
+        }
+      }
+    })
+
+    expect(() => verifyDownloadedUpdatePayload({
+      manifest,
+      wasmBytes,
+      bundleBytes,
+      ...payloadOptions(publicKey)
+    })).toThrow('update bundle size mismatch')
+  })
+
+  test('rejects downloaded updates signed by untrusted roots', () => {
+    const { publicKey, privateKey } = keyPair()
+    const wasmBytes = Buffer.from('sdn wasm carrier')
+    const bundleBytes = Buffer.from('sdn desktop update bundle')
+    const manifest = signedManifest({
+      privateKey,
+      publicKey,
+      overrides: {
+        bundle: {
+          hash: sha256Hex(bundleBytes),
+          size: bundleBytes.byteLength,
+          format: 'tar.zst'
+        },
+        wasm: {
+          hash: sha256Hex(wasmBytes)
+        }
+      }
+    })
+
+    expect(() => verifyDownloadedUpdatePayload({
+      manifest,
+      wasmBytes,
+      bundleBytes,
+      ...payloadOptions(publicKey, { trustedRoots: {} })
+    })).toThrow('untrusted update signing key')
   })
 })

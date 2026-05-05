@@ -49,6 +49,24 @@ function assertHash (value, message) {
   }
 }
 
+function sha256Hex (bytes) {
+  return crypto.createHash('sha256').update(bytes).digest('hex')
+}
+
+function normalizeBytes (value, message) {
+  if (Buffer.isBuffer(value)) {
+    return value
+  }
+  if (value instanceof Uint8Array) {
+    return Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+  }
+  if (value instanceof ArrayBuffer) {
+    return Buffer.from(value)
+  }
+
+  throw new Error(message)
+}
+
 function publicKeyFromBase64 (publicKey) {
   return crypto.createPublicKey({
     key: Buffer.from(publicKey, 'base64'),
@@ -162,7 +180,36 @@ function validateUpdateManifest (manifest, options) {
   }
 }
 
+function verifyDownloadedUpdatePayload ({ manifest, wasmBytes, bundleBytes, ...options }) {
+  const normalizedWasmBytes = normalizeBytes(wasmBytes, 'missing update wasm payload')
+  const normalizedBundleBytes = normalizeBytes(bundleBytes, 'missing update bundle payload')
+  const bundleHash = sha256Hex(normalizedBundleBytes)
+  const wasmHash = sha256Hex(normalizedWasmBytes)
+
+  const result = validateUpdateManifest(manifest, {
+    ...options,
+    bundleHash
+  })
+
+  if (manifest.wasm.hash !== wasmHash) {
+    throw new Error('update wasm hash mismatch')
+  }
+
+  if (manifest.bundle.size !== normalizedBundleBytes.byteLength) {
+    throw new Error('update bundle size mismatch')
+  }
+
+  return {
+    ...result,
+    bundleHash,
+    wasmHash,
+    bundleSize: normalizedBundleBytes.byteLength
+  }
+}
+
 module.exports = {
   canonicalManifestBytes,
-  validateUpdateManifest
+  sha256Hex,
+  validateUpdateManifest,
+  verifyDownloadedUpdatePayload
 }
