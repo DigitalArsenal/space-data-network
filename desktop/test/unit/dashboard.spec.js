@@ -47,14 +47,39 @@ test.describe('SDN dashboard window', () => {
     expect(autoUpdaterSource).toContain('!hasPackagedUpdateConfig()')
   })
 
+  test('keeps electron auto-update checks disabled until the SDN update server exists', () => {
+    const autoUpdaterSource = fs.readFileSync(path.join(__dirname, '../../src/auto-updater/index.js'), 'utf8')
+    const runtimeFeedsSource = fs.readFileSync(path.join(__dirname, '../../src/sdn-updater/runtime-feeds.js'), 'utf8')
+
+    expect(runtimeFeedsSource).toContain('const SDN_DESKTOP_AUTO_UPDATES_ENABLED = false')
+    expect(autoUpdaterSource).toContain('SDN_DESKTOP_AUTO_UPDATES_ENABLED')
+    expect(autoUpdaterSource).toContain('SDN desktop auto updates disabled until the SDN patch/update server is available')
+    expect(autoUpdaterSource.indexOf('!SDN_DESKTOP_AUTO_UPDATES_ENABLED')).toBeLessThan(autoUpdaterSource.indexOf('!hasPackagedUpdateConfig()'))
+  })
+
+  test('does not block the desktop UI with dialogs for background updater errors', () => {
+    const autoUpdaterSource = fs.readFileSync(path.join(__dirname, '../../src/auto-updater/index.js'), 'utf8')
+    const errorHandler = autoUpdaterSource.match(/autoUpdater\.on\('error'[\s\S]*?\n  \}\)/)?.[0] || ''
+
+    expect(errorHandler).toContain('if (!feedback)')
+    expect(errorHandler.indexOf('if (!feedback)')).toBeLessThan(errorHandler.indexOf('showDialog({'))
+    expect(errorHandler).toContain('feedback = false')
+    expect(errorHandler).toContain('updater errors must not block the main process')
+  })
+
   test('points desktop application update fallbacks at SDN releases', () => {
     const autoUpdaterSource = fs.readFileSync(path.join(__dirname, '../../src/auto-updater/index.js'), 'utf8')
     const runtimeFeedsSource = fs.readFileSync(path.join(__dirname, '../../src/sdn-updater/runtime-feeds.js'), 'utf8')
+    const electronBuilderSource = fs.readFileSync(path.join(__dirname, '../../electron-builder.yml'), 'utf8')
 
     expect(autoUpdaterSource).toContain('SDN_DESKTOP_RELEASES_URL')
     expect(autoUpdaterSource).toContain('sdnDesktopReleaseVersionUrl')
     expect(runtimeFeedsSource).toContain("const SDN_DESKTOP_RELEASES_URL = 'https://github.com/DigitalArsenal/space-data-network/releases/latest'")
     expect(runtimeFeedsSource).toContain('https://github.com/DigitalArsenal/space-data-network/releases/tag/desktop-v')
+    expect(electronBuilderSource).toContain('owner: DigitalArsenal')
+    expect(electronBuilderSource).toContain('repo: space-data-network')
+    expect(electronBuilderSource).not.toContain('owner: ipfs')
+    expect(electronBuilderSource).not.toContain('repo: ipfs-desktop')
     expect(autoUpdaterSource).toContain('shell.openExternal(SDN_DESKTOP_RELEASES_URL)')
     expect(autoUpdaterSource).toContain('shell.openExternal(sdnDesktopReleaseVersionUrl(version))')
     expect(autoUpdaterSource).not.toContain('github.com/ipfs/ipfs-desktop')
@@ -109,9 +134,10 @@ test.describe('SDN dashboard window', () => {
     expect(traySource).toContain("label: 'SDN UI'")
     expect(traySource).toContain("click: () => { launchDashboard('/') }")
     expect(traySource).toContain("id: 'webuiStatus'")
-    expect(traySource).toContain("click: () => { launchDashboard('/status') }")
+    expect(traySource).toContain("click: () => { launchWebUI('/status') }")
     expect(traySource).not.toContain("click: () => { launchWebUI('/') }")
     expect(traySource).not.toContain("id: 'webuiStatus',\n      label: i18n.t('status'),\n      click: () => { launchDashboard('/') }")
+    expect(traySource).not.toContain("id: 'webuiStatus',\n      label: i18n.t('status'),\n      click: () => { launchDashboard('/status') }")
   })
 
   test('uses the simplified solid triangle tray mark with a cut-out dot', () => {

@@ -96,10 +96,14 @@ snap:
     - network-bind
     - removable-media
   publish:
-    - github
+    - provider: github
+      owner: DigitalArsenal
+      repo: space-data-network
 
 publish:
-  - github
+  - provider: github
+    owner: DigitalArsenal
+    repo: space-data-network
 
 protocols:
   - name: IPFS

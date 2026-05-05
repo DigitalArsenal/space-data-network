@@ -13,6 +13,7 @@ const SDN_CUSTOM_SCHEME_ORIGINS = Object.freeze(['sdn', 'webui'].map(scheme => `
 const STALE_RANDOM_GATEWAY_WEBUI_ORIGIN = 'http://webui.ipfs.io.ipns.localhost:0'
 const DEFAULT_API_ADDR = '/ip4/127.0.0.1/tcp/5001'
 const DEFAULT_GATEWAY_ADDR = '/ip4/127.0.0.1/tcp/8080'
+const DESKTOP_API_CORS_METHODS = Object.freeze(['PUT', 'POST'])
 
 /**
  * Get repository configuration file path.
@@ -214,6 +215,30 @@ function ensureCorsOriginsForConfig (config, origins) {
   return changed
 }
 
+function ensureCorsMethodsForConfig (config, methods = DESKTOP_API_CORS_METHODS) {
+  const api = config.API || {}
+  const httpHeaders = api.HTTPHeaders || {}
+  const existingMethods = normalizeCorsOrigins(httpHeaders['Access-Control-Allow-Methods'])
+  const nextMethods = existingMethods.slice()
+
+  for (const method of methods.filter(Boolean)) {
+    if (!nextMethods.includes(method)) {
+      nextMethods.push(method)
+    }
+  }
+
+  const changed = nextMethods.length !== existingMethods.length ||
+    nextMethods.some((method, index) => method !== existingMethods[index])
+
+  if (changed) {
+    httpHeaders['Access-Control-Allow-Methods'] = nextMethods
+    api.HTTPHeaders = httpHeaders
+    config.API = api
+  }
+
+  return changed
+}
+
 /**
  * Keep local desktop RPC access on an upstream-compatible HTTP origin.
  *
@@ -222,13 +247,14 @@ function ensureCorsOriginsForConfig (config, origins) {
  */
 function configureDesktopCors (ipfsd, desktopWebOrigin) {
   const config = readConfigFile(ipfsd)
-  const changed = ensureCorsOriginsForConfig(config, [
+  const originsChanged = ensureCorsOriginsForConfig(config, [
     desktopWebOrigin,
     'https://webui.ipfs.io',
     `http://webui.ipfs.io.ipns.localhost:${getGatewayPort(config)}`
   ])
+  const methodsChanged = ensureCorsMethodsForConfig(config)
 
-  if (changed) {
+  if (originsChanged || methodsChanged) {
     writeConfigFile(ipfsd, config)
   }
 }

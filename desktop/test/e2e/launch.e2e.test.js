@@ -86,6 +86,10 @@ test.describe.serial('Application launch', async () => {
     }
   }
 
+  function expectDesktopCorsMethods (methods) {
+    expect(methods).toEqual(expect.arrayContaining(['PUT', 'POST']))
+  }
+
   function getConfigHttpPort (addrs) {
     const addr = Array.isArray(addrs)
       ? addrs.find(addr => addr.includes('127.0.0.1'))
@@ -105,6 +109,7 @@ test.describe.serial('Application launch', async () => {
     expect(config.Identity.PeerID).toBe(peerId)
     // ensure CORS is limited to upstream-compatible WebUI origins.
     expectDesktopCorsOrigins(config.API.HTTPHeaders['Access-Control-Allow-Origin'])
+    expectDesktopCorsMethods(config.API.HTTPHeaders['Access-Control-Allow-Methods'])
     expect(config.Discovery.MDNS.Enabled).toBeTruthy()
   })
 
