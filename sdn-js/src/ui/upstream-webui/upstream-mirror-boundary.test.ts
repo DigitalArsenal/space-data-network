@@ -19,6 +19,16 @@ describe('upstream IPFS mirror boundaries', () => {
     expect(source).not.toContain('sdn-logo');
   });
 
+  it('keeps upstream WebUI public app metadata branded as IPFS', async () => {
+    const manifest = JSON.parse(await readRepoFile('webui/public/manifest.json'));
+
+    expect(manifest.short_name).toBe('IPFS WebUI');
+    expect(manifest.name).toBe('IPFS Web UI');
+    expect(manifest.icons).toEqual(expect.arrayContaining([
+      expect.objectContaining({ src: 'ipfs-logo-512-ice.png' }),
+    ]));
+  });
+
   it('does not require SDN-only custom schemes in Kubo CORS configuration', async () => {
     const daemonConfig = await readRepoFile('desktop/src/daemon/config.js');
     const launchE2E = await readRepoFile('desktop/test/e2e/launch.e2e.test.js');

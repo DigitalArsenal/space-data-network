@@ -112,7 +112,7 @@ Document that deploys touching IPFS WebUI/Desktop must run the upstream mirror c
 
 Wire `scripts/update-upstream-ipfs.sh --check` into the relevant JS/UI CI path.
 
-- [ ] **Step 4: Verify full focused checks**
+- [x] **Step 4: Verify full focused checks**
 
 Run:
 
@@ -129,3 +129,8 @@ CORS-origin rules. `deployment/spaceaware/README.md` now requires
 `scripts/update-upstream-ipfs.sh --check` and desktop launch verification before
 deploys that touch WebUI/Desktop. `scripts/ci-local.sh js` runs the mirror check,
 which is covered by `.github/workflows/ci.yml` through `ci-local.sh quick`.
+
+2026-05-05 verification note: full focused checks passed:
+`node scripts/sync-upstream-webui-into-sdn-js.mjs --check`,
+`npm --prefix sdn-js run build:ui`, and
+`npm --prefix sdn-js exec vitest run src/ui/upstream-webui/branding.test.ts src/ui/upstream-webui/upstream-mirror-boundary.test.ts`.
