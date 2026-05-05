@@ -517,8 +517,71 @@ func TestManualDevPaymentIssuesGrantAndAudit(t *testing.T) {
 	if len(events) < 3 {
 		t.Fatalf("audit events len = %d, want at least 3", len(events))
 	}
-	if events[len(events)-1].EventType != PaymentAuditGrantIssued {
-		t.Fatalf("last audit event = %q, want %q", events[len(events)-1].EventType, PaymentAuditGrantIssued)
+	eventTypes := map[string]bool{}
+	for _, event := range events {
+		eventTypes[event.EventType] = true
+	}
+	for _, want := range []string{PaymentAuditGrantIssued, PaymentAuditKeyWrapIssued, PaymentAuditDeliveryReady} {
+		if !eventTypes[want] {
+			t.Fatalf("audit events missing %q: %#v", want, events)
+		}
+	}
+	if events[len(events)-1].EventType != PaymentAuditDeliveryReady {
+		t.Fatalf("last audit event = %q, want %q", events[len(events)-1].EventType, PaymentAuditDeliveryReady)
+	}
+}
+
+func TestRevokeGrantRecordsAuditAndBlocksVerification(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	listing := testListing()
+	listing.AccessType = AccessTypeStreaming
+	if err := svc.CreateListing(ctx, listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+
+	req := &PurchaseRequest{
+		ListingID:               listing.ListingID,
+		TierName:                "Basic",
+		BuyerPeerID:             "buyer-peer-123",
+		BuyerEncryptionPubkey:   []byte("buyer-public-key"),
+		KeyAlgorithm:            "x25519",
+		PaymentMethod:           PaymentMethodFiatStripe,
+		PreferredDeliveryMethod: "PubSubStream",
+	}
+	if err := svc.CreatePurchaseRequest(ctx, req); err != nil {
+		t.Fatalf("CreatePurchaseRequest failed: %v", err)
+	}
+
+	grant, err := svc.CompleteManualDevPayment(ctx, req.RequestID, ManualDevPaymentConfirmation{
+		OperatorPeerID: "provider-admin-peer",
+		Reference:      "manual-dev-receipt-1",
+	})
+	if err != nil {
+		t.Fatalf("CompleteManualDevPayment failed: %v", err)
+	}
+
+	revoked, err := svc.RevokeGrant(ctx, grant.GrantID, req.BuyerPeerID, "provider-admin-peer", "buyer subscription cancelled")
+	if err != nil {
+		t.Fatalf("RevokeGrant failed: %v", err)
+	}
+	if revoked.Status != GrantStatusRevoked {
+		t.Fatalf("revoked status = %d, want %d", revoked.Status, GrantStatusRevoked)
+	}
+	if _, err := svc.VerifyGrant(ctx, grant.GrantID, req.BuyerPeerID); err == nil {
+		t.Fatal("VerifyGrant should reject revoked grant")
+	}
+
+	events, err := svc.store.GetPaymentAuditEvents(req.RequestID)
+	if err != nil {
+		t.Fatalf("GetPaymentAuditEvents failed: %v", err)
+	}
+	if events[len(events)-1].EventType != PaymentAuditGrantRevoked {
+		t.Fatalf("last audit event = %q, want %q", events[len(events)-1].EventType, PaymentAuditGrantRevoked)
+	}
+	if events[len(events)-1].Message != "buyer subscription cancelled" {
+		t.Fatalf("revocation message = %q", events[len(events)-1].Message)
 	}
 }
 
