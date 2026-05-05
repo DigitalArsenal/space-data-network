@@ -133,18 +133,31 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).not.toContain("href='/webui'");
   });
 
-  it('uses the actual IPFS logo in the root sidebar brand slot', async () => {
+  it('uses the SDN logo in the root sidebar brand slot and the actual IPFS logo only for the IPFS escape link', async () => {
     const source = await fs.readFile(
       path.join(uiSrcPath, 'overrides/navigation/NavBar.js'),
       'utf8',
     );
 
     expect(source).toContain("import ipfsLogoMark from '../../../../../../webui/src/navigation/ipfs-logo.svg'");
-    expect(source).toContain("src={ipfsLogoMark} alt='IPFS'");
-    expect(source).not.toContain("src={sdnLogoMark}");
-    expect(source).not.toContain("import sdnLogoMark from './sdn-logo-mark.svg'");
+    expect(source).toContain("import sdnLogoMark from './sdn-logo-mark.svg'");
+    expect(source).toContain("src={sdnLogoMark} alt='Space Data Network'");
+    expect(source).toContain("<ExternalNavLink href='/webui' iconSrc={ipfsLogoMark}>IPFS</ExternalNavLink>");
+    expect(source).not.toContain("src={ipfsLogoMark} alt='IPFS'");
     expect(source).not.toContain('sdn-logo-text-vert.svg');
     expect(source).not.toContain('sdn-logo-text-horiz.svg');
+  });
+
+  it('lets the desktop shell seed the Kubo RPC address through the WebUI api URL parameter', async () => {
+    const source = await fs.readFile(
+      path.resolve(__dirname, '../../../../webui/src/bundles/ipfs-provider.js'),
+      'utf8',
+    );
+
+    expect(source).toContain('const readAPIAddressURLParam = () =>');
+    expect(source).toContain("new URL(window.location.href).searchParams.get('api')");
+    expect(source).toContain("writeSetting('ipfsApi', apiAddressFromUrl)");
+    expect(source).toContain('return apiAddressFromUrl');
   });
 
   it('defines the root-only directory route without a separate identity route', async () => {
