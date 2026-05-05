@@ -38,6 +38,114 @@ func TestNewFlatSQLStore(t *testing.T) {
 	}
 }
 
+func TestFlatSQLStoreQueryIndexedRecordsCommonCatalogFilters(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-indexed-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-satcat-csv",
+		SourceURL:    "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV",
+		BatchID:      "batch-001",
+		ContentKeyID: "public",
+	}
+	payloadBytes := sds.NewCATBuilder().
+		WithNoradCatID(25544).
+		WithObjectName("ISS (ZARYA)").
+		WithObjectID("1998-067A").
+		WithObjectType("PAYLOAD").
+		WithOpsStatus("OPERATIONAL").
+		Build()
+	rocketBytes := sds.NewCATBuilder().
+		WithNoradCatID(48274).
+		WithObjectName("CZ-5B R/B").
+		WithObjectID("2021-035B").
+		WithObjectType("ROCKET_BODY").
+		WithOpsStatus("DECAYED").
+		Build()
+
+	payloadCID, err := store.StoreWithSourceTags("CAT.fbs", payloadBytes, "source:celestrak", nil, tags)
+	if err != nil {
+		t.Fatalf("StoreWithSourceTags payload failed: %v", err)
+	}
+	if _, err := store.StoreWithSourceTags("CAT.fbs", rocketBytes, "source:celestrak", nil, tags); err != nil {
+		t.Fatalf("StoreWithSourceTags rocket failed: %v", err)
+	}
+
+	fullCatalog, err := store.QueryIndexedRecords(IndexedRecordQuery{SchemaName: "CAT.fbs", Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryIndexedRecords full catalog failed: %v", err)
+	}
+	if len(fullCatalog) != 2 {
+		t.Fatalf("full catalog returned %d records, want 2", len(fullCatalog))
+	}
+
+	norad := uint32(25544)
+	byNorad, err := store.QueryIndexedRecords(IndexedRecordQuery{SchemaName: "CAT.fbs", NoradCatID: &norad, Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryIndexedRecords NORAD failed: %v", err)
+	}
+	if len(byNorad) != 1 || byNorad[0].CID != payloadCID {
+		t.Fatalf("NORAD query returned %+v, want payload CID %s", byNorad, payloadCID)
+	}
+
+	activePayloads, err := store.QueryIndexedRecords(IndexedRecordQuery{SchemaName: "CAT.fbs", ActivePayloads: true, Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryIndexedRecords active payloads failed: %v", err)
+	}
+	if len(activePayloads) != 1 || activePayloads[0].CID != payloadCID {
+		t.Fatalf("active payload query returned %+v, want payload CID %s", activePayloads, payloadCID)
+	}
+
+	rocketBodies, err := store.QueryIndexedRecords(IndexedRecordQuery{SchemaName: "CAT.fbs", ObjectType: "ROCKET_BODY", Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryIndexedRecords object type failed: %v", err)
+	}
+	if len(rocketBodies) != 1 || rocketBodies[0].CID == payloadCID {
+		t.Fatalf("object type query returned %+v, want only rocket-body record", rocketBodies)
+	}
+
+	caReady, err := store.QueryIndexedRecords(IndexedRecordQuery{SchemaName: "CAT.fbs", CAReadyResidentSet: true, Limit: 10})
+	if err != nil {
+		t.Fatalf("QueryIndexedRecords CA-ready failed: %v", err)
+	}
+	if len(caReady) != 1 || caReady[0].CID != payloadCID {
+		t.Fatalf("CA-ready query returned %+v, want payload CID %s", caReady, payloadCID)
+	}
+
+	from := time.Now().Add(-time.Hour)
+	to := time.Now().Add(time.Hour)
+	providerBatch, err := store.QueryIndexedRecords(IndexedRecordQuery{
+		SchemaName: "CAT.fbs",
+		From:       &from,
+		To:         &to,
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-satcat-csv",
+		BatchID:    "batch-001",
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("QueryIndexedRecords provider batch failed: %v", err)
+	}
+	if len(providerBatch) != 2 {
+		t.Fatalf("provider batch/time-window query returned %d records, want 2", len(providerBatch))
+	}
+}
+
 func TestFlatSQLStoreStoreAndGet(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-test-*")
 	if err != nil {

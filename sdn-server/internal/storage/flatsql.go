@@ -89,6 +89,8 @@ func (s *FlatSQLStore) initTables() error {
 			cid TEXT NOT NULL,
 			norad_cat_id INTEGER,
 			entity_id TEXT,
+			object_type TEXT,
+			ops_status_code TEXT,
 			epoch_unix INTEGER,
 			epoch_day TEXT,
 			source_timestamp INTEGER NOT NULL,
@@ -98,6 +100,12 @@ func (s *FlatSQLStore) initTables() error {
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create index table: %w", err)
+	}
+	if err := s.ensureColumn("sdn_record_index", "object_type", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("sdn_record_index", "ops_status_code", "TEXT"); err != nil {
+		return err
 	}
 
 	if _, err := s.db.Exec(`
@@ -119,6 +127,20 @@ func (s *FlatSQLStore) initTables() error {
 		ON sdn_record_index (schema_name, entity_id, source_timestamp DESC)
 	`); err != nil {
 		return fmt.Errorf("failed to create entity index: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_catalog_filters
+		ON sdn_record_index (schema_name, object_type, ops_status_code, norad_cat_id)
+	`); err != nil {
+		return fmt.Errorf("failed to create catalog filter index: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_sdn_record_index_time_window
+		ON sdn_record_index (schema_name, epoch_unix, source_timestamp DESC)
+	`); err != nil {
+		return fmt.Errorf("failed to create time window index: %w", err)
 	}
 
 	_, err = s.db.Exec(`
@@ -249,6 +271,36 @@ func (s *FlatSQLStore) initTables() error {
 	return nil
 }
 
+func (s *FlatSQLStore) ensureColumn(tableName, columnName, columnType string) error {
+	rows, err := s.db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
+	if err != nil {
+		return fmt.Errorf("failed to inspect %s columns: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("failed to scan %s column metadata: %w", tableName, err)
+		}
+		if strings.EqualFold(name, columnName) {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed iterating %s columns: %w", tableName, err)
+	}
+
+	if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, tableName, columnName, columnType)); err != nil {
+		return fmt.Errorf("failed to add %s.%s: %w", tableName, columnName, err)
+	}
+	return nil
+}
+
 // Store stores validated data in the appropriate table.
 func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, signature []byte) (string, error) {
 	s.mu.Lock()
@@ -301,6 +353,24 @@ type SourceTagQuery struct {
 	SourceName string
 	BatchID    string
 	Limit      int
+}
+
+// IndexedRecordQuery filters materialized FlatSQL record indexes.
+type IndexedRecordQuery struct {
+	SchemaName         string
+	Day                string
+	NoradCatID         *uint32
+	EntityID           string
+	ObjectType         string
+	OpsStatusCode      string
+	ActivePayloads     bool
+	CAReadyResidentSet bool
+	From               *time.Time
+	To                 *time.Time
+	ProviderID         string
+	SourceName         string
+	BatchID            string
+	Limit              int
 }
 
 // StoreWithSourceTags stores a FlatBuffer record and attaches provider/source metadata.
@@ -942,25 +1012,39 @@ func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
 // QueryByIndexedFields returns records for schema/day/object filters.
 // day uses YYYY-MM-DD in UTC and is optional.
 func (s *FlatSQLStore) QueryByIndexedFields(schemaName, day string, noradCatID *uint32, entityID string, limit int) ([]*Record, error) {
+	return s.QueryIndexedRecords(IndexedRecordQuery{
+		SchemaName: schemaName,
+		Day:        day,
+		NoradCatID: noradCatID,
+		EntityID:   entityID,
+		Limit:      limit,
+	})
+}
+
+// QueryIndexedRecords returns records using materialized catalog/source indexes.
+func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	tableName, err := sds.SchemaNameToTable(schemaName)
+	tableName, err := sds.SchemaNameToTable(filter.SchemaName)
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
 
-	if day != "" {
-		if _, err := time.Parse("2006-01-02", day); err != nil {
-			return nil, fmt.Errorf("invalid day %q (expected YYYY-MM-DD)", day)
+	if filter.Day != "" {
+		if _, err := time.Parse("2006-01-02", filter.Day); err != nil {
+			return nil, fmt.Errorf("invalid day %q (expected YYYY-MM-DD)", filter.Day)
 		}
 	}
-
-	if limit <= 0 {
-		limit = 50
+	if filter.From != nil && filter.To != nil && filter.From.After(*filter.To) {
+		return nil, errors.New("from time must be before to time")
 	}
-	if limit > 1000 {
-		limit = 1000
+
+	if filter.Limit <= 0 {
+		filter.Limit = 50
+	}
+	if filter.Limit > 1000 {
+		filter.Limit = 1000
 	}
 
 	query := fmt.Sprintf(`
@@ -968,28 +1052,76 @@ func (s *FlatSQLStore) QueryByIndexedFields(schemaName, day string, noradCatID *
 		FROM %s d
 		INNER JOIN sdn_record_index idx
 		  ON idx.schema_name = ? AND idx.cid = d.cid
-		WHERE 1=1
 	`, tableName)
 
-	args := []interface{}{schemaName}
+	args := []interface{}{filter.SchemaName}
+	if filter.ProviderID != "" || filter.SourceName != "" || filter.BatchID != "" {
+		query += `
+		INNER JOIN sdn_record_source_tags tags
+		  ON tags.schema_name = idx.schema_name AND tags.cid = idx.cid
+		`
+	}
+	query += `
+		WHERE 1=1
+	`
 
-	if day != "" {
+	if filter.Day != "" {
 		query += ` AND idx.epoch_day = ?`
-		args = append(args, day)
+		args = append(args, filter.Day)
 	}
 
-	if noradCatID != nil {
+	if filter.NoradCatID != nil {
 		query += ` AND idx.norad_cat_id = ?`
-		args = append(args, int64(*noradCatID))
+		args = append(args, int64(*filter.NoradCatID))
 	}
 
-	if entityID != "" {
+	if filter.EntityID != "" {
 		query += ` AND idx.entity_id = ?`
-		args = append(args, entityID)
+		args = append(args, filter.EntityID)
+	}
+
+	objectType := normalizeIndexEnum(filter.ObjectType)
+	opsStatus := normalizeIndexEnum(filter.OpsStatusCode)
+	if filter.ActivePayloads || filter.CAReadyResidentSet {
+		objectType = "PAYLOAD"
+	}
+	if objectType != "" {
+		query += ` AND idx.object_type = ?`
+		args = append(args, objectType)
+	}
+	if opsStatus != "" {
+		query += ` AND idx.ops_status_code = ?`
+		args = append(args, opsStatus)
+	}
+	if filter.ActivePayloads || filter.CAReadyResidentSet {
+		query += ` AND idx.ops_status_code IN ('OPERATIONAL', 'PARTIALLY_OPERATIONAL', 'BACKUP_STANDBY', 'SPARE', 'EXTENDED_MISSION', 'UNKNOWN')`
+	}
+	if filter.CAReadyResidentSet {
+		query += ` AND idx.norad_cat_id IS NOT NULL`
+	}
+	if filter.From != nil {
+		query += ` AND COALESCE(idx.epoch_unix, idx.source_timestamp) >= ?`
+		args = append(args, filter.From.Unix())
+	}
+	if filter.To != nil {
+		query += ` AND COALESCE(idx.epoch_unix, idx.source_timestamp) <= ?`
+		args = append(args, filter.To.Unix())
+	}
+	if providerID := strings.TrimSpace(filter.ProviderID); providerID != "" {
+		query += ` AND tags.provider_id = ?`
+		args = append(args, providerID)
+	}
+	if sourceName := strings.TrimSpace(filter.SourceName); sourceName != "" {
+		query += ` AND tags.source_name = ?`
+		args = append(args, sourceName)
+	}
+	if batchID := strings.TrimSpace(filter.BatchID); batchID != "" {
+		query += ` AND tags.batch_id = ?`
+		args = append(args, batchID)
 	}
 
 	query += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) DESC LIMIT ?`
-	args = append(args, limit)
+	args = append(args, filter.Limit)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -1047,10 +1179,12 @@ func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
 }
 
 type indexedFields struct {
-	noradCatID *uint32
-	entityID   string
-	epochUnix  *int64
-	epochDay   string
+	noradCatID    *uint32
+	entityID      string
+	objectType    string
+	opsStatusCode string
+	epochUnix     *int64
+	epochDay      string
 }
 
 func (s *FlatSQLStore) upsertRecordIndex(schemaName, cid string, sourceTimestamp int64, data []byte) error {
@@ -1067,6 +1201,14 @@ func (s *FlatSQLStore) upsertRecordIndex(schemaName, cid string, sourceTimestamp
 	if fields.entityID != "" {
 		entity = fields.entityID
 	}
+	var objectType interface{}
+	if fields.objectType != "" {
+		objectType = fields.objectType
+	}
+	var opsStatusCode interface{}
+	if fields.opsStatusCode != "" {
+		opsStatusCode = fields.opsStatusCode
+	}
 	var epoch interface{}
 	if fields.epochUnix != nil {
 		epoch = *fields.epochUnix
@@ -1078,16 +1220,18 @@ func (s *FlatSQLStore) upsertRecordIndex(schemaName, cid string, sourceTimestamp
 
 	_, err = s.db.Exec(`
 		INSERT INTO sdn_record_index (
-			schema_name, cid, norad_cat_id, entity_id, epoch_unix, epoch_day, source_timestamp
+			schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, source_timestamp
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(schema_name, cid) DO UPDATE SET
 			norad_cat_id = excluded.norad_cat_id,
 			entity_id = excluded.entity_id,
+			object_type = excluded.object_type,
+			ops_status_code = excluded.ops_status_code,
 			epoch_unix = excluded.epoch_unix,
 			epoch_day = excluded.epoch_day,
 			source_timestamp = excluded.source_timestamp
-	`, schemaName, cid, norad, entity, epoch, day, sourceTimestamp)
+	`, schemaName, cid, norad, entity, objectType, opsStatusCode, epoch, day, sourceTimestamp)
 	if err != nil {
 		return fmt.Errorf("failed to upsert index row: %w", err)
 	}
@@ -1142,12 +1286,28 @@ func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error
 			idCopy := id
 			out.noradCatID = &idCopy
 		}
+		if objectType := strings.TrimSpace(cat.OBJECT_TYPE().String()); objectType != "" && objectType != "UNKNOWN" {
+			out.objectType = objectType
+		}
+		if opsStatusCode := strings.TrimSpace(cat.OPS_STATUS_CODE().String()); opsStatusCode != "" && opsStatusCode != "UNKNOWN" {
+			out.opsStatusCode = opsStatusCode
+		}
 
 	default:
 		// No structured extraction for this schema yet.
 	}
 
 	return out, nil
+}
+
+func normalizeIndexEnum(value string) string {
+	normalized := strings.TrimSpace(strings.ToUpper(value))
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	if normalized == "UNKNOWN" {
+		return ""
+	}
+	return normalized
 }
 
 func parseOMM(data []byte) (omm *OMM.OMM, err error) {
