@@ -1,8 +1,15 @@
 package ingest
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,7 +73,7 @@ func TestIngestSpaceWeatherDataStoresSPWFlatBuffers(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 
-	count, err := runner.ingestSpaceWeatherData(fixture, "source:celestrak")
+	count, _, err := runner.ingestSpaceWeatherData(fixture, "source:celestrak")
 	if err != nil {
 		t.Fatalf("ingestSpaceWeatherData failed: %v", err)
 	}
@@ -117,6 +124,226 @@ func TestIngestSpaceWeatherDataStoresSPWFlatBuffers(t *testing.T) {
 	}
 }
 
+func TestSyncCelestrakSpaceWeatherRecordsBatchProvenance(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/celestrak-sw-all.csv")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"fixture-spw"`)
+		w.Header().Set("Last-Modified", "Fri, 02 Jan 2026 03:04:05 GMT")
+		w.Header().Set("Content-Type", "text/csv")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(fixture); err != nil {
+			t.Fatalf("write fixture response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	runner, err := NewRunner(Config{
+		StoragePath:              filepath.Join(dir, "store"),
+		RawPath:                  filepath.Join(dir, "raw"),
+		CelestrakSpaceWeatherURL: server.URL + "/SW-All.csv",
+		SpaceTrackPollInterval:   time.Hour,
+		CelestrakInterval:        minCelestrakFetchInterval,
+		SatcatInterval:           minCelestrakFetchInterval,
+		SpaceWeatherInterval:     minCelestrakFetchInterval,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner failed: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	if err := runner.syncCelestrakSpaceWeather(context.Background()); err != nil {
+		t.Fatalf("syncCelestrakSpaceWeather failed: %v", err)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(dir, "raw", "provenance", "celestrak-space-weather", "*.json"))
+	if err != nil {
+		t.Fatalf("glob provenance: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("found %d provenance files, want 1: %v", len(matches), matches)
+	}
+
+	payload, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("read provenance: %v", err)
+	}
+
+	var provenance struct {
+		SourceURL        string            `json:"source_url"`
+		HTTPStatus       int               `json:"http_status"`
+		ETag             string            `json:"etag"`
+		LastModified     string            `json:"last_modified"`
+		RetrievedAt      string            `json:"retrieved_at"`
+		ParserVersion    string            `json:"parser_version"`
+		SourceSHA256     string            `json:"source_sha256"`
+		NormalizedSHA256 string            `json:"normalized_sha256"`
+		NormalizedCount  int               `json:"normalized_count"`
+		SchemaCounts     map[string]int    `json:"schema_counts"`
+		SchemaHashes     map[string]string `json:"schema_hashes"`
+		Warnings         []string          `json:"warnings"`
+	}
+	if err := json.Unmarshal(payload, &provenance); err != nil {
+		t.Fatalf("unmarshal provenance: %v\n%s", err, payload)
+	}
+
+	sum := sha256.Sum256(fixture)
+	if got, want := provenance.SourceURL, server.URL+"/SW-All.csv"; got != want {
+		t.Fatalf("source_url = %q, want %q", got, want)
+	}
+	if got, want := provenance.HTTPStatus, http.StatusOK; got != want {
+		t.Fatalf("http_status = %d, want %d", got, want)
+	}
+	if got, want := provenance.ETag, `"fixture-spw"`; got != want {
+		t.Fatalf("etag = %q, want %q", got, want)
+	}
+	if got, want := provenance.LastModified, "Fri, 02 Jan 2026 03:04:05 GMT"; got != want {
+		t.Fatalf("last_modified = %q, want %q", got, want)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, provenance.RetrievedAt); err != nil {
+		t.Fatalf("retrieved_at is not RFC3339Nano: %q", provenance.RetrievedAt)
+	}
+	if !strings.HasPrefix(provenance.ParserVersion, "celestrak-space-weather/") {
+		t.Fatalf("parser_version = %q, want celestrak-space-weather/*", provenance.ParserVersion)
+	}
+	if got, want := provenance.SourceSHA256, hex.EncodeToString(sum[:]); got != want {
+		t.Fatalf("source_sha256 = %q, want %q", got, want)
+	}
+	if provenance.NormalizedSHA256 == "" {
+		t.Fatalf("normalized_sha256 is empty")
+	}
+	if got, want := provenance.NormalizedCount, 2; got != want {
+		t.Fatalf("normalized_count = %d, want %d", got, want)
+	}
+	if got, want := provenance.SchemaCounts["SPW.fbs"], 2; got != want {
+		t.Fatalf("SPW.fbs schema count = %d, want %d", got, want)
+	}
+	if provenance.SchemaHashes["SPW.fbs"] == "" {
+		t.Fatalf("SPW.fbs schema hash is empty")
+	}
+	if len(provenance.Warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", provenance.Warnings)
+	}
+}
+
+func TestSyncSpaceTrackGapFillRecordsBatchProvenance(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/celestrak-gp-omm.csv")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			if r.Method != http.MethodPost {
+				t.Fatalf("login method = %s, want POST", r.Method)
+			}
+			w.WriteHeader(http.StatusOK)
+		case "/gp":
+			w.Header().Set("ETag", `"fixture-gp"`)
+			w.Header().Set("Content-Type", "text/csv")
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write(fixture); err != nil {
+				t.Fatalf("write fixture response: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	startDay := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	runner, err := NewRunner(Config{
+		StoragePath:          filepath.Join(dir, "store"),
+		RawPath:              filepath.Join(dir, "raw"),
+		SpaceTrackEnabled:    true,
+		SpaceTrackIdentity:   "test-user",
+		SpaceTrackPassword:   "test-password",
+		SpaceTrackLoginURL:   server.URL + "/login",
+		SpaceTrackQueryTmpl:  server.URL + "/gp?start=%s&end=%s",
+		SpaceTrackStartDay:   startDay,
+		SpaceTrackBatchDays:  1,
+		SpaceTrackBatchSleep: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner failed: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	if err := runner.syncSpaceTrackGapFill(context.Background()); err != nil {
+		t.Fatalf("syncSpaceTrackGapFill failed: %v", err)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(dir, "raw", "provenance", "spacetrack-gp-history", "*.json"))
+	if err != nil {
+		t.Fatalf("glob provenance: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("found %d provenance files, want 1: %v", len(matches), matches)
+	}
+
+	payload, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("read provenance: %v", err)
+	}
+	var provenance struct {
+		SourceURL        string            `json:"source_url"`
+		HTTPStatus       int               `json:"http_status"`
+		ETag             string            `json:"etag"`
+		ParserVersion    string            `json:"parser_version"`
+		NormalizedSHA256 string            `json:"normalized_sha256"`
+		NormalizedCount  int               `json:"normalized_count"`
+		SchemaCounts     map[string]int    `json:"schema_counts"`
+		SchemaHashes     map[string]string `json:"schema_hashes"`
+	}
+	if err := json.Unmarshal(payload, &provenance); err != nil {
+		t.Fatalf("unmarshal provenance: %v\n%s", err, payload)
+	}
+	if !strings.HasPrefix(provenance.SourceURL, server.URL+"/gp?start=") {
+		t.Fatalf("source_url = %q, want Space-Track GP test URL", provenance.SourceURL)
+	}
+	if got, want := provenance.HTTPStatus, http.StatusOK; got != want {
+		t.Fatalf("http_status = %d, want %d", got, want)
+	}
+	if got, want := provenance.ETag, `"fixture-gp"`; got != want {
+		t.Fatalf("etag = %q, want %q", got, want)
+	}
+	if got, want := provenance.ParserVersion, "spacetrack-gp-history/v1"; got != want {
+		t.Fatalf("parser_version = %q, want %q", got, want)
+	}
+	if provenance.NormalizedSHA256 == "" {
+		t.Fatalf("normalized_sha256 is empty")
+	}
+	if got, want := provenance.NormalizedCount, 4; got != want {
+		t.Fatalf("normalized_count = %d, want %d", got, want)
+	}
+	if got, want := provenance.SchemaCounts["OMM.fbs"], 2; got != want {
+		t.Fatalf("OMM.fbs schema count = %d, want %d", got, want)
+	}
+	if got, want := provenance.SchemaCounts["MPE.fbs"], 2; got != want {
+		t.Fatalf("MPE.fbs schema count = %d, want %d", got, want)
+	}
+	if provenance.SchemaHashes["OMM.fbs"] == "" {
+		t.Fatalf("OMM.fbs schema hash is empty")
+	}
+	if provenance.SchemaHashes["MPE.fbs"] == "" {
+		t.Fatalf("MPE.fbs schema hash is empty")
+	}
+}
+
 func TestIngestGPDataStoresOMMAndMPEFlatBuffers(t *testing.T) {
 	runner := newTestRunner(t)
 	fixture, err := os.ReadFile("testdata/celestrak-gp-omm.csv")
@@ -124,7 +351,7 @@ func TestIngestGPDataStoresOMMAndMPEFlatBuffers(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 
-	countOMM, countMPE, err := runner.ingestGPData(fixture, "source:celestrak")
+	countOMM, countMPE, _, err := runner.ingestGPData(fixture, "source:celestrak")
 	if err != nil {
 		t.Fatalf("ingestGPData failed: %v", err)
 	}
@@ -177,7 +404,7 @@ func TestIngestSatcatDataStoresCATFlatBuffers(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 
-	count, err := runner.ingestSatcatData(fixture, "source:celestrak")
+	count, _, err := runner.ingestSatcatData(fixture, "source:celestrak")
 	if err != nil {
 		t.Fatalf("ingestSatcatData failed: %v", err)
 	}
@@ -226,7 +453,7 @@ func TestIngestSatcatCSVDataStoresCATFlatBuffers(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 
-	count, err := runner.ingestSatcatData(fixture, "source:celestrak")
+	count, _, err := runner.ingestSatcatData(fixture, "source:celestrak")
 	if err != nil {
 		t.Fatalf("ingestSatcatData failed: %v", err)
 	}
