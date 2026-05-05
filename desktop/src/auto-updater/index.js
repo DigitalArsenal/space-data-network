@@ -11,9 +11,10 @@ const ipcMainEvents = require('../common/ipc-main-events')
 const getCtx = require('../context')
 const store = require('../common/store')
 const CONFIG_KEYS = require('../common/config-keys')
-
-const SDN_RELEASES_URL = 'https://github.com/DigitalArsenal/space-data-network/releases/latest'
-const SDN_RELEASE_VERSION_URL = version => `https://github.com/DigitalArsenal/space-data-network/releases/tag/desktop-v${version}`
+const {
+  SDN_DESKTOP_RELEASES_URL,
+  sdnDesktopReleaseVersionUrl
+} = require('../sdn-updater/runtime-feeds')
 
 function isAutoUpdateSupported () {
   if (store.get(CONFIG_KEYS.DISABLE_AUTO_UPDATE, false)) {
@@ -61,7 +62,7 @@ function setup () {
     })
 
     if (opt === 1) {
-      shell.openExternal(SDN_RELEASES_URL)
+      shell.openExternal(SDN_DESKTOP_RELEASES_URL)
     }
 
     if (!feedback) {
@@ -98,7 +99,7 @@ function setup () {
     })
 
     if (opt === 1) {
-      shell.openExternal(SDN_RELEASE_VERSION_URL(version))
+      shell.openExternal(sdnDesktopReleaseVersionUrl(version))
     }
   })
 
@@ -212,7 +213,7 @@ module.exports = async function () {
   }
   if (!isAutoUpdateSupported()) {
     getCtx().setProp('manualCheckForUpdates', () => {
-      shell.openExternal(SDN_RELEASES_URL)
+      shell.openExternal(SDN_DESKTOP_RELEASES_URL)
     })
     return
   }
