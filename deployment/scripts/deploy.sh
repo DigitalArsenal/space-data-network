@@ -83,9 +83,10 @@ parse_server_endpoint() {
 ssh_cmd() {
     local ip=$1
     shift
-    local ssh_opts=(-o StrictHostKeyChecking=no -o ConnectTimeout=10)
+    local control_path="/tmp/sdn-deploy-ssh-%r@%h:%p"
+    local ssh_opts=(-o ControlMaster=auto -o ControlPersist=120 -o ControlPath="$control_path" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10)
     if [[ -n "${SSH_KEY:-}" && -f "$SSH_KEY" ]]; then
-        ssh_opts=(-i "$SSH_KEY" "${ssh_opts[@]}")
+        ssh_opts=(-i "$SSH_KEY" -o IdentitiesOnly=yes "${ssh_opts[@]}")
     fi
     ssh "${ssh_opts[@]}" "${SSH_USER}@${ip}" "$@"
 }
@@ -95,9 +96,10 @@ scp_cmd() {
     local src=$1
     local ip=$2
     local dest=$3
-    local ssh_opts=(-o StrictHostKeyChecking=no)
+    local control_path="/tmp/sdn-deploy-ssh-%r@%h:%p"
+    local ssh_opts=(-o ControlMaster=auto -o ControlPersist=120 -o ControlPath="$control_path" -o BatchMode=yes -o StrictHostKeyChecking=no)
     if [[ -n "${SSH_KEY:-}" && -f "$SSH_KEY" ]]; then
-        ssh_opts=(-i "$SSH_KEY" "${ssh_opts[@]}")
+        ssh_opts=(-i "$SSH_KEY" -o IdentitiesOnly=yes "${ssh_opts[@]}")
     fi
     scp "${ssh_opts[@]}" "$src" "${SSH_USER}@${ip}:${dest}"
 }
@@ -107,9 +109,10 @@ rsync_cmd() {
     local src=$1
     local ip=$2
     local dest=$3
-    local transport="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10"
+    local control_path="/tmp/sdn-deploy-ssh-%r@%h:%p"
+    local transport="ssh -o ControlMaster=auto -o ControlPersist=120 -o ControlPath=${control_path} -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10"
     if [[ -n "${SSH_KEY:-}" && -f "$SSH_KEY" ]]; then
-        transport="ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o ConnectTimeout=10"
+        transport="ssh -i ${SSH_KEY} -o IdentitiesOnly=yes -o ControlMaster=auto -o ControlPersist=120 -o ControlPath=${control_path} -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10"
     fi
     rsync -az --delete -e "$transport" "$src" "${SSH_USER}@${ip}:${dest}"
 }
