@@ -36,12 +36,34 @@ import type {
   SubmitCryptoPaymentRequest,
 } from './types';
 
+export interface DeliveryTopicSubscription {
+  unsubscribe?: () => void | Promise<void>;
+}
+
+export type DeliveryTopicMessage =
+  | Uint8Array
+  | ArrayBuffer
+  | { data?: Uint8Array | ArrayBuffer; payload?: Uint8Array | ArrayBuffer };
+
+export interface StorefrontPubSub {
+  subscribe(
+    topic: string,
+    handler: (message: DeliveryTopicMessage) => void | Promise<void>,
+  ): void | DeliveryTopicSubscription | Promise<void | DeliveryTopicSubscription>;
+}
+
+export interface DeliverySubscription {
+  grantId: string;
+  topic: string;
+  unsubscribe: () => Promise<void>;
+}
+
 /** Storefront client configuration */
 export interface StorefrontClientConfig {
   /** API base URL for server-side operations */
   apiBaseUrl?: string;
   /** PubSub instance for real-time updates */
-  pubsub?: unknown; // Would be typed to actual PubSub type
+  pubsub?: StorefrontPubSub;
   /** Peer ID for this client */
   peerId: string;
   /** Signing function for requests */
@@ -59,6 +81,7 @@ export interface StorefrontEvents {
   'purchase:status': { requestId: string; status: PurchaseStatus };
   'grant:issued': AccessGrant;
   'data:received': { grantId: string; data: Uint8Array };
+  'data:subscribed': { grantId: string; topic: string };
 }
 
 /** Event handler type */
@@ -555,17 +578,31 @@ export class StorefrontClient {
   /**
    * Subscribe to a data delivery stream for a grant
    */
-  async subscribeToDelivery(grantId: string): Promise<void> {
+  async subscribeToDelivery(grantId: string): Promise<DeliverySubscription> {
     // Connect to the PubSub topic for this grant's delivery
     // Topic format: /sdn/data/{listing_id}/{buyer_peer_id}
     const grant = await this.getGrant(grantId);
     if (!grant) {
       throw new Error('Grant not found');
     }
-    if (grant.deliveryTopic) {
-      // PubSub subscription would be established here
-      this.emit('data:subscribed', { grantId, topic: grant.deliveryTopic });
+    if (!grant.deliveryTopic) {
+      throw new Error('Grant does not include a delivery topic');
     }
+    if (!this.config.pubsub?.subscribe) {
+      throw new Error('PubSub adapter required for delivery subscription');
+    }
+    const topic = grant.deliveryTopic;
+    const subscription = await this.config.pubsub.subscribe(topic, (message) => {
+      this.emit('data:received', { grantId, data: normalizeDeliveryTopicMessage(message) });
+    });
+    this.emit('data:subscribed', { grantId, topic });
+    return {
+      grantId,
+      topic,
+      unsubscribe: async () => {
+        await subscription?.unsubscribe?.();
+      },
+    };
   }
 
   // --- 14.6 Dashboard APIs ---
@@ -688,6 +725,23 @@ function normalizeStorefrontAPIBaseUrl(apiBaseUrl: string | undefined): string |
     return trimmed;
   }
   return `${trimmed}/api`;
+}
+
+function normalizeDeliveryTopicMessage(message: DeliveryTopicMessage): Uint8Array {
+  if (message instanceof Uint8Array) {
+    return message;
+  }
+  if (message instanceof ArrayBuffer) {
+    return new Uint8Array(message);
+  }
+  const payload = message?.data ?? message?.payload;
+  if (payload instanceof Uint8Array) {
+    return payload;
+  }
+  if (payload instanceof ArrayBuffer) {
+    return new Uint8Array(payload);
+  }
+  throw new TypeError('Delivery topic message must contain Uint8Array data.');
 }
 
 function normalizePaymentAuditEvent(value: unknown): PaymentAuditEvent {

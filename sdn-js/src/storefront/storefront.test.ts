@@ -412,6 +412,62 @@ describe('Storefront Client Configuration', () => {
     );
   });
 
+  it('subscribes paid grants to their encrypted delivery topic and emits stream data', async () => {
+    const { createStorefrontClient } = await import('./client');
+    let streamHandler: ((message: Uint8Array) => void) | undefined;
+    const unsubscribe = vi.fn();
+    const pubsub = {
+      subscribe: vi.fn(async (topic: string, handler: (message: Uint8Array) => void) => {
+        streamHandler = handler;
+        return { unsubscribe };
+      }),
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        grant_id: 'grant-1',
+        listing_id: 'protected-stream-1',
+        tier_name: 'Stream',
+        buyer_peer_id: 'buyer-peer',
+        access_type: AccessType.Streaming,
+        status: GrantStatus.Active,
+        payment_method: PaymentMethod.SDNCredits,
+        payment_amount: 500,
+        payment_currency: 'SDN',
+        auto_renew: true,
+        renewal_count: 0,
+        total_requests: 0,
+        total_records: 0,
+        delivery_topic: '/sdn/data/protected-stream-1/buyer-peer',
+        provider_peer_id: 'provider-peer',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io',
+      peerId: 'buyer-peer',
+      pubsub,
+    });
+    const received: Uint8Array[] = [];
+    client.on('data:received', (event) => received.push(event.data));
+
+    const subscription = await client.subscribeToDelivery('grant-1');
+
+    expect(fetchMock).toHaveBeenCalledWith('https://sdn.spaceaware.io/api/storefront/grants/grant-1');
+    expect(pubsub.subscribe).toHaveBeenCalledWith(
+      '/sdn/data/protected-stream-1/buyer-peer',
+      expect.any(Function),
+    );
+    expect(subscription.topic).toBe('/sdn/data/protected-stream-1/buyer-peer');
+    streamHandler?.(new Uint8Array([1, 2, 3]));
+    expect(received[0]).toEqual(new Uint8Array([1, 2, 3]));
+
+    await subscription.unsubscribe();
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+
   it('loads purchase payment audit events', async () => {
     const { createStorefrontClient } = await import('./client');
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
