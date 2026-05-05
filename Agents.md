@@ -20,6 +20,23 @@
 
 Keep those surfaces separate. Do not reintroduce a combined admin/WebUI mount.
 
+## Upstream IPFS Mirrors
+
+- Treat `webui/` and `desktop/` as upstream IPFS WebUI and IPFS Desktop mirrors.
+- Do not add long-lived SDN product behavior directly inside those mirrors.
+- SDN-specific behavior belongs in `sdn-js/ui/src/upstream-webui/overrides/`,
+  generated snapshots under `sdn-js/ui/src/upstream-webui/vendor/`, or explicit
+  patch/adapter files that can be reapplied after an upstream refresh.
+- Do not make Kubo depend on SDN-only custom protocol origins such as
+  `webui://-` or `sdn://-` for WebUI RPC access. Prefer upstream-compatible
+  HTTP origins and upstream desktop loading patterns.
+- Upstream update work must fetch the chosen upstream revision, refresh the
+  mirror tree, refresh SDN vendor snapshots, reapply overlays, and run focused
+  contract tests before deployment.
+- Any direct edit to `webui/` or `desktop/` must be identified as either an
+  upstream mirror refresh or temporary migration debt with a same-change plan to
+  move the behavior into the overlay/patch layer.
+
 ## Marketplace And Schemas
 
 - `spacedatastandards.org` owns the canonical FlatBuffer schemas.
