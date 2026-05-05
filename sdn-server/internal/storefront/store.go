@@ -1134,6 +1134,35 @@ func (s *Store) GetReviewsForListing(listingID string, limit, offset int) ([]*Re
 	return reviews, stats, nil
 }
 
+// GetModerationReviews retrieves reviews needing moderation or admin attention.
+func (s *Store) GetModerationReviews(limit, offset int) ([]*Review, int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var total int
+	s.db.QueryRow(`SELECT COUNT(*) FROM storefront_reviews WHERE status != 0 OR flagged_count > 0`).Scan(&total)
+	rows, err := s.db.Query(`
+		SELECT review_id, listing_id, reviewer_peer_id, rating, title, content,
+			quality_metrics, acl_grant_id, verified_purchase, created_at,
+			updated_at, status, helpful_count, not_helpful_count,
+			provider_response, provider_response_at, flagged_count,
+			moderation_notes, reviewer_signature
+		FROM storefront_reviews
+		WHERE status != 0 OR flagged_count > 0
+		ORDER BY updated_at DESC LIMIT ? OFFSET ?
+	`, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query moderation reviews: %w", err)
+	}
+	defer rows.Close()
+
+	reviews, err := scanReviewRows(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return reviews, total, nil
+}
+
 // GetCreditsBalance retrieves the credits balance for a peer.
 func (s *Store) GetCreditsBalance(peerID string) (*CreditsBalance, error) {
 	s.mu.RLock()
@@ -1389,6 +1418,146 @@ func (s *Store) GetProviderPurchases(providerPeerID string, limit, offset int) (
 	}
 
 	return purchases, total, nil
+}
+
+// GetBuyerPurchases retrieves all purchases for a buyer.
+func (s *Store) GetBuyerPurchases(buyerPeerID string, limit, offset int) ([]*PurchaseRequest, int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var total int
+	s.db.QueryRow(`SELECT COUNT(*) FROM storefront_purchases WHERE buyer_peer_id = ?`, buyerPeerID).Scan(&total)
+
+	rows, err := s.db.Query(`
+		SELECT request_id, listing_id, tier_name, buyer_peer_id, buyer_encryption_pubkey,
+			key_algorithm, buyer_email, payment_method, payment_amount, payment_currency,
+			payment_tx_hash, payment_chain, sender_address, confirmation_block,
+			payment_intent_id, credits_transaction_id, status, status_message,
+			created_at, updated_at, payment_deadline, payment_confirmed_at,
+			grant_issued_at, grant_id, provider_peer_id, provider_acknowledged_at,
+			preferred_delivery_method, webhook_url, buyer_signature, provider_signature
+		FROM storefront_purchases WHERE buyer_peer_id = ?
+		ORDER BY created_at DESC LIMIT ? OFFSET ?
+	`, buyerPeerID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query buyer purchases: %w", err)
+	}
+	defer rows.Close()
+
+	purchases, err := scanPurchaseRows(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return purchases, total, nil
+}
+
+// GetPurchasesByStatuses retrieves purchases matching any status for admin surfaces.
+func (s *Store) GetPurchasesByStatuses(statuses []PurchaseStatus, limit, offset int) ([]*PurchaseRequest, int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(statuses) == 0 {
+		return []*PurchaseRequest{}, 0, nil
+	}
+	placeholders := make([]string, len(statuses))
+	args := make([]interface{}, 0, len(statuses)+2)
+	for i, status := range statuses {
+		placeholders[i] = "?"
+		args = append(args, status)
+	}
+	where := "status IN (" + strings.Join(placeholders, ",") + ")"
+
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM storefront_purchases WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count purchases by status: %w", err)
+	}
+	args = append(args, limit, offset)
+	rows, err := s.db.Query(`
+		SELECT request_id, listing_id, tier_name, buyer_peer_id, buyer_encryption_pubkey,
+			key_algorithm, buyer_email, payment_method, payment_amount, payment_currency,
+			payment_tx_hash, payment_chain, sender_address, confirmation_block,
+			payment_intent_id, credits_transaction_id, status, status_message,
+			created_at, updated_at, payment_deadline, payment_confirmed_at,
+			grant_issued_at, grant_id, provider_peer_id, provider_acknowledged_at,
+			preferred_delivery_method, webhook_url, buyer_signature, provider_signature
+		FROM storefront_purchases WHERE `+where+`
+		ORDER BY updated_at DESC LIMIT ? OFFSET ?
+	`, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query purchases by status: %w", err)
+	}
+	defer rows.Close()
+
+	purchases, err := scanPurchaseRows(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return purchases, total, nil
+}
+
+func scanPurchaseRows(rows *sql.Rows) ([]*PurchaseRequest, error) {
+	var purchases []*PurchaseRequest
+	for rows.Next() {
+		var req PurchaseRequest
+		var createdAt, updatedAt, paymentDeadline, paymentConfirmedAt, grantIssuedAt, providerAcknowledgedAt int64
+
+		err := rows.Scan(
+			&req.RequestID, &req.ListingID, &req.TierName, &req.BuyerPeerID,
+			&req.BuyerEncryptionPubkey, &req.KeyAlgorithm, &req.BuyerEmail,
+			&req.PaymentMethod, &req.PaymentAmount, &req.PaymentCurrency,
+			&req.PaymentTxHash, &req.PaymentChain, &req.SenderAddress, &req.ConfirmationBlock,
+			&req.PaymentIntentID, &req.CreditsTransactionID, &req.Status, &req.StatusMessage,
+			&createdAt, &updatedAt, &paymentDeadline, &paymentConfirmedAt,
+			&grantIssuedAt, &req.GrantID, &req.ProviderPeerID, &providerAcknowledgedAt,
+			&req.PreferredDeliveryMethod, &req.WebhookURL,
+			&req.BuyerSignature, &req.ProviderSignature,
+		)
+		if err != nil {
+			log.Warnf("Failed to scan purchase row: %v", err)
+			continue
+		}
+
+		req.CreatedAt = time.Unix(createdAt, 0)
+		req.UpdatedAt = time.Unix(updatedAt, 0)
+		req.PaymentDeadline = time.Unix(paymentDeadline, 0)
+		req.PaymentConfirmedAt = time.Unix(paymentConfirmedAt, 0)
+		req.GrantIssuedAt = time.Unix(grantIssuedAt, 0)
+		req.ProviderAcknowledgedAt = time.Unix(providerAcknowledgedAt, 0)
+
+		purchases = append(purchases, &req)
+	}
+	return purchases, rows.Err()
+}
+
+func scanReviewRows(rows *sql.Rows) ([]*Review, error) {
+	var reviews []*Review
+	for rows.Next() {
+		var review Review
+		var qualityMetricsJSON string
+		var createdAt, updatedAt, providerResponseAt int64
+
+		err := rows.Scan(
+			&review.ReviewID, &review.ListingID, &review.ReviewerPeerID,
+			&review.Rating, &review.Title, &review.Content,
+			&qualityMetricsJSON, &review.ACLGrantID, &review.VerifiedPurchase,
+			&createdAt, &updatedAt, &review.Status, &review.HelpfulCount,
+			&review.NotHelpfulCount, &review.ProviderResponse,
+			&providerResponseAt, &review.FlaggedCount,
+			&review.ModerationNotes, &review.ReviewerSignature,
+		)
+		if err != nil {
+			log.Warnf("Failed to scan review row: %v", err)
+			continue
+		}
+
+		json.Unmarshal([]byte(qualityMetricsJSON), &review.QualityMetrics)
+		review.CreatedAt = time.Unix(createdAt, 0)
+		review.UpdatedAt = time.Unix(updatedAt, 0)
+		review.ProviderResponseAt = time.Unix(providerResponseAt, 0)
+
+		reviews = append(reviews, &review)
+	}
+	return reviews, rows.Err()
 }
 
 // CreateCreditsTransaction records a credits transaction.
