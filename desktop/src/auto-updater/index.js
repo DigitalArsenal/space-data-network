@@ -2,6 +2,8 @@ const { shell, app, BrowserWindow, Notification } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const i18n = require('i18next')
 const { ipcMain } = require('electron')
+const fs = require('fs')
+const path = require('path')
 const logger = require('../common/logger')
 const { showDialog } = require('../dialogs')
 const { IS_MAC, IS_WIN, IS_APPIMAGE } = require('../common/consts')
@@ -15,9 +17,17 @@ function isAutoUpdateSupported () {
     logger.info('[updater] auto update explicitly disabled, not checking for updates automatically')
     return false
   }
+  if (!hasPackagedUpdateConfig()) {
+    logger.info('[updater] app-update.yml missing, not checking for updates automatically')
+    return false
+  }
   // atm only macOS, windows and AppImage builds support autoupdate mechanism,
   // everything else needs to be updated manually or via a third-party package manager
   return IS_MAC || IS_WIN || IS_APPIMAGE
+}
+
+function hasPackagedUpdateConfig () {
+  return fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))
 }
 
 let updateNotification = null // must be a global to avoid gc

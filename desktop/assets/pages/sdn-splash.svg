@@ -1,25 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-  <defs>
-    <linearGradient id="orbitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#58a6ff"/>
-      <stop offset="100%" style="stop-color:#69c4cd"/>
-    </linearGradient>
-  </defs>
-  <g transform="translate(100, 100)">
-    <!-- Outer circle -->
-    <circle cx="0" cy="0" r="80" fill="none" stroke="url(#orbitGrad)" stroke-width="3" shape-rendering="geometricPrecision"/>
-    <!-- Orbits -->
-    <ellipse cx="0" cy="0" rx="80" ry="32" fill="none" stroke="url(#orbitGrad)" stroke-width="2" shape-rendering="geometricPrecision"/>
-    <ellipse cx="0" cy="0" rx="80" ry="32" fill="none" stroke="url(#orbitGrad)" stroke-width="2" transform="rotate(60)" shape-rendering="geometricPrecision"/>
-    <ellipse cx="0" cy="0" rx="80" ry="32" fill="none" stroke="url(#orbitGrad)" stroke-width="2" transform="rotate(120)" shape-rendering="geometricPrecision"/>
-    <!-- Center node -->
-    <circle cx="0" cy="0" r="10" fill="#58a6ff"/>
-    <!-- Endpoint nodes -->
-    <circle cx="-80" cy="0" r="7" fill="#69c4cd"/>
-    <circle cx="80" cy="0" r="7" fill="#69c4cd"/>
-    <circle cx="-40" cy="-69.28" r="7" fill="#69c4cd"/>
-    <circle cx="40" cy="69.28" r="7" fill="#69c4cd"/>
-    <circle cx="40" cy="-69.28" r="7" fill="#69c4cd"/>
-    <circle cx="-40" cy="69.28" r="7" fill="#69c4cd"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Space Data Network" data-sdn-mark="primary-outline-dot">
+  <circle cx="64" cy="64" r="52" fill="none" stroke="#fff" stroke-width="9"/>
+  <path d="M64 116 L19 38 L109 38 Z" fill="none" stroke="#fff" stroke-width="10" stroke-linejoin="round"/>
+  <circle cx="64" cy="64" r="7" fill="#fff"/>
 </svg>

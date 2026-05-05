@@ -1,9 +1,9 @@
 {
-  "name": "ipfs-desktop",
+  "name": "space-data-network-desktop",
   "private": true,
   "version": "0.47.0",
-  "productName": "IPFS Desktop",
-  "description": "IPFS Native Application",
+  "productName": "Space Data Network",
+  "description": "Space Data Network desktop application",
   "main": "src/index.js",
   "scripts": {
     "start": "cross-env NODE_ENV=development electron .",
@@ -69,7 +69,6 @@
   },
   "dependencies": {
     "countly-sdk-nodejs": "^20.11.0",
-    "electron-serve": "^1.1.0",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.6.2",
     "fix-path": "3.0.0",

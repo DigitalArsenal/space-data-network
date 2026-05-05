@@ -96,9 +96,15 @@ async function buildMenu () {
     { type: 'separator' },
     // @ts-ignore
     {
+      id: 'sdnUiHome',
+      label: 'SDN UI',
+      click: () => { launchDashboard('/') }
+    },
+    // @ts-ignore
+    {
       id: 'webuiStatus',
       label: i18n.t('status'),
-      click: () => { launchDashboard('/') }
+      click: () => { launchWebUI('/') }
     },
     // @ts-ignore
     {
@@ -279,7 +285,7 @@ module.exports = async function () {
   const ctx = getCtx()
   logger.info('[tray] starting')
   tray = new Tray(icon(off))
-  tray.setToolTip('IPFS Desktop')
+  tray.setToolTip('Space Data Network')
 
   const launchWebUI = ctx.getFn('launchWebUI')
 
@@ -333,6 +339,7 @@ module.exports = async function () {
     menu.getMenuItemById('stopIpfs').visible = status === STATUS.STARTING_FINISHED
     menu.getMenuItemById('restartIpfs').visible = (status === STATUS.STARTING_FINISHED || errored)
 
+    menu.getMenuItemById('sdnUiHome').enabled = true
     menu.getMenuItemById('webuiStatus').enabled = status === STATUS.STARTING_FINISHED
     menu.getMenuItemById('webuiFiles').enabled = status === STATUS.STARTING_FINISHED
     menu.getMenuItemById('webuiPeers').enabled = status === STATUS.STARTING_FINISHED
