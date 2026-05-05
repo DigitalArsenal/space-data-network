@@ -75,4 +75,6 @@ if (staleFiles.length > 0) {
 
 if (!checkOnly) {
   console.log('Synced upstream WebUI branding slice into sdn-js.');
+} else {
+  console.log('Vendored upstream WebUI files are in sync.');
 }
