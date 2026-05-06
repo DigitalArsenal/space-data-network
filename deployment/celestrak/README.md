@@ -22,6 +22,11 @@ The CelesTrak host runs three systemd units:
 - `spacedatanetwork-ingest.service`: CelesTrak ingest worker
 - `kubo.service`: local Kubo RPC/gateway node used by SDN WebUI and publication helpers
 
+The private closed-module checkout is loaded separately at
+`/opt/spacedatanetwork/closed-modules`. It contains the scheduler-facing
+CelesTrak provider and publisher CLIs, but production secrets and host adapters
+must still come from private drop-ins or the host secret manager.
+
 Kubo intentionally uses non-default local RPC ports so it does not collide with
 the SDN admin/API listener:
 
@@ -67,6 +72,41 @@ Then start services:
 systemctl daemon-reload
 systemctl enable --now kubo spacedatanetwork spacedatanetwork-ingest
 ```
+
+## Closed Module Load
+
+Install Node/npm once on the CelesTrak host, then load the private module repo.
+If the host has GitHub credentials for the private repository, prefer a normal
+clone or pull:
+
+```sh
+ssh celestrak.eth 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs npm'
+ssh celestrak.eth 'cd /opt/spacedatanetwork && git clone https://github.com/DigitalArsenal/space-data-network-closed-modules.git closed-modules'
+ssh celestrak.eth 'chown -R sdn:sdn /opt/spacedatanetwork/closed-modules'
+```
+
+If the host does not have private GitHub credentials, create a bundle from the
+already-pushed local checkout and clone that bundle on the host:
+
+```sh
+cd repos/main-packages/space-data-network-closed-modules
+git bundle create /tmp/sdn-closed-modules.bundle main
+scp /tmp/sdn-closed-modules.bundle celestrak.eth:/tmp/sdn-closed-modules.bundle
+ssh celestrak.eth 'rm -rf /opt/spacedatanetwork/closed-modules && git clone -b main /tmp/sdn-closed-modules.bundle /opt/spacedatanetwork/closed-modules'
+ssh celestrak.eth 'cd /opt/spacedatanetwork/closed-modules && git remote remove origin && git remote add origin https://github.com/DigitalArsenal/space-data-network-closed-modules.git'
+ssh celestrak.eth 'chown -R sdn:sdn /opt/spacedatanetwork/closed-modules'
+```
+
+Smoke the loaded module with non-secret public-source config:
+
+```sh
+ssh celestrak.eth 'cd /opt/spacedatanetwork/closed-modules && npm test'
+ssh celestrak.eth 'cd /opt/spacedatanetwork/closed-modules && env CELESTRAK_PROVIDER_CRON="0 */3 * * *" CELESTRAK_SOURCES="spaceWeather" SDN_PROVIDER_ID="celestrak.eth" node packages/celestrak-provider/bin/run-provider.mjs --run'
+```
+
+The checked-in `spacedatanetwork-ingest.service` remains the production
+three-hour CelesTrak pull path until the closed publisher adapters are wired to
+FlatSQL export, IPFS pinning, PNM signing, and pub/sub fanout.
 
 ## Verification
 
