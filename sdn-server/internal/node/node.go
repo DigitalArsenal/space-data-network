@@ -4,6 +4,7 @@ package node
 import (
 	"context"
 	crypto_ecdh "crypto/ecdh"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
@@ -105,6 +107,8 @@ type Node struct {
 	epmExchangeMu           sync.Mutex
 	epmExchangeLastRequest  map[peer.ID]time.Time
 	autoRelayPeerChan       chan peer.AddrInfo
+	datasetMaterializeMu    sync.Mutex
+	datasetMaterializedPNMs map[string]time.Time
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -126,6 +130,7 @@ func New(ctx context.Context, cfg *config.Config) (*Node, error) {
 		sdnDiscoveryAddrsByPeer: make(map[peer.ID][]string),
 		epmExchangeLastRequest:  make(map[peer.ID]time.Time),
 		autoRelayPeerChan:       make(chan peer.AddrInfo, 64),
+		datasetMaterializedPNMs: make(map[string]time.Time),
 	}
 
 	if err := n.init(); err != nil {
@@ -348,6 +353,7 @@ func (n *Node) init() error {
 	}
 
 	n.protocol = protocol.NewSDSExchangeHandlerWithOptions(n.store, n.validator, limits, rateLimiter)
+	n.protocol.SetPubSubPNMHandler(n.handleDatasetPublicationPNM)
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
 	n.host.SetStreamHandler(protocol.IDExchangeProtoID, protocol.HandleLegacyIDExchange)
 	n.host.SetStreamHandler(protocol.ChatProtoID, protocol.HandleLegacyChat)
@@ -967,6 +973,92 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 			log.Warnf("Failed to handle message on %s: %v", schema, err)
 		}
 	}
+}
+
+func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) error {
+	if schema == "PNM.fbs" {
+		return nil
+	}
+	if n == nil || n.store == nil || n.peerRegistry == nil {
+		return nil
+	}
+	if !n.peerRegistry.IsTrusted(from) {
+		log.Debugf("Skipping dataset PNM materialization from non-trusted peer %s on %s", from.ShortString(), schema)
+		return nil
+	}
+	ipfsAPIURL := strings.TrimSpace(n.config.Admin.IPFSAPIURL)
+	if ipfsAPIURL == "" {
+		return fmt.Errorf("trusted dataset PNM received from %s but admin.ipfs_api_url is not configured", from.ShortString())
+	}
+	pnm := PNM.GetSizePrefixedRootAsPNM(pnmBytes, 0)
+	pnmKey := strings.TrimSpace(string(pnm.CID())) + "\x00" + strings.TrimSpace(string(pnm.FILE_ID()))
+	if pnmKey == "\x00" {
+		return nil
+	}
+	if n.datasetPNMAlreadyMaterialized(pnmKey) {
+		return nil
+	}
+
+	providerPublicKey, err := ed25519PublicKeyFromPeerID(from)
+	if err != nil {
+		return fmt.Errorf("dataset provider public key unavailable for %s: %w", from.ShortString(), err)
+	}
+	workDir := filepath.Join(n.config.Storage.Path, "dataset-publication-replay")
+	result, err := storage.MaterializeDatasetPublication(ctx, n.store, storage.DatasetPublicationReplayOptions{
+		PNM:               pnmBytes,
+		ProviderPublicKey: providerPublicKey,
+		FetchByCID: func(ctx context.Context, cid string) ([]byte, error) {
+			return storage.FetchIPFSBlockByCID(ctx, ipfsAPIURL, cid)
+		},
+		WorkDir: workDir,
+	})
+	if err != nil {
+		n.clearDatasetPNMMaterialized(pnmKey)
+		return err
+	}
+	log.Infof("Materialized trusted dataset update from %s on %s: schema=%s imported=%d manifest=%s shard=%s",
+		from.ShortString(), schema, result.SchemaName, result.Imported, result.ManifestCID, result.ShardCID)
+	return nil
+}
+
+func (n *Node) datasetPNMAlreadyMaterialized(key string) bool {
+	n.datasetMaterializeMu.Lock()
+	defer n.datasetMaterializeMu.Unlock()
+	if n.datasetMaterializedPNMs == nil {
+		n.datasetMaterializedPNMs = make(map[string]time.Time)
+	}
+	now := time.Now()
+	for existing, seenAt := range n.datasetMaterializedPNMs {
+		if now.Sub(seenAt) > 24*time.Hour {
+			delete(n.datasetMaterializedPNMs, existing)
+		}
+	}
+	if _, ok := n.datasetMaterializedPNMs[key]; ok {
+		return true
+	}
+	n.datasetMaterializedPNMs[key] = now
+	return false
+}
+
+func (n *Node) clearDatasetPNMMaterialized(key string) {
+	n.datasetMaterializeMu.Lock()
+	defer n.datasetMaterializeMu.Unlock()
+	delete(n.datasetMaterializedPNMs, key)
+}
+
+func ed25519PublicKeyFromPeerID(id peer.ID) (ed25519.PublicKey, error) {
+	pubKey, err := id.ExtractPublicKey()
+	if err != nil {
+		return nil, err
+	}
+	raw, err := pubKey.Raw()
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("peer public key length = %d, want %d", len(raw), ed25519.PublicKeySize)
+	}
+	return ed25519.PublicKey(append([]byte(nil), raw...)), nil
 }
 
 // mdnsNotifee handles mDNS peer discovery events.

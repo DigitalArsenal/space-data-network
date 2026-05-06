@@ -56,6 +56,45 @@ func PublishDatasetPublicationManifestToIPFS(ctx context.Context, ipfsAPIURL str
 	return manifestCID, nil
 }
 
+// FetchIPFSBlockByCID fetches an immutable raw block from a Kubo RPC API.
+func FetchIPFSBlockByCID(ctx context.Context, ipfsAPIURL, cidValue string) ([]byte, error) {
+	if strings.TrimSpace(ipfsAPIURL) == "" {
+		return nil, fmt.Errorf("ipfs api url is required")
+	}
+	cidValue = strings.TrimSpace(cidValue)
+	if cidValue == "" {
+		return nil, fmt.Errorf("cid is required")
+	}
+	endpoint, err := url.JoinPath(strings.TrimRight(ipfsAPIURL, "/"), "/api/v0/block/get")
+	if err != nil {
+		return nil, fmt.Errorf("build IPFS URL: %w", err)
+	}
+	reqURL, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("parse IPFS URL: %w", err)
+	}
+	query := reqURL.Query()
+	query.Set("arg", cidValue)
+	reqURL.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create IPFS request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("post IPFS block get: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read IPFS block: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("IPFS block get failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return body, nil
+}
+
 func pinRawBlock(ctx context.Context, ipfsAPIURL, path, expectedCID string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", fmt.Errorf("path is required")
