@@ -1005,7 +1005,9 @@ func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, p
 		return fmt.Errorf("dataset provider public key unavailable for %s: %w", from.ShortString(), err)
 	}
 	workDir := filepath.Join(n.config.Storage.Path, "dataset-publication-replay")
-	result, err := storage.MaterializeDatasetPublication(ctx, n.store, storage.DatasetPublicationReplayOptions{
+	materializeCtx, cancel := context.WithTimeout(n.ctx, 2*time.Minute)
+	defer cancel()
+	result, err := storage.MaterializeDatasetPublication(materializeCtx, n.store, storage.DatasetPublicationReplayOptions{
 		PNM:               pnmBytes,
 		ProviderPublicKey: providerPublicKey,
 		FetchByCID: func(ctx context.Context, cid string) ([]byte, error) {
