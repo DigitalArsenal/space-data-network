@@ -209,14 +209,21 @@ func TestLatestDatasetPublicationPNMBatchesKeepsNewestBatchPerDatasetSchema(t *t
 		Data:      buildCatchupTestPNM(t, "bafy-new-mpe", "sdn-MPE-full:MPE.fbs:mpe-batch:part-000001"),
 		Timestamp: time.Unix(150, 0).UTC(),
 	}
+	olderOneShot := &storage.Record{
+		Data:      buildCatchupTestPNM(t, "bafy-old-oneshot", "sdn-OMM:OMM.fbs:old-oneshot"),
+		Timestamp: time.Unix(300, 0).UTC(),
+	}
 
-	filtered := latestDatasetPublicationPNMBatches([]*storage.Record{newPart2, oldRecord, latestMPE, newPart1})
+	filtered := latestDatasetPublicationPNMBatches([]*storage.Record{newPart2, oldRecord, latestMPE, newPart1, olderOneShot})
 	if len(filtered) != 3 {
 		t.Fatalf("filtered records = %d, want 3", len(filtered))
 	}
 	for _, record := range filtered {
 		if record == oldRecord {
 			t.Fatal("old OMM batch was retained")
+		}
+		if record == olderOneShot {
+			t.Fatal("older OMM one-shot was retained despite full-catalog OMM batch")
 		}
 	}
 }
