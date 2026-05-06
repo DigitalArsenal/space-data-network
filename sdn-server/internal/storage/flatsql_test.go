@@ -286,6 +286,67 @@ func TestFlatSQLStoreQueryRecentRecordsAvoidsIndexJoin(t *testing.T) {
 	}
 }
 
+func TestFlatSQLStoreQueryRecentRecordsPrefersLatestSourceTagMaterialization(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-recent-source-tags-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	current := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("CURRENT").Build()
+	laterInsertedButOlderMaterialization := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("OLDER").Build()
+
+	currentCID, err := store.StoreWithSourceTags("OMM.fbs", current, "source:celestrak", nil, SourceTags{
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-gp",
+		BatchID:    "current-batch",
+	})
+	if err != nil {
+		t.Fatalf("store current OMM failed: %v", err)
+	}
+	olderCID, err := store.StoreWithSourceTags("OMM.fbs", laterInsertedButOlderMaterialization, "source:celestrak", nil, SourceTags{
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-gp",
+		BatchID:    "older-batch",
+	})
+	if err != nil {
+		t.Fatalf("store older OMM failed: %v", err)
+	}
+	if _, err := store.db.Exec(`
+		UPDATE sdn_record_source_tags
+		SET created_at = CASE cid
+			WHEN ? THEN 200
+			WHEN ? THEN 100
+			ELSE created_at
+		END
+		WHERE schema_name = 'OMM.fbs'
+	`, currentCID, olderCID); err != nil {
+		t.Fatalf("set source tag materialization times failed: %v", err)
+	}
+
+	records, err := store.QueryRecentRecords("OMM.fbs", 1)
+	if err != nil {
+		t.Fatalf("QueryRecentRecords failed: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("len(records) = %d, want 1", len(records))
+	}
+	if records[0].CID != currentCID {
+		t.Fatalf("QueryRecentRecords returned CID %q, want latest materialized CID %q", records[0].CID, currentCID)
+	}
+}
+
 func TestFlatSQLStoreStoreAndGet(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-test-*")
 	if err != nil {
