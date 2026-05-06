@@ -227,7 +227,7 @@ func (n *Node) init() error {
 			TrustLevel: peers.Trusted,
 			Name:       "Config Trusted Peer",
 		}
-		if err := n.peerRegistry.AddPeer(tp); err != nil && err != peers.ErrPeerAlreadyExists {
+		if err := upsertConfiguredTrustedPeer(n.peerRegistry, tp); err != nil {
 			log.Warnf("Failed to add trusted peer %s: %v", addrInfo.ID, err)
 		}
 	}
@@ -582,6 +582,29 @@ func (n *Node) findPluginDecryptPrivateKey() ([]byte, error) {
 	}
 
 	return nil, nil
+}
+
+func upsertConfiguredTrustedPeer(registry *peers.Registry, configured *peers.TrustedPeer) error {
+	if registry == nil || configured == nil {
+		return nil
+	}
+	if err := registry.AddPeer(configured); err == nil {
+		return nil
+	} else if err != peers.ErrPeerAlreadyExists {
+		return err
+	}
+
+	existing, err := registry.GetPeer(configured.ID)
+	if err != nil {
+		return err
+	}
+	existing.Addrs = configured.Addrs
+	existing.AddrsStrings = configured.AddrsStrings
+	existing.TrustLevel = peers.Trusted
+	if strings.TrimSpace(existing.Name) == "" {
+		existing.Name = configured.Name
+	}
+	return registry.UpdatePeer(existing)
 }
 
 func (n *Node) registerCatalogPlugins(reg *license.PluginRegistry, pluginCtx plugins.RuntimeContext, recipientKey []byte) error {
