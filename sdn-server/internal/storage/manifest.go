@@ -735,6 +735,11 @@ func rebuildUnsignedDatasetManifest(manifest *dpm.DPM) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse DPM publish timestamp: %w", err)
 	}
+	providerIDs := dpmStringVectorValues(query.PROVIDER_IDSLength(), query.PROVIDER_IDS)
+	providerID := string(manifest.PROVIDER_PEER_ID())
+	if len(providerIDs) > 0 {
+		providerID = providerIDs[0]
+	}
 	sourceBatches := make([]DatasetExportSourceBatch, 0, manifest.SOURCESLength())
 	for i := 0; i < manifest.SOURCESLength(); i++ {
 		var source dpm.DPMSourceBatch
@@ -742,7 +747,7 @@ func rebuildUnsignedDatasetManifest(manifest *dpm.DPM) ([]byte, error) {
 			continue
 		}
 		sourceBatches = append(sourceBatches, DatasetExportSourceBatch{
-			ProviderID:       string(manifest.PROVIDER_PEER_ID()),
+			ProviderID:       providerID,
 			SourceName:       string(source.SOURCE_NAME()),
 			SourceURL:        string(source.SOURCE_URL()),
 			SourceSHA256:     string(source.SOURCE_SHA256()),
@@ -784,6 +789,17 @@ func rebuildUnsignedDatasetManifest(manifest *dpm.DPM) ([]byte, error) {
 		QueryEngine:     string(query.QUERY_ENGINE()),
 		QueryEngineVers: string(query.QUERY_ENGINE_VERSION()),
 	}, nil, "")
+}
+
+func dpmStringVectorValues(length int, read func(int) []byte) []string {
+	values := make([]string, 0, length)
+	for i := 0; i < length; i++ {
+		value := strings.TrimSpace(string(read(i)))
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func shardSchemaHash(manifest *dpm.DPM, kind string) string {
