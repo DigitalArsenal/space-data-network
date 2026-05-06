@@ -734,6 +734,9 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	if _, err := s.db.Exec(`DELETE FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, schemaName, cid); err != nil {
 		log.Warnf("Failed to delete index row for %s/%s: %v", schemaName, cid, err)
 	}
+	if _, err := s.db.Exec(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND cid = ?`, schemaName, cid); err != nil {
+		log.Warnf("Failed to delete source tags for %s/%s: %v", schemaName, cid, err)
+	}
 
 	return nil
 }
