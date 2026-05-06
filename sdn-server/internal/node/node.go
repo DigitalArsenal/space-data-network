@@ -1016,6 +1016,7 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 	if err != nil {
 		return 0, fmt.Errorf("query stored PNM records: %w", err)
 	}
+	records = latestDatasetPublicationPNMBatches(records)
 	materialized := 0
 	var firstErr error
 	for _, record := range records {
@@ -1151,6 +1152,71 @@ func datasetPublicationFileIDSchema(fileID string) string {
 		}
 	}
 	return ""
+}
+
+func latestDatasetPublicationPNMBatches(records []*storage.Record) []*storage.Record {
+	type batchKey struct {
+		dataset string
+		schema  string
+	}
+	type batchChoice struct {
+		batchID string
+		seenAt  time.Time
+	}
+	latest := map[batchKey]batchChoice{}
+	recordMeta := make(map[*storage.Record]struct {
+		key     batchKey
+		batchID string
+	})
+	for _, record := range records {
+		if record == nil || len(record.Data) == 0 || !PNM.SizePrefixedPNMBufferHasIdentifier(record.Data) {
+			continue
+		}
+		pnm := PNM.GetSizePrefixedRootAsPNM(record.Data, 0)
+		dataset, schema, batchID := datasetPublicationFileIDParts(string(pnm.FILE_ID()))
+		if dataset == "" || schema == "" || batchID == "" {
+			continue
+		}
+		key := batchKey{dataset: dataset, schema: schema}
+		recordMeta[record] = struct {
+			key     batchKey
+			batchID string
+		}{key: key, batchID: batchID}
+		if existing, ok := latest[key]; !ok || record.Timestamp.After(existing.seenAt) {
+			latest[key] = batchChoice{batchID: batchID, seenAt: record.Timestamp}
+		}
+	}
+	if len(latest) == 0 {
+		return records
+	}
+	filtered := make([]*storage.Record, 0, len(records))
+	for _, record := range records {
+		meta, ok := recordMeta[record]
+		if !ok {
+			filtered = append(filtered, record)
+			continue
+		}
+		if latest[meta.key].batchID == meta.batchID {
+			filtered = append(filtered, record)
+		}
+	}
+	return filtered
+}
+
+func datasetPublicationFileIDParts(fileID string) (dataset string, schema string, batchID string) {
+	parts := strings.Split(fileID, ":")
+	if len(parts) < 3 {
+		return "", datasetPublicationFileIDSchema(fileID), ""
+	}
+	dataset = strings.TrimSpace(parts[0])
+	schema = datasetPublicationFileIDSchema(fileID)
+	for i, part := range parts {
+		if strings.TrimSpace(part) == schema && i+1 < len(parts) {
+			batchID = strings.TrimSpace(parts[i+1])
+			break
+		}
+	}
+	return dataset, schema, batchID
 }
 
 func (n *Node) datasetPNMAlreadyMaterialized(key string) bool {

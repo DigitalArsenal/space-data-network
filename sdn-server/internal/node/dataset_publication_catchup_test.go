@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
+	flatbuffers "github.com/google/flatbuffers/go"
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 
@@ -186,4 +188,52 @@ func mustReadTestFile(t *testing.T, path string) []byte {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return data
+}
+
+func TestLatestDatasetPublicationPNMBatchesKeepsNewestBatchPerDatasetSchema(t *testing.T) {
+	t.Parallel()
+
+	oldRecord := &storage.Record{
+		Data:      buildCatchupTestPNM(t, "bafy-old-omm", "sdn-OMM-full:OMM.fbs:old-batch:part-000001"),
+		Timestamp: time.Unix(100, 0).UTC(),
+	}
+	newPart1 := &storage.Record{
+		Data:      buildCatchupTestPNM(t, "bafy-new-omm-1", "sdn-OMM-full:OMM.fbs:new-batch:part-000001"),
+		Timestamp: time.Unix(200, 0).UTC(),
+	}
+	newPart2 := &storage.Record{
+		Data:      buildCatchupTestPNM(t, "bafy-new-omm-2", "sdn-OMM-full:OMM.fbs:new-batch:part-000002"),
+		Timestamp: time.Unix(201, 0).UTC(),
+	}
+	latestMPE := &storage.Record{
+		Data:      buildCatchupTestPNM(t, "bafy-new-mpe", "sdn-MPE-full:MPE.fbs:mpe-batch:part-000001"),
+		Timestamp: time.Unix(150, 0).UTC(),
+	}
+
+	filtered := latestDatasetPublicationPNMBatches([]*storage.Record{newPart2, oldRecord, latestMPE, newPart1})
+	if len(filtered) != 3 {
+		t.Fatalf("filtered records = %d, want 3", len(filtered))
+	}
+	for _, record := range filtered {
+		if record == oldRecord {
+			t.Fatal("old OMM batch was retained")
+		}
+	}
+}
+
+func buildCatchupTestPNM(t *testing.T, cid, fileID string) []byte {
+	t.Helper()
+
+	builder := flatbuffers.NewBuilder(256)
+	cidOffset := builder.CreateString(cid)
+	fileIDOffset := builder.CreateString(fileID)
+	timestampOffset := builder.CreateString(time.Now().UTC().Format(time.RFC3339))
+
+	PNM.PNMStart(builder)
+	PNM.PNMAddCID(builder, cidOffset)
+	PNM.PNMAddFILE_ID(builder, fileIDOffset)
+	PNM.PNMAddPUBLISH_TIMESTAMP(builder, timestampOffset)
+	pnm := PNM.PNMEnd(builder)
+	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
+	return append([]byte(nil), builder.FinishedBytes()...)
 }
