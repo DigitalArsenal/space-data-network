@@ -1036,22 +1036,12 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 		if schema == "" {
 			continue
 		}
-		from, err := peer.Decode(strings.TrimSpace(record.PeerID))
-		if err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("decode stored PNM peer id %q: %w", record.PeerID, err)
-			}
-			continue
-		}
-		if !n.peerRegistry.IsTrusted(from) {
-			continue
-		}
-		didMaterialize, err := n.materializeDatasetPublicationPNM(ctx, schema, record.Data, from)
+		didMaterialize, err := n.materializeStoredDatasetPublicationPNM(ctx, schema, record)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
-			log.Warnf("Stored dataset PNM catch-up failed from %s on %s: %v", from.ShortString(), schema, err)
+			log.Warnf("Stored dataset PNM catch-up failed on %s: %v", schema, err)
 			continue
 		}
 		if didMaterialize {
@@ -1059,6 +1049,59 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 		}
 	}
 	return materialized, firstErr
+}
+
+func (n *Node) materializeStoredDatasetPublicationPNM(ctx context.Context, schema string, record *storage.Record) (bool, error) {
+	var lastSignerMismatch error
+	for _, from := range n.datasetPublicationSignerCandidates(strings.TrimSpace(record.PeerID)) {
+		if !n.peerRegistry.IsTrusted(from) {
+			continue
+		}
+		didMaterialize, err := n.materializeDatasetPublicationPNM(ctx, schema, record.Data, from)
+		if err == nil {
+			return didMaterialize, nil
+		}
+		if isDatasetPublicationSignerMismatch(err) {
+			lastSignerMismatch = err
+			continue
+		}
+		return false, fmt.Errorf("from %s: %w", from.ShortString(), err)
+	}
+	if lastSignerMismatch != nil {
+		return false, lastSignerMismatch
+	}
+	return false, nil
+}
+
+func (n *Node) datasetPublicationSignerCandidates(storedPeerID string) []peer.ID {
+	seen := make(map[peer.ID]bool)
+	candidates := make([]peer.ID, 0, 4)
+	if storedPeerID != "" {
+		if id, err := peer.Decode(storedPeerID); err == nil {
+			candidates = append(candidates, id)
+			seen[id] = true
+		}
+	}
+	if n == nil || n.peerRegistry == nil {
+		return candidates
+	}
+	for _, trustedPeer := range n.peerRegistry.ListPeers() {
+		if trustedPeer == nil || !n.peerRegistry.IsTrusted(trustedPeer.ID) || seen[trustedPeer.ID] {
+			continue
+		}
+		candidates = append(candidates, trustedPeer.ID)
+		seen[trustedPeer.ID] = true
+	}
+	return candidates
+}
+
+func isDatasetPublicationSignerMismatch(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "invalid PNM signature") ||
+		strings.Contains(msg, "no Ed25519 signing key found")
 }
 
 func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
