@@ -1164,6 +1164,7 @@ func latestDatasetPublicationPNMBatches(records []*storage.Record) []*storage.Re
 		seenAt  time.Time
 	}
 	latest := map[batchKey]batchChoice{}
+	hasFullDataset := map[string]bool{}
 	recordMeta := make(map[*storage.Record]struct {
 		key     batchKey
 		batchID string
@@ -1176,6 +1177,9 @@ func latestDatasetPublicationPNMBatches(records []*storage.Record) []*storage.Re
 		dataset, schema, batchID := datasetPublicationFileIDParts(string(pnm.FILE_ID()))
 		if dataset == "" || schema == "" || batchID == "" {
 			continue
+		}
+		if strings.Contains(dataset, "-full") {
+			hasFullDataset[schema] = true
 		}
 		key := batchKey{dataset: dataset, schema: schema}
 		recordMeta[record] = struct {
@@ -1194,6 +1198,9 @@ func latestDatasetPublicationPNMBatches(records []*storage.Record) []*storage.Re
 		meta, ok := recordMeta[record]
 		if !ok {
 			filtered = append(filtered, record)
+			continue
+		}
+		if hasFullDataset[meta.key.schema] && !strings.Contains(meta.key.dataset, "-full") {
 			continue
 		}
 		if latest[meta.key].batchID == meta.batchID {
