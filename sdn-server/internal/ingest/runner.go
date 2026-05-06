@@ -109,6 +109,10 @@ type Config struct {
 	SpaceTrackPollInterval time.Duration
 
 	HTTPTimeout time.Duration
+
+	// DatasetPublishURL is an optional local SDN admin endpoint that exports,
+	// pins, signs, and announces dataset updates after successful CelesTrak syncs.
+	DatasetPublishURL string
 }
 
 // Runner executes source sync and ingestion loops.
@@ -315,38 +319,70 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 		log.Warnf("Failed to record CelesTrak GP provenance: %v", err)
 	}
 
+	if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
+		Schema:            "OMM.fbs",
+		ProviderID:        celestrakProviderID,
+		SourceName:        "celestrak-gp",
+		BatchID:           tags.BatchID,
+		CombinedCelesTrak: true,
+	}); err != nil {
+		r.recordIngestFailureForReview("celestrak-gp-publication", err)
+		return fmt.Errorf("publish celestrak OMM dataset update: %w", err)
+	}
+	if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
+		Schema:            "MPE.fbs",
+		ProviderID:        celestrakProviderID,
+		SourceName:        "celestrak-gp",
+		BatchID:           tags.BatchID,
+		CombinedCelesTrak: true,
+	}); err != nil {
+		r.recordIngestFailureForReview("celestrak-gp-publication", err)
+		return fmt.Errorf("publish celestrak MPE dataset update: %w", err)
+	}
+
 	r.checkpoints.setString("celestrak_gp_last_success", time.Now().UTC().Format(time.RFC3339))
 	if err := r.checkpoints.save(); err != nil {
 		log.Warnf("Failed to persist checkpoints: %v", err)
 	}
-
 	log.Infof("CelesTrak GP sync complete: OMM=%d MPE=%d", countOMM, countMPE)
 	return nil
 }
 
 func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
-	legacyCount, err := r.syncCelestrakSatcatSource(ctx, r.cfg.CelestrakSatcatURL, "celestrak-satcat.txt", "satcat.txt", "celestrak-satcat", parserVersionCelestrakSatcat)
+	legacyCount, legacyTags, err := r.syncCelestrakSatcatSource(ctx, r.cfg.CelestrakSatcatURL, "celestrak-satcat.txt", "satcat.txt", "celestrak-satcat", parserVersionCelestrakSatcat)
 	if err != nil {
 		return err
 	}
-	csvCount, err := r.syncCelestrakSatcatSource(ctx, r.cfg.CelestrakSatcatCSVURL, "celestrak-satcat.csv", "satcat.csv", "celestrak-satcat-csv", parserVersionCelestrakSatcatCSV)
+	csvCount, csvTags, err := r.syncCelestrakSatcatSource(ctx, r.cfg.CelestrakSatcatCSVURL, "celestrak-satcat.csv", "satcat.csv", "celestrak-satcat-csv", parserVersionCelestrakSatcatCSV)
 	if err != nil {
 		return err
+	}
+
+	for _, tags := range []storage.SourceTags{legacyTags, csvTags} {
+		if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
+			Schema:            "CAT.fbs",
+			ProviderID:        celestrakProviderID,
+			SourceName:        tags.SourceName,
+			BatchID:           tags.BatchID,
+			CombinedCelesTrak: true,
+		}); err != nil {
+			r.recordIngestFailureForReview("celestrak-satcat-publication", err)
+			return fmt.Errorf("publish celestrak CAT dataset update: %w", err)
+		}
 	}
 
 	r.checkpoints.setString("celestrak_satcat_last_success", time.Now().UTC().Format(time.RFC3339))
 	if err := r.checkpoints.save(); err != nil {
 		log.Warnf("Failed to persist checkpoints: %v", err)
 	}
-
 	log.Infof("CelesTrak SATCAT sync complete: legacy_CAT=%d csv_CAT=%d", legacyCount, csvCount)
 	return nil
 }
 
-func (r *Runner) syncCelestrakSatcatSource(ctx context.Context, sourceURL, cacheName, archiveFallback, provenanceSource, parserVersion string) (int, error) {
+func (r *Runner) syncCelestrakSatcatSource(ctx context.Context, sourceURL, cacheName, archiveFallback, provenanceSource, parserVersion string) (int, storage.SourceTags, error) {
 	data, metadata, err := r.fetchWithCache(ctx, sourceURL, cacheName, minCelestrakFetchInterval)
 	if err != nil {
-		return 0, fmt.Errorf("fetch celestrak satcat: %w", err)
+		return 0, storage.SourceTags{}, fmt.Errorf("fetch celestrak satcat: %w", err)
 	}
 
 	if !metadata.FromCache {
@@ -362,14 +398,14 @@ func (r *Runner) syncCelestrakSatcatSource(ctx context.Context, sourceURL, cache
 	countCAT, normalizedHash, err := r.ingestSatcatData(data, "source:celestrak", tags)
 	if err != nil {
 		r.recordIngestFailureForReview(provenanceSource, err)
-		return 0, fmt.Errorf("ingest celestrak satcat: %w", err)
+		return 0, storage.SourceTags{}, fmt.Errorf("ingest celestrak satcat: %w", err)
 	}
 	if err := r.recordIngestBatchProvenance(provenanceSource, data, metadata, parserVersion, normalizedHash, map[string]int{
 		"CAT.fbs": countCAT,
 	}, warningsForFetch(metadata)); err != nil {
 		log.Warnf("Failed to record CelesTrak SATCAT provenance: %v", err)
 	}
-	return countCAT, nil
+	return countCAT, tags, nil
 }
 
 func (r *Runner) syncCelestrakSpaceWeather(ctx context.Context) error {
@@ -407,12 +443,59 @@ func (r *Runner) syncCelestrakSpaceWeather(ctx context.Context) error {
 		log.Warnf("Failed to record CelesTrak space weather provenance: %v", err)
 	}
 
+	if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
+		Schema:            "SPW.fbs",
+		ProviderID:        celestrakProviderID,
+		SourceName:        "celestrak-space-weather",
+		BatchID:           tags.BatchID,
+		CombinedCelesTrak: true,
+	}); err != nil {
+		r.recordIngestFailureForReview("celestrak-space-weather-publication", err)
+		return fmt.Errorf("publish celestrak SPW dataset update: %w", err)
+	}
+
 	r.checkpoints.setString("celestrak_space_weather_last_success", time.Now().UTC().Format(time.RFC3339))
 	if err := r.checkpoints.save(); err != nil {
 		log.Warnf("Failed to persist checkpoints: %v", err)
 	}
-
 	log.Infof("CelesTrak space weather sync complete: SPW=%d", countSPW)
+	return nil
+}
+
+type datasetPublicationRequest struct {
+	Schema            string `json:"schema"`
+	ProviderID        string `json:"providerId,omitempty"`
+	SourceName        string `json:"sourceName,omitempty"`
+	BatchID           string `json:"batchId,omitempty"`
+	DatasetID         string `json:"datasetId,omitempty"`
+	Limit             int    `json:"limit,omitempty"`
+	CombinedCelesTrak bool   `json:"combinedCelesTrak,omitempty"`
+}
+
+func (r *Runner) requestDatasetPublication(ctx context.Context, req datasetPublicationRequest) error {
+	publishURL := strings.TrimSpace(r.cfg.DatasetPublishURL)
+	if publishURL == "" {
+		return nil
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("encode dataset publication request for %s: %w", req.Schema, err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, publishURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create dataset publication request for %s: %w", req.Schema, err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := r.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("request dataset publication for %s: %w", req.Schema, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("dataset publication request for %s returned %s: %s", req.Schema, resp.Status, strings.TrimSpace(string(preview)))
+	}
+	log.Infof("Dataset publication requested for %s via %s", req.Schema, publishURL)
 	return nil
 }
 

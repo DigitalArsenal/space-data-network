@@ -14,6 +14,7 @@ Group=sdn
 Environment=SDN_CONFIG=/etc/spacedatanetwork/config.yaml
 Environment=SDN_STORAGE_PATH=/var/lib/spacedatanetwork/data
 Environment=SDN_RAW_PATH=/var/lib/spacedatanetwork/raw
+Environment=SDN_DATASET_PUBLISH_URL=http://127.0.0.1:5001/api/v1/admin/dataset-updates/publish
 Environment=SPACETRACK_IDENTITY=
 Environment=SPACETRACK_PASSWORD=
 Environment=WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge
@@ -27,6 +28,8 @@ ExecStart=/opt/spacedatanetwork/bin/spacedatanetwork \
     --raw-path ${SDN_RAW_PATH} \
     --celestrak-interval 3h \
     --satcat-interval 24h \
+    --celestrak-space-weather-interval 3h \
+    --dataset-publish-url ${SDN_DATASET_PUBLISH_URL} \
     --spacetrack-enabled=false \
     --http-timeout 120s
 

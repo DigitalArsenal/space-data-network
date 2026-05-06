@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -85,11 +87,24 @@ func pinRawBlock(ctx context.Context, ipfsAPIURL, path, expectedCID string) (str
 	query.Set("pin", "true")
 	reqURL.RawQuery = query.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), bytes.NewReader(data))
+	var multipartBody bytes.Buffer
+	writer := multipart.NewWriter(&multipartBody)
+	part, err := writer.CreateFormFile("data", filepath.Base(path))
+	if err != nil {
+		return "", fmt.Errorf("create IPFS multipart field: %w", err)
+	}
+	if _, err := part.Write(data); err != nil {
+		return "", fmt.Errorf("write IPFS multipart field: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("close IPFS multipart body: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), &multipartBody)
 	if err != nil {
 		return "", fmt.Errorf("create IPFS request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

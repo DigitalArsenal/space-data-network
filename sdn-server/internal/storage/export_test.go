@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -150,6 +151,54 @@ func TestFlatSQLStoreExportDatasetWindowWritesShardAndIndex(t *testing.T) {
 	}
 }
 
+func TestFlatSQLStoreExportDatasetWindowAllowsLargePublicationWindows(t *testing.T) {
+	tmpDir := t.TempDir()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(tmpDir, "db"), validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-satcat-csv",
+		SourceURL:  "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV",
+		BatchID:    "source-sha-large",
+	}
+	for i := 0; i < 1005; i++ {
+		norad := uint32(40000 + i)
+		record := sds.NewCATBuilder().
+			WithNoradCatID(norad).
+			WithObjectName(fmt.Sprintf("PAYLOAD-%d", norad)).
+			WithObjectID(fmt.Sprintf("2026-%03dA", i)).
+			WithObjectType("PAYLOAD").
+			WithOpsStatus("OPERATIONAL").
+			Build()
+		if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:celestrak", nil, tags); err != nil {
+			t.Fatalf("store record %d failed: %v", i, err)
+		}
+	}
+
+	export, err := store.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
+		SchemaName:          "CAT.fbs",
+		ProviderID:          "space-data-network-02",
+		SourceName:          "celestrak-satcat-csv",
+		BatchID:             "source-sha-large",
+		Limit:               1005,
+		AllowLargeResultSet: true,
+	})
+	if err != nil {
+		t.Fatalf("ExportDatasetWindow failed: %v", err)
+	}
+	if export.RecordCount != 1005 {
+		t.Fatalf("RecordCount = %d, want 1005", export.RecordCount)
+	}
+}
+
 func TestPublishDatasetExportToIPFSPinsShardAndIndexCIDs(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-ipfs-publish-test-*")
 	if err != nil {
@@ -189,9 +238,20 @@ func TestPublishDatasetExportToIPFSPinsShardAndIndexCIDs(t *testing.T) {
 		if r.URL.Query().Get("pin") != "true" || r.URL.Query().Get("format") != "raw" || r.URL.Query().Get("mhtype") != "sha2-256" {
 			t.Fatalf("unexpected IPFS block put query: %s", r.URL.RawQuery)
 		}
-		body, err := io.ReadAll(r.Body)
+		reader, err := r.MultipartReader()
 		if err != nil {
-			t.Fatalf("read request body: %v", err)
+			t.Fatalf("create multipart reader: %v", err)
+		}
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Fatalf("read multipart part: %v", err)
+		}
+		if part.FormName() != "data" {
+			t.Fatalf("multipart form name = %q, want data", part.FormName())
+		}
+		body, err := io.ReadAll(part)
+		if err != nil {
+			t.Fatalf("read multipart body: %v", err)
 		}
 		var cidValue string
 		switch string(body) {
@@ -250,9 +310,20 @@ func TestPublishDatasetPublicationManifestToIPFSPinsManifestCID(t *testing.T) {
 		if r.URL.Path != "/api/v0/block/put" || r.URL.Query().Get("pin") != "true" {
 			t.Fatalf("unexpected request URL: %s", r.URL.String())
 		}
-		body, err := io.ReadAll(r.Body)
+		reader, err := r.MultipartReader()
 		if err != nil {
-			t.Fatalf("read request body: %v", err)
+			t.Fatalf("create multipart reader: %v", err)
+		}
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Fatalf("read multipart part: %v", err)
+		}
+		if part.FormName() != "data" {
+			t.Fatalf("multipart form name = %q, want data", part.FormName())
+		}
+		body, err := io.ReadAll(part)
+		if err != nil {
+			t.Fatalf("read multipart body: %v", err)
 		}
 		if !bytes.Equal(body, manifestBytes) {
 			t.Fatalf("manifest body mismatch")

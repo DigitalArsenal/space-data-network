@@ -11,6 +11,7 @@ func TestIngestCommandExposesAllCelestrakSourceFlags(t *testing.T) {
 		"celestrak-satcat-csv-url",
 		"celestrak-space-weather-url",
 		"celestrak-space-weather-interval",
+		"dataset-publish-url",
 	} {
 		if ingestCmd.Flags().Lookup(name) == nil {
 			t.Fatalf("ingest flag %q is not registered", name)
