@@ -157,6 +157,13 @@ func TestMaterializeStoredDatasetPublicationPNMsReplaysTrustedProviderPNM(t *tes
 	if materialized != 1 {
 		t.Fatalf("materialized = %d, want 1", materialized)
 	}
+	materialized, err = n.materializeStoredDatasetPublicationPNMs(ctx, 10)
+	if err != nil {
+		t.Fatalf("second materializeStoredDatasetPublicationPNMs failed: %v", err)
+	}
+	if materialized != 0 {
+		t.Fatalf("second materialized = %d, want 0 for already-seen PNM", materialized)
+	}
 	records, err := subscriberStore.QueryIndexedRecords(storage.IndexedRecordQuery{
 		SchemaName: "CAT.fbs",
 		ProviderID: "celestrak.eth",

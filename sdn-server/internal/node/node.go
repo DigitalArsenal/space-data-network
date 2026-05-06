@@ -1045,14 +1045,17 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 		if !n.peerRegistry.IsTrusted(from) {
 			continue
 		}
-		if err := n.handleDatasetPublicationPNM(ctx, schema, record.Data, from); err != nil {
+		didMaterialize, err := n.materializeDatasetPublicationPNM(ctx, schema, record.Data, from)
+		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
 			log.Warnf("Stored dataset PNM catch-up failed from %s on %s: %v", from.ShortString(), schema, err)
 			continue
 		}
-		materialized++
+		if didMaterialize {
+			materialized++
+		}
 	}
 	return materialized, firstErr
 }
@@ -1083,36 +1086,41 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 }
 
 func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) error {
+	_, err := n.materializeDatasetPublicationPNM(ctx, schema, pnmBytes, from)
+	return err
+}
+
+func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) (bool, error) {
 	if schema == "PNM.fbs" {
-		return nil
+		return false, nil
 	}
 	if n == nil || n.store == nil || n.peerRegistry == nil {
-		return nil
+		return false, nil
 	}
 	if !n.peerRegistry.IsTrusted(from) {
 		log.Debugf("Skipping dataset PNM materialization from non-trusted peer %s on %s", from.ShortString(), schema)
-		return nil
+		return false, nil
 	}
 	ipfsAPIURL := strings.TrimSpace(n.config.Admin.IPFSAPIURL)
 	if ipfsAPIURL == "" {
-		return fmt.Errorf("trusted dataset PNM received from %s but admin.ipfs_api_url is not configured", from.ShortString())
+		return false, fmt.Errorf("trusted dataset PNM received from %s but admin.ipfs_api_url is not configured", from.ShortString())
 	}
 	pnm := PNM.GetSizePrefixedRootAsPNM(pnmBytes, 0)
 	if publicationSchema := datasetPublicationFileIDSchema(string(pnm.FILE_ID())); publicationSchema != "" && publicationSchema != schema {
 		log.Debugf("Skipping dataset PNM materialization from %s on %s: FILE_ID schema is %s", from.ShortString(), schema, publicationSchema)
-		return nil
+		return false, nil
 	}
 	pnmKey := strings.TrimSpace(string(pnm.CID())) + "\x00" + strings.TrimSpace(string(pnm.FILE_ID()))
 	if pnmKey == "\x00" {
-		return nil
+		return false, nil
 	}
 	if n.datasetPNMAlreadyMaterialized(pnmKey) {
-		return nil
+		return false, nil
 	}
 
 	providerPublicKey, err := n.datasetPublicationPublicKey(ctx, from)
 	if err != nil {
-		return fmt.Errorf("dataset provider public key unavailable for %s: %w", from.ShortString(), err)
+		return false, fmt.Errorf("dataset provider public key unavailable for %s: %w", from.ShortString(), err)
 	}
 	workDir := filepath.Join(n.config.Storage.Path, "dataset-publication-replay")
 	materializeCtx, cancel := context.WithTimeout(n.ctx, 2*time.Minute)
@@ -1128,11 +1136,11 @@ func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, p
 	})
 	if err != nil {
 		n.clearDatasetPNMMaterialized(pnmKey)
-		return err
+		return false, err
 	}
 	log.Infof("Materialized trusted dataset update from %s on %s: schema=%s imported=%d manifest=%s shard=%s",
 		from.ShortString(), schema, result.SchemaName, result.Imported, result.ManifestCID, result.ShardCID)
-	return nil
+	return true, nil
 }
 
 func datasetPublicationFileIDSchema(fileID string) string {
