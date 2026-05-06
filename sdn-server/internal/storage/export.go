@@ -299,6 +299,7 @@ func canonicalQueryJSON(filter IndexedRecordQuery) ([]byte, error) {
 		SourceName          string  `json:"sourceName,omitempty"`
 		BatchID             string  `json:"batchId,omitempty"`
 		Limit               int     `json:"limit,omitempty"`
+		Offset              int     `json:"offset,omitempty"`
 		AllowLargeResultSet bool    `json:"allowLargeResultSet,omitempty"`
 	}{
 		SchemaName:          filter.SchemaName,
@@ -313,6 +314,7 @@ func canonicalQueryJSON(filter IndexedRecordQuery) ([]byte, error) {
 		SourceName:          filter.SourceName,
 		BatchID:             filter.BatchID,
 		Limit:               filter.Limit,
+		Offset:              filter.Offset,
 		AllowLargeResultSet: filter.AllowLargeResultSet,
 	}
 	if filter.From != nil {

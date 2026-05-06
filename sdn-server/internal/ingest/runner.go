@@ -44,6 +44,7 @@ const (
 	defaultSpaceTrackQueryTmpl      = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/%s--%s/format/csv"
 	minCelestrakFetchInterval       = 3 * time.Hour
 	celestrakProviderID             = "space-data-network-02"
+	datasetPublicationChunkSize     = 1000
 	publicContentKeyID              = "public"
 	parserVersionCelestrakGP        = "celestrak-gp/v1"
 	parserVersionCelestrakSatcat    = "celestrak-satcat/v1"
@@ -324,6 +325,9 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 		ProviderID:        celestrakProviderID,
 		SourceName:        "celestrak-gp",
 		BatchID:           tags.BatchID,
+		Limit:             countOMM,
+		ChunkSize:         datasetPublicationChunkSize,
+		FullCatalog:       true,
 		CombinedCelesTrak: true,
 	}); err != nil {
 		r.recordIngestFailureForReview("celestrak-gp-publication", err)
@@ -334,6 +338,9 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 		ProviderID:        celestrakProviderID,
 		SourceName:        "celestrak-gp",
 		BatchID:           tags.BatchID,
+		Limit:             countMPE,
+		ChunkSize:         datasetPublicationChunkSize,
+		FullCatalog:       true,
 		CombinedCelesTrak: true,
 	}); err != nil {
 		r.recordIngestFailureForReview("celestrak-gp-publication", err)
@@ -364,6 +371,9 @@ func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
 			ProviderID:        celestrakProviderID,
 			SourceName:        tags.SourceName,
 			BatchID:           tags.BatchID,
+			Limit:             celestrakSatcatPublicationLimit(tags.SourceName, legacyCount, csvCount),
+			ChunkSize:         datasetPublicationChunkSize,
+			FullCatalog:       true,
 			CombinedCelesTrak: true,
 		}); err != nil {
 			r.recordIngestFailureForReview("celestrak-satcat-publication", err)
@@ -377,6 +387,13 @@ func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
 	}
 	log.Infof("CelesTrak SATCAT sync complete: legacy_CAT=%d csv_CAT=%d", legacyCount, csvCount)
 	return nil
+}
+
+func celestrakSatcatPublicationLimit(sourceName string, legacyCount, csvCount int) int {
+	if sourceName == "celestrak-satcat-csv" {
+		return csvCount
+	}
+	return legacyCount
 }
 
 func (r *Runner) syncCelestrakSatcatSource(ctx context.Context, sourceURL, cacheName, archiveFallback, provenanceSource, parserVersion string) (int, storage.SourceTags, error) {
@@ -448,6 +465,9 @@ func (r *Runner) syncCelestrakSpaceWeather(ctx context.Context) error {
 		ProviderID:        celestrakProviderID,
 		SourceName:        "celestrak-space-weather",
 		BatchID:           tags.BatchID,
+		Limit:             countSPW,
+		ChunkSize:         datasetPublicationChunkSize,
+		FullCatalog:       true,
 		CombinedCelesTrak: true,
 	}); err != nil {
 		r.recordIngestFailureForReview("celestrak-space-weather-publication", err)
@@ -469,6 +489,8 @@ type datasetPublicationRequest struct {
 	BatchID           string `json:"batchId,omitempty"`
 	DatasetID         string `json:"datasetId,omitempty"`
 	Limit             int    `json:"limit,omitempty"`
+	ChunkSize         int    `json:"chunkSize,omitempty"`
+	FullCatalog       bool   `json:"fullCatalog,omitempty"`
 	CombinedCelesTrak bool   `json:"combinedCelesTrak,omitempty"`
 }
 
