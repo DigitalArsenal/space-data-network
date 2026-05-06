@@ -523,7 +523,12 @@ func TestFlatSQLStoreDelete(t *testing.T) {
 
 	// Store data
 	testData := []byte(`{"test": true}`)
-	cid, err := store.Store("CAT.fbs", testData, "TestPeer", make([]byte, 64))
+	cid, err := store.StoreWithSourceTags("CAT.fbs", testData, "TestPeer", make([]byte, 64), SourceTags{
+		ProviderID: "provider",
+		SourceName: "source",
+		SourceURL:  "https://example.com/source.csv",
+		BatchID:    "batch",
+	})
 	if err != nil {
 		t.Fatalf("Failed to store: %v", err)
 	}
@@ -538,6 +543,11 @@ func TestFlatSQLStoreDelete(t *testing.T) {
 	_, err = store.Get("CAT.fbs", cid)
 	if err == nil {
 		t.Error("Expected error for deleted record")
+	}
+
+	_, err = store.GetSourceTags("CAT.fbs", cid)
+	if err == nil {
+		t.Error("Expected source tags to be removed for deleted record")
 	}
 }
 
