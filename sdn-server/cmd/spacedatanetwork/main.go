@@ -834,7 +834,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				Addr:              adminAddr,
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
-				WriteTimeout:      60 * time.Second,
+				WriteTimeout:      10 * time.Minute,
 				IdleTimeout:       120 * time.Second,
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					// Tunnel secure websocket upgrades to the local libp2p ws listener.
