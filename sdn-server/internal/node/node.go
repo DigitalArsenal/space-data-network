@@ -73,7 +73,7 @@ const (
 
 	datasetPublicationCatchupInitialDelay = 15 * time.Second
 	datasetPublicationCatchupInterval     = 5 * time.Minute
-	datasetPublicationCatchupLimit        = 1000
+	datasetPublicationCatchupLimit        = 5000
 )
 
 // Node represents a Space Data Network node.
