@@ -123,6 +123,7 @@ func (h *DataQueryHandler) handleOMMBulk(w http.ResponseWriter, r *http.Request)
 			"peer_id":   rec.PeerID,
 			"timestamp": rec.Timestamp.UTC().Format(time.RFC3339),
 		}
+		addRecordFreshness(row, rec)
 		if omm, err := decodeOMM(rec.Data); err == nil {
 			row["norad_cat_id"] = omm.NORAD_CAT_ID()
 			row["object_name"] = string(omm.OBJECT_NAME())
@@ -197,6 +198,7 @@ func (h *DataQueryHandler) handleMPE(w http.ResponseWriter, r *http.Request) {
 			"peer_id":   rec.PeerID,
 			"timestamp": rec.Timestamp.UTC().Format(time.RFC3339),
 		}
+		addRecordFreshness(row, rec)
 
 		if mpe, err := decodeMPE(rec.Data); err == nil {
 			row["entity_id"] = strings.TrimSpace(string(mpe.ENTITY_ID()))
@@ -268,6 +270,7 @@ func (h *DataQueryHandler) handleMPEBulk(w http.ResponseWriter, r *http.Request)
 			"peer_id":   rec.PeerID,
 			"timestamp": rec.Timestamp.UTC().Format(time.RFC3339),
 		}
+		addRecordFreshness(row, rec)
 		if mpe, err := decodeMPE(rec.Data); err == nil {
 			row["entity_id"] = strings.TrimSpace(string(mpe.ENTITY_ID()))
 			row["epoch_unix"] = int64(mpe.EPOCH())
@@ -333,6 +336,7 @@ func (h *DataQueryHandler) handleCAT(w http.ResponseWriter, r *http.Request) {
 			"peer_id":   rec.PeerID,
 			"timestamp": rec.Timestamp.UTC().Format(time.RFC3339),
 		}
+		addRecordFreshness(row, rec)
 
 		if cat, err := decodeCAT(rec.Data); err == nil {
 			row["norad_cat_id"] = cat.NORAD_CAT_ID()
@@ -398,6 +402,7 @@ func (h *DataQueryHandler) handleCATBulk(w http.ResponseWriter, r *http.Request)
 			"peer_id":   rec.PeerID,
 			"timestamp": rec.Timestamp.UTC().Format(time.RFC3339),
 		}
+		addRecordFreshness(row, rec)
 
 		if cat, err := decodeCAT(rec.Data); err == nil {
 			row["norad_cat_id"] = cat.NORAD_CAT_ID()
@@ -452,6 +457,27 @@ func (h *DataQueryHandler) bulkRecords(schemaName, day string, limit int) ([]*st
 		return h.store.QueryByIndexedFields(schemaName, day, nil, "", limit)
 	}
 	return h.store.QueryRecentRecords(schemaName, limit)
+}
+
+func addRecordFreshness(row map[string]interface{}, rec *storage.Record) {
+	if rec == nil {
+		return
+	}
+	if !rec.MaterializedAt.IsZero() {
+		row["materialized_at"] = rec.MaterializedAt.UTC().Format(time.RFC3339)
+	}
+	if rec.SourceTags.ProviderID != "" {
+		row["source_provider_id"] = rec.SourceTags.ProviderID
+	}
+	if rec.SourceTags.SourceName != "" {
+		row["source_name"] = rec.SourceTags.SourceName
+	}
+	if rec.SourceTags.BatchID != "" {
+		row["source_batch_id"] = rec.SourceTags.BatchID
+	}
+	if rec.SourceTags.ContentKeyID != "" {
+		row["source_content_key_id"] = rec.SourceTags.ContentKeyID
+	}
 }
 
 func requiredDay(r *http.Request, key string) (string, error) {

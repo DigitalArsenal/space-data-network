@@ -174,6 +174,12 @@ func (s *FlatSQLStore) initTables() error {
 	`); err != nil {
 		return fmt.Errorf("failed to create source tags lookup index: %w", err)
 	}
+	if err := s.createStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_recent", sourceTagsExisted, `
+		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_recent
+		ON sdn_record_source_tags (schema_name, created_at DESC, cid)
+	`); err != nil {
+		return fmt.Errorf("failed to create source tags recent index: %w", err)
+	}
 
 	// Directory index for node/user EPM records.
 	directoryExisted, err := s.tableExists("sdn_directory")
@@ -934,11 +940,13 @@ func (s *FlatSQLStore) Path() string {
 
 // Record represents a stored record with metadata.
 type Record struct {
-	CID       string
-	PeerID    string
-	Timestamp time.Time
-	Data      []byte
-	Signature []byte
+	CID            string
+	PeerID         string
+	Timestamp      time.Time
+	Data           []byte
+	Signature      []byte
+	SourceTags     SourceTags
+	MaterializedAt time.Time
 }
 
 // DirectoryRecord represents a normalized EPM directory entry.
@@ -1202,29 +1210,85 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 		limit = 250000
 	}
 
-	query := fmt.Sprintf(`
-		SELECT d.cid, d.peer_id, d.timestamp, d.data, d.signature
-		FROM %s d
-		LEFT JOIN sdn_record_source_tags tags
-		  ON tags.schema_name = ? AND tags.cid = d.cid
-		ORDER BY COALESCE(tags.created_at, d.created_at, d.rowid) DESC, d.rowid DESC
+	taggedQuery := fmt.Sprintf(`
+		SELECT d.cid, d.peer_id, d.timestamp, d.data, d.signature,
+		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
+		       tags.content_key_id, tags.created_at
+		FROM sdn_record_source_tags tags
+		INNER JOIN %s d ON d.cid = tags.cid
+		WHERE tags.schema_name = ?
+		ORDER BY tags.created_at DESC, d.rowid DESC
 		LIMIT ?
 	`, tableName)
-	rows, err := s.db.Query(query, schemaName, limit)
+	rows, err := s.db.Query(taggedQuery, schemaName, limit)
 	if err != nil {
 		return nil, fmt.Errorf("recent records query failed: %w", err)
 	}
+
+	records, err := scanRecentRecords(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) >= limit {
+		return records, nil
+	}
+
+	untaggedLimit := limit - len(records)
+	untaggedQuery := fmt.Sprintf(`
+		SELECT d.cid, d.peer_id, d.timestamp, d.data, d.signature,
+		       '', '', '', '', '', NULL
+		FROM %s d
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM sdn_record_source_tags tags
+			WHERE tags.schema_name = ? AND tags.cid = d.cid
+		)
+		ORDER BY d.rowid DESC
+		LIMIT ?
+	`, tableName)
+	rows, err = s.db.Query(untaggedQuery, schemaName, untaggedLimit)
+	if err != nil {
+		return nil, fmt.Errorf("recent untagged records query failed: %w", err)
+	}
+	untagged, err := scanRecentRecords(rows)
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, untagged...)
+	return records, nil
+}
+
+func scanRecentRecords(rows *sql.Rows) ([]*Record, error) {
 	defer rows.Close()
 
-	var records []*Record
+	records := make([]*Record, 0)
 	for rows.Next() {
 		rec := &Record{}
 		var ts int64
-		if err := rows.Scan(&rec.CID, &rec.PeerID, &ts, &rec.Data, &rec.Signature); err != nil {
+		var materializedAt sql.NullInt64
+		if err := rows.Scan(
+			&rec.CID,
+			&rec.PeerID,
+			&ts,
+			&rec.Data,
+			&rec.Signature,
+			&rec.SourceTags.ProviderID,
+			&rec.SourceTags.SourceName,
+			&rec.SourceTags.SourceURL,
+			&rec.SourceTags.BatchID,
+			&rec.SourceTags.ContentKeyID,
+			&materializedAt,
+		); err != nil {
 			return nil, fmt.Errorf("failed scanning recent row: %w", err)
 		}
 		rec.Timestamp = time.Unix(ts, 0).UTC()
+		if materializedAt.Valid && materializedAt.Int64 > 0 {
+			rec.MaterializedAt = time.Unix(materializedAt.Int64, 0).UTC()
+		}
 		records = append(records, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("recent records rows failed: %w", err)
 	}
 	return records, nil
 }
