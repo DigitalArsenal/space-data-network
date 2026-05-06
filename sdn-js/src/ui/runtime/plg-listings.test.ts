@@ -34,6 +34,7 @@ describe('decodeCanonicalPlgListing', () => {
     expect(
       decodeCanonicalPlgListing(bytes, { observedAt: 1_700_000_000_000 }),
     ).toEqual({
+      listingKind: 'module',
       pluginId: 'com.space-data-network.orbital-demo',
       version: '1.2.3',
       name: 'Orbital Demo',
