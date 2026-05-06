@@ -109,10 +109,11 @@ three-hour CelesTrak pull path. It posts successful OMM, CAT, and SPW syncs to
 the local SDN admin publication endpoint at
 `/api/v1/admin/dataset-updates/publish`, where the running daemon exports the
 FlatSQL window, pins shard/index/DPM assets to local Kubo, signs the PNM, and
-fans it out over SDN pub/sub. The first production hook publishes a
-chunk-safe current-batch window; full-catalog multi-shard DPM publication
-remains the next follow-up before treating one PNM as the whole accumulated
-catalog.
+fans it out over SDN pub/sub. Full-catalog publication is chunked into
+multi-shard DPM series instead of treating one PNM as the whole accumulated
+catalog. Subscribers replay stored trusted-provider `PNM.fbs` records on a
+timer so missed high-volume pub/sub chunks can be fetched and materialized after
+the burst.
 
 ## Verification
 
@@ -142,6 +143,16 @@ subscriber-ready:
 systemctl cat spacedatanetwork-ingest | grep dataset-publish-url
 journalctl -u spacedatanetwork-ingest -n 200 --no-pager | grep 'Dataset publication requested'
 journalctl -u spacedatanetwork -n 200 --no-pager | grep 'Dataset publication API available'
+```
+
+Confirm subscriber catch-up on each subscriber node before treating the network
+as synchronized:
+
+```sh
+journalctl -u space-data-network -n 300 --no-pager | grep 'Materialized trusted dataset update'
+journalctl -u space-data-network -n 300 --no-pager | grep 'Dataset publication PNM catch-up materialized'
+curl -fsS 'https://sdn.spaceaware.io/api/v1/data/omm/bulk?limit=1&format=json'
+curl -fsS 'http://127.0.0.1:10080/api/v1/data/omm/bulk?limit=1&format=json'
 ```
 
 ## CelesTrak Source Controls
