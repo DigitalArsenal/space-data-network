@@ -628,17 +628,23 @@ func TestMaterializeDatasetPublicationImportsAdvertisedShard(t *testing.T) {
 		export.ShardCID: shardBytes,
 		export.IndexCID: indexBytes,
 	}
+	fetchAttempts := make(map[string]int)
 	result, err := MaterializeDatasetPublication(context.Background(), subscriberStore, DatasetPublicationReplayOptions{
 		PNM:               pnmBytes,
 		ProviderPublicKey: providerPublicKey,
 		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
+			fetchAttempts[cid]++
+			if fetchAttempts[cid] == 1 {
+				return nil, fmt.Errorf("transient content routing miss for %s", cid)
+			}
 			data, ok := objects[cid]
 			if !ok {
 				return nil, os.ErrNotExist
 			}
 			return append([]byte(nil), data...), nil
 		},
-		WorkDir: filepath.Join(tmpDir, "materialize"),
+		FetchRetryDelays: []time.Duration{time.Millisecond},
+		WorkDir:          filepath.Join(tmpDir, "materialize"),
 	})
 	if err != nil {
 		t.Fatalf("MaterializeDatasetPublication failed: %v", err)

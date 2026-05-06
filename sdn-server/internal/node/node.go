@@ -1011,7 +1011,8 @@ func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, p
 		FetchByCID: func(ctx context.Context, cid string) ([]byte, error) {
 			return storage.FetchIPFSBlockByCID(ctx, ipfsAPIURL, cid)
 		},
-		WorkDir: workDir,
+		FetchRetryDelays: []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second},
+		WorkDir:          workDir,
 	})
 	if err != nil {
 		n.clearDatasetPNMMaterialized(pnmKey)
