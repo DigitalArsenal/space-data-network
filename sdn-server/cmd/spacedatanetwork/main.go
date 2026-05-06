@@ -389,6 +389,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// Local dataset publication route used by ingest workers after a
 			// successful provider sync.
 			if n.Store() != nil {
+				publicationSigningKey, err := datasetPublicationSigningKey(cfg, n.SigningKey())
+				if err != nil {
+					log.Warnf("Dataset publication signing unavailable: %v", err)
+				}
+				if len(publicationSigningKey) == ed25519.PrivateKeySize && n.Identity() == nil {
+					if epmSvc := n.EPMService(); epmSvc != nil {
+						if err := epmSvc.SetRuntimeSigningKey(ed25519.PrivateKey(publicationSigningKey), "sdn/dataset-publication/v1"); err != nil {
+							log.Warnf("Could not advertise dataset publication signing key in node EPM: %v", err)
+						} else if err := n.IndexLocalNodeEPM(); err != nil {
+							log.Warnf("Could not refresh local node EPM directory entry after adding dataset publication key: %v", err)
+						}
+					}
+				}
 				providerEPMCID := ""
 				if n.EPMService() != nil {
 					if epmCID, err := n.EPMService().GetNodeEPMCID(); err == nil {
@@ -396,10 +409,6 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					} else {
 						log.Warnf("Could not resolve node EPM CID for dataset publications: %v", err)
 					}
-				}
-				publicationSigningKey, err := datasetPublicationSigningKey(cfg, n.SigningKey())
-				if err != nil {
-					log.Warnf("Dataset publication signing unavailable: %v", err)
 				}
 				publicationDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "dataset-publications")
 				publicationAPI := api.NewDatasetPublicationHandler(api.NewConcreteDatasetPublicationService(
