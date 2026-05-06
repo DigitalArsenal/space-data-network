@@ -487,7 +487,8 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 			source_name = excluded.source_name,
 			source_url = excluded.source_url,
 			batch_id = excluded.batch_id,
-			content_key_id = excluded.content_key_id
+			content_key_id = excluded.content_key_id,
+			created_at = strftime('%s', 'now')
 	`, schemaName, cid, strings.TrimSpace(tags.ProviderID), strings.TrimSpace(tags.SourceName), strings.TrimSpace(tags.SourceURL), strings.TrimSpace(tags.BatchID), strings.TrimSpace(tags.ContentKeyID))
 	if err != nil {
 		return fmt.Errorf("failed to upsert source tags: %w", err)
@@ -1202,12 +1203,14 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 	}
 
 	query := fmt.Sprintf(`
-		SELECT cid, peer_id, timestamp, data, signature
-		FROM %s
-		ORDER BY rowid DESC
+		SELECT d.cid, d.peer_id, d.timestamp, d.data, d.signature
+		FROM %s d
+		LEFT JOIN sdn_record_source_tags tags
+		  ON tags.schema_name = ? AND tags.cid = d.cid
+		ORDER BY COALESCE(tags.created_at, d.created_at, d.rowid) DESC, d.rowid DESC
 		LIMIT ?
 	`, tableName)
-	rows, err := s.db.Query(query, limit)
+	rows, err := s.db.Query(query, schemaName, limit)
 	if err != nil {
 		return nil, fmt.Errorf("recent records query failed: %w", err)
 	}
