@@ -14,11 +14,12 @@ var ErrNoPublisher = errors.New("publisher not set")
 
 const (
 	OMMSchema = "OMM.fbs"
+	MPESchema = "MPE.fbs"
 	CATSchema = "CAT.fbs"
 	SPWSchema = "SPW.fbs"
 )
 
-var celesTrakDatasetSchemas = []string{OMMSchema, CATSchema, SPWSchema}
+var celesTrakDatasetSchemas = []string{OMMSchema, MPESchema, CATSchema, SPWSchema}
 
 // SchemaPublisher publishes bytes to an SDN schema pub/sub topic.
 type SchemaPublisher interface {

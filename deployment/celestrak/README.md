@@ -105,8 +105,14 @@ ssh celestrak.eth 'cd /opt/spacedatanetwork/closed-modules && env CELESTRAK_PROV
 ```
 
 The checked-in `spacedatanetwork-ingest.service` remains the production
-three-hour CelesTrak pull path until the closed publisher adapters are wired to
-FlatSQL export, IPFS pinning, PNM signing, and pub/sub fanout.
+three-hour CelesTrak pull path. It posts successful OMM, CAT, and SPW syncs to
+the local SDN admin publication endpoint at
+`/api/v1/admin/dataset-updates/publish`, where the running daemon exports the
+FlatSQL window, pins shard/index/DPM assets to local Kubo, signs the PNM, and
+fans it out over SDN pub/sub. The first production hook publishes a
+chunk-safe current-batch window; full-catalog multi-shard DPM publication
+remains the next follow-up before treating one PNM as the whole accumulated
+catalog.
 
 ## Verification
 
@@ -128,6 +134,15 @@ The ingest worker is configured for CelesTrak-only fetches by default. Enable
 Space-Track gap-fill only through a private systemd drop-in that sets
 `SPACETRACK_IDENTITY` and `SPACETRACK_PASSWORD`, then changes the service
 argument to `--spacetrack-enabled true`.
+
+Confirm the live publication hook is present before treating the provider as
+subscriber-ready:
+
+```sh
+systemctl cat spacedatanetwork-ingest | grep dataset-publish-url
+journalctl -u spacedatanetwork-ingest -n 200 --no-pager | grep 'Dataset publication requested'
+journalctl -u spacedatanetwork -n 200 --no-pager | grep 'Dataset publication API available'
+```
 
 ## CelesTrak Source Controls
 

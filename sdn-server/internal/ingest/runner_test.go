@@ -340,6 +340,135 @@ func TestSyncCelestrakSpaceWeatherRecordsBatchProvenance(t *testing.T) {
 	}
 }
 
+func TestSyncCelestrakSpaceWeatherRequestsDatasetPublication(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/celestrak-sw-all.csv")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Last-Modified", "Fri, 02 Jan 2026 03:04:05 GMT")
+		w.Header().Set("Content-Type", "text/csv")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(fixture); err != nil {
+			t.Fatalf("write fixture response: %v", err)
+		}
+	}))
+	defer sourceServer.Close()
+
+	publicationRequests := make(chan map[string]any, 1)
+	publicationServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Method, http.MethodPost; got != want {
+			t.Fatalf("publication method = %s, want %s", got, want)
+		}
+		if got, want := r.URL.Path, "/api/v1/admin/dataset-updates/publish"; got != want {
+			t.Fatalf("publication path = %s, want %s", got, want)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode publication request: %v", err)
+		}
+		publicationRequests <- payload
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"schema":"SPW.fbs","recordCount":2,"manifestCid":"bafymanifest"}`))
+	}))
+	defer publicationServer.Close()
+
+	dir := t.TempDir()
+	runner, err := NewRunner(Config{
+		StoragePath:              filepath.Join(dir, "store"),
+		RawPath:                  filepath.Join(dir, "raw"),
+		CelestrakSpaceWeatherURL: sourceServer.URL + "/SW-All.csv",
+		DatasetPublishURL:        publicationServer.URL + "/api/v1/admin/dataset-updates/publish",
+		SpaceTrackPollInterval:   time.Hour,
+		CelestrakInterval:        minCelestrakFetchInterval,
+		SatcatInterval:           minCelestrakFetchInterval,
+		SpaceWeatherInterval:     minCelestrakFetchInterval,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner failed: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	if err := runner.syncCelestrakSpaceWeather(context.Background()); err != nil {
+		t.Fatalf("syncCelestrakSpaceWeather failed: %v", err)
+	}
+
+	select {
+	case payload := <-publicationRequests:
+		if got, want := payload["schema"], "SPW.fbs"; got != want {
+			t.Fatalf("schema = %v, want %s", got, want)
+		}
+		if got, want := payload["providerId"], celestrakProviderID; got != want {
+			t.Fatalf("providerId = %v, want %s", got, want)
+		}
+		if got, want := payload["sourceName"], "celestrak-space-weather"; got != want {
+			t.Fatalf("sourceName = %v, want %s", got, want)
+		}
+		if got, want := payload["combinedCelesTrak"], true; got != want {
+			t.Fatalf("combinedCelesTrak = %v, want %v", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for dataset publication request")
+	}
+}
+
+func TestSyncCelestrakSpaceWeatherFailsWhenConfiguredPublicationFails(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/celestrak-sw-all.csv")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Last-Modified", "Fri, 02 Jan 2026 03:04:05 GMT")
+		w.Header().Set("Content-Type", "text/csv")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(fixture)
+	}))
+	defer sourceServer.Close()
+
+	publicationServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "pinning unavailable", http.StatusServiceUnavailable)
+	}))
+	defer publicationServer.Close()
+
+	dir := t.TempDir()
+	runner, err := NewRunner(Config{
+		StoragePath:              filepath.Join(dir, "store"),
+		RawPath:                  filepath.Join(dir, "raw"),
+		CelestrakSpaceWeatherURL: sourceServer.URL + "/SW-All.csv",
+		DatasetPublishURL:        publicationServer.URL + "/api/v1/admin/dataset-updates/publish",
+		SpaceTrackPollInterval:   time.Hour,
+		CelestrakInterval:        minCelestrakFetchInterval,
+		SatcatInterval:           minCelestrakFetchInterval,
+		SpaceWeatherInterval:     minCelestrakFetchInterval,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner failed: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	err = runner.syncCelestrakSpaceWeather(context.Background())
+	if err == nil {
+		t.Fatal("syncCelestrakSpaceWeather succeeded despite publication failure")
+	}
+	if !strings.Contains(err.Error(), "publish celestrak SPW dataset update") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := runner.checkpoints.getString("celestrak_space_weather_last_success"); got != "" {
+		t.Fatalf("success checkpoint was advanced despite publication failure: %q", got)
+	}
+}
+
 func TestSyncSpaceTrackGapFillRecordsBatchProvenance(t *testing.T) {
 	fixture, err := os.ReadFile("testdata/celestrak-gp-omm.csv")
 	if err != nil {

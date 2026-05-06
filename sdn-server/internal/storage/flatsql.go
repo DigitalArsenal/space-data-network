@@ -422,20 +422,21 @@ type SourceTagQuery struct {
 
 // IndexedRecordQuery filters materialized FlatSQL record indexes.
 type IndexedRecordQuery struct {
-	SchemaName         string
-	Day                string
-	NoradCatID         *uint32
-	EntityID           string
-	ObjectType         string
-	OpsStatusCode      string
-	ActivePayloads     bool
-	CAReadyResidentSet bool
-	From               *time.Time
-	To                 *time.Time
-	ProviderID         string
-	SourceName         string
-	BatchID            string
-	Limit              int
+	SchemaName          string
+	Day                 string
+	NoradCatID          *uint32
+	EntityID            string
+	ObjectType          string
+	OpsStatusCode       string
+	ActivePayloads      bool
+	CAReadyResidentSet  bool
+	From                *time.Time
+	To                  *time.Time
+	ProviderID          string
+	SourceName          string
+	BatchID             string
+	Limit               int
+	AllowLargeResultSet bool
 }
 
 // StoreWithSourceTags stores a FlatBuffer record and attaches provider/source metadata.
@@ -1151,8 +1152,12 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 	if filter.Limit <= 0 {
 		filter.Limit = 50
 	}
-	if filter.Limit > 1000 {
-		filter.Limit = 1000
+	maxLimit := 1000
+	if filter.AllowLargeResultSet {
+		maxLimit = 250000
+	}
+	if filter.Limit > maxLimit {
+		filter.Limit = maxLimit
 	}
 
 	query := fmt.Sprintf(`

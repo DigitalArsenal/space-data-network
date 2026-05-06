@@ -23,6 +23,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -379,7 +380,7 @@ func TestHandleModuleRuntimeMutationUpdatesOptionsAndRunsActions(t *testing.T) {
 	if err := json.NewDecoder(optionRecorder.Body).Decode(&optionPayload); err != nil {
 		t.Fatalf("decode option payload: %v", err)
 	}
-	if optionPayload.Key != "timer.refresh-grants.interval" || optionPayload.Value != "45000" || optionPayload.Persistence != "live-only" {
+	if optionPayload.Key != "timer.refresh-grants.interval" || optionPayload.Value != "45000" || optionPayload.Persistence != "persisted" {
 		t.Fatalf("option payload = %#v", optionPayload)
 	}
 
@@ -870,6 +871,30 @@ func TestStorefrontSigningKeyFromRawAcceptsSeedOrPrivateKey(t *testing.T) {
 
 	if _, err := storefrontSigningKeyFromRaw([]byte{1, 2, 3}); err == nil {
 		t.Fatal("storefrontSigningKeyFromRaw should reject invalid key lengths")
+	}
+}
+
+func TestDatasetPublicationSigningKeyCreatesPersistentLegacyIdentity(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Storage: config.StorageConfig{Path: filepath.Join(dir, "store")},
+		Setup:   config.SetupConfig{DataPath: dir},
+	}
+
+	first, err := datasetPublicationSigningKey(cfg, nil)
+	if err != nil {
+		t.Fatalf("datasetPublicationSigningKey first call failed: %v", err)
+	}
+	if len(first) != ed25519.PrivateKeySize {
+		t.Fatalf("first key length = %d, want %d", len(first), ed25519.PrivateKeySize)
+	}
+
+	second, err := datasetPublicationSigningKey(cfg, nil)
+	if err != nil {
+		t.Fatalf("datasetPublicationSigningKey second call failed: %v", err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatal("dataset publication signing key was not persisted")
 	}
 }
 

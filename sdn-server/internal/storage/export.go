@@ -285,33 +285,35 @@ func isActiveCatalogOpsStatus(status string) bool {
 
 func canonicalQueryJSON(filter IndexedRecordQuery) ([]byte, error) {
 	payload := struct {
-		SchemaName         string  `json:"schemaName"`
-		Day                string  `json:"day,omitempty"`
-		NoradCatID         *uint32 `json:"noradCatId,omitempty"`
-		EntityID           string  `json:"entityId,omitempty"`
-		ObjectType         string  `json:"objectType,omitempty"`
-		OpsStatusCode      string  `json:"opsStatusCode,omitempty"`
-		ActivePayloads     bool    `json:"activePayloads,omitempty"`
-		CAReadyResidentSet bool    `json:"caReadyResidentSet,omitempty"`
-		From               string  `json:"from,omitempty"`
-		To                 string  `json:"to,omitempty"`
-		ProviderID         string  `json:"providerId,omitempty"`
-		SourceName         string  `json:"sourceName,omitempty"`
-		BatchID            string  `json:"batchId,omitempty"`
-		Limit              int     `json:"limit,omitempty"`
+		SchemaName          string  `json:"schemaName"`
+		Day                 string  `json:"day,omitempty"`
+		NoradCatID          *uint32 `json:"noradCatId,omitempty"`
+		EntityID            string  `json:"entityId,omitempty"`
+		ObjectType          string  `json:"objectType,omitempty"`
+		OpsStatusCode       string  `json:"opsStatusCode,omitempty"`
+		ActivePayloads      bool    `json:"activePayloads,omitempty"`
+		CAReadyResidentSet  bool    `json:"caReadyResidentSet,omitempty"`
+		From                string  `json:"from,omitempty"`
+		To                  string  `json:"to,omitempty"`
+		ProviderID          string  `json:"providerId,omitempty"`
+		SourceName          string  `json:"sourceName,omitempty"`
+		BatchID             string  `json:"batchId,omitempty"`
+		Limit               int     `json:"limit,omitempty"`
+		AllowLargeResultSet bool    `json:"allowLargeResultSet,omitempty"`
 	}{
-		SchemaName:         filter.SchemaName,
-		Day:                filter.Day,
-		NoradCatID:         filter.NoradCatID,
-		EntityID:           filter.EntityID,
-		ObjectType:         filter.ObjectType,
-		OpsStatusCode:      filter.OpsStatusCode,
-		ActivePayloads:     filter.ActivePayloads,
-		CAReadyResidentSet: filter.CAReadyResidentSet,
-		ProviderID:         filter.ProviderID,
-		SourceName:         filter.SourceName,
-		BatchID:            filter.BatchID,
-		Limit:              filter.Limit,
+		SchemaName:          filter.SchemaName,
+		Day:                 filter.Day,
+		NoradCatID:          filter.NoradCatID,
+		EntityID:            filter.EntityID,
+		ObjectType:          filter.ObjectType,
+		OpsStatusCode:       filter.OpsStatusCode,
+		ActivePayloads:      filter.ActivePayloads,
+		CAReadyResidentSet:  filter.CAReadyResidentSet,
+		ProviderID:          filter.ProviderID,
+		SourceName:          filter.SourceName,
+		BatchID:             filter.BatchID,
+		Limit:               filter.Limit,
+		AllowLargeResultSet: filter.AllowLargeResultSet,
 	}
 	if filter.From != nil {
 		payload.From = filter.From.UTC().Format(time.RFC3339Nano)

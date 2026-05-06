@@ -386,6 +386,35 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				logAPI.RegisterRoutes(adminMux)
 			}
 
+			// Local dataset publication route used by ingest workers after a
+			// successful provider sync.
+			if n.Store() != nil {
+				providerEPMCID := ""
+				if n.EPMService() != nil {
+					if epmCID, err := n.EPMService().GetNodeEPMCID(); err == nil {
+						providerEPMCID = epmCID
+					} else {
+						log.Warnf("Could not resolve node EPM CID for dataset publications: %v", err)
+					}
+				}
+				publicationSigningKey, err := datasetPublicationSigningKey(cfg, n.SigningKey())
+				if err != nil {
+					log.Warnf("Dataset publication signing unavailable: %v", err)
+				}
+				publicationDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "dataset-publications")
+				publicationAPI := api.NewDatasetPublicationHandler(api.NewConcreteDatasetPublicationService(
+					n.Store(),
+					n,
+					publicationSigningKey,
+					n.PeerID().String(),
+					providerEPMCID,
+					cfg.Admin.IPFSAPIURL,
+					publicationDir,
+				))
+				publicationAPI.RegisterRoutes(adminMux)
+				log.Infof("Dataset publication API available at %s://%s/api/v1/admin/dataset-updates/publish", adminScheme, adminAddr)
+			}
+
 			// Catalog API route (public)
 			if n.Store() != nil {
 				catalogAPI := api.NewCatalogHandler(n.Store(), n.PeerID(), cfg)
@@ -992,6 +1021,41 @@ func storefrontSigningKeyFromRaw(raw []byte) (ed25519.PrivateKey, error) {
 	default:
 		return nil, fmt.Errorf("unexpected signing key length %d", len(raw))
 	}
+}
+
+func datasetPublicationSigningKey(cfg *config.Config, raw []byte) ([]byte, error) {
+	if len(raw) > 0 {
+		return storefrontSigningKeyFromRaw(raw)
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("config is required")
+	}
+	basePath := strings.TrimSpace(cfg.Setup.DataPath)
+	if basePath == "" {
+		storagePath := strings.TrimSpace(cfg.Storage.Path)
+		if storagePath == "" {
+			return nil, fmt.Errorf("storage path is required")
+		}
+		basePath = filepath.Dir(storagePath)
+	}
+
+	keyMgr, err := keys.NewManager(basePath)
+	if err != nil {
+		return nil, fmt.Errorf("create publication key manager: %w", err)
+	}
+	var identity *keys.Identity
+	if keyMgr.HasIdentity() {
+		identity, err = keyMgr.LoadIdentity()
+	} else {
+		identity, err = keyMgr.GenerateIdentity()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load publication signing identity: %w", err)
+	}
+	if identity == nil || identity.SigningKey == nil || len(identity.SigningKey.PrivateKey) == 0 {
+		return nil, fmt.Errorf("publication signing identity is unavailable")
+	}
+	return storefrontSigningKeyFromRaw(identity.SigningKey.PrivateKey)
 }
 
 func isPublicAPIPath(path string) bool {

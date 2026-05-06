@@ -459,7 +459,7 @@ func TestPublishDatasetUpdatePNMPublishesSchemaAndCombinedCelesTrakTopics(t *tes
 		t.Fatalf("PublishDatasetUpdatePNM failed: %v", err)
 	}
 
-	want := []string{"PNM.fbs", "CAT.fbs", "OMM.fbs", "SPW.fbs"}
+	want := []string{"PNM.fbs", "CAT.fbs", "OMM.fbs", "MPE.fbs", "SPW.fbs"}
 	if !reflect.DeepEqual(publisher.published, want) {
 		t.Fatalf("published schemas = %#v, want %#v", publisher.published, want)
 	}

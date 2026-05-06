@@ -45,6 +45,7 @@ var (
 	ingestSpaceTrackLoginURL   string
 	ingestSpaceTrackQueryTmpl  string
 	ingestHTTPTimeout          time.Duration
+	ingestDatasetPublishURL    string
 )
 
 func init() {
@@ -71,6 +72,7 @@ func init() {
 	ingestCmd.Flags().StringVar(&ingestSpaceTrackQueryTmpl, "spacetrack-query-template", "", "Space-Track query URL template with two %s placeholders for start/end day")
 
 	ingestCmd.Flags().DurationVar(&ingestHTTPTimeout, "http-timeout", 90*time.Second, "HTTP request timeout")
+	ingestCmd.Flags().StringVar(&ingestDatasetPublishURL, "dataset-publish-url", "", "local SDN admin dataset publication endpoint")
 
 	rootCmd.AddCommand(ingestCmd)
 }
@@ -101,6 +103,10 @@ func runIngest(cmd *cobra.Command, args []string) error {
 	password := ingestSpaceTrackPassword
 	if password == "" {
 		password = strings.TrimSpace(os.Getenv("SPACETRACK_PASSWORD"))
+	}
+	datasetPublishURL := ingestDatasetPublishURL
+	if datasetPublishURL == "" {
+		datasetPublishURL = strings.TrimSpace(os.Getenv("SDN_DATASET_PUBLISH_URL"))
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -165,6 +171,8 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		SpaceTrackQueryTmpl:    ingestSpaceTrackQueryTmpl,
 
 		HTTPTimeout: ingestHTTPTimeout,
+
+		DatasetPublishURL: datasetPublishURL,
 	})
 	if err != nil {
 		return err
