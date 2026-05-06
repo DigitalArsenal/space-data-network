@@ -58,6 +58,7 @@ type DatasetPublicationReplayOptions struct {
 	PNM               []byte
 	ProviderPublicKey ed25519.PublicKey
 	FetchByCID        func(context.Context, string) ([]byte, error)
+	FetchRetryDelays  []time.Duration
 	WorkDir           string
 }
 
@@ -169,7 +170,7 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 		return nil, fmt.Errorf("invalid PNM signature")
 	}
 
-	manifestBytes, err := opts.FetchByCID(ctx, manifestCID)
+	manifestBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, manifestCID)
 	if err != nil {
 		return nil, fmt.Errorf("fetch manifest CID %s: %w", manifestCID, err)
 	}
@@ -197,14 +198,14 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 	if !ok {
 		return nil, fmt.Errorf("DPM missing QUERY_INDEX asset")
 	}
-	shardBytes, err := opts.FetchByCID(ctx, shardAsset.CID)
+	shardBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, shardAsset.CID)
 	if err != nil {
 		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, err)
 	}
 	if err := verifyBytesCIDAndHash("shard", shardBytes, shardAsset.CID, shardAsset.SHA256); err != nil {
 		return nil, err
 	}
-	indexBytes, err := opts.FetchByCID(ctx, indexAsset.CID)
+	indexBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, indexAsset.CID)
 	if err != nil {
 		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, err)
 	}
@@ -259,7 +260,7 @@ func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opt
 		return nil, err
 	}
 	_ = fileID
-	manifestBytes, err := opts.FetchByCID(ctx, manifestCID)
+	manifestBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, manifestCID)
 	if err != nil {
 		return nil, fmt.Errorf("fetch manifest CID %s: %w", manifestCID, err)
 	}
@@ -285,14 +286,14 @@ func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opt
 	if !ok {
 		return nil, fmt.Errorf("DPM missing QUERY_INDEX asset")
 	}
-	shardBytes, err := opts.FetchByCID(ctx, shardAsset.CID)
+	shardBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, shardAsset.CID)
 	if err != nil {
 		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, err)
 	}
 	if err := verifyBytesCIDAndHash("shard", shardBytes, shardAsset.CID, shardAsset.SHA256); err != nil {
 		return nil, err
 	}
-	indexBytes, err := opts.FetchByCID(ctx, indexAsset.CID)
+	indexBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, indexAsset.CID)
 	if err != nil {
 		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, err)
 	}
@@ -313,6 +314,31 @@ func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opt
 		QuerySHA256:  index.QuerySHA256,
 		ResultSHA256: index.ResultSHA256,
 	}, nil
+}
+
+func fetchDatasetPublicationCID(ctx context.Context, fetch func(context.Context, string) ([]byte, error), retryDelays []time.Duration, cidValue string) ([]byte, error) {
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		data, err := fetch(ctx, cidValue)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if attempt >= len(retryDelays) {
+			return nil, lastErr
+		}
+		delay := retryDelays[attempt]
+		if delay <= 0 {
+			continue
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func verifyDatasetPublicationPNM(pnmBytes []byte, providerPublicKey ed25519.PublicKey) (string, string, error) {
