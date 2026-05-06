@@ -992,6 +992,10 @@ func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, p
 		return fmt.Errorf("trusted dataset PNM received from %s but admin.ipfs_api_url is not configured", from.ShortString())
 	}
 	pnm := PNM.GetSizePrefixedRootAsPNM(pnmBytes, 0)
+	if publicationSchema := datasetPublicationFileIDSchema(string(pnm.FILE_ID())); publicationSchema != "" && publicationSchema != schema {
+		log.Debugf("Skipping dataset PNM materialization from %s on %s: FILE_ID schema is %s", from.ShortString(), schema, publicationSchema)
+		return nil
+	}
 	pnmKey := strings.TrimSpace(string(pnm.CID())) + "\x00" + strings.TrimSpace(string(pnm.FILE_ID()))
 	if pnmKey == "\x00" {
 		return nil
@@ -1023,6 +1027,16 @@ func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, p
 	log.Infof("Materialized trusted dataset update from %s on %s: schema=%s imported=%d manifest=%s shard=%s",
 		from.ShortString(), schema, result.SchemaName, result.Imported, result.ManifestCID, result.ShardCID)
 	return nil
+}
+
+func datasetPublicationFileIDSchema(fileID string) string {
+	for _, part := range strings.Split(fileID, ":") {
+		part = strings.TrimSpace(part)
+		if strings.HasSuffix(part, ".fbs") {
+			return part
+		}
+	}
+	return ""
 }
 
 func (n *Node) datasetPNMAlreadyMaterialized(key string) bool {
