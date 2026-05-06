@@ -420,6 +420,17 @@ type SourceTagQuery struct {
 	Limit      int
 }
 
+// SourceBatchReconcileResult summarizes a source-batch reconciliation.
+type SourceBatchReconcileResult struct {
+	SchemaName string `json:"schemaName"`
+	ProviderID string `json:"providerId"`
+	SourceName string `json:"sourceName"`
+	KeepBatch  string `json:"keepBatch"`
+	Apply      bool   `json:"apply"`
+	Matched    int64  `json:"matched"`
+	Deleted    int64  `json:"deleted"`
+}
+
 // IndexedRecordQuery filters materialized FlatSQL record indexes.
 type IndexedRecordQuery struct {
 	SchemaName          string
@@ -566,6 +577,87 @@ func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record
 		return nil, fmt.Errorf("source tagged record rows: %w", err)
 	}
 	return records, nil
+}
+
+// ReconcileSourceBatch deletes source-tagged records outside the accepted
+// source batch. It is intended for DPM-series reconciliation after an operator
+// has selected the latest accepted source hash/batch ID.
+func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, keepBatch string, apply bool) (SourceBatchReconcileResult, error) {
+	result := SourceBatchReconcileResult{
+		SchemaName: strings.TrimSpace(schemaName),
+		ProviderID: strings.TrimSpace(providerID),
+		SourceName: strings.TrimSpace(sourceName),
+		KeepBatch:  strings.TrimSpace(keepBatch),
+		Apply:      apply,
+	}
+	if result.SchemaName == "" {
+		return result, errors.New("schema name is required")
+	}
+	if result.ProviderID == "" {
+		return result, errors.New("provider id is required")
+	}
+	if result.SourceName == "" {
+		return result, errors.New("source name is required")
+	}
+	if result.KeepBatch == "" {
+		return result, errors.New("keep batch is required")
+	}
+	tableName, err := sds.SchemaNameToTable(result.SchemaName)
+	if err != nil {
+		return result, fmt.Errorf("invalid schema name: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	args := []interface{}{result.SchemaName, result.ProviderID, result.SourceName, result.KeepBatch}
+	countSQL := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM %s records
+		INNER JOIN sdn_record_source_tags tags
+		  ON tags.schema_name = ? AND tags.cid = records.cid
+		WHERE tags.provider_id = ?
+		  AND tags.source_name = ?
+		  AND tags.batch_id <> ?
+	`, tableName)
+	if err := s.db.QueryRow(countSQL, args...).Scan(&result.Matched); err != nil {
+		return result, fmt.Errorf("count source batch reconciliation records: %w", err)
+	}
+	if !apply || result.Matched == 0 {
+		return result, nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return result, fmt.Errorf("begin source batch reconciliation: %w", err)
+	}
+	defer tx.Rollback()
+
+	cidSubquery := `
+		SELECT cid
+		FROM sdn_record_source_tags
+		WHERE schema_name = ?
+		  AND provider_id = ?
+		  AND source_name = ?
+		  AND batch_id <> ?
+	`
+	deleteRecordsSQL := fmt.Sprintf(`DELETE FROM %s WHERE cid IN (`+cidSubquery+`)`, tableName)
+	recordDelete, err := tx.Exec(deleteRecordsSQL, args...)
+	if err != nil {
+		return result, fmt.Errorf("delete source batch records: %w", err)
+	}
+	result.Deleted, _ = recordDelete.RowsAffected()
+	indexArgs := append([]interface{}{result.SchemaName}, args...)
+	if _, err := tx.Exec(`DELETE FROM sdn_record_index WHERE schema_name = ? AND cid IN (`+cidSubquery+`)`, indexArgs...); err != nil {
+		return result, fmt.Errorf("delete source batch index rows: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?`, args...); err != nil {
+		return result, fmt.Errorf("delete source batch tags: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return result, fmt.Errorf("commit source batch reconciliation: %w", err)
+	}
+	return result, nil
 }
 
 // ValidateSourceTags checks required provider/source fields.
