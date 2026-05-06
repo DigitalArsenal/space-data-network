@@ -132,7 +132,16 @@ func TestMaterializeStoredDatasetPublicationPNMsReplaysTrustedProviderPNM(t *tes
 	}))
 	defer ipfs.Close()
 
-	if _, err := subscriberStore.Store("PNM.fbs", pnmBytes, providerID.String(), nil); err != nil {
+	relayPriv, relayPub, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x45}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key relay failed: %v", err)
+	}
+	_ = relayPriv
+	relayID, err := peer.IDFromPublicKey(relayPub)
+	if err != nil {
+		t.Fatalf("relay IDFromPublicKey failed: %v", err)
+	}
+	if _, err := subscriberStore.Store("PNM.fbs", pnmBytes, relayID.String(), nil); err != nil {
 		t.Fatalf("store subscriber PNM: %v", err)
 	}
 	registry := peers.NewRegistry(false, nil)
