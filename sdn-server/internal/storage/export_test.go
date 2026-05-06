@@ -357,6 +357,7 @@ func TestBuildDatasetPublicationPNMAnnouncesSignedManifestCID(t *testing.T) {
 	manifest := &DatasetPublicationManifest{
 		Path:      "/tmp/cat-active.dpm",
 		CID:       "bafymanifestcid",
+		FileID:    "celestrak:cat:CAT.fbs:2023-11-14T22:13:20Z",
 		Signature: []byte{0x01, 0x02, 0x03},
 	}
 	pnmBytes, err := BuildDatasetPublicationPNM(manifest, DatasetPublicationPNMOptions{
@@ -374,8 +375,8 @@ func TestBuildDatasetPublicationPNMAnnouncesSignedManifestCID(t *testing.T) {
 	if got := string(root.CID()); got != manifest.CID {
 		t.Fatalf("CID = %q, want %q", got, manifest.CID)
 	}
-	if got := string(root.FILE_ID()); got != "DPM" {
-		t.Fatalf("FILE_ID = %q, want DPM", got)
+	if got := string(root.FILE_ID()); got != manifest.FileID {
+		t.Fatalf("FILE_ID = %q, want %q", got, manifest.FileID)
 	}
 	if got := string(root.MULTIFORMAT_ADDRESS()); got != "/ipfs/"+manifest.CID {
 		t.Fatalf("MULTIFORMAT_ADDRESS = %q", got)
@@ -387,7 +388,7 @@ func TestBuildDatasetPublicationPNMAnnouncesSignedManifestCID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode PNM signature: %v", err)
 	}
-	if !ed25519.Verify(signingKey.Public().(ed25519.PublicKey), datasetPublicationPNMSignaturePayload(manifest.CID, "DPM"), pnmSignature) {
+	if !ed25519.Verify(signingKey.Public().(ed25519.PublicKey), datasetPublicationPNMSignaturePayload(manifest.CID, manifest.FileID), pnmSignature) {
 		t.Fatalf("PNM signature does not verify over manifest CID announcement")
 	}
 	if got := string(root.PUBLISH_TIMESTAMP()); got != publishedAt.Format(time.RFC3339) {
@@ -640,6 +641,9 @@ func TestBuildSignedDatasetPublicationManifestBindsExportAndQuery(t *testing.T) 
 	if got := string(root.DATASET_ID()); got != "cat-active" {
 		t.Fatalf("DATASET_ID = %q", got)
 	}
+	if got := string(root.FILE_ID()); got != "cat-active:CAT.fbs:batch-sha" {
+		t.Fatalf("FILE_ID = %q", got)
+	}
 	if got := string(root.PROVIDER_EPM_CID()); got != "bafy-provider-epm" {
 		t.Fatalf("PROVIDER_EPM_CID = %q", got)
 	}
@@ -651,6 +655,9 @@ func TestBuildSignedDatasetPublicationManifestBindsExportAndQuery(t *testing.T) 
 	}
 	if got := string(root.QUERY(nil).QUERY_SHA256()); got != sha256Hex(queryJSON) {
 		t.Fatalf("QUERY_SHA256 = %q", got)
+	}
+	if got := string(root.QUERY(nil).CANONICAL_ORDER()); got != "FlatSQL export order v1" {
+		t.Fatalf("CANONICAL_ORDER = %q", got)
 	}
 	if root.SOURCESLength() != 1 {
 		t.Fatalf("SOURCESLength = %d, want 1", root.SOURCESLength())

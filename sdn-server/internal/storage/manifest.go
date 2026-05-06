@@ -23,6 +23,7 @@ type DatasetPublicationManifestOptions struct {
 	Export          *DatasetExport
 	DatasetID       string
 	UpdateID        string
+	FileID          string
 	ProviderPeerID  string
 	ProviderEPMCID  string
 	PublishedAt     time.Time
@@ -36,6 +37,7 @@ type DatasetPublicationManifestOptions struct {
 type DatasetPublicationManifest struct {
 	Path                   string
 	CID                    string
+	FileID                 string
 	SHA256                 string
 	Bytes                  []byte
 	ByteLength             int64
@@ -83,15 +85,19 @@ func BuildDatasetPublicationPNM(manifest *DatasetPublicationManifest, opts Datas
 	if strings.TrimSpace(opts.FileName) == "" {
 		opts.FileName = filepath.Base(manifest.Path)
 	}
+	fileIDValue := strings.TrimSpace(manifest.FileID)
+	if fileIDValue == "" {
+		return nil, fmt.Errorf("manifest file id is required")
+	}
 	builder := flatbuffers.NewBuilder(256)
 	addr := builder.CreateString("/ipfs/" + manifest.CID)
 	publishedAt := builder.CreateString(opts.PublishedAt.UTC().Format(time.RFC3339))
 	cidOffset := builder.CreateString(manifest.CID)
 	fileName := builder.CreateString(opts.FileName)
-	fileID := builder.CreateString("DPM")
+	fileID := builder.CreateString(fileIDValue)
 	signatureBytes := manifest.Signature
 	if len(opts.SigningKey) == ed25519.PrivateKeySize {
-		signatureBytes = ed25519.Sign(opts.SigningKey, datasetPublicationPNMSignaturePayload(manifest.CID, "DPM"))
+		signatureBytes = ed25519.Sign(opts.SigningKey, datasetPublicationPNMSignaturePayload(manifest.CID, fileIDValue))
 	}
 	signature := builder.CreateString(hex.EncodeToString(signatureBytes))
 	signatureType := builder.CreateString("Ed25519")
@@ -147,8 +153,8 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 	if manifestCID == "" {
 		return nil, fmt.Errorf("PNM missing manifest CID")
 	}
-	if fileID != "DPM" {
-		return nil, fmt.Errorf("PNM FILE_ID = %q, want DPM", fileID)
+	if fileID == "" {
+		return nil, fmt.Errorf("PNM missing FILE_ID")
 	}
 	if sigType := strings.TrimSpace(string(pnm.SIGNATURE_TYPE())); sigType != "Ed25519" {
 		return nil, fmt.Errorf("PNM SIGNATURE_TYPE = %q, want Ed25519", sigType)
@@ -173,6 +179,9 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 		return nil, err
 	}
 	_ = unsignedManifest
+	if dpmFileID := strings.TrimSpace(string(manifest.FILE_ID())); dpmFileID != fileID {
+		return nil, fmt.Errorf("PNM FILE_ID %q does not match DPM FILE_ID %q", fileID, dpmFileID)
+	}
 
 	assetMap, err := manifestAssetMap(manifest)
 	if err != nil {
@@ -250,6 +259,9 @@ func BuildSignedDatasetPublicationManifest(outputDir string, opts DatasetPublica
 	if strings.TrimSpace(opts.UpdateID) == "" {
 		return nil, fmt.Errorf("update id is required")
 	}
+	if strings.TrimSpace(opts.FileID) == "" {
+		opts.FileID = datasetPublicationFileID(opts)
+	}
 	if strings.TrimSpace(opts.ProviderPeerID) == "" {
 		return nil, fmt.Errorf("provider peer id is required")
 	}
@@ -288,6 +300,7 @@ func BuildSignedDatasetPublicationManifest(outputDir string, opts DatasetPublica
 	return &DatasetPublicationManifest{
 		Path:                   manifestPath,
 		CID:                    manifestCID,
+		FileID:                 strings.TrimSpace(opts.FileID),
 		SHA256:                 manifestSHA,
 		Bytes:                  signed,
 		ByteLength:             int64(len(signed)),
@@ -309,14 +322,19 @@ func buildDatasetPublicationManifestBytes(opts DatasetPublicationManifestOptions
 	version := builder.CreateString("1.0.0")
 	datasetID := builder.CreateString(opts.DatasetID)
 	updateID := builder.CreateString(opts.UpdateID)
+	fileIDValue := strings.TrimSpace(opts.FileID)
+	if fileIDValue == "" {
+		fileIDValue = datasetPublicationFileID(opts)
+	}
+	fileID := builder.CreateString(fileIDValue)
 	providerPeerID := builder.CreateString(opts.ProviderPeerID)
 	providerEPMCID := builder.CreateString(opts.ProviderEPMCID)
 	publishedAt := builder.CreateString(opts.PublishedAt.UTC().Format(time.RFC3339Nano))
 	signatureTypeOffset := builder.CreateString(signatureType)
 
 	assetOffsets := []flatbuffers.UOffsetT{
-		buildDPMAsset(builder, "data", export.ShardCID, "/ipfs/"+export.ShardCID, filepath.Base(export.ShardPath), export.ShardBytes, export.ShardSHA256, export.SchemaName, opts.SchemaHash, export.ContentKeyID),
-		buildDPMAsset(builder, "index", export.IndexCID, "/ipfs/"+export.IndexCID, filepath.Base(export.IndexPath), export.IndexBytes, export.IndexSHA256, "DPM.index.json", opts.SchemaHash, export.ContentKeyID),
+		buildDPMAsset(builder, "data", export.ShardCID, "/ipfs/"+export.ShardCID, filepath.Base(export.ShardPath), fileIDValue, export.ShardBytes, export.ShardSHA256, export.ResultSHA256, export.SchemaName, opts.SchemaHash, export.ContentKeyID),
+		buildDPMAsset(builder, "index", export.IndexCID, "/ipfs/"+export.IndexCID, filepath.Base(export.IndexPath), fileIDValue, export.IndexBytes, export.IndexSHA256, "", "DPM.index.json", opts.SchemaHash, export.ContentKeyID),
 	}
 	assetsVector := buildOffsetVector(builder, assetOffsets, dpm.DPMStartASSETSVector)
 
@@ -336,6 +354,7 @@ func buildDatasetPublicationManifestBytes(opts DatasetPublicationManifestOptions
 	dpm.DPMAddVERSION(builder, version)
 	dpm.DPMAddDATASET_ID(builder, datasetID)
 	dpm.DPMAddUPDATE_ID(builder, updateID)
+	dpm.DPMAddFILE_ID(builder, fileID)
 	dpm.DPMAddPROVIDER_PEER_ID(builder, providerPeerID)
 	dpm.DPMAddPROVIDER_EPM_CID(builder, providerEPMCID)
 	dpm.DPMAddPUBLISH_TIMESTAMP(builder, publishedAt)
@@ -352,11 +371,13 @@ func buildDatasetPublicationManifestBytes(opts DatasetPublicationManifestOptions
 	return append([]byte(nil), builder.FinishedBytes()...), nil
 }
 
-func buildDPMAsset(builder *flatbuffers.Builder, kind, cidValue, multiaddr, fileName string, byteLength int64, byteSHA256, schemaName, schemaHash, contentKeyID string) flatbuffers.UOffsetT {
+func buildDPMAsset(builder *flatbuffers.Builder, kind, cidValue, multiaddr, fileName, fileID string, byteLength int64, byteSHA256, dataRoot, schemaName, schemaHash, contentKeyID string) flatbuffers.UOffsetT {
 	cidOffset := builder.CreateString(cidValue)
 	multiaddrOffset := builder.CreateString(multiaddr)
 	fileNameOffset := builder.CreateString(fileName)
+	fileIDOffset := builder.CreateString(fileID)
 	byteSHAOffset := builder.CreateString(byteSHA256)
+	dataRootOffset := builder.CreateString(dataRoot)
 	schemaNameOffset := builder.CreateString(schemaName)
 	schemaHashOffset := builder.CreateString(schemaHash)
 	contentKeyOffset := builder.CreateString(contentKeyID)
@@ -371,13 +392,16 @@ func buildDPMAsset(builder *flatbuffers.Builder, kind, cidValue, multiaddr, file
 	default:
 		dpm.DPMAssetAddASSET_KIND(builder, 3)
 	}
+	dpm.DPMAssetAddTRANSPORT_KIND(builder, 0)
 	dpm.DPMAssetAddCID(builder, cidOffset)
 	dpm.DPMAssetAddMULTIFORMAT_ADDRESS(builder, multiaddrOffset)
 	dpm.DPMAssetAddFILE_NAME(builder, fileNameOffset)
+	dpm.DPMAssetAddFILE_ID(builder, fileIDOffset)
 	if byteLength > 0 {
 		dpm.DPMAssetAddBYTE_LENGTH(builder, uint64(byteLength))
 	}
 	dpm.DPMAssetAddBYTE_SHA256(builder, byteSHAOffset)
+	dpm.DPMAssetAddDATA_ROOT(builder, dataRootOffset)
 	dpm.DPMAssetAddSCHEMA_NAME(builder, schemaNameOffset)
 	dpm.DPMAssetAddSCHEMA_HASH(builder, schemaHashOffset)
 	dpm.DPMAssetAddCONTENT_KEY_ID(builder, contentKeyOffset)
@@ -410,6 +434,8 @@ func buildDPMQueryBinding(builder *flatbuffers.Builder, export *DatasetExport, o
 	resultSHA := builder.CreateString(export.ResultSHA256)
 	queryEngine := builder.CreateString(opts.QueryEngine)
 	queryEngineVersion := builder.CreateString(opts.QueryEngineVers)
+	canonicalOrder := builder.CreateString("FlatSQL export order v1")
+	queryProtocol := builder.CreateString("")
 	windowStart, windowEnd := queryWindowFromCanonical(export.CanonicalQuery)
 	windowStartOffset := builder.CreateString(windowStart)
 	windowEndOffset := builder.CreateString(windowEnd)
@@ -424,6 +450,8 @@ func buildDPMQueryBinding(builder *flatbuffers.Builder, export *DatasetExport, o
 	dpm.DPMQueryBindingAddRESULT_SHA256(builder, resultSHA)
 	dpm.DPMQueryBindingAddQUERY_ENGINE(builder, queryEngine)
 	dpm.DPMQueryBindingAddQUERY_ENGINE_VERSION(builder, queryEngineVersion)
+	dpm.DPMQueryBindingAddCANONICAL_ORDER(builder, canonicalOrder)
+	dpm.DPMQueryBindingAddQUERY_PROTOCOL(builder, queryProtocol)
 	dpm.DPMQueryBindingAddSCHEMA_NAMES(builder, schemaNames)
 	dpm.DPMQueryBindingAddPROVIDER_IDS(builder, providerIDs)
 	dpm.DPMQueryBindingAddSOURCE_NAMES(builder, sourceNames)
@@ -480,6 +508,17 @@ func queryWindowFromCanonical(canonical string) (string, string) {
 	// fields are optional DPM conveniences, so leave them empty here rather than
 	// parsing the canonical document a second time.
 	return "", ""
+}
+
+func datasetPublicationFileID(opts DatasetPublicationManifestOptions) string {
+	parts := []string{strings.TrimSpace(opts.DatasetID), strings.TrimSpace(opts.Export.SchemaName), strings.TrimSpace(opts.UpdateID)}
+	nonEmpty := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part != "" {
+			nonEmpty = append(nonEmpty, part)
+		}
+	}
+	return strings.Join(nonEmpty, ":")
 }
 
 type publicationAsset struct {
@@ -576,6 +615,7 @@ func rebuildUnsignedDatasetManifest(manifest *dpm.DPM) ([]byte, error) {
 		Export:          export,
 		DatasetID:       string(manifest.DATASET_ID()),
 		UpdateID:        string(manifest.UPDATE_ID()),
+		FileID:          string(manifest.FILE_ID()),
 		ProviderPeerID:  string(manifest.PROVIDER_PEER_ID()),
 		ProviderEPMCID:  string(manifest.PROVIDER_EPM_CID()),
 		PublishedAt:     publishedAt,
