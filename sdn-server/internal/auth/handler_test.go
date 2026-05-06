@@ -810,6 +810,12 @@ func TestLoginPage_BuildersExposeWalletAccountSurfaceForUnauthorizedUsers(t *tes
 			if !strings.Contains(page.html, "window.__sdnRefreshNodeCount") {
 				t.Fatalf("page missing node-count refresh hook: %s", page.html)
 			}
+			if !strings.Contains(page.html, "payload.configured_nodes") {
+				t.Fatalf("page missing configured-node count fallback: %s", page.html)
+			}
+			if !strings.Contains(page.html, "Math.max(connections, configuredNodes)") {
+				t.Fatalf("page should display configured nodes when live connections are lower: %s", page.html)
+			}
 			if !strings.Contains(page.html, "digitalarsenal.github.io/flatbuffers") {
 				t.Fatalf("page missing FlatBuffers technology link: %s", page.html)
 			}

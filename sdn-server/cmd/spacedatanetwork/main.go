@@ -2156,6 +2156,7 @@ func handleRelayStatus(n *node.Node) http.HandlerFunc {
 	type relayStatusResponse struct {
 		PeerID            string  `json:"peer_id"`
 		Connections       int     `json:"connections"`
+		ConfiguredNodes   int     `json:"configured_nodes"`
 		MaxConnections    int     `json:"max_connections"`
 		Load              float64 `json:"load"`
 		Mode              string  `json:"mode"`
@@ -2195,6 +2196,7 @@ func handleRelayStatus(n *node.Node) http.HandlerFunc {
 		status := relayStatusResponse{
 			PeerID:            n.PeerID().String(),
 			Connections:       len(peers),
+			ConfiguredNodes:   configuredSDNSSHNodeCount(),
 			MaxConnections:    maxConns,
 			Load:              load,
 			Mode:              n.Config().Mode,
@@ -2209,6 +2211,48 @@ func handleRelayStatus(n *node.Node) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(status)
 	}
+}
+
+func configuredSDNSSHNodeCount() int {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return 0
+	}
+	return countConfiguredSDNSSHHostStanzas(filepath.Join(home, ".ssh", "config"))
+}
+
+func countConfiguredSDNSSHHostStanzas(configPath string) int {
+	file, err := os.Open(configPath)
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	count := 0
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 2 || !strings.EqualFold(fields[0], "host") {
+			continue
+		}
+		for _, alias := range fields[1:] {
+			if isConfiguredSDNSSHAlias(alias) {
+				count++
+				break
+			}
+		}
+	}
+	return count
+}
+
+func isConfiguredSDNSSHAlias(alias string) bool {
+	alias = strings.TrimSpace(alias)
+	if alias == "" || strings.ContainsAny(alias, "*?") {
+		return false
+	}
+	return strings.HasPrefix(alias, "space-data-network-") ||
+		alias == "sdn.spaceaware.io" ||
+		alias == "celestrak.eth"
 }
 
 // handleNodeEPMJSON returns the node's EPM as JSON.
