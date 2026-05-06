@@ -402,6 +402,64 @@ func TestFlatSQLStoreStoreWithSourceTags(t *testing.T) {
 	}
 }
 
+func TestFlatSQLStoreReconcileSourceBatch(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-reconcile-batch-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	currentTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "current-batch"}
+	oldTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "old-batch"}
+	currentCID, err := store.StoreWithSourceTags("OMM.fbs", []byte(`{"satellite":"current"}`), "provider", nil, currentTags)
+	if err != nil {
+		t.Fatalf("store current record: %v", err)
+	}
+	oldCID, err := store.StoreWithSourceTags("OMM.fbs", []byte(`{"satellite":"old"}`), "provider", nil, oldTags)
+	if err != nil {
+		t.Fatalf("store old record: %v", err)
+	}
+
+	dryRun, err := store.ReconcileSourceBatch("OMM.fbs", "space-data-network-02", "celestrak-gp", "current-batch", false)
+	if err != nil {
+		t.Fatalf("dry-run reconcile source batch: %v", err)
+	}
+	if dryRun.Matched != 1 || dryRun.Deleted != 0 || dryRun.Apply {
+		t.Fatalf("dry run result = %+v, want one matched and no delete", dryRun)
+	}
+	if _, err := store.Get("OMM.fbs", oldCID); err != nil {
+		t.Fatalf("dry run deleted old record: %v", err)
+	}
+
+	applied, err := store.ReconcileSourceBatch("OMM.fbs", "space-data-network-02", "celestrak-gp", "current-batch", true)
+	if err != nil {
+		t.Fatalf("apply reconcile source batch: %v", err)
+	}
+	if applied.Matched != 1 || applied.Deleted != 1 || !applied.Apply {
+		t.Fatalf("apply result = %+v, want one deleted", applied)
+	}
+	if _, err := store.Get("OMM.fbs", currentCID); err != nil {
+		t.Fatalf("current record should remain: %v", err)
+	}
+	if _, err := store.Get("OMM.fbs", oldCID); err == nil {
+		t.Fatal("old record should be deleted")
+	}
+	if _, err := store.GetSourceTags("OMM.fbs", oldCID); err == nil {
+		t.Fatal("old source tags should be deleted")
+	}
+}
+
 func TestFlatSQLStoreGetNotFound(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-test-*")
 	if err != nil {
