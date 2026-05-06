@@ -57,6 +57,41 @@ func TestIsPublicAPIPathAllowsDirectoryRoutes(t *testing.T) {
 	}
 }
 
+func TestCountConfiguredSDNSSHHostStanzasCountsDeploymentNodesOncePerHostLine(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(configPath, []byte(`
+Host space-data-network-01 sdn.spaceaware.io
+    HostName 159.203.150.8
+    User root
+
+Host space-data-network-02 celestrak.eth
+    HostName 167.172.219.213
+    User root
+
+Host github.com
+    HostName github.com
+
+Host *.example.invalid
+    HostName ignored.example.invalid
+`), 0o600); err != nil {
+		t.Fatalf("write ssh config: %v", err)
+	}
+
+	if got, want := countConfiguredSDNSSHHostStanzas(configPath), 2; got != want {
+		t.Fatalf("countConfiguredSDNSSHHostStanzas() = %d, want %d", got, want)
+	}
+}
+
+func TestCountConfiguredSDNSSHHostStanzasMissingFileIsZero(t *testing.T) {
+	t.Parallel()
+
+	if got := countConfiguredSDNSSHHostStanzas(filepath.Join(t.TempDir(), "missing")); got != 0 {
+		t.Fatalf("countConfiguredSDNSSHHostStanzas(missing) = %d, want 0", got)
+	}
+}
+
 func TestApplyPublicAPICORSHeadersUsesRequestOrigin(t *testing.T) {
 	t.Parallel()
 

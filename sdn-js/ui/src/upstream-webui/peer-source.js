@@ -196,6 +196,11 @@ export function createHostedRegistryPeerSource (options = {}) {
         return registryPeers;
       }
 
+      const configuredDesktopPeers = await fetchConfiguredDesktopSdnNodes(baseUrl, fetchImpl).catch(() => []);
+      if (configuredDesktopPeers.length > 0) {
+        return configuredDesktopPeers;
+      }
+
       return fetchKuboSdnPeers(kuboApiBaseUrl, fetchImpl);
     }
   };
@@ -327,6 +332,20 @@ async function fetchKuboSdnPeers (baseUrl, fetchImpl) {
     .filter(Boolean);
 }
 
+async function fetchConfiguredDesktopSdnNodes (baseUrl, fetchImpl) {
+  if (!isLocalDesktopBaseUrl(baseUrl)) {
+    return [];
+  }
+
+  const response = await fetchImpl(`${baseUrl}/api/local/sdn-nodes`);
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = await response.json();
+  return Array.isArray(payload?.nodes) ? payload.nodes : [];
+}
+
 function kuboPeerToTrustedPeer (peer) {
   const peerId = stringOrNull(peer?.Identify?.ID) ?? stringOrNull(peer?.Peer);
   if (!peerId) {
@@ -367,6 +386,16 @@ function normalizePeerAddress (address, peerId) {
     return normalized;
   }
   return `${normalized}/p2p/${peerId}`;
+}
+
+function isLocalDesktopBaseUrl (baseUrl) {
+  try {
+    const parsed = new URL(baseUrl);
+    return parsed.protocol === 'http:' &&
+      ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function inferCurrentBaseUrl () {

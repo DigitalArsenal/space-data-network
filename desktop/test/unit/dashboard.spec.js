@@ -1,4 +1,5 @@
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const { test, expect } = require('@playwright/test')
 
@@ -117,6 +118,41 @@ test.describe('SDN dashboard window', () => {
     expect(staticServerSource).toContain("res.writeHead(301, { Location: `/${routeName}/${parsed.search}${parsed.hash}` })")
   })
 
+  test('serves local configured SDN nodes from SSH config for desktop peer fallback', () => {
+    const {
+      configuredSdnNodesFromSshConfig,
+      isSdnSSHHostAlias
+    } = require('../../src/static-http-server')
+    const configPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-ssh-config-')), 'config')
+
+    fs.mkdirSync(path.dirname(configPath), { recursive: true })
+    fs.writeFileSync(configPath, [
+      'Host space-data-network-01 sdn.spaceaware.io',
+      '    HostName 159.203.150.8',
+      '    User root',
+      '',
+      'Host space-data-network-02 celestrak.eth',
+      '    HostName 167.172.219.213',
+      '    User root',
+      '',
+      'Host github.com',
+      '    HostName github.com',
+      '',
+      'Host *.example.invalid',
+      '    HostName ignored.example.invalid'
+    ].join('\n'))
+
+    expect(isSdnSSHHostAlias('space-data-network-01')).toBe(true)
+    expect(isSdnSSHHostAlias('sdn.spaceaware.io')).toBe(true)
+    expect(isSdnSSHHostAlias('celestrak.eth')).toBe(true)
+    expect(isSdnSSHHostAlias('github.com')).toBe(false)
+    expect(isSdnSSHHostAlias('*.example.invalid')).toBe(false)
+    expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.id)).toEqual([
+      'space-data-network-01',
+      'space-data-network-02'
+    ])
+  })
+
   test('keeps local Kubo bootstrapped to upstream defaults and SDN seed nodes', () => {
     const daemonConfigSource = fs.readFileSync(path.join(__dirname, '../../src/daemon/config.js'), 'utf8')
 
@@ -165,6 +201,17 @@ test.describe('SDN dashboard window', () => {
     expect(traySource).not.toContain("click: () => { launchWebUI('/') }")
     expect(traySource).not.toContain("id: 'webuiStatus',\n      label: i18n.t('status'),\n      click: () => { launchDashboard('/') }")
     expect(traySource).not.toContain("id: 'webuiStatus',\n      label: i18n.t('status'),\n      click: () => { launchDashboard('/status') }")
+  })
+
+  test('uses SDN status labels in the tray menu instead of upstream IPFS labels', () => {
+    const traySource = fs.readFileSync(path.join(__dirname, '../../src/tray.js'), 'utf8')
+
+    expect(traySource).toContain("['ipfsIsRunning', 'SDN is Running', 'green']")
+    expect(traySource).toContain("['ipfsIsStarting', 'SDN is Starting', 'yellow']")
+    expect(traySource).toContain("['ipfsIsStopping', 'SDN is Stopping', 'yellow']")
+    expect(traySource).toContain("['ipfsIsNotRunning', 'SDN is Not Running', 'gray']")
+    expect(traySource).not.toContain('label: i18n.t(status)')
+    expect(traySource).not.toContain("'IPFS is Running'")
   })
 
   test('uses the simplified solid triangle tray mark with a cut-out dot', () => {

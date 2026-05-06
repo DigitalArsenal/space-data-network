@@ -30,6 +30,16 @@ function buildCheckbox (key, label) {
   }
 }
 
+const SDN_STATUS_MENU_ITEMS = Object.freeze([
+  ['ipfsIsStarting', 'SDN is Starting', 'yellow'],
+  ['ipfsIsRunning', 'SDN is Running', 'green'],
+  ['ipfsIsStopping', 'SDN is Stopping', 'yellow'],
+  ['ipfsIsNotRunning', 'SDN is Not Running', 'gray'],
+  ['ipfsHasErrored', 'SDN has Errored', 'red'],
+  ['runningWithGC', 'SDN is Running (GC in progress)', 'yellow'],
+  ['runningWhileCheckingForUpdate', 'SDN is Running (Checking for Updates)', 'yellow']
+])
+
 // Notes on this: we are only supporting accelerators on macOS for now because
 // they natively work as soon as the menu opens. They don't work like that on Windows
 // or other OSes and must be registered globally. They still collide with global
@@ -55,17 +65,9 @@ async function buildMenu () {
   // @ts-expect-error
   return Menu.buildFromTemplate([
     // @ts-ignore
-    ...[
-      ['ipfsIsStarting', 'yellow'],
-      ['ipfsIsRunning', 'green'],
-      ['ipfsIsStopping', 'yellow'],
-      ['ipfsIsNotRunning', 'gray'],
-      ['ipfsHasErrored', 'red'],
-      ['runningWithGC', 'yellow'],
-      ['runningWhileCheckingForUpdate', 'yellow']
-    ].map(([status, color]) => ({
+    ...SDN_STATUS_MENU_ITEMS.map(([status, label, color]) => ({
       id: status,
-      label: i18n.t(status),
+      label,
       visible: false,
       enabled: false,
       icon: path.resolve(path.join(__dirname, `../assets/icons/status/${color}.png`))

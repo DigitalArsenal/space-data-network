@@ -320,6 +320,13 @@ describe('upstream webui peer source', () => {
           json: async () => ({ message: 'not found' }),
         };
       }
+      if (url === 'http://127.0.0.1:17890/api/local/sdn-nodes') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ nodes: [] }),
+        };
+      }
       if (url === 'http://127.0.0.1:5001/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms') {
         expect(init).toEqual({ method: 'POST' });
         return {
@@ -369,6 +376,86 @@ describe('upstream webui peer source', () => {
         },
       },
     ]);
-    expect(fetch).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:5001/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms', { method: 'POST' });
+    expect(fetch).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:17890/api/local/sdn-nodes');
+    expect(fetch).toHaveBeenNthCalledWith(5, 'http://127.0.0.1:5001/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms', { method: 'POST' });
+  });
+
+  it('uses desktop configured SDN nodes before Kubo when hosted registry endpoints are absent', async () => {
+    const fetch = vi.fn(async (url) => {
+      if (url === 'http://127.0.0.1:17890/api/peers/sdn' ||
+        url === 'http://127.0.0.1:17890/api/peers/graph' ||
+        url === 'http://127.0.0.1:17890/api/peers') {
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ message: 'not found' }),
+        };
+      }
+      if (url === 'http://127.0.0.1:17890/api/local/sdn-nodes') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            nodes: [
+              {
+                id: 'space-data-network-01',
+                name: 'space-data-network-01',
+                addrs: [],
+                trust_level: 'trusted',
+                metadata: {
+                  agent_version: 'sdn-configured-node',
+                  protocols: '/space-data-network/configured-node/1.0.0',
+                },
+              },
+              {
+                id: 'space-data-network-02',
+                name: 'space-data-network-02',
+                addrs: [],
+                trust_level: 'trusted',
+                metadata: {
+                  agent_version: 'sdn-configured-node',
+                  protocols: '/space-data-network/configured-node/1.0.0',
+                },
+              },
+            ],
+          }),
+        };
+      }
+      if (url.includes('/api/v0/swarm/peers')) {
+        throw new Error('Kubo fallback should not run when configured SDN nodes are available');
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    const source = createHostedRegistryPeerSource({
+      baseUrl: 'http://127.0.0.1:17890',
+      kuboApiBaseUrl: 'http://127.0.0.1:5001',
+      fetchImpl: fetch,
+    });
+
+    await expect(source.listPeers()).resolves.toEqual([
+      {
+        id: 'space-data-network-01',
+        name: 'space-data-network-01',
+        addrs: [],
+        trust_level: 'trusted',
+        metadata: {
+          agent_version: 'sdn-configured-node',
+          protocols: '/space-data-network/configured-node/1.0.0',
+        },
+      },
+      {
+        id: 'space-data-network-02',
+        name: 'space-data-network-02',
+        addrs: [],
+        trust_level: 'trusted',
+        metadata: {
+          agent_version: 'sdn-configured-node',
+          protocols: '/space-data-network/configured-node/1.0.0',
+        },
+      },
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:17890/api/local/sdn-nodes');
   });
 });
