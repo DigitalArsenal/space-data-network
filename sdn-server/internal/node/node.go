@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -999,7 +1000,7 @@ func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, p
 		return nil
 	}
 
-	providerPublicKey, err := ed25519PublicKeyFromPeerID(from)
+	providerPublicKey, err := n.datasetPublicationPublicKey(ctx, from)
 	if err != nil {
 		return fmt.Errorf("dataset provider public key unavailable for %s: %w", from.ShortString(), err)
 	}
@@ -1057,6 +1058,107 @@ func ed25519PublicKeyFromPeerID(id peer.ID) (ed25519.PublicKey, error) {
 	}
 	if len(raw) != ed25519.PublicKeySize {
 		return nil, fmt.Errorf("peer public key length = %d, want %d", len(raw), ed25519.PublicKeySize)
+	}
+	return ed25519.PublicKey(append([]byte(nil), raw...)), nil
+}
+
+func (n *Node) datasetPublicationPublicKey(ctx context.Context, id peer.ID) (ed25519.PublicKey, error) {
+	if key, err := ed25519PublicKeyFromPeerID(id); err == nil {
+		return key, nil
+	}
+	if key, err := n.datasetPublicationPublicKeyFromDirectory(id); err == nil {
+		return key, nil
+	}
+	if n != nil && n.host != nil {
+		epmBytes, fetchErr := n.fetchDiscoveredNodeEPM(id)
+		if fetchErr == nil && len(epmBytes) > 0 {
+			n.indexFetchedDiscoveredNodeEPM(id, "dataset-publication", epmBytes)
+			if key, err := n.datasetPublicationPublicKeyFromDirectory(id); err == nil {
+				return key, nil
+			}
+		} else if fetchErr != nil && ctx != nil && ctx.Err() == nil {
+			log.Debugf("Could not fetch provider EPM for dataset publication key from %s: %v", id.ShortString(), fetchErr)
+		}
+	}
+	return nil, fmt.Errorf("no Ed25519 signing key found in trusted provider EPM for %s", id.ShortString())
+}
+
+func (n *Node) datasetPublicationPublicKeyFromDirectory(id peer.ID) (ed25519.PublicKey, error) {
+	if n == nil || n.store == nil {
+		return nil, fmt.Errorf("directory store is unavailable")
+	}
+	records, err := n.store.QueryDirectory(storage.DirectoryQuery{
+		Kind:   directory.KindNode,
+		PeerID: id.String(),
+		Limit:  1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(records) == 0 {
+		return nil, fmt.Errorf("no EPM directory record found for %s", id.ShortString())
+	}
+	return ed25519PublicKeyFromDirectoryJSON(records[0].EPMJSON)
+}
+
+func ed25519PublicKeyFromDirectoryJSON(epmJSON string) (ed25519.PublicKey, error) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(epmJSON), &payload); err != nil {
+		return nil, fmt.Errorf("parse EPM directory JSON: %w", err)
+	}
+	if key, err := decodeEd25519PublicKeyHex(firstDirectoryString(payload, "signing_pubkey_hex", "SIGNING_PUBKEY_HEX")); err == nil {
+		return key, nil
+	}
+	keysAny := firstDirectoryAny(payload, "keys", "KEYS")
+	keys, ok := keysAny.([]any)
+	if !ok {
+		return nil, fmt.Errorf("no Ed25519 signing public key in EPM directory record")
+	}
+	for _, entry := range keys {
+		key, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		keyType := strings.ToLower(strings.TrimSpace(firstDirectoryString(key, "key_type", "KEY_TYPE")))
+		addressType := strings.ToLower(strings.TrimSpace(firstDirectoryString(key, "address_type", "ADDRESS_TYPE")))
+		if keyType != "signing" || (addressType != "" && addressType != "ed25519") {
+			continue
+		}
+		if pub, err := decodeEd25519PublicKeyHex(firstDirectoryString(key, "public_key", "PUBLIC_KEY")); err == nil {
+			return pub, nil
+		}
+	}
+	return nil, fmt.Errorf("no Ed25519 signing public key in EPM directory record")
+}
+
+func firstDirectoryAny(values map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value, ok := values[key]; ok {
+			return value
+		}
+	}
+	return nil
+}
+
+func firstDirectoryString(values map[string]any, keys ...string) string {
+	value := firstDirectoryAny(values, keys...)
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text)
+	}
+	return ""
+}
+
+func decodeEd25519PublicKeyHex(value string) (ed25519.PublicKey, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, fmt.Errorf("empty Ed25519 public key")
+	}
+	raw, err := hex.DecodeString(value)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("public key length = %d, want %d", len(raw), ed25519.PublicKeySize)
 	}
 	return ed25519.PublicKey(append([]byte(nil), raw...)), nil
 }

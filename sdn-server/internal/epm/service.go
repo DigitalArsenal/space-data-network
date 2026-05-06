@@ -571,6 +571,8 @@ type Service struct {
 	// runtimeAddresses are non-profile addresses injected at runtime
 	// (for example deterministic onion URLs).
 	runtimeAddresses    []string
+	runtimeSigningKey   ed25519.PrivateKey
+	runtimeSigningPath  string
 	identityAttestation *IdentityAttestation
 
 	mu sync.RWMutex
@@ -837,6 +839,30 @@ func (s *Service) SetRuntimeAddresses(addresses []string) error {
 	s.runtimeAddresses = cleaned
 	if err := s.rebuildEPMLocked(); err != nil {
 		return fmt.Errorf("failed to rebuild EPM with runtime addresses: %w", err)
+	}
+	return nil
+}
+
+// SetRuntimeSigningKey updates a runtime Ed25519 signing key for node profiles
+// that do not have an HD wallet identity. This keeps local-server publication
+// keys discoverable and makes the served EPM verifiable by peers.
+func (s *Service) SetRuntimeSigningKey(privateKey ed25519.PrivateKey, keyAddress string) error {
+	if s == nil {
+		return fmt.Errorf("EPM service is nil")
+	}
+	if len(privateKey) != ed25519.PrivateKeySize {
+		return fmt.Errorf("runtime signing key length = %d, want %d", len(privateKey), ed25519.PrivateKeySize)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.runtimeSigningKey = append(ed25519.PrivateKey(nil), privateKey...)
+	s.runtimeSigningPath = strings.TrimSpace(keyAddress)
+	if s.runtimeSigningPath == "" {
+		s.runtimeSigningPath = "sdn/runtime-signing"
+	}
+	if err := s.rebuildEPMLocked(); err != nil {
+		return fmt.Errorf("failed to rebuild EPM with runtime signing key: %w", err)
 	}
 	return nil
 }
@@ -1345,6 +1371,23 @@ func (s *Service) rebuildEPMLocked() error {
 		encKeyOff := EPM.CryptoKeyEnd(builder)
 		keyOffsets = append(keyOffsets, encKeyOff)
 	}
+	if len(s.runtimeSigningKey) == ed25519.PrivateKeySize {
+		pub := s.runtimeSigningKey.Public().(ed25519.PublicKey)
+		pubOff := builder.CreateString(hex.EncodeToString(pub))
+		addrTypeOff := builder.CreateString("ed25519")
+		path := strings.TrimSpace(s.runtimeSigningPath)
+		if path == "" {
+			path = "sdn/runtime-signing"
+		}
+		pathOff := builder.CreateString(path)
+
+		EPM.CryptoKeyStart(builder)
+		EPM.CryptoKeyAddPUBLIC_KEY(builder, pubOff)
+		EPM.CryptoKeyAddADDRESS_TYPE(builder, addrTypeOff)
+		EPM.CryptoKeyAddKEY_ADDRESS(builder, pathOff)
+		EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
+		keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
+	}
 
 	if len(keyOffsets) > 0 {
 		EPM.EPMStartKEYSVector(builder, len(keyOffsets))
@@ -1422,6 +1465,10 @@ func (s *Service) rebuildEPMLocked() error {
 		if sig, err := s.identity.SigningPrivKey.Sign(canonicalContent); err == nil {
 			signatureOff = builder.CreateString(hex.EncodeToString(sig))
 		}
+	} else if len(s.runtimeSigningKey) == ed25519.PrivateKeySize {
+		canonicalContent := s.buildCanonicalSigningContent(signatureTimestamp)
+		sig := ed25519.Sign(s.runtimeSigningKey, canonicalContent)
+		signatureOff = builder.CreateString(hex.EncodeToString(sig))
 	}
 
 	// Build EPM table
@@ -1588,6 +1635,21 @@ func (s *Service) buildCanonicalSigningContent(signatureTimestamp int64) []byte 
 			"ADDRESS_TYPE": "x25519",
 			"KEY_ADDRESS":  s.identity.EncryptionKeyPath,
 			"KEY_TYPE":     "Encryption",
+		})
+		content["KEYS"] = keys
+	}
+	if len(s.runtimeSigningKey) == ed25519.PrivateKeySize {
+		keys, _ := content["KEYS"].([]map[string]interface{})
+		path := strings.TrimSpace(s.runtimeSigningPath)
+		if path == "" {
+			path = "sdn/runtime-signing"
+		}
+		pub := s.runtimeSigningKey.Public().(ed25519.PublicKey)
+		keys = append(keys, map[string]interface{}{
+			"PUBLIC_KEY":   hex.EncodeToString(pub),
+			"ADDRESS_TYPE": "ed25519",
+			"KEY_ADDRESS":  path,
+			"KEY_TYPE":     "Signing",
 		})
 		content["KEYS"] = keys
 	}

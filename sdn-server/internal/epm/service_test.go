@@ -2,6 +2,7 @@ package epm
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
 	"strings"
@@ -54,6 +55,51 @@ func TestGetNodeEPMJSONIncludesSecp256k1IdentitySigningKey(t *testing.T) {
 	}
 
 	t.Fatal("expected secp256k1 signing key in EPM keys")
+}
+
+func TestNodeEPMUsesRuntimeEd25519SigningKeyWithoutHDIdentity(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	peerID, err := peer.Decode("16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4")
+	if err != nil {
+		t.Fatalf("peer.Decode failed: %v", err)
+	}
+
+	service := NewService(nil, peers.NewRegistry(false, nil), peerID, "", t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	if err := service.SetRuntimeSigningKey(priv, "sdn/dataset-publication/v1"); err != nil {
+		t.Fatalf("SetRuntimeSigningKey failed: %v", err)
+	}
+
+	epmBytes := service.GetNodeEPM()
+	if err := VerifyEPMSignature(epmBytes); err != nil {
+		t.Fatalf("VerifyEPMSignature failed: %v", err)
+	}
+	info := service.GetNodeEPMJSON()
+	keys, ok := info["keys"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("keys field type = %T", info["keys"])
+	}
+
+	for _, key := range keys {
+		if key["key_type"] == "signing" && key["address_type"] == "ed25519" {
+			if got, want := key["public_key"], hex.EncodeToString(pub); got != want {
+				t.Fatalf("public_key = %v, want %q", got, want)
+			}
+			if got, want := key["key_address"], "sdn/dataset-publication/v1"; got != want {
+				t.Fatalf("key_address = %v, want %q", got, want)
+			}
+			return
+		}
+	}
+
+	t.Fatal("expected runtime Ed25519 signing key in EPM keys")
 }
 
 func TestGetNodeEPMJSONProjectsRuntimeIdentityFields(t *testing.T) {
