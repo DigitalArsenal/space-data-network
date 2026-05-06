@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -96,13 +97,15 @@ func TestDatasetPublicationHandlerPublishesLocalRequest(t *testing.T) {
 }
 
 type fakeDatasetUpdatePublisher struct {
-	announcement sdnpubsub.DatasetUpdateAnnouncement
-	called       bool
+	announcement  sdnpubsub.DatasetUpdateAnnouncement
+	announcements []sdnpubsub.DatasetUpdateAnnouncement
+	called        bool
 }
 
 func (f *fakeDatasetUpdatePublisher) PublishDatasetUpdatePNM(ctx context.Context, ann sdnpubsub.DatasetUpdateAnnouncement) error {
 	f.called = true
 	f.announcement = ann
+	f.announcements = append(f.announcements, ann)
 	return nil
 }
 
@@ -241,6 +244,117 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	}
 	if len(publisher.announcement.PNM) == 0 {
 		t.Fatal("publisher received empty PNM")
+	}
+}
+
+func TestConcreteDatasetPublicationServicePublishesFullCatalogAsDPMSeries(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	dir := t.TempDir()
+	store, err := storage.NewFlatSQLStore(filepath.Join(dir, "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	tags := storage.SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-satcat-csv",
+		BatchID:      "source-sha-001",
+		ContentKeyID: "public",
+	}
+	for i := 0; i < 5; i++ {
+		record := sds.NewCATBuilder().
+			WithNoradCatID(uint32(50000 + i)).
+			WithObjectName("FULL-CATALOG-TEST").
+			WithObjectID("2026-001A").
+			WithObjectType("PAYLOAD").
+			WithOpsStatus("OPERATIONAL").
+			Build()
+		if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:celestrak", nil, tags); err != nil {
+			t.Fatalf("store record %d failed: %v", i, err)
+		}
+	}
+
+	pinned := make(map[string][]byte)
+	kubo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reader, err := r.MultipartReader()
+		if err != nil {
+			t.Fatalf("multipart reader: %v", err)
+		}
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Fatalf("next part: %v", err)
+		}
+		body, err := io.ReadAll(part)
+		if err != nil {
+			t.Fatalf("read part: %v", err)
+		}
+		cidValue := cidV1RawSHA256ForTest(t, body)
+		pinned[cidValue] = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Key":"` + cidValue + `"}`))
+	}))
+	defer kubo.Close()
+
+	_, signingKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	publisher := &fakeDatasetUpdatePublisher{}
+	service := NewConcreteDatasetPublicationService(
+		store,
+		publisher,
+		signingKey,
+		"16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4",
+		"bafy-provider-epm",
+		kubo.URL,
+		filepath.Join(dir, "publications"),
+	)
+
+	result, err := service.PublishDatasetUpdate(context.Background(), DatasetPublicationRequest{
+		Schema:      "CAT.fbs",
+		ProviderID:  "space-data-network-02",
+		SourceName:  "celestrak-satcat-csv",
+		BatchID:     "source-sha-001",
+		DatasetID:   "celestrak-cat-full",
+		FullCatalog: true,
+		ChunkSize:   2,
+		Limit:       5,
+	})
+	if err != nil {
+		t.Fatalf("PublishDatasetUpdate failed: %v", err)
+	}
+	if result.RecordCount != 5 {
+		t.Fatalf("RecordCount = %d, want 5", result.RecordCount)
+	}
+	if len(result.Publications) != 3 {
+		t.Fatalf("publications = %d, want 3: %#v", len(result.Publications), result.Publications)
+	}
+	if len(publisher.announcements) != 3 {
+		t.Fatalf("announcements = %d, want 3", len(publisher.announcements))
+	}
+	if len(pinned) != 9 {
+		t.Fatalf("pinned object count = %d, want 9", len(pinned))
+	}
+	total := 0
+	for i, publication := range result.Publications {
+		if publication.ManifestCID == "" || publication.ShardCID == "" || publication.IndexCID == "" || publication.PNMCID == "" {
+			t.Fatalf("publication %d missing CIDs: %#v", i, publication)
+		}
+		if publication.RecordCount <= 0 || publication.RecordCount > 2 {
+			t.Fatalf("publication %d RecordCount = %d, want 1..2", i, publication.RecordCount)
+		}
+		total += publication.RecordCount
+		manifest := dpm.GetRootAsDPM(pinned[publication.ManifestCID], 0)
+		if got, want := string(manifest.FILE_ID()), "celestrak-cat-full:CAT.fbs:source-sha-001:part-"+fmt.Sprintf("%06d", i+1); got != want {
+			t.Fatalf("publication %d FILE_ID = %q, want %q", i, got, want)
+		}
+	}
+	if total != 5 {
+		t.Fatalf("series record total = %d, want 5", total)
 	}
 }
 

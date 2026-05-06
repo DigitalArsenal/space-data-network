@@ -436,6 +436,7 @@ type IndexedRecordQuery struct {
 	SourceName          string
 	BatchID             string
 	Limit               int
+	Offset              int
 	AllowLargeResultSet bool
 }
 
@@ -1235,6 +1236,10 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 
 	query += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) DESC, d.cid ASC LIMIT ?`
 	args = append(args, filter.Limit)
+	if filter.Offset > 0 {
+		query += ` OFFSET ?`
+		args = append(args, filter.Offset)
+	}
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

@@ -29,17 +29,20 @@ type DatasetPublicationRequest struct {
 	BatchID           string `json:"batchId,omitempty"`
 	DatasetID         string `json:"datasetId,omitempty"`
 	Limit             int    `json:"limit,omitempty"`
+	ChunkSize         int    `json:"chunkSize,omitempty"`
+	FullCatalog       bool   `json:"fullCatalog,omitempty"`
 	CombinedCelesTrak bool   `json:"combinedCelesTrak,omitempty"`
 }
 
 // DatasetPublicationResult is the safe summary returned after publication.
 type DatasetPublicationResult struct {
-	Schema      string `json:"schema"`
-	RecordCount int    `json:"recordCount"`
-	ShardCID    string `json:"shardCid"`
-	IndexCID    string `json:"indexCid"`
-	ManifestCID string `json:"manifestCid"`
-	PNMCID      string `json:"pnmCid,omitempty"`
+	Schema       string                     `json:"schema"`
+	RecordCount  int                        `json:"recordCount"`
+	ShardCID     string                     `json:"shardCid"`
+	IndexCID     string                     `json:"indexCid"`
+	ManifestCID  string                     `json:"manifestCid"`
+	PNMCID       string                     `json:"pnmCid,omitempty"`
+	Publications []DatasetPublicationResult `json:"publications,omitempty"`
 }
 
 // DatasetPublicationService publishes dataset updates.
@@ -167,18 +170,94 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	if err := sds.ValidateSchemaName(schema); err != nil {
 		return nil, fmt.Errorf("invalid schema: %w", err)
 	}
+	if req.FullCatalog || req.ChunkSize > 0 {
+		return s.publishDatasetUpdateSeries(ctx, req, schema)
+	}
 	limit := req.Limit
 	if limit <= 0 {
 		limit = defaultDatasetPublicationLimit
 	}
 
-	export, err := s.store.ExportDatasetWindow(filepath.Join(s.outputDir, safeDatasetPathComponent(schema)), storage.IndexedRecordQuery{
+	result, err := s.publishDatasetUpdatePart(ctx, req, schema, storage.IndexedRecordQuery{
 		SchemaName:          schema,
 		ProviderID:          strings.TrimSpace(req.ProviderID),
 		SourceName:          strings.TrimSpace(req.SourceName),
 		BatchID:             strings.TrimSpace(req.BatchID),
 		Limit:               limit,
 		AllowLargeResultSet: true,
+	}, datasetUpdateID(req, s.now(), 0))
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx context.Context, req DatasetPublicationRequest, schema string) (*DatasetPublicationResult, error) {
+	chunkSize := req.ChunkSize
+	if chunkSize <= 0 {
+		chunkSize = defaultDatasetPublicationLimit
+	}
+	if chunkSize > 1000 {
+		chunkSize = 1000
+	}
+	totalLimit := req.Limit
+	if totalLimit <= 0 {
+		totalLimit = 250000
+	}
+	datasetID := strings.TrimSpace(req.DatasetID)
+	if datasetID == "" {
+		datasetID = "sdn-" + safeDatasetPathComponent(strings.TrimSuffix(schema, ".fbs")) + "-full"
+	}
+	series := &DatasetPublicationResult{Schema: schema}
+	for offset, part := 0, 1; offset < totalLimit; offset, part = offset+chunkSize, part+1 {
+		limit := chunkSize
+		if remaining := totalLimit - offset; remaining < limit {
+			limit = remaining
+		}
+		partReq := req
+		partReq.DatasetID = datasetID
+		filter := storage.IndexedRecordQuery{
+			SchemaName:          schema,
+			ProviderID:          strings.TrimSpace(req.ProviderID),
+			SourceName:          strings.TrimSpace(req.SourceName),
+			BatchID:             strings.TrimSpace(req.BatchID),
+			Limit:               limit,
+			Offset:              offset,
+			AllowLargeResultSet: true,
+		}
+		publication, err := s.publishDatasetUpdatePart(ctx, partReq, schema, filter, datasetUpdateID(req, s.now(), part))
+		if err != nil {
+			if offset > 0 && strings.Contains(err.Error(), "no records match export query") {
+				break
+			}
+			return nil, err
+		}
+		series.Publications = append(series.Publications, *publication)
+		series.RecordCount += publication.RecordCount
+		if publication.RecordCount < limit {
+			break
+		}
+	}
+	if len(series.Publications) == 0 {
+		return nil, fmt.Errorf("export dataset window: no records match export query")
+	}
+	first := series.Publications[0]
+	series.ShardCID = first.ShardCID
+	series.IndexCID = first.IndexCID
+	series.ManifestCID = first.ManifestCID
+	series.PNMCID = first.PNMCID
+	return series, nil
+}
+
+func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context.Context, req DatasetPublicationRequest, schema string, filter storage.IndexedRecordQuery, updateID string) (*DatasetPublicationResult, error) {
+	export, err := s.store.ExportDatasetWindow(filepath.Join(s.outputDir, safeDatasetPathComponent(schema)), storage.IndexedRecordQuery{
+		SchemaName:          filter.SchemaName,
+		ProviderID:          filter.ProviderID,
+		SourceName:          filter.SourceName,
+		BatchID:             filter.BatchID,
+		Limit:               filter.Limit,
+		Offset:              filter.Offset,
+		AllowLargeResultSet: filter.AllowLargeResultSet,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("export dataset window: %w", err)
@@ -198,7 +277,7 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	manifest, err := storage.BuildSignedDatasetPublicationManifest(s.outputDir, storage.DatasetPublicationManifestOptions{
 		Export:         export,
 		DatasetID:      datasetID,
-		UpdateID:       publishedAt.UTC().Format("20060102T150405.000000000Z"),
+		UpdateID:       updateID,
 		ProviderPeerID: s.providerPeerID,
 		ProviderEPMCID: s.providerEPMCID,
 		PublishedAt:    publishedAt,
@@ -243,6 +322,17 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 		ManifestCID: manifest.CID,
 		PNMCID:      pnmCID,
 	}, nil
+}
+
+func datasetUpdateID(req DatasetPublicationRequest, publishedAt time.Time, part int) string {
+	base := strings.TrimSpace(req.BatchID)
+	if base == "" {
+		base = publishedAt.UTC().Format("20060102T150405.000000000Z")
+	}
+	if part > 0 {
+		return fmt.Sprintf("%s:part-%06d", base, part)
+	}
+	return base
 }
 
 func datasetPublicationSchemaHash(schema string) string {

@@ -866,6 +866,7 @@ func indexedRecordQueryFromCanonicalJSON(data []byte) (IndexedRecordQuery, error
 		SourceName         string  `json:"sourceName,omitempty"`
 		BatchID            string  `json:"batchId,omitempty"`
 		Limit              int     `json:"limit,omitempty"`
+		Offset             int     `json:"offset,omitempty"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return IndexedRecordQuery{}, err
@@ -883,6 +884,7 @@ func indexedRecordQueryFromCanonicalJSON(data []byte) (IndexedRecordQuery, error
 		SourceName:         payload.SourceName,
 		BatchID:            payload.BatchID,
 		Limit:              payload.Limit,
+		Offset:             payload.Offset,
 	}
 	if payload.From != "" {
 		from, err := time.Parse(time.RFC3339Nano, payload.From)

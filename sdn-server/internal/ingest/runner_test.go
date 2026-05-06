@@ -413,6 +413,12 @@ func TestSyncCelestrakSpaceWeatherRequestsDatasetPublication(t *testing.T) {
 		if got, want := payload["combinedCelesTrak"], true; got != want {
 			t.Fatalf("combinedCelesTrak = %v, want %v", got, want)
 		}
+		if got, want := payload["fullCatalog"], true; got != want {
+			t.Fatalf("fullCatalog = %v, want %v", got, want)
+		}
+		if got, want := payload["chunkSize"], float64(1000); got != want {
+			t.Fatalf("chunkSize = %v, want %v", got, want)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for dataset publication request")
 	}
