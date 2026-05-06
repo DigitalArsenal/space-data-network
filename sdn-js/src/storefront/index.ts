@@ -88,11 +88,16 @@ export type {
 export {
   StorefrontClient,
   createStorefrontClient,
+  createStorefrontLibp2pPubSubAdapter,
 } from './client';
 
 export type {
+  DeliveryTopicMessage,
+  DeliveryTopicSubscription,
   StorefrontClientConfig,
   StorefrontEvents,
+  StorefrontLibp2pPubSub,
+  StorefrontPubSub,
 } from './client';
 
 // UI Components and utilities

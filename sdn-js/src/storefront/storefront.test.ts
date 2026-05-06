@@ -181,6 +181,7 @@ describe('Storefront Client Configuration', () => {
     const storefront = await import('@spacedatanetwork/sdn-js/storefront');
 
     expect(typeof storefront.createStorefrontClient).toBe('function');
+    expect(typeof storefront.createStorefrontLibp2pPubSubAdapter).toBe('function');
     expect(typeof storefront.StorefrontClient).toBe('function');
     expect(storefront.AccessType.Subscription).toBe(1);
     expect(storefront.PaymentMethod.SDNCredits).toBe(3);
@@ -466,6 +467,37 @@ describe('Storefront Client Configuration', () => {
 
     await subscription.unsubscribe();
     expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  it('adapts libp2p GossipSub delivery topics for paid subscriber streams', async () => {
+    const { createStorefrontLibp2pPubSubAdapter } = await import('./client');
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const subscribe = vi.fn();
+    const unsubscribe = vi.fn();
+    const pubsub = {
+      subscribe,
+      unsubscribe,
+      addEventListener,
+      removeEventListener,
+    };
+    const adapter = createStorefrontLibp2pPubSubAdapter(pubsub);
+    const received: Uint8Array[] = [];
+
+    const subscription = await adapter.subscribe('/sdn/data/listing-1/buyer-1', (message) => {
+      received.push(message instanceof Uint8Array ? message : new Uint8Array());
+    });
+
+    expect(subscribe).toHaveBeenCalledWith('/sdn/data/listing-1/buyer-1');
+    expect(addEventListener).toHaveBeenCalledWith('message', expect.any(Function), expect.any(Object));
+    const listener = addEventListener.mock.calls[0][1] as (event: unknown) => void;
+    listener({ detail: { topic: '/sdn/data/other/buyer-1', data: new Uint8Array([9]) } });
+    listener({ detail: { topic: '/sdn/data/listing-1/buyer-1', data: new Uint8Array([1, 2, 3]) } });
+
+    expect(received).toEqual([new Uint8Array([1, 2, 3])]);
+    await subscription?.unsubscribe?.();
+    expect(removeEventListener).toHaveBeenCalledWith('message', listener);
+    expect(unsubscribe).toHaveBeenCalledWith('/sdn/data/listing-1/buyer-1');
   });
 
   it('loads purchase payment audit events', async () => {
