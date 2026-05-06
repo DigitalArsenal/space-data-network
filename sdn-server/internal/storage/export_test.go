@@ -467,7 +467,7 @@ func TestVerifyDatasetPublicationReplayVerifiesPNMManifestAssetsAndQuery(t *test
 		Export:          export,
 		DatasetID:       "cat-active",
 		UpdateID:        "source-sha-001",
-		ProviderPeerID:  "space-data-network-02",
+		ProviderPeerID:  "16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4",
 		ProviderEPMCID:  "bafy-provider-epm",
 		PublishedAt:     publishedAt,
 		SigningKey:      signingKey,
