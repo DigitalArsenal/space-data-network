@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -51,6 +52,42 @@ func TestHandlePubSubMessageStoresPNMAnnouncementsFromDatasetSchemaTopic(t *test
 	}
 	if len(ommRecords) != 0 {
 		t.Fatalf("PNM announcement should not be stored as OMM data, got %d OMM records", len(ommRecords))
+	}
+}
+
+func TestHandlePubSubMessageCallsPNMHandlerForDatasetSchemaTopic(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(t.TempDir(), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	pnmBytes := buildProtocolTestPNM(t, "bafymanifest", "dataset:OMM.fbs:batch")
+	handler := NewSDSExchangeHandler(store, validator)
+	called := false
+	fromPeer := peer.ID("12D3KooWDatasetPublisher")
+	handler.SetPubSubPNMHandler(func(ctx context.Context, schema string, data []byte, from peer.ID) error {
+		called = true
+		if schema != "OMM.fbs" {
+			t.Fatalf("handler schema = %q, want OMM.fbs", schema)
+		}
+		if !reflect.DeepEqual(data, pnmBytes) {
+			t.Fatal("handler data does not match PNM bytes")
+		}
+		if from != fromPeer {
+			t.Fatalf("handler peer = %s", from)
+		}
+		return nil
+	})
+	if err := handler.HandlePubSubMessage("OMM.fbs", pnmBytes, fromPeer); err != nil {
+		t.Fatalf("HandlePubSubMessage failed: %v", err)
+	}
+	if !called {
+		t.Fatal("PNM handler was not called")
 	}
 }
 

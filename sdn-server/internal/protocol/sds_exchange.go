@@ -81,6 +81,9 @@ type SyncLogHandler interface {
 	HandleSyncLog(s network.Stream)
 }
 
+// PubSubPNMHandler receives validated PNM announcements after local storage.
+type PubSubPNMHandler func(ctx context.Context, schema string, data []byte, from peer.ID) error
+
 // SDSExchangeHandler handles the SDS exchange protocol.
 type SDSExchangeHandler struct {
 	store       *storage.FlatSQLStore
@@ -88,6 +91,7 @@ type SDSExchangeHandler struct {
 	limits      MessageLimits
 	rateLimiter *PeerRateLimiter
 	syncHandler SyncLogHandler
+	pnmHandler  PubSubPNMHandler
 }
 
 // ErrRateLimited is returned when a peer exceeds the rate limit.
@@ -416,6 +420,11 @@ func (h *SDSExchangeHandler) SetSyncHandler(handler SyncLogHandler) {
 	h.syncHandler = handler
 }
 
+// SetPubSubPNMHandler registers an optional handler for validated PNM messages.
+func (h *SDSExchangeHandler) SetPubSubPNMHandler(handler PubSubPNMHandler) {
+	h.pnmHandler = handler
+}
+
 // HandlePubSubMessage processes a message received via PubSub.
 func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, from peer.ID) error {
 	// Check rate limit before processing
@@ -456,6 +465,11 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 		}
 		if _, err := h.store.Store("PNM.fbs", data, from.String(), nil); err != nil {
 			return fmt.Errorf("failed to store PNM: %w", err)
+		}
+		if h.pnmHandler != nil {
+			if err := h.pnmHandler(ctx, schema, data, from); err != nil {
+				return fmt.Errorf("failed to handle PNM announcement: %w", err)
+			}
 		}
 		log.Debugf("PubSub PNM announcement accepted from %s on %s", from.ShortString(), schema)
 		return nil

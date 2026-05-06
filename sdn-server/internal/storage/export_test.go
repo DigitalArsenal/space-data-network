@@ -541,6 +541,126 @@ func TestVerifyDatasetPublicationReplayVerifiesPNMManifestAssetsAndQuery(t *test
 	}
 }
 
+func TestMaterializeDatasetPublicationImportsAdvertisedShard(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-dpm-materialize-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	providerStore, err := NewFlatSQLStore(filepath.Join(tmpDir, "provider-db"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore provider failed: %v", err)
+	}
+	defer providerStore.Close()
+	subscriberStore, err := NewFlatSQLStore(filepath.Join(tmpDir, "subscriber-db"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore subscriber failed: %v", err)
+	}
+	defer subscriberStore.Close()
+
+	providerPublicKey, signingKey, err := ed25519.GenerateKey(bytes.NewReader(bytes.Repeat([]byte{0x33}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	tags := SourceTags{
+		ProviderID:   "celestrak.eth",
+		SourceName:   "celestrak-satcat-csv",
+		SourceURL:    "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV",
+		BatchID:      "source-sha-002",
+		ContentKeyID: "public",
+	}
+	recordA := sds.NewCATBuilder().WithNoradCatID(25544).WithObjectName("ISS").WithObjectType("PAYLOAD").WithOpsStatus("OPERATIONAL").Build()
+	recordB := sds.NewCATBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").WithObjectType("PAYLOAD").WithOpsStatus("OPERATIONAL").Build()
+	if _, err := providerStore.StoreWithSourceTags("CAT.fbs", recordA, "celestrak.eth", nil, tags); err != nil {
+		t.Fatalf("store record A failed: %v", err)
+	}
+	if _, err := providerStore.StoreWithSourceTags("CAT.fbs", recordB, "celestrak.eth", nil, tags); err != nil {
+		t.Fatalf("store record B failed: %v", err)
+	}
+	export, err := providerStore.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
+		SchemaName:          "CAT.fbs",
+		ProviderID:          "celestrak.eth",
+		SourceName:          "celestrak-satcat-csv",
+		BatchID:             "source-sha-002",
+		CAReadyResidentSet:  true,
+		Limit:               10,
+		AllowLargeResultSet: true,
+	})
+	if err != nil {
+		t.Fatalf("ExportDatasetWindow failed: %v", err)
+	}
+	publishedAt := time.Unix(1700001234, 0).UTC()
+	manifest, err := BuildSignedDatasetPublicationManifest(filepath.Join(tmpDir, "publish"), DatasetPublicationManifestOptions{
+		Export:         export,
+		DatasetID:      "cat-active",
+		UpdateID:       "source-sha-002",
+		ProviderPeerID: "celestrak.eth",
+		ProviderEPMCID: "bafy-provider-epm",
+		PublishedAt:    publishedAt,
+		SigningKey:     signingKey,
+		SchemaHash:     "cat-schema-hash",
+	})
+	if err != nil {
+		t.Fatalf("BuildSignedDatasetPublicationManifest failed: %v", err)
+	}
+	pnmBytes, err := BuildDatasetPublicationPNM(manifest, DatasetPublicationPNMOptions{
+		PublishedAt: publishedAt,
+		SigningKey:  signingKey,
+	})
+	if err != nil {
+		t.Fatalf("BuildDatasetPublicationPNM failed: %v", err)
+	}
+	shardBytes, err := os.ReadFile(export.ShardPath)
+	if err != nil {
+		t.Fatalf("read shard: %v", err)
+	}
+	indexBytes, err := os.ReadFile(export.IndexPath)
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	objects := map[string][]byte{
+		manifest.CID:    manifest.Bytes,
+		export.ShardCID: shardBytes,
+		export.IndexCID: indexBytes,
+	}
+	result, err := MaterializeDatasetPublication(context.Background(), subscriberStore, DatasetPublicationReplayOptions{
+		PNM:               pnmBytes,
+		ProviderPublicKey: providerPublicKey,
+		FetchByCID: func(_ context.Context, cid string) ([]byte, error) {
+			data, ok := objects[cid]
+			if !ok {
+				return nil, os.ErrNotExist
+			}
+			return append([]byte(nil), data...), nil
+		},
+		WorkDir: filepath.Join(tmpDir, "materialize"),
+	})
+	if err != nil {
+		t.Fatalf("MaterializeDatasetPublication failed: %v", err)
+	}
+	if result.Imported != 2 || result.RecordCount != 2 {
+		t.Fatalf("materialize result = %+v, want 2 imported records", result)
+	}
+	records, err := subscriberStore.QueryIndexedRecords(IndexedRecordQuery{
+		SchemaName: "CAT.fbs",
+		ProviderID: "celestrak.eth",
+		SourceName: "celestrak-satcat-csv",
+		BatchID:    "source-sha-002",
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("query imported records failed: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("imported records = %d, want 2", len(records))
+	}
+}
+
 func TestBuildSignedDatasetPublicationManifestBindsExportAndQuery(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-dpm-test-*")
 	if err != nil {

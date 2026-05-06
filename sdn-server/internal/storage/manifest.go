@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -67,6 +68,7 @@ type DatasetPublicationReplayResult struct {
 	IndexCID     string
 	SchemaName   string
 	RecordCount  int
+	Imported     int
 	QuerySHA256  string
 	ResultSHA256 string
 }
@@ -241,6 +243,165 @@ func VerifyDatasetPublicationReplay(ctx context.Context, store *FlatSQLStore, op
 		QuerySHA256:  replayed.QuerySHA256,
 		ResultSHA256: replayed.ResultSHA256,
 	}, nil
+}
+
+// MaterializeDatasetPublication verifies a signed PNM/DPM publication, resolves
+// the advertised shard/index bytes, and imports the shard into the local store.
+func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions) (*DatasetPublicationReplayResult, error) {
+	if store == nil {
+		return nil, fmt.Errorf("store is required")
+	}
+	if opts.FetchByCID == nil {
+		return nil, fmt.Errorf("CID fetcher is required")
+	}
+	manifestCID, fileID, err := verifyDatasetPublicationPNM(opts.PNM, opts.ProviderPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	_ = fileID
+	manifestBytes, err := opts.FetchByCID(ctx, manifestCID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch manifest CID %s: %w", manifestCID, err)
+	}
+	if err := verifyBytesCIDAndHash("manifest", manifestBytes, manifestCID, ""); err != nil {
+		return nil, err
+	}
+	manifest, _, err := parseAndVerifyDatasetManifest(manifestBytes, opts.ProviderPublicKey)
+	if err != nil {
+		return nil, err
+	}
+	if dpmFileID := strings.TrimSpace(string(manifest.FILE_ID())); dpmFileID != fileID {
+		return nil, fmt.Errorf("PNM FILE_ID %q does not match DPM FILE_ID %q", fileID, dpmFileID)
+	}
+	assetMap, err := manifestAssetMap(manifest)
+	if err != nil {
+		return nil, err
+	}
+	shardAsset, ok := assetMap["DATA_SHARD"]
+	if !ok {
+		return nil, fmt.Errorf("DPM missing DATA_SHARD asset")
+	}
+	indexAsset, ok := assetMap["QUERY_INDEX"]
+	if !ok {
+		return nil, fmt.Errorf("DPM missing QUERY_INDEX asset")
+	}
+	shardBytes, err := opts.FetchByCID(ctx, shardAsset.CID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, err)
+	}
+	if err := verifyBytesCIDAndHash("shard", shardBytes, shardAsset.CID, shardAsset.SHA256); err != nil {
+		return nil, err
+	}
+	indexBytes, err := opts.FetchByCID(ctx, indexAsset.CID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, err)
+	}
+	if err := verifyBytesCIDAndHash("index", indexBytes, indexAsset.CID, indexAsset.SHA256); err != nil {
+		return nil, err
+	}
+	imported, index, err := store.ImportDatasetShard(shardBytes, indexBytes, string(manifest.PROVIDER_PEER_ID()))
+	if err != nil {
+		return nil, err
+	}
+	return &DatasetPublicationReplayResult{
+		ManifestCID:  manifestCID,
+		ShardCID:     shardAsset.CID,
+		IndexCID:     indexAsset.CID,
+		SchemaName:   index.SchemaName,
+		RecordCount:  index.RecordCount,
+		Imported:     imported,
+		QuerySHA256:  index.QuerySHA256,
+		ResultSHA256: index.ResultSHA256,
+	}, nil
+}
+
+func verifyDatasetPublicationPNM(pnmBytes []byte, providerPublicKey ed25519.PublicKey) (string, string, error) {
+	if len(pnmBytes) == 0 {
+		return "", "", fmt.Errorf("PNM bytes are required")
+	}
+	if len(providerPublicKey) != ed25519.PublicKeySize {
+		return "", "", fmt.Errorf("ed25519 provider public key is required")
+	}
+	if !PNM.SizePrefixedPNMBufferHasIdentifier(pnmBytes) {
+		return "", "", fmt.Errorf("PNM buffer missing identifier")
+	}
+	pnm := PNM.GetSizePrefixedRootAsPNM(pnmBytes, 0)
+	manifestCID := strings.TrimSpace(string(pnm.CID()))
+	fileID := strings.TrimSpace(string(pnm.FILE_ID()))
+	if manifestCID == "" {
+		return "", "", fmt.Errorf("PNM missing manifest CID")
+	}
+	if fileID == "" {
+		return "", "", fmt.Errorf("PNM missing FILE_ID")
+	}
+	if sigType := strings.TrimSpace(string(pnm.SIGNATURE_TYPE())); sigType != "Ed25519" {
+		return "", "", fmt.Errorf("PNM SIGNATURE_TYPE = %q, want Ed25519", sigType)
+	}
+	pnmSignature, err := hex.DecodeString(strings.TrimSpace(string(pnm.SIGNATURE())))
+	if err != nil {
+		return "", "", fmt.Errorf("decode PNM signature: %w", err)
+	}
+	if !ed25519.Verify(providerPublicKey, datasetPublicationPNMSignaturePayload(manifestCID, fileID), pnmSignature) {
+		return "", "", fmt.Errorf("invalid PNM signature")
+	}
+	return manifestCID, fileID, nil
+}
+
+// ImportDatasetShard imports a length-prefixed dataset shard using its
+// materialized export index. It is idempotent because records are content
+// addressed in the underlying FlatSQL tables.
+func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, providerPeerID string) (int, *DatasetExportIndex, error) {
+	if s == nil {
+		return 0, nil, fmt.Errorf("store is required")
+	}
+	var index DatasetExportIndex
+	if err := json.Unmarshal(indexBytes, &index); err != nil {
+		return 0, nil, fmt.Errorf("parse dataset export index: %w", err)
+	}
+	if index.Version != 1 {
+		return 0, nil, fmt.Errorf("dataset export index version = %d, want 1", index.Version)
+	}
+	if strings.TrimSpace(index.SchemaName) == "" {
+		return 0, nil, fmt.Errorf("dataset export index missing schema name")
+	}
+	if err := verifyBytesCIDAndHash("shard", shardBytes, index.ShardCID, index.ShardSHA256); err != nil {
+		return 0, nil, err
+	}
+	if index.ResultSHA256 != "" && sha256Hex(shardBytes) != index.ResultSHA256 {
+		return 0, nil, fmt.Errorf("shard result SHA-256 does not match index")
+	}
+	if index.RecordCount != len(index.Records) {
+		return 0, nil, fmt.Errorf("dataset export index record count = %d, want %d records", index.RecordCount, len(index.Records))
+	}
+
+	imported := 0
+	for _, record := range index.Records {
+		if record.Offset < 0 || record.Length < 0 || record.Offset+4+record.Length > int64(len(shardBytes)) {
+			return imported, nil, fmt.Errorf("record %s offset/length outside shard", record.CID)
+		}
+		frame := shardBytes[record.Offset:]
+		length := int64(binary.BigEndian.Uint32(frame[:4]))
+		if length != record.Length {
+			return imported, nil, fmt.Errorf("record %s frame length = %d, want %d", record.CID, length, record.Length)
+		}
+		data := frame[4 : 4+length]
+		if computeCID(data) != record.CID {
+			return imported, nil, fmt.Errorf("record CID mismatch for indexed record %s", record.CID)
+		}
+		tags := record.SourceTags
+		if strings.TrimSpace(tags.ProviderID) == "" {
+			tags.ProviderID = strings.TrimSpace(providerPeerID)
+		}
+		if strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
+			if _, err := s.StoreWithSourceTags(index.SchemaName, data, strings.TrimSpace(providerPeerID), nil, tags); err != nil {
+				return imported, nil, err
+			}
+		} else if _, err := s.Store(index.SchemaName, data, strings.TrimSpace(providerPeerID), nil); err != nil {
+			return imported, nil, err
+		}
+		imported++
+	}
+	return imported, &index, nil
 }
 
 // BuildSignedDatasetPublicationManifest writes a signed SDS DPM manifest that
