@@ -56,7 +56,7 @@ func TestOMMBulkJSONIncludesDataForFullCatalogConsumers(t *testing.T) {
 	mux := http.NewServeMux()
 	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/omm/bulk?day="+day+"&format=json&include_data=true", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/omm/bulk?format=json&include_data=true", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -80,6 +80,12 @@ func TestOMMBulkJSONIncludesDataForFullCatalogConsumers(t *testing.T) {
 	for _, row := range body.Results {
 		if row["data_base64"] == "" {
 			t.Fatalf("row missing data_base64: %#v", row)
+		}
+		if row["materialized_at"] == "" {
+			t.Fatalf("row missing materialized_at: %#v", row)
+		}
+		if row["source_name"] != "celestrak-gp" {
+			t.Fatalf("row source_name = %#v, want celestrak-gp", row["source_name"])
 		}
 	}
 }
