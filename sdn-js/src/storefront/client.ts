@@ -52,6 +52,17 @@ export interface StorefrontPubSub {
   ): void | DeliveryTopicSubscription | Promise<void | DeliveryTopicSubscription>;
 }
 
+export interface StorefrontLibp2pPubSub {
+  subscribe(topic: string): void | Promise<void>;
+  unsubscribe?(topic: string): void | Promise<void>;
+  addEventListener(
+    type: 'message',
+    listener: (event: unknown) => void,
+    options?: { signal?: AbortSignal },
+  ): void;
+  removeEventListener?(type: 'message', listener: (event: unknown) => void): void;
+}
+
 export interface DeliverySubscription {
   grantId: string;
   topic: string;
@@ -715,6 +726,34 @@ export function createStorefrontClient(config: StorefrontClientConfig): Storefro
   return new StorefrontClient(config);
 }
 
+export function createStorefrontLibp2pPubSubAdapter(pubsub: StorefrontLibp2pPubSub): StorefrontPubSub {
+  return {
+    async subscribe(topic: string, handler: (message: DeliveryTopicMessage) => void | Promise<void>) {
+      await pubsub.subscribe(topic);
+      const controller = new AbortController();
+      const listener = (event: unknown) => {
+        const detail = eventDetail(event);
+        if (!detail || detail.topic !== topic) {
+          return;
+        }
+        const data = deliveryDataFromEventDetail(detail);
+        if (!data) {
+          return;
+        }
+        void Promise.resolve(handler(data));
+      };
+      pubsub.addEventListener('message', listener, { signal: controller.signal });
+      return {
+        unsubscribe: async () => {
+          controller.abort();
+          pubsub.removeEventListener?.('message', listener);
+          await pubsub.unsubscribe?.(topic);
+        },
+      };
+    },
+  };
+}
+
 function normalizeStorefrontAPIBaseUrl(apiBaseUrl: string | undefined): string | undefined {
   if (!apiBaseUrl) {
     return undefined;
@@ -742,6 +781,31 @@ function normalizeDeliveryTopicMessage(message: DeliveryTopicMessage): Uint8Arra
     return new Uint8Array(payload);
   }
   throw new TypeError('Delivery topic message must contain Uint8Array data.');
+}
+
+function eventDetail(event: unknown): { topic?: unknown; data?: unknown; payload?: unknown } | undefined {
+  if (!isRecord(event)) {
+    return undefined;
+  }
+  const detail = event.detail;
+  return isRecord(detail) ? detail : undefined;
+}
+
+function deliveryDataFromEventDetail(detail: { data?: unknown; payload?: unknown }): DeliveryTopicMessage | undefined {
+  if (isDeliveryTopicMessage(detail.data)) {
+    return detail.data;
+  }
+  if (isDeliveryTopicMessage(detail.payload)) {
+    return detail.payload;
+  }
+  return undefined;
+}
+
+function isDeliveryTopicMessage(value: unknown): value is DeliveryTopicMessage {
+  if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
+    return true;
+  }
+  return isRecord(value) && (isDeliveryTopicMessage(value.data) || isDeliveryTopicMessage(value.payload));
 }
 
 function normalizePaymentAuditEvent(value: unknown): PaymentAuditEvent {
