@@ -70,6 +70,10 @@ const (
 
 	// mDNS service name
 	MDNSServiceName = "space-data-network-mdns"
+
+	datasetPublicationCatchupInitialDelay = 15 * time.Second
+	datasetPublicationCatchupInterval     = 5 * time.Minute
+	datasetPublicationCatchupLimit        = 1000
 )
 
 // Node represents a Space Data Network node.
@@ -939,6 +943,13 @@ func (n *Node) Start(ctx context.Context) error {
 	n.wg.Add(1)
 	go n.runDHTDiscovery()
 
+	// Replay recently stored dataset PNMs so subscribers recover when they
+	// receive the general PNM announcement but miss a schema-topic burst.
+	if n.store != nil {
+		n.wg.Add(1)
+		go n.runDatasetPublicationPNMCatchup()
+	}
+
 	// Start EPM auto-publish via PubSub (every 30 minutes)
 	if n.epmService != nil && n.epmService.GetNodeEPM() != nil {
 		n.wg.Add(1)
@@ -949,6 +960,78 @@ func (n *Node) Start(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (n *Node) runDatasetPublicationPNMCatchup() {
+	defer n.wg.Done()
+
+	timer := time.NewTimer(datasetPublicationCatchupInitialDelay)
+	defer timer.Stop()
+	for {
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-timer.C:
+			if materialized, err := n.materializeStoredDatasetPublicationPNMs(n.ctx, datasetPublicationCatchupLimit); err != nil {
+				log.Warnf("Dataset publication PNM catch-up completed with errors after materializing %d update(s): %v", materialized, err)
+			} else if materialized > 0 {
+				log.Infof("Dataset publication PNM catch-up materialized %d update(s)", materialized)
+			}
+			timer.Reset(datasetPublicationCatchupInterval)
+		}
+	}
+}
+
+func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limit int) (int, error) {
+	if n == nil || n.store == nil || n.peerRegistry == nil {
+		return 0, nil
+	}
+	if limit <= 0 {
+		limit = datasetPublicationCatchupLimit
+	}
+	records, err := n.store.QueryRecentRecords("PNM.fbs", limit)
+	if err != nil {
+		return 0, fmt.Errorf("query stored PNM records: %w", err)
+	}
+	materialized := 0
+	var firstErr error
+	for _, record := range records {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				break
+			}
+		}
+		if record == nil || len(record.Data) == 0 || !PNM.SizePrefixedPNMBufferHasIdentifier(record.Data) {
+			continue
+		}
+		pnm := PNM.GetSizePrefixedRootAsPNM(record.Data, 0)
+		schema := datasetPublicationFileIDSchema(string(pnm.FILE_ID()))
+		if schema == "" {
+			continue
+		}
+		from, err := peer.Decode(strings.TrimSpace(record.PeerID))
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("decode stored PNM peer id %q: %w", record.PeerID, err)
+			}
+			continue
+		}
+		if !n.peerRegistry.IsTrusted(from) {
+			continue
+		}
+		if err := n.handleDatasetPublicationPNM(ctx, schema, record.Data, from); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			log.Warnf("Stored dataset PNM catch-up failed from %s on %s: %v", from.ShortString(), schema, err)
+			continue
+		}
+		materialized++
+	}
+	return materialized, firstErr
 }
 
 func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
