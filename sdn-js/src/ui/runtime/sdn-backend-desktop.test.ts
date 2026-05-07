@@ -14,9 +14,9 @@ describe('desktop-local SDN backend', () => {
       if (url === 'http://127.0.0.1:17890/api/peers/sdn') {
         return jsonResponse([
           {
-            id: '16Uiu2HAmReal',
-            name: '16Uiu2HAmReal',
-            addrs: ['/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAmReal'],
+            id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+            name: 'CelesTrak Provider',
+            addrs: ['/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4'],
             trust_level: 'observed',
             metadata: {
               agent_version: 'spacedatanetwork/1.0.3',
@@ -41,8 +41,54 @@ describe('desktop-local SDN backend', () => {
     });
     await expect(backend.listObservedPeers()).resolves.toMatchObject({
       ok: true,
-      data: [{ id: '16Uiu2HAmReal', trustLevel: 'observed' }],
+      data: [{ id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4', trustLevel: 'observed' }],
     });
+  });
+
+  it('does not promote configured aliases or DNS seed labels into peer IDs', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === 'http://127.0.0.1:17890/api/peers/sdn') {
+        return jsonResponse([
+          { id: 'space-data-network-01', name: 'space-data-network-01', addrs: [], trust_level: 'trusted' },
+          { id: 'sdn.spaceaware.io', name: 'sdn.spaceaware.io', addrs: [], trust_level: 'trusted' },
+          { id: 'celestrak.eth', name: 'celestrak.eth', addrs: [], trust_level: 'trusted' },
+          {
+            peer_id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+            name: 'Public SDN Node',
+            addrs: ['/ip4/104.131.11.220/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45'],
+            metadata: {
+              agent_version: 'spacedatanetwork/1.0.3',
+            },
+          },
+        ]);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+
+    const backend = createDesktopLocalBackend({
+      desktopProxyUrl: 'http://127.0.0.1:17890',
+      fetch: fetchMock,
+    });
+
+    await expect(backend.listObservedPeers()).resolves.toMatchObject({
+      ok: true,
+      data: [{ id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45' }],
+    });
+  });
+
+  it('advertises the required desktop-local SDN route capabilities', async () => {
+    const backend = createDesktopLocalBackend({
+      desktopProxyUrl: 'http://127.0.0.1:17890',
+      fetch: vi.fn(),
+    });
+
+    await expect(backend.getCapabilities()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'route:/api/peers/sdn', state: 'available' }),
+      expect.objectContaining({ id: 'route:/api/peers', state: 'available' }),
+      expect.objectContaining({ id: 'route:/api/peers/graph', state: 'available' }),
+      expect.objectContaining({ id: 'route:/api/node/epm/json', state: 'available' }),
+      expect.objectContaining({ id: 'route:/api/node/epm', state: 'available' }),
+    ]));
   });
 
   it('uses the configured gateway for CID resolution', async () => {

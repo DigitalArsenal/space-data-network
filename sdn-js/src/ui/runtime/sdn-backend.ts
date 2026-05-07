@@ -71,18 +71,44 @@ export interface LocalObjectSummary {
   cid?: string;
 }
 
+export interface SdnHealth {
+  healthy: boolean;
+  details: Record<string, unknown>;
+}
+
 export interface SdnBackend {
   readonly mode: SdnBackendMode;
   connect(): Promise<BackendResult<NodeSummary>>;
   getCapabilities(): Promise<BackendCapability[]>;
   getNodeSummary(): Promise<BackendResult<NodeSummary>>;
+  getHealth(): Promise<BackendResult<SdnHealth>>;
   getNodeProfile(): Promise<BackendResult<Record<string, unknown>>>;
   saveNodeProfile(profile: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>>;
+  listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>>;
+  beginClaimEpm(): Promise<BackendResult<Record<string, unknown>>>;
+  exportCore(): Promise<BackendResult<Record<string, unknown>>>;
+  importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>>;
   listObservedPeers(): Promise<BackendResult<ObservedSdnPeer[]>>;
+  listTrustedPeers(): Promise<BackendResult<ObservedSdnPeer[]>>;
+  searchDirectory(query: string): Promise<BackendResult<Array<Record<string, unknown>>>>;
+  connectPeer(peerId: string): Promise<BackendResult<Record<string, unknown>>>;
+  searchListings(query: string): Promise<BackendResult<Array<Record<string, unknown>>>>;
+  listOwnedItems(): Promise<BackendResult<Array<Record<string, unknown>>>>;
+  requestGrant(listingId: string): Promise<BackendResult<Record<string, unknown>>>;
+  installModule(moduleId: string): Promise<BackendResult<Record<string, unknown>>>;
+  subscribeDataFeed(feedId: string): Promise<BackendResult<Record<string, unknown>>>;
   getStorageSummary(): Promise<BackendResult<StorageSummary>>;
   listObjects(): Promise<BackendResult<LocalObjectSummary[]>>;
+  inspectObject(id: string): Promise<BackendResult<LocalObjectSummary | Record<string, unknown>>>;
+  pinObject(id: string): Promise<BackendResult<Record<string, unknown>>>;
+  unpinObject(id: string): Promise<BackendResult<Record<string, unknown>>>;
+  listRulesets(): Promise<BackendResult<Array<Record<string, unknown>>>>;
+  saveRuleset(ruleset: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>>;
   runSqlQuery(query: string): Promise<BackendResult<Array<Record<string, unknown>>>>;
+  getKuboStatus(): Promise<BackendResult<Record<string, unknown>>>;
+  listFiles(path?: string): Promise<BackendResult<Array<Record<string, unknown>>>>;
   resolveCid(cid: string): Promise<BackendResult<{ cid: string; gatewayUrl: string }>>;
+  readGatewayUrl(path: string): Promise<BackendResult<{ path: string; gatewayUrl: string }>>;
 }
 
 export function isBackendMode(value: string | null | undefined): value is SdnBackendMode {
@@ -114,6 +140,15 @@ export function createUnavailableResult<T>(id: string, reason: string): BackendR
 
 export function createDegradedResult<T>(id: string, reason: string, data: T | null = null): BackendResult<T> {
   return { ok: false, capability: createCapability(id, 'degraded', reason), data };
+}
+
+export function createCapabilityResult<T>(
+  id: string,
+  state: CapabilityState,
+  reason: string,
+  data: T | null = null,
+): BackendResult<T> {
+  return { ok: state === 'available', capability: createCapability(id, state, reason), data };
 }
 
 function trimTrailingSlash(value: string | null | undefined): string | null {

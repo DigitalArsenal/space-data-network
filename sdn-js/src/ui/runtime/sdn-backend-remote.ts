@@ -1,6 +1,7 @@
 import {
   createAvailableResult,
   createCapability,
+  createCapabilityResult,
   createDegradedResult,
   createUnavailableResult,
   normalizeBackendConfig,
@@ -21,6 +22,7 @@ import {
   normalizeObjectPayload,
   normalizePeerPayload,
   normalizeStorageSummary,
+  recordsFromPayload,
   resolveFetch,
   type BackendDeps,
 } from './sdn-backend-adapter-utils';
@@ -54,9 +56,26 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
       ];
     },
     getNodeSummary,
+    async getHealth() {
+      const health = await getJson<unknown>(fetchLike, joinUrl(serverBase, '/api/v1/data/health'), 'getHealth');
+      if (!health.ok) return createDegradedResult('getHealth', health.capability.reason ?? 'remote health route unavailable', { healthy: false, details: {} });
+      return createAvailableResult('getHealth', { healthy: true, details: isRecord(health.data) ? health.data : { value: health.data } });
+    },
     getNodeProfile,
     async saveNodeProfile(profile: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
       return createUnavailableResult('saveNodeProfile', `remote profile editing requires an explicit permission flow (${Object.keys(profile).length} fields)`);
+    },
+    async listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      return createCapabilityResult('listWalletsAndEpms', 'local-only', 'wallet and EPM management must run on a local node', []);
+    },
+    async beginClaimEpm(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('beginClaimEpm', 'local-only', 'EPM claim must run on a local node');
+    },
+    async exportCore(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('exportCore', 'local-only', 'Core export must run on a local node');
+    },
+    async importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('importCore', 'local-only', `Core import must run on a local node (${Object.keys(core).length} fields)`);
     },
     async listObservedPeers(): Promise<BackendResult<ObservedSdnPeer[]>> {
       const primary = await getJson<unknown>(fetchLike, joinUrl(serverBase, '/api/peers/sdn'), 'listObservedPeers');
@@ -64,6 +83,36 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
       const fallback = await getJson<unknown>(fetchLike, joinUrl(serverBase, '/api/peers'), 'listObservedPeers');
       if (!fallback.ok) return primary as BackendResult<ObservedSdnPeer[]>;
       return createAvailableResult('listObservedPeers', normalizePeerPayload(fallback.data));
+    },
+    async listTrustedPeers(): Promise<BackendResult<ObservedSdnPeer[]>> {
+      const peers = await getJson<unknown>(fetchLike, joinUrl(serverBase, '/api/peers'), 'listTrustedPeers');
+      if (!peers.ok) return peers as BackendResult<ObservedSdnPeer[]>;
+      return createAvailableResult('listTrustedPeers', normalizePeerPayload(peers.data));
+    },
+    async searchDirectory(query: string): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      const graph = await getJson<unknown>(fetchLike, joinUrl(serverBase, `/api/peers/graph?q=${encodeURIComponent(query)}`), 'searchDirectory');
+      if (!graph.ok) return graph as BackendResult<Array<Record<string, unknown>>>;
+      return createAvailableResult('searchDirectory', recordsFromPayload(graph.data));
+    },
+    async connectPeer(peerId: string): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('connectPeer', 'remote-only', `remote peer connection for ${peerId} requires server-side permission`);
+    },
+    async searchListings(query: string): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      const listings = await getJson<unknown>(fetchLike, joinUrl(serverBase, `/api/storefront/listings?q=${encodeURIComponent(query)}`), 'searchListings');
+      if (!listings.ok) return listings as BackendResult<Array<Record<string, unknown>>>;
+      return createAvailableResult('searchListings', recordsFromPayload(listings.data));
+    },
+    async listOwnedItems(): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      return createCapabilityResult('listOwnedItems', 'permission-required', 'owned item lookup requires an authenticated remote session', []);
+    },
+    async requestGrant(listingId: string): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('requestGrant', 'permission-required', `grant request for ${listingId} requires an authenticated remote session`);
+    },
+    async installModule(moduleId: string): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('installModule', 'local-only', `module ${moduleId} installation must run on a local node`);
+    },
+    async subscribeDataFeed(feedId: string): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('subscribeDataFeed', 'permission-required', `data feed ${feedId} subscription requires an authenticated remote session`);
     },
     async getStorageSummary(): Promise<BackendResult<StorageSummary>> {
       const summary = await getJson<unknown>(fetchLike, joinUrl(serverBase, '/api/v1/data/storage'), 'getStorageSummary');
@@ -74,6 +123,23 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
       const objects = await getJson<unknown>(fetchLike, joinUrl(serverBase, '/api/v1/data/objects'), 'listObjects');
       if (!objects.ok) return objects as BackendResult<LocalObjectSummary[]>;
       return createAvailableResult('listObjects', normalizeObjectPayload(objects.data));
+    },
+    async inspectObject(id: string): Promise<BackendResult<LocalObjectSummary | Record<string, unknown>>> {
+      const object = await getJson<unknown>(fetchLike, joinUrl(serverBase, `/api/v1/data/objects/${encodeURIComponent(id)}`), 'inspectObject');
+      if (!object.ok) return object as BackendResult<Record<string, unknown>>;
+      return createAvailableResult('inspectObject', isRecord(object.data) ? object.data : { id, value: object.data });
+    },
+    async pinObject(id: string): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('pinObject', 'local-only', `pinning ${id} must run on a local node`);
+    },
+    async unpinObject(id: string): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('unpinObject', 'local-only', `unpinning ${id} must run on a local node`);
+    },
+    async listRulesets(): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      return createCapabilityResult('listRulesets', 'local-only', 'retention rulesets must run on a local node', []);
+    },
+    async saveRuleset(ruleset: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('saveRuleset', 'local-only', `ruleset persistence must run on a local node (${Object.keys(ruleset).length} fields)`);
     },
     async runSqlQuery(query: string): Promise<BackendResult<Array<Record<string, unknown>>>> {
       const result = await getJson<unknown>(
@@ -93,11 +159,25 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
       }
       return createAvailableResult('runSqlQuery', []);
     },
+    async getKuboStatus(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('getKuboStatus', 'local-only', 'Kubo RPC status is only available for local desktop nodes');
+    },
+    async listFiles(): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      return createCapabilityResult('listFiles', 'local-only', 'MFS file browsing is only available for local desktop nodes', []);
+    },
     async resolveCid(cid: string): Promise<BackendResult<{ cid: string; gatewayUrl: string }>> {
       if (!serverBase) return createUnavailableResult('resolveCid', 'remote server URL is not configured');
       return createAvailableResult('resolveCid', {
         cid,
         gatewayUrl: joinUrl(serverBase, `/ipfs/${encodeURIComponent(cid)}`),
+      });
+    },
+    async readGatewayUrl(path: string): Promise<BackendResult<{ path: string; gatewayUrl: string }>> {
+      if (!serverBase) return createUnavailableResult('readGatewayUrl', 'remote server URL is not configured');
+      const gatewayPath = path.startsWith('/ipfs/') ? path : `/ipfs/${path}`;
+      return createAvailableResult('readGatewayUrl', {
+        path,
+        gatewayUrl: joinUrl(serverBase, gatewayPath),
       });
     },
   };
