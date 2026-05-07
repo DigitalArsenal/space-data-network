@@ -944,7 +944,7 @@ git commit -m "Document SDN UI Vite development loop"
 - Inspect: `desktop/src/dashboard/index.js`
 - Inspect/modify: `sdn-server` frontend serving code as needed.
 
-- [ ] **Step 1: Write desktop guard tests**
+- [x] **Step 1: Write desktop guard tests**
 
 In `desktop/test/unit/dashboard.spec.js`, assert:
 
@@ -954,7 +954,7 @@ expect(packageJson.scripts['build:sdn-ui:copy']).toContain('../sdn-js/ui/dist')
 expect(dashboardSource).toContain("registerStaticScheme({ scheme: 'sdn', directory: 'assets/sdn-ui' })")
 ```
 
-- [ ] **Step 2: Run desktop guard tests**
+- [x] **Step 2: Run desktop guard tests**
 
 ```sh
 npm --prefix desktop test -- --grep "SDN UI route|build:sdn-ui|uses SDN UI route"
@@ -962,7 +962,7 @@ npm --prefix desktop test -- --grep "SDN UI route|build:sdn-ui|uses SDN UI route
 
 Expected: passes or fails only on missing new assertions.
 
-- [ ] **Step 3: Update server host if it points at old assumptions**
+- [x] **Step 3: Update server host if it points at old assumptions**
 
 Find server references:
 
@@ -972,7 +972,7 @@ rg -n "sdn-js/ui|assets/sdn-ui|webui_path|frontend_path|admin_ui_path" sdn-serve
 
 If server already serves `sdn-js/ui/dist` or staged frontend assets, document no change. If it hard-codes old upstream WebUI paths, update it to use the built `sdn-js/ui/dist` artifact for `/` and keep `/webui` separate.
 
-- [ ] **Step 4: Verify builds**
+- [x] **Step 4: Verify builds**
 
 ```sh
 npm --prefix sdn-js run build:sdn-ui
@@ -981,7 +981,7 @@ npm --prefix desktop run build:sdn-ui
 
 Expected: both pass and desktop copies Svelte output into `desktop/assets/sdn-ui`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```sh
 git add desktop/test/unit/dashboard.spec.js desktop/package.json sdn-server
