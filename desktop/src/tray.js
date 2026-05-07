@@ -54,7 +54,6 @@ async function buildMenu () {
   const startIpfs = ctx.getFn('startIpfs')
   const stopIpfs = ctx.getFn('stopIpfs')
   const launchDashboard = ctx.getFn('launchDashboard')
-  const launchWebUI = ctx.getFn('launchWebUI')
   const manualCheckForUpdates = ctx.getFn('manualCheckForUpdates')
   /**
    * we need to wait for i18n to be ready before we translate the tray menu
@@ -100,25 +99,25 @@ async function buildMenu () {
     {
       id: 'sdnUiHome',
       label: 'SDN UI',
-      click: () => { launchDashboard('/') }
+      click: () => { launchDashboard('/status') }
     },
     // @ts-ignore
     {
-      id: 'webuiStatus',
+      id: 'sdnStatus',
       label: i18n.t('status'),
-      click: () => { launchWebUI('/status') }
+      click: () => { launchDashboard('/status') }
     },
     // @ts-ignore
     {
-      id: 'webuiFiles',
+      id: 'sdnFiles',
       label: i18n.t('files'),
-      click: () => { launchWebUI('/files') }
+      click: () => { launchDashboard('/files') }
     },
     // @ts-ignore
     {
-      id: 'webuiPeers',
+      id: 'sdnPeers',
       label: i18n.t('peers'),
-      click: () => { launchWebUI('/peers') }
+      click: () => { launchDashboard('/peers') }
     },
     // @ts-ignore
     { type: 'separator' },
@@ -137,9 +136,9 @@ async function buildMenu () {
       label: IS_MAC ? i18n.t('settings.preferences') : i18n.t('settings.settings'),
       submenu: [
         {
-          id: 'webuiNodeSettings',
+          id: 'sdnNodeSettings',
           label: i18n.t('settings.openNodeSettings'),
-          click: () => { launchWebUI('/settings') }
+          click: () => { launchDashboard('/settings') }
         },
         { type: 'separator' },
         {
@@ -319,7 +318,7 @@ module.exports = async function () {
   }
   tray.on('right-click', popupMenu)
   const launchDashboard = ctx.getFn('launchDashboard')
-  tray.on('double-click', async () => launchDashboard('/'))
+  tray.on('double-click', async () => launchDashboard('/status'))
 
   ctx.setProp('tray.update-menu', async () => {
     logger.fileLogger.debug('[tray.update-menu] updating tray menu')
@@ -342,10 +341,10 @@ module.exports = async function () {
     menu.getMenuItemById('restartIpfs').visible = (status === STATUS.STARTING_FINISHED || errored)
 
     menu.getMenuItemById('sdnUiHome').enabled = true
-    menu.getMenuItemById('webuiStatus').enabled = status === STATUS.STARTING_FINISHED
-    menu.getMenuItemById('webuiFiles').enabled = status === STATUS.STARTING_FINISHED
-    menu.getMenuItemById('webuiPeers').enabled = status === STATUS.STARTING_FINISHED
-    menu.getMenuItemById('webuiNodeSettings').enabled = status === STATUS.STARTING_FINISHED
+    menu.getMenuItemById('sdnStatus').enabled = status === STATUS.STARTING_FINISHED
+    menu.getMenuItemById('sdnFiles').enabled = status === STATUS.STARTING_FINISHED
+    menu.getMenuItemById('sdnPeers').enabled = status === STATUS.STARTING_FINISHED
+    menu.getMenuItemById('sdnNodeSettings').enabled = status === STATUS.STARTING_FINISHED
 
     menu.getMenuItemById('startIpfs').enabled = !gcRunning
     menu.getMenuItemById('stopIpfs').enabled = !gcRunning
