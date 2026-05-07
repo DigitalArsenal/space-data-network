@@ -37,7 +37,7 @@
 - Modify: `sdn-js/ui/vite.config.mts`
 - Test: `sdn-js/src/ui/vite-config.test.ts`
 
-- [ ] **Step 1: Add a failing package script test**
+- [x] **Step 1: Add a failing package script test**
 
 Add this test to `sdn-js/src/ui/vite-config.test.ts`:
 
@@ -59,7 +59,7 @@ describe('sdn-ui package scripts', () => {
 });
 ```
 
-- [ ] **Step 2: Run the failing test**
+- [x] **Step 2: Run the failing test**
 
 Run:
 
@@ -69,7 +69,7 @@ npm --prefix sdn-js exec vitest run src/ui/vite-config.test.ts
 
 Expected before implementation: fails because `build:sdn-ui` and `dev:sdn-ui` are missing.
 
-- [ ] **Step 3: Update `sdn-js/package.json` scripts and dependencies**
+- [x] **Step 3: Update `sdn-js/package.json` scripts and dependencies**
 
 Add scripts:
 
@@ -84,16 +84,15 @@ Add scripts:
 }
 ```
 
-Add dependencies:
+Add Svelte build tooling as development dependencies only. Do not add
+`lucide-svelte` until a UI task imports it, and do not ship `svelte` as a
+runtime dependency while this package only compiles the UI during build.
 
 ```json
 {
-  "dependencies": {
-    "lucide-svelte": "^0.468.0",
-    "svelte": "^5.0.0"
-  },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "svelte": "^5.0.0",
     "svelte-check": "^4.0.0"
   }
 }
@@ -105,7 +104,7 @@ Run:
 npm --prefix sdn-js install
 ```
 
-- [ ] **Step 4: Add Svelte to Vite config without changing output location**
+- [x] **Step 4: Add Svelte to Vite config without changing output location**
 
 In `sdn-js/ui/vite.config.mts`, import and add the Svelte plugin:
 
@@ -124,7 +123,7 @@ plugins: [
 
 Ensure `root: __dirname`, `base: './'`, and default output remain `sdn-js/ui/dist`.
 
-- [ ] **Step 5: Add `sdn-js/ui/tsconfig.json`**
+- [x] **Step 5: Add `sdn-js/ui/tsconfig.json`**
 
 Create:
 
@@ -148,7 +147,7 @@ If no Svelte component exists yet, add a tiny hidden sentinel component under
 legacy upstream WebUI bridge. Do not include `src/**/*.ts` in this task; adapter
 TypeScript checks are introduced after the SDN runtime contract exists.
 
-- [ ] **Step 6: Verify scripts and config**
+- [x] **Step 6: Verify scripts and config**
 
 Run:
 
@@ -160,7 +159,7 @@ npm --prefix sdn-js run check:sdn-ui
 Expected: vitest passes; `svelte-check` passes with zero errors and does not
 scan legacy upstream WebUI TypeScript.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```sh
 git add sdn-js/package.json sdn-js/package-lock.json sdn-js/ui/vite.config.mts sdn-js/ui/tsconfig.json sdn-js/src/ui/vite-config.test.ts
