@@ -69,12 +69,54 @@ test('SDN product routes do not navigate into upstream /webui', async ({ page })
 test('captures desktop and mobile SDN UI screenshots', async ({ page }, testInfo) => {
   for (const route of ['node', 'peers', 'local-data']) {
     await page.goto(`/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/${route}`);
-    await page.screenshot({
+    await assertVisualGuardrails(page);
+    const screenshot = await page.screenshot({
       path: testInfo.outputPath(`${route}-${testInfo.project.name}.png`),
       fullPage: true,
     });
+    expect(screenshot.length).toBeGreaterThan(10_000);
   }
 });
+
+async function assertVisualGuardrails(page: Page): Promise<void> {
+  const metrics = await page.evaluate(() => {
+    const root = window.getComputedStyle(document.documentElement);
+    const cards = Array.from(document.querySelectorAll<HTMLElement>('.sdn-card'));
+    const controls = Array.from(document.querySelectorAll<HTMLElement>('button, a, input, .sdn-button, .sdn-input'));
+    return {
+      scrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+      bodyTextLength: document.body.innerText.trim().length,
+      tokens: {
+        bg: root.getPropertyValue('--sdn-bg').trim(),
+        surface: root.getPropertyValue('--sdn-surface').trim(),
+        blue: root.getPropertyValue('--sdn-blue').trim(),
+        green: root.getPropertyValue('--sdn-green').trim(),
+        amber: root.getPropertyValue('--sdn-amber').trim(),
+        red: root.getPropertyValue('--sdn-red').trim(),
+        purple: root.getPropertyValue('--sdn-purple').trim(),
+      },
+      cardRadii: cards.map((card) => Number.parseFloat(window.getComputedStyle(card).borderRadius)),
+      controlRadii: controls.map((control) => Number.parseFloat(window.getComputedStyle(control).borderRadius)),
+    };
+  });
+
+  expect(metrics.bodyTextLength).toBeGreaterThan(100);
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1);
+  expect(metrics.tokens).toEqual({
+    bg: '#050506',
+    surface: '#111318',
+    blue: '#0a84ff',
+    green: '#30d158',
+    amber: '#ffd60a',
+    red: '#ff453a',
+    purple: '#bf5af2',
+  });
+  expect(metrics.cardRadii.length).toBeGreaterThan(0);
+  expect(metrics.cardRadii.every((radius) => radius <= 12)).toBe(true);
+  expect(metrics.controlRadii.length).toBeGreaterThan(0);
+  expect(metrics.controlRadii.every((radius) => radius <= 12)).toBe(true);
+}
 
 async function installSdnFixtures(page: Page): Promise<void> {
   await page.route('**/api/node/epm/json', async (route) => {
