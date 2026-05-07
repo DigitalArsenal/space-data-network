@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig, transformWithEsbuild } from 'vite';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -90,6 +91,7 @@ export default defineConfig({
   publicDir: path.resolve(upstreamWebUiRoot, 'public'),
   base: './',
   plugins: [
+    svelte(),
     {
       name: 'sdn-react-virtualized-window-scroller-patch',
       transform(code, id) {

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -6,6 +7,45 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '../../..');
+
+describe('sdn-ui package scripts', () => {
+  it('keeps sdn-js/ui as the SDN UI build target and exposes a fast dev script', () => {
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
+    ) as { scripts: Record<string, string> };
+
+    expect(packageJson.scripts['build:ui']).toBe('vite build --config ui/vite.config.mts');
+    expect(packageJson.scripts['build:sdn-ui']).toBe('vite build --config ui/vite.config.mts');
+    expect(packageJson.scripts['dev:sdn-ui']).toBe('vite --config ui/vite.config.mts');
+    expect(packageJson.scripts['check:sdn-ui']).toBe('svelte-check --tsconfig ui/tsconfig.json');
+  });
+
+  it('keeps Svelte dependencies scoped to tooling until the product UI imports them', () => {
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'),
+    ) as {
+      dependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
+    };
+
+    expect(packageJson.dependencies['lucide-svelte']).toBeUndefined();
+    expect(packageJson.dependencies.svelte).toBeUndefined();
+    expect(packageJson.devDependencies.svelte).toBe('^5.0.0');
+    expect(packageJson.devDependencies['@sveltejs/vite-plugin-svelte']).toBe('^5.0.0');
+    expect(packageJson.devDependencies['svelte-check']).toBe('^4.0.0');
+  });
+
+  it('keeps svelte-check scoped away from the legacy upstream webui bridge', () => {
+    const tsconfig = JSON.parse(
+      fs.readFileSync(path.resolve(__dirname, '../../ui/tsconfig.json'), 'utf8'),
+    ) as { compilerOptions: { noEmit?: boolean }; include: string[] };
+
+    expect(tsconfig.compilerOptions.noEmit).toBe(true);
+    expect(tsconfig.include).toContain('src/**/*.svelte');
+    expect(tsconfig.include).not.toContain('src/**/*.ts');
+    expect(tsconfig.include).not.toContain('vite.config.mts');
+  });
+});
 
 describe('admin vite config', () => {
   afterEach(() => {
@@ -33,6 +73,28 @@ describe('admin vite config', () => {
     const server = typeof config.server === 'function' ? config.server({} as never) : config.server;
 
     expect(server?.fs?.allow).toContain(repoRoot);
+  });
+
+  it('keeps sdn-js/ui as the Vite root and build output location', async () => {
+    vi.resetModules();
+
+    const { default: config } = await import('../../ui/vite.config.mts');
+    const build = typeof config.build === 'function' ? config.build({} as never) : config.build;
+
+    expect(config.root).toBe(path.resolve(__dirname, '../../ui'));
+    expect(config.base).toBe('./');
+    expect(build?.outDir).toBe('dist');
+  });
+
+  it('installs the Svelte plugin before the legacy upstream webui plugins', async () => {
+    vi.resetModules();
+
+    const { default: config } = await import('../../ui/vite.config.mts');
+    const plugins = Array.isArray(config.plugins) ? config.plugins.flat() : [];
+    const firstPlugin = plugins[0];
+
+    expect(firstPlugin).toBeDefined();
+    expect(firstPlugin && typeof firstPlugin === 'object' && 'name' in firstPlugin ? firstPlugin.name : '').toBe('vite-plugin-svelte');
   });
 
   it('injects a browser process shim for upstream webui dependencies', async () => {
