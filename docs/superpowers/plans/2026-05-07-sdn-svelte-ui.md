@@ -870,11 +870,11 @@ git commit -m "Build SDN Svelte product screens"
 - Create: `sdn-js/src/ui/sdn-ui/dev-config.test.ts`
 - Modify: `sdn-js/README.md` or create `sdn-js/ui/README.md`
 
-- [ ] **Step 1: Write dev config tests**
+- [x] **Step 1: Write dev config tests**
 
 Assert Vite config proxies `/api`, `/ipfs`, and `/webui` only when `SDN_UI_PROXY_TARGET` is set, and exposes env vars through `import.meta.env`.
 
-- [ ] **Step 2: Update Vite config**
+- [x] **Step 2: Update Vite config**
 
 Keep existing proxy structure and ensure:
 
@@ -892,7 +892,7 @@ Proxy:
 
 Do not proxy `/webui` to the Svelte app. It remains upstream IPFS.
 
-- [ ] **Step 3: Document local dev**
+- [x] **Step 3: Document local dev**
 
 Add `sdn-js/ui/README.md`:
 
@@ -918,7 +918,7 @@ npm --prefix sdn-js run dev:sdn-ui
 ```
 ```
 
-- [ ] **Step 4: Verify local dev server starts**
+- [x] **Step 4: Verify local dev server starts**
 
 Run:
 
@@ -928,7 +928,7 @@ SDN_UI_BACKEND=desktop-local SDN_UI_PROXY_TARGET=http://127.0.0.1:17890 npm --pr
 
 Expected: Vite prints a local URL. Stop the dev server after smoke verification.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```sh
 git add sdn-js/ui/vite.config.mts sdn-js/ui/README.md sdn-js/src/ui/sdn-ui/dev-config.test.ts

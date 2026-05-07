@@ -90,6 +90,7 @@ export default defineConfig({
   root: __dirname,
   publicDir: path.resolve(upstreamWebUiRoot, 'public'),
   base: './',
+  envPrefix: ['VITE_', 'SDN_UI_'],
   plugins: [
     svelte(),
     {

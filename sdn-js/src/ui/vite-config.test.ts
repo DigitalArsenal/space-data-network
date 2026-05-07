@@ -42,6 +42,7 @@ describe('sdn-ui package scripts', () => {
 
     expect(tsconfig.compilerOptions.noEmit).toBe(true);
     expect(tsconfig.include).toContain('src/**/*.svelte');
+    expect(tsconfig.include).toContain('src/lib/**/*.ts');
     expect(tsconfig.include).not.toContain('src/**/*.ts');
     expect(tsconfig.include).not.toContain('vite.config.mts');
   });
