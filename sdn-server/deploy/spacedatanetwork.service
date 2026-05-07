@@ -16,6 +16,7 @@ Environment=SDN_MODE=full
 Environment=SDN_CONFIG=/etc/spacedatanetwork/config.yaml
 Environment=SDN_DATA_DIR=/var/lib/spacedatanetwork
 Environment=WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge
+Environment=LD_LIBRARY_PATH=/opt/spacedatanetwork/.wasmedge/lib
 
 # Working directory
 WorkingDirectory=/opt/spacedatanetwork
