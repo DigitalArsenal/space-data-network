@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -617,6 +618,70 @@ func TestPublicHomepageFileIgnoresDeprecatedHomepageWhenFrontendPathIsSet(t *tes
 
 	if got := publicHomepageFile("/var/lib/spacedatanetwork/frontend", "/opt/spacedatanetwork/spaceaware/index.html"); got != "" {
 		t.Fatalf("public homepage file = %q, want embedded default landing page", got)
+	}
+}
+
+func TestDefaultFrontendCandidatesPreferBuiltSdnUIBeforeManagedFrontend(t *testing.T) {
+	t.Parallel()
+
+	candidates := defaultFrontendCandidates()
+	sdnUIIndex := -1
+	defaultIndex := -1
+	for index, candidate := range candidates {
+		if strings.Contains(filepath.ToSlash(candidate), "sdn-js/ui/dist") && sdnUIIndex == -1 {
+			sdnUIIndex = index
+		}
+		if candidate == config.DefaultFrontendPath() {
+			defaultIndex = index
+		}
+	}
+
+	if sdnUIIndex == -1 {
+		t.Fatalf("default frontend candidates = %#v, want sdn-js/ui/dist candidate", candidates)
+	}
+	if defaultIndex == -1 {
+		t.Fatalf("default frontend candidates = %#v, want managed default frontend fallback", candidates)
+	}
+	if sdnUIIndex > defaultIndex {
+		t.Fatalf("sdn-js/ui/dist candidate index %d should precede managed fallback index %d", sdnUIIndex, defaultIndex)
+	}
+}
+
+func TestFirstExistingFrontendPathRequiresIndexHTML(t *testing.T) {
+	t.Parallel()
+
+	withoutIndex := t.TempDir()
+	withIndex := t.TempDir()
+	if err := os.WriteFile(filepath.Join(withIndex, "index.html"), []byte("<!doctype html>"), 0o644); err != nil {
+		t.Fatalf("write index.html failed: %v", err)
+	}
+
+	if got := firstExistingFrontendPath([]string{withoutIndex, withIndex}); got != withIndex {
+		t.Fatalf("first existing frontend path = %q, want %q", got, withIndex)
+	}
+}
+
+func TestResolveFrontendPathRespectsExplicitConfiguredPath(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveFrontendPath("/var/lib/sdn/custom-ui"); got != "/var/lib/sdn/custom-ui" {
+		t.Fatalf("resolved frontend path = %q, want explicit configured path", got)
+	}
+}
+
+func TestProvisionFrontendDirWritesDefaultIndexInExistingDirectory(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := provisionFrontendDir(dir); err != nil {
+		t.Fatalf("provisionFrontendDir failed: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		t.Fatalf("read provisioned index: %v", err)
+	}
+	if !bytes.Contains(body, []byte("Space Data Network")) {
+		t.Fatalf("provisioned index = %q, want default SDN frontend", string(body))
 	}
 }
 

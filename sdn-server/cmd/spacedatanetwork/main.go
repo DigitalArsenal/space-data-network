@@ -191,8 +191,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if envPath := os.Getenv("SDN_FRONTEND_PATH"); envPath != "" {
 		cfg.Admin.FrontendPath = envPath
 	}
-	// Resolve empty frontend path to standard location
-	if strings.TrimSpace(cfg.Admin.FrontendPath) == "" {
+	// Resolve empty frontend path to the built SDN Svelte UI when available,
+	// then fall back to the managed frontend directory.
+	cfg.Admin.FrontendPath = resolveFrontendPath(cfg.Admin.FrontendPath)
+	if cfg.Admin.FrontendPath == "" {
 		cfg.Admin.FrontendPath = config.DefaultFrontendPath()
 	}
 	// Auto-provision frontend directory with default page if it doesn't exist
@@ -817,18 +819,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// ----------------------------------------------------------------
 			// Public homepage at / — intentionally separate from /admin.
 			// ----------------------------------------------------------------
-			homepageFile := publicHomepageFile(cfg.Admin.FrontendPath, cfg.Admin.HomepageFile)
-			landingHTML := loadLandingPageFallback(homepageFile)
-			if buildAssetsDir := resolveBuildAssetsDir(homepageFile); buildAssetsDir != "" {
-				adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
-				log.Infof("Static build assets at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
+			frontendHandler, frontendErr := makeFrontendHandler(cfg.Admin.FrontendPath)
+			if frontendErr != nil {
+				log.Warnf("Could not serve frontend_path %q at /: %v", cfg.Admin.FrontendPath, frontendErr)
+				homepageFile := publicHomepageFile(cfg.Admin.FrontendPath, cfg.Admin.HomepageFile)
+				landingHTML := loadLandingPageFallback(homepageFile)
+				if buildAssetsDir := resolveBuildAssetsDir(homepageFile); buildAssetsDir != "" {
+					adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
+					log.Infof("Static build assets at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
+				}
+				frontendHandler = adminLandingHandler(http.NotFoundHandler(), landingHTML)
 			}
-			adminMux.Handle("/", makeFrontendSurfaceHandler(
-				adminLandingHandler(http.NotFoundHandler(), landingHTML),
-				authHandler,
-				cfg.Admin.RequireAuth,
-			))
-			log.Infof("Public homepage at %s://%s/ (admin portal remains at /admin)", adminScheme, adminAddr)
+			adminMux.Handle("/", makeFrontendSurfaceHandler(frontendHandler, authHandler, cfg.Admin.RequireAuth))
+			log.Infof("SDN UI at %s://%s/ from %s (admin portal remains at /admin)", adminScheme, adminAddr, cfg.Admin.FrontendPath)
 
 			adminServer = &http.Server{
 				Addr:              adminAddr,
@@ -1339,16 +1342,60 @@ func resolveAdminUIPath(configuredPath string) string {
 	return ""
 }
 
+func resolveFrontendPath(configuredPath string) string {
+	configuredPath = strings.TrimSpace(configuredPath)
+	if configuredPath != "" {
+		return configuredPath
+	}
+	if candidate := firstExistingFrontendPath(defaultFrontendCandidates()); candidate != "" {
+		return candidate
+	}
+	return config.DefaultFrontendPath()
+}
+
+func defaultFrontendCandidates() []string {
+	return []string{
+		filepath.Join("sdn-js", "ui", "dist"),
+		filepath.Join("..", "sdn-js", "ui", "dist"),
+		filepath.Join("..", "..", "sdn-js", "ui", "dist"),
+		filepath.Join("..", "..", "..", "sdn-js", "ui", "dist"),
+		"/opt/spacedatanetwork/sdn-ui",
+		"/opt/spacedatanetwork/frontend",
+		config.DefaultFrontendPath(),
+	}
+}
+
+func firstExistingFrontendPath(candidates []string) string {
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(candidate, "index.html"))
+		if err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
 // provisionFrontendDir creates the frontend directory with a default index.html
 // if it doesn't already exist.
 func provisionFrontendDir(dir string) error {
-	if _, err := os.Stat(dir); err == nil {
-		return nil // already exists
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return fmt.Errorf("frontend path is empty")
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 	indexPath := filepath.Join(dir, "index.html")
+	if st, err := os.Stat(indexPath); err == nil {
+		if st.IsDir() {
+			return fmt.Errorf("%s is a directory", indexPath)
+		}
+		return nil
+	}
 	return os.WriteFile(indexPath, []byte(defaultFrontendHTML), 0644)
 }
 
