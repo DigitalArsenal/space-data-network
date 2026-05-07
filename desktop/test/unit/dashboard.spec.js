@@ -190,17 +190,28 @@ test.describe('SDN dashboard window', () => {
     expect(webuiSource).toContain('if (!apiAddressSynced) window.loadURL(url.toString())')
   })
 
-  test('routes tray menu home to SDN UI and IPFS links to Web UI pages', () => {
+  test('routes tray menu entries to SDN dashboard pages instead of IPFS Web UI pages', () => {
     const traySource = fs.readFileSync(path.join(__dirname, '../../src/tray.js'), 'utf8')
 
     expect(traySource).toContain("id: 'sdnUiHome'")
     expect(traySource).toContain("label: 'SDN UI'")
-    expect(traySource).toContain("click: () => { launchDashboard('/') }")
-    expect(traySource).toContain("id: 'webuiStatus'")
-    expect(traySource).toContain("click: () => { launchWebUI('/status') }")
-    expect(traySource).not.toContain("click: () => { launchWebUI('/') }")
-    expect(traySource).not.toContain("id: 'webuiStatus',\n      label: i18n.t('status'),\n      click: () => { launchDashboard('/') }")
-    expect(traySource).not.toContain("id: 'webuiStatus',\n      label: i18n.t('status'),\n      click: () => { launchDashboard('/status') }")
+    expect(traySource).toContain("click: () => { launchDashboard('/status') }")
+    expect(traySource).toContain("id: 'sdnStatus'")
+    expect(traySource).toContain("id: 'sdnFiles'")
+    expect(traySource).toContain("id: 'sdnPeers'")
+    expect(traySource).toContain("id: 'sdnNodeSettings'")
+    expect(traySource).toContain("click: () => { launchDashboard('/files') }")
+    expect(traySource).toContain("click: () => { launchDashboard('/peers') }")
+    expect(traySource).toContain("click: () => { launchDashboard('/settings') }")
+    expect(traySource).not.toContain("id: 'webuiStatus'")
+    expect(traySource).not.toContain("id: 'webuiFiles'")
+    expect(traySource).not.toContain("id: 'webuiPeers'")
+    expect(traySource).not.toContain("id: 'webuiNodeSettings'")
+    expect(traySource).not.toContain("click: () => { launchWebUI('/status') }")
+    expect(traySource).not.toContain("click: () => { launchWebUI('/files') }")
+    expect(traySource).not.toContain("click: () => { launchWebUI('/peers') }")
+    expect(traySource).not.toContain("click: () => { launchWebUI('/settings') }")
+    expect(traySource).not.toContain("click: () => { launchDashboard('/') }")
   })
 
   test('uses SDN status labels in the tray menu instead of upstream IPFS labels', () => {
