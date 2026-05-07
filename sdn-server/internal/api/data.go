@@ -16,6 +16,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
 
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
@@ -44,6 +45,7 @@ func (h *DataQueryHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/data/mpe/bulk", h.handleMPEBulk)
 	mux.HandleFunc("/api/v1/data/cat", h.handleCAT)
 	mux.HandleFunc("/api/v1/data/cat/bulk", h.handleCATBulk)
+	mux.HandleFunc("/api/v1/data/spw/bulk", h.handleSPWBulk)
 	mux.HandleFunc("/api/v1/data/secure/omm", h.handleSecureOMM)
 }
 
@@ -430,6 +432,73 @@ func (h *DataQueryHandler) handleCATBulk(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func (h *DataQueryHandler) handleSPWBulk(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+
+	limit := parseLimit(r, 50000, 250000)
+	includeData := parseBool(r, "include_data")
+	format := requestedDataFormat(r)
+
+	records, err := h.bulkRecords("SPW.fbs", "", limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	setCachePolicy(w, "")
+	if handleConditionalCache(w, r, "SPW.fbs", "", "bulk", records) {
+		return
+	}
+
+	if format == dataFormatFlatBuffers {
+		w.Header().Set("Content-Disposition", `attachment; filename="spw-bulk.fbsstream"`)
+		writeFlatBufferStream(w, "SPW.fbs", records)
+		return
+	}
+
+	results := make([]map[string]interface{}, 0, len(records))
+	for _, rec := range records {
+		row := map[string]interface{}{
+			"cid":       rec.CID,
+			"peer_id":   rec.PeerID,
+			"timestamp": rec.Timestamp.UTC().Format(time.RFC3339),
+		}
+		addRecordFreshness(row, rec)
+
+		if spw, err := decodeSPW(rec.Data); err == nil {
+			row["date"] = string(spw.DATE())
+			row["bsrn"] = spw.BSRN()
+			row["nd"] = spw.ND()
+			row["kp1"] = spw.KP1()
+			row["ap1"] = spw.AP1()
+			row["f107_obs"] = spw.F107Obs()
+			row["f107_adj"] = spw.F107Adj()
+			row["f107_data_type"] = spw.F107DataType().String()
+		}
+
+		if includeData {
+			row["data_base64"] = base64.StdEncoding.EncodeToString(rec.Data)
+		}
+
+		results = append(results, row)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"schema": "SPW.fbs",
+		"query": map[string]interface{}{
+			"limit": limit,
+		},
+		"count":   len(results),
+		"results": results,
+	})
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -757,6 +826,17 @@ func decodeMPE(data []byte) (*MPE.MPE, error) {
 		return MPE.GetRootAsMPE(data, 0), nil
 	default:
 		return nil, fmt.Errorf("invalid MPE buffer")
+	}
+}
+
+func decodeSPW(data []byte) (*SPW.SPW, error) {
+	switch {
+	case SPW.SizePrefixedSPWBufferHasIdentifier(data):
+		return SPW.GetSizePrefixedRootAsSPW(data, 0), nil
+	case SPW.SPWBufferHasIdentifier(data):
+		return SPW.GetRootAsSPW(data, 0), nil
+	default:
+		return nil, fmt.Errorf("invalid SPW buffer")
 	}
 }
 

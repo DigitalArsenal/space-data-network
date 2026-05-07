@@ -203,6 +203,7 @@ Bulk FlatBuffer endpoints (globe feed):
 - `GET /api/v1/data/omm/bulk?day=YYYY-MM-DD&limit=50000` (FlatBuffers default)
 - `GET /api/v1/data/mpe/bulk?day=YYYY-MM-DD&limit=50000` (FlatBuffers default)
 - `GET /api/v1/data/cat/bulk?limit=50000` (FlatBuffers default)
+- `GET /api/v1/data/spw/bulk?limit=50000` (FlatBuffers default)
 
 Plugin catalog location:
 
