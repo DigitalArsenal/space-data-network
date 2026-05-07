@@ -67,3 +67,9 @@ Keep those surfaces separate. Do not reintroduce a combined admin/WebUI mount.
 - Do not revert unrelated user changes.
 - Verify route changes with focused Go tests and WebUI builds.
 - Verify UI/runtime changes with focused `sdn-js` tests and the UI build.
+- For any change under `desktop/` or any behavior that affects SDN Desktop
+  packaging, startup, tray/menu routing, updater behavior, or bundled WebUI/SDN
+  UI assets, package the desktop app, reinstall or refresh the local installed
+  app, and restart the local desktop app before reporting completion. If one of
+  those steps cannot be completed, report the exact blocker and do not present
+  the desktop work as fully installed locally.
