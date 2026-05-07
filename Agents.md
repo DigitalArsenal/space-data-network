@@ -42,6 +42,10 @@ Keep those surfaces separate. Do not reintroduce a combined admin/WebUI mount.
 - `spacedatastandards.org` owns the canonical FlatBuffer schemas.
 - `PLG` is the single canonical signed marketplace manifest and storefront listing for a module version.
 - There should be exactly one canonical listing per `PLUGIN_ID + VERSION`.
+- OrbPro module-delivery seed catalogs must keep wasm-engine runtime and SDK
+  artifacts distinct: `com.orbpro.wasm-engine@1.0.0` is the protected runtime
+  artifact, and `com.orbpro.wasm-engine-sdk@1.0.0` is the SDK 0.8 artifact used
+  by public `useSdkPath: true` Sandcastle demos. Do not collapse those IDs.
 - Search and discovery must derive from `PLG` itself, not a second listing record.
 - If `PLG` needs new fields, define them upstream first and consume the published bindings here.
 - Do not create repo-local `.fbs` files or shadow schema bindings.

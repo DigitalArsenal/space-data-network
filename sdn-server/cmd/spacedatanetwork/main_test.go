@@ -121,6 +121,14 @@ func TestApplyPublicAPICORSHeadersFallsBackToWildcard(t *testing.T) {
 	}
 }
 
+func TestIPFSGatewayPathDoesNotUsePublicAPICORS(t *testing.T) {
+	t.Parallel()
+
+	if isPublicAPIPath("/ipfs/QmExample") {
+		t.Fatal("/ipfs gateway responses must use only the normalized gateway CORS headers")
+	}
+}
+
 func TestNormalizeIPFSGatewayCORSHeadersCollapsesDuplicateValues(t *testing.T) {
 	t.Parallel()
 

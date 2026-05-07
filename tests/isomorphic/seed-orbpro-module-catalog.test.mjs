@@ -148,38 +148,37 @@ await test("seedOrbproModuleCatalog uses the shipped plugin version for built-in
   );
   const pluginRoot = path.join(tempRoot, "license", "plugins");
   await fs.mkdir(pluginRoot, { recursive: true });
+  const builtInModule = DEFAULT_ORBPRO_MODULES.find(
+    (entry) => entry.moduleId === "com.orbpro.access",
+  );
+  assert.ok(builtInModule);
 
   const summary = await seedOrbproModuleCatalog({
     pluginRoot,
-    modules: [
-      {
-        slug: "sgp4",
-        moduleId: "com.orbpro.sgp4",
-        wasmPath: "../space-data-network-plugins/packages/sgp4/dist/sgp4.wasm",
-      },
-    ],
+    modules: [builtInModule],
   });
 
   assert.equal(summary.seeded.length, 1);
-  assert.equal(summary.seeded[0].moduleId, "com.orbpro.sgp4");
+  assert.equal(summary.seeded[0].moduleId, "com.orbpro.access");
 
   const catalog = JSON.parse(
     await fs.readFile(path.join(pluginRoot, "catalog.json"), "utf8"),
   );
-  const sgp4Manifest = JSON.parse(
+  const manifest = JSON.parse(
     await fs.readFile(
       path.resolve(
-        workspaceRoot,
-        "space-data-network-plugins/packages/sgp4/dist/manifest.json",
+        repoRoot,
+        "..",
+        "OrbPro/packages/space-data-network-modules/analysis/access/plugin-manifest.json",
       ),
       "utf8",
     ),
   );
   const seededEntry = catalog.plugins.find(
-    (entry) => entry.id === "com.orbpro.sgp4",
+    (entry) => entry.id === "com.orbpro.access",
   );
 
-  assert.equal(seededEntry?.version, sgp4Manifest.version);
+  assert.equal(seededEntry?.version, manifest.version);
 });
 
 await test("DEFAULT_ORBPRO_MODULES includes the licensing runtime", async () => {
@@ -187,6 +186,28 @@ await test("DEFAULT_ORBPRO_MODULES includes the licensing runtime", async () => 
     DEFAULT_ORBPRO_MODULES.some((entry) => entry.moduleId === "licensing"),
     true,
   );
+});
+
+await test("DEFAULT_ORBPRO_MODULES includes the SDN-licensed wasm-engine SDK artifact", async () => {
+  const wasmEngine = DEFAULT_ORBPRO_MODULES.find(
+    (entry) => entry.moduleId === "com.orbpro.wasm-engine-sdk",
+  );
+
+  assert.equal(wasmEngine?.version, "1.0.0");
+  assert.equal(
+    wasmEngine?.wasmPath,
+    "packages/wasm-engine/dist-sdn/isomorphic/module.wasm",
+  );
+  assert.equal(wasmEngine?.manifestPath, "packages/wasm-engine/plugin-manifest.json");
+});
+
+await test("DEFAULT_ORBPRO_MODULES includes the protected wasm-engine runtime artifact", async () => {
+  const wasmEngineRuntime = DEFAULT_ORBPRO_MODULES.find(
+    (entry) => entry.slug === "wasm-engine",
+  );
+
+  assert.equal(wasmEngineRuntime?.protectedModulePath, "packages/wasm-engine/dist/wasm-engine-encrypted.js");
+  assert.equal(wasmEngineRuntime?.protectedExports?.[0]?.exportName, "encryptedData");
 });
 
 await test("OPTIONAL_ORBPRO_MODULES pins conjunction to the current SDN module tag", async () => {
