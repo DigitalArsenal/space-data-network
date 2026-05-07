@@ -34,6 +34,17 @@ test('local-data route renders storage and degraded SQL workbench state', async 
   await expect(page.getByText('STARLINK-34967')).toBeVisible();
 });
 
+test('explore route renders CID inspection with the configured gateway', async ({ page }) => {
+  await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/explore/bafySdnFixture');
+
+  await expect(page.getByRole('heading', { level: 1, name: 'Local Data' })).toBeVisible();
+  await expect(page.getByText('bafySdnFixture')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open Gateway' })).toHaveAttribute(
+    'href',
+    'http://127.0.0.1:8081/ipfs/bafySdnFixture',
+  );
+});
+
 test('command buttons use operational radii rather than fully rounded bubbles', async ({ page }) => {
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/node');
 

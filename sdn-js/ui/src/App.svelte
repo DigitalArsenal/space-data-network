@@ -11,11 +11,13 @@
     LocalObjectSummary,
     NodeSummary,
     ObservedSdnPeer,
+    SdnBackend,
     SdnBackendMode,
     StorageSummary,
   } from '../../src/ui/runtime/sdn-backend';
 
   let currentRoute = '/node';
+  let backend: SdnBackend | null = null;
   let backendMode: SdnBackendMode = 'desktop-local';
   let nodeSummary: NodeSummary | null = null;
   let nodeState = 'loading';
@@ -28,6 +30,10 @@
   let storageLabel = 'pending';
   let primaryRoute = '/node';
   let screenTitle = 'Node';
+  let inspectionTarget: string | null = null;
+  let inspectionGatewayUrl: string | null = null;
+  let inspectionState = 'not-selected';
+  let inspectionRequestId = 0;
 
   const screenTitles: Record<string, string> = {
     '/node': 'Node',
@@ -38,7 +44,7 @@
   };
 
   onMount(() => {
-    const backend = createBackendFromLocation(window.location);
+    backend = createBackendFromLocation(window.location);
     backendMode = backend.mode;
     updateRouteFromLocation();
     window.addEventListener('hashchange', updateRouteFromLocation);
@@ -78,19 +84,60 @@
     return () => window.removeEventListener('hashchange', updateRouteFromLocation);
   });
 
+  $: primaryRoute = primaryRouteFromNormalized(currentRoute);
+  $: screenTitle = screenTitles[primaryRoute] ?? 'Node';
+  $: inspectionTarget = inspectionTargetFromRoute(currentRoute);
+  $: {
+    const activeBackend = backend;
+    const target = inspectionTarget;
+    if (activeBackend && target) {
+      loadGatewayInspection(activeBackend, target);
+    } else {
+      cancelGatewayInspection();
+    }
+  }
+
   function updateRouteFromLocation(): void {
     const rawRoute = window.location.hash || window.location.pathname;
     currentRoute = normalizeSdnRoute(rawRoute);
   }
-
-  $: primaryRoute = primaryRouteFromNormalized(currentRoute);
-  $: screenTitle = screenTitles[primaryRoute] ?? 'Node';
 
   function formatBytes(value: number | null | undefined): string {
     if (!value) return 'pending';
     if (value > 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`;
     if (value > 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`;
     return `${value} B`;
+  }
+
+  function inspectionTargetFromRoute(route: string): string | null {
+    const queryIndex = route.indexOf('?');
+    if (queryIndex === -1) return null;
+    const params = new URLSearchParams(route.slice(queryIndex + 1));
+    const target = params.get('inspect')?.trim();
+    return target || null;
+  }
+
+  async function loadGatewayInspection(activeBackend: SdnBackend, target: string): Promise<void> {
+    const requestId = inspectionRequestId + 1;
+    inspectionRequestId = requestId;
+    inspectionState = 'loading';
+    inspectionGatewayUrl = null;
+    try {
+      const result = await activeBackend.readGatewayUrl(target);
+      if (inspectionRequestId !== requestId) return;
+      inspectionGatewayUrl = result.data?.gatewayUrl ?? null;
+      inspectionState = result.ok ? 'available' : result.capability.state;
+    } catch {
+      if (inspectionRequestId !== requestId) return;
+      inspectionGatewayUrl = null;
+      inspectionState = 'unavailable';
+    }
+  }
+
+  function cancelGatewayInspection(): void {
+    inspectionRequestId += 1;
+    inspectionGatewayUrl = null;
+    inspectionState = 'not-selected';
   }
 </script>
 
@@ -106,7 +153,13 @@
   {#if primaryRoute === '/peers'}
     <PeersScreen {peers} />
   {:else if primaryRoute === '/local-data'}
-    <LocalDataScreen {storage} {objects} />
+    <LocalDataScreen
+      {storage}
+      {objects}
+      {inspectionTarget}
+      {inspectionGatewayUrl}
+      {inspectionState}
+    />
   {:else}
     <NodeScreen summary={nodeSummary} profile={nodeProfile} {capabilities} />
   {/if}

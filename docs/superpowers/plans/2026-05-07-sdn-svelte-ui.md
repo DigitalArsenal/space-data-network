@@ -1053,7 +1053,7 @@ git commit -m "Add SDN UI browser guardrails"
 **Files:**
 - No source edits unless verification exposes a bug.
 
-- [ ] **Step 1: Package desktop**
+- [x] **Step 1: Package desktop**
 
 ```sh
 npm --prefix desktop run package
@@ -1061,7 +1061,7 @@ npm --prefix desktop run package
 
 Expected: exits 0. Known warnings about unsigned macOS app, dependency source maps, CSS `*zoom`, or chunk sizes are acceptable if unchanged.
 
-- [ ] **Step 2: Reinstall local app**
+- [x] **Step 2: Reinstall local app**
 
 ```sh
 osascript -e 'tell application "Space Data Network" to quit' >/dev/null 2>&1 || true
@@ -1072,7 +1072,7 @@ ditto 'desktop/dist/mac-universal/Space Data Network.app' '/Applications/Space D
 open -a '/Applications/Space Data Network.app'
 ```
 
-- [ ] **Step 3: Verify installed local endpoints**
+- [x] **Step 3: Verify installed local endpoints**
 
 ```sh
 curl -fsS http://127.0.0.1:17890/api/node/epm/json
@@ -1081,7 +1081,7 @@ curl -fsS http://127.0.0.1:17890/api/peers/sdn
 
 Expected: both return HTTP 200.
 
-- [ ] **Step 4: Verify installed SDN UI in browser**
+- [x] **Step 4: Verify installed SDN UI in browser**
 
 Open:
 
@@ -1096,7 +1096,7 @@ Verify:
 - Explore/CID inspection uses gateway `127.0.0.1:8081` when invoked.
 - console has no page errors.
 
-- [ ] **Step 5: Commit fixes if verification exposed bugs**
+- [x] **Step 5: Commit fixes if verification exposed bugs**
 
 If verification required source edits:
 
