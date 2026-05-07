@@ -995,7 +995,7 @@ git commit -m "Host Svelte SDN UI from desktop and server"
 - Create: `sdn-js/tests/sdn-ui.spec.ts`
 - Modify: `sdn-js/package.json`
 
-- [ ] **Step 1: Add Playwright script**
+- [x] **Step 1: Add Playwright script**
 
 Add:
 
@@ -1007,7 +1007,7 @@ Add:
 }
 ```
 
-- [ ] **Step 2: Create Playwright tests**
+- [x] **Step 2: Create Playwright tests**
 
 Test:
 
@@ -1017,7 +1017,7 @@ Test:
 - buttons do not use fully rounded bubble style except chips.
 - no route sends the page to `/webui`.
 
-- [ ] **Step 3: Run Vite and Playwright**
+- [x] **Step 3: Run Vite and Playwright**
 
 ```sh
 SDN_UI_BACKEND=desktop-local SDN_UI_PROXY_TARGET=http://127.0.0.1:17890 npm --prefix sdn-js run dev:sdn-ui -- --host 127.0.0.1 --port 5174
@@ -1026,7 +1026,7 @@ npm --prefix sdn-js run test:e2e:sdn-ui
 
 Expected: Playwright passes. Stop Vite after tests.
 
-- [ ] **Step 4: Capture screenshots**
+- [x] **Step 4: Capture screenshots**
 
 Use Playwright screenshot assertions for:
 
@@ -1041,7 +1041,7 @@ Local Data mobile
 
 Store screenshots in test output, not committed artifacts.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```sh
 git add sdn-js/package.json sdn-js/package-lock.json sdn-js/playwright.sdn-ui.config.ts sdn-js/tests/sdn-ui.spec.ts

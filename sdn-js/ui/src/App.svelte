@@ -26,6 +26,8 @@
   let objects: LocalObjectSummary[] = [];
   let walletState = 'pending';
   let storageLabel = 'pending';
+  let primaryRoute = '/node';
+  let screenTitle = 'Node';
 
   const screenTitles: Record<string, string> = {
     '/node': 'Node',
@@ -81,13 +83,8 @@
     currentRoute = normalizeSdnRoute(rawRoute);
   }
 
-  function currentPrimaryRoute(): string {
-    return primaryRouteFromNormalized(currentRoute);
-  }
-
-  function currentTitle(): string {
-    return screenTitles[currentPrimaryRoute()] ?? 'Node';
-  }
+  $: primaryRoute = primaryRouteFromNormalized(currentRoute);
+  $: screenTitle = screenTitles[primaryRoute] ?? 'Node';
 
   function formatBytes(value: number | null | undefined): string {
     if (!value) return 'pending';
@@ -98,17 +95,17 @@
 </script>
 
 <AppShell
-  activeRoute={currentPrimaryRoute()}
+  activeRoute={primaryRoute}
   {backendMode}
   {nodeState}
   peerCount={peers.length}
   {walletState}
   {storageLabel}
-  title={currentTitle()}
+  title={screenTitle}
 >
-  {#if currentPrimaryRoute() === '/peers'}
+  {#if primaryRoute === '/peers'}
     <PeersScreen {peers} />
-  {:else if currentPrimaryRoute() === '/local-data'}
+  {:else if primaryRoute === '/local-data'}
     <LocalDataScreen {storage} {objects} />
   {:else}
     <NodeScreen summary={nodeSummary} profile={nodeProfile} {capabilities} />

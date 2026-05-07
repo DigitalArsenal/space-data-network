@@ -13,7 +13,7 @@
     <strong>SDN</strong>
     <span>Space Data Network</span>
   </div>
-  <nav class="sdn-nav-list">
+  <nav class="sdn-nav-list" aria-label="Primary">
     {#each navItems as item}
       <a
         class="sdn-nav-link"
