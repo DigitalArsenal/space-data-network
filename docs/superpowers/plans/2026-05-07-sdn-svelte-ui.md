@@ -173,7 +173,7 @@ git commit -m "Add Svelte tooling for SDN UI"
 - Create: `sdn-js/src/ui/runtime/sdn-backend.test.ts`
 - Modify: `sdn-js/src/ui/runtime/index.ts`
 
-- [ ] **Step 1: Write the contract tests**
+- [x] **Step 1: Write the contract tests**
 
 Create `sdn-js/src/ui/runtime/sdn-backend.test.ts`:
 
@@ -238,7 +238,7 @@ describe('SdnBackend contract helpers', () => {
 });
 ```
 
-- [ ] **Step 2: Run the failing test**
+- [x] **Step 2: Run the failing test**
 
 Run:
 
@@ -248,7 +248,7 @@ npm --prefix sdn-js exec vitest run src/ui/runtime/sdn-backend.test.ts
 
 Expected: fails because `sdn-backend.ts` does not exist.
 
-- [ ] **Step 3: Create `sdn-backend.ts`**
+- [x] **Step 3: Create `sdn-backend.ts`**
 
 Create:
 
@@ -374,7 +374,7 @@ function trimTrailingSlash(value: string | null | undefined): string | null {
 }
 ```
 
-- [ ] **Step 4: Export the contract**
+- [x] **Step 4: Export the contract**
 
 Append to `sdn-js/src/ui/runtime/index.ts`:
 
@@ -382,7 +382,7 @@ Append to `sdn-js/src/ui/runtime/index.ts`:
 export * from './sdn-backend';
 ```
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run:
 
@@ -392,7 +392,7 @@ npm --prefix sdn-js exec vitest run src/ui/runtime/sdn-backend.test.ts
 
 Expected: passes.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```sh
 git add sdn-js/src/ui/runtime/sdn-backend.ts sdn-js/src/ui/runtime/sdn-backend.test.ts sdn-js/src/ui/runtime/index.ts
