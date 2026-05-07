@@ -33,6 +33,7 @@
     "dev": "tsc --emitDeclarationOnly --watch",
     "test": "npm run build:core && vitest run",
     "test:e2e:storefront": "playwright test --config playwright.storefront.config.ts",
+    "test:e2e:sdn-ui": "playwright test --config playwright.sdn-ui.config.ts",
     "test:relay": "SDN_RUN_RELAY_TEST=1 vitest run src/spaceaware-relay.integration.test.ts",
     "lint": "eslint src --ext .ts",
     "prepublishOnly": "npm run build:package"
