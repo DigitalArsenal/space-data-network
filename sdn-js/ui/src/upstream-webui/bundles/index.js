@@ -6,7 +6,7 @@ import nodeBandwidthBundle from '../../../../../webui/src/bundles/node-bandwidth
 import peersBundle from './peers.js';
 import peerLocationsBundle from './peer-locations.js';
 import pinningBundle from '../../../../../webui/src/bundles/pinning.js';
-import routesBundle from '../../../../../webui/src/bundles/routes.js';
+import routesBundle from '../overrides/bundles/routes.js';
 import redirectsBundle from './redirects.js';
 import filesBundle from '../../../../../webui/src/bundles/files/index.js';
 import configBundle from '../../../../../webui/src/bundles/config.js';
