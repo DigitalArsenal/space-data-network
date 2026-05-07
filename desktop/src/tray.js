@@ -99,7 +99,7 @@ async function buildMenu () {
     {
       id: 'sdnUiHome',
       label: 'SDN UI',
-      click: () => { launchDashboard('/status') }
+      click: () => { launchDashboard('/') }
     },
     // @ts-ignore
     {

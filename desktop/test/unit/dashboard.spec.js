@@ -195,11 +195,12 @@ test.describe('SDN dashboard window', () => {
 
     expect(traySource).toContain("id: 'sdnUiHome'")
     expect(traySource).toContain("label: 'SDN UI'")
-    expect(traySource).toContain("click: () => { launchDashboard('/status') }")
+    expect(traySource).toContain("click: () => { launchDashboard('/') }")
     expect(traySource).toContain("id: 'sdnStatus'")
     expect(traySource).toContain("id: 'sdnFiles'")
     expect(traySource).toContain("id: 'sdnPeers'")
     expect(traySource).toContain("id: 'sdnNodeSettings'")
+    expect(traySource).toContain("click: () => { launchDashboard('/status') }")
     expect(traySource).toContain("click: () => { launchDashboard('/files') }")
     expect(traySource).toContain("click: () => { launchDashboard('/peers') }")
     expect(traySource).toContain("click: () => { launchDashboard('/settings') }")
@@ -211,7 +212,25 @@ test.describe('SDN dashboard window', () => {
     expect(traySource).not.toContain("click: () => { launchWebUI('/files') }")
     expect(traySource).not.toContain("click: () => { launchWebUI('/peers') }")
     expect(traySource).not.toContain("click: () => { launchWebUI('/settings') }")
-    expect(traySource).not.toContain("click: () => { launchDashboard('/') }")
+  })
+
+  test('uses SDN UI route and shell overrides instead of upstream WebUI routes', () => {
+    const appSource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/overrides/App.js'), 'utf8')
+    const bundleSource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/bundles/index.js'), 'utf8')
+    const routeSource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/overrides/bundles/routes.js'), 'utf8')
+    const navSource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/overrides/navigation/NavBar.js'), 'utf8')
+
+    expect(appSource).toContain("import NavBar from './navigation/NavBar.js'")
+    expect(appSource).not.toContain("webui/src/navigation/NavBar.js")
+    expect(bundleSource).toContain("import routesBundle from '../overrides/bundles/routes.js'")
+    expect(bundleSource).not.toContain("webui/src/bundles/routes.js")
+    expect(routeSource).toContain("import SettingsPage from '../settings/SettingsPage.js'")
+    expect(routeSource).toContain("import DirectoryPage from '../directory/DirectoryPage.js'")
+    expect(routeSource).toContain("import ModulesPage from '../modules/ModulesPage.js'")
+    expect(routeSource).toContain("import MarketplacePage from '../marketplace/MarketplacePage.js'")
+    expect(navSource).toContain("import sdnLogoMark from './sdn-logo-mark.svg'")
+    expect(navSource).toContain("<NavLink to='/modules'")
+    expect(navSource).toContain("<ExternalNavLink href='/webui'")
   })
 
   test('uses SDN status labels in the tray menu instead of upstream IPFS labels', () => {
