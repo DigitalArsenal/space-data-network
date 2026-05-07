@@ -12,6 +12,7 @@ import { DndProvider } from 'react-dnd'
 import DndBackend from './lib/dnd-backend.js'
 import { HeliaProvider, ExploreProvider } from 'ipld-explorer-components/providers'
 import { ContextBridgeProvider } from './helpers/context-bridge.jsx'
+import { syncKuboGatewaySettingFromUrl } from './lib/kubo-gateway-settings.js'
 
 const appVersion = process.env.REACT_APP_VERSION
 const gitRevision = process.env.REACT_APP_GIT_REV
@@ -19,6 +20,7 @@ const gitRevision = process.env.REACT_APP_GIT_REV
 console.log(`IPFS Web UI - v${appVersion} - https://github.com/ipfs-shipyard/ipfs-webui/commit/${gitRevision}`)
 
 async function render () {
+  syncKuboGatewaySettingFromUrl()
   const initialData = await bundleCache.getAll()
   if (initialData && process.env.NODE_ENV !== 'production') {
     console.log('intialising store with data from cache', initialData)

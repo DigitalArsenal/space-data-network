@@ -20,6 +20,25 @@
 
 Keep those surfaces separate. Do not reintroduce a combined admin/WebUI mount.
 
+## Desktop Peer And Gateway Guardrails
+
+- The desktop SDN menu must route to SDN UI pages under `/sdn`; the IPFS menu
+  may route to `/webui`. Do not send SDN status, files, peers, explore,
+  settings, or dashboard actions to upstream IPFS WebUI routes.
+- Never treat SSH host aliases, DNS names, or configured seed labels such as
+  `space-data-network-01`, `sdn.spaceaware.io`, or `celestrak.eth` as libp2p
+  Peer IDs. Configured hosts may seed connection attempts, but the UI may show
+  an SDN peer only when Kubo or SDN identify data provides a real Peer ID and
+  SDN protocol or agent evidence.
+- The local desktop SDN static server must expose the SDN API routes used by
+  bundled SDN UI pages, including `/api/peers/sdn`, `/api/peers`,
+  `/api/peers/graph`, and `/api/node/epm/json`.
+- Desktop WebUI and SDN UI windows must inject both the live Kubo RPC API
+  address and the live Kubo gateway address before the bundled UI initializes.
+  The IPLD explorer must use the injected gateway, not a hard-coded `8080`.
+- Keep desktop bootstrap configuration on upstream-compatible IPFS defaults
+  plus real SDN seed multiaddrs with real `/p2p/<peer-id>` values.
+
 ## Upstream IPFS Mirrors
 
 - Treat `webui/` and `desktop/` as upstream IPFS WebUI and IPFS Desktop mirrors.

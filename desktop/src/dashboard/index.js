@@ -2,6 +2,7 @@
 const { screen, BrowserWindow, app, ipcMain } = require('electron')
 const { join } = require('path')
 const { URL } = require('url')
+const toUri = require('multiaddr-to-uri')
 const logger = require('../common/logger')
 const store = require('../common/store')
 const { OPEN_WEBUI_LAUNCH: CONFIG_KEY } = require('../common/config-keys')
@@ -75,15 +76,36 @@ module.exports = async function () {
 
   const url = await getDesktopStaticUrl('sdn')
   let apiAddress = null
+  let gatewayAddress = null
   const loadIntroPage = () => window.loadFile(introPath)
   const getIpfsd = ctx.getFn('getIpfsd')
 
-  async function syncIpfsApiAddress () {
+  function gatewayUrlFromAddr (addr) {
+    if (!addr) return null
+    const ma = addr.toString().includes('/http') ? addr : addr.encapsulate('/http')
+    return toUri(ma)
+  }
+
+  async function syncIpfsAddresses () {
     const ipfsd = await getIpfsd(true)
+    let changed = false
 
     if (ipfsd && ipfsd.apiAddr !== apiAddress) {
       apiAddress = ipfsd.apiAddr
       url.searchParams.set('api', apiAddress.toString())
+      changed = true
+    }
+
+    if (ipfsd && ipfsd.gatewayAddr !== gatewayAddress) {
+      gatewayAddress = ipfsd.gatewayAddr
+      const gatewayUrl = gatewayUrlFromAddr(gatewayAddress)
+      if (gatewayUrl) {
+        url.searchParams.set('gateway', gatewayUrl)
+        changed = true
+      }
+    }
+
+    if (changed) {
       window.webContents.loadURL(url.toString())
       return true
     }
@@ -91,12 +113,12 @@ module.exports = async function () {
     return false
   }
 
-  ipcMain.on(ipcMainEvents.IPFSD, syncIpfsApiAddress)
+  ipcMain.on(ipcMainEvents.IPFSD, syncIpfsAddresses)
 
   const loadDashboardApp = async (path) => {
     url.hash = path || '/'
-    const apiAddressSynced = await syncIpfsApiAddress()
-    if (!apiAddressSynced) window.webContents.loadURL(url.toString())
+    const addressesSynced = await syncIpfsAddresses()
+    if (!addressesSynced) window.webContents.loadURL(url.toString())
   }
 
   window.webContents.on('will-navigate', (event, targetUrl) => {

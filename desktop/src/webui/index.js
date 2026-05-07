@@ -1,6 +1,7 @@
 // @ts-check
 const { screen, BrowserWindow, ipcMain, app, session } = require('electron')
 const { join } = require('path')
+const toUri = require('multiaddr-to-uri')
 const i18n = require('i18next')
 const openExternal = require('./open-external')
 const logger = require('../common/logger')
@@ -137,6 +138,7 @@ module.exports = async function () {
   const window = createWindow()
   ctx.setProp('webui', window)
   let apiAddress = null
+  let gatewayAddress = null
 
   const url = await getDesktopStaticUrl('webui', '/blank')
   url.searchParams.set('deviceId', await ctx.getProp('countlyDeviceId'))
@@ -168,13 +170,33 @@ module.exports = async function () {
   }
 
   const getIpfsd = ctx.getFn('getIpfsd')
-  async function syncIpfsApiAddress () {
+  function gatewayUrlFromAddr (addr) {
+    if (!addr) return null
+    const ma = addr.toString().includes('/http') ? addr : addr.encapsulate('/http')
+    return toUri(ma)
+  }
+
+  async function syncIpfsAddresses () {
     const ipfsd = await getIpfsd(true)
+    let changed = false
 
     if (ipfsd && ipfsd.apiAddr !== apiAddress) {
       apiAddress = ipfsd.apiAddr
       url.searchParams.set('api', apiAddress.toString())
       updateLanguage()
+      changed = true
+    }
+
+    if (ipfsd && ipfsd.gatewayAddr !== gatewayAddress) {
+      gatewayAddress = ipfsd.gatewayAddr
+      const gatewayUrl = gatewayUrlFromAddr(gatewayAddress)
+      if (gatewayUrl) {
+        url.searchParams.set('gateway', gatewayUrl)
+        changed = true
+      }
+    }
+
+    if (changed) {
       window.loadURL(url.toString())
       return true
     }
@@ -182,7 +204,7 @@ module.exports = async function () {
     return false
   }
 
-  ipcMain.on(ipcMainEvents.IPFSD, syncIpfsApiAddress)
+  ipcMain.on(ipcMainEvents.IPFSD, syncIpfsAddresses)
 
   // Set user agent
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -198,10 +220,10 @@ module.exports = async function () {
 
     updateLanguage()
     ;(async () => {
-      const apiAddressSynced = await syncIpfsApiAddress()
-      if (!apiAddressSynced) window.loadURL(url.toString())
+      const addressesSynced = await syncIpfsAddresses()
+      if (!addressesSynced) window.loadURL(url.toString())
     })().catch((err) => {
-      logger.error('[web ui] failed to sync Kubo RPC address before initial load')
+      logger.error('[web ui] failed to sync Kubo RPC/gateway addresses before initial load')
       logger.error(err)
       window.loadURL(url.toString())
     })

@@ -151,6 +151,45 @@ test.describe('SDN dashboard window', () => {
       'space-data-network-01',
       'space-data-network-02'
     ])
+    expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.addrs)).toEqual([
+      [],
+      []
+    ])
+    expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('/p2p/space-data-network-')
+    expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('/p2p/sdn.spaceaware.io')
+    expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('/p2p/celestrak.eth')
+  })
+
+  test('serves observed local Kubo SDN peers with real peer IDs for desktop SDN pages', () => {
+    const { kuboSwarmPeersToDesktopSdnPeers } = require('../../src/static-http-server')
+
+    const peers = kuboSwarmPeersToDesktopSdnPeers({
+      Peers: [
+        {
+          Peer: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+          Addr: '/ip4/159.203.150.8/tcp/4001',
+          Identify: {
+            ID: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+            AgentVersion: 'spacedatanetwork/1.0.3',
+            Protocols: ['/space-data-network/module-delivery/1.0.0']
+          }
+        },
+        {
+          Peer: '12D3KooWGeneric',
+          Addr: '/ip4/203.0.113.1/tcp/4001',
+          Identify: {
+            ID: '12D3KooWGeneric',
+            AgentVersion: 'kubo/0.39.0',
+            Protocols: ['/ipfs/kad/1.0.0']
+          }
+        }
+      ]
+    })
+
+    expect(peers).toHaveLength(1)
+    expect(peers[0].id).toBe('16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
+    expect(peers[0].addrs[0]).toBe('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
+    expect(JSON.stringify(peers)).not.toContain('/p2p/space-data-network-')
   })
 
   test('keeps local Kubo bootstrapped to upstream defaults and SDN seed nodes', () => {
@@ -160,6 +199,8 @@ test.describe('SDN dashboard window', () => {
     expect(daemonConfigSource).toContain("'auto'")
     expect(daemonConfigSource).toContain('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
     expect(daemonConfigSource).toContain('/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
+    expect(daemonConfigSource).toContain('/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4')
+    expect(daemonConfigSource).toContain('/dns4/celestrak.eth/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4')
     expect(daemonConfigSource).toContain('ensureDesktopBootstrapPeers')
     expect(daemonConfigSource).toContain('config.Bootstrap = nextBootstrap')
   })
@@ -172,22 +213,26 @@ test.describe('SDN dashboard window', () => {
     expect(storeSource).not.toContain('--agent-version-suffix=desktop')
   })
 
-  test('syncs the live Kubo RPC address before the SDN dashboard app first loads', () => {
+  test('syncs the live Kubo RPC and gateway addresses before the SDN dashboard app first loads', () => {
     const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/dashboard/index.js'), 'utf8')
 
-    expect(dashboardSource).toContain('async function syncIpfsApiAddress')
-    expect(dashboardSource).toContain('ipcMain.on(ipcMainEvents.IPFSD, syncIpfsApiAddress)')
-    expect(dashboardSource).toContain('const apiAddressSynced = await syncIpfsApiAddress()')
-    expect(dashboardSource).toContain('if (!apiAddressSynced) window.webContents.loadURL(url.toString())')
+    expect(dashboardSource).toContain('async function syncIpfsAddresses')
+    expect(dashboardSource).toContain("url.searchParams.set('api', apiAddress.toString())")
+    expect(dashboardSource).toContain("url.searchParams.set('gateway', gatewayUrl)")
+    expect(dashboardSource).toContain('ipcMain.on(ipcMainEvents.IPFSD, syncIpfsAddresses)')
+    expect(dashboardSource).toContain('const addressesSynced = await syncIpfsAddresses()')
+    expect(dashboardSource).toContain('if (!addressesSynced) window.webContents.loadURL(url.toString())')
   })
 
-  test('syncs the live Kubo RPC address before the desktop Web UI first loads', () => {
+  test('syncs the live Kubo RPC and gateway addresses before the desktop Web UI first loads', () => {
     const webuiSource = fs.readFileSync(path.join(__dirname, '../../src/webui/index.js'), 'utf8')
 
-    expect(webuiSource).toContain('async function syncIpfsApiAddress')
-    expect(webuiSource).toContain('ipcMain.on(ipcMainEvents.IPFSD, syncIpfsApiAddress)')
-    expect(webuiSource).toContain('const apiAddressSynced = await syncIpfsApiAddress()')
-    expect(webuiSource).toContain('if (!apiAddressSynced) window.loadURL(url.toString())')
+    expect(webuiSource).toContain('async function syncIpfsAddresses')
+    expect(webuiSource).toContain("url.searchParams.set('api', apiAddress.toString())")
+    expect(webuiSource).toContain("url.searchParams.set('gateway', gatewayUrl)")
+    expect(webuiSource).toContain('ipcMain.on(ipcMainEvents.IPFSD, syncIpfsAddresses)')
+    expect(webuiSource).toContain('const addressesSynced = await syncIpfsAddresses()')
+    expect(webuiSource).toContain('if (!addressesSynced) window.loadURL(url.toString())')
   })
 
   test('routes tray menu entries to SDN dashboard pages instead of IPFS Web UI pages', () => {
@@ -219,11 +264,13 @@ test.describe('SDN dashboard window', () => {
     const bundleSource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/bundles/index.js'), 'utf8')
     const routeSource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/overrides/bundles/routes.js'), 'utf8')
     const navSource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/overrides/navigation/NavBar.js'), 'utf8')
+    const entrySource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/index.js'), 'utf8')
 
     expect(appSource).toContain("import NavBar from './navigation/NavBar.js'")
     expect(appSource).not.toContain("webui/src/navigation/NavBar.js")
     expect(bundleSource).toContain("import routesBundle from '../overrides/bundles/routes.js'")
     expect(bundleSource).not.toContain("webui/src/bundles/routes.js")
+    expect(entrySource).toContain('syncKuboGatewaySettingFromUrl')
     expect(routeSource).toContain("import SettingsPage from '../settings/SettingsPage.js'")
     expect(routeSource).toContain("import DirectoryPage from '../directory/DirectoryPage.js'")
     expect(routeSource).toContain("import ModulesPage from '../modules/ModulesPage.js'")
