@@ -769,7 +769,7 @@ git commit -m "Create Svelte SDN UI shell"
 - Modify: `sdn-js/ui/src/App.svelte`
 - Test: `sdn-js/src/ui/sdn-ui/app-shell.test.ts`
 
-- [ ] **Step 1: Write DOM-render tests**
+- [x] **Step 1: Write DOM-render tests**
 
 Use `@testing-library/svelte` if added, or use Svelte component instantiation in jsdom. Test:
 
@@ -781,7 +781,7 @@ expect(document.body.textContent).not.toContain('Status');
 expect(document.body.textContent).not.toContain('Files');
 ```
 
-- [ ] **Step 2: Implement shell components**
+- [x] **Step 2: Implement shell components**
 
 `SideNav.svelte` must render only:
 
@@ -793,7 +793,7 @@ Local Data
 
 `TopStatusBar.svelte` must render backend mode, node state, peer count, wallet state, and storage summary from backend result state.
 
-- [ ] **Step 3: Implement `NodeScreen.svelte`**
+- [x] **Step 3: Implement `NodeScreen.svelte`**
 
 Use backend methods:
 
@@ -812,7 +812,7 @@ Render:
 - Access & Roles card.
 - Advanced drawer trigger for Kubo/IPFS diagnostics.
 
-- [ ] **Step 4: Implement `PeersScreen.svelte`**
+- [x] **Step 4: Implement `PeersScreen.svelte`**
 
 Use:
 
@@ -827,7 +827,7 @@ Render:
 - Data feeds, modules, and schemas tabs as explicit degraded cards until marketplace endpoints are wired.
 - Mission loadout panel.
 
-- [ ] **Step 5: Implement `LocalDataScreen.svelte`**
+- [x] **Step 5: Implement `LocalDataScreen.svelte`**
 
 Use:
 
@@ -844,7 +844,7 @@ Render:
 - Rulesets.
 - SQL workbench with degraded state if `runSqlQuery` is unavailable.
 
-- [ ] **Step 6: Verify UI semantics**
+- [x] **Step 6: Verify UI semantics**
 
 Run:
 
@@ -856,7 +856,7 @@ npm --prefix sdn-js exec vitest run src/ui/sdn-ui
 
 Expected: all pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```sh
 git add sdn-js/ui/src sdn-js/src/ui/sdn-ui
