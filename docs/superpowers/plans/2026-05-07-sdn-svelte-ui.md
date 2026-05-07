@@ -1128,13 +1128,13 @@ git -C repos/main-packages/space-data-network status --short --branch
 
 Do not stage generated `desktop/assets/sdn-ui` or unrelated `sdn-server/bin` unless a task explicitly requires them.
 
-- [ ] **Step 3: Push component branch**
+- [x] **Step 3: Push component branch**
 
 ```sh
 git -C repos/main-packages/space-data-network push
 ```
 
-- [ ] **Step 4: Update stack pin**
+- [x] **Step 4: Update stack pin**
 
 ```sh
 git add repos/main-packages/space-data-network
@@ -1142,7 +1142,7 @@ git commit -m "Update SDN Svelte UI pin"
 git push
 ```
 
-- [ ] **Step 5: Required stack verification**
+- [x] **Step 5: Required stack verification**
 
 ```sh
 git submodule status
