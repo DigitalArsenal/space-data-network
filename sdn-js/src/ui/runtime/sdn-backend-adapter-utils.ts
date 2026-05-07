@@ -61,12 +61,12 @@ export function nodeSummaryFromProfile(
 }
 
 export function normalizePeerPayload(payload: unknown): ObservedSdnPeer[] {
-  const records = asRecordArray(payload);
+  const records = recordsFromPayload(payload);
   return records.map(normalizePeerRecord).filter((peer): peer is ObservedSdnPeer => peer !== null);
 }
 
 export function normalizeObjectPayload(payload: unknown): LocalObjectSummary[] {
-  return asRecordArray(payload).map((record, index) => {
+  return recordsFromPayload(payload).map((record, index) => {
     const cid = readString(record, 'cid', 'CID');
     const id = readString(record, 'id', 'object_id', 'objectId') ?? cid ?? `object-${index + 1}`;
     return {
@@ -79,6 +79,16 @@ export function normalizeObjectPayload(payload: unknown): LocalObjectSummary[] {
       ...(cid ? { cid } : {}),
     };
   });
+}
+
+export function recordsFromPayload(payload: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(payload)) return payload.filter(isRecord);
+  if (!isRecord(payload)) return [];
+  for (const key of ['peers', 'results', 'items', 'objects', 'records', 'wallets', 'epms', 'rulesets', 'files']) {
+    const value = payload[key];
+    if (Array.isArray(value)) return value.filter(isRecord);
+  }
+  return [payload];
 }
 
 export function normalizeStorageSummary(payload: unknown): StorageSummary {
@@ -97,6 +107,7 @@ function normalizePeerRecord(record: Record<string, unknown>): ObservedSdnPeer |
   if (!id) return null;
   const protocols = normalizeProtocols(record.protocols ?? metadata.protocols);
   const agentVersion = readString(record, 'agent_version', 'agentVersion') ?? readString(metadata, 'agent_version', 'agentVersion');
+  if (!isLikelyLibp2pPeerId(id) || !hasSdnIdentityEvidence(record, metadata, protocols, agentVersion)) return null;
   return {
     id,
     name: readString(record, 'name', 'display_name', 'displayName', 'dn') ?? id,
@@ -107,16 +118,6 @@ function normalizePeerRecord(record: Record<string, unknown>): ObservedSdnPeer |
   };
 }
 
-function asRecordArray(payload: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(payload)) return payload.filter(isRecord);
-  if (!isRecord(payload)) return [];
-  for (const key of ['peers', 'results', 'items', 'objects', 'records']) {
-    const value = payload[key];
-    if (Array.isArray(value)) return value.filter(isRecord);
-  }
-  return [];
-}
-
 function normalizeProtocols(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
@@ -125,6 +126,25 @@ function normalizeProtocols(value: unknown): string[] {
     return value.split(/[,\s]+/).map((entry) => entry.trim()).filter(Boolean);
   }
   return [];
+}
+
+function isLikelyLibp2pPeerId(value: string): boolean {
+  return /^(12D3Koo|16Uiu2H|Qm)[1-9A-HJ-NP-Za-km-z]{20,}$/.test(value);
+}
+
+function hasSdnIdentityEvidence(
+  record: Record<string, unknown>,
+  metadata: Record<string, unknown>,
+  protocols: string[],
+  agentVersion: string | null,
+): boolean {
+  const evidence = [
+    agentVersion,
+    readString(record, 'source', 'kind', 'type'),
+    readString(metadata, 'source', 'kind', 'type'),
+    ...protocols,
+  ].filter((entry): entry is string => Boolean(entry));
+  return evidence.some((entry) => /space-data-network|spacedatanetwork|sdn/i.test(entry));
 }
 
 function readStringArray(value: unknown): string[] {

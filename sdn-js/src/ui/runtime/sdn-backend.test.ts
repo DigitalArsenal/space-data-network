@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createBrowserNodeBackend } from './sdn-backend-browser';
 import {
   createCapability,
   createUnavailableResult,
@@ -7,6 +8,47 @@ import {
 } from './sdn-backend';
 
 describe('SdnBackend contract helpers', () => {
+  const requiredMethods = [
+    'connect',
+    'getCapabilities',
+    'getNodeSummary',
+    'getHealth',
+    'getNodeProfile',
+    'saveNodeProfile',
+    'listWalletsAndEpms',
+    'beginClaimEpm',
+    'exportCore',
+    'importCore',
+    'listObservedPeers',
+    'listTrustedPeers',
+    'searchDirectory',
+    'connectPeer',
+    'searchListings',
+    'listOwnedItems',
+    'requestGrant',
+    'installModule',
+    'subscribeDataFeed',
+    'getStorageSummary',
+    'listObjects',
+    'inspectObject',
+    'pinObject',
+    'unpinObject',
+    'listRulesets',
+    'saveRuleset',
+    'runSqlQuery',
+    'getKuboStatus',
+    'listFiles',
+    'resolveCid',
+    'readGatewayUrl',
+  ] as const;
+
+  it('exposes every backend method required by the SDN UI design contract', () => {
+    const backend = createBrowserNodeBackend();
+    for (const method of requiredMethods) {
+      expect(typeof backend[method]).toBe('function');
+    }
+  });
+
   it('normalizes desktop-local configuration with Kubo and proxy URLs', () => {
     expect(normalizeBackendConfig({
       mode: 'desktop-local',
