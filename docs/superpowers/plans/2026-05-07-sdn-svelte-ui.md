@@ -1111,7 +1111,7 @@ git commit -m "Fix SDN Svelte UI desktop packaging"
 - Component repo: `repos/main-packages/space-data-network`
 - Stack repo: `/Users/tj/software/orbpro-stack`
 
-- [ ] **Step 1: Run focused component verification**
+- [x] **Step 1: Run focused component verification**
 
 ```sh
 npm --prefix sdn-js exec vitest run src/ui/runtime/sdn-backend*.test.ts src/ui/sdn-ui
@@ -1120,7 +1120,7 @@ npm --prefix sdn-js run build:sdn-ui
 npm --prefix desktop test -- --grep "SDN UI|SDN dashboard|uses SDN UI route"
 ```
 
-- [ ] **Step 2: Check dirty files**
+- [x] **Step 2: Check dirty files**
 
 ```sh
 git -C repos/main-packages/space-data-network status --short --branch
