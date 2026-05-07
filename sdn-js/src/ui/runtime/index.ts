@@ -4,6 +4,10 @@ export {
   normalizeAddressLookupKey,
 } from './address-lookup';
 export * from './sdn-backend';
+export * from './sdn-backend-browser';
+export * from './sdn-backend-desktop';
+export * from './sdn-backend-factory';
+export * from './sdn-backend-remote';
 export {
   type AdminAdapter,
   type AdminMode,
