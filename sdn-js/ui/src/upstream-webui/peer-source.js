@@ -1,6 +1,7 @@
 const DEFAULT_STALE_MS = 10_000;
 const DEFAULT_KUBO_API_BASE_URL = 'http://127.0.0.1:5001';
 const SDN_PROTOCOL_PREFIXES = ['/space-data-network/', '/spacedatanetwork/'];
+const CONFIGURED_SDN_NODE_PROTOCOL = '/space-data-network/configured-node/1.0.0';
 
 /**
  * Normalize a trusted SDN peer into the minimal shape expected by the upstream
@@ -13,9 +14,10 @@ export function normalizeTrustedPeerToSwarmPeer (peer) {
   const addrs = Array.isArray(peer?.addrs) ? peer.addrs.filter(Boolean) : [];
   const protocols = splitProtocols(peer?.metadata?.protocols);
   const agentVersion = inferAgentVersion(peer?.metadata);
+  const peerId = String(peer?.id ?? '').trim();
 
   return {
-    peer: String(peer?.id ?? '').trim(),
+    peer: isResolvedPeerId(peerId, protocols) ? peerId : '',
     addr: addrs[0] ?? '',
     latency: null,
     direction: null,
@@ -196,11 +198,6 @@ export function createHostedRegistryPeerSource (options = {}) {
         return registryPeers;
       }
 
-      const configuredDesktopPeers = await fetchConfiguredDesktopSdnNodes(baseUrl, fetchImpl).catch(() => []);
-      if (configuredDesktopPeers.length > 0) {
-        return configuredDesktopPeers;
-      }
-
       return fetchKuboSdnPeers(kuboApiBaseUrl, fetchImpl);
     }
   };
@@ -259,7 +256,28 @@ function isObservedSdnPeer ({ trustLevel, name, organization, protocols }) {
 }
 
 function isSdnProtocol (protocol) {
-  return SDN_PROTOCOL_PREFIXES.some((prefix) => String(protocol ?? '').startsWith(prefix));
+  const value = String(protocol ?? '');
+  return value !== CONFIGURED_SDN_NODE_PROTOCOL &&
+    SDN_PROTOCOL_PREFIXES.some((prefix) => value.startsWith(prefix));
+}
+
+function isConfiguredNodeAlias (value) {
+  return typeof value === 'string' &&
+    (value.startsWith('space-data-network-') ||
+      value === 'sdn.spaceaware.io' ||
+      value === 'celestrak.eth');
+}
+
+function isResolvedPeerId (peerId, protocols = []) {
+  if (!peerId || isConfiguredNodeAlias(peerId)) {
+    return false;
+  }
+
+  if (splitProtocols(protocols).includes(CONFIGURED_SDN_NODE_PROTOCOL)) {
+    return false;
+  }
+
+  return true;
 }
 
 function formatProtocols (streams) {

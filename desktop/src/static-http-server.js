@@ -29,6 +29,14 @@ const contentTypes = Object.freeze({
   '.woff2': 'font/woff2'
 })
 
+function sendJSON (res, status, payload) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store'
+  })
+  res.end(JSON.stringify(payload))
+}
+
 function routeForUrl (requestUrl) {
   const parsed = new URL(requestUrl, `http://${HOST}`)
   const [, routeName, ...segments] = parsed.pathname.split('/')
@@ -107,13 +115,186 @@ function serveConfiguredSdnNodes (req, res) {
     return false
   }
 
-  res.writeHead(200, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store'
-  })
-  res.end(JSON.stringify({
+  sendJSON(res, 200, {
     nodes: configuredSdnNodesFromSshConfig()
-  }))
+  })
+  return true
+}
+
+function isSdnProtocol (protocol) {
+  const value = String(protocol ?? '')
+  return value.startsWith('/space-data-network/') || value.startsWith('/spacedatanetwork/')
+}
+
+function isSdnAgentVersion (agentVersion) {
+  const value = String(agentVersion ?? '').toLowerCase()
+  return value.includes('spacedatanetwork') || value.includes('space-data-network') || value.startsWith('sdn')
+}
+
+function normalizeKuboPeerAddress (address, peerId) {
+  const value = String(address ?? '').trim()
+  if (!value) return ''
+  return value.includes('/p2p/') ? value : `${value}/p2p/${peerId}`
+}
+
+function kuboSwarmPeersToDesktopSdnPeers (payload) {
+  return (Array.isArray(payload?.Peers) ? payload.Peers : [])
+    .map(peer => {
+      const identify = peer?.Identify || {}
+      const peerId = String(identify.ID || peer?.Peer || '').trim()
+      if (!peerId) return null
+
+      const agentVersion = String(identify.AgentVersion || '').trim()
+      const protocols = Array.isArray(identify.Protocols)
+        ? identify.Protocols.map(protocol => String(protocol ?? '').trim()).filter(Boolean)
+        : []
+
+      if (!isSdnAgentVersion(agentVersion) && !protocols.some(isSdnProtocol)) {
+        return null
+      }
+
+      const metadata = {}
+      if (agentVersion) metadata.agent_version = agentVersion
+      if (protocols.length > 0) metadata.protocols = protocols.join(',')
+
+      return {
+        id: peerId,
+        name: peerId,
+        addrs: [normalizeKuboPeerAddress(peer?.Addr, peerId)].filter(Boolean),
+        trust_level: 'observed',
+        metadata
+      }
+    })
+    .filter(Boolean)
+}
+
+function requestKuboJSON (apiPath) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ hostname: HOST, port: 5001, path: apiPath, method: 'POST' }, response => {
+      let raw = ''
+      response.setEncoding('utf8')
+      response.on('data', chunk => { raw += chunk })
+      response.on('end', () => {
+        if (response.statusCode < 200 || response.statusCode > 299) {
+          reject(new Error(`Kubo API request failed (${response.statusCode})`))
+          return
+        }
+
+        try {
+          resolve(JSON.parse(raw))
+        } catch (err) {
+          reject(err)
+        }
+      })
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+async function serveDesktopPeerAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  if (parsed.pathname !== '/api/peers/sdn' && parsed.pathname !== '/api/peers' && parsed.pathname !== '/api/peers/graph') {
+    return false
+  }
+
+  try {
+    const swarm = await requestKuboJSON('/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms')
+    const peers = kuboSwarmPeersToDesktopSdnPeers(swarm)
+
+    if (parsed.pathname === '/api/peers/graph') {
+      sendJSON(res, 200, {
+        local_peer_id: '',
+        nodes: peers.map(peer => ({
+          peer_id: peer.id,
+          dn: peer.name,
+          trust_level: peer.trust_level,
+          multiformat_address: peer.addrs,
+          is_online: true
+        })),
+        edges: []
+      })
+      return true
+    }
+
+    sendJSON(res, 200, peers)
+  } catch (err) {
+    logger.error(`[static-server] failed to serve desktop SDN peers: ${err.message || err}`)
+    sendJSON(res, 200, [])
+  }
+  return true
+}
+
+function localProfilePath () {
+  return path.join(app.getPath('userData'), 'sdn-node-profile.json')
+}
+
+async function defaultDesktopNodeProfile () {
+  try {
+    const identity = await requestKuboJSON('/api/v0/id')
+    return {
+      dn: 'Space Data Network Desktop',
+      entity_type: 'Node',
+      peer_id: identity.ID || '',
+      agent_version: identity.AgentVersion || '',
+      multiformat_address: Array.isArray(identity.Addresses) ? identity.Addresses : []
+    }
+  } catch {
+    return {
+      dn: 'Space Data Network Desktop',
+      entity_type: 'Node',
+      peer_id: '',
+      multiformat_address: []
+    }
+  }
+}
+
+async function readDesktopNodeProfile () {
+  try {
+    return JSON.parse(await fs.promises.readFile(localProfilePath(), 'utf8'))
+  } catch {
+    return defaultDesktopNodeProfile()
+  }
+}
+
+async function readRequestBody (req) {
+  return await new Promise((resolve, reject) => {
+    let body = ''
+    req.setEncoding('utf8')
+    req.on('data', chunk => { body += chunk })
+    req.on('end', () => resolve(body))
+    req.on('error', reject)
+  })
+}
+
+async function serveDesktopNodeEPMAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  if (parsed.pathname !== '/api/node/epm/json' && parsed.pathname !== '/api/node/epm') {
+    return false
+  }
+
+  if (req.method === 'GET' && parsed.pathname === '/api/node/epm/json') {
+    sendJSON(res, 200, await readDesktopNodeProfile())
+    return true
+  }
+
+  if (req.method === 'PUT' && parsed.pathname === '/api/node/epm') {
+    let profile
+    try {
+      profile = JSON.parse(await readRequestBody(req) || '{}')
+    } catch {
+      sendJSON(res, 400, { error: 'invalid JSON profile' })
+      return true
+    }
+
+    const next = { ...(await readDesktopNodeProfile()), ...profile }
+    await fs.promises.mkdir(path.dirname(localProfilePath()), { recursive: true })
+    await fs.promises.writeFile(localProfilePath(), JSON.stringify(next, null, 2))
+    sendJSON(res, 200, next)
+    return true
+  }
+
+  sendJSON(res, 405, { error: 'method not allowed' })
   return true
 }
 
@@ -145,19 +326,31 @@ async function startDesktopStaticServer () {
         return
       }
 
-      if (redirectBareAppRoute(req, res)) {
-        return
-      }
+      Promise.resolve()
+        .then(() => serveDesktopPeerAPI(req, res))
+        .then(handled => handled || serveDesktopNodeEPMAPI(req, res))
+        .then(handled => {
+          if (handled) return
 
-      const filePath = routeForUrl(req.url || '/')
+          if (redirectBareAppRoute(req, res)) {
+            return
+          }
 
-      if (!filePath) {
-        res.writeHead(404)
-        res.end('Not found')
-        return
-      }
+          const filePath = routeForUrl(req.url || '/')
 
-      serveFile(res, filePath)
+          if (!filePath) {
+            res.writeHead(404)
+            res.end('Not found')
+            return
+          }
+
+          serveFile(res, filePath)
+        })
+        .catch(err => {
+          logger.error(`[static-server] failed to serve request: ${err.message || err}`)
+          res.writeHead(500)
+          res.end('Internal server error')
+        })
     })
 
     await new Promise((resolve, reject) => {
@@ -195,5 +388,6 @@ module.exports = {
   getDesktopStaticOrigin,
   getDesktopStaticUrl,
   isSdnSSHHostAlias,
+  kuboSwarmPeersToDesktopSdnPeers,
   startDesktopStaticServer
 }

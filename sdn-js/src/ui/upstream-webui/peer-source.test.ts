@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildObservedSdnPeers,
@@ -71,6 +71,38 @@ describe('upstream webui peer source', () => {
         protocols: '/spacedatanetwork/sds/SSA',
       },
     ]);
+  });
+
+  it('never treats configured node aliases as libp2p peer IDs', () => {
+    const rows = trustedPeerListToPeerLocationsForSwarm([
+      {
+        id: 'space-data-network-01',
+        name: 'space-data-network-01',
+        addrs: ['/ip4/159.203.150.8/tcp/4001/p2p/space-data-network-01'],
+        trust_level: 'trusted',
+        metadata: {
+          agent_version: 'sdn-configured-node',
+          protocols: '/space-data-network/configured-node/1.0.0',
+        },
+      },
+      {
+        id: 'sdn.spaceaware.io',
+        name: 'sdn.spaceaware.io',
+        addrs: ['/dns4/sdn.spaceaware.io/tcp/4001/p2p/sdn.spaceaware.io'],
+        trust_level: 'trusted',
+      },
+      {
+        id: 'celestrak.eth',
+        name: 'celestrak.eth',
+        addrs: ['/dns4/celestrak.eth/tcp/4001/p2p/celestrak.eth'],
+        trust_level: 'trusted',
+      },
+    ]);
+
+    expect(rows).toEqual([]);
+    expect(JSON.stringify(rows)).not.toContain('/p2p/space-data-network-');
+    expect(JSON.stringify(rows)).not.toContain('/p2p/sdn.spaceaware.io');
+    expect(JSON.stringify(rows)).not.toContain('/p2p/celestrak.eth');
   });
 
   it('derives agentVersion from the SDN advertisement flag when no explicit agent version is present', () => {
@@ -376,11 +408,11 @@ describe('upstream webui peer source', () => {
         },
       },
     ]);
-    expect(fetch).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:17890/api/local/sdn-nodes');
-    expect(fetch).toHaveBeenNthCalledWith(5, 'http://127.0.0.1:5001/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms', { method: 'POST' });
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:5001/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms', { method: 'POST' });
   });
 
-  it('uses desktop configured SDN nodes before Kubo when hosted registry endpoints are absent', async () => {
+  it('does not use desktop configured SDN node aliases as peers when hosted registry endpoints are absent', async () => {
     const fetch = vi.fn(async (url) => {
       if (url === 'http://127.0.0.1:17890/api/peers/sdn' ||
         url === 'http://127.0.0.1:17890/api/peers/graph' ||
@@ -422,7 +454,11 @@ describe('upstream webui peer source', () => {
         };
       }
       if (url.includes('/api/v0/swarm/peers')) {
-        throw new Error('Kubo fallback should not run when configured SDN nodes are available');
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ Peers: [] }),
+        };
       }
       throw new Error(`unexpected url ${url}`);
     });
@@ -433,29 +469,8 @@ describe('upstream webui peer source', () => {
       fetchImpl: fetch,
     });
 
-    await expect(source.listPeers()).resolves.toEqual([
-      {
-        id: 'space-data-network-01',
-        name: 'space-data-network-01',
-        addrs: [],
-        trust_level: 'trusted',
-        metadata: {
-          agent_version: 'sdn-configured-node',
-          protocols: '/space-data-network/configured-node/1.0.0',
-        },
-      },
-      {
-        id: 'space-data-network-02',
-        name: 'space-data-network-02',
-        addrs: [],
-        trust_level: 'trusted',
-        metadata: {
-          agent_version: 'sdn-configured-node',
-          protocols: '/space-data-network/configured-node/1.0.0',
-        },
-      },
-    ]);
+    await expect(source.listPeers()).resolves.toEqual([]);
     expect(fetch).toHaveBeenCalledTimes(4);
-    expect(fetch).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:17890/api/local/sdn-nodes');
+    expect(fetch).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:5001/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms', { method: 'POST' });
   });
 });
