@@ -3,6 +3,7 @@ export {
   addressLookupNamespace,
   normalizeAddressLookupKey,
 } from './address-lookup';
+export * from './sdn-backend';
 export {
   type AdminAdapter,
   type AdminMode,
