@@ -105,6 +105,8 @@ test.describe('SDN dashboard window', () => {
     expect(webuiSource).toContain("directory: 'assets/webui'")
     expect(dashboardSource).not.toContain("require('electron-serve')")
     expect(webuiSource).not.toContain("require('electron-serve')")
+    expect(packageJson.scripts['build:sdn-ui:build']).toBe('npm --prefix ../sdn-js run build:ui')
+    expect(packageJson.scripts['build:sdn-ui:copy']).toContain('../sdn-js/ui/dist')
     expect(packageJson.scripts['build:webui:build']).toBe('npm --prefix ../webui run build')
     expect(packageJson.scripts['build:webui:copy']).toBe('shx rm -rf assets/webui && shx cp -r ../webui/build assets/webui')
     expect(packageJson.scripts['build:webui:download']).toBeUndefined()
