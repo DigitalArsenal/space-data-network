@@ -410,7 +410,7 @@ git commit -m "Define SDN UI backend contract"
 - Create: `sdn-js/src/ui/runtime/sdn-backend-factory.ts`
 - Modify: `sdn-js/src/ui/runtime/index.ts`
 
-- [ ] **Step 1: Write desktop adapter tests**
+- [x] **Step 1: Write desktop adapter tests**
 
 Create `sdn-js/src/ui/runtime/sdn-backend-desktop.test.ts` with fetch mocks:
 
@@ -472,7 +472,7 @@ function jsonResponse(payload: unknown) {
 }
 ```
 
-- [ ] **Step 2: Write remote and browser adapter tests**
+- [x] **Step 2: Write remote and browser adapter tests**
 
 Create tests asserting:
 
@@ -485,7 +485,7 @@ expect(await createBrowserNodeBackend().getCapabilities()).toContainEqual({
 });
 ```
 
-- [ ] **Step 3: Run failing adapter tests**
+- [x] **Step 3: Run failing adapter tests**
 
 Run:
 
@@ -495,11 +495,11 @@ npm --prefix sdn-js exec vitest run src/ui/runtime/sdn-backend-desktop.test.ts s
 
 Expected: fails because adapters do not exist.
 
-- [ ] **Step 4: Implement `createDesktopLocalBackend`**
+- [x] **Step 4: Implement `createDesktopLocalBackend`**
 
 Implement methods using `desktopProxyUrl` for `/api/*` routes, `kuboApiUrl` for Kubo calls, and `gatewayUrl` for CID resolution. Normalize peers into `ObservedSdnPeer` and split comma-separated `metadata.protocols`.
 
-- [ ] **Step 5: Implement `createRemoteSdnBackend`**
+- [x] **Step 5: Implement `createRemoteSdnBackend`**
 
 Implement remote calls against `serverUrl`, starting with:
 
@@ -513,11 +513,11 @@ POST /api/v1/data/query
 
 If an endpoint returns `404`, return a degraded capability result with the endpoint name in the reason.
 
-- [ ] **Step 6: Implement `createBrowserNodeBackend`**
+- [x] **Step 6: Implement `createBrowserNodeBackend`**
 
 Return explicit degraded results for daemon-only methods and available capability metadata for local browser identity state. Do not claim browser-node is fully implemented.
 
-- [ ] **Step 7: Implement `createSdnBackend` factory**
+- [x] **Step 7: Implement `createSdnBackend` factory**
 
 Create `sdn-js/src/ui/runtime/sdn-backend-factory.ts`:
 
@@ -535,7 +535,7 @@ export function createSdnBackend(config: PartialSdnBackendConfig): SdnBackend {
 }
 ```
 
-- [ ] **Step 8: Export adapters**
+- [x] **Step 8: Export adapters**
 
 Append to `sdn-js/src/ui/runtime/index.ts`:
 
@@ -546,7 +546,7 @@ export * from './sdn-backend-factory';
 export * from './sdn-backend-remote';
 ```
 
-- [ ] **Step 9: Verify**
+- [x] **Step 9: Verify**
 
 Run:
 
@@ -556,7 +556,7 @@ npm --prefix sdn-js exec vitest run src/ui/runtime/sdn-backend*.test.ts
 
 Expected: passes.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```sh
 git add sdn-js/src/ui/runtime/sdn-backend*.ts
