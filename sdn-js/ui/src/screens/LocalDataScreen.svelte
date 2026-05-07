@@ -4,6 +4,9 @@
 
   export let storage: StorageSummary | null = null;
   export let objects: LocalObjectSummary[] = [];
+  export let inspectionTarget: string | null = null;
+  export let inspectionGatewayUrl: string | null = null;
+  export let inspectionState = 'not-selected';
 
   function formatBytes(value: number | null | undefined): string {
     if (!value) return 'pending';
@@ -43,7 +46,22 @@
 </article>
 
 <section class="sdn-panel-grid">
-  <article class="sdn-card"><h2>Object Inspector</h2><p>Select a stored object to inspect provenance, signatures, and gateway access.</p></article>
+  <article class="sdn-card">
+    <h2>Object Inspector</h2>
+    {#if inspectionTarget}
+      <dl class="sdn-details">
+        <div><dt>CID</dt><dd><code>{inspectionTarget}</code></dd></div>
+        <div><dt>Gateway</dt><dd>{inspectionState}</dd></div>
+      </dl>
+      {#if inspectionGatewayUrl}
+        <a class="sdn-button" href={inspectionGatewayUrl} target="_blank" rel="noreferrer">Open Gateway</a>
+      {:else}
+        <p>Gateway access is unavailable for this object.</p>
+      {/if}
+    {:else}
+      <p>Select a stored object to inspect provenance, signatures, and gateway access.</p>
+    {/if}
+  </article>
   <article class="sdn-card"><h2>Rulesets</h2><p>Retention, aging, and replication policies are represented as degraded until the local policy endpoint is wired.</p></article>
   <article class="sdn-card"><h2>SQL Workbench</h2><p>Local SQL queries use the backend contract and show degraded state when no local index is available.</p></article>
 </section>

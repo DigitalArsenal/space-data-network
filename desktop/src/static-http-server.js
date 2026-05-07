@@ -9,6 +9,12 @@ const logger = require('./common/logger')
 
 const HOST = '127.0.0.1'
 const START_PORT = 17890
+const DESKTOP_SDN_SEED_PEERS = Object.freeze([
+  '/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+  '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+  '/dns4/celestrak.eth/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+  '/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4'
+])
 const ROUTES = Object.freeze({
   sdn: 'assets/sdn-ui',
   webui: 'assets/webui'
@@ -192,6 +198,19 @@ function requestKuboJSON (apiPath) {
   })
 }
 
+async function connectDesktopSdnSeedPeers (requestJSON = requestKuboJSON) {
+  const results = []
+  for (const peer of DESKTOP_SDN_SEED_PEERS) {
+    try {
+      const result = await requestJSON(`/api/v0/swarm/connect?timeout=5000ms&arg=${encodeURIComponent(peer)}`)
+      results.push({ peer, ok: true, result })
+    } catch (err) {
+      results.push({ peer, ok: false, error: err })
+    }
+  }
+  return results
+}
+
 async function serveDesktopPeerAPI (req, res) {
   const parsed = new URL(req.url || '/', `http://${HOST}`)
   if (parsed.pathname !== '/api/peers/sdn' && parsed.pathname !== '/api/peers' && parsed.pathname !== '/api/peers/graph') {
@@ -200,7 +219,13 @@ async function serveDesktopPeerAPI (req, res) {
 
   try {
     const swarm = await requestKuboJSON('/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms')
-    const peers = kuboSwarmPeersToDesktopSdnPeers(swarm)
+    let peers = kuboSwarmPeersToDesktopSdnPeers(swarm)
+
+    if (peers.length === 0) {
+      await connectDesktopSdnSeedPeers()
+      const refreshedSwarm = await requestKuboJSON('/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms')
+      peers = kuboSwarmPeersToDesktopSdnPeers(refreshedSwarm)
+    }
 
     if (parsed.pathname === '/api/peers/graph') {
       sendJSON(res, 200, {
@@ -298,6 +323,37 @@ async function serveDesktopNodeEPMAPI (req, res) {
   return true
 }
 
+async function serveDesktopLocalDataAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+
+  if (req.method === 'GET' && parsed.pathname === '/api/v1/data/health') {
+    sendJSON(res, 200, {
+      healthy: true,
+      details: {
+        runtime: 'desktop-local',
+        object_index: 'degraded'
+      }
+    })
+    return true
+  }
+
+  if (req.method === 'GET' && parsed.pathname === '/api/v1/data/objects') {
+    sendJSON(res, 200, { objects: [] })
+    return true
+  }
+
+  if (req.method === 'POST' && parsed.pathname === '/api/v1/data/query') {
+    sendJSON(res, 200, {
+      results: [],
+      degraded: true,
+      reason: 'local SQL index is not wired in desktop-local yet'
+    })
+    return true
+  }
+
+  return false
+}
+
 function serveFile (res, filePath) {
   fs.readFile(filePath, (err, body) => {
     if (err) {
@@ -329,6 +385,7 @@ async function startDesktopStaticServer () {
       Promise.resolve()
         .then(() => serveDesktopPeerAPI(req, res))
         .then(handled => handled || serveDesktopNodeEPMAPI(req, res))
+        .then(handled => handled || serveDesktopLocalDataAPI(req, res))
         .then(handled => {
           if (handled) return
 
@@ -384,10 +441,13 @@ async function getDesktopStaticUrl (routeName, hash = '/') {
 }
 
 module.exports = {
+  connectDesktopSdnSeedPeers,
   configuredSdnNodesFromSshConfig,
+  DESKTOP_SDN_SEED_PEERS,
   getDesktopStaticOrigin,
   getDesktopStaticUrl,
   isSdnSSHHostAlias,
   kuboSwarmPeersToDesktopSdnPeers,
+  serveDesktopLocalDataAPI,
   startDesktopStaticServer
 }

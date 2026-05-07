@@ -194,6 +194,38 @@ test.describe('SDN dashboard window', () => {
     expect(JSON.stringify(peers)).not.toContain('/p2p/space-data-network-')
   })
 
+  test('connects real SDN seed peer multiaddrs before desktop peer API reports empty', async () => {
+    const { connectDesktopSdnSeedPeers, DESKTOP_SDN_SEED_PEERS } = require('../../src/static-http-server')
+    const requestedPaths = []
+
+    const results = await connectDesktopSdnSeedPeers(async (apiPath) => {
+      requestedPaths.push(apiPath)
+      if (apiPath.includes('dns4')) throw new Error('dns seed unavailable in test')
+      return { Strings: ['connect success'] }
+    })
+
+    expect(results).toHaveLength(DESKTOP_SDN_SEED_PEERS.length)
+    expect(results.some(result => result.ok)).toBe(true)
+    expect(results.some(result => !result.ok)).toBe(true)
+    expect(decodeURIComponent(requestedPaths.join('\n'))).toContain('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
+    expect(decodeURIComponent(requestedPaths.join('\n'))).toContain('/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4')
+    expect(decodeURIComponent(requestedPaths.join('\n'))).not.toContain('/p2p/space-data-network-')
+    expect(decodeURIComponent(requestedPaths.join('\n'))).not.toContain('/p2p/sdn.spaceaware.io')
+    expect(decodeURIComponent(requestedPaths.join('\n'))).not.toContain('/p2p/celestrak.eth')
+  })
+
+  test('serves Svelte local data endpoints with degraded desktop-local placeholders', () => {
+    const staticServerSource = fs.readFileSync(path.join(__dirname, '../../src/static-http-server.js'), 'utf8')
+
+    expect(staticServerSource).toContain("parsed.pathname === '/api/v1/data/health'")
+    expect(staticServerSource).toContain("parsed.pathname === '/api/v1/data/objects'")
+    expect(staticServerSource).toContain("parsed.pathname === '/api/v1/data/query'")
+    expect(staticServerSource).toContain('object_index')
+    expect(staticServerSource).toContain('objects: []')
+    expect(staticServerSource).toContain('local SQL index is not wired in desktop-local yet')
+    expect(staticServerSource).toContain('handled || serveDesktopLocalDataAPI(req, res)')
+  })
+
   test('keeps local Kubo bootstrapped to upstream defaults and SDN seed nodes', () => {
     const daemonConfigSource = fs.readFileSync(path.join(__dirname, '../../src/daemon/config.js'), 'utf8')
 

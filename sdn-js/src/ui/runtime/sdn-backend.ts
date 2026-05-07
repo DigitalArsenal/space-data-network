@@ -119,10 +119,10 @@ export function normalizeBackendConfig(input: PartialSdnBackendConfig): SdnBacke
   const mode = isBackendMode(input.mode) ? input.mode : 'desktop-local';
   return {
     mode,
-    kuboApiUrl: trimTrailingSlash(input.kuboApiUrl) ?? (mode === 'desktop-local' ? 'http://127.0.0.1:5001' : null),
-    gatewayUrl: trimTrailingSlash(input.gatewayUrl) ?? (mode === 'desktop-local' ? 'http://127.0.0.1:8081' : null),
-    desktopProxyUrl: trimTrailingSlash(input.desktopProxyUrl) ?? null,
-    serverUrl: trimTrailingSlash(input.serverUrl) ?? null,
+    kuboApiUrl: normalizeEndpointUrl(input.kuboApiUrl) ?? (mode === 'desktop-local' ? 'http://127.0.0.1:5001' : null),
+    gatewayUrl: normalizeEndpointUrl(input.gatewayUrl) ?? (mode === 'desktop-local' ? 'http://127.0.0.1:8081' : null),
+    desktopProxyUrl: normalizeEndpointUrl(input.desktopProxyUrl) ?? null,
+    serverUrl: normalizeEndpointUrl(input.serverUrl) ?? null,
   };
 }
 
@@ -155,4 +155,18 @@ function trimTrailingSlash(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
   return trimmed.replace(/\/+$/, '');
+}
+
+function normalizeEndpointUrl(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimTrailingSlash(endpointUrlFromMultiaddr(trimmed) ?? trimmed);
+}
+
+function endpointUrlFromMultiaddr(value: string): string | null {
+  const [, hostProtocol, host, transport, port] = value.split('/');
+  if (!hostProtocol || !host || transport !== 'tcp' || !port) return null;
+  if (!['ip4', 'ip6', 'dns', 'dns4', 'dns6'].includes(hostProtocol)) return null;
+  const hostname = hostProtocol === 'ip6' ? `[${host}]` : host;
+  return `http://${hostname}:${port}`;
 }

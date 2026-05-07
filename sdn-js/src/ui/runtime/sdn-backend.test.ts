@@ -64,6 +64,17 @@ describe('SdnBackend contract helpers', () => {
     });
   });
 
+  it('normalizes injected desktop Kubo multiaddrs to HTTP URLs', () => {
+    expect(normalizeBackendConfig({
+      mode: 'desktop-local',
+      kuboApiUrl: '/ip4/127.0.0.1/tcp/5001',
+      gatewayUrl: '/ip4/127.0.0.1/tcp/8081',
+    })).toMatchObject({
+      kuboApiUrl: 'http://127.0.0.1:5001',
+      gatewayUrl: 'http://127.0.0.1:8081',
+    });
+  });
+
   it('normalizes remote-sdn configuration with server URL only', () => {
     expect(normalizeBackendConfig({
       mode: 'remote-sdn',
