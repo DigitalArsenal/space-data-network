@@ -134,13 +134,19 @@ Create:
   "compilerOptions": {
     "allowJs": true,
     "checkJs": false,
+    "noEmit": true,
     "rootDir": ".",
     "types": ["svelte"]
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.mts"],
+  "include": ["src/**/*.svelte"],
   "exclude": ["dist", "node_modules"]
 }
 ```
+
+If no Svelte component exists yet, add a tiny hidden sentinel component under
+`sdn-js/ui/src/` so `check:sdn-ui` proves Svelte tooling without traversing the
+legacy upstream WebUI bridge. Do not include `src/**/*.ts` in this task; adapter
+TypeScript checks are introduced after the SDN runtime contract exists.
 
 - [ ] **Step 6: Verify scripts and config**
 
@@ -151,7 +157,8 @@ npm --prefix sdn-js exec vitest run src/ui/vite-config.test.ts
 npm --prefix sdn-js run check:sdn-ui
 ```
 
-Expected: vitest passes; `svelte-check` may fail until Task 2 creates `App.svelte`. If it fails only for missing Svelte app files, proceed to Task 2 before re-running.
+Expected: vitest passes; `svelte-check` passes with zero errors and does not
+scan legacy upstream WebUI TypeScript.
 
 - [ ] **Step 7: Commit**
 
