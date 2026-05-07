@@ -1016,7 +1016,7 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 	if err != nil {
 		return 0, fmt.Errorf("query stored PNM records: %w", err)
 	}
-	records = latestDatasetPublicationPNMBatches(records)
+	records = n.catchupCandidateDatasetPublicationPNMs(records)
 	materialized := 0
 	var firstErr error
 	for _, record := range records {
@@ -1049,6 +1049,27 @@ func (n *Node) materializeStoredDatasetPublicationPNMs(ctx context.Context, limi
 		}
 	}
 	return materialized, firstErr
+}
+
+func (n *Node) catchupCandidateDatasetPublicationPNMs(records []*storage.Record) []*storage.Record {
+	if len(records) == 0 {
+		return records
+	}
+	candidates := records[:0]
+	for _, record := range records {
+		if n.storedDatasetPublicationPNMIsSelfOwned(record) {
+			continue
+		}
+		candidates = append(candidates, record)
+	}
+	return latestDatasetPublicationPNMBatches(candidates)
+}
+
+func (n *Node) storedDatasetPublicationPNMIsSelfOwned(record *storage.Record) bool {
+	if n == nil || n.host == nil || record == nil {
+		return false
+	}
+	return strings.TrimSpace(record.PeerID) == n.host.ID().String()
 }
 
 func (n *Node) materializeStoredDatasetPublicationPNM(ctx context.Context, schema string, record *storage.Record) (bool, error) {
