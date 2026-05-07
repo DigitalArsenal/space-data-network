@@ -14,6 +14,7 @@ import (
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
+	libp2p "github.com/libp2p/go-libp2p"
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
 
@@ -197,6 +198,94 @@ func mustReadTestFile(t *testing.T, path string) []byte {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return data
+}
+
+func TestMaterializeStoredDatasetPublicationPNMsSkipsSelfOwnedPNM(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "store"), validator)
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	defer store.Close()
+
+	hostPriv, _, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x47}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key failed: %v", err)
+	}
+	h, err := libp2p.New(libp2p.Identity(hostPriv), libp2p.NoListenAddrs)
+	if err != nil {
+		t.Fatalf("libp2p.New failed: %v", err)
+	}
+	defer h.Close()
+
+	pnmBytes := buildCatchupTestPNM(t, "bafy-self-pnm", "sdn-OMM-full:OMM.fbs:self-batch:part-000001")
+	if _, err := store.Store("PNM.fbs", pnmBytes, h.ID().String(), nil); err != nil {
+		t.Fatalf("store self PNM: %v", err)
+	}
+	registry := peers.NewRegistry(false, nil)
+	if err := registry.AddPeer(&peers.TrustedPeer{ID: h.ID(), TrustLevel: peers.Trusted}); err != nil {
+		t.Fatalf("add trusted self peer: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	n := &Node{
+		host:         h,
+		store:        store,
+		peerRegistry: registry,
+		config: &config.Config{
+			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "storage")},
+			Admin:   config.AdminConfig{IPFSAPIURL: "http://127.0.0.1:5002"},
+		},
+		ctx:                     ctx,
+		datasetMaterializedPNMs: make(map[string]time.Time),
+	}
+
+	materialized, err := n.materializeStoredDatasetPublicationPNMs(ctx, 10)
+	if err != nil {
+		t.Fatalf("self-owned stored PNM should be skipped without replay error, got %v", err)
+	}
+	if materialized != 0 {
+		t.Fatalf("materialized = %d, want 0 for self-owned PNM", materialized)
+	}
+}
+
+func TestCatchupCandidateDatasetPublicationPNMsIgnoresNewerSelfOwnedBatch(t *testing.T) {
+	t.Parallel()
+
+	hostPriv, _, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x48}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key failed: %v", err)
+	}
+	h, err := libp2p.New(libp2p.Identity(hostPriv), libp2p.NoListenAddrs)
+	if err != nil {
+		t.Fatalf("libp2p.New failed: %v", err)
+	}
+	defer h.Close()
+
+	trustedInbound := &storage.Record{
+		PeerID:    "16Uiu2HAmTrustedProvider",
+		Data:      buildCatchupTestPNM(t, "bafy-trusted-omm", "sdn-OMM-full:OMM.fbs:trusted-batch:part-000001"),
+		Timestamp: time.Unix(200, 0).UTC(),
+	}
+	selfOwnedNewer := &storage.Record{
+		PeerID:    h.ID().String(),
+		Data:      buildCatchupTestPNM(t, "bafy-self-omm", "sdn-OMM-full:OMM.fbs:self-batch:part-000001"),
+		Timestamp: time.Unix(300, 0).UTC(),
+	}
+
+	candidates := (&Node{host: h}).catchupCandidateDatasetPublicationPNMs([]*storage.Record{selfOwnedNewer, trustedInbound})
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %d, want trusted inbound only", len(candidates))
+	}
+	if candidates[0] != trustedInbound {
+		t.Fatal("newer self-owned PNM hid the trusted inbound catch-up candidate")
+	}
 }
 
 func TestLatestDatasetPublicationPNMBatchesKeepsNewestBatchPerDatasetSchema(t *testing.T) {

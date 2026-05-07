@@ -27,11 +27,11 @@ ExecStart=/opt/spacedatanetwork/bin/spacedatanetwork \
     --storage-path ${SDN_STORAGE_PATH} \
     --raw-path ${SDN_RAW_PATH} \
     --celestrak-interval 3h \
-    --satcat-interval 24h \
+    --satcat-interval 3h \
     --celestrak-space-weather-interval 3h \
     --dataset-publish-url ${SDN_DATASET_PUBLISH_URL} \
     --spacetrack-enabled=false \
-    --http-timeout 120s
+    --http-timeout 900s
 
 Restart=always
 RestartSec=10
