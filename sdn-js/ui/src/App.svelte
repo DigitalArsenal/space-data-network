@@ -1,19 +1,31 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import AppShell from './components/AppShell.svelte';
   import { createBackendFromLocation } from './lib/backend-context';
   import { normalizeSdnRoute, primaryRouteFromNormalized } from './lib/routes';
-  import type { NodeSummary, SdnBackendMode } from '../../src/ui/runtime/sdn-backend';
-
-  const navItems = [
-    { href: '#/node', route: '/node', label: 'Node' },
-    { href: '#/peers', route: '/peers', label: 'Peers' },
-    { href: '#/local-data', route: '/local-data', label: 'Local Data' },
-  ] as const;
+  import LocalDataScreen from './screens/LocalDataScreen.svelte';
+  import NodeScreen from './screens/NodeScreen.svelte';
+  import PeersScreen from './screens/PeersScreen.svelte';
+  import type {
+    BackendCapability,
+    LocalObjectSummary,
+    NodeSummary,
+    ObservedSdnPeer,
+    SdnBackendMode,
+    StorageSummary,
+  } from '../../src/ui/runtime/sdn-backend';
 
   let currentRoute = '/node';
   let backendMode: SdnBackendMode = 'desktop-local';
   let nodeSummary: NodeSummary | null = null;
   let nodeState = 'loading';
+  let nodeProfile: Record<string, unknown> | null = null;
+  let capabilities: BackendCapability[] = [];
+  let peers: ObservedSdnPeer[] = [];
+  let storage: StorageSummary | null = null;
+  let objects: LocalObjectSummary[] = [];
+  let walletState = 'pending';
+  let storageLabel = 'pending';
 
   const screenTitles: Record<string, string> = {
     '/node': 'Node',
@@ -34,6 +46,33 @@
     }).catch((error: unknown) => {
       nodeState = error instanceof Error ? error.message : 'unavailable';
     });
+    backend.getNodeProfile().then((result) => {
+      nodeProfile = result.data;
+      walletState = result.ok ? 'claimed' : result.capability.state;
+    }).catch(() => {
+      walletState = 'unavailable';
+    });
+    backend.getCapabilities().then((result) => {
+      capabilities = result;
+    }).catch(() => {
+      capabilities = [];
+    });
+    backend.listObservedPeers().then((result) => {
+      peers = result.data ?? [];
+    }).catch(() => {
+      peers = [];
+    });
+    backend.getStorageSummary().then((result) => {
+      storage = result.data;
+      storageLabel = formatBytes(result.data?.usedBytes);
+    }).catch(() => {
+      storageLabel = 'unavailable';
+    });
+    backend.listObjects().then((result) => {
+      objects = result.data ?? [];
+    }).catch(() => {
+      objects = [];
+    });
     return () => window.removeEventListener('hashchange', updateRouteFromLocation);
   });
 
@@ -49,44 +88,29 @@
   function currentTitle(): string {
     return screenTitles[currentPrimaryRoute()] ?? 'Node';
   }
+
+  function formatBytes(value: number | null | undefined): string {
+    if (!value) return 'pending';
+    if (value > 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`;
+    if (value > 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`;
+    return `${value} B`;
+  }
 </script>
 
-<div class="sdn-app">
-  <div class="sdn-shell">
-    <aside class="sdn-side-nav" aria-label="Primary">
-      <div class="sdn-brand">
-        <strong>SDN</strong>
-        <span>{backendMode}</span>
-      </div>
-      <nav class="sdn-nav-list">
-        {#each navItems as item}
-          <a
-            class="sdn-nav-link"
-            href={item.href}
-            aria-current={currentPrimaryRoute() === item.route ? 'page' : undefined}
-          >
-            {item.label}
-          </a>
-        {/each}
-      </nav>
-    </aside>
-
-    <main class="sdn-main">
-      <header class="sdn-top-bar">
-        <h1>{currentTitle()}</h1>
-        <div class="sdn-top-meta" aria-label="Runtime status">
-          <span class="sdn-chip" data-state={nodeState === 'online' ? 'online' : 'degraded'}>{nodeState}</span>
-          <span class="sdn-chip">{nodeSummary?.peerId ?? 'peer pending'}</span>
-          <span class="sdn-chip">{nodeSummary?.agentVersion ?? backendMode}</span>
-        </div>
-      </header>
-
-      <section class="sdn-content" aria-label={currentTitle()}>
-        <article class="sdn-card">
-          <h2>{currentTitle()}</h2>
-          <p>{nodeSummary?.displayName ?? 'Space Data Network'}</p>
-        </article>
-      </section>
-    </main>
-  </div>
-</div>
+<AppShell
+  activeRoute={currentPrimaryRoute()}
+  {backendMode}
+  {nodeState}
+  peerCount={peers.length}
+  {walletState}
+  {storageLabel}
+  title={currentTitle()}
+>
+  {#if currentPrimaryRoute() === '/peers'}
+    <PeersScreen {peers} />
+  {:else if currentPrimaryRoute() === '/local-data'}
+    <LocalDataScreen {storage} {objects} />
+  {:else}
+    <NodeScreen summary={nodeSummary} profile={nodeProfile} {capabilities} />
+  {/if}
+</AppShell>
