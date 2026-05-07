@@ -4,9 +4,9 @@
     "allowJs": true,
     "checkJs": false,
     "noEmit": true,
-    "rootDir": ".",
-    "types": ["svelte"]
+    "rootDir": "..",
+    "types": ["svelte", "vite/client"]
   },
-  "include": ["src/**/*.svelte"],
+  "include": ["src/**/*.svelte", "src/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }

@@ -1,0 +1,21 @@
+:root {
+  color-scheme: dark;
+  --sdn-bg: #050506;
+  --sdn-bg-elevated: #0c0d10;
+  --sdn-surface: #111318;
+  --sdn-surface-2: #171a21;
+  --sdn-border: rgba(255, 255, 255, 0.11);
+  --sdn-border-strong: rgba(255, 255, 255, 0.18);
+  --sdn-text: #f5f5f7;
+  --sdn-text-muted: #a1a1aa;
+  --sdn-text-subtle: #71717a;
+  --sdn-blue: #0a84ff;
+  --sdn-green: #30d158;
+  --sdn-amber: #ffd60a;
+  --sdn-red: #ff453a;
+  --sdn-purple: #bf5af2;
+  --sdn-radius: 12px;
+  --sdn-radius-sm: 8px;
+  --sdn-shadow: 0 20px 80px rgba(0, 0, 0, 0.35);
+  --sdn-font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+}
