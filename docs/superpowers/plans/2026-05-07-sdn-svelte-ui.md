@@ -574,7 +574,7 @@ git commit -m "Add SDN UI backend adapters"
 - Create: `sdn-js/ui/src/lib/routes.ts`
 - Create: `sdn-js/src/ui/sdn-ui/routes.test.ts`
 
-- [ ] **Step 1: Write route compatibility tests**
+- [x] **Step 1: Write route compatibility tests**
 
 Create `sdn-js/src/ui/sdn-ui/routes.test.ts`:
 
@@ -598,7 +598,7 @@ describe('SDN Svelte UI route compatibility', () => {
 });
 ```
 
-- [ ] **Step 2: Run failing route test**
+- [x] **Step 2: Run failing route test**
 
 ```sh
 npm --prefix sdn-js exec vitest run src/ui/sdn-ui/routes.test.ts
@@ -606,7 +606,7 @@ npm --prefix sdn-js exec vitest run src/ui/sdn-ui/routes.test.ts
 
 Expected: fails because route helper does not exist.
 
-- [ ] **Step 3: Implement `routes.ts`**
+- [x] **Step 3: Implement `routes.ts`**
 
 Create `sdn-js/ui/src/lib/routes.ts`:
 
@@ -627,7 +627,7 @@ export function normalizeSdnRoute(rawPath: string): string {
 }
 ```
 
-- [ ] **Step 4: Create design tokens**
+- [x] **Step 4: Create design tokens**
 
 Create `sdn-js/ui/src/styles/tokens.css` with:
 
@@ -655,7 +655,7 @@ Create `sdn-js/ui/src/styles/tokens.css` with:
 }
 ```
 
-- [ ] **Step 5: Create app shell styles**
+- [x] **Step 5: Create app shell styles**
 
 Create `sdn-js/ui/src/styles/app.css` with stable layout classes:
 
@@ -693,7 +693,7 @@ textarea {
 }
 ```
 
-- [ ] **Step 6: Create backend context**
+- [x] **Step 6: Create backend context**
 
 Create `sdn-js/ui/src/lib/backend-context.ts` that reads query params and env vars:
 
@@ -712,7 +712,7 @@ export function createBackendFromLocation(location: Location = window.location):
 }
 ```
 
-- [ ] **Step 7: Replace `main.ts`**
+- [x] **Step 7: Replace `main.ts`**
 
 Change `sdn-js/ui/src/main.ts` to:
 
@@ -731,11 +731,11 @@ const app = new App({ target });
 export default app;
 ```
 
-- [ ] **Step 8: Create the first `App.svelte` shell**
+- [x] **Step 8: Create the first `App.svelte` shell**
 
 Create a minimal shell that renders the top navigation, active route, and backend mode using real route normalization. The shell must render `Node`, `Peers`, and `Local Data` labels and must not render upstream `Status` or `Files` nav items.
 
-- [ ] **Step 9: Verify**
+- [x] **Step 9: Verify**
 
 Run:
 
@@ -747,7 +747,7 @@ npm --prefix sdn-js run build:sdn-ui
 
 Expected: passes and produces `sdn-js/ui/dist`.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```sh
 git add sdn-js/ui/src sdn-js/src/ui/sdn-ui/routes.test.ts

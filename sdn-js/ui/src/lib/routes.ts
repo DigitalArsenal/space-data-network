@@ -1,0 +1,36 @@
+export type PrimaryRoute = '/node' | '/peers' | '/local-data' | '/advanced' | '/claim-core';
+
+export function normalizeSdnRoute(rawPath: string): string {
+  const path = normalizePath(rawPath);
+  if (path === '' || path === '/' || path.startsWith('/status')) return '/node';
+  if (path.startsWith('/settings')) return '/node?panel=advanced';
+  if (path.startsWith('/files')) return '/local-data';
+  if (path.startsWith('/pins')) return '/local-data?tab=pins';
+  if (path.startsWith('/modules')) return '/peers?tab=modules';
+  if (path.startsWith('/marketplace')) return '/peers?tab=marketplace';
+  if (path.startsWith('/explore/')) return `/local-data?inspect=${encodeURIComponent(path.slice('/explore/'.length))}`;
+  if (
+    path.startsWith('/node') ||
+    path.startsWith('/peers') ||
+    path.startsWith('/local-data') ||
+    path.startsWith('/advanced') ||
+    path.startsWith('/claim-core')
+  ) {
+    return path;
+  }
+  return '/node';
+}
+
+export function primaryRouteFromNormalized(route: string): PrimaryRoute {
+  if (route.startsWith('/peers')) return '/peers';
+  if (route.startsWith('/local-data')) return '/local-data';
+  if (route.startsWith('/advanced')) return '/advanced';
+  if (route.startsWith('/claim-core')) return '/claim-core';
+  return '/node';
+}
+
+function normalizePath(rawPath: string): string {
+  const withoutHash = rawPath.startsWith('#') ? rawPath.slice(1) : rawPath;
+  const withoutSdnPrefix = withoutHash.replace(/^\/sdn\/?/, '/');
+  return withoutSdnPrefix || '/';
+}
