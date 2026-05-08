@@ -6,6 +6,7 @@
   import LocalDataScreen from './screens/LocalDataScreen.svelte';
   import NodeScreen from './screens/NodeScreen.svelte';
   import PeersScreen from './screens/PeersScreen.svelte';
+  import type { HostedEpmRecord } from '../../src/ui/runtime/identity';
   import type {
     BackendCapability,
     LocalObjectSummary,
@@ -24,6 +25,7 @@
   let nodeProfile: Record<string, unknown> | null = null;
   let capabilities: BackendCapability[] = [];
   let peers: ObservedSdnPeer[] = [];
+  let hostedEpms: HostedEpmRecord[] = [];
   let storage: StorageSummary | null = null;
   let objects: LocalObjectSummary[] = [];
   let walletState = 'pending';
@@ -70,6 +72,7 @@
     }).catch(() => {
       peers = [];
     });
+    loadHostedEpms();
     backend.getStorageSummary().then((result) => {
       storage = result.data;
       storageLabel = formatBytes(result.data?.usedBytes);
@@ -139,6 +142,19 @@
     inspectionGatewayUrl = null;
     inspectionState = 'not-selected';
   }
+
+  async function loadHostedEpms(): Promise<void> {
+    if (!backend) {
+      hostedEpms = [];
+      return;
+    }
+    try {
+      const result = await backend.listHostedEpms();
+      hostedEpms = result.data ?? [];
+    } catch {
+      hostedEpms = [];
+    }
+  }
 </script>
 
 <AppShell
@@ -151,7 +167,7 @@
   title={screenTitle}
 >
   {#if primaryRoute === '/peers'}
-    <PeersScreen {peers} />
+    <PeersScreen {backend} {peers} {hostedEpms} />
   {:else if primaryRoute === '/data'}
     <LocalDataScreen
       {storage}
@@ -161,6 +177,13 @@
       {inspectionState}
     />
   {:else}
-    <NodeScreen summary={nodeSummary} profile={nodeProfile} {capabilities} />
+    <NodeScreen
+      {backend}
+      summary={nodeSummary}
+      profile={nodeProfile}
+      {capabilities}
+      {hostedEpms}
+      onHostedEpmsReload={loadHostedEpms}
+    />
   {/if}
 </AppShell>
