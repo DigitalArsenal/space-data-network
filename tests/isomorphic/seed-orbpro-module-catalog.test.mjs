@@ -188,26 +188,68 @@ await test("DEFAULT_ORBPRO_MODULES includes the licensing runtime", async () => 
   );
 });
 
-await test("DEFAULT_ORBPRO_MODULES includes the SDN-licensed wasm-engine SDK artifact", async () => {
-  const wasmEngine = DEFAULT_ORBPRO_MODULES.find(
-    (entry) => entry.moduleId === "com.orbpro.wasm-engine-sdk",
-  );
-
-  assert.equal(wasmEngine?.version, "1.0.0");
-  assert.equal(
-    wasmEngine?.wasmPath,
-    "packages/wasm-engine/dist-sdn/isomorphic/module.wasm",
-  );
-  assert.equal(wasmEngine?.manifestPath, "packages/wasm-engine/plugin-manifest.json");
-});
-
 await test("DEFAULT_ORBPRO_MODULES includes the protected wasm-engine runtime artifact", async () => {
   const wasmEngineRuntime = DEFAULT_ORBPRO_MODULES.find(
     (entry) => entry.slug === "wasm-engine",
   );
 
+  assert.equal(
+    DEFAULT_ORBPRO_MODULES.some(
+      (entry) =>
+        entry.slug === "wasm-engine-sdk" ||
+        entry.moduleId === "com.orbpro.wasm-engine-sdk",
+    ),
+    false,
+  );
   assert.equal(wasmEngineRuntime?.protectedModulePath, "packages/wasm-engine/dist/wasm-engine-encrypted.js");
   assert.equal(wasmEngineRuntime?.protectedExports?.[0]?.exportName, "encryptedData");
+});
+
+await test("seedOrbproModuleCatalog removes the stale wasm-engine-sdk catalog entry", async () => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sdn-seed-orbpro-stale-wasm-engine-sdk-"),
+  );
+  const pluginRoot = path.join(tempRoot, "license", "plugins");
+  await fs.mkdir(pluginRoot, { recursive: true });
+
+  await fs.writeFile(
+    path.join(pluginRoot, "catalog.json"),
+    JSON.stringify(
+      {
+        plugins: [
+          {
+            id: "com.orbpro.wasm-engine-sdk",
+            version: "1.0.0",
+            encrypted_path: "wasm-engine-sdk.wasm.enc",
+            key_path: "wasm-engine-sdk.key",
+            content_type: "application/wasm+encrypted",
+          },
+          {
+            id: "existing.module",
+            version: "9.9.9",
+            encrypted_path: "existing.wasm.enc",
+            key_path: "existing.key",
+            content_type: "application/wasm+encrypted",
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
+  await seedOrbproModuleCatalog({
+    pluginRoot,
+    modules: [],
+  });
+
+  const catalog = JSON.parse(
+    await fs.readFile(path.join(pluginRoot, "catalog.json"), "utf8"),
+  );
+  assert.deepEqual(
+    catalog.plugins.map((entry) => entry.id),
+    ["existing.module"],
+  );
 });
 
 await test("OPTIONAL_ORBPRO_MODULES pins conjunction to the current SDN module tag", async () => {

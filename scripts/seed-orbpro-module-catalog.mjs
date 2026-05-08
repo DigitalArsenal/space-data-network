@@ -26,6 +26,7 @@ const moduleIdPattern = /^[A-Za-z0-9._-]+$/;
 const staleManagedModuleIds = Object.freeze([
   "licensing",
   "conjunction-assessment",
+  "com.orbpro.wasm-engine-sdk",
 ]);
 
 const DEFAULT_ORBPRO_MODULES = Object.freeze([
@@ -137,13 +138,6 @@ const DEFAULT_ORBPRO_MODULES = Object.freeze([
       "packages/space-data-network-modules/licensing/core/dist/isomorphic/module.wasm",
     manifestPath:
       "packages/space-data-network-modules/licensing/core/plugin-manifest.json",
-  }),
-  Object.freeze({
-    slug: "wasm-engine-sdk",
-    moduleId: "com.orbpro.wasm-engine-sdk",
-    version: "1.0.0",
-    wasmPath: "packages/wasm-engine/dist-sdn/isomorphic/module.wasm",
-    manifestPath: "packages/wasm-engine/plugin-manifest.json",
   }),
 ]);
 
