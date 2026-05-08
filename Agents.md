@@ -61,10 +61,21 @@ Keep those surfaces separate. Do not reintroduce a combined admin/WebUI mount.
 - `spacedatastandards.org` owns the canonical FlatBuffer schemas.
 - `PLG` is the single canonical signed marketplace manifest and storefront listing for a module version.
 - There should be exactly one canonical listing per `PLUGIN_ID + VERSION`.
-- OrbPro module-delivery seed catalogs must keep wasm-engine runtime and SDK
-  artifacts distinct: `com.orbpro.wasm-engine@1.0.0` is the protected runtime
-  artifact, and `com.orbpro.wasm-engine-sdk@1.0.0` is the SDK 0.8 artifact used
-  by public `useSdkPath: true` Sandcastle demos. Do not collapse those IDs.
+- OrbPro module-delivery seed catalogs must not publish built-in Sandcastle
+  SDK artifacts as remote downloadable modules. Built-in OrbPro/Sandcastle
+  module bytes are shipped locally as encrypted artifacts and SDN provides only
+  the `com.orbpro.wasm-engine@1.0.0` grant/key needed to decrypt those bytes.
+  There is no `com.orbpro.wasm-engine-sdk` listing, catalog entry, or
+  publication.
+- Storefront and third-party modules remain allowed to publish encrypted module
+  bytes by module ID through the decentralized module-delivery path. Keep tests
+  for remote module download by ID, but do not use that path for built-in
+  OrbPro/Sandcastle dependencies.
+- When deploying or repairing the live OrbPro licensing provider, verify the
+  active plugin root loaded by the running service, not only a mirror or stale
+  data directory. The active `com.orbpro.wasm-engine` key must match the current
+  OrbPro built-in wasm-engine artifacts, otherwise the browser can receive a
+  grant but decrypt local bytes into non-WASM garbage.
 - Search and discovery must derive from `PLG` itself, not a second listing record.
 - If `PLG` needs new fields, define them upstream first and consume the published bindings here.
 - Do not create repo-local `.fbs` files or shadow schema bindings.
