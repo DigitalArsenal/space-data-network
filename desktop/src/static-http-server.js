@@ -501,6 +501,68 @@ async function readIdentityRecord (id) {
   return publicIdentityRecord(id, 'hosted', stored.epmJson || stored.epm_json || stored, stored.updatedAt || stored.updated_at)
 }
 
+async function listIdentityRecords () {
+  const store = await readHostedEpmStore()
+  const hosted = Object.entries(store.records)
+    .map(([id, record]) => publicIdentityRecord(id, 'hosted', record.epmJson || record.epm_json || record, record.updatedAt || record.updated_at))
+  return [
+    await nodeSelfIdentityRecord(),
+    ...hosted
+  ]
+}
+
+function directoryKindForIdentity (record) {
+  const entityType = readEpmString(record.epmJson, ['entity_type', 'entityType', 'type']).toLowerCase()
+  if (record.kind === 'node-self' || entityType.includes('node')) return 'node'
+  return 'user'
+}
+
+function identityRecordToDirectoryEntry (record) {
+  const publicKey = readEpmString(record.epmJson, [
+    'public_key',
+    'publicKey',
+    'signing_public_key',
+    'signingPublicKey',
+    'encryption_public_key',
+    'encryptionPublicKey'
+  ])
+
+  return {
+    id: record.id,
+    dn: record.label,
+    entity_type: directoryKindForIdentity(record) === 'node' ? 'Node' : readEpmString(record.epmJson, ['entity_type', 'entityType']) || 'Person',
+    peer_id: record.peerId,
+    epm_cid: record.epmCid,
+    public_key: publicKey,
+    epm_json: record.epmJson,
+    updated_at: record.updated_at
+  }
+}
+
+function matchesDirectoryQuery (entry, query) {
+  if (!query) return true
+  return JSON.stringify(entry).toLowerCase().includes(query.toLowerCase())
+}
+
+async function serveDesktopDirectoryAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  if (req.method !== 'GET' || (parsed.pathname !== '/api/directory/nodes' && parsed.pathname !== '/api/directory/users')) {
+    return false
+  }
+
+  const requestedKind = parsed.pathname.endsWith('/nodes') ? 'node' : 'user'
+  const query = parsed.searchParams.get('q') || ''
+  const limit = Math.max(1, Math.min(Number.parseInt(parsed.searchParams.get('limit') || '50', 10) || 50, 200))
+  const records = (await listIdentityRecords())
+    .filter(record => directoryKindForIdentity(record) === requestedKind)
+    .map(identityRecordToDirectoryEntry)
+    .filter(entry => matchesDirectoryQuery(entry, query))
+    .slice(0, limit)
+
+  sendJSON(res, 200, requestedKind === 'node' ? { nodes: records } : { users: records })
+  return true
+}
+
 async function serveDesktopIdentityAPI (req, res) {
   const parsed = new URL(req.url || '/', `http://${HOST}`)
   const segments = parsed.pathname.split('/').filter(Boolean)
@@ -510,15 +572,8 @@ async function serveDesktopIdentityAPI (req, res) {
   }
 
   if (req.method === 'GET' && segments.length === 3) {
-    const store = await readHostedEpmStore()
-    const hosted = Object.entries(store.records)
-      .map(([id, record]) => publicIdentityRecord(id, 'hosted', record.epmJson || record.epm_json || record, record.updatedAt || record.updated_at))
-
     sendJSON(res, 200, {
-      epms: [
-        await nodeSelfIdentityRecord(),
-        ...hosted
-      ]
+      epms: await listIdentityRecords()
     })
     return true
   }
@@ -681,6 +736,7 @@ async function startDesktopStaticServer () {
 
       Promise.resolve()
         .then(() => serveDesktopPeerAPI(req, res))
+        .then(handled => handled || serveDesktopDirectoryAPI(req, res))
         .then(handled => handled || serveDesktopIdentityAPI(req, res))
         .then(handled => handled || serveDesktopNodeEPMAPI(req, res))
         .then(handled => handled || serveDesktopLocalDataAPI(req, res))
@@ -746,6 +802,7 @@ module.exports = {
   getDesktopStaticUrl,
   isSdnSSHHostAlias,
   kuboSwarmPeersToDesktopSdnPeers,
+  serveDesktopDirectoryAPI,
   serveDesktopIdentityAPI,
   serveDesktopLocalDataAPI,
   startDesktopStaticServer

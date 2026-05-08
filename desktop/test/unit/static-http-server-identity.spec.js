@@ -53,6 +53,44 @@ test.describe('desktop static identity API', () => {
     expect(vcard.body).toContain('X-SDN-PEER-ID:16Uiu2Alice')
     expect(vcard.body).not.toContain('must-not-be-exported')
   })
+
+  test('serves local node and person directory search from public hosted EPMs', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-directory-api-'))
+    const { serveDesktopDirectoryAPI, serveDesktopIdentityAPI } = loadStaticServer(userData)
+
+    await requestJson(serveDesktopIdentityAPI, 'PUT', '/api/identity/epms/alice', {
+      epm_json: {
+        dn: 'Alice Operator',
+        entity_type: 'Person',
+        peer_id: '16Uiu2Alice',
+        public_key: 'abcdef',
+        private_key: 'must-not-be-indexed'
+      }
+    })
+    await requestJson(serveDesktopIdentityAPI, 'PUT', '/api/identity/epms/provider-node', {
+      epm_json: {
+        dn: 'CelesTrak Provider',
+        entity_type: 'Node',
+        peer_id: '16Uiu2Provider',
+        public_key: '123456',
+        private_key: 'must-not-be-indexed'
+      }
+    })
+
+    const nodes = await requestJson(serveDesktopDirectoryAPI, 'GET', '/api/directory/nodes?q=provider')
+    expect(nodes.statusCode).toBe(200)
+    expect(nodes.json.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ dn: 'CelesTrak Provider', peer_id: '16Uiu2Provider' })
+    ]))
+    expect(nodes.body).not.toContain('must-not-be-indexed')
+
+    const users = await requestJson(serveDesktopDirectoryAPI, 'GET', '/api/directory/users?q=alice')
+    expect(users.statusCode).toBe(200)
+    expect(users.json.users).toEqual(expect.arrayContaining([
+      expect.objectContaining({ dn: 'Alice Operator', peer_id: '16Uiu2Alice' })
+    ]))
+    expect(users.body).not.toContain('must-not-be-indexed')
+  })
 })
 
 function loadStaticServer (userData) {
