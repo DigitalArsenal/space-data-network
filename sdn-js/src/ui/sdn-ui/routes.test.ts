@@ -6,11 +6,13 @@ describe('SDN Svelte UI route compatibility', () => {
     ['/', '/node'],
     ['/status', '/node'],
     ['/settings', '/node?panel=advanced'],
-    ['/files', '/local-data'],
-    ['/pins', '/local-data?tab=pins'],
+    ['/files', '/data'],
+    ['/pins', '/data?tab=pins'],
     ['/modules', '/peers?tab=modules'],
     ['/marketplace', '/peers?tab=marketplace'],
-    ['/explore/bafy123', '/local-data?inspect=bafy123'],
+    ['/explore/bafy123', '/data?inspect=bafy123'],
+    ['/local-data', '/data'],
+    ['/local-data?tab=pins', '/data?tab=pins'],
   ])('maps %s to %s', (input, expected) => {
     expect(normalizeSdnRoute(input)).toBe(expected);
   });

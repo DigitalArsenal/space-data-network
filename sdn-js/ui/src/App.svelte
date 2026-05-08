@@ -38,7 +38,7 @@
   const screenTitles: Record<string, string> = {
     '/node': 'Node',
     '/peers': 'Peers',
-    '/local-data': 'Local Data',
+    '/data': 'Data',
     '/advanced': 'Advanced',
     '/claim-core': 'Claim Core',
   };
@@ -152,7 +152,7 @@
 >
   {#if primaryRoute === '/peers'}
     <PeersScreen {peers} />
-  {:else if primaryRoute === '/local-data'}
+  {:else if primaryRoute === '/data'}
     <LocalDataScreen
       {storage}
       {objects}
