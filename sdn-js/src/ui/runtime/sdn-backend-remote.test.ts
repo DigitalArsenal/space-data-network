@@ -6,7 +6,7 @@ import { createRemoteSdnBackend } from './sdn-backend-remote';
 describe('remote-sdn backend', () => {
   it('loads node profile and observed SDN peers from a remote server', async () => {
     const fetchMock = vi.fn(async (url: string) => {
-      if (url === 'https://sdn.spaceaware.io/api/node/epm/json') {
+      if (url === 'https://sdn.spaceaware.io/api/node/info') {
         return jsonResponse({ dn: 'SDN Public Node', peer_id: '16Uiu2HAmRemote' });
       }
       if (url === 'https://sdn.spaceaware.io/api/peers/sdn') {
@@ -42,6 +42,28 @@ describe('remote-sdn backend', () => {
     await expect(backend.listObservedPeers()).resolves.toMatchObject({
       ok: true,
       data: [{ id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4', name: 'CelesTrak Provider' }],
+    });
+  });
+
+  it('falls back to public node info when hosted EPM routes are authenticated', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === 'https://sdn.spaceaware.io/api/identity/epms') {
+        return { ok: false, status: 302, json: async () => ({}) } as Response;
+      }
+      if (url === 'https://sdn.spaceaware.io/api/node/info') {
+        return jsonResponse({ dn: 'SDN Public Node', peer_id: '16Uiu2HAmRemote', entity_type: 'Node' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const backend = createRemoteSdnBackend({
+      mode: 'remote-sdn',
+      serverUrl: 'https://sdn.spaceaware.io',
+      fetch: fetchMock,
+    });
+
+    await expect(backend.listHostedEpms()).resolves.toMatchObject({
+      ok: true,
+      data: [{ id: 'self', kind: 'node-self', label: 'SDN Public Node', peerId: '16Uiu2HAmRemote' }],
     });
   });
 
