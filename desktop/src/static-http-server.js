@@ -3,6 +3,7 @@ const fs = require('fs')
 const path = require('path')
 const http = require('http')
 const os = require('os')
+const crypto = require('crypto')
 const { app } = require('electron')
 const portfinder = require('portfinder')
 const logger = require('./common/logger')
@@ -21,6 +22,11 @@ const ROUTES = Object.freeze({
 })
 
 let serverPromise = null
+
+const HOSTED_EPM_STORE_VERSION = 1
+const HOSTED_EPM_STORE_FILE = 'sdn-hosted-epms.enc.json'
+const HOSTED_EPM_STORE_SALT = 'space-data-network-hosted-epm-store-v1'
+const SECRET_EPM_FIELD_PATTERN = /(^|[_-])(private|secret|mnemonic|seed|xpriv|core)([_-]|$)|privatekey|encryptedcore/i
 
 const contentTypes = Object.freeze({
   '.css': 'text/css; charset=utf-8',
@@ -41,6 +47,14 @@ function sendJSON (res, status, payload) {
     'Cache-Control': 'no-store'
   })
   res.end(JSON.stringify(payload))
+}
+
+function sendText (res, status, contentType, payload) {
+  res.writeHead(status, {
+    'Content-Type': contentType,
+    'Cache-Control': 'no-store'
+  })
+  res.end(payload)
 }
 
 function routeForUrl (requestUrl) {
@@ -292,6 +306,289 @@ async function readRequestBody (req) {
   })
 }
 
+function hostedEpmStorePath () {
+  return path.join(app.getPath('userData'), HOSTED_EPM_STORE_FILE)
+}
+
+function identityStorePassword () {
+  if (process.env.SDN_KEY_PASSWORD) return process.env.SDN_KEY_PASSWORD
+  if (process.env.SDN_DESKTOP_KEY_PASSWORD) return process.env.SDN_DESKTOP_KEY_PASSWORD
+
+  return [
+    'sdn-desktop-hosted-epms',
+    os.hostname(),
+    os.platform(),
+    os.arch(),
+    os.homedir(),
+    app.getPath('userData')
+  ].join('|')
+}
+
+function hostedEpmStoreKey () {
+  return crypto.scryptSync(identityStorePassword(), HOSTED_EPM_STORE_SALT, 32)
+}
+
+function emptyHostedEpmStore () {
+  return {
+    version: HOSTED_EPM_STORE_VERSION,
+    records: {}
+  }
+}
+
+async function readHostedEpmStore () {
+  let raw
+  try {
+    raw = await fs.promises.readFile(hostedEpmStorePath(), 'utf8')
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      logger.warn(`[static-server] failed to read hosted EPM store: ${err.message || err}`)
+    }
+    return emptyHostedEpmStore()
+  }
+
+  try {
+    const envelope = JSON.parse(raw)
+    const decipher = crypto.createDecipheriv(
+      'aes-256-gcm',
+      hostedEpmStoreKey(),
+      Buffer.from(envelope.iv || '', 'base64')
+    )
+    decipher.setAuthTag(Buffer.from(envelope.tag || '', 'base64'))
+    const plaintext = Buffer.concat([
+      decipher.update(Buffer.from(envelope.ciphertext || '', 'base64')),
+      decipher.final()
+    ]).toString('utf8')
+    const store = JSON.parse(plaintext)
+    return {
+      version: HOSTED_EPM_STORE_VERSION,
+      records: store.records && typeof store.records === 'object' ? store.records : {}
+    }
+  } catch (err) {
+    logger.warn(`[static-server] failed to decrypt hosted EPM store: ${err.message || err}`)
+    return emptyHostedEpmStore()
+  }
+}
+
+async function writeHostedEpmStore (store) {
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv('aes-256-gcm', hostedEpmStoreKey(), iv)
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify({
+      version: HOSTED_EPM_STORE_VERSION,
+      records: store.records || {}
+    }), 'utf8'),
+    cipher.final()
+  ])
+
+  const envelope = {
+    version: HOSTED_EPM_STORE_VERSION,
+    algorithm: 'aes-256-gcm',
+    kdf: 'scrypt-system-derived',
+    iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
+    ciphertext: ciphertext.toString('base64')
+  }
+
+  await fs.promises.mkdir(path.dirname(hostedEpmStorePath()), { recursive: true })
+  await fs.promises.writeFile(hostedEpmStorePath(), JSON.stringify(envelope, null, 2))
+}
+
+function normalizeEpmFieldName (name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function isSecretEpmField (name) {
+  return SECRET_EPM_FIELD_PATTERN.test(String(name || '')) ||
+    SECRET_EPM_FIELD_PATTERN.test(normalizeEpmFieldName(name))
+}
+
+function sanitizePublicEPM (value) {
+  if (Array.isArray(value)) {
+    return value.map(item => sanitizePublicEPM(item))
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !isSecretEpmField(key))
+      .map(([key, item]) => [key, sanitizePublicEPM(item)])
+  )
+}
+
+function readEpmString (epm, names) {
+  if (!epm || typeof epm !== 'object') return ''
+
+  const normalizedNames = new Set(names.map(normalizeEpmFieldName))
+  for (const [key, value] of Object.entries(epm)) {
+    if (!normalizedNames.has(normalizeEpmFieldName(key))) continue
+    if (typeof value === 'string') return value.trim()
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  }
+
+  return ''
+}
+
+function publicIdentityRecord (id, kind, epmJson, updatedAt = new Date().toISOString()) {
+  const publicEpm = sanitizePublicEPM(epmJson || {})
+  const label = readEpmString(publicEpm, ['dn', 'display_name', 'displayName', 'name']) || id
+  const peerId = readEpmString(publicEpm, ['peer_id', 'peerId', 'ipfs_peer_id', 'ipfsPeerId'])
+  const epmCid = readEpmString(publicEpm, ['epm_cid', 'epmCid', 'cid'])
+
+  return {
+    id,
+    kind,
+    label,
+    peerId,
+    epmCid,
+    epmJson: publicEpm,
+    epm_json: publicEpm,
+    updatedAt,
+    updated_at: updatedAt
+  }
+}
+
+async function nodeSelfIdentityRecord () {
+  return publicIdentityRecord('self', 'node-self', await readDesktopNodeProfile())
+}
+
+function hostedIdentityRecord (id, payload, existing = {}) {
+  const epmJson = payload.epm_json || payload.epmJson || payload
+  return publicIdentityRecord(id, 'hosted', epmJson, existing.updatedAt || existing.updated_at || new Date().toISOString())
+}
+
+function escapeVCardValue (value) {
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\r?\n/g, '\\n')
+    .replace(/,/g, '\\,')
+    .replace(/;/g, '\\;')
+}
+
+function identityRecordToVCard (record) {
+  const publicKey = readEpmString(record.epmJson, [
+    'public_key',
+    'publicKey',
+    'signing_public_key',
+    'signingPublicKey',
+    'encryption_public_key',
+    'encryptionPublicKey'
+  ])
+  const lines = [
+    'BEGIN:VCARD',
+    'VERSION:4.0',
+    `FN:${escapeVCardValue(record.label)}`
+  ]
+
+  if (record.peerId) lines.push(`X-SDN-PEER-ID:${escapeVCardValue(record.peerId)}`)
+  if (record.epmCid) lines.push(`X-SDN-EPM-CID:${escapeVCardValue(record.epmCid)}`)
+  if (publicKey) lines.push(`X-SDN-PUBLIC-KEY:${escapeVCardValue(publicKey)}`)
+  lines.push('END:VCARD')
+
+  return `${lines.join('\r\n')}\r\n`
+}
+
+async function readIdentityRecord (id) {
+  if (id === 'self') {
+    return nodeSelfIdentityRecord()
+  }
+
+  const store = await readHostedEpmStore()
+  const stored = store.records[id]
+  if (!stored) return null
+  return publicIdentityRecord(id, 'hosted', stored.epmJson || stored.epm_json || stored, stored.updatedAt || stored.updated_at)
+}
+
+async function serveDesktopIdentityAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  const segments = parsed.pathname.split('/').filter(Boolean)
+
+  if (segments[0] !== 'api' || segments[1] !== 'identity' || segments[2] !== 'epms') {
+    return false
+  }
+
+  if (req.method === 'GET' && segments.length === 3) {
+    const store = await readHostedEpmStore()
+    const hosted = Object.entries(store.records)
+      .map(([id, record]) => publicIdentityRecord(id, 'hosted', record.epmJson || record.epm_json || record, record.updatedAt || record.updated_at))
+
+    sendJSON(res, 200, {
+      epms: [
+        await nodeSelfIdentityRecord(),
+        ...hosted
+      ]
+    })
+    return true
+  }
+
+  const identityId = segments[3] ? decodeURIComponent(segments[3]) : ''
+  const suffix = segments[4] || ''
+  if (!identityId) {
+    sendJSON(res, 404, { error: 'identity not found' })
+    return true
+  }
+
+  if (req.method === 'GET' && segments.length >= 4) {
+    const record = await readIdentityRecord(identityId)
+    if (!record) {
+      sendJSON(res, 404, { error: 'identity not found' })
+      return true
+    }
+
+    if (suffix === 'vcard' || suffix === 'vcf') {
+      sendText(res, 200, 'text/vcard; charset=utf-8', identityRecordToVCard(record))
+      return true
+    }
+
+    if (suffix === 'epm') {
+      sendJSON(res, 200, record.epmJson)
+      return true
+    }
+
+    sendJSON(res, 200, record)
+    return true
+  }
+
+  if (req.method === 'PUT' && segments.length === 4) {
+    let payload
+    try {
+      payload = JSON.parse(await readRequestBody(req) || '{}')
+    } catch {
+      sendJSON(res, 400, { error: 'invalid JSON identity' })
+      return true
+    }
+
+    if (identityId === 'self') {
+      const epmJson = sanitizePublicEPM(payload.epm_json || payload.epmJson || payload)
+      const next = { ...(await readDesktopNodeProfile()), ...epmJson }
+      await fs.promises.mkdir(path.dirname(localProfilePath()), { recursive: true })
+      await fs.promises.writeFile(localProfilePath(), JSON.stringify(next, null, 2))
+      sendJSON(res, 200, publicIdentityRecord('self', 'node-self', next))
+      return true
+    }
+
+    const store = await readHostedEpmStore()
+    const record = hostedIdentityRecord(identityId, payload, store.records[identityId])
+    store.records[identityId] = record
+    await writeHostedEpmStore(store)
+    sendJSON(res, 200, record)
+    return true
+  }
+
+  if (req.method === 'DELETE' && segments.length === 4 && identityId !== 'self') {
+    const store = await readHostedEpmStore()
+    delete store.records[identityId]
+    await writeHostedEpmStore(store)
+    sendJSON(res, 200, { ok: true })
+    return true
+  }
+
+  sendJSON(res, 405, { error: 'method not allowed' })
+  return true
+}
+
 async function serveDesktopNodeEPMAPI (req, res) {
   const parsed = new URL(req.url || '/', `http://${HOST}`)
   if (parsed.pathname !== '/api/node/epm/json' && parsed.pathname !== '/api/node/epm') {
@@ -384,6 +681,7 @@ async function startDesktopStaticServer () {
 
       Promise.resolve()
         .then(() => serveDesktopPeerAPI(req, res))
+        .then(handled => handled || serveDesktopIdentityAPI(req, res))
         .then(handled => handled || serveDesktopNodeEPMAPI(req, res))
         .then(handled => handled || serveDesktopLocalDataAPI(req, res))
         .then(handled => {
@@ -448,6 +746,7 @@ module.exports = {
   getDesktopStaticUrl,
   isSdnSSHHostAlias,
   kuboSwarmPeersToDesktopSdnPeers,
+  serveDesktopIdentityAPI,
   serveDesktopLocalDataAPI,
   startDesktopStaticServer
 }

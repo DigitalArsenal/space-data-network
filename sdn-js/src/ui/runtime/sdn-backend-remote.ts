@@ -26,6 +26,7 @@ import {
   resolveFetch,
   type BackendDeps,
 } from './sdn-backend-adapter-utils';
+import { normalizeHostedEpmRecord, type HostedEpmRecord } from './identity';
 
 export type RemoteSdnBackendOptions = PartialSdnBackendConfig & Partial<SdnBackendConfig> & BackendDeps;
 
@@ -77,6 +78,28 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
     async importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
       return createCapabilityResult('importCore', 'local-only', `Core import must run on a local node (${Object.keys(core).length} fields)`);
     },
+    async listHostedEpms(): Promise<BackendResult<HostedEpmRecord[]>> {
+      const epms = await getJson<unknown>(fetchLike, joinUrl(serverBase, '/api/identity/epms'), 'listHostedEpms');
+      if (!epms.ok) return epms as BackendResult<HostedEpmRecord[]>;
+      return createAvailableResult('listHostedEpms', recordsFromPayload(epms.data).map(normalizeHostedEpmRecord));
+    },
+    async saveHostedEpm(record: HostedEpmRecord): Promise<BackendResult<HostedEpmRecord>> {
+      return createCapabilityResult('saveHostedEpm', 'local-only', `editing hosted EPM ${record.id} must run on a local node`);
+    },
+    async importHostedEpm(input: { name: string }): Promise<BackendResult<HostedEpmRecord>> {
+      return createCapabilityResult('importHostedEpm', 'local-only', `importing hosted EPM ${input.name} must run on a local node`);
+    },
+    async deleteHostedEpm(id: string): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('deleteHostedEpm', 'local-only', `deleting hosted EPM ${id} must run on a local node`);
+    },
+    async downloadHostedEpm(id: string, format: 'json' | 'epm' | 'vcard'): Promise<BackendResult<{ url: string; filename: string }>> {
+      const suffix = format === 'json' ? '' : `/${format === 'vcard' ? 'vcard' : 'epm'}`;
+      const extension = format === 'vcard' ? 'vcf' : format;
+      return createAvailableResult('downloadHostedEpm', {
+        url: joinUrl(serverBase, `/api/identity/epms/${encodeURIComponent(id)}${suffix}`),
+        filename: `${id}.${extension}`,
+      });
+    },
     async listObservedPeers(): Promise<BackendResult<ObservedSdnPeer[]>> {
       const primary = await getJson<unknown>(fetchLike, joinUrl(serverBase, '/api/peers/sdn'), 'listObservedPeers');
       if (primary.ok) return createAvailableResult('listObservedPeers', normalizePeerPayload(primary.data));
@@ -90,9 +113,18 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
       return createAvailableResult('listTrustedPeers', normalizePeerPayload(peers.data));
     },
     async searchDirectory(query: string): Promise<BackendResult<Array<Record<string, unknown>>>> {
-      const graph = await getJson<unknown>(fetchLike, joinUrl(serverBase, `/api/peers/graph?q=${encodeURIComponent(query)}`), 'searchDirectory');
-      if (!graph.ok) return graph as BackendResult<Array<Record<string, unknown>>>;
-      return createAvailableResult('searchDirectory', recordsFromPayload(graph.data));
+      const [nodes, users] = await Promise.all([
+        getJson<unknown>(fetchLike, joinUrl(serverBase, `/api/directory/nodes?q=${encodeURIComponent(query)}`), 'searchDirectory:nodes'),
+        getJson<unknown>(fetchLike, joinUrl(serverBase, `/api/directory/users?q=${encodeURIComponent(query)}`), 'searchDirectory:users'),
+      ]);
+      const records = [
+        ...(nodes.ok ? recordsFromPayload(nodes.data).map((record) => ({ ...record, directoryKind: 'node' })) : []),
+        ...(users.ok ? recordsFromPayload(users.data).map((record) => ({ ...record, directoryKind: 'person' })) : []),
+      ];
+      if (!nodes.ok && !users.ok) {
+        return createDegradedResult('searchDirectory', nodes.capability.reason ?? users.capability.reason ?? 'directory search unavailable', records);
+      }
+      return createAvailableResult('searchDirectory', records);
     },
     async connectPeer(peerId: string): Promise<BackendResult<Record<string, unknown>>> {
       return createCapabilityResult('connectPeer', 'remote-only', `remote peer connection for ${peerId} requires server-side permission`);

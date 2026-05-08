@@ -25,6 +25,7 @@ import {
   resolveFetch,
   type BackendDeps,
 } from './sdn-backend-adapter-utils';
+import { normalizeHostedEpmRecord, type HostedEpmRecord } from './identity';
 
 export type DesktopLocalBackendOptions = PartialSdnBackendConfig & BackendDeps;
 
@@ -64,7 +65,7 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
         createCapability('kubo-rpc', kuboBase ? 'available' : 'unavailable', kuboBase ? undefined : 'Kubo RPC URL is not configured'),
         createCapability('desktop-proxy', desktopBase ? 'available' : 'degraded', desktopBase ? undefined : 'using relative desktop routes'),
         createCapability('browser-node', 'local-only', 'desktop-local uses daemon Kubo rather than browser-node'),
-        ...['/api/peers/sdn', '/api/peers', '/api/peers/graph', '/api/node/epm/json', '/api/node/epm'].map((route) => (
+        ...['/api/peers/sdn', '/api/peers', '/api/peers/graph', '/api/directory/nodes', '/api/directory/users', '/api/identity/epms', '/api/node/epm/json', '/api/node/epm'].map((route) => (
           createCapability(`route:${route}`, desktopBase ? 'available' : 'degraded', desktopBase ? undefined : 'desktop proxy URL is not configured')
         )),
       ];
@@ -93,6 +94,62 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
     async importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
       return createCapabilityResult('importCore', 'permission-required', `Core import requires local wallet confirmation (${Object.keys(core).length} fields)`);
     },
+    async listHostedEpms(): Promise<BackendResult<HostedEpmRecord[]>> {
+      const epms = await getJson<unknown>(fetchLike, joinUrl(desktopBase, '/api/identity/epms'), 'listHostedEpms');
+      if (!epms.ok) return epms as BackendResult<HostedEpmRecord[]>;
+      return createAvailableResult('listHostedEpms', recordsFromPayload(epms.data).map(normalizeHostedEpmRecord));
+    },
+    async saveHostedEpm(record: HostedEpmRecord): Promise<BackendResult<HostedEpmRecord>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(desktopBase, `/api/identity/epms/${encodeURIComponent(record.id)}`),
+        'saveHostedEpm',
+        {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            id: record.id,
+            kind: record.kind,
+            epm_json: record.epmJson,
+          }),
+        },
+      );
+      if (!result.ok) return result as BackendResult<HostedEpmRecord>;
+      return createAvailableResult('saveHostedEpm', normalizeHostedEpmRecord(result.data && isRecord(result.data)
+        ? result.data
+        : { id: record.id, kind: record.kind, epm_json: record.epmJson }));
+    },
+    async importHostedEpm(input: { name: string; bytes?: Uint8Array; text?: string }): Promise<BackendResult<HostedEpmRecord>> {
+      let payload: unknown;
+      try {
+        const text = input.text ?? (input.bytes ? new TextDecoder().decode(input.bytes) : '');
+        payload = JSON.parse(text);
+      } catch (error) {
+        return createDegradedResult('importHostedEpm', `unable to parse hosted EPM import: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const record = normalizeHostedEpmRecord({
+        id: input.name.replace(/\.[^.]+$/, '') || undefined,
+        kind: 'hosted',
+        epm_json: isRecord(payload) ? payload : {},
+      });
+      return this.saveHostedEpm(record);
+    },
+    async deleteHostedEpm(id: string): Promise<BackendResult<Record<string, unknown>>> {
+      return getJson<Record<string, unknown>>(
+        fetchLike,
+        joinUrl(desktopBase, `/api/identity/epms/${encodeURIComponent(id)}`),
+        'deleteHostedEpm',
+        { method: 'DELETE' },
+      );
+    },
+    async downloadHostedEpm(id: string, format: 'json' | 'epm' | 'vcard'): Promise<BackendResult<{ url: string; filename: string }>> {
+      const suffix = format === 'json' ? '' : `/${format === 'vcard' ? 'vcard' : 'epm'}`;
+      const extension = format === 'vcard' ? 'vcf' : format;
+      return createAvailableResult('downloadHostedEpm', {
+        url: joinUrl(desktopBase, `/api/identity/epms/${encodeURIComponent(id)}${suffix}`),
+        filename: `${id}.${extension}`,
+      });
+    },
     async listObservedPeers(): Promise<BackendResult<ObservedSdnPeer[]>> {
       const peers = await getJson<unknown>(fetchLike, joinUrl(desktopBase, '/api/peers/sdn'), 'listObservedPeers');
       if (!peers.ok) return peers as BackendResult<ObservedSdnPeer[]>;
@@ -104,9 +161,18 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
       return createAvailableResult('listTrustedPeers', normalizePeerPayload(peers.data));
     },
     async searchDirectory(query: string): Promise<BackendResult<Array<Record<string, unknown>>>> {
-      const graph = await getJson<unknown>(fetchLike, joinUrl(desktopBase, `/api/peers/graph?q=${encodeURIComponent(query)}`), 'searchDirectory');
-      if (!graph.ok) return graph as BackendResult<Array<Record<string, unknown>>>;
-      return createAvailableResult('searchDirectory', recordsFromPayload(graph.data));
+      const [nodes, users] = await Promise.all([
+        getJson<unknown>(fetchLike, joinUrl(desktopBase, `/api/directory/nodes?q=${encodeURIComponent(query)}`), 'searchDirectory:nodes'),
+        getJson<unknown>(fetchLike, joinUrl(desktopBase, `/api/directory/users?q=${encodeURIComponent(query)}`), 'searchDirectory:users'),
+      ]);
+      const records = [
+        ...(nodes.ok ? recordsFromPayload(nodes.data).map((record) => ({ ...record, directoryKind: 'node' })) : []),
+        ...(users.ok ? recordsFromPayload(users.data).map((record) => ({ ...record, directoryKind: 'person' })) : []),
+      ];
+      if (!nodes.ok && !users.ok) {
+        return createDegradedResult('searchDirectory', nodes.capability.reason ?? users.capability.reason ?? 'directory search unavailable', records);
+      }
+      return createAvailableResult('searchDirectory', records);
     },
     async connectPeer(peerId: string): Promise<BackendResult<Record<string, unknown>>> {
       return createUnavailableResult('connectPeer', `peer connection for ${peerId} is not wired in the Svelte UI adapter yet`);

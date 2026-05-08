@@ -91,6 +91,49 @@ describe('desktop-local SDN backend', () => {
     ]));
   });
 
+  it('loads and saves hosted EPMs through identity routes', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === 'http://127.0.0.1:17890/api/identity/epms') {
+        return jsonResponse({ epms: [{ id: 'self', kind: 'node-self', epm_json: { dn: 'Local Node', peer_id: '12D3KooWNode' } }] });
+      }
+      if (url === 'http://127.0.0.1:17890/api/identity/epms/self') {
+        expect(init?.method).toBe('PUT');
+        return jsonResponse({ id: 'self', kind: 'node-self', epm_json: { dn: 'Updated Node', peer_id: '12D3KooWNode' } });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const backend = createDesktopLocalBackend({ desktopProxyUrl: 'http://127.0.0.1:17890', fetch: fetchMock });
+
+    await expect(backend.listHostedEpms()).resolves.toMatchObject({ ok: true, data: [{ id: 'self', kind: 'node-self' }] });
+    await expect(backend.saveHostedEpm({
+      id: 'self',
+      kind: 'node-self',
+      label: 'Updated Node',
+      peerId: '12D3KooWNode',
+      epmJson: { dn: 'Updated Node', peer_id: '12D3KooWNode' },
+    })).resolves.toMatchObject({ ok: true, data: { label: 'Updated Node' } });
+    expect(calls.map((call) => call.url)).toContain('http://127.0.0.1:17890/api/identity/epms');
+    expect(calls.map((call) => call.url)).toContain('http://127.0.0.1:17890/api/identity/epms/self');
+  });
+
+  it('searches node and person directory endpoints instead of the peers graph', async () => {
+    const urls: string[] = [];
+    const fetchMock = vi.fn(async (url: string) => {
+      urls.push(url);
+      if (url.includes('/api/directory/nodes')) return jsonResponse({ nodes: [{ peer_id: 'node-peer', dn: 'Node Alice' }] });
+      if (url.includes('/api/directory/users')) return jsonResponse({ users: [{ peer_id: 'user-peer', dn: 'User Alice' }] });
+      throw new Error(`unexpected ${url}`);
+    });
+    const backend = createDesktopLocalBackend({ desktopProxyUrl: 'http://127.0.0.1:17890', fetch: fetchMock });
+
+    await expect(backend.searchDirectory('alice')).resolves.toMatchObject({ ok: true });
+    expect(urls.some((url) => url.includes('/api/directory/nodes?q=alice'))).toBe(true);
+    expect(urls.some((url) => url.includes('/api/directory/users?q=alice'))).toBe(true);
+    expect(urls.some((url) => url.includes('/api/peers/graph'))).toBe(false);
+  });
+
   it('uses the configured gateway for CID resolution', async () => {
     const backend = createDesktopLocalBackend({
       gatewayUrl: 'http://127.0.0.1:8081',
