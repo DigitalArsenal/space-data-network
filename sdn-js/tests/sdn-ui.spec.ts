@@ -12,7 +12,8 @@ test('node route renders the three SDN product navigation items only', async ({ 
   const nav = page.getByRole('navigation', { name: 'Primary' });
   await expect(nav.getByRole('link', { name: 'Node' })).toBeVisible();
   await expect(nav.getByRole('link', { name: 'Peers' })).toBeVisible();
-  await expect(nav.getByRole('link', { name: 'Local Data' })).toBeVisible();
+  await expect(nav.getByRole('link', { name: 'Data' })).toBeVisible();
+  await expect(nav.getByText('Local Data')).toHaveCount(0);
   await expect(nav.getByText('Status')).toHaveCount(0);
   await expect(nav.getByText('Files')).toHaveCount(0);
 });
@@ -25,10 +26,10 @@ test('peers route renders SDN peer fixtures through the backend adapter', async 
   await expect(page.getByText(realPeerId)).toBeVisible();
 });
 
-test('local-data route renders storage and degraded SQL workbench state', async ({ page }) => {
-  await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/local-data');
+test('data route renders storage and degraded SQL workbench state', async ({ page }) => {
+  await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
 
-  await expect(page.getByRole('heading', { name: 'Local Data' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Data' })).toBeVisible();
   await expect(page.getByText('Pins And Stored Objects')).toBeVisible();
   await expect(page.getByText('SQL Workbench')).toBeVisible();
   await expect(page.getByText('STARLINK-34967')).toBeVisible();
@@ -37,7 +38,7 @@ test('local-data route renders storage and degraded SQL workbench state', async 
 test('explore route renders CID inspection with the configured gateway', async ({ page }) => {
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/explore/bafySdnFixture');
 
-  await expect(page.getByRole('heading', { level: 1, name: 'Local Data' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Data' })).toBeVisible();
   await expect(page.getByText('bafySdnFixture')).toBeVisible();
   await expect(page.getByRole('link', { name: 'Open Gateway' })).toHaveAttribute(
     'href',
@@ -62,12 +63,12 @@ test('SDN product routes do not navigate into upstream /webui', async ({ page })
 
   await page.getByRole('link', { name: 'Peers' }).click();
   await expect(page).not.toHaveURL(/\/webui/);
-  await page.getByRole('link', { name: 'Local Data' }).click();
+  await page.getByRole('link', { name: 'Data' }).click();
   await expect(page).not.toHaveURL(/\/webui/);
 });
 
 test('captures desktop and mobile SDN UI screenshots', async ({ page }, testInfo) => {
-  for (const route of ['node', 'peers', 'local-data']) {
+  for (const route of ['node', 'peers', 'data']) {
     await page.goto(`/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/${route}`);
     await assertVisualGuardrails(page);
     const screenshot = await page.screenshot({
