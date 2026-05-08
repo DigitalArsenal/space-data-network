@@ -251,12 +251,50 @@ function bytesToHex(bytes: Uint8Array): string {
 function bytesToBase64(bytes: Uint8Array): string {
   const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
   if (typeof btoa === 'function') return btoa(binary);
-  return Buffer.from(bytes).toString('base64');
+  return encodeBase64(bytes);
 }
 
 function base64ToBytes(value: string): Uint8Array {
   if (typeof atob === 'function') {
     return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
   }
-  return new Uint8Array(Buffer.from(value, 'base64'));
+  return decodeBase64(value);
+}
+
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function encodeBase64(bytes: Uint8Array): string {
+  let output = '';
+  for (let index = 0; index < bytes.length; index += 3) {
+    const first = bytes[index];
+    const second = bytes[index + 1] ?? 0;
+    const third = bytes[index + 2] ?? 0;
+    const triplet = (first << 16) | (second << 8) | third;
+    output += BASE64_ALPHABET[(triplet >> 18) & 63];
+    output += BASE64_ALPHABET[(triplet >> 12) & 63];
+    output += index + 1 < bytes.length ? BASE64_ALPHABET[(triplet >> 6) & 63] : '=';
+    output += index + 2 < bytes.length ? BASE64_ALPHABET[triplet & 63] : '=';
+  }
+  return output;
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const clean = value.replace(/\s+/g, '');
+  if (clean.length % 4 !== 0) {
+    throw new Error('Invalid base64 payload');
+  }
+
+  const bytes: number[] = [];
+  for (let index = 0; index < clean.length; index += 4) {
+    const chars = clean.slice(index, index + 4);
+    const sextets = chars.split('').map((char) => (char === '=' ? 0 : BASE64_ALPHABET.indexOf(char)));
+    if (sextets.some((entry) => entry < 0)) {
+      throw new Error('Invalid base64 payload');
+    }
+    const triplet = (sextets[0] << 18) | (sextets[1] << 12) | (sextets[2] << 6) | sextets[3];
+    bytes.push((triplet >> 16) & 255);
+    if (chars[2] !== '=') bytes.push((triplet >> 8) & 255);
+    if (chars[3] !== '=') bytes.push(triplet & 255);
+  }
+  return new Uint8Array(bytes);
 }
