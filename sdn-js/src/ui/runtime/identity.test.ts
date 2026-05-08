@@ -89,6 +89,8 @@ describe('public EPM exports', () => {
         peer_id: '16Uiu2Alice',
         epm_cid: 'bafyepm',
         public_key: 'abcdef',
+        signing_public_key: 'signing-public',
+        encryption_public_key: 'encryption-public',
         private_key: 'must-not-export',
       },
     });
@@ -98,6 +100,8 @@ describe('public EPM exports', () => {
     expect(payload).toContain('X-SDN-PEER-ID:16Uiu2Alice');
     expect(payload).toContain('X-SDN-EPM-CID:bafyepm');
     expect(payload).toContain('X-SDN-PUBLIC-KEY:abcdef');
+    expect(payload).toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public');
+    expect(payload).toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public');
     expect(payload).not.toContain('must-not-export');
   });
 });

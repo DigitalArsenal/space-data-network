@@ -476,6 +476,16 @@ function identityRecordToVCard (record) {
     'encryption_public_key',
     'encryptionPublicKey'
   ])
+  const signingPublicKey = readEpmString(record.epmJson, [
+    'signing_public_key',
+    'signingPublicKey',
+    'signing_pubkey_hex'
+  ])
+  const encryptionPublicKey = readEpmString(record.epmJson, [
+    'encryption_public_key',
+    'encryptionPublicKey',
+    'encryption_pubkey_hex'
+  ])
   const lines = [
     'BEGIN:VCARD',
     'VERSION:4.0',
@@ -485,6 +495,8 @@ function identityRecordToVCard (record) {
   if (record.peerId) lines.push(`X-SDN-PEER-ID:${escapeVCardValue(record.peerId)}`)
   if (record.epmCid) lines.push(`X-SDN-EPM-CID:${escapeVCardValue(record.epmCid)}`)
   if (publicKey) lines.push(`X-SDN-PUBLIC-KEY:${escapeVCardValue(publicKey)}`)
+  if (signingPublicKey) lines.push(`X-SDN-SIGNING-PUBLIC-KEY:${escapeVCardValue(signingPublicKey)}`)
+  if (encryptionPublicKey) lines.push(`X-SDN-ENCRYPTION-PUBLIC-KEY:${escapeVCardValue(encryptionPublicKey)}`)
   lines.push('END:VCARD')
 
   return `${lines.join('\r\n')}\r\n`
