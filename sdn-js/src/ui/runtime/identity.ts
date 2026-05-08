@@ -43,6 +43,19 @@ const NORMALIZED_SECRET_KEYS = new Set([
   'walletprivatekey',
   'walletprivatematerial',
 ]);
+const PUBLIC_KEY_FIELDS = [
+  'public_key',
+  'PUBLIC_KEY',
+  'publicKey',
+  'signing_public_key',
+  'signingPublicKey',
+  'signing_pubkey_hex',
+  'encryption_public_key',
+  'encryptionPublicKey',
+  'encryption_pubkey_hex',
+];
+const SIGNING_PUBLIC_KEY_FIELDS = ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex'];
+const ENCRYPTION_PUBLIC_KEY_FIELDS = ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex'];
 
 export function normalizeHostedEpmRecord(input: Record<string, unknown>): HostedEpmRecord {
   const epmJson = normalizeRecord(input.epm_json ?? input.epmJson ?? input);
@@ -83,7 +96,9 @@ export function createVCardQrPayload(input: Record<string, unknown> | HostedEpmR
   addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', record.kind === 'node-self' ? 'node' : 'user');
   addVCardLine(lines, 'X-SDN-PEER-ID', record.peerId);
   addVCardLine(lines, 'X-SDN-EPM-CID', record.epmCid || pickString(epm, ['epm_cid', 'epmCid']));
-  addVCardLine(lines, 'X-SDN-PUBLIC-KEY', pickString(epm, ['public_key', 'PUBLIC_KEY', 'signing_pubkey_hex']));
+  addVCardLine(lines, 'X-SDN-PUBLIC-KEY', pickString(epm, PUBLIC_KEY_FIELDS));
+  addVCardLine(lines, 'X-SDN-SIGNING-PUBLIC-KEY', pickString(epm, SIGNING_PUBLIC_KEY_FIELDS));
+  addVCardLine(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY', pickString(epm, ENCRYPTION_PUBLIC_KEY_FIELDS));
   lines.push('END:VCARD');
   return lines.join('\r\n');
 }

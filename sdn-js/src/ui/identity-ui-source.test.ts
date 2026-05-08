@@ -53,6 +53,8 @@ describe('SDN identity Svelte source', () => {
       'peer_id',
       'epm_cid',
       'public_key',
+      'signing_public_key',
+      'encryption_public_key',
       'multiformat_address',
     ]) {
       expect(source).toContain(field);

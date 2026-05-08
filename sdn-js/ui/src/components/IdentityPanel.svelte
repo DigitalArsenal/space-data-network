@@ -83,9 +83,11 @@
     { key: 'email', label: 'Email', placeholder: 'jane@example.com' },
     { key: 'telephone', label: 'Telephone', placeholder: '+1 555 0100' },
     { key: 'entity_type', label: 'Entity type', placeholder: 'person, organization, node' },
-    { key: 'peer_id', label: 'Peer ID', placeholder: '12D3KooW...' },
+    { key: 'peer_id', label: 'IPFS Peer ID', placeholder: '12D3KooW...' },
     { key: 'epm_cid', label: 'EPM CID', placeholder: 'bafy...' },
-    { key: 'public_key', label: 'Public key', placeholder: 'Public signing or encryption key' },
+    { key: 'public_key', label: 'Public key', placeholder: 'Primary public key' },
+    { key: 'signing_public_key', label: 'Signing public key', placeholder: 'Public digital signing key' },
+    { key: 'encryption_public_key', label: 'Encryption public key', placeholder: 'Public encryption key' },
     { key: 'multiformat_address', label: 'Multiformat address', placeholder: '/ip4/.../p2p/...' },
   ] as const;
 
@@ -489,7 +491,9 @@
     addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', normalized.kind === 'node-self' ? 'node' : 'user');
     addVCardLine(lines, 'X-SDN-PEER-ID', normalized.peerId);
     addVCardLine(lines, 'X-SDN-EPM-CID', normalized.epmCid ?? stringValue(epm.epm_cid) ?? stringValue(epm.epmCid));
-    addVCardLine(lines, 'X-SDN-PUBLIC-KEY', stringValue(epm.public_key) ?? stringValue(epm.PUBLIC_KEY) ?? stringValue(epm.signing_pubkey_hex));
+    addVCardLine(lines, 'X-SDN-PUBLIC-KEY', publicKeyValue(epm));
+    addVCardLine(lines, 'X-SDN-SIGNING-PUBLIC-KEY', stringValue(epm.signing_public_key) ?? stringValue(epm.signingPublicKey) ?? stringValue(epm.signing_pubkey_hex));
+    addVCardLine(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY', stringValue(epm.encryption_public_key) ?? stringValue(epm.encryptionPublicKey) ?? stringValue(epm.encryption_pubkey_hex));
     lines.push('END:VCARD');
     return lines.join('\r\n');
   }
@@ -539,8 +543,22 @@
       if (key === 'X-SDN-PEER-ID') fields.peer_id = value;
       if (key === 'X-SDN-EPM-CID') fields.epm_cid = value;
       if (key === 'X-SDN-PUBLIC-KEY') fields.public_key = value;
+      if (key === 'X-SDN-SIGNING-PUBLIC-KEY') fields.signing_public_key = value;
+      if (key === 'X-SDN-ENCRYPTION-PUBLIC-KEY') fields.encryption_public_key = value;
     }
     return fields;
+  }
+
+  function publicKeyValue(epm: Record<string, unknown>): string | undefined {
+    return stringValue(epm.public_key)
+      ?? stringValue(epm.PUBLIC_KEY)
+      ?? stringValue(epm.publicKey)
+      ?? stringValue(epm.signing_public_key)
+      ?? stringValue(epm.signingPublicKey)
+      ?? stringValue(epm.signing_pubkey_hex)
+      ?? stringValue(epm.encryption_public_key)
+      ?? stringValue(epm.encryptionPublicKey)
+      ?? stringValue(epm.encryption_pubkey_hex);
   }
 
   function slugFromDraft(): string {

@@ -16,6 +16,8 @@ test.describe('desktop static identity API', () => {
         peer_id: '16Uiu2Alice',
         epm_cid: 'bafy-alice-epm',
         public_key: 'abcdef',
+        signing_public_key: 'signing-public',
+        encryption_public_key: 'encryption-public',
         private_key: 'must-not-be-exported'
       }
     })
@@ -51,6 +53,9 @@ test.describe('desktop static identity API', () => {
     expect(vcard.body).toContain('BEGIN:VCARD')
     expect(vcard.body).toContain('FN:Alice Example')
     expect(vcard.body).toContain('X-SDN-PEER-ID:16Uiu2Alice')
+    expect(vcard.body).toContain('X-SDN-PUBLIC-KEY:abcdef')
+    expect(vcard.body).toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public')
+    expect(vcard.body).toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public')
     expect(vcard.body).not.toContain('must-not-be-exported')
   })
 
