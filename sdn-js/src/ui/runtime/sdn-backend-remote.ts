@@ -36,6 +36,8 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
   const serverBase = config.serverUrl;
 
   async function getNodeProfile(): Promise<BackendResult<Record<string, unknown>>> {
+    const publicInfo = await getJson<Record<string, unknown>>(fetchLike, joinUrl(serverBase, '/api/node/info'), 'getNodeProfile');
+    if (publicInfo.ok) return publicInfo;
     return getJson<Record<string, unknown>>(fetchLike, joinUrl(serverBase, '/api/node/epm/json'), 'getNodeProfile');
   }
 
@@ -80,7 +82,17 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
     },
     async listHostedEpms(): Promise<BackendResult<HostedEpmRecord[]>> {
       const epms = await getJson<unknown>(fetchLike, joinUrl(serverBase, '/api/identity/epms'), 'listHostedEpms');
-      if (!epms.ok) return epms as BackendResult<HostedEpmRecord[]>;
+      if (!epms.ok) {
+        const profile = await getNodeProfile();
+        if (profile.ok && profile.data) {
+          return createAvailableResult('listHostedEpms', [normalizeHostedEpmRecord({
+            id: 'self',
+            kind: 'node-self',
+            epm_json: profile.data,
+          })]);
+        }
+        return epms as BackendResult<HostedEpmRecord[]>;
+      }
       return createAvailableResult('listHostedEpms', recordsFromPayload(epms.data).map(normalizeHostedEpmRecord));
     },
     async saveHostedEpm(record: HostedEpmRecord): Promise<BackendResult<HostedEpmRecord>> {
