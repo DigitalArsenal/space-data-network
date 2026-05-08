@@ -1,3 +1,5 @@
+import type { HostedEpmRecord } from './identity';
+
 export const BACKEND_MODES = ['desktop-local', 'remote-sdn', 'browser-node'] as const;
 
 export type SdnBackendMode = (typeof BACKEND_MODES)[number];
@@ -88,6 +90,11 @@ export interface SdnBackend {
   beginClaimEpm(): Promise<BackendResult<Record<string, unknown>>>;
   exportCore(): Promise<BackendResult<Record<string, unknown>>>;
   importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>>;
+  listHostedEpms(): Promise<BackendResult<HostedEpmRecord[]>>;
+  saveHostedEpm(record: HostedEpmRecord): Promise<BackendResult<HostedEpmRecord>>;
+  importHostedEpm(input: { name: string; bytes?: Uint8Array; text?: string }): Promise<BackendResult<HostedEpmRecord>>;
+  deleteHostedEpm(id: string): Promise<BackendResult<Record<string, unknown>>>;
+  downloadHostedEpm(id: string, format: 'json' | 'epm' | 'vcard'): Promise<BackendResult<{ url: string; filename: string }>>;
   listObservedPeers(): Promise<BackendResult<ObservedSdnPeer[]>>;
   listTrustedPeers(): Promise<BackendResult<ObservedSdnPeer[]>>;
   searchDirectory(query: string): Promise<BackendResult<Array<Record<string, unknown>>>>;

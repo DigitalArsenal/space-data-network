@@ -12,6 +12,7 @@ import {
   type SdnBackend,
   type StorageSummary,
 } from './sdn-backend';
+import type { HostedEpmRecord } from './identity';
 
 export function createBrowserNodeBackend(): SdnBackend {
   const summary: NodeSummary = {
@@ -57,6 +58,21 @@ export function createBrowserNodeBackend(): SdnBackend {
     },
     async importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
       return createDegradedResult('importCore', `browser Core import is scheduled for Milestone 4 (${Object.keys(core).length} fields)`);
+    },
+    async listHostedEpms(): Promise<BackendResult<HostedEpmRecord[]>> {
+      return createDegradedResult('listHostedEpms', 'browser hosted EPM storage is scheduled for Milestone 4', []);
+    },
+    async saveHostedEpm(record: HostedEpmRecord): Promise<BackendResult<HostedEpmRecord>> {
+      return createDegradedResult('saveHostedEpm', `browser hosted EPM persistence for ${record.id} is scheduled for Milestone 4`, record);
+    },
+    async importHostedEpm(input: { name: string }): Promise<BackendResult<HostedEpmRecord>> {
+      return createDegradedResult('importHostedEpm', `browser hosted EPM import for ${input.name} is scheduled for Milestone 4`);
+    },
+    async deleteHostedEpm(id: string): Promise<BackendResult<Record<string, unknown>>> {
+      return createDegradedResult('deleteHostedEpm', `browser hosted EPM deletion for ${id} is scheduled for Milestone 4`);
+    },
+    async downloadHostedEpm(id: string, format: 'json' | 'epm' | 'vcard'): Promise<BackendResult<{ url: string; filename: string }>> {
+      return createDegradedResult('downloadHostedEpm', `browser hosted EPM ${format} download for ${id} is scheduled for Milestone 4`);
     },
     async listObservedPeers(): Promise<BackendResult<ObservedSdnPeer[]>> {
       return createDegradedResult('listObservedPeers', 'browser transports are scheduled for Milestone 4', []);
