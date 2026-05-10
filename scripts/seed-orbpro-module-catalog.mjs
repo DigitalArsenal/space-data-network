@@ -90,7 +90,9 @@ const DEFAULT_ORBPRO_MODULES = Object.freeze([
   Object.freeze({
     slug: "wasm-engine",
     protectedModulePath:
-      "packages/wasm-engine/dist/wasm-engine-encrypted.js",
+      "packages/wasm-engine/dist/wasm-engine-sdn-encrypted.js",
+    moduleId: "com.orbpro.wasm-engine",
+    moduleVersion: "1.0.0",
     protectedExports: Object.freeze([
       Object.freeze({ exportName: "encryptedData", slug: "wasm-engine" }),
     ]),

@@ -11,8 +11,20 @@ const seedScript = await fs.readFile(seedScriptPath, "utf8");
 
 assert.match(
   seedScript,
-  /slug:\s*"wasm-engine"[\s\S]*?protectedModulePath:\s*"packages\/wasm-engine\/dist\/wasm-engine-encrypted\.js"/,
-  "DEFAULT_ORBPRO_MODULES must seed the wasm-engine protected artifact",
+  /slug:\s*"wasm-engine"[\s\S]*?protectedModulePath:\s*"packages\/wasm-engine\/dist\/wasm-engine-sdn-encrypted\.js"/,
+  "DEFAULT_ORBPRO_MODULES must seed the SDN-encrypted wasm-engine protected artifact",
+);
+
+assert.doesNotMatch(
+  seedScript,
+  /protectedModulePath:\s*"packages\/wasm-engine\/dist\/wasm-engine-encrypted\.js"/,
+  "DEFAULT_ORBPRO_MODULES must not seed the legacy wasm-engine-encrypted.js artifact",
+);
+
+assert.match(
+  seedScript,
+  /slug:\s*"wasm-engine"[\s\S]*?moduleId:\s*"com\.orbpro\.wasm-engine"/,
+  "the wasm-engine seed entry must declare the canonical com.orbpro.wasm-engine moduleId",
 );
 
 assert.match(
