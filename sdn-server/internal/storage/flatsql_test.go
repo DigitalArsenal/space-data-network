@@ -182,6 +182,80 @@ func TestNewFlatSQLStoreMigratesLegacySDSTableToCanonicalSchemaTable(t *testing.
 	}
 }
 
+func TestCopyBlobSchemaRowsToMetadataTableSkipsExistingMetadataRows(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-resume-migration-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if _, err := store.db.Exec(`
+		CREATE TABLE sds_omm (
+			cid TEXT PRIMARY KEY,
+			peer_id TEXT NOT NULL,
+			timestamp INTEGER NOT NULL,
+			data BLOB NOT NULL,
+			signature BLOB,
+			UNIQUE(cid)
+		)
+	`); err != nil {
+		t.Fatalf("create legacy schema table failed: %v", err)
+	}
+	existingPayload := []byte("existing-omm-payload")
+	newPayload := []byte("new-omm-payload")
+	if _, err := store.db.Exec(`
+		INSERT INTO sds_omm (cid, peer_id, timestamp, data, signature)
+		VALUES
+			('existing-cid', 'source:celestrak', 1700000000, ?, NULL),
+			('new-cid', 'source:celestrak', 1700000001, ?, NULL)
+	`, existingPayload, newPayload); err != nil {
+		t.Fatalf("insert legacy records failed: %v", err)
+	}
+
+	streamPath, streamOffset, recordLength, err := store.appendFlatSQLStreamRecord("OMM.fbs", existingPayload)
+	if err != nil {
+		t.Fatalf("append existing stream record failed: %v", err)
+	}
+	if err := insertSchemaMetadata(store.db, "OMM", "existing-cid", "source:celestrak", 1700000000, streamPath, streamOffset, recordLength, nil, 1700000000); err != nil {
+		t.Fatalf("insert existing metadata failed: %v", err)
+	}
+	streamFile := filepath.Join(tmpDir, streamPath)
+	before, err := os.Stat(streamFile)
+	if err != nil {
+		t.Fatalf("stat stream before migration failed: %v", err)
+	}
+
+	if err := store.copyBlobSchemaRowsToMetadataTable("OMM.fbs", "sds_omm", "OMM"); err != nil {
+		t.Fatalf("copy legacy rows failed: %v", err)
+	}
+
+	after, err := os.Stat(streamFile)
+	if err != nil {
+		t.Fatalf("stat stream after migration failed: %v", err)
+	}
+	expectedGrowth := int64(4 + len(newPayload))
+	if growth := after.Size() - before.Size(); growth != expectedGrowth {
+		t.Fatalf("stream file grew by %d bytes, want only new record growth %d", growth, expectedGrowth)
+	}
+	record, err := store.Get("OMM.fbs", "new-cid")
+	if err != nil {
+		t.Fatalf("migrated new record lookup failed: %v", err)
+	}
+	if string(record) != string(newPayload) {
+		t.Fatalf("migrated new payload = %q, want %q", string(record), string(newPayload))
+	}
+}
+
 func TestNewFlatSQLStoreDoesNotSynchronouslyIndexExistingGlobalTables(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-existing-global-index-test-*")
 	if err != nil {
