@@ -34,8 +34,9 @@ import (
 var log = logging.Logger("storage")
 
 const (
-	flatSQLStreamDirName = "flatsql-streams"
-	localEPMStoreSalt    = "space-data-network-local-epm-store-v1"
+	flatSQLStreamDirName         = "flatsql-streams"
+	legacyBlobMigrationBatchSize = 50000
+	localEPMStoreSalt            = "space-data-network-local-epm-store-v1"
 )
 
 // FlatSQLStore provides SQLite storage with FlatBuffer virtual tables.
@@ -680,94 +681,121 @@ func (s *FlatSQLStore) copyBlobSchemaRowsToMetadataTable(schemaName, sourceTable
 	}
 	signatureExpr := "NULL"
 	if columns["signature"] {
-		signatureExpr = "signature"
+		signatureExpr = "src.signature"
 	}
-	createdAtExpr := "timestamp"
+	createdAtExpr := "src.timestamp"
 	if columns["created_at"] {
-		createdAtExpr = "created_at"
+		createdAtExpr = "src.created_at"
 	}
 
 	log.Infof("Migrating FlatSQL %s records from SQLite BLOB table %s to stream metadata", schemaName, sourceTable)
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin schema table migration %s: %w", sourceTable, err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-
-	rows, err := tx.Query(fmt.Sprintf(`
-		SELECT cid, peer_id, timestamp, data, %s, %s
-		FROM %s
-		ORDER BY rowid ASC
-	`, signatureExpr, createdAtExpr, sourceTable))
-	if err != nil {
-		return fmt.Errorf("query legacy schema table %s: %w", sourceTable, err)
-	}
-
-	stmt, err := tx.Prepare(fmt.Sprintf(`
-		INSERT OR IGNORE INTO %s (
-			cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex, created_at
-		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, targetTable))
-	if err != nil {
-		_ = rows.Close()
-		return fmt.Errorf("prepare migrated schema metadata insert %s: %w", targetTable, err)
-	}
 	appender, err := s.newFlatSQLStreamAppender(schemaName)
 	if err != nil {
-		_ = rows.Close()
-		_ = stmt.Close()
 		return fmt.Errorf("open migrated %s FlatSQL stream: %w", schemaName, err)
 	}
 	defer appender.Close()
 
 	var migratedRows int64
-	for rows.Next() {
-		var cid, peerID string
-		var timestamp, createdAt int64
-		var data []byte
-		var signature []byte
-		if err := rows.Scan(&cid, &peerID, &timestamp, &data, &signature, &createdAt); err != nil {
-			return fmt.Errorf("scan legacy schema table %s: %w", sourceTable, err)
-		}
-		streamPath, streamOffset, recordLength, err := appender.Append(data)
+	var lastRowID int64
+	for {
+		batchRows, err := func() (int64, error) {
+			tx, err := s.db.Begin()
+			if err != nil {
+				return 0, fmt.Errorf("begin schema table migration %s: %w", sourceTable, err)
+			}
+			committed := false
+			defer func() {
+				if !committed {
+					_ = tx.Rollback()
+				}
+			}()
+
+			rows, err := tx.Query(fmt.Sprintf(`
+			SELECT src.rowid, src.cid, src.peer_id, src.timestamp, src.data, %s, %s
+			FROM %s AS src
+			LEFT JOIN %s AS dst ON dst.cid = src.cid
+			WHERE src.rowid > ? AND dst.cid IS NULL
+			ORDER BY src.rowid ASC
+			LIMIT ?
+		`, signatureExpr, createdAtExpr, sourceTable, targetTable), lastRowID, legacyBlobMigrationBatchSize)
+			if err != nil {
+				return 0, fmt.Errorf("query legacy schema table %s: %w", sourceTable, err)
+			}
+
+			stmt, err := tx.Prepare(fmt.Sprintf(`
+			INSERT OR IGNORE INTO %s (
+				cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex, created_at
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, targetTable))
+			if err != nil {
+				_ = rows.Close()
+				return 0, fmt.Errorf("prepare migrated schema metadata insert %s: %w", targetTable, err)
+			}
+
+			var batchRows int64
+			for rows.Next() {
+				var rowID int64
+				var cid, peerID string
+				var timestamp, createdAt int64
+				var data []byte
+				var signature []byte
+				if err := rows.Scan(&rowID, &cid, &peerID, &timestamp, &data, &signature, &createdAt); err != nil {
+					_ = rows.Close()
+					_ = stmt.Close()
+					return 0, fmt.Errorf("scan legacy schema table %s: %w", sourceTable, err)
+				}
+				lastRowID = rowID
+				streamPath, streamOffset, recordLength, err := appender.Append(data)
+				if err != nil {
+					_ = rows.Close()
+					_ = stmt.Close()
+					return 0, fmt.Errorf("append migrated %s record %s to FlatSQL stream: %w", schemaName, cid, err)
+				}
+				var signatureHex any
+				if len(signature) > 0 {
+					signatureHex = hex.EncodeToString(signature)
+				}
+				if createdAt <= 0 {
+					createdAt = timestamp
+				}
+				if _, err := stmt.Exec(cid, peerID, timestamp, streamPath, streamOffset, recordLength, signatureHex, createdAt); err != nil {
+					_ = rows.Close()
+					_ = stmt.Close()
+					return 0, fmt.Errorf("insert migrated %s metadata row %s: %w", schemaName, cid, err)
+				}
+				batchRows++
+				migratedRows++
+				if migratedRows%100000 == 0 {
+					log.Infof("Migrated %d FlatSQL %s records to stream metadata", migratedRows, schemaName)
+				}
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				_ = stmt.Close()
+				return 0, fmt.Errorf("iterate legacy schema table %s: %w", sourceTable, err)
+			}
+			if err := rows.Close(); err != nil {
+				_ = stmt.Close()
+				return 0, fmt.Errorf("close legacy schema rows %s: %w", sourceTable, err)
+			}
+			if err := stmt.Close(); err != nil {
+				return 0, fmt.Errorf("close migrated schema metadata insert %s: %w", targetTable, err)
+			}
+			if err := tx.Commit(); err != nil {
+				return 0, fmt.Errorf("commit migrated schema table %s: %w", sourceTable, err)
+			}
+			committed = true
+			return batchRows, nil
+		}()
 		if err != nil {
-			return fmt.Errorf("append migrated %s record %s to FlatSQL stream: %w", schemaName, cid, err)
+			return err
 		}
-		var signatureHex any
-		if len(signature) > 0 {
-			signatureHex = hex.EncodeToString(signature)
-		}
-		if createdAt <= 0 {
-			createdAt = timestamp
-		}
-		if _, err := stmt.Exec(cid, peerID, timestamp, streamPath, streamOffset, recordLength, signatureHex, createdAt); err != nil {
-			return fmt.Errorf("insert migrated %s metadata row %s: %w", schemaName, cid, err)
-		}
-		migratedRows++
-		if migratedRows%100000 == 0 {
-			log.Infof("Migrated %d FlatSQL %s records to stream metadata", migratedRows, schemaName)
+		if batchRows == 0 {
+			break
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate legacy schema table %s: %w", sourceTable, err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close legacy schema rows %s: %w", sourceTable, err)
-	}
-	if err := stmt.Close(); err != nil {
-		return fmt.Errorf("close migrated schema metadata insert %s: %w", targetTable, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit migrated schema table %s: %w", sourceTable, err)
-	}
-	committed = true
 	log.Infof("Migrated %d FlatSQL %s records from SQLite BLOB table %s to stream metadata", migratedRows, schemaName, sourceTable)
 	return nil
 }
