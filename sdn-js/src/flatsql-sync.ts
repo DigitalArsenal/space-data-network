@@ -15,7 +15,7 @@ export interface FlatSqlSyncTransport {
 export interface FlatSqlSyncQuery {
   targetPeerId: string;
   candidateAddrs?: string[];
-  op?: 'read_chunk' | 'scan' | 'open_snapshot';
+  op?: 'read_chunk' | 'scan' | 'open_snapshot' | 'open_manifest';
   schema: string;
   providerId?: string;
   sourceName?: string;

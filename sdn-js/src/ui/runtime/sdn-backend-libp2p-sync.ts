@@ -122,14 +122,7 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
         queryProfile: request.queryProfile,
         records: request.records,
       });
-      const refs = chunk.header.results.length > 0 ? chunk.header.results.map(rawRecordFromFlatSqlRef) : request.records;
-      if ((refs?.length ?? 0) > 0 && chunk.records.length < (refs?.length ?? 0)) {
-        throw new Error(`remote FlatSQL sync returned ${chunk.records.length}/${refs?.length ?? 0} FlatBuffer frames`);
-      }
-      return createAvailableResult('streamRawData', refs.map((record, index) => ({
-        ...record,
-        ...(chunk.records[index] ? { dataBytes: chunk.records[index] } : {}),
-      })));
+      return createAvailableResult('streamRawData', rawRecordsWithDataFromFlatSqlChunk(chunk, request.records));
     } catch (error) {
       return createUnavailableResult('streamRawData', formatSyncError(error));
     }
@@ -296,24 +289,12 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     scanRawData,
     streamRawData,
     async queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>> {
-      const scan = await scanRawData(query);
-      if (!scan.ok || !scan.data) {
-        return createUnavailableResult('queryRawData', scan.capability.reason ?? 'Remote FlatSQL sync scan failed');
+      try {
+        const chunk = await requestChunk({ ...query, op: 'read_chunk' });
+        return createAvailableResult('queryRawData', rawRecordsWithDataFromFlatSqlChunk(chunk));
+      } catch (error) {
+        return createUnavailableResult('queryRawData', formatSyncError(error));
       }
-      if (scan.data.results.length === 0) return createAvailableResult('queryRawData', []);
-      return streamRawData({
-        schema: scan.data.schema,
-        scanHash: scan.data.scanHash,
-        chunkHash: scan.data.chunkHash || scan.data.scanHash,
-        snapshotId: scan.data.snapshotId,
-        head: scan.data.head,
-        cursor: scan.data.cursor,
-        nextCursor: scan.data.nextCursor,
-        totalCount: scan.data.totalCount,
-        highWaterMark: scan.data.highWaterMark,
-        queryProfile: scan.data.queryProfile,
-        records: scan.data.results,
-      });
     },
     async readRawDataRecord(_schemaName: string, cid: string): Promise<BackendResult<RawDataRecordBytes>> {
       return createCapabilityResult('readRawDataRecord', 'local-only', `record ${cid} bytes are available after scan-bound FlatSQL streaming`);
@@ -491,7 +472,7 @@ function normalizeCandidateAddrs(addrs: string[]): string[] {
   return Array.from(new Set(addrs.map((addr) => addr.trim()).filter(Boolean)));
 }
 
-function dataScanResultFromChunk(chunk: FlatSqlSyncChunk): DataScanResult {
+export function dataScanResultFromChunk(chunk: FlatSqlSyncChunk): DataScanResult {
   return {
     schema: chunk.header.schema,
     totalCount: chunk.header.totalCount,
@@ -511,6 +492,17 @@ function dataScanResultFromChunk(chunk: FlatSqlSyncChunk): DataScanResult {
     transports: chunk.header.transports,
     results: chunk.header.results.map(rawRecordFromFlatSqlRef),
   };
+}
+
+export function rawRecordsWithDataFromFlatSqlChunk(chunk: FlatSqlSyncChunk, fallbackRefs: RawDataRecord[] = []): RawDataRecord[] {
+  const refs = chunk.header.results.length > 0 ? chunk.header.results.map(rawRecordFromFlatSqlRef) : fallbackRefs;
+  if (refs.length > 0 && chunk.records.length < refs.length) {
+    throw new Error(`remote FlatSQL sync returned ${chunk.records.length}/${refs.length} FlatBuffer frames`);
+  }
+  return refs.map((record, index) => ({
+    ...record,
+    ...(chunk.records[index] ? { dataBytes: chunk.records[index] } : {}),
+  }));
 }
 
 function rawRecordFromFlatSqlRef(record: FlatSqlSyncRecordRef): RawDataRecord {

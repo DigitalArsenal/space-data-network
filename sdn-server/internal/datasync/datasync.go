@@ -54,7 +54,9 @@ type QueryRequest struct {
 	Cursor                 string `json:"cursor"`
 	SnapshotID             string `json:"snapshot_id"`
 	Head                   string `json:"head"`
+	HighWaterMark          string `json:"high_water_mark"`
 	QueryProfile           string `json:"query_profile"`
+	TotalCount             int64  `json:"total_count"`
 	Limit                  int    `json:"limit"`
 	Offset                 int    `json:"offset"`
 	IncludeData            bool   `json:"include_data"`
@@ -106,6 +108,36 @@ type ScanResponse struct {
 	MaxChunkSize  int                      `json:"max_chunk_size"`
 	Transports    []string                 `json:"transports"`
 	Results       []map[string]interface{} `json:"results"`
+}
+
+type ManifestResponse struct {
+	ManifestID        string            `json:"manifest_id"`
+	Schema            string            `json:"schema"`
+	ProviderID        string            `json:"provider_id,omitempty"`
+	SourceName        string            `json:"source_name,omitempty"`
+	BatchID           string            `json:"batch_id,omitempty"`
+	ProducerPeerID    string            `json:"producer_peer_id,omitempty"`
+	ProducerPublicKey string            `json:"producer_public_key,omitempty"`
+	TotalCount        int64             `json:"total_count"`
+	TotalBytes        int64             `json:"total_bytes"`
+	SnapshotID        string            `json:"snapshot_id"`
+	Head              string            `json:"head"`
+	HighWaterMark     string            `json:"high_water_mark"`
+	QueryProfile      string            `json:"query_profile"`
+	SyncProtocol      string            `json:"sync_protocol"`
+	MaxChunkSize      int               `json:"max_chunk_size"`
+	Transports        []string          `json:"transports"`
+	Segments          []ManifestSegment `json:"segments"`
+}
+
+type ManifestSegment struct {
+	Index      int    `json:"index"`
+	Cursor     string `json:"cursor"`
+	NextCursor string `json:"next_cursor"`
+	RowCount   int    `json:"row_count"`
+	ByteCount  int64  `json:"byte_count"`
+	ChunkHash  string `json:"chunk_hash"`
+	CID        string `json:"cid,omitempty"`
 }
 
 type Snapshot struct {
@@ -170,15 +202,28 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 	}
 
 	filter := FilterFromRequest(req, limit, offset)
-	totalCount, err := store.CountRawRecords(filter)
-	if err != nil {
-		return nil, nil, err
+	var totalCount int64
+	var snapshot Snapshot
+	hasProvidedSnapshot := req.TotalCount > 0 && strings.TrimSpace(req.SnapshotID) != "" && strings.TrimSpace(req.Head) != ""
+	if hasProvidedSnapshot {
+		totalCount = req.TotalCount
+		snapshot = Snapshot{
+			SnapshotID:    strings.TrimSpace(req.SnapshotID),
+			Head:          strings.TrimSpace(req.Head),
+			HighWaterMark: strings.TrimSpace(req.HighWaterMark),
+		}
+	} else {
+		var err error
+		totalCount, err = store.CountRawRecords(filter)
+		if err != nil {
+			return nil, nil, err
+		}
+		snapshot, err = SnapshotForFilter(store, filter, totalCount, NormalizeQueryProfile(req.QueryProfile))
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	records, err := store.QueryRawRecordRefs(filter)
-	if err != nil {
-		return nil, nil, err
-	}
-	snapshot, err := SnapshotForFilter(store, filter, totalCount, NormalizeQueryProfile(req.QueryProfile))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -211,6 +256,93 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 		Results:       results,
 	}
 	return response, records, nil
+}
+
+func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ManifestResponse, error) {
+	if store == nil {
+		return nil, fmt.Errorf("FlatSQL store is unavailable")
+	}
+	schemaName := NormalizeSchema(req)
+	if schemaName == "" {
+		return nil, fmt.Errorf("schema is required")
+	}
+	segmentLimit := req.Limit
+	if segmentLimit <= 0 {
+		segmentLimit = MaxSyncChunkLimit
+	}
+	if maxLimit <= 0 || maxLimit > MaxSyncChunkLimit {
+		maxLimit = MaxSyncChunkLimit
+	}
+	if segmentLimit > maxLimit {
+		segmentLimit = maxLimit
+	}
+
+	filter := FilterFromRequest(req, segmentLimit, 0)
+	totalCount, err := store.CountRawRecords(filter)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := SnapshotForFilter(store, filter, totalCount, NormalizeQueryProfile(req.QueryProfile))
+	if err != nil {
+		return nil, err
+	}
+
+	segments := make([]ManifestSegment, 0)
+	var totalBytes int64
+	for offset, index := 0, 0; int64(offset) < totalCount || (totalCount == 0 && index == 0); offset, index = offset+segmentLimit, index+1 {
+		segmentReq := req
+		segmentReq.Limit = segmentLimit
+		segmentReq.Offset = offset
+		segmentReq.Cursor = ""
+		segmentReq.TotalCount = totalCount
+		segmentReq.SnapshotID = snapshot.SnapshotID
+		segmentReq.Head = snapshot.Head
+		segmentReq.HighWaterMark = snapshot.HighWaterMark
+		scan, records, err := Scan(store, segmentReq, maxLimit)
+		if err != nil {
+			return nil, err
+		}
+		if len(records) == 0 {
+			break
+		}
+		byteCount := int64(0)
+		for _, record := range records {
+			byteCount += RecordSizeBytes(record)
+		}
+		totalBytes += byteCount
+		segments = append(segments, ManifestSegment{
+			Index:      index,
+			Cursor:     scan.Cursor,
+			NextCursor: scan.NextCursor,
+			RowCount:   len(records),
+			ByteCount:  byteCount,
+			ChunkHash:  scan.ChunkHash,
+		})
+		if scan.NextCursor == "" {
+			break
+		}
+	}
+
+	manifest := &ManifestResponse{
+		Schema:            schemaName,
+		ProviderID:        FirstNonEmpty(req.ProviderID, req.ProviderId),
+		SourceName:        req.SourceName,
+		BatchID:           FirstNonEmpty(req.BatchID, req.BatchId),
+		ProducerPeerID:    FirstNonEmpty(req.ProducerPeerID, req.ProducerPeerId),
+		ProducerPublicKey: FirstNonEmpty(req.ProducerPublicKey, req.ProducerPublicKeyCamel),
+		TotalCount:        totalCount,
+		TotalBytes:        totalBytes,
+		SnapshotID:        snapshot.SnapshotID,
+		Head:              snapshot.Head,
+		HighWaterMark:     snapshot.HighWaterMark,
+		QueryProfile:      NormalizeQueryProfile(req.QueryProfile),
+		SyncProtocol:      ProtocolID,
+		MaxChunkSize:      maxLimit,
+		Transports:        append([]string(nil), SupportedTransports...),
+		Segments:          segments,
+	}
+	manifest.ManifestID = ManifestHash(manifest)
+	return manifest, nil
 }
 
 func ResolveStreamRecords(store *storage.FlatSQLStore, req StreamRequest) (string, []*storage.Record, error) {
@@ -347,6 +479,44 @@ func ScanHash(schemaName string, records []*storage.Record) string {
 			rec.SourceTags.BatchID,
 			rec.SourceTags.ProducerPeerID,
 			rec.SourceTags.ProducerPublicKey,
+		)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func ManifestHash(manifest *ManifestResponse) string {
+	hash := sha256.New()
+	if manifest == nil {
+		return hex.EncodeToString(hash.Sum(nil))
+	}
+	_, _ = fmt.Fprintf(
+		hash,
+		"%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s\x00%s\x00%s\n",
+		manifest.Schema,
+		manifest.ProviderID,
+		manifest.SourceName,
+		manifest.BatchID,
+		manifest.ProducerPeerID,
+		manifest.ProducerPublicKey,
+		manifest.QueryProfile,
+		manifest.TotalCount,
+		manifest.TotalBytes,
+		manifest.SnapshotID,
+		manifest.Head,
+		manifest.HighWaterMark,
+		manifest.SyncProtocol,
+	)
+	for _, segment := range manifest.Segments {
+		_, _ = fmt.Fprintf(
+			hash,
+			"%d\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s\n",
+			segment.Index,
+			segment.Cursor,
+			segment.NextCursor,
+			segment.RowCount,
+			segment.ByteCount,
+			segment.ChunkHash,
+			segment.CID,
 		)
 	}
 	return hex.EncodeToString(hash.Sum(nil))

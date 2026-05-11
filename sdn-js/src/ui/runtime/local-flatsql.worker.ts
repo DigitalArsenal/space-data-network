@@ -7,6 +7,10 @@ import {
 } from './local-flatsql';
 import { TimeoutError, withTimeout } from './async-timeout';
 import { Libp2pFlatSqlSyncBackendCache } from './libp2p-sync-backend-cache';
+import {
+  dataScanResultFromChunk,
+  rawRecordsWithDataFromFlatSqlChunk,
+} from './sdn-backend-libp2p-sync';
 import { retryRemoteSyncOperation } from './remote-sync-retry';
 import { SerialTaskQueue } from './serial-task-queue';
 import type { DataSummary, RawDataRecord, SdnBackend } from './sdn-backend';
@@ -124,34 +128,18 @@ async function getRemoteDataSummary(backendConfig: WorkerFlatSqlSyncBackendConfi
 
 async function queryRemotePage(request: WorkerRemotePageRequest): Promise<WorkerRemotePageResult> {
   const currentStore = requireStore();
-  const scanResult = await withRemoteBackendOperation(
+  const chunk = await withRemoteSyncChunkOperation(
     request.backendConfig,
-    'Remote page scan',
-    (backend) => backend.scanRawData(request.query),
+    'Remote page chunk',
+    {
+      targetPeerId: '',
+      ...request.query,
+      op: 'read_chunk',
+    },
   );
-  if (!scanResult.ok) throw new Error(scanResult.capability.reason ?? 'Remote scan failed');
-  const scan = scanResult.data;
-  let records: RawDataRecord[] = [];
-  if (scan?.results.length) {
-    const streamResult = await withRemoteBackendOperation(
-      request.backendConfig,
-      'Remote page stream',
-      (backend) => backend.streamRawData({
-        schema: scan.schema,
-        scanHash: scan.scanHash,
-        chunkHash: scan.chunkHash || scan.scanHash,
-        snapshotId: scan.snapshotId,
-        head: scan.head,
-        cursor: scan.cursor,
-        nextCursor: scan.nextCursor,
-        totalCount: scan.totalCount,
-        highWaterMark: scan.highWaterMark,
-        queryProfile: scan.queryProfile,
-        records: scan.results,
-      }),
-    );
-    if (!streamResult.ok) throw new Error(streamResult.capability.reason ?? 'Remote FlatBuffer stream failed');
-    records = streamResult.data ?? [];
+  const scan = dataScanResultFromChunk(chunk);
+  const records = rawRecordsWithDataFromFlatSqlChunk(chunk, scan.results);
+  if (records.length > 0) {
     await currentStore.ingestRecords(request.standardId, records, {
       source: request.source,
       persist: true,
@@ -176,8 +164,10 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
   let nextCursor = canResume ? request.initialProgress.nextCursor ?? '' : '';
   let snapshotId = canResume ? request.initialProgress.snapshotId ?? '' : '';
   let head = canResume ? request.initialProgress.head ?? '' : '';
+  let highWaterMark = canResume ? request.initialProgress.highWaterMark ?? '' : '';
   let queryProfile = canResume ? request.initialProgress.queryProfile ?? 'ordered-offset-v1' : 'ordered-offset-v1';
   let verifiedChunks = canResume ? request.initialProgress.verifiedChunks.slice(-256) : [];
+  let snapshotVerifiedForSession = false;
 
   const providerPeerId = request.backendConfig.targetPeerId || null;
   const providerPublicKey = request.backendConfig.publicKey || request.backendConfig.targetPeerId || null;
@@ -192,6 +182,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
     providerPublicKey,
     snapshotId: snapshotId || null,
     head: head || null,
+    highWaterMark: highWaterMark || null,
     nextCursor: nextCursor || null,
     queryProfile,
     verifiedChunks,
@@ -224,71 +215,61 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
         return { progress, stats: currentStats };
       }
 
-      let scanResult = await withRemoteBackendOperation(
+      let chunk = await withRemoteSyncChunkOperation(
         request.backendConfig,
-        'Remote sync scan',
-        (backend) => backend.scanRawData({
+        'Remote sync chunk',
+        {
+          targetPeerId: '',
           schema: request.schema,
+          op: 'read_chunk',
           limit: request.pageSize,
           ...(nextCursor
             ? {
                 cursor: nextCursor,
                 snapshotId: snapshotId || undefined,
                 head: head || undefined,
+                ...(snapshotVerifiedForSession
+                  ? {
+                      totalCount: totalRows,
+                      highWaterMark: highWaterMark || undefined,
+                    }
+                  : {}),
                 queryProfile,
               }
             : { offset }),
-        }),
+        },
       );
-      if (!scanResult.ok) throw new Error(scanResult.capability.reason ?? 'Remote scan failed');
 
-      let scan = scanResult.data;
-      if (!scan) throw new Error('Remote scan returned no data');
+      let scan = dataScanResultFromChunk(chunk);
 
       if (nextCursor && head && scan.head && scan.head !== head) {
         nextCursor = '';
         offset = localRows;
-        scanResult = await withRemoteBackendOperation(
+        snapshotVerifiedForSession = false;
+        chunk = await withRemoteSyncChunkOperation(
           request.backendConfig,
           'Remote sync snapshot refresh',
-          (backend) => backend.scanRawData({
+          {
+            targetPeerId: '',
             schema: request.schema,
+            op: 'read_chunk',
             limit: request.pageSize,
             offset,
             queryProfile,
-          }),
+          },
         );
-        if (!scanResult.ok) throw new Error(scanResult.capability.reason ?? 'Remote scan failed after snapshot refresh');
-        scan = scanResult.data;
-        if (!scan) throw new Error('Remote scan returned no data after snapshot refresh');
+        scan = dataScanResultFromChunk(chunk);
       }
 
       snapshotId = scan.snapshotId || snapshotId;
       head = scan.head || head;
+      highWaterMark = scan.highWaterMark || highWaterMark;
+      snapshotVerifiedForSession = true;
       queryProfile = scan.queryProfile || queryProfile;
       totalRows = Math.max(totalRows, scan.totalCount ?? 0, offset + scan.results.length);
       if (scan.results.length === 0) break;
 
-      const streamResult = await withRemoteBackendOperation(
-        request.backendConfig,
-        'Remote sync stream',
-        (backend) => backend.streamRawData({
-          schema: scan.schema,
-          scanHash: scan.scanHash,
-          chunkHash: scan.chunkHash || scan.scanHash,
-          snapshotId: scan.snapshotId,
-          head: scan.head,
-          cursor: scan.cursor,
-          nextCursor: scan.nextCursor,
-          totalCount: scan.totalCount,
-          highWaterMark: scan.highWaterMark,
-          queryProfile: scan.queryProfile || queryProfile,
-          records: scan.results,
-        }),
-      );
-      if (!streamResult.ok) throw new Error(streamResult.capability.reason ?? 'Remote FlatBuffer stream failed');
-
-      const records = streamResult.data ?? [];
+      const records = rawRecordsWithDataFromFlatSqlChunk(chunk, scan.results);
       const ingestedRows = await currentStore.ingestRecords(request.standardId, records, {
         source: request.source,
         persist: false,
@@ -323,7 +304,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
         head: head || null,
         cursor: scan.cursor || null,
         nextCursor: nextCursor || null,
-        highWaterMark: scan.highWaterMark || null,
+        highWaterMark: highWaterMark || null,
         queryProfile,
         chunkHash: chunkHash || null,
         syncProtocol: scan.syncProtocol || null,
@@ -352,6 +333,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       snapshotId: snapshotId || null,
       head: head || null,
       nextCursor: nextCursor || null,
+      highWaterMark: highWaterMark || null,
       queryProfile,
       verifiedChunks,
       lastSyncedAt: new Date().toISOString(),
@@ -381,7 +363,8 @@ function progressFor(current: WorkerSchemaSyncProgress, patch: Partial<WorkerSch
 }
 
 function localRowsForStandard(stats: LocalFlatSqlStandardStats[], standardId: string): number {
-  return stats.find((entry) => entry.standardId === standardId)?.recordCount ?? 0;
+  const stat = stats.find((entry) => entry.standardId === standardId);
+  return Math.max(stat?.ingestedRecordCount ?? 0, stat?.recordCount ?? 0);
 }
 
 function cachedBytesForStandard(stats: LocalFlatSqlStandardStats[], standardId: string): number {
@@ -414,6 +397,20 @@ async function withRemoteBackendOperation<T>(
     retryDelayMs: REMOTE_SYNC_RETRY_DELAY_MS,
     reset: () => syncBackendCache.destroy(),
     run: () => withRemoteSyncTimeout(operation(syncBackendCache.backendFor(backendConfig)), label),
+  });
+}
+
+async function withRemoteSyncChunkOperation(
+  backendConfig: WorkerFlatSqlSyncBackendConfig,
+  label: string,
+  query: Parameters<Libp2pFlatSqlSyncBackendCache['readFlatSqlSyncChunk']>[1],
+) {
+  return await retryRemoteSyncOperation({
+    label,
+    attempts: REMOTE_SYNC_RETRY_ATTEMPTS,
+    retryDelayMs: REMOTE_SYNC_RETRY_DELAY_MS,
+    reset: () => syncBackendCache.destroy(),
+    run: () => withRemoteSyncTimeout(syncBackendCache.readFlatSqlSyncChunk(backendConfig, query), label),
   });
 }
 

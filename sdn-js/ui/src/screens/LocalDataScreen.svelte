@@ -13,7 +13,11 @@
   } from '../../../src/ui/runtime/local-flatsql-worker-client';
   import { decodeOmmFlatBuffer } from '../../../src/ui/runtime/omm-flatbuffer';
   import { decodePnmFlatBuffer } from '../../../src/ui/runtime/pnm-flatbuffer';
-  import { schemaSyncStatusLabel as formatSchemaSyncStatusLabel } from '../lib/schema-sync-labels';
+  import { createSchemaSyncScheduler } from '../lib/schema-sync-scheduler';
+  import {
+    effectiveSchemaSyncStatus,
+    schemaSyncStatusLabel as formatSchemaSyncStatusLabel,
+  } from '../lib/schema-sync-labels';
   import type {
     DataScanResult,
     DataSummary,
@@ -117,7 +121,7 @@
   const SCHEMA_EXTENSION = 'fbs';
   const DEFAULT_PAGE_SIZE = 10;
   const DATA_SOURCE_PAGE_SIZE = 6;
-  const SYNC_PAGE_SIZE = 5_000;
+  const SYNC_PAGE_SIZE = 50_000;
   const SYNC_PERSIST_RECORD_INTERVAL = 100_000;
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
   const SCHEMA_SYNC_STORAGE_KEY = 'sdn:data-schema-sync:v1';
@@ -255,11 +259,13 @@
   let pnmQueryError = '';
   let pnmSignatureStatus = '';
   let pnmSignatureRunning = false;
-  let lastAutoSyncSignature = '';
   let resetConfirmOpen = false;
   let resetConfirmText = '';
   let resetStatus = '';
   let resetRunning = false;
+  const schemaSyncScheduler = createSchemaSyncScheduler({
+    syncSchema: (standardId, dataSourceId) => synchronizeSchema(standardId, dataSourceId),
+  });
 
   $: dataSourceOptions = buildDataSourceOptions(backend, configuredDataSources, peers);
   $: filteredDataSourceOptions = filterDataSourceOptions(dataSourceOptions, dataSourceSearchText);
@@ -285,7 +291,7 @@
   $: canGoNext = rawRecords.length >= pageSize && (estimatedTotalRows === null || ((pageIndex + 1) * pageSize) < estimatedTotalRows);
   $: pageLabel = `${pageIndex + 1}/${totalPageCount}`;
   $: selectedLocalFlatSqlStats = localFlatSqlStats.find((entry) => entry.standardId === selectedStandardId) ?? null;
-  $: localRowCount = selectedLocalFlatSqlStats?.recordCount ?? 0;
+  $: localRowCount = localRowsForStandard(localFlatSqlStats, selectedStandardId);
   $: cachedByteCount = selectedLocalFlatSqlStats?.cachedBytes ?? 0;
   $: scanHashLabel = dataScan?.scanHash ? shorten(dataScan.scanHash, 18) : 'none';
   $: sqlColumns = sqlResult?.columns ?? [];
@@ -309,6 +315,7 @@
   }
 
   async function initializeDataExplorer(): Promise<void> {
+    schemaSyncScheduler.reset();
     configuredDataSources = [];
     selectedDataSourceId = LOCAL_DATA_SOURCE_ID;
     userSelectedDataSource = false;
@@ -504,6 +511,7 @@
     userSelectedDataSource = true;
     userSelectedStandard = false;
     userEditedColumns = false;
+    schemaSyncScheduler.reset();
     void initializeWorkbench();
   }
 
@@ -537,7 +545,7 @@
       mode: value === 'sync' ? 'sync' : 'preview',
     });
     if (value === 'sync') {
-      void synchronizeSchema(standardId);
+      scheduleEnabledSchemaSyncs(buildSchemaSyncRows(standardOptions, selectedDataSourceId, localFlatSqlStats), selectedDataSourceId);
     }
   }
 
@@ -546,7 +554,7 @@
       storageCap: normalizedStorageCap((event.currentTarget as HTMLInputElement).value),
     });
     if (schemaSyncPreferenceFor(selectedDataSourceId, standardId).mode === 'sync') {
-      void synchronizeSchema(standardId);
+      scheduleEnabledSchemaSyncs(buildSchemaSyncRows(standardOptions, selectedDataSourceId, localFlatSqlStats), selectedDataSourceId);
     }
   }
 
@@ -556,7 +564,7 @@
       storageUnit: isStorageUnit(value) ? value : DEFAULT_SCHEMA_SYNC_PREFERENCE.storageUnit,
     });
     if (schemaSyncPreferenceFor(selectedDataSourceId, standardId).mode === 'sync') {
-      void synchronizeSchema(standardId);
+      scheduleEnabledSchemaSyncs(buildSchemaSyncRows(standardOptions, selectedDataSourceId, localFlatSqlStats), selectedDataSourceId);
     }
   }
 
@@ -595,25 +603,15 @@
   }
 
   function scheduleEnabledSchemaSyncs(rows: SchemaSyncRow[], dataSourceId: string): void {
-    const signature = rows
-      .filter((row) => row.preference.mode === 'sync')
-      .map((row) => `${dataSourceId}:${row.id}:${row.localRows}:${row.remoteRows}:${row.preference.storageCap}:${row.preference.storageUnit}`)
-      .join('|');
-    if (!signature || signature === lastAutoSyncSignature) return;
-    lastAutoSyncSignature = signature;
-    for (const row of rows) {
-      if (row.preference.mode !== 'sync') continue;
-      if (row.remoteRows > row.localRows) void synchronizeSchema(row.id);
-    }
+    void schemaSyncScheduler.schedule(rows, dataSourceId);
   }
 
-  async function synchronizeSchema(standardId: string): Promise<void> {
-    const dataSourceId = selectedDataSourceId;
+  async function synchronizeSchema(standardId: string, dataSourceId = selectedDataSourceId): Promise<void> {
     const key = schemaSyncPreferenceKey(dataSourceId, standardId);
     const preference = schemaSyncPreferenceFor(dataSourceId, standardId);
     if (preference.mode !== 'sync' || activeSyncKeys.has(key)) return;
 
-    const source = currentDataSourceOption();
+    const source = dataSourceOptionForId(dataSourceId);
     const backendConfig = backendConfigForDataSource(source);
     if (!backendConfig) return;
     const initialProgress = schemaSyncProgressFor(
@@ -633,7 +631,7 @@
 
     let store: WorkerLocalFlatSqlStore | null = null;
     try {
-      store = await ensureLocalFlatSqlStore();
+      store = await ensureLocalFlatSqlStore(dataSourceId);
       if (!store) throw new Error('FlatSQL initialization failed');
       const update = await store.syncSchema({
         standardId,
@@ -686,8 +684,8 @@
     persistSchemaSyncProgress(schemaSyncProgress);
   }
 
-  async function ensureLocalFlatSqlStore(): Promise<WorkerLocalFlatSqlStore | null> {
-    const nextKey = localFlatSqlPersistenceKey(selectedDataSourceId);
+  async function ensureLocalFlatSqlStore(dataSourceId = selectedDataSourceId): Promise<WorkerLocalFlatSqlStore | null> {
+    const nextKey = localFlatSqlPersistenceKey(dataSourceId);
     if (localFlatSqlStore && localFlatSqlStoreKey === nextKey) return localFlatSqlStore;
     if (localFlatSqlStorePromise && localFlatSqlStorePromiseKey === nextKey) return localFlatSqlStorePromise;
     resetLocalFlatSqlStore();
@@ -756,7 +754,7 @@
       });
       clearSchemaSyncProgressForDataSource(dataSourceId);
       activeSyncKeys = new Set();
-      lastAutoSyncSignature = '';
+      schemaSyncScheduler.reset();
       rawRecords = [];
       dataScan = null;
       clearPnmSelection();
@@ -1015,7 +1013,8 @@
   }
 
   function localRowsForStandard(stats: LocalFlatSqlStandardStats[], standardId: string): number {
-    return stats.find((entry) => entry.standardId === standardId)?.recordCount ?? 0;
+    const stat = stats.find((entry) => entry.standardId === standardId);
+    return Math.max(stat?.ingestedRecordCount ?? 0, stat?.recordCount ?? 0);
   }
 
   function cachedBytesForStandard(stats: LocalFlatSqlStandardStats[], standardId: string): number {
@@ -1039,8 +1038,14 @@
     const activePersisted = localRows === 0 && (persisted?.localRows ?? 0) > 0 ? null : persisted;
     const totalRows = Math.max(remoteRows, activePersisted?.totalRows ?? 0);
     const complete = totalRows > 0 && localRows >= totalRows;
+    const active = activeSyncKeys.has(key);
+    const status = effectiveSchemaSyncStatus({
+      active,
+      complete,
+      persistedStatus: activePersisted?.status,
+    });
     return {
-      status: activeSyncKeys.has(key) ? 'syncing' : complete ? 'synced' : activePersisted?.status ?? 'idle',
+      status,
       syncedRows: Math.max(localRows, activePersisted?.syncedRows ?? 0),
       totalRows,
       localRows,
@@ -1428,6 +1433,11 @@
   function currentDataSourceOption(): DataSourceOption | null {
     const options = buildDataSourceOptions(backend, configuredDataSources, peers);
     return options.find((source) => source.id === selectedDataSourceId) ?? options[0] ?? null;
+  }
+
+  function dataSourceOptionForId(dataSourceId: string): DataSourceOption | null {
+    const options = buildDataSourceOptions(backend, configuredDataSources, peers);
+    return options.find((source) => source.id === dataSourceId) ?? null;
   }
 
   function buildDataSourceOptions(
