@@ -628,6 +628,18 @@ func (s *FlatSQLStore) migrateLegacySchemaTable(schemaName, tableName string) er
 	if err := s.createSchemaMetadataTable(tableName); err != nil {
 		return fmt.Errorf("create canonical schema table %s before legacy migration: %w", tableName, err)
 	}
+	hasCanonicalRows, err := s.schemaMetadataTableHasRows(tableName)
+	if err != nil {
+		return err
+	}
+	if hasCanonicalRows {
+		log.Warnf(
+			"Deferring legacy FlatSQL table %s migration into %s because canonical stream metadata already exists; run maintenance migration before dropping legacy bytes",
+			legacyTableName,
+			tableName,
+		)
+		return nil
+	}
 	if err := s.copyBlobSchemaRowsToMetadataTable(schemaName, legacyTableName, tableName); err != nil {
 		return err
 	}
@@ -636,6 +648,18 @@ func (s *FlatSQLStore) migrateLegacySchemaTable(schemaName, tableName string) er
 	}
 	log.Infof("Merged legacy FlatSQL table %s into %s", legacyTableName, tableName)
 	return nil
+}
+
+func (s *FlatSQLStore) schemaMetadataTableHasRows(tableName string) (bool, error) {
+	var cid string
+	err := s.db.QueryRow(fmt.Sprintf(`SELECT cid FROM %s LIMIT 1`, tableName)).Scan(&cid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect schema metadata table %s: %w", tableName, err)
+	}
+	return true, nil
 }
 
 func (s *FlatSQLStore) migrateBlobSchemaTableInPlace(schemaName, tableName string) error {
@@ -1322,6 +1346,7 @@ type DataSourceSummary struct {
 // RawRecordQuery filters raw FlatBuffer records for UI and node-to-node reads.
 type RawRecordQuery struct {
 	SchemaName        string
+	CID               string
 	ProviderID        string
 	SourceName        string
 	BatchID           string
@@ -2603,6 +2628,193 @@ func (s *FlatSQLStore) DataSummary() (*DataSummary, error) {
 	return summary, nil
 }
 
+// CountRawRecords returns a filtered raw-record count without hydrating
+// FlatBuffer payloads from stream files.
+func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	filter.SchemaName = strings.TrimSpace(filter.SchemaName)
+	if filter.SchemaName == "" {
+		return 0, errors.New("schema name is required")
+	}
+	tableName, err := sds.SchemaNameToTable(filter.SchemaName)
+	if err != nil {
+		return 0, fmt.Errorf("invalid schema name: %w", err)
+	}
+
+	sourceFiltered := strings.TrimSpace(filter.ProviderID) != "" ||
+		strings.TrimSpace(filter.SourceName) != "" ||
+		strings.TrimSpace(filter.BatchID) != "" ||
+		strings.TrimSpace(filter.ProducerPeerID) != "" ||
+		strings.TrimSpace(filter.ProducerPublicKey) != ""
+
+	if !sourceFiltered {
+		total, err := s.countSchemaRecordsLocked(tableName, filter)
+		if err != nil {
+			return 0, err
+		}
+		if filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) {
+			localCount, err := s.countLocalEPMRecordsLocked(filter)
+			if err != nil {
+				return 0, err
+			}
+			total += localCount
+		}
+		return total, nil
+	}
+
+	if strings.TrimSpace(filter.PeerID) == "" && strings.TrimSpace(filter.CID) == "" {
+		total, ok, err := s.countSourceSummaryRecordsLocked(filter)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			if filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) {
+				localCount, err := s.countLocalEPMRecordsLocked(filter)
+				if err != nil {
+					return 0, err
+				}
+				total += localCount
+			}
+			return total, nil
+		}
+	}
+
+	taggedQuery := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM sdn_record_source_tags tags
+		INNER JOIN %s records ON records.cid = tags.cid
+		WHERE tags.schema_name = ?
+	`, tableName)
+	args := []interface{}{filter.SchemaName}
+
+	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
+		taggedQuery += ` AND records.peer_id = ?`
+		args = append(args, peerID)
+	}
+	if cid := strings.TrimSpace(filter.CID); cid != "" {
+		taggedQuery += ` AND records.cid = ?`
+		args = append(args, cid)
+	}
+	if providerID := strings.TrimSpace(filter.ProviderID); providerID != "" {
+		taggedQuery += ` AND tags.provider_id = ?`
+		args = append(args, providerID)
+	}
+	if sourceName := strings.TrimSpace(filter.SourceName); sourceName != "" {
+		taggedQuery += ` AND tags.source_name = ?`
+		args = append(args, sourceName)
+	}
+	if batchID := strings.TrimSpace(filter.BatchID); batchID != "" {
+		taggedQuery += ` AND tags.batch_id = ?`
+		args = append(args, batchID)
+	}
+	if producerPeerID := strings.TrimSpace(filter.ProducerPeerID); producerPeerID != "" {
+		taggedQuery += ` AND tags.producer_peer_id = ?`
+		args = append(args, producerPeerID)
+	}
+	if producerPublicKey := strings.TrimSpace(filter.ProducerPublicKey); producerPublicKey != "" {
+		taggedQuery += ` AND tags.producer_public_key = ?`
+		args = append(args, producerPublicKey)
+	}
+
+	var total int64
+	if err := s.db.QueryRow(taggedQuery, args...).Scan(&total); err != nil {
+		return 0, fmt.Errorf("raw tagged record count failed: %w", err)
+	}
+
+	if !sourceFiltered {
+		untaggedQuery := fmt.Sprintf(`
+			SELECT COUNT(*)
+			FROM %s records
+			WHERE NOT EXISTS (
+				SELECT 1
+				FROM sdn_record_source_tags tags
+				WHERE tags.schema_name = ? AND tags.cid = records.cid
+			)
+		`, tableName)
+		untaggedArgs := []interface{}{filter.SchemaName}
+		if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
+			untaggedQuery += ` AND records.peer_id = ?`
+			untaggedArgs = append(untaggedArgs, peerID)
+		}
+		if cid := strings.TrimSpace(filter.CID); cid != "" {
+			untaggedQuery += ` AND records.cid = ?`
+			untaggedArgs = append(untaggedArgs, cid)
+		}
+		var untagged int64
+		if err := s.db.QueryRow(untaggedQuery, untaggedArgs...).Scan(&untagged); err != nil {
+			return 0, fmt.Errorf("raw untagged record count failed: %w", err)
+		}
+		total += untagged
+	}
+
+	if filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) {
+		localCount, err := s.countLocalEPMRecordsLocked(filter)
+		if err != nil {
+			return 0, err
+		}
+		total += localCount
+	}
+
+	return total, nil
+}
+
+func (s *FlatSQLStore) countSchemaRecordsLocked(tableName string, filter RawRecordQuery) (int64, error) {
+	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE 1=1`, tableName)
+	args := make([]interface{}, 0, 2)
+	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
+		query += ` AND peer_id = ?`
+		args = append(args, peerID)
+	}
+	if cid := strings.TrimSpace(filter.CID); cid != "" {
+		query += ` AND cid = ?`
+		args = append(args, cid)
+	}
+
+	var total int64
+	if err := s.db.QueryRow(query, args...).Scan(&total); err != nil {
+		return 0, fmt.Errorf("raw schema record count failed: %w", err)
+	}
+	return total, nil
+}
+
+func (s *FlatSQLStore) countSourceSummaryRecordsLocked(filter RawRecordQuery) (int64, bool, error) {
+	query := `
+		SELECT COUNT(*), COALESCE(SUM(record_count), 0)
+		FROM sdn_record_source_summary
+		WHERE schema_name = ?
+	`
+	args := []interface{}{filter.SchemaName}
+	if providerID := strings.TrimSpace(filter.ProviderID); providerID != "" {
+		query += ` AND provider_id = ?`
+		args = append(args, providerID)
+	}
+	if sourceName := strings.TrimSpace(filter.SourceName); sourceName != "" {
+		query += ` AND source_name = ?`
+		args = append(args, sourceName)
+	}
+	if batchID := strings.TrimSpace(filter.BatchID); batchID != "" {
+		query += ` AND batch_id = ?`
+		args = append(args, batchID)
+	}
+	if producerPeerID := strings.TrimSpace(filter.ProducerPeerID); producerPeerID != "" {
+		query += ` AND producer_peer_id = ?`
+		args = append(args, producerPeerID)
+	}
+	if producerPublicKey := strings.TrimSpace(filter.ProducerPublicKey); producerPublicKey != "" {
+		query += ` AND producer_public_key = ?`
+		args = append(args, producerPublicKey)
+	}
+
+	var summaryRows int64
+	var total int64
+	if err := s.db.QueryRow(query, args...).Scan(&summaryRows, &total); err != nil {
+		return 0, false, fmt.Errorf("raw source summary count failed: %w", err)
+	}
+	return total, summaryRows > 0, nil
+}
+
 // QueryRawRecords returns raw FlatBuffer records with metadata and source tags.
 func (s *FlatSQLStore) QueryRawRecords(filter RawRecordQuery) ([]*Record, error) {
 	s.mu.RLock()
@@ -2646,6 +2858,10 @@ func (s *FlatSQLStore) QueryRawRecords(filter RawRecordQuery) ([]*Record, error)
 	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
 		taggedQuery += ` AND records.peer_id = ?`
 		args = append(args, peerID)
+	}
+	if cid := strings.TrimSpace(filter.CID); cid != "" {
+		taggedQuery += ` AND records.cid = ?`
+		args = append(args, cid)
 	}
 	if providerID := strings.TrimSpace(filter.ProviderID); providerID != "" {
 		taggedQuery += ` AND tags.provider_id = ?`
@@ -2696,6 +2912,10 @@ func (s *FlatSQLStore) QueryRawRecords(filter RawRecordQuery) ([]*Record, error)
 		if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
 			untaggedQuery += ` AND records.peer_id = ?`
 			untaggedArgs = append(untaggedArgs, peerID)
+		}
+		if cid := strings.TrimSpace(filter.CID); cid != "" {
+			untaggedQuery += ` AND records.cid = ?`
+			untaggedArgs = append(untaggedArgs, cid)
 		}
 		untaggedQuery += ` ORDER BY records.timestamp DESC, records.cid ASC LIMIT ?`
 		untaggedArgs = append(untaggedArgs, untaggedLimit)
@@ -2863,6 +3083,12 @@ func localEPMFilterMatches(filter RawRecordQuery) bool {
 	if batchID := strings.TrimSpace(filter.BatchID); batchID != "" && batchID != "local" {
 		return false
 	}
+	if producerPeerID := strings.TrimSpace(filter.ProducerPeerID); producerPeerID != "" && producerPeerID != "local-node" {
+		return false
+	}
+	if producerPublicKey := strings.TrimSpace(filter.ProducerPublicKey); producerPublicKey != "" && producerPublicKey != "local-node" {
+		return false
+	}
 	return true
 }
 
@@ -2911,6 +3137,10 @@ func (s *FlatSQLStore) queryLocalEPMRecordsLocked(filter RawRecordQuery, limit i
 		query += ` AND peer_id = ?`
 		args = append(args, peerID)
 	}
+	if cid := strings.TrimSpace(filter.CID); cid != "" {
+		query += ` AND peer_id = ?`
+		args = append(args, cid)
+	}
 	query += ` ORDER BY updated_at DESC, peer_id ASC LIMIT ?`
 	args = append(args, limit)
 
@@ -2948,6 +3178,28 @@ func (s *FlatSQLStore) queryLocalEPMRecordsLocked(filter RawRecordQuery, limit i
 		return nil, fmt.Errorf("local EPM rows failed: %w", err)
 	}
 	return records, nil
+}
+
+func (s *FlatSQLStore) countLocalEPMRecordsLocked(filter RawRecordQuery) (int64, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM sdn_local_epms
+		WHERE schema_name = 'EPM.fbs'
+	`
+	args := make([]interface{}, 0, 1)
+	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
+		query += ` AND peer_id = ?`
+		args = append(args, peerID)
+	}
+	if cid := strings.TrimSpace(filter.CID); cid != "" {
+		query += ` AND peer_id = ?`
+		args = append(args, cid)
+	}
+	var count int64
+	if err := s.db.QueryRow(query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count local EPM records: %w", err)
+	}
+	return count, nil
 }
 
 // QueryIndexedRecords returns records using materialized catalog/source indexes.

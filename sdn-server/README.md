@@ -196,6 +196,8 @@ Data API response format:
 
 - Default for `OMM`, `MPE`, `CAT` query endpoints: `application/x-flatbuffers`
 - Stream framing: `uint32be-length-prefixed` records
+- Raw FlatSQL data queries can stream record payloads directly with
+  `Accept: application/vnd.sdn.flatbuffers.stream`
 - JSON fallback for debugging: add `?format=json` (or `Accept: application/json`)
 
 Bulk FlatBuffer endpoints (globe feed):

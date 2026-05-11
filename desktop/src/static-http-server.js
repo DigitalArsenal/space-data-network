@@ -160,6 +160,21 @@ function isSdnSSHHostAlias (alias) {
       alias === 'celestrak.eth')
 }
 
+const CONFIGURED_SDN_NODE_IDENTITIES = [
+  {
+    aliases: ['space-data-network-01', 'sdn.spaceaware.io'],
+    name: 'SpaceAware.io',
+    peer_id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+    public_key: '0257d9a39fac79d4c36e017b3b6913f60684586605ebb9370cf417ef44bf0f7cd2'
+  },
+  {
+    aliases: ['space-data-network-02', 'celestrak.eth'],
+    name: 'CelesTrak Provider',
+    peer_id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+    public_key: '90aa23ea4ff2d68cf8cb8155135fe5a25b580ec805e835aabb0e8905ffb2c3b2'
+  }
+]
+
 function configuredSdnNodesFromSshConfig (configPath = path.join(os.homedir(), '.ssh', 'config')) {
   let config
   try {
@@ -174,6 +189,7 @@ function configuredSdnNodesFromSshConfig (configPath = path.join(os.homedir(), '
   const flush = () => {
     if (!current || current.aliases.length === 0) return
     const alias = current.aliases[0]
+    const identity = configuredNodeIdentityForSdnSSHHost(alias, current.aliases)
     nodes.push({
       id: alias,
       name: displayNameForSdnSSHHost(alias, current.aliases),
@@ -183,6 +199,8 @@ function configuredSdnNodesFromSshConfig (configPath = path.join(os.homedir(), '
         agent_version: 'sdn-configured-node',
         protocols: '/space-data-network/configured-node/1.0.0',
         ssh_aliases: current.aliases.join(','),
+        ...(identity?.peer_id ? { peer_id: identity.peer_id } : {}),
+        ...(identity?.public_key ? { public_key: identity.public_key } : {}),
         ...(current.hostName ? { host_name: current.hostName } : {}),
         admin_proxy_path: `/api/local/sdn-nodes/${encodeURIComponent(alias)}`
       }
@@ -213,10 +231,20 @@ function configuredSdnNodesFromSshConfig (configPath = path.join(os.homedir(), '
 }
 
 function displayNameForSdnSSHHost (alias, aliases = []) {
+  return configuredNodeIdentityForSdnSSHHost(alias, aliases)?.name || alias
+}
+
+function configuredNodeIdentityForSdnSSHHost (alias, aliases = []) {
   const names = new Set([alias, ...aliases].map(value => String(value || '').toLowerCase()))
-  if (names.has('space-data-network-02') || names.has('celestrak.eth')) return 'CelesTrak Provider'
-  if (names.has('space-data-network-01') || names.has('sdn.spaceaware.io')) return 'Space Data Network Public Node'
-  return alias
+  return CONFIGURED_SDN_NODE_IDENTITIES.find(identity => (
+    identity.aliases.some(candidate => names.has(candidate.toLowerCase()))
+  )) || null
+}
+
+function configuredNodeIdentityForSdnPeerID (peerId) {
+  const normalized = String(peerId || '').trim()
+  if (!normalized) return null
+  return CONFIGURED_SDN_NODE_IDENTITIES.find(identity => identity.peer_id === normalized) || null
 }
 
 function serveConfiguredSdnNodes (req, res) {
@@ -301,7 +329,9 @@ function isAllowedConfiguredNodeDataProxyPath (method, targetPath) {
       targetPath === '/api/v1/data/summary'
   }
   if (method === 'POST') {
-    return targetPath === '/api/v1/data/query'
+    return targetPath === '/api/v1/data/query' ||
+      targetPath === '/api/v1/data/scan' ||
+      targetPath === '/api/v1/data/stream'
   }
   return false
 }
@@ -312,16 +342,30 @@ async function defaultConfiguredSdnNodeRemoteRequest (request) {
     configuredSdnNodeCurlArgs(request),
     request.body || ''
   )
-  const marker = Buffer.from('__SDN_HTTP_STATUS__:')
-  const markerIndex = output.lastIndexOf(marker)
-  if (markerIndex < 0) {
+  return parseConfiguredSdnNodeRemoteResponse(output)
+}
+
+function parseConfiguredSdnNodeRemoteResponse (output) {
+  const statusMarker = Buffer.from('__SDN_HTTP_STATUS__:')
+  const statusMarkerIndex = output.lastIndexOf(statusMarker)
+  if (statusMarkerIndex < 0) {
     throw new Error('remote data proxy response did not include an HTTP status')
   }
-  const body = output.subarray(0, markerIndex)
-  const statusCode = Number(output.subarray(markerIndex + marker.length).toString('utf8').trim()) || 502
+  const bodyEnd = statusMarkerIndex > 0 && (output[statusMarkerIndex - 1] === 0x0a || output[statusMarkerIndex - 1] === 0x6e)
+    ? statusMarkerIndex - 1
+    : statusMarkerIndex
+  const body = output.subarray(0, bodyEnd)
+  const trailer = output.subarray(statusMarkerIndex + statusMarker.length).toString('utf8').trim()
+  const contentTypeMarker = '__SDN_CONTENT_TYPE__:'
+  const contentTypeIndex = trailer.indexOf(contentTypeMarker)
+  const statusText = contentTypeIndex >= 0
+    ? trailer.slice(0, contentTypeIndex).replace(/[^\d]+$/, '').trim()
+    : trailer
+  const contentType = contentTypeIndex >= 0 ? trailer.slice(contentTypeIndex + contentTypeMarker.length).trim() : 'application/json; charset=utf-8'
+  const statusCode = Number(statusText) || 502
   return {
     statusCode,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
+    headers: { 'content-type': contentType || 'application/json; charset=utf-8' },
     body
   }
 }
@@ -343,9 +387,9 @@ function configuredSdnNodeCurlArgs (request) {
     '--request',
     request.method,
     '--header',
-    'accept:application/json',
+    `accept:${configuredSdnNodeAccept(request.headers?.accept)}`,
     '--write-out',
-    '__SDN_HTTP_STATUS__:%{http_code}'
+    '\\n__SDN_HTTP_STATUS__:%{http_code}\\n__SDN_CONTENT_TYPE__:%{content_type}'
   ]
 
   if (request.method === 'POST') {
@@ -364,6 +408,11 @@ function configuredSdnNodeCurlArgs (request) {
 function configuredSdnNodeContentType (value) {
   const contentType = String(value || 'application/json').split(';')[0].trim()
   return contentType || 'application/json'
+}
+
+function configuredSdnNodeAccept (value) {
+  const accept = String(value || 'application/json').split(',')[0].trim()
+  return accept || 'application/json'
 }
 
 function collectRemoteCommandOutput (command, args, input) {
@@ -420,13 +469,16 @@ function kuboSwarmPeersToDesktopSdnPeers (payload) {
         return null
       }
 
+      const identity = configuredNodeIdentityForSdnPeerID(peerId)
       const metadata = {}
       if (agentVersion) metadata.agent_version = agentVersion
       if (protocols.length > 0) metadata.protocols = protocols.join(',')
+      if (identity?.peer_id) metadata.peer_id = identity.peer_id
+      if (identity?.public_key) metadata.public_key = identity.public_key
 
       return {
         id: peerId,
-        name: peerId,
+        name: identity?.name || peerId,
         addrs: [normalizeKuboPeerAddress(peer?.Addr, peerId)].filter(Boolean),
         trust_level: 'observed',
         metadata
@@ -1078,8 +1130,13 @@ async function serveDesktopLocalDataAPI (req, res) {
       (!batch || batch === record.batch_id) &&
       (!peer || peer === record.peer_id)
 
+    if (matches && acceptsRawFlatbufferStream(req.headers?.accept)) {
+      sendBuffer(res, 200, 'application/vnd.sdn.flatbuffers.stream', rawFlatbufferStream([record.bytes]))
+      return true
+    }
+
     if (matches) {
-      sendJSON(res, 200, { records: [desktopLocalEpmDataJson(record)] })
+      sendJSON(res, 200, { records: [desktopLocalEpmDataJson(record, Boolean(payload.include_data))] })
       return true
     }
 
@@ -1109,8 +1166,8 @@ async function desktopLocalEpmDataRecord () {
   }
 }
 
-function desktopLocalEpmDataJson (record) {
-  return {
+function desktopLocalEpmDataJson (record, includeData = false) {
+  const row = {
     schema_name: record.schema_name,
     cid: record.cid,
     peer_id: record.peer_id,
@@ -1118,9 +1175,24 @@ function desktopLocalEpmDataJson (record) {
     source_name: record.source_name,
     batch_id: record.batch_id,
     timestamp: record.timestamp,
-    size_bytes: record.size_bytes,
-    data_base64: record.bytes.toString('base64')
+    size_bytes: record.size_bytes
   }
+  if (includeData) row.data_base64 = record.bytes.toString('base64')
+  return row
+}
+
+function acceptsRawFlatbufferStream (value) {
+  return String(value || '').toLowerCase().includes('application/vnd.sdn.flatbuffers.stream')
+}
+
+function rawFlatbufferStream (records) {
+  const chunks = []
+  for (const record of records) {
+    const header = Buffer.alloc(4)
+    header.writeUInt32BE(record.byteLength, 0)
+    chunks.push(header, record)
+  }
+  return Buffer.concat(chunks)
 }
 
 function serveFile (res, filePath) {
@@ -1226,6 +1298,7 @@ module.exports = {
   isAllowedLoopbackHostHeader,
   isSdnSSHHostAlias,
   kuboSwarmPeersToDesktopSdnPeers,
+  parseConfiguredSdnNodeRemoteResponse,
   serveConfiguredSdnNodeDataProxy,
   serveDesktopDirectoryAPI,
   serveDesktopIdentityAPI,

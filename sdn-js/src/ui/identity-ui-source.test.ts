@@ -208,8 +208,13 @@ describe('SDN data Svelte source', () => {
       'sortColumn',
       'sortDirection',
       'Data source',
+      'Data sources',
       'Table',
-      'Search',
+      'SQL',
+      'Run SQL',
+      'createLocalFlatSqlStore',
+      'ingestDownloadedRecords',
+      'INTERNAL_SQL_COLUMN_KEYS',
       'Page size',
       'Previous',
       'Next',
@@ -219,7 +224,6 @@ describe('SDN data Svelte source', () => {
       'Producer',
       'Source',
       'Batch',
-      'Bytes',
       'Display name',
       'Legal name',
       'Email',
@@ -229,11 +233,13 @@ describe('SDN data Svelte source', () => {
       'NORAD catalog ID',
       'OBJECT_NAME',
       'NORAD_CAT_ID',
-      'dataBase64',
+      'dataBytes',
       'schemaName',
       'providerId',
       'sourceName',
     ]);
+    expect(source).not.toContain("label: 'Bytes'");
+    expect(source).not.toContain('dataBase64');
     expect(source).not.toContain('SQL Workbench');
     expect(source).not.toContain('backend ready');
     expect(source).not.toContain('Refresh');

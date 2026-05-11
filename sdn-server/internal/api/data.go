@@ -29,6 +29,8 @@ type DataQueryHandler struct {
 	verifier *license.TokenVerifier
 }
 
+const rawFlatBufferStreamContentType = "application/vnd.sdn.flatbuffers.stream"
+
 // NewDataQueryHandler creates a new data query handler.
 func NewDataQueryHandler(store *storage.FlatSQLStore, verifier *license.TokenVerifier) *DataQueryHandler {
 	return &DataQueryHandler{
@@ -41,6 +43,8 @@ func NewDataQueryHandler(store *storage.FlatSQLStore, verifier *license.TokenVer
 func (h *DataQueryHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/data/health", h.handleHealth)
 	mux.HandleFunc("/api/v1/data/summary", h.handleSummary)
+	mux.HandleFunc("/api/v1/data/scan", h.handleScan)
+	mux.HandleFunc("/api/v1/data/stream", h.handleRawStream)
 	mux.HandleFunc("/api/v1/data/query", h.handleRawQuery)
 	mux.HandleFunc("/api/v1/data/records/", h.handleRawRecord)
 	mux.HandleFunc("/api/v1/data/omm", h.handleOMM)
@@ -131,15 +135,175 @@ func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if requestedRawFlatBufferStream(r) {
+		writeFlatBufferPayloadStreamWithContentType(w, schemaName, recordsToPayloads(records), rawFlatBufferStreamContentType)
+		return
+	}
+
 	results := make([]map[string]interface{}, 0, len(records))
 	for _, rec := range records {
-		results = append(results, rawRecordRow(schemaName, rec))
+		results = append(results, rawRecordRow(schemaName, rec, req.IncludeData))
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"schema":  schemaName,
 		"count":   len(results),
 		"results": results,
 	})
+}
+
+func (h *DataQueryHandler) handleScan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+
+	var req rawDataQueryRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	schemaName := strings.TrimSpace(firstNonEmptyDataString(req.Schema, req.SchemaName))
+	if schemaName == "" {
+		writeError(w, http.StatusBadRequest, "schema is required")
+		return
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	offset := req.Offset
+	if strings.TrimSpace(req.Cursor) != "" {
+		parsedOffset, err := parseScanCursor(req.Cursor)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		offset = parsedOffset
+	}
+	if offset < 0 {
+		writeError(w, http.StatusBadRequest, "offset must be non-negative")
+		return
+	}
+
+	filter := storage.RawRecordQuery{
+		SchemaName:        schemaName,
+		ProviderID:        firstNonEmptyDataString(req.ProviderID, req.ProviderId),
+		SourceName:        req.SourceName,
+		BatchID:           firstNonEmptyDataString(req.BatchID, req.BatchId),
+		ProducerPeerID:    firstNonEmptyDataString(req.ProducerPeerID, req.ProducerPeerId),
+		ProducerPublicKey: firstNonEmptyDataString(req.ProducerPublicKey, req.ProducerPublicKeyCamel),
+		PeerID:            firstNonEmptyDataString(req.PeerID, req.PeerId),
+		Limit:             limit,
+		Offset:            offset,
+	}
+	totalCount, err := h.store.CountRawRecords(filter)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	records, err := h.store.QueryRawRecords(filter)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	results := make([]map[string]interface{}, 0, len(records))
+	for _, rec := range records {
+		results = append(results, rawRecordRow(schemaName, rec, false))
+	}
+	nextCursor := ""
+	if int64(offset+len(records)) < totalCount {
+		nextCursor = encodeScanCursor(offset + len(records))
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"schema":      schemaName,
+		"total_count": totalCount,
+		"count":       len(results),
+		"limit":       limit,
+		"offset":      offset,
+		"cursor":      encodeScanCursor(offset),
+		"next_cursor": nextCursor,
+		"scan_hash":   scanHash(schemaName, records),
+		"results":     results,
+	})
+}
+
+func (h *DataQueryHandler) handleRawStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+
+	var req rawDataStreamRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024*1024)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	schemaName := strings.TrimSpace(firstNonEmptyDataString(req.Schema, req.SchemaName))
+	if schemaName == "" {
+		writeError(w, http.StatusBadRequest, "schema is required")
+		return
+	}
+	if len(req.Records) == 0 {
+		writeError(w, http.StatusBadRequest, "records are required")
+		return
+	}
+	if len(req.Records) > 1000 {
+		writeError(w, http.StatusBadRequest, "records limit is 1000")
+		return
+	}
+
+	records := make([]*storage.Record, 0, len(req.Records))
+	for _, ref := range req.Records {
+		cid := strings.TrimSpace(firstNonEmptyDataString(ref.CID, ref.ID))
+		if cid == "" {
+			writeError(w, http.StatusBadRequest, "record cid is required")
+			return
+		}
+		refSchema := strings.TrimSpace(firstNonEmptyDataString(ref.Schema, ref.SchemaName))
+		if refSchema != "" && refSchema != schemaName {
+			writeError(w, http.StatusBadRequest, "record schema does not match stream schema")
+			return
+		}
+		found, err := h.store.QueryRawRecords(storage.RawRecordQuery{
+			SchemaName:        schemaName,
+			CID:               cid,
+			ProviderID:        firstNonEmptyDataString(ref.ProviderID, ref.ProviderId),
+			SourceName:        ref.SourceName,
+			BatchID:           firstNonEmptyDataString(ref.BatchID, ref.BatchId),
+			ProducerPeerID:    firstNonEmptyDataString(ref.ProducerPeerID, ref.ProducerPeerId),
+			ProducerPublicKey: firstNonEmptyDataString(ref.ProducerPublicKey, ref.ProducerPublicKeyCamel),
+			PeerID:            firstNonEmptyDataString(ref.PeerID, ref.PeerId),
+			Limit:             1,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if len(found) != 1 {
+			writeError(w, http.StatusNotFound, fmt.Sprintf("record %s not found for scan ref", cid))
+			return
+		}
+		records = append(records, found[0])
+	}
+
+	computedHash := scanHash(schemaName, records)
+	if expectedHash := strings.TrimSpace(req.ScanHash); expectedHash != "" && expectedHash != computedHash {
+		writeError(w, http.StatusConflict, "scan hash does not match requested record refs")
+		return
+	}
+
+	w.Header().Set("X-SDN-Scan-Hash", computedHash)
+	writeFlatBufferPayloadStreamWithContentType(w, schemaName, recordsToPayloads(records), rawFlatBufferStreamContentType)
 }
 
 func (h *DataQueryHandler) handleRawRecord(w http.ResponseWriter, r *http.Request) {
@@ -647,8 +811,35 @@ type rawDataQueryRequest struct {
 	ProducerPublicKeyCamel string `json:"producerPublicKey"`
 	PeerID                 string `json:"peer_id"`
 	PeerId                 string `json:"peerId"`
+	Cursor                 string `json:"cursor"`
 	Limit                  int    `json:"limit"`
 	Offset                 int    `json:"offset"`
+	IncludeData            bool   `json:"include_data"`
+}
+
+type rawDataStreamRequest struct {
+	Schema     string                `json:"schema"`
+	SchemaName string                `json:"schema_name"`
+	ScanHash   string                `json:"scan_hash"`
+	Records    []rawDataStreamRecord `json:"records"`
+}
+
+type rawDataStreamRecord struct {
+	Schema                 string `json:"schema"`
+	SchemaName             string `json:"schema_name"`
+	CID                    string `json:"cid"`
+	ID                     string `json:"id"`
+	ProviderID             string `json:"provider_id"`
+	ProviderId             string `json:"providerId"`
+	SourceName             string `json:"source_name"`
+	BatchID                string `json:"batch_id"`
+	BatchId                string `json:"batchId"`
+	ProducerPeerID         string `json:"producer_peer_id"`
+	ProducerPeerId         string `json:"producerPeerId"`
+	ProducerPublicKey      string `json:"producer_public_key"`
+	ProducerPublicKeyCamel string `json:"producerPublicKey"`
+	PeerID                 string `json:"peer_id"`
+	PeerId                 string `json:"peerId"`
 }
 
 func schemaSummaryRows(schemas []storage.DataSchemaSummary) []map[string]interface{} {
@@ -680,14 +871,17 @@ func sourceSummaryRows(sources []storage.DataSourceSummary) []map[string]interfa
 	return rows
 }
 
-func rawRecordRow(schemaName string, rec *storage.Record) map[string]interface{} {
+func rawRecordRow(schemaName string, rec *storage.Record, includeData bool) map[string]interface{} {
 	row := map[string]interface{}{
-		"schema_name": schemaName,
-		"cid":         rec.CID,
-		"peer_id":     rec.PeerID,
-		"timestamp":   rec.Timestamp.UTC().Format(time.RFC3339),
-		"size_bytes":  len(rec.Data),
-		"data_base64": base64.StdEncoding.EncodeToString(rec.Data),
+		"schema_name":    schemaName,
+		"cid":            rec.CID,
+		"peer_id":        rec.PeerID,
+		"timestamp":      rec.Timestamp.UTC().Format(time.RFC3339),
+		"size_bytes":     len(rec.Data),
+		"flatbuffer_uri": fmt.Sprintf("/api/v1/data/records/%s/%s", url.PathEscape(schemaName), url.PathEscape(rec.CID)),
+	}
+	if includeData {
+		row["data_base64"] = base64.StdEncoding.EncodeToString(rec.Data)
 	}
 	if len(rec.Signature) > 0 {
 		row["signature_base64"] = base64.StdEncoding.EncodeToString(rec.Signature)
@@ -717,6 +911,45 @@ func rawRecordRow(schemaName string, rec *storage.Record) map[string]interface{}
 		row["producer_public_key"] = rec.SourceTags.ProducerPublicKey
 	}
 	return row
+}
+
+func scanHash(schemaName string, records []*storage.Record) string {
+	hash := sha256.New()
+	for _, rec := range records {
+		_, _ = fmt.Fprintf(
+			hash,
+			"%s\x00%s\x00%s\x00%d\x00%s\x00%s\x00%s\x00%s\x00%s\n",
+			schemaName,
+			rec.CID,
+			rec.PeerID,
+			len(rec.Data),
+			rec.SourceTags.ProviderID,
+			rec.SourceTags.SourceName,
+			rec.SourceTags.BatchID,
+			rec.SourceTags.ProducerPeerID,
+			rec.SourceTags.ProducerPublicKey,
+		)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func encodeScanCursor(offset int) string {
+	if offset < 0 {
+		offset = 0
+	}
+	return base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+}
+
+func parseScanCursor(cursor string) (int, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(cursor))
+	if err != nil {
+		return 0, fmt.Errorf("invalid cursor")
+	}
+	offset, err := strconv.Atoi(string(raw))
+	if err != nil || offset < 0 {
+		return 0, fmt.Errorf("invalid cursor")
+	}
+	return offset, nil
 }
 
 func firstNonEmptyDataString(values ...string) string {
@@ -987,16 +1220,34 @@ func requestedDataFormat(r *http.Request) dataFormat {
 	return dataFormatFlatBuffers
 }
 
+func requestedRawFlatBufferStream(r *http.Request) bool {
+	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	if format == "raw-flatbuffer-stream" || format == "flatbuffer-stream" || format == "flatbuffers-stream" {
+		return true
+	}
+	accept := strings.ToLower(strings.TrimSpace(r.Header.Get("Accept")))
+	return strings.Contains(accept, rawFlatBufferStreamContentType) ||
+		strings.Contains(accept, "application/vnd.sdn.raw-flatbuffer-stream")
+}
+
 func writeFlatBufferStream(w http.ResponseWriter, schema string, records []*storage.Record) {
+	writeFlatBufferPayloadStream(w, schema, recordsToPayloads(records))
+}
+
+func recordsToPayloads(records []*storage.Record) [][]byte {
 	payloads := make([][]byte, 0, len(records))
 	for _, rec := range records {
 		payloads = append(payloads, rec.Data)
 	}
-	writeFlatBufferPayloadStream(w, schema, payloads)
+	return payloads
 }
 
 func writeFlatBufferPayloadStream(w http.ResponseWriter, schema string, payloads [][]byte) {
-	w.Header().Set("Content-Type", "application/x-flatbuffers")
+	writeFlatBufferPayloadStreamWithContentType(w, schema, payloads, "application/x-flatbuffers")
+}
+
+func writeFlatBufferPayloadStreamWithContentType(w http.ResponseWriter, schema string, payloads [][]byte, contentType string) {
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-SDN-Schema", schema)
 	w.Header().Set("X-SDN-Record-Count", strconv.Itoa(len(payloads)))
 	w.Header().Set("X-SDN-Stream-Format", "uint32be-length-prefixed")

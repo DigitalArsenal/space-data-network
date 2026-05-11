@@ -223,7 +223,7 @@ func TestDataQueryReturnsRawFlatBufferRowsForEPM(t *testing.T) {
 	mux := http.NewServeMux()
 	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/query", bytes.NewBufferString(`{"schema":"EPM.fbs","provider_id":"local-node","source_name":"local-epm","limit":10}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/query", bytes.NewBufferString(`{"schema":"EPM.fbs","provider_id":"local-node","source_name":"local-epm","limit":10,"include_data":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -263,6 +263,162 @@ func TestDataQueryReturnsRawFlatBufferRowsForEPM(t *testing.T) {
 	}
 	if row.SizeBytes != len(epmBytes) {
 		t.Fatalf("size_bytes = %d, want %d", row.SizeBytes, len(epmBytes))
+	}
+}
+
+func TestDataQueryStreamsRawFlatBuffersWithoutBase64(t *testing.T) {
+	store := newDataAPITestStore(t)
+	payload := storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/query", bytes.NewBufferString(`{"schema":"OMM.fbs","provider_id":"space-data-network-02","source_name":"celestrak-gp","limit":10}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.sdn.flatbuffers.stream")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/vnd.sdn.flatbuffers.stream" {
+		t.Fatalf("Content-Type = %q, want raw FlatBuffer stream", got)
+	}
+	if got := rec.Header().Get("X-SDN-Schema"); got != "OMM.fbs" {
+		t.Fatalf("X-SDN-Schema = %q, want OMM.fbs", got)
+	}
+	if got := rec.Header().Get("X-SDN-Stream-Format"); got != "uint32be-length-prefixed" {
+		t.Fatalf("X-SDN-Stream-Format = %q", got)
+	}
+	records := readLengthPrefixedRecords(t, rec.Body.Bytes())
+	if len(records) != 1 {
+		t.Fatalf("stream record count = %d, want 1", len(records))
+	}
+	if string(records[0]) != string(payload) {
+		t.Fatal("stream did not return original raw OMM FlatBuffer bytes")
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("data_base64")) {
+		t.Fatal("raw FlatBuffer stream must not contain JSON/base64 fields")
+	}
+}
+
+func TestDataScanReturnsFilteredTotalAndHashBoundRefs(t *testing.T) {
+	store := newDataAPITestStore(t)
+	storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
+	storeDataAPITestOMM(t, store, 25544, "ISS (ZARYA)", "2026-05-10")
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/scan", bytes.NewBufferString(`{"schema":"OMM.fbs","provider_id":"space-data-network-02","source_name":"celestrak-gp","limit":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Schema     string `json:"schema"`
+		TotalCount int64  `json:"total_count"`
+		Count      int    `json:"count"`
+		Limit      int    `json:"limit"`
+		NextCursor string `json:"next_cursor"`
+		ScanHash   string `json:"scan_hash"`
+		Results    []struct {
+			SchemaName string `json:"schema_name"`
+			CID        string `json:"cid"`
+			ProviderID string `json:"provider_id"`
+			SourceName string `json:"source_name"`
+			SizeBytes  int    `json:"size_bytes"`
+			DataBase64 string `json:"data_base64"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if body.Schema != "OMM.fbs" || body.TotalCount != 2 || body.Count != 1 || body.Limit != 1 {
+		t.Fatalf("unexpected scan response: %+v", body)
+	}
+	if body.NextCursor == "" {
+		t.Fatalf("next_cursor is empty for a partial scan: %+v", body)
+	}
+	if body.ScanHash == "" {
+		t.Fatalf("scan_hash is empty: %+v", body)
+	}
+	if len(body.Results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(body.Results))
+	}
+	row := body.Results[0]
+	if row.SchemaName != "OMM.fbs" || row.ProviderID != "space-data-network-02" || row.SourceName != "celestrak-gp" {
+		t.Fatalf("unexpected row metadata: %+v", row)
+	}
+	if row.SizeBytes == 0 {
+		t.Fatalf("size_bytes was not populated: %+v", row)
+	}
+	if row.DataBase64 != "" {
+		t.Fatalf("scan refs must not inline base64 payloads: %+v", row)
+	}
+}
+
+func TestDataStreamReturnsScanBoundRefsInRequestedOrder(t *testing.T) {
+	store := newDataAPITestStore(t)
+	storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
+	storeDataAPITestOMM(t, store, 25544, "ISS (ZARYA)", "2026-05-10")
+
+	records, err := store.QueryRawRecords(storage.RawRecordQuery{
+		SchemaName: "OMM.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-gp",
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("query raw records failed: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("len(records) = %d, want 2", len(records))
+	}
+	ordered := []*storage.Record{records[1], records[0]}
+	requestBody := map[string]interface{}{
+		"schema":    "OMM.fbs",
+		"scan_hash": scanHash("OMM.fbs", ordered),
+		"records": []map[string]interface{}{
+			rawRecordRow("OMM.fbs", ordered[0], false),
+			rawRecordRow("OMM.fbs", ordered[1], false),
+		},
+	}
+	body, err := json.Marshal(requestBody)
+	if err != nil {
+		t.Fatalf("marshal request failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/stream", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.sdn.flatbuffers.stream")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/vnd.sdn.flatbuffers.stream" {
+		t.Fatalf("Content-Type = %q, want raw FlatBuffer stream", got)
+	}
+	if got := rec.Header().Get("X-SDN-Scan-Hash"); got != requestBody["scan_hash"] {
+		t.Fatalf("X-SDN-Scan-Hash = %q, want %q", got, requestBody["scan_hash"])
+	}
+	streamRecords := readLengthPrefixedRecords(t, rec.Body.Bytes())
+	if len(streamRecords) != len(ordered) {
+		t.Fatalf("stream record count = %d, want %d", len(streamRecords), len(ordered))
+	}
+	for index := range ordered {
+		if string(streamRecords[index]) != string(ordered[index].Data) {
+			t.Fatalf("stream record %d did not match requested ref order", index)
+		}
 	}
 }
 
@@ -346,7 +502,7 @@ func apiSourceCount(sources []apiSourceSummaryRow, schema, providerID, sourceNam
 	return 0
 }
 
-func storeDataAPITestOMM(t *testing.T, store *storage.FlatSQLStore, norad uint32, objectName, day string) {
+func storeDataAPITestOMM(t *testing.T, store *storage.FlatSQLStore, norad uint32, objectName, day string) []byte {
 	t.Helper()
 
 	epoch, err := time.Parse(time.RFC3339, day+"T12:00:00Z")
@@ -367,6 +523,7 @@ func storeDataAPITestOMM(t *testing.T, store *storage.FlatSQLStore, norad uint32
 	if _, err := store.StoreWithSourceTags("OMM.fbs", payload, "source:celestrak", nil, tags); err != nil {
 		t.Fatalf("store OMM failed: %v", err)
 	}
+	return payload
 }
 
 func storeDataAPITestSPW(t *testing.T, store *storage.FlatSQLStore, date string) {

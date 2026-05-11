@@ -6,6 +6,7 @@ import {
   createUnavailableResult,
   type BackendCapability,
   type BackendResult,
+  type DataScanResult,
   type DataSummary,
   type LocalObjectSummary,
   type NodeAccessUserInput,
@@ -133,6 +134,12 @@ export function createBrowserNodeBackend(): SdnBackend {
     },
     async getDataSummary(): Promise<BackendResult<DataSummary>> {
       return createUnavailableResult('getDataSummary', 'raw FlatSQL summary requires a local or remote SDN node');
+    },
+    async scanRawData(): Promise<BackendResult<DataScanResult>> {
+      return createUnavailableResult('scanRawData', 'raw FlatSQL scan requires a local or remote SDN node');
+    },
+    async streamRawData(): Promise<BackendResult<RawDataRecord[]>> {
+      return createUnavailableResult('streamRawData', 'raw FlatBuffer streams require a local or remote SDN node');
     },
     async queryRawData(): Promise<BackendResult<RawDataRecord[]>> {
       return createUnavailableResult('queryRawData', 'raw FlatSQL query requires a local or remote SDN node');

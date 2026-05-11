@@ -193,6 +193,9 @@ describe('desktop-local SDN backend', () => {
       if (url === 'http://127.0.0.1:17890/api/v1/data/query') {
         expect(init?.method).toBe('POST');
         expect(init?.credentials).toBe('include');
+        if (acceptHeader(init).includes('application/vnd.sdn.flatbuffers.stream')) {
+          return flatbufferStreamResponse([new Uint8Array([0, 1, 2, 3])]);
+        }
         return jsonResponse({
           schema: 'EPM.fbs',
           count: 1,
@@ -203,7 +206,6 @@ describe('desktop-local SDN backend', () => {
             provider_id: 'local-node',
             source_name: 'local-epm',
             size_bytes: 128,
-            data_base64: 'AAECAw==',
           }],
         });
       }
@@ -220,7 +222,7 @@ describe('desktop-local SDN backend', () => {
     });
     await expect(backend.queryRawData({ schema: 'EPM.fbs', providerId: 'local-node', sourceName: 'local-epm', limit: 10 })).resolves.toMatchObject({
       ok: true,
-      data: [{ schemaName: 'EPM.fbs', cid: '12D3KooWEPM', dataBase64: 'AAECAw==' }],
+      data: [{ schemaName: 'EPM.fbs', cid: '12D3KooWEPM', dataBytes: new Uint8Array([0, 1, 2, 3]) }],
     });
     await expect(backend.readRawDataRecord('EPM.fbs', '12D3KooWEPM')).resolves.toMatchObject({
       ok: true,
@@ -230,6 +232,106 @@ describe('desktop-local SDN backend', () => {
       expect.objectContaining({ url: 'http://127.0.0.1:17890/api/v1/data/summary', init: expect.objectContaining({ credentials: 'include' }) }),
       expect.objectContaining({ url: 'http://127.0.0.1:17890/api/v1/data/query', init: expect.objectContaining({ method: 'POST', credentials: 'include' }) }),
     ]));
+    expect(calls.filter((call) => call.url === 'http://127.0.0.1:17890/api/v1/data/query')).toHaveLength(2);
+  });
+
+  it('scans raw data refs through the local desktop data endpoint', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === 'http://127.0.0.1:17890/api/v1/data/scan') {
+        expect(init?.method).toBe('POST');
+        expect(init?.credentials).toBe('include');
+        return jsonResponse({
+          schema: 'OMM.fbs',
+          total_count: 31069,
+          count: 1,
+          limit: 1,
+          offset: 0,
+          cursor: 'MA',
+          next_cursor: 'MQ',
+          scan_hash: 'scan-hash',
+          results: [{
+            schema_name: 'OMM.fbs',
+            cid: 'omm-cid-1',
+            peer_id: 'source:celestrak',
+            provider_id: 'space-data-network-02',
+            source_name: 'celestrak-gp',
+            size_bytes: 256,
+          }],
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const backend = createDesktopLocalBackend({ desktopProxyUrl: 'http://127.0.0.1:17890', fetch: fetchMock });
+
+    const result = await backend.scanRawData({ schema: 'OMM.fbs', providerId: 'space-data-network-02', sourceName: 'celestrak-gp', limit: 1 });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        schema: 'OMM.fbs',
+        totalCount: 31069,
+        count: 1,
+        nextCursor: 'MQ',
+        scanHash: 'scan-hash',
+        results: [{ schemaName: 'OMM.fbs', cid: 'omm-cid-1' }],
+      },
+    });
+    expect(result.data?.results[0]).not.toHaveProperty('dataBytes');
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(String(calls[0]?.init?.body))).toMatchObject({
+      schema: 'OMM.fbs',
+      include_data: false,
+      provider_id: 'space-data-network-02',
+      source_name: 'celestrak-gp',
+      limit: 1,
+    });
+  });
+
+  it('streams local proxy raw FlatBuffers for scan-bound refs', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === 'http://127.0.0.1:17890/api/v1/data/stream') {
+        expect(init?.method).toBe('POST');
+        expect(init?.credentials).toBe('include');
+        expect(acceptHeader(init)).toContain('application/vnd.sdn.flatbuffers.stream');
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          schema: 'OMM.fbs',
+          scan_hash: 'scan-hash',
+          records: [{
+            schema_name: 'OMM.fbs',
+            cid: 'omm-cid-1',
+            peer_id: 'source:celestrak',
+            provider_id: 'space-data-network-02',
+            source_name: 'celestrak-gp',
+          }],
+        });
+        return flatbufferStreamResponse([new Uint8Array([4, 3, 2, 1])]);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const backend = createDesktopLocalBackend({ desktopProxyUrl: 'http://127.0.0.1:17890', fetch: fetchMock });
+
+    const result = await backend.streamRawData({
+      schema: 'OMM.fbs',
+      scanHash: 'scan-hash',
+      records: [{
+        schemaName: 'OMM.fbs',
+        cid: 'omm-cid-1',
+        peerId: 'source:celestrak',
+        providerId: 'space-data-network-02',
+        sourceName: 'celestrak-gp',
+        sizeBytes: 4,
+      }],
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: [{ schemaName: 'OMM.fbs', cid: 'omm-cid-1', dataBytes: new Uint8Array([4, 3, 2, 1]) }],
+    });
+    expect(calls).toHaveLength(1);
   });
 
   it('manages node access grants through the wallet-cookie auth API', async () => {
@@ -311,4 +413,29 @@ function jsonResponse(payload: unknown) {
     status: 200,
     json: async () => payload,
   } as Response;
+}
+
+function flatbufferStreamResponse(records: Uint8Array[]) {
+  const size = records.reduce((total, record) => total + 4 + record.byteLength, 0);
+  const body = new Uint8Array(size);
+  const view = new DataView(body.buffer);
+  let offset = 0;
+  for (const record of records) {
+    view.setUint32(offset, record.byteLength, false);
+    offset += 4;
+    body.set(record, offset);
+    offset += record.byteLength;
+  }
+  return new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'application/vnd.sdn.flatbuffers.stream' },
+  });
+}
+
+function acceptHeader(init?: RequestInit): string {
+  const headers = init?.headers;
+  if (!headers) return '';
+  if (headers instanceof Headers) return headers.get('accept') ?? '';
+  if (Array.isArray(headers)) return String(headers.find(([key]) => key.toLowerCase() === 'accept')?.[1] ?? '');
+  return String((headers as Record<string, string>).accept ?? (headers as Record<string, string>).Accept ?? '');
 }
