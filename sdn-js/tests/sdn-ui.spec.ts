@@ -41,7 +41,8 @@ test('data route renders a searchable remote data source without workbench statu
   await page.getByRole('option', { name: /CelesTrak Provider/ }).click();
 
   await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('OMM');
-  await expect(page.getByText('celestrak-omm-1')).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'STARLINK-6292' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '2023-078J' })).toBeVisible();
   await expect(page.getByRole('cell', { name: 'space-data-network-02' })).toBeVisible();
 });
 
@@ -230,7 +231,7 @@ async function installSdnFixtures(page: Page): Promise<void> {
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
-        records: [
+        results: [
           {
             schema_name: 'OMM.fbs',
             cid: 'celestrak-omm-1',
@@ -240,7 +241,7 @@ async function installSdnFixtures(page: Page): Promise<void> {
             batch_id: 'fixture-batch',
             timestamp: '2026-05-11T04:02:25Z',
             size_bytes: 288,
-            data_base64: '',
+            data_base64: 'HAEAAEgAAAAkT01NAAAAADwAVAAAAAwACABQAEwAEAAAAAAAAAAAAAAARAAAADwANAAsACQAHAAUAAAAAAAAAAAAAAAAAAAABABIADwAAABQAAAAVAAAAGAAAAB4AAAAxEKtad4BV0DByqFFtsBwQGZmZmZmnGJAXf5D+u1/UUCej3xvHS04P22KKnBw9y1AUAAAAMfdAABkAAAAcAAAAAEAAABVAAAACAAAAFNETi1URVNUAAAAABQAAAAyMDI2LTA1LTExVDEwOjI2OjQxWgAAAAAFAAAARUFSVEgAAAAUAAAAMjAyNi0wNS0xMFQxMDo0NTozMVoAAAAACQAAADIwMjMtMDc4SgAAAA0AAABTVEFSTElOSy02MjkyAAAA',
           },
         ],
       }),
