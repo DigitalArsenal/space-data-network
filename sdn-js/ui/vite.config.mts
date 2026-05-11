@@ -11,6 +11,7 @@ const repoRoot = path.resolve(packageRoot, '..');
 const stackPackagesRoot = path.resolve(repoRoot, '..');
 const upstreamWebUiRoot = path.resolve(repoRoot, 'webui');
 const sdnUpstreamWebUiRoot = path.resolve(__dirname, 'src', 'upstream-webui');
+const coiServiceWorkerPath = path.resolve(__dirname, 'src', 'lib', 'coi-serviceworker.js');
 const proxyTarget = process.env.SDN_UI_PROXY_TARGET?.trim();
 const kuboProxyTarget = process.env.SDN_UI_KUBO_PROXY_TARGET?.trim();
 const reactVirtualizedWindowScrollerOnScrollPath = path.resolve(
@@ -154,6 +155,22 @@ export default defineConfig({
           }
         }
         return null;
+      },
+    },
+    {
+      name: 'sdn-coi-service-worker',
+      configureServer(server) {
+        server.middlewares.use('/coi-serviceworker.js', async (_req, res) => {
+          res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+          res.end(await fs.promises.readFile(coiServiceWorkerPath, 'utf8'));
+        });
+      },
+      generateBundle() {
+        this.emitFile({
+          type: 'asset',
+          fileName: 'coi-serviceworker.js',
+          source: fs.readFileSync(coiServiceWorkerPath, 'utf8'),
+        });
       },
     },
   ],
