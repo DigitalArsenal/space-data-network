@@ -5,7 +5,8 @@ import {
   type LocalFlatSqlStore,
   type LocalFlatSqlStoreOptions,
 } from './local-flatsql';
-import { createLibp2pFlatSqlSyncBackend } from './sdn-backend-libp2p-sync';
+import { TimeoutError, withTimeout } from './async-timeout';
+import { Libp2pFlatSqlSyncBackendCache } from './libp2p-sync-backend-cache';
 import type { DataSummary, RawDataRecord } from './sdn-backend';
 import type {
   WorkerFlatSqlSyncBackendConfig,
@@ -37,6 +38,8 @@ type FlatSqlWorkerGlobal = {
 };
 
 const workerGlobal = self as unknown as FlatSqlWorkerGlobal;
+const syncBackendCache = new Libp2pFlatSqlSyncBackendCache();
+const REMOTE_SYNC_OPERATION_TIMEOUT_MS = 60_000;
 let store: LocalFlatSqlStore | null = null;
 
 workerGlobal.onmessage = (event: MessageEvent<WorkerRequest>) => {
@@ -48,6 +51,7 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
     switch (request.type) {
       case 'init':
         store?.destroy();
+        await syncBackendCache.destroy();
         store = await createLocalFlatSqlStore(request.options);
         postSuccess(request.id, undefined, await stats({ includeCachedBytes: false }));
         return;
@@ -87,6 +91,7 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
       case 'destroy':
         store?.destroy();
         store = null;
+        await syncBackendCache.destroy();
         postSuccess(request.id);
         return;
       default:
@@ -107,32 +112,38 @@ async function stats(options?: LocalFlatSqlStatsOptions): Promise<LocalFlatSqlSt
 }
 
 async function getRemoteDataSummary(backendConfig: WorkerFlatSqlSyncBackendConfig): Promise<DataSummary | null> {
-  const summary = await createLibp2pFlatSqlSyncBackend(backendConfig).getDataSummary();
+  const summary = await withRemoteSyncTimeout(
+    syncBackendCache.backendFor(backendConfig).getDataSummary(),
+    'Remote data summary',
+  );
   if (!summary.ok) throw new Error(summary.capability.reason ?? 'Remote data summary failed');
   return summary.data;
 }
 
 async function queryRemotePage(request: WorkerRemotePageRequest): Promise<WorkerRemotePageResult> {
   const currentStore = requireStore();
-  const backend = createLibp2pFlatSqlSyncBackend(request.backendConfig);
-  const scanResult = await backend.scanRawData(request.query);
+  const backend = syncBackendCache.backendFor(request.backendConfig);
+  const scanResult = await withRemoteSyncTimeout(backend.scanRawData(request.query), 'Remote page scan');
   if (!scanResult.ok) throw new Error(scanResult.capability.reason ?? 'Remote scan failed');
   const scan = scanResult.data;
   let records: RawDataRecord[] = [];
   if (scan?.results.length) {
-    const streamResult = await backend.streamRawData({
-      schema: scan.schema,
-      scanHash: scan.scanHash,
-      chunkHash: scan.chunkHash || scan.scanHash,
-      snapshotId: scan.snapshotId,
-      head: scan.head,
-      cursor: scan.cursor,
-      nextCursor: scan.nextCursor,
-      totalCount: scan.totalCount,
-      highWaterMark: scan.highWaterMark,
-      queryProfile: scan.queryProfile,
-      records: scan.results,
-    });
+    const streamResult = await withRemoteSyncTimeout(
+      backend.streamRawData({
+        schema: scan.schema,
+        scanHash: scan.scanHash,
+        chunkHash: scan.chunkHash || scan.scanHash,
+        snapshotId: scan.snapshotId,
+        head: scan.head,
+        cursor: scan.cursor,
+        nextCursor: scan.nextCursor,
+        totalCount: scan.totalCount,
+        highWaterMark: scan.highWaterMark,
+        queryProfile: scan.queryProfile,
+        records: scan.results,
+      }),
+      'Remote page stream',
+    );
     if (!streamResult.ok) throw new Error(streamResult.capability.reason ?? 'Remote FlatBuffer stream failed');
     records = streamResult.data ?? [];
     await currentStore.ingestRecords(request.standardId, records, {
@@ -149,7 +160,7 @@ async function queryRemotePage(request: WorkerRemotePageRequest): Promise<Worker
 
 async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest): Promise<{ progress: WorkerSchemaSyncProgress; stats: LocalFlatSqlStandardStats[] }> {
   const currentStore = requireStore();
-  const backend = createLibp2pFlatSqlSyncBackend(request.backendConfig);
+  const backend = syncBackendCache.backendFor(request.backendConfig);
   let currentStats = await currentStore.getStats({ includeCachedBytes: false });
   let offset = localRowsForStandard(currentStats, request.standardId);
   let localRows = offset;
@@ -208,18 +219,21 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
         return { progress, stats: currentStats };
       }
 
-      let scanResult = await backend.scanRawData({
-        schema: request.schema,
-        limit: request.pageSize,
-        ...(nextCursor
-          ? {
-              cursor: nextCursor,
-              snapshotId: snapshotId || undefined,
-              head: head || undefined,
-              queryProfile,
-            }
-          : { offset }),
-      });
+      let scanResult = await withRemoteSyncTimeout(
+        backend.scanRawData({
+          schema: request.schema,
+          limit: request.pageSize,
+          ...(nextCursor
+            ? {
+                cursor: nextCursor,
+                snapshotId: snapshotId || undefined,
+                head: head || undefined,
+                queryProfile,
+              }
+            : { offset }),
+        }),
+        'Remote sync scan',
+      );
       if (!scanResult.ok) throw new Error(scanResult.capability.reason ?? 'Remote scan failed');
 
       let scan = scanResult.data;
@@ -228,12 +242,15 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       if (nextCursor && head && scan.head && scan.head !== head) {
         nextCursor = '';
         offset = localRows;
-        scanResult = await backend.scanRawData({
-          schema: request.schema,
-          limit: request.pageSize,
-          offset,
-          queryProfile,
-        });
+        scanResult = await withRemoteSyncTimeout(
+          backend.scanRawData({
+            schema: request.schema,
+            limit: request.pageSize,
+            offset,
+            queryProfile,
+          }),
+          'Remote sync snapshot refresh',
+        );
         if (!scanResult.ok) throw new Error(scanResult.capability.reason ?? 'Remote scan failed after snapshot refresh');
         scan = scanResult.data;
         if (!scan) throw new Error('Remote scan returned no data after snapshot refresh');
@@ -245,19 +262,22 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       totalRows = Math.max(totalRows, scan.totalCount ?? 0, offset + scan.results.length);
       if (scan.results.length === 0) break;
 
-      const streamResult = await backend.streamRawData({
-        schema: scan.schema,
-        scanHash: scan.scanHash,
-        chunkHash: scan.chunkHash || scan.scanHash,
-        snapshotId: scan.snapshotId,
-        head: scan.head,
-        cursor: scan.cursor,
-        nextCursor: scan.nextCursor,
-        totalCount: scan.totalCount,
-        highWaterMark: scan.highWaterMark,
-        queryProfile: scan.queryProfile || queryProfile,
-        records: scan.results,
-      });
+      const streamResult = await withRemoteSyncTimeout(
+        backend.streamRawData({
+          schema: scan.schema,
+          scanHash: scan.scanHash,
+          chunkHash: scan.chunkHash || scan.scanHash,
+          snapshotId: scan.snapshotId,
+          head: scan.head,
+          cursor: scan.cursor,
+          nextCursor: scan.nextCursor,
+          totalCount: scan.totalCount,
+          highWaterMark: scan.highWaterMark,
+          queryProfile: scan.queryProfile || queryProfile,
+          records: scan.results,
+        }),
+        'Remote sync stream',
+      );
       if (!streamResult.ok) throw new Error(streamResult.capability.reason ?? 'Remote FlatBuffer stream failed');
 
       const records = streamResult.data ?? [];
@@ -358,6 +378,21 @@ function localRowsForStandard(stats: LocalFlatSqlStandardStats[], standardId: st
 
 function cachedBytesForStandard(stats: LocalFlatSqlStandardStats[], standardId: string): number {
   return stats.find((entry) => entry.standardId === standardId)?.cachedBytes ?? 0;
+}
+
+async function withRemoteSyncTimeout<T>(operation: Promise<T>, label: string): Promise<T> {
+  try {
+    return await withTimeout(
+      operation,
+      REMOTE_SYNC_OPERATION_TIMEOUT_MS,
+      `${label} timed out after ${REMOTE_SYNC_OPERATION_TIMEOUT_MS / 1000}s`,
+    );
+  } catch (error) {
+    if (error instanceof TimeoutError) {
+      await syncBackendCache.destroy();
+    }
+    throw error;
+  }
 }
 
 function postRemotePageSuccess(id: number, result: WorkerRemotePageResult): void {

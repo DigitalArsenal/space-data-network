@@ -1,6 +1,8 @@
 import {
   FLATSQL_SYNC_PROTOCOL_ID,
+  requestFlatSqlSyncChunk,
   type FlatSqlSyncChunk,
+  type FlatSqlSyncTransport,
   type FlatSqlSyncQuery,
   type FlatSqlSyncRecordRef,
 } from '../../flatsql-sync';
@@ -28,6 +30,7 @@ import {
 
 export interface Libp2pFlatSqlSyncClient {
   readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk>;
+  stop?(): Promise<void> | void;
 }
 
 export interface Libp2pFlatSqlSyncBackendOptions {
@@ -56,7 +59,7 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
   async function ensureClient(): Promise<Libp2pFlatSqlSyncClient> {
     if (!targetPeerId) throw new Error('remote peer ID is not configured');
     if (candidateAddrs.length === 0) throw new Error('remote libp2p sync address is not configured');
-    if (!clientPromise) clientPromise = options.nodeFactory ? options.nodeFactory() : createDefaultSyncClient(candidateAddrs);
+    if (!clientPromise) clientPromise = options.nodeFactory ? options.nodeFactory() : createDefaultLibp2pFlatSqlSyncClient(candidateAddrs);
     return clientPromise;
   }
 
@@ -120,6 +123,9 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
         records: request.records,
       });
       const refs = chunk.header.results.length > 0 ? chunk.header.results.map(rawRecordFromFlatSqlRef) : request.records;
+      if ((refs?.length ?? 0) > 0 && chunk.records.length < (refs?.length ?? 0)) {
+        throw new Error(`remote FlatSQL sync returned ${chunk.records.length}/${refs?.length ?? 0} FlatBuffer frames`);
+      }
       return createAvailableResult('streamRawData', refs.map((record, index) => ({
         ...record,
         ...(chunk.records[index] ? { dataBytes: chunk.records[index] } : {}),
@@ -243,17 +249,21 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     },
     async getDataSummary(): Promise<BackendResult<DataSummary>> {
       try {
-        const settledChunks = await Promise.allSettled(summarySchemas.map(async (schema) => requestChunk({
-          schema,
-          op: 'scan',
-          limit: 1,
-          offset: 0,
-        })));
-        const chunks = settledChunks
-          .filter((result): result is PromiseFulfilledResult<FlatSqlSyncChunk> => result.status === 'fulfilled')
-          .map((result) => result.value);
+        const chunks: FlatSqlSyncChunk[] = [];
+        let firstError: unknown = null;
+        for (const schema of summarySchemas) {
+          try {
+            chunks.push(await requestChunk({
+              schema,
+              op: 'scan',
+              limit: 1,
+              offset: 0,
+            }));
+          } catch (error) {
+            firstError ??= error;
+          }
+        }
         if (chunks.length === 0) {
-          const firstError = settledChunks.find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;
           return createUnavailableResult('getDataSummary', formatSyncError(firstError ?? 'remote FlatSQL sync summary unavailable'));
         }
         const schemas = chunks
@@ -351,16 +361,134 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
   }
 }
 
-async function createDefaultSyncClient(candidateAddrs: string[]): Promise<Libp2pFlatSqlSyncClient> {
-  const { SDNNode } = await import('../../node');
-  return SDNNode.create({
-    edgeRelays: candidateAddrs,
-    bootstrapPeers: [],
-    includeIPFSBootstrap: false,
-    enableIdentify: false,
-    enableStorage: false,
-    enableRelayProbing: false,
+export async function createDefaultLibp2pFlatSqlSyncClient(candidateAddrs: string[]): Promise<Libp2pFlatSqlSyncClient> {
+  const normalizedAddrs = normalizeCandidateAddrs(candidateAddrs);
+  const [{ createLibp2p }, { noise }, { yamux }, { multiaddr }, { peerIdFromString }] = await Promise.all([
+    import('libp2p'),
+    import('@chainsafe/libp2p-noise'),
+    import('@chainsafe/libp2p-yamux'),
+    import('@multiformats/multiaddr'),
+    import('@libp2p/peer-id'),
+  ]);
+  const transports: any[] = [];
+  const services: Record<string, any> = {};
+  const includeAllTransports = normalizedAddrs.length === 0;
+  if (includeAllTransports || normalizedAddrs.some((addr) => addr.includes('/ws') || addr.includes('/wss'))) {
+    const [{ webSockets }, { all: wsFilters }] = await Promise.all([
+      import('@libp2p/websockets'),
+      import('@libp2p/websockets/filters'),
+    ]);
+    transports.push(webSockets({ filter: wsFilters }));
+  }
+  if (includeAllTransports || normalizedAddrs.some((addr) => addr.includes('/webtransport'))) {
+    const { webTransport } = await import('@libp2p/webtransport');
+    transports.push(webTransport());
+  }
+  if (includeAllTransports || normalizedAddrs.some((addr) => addr.includes('/webrtc') || addr.includes('/p2p-circuit'))) {
+    const [{ webRTC }, { circuitRelayTransport }, { identify }] = await Promise.all([
+      import('@libp2p/webrtc'),
+      import('@libp2p/circuit-relay-v2'),
+      import('@libp2p/identify'),
+    ]);
+    transports.push(webRTC(), circuitRelayTransport({ discoverRelays: 0 }));
+    services.identify = identify();
+  }
+  const libp2p = await createLibp2p({
+    transports,
+    connectionEncryption: [noise()],
+    streamMuxers: [yamux()],
+    peerDiscovery: [],
+    services,
   });
+  await libp2p.start();
+
+  const transport: FlatSqlSyncTransport = {
+    async dialProtocol(targetPeerId, protocolId, payload, requestCandidateAddrs) {
+      const addrs = normalizeCandidateAddrs(requestCandidateAddrs?.length ? requestCandidateAddrs : normalizedAddrs);
+      if (addrs.length === 0) {
+        const stream = await libp2p.dialProtocol(peerIdFromString(targetPeerId), protocolId);
+        return exchangeFlatSqlSyncStream(stream, payload);
+      }
+
+      let lastError: unknown = null;
+      for (const addr of addrs) {
+        try {
+          const stream = await libp2p.dialProtocol(multiaddr(normalizeDialTarget(addr, targetPeerId)), protocolId);
+          return await exchangeFlatSqlSyncStream(stream, payload);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw new Error(`failed to dial ${protocolId} for ${targetPeerId}: ${formatSyncError(lastError)}`);
+    },
+  };
+
+  return {
+    readFlatSqlSyncChunk(query) {
+      return requestFlatSqlSyncChunk(transport, query);
+    },
+    async stop() {
+      await libp2p.stop();
+    },
+  };
+}
+
+async function exchangeFlatSqlSyncStream(stream: unknown, payloadBytes: Uint8Array): Promise<Uint8Array> {
+  const libp2pStream = stream as {
+    sink(source: AsyncIterable<Uint8Array>): Promise<void>;
+    source: AsyncIterable<unknown>;
+    close(): Promise<void>;
+  };
+  try {
+    await libp2pStream.sink((async function* source() {
+      yield cloneStreamBytes(payloadBytes);
+    })());
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of libp2pStream.source) {
+      chunks.push(cloneStreamBytes(chunk));
+    }
+    return concatStreamBytes(chunks);
+  } finally {
+    await libp2pStream.close().catch(() => undefined);
+  }
+}
+
+function cloneStreamBytes(chunk: unknown): Uint8Array {
+  if (chunk instanceof Uint8Array) return new Uint8Array(chunk);
+  if (chunk instanceof ArrayBuffer) return new Uint8Array(chunk.slice(0));
+  if (ArrayBuffer.isView(chunk)) {
+    return new Uint8Array(chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength));
+  }
+  if (chunk && typeof chunk === 'object' && 'subarray' in chunk && typeof chunk.subarray === 'function') {
+    return new Uint8Array(chunk.subarray());
+  }
+  throw new Error('stream chunk must be Uint8Array-compatible bytes');
+}
+
+function concatStreamBytes(chunks: Uint8Array[]): Uint8Array {
+  const length = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+function normalizeDialTarget(addr: string, targetPeerId: string): string {
+  const trimmed = addr.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.includes('/p2p-circuit')) {
+    return trimmed.includes(`/p2p/${targetPeerId}`) ? trimmed : `${trimmed}/p2p/${targetPeerId}`;
+  }
+  if (trimmed.includes(`/p2p/${targetPeerId}`)) return trimmed;
+  if (trimmed.includes('/p2p/')) return `${trimmed}/p2p-circuit/p2p/${targetPeerId}`;
+  return `${trimmed}/p2p/${targetPeerId}`;
+}
+
+function normalizeCandidateAddrs(addrs: string[]): string[] {
+  return Array.from(new Set(addrs.map((addr) => addr.trim()).filter(Boolean)));
 }
 
 function dataScanResultFromChunk(chunk: FlatSqlSyncChunk): DataScanResult {

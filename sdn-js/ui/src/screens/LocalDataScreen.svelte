@@ -13,6 +13,7 @@
   } from '../../../src/ui/runtime/local-flatsql-worker-client';
   import { decodeOmmFlatBuffer } from '../../../src/ui/runtime/omm-flatbuffer';
   import { decodePnmFlatBuffer } from '../../../src/ui/runtime/pnm-flatbuffer';
+  import { schemaSyncStatusLabel as formatSchemaSyncStatusLabel } from '../lib/schema-sync-labels';
   import type {
     DataScanResult,
     DataSummary,
@@ -116,7 +117,7 @@
   const SCHEMA_EXTENSION = 'fbs';
   const DEFAULT_PAGE_SIZE = 10;
   const DATA_SOURCE_PAGE_SIZE = 6;
-  const SYNC_PAGE_SIZE = 25_000;
+  const SYNC_PAGE_SIZE = 5_000;
   const SYNC_PERSIST_RECORD_INTERVAL = 100_000;
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
   const SCHEMA_SYNC_STORAGE_KEY = 'sdn:data-schema-sync:v1';
@@ -1347,10 +1348,12 @@
   }
 
   function syncStatusLabel(schema: SchemaSyncRow): string {
-    if (schema.preference.mode !== 'sync') return 'Preview only';
-    if (schema.progress.status === 'error') return 'Sync error';
-    if (schema.progress.status === 'capped') return 'Storage cap reached';
-    return 'Syncing';
+    return formatSchemaSyncStatusLabel({
+      preferenceMode: schema.preference.mode,
+      progressStatus: schema.progress.status,
+      localRows: schema.localRows,
+      remoteRows: schema.remoteRows,
+    });
   }
 
   function syncPieStyle(schema: SchemaSyncRow): string {

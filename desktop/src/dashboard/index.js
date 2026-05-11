@@ -77,6 +77,7 @@ module.exports = async function () {
   const url = await getDesktopStaticUrl('sdn')
   let apiAddress = null
   let gatewayAddress = null
+  let dashboardAppLoaded = false
   const loadIntroPage = () => window.loadFile(introPath)
   const getIpfsd = ctx.getFn('getIpfsd')
 
@@ -113,12 +114,15 @@ module.exports = async function () {
     return false
   }
 
-  ipcMain.on(ipcMainEvents.IPFSD, syncIpfsAddresses)
+  ipcMain.on(ipcMainEvents.IPFSD, () => {
+    if (dashboardAppLoaded) void syncIpfsAddresses()
+  })
 
   const loadDashboardApp = async (path) => {
     url.hash = path || '/'
     const addressesSynced = await syncIpfsAddresses()
     if (!addressesSynced) window.webContents.loadURL(url.toString())
+    dashboardAppLoaded = true
   }
 
   window.webContents.on('will-navigate', (event, targetUrl) => {
