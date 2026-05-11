@@ -16,6 +16,10 @@ The protocol has three phases:
 
 The current HTTP increment maps this to `/api/v1/data/scan` and `/api/v1/data/stream`: scan returns ordered refs and stream sends the matching raw FlatBuffer frames. The immediate fix is to make these endpoints support large chunks and avoid per-record SQL lookups. A follow-up endpoint can combine scan metadata and raw frames into one stream once libp2p framing lands.
 
+Implementation update, 2026-05-11: the shared SDN `datasync` contract now backs HTTP scan/stream and the libp2p stream protocol. `/api/v1/data/scan` returns `snapshot_id`, `head`, `high_water_mark`, `cursor`, `next_cursor`, `scan_hash`, `chunk_hash`, `sync_protocol`, `max_chunk_size`, `transports`, `total_count`, and ordered refs. `/api/v1/data/stream` verifies `scan_hash`/`chunk_hash` against the requested refs before streaming and echoes the same resume fields in `X-SDN-*` headers.
+
+The libp2p protocol uses one `uint32be length + JSON` control frame followed by `uint32be length + raw FlatBuffer bytes` frames for `read_chunk`. `scan`/`open_snapshot` return only the metadata frame. `ack_progress` stores/echoes resume fields so clients can persist provider progress before requesting the next chunk. The same protocol ID is available through libp2p WebSocket/WebTransport/WebRTC-capable nodes.
+
 ## Resume Model
 
 Resume is cursor-based, not "start over and count rows" long term. A replica persists, per source/schema/profile:
@@ -31,9 +35,11 @@ Resume is cursor-based, not "start over and count rows" long term. A replica per
 
 On restart, refresh, transport failure, or peer reconnect, the client reopens the snapshot. If the provider reports the same head, the client resumes from the persisted cursor. If the head changed, the client keeps verified local rows, requests the provider's delta/publication log, and resumes from the closest valid high-water marker. Until PLOG/PLHD heads are fully wired, the HTTP wrapper can resume by offset/local-row count but must expose the stronger head/cursor fields so the UI and storage ledger do not bake in offset semantics.
 
+Implementation update, 2026-05-11: browser sync persists this ledger in local storage per selected data source and SDS schema. It resumes with the provider `next_cursor` when the `head` matches. If the provider head changes, it preserves verified local rows and restarts from the current local row offset until publication-log delta sync is available.
+
 ## Chunk Format
 
-Data frames are `uint32be length + raw FlatBuffer bytes`. The server reads payload bytes directly from the FlatSQL stream files and writes network frames without base64 or JSON translation. Control metadata is out of band for HTTP headers today and should become FlatBuffer control frames for libp2p.
+Data frames are `uint32be length + raw FlatBuffer bytes`. The server reads payload bytes directly from the FlatSQL stream files and writes network frames without base64 or JSON translation. Control metadata is out of band for HTTP headers today and should become FlatBuffer control frames for libp2p. Control metadata is JSON for the first libp2p implementation so older HTTP clients and the browser dialer share the same field names. The data plane remains raw FlatBuffer frames with no base64 or JSON payload translation.
 
 The record payload frame is already the SDS FlatBuffer stored by FlatSQL. If the on-disk FlatSQL stream has its own little-endian length prefix, the server verifies it and sends only the raw FlatBuffer payload inside the SDN network frame.
 
@@ -58,3 +64,5 @@ The first implementation increment is accepted when:
 - the stream path writes raw FlatBuffer frames in requested order;
 - the stream path uses a batched ref lookup and direct FlatSQL stream reads instead of per-record SQL calls;
 - browser sync can keep using the same ordered scan/stream abstraction while larger chunks and durable progress make resume practical.
+- HTTP scan/stream and libp2p scan/read_chunk expose the same snapshot/head/cursor/chunk metadata;
+- browser and desktop sync persist per-source/schema resume state and can restart from the provider cursor after refresh or reconnect.

@@ -320,13 +320,20 @@ func TestDataScanReturnsFilteredTotalAndHashBoundRefs(t *testing.T) {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	var body struct {
-		Schema     string `json:"schema"`
-		TotalCount int64  `json:"total_count"`
-		Count      int    `json:"count"`
-		Limit      int    `json:"limit"`
-		NextCursor string `json:"next_cursor"`
-		ScanHash   string `json:"scan_hash"`
-		Results    []struct {
+		Schema        string `json:"schema"`
+		TotalCount    int64  `json:"total_count"`
+		Count         int    `json:"count"`
+		Limit         int    `json:"limit"`
+		Cursor        string `json:"cursor"`
+		NextCursor    string `json:"next_cursor"`
+		SnapshotID    string `json:"snapshot_id"`
+		Head          string `json:"head"`
+		HighWaterMark string `json:"high_water_mark"`
+		ScanHash      string `json:"scan_hash"`
+		ChunkHash     string `json:"chunk_hash"`
+		SyncProtocol  string `json:"sync_protocol"`
+		MaxChunkSize  int    `json:"max_chunk_size"`
+		Results       []struct {
 			SchemaName string `json:"schema_name"`
 			CID        string `json:"cid"`
 			ProviderID string `json:"provider_id"`
@@ -344,8 +351,26 @@ func TestDataScanReturnsFilteredTotalAndHashBoundRefs(t *testing.T) {
 	if body.NextCursor == "" {
 		t.Fatalf("next_cursor is empty for a partial scan: %+v", body)
 	}
+	if body.Cursor == "" {
+		t.Fatalf("cursor is empty: %+v", body)
+	}
+	if body.SnapshotID == "" || body.Head == "" || body.SnapshotID != body.Head {
+		t.Fatalf("snapshot/head metadata not populated consistently: %+v", body)
+	}
+	if body.HighWaterMark == "" {
+		t.Fatalf("high_water_mark is empty: %+v", body)
+	}
 	if body.ScanHash == "" {
 		t.Fatalf("scan_hash is empty: %+v", body)
+	}
+	if body.ChunkHash == "" || body.ChunkHash != body.ScanHash {
+		t.Fatalf("chunk_hash = %q, scan_hash = %q", body.ChunkHash, body.ScanHash)
+	}
+	if body.SyncProtocol != "/space-data-network/flatsql-sync/1.0.0" {
+		t.Fatalf("sync_protocol = %q", body.SyncProtocol)
+	}
+	if body.MaxChunkSize < 1105 {
+		t.Fatalf("max_chunk_size = %d, want at least large sync chunks", body.MaxChunkSize)
 	}
 	if len(body.Results) != 1 {
 		t.Fatalf("len(results) = %d, want 1", len(body.Results))
@@ -359,6 +384,87 @@ func TestDataScanReturnsFilteredTotalAndHashBoundRefs(t *testing.T) {
 	}
 	if row.DataBase64 != "" {
 		t.Fatalf("scan refs must not inline base64 payloads: %+v", row)
+	}
+}
+
+func TestDataStreamEchoesResumableChunkMetadata(t *testing.T) {
+	store := newDataAPITestStore(t)
+	storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	scanReq := httptest.NewRequest(http.MethodPost, "/api/v1/data/scan", bytes.NewBufferString(`{"schema":"OMM.fbs","provider_id":"space-data-network-02","source_name":"celestrak-gp","limit":1}`))
+	scanReq.Header.Set("Content-Type", "application/json")
+	scanRec := httptest.NewRecorder()
+	mux.ServeHTTP(scanRec, scanReq)
+	if scanRec.Code != http.StatusOK {
+		t.Fatalf("scan status = %d, body=%s", scanRec.Code, scanRec.Body.String())
+	}
+	var scanBody struct {
+		Schema        string                   `json:"schema"`
+		ScanHash      string                   `json:"scan_hash"`
+		ChunkHash     string                   `json:"chunk_hash"`
+		SnapshotID    string                   `json:"snapshot_id"`
+		Head          string                   `json:"head"`
+		Cursor        string                   `json:"cursor"`
+		NextCursor    string                   `json:"next_cursor"`
+		TotalCount    int64                    `json:"total_count"`
+		HighWaterMark string                   `json:"high_water_mark"`
+		Results       []map[string]interface{} `json:"results"`
+	}
+	if err := json.Unmarshal(scanRec.Body.Bytes(), &scanBody); err != nil {
+		t.Fatalf("decode scan failed: %v", err)
+	}
+	streamBody, err := json.Marshal(map[string]interface{}{
+		"schema":          scanBody.Schema,
+		"scan_hash":       scanBody.ScanHash,
+		"chunk_hash":      scanBody.ChunkHash,
+		"snapshot_id":     scanBody.SnapshotID,
+		"head":            scanBody.Head,
+		"cursor":          scanBody.Cursor,
+		"next_cursor":     scanBody.NextCursor,
+		"total_count":     scanBody.TotalCount,
+		"high_water_mark": scanBody.HighWaterMark,
+		"records":         scanBody.Results,
+	})
+	if err != nil {
+		t.Fatalf("marshal stream request failed: %v", err)
+	}
+
+	streamReq := httptest.NewRequest(http.MethodPost, "/api/v1/data/stream", bytes.NewReader(streamBody))
+	streamReq.Header.Set("Content-Type", "application/json")
+	streamReq.Header.Set("Accept", "application/vnd.sdn.flatbuffers.stream")
+	streamRec := httptest.NewRecorder()
+	mux.ServeHTTP(streamRec, streamReq)
+
+	if streamRec.Code != http.StatusOK {
+		t.Fatalf("stream status = %d, body=%s", streamRec.Code, streamRec.Body.String())
+	}
+	headers := streamRec.Header()
+	if headers.Get("X-SDN-Sync-Protocol") != "/space-data-network/flatsql-sync/1.0.0" {
+		t.Fatalf("X-SDN-Sync-Protocol = %q", headers.Get("X-SDN-Sync-Protocol"))
+	}
+	if headers.Get("X-SDN-Snapshot-ID") != scanBody.SnapshotID {
+		t.Fatalf("X-SDN-Snapshot-ID = %q, want %q", headers.Get("X-SDN-Snapshot-ID"), scanBody.SnapshotID)
+	}
+	if headers.Get("X-SDN-Head") != scanBody.Head {
+		t.Fatalf("X-SDN-Head = %q, want %q", headers.Get("X-SDN-Head"), scanBody.Head)
+	}
+	if headers.Get("X-SDN-Cursor") != scanBody.Cursor {
+		t.Fatalf("X-SDN-Cursor = %q, want %q", headers.Get("X-SDN-Cursor"), scanBody.Cursor)
+	}
+	if headers.Get("X-SDN-Chunk-Hash") != scanBody.ChunkHash {
+		t.Fatalf("X-SDN-Chunk-Hash = %q, want %q", headers.Get("X-SDN-Chunk-Hash"), scanBody.ChunkHash)
+	}
+	if headers.Get("X-SDN-Total-Count") != "1" {
+		t.Fatalf("X-SDN-Total-Count = %q", headers.Get("X-SDN-Total-Count"))
+	}
+	if headers.Get("X-SDN-High-Water-Mark") != scanBody.HighWaterMark {
+		t.Fatalf("X-SDN-High-Water-Mark = %q, want %q", headers.Get("X-SDN-High-Water-Mark"), scanBody.HighWaterMark)
+	}
+	if records := readLengthPrefixedRecords(t, streamRec.Body.Bytes()); len(records) != 1 {
+		t.Fatalf("stream record count = %d, want 1", len(records))
 	}
 }
 

@@ -102,6 +102,9 @@ export interface RawDataQuery {
   batchId?: string;
   peerId?: string;
   cursor?: string;
+  snapshotId?: string;
+  head?: string;
+  queryProfile?: string;
   limit?: number;
   offset?: number;
 }
@@ -133,13 +136,29 @@ export interface DataScanResult {
   offset: number;
   cursor: string;
   nextCursor: string;
+  snapshotId: string;
+  head: string;
+  highWaterMark: string;
   scanHash: string;
+  chunkHash: string;
+  queryProfile: string;
+  syncProtocol: string;
+  maxChunkSize: number;
+  transports: string[];
   results: RawDataRecord[];
 }
 
 export interface RawDataStreamRequest {
   schema: string;
   scanHash?: string;
+  chunkHash?: string;
+  snapshotId?: string;
+  head?: string;
+  cursor?: string;
+  nextCursor?: string;
+  totalCount?: number;
+  highWaterMark?: string;
+  queryProfile?: string;
   records: RawDataRecord[];
 }
 

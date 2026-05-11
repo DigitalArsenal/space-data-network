@@ -400,6 +400,9 @@ function rawDataQueryPayload(query: RawDataQuery): Record<string, unknown> {
     ...(query.batchId ? { batch_id: query.batchId } : {}),
     ...(query.peerId ? { peer_id: query.peerId } : {}),
     ...(query.cursor ? { cursor: query.cursor } : {}),
+    ...(query.snapshotId ? { snapshot_id: query.snapshotId } : {}),
+    ...(query.head ? { head: query.head } : {}),
+    ...(query.queryProfile ? { query_profile: query.queryProfile } : {}),
     ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
     ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
   };

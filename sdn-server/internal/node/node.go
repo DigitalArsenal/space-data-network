@@ -36,7 +36,9 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	webrtc "github.com/libp2p/go-libp2p/p2p/transport/webrtc"
 	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
+	webtransport "github.com/libp2p/go-libp2p/p2p/transport/webtransport"
 	"github.com/multiformats/go-multiaddr"
 	mh "github.com/multiformats/go-multihash"
 
@@ -259,6 +261,8 @@ func (n *Node) init() error {
 		libp2p.ListenAddrs(listenAddrs...),
 		libp2p.Transport(tcp.NewTCPTransport),
 		libp2p.Transport(websocket.New),
+		libp2p.Transport(webtransport.New),
+		libp2p.Transport(webrtc.New),
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.ConnectionManager(connMgr),
@@ -360,6 +364,9 @@ func (n *Node) init() error {
 	n.protocol = protocol.NewSDSExchangeHandlerWithOptions(n.store, n.validator, limits, rateLimiter)
 	n.protocol.SetPubSubPNMHandler(n.handleDatasetPublicationPNM)
 	n.host.SetStreamHandler(protocol.SDSProtocolID, n.protocol.HandleStream)
+	if n.store != nil {
+		n.host.SetStreamHandler(protocol.FlatSQLSyncProtocolID, protocol.NewFlatSQLSyncHandler(n.store).HandleStream)
+	}
 	n.host.SetStreamHandler(protocol.IDExchangeProtoID, protocol.HandleLegacyIDExchange)
 	n.host.SetStreamHandler(protocol.ChatProtoID, protocol.HandleLegacyChat)
 

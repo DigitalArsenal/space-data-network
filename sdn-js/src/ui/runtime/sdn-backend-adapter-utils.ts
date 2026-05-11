@@ -159,7 +159,15 @@ export function normalizeDataScanResult(payload: unknown): DataScanResult {
     offset: readNumber(record, 'offset') ?? 0,
     cursor: readString(record, 'cursor') ?? '',
     nextCursor: readString(record, 'next_cursor', 'nextCursor') ?? '',
+    snapshotId: readString(record, 'snapshot_id', 'snapshotId') ?? '',
+    head: readString(record, 'head') ?? '',
+    highWaterMark: readString(record, 'high_water_mark', 'highWaterMark') ?? '',
     scanHash: readString(record, 'scan_hash', 'scanHash') ?? '',
+    chunkHash: readString(record, 'chunk_hash', 'chunkHash') ?? '',
+    queryProfile: readString(record, 'query_profile', 'queryProfile') ?? '',
+    syncProtocol: readString(record, 'sync_protocol', 'syncProtocol') ?? '',
+    maxChunkSize: readNumber(record, 'max_chunk_size', 'maxChunkSize') ?? 0,
+    transports: readStringArray(record.transports),
     results: normalizeRawDataRecords(record),
   };
 }
@@ -208,6 +216,14 @@ export function rawDataStreamPayload(request: RawDataStreamRequest): Record<stri
   return {
     schema: request.schema,
     ...(request.scanHash ? { scan_hash: request.scanHash } : {}),
+    ...(request.chunkHash ? { chunk_hash: request.chunkHash } : {}),
+    ...(request.snapshotId ? { snapshot_id: request.snapshotId } : {}),
+    ...(request.head ? { head: request.head } : {}),
+    ...(request.cursor ? { cursor: request.cursor } : {}),
+    ...(request.nextCursor ? { next_cursor: request.nextCursor } : {}),
+    ...(typeof request.totalCount === 'number' ? { total_count: request.totalCount } : {}),
+    ...(request.highWaterMark ? { high_water_mark: request.highWaterMark } : {}),
+    ...(request.queryProfile ? { query_profile: request.queryProfile } : {}),
     records: request.records.map((record) => ({
       schema_name: record.schemaName,
       cid: record.cid,
