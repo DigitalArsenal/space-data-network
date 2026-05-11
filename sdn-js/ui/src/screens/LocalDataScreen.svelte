@@ -1,5 +1,6 @@
 <script lang="ts">
   import { decodeEpmFlatBuffer } from '../../../src/ui/runtime/epm-flatbuffer';
+  import { decodeOmmFlatBuffer } from '../../../src/ui/runtime/omm-flatbuffer';
   import type {
     DataSummary,
     ObservedSdnPeer,
@@ -83,8 +84,29 @@
     { key: 'signature', label: 'Signature', source: 'standard' },
     { key: 'signature_timestamp', label: 'Signature timestamp', source: 'standard' },
   ];
+  const OMM_STANDARD_COLUMNS: WorkbenchColumn[] = [
+    { key: 'OBJECT_NAME', label: 'Object name', source: 'standard' },
+    { key: 'OBJECT_ID', label: 'Object ID', source: 'standard' },
+    { key: 'NORAD_CAT_ID', label: 'NORAD catalog ID', source: 'standard' },
+    { key: 'EPOCH', label: 'Epoch', source: 'standard' },
+    { key: 'MEAN_MOTION', label: 'Mean motion', source: 'standard' },
+    { key: 'ECCENTRICITY', label: 'Eccentricity', source: 'standard' },
+    { key: 'INCLINATION', label: 'Inclination', source: 'standard' },
+    { key: 'RA_OF_ASC_NODE', label: 'RA ascending node', source: 'standard' },
+    { key: 'ARG_OF_PERICENTER', label: 'Argument of pericenter', source: 'standard' },
+    { key: 'MEAN_ANOMALY', label: 'Mean anomaly', source: 'standard' },
+    { key: 'BSTAR', label: 'BSTAR', source: 'standard' },
+    { key: 'MEAN_ELEMENT_THEORY', label: 'Mean element theory', source: 'standard' },
+    { key: 'TIME_SYSTEM', label: 'Time system', source: 'standard' },
+    { key: 'EPHEMERIS_TYPE', label: 'Ephemeris type', source: 'standard' },
+    { key: 'CLASSIFICATION_TYPE', label: 'Classification', source: 'standard' },
+    { key: 'ORIGINATOR', label: 'Originator', source: 'standard' },
+    { key: 'CREATION_DATE', label: 'Creation date', source: 'standard' },
+    { key: 'CENTER_NAME', label: 'Center', source: 'standard' },
+  ];
   const STANDARD_FIELD_COLUMNS: Record<string, WorkbenchColumn[]> = {
     EPM: EPM_STANDARD_COLUMNS,
+    OMM: OMM_STANDARD_COLUMNS,
   };
 
   let dataSummary: DataSummary | null = null;
@@ -323,7 +345,8 @@
         dynamicColumns.push({ key, label: labelFromFieldKey(key), source: 'standard' });
       }
     }
-    return [...METADATA_COLUMNS, ...standardColumns, ...dynamicColumns];
+    if (standardColumns.length === 0) return [...METADATA_COLUMNS, ...dynamicColumns];
+    return [...standardColumns, ...METADATA_COLUMNS, ...dynamicColumns];
   }
 
   function syncVisibleColumnKeys(columns: WorkbenchColumn[]): void {
@@ -341,9 +364,12 @@
   }
 
   function decodeWorkbenchRecord(record: RawDataRecord): WorkbenchRow {
-    if (standardIdFromSchema(record.schemaName) !== 'EPM') return { record, decoded: {} };
     try {
-      return { record, decoded: decodeEpmFlatBuffer(base64ToBytes(record.dataBase64)) };
+      const bytes = base64ToBytes(record.dataBase64);
+      const standardId = standardIdFromSchema(record.schemaName);
+      if (standardId === 'EPM') return { record, decoded: decodeEpmFlatBuffer(bytes) };
+      if (standardId === 'OMM') return { record, decoded: decodeOmmFlatBuffer(bytes) };
+      return { record, decoded: {} };
     } catch {
       return { record, decoded: {} };
     }

@@ -181,12 +181,14 @@ describe('SDN identity Svelte source', () => {
 });
 
 describe('SDN data Svelte source', () => {
-  it('exposes a simple SQL-workbench data table surface', () => {
+  it('exposes a simple standards data table surface', () => {
     const source = readUiSource('screens/LocalDataScreen.svelte');
 
     expectSourceToContainAll(source, [
-      'backend.getDataSummary',
-      'backend.queryRawData',
+      'activeBackend.getDataSummary',
+      'activeBackend.queryRawData',
+      'backendForSelectedDataSource',
+      'createRemoteSdnBackend',
       'standardIdFromSchema',
       'schemaNameForStandardId',
       'runWorkbenchQuery',
@@ -196,14 +198,16 @@ describe('SDN data Svelte source', () => {
       'visibleColumns',
       'STANDARD_FIELD_COLUMNS',
       'EPM_STANDARD_COLUMNS',
+      'OMM_STANDARD_COLUMNS',
       'decodeWorkbenchRecord',
       'decodeEpmFlatBuffer',
+      'decodeOmmFlatBuffer',
       'columnMenuOpen',
       'toggleColumn',
       'Columns',
       'sortColumn',
       'sortDirection',
-      'SQL Workbench',
+      'Data source',
       'Table',
       'Search',
       'Page size',
@@ -220,11 +224,19 @@ describe('SDN data Svelte source', () => {
       'Legal name',
       'Email',
       'Entity type',
+      'Object name',
+      'Object ID',
+      'NORAD catalog ID',
+      'OBJECT_NAME',
+      'NORAD_CAT_ID',
       'dataBase64',
       'schemaName',
       'providerId',
       'sourceName',
     ]);
+    expect(source).not.toContain('SQL Workbench');
+    expect(source).not.toContain('backend ready');
+    expect(source).not.toContain('Refresh');
     expect(source).not.toContain('Source browser');
     expect(source).not.toContain('Query builder');
     expect(source).not.toContain('Record inspector');
