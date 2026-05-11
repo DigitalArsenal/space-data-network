@@ -100,8 +100,8 @@
   const SCHEMA_EXTENSION = 'fbs';
   const DEFAULT_PAGE_SIZE = 10;
   const DATA_SOURCE_PAGE_SIZE = 6;
-  const SYNC_PAGE_SIZE = 5_000;
-  const SYNC_PERSIST_RECORD_INTERVAL = 25_000;
+  const SYNC_PAGE_SIZE = 25_000;
+  const SYNC_PERSIST_RECORD_INTERVAL = 100_000;
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
   const SCHEMA_SYNC_STORAGE_KEY = 'sdn:data-schema-sync:v1';
   const SCHEMA_SYNC_STATE_STORAGE_KEY = 'sdn:data-schema-sync-state:v1';

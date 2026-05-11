@@ -307,7 +307,7 @@ async function installSdnFixtures(page: Page): Promise<void> {
     expect(body.include_data).toBe(false);
     const offset = Number(body.offset ?? 0);
     const limit = Number(body.limit ?? 10);
-    if (offset > 0) expect(limit).toBeGreaterThanOrEqual(1_000);
+    if (offset > 0) expect(limit).toBe(25_000);
     const pageRefs = PNM_FIXTURE_REFS.slice(offset, offset + limit);
     await new Promise((resolve) => setTimeout(resolve, 100));
     await route.fulfill({

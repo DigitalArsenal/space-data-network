@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1093,6 +1094,9 @@ func (s *FlatSQLStore) readFlatSQLStreamRecord(streamPath string, streamOffset, 
 }
 
 func (s *FlatSQLStore) hydrateRecordData(record *Record, streamPath string, streamOffset, recordLength int64, signatureHex sql.NullString) error {
+	record.StreamPath = streamPath
+	record.StreamOffset = streamOffset
+	record.RecordLength = recordLength
 	data, err := s.readFlatSQLStreamRecord(streamPath, streamOffset, recordLength)
 	if err != nil {
 		return err
@@ -1355,6 +1359,17 @@ type RawRecordQuery struct {
 	PeerID            string
 	Limit             int
 	Offset            int
+}
+
+// RawRecordRef identifies one scan-bound record for ordered raw-byte sync.
+type RawRecordRef struct {
+	CID               string
+	ProviderID        string
+	SourceName        string
+	BatchID           string
+	ProducerPeerID    string
+	ProducerPublicKey string
+	PeerID            string
 }
 
 // IndexedRecordQuery filters materialized FlatSQL record indexes.
@@ -2013,6 +2028,9 @@ type Record struct {
 	Signature      []byte
 	SourceTags     SourceTags
 	MaterializedAt time.Time
+	StreamPath     string
+	StreamOffset   int64
+	RecordLength   int64
 }
 
 // DirectoryRecord represents a normalized EPM directory entry.
@@ -2815,8 +2833,21 @@ func (s *FlatSQLStore) countSourceSummaryRecordsLocked(filter RawRecordQuery) (i
 	return total, summaryRows > 0, nil
 }
 
+const rawRecordMaxQueryLimit = 50000
+const rawRecordRefLookupBatchSize = 500
+
 // QueryRawRecords returns raw FlatBuffer records with metadata and source tags.
 func (s *FlatSQLStore) QueryRawRecords(filter RawRecordQuery) ([]*Record, error) {
+	return s.queryRawRecords(filter, true)
+}
+
+// QueryRawRecordRefs returns metadata refs without opening FlatSQL backing
+// files. Provider scan paths use this to keep counts/pages cheap.
+func (s *FlatSQLStore) QueryRawRecordRefs(filter RawRecordQuery) ([]*Record, error) {
+	return s.queryRawRecords(filter, false)
+}
+
+func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -2831,8 +2862,8 @@ func (s *FlatSQLStore) QueryRawRecords(filter RawRecordQuery) ([]*Record, error)
 	if filter.Limit <= 0 {
 		filter.Limit = 100
 	}
-	if filter.Limit > 1000 {
-		filter.Limit = 1000
+	if filter.Limit > rawRecordMaxQueryLimit {
+		filter.Limit = rawRecordMaxQueryLimit
 	}
 	if filter.Offset < 0 {
 		filter.Offset = 0
@@ -2890,7 +2921,7 @@ func (s *FlatSQLStore) QueryRawRecords(filter RawRecordQuery) ([]*Record, error)
 	if err != nil {
 		return nil, fmt.Errorf("raw record query failed: %w", err)
 	}
-	records, err := s.scanRawRecordRows(rows)
+	records, err := s.scanRawRecordRows(rows, hydrate)
 	if err != nil {
 		return nil, err
 	}
@@ -2923,7 +2954,7 @@ func (s *FlatSQLStore) QueryRawRecords(filter RawRecordQuery) ([]*Record, error)
 		if err != nil {
 			return nil, fmt.Errorf("raw untagged record query failed: %w", err)
 		}
-		untagged, err := s.scanRawRecordRows(untaggedRows)
+		untagged, err := s.scanRawRecordRows(untaggedRows, hydrate)
 		if err != nil {
 			return nil, err
 		}
@@ -2940,6 +2971,261 @@ func (s *FlatSQLStore) QueryRawRecords(filter RawRecordQuery) ([]*Record, error)
 	}
 
 	return records, nil
+}
+
+// QueryRawRecordRefsByRefs resolves scan-bound refs in batches and preserves
+// the requested order. Returned records include FlatSQL stream offsets but do
+// not hydrate Data.
+func (s *FlatSQLStore) QueryRawRecordRefsByRefs(schemaName string, refs []RawRecordRef) ([]*Record, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	schemaName = strings.TrimSpace(schemaName)
+	if schemaName == "" {
+		return nil, errors.New("schema name is required")
+	}
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schema name: %w", err)
+	}
+	if len(refs) == 0 {
+		return nil, nil
+	}
+
+	normalizedRefs := make([]RawRecordRef, 0, len(refs))
+	for _, ref := range refs {
+		ref = normalizeRawRecordRef(ref)
+		if ref.CID == "" {
+			return nil, errors.New("record cid is required")
+		}
+		normalizedRefs = append(normalizedRefs, ref)
+	}
+
+	candidates := make(map[string][]*Record, len(normalizedRefs))
+	for start := 0; start < len(normalizedRefs); start += rawRecordRefLookupBatchSize {
+		end := start + rawRecordRefLookupBatchSize
+		if end > len(normalizedRefs) {
+			end = len(normalizedRefs)
+		}
+		if err := s.loadRawRecordRefCandidatesLocked(schemaName, tableName, normalizedRefs[start:end], candidates); err != nil {
+			return nil, err
+		}
+	}
+
+	ordered := make([]*Record, 0, len(normalizedRefs))
+	for _, ref := range normalizedRefs {
+		var matched *Record
+		for _, candidate := range candidates[ref.CID] {
+			if rawRecordMatchesRef(candidate, ref) {
+				matched = candidate
+				break
+			}
+		}
+		if matched == nil && schemaName == "EPM.fbs" {
+			local, err := s.queryLocalEPMRecordsLocked(RawRecordQuery{
+				SchemaName:        schemaName,
+				CID:               ref.CID,
+				ProviderID:        ref.ProviderID,
+				SourceName:        ref.SourceName,
+				BatchID:           ref.BatchID,
+				ProducerPeerID:    ref.ProducerPeerID,
+				ProducerPublicKey: ref.ProducerPublicKey,
+				PeerID:            ref.PeerID,
+				Limit:             1,
+			}, 1)
+			if err == nil && len(local) == 1 {
+				matched = local[0]
+			}
+		}
+		if matched == nil {
+			return nil, fmt.Errorf("raw record ref not found: %s", ref.CID)
+		}
+		ordered = append(ordered, matched)
+	}
+
+	return ordered, nil
+}
+
+func (s *FlatSQLStore) loadRawRecordRefCandidatesLocked(schemaName, tableName string, refs []RawRecordRef, candidates map[string][]*Record) error {
+	cids := make([]string, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		if _, ok := seen[ref.CID]; ok {
+			continue
+		}
+		seen[ref.CID] = struct{}{}
+		cids = append(cids, ref.CID)
+	}
+	if len(cids) == 0 {
+		return nil
+	}
+
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(cids)), ",")
+	taggedQuery := fmt.Sprintf(`
+		SELECT records.cid, records.peer_id, records.timestamp,
+		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
+		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
+		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
+		FROM sdn_record_source_tags tags
+		INNER JOIN %s records ON records.cid = tags.cid
+		WHERE tags.schema_name = ? AND records.cid IN (%s)
+	`, tableName, placeholders)
+	taggedArgs := make([]interface{}, 0, len(cids)+1)
+	taggedArgs = append(taggedArgs, schemaName)
+	for _, cid := range cids {
+		taggedArgs = append(taggedArgs, cid)
+	}
+	taggedRows, err := s.db.Query(taggedQuery, taggedArgs...)
+	if err != nil {
+		return fmt.Errorf("raw record ref query failed: %w", err)
+	}
+	tagged, err := s.scanRawRecordRows(taggedRows, false)
+	if err != nil {
+		return err
+	}
+	for _, record := range tagged {
+		candidates[record.CID] = append(candidates[record.CID], record)
+	}
+
+	untaggedQuery := fmt.Sprintf(`
+		SELECT records.cid, records.peer_id, records.timestamp,
+		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
+		       '', '', '', '', '', '', '', NULL
+		FROM %s records
+		WHERE records.cid IN (%s)
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM sdn_record_source_tags tags
+			  WHERE tags.schema_name = ? AND tags.cid = records.cid
+		  )
+	`, tableName, placeholders)
+	untaggedArgs := make([]interface{}, 0, len(cids)+1)
+	for _, cid := range cids {
+		untaggedArgs = append(untaggedArgs, cid)
+	}
+	untaggedArgs = append(untaggedArgs, schemaName)
+	untaggedRows, err := s.db.Query(untaggedQuery, untaggedArgs...)
+	if err != nil {
+		return fmt.Errorf("raw untagged record ref query failed: %w", err)
+	}
+	untagged, err := s.scanRawRecordRows(untaggedRows, false)
+	if err != nil {
+		return err
+	}
+	for _, record := range untagged {
+		candidates[record.CID] = append(candidates[record.CID], record)
+	}
+	return nil
+}
+
+func normalizeRawRecordRef(ref RawRecordRef) RawRecordRef {
+	ref.CID = strings.TrimSpace(ref.CID)
+	ref.ProviderID = strings.TrimSpace(ref.ProviderID)
+	ref.SourceName = strings.TrimSpace(ref.SourceName)
+	ref.BatchID = strings.TrimSpace(ref.BatchID)
+	ref.ProducerPeerID = strings.TrimSpace(ref.ProducerPeerID)
+	ref.ProducerPublicKey = strings.TrimSpace(ref.ProducerPublicKey)
+	ref.PeerID = strings.TrimSpace(ref.PeerID)
+	return ref
+}
+
+func rawRecordMatchesRef(record *Record, ref RawRecordRef) bool {
+	if ref.CID != "" && record.CID != ref.CID {
+		return false
+	}
+	if ref.PeerID != "" && record.PeerID != ref.PeerID {
+		return false
+	}
+	if ref.ProviderID != "" && record.SourceTags.ProviderID != ref.ProviderID {
+		return false
+	}
+	if ref.SourceName != "" && record.SourceTags.SourceName != ref.SourceName {
+		return false
+	}
+	if ref.BatchID != "" && record.SourceTags.BatchID != ref.BatchID {
+		return false
+	}
+	if ref.ProducerPeerID != "" && record.SourceTags.ProducerPeerID != ref.ProducerPeerID {
+		return false
+	}
+	if ref.ProducerPublicKey != "" && record.SourceTags.ProducerPublicKey != ref.ProducerPublicKey {
+		return false
+	}
+	return true
+}
+
+// WriteRawRecordFrames writes SDN network frames directly from FlatSQL backing
+// files. It verifies the on-disk little-endian FlatSQL frame length and emits a
+// big-endian SDN stream frame without JSON/base64 translation.
+func (s *FlatSQLStore) WriteRawRecordFrames(writer io.Writer, records []*Record) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	openFiles := make(map[string]*os.File)
+	defer func() {
+		for _, file := range openFiles {
+			_ = file.Close()
+		}
+	}()
+
+	var networkLength [4]byte
+	var diskLength [4]byte
+	for _, record := range records {
+		if len(record.Data) > 0 && strings.TrimSpace(record.StreamPath) == "" {
+			if len(record.Data) > int(^uint32(0)) {
+				return fmt.Errorf("record %s exceeds uint32 stream frame length", record.CID)
+			}
+			binary.BigEndian.PutUint32(networkLength[:], uint32(len(record.Data)))
+			if _, err := writer.Write(networkLength[:]); err != nil {
+				return err
+			}
+			if _, err := writer.Write(record.Data); err != nil {
+				return err
+			}
+			continue
+		}
+		if record.StreamOffset < 0 {
+			return fmt.Errorf("record %s has negative FlatSQL stream offset %d", record.CID, record.StreamOffset)
+		}
+		if record.RecordLength < 0 || record.RecordLength > int64(^uint32(0)) {
+			return fmt.Errorf("record %s has invalid FlatSQL record length %d", record.CID, record.RecordLength)
+		}
+		file, err := s.openCachedFlatSQLStreamFile(openFiles, record.StreamPath)
+		if err != nil {
+			return fmt.Errorf("open FlatSQL stream for %s: %w", record.CID, err)
+		}
+		if _, err := file.ReadAt(diskLength[:], record.StreamOffset); err != nil {
+			return fmt.Errorf("read FlatSQL stream length for %s: %w", record.CID, err)
+		}
+		if got := int64(binary.LittleEndian.Uint32(diskLength[:])); got != record.RecordLength {
+			return fmt.Errorf("FlatSQL stream frame length for %s = %d, want %d", record.CID, got, record.RecordLength)
+		}
+		binary.BigEndian.PutUint32(networkLength[:], uint32(record.RecordLength))
+		if _, err := writer.Write(networkLength[:]); err != nil {
+			return err
+		}
+		section := io.NewSectionReader(file, record.StreamOffset+4, record.RecordLength)
+		if _, err := io.Copy(writer, section); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *FlatSQLStore) openCachedFlatSQLStreamFile(openFiles map[string]*os.File, streamPath string) (*os.File, error) {
+	clean := filepath.Clean(streamPath)
+	if filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return nil, fmt.Errorf("invalid FlatSQL stream path %q", streamPath)
+	}
+	if file := openFiles[clean]; file != nil {
+		return file, nil
+	}
+	file, err := os.Open(filepath.Join(s.basePath, clean))
+	if err != nil {
+		return nil, err
+	}
+	openFiles[clean] = file
+	return file, nil
 }
 
 // GetRawRecord returns one raw FlatBuffer record by schema and CID. Local EPM
@@ -3017,7 +3303,7 @@ func (s *FlatSQLStore) scanRecentRecords(rows *sql.Rows) ([]*Record, error) {
 	return records, nil
 }
 
-func (s *FlatSQLStore) scanRawRecordRows(rows *sql.Rows) ([]*Record, error) {
+func (s *FlatSQLStore) scanRawRecordRows(rows *sql.Rows, hydrate bool) ([]*Record, error) {
 	defer rows.Close()
 
 	records := make([]*Record, 0)
@@ -3048,8 +3334,19 @@ func (s *FlatSQLStore) scanRawRecordRows(rows *sql.Rows) ([]*Record, error) {
 			return nil, fmt.Errorf("failed scanning raw record row: %w", err)
 		}
 		rec.Timestamp = time.Unix(ts, 0).UTC()
-		if err := s.hydrateRecordData(rec, streamPath, streamOffset, recordLength, signatureHex); err != nil {
-			return nil, fmt.Errorf("failed reading raw record data: %w", err)
+		rec.StreamPath = streamPath
+		rec.StreamOffset = streamOffset
+		rec.RecordLength = recordLength
+		if hydrate {
+			if err := s.hydrateRecordData(rec, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+				return nil, fmt.Errorf("failed reading raw record data: %w", err)
+			}
+		} else if signatureHex.Valid && strings.TrimSpace(signatureHex.String) != "" {
+			signature, err := hex.DecodeString(strings.TrimSpace(signatureHex.String))
+			if err != nil {
+				return nil, fmt.Errorf("decode signature_hex for %s: %w", rec.CID, err)
+			}
+			rec.Signature = signature
 		}
 		if materializedAt.Valid && materializedAt.Int64 > 0 {
 			rec.MaterializedAt = time.Unix(materializedAt.Int64, 0).UTC()

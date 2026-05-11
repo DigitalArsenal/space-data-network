@@ -362,6 +362,49 @@ func TestDataScanReturnsFilteredTotalAndHashBoundRefs(t *testing.T) {
 	}
 }
 
+func TestDataScanAllowsLargeOrderedChunks(t *testing.T) {
+	store := newDataAPITestStore(t)
+	for index := 0; index < 1105; index++ {
+		storeDataAPITestOMM(t, store, uint32(60000+index), "SYNC-TEST", "2026-05-10")
+	}
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/scan", bytes.NewBufferString(`{"schema":"OMM.fbs","provider_id":"space-data-network-02","source_name":"celestrak-gp","limit":1105}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		TotalCount int64 `json:"total_count"`
+		Count      int   `json:"count"`
+		Limit      int   `json:"limit"`
+		Results    []struct {
+			CID        string `json:"cid"`
+			SizeBytes  int    `json:"size_bytes"`
+			DataBase64 string `json:"data_base64"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if body.TotalCount != 1105 || body.Count != 1105 || body.Limit != 1105 || len(body.Results) != 1105 {
+		t.Fatalf("large scan = total %d count %d limit %d len %d, want 1105", body.TotalCount, body.Count, body.Limit, len(body.Results))
+	}
+	for _, row := range body.Results {
+		if row.CID == "" || row.SizeBytes == 0 {
+			t.Fatalf("large scan returned incomplete ref: %+v", row)
+		}
+		if row.DataBase64 != "" {
+			t.Fatalf("large scan must not inline record payloads")
+		}
+	}
+}
+
 func TestDataStreamReturnsScanBoundRefsInRequestedOrder(t *testing.T) {
 	store := newDataAPITestStore(t)
 	storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
@@ -419,6 +462,62 @@ func TestDataStreamReturnsScanBoundRefsInRequestedOrder(t *testing.T) {
 		if string(streamRecords[index]) != string(ordered[index].Data) {
 			t.Fatalf("stream record %d did not match requested ref order", index)
 		}
+	}
+}
+
+func TestDataStreamAcceptsLargeScanBoundRefChunks(t *testing.T) {
+	store := newDataAPITestStore(t)
+	for index := 0; index < 1105; index++ {
+		storeDataAPITestOMM(t, store, uint32(62000+index), "STREAM-TEST", "2026-05-10")
+	}
+
+	records, err := store.QueryRawRecords(storage.RawRecordQuery{
+		SchemaName: "OMM.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-gp",
+		Limit:      1105,
+	})
+	if err != nil {
+		t.Fatalf("query raw records failed: %v", err)
+	}
+	if len(records) != 1105 {
+		t.Fatalf("len(records) = %d, want 1105", len(records))
+	}
+	requestRefs := make([]map[string]interface{}, 0, len(records))
+	for _, record := range records {
+		requestRefs = append(requestRefs, rawRecordRow("OMM.fbs", record, false))
+	}
+	requestBody := map[string]interface{}{
+		"schema":    "OMM.fbs",
+		"scan_hash": scanHash("OMM.fbs", records),
+		"records":   requestRefs,
+	}
+	body, err := json.Marshal(requestBody)
+	if err != nil {
+		t.Fatalf("marshal request failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/stream", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.sdn.flatbuffers.stream")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	streamRecords := readLengthPrefixedRecords(t, rec.Body.Bytes())
+	if len(streamRecords) != len(records) {
+		t.Fatalf("stream record count = %d, want %d", len(streamRecords), len(records))
+	}
+	if string(streamRecords[0]) != string(records[0].Data) {
+		t.Fatal("large stream did not preserve first requested record")
+	}
+	if string(streamRecords[len(streamRecords)-1]) != string(records[len(records)-1].Data) {
+		t.Fatal("large stream did not preserve last requested record")
 	}
 }
 
