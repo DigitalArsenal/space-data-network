@@ -164,6 +164,59 @@ test.describe('desktop static identity API', () => {
     expect(record.headers['Content-Type']).toBe('application/x-flatbuffers')
     expect(record.bodyBuffer.byteLength).toBeGreaterThan(0)
   })
+
+  test('proxies configured SDN node data queries through the local SSH admin API', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-remote-data-api-'))
+    const configPath = path.join(userData, 'ssh-config')
+    fs.writeFileSync(configPath, [
+      'Host space-data-network-02 celestrak.eth',
+      '    HostName 167.172.219.213',
+      '    User root'
+    ].join('\n'))
+
+    const requests = []
+    const { serveConfiguredSdnNodeDataProxy } = loadStaticServer(userData)
+    const handler = (req, res) => serveConfiguredSdnNodeDataProxy(req, res, {
+      configPath,
+      runRemoteRequest: async (request) => {
+        requests.push(request)
+        return {
+          statusCode: 200,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ records: [{ cid: 'celestrak-omm-1', schema_name: 'OMM.fbs' }] })
+        }
+      }
+    })
+
+    const query = await requestJson(
+      handler,
+      'POST',
+      '/api/local/sdn-nodes/space-data-network-02/api/v1/data/query',
+      { schema: 'OMM.fbs', limit: 25 }
+    )
+
+    expect(query.statusCode).toBe(200)
+    expect(query.json.records).toEqual([
+      expect.objectContaining({ cid: 'celestrak-omm-1', schema_name: 'OMM.fbs' })
+    ])
+    expect(requests).toEqual([
+      expect.objectContaining({
+        node: expect.objectContaining({ id: 'space-data-network-02', name: 'CelesTrak Provider' }),
+        method: 'POST',
+        targetPath: '/api/v1/data/query',
+        body: JSON.stringify({ schema: 'OMM.fbs', limit: 25 })
+      })
+    ])
+
+    const denied = await requestJson(
+      handler,
+      'POST',
+      '/api/local/sdn-nodes/space-data-network-02/api/v1/data/publish/OMM.fbs',
+      { schema: 'OMM.fbs' }
+    )
+    expect(denied.statusCode).toBe(403)
+    expect(denied.json.error).toContain('not allowed')
+  })
 })
 
 function loadStaticServer (userData) {

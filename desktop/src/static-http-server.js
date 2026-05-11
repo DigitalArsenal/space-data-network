@@ -4,6 +4,7 @@ const path = require('path')
 const http = require('http')
 const os = require('os')
 const crypto = require('crypto')
+const { spawn } = require('child_process')
 const { app } = require('electron')
 const portfinder = require('portfinder')
 const logger = require('./common/logger')
@@ -167,22 +168,55 @@ function configuredSdnNodesFromSshConfig (configPath = path.join(os.homedir(), '
     return []
   }
 
-  return config
-    .split(/\r?\n/)
-    .map(line => line.trim().split(/\s+/))
-    .filter(fields => fields.length > 1 && fields[0].toLowerCase() === 'host')
-    .map(fields => fields.slice(1).find(isSdnSSHHostAlias))
-    .filter(Boolean)
-    .map(alias => ({
+  const nodes = []
+  let current = null
+
+  const flush = () => {
+    if (!current || current.aliases.length === 0) return
+    const alias = current.aliases[0]
+    nodes.push({
       id: alias,
-      name: alias,
+      name: displayNameForSdnSSHHost(alias, current.aliases),
       addrs: [],
       trust_level: 'trusted',
       metadata: {
         agent_version: 'sdn-configured-node',
-        protocols: '/space-data-network/configured-node/1.0.0'
+        protocols: '/space-data-network/configured-node/1.0.0',
+        ssh_aliases: current.aliases.join(','),
+        ...(current.hostName ? { host_name: current.hostName } : {}),
+        admin_proxy_path: `/api/local/sdn-nodes/${encodeURIComponent(alias)}`
       }
-    }))
+    })
+  }
+
+  for (const rawLine of config.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) continue
+    const fields = line.split(/\s+/)
+    const key = fields[0].toLowerCase()
+
+    if (key === 'host') {
+      flush()
+      current = {
+        aliases: fields.slice(1).filter(isSdnSSHHostAlias),
+        hostName: ''
+      }
+      continue
+    }
+
+    if (!current) continue
+    if (key === 'hostname') current.hostName = fields[1] || ''
+  }
+
+  flush()
+  return nodes
+}
+
+function displayNameForSdnSSHHost (alias, aliases = []) {
+  const names = new Set([alias, ...aliases].map(value => String(value || '').toLowerCase()))
+  if (names.has('space-data-network-02') || names.has('celestrak.eth')) return 'CelesTrak Provider'
+  if (names.has('space-data-network-01') || names.has('sdn.spaceaware.io')) return 'Space Data Network Public Node'
+  return alias
 }
 
 function serveConfiguredSdnNodes (req, res) {
@@ -195,6 +229,163 @@ function serveConfiguredSdnNodes (req, res) {
     nodes: configuredSdnNodesFromSshConfig()
   })
   return true
+}
+
+async function serveConfiguredSdnNodeDataProxy (req, res, options = {}) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  if (!parsed.pathname.startsWith('/api/local/sdn-nodes/')) {
+    return false
+  }
+
+  const segments = parsed.pathname.split('/').filter(Boolean)
+  const nodeID = decodeURIComponent(segments[3] || '')
+  const targetPath = `/${segments.slice(4).join('/')}`
+  const targetPathWithQuery = `${targetPath}${parsed.search}`
+  const method = String(req.method || 'GET').toUpperCase()
+
+  if (!nodeID || targetPath === '/') {
+    sendJSON(res, 404, { error: 'configured SDN node route not found' })
+    return true
+  }
+
+  if (!isAllowedConfiguredNodeDataProxyPath(method, decodeURIComponent(targetPath))) {
+    sendJSON(res, 403, { error: `configured SDN node data proxy path is not allowed: ${method} ${targetPath}` })
+    return true
+  }
+
+  const node = configuredSdnNodeByID(nodeID, options.configPath)
+  if (!node) {
+    sendJSON(res, 404, { error: `configured SDN node not found: ${nodeID}` })
+    return true
+  }
+
+  try {
+    const body = method === 'POST' ? await readRequestBody(req) : ''
+    const runRemoteRequest = options.runRemoteRequest || defaultConfiguredSdnNodeRemoteRequest
+    const response = await runRemoteRequest({
+      node,
+      method,
+      targetPath,
+      targetPathWithQuery,
+      body,
+      headers: req.headers || {}
+    })
+    sendText(
+      res,
+      response.statusCode || 502,
+      response.headers?.['content-type'] || response.headers?.['Content-Type'] || 'application/json; charset=utf-8',
+      response.body || ''
+    )
+  } catch (err) {
+    logger.error(`[static-server] configured SDN node data proxy failed: ${err.message || err}`)
+    sendJSON(res, 502, { error: err.message || String(err) })
+  }
+  return true
+}
+
+function configuredSdnNodeByID (nodeID, configPath) {
+  return configuredSdnNodesFromSshConfig(configPath)
+    .find(node => node.id === nodeID || sshAliasesForConfiguredNode(node).includes(nodeID))
+}
+
+function sshAliasesForConfiguredNode (node) {
+  return String(node?.metadata?.ssh_aliases || '')
+    .split(',')
+    .map(alias => alias.trim())
+    .filter(Boolean)
+}
+
+function isAllowedConfiguredNodeDataProxyPath (method, targetPath) {
+  if (method === 'GET') {
+    return targetPath === '/api/v1/data/health' ||
+      targetPath === '/api/v1/data/summary'
+  }
+  if (method === 'POST') {
+    return targetPath === '/api/v1/data/query'
+  }
+  return false
+}
+
+async function defaultConfiguredSdnNodeRemoteRequest (request) {
+  const output = await collectRemoteCommandOutput(
+    'ssh',
+    configuredSdnNodeCurlArgs(request),
+    request.body || ''
+  )
+  const marker = Buffer.from('__SDN_HTTP_STATUS__:')
+  const markerIndex = output.lastIndexOf(marker)
+  if (markerIndex < 0) {
+    throw new Error('remote data proxy response did not include an HTTP status')
+  }
+  const body = output.subarray(0, markerIndex)
+  const statusCode = Number(output.subarray(markerIndex + marker.length).toString('utf8').trim()) || 502
+  return {
+    statusCode,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+    body
+  }
+}
+
+function configuredSdnNodeCurlArgs (request) {
+  const targetPath = request.targetPathWithQuery || request.targetPath
+  const targetUrl = `http://127.0.0.1:5001${targetPath}`
+  const args = [
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'ConnectTimeout=8',
+    request.node.id,
+    'curl',
+    '--silent',
+    '--show-error',
+    '--max-time',
+    '45',
+    '--request',
+    request.method,
+    '--header',
+    'accept:application/json',
+    '--write-out',
+    '__SDN_HTTP_STATUS__:%{http_code}'
+  ]
+
+  if (request.method === 'POST') {
+    args.push(
+      '--header',
+      `content-type:${configuredSdnNodeContentType(request.headers?.['content-type'])}`,
+      '--data-binary',
+      '@-'
+    )
+  }
+
+  args.push(targetUrl)
+  return args
+}
+
+function configuredSdnNodeContentType (value) {
+  const contentType = String(value || 'application/json').split(';')[0].trim()
+  return contentType || 'application/json'
+}
+
+function collectRemoteCommandOutput (command, args, input) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] })
+    const stdout = []
+    const stderr = []
+
+    child.stdout.on('data', chunk => stdout.push(chunk))
+    child.stderr.on('data', chunk => stderr.push(chunk))
+    child.on('error', reject)
+    child.on('close', code => {
+      if (code !== 0) {
+        reject(new Error(Buffer.concat(stderr).toString('utf8').trim() || `${command} exited with code ${code}`))
+        return
+      }
+      resolve(Buffer.concat(stdout))
+    })
+
+    if (input) child.stdin.end(input)
+    else child.stdin.end()
+  })
 }
 
 function isSdnProtocol (protocol) {
@@ -965,7 +1156,8 @@ async function startDesktopStaticServer () {
       }
 
       Promise.resolve()
-        .then(() => serveDesktopPeerAPI(req, res))
+        .then(() => serveConfiguredSdnNodeDataProxy(req, res))
+        .then(handled => handled || serveDesktopPeerAPI(req, res))
         .then(handled => handled || serveDesktopDirectoryAPI(req, res))
         .then(handled => handled || serveDesktopIdentityAPI(req, res))
         .then(handled => handled || serveDesktopNodeEPMAPI(req, res))
@@ -1028,11 +1220,13 @@ module.exports = {
   connectDesktopSdnSeedPeers,
   configuredSdnNodesFromSshConfig,
   DESKTOP_SDN_SEED_PEERS,
+  displayNameForSdnSSHHost,
   getDesktopStaticOrigin,
   getDesktopStaticUrl,
   isAllowedLoopbackHostHeader,
   isSdnSSHHostAlias,
   kuboSwarmPeersToDesktopSdnPeers,
+  serveConfiguredSdnNodeDataProxy,
   serveDesktopDirectoryAPI,
   serveDesktopIdentityAPI,
   serveDesktopLocalDataAPI,

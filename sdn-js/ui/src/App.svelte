@@ -105,6 +105,8 @@
   {:else if primaryRoute === '/data'}
     <LocalDataScreen
       {backend}
+      {peers}
+      route={currentRoute}
     />
   {:else}
     <NodeScreen
