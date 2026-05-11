@@ -75,7 +75,7 @@
     "@multiformats/multiaddr": "^12.1.0",
     "@noble/curves": "^1.9.7",
     "flatbuffers": "^25.9.23",
-    "flatsql": "^0.4.2",
+    "flatsql": "file:../../flatsql",
     "hd-wallet-ui": "^2.0.6",
     "hd-wallet-wasm": "^2.0.6",
     "helia": "^6.0.22",

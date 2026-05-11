@@ -2,17 +2,20 @@ import {
   createAvailableResult,
   createDegradedResult,
   type BackendResult,
+  type DataScanResult,
   type DataSummary,
   type LocalObjectSummary,
   type NodeAccessUser,
   type NodeSummary,
   type ObservedSdnPeer,
   type RawDataRecord,
+  type RawDataStreamRequest,
   type SdnBackendMode,
   type StorageSummary,
 } from './sdn-backend';
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+export const RAW_FLATBUFFER_STREAM_CONTENT_TYPE = 'application/vnd.sdn.flatbuffers.stream';
 
 export interface BackendDeps {
   fetch?: FetchLike;
@@ -146,18 +149,74 @@ export function normalizeDataSummary(payload: unknown): DataSummary {
   };
 }
 
+export function normalizeDataScanResult(payload: unknown): DataScanResult {
+  const record = isRecord(payload) ? payload : {};
+  return {
+    schema: readString(record, 'schema') ?? 'unknown',
+    totalCount: readNumber(record, 'total_count', 'totalCount') ?? 0,
+    count: readNumber(record, 'count') ?? 0,
+    limit: readNumber(record, 'limit') ?? 0,
+    offset: readNumber(record, 'offset') ?? 0,
+    cursor: readString(record, 'cursor') ?? '',
+    nextCursor: readString(record, 'next_cursor', 'nextCursor') ?? '',
+    scanHash: readString(record, 'scan_hash', 'scanHash') ?? '',
+    results: normalizeRawDataRecords(record),
+  };
+}
+
 export function normalizeRawDataRecords(payload: unknown): RawDataRecord[] {
-  return recordsFromPayload(payload).map((record): RawDataRecord => ({
-    schemaName: readString(record, 'schema_name', 'schemaName') ?? 'unknown',
-    cid: readString(record, 'cid', 'CID', 'id') ?? '',
-    peerId: readString(record, 'peer_id', 'peerId') ?? '',
-    providerId: readString(record, 'provider_id', 'providerId') ?? undefined,
-    sourceName: readString(record, 'source_name', 'sourceName') ?? undefined,
-    batchId: readString(record, 'batch_id', 'batchId') ?? undefined,
-    timestamp: readString(record, 'timestamp') ?? undefined,
-    sizeBytes: readNumber(record, 'size_bytes', 'sizeBytes') ?? 0,
-    dataBase64: readString(record, 'data_base64', 'dataBase64') ?? '',
-  })).filter((record) => record.schemaName !== 'unknown' && record.cid !== '');
+  return recordsFromPayload(payload).map((record): RawDataRecord => {
+    const dataBase64 = readString(record, 'data_base64', 'dataBase64') ?? undefined;
+    return {
+      schemaName: readString(record, 'schema_name', 'schemaName') ?? 'unknown',
+      cid: readString(record, 'cid', 'CID', 'id') ?? '',
+      peerId: readString(record, 'peer_id', 'peerId') ?? '',
+      providerId: readString(record, 'provider_id', 'providerId') ?? undefined,
+      sourceName: readString(record, 'source_name', 'sourceName') ?? undefined,
+      batchId: readString(record, 'batch_id', 'batchId') ?? undefined,
+      timestamp: readString(record, 'timestamp') ?? undefined,
+      sizeBytes: readNumber(record, 'size_bytes', 'sizeBytes') ?? 0,
+      ...(dataBase64 ? { dataBase64 } : {}),
+    };
+  }).filter((record) => record.schemaName !== 'unknown' && record.cid !== '');
+}
+
+export function parseRawFlatbufferStream(bytes: Uint8Array): Uint8Array[] {
+  const records: Uint8Array[] = [];
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    if (offset + 4 > bytes.byteLength) throw new Error('truncated raw FlatBuffer stream frame header');
+    const length = view.getUint32(offset, false);
+    offset += 4;
+    if (offset + length > bytes.byteLength) throw new Error('truncated raw FlatBuffer stream frame payload');
+    records.push(bytes.slice(offset, offset + length));
+    offset += length;
+  }
+  return records;
+}
+
+export function attachRawFlatbufferStream(records: RawDataRecord[], streamBytes: Uint8Array): RawDataRecord[] {
+  const payloads = parseRawFlatbufferStream(streamBytes);
+  return records.map((record, index) => ({
+    ...record,
+    ...(payloads[index] ? { dataBytes: payloads[index] } : {}),
+  }));
+}
+
+export function rawDataStreamPayload(request: RawDataStreamRequest): Record<string, unknown> {
+  return {
+    schema: request.schema,
+    ...(request.scanHash ? { scan_hash: request.scanHash } : {}),
+    records: request.records.map((record) => ({
+      schema_name: record.schemaName,
+      cid: record.cid,
+      peer_id: record.peerId,
+      ...(record.providerId ? { provider_id: record.providerId } : {}),
+      ...(record.sourceName ? { source_name: record.sourceName } : {}),
+      ...(record.batchId ? { batch_id: record.batchId } : {}),
+    })),
+  };
 }
 
 function normalizePeerRecord(record: Record<string, unknown>): ObservedSdnPeer | null {

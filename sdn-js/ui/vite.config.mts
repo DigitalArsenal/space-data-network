@@ -8,6 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const packageRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(packageRoot, '..');
+const stackPackagesRoot = path.resolve(repoRoot, '..');
 const upstreamWebUiRoot = path.resolve(repoRoot, 'webui');
 const sdnUpstreamWebUiRoot = path.resolve(__dirname, 'src', 'upstream-webui');
 const proxyTarget = process.env.SDN_UI_PROXY_TARGET?.trim();
@@ -160,7 +161,7 @@ export default defineConfig({
     host: '127.0.0.1',
     port: Number.parseInt(process.env.SDN_ADMIN_UI_PORT ?? '5173', 10),
     fs: {
-      allow: [repoRoot],
+      allow: [repoRoot, stackPackagesRoot],
     },
     ...(proxyTarget || kuboProxyTarget
       ? {

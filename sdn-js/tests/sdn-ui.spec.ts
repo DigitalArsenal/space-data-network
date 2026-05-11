@@ -1,4 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
+import * as flatbuffers from 'flatbuffers';
+import { PNM } from 'spacedatastandards.org/lib/js/PNM/PNM.js';
 
 const realPeerId = '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4';
 
@@ -38,12 +40,57 @@ test('data route renders a searchable remote data source without workbench statu
   const dataSourceSearch = page.getByRole('searchbox', { name: 'Data source' });
   await expect(dataSourceSearch).toBeVisible();
   await dataSourceSearch.fill('celes');
-  await page.getByRole('option', { name: /CelesTrak Provider/ }).click();
+  const sourceTable = page.getByRole('table', { name: 'Data sources' });
+  await expect(sourceTable).toBeVisible();
+  await expect(sourceTable.getByText('CelesTrak Provider')).toBeVisible();
+  await expect(sourceTable.getByText(realPeerId)).toBeVisible();
+  await sourceTable.getByRole('button', { name: /CelesTrak Provider/ }).click();
+  await expect(page.getByText('Loading')).toBeVisible();
 
-  await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('OMM');
-  await expect(page.getByRole('cell', { name: 'STARLINK-6292' })).toBeVisible();
-  await expect(page.getByRole('cell', { name: '2023-078J' })).toBeVisible();
-  await expect(page.getByRole('cell', { name: 'space-data-network-02' })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('PNM');
+  await expect(page.getByRole('combobox', { name: 'Table' }).locator('option')).toHaveText([
+    'PNM (4)',
+    'OMM (2)',
+    'CAT (1)',
+    'EPM (1)',
+  ]);
+  const schemaSync = page.getByRole('table', { name: 'Schema sync' });
+  await expect(schemaSync).toBeVisible();
+  await expect(schemaSync.getByRole('row').nth(1)).toContainText('PNM');
+  await expect(schemaSync.getByRole('row').nth(1)).toContainText('4');
+  await expect(schemaSync.getByRole('combobox', { name: 'PNM sync' })).toHaveValue('preview');
+  await expect(schemaSync.getByRole('spinbutton', { name: 'PNM storage cap' })).toBeDisabled();
+  await schemaSync.getByRole('combobox', { name: 'PNM sync' }).selectOption('sync');
+  await expect(schemaSync.getByRole('spinbutton', { name: 'PNM storage cap' })).toBeEnabled();
+  await schemaSync.getByRole('spinbutton', { name: 'PNM storage cap' }).fill('2');
+  await schemaSync.getByRole('combobox', { name: 'PNM storage unit' }).selectOption('MB');
+  await expect(page.getByRole('combobox', { name: 'Page size' })).toHaveValue('10');
+  await expect(page.getByLabel('Remote rows 4')).toBeVisible();
+  await expect(page.getByLabel('Local rows 1')).toBeVisible();
+  const dataRows = page.getByRole('table', { name: 'Data rows' });
+  await expect(dataRows.getByRole('cell', { name: 'bafy-pnm-cid' })).toBeVisible();
+  await expect(dataRows.getByRole('columnheader', { name: 'SIGNATURE' })).toHaveCount(0);
+  await expect(page.getByRole('table', { name: 'SQL results' })).toHaveCount(0);
+  await expect(page.getByRole('columnheader', { name: 'Bytes' })).toHaveCount(0);
+  await expect(dataRows.getByRole('columnheader', { name: 'SEMI_MAJOR_AXIS' })).toHaveCount(0);
+  await expect(dataRows.getByRole('columnheader', { name: 'MASS' })).toHaveCount(0);
+  await expect(dataRows.getByRole('columnheader', { name: '_rowid' })).toHaveCount(0);
+  await expect(dataRows.getByRole('columnheader', { name: '_data' })).toHaveCount(0);
+
+  const sql = page.getByRole('textbox', { name: 'SQL' });
+  await expect(sql).toHaveValue('SELECT * FROM PNM LIMIT 10');
+  await sql.fill('SELECT FILE_ID, CID FROM PNM LIMIT 10');
+  await page.getByRole('button', { name: 'Run SQL' }).click();
+  await expect(dataRows.getByRole('columnheader', { name: 'FILE_ID' })).toBeVisible();
+  await expect(dataRows.getByRole('cell', { name: 'bafy-pnm-cid' })).toBeVisible();
+
+  await page.reload();
+  await page.getByRole('searchbox', { name: 'Data source' }).fill('celes');
+  await page.getByRole('table', { name: 'Data sources' }).getByRole('button', { name: /CelesTrak Provider/ }).click();
+  const reloadedSchemaSync = page.getByRole('table', { name: 'Schema sync' });
+  await expect(reloadedSchemaSync.getByRole('combobox', { name: 'PNM sync' })).toHaveValue('sync');
+  await expect(reloadedSchemaSync.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2');
+  await expect(reloadedSchemaSync.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
 });
 
 test('explore route renders CID inspection with the configured gateway', async ({ page }) => {
@@ -198,6 +245,8 @@ async function installSdnFixtures(page: Page): Promise<void> {
               agent_version: 'sdn-configured-node',
               admin_proxy_path: '/api/local/sdn-nodes/space-data-network-02',
               host_name: '167.172.219.213',
+              peer_id: realPeerId,
+              public_key: realPeerId,
               protocols: '/space-data-network/configured-node/1.0.0',
             },
           },
@@ -209,10 +258,23 @@ async function installSdnFixtures(page: Page): Promise<void> {
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
-        total_records: 2,
-        total_bytes: 576,
-        schemas: [{ schema_name: 'OMM.fbs', count: 2, total_bytes: 576 }],
+        total_records: 8,
+        total_bytes: 1152,
+        schemas: [
+          { schema_name: 'CAT.fbs', count: 1, total_bytes: 144 },
+          { schema_name: 'EPM.fbs', count: 1, total_bytes: 144 },
+          { schema_name: 'OMM.fbs', count: 2, total_bytes: 576 },
+          { schema_name: 'PNM.fbs', count: 4, total_bytes: 288 },
+        ],
         sources: [
+          {
+            schema_name: 'PNM.fbs',
+            provider_id: 'space-data-network-02',
+            source_name: 'celestrak-publication-log',
+            batch_id: 'fixture-pnm-batch',
+            count: 4,
+            total_bytes: 288,
+          },
           {
             schema_name: 'OMM.fbs',
             provider_id: 'space-data-network-02',
@@ -225,9 +287,65 @@ async function installSdnFixtures(page: Page): Promise<void> {
       }),
     });
   });
+  await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/scan', async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body).toMatchObject({ schema: 'PNM.fbs', limit: 10, offset: 0, include_data: false });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        schema: 'PNM.fbs',
+        total_count: 4,
+        count: 1,
+        limit: 10,
+        offset: 0,
+        cursor: 'MA',
+        next_cursor: '',
+        scan_hash: 'fixture-scan-hash',
+        results: [
+          {
+            schema_name: 'PNM.fbs',
+            cid: 'celestrak-pnm-1',
+            peer_id: 'source:celestrak',
+            provider_id: 'space-data-network-02',
+            source_name: 'celestrak-publication-log',
+            batch_id: 'fixture-pnm-batch',
+            timestamp: '2026-05-11T04:02:25Z',
+            size_bytes: 288,
+          },
+        ],
+      }),
+    });
+  });
+  await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/stream', async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body).toMatchObject({
+      schema: 'PNM.fbs',
+      scan_hash: 'fixture-scan-hash',
+      records: [{
+        schema_name: 'PNM.fbs',
+        cid: 'celestrak-pnm-1',
+        peer_id: 'source:celestrak',
+        provider_id: 'space-data-network-02',
+        source_name: 'celestrak-publication-log',
+      }],
+    });
+    expect(route.request().headers().accept).toContain('application/vnd.sdn.flatbuffers.stream');
+    await route.fulfill({
+      contentType: 'application/vnd.sdn.flatbuffers.stream',
+      body: rawFlatbufferStream([PNM_BYTES]),
+    });
+  });
   await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/query', async (route) => {
     const body = route.request().postDataJSON();
-    expect(body).toMatchObject({ schema: 'OMM.fbs', limit: 25, offset: 0 });
+    expect(body).toMatchObject({ schema: 'OMM.fbs', limit: 10, offset: 0 });
+    if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
+      await route.fulfill({
+        contentType: 'application/vnd.sdn.flatbuffers.stream',
+        body: rawFlatbufferStream([STARLINK_6292_OMM_BYTES]),
+      });
+      return;
+    }
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
@@ -241,7 +359,6 @@ async function installSdnFixtures(page: Page): Promise<void> {
             batch_id: 'fixture-batch',
             timestamp: '2026-05-11T04:02:25Z',
             size_bytes: 288,
-            data_base64: 'HAEAAEgAAAAkT01NAAAAADwAVAAAAAwACABQAEwAEAAAAAAAAAAAAAAARAAAADwANAAsACQAHAAUAAAAAAAAAAAAAAAAAAAABABIADwAAABQAAAAVAAAAGAAAAB4AAAAxEKtad4BV0DByqFFtsBwQGZmZmZmnGJAXf5D+u1/UUCej3xvHS04P22KKnBw9y1AUAAAAMfdAABkAAAAcAAAAAEAAABVAAAACAAAAFNETi1URVNUAAAAABQAAAAyMDI2LTA1LTExVDEwOjI2OjQxWgAAAAAFAAAARUFSVEgAAAAUAAAAMjAyNi0wNS0xMFQxMDo0NTozMVoAAAAACQAAADIwMjMtMDc4SgAAAA0AAABTVEFSTElOSy02MjkyAAAA',
           },
         ],
       }),
@@ -269,4 +386,35 @@ async function installSdnFixtures(page: Page): Promise<void> {
       }),
     });
   });
+}
+
+const STARLINK_6292_OMM_BYTES = Buffer.from('HAEAAEgAAAAkT01NAAAAADwAVAAAAAwACABQAEwAEAAAAAAAAAAAAAAARAAAADwANAAsACQAHAAUAAAAAAAAAAAAAAAAAAAABABIADwAAABQAAAAVAAAAGAAAAB4AAAAxEKtad4BV0DByqFFtsBwQGZmZmZmnGJAXf5D+u1/UUCej3xvHS04P22KKnBw9y1AUAAAAMfdAABkAAAAcAAAAAEAAABVAAAACAAAAFNETi1URVNUAAAAABQAAAAyMDI2LTA1LTExVDEwOjI2OjQxWgAAAAAFAAAARUFSVEgAAAAUAAAAMjAyNi0wNS0xMFQxMDo0NTozMVoAAAAACQAAADIwMjMtMDc4SgAAAA0AAABTVEFSTElOSy02MjkyAAAA', 'base64');
+const PNM_BYTES = buildPnmBytes();
+
+function rawFlatbufferStream(records: Buffer[]): Buffer {
+  const chunks: Buffer[] = [];
+  for (const record of records) {
+    const header = Buffer.alloc(4);
+    header.writeUInt32BE(record.byteLength, 0);
+    chunks.push(header, record);
+  }
+  return Buffer.concat(chunks);
+}
+
+function buildPnmBytes(): Buffer {
+  const builder = new flatbuffers.Builder(256);
+  const multiaddr = builder.createString('/dns4/celestrak.eth/tcp/443/wss');
+  const published = builder.createString('2026-05-11T03:00:00Z');
+  const cid = builder.createString('bafy-pnm-cid');
+  const fileName = builder.createString('OMM.fbs');
+  const fileId = builder.createString('celestrak:gp:OMM.fbs:2026-05-11T03:00:00Z');
+  PNM.startPNM(builder);
+  PNM.addMultiformatAddress(builder, multiaddr);
+  PNM.addPublishTimestamp(builder, published);
+  PNM.addCid(builder, cid);
+  PNM.addFileName(builder, fileName);
+  PNM.addFileId(builder, fileId);
+  const pnm = PNM.endPNM(builder);
+  PNM.finishSizePrefixedPNMBuffer(builder, pnm);
+  return Buffer.from(builder.asUint8Array());
 }

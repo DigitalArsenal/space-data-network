@@ -101,6 +101,7 @@ export interface RawDataQuery {
   sourceName?: string;
   batchId?: string;
   peerId?: string;
+  cursor?: string;
   limit?: number;
   offset?: number;
 }
@@ -114,13 +115,32 @@ export interface RawDataRecord {
   batchId?: string;
   timestamp?: string;
   sizeBytes: number;
-  dataBase64: string;
+  dataBase64?: string;
+  dataBytes?: Uint8Array;
 }
 
 export interface RawDataRecordBytes {
   schemaName: string;
   cid: string;
   bytes: Uint8Array;
+}
+
+export interface DataScanResult {
+  schema: string;
+  totalCount: number;
+  count: number;
+  limit: number;
+  offset: number;
+  cursor: string;
+  nextCursor: string;
+  scanHash: string;
+  results: RawDataRecord[];
+}
+
+export interface RawDataStreamRequest {
+  schema: string;
+  scanHash?: string;
+  records: RawDataRecord[];
 }
 
 export interface SdnHealth {
@@ -180,6 +200,8 @@ export interface SdnBackend {
   listObjects(): Promise<BackendResult<LocalObjectSummary[]>>;
   inspectObject(id: string): Promise<BackendResult<LocalObjectSummary | Record<string, unknown>>>;
   getDataSummary(): Promise<BackendResult<DataSummary>>;
+  scanRawData(query: RawDataQuery): Promise<BackendResult<DataScanResult>>;
+  streamRawData(request: RawDataStreamRequest): Promise<BackendResult<RawDataRecord[]>>;
   queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>>;
   readRawDataRecord(schemaName: string, cid: string): Promise<BackendResult<RawDataRecordBytes>>;
   pinObject(id: string): Promise<BackendResult<Record<string, unknown>>>;

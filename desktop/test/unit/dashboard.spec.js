@@ -157,6 +157,18 @@ test.describe('SDN dashboard window', () => {
       [],
       []
     ])
+    expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.name)).toEqual([
+      'SpaceAware.io',
+      'CelesTrak Provider'
+    ])
+    expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.metadata.peer_id)).toEqual([
+      '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+      '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4'
+    ])
+    expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.metadata.public_key)).toEqual([
+      '0257d9a39fac79d4c36e017b3b6913f60684586605ebb9370cf417ef44bf0f7cd2',
+      '90aa23ea4ff2d68cf8cb8155135fe5a25b580ec805e835aabb0e8905ffb2c3b2'
+    ])
     expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('/p2p/space-data-network-')
     expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('/p2p/sdn.spaceaware.io')
     expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('/p2p/celestrak.eth')

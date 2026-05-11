@@ -157,7 +157,17 @@ test.describe('desktop static identity API', () => {
         source_name: 'local-epm'
       })
     ])
-    expect(query.json.records[0].data_base64).toEqual(expect.any(String))
+    expect(query.json.records[0].data_base64).toBeUndefined()
+
+    const stream = await requestRaw(serveDesktopLocalDataAPI, 'POST', '/api/v1/data/query', JSON.stringify({
+      schema: 'EPM.fbs',
+      provider_id: 'local-node',
+      source_name: 'local-epm',
+      limit: 5
+    }), { accept: 'application/vnd.sdn.flatbuffers.stream', 'content-type': 'application/json' })
+    expect(stream.statusCode).toBe(200)
+    expect(stream.headers['Content-Type']).toBe('application/vnd.sdn.flatbuffers.stream')
+    expect(stream.bodyBuffer.readUInt32BE(0)).toBeGreaterThan(0)
 
     const record = await requestRaw(serveDesktopLocalDataAPI, 'GET', '/api/v1/data/records/EPM.fbs/12D3KooWDesktopNode')
     expect(record.statusCode).toBe(200)
@@ -183,7 +193,9 @@ test.describe('desktop static identity API', () => {
         return {
           statusCode: 200,
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ records: [{ cid: 'celestrak-omm-1', schema_name: 'OMM.fbs' }] })
+          body: JSON.stringify(request.targetPath === '/api/v1/data/scan'
+            ? { schema: 'OMM.fbs', scan_hash: 'scan-1', results: [{ cid: 'celestrak-omm-1', schema_name: 'OMM.fbs' }] }
+            : { records: [{ cid: 'celestrak-omm-1', schema_name: 'OMM.fbs' }] })
         }
       }
     })
@@ -199,12 +211,30 @@ test.describe('desktop static identity API', () => {
     expect(query.json.records).toEqual([
       expect.objectContaining({ cid: 'celestrak-omm-1', schema_name: 'OMM.fbs' })
     ])
+    const scan = await requestJson(
+      handler,
+      'POST',
+      '/api/local/sdn-nodes/space-data-network-02/api/v1/data/scan',
+      { schema: 'OMM.fbs', limit: 10, offset: 0, include_data: false }
+    )
+
+    expect(scan.statusCode).toBe(200)
+    expect(scan.json).toEqual(expect.objectContaining({
+      schema: 'OMM.fbs',
+      scan_hash: 'scan-1'
+    }))
     expect(requests).toEqual([
       expect.objectContaining({
         node: expect.objectContaining({ id: 'space-data-network-02', name: 'CelesTrak Provider' }),
         method: 'POST',
         targetPath: '/api/v1/data/query',
         body: JSON.stringify({ schema: 'OMM.fbs', limit: 25 })
+      }),
+      expect.objectContaining({
+        node: expect.objectContaining({ id: 'space-data-network-02', name: 'CelesTrak Provider' }),
+        method: 'POST',
+        targetPath: '/api/v1/data/scan',
+        body: JSON.stringify({ schema: 'OMM.fbs', limit: 10, offset: 0, include_data: false })
       })
     ])
 
@@ -216,6 +246,121 @@ test.describe('desktop static identity API', () => {
     )
     expect(denied.statusCode).toBe(403)
     expect(denied.json.error).toContain('not allowed')
+  })
+
+  test('proxies configured SDN node raw FlatBuffer query and scan streams without forcing JSON', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-remote-flatbuffer-api-'))
+    const configPath = path.join(userData, 'ssh-config')
+    fs.writeFileSync(configPath, [
+      'Host space-data-network-02 celestrak.eth',
+      '    HostName 167.172.219.213',
+      '    User root'
+    ].join('\n'))
+
+    const requests = []
+    const flatbufferStream = Buffer.concat([Buffer.from([0, 0, 0, 4]), Buffer.from([0, 1, 2, 3])])
+    const { serveConfiguredSdnNodeDataProxy } = loadStaticServer(userData)
+    const handler = (req, res) => serveConfiguredSdnNodeDataProxy(req, res, {
+      configPath,
+      runRemoteRequest: async (request) => {
+        requests.push(request)
+        return {
+          statusCode: 200,
+          headers: { 'content-type': 'application/vnd.sdn.flatbuffers.stream' },
+          body: flatbufferStream
+        }
+      }
+    })
+
+    const query = await requestRaw(
+      handler,
+      'POST',
+      '/api/local/sdn-nodes/space-data-network-02/api/v1/data/query',
+      JSON.stringify({ schema: 'OMM.fbs', limit: 25 }),
+      { accept: 'application/vnd.sdn.flatbuffers.stream', 'content-type': 'application/json' }
+    )
+
+    expect(query.statusCode).toBe(200)
+    expect(query.headers['Content-Type']).toBe('application/vnd.sdn.flatbuffers.stream')
+    expect(query.bodyBuffer).toEqual(flatbufferStream)
+    expect(requests[0]).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ accept: 'application/vnd.sdn.flatbuffers.stream' })
+    }))
+
+    const stream = await requestRaw(
+      handler,
+      'POST',
+      '/api/local/sdn-nodes/space-data-network-02/api/v1/data/stream',
+      JSON.stringify({ schema: 'OMM.fbs', scan_hash: 'scan-1', records: [{ cid: 'celestrak-omm-1' }] }),
+      { accept: 'application/vnd.sdn.flatbuffers.stream', 'content-type': 'application/json' }
+    )
+
+    expect(stream.statusCode).toBe(200)
+    expect(stream.headers['Content-Type']).toBe('application/vnd.sdn.flatbuffers.stream')
+    expect(stream.bodyBuffer).toEqual(flatbufferStream)
+    expect(requests[1]).toEqual(expect.objectContaining({
+      targetPath: '/api/v1/data/stream',
+      headers: expect.objectContaining({ accept: 'application/vnd.sdn.flatbuffers.stream' })
+    }))
+  })
+
+  test('maps observed configured SDN peer IDs to EPM display names', () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-peer-name-api-'))
+    const { kuboSwarmPeersToDesktopSdnPeers } = loadStaticServer(userData)
+
+    const peers = kuboSwarmPeersToDesktopSdnPeers({
+      Peers: [
+        {
+          Peer: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+          Addr: '/ip4/104.131.11.220/tcp/4001',
+          Identify: {
+            ID: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+            AgentVersion: 'spacedatanetwork/1.0.3',
+            Protocols: ['/space-data-network/module-delivery/1.0.0']
+          }
+        },
+        {
+          Peer: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+          Addr: '/ip4/167.172.219.213/tcp/4001',
+          Identify: {
+            ID: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+            AgentVersion: 'spacedatanetwork/1.0.3',
+            Protocols: ['/space-data-network/module-delivery/1.0.0']
+          }
+        }
+      ]
+    })
+
+    expect(peers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+        name: 'SpaceAware.io',
+        metadata: expect.objectContaining({
+          public_key: '0257d9a39fac79d4c36e017b3b6913f60684586605ebb9370cf417ef44bf0f7cd2'
+        })
+      }),
+      expect.objectContaining({
+        id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+        name: 'CelesTrak Provider',
+        metadata: expect.objectContaining({
+          public_key: '90aa23ea4ff2d68cf8cb8155135fe5a25b580ec805e835aabb0e8905ffb2c3b2'
+        })
+      })
+    ]))
+  })
+
+  test('parses remote curl trailers when ssh strips newline escapes', () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-remote-curl-trailer-'))
+    const { parseConfiguredSdnNodeRemoteResponse } = loadStaticServer(userData)
+    const flatbufferStream = Buffer.concat([Buffer.from([0, 0, 0, 4]), Buffer.from([0, 1, 2, 3])])
+    const parsed = parseConfiguredSdnNodeRemoteResponse(Buffer.concat([
+      flatbufferStream,
+      Buffer.from('n__SDN_HTTP_STATUS__:200n__SDN_CONTENT_TYPE__:application/vnd.sdn.flatbuffers.stream')
+    ]))
+
+    expect(parsed.statusCode).toBe(200)
+    expect(parsed.headers['content-type']).toBe('application/vnd.sdn.flatbuffers.stream')
+    expect(parsed.body).toEqual(flatbufferStream)
   })
 })
 
@@ -246,10 +391,11 @@ async function requestJson (handler, method, url, body) {
   }
 }
 
-async function requestRaw (handler, method, url, body = '') {
+async function requestRaw (handler, method, url, body = '', headers = {}) {
   const req = new EventEmitter()
   req.method = method
   req.url = url
+  req.headers = headers
   req.setEncoding = () => {}
 
   const chunks = []

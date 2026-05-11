@@ -7,6 +7,7 @@ import {
   normalizeBackendConfig,
   type BackendCapability,
   type BackendResult,
+  type DataScanResult,
   type DataSummary,
   type LocalObjectSummary,
   type NodeAccessUser,
@@ -17,6 +18,7 @@ import {
   type RawDataQuery,
   type RawDataRecord,
   type RawDataRecordBytes,
+  type RawDataStreamRequest,
   type SdnBackend,
   type StorageSummary,
 } from './sdn-backend';
@@ -25,12 +27,16 @@ import {
   getJson,
   joinUrl,
   nodeSummaryFromProfile,
+  normalizeDataScanResult,
   normalizeDataSummary,
   normalizeNodeAccessPayload,
   normalizeObjectPayload,
   normalizePeerPayload,
   normalizeRawDataRecords,
+  attachRawFlatbufferStream,
   normalizeStorageSummary,
+  rawDataStreamPayload,
+  RAW_FLATBUFFER_STREAM_CONTENT_TYPE,
   recordsFromPayload,
   resolveFetch,
   type BackendDeps,
@@ -302,15 +308,46 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
       if (!result.ok) return createDegradedResult('getDataSummary', result.capability.reason ?? 'data summary unavailable');
       return createAvailableResult('getDataSummary', normalizeDataSummary(result.data));
     },
+    async scanRawData(query: RawDataQuery): Promise<BackendResult<DataScanResult>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/v1/data/scan'),
+        'scanRawData',
+        authJsonRequest('POST', rawDataQueryPayload(query)),
+      );
+      if (!result.ok) return result as BackendResult<DataScanResult>;
+      return createAvailableResult('scanRawData', normalizeDataScanResult(result.data));
+    },
+    async streamRawData(request: RawDataStreamRequest): Promise<BackendResult<RawDataRecord[]>> {
+      const stream = await getBytes(
+        fetchLike,
+        joinUrl(desktopBase, '/api/v1/data/stream'),
+        'streamRawData',
+        authRawFlatbufferStreamRequest(rawDataStreamPayload(request)),
+      );
+      if (!stream.ok || !stream.data) {
+        return createDegradedResult('streamRawData', stream.capability.reason ?? 'raw FlatBuffer stream unavailable');
+      }
+      return createAvailableResult('streamRawData', attachRawFlatbufferStream(request.records, stream.data));
+    },
     async queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>> {
+      const payload = rawDataQueryPayload(query);
       const result = await getJson<unknown>(
         fetchLike,
         joinUrl(desktopBase, '/api/v1/data/query'),
         'queryRawData',
-        authJsonRequest('POST', rawDataQueryPayload(query)),
+        authJsonRequest('POST', payload),
       );
       if (!result.ok) return result as BackendResult<RawDataRecord[]>;
-      return createAvailableResult('queryRawData', normalizeRawDataRecords(result.data));
+      const records = normalizeRawDataRecords(result.data);
+      const stream = await getBytes(
+        fetchLike,
+        joinUrl(desktopBase, '/api/v1/data/query'),
+        'queryRawData:flatbufferStream',
+        authRawFlatbufferStreamRequest(payload),
+      );
+      if (!stream.ok || !stream.data) return createAvailableResult('queryRawData', records);
+      return createAvailableResult('queryRawData', attachRawFlatbufferStream(records, stream.data));
     },
     async readRawDataRecord(schemaName: string, cid: string): Promise<BackendResult<RawDataRecordBytes>> {
       const result = await getBytes(
@@ -428,12 +465,25 @@ function authJsonRequest(method: string, body: Record<string, unknown>): Request
 function rawDataQueryPayload(query: RawDataQuery): Record<string, unknown> {
   return {
     schema: query.schema,
+    include_data: false,
     ...(query.providerId ? { provider_id: query.providerId } : {}),
     ...(query.sourceName ? { source_name: query.sourceName } : {}),
     ...(query.batchId ? { batch_id: query.batchId } : {}),
     ...(query.peerId ? { peer_id: query.peerId } : {}),
+    ...(query.cursor ? { cursor: query.cursor } : {}),
     ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
     ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
+  };
+}
+
+function authRawFlatbufferStreamRequest(body: Record<string, unknown>): RequestInit {
+  const init = authJsonRequest('POST', body);
+  return {
+    ...init,
+    headers: {
+      ...(init.headers as Record<string, string>),
+      accept: RAW_FLATBUFFER_STREAM_CONTENT_TYPE,
+    },
   };
 }
 
