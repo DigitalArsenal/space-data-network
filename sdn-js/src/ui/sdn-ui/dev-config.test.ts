@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 describe('SDN UI Vite development configuration', () => {
   afterEach(() => {
     delete process.env.SDN_UI_PROXY_TARGET;
+    delete process.env.SDN_UI_KUBO_PROXY_TARGET;
     vi.resetModules();
   });
 
@@ -33,5 +34,34 @@ describe('SDN UI Vite development configuration', () => {
     const { default: config } = await import('../../../ui/vite.config.mts');
 
     expect(config.envPrefix).toEqual(expect.arrayContaining(['VITE_', 'SDN_UI_']));
+  });
+
+  it('proxies Kubo through /kubo without forwarding the browser Origin header', async () => {
+    process.env.SDN_UI_KUBO_PROXY_TARGET = 'http://127.0.0.1:5001';
+    vi.resetModules();
+    const { default: config } = await import('../../../ui/vite.config.mts');
+    const server = typeof config.server === 'function'
+      ? config.server({} as never)
+      : config.server;
+    const kuboProxy = server?.proxy?.['/kubo'];
+    expect(kuboProxy).toEqual(expect.objectContaining({
+      target: 'http://127.0.0.1:5001',
+      rewrite: expect.any(Function),
+      configure: expect.any(Function),
+    }));
+
+    const events = new Map<string, Function>();
+    kuboProxy.configure({
+      on(event: string, handler: Function) {
+        events.set(event, handler);
+      },
+    });
+
+    const removeHeader = vi.fn();
+    events.get('proxyReq')?.({ removeHeader });
+    expect(removeHeader).toHaveBeenCalledWith('origin');
+    expect(removeHeader).toHaveBeenCalledWith('referer');
+    expect(removeHeader).toHaveBeenCalledWith('user-agent');
+    expect(kuboProxy.rewrite('/kubo/api/v0/id')).toBe('/api/v0/id');
   });
 });

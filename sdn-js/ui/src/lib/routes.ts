@@ -1,4 +1,4 @@
-export type PrimaryRoute = '/node' | '/peers' | '/data' | '/advanced' | '/claim-core';
+export type PrimaryRoute = '/node' | '/peers' | '/data' | '/advanced';
 
 export function normalizeSdnRoute(rawPath: string): string {
   const path = normalizePath(rawPath);
@@ -14,8 +14,7 @@ export function normalizeSdnRoute(rawPath: string): string {
     path.startsWith('/node') ||
     path.startsWith('/peers') ||
     path.startsWith('/data') ||
-    path.startsWith('/advanced') ||
-    path.startsWith('/claim-core')
+    path.startsWith('/advanced')
   ) {
     return path;
   }
@@ -26,7 +25,6 @@ export function primaryRouteFromNormalized(route: string): PrimaryRoute {
   if (route.startsWith('/peers')) return '/peers';
   if (route.startsWith('/data')) return '/data';
   if (route.startsWith('/advanced')) return '/advanced';
-  if (route.startsWith('/claim-core')) return '/claim-core';
   return '/node';
 }
 

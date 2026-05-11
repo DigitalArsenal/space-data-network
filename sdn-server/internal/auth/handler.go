@@ -34,30 +34,31 @@ const (
 
 // Handler serves HTTP authentication endpoints using Ed25519 challenge-response.
 type Handler struct {
-	userStore        *UserStore
-	sessions         *SessionStore
-	challenges       map[string]pendingChallenge
-	mu               sync.Mutex
-	challengeTTL     time.Duration
-	sessionTTL       time.Duration
-	clockSkew        time.Duration
-	walletUIPath     string // filesystem path to hd-wallet-ui package root or dist, or empty for CDN
-	configPath       string // filesystem path to config.yaml for setup instructions
-	nodeAttestations map[string]epm.IdentityAttestation
-	attestMu         sync.RWMutex
-	rateMu           sync.Mutex
-	rates            map[string]rateEntry
+	userStore            *UserStore
+	sessions             *SessionStore
+	challenges           map[string]pendingChallenge
+	mu                   sync.Mutex
+	challengeTTL         time.Duration
+	sessionTTL           time.Duration
+	clockSkew            time.Duration
+	walletUIPath         string // filesystem path to hd-wallet-ui package root or dist, or empty for CDN
+	configPath           string // filesystem path to config.yaml for setup instructions
+	nodeAttestations     map[string]epm.IdentityAttestation
+	attestMu             sync.RWMutex
+	rateMu               sync.Mutex
+	rates                map[string]rateEntry
 	cookieSecureOverride *bool
-	tlsManager            *tlsmgr.Manager
+	tlsManager           *tlsmgr.Manager
 }
 
 type pendingChallenge struct {
-	id        string
-	xpub      string
-	pubKey    ed25519.PublicKey
-	challenge []byte
-	createdAt time.Time
-	expiresAt time.Time
+	id                  string
+	xpub                string
+	pubKey              ed25519.PublicKey
+	challenge           []byte
+	createdAt           time.Time
+	expiresAt           time.Time
+	firstAdminBootstrap bool
 }
 
 type rateEntry struct {
@@ -88,7 +89,7 @@ type verifyRequest struct {
 
 type verifyResponse struct {
 	User      authSessionUser `json:"user"`
-	ExpiresAt int64 `json:"expires_at"`
+	ExpiresAt int64           `json:"expires_at"`
 }
 
 type authSessionUser struct {
@@ -283,6 +284,7 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 	// Unknown xpubs get a valid-looking response that can never be verified
 	// (prevents user enumeration).
 	shouldStore := false
+	firstAdminBootstrap := false
 	expectedPubKey := []byte(nil)
 	if user != nil {
 		if req.XPub == "" {
@@ -319,6 +321,10 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	} else if req.XPub != "" && !h.userStore.HasAdmin() {
+		shouldStore = true
+		firstAdminBootstrap = true
+		expectedPubKey = pubRaw
 	}
 
 	// Generate challenge
@@ -345,12 +351,13 @@ func (h *Handler) handleChallenge(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.challenges[challengeID] = pendingChallenge{
-			id:        challengeID,
-			xpub:      req.XPub,
-			pubKey:    append(ed25519.PublicKey(nil), expectedPubKey...),
-			challenge: challengeBytes,
-			createdAt: now,
-			expiresAt: now.Add(h.challengeTTL),
+			id:                  challengeID,
+			xpub:                req.XPub,
+			pubKey:              append(ed25519.PublicKey(nil), expectedPubKey...),
+			challenge:           challengeBytes,
+			createdAt:           now,
+			expiresAt:           now.Add(h.challengeTTL),
+			firstAdminBootstrap: firstAdminBootstrap,
 		}
 		h.mu.Unlock()
 	}
@@ -456,6 +463,23 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 
 	// Look up user trust level
 	user, err := h.userStore.GetUser(pending.xpub)
+	if (err == nil && user == nil) && pending.firstAdminBootstrap {
+		if h.userStore.HasAdmin() {
+			h.writeAuthenticationFailure(w)
+			return
+		}
+		if err := h.userStore.AddUser(
+			pending.xpub,
+			"Initial Admin",
+			peers.Admin,
+			hex.EncodeToString(pending.pubKey),
+		); err != nil {
+			log.Warnf("failed to create first admin for %q: %v", pending.xpub, err)
+			writeJSON(w, http.StatusInternalServerError, errorResponse{Code: "server_error", Message: "failed to create first admin"})
+			return
+		}
+		user, err = h.userStore.GetUser(pending.xpub)
+	}
 	if err != nil || user == nil {
 		h.writeAuthenticationFailure(w)
 		return

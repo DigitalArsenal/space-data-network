@@ -39,7 +39,7 @@
 
   const identityRuntimeModules = import.meta.glob('../../../src/ui/runtime/identity.ts');
   let query = '';
-  let searchState = 'Search public directory records for nodes and people.';
+  let searchState = '';
   let results: Array<Record<string, unknown>> = [];
   let selectedRecord: Record<string, unknown> | null = null;
   let selectedQr = '';
@@ -90,7 +90,7 @@
         margin: 1,
         width: 220,
       });
-      searchState = 'Public directory vCard QR ready.';
+      searchState = '';
     } catch (error) {
       searchState = `QR unavailable: ${errorMessage(error)}`;
     }
@@ -114,7 +114,7 @@
         return;
       }
       triggerDownload(result.data.url, result.data.filename);
-      searchState = `Public ${format === 'vcard' ? 'vCard' : 'EPM'} download started.`;
+      searchState = '';
     } catch (error) {
       searchState = errorMessage(error);
     }
@@ -189,7 +189,9 @@
     addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', normalized.kind === 'node-self' ? 'node' : 'user');
     addVCardLine(lines, 'X-SDN-PEER-ID', normalized.peerId);
     addVCardLine(lines, 'X-SDN-EPM-CID', normalized.epmCid ?? stringValue(epm.epm_cid) ?? stringValue(epm.epmCid));
-    addVCardLine(lines, 'X-SDN-PUBLIC-KEY', stringValue(epm.public_key) ?? stringValue(epm.PUBLIC_KEY) ?? stringValue(epm.signing_pubkey_hex));
+    const publicKey = publicKeyValue(epm);
+    addVCardLine(lines, 'EMAIL;TYPE=INTERNET', publicKeyEmailAddress(publicKey));
+    addVCardLine(lines, 'X-SDN-PUBLIC-KEY', publicKey);
     lines.push('END:VCARD');
     return lines.join('\r\n');
   }
@@ -207,6 +209,23 @@
       }
     }
     return out;
+  }
+
+  function publicKeyValue(epm: Record<string, unknown>): string | undefined {
+    return stringValue(epm.public_key)
+      ?? stringValue(epm.PUBLIC_KEY)
+      ?? stringValue(epm.publicKey)
+      ?? stringValue(epm.signing_public_key)
+      ?? stringValue(epm.signingPublicKey)
+      ?? stringValue(epm.signing_pubkey_hex)
+      ?? stringValue(epm.encryption_public_key)
+      ?? stringValue(epm.encryptionPublicKey)
+      ?? stringValue(epm.encryption_pubkey_hex);
+  }
+
+  function publicKeyEmailAddress(publicKey: string | undefined): string | undefined {
+    const localPart = publicKey?.trim().replace(/\s+/g, '').replace(/[^A-Za-z0-9._%+-]/g, '');
+    return localPart ? `${localPart}@spacedatanetwork.org` : undefined;
   }
 
   function addVCardLine(lines: string[], key: string, value: string | undefined): void {
@@ -321,7 +340,9 @@
     <input class="sdn-input" bind:value={query} placeholder="Search public directory" aria-label="Search public directory" />
     <button class="sdn-button" type="submit" disabled={!backend}>Search</button>
   </form>
-  <p class="sdn-status-line">{searchState}</p>
+  {#if searchState}
+    <p class="sdn-status-line">{searchState}</p>
+  {/if}
 
   <div class="sdn-directory-grid">
     <section>
@@ -373,14 +394,11 @@
     <section class="sdn-directory-preview">
       <div>
         <h3>{displayName(selectedRecord)}</h3>
-        <p>Public vCard QR contains public EPM fields and public keys only.</p>
         <textarea class="sdn-input sdn-vcard-preview" readonly value={selectedVCard} aria-label="Directory public vCard payload"></textarea>
       </div>
       <div class="sdn-qr-frame">
         {#if selectedQr}
           <img src={selectedQr} alt="Directory public vCard QR code" />
-        {:else}
-          <span>QR pending</span>
         {/if}
       </div>
     </section>

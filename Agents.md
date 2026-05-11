@@ -20,6 +20,32 @@
 
 Keep those surfaces separate. Do not reintroduce a combined admin/WebUI mount.
 
+## Node Security Guardrails
+
+- Public server routes must be explicit and method-aware. Do not add broad
+  public prefixes such as all of `/api/auth/`, `/api/v0/`, or `/api/v1/data/`
+  when only specific read/challenge endpoints should be unauthenticated.
+- Server control-plane mutations must require the wallet-cookie auth scheme
+  (`sdn_wallet_session`) and the appropriate trust level. Kubo RPC proxy
+  routes, frontend management, plugin upload, module runtime actions, peer ACLs,
+  and auth user management are admin-only unless a narrower documented
+  capability flow exists.
+- Admin grant/revoke flows use `/api/auth/users` and `/api/auth/users/{xpub}`.
+  Config-managed admins are authoritative config entries and must not appear
+  revocable through the UI or API unless the config itself changes.
+- Local node EPM profile edits must persist as encrypted size-prefixed
+  `EPM.fbs` bytes in the FlatSQL-backed EPM store. Do not persist editable
+  profile JSON, EPM JSON projections, plaintext `keys/epm-profile.json`, or ad
+  hoc JSON files as the active source of truth; JSON views must be derived from
+  the FlatBuffer only at compatibility/API edges.
+- Backend-to-frontend EPM transport must use raw FlatBuffer bytes from
+  `/api/node/epm` with `application/x-flatbuffers`. The UI may decode those
+  bytes locally for forms, but it must not prefer `/api/node/epm/json`,
+  `/api/node/info`, or any other JSON profile endpoint for node identity data.
+- SDN UI node-self profile edits must call `/api/node/epm`. Hosted identity
+  rows may use `/api/identity/epms/{id}`, but `/api/identity/epms/self` must
+  not become a second node-profile write path.
+
 ## Desktop Peer And Gateway Guardrails
 
 - The desktop SDN menu must route to SDN UI pages under `/sdn`; the IPFS menu
@@ -33,6 +59,9 @@ Keep those surfaces separate. Do not reintroduce a combined admin/WebUI mount.
 - The local desktop SDN static server must expose the SDN API routes used by
   bundled SDN UI pages, including `/api/peers/sdn`, `/api/peers`,
   `/api/peers/graph`, and `/api/node/epm/json`.
+- The local desktop SDN static server must remain loopback-bound and must reject
+  requests whose `Host` header is not a local host form (`localhost`,
+  `127.0.0.1`, `0.0.0.0`, or `::1`) before API or static routes respond.
 - Desktop WebUI and SDN UI windows must inject both the live Kubo RPC API
   address and the live Kubo gateway address before the bundled UI initializes.
   The IPLD explorer must use the injected gateway, not a hard-coded `8080`.

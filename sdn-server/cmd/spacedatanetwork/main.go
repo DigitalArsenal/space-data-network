@@ -857,7 +857,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 					}
 
-					if isPublicAPIPath(r.URL.Path) {
+					if isPublicAPIRequest(r.Method, r.URL.Path) {
 						applyPublicAPICORSHeaders(w.Header(), r.Header.Get("Origin"))
 						if r.Method == http.MethodOptions {
 							w.WriteHeader(http.StatusNoContent)
@@ -868,7 +868,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 					// CSRF protection: for state-changing requests using cookie auth,
 					// require same-origin Origin/Referer, or X-Requested-With.
 					if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-						if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) && !isPublicAPIPath(r.URL.Path) {
+						if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) && !isPublicAPIRequest(r.Method, r.URL.Path) {
 							origin := strings.TrimSpace(r.Header.Get("Origin"))
 							referer := strings.TrimSpace(r.Header.Get("Referer"))
 							xrw := strings.TrimSpace(r.Header.Get("X-Requested-With"))
@@ -905,7 +905,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						isAPIOrPlugin := strings.HasPrefix(path, "/api/") ||
 							strings.HasPrefix(path, "/orbpro-key-broker/")
 
-						if isAPIOrPlugin && !isPublicAPIPath(path) {
+						if isAPIOrPlugin && !isPublicAPIRequest(r.Method, path) {
 							minTrust := peers.Standard
 							if isAdminOnlyAPIPath(path) {
 								minTrust = peers.Admin
@@ -1071,21 +1071,58 @@ func datasetPublicationSigningKey(cfg *config.Config, raw []byte) ([]byte, error
 }
 
 func isPublicAPIPath(path string) bool {
-	return strings.HasPrefix(path, "/api/v1/data/") ||
-		strings.HasPrefix(path, "/api/module-delivery/provider") ||
-		strings.HasPrefix(path, "/api/module-delivery/listings") ||
-		strings.HasPrefix(path, "/api/directory/") ||
+	return isPublicAPIRequest(http.MethodGet, path)
+}
+
+func isPublicAPIRequest(method string, path string) bool {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method == http.MethodOptions {
+		return isPublicAPIRequest(http.MethodGet, path) ||
+			isPublicAPIRequest(http.MethodPost, path)
+	}
+
+	if method == http.MethodPost {
+		switch path {
+		case "/api/auth/challenge", "/api/auth/verify", "/api/storefront/listings/search", "/api/storefront/payments/stripe/webhook":
+			return true
+		}
+		return false
+	}
+
+	if method != http.MethodGet && method != http.MethodHead {
+		return false
+	}
+
+	return isPublicReadAPIPath(path)
+}
+
+func isPublicReadAPIPath(path string) bool {
+	switch path {
+	case "/api/module-delivery/provider",
+		"/api/module-delivery/listings",
+		"/api/node/info",
+		"/api/relay/status",
+		"/api/auth/status",
+		"/api/storefront/listings",
+		"/api/v1/catalog",
+		"/api/v1/data/health",
+		"/api/v1/data/omm",
+		"/api/v1/data/omm/bulk",
+		"/api/v1/data/mpe",
+		"/api/v1/data/mpe/bulk",
+		"/api/v1/data/cat",
+		"/api/v1/data/cat/bulk",
+		"/api/v1/data/spw/bulk",
+		"/api/v1/data/secure/omm",
+		"/sdn/libp2p.js":
+		return true
+	}
+
+	return strings.HasPrefix(path, "/api/directory/") ||
 		strings.HasPrefix(path, "/api/v1/demo/") ||
-		strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook") ||
-		strings.HasPrefix(path, "/api/storefront/listings") ||
-		strings.HasPrefix(path, "/api/storefront/reviews") ||
+		strings.HasPrefix(path, "/api/storefront/listings/") ||
 		strings.HasPrefix(path, "/api/storefront/trust/") ||
-		strings.HasPrefix(path, "/api/auth/") ||
-		strings.HasPrefix(path, "/api/node/info") ||
-		strings.HasPrefix(path, "/api/relay/status") ||
-		strings.HasPrefix(path, "/api/v0/") ||
-		path == "/api/v0" ||
-		path == "/sdn/libp2p.js"
+		strings.HasPrefix(path, "/api/v1/log/")
 }
 
 func isWebhookPath(path string) bool {
@@ -1227,7 +1264,18 @@ func isAdminOnlyAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/export") ||
 		strings.HasPrefix(path, "/api/import") ||
 		strings.HasPrefix(path, "/api/admin/") ||
-		path == "/api/v1/plugins/upload"
+		strings.HasPrefix(path, "/api/auth/users") ||
+		strings.HasPrefix(path, "/api/v0") ||
+		strings.HasPrefix(path, "/api/v1/admin/") ||
+		path == "/api/v1/data/summary" ||
+		path == "/api/v1/data/query" ||
+		strings.HasPrefix(path, "/api/v1/data/records/") ||
+		strings.HasPrefix(path, "/api/v1/modules/runtime/") ||
+		strings.HasPrefix(path, "/api/v1/plugins/") ||
+		strings.HasPrefix(path, "/api/routing/") ||
+		strings.HasPrefix(path, "/api/streaming/") ||
+		strings.HasPrefix(path, "/api/relay/filters") ||
+		strings.HasPrefix(path, "/api/storefront/dashboard/admin")
 }
 
 func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
@@ -2486,8 +2534,13 @@ func handleNodeEPM(n *node.Node) http.HandlerFunc {
 			if err := epmSvc.PublishEPM(r.Context(), n); err != nil {
 				log.Warnf("Failed to publish updated EPM PNM: %v", err)
 			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(epmSvc.GetNodeEPMJSON())
+			epmData := epmSvc.GetNodeEPM()
+			if epmData == nil {
+				http.Error(w, "no EPM available", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-flatbuffers")
+			w.Write(epmData)
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

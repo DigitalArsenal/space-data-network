@@ -382,6 +382,9 @@ func (n *Node) init() error {
 	n.protocol.SetSyncHandler(syncHandler)
 
 	n.epmService = epm.NewService(n.identity, n.peerRegistry, n.host.ID(), xpubStr, basePath)
+	if n.store != nil {
+		n.epmService.SetProfileStore(n.store)
+	}
 	if err := n.epmService.Init(); err != nil {
 		log.Warnf("EPM service initialization failed (non-fatal): %v", err)
 	} else {

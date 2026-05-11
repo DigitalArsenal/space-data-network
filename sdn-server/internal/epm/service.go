@@ -566,8 +566,9 @@ type Service struct {
 	xpub     string
 	dataDir  string
 
-	epmBytes []byte // current node EPM (size-prefixed FlatBuffer)
-	profile  *Profile
+	profileStore ProfileStore
+	epmBytes     []byte // current node EPM (size-prefixed FlatBuffer)
+	profile      *Profile
 	// runtimeAddresses are non-profile addresses injected at runtime
 	// (for example deterministic onion URLs).
 	runtimeAddresses    []string
@@ -576,6 +577,14 @@ type Service struct {
 	identityAttestation *IdentityAttestation
 
 	mu sync.RWMutex
+}
+
+// ProfileStore persists the editable node EPM profile in an encrypted
+// FlatSQL-backed store while keeping public EPM bytes available as the EPM
+// source of truth.
+type ProfileStore interface {
+	LoadLocalEPM(peerID string) ([]byte, error)
+	SaveLocalEPM(peerID string, epmBytes []byte) error
 }
 
 // NewService creates a new EPM service.
@@ -590,15 +599,25 @@ func NewService(identity *wasm.DerivedIdentity, registry *peers.Registry, peerID
 	}
 }
 
+// SetProfileStore configures encrypted FlatSQL-backed persistence for editable
+// node EPM profile fields. When unset, the legacy profile JSON file is used.
+func (s *Service) SetProfileStore(store ProfileStore) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.profileStore = store
+}
+
 // Init loads or creates the node's EPM profile and builds the initial EPM.
 func (s *Service) Init() error {
 	// Load existing profile or create default
-	profile, err := LoadProfile(s.dataDir)
+	profile, err := s.loadProfile()
 	if err != nil {
 		log.Infof("No existing EPM profile, creating default")
 		profile = s.defaultProfile()
-		if saveErr := SaveProfile(s.dataDir, profile); saveErr != nil {
-			log.Warnf("Failed to persist default EPM profile: %v", saveErr)
+		if s.profileStore == nil {
+			if saveErr := s.saveProfile(profile, nil); saveErr != nil {
+				log.Warnf("Failed to persist default EPM profile: %v", saveErr)
+			}
 		}
 	}
 	s.profile = profile
@@ -607,9 +626,128 @@ func (s *Service) Init() error {
 	if err := s.rebuildEPM(); err != nil {
 		return fmt.Errorf("failed to build node EPM: %w", err)
 	}
+	if err := s.persistCurrentProfile(); err != nil {
+		log.Warnf("Failed to persist initial EPM profile: %v", err)
+	}
 
 	log.Infof("EPM service initialized (PeerID=%s, hasIdentity=%v)", s.peerID, s.identity != nil)
 	return nil
+}
+
+func (s *Service) loadProfile() (*Profile, error) {
+	if s.profileStore != nil {
+		raw, err := s.profileStore.LoadLocalEPM(s.peerID.String())
+		if err == nil {
+			profile, err := profileFromEPMBytes(raw)
+			if err != nil {
+				return nil, fmt.Errorf("decode encrypted EPM FlatBuffer profile: %w", err)
+			}
+			return profile, nil
+		}
+		log.Debugf("No encrypted FlatSQL EPM profile loaded for %s: %v", s.peerID, err)
+	}
+	return LoadProfile(s.dataDir)
+}
+
+func profileFromEPMBytes(epmBytes []byte) (profile *Profile, err error) {
+	if len(epmBytes) == 0 {
+		return nil, errors.New("empty EPM FlatBuffer")
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("invalid EPM FlatBuffer: %v", r)
+		}
+	}()
+
+	epm := EPM.GetSizePrefixedRootAsEPM(epmBytes, 0)
+	p := &Profile{}
+	if v := epm.DN(); v != nil {
+		p.DN = string(v)
+	}
+	if v := epm.LEGAL_NAME(); v != nil {
+		p.LegalName = string(v)
+	}
+	if v := epm.FAMILY_NAME(); v != nil {
+		p.FamilyName = string(v)
+	}
+	if v := epm.GIVEN_NAME(); v != nil {
+		p.GivenName = string(v)
+	}
+	if v := epm.ADDITIONAL_NAME(); v != nil {
+		p.AdditionalName = string(v)
+	}
+	if v := epm.HONORIFIC_PREFIX(); v != nil {
+		p.HonorificPrefix = string(v)
+	}
+	if v := epm.HONORIFIC_SUFFIX(); v != nil {
+		p.HonorificSuffix = string(v)
+	}
+	if v := epm.JOB_TITLE(); v != nil {
+		p.JobTitle = string(v)
+	}
+	if v := epm.OCCUPATION(); v != nil {
+		p.Occupation = string(v)
+	}
+	if v := epm.EMAIL(); v != nil {
+		p.Email = string(v)
+	}
+	if v := epm.TELEPHONE(); v != nil {
+		p.Telephone = string(v)
+	}
+
+	addr := new(EPM.Address)
+	if epm.ADDRESS(addr) != nil {
+		p.Address = &Address{}
+		if v := addr.COUNTRY(); v != nil {
+			p.Address.Country = string(v)
+		}
+		if v := addr.REGION(); v != nil {
+			p.Address.Region = string(v)
+		}
+		if v := addr.LOCALITY(); v != nil {
+			p.Address.Locality = string(v)
+		}
+		if v := addr.POSTAL_CODE(); v != nil {
+			p.Address.PostalCode = string(v)
+		}
+		if v := addr.STREET(); v != nil {
+			p.Address.Street = string(v)
+		}
+		if v := addr.POST_OFFICE_BOX_NUMBER(); v != nil {
+			p.Address.POBox = string(v)
+		}
+		if p.Address.IsEmpty() {
+			p.Address = nil
+		}
+	}
+
+	if n := epm.ALTERNATE_NAMESLength(); n > 0 {
+		p.AlternateNames = make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			if v := epm.ALTERNATE_NAMES(i); v != nil {
+				p.AlternateNames = append(p.AlternateNames, string(v))
+			}
+		}
+	}
+	return p, nil
+}
+
+func (s *Service) saveProfile(profile *Profile, epmBytes []byte) error {
+	if profile == nil {
+		profile = &Profile{}
+	}
+	if s.profileStore != nil {
+		return s.profileStore.SaveLocalEPM(s.peerID.String(), epmBytes)
+	}
+	return SaveProfile(s.dataDir, profile)
+}
+
+func (s *Service) persistCurrentProfile() error {
+	profile := s.GetNodeProfile()
+	if profile == nil {
+		return nil
+	}
+	return s.saveProfile(profile, s.GetNodeEPM())
 }
 
 // GetNodeEPM returns the current EPM as a size-prefixed FlatBuffer.
@@ -645,8 +783,8 @@ func (s *Service) GetNodeVCard() (string, error) {
 
 // GetNodeQR returns a QR code PNG of the node's vCard.
 func (s *Service) GetNodeQR(size int) ([]byte, error) {
-	if size > 0 && size < 2048 {
-		size = 2048
+	if size > 0 && size < 4096 {
+		size = 4096
 	}
 	vcardStr, err := s.GetNodeQRVCard()
 	if err != nil {
@@ -1185,15 +1323,17 @@ func (s *Service) GetIdentityAttestation() *IdentityAttestation {
 // UpdateProfile updates the node's EPM profile and rebuilds the EPM.
 func (s *Service) UpdateProfile(profile *Profile) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	s.profile = profile
 	if err := s.rebuildEPMLocked(); err != nil {
+		s.mu.Unlock()
 		return fmt.Errorf("failed to rebuild EPM: %w", err)
 	}
+	epmBytes := append([]byte(nil), s.epmBytes...)
+	s.mu.Unlock()
 
 	// Persist profile
-	if err := SaveProfile(s.dataDir, profile); err != nil {
+	if err := s.saveProfile(profile, epmBytes); err != nil {
 		log.Warnf("Failed to persist EPM profile: %v", err)
 	}
 

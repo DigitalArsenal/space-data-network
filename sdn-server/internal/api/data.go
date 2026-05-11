@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,9 @@ func NewDataQueryHandler(store *storage.FlatSQLStore, verifier *license.TokenVer
 // RegisterRoutes registers public data API routes.
 func (h *DataQueryHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/data/health", h.handleHealth)
+	mux.HandleFunc("/api/v1/data/summary", h.handleSummary)
+	mux.HandleFunc("/api/v1/data/query", h.handleRawQuery)
+	mux.HandleFunc("/api/v1/data/records/", h.handleRawRecord)
 	mux.HandleFunc("/api/v1/data/omm", h.handleOMM)
 	mux.HandleFunc("/api/v1/data/omm/bulk", h.handleOMMBulk)
 	mux.HandleFunc("/api/v1/data/mpe", h.handleMPE)
@@ -61,6 +65,122 @@ func (h *DataQueryHandler) handleHealth(w http.ResponseWriter, r *http.Request) 
 		"time":      time.Now().UTC().Format(time.RFC3339),
 	}
 	writeJSON(w, http.StatusOK, payload)
+}
+
+func (h *DataQueryHandler) handleSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+	summary, err := h.store.DataSummary()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"total_records": summary.TotalRecords,
+		"total_bytes":   summary.TotalBytes,
+		"schemas":       schemaSummaryRows(summary.Schemas),
+		"sources":       sourceSummaryRows(summary.Sources),
+	})
+}
+
+func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+
+	var req rawDataQueryRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	schemaName := strings.TrimSpace(firstNonEmptyDataString(req.Schema, req.SchemaName))
+	if schemaName == "" {
+		writeError(w, http.StatusBadRequest, "schema is required")
+		return
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	records, err := h.store.QueryRawRecords(storage.RawRecordQuery{
+		SchemaName:        schemaName,
+		ProviderID:        firstNonEmptyDataString(req.ProviderID, req.ProviderId),
+		SourceName:        req.SourceName,
+		BatchID:           firstNonEmptyDataString(req.BatchID, req.BatchId),
+		ProducerPeerID:    firstNonEmptyDataString(req.ProducerPeerID, req.ProducerPeerId),
+		ProducerPublicKey: firstNonEmptyDataString(req.ProducerPublicKey, req.ProducerPublicKeyCamel),
+		PeerID:            firstNonEmptyDataString(req.PeerID, req.PeerId),
+		Limit:             limit,
+		Offset:            req.Offset,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	results := make([]map[string]interface{}, 0, len(records))
+	for _, rec := range records {
+		results = append(results, rawRecordRow(schemaName, rec))
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"schema":  schemaName,
+		"count":   len(results),
+		"results": results,
+	})
+}
+
+func (h *DataQueryHandler) handleRawRecord(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+
+	suffix := strings.TrimPrefix(r.URL.Path, "/api/v1/data/records/")
+	parts := strings.SplitN(suffix, "/", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		writeError(w, http.StatusBadRequest, "expected /api/v1/data/records/{schema}/{cid}")
+		return
+	}
+	schemaName, err := url.PathUnescape(parts[0])
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid schema")
+		return
+	}
+	recordID, err := url.PathUnescape(parts[1])
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid record id")
+		return
+	}
+
+	record, err := h.store.GetRawRecord(schemaName, recordID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-flatbuffers")
+	w.Header().Set("X-SDN-Schema", schemaName)
+	w.Header().Set("X-SDN-Record-ID", record.CID)
+	w.Header().Set("X-SDN-Peer-ID", record.PeerID)
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(record.Data)
+	}
 }
 
 func (h *DataQueryHandler) handleOMM(w http.ResponseWriter, r *http.Request) {
@@ -513,6 +633,101 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	})
 }
 
+type rawDataQueryRequest struct {
+	Schema                 string `json:"schema"`
+	SchemaName             string `json:"schema_name"`
+	ProviderID             string `json:"provider_id"`
+	ProviderId             string `json:"providerId"`
+	SourceName             string `json:"source_name"`
+	BatchID                string `json:"batch_id"`
+	BatchId                string `json:"batchId"`
+	ProducerPeerID         string `json:"producer_peer_id"`
+	ProducerPeerId         string `json:"producerPeerId"`
+	ProducerPublicKey      string `json:"producer_public_key"`
+	ProducerPublicKeyCamel string `json:"producerPublicKey"`
+	PeerID                 string `json:"peer_id"`
+	PeerId                 string `json:"peerId"`
+	Limit                  int    `json:"limit"`
+	Offset                 int    `json:"offset"`
+}
+
+func schemaSummaryRows(schemas []storage.DataSchemaSummary) []map[string]interface{} {
+	rows := make([]map[string]interface{}, 0, len(schemas))
+	for _, schema := range schemas {
+		rows = append(rows, map[string]interface{}{
+			"schema_name": schema.SchemaName,
+			"count":       schema.Count,
+			"total_bytes": schema.TotalBytes,
+		})
+	}
+	return rows
+}
+
+func sourceSummaryRows(sources []storage.DataSourceSummary) []map[string]interface{} {
+	rows := make([]map[string]interface{}, 0, len(sources))
+	for _, source := range sources {
+		rows = append(rows, map[string]interface{}{
+			"schema_name":         source.SchemaName,
+			"provider_id":         source.ProviderID,
+			"source_name":         source.SourceName,
+			"batch_id":            source.BatchID,
+			"producer_peer_id":    source.ProducerPeerID,
+			"producer_public_key": source.ProducerPublicKey,
+			"count":               source.Count,
+			"total_bytes":         source.TotalBytes,
+		})
+	}
+	return rows
+}
+
+func rawRecordRow(schemaName string, rec *storage.Record) map[string]interface{} {
+	row := map[string]interface{}{
+		"schema_name": schemaName,
+		"cid":         rec.CID,
+		"peer_id":     rec.PeerID,
+		"timestamp":   rec.Timestamp.UTC().Format(time.RFC3339),
+		"size_bytes":  len(rec.Data),
+		"data_base64": base64.StdEncoding.EncodeToString(rec.Data),
+	}
+	if len(rec.Signature) > 0 {
+		row["signature_base64"] = base64.StdEncoding.EncodeToString(rec.Signature)
+	}
+	if !rec.MaterializedAt.IsZero() {
+		row["materialized_at"] = rec.MaterializedAt.UTC().Format(time.RFC3339)
+	}
+	if rec.SourceTags.ProviderID != "" {
+		row["provider_id"] = rec.SourceTags.ProviderID
+	}
+	if rec.SourceTags.SourceName != "" {
+		row["source_name"] = rec.SourceTags.SourceName
+	}
+	if rec.SourceTags.SourceURL != "" {
+		row["source_url"] = rec.SourceTags.SourceURL
+	}
+	if rec.SourceTags.BatchID != "" {
+		row["batch_id"] = rec.SourceTags.BatchID
+	}
+	if rec.SourceTags.ContentKeyID != "" {
+		row["content_key_id"] = rec.SourceTags.ContentKeyID
+	}
+	if rec.SourceTags.ProducerPeerID != "" {
+		row["producer_peer_id"] = rec.SourceTags.ProducerPeerID
+	}
+	if rec.SourceTags.ProducerPublicKey != "" {
+		row["producer_public_key"] = rec.SourceTags.ProducerPublicKey
+	}
+	return row
+}
+
+func firstNonEmptyDataString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func (h *DataQueryHandler) ensureStore(w http.ResponseWriter) bool {
 	if h.store == nil {
 		writeError(w, http.StatusServiceUnavailable, "local storage unavailable in edge mode")
@@ -546,6 +761,12 @@ func addRecordFreshness(row map[string]interface{}, rec *storage.Record) {
 	}
 	if rec.SourceTags.ContentKeyID != "" {
 		row["source_content_key_id"] = rec.SourceTags.ContentKeyID
+	}
+	if rec.SourceTags.ProducerPeerID != "" {
+		row["source_producer_peer_id"] = rec.SourceTags.ProducerPeerID
+	}
+	if rec.SourceTags.ProducerPublicKey != "" {
+		row["source_producer_public_key"] = rec.SourceTags.ProducerPublicKey
 	}
 }
 

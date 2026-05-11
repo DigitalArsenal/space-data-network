@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import { decodeEpmFlatBuffer } from '../../../src/ui/runtime/epm-flatbuffer';
 
   type HostedEpmKind = 'node-self' | 'hosted';
   type CapabilityState = 'available' | 'degraded' | 'unavailable' | 'permission-required' | 'remote-only' | 'local-only';
+  type IdentityView = 'profile' | 'edit-profile' | 'hosted-epms' | 'keys-import' | 'security' | 'downloads';
 
   interface BackendCapability {
     id: string;
@@ -37,14 +39,15 @@
 
   interface IdentityBackend {
     readonly mode: string;
+    saveNodeProfile(profile: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>>;
     saveHostedEpm(record: HostedEpmRecord): Promise<BackendResult<HostedEpmRecord>>;
     importHostedEpm(input: { name: string; bytes?: Uint8Array; text?: string }): Promise<BackendResult<HostedEpmRecord>>;
     deleteHostedEpm(id: string): Promise<BackendResult<Record<string, unknown>>>;
     downloadHostedEpm(id: string, format: 'json' | 'epm' | 'vcard'): Promise<BackendResult<{ url: string; filename: string }>>;
     listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>>;
-    beginClaimEpm(): Promise<BackendResult<Record<string, unknown>>>;
     exportCore(): Promise<BackendResult<Record<string, unknown>>>;
     importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>>;
+    saveNodeAccessUser(user: { xpub: string; name?: string; trustLevel: string; signingPubKeyHex?: string }): Promise<BackendResult<Record<string, unknown>>>;
   }
 
   interface MountedWalletUI {
@@ -52,13 +55,6 @@
     openAccount?: () => void | Promise<void>;
     destroy?: () => void | Promise<void>;
   }
-
-  export let backend: IdentityBackend | null = null;
-  export let summary: NodeSummary | null = null;
-  export let profile: Record<string, unknown> | null = null;
-  export let capabilities: BackendCapability[] = [];
-  export let hostedEpms: HostedEpmRecord[] = [];
-  export let onReload: () => void | Promise<void> = () => {};
 
   type IdentityRuntimeModule = {
     createVCardQrPayload: (input: Record<string, unknown> | HostedEpmRecord) => string;
@@ -72,6 +68,12 @@
     mountWalletUI: (host: HTMLElement, options?: Record<string, unknown>) => Promise<MountedWalletUI>;
   };
 
+  export let backend: IdentityBackend | null = null;
+  export let summary: NodeSummary | null = null;
+  export let profile: Record<string, unknown> | null = null;
+  export let hostedEpms: HostedEpmRecord[] = [];
+  export let onReload: () => void | Promise<void> = () => {};
+
   const identityRuntimeModules = import.meta.glob('../../../src/ui/runtime/identity.ts');
   const walletRuntimeModules = import.meta.glob('../../../src/ui/runtime/wallet-ui.ts');
   const NEW_EPM_ID = '__new-hosted-epm__';
@@ -83,27 +85,31 @@
     { key: 'email', label: 'Email', placeholder: 'jane@example.com' },
     { key: 'telephone', label: 'Telephone', placeholder: '+1 555 0100' },
     { key: 'entity_type', label: 'Entity type', placeholder: 'person, organization, node' },
-    { key: 'peer_id', label: 'IPFS Peer ID', placeholder: '12D3KooW...' },
-    { key: 'epm_cid', label: 'EPM CID', placeholder: 'bafy...' },
-    { key: 'public_key', label: 'Public key', placeholder: 'Primary public key' },
-    { key: 'signing_public_key', label: 'Signing public key', placeholder: 'Public digital signing key' },
-    { key: 'encryption_public_key', label: 'Encryption public key', placeholder: 'Public encryption key' },
-    { key: 'multiformat_address', label: 'Multiformat address', placeholder: '/ip4/.../p2p/...' },
   ] as const;
 
+  const viewTitles: Record<IdentityView, string> = {
+    profile: 'Node Profile',
+    'edit-profile': 'Edit Profile',
+    'hosted-epms': 'Local Users',
+    'keys-import': 'Keys / Import',
+    security: 'Security',
+    downloads: 'Downloads',
+  };
+
+  let view: IdentityView = 'profile';
   let selectedId = '';
   let draftId = '';
   let draftKind: HostedEpmKind = 'hosted';
   let draftFields: Record<string, string> = createEmptyDraftFields();
   let draftSourceKey = '';
-  let saveState = 'Select a hosted EPM or create one.';
-  let importState = 'Import public EPM JSON, .epm, vCard, or .vcf files.';
-  let downloadState = 'Downloads contain public EPM fields and public keys only.';
-  let walletState = 'Wallet surface is ready to load.';
-  let coreState = 'Encrypted Core import/export requires the local wallet adapter.';
-  let walletRecords: Array<Record<string, unknown>> = [];
+  let saveState = '';
+  let importState = '';
+  let downloadState = '';
+  let walletState = '';
+  let coreState = '';
+  let securityState = '';
   let qrDataUrl = '';
-  let qrState = 'Public vCard QR uses public EPM fields and public keys only.';
+  let qrState = '';
   let qrPayloadKey = '';
   let vcardPayload = '';
   let vcardRecordKey = '';
@@ -112,30 +118,54 @@
   let identityRuntimePromise: Promise<IdentityRuntimeModule> | null = null;
   let qrCodeModulePromise: Promise<QrCodeModule> | null = null;
   let walletRuntimePromise: Promise<WalletRuntimeModule> | null = null;
+  let keygenUsername = '';
+  let keygenPassword = '';
+  let passphraseInput = '';
+  let grantPublicKey = '';
 
   $: if (!selectedId && hostedEpms.length > 0) {
     selectedId = hostedEpms[0].id;
   }
-  $: activeRecord = hostedEpms.find((record) => record.id === selectedId) ?? null;
+  $: fallbackRecord = createFallbackRecord();
+  $: activeRecord = selectedId === NEW_EPM_ID
+    ? null
+    : hostedEpms.find((record) => record.id === selectedId) ?? hostedEpms[0] ?? fallbackRecord;
   $: syncDraftFromRecord(activeRecord);
-  $: previewRecord = buildPreviewRecord(activeRecord);
-  $: publicJson = previewRecord ? JSON.stringify(previewRecord.epmJson, null, 2) : '{}';
-  $: void updateVCardPayload(previewRecord);
+  $: previewRecord = view === 'edit-profile' || selectedId === NEW_EPM_ID ? buildPreviewRecord(activeRecord) : null;
+  $: profileRecord = previewRecord ?? activeRecord ?? fallbackRecord;
+  $: publicJson = profileRecord ? JSON.stringify(createPublicEpmExport(profileRecord.epmJson), null, 2) : '{}';
+  $: void updateVCardPayload(profileRecord);
   $: void renderQr(vcardPayload);
-  $: nodeSelfCount = hostedEpms.filter((record) => record.kind === 'node-self').length;
-  $: hostedCount = hostedEpms.filter((record) => record.kind === 'hosted').length;
   $: fallbackNodeIdentity = summary?.peerId ?? stringValue(profile?.peer_id) ?? stringValue(profile?.PeerID) ?? 'pending';
 
   onDestroy(() => {
     void mountedWallet?.destroy?.();
   });
 
+  function setView(nextView: IdentityView): void {
+    view = nextView;
+  }
+
   function createEmptyDraftFields(): Record<string, string> {
     return Object.fromEntries(PROFILE_FIELDS.map((field) => [field.key, '']));
   }
 
+  function createFallbackRecord(): HostedEpmRecord {
+    const epmJson = createPublicEpmExport({
+      ...(profile ?? {}),
+      dn: summary?.displayName ?? stringValue(profile?.dn) ?? 'Space Data Network',
+      peer_id: summary?.peerId ?? stringValue(profile?.peer_id) ?? stringValue(profile?.PeerID) ?? '',
+      agent_version: summary?.agentVersion ?? stringValue(profile?.agent_version) ?? '',
+    });
+    return normalizeHostedEpmRecord({
+      id: 'self',
+      kind: 'node-self',
+      epm_json: epmJson,
+    });
+  }
+
   function syncDraftFromRecord(record: HostedEpmRecord | null): void {
-    const sourceKey = record ? `${record.id}:${record.updatedAt ?? ''}` : selectedId;
+    const sourceKey = record ? draftSourceKeyForRecord(record) : selectedId;
     if (sourceKey === draftSourceKey) return;
     draftSourceKey = sourceKey;
 
@@ -155,9 +185,17 @@
     ]));
   }
 
+  function draftSourceKeyForRecord(record: HostedEpmRecord): string {
+    return [
+      record.id,
+      record.kind,
+      record.updatedAt ?? '',
+      record.peerId,
+      ...PROFILE_FIELDS.map((field) => fieldValue(record, field.key)),
+    ].join('\u001f');
+  }
+
   function fieldValue(record: HostedEpmRecord, key: string): string {
-    if (key === 'peer_id') return record.peerId;
-    if (key === 'epm_cid') return record.epmCid ?? stringValue(record.epmJson.epm_cid) ?? stringValue(record.epmJson.epmCid) ?? '';
     const value = record.epmJson[key];
     if (Array.isArray(value)) return value.map((entry) => String(entry)).join(', ');
     return stringValue(value) ?? '';
@@ -170,7 +208,6 @@
     return normalizeHostedEpmRecord({
       id,
       kind: record?.kind ?? draftKind,
-      epm_cid: draftFields.epm_cid,
       epm_json: epmJson,
       updatedAt: record?.updatedAt,
     });
@@ -181,14 +218,12 @@
     for (const field of PROFILE_FIELDS) {
       const value = draftFields[field.key]?.trim();
       if (value) {
-        epmJson[field.key] = field.key === 'multiformat_address' && value.includes(',')
-          ? value.split(',').map((entry) => entry.trim()).filter(Boolean)
-          : value;
+        epmJson[field.key] = value;
       } else {
         delete epmJson[field.key];
       }
     }
-    return epmJson;
+    return createPublicEpmExport(epmJson);
   }
 
   function startHostedEpm(): void {
@@ -197,12 +232,18 @@
     draftKind = 'hosted';
     draftFields = createEmptyDraftFields();
     draftSourceKey = NEW_EPM_ID;
-    saveState = 'New hosted identity ready for public EPM fields.';
+    saveState = '';
+    setView('edit-profile');
+  }
+
+  function selectRecord(record: HostedEpmRecord, nextView: IdentityView = 'profile'): void {
+    selectedId = record.id;
+    setView(nextView);
   }
 
   async function saveProfile(): Promise<void> {
     if (!backend) {
-      saveState = 'Backend unavailable; hosted EPM save is disabled.';
+      saveState = 'Backend unavailable.';
       return;
     }
     const record = buildPreviewRecord(activeRecord);
@@ -210,16 +251,26 @@
       saveState = 'Select or create an EPM before saving.';
       return;
     }
-    saveState = 'Saving public EPM profile...';
+    saveState = 'Saving...';
     try {
-      const result = await backend.saveHostedEpm(record);
-      if (!result.ok || !result.data) {
-        saveState = result.capability.reason ?? 'Hosted EPM save is unavailable.';
-        return;
+      if (record.kind === 'node-self') {
+        const result = await backend.saveNodeProfile(record.epmJson);
+        if (!result.ok || !result.data) {
+          saveState = result.capability.reason ?? 'Node EPM save is unavailable.';
+          return;
+        }
+        selectedId = 'self';
+      } else {
+        const result = await backend.saveHostedEpm(record);
+        if (!result.ok || !result.data) {
+          saveState = result.capability.reason ?? 'Local user save is unavailable.';
+          return;
+        }
+        selectedId = result.data.id;
       }
-      selectedId = result.data.id;
-      saveState = `${result.data.kind === 'node-self' ? 'Node self' : 'Hosted'} public EPM saved.`;
+      saveState = '';
       await onReload();
+      setView('profile');
     } catch (error) {
       saveState = errorMessage(error);
     }
@@ -227,13 +278,15 @@
 
   async function deleteHostedEpm(): Promise<void> {
     if (!backend || !activeRecord || activeRecord.kind === 'node-self') return;
-    saveState = 'Deleting hosted EPM...';
+    saveState = 'Deleting...';
     try {
       const result = await backend.deleteHostedEpm(activeRecord.id);
-      saveState = result.ok ? 'Hosted EPM deleted.' : result.capability.reason ?? 'Hosted EPM delete is unavailable.';
       if (result.ok) {
+        saveState = '';
         selectedId = '';
         await onReload();
+      } else {
+        saveState = result.capability.reason ?? 'Local user delete is unavailable.';
       }
     } catch (error) {
       saveState = errorMessage(error);
@@ -253,12 +306,13 @@
       const bytes = new TextEncoder().encode(text);
       const result = await backend.importHostedEpm({ name: file.name, bytes, text });
       if (!result.ok || !result.data) {
-        importState = result.capability.reason ?? 'Hosted EPM import is unavailable.';
+        importState = result.capability.reason ?? 'Local user import is unavailable.';
         return;
       }
       selectedId = result.data.id;
-      importState = 'Imported hosted public EPM.';
+      importState = '';
       await onReload();
+      setView('profile');
     } catch (error) {
       importState = errorMessage(error);
     }
@@ -266,18 +320,18 @@
 
   async function downloadHostedEpm(record: HostedEpmRecord | null, format: 'json' | 'epm' | 'vcard'): Promise<void> {
     if (!backend || !record) {
-      downloadState = 'Select a hosted EPM before downloading.';
+      downloadState = 'Select an EPM before downloading.';
       return;
     }
-    downloadState = `Preparing public ${formatLabel(format)} download...`;
+    downloadState = `Preparing ${formatLabel(format)}...`;
     try {
       const result = await backend.downloadHostedEpm(record.id, format);
       if (!result.ok || !result.data) {
-        downloadState = result.capability.reason ?? `Public ${formatLabel(format)} download is unavailable.`;
+        downloadState = result.capability.reason ?? `${formatLabel(format)} download is unavailable.`;
         return;
       }
       triggerDownload(result.data.url, result.data.filename);
-      downloadState = `Public ${formatLabel(format)} download started.`;
+      downloadState = '';
     } catch (error) {
       downloadState = errorMessage(error);
     }
@@ -285,19 +339,29 @@
 
   async function loadWallets(): Promise<void> {
     if (!backend) {
-      walletState = 'Backend unavailable; wallet lookup is disabled.';
+      walletState = 'Backend unavailable.';
       return;
     }
-    walletState = 'Loading wallet-derived public identities...';
+    walletState = 'Loading...';
     try {
       const result = await backend.listWalletsAndEpms();
-      walletRecords = result.data ?? [];
-      walletState = result.ok
-        ? `Loaded ${walletRecords.length} wallet or EPM record${walletRecords.length === 1 ? '' : 's'}.`
-        : result.capability.reason ?? 'Wallet identity list is unavailable.';
+      walletState = result.ok ? '' : result.capability.reason ?? 'Wallet identity list is unavailable.';
     } catch (error) {
       walletState = errorMessage(error);
     }
+  }
+
+  async function openWalletFlow(flow: 'deterministic' | 'passphrase'): Promise<void> {
+    if (flow === 'deterministic' && (!keygenUsername.trim() || !keygenPassword.trim())) {
+      walletState = 'Username and password required.';
+      return;
+    }
+    if (flow === 'passphrase' && !passphraseInput.trim()) {
+      walletState = 'Passphrase required.';
+      return;
+    }
+    walletState = flow === 'deterministic' ? 'Opening deterministic keygen...' : 'Opening passphrase import...';
+    await addWallet();
   }
 
   async function addWallet(): Promise<void> {
@@ -305,63 +369,199 @@
       walletState = 'Wallet host is not mounted yet.';
       return;
     }
-    walletState = 'Loading hd-wallet-ui...';
     try {
       const { mountWalletUI } = await loadWalletRuntime();
       mountedWallet ??= await mountWalletUI(walletHost, { backendMode: backend?.mode ?? 'desktop-local' });
       await mountedWallet.openLogin?.();
-      walletState = 'hd-wallet-ui wallet surface opened.';
+      walletState = '';
     } catch (error) {
-      walletState = `hd-wallet-ui unavailable: ${errorMessage(error)}`;
-    }
-  }
-
-  async function beginWalletClaim(): Promise<void> {
-    if (!backend) return;
-    walletState = 'Starting wallet EPM claim...';
-    try {
-      const result = await backend.beginClaimEpm();
-      walletState = result.ok ? 'Wallet EPM claim started.' : result.capability.reason ?? 'Wallet EPM claim requires local confirmation.';
-    } catch (error) {
-      walletState = errorMessage(error);
+      walletState = `hd-wallet-wasm unavailable: ${errorMessage(error)}`;
     }
   }
 
   async function exportEncryptedCore(): Promise<void> {
     if (!backend) {
-      coreState = 'Backend unavailable; Encrypted Core export is disabled.';
+      coreState = 'Backend unavailable.';
       return;
     }
-    coreState = 'Requesting Encrypted Core export...';
+    coreState = 'Exporting encrypted Core...';
     try {
       const result = await backend.exportCore();
       const url = stringValue(result.data?.url);
       if (result.ok && url) {
         triggerDownload(url, stringValue(result.data?.filename) ?? 'sdn-encrypted-core.sdncore');
       }
-      coreState = result.ok ? 'Encrypted Core export request accepted.' : result.capability.reason ?? 'Encrypted Core export requires local wallet confirmation.';
+      coreState = result.ok ? '' : result.capability.reason ?? 'Encrypted Core export requires local wallet confirmation.';
     } catch (error) {
       coreState = errorMessage(error);
     }
   }
 
-  async function importEncryptedCore(event: Event): Promise<void> {
+  async function importEncryptedPrivateKeyFile(event: Event): Promise<void> {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
     if (!file || !backend) return;
-    coreState = `Importing Encrypted Core artifact ${file.name}...`;
+    coreState = `Importing ${file.name}...`;
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const result = await backend.importCore({
         name: file.name,
-        encrypted_core: bytesToBase64(bytes),
+        encrypted_private_key: bytesToBase64(bytes),
         encoding: 'base64',
       });
-      coreState = result.ok ? 'Encrypted Core import request accepted.' : result.capability.reason ?? 'Encrypted Core import requires local wallet confirmation.';
+      coreState = result.ok ? '' : result.capability.reason ?? 'Encrypted private key import requires local wallet confirmation.';
     } catch (error) {
       coreState = errorMessage(error);
     }
+  }
+
+  async function grantAdminForPublicKey(publicKey: string, name = '', signingPubKeyHex = ''): Promise<void> {
+    if (!backend) return;
+    const normalizedPublicKey = publicKey.trim();
+    if (!normalizedPublicKey) {
+      securityState = 'Public key is required.';
+      return;
+    }
+    securityState = 'Granting admin...';
+    try {
+      const result = await backend.saveNodeAccessUser({
+        xpub: normalizedPublicKey,
+        name: name.trim(),
+        trustLevel: 'admin',
+        signingPubKeyHex: signingPubKeyHex.trim(),
+      });
+      if (!result.ok) {
+        securityState = result.capability.reason ?? 'Grant failed.';
+        return;
+      }
+      grantPublicKey = '';
+      securityState = '';
+    } catch (error) {
+      securityState = errorMessage(error);
+    }
+  }
+
+  async function grantAdminFromSecurityFile(event: Event): Promise<void> {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file || !backend) return;
+    securityState = `Reading ${file.name}...`;
+    try {
+      const [buffer, text] = await Promise.all([file.arrayBuffer(), file.text()]);
+      const grant = securityGrantFromUploadedIdentity(file.name, new Uint8Array(buffer), text);
+      await grantAdminForPublicKey(grant.publicKey, grant.name, grant.signingPubKeyHex);
+    } catch (error) {
+      securityState = errorMessage(error);
+    }
+  }
+
+  function securityGrantFromUploadedIdentity(filename: string, bytes: Uint8Array, text: string): { publicKey: string; name: string; signingPubKeyHex: string } {
+    try {
+      const textGrant = securityGrantFromText(text);
+      if (textGrant.publicKey) return textGrant;
+    } catch {
+      // Fall through to binary EPM parsing below.
+    }
+
+    try {
+      const epm = decodeEpmFlatBuffer(bytes);
+      const binaryGrant = securityGrantFromJson(epm);
+      if (binaryGrant.publicKey) return binaryGrant;
+    } catch (error) {
+      const suffix = filename ? ` (${filename})` : '';
+      throw new Error(`Unable to read admin public key from uploaded EPM or .vcf${suffix}: ${errorMessage(error)}`);
+    }
+
+    throw new Error('Uploaded EPM or .vcf did not include a public key.');
+  }
+
+  function securityGrantFromText(text: string): { publicKey: string; name: string; signingPubKeyHex: string } {
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('uploaded EPM or .vcf is empty');
+    if (/^BEGIN:VCARD/i.test(trimmed)) return securityGrantFromVCard(trimmed);
+    return securityGrantFromJson(JSON.parse(trimmed));
+  }
+
+  function securityGrantFromJson(payload: unknown): { publicKey: string; name: string; signingPubKeyHex: string } {
+    const objects = collectJsonObjects(payload);
+    for (const object of objects) {
+      const publicKey = firstString(
+        object.xpub,
+        object.XPUB,
+        object.public_key,
+        object.PUBLIC_KEY,
+        object.publicKey,
+        object.signing_public_key,
+        object.signingPublicKey,
+        object.signing_pubkey_hex,
+      );
+      const keys = Array.isArray(object.keys) ? object.keys : Array.isArray(object.KEYS) ? object.KEYS : [];
+      const signingKey = keys.find((key) => firstString(key?.key_type, key?.KEY_TYPE).toLowerCase() === 'signing');
+      const keyPublicKey = firstString(
+        signingKey?.xpub,
+        signingKey?.XPUB,
+        signingKey?.public_key,
+        signingKey?.PUBLIC_KEY,
+        ...keys.map((key) => firstString(key?.xpub, key?.XPUB, key?.public_key, key?.PUBLIC_KEY)),
+      );
+      const resolvedPublicKey = publicKey || keyPublicKey;
+      if (resolvedPublicKey) {
+        return {
+          publicKey: resolvedPublicKey,
+          name: firstString(object.dn, object.DN, object.name, object.legal_name, object.LEGAL_NAME, 'Imported SDN identity'),
+          signingPubKeyHex: firstString(object.signing_public_key, object.signingPublicKey, object.signing_pubkey_hex, signingKey?.public_key, signingKey?.PUBLIC_KEY),
+        };
+      }
+    }
+
+    throw new Error('uploaded EPM did not include a public key');
+  }
+
+  function securityGrantFromVCard(vcard: string): { publicKey: string; name: string; signingPubKeyHex: string } {
+    const lines = vcardLines(vcard);
+    const publicKey = firstString(
+      vcardValue(lines, 'X-SDN-XPUB'),
+      vcardValue(lines, 'X-XPUB'),
+      vcardValue(lines, 'XPUB'),
+      vcardValue(lines, 'X-SDN-PUBLIC-KEY'),
+      vcardValue(lines, 'X-SDN-SIGNING-PUBLIC-KEY'),
+      vcardEmailAlias(lines, 'spacedatanetwork.org'),
+      unfoldedVCard(vcard).match(/\bxpub[A-Za-z0-9]+\b/)?.[0],
+    );
+    if (!publicKey) throw new Error('uploaded .vcf did not include a public key');
+    return {
+      publicKey,
+      name: firstString(vcardValue(lines, 'FN'), vcardValue(lines, 'ORG'), 'Imported SDN identity'),
+      signingPubKeyHex: vcardValue(lines, 'X-SDN-SIGNING-PUBLIC-KEY'),
+    };
+  }
+
+  function collectJsonObjects(value: unknown, collected: Array<Record<string, unknown>> = [], depth = 0): Array<Record<string, unknown>> {
+    if (depth > 4 || value == null) return collected;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          collectJsonObjects(JSON.parse(trimmed), collected, depth + 1);
+        } catch {
+          // Ignore strings that are not nested JSON.
+        }
+      }
+      return collected;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) collectJsonObjects(item, collected, depth + 1);
+      return collected;
+    }
+    if (isRecord(value)) {
+      collected.push(value);
+      for (const key of ['epm_json', 'EPM_JSON', 'epm', 'EPM', 'record', 'RECORD']) {
+        if (value[key] !== undefined) collectJsonObjects(value[key], collected, depth + 1);
+      }
+    }
+    return collected;
   }
 
   async function updateVCardPayload(record: HostedEpmRecord | null): Promise<void> {
@@ -390,6 +590,7 @@
     qrPayloadKey = payload;
     if (!payload) {
       qrDataUrl = '';
+      qrState = '';
       return;
     }
     try {
@@ -402,7 +603,7 @@
       });
       if (qrPayloadKey === payload) {
         qrDataUrl = dataUrl;
-        qrState = 'Public vCard QR ready. It contains public EPM fields and public keys only.';
+        qrState = '';
       }
     } catch (error) {
       if (qrPayloadKey === payload) {
@@ -491,7 +692,9 @@
     addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', normalized.kind === 'node-self' ? 'node' : 'user');
     addVCardLine(lines, 'X-SDN-PEER-ID', normalized.peerId);
     addVCardLine(lines, 'X-SDN-EPM-CID', normalized.epmCid ?? stringValue(epm.epm_cid) ?? stringValue(epm.epmCid));
-    addVCardLine(lines, 'X-SDN-PUBLIC-KEY', publicKeyValue(epm));
+    const publicKey = publicKeyValue(epm);
+    addVCardLine(lines, 'EMAIL;TYPE=INTERNET', publicKeyEmailAddress(publicKey));
+    addVCardLine(lines, 'X-SDN-PUBLIC-KEY', publicKey);
     addVCardLine(lines, 'X-SDN-SIGNING-PUBLIC-KEY', stringValue(epm.signing_public_key) ?? stringValue(epm.signingPublicKey) ?? stringValue(epm.signing_pubkey_hex));
     addVCardLine(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY', stringValue(epm.encryption_public_key) ?? stringValue(epm.encryptionPublicKey) ?? stringValue(epm.encryption_pubkey_hex));
     lines.push('END:VCARD');
@@ -532,21 +735,66 @@
 
   function epmJsonFromVCard(text: string): Record<string, unknown> {
     const fields: Record<string, unknown> = {};
-    for (const rawLine of text.split(/\r?\n/)) {
-      const [rawKey, ...rest] = rawLine.split(':');
-      const key = rawKey?.trim().toUpperCase();
-      const value = rest.join(':').trim();
-      if (!key || !value) continue;
-      if (key === 'FN') fields.dn = value;
-      if (key === 'EMAIL') fields.email = value;
-      if (key === 'TEL') fields.telephone = value;
-      if (key === 'X-SDN-PEER-ID') fields.peer_id = value;
-      if (key === 'X-SDN-EPM-CID') fields.epm_cid = value;
-      if (key === 'X-SDN-PUBLIC-KEY') fields.public_key = value;
-      if (key === 'X-SDN-SIGNING-PUBLIC-KEY') fields.signing_public_key = value;
-      if (key === 'X-SDN-ENCRYPTION-PUBLIC-KEY') fields.encryption_public_key = value;
+    const lines = vcardLines(text);
+    fields.dn = vcardValue(lines, 'FN');
+    fields.email = vcardValue(lines, 'EMAIL');
+    fields.telephone = vcardValue(lines, 'TEL');
+    fields.peer_id = vcardValue(lines, 'X-SDN-PEER-ID');
+    fields.epm_cid = vcardValue(lines, 'X-SDN-EPM-CID');
+    fields.public_key = firstString(vcardValue(lines, 'X-SDN-PUBLIC-KEY'), vcardEmailAlias(lines, 'spacedatanetwork.org'));
+    fields.signing_public_key = vcardValue(lines, 'X-SDN-SIGNING-PUBLIC-KEY');
+    fields.encryption_public_key = vcardValue(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY');
+    for (const key of Object.keys(fields)) {
+      if (!fields[key]) delete fields[key];
     }
     return fields;
+  }
+
+  function vcardLines(vcard: string): string[] {
+    return unfoldedVCard(vcard).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  }
+
+  function unfoldedVCard(vcard: string): string {
+    return String(vcard ?? '').replace(/\r?\n[ \t]/g, '');
+  }
+
+  function vcardValue(lines: string[], fieldName: string): string {
+    const normalizedField = fieldName.toUpperCase();
+    for (const line of lines) {
+      const colon = line.indexOf(':');
+      if (colon < 0) continue;
+      const name = line.slice(0, colon).split(';')[0].toUpperCase();
+      if (name === normalizedField) return unescapeVCardValue(line.slice(colon + 1));
+    }
+    return '';
+  }
+
+  function vcardEmailAlias(lines: string[], domain: string): string {
+    const suffix = `@${domain}`.toLowerCase();
+    for (const line of lines) {
+      const colon = line.indexOf(':');
+      if (colon < 0 || !line.slice(0, colon).toUpperCase().startsWith('EMAIL')) continue;
+      const value = unescapeVCardValue(line.slice(colon + 1));
+      if (value.toLowerCase().endsWith(suffix)) return value.slice(0, -suffix.length);
+    }
+    return '';
+  }
+
+  function unescapeVCardValue(value: string): string {
+    return String(value ?? '')
+      .replace(/\\n/g, '\n')
+      .replace(/\\,/g, ',')
+      .replace(/\\;/g, ';')
+      .replace(/\\\\/g, '\\')
+      .trim();
+  }
+
+  function firstString(...values: unknown[]): string {
+    for (const value of values) {
+      const normalized = stringValue(value);
+      if (normalized) return normalized;
+    }
+    return '';
   }
 
   function publicKeyValue(epm: Record<string, unknown>): string | undefined {
@@ -561,8 +809,13 @@
       ?? stringValue(epm.encryption_pubkey_hex);
   }
 
+  function publicKeyEmailAddress(publicKey: string | undefined): string | undefined {
+    const localPart = publicKey?.trim().replace(/\s+/g, '').replace(/[^A-Za-z0-9._%+-]/g, '');
+    return localPart ? `${localPart}@spacedatanetwork.org` : undefined;
+  }
+
   function slugFromDraft(): string {
-    const source = draftFields.dn || draftFields.peer_id || 'hosted-epm';
+    const source = draftFields.dn || activeRecord?.peerId || 'hosted-epm';
     return source.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48);
   }
 
@@ -601,162 +854,229 @@
 </script>
 
 <section class="sdn-identity-workspace">
-  <article class="sdn-card sdn-glass">
-    <div class="sdn-card-head">
-      <div>
-        <h2>Hosted EPM Registry</h2>
-        <p>Node self identity stays separate from hosted public EPM identities.</p>
-      </div>
-      <button class="sdn-button" type="button" on:click={startHostedEpm}>Add hosted EPM</button>
-    </div>
+  <nav class="sdn-breadcrumbs" aria-label="Identity breadcrumbs">
+    <button type="button" on:click={() => setView('profile')}>Identity /</button>
+    <span>{viewTitles[view]}</span>
+  </nav>
 
-    <div class="sdn-registry-row">
-      <label>
-        <span>Local identity</span>
-        <select class="sdn-input sdn-select" bind:value={selectedId} aria-label="Local hosted EPM selector">
-          {#each hostedEpms as record}
-            <option value={record.id}>
-              {record.kind === 'node-self' ? 'Node self' : 'Hosted'} - {record.label || record.id}
-            </option>
-          {/each}
-          {#if selectedId === NEW_EPM_ID}
-            <option value={NEW_EPM_ID}>Hosted - new public EPM</option>
+  <div class="sdn-view-nav" aria-label="Identity sections">
+    <button type="button" class:active={view === 'profile'} on:click={() => setView('profile')}>Node Profile</button>
+    <button type="button" class:active={view === 'hosted-epms'} on:click={() => setView('hosted-epms')}>Local Users</button>
+    <button type="button" class:active={view === 'keys-import'} on:click={() => setView('keys-import')}>Keys / Import</button>
+    <button type="button" class:active={view === 'security'} on:click={() => setView('security')}>Security</button>
+    <button type="button" class:active={view === 'downloads'} on:click={() => setView('downloads')}>Downloads</button>
+  </div>
+
+  {#if view === 'profile'}
+    <article class="sdn-card sdn-glass sdn-profile-home">
+      <div class="sdn-profile-summary">
+        <div class="sdn-card-head">
+          <div>
+            <h2>{profileRecord.label || 'Space Data Network'}</h2>
+          </div>
+        </div>
+
+        <dl class="sdn-details sdn-profile-details">
+          <div><dt>Peer ID</dt><dd>{profileRecord.peerId || fallbackNodeIdentity}</dd></div>
+          <div><dt>Agent</dt><dd>{summary?.agentVersion ?? stringValue(profileRecord.epmJson.agent_version) ?? 'pending'}</dd></div>
+          <div><dt>Email</dt><dd>{stringValue(profileRecord.epmJson.email) ?? 'pending'}</dd></div>
+          <div><dt>Entity</dt><dd>{stringValue(profileRecord.epmJson.entity_type) ?? 'node'}</dd></div>
+        </dl>
+
+        <div class="sdn-action-grid">
+          <button class="sdn-button" type="button" on:click={() => setView('edit-profile')}>Edit Profile</button>
+          <button class="sdn-button" type="button" on:click={() => setView('hosted-epms')}>Local Users</button>
+          <button class="sdn-button" type="button" on:click={() => setView('keys-import')}>Keys / Import</button>
+          <button class="sdn-button" type="button" on:click={() => setView('security')}>Security</button>
+          <button class="sdn-button" type="button" on:click={() => setView('downloads')}>Downloads</button>
+        </div>
+      </div>
+
+      <div class="sdn-profile-qr">
+        <div class="sdn-qr-frame" aria-label="Public vCard QR preview">
+          {#if qrDataUrl}
+            <img src={qrDataUrl} alt="Public vCard QR code" />
           {/if}
-        </select>
-      </label>
-      <div class="sdn-identity-counts">
-        <span class="sdn-chip" data-state={nodeSelfCount ? 'online' : 'warning'}>Node self: {nodeSelfCount}</span>
-        <span class="sdn-chip" data-state={hostedCount ? 'online' : 'warning'}>Hosted: {hostedCount}</span>
-        <span class="sdn-chip" data-state={fallbackNodeIdentity === 'pending' ? 'warning' : 'special'}>Peer: {fallbackNodeIdentity}</span>
-      </div>
-    </div>
-  </article>
-
-  <article class="sdn-card sdn-glass">
-    <div class="sdn-card-head">
-      <div>
-        <h2>Public Profile Fields</h2>
-        <p>These fields are saved into the public EPM profile only.</p>
-      </div>
-      <span class="sdn-chip" data-state={draftKind === 'node-self' ? 'special' : 'online'}>
-        {draftKind === 'node-self' ? 'Node self' : 'Hosted identity'}
-      </span>
-    </div>
-
-    <div class="sdn-form-grid">
-      {#each PROFILE_FIELDS as field}
-        <label>
-          <span>{field.label}</span>
-          <input
-            class="sdn-input"
-            bind:value={draftFields[field.key]}
-            placeholder={field.placeholder}
-            autocomplete="off"
-          />
-        </label>
-      {/each}
-    </div>
-
-    <div class="sdn-toolbar">
-      <button class="sdn-button" type="button" on:click={saveProfile} disabled={!backend}>Save public profile</button>
-      <button class="sdn-button sdn-button-muted" type="button" on:click={deleteHostedEpm} disabled={!backend || !activeRecord || activeRecord.kind === 'node-self'}>
-        Delete hosted EPM
-      </button>
-      <label class="sdn-file-button">
-        Import EPM JSON/vCard
-        <input type="file" accept=".json,.epm,.vcf,.vcard" on:change={importEpmFile} />
-      </label>
-    </div>
-    <p class="sdn-status-line">{saveState}</p>
-    <p class="sdn-status-line">{importState}</p>
-  </article>
-
-  <article class="sdn-card sdn-glass">
-    <div class="sdn-card-head">
-      <div>
-        <h2>Public EPM Downloads</h2>
-        <p>Exports include public EPM fields and public keys only.</p>
-      </div>
-    </div>
-    <div class="sdn-toolbar">
-      <button class="sdn-button" type="button" on:click={() => downloadHostedEpm(previewRecord, 'json')} disabled={!backend || !previewRecord}>
-        Download JSON
-      </button>
-      <button class="sdn-button" type="button" on:click={() => downloadHostedEpm(previewRecord, 'epm')} disabled={!backend || !previewRecord}>
-        Download EPM
-      </button>
-      <button class="sdn-button" type="button" on:click={() => downloadHostedEpm(previewRecord, 'vcard')} disabled={!backend || !previewRecord}>
-        Download vCard
-      </button>
-    </div>
-    <p class="sdn-status-line">{downloadState}</p>
-    <pre class="sdn-public-json">{publicJson}</pre>
-  </article>
-
-  <article class="sdn-card sdn-glass">
-    <div class="sdn-card-head">
-      <div>
-        <h2>Public vCard QR</h2>
-        <p>QR content is generated from public EPM data and public keys only.</p>
-      </div>
-    </div>
-    <div class="sdn-qr-layout">
-      <div class="sdn-qr-frame" aria-label="Public vCard QR preview">
-        {#if qrDataUrl}
-          <img src={qrDataUrl} alt="Public vCard QR code" />
-        {:else}
-          <span>QR pending</span>
+        </div>
+        {#if qrState}
+          <p class="sdn-status-line">{qrState}</p>
         {/if}
       </div>
-      <textarea class="sdn-input sdn-vcard-preview" readonly value={vcardPayload} aria-label="Public vCard payload"></textarea>
-    </div>
-    <p class="sdn-status-line">{qrState}</p>
-  </article>
-
-  <article class="sdn-card sdn-glass">
-    <div class="sdn-card-head">
-      <div>
-        <h2>Wallet Identity</h2>
-        <p>Use the canonical hd-wallet-ui surface for wallet-derived public identity.</p>
+    </article>
+  {:else if view === 'edit-profile'}
+    <article class="sdn-card sdn-glass">
+      <div class="sdn-card-head">
+        <div>
+          <h2>Edit Profile</h2>
+        </div>
       </div>
-    </div>
-    <div class="sdn-toolbar">
-      <button class="sdn-button" type="button" on:click={addWallet}>Add wallet</button>
-      <button class="sdn-button" type="button" on:click={loadWallets} disabled={!backend}>Refresh wallet EPMs</button>
-      <button class="sdn-button" type="button" on:click={beginWalletClaim} disabled={!backend}>Claim EPM</button>
-    </div>
-    <div class="sdn-wallet-host" bind:this={walletHost}></div>
-    <p class="sdn-status-line">{walletState}</p>
-    {#if walletRecords.length}
-      <div class="sdn-capability-list">
-        {#each walletRecords.slice(0, 6) as walletRecord}
-          <span class="sdn-chip" data-state="special">{String(walletRecord.dn ?? walletRecord.peer_id ?? walletRecord.id ?? 'wallet EPM')}</span>
+
+      {#if selectedId === NEW_EPM_ID}
+        <label class="sdn-field">
+          <span>Local user ID</span>
+          <input class="sdn-input" bind:value={draftId} placeholder="hosted-epm-id" autocomplete="off" />
+        </label>
+      {/if}
+
+      <div class="sdn-profile-form">
+        {#each PROFILE_FIELDS as field}
+          <label class="sdn-field">
+            <span>{field.label}</span>
+            <input
+              class="sdn-input"
+              bind:value={draftFields[field.key]}
+              placeholder={field.placeholder}
+              autocomplete="off"
+            />
+          </label>
         {/each}
       </div>
-    {/if}
-  </article>
 
-  <article class="sdn-card sdn-glass">
-    <div class="sdn-card-head">
-      <div>
-        <h2>Encrypted Core</h2>
-        <p>Core import and export actions accept encrypted artifacts only.</p>
+      <div class="sdn-toolbar sdn-section-toolbar">
+        <button class="sdn-button" type="button" on:click={saveProfile} disabled={!backend}>Save public profile</button>
+        <button class="sdn-button sdn-button-muted" type="button" on:click={() => setView('profile')}>Cancel</button>
       </div>
-    </div>
-    <div class="sdn-toolbar">
-      <button class="sdn-button" type="button" on:click={exportEncryptedCore} disabled={!backend}>Export Encrypted Core</button>
-      <label class="sdn-file-button">
-        Import Encrypted Core
-        <input type="file" accept=".sdncore,.kmf,.enc,application/octet-stream" on:change={importEncryptedCore} />
-      </label>
-    </div>
-    <p class="sdn-status-line">{coreState}</p>
-    <div class="sdn-capability-list">
-      {#each capabilities.filter((capability) => capability.id.toLowerCase().includes('identity') || capability.id.toLowerCase().includes('wallet')).slice(0, 6) as capability}
-        <span class="sdn-chip" data-state={capability.state === 'available' ? 'online' : 'warning'}>
-          {capability.id}: {capability.state}
-        </span>
-      {/each}
-    </div>
-  </article>
+      {#if saveState}
+        <p class="sdn-status-line">{saveState}</p>
+      {/if}
+    </article>
+  {:else if view === 'hosted-epms'}
+    <article class="sdn-card sdn-glass">
+      <div class="sdn-card-head">
+        <div>
+          <h2>Local Users</h2>
+        </div>
+        <button class="sdn-button" type="button" on:click={startHostedEpm}>Add local user</button>
+      </div>
+
+      <div class="sdn-identity-list">
+        {#each hostedEpms as record}
+          <section class="sdn-identity-row" class:active={record.id === profileRecord.id}>
+            <div>
+              <strong>{record.label || record.id}</strong>
+              <span>{record.peerId || 'no peer id'}</span>
+              {#if record.epmCid}
+                <small>{record.epmCid}</small>
+              {/if}
+            </div>
+            <div class="sdn-actions-nowrap">
+              <button class="sdn-button sdn-button-compact" type="button" on:click={() => selectRecord(record, 'profile')}>Profile</button>
+              <button class="sdn-button sdn-button-compact" type="button" on:click={() => selectRecord(record, 'edit-profile')}>Edit</button>
+              <button class="sdn-button sdn-button-compact" type="button" on:click={() => downloadHostedEpm(record, 'vcard')} disabled={!backend}>vCard</button>
+              <button class="sdn-button sdn-button-compact sdn-button-muted" type="button" on:click={deleteHostedEpm} disabled={!backend || record.kind === 'node-self' || record.id !== activeRecord?.id}>Delete</button>
+            </div>
+          </section>
+        {/each}
+      </div>
+
+      <div class="sdn-toolbar sdn-section-toolbar">
+        <label class="sdn-file-button">
+          Import EPM JSON/vCard
+          <input type="file" accept=".json,.epm,.vcf,.vcard" on:change={importEpmFile} />
+        </label>
+      </div>
+      {#if importState}
+        <p class="sdn-status-line">{importState}</p>
+      {/if}
+    </article>
+  {:else if view === 'keys-import'}
+    <article class="sdn-card sdn-glass">
+      <div class="sdn-card-head">
+        <div>
+          <h2>Keys / Import</h2>
+        </div>
+        <button class="sdn-button" type="button" on:click={loadWallets} disabled={!backend}>Refresh</button>
+      </div>
+
+      <div class="sdn-key-method-grid">
+        <section class="sdn-key-method">
+          <h3>Deterministic Keygen</h3>
+          <label class="sdn-field">
+            <span>Username</span>
+            <input class="sdn-input" bind:value={keygenUsername} autocomplete="username" />
+          </label>
+          <label class="sdn-field">
+            <span>Password</span>
+            <input class="sdn-input" type="password" bind:value={keygenPassword} autocomplete="new-password" />
+          </label>
+          <button class="sdn-button" type="button" on:click={() => openWalletFlow('deterministic')}>Create</button>
+        </section>
+
+        <section class="sdn-key-method">
+          <h3>Import Passphrase</h3>
+          <label class="sdn-field">
+            <span>Passphrase</span>
+            <textarea class="sdn-input sdn-secret-input" bind:value={passphraseInput}></textarea>
+          </label>
+          <button class="sdn-button" type="button" on:click={() => openWalletFlow('passphrase')}>Import</button>
+        </section>
+
+        <section class="sdn-key-method">
+          <h3>Encrypted Private Key File</h3>
+          <label class="sdn-file-button">
+            Import encrypted key
+            <input type="file" accept=".sdncore,.kmf,.enc,application/octet-stream" on:change={importEncryptedPrivateKeyFile} />
+          </label>
+          <button class="sdn-button sdn-button-muted" type="button" on:click={exportEncryptedCore} disabled={!backend}>Export Encrypted Core</button>
+        </section>
+      </div>
+
+      <div class="sdn-wallet-host" bind:this={walletHost}></div>
+      {#if walletState}
+        <p class="sdn-status-line">{walletState}</p>
+      {/if}
+      {#if coreState}
+        <p class="sdn-status-line">{coreState}</p>
+      {/if}
+    </article>
+  {:else if view === 'security'}
+    <article class="sdn-card sdn-glass">
+      <div class="sdn-card-head">
+        <div>
+          <h2>Security</h2>
+        </div>
+      </div>
+
+      <div class="sdn-key-method-grid">
+        <section class="sdn-key-method">
+          <h3>Grant admin for public key</h3>
+          <label class="sdn-field">
+            <span>Public key</span>
+            <input class="sdn-input" bind:value={grantPublicKey} autocomplete="off" />
+          </label>
+          <button class="sdn-button" type="button" on:click={() => grantAdminForPublicKey(grantPublicKey)} disabled={!backend}>Grant admin</button>
+        </section>
+
+        <section class="sdn-key-method">
+          <h3>Upload EPM / .vcf</h3>
+          <label class="sdn-file-button">
+            Upload EPM / .vcf
+            <input type="file" accept=".epm,.vcf,.vcard,application/octet-stream,text/vcard,text/x-vcard" on:change={grantAdminFromSecurityFile} />
+          </label>
+        </section>
+      </div>
+      {#if securityState}
+        <p class="sdn-status-line">{securityState}</p>
+      {/if}
+    </article>
+  {:else if view === 'downloads'}
+    <article class="sdn-card sdn-glass">
+      <div class="sdn-card-head">
+        <div>
+          <h2>Downloads</h2>
+          <p>{profileRecord.label || profileRecord.id}</p>
+        </div>
+      </div>
+
+      <div class="sdn-toolbar sdn-section-toolbar">
+        <button class="sdn-button" type="button" on:click={() => downloadHostedEpm(profileRecord, 'json')} disabled={!backend || !profileRecord}>Download JSON</button>
+        <button class="sdn-button" type="button" on:click={() => downloadHostedEpm(profileRecord, 'epm')} disabled={!backend || !profileRecord}>Download EPM</button>
+        <button class="sdn-button" type="button" on:click={() => downloadHostedEpm(profileRecord, 'vcard')} disabled={!backend || !profileRecord}>Download vCard</button>
+      </div>
+      {#if downloadState}
+        <p class="sdn-status-line">{downloadState}</p>
+      {/if}
+      <pre class="sdn-public-json">{publicJson}</pre>
+    </article>
+  {/if}
 </section>

@@ -6,9 +6,13 @@ import {
   createUnavailableResult,
   type BackendCapability,
   type BackendResult,
+  type DataSummary,
   type LocalObjectSummary,
+  type NodeAccessUserInput,
   type NodeSummary,
   type ObservedSdnPeer,
+  type RawDataRecord,
+  type RawDataRecordBytes,
   type SdnBackend,
   type StorageSummary,
 } from './sdn-backend';
@@ -58,6 +62,18 @@ export function createBrowserNodeBackend(): SdnBackend {
     },
     async importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
       return createDegradedResult('importCore', `browser Core import is scheduled for Milestone 4 (${Object.keys(core).length} fields)`);
+    },
+    async listNodeAccessUsers() {
+      return createCapabilityResult('listNodeAccessUsers', 'remote-only', 'node access management requires a local or remote SDN server', []);
+    },
+    async saveNodeAccessUser(user: NodeAccessUserInput) {
+      return createCapabilityResult('saveNodeAccessUser', 'remote-only', `granting ${user.xpub} requires a local or remote SDN server`);
+    },
+    async revokeNodeAdmin(xpub: string) {
+      return createCapabilityResult('revokeNodeAdmin', 'remote-only', `revoking admin for ${xpub} requires a local or remote SDN server`);
+    },
+    async deleteNodeAccessUser(xpub: string) {
+      return createCapabilityResult('deleteNodeAccessUser', 'remote-only', `removing ${xpub} requires a local or remote SDN server`);
     },
     async listHostedEpms(): Promise<BackendResult<HostedEpmRecord[]>> {
       return createDegradedResult('listHostedEpms', 'browser hosted EPM storage is scheduled for Milestone 4', []);
@@ -114,6 +130,15 @@ export function createBrowserNodeBackend(): SdnBackend {
     },
     async inspectObject(id: string): Promise<BackendResult<LocalObjectSummary | Record<string, unknown>>> {
       return createDegradedResult('inspectObject', `browser object inspection for ${id} is scheduled for Milestone 4`);
+    },
+    async getDataSummary(): Promise<BackendResult<DataSummary>> {
+      return createUnavailableResult('getDataSummary', 'raw FlatSQL summary requires a local or remote SDN node');
+    },
+    async queryRawData(): Promise<BackendResult<RawDataRecord[]>> {
+      return createUnavailableResult('queryRawData', 'raw FlatSQL query requires a local or remote SDN node');
+    },
+    async readRawDataRecord(): Promise<BackendResult<RawDataRecordBytes>> {
+      return createUnavailableResult('readRawDataRecord', 'raw FlatBuffer record reads require a local or remote SDN node');
     },
     async pinObject(id: string): Promise<BackendResult<Record<string, unknown>>> {
       return createDegradedResult('pinObject', `browser pinning for ${id} is scheduled for Milestone 4`);

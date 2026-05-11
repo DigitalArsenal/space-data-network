@@ -294,7 +294,5 @@ func SchemaNameToTable(schemaName string) (string, error) {
 	if err := ValidateSchemaName(schemaName); err != nil {
 		return "", fmt.Errorf("invalid schema name for table: %w", err)
 	}
-	name := strings.TrimSuffix(schemaName, ".fbs")
-	name = strings.ToLower(name)
-	return "sds_" + name, nil
+	return strings.TrimSuffix(schemaName, ".fbs"), nil
 }

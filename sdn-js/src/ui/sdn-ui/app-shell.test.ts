@@ -13,7 +13,6 @@ describe('SDN Svelte app shell', () => {
         backendMode: 'desktop-local',
         nodeState: 'online',
         peerCount: 2,
-        walletState: 'claimed',
         storageLabel: '1.2 GB',
         title: 'Node',
       },

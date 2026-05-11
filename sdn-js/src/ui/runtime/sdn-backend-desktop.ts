@@ -7,24 +7,35 @@ import {
   normalizeBackendConfig,
   type BackendCapability,
   type BackendResult,
+  type DataSummary,
   type LocalObjectSummary,
+  type NodeAccessUser,
+  type NodeAccessUserInput,
   type NodeSummary,
   type ObservedSdnPeer,
   type PartialSdnBackendConfig,
+  type RawDataQuery,
+  type RawDataRecord,
+  type RawDataRecordBytes,
   type SdnBackend,
   type StorageSummary,
 } from './sdn-backend';
 import {
+  getBytes,
   getJson,
   joinUrl,
   nodeSummaryFromProfile,
+  normalizeDataSummary,
+  normalizeNodeAccessPayload,
   normalizeObjectPayload,
   normalizePeerPayload,
+  normalizeRawDataRecords,
   normalizeStorageSummary,
   recordsFromPayload,
   resolveFetch,
   type BackendDeps,
 } from './sdn-backend-adapter-utils';
+import { decodeEpmFlatBuffer } from './epm-flatbuffer';
 import { normalizeHostedEpmRecord, type HostedEpmRecord } from './identity';
 
 export type DesktopLocalBackendOptions = PartialSdnBackendConfig & BackendDeps;
@@ -37,7 +48,17 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
   const gatewayBase = config.gatewayUrl ?? 'http://127.0.0.1:8081';
 
   async function getNodeProfile(): Promise<BackendResult<Record<string, unknown>>> {
-    return getJson<Record<string, unknown>>(fetchLike, joinUrl(desktopBase, '/api/node/epm/json'), 'getNodeProfile');
+    const result = await getBytes(fetchLike, joinUrl(desktopBase, '/api/node/epm'), 'getNodeProfile', {
+      headers: { accept: 'application/x-flatbuffers' },
+    });
+    if (!result.ok || !result.data) {
+      return createDegradedResult('getNodeProfile', result.capability.reason ?? 'node EPM FlatBuffer unavailable');
+    }
+    try {
+      return createAvailableResult('getNodeProfile', decodeEpmFlatBuffer(result.data));
+    } catch (error) {
+      return createDegradedResult('getNodeProfile', error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function getNodeSummary(): Promise<BackendResult<NodeSummary>> {
@@ -78,11 +99,30 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
     },
     getNodeProfile,
     async saveNodeProfile(profile: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
-      return createUnavailableResult('saveNodeProfile', `profile editing is not wired in desktop-local yet (${Object.keys(profile).length} fields)`);
+      const result = await getBytes(
+        fetchLike,
+        joinUrl(desktopBase, '/api/node/epm'),
+        'saveNodeProfile',
+        {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(profile),
+        },
+      );
+      if (!result.ok || !result.data) {
+        return createDegradedResult('saveNodeProfile', result.capability.reason ?? 'updated node EPM FlatBuffer unavailable');
+      }
+      try {
+        return createAvailableResult('saveNodeProfile', decodeEpmFlatBuffer(result.data));
+      } catch (error) {
+        return createDegradedResult('saveNodeProfile', error instanceof Error ? error.message : String(error));
+      }
     },
     async listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>> {
-      const epm = await getJson<unknown>(fetchLike, joinUrl(desktopBase, '/api/node/epm'), 'listWalletsAndEpms');
-      if (!epm.ok) return epm as BackendResult<Array<Record<string, unknown>>>;
+      const epm = await getNodeProfile();
+      if (!epm.ok) {
+        return createDegradedResult('listWalletsAndEpms', epm.capability.reason ?? 'node EPM FlatBuffer unavailable', []);
+      }
       return createAvailableResult('listWalletsAndEpms', recordsFromPayload(epm.data));
     },
     async beginClaimEpm(): Promise<BackendResult<Record<string, unknown>>> {
@@ -93,6 +133,45 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
     },
     async importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
       return createCapabilityResult('importCore', 'permission-required', `Core import requires local wallet confirmation (${Object.keys(core).length} fields)`);
+    },
+    async listNodeAccessUsers(): Promise<BackendResult<NodeAccessUser[]>> {
+      const users = await getJson<unknown>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/auth/users'),
+        'listNodeAccessUsers',
+        authRequest(),
+      );
+      if (!users.ok) return users as BackendResult<NodeAccessUser[]>;
+      return createAvailableResult('listNodeAccessUsers', normalizeNodeAccessPayload(users.data));
+    },
+    async saveNodeAccessUser(user: NodeAccessUserInput): Promise<BackendResult<Record<string, unknown>>> {
+      return getJson<Record<string, unknown>>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/auth/users'),
+        'saveNodeAccessUser',
+        authJsonRequest('POST', {
+          xpub: user.xpub,
+          name: user.name ?? '',
+          trust_level: user.trustLevel,
+          signing_pubkey_hex: user.signingPubKeyHex ?? '',
+        }),
+      );
+    },
+    async revokeNodeAdmin(xpub: string): Promise<BackendResult<Record<string, unknown>>> {
+      return getJson<Record<string, unknown>>(
+        fetchLike,
+        joinUrl(desktopBase, `/api/auth/users/${encodeURIComponent(xpub)}`),
+        'revokeNodeAdmin',
+        authJsonRequest('PUT', { trust_level: 'standard' }),
+      );
+    },
+    async deleteNodeAccessUser(xpub: string): Promise<BackendResult<Record<string, unknown>>> {
+      return getJson<Record<string, unknown>>(
+        fetchLike,
+        joinUrl(desktopBase, `/api/auth/users/${encodeURIComponent(xpub)}`),
+        'deleteNodeAccessUser',
+        authRequest('DELETE'),
+      );
     },
     async listHostedEpms(): Promise<BackendResult<HostedEpmRecord[]>> {
       const epms = await getJson<unknown>(fetchLike, joinUrl(desktopBase, '/api/identity/epms'), 'listHostedEpms');
@@ -213,6 +292,38 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
       if (object) return createAvailableResult('inspectObject', object);
       return createDegradedResult('inspectObject', `object ${id} is not available in the local index`);
     },
+    async getDataSummary(): Promise<BackendResult<DataSummary>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/v1/data/summary'),
+        'getDataSummary',
+        authRequest(),
+      );
+      if (!result.ok) return createDegradedResult('getDataSummary', result.capability.reason ?? 'data summary unavailable');
+      return createAvailableResult('getDataSummary', normalizeDataSummary(result.data));
+    },
+    async queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/v1/data/query'),
+        'queryRawData',
+        authJsonRequest('POST', rawDataQueryPayload(query)),
+      );
+      if (!result.ok) return result as BackendResult<RawDataRecord[]>;
+      return createAvailableResult('queryRawData', normalizeRawDataRecords(result.data));
+    },
+    async readRawDataRecord(schemaName: string, cid: string): Promise<BackendResult<RawDataRecordBytes>> {
+      const result = await getBytes(
+        fetchLike,
+        joinUrl(desktopBase, `/api/v1/data/records/${encodeURIComponent(schemaName)}/${encodeURIComponent(cid)}`),
+        'readRawDataRecord',
+        authRequest(),
+      );
+      if (!result.ok || !result.data) {
+        return createDegradedResult('readRawDataRecord', result.capability.reason ?? 'raw FlatBuffer record unavailable');
+      }
+      return createAvailableResult('readRawDataRecord', { schemaName, cid, bytes: result.data });
+    },
     async pinObject(id: string): Promise<BackendResult<Record<string, unknown>>> {
       const result = await getJson<Record<string, unknown>>(
         fetchLike,
@@ -292,6 +403,38 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
 
 function gatewayUrlForPath(gatewayBase: string, path: string): string {
   return `${gatewayBase.replace(/\/+$/, '')}/${path.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/')}`;
+}
+
+function authRequest(method?: string): RequestInit {
+  return {
+    ...(method ? { method } : {}),
+    credentials: 'include',
+    headers: { 'x-requested-with': 'sdn-ui' },
+  };
+}
+
+function authJsonRequest(method: string, body: Record<string, unknown>): RequestInit {
+  return {
+    method,
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      'x-requested-with': 'sdn-ui',
+    },
+    body: JSON.stringify(body),
+  };
+}
+
+function rawDataQueryPayload(query: RawDataQuery): Record<string, unknown> {
+  return {
+    schema: query.schema,
+    ...(query.providerId ? { provider_id: query.providerId } : {}),
+    ...(query.sourceName ? { source_name: query.sourceName } : {}),
+    ...(query.batchId ? { batch_id: query.batchId } : {}),
+    ...(query.peerId ? { peer_id: query.peerId } : {}),
+    ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
+    ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

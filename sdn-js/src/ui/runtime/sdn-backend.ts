@@ -73,9 +73,77 @@ export interface LocalObjectSummary {
   cid?: string;
 }
 
+export interface DataSchemaSummary {
+  schemaName: string;
+  count: number;
+  totalBytes: number;
+}
+
+export interface DataSourceSummary {
+  schemaName: string;
+  providerId: string;
+  sourceName: string;
+  batchId: string;
+  count: number;
+  totalBytes: number;
+}
+
+export interface DataSummary {
+  totalRecords: number;
+  totalBytes: number;
+  schemas: DataSchemaSummary[];
+  sources: DataSourceSummary[];
+}
+
+export interface RawDataQuery {
+  schema: string;
+  providerId?: string;
+  sourceName?: string;
+  batchId?: string;
+  peerId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface RawDataRecord {
+  schemaName: string;
+  cid: string;
+  peerId: string;
+  providerId?: string;
+  sourceName?: string;
+  batchId?: string;
+  timestamp?: string;
+  sizeBytes: number;
+  dataBase64: string;
+}
+
+export interface RawDataRecordBytes {
+  schemaName: string;
+  cid: string;
+  bytes: Uint8Array;
+}
+
 export interface SdnHealth {
   healthy: boolean;
   details: Record<string, unknown>;
+}
+
+export interface NodeAccessUser {
+  xpub: string;
+  name: string;
+  trustLevel: string;
+  signingPubKeyHex: string;
+  source: string;
+  configManaged: boolean;
+  createdAt?: string;
+  lastLogin?: string;
+}
+
+export interface NodeAccessUserInput {
+  xpub: string;
+  name?: string;
+  trustLevel: string;
+  signingPubKeyHex?: string;
 }
 
 export interface SdnBackend {
@@ -90,6 +158,10 @@ export interface SdnBackend {
   beginClaimEpm(): Promise<BackendResult<Record<string, unknown>>>;
   exportCore(): Promise<BackendResult<Record<string, unknown>>>;
   importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>>;
+  listNodeAccessUsers(): Promise<BackendResult<NodeAccessUser[]>>;
+  saveNodeAccessUser(user: NodeAccessUserInput): Promise<BackendResult<Record<string, unknown>>>;
+  revokeNodeAdmin(xpub: string): Promise<BackendResult<Record<string, unknown>>>;
+  deleteNodeAccessUser(xpub: string): Promise<BackendResult<Record<string, unknown>>>;
   listHostedEpms(): Promise<BackendResult<HostedEpmRecord[]>>;
   saveHostedEpm(record: HostedEpmRecord): Promise<BackendResult<HostedEpmRecord>>;
   importHostedEpm(input: { name: string; bytes?: Uint8Array; text?: string }): Promise<BackendResult<HostedEpmRecord>>;
@@ -107,6 +179,9 @@ export interface SdnBackend {
   getStorageSummary(): Promise<BackendResult<StorageSummary>>;
   listObjects(): Promise<BackendResult<LocalObjectSummary[]>>;
   inspectObject(id: string): Promise<BackendResult<LocalObjectSummary | Record<string, unknown>>>;
+  getDataSummary(): Promise<BackendResult<DataSummary>>;
+  queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>>;
+  readRawDataRecord(schemaName: string, cid: string): Promise<BackendResult<RawDataRecordBytes>>;
   pinObject(id: string): Promise<BackendResult<Record<string, unknown>>>;
   unpinObject(id: string): Promise<BackendResult<Record<string, unknown>>>;
   listRulesets(): Promise<BackendResult<Array<Record<string, unknown>>>>;

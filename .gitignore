@@ -65,6 +65,7 @@ yarn-error.log*
 # WASM builds
 *.wasm.map
 /sdn-wasi/dist/
+sdn-server/bin/
 sdn-server/spacedatanetwork
 sdn-server/spacedatanetwork-test
 
