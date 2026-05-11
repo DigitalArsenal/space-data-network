@@ -7,6 +7,7 @@
     type LocalFlatSqlStore,
   } from '../../../src/ui/runtime/local-flatsql';
   import { decodeOmmFlatBuffer } from '../../../src/ui/runtime/omm-flatbuffer';
+  import { decodePnmFlatBuffer } from '../../../src/ui/runtime/pnm-flatbuffer';
   import type {
     DataScanResult,
     DataSummary,
@@ -15,6 +16,7 @@
     SdnBackend,
   } from '../../../src/ui/runtime/sdn-backend';
   import { createRemoteSdnBackend } from '../../../src/ui/runtime/sdn-backend-remote';
+  import { verify as verifyEd25519Signature } from '../../../src/crypto/hd-wallet';
   import CAT_SCHEMA from '../../../node_modules/spacedatastandards.org/schema/CAT/main.fbs?raw';
   import EPM_SCHEMA from '../../../node_modules/spacedatastandards.org/schema/EPM/main.fbs?raw';
   import MPE_SCHEMA from '../../../node_modules/spacedatastandards.org/schema/MPE/main.fbs?raw';
@@ -26,7 +28,9 @@
   type SortDirection = 'asc' | 'desc';
   type ColumnSource = 'metadata' | 'standard';
   type SchemaSyncMode = 'preview' | 'sync';
+  type SchemaSyncStatus = 'idle' | 'syncing' | 'synced' | 'capped' | 'error';
   type StorageUnit = 'MB' | 'GB' | 'TB';
+  type DataSubview = 'storage' | 'subscriptions' | 'explorer';
 
   interface WorkbenchColumn {
     key: SortColumn;
@@ -70,9 +74,21 @@
     storageUnit: StorageUnit;
   }
 
+  interface SchemaSyncProgress {
+    status: SchemaSyncStatus;
+    syncedRows: number;
+    totalRows: number;
+    localRows: number;
+    cachedBytes: number;
+    lastSyncedAt: string | null;
+    error: string | null;
+  }
+
   interface SchemaSyncRow extends StandardOption {
     localRows: number;
+    cachedBytes: number;
     preference: SchemaSyncPreference;
+    progress: SchemaSyncProgress;
   }
 
   export let backend: SdnBackend | null = null;
@@ -84,9 +100,16 @@
   const SCHEMA_EXTENSION = 'fbs';
   const DEFAULT_PAGE_SIZE = 10;
   const DATA_SOURCE_PAGE_SIZE = 6;
+  const SYNC_PAGE_SIZE = 100;
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
   const SCHEMA_SYNC_STORAGE_KEY = 'sdn:data-schema-sync:v1';
+  const SCHEMA_SYNC_STATE_STORAGE_KEY = 'sdn:data-schema-sync-state:v1';
   const STORAGE_CAP_UNITS: StorageUnit[] = ['MB', 'GB', 'TB'];
+  const DATA_SUBVIEWS: Array<{ id: DataSubview; label: string; breadcrumb: string }> = [
+    { id: 'storage', label: 'Storage', breadcrumb: 'Local storage state' },
+    { id: 'subscriptions', label: 'Subscriptions', breadcrumb: 'Sync subscriptions' },
+    { id: 'explorer', label: 'Explorer', breadcrumb: 'Data explorer' },
+  ];
   const DEFAULT_SCHEMA_SYNC_PREFERENCE: SchemaSyncPreference = {
     mode: 'preview',
     storageCap: 1,
@@ -154,9 +177,21 @@
     { key: 'CREATION_DATE', label: 'Creation date', source: 'standard' },
     { key: 'CENTER_NAME', label: 'Center', source: 'standard' },
   ];
+  const PNM_STANDARD_COLUMNS: WorkbenchColumn[] = [
+    { key: 'FILE_ID', label: 'FILE_ID', source: 'standard' },
+    { key: 'CID', label: 'CID', source: 'standard' },
+    { key: 'FILE_NAME', label: 'FILE_NAME', source: 'standard' },
+    { key: 'PUBLISH_TIMESTAMP', label: 'PUBLISH_TIMESTAMP', source: 'standard' },
+    { key: 'MULTIFORMAT_ADDRESS', label: 'MULTIFORMAT_ADDRESS', source: 'standard' },
+    { key: 'SIGNATURE', label: 'SIGNATURE', source: 'standard' },
+    { key: 'SIGNATURE_TYPE', label: 'SIGNATURE_TYPE', source: 'standard' },
+    { key: 'TIMESTAMP_SIGNATURE', label: 'TIMESTAMP_SIGNATURE', source: 'standard' },
+    { key: 'TIMESTAMP_SIGNATURE_TYPE', label: 'TIMESTAMP_SIGNATURE_TYPE', source: 'standard' },
+  ];
   const STANDARD_FIELD_COLUMNS: Record<string, WorkbenchColumn[]> = {
     EPM: EPM_STANDARD_COLUMNS,
     OMM: OMM_STANDARD_COLUMNS,
+    PNM: PNM_STANDARD_COLUMNS,
   };
 
   let dataSummary: DataSummary | null = null;
@@ -184,6 +219,8 @@
   let inspectGatewayUrl = '';
   let localFlatSqlStore: LocalFlatSqlStore | null = null;
   let localFlatSqlStoreKey = '';
+  let localFlatSqlStorePromise: Promise<LocalFlatSqlStore | null> | null = null;
+  let localFlatSqlStorePromiseKey = '';
   let localFlatSqlStats: LocalFlatSqlStandardStats[] = [];
   let sqlQueryText = defaultSqlQuery(DEFAULT_STANDARD_ID);
   let sqlResult: LocalFlatSqlQueryResult | null = null;
@@ -192,6 +229,16 @@
   let userEditedSql = false;
   let userEditedColumns = false;
   let schemaSyncPreferences: Record<string, SchemaSyncPreference> = loadSchemaSyncPreferences();
+  let schemaSyncProgress: Record<string, SchemaSyncProgress> = loadSchemaSyncProgress();
+  let activeSyncKeys = new Set<string>();
+  let dataSubview: DataSubview = 'storage';
+  let selectedPnmRow: WorkbenchRow | null = null;
+  let pnmFileIdQuery = '';
+  let pnmQueryResult: LocalFlatSqlQueryResult | null = null;
+  let pnmQueryError = '';
+  let pnmSignatureStatus = '';
+  let pnmSignatureRunning = false;
+  let lastAutoSyncSignature = '';
 
   $: dataSourceOptions = buildDataSourceOptions(backend, configuredDataSources, peers);
   $: filteredDataSourceOptions = filterDataSourceOptions(dataSourceOptions, dataSourceSearchText);
@@ -204,6 +251,7 @@
   $: dataSourcePageLabel = `${dataSourcePageIndex + 1}/${dataSourceTotalPageCount}`;
   $: standardOptions = standardOptionsFromSummary(dataSummary);
   $: schemaSyncRows = buildSchemaSyncRows(standardOptions, selectedDataSourceId, localFlatSqlStats);
+  $: selectedDataSubview = DATA_SUBVIEWS.find((entry) => entry.id === dataSubview) ?? DATA_SUBVIEWS[0];
   $: decodedRows = rawRecords.map(decodeWorkbenchRecord);
   $: allColumns = workbenchColumnsForStandard(selectedStandardId, decodedRows);
   $: syncVisibleColumnKeys(allColumns);
@@ -222,11 +270,16 @@
   $: sqlColumns = sqlResult?.columns ?? [];
   $: displaySqlColumns = visibleSqlColumns(sqlColumns, sqlRecords);
   $: sqlRecords = sqlResult?.records ?? [];
+  $: pnmQueryColumns = visibleSqlColumns(pnmQueryResult?.columns ?? [], pnmQueryRows);
+  $: pnmQueryRows = pnmQueryResult?.records ?? [];
+  $: selectedPnmDetails = selectedPnmRow?.decoded ?? {};
 
   $: if (backend && backend !== lastBackend) {
     lastBackend = backend;
     void initializeDataExplorer();
   }
+
+  $: scheduleEnabledSchemaSyncs(schemaSyncRows, selectedDataSourceId);
 
   $: syncInspectRoute(route, backend);
 
@@ -250,6 +303,10 @@
   async function initializeWorkbench(): Promise<void> {
     await loadDataSummary();
     await runWorkbenchQuery(0);
+  }
+
+  function selectDataSubview(nextSubview: DataSubview): void {
+    dataSubview = nextSubview;
   }
 
   async function loadConfiguredDataSources(): Promise<void> {
@@ -331,10 +388,10 @@
       }
       rawRecords = nextRecords;
       pageIndex = nextPage;
+      resetPnmSelectionIfNeeded();
       await ingestDownloadedRecords(rawRecords);
-      if (rawRecords.length > 0 && (!userEditedSql || sqlResult === null)) {
-        if (!userEditedSql) sqlQueryText = defaultSqlQuery(selectedStandardId);
-        await runSqlQuery();
+      if (rawRecords.length > 0 && !userEditedSql) {
+        sqlQueryText = defaultSqlQuery(selectedStandardId);
       }
     } catch {
       rawRecords = [];
@@ -348,6 +405,7 @@
     userSelectedStandard = true;
     userEditedColumns = false;
     resetSqlForSelectedStandard();
+    clearPnmSelection();
     columnMenuOpen = false;
     dataScan = null;
     pageIndex = 0;
@@ -368,6 +426,7 @@
     pageIndex = 0;
     rawRecords = [];
     dataScan = null;
+    clearPnmSelection();
     resetLocalFlatSqlStore();
     resetSqlForSelectedStandard();
     columnMenuOpen = false;
@@ -406,12 +465,18 @@
     updateSchemaSyncPreference(standardId, {
       mode: value === 'sync' ? 'sync' : 'preview',
     });
+    if (value === 'sync') {
+      void synchronizeSchema(standardId);
+    }
   }
 
   function handleSchemaStorageCapInput(standardId: string, event: Event): void {
     updateSchemaSyncPreference(standardId, {
       storageCap: normalizedStorageCap((event.currentTarget as HTMLInputElement).value),
     });
+    if (schemaSyncPreferenceFor(selectedDataSourceId, standardId).mode === 'sync') {
+      void synchronizeSchema(standardId);
+    }
   }
 
   function handleSchemaStorageUnitChange(standardId: string, event: Event): void {
@@ -419,6 +484,9 @@
     updateSchemaSyncPreference(standardId, {
       storageUnit: isStorageUnit(value) ? value : DEFAULT_SCHEMA_SYNC_PREFERENCE.storageUnit,
     });
+    if (schemaSyncPreferenceFor(selectedDataSourceId, standardId).mode === 'sync') {
+      void synchronizeSchema(standardId);
+    }
   }
 
   async function runSqlQuery(): Promise<void> {
@@ -455,28 +523,165 @@
     }
   }
 
+  function scheduleEnabledSchemaSyncs(rows: SchemaSyncRow[], dataSourceId: string): void {
+    const signature = rows
+      .filter((row) => row.preference.mode === 'sync')
+      .map((row) => `${dataSourceId}:${row.id}:${row.localRows}:${row.remoteRows}:${row.preference.storageCap}:${row.preference.storageUnit}`)
+      .join('|');
+    if (!signature || signature === lastAutoSyncSignature) return;
+    lastAutoSyncSignature = signature;
+    for (const row of rows) {
+      if (row.preference.mode !== 'sync') continue;
+      if (row.remoteRows > row.localRows) void synchronizeSchema(row.id);
+    }
+  }
+
+  async function synchronizeSchema(standardId: string): Promise<void> {
+    const activeBackend = backendForSelectedDataSource();
+    const key = schemaSyncPreferenceKey(selectedDataSourceId, standardId);
+    const preference = schemaSyncPreferenceFor(selectedDataSourceId, standardId);
+    if (!activeBackend || preference.mode !== 'sync' || activeSyncKeys.has(key)) return;
+
+    activeSyncKeys = new Set(activeSyncKeys).add(key);
+    refreshSchemaSyncProgress(standardId, {
+      status: 'syncing',
+      error: null,
+      totalRows: totalRowsForStandardId(dataSummary, standardId) ?? 0,
+    });
+
+    try {
+      const store = await ensureLocalFlatSqlStore();
+      if (!store) throw new Error('FlatSQL initialization failed');
+      const source = currentDataSourceOption();
+      let offset = localRowsForStandard(localFlatSqlStats, standardId);
+      let localRows = offset;
+      let cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
+      let totalRows = Math.max(totalRowsForStandardId(dataSummary, standardId) ?? 0, localRows);
+      const capBytes = storageCapBytes(preference);
+
+      while (localRows < totalRows || totalRows === 0) {
+        if (cachedBytes >= capBytes && localRows < totalRows) {
+          refreshSchemaSyncProgress(standardId, {
+            status: 'capped',
+            syncedRows: localRows,
+            totalRows,
+            localRows,
+            cachedBytes,
+            error: `Storage cap reached at ${formatBytes(capBytes)}`,
+          });
+          return;
+        }
+
+        const scanResult = await activeBackend.scanRawData({
+          schema: schemaNameForStandardId(standardId),
+          limit: SYNC_PAGE_SIZE,
+          offset,
+        });
+        if (!scanResult.ok) throw new Error('Remote scan failed');
+
+        const scan = scanResult.data;
+        if (!scan) throw new Error('Remote scan returned no data');
+        totalRows = Math.max(totalRows, scan.totalCount ?? 0, offset + scan.results.length);
+        if (scan.results.length === 0) break;
+
+        const streamResult = await activeBackend.streamRawData({
+          schema: scan.schema,
+          scanHash: scan.scanHash,
+          records: scan.results,
+        });
+        if (!streamResult.ok) throw new Error('Remote FlatBuffer stream failed');
+
+        const records = streamResult.data ?? [];
+        await store.ingestRecords(standardId, records, source?.publicKey ?? source?.peerId ?? source?.id ?? null);
+        refreshLocalFlatSqlStats();
+        localRows = localRowsForStandard(localFlatSqlStats, standardId);
+        cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
+        offset += scan.results.length;
+
+        refreshSchemaSyncProgress(standardId, {
+          status: localRows >= totalRows ? 'synced' : 'syncing',
+          syncedRows: localRows,
+          totalRows,
+          localRows,
+          cachedBytes,
+          lastSyncedAt: new Date().toISOString(),
+          error: null,
+        });
+
+        if (offset >= totalRows || records.length === 0) break;
+      }
+
+      refreshSchemaSyncProgress(standardId, {
+        status: localRows >= totalRows ? 'synced' : 'idle',
+        syncedRows: localRows,
+        totalRows,
+        localRows,
+        cachedBytes,
+        lastSyncedAt: new Date().toISOString(),
+        error: null,
+      });
+    } catch (error) {
+      refreshSchemaSyncProgress(standardId, {
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Schema sync failed',
+      });
+    } finally {
+      const nextActive = new Set(activeSyncKeys);
+      nextActive.delete(key);
+      activeSyncKeys = nextActive;
+    }
+  }
+
+  function refreshSchemaSyncProgress(standardId: string, patch: Partial<SchemaSyncProgress>): void {
+    const key = schemaSyncPreferenceKey(selectedDataSourceId, standardId);
+    const localRows = localRowsForStandard(localFlatSqlStats, standardId);
+    const cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
+    const current = schemaSyncProgressFor(selectedDataSourceId, standardId, totalRowsForStandardId(dataSummary, standardId) ?? 0, localFlatSqlStats);
+    schemaSyncProgress = {
+      ...schemaSyncProgress,
+      [key]: {
+        ...current,
+        localRows,
+        cachedBytes,
+        ...patch,
+        syncedRows: Math.max(patch.syncedRows ?? current.syncedRows, localRows),
+      },
+    };
+    persistSchemaSyncProgress(schemaSyncProgress);
+  }
+
   async function ensureLocalFlatSqlStore(): Promise<LocalFlatSqlStore | null> {
     const nextKey = `sdn-data:${selectedDataSourceId}`;
     if (localFlatSqlStore && localFlatSqlStoreKey === nextKey) return localFlatSqlStore;
+    if (localFlatSqlStorePromise && localFlatSqlStorePromiseKey === nextKey) return localFlatSqlStorePromise;
     resetLocalFlatSqlStore();
-    try {
-      localFlatSqlStore = await createLocalFlatSqlStore({
-        schemas: LOCAL_FLATSQL_SCHEMAS,
-        persistenceKey: nextKey,
-      });
-      localFlatSqlStoreKey = nextKey;
-      refreshLocalFlatSqlStats();
-      return localFlatSqlStore;
-    } catch (error) {
-      sqlError = error instanceof Error ? error.message : 'FlatSQL initialization failed';
-      return null;
-    }
+    localFlatSqlStorePromiseKey = nextKey;
+    localFlatSqlStorePromise = (async () => {
+      try {
+        localFlatSqlStore = await createLocalFlatSqlStore({
+          schemas: LOCAL_FLATSQL_SCHEMAS,
+          persistenceKey: nextKey,
+        });
+        localFlatSqlStoreKey = nextKey;
+        refreshLocalFlatSqlStats();
+        return localFlatSqlStore;
+      } catch (error) {
+        sqlError = error instanceof Error ? error.message : 'FlatSQL initialization failed';
+        return null;
+      } finally {
+        localFlatSqlStorePromise = null;
+        localFlatSqlStorePromiseKey = '';
+      }
+    })();
+    return localFlatSqlStorePromise;
   }
 
   function resetLocalFlatSqlStore(): void {
     localFlatSqlStore?.destroy();
     localFlatSqlStore = null;
     localFlatSqlStoreKey = '';
+    localFlatSqlStorePromise = null;
+    localFlatSqlStorePromiseKey = '';
     localFlatSqlStats = [];
     sqlResult = null;
     sqlError = '';
@@ -569,6 +774,131 @@
     return shorten(sqlCellValue(row, column), 40);
   }
 
+  function handleWorkbenchRowClick(row: WorkbenchRow): void {
+    if (selectedStandardId === 'PNM' && !sqlResult) selectPnmRow(row);
+  }
+
+  function handleWorkbenchRowKeydown(row: WorkbenchRow, event: KeyboardEvent): void {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    handleWorkbenchRowClick(row);
+  }
+
+  function selectPnmRow(row: WorkbenchRow): void {
+    selectedPnmRow = row;
+    pnmFileIdQuery = pnmValue(row.decoded, 'FILE_ID');
+    pnmQueryResult = null;
+    pnmQueryError = '';
+    pnmSignatureStatus = '';
+    void runPnmFileIdQuery();
+  }
+
+  function resetPnmSelectionIfNeeded(): void {
+    if (selectedStandardId !== 'PNM') {
+      clearPnmSelection();
+      return;
+    }
+    if (!selectedPnmRow) return;
+    const selectedCid = selectedPnmRow.record.cid;
+    if (!rawRecords.some((record) => record.cid === selectedCid)) clearPnmSelection();
+  }
+
+  function clearPnmSelection(): void {
+    selectedPnmRow = null;
+    pnmFileIdQuery = '';
+    pnmQueryResult = null;
+    pnmQueryError = '';
+    pnmSignatureStatus = '';
+    pnmSignatureRunning = false;
+  }
+
+  async function runPnmFileIdQuery(): Promise<void> {
+    const fileId = pnmFileIdQuery.trim();
+    if (!fileId) {
+      pnmQueryResult = null;
+      pnmQueryError = 'FILE_ID is required';
+      return;
+    }
+    pnmQueryError = '';
+    try {
+      const store = await ensureLocalFlatSqlStore();
+      if (!store) return;
+      pnmQueryResult = store.query(`SELECT * FROM PNM WHERE FILE_ID = '${escapeSqlString(fileId)}' LIMIT 100`, 'PNM');
+    } catch (error) {
+      pnmQueryResult = null;
+      pnmQueryError = error instanceof Error ? error.message : 'FILE_ID query failed';
+    }
+  }
+
+  async function verifySelectedPnmSignature(): Promise<void> {
+    if (!selectedPnmRow) return;
+    pnmSignatureRunning = true;
+    pnmSignatureStatus = '';
+    try {
+      pnmSignatureStatus = await verifyPnmSignature(selectedPnmRow.decoded, currentDataSourceOption()?.publicKey ?? null);
+    } catch (error) {
+      pnmSignatureStatus = error instanceof Error ? error.message : 'Signature verification failed';
+    } finally {
+      pnmSignatureRunning = false;
+    }
+  }
+
+  async function verifyPnmSignature(decoded: Record<string, unknown>, publicKeyText: string | null): Promise<string> {
+    const cid = pnmValue(decoded, 'CID');
+    const signature = pnmValue(decoded, 'SIGNATURE');
+    const signatureType = pnmValue(decoded, 'SIGNATURE_TYPE').toLowerCase();
+    if (!cid) return 'CID is unavailable; cannot reconstitute the signed payload.';
+    if (!signature) return 'Signature not present on this PNM.';
+    if (!signatureType.includes('ed25519')) {
+      return signatureType
+        ? `Signature type ${pnmValue(decoded, 'SIGNATURE_TYPE')} is not supported in this verifier.`
+        : 'Signature type is unavailable.';
+    }
+    const publicKey = bytesFromEncodedString(publicKeyText ?? '');
+    const signatureBytes = bytesFromEncodedString(signature);
+    if (!publicKey || publicKey.byteLength !== 32) {
+      return 'Cannot verify: provider public key is not a 32-byte Ed25519 key.';
+    }
+    if (!signatureBytes || signatureBytes.byteLength !== 64) {
+      return 'Cannot verify: PNM signature is not a 64-byte Ed25519 signature.';
+    }
+    const valid = await verifyEd25519Signature(publicKey, new TextEncoder().encode(cid), signatureBytes);
+    return valid ? 'Signature valid for reconstituted CID payload.' : 'Signature invalid for reconstituted CID payload.';
+  }
+
+  function pnmValue(decoded: Record<string, unknown>, key: string): string {
+    return stringifyCellValue(decoded[key]);
+  }
+
+  function pnmSignaturePayload(decoded: Record<string, unknown>): string {
+    return pnmValue(decoded, 'CID') || '';
+  }
+
+  function escapeSqlString(value: string): string {
+    return value.replace(/'/g, "''");
+  }
+
+  function bytesFromEncodedString(value: string): Uint8Array | null {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const hex = trimmed.startsWith('0x') ? trimmed.slice(2) : trimmed;
+    if (/^[0-9a-fA-F]+$/.test(hex) && hex.length % 2 === 0) {
+      const bytes = new Uint8Array(hex.length / 2);
+      for (let index = 0; index < bytes.length; index += 1) {
+        bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+      }
+      return bytes;
+    }
+    try {
+      const normalized = trimmed.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+      const binary = atob(padded);
+      return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    } catch {
+      return null;
+    }
+  }
+
   function visibleSqlColumns(columns: string[], records: Array<Record<string, unknown>>): string[] {
     const visible = columns.filter((column) => !isInternalSqlColumn(column) && records.some((row) => hasDisplayValue(row[column])));
     if (visible.length > 0 || records.length > 0) return visible;
@@ -591,7 +921,9 @@
     return options.map((option) => ({
       ...option,
       localRows: localRowsForStandard(stats, option.id),
+      cachedBytes: cachedBytesForStandard(stats, option.id),
       preference: schemaSyncPreferenceFor(dataSourceId, option.id),
+      progress: schemaSyncProgressFor(dataSourceId, option.id, option.remoteRows, stats),
     }));
   }
 
@@ -599,8 +931,35 @@
     return stats.find((entry) => entry.standardId === standardId)?.recordCount ?? 0;
   }
 
+  function cachedBytesForStandard(stats: LocalFlatSqlStandardStats[], standardId: string): number {
+    return stats.find((entry) => entry.standardId === standardId)?.cachedBytes ?? 0;
+  }
+
   function schemaSyncPreferenceFor(dataSourceId: string, standardId: string): SchemaSyncPreference {
     return schemaSyncPreferences[schemaSyncPreferenceKey(dataSourceId, standardId)] ?? DEFAULT_SCHEMA_SYNC_PREFERENCE;
+  }
+
+  function schemaSyncProgressFor(
+    dataSourceId: string,
+    standardId: string,
+    remoteRows: number,
+    stats: LocalFlatSqlStandardStats[],
+  ): SchemaSyncProgress {
+    const key = schemaSyncPreferenceKey(dataSourceId, standardId);
+    const localRows = localRowsForStandard(stats, standardId);
+    const cachedBytes = cachedBytesForStandard(stats, standardId);
+    const persisted = schemaSyncProgress[key];
+    const totalRows = Math.max(remoteRows, persisted?.totalRows ?? 0);
+    const complete = totalRows > 0 && localRows >= totalRows;
+    return {
+      status: activeSyncKeys.has(key) ? 'syncing' : complete ? 'synced' : persisted?.status ?? 'idle',
+      syncedRows: Math.max(localRows, persisted?.syncedRows ?? 0),
+      totalRows,
+      localRows,
+      cachedBytes,
+      lastSyncedAt: persisted?.lastSyncedAt ?? null,
+      error: persisted?.error ?? null,
+    };
   }
 
   function updateSchemaSyncPreference(standardId: string, patch: Partial<SchemaSyncPreference>): void {
@@ -642,6 +1001,31 @@
     }
   }
 
+  function loadSchemaSyncProgress(): Record<string, SchemaSyncProgress> {
+    if (typeof window === 'undefined') return {};
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(SCHEMA_SYNC_STATE_STORAGE_KEY) ?? '{}') as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+      const progress: Record<string, SchemaSyncProgress> = {};
+      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+        const normalized = normalizeSchemaSyncProgress(value);
+        if (normalized) progress[key] = normalized;
+      }
+      return progress;
+    } catch {
+      return {};
+    }
+  }
+
+  function persistSchemaSyncProgress(progress: Record<string, SchemaSyncProgress>): void {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(SCHEMA_SYNC_STATE_STORAGE_KEY, JSON.stringify(progress));
+    } catch {
+      // Storage quota or privacy settings should not block progress reporting.
+    }
+  }
+
   function normalizeSchemaSyncPreference(value: unknown): SchemaSyncPreference | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const candidate = value as Record<string, unknown>;
@@ -658,13 +1042,40 @@
     return Math.max(0.1, Math.min(1_000_000, Math.round(numeric * 10) / 10));
   }
 
+  function normalizeSchemaSyncProgress(value: unknown): SchemaSyncProgress | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const candidate = value as Record<string, unknown>;
+    return {
+      status: isSchemaSyncStatus(candidate.status) ? candidate.status : 'idle',
+      syncedRows: normalizedRowCount(candidate.syncedRows),
+      totalRows: normalizedRowCount(candidate.totalRows),
+      localRows: normalizedRowCount(candidate.localRows),
+      cachedBytes: normalizedRowCount(candidate.cachedBytes),
+      lastSyncedAt: typeof candidate.lastSyncedAt === 'string' ? candidate.lastSyncedAt : null,
+      error: typeof candidate.error === 'string' ? candidate.error : null,
+    };
+  }
+
+  function normalizedRowCount(value: unknown): number {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0) return 0;
+    return Math.floor(numeric);
+  }
+
+  function isSchemaSyncStatus(value: unknown): value is SchemaSyncStatus {
+    return value === 'idle' || value === 'syncing' || value === 'synced' || value === 'capped' || value === 'error';
+  }
+
   function isStorageUnit(value: unknown): value is StorageUnit {
     return typeof value === 'string' && STORAGE_CAP_UNITS.includes(value as StorageUnit);
   }
 
   function workbenchColumnsForStandard(standardId: string, rows: WorkbenchRow[]): WorkbenchColumn[] {
     const standardColumns = STANDARD_FIELD_COLUMNS[standardId] ?? [];
-    const knownKeys = new Set([...METADATA_COLUMNS, ...standardColumns].map((column) => column.key));
+    const metadataColumns = standardId === 'PNM'
+      ? METADATA_COLUMNS.filter((column) => column.key !== 'cid')
+      : METADATA_COLUMNS;
+    const knownKeys = new Set([...metadataColumns, ...standardColumns].map((column) => column.key));
     const dynamicColumns: WorkbenchColumn[] = [];
     for (const row of rows) {
       for (const key of Object.keys(row.decoded)) {
@@ -674,8 +1085,8 @@
         dynamicColumns.push({ key, label: labelFromFieldKey(key), source: 'standard' });
       }
     }
-    if (standardColumns.length === 0) return [...METADATA_COLUMNS, ...dynamicColumns];
-    return [...standardColumns, ...METADATA_COLUMNS, ...dynamicColumns];
+    if (standardColumns.length === 0) return [...metadataColumns, ...dynamicColumns];
+    return [...standardColumns, ...metadataColumns, ...dynamicColumns];
   }
 
   function syncVisibleColumnKeys(columns: WorkbenchColumn[]): void {
@@ -712,6 +1123,7 @@
       const standardId = standardIdFromSchema(record.schemaName);
       if (standardId === 'EPM') return { record, decoded: decodeEpmFlatBuffer(bytes) };
       if (standardId === 'OMM') return { record, decoded: decodeOmmFlatBuffer(bytes) };
+      if (standardId === 'PNM') return { record, decoded: decodePnmFlatBuffer(bytes) };
       return { record, decoded: {} };
     } catch {
       return { record, decoded: {} };
@@ -797,6 +1209,38 @@
     return new Intl.NumberFormat('en-US').format(value);
   }
 
+  function syncProgressLabel(schema: SchemaSyncRow): string {
+    const syncedRows = Math.max(schema.localRows, schema.progress.syncedRows);
+    const totalRows = Math.max(schema.remoteRows, schema.progress.totalRows);
+    if (totalRows === 0) return 'No remote rows';
+    return `Synced ${formatNumber(syncedRows)}/${formatNumber(totalRows)}`;
+  }
+
+  function syncStatusLabel(schema: SchemaSyncRow): string {
+    if (schema.preference.mode !== 'sync') return 'Preview only';
+    if (schema.progress.status === 'error') return 'Sync error';
+    if (schema.progress.status === 'capped') return 'Storage cap reached';
+    return 'Syncing';
+  }
+
+  function syncPieStyle(schema: SchemaSyncRow): string {
+    const totalRows = Math.max(schema.remoteRows, schema.progress.totalRows, 1);
+    const syncedRows = Math.min(totalRows, Math.max(schema.localRows, schema.progress.syncedRows));
+    const degrees = Math.round((syncedRows / totalRows) * 360);
+    return `background: conic-gradient(var(--sdn-green) ${degrees}deg, rgba(255, 255, 255, 0.08) ${degrees}deg);`;
+  }
+
+  function formatDateTime(value: string): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date);
+  }
+
   function formatBytes(value: number): string {
     if (!Number.isFinite(value) || value <= 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -808,6 +1252,15 @@
     }
     const digits = nextValue >= 10 || unitIndex === 0 ? 0 : 1;
     return `${nextValue.toFixed(digits)} ${units[unitIndex]}`;
+  }
+
+  function storageCapBytes(preference: SchemaSyncPreference): number {
+    const unitMultiplier = preference.storageUnit === 'TB'
+      ? 1024 ** 4
+      : preference.storageUnit === 'GB'
+        ? 1024 ** 3
+        : 1024 ** 2;
+    return Math.max(1, Math.floor(preference.storageCap * unitMultiplier));
   }
 
   function normalizedPageSize(): number {
@@ -1041,195 +1494,339 @@
     </aside>
 
     <div class="sdn-workbench-main">
-      <div class="sdn-workbench-controls">
-        <label>
-          <span>Table</span>
-          <select class="sdn-input sdn-select" bind:value={selectedStandardId} on:change={handleTableChange}>
-            {#each standardOptions as standard}
-              <option value={standard.id}>{standard.id} ({formatNumber(standard.remoteRows)})</option>
-            {/each}
-          </select>
-        </label>
-
-        <label class="sdn-workbench-sql">
-          <span>SQL</span>
-          <textarea class="sdn-input sdn-sql-input" bind:value={sqlQueryText} on:input={handleSqlInput} rows="2" spellcheck="false"></textarea>
-        </label>
-
-        <label>
-          <span>Page size</span>
-          <select class="sdn-input sdn-select" bind:value={pageSize} on:change={handlePageSizeChange}>
-            {#each PAGE_SIZE_OPTIONS as option}
-              <option value={option}>{option}</option>
-            {/each}
-          </select>
-        </label>
-
-        {#if !sqlResult}
-          <div class="sdn-column-menu">
-            <button class="sdn-button sdn-button-muted" type="button" on:click={() => columnMenuOpen = !columnMenuOpen}>Columns</button>
-            {#if columnMenuOpen}
-              <div class="sdn-column-menu-panel">
-                {#each allColumns as column}
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={visibleColumnKeys.includes(column.key)}
-                      on:change={() => toggleColumn(column.key)}
-                    />
-                    <span>{column.label}</span>
-                  </label>
-                {/each}
-              </div>
-            {/if}
-          </div>
-          {/if}
-
-        <button class="sdn-button sdn-button-muted" type="button" on:click={() => void runSqlQuery()} disabled={sqlRunning}>Run SQL</button>
-      </div>
-
-      <div class="sdn-schema-sync-wrap">
-        <table class="sdn-table sdn-schema-sync-table" aria-label="Schema sync">
-          <thead>
-            <tr>
-              <th>Schema</th>
-              <th>Remote rows</th>
-              <th>Local rows</th>
-              <th>Sync</th>
-              <th>Storage cap</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each schemaSyncRows as schema}
-              <tr class:active={schema.id === selectedStandardId}>
-                <td>{schema.id}</td>
-                <td>{formatNumber(schema.remoteRows)}</td>
-                <td>{formatNumber(schema.localRows)}</td>
-                <td>
-                  <select
-                    class="sdn-input sdn-select sdn-schema-sync-mode"
-                    aria-label={`${schema.id} sync`}
-                    value={schema.preference.mode}
-                    on:change={(event) => handleSchemaSyncModeChange(schema.id, event)}
-                  >
-                    <option value="preview">Preview only</option>
-                    <option value="sync">Sync locally</option>
-                  </select>
-                </td>
-                <td>
-                  <div class="sdn-storage-cap-controls">
-                    <input
-                      class="sdn-input"
-                      type="number"
-                      min="0.1"
-                      step="0.1"
-                      aria-label={`${schema.id} storage cap`}
-                      value={schema.preference.storageCap}
-                      disabled={schema.preference.mode !== 'sync'}
-                      on:input={(event) => handleSchemaStorageCapInput(schema.id, event)}
-                    />
-                    <select
-                      class="sdn-input sdn-select"
-                      aria-label={`${schema.id} storage unit`}
-                      value={schema.preference.storageUnit}
-                      disabled={schema.preference.mode !== 'sync'}
-                      on:change={(event) => handleSchemaStorageUnitChange(schema.id, event)}
-                    >
-                      {#each STORAGE_CAP_UNITS as unit}
-                        <option value={unit}>{unit}</option>
-                      {/each}
-                    </select>
-                  </div>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
+      <nav class="sdn-data-subnav" aria-label="Data sections">
+        <div class="sdn-breadcrumb">Data / {selectedDataSubview.breadcrumb}</div>
+        <div class="sdn-data-subnav-actions">
+          {#each DATA_SUBVIEWS as subview}
+            <button
+              class="sdn-button sdn-button-muted"
+              class:active={dataSubview === subview.id}
+              type="button"
+              aria-pressed={dataSubview === subview.id}
+              on:click={() => selectDataSubview(subview.id)}
+            >
+              {subview.label}
+            </button>
+          {/each}
+        </div>
+      </nav>
 
       {#if workbenchLoading}
         <p class="sdn-loading-inline" role="status">Loading</p>
       {/if}
 
-      <div class="sdn-dataset-summary" aria-label="Dataset summary">
-        <div class="sdn-dataset-metric" aria-label={`Remote rows ${formatNumber(estimatedTotalRows ?? 0)}`}>
-          <span>Remote rows</span>
-          <strong>{formatNumber(estimatedTotalRows ?? 0)}</strong>
-        </div>
-        <div class="sdn-dataset-metric" aria-label={`Local rows ${formatNumber(localRowCount)}`}>
-          <span>Local rows</span>
-          <strong>{formatNumber(localRowCount)}</strong>
-        </div>
-        <div class="sdn-dataset-metric" aria-label={`Cached ${formatBytes(cachedByteCount)}`}>
-          <span>Cached</span>
-          <strong>{formatBytes(cachedByteCount)}</strong>
-        </div>
-        <div class="sdn-dataset-metric" aria-label={`Scan ${scanHashLabel}`}>
-          <span>Scan</span>
-          <strong>{scanHashLabel}</strong>
-        </div>
-      </div>
+      {#if dataSubview === 'storage'}
+        <section class="sdn-storage-state" aria-label="Local storage state">
+          <div class="sdn-dataset-summary" aria-label="Dataset summary">
+            <div class="sdn-dataset-metric" aria-label={`Remote rows ${formatNumber(estimatedTotalRows ?? 0)}`}>
+              <span>Remote rows</span>
+              <strong>{formatNumber(estimatedTotalRows ?? 0)}</strong>
+            </div>
+            <div class="sdn-dataset-metric" aria-label={`Local rows ${formatNumber(localRowCount)}`}>
+              <span>Local rows</span>
+              <strong>{formatNumber(localRowCount)}</strong>
+            </div>
+            <div class="sdn-dataset-metric" aria-label={`Cached ${formatBytes(cachedByteCount)}`}>
+              <span>Cached</span>
+              <strong>{formatBytes(cachedByteCount)}</strong>
+            </div>
+            <div class="sdn-dataset-metric" aria-label={`Scan ${scanHashLabel}`}>
+              <span>Scan</span>
+              <strong>{scanHashLabel}</strong>
+            </div>
+          </div>
 
-      <div class="sdn-table-wrap sdn-workbench-table-wrap">
-        <table class="sdn-table sdn-workbench-table" aria-label="Data rows">
-          {#if sqlResult}
+          <div class="sdn-storage-grid">
+            {#each schemaSyncRows as schema}
+              <article class="sdn-storage-row" class:active={schema.id === selectedStandardId}>
+                <div class="sdn-sync-pie" style={syncPieStyle(schema)} aria-hidden="true"></div>
+                <div>
+                  <strong>{schema.id}</strong>
+                  <span>{formatNumber(schema.localRows)} local / {formatNumber(schema.remoteRows)} remote</span>
+                </div>
+                <div>
+                  <strong>{formatBytes(schema.cachedBytes)}</strong>
+                  <span>{syncProgressLabel(schema)}</span>
+                </div>
+                <div>
+                  <strong>{syncStatusLabel(schema)}</strong>
+                  <span>{schema.progress.lastSyncedAt ? formatDateTime(schema.progress.lastSyncedAt) : 'Never synced'}</span>
+                </div>
+              </article>
+            {/each}
+          </div>
+        </section>
+      {:else if dataSubview === 'subscriptions'}
+        <section class="sdn-schema-sync-wrap" aria-label="Sync subscriptions">
+          <table class="sdn-table sdn-schema-sync-table" aria-label="Schema sync">
             <thead>
               <tr>
-                {#each displaySqlColumns as column}
-                  <th>{column}</th>
-                {/each}
+                <th>Schema</th>
+                <th>Remote rows</th>
+                <th>Local rows</th>
+                <th>Progress</th>
+                <th>Status</th>
+                <th>Sync</th>
+                <th>Storage cap</th>
+                <th>Last synced</th>
               </tr>
             </thead>
             <tbody>
-              {#each sqlRecords as row}
-                <tr>
-                  {#each displaySqlColumns as column}
-                    <td title={sqlCellValue(row, column)}>{displaySqlCellValue(row, column)}</td>
-                  {/each}
-                </tr>
-              {:else}
-                <tr>
-                  <td colspan={Math.max(1, displaySqlColumns.length)}>No rows loaded for {selectedStandardId}.</td>
+              {#each schemaSyncRows as schema}
+                <tr class:active={schema.id === selectedStandardId}>
+                  <td>{schema.id}</td>
+                  <td>{formatNumber(schema.remoteRows)}</td>
+                  <td>{formatNumber(schema.localRows)}</td>
+                  <td>{syncProgressLabel(schema)}</td>
+                  <td>{syncStatusLabel(schema)}</td>
+                  <td>
+                    <select
+                      class="sdn-input sdn-select sdn-schema-sync-mode"
+                      aria-label={`${schema.id} sync`}
+                      value={schema.preference.mode}
+                      on:change={(event) => handleSchemaSyncModeChange(schema.id, event)}
+                    >
+                      <option value="preview">Preview only</option>
+                      <option value="sync">Sync locally</option>
+                    </select>
+                  </td>
+                  <td>
+                    <div class="sdn-storage-cap-controls">
+                      <input
+                        class="sdn-input"
+                        type="number"
+                        min="0.1"
+                        step="0.1"
+                        aria-label={`${schema.id} storage cap`}
+                        value={schema.preference.storageCap}
+                        disabled={schema.preference.mode !== 'sync'}
+                        on:input={(event) => handleSchemaStorageCapInput(schema.id, event)}
+                      />
+                      <select
+                        class="sdn-input sdn-select"
+                        aria-label={`${schema.id} storage unit`}
+                        value={schema.preference.storageUnit}
+                        disabled={schema.preference.mode !== 'sync'}
+                        on:change={(event) => handleSchemaStorageUnitChange(schema.id, event)}
+                      >
+                        {#each STORAGE_CAP_UNITS as unit}
+                          <option value={unit}>{unit}</option>
+                        {/each}
+                      </select>
+                    </div>
+                  </td>
+                  <td>{schema.progress.lastSyncedAt ? formatDateTime(schema.progress.lastSyncedAt) : 'Never'}</td>
                 </tr>
               {/each}
             </tbody>
-          {:else}
-            <thead>
-              <tr>
-                {#each visibleColumns as column}
-                  <th aria-sort={sortAria(column.key)}>
-                    <button class="sdn-sort-button" type="button" on:click={() => setSort(column.key)}>
-                      {sortableHeader(column.key, column.label)}
-                    </button>
-                  </th>
+          </table>
+        </section>
+      {:else}
+        <section class="sdn-explorer-panel" aria-label="Data explorer">
+          <div class="sdn-workbench-controls">
+            <label>
+              <span>Table</span>
+              <select class="sdn-input sdn-select" bind:value={selectedStandardId} on:change={handleTableChange}>
+                {#each standardOptions as standard}
+                  <option value={standard.id}>{standard.id} ({formatNumber(standard.remoteRows)})</option>
                 {/each}
-              </tr>
-            </thead>
-            <tbody>
-              {#each visibleRows as row}
-                <tr>
-                  {#each visibleColumns as column}
-                    <td title={fullCellValue(row, column)}>{displayCellValue(row, column)}</td>
+              </select>
+            </label>
+
+            <label class="sdn-workbench-sql">
+              <span>SQL</span>
+              <textarea class="sdn-input sdn-sql-input" bind:value={sqlQueryText} on:input={handleSqlInput} rows="2" spellcheck="false"></textarea>
+            </label>
+
+            <label>
+              <span>Page size</span>
+              <select class="sdn-input sdn-select" bind:value={pageSize} on:change={handlePageSizeChange}>
+                {#each PAGE_SIZE_OPTIONS as option}
+                  <option value={option}>{option}</option>
+                {/each}
+              </select>
+            </label>
+
+            {#if !sqlResult}
+              <div class="sdn-column-menu">
+                <button class="sdn-button sdn-button-muted" type="button" on:click={() => columnMenuOpen = !columnMenuOpen}>Columns</button>
+                {#if columnMenuOpen}
+                  <div class="sdn-column-menu-panel">
+                    {#each allColumns as column}
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={visibleColumnKeys.includes(column.key)}
+                          on:change={() => toggleColumn(column.key)}
+                        />
+                        <span>{column.label}</span>
+                      </label>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+
+            <button class="sdn-button sdn-button-muted" type="button" on:click={() => void runSqlQuery()} disabled={sqlRunning}>Run SQL</button>
+          </div>
+
+          <div class="sdn-dataset-summary" aria-label="Dataset summary">
+            <div class="sdn-dataset-metric" aria-label={`Remote rows ${formatNumber(estimatedTotalRows ?? 0)}`}>
+              <span>Remote rows</span>
+              <strong>{formatNumber(estimatedTotalRows ?? 0)}</strong>
+            </div>
+            <div class="sdn-dataset-metric" aria-label={`Local rows ${formatNumber(localRowCount)}`}>
+              <span>Local rows</span>
+              <strong>{formatNumber(localRowCount)}</strong>
+            </div>
+            <div class="sdn-dataset-metric" aria-label={`Cached ${formatBytes(cachedByteCount)}`}>
+              <span>Cached</span>
+              <strong>{formatBytes(cachedByteCount)}</strong>
+            </div>
+            <div class="sdn-dataset-metric" aria-label={`Scan ${scanHashLabel}`}>
+              <span>Scan</span>
+              <strong>{scanHashLabel}</strong>
+            </div>
+          </div>
+
+          <div class="sdn-table-wrap sdn-workbench-table-wrap">
+            <table class="sdn-table sdn-workbench-table" aria-label="Data rows">
+              {#if sqlResult}
+                <thead>
+                  <tr>
+                    {#each displaySqlColumns as column}
+                      <th>{column}</th>
+                    {/each}
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each sqlRecords as row}
+                    <tr>
+                      {#each displaySqlColumns as column}
+                        <td title={sqlCellValue(row, column)}>{displaySqlCellValue(row, column)}</td>
+                      {/each}
+                    </tr>
+                  {:else}
+                    <tr>
+                      <td colspan={Math.max(1, displaySqlColumns.length)}>No rows loaded for {selectedStandardId}.</td>
+                    </tr>
                   {/each}
-                </tr>
+                </tbody>
               {:else}
-                <tr>
-                  <td colspan={Math.max(1, visibleColumns.length)}>No rows loaded for {selectedStandardId}.</td>
-                </tr>
-              {/each}
-            </tbody>
+                <thead>
+                  <tr>
+                    {#each visibleColumns as column}
+                      <th aria-sort={sortAria(column.key)}>
+                        <button class="sdn-sort-button" type="button" on:click={() => setSort(column.key)}>
+                          {sortableHeader(column.key, column.label)}
+                        </button>
+                      </th>
+                    {/each}
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each visibleRows as row}
+                    <tr
+                      class:sdn-clickable-row={selectedStandardId === 'PNM'}
+                      class:active={selectedPnmRow?.record.cid === row.record.cid}
+                      role={selectedStandardId === 'PNM' ? 'button' : undefined}
+                      tabindex={selectedStandardId === 'PNM' ? 0 : undefined}
+                      on:click={() => handleWorkbenchRowClick(row)}
+                      on:keydown={(event) => handleWorkbenchRowKeydown(row, event)}
+                    >
+                      {#each visibleColumns as column}
+                        <td title={fullCellValue(row, column)}>{displayCellValue(row, column)}</td>
+                      {/each}
+                    </tr>
+                  {:else}
+                    <tr>
+                      <td colspan={Math.max(1, visibleColumns.length)}>No rows loaded for {selectedStandardId}.</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              {/if}
+            </table>
+          </div>
+
+          <div class="sdn-pagination">
+            <button class="sdn-button sdn-button-muted" type="button" on:click={goToPreviousPage} disabled={!canGoPrevious}>Previous</button>
+            <span class="sdn-page-count">{pageLabel}</span>
+            <button class="sdn-button sdn-button-muted" type="button" on:click={goToNextPage} disabled={!canGoNext}>Next</button>
+          </div>
+
+          {#if selectedStandardId === 'PNM' && selectedPnmRow}
+            <section class="sdn-pnm-detail" aria-label="PNM detail">
+              <div class="sdn-pnm-detail-head">
+                <div>
+                  <strong>PNM publication</strong>
+                  <span>{pnmValue(selectedPnmDetails, 'FILE_ID')}</span>
+                </div>
+                <button class="sdn-button sdn-button-muted" type="button" on:click={() => void verifySelectedPnmSignature()} disabled={pnmSignatureRunning}>Verify signature</button>
+              </div>
+
+              <div class="sdn-pnm-fields">
+                {#each PNM_STANDARD_COLUMNS as column}
+                  {#if hasDisplayValue(selectedPnmDetails[column.key])}
+                    <div>
+                      <span>{column.label}</span>
+                      <code>{pnmValue(selectedPnmDetails, column.key)}</code>
+                    </div>
+                  {/if}
+                {/each}
+              </div>
+
+              <label class="sdn-pnm-file-query">
+                <span>FILE_ID query</span>
+                <div>
+                  <input class="sdn-input" bind:value={pnmFileIdQuery} />
+                  <button class="sdn-button sdn-button-muted" type="button" on:click={() => void runPnmFileIdQuery()}>Query</button>
+                </div>
+              </label>
+
+              <div class="sdn-pnm-signature-payload">
+                <span>Reconstituted signature payload</span>
+                <code>{pnmSignaturePayload(selectedPnmDetails)}</code>
+              </div>
+
+              {#if pnmSignatureStatus}
+                <p class="sdn-empty-inline" role="status">{pnmSignatureStatus}</p>
+              {/if}
+
+              {#if pnmQueryError}
+                <p class="sdn-empty-inline" role="alert">{pnmQueryError}</p>
+              {:else if pnmQueryResult}
+                <div class="sdn-table-wrap sdn-pnm-query-table-wrap">
+                  <table class="sdn-table sdn-pnm-query-table" aria-label="PNM FILE_ID results">
+                    <thead>
+                      <tr>
+                        {#each pnmQueryColumns as column}
+                          <th>{column}</th>
+                        {/each}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {#each pnmQueryRows as row}
+                        <tr>
+                          {#each pnmQueryColumns as column}
+                            <td title={sqlCellValue(row, column)}>{displaySqlCellValue(row, column)}</td>
+                          {/each}
+                        </tr>
+                      {:else}
+                        <tr>
+                          <td colspan={Math.max(1, pnmQueryColumns.length)}>No PNMs found for this FILE_ID.</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+              {/if}
+            </section>
           {/if}
-        </table>
-      </div>
 
-      <div class="sdn-pagination">
-        <button class="sdn-button sdn-button-muted" type="button" on:click={goToPreviousPage} disabled={!canGoPrevious}>Previous</button>
-        <span class="sdn-page-count">{pageLabel}</span>
-        <button class="sdn-button sdn-button-muted" type="button" on:click={goToNextPage} disabled={!canGoNext}>Next</button>
-      </div>
-
-      {#if sqlError}
-        <p class="sdn-empty-inline" role="alert">{sqlError}</p>
+          {#if sqlError}
+            <p class="sdn-empty-inline" role="alert">{sqlError}</p>
+          {/if}
+        </section>
       {/if}
     </div>
   </div>

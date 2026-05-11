@@ -47,28 +47,41 @@ test('data route renders a searchable remote data source without workbench statu
   await sourceTable.getByRole('button', { name: /CelesTrak Provider/ }).click();
   await expect(page.getByText('Loading')).toBeVisible();
 
-  await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('PNM');
-  await expect(page.getByRole('combobox', { name: 'Table' }).locator('option')).toHaveText([
-    'PNM (4)',
-    'OMM (2)',
-    'CAT (1)',
-    'EPM (1)',
-  ]);
+  await expect(page.getByRole('button', { name: 'Storage' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('Local storage state')).toBeVisible();
+  await page.getByRole('button', { name: 'Subscriptions' }).click();
   const schemaSync = page.getByRole('table', { name: 'Schema sync' });
   await expect(schemaSync).toBeVisible();
   await expect(schemaSync.getByRole('row').nth(1)).toContainText('PNM');
-  await expect(schemaSync.getByRole('row').nth(1)).toContainText('4');
+  await expect(schemaSync.getByRole('row').nth(1)).toContainText('12');
   await expect(schemaSync.getByRole('combobox', { name: 'PNM sync' })).toHaveValue('preview');
   await expect(schemaSync.getByRole('spinbutton', { name: 'PNM storage cap' })).toBeDisabled();
   await schemaSync.getByRole('combobox', { name: 'PNM sync' }).selectOption('sync');
   await expect(schemaSync.getByRole('spinbutton', { name: 'PNM storage cap' })).toBeEnabled();
-  await schemaSync.getByRole('spinbutton', { name: 'PNM storage cap' }).fill('2');
+  await schemaSync.getByRole('spinbutton', { name: 'PNM storage cap' }).fill('2.5');
   await schemaSync.getByRole('combobox', { name: 'PNM storage unit' }).selectOption('MB');
+  await expect(schemaSync.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2.5');
+  await expect(schemaSync.getByRole('row').nth(1)).toContainText('Syncing');
+  await expect(schemaSync.getByRole('row').nth(1)).toContainText('Synced 12/12');
+  await page.getByRole('button', { name: 'Explorer' }).click();
+  await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('PNM');
+  await expect(page.getByRole('combobox', { name: 'Table' }).locator('option')).toHaveText([
+    'PNM (12)',
+    'OMM (2)',
+    'CAT (1)',
+    'EPM (1)',
+  ]);
   await expect(page.getByRole('combobox', { name: 'Page size' })).toHaveValue('10');
-  await expect(page.getByLabel('Remote rows 4')).toBeVisible();
-  await expect(page.getByLabel('Local rows 1')).toBeVisible();
+  await expect(page.getByLabel('Remote rows 12')).toBeVisible();
+  await expect(page.getByLabel('Local rows 12')).toBeVisible();
   const dataRows = page.getByRole('table', { name: 'Data rows' });
-  await expect(dataRows.getByRole('cell', { name: 'bafy-pnm-cid' })).toBeVisible();
+  await expect(dataRows.getByRole('cell', { name: 'bafy-pnm-cid', exact: true })).toBeVisible();
+  await dataRows.getByRole('cell', { name: 'bafy-pnm-cid', exact: true }).click();
+  await expect(page.getByLabel('PNM detail')).toContainText('celestrak:gp:OMM.fbs:2026-05-11T03:00:00Z');
+  await expect(page.getByText('Reconstituted signature payload')).toBeVisible();
+  await page.getByRole('button', { name: 'Verify signature' }).click();
+  await expect(page.getByText('Signature not present on this PNM.')).toBeVisible();
+  await expect(page.getByRole('table', { name: 'PNM FILE_ID results' })).toContainText('bafy-pnm-cid');
   await expect(dataRows.getByRole('columnheader', { name: 'SIGNATURE' })).toHaveCount(0);
   await expect(page.getByRole('table', { name: 'SQL results' })).toHaveCount(0);
   await expect(page.getByRole('columnheader', { name: 'Bytes' })).toHaveCount(0);
@@ -82,14 +95,15 @@ test('data route renders a searchable remote data source without workbench statu
   await sql.fill('SELECT FILE_ID, CID FROM PNM LIMIT 10');
   await page.getByRole('button', { name: 'Run SQL' }).click();
   await expect(dataRows.getByRole('columnheader', { name: 'FILE_ID' })).toBeVisible();
-  await expect(dataRows.getByRole('cell', { name: 'bafy-pnm-cid' })).toBeVisible();
+  await expect(dataRows.getByRole('cell', { name: 'bafy-pnm-cid', exact: true })).toBeVisible();
 
   await page.reload();
   await page.getByRole('searchbox', { name: 'Data source' }).fill('celes');
   await page.getByRole('table', { name: 'Data sources' }).getByRole('button', { name: /CelesTrak Provider/ }).click();
+  await page.getByRole('button', { name: 'Subscriptions' }).click();
   const reloadedSchemaSync = page.getByRole('table', { name: 'Schema sync' });
   await expect(reloadedSchemaSync.getByRole('combobox', { name: 'PNM sync' })).toHaveValue('sync');
-  await expect(reloadedSchemaSync.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2');
+  await expect(reloadedSchemaSync.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2.5');
   await expect(reloadedSchemaSync.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
 });
 
@@ -258,13 +272,13 @@ async function installSdnFixtures(page: Page): Promise<void> {
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
-        total_records: 8,
-        total_bytes: 1152,
+        total_records: 16,
+        total_bytes: 3456,
         schemas: [
           { schema_name: 'CAT.fbs', count: 1, total_bytes: 144 },
           { schema_name: 'EPM.fbs', count: 1, total_bytes: 144 },
           { schema_name: 'OMM.fbs', count: 2, total_bytes: 576 },
-          { schema_name: 'PNM.fbs', count: 4, total_bytes: 288 },
+          { schema_name: 'PNM.fbs', count: 12, total_bytes: 1728 },
         ],
         sources: [
           {
@@ -272,8 +286,8 @@ async function installSdnFixtures(page: Page): Promise<void> {
             provider_id: 'space-data-network-02',
             source_name: 'celestrak-publication-log',
             batch_id: 'fixture-pnm-batch',
-            count: 4,
-            total_bytes: 288,
+            count: 12,
+            total_bytes: 1728,
           },
           {
             schema_name: 'OMM.fbs',
@@ -289,55 +303,79 @@ async function installSdnFixtures(page: Page): Promise<void> {
   });
   await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/scan', async (route) => {
     const body = route.request().postDataJSON();
-    expect(body).toMatchObject({ schema: 'PNM.fbs', limit: 10, offset: 0, include_data: false });
+    expect(body.schema).toBe('PNM.fbs');
+    expect(body.include_data).toBe(false);
+    const offset = Number(body.offset ?? 0);
+    const limit = Number(body.limit ?? 10);
+    const pageRefs = PNM_FIXTURE_REFS.slice(offset, offset + limit);
     await new Promise((resolve) => setTimeout(resolve, 100));
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
         schema: 'PNM.fbs',
-        total_count: 4,
-        count: 1,
-        limit: 10,
-        offset: 0,
+        total_count: PNM_FIXTURE_REFS.length,
+        count: pageRefs.length,
+        limit,
+        offset,
         cursor: 'MA',
-        next_cursor: '',
+        next_cursor: offset + pageRefs.length < PNM_FIXTURE_REFS.length ? String(offset + pageRefs.length) : '',
         scan_hash: 'fixture-scan-hash',
-        results: [
-          {
-            schema_name: 'PNM.fbs',
-            cid: 'celestrak-pnm-1',
-            peer_id: 'source:celestrak',
-            provider_id: 'space-data-network-02',
-            source_name: 'celestrak-publication-log',
-            batch_id: 'fixture-pnm-batch',
-            timestamp: '2026-05-11T04:02:25Z',
-            size_bytes: 288,
-          },
-        ],
+        results: pageRefs.map(({ cid }, index) => ({
+          schema_name: 'PNM.fbs',
+          cid,
+          peer_id: 'source:celestrak',
+          provider_id: 'space-data-network-02',
+          source_name: 'celestrak-publication-log',
+          batch_id: 'fixture-pnm-batch',
+          timestamp: `2026-05-11T04:${String(offset + index).padStart(2, '0')}:25Z`,
+          size_bytes: 144,
+        })),
       }),
     });
   });
   await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/stream', async (route) => {
     const body = route.request().postDataJSON();
-    expect(body).toMatchObject({
-      schema: 'PNM.fbs',
-      scan_hash: 'fixture-scan-hash',
-      records: [{
-        schema_name: 'PNM.fbs',
-        cid: 'celestrak-pnm-1',
-        peer_id: 'source:celestrak',
-        provider_id: 'space-data-network-02',
-        source_name: 'celestrak-publication-log',
-      }],
-    });
+    expect(body.schema).toBe('PNM.fbs');
+    expect(body.scan_hash).toBe('fixture-scan-hash');
     expect(route.request().headers().accept).toContain('application/vnd.sdn.flatbuffers.stream');
+    const records = Array.isArray(body.records) ? body.records : [];
+    const buffers = records.map((record: { cid: string }) => PNM_FIXTURE_REFS.find((fixture) => fixture.cid === record.cid)?.bytes ?? PNM_BYTES);
     await route.fulfill({
       contentType: 'application/vnd.sdn.flatbuffers.stream',
-      body: rawFlatbufferStream([PNM_BYTES]),
+      body: rawFlatbufferStream(buffers),
     });
   });
   await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/query', async (route) => {
     const body = route.request().postDataJSON();
+    if (body.schema === 'PNM.fbs') {
+      const offset = Number(body.offset ?? 0);
+      const limit = Number(body.limit ?? 10);
+      const pageRefs = PNM_FIXTURE_REFS.slice(offset, offset + limit);
+      if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
+        await route.fulfill({
+          contentType: 'application/vnd.sdn.flatbuffers.stream',
+          body: rawFlatbufferStream(pageRefs.map((record) => record.bytes)),
+        });
+        return;
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          results: pageRefs.map(({ cid }, index) => ({
+            schema_name: 'PNM.fbs',
+            cid,
+            peer_id: 'source:celestrak',
+            provider_id: 'space-data-network-02',
+            source_name: 'celestrak-publication-log',
+            batch_id: 'fixture-pnm-batch',
+            timestamp: `2026-05-11T04:${String(offset + index).padStart(2, '0')}:25Z`,
+            size_bytes: 144,
+            data_base64: pageRefs[index].bytes.toString('base64'),
+          })),
+        }),
+      });
+      return;
+    }
     expect(body).toMatchObject({ schema: 'OMM.fbs', limit: 10, offset: 0 });
     if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
       await route.fulfill({
@@ -389,7 +427,15 @@ async function installSdnFixtures(page: Page): Promise<void> {
 }
 
 const STARLINK_6292_OMM_BYTES = Buffer.from('HAEAAEgAAAAkT01NAAAAADwAVAAAAAwACABQAEwAEAAAAAAAAAAAAAAARAAAADwANAAsACQAHAAUAAAAAAAAAAAAAAAAAAAABABIADwAAABQAAAAVAAAAGAAAAB4AAAAxEKtad4BV0DByqFFtsBwQGZmZmZmnGJAXf5D+u1/UUCej3xvHS04P22KKnBw9y1AUAAAAMfdAABkAAAAcAAAAAEAAABVAAAACAAAAFNETi1URVNUAAAAABQAAAAyMDI2LTA1LTExVDEwOjI2OjQxWgAAAAAFAAAARUFSVEgAAAAUAAAAMjAyNi0wNS0xMFQxMDo0NTozMVoAAAAACQAAADIwMjMtMDc4SgAAAA0AAABTVEFSTElOSy02MjkyAAAA', 'base64');
-const PNM_BYTES = buildPnmBytes();
+const PNM_BYTES = buildPnmBytes('bafy-pnm-cid', 'celestrak:gp:OMM.fbs:2026-05-11T03:00:00Z');
+const PNM_FIXTURE_REFS = Array.from({ length: 12 }, (_, index) => {
+  const ordinal = index + 1;
+  const cid = ordinal === 1 ? 'bafy-pnm-cid' : `bafy-pnm-cid-${ordinal}`;
+  return {
+    cid,
+    bytes: buildPnmBytes(cid, `celestrak:gp:OMM.fbs:2026-05-11T03:${String(index).padStart(2, '0')}:00Z`),
+  };
+});
 
 function rawFlatbufferStream(records: Buffer[]): Buffer {
   const chunks: Buffer[] = [];
@@ -401,13 +447,13 @@ function rawFlatbufferStream(records: Buffer[]): Buffer {
   return Buffer.concat(chunks);
 }
 
-function buildPnmBytes(): Buffer {
+function buildPnmBytes(cidValue: string, fileIdValue: string): Buffer {
   const builder = new flatbuffers.Builder(256);
   const multiaddr = builder.createString('/dns4/celestrak.eth/tcp/443/wss');
   const published = builder.createString('2026-05-11T03:00:00Z');
-  const cid = builder.createString('bafy-pnm-cid');
+  const cid = builder.createString(cidValue);
   const fileName = builder.createString('OMM.fbs');
-  const fileId = builder.createString('celestrak:gp:OMM.fbs:2026-05-11T03:00:00Z');
+  const fileId = builder.createString(fileIdValue);
   PNM.startPNM(builder);
   PNM.addMultiformatAddress(builder, multiaddr);
   PNM.addPublishTimestamp(builder, published);
