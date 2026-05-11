@@ -52,6 +52,7 @@ test.describe('desktop static identity API', () => {
     expect(vcard.statusCode).toBe(200)
     expect(vcard.body).toContain('BEGIN:VCARD')
     expect(vcard.body).toContain('FN:Alice Example')
+    expect(vcard.body).toContain('EMAIL;TYPE=INTERNET:abcdef@spacedatanetwork.org')
     expect(vcard.body).toContain('X-SDN-PEER-ID:16Uiu2Alice')
     expect(vcard.body).toContain('X-SDN-PUBLIC-KEY:abcdef')
     expect(vcard.body).toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public')
@@ -95,6 +96,73 @@ test.describe('desktop static identity API', () => {
       expect.objectContaining({ dn: 'Alice Operator', peer_id: '16Uiu2Alice' })
     ]))
     expect(users.body).not.toContain('must-not-be-indexed')
+  })
+
+  test('serves the local node EPM route as a raw FlatBuffer', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-node-epm-api-'))
+    const { serveDesktopNodeEPMAPI } = loadStaticServer(userData)
+
+    const put = await requestRaw(serveDesktopNodeEPMAPI, 'PUT', '/api/node/epm', JSON.stringify({
+      dn: 'Desktop Node',
+      email: 'node@example.invalid',
+      peer_id: '12D3KooWDesktopNode'
+    }))
+    expect(put.statusCode).toBe(200)
+    expect(put.headers['Content-Type']).toBe('application/x-flatbuffers')
+
+    const get = await requestRaw(serveDesktopNodeEPMAPI, 'GET', '/api/node/epm')
+    expect(get.statusCode).toBe(200)
+    expect(get.headers['Content-Type']).toBe('application/x-flatbuffers')
+
+    const flatbuffers = await import('flatbuffers')
+    const { EPM } = await import('spacedatastandards.org/lib/js/EPM/EPM.js')
+    const epm = EPM.getSizePrefixedRootAsEPM(new flatbuffers.ByteBuffer(new Uint8Array(get.bodyBuffer)))
+    expect(epm.DN()).toBe('Desktop Node')
+    expect(epm.EMAIL()).toBe('node@example.invalid')
+  })
+
+  test('serves local node EPM through desktop raw data query routes', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-local-data-api-'))
+    const { serveDesktopLocalDataAPI, serveDesktopNodeEPMAPI } = loadStaticServer(userData)
+
+    await requestRaw(serveDesktopNodeEPMAPI, 'PUT', '/api/node/epm', JSON.stringify({
+      dn: 'Desktop Node',
+      email: 'node@example.invalid',
+      peer_id: '12D3KooWDesktopNode'
+    }))
+
+    const summary = await requestJson(serveDesktopLocalDataAPI, 'GET', '/api/v1/data/summary')
+    expect(summary.statusCode).toBe(200)
+    expect(summary.json.total_records).toBe(1)
+    expect(summary.json.schemas).toEqual([
+      expect.objectContaining({ schema_name: 'EPM.fbs', count: 1 })
+    ])
+    expect(summary.json.sources).toEqual([
+      expect.objectContaining({ schema_name: 'EPM.fbs', provider_id: 'local-node', source_name: 'local-epm' })
+    ])
+
+    const query = await requestJson(serveDesktopLocalDataAPI, 'POST', '/api/v1/data/query', {
+      schema: 'EPM.fbs',
+      provider_id: 'local-node',
+      source_name: 'local-epm',
+      limit: 5
+    })
+    expect(query.statusCode).toBe(200)
+    expect(query.json.records).toEqual([
+      expect.objectContaining({
+        schema_name: 'EPM.fbs',
+        cid: '12D3KooWDesktopNode',
+        peer_id: '12D3KooWDesktopNode',
+        provider_id: 'local-node',
+        source_name: 'local-epm'
+      })
+    ])
+    expect(query.json.records[0].data_base64).toEqual(expect.any(String))
+
+    const record = await requestRaw(serveDesktopLocalDataAPI, 'GET', '/api/v1/data/records/EPM.fbs/12D3KooWDesktopNode')
+    expect(record.statusCode).toBe(200)
+    expect(record.headers['Content-Type']).toBe('application/x-flatbuffers')
+    expect(record.bodyBuffer.byteLength).toBeGreaterThan(0)
   })
 })
 
@@ -152,9 +220,11 @@ async function requestRaw (handler, method, url, body = '') {
   })
   await handled
 
+  const bodyBuffer = Buffer.concat(chunks)
   return {
     statusCode: res.statusCode,
     headers: res.headers,
-    body: Buffer.concat(chunks).toString('utf8')
+    body: bodyBuffer.toString('utf8'),
+    bodyBuffer
   }
 }

@@ -368,19 +368,22 @@ ENTRY_HASH = SHA-256(
 
 ## FlatSQL Storage
 
-FlatSQL is SDN's SQLite-based storage layer that stores raw FlatBuffer blobs
-alongside indexed metadata.
+FlatSQL is SDN's stream-backed storage layer. Raw FlatBuffer records are
+appended to `.flatsql` stream files, while SQLite stores canonical schema
+metadata and query indexes only.
 
 ### Database Schema
 
 ```sql
--- Per-schema data table (one per registered schema)
-CREATE TABLE sds_{schema_name} (
-  cid        TEXT PRIMARY KEY,   -- SHA-256 content ID
-  peer_id    TEXT,               -- Publisher's peer ID
-  timestamp  INTEGER,            -- Unix timestamp
-  data       BLOB,               -- Raw FlatBuffer bytes
-  signature  BLOB                -- Ed25519 signature
+-- Per-schema metadata table (one per registered SDS schema)
+CREATE TABLE OMM (
+  cid           TEXT PRIMARY KEY, -- SHA-256 content ID
+  peer_id       TEXT NOT NULL,    -- Publisher's peer ID
+  timestamp     INTEGER NOT NULL, -- Unix timestamp
+  stream_path   TEXT NOT NULL,    -- Relative .flatsql stream path
+  stream_offset INTEGER NOT NULL, -- Offset of size-prefixed frame
+  record_length INTEGER NOT NULL, -- FlatBuffer byte length
+  signature_hex TEXT              -- Ed25519 signature, hex-encoded
 );
 
 -- Fast lookup index for API queries
@@ -421,7 +424,7 @@ Validate file_identifier (bytes 4-7) against schema registry
 Compute CID = SHA-256(bytes) → hex string
     │
     ▼
-INSERT into sds_{schema} (cid, peer_id, timestamp, data, signature)
+Append bytes to {schema}.flatsql and INSERT metadata into {schema}
     │
     ▼
 Extract index fields (NORAD_CAT_ID, epoch, entity_id) from FlatBuffer

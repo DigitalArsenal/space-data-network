@@ -2,14 +2,20 @@
 package storage
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,17 +26,25 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	logging "github.com/ipfs/go-log/v2"
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
+	"golang.org/x/crypto/scrypt"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 var log = logging.Logger("storage")
 
+const (
+	flatSQLStreamDirName = "flatsql-streams"
+	localEPMStoreSalt    = "space-data-network-local-epm-store-v1"
+)
+
 // FlatSQLStore provides SQLite storage with FlatBuffer virtual tables.
 type FlatSQLStore struct {
 	db        *sql.DB
 	validator *sds.Validator
 	dbPath    string
+	basePath  string
+	streamDir string
 	mu        sync.RWMutex
 }
 
@@ -39,6 +53,10 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator) (*FlatSQLStore, 
 	// Ensure directory exists
 	if err := os.MkdirAll(basePath, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
+	}
+	streamDir := filepath.Join(basePath, flatSQLStreamDirName)
+	if err := os.MkdirAll(streamDir, 0700); err != nil {
+		return nil, fmt.Errorf("failed to create FlatSQL stream directory: %w", err)
 	}
 
 	dbPath := filepath.Join(basePath, "sdn.db")
@@ -58,6 +76,8 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator) (*FlatSQLStore, 
 		db:        db,
 		validator: validator,
 		dbPath:    dbPath,
+		basePath:  basePath,
+		streamDir: streamDir,
 	}
 
 	// Initialize tables for all schemas
@@ -147,27 +167,23 @@ func (s *FlatSQLStore) initTables() error {
 		return fmt.Errorf("failed to create time window index: %w", err)
 	}
 
-	sourceTagsExisted, err := s.tableExists("sdn_record_source_tags")
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS sdn_record_source_tags (
-			schema_name TEXT NOT NULL,
-			cid TEXT NOT NULL,
-			provider_id TEXT NOT NULL,
-			source_name TEXT NOT NULL,
-			source_url TEXT,
-			batch_id TEXT,
-			content_key_id TEXT,
-			created_at INTEGER DEFAULT (strftime('%s', 'now')),
-			PRIMARY KEY (schema_name, cid)
-		)
-	`)
+	sourceTagsExisted, err := s.initSourceTagsTable()
 	if err != nil {
 		return fmt.Errorf("failed to create source tags table: %w", err)
 	}
 
+	if !sourceTagsExisted {
+		log.Infof("Building FlatSQL source tag producer uniqueness index")
+	}
+	if err := s.createStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_unique", sourceTagsExisted, `
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_sdn_record_source_tags_unique
+		ON sdn_record_source_tags (
+			schema_name, cid, provider_id, source_name, batch_id,
+			content_key_id, producer_peer_id, producer_public_key
+		)
+	`); err != nil {
+		return fmt.Errorf("failed to create source tags producer uniqueness index: %w", err)
+	}
 	if err := s.createStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_lookup", sourceTagsExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_lookup
 		ON sdn_record_source_tags (schema_name, provider_id, source_name, batch_id)
@@ -179,6 +195,9 @@ func (s *FlatSQLStore) initTables() error {
 		ON sdn_record_source_tags (schema_name, created_at DESC, cid)
 	`); err != nil {
 		return fmt.Errorf("failed to create source tags recent index: %w", err)
+	}
+	if err := s.initSourceSummaryTable(); err != nil {
+		return fmt.Errorf("failed to create source summary table: %w", err)
 	}
 
 	// Directory index for node/user EPM records.
@@ -216,6 +235,13 @@ func (s *FlatSQLStore) initTables() error {
 		ON sdn_directory (kind, updated_at DESC)
 	`); err != nil {
 		return fmt.Errorf("failed to create directory updated index: %w", err)
+	}
+
+	// Local EPM source-of-truth records. Only the size-prefixed EPM FlatBuffer
+	// bytes are persisted; editable forms and JSON views are derived from the
+	// FlatBuffer at the API edge.
+	if err := s.initLocalEPMTable(); err != nil {
+		return fmt.Errorf("failed to create local EPM table: %w", err)
 	}
 
 	// Publication log index for PLG hash-chained logs.
@@ -260,33 +286,22 @@ func (s *FlatSQLStore) initTables() error {
 		if err != nil {
 			return fmt.Errorf("invalid schema name %q: %w", schemaName, err)
 		}
+		if err := s.migrateCanonicalSchemaTableIfNeeded(schemaName, tableName); err != nil {
+			return err
+		}
 		tableExisted, err := s.tableExists(tableName)
 		if err != nil {
 			return err
 		}
-
-		// Main data table
-		createSQL := fmt.Sprintf(`
-			CREATE TABLE IF NOT EXISTS %s (
-				cid TEXT PRIMARY KEY,
-				peer_id TEXT NOT NULL,
-				timestamp INTEGER NOT NULL,
-				data BLOB NOT NULL,
-				signature BLOB,
-				created_at INTEGER DEFAULT (strftime('%%s', 'now')),
-				UNIQUE(cid)
-			)
-		`, tableName)
-
-		if _, err := s.db.Exec(createSQL); err != nil {
+		if err := s.createSchemaMetadataTable(tableName); err != nil {
 			return fmt.Errorf("failed to create table %s: %w", tableName, err)
+		}
+		if err := s.migrateLegacySchemaTable(schemaName, tableName); err != nil {
+			return err
 		}
 
 		// Create index on peer_id and timestamp
-		indexName := fmt.Sprintf("idx_%s_peer_time", tableName)
-		indexSQL := fmt.Sprintf(`
-			CREATE INDEX IF NOT EXISTS %s ON %s (peer_id, timestamp)
-		`, indexName, tableName)
+		indexName, indexSQL := schemaPeerTimeIndexSQL(tableName)
 		if err := s.createStartupIndex(tableName, indexName, tableExisted, indexSQL); err != nil {
 			if tableExisted {
 				return err
@@ -295,6 +310,9 @@ func (s *FlatSQLStore) initTables() error {
 		}
 
 		log.Debugf("Initialized table: %s", tableName)
+		if err := s.ensureSourceSummaryForSchema(schemaName, tableName); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -316,6 +334,448 @@ func (s *FlatSQLStore) createStartupIndex(tableName, indexName string, tableExis
 		return err
 	}
 	return nil
+}
+
+func (s *FlatSQLStore) initSourceTagsTable() (bool, error) {
+	existed, err := s.tableExists("sdn_record_source_tags")
+	if err != nil {
+		return false, err
+	}
+	if !existed {
+		_, err := s.db.Exec(sourceTagsTableSQL("sdn_record_source_tags"))
+		return false, err
+	}
+	needsMigration, err := s.sourceTagsTableNeedsMigration()
+	if err != nil {
+		return true, err
+	}
+	if !needsMigration {
+		return true, nil
+	}
+	if _, err := s.db.Exec(`DROP TABLE IF EXISTS sdn_record_source_tags_next`); err != nil {
+		return true, err
+	}
+	if _, err := s.db.Exec(sourceTagsMigrationTableSQL("sdn_record_source_tags_next")); err != nil {
+		return true, err
+	}
+	columns, err := s.tableColumnSet("sdn_record_source_tags")
+	if err != nil {
+		return true, err
+	}
+	producerPeerExpr := "TRIM(provider_id)"
+	if columns["producer_peer_id"] {
+		producerPeerExpr = "COALESCE(NULLIF(producer_peer_id, ''), TRIM(provider_id))"
+	}
+	producerPublicKeyExpr := "COALESCE(content_key_id, '')"
+	if columns["producer_public_key"] {
+		producerPublicKeyExpr = "COALESCE(NULLIF(producer_public_key, ''), COALESCE(content_key_id, ''))"
+	}
+	log.Infof("Migrating FlatSQL source tags to producer-aware provenance keys")
+	if _, err := s.db.Exec(fmt.Sprintf(`
+		INSERT OR IGNORE INTO sdn_record_source_tags_next (
+			schema_name, cid, provider_id, source_name, source_url, batch_id,
+			content_key_id, producer_peer_id, producer_public_key, created_at
+		)
+		SELECT
+			schema_name,
+			cid,
+			TRIM(provider_id),
+			TRIM(source_name),
+			source_url,
+			COALESCE(batch_id, ''),
+			COALESCE(content_key_id, ''),
+			%s,
+			%s,
+			created_at
+		FROM sdn_record_source_tags
+	`, producerPeerExpr, producerPublicKeyExpr)); err != nil {
+		return true, err
+	}
+	if _, err := s.db.Exec(`DROP TABLE sdn_record_source_tags`); err != nil {
+		return true, err
+	}
+	if _, err := s.db.Exec(`ALTER TABLE sdn_record_source_tags_next RENAME TO sdn_record_source_tags`); err != nil {
+		return true, err
+	}
+	log.Infof("Migrated FlatSQL source tags to producer-aware provenance keys")
+	return false, nil
+}
+
+func sourceTagsTableSQL(tableName string) string {
+	return fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			schema_name TEXT NOT NULL,
+			cid TEXT NOT NULL,
+			provider_id TEXT NOT NULL,
+			source_name TEXT NOT NULL,
+			source_url TEXT,
+			batch_id TEXT NOT NULL DEFAULT '',
+			content_key_id TEXT NOT NULL DEFAULT '',
+			producer_peer_id TEXT NOT NULL DEFAULT '',
+			producer_public_key TEXT NOT NULL DEFAULT '',
+			created_at INTEGER DEFAULT (strftime('%%s', 'now')),
+			PRIMARY KEY (
+				schema_name, cid, provider_id, source_name, batch_id,
+				content_key_id, producer_peer_id, producer_public_key
+			)
+		)
+	`, tableName)
+}
+
+func sourceTagsMigrationTableSQL(tableName string) string {
+	return fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			schema_name TEXT NOT NULL,
+			cid TEXT NOT NULL,
+			provider_id TEXT NOT NULL,
+			source_name TEXT NOT NULL,
+			source_url TEXT,
+			batch_id TEXT NOT NULL DEFAULT '',
+			content_key_id TEXT NOT NULL DEFAULT '',
+			producer_peer_id TEXT NOT NULL DEFAULT '',
+			producer_public_key TEXT NOT NULL DEFAULT '',
+			created_at INTEGER DEFAULT (strftime('%%s', 'now'))
+		)
+	`, tableName)
+}
+
+func (s *FlatSQLStore) sourceTagsTableNeedsMigration() (bool, error) {
+	rows, err := s.db.Query(`PRAGMA table_info(sdn_record_source_tags)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	columns := map[string]int{}
+	present := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		columns[name] = pk
+		present[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	required := []string{
+		"schema_name", "cid", "provider_id", "source_name", "batch_id",
+		"content_key_id", "producer_peer_id", "producer_public_key",
+	}
+	for _, name := range required {
+		if !present[name] {
+			return true, nil
+		}
+	}
+	hasPrimaryKey := true
+	for _, name := range required {
+		if columns[name] == 0 {
+			hasPrimaryKey = false
+			break
+		}
+	}
+	if hasPrimaryKey {
+		return false, nil
+	}
+	hasUniqueIndex, err := s.indexHasColumns("idx_sdn_record_source_tags_unique", required)
+	if err != nil {
+		return false, err
+	}
+	return !hasUniqueIndex, nil
+}
+
+func (s *FlatSQLStore) indexHasColumns(indexName string, expected []string) (bool, error) {
+	exists, err := s.indexExists(indexName)
+	if err != nil || !exists {
+		return exists, err
+	}
+	rows, err := s.db.Query(fmt.Sprintf(`PRAGMA index_info(%s)`, indexName))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	actual := make([]string, 0, len(expected))
+	for rows.Next() {
+		var seqno, cid int
+		var name string
+		if err := rows.Scan(&seqno, &cid, &name); err != nil {
+			return false, err
+		}
+		actual = append(actual, name)
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	if len(actual) != len(expected) {
+		return false, nil
+	}
+	for i := range expected {
+		if actual[i] != expected[i] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (s *FlatSQLStore) initSourceSummaryTable() error {
+	sourceSummaryExisted, err := s.tableExists("sdn_record_source_summary")
+	if err != nil {
+		return err
+	}
+	if sourceSummaryExisted {
+		columns, err := s.tableColumnSet("sdn_record_source_summary")
+		if err != nil {
+			return err
+		}
+		if !columns["producer_peer_id"] || !columns["producer_public_key"] {
+			if _, err := s.db.Exec(`DROP TABLE sdn_record_source_summary`); err != nil {
+				return err
+			}
+			sourceSummaryExisted = false
+		}
+	}
+	_, err = s.db.Exec(sourceSummaryTableSQL("sdn_record_source_summary"))
+	if err != nil {
+		return fmt.Errorf("failed to create source summary table: %w", err)
+	}
+	if err := s.createStartupIndex("sdn_record_source_summary", "idx_sdn_record_source_summary_schema", sourceSummaryExisted, `
+		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_summary_schema
+		ON sdn_record_source_summary (schema_name)
+	`); err != nil {
+		return fmt.Errorf("failed to create source summary schema index: %w", err)
+	}
+	return nil
+}
+
+func sourceSummaryTableSQL(tableName string) string {
+	return fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			schema_name TEXT NOT NULL,
+			provider_id TEXT NOT NULL,
+			source_name TEXT NOT NULL,
+			batch_id TEXT NOT NULL,
+			producer_peer_id TEXT NOT NULL DEFAULT '',
+			producer_public_key TEXT NOT NULL DEFAULT '',
+			record_count INTEGER NOT NULL,
+			total_bytes INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL DEFAULT (strftime('%%s', 'now')),
+			PRIMARY KEY (
+				schema_name, provider_id, source_name, batch_id,
+				producer_peer_id, producer_public_key
+			)
+		)
+	`, tableName)
+}
+
+func (s *FlatSQLStore) createSchemaMetadataTable(tableName string) error {
+	_, err := s.db.Exec(schemaMetadataTableSQL(tableName))
+	return err
+}
+
+func schemaMetadataTableSQL(tableName string) string {
+	return fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			cid TEXT PRIMARY KEY,
+			peer_id TEXT NOT NULL,
+			timestamp INTEGER NOT NULL,
+			stream_path TEXT NOT NULL,
+			stream_offset INTEGER NOT NULL,
+			record_length INTEGER NOT NULL,
+			signature_hex TEXT,
+			created_at INTEGER DEFAULT (strftime('%%s', 'now')),
+			UNIQUE(cid)
+		)
+	`, tableName)
+}
+
+func (s *FlatSQLStore) migrateCanonicalSchemaTableIfNeeded(schemaName, tableName string) error {
+	exists, err := s.tableExists(tableName)
+	if err != nil || !exists {
+		return err
+	}
+	columns, err := s.tableColumnSet(tableName)
+	if err != nil {
+		return err
+	}
+	if !columns["data"] && columns["stream_path"] && columns["stream_offset"] && columns["record_length"] {
+		return nil
+	}
+	if !columns["data"] {
+		return fmt.Errorf("schema table %s has unsupported FlatSQL metadata layout", tableName)
+	}
+	return s.migrateBlobSchemaTableInPlace(schemaName, tableName)
+}
+
+func (s *FlatSQLStore) migrateLegacySchemaTable(schemaName, tableName string) error {
+	legacyTableName := legacySchemaTableName(schemaName)
+	if legacyTableName == tableName {
+		return nil
+	}
+	legacyExists, err := s.tableExists(legacyTableName)
+	if err != nil {
+		return err
+	}
+	if !legacyExists {
+		return nil
+	}
+	if err := s.createSchemaMetadataTable(tableName); err != nil {
+		return fmt.Errorf("create canonical schema table %s before legacy migration: %w", tableName, err)
+	}
+	if err := s.copyBlobSchemaRowsToMetadataTable(schemaName, legacyTableName, tableName); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(fmt.Sprintf(`DROP TABLE %s`, legacyTableName)); err != nil {
+		return fmt.Errorf("drop migrated legacy schema table %s: %w", legacyTableName, err)
+	}
+	log.Infof("Merged legacy FlatSQL table %s into %s", legacyTableName, tableName)
+	return nil
+}
+
+func (s *FlatSQLStore) migrateBlobSchemaTableInPlace(schemaName, tableName string) error {
+	nextTable := tableName + "_stream_migration"
+	if _, err := s.db.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, nextTable)); err != nil {
+		return fmt.Errorf("drop stale schema migration table %s: %w", nextTable, err)
+	}
+	if _, err := s.db.Exec(schemaMetadataTableSQL(nextTable)); err != nil {
+		return fmt.Errorf("create schema migration table %s: %w", nextTable, err)
+	}
+	if err := s.copyBlobSchemaRowsToMetadataTable(schemaName, tableName, nextTable); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(fmt.Sprintf(`DROP TABLE %s`, tableName)); err != nil {
+		return fmt.Errorf("drop migrated schema table %s: %w", tableName, err)
+	}
+	if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s RENAME TO %s`, nextTable, tableName)); err != nil {
+		return fmt.Errorf("rename schema migration table %s to %s: %w", nextTable, tableName, err)
+	}
+	indexName, indexSQL := schemaPeerTimeIndexSQL(tableName)
+	if _, err := s.db.Exec(indexSQL); err != nil {
+		return fmt.Errorf("create migrated schema index %s: %w", indexName, err)
+	}
+	log.Infof("Migrated FlatSQL schema table %s from SQLite BLOB rows to stream metadata", tableName)
+	return nil
+}
+
+func schemaPeerTimeIndexSQL(tableName string) (string, string) {
+	indexName := fmt.Sprintf("idx_%s_peer_time", tableName)
+	indexSQL := fmt.Sprintf(`
+		CREATE INDEX IF NOT EXISTS %s ON %s (peer_id, timestamp)
+	`, indexName, tableName)
+	return indexName, indexSQL
+}
+
+func (s *FlatSQLStore) copyBlobSchemaRowsToMetadataTable(schemaName, sourceTable, targetTable string) error {
+	columns, err := s.tableColumnSet(sourceTable)
+	if err != nil {
+		return err
+	}
+	if !columns["data"] {
+		return fmt.Errorf("legacy schema table %s has no data column", sourceTable)
+	}
+	signatureExpr := "NULL"
+	if columns["signature"] {
+		signatureExpr = "signature"
+	}
+	createdAtExpr := "timestamp"
+	if columns["created_at"] {
+		createdAtExpr = "created_at"
+	}
+
+	log.Infof("Migrating FlatSQL %s records from SQLite BLOB table %s to stream metadata", schemaName, sourceTable)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin schema table migration %s: %w", sourceTable, err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	rows, err := tx.Query(fmt.Sprintf(`
+		SELECT cid, peer_id, timestamp, data, %s, %s
+		FROM %s
+		ORDER BY rowid ASC
+	`, signatureExpr, createdAtExpr, sourceTable))
+	if err != nil {
+		return fmt.Errorf("query legacy schema table %s: %w", sourceTable, err)
+	}
+
+	stmt, err := tx.Prepare(fmt.Sprintf(`
+		INSERT OR IGNORE INTO %s (
+			cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex, created_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, targetTable))
+	if err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("prepare migrated schema metadata insert %s: %w", targetTable, err)
+	}
+	appender, err := s.newFlatSQLStreamAppender(schemaName)
+	if err != nil {
+		_ = rows.Close()
+		_ = stmt.Close()
+		return fmt.Errorf("open migrated %s FlatSQL stream: %w", schemaName, err)
+	}
+	defer appender.Close()
+
+	var migratedRows int64
+	for rows.Next() {
+		var cid, peerID string
+		var timestamp, createdAt int64
+		var data []byte
+		var signature []byte
+		if err := rows.Scan(&cid, &peerID, &timestamp, &data, &signature, &createdAt); err != nil {
+			return fmt.Errorf("scan legacy schema table %s: %w", sourceTable, err)
+		}
+		streamPath, streamOffset, recordLength, err := appender.Append(data)
+		if err != nil {
+			return fmt.Errorf("append migrated %s record %s to FlatSQL stream: %w", schemaName, cid, err)
+		}
+		var signatureHex any
+		if len(signature) > 0 {
+			signatureHex = hex.EncodeToString(signature)
+		}
+		if createdAt <= 0 {
+			createdAt = timestamp
+		}
+		if _, err := stmt.Exec(cid, peerID, timestamp, streamPath, streamOffset, recordLength, signatureHex, createdAt); err != nil {
+			return fmt.Errorf("insert migrated %s metadata row %s: %w", schemaName, cid, err)
+		}
+		migratedRows++
+		if migratedRows%100000 == 0 {
+			log.Infof("Migrated %d FlatSQL %s records to stream metadata", migratedRows, schemaName)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate legacy schema table %s: %w", sourceTable, err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close legacy schema rows %s: %w", sourceTable, err)
+	}
+	if err := stmt.Close(); err != nil {
+		return fmt.Errorf("close migrated schema metadata insert %s: %w", targetTable, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migrated schema table %s: %w", sourceTable, err)
+	}
+	committed = true
+	log.Infof("Migrated %d FlatSQL %s records from SQLite BLOB table %s to stream metadata", migratedRows, schemaName, sourceTable)
+	return nil
+}
+
+func legacySchemaTableName(schemaName string) string {
+	name := strings.TrimSuffix(schemaName, ".fbs")
+	name = strings.ToLower(name)
+	return "sds_" + name
 }
 
 func (s *FlatSQLStore) tableExists(tableName string) (bool, error) {
@@ -372,6 +832,367 @@ func (s *FlatSQLStore) ensureColumn(tableName, columnName, columnType string) er
 	return nil
 }
 
+func (s *FlatSQLStore) initLocalEPMTable() error {
+	const createSQL = `
+		CREATE TABLE IF NOT EXISTS sdn_local_epms (
+			peer_id TEXT PRIMARY KEY,
+			schema_name TEXT NOT NULL DEFAULT 'EPM.fbs',
+			encrypted_epm_bytes TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`
+
+	exists, err := s.tableExists("sdn_local_epms")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		_, err := s.db.Exec(createSQL)
+		return err
+	}
+
+	columns, err := s.tableColumnSet("sdn_local_epms")
+	if err != nil {
+		return err
+	}
+	if !columns["encrypted_profile_json"] && !columns["encrypted_epm_json"] {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		CREATE TABLE sdn_local_epms_next (
+			peer_id TEXT PRIMARY KEY,
+			schema_name TEXT NOT NULL DEFAULT 'EPM.fbs',
+			encrypted_epm_bytes TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+		INSERT OR REPLACE INTO sdn_local_epms_next (
+			peer_id, schema_name, encrypted_epm_bytes, updated_at
+		)
+		SELECT
+			peer_id,
+			COALESCE(NULLIF(schema_name, ''), 'EPM.fbs'),
+			encrypted_epm_bytes,
+			updated_at
+		FROM sdn_local_epms
+		WHERE encrypted_epm_bytes IS NOT NULL AND encrypted_epm_bytes <> ''
+	`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE sdn_local_epms`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE sdn_local_epms_next RENAME TO sdn_local_epms`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *FlatSQLStore) tableColumnSet(tableName string) (map[string]bool, error) {
+	rows, err := s.db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect %s columns: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	columns := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return nil, fmt.Errorf("failed to scan %s column metadata: %w", tableName, err)
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed iterating %s columns: %w", tableName, err)
+	}
+	return columns, nil
+}
+
+type sqlExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func insertSchemaMetadata(exec sqlExecer, tableName, cid, peerID string, timestamp int64, streamPath string, streamOffset, recordLength int64, signature []byte, createdAt int64) error {
+	var signatureHex any
+	if len(signature) > 0 {
+		signatureHex = hex.EncodeToString(signature)
+	}
+	if createdAt <= 0 {
+		createdAt = timestamp
+	}
+	_, err := exec.Exec(fmt.Sprintf(`
+		INSERT OR IGNORE INTO %s (
+			cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex, created_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, tableName), cid, peerID, timestamp, streamPath, streamOffset, recordLength, signatureHex, createdAt)
+	return err
+}
+
+type flatSQLStreamAppender struct {
+	file         *os.File
+	relativePath string
+	offset       int64
+}
+
+func (s *FlatSQLStore) newFlatSQLStreamAppender(schemaName string) (*flatSQLStreamAppender, error) {
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return nil, err
+	}
+	relativePath := filepath.Join(flatSQLStreamDirName, tableName+".flatsql")
+	absolutePath := filepath.Join(s.basePath, relativePath)
+	if err := os.MkdirAll(filepath.Dir(absolutePath), 0700); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(absolutePath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0600)
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return &flatSQLStreamAppender{
+		file:         file,
+		relativePath: relativePath,
+		offset:       info.Size(),
+	}, nil
+}
+
+func (a *flatSQLStreamAppender) Append(data []byte) (string, int64, int64, error) {
+	if len(data) > int(^uint32(0)) {
+		return "", 0, 0, fmt.Errorf("record exceeds uint32 FlatSQL stream frame length")
+	}
+	offset := a.offset
+	var sizePrefix [4]byte
+	binary.LittleEndian.PutUint32(sizePrefix[:], uint32(len(data)))
+	if _, err := a.file.Write(sizePrefix[:]); err != nil {
+		return "", 0, 0, err
+	}
+	if _, err := a.file.Write(data); err != nil {
+		return "", 0, 0, err
+	}
+	a.offset += int64(len(sizePrefix) + len(data))
+	return a.relativePath, offset, int64(len(data)), nil
+}
+
+func (a *flatSQLStreamAppender) Close() error {
+	return a.file.Close()
+}
+
+func (s *FlatSQLStore) appendFlatSQLStreamRecord(schemaName string, data []byte) (string, int64, int64, error) {
+	appender, err := s.newFlatSQLStreamAppender(schemaName)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	defer appender.Close()
+	return appender.Append(data)
+}
+
+func (s *FlatSQLStore) readFlatSQLStreamRecord(streamPath string, streamOffset, recordLength int64) ([]byte, error) {
+	if streamOffset < 0 {
+		return nil, fmt.Errorf("negative FlatSQL stream offset %d", streamOffset)
+	}
+	if recordLength < 0 || recordLength > int64(^uint32(0)) {
+		return nil, fmt.Errorf("invalid FlatSQL record length %d", recordLength)
+	}
+	clean := filepath.Clean(streamPath)
+	if filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return nil, fmt.Errorf("invalid FlatSQL stream path %q", streamPath)
+	}
+	absolutePath := filepath.Join(s.basePath, clean)
+	file, err := os.Open(absolutePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var sizePrefix [4]byte
+	if _, err := file.ReadAt(sizePrefix[:], streamOffset); err != nil {
+		return nil, err
+	}
+	length := int64(binary.LittleEndian.Uint32(sizePrefix[:]))
+	if length != recordLength {
+		return nil, fmt.Errorf("FlatSQL stream frame length = %d, want %d", length, recordLength)
+	}
+	data := make([]byte, recordLength)
+	if _, err := file.ReadAt(data, streamOffset+4); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func (s *FlatSQLStore) hydrateRecordData(record *Record, streamPath string, streamOffset, recordLength int64, signatureHex sql.NullString) error {
+	data, err := s.readFlatSQLStreamRecord(streamPath, streamOffset, recordLength)
+	if err != nil {
+		return err
+	}
+	record.Data = data
+	if signatureHex.Valid && strings.TrimSpace(signatureHex.String) != "" {
+		signature, err := hex.DecodeString(strings.TrimSpace(signatureHex.String))
+		if err != nil {
+			return fmt.Errorf("decode signature_hex for %s: %w", record.CID, err)
+		}
+		record.Signature = signature
+	}
+	return nil
+}
+
+func (s *FlatSQLStore) ensureSourceSummaryForSchema(schemaName, tableName string) error {
+	var existing int
+	if err := s.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM sdn_record_source_summary
+		WHERE schema_name = ?
+	`, schemaName).Scan(&existing); err != nil {
+		return fmt.Errorf("inspect source summary for %s: %w", schemaName, err)
+	}
+	if existing > 0 {
+		return nil
+	}
+
+	var hasTag int
+	if err := s.db.QueryRow(`
+		SELECT 1
+		FROM sdn_record_source_tags
+		WHERE schema_name = ?
+		LIMIT 1
+	`, schemaName).Scan(&hasTag); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("inspect source tags for %s: %w", schemaName, err)
+	}
+	return s.rebuildSourceSummaryForSchema(schemaName, tableName)
+}
+
+func (s *FlatSQLStore) rebuildSourceSummaryForSchema(schemaName, tableName string) error {
+	if _, err := s.db.Exec(`DELETE FROM sdn_record_source_summary WHERE schema_name = ?`, schemaName); err != nil {
+		return fmt.Errorf("clear source summary for %s: %w", schemaName, err)
+	}
+	if _, err := s.db.Exec(fmt.Sprintf(`
+		INSERT INTO sdn_record_source_summary (
+			schema_name, provider_id, source_name, batch_id, producer_peer_id,
+			producer_public_key, record_count, total_bytes, updated_at
+		)
+		SELECT
+			tags.schema_name,
+			tags.provider_id,
+			tags.source_name,
+			COALESCE(tags.batch_id, ''),
+			COALESCE(tags.producer_peer_id, ''),
+			COALESCE(tags.producer_public_key, ''),
+			COUNT(*),
+			COALESCE(SUM(records.record_length), 0),
+			strftime('%%s', 'now')
+		FROM sdn_record_source_tags tags
+		INNER JOIN %s records ON records.cid = tags.cid
+		WHERE tags.schema_name = ?
+		GROUP BY tags.schema_name, tags.provider_id, tags.source_name, COALESCE(tags.batch_id, ''),
+		         COALESCE(tags.producer_peer_id, ''), COALESCE(tags.producer_public_key, '')
+	`, tableName), schemaName); err != nil {
+		return fmt.Errorf("rebuild source summary for %s: %w", schemaName, err)
+	}
+	return nil
+}
+
+func incrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, recordBytes int64) error {
+	tags = normalizeSourceTags(tags)
+	_, err := tx.Exec(`
+		INSERT INTO sdn_record_source_summary (
+			schema_name, provider_id, source_name, batch_id, producer_peer_id,
+			producer_public_key, record_count, total_bytes, updated_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, 1, ?, strftime('%s', 'now'))
+		ON CONFLICT(schema_name, provider_id, source_name, batch_id, producer_peer_id, producer_public_key) DO UPDATE SET
+			record_count = record_count + 1,
+			total_bytes = total_bytes + excluded.total_bytes,
+			updated_at = excluded.updated_at
+	`, schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey, recordBytes)
+	if err != nil {
+		return fmt.Errorf("increment source summary: %w", err)
+	}
+	return nil
+}
+
+func decrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, recordBytes int64) error {
+	tags = normalizeSourceTags(tags)
+	_, err := tx.Exec(`
+		UPDATE sdn_record_source_summary
+		SET
+			record_count = CASE WHEN record_count > 0 THEN record_count - 1 ELSE 0 END,
+			total_bytes = CASE WHEN total_bytes > ? THEN total_bytes - ? ELSE 0 END,
+			updated_at = strftime('%s', 'now')
+		WHERE schema_name = ?
+		  AND provider_id = ?
+		  AND source_name = ?
+		  AND batch_id = ?
+		  AND producer_peer_id = ?
+		  AND producer_public_key = ?
+	`, recordBytes, recordBytes, schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey)
+	if err != nil {
+		return fmt.Errorf("decrement source summary: %w", err)
+	}
+	if _, err := tx.Exec(`
+		DELETE FROM sdn_record_source_summary
+		WHERE schema_name = ?
+		  AND provider_id = ?
+		  AND source_name = ?
+		  AND batch_id = ?
+		  AND producer_peer_id = ?
+		  AND producer_public_key = ?
+		  AND record_count <= 0
+	`, schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey); err != nil {
+		return fmt.Errorf("delete empty source summary: %w", err)
+	}
+	return nil
+}
+
+func sameSourceSummaryKey(left, right SourceTags) bool {
+	left = normalizeSourceTags(left)
+	right = normalizeSourceTags(right)
+	return strings.TrimSpace(left.ProviderID) == strings.TrimSpace(right.ProviderID) &&
+		strings.TrimSpace(left.SourceName) == strings.TrimSpace(right.SourceName) &&
+		strings.TrimSpace(left.BatchID) == strings.TrimSpace(right.BatchID) &&
+		strings.TrimSpace(left.ProducerPeerID) == strings.TrimSpace(right.ProducerPeerID) &&
+		strings.TrimSpace(left.ProducerPublicKey) == strings.TrimSpace(right.ProducerPublicKey)
+}
+
+func normalizeSourceTags(tags SourceTags) SourceTags {
+	tags.ProviderID = strings.TrimSpace(tags.ProviderID)
+	tags.SourceName = strings.TrimSpace(tags.SourceName)
+	tags.SourceURL = strings.TrimSpace(tags.SourceURL)
+	tags.BatchID = strings.TrimSpace(tags.BatchID)
+	tags.ContentKeyID = strings.TrimSpace(tags.ContentKeyID)
+	tags.ProducerPeerID = strings.TrimSpace(tags.ProducerPeerID)
+	tags.ProducerPublicKey = strings.TrimSpace(tags.ProducerPublicKey)
+	if tags.ProducerPeerID == "" {
+		tags.ProducerPeerID = tags.ProviderID
+	}
+	if tags.ProducerPublicKey == "" {
+		tags.ProducerPublicKey = tags.ContentKeyID
+	}
+	return tags
+}
+
 // Store stores validated data in the appropriate table.
 func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, signature []byte) (string, error) {
 	s.mu.Lock()
@@ -384,18 +1205,22 @@ func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, sign
 
 	// Compute CID (content identifier)
 	cid := computeCID(data)
+	var existing int
+	if err := s.db.QueryRow(fmt.Sprintf(`SELECT 1 FROM %s WHERE cid = ?`, tableName), cid).Scan(&existing); err == nil {
+		return cid, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("failed to check existing record: %w", err)
+	}
 
 	// Use INSERT OR IGNORE: content-addressed records are immutable.
 	// REPLACE would allow a different peer to overwrite the original
 	// author's peer_id (attribution hijacking).
-	insertSQL := fmt.Sprintf(`
-		INSERT OR IGNORE INTO %s (cid, peer_id, timestamp, data, signature)
-		VALUES (?, ?, ?, ?, ?)
-	`, tableName)
-
 	now := time.Now().Unix()
-	_, err = s.db.Exec(insertSQL, cid, peerID, now, data, signature)
+	streamPath, streamOffset, recordLength, err := s.appendFlatSQLStreamRecord(schemaName, data)
 	if err != nil {
+		return "", fmt.Errorf("failed to append FlatSQL stream record: %w", err)
+	}
+	if err := insertSchemaMetadata(s.db, tableName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now); err != nil {
 		return "", fmt.Errorf("failed to store data: %w", err)
 	}
 
@@ -410,11 +1235,13 @@ func (s *FlatSQLStore) Store(schemaName string, data []byte, peerID string, sign
 
 // SourceTags records source provenance needed for provider/batch-aware queries.
 type SourceTags struct {
-	ProviderID   string
-	SourceName   string
-	SourceURL    string
-	BatchID      string
-	ContentKeyID string
+	ProviderID        string
+	SourceName        string
+	SourceURL         string
+	BatchID           string
+	ContentKeyID      string
+	ProducerPeerID    string
+	ProducerPublicKey string
 }
 
 // SourceTagQuery filters stored records by source tags.
@@ -435,6 +1262,46 @@ type SourceBatchReconcileResult struct {
 	Apply      bool   `json:"apply"`
 	Matched    int64  `json:"matched"`
 	Deleted    int64  `json:"deleted"`
+}
+
+// DataSummary describes local FlatSQL record volume by schema and source.
+type DataSummary struct {
+	TotalRecords int64
+	TotalBytes   int64
+	Schemas      []DataSchemaSummary
+	Sources      []DataSourceSummary
+}
+
+// DataSchemaSummary is a per-schema FlatSQL record count and byte total.
+type DataSchemaSummary struct {
+	SchemaName string
+	Count      int64
+	TotalBytes int64
+}
+
+// DataSourceSummary is a per-producer/source FlatSQL record count and byte total.
+type DataSourceSummary struct {
+	SchemaName        string
+	ProviderID        string
+	SourceName        string
+	BatchID           string
+	ProducerPeerID    string
+	ProducerPublicKey string
+	Count             int64
+	TotalBytes        int64
+}
+
+// RawRecordQuery filters raw FlatBuffer records for UI and node-to-node reads.
+type RawRecordQuery struct {
+	SchemaName        string
+	ProviderID        string
+	SourceName        string
+	BatchID           string
+	ProducerPeerID    string
+	ProducerPublicKey string
+	PeerID            string
+	Limit             int
+	Offset            int
 }
 
 // IndexedRecordQuery filters materialized FlatSQL record indexes.
@@ -471,10 +1338,12 @@ func (s *FlatSQLStore) StoreWithSourceTags(schemaName string, data []byte, peerI
 
 // UpsertSourceTags attaches or updates source tags for an existing record.
 func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags) error {
+	tags = normalizeSourceTags(tags)
 	if err := ValidateSourceTags(tags); err != nil {
 		return err
 	}
-	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
 		return fmt.Errorf("invalid schema name: %w", err)
 	}
 	if strings.TrimSpace(cid) == "" {
@@ -483,21 +1352,62 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec(`
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin source tag upsert: %w", err)
+	}
+	defer tx.Rollback()
+
+	var recordBytes sql.NullInt64
+	if err := tx.QueryRow(fmt.Sprintf(`SELECT record_length FROM %s WHERE cid = ?`, tableName), cid).Scan(&recordBytes); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("lookup source-tagged record bytes: %w", err)
+		}
+	}
+
+	var existingTag int
+	err = tx.QueryRow(`
+		SELECT 1
+		FROM sdn_record_source_tags
+		WHERE schema_name = ?
+		  AND cid = ?
+		  AND provider_id = ?
+		  AND source_name = ?
+		  AND batch_id = ?
+		  AND content_key_id = ?
+		  AND producer_peer_id = ?
+		  AND producer_public_key = ?
+	`, schemaName, cid, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey).Scan(&existingTag)
+	if errors.Is(err, sql.ErrNoRows) {
+		existingTag = 0
+	} else if err != nil {
+		return fmt.Errorf("lookup existing source tags: %w", err)
+	}
+
+	_, err = tx.Exec(`
 		INSERT INTO sdn_record_source_tags (
-			schema_name, cid, provider_id, source_name, source_url, batch_id, content_key_id
+			schema_name, cid, provider_id, source_name, source_url, batch_id,
+			content_key_id, producer_peer_id, producer_public_key
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(schema_name, cid) DO UPDATE SET
-			provider_id = excluded.provider_id,
-			source_name = excluded.source_name,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(schema_name, cid, provider_id, source_name, batch_id, content_key_id, producer_peer_id, producer_public_key) DO UPDATE SET
 			source_url = excluded.source_url,
-			batch_id = excluded.batch_id,
-			content_key_id = excluded.content_key_id,
 			created_at = strftime('%s', 'now')
-	`, schemaName, cid, strings.TrimSpace(tags.ProviderID), strings.TrimSpace(tags.SourceName), strings.TrimSpace(tags.SourceURL), strings.TrimSpace(tags.BatchID), strings.TrimSpace(tags.ContentKeyID))
+	`, schemaName, cid, tags.ProviderID, tags.SourceName, tags.SourceURL, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey)
 	if err != nil {
 		return fmt.Errorf("failed to upsert source tags: %w", err)
+	}
+
+	bytesTotal := recordBytes.Int64
+	if existingTag == 0 {
+		if err := incrementSourceSummary(tx, schemaName, tags, bytesTotal); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit source tag upsert: %w", err)
 	}
 	return nil
 }
@@ -512,10 +1422,21 @@ func (s *FlatSQLStore) GetSourceTags(schemaName, cid string) (SourceTags, error)
 	defer s.mu.RUnlock()
 	var tags SourceTags
 	err := s.db.QueryRow(`
-		SELECT provider_id, source_name, source_url, batch_id, content_key_id
+		SELECT provider_id, source_name, source_url, batch_id, content_key_id,
+		       producer_peer_id, producer_public_key
 		FROM sdn_record_source_tags
 		WHERE schema_name = ? AND cid = ?
-	`, schemaName, cid).Scan(&tags.ProviderID, &tags.SourceName, &tags.SourceURL, &tags.BatchID, &tags.ContentKeyID)
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, schemaName, cid).Scan(
+		&tags.ProviderID,
+		&tags.SourceName,
+		&tags.SourceURL,
+		&tags.BatchID,
+		&tags.ContentKeyID,
+		&tags.ProducerPeerID,
+		&tags.ProducerPublicKey,
+	)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return SourceTags{}, fmt.Errorf("source tags not found: %s/%s", schemaName, cid)
@@ -557,7 +1478,8 @@ func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	rows, err := s.db.Query(fmt.Sprintf(`
-		SELECT records.cid, records.peer_id, records.timestamp, records.data, records.signature
+		SELECT records.cid, records.peer_id, records.timestamp,
+		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex
 		FROM %s records
 		INNER JOIN sdn_record_source_tags tags
 			ON tags.schema_name = ? AND tags.cid = records.cid
@@ -574,10 +1496,16 @@ func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record
 	for rows.Next() {
 		var record Record
 		var ts int64
-		if err := rows.Scan(&record.CID, &record.PeerID, &ts, &record.Data, &record.Signature); err != nil {
+		var streamPath string
+		var streamOffset, recordLength int64
+		var signatureHex sql.NullString
+		if err := rows.Scan(&record.CID, &record.PeerID, &ts, &streamPath, &streamOffset, &recordLength, &signatureHex); err != nil {
 			return nil, fmt.Errorf("failed to scan source tagged record: %w", err)
 		}
 		record.Timestamp = time.Unix(ts, 0)
+		if err := s.hydrateRecordData(&record, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+			return nil, fmt.Errorf("failed to read source tagged record data: %w", err)
+		}
 		records = append(records, &record)
 	}
 	if err := rows.Err(); err != nil {
@@ -648,21 +1576,50 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 		  AND source_name = ?
 		  AND batch_id <> ?
 	`
-	deleteRecordsSQL := fmt.Sprintf(`DELETE FROM %s WHERE cid IN (`+cidSubquery+`)`, tableName)
-	recordDelete, err := tx.Exec(deleteRecordsSQL, args...)
-	if err != nil {
-		return result, fmt.Errorf("delete source batch records: %w", err)
+	if _, err := tx.Exec(`CREATE TEMP TABLE IF NOT EXISTS temp_sdn_reconcile_cids (cid TEXT PRIMARY KEY)`); err != nil {
+		return result, fmt.Errorf("create reconcile cid table: %w", err)
 	}
-	result.Deleted, _ = recordDelete.RowsAffected()
-	indexArgs := append([]interface{}{result.SchemaName}, args...)
-	if _, err := tx.Exec(`DELETE FROM sdn_record_index WHERE schema_name = ? AND cid IN (`+cidSubquery+`)`, indexArgs...); err != nil {
-		return result, fmt.Errorf("delete source batch index rows: %w", err)
+	if _, err := tx.Exec(`DELETE FROM temp_sdn_reconcile_cids`); err != nil {
+		return result, fmt.Errorf("clear reconcile cid table: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO temp_sdn_reconcile_cids (cid) `+cidSubquery, args...); err != nil {
+		return result, fmt.Errorf("stage source batch cids: %w", err)
 	}
 	if _, err := tx.Exec(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id <> ?`, args...); err != nil {
 		return result, fmt.Errorf("delete source batch tags: %w", err)
 	}
+	deleteRecordsSQL := fmt.Sprintf(`
+		DELETE FROM %s
+		WHERE cid IN (SELECT cid FROM temp_sdn_reconcile_cids)
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM sdn_record_source_tags tags
+			WHERE tags.schema_name = ? AND tags.cid = %s.cid
+		  )
+	`, tableName, tableName)
+	recordDelete, err := tx.Exec(deleteRecordsSQL, result.SchemaName)
+	if err != nil {
+		return result, fmt.Errorf("delete orphaned source batch records: %w", err)
+	}
+	result.Deleted, _ = recordDelete.RowsAffected()
+	if _, err := tx.Exec(`
+		DELETE FROM sdn_record_index
+		WHERE schema_name = ?
+		  AND cid IN (SELECT cid FROM temp_sdn_reconcile_cids)
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM sdn_record_source_tags tags
+			WHERE tags.schema_name = sdn_record_index.schema_name
+			  AND tags.cid = sdn_record_index.cid
+		  )
+	`, result.SchemaName); err != nil {
+		return result, fmt.Errorf("delete orphaned source batch index rows: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return result, fmt.Errorf("commit source batch reconciliation: %w", err)
+	}
+	if err := s.rebuildSourceSummaryForSchema(result.SchemaName, tableName); err != nil {
+		return result, err
 	}
 	return result, nil
 }
@@ -680,26 +1637,11 @@ func ValidateSourceTags(tags SourceTags) error {
 
 // Get retrieves data by CID.
 func (s *FlatSQLStore) Get(schemaName, cid string) ([]byte, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	tableName, err := sds.SchemaNameToTable(schemaName)
+	record, err := s.GetRecord(schemaName, cid)
 	if err != nil {
-		return nil, fmt.Errorf("invalid schema name: %w", err)
+		return nil, err
 	}
-
-	querySQL := fmt.Sprintf(`SELECT data FROM %s WHERE cid = ?`, tableName)
-
-	var data []byte
-	err = s.db.QueryRow(querySQL, cid).Scan(&data)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("not found: %s", cid)
-		}
-		return nil, fmt.Errorf("failed to get data: %w", err)
-	}
-
-	return data, nil
+	return append([]byte(nil), record.Data...), nil
 }
 
 // Query executes a safe parameterized query against a schema table.
@@ -716,9 +1658,9 @@ func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}
 
 	var querySQL string
 	if whereClause != "" {
-		querySQL = fmt.Sprintf(`SELECT data FROM %s WHERE %s`, tableName, whereClause)
+		querySQL = fmt.Sprintf(`SELECT stream_path, stream_offset, record_length FROM %s WHERE %s`, tableName, whereClause)
 	} else {
-		querySQL = fmt.Sprintf(`SELECT data FROM %s`, tableName)
+		querySQL = fmt.Sprintf(`SELECT stream_path, stream_offset, record_length FROM %s`, tableName)
 	}
 
 	rows, err := s.db.Query(querySQL, args...)
@@ -729,9 +1671,15 @@ func (s *FlatSQLStore) Query(schemaName, whereClause string, args ...interface{}
 
 	var results [][]byte
 	for rows.Next() {
-		var data []byte
-		if err := rows.Scan(&data); err != nil {
+		var streamPath string
+		var streamOffset, recordLength int64
+		if err := rows.Scan(&streamPath, &streamOffset, &recordLength); err != nil {
 			log.Warnf("Failed to scan row: %v", err)
+			continue
+		}
+		data, err := s.readFlatSQLStreamRecord(streamPath, streamOffset, recordLength)
+		if err != nil {
+			log.Warnf("Failed to read FlatSQL stream record: %v", err)
 			continue
 		}
 		results = append(results, data)
@@ -770,7 +1718,7 @@ func (s *FlatSQLStore) QueryAllBounded(schemaName string, limit int, maxTotalByt
 	if err != nil {
 		return nil, fmt.Errorf("invalid schema name: %w", err)
 	}
-	querySQL := fmt.Sprintf(`SELECT data FROM %s ORDER BY timestamp DESC LIMIT ?`, tableName)
+	querySQL := fmt.Sprintf(`SELECT stream_path, stream_offset, record_length FROM %s ORDER BY timestamp DESC LIMIT ?`, tableName)
 	rows, err := s.db.Query(querySQL, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query bounded records: %w", err)
@@ -780,9 +1728,15 @@ func (s *FlatSQLStore) QueryAllBounded(schemaName string, limit int, maxTotalByt
 	results := make([][]byte, 0, limit)
 	totalBytes := 0
 	for rows.Next() {
-		var data []byte
-		if err := rows.Scan(&data); err != nil {
+		var streamPath string
+		var streamOffset, recordLength int64
+		if err := rows.Scan(&streamPath, &streamOffset, &recordLength); err != nil {
 			log.Warnf("Failed to scan row: %v", err)
+			continue
+		}
+		data, err := s.readFlatSQLStreamRecord(streamPath, streamOffset, recordLength)
+		if err != nil {
+			log.Warnf("Failed to read FlatSQL stream record: %v", err)
 			continue
 		}
 		if len(data) > maxTotalBytes {
@@ -818,9 +1772,51 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 		return fmt.Errorf("invalid schema name: %w", err)
 	}
 
-	deleteSQL := fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, tableName)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin delete: %w", err)
+	}
+	defer tx.Rollback()
 
-	result, err := s.db.Exec(deleteSQL, cid)
+	var recordBytes sql.NullInt64
+	if err := tx.QueryRow(fmt.Sprintf(`SELECT record_length FROM %s WHERE cid = ?`, tableName), cid).Scan(&recordBytes); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("not found: %s", cid)
+		}
+		return fmt.Errorf("lookup deleted record bytes: %w", err)
+	}
+	tagRows, err := tx.Query(`
+		SELECT provider_id, source_name, source_url, batch_id, content_key_id,
+		       producer_peer_id, producer_public_key
+		FROM sdn_record_source_tags
+		WHERE schema_name = ? AND cid = ?
+	`, schemaName, cid)
+	if err != nil {
+		return fmt.Errorf("lookup deleted source tags: %w", err)
+	}
+	var deletedTags []SourceTags
+	for tagRows.Next() {
+		var tags SourceTags
+		if err := tagRows.Scan(
+			&tags.ProviderID,
+			&tags.SourceName,
+			&tags.SourceURL,
+			&tags.BatchID,
+			&tags.ContentKeyID,
+			&tags.ProducerPeerID,
+			&tags.ProducerPublicKey,
+		); err != nil {
+			tagRows.Close()
+			return fmt.Errorf("scan deleted source tags: %w", err)
+		}
+		deletedTags = append(deletedTags, tags)
+	}
+	if err := tagRows.Close(); err != nil {
+		return fmt.Errorf("close deleted source tags: %w", err)
+	}
+
+	deleteSQL := fmt.Sprintf(`DELETE FROM %s WHERE cid = ?`, tableName)
+	result, err := tx.Exec(deleteSQL, cid)
 	if err != nil {
 		return fmt.Errorf("failed to delete: %w", err)
 	}
@@ -830,14 +1826,19 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 		return fmt.Errorf("not found: %s", cid)
 	}
 
-	if _, err := s.db.Exec(`DELETE FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, schemaName, cid); err != nil {
+	if _, err := tx.Exec(`DELETE FROM sdn_record_index WHERE schema_name = ? AND cid = ?`, schemaName, cid); err != nil {
 		log.Warnf("Failed to delete index row for %s/%s: %v", schemaName, cid, err)
 	}
-	if _, err := s.db.Exec(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND cid = ?`, schemaName, cid); err != nil {
+	if _, err := tx.Exec(`DELETE FROM sdn_record_source_tags WHERE schema_name = ? AND cid = ?`, schemaName, cid); err != nil {
 		log.Warnf("Failed to delete source tags for %s/%s: %v", schemaName, cid, err)
 	}
+	for _, tags := range deletedTags {
+		if err := decrementSourceSummary(tx, schemaName, tags, recordBytes.Int64); err != nil {
+			return err
+		}
+	}
 
-	return nil
+	return tx.Commit()
 }
 
 // Count returns the number of records in a schema table.
@@ -890,6 +1891,18 @@ func (s *FlatSQLStore) GarbageCollect(maxAge time.Duration) (int64, error) {
 			WHERE schema_name = ? AND source_timestamp < ?
 		`, schemaName, cutoff); err != nil {
 			log.Warnf("GC index cleanup failed for %s: %v", schemaName, err)
+		}
+		if affected > 0 {
+			if _, err := s.db.Exec(fmt.Sprintf(`
+				DELETE FROM sdn_record_source_tags
+				WHERE schema_name = ?
+				  AND cid NOT IN (SELECT cid FROM %s)
+			`, tableName), schemaName); err != nil {
+				log.Warnf("GC source tag cleanup failed for %s: %v", schemaName, err)
+			}
+			if err := s.rebuildSourceSummaryForSchema(schemaName, tableName); err != nil {
+				log.Warnf("GC source summary rebuild failed for %s: %v", schemaName, err)
+			}
 		}
 	}
 
@@ -960,6 +1973,14 @@ type DirectoryRecord struct {
 	Source         string
 	EPMJSON        string
 	UpdatedAt      int64
+}
+
+// LocalEPMRecord is the decrypted local EPM source-of-truth record. The
+// corresponding on-disk SQLite row stores only EPM.fbs bytes encrypted.
+type LocalEPMRecord struct {
+	PeerID    string
+	EPMBytes  []byte
+	UpdatedAt int64
 }
 
 // DirectoryQuery filters directory records.
@@ -1139,6 +2160,173 @@ func (s *FlatSQLStore) QueryDirectory(query DirectoryQuery) ([]DirectoryRecord, 
 	return results, nil
 }
 
+// SaveLocalEPM stores a local node EPM FlatBuffer encrypted in the FlatSQL
+// database. JSON profile and JSON EPM projections are intentionally not stored.
+func (s *FlatSQLStore) SaveLocalEPM(peerID string, epmBytes []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	peerID = strings.TrimSpace(peerID)
+	if peerID == "" {
+		return errors.New("local EPM peer_id is required")
+	}
+	if len(epmBytes) == 0 {
+		return errors.New("local EPM bytes are required")
+	}
+
+	encryptedBytes, err := s.encryptLocalEPMPayload(epmBytes)
+	if err != nil {
+		return fmt.Errorf("encrypt local EPM bytes: %w", err)
+	}
+
+	_, err = s.db.Exec(`
+		INSERT INTO sdn_local_epms (
+			peer_id, schema_name, encrypted_epm_bytes, updated_at
+		)
+		VALUES (?, 'EPM.fbs', ?, ?)
+		ON CONFLICT(peer_id) DO UPDATE SET
+			schema_name = 'EPM.fbs',
+			encrypted_epm_bytes = excluded.encrypted_epm_bytes,
+			updated_at = excluded.updated_at
+	`, peerID, encryptedBytes, time.Now().Unix())
+	if err != nil {
+		return fmt.Errorf("save local EPM record: %w", err)
+	}
+
+	return nil
+}
+
+// LoadLocalEPM decrypts the local node EPM FlatBuffer bytes.
+func (s *FlatSQLStore) LoadLocalEPM(peerID string) ([]byte, error) {
+	record, err := s.GetLocalEPMRecord(peerID)
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(nil), record.EPMBytes...), nil
+}
+
+// GetLocalEPMRecord decrypts the local EPM record for a peer ID.
+func (s *FlatSQLStore) GetLocalEPMRecord(peerID string) (*LocalEPMRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	peerID = strings.TrimSpace(peerID)
+	if peerID == "" {
+		return nil, errors.New("local EPM peer_id is required")
+	}
+
+	var encryptedBytes string
+	var updatedAt int64
+	err := s.db.QueryRow(`
+		SELECT encrypted_epm_bytes, updated_at
+		FROM sdn_local_epms
+		WHERE peer_id = ?
+	`, peerID).Scan(&encryptedBytes, &updatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("local EPM profile not found for %s", peerID)
+		}
+		return nil, fmt.Errorf("read local EPM profile: %w", err)
+	}
+
+	epmBytes, err := s.decryptLocalEPMPayload(encryptedBytes)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt local EPM bytes: %w", err)
+	}
+
+	return &LocalEPMRecord{
+		PeerID:    peerID,
+		EPMBytes:  epmBytes,
+		UpdatedAt: updatedAt,
+	}, nil
+}
+
+type localEPMEnvelope struct {
+	Version    int    `json:"version"`
+	Algorithm  string `json:"algorithm"`
+	KDF        string `json:"kdf"`
+	IV         string `json:"iv"`
+	Ciphertext string `json:"ciphertext"`
+}
+
+func (s *FlatSQLStore) encryptLocalEPMPayload(plaintext []byte) (string, error) {
+	gcm, err := s.localEPMGCM()
+	if err != nil {
+		return "", err
+	}
+	iv := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(iv); err != nil {
+		return "", err
+	}
+	ciphertext := gcm.Seal(nil, iv, plaintext, []byte("EPM.fbs"))
+	envelope := localEPMEnvelope{
+		Version:    1,
+		Algorithm:  "aes-256-gcm",
+		KDF:        "scrypt-system-derived",
+		IV:         base64.StdEncoding.EncodeToString(iv),
+		Ciphertext: base64.StdEncoding.EncodeToString(ciphertext),
+	}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (s *FlatSQLStore) decryptLocalEPMPayload(rawEnvelope string) ([]byte, error) {
+	var envelope localEPMEnvelope
+	if err := json.Unmarshal([]byte(rawEnvelope), &envelope); err != nil {
+		return nil, err
+	}
+	iv, err := base64.StdEncoding.DecodeString(envelope.IV)
+	if err != nil {
+		return nil, err
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(envelope.Ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := s.localEPMGCM()
+	if err != nil {
+		return nil, err
+	}
+	return gcm.Open(nil, iv, ciphertext, []byte("EPM.fbs"))
+}
+
+func (s *FlatSQLStore) localEPMGCM() (cipher.AEAD, error) {
+	key, err := s.localEPMKey()
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+func (s *FlatSQLStore) localEPMKey() ([]byte, error) {
+	password := strings.TrimSpace(os.Getenv("SDN_EPM_STORE_PASSWORD"))
+	if password == "" {
+		password = strings.TrimSpace(os.Getenv("SDN_KEY_PASSWORD"))
+	}
+	if password == "" {
+		hostname, _ := os.Hostname()
+		homeDir, _ := os.UserHomeDir()
+		password = strings.Join([]string{
+			"sdn-local-epm",
+			hostname,
+			runtime.GOOS,
+			runtime.GOARCH,
+			homeDir,
+			filepath.Dir(s.dbPath),
+		}, "|")
+	}
+
+	salt := sha256.Sum256([]byte(localEPMStoreSalt + "|" + s.dbPath))
+	return scrypt.Key([]byte(password), salt[:], 32768, 8, 1, 32)
+}
+
 // RebuildIndex scans all schema tables and repopulates sdn_record_index.
 func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
 	s.mu.Lock()
@@ -1151,7 +2339,7 @@ func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid schema name %q: %w", schemaName, err)
 		}
-		rows, err := s.db.Query(fmt.Sprintf(`SELECT cid, timestamp, data FROM %s`, tableName))
+		rows, err := s.db.Query(fmt.Sprintf(`SELECT cid, timestamp, stream_path, stream_offset, record_length FROM %s`, tableName))
 		if err != nil {
 			return nil, fmt.Errorf("failed to query %s for reindex: %w", tableName, err)
 		}
@@ -1160,10 +2348,16 @@ func (s *FlatSQLStore) RebuildIndex() (map[string]int64, error) {
 		for rows.Next() {
 			var cid string
 			var ts int64
-			var data []byte
-			if err := rows.Scan(&cid, &ts, &data); err != nil {
+			var streamPath string
+			var streamOffset, recordLength int64
+			if err := rows.Scan(&cid, &ts, &streamPath, &streamOffset, &recordLength); err != nil {
 				rows.Close()
 				return nil, fmt.Errorf("failed to scan %s row: %w", tableName, err)
+			}
+			data, err := s.readFlatSQLStreamRecord(streamPath, streamOffset, recordLength)
+			if err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("failed to read %s/%s stream record: %w", schemaName, cid, err)
 			}
 			if err := s.upsertRecordIndex(schemaName, cid, ts, data); err != nil {
 				log.Debugf("Skipping index row for %s/%s: %v", schemaName, cid, err)
@@ -1211,9 +2405,10 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 	}
 
 	taggedQuery := fmt.Sprintf(`
-		SELECT d.cid, d.peer_id, d.timestamp, d.data, d.signature,
+		SELECT d.cid, d.peer_id, d.timestamp,
+		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
 		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
-		       tags.content_key_id, tags.created_at
+		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
 		FROM sdn_record_source_tags tags
 		INNER JOIN %s d ON d.cid = tags.cid
 		WHERE tags.schema_name = ?
@@ -1225,7 +2420,7 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 		return nil, fmt.Errorf("recent records query failed: %w", err)
 	}
 
-	records, err := scanRecentRecords(rows)
+	records, err := s.scanRecentRecords(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -1235,8 +2430,9 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 
 	untaggedLimit := limit - len(records)
 	untaggedQuery := fmt.Sprintf(`
-		SELECT d.cid, d.peer_id, d.timestamp, d.data, d.signature,
-		       '', '', '', '', '', NULL
+		SELECT d.cid, d.peer_id, d.timestamp,
+		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex,
+		       '', '', '', '', '', '', '', NULL
 		FROM %s d
 		WHERE NOT EXISTS (
 			SELECT 1
@@ -1250,7 +2446,7 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 	if err != nil {
 		return nil, fmt.Errorf("recent untagged records query failed: %w", err)
 	}
-	untagged, err := scanRecentRecords(rows)
+	untagged, err := s.scanRecentRecords(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -1258,7 +2454,277 @@ func (s *FlatSQLStore) QueryRecentRecords(schemaName string, limit int) ([]*Reco
 	return records, nil
 }
 
-func scanRecentRecords(rows *sql.Rows) ([]*Record, error) {
+// DataSummary returns aggregate FlatSQL record counts and raw byte totals.
+func (s *FlatSQLStore) DataSummary() (*DataSummary, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	summary := &DataSummary{
+		Schemas: make([]DataSchemaSummary, 0),
+		Sources: make([]DataSourceSummary, 0),
+	}
+	summarizedSchemas := map[string]bool{}
+
+	schemaRows, err := s.db.Query(`
+		SELECT schema_name, COALESCE(SUM(record_count), 0), COALESCE(SUM(total_bytes), 0)
+		FROM sdn_record_source_summary
+		GROUP BY schema_name
+		ORDER BY schema_name
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("summarize source-backed schemas: %w", err)
+	}
+	for schemaRows.Next() {
+		var schema DataSchemaSummary
+		if err := schemaRows.Scan(&schema.SchemaName, &schema.Count, &schema.TotalBytes); err != nil {
+			schemaRows.Close()
+			return nil, fmt.Errorf("scan source-backed schema summary: %w", err)
+		}
+		if schema.Count > 0 {
+			summary.Schemas = append(summary.Schemas, schema)
+			summary.TotalRecords += schema.Count
+			summary.TotalBytes += schema.TotalBytes
+			summarizedSchemas[schema.SchemaName] = true
+		}
+	}
+	if err := schemaRows.Close(); err != nil {
+		return nil, fmt.Errorf("close source-backed schema summary rows: %w", err)
+	}
+
+	sourceRows, err := s.db.Query(`
+		SELECT schema_name, provider_id, source_name, batch_id, producer_peer_id,
+		       producer_public_key, record_count, total_bytes
+		FROM sdn_record_source_summary
+		WHERE record_count > 0
+		ORDER BY schema_name ASC, provider_id ASC, source_name ASC, batch_id ASC,
+		         producer_peer_id ASC, producer_public_key ASC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("summarize source-backed producers: %w", err)
+	}
+	for sourceRows.Next() {
+		var source DataSourceSummary
+		if err := sourceRows.Scan(
+			&source.SchemaName,
+			&source.ProviderID,
+			&source.SourceName,
+			&source.BatchID,
+			&source.ProducerPeerID,
+			&source.ProducerPublicKey,
+			&source.Count,
+			&source.TotalBytes,
+		); err != nil {
+			sourceRows.Close()
+			return nil, fmt.Errorf("scan source-backed producer summary: %w", err)
+		}
+		summary.Sources = append(summary.Sources, source)
+	}
+	if err := sourceRows.Close(); err != nil {
+		return nil, fmt.Errorf("close source-backed producer summary rows: %w", err)
+	}
+
+	for _, schemaName := range s.validator.Schemas() {
+		if summarizedSchemas[schemaName] {
+			continue
+		}
+		tableName, err := sds.SchemaNameToTable(schemaName)
+		if err != nil {
+			return nil, fmt.Errorf("invalid schema name %q: %w", schemaName, err)
+		}
+		var count int64
+		var totalBytes sql.NullInt64
+		if err := s.db.QueryRow(fmt.Sprintf(`SELECT COUNT(*), COALESCE(SUM(record_length), 0) FROM %s`, tableName)).Scan(&count, &totalBytes); err != nil {
+			return nil, fmt.Errorf("summarize %s: %w", schemaName, err)
+		}
+		if count > 0 {
+			bytesTotal := totalBytes.Int64
+			summary.Schemas = append(summary.Schemas, DataSchemaSummary{
+				SchemaName: schemaName,
+				Count:      count,
+				TotalBytes: bytesTotal,
+			})
+			summary.TotalRecords += count
+			summary.TotalBytes += bytesTotal
+		}
+	}
+
+	localCount, localBytes, err := s.localEPMSummaryLocked()
+	if err != nil {
+		return nil, err
+	}
+	if localCount > 0 {
+		summary.Schemas = appendOrAddSchemaSummary(summary.Schemas, DataSchemaSummary{
+			SchemaName: "EPM.fbs",
+			Count:      localCount,
+			TotalBytes: localBytes,
+		})
+		summary.Sources = append(summary.Sources, DataSourceSummary{
+			SchemaName:        "EPM.fbs",
+			ProviderID:        "local-node",
+			SourceName:        "local-epm",
+			BatchID:           "local",
+			ProducerPeerID:    "local-node",
+			ProducerPublicKey: "local-node",
+			Count:             localCount,
+			TotalBytes:        localBytes,
+		})
+		summary.TotalRecords += localCount
+		summary.TotalBytes += localBytes
+	}
+
+	return summary, nil
+}
+
+// QueryRawRecords returns raw FlatBuffer records with metadata and source tags.
+func (s *FlatSQLStore) QueryRawRecords(filter RawRecordQuery) ([]*Record, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	filter.SchemaName = strings.TrimSpace(filter.SchemaName)
+	if filter.SchemaName == "" {
+		return nil, errors.New("schema name is required")
+	}
+	tableName, err := sds.SchemaNameToTable(filter.SchemaName)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schema name: %w", err)
+	}
+	if filter.Limit <= 0 {
+		filter.Limit = 100
+	}
+	if filter.Limit > 1000 {
+		filter.Limit = 1000
+	}
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+
+	sourceFiltered := strings.TrimSpace(filter.ProviderID) != "" ||
+		strings.TrimSpace(filter.SourceName) != "" ||
+		strings.TrimSpace(filter.BatchID) != "" ||
+		strings.TrimSpace(filter.ProducerPeerID) != "" ||
+		strings.TrimSpace(filter.ProducerPublicKey) != ""
+
+	taggedQuery := fmt.Sprintf(`
+		SELECT records.cid, records.peer_id, records.timestamp,
+		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
+		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
+		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
+		FROM sdn_record_source_tags tags
+		INNER JOIN %s records ON records.cid = tags.cid
+		WHERE tags.schema_name = ?
+	`, tableName)
+	args := []interface{}{filter.SchemaName}
+
+	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
+		taggedQuery += ` AND records.peer_id = ?`
+		args = append(args, peerID)
+	}
+	if providerID := strings.TrimSpace(filter.ProviderID); providerID != "" {
+		taggedQuery += ` AND tags.provider_id = ?`
+		args = append(args, providerID)
+	}
+	if sourceName := strings.TrimSpace(filter.SourceName); sourceName != "" {
+		taggedQuery += ` AND tags.source_name = ?`
+		args = append(args, sourceName)
+	}
+	if batchID := strings.TrimSpace(filter.BatchID); batchID != "" {
+		taggedQuery += ` AND tags.batch_id = ?`
+		args = append(args, batchID)
+	}
+	if producerPeerID := strings.TrimSpace(filter.ProducerPeerID); producerPeerID != "" {
+		taggedQuery += ` AND tags.producer_peer_id = ?`
+		args = append(args, producerPeerID)
+	}
+	if producerPublicKey := strings.TrimSpace(filter.ProducerPublicKey); producerPublicKey != "" {
+		taggedQuery += ` AND tags.producer_public_key = ?`
+		args = append(args, producerPublicKey)
+	}
+	taggedQuery += ` ORDER BY tags.created_at DESC, tags.cid ASC LIMIT ? OFFSET ?`
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := s.db.Query(taggedQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("raw record query failed: %w", err)
+	}
+	records, err := s.scanRawRecordRows(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	if !sourceFiltered && len(records) < filter.Limit {
+		untaggedLimit := filter.Limit - len(records)
+		untaggedQuery := fmt.Sprintf(`
+			SELECT records.cid, records.peer_id, records.timestamp,
+			       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
+			       '', '', '', '', '', '', '', NULL
+			FROM %s records
+			WHERE NOT EXISTS (
+				SELECT 1
+				FROM sdn_record_source_tags tags
+				WHERE tags.schema_name = ? AND tags.cid = records.cid
+			)
+		`, tableName)
+		untaggedArgs := []interface{}{filter.SchemaName}
+		if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
+			untaggedQuery += ` AND records.peer_id = ?`
+			untaggedArgs = append(untaggedArgs, peerID)
+		}
+		untaggedQuery += ` ORDER BY records.timestamp DESC, records.cid ASC LIMIT ?`
+		untaggedArgs = append(untaggedArgs, untaggedLimit)
+		untaggedRows, err := s.db.Query(untaggedQuery, untaggedArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("raw untagged record query failed: %w", err)
+		}
+		untagged, err := s.scanRawRecordRows(untaggedRows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, untagged...)
+	}
+
+	if filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) && len(records) < filter.Limit {
+		localLimit := filter.Limit - len(records)
+		localRecords, err := s.queryLocalEPMRecordsLocked(filter, localLimit)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, localRecords...)
+	}
+
+	return records, nil
+}
+
+// GetRawRecord returns one raw FlatBuffer record by schema and CID. Local EPM
+// records use the peer ID as the stable local record identifier.
+func (s *FlatSQLStore) GetRawRecord(schemaName, cid string) (*Record, error) {
+	cid = strings.TrimSpace(cid)
+	if cid == "" {
+		return nil, errors.New("record id is required")
+	}
+	record, err := s.GetRecord(schemaName, cid)
+	if err == nil {
+		return record, nil
+	}
+	if schemaName == "EPM.fbs" {
+		local, localErr := s.GetLocalEPMRecord(cid)
+		if localErr == nil {
+			return &Record{
+				CID:       local.PeerID,
+				PeerID:    local.PeerID,
+				Timestamp: time.Unix(local.UpdatedAt, 0).UTC(),
+				Data:      append([]byte(nil), local.EPMBytes...),
+				SourceTags: SourceTags{
+					ProviderID: "local-node",
+					SourceName: "local-epm",
+					BatchID:    "local",
+				},
+			}, nil
+		}
+	}
+	return nil, err
+}
+
+func (s *FlatSQLStore) scanRecentRecords(rows *sql.Rows) ([]*Record, error) {
 	defer rows.Close()
 
 	records := make([]*Record, 0)
@@ -1266,22 +2732,32 @@ func scanRecentRecords(rows *sql.Rows) ([]*Record, error) {
 		rec := &Record{}
 		var ts int64
 		var materializedAt sql.NullInt64
+		var streamPath string
+		var streamOffset, recordLength int64
+		var signatureHex sql.NullString
 		if err := rows.Scan(
 			&rec.CID,
 			&rec.PeerID,
 			&ts,
-			&rec.Data,
-			&rec.Signature,
+			&streamPath,
+			&streamOffset,
+			&recordLength,
+			&signatureHex,
 			&rec.SourceTags.ProviderID,
 			&rec.SourceTags.SourceName,
 			&rec.SourceTags.SourceURL,
 			&rec.SourceTags.BatchID,
 			&rec.SourceTags.ContentKeyID,
+			&rec.SourceTags.ProducerPeerID,
+			&rec.SourceTags.ProducerPublicKey,
 			&materializedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed scanning recent row: %w", err)
 		}
 		rec.Timestamp = time.Unix(ts, 0).UTC()
+		if err := s.hydrateRecordData(rec, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+			return nil, fmt.Errorf("failed reading recent record data: %w", err)
+		}
 		if materializedAt.Valid && materializedAt.Int64 > 0 {
 			rec.MaterializedAt = time.Unix(materializedAt.Int64, 0).UTC()
 		}
@@ -1289,6 +2765,159 @@ func scanRecentRecords(rows *sql.Rows) ([]*Record, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("recent records rows failed: %w", err)
+	}
+	return records, nil
+}
+
+func (s *FlatSQLStore) scanRawRecordRows(rows *sql.Rows) ([]*Record, error) {
+	defer rows.Close()
+
+	records := make([]*Record, 0)
+	for rows.Next() {
+		rec := &Record{}
+		var ts int64
+		var materializedAt sql.NullInt64
+		var streamPath string
+		var streamOffset, recordLength int64
+		var signatureHex sql.NullString
+		if err := rows.Scan(
+			&rec.CID,
+			&rec.PeerID,
+			&ts,
+			&streamPath,
+			&streamOffset,
+			&recordLength,
+			&signatureHex,
+			&rec.SourceTags.ProviderID,
+			&rec.SourceTags.SourceName,
+			&rec.SourceTags.SourceURL,
+			&rec.SourceTags.BatchID,
+			&rec.SourceTags.ContentKeyID,
+			&rec.SourceTags.ProducerPeerID,
+			&rec.SourceTags.ProducerPublicKey,
+			&materializedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed scanning raw record row: %w", err)
+		}
+		rec.Timestamp = time.Unix(ts, 0).UTC()
+		if err := s.hydrateRecordData(rec, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+			return nil, fmt.Errorf("failed reading raw record data: %w", err)
+		}
+		if materializedAt.Valid && materializedAt.Int64 > 0 {
+			rec.MaterializedAt = time.Unix(materializedAt.Int64, 0).UTC()
+		}
+		records = append(records, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("raw record rows failed: %w", err)
+	}
+	return records, nil
+}
+
+func appendOrAddSchemaSummary(schemas []DataSchemaSummary, add DataSchemaSummary) []DataSchemaSummary {
+	for i := range schemas {
+		if schemas[i].SchemaName == add.SchemaName {
+			schemas[i].Count += add.Count
+			schemas[i].TotalBytes += add.TotalBytes
+			return schemas
+		}
+	}
+	return append(schemas, add)
+}
+
+func localEPMFilterMatches(filter RawRecordQuery) bool {
+	if providerID := strings.TrimSpace(filter.ProviderID); providerID != "" && providerID != "local-node" {
+		return false
+	}
+	if sourceName := strings.TrimSpace(filter.SourceName); sourceName != "" && sourceName != "local-epm" {
+		return false
+	}
+	if batchID := strings.TrimSpace(filter.BatchID); batchID != "" && batchID != "local" {
+		return false
+	}
+	return true
+}
+
+func (s *FlatSQLStore) localEPMSummaryLocked() (int64, int64, error) {
+	rows, err := s.db.Query(`
+		SELECT encrypted_epm_bytes
+		FROM sdn_local_epms
+		WHERE schema_name = 'EPM.fbs'
+	`)
+	if err != nil {
+		return 0, 0, fmt.Errorf("summarize local EPMs: %w", err)
+	}
+	defer rows.Close()
+
+	var count int64
+	var totalBytes int64
+	for rows.Next() {
+		var encrypted string
+		if err := rows.Scan(&encrypted); err != nil {
+			return 0, 0, fmt.Errorf("scan local EPM summary: %w", err)
+		}
+		raw, err := s.decryptLocalEPMPayload(encrypted)
+		if err != nil {
+			return 0, 0, fmt.Errorf("decrypt local EPM summary payload: %w", err)
+		}
+		count++
+		totalBytes += int64(len(raw))
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, fmt.Errorf("local EPM summary rows failed: %w", err)
+	}
+	return count, totalBytes, nil
+}
+
+func (s *FlatSQLStore) queryLocalEPMRecordsLocked(filter RawRecordQuery, limit int) ([]*Record, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	query := `
+		SELECT peer_id, encrypted_epm_bytes, updated_at
+		FROM sdn_local_epms
+		WHERE schema_name = 'EPM.fbs'
+	`
+	args := make([]interface{}, 0, 3)
+	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
+		query += ` AND peer_id = ?`
+		args = append(args, peerID)
+	}
+	query += ` ORDER BY updated_at DESC, peer_id ASC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query local EPM records: %w", err)
+	}
+	defer rows.Close()
+
+	records := make([]*Record, 0, limit)
+	for rows.Next() {
+		var peerID string
+		var encrypted string
+		var updatedAt int64
+		if err := rows.Scan(&peerID, &encrypted, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan local EPM record: %w", err)
+		}
+		epmBytes, err := s.decryptLocalEPMPayload(encrypted)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt local EPM record: %w", err)
+		}
+		records = append(records, &Record{
+			CID:       peerID,
+			PeerID:    peerID,
+			Timestamp: time.Unix(updatedAt, 0).UTC(),
+			Data:      epmBytes,
+			SourceTags: SourceTags{
+				ProviderID: "local-node",
+				SourceName: "local-epm",
+				BatchID:    "local",
+			},
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("local EPM rows failed: %w", err)
 	}
 	return records, nil
 }
@@ -1324,7 +2953,8 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 	}
 
 	query := fmt.Sprintf(`
-		SELECT d.cid, d.peer_id, d.timestamp, d.data, d.signature
+		SELECT d.cid, d.peer_id, d.timestamp,
+		       d.stream_path, d.stream_offset, d.record_length, d.signature_hex
 		FROM %s d
 		INNER JOIN sdn_record_index idx
 		  ON idx.schema_name = ? AND idx.cid = d.cid
@@ -1413,10 +3043,16 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 	for rows.Next() {
 		rec := &Record{}
 		var ts int64
-		if err := rows.Scan(&rec.CID, &rec.PeerID, &ts, &rec.Data, &rec.Signature); err != nil {
+		var streamPath string
+		var streamOffset, recordLength int64
+		var signatureHex sql.NullString
+		if err := rows.Scan(&rec.CID, &rec.PeerID, &ts, &streamPath, &streamOffset, &recordLength, &signatureHex); err != nil {
 			return nil, fmt.Errorf("failed scanning indexed row: %w", err)
 		}
 		rec.Timestamp = time.Unix(ts, 0).UTC()
+		if err := s.hydrateRecordData(rec, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+			return nil, fmt.Errorf("failed reading indexed record data: %w", err)
+		}
 		records = append(records, rec)
 	}
 
@@ -1434,18 +3070,23 @@ func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
 	}
 
 	querySQL := fmt.Sprintf(`
-		SELECT cid, peer_id, timestamp, data, signature
+		SELECT cid, peer_id, timestamp, stream_path, stream_offset, record_length, signature_hex
 		FROM %s WHERE cid = ?
 	`, tableName)
 
 	var record Record
 	var timestamp int64
+	var streamPath string
+	var streamOffset, recordLength int64
+	var signatureHex sql.NullString
 	err = s.db.QueryRow(querySQL, cid).Scan(
 		&record.CID,
 		&record.PeerID,
 		&timestamp,
-		&record.Data,
-		&record.Signature,
+		&streamPath,
+		&streamOffset,
+		&recordLength,
+		&signatureHex,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1455,6 +3096,9 @@ func (s *FlatSQLStore) GetRecord(schemaName, cid string) (*Record, error) {
 	}
 
 	record.Timestamp = time.Unix(timestamp, 0)
+	if err := s.hydrateRecordData(&record, streamPath, streamOffset, recordLength, signatureHex); err != nil {
+		return nil, fmt.Errorf("failed to read record data: %w", err)
+	}
 	return &record, nil
 }
 
@@ -1690,7 +3334,7 @@ func (s *FlatSQLStore) SchemaDateRanges() ([]SchemaDateRange, error) {
 			continue
 		}
 		var totalBytes sql.NullInt64
-		err = s.db.QueryRow(fmt.Sprintf(`SELECT SUM(LENGTH(data)) FROM %s`, tableName)).Scan(&totalBytes)
+		err = s.db.QueryRow(fmt.Sprintf(`SELECT SUM(record_length) FROM %s`, tableName)).Scan(&totalBytes)
 		if err == nil && totalBytes.Valid {
 			ranges[i].TotalBytes = totalBytes.Int64
 		}
@@ -1711,7 +3355,7 @@ func (s *FlatSQLStore) PeerStorageBytes(peerID string) (int64, error) {
 			continue
 		}
 		var bytes sql.NullInt64
-		err = s.db.QueryRow(fmt.Sprintf(`SELECT SUM(LENGTH(data)) FROM %s WHERE peer_id = ?`, tableName), peerID).Scan(&bytes)
+		err = s.db.QueryRow(fmt.Sprintf(`SELECT SUM(record_length) FROM %s WHERE peer_id = ?`, tableName), peerID).Scan(&bytes)
 		if err == nil && bytes.Valid {
 			total += bytes.Int64
 		}
@@ -1784,17 +3428,21 @@ func (s *FlatSQLStore) QueryLogEntries(publisherPeerID, schemaType string, since
 	if limit > 1000 {
 		limit = 1000
 	}
+	plgTableName, err := sds.SchemaNameToTable("PLG.fbs")
+	if err != nil {
+		return nil, fmt.Errorf("invalid PLG schema name: %w", err)
+	}
 
-	rows, err := s.db.Query(`
-		SELECT p.data
+	rows, err := s.db.Query(fmt.Sprintf(`
+		SELECT p.stream_path, p.stream_offset, p.record_length
 		FROM sdn_log_index li
-		INNER JOIN sds_plg p ON p.cid = li.plg_cid
+		INNER JOIN %s p ON p.cid = li.plg_cid
 		WHERE li.publisher_peer_id = ?
 		  AND li.schema_type = ?
 		  AND li.sequence > ?
 		ORDER BY li.sequence ASC
 		LIMIT ?
-	`, publisherPeerID, schemaType, sinceSequence, limit)
+	`, plgTableName), publisherPeerID, schemaType, sinceSequence, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query log entries: %w", err)
 	}
@@ -1802,9 +3450,15 @@ func (s *FlatSQLStore) QueryLogEntries(publisherPeerID, schemaType string, since
 
 	var results [][]byte
 	for rows.Next() {
-		var data []byte
-		if err := rows.Scan(&data); err != nil {
+		var streamPath string
+		var streamOffset, recordLength int64
+		if err := rows.Scan(&streamPath, &streamOffset, &recordLength); err != nil {
 			log.Warnf("Failed to scan log entry: %v", err)
+			continue
+		}
+		data, err := s.readFlatSQLStreamRecord(streamPath, streamOffset, recordLength)
+		if err != nil {
+			log.Warnf("Failed to read log entry FlatSQL stream record: %v", err)
 			continue
 		}
 		results = append(results, data)

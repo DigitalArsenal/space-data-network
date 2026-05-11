@@ -1,15 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as flatbuffers from 'flatbuffers';
+import { EPM } from 'spacedatastandards.org/lib/js/EPM/EPM.js';
+import { EntityType } from 'spacedatastandards.org/lib/js/EPM/EntityType.js';
 import { createDesktopLocalBackend } from './sdn-backend-desktop';
 
 describe('desktop-local SDN backend', () => {
   it('loads node profile and observed SDN peers through local desktop routes', async () => {
     const fetchMock = vi.fn(async (url: string) => {
-      if (url === 'http://127.0.0.1:17890/api/node/epm/json') {
-        return jsonResponse({
+      if (url === 'http://127.0.0.1:17890/api/node/epm') {
+        return flatbufferResponse(buildNodeEpm({
           dn: 'Space Data Network Desktop',
           peer_id: '12D3KooWLocal',
-          agent_version: 'kubo/0.39.0/sdn-desktop',
-        });
+          email: 'desktop@example.invalid',
+        }));
+      }
+      if (url === 'http://127.0.0.1:17890/api/node/epm/json') {
+        throw new Error('desktop-local node profile must use the FlatBuffer EPM route before JSON fallback');
       }
       if (url === 'http://127.0.0.1:17890/api/peers/sdn') {
         return jsonResponse([
@@ -37,7 +43,7 @@ describe('desktop-local SDN backend', () => {
 
     await expect(backend.getNodeProfile()).resolves.toMatchObject({
       ok: true,
-      data: { peer_id: '12D3KooWLocal' },
+      data: { peer_id: '12D3KooWLocal', email: 'desktop@example.invalid' },
     });
     await expect(backend.listObservedPeers()).resolves.toMatchObject({
       ok: true,
@@ -118,6 +124,29 @@ describe('desktop-local SDN backend', () => {
     expect(calls.map((call) => call.url)).toContain('http://127.0.0.1:17890/api/identity/epms/self');
   });
 
+  it('saves the node-self profile through the node EPM route', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === 'http://127.0.0.1:17890/api/node/epm') {
+        expect(init?.method).toBe('PUT');
+        return flatbufferResponse(buildNodeEpm({ dn: 'Updated Node', email: 'node@example.com', peer_id: '12D3KooWNode' }));
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const backend = createDesktopLocalBackend({ desktopProxyUrl: 'http://127.0.0.1:17890', fetch: fetchMock });
+
+    await expect(backend.saveNodeProfile({
+      dn: 'Updated Node',
+      email: 'node@example.com',
+      peer_id: '12D3KooWNode',
+    })).resolves.toMatchObject({
+      ok: true,
+      data: { email: 'node@example.com' },
+    });
+    expect(calls[0]?.url).toBe('http://127.0.0.1:17890/api/node/epm');
+  });
+
   it('searches node and person directory endpoints instead of the peers graph', async () => {
     const urls: string[] = [];
     const fetchMock = vi.fn(async (url: string) => {
@@ -148,7 +177,133 @@ describe('desktop-local SDN backend', () => {
       },
     });
   });
+
+  it('queries raw FlatSQL data records through protected data endpoints', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === 'http://127.0.0.1:17890/api/v1/data/summary') {
+        return jsonResponse({
+          total_records: 1,
+          total_bytes: 128,
+          schemas: [{ schema_name: 'EPM.fbs', count: 1, total_bytes: 128 }],
+          sources: [{ schema_name: 'EPM.fbs', provider_id: 'local-node', source_name: 'local-epm', batch_id: 'local', count: 1, total_bytes: 128 }],
+        });
+      }
+      if (url === 'http://127.0.0.1:17890/api/v1/data/query') {
+        expect(init?.method).toBe('POST');
+        expect(init?.credentials).toBe('include');
+        return jsonResponse({
+          schema: 'EPM.fbs',
+          count: 1,
+          results: [{
+            schema_name: 'EPM.fbs',
+            cid: '12D3KooWEPM',
+            peer_id: '12D3KooWEPM',
+            provider_id: 'local-node',
+            source_name: 'local-epm',
+            size_bytes: 128,
+            data_base64: 'AAECAw==',
+          }],
+        });
+      }
+      if (url === 'http://127.0.0.1:17890/api/v1/data/records/EPM.fbs/12D3KooWEPM') {
+        return flatbufferResponse(new Uint8Array([0, 1, 2, 3]));
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const backend = createDesktopLocalBackend({ desktopProxyUrl: 'http://127.0.0.1:17890', fetch: fetchMock });
+
+    await expect(backend.getDataSummary()).resolves.toMatchObject({
+      ok: true,
+      data: { totalRecords: 1, schemas: [{ schemaName: 'EPM.fbs', count: 1 }] },
+    });
+    await expect(backend.queryRawData({ schema: 'EPM.fbs', providerId: 'local-node', sourceName: 'local-epm', limit: 10 })).resolves.toMatchObject({
+      ok: true,
+      data: [{ schemaName: 'EPM.fbs', cid: '12D3KooWEPM', dataBase64: 'AAECAw==' }],
+    });
+    await expect(backend.readRawDataRecord('EPM.fbs', '12D3KooWEPM')).resolves.toMatchObject({
+      ok: true,
+      data: { schemaName: 'EPM.fbs', cid: '12D3KooWEPM', bytes: new Uint8Array([0, 1, 2, 3]) },
+    });
+    expect(calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ url: 'http://127.0.0.1:17890/api/v1/data/summary', init: expect.objectContaining({ credentials: 'include' }) }),
+      expect.objectContaining({ url: 'http://127.0.0.1:17890/api/v1/data/query', init: expect.objectContaining({ method: 'POST', credentials: 'include' }) }),
+    ]));
+  });
+
+  it('manages node access grants through the wallet-cookie auth API', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === 'http://127.0.0.1:17890/api/auth/users') {
+        if (init?.method === 'POST') return jsonResponse({ status: 'created' });
+        return jsonResponse([
+          { xpub: 'xpub-config-admin', name: 'Config Admin', trust_level: 'admin', source: 'config' },
+          { xpub: 'xpub-operator', name: 'Operator', trust_level: 'standard', source: 'database' },
+        ]);
+      }
+      if (url === 'http://127.0.0.1:17890/api/auth/users/xpub-operator') {
+        if (init?.method === 'PUT') return jsonResponse({ status: 'updated' });
+        if (init?.method === 'DELETE') return jsonResponse({ status: 'removed' });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const backend = createDesktopLocalBackend({ desktopProxyUrl: 'http://127.0.0.1:17890', fetch: fetchMock });
+
+    await expect(backend.listNodeAccessUsers()).resolves.toMatchObject({
+      ok: true,
+      data: expect.arrayContaining([
+        expect.objectContaining({ xpub: 'xpub-config-admin', trustLevel: 'admin', source: 'config', configManaged: true }),
+      ]),
+    });
+    await expect(backend.saveNodeAccessUser({ xpub: 'xpub-new-admin', name: 'New Admin', trustLevel: 'admin' })).resolves.toMatchObject({ ok: true });
+    await expect(backend.revokeNodeAdmin('xpub-operator')).resolves.toMatchObject({ ok: true });
+    await expect(backend.deleteNodeAccessUser('xpub-operator')).resolves.toMatchObject({ ok: true });
+    expect(calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        url: 'http://127.0.0.1:17890/api/auth/users',
+        init: expect.objectContaining({ credentials: 'include' }),
+      }),
+      expect.objectContaining({
+        url: 'http://127.0.0.1:17890/api/auth/users',
+        init: expect.objectContaining({ method: 'POST', credentials: 'include' }),
+      }),
+      expect.objectContaining({
+        url: 'http://127.0.0.1:17890/api/auth/users/xpub-operator',
+        init: expect.objectContaining({ method: 'PUT', credentials: 'include' }),
+      }),
+      expect.objectContaining({
+        url: 'http://127.0.0.1:17890/api/auth/users/xpub-operator',
+        init: expect.objectContaining({ method: 'DELETE', credentials: 'include' }),
+      }),
+    ]));
+  });
 });
+
+function buildNodeEpm(profile: { dn: string; peer_id: string; email?: string }): Uint8Array {
+  const builder = new flatbuffers.Builder(1024);
+  const dn = builder.createString(profile.dn);
+  const email = profile.email ? builder.createString(profile.email) : 0;
+  const address = builder.createString(`/ip4/127.0.0.1/tcp/4001/p2p/${profile.peer_id}`);
+  const addresses = EPM.createMultiformatAddressVector(builder, [address]);
+
+  EPM.startEPM(builder);
+  EPM.addDn(builder, dn);
+  if (email) EPM.addEmail(builder, email);
+  EPM.addMultiformatAddress(builder, addresses);
+  EPM.addEntityType(builder, EntityType.Node);
+  const epm = EPM.endEPM(builder);
+  EPM.finishSizePrefixedEPMBuffer(builder, epm);
+  return builder.asUint8Array();
+}
+
+function flatbufferResponse(payload: Uint8Array) {
+  return new Response(payload, {
+    status: 200,
+    headers: { 'content-type': 'application/x-flatbuffers' },
+  });
+}
 
 function jsonResponse(payload: unknown) {
   return {

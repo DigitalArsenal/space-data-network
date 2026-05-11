@@ -91,16 +91,23 @@ export function createPublicEpmExport(input: Record<string, unknown>): Record<st
 export function createVCardQrPayload(input: Record<string, unknown> | HostedEpmRecord): string {
   const record = isHostedEpmRecord(input) ? input : normalizeHostedEpmRecord(input);
   const epm = createPublicEpmExport(record.epmJson);
+  const publicKey = pickString(epm, PUBLIC_KEY_FIELDS);
   const lines = ['BEGIN:VCARD', 'VERSION:3.0'];
   addVCardLine(lines, 'FN', pickString(epm, ['dn', 'DN']) || record.label);
   addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', record.kind === 'node-self' ? 'node' : 'user');
   addVCardLine(lines, 'X-SDN-PEER-ID', record.peerId);
   addVCardLine(lines, 'X-SDN-EPM-CID', record.epmCid || pickString(epm, ['epm_cid', 'epmCid']));
-  addVCardLine(lines, 'X-SDN-PUBLIC-KEY', pickString(epm, PUBLIC_KEY_FIELDS));
+  addVCardLine(lines, 'EMAIL;TYPE=INTERNET', publicKeyEmailAddress(publicKey));
+  addVCardLine(lines, 'X-SDN-PUBLIC-KEY', publicKey);
   addVCardLine(lines, 'X-SDN-SIGNING-PUBLIC-KEY', pickString(epm, SIGNING_PUBLIC_KEY_FIELDS));
   addVCardLine(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY', pickString(epm, ENCRYPTION_PUBLIC_KEY_FIELDS));
   lines.push('END:VCARD');
   return lines.join('\r\n');
+}
+
+export function publicKeyEmailAddress(publicKey: string | undefined): string | undefined {
+  const localPart = publicKey?.trim().replace(/\s+/g, '').replace(/[^A-Za-z0-9._%+-]/g, '');
+  return localPart ? `${localPart}@spacedatanetwork.org` : undefined;
 }
 
 export async function createChunkedQrPayloads(

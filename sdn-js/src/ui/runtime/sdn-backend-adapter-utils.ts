@@ -2,9 +2,12 @@ import {
   createAvailableResult,
   createDegradedResult,
   type BackendResult,
+  type DataSummary,
   type LocalObjectSummary,
+  type NodeAccessUser,
   type NodeSummary,
   type ObservedSdnPeer,
+  type RawDataRecord,
   type SdnBackendMode,
   type StorageSummary,
 } from './sdn-backend';
@@ -41,6 +44,23 @@ export async function getJson<T>(
       return createDegradedResult(capabilityId, `${url} returned HTTP ${response.status}`);
     }
     return createAvailableResult(capabilityId, await response.json() as T);
+  } catch (error) {
+    return createDegradedResult(capabilityId, error instanceof Error ? error.message : String(error));
+  }
+}
+
+export async function getBytes(
+  fetchLike: FetchLike,
+  url: string,
+  capabilityId: string,
+  init?: RequestInit,
+): Promise<BackendResult<Uint8Array>> {
+  try {
+    const response = await fetchLike(url, init);
+    if (!response.ok) {
+      return createDegradedResult(capabilityId, `${url} returned HTTP ${response.status}`);
+    }
+    return createAvailableResult(capabilityId, new Uint8Array(await response.arrayBuffer()));
   } catch (error) {
     return createDegradedResult(capabilityId, error instanceof Error ? error.message : String(error));
   }
@@ -91,6 +111,10 @@ export function recordsFromPayload(payload: unknown): Array<Record<string, unkno
   return [payload];
 }
 
+export function normalizeNodeAccessPayload(payload: unknown): NodeAccessUser[] {
+  return recordsFromPayload(payload).map(normalizeNodeAccessUser).filter((user): user is NodeAccessUser => user !== null);
+}
+
 export function normalizeStorageSummary(payload: unknown): StorageSummary {
   const record = isRecord(payload) ? payload : {};
   return {
@@ -99,6 +123,41 @@ export function normalizeStorageSummary(payload: unknown): StorageSummary {
     cacheBytes: readNumber(record, 'cache_bytes', 'cacheBytes') ?? null,
     quotaBytes: readNumber(record, 'quota_bytes', 'quotaBytes', 'storage_max', 'StorageMax') ?? null,
   };
+}
+
+export function normalizeDataSummary(payload: unknown): DataSummary {
+  const record = isRecord(payload) ? payload : {};
+  return {
+    totalRecords: readNumber(record, 'total_records', 'totalRecords') ?? 0,
+    totalBytes: readNumber(record, 'total_bytes', 'totalBytes') ?? 0,
+    schemas: recordsFromValue(record.schemas).map((entry) => ({
+      schemaName: readString(entry, 'schema_name', 'schemaName') ?? 'unknown',
+      count: readNumber(entry, 'count') ?? 0,
+      totalBytes: readNumber(entry, 'total_bytes', 'totalBytes') ?? 0,
+    })),
+    sources: recordsFromValue(record.sources).map((entry) => ({
+      schemaName: readString(entry, 'schema_name', 'schemaName') ?? 'unknown',
+      providerId: readString(entry, 'provider_id', 'providerId') ?? '',
+      sourceName: readString(entry, 'source_name', 'sourceName') ?? '',
+      batchId: readString(entry, 'batch_id', 'batchId') ?? '',
+      count: readNumber(entry, 'count') ?? 0,
+      totalBytes: readNumber(entry, 'total_bytes', 'totalBytes') ?? 0,
+    })),
+  };
+}
+
+export function normalizeRawDataRecords(payload: unknown): RawDataRecord[] {
+  return recordsFromPayload(payload).map((record): RawDataRecord => ({
+    schemaName: readString(record, 'schema_name', 'schemaName') ?? 'unknown',
+    cid: readString(record, 'cid', 'CID', 'id') ?? '',
+    peerId: readString(record, 'peer_id', 'peerId') ?? '',
+    providerId: readString(record, 'provider_id', 'providerId') ?? undefined,
+    sourceName: readString(record, 'source_name', 'sourceName') ?? undefined,
+    batchId: readString(record, 'batch_id', 'batchId') ?? undefined,
+    timestamp: readString(record, 'timestamp') ?? undefined,
+    sizeBytes: readNumber(record, 'size_bytes', 'sizeBytes') ?? 0,
+    dataBase64: readString(record, 'data_base64', 'dataBase64') ?? '',
+  })).filter((record) => record.schemaName !== 'unknown' && record.cid !== '');
 }
 
 function normalizePeerRecord(record: Record<string, unknown>): ObservedSdnPeer | null {
@@ -116,6 +175,11 @@ function normalizePeerRecord(record: Record<string, unknown>): ObservedSdnPeer |
     ...(agentVersion ? { agentVersion } : {}),
     ...(protocols.length > 0 ? { protocols } : {}),
   };
+}
+
+function recordsFromValue(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord);
 }
 
 function normalizeProtocols(value: unknown): string[] {
@@ -158,6 +222,22 @@ function readString(record: Record<string, unknown>, ...keys: string[]): string 
     if (typeof value === 'string' && value.trim().length > 0) return value.trim();
   }
   return null;
+}
+
+function normalizeNodeAccessUser(record: Record<string, unknown>): NodeAccessUser | null {
+  const xpub = readString(record, 'xpub', 'XPub');
+  if (!xpub) return null;
+  const source = readString(record, 'source', 'Source') ?? 'database';
+  return {
+    xpub,
+    name: readString(record, 'name', 'Name') ?? '',
+    trustLevel: readString(record, 'trust_level', 'trustLevel', 'TrustLevel') ?? 'untrusted',
+    signingPubKeyHex: readString(record, 'signing_pubkey_hex', 'signingPubKeyHex', 'SigningPubKeyHex') ?? '',
+    source,
+    configManaged: source === 'config',
+    ...(readString(record, 'created_at', 'createdAt', 'CreatedAt') ? { createdAt: readString(record, 'created_at', 'createdAt', 'CreatedAt') ?? undefined } : {}),
+    ...(readString(record, 'last_login', 'lastLogin', 'LastLogin') ? { lastLogin: readString(record, 'last_login', 'lastLogin', 'LastLogin') ?? undefined } : {}),
+  };
 }
 
 function readNumber(record: Record<string, unknown>, ...keys: string[]): number | null {

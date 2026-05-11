@@ -57,6 +57,14 @@ function sendText (res, status, contentType, payload) {
   res.end(payload)
 }
 
+function sendBuffer (res, status, contentType, payload) {
+  res.writeHead(status, {
+    'Content-Type': contentType,
+    'Cache-Control': 'no-store'
+  })
+  res.end(payload)
+}
+
 function routeForUrl (requestUrl) {
   const parsed = new URL(requestUrl, `http://${HOST}`)
   const [, routeName, ...segments] = parsed.pathname.split('/')
@@ -90,6 +98,54 @@ function redirectBareAppRoute (req, res) {
 
   res.writeHead(301, { Location: `/${routeName}/${parsed.search}${parsed.hash}` })
   res.end()
+  return true
+}
+
+function isAllowedLoopbackHostHeader (hostHeader) {
+  const host = normalizeHostHeader(hostHeader)
+  return host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '0.0.0.0' ||
+    host === '::1'
+}
+
+function normalizeHostHeader (hostHeader) {
+  if (Array.isArray(hostHeader)) {
+    hostHeader = hostHeader[0]
+  }
+  if (typeof hostHeader !== 'string') {
+    return null
+  }
+
+  const value = hostHeader.trim().toLowerCase()
+  if (!value) {
+    return null
+  }
+
+  if (value.startsWith('[')) {
+    const match = value.match(/^\[([^\]]+)\](?::\d+)?$/)
+    return match ? match[1] : null
+  }
+
+  if (value === '::1') {
+    return value
+  }
+
+  const hostPort = value.match(/^([^:]+)(?::\d+)?$/)
+  return hostPort ? hostPort[1] : null
+}
+
+function rejectNonLoopbackHostHeader (req, res) {
+  if (isAllowedLoopbackHostHeader(req.headers.host)) {
+    return false
+  }
+
+  logger.warn(`[desktop static] rejected non-loopback Host header: ${req.headers.host || 'missing'}`)
+  res.writeHead(403, {
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Cache-Control': 'no-store'
+  })
+  res.end('Forbidden')
   return true
 }
 
@@ -296,6 +352,57 @@ async function readDesktopNodeProfile () {
   }
 }
 
+async function buildDesktopNodeEPM (profile) {
+  const flatbuffers = require('flatbuffers')
+  const builder = new flatbuffers.Builder(2048)
+
+  const dnOff = createStringOffset(builder, readEpmString(profile, ['dn', 'display_name', 'displayName', 'name']))
+  const legalNameOff = createStringOffset(builder, readEpmString(profile, ['legal_name', 'legalName']))
+  const familyNameOff = createStringOffset(builder, readEpmString(profile, ['family_name', 'familyName']))
+  const givenNameOff = createStringOffset(builder, readEpmString(profile, ['given_name', 'givenName']))
+  const emailOff = createStringOffset(builder, readEpmString(profile, ['email']))
+  const telephoneOff = createStringOffset(builder, readEpmString(profile, ['telephone', 'phone']))
+  const addresses = desktopEpmAddresses(profile)
+  const addressesOff = createOffsetVector(builder, addresses.map(address => builder.createString(address)))
+
+  builder.startObject(19)
+  builder.addFieldInt8(18, 1, 0) // EPM.EntityType.Node
+  if (dnOff) builder.addFieldOffset(0, dnOff, 0)
+  if (legalNameOff) builder.addFieldOffset(1, legalNameOff, 0)
+  if (familyNameOff) builder.addFieldOffset(2, familyNameOff, 0)
+  if (givenNameOff) builder.addFieldOffset(3, givenNameOff, 0)
+  if (emailOff) builder.addFieldOffset(11, emailOff, 0)
+  if (telephoneOff) builder.addFieldOffset(12, telephoneOff, 0)
+  if (addressesOff) builder.addFieldOffset(14, addressesOff, 0)
+  const epm = builder.endObject()
+  builder.finish(epm, '$EPM', true)
+  return Buffer.from(builder.asUint8Array())
+}
+
+function createStringOffset (builder, value) {
+  const trimmed = String(value || '').trim()
+  return trimmed ? builder.createString(trimmed) : 0
+}
+
+function createOffsetVector (builder, offsets) {
+  if (offsets.length === 0) return 0
+  builder.startVector(4, offsets.length, 4)
+  for (let index = offsets.length - 1; index >= 0; index--) {
+    builder.addOffset(offsets[index])
+  }
+  return builder.endVector()
+}
+
+function desktopEpmAddresses (profile) {
+  const raw = profile && (profile.multiformat_address || profile.multiaddrs || profile.addresses)
+  const addresses = Array.isArray(raw) ? raw.filter(value => typeof value === 'string' && value.trim()).map(value => value.trim()) : []
+  const peerID = readEpmString(profile, ['peer_id', 'peerId', 'PeerID', 'ID'])
+  if (peerID && !addresses.some(address => address.includes(`/p2p/${peerID}`) || address.includes(`/ipns/${peerID}`))) {
+    addresses.unshift(`/ipns/${peerID}`)
+  }
+  return addresses
+}
+
 async function readRequestBody (req) {
   return await new Promise((resolve, reject) => {
     let body = ''
@@ -494,12 +601,19 @@ function identityRecordToVCard (record) {
 
   if (record.peerId) lines.push(`X-SDN-PEER-ID:${escapeVCardValue(record.peerId)}`)
   if (record.epmCid) lines.push(`X-SDN-EPM-CID:${escapeVCardValue(record.epmCid)}`)
+  const publicKeyEmail = publicKeyEmailAddress(publicKey)
+  if (publicKeyEmail) lines.push(`EMAIL;TYPE=INTERNET:${escapeVCardValue(publicKeyEmail)}`)
   if (publicKey) lines.push(`X-SDN-PUBLIC-KEY:${escapeVCardValue(publicKey)}`)
   if (signingPublicKey) lines.push(`X-SDN-SIGNING-PUBLIC-KEY:${escapeVCardValue(signingPublicKey)}`)
   if (encryptionPublicKey) lines.push(`X-SDN-ENCRYPTION-PUBLIC-KEY:${escapeVCardValue(encryptionPublicKey)}`)
   lines.push('END:VCARD')
 
   return `${lines.join('\r\n')}\r\n`
+}
+
+function publicKeyEmailAddress (publicKey) {
+  const localPart = String(publicKey || '').trim().replace(/\s+/g, '').replace(/[^A-Za-z0-9._%+-]/g, '')
+  return localPart ? `${localPart}@spacedatanetwork.org` : ''
 }
 
 async function readIdentityRecord (id) {
@@ -667,6 +781,11 @@ async function serveDesktopNodeEPMAPI (req, res) {
     return true
   }
 
+  if (req.method === 'GET' && parsed.pathname === '/api/node/epm') {
+    sendBuffer(res, 200, 'application/x-flatbuffers', await buildDesktopNodeEPM(await readDesktopNodeProfile()))
+    return true
+  }
+
   if (req.method === 'PUT' && parsed.pathname === '/api/node/epm') {
     let profile
     try {
@@ -679,7 +798,7 @@ async function serveDesktopNodeEPMAPI (req, res) {
     const next = { ...(await readDesktopNodeProfile()), ...profile }
     await fs.promises.mkdir(path.dirname(localProfilePath()), { recursive: true })
     await fs.promises.writeFile(localProfilePath(), JSON.stringify(next, null, 2))
-    sendJSON(res, 200, next)
+    sendBuffer(res, 200, 'application/x-flatbuffers', await buildDesktopNodeEPM(next))
     return true
   }
 
@@ -695,8 +814,35 @@ async function serveDesktopLocalDataAPI (req, res) {
       healthy: true,
       details: {
         runtime: 'desktop-local',
-        object_index: 'degraded'
+        object_index: 'degraded',
+        message: 'local SQL index is not wired in desktop-local yet'
       }
+    })
+    return true
+  }
+
+  if (req.method === 'GET' && parsed.pathname === '/api/v1/data/summary') {
+    const record = await desktopLocalEpmDataRecord()
+    sendJSON(res, 200, {
+      total_records: 1,
+      total_bytes: record.size_bytes,
+      schemas: [
+        {
+          schema_name: 'EPM.fbs',
+          count: 1,
+          total_bytes: record.size_bytes
+        }
+      ],
+      sources: [
+        {
+          schema_name: 'EPM.fbs',
+          provider_id: 'local-node',
+          source_name: 'local-epm',
+          batch_id: 'local',
+          count: 1,
+          total_bytes: record.size_bytes
+        }
+      ]
     })
     return true
   }
@@ -706,16 +852,84 @@ async function serveDesktopLocalDataAPI (req, res) {
     return true
   }
 
+  if (req.method === 'GET' && parsed.pathname.startsWith('/api/v1/data/records/')) {
+    const segments = parsed.pathname.split('/').filter(Boolean)
+    const schemaName = decodeURIComponent(segments[4] || '')
+    const cid = decodeURIComponent(segments[5] || '')
+    const record = await desktopLocalEpmDataRecord()
+    if (schemaName !== 'EPM.fbs' || cid !== record.cid) {
+      sendJSON(res, 404, { error: 'record not found' })
+      return true
+    }
+
+    sendBuffer(res, 200, 'application/x-flatbuffers', record.bytes)
+    return true
+  }
+
   if (req.method === 'POST' && parsed.pathname === '/api/v1/data/query') {
+    let payload = {}
+    try {
+      payload = JSON.parse(await readRequestBody(req) || '{}')
+    } catch {
+      sendJSON(res, 400, { error: 'invalid JSON query' })
+      return true
+    }
+
+    const record = await desktopLocalEpmDataRecord()
+    const schema = readEpmString(payload, ['schema', 'schema_name', 'schemaName'])
+    const provider = readEpmString(payload, ['provider_id', 'providerId'])
+    const source = readEpmString(payload, ['source_name', 'sourceName'])
+    const batch = readEpmString(payload, ['batch_id', 'batchId'])
+    const peer = readEpmString(payload, ['peer_id', 'peerId'])
+    const matches = (!schema || schema === record.schema_name) &&
+      (!provider || provider === record.provider_id) &&
+      (!source || source === record.source_name) &&
+      (!batch || batch === record.batch_id) &&
+      (!peer || peer === record.peer_id)
+
+    if (matches) {
+      sendJSON(res, 200, { records: [desktopLocalEpmDataJson(record)] })
+      return true
+    }
+
     sendJSON(res, 200, {
-      results: [],
-      degraded: true,
-      reason: 'local SQL index is not wired in desktop-local yet'
+      records: []
     })
     return true
   }
 
   return false
+}
+
+async function desktopLocalEpmDataRecord () {
+  const profile = await readDesktopNodeProfile()
+  const bytes = await buildDesktopNodeEPM(profile)
+  const peerID = readEpmString(profile, ['peer_id', 'peerId', 'PeerID', 'ID']) || 'self'
+  return {
+    schema_name: 'EPM.fbs',
+    cid: peerID,
+    peer_id: peerID,
+    provider_id: 'local-node',
+    source_name: 'local-epm',
+    batch_id: 'local',
+    timestamp: new Date().toISOString(),
+    size_bytes: bytes.byteLength,
+    bytes
+  }
+}
+
+function desktopLocalEpmDataJson (record) {
+  return {
+    schema_name: record.schema_name,
+    cid: record.cid,
+    peer_id: record.peer_id,
+    provider_id: record.provider_id,
+    source_name: record.source_name,
+    batch_id: record.batch_id,
+    timestamp: record.timestamp,
+    size_bytes: record.size_bytes,
+    data_base64: record.bytes.toString('base64')
+  }
 }
 
 function serveFile (res, filePath) {
@@ -742,6 +956,10 @@ async function startDesktopStaticServer () {
   serverPromise = (async () => {
     const port = await portfinder.getPortPromise({ port: START_PORT })
     const server = http.createServer((req, res) => {
+      if (rejectNonLoopbackHostHeader(req, res)) {
+        return
+      }
+
       if (serveConfiguredSdnNodes(req, res)) {
         return
       }
@@ -812,10 +1030,12 @@ module.exports = {
   DESKTOP_SDN_SEED_PEERS,
   getDesktopStaticOrigin,
   getDesktopStaticUrl,
+  isAllowedLoopbackHostHeader,
   isSdnSSHHostAlias,
   kuboSwarmPeersToDesktopSdnPeers,
   serveDesktopDirectoryAPI,
   serveDesktopIdentityAPI,
   serveDesktopLocalDataAPI,
+  serveDesktopNodeEPMAPI,
   startDesktopStaticServer
 }

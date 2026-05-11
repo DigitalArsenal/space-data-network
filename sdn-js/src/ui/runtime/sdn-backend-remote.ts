@@ -7,25 +7,36 @@ import {
   normalizeBackendConfig,
   type BackendCapability,
   type BackendResult,
+  type DataSummary,
   type LocalObjectSummary,
+  type NodeAccessUser,
+  type NodeAccessUserInput,
   type NodeSummary,
   type ObservedSdnPeer,
   type PartialSdnBackendConfig,
+  type RawDataQuery,
+  type RawDataRecord,
+  type RawDataRecordBytes,
   type SdnBackend,
   type SdnBackendConfig,
   type StorageSummary,
 } from './sdn-backend';
 import {
+  getBytes,
   getJson,
   joinUrl,
   nodeSummaryFromProfile,
+  normalizeDataSummary,
+  normalizeNodeAccessPayload,
   normalizeObjectPayload,
   normalizePeerPayload,
+  normalizeRawDataRecords,
   normalizeStorageSummary,
   recordsFromPayload,
   resolveFetch,
   type BackendDeps,
 } from './sdn-backend-adapter-utils';
+import { decodeEpmFlatBuffer } from './epm-flatbuffer';
 import { normalizeHostedEpmRecord, type HostedEpmRecord } from './identity';
 
 export type RemoteSdnBackendOptions = PartialSdnBackendConfig & Partial<SdnBackendConfig> & BackendDeps;
@@ -36,9 +47,17 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
   const serverBase = config.serverUrl;
 
   async function getNodeProfile(): Promise<BackendResult<Record<string, unknown>>> {
-    const publicInfo = await getJson<Record<string, unknown>>(fetchLike, joinUrl(serverBase, '/api/node/info'), 'getNodeProfile');
-    if (publicInfo.ok) return publicInfo;
-    return getJson<Record<string, unknown>>(fetchLike, joinUrl(serverBase, '/api/node/epm/json'), 'getNodeProfile');
+    const result = await getBytes(fetchLike, joinUrl(serverBase, '/api/node/epm'), 'getNodeProfile', {
+      headers: { accept: 'application/x-flatbuffers' },
+    });
+    if (!result.ok || !result.data) {
+      return createDegradedResult('getNodeProfile', result.capability.reason ?? 'node EPM FlatBuffer unavailable');
+    }
+    try {
+      return createAvailableResult('getNodeProfile', decodeEpmFlatBuffer(result.data));
+    } catch (error) {
+      return createDegradedResult('getNodeProfile', error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function getNodeSummary(): Promise<BackendResult<NodeSummary>> {
@@ -66,7 +85,20 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
     },
     getNodeProfile,
     async saveNodeProfile(profile: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
-      return createUnavailableResult('saveNodeProfile', `remote profile editing requires an explicit permission flow (${Object.keys(profile).length} fields)`);
+      const result = await getBytes(
+        fetchLike,
+        joinUrl(serverBase, '/api/node/epm'),
+        'saveNodeProfile',
+        authJsonRequest('PUT', profile),
+      );
+      if (!result.ok || !result.data) {
+        return createDegradedResult('saveNodeProfile', result.capability.reason ?? 'updated node EPM FlatBuffer unavailable');
+      }
+      try {
+        return createAvailableResult('saveNodeProfile', decodeEpmFlatBuffer(result.data));
+      } catch (error) {
+        return createDegradedResult('saveNodeProfile', error instanceof Error ? error.message : String(error));
+      }
     },
     async listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>> {
       return createCapabilityResult('listWalletsAndEpms', 'local-only', 'wallet and EPM management must run on a local node', []);
@@ -79,6 +111,45 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
     },
     async importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
       return createCapabilityResult('importCore', 'local-only', `Core import must run on a local node (${Object.keys(core).length} fields)`);
+    },
+    async listNodeAccessUsers(): Promise<BackendResult<NodeAccessUser[]>> {
+      const users = await getJson<unknown>(
+        fetchLike,
+        joinUrl(serverBase, '/api/auth/users'),
+        'listNodeAccessUsers',
+        authRequest(),
+      );
+      if (!users.ok) return users as BackendResult<NodeAccessUser[]>;
+      return createAvailableResult('listNodeAccessUsers', normalizeNodeAccessPayload(users.data));
+    },
+    async saveNodeAccessUser(user: NodeAccessUserInput): Promise<BackendResult<Record<string, unknown>>> {
+      return getJson<Record<string, unknown>>(
+        fetchLike,
+        joinUrl(serverBase, '/api/auth/users'),
+        'saveNodeAccessUser',
+        authJsonRequest('POST', {
+          xpub: user.xpub,
+          name: user.name ?? '',
+          trust_level: user.trustLevel,
+          signing_pubkey_hex: user.signingPubKeyHex ?? '',
+        }),
+      );
+    },
+    async revokeNodeAdmin(xpub: string): Promise<BackendResult<Record<string, unknown>>> {
+      return getJson<Record<string, unknown>>(
+        fetchLike,
+        joinUrl(serverBase, `/api/auth/users/${encodeURIComponent(xpub)}`),
+        'revokeNodeAdmin',
+        authJsonRequest('PUT', { trust_level: 'standard' }),
+      );
+    },
+    async deleteNodeAccessUser(xpub: string): Promise<BackendResult<Record<string, unknown>>> {
+      return getJson<Record<string, unknown>>(
+        fetchLike,
+        joinUrl(serverBase, `/api/auth/users/${encodeURIComponent(xpub)}`),
+        'deleteNodeAccessUser',
+        authRequest('DELETE'),
+      );
     },
     async listHostedEpms(): Promise<BackendResult<HostedEpmRecord[]>> {
       const epms = await getJson<unknown>(fetchLike, joinUrl(serverBase, '/api/identity/epms'), 'listHostedEpms');
@@ -173,6 +244,38 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
       if (!object.ok) return object as BackendResult<Record<string, unknown>>;
       return createAvailableResult('inspectObject', isRecord(object.data) ? object.data : { id, value: object.data });
     },
+    async getDataSummary(): Promise<BackendResult<DataSummary>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(serverBase, '/api/v1/data/summary'),
+        'getDataSummary',
+        authRequest(),
+      );
+      if (!result.ok) return createDegradedResult('getDataSummary', result.capability.reason ?? 'data summary unavailable');
+      return createAvailableResult('getDataSummary', normalizeDataSummary(result.data));
+    },
+    async queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(serverBase, '/api/v1/data/query'),
+        'queryRawData',
+        authJsonRequest('POST', rawDataQueryPayload(query)),
+      );
+      if (!result.ok) return result as BackendResult<RawDataRecord[]>;
+      return createAvailableResult('queryRawData', normalizeRawDataRecords(result.data));
+    },
+    async readRawDataRecord(schemaName: string, cid: string): Promise<BackendResult<RawDataRecordBytes>> {
+      const result = await getBytes(
+        fetchLike,
+        joinUrl(serverBase, `/api/v1/data/records/${encodeURIComponent(schemaName)}/${encodeURIComponent(cid)}`),
+        'readRawDataRecord',
+        authRequest(),
+      );
+      if (!result.ok || !result.data) {
+        return createDegradedResult('readRawDataRecord', result.capability.reason ?? 'raw FlatBuffer record unavailable');
+      }
+      return createAvailableResult('readRawDataRecord', { schemaName, cid, bytes: result.data });
+    },
     async pinObject(id: string): Promise<BackendResult<Record<string, unknown>>> {
       return createCapabilityResult('pinObject', 'local-only', `pinning ${id} must run on a local node`);
     },
@@ -229,4 +332,36 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function authRequest(method?: string): RequestInit {
+  return {
+    ...(method ? { method } : {}),
+    credentials: 'include',
+    headers: { 'x-requested-with': 'sdn-ui' },
+  };
+}
+
+function authJsonRequest(method: string, body: Record<string, unknown>): RequestInit {
+  return {
+    method,
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/json',
+      'x-requested-with': 'sdn-ui',
+    },
+    body: JSON.stringify(body),
+  };
+}
+
+function rawDataQueryPayload(query: RawDataQuery): Record<string, unknown> {
+  return {
+    schema: query.schema,
+    ...(query.providerId ? { provider_id: query.providerId } : {}),
+    ...(query.sourceName ? { source_name: query.sourceName } : {}),
+    ...(query.batchId ? { batch_id: query.batchId } : {}),
+    ...(query.peerId ? { peer_id: query.peerId } : {}),
+    ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
+    ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
+  };
 }

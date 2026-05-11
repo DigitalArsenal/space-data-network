@@ -99,6 +99,7 @@ describe('public EPM exports', () => {
     expect(payload).toContain('FN:Alice Example');
     expect(payload).toContain('X-SDN-PEER-ID:16Uiu2Alice');
     expect(payload).toContain('X-SDN-EPM-CID:bafyepm');
+    expect(payload).toContain('EMAIL;TYPE=INTERNET:abcdef@spacedatanetwork.org');
     expect(payload).toContain('X-SDN-PUBLIC-KEY:abcdef');
     expect(payload).toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public');
     expect(payload).toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public');

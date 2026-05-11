@@ -39,7 +39,28 @@ func TestNewFlatSQLStore(t *testing.T) {
 	}
 }
 
-func TestNewFlatSQLStoreDoesNotSynchronouslyIndexExistingSchemaTables(t *testing.T) {
+func TestNewFlatSQLStoreCreatesCanonicalSchemaTablesWithoutSQLiteBlobs(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-no-blob-table-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	assertNoSQLiteBlobColumns(t, store, "OMM")
+	assertHasColumns(t, store, "OMM", "cid", "peer_id", "timestamp", "stream_path", "stream_offset", "record_length", "signature_hex")
+}
+
+func TestNewFlatSQLStoreMigratesExistingCanonicalBlobTableToStreamMetadata(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-existing-table-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -50,8 +71,9 @@ func TestNewFlatSQLStoreDoesNotSynchronouslyIndexExistingSchemaTables(t *testing
 	if err != nil {
 		t.Fatalf("open sqlite db failed: %v", err)
 	}
+	payload := []byte("canonical-omm-payload")
 	if _, err := db.Exec(`
-		CREATE TABLE sds_omm (
+		CREATE TABLE OMM (
 			cid TEXT PRIMARY KEY,
 			peer_id TEXT NOT NULL,
 			timestamp INTEGER NOT NULL,
@@ -62,6 +84,12 @@ func TestNewFlatSQLStoreDoesNotSynchronouslyIndexExistingSchemaTables(t *testing
 		)
 	`); err != nil {
 		t.Fatalf("create existing schema table failed: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO OMM (cid, peer_id, timestamp, data, signature)
+		VALUES ('canonical-cid', 'source:celestrak', 1700000000, ?, x'010203')
+	`, payload); err != nil {
+		t.Fatalf("insert existing canonical record failed: %v", err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatalf("close sqlite db failed: %v", err)
@@ -78,12 +106,79 @@ func TestNewFlatSQLStoreDoesNotSynchronouslyIndexExistingSchemaTables(t *testing
 	}
 	defer store.Close()
 
-	var count int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_sds_omm_peer_time'`).Scan(&count); err != nil {
-		t.Fatalf("index lookup failed: %v", err)
+	assertNoSQLiteBlobColumns(t, store, "OMM")
+	record, err := store.Get("OMM.fbs", "canonical-cid")
+	if err != nil {
+		t.Fatalf("migrated canonical record lookup failed: %v", err)
 	}
-	if count != 0 {
-		t.Fatalf("existing schema table peer/time index should be deferred, count=%d", count)
+	if string(record) != string(payload) {
+		t.Fatalf("migrated canonical payload = %q, want %q", string(record), string(payload))
+	}
+}
+
+func TestNewFlatSQLStoreMigratesLegacySDSTableToCanonicalSchemaTable(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-legacy-table-migration-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	db, err := sql.Open("sqlite3", filepath.Join(tmpDir, "sdn.db"))
+	if err != nil {
+		t.Fatalf("open sqlite db failed: %v", err)
+	}
+	legacyPayload := []byte("legacy-omm-payload")
+	if _, err := db.Exec(`
+		CREATE TABLE sds_omm (
+			cid TEXT PRIMARY KEY,
+			peer_id TEXT NOT NULL,
+			timestamp INTEGER NOT NULL,
+			data BLOB NOT NULL,
+			signature BLOB,
+			created_at INTEGER DEFAULT (strftime('%s', 'now')),
+			UNIQUE(cid)
+		)
+	`); err != nil {
+		t.Fatalf("create legacy schema table failed: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO sds_omm (cid, peer_id, timestamp, data, signature)
+		VALUES ('legacy-cid', 'source:celestrak', 1700000000, ?, NULL)
+	`, legacyPayload); err != nil {
+		t.Fatalf("insert legacy record failed: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite db failed: %v", err)
+	}
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	if exists, err := store.tableExists("OMM"); err != nil {
+		t.Fatalf("canonical table lookup failed: %v", err)
+	} else if !exists {
+		t.Fatal("canonical OMM table was not created from legacy sds_omm")
+	}
+	if exists, err := store.tableExists("sds_omm"); err != nil {
+		t.Fatalf("legacy table lookup failed: %v", err)
+	} else if exists {
+		t.Fatal("legacy sds_omm table still exists after migration")
+	}
+	assertNoSQLiteBlobColumns(t, store, "OMM")
+	assertHasColumns(t, store, "OMM", "stream_path", "stream_offset", "record_length", "signature_hex")
+	record, err := store.Get("OMM.fbs", "legacy-cid")
+	if err != nil {
+		t.Fatalf("migrated record lookup failed: %v", err)
+	}
+	if string(record) != string(legacyPayload) {
+		t.Fatalf("migrated payload = %q, want %q", string(record), string(legacyPayload))
 	}
 }
 
@@ -347,6 +442,333 @@ func TestFlatSQLStoreQueryRecentRecordsPrefersLatestSourceTagMaterialization(t *
 	}
 }
 
+func TestFlatSQLStoreDataSummaryGroupsBySchemaAndSource(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-data-summary-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	cat := sds.NewCATBuilder().
+		WithNoradCatID(25544).
+		WithObjectName("ISS (ZARYA)").
+		WithObjectID("1998-067A").
+		WithObjectType("PAYLOAD").
+		WithOpsStatus("OPERATIONAL").
+		Build()
+	epm := sds.NewEPMBuilder().
+		WithDN("CelesTrak Node").
+		WithEmail("operator@example.test").
+		WithMultiAddrs([]string{"/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWDataSummary"}).
+		Build()
+
+	if _, err := store.StoreWithSourceTags("CAT.fbs", cat, "source:celestrak", nil, SourceTags{
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-satcat-csv",
+		BatchID:    "satcat-batch",
+	}); err != nil {
+		t.Fatalf("store CAT failed: %v", err)
+	}
+	if err := store.SaveLocalEPM("12D3KooWDataSummary", epm); err != nil {
+		t.Fatalf("SaveLocalEPM failed: %v", err)
+	}
+
+	summary, err := store.DataSummary()
+	if err != nil {
+		t.Fatalf("DataSummary failed: %v", err)
+	}
+	if summary.TotalRecords < 2 {
+		t.Fatalf("TotalRecords = %d, want at least 2", summary.TotalRecords)
+	}
+	if got := findSchemaCount(summary.Schemas, "CAT.fbs"); got != 1 {
+		t.Fatalf("CAT schema count = %d, want 1", got)
+	}
+	if got := findSchemaCount(summary.Schemas, "EPM.fbs"); got != 1 {
+		t.Fatalf("EPM schema count = %d, want local EPM count 1", got)
+	}
+	if got := findSourceCount(summary.Sources, "CAT.fbs", "space-data-network-02", "celestrak-satcat-csv"); got != 1 {
+		t.Fatalf("CAT source count = %d, want 1", got)
+	}
+	if got := findSourceCount(summary.Sources, "EPM.fbs", "local-node", "local-epm"); got != 1 {
+		t.Fatalf("local EPM source count = %d, want 1", got)
+	}
+}
+
+func TestFlatSQLStoreMaintainsSourceSummaryForMultipleProducers(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-source-summary-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	alpha := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
+	bravo := sds.NewOMMBuilder().WithNoradCatID(40909).WithObjectName("STARLINK").Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", alpha, "peer-alpha", nil, SourceTags{
+		ProviderID:   "peer-alpha",
+		SourceName:   "celestrak-gp",
+		BatchID:      "alpha-batch",
+		ContentKeyID: "alpha-public-key",
+	}); err != nil {
+		t.Fatalf("store alpha OMM failed: %v", err)
+	}
+	if _, err := store.StoreWithSourceTags("OMM.fbs", bravo, "peer-bravo", nil, SourceTags{
+		ProviderID:   "peer-bravo",
+		SourceName:   "celestrak-gp",
+		BatchID:      "bravo-batch",
+		ContentKeyID: "bravo-public-key",
+	}); err != nil {
+		t.Fatalf("store bravo OMM failed: %v", err)
+	}
+
+	rows, err := store.db.Query(`
+		SELECT provider_id, source_name, batch_id, record_count, total_bytes
+		FROM sdn_record_source_summary
+		WHERE schema_name = 'OMM.fbs'
+		ORDER BY provider_id
+	`)
+	if err != nil {
+		t.Fatalf("query source summary failed: %v", err)
+	}
+	defer rows.Close()
+
+	type sourceRow struct {
+		providerID  string
+		sourceName  string
+		batchID     string
+		recordCount int64
+		totalBytes  int64
+	}
+	var got []sourceRow
+	for rows.Next() {
+		var row sourceRow
+		if err := rows.Scan(&row.providerID, &row.sourceName, &row.batchID, &row.recordCount, &row.totalBytes); err != nil {
+			t.Fatalf("scan source summary failed: %v", err)
+		}
+		got = append(got, row)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("source summary rows failed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("source summary row count = %d, want 2: %#v", len(got), got)
+	}
+	if got[0].providerID != "peer-alpha" || got[0].recordCount != 1 || got[0].totalBytes != int64(len(alpha)) {
+		t.Fatalf("alpha summary = %#v, want one alpha row with %d bytes", got[0], len(alpha))
+	}
+	if got[1].providerID != "peer-bravo" || got[1].recordCount != 1 || got[1].totalBytes != int64(len(bravo)) {
+		t.Fatalf("bravo summary = %#v, want one bravo row with %d bytes", got[1], len(bravo))
+	}
+}
+
+func TestFlatSQLStoreStoresSameRecordCIDForMultipleProducers(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-source-producer-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	omm := sds.NewOMMBuilder().WithNoradCatID(25544).WithObjectName("ISS").Build()
+	alphaCID, err := store.StoreWithSourceTags("OMM.fbs", omm, "peer-alpha", nil, SourceTags{
+		ProviderID:        "provider-alpha",
+		SourceName:        "celestrak-gp",
+		BatchID:           "alpha-batch",
+		ContentKeyID:      "alpha-content-key",
+		ProducerPeerID:    "peer-alpha",
+		ProducerPublicKey: "alpha-public-key",
+	})
+	if err != nil {
+		t.Fatalf("store alpha OMM failed: %v", err)
+	}
+	bravoCID, err := store.StoreWithSourceTags("OMM.fbs", omm, "peer-bravo", nil, SourceTags{
+		ProviderID:        "provider-bravo",
+		SourceName:        "celestrak-gp",
+		BatchID:           "bravo-batch",
+		ContentKeyID:      "bravo-content-key",
+		ProducerPeerID:    "peer-bravo",
+		ProducerPublicKey: "bravo-public-key",
+	})
+	if err != nil {
+		t.Fatalf("store bravo OMM failed: %v", err)
+	}
+	if alphaCID != bravoCID {
+		t.Fatalf("same FlatBuffer bytes produced different CIDs: %s != %s", alphaCID, bravoCID)
+	}
+
+	alphaRows, err := store.QueryRawRecords(RawRecordQuery{SchemaName: "OMM.fbs", ProviderID: "provider-alpha", Limit: 10})
+	if err != nil {
+		t.Fatalf("query alpha records failed: %v", err)
+	}
+	bravoRows, err := store.QueryRawRecords(RawRecordQuery{SchemaName: "OMM.fbs", ProviderID: "provider-bravo", Limit: 10})
+	if err != nil {
+		t.Fatalf("query bravo records failed: %v", err)
+	}
+	if len(alphaRows) != 1 || alphaRows[0].CID != alphaCID || alphaRows[0].SourceTags.ProducerPublicKey != "alpha-public-key" {
+		t.Fatalf("alpha rows = %#v, want one alpha producer row", alphaRows)
+	}
+	if len(bravoRows) != 1 || bravoRows[0].CID != alphaCID || bravoRows[0].SourceTags.ProducerPublicKey != "bravo-public-key" {
+		t.Fatalf("bravo rows = %#v, want one bravo producer row", bravoRows)
+	}
+}
+
+func TestFlatSQLStoreQueryRawRecordsReturnsRawFlatBuffersByProducerAndType(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-raw-query-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	cat := sds.NewCATBuilder().
+		WithNoradCatID(25544).
+		WithObjectName("ISS (ZARYA)").
+		WithObjectID("1998-067A").
+		WithObjectType("PAYLOAD").
+		WithOpsStatus("OPERATIONAL").
+		Build()
+	cid, err := store.StoreWithSourceTags("CAT.fbs", cat, "source:celestrak", nil, SourceTags{
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-satcat-csv",
+		BatchID:    "satcat-batch",
+	})
+	if err != nil {
+		t.Fatalf("store CAT failed: %v", err)
+	}
+
+	records, err := store.QueryRawRecords(RawRecordQuery{
+		SchemaName: "CAT.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-satcat-csv",
+		BatchID:    "satcat-batch",
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("QueryRawRecords failed: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("len(records) = %d, want 1", len(records))
+	}
+	if records[0].CID != cid {
+		t.Fatalf("CID = %q, want %q", records[0].CID, cid)
+	}
+	if string(records[0].Data) != string(cat) {
+		t.Fatal("raw query did not return original FlatBuffer bytes")
+	}
+	if records[0].SourceTags.ProviderID != "space-data-network-02" || records[0].SourceTags.SourceName != "celestrak-satcat-csv" {
+		t.Fatalf("source tags not populated: %#v", records[0].SourceTags)
+	}
+}
+
+func findSchemaCount(schemas []DataSchemaSummary, schema string) int64 {
+	for _, entry := range schemas {
+		if entry.SchemaName == schema {
+			return entry.Count
+		}
+	}
+	return 0
+}
+
+func findSourceCount(sources []DataSourceSummary, schema, providerID, sourceName string) int64 {
+	for _, entry := range sources {
+		if entry.SchemaName == schema && entry.ProviderID == providerID && entry.SourceName == sourceName {
+			return entry.Count
+		}
+	}
+	return 0
+}
+
+func assertNoSQLiteBlobColumns(t *testing.T, store *FlatSQLStore, tableName string) {
+	t.Helper()
+	columns := tableColumnTypes(t, store, tableName)
+	for name, typ := range columns {
+		if typ == "BLOB" {
+			t.Fatalf("%s.%s is a SQLite BLOB column; schema tables must be stream-backed metadata only", tableName, name)
+		}
+	}
+	if _, ok := columns["data"]; ok {
+		t.Fatalf("%s still has legacy data column", tableName)
+	}
+	if _, ok := columns["signature"]; ok {
+		t.Fatalf("%s still has legacy signature column", tableName)
+	}
+}
+
+func assertHasColumns(t *testing.T, store *FlatSQLStore, tableName string, names ...string) {
+	t.Helper()
+	columns := tableColumnTypes(t, store, tableName)
+	for _, name := range names {
+		if _, ok := columns[name]; !ok {
+			t.Fatalf("%s missing expected column %s; columns=%v", tableName, name, columns)
+		}
+	}
+}
+
+func tableColumnTypes(t *testing.T, store *FlatSQLStore, tableName string) map[string]string {
+	t.Helper()
+	rows, err := store.db.Query(`PRAGMA table_info(` + tableName + `)`)
+	if err != nil {
+		t.Fatalf("inspect %s columns failed: %v", tableName, err)
+	}
+	defer rows.Close()
+
+	columns := map[string]string{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatalf("scan %s column failed: %v", tableName, err)
+		}
+		columns[name] = typ
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("%s column rows failed: %v", tableName, err)
+	}
+	return columns
+}
+
 func TestFlatSQLStoreStoreAndGet(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-test-*")
 	if err != nil {
@@ -377,6 +799,33 @@ func TestFlatSQLStoreStoreAndGet(t *testing.T) {
 
 	if cid == "" {
 		t.Error("Expected non-empty CID")
+	}
+	assertNoSQLiteBlobColumns(t, store, "OMM")
+
+	var streamPath string
+	var streamOffset, recordLength int64
+	var signatureHex sql.NullString
+	if err := store.db.QueryRow(`
+		SELECT stream_path, stream_offset, record_length, signature_hex
+		FROM OMM
+		WHERE cid = ?
+	`, cid).Scan(&streamPath, &streamOffset, &recordLength, &signatureHex); err != nil {
+		t.Fatalf("stored metadata lookup failed: %v", err)
+	}
+	if streamPath == "" {
+		t.Fatal("stream_path is empty")
+	}
+	if streamOffset < 0 {
+		t.Fatalf("stream_offset = %d, want non-negative", streamOffset)
+	}
+	if recordLength != int64(len(testData)) {
+		t.Fatalf("record_length = %d, want %d", recordLength, len(testData))
+	}
+	if !signatureHex.Valid || signatureHex.String == "" {
+		t.Fatal("signature_hex was not stored as text")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, streamPath)); err != nil {
+		t.Fatalf("FlatSQL stream file was not created: %v", err)
 	}
 
 	// Get data back

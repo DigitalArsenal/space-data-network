@@ -67,6 +67,32 @@ test('SDN product routes do not navigate into upstream /webui', async ({ page })
   await expect(page).not.toHaveURL(/\/webui/);
 });
 
+test('node self EPM email stays visible after the persisted EPM reloads', async ({ page }) => {
+  await page.route('**/api/identity/epms', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        epms: [
+          {
+            id: 'self',
+            kind: 'node-self',
+            epm_json: {
+              dn: 'Space Data Network Desktop',
+              peer_id: '12D3KooWNZMVqKBHke7bQJ6JTs2zp13DTZu441UNs6hZcZ3bUwMs',
+              agent_version: 'kubo/0.39.0/sdn-desktop',
+              email: 'persisted-node@example.invalid',
+            },
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/node');
+
+  await expect(page.getByText('persisted-node@example.invalid')).toBeVisible();
+});
+
 test('captures desktop and mobile SDN UI screenshots', async ({ page }, testInfo) => {
   for (const route of ['node', 'peers', 'data']) {
     await page.goto(`/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/${route}`);

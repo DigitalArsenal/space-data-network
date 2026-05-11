@@ -11,6 +11,7 @@ const repoRoot = path.resolve(packageRoot, '..');
 const upstreamWebUiRoot = path.resolve(repoRoot, 'webui');
 const sdnUpstreamWebUiRoot = path.resolve(__dirname, 'src', 'upstream-webui');
 const proxyTarget = process.env.SDN_UI_PROXY_TARGET?.trim();
+const kuboProxyTarget = process.env.SDN_UI_KUBO_PROXY_TARGET?.trim();
 const reactVirtualizedWindowScrollerOnScrollPath = path.resolve(
   upstreamWebUiRoot,
   'node_modules',
@@ -161,34 +162,55 @@ export default defineConfig({
     fs: {
       allow: [repoRoot],
     },
-    ...(proxyTarget
+    ...(proxyTarget || kuboProxyTarget
       ? {
         proxy: {
-        '/api': {
-          target: proxyTarget,
-          changeOrigin: true,
-          secure: false,
-        },
-        '/login': {
-          target: proxyTarget,
-          changeOrigin: true,
-          secure: false,
-        },
-        '/wallet-ui': {
-          target: proxyTarget,
-          changeOrigin: true,
-          secure: false,
-        },
-        '/webui': {
-          target: proxyTarget,
-          changeOrigin: true,
-          secure: false,
-        },
-        '/ipfs': {
-          target: proxyTarget,
-          changeOrigin: true,
-          secure: false,
-        },
+          ...(kuboProxyTarget
+            ? {
+              '/kubo': {
+                target: kuboProxyTarget,
+                changeOrigin: true,
+                secure: false,
+                rewrite: (requestPath: string) => requestPath.replace(/^\/kubo(?=\/|$)/, '') || '/',
+                configure: (proxy) => {
+                  proxy.on('proxyReq', (proxyReq) => {
+                    proxyReq.removeHeader('origin');
+                    proxyReq.removeHeader('referer');
+                    proxyReq.removeHeader('user-agent');
+                  });
+                },
+              },
+            }
+            : {}),
+          ...(proxyTarget
+            ? {
+              '/api': {
+                target: proxyTarget,
+                changeOrigin: true,
+                secure: false,
+              },
+              '/login': {
+                target: proxyTarget,
+                changeOrigin: true,
+                secure: false,
+              },
+              '/wallet-ui': {
+                target: proxyTarget,
+                changeOrigin: true,
+                secure: false,
+              },
+              '/webui': {
+                target: proxyTarget,
+                changeOrigin: true,
+                secure: false,
+              },
+              '/ipfs': {
+                target: proxyTarget,
+                changeOrigin: true,
+                secure: false,
+              },
+            }
+            : {}),
         },
       }
       : {}),

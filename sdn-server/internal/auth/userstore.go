@@ -305,7 +305,7 @@ func (s *UserStore) applyConfigOverrides(u *User) {
 	}
 
 	// Config wins on trusted metadata to avoid stale DB rows blocking updated config.
-	u.Source = "database"
+	u.Source = "config"
 	if strings.TrimSpace(cu.Name) != "" {
 		u.Name = cu.Name
 	}
@@ -381,6 +381,10 @@ func (s *UserStore) UpdateTrust(xpub string, trust peers.TrustLevel) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if _, ok := s.configUsers[xpub]; ok {
+		return fmt.Errorf("config-managed users cannot have trust changed through the API")
+	}
+
 	result, err := s.db.Exec("UPDATE users SET trust_level = ? WHERE xpub = ?", int(trust), xpub)
 	if err != nil {
 		return fmt.Errorf("failed to update trust: %w", err)
@@ -388,18 +392,6 @@ func (s *UserStore) UpdateTrust(xpub string, trust peers.TrustLevel) error {
 
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
-		// If it's a config user, promote to database to override
-		if _, ok := s.configUsers[xpub]; ok {
-			cu := s.configUsers[xpub]
-			_, err := s.db.Exec(
-				"INSERT INTO users (xpub, name, trust_level, signing_pubkey_hex, created_at) VALUES (?, ?, ?, ?, ?)",
-				xpub, cu.Name, int(trust), cu.SigningPubKeyHex, time.Now().Unix(),
-			)
-			if err != nil {
-				return fmt.Errorf("failed to override config user trust: %w", err)
-			}
-			return nil
-		}
 		return fmt.Errorf("user not found")
 	}
 

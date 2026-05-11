@@ -59,6 +59,103 @@ func TestIsPublicAPIPathAllowsDirectoryRoutes(t *testing.T) {
 	}
 }
 
+func TestNodeSecurityPublicAPIRequestPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		method string
+		path   string
+		public bool
+	}{
+		{http.MethodGet, "/api/node/info", true},
+		{http.MethodGet, "/api/module-delivery/provider", true},
+		{http.MethodGet, "/api/module-delivery/listings", true},
+		{http.MethodGet, "/api/directory/nodes", true},
+		{http.MethodPost, "/api/auth/challenge", true},
+		{http.MethodPost, "/api/auth/verify", true},
+		{http.MethodGet, "/api/auth/status", true},
+		{http.MethodGet, "/api/storefront/listings", true},
+		{http.MethodGet, "/api/storefront/listings/example", true},
+		{http.MethodGet, "/api/storefront/listings/example/reviews", true},
+		{http.MethodPost, "/api/storefront/listings/search", true},
+		{http.MethodPost, "/api/storefront/payments/stripe/webhook", true},
+		{http.MethodGet, "/api/v1/data/omm/bulk", true},
+		{http.MethodGet, "/api/v1/data/secure/omm", true},
+
+		{http.MethodGet, "/api/v1/data/summary", false},
+		{http.MethodPost, "/api/v1/data/query", false},
+		{http.MethodGet, "/api/v1/data/records/EPM.fbs/12D3KooW", false},
+		{http.MethodPost, "/api/storefront/listings", false},
+		{http.MethodPatch, "/api/storefront/listings/example", false},
+		{http.MethodDelete, "/api/storefront/listings/example", false},
+		{http.MethodGet, "/api/auth/users", false},
+		{http.MethodPut, "/api/auth/users/xpub-admin", false},
+		{http.MethodGet, "/api/auth/me", false},
+		{http.MethodPost, "/api/auth/logout", false},
+		{http.MethodPost, "/api/v0/id", false},
+		{http.MethodPost, "/api/v0/pin/add", false},
+		{http.MethodPost, "/api/v1/data/publish/OMM.fbs", false},
+		{http.MethodPost, "/api/v1/data/publish/batch/OMM.fbs", false},
+		{http.MethodPost, "/api/v1/modules/runtime/celestrak-provider/schedules/full/run", false},
+		{http.MethodPost, "/api/v1/admin/dataset-updates/publish", false},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			t.Parallel()
+			if got := isPublicAPIRequest(tc.method, tc.path); got != tc.public {
+				t.Fatalf("isPublicAPIRequest(%q, %q) = %v, want %v", tc.method, tc.path, got, tc.public)
+			}
+		})
+	}
+}
+
+func TestNodeSecurityAdminOnlyAPIPathPolicy(t *testing.T) {
+	t.Parallel()
+
+	adminPaths := []string{
+		"/api/auth/users",
+		"/api/auth/users/xpub-admin",
+		"/api/v0/id",
+		"/api/v0/pin/add",
+		"/api/v1/data/summary",
+		"/api/v1/data/query",
+		"/api/v1/data/records/EPM.fbs/12D3KooW",
+		"/api/v1/modules/runtime/celestrak-provider/schedules/full/run",
+		"/api/v1/admin/dataset-updates/publish",
+		"/api/admin/frontend/files",
+		"/api/v1/plugins/upload",
+		"/api/routing/config",
+		"/api/streaming/sessions",
+		"/api/relay/filters",
+	}
+	for _, path := range adminPaths {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			if !isAdminOnlyAPIPath(path) {
+				t.Fatalf("expected %q to require admin trust", path)
+			}
+		})
+	}
+
+	standardPaths := []string{
+		"/api/auth/me",
+		"/api/storefront/purchases",
+		"/api/v1/data/publish/OMM.fbs",
+	}
+	for _, path := range standardPaths {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			if isAdminOnlyAPIPath(path) {
+				t.Fatalf("expected %q to require authentication without forcing admin trust", path)
+			}
+		})
+	}
+}
+
 func TestCountConfiguredSDNSSHHostStanzasCountsDeploymentNodesOncePerHostLine(t *testing.T) {
 	t.Parallel()
 
@@ -584,8 +681,8 @@ func TestDefaultFrontendHTMLIsCleanLandingPage(t *testing.T) {
 	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="/admin/"`)) {
 		t.Fatal("default frontend should link to the admin page")
 	}
-	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="https://spacedatanet.org"`)) {
-		t.Fatal("default frontend should link to spacedatanet.org documentation")
+	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="https://spacedatanetwork.org"`)) {
+		t.Fatal("default frontend should link to spacedatanetwork.org documentation")
 	}
 	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`class="landing-card"`)) {
 		t.Fatal("default frontend should use a single simple landing content block")
