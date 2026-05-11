@@ -100,7 +100,8 @@
   const SCHEMA_EXTENSION = 'fbs';
   const DEFAULT_PAGE_SIZE = 10;
   const DATA_SOURCE_PAGE_SIZE = 6;
-  const SYNC_PAGE_SIZE = 100;
+  const SYNC_PAGE_SIZE = 5_000;
+  const SYNC_PERSIST_RECORD_INTERVAL = 25_000;
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
   const SCHEMA_SYNC_STORAGE_KEY = 'sdn:data-schema-sync:v1';
   const SCHEMA_SYNC_STATE_STORAGE_KEY = 'sdn:data-schema-sync-state:v1';
@@ -549,18 +550,22 @@
       totalRows: totalRowsForStandardId(dataSummary, standardId) ?? 0,
     });
 
+    let store: LocalFlatSqlStore | null = null;
     try {
-      const store = await ensureLocalFlatSqlStore();
+      store = await ensureLocalFlatSqlStore();
       if (!store) throw new Error('FlatSQL initialization failed');
       const source = currentDataSourceOption();
       let offset = localRowsForStandard(localFlatSqlStats, standardId);
       let localRows = offset;
       let cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
       let totalRows = Math.max(totalRowsForStandardId(dataSummary, standardId) ?? 0, localRows);
+      let recordsSincePersist = 0;
       const capBytes = storageCapBytes(preference);
 
       while (localRows < totalRows || totalRows === 0) {
         if (cachedBytes >= capBytes && localRows < totalRows) {
+          await store.flush(standardId);
+          refreshLocalFlatSqlStats();
           refreshSchemaSyncProgress(standardId, {
             status: 'capped',
             syncedRows: localRows,
@@ -592,8 +597,18 @@
         if (!streamResult.ok) throw new Error('Remote FlatBuffer stream failed');
 
         const records = streamResult.data ?? [];
-        await store.ingestRecords(standardId, records, source?.publicKey ?? source?.peerId ?? source?.id ?? null);
-        refreshLocalFlatSqlStats();
+        const ingestedRows = await store.ingestRecords(standardId, records, {
+          source: source?.publicKey ?? source?.peerId ?? source?.id ?? null,
+          persist: false,
+        });
+        recordsSincePersist += ingestedRows;
+        if (recordsSincePersist >= SYNC_PERSIST_RECORD_INTERVAL || offset + scan.results.length >= totalRows) {
+          await store.flush(standardId);
+          recordsSincePersist = 0;
+          refreshLocalFlatSqlStats();
+        } else {
+          refreshLocalFlatSqlStats(false);
+        }
         localRows = localRowsForStandard(localFlatSqlStats, standardId);
         cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
         offset += scan.results.length;
@@ -611,6 +626,10 @@
         if (offset >= totalRows || records.length === 0) break;
       }
 
+      await store.flush(standardId);
+      refreshLocalFlatSqlStats();
+      localRows = localRowsForStandard(localFlatSqlStats, standardId);
+      cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
       refreshSchemaSyncProgress(standardId, {
         status: localRows >= totalRows ? 'synced' : 'idle',
         syncedRows: localRows,
@@ -625,6 +644,10 @@
         status: 'error',
         error: error instanceof Error ? error.message : 'Schema sync failed',
       });
+      if (store) {
+        await store.flush(standardId);
+        refreshLocalFlatSqlStats();
+      }
     } finally {
       const nextActive = new Set(activeSyncKeys);
       nextActive.delete(key);
@@ -687,8 +710,8 @@
     sqlError = '';
   }
 
-  function refreshLocalFlatSqlStats(): void {
-    localFlatSqlStats = localFlatSqlStore?.getStats() ?? [];
+  function refreshLocalFlatSqlStats(includeCachedBytes = true): void {
+    localFlatSqlStats = localFlatSqlStore?.getStats({ includeCachedBytes }) ?? [];
   }
 
   function resetSqlForSelectedStandard(): void {
