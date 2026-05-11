@@ -14,6 +14,11 @@ export interface LocalFlatSqlStoreOptions {
   persistenceKey?: string | null;
 }
 
+export interface ClearLocalFlatSqlStoreOptions {
+  persistenceKey: string;
+  standardIds: string[];
+}
+
 export interface LocalFlatSqlQueryResult {
   columns: string[];
   rows: unknown[][];
@@ -31,6 +36,7 @@ export interface LocalFlatSqlStandardStats {
 export interface LocalFlatSqlIngestOptions {
   source?: string | null;
   persist?: boolean;
+  transfer?: boolean;
 }
 
 export interface LocalFlatSqlStatsOptions {
@@ -40,8 +46,8 @@ export interface LocalFlatSqlStatsOptions {
 export interface LocalFlatSqlStore {
   ingestRecords(standardId: string, records: RawDataRecord[], sourceOrOptions?: string | LocalFlatSqlIngestOptions | null): Promise<number>;
   flush(standardId?: string): Promise<void>;
-  query(sql: string, standardId?: string): LocalFlatSqlQueryResult;
-  getStats(options?: LocalFlatSqlStatsOptions): LocalFlatSqlStandardStats[];
+  query(sql: string, standardId?: string): LocalFlatSqlQueryResult | Promise<LocalFlatSqlQueryResult>;
+  getStats(options?: LocalFlatSqlStatsOptions): LocalFlatSqlStandardStats[] | Promise<LocalFlatSqlStandardStats[]>;
   destroy(): void;
 }
 
@@ -84,6 +90,29 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
   }
 
   return new WasmLocalFlatSqlStore(states, options.persistenceKey ?? null);
+}
+
+export async function clearLocalFlatSqlStore(options: ClearLocalFlatSqlStoreOptions): Promise<void> {
+  const persistenceKey = options.persistenceKey.trim();
+  const standardIds = Array.from(new Set(options.standardIds.map(normalizeStandardId)));
+  if (!persistenceKey || standardIds.length === 0 || !hasIndexedDb()) return;
+  const db = await openLocalFlatSqlDb();
+  await new Promise<void>((resolve) => {
+    const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(LOCAL_FLATSQL_STORE_NAME);
+    for (const standardId of standardIds) {
+      store.delete(persistedStandardKey(persistenceKey, standardId));
+      store.delete(persistedRecordKey(persistenceKey, standardId));
+    }
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      resolve();
+    };
+  });
 }
 
 export function stripSdnFlatBufferSizePrefix(bytes: Uint8Array): Uint8Array {

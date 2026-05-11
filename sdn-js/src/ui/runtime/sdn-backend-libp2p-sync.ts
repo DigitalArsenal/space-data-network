@@ -1,0 +1,432 @@
+import {
+  FLATSQL_SYNC_PROTOCOL_ID,
+  type FlatSqlSyncChunk,
+  type FlatSqlSyncQuery,
+  type FlatSqlSyncRecordRef,
+} from '../../flatsql-sync';
+import {
+  createAvailableResult,
+  createCapability,
+  createCapabilityResult,
+  createUnavailableResult,
+  type BackendCapability,
+  type BackendResult,
+  type DataScanResult,
+  type DataSummary,
+  type LocalObjectSummary,
+  type NodeAccessUser,
+  type NodeAccessUserInput,
+  type NodeSummary,
+  type ObservedSdnPeer,
+  type RawDataQuery,
+  type RawDataRecord,
+  type RawDataRecordBytes,
+  type RawDataStreamRequest,
+  type SdnBackend,
+  type StorageSummary,
+} from './sdn-backend';
+
+export interface Libp2pFlatSqlSyncClient {
+  readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk>;
+}
+
+export interface Libp2pFlatSqlSyncBackendOptions {
+  targetPeerId: string;
+  candidateAddrs: string[];
+  providerId?: string | null;
+  sourceName?: string | null;
+  displayName?: string | null;
+  publicKey?: string | null;
+  schemas?: string[];
+  syncClient?: Libp2pFlatSqlSyncClient;
+  nodeFactory?: () => Promise<Libp2pFlatSqlSyncClient>;
+}
+
+const DEFAULT_SUMMARY_SCHEMAS = ['CAT.fbs', 'EPM.fbs', 'MPE.fbs', 'OMM.fbs', 'PNM.fbs', 'SPW.fbs'];
+
+export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackendOptions): SdnBackend {
+  const targetPeerId = options.targetPeerId.trim();
+  const candidateAddrs = Array.from(new Set(options.candidateAddrs.map((addr) => addr.trim()).filter(Boolean)));
+  const providerId = optionalText(options.providerId);
+  const sourceName = optionalText(options.sourceName);
+  const displayName = optionalText(options.displayName) ?? providerId ?? targetPeerId;
+  const summarySchemas = normalizeSummarySchemas(options.schemas);
+  let clientPromise: Promise<Libp2pFlatSqlSyncClient> | null = options.syncClient ? Promise.resolve(options.syncClient) : null;
+
+  async function ensureClient(): Promise<Libp2pFlatSqlSyncClient> {
+    if (!targetPeerId) throw new Error('remote peer ID is not configured');
+    if (candidateAddrs.length === 0) throw new Error('remote libp2p sync address is not configured');
+    if (!clientPromise) clientPromise = options.nodeFactory ? options.nodeFactory() : createDefaultSyncClient(candidateAddrs);
+    return clientPromise;
+  }
+
+  async function requestChunk(query: RawDataQuery & {
+    op?: FlatSqlSyncQuery['op'];
+    scanHash?: string;
+    chunkHash?: string;
+    nextCursor?: string;
+    totalCount?: number;
+    highWaterMark?: string;
+    records?: RawDataRecord[];
+  }): Promise<FlatSqlSyncChunk> {
+    const client = await ensureClient();
+    return client.readFlatSqlSyncChunk({
+      targetPeerId,
+      candidateAddrs,
+      op: query.op,
+      schema: query.schema,
+      providerId: query.providerId ?? providerId ?? undefined,
+      sourceName: query.sourceName ?? sourceName ?? undefined,
+      batchId: query.batchId,
+      peerId: query.peerId,
+      cursor: query.cursor,
+      snapshotId: query.snapshotId,
+      head: query.head,
+      nextCursor: query.nextCursor,
+      totalCount: query.totalCount,
+      highWaterMark: query.highWaterMark,
+      scanHash: query.scanHash,
+      chunkHash: query.chunkHash,
+      queryProfile: query.queryProfile,
+      limit: query.limit,
+      offset: query.offset,
+      records: query.records?.map(rawRecordToFlatSqlRef),
+    });
+  }
+
+  async function scanRawData(query: RawDataQuery): Promise<BackendResult<DataScanResult>> {
+    try {
+      const chunk = await requestChunk({ ...query, op: 'scan' });
+      return createAvailableResult('scanRawData', dataScanResultFromChunk(chunk));
+    } catch (error) {
+      return createUnavailableResult('scanRawData', formatSyncError(error));
+    }
+  }
+
+  async function streamRawData(request: RawDataStreamRequest): Promise<BackendResult<RawDataRecord[]>> {
+    try {
+      const chunk = await requestChunk({
+        schema: request.schema,
+        op: 'read_chunk',
+        scanHash: request.scanHash,
+        chunkHash: request.chunkHash,
+        snapshotId: request.snapshotId,
+        head: request.head,
+        cursor: request.cursor,
+        nextCursor: request.nextCursor,
+        totalCount: request.totalCount,
+        highWaterMark: request.highWaterMark,
+        queryProfile: request.queryProfile,
+        records: request.records,
+      });
+      const refs = chunk.header.results.length > 0 ? chunk.header.results.map(rawRecordFromFlatSqlRef) : request.records;
+      return createAvailableResult('streamRawData', refs.map((record, index) => ({
+        ...record,
+        ...(chunk.records[index] ? { dataBytes: chunk.records[index] } : {}),
+      })));
+    } catch (error) {
+      return createUnavailableResult('streamRawData', formatSyncError(error));
+    }
+  }
+
+  return {
+    mode: 'remote-sdn',
+    connect: getNodeSummary,
+    async getCapabilities(): Promise<BackendCapability[]> {
+      return [
+        createCapability(
+          'flatSqlSync',
+          targetPeerId && candidateAddrs.length > 0 ? 'available' : 'unavailable',
+          targetPeerId && candidateAddrs.length > 0 ? undefined : 'remote peer ID and libp2p sync address are required',
+        ),
+        createCapability('transport:libp2p', 'available'),
+        createCapability('transport:http', 'unavailable', 'configured remote data does not support HTTP fallback'),
+        createCapability('transport:ssh', 'unavailable', 'configured remote data does not support SSH fallback'),
+      ];
+    },
+    getNodeSummary,
+    async getHealth() {
+      try {
+        await requestChunk({ schema: summarySchemas[0] ?? 'OMM.fbs', op: 'scan', limit: 1, offset: 0 });
+        return createAvailableResult('getHealth', { healthy: true, details: { protocol: FLATSQL_SYNC_PROTOCOL_ID, peerId: targetPeerId } });
+      } catch (error) {
+        return createUnavailableResult('getHealth', formatSyncError(error));
+      }
+    },
+    async getNodeProfile(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('getNodeProfile', 'remote-only', 'configured remote node profile is advertised through its EPM and peer metadata');
+    },
+    async saveNodeProfile(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('saveNodeProfile', 'local-only', 'configured remote node profile edits are not available from the data explorer');
+    },
+    async listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      return createCapabilityResult('listWalletsAndEpms', 'local-only', 'wallet and EPM management must run on a local node', []);
+    },
+    async beginClaimEpm(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('beginClaimEpm', 'local-only', 'EPM claim must run on a local node');
+    },
+    async exportCore(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('exportCore', 'local-only', 'Core export must run on a local node');
+    },
+    async importCore(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('importCore', 'local-only', 'Core import must run on a local node');
+    },
+    async listNodeAccessUsers(): Promise<BackendResult<NodeAccessUser[]>> {
+      return createCapabilityResult('listNodeAccessUsers', 'permission-required', 'node access users require an authenticated server session', []);
+    },
+    async saveNodeAccessUser(_user: NodeAccessUserInput): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('saveNodeAccessUser', 'permission-required', 'node access changes require an authenticated server session');
+    },
+    async revokeNodeAdmin(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('revokeNodeAdmin', 'permission-required', 'node access changes require an authenticated server session');
+    },
+    async deleteNodeAccessUser(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('deleteNodeAccessUser', 'permission-required', 'node access changes require an authenticated server session');
+    },
+    async listHostedEpms() {
+      return createCapabilityResult('listHostedEpms', 'remote-only', 'configured remote EPM listing is not part of FlatSQL sync', []);
+    },
+    async saveHostedEpm(record) {
+      return createCapabilityResult('saveHostedEpm', 'local-only', `editing hosted EPM ${record.id} must run on a local node`);
+    },
+    async importHostedEpm(input) {
+      return createCapabilityResult('importHostedEpm', 'local-only', `importing hosted EPM ${input.name} must run on a local node`);
+    },
+    async deleteHostedEpm(id) {
+      return createCapabilityResult('deleteHostedEpm', 'local-only', `deleting hosted EPM ${id} must run on a local node`);
+    },
+    async downloadHostedEpm(id, format) {
+      return createCapabilityResult('downloadHostedEpm', 'remote-only', `download for ${id}.${format} is not part of FlatSQL sync`);
+    },
+    async listObservedPeers(): Promise<BackendResult<ObservedSdnPeer[]>> {
+      return createAvailableResult('listObservedPeers', [{
+        id: targetPeerId,
+        name: displayName,
+        addrs: candidateAddrs,
+        trustLevel: 'configured',
+        agentVersion: 'sdn-configured-node',
+        protocols: [FLATSQL_SYNC_PROTOCOL_ID],
+      }]);
+    },
+    async listTrustedPeers(): Promise<BackendResult<ObservedSdnPeer[]>> {
+      return this.listObservedPeers();
+    },
+    async searchDirectory(): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      return createCapabilityResult('searchDirectory', 'remote-only', 'directory search is not part of FlatSQL sync', []);
+    },
+    async connectPeer(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('connectPeer', 'remote-only', 'configured remote connection uses its advertised libp2p sync address');
+    },
+    async searchListings(): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      return createCapabilityResult('searchListings', 'remote-only', 'marketplace listings are not part of FlatSQL sync', []);
+    },
+    async listOwnedItems(): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      return createCapabilityResult('listOwnedItems', 'permission-required', 'owned item lookup requires an authenticated session', []);
+    },
+    async requestGrant(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('requestGrant', 'permission-required', 'grant request requires an authenticated session');
+    },
+    async installModule(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('installModule', 'local-only', 'module installation must run on a local node');
+    },
+    async subscribeDataFeed(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('subscribeDataFeed', 'local-only', 'FlatSQL sync subscriptions are managed locally');
+    },
+    async getStorageSummary(): Promise<BackendResult<StorageSummary>> {
+      return createCapabilityResult('getStorageSummary', 'local-only', 'remote storage details are not part of FlatSQL sync');
+    },
+    async listObjects(): Promise<BackendResult<LocalObjectSummary[]>> {
+      return createCapabilityResult('listObjects', 'local-only', 'object inventory is local to the desktop FlatSQL store', []);
+    },
+    async inspectObject(): Promise<BackendResult<LocalObjectSummary | Record<string, unknown>>> {
+      return createCapabilityResult('inspectObject', 'local-only', 'object inspection is local to the desktop FlatSQL store');
+    },
+    async getDataSummary(): Promise<BackendResult<DataSummary>> {
+      try {
+        const settledChunks = await Promise.allSettled(summarySchemas.map(async (schema) => requestChunk({
+          schema,
+          op: 'scan',
+          limit: 1,
+          offset: 0,
+        })));
+        const chunks = settledChunks
+          .filter((result): result is PromiseFulfilledResult<FlatSqlSyncChunk> => result.status === 'fulfilled')
+          .map((result) => result.value);
+        if (chunks.length === 0) {
+          const firstError = settledChunks.find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;
+          return createUnavailableResult('getDataSummary', formatSyncError(firstError ?? 'remote FlatSQL sync summary unavailable'));
+        }
+        const schemas = chunks
+          .map((chunk) => ({
+            schemaName: chunk.header.schema,
+            count: chunk.header.totalCount,
+            totalBytes: estimateTotalBytes(chunk.header.results, chunk.header.totalCount),
+          }))
+          .filter((schema) => schema.count > 0)
+          .sort((left, right) => right.count - left.count || left.schemaName.localeCompare(right.schemaName));
+        const totalRecords = schemas.reduce((sum, schema) => sum + schema.count, 0);
+        const totalBytes = schemas.reduce((sum, schema) => sum + schema.totalBytes, 0);
+        return createAvailableResult('getDataSummary', {
+          totalRecords,
+          totalBytes,
+          schemas,
+          sources: schemas.map((schema) => ({
+            schemaName: schema.schemaName,
+            providerId: providerId ?? targetPeerId,
+            sourceName: sourceName ?? '',
+            batchId: '',
+            count: schema.count,
+            totalBytes: schema.totalBytes,
+          })),
+        });
+      } catch (error) {
+        return createUnavailableResult('getDataSummary', formatSyncError(error));
+      }
+    },
+    scanRawData,
+    streamRawData,
+    async queryRawData(query: RawDataQuery): Promise<BackendResult<RawDataRecord[]>> {
+      const scan = await scanRawData(query);
+      if (!scan.ok || !scan.data) {
+        return createUnavailableResult('queryRawData', scan.capability.reason ?? 'Remote FlatSQL sync scan failed');
+      }
+      if (scan.data.results.length === 0) return createAvailableResult('queryRawData', []);
+      return streamRawData({
+        schema: scan.data.schema,
+        scanHash: scan.data.scanHash,
+        chunkHash: scan.data.chunkHash || scan.data.scanHash,
+        snapshotId: scan.data.snapshotId,
+        head: scan.data.head,
+        cursor: scan.data.cursor,
+        nextCursor: scan.data.nextCursor,
+        totalCount: scan.data.totalCount,
+        highWaterMark: scan.data.highWaterMark,
+        queryProfile: scan.data.queryProfile,
+        records: scan.data.results,
+      });
+    },
+    async readRawDataRecord(_schemaName: string, cid: string): Promise<BackendResult<RawDataRecordBytes>> {
+      return createCapabilityResult('readRawDataRecord', 'local-only', `record ${cid} bytes are available after scan-bound FlatSQL streaming`);
+    },
+    async pinObject(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('pinObject', 'local-only', 'pinning is managed by the local FlatSQL store');
+    },
+    async unpinObject(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('unpinObject', 'local-only', 'pinning is managed by the local FlatSQL store');
+    },
+    async listRulesets(): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      return createCapabilityResult('listRulesets', 'local-only', 'retention rulesets are managed by the local FlatSQL store', []);
+    },
+    async saveRuleset(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('saveRuleset', 'local-only', 'retention rulesets are managed by the local FlatSQL store');
+    },
+    async runSqlQuery(): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      return createCapabilityResult('runSqlQuery', 'local-only', 'SQL queries run against the local FlatSQL store after sync', []);
+    },
+    async getKuboStatus(): Promise<BackendResult<Record<string, unknown>>> {
+      return createCapabilityResult('getKuboStatus', 'local-only', 'Kubo status is only available for local desktop nodes');
+    },
+    async listFiles(): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      return createCapabilityResult('listFiles', 'local-only', 'MFS file browsing is only available for local desktop nodes', []);
+    },
+    async resolveCid(cid: string): Promise<BackendResult<{ cid: string; gatewayUrl: string }>> {
+      return createCapabilityResult('resolveCid', 'local-only', `CID ${cid} resolution is local to the desktop gateway`);
+    },
+    async readGatewayUrl(path: string): Promise<BackendResult<{ path: string; gatewayUrl: string }>> {
+      return createCapabilityResult('readGatewayUrl', 'local-only', `gateway read for ${path} is local to the desktop gateway`);
+    },
+  };
+
+  async function getNodeSummary(): Promise<BackendResult<NodeSummary>> {
+    if (!targetPeerId || candidateAddrs.length === 0) {
+      return createUnavailableResult('getNodeSummary', 'remote peer ID and libp2p sync address are required');
+    }
+    return createAvailableResult('getNodeSummary', {
+      displayName,
+      peerId: targetPeerId,
+      agentVersion: 'sdn-configured-node',
+      online: true,
+      runtime: 'remote-sdn',
+    });
+  }
+}
+
+async function createDefaultSyncClient(candidateAddrs: string[]): Promise<Libp2pFlatSqlSyncClient> {
+  const { SDNNode } = await import('../../node');
+  return SDNNode.create({
+    edgeRelays: candidateAddrs,
+    bootstrapPeers: [],
+    includeIPFSBootstrap: false,
+    enableIdentify: false,
+    enableStorage: false,
+    enableRelayProbing: false,
+  });
+}
+
+function dataScanResultFromChunk(chunk: FlatSqlSyncChunk): DataScanResult {
+  return {
+    schema: chunk.header.schema,
+    totalCount: chunk.header.totalCount,
+    count: chunk.header.count,
+    limit: chunk.header.limit,
+    offset: chunk.header.offset,
+    cursor: chunk.header.cursor,
+    nextCursor: chunk.header.nextCursor,
+    snapshotId: chunk.header.snapshotId,
+    head: chunk.header.head,
+    highWaterMark: chunk.header.highWaterMark,
+    scanHash: chunk.header.scanHash,
+    chunkHash: chunk.header.chunkHash,
+    queryProfile: chunk.header.queryProfile,
+    syncProtocol: chunk.header.syncProtocol,
+    maxChunkSize: chunk.header.maxChunkSize,
+    transports: chunk.header.transports,
+    results: chunk.header.results.map(rawRecordFromFlatSqlRef),
+  };
+}
+
+function rawRecordFromFlatSqlRef(record: FlatSqlSyncRecordRef): RawDataRecord {
+  return {
+    schemaName: record.schemaName,
+    cid: record.cid,
+    peerId: record.peerId,
+    providerId: record.providerId,
+    sourceName: record.sourceName,
+    batchId: record.batchId,
+    timestamp: record.timestamp,
+    sizeBytes: record.sizeBytes,
+  };
+}
+
+function rawRecordToFlatSqlRef(record: RawDataRecord): FlatSqlSyncRecordRef {
+  return {
+    schemaName: record.schemaName,
+    cid: record.cid,
+    peerId: record.peerId,
+    providerId: record.providerId,
+    sourceName: record.sourceName,
+    batchId: record.batchId,
+    timestamp: record.timestamp,
+    sizeBytes: record.sizeBytes,
+  };
+}
+
+function estimateTotalBytes(records: FlatSqlSyncRecordRef[], totalCount: number): number {
+  if (records.length === 0 || totalCount <= 0) return 0;
+  const averageBytes = records.reduce((sum, record) => sum + record.sizeBytes, 0) / records.length;
+  return Math.round(averageBytes * totalCount);
+}
+
+function normalizeSummarySchemas(schemas: string[] | undefined): string[] {
+  const candidates = schemas?.length ? schemas : DEFAULT_SUMMARY_SCHEMAS;
+  return Array.from(new Set(candidates.map((schema) => schema.trim()).filter(Boolean)));
+}
+
+function optionalText(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function formatSyncError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

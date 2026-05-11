@@ -175,8 +175,8 @@ test.describe('desktop static identity API', () => {
     expect(record.bodyBuffer.byteLength).toBeGreaterThan(0)
   })
 
-  test('proxies configured SDN node data queries through the local SSH admin API', async () => {
-    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-remote-data-api-'))
+  test('advertises configured remote data nodes with libp2p FlatSQL sync addresses only', () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-configured-sync-addrs-'))
     const configPath = path.join(userData, 'ssh-config')
     fs.writeFileSync(configPath, [
       'Host space-data-network-02 celestrak.eth',
@@ -184,124 +184,40 @@ test.describe('desktop static identity API', () => {
       '    User root'
     ].join('\n'))
 
-    const requests = []
-    const { serveConfiguredSdnNodeDataProxy } = loadStaticServer(userData)
-    const handler = (req, res) => serveConfiguredSdnNodeDataProxy(req, res, {
-      configPath,
-      runRemoteRequest: async (request) => {
-        requests.push(request)
-        return {
-          statusCode: 200,
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(request.targetPath === '/api/v1/data/scan'
-            ? { schema: 'OMM.fbs', scan_hash: 'scan-1', results: [{ cid: 'celestrak-omm-1', schema_name: 'OMM.fbs' }] }
-            : { records: [{ cid: 'celestrak-omm-1', schema_name: 'OMM.fbs' }] })
-        }
-      }
-    })
+    const staticServer = loadStaticServer(userData)
+    const nodes = staticServer.configuredSdnNodesFromSshConfig(configPath)
+    const celestrak = nodes.find(node => node.id === 'space-data-network-02')
 
-    const query = await requestJson(
-      handler,
-      'POST',
-      '/api/local/sdn-nodes/space-data-network-02/api/v1/data/query',
-      { schema: 'OMM.fbs', limit: 25 }
-    )
-
-    expect(query.statusCode).toBe(200)
-    expect(query.json.records).toEqual([
-      expect.objectContaining({ cid: 'celestrak-omm-1', schema_name: 'OMM.fbs' })
-    ])
-    const scan = await requestJson(
-      handler,
-      'POST',
-      '/api/local/sdn-nodes/space-data-network-02/api/v1/data/scan',
-      { schema: 'OMM.fbs', limit: 10, offset: 0, include_data: false }
-    )
-
-    expect(scan.statusCode).toBe(200)
-    expect(scan.json).toEqual(expect.objectContaining({
-      schema: 'OMM.fbs',
-      scan_hash: 'scan-1'
-    }))
-    expect(requests).toEqual([
-      expect.objectContaining({
-        node: expect.objectContaining({ id: 'space-data-network-02', name: 'CelesTrak Provider' }),
-        method: 'POST',
-        targetPath: '/api/v1/data/query',
-        body: JSON.stringify({ schema: 'OMM.fbs', limit: 25 })
-      }),
-      expect.objectContaining({
-        node: expect.objectContaining({ id: 'space-data-network-02', name: 'CelesTrak Provider' }),
-        method: 'POST',
-        targetPath: '/api/v1/data/scan',
-        body: JSON.stringify({ schema: 'OMM.fbs', limit: 10, offset: 0, include_data: false })
+    expect(celestrak).toEqual(expect.objectContaining({
+      name: 'CelesTrak Provider',
+      addrs: [
+        '/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4'
+      ],
+      metadata: expect.objectContaining({
+        peer_id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+        sync_protocol: '/space-data-network/flatsql-sync/1.0.0'
       })
-    ])
-
-    const denied = await requestJson(
-      handler,
-      'POST',
-      '/api/local/sdn-nodes/space-data-network-02/api/v1/data/publish/OMM.fbs',
-      { schema: 'OMM.fbs' }
-    )
-    expect(denied.statusCode).toBe(403)
-    expect(denied.json.error).toContain('not allowed')
+    }))
+    expect(celestrak.metadata.admin_proxy_path).toBeUndefined()
   })
 
-  test('proxies configured SDN node raw FlatBuffer query and scan streams without forcing JSON', async () => {
-    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-remote-flatbuffer-api-'))
-    const configPath = path.join(userData, 'ssh-config')
-    fs.writeFileSync(configPath, [
-      'Host space-data-network-02 celestrak.eth',
-      '    HostName 167.172.219.213',
-      '    User root'
-    ].join('\n'))
+  test('does not export a configured-node HTTP or SSH data proxy', () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-no-remote-proxy-'))
+    const staticServer = loadStaticServer(userData)
 
-    const requests = []
-    const flatbufferStream = Buffer.concat([Buffer.from([0, 0, 0, 4]), Buffer.from([0, 1, 2, 3])])
-    const { serveConfiguredSdnNodeDataProxy } = loadStaticServer(userData)
-    const handler = (req, res) => serveConfiguredSdnNodeDataProxy(req, res, {
-      configPath,
-      runRemoteRequest: async (request) => {
-        requests.push(request)
-        return {
-          statusCode: 200,
-          headers: { 'content-type': 'application/vnd.sdn.flatbuffers.stream' },
-          body: flatbufferStream
-        }
-      }
+    expect(staticServer.serveConfiguredSdnNodeDataProxy).toBeUndefined()
+    expect(staticServer.parseConfiguredSdnNodeRemoteResponse).toBeUndefined()
+  })
+
+  test('sends cross-origin isolation headers for worker and SharedArrayBuffer support', () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-isolation-headers-'))
+    const { staticAssetHeaders } = loadStaticServer(userData)
+
+    expect(staticAssetHeaders('text/javascript; charset=utf-8')).toMatchObject({
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Resource-Policy': 'same-origin'
     })
-
-    const query = await requestRaw(
-      handler,
-      'POST',
-      '/api/local/sdn-nodes/space-data-network-02/api/v1/data/query',
-      JSON.stringify({ schema: 'OMM.fbs', limit: 25 }),
-      { accept: 'application/vnd.sdn.flatbuffers.stream', 'content-type': 'application/json' }
-    )
-
-    expect(query.statusCode).toBe(200)
-    expect(query.headers['Content-Type']).toBe('application/vnd.sdn.flatbuffers.stream')
-    expect(query.bodyBuffer).toEqual(flatbufferStream)
-    expect(requests[0]).toEqual(expect.objectContaining({
-      headers: expect.objectContaining({ accept: 'application/vnd.sdn.flatbuffers.stream' })
-    }))
-
-    const stream = await requestRaw(
-      handler,
-      'POST',
-      '/api/local/sdn-nodes/space-data-network-02/api/v1/data/stream',
-      JSON.stringify({ schema: 'OMM.fbs', scan_hash: 'scan-1', records: [{ cid: 'celestrak-omm-1' }] }),
-      { accept: 'application/vnd.sdn.flatbuffers.stream', 'content-type': 'application/json' }
-    )
-
-    expect(stream.statusCode).toBe(200)
-    expect(stream.headers['Content-Type']).toBe('application/vnd.sdn.flatbuffers.stream')
-    expect(stream.bodyBuffer).toEqual(flatbufferStream)
-    expect(requests[1]).toEqual(expect.objectContaining({
-      targetPath: '/api/v1/data/stream',
-      headers: expect.objectContaining({ accept: 'application/vnd.sdn.flatbuffers.stream' })
-    }))
   })
 
   test('maps observed configured SDN peer IDs to EPM display names', () => {
@@ -349,19 +265,6 @@ test.describe('desktop static identity API', () => {
     ]))
   })
 
-  test('parses remote curl trailers when ssh strips newline escapes', () => {
-    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-remote-curl-trailer-'))
-    const { parseConfiguredSdnNodeRemoteResponse } = loadStaticServer(userData)
-    const flatbufferStream = Buffer.concat([Buffer.from([0, 0, 0, 4]), Buffer.from([0, 1, 2, 3])])
-    const parsed = parseConfiguredSdnNodeRemoteResponse(Buffer.concat([
-      flatbufferStream,
-      Buffer.from('n__SDN_HTTP_STATUS__:200n__SDN_CONTENT_TYPE__:application/vnd.sdn.flatbuffers.stream')
-    ]))
-
-    expect(parsed.statusCode).toBe(200)
-    expect(parsed.headers['content-type']).toBe('application/vnd.sdn.flatbuffers.stream')
-    expect(parsed.body).toEqual(flatbufferStream)
-  })
 })
 
 function loadStaticServer (userData) {

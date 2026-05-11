@@ -7,6 +7,7 @@ export * from './sdn-backend';
 export * from './sdn-backend-browser';
 export * from './sdn-backend-desktop';
 export * from './sdn-backend-factory';
+export * from './sdn-backend-libp2p-sync';
 export * from './sdn-backend-remote';
 export {
   type AdminAdapter,

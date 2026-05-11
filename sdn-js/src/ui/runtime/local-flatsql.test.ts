@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-import { createLocalFlatSqlStore, isReadOnlyFlatSqlQuery, stripSdnFlatBufferSizePrefix } from './local-flatsql';
+import { clearLocalFlatSqlStore, createLocalFlatSqlStore, isReadOnlyFlatSqlQuery, stripSdnFlatBufferSizePrefix } from './local-flatsql';
 
 const OMM_SCHEMA = readFileSync(
   new URL('../../../../../spacedatastandards.org/schema/OMM/main.fbs', import.meta.url),
@@ -95,6 +95,13 @@ describe('local FlatSQL datastore', () => {
     await store.flush('OMM');
 
     expect(store.getStats({ includeCachedBytes: false })[0]?.cachedBytes).toBeGreaterThan(0);
+  });
+
+  it('allows callers to clear persisted local FlatSQL data without IndexedDB support', async () => {
+    await expect(clearLocalFlatSqlStore({
+      persistenceKey: 'sdn-data:configured:space-data-network-02',
+      standardIds: ['OMM', 'PNM'],
+    })).resolves.toBeUndefined();
   });
 
   it('rejects non-read-only SQL before it reaches FlatSQL', async () => {

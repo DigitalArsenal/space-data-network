@@ -1,11 +1,16 @@
 <script lang="ts">
   import { decodeEpmFlatBuffer } from '../../../src/ui/runtime/epm-flatbuffer';
   import {
-    createLocalFlatSqlStore,
+    clearLocalFlatSqlStore,
     type LocalFlatSqlQueryResult,
     type LocalFlatSqlStandardStats,
-    type LocalFlatSqlStore,
   } from '../../../src/ui/runtime/local-flatsql';
+  import {
+    createWorkerLocalFlatSqlStore,
+    type WorkerFlatSqlSyncBackendConfig,
+    type WorkerLocalFlatSqlStore,
+    type WorkerSchemaSyncUpdate,
+  } from '../../../src/ui/runtime/local-flatsql-worker-client';
   import { decodeOmmFlatBuffer } from '../../../src/ui/runtime/omm-flatbuffer';
   import { decodePnmFlatBuffer } from '../../../src/ui/runtime/pnm-flatbuffer';
   import type {
@@ -15,7 +20,6 @@
     RawDataRecord,
     SdnBackend,
   } from '../../../src/ui/runtime/sdn-backend';
-  import { createRemoteSdnBackend } from '../../../src/ui/runtime/sdn-backend-remote';
   import { verify as verifyEd25519Signature } from '../../../src/crypto/hd-wallet';
   import CAT_SCHEMA from '../../../node_modules/spacedatastandards.org/schema/CAT/main.fbs?raw';
   import EPM_SCHEMA from '../../../node_modules/spacedatastandards.org/schema/EPM/main.fbs?raw';
@@ -59,7 +63,7 @@
     peerId: string | null;
     publicKey: string | null;
     kind: 'local' | 'configured';
-    serverUrl?: string;
+    syncAddrs?: string[];
     searchText: string;
   }
 
@@ -225,14 +229,13 @@
   let workbenchLoading = false;
   let lastBackend: SdnBackend | null = null;
   let configuredDataSources: ConfiguredSdnNode[] = [];
-  let dataSourceBackends = new Map<string, SdnBackend>();
   let userSelectedDataSource = false;
   let userSelectedStandard = false;
   let inspectCid = '';
   let inspectGatewayUrl = '';
-  let localFlatSqlStore: LocalFlatSqlStore | null = null;
+  let localFlatSqlStore: WorkerLocalFlatSqlStore | null = null;
   let localFlatSqlStoreKey = '';
-  let localFlatSqlStorePromise: Promise<LocalFlatSqlStore | null> | null = null;
+  let localFlatSqlStorePromise: Promise<WorkerLocalFlatSqlStore | null> | null = null;
   let localFlatSqlStorePromiseKey = '';
   let localFlatSqlStats: LocalFlatSqlStandardStats[] = [];
   let sqlQueryText = defaultSqlQuery(DEFAULT_STANDARD_ID);
@@ -252,6 +255,10 @@
   let pnmSignatureStatus = '';
   let pnmSignatureRunning = false;
   let lastAutoSyncSignature = '';
+  let resetConfirmOpen = false;
+  let resetConfirmText = '';
+  let resetStatus = '';
+  let resetRunning = false;
 
   $: dataSourceOptions = buildDataSourceOptions(backend, configuredDataSources, peers);
   $: filteredDataSourceOptions = filterDataSourceOptions(dataSourceOptions, dataSourceSearchText);
@@ -302,7 +309,6 @@
 
   async function initializeDataExplorer(): Promise<void> {
     configuredDataSources = [];
-    dataSourceBackends = new Map();
     selectedDataSourceId = LOCAL_DATA_SOURCE_ID;
     userSelectedDataSource = false;
     userSelectedStandard = false;
@@ -342,6 +348,26 @@
   }
 
   async function loadDataSummary(): Promise<void> {
+    const source = currentDataSourceOption();
+    const workerBackendConfig = backendConfigForDataSource(source);
+    if (workerBackendConfig) {
+      try {
+        const store = await ensureLocalFlatSqlStore();
+        dataSummary = store ? await store.getRemoteDataSummary(workerBackendConfig) : null;
+        const nextStandardOptions = standardIdsFromSummary(dataSummary);
+        const previousStandardId = selectedStandardId;
+        if (!userSelectedStandard || !nextStandardOptions.includes(selectedStandardId)) {
+          selectedStandardId = preferredStandardIdFromSummary(dataSummary);
+        }
+        if (previousStandardId !== selectedStandardId && !userEditedSql) {
+          resetSqlForSelectedStandard();
+        }
+      } catch {
+        dataSummary = null;
+      }
+      return;
+    }
+
     const activeBackend = backendForSelectedDataSource();
     if (!activeBackend) {
       dataSummary = null;
@@ -365,12 +391,6 @@
   }
 
   async function runWorkbenchQuery(targetPage = pageIndex): Promise<void> {
-    const activeBackend = backendForSelectedDataSource();
-    if (!activeBackend) {
-      rawRecords = [];
-      dataScan = null;
-      return;
-    }
     const nextPage = Math.max(0, targetPage);
     const query = {
       schema: schemaNameForStandardId(selectedStandardId),
@@ -379,6 +399,35 @@
     };
     workbenchLoading = true;
     try {
+      const source = currentDataSourceOption();
+      const workerBackendConfig = backendConfigForDataSource(source);
+      if (workerBackendConfig) {
+        const store = await ensureLocalFlatSqlStore();
+        if (!store) throw new Error('FlatSQL initialization failed');
+        const result = await store.queryRemotePage({
+          standardId: selectedStandardId,
+          query,
+          backendConfig: workerBackendConfig,
+          source: source?.publicKey ?? source?.peerId ?? source?.id ?? null,
+        });
+        dataScan = result.scan;
+        rawRecords = result.records;
+        localFlatSqlStats = result.stats;
+        pageIndex = nextPage;
+        resetPnmSelectionIfNeeded();
+        if (rawRecords.length > 0 && !userEditedSql) {
+          sqlQueryText = defaultSqlQuery(selectedStandardId);
+        }
+        return;
+      }
+
+      const activeBackend = backendForSelectedDataSource();
+      if (!activeBackend) {
+        rawRecords = [];
+        dataScan = null;
+        return;
+      }
+
       try {
         const scanResult = await activeBackend.scanRawData(query);
         dataScan = scanResult.ok ? scanResult.data : null;
@@ -522,7 +571,7 @@
     try {
       const store = await ensureLocalFlatSqlStore();
       if (!store) return;
-      sqlResult = store.query(query, selectedStandardId);
+      sqlResult = await store.query(query, selectedStandardId);
     } catch (error) {
       sqlResult = null;
       sqlError = error instanceof Error ? error.message : 'SQL query failed';
@@ -538,7 +587,7 @@
       if (!store) return;
       const source = currentDataSourceOption();
       await store.ingestRecords(selectedStandardId, records, source?.publicKey ?? source?.peerId ?? source?.id ?? null);
-      refreshLocalFlatSqlStats();
+      await refreshLocalFlatSqlStats();
     } catch (error) {
       sqlError = error instanceof Error ? error.message : 'FlatSQL ingest failed';
     }
@@ -558,14 +607,16 @@
   }
 
   async function synchronizeSchema(standardId: string): Promise<void> {
-    const activeBackend = backendForSelectedDataSource();
-    const key = schemaSyncPreferenceKey(selectedDataSourceId, standardId);
-    const preference = schemaSyncPreferenceFor(selectedDataSourceId, standardId);
-    if (!activeBackend || preference.mode !== 'sync' || activeSyncKeys.has(key)) return;
+    const dataSourceId = selectedDataSourceId;
+    const key = schemaSyncPreferenceKey(dataSourceId, standardId);
+    const preference = schemaSyncPreferenceFor(dataSourceId, standardId);
+    if (preference.mode !== 'sync' || activeSyncKeys.has(key)) return;
 
     const source = currentDataSourceOption();
+    const backendConfig = backendConfigForDataSource(source);
+    if (!backendConfig) return;
     const initialProgress = schemaSyncProgressFor(
-      selectedDataSourceId,
+      dataSourceId,
       standardId,
       totalRowsForStandardId(dataSummary, standardId) ?? 0,
       localFlatSqlStats,
@@ -577,175 +628,32 @@
       totalRows: totalRowsForStandardId(dataSummary, standardId) ?? 0,
       providerPeerId: source?.peerId ?? null,
       providerPublicKey: source?.publicKey ?? null,
-    });
+    }, dataSourceId);
 
-    let store: LocalFlatSqlStore | null = null;
+    let store: WorkerLocalFlatSqlStore | null = null;
     try {
       store = await ensureLocalFlatSqlStore();
       if (!store) throw new Error('FlatSQL initialization failed');
-      let offset = localRowsForStandard(localFlatSqlStats, standardId);
-      let localRows = offset;
-      let cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
-      let totalRows = Math.max(totalRowsForStandardId(dataSummary, standardId) ?? 0, localRows);
-      let recordsSincePersist = 0;
-      const capBytes = storageCapBytes(preference);
-      let nextCursor = initialProgress.nextCursor ?? '';
-      let snapshotId = initialProgress.snapshotId ?? '';
-      let head = initialProgress.head ?? '';
-      let queryProfile = initialProgress.queryProfile ?? 'ordered-offset-v1';
-      let verifiedChunks = initialProgress.verifiedChunks.slice(-256);
-
-      while (localRows < totalRows || totalRows === 0) {
-        if (cachedBytes >= capBytes && localRows < totalRows) {
-          await store.flush(standardId);
-          refreshLocalFlatSqlStats();
-          refreshSchemaSyncProgress(standardId, {
-            status: 'capped',
-            syncedRows: localRows,
-            totalRows,
-            localRows,
-            cachedBytes,
-            pinnedBytes: cachedBytes,
-            providerPeerId: source?.peerId ?? null,
-            providerPublicKey: source?.publicKey ?? null,
-            snapshotId: snapshotId || null,
-            head: head || null,
-            nextCursor: nextCursor || null,
-            queryProfile,
-            verifiedChunks,
-            error: `Storage cap reached at ${formatBytes(capBytes)}`,
-          });
-          return;
-        }
-
-        let scanResult = await activeBackend.scanRawData({
-          schema: schemaNameForStandardId(standardId),
-          limit: SYNC_PAGE_SIZE,
-          ...(nextCursor
-            ? {
-                cursor: nextCursor,
-                snapshotId: snapshotId || undefined,
-                head: head || undefined,
-                queryProfile,
-              }
-            : { offset }),
-        });
-        if (!scanResult.ok) throw new Error('Remote scan failed');
-
-        let scan = scanResult.data;
-        if (!scan) throw new Error('Remote scan returned no data');
-
-        if (nextCursor && head && scan.head && scan.head !== head) {
-          nextCursor = '';
-          offset = localRows;
-          scanResult = await activeBackend.scanRawData({
-            schema: schemaNameForStandardId(standardId),
-            limit: SYNC_PAGE_SIZE,
-            offset,
-            queryProfile,
-          });
-          if (!scanResult.ok) throw new Error('Remote scan failed after snapshot refresh');
-          scan = scanResult.data;
-          if (!scan) throw new Error('Remote scan returned no data after snapshot refresh');
-        }
-
-        snapshotId = scan.snapshotId || snapshotId;
-        head = scan.head || head;
-        queryProfile = scan.queryProfile || queryProfile;
-        totalRows = Math.max(totalRows, scan.totalCount ?? 0, offset + scan.results.length);
-        if (scan.results.length === 0) break;
-
-        const streamResult = await activeBackend.streamRawData({
-          schema: scan.schema,
-          scanHash: scan.scanHash,
-          chunkHash: scan.chunkHash || scan.scanHash,
-          snapshotId: scan.snapshotId,
-          head: scan.head,
-          cursor: scan.cursor,
-          nextCursor: scan.nextCursor,
-          totalCount: scan.totalCount,
-          highWaterMark: scan.highWaterMark,
-          queryProfile: scan.queryProfile || queryProfile,
-          records: scan.results,
-        });
-        if (!streamResult.ok) throw new Error('Remote FlatBuffer stream failed');
-
-        const records = streamResult.data ?? [];
-        const ingestedRows = await store.ingestRecords(standardId, records, {
-          source: source?.publicKey ?? source?.peerId ?? source?.id ?? null,
-            persist: false,
-        });
-        recordsSincePersist += ingestedRows;
-        const chunkHash = scan.chunkHash || scan.scanHash;
-        if (chunkHash && !verifiedChunks.includes(chunkHash)) {
-          verifiedChunks = [...verifiedChunks, chunkHash].slice(-256);
-        }
-        if (recordsSincePersist >= SYNC_PERSIST_RECORD_INTERVAL || offset + scan.results.length >= totalRows) {
-          await store.flush(standardId);
-          recordsSincePersist = 0;
-          refreshLocalFlatSqlStats();
-        } else {
-          refreshLocalFlatSqlStats(false);
-        }
-        localRows = localRowsForStandard(localFlatSqlStats, standardId);
-        cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
-        offset += scan.results.length;
-        nextCursor = scan.nextCursor ?? '';
-
-        refreshSchemaSyncProgress(standardId, {
-          status: localRows >= totalRows ? 'synced' : 'syncing',
-          syncedRows: localRows,
-          totalRows,
-          localRows,
-          cachedBytes,
-          pinnedBytes: cachedBytes,
-          providerPeerId: source?.peerId ?? null,
-          providerPublicKey: source?.publicKey ?? null,
-          snapshotId: snapshotId || null,
-          head: head || null,
-          cursor: scan.cursor || null,
-          nextCursor: nextCursor || null,
-          highWaterMark: scan.highWaterMark || null,
-          queryProfile,
-          chunkHash: chunkHash || null,
-          syncProtocol: scan.syncProtocol || null,
-          verifiedChunks,
-          lastSyncedAt: new Date().toISOString(),
-          error: null,
-        });
-
-        if (!nextCursor || offset >= totalRows || records.length === 0) break;
-      }
-
-      await store.flush(standardId);
-      refreshLocalFlatSqlStats();
-      localRows = localRowsForStandard(localFlatSqlStats, standardId);
-      cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
-      refreshSchemaSyncProgress(standardId, {
-        status: localRows >= totalRows ? 'synced' : 'idle',
-        syncedRows: localRows,
-        totalRows,
-        localRows,
-        cachedBytes,
-        pinnedBytes: cachedBytes,
-        providerPeerId: source?.peerId ?? null,
-        providerPublicKey: source?.publicKey ?? null,
-        snapshotId: snapshotId || null,
-        head: head || null,
-        nextCursor: nextCursor || null,
-        queryProfile,
-        verifiedChunks,
-        lastSyncedAt: new Date().toISOString(),
-        error: null,
-      });
+      const update = await store.syncSchema({
+        standardId,
+        schema: schemaNameForStandardId(standardId),
+        backendConfig,
+        initialProgress,
+        totalRows: totalRowsForStandardId(dataSummary, standardId) ?? 0,
+        capBytes: storageCapBytes(preference),
+        pageSize: SYNC_PAGE_SIZE,
+        persistRecordInterval: SYNC_PERSIST_RECORD_INTERVAL,
+        source: source?.publicKey ?? source?.peerId ?? source?.id ?? null,
+      }, (nextUpdate) => applyWorkerSchemaSyncUpdate(standardId, dataSourceId, nextUpdate));
+      applyWorkerSchemaSyncUpdate(standardId, dataSourceId, update);
     } catch (error) {
       refreshSchemaSyncProgress(standardId, {
         status: 'error',
         error: error instanceof Error ? error.message : 'Schema sync failed',
-      });
+      }, dataSourceId);
       if (store) {
         await store.flush(standardId);
-        refreshLocalFlatSqlStats();
+        await refreshLocalFlatSqlStats();
       }
     } finally {
       const nextActive = new Set(activeSyncKeys);
@@ -754,11 +662,16 @@
     }
   }
 
-  function refreshSchemaSyncProgress(standardId: string, patch: Partial<SchemaSyncProgress>): void {
-    const key = schemaSyncPreferenceKey(selectedDataSourceId, standardId);
+  function applyWorkerSchemaSyncUpdate(standardId: string, dataSourceId: string, update: WorkerSchemaSyncUpdate): void {
+    localFlatSqlStats = update.stats;
+    refreshSchemaSyncProgress(standardId, update.progress, dataSourceId);
+  }
+
+  function refreshSchemaSyncProgress(standardId: string, patch: Partial<SchemaSyncProgress>, dataSourceId = selectedDataSourceId): void {
+    const key = schemaSyncPreferenceKey(dataSourceId, standardId);
     const localRows = localRowsForStandard(localFlatSqlStats, standardId);
     const cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
-    const current = schemaSyncProgressFor(selectedDataSourceId, standardId, totalRowsForStandardId(dataSummary, standardId) ?? 0, localFlatSqlStats);
+    const current = schemaSyncProgressFor(dataSourceId, standardId, totalRowsForStandardId(dataSummary, standardId) ?? 0, localFlatSqlStats);
     schemaSyncProgress = {
       ...schemaSyncProgress,
       [key]: {
@@ -772,20 +685,20 @@
     persistSchemaSyncProgress(schemaSyncProgress);
   }
 
-  async function ensureLocalFlatSqlStore(): Promise<LocalFlatSqlStore | null> {
-    const nextKey = `sdn-data:${selectedDataSourceId}`;
+  async function ensureLocalFlatSqlStore(): Promise<WorkerLocalFlatSqlStore | null> {
+    const nextKey = localFlatSqlPersistenceKey(selectedDataSourceId);
     if (localFlatSqlStore && localFlatSqlStoreKey === nextKey) return localFlatSqlStore;
     if (localFlatSqlStorePromise && localFlatSqlStorePromiseKey === nextKey) return localFlatSqlStorePromise;
     resetLocalFlatSqlStore();
     localFlatSqlStorePromiseKey = nextKey;
     localFlatSqlStorePromise = (async () => {
       try {
-        localFlatSqlStore = await createLocalFlatSqlStore({
+        localFlatSqlStore = await createWorkerLocalFlatSqlStore({
           schemas: LOCAL_FLATSQL_SCHEMAS,
           persistenceKey: nextKey,
         });
         localFlatSqlStoreKey = nextKey;
-        refreshLocalFlatSqlStats();
+        await refreshLocalFlatSqlStats();
         return localFlatSqlStore;
       } catch (error) {
         sqlError = error instanceof Error ? error.message : 'FlatSQL initialization failed';
@@ -809,8 +722,59 @@
     sqlError = '';
   }
 
-  function refreshLocalFlatSqlStats(includeCachedBytes = true): void {
-    localFlatSqlStats = localFlatSqlStore?.getStats({ includeCachedBytes }) ?? [];
+  function localFlatSqlPersistenceKey(dataSourceId: string): string {
+    return `sdn-data:${dataSourceId}`;
+  }
+
+  function beginResetLocalData(): void {
+    resetConfirmOpen = true;
+    resetConfirmText = '';
+    resetStatus = '';
+  }
+
+  function cancelResetLocalData(): void {
+    if (resetRunning) return;
+    resetConfirmOpen = false;
+    resetConfirmText = '';
+    resetStatus = '';
+  }
+
+  async function confirmResetLocalData(): Promise<void> {
+    if (resetConfirmText.trim() !== 'RESET') {
+      resetStatus = 'Type RESET to clear local data.';
+      return;
+    }
+    resetRunning = true;
+    resetStatus = '';
+    const dataSourceId = selectedDataSourceId;
+    try {
+      resetLocalFlatSqlStore();
+      await clearLocalFlatSqlStore({
+        persistenceKey: localFlatSqlPersistenceKey(dataSourceId),
+        standardIds: LOCAL_FLATSQL_SCHEMAS.map((schema) => schema.standardId),
+      });
+      clearSchemaSyncProgressForDataSource(dataSourceId);
+      activeSyncKeys = new Set();
+      lastAutoSyncSignature = '';
+      rawRecords = [];
+      dataScan = null;
+      clearPnmSelection();
+      resetSqlForSelectedStandard();
+      await ensureLocalFlatSqlStore();
+      await refreshLocalFlatSqlStats();
+      resetStatus = 'Local cache reset. Sync will restart from the first remote row.';
+      resetConfirmOpen = false;
+      resetConfirmText = '';
+      void runWorkbenchQuery(0);
+    } catch (error) {
+      resetStatus = error instanceof Error ? error.message : 'Local cache reset failed';
+    } finally {
+      resetRunning = false;
+    }
+  }
+
+  async function refreshLocalFlatSqlStats(includeCachedBytes = true): Promise<void> {
+    localFlatSqlStats = localFlatSqlStore ? await localFlatSqlStore.getStats({ includeCachedBytes }) : [];
   }
 
   function resetSqlForSelectedStandard(): void {
@@ -945,7 +909,7 @@
     try {
       const store = await ensureLocalFlatSqlStore();
       if (!store) return;
-      pnmQueryResult = store.query(`SELECT * FROM PNM WHERE FILE_ID = '${escapeSqlString(fileId)}' LIMIT 100`, 'PNM');
+      pnmQueryResult = await store.query(`SELECT * FROM PNM WHERE FILE_ID = '${escapeSqlString(fileId)}' LIMIT 100`, 'PNM');
     } catch (error) {
       pnmQueryResult = null;
       pnmQueryError = error instanceof Error ? error.message : 'FILE_ID query failed';
@@ -1071,28 +1035,29 @@
     const localRows = localRowsForStandard(stats, standardId);
     const cachedBytes = cachedBytesForStandard(stats, standardId);
     const persisted = schemaSyncProgress[key];
-    const totalRows = Math.max(remoteRows, persisted?.totalRows ?? 0);
+    const activePersisted = localRows === 0 && (persisted?.localRows ?? 0) > 0 ? null : persisted;
+    const totalRows = Math.max(remoteRows, activePersisted?.totalRows ?? 0);
     const complete = totalRows > 0 && localRows >= totalRows;
     return {
-      status: activeSyncKeys.has(key) ? 'syncing' : complete ? 'synced' : persisted?.status ?? 'idle',
-      syncedRows: Math.max(localRows, persisted?.syncedRows ?? 0),
+      status: activeSyncKeys.has(key) ? 'syncing' : complete ? 'synced' : activePersisted?.status ?? 'idle',
+      syncedRows: Math.max(localRows, activePersisted?.syncedRows ?? 0),
       totalRows,
       localRows,
       cachedBytes,
-      pinnedBytes: persisted?.pinnedBytes ?? cachedBytes,
-      providerPeerId: persisted?.providerPeerId ?? null,
-      providerPublicKey: persisted?.providerPublicKey ?? null,
-      snapshotId: persisted?.snapshotId ?? null,
-      head: persisted?.head ?? null,
-      cursor: persisted?.cursor ?? null,
-      nextCursor: persisted?.nextCursor ?? null,
-      highWaterMark: persisted?.highWaterMark ?? null,
-      queryProfile: persisted?.queryProfile ?? null,
-      chunkHash: persisted?.chunkHash ?? null,
-      syncProtocol: persisted?.syncProtocol ?? null,
-      verifiedChunks: persisted?.verifiedChunks ?? [],
-      lastSyncedAt: persisted?.lastSyncedAt ?? null,
-      error: persisted?.error ?? null,
+      pinnedBytes: activePersisted?.pinnedBytes ?? cachedBytes,
+      providerPeerId: activePersisted?.providerPeerId ?? null,
+      providerPublicKey: activePersisted?.providerPublicKey ?? null,
+      snapshotId: activePersisted?.snapshotId ?? null,
+      head: activePersisted?.head ?? null,
+      cursor: activePersisted?.cursor ?? null,
+      nextCursor: activePersisted?.nextCursor ?? null,
+      highWaterMark: activePersisted?.highWaterMark ?? null,
+      queryProfile: activePersisted?.queryProfile ?? null,
+      chunkHash: activePersisted?.chunkHash ?? null,
+      syncProtocol: activePersisted?.syncProtocol ?? null,
+      verifiedChunks: activePersisted?.verifiedChunks ?? [],
+      lastSyncedAt: activePersisted?.lastSyncedAt ?? null,
+      error: activePersisted?.error ?? null,
     };
   }
 
@@ -1158,6 +1123,14 @@
     } catch {
       // Storage quota or privacy settings should not block progress reporting.
     }
+  }
+
+  function clearSchemaSyncProgressForDataSource(dataSourceId: string): void {
+    const prefix = `${dataSourceId}:`;
+    schemaSyncProgress = Object.fromEntries(
+      Object.entries(schemaSyncProgress).filter(([key]) => !key.startsWith(prefix)),
+    );
+    persistSchemaSyncProgress(schemaSyncProgress);
   }
 
   function normalizeSchemaSyncPreference(value: unknown): SchemaSyncPreference | null {
@@ -1435,12 +1408,18 @@
     const source = currentDataSourceOption();
     if (!backend || !source) return null;
     if (source.kind === 'local') return backend;
-    if (!source.serverUrl) return null;
-    const existing = dataSourceBackends.get(source.id);
-    if (existing) return existing;
-    const remoteBackend = createRemoteSdnBackend({ serverUrl: source.serverUrl });
-    dataSourceBackends.set(source.id, remoteBackend);
-    return remoteBackend;
+    return null;
+  }
+
+  function backendConfigForDataSource(source: DataSourceOption | null): WorkerFlatSqlSyncBackendConfig | null {
+    if (!source || source.kind !== 'configured' || !source.peerId || !source.syncAddrs?.length) return null;
+    return {
+      targetPeerId: source.peerId,
+      candidateAddrs: source.syncAddrs,
+      providerId: configuredProviderIdFromSource(source),
+      displayName: source.label,
+      publicKey: source.publicKey,
+    };
   }
 
   function currentDataSourceOption(): DataSourceOption | null {
@@ -1465,9 +1444,9 @@
     const observedNames = new Map(observedPeers.map((peer) => [peer.id, peer.name]));
 
     for (const node of configuredNodes) {
-      const serverUrl = configuredNodeServerUrl(node);
-      if (!serverUrl) continue;
       const peerId = configuredNodePeerId(node);
+      const syncAddrs = configuredNodeSyncAddrs(node, peerId);
+      if (!peerId || syncAddrs.length === 0) continue;
       const publicKey = configuredNodePublicKey(node) ?? peerId;
       const label = configuredNodeLabel(node, observedNames, peerId);
       const detail = [node.id, configuredNodeHostName(node)].filter(Boolean).join(' / ');
@@ -1478,8 +1457,8 @@
         peerId,
         publicKey,
         kind: 'configured',
-        serverUrl,
-        searchText: [label, detail, publicKey, peerId, node.trustLevel, node.trust_level, node.addrs.join(' ')].filter(Boolean).join(' ').toLowerCase(),
+        syncAddrs,
+        searchText: [label, detail, publicKey, peerId, node.trustLevel, node.trust_level, syncAddrs.join(' ')].filter(Boolean).join(' ').toLowerCase(),
       });
     }
 
@@ -1514,9 +1493,11 @@
     }).filter((record): record is ConfiguredSdnNode => record !== null);
   }
 
-  function configuredNodeServerUrl(node: ConfiguredSdnNode): string | null {
-    return readRecordString(node.metadata ?? {}, 'admin_proxy_path', 'adminProxyPath', 'server_url', 'serverUrl')
-      ?? `/api/local/sdn-nodes/${encodeURIComponent(node.id)}`;
+  function configuredNodeSyncAddrs(node: ConfiguredSdnNode, peerId: string | null): string[] {
+    if (!peerId) return [];
+    return node.addrs
+      .map((addr) => addr.trim())
+      .filter((addr) => addr.includes('/p2p/') && addr.endsWith(`/p2p/${peerId}`) && /\/tcp\/\d+\/wss?\//.test(addr));
   }
 
   function configuredNodeHostName(node: ConfiguredSdnNode): string {
@@ -1540,6 +1521,11 @@
     const observedNodeName = observedNames.get(node.id);
     if (observedNodeName && observedNodeName !== node.id) return observedNodeName;
     return node.name ?? peerId ?? node.id;
+  }
+
+  function configuredProviderIdFromSource(source: DataSourceOption): string | null {
+    const id = source.id.startsWith('configured:') ? source.id.slice('configured:'.length) : source.id;
+    return id || source.peerId;
   }
 
   function dedupeDataSourceOptions(options: DataSourceOption[]): DataSourceOption[] {
@@ -1691,6 +1677,25 @@
               <span>Scan</span>
               <strong>{scanHashLabel}</strong>
             </div>
+          </div>
+
+          <div class="sdn-reset-panel">
+            <button class="sdn-button sdn-button-muted" type="button" on:click={beginResetLocalData} disabled={resetRunning}>Reset local cache</button>
+            {#if resetConfirmOpen}
+              <div class="sdn-reset-confirm" role="group" aria-label="Reset local cache confirmation">
+                <label>
+                  <span>Type RESET to clear {currentDataSourceOption()?.label ?? 'this source'} local data.</span>
+                  <input class="sdn-input" bind:value={resetConfirmText} autocomplete="off" />
+                </label>
+                <div class="sdn-toolbar">
+                  <button class="sdn-button" type="button" on:click={() => void confirmResetLocalData()} disabled={resetRunning || resetConfirmText.trim() !== 'RESET'}>Clear local data</button>
+                  <button class="sdn-button sdn-button-muted" type="button" on:click={cancelResetLocalData} disabled={resetRunning}>Cancel</button>
+                </div>
+              </div>
+            {/if}
+            {#if resetStatus}
+              <p class="sdn-empty-inline" role="status">{resetStatus}</p>
+            {/if}
           </div>
 
           <div class="sdn-storage-grid">

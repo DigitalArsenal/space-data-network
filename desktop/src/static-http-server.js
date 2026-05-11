@@ -4,13 +4,15 @@ const path = require('path')
 const http = require('http')
 const os = require('os')
 const crypto = require('crypto')
-const { spawn } = require('child_process')
+const net = require('net')
 const { app } = require('electron')
 const portfinder = require('portfinder')
 const logger = require('./common/logger')
 
 const HOST = '127.0.0.1'
 const START_PORT = 17890
+const FLATSQL_SYNC_PROTOCOL_ID = '/space-data-network/flatsql-sync/1.0.0'
+const CONFIGURED_SDN_NODE_SYNC_WS_PORT = 8080
 const DESKTOP_SDN_SEED_PEERS = Object.freeze([
   '/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
   '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
@@ -43,27 +45,29 @@ const contentTypes = Object.freeze({
 })
 
 function sendJSON (res, status, payload) {
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store'
-  })
+  res.writeHead(status, staticAssetHeaders('application/json; charset=utf-8'))
   res.end(JSON.stringify(payload))
 }
 
 function sendText (res, status, contentType, payload) {
-  res.writeHead(status, {
-    'Content-Type': contentType,
-    'Cache-Control': 'no-store'
-  })
+  res.writeHead(status, staticAssetHeaders(contentType))
   res.end(payload)
 }
 
 function sendBuffer (res, status, contentType, payload) {
-  res.writeHead(status, {
-    'Content-Type': contentType,
-    'Cache-Control': 'no-store'
-  })
+  res.writeHead(status, staticAssetHeaders(contentType))
   res.end(payload)
+}
+
+function staticAssetHeaders (contentType, extra = {}) {
+  return {
+    'Content-Type': contentType,
+    'Cache-Control': 'no-store',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Embedder-Policy': 'require-corp',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+    ...extra
+  }
 }
 
 function routeForUrl (requestUrl) {
@@ -97,7 +101,7 @@ function redirectBareAppRoute (req, res) {
     return false
   }
 
-  res.writeHead(301, { Location: `/${routeName}/${parsed.search}${parsed.hash}` })
+  res.writeHead(301, staticAssetHeaders('text/plain; charset=utf-8', { Location: `/${routeName}/${parsed.search}${parsed.hash}` }))
   res.end()
   return true
 }
@@ -142,10 +146,7 @@ function rejectNonLoopbackHostHeader (req, res) {
   }
 
   logger.warn(`[desktop static] rejected non-loopback Host header: ${req.headers.host || 'missing'}`)
-  res.writeHead(403, {
-    'Content-Type': 'text/plain; charset=utf-8',
-    'Cache-Control': 'no-store'
-  })
+  res.writeHead(403, staticAssetHeaders('text/plain; charset=utf-8'))
   res.end('Forbidden')
   return true
 }
@@ -190,19 +191,20 @@ function configuredSdnNodesFromSshConfig (configPath = path.join(os.homedir(), '
     if (!current || current.aliases.length === 0) return
     const alias = current.aliases[0]
     const identity = configuredNodeIdentityForSdnSSHHost(alias, current.aliases)
+    const addrs = configuredNodeLibp2pSyncAddrs(current.hostName || alias, identity)
     nodes.push({
       id: alias,
       name: displayNameForSdnSSHHost(alias, current.aliases),
-      addrs: [],
+      addrs,
       trust_level: 'trusted',
       metadata: {
         agent_version: 'sdn-configured-node',
-        protocols: '/space-data-network/configured-node/1.0.0',
+        protocols: `/space-data-network/configured-node/1.0.0,${FLATSQL_SYNC_PROTOCOL_ID}`,
+        sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
         ssh_aliases: current.aliases.join(','),
         ...(identity?.peer_id ? { peer_id: identity.peer_id } : {}),
         ...(identity?.public_key ? { public_key: identity.public_key } : {}),
-        ...(current.hostName ? { host_name: current.hostName } : {}),
-        admin_proxy_path: `/api/local/sdn-nodes/${encodeURIComponent(alias)}`
+        ...(current.hostName ? { host_name: current.hostName } : {})
       }
     })
   }
@@ -234,6 +236,23 @@ function displayNameForSdnSSHHost (alias, aliases = []) {
   return configuredNodeIdentityForSdnSSHHost(alias, aliases)?.name || alias
 }
 
+function configuredNodeLibp2pSyncAddrs (hostName, identity) {
+  const host = String(hostName || '').trim()
+  const peerId = String(identity?.peer_id || '').trim()
+  if (!host || !peerId || host.startsWith('space-data-network-')) return []
+  const hostProtocol = multiaddrHostProtocol(host)
+  if (!hostProtocol) return []
+  return [`/${hostProtocol}/${host}/tcp/${CONFIGURED_SDN_NODE_SYNC_WS_PORT}/ws/p2p/${peerId}`]
+}
+
+function multiaddrHostProtocol (hostName) {
+  const ipVersion = net.isIP(hostName)
+  if (ipVersion === 4) return 'ip4'
+  if (ipVersion === 6) return 'ip6'
+  if (/^[a-z0-9.-]+$/i.test(hostName)) return 'dns4'
+  return null
+}
+
 function configuredNodeIdentityForSdnSSHHost (alias, aliases = []) {
   const names = new Set([alias, ...aliases].map(value => String(value || '').toLowerCase()))
   return CONFIGURED_SDN_NODE_IDENTITIES.find(identity => (
@@ -257,184 +276,6 @@ function serveConfiguredSdnNodes (req, res) {
     nodes: configuredSdnNodesFromSshConfig()
   })
   return true
-}
-
-async function serveConfiguredSdnNodeDataProxy (req, res, options = {}) {
-  const parsed = new URL(req.url || '/', `http://${HOST}`)
-  if (!parsed.pathname.startsWith('/api/local/sdn-nodes/')) {
-    return false
-  }
-
-  const segments = parsed.pathname.split('/').filter(Boolean)
-  const nodeID = decodeURIComponent(segments[3] || '')
-  const targetPath = `/${segments.slice(4).join('/')}`
-  const targetPathWithQuery = `${targetPath}${parsed.search}`
-  const method = String(req.method || 'GET').toUpperCase()
-
-  if (!nodeID || targetPath === '/') {
-    sendJSON(res, 404, { error: 'configured SDN node route not found' })
-    return true
-  }
-
-  if (!isAllowedConfiguredNodeDataProxyPath(method, decodeURIComponent(targetPath))) {
-    sendJSON(res, 403, { error: `configured SDN node data proxy path is not allowed: ${method} ${targetPath}` })
-    return true
-  }
-
-  const node = configuredSdnNodeByID(nodeID, options.configPath)
-  if (!node) {
-    sendJSON(res, 404, { error: `configured SDN node not found: ${nodeID}` })
-    return true
-  }
-
-  try {
-    const body = method === 'POST' ? await readRequestBody(req) : ''
-    const runRemoteRequest = options.runRemoteRequest || defaultConfiguredSdnNodeRemoteRequest
-    const response = await runRemoteRequest({
-      node,
-      method,
-      targetPath,
-      targetPathWithQuery,
-      body,
-      headers: req.headers || {}
-    })
-    sendText(
-      res,
-      response.statusCode || 502,
-      response.headers?.['content-type'] || response.headers?.['Content-Type'] || 'application/json; charset=utf-8',
-      response.body || ''
-    )
-  } catch (err) {
-    logger.error(`[static-server] configured SDN node data proxy failed: ${err.message || err}`)
-    sendJSON(res, 502, { error: err.message || String(err) })
-  }
-  return true
-}
-
-function configuredSdnNodeByID (nodeID, configPath) {
-  return configuredSdnNodesFromSshConfig(configPath)
-    .find(node => node.id === nodeID || sshAliasesForConfiguredNode(node).includes(nodeID))
-}
-
-function sshAliasesForConfiguredNode (node) {
-  return String(node?.metadata?.ssh_aliases || '')
-    .split(',')
-    .map(alias => alias.trim())
-    .filter(Boolean)
-}
-
-function isAllowedConfiguredNodeDataProxyPath (method, targetPath) {
-  if (method === 'GET') {
-    return targetPath === '/api/v1/data/health' ||
-      targetPath === '/api/v1/data/summary'
-  }
-  if (method === 'POST') {
-    return targetPath === '/api/v1/data/query' ||
-      targetPath === '/api/v1/data/scan' ||
-      targetPath === '/api/v1/data/stream'
-  }
-  return false
-}
-
-async function defaultConfiguredSdnNodeRemoteRequest (request) {
-  const output = await collectRemoteCommandOutput(
-    'ssh',
-    configuredSdnNodeCurlArgs(request),
-    request.body || ''
-  )
-  return parseConfiguredSdnNodeRemoteResponse(output)
-}
-
-function parseConfiguredSdnNodeRemoteResponse (output) {
-  const statusMarker = Buffer.from('__SDN_HTTP_STATUS__:')
-  const statusMarkerIndex = output.lastIndexOf(statusMarker)
-  if (statusMarkerIndex < 0) {
-    throw new Error('remote data proxy response did not include an HTTP status')
-  }
-  const bodyEnd = statusMarkerIndex > 0 && (output[statusMarkerIndex - 1] === 0x0a || output[statusMarkerIndex - 1] === 0x6e)
-    ? statusMarkerIndex - 1
-    : statusMarkerIndex
-  const body = output.subarray(0, bodyEnd)
-  const trailer = output.subarray(statusMarkerIndex + statusMarker.length).toString('utf8').trim()
-  const contentTypeMarker = '__SDN_CONTENT_TYPE__:'
-  const contentTypeIndex = trailer.indexOf(contentTypeMarker)
-  const statusText = contentTypeIndex >= 0
-    ? trailer.slice(0, contentTypeIndex).replace(/[^\d]+$/, '').trim()
-    : trailer
-  const contentType = contentTypeIndex >= 0 ? trailer.slice(contentTypeIndex + contentTypeMarker.length).trim() : 'application/json; charset=utf-8'
-  const statusCode = Number(statusText) || 502
-  return {
-    statusCode,
-    headers: { 'content-type': contentType || 'application/json; charset=utf-8' },
-    body
-  }
-}
-
-function configuredSdnNodeCurlArgs (request) {
-  const targetPath = request.targetPathWithQuery || request.targetPath
-  const targetUrl = `http://127.0.0.1:5001${targetPath}`
-  const args = [
-    '-o',
-    'BatchMode=yes',
-    '-o',
-    'ConnectTimeout=8',
-    request.node.id,
-    'curl',
-    '--silent',
-    '--show-error',
-    '--max-time',
-    '45',
-    '--request',
-    request.method,
-    '--header',
-    `accept:${configuredSdnNodeAccept(request.headers?.accept)}`,
-    '--write-out',
-    '\\n__SDN_HTTP_STATUS__:%{http_code}\\n__SDN_CONTENT_TYPE__:%{content_type}'
-  ]
-
-  if (request.method === 'POST') {
-    args.push(
-      '--header',
-      `content-type:${configuredSdnNodeContentType(request.headers?.['content-type'])}`,
-      '--data-binary',
-      '@-'
-    )
-  }
-
-  args.push(targetUrl)
-  return args
-}
-
-function configuredSdnNodeContentType (value) {
-  const contentType = String(value || 'application/json').split(';')[0].trim()
-  return contentType || 'application/json'
-}
-
-function configuredSdnNodeAccept (value) {
-  const accept = String(value || 'application/json').split(',')[0].trim()
-  return accept || 'application/json'
-}
-
-function collectRemoteCommandOutput (command, args, input) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] })
-    const stdout = []
-    const stderr = []
-
-    child.stdout.on('data', chunk => stdout.push(chunk))
-    child.stderr.on('data', chunk => stderr.push(chunk))
-    child.on('error', reject)
-    child.on('close', code => {
-      if (code !== 0) {
-        reject(new Error(Buffer.concat(stderr).toString('utf8').trim() || `${command} exited with code ${code}`))
-        return
-      }
-      resolve(Buffer.concat(stdout))
-    })
-
-    if (input) child.stdin.end(input)
-    else child.stdin.end()
-  })
 }
 
 function isSdnProtocol (protocol) {
@@ -1198,15 +1039,12 @@ function rawFlatbufferStream (records) {
 function serveFile (res, filePath) {
   fs.readFile(filePath, (err, body) => {
     if (err) {
-      res.writeHead(404)
+      res.writeHead(404, staticAssetHeaders('text/plain; charset=utf-8'))
       res.end('Not found')
       return
     }
 
-    res.writeHead(200, {
-      'Content-Type': contentTypes[path.extname(filePath)] || 'application/octet-stream',
-      'Cache-Control': 'no-store'
-    })
+    res.writeHead(200, staticAssetHeaders(contentTypes[path.extname(filePath)] || 'application/octet-stream'))
     res.end(body)
   })
 }
@@ -1228,8 +1066,7 @@ async function startDesktopStaticServer () {
       }
 
       Promise.resolve()
-        .then(() => serveConfiguredSdnNodeDataProxy(req, res))
-        .then(handled => handled || serveDesktopPeerAPI(req, res))
+        .then(() => serveDesktopPeerAPI(req, res))
         .then(handled => handled || serveDesktopDirectoryAPI(req, res))
         .then(handled => handled || serveDesktopIdentityAPI(req, res))
         .then(handled => handled || serveDesktopNodeEPMAPI(req, res))
@@ -1244,7 +1081,7 @@ async function startDesktopStaticServer () {
           const filePath = routeForUrl(req.url || '/')
 
           if (!filePath) {
-            res.writeHead(404)
+            res.writeHead(404, staticAssetHeaders('text/plain; charset=utf-8'))
             res.end('Not found')
             return
           }
@@ -1253,7 +1090,7 @@ async function startDesktopStaticServer () {
         })
         .catch(err => {
           logger.error(`[static-server] failed to serve request: ${err.message || err}`)
-          res.writeHead(500)
+          res.writeHead(500, staticAssetHeaders('text/plain; charset=utf-8'))
           res.end('Internal server error')
         })
     })
@@ -1298,11 +1135,10 @@ module.exports = {
   isAllowedLoopbackHostHeader,
   isSdnSSHHostAlias,
   kuboSwarmPeersToDesktopSdnPeers,
-  parseConfiguredSdnNodeRemoteResponse,
-  serveConfiguredSdnNodeDataProxy,
   serveDesktopDirectoryAPI,
   serveDesktopIdentityAPI,
   serveDesktopLocalDataAPI,
   serveDesktopNodeEPMAPI,
+  staticAssetHeaders,
   startDesktopStaticServer
 }

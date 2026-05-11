@@ -2,9 +2,16 @@ import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const uiRoot = new URL('../../ui/src/', import.meta.url);
+const runtimeRoot = new URL('./runtime/', import.meta.url);
 
 function readUiSource(path: string): string {
   const fileUrl = new URL(path, uiRoot);
+  expect(existsSync(fileUrl), `${path} should exist`).toBe(true);
+  return readFileSync(fileUrl, 'utf8');
+}
+
+function readRuntimeSource(path: string): string {
+  const fileUrl = new URL(path, runtimeRoot);
   expect(existsSync(fileUrl), `${path} should exist`).toBe(true);
   return readFileSync(fileUrl, 'utf8');
 }
@@ -188,7 +195,6 @@ describe('SDN data Svelte source', () => {
       'activeBackend.getDataSummary',
       'activeBackend.queryRawData',
       'backendForSelectedDataSource',
-      'createRemoteSdnBackend',
       'standardIdFromSchema',
       'schemaNameForStandardId',
       'runWorkbenchQuery',
@@ -212,8 +218,16 @@ describe('SDN data Svelte source', () => {
       'Table',
       'SQL',
       'Run SQL',
-      'createLocalFlatSqlStore',
+      'createWorkerLocalFlatSqlStore',
+      'getRemoteDataSummary',
+      'queryRemotePage',
+      'syncSchema',
+      'backendConfigForDataSource',
+      'clearLocalFlatSqlStore',
       'ingestDownloadedRecords',
+      'confirmResetLocalData',
+      'Reset local cache',
+      'Type RESET to clear',
       'INTERNAL_SQL_COLUMN_KEYS',
       'Page size',
       'Previous',
@@ -243,6 +257,11 @@ describe('SDN data Svelte source', () => {
     expect(source).not.toContain('SQL Workbench');
     expect(source).not.toContain('backend ready');
     expect(source).not.toContain('Refresh');
+    expect(source).not.toContain('admin_proxy_path');
+    expect(source).not.toContain('serverUrl');
+    expect(source).not.toContain('createLocalFlatSqlStore');
+    expect(source).not.toContain('createLibp2pFlatSqlSyncBackend');
+    expect(source).not.toContain('await activeBackend.streamRawData({\\n          schema: scan.schema');
     expect(source).not.toContain('Source browser');
     expect(source).not.toContain('Query builder');
     expect(source).not.toContain('Record inspector');
@@ -258,6 +277,28 @@ describe('SDN data Svelte source', () => {
     expect(source).not.toContain('Standards type');
     expect(source).toContain("if (!value) return '';");
     expect(source).not.toContain("if (!value) return 'pending';");
+  });
+});
+
+describe('SDN data worker source', () => {
+  it('keeps remote sync and FlatSQL ingest off the renderer thread', () => {
+    const workerSource = readRuntimeSource('local-flatsql.worker.ts');
+    const clientSource = readRuntimeSource('local-flatsql-worker-client.ts');
+
+    expectSourceToContainAll(workerSource, [
+      'createLibp2pFlatSqlSyncBackend',
+      'queryRemotePage',
+      'syncSchemaInWorker',
+      'currentStore.ingestRecords',
+      'prepareRecordsForTransfer',
+      'workerGlobal.postMessage(response, transferables)',
+    ]);
+    expectSourceToContainAll(clientSource, [
+      "new Worker(new URL('./local-flatsql.worker.ts', import.meta.url), { type: 'module' })",
+      'syncProgressHandlers',
+      'queryRemotePage',
+      'syncSchema',
+    ]);
   });
 });
 

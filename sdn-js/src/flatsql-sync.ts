@@ -26,9 +26,15 @@ export interface FlatSqlSyncQuery {
   cursor?: string;
   snapshotId?: string;
   head?: string;
+  nextCursor?: string;
+  totalCount?: number;
+  highWaterMark?: string;
+  scanHash?: string;
+  chunkHash?: string;
   queryProfile?: string;
   limit?: number;
   offset?: number;
+  records?: FlatSqlSyncRecordRef[];
 }
 
 export interface FlatSqlSyncHeader {
@@ -95,10 +101,31 @@ export function encodeFlatSqlSyncRequest(query: FlatSqlSyncQuery): Uint8Array {
     ...(query.cursor ? { cursor: query.cursor } : {}),
     ...(query.snapshotId ? { snapshot_id: query.snapshotId } : {}),
     ...(query.head ? { head: query.head } : {}),
+    ...(query.nextCursor ? { next_cursor: query.nextCursor } : {}),
+    ...(typeof query.totalCount === 'number' ? { total_count: query.totalCount } : {}),
+    ...(query.highWaterMark ? { high_water_mark: query.highWaterMark } : {}),
+    ...(query.scanHash ? { scan_hash: query.scanHash } : {}),
+    ...(query.chunkHash ? { chunk_hash: query.chunkHash } : {}),
     ...(query.queryProfile ? { query_profile: query.queryProfile } : {}),
     ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
     ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
+    ...(query.records ? { records: query.records.map(flatSqlSyncRecordRefPayload) } : {}),
   });
+}
+
+function flatSqlSyncRecordRefPayload(record: FlatSqlSyncRecordRef): Record<string, unknown> {
+  return {
+    schema_name: record.schemaName,
+    cid: record.cid,
+    peer_id: record.peerId,
+    ...(record.providerId ? { provider_id: record.providerId } : {}),
+    ...(record.sourceName ? { source_name: record.sourceName } : {}),
+    ...(record.batchId ? { batch_id: record.batchId } : {}),
+    ...(record.producerPeerId ? { producer_peer_id: record.producerPeerId } : {}),
+    ...(record.producerPublicKey ? { producer_public_key: record.producerPublicKey } : {}),
+    ...(record.timestamp ? { timestamp: record.timestamp } : {}),
+    ...(typeof record.sizeBytes === 'number' ? { size_bytes: record.sizeBytes } : {}),
+  };
 }
 
 export function decodeFlatSqlSyncChunk(bytes: Uint8Array): FlatSqlSyncChunk {

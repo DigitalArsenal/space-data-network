@@ -87,6 +87,15 @@ describe('admin vite config', () => {
     expect(build?.outDir).toBe('dist');
   });
 
+  it('builds module workers as ES chunks for the FlatSQL runtime', async () => {
+    vi.resetModules();
+
+    const { default: config } = await import('../../ui/vite.config.mts');
+    const worker = typeof config.worker === 'function' ? config.worker({} as never) : config.worker;
+
+    expect(worker?.format).toBe('es');
+  });
+
   it('installs the Svelte plugin before the legacy upstream webui plugins', async () => {
     vi.resetModules();
 
