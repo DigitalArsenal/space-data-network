@@ -96,6 +96,18 @@ describe('admin vite config', () => {
     expect(worker?.format).toBe('es');
   });
 
+  it('emits the COI service worker at the UI root for static browser hosting', async () => {
+    vi.resetModules();
+
+    const { default: config } = await import('../../ui/vite.config.mts');
+    const plugins = Array.isArray(config.plugins) ? config.plugins.flat() : [];
+    const plugin = plugins.find((entry) => entry && typeof entry === 'object' && entry.name === 'sdn-coi-service-worker');
+
+    expect(plugin).toBeDefined();
+    expect(typeof plugin?.generateBundle).toBe('function');
+    expect(typeof plugin?.configureServer).toBe('function');
+  });
+
   it('installs the Svelte plugin before the legacy upstream webui plugins', async () => {
     vi.resetModules();
 

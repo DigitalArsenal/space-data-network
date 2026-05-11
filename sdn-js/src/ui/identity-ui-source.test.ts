@@ -300,6 +300,25 @@ describe('SDN data worker source', () => {
       'syncSchema',
     ]);
   });
+
+  it('registers a browser COI service worker for SharedArrayBuffer-capable static hosting', () => {
+    const mainSource = readUiSource('main.ts');
+    const coiSource = readUiSource('lib/cross-origin-isolation.ts');
+    const serviceWorkerSource = readUiSource('lib/coi-serviceworker.js');
+
+    expect(mainSource).toContain('ensureCrossOriginIsolation');
+    expectSourceToContainAll(coiSource, [
+      'coi-serviceworker.js',
+      'globalThis.crossOriginIsolated',
+      'navigator.serviceWorker.register',
+      'window.location.reload',
+    ]);
+    expectSourceToContainAll(serviceWorkerSource, [
+      "headers.set('Cross-Origin-Opener-Policy', 'same-origin')",
+      "headers.set('Cross-Origin-Embedder-Policy', 'require-corp')",
+      "headers.set('Cross-Origin-Resource-Policy', 'same-origin')",
+    ]);
+  });
 });
 
 describe('SDN identity styling guardrails', () => {
