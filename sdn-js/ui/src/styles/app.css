@@ -462,6 +462,109 @@ textarea,
   gap: 1rem;
 }
 
+.sdn-inspect-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+  border: 1px solid var(--sdn-border);
+  border-radius: var(--sdn-radius);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.7rem;
+}
+
+.sdn-inspect-strip code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sdn-data-explorer-layout {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.sdn-workbench-main,
+.sdn-source-browser {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.sdn-source-browser {
+  position: sticky;
+  top: 1rem;
+}
+
+.sdn-source-search {
+  display: grid;
+  gap: 0.38rem;
+  color: var(--sdn-text-subtle);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.sdn-source-list {
+  display: grid;
+  gap: 0.45rem;
+  max-height: 28rem;
+  overflow: auto;
+}
+
+.sdn-source-option {
+  display: grid;
+  gap: 0.18rem;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--sdn-border);
+  border-radius: var(--sdn-radius);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--sdn-text);
+  padding: 0.62rem 0.7rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sdn-source-option:hover,
+.sdn-source-option:focus-visible {
+  border-color: var(--sdn-blue);
+  background: rgba(10, 132, 255, 0.1);
+  outline: none;
+}
+
+.sdn-source-option.active {
+  border-color: var(--sdn-green);
+  background: rgba(48, 209, 88, 0.1);
+}
+
+.sdn-source-option span,
+.sdn-source-option small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sdn-source-option span {
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.sdn-source-option small {
+  color: var(--sdn-text-muted);
+  font-size: 0.72rem;
+}
+
+.sdn-empty-inline {
+  margin: 0;
+  color: var(--sdn-text-muted);
+  font-size: 0.84rem;
+}
+
 .sdn-workbench-controls {
   display: grid;
   grid-template-columns: minmax(8rem, 12rem) minmax(14rem, 1fr) minmax(8rem, 10rem) auto;
@@ -1159,6 +1262,7 @@ pre {
   .sdn-key-method-grid,
   .sdn-form-grid,
   .sdn-workbench-controls,
+  .sdn-data-explorer-layout,
   .sdn-directory-grid,
   .sdn-data-workspace,
   .sdn-data-results-layout,

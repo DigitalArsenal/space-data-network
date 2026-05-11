@@ -26,13 +26,23 @@ test('peers route renders SDN peer fixtures through the backend adapter', async 
   await expect(page.getByText(realPeerId)).toBeVisible();
 });
 
-test('data route renders storage and degraded SQL workbench state', async ({ page }) => {
+test('data route renders a searchable remote data source without workbench status chrome', async ({ page }) => {
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
 
   await expect(page.getByRole('heading', { name: 'Data' })).toBeVisible();
-  await expect(page.getByText('Pins And Stored Objects')).toBeVisible();
-  await expect(page.getByText('SQL Workbench')).toBeVisible();
-  await expect(page.getByText('STARLINK-34967')).toBeVisible();
+  await expect(page.getByText('SQL Workbench')).toHaveCount(0);
+  await expect(page.getByText('backend ready')).toHaveCount(0);
+  await expect(page.getByText(/available .* total/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Refresh' })).toHaveCount(0);
+
+  const dataSourceSearch = page.getByRole('searchbox', { name: 'Data source' });
+  await expect(dataSourceSearch).toBeVisible();
+  await dataSourceSearch.fill('celes');
+  await page.getByRole('option', { name: /CelesTrak Provider/ }).click();
+
+  await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('OMM');
+  await expect(page.getByText('celestrak-omm-1')).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'space-data-network-02' })).toBeVisible();
 });
 
 test('explore route renders CID inspection with the configured gateway', async ({ page }) => {
@@ -131,8 +141,8 @@ async function assertVisualGuardrails(page: Page): Promise<void> {
   expect(metrics.bodyTextLength).toBeGreaterThan(100);
   expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1);
   expect(metrics.tokens).toEqual({
-    bg: '#050506',
-    surface: '#111318',
+    bg: '#000000',
+    surface: '#0b0d10',
     blue: '#0a84ff',
     green: '#30d158',
     amber: '#ffd60a',
@@ -171,6 +181,69 @@ async function installSdnFixtures(page: Page): Promise<void> {
           },
         },
       ]),
+    });
+  });
+  await page.route('**/api/local/sdn-nodes', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        nodes: [
+          {
+            id: 'space-data-network-02',
+            name: 'CelesTrak Provider',
+            addrs: [],
+            trust_level: 'trusted',
+            metadata: {
+              agent_version: 'sdn-configured-node',
+              admin_proxy_path: '/api/local/sdn-nodes/space-data-network-02',
+              host_name: '167.172.219.213',
+              protocols: '/space-data-network/configured-node/1.0.0',
+            },
+          },
+        ],
+      }),
+    });
+  });
+  await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/summary', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total_records: 2,
+        total_bytes: 576,
+        schemas: [{ schema_name: 'OMM.fbs', count: 2, total_bytes: 576 }],
+        sources: [
+          {
+            schema_name: 'OMM.fbs',
+            provider_id: 'space-data-network-02',
+            source_name: 'celestrak-gp',
+            batch_id: 'fixture-batch',
+            count: 2,
+            total_bytes: 576,
+          },
+        ],
+      }),
+    });
+  });
+  await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/query', async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body).toMatchObject({ schema: 'OMM.fbs', limit: 25, offset: 0 });
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        records: [
+          {
+            schema_name: 'OMM.fbs',
+            cid: 'celestrak-omm-1',
+            peer_id: 'source:celestrak',
+            provider_id: 'space-data-network-02',
+            source_name: 'celestrak-gp',
+            batch_id: 'fixture-batch',
+            timestamp: '2026-05-11T04:02:25Z',
+            size_bytes: 288,
+            data_base64: '',
+          },
+        ],
+      }),
     });
   });
   await page.route('**/api/v0/repo/stat', async (route) => {
