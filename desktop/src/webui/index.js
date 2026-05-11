@@ -139,30 +139,39 @@ module.exports = async function () {
   ctx.setProp('webui', window)
   let apiAddress = null
   let gatewayAddress = null
+  let webUiLoaded = false
 
   const url = await getDesktopStaticUrl('webui', '/blank')
   url.searchParams.set('deviceId', await ctx.getProp('countlyDeviceId'))
+
+  async function loadWebUIApp (path = '/') {
+    url.hash = path
+    updateLanguage()
+    const addressesSynced = await syncIpfsAddresses()
+    if (!addressesSynced) window.loadURL(url.toString())
+    webUiLoaded = true
+  }
 
   ctx.setProp('launchWebUI', async (path, { focus = true, forceRefresh = false } = {}) => {
     if (window.isDestroyed()) {
       logger.error(`[web ui] window is destroyed, not launching web ui with ${path}`)
       return
     }
-    if (forceRefresh) window.webContents.reload()
     if (!path) {
       logger.info('[web ui] launching web ui', { withAnalytics: analyticsKeys.FN_LAUNCH_WEB_UI })
     } else {
       logger.info(`[web ui] navigate to ${path}`, { withAnalytics: analyticsKeys.FN_LAUNCH_WEB_UI_WITH_PATH })
-      url.hash = path
-      window.webContents.loadURL(url.toString())
+    }
+    if (!webUiLoaded || path) {
+      await loadWebUIApp(path || '/')
+    } else if (forceRefresh) {
+      window.webContents.reload()
     }
     if (focus) {
       window.show()
       window.focus()
       dock.show()
     }
-    // load again: minimize visual jitter on windows
-    if (path) window.webContents.loadURL(url.toString())
   })
 
   function updateLanguage () {
@@ -204,7 +213,9 @@ module.exports = async function () {
     return false
   }
 
-  ipcMain.on(ipcMainEvents.IPFSD, syncIpfsAddresses)
+  ipcMain.on(ipcMainEvents.IPFSD, () => {
+    if (webUiLoaded) void syncIpfsAddresses()
+  })
 
   // Set user agent
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
@@ -212,20 +223,7 @@ module.exports = async function () {
     callback({ cancel: false, requestHeaders: details.requestHeaders }) // eslint-disable-line
   })
 
-  return /** @type {Promise<void>} */(new Promise(resolve => {
-    window.once('ready-to-show', () => {
-      logger.info('[web ui] window ready')
-      resolve()
-    })
-
-    updateLanguage()
-    ;(async () => {
-      const addressesSynced = await syncIpfsAddresses()
-      if (!addressesSynced) window.loadURL(url.toString())
-    })().catch((err) => {
-      logger.error('[web ui] failed to sync Kubo RPC/gateway addresses before initial load')
-      logger.error(err)
-      window.loadURL(url.toString())
-    })
-  }))
+  window.once('ready-to-show', () => {
+    logger.info('[web ui] window ready')
+  })
 }

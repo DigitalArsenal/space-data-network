@@ -284,9 +284,11 @@ describe('SDN data worker source', () => {
   it('keeps remote sync and FlatSQL ingest off the renderer thread', () => {
     const workerSource = readRuntimeSource('local-flatsql.worker.ts');
     const clientSource = readRuntimeSource('local-flatsql-worker-client.ts');
+    const libp2pSource = readRuntimeSource('sdn-backend-libp2p-sync.ts');
 
     expectSourceToContainAll(workerSource, [
-      'createLibp2pFlatSqlSyncBackend',
+      'Libp2pFlatSqlSyncBackendCache',
+      'withRemoteSyncTimeout',
       'queryRemotePage',
       'syncSchemaInWorker',
       'currentStore.ingestRecords',
@@ -299,6 +301,13 @@ describe('SDN data worker source', () => {
       'queryRemotePage',
       'syncSchema',
     ]);
+    expectSourceToContainAll(libp2pSource, [
+      'requestFlatSqlSyncChunk',
+      'createLibp2p',
+      'exchangeFlatSqlSyncStream',
+    ]);
+    expect(libp2pSource).not.toContain("import('../../node')");
+    expect(libp2pSource).not.toContain('SDNNode.create');
   });
 
   it('registers a browser COI service worker for SharedArrayBuffer-capable static hosting', () => {

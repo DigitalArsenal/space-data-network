@@ -117,10 +117,10 @@ test.describe('SDN dashboard window', () => {
 
     expect(staticServerSource).toContain('redirectBareAppRoute')
     expect(staticServerSource).toContain("parsed.pathname !== `/${routeName}`")
-    expect(staticServerSource).toContain("res.writeHead(301, { Location: `/${routeName}/${parsed.search}${parsed.hash}` })")
+    expect(staticServerSource).toContain("res.writeHead(301, staticAssetHeaders('text/plain; charset=utf-8', { Location: `/${routeName}/${parsed.search}${parsed.hash}` }))")
   })
 
-  test('serves local configured SDN nodes from SSH config for desktop peer fallback', () => {
+  test('serves configured SDN node identities with libp2p websocket addresses only', () => {
     const {
       configuredSdnNodesFromSshConfig,
       isSdnSSHHostAlias
@@ -154,8 +154,8 @@ test.describe('SDN dashboard window', () => {
       'space-data-network-02'
     ])
     expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.addrs)).toEqual([
-      [],
-      []
+      ['/ip4/159.203.150.8/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45'],
+      ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4']
     ])
     expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.name)).toEqual([
       'SpaceAware.io',
@@ -172,6 +172,7 @@ test.describe('SDN dashboard window', () => {
     expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('/p2p/space-data-network-')
     expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('/p2p/sdn.spaceaware.io')
     expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('/p2p/celestrak.eth')
+    expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('http')
   })
 
   test('serves observed local Kubo SDN peers with real peer IDs for desktop SDN pages', () => {
@@ -265,9 +266,18 @@ test.describe('SDN dashboard window', () => {
     expect(dashboardSource).toContain('async function syncIpfsAddresses')
     expect(dashboardSource).toContain("url.searchParams.set('api', apiAddress.toString())")
     expect(dashboardSource).toContain("url.searchParams.set('gateway', gatewayUrl)")
-    expect(dashboardSource).toContain('ipcMain.on(ipcMainEvents.IPFSD, syncIpfsAddresses)')
+    expect(dashboardSource).toContain('ipcMain.on(ipcMainEvents.IPFSD, () => {')
+    expect(dashboardSource).toContain('if (dashboardAppLoaded) void syncIpfsAddresses()')
     expect(dashboardSource).toContain('const addressesSynced = await syncIpfsAddresses()')
     expect(dashboardSource).toContain('if (!addressesSynced) window.webContents.loadURL(url.toString())')
+  })
+
+  test('does not load the hidden SDN dashboard app from Kubo address updates at desktop startup', () => {
+    const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/dashboard/index.js'), 'utf8')
+
+    expect(dashboardSource).toContain('let dashboardAppLoaded = false')
+    expect(dashboardSource).toContain('if (dashboardAppLoaded) void syncIpfsAddresses()')
+    expect(dashboardSource).toContain('dashboardAppLoaded = true')
   })
 
   test('syncs the live Kubo RPC and gateway addresses before the desktop Web UI first loads', () => {
@@ -276,9 +286,19 @@ test.describe('SDN dashboard window', () => {
     expect(webuiSource).toContain('async function syncIpfsAddresses')
     expect(webuiSource).toContain("url.searchParams.set('api', apiAddress.toString())")
     expect(webuiSource).toContain("url.searchParams.set('gateway', gatewayUrl)")
-    expect(webuiSource).toContain('ipcMain.on(ipcMainEvents.IPFSD, syncIpfsAddresses)')
+    expect(webuiSource).toContain('ipcMain.on(ipcMainEvents.IPFSD, () => {')
+    expect(webuiSource).toContain('if (webUiLoaded) void syncIpfsAddresses()')
     expect(webuiSource).toContain('const addressesSynced = await syncIpfsAddresses()')
     expect(webuiSource).toContain('if (!addressesSynced) window.loadURL(url.toString())')
+  })
+
+  test('does not load the hidden IPFS Web UI renderer at desktop startup', () => {
+    const webuiSource = fs.readFileSync(path.join(__dirname, '../../src/webui/index.js'), 'utf8')
+
+    expect(webuiSource).toContain('let webUiLoaded = false')
+    expect(webuiSource).toContain('async function loadWebUIApp')
+    expect(webuiSource).toContain("await loadWebUIApp(path || '/')")
+    expect(webuiSource).not.toContain("return /** @type {Promise<void>} */(new Promise(resolve =>")
   })
 
   test('routes tray menu entries to SDN dashboard pages instead of IPFS Web UI pages', () => {

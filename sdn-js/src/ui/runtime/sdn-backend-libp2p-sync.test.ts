@@ -68,6 +68,29 @@ describe('libp2p FlatSQL sync backend', () => {
     });
   });
 
+  it('loads summary schemas sequentially instead of parallel dialing every schema', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const backend = createLibp2pFlatSqlSyncBackend({
+      targetPeerId: '16Uiu2HCelesTrak',
+      candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+      schemas: ['CAT.fbs', 'OMM.fbs', 'PNM.fbs'],
+      syncClient: {
+        async readFlatSqlSyncChunk(query) {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await Promise.resolve();
+          inFlight -= 1;
+          return headerOnlyChunk(query.schema, query.schema === 'OMM.fbs' ? 10 : 0);
+        },
+      },
+    });
+
+    await expect(backend.getDataSummary()).resolves.toMatchObject({ ok: true });
+
+    expect(maxInFlight).toBe(1);
+  });
+
   it('fails visibly when libp2p sync cannot connect', async () => {
     const backend = createLibp2pFlatSqlSyncBackend({
       targetPeerId: '16Uiu2HCelesTrak',
@@ -166,6 +189,40 @@ describe('libp2p FlatSQL sync backend', () => {
         records: [expect.objectContaining({ cid: 'omm-cid-1' })],
       }),
     ]);
+  });
+
+  it('fails stream requests that return refs without matching FlatBuffer frames', async () => {
+    const backend = createLibp2pFlatSqlSyncBackend({
+      targetPeerId: '16Uiu2HCelesTrak',
+      candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+      syncClient: {
+        async readFlatSqlSyncChunk(query) {
+          return {
+            header: headerOnlyChunk('OMM.fbs', 1, {
+              count: 1,
+              results: [recordRef()],
+              chunkHash: query.chunkHash ?? 'chunk-hash',
+              scanHash: query.scanHash ?? 'scan-hash',
+            }).header,
+            records: [],
+          };
+        },
+      },
+    });
+
+    await expect(backend.streamRawData({
+      schema: 'OMM.fbs',
+      scanHash: 'scan-hash',
+      chunkHash: 'chunk-hash',
+      records: [recordRef()],
+    })).resolves.toMatchObject({
+      ok: false,
+      capability: {
+        id: 'streamRawData',
+        state: 'unavailable',
+        reason: 'remote FlatSQL sync returned 0/1 FlatBuffer frames',
+      },
+    });
   });
 });
 
