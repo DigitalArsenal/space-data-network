@@ -80,6 +80,10 @@ func (h *FlatSQLSyncHandler) HandleStream(s network.Stream) {
 		if err := h.handleScan(s, req); err != nil {
 			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
 		}
+	case "open_manifest":
+		if err := h.handleOpenManifest(s, req); err != nil {
+			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
+		}
 	case "ack_progress":
 		if err := h.handleAckProgress(s, req); err != nil {
 			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
@@ -142,6 +146,17 @@ func (h *FlatSQLSyncHandler) handleScan(writer io.Writer, req flatSQLSyncRequest
 	return writeFlatSQLSyncJSONFrame(writer, response)
 }
 
+func (h *FlatSQLSyncHandler) handleOpenManifest(writer io.Writer, req flatSQLSyncRequest) error {
+	if h.store == nil {
+		return fmt.Errorf("FlatSQL store is unavailable")
+	}
+	response, err := datasync.OpenManifest(h.store, req.queryRequest(), datasync.MaxSyncChunkLimit)
+	if err != nil {
+		return err
+	}
+	return writeFlatSQLSyncJSONFrame(writer, response)
+}
+
 func (h *FlatSQLSyncHandler) handleAckProgress(writer io.Writer, req flatSQLSyncRequest) error {
 	return writeFlatSQLSyncJSONFrame(writer, map[string]interface{}{
 		"status":          "acknowledged",
@@ -177,7 +192,9 @@ func (req flatSQLSyncRequest) queryRequest() datasync.QueryRequest {
 		Cursor:                 req.Cursor,
 		SnapshotID:             req.SnapshotID,
 		Head:                   req.Head,
+		HighWaterMark:          req.HighWaterMark,
 		QueryProfile:           req.QueryProfile,
+		TotalCount:             req.TotalCount,
 		Limit:                  req.Limit,
 		Offset:                 req.Offset,
 	}

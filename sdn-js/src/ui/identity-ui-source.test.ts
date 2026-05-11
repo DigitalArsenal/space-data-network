@@ -291,10 +291,13 @@ describe('SDN data worker source', () => {
       'withRemoteSyncTimeout',
       'queryRemotePage',
       'syncSchemaInWorker',
+      "'Remote page chunk'",
       'currentStore.ingestRecords',
       'prepareRecordsForTransfer',
       'workerGlobal.postMessage(response, transferables)',
     ]);
+    expect(workerSource).not.toContain('Remote page scan');
+    expect(workerSource).not.toContain('Remote page stream');
     expectSourceToContainAll(clientSource, [
       "new Worker(new URL('./local-flatsql.worker.ts', import.meta.url), { type: 'module' })",
       'syncProgressHandlers',

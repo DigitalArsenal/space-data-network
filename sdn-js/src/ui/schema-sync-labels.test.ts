@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { schemaSyncStatusLabel } from '../../ui/src/lib/schema-sync-labels';
+import { effectiveSchemaSyncStatus, schemaSyncStatusLabel } from '../../ui/src/lib/schema-sync-labels';
 
 describe('schema sync status labels', () => {
   it('does not show active syncing for an idle subscription with no worker progress', () => {
@@ -42,5 +42,26 @@ describe('schema sync status labels', () => {
       localRows: 10,
       remoteRows: 1_999_559,
     })).toBe('Sync error');
+  });
+
+  it('does not revive persisted syncing state when the worker is not active', () => {
+    expect(effectiveSchemaSyncStatus({
+      active: false,
+      complete: false,
+      persistedStatus: 'syncing',
+    })).toBe('idle');
+  });
+
+  it('keeps active and complete states authoritative', () => {
+    expect(effectiveSchemaSyncStatus({
+      active: true,
+      complete: false,
+      persistedStatus: 'idle',
+    })).toBe('syncing');
+    expect(effectiveSchemaSyncStatus({
+      active: false,
+      complete: true,
+      persistedStatus: 'error',
+    })).toBe('synced');
   });
 });

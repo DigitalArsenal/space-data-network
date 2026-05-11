@@ -8,6 +8,16 @@ SDN providers must be able to move FlatSQL-backed SDS records to browsers and de
 
 The SDN-owned sync protocol is `/space-data-network/flatsql-sync/1.0.0`. HTTP endpoints are compatibility wrappers for the same message shape, and libp2p WebSocket/WebRTC streams should carry the same control fields and length-prefixed payload frames.
 
+Architecture correction, 2026-05-11 evening: the row scan/stream protocol is only a compatibility and preview surface. Provider-to-replica synchronization must move to a manifest-first data plane that follows the pattern used by mature distributed systems:
+
+1. discover the mutable producer/schema head through a small signed control record;
+2. fetch immutable chunk descriptors from that head;
+3. fetch the missing raw FlatBuffer chunks by content address over libp2p/IPFS block exchange or the same libp2p stream framing while IPFS publication is being wired;
+4. materialize the received FlatBuffers into the local independent FlatSQL datastore;
+5. run every SQL query against the local datastore.
+
+The system must not require upstream FlatSQL changes. Each SDN node keeps its own independent local datastore and only replicates SDS FlatBuffer records plus provider/source metadata. PubSub/IPNS-style head announcements are notifications; they are not the bulk transfer path.
+
 The protocol has three phases:
 
 1. `OpenSnapshot`: client asks for schema, source identity, query profile, and an optional previous cursor. Provider returns total rows, snapshot/head identity, first cursor, max chunk size, and source metadata.
@@ -19,6 +29,19 @@ The current HTTP increment maps this to `/api/v1/data/scan` and `/api/v1/data/st
 Implementation update, 2026-05-11: the shared SDN `datasync` contract now backs HTTP scan/stream and the libp2p stream protocol. `/api/v1/data/scan` returns `snapshot_id`, `head`, `high_water_mark`, `cursor`, `next_cursor`, `scan_hash`, `chunk_hash`, `sync_protocol`, `max_chunk_size`, `transports`, `total_count`, and ordered refs. `/api/v1/data/stream` verifies `scan_hash`/`chunk_hash` against the requested refs before streaming and echoes the same resume fields in `X-SDN-*` headers.
 
 The libp2p protocol uses one `uint32be length + JSON` control frame followed by `uint32be length + raw FlatBuffer bytes` frames for `read_chunk`. `scan`/`open_snapshot` return only the metadata frame. `ack_progress` stores/echoes resume fields so clients can persist provider progress before requesting the next chunk. The same protocol ID is available through libp2p WebSocket/WebTransport/WebRTC-capable nodes.
+
+The first migration slice keeps protocol compatibility and removes the worst row-page behavior by having sync workers request `read_chunk` directly. A direct `read_chunk` returns the chunk metadata and raw FlatBuffer frames in one libp2p stream. It does not perform a separate `scan` request followed by a second stream request with the same row refs.
+
+The next slice adds `open_manifest`. It returns a manifest for one producer/schema/query profile with:
+
+- `manifest_id`, `head`, `sequence`, and `snapshot_id`;
+- `schema`, `provider_id`, `producer_peer_id`, and `producer_public_key`;
+- `total_count`, `total_bytes`, `min_epoch`, and `max_epoch` when available;
+- ordered `segments`, each with `index`, `cursor`, `next_cursor`, `row_count`, `byte_count`, `chunk_hash`, optional `cid`, and optional epoch bounds.
+
+When a segment has a CID, replicas fetch that immutable content through IPFS/Bitswap-style block exchange. When a provider has not yet published segment CIDs, replicas may fetch the segment through `read_chunk` using the manifest segment cursor. Both paths must produce the same raw FlatBuffer frames and chunk hash.
+
+This keeps the short-term implementation fast and compatible while moving the data model away from row API replication.
 
 ## Resume Model
 

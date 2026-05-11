@@ -124,6 +124,100 @@ func TestFlatSQLSyncProtocolAckProgress(t *testing.T) {
 	}
 }
 
+func TestFlatSQLSyncProtocolReadChunkReusesProvidedSnapshotMetadata(t *testing.T) {
+	store := newFlatSQLSyncTestStore(t)
+	payload := storeFlatSQLSyncTestOMM(t, store, 56775, "STARLINK-6292")
+	handler := NewFlatSQLSyncHandler(store)
+
+	var out bytes.Buffer
+	if err := handler.handleReadChunk(&out, flatSQLSyncRequest{
+		Op:            "read_chunk",
+		Schema:        "OMM.fbs",
+		ProviderID:    "space-data-network-02",
+		SourceName:    "celestrak-gp",
+		Limit:         1,
+		SnapshotID:    "snapshot-fast-path",
+		Head:          "snapshot-fast-path",
+		HighWaterMark: "123:456:789:100",
+		TotalCount:    100,
+	}); err != nil {
+		t.Fatalf("read chunk failed: %v", err)
+	}
+
+	var header struct {
+		TotalCount    int64  `json:"total_count"`
+		SnapshotID    string `json:"snapshot_id"`
+		Head          string `json:"head"`
+		HighWaterMark string `json:"high_water_mark"`
+		Results       []struct {
+			CID string `json:"cid"`
+		} `json:"results"`
+	}
+	readFlatSQLSyncTestJSONFrame(t, &out, &header)
+	if header.TotalCount != 100 || header.SnapshotID != "snapshot-fast-path" || header.Head != "snapshot-fast-path" || header.HighWaterMark != "123:456:789:100" {
+		t.Fatalf("snapshot metadata was not reused: %+v", header)
+	}
+	if len(header.Results) != 1 || header.Results[0].CID == "" {
+		t.Fatalf("unexpected refs: %+v", header.Results)
+	}
+	records := readFlatSQLSyncTestRawFrames(t, &out)
+	if len(records) != 1 || !bytes.Equal(records[0], payload) {
+		t.Fatalf("raw frames did not match stored FlatBuffer payload")
+	}
+}
+
+func TestFlatSQLSyncProtocolOpenManifestReturnsOrderedSegments(t *testing.T) {
+	store := newFlatSQLSyncTestStore(t)
+	storeFlatSQLSyncTestOMM(t, store, 56775, "STARLINK-6292")
+	storeFlatSQLSyncTestOMM(t, store, 25544, "ISS")
+	handler := NewFlatSQLSyncHandler(store)
+
+	var out bytes.Buffer
+	if err := handler.handleOpenManifest(&out, flatSQLSyncRequest{
+		Op:         "open_manifest",
+		Schema:     "OMM.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-gp",
+		Limit:      1,
+	}); err != nil {
+		t.Fatalf("open manifest failed: %v", err)
+	}
+
+	var body struct {
+		ManifestID   string `json:"manifest_id"`
+		Schema       string `json:"schema"`
+		TotalCount   int64  `json:"total_count"`
+		TotalBytes   int64  `json:"total_bytes"`
+		Head         string `json:"head"`
+		SyncProtocol string `json:"sync_protocol"`
+		Segments     []struct {
+			Index      int    `json:"index"`
+			Cursor     string `json:"cursor"`
+			NextCursor string `json:"next_cursor"`
+			RowCount   int    `json:"row_count"`
+			ByteCount  int64  `json:"byte_count"`
+			ChunkHash  string `json:"chunk_hash"`
+		} `json:"segments"`
+	}
+	readFlatSQLSyncTestJSONFrame(t, &out, &body)
+
+	if body.Schema != "OMM.fbs" || body.TotalCount != 2 || body.TotalBytes <= 0 || body.ManifestID == "" || body.Head == "" {
+		t.Fatalf("unexpected manifest header: %+v", body)
+	}
+	if body.SyncProtocol != FlatSQLSyncProtocolID {
+		t.Fatalf("sync protocol = %q, want %q", body.SyncProtocol, FlatSQLSyncProtocolID)
+	}
+	if len(body.Segments) != 2 {
+		t.Fatalf("segments = %d, want 2: %+v", len(body.Segments), body.Segments)
+	}
+	if body.Segments[0].Index != 0 || body.Segments[0].RowCount != 1 || body.Segments[0].NextCursor == "" || body.Segments[0].ChunkHash == "" {
+		t.Fatalf("unexpected first segment: %+v", body.Segments[0])
+	}
+	if body.Segments[1].Index != 1 || body.Segments[1].RowCount != 1 || body.Segments[1].NextCursor != "" || body.Segments[1].ChunkHash == "" {
+		t.Fatalf("unexpected second segment: %+v", body.Segments[1])
+	}
+}
+
 func newFlatSQLSyncTestStore(t *testing.T) *storage.FlatSQLStore {
 	t.Helper()
 	tmpDir, err := os.MkdirTemp("", "sdn-flatsql-sync-test-*")

@@ -35,6 +35,7 @@ describe('sdn upstream webui cutover contract', () => {
       'lib/cross-origin-isolation.ts',
       'lib/routes.ts',
       'lib/schema-sync-labels.ts',
+      'lib/schema-sync-scheduler.ts',
       'main.ts',
       'screens/LocalDataScreen.svelte',
       'screens/NodeScreen.svelte',

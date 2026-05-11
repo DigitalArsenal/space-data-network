@@ -46,6 +46,39 @@ describe('libp2p FlatSQL sync backend cache', () => {
     expect(stopCount).toBe(2);
   });
 
+  it('lets workers fetch a direct read_chunk through the cached libp2p client', async () => {
+    const calls: FlatSqlSyncQuery[] = [];
+    const cache = new Libp2pFlatSqlSyncBackendCache(async () => ({
+      async readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk> {
+        calls.push(query);
+        return headerOnlyChunk(query.schema);
+      },
+    }));
+
+    await expect(cache.readFlatSqlSyncChunk(remoteConfig(), {
+      targetPeerId: '',
+      schema: 'OMM.fbs',
+      op: 'read_chunk',
+      limit: 50_000,
+      offset: 10_000,
+    })).resolves.toMatchObject({
+      header: {
+        schema: 'OMM.fbs',
+      },
+    });
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        targetPeerId: '16Uiu2HCelesTrak',
+        candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+        schema: 'OMM.fbs',
+        op: 'read_chunk',
+        limit: 50_000,
+        offset: 10_000,
+      }),
+    ]);
+  });
+
   it('does not hang destroy when a libp2p client is still being created', async () => {
     const cache = new Libp2pFlatSqlSyncBackendCache(async () => new Promise(() => undefined));
 

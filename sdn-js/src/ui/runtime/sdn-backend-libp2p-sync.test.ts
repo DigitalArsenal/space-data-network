@@ -191,6 +191,51 @@ describe('libp2p FlatSQL sync backend', () => {
     ]);
   });
 
+  it('queries raw data with one direct read_chunk stream instead of scan plus row-ref stream', async () => {
+    const rawRecord = new Uint8Array([9, 8, 7, 6]);
+    const calls: FlatSqlSyncQuery[] = [];
+    const backend = createLibp2pFlatSqlSyncBackend({
+      targetPeerId: '16Uiu2HCelesTrak',
+      candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+      syncClient: {
+        async readFlatSqlSyncChunk(query) {
+          calls.push(query);
+          return {
+            header: headerOnlyChunk('OMM.fbs', 2_005_702, {
+              count: 1,
+              limit: 50_000,
+              nextCursor: 'cursor-50000',
+              results: [recordRef()],
+              chunkHash: 'chunk-hash',
+              scanHash: 'scan-hash',
+            }).header,
+            records: [rawRecord],
+          };
+        },
+      },
+    });
+
+    await expect(backend.queryRawData({ schema: 'OMM.fbs', limit: 50_000, offset: 10_000 })).resolves.toMatchObject({
+      ok: true,
+      data: [{ cid: 'omm-cid-1', dataBytes: rawRecord }],
+    });
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        op: 'read_chunk',
+        targetPeerId: '16Uiu2HCelesTrak',
+        candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+        schema: 'OMM.fbs',
+        providerId: 'space-data-network-02',
+        sourceName: 'celestrak-gp',
+        limit: 50_000,
+        offset: 10_000,
+      }),
+    ]);
+  });
+
   it('fails stream requests that return refs without matching FlatBuffer frames', async () => {
     const backend = createLibp2pFlatSqlSyncBackend({
       targetPeerId: '16Uiu2HCelesTrak',

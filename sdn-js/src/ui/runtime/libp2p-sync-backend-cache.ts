@@ -4,6 +4,7 @@ import {
   type Libp2pFlatSqlSyncBackendOptions,
   type Libp2pFlatSqlSyncClient,
 } from './sdn-backend-libp2p-sync';
+import type { FlatSqlSyncChunk, FlatSqlSyncQuery } from '../../flatsql-sync';
 import type { SdnBackend } from './sdn-backend';
 
 type Libp2pFlatSqlSyncClientFactory = (
@@ -32,6 +33,21 @@ export class Libp2pFlatSqlSyncBackendCache {
     });
     this.backends.set(key, backend);
     return backend;
+  }
+
+  async readFlatSqlSyncChunk(
+    options: Libp2pFlatSqlSyncBackendOptions,
+    query: FlatSqlSyncQuery,
+  ): Promise<FlatSqlSyncChunk> {
+    const normalizedOptions = normalizeOptions(options);
+    const client = await this.clientFor(normalizedOptions);
+    return await client.readFlatSqlSyncChunk({
+      ...query,
+      targetPeerId: normalizedOptions.targetPeerId,
+      candidateAddrs: normalizedOptions.candidateAddrs,
+      providerId: query.providerId ?? normalizedOptions.providerId ?? undefined,
+      sourceName: query.sourceName ?? normalizedOptions.sourceName ?? undefined,
+    });
   }
 
   async destroy(): Promise<void> {

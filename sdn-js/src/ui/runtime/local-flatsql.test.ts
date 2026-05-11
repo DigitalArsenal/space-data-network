@@ -97,6 +97,45 @@ describe('local FlatSQL datastore', () => {
     expect(store.getStats({ includeCachedBytes: false })[0]?.cachedBytes).toBeGreaterThan(0);
   });
 
+  it('tracks downloaded FlatBuffer frames separately from materialized SQL rows', async () => {
+    const store = await createLocalFlatSqlStore({
+      schemas: [{
+        standardId: 'OMM',
+        tableName: 'OMM',
+        fileId: '$OMM',
+        schema: OMM_SCHEMA,
+      }],
+    });
+
+    await store.ingestRecords('OMM', [
+      {
+        cid: 'celestrak-omm-history',
+        schemaName: 'OMM.fbs',
+        peerId: 'source:celestrak',
+        providerId: 'space-data-network-02',
+        sourceName: 'celestrak-gp',
+        batchId: 'fixture-batch',
+        timestamp: '2026-05-11T04:02:25Z',
+        dataBytes: STARLINK_6292_OMM_BYTES,
+      },
+      {
+        cid: 'celestrak-omm-history',
+        schemaName: 'OMM.fbs',
+        peerId: 'source:celestrak',
+        providerId: 'space-data-network-02',
+        sourceName: 'celestrak-gp',
+        batchId: 'fixture-batch',
+        timestamp: '2026-05-11T07:02:25Z',
+        dataBytes: STARLINK_6292_OMM_BYTES,
+      },
+    ], { source: 'space-data-network-02', persist: false });
+
+    expect(store.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      recordCount: 2,
+      ingestedRecordCount: 2,
+    }));
+  });
+
   it('allows callers to clear persisted local FlatSQL data without IndexedDB support', async () => {
     await expect(clearLocalFlatSqlStore({
       persistenceKey: 'sdn-data:configured:space-data-network-02',
