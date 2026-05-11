@@ -28,10 +28,20 @@ export interface LocalFlatSqlStandardStats {
   ingestedRecordCount: number;
 }
 
+export interface LocalFlatSqlIngestOptions {
+  source?: string | null;
+  persist?: boolean;
+}
+
+export interface LocalFlatSqlStatsOptions {
+  includeCachedBytes?: boolean;
+}
+
 export interface LocalFlatSqlStore {
-  ingestRecords(standardId: string, records: RawDataRecord[], source?: string | null): Promise<number>;
+  ingestRecords(standardId: string, records: RawDataRecord[], sourceOrOptions?: string | LocalFlatSqlIngestOptions | null): Promise<number>;
+  flush(standardId?: string): Promise<void>;
   query(sql: string, standardId?: string): LocalFlatSqlQueryResult;
-  getStats(): LocalFlatSqlStandardStats[];
+  getStats(options?: LocalFlatSqlStatsOptions): LocalFlatSqlStandardStats[];
   destroy(): void;
 }
 
@@ -39,6 +49,8 @@ interface StandardDatabaseState {
   schema: LocalFlatSqlSchema;
   db: FlatSQLDatabase;
   ingestedKeys: Set<string>;
+  cachedBytes: number;
+  dirty: boolean;
 }
 
 const LOCAL_FLATSQL_DB_NAME = 'sdn-local-flatsql';
@@ -62,7 +74,13 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
     const ingestedKeys = options.persistenceKey
       ? await readPersistedRecordKeys(persistedRecordKey(options.persistenceKey, standardId))
       : new Set<string>();
-    states.set(standardId, { schema: { ...schema, standardId }, db, ingestedKeys });
+    states.set(standardId, {
+      schema: { ...schema, standardId },
+      db,
+      ingestedKeys,
+      cachedBytes: persisted?.byteLength ?? 0,
+      dirty: false,
+    });
   }
 
   return new WasmLocalFlatSqlStore(states, options.persistenceKey ?? null);
@@ -89,7 +107,12 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     private readonly persistenceKey: string | null,
   ) {}
 
-  async ingestRecords(standardId: string, records: RawDataRecord[], _source?: string | null): Promise<number> {
+  async ingestRecords(
+    standardId: string,
+    records: RawDataRecord[],
+    sourceOrOptions?: string | LocalFlatSqlIngestOptions | null,
+  ): Promise<number> {
+    const options = normalizeIngestOptions(sourceOrOptions);
     const state = this.stateForStandard(standardId);
     const nextRecords = records.filter((record) => !state.ingestedKeys.has(recordIngestKey(record)));
     const recordsWithBytes = nextRecords.filter((record) => record.dataBytes instanceof Uint8Array);
@@ -98,8 +121,19 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
 
     const count = state.db.ingestBuffers(buffers);
     for (const record of recordsWithBytes) state.ingestedKeys.add(recordIngestKey(record));
-    await this.persistStandard(state);
+    state.dirty = true;
+    if (options.persist !== false) await this.persistStandard(state);
     return count;
+  }
+
+  async flush(standardId?: string): Promise<void> {
+    if (standardId) {
+      await this.persistStandard(this.stateForStandard(standardId));
+      return;
+    }
+    for (const state of this.states.values()) {
+      await this.persistStandard(state);
+    }
   }
 
   query(sql: string, standardId?: string): LocalFlatSqlQueryResult {
@@ -115,14 +149,14 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     };
   }
 
-  getStats(): LocalFlatSqlStandardStats[] {
+  getStats(options: LocalFlatSqlStatsOptions = {}): LocalFlatSqlStandardStats[] {
     return Array.from(this.states.values()).map((state) => {
       const dbStats = state.db.getStats().find((entry) => entry.tableName === state.schema.tableName);
       return {
         standardId: state.schema.standardId,
         tableName: state.schema.tableName,
         recordCount: Number(dbStats?.recordCount ?? 0),
-        cachedBytes: state.db.exportData().byteLength,
+        cachedBytes: this.cachedBytesForState(state, options.includeCachedBytes !== false),
         ingestedRecordCount: state.ingestedKeys.size,
       };
     });
@@ -149,10 +183,18 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   }
 
   private async persistStandard(state: StandardDatabaseState): Promise<void> {
-    if (!this.persistenceKey) return;
     const bytes = state.db.exportData();
+    state.cachedBytes = bytes.byteLength;
+    state.dirty = false;
+    if (!this.persistenceKey) return;
     await writePersistedFlatSqlBytes(persistedStandardKey(this.persistenceKey, state.schema.standardId), bytes);
     await writePersistedRecordKeys(persistedRecordKey(this.persistenceKey, state.schema.standardId), state.ingestedKeys);
+  }
+
+  private cachedBytesForState(state: StandardDatabaseState, includeCachedBytes: boolean): number {
+    if (!includeCachedBytes) return state.cachedBytes;
+    state.cachedBytes = state.db.exportData().byteLength;
+    return state.cachedBytes;
   }
 }
 
@@ -184,6 +226,12 @@ function hasMultipleStatements(sql: string): boolean {
   const trimmed = sql.trim();
   if (!trimmed.includes(';')) return false;
   return !/;\s*$/.test(trimmed);
+}
+
+function normalizeIngestOptions(sourceOrOptions?: string | LocalFlatSqlIngestOptions | null): LocalFlatSqlIngestOptions {
+  if (!sourceOrOptions) return {};
+  if (typeof sourceOrOptions === 'string') return { source: sourceOrOptions };
+  return sourceOrOptions;
 }
 
 function rowToRecord(columns: string[], row: unknown[]): Record<string, unknown> {

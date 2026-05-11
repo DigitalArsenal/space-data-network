@@ -65,6 +65,38 @@ describe('local FlatSQL datastore', () => {
     expect(store.getStats()[0]?.cachedBytes).toBeGreaterThan(0);
   });
 
+  it('supports deferred persistence for bulk ingest batches', async () => {
+    const store = await createLocalFlatSqlStore({
+      schemas: [{
+        standardId: 'OMM',
+        tableName: 'OMM',
+        fileId: '$OMM',
+        schema: OMM_SCHEMA,
+      }],
+    });
+
+    await store.ingestRecords('OMM', [{
+      cid: 'celestrak-omm-deferred',
+      schemaName: 'OMM.fbs',
+      peerId: 'source:celestrak',
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+      batchId: 'fixture-batch',
+      timestamp: '2026-05-11T04:02:25Z',
+      dataBytes: STARLINK_6292_OMM_BYTES,
+    }], { source: 'space-data-network-02', persist: false });
+
+    expect(store.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 1', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
+    expect(store.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      recordCount: 1,
+      cachedBytes: 0,
+    }));
+
+    await store.flush('OMM');
+
+    expect(store.getStats({ includeCachedBytes: false })[0]?.cachedBytes).toBeGreaterThan(0);
+  });
+
   it('rejects non-read-only SQL before it reaches FlatSQL', async () => {
     const store = await createLocalFlatSqlStore({
       schemas: [{
