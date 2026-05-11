@@ -534,6 +534,33 @@ textarea,
   min-width: 0;
 }
 
+.sdn-reset-panel,
+.sdn-reset-confirm {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.sdn-reset-confirm {
+  border: 1px solid var(--sdn-border);
+  border-radius: var(--sdn-radius);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.75rem;
+}
+
+.sdn-reset-confirm label {
+  display: grid;
+  gap: 0.38rem;
+  min-width: 0;
+  color: var(--sdn-text-subtle);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.sdn-reset-confirm .sdn-input {
+  width: 100%;
+}
+
 .sdn-source-browser {
   position: sticky;
   top: 1rem;
@@ -793,7 +820,7 @@ textarea,
   width: 2rem;
   height: 2rem;
   border: 1px solid var(--sdn-border);
-  border-radius: 50%;
+  clip-path: circle(50% at 50% 50%);
 }
 
 .sdn-schema-sync-table {

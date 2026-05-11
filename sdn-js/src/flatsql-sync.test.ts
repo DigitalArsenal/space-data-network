@@ -39,6 +39,51 @@ describe('FlatSQL sync protocol client', () => {
     });
   });
 
+  it('encodes scan-bound read_chunk requests with record refs for direct FlatBuffer streaming', () => {
+    const frame = encodeFlatSqlSyncRequest({
+      targetPeerId: '16Uiu2HTest',
+      schema: 'OMM.fbs',
+      op: 'read_chunk',
+      scanHash: 'scan-hash',
+      chunkHash: 'chunk-hash',
+      snapshotId: 'snapshot-1',
+      head: 'head-1',
+      nextCursor: 'cursor-2',
+      totalCount: 2,
+      highWaterMark: '1:2:3:2',
+      records: [{
+        schemaName: 'OMM.fbs',
+        cid: 'cid-1',
+        peerId: 'source:celestrak',
+        providerId: 'space-data-network-02',
+        sourceName: 'celestrak-gp',
+        sizeBytes: 256,
+      }],
+    });
+
+    const length = new DataView(frame.buffer, frame.byteOffset, 4).getUint32(0, false);
+    const payload = JSON.parse(decoder.decode(frame.slice(4, 4 + length))) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      op: 'read_chunk',
+      schema: 'OMM.fbs',
+      scan_hash: 'scan-hash',
+      chunk_hash: 'chunk-hash',
+      snapshot_id: 'snapshot-1',
+      head: 'head-1',
+      next_cursor: 'cursor-2',
+      total_count: 2,
+      high_water_mark: '1:2:3:2',
+      records: [{
+        schema_name: 'OMM.fbs',
+        cid: 'cid-1',
+        peer_id: 'source:celestrak',
+        provider_id: 'space-data-network-02',
+        source_name: 'celestrak-gp',
+        size_bytes: 256,
+      }],
+    });
+  });
+
   it('dials the FlatSQL sync protocol and decodes header plus raw FlatBuffer frames', async () => {
     const rawRecord = new Uint8Array([1, 2, 3, 4]);
     const response = concatFrames([
