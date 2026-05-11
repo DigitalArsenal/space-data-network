@@ -7,7 +7,9 @@ import {
 } from './local-flatsql';
 import { TimeoutError, withTimeout } from './async-timeout';
 import { Libp2pFlatSqlSyncBackendCache } from './libp2p-sync-backend-cache';
-import type { DataSummary, RawDataRecord } from './sdn-backend';
+import { retryRemoteSyncOperation } from './remote-sync-retry';
+import { SerialTaskQueue } from './serial-task-queue';
+import type { DataSummary, RawDataRecord, SdnBackend } from './sdn-backend';
 import type {
   WorkerFlatSqlSyncBackendConfig,
   WorkerRemotePageRequest,
@@ -39,7 +41,10 @@ type FlatSqlWorkerGlobal = {
 
 const workerGlobal = self as unknown as FlatSqlWorkerGlobal;
 const syncBackendCache = new Libp2pFlatSqlSyncBackendCache();
+const schemaSyncQueue = new SerialTaskQueue();
 const REMOTE_SYNC_OPERATION_TIMEOUT_MS = 60_000;
+const REMOTE_SYNC_RETRY_ATTEMPTS = 4;
+const REMOTE_SYNC_RETRY_DELAY_MS = 500;
 let store: LocalFlatSqlStore | null = null;
 
 workerGlobal.onmessage = (event: MessageEvent<WorkerRequest>) => {
@@ -86,7 +91,7 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
         postRemotePageSuccess(request.id, await queryRemotePage(request.request));
         return;
       case 'syncSchema':
-        postSuccess(request.id, await syncSchemaInWorker(request.id, request.request));
+        postSuccess(request.id, await schemaSyncQueue.enqueue(() => syncSchemaInWorker(request.id, request.request)));
         return;
       case 'destroy':
         store?.destroy();
@@ -112,24 +117,26 @@ async function stats(options?: LocalFlatSqlStatsOptions): Promise<LocalFlatSqlSt
 }
 
 async function getRemoteDataSummary(backendConfig: WorkerFlatSqlSyncBackendConfig): Promise<DataSummary | null> {
-  const summary = await withRemoteSyncTimeout(
-    syncBackendCache.backendFor(backendConfig).getDataSummary(),
-    'Remote data summary',
-  );
+  const summary = await withRemoteBackendOperation(backendConfig, 'Remote data summary', (backend) => backend.getDataSummary());
   if (!summary.ok) throw new Error(summary.capability.reason ?? 'Remote data summary failed');
   return summary.data;
 }
 
 async function queryRemotePage(request: WorkerRemotePageRequest): Promise<WorkerRemotePageResult> {
   const currentStore = requireStore();
-  const backend = syncBackendCache.backendFor(request.backendConfig);
-  const scanResult = await withRemoteSyncTimeout(backend.scanRawData(request.query), 'Remote page scan');
+  const scanResult = await withRemoteBackendOperation(
+    request.backendConfig,
+    'Remote page scan',
+    (backend) => backend.scanRawData(request.query),
+  );
   if (!scanResult.ok) throw new Error(scanResult.capability.reason ?? 'Remote scan failed');
   const scan = scanResult.data;
   let records: RawDataRecord[] = [];
   if (scan?.results.length) {
-    const streamResult = await withRemoteSyncTimeout(
-      backend.streamRawData({
+    const streamResult = await withRemoteBackendOperation(
+      request.backendConfig,
+      'Remote page stream',
+      (backend) => backend.streamRawData({
         schema: scan.schema,
         scanHash: scan.scanHash,
         chunkHash: scan.chunkHash || scan.scanHash,
@@ -142,7 +149,6 @@ async function queryRemotePage(request: WorkerRemotePageRequest): Promise<Worker
         queryProfile: scan.queryProfile,
         records: scan.results,
       }),
-      'Remote page stream',
     );
     if (!streamResult.ok) throw new Error(streamResult.capability.reason ?? 'Remote FlatBuffer stream failed');
     records = streamResult.data ?? [];
@@ -160,7 +166,6 @@ async function queryRemotePage(request: WorkerRemotePageRequest): Promise<Worker
 
 async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest): Promise<{ progress: WorkerSchemaSyncProgress; stats: LocalFlatSqlStandardStats[] }> {
   const currentStore = requireStore();
-  const backend = syncBackendCache.backendFor(request.backendConfig);
   let currentStats = await currentStore.getStats({ includeCachedBytes: false });
   let offset = localRowsForStandard(currentStats, request.standardId);
   let localRows = offset;
@@ -219,8 +224,10 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
         return { progress, stats: currentStats };
       }
 
-      let scanResult = await withRemoteSyncTimeout(
-        backend.scanRawData({
+      let scanResult = await withRemoteBackendOperation(
+        request.backendConfig,
+        'Remote sync scan',
+        (backend) => backend.scanRawData({
           schema: request.schema,
           limit: request.pageSize,
           ...(nextCursor
@@ -232,7 +239,6 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
               }
             : { offset }),
         }),
-        'Remote sync scan',
       );
       if (!scanResult.ok) throw new Error(scanResult.capability.reason ?? 'Remote scan failed');
 
@@ -242,14 +248,15 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       if (nextCursor && head && scan.head && scan.head !== head) {
         nextCursor = '';
         offset = localRows;
-        scanResult = await withRemoteSyncTimeout(
-          backend.scanRawData({
+        scanResult = await withRemoteBackendOperation(
+          request.backendConfig,
+          'Remote sync snapshot refresh',
+          (backend) => backend.scanRawData({
             schema: request.schema,
             limit: request.pageSize,
             offset,
             queryProfile,
           }),
-          'Remote sync snapshot refresh',
         );
         if (!scanResult.ok) throw new Error(scanResult.capability.reason ?? 'Remote scan failed after snapshot refresh');
         scan = scanResult.data;
@@ -262,8 +269,10 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       totalRows = Math.max(totalRows, scan.totalCount ?? 0, offset + scan.results.length);
       if (scan.results.length === 0) break;
 
-      const streamResult = await withRemoteSyncTimeout(
-        backend.streamRawData({
+      const streamResult = await withRemoteBackendOperation(
+        request.backendConfig,
+        'Remote sync stream',
+        (backend) => backend.streamRawData({
           schema: scan.schema,
           scanHash: scan.scanHash,
           chunkHash: scan.chunkHash || scan.scanHash,
@@ -276,7 +285,6 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
           queryProfile: scan.queryProfile || queryProfile,
           records: scan.results,
         }),
-        'Remote sync stream',
       );
       if (!streamResult.ok) throw new Error(streamResult.capability.reason ?? 'Remote FlatBuffer stream failed');
 
@@ -393,6 +401,20 @@ async function withRemoteSyncTimeout<T>(operation: Promise<T>, label: string): P
     }
     throw error;
   }
+}
+
+async function withRemoteBackendOperation<T>(
+  backendConfig: WorkerFlatSqlSyncBackendConfig,
+  label: string,
+  operation: (backend: SdnBackend) => Promise<T>,
+): Promise<T> {
+  return await retryRemoteSyncOperation({
+    label,
+    attempts: REMOTE_SYNC_RETRY_ATTEMPTS,
+    retryDelayMs: REMOTE_SYNC_RETRY_DELAY_MS,
+    reset: () => syncBackendCache.destroy(),
+    run: () => withRemoteSyncTimeout(operation(syncBackendCache.backendFor(backendConfig)), label),
+  });
 }
 
 function postRemotePageSuccess(id: number, result: WorkerRemotePageResult): void {
