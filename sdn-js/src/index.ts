@@ -11,6 +11,19 @@ export type { HeliaSDNNode } from './helia';
 export type { SDNConfig, SDNNodeEvents } from './node';
 export { IPFS_BOOTSTRAP_PEERS, LEGACY_ID_EXCHANGE_PROTOCOL } from './node';
 export {
+  FLATSQL_SYNC_PROTOCOL_ID,
+  decodeFlatSqlSyncChunk,
+  encodeFlatSqlSyncRequest,
+  requestFlatSqlSyncChunk,
+} from './flatsql-sync';
+export type {
+  FlatSqlSyncChunk,
+  FlatSqlSyncHeader,
+  FlatSqlSyncQuery,
+  FlatSqlSyncRecordRef,
+  FlatSqlSyncTransport,
+} from './flatsql-sync';
+export {
   MODULE_DELIVERY_PROTOCOL_ID,
   ModuleDeliveryProtocolError,
   fetchEncryptedModuleBundle,

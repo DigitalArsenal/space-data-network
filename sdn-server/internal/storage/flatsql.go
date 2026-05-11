@@ -1361,6 +1361,16 @@ type RawRecordQuery struct {
 	Offset            int
 }
 
+// RawRecordHead summarizes a raw-record result set without hydrating any
+// FlatBuffer payload bytes.
+type RawRecordHead struct {
+	TotalBytes             int64
+	MaxRecordTimestampUnix int64
+	MaxSourceUpdatedAtUnix int64
+	MaxCreatedAtUnix       int64
+	MaxRowID               int64
+}
+
 // RawRecordRef identifies one scan-bound record for ordered raw-byte sync.
 type RawRecordRef struct {
 	CID               string
@@ -2778,6 +2788,117 @@ func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
 	return total, nil
 }
 
+// RawRecordHead returns cursor/snapshot metadata for a raw-record result set
+// without opening the FlatSQL backing stream files.
+func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	filter.SchemaName = strings.TrimSpace(filter.SchemaName)
+	if filter.SchemaName == "" {
+		return RawRecordHead{}, errors.New("schema name is required")
+	}
+	tableName, err := sds.SchemaNameToTable(filter.SchemaName)
+	if err != nil {
+		return RawRecordHead{}, fmt.Errorf("invalid schema name: %w", err)
+	}
+
+	sourceFiltered := strings.TrimSpace(filter.ProviderID) != "" ||
+		strings.TrimSpace(filter.SourceName) != "" ||
+		strings.TrimSpace(filter.BatchID) != "" ||
+		strings.TrimSpace(filter.ProducerPeerID) != "" ||
+		strings.TrimSpace(filter.ProducerPublicKey) != ""
+
+	var head RawRecordHead
+	if sourceFiltered && strings.TrimSpace(filter.PeerID) == "" && strings.TrimSpace(filter.CID) == "" {
+		summary, ok, err := s.rawSourceSummaryHeadLocked(filter)
+		if err != nil {
+			return RawRecordHead{}, err
+		}
+		if ok {
+			head = summary
+			if filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) {
+				localCount, localBytes, err := s.localEPMSummaryLocked()
+				if err != nil {
+					return RawRecordHead{}, err
+				}
+				head.TotalBytes += localBytes
+				if localCount > 0 {
+					now := time.Now().Unix()
+					head.MaxRecordTimestampUnix = max(head.MaxRecordTimestampUnix, now)
+					head.MaxCreatedAtUnix = max(head.MaxCreatedAtUnix, now)
+				}
+			}
+			return head, nil
+		}
+	}
+
+	if sourceFiltered {
+		head, err = s.rawTaggedRecordHeadLocked(tableName, filter)
+	} else {
+		head, err = s.rawSchemaRecordHeadLocked(tableName, filter)
+	}
+	if err != nil {
+		return RawRecordHead{}, err
+	}
+
+	if filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) {
+		localCount, localBytes, err := s.localEPMSummaryLocked()
+		if err != nil {
+			return RawRecordHead{}, err
+		}
+		head.TotalBytes += localBytes
+		if localCount > 0 {
+			now := time.Now().Unix()
+			head.MaxRecordTimestampUnix = max(head.MaxRecordTimestampUnix, now)
+			head.MaxCreatedAtUnix = max(head.MaxCreatedAtUnix, now)
+		}
+	}
+
+	return head, nil
+}
+
+func (s *FlatSQLStore) rawSourceSummaryHeadLocked(filter RawRecordQuery) (RawRecordHead, bool, error) {
+	query := `
+		SELECT COUNT(*), COALESCE(SUM(total_bytes), 0), COALESCE(MAX(updated_at), 0)
+		FROM sdn_record_source_summary
+		WHERE schema_name = ?
+	`
+	args := []interface{}{filter.SchemaName}
+	if providerID := strings.TrimSpace(filter.ProviderID); providerID != "" {
+		query += ` AND provider_id = ?`
+		args = append(args, providerID)
+	}
+	if sourceName := strings.TrimSpace(filter.SourceName); sourceName != "" {
+		query += ` AND source_name = ?`
+		args = append(args, sourceName)
+	}
+	if batchID := strings.TrimSpace(filter.BatchID); batchID != "" {
+		query += ` AND batch_id = ?`
+		args = append(args, batchID)
+	}
+	if producerPeerID := strings.TrimSpace(filter.ProducerPeerID); producerPeerID != "" {
+		query += ` AND producer_peer_id = ?`
+		args = append(args, producerPeerID)
+	}
+	if producerPublicKey := strings.TrimSpace(filter.ProducerPublicKey); producerPublicKey != "" {
+		query += ` AND producer_public_key = ?`
+		args = append(args, producerPublicKey)
+	}
+
+	var summaryRows int64
+	var totalBytes int64
+	var maxUpdated int64
+	if err := s.db.QueryRow(query, args...).Scan(&summaryRows, &totalBytes, &maxUpdated); err != nil {
+		return RawRecordHead{}, false, fmt.Errorf("raw source summary head failed: %w", err)
+	}
+	return RawRecordHead{
+		TotalBytes:             totalBytes,
+		MaxSourceUpdatedAtUnix: maxUpdated,
+		MaxCreatedAtUnix:       maxUpdated,
+	}, summaryRows > 0, nil
+}
+
 func (s *FlatSQLStore) countSchemaRecordsLocked(tableName string, filter RawRecordQuery) (int64, error) {
 	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE 1=1`, tableName)
 	args := make([]interface{}, 0, 2)
@@ -2795,6 +2916,87 @@ func (s *FlatSQLStore) countSchemaRecordsLocked(tableName string, filter RawReco
 		return 0, fmt.Errorf("raw schema record count failed: %w", err)
 	}
 	return total, nil
+}
+
+func (s *FlatSQLStore) rawSchemaRecordHeadLocked(tableName string, filter RawRecordQuery) (RawRecordHead, error) {
+	query := fmt.Sprintf(`
+		SELECT COALESCE(SUM(record_length), 0), COALESCE(MAX(timestamp), 0),
+		       COALESCE(MAX(created_at), 0), COALESCE(MAX(rowid), 0)
+		FROM %s
+		WHERE 1=1
+	`, tableName)
+	args := make([]interface{}, 0, 2)
+	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
+		query += ` AND peer_id = ?`
+		args = append(args, peerID)
+	}
+	if cid := strings.TrimSpace(filter.CID); cid != "" {
+		query += ` AND cid = ?`
+		args = append(args, cid)
+	}
+
+	var head RawRecordHead
+	if err := s.db.QueryRow(query, args...).Scan(
+		&head.TotalBytes,
+		&head.MaxRecordTimestampUnix,
+		&head.MaxCreatedAtUnix,
+		&head.MaxRowID,
+	); err != nil {
+		return RawRecordHead{}, fmt.Errorf("raw schema record head failed: %w", err)
+	}
+	return head, nil
+}
+
+func (s *FlatSQLStore) rawTaggedRecordHeadLocked(tableName string, filter RawRecordQuery) (RawRecordHead, error) {
+	query := fmt.Sprintf(`
+		SELECT COALESCE(SUM(records.record_length), 0), COALESCE(MAX(records.timestamp), 0),
+		       COALESCE(MAX(tags.created_at), 0), COALESCE(MAX(records.rowid), 0)
+		FROM sdn_record_source_tags tags
+		INNER JOIN %s records ON records.cid = tags.cid
+		WHERE tags.schema_name = ?
+	`, tableName)
+	args := []interface{}{filter.SchemaName}
+
+	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
+		query += ` AND records.peer_id = ?`
+		args = append(args, peerID)
+	}
+	if cid := strings.TrimSpace(filter.CID); cid != "" {
+		query += ` AND records.cid = ?`
+		args = append(args, cid)
+	}
+	if providerID := strings.TrimSpace(filter.ProviderID); providerID != "" {
+		query += ` AND tags.provider_id = ?`
+		args = append(args, providerID)
+	}
+	if sourceName := strings.TrimSpace(filter.SourceName); sourceName != "" {
+		query += ` AND tags.source_name = ?`
+		args = append(args, sourceName)
+	}
+	if batchID := strings.TrimSpace(filter.BatchID); batchID != "" {
+		query += ` AND tags.batch_id = ?`
+		args = append(args, batchID)
+	}
+	if producerPeerID := strings.TrimSpace(filter.ProducerPeerID); producerPeerID != "" {
+		query += ` AND tags.producer_peer_id = ?`
+		args = append(args, producerPeerID)
+	}
+	if producerPublicKey := strings.TrimSpace(filter.ProducerPublicKey); producerPublicKey != "" {
+		query += ` AND tags.producer_public_key = ?`
+		args = append(args, producerPublicKey)
+	}
+
+	var head RawRecordHead
+	if err := s.db.QueryRow(query, args...).Scan(
+		&head.TotalBytes,
+		&head.MaxRecordTimestampUnix,
+		&head.MaxCreatedAtUnix,
+		&head.MaxRowID,
+	); err != nil {
+		return RawRecordHead{}, fmt.Errorf("raw tagged record head failed: %w", err)
+	}
+	head.MaxSourceUpdatedAtUnix = head.MaxCreatedAtUnix
+	return head, nil
 }
 
 func (s *FlatSQLStore) countSourceSummaryRecordsLocked(filter RawRecordQuery) (int64, bool, error) {

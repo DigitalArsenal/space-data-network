@@ -305,10 +305,17 @@ async function installSdnFixtures(page: Page): Promise<void> {
     const body = route.request().postDataJSON();
     expect(body.schema).toBe('PNM.fbs');
     expect(body.include_data).toBe(false);
-    const offset = Number(body.offset ?? 0);
+    const cursorOffset = typeof body.cursor === 'string' && body.cursor
+      ? Number(Buffer.from(body.cursor, 'base64url').toString('utf8'))
+      : 0;
+    const offset = Number(body.offset ?? cursorOffset);
     const limit = Number(body.limit ?? 10);
     if (offset > 0) expect(limit).toBe(25_000);
     const pageRefs = PNM_FIXTURE_REFS.slice(offset, offset + limit);
+    const nextOffset = offset + pageRefs.length;
+    const nextCursor = nextOffset < PNM_FIXTURE_REFS.length
+      ? Buffer.from(String(nextOffset), 'utf8').toString('base64url')
+      : '';
     await new Promise((resolve) => setTimeout(resolve, 100));
     await route.fulfill({
       contentType: 'application/json',
@@ -318,9 +325,17 @@ async function installSdnFixtures(page: Page): Promise<void> {
         count: pageRefs.length,
         limit,
         offset,
-        cursor: 'MA',
-        next_cursor: offset + pageRefs.length < PNM_FIXTURE_REFS.length ? String(offset + pageRefs.length) : '',
+        cursor: Buffer.from(String(offset), 'utf8').toString('base64url'),
+        next_cursor: nextCursor,
+        snapshot_id: 'fixture-snapshot',
+        head: 'fixture-snapshot',
+        high_water_mark: '1:2:3:2',
         scan_hash: 'fixture-scan-hash',
+        chunk_hash: 'fixture-scan-hash',
+        query_profile: 'ordered-offset-v1',
+        sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
+        max_chunk_size: 50000,
+        transports: ['http', 'libp2p-websocket', 'libp2p-webrtc'],
         results: pageRefs.map(({ cid }, index) => ({
           schema_name: 'PNM.fbs',
           cid,
@@ -338,6 +353,8 @@ async function installSdnFixtures(page: Page): Promise<void> {
     const body = route.request().postDataJSON();
     expect(body.schema).toBe('PNM.fbs');
     expect(body.scan_hash).toBe('fixture-scan-hash');
+    expect(body.chunk_hash).toBe('fixture-scan-hash');
+    expect(body.snapshot_id).toBe('fixture-snapshot');
     expect(route.request().headers().accept).toContain('application/vnd.sdn.flatbuffers.stream');
     const records = Array.isArray(body.records) ? body.records : [];
     const buffers = records.map((record: { cid: string }) => PNM_FIXTURE_REFS.find((fixture) => fixture.cid === record.cid)?.bytes ?? PNM_BYTES);

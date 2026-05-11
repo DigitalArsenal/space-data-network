@@ -19,6 +19,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
 
+	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -30,11 +31,11 @@ type DataQueryHandler struct {
 }
 
 const (
-	rawFlatBufferStreamContentType = "application/vnd.sdn.flatbuffers.stream"
-	rawDataDefaultLimit            = 100
-	rawDataMaxQueryLimit           = 1000
-	rawDataMaxSyncChunkLimit       = 50000
-	rawDataStreamRequestMaxBytes   = 32 * 1024 * 1024
+	rawFlatBufferStreamContentType = datasync.RawFlatBufferStreamType
+	rawDataDefaultLimit            = datasync.DefaultLimit
+	rawDataMaxQueryLimit           = datasync.MaxQueryLimit
+	rawDataMaxSyncChunkLimit       = datasync.MaxSyncChunkLimit
+	rawDataStreamRequestMaxBytes   = datasync.StreamRequestMaxBytes
 )
 
 // NewDataQueryHandler creates a new data query handler.
@@ -171,73 +172,12 @@ func (h *DataQueryHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	schemaName := strings.TrimSpace(firstNonEmptyDataString(req.Schema, req.SchemaName))
-	if schemaName == "" {
-		writeError(w, http.StatusBadRequest, "schema is required")
-		return
-	}
-	limit := req.Limit
-	if limit <= 0 {
-		limit = rawDataDefaultLimit
-	}
-	if limit > rawDataMaxSyncChunkLimit {
-		limit = rawDataMaxSyncChunkLimit
-	}
-	offset := req.Offset
-	if strings.TrimSpace(req.Cursor) != "" {
-		parsedOffset, err := parseScanCursor(req.Cursor)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		offset = parsedOffset
-	}
-	if offset < 0 {
-		writeError(w, http.StatusBadRequest, "offset must be non-negative")
-		return
-	}
-
-	filter := storage.RawRecordQuery{
-		SchemaName:        schemaName,
-		ProviderID:        firstNonEmptyDataString(req.ProviderID, req.ProviderId),
-		SourceName:        req.SourceName,
-		BatchID:           firstNonEmptyDataString(req.BatchID, req.BatchId),
-		ProducerPeerID:    firstNonEmptyDataString(req.ProducerPeerID, req.ProducerPeerId),
-		ProducerPublicKey: firstNonEmptyDataString(req.ProducerPublicKey, req.ProducerPublicKeyCamel),
-		PeerID:            firstNonEmptyDataString(req.PeerID, req.PeerId),
-		Limit:             limit,
-		Offset:            offset,
-	}
-	totalCount, err := h.store.CountRawRecords(filter)
+	response, _, err := datasync.Scan(h.store, rawQueryToSyncRequest(req), rawDataMaxSyncChunkLimit)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	records, err := h.store.QueryRawRecordRefs(filter)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	results := make([]map[string]interface{}, 0, len(records))
-	for _, rec := range records {
-		results = append(results, rawRecordRow(schemaName, rec, false))
-	}
-	nextCursor := ""
-	if int64(offset+len(records)) < totalCount {
-		nextCursor = encodeScanCursor(offset + len(records))
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"schema":      schemaName,
-		"total_count": totalCount,
-		"count":       len(results),
-		"limit":       limit,
-		"offset":      offset,
-		"cursor":      encodeScanCursor(offset),
-		"next_cursor": nextCursor,
-		"scan_hash":   scanHash(schemaName, records),
-		"results":     results,
-	})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *DataQueryHandler) handleRawStream(w http.ResponseWriter, r *http.Request) {
@@ -259,50 +199,30 @@ func (h *DataQueryHandler) handleRawStream(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "schema is required")
 		return
 	}
-	if len(req.Records) == 0 {
-		writeError(w, http.StatusBadRequest, "records are required")
-		return
-	}
-	if len(req.Records) > rawDataMaxSyncChunkLimit {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("records limit is %d", rawDataMaxSyncChunkLimit))
-		return
-	}
-
-	refs := make([]storage.RawRecordRef, 0, len(req.Records))
-	for _, ref := range req.Records {
-		cid := strings.TrimSpace(firstNonEmptyDataString(ref.CID, ref.ID))
-		if cid == "" {
-			writeError(w, http.StatusBadRequest, "record cid is required")
-			return
-		}
-		refSchema := strings.TrimSpace(firstNonEmptyDataString(ref.Schema, ref.SchemaName))
-		if refSchema != "" && refSchema != schemaName {
-			writeError(w, http.StatusBadRequest, "record schema does not match stream schema")
-			return
-		}
-		refs = append(refs, storage.RawRecordRef{
-			CID:               cid,
-			ProviderID:        firstNonEmptyDataString(ref.ProviderID, ref.ProviderId),
-			SourceName:        ref.SourceName,
-			BatchID:           firstNonEmptyDataString(ref.BatchID, ref.BatchId),
-			ProducerPeerID:    firstNonEmptyDataString(ref.ProducerPeerID, ref.ProducerPeerId),
-			ProducerPublicKey: firstNonEmptyDataString(ref.ProducerPublicKey, ref.ProducerPublicKeyCamel),
-			PeerID:            firstNonEmptyDataString(ref.PeerID, ref.PeerId),
-		})
-	}
-	records, err := h.store.QueryRawRecordRefsByRefs(schemaName, refs)
+	computedHash, records, err := datasync.ResolveStreamRecords(h.store, rawStreamToSyncRequest(req))
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
-	}
-
-	computedHash := scanHash(schemaName, records)
-	if expectedHash := strings.TrimSpace(req.ScanHash); expectedHash != "" && expectedHash != computedHash {
-		writeError(w, http.StatusConflict, "scan hash does not match requested record refs")
+		status := http.StatusNotFound
+		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "schema") {
+			status = http.StatusBadRequest
+		}
+		if strings.Contains(err.Error(), "scan hash") {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
 		return
 	}
 
 	w.Header().Set("X-SDN-Scan-Hash", computedHash)
+	w.Header().Set("X-SDN-Chunk-Hash", firstNonEmptyDataString(req.ChunkHash, computedHash))
+	w.Header().Set("X-SDN-Sync-Protocol", datasync.ProtocolID)
+	w.Header().Set("X-SDN-Snapshot-ID", req.SnapshotID)
+	w.Header().Set("X-SDN-Head", req.Head)
+	w.Header().Set("X-SDN-Cursor", req.Cursor)
+	w.Header().Set("X-SDN-Next-Cursor", req.NextCursor)
+	if req.TotalCount > 0 {
+		w.Header().Set("X-SDN-Total-Count", strconv.FormatInt(req.TotalCount, 10))
+	}
+	w.Header().Set("X-SDN-High-Water-Mark", req.HighWaterMark)
 	writeFlatBufferRecordStreamWithContentType(w, schemaName, records, rawFlatBufferStreamContentType, h.store)
 }
 
@@ -812,16 +732,27 @@ type rawDataQueryRequest struct {
 	PeerID                 string `json:"peer_id"`
 	PeerId                 string `json:"peerId"`
 	Cursor                 string `json:"cursor"`
+	SnapshotID             string `json:"snapshot_id"`
+	Head                   string `json:"head"`
+	QueryProfile           string `json:"query_profile"`
 	Limit                  int    `json:"limit"`
 	Offset                 int    `json:"offset"`
 	IncludeData            bool   `json:"include_data"`
 }
 
 type rawDataStreamRequest struct {
-	Schema     string                `json:"schema"`
-	SchemaName string                `json:"schema_name"`
-	ScanHash   string                `json:"scan_hash"`
-	Records    []rawDataStreamRecord `json:"records"`
+	Schema        string                `json:"schema"`
+	SchemaName    string                `json:"schema_name"`
+	ScanHash      string                `json:"scan_hash"`
+	ChunkHash     string                `json:"chunk_hash"`
+	SnapshotID    string                `json:"snapshot_id"`
+	Head          string                `json:"head"`
+	Cursor        string                `json:"cursor"`
+	NextCursor    string                `json:"next_cursor"`
+	TotalCount    int64                 `json:"total_count"`
+	HighWaterMark string                `json:"high_water_mark"`
+	QueryProfile  string                `json:"query_profile"`
+	Records       []rawDataStreamRecord `json:"records"`
 }
 
 type rawDataStreamRecord struct {
@@ -840,6 +771,70 @@ type rawDataStreamRecord struct {
 	ProducerPublicKeyCamel string `json:"producerPublicKey"`
 	PeerID                 string `json:"peer_id"`
 	PeerId                 string `json:"peerId"`
+}
+
+func rawQueryToSyncRequest(req rawDataQueryRequest) datasync.QueryRequest {
+	return datasync.QueryRequest{
+		Schema:                 req.Schema,
+		SchemaName:             req.SchemaName,
+		ProviderID:             req.ProviderID,
+		ProviderId:             req.ProviderId,
+		SourceName:             req.SourceName,
+		BatchID:                req.BatchID,
+		BatchId:                req.BatchId,
+		ProducerPeerID:         req.ProducerPeerID,
+		ProducerPeerId:         req.ProducerPeerId,
+		ProducerPublicKey:      req.ProducerPublicKey,
+		ProducerPublicKeyCamel: req.ProducerPublicKeyCamel,
+		PeerID:                 req.PeerID,
+		PeerId:                 req.PeerId,
+		Cursor:                 req.Cursor,
+		SnapshotID:             req.SnapshotID,
+		Head:                   req.Head,
+		QueryProfile:           req.QueryProfile,
+		Limit:                  req.Limit,
+		Offset:                 req.Offset,
+		IncludeData:            req.IncludeData,
+	}
+}
+
+func rawStreamToSyncRequest(req rawDataStreamRequest) datasync.StreamRequest {
+	records := make([]datasync.RecordRef, 0, len(req.Records))
+	for _, ref := range req.Records {
+		records = append(records, datasync.RecordRef{
+			Schema:                 ref.Schema,
+			SchemaName:             ref.SchemaName,
+			CID:                    ref.CID,
+			ID:                     ref.ID,
+			ProviderID:             ref.ProviderID,
+			ProviderId:             ref.ProviderId,
+			SourceName:             ref.SourceName,
+			BatchID:                ref.BatchID,
+			BatchId:                ref.BatchId,
+			ProducerPeerID:         ref.ProducerPeerID,
+			ProducerPeerId:         ref.ProducerPeerId,
+			ProducerPublicKey:      ref.ProducerPublicKey,
+			ProducerPublicKeyCamel: ref.ProducerPublicKeyCamel,
+			PeerID:                 ref.PeerID,
+			PeerId:                 ref.PeerId,
+		})
+	}
+	return datasync.StreamRequest{
+		QueryRequest: datasync.QueryRequest{
+			Schema:       req.Schema,
+			SchemaName:   req.SchemaName,
+			Cursor:       req.Cursor,
+			SnapshotID:   req.SnapshotID,
+			Head:         req.Head,
+			QueryProfile: req.QueryProfile,
+		},
+		ScanHash:      req.ScanHash,
+		ChunkHash:     req.ChunkHash,
+		NextCursor:    req.NextCursor,
+		TotalCount:    req.TotalCount,
+		HighWaterMark: req.HighWaterMark,
+		Records:       records,
+	}
 }
 
 func schemaSummaryRows(schemas []storage.DataSchemaSummary) []map[string]interface{} {

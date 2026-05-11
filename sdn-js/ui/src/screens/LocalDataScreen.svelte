@@ -80,6 +80,18 @@
     totalRows: number;
     localRows: number;
     cachedBytes: number;
+    pinnedBytes: number;
+    providerPeerId: string | null;
+    providerPublicKey: string | null;
+    snapshotId: string | null;
+    head: string | null;
+    cursor: string | null;
+    nextCursor: string | null;
+    highWaterMark: string | null;
+    queryProfile: string | null;
+    chunkHash: string | null;
+    syncProtocol: string | null;
+    verifiedChunks: string[];
     lastSyncedAt: string | null;
     error: string | null;
   }
@@ -379,6 +391,14 @@
         const streamResult = await activeBackend.streamRawData({
           schema: dataScan.schema,
           scanHash: dataScan.scanHash,
+          chunkHash: dataScan.chunkHash || dataScan.scanHash,
+          snapshotId: dataScan.snapshotId,
+          head: dataScan.head,
+          cursor: dataScan.cursor,
+          nextCursor: dataScan.nextCursor,
+          totalCount: dataScan.totalCount,
+          highWaterMark: dataScan.highWaterMark,
+          queryProfile: dataScan.queryProfile,
           records: dataScan.results,
         });
         nextRecords = streamResult.ok ? streamResult.data ?? [] : [];
@@ -543,24 +563,37 @@
     const preference = schemaSyncPreferenceFor(selectedDataSourceId, standardId);
     if (!activeBackend || preference.mode !== 'sync' || activeSyncKeys.has(key)) return;
 
+    const source = currentDataSourceOption();
+    const initialProgress = schemaSyncProgressFor(
+      selectedDataSourceId,
+      standardId,
+      totalRowsForStandardId(dataSummary, standardId) ?? 0,
+      localFlatSqlStats,
+    );
     activeSyncKeys = new Set(activeSyncKeys).add(key);
     refreshSchemaSyncProgress(standardId, {
       status: 'syncing',
       error: null,
       totalRows: totalRowsForStandardId(dataSummary, standardId) ?? 0,
+      providerPeerId: source?.peerId ?? null,
+      providerPublicKey: source?.publicKey ?? null,
     });
 
     let store: LocalFlatSqlStore | null = null;
     try {
       store = await ensureLocalFlatSqlStore();
       if (!store) throw new Error('FlatSQL initialization failed');
-      const source = currentDataSourceOption();
       let offset = localRowsForStandard(localFlatSqlStats, standardId);
       let localRows = offset;
       let cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
       let totalRows = Math.max(totalRowsForStandardId(dataSummary, standardId) ?? 0, localRows);
       let recordsSincePersist = 0;
       const capBytes = storageCapBytes(preference);
+      let nextCursor = initialProgress.nextCursor ?? '';
+      let snapshotId = initialProgress.snapshotId ?? '';
+      let head = initialProgress.head ?? '';
+      let queryProfile = initialProgress.queryProfile ?? 'ordered-offset-v1';
+      let verifiedChunks = initialProgress.verifiedChunks.slice(-256);
 
       while (localRows < totalRows || totalRows === 0) {
         if (cachedBytes >= capBytes && localRows < totalRows) {
@@ -572,26 +605,67 @@
             totalRows,
             localRows,
             cachedBytes,
+            pinnedBytes: cachedBytes,
+            providerPeerId: source?.peerId ?? null,
+            providerPublicKey: source?.publicKey ?? null,
+            snapshotId: snapshotId || null,
+            head: head || null,
+            nextCursor: nextCursor || null,
+            queryProfile,
+            verifiedChunks,
             error: `Storage cap reached at ${formatBytes(capBytes)}`,
           });
           return;
         }
 
-        const scanResult = await activeBackend.scanRawData({
+        let scanResult = await activeBackend.scanRawData({
           schema: schemaNameForStandardId(standardId),
           limit: SYNC_PAGE_SIZE,
-          offset,
+          ...(nextCursor
+            ? {
+                cursor: nextCursor,
+                snapshotId: snapshotId || undefined,
+                head: head || undefined,
+                queryProfile,
+              }
+            : { offset }),
         });
         if (!scanResult.ok) throw new Error('Remote scan failed');
 
-        const scan = scanResult.data;
+        let scan = scanResult.data;
         if (!scan) throw new Error('Remote scan returned no data');
+
+        if (nextCursor && head && scan.head && scan.head !== head) {
+          nextCursor = '';
+          offset = localRows;
+          scanResult = await activeBackend.scanRawData({
+            schema: schemaNameForStandardId(standardId),
+            limit: SYNC_PAGE_SIZE,
+            offset,
+            queryProfile,
+          });
+          if (!scanResult.ok) throw new Error('Remote scan failed after snapshot refresh');
+          scan = scanResult.data;
+          if (!scan) throw new Error('Remote scan returned no data after snapshot refresh');
+        }
+
+        snapshotId = scan.snapshotId || snapshotId;
+        head = scan.head || head;
+        queryProfile = scan.queryProfile || queryProfile;
         totalRows = Math.max(totalRows, scan.totalCount ?? 0, offset + scan.results.length);
         if (scan.results.length === 0) break;
 
         const streamResult = await activeBackend.streamRawData({
           schema: scan.schema,
           scanHash: scan.scanHash,
+          chunkHash: scan.chunkHash || scan.scanHash,
+          snapshotId: scan.snapshotId,
+          head: scan.head,
+          cursor: scan.cursor,
+          nextCursor: scan.nextCursor,
+          totalCount: scan.totalCount,
+          highWaterMark: scan.highWaterMark,
+          queryProfile: scan.queryProfile || queryProfile,
           records: scan.results,
         });
         if (!streamResult.ok) throw new Error('Remote FlatBuffer stream failed');
@@ -599,9 +673,13 @@
         const records = streamResult.data ?? [];
         const ingestedRows = await store.ingestRecords(standardId, records, {
           source: source?.publicKey ?? source?.peerId ?? source?.id ?? null,
-          persist: false,
+            persist: false,
         });
         recordsSincePersist += ingestedRows;
+        const chunkHash = scan.chunkHash || scan.scanHash;
+        if (chunkHash && !verifiedChunks.includes(chunkHash)) {
+          verifiedChunks = [...verifiedChunks, chunkHash].slice(-256);
+        }
         if (recordsSincePersist >= SYNC_PERSIST_RECORD_INTERVAL || offset + scan.results.length >= totalRows) {
           await store.flush(standardId);
           recordsSincePersist = 0;
@@ -612,6 +690,7 @@
         localRows = localRowsForStandard(localFlatSqlStats, standardId);
         cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
         offset += scan.results.length;
+        nextCursor = scan.nextCursor ?? '';
 
         refreshSchemaSyncProgress(standardId, {
           status: localRows >= totalRows ? 'synced' : 'syncing',
@@ -619,11 +698,23 @@
           totalRows,
           localRows,
           cachedBytes,
+          pinnedBytes: cachedBytes,
+          providerPeerId: source?.peerId ?? null,
+          providerPublicKey: source?.publicKey ?? null,
+          snapshotId: snapshotId || null,
+          head: head || null,
+          cursor: scan.cursor || null,
+          nextCursor: nextCursor || null,
+          highWaterMark: scan.highWaterMark || null,
+          queryProfile,
+          chunkHash: chunkHash || null,
+          syncProtocol: scan.syncProtocol || null,
+          verifiedChunks,
           lastSyncedAt: new Date().toISOString(),
           error: null,
         });
 
-        if (offset >= totalRows || records.length === 0) break;
+        if (!nextCursor || offset >= totalRows || records.length === 0) break;
       }
 
       await store.flush(standardId);
@@ -636,6 +727,14 @@
         totalRows,
         localRows,
         cachedBytes,
+        pinnedBytes: cachedBytes,
+        providerPeerId: source?.peerId ?? null,
+        providerPublicKey: source?.publicKey ?? null,
+        snapshotId: snapshotId || null,
+        head: head || null,
+        nextCursor: nextCursor || null,
+        queryProfile,
+        verifiedChunks,
         lastSyncedAt: new Date().toISOString(),
         error: null,
       });
@@ -980,6 +1079,18 @@
       totalRows,
       localRows,
       cachedBytes,
+      pinnedBytes: persisted?.pinnedBytes ?? cachedBytes,
+      providerPeerId: persisted?.providerPeerId ?? null,
+      providerPublicKey: persisted?.providerPublicKey ?? null,
+      snapshotId: persisted?.snapshotId ?? null,
+      head: persisted?.head ?? null,
+      cursor: persisted?.cursor ?? null,
+      nextCursor: persisted?.nextCursor ?? null,
+      highWaterMark: persisted?.highWaterMark ?? null,
+      queryProfile: persisted?.queryProfile ?? null,
+      chunkHash: persisted?.chunkHash ?? null,
+      syncProtocol: persisted?.syncProtocol ?? null,
+      verifiedChunks: persisted?.verifiedChunks ?? [],
       lastSyncedAt: persisted?.lastSyncedAt ?? null,
       error: persisted?.error ?? null,
     };
@@ -1074,9 +1185,32 @@
       totalRows: normalizedRowCount(candidate.totalRows),
       localRows: normalizedRowCount(candidate.localRows),
       cachedBytes: normalizedRowCount(candidate.cachedBytes),
+      pinnedBytes: normalizedRowCount(candidate.pinnedBytes),
+      providerPeerId: normalizedOptionalString(candidate.providerPeerId),
+      providerPublicKey: normalizedOptionalString(candidate.providerPublicKey),
+      snapshotId: normalizedOptionalString(candidate.snapshotId),
+      head: normalizedOptionalString(candidate.head),
+      cursor: normalizedOptionalString(candidate.cursor),
+      nextCursor: normalizedOptionalString(candidate.nextCursor),
+      highWaterMark: normalizedOptionalString(candidate.highWaterMark),
+      queryProfile: normalizedOptionalString(candidate.queryProfile),
+      chunkHash: normalizedOptionalString(candidate.chunkHash),
+      syncProtocol: normalizedOptionalString(candidate.syncProtocol),
+      verifiedChunks: normalizedStringArray(candidate.verifiedChunks).slice(-256),
       lastSyncedAt: typeof candidate.lastSyncedAt === 'string' ? candidate.lastSyncedAt : null,
       error: typeof candidate.error === 'string' ? candidate.error : null,
     };
+  }
+
+  function normalizedOptionalString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+  }
+
+  function normalizedStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      .map((entry) => entry.trim());
   }
 
   function normalizedRowCount(value: unknown): number {
