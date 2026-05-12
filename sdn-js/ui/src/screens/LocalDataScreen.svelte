@@ -45,6 +45,7 @@
   type SortColumn = string;
   type SortDirection = 'asc' | 'desc';
   type ColumnSource = 'metadata' | 'standard';
+  type DataSection = 'storage' | 'subscriptions' | 'explorer';
   type SchemaSyncMode = 'preview' | 'sync';
   type SchemaSyncStatus = 'idle' | 'syncing' | 'synced' | 'capped' | 'error';
   type StorageUnit = 'MB' | 'GB' | 'TB';
@@ -137,6 +138,11 @@
   const SYNC_PAGE_SIZE = 50_000;
   const SYNC_PERSIST_RECORD_INTERVAL = 100_000;
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+  const DATA_SECTIONS: Array<{ id: DataSection; label: string; breadcrumb: string }> = [
+    { id: 'storage', label: 'Storage', breadcrumb: 'Data / Storage' },
+    { id: 'subscriptions', label: 'Sync settings', breadcrumb: 'Data / Sync Settings' },
+    { id: 'explorer', label: 'Explorer', breadcrumb: 'Data / Explorer' },
+  ];
   const SCHEMA_SYNC_STORAGE_KEY = 'sdn:data-schema-sync:v1';
   const SCHEMA_SYNC_STATE_STORAGE_KEY = 'sdn:data-schema-sync-state:v1';
   const STORAGE_CAP_UNITS: StorageUnit[] = ['MB', 'GB', 'TB'];
@@ -225,6 +231,7 @@
   };
 
   let dataSummary: DataSummary | null = null;
+  let selectedDataSection: DataSection = 'storage';
   let selectedStandardId = DEFAULT_STANDARD_ID;
   let selectedDataSourceId = LOCAL_DATA_SOURCE_ID;
   let lastColumnStandardId = '';
@@ -276,20 +283,29 @@
 
   $: dataSourceOptions = buildDataSourceOptions(backend, configuredDataSources, peers);
   $: schemaSyncRows = buildSubscribedSchemaSyncRows(dataDirectoryState.subscriptions, selectedDataSourceId, localFlatSqlStats);
+  $: activeStorageRows = schemaSyncRows.filter((row) => row.preference.mode === 'sync');
+  $: selectedSchemaSyncRow = schemaSyncRows.find((row) => row.id === selectedStandardId && row.dataSourceId === selectedDataSourceId)
+    ?? schemaSyncRows.find((row) => row.id === selectedStandardId)
+    ?? null;
+  $: selectedDataSectionMeta = DATA_SECTIONS.find((section) => section.id === selectedDataSection) ?? DATA_SECTIONS[0];
+  $: syncSelectedStandardWithSubscriptions(schemaSyncRows);
   $: decodedRows = rawRecords.map(decodeWorkbenchRecord);
   $: allColumns = workbenchColumnsForStandard(selectedStandardId, decodedRows);
   $: syncVisibleColumnKeys(allColumns);
   $: visibleColumns = allColumns.filter((column) => visibleColumnKeys.includes(column.key));
   $: filteredRows = filterRows(decodedRows, searchText);
   $: visibleRows = sortRows(filteredRows, sortColumn, sortDirection);
-  $: estimatedTotalRows = scanTotalRowsForStandard(dataScan, selectedStandardId) ?? totalRowsForStandardId(dataSummary, selectedStandardId);
+  $: estimatedTotalRows = scanTotalRowsForStandard(dataScan, selectedStandardId)
+    ?? totalRowsForStandardId(dataSummary, selectedStandardId)
+    ?? selectedSchemaSyncRow?.remoteRows
+    ?? null;
   $: totalPageCount = estimatedTotalRows === null ? Math.max(1, pageIndex + (canGoNext ? 2 : 1)) : Math.max(1, Math.ceil(estimatedTotalRows / normalizedPageSize()));
   $: canGoPrevious = pageIndex > 0;
   $: canGoNext = rawRecords.length >= pageSize && (estimatedTotalRows === null || ((pageIndex + 1) * pageSize) < estimatedTotalRows);
   $: pageLabel = `${pageIndex + 1}/${totalPageCount}`;
   $: selectedLocalFlatSqlStats = localFlatSqlStats.find((entry) => entry.standardId === selectedStandardId) ?? null;
-  $: localRowCount = localRowsForStandard(localFlatSqlStats, selectedStandardId);
-  $: cachedByteCount = selectedLocalFlatSqlStats?.cachedBytes ?? 0;
+  $: localRowCount = localRowsForStandard(localFlatSqlStats, selectedStandardId) || selectedSchemaSyncRow?.localRows || 0;
+  $: cachedByteCount = selectedLocalFlatSqlStats?.cachedBytes ?? selectedSchemaSyncRow?.cachedBytes ?? 0;
   $: scanHashLabel = dataScan?.scanHash ? shorten(dataScan.scanHash, 18) : 'none';
   $: sqlColumns = sqlResult?.columns ?? [];
   $: displaySqlColumns = visibleSqlColumns(sqlColumns, sqlRecords);
@@ -364,6 +380,7 @@
       try {
         const store = await ensureLocalFlatSqlStore();
         dataSummary = store ? await store.getRemoteDataSummary(workerBackendConfig) : null;
+        refreshSubscriptionRemoteRowsFromSummary(source?.id ?? selectedDataSourceId, dataSummary);
         const nextStandardOptions = standardIdsFromSummary(dataSummary);
         const previousStandardId = selectedStandardId;
         if (!userSelectedStandard || !nextStandardOptions.includes(selectedStandardId)) {
@@ -387,6 +404,7 @@
     try {
       const result = await activeBackend.getDataSummary();
       dataSummary = result.data;
+      refreshSubscriptionRemoteRowsFromSummary(source?.id ?? selectedDataSourceId, result.data);
       const nextStandardOptions = standardIdsFromSummary(result.data);
       const previousStandardId = selectedStandardId;
       if (!userSelectedStandard || !nextStandardOptions.includes(selectedStandardId)) {
@@ -527,8 +545,23 @@
     userEditedSql = true;
   }
 
+  function setDataSection(section: DataSection): void {
+    selectedDataSection = section;
+  }
+
+  function syncSelectedStandardWithSubscriptions(rows: SchemaSyncRow[]): void {
+    if (userSelectedStandard || rows.length === 0) return;
+    if (rows.some((row) => row.id === selectedStandardId)) return;
+    selectedStandardId = rows[0].id;
+    resetSqlForSelectedStandard();
+    clearPnmSelection();
+    dataScan = null;
+    pageIndex = 0;
+  }
+
   function selectSubscribedRow(schema: SchemaSyncRow): void {
     selectedStandardId = schema.id;
+    selectedDataSection = 'explorer';
     if (selectedDataSourceId !== schema.dataSourceId) {
       selectDataSource(schema.dataSourceId);
       return;
@@ -561,6 +594,20 @@
 
   function updateSubscription(subscriptionId: string, patch: Partial<Pick<DataFeedSubscription, 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter'>>): void {
     dataDirectoryState = updateDataFeedSubscription(dataDirectoryState, subscriptionId, patch);
+    persistDataDirectoryState(dataDirectoryState);
+  }
+
+  function refreshSubscriptionRemoteRowsFromSummary(dataSourceId: string, summary: DataSummary | null): void {
+    if (!summary) return;
+    let nextState = dataDirectoryState;
+    for (const subscription of dataDirectoryState.subscriptions) {
+      if (subscription.dataSourceId !== dataSourceId) continue;
+      const remoteRows = totalRowsForStandardId(summary, subscription.standardId);
+      if (remoteRows === null || remoteRows === subscription.remoteRows) continue;
+      nextState = updateDataFeedSubscription(nextState, subscription.id, { remoteRows });
+    }
+    if (nextState === dataDirectoryState) return;
+    dataDirectoryState = nextState;
     persistDataDirectoryState(dataDirectoryState);
   }
 
@@ -1030,7 +1077,13 @@
   ): SchemaSyncRow[] {
     return subscriptions.map((subscription) => {
       const sourceStats = subscription.dataSourceId === activeDataSourceId ? stats : [];
-      const progress = schemaSyncProgressFor(subscription.dataSourceId, subscription.standardId, subscription.remoteRows, sourceStats);
+      const progress = schemaSyncProgressFor(
+        subscription.dataSourceId,
+        subscription.standardId,
+        subscription.remoteRows,
+        sourceStats,
+        subscription.dataSourceId === activeDataSourceId,
+      );
       return {
         id: subscription.standardId,
         subscriptionId: subscription.id,
@@ -1094,12 +1147,13 @@
     standardId: string,
     remoteRows: number,
     stats: LocalFlatSqlStandardStats[],
+    statsAreAuthoritative = true,
   ): SchemaSyncProgress {
     const key = schemaSyncPreferenceKey(dataSourceId, standardId);
     const localRows = localRowsForStandard(stats, standardId);
     const cachedBytes = cachedBytesForStandard(stats, standardId);
     const persisted = schemaSyncProgress[key];
-    const activePersisted = localRows === 0 && (persisted?.localRows ?? 0) > 0 ? null : persisted;
+    const activePersisted = statsAreAuthoritative && localRows === 0 && (persisted?.localRows ?? 0) > 0 ? null : persisted;
     const totalRows = Math.max(remoteRows, activePersisted?.totalRows ?? 0);
     const complete = totalRows > 0 && localRows >= totalRows;
     const active = activeSyncKeys.has(key);
@@ -1687,26 +1741,39 @@
 
   <div class="sdn-workbench-main">
       <nav class="sdn-data-subnav" aria-label="Data state">
-        <div class="sdn-breadcrumb">Data / Combined Storage / Subscriptions</div>
+        <div class="sdn-breadcrumb">{selectedDataSectionMeta.breadcrumb}</div>
+        <div class="sdn-data-subnav-actions" role="group" aria-label="Data sections">
+          {#each DATA_SECTIONS as section}
+            <button
+              class="sdn-button sdn-button-muted sdn-button-compact"
+              class:active={selectedDataSection === section.id}
+              type="button"
+              on:click={() => setDataSection(section.id)}
+            >
+              {section.label}
+            </button>
+          {/each}
+        </div>
       </nav>
 
       {#if workbenchLoading}
         <p class="sdn-loading-inline" role="status">Loading</p>
       {/if}
 
+      {#if selectedDataSection === 'storage'}
         <section class="sdn-storage-state" aria-label="Local storage state">
           <div class="sdn-dataset-summary" aria-label="Dataset summary">
-            <div class="sdn-dataset-metric" aria-label={`Remote rows ${formatNumber(schemaSyncRows.reduce((total, row) => total + row.remoteRows, 0))}`}>
+            <div class="sdn-dataset-metric" aria-label={`Remote rows ${formatNumber(activeStorageRows.reduce((total, row) => total + row.remoteRows, 0))}`}>
               <span>Remote rows</span>
-              <strong>{formatNumber(schemaSyncRows.reduce((total, row) => total + row.remoteRows, 0))}</strong>
+              <strong>{formatNumber(activeStorageRows.reduce((total, row) => total + row.remoteRows, 0))}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Local rows ${formatNumber(schemaSyncRows.reduce((total, row) => total + row.localRows, 0))}`}>
+            <div class="sdn-dataset-metric" aria-label={`Local rows ${formatNumber(activeStorageRows.reduce((total, row) => total + row.localRows, 0))}`}>
               <span>Local rows</span>
-              <strong>{formatNumber(schemaSyncRows.reduce((total, row) => total + row.localRows, 0))}</strong>
+              <strong>{formatNumber(activeStorageRows.reduce((total, row) => total + row.localRows, 0))}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Cached ${formatBytes(schemaSyncRows.reduce((total, row) => total + row.cachedBytes, 0))}`}>
+            <div class="sdn-dataset-metric" aria-label={`Cached ${formatBytes(activeStorageRows.reduce((total, row) => total + row.cachedBytes, 0))}`}>
               <span>Cached</span>
-              <strong>{formatBytes(schemaSyncRows.reduce((total, row) => total + row.cachedBytes, 0))}</strong>
+              <strong>{formatBytes(activeStorageRows.reduce((total, row) => total + row.cachedBytes, 0))}</strong>
             </div>
             <div class="sdn-dataset-metric" aria-label={`Scan ${scanHashLabel}`}>
               <span>Scan</span>
@@ -1715,7 +1782,7 @@
           </div>
 
           <div class="sdn-storage-grid">
-            {#each schemaSyncRows as schema}
+            {#each activeStorageRows as schema}
               <article class="sdn-storage-row" class:active={schema.id === selectedStandardId && schema.dataSourceId === selectedDataSourceId}>
                 <div>
                   <strong>{schema.id}</strong>
@@ -1734,99 +1801,90 @@
                 <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => selectSubscribedRow(schema)}>Query</button>
               </article>
             {:else}
-              <p class="sdn-empty-inline">No subscribed data feeds. Add a feed from Peers to start local sync.</p>
+              <p class="sdn-empty-inline">No actively synced data feeds. Add a feed from Peers to start local sync.</p>
             {/each}
           </div>
         </section>
+      {/if}
 
-        <section class="sdn-schema-sync-wrap" aria-label="Sync subscriptions">
-          <table class="sdn-table sdn-schema-sync-table" aria-label="Schema sync">
-            <thead>
-              <tr>
-                <th>Provider</th>
-                <th>Schema</th>
-                <th>Remote rows</th>
-                <th>Local rows</th>
-                <th>Progress</th>
-                <th>Status</th>
-                <th>Storage cap</th>
-                <th>Sync filter</th>
-                <th>Next sync attempt</th>
-                <th>Reset row</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each schemaSyncRows as schema}
-                <tr class:active={schema.id === selectedStandardId && schema.dataSourceId === selectedDataSourceId}>
-                  <td>
-                    <strong>{schema.providerName}</strong>
-                    <small>{schema.providerPublicKey ?? schema.providerPeerId ?? schema.dataSourceId}</small>
-                  </td>
-                  <td>{schema.id}</td>
-                  <td>{formatNumber(schema.remoteRows)}</td>
-                  <td>{formatNumber(schema.localRows)}</td>
-                  <td>{syncProgressLabel(schema)}</td>
-                  <td>{syncStatusLabel(schema)}</td>
-                  <td>
-                    <div class="sdn-storage-cap-controls">
-                      <input
-                        class="sdn-input"
-                        type="number"
-                        min="0.1"
-                        step="0.1"
-                        aria-label={`${schema.id} storage cap`}
-                        value={schema.preference.storageCap}
-                        on:input={(event) => handleSubscriptionStorageCapInput(schema, event)}
-                      />
-                      <select
-                        class="sdn-input sdn-select"
-                        aria-label={`${schema.id} storage unit`}
-                        value={schema.preference.storageUnit}
-                        on:change={(event) => handleSubscriptionStorageUnitChange(schema, event)}
-                      >
-                        {#each STORAGE_CAP_UNITS as unit}
-                          <option value={unit}>{unit}</option>
-                        {/each}
-                      </select>
-                    </div>
-                  </td>
-                  <td>
+      {#if selectedDataSection === 'subscriptions'}
+        <section class="sdn-storage-state" aria-label="Sync settings">
+          <div class="sdn-storage-grid">
+            {#each schemaSyncRows as schema}
+              <article class="sdn-storage-row sdn-subscription-row" class:active={schema.id === selectedStandardId && schema.dataSourceId === selectedDataSourceId}>
+                <div>
+                  <strong>{schema.id}</strong>
+                  <span>{schema.providerName}</span>
+                  <span>{formatNumber(schema.localRows)} local / {formatNumber(schema.remoteRows)} remote</span>
+                </div>
+                <div>
+                  <strong>{syncStatusLabel(schema)}</strong>
+                  <span>{syncProgressLabel(schema)}</span>
+                  <span>Next sync attempt: {nextSyncAttemptLabel(schema)}</span>
+                </div>
+                <label>
+                  <span>Storage cap</span>
+                  <div class="sdn-storage-cap-controls">
                     <input
-                      class="sdn-input sdn-sync-filter"
-                      aria-label={`${schema.id} sync filter`}
-                      value={schema.syncFilter}
-                      placeholder="Sync filter"
-                      on:input={(event) => handleSubscriptionFilterInput(schema, event)}
+                      class="sdn-input"
+                      type="number"
+                      min="0.1"
+                      step="0.1"
+                      aria-label={`${schema.id} storage cap`}
+                      value={schema.preference.storageCap}
+                      on:input={(event) => handleSubscriptionStorageCapInput(schema, event)}
                     />
-                  </td>
-                  <td>{nextSyncAttemptLabel(schema)}</td>
-                  <td>
-                    {#if resetSubscriptionId === schema.subscriptionId}
-                      <div class="sdn-reset-confirm sdn-reset-row-confirm" role="group" aria-label={`${schema.id} row reset confirmation`}>
-                        <label>
-                          <span>Type RESET to clear this row.</span>
-                          <input class="sdn-input" bind:value={resetConfirmText} autocomplete="off" />
-                        </label>
-                        <div class="sdn-toolbar">
-                          <button class="sdn-button sdn-button-compact" type="button" on:click={() => void confirmResetSubscriptionData(schema)} disabled={resetRunning || resetConfirmText.trim() !== 'RESET'}>Clear</button>
-                          <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={cancelResetSubscriptionData} disabled={resetRunning}>Cancel</button>
-                        </div>
+                    <select
+                      class="sdn-input sdn-select"
+                      aria-label={`${schema.id} storage unit`}
+                      value={schema.preference.storageUnit}
+                      on:change={(event) => handleSubscriptionStorageUnitChange(schema, event)}
+                    >
+                      {#each STORAGE_CAP_UNITS as unit}
+                        <option value={unit}>{unit}</option>
+                      {/each}
+                    </select>
+                  </div>
+                </label>
+                <label>
+                  <span>Sync filter</span>
+                  <input
+                    class="sdn-input sdn-sync-filter"
+                    aria-label={`${schema.id} sync filter`}
+                    value={schema.syncFilter}
+                    placeholder="Sync filter"
+                    on:input={(event) => handleSubscriptionFilterInput(schema, event)}
+                  />
+                </label>
+                <div class="sdn-subscription-actions">
+                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => selectSubscribedRow(schema)}>Query</button>
+                  {#if resetSubscriptionId === schema.subscriptionId}
+                    <div class="sdn-reset-confirm sdn-reset-row-confirm" role="group" aria-label={`${schema.id} row reset confirmation`}>
+                      <label>
+                        <span>Type RESET to clear this row.</span>
+                        <input class="sdn-input" bind:value={resetConfirmText} autocomplete="off" />
+                      </label>
+                      <div class="sdn-toolbar">
+                        <button class="sdn-button sdn-button-compact" type="button" on:click={() => void confirmResetSubscriptionData(schema)} disabled={resetRunning || resetConfirmText.trim() !== 'RESET'}>Clear</button>
+                        <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={cancelResetSubscriptionData} disabled={resetRunning}>Cancel</button>
                       </div>
-                    {:else}
-                      <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => beginResetSubscriptionData(schema.subscriptionId)} disabled={resetRunning}>Reset row</button>
-                    {/if}
-                  </td>
-                </tr>
-              {:else}
-                <tr><td colspan="10">No subscribed data feeds.</td></tr>
-              {/each}
-            </tbody>
-          </table>
+                    </div>
+                  {:else}
+                    <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => beginResetSubscriptionData(schema.subscriptionId)} disabled={resetRunning}>Reset row</button>
+                  {/if}
+                </div>
+              </article>
+            {:else}
+              <p class="sdn-empty-inline">No subscribed data feeds.</p>
+            {/each}
+          </div>
           {#if resetStatus}
             <p class="sdn-empty-inline" role="status">{resetStatus}</p>
           {/if}
         </section>
+      {/if}
 
+      {#if selectedDataSection === 'explorer'}
         <section class="sdn-explorer-panel" aria-label="Local SQL">
           <div class="sdn-workbench-controls">
             <label>
@@ -2032,5 +2090,6 @@
             <p class="sdn-empty-inline" role="alert">{sqlError}</p>
           {/if}
         </section>
+      {/if}
   </div>
 </article>

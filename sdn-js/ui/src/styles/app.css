@@ -503,6 +503,7 @@ textarea,
 .sdn-workbench-main,
 .sdn-source-browser {
   display: grid;
+  align-content: start;
   gap: 1rem;
   min-width: 0;
 }
@@ -804,9 +805,19 @@ textarea,
   background: rgba(10, 132, 255, 0.1);
 }
 
+.sdn-subscription-row {
+  grid-template-columns: minmax(8rem, 1fr) minmax(9rem, 0.9fr) minmax(11rem, 0.9fr) minmax(12rem, 1fr) auto;
+}
+
 .sdn-storage-row > div {
   display: grid;
   gap: 0.12rem;
+  min-width: 0;
+}
+
+.sdn-subscription-row label {
+  display: grid;
+  gap: 0.24rem;
   min-width: 0;
 }
 
@@ -867,6 +878,15 @@ textarea,
 .sdn-reset-row-confirm {
   min-width: 15rem;
   padding: 0.55rem;
+}
+
+.sdn-subscription-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  min-width: 0;
 }
 
 .sdn-workbench-meta,

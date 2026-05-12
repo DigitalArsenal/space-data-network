@@ -283,6 +283,7 @@ describe('SDN data Svelte source', () => {
       'updateDataFeedSubscription',
       'persistDataDirectoryState',
       'schemaSyncRows = buildSubscribedSchemaSyncRows',
+      'syncSelectedStandardWithSubscriptions(schemaSyncRows)',
       'scheduleSubscribedSchemaSyncs(schemaSyncRows)',
       'beginResetSubscriptionData',
       'confirmResetSubscriptionData',
@@ -294,7 +295,18 @@ describe('SDN data Svelte source', () => {
       'handleSubscriptionFilterInput',
       'handleSubscriptionStorageCapInput',
       'handleSubscriptionStorageUnitChange',
-      'Combined Storage / Subscriptions',
+      "type DataSection = 'storage' | 'subscriptions' | 'explorer'",
+      'DATA_SECTIONS',
+      "let selectedDataSection: DataSection = 'storage'",
+      'setDataSection',
+      'activeStorageRows',
+      'selectedSchemaSyncRow',
+      'refreshSubscriptionRemoteRowsFromSummary',
+      'selectedSchemaSyncRow?.remoteRows',
+      'Data / Storage',
+      'Data / Sync Settings',
+      'Data / Explorer',
+      'Sync settings',
       'INTERNAL_SQL_COLUMN_KEYS',
       'Page size',
       'Previous',
@@ -326,6 +338,9 @@ describe('SDN data Svelte source', () => {
     expect(source).not.toContain('sdn-source-browser');
     expect(source).not.toContain('Data source</span>');
     expect(source).not.toContain('Data sources');
+    expect(source).not.toContain('Combined Storage / Subscriptions');
+    expect(source).not.toContain('aria-label="Sync subscriptions"');
+    expect(source).not.toContain('<th>Provider</th>');
     expect(source).not.toContain('Reset local cache');
     expect(source).not.toContain('confirmResetLocalData');
     expect(source).not.toContain("label: 'Bytes'");
@@ -519,6 +534,7 @@ describe('SDN identity styling guardrails', () => {
     expect(appCss).toMatch(/\.sdn-app\s*{[^}]*height:\s*100vh[^}]*overflow:\s*hidden/s);
     expect(appCss).toMatch(/\.sdn-main\s*{[^}]*grid-template-rows:\s*auto minmax\(0,\s*1fr\)[^}]*overflow:\s*hidden/s);
     expect(appCss).toMatch(/\.sdn-content\s*{[^}]*overflow:\s*auto/s);
+    expect(appCss).toMatch(/\.sdn-workbench-main,\s*\.sdn-source-browser\s*{[^}]*align-content:\s*start/s);
   });
 
   it('does not present identity as claimed or show Core claim controls', () => {
