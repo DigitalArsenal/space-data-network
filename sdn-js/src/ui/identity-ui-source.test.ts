@@ -136,18 +136,40 @@ describe('SDN identity Svelte source', () => {
     expect(securityView).not.toContain('Signing public key');
   });
 
-  it('renders EPM actions in peer rows and includes directory search', () => {
+  it('renders Peers as the data-source storefront with PGP ownertrust', () => {
     const source = readUiSource('screens/PeersScreen.svelte');
 
     expect(source).toContain("import DirectorySearchPanel from '../components/DirectorySearchPanel.svelte'");
+    expect(source).toContain("from '../../../src/ui/runtime/data-directory'");
     expect(source).toContain('<DirectorySearchPanel');
+    expect(source).toContain("type PeerView = 'home' | 'observed' | 'feeds' | 'peer-detail'");
+    expect(source).toContain('PGP_OWNERTRUST_LEVELS');
+    expect(source).toContain('DEFAULT_OWNERTRUST');
+    expect(source).toContain('ownertrustForPeer');
+    expect(source).toContain('isTrustedDirectoryOwnertrust');
+    expect(source).toContain('subscribeToDataFeed');
+    expect(source).toContain('upsertDataFeedSubscription');
+    expect(source).toContain('persistDataDirectoryState');
+    expect(source).toContain('Trust key');
+    expect(source).toContain('unknown');
+    expect(source).toContain('never');
+    expect(source).toContain('marginal');
+    expect(source).toContain('full');
+    expect(source).toContain('ultimate');
+    expect(source).toContain('Observed Peers');
+    expect(source).toContain('Data Feeds');
+    expect(source).toContain('Directory Search');
+    expect(source).toContain('Available Data');
+    expect(source).toContain('Available Modules');
+    expect(source).toContain('<button class="sdn-storefront-stat" type="button" on:click={() => setPeerView(\'observed\')}>');
+    expect(source).toContain('<button class="sdn-storefront-stat" type="button" on:click={() => setPeerView(\'feeds\')}>');
     expect(source).toContain('<th><button type="button" on:click={() => setSort(\'name\')}>{sortablePeerHeader(\'name\', \'Name\')}</button></th>');
     expect(source).toContain('<th><button type="button" on:click={() => setSort(\'peerId\')}>{sortablePeerHeader(\'peerId\', \'PeerID\')}</button></th>');
-    expect(source).toContain('<th><button type="button" on:click={() => setSort(\'trust\')}>{sortablePeerHeader(\'trust\', \'Trust\')}</button></th>');
+    expect(source).toContain('<th><button type="button" on:click={() => setSort(\'trust\')}>{sortablePeerHeader(\'trust\', \'Ownertrust\')}</button></th>');
     expect(source).toContain('<th><button type="button" on:click={() => setSort(\'ip\')}>{sortablePeerHeader(\'ip\', \'IP\')}</button></th>');
     expect(source).toContain('<th><button type="button" on:click={() => setSort(\'agent\')}>{sortablePeerHeader(\'agent\', \'Agent\')}</button></th>');
-    expect(source).toContain('expandedPeerId');
-    expect(source).toContain('togglePeer(peer)');
+    expect(source).toContain('selectedPeerId');
+    expect(source).toContain('showPeerDetail(peer)');
     expect(source).toContain('renderPeerQr');
     expect(source).toContain('peerMatchesQuery');
     expect(source).toContain('displayNameForPeer');
@@ -155,9 +177,15 @@ describe('SDN identity Svelte source', () => {
     expect(source).toContain('peerPhone');
     expect(source).toContain('peerIp');
     expect(source).toContain('EPM Fields');
-    expect(source).toContain('Public vCard QR');
     expect(source).toContain('Email');
     expect(source).toContain('Phone');
+    expect(source).not.toContain("import MetricCard from '../components/cards/MetricCard.svelte'");
+    expect(source).not.toContain('MetricCard');
+    expect(source).not.toContain('Mission Loadout');
+    expect(source).not.toContain('Mission Builder');
+    expect(source).not.toContain('Marketplace feed adapter pending');
+    expect(source).not.toContain('<section class="sdn-panel-grid">');
+    expect(source).not.toContain('sdn-grid-3');
     expect(source).not.toContain('<th>EPM</th>');
     expect(source).not.toContain('downloadHostedEpm');
     expect(source).not.toContain('<th>Actions</th>');
@@ -188,7 +216,7 @@ describe('SDN identity Svelte source', () => {
 });
 
 describe('SDN data Svelte source', () => {
-  it('exposes a simple standards data table surface', () => {
+  it('exposes subscribed local data sync and query controls without source-storefront clutter', () => {
     const source = readUiSource('screens/LocalDataScreen.svelte');
 
     expectSourceToContainAll(source, [
@@ -213,8 +241,6 @@ describe('SDN data Svelte source', () => {
       'Columns',
       'sortColumn',
       'sortDirection',
-      'Data source',
-      'Data sources',
       'Table',
       'SQL',
       'Run SQL',
@@ -225,9 +251,23 @@ describe('SDN data Svelte source', () => {
       'backendConfigForDataSource',
       'clearLocalFlatSqlStore',
       'ingestDownloadedRecords',
-      'confirmResetLocalData',
-      'Reset local cache',
+      'loadDataDirectoryState',
+      'migrateSchemaSyncPreferencesToDataDirectory',
+      'updateDataFeedSubscription',
+      'persistDataDirectoryState',
+      'schemaSyncRows = buildSubscribedSchemaSyncRows',
+      'scheduleSubscribedSchemaSyncs(schemaSyncRows)',
+      'beginResetSubscriptionData',
+      'confirmResetSubscriptionData',
+      'Reset row',
       'Type RESET to clear',
+      'Next sync attempt',
+      'nextSyncAttemptLabel',
+      'Sync filter',
+      'handleSubscriptionFilterInput',
+      'handleSubscriptionStorageCapInput',
+      'handleSubscriptionStorageUnitChange',
+      'Combined Storage / Subscriptions',
       'INTERNAL_SQL_COLUMN_KEYS',
       'Page size',
       'Previous',
@@ -252,6 +292,15 @@ describe('SDN data Svelte source', () => {
       'providerId',
       'sourceName',
     ]);
+    expect(source).not.toContain("type DataSubview = 'storage' | 'subscriptions' | 'explorer'");
+    expect(source).not.toContain('DATA_SUBVIEWS');
+    expect(source).not.toContain('selectedDataSubview');
+    expect(source).not.toContain('selectDataSubview');
+    expect(source).not.toContain('sdn-source-browser');
+    expect(source).not.toContain('Data source</span>');
+    expect(source).not.toContain('Data sources');
+    expect(source).not.toContain('Reset local cache');
+    expect(source).not.toContain('confirmResetLocalData');
     expect(source).not.toContain("label: 'Bytes'");
     expect(source).not.toContain('dataBase64');
     expect(source).not.toContain('SQL Workbench');

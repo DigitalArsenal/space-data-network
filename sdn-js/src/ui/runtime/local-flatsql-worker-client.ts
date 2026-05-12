@@ -52,6 +52,7 @@ export interface WorkerSchemaSyncRequest {
   pageSize: number;
   persistRecordInterval: number;
   source: string | null;
+  syncFilter?: string;
 }
 
 export interface WorkerSchemaSyncUpdate {

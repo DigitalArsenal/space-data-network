@@ -1,6 +1,15 @@
 <script lang="ts">
   import { decodeEpmFlatBuffer } from '../../../src/ui/runtime/epm-flatbuffer';
   import {
+    loadDataDirectoryState,
+    migrateSchemaSyncPreferencesToDataDirectory,
+    persistDataDirectoryState,
+    updateDataFeedSubscription,
+    type DataDirectoryState,
+    type DataDirectoryMigrationSource,
+    type DataFeedSubscription,
+  } from '../../../src/ui/runtime/data-directory';
+  import {
     clearLocalFlatSqlStore,
     type LocalFlatSqlQueryResult,
     type LocalFlatSqlStandardStats,
@@ -39,7 +48,6 @@
   type SchemaSyncMode = 'preview' | 'sync';
   type SchemaSyncStatus = 'idle' | 'syncing' | 'synced' | 'capped' | 'error';
   type StorageUnit = 'MB' | 'GB' | 'TB';
-  type DataSubview = 'storage' | 'subscriptions' | 'explorer';
 
   interface WorkbenchColumn {
     key: SortColumn;
@@ -106,6 +114,12 @@
   }
 
   interface SchemaSyncRow extends StandardOption {
+    subscriptionId: string;
+    dataSourceId: string;
+    providerName: string;
+    providerPeerId: string | null;
+    providerPublicKey: string | null;
+    syncFilter: string;
     localRows: number;
     cachedBytes: number;
     preference: SchemaSyncPreference;
@@ -120,18 +134,12 @@
   const LOCAL_DATA_SOURCE_ID = 'local';
   const SCHEMA_EXTENSION = 'fbs';
   const DEFAULT_PAGE_SIZE = 10;
-  const DATA_SOURCE_PAGE_SIZE = 6;
   const SYNC_PAGE_SIZE = 50_000;
   const SYNC_PERSIST_RECORD_INTERVAL = 100_000;
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
   const SCHEMA_SYNC_STORAGE_KEY = 'sdn:data-schema-sync:v1';
   const SCHEMA_SYNC_STATE_STORAGE_KEY = 'sdn:data-schema-sync-state:v1';
   const STORAGE_CAP_UNITS: StorageUnit[] = ['MB', 'GB', 'TB'];
-  const DATA_SUBVIEWS: Array<{ id: DataSubview; label: string; breadcrumb: string }> = [
-    { id: 'storage', label: 'Storage', breadcrumb: 'Local storage state' },
-    { id: 'subscriptions', label: 'Subscriptions', breadcrumb: 'Sync subscriptions' },
-    { id: 'explorer', label: 'Explorer', breadcrumb: 'Data explorer' },
-  ];
   const DEFAULT_SCHEMA_SYNC_PREFERENCE: SchemaSyncPreference = {
     mode: 'preview',
     storageCap: 1,
@@ -223,8 +231,6 @@
   let columnMenuOpen = false;
   let visibleColumnKeys: string[] = [];
   let searchText = '';
-  let dataSourceSearchText = '';
-  let dataSourcePageIndex = 0;
   let pageSize = DEFAULT_PAGE_SIZE;
   let pageIndex = 0;
   let sortColumn: SortColumn = 'timestamp';
@@ -249,36 +255,27 @@
   let sqlRunning = false;
   let userEditedSql = false;
   let userEditedColumns = false;
+  let dataDirectoryState: DataDirectoryState = loadDataDirectoryState();
   let schemaSyncPreferences: Record<string, SchemaSyncPreference> = loadSchemaSyncPreferences();
   let schemaSyncProgress: Record<string, SchemaSyncProgress> = loadSchemaSyncProgress();
   let activeSyncKeys = new Set<string>();
-  let dataSubview: DataSubview = 'storage';
   let selectedPnmRow: WorkbenchRow | null = null;
   let pnmFileIdQuery = '';
   let pnmQueryResult: LocalFlatSqlQueryResult | null = null;
   let pnmQueryError = '';
   let pnmSignatureStatus = '';
   let pnmSignatureRunning = false;
-  let resetConfirmOpen = false;
+  let resetSubscriptionId = '';
   let resetConfirmText = '';
   let resetStatus = '';
   let resetRunning = false;
   const schemaSyncScheduler = createSchemaSyncScheduler({
     syncSchema: (standardId, dataSourceId) => synchronizeSchema(standardId, dataSourceId),
   });
+  const schemaSyncSchedulers = new Map<string, typeof schemaSyncScheduler>([[LOCAL_DATA_SOURCE_ID, schemaSyncScheduler]]);
 
   $: dataSourceOptions = buildDataSourceOptions(backend, configuredDataSources, peers);
-  $: filteredDataSourceOptions = filterDataSourceOptions(dataSourceOptions, dataSourceSearchText);
-  $: dataSourceTotalPageCount = Math.max(1, Math.ceil(filteredDataSourceOptions.length / DATA_SOURCE_PAGE_SIZE));
-  $: if (dataSourcePageIndex >= dataSourceTotalPageCount) dataSourcePageIndex = dataSourceTotalPageCount - 1;
-  $: paginatedDataSourceOptions = filteredDataSourceOptions.slice(
-    dataSourcePageIndex * DATA_SOURCE_PAGE_SIZE,
-    (dataSourcePageIndex + 1) * DATA_SOURCE_PAGE_SIZE,
-  );
-  $: dataSourcePageLabel = `${dataSourcePageIndex + 1}/${dataSourceTotalPageCount}`;
-  $: standardOptions = standardOptionsFromSummary(dataSummary);
-  $: schemaSyncRows = buildSchemaSyncRows(standardOptions, selectedDataSourceId, localFlatSqlStats);
-  $: selectedDataSubview = DATA_SUBVIEWS.find((entry) => entry.id === dataSubview) ?? DATA_SUBVIEWS[0];
+  $: schemaSyncRows = buildSubscribedSchemaSyncRows(dataDirectoryState.subscriptions, selectedDataSourceId, localFlatSqlStats);
   $: decodedRows = rawRecords.map(decodeWorkbenchRecord);
   $: allColumns = workbenchColumnsForStandard(selectedStandardId, decodedRows);
   $: syncVisibleColumnKeys(allColumns);
@@ -306,7 +303,7 @@
     void initializeDataExplorer();
   }
 
-  $: scheduleEnabledSchemaSyncs(schemaSyncRows, selectedDataSourceId);
+  $: scheduleSubscribedSchemaSyncs(schemaSyncRows);
 
   $: syncInspectRoute(route, backend);
 
@@ -315,14 +312,23 @@
   }
 
   async function initializeDataExplorer(): Promise<void> {
-    schemaSyncScheduler.reset();
+    resetSchemaSyncSchedulers();
     configuredDataSources = [];
+    dataDirectoryState = loadDataDirectoryState();
     selectedDataSourceId = LOCAL_DATA_SOURCE_ID;
     userSelectedDataSource = false;
     userSelectedStandard = false;
     await loadConfiguredDataSources();
+    dataDirectoryState = migrateSchemaSyncPreferencesToDataDirectory(
+      dataDirectoryState,
+      schemaSyncPreferences,
+      dataDirectoryMigrationSources(buildDataSourceOptions(backend, configuredDataSources, peers)),
+      schemaSyncProgress,
+    );
+    persistDataDirectoryState(dataDirectoryState);
     if (!userSelectedDataSource) {
-      selectedDataSourceId = preferredDataSourceId(buildDataSourceOptions(backend, configuredDataSources, peers));
+      selectedDataSourceId = preferredSubscribedDataSourceId(dataDirectoryState.subscriptions)
+        ?? preferredDataSourceId(buildDataSourceOptions(backend, configuredDataSources, peers));
     }
     await initializeWorkbench();
   }
@@ -330,10 +336,6 @@
   async function initializeWorkbench(): Promise<void> {
     await loadDataSummary();
     await runWorkbenchQuery(0);
-  }
-
-  function selectDataSubview(nextSubview: DataSubview): void {
-    dataSubview = nextSubview;
   }
 
   async function loadConfiguredDataSources(): Promise<void> {
@@ -499,8 +501,6 @@
   function selectDataSource(sourceId: string): void {
     if (!dataSourceOptions.some((source) => source.id === sourceId)) return;
     selectedDataSourceId = sourceId;
-    dataSourceSearchText = '';
-    dataSourcePageIndex = 0;
     pageIndex = 0;
     rawRecords = [];
     dataScan = null;
@@ -511,12 +511,8 @@
     userSelectedDataSource = true;
     userSelectedStandard = false;
     userEditedColumns = false;
-    schemaSyncScheduler.reset();
+    resetSchemaSyncSchedulers();
     void initializeWorkbench();
-  }
-
-  function handleDataSourceSearchInput(): void {
-    dataSourcePageIndex = 0;
   }
 
   function goToPreviousPage(): void {
@@ -527,45 +523,45 @@
     if (canGoNext) void runWorkbenchQuery(pageIndex + 1);
   }
 
-  function goToPreviousDataSourcePage(): void {
-    if (dataSourcePageIndex > 0) dataSourcePageIndex -= 1;
-  }
-
-  function goToNextDataSourcePage(): void {
-    if (dataSourcePageIndex + 1 < dataSourceTotalPageCount) dataSourcePageIndex += 1;
-  }
-
   function handleSqlInput(): void {
     userEditedSql = true;
   }
 
-  function handleSchemaSyncModeChange(standardId: string, event: Event): void {
-    const value = (event.currentTarget as HTMLSelectElement).value;
-    updateSchemaSyncPreference(standardId, {
-      mode: value === 'sync' ? 'sync' : 'preview',
-    });
-    if (value === 'sync') {
-      scheduleEnabledSchemaSyncs(buildSchemaSyncRows(standardOptions, selectedDataSourceId, localFlatSqlStats), selectedDataSourceId);
+  function selectSubscribedRow(schema: SchemaSyncRow): void {
+    selectedStandardId = schema.id;
+    if (selectedDataSourceId !== schema.dataSourceId) {
+      selectDataSource(schema.dataSourceId);
+      return;
     }
+    userSelectedStandard = true;
+    resetSqlForSelectedStandard();
+    void runWorkbenchQuery(0);
   }
 
-  function handleSchemaStorageCapInput(standardId: string, event: Event): void {
-    updateSchemaSyncPreference(standardId, {
-      storageCap: normalizedStorageCap((event.currentTarget as HTMLInputElement).value),
-    });
-    if (schemaSyncPreferenceFor(selectedDataSourceId, standardId).mode === 'sync') {
-      scheduleEnabledSchemaSyncs(buildSchemaSyncRows(standardOptions, selectedDataSourceId, localFlatSqlStats), selectedDataSourceId);
-    }
+  function handleSubscriptionStorageCapInput(schema: SchemaSyncRow, event: Event): void {
+    const storageCap = normalizedStorageCap((event.currentTarget as HTMLInputElement).value);
+    updateSubscription(schema.subscriptionId, { storageCap });
+    updateSchemaSyncPreference(schema.id, { mode: 'sync', storageCap }, schema.dataSourceId);
+    scheduleSubscribedSchemaSyncs(schemaSyncRows);
   }
 
-  function handleSchemaStorageUnitChange(standardId: string, event: Event): void {
+  function handleSubscriptionStorageUnitChange(schema: SchemaSyncRow, event: Event): void {
     const value = (event.currentTarget as HTMLSelectElement).value;
-    updateSchemaSyncPreference(standardId, {
-      storageUnit: isStorageUnit(value) ? value : DEFAULT_SCHEMA_SYNC_PREFERENCE.storageUnit,
+    const storageUnit = isStorageUnit(value) ? value : DEFAULT_SCHEMA_SYNC_PREFERENCE.storageUnit;
+    updateSubscription(schema.subscriptionId, { storageUnit });
+    updateSchemaSyncPreference(schema.id, { mode: 'sync', storageUnit }, schema.dataSourceId);
+    scheduleSubscribedSchemaSyncs(schemaSyncRows);
+  }
+
+  function handleSubscriptionFilterInput(schema: SchemaSyncRow, event: Event): void {
+    updateSubscription(schema.subscriptionId, {
+      syncFilter: (event.currentTarget as HTMLInputElement).value,
     });
-    if (schemaSyncPreferenceFor(selectedDataSourceId, standardId).mode === 'sync') {
-      scheduleEnabledSchemaSyncs(buildSchemaSyncRows(standardOptions, selectedDataSourceId, localFlatSqlStats), selectedDataSourceId);
-    }
+  }
+
+  function updateSubscription(subscriptionId: string, patch: Partial<Pick<DataFeedSubscription, 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter'>>): void {
+    dataDirectoryState = updateDataFeedSubscription(dataDirectoryState, subscriptionId, patch);
+    persistDataDirectoryState(dataDirectoryState);
   }
 
   async function runSqlQuery(): Promise<void> {
@@ -602,8 +598,30 @@
     }
   }
 
-  function scheduleEnabledSchemaSyncs(rows: SchemaSyncRow[], dataSourceId: string): void {
-    void schemaSyncScheduler.schedule(rows, dataSourceId);
+  function scheduleSubscribedSchemaSyncs(rows: SchemaSyncRow[]): void {
+    const bySource = new Map<string, SchemaSyncRow[]>();
+    for (const row of rows) {
+      if (row.preference.mode !== 'sync') continue;
+      bySource.set(row.dataSourceId, [...bySource.get(row.dataSourceId) ?? [], row]);
+    }
+    for (const [dataSourceId, sourceRows] of bySource) {
+      void schemaSyncSchedulerForDataSource(dataSourceId).schedule(sourceRows, dataSourceId);
+    }
+  }
+
+  function schemaSyncSchedulerForDataSource(dataSourceId: string): typeof schemaSyncScheduler {
+    const existing = schemaSyncSchedulers.get(dataSourceId);
+    if (existing) return existing;
+    const scheduler = createSchemaSyncScheduler({
+      syncSchema: (standardId, sourceId) => synchronizeSchema(standardId, sourceId),
+    });
+    schemaSyncSchedulers.set(dataSourceId, scheduler);
+    return scheduler;
+  }
+
+  function resetSchemaSyncSchedulers(): void {
+    schemaSyncScheduler.reset();
+    for (const scheduler of schemaSyncSchedulers.values()) scheduler.reset();
   }
 
   async function synchronizeSchema(standardId: string, dataSourceId = selectedDataSourceId): Promise<void> {
@@ -614,17 +632,18 @@
     const source = dataSourceOptionForId(dataSourceId);
     const backendConfig = backendConfigForDataSource(source);
     if (!backendConfig) return;
+    const remoteRows = remoteRowsForSubscription(dataSourceId, standardId) ?? totalRowsForStandardId(dataSummary, standardId) ?? 0;
     const initialProgress = schemaSyncProgressFor(
       dataSourceId,
       standardId,
-      totalRowsForStandardId(dataSummary, standardId) ?? 0,
+      remoteRows,
       localFlatSqlStats,
     );
     activeSyncKeys = new Set(activeSyncKeys).add(key);
     refreshSchemaSyncProgress(standardId, {
       status: 'syncing',
       error: null,
-      totalRows: totalRowsForStandardId(dataSummary, standardId) ?? 0,
+      totalRows: remoteRows,
       providerPeerId: source?.peerId ?? null,
       providerPublicKey: source?.publicKey ?? null,
     }, dataSourceId);
@@ -638,11 +657,12 @@
         schema: schemaNameForStandardId(standardId),
         backendConfig,
         initialProgress,
-        totalRows: totalRowsForStandardId(dataSummary, standardId) ?? 0,
+        totalRows: remoteRows,
         capBytes: storageCapBytes(preference),
         pageSize: SYNC_PAGE_SIZE,
         persistRecordInterval: SYNC_PERSIST_RECORD_INTERVAL,
         source: source?.publicKey ?? source?.peerId ?? source?.id ?? null,
+        syncFilter: syncFilterForSubscription(dataSourceId, standardId),
       }, (nextUpdate) => applyWorkerSchemaSyncUpdate(standardId, dataSourceId, nextUpdate));
       applyWorkerSchemaSyncUpdate(standardId, dataSourceId, update);
     } catch (error) {
@@ -725,48 +745,53 @@
     return `sdn-data:${dataSourceId}`;
   }
 
-  function beginResetLocalData(): void {
-    resetConfirmOpen = true;
+  function beginResetSubscriptionData(subscriptionId: string): void {
+    resetSubscriptionId = subscriptionId;
     resetConfirmText = '';
     resetStatus = '';
   }
 
-  function cancelResetLocalData(): void {
+  function cancelResetSubscriptionData(): void {
     if (resetRunning) return;
-    resetConfirmOpen = false;
+    resetSubscriptionId = '';
     resetConfirmText = '';
     resetStatus = '';
   }
 
-  async function confirmResetLocalData(): Promise<void> {
+  async function confirmResetSubscriptionData(schema: SchemaSyncRow): Promise<void> {
     if (resetConfirmText.trim() !== 'RESET') {
-      resetStatus = 'Type RESET to clear local data.';
+      resetStatus = 'Type RESET to clear this row.';
       return;
     }
     resetRunning = true;
     resetStatus = '';
-    const dataSourceId = selectedDataSourceId;
+    const dataSourceId = schema.dataSourceId;
+    const standardId = schema.id;
     try {
       resetLocalFlatSqlStore();
       await clearLocalFlatSqlStore({
         persistenceKey: localFlatSqlPersistenceKey(dataSourceId),
-        standardIds: LOCAL_FLATSQL_SCHEMAS.map((schema) => schema.standardId),
+        standardIds: [standardId],
       });
-      clearSchemaSyncProgressForDataSource(dataSourceId);
-      activeSyncKeys = new Set();
-      schemaSyncScheduler.reset();
+      clearSchemaSyncProgressForSubscription(dataSourceId, standardId);
+      const nextActive = new Set(activeSyncKeys);
+      nextActive.delete(schemaSyncPreferenceKey(dataSourceId, standardId));
+      activeSyncKeys = nextActive;
+      schemaSyncSchedulerForDataSource(dataSourceId).reset();
       rawRecords = [];
       dataScan = null;
       clearPnmSelection();
       resetSqlForSelectedStandard();
-      await ensureLocalFlatSqlStore();
+      selectedDataSourceId = dataSourceId;
+      selectedStandardId = standardId;
+      await ensureLocalFlatSqlStore(dataSourceId);
       await refreshLocalFlatSqlStats();
-      resetStatus = 'Local cache reset. Sync will restart from the first remote row.';
-      resetConfirmOpen = false;
+      resetStatus = `${standardId} row reset. Sync will restart from the first remote row.`;
+      resetSubscriptionId = '';
       resetConfirmText = '';
-      void runWorkbenchQuery(0);
+      void synchronizeSchema(standardId, dataSourceId);
     } catch (error) {
-      resetStatus = error instanceof Error ? error.message : 'Local cache reset failed';
+      resetStatus = error instanceof Error ? error.message : 'Row reset failed';
     } finally {
       resetRunning = false;
     }
@@ -998,18 +1023,32 @@
     return `SELECT * FROM ${standardIdFromSchema(standardId)} LIMIT ${DEFAULT_PAGE_SIZE}`;
   }
 
-  function buildSchemaSyncRows(
-    options: StandardOption[],
-    dataSourceId: string,
+  function buildSubscribedSchemaSyncRows(
+    subscriptions: DataFeedSubscription[],
+    activeDataSourceId: string,
     stats: LocalFlatSqlStandardStats[],
   ): SchemaSyncRow[] {
-    return options.map((option) => ({
-      ...option,
-      localRows: localRowsForStandard(stats, option.id),
-      cachedBytes: cachedBytesForStandard(stats, option.id),
-      preference: schemaSyncPreferenceFor(dataSourceId, option.id),
-      progress: schemaSyncProgressFor(dataSourceId, option.id, option.remoteRows, stats),
-    }));
+    return subscriptions.map((subscription) => {
+      const sourceStats = subscription.dataSourceId === activeDataSourceId ? stats : [];
+      const progress = schemaSyncProgressFor(subscription.dataSourceId, subscription.standardId, subscription.remoteRows, sourceStats);
+      return {
+        id: subscription.standardId,
+        subscriptionId: subscription.id,
+        dataSourceId: subscription.dataSourceId,
+        providerName: subscription.providerName,
+        providerPeerId: subscription.peerId,
+        providerPublicKey: subscription.providerPublicKey,
+        syncFilter: subscription.syncFilter,
+        remoteRows: Math.max(subscription.remoteRows, progress.totalRows),
+        localRows: progress.localRows,
+        cachedBytes: progress.cachedBytes,
+        preference: subscriptionSchemaSyncPreference(subscription),
+        progress,
+      };
+    }).sort((left, right) => {
+      const delta = right.remoteRows - left.remoteRows;
+      return delta === 0 ? left.id.localeCompare(right.id) : delta;
+    });
   }
 
   function localRowsForStandard(stats: LocalFlatSqlStandardStats[], standardId: string): number {
@@ -1023,6 +1062,31 @@
 
   function schemaSyncPreferenceFor(dataSourceId: string, standardId: string): SchemaSyncPreference {
     return schemaSyncPreferences[schemaSyncPreferenceKey(dataSourceId, standardId)] ?? DEFAULT_SCHEMA_SYNC_PREFERENCE;
+  }
+
+  function subscriptionSchemaSyncPreference(subscription: DataFeedSubscription): SchemaSyncPreference {
+    const persisted = schemaSyncPreferences[schemaSyncPreferenceKey(subscription.dataSourceId, subscription.standardId)];
+    return normalizeSchemaSyncPreference({
+      mode: 'sync',
+      storageCap: persisted?.storageCap ?? subscription.storageCap,
+      storageUnit: persisted?.storageUnit ?? subscription.storageUnit,
+    }) ?? {
+      mode: 'sync',
+      storageCap: subscription.storageCap,
+      storageUnit: subscription.storageUnit,
+    };
+  }
+
+  function remoteRowsForSubscription(dataSourceId: string, standardId: string): number | null {
+    return dataDirectoryState.subscriptions.find((subscription) => (
+      subscription.dataSourceId === dataSourceId && subscription.standardId === standardId
+    ))?.remoteRows ?? null;
+  }
+
+  function syncFilterForSubscription(dataSourceId: string, standardId: string): string {
+    return dataDirectoryState.subscriptions.find((subscription) => (
+      subscription.dataSourceId === dataSourceId && subscription.standardId === standardId
+    ))?.syncFilter ?? '';
   }
 
   function schemaSyncProgressFor(
@@ -1067,9 +1131,9 @@
     };
   }
 
-  function updateSchemaSyncPreference(standardId: string, patch: Partial<SchemaSyncPreference>): void {
-    const key = schemaSyncPreferenceKey(selectedDataSourceId, standardId);
-    const current = schemaSyncPreferenceFor(selectedDataSourceId, standardId);
+  function updateSchemaSyncPreference(standardId: string, patch: Partial<SchemaSyncPreference>, dataSourceId = selectedDataSourceId): void {
+    const key = schemaSyncPreferenceKey(dataSourceId, standardId);
+    const current = schemaSyncPreferenceFor(dataSourceId, standardId);
     schemaSyncPreferences = {
       ...schemaSyncPreferences,
       [key]: normalizeSchemaSyncPreference({ ...current, ...patch }) ?? DEFAULT_SCHEMA_SYNC_PREFERENCE,
@@ -1131,10 +1195,10 @@
     }
   }
 
-  function clearSchemaSyncProgressForDataSource(dataSourceId: string): void {
-    const prefix = `${dataSourceId}:`;
+  function clearSchemaSyncProgressForSubscription(dataSourceId: string, standardId: string): void {
+    const key = schemaSyncPreferenceKey(dataSourceId, standardId);
     schemaSyncProgress = Object.fromEntries(
-      Object.entries(schemaSyncProgress).filter(([key]) => !key.startsWith(prefix)),
+      Object.entries(schemaSyncProgress).filter(([candidate]) => candidate !== key),
     );
     persistSchemaSyncProgress(schemaSyncProgress);
   }
@@ -1361,6 +1425,15 @@
     });
   }
 
+  function nextSyncAttemptLabel(schema: SchemaSyncRow): string {
+    const key = schemaSyncPreferenceKey(schema.dataSourceId, schema.id);
+    if (activeSyncKeys.has(key)) return 'Syncing now';
+    if (schema.progress.status === 'error') return 'On next scheduler pass';
+    if (schema.preference.mode !== 'sync') return 'Not scheduled';
+    if (schema.remoteRows > schema.localRows) return 'Queued';
+    return 'When remote rows advance';
+  }
+
   function syncPieStyle(schema: SchemaSyncRow): string {
     const totalRows = Math.max(schema.remoteRows, schema.progress.totalRows, 1);
     const syncedRows = Math.min(totalRows, Math.max(schema.localRows, schema.progress.syncedRows));
@@ -1485,16 +1558,26 @@
     return dedupeDataSourceOptions(options);
   }
 
+  function dataDirectoryMigrationSources(options: DataSourceOption[]): DataDirectoryMigrationSource[] {
+    return options
+      .filter((source) => source.peerId)
+      .map((source) => ({
+        dataSourceId: source.id,
+        peerId: source.peerId ?? source.id,
+        providerName: source.label,
+        providerPublicKey: source.publicKey,
+      }));
+  }
+
   function preferredDataSourceId(options: DataSourceOption[]): string {
     return options.find((source) => source.searchText.includes('celestrak'))?.id
       ?? options.find((source) => source.kind === 'configured')?.id
       ?? LOCAL_DATA_SOURCE_ID;
   }
 
-  function filterDataSourceOptions(options: DataSourceOption[], query: string): DataSourceOption[] {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return options;
-    return options.filter((source) => source.searchText.includes(normalized));
+  function preferredSubscribedDataSourceId(subscriptions: DataFeedSubscription[]): string | null {
+    const firstConfigured = subscriptions.find((subscription) => subscription.dataSourceId !== LOCAL_DATA_SOURCE_ID);
+    return firstConfigured?.dataSourceId ?? subscriptions[0]?.dataSourceId ?? null;
   }
 
   function normalizeConfiguredDataSources(payload: unknown): ConfiguredSdnNode[] {
@@ -1609,89 +1692,28 @@
     </div>
   {/if}
 
-  <div class="sdn-data-explorer-layout">
-    <aside class="sdn-source-browser" aria-label="Data sources">
-      <label class="sdn-source-search">
-        <span>Data source</span>
-        <input
-          class="sdn-input"
-          type="search"
-          bind:value={dataSourceSearchText}
-          on:input={handleDataSourceSearchInput}
-          placeholder="Search sources"
-          autocomplete="off"
-        />
-      </label>
-
-      <div class="sdn-source-table-wrap">
-        <table class="sdn-table sdn-source-table" aria-label="Data sources">
-          <tbody>
-            {#each paginatedDataSourceOptions as source}
-              <tr class:active={source.id === selectedDataSourceId}>
-                <td>
-                  <button
-                    class="sdn-source-row-button"
-                    type="button"
-                    aria-pressed={source.id === selectedDataSourceId}
-                    on:click={() => selectDataSource(source.id)}
-                  >
-                    <span>{source.label || source.peerId || source.id}</span>
-                    <small>{source.publicKey || source.peerId || source.detail}</small>
-                  </button>
-                </td>
-              </tr>
-            {:else}
-              <tr>
-                <td>No matching sources.</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="sdn-pagination sdn-source-pagination">
-        <button class="sdn-button sdn-button-muted" type="button" on:click={goToPreviousDataSourcePage} disabled={dataSourcePageIndex <= 0}>Previous</button>
-        <span class="sdn-page-count">{dataSourcePageLabel}</span>
-        <button class="sdn-button sdn-button-muted" type="button" on:click={goToNextDataSourcePage} disabled={dataSourcePageIndex + 1 >= dataSourceTotalPageCount}>Next</button>
-      </div>
-    </aside>
-
-    <div class="sdn-workbench-main">
-      <nav class="sdn-data-subnav" aria-label="Data sections">
-        <div class="sdn-breadcrumb">Data / {selectedDataSubview.breadcrumb}</div>
-        <div class="sdn-data-subnav-actions">
-          {#each DATA_SUBVIEWS as subview}
-            <button
-              class="sdn-button sdn-button-muted"
-              class:active={dataSubview === subview.id}
-              type="button"
-              aria-pressed={dataSubview === subview.id}
-              on:click={() => selectDataSubview(subview.id)}
-            >
-              {subview.label}
-            </button>
-          {/each}
-        </div>
+  <div class="sdn-workbench-main">
+      <nav class="sdn-data-subnav" aria-label="Data state">
+        <div class="sdn-breadcrumb">Data / Combined Storage / Subscriptions</div>
       </nav>
 
       {#if workbenchLoading}
         <p class="sdn-loading-inline" role="status">Loading</p>
       {/if}
 
-      {#if dataSubview === 'storage'}
         <section class="sdn-storage-state" aria-label="Local storage state">
           <div class="sdn-dataset-summary" aria-label="Dataset summary">
-            <div class="sdn-dataset-metric" aria-label={`Remote rows ${formatNumber(estimatedTotalRows ?? 0)}`}>
+            <div class="sdn-dataset-metric" aria-label={`Remote rows ${formatNumber(schemaSyncRows.reduce((total, row) => total + row.remoteRows, 0))}`}>
               <span>Remote rows</span>
-              <strong>{formatNumber(estimatedTotalRows ?? 0)}</strong>
+              <strong>{formatNumber(schemaSyncRows.reduce((total, row) => total + row.remoteRows, 0))}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Local rows ${formatNumber(localRowCount)}`}>
+            <div class="sdn-dataset-metric" aria-label={`Local rows ${formatNumber(schemaSyncRows.reduce((total, row) => total + row.localRows, 0))}`}>
               <span>Local rows</span>
-              <strong>{formatNumber(localRowCount)}</strong>
+              <strong>{formatNumber(schemaSyncRows.reduce((total, row) => total + row.localRows, 0))}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Cached ${formatBytes(cachedByteCount)}`}>
+            <div class="sdn-dataset-metric" aria-label={`Cached ${formatBytes(schemaSyncRows.reduce((total, row) => total + row.cachedBytes, 0))}`}>
               <span>Cached</span>
-              <strong>{formatBytes(cachedByteCount)}</strong>
+              <strong>{formatBytes(schemaSyncRows.reduce((total, row) => total + row.cachedBytes, 0))}</strong>
             </div>
             <div class="sdn-dataset-metric" aria-label={`Scan ${scanHashLabel}`}>
               <span>Scan</span>
@@ -1699,31 +1721,13 @@
             </div>
           </div>
 
-          <div class="sdn-reset-panel">
-            <button class="sdn-button sdn-button-muted" type="button" on:click={beginResetLocalData} disabled={resetRunning}>Reset local cache</button>
-            {#if resetConfirmOpen}
-              <div class="sdn-reset-confirm" role="group" aria-label="Reset local cache confirmation">
-                <label>
-                  <span>Type RESET to clear {currentDataSourceOption()?.label ?? 'this source'} local data.</span>
-                  <input class="sdn-input" bind:value={resetConfirmText} autocomplete="off" />
-                </label>
-                <div class="sdn-toolbar">
-                  <button class="sdn-button" type="button" on:click={() => void confirmResetLocalData()} disabled={resetRunning || resetConfirmText.trim() !== 'RESET'}>Clear local data</button>
-                  <button class="sdn-button sdn-button-muted" type="button" on:click={cancelResetLocalData} disabled={resetRunning}>Cancel</button>
-                </div>
-              </div>
-            {/if}
-            {#if resetStatus}
-              <p class="sdn-empty-inline" role="status">{resetStatus}</p>
-            {/if}
-          </div>
-
           <div class="sdn-storage-grid">
             {#each schemaSyncRows as schema}
-              <article class="sdn-storage-row" class:active={schema.id === selectedStandardId}>
+              <article class="sdn-storage-row" class:active={schema.id === selectedStandardId && schema.dataSourceId === selectedDataSourceId}>
                 <div class="sdn-sync-pie" style={syncPieStyle(schema)} aria-hidden="true"></div>
                 <div>
                   <strong>{schema.id}</strong>
+                  <span>{schema.providerName}</span>
                   <span>{formatNumber(schema.localRows)} local / {formatNumber(schema.remoteRows)} remote</span>
                 </div>
                 <div>
@@ -1732,46 +1736,45 @@
                 </div>
                 <div>
                   <strong>{syncStatusLabel(schema)}</strong>
+                  <span>Next sync attempt: {nextSyncAttemptLabel(schema)}</span>
                   <span>{schema.progress.lastSyncedAt ? formatDateTime(schema.progress.lastSyncedAt) : 'Never synced'}</span>
                 </div>
+                <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => selectSubscribedRow(schema)}>Query</button>
               </article>
+            {:else}
+              <p class="sdn-empty-inline">No subscribed data feeds. Add a feed from Peers to start local sync.</p>
             {/each}
           </div>
         </section>
-      {:else if dataSubview === 'subscriptions'}
+
         <section class="sdn-schema-sync-wrap" aria-label="Sync subscriptions">
           <table class="sdn-table sdn-schema-sync-table" aria-label="Schema sync">
             <thead>
               <tr>
+                <th>Provider</th>
                 <th>Schema</th>
                 <th>Remote rows</th>
                 <th>Local rows</th>
                 <th>Progress</th>
                 <th>Status</th>
-                <th>Sync</th>
                 <th>Storage cap</th>
-                <th>Last synced</th>
+                <th>Sync filter</th>
+                <th>Next sync attempt</th>
+                <th>Reset row</th>
               </tr>
             </thead>
             <tbody>
               {#each schemaSyncRows as schema}
-                <tr class:active={schema.id === selectedStandardId}>
+                <tr class:active={schema.id === selectedStandardId && schema.dataSourceId === selectedDataSourceId}>
+                  <td>
+                    <strong>{schema.providerName}</strong>
+                    <small>{schema.providerPublicKey ?? schema.providerPeerId ?? schema.dataSourceId}</small>
+                  </td>
                   <td>{schema.id}</td>
                   <td>{formatNumber(schema.remoteRows)}</td>
                   <td>{formatNumber(schema.localRows)}</td>
                   <td>{syncProgressLabel(schema)}</td>
                   <td>{syncStatusLabel(schema)}</td>
-                  <td>
-                    <select
-                      class="sdn-input sdn-select sdn-schema-sync-mode"
-                      aria-label={`${schema.id} sync`}
-                      value={schema.preference.mode}
-                      on:change={(event) => handleSchemaSyncModeChange(schema.id, event)}
-                    >
-                      <option value="preview">Preview only</option>
-                      <option value="sync">Sync locally</option>
-                    </select>
-                  </td>
                   <td>
                     <div class="sdn-storage-cap-controls">
                       <input
@@ -1781,15 +1784,13 @@
                         step="0.1"
                         aria-label={`${schema.id} storage cap`}
                         value={schema.preference.storageCap}
-                        disabled={schema.preference.mode !== 'sync'}
-                        on:input={(event) => handleSchemaStorageCapInput(schema.id, event)}
+                        on:input={(event) => handleSubscriptionStorageCapInput(schema, event)}
                       />
                       <select
                         class="sdn-input sdn-select"
                         aria-label={`${schema.id} storage unit`}
                         value={schema.preference.storageUnit}
-                        disabled={schema.preference.mode !== 'sync'}
-                        on:change={(event) => handleSchemaStorageUnitChange(schema.id, event)}
+                        on:change={(event) => handleSubscriptionStorageUnitChange(schema, event)}
                       >
                         {#each STORAGE_CAP_UNITS as unit}
                           <option value={unit}>{unit}</option>
@@ -1797,19 +1798,49 @@
                       </select>
                     </div>
                   </td>
-                  <td>{schema.progress.lastSyncedAt ? formatDateTime(schema.progress.lastSyncedAt) : 'Never'}</td>
+                  <td>
+                    <input
+                      class="sdn-input sdn-sync-filter"
+                      aria-label={`${schema.id} sync filter`}
+                      value={schema.syncFilter}
+                      placeholder="Sync filter"
+                      on:input={(event) => handleSubscriptionFilterInput(schema, event)}
+                    />
+                  </td>
+                  <td>{nextSyncAttemptLabel(schema)}</td>
+                  <td>
+                    {#if resetSubscriptionId === schema.subscriptionId}
+                      <div class="sdn-reset-confirm sdn-reset-row-confirm" role="group" aria-label={`${schema.id} row reset confirmation`}>
+                        <label>
+                          <span>Type RESET to clear this row.</span>
+                          <input class="sdn-input" bind:value={resetConfirmText} autocomplete="off" />
+                        </label>
+                        <div class="sdn-toolbar">
+                          <button class="sdn-button sdn-button-compact" type="button" on:click={() => void confirmResetSubscriptionData(schema)} disabled={resetRunning || resetConfirmText.trim() !== 'RESET'}>Clear</button>
+                          <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={cancelResetSubscriptionData} disabled={resetRunning}>Cancel</button>
+                        </div>
+                      </div>
+                    {:else}
+                      <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => beginResetSubscriptionData(schema.subscriptionId)} disabled={resetRunning}>Reset row</button>
+                    {/if}
+                  </td>
                 </tr>
+              {:else}
+                <tr><td colspan="10">No subscribed data feeds.</td></tr>
               {/each}
             </tbody>
           </table>
+          {#if resetStatus}
+            <p class="sdn-empty-inline" role="status">{resetStatus}</p>
+          {/if}
         </section>
-      {:else}
-        <section class="sdn-explorer-panel" aria-label="Data explorer">
+
+        <section class="sdn-explorer-panel" aria-label="Local SQL">
           <div class="sdn-workbench-controls">
             <label>
               <span>Table</span>
               <select class="sdn-input sdn-select" bind:value={selectedStandardId} on:change={handleTableChange}>
-                {#each standardOptions as standard}
+                {#each schemaSyncRows as standard}
                   <option value={standard.id}>{standard.id} ({formatNumber(standard.remoteRows)})</option>
                 {/each}
               </select>
@@ -2009,7 +2040,5 @@
             <p class="sdn-empty-inline" role="alert">{sqlError}</p>
           {/if}
         </section>
-      {/if}
-    </div>
   </div>
 </article>

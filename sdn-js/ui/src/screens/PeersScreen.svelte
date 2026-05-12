@@ -1,11 +1,24 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import {
+    DEFAULT_OWNERTRUST,
+    PGP_OWNERTRUST_LEVELS,
+    isTrustedDirectoryOwnertrust,
+    loadDataDirectoryState,
+    persistDataDirectoryState,
+    subscriptionKey,
+    upsertDataFeedSubscription,
+    updatePeerOwnertrust,
+    type DataDirectoryState,
+    type PgpOwnertrust,
+  } from '../../../src/ui/runtime/data-directory';
   import type { HostedEpmRecord } from '../../../src/ui/runtime/identity';
   import type { ObservedSdnPeer, SdnBackend } from '../../../src/ui/runtime/sdn-backend';
   import DirectorySearchPanel from '../components/DirectorySearchPanel.svelte';
-  import MetricCard from '../components/cards/MetricCard.svelte';
 
   type PeerSortColumn = 'name' | 'peerId' | 'trust' | 'ip' | 'agent';
   type SortDirection = 'asc' | 'desc';
+  type PeerView = 'home' | 'observed' | 'feeds' | 'peer-detail';
 
   type IdentityRuntimeModule = {
     createVCardQrPayload: (input: Record<string, unknown> | HostedEpmRecord) => string;
@@ -15,28 +28,144 @@
     toDataURL: (input: string, options?: Record<string, unknown>) => Promise<string>;
   };
 
+  interface ConfiguredSdnNode {
+    id: string;
+    name: string;
+    addrs: string[];
+    trust_level?: string;
+    trustLevel?: string;
+    metadata?: Record<string, unknown>;
+  }
+
+  interface DataSourceOption {
+    id: string;
+    label: string;
+    detail: string;
+    peerId: string;
+    publicKey: string | null;
+    syncAddrs: string[];
+    searchText: string;
+  }
+
+  interface PeerDataFeed {
+    id: string;
+    dataSourceId: string;
+    peerId: string;
+    providerName: string;
+    providerPublicKey: string | null;
+    standardId: string;
+    remoteRows: number;
+    syncAddrs: string[];
+  }
+
+  interface StorefrontModule {
+    id: string;
+    name: string;
+    peerId: string;
+    providerName: string;
+    version: string;
+    status: string;
+  }
+
   export let backend: SdnBackend | null = null;
   export let peers: ObservedSdnPeer[] = [];
   export let hostedEpms: HostedEpmRecord[] = [];
 
   const identityRuntimeModules = import.meta.glob('../../../src/ui/runtime/identity.ts');
+  const STORE_FEED_STANDARD_IDS = ['OMM', 'PNM', 'CAT', 'SPW', 'MPE', 'EPM'];
+  const DEFAULT_SUBSCRIPTION_STORAGE_CAP = 1;
+  const DEFAULT_SUBSCRIPTION_STORAGE_UNIT = 'GB';
+
+  let peerView: PeerView = 'home';
   let query = '';
   let sortColumn: PeerSortColumn = 'name';
   let sortDirection: SortDirection = 'asc';
-  let expandedPeerId = '';
+  let selectedPeerId = '';
   let peerQrDataUrl = '';
   let peerQrState = '';
   let peerQrKey = '';
+  let configuredDataSources: ConfiguredSdnNode[] = [];
+  let dataDirectoryState: DataDirectoryState = loadDataDirectoryState();
+  let storefrontListings: Array<Record<string, unknown>> = [];
+  let feedStatus = '';
+  let directoryStatus = '';
   let identityRuntimePromise: Promise<IdentityRuntimeModule> | null = null;
   let qrCodeModulePromise: Promise<QrCodeModule> | null = null;
 
+  $: dataSourceOptions = buildDataSourceOptions(configuredDataSources, peers);
+  $: peerDataFeeds = buildPeerDataFeeds(dataSourceOptions, storefrontListings, dataDirectoryState);
+  $: storefrontModules = buildStorefrontModules(storefrontListings);
+  $: trustedPeers = peers.filter((peer) => isTrustedDirectoryOwnertrust(ownertrustForPeer(peer.id)));
   $: filteredPeers = peers.filter(peerMatchesQuery);
   $: visiblePeers = sortPeers(filteredPeers, sortColumn, sortDirection);
-  $: expandedPeer = expandedPeerId ? peers.find((peer) => peer.id === expandedPeerId) ?? null : null;
-  $: void renderPeerQr(expandedPeer);
+  $: selectedPeer = selectedPeerId ? peers.find((peer) => peer.id === selectedPeerId) ?? null : null;
+  $: selectedPeerFeeds = selectedPeer ? peerDataFeeds.filter((feed) => feed.peerId === selectedPeer.id) : [];
+  $: selectedPeerModules = selectedPeer ? storefrontModules.filter((module) => module.peerId === selectedPeer.id) : [];
+  $: void renderPeerQr(selectedPeer);
+
+  onMount(() => {
+    dataDirectoryState = loadDataDirectoryState();
+    void loadPeerStorefrontSources();
+  });
+
+  async function loadPeerStorefrontSources(): Promise<void> {
+    await loadConfiguredDataSources();
+    await loadStorefrontListings();
+  }
+
+  async function loadConfiguredDataSources(): Promise<void> {
+    if (typeof fetch !== 'function') {
+      configuredDataSources = [];
+      return;
+    }
+    try {
+      const response = await fetch('/api/local/sdn-nodes', {
+        headers: { accept: 'application/json' },
+      });
+      configuredDataSources = response.ok ? normalizeConfiguredDataSources(await response.json()) : [];
+    } catch {
+      configuredDataSources = [];
+    }
+  }
+
+  async function loadStorefrontListings(): Promise<void> {
+    if (!backend) {
+      storefrontListings = [];
+      return;
+    }
+    try {
+      const result = await backend.searchListings('');
+      storefrontListings = result.data ?? [];
+      directoryStatus = result.ok ? '' : result.capability.reason ?? '';
+    } catch (error) {
+      storefrontListings = [];
+      directoryStatus = errorMessage(error);
+    }
+  }
+
+  function setPeerView(view: PeerView): void {
+    peerView = view;
+    if (view !== 'peer-detail') selectedPeerId = '';
+    feedStatus = '';
+  }
+
+  function showPeerDetail(peer: ObservedSdnPeer): void {
+    selectedPeerId = peer.id;
+    peerView = 'peer-detail';
+  }
 
   function getPeerEpm(peer: ObservedSdnPeer): HostedEpmRecord | null {
     return hostedEpms.find((record) => record.peerId === peer.id || record.id === peer.id) ?? null;
+  }
+
+  function ownertrustForPeer(peerId: string): PgpOwnertrust {
+    return dataDirectoryState.peerTrust[peerId] ?? DEFAULT_OWNERTRUST;
+  }
+
+  function handleOwnertrustChange(peer: ObservedSdnPeer, event: Event): void {
+    const value = (event.currentTarget as HTMLSelectElement).value as PgpOwnertrust;
+    dataDirectoryState = updatePeerOwnertrust(dataDirectoryState, peer.id, value);
+    persistDataDirectoryState(dataDirectoryState);
   }
 
   function setSort(column: PeerSortColumn): void {
@@ -59,7 +188,7 @@
     return [
       displayNameForPeer(peer),
       peer.id,
-      peer.trustLevel,
+      ownertrustForPeer(peer.id),
       peerIp(peer),
       peer.agentVersion ?? '',
       peerEmail(peer),
@@ -76,19 +205,126 @@
   function peerSortValue(peer: ObservedSdnPeer, column: PeerSortColumn): string {
     if (column === 'name') return displayNameForPeer(peer);
     if (column === 'peerId') return peer.id;
-    if (column === 'trust') return peer.trustLevel;
+    if (column === 'trust') return ownertrustForPeer(peer.id);
     if (column === 'ip') return peerIp(peer);
     return peer.agentVersion ?? '';
-  }
-
-  function togglePeer(peer: ObservedSdnPeer): void {
-    expandedPeerId = expandedPeerId === peer.id ? '' : peer.id;
   }
 
   function handlePeerRowKeydown(event: KeyboardEvent, peer: ObservedSdnPeer): void {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
-    togglePeer(peer);
+    showPeerDetail(peer);
+  }
+
+  function subscribeToDataFeed(feed: PeerDataFeed): void {
+    dataDirectoryState = upsertDataFeedSubscription(dataDirectoryState, {
+      dataSourceId: feed.dataSourceId,
+      peerId: feed.peerId,
+      standardId: feed.standardId,
+      providerName: feed.providerName,
+      providerPublicKey: feed.providerPublicKey,
+      remoteRows: feed.remoteRows,
+      storageCap: DEFAULT_SUBSCRIPTION_STORAGE_CAP,
+      storageUnit: DEFAULT_SUBSCRIPTION_STORAGE_UNIT,
+      syncFilter: '',
+    });
+    persistDataDirectoryState(dataDirectoryState);
+    feedStatus = `Subscribed ${feed.providerName} ${feed.standardId}; ownertrust is ${ownertrustForPeer(feed.peerId)}.`;
+  }
+
+  function isFeedSubscribed(feed: PeerDataFeed): boolean {
+    const key = subscriptionKey(feed.dataSourceId, feed.standardId);
+    return dataDirectoryState.subscriptions.some((subscription) => subscription.id === key);
+  }
+
+  function buildPeerDataFeeds(
+    sources: DataSourceOption[],
+    listings: Array<Record<string, unknown>>,
+    state: DataDirectoryState,
+  ): PeerDataFeed[] {
+    const feeds = new Map<string, PeerDataFeed>();
+    for (const source of sources) {
+      for (const standardId of STORE_FEED_STANDARD_IDS) {
+        const key = subscriptionKey(source.id, standardId);
+        const subscription = state.subscriptions.find((entry) => entry.id === key);
+        feeds.set(key, {
+          id: key,
+          dataSourceId: source.id,
+          peerId: source.peerId,
+          providerName: source.label,
+          providerPublicKey: source.publicKey,
+          standardId,
+          remoteRows: subscription?.remoteRows ?? 0,
+          syncAddrs: source.syncAddrs,
+        });
+      }
+    }
+
+    for (const listing of listings) {
+      if (listingKind(listing) !== 'data') continue;
+      const peerId = listingPeerId(listing);
+      if (!peerId) continue;
+      const standards = listingStandards(listing);
+      for (const standardId of standards.length ? standards : STORE_FEED_STANDARD_IDS) {
+        const dataSourceId = stringValue(listing.id) ?? stringValue(listing.listingId) ?? `listing:${peerId}:${standardId}`;
+        const key = subscriptionKey(dataSourceId, standardId);
+        if (feeds.has(key)) continue;
+        feeds.set(key, {
+          id: key,
+          dataSourceId,
+          peerId,
+          providerName: listingProviderName(listing, peerId),
+          providerPublicKey: stringValue(listing.publicKey) ?? stringValue(listing.providerPublicKey) ?? null,
+          standardId,
+          remoteRows: numberValue(listing.remoteRows) ?? numberValue(listing.recordCount) ?? 0,
+          syncAddrs: [],
+        });
+      }
+    }
+
+    return Array.from(feeds.values())
+      .sort((left, right) => left.providerName.localeCompare(right.providerName) || left.standardId.localeCompare(right.standardId));
+  }
+
+  function buildStorefrontModules(listings: Array<Record<string, unknown>>): StorefrontModule[] {
+    return listings
+      .filter((listing) => listingKind(listing) === 'module')
+      .map((listing): StorefrontModule | null => {
+        const peerId = listingPeerId(listing);
+        if (!peerId) return null;
+        return {
+          id: stringValue(listing.id) ?? stringValue(listing.pluginId) ?? `${peerId}:module`,
+          name: stringValue(listing.name) ?? stringValue(listing.title) ?? stringValue(listing.pluginId) ?? 'Module',
+          peerId,
+          providerName: listingProviderName(listing, peerId),
+          version: stringValue(listing.version) ?? '',
+          status: stringValue(listing.status) ?? '',
+        };
+      })
+      .filter((module): module is StorefrontModule => module !== null);
+  }
+
+  function buildDataSourceOptions(configuredNodes: ConfiguredSdnNode[], observedPeers: ObservedSdnPeer[]): DataSourceOption[] {
+    const observedNames = new Map(observedPeers.map((peer) => [peer.id, peer.name]));
+    const options: DataSourceOption[] = [];
+    for (const node of configuredNodes) {
+      const peerId = configuredNodePeerId(node);
+      const syncAddrs = configuredNodeSyncAddrs(node, peerId);
+      if (!peerId || syncAddrs.length === 0) continue;
+      const publicKey = configuredNodePublicKey(node) ?? peerId;
+      const label = configuredNodeLabel(node, observedNames, peerId);
+      const detail = [node.id, configuredNodeHostName(node)].filter(Boolean).join(' / ');
+      options.push({
+        id: `configured:${node.id}`,
+        label,
+        detail,
+        peerId,
+        publicKey,
+        syncAddrs,
+        searchText: [label, detail, publicKey, peerId, node.trustLevel, node.trust_level, syncAddrs.join(' ')].filter(Boolean).join(' ').toLowerCase(),
+      });
+    }
+    return dedupeDataSourceOptions(options);
   }
 
   function displayNameForPeer(peer: ObservedSdnPeer): string {
@@ -271,8 +507,134 @@
       && value.epmJson !== null;
   }
 
+  function normalizeConfiguredDataSources(payload: unknown): ConfiguredSdnNode[] {
+    const records = recordsFromPayloadKey(payload, 'nodes');
+    return records.map((record): ConfiguredSdnNode | null => {
+      const id = readRecordString(record, 'id', 'peer_id', 'peerId');
+      if (!id) return null;
+      const addrs = Array.isArray(record.addrs) ? record.addrs.filter((entry): entry is string => typeof entry === 'string') : [];
+      return {
+        id,
+        name: readRecordString(record, 'name', 'display_name', 'displayName', 'dn') ?? id,
+        addrs,
+        trust_level: readRecordString(record, 'trust_level', 'trustLevel') ?? undefined,
+        metadata: isRecord(record.metadata) ? record.metadata : {},
+      };
+    }).filter((record): record is ConfiguredSdnNode => record !== null);
+  }
+
+  function configuredNodeSyncAddrs(node: ConfiguredSdnNode, peerId: string | null): string[] {
+    if (!peerId) return [];
+    return node.addrs
+      .map((addr) => addr.trim())
+      .filter((addr) => addr.includes('/p2p/') && addr.endsWith(`/p2p/${peerId}`) && /\/tcp\/\d+\/wss?\//.test(addr));
+  }
+
+  function configuredNodeHostName(node: ConfiguredSdnNode): string {
+    return readRecordString(node.metadata ?? {}, 'host_name', 'hostName') ?? '';
+  }
+
+  function configuredNodePeerId(node: ConfiguredSdnNode): string | null {
+    return readRecordString(node.metadata ?? {}, 'peer_id', 'peerId')
+      ?? node.addrs.map((addr) => addr.split('/p2p/')[1]).find((value): value is string => Boolean(value))
+      ?? null;
+  }
+
+  function configuredNodePublicKey(node: ConfiguredSdnNode): string | null {
+    return readRecordString(node.metadata ?? {}, 'public_key', 'publicKey', 'signing_public_key', 'signingPublicKey');
+  }
+
+  function configuredNodeLabel(node: ConfiguredSdnNode, observedNames: Map<string, string>, peerId: string | null): string {
+    if (node.name && node.name !== node.id && node.name !== peerId) return node.name;
+    const observedPeerName = peerId ? observedNames.get(peerId) : null;
+    if (observedPeerName && observedPeerName !== peerId) return observedPeerName;
+    const observedNodeName = observedNames.get(node.id);
+    if (observedNodeName && observedNodeName !== node.id) return observedNodeName;
+    return node.name ?? peerId ?? node.id;
+  }
+
+  function dedupeDataSourceOptions(options: DataSourceOption[]): DataSourceOption[] {
+    const seen = new Set<string>();
+    return options.filter((source) => {
+      if (seen.has(source.id)) return false;
+      seen.add(source.id);
+      return true;
+    });
+  }
+
+  function listingKind(listing: Record<string, unknown>): 'data' | 'module' {
+    const kind = stringValue(listing.listingKind) ?? stringValue(listing.kind) ?? stringValue(listing.type);
+    return kind === 'data' || kind === 'data_stream' || kind === 'dataset' ? 'data' : 'module';
+  }
+
+  function listingPeerId(listing: Record<string, unknown>): string | null {
+    return stringValue(listing.peerId)
+      ?? stringValue(listing.providerPeerId)
+      ?? stringValue(listing.providerId)
+      ?? stringValue(listing.authorPeerId)
+      ?? null;
+  }
+
+  function listingProviderName(listing: Record<string, unknown>, fallback: string): string {
+    return stringValue(listing.providerName)
+      ?? stringValue(listing.authorName)
+      ?? stringValue(listing.sellerName)
+      ?? stringValue(listing.sourceName)
+      ?? fallback;
+  }
+
+  function listingStandards(listing: Record<string, unknown>): string[] {
+    const values = [
+      ...stringArrayValue(listing.standards),
+      ...stringArrayValue(listing.standardsUsed),
+      ...stringArrayValue(listing.schemas),
+      stringValue(listing.standardId),
+      stringValue(listing.schemaName),
+    ].filter((value): value is string => Boolean(value));
+    return Array.from(new Set(values.map((value) => value.split('.')[0]?.trim().toUpperCase() ?? '').filter(Boolean)));
+  }
+
+  function stringArrayValue(value: unknown): string[] {
+    return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0) : [];
+  }
+
+  function recordsFromPayloadKey(payload: unknown, key: string): Array<Record<string, unknown>> {
+    if (Array.isArray(payload)) return payload.filter(isRecord);
+    if (!isRecord(payload)) return [];
+    const value = payload[key];
+    if (Array.isArray(value)) return value.filter(isRecord);
+    return [];
+  }
+
+  function readRecordString(record: Record<string, unknown>, ...keys: string[]): string | null {
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return null;
+  }
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  }
+
   function stringValue(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  }
+
+  function numberValue(value: unknown): number | null {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : null;
+  }
+
+  function formatNumber(value: number): string {
+    return new Intl.NumberFormat('en-US').format(value);
+  }
+
+  function shorten(value: string | null | undefined, length = 30): string {
+    if (!value) return '';
+    if (value.length <= length) return value;
+    return `${value.slice(0, Math.max(4, length - 5))}...${value.slice(-4)}`;
   }
 
   function errorMessage(error: unknown): string {
@@ -280,83 +642,272 @@
   }
 </script>
 
-<div class="sdn-grid sdn-grid-3">
-  <MetricCard title="Observed Peers" value={peers.length} detail="SDN identify records only" tone="online" />
-  <MetricCard title="Data Feeds" value="degraded" detail="Marketplace feed adapter pending" tone="warning" />
-  <MetricCard title="Mission Loadout" value="draft" detail="Assemble providers, schemas, and modules" tone="special" />
-</div>
+{#if peerView === 'home'}
+  <section class="sdn-storefront-home" aria-label="Peers storefront">
+    <div class="sdn-storefront-directory">
+      <h2>Directory Search</h2>
+      <DirectorySearchPanel {backend} />
+    </div>
 
-<article class="sdn-card">
-  <div class="sdn-card-head">
-    <h2>Trusted And Observed Peers</h2>
-    <input class="sdn-input" bind:value={query} placeholder="Search peers" aria-label="Search peers" />
-  </div>
-  <div class="sdn-table-wrap">
-    <table class="sdn-table">
-      <thead>
-        <tr>
-          <th><button type="button" on:click={() => setSort('name')}>{sortablePeerHeader('name', 'Name')}</button></th>
-          <th><button type="button" on:click={() => setSort('peerId')}>{sortablePeerHeader('peerId', 'PeerID')}</button></th>
-          <th><button type="button" on:click={() => setSort('trust')}>{sortablePeerHeader('trust', 'Trust')}</button></th>
-          <th><button type="button" on:click={() => setSort('ip')}>{sortablePeerHeader('ip', 'IP')}</button></th>
-          <th><button type="button" on:click={() => setSort('agent')}>{sortablePeerHeader('agent', 'Agent')}</button></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each visiblePeers as peer}
-          <tr
-            class:active={expandedPeerId === peer.id}
-            role="button"
-            tabindex="0"
-            aria-expanded={expandedPeerId === peer.id}
-            on:click={() => togglePeer(peer)}
-            on:keydown={(event) => handlePeerRowKeydown(event, peer)}
-          >
-            <td>{displayNameForPeer(peer)}</td>
-            <td><code>{peer.id}</code></td>
-            <td>{peer.trustLevel}</td>
-            <td>{peerIp(peer)}</td>
-            <td>{peer.agentVersion ?? ''}</td>
-          </tr>
-          {#if expandedPeerId === peer.id}
-            <tr class="sdn-peer-expanded-row">
-              <td colspan="5">
-                <section class="sdn-peer-expanded">
-                  <div class="sdn-qr-frame" aria-label="Public peer vCard QR">
-                    {#if peerQrDataUrl}
-                      <img src={peerQrDataUrl} alt="Public vCard QR code" />
-                    {/if}
-                  </div>
-                  <div>
-                    <h3>EPM Fields</h3>
-                    {#if peerQrState}
-                      <p class="sdn-status-line">{peerQrState}</p>
-                    {/if}
-                    <dl class="sdn-profile-details sdn-peer-fields">
-                      {#each peerEpmSummary(peer) as field}
-                        <div>
-                          <dt>{field.label}</dt>
-                          <dd>{field.value}</dd>
-                        </div>
-                      {/each}
-                    </dl>
-                  </div>
-                </section>
-              </td>
+    <div class="sdn-storefront-stats" aria-label="Peer storefront summary">
+      <button class="sdn-storefront-stat" type="button" on:click={() => setPeerView('observed')}>
+        <span>Observed Peers</span>
+        <strong>{formatNumber(peers.length)}</strong>
+      </button>
+      <button class="sdn-storefront-stat" type="button" on:click={() => setPeerView('feeds')}>
+        <span>Data Feeds</span>
+        <strong>{formatNumber(peerDataFeeds.length)}</strong>
+      </button>
+    </div>
+  </section>
+{:else if peerView === 'observed'}
+  <section class="sdn-peer-workspace" aria-label="Observed peer directory">
+    <nav class="sdn-breadcrumbs" aria-label="Peer breadcrumbs">
+      <button type="button" on:click={() => setPeerView('home')}>Peers</button>
+      <span>/ Directory</span>
+    </nav>
+
+    <article class="sdn-card">
+      <div class="sdn-card-head">
+        <div>
+          <h2>Trusted And Observed Peers</h2>
+          <p>{formatNumber(trustedPeers.length)} trusted / {formatNumber(peers.length)} observed</p>
+        </div>
+        <input class="sdn-input" bind:value={query} placeholder="Search peers" aria-label="Search peers" />
+      </div>
+
+      <div class="sdn-trust-key" aria-label="Trust key">
+        <strong>Trust key</strong>
+        <span>unknown: not evaluated</span>
+        <span>never: explicitly not trusted</span>
+        <span>marginal: limited data source trust</span>
+        <span>full: fully trusted</span>
+        <span>ultimate: local ultimate ownertrust</span>
+      </div>
+
+      <div class="sdn-table-wrap">
+        <table class="sdn-table">
+          <thead>
+            <tr>
+              <th><button type="button" on:click={() => setSort('name')}>{sortablePeerHeader('name', 'Name')}</button></th>
+              <th><button type="button" on:click={() => setSort('peerId')}>{sortablePeerHeader('peerId', 'PeerID')}</button></th>
+              <th><button type="button" on:click={() => setSort('trust')}>{sortablePeerHeader('trust', 'Ownertrust')}</button></th>
+              <th><button type="button" on:click={() => setSort('ip')}>{sortablePeerHeader('ip', 'IP')}</button></th>
+              <th><button type="button" on:click={() => setSort('agent')}>{sortablePeerHeader('agent', 'Agent')}</button></th>
             </tr>
+          </thead>
+          <tbody>
+            {#each visiblePeers as peer}
+              <tr
+                role="button"
+                tabindex="0"
+                on:click={() => showPeerDetail(peer)}
+                on:keydown={(event) => handlePeerRowKeydown(event, peer)}
+              >
+                <td>{displayNameForPeer(peer)}</td>
+                <td><code>{peer.id}</code></td>
+                <td>
+                  <select
+                    class="sdn-input sdn-select sdn-ownertrust-select"
+                    aria-label={`${displayNameForPeer(peer)} ownertrust`}
+                    value={ownertrustForPeer(peer.id)}
+                    on:click|stopPropagation
+                    on:keydown|stopPropagation
+                    on:change={(event) => handleOwnertrustChange(peer, event)}
+                  >
+                    {#each PGP_OWNERTRUST_LEVELS as level}
+                      <option value={level}>{level}</option>
+                    {/each}
+                  </select>
+                </td>
+                <td>{peerIp(peer)}</td>
+                <td>{peer.agentVersion ?? ''}</td>
+              </tr>
+            {:else}
+              <tr><td colspan="5">No SDN peers loaded.</td></tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+{:else if peerView === 'feeds'}
+  <section class="sdn-peer-workspace" aria-label="Data feeds">
+    <nav class="sdn-breadcrumbs" aria-label="Peer breadcrumbs">
+      <button type="button" on:click={() => setPeerView('home')}>Peers</button>
+      <span>/ Data Feeds</span>
+    </nav>
+
+    <article class="sdn-card">
+      <div class="sdn-card-head">
+        <div>
+          <h2>Data Feeds</h2>
+          <p>{formatNumber(dataDirectoryState.subscriptions.length)} subscriptions</p>
+        </div>
+      </div>
+
+      <div class="sdn-table-wrap">
+        <table class="sdn-table sdn-feed-table">
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Schema</th>
+              <th>Remote rows</th>
+              <th>Ownertrust</th>
+              <th>Subscribe</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each peerDataFeeds as feed}
+              <tr>
+                <td>
+                  <strong>{feed.providerName}</strong>
+                  <small>{shorten(feed.providerPublicKey ?? feed.peerId, 42)}</small>
+                </td>
+                <td>{feed.standardId}</td>
+                <td>{formatNumber(feed.remoteRows)}</td>
+                <td>{ownertrustForPeer(feed.peerId)}</td>
+                <td>
+                  <button
+                    class="sdn-button sdn-button-muted sdn-button-compact"
+                    type="button"
+                    disabled={isFeedSubscribed(feed)}
+                    on:click={() => subscribeToDataFeed(feed)}
+                  >
+                    {isFeedSubscribed(feed) ? 'Subscribed' : 'Subscribe'}
+                  </button>
+                </td>
+              </tr>
+            {:else}
+              <tr><td colspan="5">No published feeds discovered from configured peers.</td></tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+
+      {#if feedStatus}
+        <p class="sdn-empty-inline" role="status">{feedStatus}</p>
+      {:else if directoryStatus}
+        <p class="sdn-empty-inline" role="status">{directoryStatus}</p>
+      {/if}
+    </article>
+  </section>
+{:else if selectedPeer}
+  <section class="sdn-peer-workspace" aria-label="Peer details">
+    <nav class="sdn-breadcrumbs" aria-label="Peer breadcrumbs">
+      <button type="button" on:click={() => setPeerView('observed')}>Directory</button>
+      <span>/ {displayNameForPeer(selectedPeer)}</span>
+    </nav>
+
+    <article class="sdn-card">
+      <div class="sdn-card-head">
+        <div>
+          <h2>{displayNameForPeer(selectedPeer)}</h2>
+          <p>{selectedPeer.id}</p>
+        </div>
+        <select
+          class="sdn-input sdn-select sdn-ownertrust-select"
+          aria-label={`${displayNameForPeer(selectedPeer)} ownertrust`}
+          value={ownertrustForPeer(selectedPeer.id)}
+          on:change={(event) => handleOwnertrustChange(selectedPeer, event)}
+        >
+          {#each PGP_OWNERTRUST_LEVELS as level}
+            <option value={level}>{level}</option>
+          {/each}
+        </select>
+      </div>
+
+      <section class="sdn-peer-expanded">
+        <div class="sdn-qr-frame" aria-label="Public peer vCard QR">
+          {#if peerQrDataUrl}
+            <img src={peerQrDataUrl} alt="Public vCard QR code" />
           {/if}
-        {:else}
-          <tr><td colspan="5">No SDN peers loaded.</td></tr>
-        {/each}
-      </tbody>
-    </table>
-  </div>
-</article>
+        </div>
+        <div>
+          <h3>EPM Fields</h3>
+          {#if peerQrState}
+            <p class="sdn-status-line">{peerQrState}</p>
+          {/if}
+          <dl class="sdn-profile-details sdn-peer-fields">
+            {#each peerEpmSummary(selectedPeer) as field}
+              <div>
+                <dt>{field.label}</dt>
+                <dd>{field.value}</dd>
+              </div>
+            {/each}
+          </dl>
+        </div>
+      </section>
+    </article>
 
-<DirectorySearchPanel {backend} />
+    <article class="sdn-card">
+      <div class="sdn-card-head">
+        <h2>Available Data</h2>
+      </div>
+      <div class="sdn-table-wrap">
+        <table class="sdn-table sdn-feed-table">
+          <thead>
+            <tr>
+              <th>Schema</th>
+              <th>Remote rows</th>
+              <th>Source</th>
+              <th>Subscribe</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each selectedPeerFeeds as feed}
+              <tr>
+                <td>{feed.standardId}</td>
+                <td>{formatNumber(feed.remoteRows)}</td>
+                <td>{feed.providerName}</td>
+                <td>
+                  <button
+                    class="sdn-button sdn-button-muted sdn-button-compact"
+                    type="button"
+                    disabled={isFeedSubscribed(feed)}
+                    on:click={() => subscribeToDataFeed(feed)}
+                  >
+                    {isFeedSubscribed(feed) ? 'Subscribed' : 'Subscribe'}
+                  </button>
+                </td>
+              </tr>
+            {:else}
+              <tr><td colspan="4">No data feeds published for this peer.</td></tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      {#if feedStatus}
+        <p class="sdn-empty-inline" role="status">{feedStatus}</p>
+      {/if}
+    </article>
 
-<section class="sdn-panel-grid">
-  <article class="sdn-card sdn-glass"><h2>Marketplace</h2><p>Data feeds, modules, and schemas appear here as backend endpoints graduate from degraded capability state.</p></article>
-  <article class="sdn-card sdn-glass"><h2>Modules</h2><p>Install and configure analysis modules from verified providers.</p></article>
-  <article class="sdn-card sdn-glass"><h2>Mission Builder</h2><p>Combine peers, feeds, modules, and retention rules into a repeatable mission loadout.</p></article>
-</section>
+    <article class="sdn-card">
+      <div class="sdn-card-head">
+        <h2>Available Modules</h2>
+      </div>
+      <div class="sdn-table-wrap">
+        <table class="sdn-table">
+          <thead>
+            <tr>
+              <th>Module</th>
+              <th>Version</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each selectedPeerModules as module}
+              <tr>
+                <td>{module.name}</td>
+                <td>{module.version}</td>
+                <td>{module.status}</td>
+              </tr>
+            {:else}
+              <tr><td colspan="3">No modules published for this peer.</td></tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+{/if}
