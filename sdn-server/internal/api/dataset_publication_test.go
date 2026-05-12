@@ -109,6 +109,16 @@ func (f *fakeDatasetUpdatePublisher) PublishDatasetUpdatePNM(ctx context.Context
 	return nil
 }
 
+func TestUnlimitedDatasetPublicationLimitUsesNativeIntMaximum(t *testing.T) {
+	limit := unlimitedDatasetPublicationLimit()
+	if limit <= 250000 {
+		t.Fatalf("unlimitedDatasetPublicationLimit = %d, want above legacy cap", limit)
+	}
+	if limit != int(^uint(0)>>1) {
+		t.Fatalf("unlimitedDatasetPublicationLimit = %d, want native int maximum", limit)
+	}
+}
+
 func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testing.T) {
 	validator, err := sds.NewValidator(nil)
 	if err != nil {
@@ -244,6 +254,25 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	}
 	if len(publisher.announcement.PNM) == 0 {
 		t.Fatal("publisher received empty PNM")
+	}
+	publishedShard, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		SchemaName:   "CAT.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-satcat-csv",
+		BatchID:      "source-sha-001",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        10,
+		RecordCount:  2,
+	})
+	if err != nil {
+		t.Fatalf("FindDatasetShardPublication failed: %v", err)
+	}
+	if !found {
+		t.Fatal("published shard registry entry was not stored")
+	}
+	if publishedShard.ShardCID != result.ShardCID || publishedShard.IndexCID != result.IndexCID || publishedShard.ManifestCID != result.ManifestCID || publishedShard.PNMCID != result.PNMCID {
+		t.Fatalf("published shard registry entry mismatch: %#v result=%#v", publishedShard, result)
 	}
 }
 

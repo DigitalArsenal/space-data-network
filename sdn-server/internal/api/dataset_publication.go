@@ -18,7 +18,10 @@ import (
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
-const defaultDatasetPublicationLimit = 250
+const (
+	defaultDatasetPublicationLimit = 250
+	maxDatasetPublicationChunkSize = 50000
+)
 
 // DatasetPublicationRequest describes a local request to export, pin, sign,
 // and announce a dataset update from the daemon's current FlatSQL store.
@@ -197,12 +200,12 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 	if chunkSize <= 0 {
 		chunkSize = defaultDatasetPublicationLimit
 	}
-	if chunkSize > 1000 {
-		chunkSize = 1000
+	if chunkSize > maxDatasetPublicationChunkSize {
+		chunkSize = maxDatasetPublicationChunkSize
 	}
 	totalLimit := req.Limit
 	if totalLimit <= 0 {
-		totalLimit = 250000
+		totalLimit = unlimitedDatasetPublicationLimit()
 	}
 	datasetID := strings.TrimSpace(req.DatasetID)
 	if datasetID == "" {
@@ -247,6 +250,10 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 	series.ManifestCID = first.ManifestCID
 	series.PNMCID = first.PNMCID
 	return series, nil
+}
+
+func unlimitedDatasetPublicationLimit() int {
+	return int(^uint(0) >> 1)
 }
 
 func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context.Context, req DatasetPublicationRequest, schema string, filter storage.IndexedRecordQuery, updateID string) (*DatasetPublicationResult, error) {
@@ -313,6 +320,28 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context
 		CombinedCelesTrak: req.CombinedCelesTrak,
 	}); err != nil {
 		return nil, err
+	}
+	if err := s.store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
+		SchemaName:   schema,
+		ProviderID:   filter.ProviderID,
+		SourceName:   filter.SourceName,
+		BatchID:      filter.BatchID,
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       filter.Offset,
+		Limit:        filter.Limit,
+		RecordCount:  export.RecordCount,
+		ByteCount:    export.ShardBytes,
+		ShardCID:     export.ShardCID,
+		IndexCID:     export.IndexCID,
+		ManifestCID:  manifest.CID,
+		PNMCID:       pnmCID,
+		ShardSHA256:  export.ShardSHA256,
+		IndexSHA256:  export.IndexSHA256,
+		QuerySHA256:  export.QuerySHA256,
+		ResultSHA256: export.ResultSHA256,
+		PublishedAt:  publishedAt,
+	}); err != nil {
+		return nil, fmt.Errorf("record dataset shard publication: %w", err)
 	}
 	return &DatasetPublicationResult{
 		Schema:      schema,

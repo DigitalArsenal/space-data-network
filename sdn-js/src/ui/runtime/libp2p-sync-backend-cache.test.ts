@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type FlatSqlSyncChunk, type FlatSqlSyncQuery } from '../../flatsql-sync';
+import { type FlatSqlSyncChunk, type FlatSqlSyncManifest, type FlatSqlSyncQuery } from '../../flatsql-sync';
 import { withTimeout } from './async-timeout';
 import { Libp2pFlatSqlSyncBackendCache } from './libp2p-sync-backend-cache';
 import type { Libp2pFlatSqlSyncClient } from './sdn-backend-libp2p-sync';
@@ -11,6 +11,9 @@ describe('libp2p FlatSQL sync backend cache', () => {
       const client = {
         async readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk> {
           return headerOnlyChunk(query.schema);
+        },
+        async openFlatSqlSyncManifest(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest> {
+          return manifestFor(query.schema);
         },
         async stop() {},
       };
@@ -33,6 +36,9 @@ describe('libp2p FlatSQL sync backend cache', () => {
       async readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk> {
         return headerOnlyChunk(query.schema);
       },
+      async openFlatSqlSyncManifest(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest> {
+        return manifestFor(query.schema);
+      },
       async stop() {
         stopCount += 1;
       },
@@ -52,6 +58,9 @@ describe('libp2p FlatSQL sync backend cache', () => {
       async readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk> {
         calls.push(query);
         return headerOnlyChunk(query.schema);
+      },
+      async openFlatSqlSyncManifest(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest> {
+        return manifestFor(query.schema);
       },
     }));
 
@@ -75,6 +84,41 @@ describe('libp2p FlatSQL sync backend cache', () => {
         op: 'read_chunk',
         limit: 50_000,
         offset: 10_000,
+      }),
+    ]);
+  });
+
+  it('lets workers open a published shard manifest through the cached libp2p client', async () => {
+    const calls: FlatSqlSyncQuery[] = [];
+    const cache = new Libp2pFlatSqlSyncBackendCache(async () => ({
+      async readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk> {
+        return headerOnlyChunk(query.schema);
+      },
+      async openFlatSqlSyncManifest(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest> {
+        calls.push(query);
+        return manifestFor(query.schema);
+      },
+    }));
+
+    await expect(cache.openFlatSqlSyncManifest(remoteConfig(), {
+      targetPeerId: '',
+      schema: 'OMM.fbs',
+      op: 'open_manifest',
+      queryProfile: 'dataset-publication-offset-v1',
+      limit: 50_000,
+    })).resolves.toMatchObject({
+      schema: 'OMM.fbs',
+      segments: [expect.objectContaining({ cid: 'bafkshard', indexCid: 'bafkindex' })],
+    });
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        targetPeerId: '16Uiu2HCelesTrak',
+        candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+        schema: 'OMM.fbs',
+        op: 'open_manifest',
+        queryProfile: 'dataset-publication-offset-v1',
+        limit: 50_000,
       }),
     ]);
   });
@@ -120,5 +164,33 @@ function headerOnlyChunk(schema: string): FlatSqlSyncChunk {
       results: [],
     },
     records: [],
+  };
+}
+
+function manifestFor(schema: string): FlatSqlSyncManifest {
+  return {
+    manifestId: 'manifest-1',
+    schema,
+    totalCount: 50_000,
+    totalBytes: 8_000_000,
+    snapshotId: 'snapshot-1',
+    head: 'snapshot-1',
+    highWaterMark: '1:2:3:50000',
+    queryProfile: 'dataset-publication-offset-v1',
+    syncProtocol: '/space-data-network/flatsql-sync/1.0.0',
+    maxChunkSize: 50_000,
+    transports: ['libp2p-websocket', 'libp2p-webrtc'],
+    segments: [{
+      index: 0,
+      cursor: 'MA',
+      nextCursor: '',
+      rowCount: 50_000,
+      byteCount: 8_000_000,
+      chunkHash: 'result-sha',
+      cid: 'bafkshard',
+      indexCid: 'bafkindex',
+      manifestCid: 'bafkmanifest',
+      shardSha256: 'shard-sha',
+    }],
   };
 }

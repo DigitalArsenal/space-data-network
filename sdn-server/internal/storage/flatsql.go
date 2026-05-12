@@ -201,6 +201,9 @@ func (s *FlatSQLStore) initTables() error {
 	if err := s.initSourceSummaryTable(); err != nil {
 		return fmt.Errorf("failed to create source summary table: %w", err)
 	}
+	if err := s.initDatasetShardPublicationTable(); err != nil {
+		return fmt.Errorf("failed to create dataset shard publication table: %w", err)
+	}
 
 	// Directory index for node/user EPM records.
 	directoryExisted, err := s.tableExists("sdn_directory")

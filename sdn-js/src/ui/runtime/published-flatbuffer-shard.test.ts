@@ -1,0 +1,112 @@
+import { describe, expect, it } from 'vitest';
+import { rawRecordsFromPublishedFlatSqlSegment } from './published-flatbuffer-shard';
+
+const encoder = new TextEncoder();
+
+describe('published FlatSQL shard reader', () => {
+  it('hydrates raw records from a DPM shard and its materialized index', async () => {
+    const first = new Uint8Array([1, 2, 3]);
+    const second = new Uint8Array([4, 5]);
+    const shard = concatFrames([first, second]);
+    const index = encoder.encode(JSON.stringify({
+      version: 1,
+      schemaName: 'OMM.fbs',
+      shardCid: 'bafkshard',
+      shardSha256: await sha256Hex(shard),
+      recordCount: 2,
+      records: [
+        {
+          cid: 'cid-1',
+          offset: 0,
+          length: 3,
+          sourceTags: {
+            providerId: 'space-data-network-02',
+            sourceName: 'celestrak-gp',
+            batchId: 'batch-001',
+            producerPeerId: 'producer-peer',
+            producerPublicKey: 'producer-key',
+          },
+        },
+        {
+          cid: 'cid-2',
+          offset: 7,
+          length: 2,
+          sourceTags: {
+            providerId: 'space-data-network-02',
+            sourceName: 'celestrak-gp',
+          },
+        },
+      ],
+    }));
+
+    const records = await rawRecordsFromPublishedFlatSqlSegment({
+      schema: 'OMM.fbs',
+      providerPeerId: '16Uiu2HCelesTrak',
+      cid: 'bafkshard',
+      indexCid: 'bafkindex',
+      shardSha256: await sha256Hex(shard),
+      fetchCidBytes: async (cid) => {
+        if (cid === 'bafkshard') return shard;
+        if (cid === 'bafkindex') return index;
+        throw new Error(`unexpected CID ${cid}`);
+      },
+    });
+
+    expect(records).toEqual([
+      expect.objectContaining({
+        schemaName: 'OMM.fbs',
+        cid: 'cid-1',
+        peerId: '16Uiu2HCelesTrak',
+        providerId: 'space-data-network-02',
+        sourceName: 'celestrak-gp',
+        batchId: 'batch-001',
+        producerPeerId: 'producer-peer',
+        producerPublicKey: 'producer-key',
+        sizeBytes: 3,
+        dataBytes: first,
+      }),
+      expect.objectContaining({
+        cid: 'cid-2',
+        sizeBytes: 2,
+        dataBytes: second,
+      }),
+    ]);
+  });
+
+  it('rejects a shard whose bytes do not match the advertised SHA-256', async () => {
+    const shard = concatFrames([new Uint8Array([1, 2, 3])]);
+    const index = encoder.encode(JSON.stringify({
+      version: 1,
+      schemaName: 'OMM.fbs',
+      recordCount: 1,
+      records: [{ cid: 'cid-1', offset: 0, length: 3 }],
+    }));
+
+    await expect(rawRecordsFromPublishedFlatSqlSegment({
+      schema: 'OMM.fbs',
+      providerPeerId: '16Uiu2HCelesTrak',
+      cid: 'bafkshard',
+      indexCid: 'bafkindex',
+      shardSha256: 'not-the-sha',
+      fetchCidBytes: async (cid) => cid === 'bafkshard' ? shard : index,
+    })).rejects.toThrow('shard SHA-256 mismatch');
+  });
+});
+
+function concatFrames(frames: Uint8Array[]): Uint8Array {
+  const totalLength = frames.reduce((sum, frame) => sum + 4 + frame.byteLength, 0);
+  const out = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const frame of frames) {
+    new DataView(out.buffer).setUint32(offset, frame.byteLength, false);
+    offset += 4;
+    out.set(frame, offset);
+    offset += frame.byteLength;
+  }
+  return out;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}

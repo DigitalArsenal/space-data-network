@@ -218,6 +218,68 @@ func TestFlatSQLSyncProtocolOpenManifestReturnsOrderedSegments(t *testing.T) {
 	}
 }
 
+func TestFlatSQLSyncProtocolOpenManifestIncludesPublishedShardCIDs(t *testing.T) {
+	store := newFlatSQLSyncTestStore(t)
+	storeFlatSQLSyncTestOMM(t, store, 56775, "STARLINK-6292")
+	if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "test-batch",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        50000,
+		RecordCount:  1,
+		ByteCount:    2048,
+		ShardCID:     "bafkshard",
+		IndexCID:     "bafkindex",
+		ManifestCID:  "bafkmanifest",
+		ShardSHA256:  "shard-sha",
+		ResultSHA256: "result-sha",
+	}); err != nil {
+		t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+	}
+	handler := NewFlatSQLSyncHandler(store)
+
+	var out bytes.Buffer
+	if err := handler.handleOpenManifest(&out, flatSQLSyncRequest{
+		Op:           "open_manifest",
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "test-batch",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Limit:        50000,
+	}); err != nil {
+		t.Fatalf("open manifest failed: %v", err)
+	}
+
+	var body struct {
+		QueryProfile string `json:"query_profile"`
+		Segments     []struct {
+			CID         string `json:"cid"`
+			IndexCID    string `json:"index_cid"`
+			ManifestCID string `json:"manifest_cid"`
+			ShardSHA256 string `json:"shard_sha256"`
+			ChunkHash   string `json:"chunk_hash"`
+		} `json:"segments"`
+	}
+	readFlatSQLSyncTestJSONFrame(t, &out, &body)
+	if body.QueryProfile != storage.DatasetPublicationQueryProfile {
+		t.Fatalf("query profile = %q, want %q", body.QueryProfile, storage.DatasetPublicationQueryProfile)
+	}
+	if len(body.Segments) != 1 {
+		t.Fatalf("segments = %d, want 1: %+v", len(body.Segments), body.Segments)
+	}
+	segment := body.Segments[0]
+	if segment.CID != "bafkshard" || segment.IndexCID != "bafkindex" || segment.ManifestCID != "bafkmanifest" {
+		t.Fatalf("published CIDs missing from manifest segment: %+v", segment)
+	}
+	if segment.ShardSHA256 != "shard-sha" || segment.ChunkHash != "result-sha" {
+		t.Fatalf("published hashes missing from manifest segment: %+v", segment)
+	}
+}
+
 func newFlatSQLSyncTestStore(t *testing.T) *storage.FlatSQLStore {
 	t.Helper()
 	tmpDir, err := os.MkdirTemp("", "sdn-flatsql-sync-test-*")

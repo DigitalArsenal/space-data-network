@@ -107,6 +107,45 @@ test('data route renders a searchable remote data source without workbench statu
   await expect(reloadedSchemaSync.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
 });
 
+test('data route keeps the shell fixed while the content pane scrolls', async ({ page }) => {
+  await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
+
+  const layout = await page.evaluate(() => {
+    const content = document.querySelector<HTMLElement>('.sdn-content');
+    const topBar = document.querySelector<HTMLElement>('.sdn-top-bar');
+    if (!content || !topBar) throw new Error('missing app shell');
+    const filler = document.createElement('div');
+    filler.style.height = '1600px';
+    filler.setAttribute('data-test-filler', 'true');
+    content.append(filler);
+    const beforeTop = topBar.getBoundingClientRect().top;
+    content.scrollTop = 480;
+    window.scrollTo(0, 480);
+    const afterTop = topBar.getBoundingClientRect().top;
+    return {
+      bodyOverflow: getComputedStyle(document.body).overflow,
+      bodyClientHeight: document.body.clientHeight,
+      bodyScrollHeight: document.body.scrollHeight,
+      contentOverflow: getComputedStyle(content).overflow,
+      contentClientHeight: content.clientHeight,
+      contentScrollHeight: content.scrollHeight,
+      contentScrollTop: content.scrollTop,
+      windowScrollY: window.scrollY,
+      beforeTop,
+      afterTop,
+    };
+  });
+
+  expect(layout.bodyOverflow).toBe('hidden');
+  expect(layout.bodyScrollHeight).toBe(layout.bodyClientHeight);
+  expect(layout.contentOverflow).toContain('auto');
+  expect(layout.contentScrollHeight).toBeGreaterThan(layout.contentClientHeight);
+  expect(layout.contentScrollTop).toBeGreaterThan(0);
+  expect(layout.windowScrollY).toBe(0);
+  expect(layout.beforeTop).toBe(0);
+  expect(layout.afterTop).toBe(0);
+});
+
 test('explore route renders CID inspection with the configured gateway', async ({ page }) => {
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/explore/bafySdnFixture');
 

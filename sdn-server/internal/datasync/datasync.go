@@ -131,13 +131,19 @@ type ManifestResponse struct {
 }
 
 type ManifestSegment struct {
-	Index      int    `json:"index"`
-	Cursor     string `json:"cursor"`
-	NextCursor string `json:"next_cursor"`
-	RowCount   int    `json:"row_count"`
-	ByteCount  int64  `json:"byte_count"`
-	ChunkHash  string `json:"chunk_hash"`
-	CID        string `json:"cid,omitempty"`
+	Index       int    `json:"index"`
+	Cursor      string `json:"cursor"`
+	NextCursor  string `json:"next_cursor"`
+	RowCount    int    `json:"row_count"`
+	ByteCount   int64  `json:"byte_count"`
+	ChunkHash   string `json:"chunk_hash"`
+	CID         string `json:"cid,omitempty"`
+	IndexCID    string `json:"index_cid,omitempty"`
+	ManifestCID string `json:"manifest_cid,omitempty"`
+	PNMCID      string `json:"pnm_cid,omitempty"`
+	ShardSHA256 string `json:"shard_sha256,omitempty"`
+	IndexSHA256 string `json:"index_sha256,omitempty"`
+	QuerySHA256 string `json:"query_sha256,omitempty"`
 }
 
 type Snapshot struct {
@@ -287,6 +293,7 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 		return nil, err
 	}
 
+	queryProfile := NormalizeQueryProfile(req.QueryProfile)
 	segments := make([]ManifestSegment, 0)
 	var totalBytes int64
 	for offset, index := 0, 0; int64(offset) < totalCount || (totalCount == 0 && index == 0); offset, index = offset+segmentLimit, index+1 {
@@ -309,15 +316,42 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 		for _, record := range records {
 			byteCount += RecordSizeBytes(record)
 		}
-		totalBytes += byteCount
-		segments = append(segments, ManifestSegment{
+		segment := ManifestSegment{
 			Index:      index,
 			Cursor:     scan.Cursor,
 			NextCursor: scan.NextCursor,
 			RowCount:   len(records),
 			ByteCount:  byteCount,
 			ChunkHash:  scan.ChunkHash,
-		})
+		}
+		if publication, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+			SchemaName:   schemaName,
+			ProviderID:   FirstNonEmpty(req.ProviderID, req.ProviderId),
+			SourceName:   req.SourceName,
+			BatchID:      FirstNonEmpty(req.BatchID, req.BatchId),
+			QueryProfile: queryProfile,
+			Offset:       offset,
+			Limit:        segmentLimit,
+			RecordCount:  len(records),
+		}); err != nil {
+			return nil, err
+		} else if found {
+			segment.CID = publication.ShardCID
+			segment.IndexCID = publication.IndexCID
+			segment.ManifestCID = publication.ManifestCID
+			segment.PNMCID = publication.PNMCID
+			segment.ShardSHA256 = publication.ShardSHA256
+			segment.IndexSHA256 = publication.IndexSHA256
+			segment.QuerySHA256 = publication.QuerySHA256
+			if publication.ResultSHA256 != "" {
+				segment.ChunkHash = publication.ResultSHA256
+			}
+			if publication.ByteCount > 0 {
+				segment.ByteCount = publication.ByteCount
+			}
+		}
+		totalBytes += segment.ByteCount
+		segments = append(segments, segment)
 		if scan.NextCursor == "" {
 			break
 		}
@@ -335,7 +369,7 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 		SnapshotID:        snapshot.SnapshotID,
 		Head:              snapshot.Head,
 		HighWaterMark:     snapshot.HighWaterMark,
-		QueryProfile:      NormalizeQueryProfile(req.QueryProfile),
+		QueryProfile:      queryProfile,
 		SyncProtocol:      ProtocolID,
 		MaxChunkSize:      maxLimit,
 		Transports:        append([]string(nil), SupportedTransports...),
@@ -509,7 +543,7 @@ func ManifestHash(manifest *ManifestResponse) string {
 	for _, segment := range manifest.Segments {
 		_, _ = fmt.Fprintf(
 			hash,
-			"%d\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s\n",
+			"%d\x00%s\x00%s\x00%d\x00%d\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\n",
 			segment.Index,
 			segment.Cursor,
 			segment.NextCursor,
@@ -517,6 +551,12 @@ func ManifestHash(manifest *ManifestResponse) string {
 			segment.ByteCount,
 			segment.ChunkHash,
 			segment.CID,
+			segment.IndexCID,
+			segment.ManifestCID,
+			segment.PNMCID,
+			segment.ShardSHA256,
+			segment.IndexSHA256,
+			segment.QuerySHA256,
 		)
 	}
 	return hex.EncodeToString(hash.Sum(nil))

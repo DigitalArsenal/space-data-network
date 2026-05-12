@@ -57,6 +57,42 @@ export interface FlatSqlSyncHeader {
   results: FlatSqlSyncRecordRef[];
 }
 
+export interface FlatSqlSyncManifest {
+  manifestId: string;
+  schema: string;
+  providerId?: string;
+  sourceName?: string;
+  batchId?: string;
+  producerPeerId?: string;
+  producerPublicKey?: string;
+  totalCount: number;
+  totalBytes: number;
+  snapshotId: string;
+  head: string;
+  highWaterMark: string;
+  queryProfile: string;
+  syncProtocol: string;
+  maxChunkSize: number;
+  transports: string[];
+  segments: FlatSqlSyncManifestSegment[];
+}
+
+export interface FlatSqlSyncManifestSegment {
+  index: number;
+  cursor: string;
+  nextCursor: string;
+  rowCount: number;
+  byteCount: number;
+  chunkHash: string;
+  cid?: string;
+  indexCid?: string;
+  manifestCid?: string;
+  pnmCid?: string;
+  shardSha256?: string;
+  indexSha256?: string;
+  querySha256?: string;
+}
+
 export interface FlatSqlSyncRecordRef {
   schemaName: string;
   cid: string;
@@ -86,6 +122,19 @@ export async function requestFlatSqlSyncChunk(
     query.candidateAddrs,
   );
   return decodeFlatSqlSyncChunk(response);
+}
+
+export async function requestFlatSqlSyncManifest(
+  transport: FlatSqlSyncTransport,
+  query: FlatSqlSyncQuery,
+): Promise<FlatSqlSyncManifest> {
+  const response = await transport.dialProtocol(
+    query.targetPeerId,
+    FLATSQL_SYNC_PROTOCOL_ID,
+    encodeFlatSqlSyncRequest({ ...query, op: 'open_manifest' }),
+    query.candidateAddrs,
+  );
+  return decodeFlatSqlSyncManifest(response);
 }
 
 export function encodeFlatSqlSyncRequest(query: FlatSqlSyncQuery): Uint8Array {
@@ -153,6 +202,18 @@ export function decodeFlatSqlSyncChunk(bytes: Uint8Array): FlatSqlSyncChunk {
   return { header, records };
 }
 
+export function decodeFlatSqlSyncManifest(bytes: Uint8Array): FlatSqlSyncManifest {
+  const first = readFrame(bytes, 0);
+  if (!first) throw new Error('missing FlatSQL sync manifest frame');
+  const payload = JSON.parse(textDecoder.decode(first.payload)) as unknown;
+  throwIfProtocolError(payload);
+  const manifest = normalizeFlatSqlSyncManifest(payload);
+  if (manifest.syncProtocol && manifest.syncProtocol !== FLATSQL_SYNC_PROTOCOL_ID) {
+    throw new Error(`unexpected FlatSQL sync protocol ${manifest.syncProtocol}`);
+  }
+  return manifest;
+}
+
 function encodeJsonFrame(payload: Record<string, unknown>): Uint8Array {
   const data = textEncoder.encode(JSON.stringify(payload));
   const frame = new Uint8Array(4 + data.byteLength);
@@ -193,6 +254,56 @@ function normalizeFlatSqlSyncHeader(payload: unknown): FlatSqlSyncHeader {
     transports: readStringArray(record.transports),
     results: results.filter(isRecord).map(normalizeFlatSqlSyncRecordRef),
   };
+}
+
+function normalizeFlatSqlSyncManifest(payload: unknown): FlatSqlSyncManifest {
+  const record = isRecord(payload) ? payload : {};
+  const segments = Array.isArray(record.segments) ? record.segments : [];
+  return {
+    manifestId: readString(record, 'manifest_id', 'manifestId') ?? '',
+    schema: readString(record, 'schema') ?? 'unknown',
+    providerId: readString(record, 'provider_id', 'providerId') ?? undefined,
+    sourceName: readString(record, 'source_name', 'sourceName') ?? undefined,
+    batchId: readString(record, 'batch_id', 'batchId') ?? undefined,
+    producerPeerId: readString(record, 'producer_peer_id', 'producerPeerId') ?? undefined,
+    producerPublicKey: readString(record, 'producer_public_key', 'producerPublicKey') ?? undefined,
+    totalCount: readNumber(record, 'total_count', 'totalCount') ?? 0,
+    totalBytes: readNumber(record, 'total_bytes', 'totalBytes') ?? 0,
+    snapshotId: readString(record, 'snapshot_id', 'snapshotId') ?? '',
+    head: readString(record, 'head') ?? '',
+    highWaterMark: readString(record, 'high_water_mark', 'highWaterMark') ?? '',
+    queryProfile: readString(record, 'query_profile', 'queryProfile') ?? '',
+    syncProtocol: readString(record, 'sync_protocol', 'syncProtocol') ?? '',
+    maxChunkSize: readNumber(record, 'max_chunk_size', 'maxChunkSize') ?? 0,
+    transports: readStringArray(record.transports),
+    segments: segments.filter(isRecord).map(normalizeFlatSqlSyncManifestSegment),
+  };
+}
+
+function normalizeFlatSqlSyncManifestSegment(record: Record<string, unknown>): FlatSqlSyncManifestSegment {
+  return {
+    index: readNumber(record, 'index') ?? 0,
+    cursor: readString(record, 'cursor') ?? '',
+    nextCursor: readString(record, 'next_cursor', 'nextCursor') ?? '',
+    rowCount: readNumber(record, 'row_count', 'rowCount') ?? 0,
+    byteCount: readNumber(record, 'byte_count', 'byteCount') ?? 0,
+    chunkHash: readString(record, 'chunk_hash', 'chunkHash') ?? '',
+    cid: readString(record, 'cid') ?? undefined,
+    indexCid: readString(record, 'index_cid', 'indexCid') ?? undefined,
+    manifestCid: readString(record, 'manifest_cid', 'manifestCid') ?? undefined,
+    pnmCid: readString(record, 'pnm_cid', 'pnmCid') ?? undefined,
+    shardSha256: readString(record, 'shard_sha256', 'shardSha256') ?? undefined,
+    indexSha256: readString(record, 'index_sha256', 'indexSha256') ?? undefined,
+    querySha256: readString(record, 'query_sha256', 'querySha256') ?? undefined,
+  };
+}
+
+function throwIfProtocolError(payload: unknown): void {
+  const status = readString(payload, 'status');
+  if (status === 'error') {
+    const message = readNestedString(payload, 'error', 'message') ?? 'FlatSQL sync request failed';
+    throw new Error(message);
+  }
 }
 
 function normalizeFlatSqlSyncRecordRef(record: Record<string, unknown>): FlatSqlSyncRecordRef {

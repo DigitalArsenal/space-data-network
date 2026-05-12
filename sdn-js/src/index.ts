@@ -13,12 +13,16 @@ export { IPFS_BOOTSTRAP_PEERS, LEGACY_ID_EXCHANGE_PROTOCOL } from './node';
 export {
   FLATSQL_SYNC_PROTOCOL_ID,
   decodeFlatSqlSyncChunk,
+  decodeFlatSqlSyncManifest,
   encodeFlatSqlSyncRequest,
   requestFlatSqlSyncChunk,
+  requestFlatSqlSyncManifest,
 } from './flatsql-sync';
 export type {
   FlatSqlSyncChunk,
   FlatSqlSyncHeader,
+  FlatSqlSyncManifest,
+  FlatSqlSyncManifestSegment,
   FlatSqlSyncQuery,
   FlatSqlSyncRecordRef,
   FlatSqlSyncTransport,

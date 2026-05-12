@@ -293,6 +293,9 @@ describe('SDN data worker source', () => {
       'syncSchemaInWorker',
       "'Remote page chunk'",
       'currentStore.ingestRecords',
+      'const resumeRecordOffset = Math.max(0, localRows - cumulativeRows);',
+      'const recordsToIngest = resumeRecordOffset > 0 ? records.slice(resumeRecordOffset) : records;',
+      'ingestRecords(options.request.standardId, recordsToIngest',
       'prepareRecordsForTransfer',
       'workerGlobal.postMessage(response, transferables)',
     ]);
@@ -412,6 +415,15 @@ describe('SDN identity styling guardrails', () => {
     expect(appCss).toMatch(/\.sdn-workbench-table-wrap\s*{[^}]*overflow-x:\s*auto/s);
     expect(appCss).toMatch(/\.sdn-workbench-table\s*{[^}]*min-width:\s*max-content/s);
     expect(appCss).toMatch(/\.sdn-workbench-table th,\s*\.sdn-workbench-table td\s*{[^}]*min-width:\s*50px/s);
+  });
+
+  it('keeps the app shell fixed while content panes own scrolling', () => {
+    const appCss = readUiSource('styles/app.css');
+
+    expect(appCss).toMatch(/html,\s*body,\s*#root\s*{[^}]*height:\s*100%[^}]*overflow:\s*hidden/s);
+    expect(appCss).toMatch(/\.sdn-app\s*{[^}]*height:\s*100vh[^}]*overflow:\s*hidden/s);
+    expect(appCss).toMatch(/\.sdn-main\s*{[^}]*grid-template-rows:\s*auto minmax\(0,\s*1fr\)[^}]*overflow:\s*hidden/s);
+    expect(appCss).toMatch(/\.sdn-content\s*{[^}]*overflow:\s*auto/s);
   });
 
   it('does not present identity as claimed or show Core claim controls', () => {

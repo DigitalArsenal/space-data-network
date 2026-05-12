@@ -416,7 +416,7 @@ func TestSyncCelestrakSpaceWeatherRequestsDatasetPublication(t *testing.T) {
 		if got, want := payload["fullCatalog"], true; got != want {
 			t.Fatalf("fullCatalog = %v, want %v", got, want)
 		}
-		if got, want := payload["chunkSize"], float64(1000); got != want {
+		if got, want := payload["chunkSize"], float64(50000); got != want {
 			t.Fatalf("chunkSize = %v, want %v", got, want)
 		}
 	case <-time.After(2 * time.Second):
