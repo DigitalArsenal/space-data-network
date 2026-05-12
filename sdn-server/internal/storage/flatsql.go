@@ -1555,6 +1555,72 @@ func (s *FlatSQLStore) GetSourceTags(schemaName, cid string) (SourceTags, error)
 	return tags, nil
 }
 
+func (s *FlatSQLStore) sourceTagsForCIDs(schemaName string, cids []string) (map[string]SourceTags, error) {
+	if _, err := sds.SchemaNameToTable(schemaName); err != nil {
+		return nil, fmt.Errorf("invalid schema name: %w", err)
+	}
+	tagsByCID := make(map[string]SourceTags, len(cids))
+	if len(cids) == 0 {
+		return tagsByCID, nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	const chunkSize = 500
+	for start := 0; start < len(cids); start += chunkSize {
+		end := start + chunkSize
+		if end > len(cids) {
+			end = len(cids)
+		}
+		chunk := cids[start:end]
+		placeholders := make([]string, len(chunk))
+		args := make([]interface{}, 0, len(chunk)+1)
+		args = append(args, schemaName)
+		for i, cid := range chunk {
+			placeholders[i] = "?"
+			args = append(args, cid)
+		}
+
+		rows, err := s.db.Query(`
+			SELECT cid, provider_id, source_name, source_url, batch_id, content_key_id,
+			       producer_peer_id, producer_public_key
+			FROM sdn_record_source_tags
+			WHERE schema_name = ? AND cid IN (`+strings.Join(placeholders, ",")+`)
+			ORDER BY cid ASC, created_at DESC
+		`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("query source tags: %w", err)
+		}
+		for rows.Next() {
+			var cid string
+			var tags SourceTags
+			if err := rows.Scan(
+				&cid,
+				&tags.ProviderID,
+				&tags.SourceName,
+				&tags.SourceURL,
+				&tags.BatchID,
+				&tags.ContentKeyID,
+				&tags.ProducerPeerID,
+				&tags.ProducerPublicKey,
+			); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan source tags: %w", err)
+			}
+			if _, exists := tagsByCID[cid]; !exists {
+				tagsByCID[cid] = tags
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("read source tags: %w", err)
+		}
+		rows.Close()
+	}
+	return tagsByCID, nil
+}
+
 // QuerySourceTaggedRecords returns records matching provider/source/batch tags.
 func (s *FlatSQLStore) QuerySourceTaggedRecords(query SourceTagQuery) ([]*Record, error) {
 	if query.Limit <= 0 {
