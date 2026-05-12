@@ -732,18 +732,27 @@ func TestBuildSignedDatasetPublicationManifestBindsExportAndQuery(t *testing.T) 
 		t.Fatalf("index CID: %v", err)
 	}
 	query := IndexedRecordQuery{
-		SchemaName:         "CAT.fbs",
-		ProviderID:         "provider-1",
-		SourceName:         "celestrak-satcat-csv",
-		BatchID:            "batch-sha",
-		CAReadyResidentSet: true,
-		From:               &from,
-		To:                 &to,
-		Limit:              100,
+		SchemaName:          "CAT.fbs",
+		ProviderID:          "provider-1",
+		SourceName:          "celestrak-satcat-csv",
+		BatchID:             "batch-sha",
+		CAReadyResidentSet:  true,
+		From:                &from,
+		To:                  &to,
+		Limit:               100,
+		AllowLargeResultSet: true,
+		OrderByCID:          true,
 	}
 	queryJSON, err := canonicalQueryJSON(query)
 	if err != nil {
 		t.Fatalf("canonicalQueryJSON failed: %v", err)
+	}
+	parsedQuery, err := indexedRecordQueryFromCanonicalJSON(queryJSON)
+	if err != nil {
+		t.Fatalf("indexedRecordQueryFromCanonicalJSON failed: %v", err)
+	}
+	if !parsedQuery.AllowLargeResultSet || !parsedQuery.OrderByCID {
+		t.Fatalf("canonical query did not preserve publication query options: %+v", parsedQuery)
 	}
 	export := &DatasetExport{
 		SchemaName:     "CAT.fbs",

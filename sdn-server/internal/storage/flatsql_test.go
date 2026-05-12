@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -480,6 +481,28 @@ func TestFlatSQLStoreQueryIndexedRecordsCommonCatalogFilters(t *testing.T) {
 	}
 	if len(providerBatch) != 2 {
 		t.Fatalf("provider batch/time-window query returned %d records, want 2", len(providerBatch))
+	}
+
+	byCID, err := store.QueryIndexedRecords(IndexedRecordQuery{
+		SchemaName: "CAT.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-satcat-csv",
+		BatchID:    "batch-001",
+		Limit:      10,
+		OrderByCID: true,
+	})
+	if err != nil {
+		t.Fatalf("QueryIndexedRecords CID order failed: %v", err)
+	}
+	wantCIDs := []string{payloadCID, rocketBodies[0].CID}
+	sort.Strings(wantCIDs)
+	if len(byCID) != len(wantCIDs) {
+		t.Fatalf("CID-ordered query returned %d records, want %d", len(byCID), len(wantCIDs))
+	}
+	for i, want := range wantCIDs {
+		if byCID[i].CID != want {
+			t.Fatalf("CID-ordered query[%d] = %s, want %s", i, byCID[i].CID, want)
+		}
 	}
 }
 

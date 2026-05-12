@@ -884,39 +884,43 @@ func verifyBytesCIDAndHash(label string, data []byte, expectedCID, expectedSHA s
 
 func indexedRecordQueryFromCanonicalJSON(data []byte) (IndexedRecordQuery, error) {
 	var payload struct {
-		SchemaName         string  `json:"schemaName"`
-		Day                string  `json:"day,omitempty"`
-		NoradCatID         *uint32 `json:"noradCatId,omitempty"`
-		EntityID           string  `json:"entityId,omitempty"`
-		ObjectType         string  `json:"objectType,omitempty"`
-		OpsStatusCode      string  `json:"opsStatusCode,omitempty"`
-		ActivePayloads     bool    `json:"activePayloads,omitempty"`
-		CAReadyResidentSet bool    `json:"caReadyResidentSet,omitempty"`
-		From               string  `json:"from,omitempty"`
-		To                 string  `json:"to,omitempty"`
-		ProviderID         string  `json:"providerId,omitempty"`
-		SourceName         string  `json:"sourceName,omitempty"`
-		BatchID            string  `json:"batchId,omitempty"`
-		Limit              int     `json:"limit,omitempty"`
-		Offset             int     `json:"offset,omitempty"`
+		SchemaName          string  `json:"schemaName"`
+		Day                 string  `json:"day,omitempty"`
+		NoradCatID          *uint32 `json:"noradCatId,omitempty"`
+		EntityID            string  `json:"entityId,omitempty"`
+		ObjectType          string  `json:"objectType,omitempty"`
+		OpsStatusCode       string  `json:"opsStatusCode,omitempty"`
+		ActivePayloads      bool    `json:"activePayloads,omitempty"`
+		CAReadyResidentSet  bool    `json:"caReadyResidentSet,omitempty"`
+		From                string  `json:"from,omitempty"`
+		To                  string  `json:"to,omitempty"`
+		ProviderID          string  `json:"providerId,omitempty"`
+		SourceName          string  `json:"sourceName,omitempty"`
+		BatchID             string  `json:"batchId,omitempty"`
+		Limit               int     `json:"limit,omitempty"`
+		Offset              int     `json:"offset,omitempty"`
+		AllowLargeResultSet bool    `json:"allowLargeResultSet,omitempty"`
+		OrderByCID          bool    `json:"orderByCid,omitempty"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return IndexedRecordQuery{}, err
 	}
 	filter := IndexedRecordQuery{
-		SchemaName:         payload.SchemaName,
-		Day:                payload.Day,
-		NoradCatID:         payload.NoradCatID,
-		EntityID:           payload.EntityID,
-		ObjectType:         payload.ObjectType,
-		OpsStatusCode:      payload.OpsStatusCode,
-		ActivePayloads:     payload.ActivePayloads,
-		CAReadyResidentSet: payload.CAReadyResidentSet,
-		ProviderID:         payload.ProviderID,
-		SourceName:         payload.SourceName,
-		BatchID:            payload.BatchID,
-		Limit:              payload.Limit,
-		Offset:             payload.Offset,
+		SchemaName:          payload.SchemaName,
+		Day:                 payload.Day,
+		NoradCatID:          payload.NoradCatID,
+		EntityID:            payload.EntityID,
+		ObjectType:          payload.ObjectType,
+		OpsStatusCode:       payload.OpsStatusCode,
+		ActivePayloads:      payload.ActivePayloads,
+		CAReadyResidentSet:  payload.CAReadyResidentSet,
+		ProviderID:          payload.ProviderID,
+		SourceName:          payload.SourceName,
+		BatchID:             payload.BatchID,
+		Limit:               payload.Limit,
+		Offset:              payload.Offset,
+		AllowLargeResultSet: payload.AllowLargeResultSet,
+		OrderByCID:          payload.OrderByCID,
 	}
 	if payload.From != "" {
 		from, err := time.Parse(time.RFC3339Nano, payload.From)

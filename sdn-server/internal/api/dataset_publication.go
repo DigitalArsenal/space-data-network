@@ -270,6 +270,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context
 		Limit:               filter.Limit,
 		Offset:              filter.Offset,
 		AllowLargeResultSet: filter.AllowLargeResultSet,
+		OrderByCID:          true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("export dataset window: %w", err)
