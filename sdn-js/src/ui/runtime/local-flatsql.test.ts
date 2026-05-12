@@ -97,6 +97,30 @@ describe('local FlatSQL datastore', () => {
     expect(store.getStats({ includeCachedBytes: false })[0]?.cachedBytes).toBeGreaterThan(0);
   });
 
+  it('ingests native FlatSQL size-prefixed streams without using JSON row objects as the sync boundary', async () => {
+    const store = await createLocalFlatSqlStore({
+      schemas: [{
+        standardId: 'OMM',
+        tableName: 'OMM',
+        fileId: '$OMM',
+        schema: OMM_SCHEMA,
+      }],
+    });
+
+    const stream = flatSqlSizePrefixedStream([stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES)]);
+    const ingested = await store.ingestFlatBufferStream('OMM', stream, {
+      recordKeys: ['celestrak-omm-stream'],
+      persist: false,
+    });
+
+    expect(ingested).toBe(1);
+    expect(store.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 1', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
+    expect(store.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      recordCount: 1,
+      ingestedRecordCount: 1,
+    }));
+  });
+
   it('tracks downloaded FlatBuffer frames separately from materialized SQL rows', async () => {
     const store = await createLocalFlatSqlStore({
       schemas: [{
@@ -180,3 +204,17 @@ describe('local FlatSQL datastore', () => {
     expect(store.query('SELECT * FROM PNM LIMIT 0', 'PNM').columns).not.toContain('https');
   });
 });
+
+function flatSqlSizePrefixedStream(records: Uint8Array[]): Uint8Array {
+  const totalLength = records.reduce((sum, frame) => sum + 4 + frame.byteLength, 0);
+  const out = new Uint8Array(totalLength);
+  const view = new DataView(out.buffer);
+  let offset = 0;
+  for (const frame of records) {
+    view.setUint32(offset, frame.byteLength, true);
+    offset += 4;
+    out.set(frame, offset);
+    offset += frame.byteLength;
+  }
+  return out;
+}

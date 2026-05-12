@@ -1,9 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { rawRecordsFromPublishedFlatSqlSegment } from './published-flatbuffer-shard';
+import { flatBufferStreamFromPublishedFlatSqlSegment, rawRecordsFromPublishedFlatSqlSegment } from './published-flatbuffer-shard';
 
 const encoder = new TextEncoder();
 
 describe('published FlatSQL shard reader', () => {
+  it('returns verified native FlatSQL shard streams without requiring the JSON materialized index', async () => {
+    const first = new Uint8Array([1, 2, 3]);
+    const second = new Uint8Array([4, 5]);
+    const shard = concatFrames([first, second]);
+
+    const stream = await flatBufferStreamFromPublishedFlatSqlSegment({
+      schema: 'OMM.fbs',
+      providerPeerId: '16Uiu2HCelesTrak',
+      cid: 'bafkshard',
+      shardSha256: await sha256Hex(shard),
+      fetchCidBytes: async (cid) => {
+        if (cid === 'bafkshard') return shard;
+        throw new Error(`unexpected CID ${cid}`);
+      },
+    });
+
+    expect(stream).toEqual(shard);
+  });
+
   it('hydrates raw records from a DPM shard and its materialized index', async () => {
     const first = new Uint8Array([1, 2, 3]);
     const second = new Uint8Array([4, 5]);
@@ -98,7 +117,7 @@ function concatFrames(frames: Uint8Array[]): Uint8Array {
   const out = new Uint8Array(totalLength);
   let offset = 0;
   for (const frame of frames) {
-    new DataView(out.buffer).setUint32(offset, frame.byteLength, false);
+    new DataView(out.buffer).setUint32(offset, frame.byteLength, true);
     offset += 4;
     out.set(frame, offset);
     offset += frame.byteLength;

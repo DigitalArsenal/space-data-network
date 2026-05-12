@@ -109,6 +109,7 @@ export interface FlatSqlSyncRecordRef {
 export interface FlatSqlSyncChunk {
   header: FlatSqlSyncHeader;
   records: Uint8Array[];
+  recordStream: Uint8Array;
 }
 
 export async function requestFlatSqlSyncChunk(
@@ -191,15 +192,9 @@ export function decodeFlatSqlSyncChunk(bytes: Uint8Array): FlatSqlSyncChunk {
     throw new Error(message);
   }
 
-  const records: Uint8Array[] = [];
-  let offset = first.nextOffset;
-  while (offset < bytes.byteLength) {
-    const frame = readFrame(bytes, offset);
-    if (!frame) break;
-    records.push(frame.payload);
-    offset = frame.nextOffset;
-  }
-  return { header, records };
+  const recordStream = bytes.slice(first.nextOffset);
+  const records = decodeFlatSqlSizePrefixedStream(recordStream);
+  return { header, records, recordStream };
 }
 
 export function decodeFlatSqlSyncManifest(bytes: Uint8Array): FlatSqlSyncManifest {
@@ -230,6 +225,28 @@ function readFrame(bytes: Uint8Array, offset: number): { payload: Uint8Array; ne
   const nextOffset = payloadOffset + length;
   if (nextOffset > bytes.byteLength) throw new Error('truncated FlatSQL sync frame payload');
   return { payload: bytes.slice(payloadOffset, nextOffset), nextOffset };
+}
+
+function decodeFlatSqlSizePrefixedStream(streamBytes: Uint8Array): Uint8Array[] {
+  const view = new DataView(streamBytes.buffer, streamBytes.byteOffset, streamBytes.byteLength);
+  const records: Uint8Array[] = [];
+  let offset = 0;
+  let index = 0;
+  while (offset < streamBytes.byteLength) {
+    if (streamBytes.byteLength - offset < 4) {
+      throw new Error(`truncated FlatSQL size-prefixed stream header at offset ${offset}`);
+    }
+    const length = view.getUint32(offset, true);
+    offset += 4;
+    const nextOffset = offset + length;
+    if (nextOffset > streamBytes.byteLength) {
+      throw new Error(`truncated FlatSQL size-prefixed stream payload at index ${index}`);
+    }
+    records.push(streamBytes.slice(offset, nextOffset));
+    offset = nextOffset;
+    index += 1;
+  }
+  return records;
 }
 
 function normalizeFlatSqlSyncHeader(payload: unknown): FlatSqlSyncHeader {

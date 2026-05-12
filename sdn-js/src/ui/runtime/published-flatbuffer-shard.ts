@@ -5,7 +5,7 @@ export interface PublishedFlatSqlSegmentInput {
   schema: string;
   providerPeerId: string;
   cid: string;
-  indexCid: string;
+  indexCid?: string;
   shardSha256?: string;
   fetchCidBytes(cid: string): Promise<Uint8Array>;
 }
@@ -34,8 +34,22 @@ interface DatasetExportIndexRecord {
 
 const textDecoder = new TextDecoder();
 
+export async function flatBufferStreamFromPublishedFlatSqlSegment(input: PublishedFlatSqlSegmentInput): Promise<Uint8Array> {
+  const shardBytes = await input.fetchCidBytes(input.cid);
+  const expectedSha = input.shardSha256?.trim();
+  if (expectedSha) {
+    const actualSha = await sha256Hex(shardBytes);
+    if (actualSha !== expectedSha) {
+      throw new Error(`shard SHA-256 mismatch for ${input.cid}`);
+    }
+  }
+  assertFlatSqlSizePrefixedStream(shardBytes);
+  return shardBytes;
+}
+
 export async function rawRecordsFromPublishedFlatSqlSegment(input: PublishedFlatSqlSegmentInput): Promise<RawDataRecord[]> {
   const shardBytes = await input.fetchCidBytes(input.cid);
+  if (!input.indexCid) throw new Error('published shard materialized index CID is required for raw record hydration');
   const indexBytes = await input.fetchCidBytes(input.indexCid);
   const expectedSha = input.shardSha256?.trim();
   if (expectedSha) {
@@ -83,7 +97,7 @@ function rawRecordFromIndexRecord(
     throw new Error(`record ${cid} offset/length outside shard`);
   }
   const view = new DataView(shardBytes.buffer, shardBytes.byteOffset + offset, 4);
-  const frameLength = view.getUint32(0, false);
+  const frameLength = view.getUint32(0, true);
   if (frameLength !== length) {
     throw new Error(`record ${cid} frame length ${frameLength} does not match index length ${length}`);
   }
@@ -101,6 +115,24 @@ function rawRecordFromIndexRecord(
     sizeBytes: dataBytes.byteLength,
     dataBytes,
   };
+}
+
+function assertFlatSqlSizePrefixedStream(streamBytes: Uint8Array): void {
+  const view = new DataView(streamBytes.buffer, streamBytes.byteOffset, streamBytes.byteLength);
+  let offset = 0;
+  let index = 0;
+  while (offset < streamBytes.byteLength) {
+    if (streamBytes.byteLength - offset < 4) {
+      throw new Error(`Invalid FlatSQL shard stream: truncated frame header at offset ${offset}`);
+    }
+    const length = view.getUint32(offset, true);
+    offset += 4;
+    if (offset + length > streamBytes.byteLength) {
+      throw new Error(`Invalid FlatSQL shard stream: truncated frame at index ${index}`);
+    }
+    offset += length;
+    index += 1;
+  }
 }
 
 function parseDatasetExportIndex(indexBytes: Uint8Array): DatasetExportIndex {

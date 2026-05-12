@@ -367,7 +367,7 @@ func readFlatSQLSyncTestRawFrames(t *testing.T, reader io.Reader) [][]byte {
 			}
 			t.Fatalf("read raw frame header failed: %v", err)
 		}
-		length := binary.BigEndian.Uint32(header[:])
+		length := binary.LittleEndian.Uint32(header[:])
 		payload := make([]byte, length)
 		if _, err := io.ReadFull(reader, payload); err != nil {
 			t.Fatalf("read raw frame payload failed: %v", err)

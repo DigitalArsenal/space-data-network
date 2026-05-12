@@ -4,16 +4,18 @@ import {
   type LocalFlatSqlStatsOptions,
   type LocalFlatSqlStore,
   type LocalFlatSqlStoreOptions,
+  type LocalFlatSqlStreamIngestOptions,
 } from './local-flatsql';
 import { TimeoutError, withTimeout } from './async-timeout';
 import { Libp2pFlatSqlSyncBackendCache } from './libp2p-sync-backend-cache';
 import {
   dataScanResultFromChunk,
+  flatSqlRecordKeys,
   rawRecordsWithDataFromFlatSqlChunk,
 } from './sdn-backend-libp2p-sync';
 import {
   fetchCidBytesFromGateway,
-  rawRecordsFromPublishedFlatSqlSegment,
+  flatBufferStreamFromPublishedFlatSqlSegment,
 } from './published-flatbuffer-shard';
 import { retryRemoteSyncOperation } from './remote-sync-retry';
 import { SerialTaskQueue } from './serial-task-queue';
@@ -30,6 +32,7 @@ import type {
 type WorkerRequest =
   | { id: number; type: 'init'; options: LocalFlatSqlStoreOptions }
   | { id: number; type: 'ingestRecords'; standardId: string; records: RawDataRecord[]; sourceOrOptions?: unknown }
+  | { id: number; type: 'ingestFlatBufferStream'; standardId: string; streamBytes: Uint8Array; options?: LocalFlatSqlStreamIngestOptions | null }
   | { id: number; type: 'flush'; standardId?: string }
   | { id: number; type: 'query'; sql: string; standardId?: string }
   | { id: number; type: 'getStats'; options?: LocalFlatSqlStatsOptions }
@@ -75,6 +78,16 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
           request.standardId,
           request.records,
           request.sourceOrOptions as Parameters<LocalFlatSqlStore['ingestRecords']>[2],
+        );
+        postSuccess(request.id, ingested, await stats({ includeCachedBytes: false }));
+        return;
+      }
+      case 'ingestFlatBufferStream': {
+        const currentStore = requireStore();
+        const ingested = await currentStore.ingestFlatBufferStream(
+          request.standardId,
+          request.streamBytes,
+          request.options,
         );
         postSuccess(request.id, ingested, await stats({ includeCachedBytes: false }));
         return;
@@ -144,10 +157,11 @@ async function queryRemotePage(request: WorkerRemotePageRequest): Promise<Worker
   );
   const scan = dataScanResultFromChunk(chunk);
   const records = rawRecordsWithDataFromFlatSqlChunk(chunk, scan.results);
-  if (records.length > 0) {
-    await currentStore.ingestRecords(request.standardId, records, {
+  if (chunk.recordStream.byteLength > 0 && scan.results.length > 0) {
+    await currentStore.ingestFlatBufferStream(request.standardId, chunk.recordStream, {
       source: request.source,
       persist: true,
+      recordKeys: flatSqlRecordKeys(scan.results),
     });
   }
   return {
@@ -292,10 +306,10 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       totalRows = Math.max(totalRows, scan.totalCount ?? 0, offset + scan.results.length);
       if (scan.results.length === 0) break;
 
-      const records = rawRecordsWithDataFromFlatSqlChunk(chunk, scan.results);
-      const ingestedRows = await currentStore.ingestRecords(request.standardId, records, {
+      const ingestedRows = await currentStore.ingestFlatBufferStream(request.standardId, chunk.recordStream, {
         source: request.source,
         persist: false,
+        recordKeys: flatSqlRecordKeys(scan.results),
       });
       recordsSincePersist += ingestedRows;
       const chunkHash = scan.chunkHash || scan.scanHash;
@@ -337,7 +351,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       });
       postProgress(id, progress, currentStats);
 
-      if (!nextCursor || offset >= totalRows || records.length === 0) break;
+      if (!nextCursor || offset >= totalRows || scan.results.length === 0) break;
     }
 
     await currentStore.flush(request.standardId);
@@ -413,7 +427,7 @@ async function syncPublishedSegments(options: {
         cumulativeRows = segmentEnd;
         continue;
       }
-      if (!segment.cid || !segment.indexCid) {
+      if (!segment.cid) {
         cumulativeRows = segmentEnd;
         continue;
       }
@@ -439,23 +453,20 @@ async function syncPublishedSegments(options: {
         return { progress, stats: currentStats };
       }
 
-      const records = await rawRecordsFromPublishedFlatSqlSegment({
+      const streamBytes = await flatBufferStreamFromPublishedFlatSqlSegment({
         schema: options.request.schema,
         providerPeerId: options.request.backendConfig.targetPeerId,
         cid: segment.cid,
-        indexCid: segment.indexCid,
         shardSha256: segment.shardSha256,
         fetchCidBytes: (cid) => fetchCidBytesFromGateway(gatewayUrl, cid),
       });
       const resumeRecordOffset = Math.max(0, localRows - cumulativeRows);
-      const recordsToIngest = resumeRecordOffset > 0 ? records.slice(resumeRecordOffset) : records;
-      if (recordsToIngest.length === 0) {
-        cumulativeRows = segmentEnd;
-        continue;
-      }
-      await options.currentStore.ingestRecords(options.request.standardId, recordsToIngest, {
+      await options.currentStore.ingestFlatBufferStream(options.request.standardId, streamBytes, {
         source: options.request.source,
         persist: false,
+        skipRecords: resumeRecordOffset,
+        recordKeyPrefix: `published:${segment.cid}`,
+        recordKeyOffset: resumeRecordOffset,
       });
       await options.currentStore.flush(options.request.standardId);
       currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
@@ -533,7 +544,7 @@ async function openPublishedManifestSegments(
     queryProfile: 'dataset-publication-offset-v1',
     limit: pageSize,
   });
-  return manifest.segments.filter((segment) => Boolean(segment.cid && segment.indexCid));
+  return manifest.segments.filter((segment) => Boolean(segment.cid));
 }
 
 function progressFor(current: WorkerSchemaSyncProgress, patch: Partial<WorkerSchemaSyncProgress>): WorkerSchemaSyncProgress {

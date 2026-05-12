@@ -90,8 +90,8 @@ type DatasetExportMaterializedMap struct {
 	ActivePayloads  []int            `json:"activePayloads,omitempty"`
 }
 
-// ExportDatasetWindow writes length-prefixed FlatBuffer shard bytes and a
-// deterministic materialized index for an indexed FlatSQL query.
+// ExportDatasetWindow writes a native FlatSQL size-prefixed FlatBuffer shard
+// and a deterministic materialized index for an indexed FlatSQL query.
 func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecordQuery) (*DatasetExport, error) {
 	if outputDir == "" {
 		return nil, fmt.Errorf("output dir is required")
@@ -121,7 +121,7 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 			return nil, fmt.Errorf("record %s exceeds uint32 shard frame length", record.CID)
 		}
 		offset := int64(shard.Len())
-		if err := binary.Write(&shard, binary.BigEndian, uint32(len(record.Data))); err != nil {
+		if err := binary.Write(&shard, binary.LittleEndian, uint32(len(record.Data))); err != nil {
 			return nil, fmt.Errorf("write shard length: %w", err)
 		}
 		if _, err := shard.Write(record.Data); err != nil {

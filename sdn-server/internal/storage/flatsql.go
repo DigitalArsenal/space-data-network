@@ -3359,9 +3359,9 @@ func rawRecordMatchesRef(record *Record, ref RawRecordRef) bool {
 	return true
 }
 
-// WriteRawRecordFrames writes SDN network frames directly from FlatSQL backing
-// files. It verifies the on-disk little-endian FlatSQL frame length and emits a
-// big-endian SDN stream frame without JSON/base64 translation.
+// WriteRawRecordFrames writes native FlatSQL size-prefixed FlatBuffer streams
+// directly from FlatSQL backing files. FlatSQL stream frame lengths are
+// little-endian uint32 values.
 func (s *FlatSQLStore) WriteRawRecordFrames(writer io.Writer, records []*Record) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -3373,15 +3373,14 @@ func (s *FlatSQLStore) WriteRawRecordFrames(writer io.Writer, records []*Record)
 		}
 	}()
 
-	var networkLength [4]byte
 	var diskLength [4]byte
 	for _, record := range records {
 		if len(record.Data) > 0 && strings.TrimSpace(record.StreamPath) == "" {
 			if len(record.Data) > int(^uint32(0)) {
 				return fmt.Errorf("record %s exceeds uint32 stream frame length", record.CID)
 			}
-			binary.BigEndian.PutUint32(networkLength[:], uint32(len(record.Data)))
-			if _, err := writer.Write(networkLength[:]); err != nil {
+			binary.LittleEndian.PutUint32(diskLength[:], uint32(len(record.Data)))
+			if _, err := writer.Write(diskLength[:]); err != nil {
 				return err
 			}
 			if _, err := writer.Write(record.Data); err != nil {
@@ -3405,8 +3404,7 @@ func (s *FlatSQLStore) WriteRawRecordFrames(writer io.Writer, records []*Record)
 		if got := int64(binary.LittleEndian.Uint32(diskLength[:])); got != record.RecordLength {
 			return fmt.Errorf("FlatSQL stream frame length for %s = %d, want %d", record.CID, got, record.RecordLength)
 		}
-		binary.BigEndian.PutUint32(networkLength[:], uint32(record.RecordLength))
-		if _, err := writer.Write(networkLength[:]); err != nil {
+		if _, err := writer.Write(diskLength[:]); err != nil {
 			return err
 		}
 		section := io.NewSectionReader(file, record.StreamOffset+4, record.RecordLength)

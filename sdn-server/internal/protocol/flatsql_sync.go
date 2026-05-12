@@ -59,9 +59,9 @@ func NewFlatSQLSyncHandler(store *storage.FlatSQLStore) *FlatSQLSyncHandler {
 	return &FlatSQLSyncHandler{store: store}
 }
 
-// HandleStream handles one FlatSQL sync request. The wire format is:
-// uint32be JSON request, uint32be JSON response, then optional raw
-// uint32be FlatBuffer frames for read_chunk.
+// HandleStream handles one FlatSQL sync request. The record data plane is a
+// native FlatSQL little-endian size-prefixed FlatBuffer stream after the
+// response header for read_chunk.
 func (h *FlatSQLSyncHandler) HandleStream(s network.Stream) {
 	defer s.Close()
 

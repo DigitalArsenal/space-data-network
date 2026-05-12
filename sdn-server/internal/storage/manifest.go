@@ -373,8 +373,8 @@ func verifyDatasetPublicationPNM(pnmBytes []byte, providerPublicKey ed25519.Publ
 	return manifestCID, fileID, nil
 }
 
-// ImportDatasetShard imports a length-prefixed dataset shard using its
-// materialized export index. It is idempotent because records are content
+// ImportDatasetShard imports a native FlatSQL size-prefixed dataset shard using
+// its materialized export index. It is idempotent because records are content
 // addressed in the underlying FlatSQL tables.
 func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, providerPeerID string) (int, *DatasetExportIndex, error) {
 	if s == nil {
@@ -406,7 +406,7 @@ func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, provide
 			return imported, nil, fmt.Errorf("record %s offset/length outside shard", record.CID)
 		}
 		frame := shardBytes[record.Offset:]
-		length := int64(binary.BigEndian.Uint32(frame[:4]))
+		length := int64(binary.LittleEndian.Uint32(frame[:4]))
 		if length != record.Length {
 			return imported, nil, fmt.Errorf("record %s frame length = %d, want %d", record.CID, length, record.Length)
 		}
