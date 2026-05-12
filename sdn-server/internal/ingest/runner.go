@@ -45,6 +45,7 @@ const (
 	minCelestrakFetchInterval       = 3 * time.Hour
 	celestrakProviderID             = "space-data-network-02"
 	datasetPublicationChunkSize     = 50000
+	fullCatalogPublicationTimeout   = 2 * time.Hour
 	publicContentKeyID              = "public"
 	parserVersionCelestrakGP        = "celestrak-gp/v1"
 	parserVersionCelestrakSatcat    = "celestrak-satcat/v1"
@@ -508,7 +509,7 @@ func (r *Runner) requestDatasetPublication(ctx context.Context, req datasetPubli
 		return fmt.Errorf("create dataset publication request for %s: %w", req.Schema, err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := r.httpClient.Do(httpReq)
+	resp, err := r.datasetPublicationHTTPClient(req).Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("request dataset publication for %s: %w", req.Schema, err)
 	}
@@ -519,6 +520,17 @@ func (r *Runner) requestDatasetPublication(ctx context.Context, req datasetPubli
 	}
 	log.Infof("Dataset publication requested for %s via %s", req.Schema, publishURL)
 	return nil
+}
+
+func (r *Runner) datasetPublicationHTTPClient(req datasetPublicationRequest) *http.Client {
+	if !req.FullCatalog && req.ChunkSize <= 0 {
+		return r.httpClient
+	}
+	client := *r.httpClient
+	if client.Timeout < fullCatalogPublicationTimeout {
+		client.Timeout = fullCatalogPublicationTimeout
+	}
+	return &client
 }
 
 func (r *Runner) syncSpaceTrackGapFill(ctx context.Context) error {
