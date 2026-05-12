@@ -37,7 +37,7 @@ func TestOMMBulkReturnsFullCatalogFlatBufferStream(t *testing.T) {
 	if got := rec.Header().Get("X-SDN-Schema"); got != "OMM.fbs" {
 		t.Fatalf("X-SDN-Schema = %q, want OMM.fbs", got)
 	}
-	if got := rec.Header().Get("X-SDN-Stream-Format"); got != "uint32be-length-prefixed" {
+	if got := rec.Header().Get("X-SDN-Stream-Format"); got != "flatsql-size-prefixed-le-u32" {
 		t.Fatalf("X-SDN-Stream-Format = %q", got)
 	}
 	if got := rec.Header().Get("X-SDN-Record-Count"); got != "2" {
@@ -111,7 +111,7 @@ func TestSPWBulkReturnsSpaceWeatherFlatBufferStream(t *testing.T) {
 	if got := rec.Header().Get("X-SDN-Schema"); got != "SPW.fbs" {
 		t.Fatalf("X-SDN-Schema = %q, want SPW.fbs", got)
 	}
-	if got := rec.Header().Get("X-SDN-Stream-Format"); got != "uint32be-length-prefixed" {
+	if got := rec.Header().Get("X-SDN-Stream-Format"); got != "flatsql-size-prefixed-le-u32" {
 		t.Fatalf("X-SDN-Stream-Format = %q", got)
 	}
 	if got := rec.Header().Get("X-SDN-Record-Count"); got != "2" {
@@ -288,7 +288,7 @@ func TestDataQueryStreamsRawFlatBuffersWithoutBase64(t *testing.T) {
 	if got := rec.Header().Get("X-SDN-Schema"); got != "OMM.fbs" {
 		t.Fatalf("X-SDN-Schema = %q, want OMM.fbs", got)
 	}
-	if got := rec.Header().Get("X-SDN-Stream-Format"); got != "uint32be-length-prefixed" {
+	if got := rec.Header().Get("X-SDN-Stream-Format"); got != "flatsql-size-prefixed-le-u32" {
 		t.Fatalf("X-SDN-Stream-Format = %q", got)
 	}
 	records := readLengthPrefixedRecords(t, rec.Body.Bytes())
@@ -766,7 +766,7 @@ func readLengthPrefixedRecords(t *testing.T, data []byte) [][]byte {
 	var records [][]byte
 	for reader.Len() > 0 {
 		var length uint32
-		if err := binary.Read(reader, binary.BigEndian, &length); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &length); err != nil {
 			t.Fatalf("read length failed: %v", err)
 		}
 		payload := make([]byte, length)

@@ -511,6 +511,17 @@ export function rawRecordsWithDataFromFlatSqlChunk(chunk: FlatSqlSyncChunk, fall
   }));
 }
 
+export function flatSqlRecordKeys(records: RawDataRecord[]): string[] {
+  return records.map((record) => [
+    record.schemaName,
+    record.cid,
+    record.providerId ?? '',
+    record.sourceName ?? '',
+    record.batchId ?? '',
+    record.timestamp ?? '',
+  ].join('|'));
+}
+
 function rawRecordFromFlatSqlRef(record: FlatSqlSyncRecordRef): RawDataRecord {
   return {
     schemaName: record.schemaName,

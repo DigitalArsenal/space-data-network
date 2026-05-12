@@ -108,7 +108,7 @@ func TestFlatSQLStoreExportDatasetWindowWritesShardAndIndex(t *testing.T) {
 	var recordLengths []uint32
 	for reader.Len() > 0 {
 		var length uint32
-		if err := binary.Read(reader, binary.BigEndian, &length); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &length); err != nil {
 			t.Fatalf("read length prefix failed: %v", err)
 		}
 		payload := make([]byte, length)

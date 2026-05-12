@@ -164,6 +164,7 @@ function headerOnlyChunk(schema: string): FlatSqlSyncChunk {
       results: [],
     },
     records: [],
+    recordStream: new Uint8Array(),
   };
 }
 

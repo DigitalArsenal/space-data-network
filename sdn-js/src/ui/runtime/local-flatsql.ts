@@ -39,12 +39,20 @@ export interface LocalFlatSqlIngestOptions {
   transfer?: boolean;
 }
 
+export interface LocalFlatSqlStreamIngestOptions extends LocalFlatSqlIngestOptions {
+  recordKeys?: string[];
+  recordKeyPrefix?: string;
+  recordKeyOffset?: number;
+  skipRecords?: number;
+}
+
 export interface LocalFlatSqlStatsOptions {
   includeCachedBytes?: boolean;
 }
 
 export interface LocalFlatSqlStore {
   ingestRecords(standardId: string, records: RawDataRecord[], sourceOrOptions?: string | LocalFlatSqlIngestOptions | null): Promise<number>;
+  ingestFlatBufferStream(standardId: string, streamBytes: Uint8Array, options?: LocalFlatSqlStreamIngestOptions | null): Promise<number>;
   flush(standardId?: string): Promise<void>;
   query(sql: string, standardId?: string): LocalFlatSqlQueryResult | Promise<LocalFlatSqlQueryResult>;
   getStats(options?: LocalFlatSqlStatsOptions): LocalFlatSqlStandardStats[] | Promise<LocalFlatSqlStandardStats[]>;
@@ -155,6 +163,30 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     return count;
   }
 
+  async ingestFlatBufferStream(
+    standardId: string,
+    streamBytes: Uint8Array,
+    options: LocalFlatSqlStreamIngestOptions | null = null,
+  ): Promise<number> {
+    const state = this.stateForStandard(standardId);
+    const streamRecords = decodeFlatSqlSizePrefixedStream(streamBytes, options?.skipRecords ?? 0);
+    if (streamRecords.length === 0) return 0;
+
+    const keyOffset = Math.max(0, options?.recordKeyOffset ?? options?.skipRecords ?? 0);
+    const candidates = streamRecords.map((buffer, index) => ({
+      buffer,
+      key: flatSqlStreamRecordKey(standardId, buffer, index + keyOffset, options),
+    }));
+    const nextRecords = candidates.filter((entry) => !state.ingestedKeys.has(entry.key));
+    if (nextRecords.length === 0) return 0;
+
+    state.db.ingestBuffers(nextRecords.map((entry) => stripSdnFlatBufferSizePrefix(entry.buffer)));
+    for (const entry of nextRecords) state.ingestedKeys.add(entry.key);
+    state.dirty = true;
+    if (options?.persist !== false) await this.persistStandard(state);
+    return nextRecords.length;
+  }
+
   async flush(standardId?: string): Promise<void> {
     if (standardId) {
       await this.persistStandard(this.stateForStandard(standardId));
@@ -261,6 +293,50 @@ function normalizeIngestOptions(sourceOrOptions?: string | LocalFlatSqlIngestOpt
   if (!sourceOrOptions) return {};
   if (typeof sourceOrOptions === 'string') return { source: sourceOrOptions };
   return sourceOrOptions;
+}
+
+export function decodeFlatSqlSizePrefixedStream(streamBytes: Uint8Array, skipRecords = 0): Uint8Array[] {
+  const view = new DataView(streamBytes.buffer, streamBytes.byteOffset, streamBytes.byteLength);
+  const records: Uint8Array[] = [];
+  let offset = 0;
+  let index = 0;
+  while (offset < streamBytes.byteLength) {
+    if (streamBytes.byteLength - offset < 4) {
+      throw new Error(`Invalid FlatSQL size-prefixed stream: truncated frame header at offset ${offset}`);
+    }
+    const length = view.getUint32(offset, true);
+    offset += 4;
+    const nextOffset = offset + length;
+    if (nextOffset > streamBytes.byteLength) {
+      throw new Error(`Invalid FlatSQL size-prefixed stream: truncated frame at index ${index}`);
+    }
+    if (index >= skipRecords) records.push(streamBytes.slice(offset, nextOffset));
+    offset = nextOffset;
+    index += 1;
+  }
+  return records;
+}
+
+function flatSqlStreamRecordKey(
+  standardId: string,
+  buffer: Uint8Array,
+  index: number,
+  options: LocalFlatSqlStreamIngestOptions | null,
+): string {
+  const explicitKey = options?.recordKeys?.[index - Math.max(0, options.recordKeyOffset ?? options.skipRecords ?? 0)]?.trim();
+  if (explicitKey) return explicitKey;
+  const prefix = options?.recordKeyPrefix?.trim();
+  if (prefix) return `${normalizeStandardId(standardId)}|${prefix}|${index}`;
+  return `${normalizeStandardId(standardId)}|stream|${buffer.byteLength}|${fnv1a32(buffer).toString(16).padStart(8, '0')}`;
+}
+
+function fnv1a32(bytes: Uint8Array): number {
+  let hash = 0x811c9dc5;
+  for (const byte of bytes) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
 }
 
 function rowToRecord(columns: string[], row: unknown[]): Record<string, unknown> {

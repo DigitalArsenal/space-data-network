@@ -6,6 +6,7 @@ import {
   type LocalFlatSqlStatsOptions,
   type LocalFlatSqlStore,
   type LocalFlatSqlStoreOptions,
+  type LocalFlatSqlStreamIngestOptions,
 } from './local-flatsql';
 import type { DataScanResult, DataSummary, RawDataQuery, RawDataRecord } from './sdn-backend';
 
@@ -80,6 +81,7 @@ export interface WorkerLocalFlatSqlStore extends LocalFlatSqlStore {
 type WorkerRequest =
   | { id: number; type: 'init'; options: LocalFlatSqlStoreOptions }
   | { id: number; type: 'ingestRecords'; standardId: string; records: RawDataRecord[]; sourceOrOptions?: string | LocalFlatSqlIngestOptions | null }
+  | { id: number; type: 'ingestFlatBufferStream'; standardId: string; streamBytes: Uint8Array; options?: LocalFlatSqlStreamIngestOptions | null }
   | { id: number; type: 'flush'; standardId?: string }
   | { id: number; type: 'query'; sql: string; standardId?: string }
   | { id: number; type: 'getStats'; options?: LocalFlatSqlStatsOptions }
@@ -148,6 +150,28 @@ class WorkerLocalFlatSqlStoreClient implements WorkerLocalFlatSqlStore {
       },
       prepared.transferables,
     );
+  }
+
+  async ingestFlatBufferStream(
+    standardId: string,
+    streamBytes: Uint8Array,
+    options?: LocalFlatSqlStreamIngestOptions | null,
+  ): Promise<number> {
+    const transferables: Transferable[] = [];
+    let bytes = streamBytes;
+    if (streamBytes.byteOffset === 0 && streamBytes.byteLength === streamBytes.buffer.byteLength && streamBytes.buffer instanceof ArrayBuffer) {
+      transferables.push(streamBytes.buffer);
+    } else {
+      bytes = streamBytes.slice();
+      transferables.push(bytes.buffer);
+    }
+    return await this.request<number>({
+      id: 0,
+      type: 'ingestFlatBufferStream',
+      standardId,
+      streamBytes: bytes,
+      options,
+    }, transferables);
   }
 
   async flush(standardId?: string): Promise<void> {

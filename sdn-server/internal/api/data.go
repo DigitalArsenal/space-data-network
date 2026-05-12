@@ -1255,12 +1255,12 @@ func writeFlatBufferPayloadStreamWithContentType(w http.ResponseWriter, schema s
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-SDN-Schema", schema)
 	w.Header().Set("X-SDN-Record-Count", strconv.Itoa(len(payloads)))
-	w.Header().Set("X-SDN-Stream-Format", "uint32be-length-prefixed")
+	w.Header().Set("X-SDN-Stream-Format", "flatsql-size-prefixed-le-u32")
 	w.WriteHeader(http.StatusOK)
 
 	var lenBuf [4]byte
 	for _, payload := range payloads {
-		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(payload)))
+		binary.LittleEndian.PutUint32(lenBuf[:], uint32(len(payload)))
 		if _, err := w.Write(lenBuf[:]); err != nil {
 			return
 		}
@@ -1274,7 +1274,7 @@ func writeFlatBufferRecordStreamWithContentType(w http.ResponseWriter, schema st
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-SDN-Schema", schema)
 	w.Header().Set("X-SDN-Record-Count", strconv.Itoa(len(records)))
-	w.Header().Set("X-SDN-Stream-Format", "uint32be-length-prefixed")
+	w.Header().Set("X-SDN-Stream-Format", "flatsql-size-prefixed-le-u32")
 	w.WriteHeader(http.StatusOK)
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()

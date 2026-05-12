@@ -132,6 +132,7 @@ describe('libp2p FlatSQL sync backend', () => {
                 scanHash: 'scan-hash',
               }).header,
               records: [rawRecord],
+              recordStream: flatSqlSizePrefixedStream([rawRecord]),
             };
           }
           return {
@@ -143,6 +144,7 @@ describe('libp2p FlatSQL sync backend', () => {
               nextCursor: 'cursor-2',
             }).header,
             records: [],
+            recordStream: new Uint8Array(),
           };
         },
       },
@@ -212,6 +214,7 @@ describe('libp2p FlatSQL sync backend', () => {
               scanHash: 'scan-hash',
             }).header,
             records: [rawRecord],
+            recordStream: flatSqlSizePrefixedStream([rawRecord]),
           };
         },
       },
@@ -250,6 +253,7 @@ describe('libp2p FlatSQL sync backend', () => {
               scanHash: query.scanHash ?? 'scan-hash',
             }).header,
             records: [],
+            recordStream: new Uint8Array(),
           };
         },
       },
@@ -294,6 +298,7 @@ function headerOnlyChunk(schema: string, totalCount: number, patch: Partial<Flat
       ...patch,
     },
     records: [],
+    recordStream: new Uint8Array(),
   };
 }
 
@@ -306,4 +311,18 @@ function recordRef() {
     sourceName: 'celestrak-gp',
     sizeBytes: 4,
   };
+}
+
+function flatSqlSizePrefixedStream(records: Uint8Array[]): Uint8Array {
+  const totalLength = records.reduce((sum, frame) => sum + 4 + frame.byteLength, 0);
+  const out = new Uint8Array(totalLength);
+  const view = new DataView(out.buffer);
+  let offset = 0;
+  for (const frame of records) {
+    view.setUint32(offset, frame.byteLength, true);
+    offset += 4;
+    out.set(frame, offset);
+    offset += frame.byteLength;
+  }
+  return out;
 }

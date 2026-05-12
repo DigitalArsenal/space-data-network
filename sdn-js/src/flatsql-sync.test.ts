@@ -86,10 +86,10 @@ describe('FlatSQL sync protocol client', () => {
     });
   });
 
-  it('dials the FlatSQL sync protocol and decodes header plus raw FlatBuffer frames', async () => {
+  it('dials the FlatSQL sync protocol and decodes header plus the native FlatSQL FlatBuffer stream', async () => {
     const rawRecord = new Uint8Array([1, 2, 3, 4]);
-    const response = concatFrames([
-      encoder.encode(JSON.stringify({
+    const response = concatJsonFrameAndFlatSqlStream(
+      {
         schema: 'OMM.fbs',
         total_count: 1,
         count: 1,
@@ -107,9 +107,9 @@ describe('FlatSQL sync protocol client', () => {
         max_chunk_size: 50_000,
         transports: ['http', 'libp2p-websocket', 'libp2p-webrtc'],
         results: [{ schema_name: 'OMM.fbs', cid: 'cid-1', peer_id: 'peer-1', size_bytes: rawRecord.byteLength }],
-      })),
-      rawRecord,
-    ]);
+      },
+      [rawRecord],
+    );
     const calls: Array<{ peer: string; protocol: string; payload: Uint8Array; addrs?: string[] }> = [];
     const transport: FlatSqlSyncTransport = {
       async dialProtocol(targetPeerId, protocolId, payload, candidateAddrs) {
@@ -137,6 +137,7 @@ describe('FlatSQL sync protocol client', () => {
     });
     expect(chunk.records).toHaveLength(1);
     expect(Array.from(chunk.records[0] ?? [])).toEqual([1, 2, 3, 4]);
+    expect(Array.from(chunk.recordStream)).toEqual([4, 0, 0, 0, 1, 2, 3, 4]);
   });
 
   it('surfaces protocol error frames', () => {
@@ -232,6 +233,30 @@ function concatFrames(frames: Uint8Array[]): Uint8Array {
   let offset = 0;
   for (const frame of frames) {
     new DataView(out.buffer).setUint32(offset, frame.byteLength, false);
+    offset += 4;
+    out.set(frame, offset);
+    offset += frame.byteLength;
+  }
+  return out;
+}
+
+function concatJsonFrameAndFlatSqlStream(header: Record<string, unknown>, records: Uint8Array[]): Uint8Array {
+  const headerBytes = encoder.encode(JSON.stringify(header));
+  const streamBytes = flatSqlSizePrefixedStream(records);
+  const out = new Uint8Array(4 + headerBytes.byteLength + streamBytes.byteLength);
+  new DataView(out.buffer).setUint32(0, headerBytes.byteLength, false);
+  out.set(headerBytes, 4);
+  out.set(streamBytes, 4 + headerBytes.byteLength);
+  return out;
+}
+
+function flatSqlSizePrefixedStream(records: Uint8Array[]): Uint8Array {
+  const totalLength = records.reduce((sum, frame) => sum + 4 + frame.byteLength, 0);
+  const out = new Uint8Array(totalLength);
+  const view = new DataView(out.buffer);
+  let offset = 0;
+  for (const frame of records) {
+    view.setUint32(offset, frame.byteLength, true);
     offset += 4;
     out.set(frame, offset);
     offset += frame.byteLength;
