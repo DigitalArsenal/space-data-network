@@ -192,13 +192,13 @@ func (s *FlatSQLStore) initTables() error {
 	`); err != nil {
 		return fmt.Errorf("failed to create source tags lookup index: %w", err)
 	}
-	if err := s.createStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_source_cid", sourceTagsExisted, `
+	if err := s.createRequiredStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_source_cid", `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_source_cid
 		ON sdn_record_source_tags (schema_name, provider_id, source_name, cid)
 	`); err != nil {
 		return fmt.Errorf("failed to create source tags source/cid index: %w", err)
 	}
-	if err := s.createStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_batch_cid", sourceTagsExisted, `
+	if err := s.createRequiredStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_batch_cid", `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_batch_cid
 		ON sdn_record_source_tags (schema_name, provider_id, source_name, batch_id, cid)
 	`); err != nil {
@@ -347,6 +347,21 @@ func (s *FlatSQLStore) createStartupIndex(tableName, indexName string, tableExis
 		log.Warnf("Skipping synchronous startup creation of missing index %s on existing table %s; rebuild indexes during maintenance", indexName, tableName)
 		return nil
 	}
+	if _, err := s.db.Exec(createSQL); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *FlatSQLStore) createRequiredStartupIndex(tableName, indexName string, createSQL string) error {
+	indexExists, err := s.indexExists(indexName)
+	if err != nil {
+		return err
+	}
+	if indexExists {
+		return nil
+	}
+	log.Infof("Building required FlatSQL index %s on %s", indexName, tableName)
 	if _, err := s.db.Exec(createSQL); err != nil {
 		return err
 	}
