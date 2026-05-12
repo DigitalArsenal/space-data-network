@@ -789,7 +789,7 @@ textarea,
 
 .sdn-storage-row {
   display: grid;
-  grid-template-columns: 2.5rem minmax(8rem, 1.1fr) minmax(7rem, 0.8fr) minmax(11rem, 1fr) auto;
+  grid-template-columns: minmax(8rem, 1.1fr) minmax(7rem, 0.8fr) minmax(11rem, 1fr) auto;
   gap: 0.7rem;
   align-items: center;
   min-width: 0;
@@ -804,7 +804,7 @@ textarea,
   background: rgba(10, 132, 255, 0.1);
 }
 
-.sdn-storage-row div:not(.sdn-sync-pie) {
+.sdn-storage-row > div {
   display: grid;
   gap: 0.12rem;
   min-width: 0;
@@ -826,16 +826,6 @@ textarea,
 .sdn-storage-row span {
   color: var(--sdn-text-muted);
   font-size: 0.72rem;
-}
-
-.sdn-sync-pie {
-  width: 2rem;
-  height: 2rem;
-  border: 1px solid var(--sdn-border);
-  box-shadow:
-    inset 0 0 0 0.28rem rgba(0, 0, 0, 0.62),
-    inset 0 0 0 0.42rem rgba(255, 255, 255, 0.035);
-  clip-path: circle(50% at 50% 50%);
 }
 
 .sdn-schema-sync-table {

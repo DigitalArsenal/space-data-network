@@ -1434,13 +1434,6 @@
     return 'When remote rows advance';
   }
 
-  function syncPieStyle(schema: SchemaSyncRow): string {
-    const totalRows = Math.max(schema.remoteRows, schema.progress.totalRows, 1);
-    const syncedRows = Math.min(totalRows, Math.max(schema.localRows, schema.progress.syncedRows));
-    const degrees = Math.round((syncedRows / totalRows) * 360);
-    return `background: conic-gradient(var(--sdn-green) ${degrees}deg, rgba(255, 255, 255, 0.08) ${degrees}deg);`;
-  }
-
   function formatDateTime(value: string): string {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
@@ -1724,7 +1717,6 @@
           <div class="sdn-storage-grid">
             {#each schemaSyncRows as schema}
               <article class="sdn-storage-row" class:active={schema.id === selectedStandardId && schema.dataSourceId === selectedDataSourceId}>
-                <div class="sdn-sync-pie" style={syncPieStyle(schema)} aria-hidden="true"></div>
                 <div>
                   <strong>{schema.id}</strong>
                   <span>{schema.providerName}</span>

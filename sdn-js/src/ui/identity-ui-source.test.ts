@@ -191,15 +191,42 @@ describe('SDN identity Svelte source', () => {
     expect(source).not.toContain('<th>Actions</th>');
   });
 
-  it('queries nodes and people in the directory search panel', () => {
+  it('renders debounced unified directory search with upload search and configured nodes', () => {
     const source = readUiSource('components/DirectorySearchPanel.svelte');
 
-    expect(source).toContain('backend.searchDirectory');
-    expect(source).toContain('directoryKind ===');
-    expect(source).toContain('Nodes');
-    expect(source).toContain('People');
-    expect(source).toContain('downloadHostedEpm');
-    expect(source).toContain('Show QR');
+    expectSourceToContainAll(source, [
+      'const DIRECTORY_PAGE_SIZE = 10;',
+      'const SEARCH_DEBOUNCE_MS = 250;',
+      'loadConfiguredDirectoryNodes',
+      "/api/local/sdn-nodes",
+      'normalizeConfiguredDirectoryNodes',
+      'backend.searchDirectory',
+      'scheduleDirectorySearch',
+      'handleUploadSearch',
+      'decodeEpmFlatBuffer',
+      'sortableDirectoryHeader',
+      'aria-label="Directory results"',
+      'Type',
+      'Name',
+      'PeerID',
+      'Public key',
+      'EPM',
+      'vCard',
+      'Show QR',
+      'Previous',
+      'Next',
+    ]);
+    expect(source).toContain("on:input={handleSearchInput}");
+    expect(source).toContain("accept=\".epm,application/octet-stream\"");
+    expect(source).toContain("accept=\".vcf,.vcard,text/vcard,text/x-vcard\"");
+    expect(source).not.toContain('<form');
+    expect(source).not.toContain('type="submit"');
+    expect(source).not.toContain('>Nodes<');
+    expect(source).not.toContain('>People<');
+    expect(source).not.toContain('No node results');
+    expect(source).not.toContain('No people results');
+    expect(source).not.toContain('pending');
+    expect(source).not.toContain('Directory record has no EPM or peer identifier to download.');
   });
 
   it('does not offer plaintext Core export controls in public identity UI copy', () => {
@@ -472,6 +499,17 @@ describe('SDN identity styling guardrails', () => {
     expect(appCss).toMatch(/\.sdn-workbench-table-wrap\s*{[^}]*overflow-x:\s*auto/s);
     expect(appCss).toMatch(/\.sdn-workbench-table\s*{[^}]*min-width:\s*max-content/s);
     expect(appCss).toMatch(/\.sdn-workbench-table th,\s*\.sdn-workbench-table td\s*{[^}]*min-width:\s*50px/s);
+  });
+
+  it('keeps subscribed storage rows free of noisy mini pie backgrounds', () => {
+    const localDataSource = readUiSource('screens/LocalDataScreen.svelte');
+    const appCss = readUiSource('styles/app.css');
+
+    expect(localDataSource).not.toContain('syncPieStyle');
+    expect(localDataSource).not.toContain('sdn-sync-pie');
+    expect(appCss).not.toContain('.sdn-sync-pie');
+    expect(appCss).not.toContain('conic-gradient');
+    expect(appCss).not.toContain('clip-path: circle');
   });
 
   it('keeps the app shell fixed while content panes own scrolling', () => {
