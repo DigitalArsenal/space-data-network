@@ -57,6 +57,8 @@ const schemaSyncQueue = new SerialTaskQueue();
 const REMOTE_SYNC_OPERATION_TIMEOUT_MS = 60_000;
 const REMOTE_SYNC_RETRY_ATTEMPTS = 4;
 const REMOTE_SYNC_RETRY_DELAY_MS = 500;
+const PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE = 50_000;
+const PUBLISHED_SHARD_FETCH_CONCURRENCY = 6;
 let store: LocalFlatSqlStore | null = null;
 
 workerGlobal.onmessage = (event: MessageEvent<WorkerRequest>) => {
@@ -189,7 +191,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
   let snapshotVerifiedForSession = false;
   const syncStartedAtMs = Date.now();
   let downloadedBytes = 0;
-  const publishedSegments = await openPublishedManifestSegments(request.backendConfig, request.schema, request.pageSize).catch(() => []);
+  const publishedSegments = await openPublishedManifestSegments(request.backendConfig, request.schema).catch(() => []);
 
   const providerPeerId = request.backendConfig.targetPeerId || null;
   const providerPublicKey = request.backendConfig.publicKey || request.backendConfig.targetPeerId || null;
@@ -431,20 +433,11 @@ async function syncPublishedSegments(options: {
   if (!gatewayUrl) throw new Error('local IPFS gateway URL is required for published shard sync');
   const manifestTotalRows = options.segments.reduce((sum, segment) => sum + Math.max(0, segment.rowCount), 0);
   totalRows = Math.max(totalRows, manifestTotalRows, options.request.totalRows);
-  let cumulativeRows = 0;
 
   try {
-    for (const segment of options.segments) {
-      const segmentRows = Math.max(0, segment.rowCount);
-      const segmentEnd = cumulativeRows + segmentRows;
-      if (segmentEnd <= localRows) {
-        cumulativeRows = segmentEnd;
-        continue;
-      }
-      if (!segment.cid) {
-        cumulativeRows = segmentEnd;
-        continue;
-      }
+    let recordsSincePersist = 0;
+    for await (const fetched of fetchPublishedSegmentsInOrder(options.segments, options.request, gatewayUrl, localRows)) {
+      const { segment, streamBytes, cumulativeRows, segmentEnd } = fetched;
       if (cachedBytes >= options.request.capBytes && localRows < totalRows) {
         await options.currentStore.flush(options.request.standardId);
         currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
@@ -468,29 +461,27 @@ async function syncPublishedSegments(options: {
         return { progress, stats: currentStats };
       }
 
-      const streamBytes = await flatBufferStreamFromPublishedFlatSqlSegment({
-        schema: options.request.schema,
-        providerPeerId: options.request.backendConfig.targetPeerId,
-        cid: segment.cid,
-        shardSha256: segment.shardSha256,
-        fetchCidBytes: (cid) => fetchCidBytesFromGateway(gatewayUrl, cid),
-      });
       downloadedBytes += streamBytes.byteLength;
       const resumeRecordOffset = Math.max(0, localRows - cumulativeRows);
-      await options.currentStore.ingestFlatBufferStream(options.request.standardId, streamBytes, {
+      const ingestedRows = await options.currentStore.ingestFlatBufferStream(options.request.standardId, streamBytes, {
         source: options.request.source,
         persist: false,
         skipRecords: resumeRecordOffset,
         recordKeyPrefix: `published:${segment.cid}`,
         recordKeyOffset: resumeRecordOffset,
       });
-      await options.currentStore.flush(options.request.standardId);
-      currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
-      localRows = localRowsForStandard(currentStats, options.request.standardId);
-      cachedBytes = cachedBytesForStandard(currentStats, options.request.standardId);
+      recordsSincePersist += ingestedRows;
+      localRows += ingestedRows;
       const chunkHash = segment.chunkHash || segment.cid;
       if (chunkHash && !verifiedChunks.includes(chunkHash)) {
         verifiedChunks = [...verifiedChunks, chunkHash].slice(-256);
+      }
+      if (recordsSincePersist >= options.request.persistRecordInterval || segmentEnd >= totalRows) {
+        await options.currentStore.flush(options.request.standardId);
+        recordsSincePersist = 0;
+        currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
+        localRows = localRowsForStandard(currentStats, options.request.standardId);
+        cachedBytes = cachedBytesForStandard(currentStats, options.request.standardId);
       }
       progress = progressFor(progress, {
         status: localRows >= totalRows ? 'synced' : 'syncing',
@@ -512,7 +503,6 @@ async function syncPublishedSegments(options: {
         error: null,
       });
       postProgress(options.id, progress, currentStats);
-      cumulativeRows = segmentEnd;
     }
 
     await options.currentStore.flush(options.request.standardId);
@@ -552,7 +542,6 @@ async function syncPublishedSegments(options: {
 async function openPublishedManifestSegments(
   backendConfig: WorkerFlatSqlSyncBackendConfig,
   schema: string,
-  pageSize: number,
 ): Promise<FlatSqlSyncManifestSegment[]> {
   if (!backendConfig.gatewayUrl?.trim()) return [];
   const manifest = await withRemoteSyncManifestOperation(backendConfig, 'Remote published shard manifest', {
@@ -560,9 +549,65 @@ async function openPublishedManifestSegments(
     schema,
     op: 'open_manifest',
     queryProfile: 'dataset-publication-offset-v1',
-    limit: pageSize,
+    limit: PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE,
   });
   return manifest.segments.filter((segment) => Boolean(segment.cid));
+}
+
+async function* fetchPublishedSegmentsInOrder(
+  segments: FlatSqlSyncManifestSegment[],
+  request: WorkerSchemaSyncRequest,
+  gatewayUrl: string,
+  localRows: number,
+): AsyncGenerator<{
+  segment: FlatSqlSyncManifestSegment;
+  streamBytes: Uint8Array;
+  cumulativeRows: number;
+  segmentEnd: number;
+}> {
+  const syncItems: Array<{ segment: FlatSqlSyncManifestSegment; cumulativeRows: number; segmentEnd: number }> = [];
+  let cumulativeRows = 0;
+  for (const segment of segments) {
+    const segmentRows = Math.max(0, segment.rowCount);
+    const segmentEnd = cumulativeRows + segmentRows;
+    if (segment.cid && segmentEnd > localRows) {
+      syncItems.push({ segment, cumulativeRows, segmentEnd });
+    }
+    cumulativeRows = segmentEnd;
+  }
+
+  const inFlight = new Map<number, Promise<{
+    segment: FlatSqlSyncManifestSegment;
+    streamBytes: Uint8Array;
+    cumulativeRows: number;
+    segmentEnd: number;
+  }>>();
+  let nextToSchedule = 0;
+  const schedule = (): void => {
+    while (nextToSchedule < syncItems.length && inFlight.size < PUBLISHED_SHARD_FETCH_CONCURRENCY) {
+      const index = nextToSchedule;
+      nextToSchedule += 1;
+      const item = syncItems[index];
+      if (!item) continue;
+      inFlight.set(index, flatBufferStreamFromPublishedFlatSqlSegment({
+        schema: request.schema,
+        providerPeerId: request.backendConfig.targetPeerId,
+        cid: item.segment.cid as string,
+        shardSha256: item.segment.shardSha256,
+        fetchCidBytes: (cid) => fetchCidBytesFromGateway(gatewayUrl, cid),
+      }).then((streamBytes) => ({ ...item, streamBytes })));
+    }
+  };
+
+  for (let index = 0; index < syncItems.length; index += 1) {
+    schedule();
+    const next = inFlight.get(index);
+    if (!next) throw new Error('published shard prefetch queue lost ordering');
+    const fetched = await next;
+    inFlight.delete(index);
+    schedule();
+    yield fetched;
+  }
 }
 
 function progressFor(current: WorkerSchemaSyncProgress, patch: Partial<WorkerSchemaSyncProgress>): WorkerSchemaSyncProgress {

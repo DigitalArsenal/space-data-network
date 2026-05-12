@@ -310,7 +310,7 @@ export function decodeFlatSqlSizePrefixedStream(streamBytes: Uint8Array, skipRec
     if (nextOffset > streamBytes.byteLength) {
       throw new Error(`Invalid FlatSQL size-prefixed stream: truncated frame at index ${index}`);
     }
-    if (index >= skipRecords) records.push(streamBytes.slice(offset, nextOffset));
+    if (index >= skipRecords) records.push(streamBytes.subarray(offset, nextOffset));
     offset = nextOffset;
     index += 1;
   }

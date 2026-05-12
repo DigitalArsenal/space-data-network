@@ -242,6 +242,52 @@ func (s *FlatSQLStore) ListDatasetShardPublications(query DatasetShardPublicatio
 	return publications, nil
 }
 
+// FindLargestDatasetShardPublicationLimit returns the largest published shard
+// window for a dataset query. Manifest readers use this to follow the actual
+// provider artifact layout instead of the caller's UI page size.
+func (s *FlatSQLStore) FindLargestDatasetShardPublicationLimit(query DatasetShardPublicationQuery) (int, bool, error) {
+	query = normalizeDatasetShardPublicationQuery(query)
+	if query.SchemaName == "" {
+		return 0, false, errors.New("schema name is required")
+	}
+	if query.QueryProfile == "" {
+		return 0, false, errors.New("query profile is required")
+	}
+
+	where := []string{`schema_name = ?`, `query_profile = ?`}
+	args := []interface{}{query.SchemaName, query.QueryProfile}
+	if query.ProviderID != "" {
+		where = append(where, `provider_id = ?`)
+		args = append(args, query.ProviderID)
+	}
+	if query.SourceName != "" {
+		where = append(where, `source_name = ?`)
+		args = append(args, query.SourceName)
+	}
+	if query.BatchID != "" {
+		where = append(where, `batch_id = ?`)
+		args = append(args, query.BatchID)
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var limit int
+	err := s.db.QueryRow(`
+		SELECT window_limit
+		FROM sdn_dataset_shard_publications
+		WHERE `+strings.Join(where, " AND ")+`
+		ORDER BY window_limit DESC, published_at DESC
+		LIMIT 1
+	`, args...).Scan(&limit)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("find largest dataset shard publication limit: %w", err)
+	}
+	return limit, true, nil
+}
+
 func (s *FlatSQLStore) findDatasetShardPublicationLocked(query DatasetShardPublicationQuery) (DatasetShardPublication, error) {
 	where := []string{`schema_name = ?`, `query_profile = ?`, `window_offset = ?`, `window_limit = ?`}
 	args := []interface{}{query.SchemaName, query.QueryProfile, query.Offset, query.Limit}
