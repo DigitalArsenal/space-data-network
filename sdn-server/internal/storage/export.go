@@ -114,6 +114,15 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 	}
 	querySHA := sha256Hex(queryJSON)
 
+	cids := make([]string, 0, len(records))
+	for _, record := range records {
+		cids = append(cids, record.CID)
+	}
+	sourceTags, err := s.sourceTagsForCIDs(filter.SchemaName, cids)
+	if err != nil {
+		return nil, fmt.Errorf("load source tags: %w", err)
+	}
+
 	shard := bytes.Buffer{}
 	indexRecords := make([]DatasetExportIndexRecord, 0, len(records))
 	for _, record := range records {
@@ -132,7 +141,6 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 		if err != nil {
 			return nil, fmt.Errorf("extract index fields for %s: %w", record.CID, err)
 		}
-		tags, _ := s.GetSourceTags(filter.SchemaName, record.CID)
 		indexRecords = append(indexRecords, DatasetExportIndexRecord{
 			CID:           record.CID,
 			Offset:        offset,
@@ -143,7 +151,7 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 			OpsStatusCode: fields.opsStatusCode,
 			EpochUnix:     fields.epochUnix,
 			EpochDay:      fields.epochDay,
-			SourceTags:    tags,
+			SourceTags:    sourceTags[record.CID],
 		})
 	}
 
