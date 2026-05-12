@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-import { clearLocalFlatSqlStore, createLocalFlatSqlStore, isReadOnlyFlatSqlQuery, stripSdnFlatBufferSizePrefix } from './local-flatsql';
+import { clearLocalFlatSqlStore, createLocalFlatSqlStore, decodeFlatSqlSizePrefixedStream, isReadOnlyFlatSqlQuery, stripSdnFlatBufferSizePrefix } from './local-flatsql';
 
 const OMM_SCHEMA = readFileSync(
   new URL('../../../../../spacedatastandards.org/schema/OMM/main.fbs', import.meta.url),
@@ -119,6 +119,16 @@ describe('local FlatSQL datastore', () => {
       recordCount: 1,
       ingestedRecordCount: 1,
     }));
+  });
+
+  it('decodes FlatSQL sync streams with zero-copy record views', () => {
+    const first = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
+    const stream = flatSqlSizePrefixedStream([first]);
+
+    const records = decodeFlatSqlSizePrefixedStream(stream);
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.buffer).toBe(stream.buffer);
   });
 
   it('tracks downloaded FlatBuffer frames separately from materialized SQL rows', async () => {

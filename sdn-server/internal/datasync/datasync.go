@@ -282,6 +282,22 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 	if segmentLimit > maxLimit {
 		segmentLimit = maxLimit
 	}
+	queryProfile := NormalizeQueryProfile(req.QueryProfile)
+	if queryProfile == storage.DatasetPublicationQueryProfile {
+		publishedLimit, found, err := store.FindLargestDatasetShardPublicationLimit(storage.DatasetShardPublicationQuery{
+			SchemaName:   schemaName,
+			ProviderID:   FirstNonEmpty(req.ProviderID, req.ProviderId),
+			SourceName:   req.SourceName,
+			BatchID:      FirstNonEmpty(req.BatchID, req.BatchId),
+			QueryProfile: queryProfile,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if found && publishedLimit > 0 && publishedLimit <= maxLimit {
+			segmentLimit = publishedLimit
+		}
+	}
 
 	filter := FilterFromRequest(req, segmentLimit, 0)
 	totalCount, err := store.CountRawRecords(filter)
@@ -293,7 +309,6 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 		return nil, err
 	}
 
-	queryProfile := NormalizeQueryProfile(req.QueryProfile)
 	segments := make([]ManifestSegment, 0)
 	var totalBytes int64
 	for offset, index := 0, 0; int64(offset) < totalCount || (totalCount == 0 && index == 0); offset, index = offset+segmentLimit, index+1 {
