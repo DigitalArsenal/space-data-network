@@ -187,6 +187,8 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
   let queryProfile = canResume ? request.initialProgress.queryProfile ?? 'ordered-offset-v1' : 'ordered-offset-v1';
   let verifiedChunks = canResume ? request.initialProgress.verifiedChunks.slice(-256) : [];
   let snapshotVerifiedForSession = false;
+  const syncStartedAtMs = Date.now();
+  let downloadedBytes = 0;
   const publishedSegments = await openPublishedManifestSegments(request.backendConfig, request.schema, request.pageSize).catch(() => []);
 
   const providerPeerId = request.backendConfig.targetPeerId || null;
@@ -198,6 +200,8 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
     localRows,
     cachedBytes,
     pinnedBytes: cachedBytes,
+    downloadedBytes,
+    downloadSpeedBytesPerSecond: 0,
     providerPeerId,
     providerPublicKey,
     snapshotId: snapshotId || null,
@@ -223,6 +227,8 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
         totalRows,
         cachedBytes,
         verifiedChunks,
+        downloadedBytes,
+        syncStartedAtMs,
         providerPeerId,
         providerPublicKey,
       });
@@ -239,6 +245,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
           localRows,
           cachedBytes,
           pinnedBytes: cachedBytes,
+          ...downloadProgressPatch(syncStartedAtMs, downloadedBytes),
           providerPeerId,
           providerPublicKey,
           snapshotId: snapshotId || null,
@@ -278,6 +285,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       );
 
       let scan = dataScanResultFromChunk(chunk);
+      downloadedBytes += chunk.recordStream.byteLength;
 
       if (nextCursor && head && scan.head && scan.head !== head) {
         nextCursor = '';
@@ -296,6 +304,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
           },
         );
         scan = dataScanResultFromChunk(chunk);
+        downloadedBytes += chunk.recordStream.byteLength;
       }
 
       snapshotId = scan.snapshotId || snapshotId;
@@ -335,6 +344,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
         localRows,
         cachedBytes,
         pinnedBytes: cachedBytes,
+        ...downloadProgressPatch(syncStartedAtMs, downloadedBytes),
         providerPeerId,
         providerPublicKey,
         snapshotId: snapshotId || null,
@@ -365,6 +375,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       localRows,
       cachedBytes,
       pinnedBytes: cachedBytes,
+      ...downloadProgressPatch(syncStartedAtMs, downloadedBytes),
       providerPeerId,
       providerPublicKey,
       snapshotId: snapshotId || null,
@@ -402,6 +413,8 @@ async function syncPublishedSegments(options: {
   totalRows: number;
   cachedBytes: number;
   verifiedChunks: string[];
+  downloadedBytes: number;
+  syncStartedAtMs: number;
   providerPeerId: string | null;
   providerPublicKey: string | null;
 }): Promise<{ progress: WorkerSchemaSyncProgress; stats: LocalFlatSqlStandardStats[] }> {
@@ -413,6 +426,7 @@ async function syncPublishedSegments(options: {
     cachedBytes,
     verifiedChunks,
   } = options;
+  let downloadedBytes = options.downloadedBytes;
   const gatewayUrl = options.request.backendConfig.gatewayUrl?.trim();
   if (!gatewayUrl) throw new Error('local IPFS gateway URL is required for published shard sync');
   const manifestTotalRows = options.segments.reduce((sum, segment) => sum + Math.max(0, segment.rowCount), 0);
@@ -441,6 +455,7 @@ async function syncPublishedSegments(options: {
           localRows,
           cachedBytes,
           pinnedBytes: cachedBytes,
+          ...downloadProgressPatch(options.syncStartedAtMs, downloadedBytes),
           providerPeerId: options.providerPeerId,
           providerPublicKey: options.providerPublicKey,
           cursor: segment.cursor || null,
@@ -460,6 +475,7 @@ async function syncPublishedSegments(options: {
         shardSha256: segment.shardSha256,
         fetchCidBytes: (cid) => fetchCidBytesFromGateway(gatewayUrl, cid),
       });
+      downloadedBytes += streamBytes.byteLength;
       const resumeRecordOffset = Math.max(0, localRows - cumulativeRows);
       await options.currentStore.ingestFlatBufferStream(options.request.standardId, streamBytes, {
         source: options.request.source,
@@ -483,6 +499,7 @@ async function syncPublishedSegments(options: {
         localRows,
         cachedBytes,
         pinnedBytes: cachedBytes,
+        ...downloadProgressPatch(options.syncStartedAtMs, downloadedBytes),
         providerPeerId: options.providerPeerId,
         providerPublicKey: options.providerPublicKey,
         cursor: segment.cursor || null,
@@ -509,6 +526,7 @@ async function syncPublishedSegments(options: {
       localRows,
       cachedBytes,
       pinnedBytes: cachedBytes,
+      ...downloadProgressPatch(options.syncStartedAtMs, downloadedBytes),
       providerPeerId: options.providerPeerId,
       providerPublicKey: options.providerPublicKey,
       queryProfile: 'dataset-publication-offset-v1',
@@ -552,6 +570,14 @@ function progressFor(current: WorkerSchemaSyncProgress, patch: Partial<WorkerSch
     ...current,
     ...patch,
     syncedRows: Math.max(patch.syncedRows ?? current.syncedRows, patch.localRows ?? current.localRows),
+  };
+}
+
+function downloadProgressPatch(startedAtMs: number, downloadedBytes: number): Pick<WorkerSchemaSyncProgress, 'downloadedBytes' | 'downloadSpeedBytesPerSecond'> {
+  const elapsedSeconds = Math.max(0.001, (Date.now() - startedAtMs) / 1000);
+  return {
+    downloadedBytes,
+    downloadSpeedBytesPerSecond: Math.max(0, Math.floor(downloadedBytes / elapsedSeconds)),
   };
 }
 

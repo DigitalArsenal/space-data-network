@@ -324,7 +324,7 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 			ByteCount:  byteCount,
 			ChunkHash:  scan.ChunkHash,
 		}
-		if publication, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		if publication, found, err := findDatasetShardPublicationForSegment(store, storage.DatasetShardPublicationQuery{
 			SchemaName:   schemaName,
 			ProviderID:   FirstNonEmpty(req.ProviderID, req.ProviderId),
 			SourceName:   req.SourceName,
@@ -377,6 +377,22 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 	}
 	manifest.ManifestID = ManifestHash(manifest)
 	return manifest, nil
+}
+
+func findDatasetShardPublicationForSegment(store *storage.FlatSQLStore, query storage.DatasetShardPublicationQuery) (storage.DatasetShardPublication, bool, error) {
+	limits := []int{query.Limit}
+	if query.RecordCount > 0 && query.RecordCount < query.Limit {
+		limits = append(limits, query.RecordCount)
+	}
+	for _, limit := range limits {
+		nextQuery := query
+		nextQuery.Limit = limit
+		publication, found, err := store.FindDatasetShardPublication(nextQuery)
+		if err != nil || found {
+			return publication, found, err
+		}
+	}
+	return storage.DatasetShardPublication{}, false, nil
 }
 
 func ResolveStreamRecords(store *storage.FlatSQLStore, req StreamRequest) (string, []*storage.Record, error) {

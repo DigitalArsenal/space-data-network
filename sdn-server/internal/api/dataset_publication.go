@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	defaultDatasetPublicationLimit = 250
-	maxDatasetPublicationChunkSize = 50000
+	defaultDatasetPublicationLimit         = 250
+	maxDatasetPublicationChunkSize         = 50000
+	defaultFullCatalogPublicationChunkSize = maxDatasetPublicationChunkSize
 )
 
 // DatasetPublicationRequest describes a local request to export, pin, sign,
@@ -198,7 +199,11 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx context.Context, req DatasetPublicationRequest, schema string) (*DatasetPublicationResult, error) {
 	chunkSize := req.ChunkSize
 	if chunkSize <= 0 {
-		chunkSize = defaultDatasetPublicationLimit
+		if req.FullCatalog {
+			chunkSize = defaultFullCatalogPublicationChunkSize
+		} else {
+			chunkSize = defaultDatasetPublicationLimit
+		}
 	}
 	if chunkSize > maxDatasetPublicationChunkSize {
 		chunkSize = maxDatasetPublicationChunkSize
