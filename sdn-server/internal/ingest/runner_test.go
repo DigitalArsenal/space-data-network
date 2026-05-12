@@ -475,6 +475,34 @@ func TestSyncCelestrakSpaceWeatherFailsWhenConfiguredPublicationFails(t *testing
 	}
 }
 
+func TestRequestDatasetPublicationUsesLongTimeoutForFullCatalog(t *testing.T) {
+	publicationServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(25 * time.Millisecond)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer publicationServer.Close()
+
+	runner := &Runner{
+		cfg: Config{
+			DatasetPublishURL: publicationServer.URL + "/api/v1/admin/dataset-updates/publish",
+		},
+		httpClient: &http.Client{
+			Timeout: time.Nanosecond,
+		},
+	}
+
+	err := runner.requestDatasetPublication(context.Background(), datasetPublicationRequest{
+		Schema:      "OMM.fbs",
+		ProviderID:  celestrakProviderID,
+		SourceName:  "celestrak-gp",
+		FullCatalog: true,
+		ChunkSize:   datasetPublicationChunkSize,
+	})
+	if err != nil {
+		t.Fatalf("requestDatasetPublication failed: %v", err)
+	}
+}
+
 func TestSyncSpaceTrackGapFillRecordsBatchProvenance(t *testing.T) {
 	fixture, err := os.ReadFile("testdata/celestrak-gp-omm.csv")
 	if err != nil {
