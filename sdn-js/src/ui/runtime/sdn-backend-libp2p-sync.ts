@@ -1,7 +1,9 @@
 import {
   FLATSQL_SYNC_PROTOCOL_ID,
   requestFlatSqlSyncChunk,
+  requestFlatSqlSyncManifest,
   type FlatSqlSyncChunk,
+  type FlatSqlSyncManifest,
   type FlatSqlSyncTransport,
   type FlatSqlSyncQuery,
   type FlatSqlSyncRecordRef,
@@ -30,6 +32,7 @@ import {
 
 export interface Libp2pFlatSqlSyncClient {
   readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk>;
+  openFlatSqlSyncManifest?(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest>;
   stop?(): Promise<void> | void;
 }
 
@@ -408,6 +411,9 @@ export async function createDefaultLibp2pFlatSqlSyncClient(candidateAddrs: strin
     readFlatSqlSyncChunk(query) {
       return requestFlatSqlSyncChunk(transport, query);
     },
+    openFlatSqlSyncManifest(query) {
+      return requestFlatSqlSyncManifest(transport, query);
+    },
     async stop() {
       await libp2p.stop();
     },
@@ -513,6 +519,8 @@ function rawRecordFromFlatSqlRef(record: FlatSqlSyncRecordRef): RawDataRecord {
     providerId: record.providerId,
     sourceName: record.sourceName,
     batchId: record.batchId,
+    producerPeerId: record.producerPeerId,
+    producerPublicKey: record.producerPublicKey,
     timestamp: record.timestamp,
     sizeBytes: record.sizeBytes,
   };

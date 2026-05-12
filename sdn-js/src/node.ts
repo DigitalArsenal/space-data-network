@@ -41,7 +41,9 @@ import {
 } from "./module-delivery";
 import {
   requestFlatSqlSyncChunk,
+  requestFlatSqlSyncManifest,
   type FlatSqlSyncChunk,
+  type FlatSqlSyncManifest,
   type FlatSqlSyncQuery,
 } from "./flatsql-sync";
 
@@ -474,6 +476,10 @@ export class SDNNode {
 
   async readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk> {
     return requestFlatSqlSyncChunk(this, query);
+  }
+
+  async openFlatSqlSyncManifest(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest> {
+    return requestFlatSqlSyncManifest(this, query);
   }
 
   async dialProtocolThroughRelay(

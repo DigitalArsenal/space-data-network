@@ -1427,7 +1427,14 @@
       providerId: configuredProviderIdFromSource(source),
       displayName: source.label,
       publicKey: source.publicKey,
+      gatewayUrl: localGatewayUrl(),
     };
+  }
+
+  function localGatewayUrl(): string | null {
+    const params = new URLSearchParams(window.location.search);
+    const env = import.meta.env as ImportMetaEnv & { readonly SDN_UI_GATEWAY_URL?: string };
+    return params.get('gateway') ?? env.SDN_UI_GATEWAY_URL ?? (backend?.mode === 'desktop-local' ? 'http://127.0.0.1:8081' : null);
   }
 
   function currentDataSourceOption(): DataSourceOption | null {

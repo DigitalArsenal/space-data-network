@@ -16,6 +16,7 @@ export interface WorkerFlatSqlSyncBackendConfig {
   sourceName?: string | null;
   displayName?: string | null;
   publicKey?: string | null;
+  gatewayUrl?: string | null;
 }
 
 export interface WorkerSchemaSyncProgress {

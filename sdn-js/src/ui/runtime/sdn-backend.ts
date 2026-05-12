@@ -116,6 +116,8 @@ export interface RawDataRecord {
   providerId?: string;
   sourceName?: string;
   batchId?: string;
+  producerPeerId?: string;
+  producerPublicKey?: string;
   timestamp?: string;
   sizeBytes: number;
   dataBase64?: string;

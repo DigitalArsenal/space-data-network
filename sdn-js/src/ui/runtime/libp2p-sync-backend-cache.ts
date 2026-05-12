@@ -4,7 +4,7 @@ import {
   type Libp2pFlatSqlSyncBackendOptions,
   type Libp2pFlatSqlSyncClient,
 } from './sdn-backend-libp2p-sync';
-import type { FlatSqlSyncChunk, FlatSqlSyncQuery } from '../../flatsql-sync';
+import type { FlatSqlSyncChunk, FlatSqlSyncManifest, FlatSqlSyncQuery } from '../../flatsql-sync';
 import type { SdnBackend } from './sdn-backend';
 
 type Libp2pFlatSqlSyncClientFactory = (
@@ -43,6 +43,23 @@ export class Libp2pFlatSqlSyncBackendCache {
     const client = await this.clientFor(normalizedOptions);
     return await client.readFlatSqlSyncChunk({
       ...query,
+      targetPeerId: normalizedOptions.targetPeerId,
+      candidateAddrs: normalizedOptions.candidateAddrs,
+      providerId: query.providerId ?? normalizedOptions.providerId ?? undefined,
+      sourceName: query.sourceName ?? normalizedOptions.sourceName ?? undefined,
+    });
+  }
+
+  async openFlatSqlSyncManifest(
+    options: Libp2pFlatSqlSyncBackendOptions,
+    query: FlatSqlSyncQuery,
+  ): Promise<FlatSqlSyncManifest> {
+    const normalizedOptions = normalizeOptions(options);
+    const client = await this.clientFor(normalizedOptions);
+    if (!client.openFlatSqlSyncManifest) throw new Error('remote FlatSQL sync manifest is unavailable');
+    return await client.openFlatSqlSyncManifest({
+      ...query,
+      op: 'open_manifest',
       targetPeerId: normalizedOptions.targetPeerId,
       candidateAddrs: normalizedOptions.candidateAddrs,
       providerId: query.providerId ?? normalizedOptions.providerId ?? undefined,

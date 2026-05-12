@@ -44,7 +44,7 @@ const (
 	defaultSpaceTrackQueryTmpl      = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/%s--%s/format/csv"
 	minCelestrakFetchInterval       = 3 * time.Hour
 	celestrakProviderID             = "space-data-network-02"
-	datasetPublicationChunkSize     = 1000
+	datasetPublicationChunkSize     = 50000
 	publicContentKeyID              = "public"
 	parserVersionCelestrakGP        = "celestrak-gp/v1"
 	parserVersionCelestrakSatcat    = "celestrak-satcat/v1"

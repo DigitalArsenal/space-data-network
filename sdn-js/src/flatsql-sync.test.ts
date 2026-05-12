@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   FLATSQL_SYNC_PROTOCOL_ID,
   decodeFlatSqlSyncChunk,
+  decodeFlatSqlSyncManifest,
   encodeFlatSqlSyncRequest,
   requestFlatSqlSyncChunk,
+  requestFlatSqlSyncManifest,
   type FlatSqlSyncTransport,
 } from './flatsql-sync';
 
@@ -146,6 +148,81 @@ describe('FlatSQL sync protocol client', () => {
       })),
     ]);
     expect(() => decodeFlatSqlSyncChunk(response)).toThrow('schema is required');
+  });
+
+  it('dials open_manifest and decodes published shard CID segments', async () => {
+    const response = concatFrames([
+      encoder.encode(JSON.stringify({
+        manifest_id: 'manifest-1',
+        schema: 'OMM.fbs',
+        provider_id: 'space-data-network-02',
+        source_name: 'celestrak-gp',
+        total_count: 50000,
+        total_bytes: 8000000,
+        snapshot_id: 'snapshot-1',
+        head: 'snapshot-1',
+        high_water_mark: '1:2:3:50000',
+        query_profile: 'dataset-publication-offset-v1',
+        sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
+        max_chunk_size: 50000,
+        transports: ['libp2p-websocket', 'libp2p-webrtc'],
+        segments: [{
+          index: 0,
+          cursor: 'MA',
+          next_cursor: '',
+          row_count: 50000,
+          byte_count: 8000000,
+          chunk_hash: 'result-sha',
+          cid: 'bafkshard',
+          index_cid: 'bafkindex',
+          manifest_cid: 'bafkmanifest',
+          shard_sha256: 'shard-sha',
+        }],
+      })),
+    ]);
+    const calls: Array<{ peer: string; payload: Uint8Array }> = [];
+    const transport: FlatSqlSyncTransport = {
+      async dialProtocol(targetPeerId, _protocolId, payload) {
+        calls.push({ peer: targetPeerId, payload });
+        return response;
+      },
+    };
+
+    const manifest = await requestFlatSqlSyncManifest(transport, {
+      targetPeerId: '16Uiu2HTest',
+      schema: 'OMM.fbs',
+      queryProfile: 'dataset-publication-offset-v1',
+      limit: 50_000,
+    });
+
+    const requestLength = new DataView(calls[0]?.payload.buffer ?? new ArrayBuffer(0), calls[0]?.payload.byteOffset ?? 0, 4).getUint32(0, false);
+    const requestPayload = JSON.parse(decoder.decode(calls[0]?.payload.slice(4, 4 + requestLength))) as Record<string, unknown>;
+    expect(requestPayload).toMatchObject({
+      op: 'open_manifest',
+      schema: 'OMM.fbs',
+      query_profile: 'dataset-publication-offset-v1',
+      limit: 50_000,
+    });
+    expect(manifest.segments).toEqual([
+      expect.objectContaining({
+        cid: 'bafkshard',
+        indexCid: 'bafkindex',
+        manifestCid: 'bafkmanifest',
+        shardSha256: 'shard-sha',
+        rowCount: 50000,
+      }),
+    ]);
+  });
+
+  it('surfaces open_manifest protocol error frames', () => {
+    const response = concatFrames([
+      encoder.encode(JSON.stringify({
+        status: 'error',
+        sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
+        error: { message: 'schema is required' },
+      })),
+    ]);
+    expect(() => decodeFlatSqlSyncManifest(response)).toThrow('schema is required');
   });
 });
 
