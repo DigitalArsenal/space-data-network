@@ -366,6 +366,13 @@ describe('SDN data worker source', () => {
     expect(libp2pSource).not.toContain('SDNNode.create');
   });
 
+  it('continues offset-based schema sync when a chunk has no cursor', () => {
+    const workerSource = readRuntimeSource('local-flatsql.worker.ts');
+
+    expect(workerSource).toContain('if (offset >= totalRows || scan.results.length === 0) break;');
+    expect(workerSource).not.toContain('if (!nextCursor || offset >= totalRows || scan.results.length === 0) break;');
+  });
+
   it('registers a browser COI service worker for SharedArrayBuffer-capable static hosting', () => {
     const mainSource = readUiSource('main.ts');
     const coiSource = readUiSource('lib/cross-origin-isolation.ts');

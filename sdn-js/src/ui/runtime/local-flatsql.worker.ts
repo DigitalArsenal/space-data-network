@@ -351,7 +351,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       });
       postProgress(id, progress, currentStats);
 
-      if (!nextCursor || offset >= totalRows || scan.results.length === 0) break;
+      if (offset >= totalRows || scan.results.length === 0) break;
     }
 
     await currentStore.flush(request.standardId);
