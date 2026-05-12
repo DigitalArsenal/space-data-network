@@ -119,7 +119,7 @@ func TestMaterializeStoredDatasetPublicationPNMsReplaysTrustedProviderPNM(t *tes
 		export.IndexCID: indexBytes,
 	}
 	ipfs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Path; got != "/api/v0/block/get" {
+		if got := r.URL.Path; got != "/api/v0/cat" {
 			http.Error(w, "unexpected path "+got, http.StatusNotFound)
 			return
 		}

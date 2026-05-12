@@ -226,17 +226,19 @@ func TestPublishDatasetExportToIPFSPinsShardAndIndexCIDs(t *testing.T) {
 		t.Fatalf("write index: %v", err)
 	}
 
+	const shardTransportCID = "bafybeishardtransportcid"
+	const indexTransportCID = "bafybeiindextransportcid"
 	var requests []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.URL.String())
 		if r.Method != http.MethodPost {
 			t.Fatalf("method = %s, want POST", r.Method)
 		}
-		if r.URL.Path != "/api/v0/block/put" {
-			t.Fatalf("path = %q, want /api/v0/block/put", r.URL.Path)
+		if r.URL.Path != "/api/v0/add" {
+			t.Fatalf("path = %q, want /api/v0/add", r.URL.Path)
 		}
-		if r.URL.Query().Get("pin") != "true" || r.URL.Query().Get("format") != "raw" || r.URL.Query().Get("mhtype") != "sha2-256" {
-			t.Fatalf("unexpected IPFS block put query: %s", r.URL.RawQuery)
+		if r.URL.Query().Get("pin") != "true" || r.URL.Query().Get("cid-version") != "1" || r.URL.Query().Get("raw-leaves") != "true" || r.URL.Query().Get("hash") != "sha2-256" {
+			t.Fatalf("unexpected IPFS add query: %s", r.URL.RawQuery)
 		}
 		reader, err := r.MultipartReader()
 		if err != nil {
@@ -246,8 +248,8 @@ func TestPublishDatasetExportToIPFSPinsShardAndIndexCIDs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read multipart part: %v", err)
 		}
-		if part.FormName() != "data" {
-			t.Fatalf("multipart form name = %q, want data", part.FormName())
+		if part.FormName() != "file" {
+			t.Fatalf("multipart form name = %q, want file", part.FormName())
 		}
 		body, err := io.ReadAll(part)
 		if err != nil {
@@ -256,14 +258,14 @@ func TestPublishDatasetExportToIPFSPinsShardAndIndexCIDs(t *testing.T) {
 		var cidValue string
 		switch string(body) {
 		case string(shardBytes):
-			cidValue = shardCID
+			cidValue = shardTransportCID
 		case string(indexBytes):
-			cidValue = indexCID
+			cidValue = indexTransportCID
 		default:
 			t.Fatalf("unexpected body %q", string(body))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"Key":"` + cidValue + `"}`))
+		_, _ = w.Write([]byte(`{"Name":"` + part.FileName() + `","Hash":"` + cidValue + `","Size":"123"}` + "\n"))
 	}))
 	defer server.Close()
 
@@ -276,14 +278,44 @@ func TestPublishDatasetExportToIPFSPinsShardAndIndexCIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PublishDatasetExportToIPFS failed: %v", err)
 	}
-	if published.ShardCID != shardCID || published.IndexCID != indexCID {
-		t.Fatalf("published CIDs = %+v, want shard=%s index=%s", published, shardCID, indexCID)
+	if published.ShardCID != shardTransportCID || published.IndexCID != indexTransportCID {
+		t.Fatalf("published CIDs = %+v, want shard=%s index=%s", published, shardTransportCID, indexTransportCID)
 	}
 	if len(requests) != 2 {
 		t.Fatalf("requests = %d, want 2", len(requests))
 	}
-	if !strings.Contains(requests[0], "pin=true") || !strings.Contains(requests[1], "pin=true") {
-		t.Fatalf("pin policy not applied to every request: %v", requests)
+	if !strings.Contains(requests[0], "raw-leaves=true") || !strings.Contains(requests[1], "raw-leaves=true") {
+		t.Fatalf("chunked UnixFS policy not applied to every request: %v", requests)
+	}
+}
+
+func TestFetchIPFSBlockByCIDUsesCatForChunkedUnixFSFiles(t *testing.T) {
+	payload := []byte("chunked-flatbuffer-shard")
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v0/cat" {
+			t.Fatalf("path = %q, want /api/v0/cat", r.URL.Path)
+		}
+		if r.URL.Query().Get("arg") != "bafybeichunkedshard" {
+			t.Fatalf("arg = %q, want chunked shard CID", r.URL.Query().Get("arg"))
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	fetched, err := FetchIPFSBlockByCID(context.Background(), server.URL, "bafybeichunkedshard")
+	if err != nil {
+		t.Fatalf("FetchIPFSBlockByCID failed: %v", err)
+	}
+	if !bytes.Equal(fetched, payload) {
+		t.Fatalf("fetched payload mismatch")
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
 	}
 }
 
