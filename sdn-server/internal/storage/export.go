@@ -301,6 +301,7 @@ func canonicalQueryJSON(filter IndexedRecordQuery) ([]byte, error) {
 		Limit               int     `json:"limit,omitempty"`
 		Offset              int     `json:"offset,omitempty"`
 		AllowLargeResultSet bool    `json:"allowLargeResultSet,omitempty"`
+		OrderByCID          bool    `json:"orderByCid,omitempty"`
 	}{
 		SchemaName:          filter.SchemaName,
 		Day:                 filter.Day,
@@ -316,6 +317,7 @@ func canonicalQueryJSON(filter IndexedRecordQuery) ([]byte, error) {
 		Limit:               filter.Limit,
 		Offset:              filter.Offset,
 		AllowLargeResultSet: filter.AllowLargeResultSet,
+		OrderByCID:          filter.OrderByCID,
 	}
 	if filter.From != nil {
 		payload.From = filter.From.UTC().Format(time.RFC3339Nano)

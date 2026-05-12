@@ -192,6 +192,18 @@ func (s *FlatSQLStore) initTables() error {
 	`); err != nil {
 		return fmt.Errorf("failed to create source tags lookup index: %w", err)
 	}
+	if err := s.createStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_source_cid", sourceTagsExisted, `
+		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_source_cid
+		ON sdn_record_source_tags (schema_name, provider_id, source_name, cid)
+	`); err != nil {
+		return fmt.Errorf("failed to create source tags source/cid index: %w", err)
+	}
+	if err := s.createStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_batch_cid", sourceTagsExisted, `
+		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_batch_cid
+		ON sdn_record_source_tags (schema_name, provider_id, source_name, batch_id, cid)
+	`); err != nil {
+		return fmt.Errorf("failed to create source tags batch/cid index: %w", err)
+	}
 	if err := s.createStartupIndex("sdn_record_source_tags", "idx_sdn_record_source_tags_recent", sourceTagsExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_tags_recent
 		ON sdn_record_source_tags (schema_name, created_at DESC, cid)
@@ -1403,6 +1415,7 @@ type IndexedRecordQuery struct {
 	Limit               int
 	Offset              int
 	AllowLargeResultSet bool
+	OrderByCID          bool
 }
 
 // StoreWithSourceTags stores a FlatBuffer record and attaches provider/source metadata.
@@ -3806,7 +3819,15 @@ func (s *FlatSQLStore) QueryIndexedRecords(filter IndexedRecordQuery) ([]*Record
 		args = append(args, batchID)
 	}
 
-	query += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) DESC, d.cid ASC LIMIT ?`
+	if filter.OrderByCID {
+		if filter.ProviderID != "" || filter.SourceName != "" || filter.BatchID != "" {
+			query += ` ORDER BY tags.cid ASC LIMIT ?`
+		} else {
+			query += ` ORDER BY d.cid ASC LIMIT ?`
+		}
+	} else {
+		query += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) DESC, d.cid ASC LIMIT ?`
+	}
 	args = append(args, filter.Limit)
 	if filter.Offset > 0 {
 		query += ` OFFSET ?`
