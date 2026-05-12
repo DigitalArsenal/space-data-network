@@ -867,10 +867,16 @@ func verifyBytesCIDAndHash(label string, data []byte, expectedCID, expectedSHA s
 	if err != nil {
 		return fmt.Errorf("compute %s CID: %w", label, err)
 	}
-	if localCID != expectedCID {
+	if localCID == expectedCID {
+		if expectedSHA != "" && sha256Hex(data) != expectedSHA {
+			return fmt.Errorf("%s SHA-256 does not match expected hash", label)
+		}
+		return nil
+	}
+	if expectedSHA == "" {
 		return fmt.Errorf("%s CID %s does not match expected CID %s", label, localCID, expectedCID)
 	}
-	if expectedSHA != "" && sha256Hex(data) != expectedSHA {
+	if sha256Hex(data) != expectedSHA {
 		return fmt.Errorf("%s SHA-256 does not match expected hash", label)
 	}
 	return nil

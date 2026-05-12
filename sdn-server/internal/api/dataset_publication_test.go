@@ -160,33 +160,7 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	}
 
 	pinned := make(map[string][]byte)
-	kubo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v0/block/put" {
-			t.Fatalf("unexpected IPFS path: %s", r.URL.Path)
-		}
-		if r.URL.Query().Get("pin") != "true" || r.URL.Query().Get("format") != "raw" {
-			t.Fatalf("unexpected IPFS query: %s", r.URL.RawQuery)
-		}
-		reader, err := r.MultipartReader()
-		if err != nil {
-			t.Fatalf("multipart reader: %v", err)
-		}
-		part, err := reader.NextPart()
-		if err != nil {
-			t.Fatalf("next part: %v", err)
-		}
-		if part.FormName() != "data" {
-			t.Fatalf("multipart field = %q, want data", part.FormName())
-		}
-		body, err := io.ReadAll(part)
-		if err != nil {
-			t.Fatalf("read part: %v", err)
-		}
-		cidValue := cidV1RawSHA256ForTest(t, body)
-		pinned[cidValue] = body
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"Key":"` + cidValue + `"}`))
-	}))
+	kubo := newDatasetPublicationKuboTestServer(t, pinned)
 	defer kubo.Close()
 
 	_, signingKey, err := ed25519.GenerateKey(nil)
@@ -308,24 +282,7 @@ func TestConcreteDatasetPublicationServicePublishesFullCatalogAsDPMSeries(t *tes
 	}
 
 	pinned := make(map[string][]byte)
-	kubo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reader, err := r.MultipartReader()
-		if err != nil {
-			t.Fatalf("multipart reader: %v", err)
-		}
-		part, err := reader.NextPart()
-		if err != nil {
-			t.Fatalf("next part: %v", err)
-		}
-		body, err := io.ReadAll(part)
-		if err != nil {
-			t.Fatalf("read part: %v", err)
-		}
-		cidValue := cidV1RawSHA256ForTest(t, body)
-		pinned[cidValue] = body
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"Key":"` + cidValue + `"}`))
-	}))
+	kubo := newDatasetPublicationKuboTestServer(t, pinned)
 	defer kubo.Close()
 
 	_, signingKey, err := ed25519.GenerateKey(nil)
@@ -419,24 +376,7 @@ func TestConcreteDatasetPublicationServiceDefaultsFullCatalogToLargeSyncChunks(t
 	}
 
 	pinned := make(map[string][]byte)
-	kubo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reader, err := r.MultipartReader()
-		if err != nil {
-			t.Fatalf("multipart reader: %v", err)
-		}
-		part, err := reader.NextPart()
-		if err != nil {
-			t.Fatalf("next part: %v", err)
-		}
-		body, err := io.ReadAll(part)
-		if err != nil {
-			t.Fatalf("read part: %v", err)
-		}
-		cidValue := cidV1RawSHA256ForTest(t, body)
-		pinned[cidValue] = body
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"Key":"` + cidValue + `"}`))
-	}))
+	kubo := newDatasetPublicationKuboTestServer(t, pinned)
 	defer kubo.Close()
 
 	_, signingKey, err := ed25519.GenerateKey(nil)
@@ -507,4 +447,47 @@ func cidV1RawSHA256ForTest(t *testing.T, data []byte) string {
 		t.Fatalf("encode multihash: %v", err)
 	}
 	return cid.NewCidV1(cid.Raw, hash).String()
+}
+
+func newDatasetPublicationKuboTestServer(t *testing.T, pinned map[string][]byte) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var responseKey string
+		var wantField string
+		switch r.URL.Path {
+		case "/api/v0/add":
+			responseKey = "Hash"
+			wantField = "file"
+			if r.URL.Query().Get("pin") != "true" || r.URL.Query().Get("cid-version") != "1" || r.URL.Query().Get("raw-leaves") != "true" || r.URL.Query().Get("hash") != "sha2-256" {
+				t.Fatalf("unexpected IPFS add query: %s", r.URL.RawQuery)
+			}
+		case "/api/v0/block/put":
+			responseKey = "Key"
+			wantField = "data"
+			if r.URL.Query().Get("pin") != "true" || r.URL.Query().Get("format") != "raw" {
+				t.Fatalf("unexpected IPFS block put query: %s", r.URL.RawQuery)
+			}
+		default:
+			t.Fatalf("unexpected IPFS path: %s", r.URL.Path)
+		}
+		reader, err := r.MultipartReader()
+		if err != nil {
+			t.Fatalf("multipart reader: %v", err)
+		}
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Fatalf("next part: %v", err)
+		}
+		if part.FormName() != wantField {
+			t.Fatalf("multipart field = %q, want %s", part.FormName(), wantField)
+		}
+		body, err := io.ReadAll(part)
+		if err != nil {
+			t.Fatalf("read part: %v", err)
+		}
+		cidValue := cidV1RawSHA256ForTest(t, body)
+		pinned[cidValue] = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"` + responseKey + `":"` + cidValue + `"}` + "\n"))
+	}))
 }
