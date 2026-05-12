@@ -321,12 +321,12 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 		log.Warnf("Failed to record CelesTrak GP provenance: %v", err)
 	}
 
+	// Publish source-wide snapshots so replicas can sync the historical store,
+	// not only the latest CelesTrak fetch batch.
 	if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
 		Schema:            "OMM.fbs",
 		ProviderID:        celestrakProviderID,
 		SourceName:        "celestrak-gp",
-		BatchID:           tags.BatchID,
-		Limit:             countOMM,
 		ChunkSize:         datasetPublicationChunkSize,
 		FullCatalog:       true,
 		CombinedCelesTrak: true,
@@ -338,8 +338,6 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 		Schema:            "MPE.fbs",
 		ProviderID:        celestrakProviderID,
 		SourceName:        "celestrak-gp",
-		BatchID:           tags.BatchID,
-		Limit:             countMPE,
 		ChunkSize:         datasetPublicationChunkSize,
 		FullCatalog:       true,
 		CombinedCelesTrak: true,
@@ -371,8 +369,6 @@ func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
 			Schema:            "CAT.fbs",
 			ProviderID:        celestrakProviderID,
 			SourceName:        tags.SourceName,
-			BatchID:           tags.BatchID,
-			Limit:             celestrakSatcatPublicationLimit(tags.SourceName, legacyCount, csvCount),
 			ChunkSize:         datasetPublicationChunkSize,
 			FullCatalog:       true,
 			CombinedCelesTrak: true,
@@ -388,13 +384,6 @@ func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
 	}
 	log.Infof("CelesTrak SATCAT sync complete: legacy_CAT=%d csv_CAT=%d", legacyCount, csvCount)
 	return nil
-}
-
-func celestrakSatcatPublicationLimit(sourceName string, legacyCount, csvCount int) int {
-	if sourceName == "celestrak-satcat-csv" {
-		return csvCount
-	}
-	return legacyCount
 }
 
 func (r *Runner) syncCelestrakSatcatSource(ctx context.Context, sourceURL, cacheName, archiveFallback, provenanceSource, parserVersion string) (int, storage.SourceTags, error) {
@@ -465,8 +454,6 @@ func (r *Runner) syncCelestrakSpaceWeather(ctx context.Context) error {
 		Schema:            "SPW.fbs",
 		ProviderID:        celestrakProviderID,
 		SourceName:        "celestrak-space-weather",
-		BatchID:           tags.BatchID,
-		Limit:             countSPW,
 		ChunkSize:         datasetPublicationChunkSize,
 		FullCatalog:       true,
 		CombinedCelesTrak: true,

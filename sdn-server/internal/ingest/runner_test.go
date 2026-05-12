@@ -419,6 +419,12 @@ func TestSyncCelestrakSpaceWeatherRequestsDatasetPublication(t *testing.T) {
 		if got, want := payload["chunkSize"], float64(50000); got != want {
 			t.Fatalf("chunkSize = %v, want %v", got, want)
 		}
+		if _, ok := payload["batchId"]; ok {
+			t.Fatalf("batchId should be omitted for source-wide dataset publication: %#v", payload)
+		}
+		if _, ok := payload["limit"]; ok {
+			t.Fatalf("limit should be omitted for source-wide dataset publication: %#v", payload)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for dataset publication request")
 	}
