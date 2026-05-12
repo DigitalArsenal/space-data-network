@@ -99,6 +99,8 @@
     localRows: number;
     cachedBytes: number;
     pinnedBytes: number;
+    downloadedBytes: number;
+    downloadSpeedBytesPerSecond: number;
     providerPeerId: string | null;
     providerPublicKey: string | null;
     snapshotId: string | null;
@@ -1169,6 +1171,8 @@
       localRows,
       cachedBytes,
       pinnedBytes: activePersisted?.pinnedBytes ?? cachedBytes,
+      downloadedBytes: activePersisted?.downloadedBytes ?? 0,
+      downloadSpeedBytesPerSecond: active ? activePersisted?.downloadSpeedBytesPerSecond ?? 0 : 0,
       providerPeerId: activePersisted?.providerPeerId ?? null,
       providerPublicKey: activePersisted?.providerPublicKey ?? null,
       snapshotId: activePersisted?.snapshotId ?? null,
@@ -1283,6 +1287,8 @@
       localRows: normalizedRowCount(candidate.localRows),
       cachedBytes: normalizedRowCount(candidate.cachedBytes),
       pinnedBytes: normalizedRowCount(candidate.pinnedBytes),
+      downloadedBytes: normalizedRowCount(candidate.downloadedBytes),
+      downloadSpeedBytesPerSecond: normalizedRowCount(candidate.downloadSpeedBytesPerSecond),
       providerPeerId: normalizedOptionalString(candidate.providerPeerId),
       providerPublicKey: normalizedOptionalString(candidate.providerPublicKey),
       snapshotId: normalizedOptionalString(candidate.snapshotId),
@@ -1470,6 +1476,10 @@
     return `Synced ${formatNumber(syncedRows)}/${formatNumber(totalRows)}`;
   }
 
+  function syncDownloadSpeedLabel(schema: SchemaSyncRow): string {
+    return `Download ${formatBytesPerSecond(schema.progress.downloadSpeedBytesPerSecond)}`;
+  }
+
   function syncStatusLabel(schema: SchemaSyncRow): string {
     return formatSchemaSyncStatusLabel({
       preferenceMode: schema.preference.mode,
@@ -1510,6 +1520,10 @@
     }
     const digits = nextValue >= 10 || unitIndex === 0 ? 0 : 1;
     return `${nextValue.toFixed(digits)} ${units[unitIndex]}`;
+  }
+
+  function formatBytesPerSecond(value: number): string {
+    return `${formatBytes(value)}/s`;
   }
 
   function storageCapBytes(preference: SchemaSyncPreference): number {
@@ -1792,6 +1806,7 @@
                 <div>
                   <strong>{formatBytes(schema.cachedBytes)}</strong>
                   <span>{syncProgressLabel(schema)}</span>
+                  <span>{syncDownloadSpeedLabel(schema)}</span>
                 </div>
                 <div>
                   <strong>{syncStatusLabel(schema)}</strong>
@@ -1820,6 +1835,7 @@
                 <div>
                   <strong>{syncStatusLabel(schema)}</strong>
                   <span>{syncProgressLabel(schema)}</span>
+                  <span>{syncDownloadSpeedLabel(schema)}</span>
                   <span>Next sync attempt: {nextSyncAttemptLabel(schema)}</span>
                 </div>
                 <label>

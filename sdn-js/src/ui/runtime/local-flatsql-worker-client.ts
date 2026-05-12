@@ -27,6 +27,8 @@ export interface WorkerSchemaSyncProgress {
   localRows: number;
   cachedBytes: number;
   pinnedBytes: number;
+  downloadedBytes: number;
+  downloadSpeedBytesPerSecond: number;
   providerPeerId: string | null;
   providerPublicKey: string | null;
   snapshotId: string | null;

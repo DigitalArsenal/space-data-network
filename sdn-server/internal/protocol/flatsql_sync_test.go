@@ -280,6 +280,57 @@ func TestFlatSQLSyncProtocolOpenManifestIncludesPublishedShardCIDs(t *testing.T)
 	}
 }
 
+func TestFlatSQLSyncProtocolOpenManifestIncludesPartialPublishedShardCIDs(t *testing.T) {
+	store := newFlatSQLSyncTestStore(t)
+	storeFlatSQLSyncTestOMM(t, store, 56775, "STARLINK-6292")
+	if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "test-batch",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        1,
+		RecordCount:  1,
+		ByteCount:    2048,
+		ShardCID:     "bafkpartialshard",
+		IndexCID:     "bafkpartialindex",
+		ManifestCID:  "bafkpartialmanifest",
+		ShardSHA256:  "partial-shard-sha",
+		ResultSHA256: "partial-result-sha",
+	}); err != nil {
+		t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+	}
+	handler := NewFlatSQLSyncHandler(store)
+
+	var out bytes.Buffer
+	if err := handler.handleOpenManifest(&out, flatSQLSyncRequest{
+		Op:           "open_manifest",
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "test-batch",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Limit:        50000,
+	}); err != nil {
+		t.Fatalf("open manifest failed: %v", err)
+	}
+
+	var body struct {
+		Segments []struct {
+			CID       string `json:"cid"`
+			ChunkHash string `json:"chunk_hash"`
+		} `json:"segments"`
+	}
+	readFlatSQLSyncTestJSONFrame(t, &out, &body)
+	if len(body.Segments) != 1 {
+		t.Fatalf("segments = %d, want 1: %+v", len(body.Segments), body.Segments)
+	}
+	if body.Segments[0].CID != "bafkpartialshard" || body.Segments[0].ChunkHash != "partial-result-sha" {
+		t.Fatalf("partial published CID missing from manifest segment: %+v", body.Segments[0])
+	}
+}
+
 func newFlatSQLSyncTestStore(t *testing.T) *storage.FlatSQLStore {
 	t.Helper()
 	tmpDir, err := os.MkdirTemp("", "sdn-flatsql-sync-test-*")

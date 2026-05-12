@@ -387,6 +387,118 @@ func TestConcreteDatasetPublicationServicePublishesFullCatalogAsDPMSeries(t *tes
 	}
 }
 
+func TestConcreteDatasetPublicationServiceDefaultsFullCatalogToLargeSyncChunks(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	dir := t.TempDir()
+	store, err := storage.NewFlatSQLStore(filepath.Join(dir, "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	tags := storage.SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "source-sha-001",
+		ContentKeyID: "public",
+	}
+	for i := 0; i < defaultDatasetPublicationLimit+1; i++ {
+		record := sds.NewCATBuilder().
+			WithNoradCatID(uint32(60000 + i)).
+			WithObjectName("FULL-CATALOG-DEFAULT-CHUNK").
+			WithObjectID("2026-001A").
+			WithObjectType("PAYLOAD").
+			WithOpsStatus("OPERATIONAL").
+			Build()
+		if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:celestrak", nil, tags); err != nil {
+			t.Fatalf("store record %d failed: %v", i, err)
+		}
+	}
+
+	pinned := make(map[string][]byte)
+	kubo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reader, err := r.MultipartReader()
+		if err != nil {
+			t.Fatalf("multipart reader: %v", err)
+		}
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Fatalf("next part: %v", err)
+		}
+		body, err := io.ReadAll(part)
+		if err != nil {
+			t.Fatalf("read part: %v", err)
+		}
+		cidValue := cidV1RawSHA256ForTest(t, body)
+		pinned[cidValue] = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Key":"` + cidValue + `"}`))
+	}))
+	defer kubo.Close()
+
+	_, signingKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	publisher := &fakeDatasetUpdatePublisher{}
+	service := NewConcreteDatasetPublicationService(
+		store,
+		publisher,
+		signingKey,
+		"16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4",
+		"bafy-provider-epm",
+		kubo.URL,
+		filepath.Join(dir, "publications"),
+	)
+
+	result, err := service.PublishDatasetUpdate(context.Background(), DatasetPublicationRequest{
+		Schema:      "CAT.fbs",
+		ProviderID:  "space-data-network-02",
+		SourceName:  "celestrak-gp",
+		BatchID:     "source-sha-001",
+		DatasetID:   "celestrak-cat-full",
+		FullCatalog: true,
+		Limit:       defaultDatasetPublicationLimit + 1,
+	})
+	if err != nil {
+		t.Fatalf("PublishDatasetUpdate failed: %v", err)
+	}
+	if result.RecordCount != defaultDatasetPublicationLimit+1 {
+		t.Fatalf("RecordCount = %d, want %d", result.RecordCount, defaultDatasetPublicationLimit+1)
+	}
+	if len(result.Publications) != 1 {
+		t.Fatalf("publications = %d, want one large sync chunk: %#v", len(result.Publications), result.Publications)
+	}
+	if len(publisher.announcements) != 1 {
+		t.Fatalf("announcements = %d, want one large sync chunk", len(publisher.announcements))
+	}
+	if len(pinned) != 3 {
+		t.Fatalf("pinned object count = %d, want 3", len(pinned))
+	}
+	publishedShard, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		SchemaName:   "CAT.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "source-sha-001",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        defaultDatasetPublicationLimit + 1,
+		RecordCount:  defaultDatasetPublicationLimit + 1,
+	})
+	if err != nil {
+		t.Fatalf("FindDatasetShardPublication failed: %v", err)
+	}
+	if !found {
+		t.Fatal("published full-catalog shard was not stored under the large sync chunk size")
+	}
+	if publishedShard.ShardCID != result.ShardCID {
+		t.Fatalf("published shard CID = %q, want %q", publishedShard.ShardCID, result.ShardCID)
+	}
+}
+
 func cidV1RawSHA256ForTest(t *testing.T, data []byte) string {
 	t.Helper()
 	sum := sha256.Sum256(data)
