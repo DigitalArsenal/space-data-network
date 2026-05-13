@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   flatBufferStreamFromPublishedFlatSqlSegment,
+  importPublishedFlatSqlShardCar,
   timedFlatBufferStreamFromPublishedFlatSqlSegment,
   rawRecordsFromPublishedFlatSqlSegment,
 } from './published-flatbuffer-shard';
@@ -45,6 +46,30 @@ describe('published FlatSQL shard reader', () => {
     expect(result.streamBytes).toEqual(shard);
     expect(result.networkTransferMs).toBeGreaterThanOrEqual(0);
     expect(result.verificationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('verifies and imports a published shard-group CAR before shard reads', async () => {
+    const car = encoder.encode('car bytes for a complete shard group');
+    const imported: Uint8Array[] = [];
+
+    const result = await importPublishedFlatSqlShardCar({
+      cid: 'bafkcar',
+      sha256: await sha256Hex(car),
+      fetchCidBytes: async (cid) => {
+        if (cid !== 'bafkcar') throw new Error(`unexpected CID ${cid}`);
+        return car;
+      },
+      importCarBytes: async (bytes) => {
+        imported.push(bytes);
+      },
+    });
+
+    expect(imported).toEqual([car]);
+    expect(result.cid).toBe('bafkcar');
+    expect(result.byteLength).toBe(car.byteLength);
+    expect(result.networkTransferMs).toBeGreaterThanOrEqual(0);
+    expect(result.verificationMs).toBeGreaterThanOrEqual(0);
+    expect(result.importMs).toBeGreaterThanOrEqual(0);
   });
 
   it('hydrates raw records from a DPM shard and its materialized index', async () => {

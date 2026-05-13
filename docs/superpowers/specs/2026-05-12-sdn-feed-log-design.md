@@ -43,7 +43,8 @@ On a measured 2 Gbps path, the target is about 1.6 Gbps, or 200 MB/s. At that ta
 - Desktop/browser sync asks local Kubo for IPFS providers of published shard CIDs and connects to those provider multiaddrs before gateway shard reads, so multi-provider seeding can come from IPFS provider records without introducing HTTP or SSH data fallbacks.
 - Desktop/browser sync also includes artifact seed addresses from generic trusted peer records, after the selected/configured provider addresses and without using unknown or never-trusted observed peers as trusted seeds.
 - Browser/desktop sync passes verified published shard streams directly to FlatSQL's native size-prefixed stream ingest when the payload frames are already direct FlatBuffers, with the decoder path retained for explicit-key previews, duplicate shard keys, and nested SDN-prefixed frames.
+- `open_manifest` can advertise verified shard-group CAR bundles from the pin ledger, and the browser/desktop worker imports those CARs into local Kubo before fetching the ordered shard CIDs.
 
 ## Follow-Up Work
 
-- Add CAR export/import for shard groups to reduce per-CID round trips when a provider or peer offers a complete dataset snapshot.
+- Add provider-side CAR creation and registration for complete shard groups so providers can publish the shard-group CAR bundles that replicas already understand.

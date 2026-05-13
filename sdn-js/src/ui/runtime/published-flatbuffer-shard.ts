@@ -16,6 +16,21 @@ export interface TimedPublishedFlatSqlSegment {
   verificationMs: number;
 }
 
+export interface PublishedFlatSqlShardCarImportInput {
+  cid: string;
+  sha256?: string;
+  fetchCidBytes(cid: string): Promise<Uint8Array>;
+  importCarBytes(bytes: Uint8Array): Promise<void>;
+}
+
+export interface TimedPublishedFlatSqlShardCarImport {
+  cid: string;
+  byteLength: number;
+  networkTransferMs: number;
+  verificationMs: number;
+  importMs: number;
+}
+
 interface DatasetExportIndex {
   version?: number;
   schemaName?: string;
@@ -59,6 +74,61 @@ export async function timedFlatBufferStreamFromPublishedFlatSqlSegment(input: Pu
   assertFlatSqlSizePrefixedStream(shardBytes);
   const verificationMs = Math.max(0, Date.now() - verificationStartedAt);
   return { streamBytes: shardBytes, networkTransferMs, verificationMs };
+}
+
+export async function importPublishedFlatSqlShardCar(input: PublishedFlatSqlShardCarImportInput): Promise<TimedPublishedFlatSqlShardCarImport> {
+  const cid = input.cid.trim();
+  if (!cid) throw new Error('published shard CAR CID is required');
+  const networkStartedAt = Date.now();
+  const carBytes = await input.fetchCidBytes(cid);
+  const networkTransferMs = Math.max(0, Date.now() - networkStartedAt);
+  const verificationStartedAt = Date.now();
+  const expectedSha = input.sha256?.trim();
+  if (expectedSha) {
+    const actualSha = await sha256Hex(carBytes);
+    if (actualSha !== expectedSha) {
+      throw new Error(`shard group CAR SHA-256 mismatch for ${cid}`);
+    }
+  }
+  const verificationMs = Math.max(0, Date.now() - verificationStartedAt);
+  const importStartedAt = Date.now();
+  await input.importCarBytes(carBytes);
+  const importMs = Math.max(0, Date.now() - importStartedAt);
+  return {
+    cid,
+    byteLength: carBytes.byteLength,
+    networkTransferMs,
+    verificationMs,
+    importMs,
+  };
+}
+
+export async function importCarBytesToKubo(ipfsApiUrl: string, carBytes: Uint8Array): Promise<void> {
+  const base = ipfsApiUrl.trim().replace(/\/+$/, '');
+  if (!base) throw new Error('local IPFS API URL is required for CAR import');
+  if (typeof FormData === 'undefined' || typeof Blob === 'undefined') {
+    throw new Error('CAR import requires FormData and Blob support');
+  }
+  const form = new FormData();
+  form.append('file', new Blob([arrayBufferBlobPart(carBytes)], { type: 'application/vnd.ipld.car' }), 'sdn-shard-group.car');
+  const response = await fetch(`${base}/api/v0/dag/import?pin-roots=true&stats=false`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`IPFS CAR import failed with HTTP ${response.status}${text ? `: ${text.trim()}` : ''}`);
+  }
+}
+
+function arrayBufferBlobPart(bytes: Uint8Array): ArrayBuffer {
+  if (bytes.buffer instanceof ArrayBuffer) {
+    if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+      return bytes.buffer;
+    }
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  }
+  return new Uint8Array(bytes).buffer;
 }
 
 export async function rawRecordsFromPublishedFlatSqlSegment(input: PublishedFlatSqlSegmentInput): Promise<RawDataRecord[]> {

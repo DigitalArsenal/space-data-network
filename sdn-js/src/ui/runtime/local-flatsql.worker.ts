@@ -17,6 +17,8 @@ import {
 } from './sdn-backend-libp2p-sync';
 import {
   fetchCidBytesFromGateway,
+  importCarBytesToKubo,
+  importPublishedFlatSqlShardCar,
   timedFlatBufferStreamFromPublishedFlatSqlSegment,
 } from './published-flatbuffer-shard';
 import { retryRemoteSyncOperation } from './remote-sync-retry';
@@ -25,7 +27,7 @@ import { syncRowCountSummary } from './sync-progress';
 import { DEFAULT_WIRE_SPEED_TARGET, measuredWireSpeedUtilization, meetsWireSpeedTarget } from './sync-throughput';
 import { connectIpfsArtifactPeers, connectIpfsArtifactProviders } from './ipfs-artifact-peers';
 import type { DataSummary, RawDataRecord, SdnBackend } from './sdn-backend';
-import type { FlatSqlSyncManifest, FlatSqlSyncManifestSegment } from '../../flatsql-sync';
+import type { FlatSqlSyncManifest, FlatSqlSyncManifestArtifactBundle, FlatSqlSyncManifestSegment } from '../../flatsql-sync';
 import type {
   WorkerFlatSqlSyncBackendConfig,
   WorkerRemotePageRequest,
@@ -516,6 +518,9 @@ async function syncPublishedSegments(options: {
         .filter((cid): cid is string => Boolean(cid))
         .slice(0, PUBLISHED_SHARD_PROVIDER_DISCOVERY_CID_LIMIT),
     });
+    const carImportTiming = await importPublishedShardCarBundles(options.manifest, options.request, gatewayUrl);
+    networkTransferMs += carImportTiming.networkTransferMs;
+    verificationMs += carImportTiming.verificationMs + carImportTiming.importMs;
 
     let recordsSincePersist = 0;
     for await (const fetched of fetchPublishedSegmentsInOrder(options.segments, options.request, gatewayUrl, localRows)) {
@@ -652,6 +657,42 @@ async function syncPublishedSegments(options: {
     postProgress(options.id, progress, currentStats);
     return { progress, stats: currentStats };
   }
+}
+
+async function importPublishedShardCarBundles(
+  manifest: FlatSqlSyncManifest,
+  request: WorkerSchemaSyncRequest,
+  gatewayUrl: string,
+): Promise<{
+  networkTransferMs: number;
+  verificationMs: number;
+  importMs: number;
+  byteLength: number;
+}> {
+  const bundles = manifest.artifactBundles.filter(isShardGroupCarBundle);
+  if (bundles.length === 0) {
+    return { networkTransferMs: 0, verificationMs: 0, importMs: 0, byteLength: 0 };
+  }
+  const ipfsApiUrl = request.backendConfig.ipfsApiUrl?.trim();
+  if (!ipfsApiUrl) throw new Error('local IPFS API URL is required for published shard CAR import');
+  const totals = { networkTransferMs: 0, verificationMs: 0, importMs: 0, byteLength: 0 };
+  for (const bundle of bundles) {
+    const result = await importPublishedFlatSqlShardCar({
+      cid: bundle.cid,
+      sha256: bundle.sha256,
+      fetchCidBytes: (cid) => fetchCidBytesFromGateway(gatewayUrl, cid),
+      importCarBytes: (bytes) => importCarBytesToKubo(ipfsApiUrl, bytes),
+    });
+    totals.networkTransferMs += result.networkTransferMs;
+    totals.verificationMs += result.verificationMs;
+    totals.importMs += result.importMs;
+    totals.byteLength += result.byteLength;
+  }
+  return totals;
+}
+
+function isShardGroupCarBundle(bundle: FlatSqlSyncManifestArtifactBundle): boolean {
+  return bundle.role === 'shard-group-car' && bundle.cid.trim().length > 0;
 }
 
 async function openPublishedManifest(
