@@ -13,6 +13,7 @@ const HOST = '127.0.0.1'
 const START_PORT = 17890
 const FLATSQL_SYNC_PROTOCOL_ID = '/space-data-network/flatsql-sync/1.0.0'
 const CONFIGURED_SDN_NODE_SYNC_WS_PORT = 8080
+const CONFIGURED_SDN_NODE_ARTIFACT_PORT = 4002
 const DESKTOP_SDN_SEED_PEERS = Object.freeze([
   '/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
   '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
@@ -166,13 +167,15 @@ const CONFIGURED_SDN_NODE_IDENTITIES = [
     aliases: ['space-data-network-01', 'sdn.spaceaware.io'],
     name: 'SpaceAware.io',
     peer_id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
-    public_key: '0257d9a39fac79d4c36e017b3b6913f60684586605ebb9370cf417ef44bf0f7cd2'
+    public_key: '0257d9a39fac79d4c36e017b3b6913f60684586605ebb9370cf417ef44bf0f7cd2',
+    ipfs_artifact_peer_id: '12D3KooWMtfuRiHtDuzMMRYB2oX8UKVqP43hZQakGBLhWsMnCd7K'
   },
   {
     aliases: ['space-data-network-02', 'celestrak.eth'],
     name: 'CelesTrak Provider',
     peer_id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
-    public_key: '90aa23ea4ff2d68cf8cb8155135fe5a25b580ec805e835aabb0e8905ffb2c3b2'
+    public_key: '90aa23ea4ff2d68cf8cb8155135fe5a25b580ec805e835aabb0e8905ffb2c3b2',
+    ipfs_artifact_peer_id: '12D3KooWGhZfrxQVvwQHNGRkeJhGqMbkDqjktfpBXzn47N78XY9j'
   }
 ]
 
@@ -192,6 +195,7 @@ function configuredSdnNodesFromSshConfig (configPath = path.join(os.homedir(), '
     const alias = current.aliases[0]
     const identity = configuredNodeIdentityForSdnSSHHost(alias, current.aliases)
     const addrs = configuredNodeLibp2pSyncAddrs(current.hostName || alias, identity)
+    const ipfsArtifactAddrs = configuredNodeIpfsArtifactAddrs(current.hostName || alias, identity)
     nodes.push({
       id: alias,
       name: displayNameForSdnSSHHost(alias, current.aliases),
@@ -204,6 +208,7 @@ function configuredSdnNodesFromSshConfig (configPath = path.join(os.homedir(), '
         ssh_aliases: current.aliases.join(','),
         ...(identity?.peer_id ? { peer_id: identity.peer_id } : {}),
         ...(identity?.public_key ? { public_key: identity.public_key } : {}),
+        ...(ipfsArtifactAddrs.length > 0 ? { ipfs_artifact_addrs: ipfsArtifactAddrs } : {}),
         ...(current.hostName ? { host_name: current.hostName } : {})
       }
     })
@@ -243,6 +248,15 @@ function configuredNodeLibp2pSyncAddrs (hostName, identity) {
   const hostProtocol = multiaddrHostProtocol(host)
   if (!hostProtocol) return []
   return [`/${hostProtocol}/${host}/tcp/${CONFIGURED_SDN_NODE_SYNC_WS_PORT}/ws/p2p/${peerId}`]
+}
+
+function configuredNodeIpfsArtifactAddrs (hostName, identity) {
+  const host = String(hostName || '').trim()
+  const peerId = String(identity?.ipfs_artifact_peer_id || '').trim()
+  if (!host || !peerId || host.startsWith('space-data-network-')) return []
+  const hostProtocol = multiaddrHostProtocol(host)
+  if (!hostProtocol) return []
+  return [`/${hostProtocol}/${host}/tcp/${CONFIGURED_SDN_NODE_ARTIFACT_PORT}/p2p/${peerId}`]
 }
 
 function multiaddrHostProtocol (hostName) {

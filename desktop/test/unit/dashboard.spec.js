@@ -169,6 +169,10 @@ test.describe('SDN dashboard window', () => {
       '0257d9a39fac79d4c36e017b3b6913f60684586605ebb9370cf417ef44bf0f7cd2',
       '90aa23ea4ff2d68cf8cb8155135fe5a25b580ec805e835aabb0e8905ffb2c3b2'
     ])
+    expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.metadata.ipfs_artifact_addrs)).toEqual([
+      ['/ip4/159.203.150.8/tcp/4002/p2p/12D3KooWMtfuRiHtDuzMMRYB2oX8UKVqP43hZQakGBLhWsMnCd7K'],
+      ['/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWGhZfrxQVvwQHNGRkeJhGqMbkDqjktfpBXzn47N78XY9j']
+    ])
     expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('/p2p/space-data-network-')
     expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('/p2p/sdn.spaceaware.io')
     expect(JSON.stringify(configuredSdnNodesFromSshConfig(configPath))).not.toContain('/p2p/celestrak.eth')

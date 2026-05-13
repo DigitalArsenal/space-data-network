@@ -23,6 +23,7 @@ import { retryRemoteSyncOperation } from './remote-sync-retry';
 import { SerialTaskQueue } from './serial-task-queue';
 import { syncRowCountSummary } from './sync-progress';
 import { DEFAULT_WIRE_SPEED_TARGET, measuredWireSpeedUtilization, meetsWireSpeedTarget } from './sync-throughput';
+import { connectIpfsArtifactPeers } from './ipfs-artifact-peers';
 import type { DataSummary, RawDataRecord, SdnBackend } from './sdn-backend';
 import type { FlatSqlSyncManifest, FlatSqlSyncManifestSegment } from '../../flatsql-sync';
 import type {
@@ -496,6 +497,11 @@ async function syncPublishedSegments(options: {
   totalRows = Math.max(totalRows, manifestTotalRows, options.request.totalRows);
 
   try {
+    await connectIpfsArtifactPeers({
+      ipfsApiUrl: options.request.backendConfig.ipfsApiUrl,
+      artifactPeerAddrs: options.request.backendConfig.artifactPeerAddrs,
+    });
+
     let recordsSincePersist = 0;
     for await (const fetched of fetchPublishedSegmentsInOrder(options.segments, options.request, gatewayUrl, localRows)) {
       const { segment, streamBytes, cumulativeRows, segmentEnd } = fetched;

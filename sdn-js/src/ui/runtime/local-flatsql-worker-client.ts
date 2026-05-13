@@ -21,6 +21,8 @@ export interface WorkerFlatSqlSyncBackendConfig {
   displayName?: string | null;
   publicKey?: string | null;
   gatewayUrl?: string | null;
+  ipfsApiUrl?: string | null;
+  artifactPeerAddrs?: string[] | null;
   measuredWireSpeedBytesPerSecond?: number | null;
 }
 
