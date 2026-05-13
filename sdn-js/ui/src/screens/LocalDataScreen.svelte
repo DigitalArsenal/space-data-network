@@ -2209,6 +2209,9 @@
                   <strong>{syncStatusLabel(schema)}</strong>
                   <span>Next sync attempt: {nextSyncAttemptLabel(schema)}</span>
                   <span>{schema.progress.lastSyncedAt ? formatDateTime(schema.progress.lastSyncedAt) : 'Never synced'}</span>
+                  {#if schema.progress.error}
+                    <span class="sdn-sync-error" title={schema.progress.error}>{shorten(schema.progress.error, 120)}</span>
+                  {/if}
                 </div>
                 <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => retrySubscriptionSync(schema)} disabled={activeSyncKeys.has(schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey))}>Retry</button>
               </article>
@@ -2235,6 +2238,9 @@
                   <span>{syncDownloadSpeedLabel(schema)}</span>
                   <span>{syncTimingLabel(schema)}</span>
                   <span>Next sync attempt: {nextSyncAttemptLabel(schema)}</span>
+                  {#if schema.progress.error}
+                    <span class="sdn-sync-error" title={schema.progress.error}>{shorten(schema.progress.error, 120)}</span>
+                  {/if}
                 </div>
                 <label>
                   <span>Storage cap</span>
