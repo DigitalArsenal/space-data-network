@@ -280,6 +280,8 @@ describe('SDN data Svelte source', () => {
       'boundedWireSpeedUtilization(schema.progress.wireSpeedUtilization)',
       'Download',
       'backendConfigForDataSource',
+      'artifactPeerAddrsForDataSource(source)',
+      'prioritizeIpfsArtifactPeerAddrs(',
       'clearLocalFlatSqlStore',
       'ingestDownloadedRecords',
       'loadDataDirectoryState',
