@@ -22,6 +22,15 @@ export interface IpfsArtifactProviderConnectSummary extends IpfsArtifactPeerConn
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_PROVIDER_DISCOVERY_COUNT = 20;
+const TRUSTED_ARTIFACT_SEED_LEVELS = new Set([
+  'marginal',
+  'limited',
+  'full',
+  'ultimate',
+  'trusted',
+  'admin',
+  'configured',
+]);
 
 export function normalizeIpfsArtifactPeerAddrs(value: unknown): string[] {
   const rawValues = Array.isArray(value)
@@ -46,6 +55,18 @@ export function prioritizeIpfsArtifactPeerAddrs(primary: unknown, candidates: un
     ...normalizeIpfsArtifactPeerAddrs(primary),
     ...normalizeIpfsArtifactPeerAddrs(candidates),
   ]);
+}
+
+export function artifactPeerAddrsForTrustedPeers(value: unknown): string[] {
+  const peers = Array.isArray(value) ? value : [];
+  return normalizeIpfsArtifactPeerAddrs(peers.flatMap((peer) => {
+    const record = asRecord(peer);
+    if (!record || !isTrustedArtifactSeedPeer(record)) return [];
+    const metadata = asRecord(record.metadata) ?? {};
+    return normalizeIpfsArtifactPeerAddrs(
+      artifactAddrValue(record) ?? artifactAddrValue(metadata),
+    );
+  }));
 }
 
 export async function connectIpfsArtifactPeers(options: IpfsArtifactPeerConnectOptions): Promise<IpfsArtifactPeerConnectSummary> {
@@ -257,4 +278,20 @@ function stringFromMultiaddrValue(value: unknown): string | null {
 function appendPeerIdToMultiaddr(addr: string, peerId: string | null): string {
   if (!peerId || addr.includes('/p2p/') || addr.includes('/ipfs/')) return addr;
   return `${addr.replace(/\/+$/, '')}/p2p/${peerId}`;
+}
+
+function isTrustedArtifactSeedPeer(record: Record<string, unknown>): boolean {
+  const metadata = asRecord(record.metadata) ?? {};
+  const trustLevel = stringValue(record, ['trustLevel', 'trust_level', 'trust'])
+    ?? stringValue(metadata, ['trustLevel', 'trust_level', 'trust']);
+  return TRUSTED_ARTIFACT_SEED_LEVELS.has((trustLevel ?? '').trim().toLowerCase());
+}
+
+function artifactAddrValue(record: Record<string, unknown>): unknown {
+  return record.ipfs_artifact_addrs
+    ?? record.ipfsArtifactAddrs
+    ?? record.artifact_peer_addrs
+    ?? record.artifactPeerAddrs
+    ?? record.artifact_addrs
+    ?? record.artifactAddrs;
 }

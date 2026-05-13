@@ -41,9 +41,9 @@ On a measured 2 Gbps path, the target is about 1.6 Gbps, or 200 MB/s. At that ta
 - Desktop/browser sync automatically connects the local Kubo node to configured SDN artifact seed peers, selected provider first, before fetching published shard CIDs through the local gateway. With both CelesTrak and SpaceAware configured, normal app sync no longer depends on a manually supplied second seed peer.
 - Observed desktop SDN peer records that match configured provider identities also advertise the provider artifact peer address, so sync retry paths can reuse artifact seeds discovered from the local peer list.
 - Desktop/browser sync asks local Kubo for IPFS providers of published shard CIDs and connects to those provider multiaddrs before gateway shard reads, so multi-provider seeding can come from IPFS provider records without introducing HTTP or SSH data fallbacks.
+- Desktop/browser sync also includes artifact seed addresses from generic trusted peer records, after the selected/configured provider addresses and without using unknown or never-trusted observed peers as trusted seeds.
 - Browser/desktop sync passes verified published shard streams directly to FlatSQL's native size-prefixed stream ingest when the payload frames are already direct FlatBuffers, with the decoder path retained for explicit-key previews, duplicate shard keys, and nested SDN-prefixed frames.
 
 ## Follow-Up Work
 
 - Add CAR export/import for shard groups to reduce per-CID round trips when a provider or peer offers a complete dataset snapshot.
-- Extend shard seed peer discovery beyond configured, observed-known, and local Kubo provider records to generic trusted peer records.

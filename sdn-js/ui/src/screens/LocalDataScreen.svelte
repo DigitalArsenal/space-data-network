@@ -23,7 +23,7 @@
   } from '../../../src/ui/runtime/local-flatsql-worker-client';
   import { decodeOmmFlatBuffer } from '../../../src/ui/runtime/omm-flatbuffer';
   import { decodePnmFlatBuffer } from '../../../src/ui/runtime/pnm-flatbuffer';
-  import { normalizeIpfsArtifactPeerAddrs, prioritizeIpfsArtifactPeerAddrs } from '../../../src/ui/runtime/ipfs-artifact-peers';
+  import { artifactPeerAddrsForTrustedPeers, normalizeIpfsArtifactPeerAddrs, prioritizeIpfsArtifactPeerAddrs } from '../../../src/ui/runtime/ipfs-artifact-peers';
   import {
     buildEpochProfileSql,
     EPOCH_SQL_PROFILES,
@@ -167,6 +167,7 @@
 
   export let backend: SdnBackend | null = null;
   export let peers: ObservedSdnPeer[] = [];
+  export let trustedPeers: ObservedSdnPeer[] = [];
   export let route = '/data';
 
   const DEFAULT_STANDARD_ID = 'EPM';
@@ -2222,6 +2223,7 @@
     return prioritizeIpfsArtifactPeerAddrs(source.artifactPeerAddrs ?? [], [
       ...discoveredPeerAddrs,
       ...artifactPeerAddrsForObservedPeers(peers),
+      ...artifactPeerAddrsForTrustedPeers(trustedPeers),
     ]);
   }
 

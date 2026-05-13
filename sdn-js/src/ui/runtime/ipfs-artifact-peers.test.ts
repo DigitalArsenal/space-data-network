@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  artifactPeerAddrsForTrustedPeers,
   connectIpfsArtifactProviders,
   connectIpfsArtifactPeers,
   normalizeIpfsArtifactPeerAddrs,
@@ -59,6 +60,41 @@ describe('IPFS artifact peer routing', () => {
     )).toEqual([
       '/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWCelesTrak',
       '/ip4/159.203.150.8/tcp/4002/p2p/12D3KooWSpaceAware',
+    ]);
+  });
+
+  it('adds generic trusted peer artifact addresses without using untrusted observed peers', () => {
+    expect(artifactPeerAddrsForTrustedPeers([
+      {
+        id: '16Uiu2HUnknown',
+        trustLevel: 'unknown',
+        artifactPeerAddrs: ['/ip4/198.51.100.10/tcp/4002/p2p/12D3KooWUnknown'],
+      },
+      {
+        id: '16Uiu2HNever',
+        trust_level: 'never',
+        metadata: {
+          ipfs_artifact_addrs: ['/ip4/198.51.100.11/tcp/4002/p2p/12D3KooWNever'],
+        },
+      },
+      {
+        id: '16Uiu2HMarginal',
+        trustLevel: 'marginal',
+        artifactPeerAddrs: ['/ip4/203.0.113.20/tcp/4002/p2p/12D3KooWMarginal'],
+      },
+      {
+        id: '16Uiu2HTrusted',
+        trust_level: 'trusted',
+        metadata: {
+          ipfs_artifact_addrs: [
+            '/dns4/trusted-seed.example/tcp/4002/p2p/12D3KooWTrusted',
+            '/ip4/203.0.113.20/tcp/4002/p2p/12D3KooWMarginal',
+          ],
+        },
+      },
+    ])).toEqual([
+      '/ip4/203.0.113.20/tcp/4002/p2p/12D3KooWMarginal',
+      '/dns4/trusted-seed.example/tcp/4002/p2p/12D3KooWTrusted',
     ]);
   });
 
