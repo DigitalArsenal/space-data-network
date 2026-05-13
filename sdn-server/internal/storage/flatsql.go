@@ -584,6 +584,9 @@ func (s *FlatSQLStore) initSourceSummaryTable() error {
 	if err != nil {
 		return fmt.Errorf("failed to create source summary table: %w", err)
 	}
+	if err := s.ensureColumn("sdn_record_source_summary", "max_rowid", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := s.createStartupIndex("sdn_record_source_summary", "idx_sdn_record_source_summary_schema", sourceSummaryExisted, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_record_source_summary_schema
 		ON sdn_record_source_summary (schema_name)
@@ -604,6 +607,7 @@ func sourceSummaryTableSQL(tableName string) string {
 			producer_public_key TEXT NOT NULL DEFAULT '',
 			record_count INTEGER NOT NULL,
 			total_bytes INTEGER NOT NULL,
+			max_rowid INTEGER NOT NULL DEFAULT 0,
 			updated_at INTEGER NOT NULL DEFAULT (strftime('%%s', 'now')),
 			PRIMARY KEY (
 				schema_name, provider_id, source_name, batch_id,
@@ -1160,6 +1164,19 @@ func (s *FlatSQLStore) ensureSourceSummaryForSchema(schemaName, tableName string
 		return fmt.Errorf("inspect source summary for %s: %w", schemaName, err)
 	}
 	if existing > 0 {
+		var stale int
+		if err := s.db.QueryRow(`
+			SELECT COUNT(*)
+			FROM sdn_record_source_summary
+			WHERE schema_name = ?
+			  AND record_count > 0
+			  AND max_rowid <= 0
+		`, schemaName).Scan(&stale); err != nil {
+			return fmt.Errorf("inspect source summary row bounds for %s: %w", schemaName, err)
+		}
+		if stale > 0 {
+			return s.rebuildSourceSummaryForSchema(schemaName, tableName)
+		}
 		return nil
 	}
 
@@ -1185,7 +1202,7 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSchema(schemaName, tableName strin
 	if _, err := s.db.Exec(fmt.Sprintf(`
 		INSERT INTO sdn_record_source_summary (
 			schema_name, provider_id, source_name, batch_id, producer_peer_id,
-			producer_public_key, record_count, total_bytes, updated_at
+			producer_public_key, record_count, total_bytes, max_rowid, updated_at
 		)
 		SELECT
 			tags.schema_name,
@@ -1196,6 +1213,7 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSchema(schemaName, tableName strin
 			COALESCE(tags.producer_public_key, ''),
 			COUNT(*),
 			COALESCE(SUM(records.record_length), 0),
+			COALESCE(MAX(records.rowid), 0),
 			strftime('%%s', 'now')
 		FROM sdn_record_source_tags tags
 		INNER JOIN %s records ON records.cid = tags.cid
@@ -1221,7 +1239,7 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSourceBatch(schemaName, tableName,
 	if _, err := s.db.Exec(fmt.Sprintf(`
 		INSERT INTO sdn_record_source_summary (
 			schema_name, provider_id, source_name, batch_id, producer_peer_id,
-			producer_public_key, record_count, total_bytes, updated_at
+			producer_public_key, record_count, total_bytes, max_rowid, updated_at
 		)
 		SELECT
 			tags.schema_name,
@@ -1232,6 +1250,7 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSourceBatch(schemaName, tableName,
 			COALESCE(tags.producer_public_key, ''),
 			COUNT(*),
 			COALESCE(SUM(records.record_length), 0),
+			COALESCE(MAX(records.rowid), 0),
 			strftime('%%s', 'now')
 		FROM sdn_record_source_tags tags
 		INNER JOIN %s records ON records.cid = tags.cid
@@ -1276,32 +1295,34 @@ func (s *FlatSQLStore) RefreshSourceBatchSummary(schemaName, providerID, sourceN
 	return s.rebuildSourceSummaryForSourceBatch(schemaName, tableName, providerID, sourceName, batchID)
 }
 
-func incrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, recordBytes int64) error {
+func incrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, recordBytes, recordRowID int64) error {
 	tags = normalizeSourceTags(tags)
 	_, err := tx.Exec(`
 		INSERT INTO sdn_record_source_summary (
 			schema_name, provider_id, source_name, batch_id, producer_peer_id,
-			producer_public_key, record_count, total_bytes, updated_at
+			producer_public_key, record_count, total_bytes, max_rowid, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, 1, ?, strftime('%s', 'now'))
+		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, strftime('%s', 'now'))
 		ON CONFLICT(schema_name, provider_id, source_name, batch_id, producer_peer_id, producer_public_key) DO UPDATE SET
 			record_count = record_count + 1,
 			total_bytes = total_bytes + excluded.total_bytes,
+			max_rowid = MAX(max_rowid, excluded.max_rowid),
 			updated_at = excluded.updated_at
-	`, schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey, recordBytes)
+	`, schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey, recordBytes, recordRowID)
 	if err != nil {
 		return fmt.Errorf("increment source summary: %w", err)
 	}
 	return nil
 }
 
-func decrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, recordBytes int64) error {
+func decrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, recordBytes, recordRowID int64) error {
 	tags = normalizeSourceTags(tags)
 	_, err := tx.Exec(`
 		UPDATE sdn_record_source_summary
 		SET
 			record_count = CASE WHEN record_count > 0 THEN record_count - 1 ELSE 0 END,
 			total_bytes = CASE WHEN total_bytes > ? THEN total_bytes - ? ELSE 0 END,
+			max_rowid = CASE WHEN max_rowid = ? THEN 0 ELSE max_rowid END,
 			updated_at = strftime('%s', 'now')
 		WHERE schema_name = ?
 		  AND provider_id = ?
@@ -1309,7 +1330,7 @@ func decrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, reco
 		  AND batch_id = ?
 		  AND producer_peer_id = ?
 		  AND producer_public_key = ?
-	`, recordBytes, recordBytes, schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey)
+	`, recordBytes, recordBytes, recordRowID, schemaName, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ProducerPeerID, tags.ProducerPublicKey)
 	if err != nil {
 		return fmt.Errorf("decrement source summary: %w", err)
 	}
@@ -1686,13 +1707,14 @@ func upsertSourceTagsTx(tx *sql.Tx, tableName, schemaName, cid string, tags Sour
 	}
 
 	bytesTotal := recordBytes
-	if bytesTotal < 0 {
-		var storedBytes sql.NullInt64
-		if err := tx.QueryRow(fmt.Sprintf(`SELECT record_length FROM %s WHERE cid = ?`, tableName), cid).Scan(&storedBytes); err != nil {
-			if !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("lookup source-tagged record bytes: %w", err)
-			}
+	var storedRowID sql.NullInt64
+	var storedBytes sql.NullInt64
+	if err := tx.QueryRow(fmt.Sprintf(`SELECT rowid, record_length FROM %s WHERE cid = ?`, tableName), cid).Scan(&storedRowID, &storedBytes); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("lookup source-tagged record metadata: %w", err)
 		}
+	}
+	if bytesTotal < 0 {
 		bytesTotal = storedBytes.Int64
 	}
 
@@ -1707,7 +1729,7 @@ func upsertSourceTagsTx(tx *sql.Tx, tableName, schemaName, cid string, tags Sour
 		return fmt.Errorf("failed to upsert source tags: %w", err)
 	}
 
-	if err := incrementSourceSummary(tx, schemaName, tags, bytesTotal); err != nil {
+	if err := incrementSourceSummary(tx, schemaName, tags, bytesTotal, storedRowID.Int64); err != nil {
 		return err
 	}
 	return nil
@@ -2304,7 +2326,8 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 	defer tx.Rollback()
 
 	var recordBytes sql.NullInt64
-	if err := tx.QueryRow(fmt.Sprintf(`SELECT record_length FROM %s WHERE cid = ?`, tableName), cid).Scan(&recordBytes); err != nil {
+	var recordRowID sql.NullInt64
+	if err := tx.QueryRow(fmt.Sprintf(`SELECT rowid, record_length FROM %s WHERE cid = ?`, tableName), cid).Scan(&recordRowID, &recordBytes); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("not found: %s", cid)
 		}
@@ -2358,7 +2381,7 @@ func (s *FlatSQLStore) Delete(schemaName, cid string) error {
 		log.Warnf("Failed to delete source tags for %s/%s: %v", schemaName, cid, err)
 	}
 	for _, tags := range deletedTags {
-		if err := decrementSourceSummary(tx, schemaName, tags, recordBytes.Int64); err != nil {
+		if err := decrementSourceSummary(tx, schemaName, tags, recordBytes.Int64, recordRowID.Int64); err != nil {
 			return err
 		}
 	}
@@ -3341,7 +3364,7 @@ func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, erro
 
 func (s *FlatSQLStore) rawSourceSummaryHeadLocked(filter RawRecordQuery) (RawRecordHead, bool, error) {
 	query := `
-		SELECT COUNT(*), COALESCE(SUM(total_bytes), 0), COALESCE(MAX(updated_at), 0)
+		SELECT COUNT(*), COALESCE(SUM(total_bytes), 0), COALESCE(MAX(updated_at), 0), COALESCE(MAX(max_rowid), 0)
 		FROM sdn_record_source_summary
 		WHERE schema_name = ?
 	`
@@ -3370,13 +3393,15 @@ func (s *FlatSQLStore) rawSourceSummaryHeadLocked(filter RawRecordQuery) (RawRec
 	var summaryRows int64
 	var totalBytes int64
 	var maxUpdated int64
-	if err := s.db.QueryRow(query, args...).Scan(&summaryRows, &totalBytes, &maxUpdated); err != nil {
+	var maxRowID int64
+	if err := s.db.QueryRow(query, args...).Scan(&summaryRows, &totalBytes, &maxUpdated, &maxRowID); err != nil {
 		return RawRecordHead{}, false, fmt.Errorf("raw source summary head failed: %w", err)
 	}
 	return RawRecordHead{
 		TotalBytes:             totalBytes,
 		MaxSourceUpdatedAtUnix: maxUpdated,
 		MaxCreatedAtUnix:       maxUpdated,
+		MaxRowID:               maxRowID,
 	}, summaryRows > 0, nil
 }
 
