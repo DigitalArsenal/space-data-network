@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ipfs/go-cid"
@@ -33,6 +34,14 @@ type DatasetExport struct {
 	SourceBatches    []DatasetExportSourceBatch
 	ContentKeyID     string
 	EncryptionPolicy string
+}
+
+// DatasetExportRecord is one already-materialized FlatBuffer record to include
+// in a dataset export without first inserting it into a FlatSQL store.
+type DatasetExportRecord struct {
+	CID        string
+	Data       []byte
+	SourceTags SourceTags
 }
 
 // DatasetExportIndex is the replayable query/index sidecar for a shard.
@@ -108,12 +117,6 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 		return nil, fmt.Errorf("no records match export query")
 	}
 
-	queryJSON, err := canonicalQueryJSON(filter)
-	if err != nil {
-		return nil, err
-	}
-	querySHA := sha256Hex(queryJSON)
-
 	cids := make([]string, 0, len(records))
 	for _, record := range records {
 		cids = append(cids, record.CID)
@@ -123,11 +126,47 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 		return nil, fmt.Errorf("load source tags: %w", err)
 	}
 
+	exportRecords := make([]DatasetExportRecord, 0, len(records))
+	for _, record := range records {
+		exportRecords = append(exportRecords, DatasetExportRecord{
+			CID:        record.CID,
+			Data:       record.Data,
+			SourceTags: sourceTags[record.CID],
+		})
+	}
+	return ExportDatasetRecords(outputDir, filter, exportRecords)
+}
+
+// ExportDatasetRecords writes a native FlatSQL size-prefixed FlatBuffer shard
+// and deterministic materialized index from records supplied by an SDN-owned
+// source such as a legacy SQLite archive. It does not insert the records into
+// the provider's FlatSQL store.
+func ExportDatasetRecords(outputDir string, filter IndexedRecordQuery, records []DatasetExportRecord) (*DatasetExport, error) {
+	if outputDir == "" {
+		return nil, fmt.Errorf("output dir is required")
+	}
+	if filter.SchemaName == "" {
+		return nil, fmt.Errorf("schema name is required")
+	}
+	if len(records) == 0 {
+		return nil, fmt.Errorf("no records match export query")
+	}
+
+	queryJSON, err := canonicalQueryJSON(filter)
+	if err != nil {
+		return nil, err
+	}
+	querySHA := sha256Hex(queryJSON)
+
 	shard := bytes.Buffer{}
 	indexRecords := make([]DatasetExportIndexRecord, 0, len(records))
 	for _, record := range records {
 		if len(record.Data) > int(^uint32(0)) {
 			return nil, fmt.Errorf("record %s exceeds uint32 shard frame length", record.CID)
+		}
+		recordCID := strings.TrimSpace(record.CID)
+		if recordCID == "" {
+			recordCID = computeCID(record.Data)
 		}
 		offset := int64(shard.Len())
 		if err := binary.Write(&shard, binary.LittleEndian, uint32(len(record.Data))); err != nil {
@@ -142,7 +181,7 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 			return nil, fmt.Errorf("extract index fields for %s: %w", record.CID, err)
 		}
 		indexRecords = append(indexRecords, DatasetExportIndexRecord{
-			CID:           record.CID,
+			CID:           recordCID,
 			Offset:        offset,
 			Length:        int64(len(record.Data)),
 			NoradCatID:    fields.noradCatID,
@@ -151,7 +190,7 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 			OpsStatusCode: fields.opsStatusCode,
 			EpochUnix:     fields.epochUnix,
 			EpochDay:      fields.epochDay,
-			SourceTags:    sourceTags[record.CID],
+			SourceTags:    record.SourceTags,
 		})
 	}
 

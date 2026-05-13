@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -19,6 +22,7 @@ import (
 	"github.com/google/flatbuffers/go"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	"github.com/spf13/cobra"
@@ -33,23 +37,30 @@ them as OMM (and optionally MPE) FlatBuffers in the current FlatSQL storage.`,
 }
 
 var (
-	importLegacySourceDB           string
-	importLegacySourceTable        string
-	importLegacyStoragePath        string
-	importLegacySourcePeer         string
-	importLegacyBatchSize          int
-	importLegacyCheckpointPath     string
-	importLegacyResetCheckpoint    bool
-	importLegacyMaxRows            int64
-	importLegacyStoreMPE           bool
-	importLegacyProviderID         string
-	importLegacySourceNameForTags  string
-	importLegacySourceURL          string
-	importLegacyBatchID            string
-	importLegacyContentKeyID       string
-	importLegacyProducerPeerID     string
-	importLegacyProducerPublicKey  string
-	importLegacyDatastoreNamespace bool
+	importLegacySourceDB                  string
+	importLegacySourceTable               string
+	importLegacyStoragePath               string
+	importLegacySourcePeer                string
+	importLegacyBatchSize                 int
+	importLegacyCheckpointPath            string
+	importLegacyResetCheckpoint           bool
+	importLegacyMaxRows                   int64
+	importLegacyStoreMPE                  bool
+	importLegacyProviderID                string
+	importLegacySourceNameForTags         string
+	importLegacySourceURL                 string
+	importLegacyBatchID                   string
+	importLegacyContentKeyID              string
+	importLegacyProducerPeerID            string
+	importLegacyProducerPublicKey         string
+	importLegacyDatastoreNamespace        bool
+	importLegacyPublishArtifactsOnly      bool
+	importLegacyIPFSAPIURL                string
+	importLegacyPublicationOutputDir      string
+	importLegacyPublicationSigningKeyHex  string
+	importLegacyPublicationProviderPeerID string
+	importLegacyPublicationProviderEPMCID string
+	importLegacyPublicationDatasetID      string
 )
 
 func init() {
@@ -70,6 +81,13 @@ func init() {
 	importLegacySQLiteCmd.Flags().StringVar(&importLegacyProducerPeerID, "producer-peer-id", "", "producer peer ID for imported source tags (default: --source-peer)")
 	importLegacySQLiteCmd.Flags().StringVar(&importLegacyProducerPublicKey, "producer-public-key", "", "producer public key for imported source tags")
 	importLegacySQLiteCmd.Flags().BoolVar(&importLegacyDatastoreNamespace, "datastore-namespace", false, "store OMM rows in an isolated SDN datastore namespace instead of adding per-record source tags")
+	importLegacySQLiteCmd.Flags().BoolVar(&importLegacyPublishArtifactsOnly, "publish-artifacts-only", false, "publish historical OMM FlatBuffer shard artifacts and SDN feed metadata without materializing OMM rows in FlatSQL")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacyIPFSAPIURL, "ipfs-api-url", "", "Kubo RPC API URL used by --publish-artifacts-only (default: config admin.ipfs_api_url or SDN_IPFS_API_URL)")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacyPublicationOutputDir, "publication-output-dir", "", "artifact output directory for --publish-artifacts-only (default: <storage-parent>/dataset-publications/legacy-sqlite)")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacyPublicationSigningKeyHex, "publication-signing-key-hex", "", "Ed25519 seed or private key hex for signing historical dataset manifests (default: node publication identity)")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacyPublicationProviderPeerID, "publication-provider-peer-id", "", "provider peer ID to bind into signed historical dataset manifests")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacyPublicationProviderEPMCID, "publication-provider-epm-cid", "", "provider EPM CID to bind into signed historical dataset manifests")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacyPublicationDatasetID, "publication-dataset-id", "", "dataset ID for historical artifact manifests")
 	_ = importLegacySQLiteCmd.MarkFlagRequired("source-db")
 
 	rootCmd.AddCommand(importLegacySQLiteCmd)
@@ -116,6 +134,12 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 	if importLegacyDatastoreNamespace && importLegacyStoreMPE {
 		return fmt.Errorf("--datastore-namespace currently supports OMM import only; run MPE as a separate source datastore")
 	}
+	if importLegacyPublishArtifactsOnly && importLegacyStoreMPE {
+		return fmt.Errorf("--publish-artifacts-only currently supports OMM artifacts only; run MPE as a separate publication source")
+	}
+	if importLegacyPublishArtifactsOnly && importLegacyDatastoreNamespace {
+		return fmt.Errorf("--publish-artifacts-only already uses an isolated SDN datastore namespace; do not combine it with --datastore-namespace")
+	}
 
 	sourceTags, err := legacyImportSourceTags(sourceDB, importLegacySourcePeer)
 	if err != nil {
@@ -124,7 +148,7 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 
 	destinationPath := storagePath
 	var datastoreIdentity storage.DatastoreIdentity
-	if importLegacyDatastoreNamespace {
+	if importLegacyDatastoreNamespace || importLegacyPublishArtifactsOnly {
 		datastoreIdentity = legacyImportDatastoreIdentity(sourceTags)
 		destinationPath, err = storage.DatastoreIdentityPath(storagePath, datastoreIdentity)
 		if err != nil {
@@ -154,7 +178,7 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 	}
 
 	var store *storage.FlatSQLStore
-	if importLegacyDatastoreNamespace {
+	if importLegacyDatastoreNamespace || importLegacyPublishArtifactsOnly {
 		store, err = storage.NewFlatSQLStoreForIdentity(storagePath, validator, datastoreIdentity)
 		if err != nil {
 			return fmt.Errorf("failed to open namespaced destination storage: %w", err)
@@ -166,6 +190,14 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 		}
 	}
 	defer store.Close()
+
+	var artifactPublisher *legacyArtifactPublisher
+	if importLegacyPublishArtifactsOnly {
+		artifactPublisher, err = newLegacyArtifactPublisher(cfg, store, sourceTags, storagePath)
+		if err != nil {
+			return err
+		}
+	}
 
 	src, err := sql.Open("sqlite3", "file:"+sourceDB+"?mode=ro")
 	if err != nil {
@@ -212,7 +244,9 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 
 		var batchCount int64
 		var lastRowID int64
+		ommBatchOffset := int(checkpoint.OMMStored)
 		ommBatch := make([][]byte, 0, importLegacyBatchSize)
+		ommExportBatch := make([]storage.DatasetExportRecord, 0, importLegacyBatchSize)
 		mpeBatch := make([][]byte, 0, importLegacyBatchSize)
 
 		for rows.Next() {
@@ -294,7 +328,14 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 			}
 
 			ommBytes := builder.Build()
-			ommBatch = append(ommBatch, ommBytes)
+			if importLegacyPublishArtifactsOnly {
+				ommExportBatch = append(ommExportBatch, storage.DatasetExportRecord{
+					Data:       ommBytes,
+					SourceTags: sourceTags,
+				})
+			} else {
+				ommBatch = append(ommBatch, ommBytes)
+			}
 			checkpoint.OMMStored++
 
 			if importLegacyStoreMPE {
@@ -324,7 +365,13 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("source rows iteration error: %w", err)
 		}
-		if importLegacyDatastoreNamespace {
+		if importLegacyPublishArtifactsOnly {
+			if len(ommExportBatch) > 0 {
+				if err := artifactPublisher.PublishOMMBatch(ctx, ommBatchOffset, importLegacyBatchSize, ommExportBatch); err != nil {
+					return fmt.Errorf("publish OMM legacy artifacts after rowid=%d: %w", lastRowID, err)
+				}
+			}
+		} else if importLegacyDatastoreNamespace {
 			if _, err := store.StoreBatch("OMM.fbs", ommBatch, importLegacySourcePeer, nil); err != nil {
 				return fmt.Errorf("store OMM legacy namespace batch after rowid=%d: %w", lastRowID, err)
 			}
@@ -438,6 +485,294 @@ func legacyImportDatastoreIdentity(tags storage.SourceTags) storage.DatastoreIde
 		HighWaterMark:   tags.BatchID,
 		ArtifactHash:    tags.BatchID,
 	}
+}
+
+type legacyArtifactPublisher struct {
+	store             *storage.FlatSQLStore
+	sourceTags        storage.SourceTags
+	ipfsAPIURL        string
+	outputDir         string
+	signingKey        ed25519.PrivateKey
+	providerPeerID    string
+	providerEPMCID    string
+	providerPublicKey string
+	datasetID         string
+	now               func() time.Time
+}
+
+func newLegacyArtifactPublisher(cfg *config.Config, store *storage.FlatSQLStore, sourceTags storage.SourceTags, storagePath string) (*legacyArtifactPublisher, error) {
+	if store == nil {
+		return nil, fmt.Errorf("artifact publication store is required")
+	}
+	ipfsAPIURL := strings.TrimSpace(importLegacyIPFSAPIURL)
+	if ipfsAPIURL == "" && cfg != nil {
+		ipfsAPIURL = strings.TrimSpace(cfg.Admin.IPFSAPIURL)
+	}
+	if ipfsAPIURL == "" {
+		ipfsAPIURL = strings.TrimSpace(os.Getenv("SDN_IPFS_API_URL"))
+	}
+	if ipfsAPIURL == "" {
+		return nil, fmt.Errorf("--ipfs-api-url or SDN_IPFS_API_URL is required for --publish-artifacts-only")
+	}
+
+	outputDir := strings.TrimSpace(importLegacyPublicationOutputDir)
+	if outputDir == "" {
+		parent := filepath.Dir(strings.TrimSpace(storagePath))
+		if parent == "." || parent == "" {
+			parent = storagePath
+		}
+		outputDir = filepath.Join(parent, "dataset-publications", "legacy-sqlite")
+	}
+
+	signingKey, err := legacyArtifactPublicationSigningKey(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	providerPeerID := strings.TrimSpace(importLegacyPublicationProviderPeerID)
+	if providerPeerID == "" {
+		return nil, fmt.Errorf("--publication-provider-peer-id is required for --publish-artifacts-only")
+	}
+	providerEPMCID := strings.TrimSpace(importLegacyPublicationProviderEPMCID)
+	datasetID := strings.TrimSpace(importLegacyPublicationDatasetID)
+	if datasetID == "" {
+		datasetID = "sdn-omm-celestrak-gp-historical"
+	}
+	providerPublicKey := ""
+	if len(signingKey) == ed25519.PrivateKeySize {
+		if pubKey, ok := signingKey.Public().(ed25519.PublicKey); ok {
+			providerPublicKey = hex.EncodeToString(pubKey)
+			if strings.TrimSpace(sourceTags.ProducerPublicKey) == "" {
+				sourceTags.ProducerPublicKey = providerPublicKey
+			}
+		}
+	}
+	return &legacyArtifactPublisher{
+		store:             store,
+		sourceTags:        sourceTags,
+		ipfsAPIURL:        ipfsAPIURL,
+		outputDir:         outputDir,
+		signingKey:        signingKey,
+		providerPeerID:    providerPeerID,
+		providerEPMCID:    providerEPMCID,
+		providerPublicKey: providerPublicKey,
+		datasetID:         datasetID,
+		now:               func() time.Time { return time.Now().UTC() },
+	}, nil
+}
+
+func legacyArtifactPublicationSigningKey(cfg *config.Config) (ed25519.PrivateKey, error) {
+	if rawHex := strings.TrimSpace(importLegacyPublicationSigningKeyHex); rawHex != "" {
+		raw, err := hex.DecodeString(rawHex)
+		if err != nil {
+			return nil, fmt.Errorf("decode --publication-signing-key-hex: %w", err)
+		}
+		return storefrontSigningKeyFromRaw(raw)
+	}
+	raw, err := datasetPublicationSigningKey(cfg, nil)
+	if err != nil {
+		return nil, err
+	}
+	return storefrontSigningKeyFromRaw(raw)
+}
+
+func (p *legacyArtifactPublisher) PublishOMMBatch(ctx context.Context, offset, limit int, records []storage.DatasetExportRecord) error {
+	if p == nil {
+		return fmt.Errorf("artifact publisher is unavailable")
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	filter := storage.IndexedRecordQuery{
+		SchemaName:          "OMM.fbs",
+		ProviderID:          p.sourceTags.ProviderID,
+		SourceName:          p.sourceTags.SourceName,
+		BatchID:             p.sourceTags.BatchID,
+		Limit:               limit,
+		Offset:              offset,
+		AllowLargeResultSet: true,
+	}
+	export, err := storage.ExportDatasetRecords(filepath.Join(p.outputDir, "OMM.fbs"), filter, records)
+	if err != nil {
+		return fmt.Errorf("export dataset records: %w", err)
+	}
+	published, err := storage.PublishDatasetExportToIPFS(ctx, p.ipfsAPIURL, export)
+	if err != nil {
+		return err
+	}
+	export.ShardCID = published.ShardCID
+	export.IndexCID = published.IndexCID
+
+	publishedAt := p.now()
+	manifest, err := storage.BuildSignedDatasetPublicationManifest(p.outputDir, storage.DatasetPublicationManifestOptions{
+		Export:         export,
+		DatasetID:      p.datasetID,
+		UpdateID:       legacyDatasetUpdateID(p.sourceTags.BatchID, offset, limit),
+		ProviderPeerID: p.providerPeerID,
+		ProviderEPMCID: p.providerEPMCID,
+		PublishedAt:    publishedAt,
+		SigningKey:     p.signingKey,
+		SchemaHash:     legacyDatasetPublicationSchemaHash("OMM.fbs"),
+	})
+	if err != nil {
+		return err
+	}
+	manifestCID, err := storage.PublishDatasetPublicationManifestToIPFS(ctx, p.ipfsAPIURL, manifest)
+	if err != nil {
+		return err
+	}
+	manifest.CID = manifestCID
+	pnmBytes, err := storage.BuildDatasetPublicationPNM(manifest, storage.DatasetPublicationPNMOptions{
+		PublishedAt: publishedAt,
+		SigningKey:  p.signingKey,
+	})
+	if err != nil {
+		return err
+	}
+	pnmCID, err := p.store.Store("PNM.fbs", pnmBytes, p.providerPeerID, nil)
+	if err != nil {
+		return fmt.Errorf("store dataset publication PNM: %w", err)
+	}
+	publication := storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   p.sourceTags.ProviderID,
+		SourceName:   p.sourceTags.SourceName,
+		BatchID:      p.sourceTags.BatchID,
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       offset,
+		Limit:        limit,
+		RecordCount:  export.RecordCount,
+		ByteCount:    export.ShardBytes,
+		ShardCID:     export.ShardCID,
+		IndexCID:     export.IndexCID,
+		ManifestCID:  manifest.CID,
+		PNMCID:       pnmCID,
+		ShardSHA256:  export.ShardSHA256,
+		IndexSHA256:  export.IndexSHA256,
+		QuerySHA256:  export.QuerySHA256,
+		ResultSHA256: export.ResultSHA256,
+		PublishedAt:  publishedAt,
+	}
+	if err := p.store.UpsertDatasetShardPublication(publication); err != nil {
+		return fmt.Errorf("record dataset shard publication: %w", err)
+	}
+	publishedShard, found, err := p.store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   p.sourceTags.ProviderID,
+		SourceName:   p.sourceTags.SourceName,
+		BatchID:      p.sourceTags.BatchID,
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       offset,
+		Limit:        limit,
+		RecordCount:  export.RecordCount,
+	})
+	if err != nil {
+		return fmt.Errorf("load dataset feed head: %w", err)
+	}
+	if !found {
+		return fmt.Errorf("load dataset feed head: published shard was not found")
+	}
+	return p.recordPublicationPins(publishedShard, export, manifest, pnmCID, pnmBytes)
+}
+
+func (p *legacyArtifactPublisher) recordPublicationPins(pub storage.DatasetShardPublication, export *storage.DatasetExport, manifest *storage.DatasetPublicationManifest, pnmCID string, pnmBytes []byte) error {
+	if export == nil {
+		return fmt.Errorf("record publication pin ledger: export is required")
+	}
+	if manifest == nil {
+		return fmt.Errorf("record publication pin ledger: manifest is required")
+	}
+	verifiedAt := pub.PublishedAt
+	if verifiedAt.IsZero() {
+		verifiedAt = p.now()
+	}
+	snapshotID := pub.FeedHead
+	if snapshotID == "" {
+		snapshotID = pub.ManifestCID
+	}
+	highWaterMark := datasync.PublishedFeedHighWaterMark([]storage.DatasetShardPublication{pub}, int64(pub.RecordCount), pub.ByteCount)
+	entries := []storage.PinLedgerEntry{
+		{
+			CID:           pub.ShardCID,
+			ByteHash:      export.ShardSHA256,
+			Role:          "shard",
+			RowCount:      int64(pub.RecordCount),
+			ByteCount:     export.ShardBytes,
+			HighWaterMark: highWaterMark,
+		},
+		{
+			CID:           pub.IndexCID,
+			ByteHash:      export.IndexSHA256,
+			Role:          "index",
+			ByteCount:     export.IndexBytes,
+			HighWaterMark: highWaterMark,
+		},
+		{
+			CID:           pub.ManifestCID,
+			ByteHash:      manifest.SHA256,
+			Role:          "manifest",
+			ByteCount:     manifest.ByteLength,
+			HighWaterMark: highWaterMark,
+		},
+		{
+			CID:           pnmCID,
+			ByteHash:      legacySHA256Hex(pnmBytes),
+			Role:          "pnm",
+			ByteCount:     int64(len(pnmBytes)),
+			HighWaterMark: highWaterMark,
+		},
+	}
+	for _, entry := range entries {
+		if entry.CID == "" {
+			continue
+		}
+		entry.SchemaName = pub.SchemaName
+		entry.ProviderPeerID = p.providerPeerID
+		entry.ProviderPublicKey = p.providerPublicKey
+		entry.ProviderID = pub.ProviderID
+		entry.SourceName = pub.SourceName
+		entry.BatchID = pub.BatchID
+		entry.QueryProfile = pub.QueryProfile
+		entry.SnapshotID = snapshotID
+		entry.Head = pub.FeedHead
+		entry.VerificationState = "verified"
+		entry.VerifiedAt = verifiedAt
+		entry.UpdatedAt = verifiedAt
+		if err := p.store.UpsertPinLedgerEntry(entry); err != nil {
+			return fmt.Errorf("record publication pin ledger %s %s: %w", entry.Role, entry.CID, err)
+		}
+	}
+	return nil
+}
+
+func legacyDatasetUpdateID(batchID string, offset, limit int) string {
+	base := strings.TrimSpace(batchID)
+	if base == "" {
+		base = time.Now().UTC().Format("20060102T150405.000000000Z")
+	}
+	part := 1
+	if limit > 0 && offset > 0 {
+		part = offset/limit + 1
+	}
+	return fmt.Sprintf("%s:part-%06d", base, part)
+}
+
+func legacyDatasetPublicationSchemaHash(schema string) string {
+	registry, err := sds.NewSchemaRegistry()
+	if err != nil {
+		return ""
+	}
+	content, ok := registry.Get(schema)
+	if !ok || len(content) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(content)
+	return hex.EncodeToString(sum[:])
+}
+
+func legacySHA256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func legacyImportBatchID(sourceDB string) (string, error) {
