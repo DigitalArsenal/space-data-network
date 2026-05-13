@@ -10,6 +10,7 @@ export * from './sdn-backend-factory';
 export * from './sdn-backend-libp2p-sync';
 export * from './sdn-backend-remote';
 export * from './sync-throughput';
+export * from './ipfs-artifact-peers';
 export {
   fetchCidBytesFromGateway,
   flatBufferStreamFromPublishedFlatSqlSegment,

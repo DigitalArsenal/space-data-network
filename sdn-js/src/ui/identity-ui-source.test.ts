@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const uiRoot = new URL('../../ui/src/', import.meta.url);
 const runtimeRoot = new URL('./runtime/', import.meta.url);
+const scriptsRoot = new URL('../../scripts/', import.meta.url);
 
 function readUiSource(path: string): string {
   const fileUrl = new URL(path, uiRoot);
@@ -12,6 +13,12 @@ function readUiSource(path: string): string {
 
 function readRuntimeSource(path: string): string {
   const fileUrl = new URL(path, runtimeRoot);
+  expect(existsSync(fileUrl), `${path} should exist`).toBe(true);
+  return readFileSync(fileUrl, 'utf8');
+}
+
+function readScriptSource(path: string): string {
+  const fileUrl = new URL(path, scriptsRoot);
   expect(existsSync(fileUrl), `${path} should exist`).toBe(true);
   return readFileSync(fileUrl, 'utf8');
 }
@@ -459,6 +466,19 @@ describe('SDN data worker source', () => {
       "headers.set('Cross-Origin-Opener-Policy', 'same-origin')",
       "headers.set('Cross-Origin-Embedder-Policy', 'require-corp')",
       "headers.set('Cross-Origin-Resource-Policy', 'same-origin')",
+    ]);
+  });
+
+  it('keeps the throughput harness on automatic IPFS provider discovery for shards', () => {
+    const source = readScriptSource('measure-flatsql-sync-throughput.mjs');
+
+    expectSourceToContainAll(source, [
+      'connectIpfsArtifactPeers',
+      'connectIpfsArtifactProviders',
+      'ipfsProviderDiscoveryLimit',
+      'providerDiscoveryCids',
+      'selectedSegments',
+      'artifactRouting',
     ]);
   });
 });

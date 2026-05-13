@@ -34,6 +34,7 @@ export interface ThroughputHarnessOptions {
   gateway: string;
   ipfsApi: string;
   ipfsPeers: string[];
+  ipfsProviderDiscoveryLimit: number;
   probeBytes: number;
   manifestLimit: number;
   maxSegments: number | null;
@@ -48,6 +49,21 @@ export interface ThroughputHarnessResult {
   peer: string;
   schema: string;
   target: number;
+  artifactRouting?: {
+    configuredPeerCount: number;
+    configuredPeerConnect: {
+      attempted: number;
+      connected: number;
+      failed: number;
+    };
+    providerDiscoveryCidCount: number;
+    providerDiscovery: {
+      attempted: number;
+      connected: number;
+      failed: number;
+      discovered: number;
+    };
+  };
   probe: {
     requestedBytes: number;
     payloadBytes: number;
@@ -127,6 +143,7 @@ export function parseThroughputHarnessArgs(argv: string[]): ThroughputHarnessOpt
     gateway: 'http://127.0.0.1:8081',
     ipfsApi: 'http://127.0.0.1:5001',
     ipfsPeers: [],
+    ipfsProviderDiscoveryLimit: 16,
     probeBytes: 64 * 1024 * 1024,
     manifestLimit: 50_000,
     maxSegments: null,
@@ -167,6 +184,12 @@ export function parseThroughputHarnessArgs(argv: string[]): ThroughputHarnessOpt
       case '--ipfs-peer':
         options.ipfsPeers.push(requiredArg(argv, index += 1, arg));
         break;
+      case '--ipfs-provider-discovery-limit':
+        options.ipfsProviderDiscoveryLimit = nonNegativeIntegerArg(argv, index += 1, arg);
+        break;
+      case '--no-ipfs-provider-discovery':
+        options.ipfsProviderDiscoveryLimit = 0;
+        break;
       case '--probe-bytes':
         options.probeBytes = positiveIntegerArg(argv, index += 1, arg);
         break;
@@ -196,6 +219,7 @@ export function parseThroughputHarnessArgs(argv: string[]): ThroughputHarnessOpt
   options.gateway = options.gateway.trim().replace(/\/+$/, '') || 'http://127.0.0.1:8081';
   options.ipfsApi = options.ipfsApi.trim().replace(/\/+$/, '') || 'http://127.0.0.1:5001';
   options.ipfsPeers = Array.from(new Set(options.ipfsPeers.map((addr) => addr.trim()).filter(Boolean)));
+  options.ipfsProviderDiscoveryLimit = nonNegativeInteger(options.ipfsProviderDiscoveryLimit);
   return options;
 }
 
@@ -208,6 +232,7 @@ export function throughputHarnessSummary(result: ThroughputHarnessResult): strin
     `FlatSQL sync throughput audit (${result.schema})`,
     `Peer: ${result.peer}`,
     `Rows: ${result.manifest.totalCount.toLocaleString()} remote across ${result.manifest.segmentCount.toLocaleString()} published segments`,
+    ...(result.artifactRouting ? [artifactRoutingSummary(result.artifactRouting)] : []),
     `Wire speed probe: ${formatBytesPerSecond(result.probe.bytesPerSecond)}`,
     `Published shard download: ${formatBytesPerSecond(result.audit.downloadBytesPerSecond)} (${utilization})`,
     `Timing: manifest ${formatDuration(result.audit.timingsMs.manifestDiscovery)} / network ${formatDuration(result.audit.timingsMs.networkTransfer)} / verify ${formatDuration(result.audit.timingsMs.verification)} / FlatSQL ${formatDuration(result.audit.timingsMs.flatSqlMaterialization)}`,
@@ -244,6 +269,12 @@ function positiveIntegerArg(argv: string[], index: number, option: string): numb
   return Math.floor(value);
 }
 
+function nonNegativeIntegerArg(argv: string[], index: number, option: string): number {
+  const value = Number(requiredArg(argv, index, option));
+  if (!Number.isFinite(value) || value < 0) throw new Error(`${option} must be a non-negative number`);
+  return Math.floor(value);
+}
+
 function positiveRatioArg(argv: string[], index: number, option: string): number {
   const value = Number(requiredArg(argv, index, option));
   if (!Number.isFinite(value) || value <= 0 || value > 1) throw new Error(`${option} must be a ratio from 0 to 1`);
@@ -254,4 +285,14 @@ function formatDuration(milliseconds: number): string {
   const value = nonNegativeInteger(milliseconds);
   if (value >= 1000) return `${(value / 1000).toFixed(2)} s`;
   return `${value} ms`;
+}
+
+function artifactRoutingSummary(routing: NonNullable<ThroughputHarnessResult['artifactRouting']>): string {
+  const configured = routing.configuredPeerCount > 0
+    ? `${routing.configuredPeerConnect.connected}/${routing.configuredPeerConnect.attempted} configured peers connected`
+    : '0 configured peers';
+  const discovered = routing.providerDiscoveryCidCount > 0
+    ? `${routing.providerDiscovery.discovered} providers discovered from ${routing.providerDiscoveryCidCount} shard CIDs, ${routing.providerDiscovery.connected}/${routing.providerDiscovery.attempted} connected`
+    : 'provider discovery disabled';
+  return `IPFS shard routing: ${configured}; ${discovered}`;
 }

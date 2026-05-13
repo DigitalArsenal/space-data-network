@@ -65,6 +65,7 @@ describe('sync throughput targets', () => {
       '--ipfs-api', 'http://127.0.0.1:15002',
       '--ipfs-peer', '/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWCelesTrakKubo',
       '--ipfs-peer', '/ip4/104.131.11.220/tcp/4002/p2p/12D3KooWSpaceAwareKubo',
+      '--ipfs-provider-discovery-limit', '8',
       '--max-segments', '3',
     ]);
 
@@ -83,10 +84,25 @@ describe('sync throughput targets', () => {
         '/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWCelesTrakKubo',
         '/ip4/104.131.11.220/tcp/4002/p2p/12D3KooWSpaceAwareKubo',
       ],
+      ipfsProviderDiscoveryLimit: 8,
       concurrency: 24,
       maxSegments: 3,
       target: 0.8,
     });
+  });
+
+  it('enables automatic IPFS provider discovery for the throughput harness by default', () => {
+    const options = parseThroughputHarnessArgs([
+      '--peer', '16Uiu2HCelesTrak',
+      '--addr', '/dns4/celestrak.example/tcp/443/wss/p2p/16Uiu2HCelesTrak',
+    ]);
+
+    expect(options.ipfsProviderDiscoveryLimit).toBe(16);
+    expect(parseThroughputHarnessArgs([
+      '--peer', '16Uiu2HCelesTrak',
+      '--addr', '/dns4/celestrak.example/tcp/443/wss/p2p/16Uiu2HCelesTrak',
+      '--no-ipfs-provider-discovery',
+    ]).ipfsProviderDiscoveryLimit).toBe(0);
   });
 
   it('renders a concise pass/fail summary with separate timing fields', () => {

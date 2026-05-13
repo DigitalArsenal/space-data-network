@@ -3,6 +3,8 @@
 import { pathToFileURL } from 'node:url';
 
 import {
+  connectIpfsArtifactPeers,
+  connectIpfsArtifactProviders,
   createDefaultLibp2pFlatSqlSyncClient,
   fetchCidBytesFromGateway,
   parseThroughputHarnessArgs,
@@ -43,7 +45,7 @@ export async function runThroughputHarness(options, now = () => Date.now()) {
       throw new Error('published manifest has no CID-backed shard segments to measure');
     }
 
-    await connectLocalIpfsPeers(options);
+    const artifactRouting = await connectLocalIpfsPeers(options, selectedSegments);
     const download = await downloadPublishedSegments({
       segments: selectedSegments,
       schema: options.schema,
@@ -67,6 +69,7 @@ export async function runThroughputHarness(options, now = () => Date.now()) {
       peer: options.peer,
       schema: options.schema,
       target: options.target,
+      artifactRouting,
       probe,
       manifest: {
         totalCount: manifest.totalCount,
@@ -136,17 +139,32 @@ function validateOptions(options) {
   if (options.ipfsPeers.length > 0 && !options.ipfsApi) throw new Error('--ipfs-api is required when --ipfs-peer is used');
 }
 
-async function connectLocalIpfsPeers(options) {
-  if (!options.ipfsPeers.length) return;
-  const api = options.ipfsApi.replace(/\/+$/, '');
-  for (const peer of options.ipfsPeers) {
-    const url = `${api}/api/v0/swarm/connect?arg=${encodeURIComponent(peer)}`;
-    const response = await fetch(url, { method: 'POST' });
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`local IPFS swarm connect failed for ${peer}: HTTP ${response.status}${text ? ` ${text}` : ''}`);
-    }
+async function connectLocalIpfsPeers(options, selectedSegments = []) {
+  const configuredPeerConnect = await connectIpfsArtifactPeers({
+    ipfsApiUrl: options.ipfsApi,
+    artifactPeerAddrs: options.ipfsPeers,
+  });
+  if (options.ipfsPeers.length > 0 && configuredPeerConnect.failed > 0) {
+    throw new Error(
+      `local IPFS swarm connect failed for ${configuredPeerConnect.failed}/${configuredPeerConnect.attempted} configured peers`,
+    );
   }
+  const providerDiscoveryCids = options.ipfsProviderDiscoveryLimit > 0
+    ? selectedSegments
+      .map((segment) => segment.cid)
+      .filter(Boolean)
+      .slice(0, options.ipfsProviderDiscoveryLimit)
+    : [];
+  const providerDiscovery = await connectIpfsArtifactProviders({
+    ipfsApiUrl: options.ipfsApi,
+    cids: providerDiscoveryCids,
+  });
+  return {
+    configuredPeerCount: options.ipfsPeers.length,
+    configuredPeerConnect,
+    providerDiscoveryCidCount: providerDiscoveryCids.length,
+    providerDiscovery,
+  };
 }
 
 function usage() {
@@ -156,7 +174,8 @@ function usage() {
     'Measures CelesTrak published-shard download throughput against libp2p wire speed.',
     'Provider control traffic uses /space-data-network/flatsql-sync/1.0.0 over libp2p.',
     'CID bytes are fetched from the local IPFS gateway only; this is not a remote HTTP fallback.',
-    'Use --ipfs-peer to connect the local IPFS node to known shard seed peers before measuring.',
+    'The harness asks local Kubo to discover and connect IPFS providers for selected shard CIDs.',
+    'Use --ipfs-peer only to add known shard seed peers before measuring.',
     '',
     'Options:',
     '  --schema <schema>            SDS schema, default OMM.fbs',
@@ -165,6 +184,8 @@ function usage() {
     '  --gateway <url>             Local IPFS gateway, default http://127.0.0.1:8081',
     '  --ipfs-api <url>            Local IPFS RPC API for swarm connect, default http://127.0.0.1:5001',
     '  --ipfs-peer <multiaddr>     Local IPFS peer to connect before download; repeatable',
+    '  --ipfs-provider-discovery-limit <count>  Shard CIDs used for Kubo findprovs, default 16',
+    '  --no-ipfs-provider-discovery             Disable automatic Kubo provider discovery',
     '  --probe-bytes <bytes>       Wire-speed probe payload, default 67108864',
     '  --manifest-limit <rows>     Published manifest row limit, default 50000',
     '  --max-segments <count>      Measure only the first N published shards',
