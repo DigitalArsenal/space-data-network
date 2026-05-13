@@ -174,6 +174,15 @@ describe('FlatSQL sync protocol client', () => {
         sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
         max_chunk_size: 50000,
         transports: ['libp2p-websocket', 'libp2p-webrtc'],
+        artifact_bundles: [{
+          role: 'shard-group-car',
+          cid: 'bafkcar',
+          byte_count: 9000000,
+          sha256: 'car-sha',
+          format: 'car-v1',
+          segment_start: 0,
+          segment_count: 1,
+        }],
         segments: [{
           index: 0,
           cursor: 'MA',
@@ -219,6 +228,17 @@ describe('FlatSQL sync protocol client', () => {
         shardSha256: 'shard-sha',
         rowCount: 50000,
       }),
+    ]);
+    expect(manifest.artifactBundles).toEqual([
+      {
+        role: 'shard-group-car',
+        cid: 'bafkcar',
+        byteCount: 9000000,
+        sha256: 'car-sha',
+        format: 'car-v1',
+        segmentStart: 0,
+        segmentCount: 1,
+      },
     ]);
   });
 

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -130,7 +131,18 @@ type ManifestResponse struct {
 	SyncProtocol      string            `json:"sync_protocol"`
 	MaxChunkSize      int               `json:"max_chunk_size"`
 	Transports        []string          `json:"transports"`
+	ArtifactBundles   []ArtifactBundle  `json:"artifact_bundles,omitempty"`
 	Segments          []ManifestSegment `json:"segments"`
+}
+
+type ArtifactBundle struct {
+	Role         string `json:"role"`
+	CID          string `json:"cid"`
+	ByteCount    int64  `json:"byte_count,omitempty"`
+	SHA256       string `json:"sha256,omitempty"`
+	Format       string `json:"format,omitempty"`
+	SegmentStart int    `json:"segment_start"`
+	SegmentCount int    `json:"segment_count"`
 }
 
 type ManifestSegment struct {
@@ -501,6 +513,10 @@ func OpenPublishedManifest(store *storage.FlatSQLStore, req QueryRequest, queryP
 
 	head := PublishedFeedHead(schemaName, FirstNonEmpty(req.ProviderID, req.ProviderId), req.SourceName, FirstNonEmpty(req.BatchID, req.BatchId), queryProfile, publications)
 	highWater := PublishedFeedHighWaterMark(publications, totalCount, totalBytes)
+	artifactBundles, err := publishedManifestArtifactBundles(store, req, queryProfile, len(segments))
+	if err != nil {
+		return nil, err
+	}
 	manifest := &ManifestResponse{
 		Schema:            schemaName,
 		ProviderID:        FirstNonEmpty(req.ProviderID, req.ProviderId),
@@ -517,10 +533,48 @@ func OpenPublishedManifest(store *storage.FlatSQLStore, req QueryRequest, queryP
 		SyncProtocol:      ProtocolID,
 		MaxChunkSize:      maxLimit,
 		Transports:        append([]string(nil), SupportedTransports...),
+		ArtifactBundles:   artifactBundles,
 		Segments:          segments,
 	}
 	manifest.ManifestID = ManifestHash(manifest)
 	return manifest, nil
+}
+
+func publishedManifestArtifactBundles(store *storage.FlatSQLStore, req QueryRequest, queryProfile string, segmentCount int) ([]ArtifactBundle, error) {
+	entries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		SchemaName:        NormalizeSchema(req),
+		ProviderID:        FirstNonEmpty(req.ProviderID, req.ProviderId),
+		SourceName:        req.SourceName,
+		BatchID:           FirstNonEmpty(req.BatchID, req.BatchId),
+		QueryProfile:      queryProfile,
+		Role:              "shard-group-car",
+		VerificationState: "verified",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list published shard CAR bundles: %w", err)
+	}
+	seen := map[string]bool{}
+	bundles := make([]ArtifactBundle, 0, len(entries))
+	for _, entry := range entries {
+		cidValue := strings.TrimSpace(entry.CID)
+		if cidValue == "" || seen[cidValue] {
+			continue
+		}
+		seen[cidValue] = true
+		bundles = append(bundles, ArtifactBundle{
+			Role:         "shard-group-car",
+			CID:          cidValue,
+			ByteCount:    entry.ByteCount,
+			SHA256:       entry.ByteHash,
+			Format:       "car-v1",
+			SegmentStart: 0,
+			SegmentCount: segmentCount,
+		})
+	}
+	sort.Slice(bundles, func(i, j int) bool {
+		return bundles[i].CID < bundles[j].CID
+	})
+	return bundles, nil
 }
 
 func findDatasetShardPublicationForSegment(store *storage.FlatSQLStore, query storage.DatasetShardPublicationQuery) (storage.DatasetShardPublication, bool, error) {
@@ -718,6 +772,19 @@ func ManifestHash(manifest *ManifestResponse) string {
 			segment.ShardSHA256,
 			segment.IndexSHA256,
 			segment.QuerySHA256,
+		)
+	}
+	for _, bundle := range manifest.ArtifactBundles {
+		_, _ = fmt.Fprintf(
+			hash,
+			"%s\x00%s\x00%d\x00%s\x00%s\x00%d\x00%d\n",
+			bundle.Role,
+			bundle.CID,
+			bundle.ByteCount,
+			bundle.SHA256,
+			bundle.Format,
+			bundle.SegmentStart,
+			bundle.SegmentCount,
 		)
 	}
 	return hex.EncodeToString(hash.Sum(nil))

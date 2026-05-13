@@ -95,6 +95,69 @@ func TestOpenManifestUsesPublishedFeedWithoutScanningRawRows(t *testing.T) {
 	}
 }
 
+func TestOpenManifestAdvertisesPublishedShardGroupCARBundle(t *testing.T) {
+	store := newDataSyncTestStore(t)
+	publication := storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        50_000,
+		RecordCount:  50_000,
+		ByteCount:    15_000_000,
+		ShardCID:     "bafyommshard000",
+		IndexCID:     "bafyommindex000",
+		ManifestCID:  "bafyommmanifest000",
+		ShardSHA256:  "shard-sha-000",
+		IndexSHA256:  "index-sha-000",
+		QuerySHA256:  "query-sha-000",
+		ResultSHA256: "result-sha-000",
+		PublishedAt:  time.Unix(1_778_600_000, 0).UTC(),
+	}
+	if err := store.UpsertDatasetShardPublication(publication); err != nil {
+		t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+	}
+	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
+		CID:               "bafyshardgroupcar",
+		SchemaName:        "OMM.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		Head:              publication.FeedHead,
+		ByteHash:          "car-sha-256",
+		Role:              "shard-group-car",
+		RowCount:          50_000,
+		ByteCount:         16_000_000,
+		VerificationState: "verified",
+		VerifiedAt:        publication.PublishedAt,
+	}); err != nil {
+		t.Fatalf("UpsertPinLedgerEntry failed: %v", err)
+	}
+
+	manifest, err := OpenManifest(store, QueryRequest{
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Limit:        50_000,
+	}, MaxSyncChunkLimit)
+	if err != nil {
+		t.Fatalf("OpenManifest failed: %v", err)
+	}
+
+	if len(manifest.ArtifactBundles) != 1 {
+		t.Fatalf("artifact bundles = %d, want 1: %+v", len(manifest.ArtifactBundles), manifest.ArtifactBundles)
+	}
+	bundle := manifest.ArtifactBundles[0]
+	if bundle.Role != "shard-group-car" || bundle.CID != "bafyshardgroupcar" || bundle.SHA256 != "car-sha-256" || bundle.ByteCount != 16_000_000 {
+		t.Fatalf("unexpected CAR bundle: %+v", bundle)
+	}
+	if bundle.SegmentStart != 0 || bundle.SegmentCount != 1 {
+		t.Fatalf("CAR bundle segment range = %d/%d, want 0/1", bundle.SegmentStart, bundle.SegmentCount)
+	}
+}
+
 func TestScanAppliesSubscriptionSyncFilterBeforeReturningRefs(t *testing.T) {
 	store := newDataSyncTestStore(t)
 	tags := storage.SourceTags{

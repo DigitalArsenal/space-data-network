@@ -115,7 +115,18 @@ export interface FlatSqlSyncManifest {
   syncProtocol: string;
   maxChunkSize: number;
   transports: string[];
+  artifactBundles: FlatSqlSyncManifestArtifactBundle[];
   segments: FlatSqlSyncManifestSegment[];
+}
+
+export interface FlatSqlSyncManifestArtifactBundle {
+  role: 'shard-group-car' | string;
+  cid: string;
+  byteCount: number;
+  sha256?: string;
+  format?: string;
+  segmentStart: number;
+  segmentCount: number;
 }
 
 export interface FlatSqlSyncManifestSegment {
@@ -391,6 +402,11 @@ function normalizeFlatSqlSyncHeader(payload: unknown): FlatSqlSyncHeader {
 function normalizeFlatSqlSyncManifest(payload: unknown): FlatSqlSyncManifest {
   const record = isRecord(payload) ? payload : {};
   const segments = Array.isArray(record.segments) ? record.segments : [];
+  const artifactBundles = Array.isArray(record.artifact_bundles)
+    ? record.artifact_bundles
+    : Array.isArray(record.artifactBundles)
+      ? record.artifactBundles
+      : [];
   return {
     manifestId: readString(record, 'manifest_id', 'manifestId') ?? '',
     schema: readString(record, 'schema') ?? 'unknown',
@@ -408,7 +424,20 @@ function normalizeFlatSqlSyncManifest(payload: unknown): FlatSqlSyncManifest {
     syncProtocol: readString(record, 'sync_protocol', 'syncProtocol') ?? '',
     maxChunkSize: readNumber(record, 'max_chunk_size', 'maxChunkSize') ?? 0,
     transports: readStringArray(record.transports),
+    artifactBundles: artifactBundles.filter(isRecord).map(normalizeFlatSqlSyncManifestArtifactBundle),
     segments: segments.filter(isRecord).map(normalizeFlatSqlSyncManifestSegment),
+  };
+}
+
+function normalizeFlatSqlSyncManifestArtifactBundle(record: Record<string, unknown>): FlatSqlSyncManifestArtifactBundle {
+  return {
+    role: readString(record, 'role') ?? '',
+    cid: readString(record, 'cid') ?? '',
+    byteCount: readNumber(record, 'byte_count', 'byteCount') ?? 0,
+    sha256: readString(record, 'sha256') ?? undefined,
+    format: readString(record, 'format') ?? undefined,
+    segmentStart: readNumber(record, 'segment_start', 'segmentStart') ?? 0,
+    segmentCount: readNumber(record, 'segment_count', 'segmentCount') ?? 0,
   };
 }
 
