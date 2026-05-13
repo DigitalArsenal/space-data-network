@@ -61,6 +61,8 @@ var (
 	importLegacyPublicationProviderPeerID string
 	importLegacyPublicationProviderEPMCID string
 	importLegacyPublicationDatasetID      string
+	importLegacyPublicationPlanOnly       bool
+	importLegacyPublicationPlanOutput     string
 )
 
 func init() {
@@ -88,6 +90,8 @@ func init() {
 	importLegacySQLiteCmd.Flags().StringVar(&importLegacyPublicationProviderPeerID, "publication-provider-peer-id", "", "provider peer ID to bind into signed historical dataset manifests")
 	importLegacySQLiteCmd.Flags().StringVar(&importLegacyPublicationProviderEPMCID, "publication-provider-epm-cid", "", "provider EPM CID to bind into signed historical dataset manifests")
 	importLegacySQLiteCmd.Flags().StringVar(&importLegacyPublicationDatasetID, "publication-dataset-id", "", "dataset ID for historical artifact manifests")
+	importLegacySQLiteCmd.Flags().BoolVar(&importLegacyPublicationPlanOnly, "publication-plan-only", false, "with --publish-artifacts-only, publish shard/index artifacts and write a registration plan without signing/storing DPM/PNM metadata locally")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacyPublicationPlanOutput, "publication-plan-output", "", "write or update a compact historical artifact registration plan JSON file")
 	_ = importLegacySQLiteCmd.MarkFlagRequired("source-db")
 
 	rootCmd.AddCommand(importLegacySQLiteCmd)
@@ -497,6 +501,8 @@ type legacyArtifactPublisher struct {
 	providerEPMCID    string
 	providerPublicKey string
 	datasetID         string
+	planOnly          bool
+	planOutputPath    string
 	now               func() time.Time
 }
 
@@ -524,9 +530,19 @@ func newLegacyArtifactPublisher(cfg *config.Config, store *storage.FlatSQLStore,
 		outputDir = filepath.Join(parent, "dataset-publications", "legacy-sqlite")
 	}
 
-	signingKey, err := legacyArtifactPublicationSigningKey(cfg)
-	if err != nil {
-		return nil, err
+	planOnly := importLegacyPublicationPlanOnly
+	planOutputPath := strings.TrimSpace(importLegacyPublicationPlanOutput)
+	if planOnly && planOutputPath == "" {
+		return nil, fmt.Errorf("--publication-plan-output is required with --publication-plan-only")
+	}
+
+	var signingKey ed25519.PrivateKey
+	if !planOnly {
+		var err error
+		signingKey, err = legacyArtifactPublicationSigningKey(cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	providerPeerID := strings.TrimSpace(importLegacyPublicationProviderPeerID)
@@ -557,6 +573,8 @@ func newLegacyArtifactPublisher(cfg *config.Config, store *storage.FlatSQLStore,
 		providerEPMCID:    providerEPMCID,
 		providerPublicKey: providerPublicKey,
 		datasetID:         datasetID,
+		planOnly:          planOnly,
+		planOutputPath:    planOutputPath,
 		now:               func() time.Time { return time.Now().UTC() },
 	}, nil
 }
@@ -604,6 +622,9 @@ func (p *legacyArtifactPublisher) PublishOMMBatch(ctx context.Context, offset, l
 	export.IndexCID = published.IndexCID
 
 	publishedAt := p.now()
+	if p.planOnly {
+		return p.appendPublicationPlan(export, offset, limit, publishedAt)
+	}
 	manifest, err := storage.BuildSignedDatasetPublicationManifest(p.outputDir, storage.DatasetPublicationManifestOptions{
 		Export:         export,
 		DatasetID:      p.datasetID,

@@ -185,3 +185,45 @@ Keep GP and space-weather intervals at or above the CelesTrak-safe minimum
 enforced by the SDN ingest runner. Faster production polling requires a private
 provider agreement and should be recorded in the host runbook, not in this
 public deployment directory.
+
+## Historical `/opt/data` Archive Publication
+
+The historical OMM archive at `/opt/data/satellite_data.db` is too large to
+materialize into the current 48 GB CelesTrak provider volume. Publish it as
+immutable FlatBuffer artifacts from the machine that has `/opt/data`, then
+register the compact plan on `celestrak.eth` so the provider signs the DPM/PNM
+metadata with its own node identity.
+
+Local artifact export, using a local Kubo RPC endpoint:
+
+```sh
+spacedatanetwork import-legacy-sqlite \
+  --source-db /opt/data/satellite_data.db \
+  --source-table satellite_data \
+  --publish-artifacts-only \
+  --publication-plan-only \
+  --publication-plan-output /opt/data/celestrak-historical-omm-plan.json \
+  --ipfs-api-url "$LOCAL_IPFS_API_URL" \
+  --storage-path /opt/data/sdn-historical-plan-state \
+  --batch-size 50000 \
+  --provider-id space-data-network-02 \
+  --source-name celestrak-gp-historical \
+  --source-peer source:legacy-sqlite \
+  --publication-provider-peer-id "$CELESTRAK_PEER_ID" \
+  --publication-provider-epm-cid "$CELESTRAK_EPM_CID" \
+  --publication-dataset-id sdn-omm-celestrak-gp-historical
+```
+
+Copy only the generated plan JSON to the provider, then register it there:
+
+```sh
+spacedatanetwork --config /etc/spacedatanetwork/config.yaml \
+  dataset-publications register-plan \
+  --plan-file /opt/spacedatanetwork/import/celestrak-historical-omm-plan.json
+```
+
+The registration step signs and pins DPM manifests on the provider, stores
+PNMs and shard-publication metadata in an isolated SDN datastore namespace, and
+does not insert historical `OMM` rows into the provider FlatSQL database. The
+shard and index CIDs remain normal IPFS content; pin them on enough artifact
+seed peers before treating the historical feed as highly available.
