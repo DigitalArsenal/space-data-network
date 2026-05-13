@@ -2,9 +2,11 @@ package pubsub
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -21,6 +23,11 @@ const (
 
 var celesTrakDatasetSchemas = []string{OMMSchema, MPESchema, CATSchema, SPWSchema}
 
+const (
+	DatasetFeedHeadTopicPrefix = "/space-data-network/feed-heads/1.0.0/"
+	DatasetFeedHeadMessageType = "sdn.dataset.feed_head.v1"
+)
+
 // SchemaPublisher publishes bytes to an SDN schema pub/sub topic.
 type SchemaPublisher interface {
 	Publish(schema string, data []byte) error
@@ -32,6 +39,27 @@ type DatasetUpdateAnnouncement struct {
 	PNM               []byte
 	Schemas           []string
 	CombinedCelesTrak bool
+}
+
+// DatasetFeedHeadAnnouncement is the small mutable feed-head message replicas
+// subscribe to before fetching immutable FlatSQL shard CIDs.
+type DatasetFeedHeadAnnouncement struct {
+	MessageType  string    `json:"message_type"`
+	Schema       string    `json:"schema"`
+	ProviderID   string    `json:"provider_id,omitempty"`
+	SourceName   string    `json:"source_name,omitempty"`
+	BatchID      string    `json:"batch_id,omitempty"`
+	QueryProfile string    `json:"query_profile"`
+	FeedSequence int64     `json:"feed_sequence"`
+	PreviousHead string    `json:"previous_head,omitempty"`
+	FeedHead     string    `json:"feed_head"`
+	RecordCount  int       `json:"record_count,omitempty"`
+	ByteCount    int64     `json:"byte_count,omitempty"`
+	ShardCID     string    `json:"shard_cid,omitempty"`
+	IndexCID     string    `json:"index_cid,omitempty"`
+	ManifestCID  string    `json:"manifest_cid,omitempty"`
+	PNMCID       string    `json:"pnm_cid,omitempty"`
+	PublishedAt  time.Time `json:"published_at,omitempty"`
 }
 
 // PublishDatasetUpdatePNM publishes one signed dataset-update PNM to the PNM
@@ -66,6 +94,44 @@ func PublishDatasetUpdatePNM(ctx context.Context, publisher SchemaPublisher, ann
 		}
 	}
 	return errors.Join(publishErrs...)
+}
+
+func DatasetFeedHeadTopic(schema string) string {
+	return DatasetFeedHeadTopicPrefix + normalizeDatasetUpdateSchema(schema)
+}
+
+func PublishDatasetFeedHead(ctx context.Context, publisher TopicPublisher, ann DatasetFeedHeadAnnouncement) error {
+	if publisher == nil {
+		return ErrNoPublisher
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ann.Schema = normalizeDatasetUpdateSchema(ann.Schema)
+	if err := sds.ValidateSchemaName(ann.Schema); err != nil {
+		return fmt.Errorf("invalid schema: %w", err)
+	}
+	ann.QueryProfile = strings.TrimSpace(ann.QueryProfile)
+	if ann.QueryProfile == "" {
+		return errors.New("query profile is required")
+	}
+	ann.FeedHead = strings.TrimSpace(ann.FeedHead)
+	if ann.FeedHead == "" {
+		return errors.New("feed head is required")
+	}
+	if ann.FeedSequence <= 0 {
+		return errors.New("feed sequence must be positive")
+	}
+	ann.MessageType = DatasetFeedHeadMessageType
+	payload, err := json.Marshal(ann)
+	if err != nil {
+		return fmt.Errorf("marshal dataset feed head: %w", err)
+	}
+	topic := DatasetFeedHeadTopic(ann.Schema)
+	if err := publisher.PublishToTopic(ctx, topic, payload); err != nil {
+		return fmt.Errorf("%s: %w", topic, err)
+	}
+	return nil
 }
 
 func hasSizePrefixedPNMIdentifier(data []byte) (ok bool) {

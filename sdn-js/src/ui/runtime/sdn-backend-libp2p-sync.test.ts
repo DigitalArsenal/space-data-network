@@ -68,6 +68,96 @@ describe('libp2p FlatSQL sync backend', () => {
     });
   });
 
+  it('builds data summaries from registered datastore namespaces when advertised over libp2p', async () => {
+    const calls: FlatSqlSyncQuery[] = [];
+    const backend = createLibp2pFlatSqlSyncBackend({
+      targetPeerId: '16Uiu2HCelesTrak',
+      candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+      syncClient: {
+        async listFlatSqlSyncDatastores() {
+          return {
+            count: 1,
+            results: [{
+              key: 'sdn-ds-v1-history',
+              updatedAt: 1778712000,
+              identity: {
+                schemaName: 'OMM.fbs',
+                sourcePeerId: 'source:history',
+                sourcePublicKey: 'history-public-key',
+                providerId: 'space-data-network-02',
+                sourceName: 'celestrak-gp-historical',
+              },
+            }],
+          };
+        },
+        async readFlatSqlSyncChunk(query) {
+          calls.push(query);
+          return headerOnlyChunk(query.schema, 44_349_135);
+        },
+      },
+    });
+
+    await expect(backend.getDataSummary()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        totalRecords: 44_349_135,
+        schemas: [{ schemaName: 'OMM.fbs', count: 44_349_135 }],
+        sources: [{
+          datastoreKey: 'sdn-ds-v1-history',
+          schemaName: 'OMM.fbs',
+          providerId: 'space-data-network-02',
+          sourceName: 'celestrak-gp-historical',
+          producerPeerId: 'source:history',
+          producerPublicKey: 'history-public-key',
+          count: 44_349_135,
+        }],
+      },
+    });
+    expect(calls).toEqual([
+      expect.objectContaining({
+        op: 'scan',
+        schema: 'OMM.fbs',
+        datastoreKey: 'sdn-ds-v1-history',
+        limit: 1,
+        offset: 0,
+      }),
+    ]);
+  });
+
+  it('falls back to schema scans when a provider does not support datastore discovery yet', async () => {
+    const calls: FlatSqlSyncQuery[] = [];
+    const backend = createLibp2pFlatSqlSyncBackend({
+      targetPeerId: '16Uiu2HCelesTrak',
+      candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+      providerId: 'space-data-network-02',
+      schemas: ['OMM.fbs'],
+      syncClient: {
+        async listFlatSqlSyncDatastores() {
+          throw new Error('unsupported sync op "list_datastores"');
+        },
+        async readFlatSqlSyncChunk(query) {
+          calls.push(query);
+          return headerOnlyChunk(query.schema, 1_999_559);
+        },
+      },
+    });
+
+    await expect(backend.getDataSummary()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        totalRecords: 1_999_559,
+        schemas: [{ schemaName: 'OMM.fbs', count: 1_999_559 }],
+      },
+    });
+    expect(calls).toEqual([
+      expect.objectContaining({
+        op: 'scan',
+        schema: 'OMM.fbs',
+        providerId: 'space-data-network-02',
+      }),
+    ]);
+  });
+
   it('loads summary schemas sequentially instead of parallel dialing every schema', async () => {
     let inFlight = 0;
     let maxInFlight = 0;
@@ -190,6 +280,54 @@ describe('libp2p FlatSQL sync backend', () => {
         chunkHash: 'chunk-hash',
         records: [expect.objectContaining({ cid: 'omm-cid-1' })],
       }),
+    ]);
+  });
+
+  it('carries datastore namespaces through libp2p scan and stream requests', async () => {
+    const rawRecord = new Uint8Array([1, 3, 3, 7]);
+    const calls: FlatSqlSyncQuery[] = [];
+    const backend = createLibp2pFlatSqlSyncBackend({
+      targetPeerId: '16Uiu2HCelesTrak',
+      candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+      datastoreKey: 'sdn-ds-v1-history',
+      syncClient: {
+        async readFlatSqlSyncChunk(query) {
+          calls.push(query);
+          if (query.op === 'read_chunk') {
+            return {
+              header: headerOnlyChunk('OMM.fbs', 1, {
+                count: 1,
+                results: [recordRef()],
+                scanHash: 'namespace-scan-hash',
+                chunkHash: 'namespace-scan-hash',
+              }).header,
+              records: [rawRecord],
+              recordStream: flatSqlSizePrefixedStream([rawRecord]),
+            };
+          }
+          return headerOnlyChunk('OMM.fbs', 1, {
+            count: 1,
+            results: [recordRef()],
+            scanHash: 'namespace-scan-hash',
+            chunkHash: 'namespace-scan-hash',
+          });
+        },
+      },
+    });
+
+    const scan = await backend.scanRawData({ schema: 'OMM.fbs', limit: 1 });
+    await expect(backend.streamRawData({
+      schema: 'OMM.fbs',
+      scanHash: scan.data?.scanHash,
+      records: scan.data?.results ?? [],
+    })).resolves.toMatchObject({
+      ok: true,
+      data: [{ cid: 'omm-cid-1', dataBytes: rawRecord }],
+    });
+
+    expect(calls).toEqual([
+      expect.objectContaining({ op: 'scan', datastoreKey: 'sdn-ds-v1-history' }),
+      expect.objectContaining({ op: 'read_chunk', datastoreKey: 'sdn-ds-v1-history' }),
     ]);
   });
 

@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   FLATSQL_SYNC_PROTOCOL_ID,
   decodeFlatSqlSyncChunk,
+  decodeFlatSqlSyncDatastores,
   decodeFlatSqlSyncManifest,
   encodeFlatSqlSyncRequest,
+  requestFlatSqlSyncDatastores,
+  requestFlatSqlWireSpeedProbe,
   requestFlatSqlSyncChunk,
   requestFlatSqlSyncManifest,
   type FlatSqlSyncTransport,
@@ -17,6 +20,7 @@ describe('FlatSQL sync protocol client', () => {
     const frame = encodeFlatSqlSyncRequest({
       targetPeerId: '16Uiu2HTest',
       schema: 'OMM.fbs',
+      datastoreKey: 'sdn-ds-v1-history',
       providerId: 'space-data-network-02',
       sourceName: 'celestrak-gp',
       cursor: 'cursor-1',
@@ -31,6 +35,7 @@ describe('FlatSQL sync protocol client', () => {
     expect(payload).toMatchObject({
       op: 'read_chunk',
       schema: 'OMM.fbs',
+      datastore_key: 'sdn-ds-v1-history',
       provider_id: 'space-data-network-02',
       source_name: 'celestrak-gp',
       cursor: 'cursor-1',
@@ -215,6 +220,102 @@ describe('FlatSQL sync protocol client', () => {
     ]);
   });
 
+  it('dials list_datastores and decodes SDN datastore identities', async () => {
+    const response = concatFrames([
+      encoder.encode(JSON.stringify({
+        count: 1,
+        results: [{
+          key: 'sdn-ds-v1-history',
+          updated_at: 1778712000,
+          identity: {
+            schema_name: 'OMM.fbs',
+            source_peer_id: 'source:history',
+            source_public_key: 'history-public-key',
+            provider_id: 'space-data-network-02',
+            source_name: 'celestrak-gp-historical',
+          },
+        }],
+      })),
+    ]);
+    const calls: Array<{ peer: string; payload: Uint8Array }> = [];
+    const transport: FlatSqlSyncTransport = {
+      async dialProtocol(targetPeerId, _protocolId, payload) {
+        calls.push({ peer: targetPeerId, payload });
+        return response;
+      },
+    };
+
+    const datastores = await requestFlatSqlSyncDatastores(transport, {
+      targetPeerId: '16Uiu2HTest',
+    });
+
+    const requestLength = new DataView(calls[0]?.payload.buffer ?? new ArrayBuffer(0), calls[0]?.payload.byteOffset ?? 0, 4).getUint32(0, false);
+    const requestPayload = JSON.parse(decoder.decode(calls[0]?.payload.slice(4, 4 + requestLength))) as Record<string, unknown>;
+    expect(requestPayload).toMatchObject({ op: 'list_datastores' });
+    expect(datastores).toEqual({
+      count: 1,
+      results: [expect.objectContaining({
+        key: 'sdn-ds-v1-history',
+        identity: expect.objectContaining({
+          schemaName: 'OMM.fbs',
+          sourcePublicKey: 'history-public-key',
+          sourceName: 'celestrak-gp-historical',
+        }),
+      })],
+    });
+    expect(decodeFlatSqlSyncDatastores(response).results[0]?.key).toBe('sdn-ds-v1-history');
+  });
+
+  it('measures wire speed with a bounded FlatSQL sync protocol probe', async () => {
+    const probeBytes = new Uint8Array([7, 9, 11, 13]);
+    const response = concatJsonFrameAndRawBytes(
+      {
+        op: 'wire_speed_probe',
+        status: 'ok',
+        sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
+        probe_bytes: probeBytes.byteLength,
+        payload_bytes: probeBytes.byteLength,
+      },
+      probeBytes,
+    );
+    const calls: Array<{ peer: string; protocol: string; payload: Uint8Array; addrs?: string[] }> = [];
+    const transport: FlatSqlSyncTransport = {
+      async dialProtocol(targetPeerId, protocolId, payload, candidateAddrs) {
+        calls.push({ peer: targetPeerId, protocol: protocolId, payload, addrs: candidateAddrs });
+        return response;
+      },
+    };
+    const clockValues = [1000, 1250];
+    const result = await requestFlatSqlWireSpeedProbe(
+      transport,
+      {
+        targetPeerId: '16Uiu2HTest',
+        candidateAddrs: ['/dns4/celestrak.eth/tcp/443/wss/p2p/16Uiu2HTest'],
+        probeBytes: probeBytes.byteLength,
+      },
+      () => clockValues.shift() ?? 1250,
+    );
+
+    const requestLength = new DataView(calls[0]?.payload.buffer ?? new ArrayBuffer(0), calls[0]?.payload.byteOffset ?? 0, 4).getUint32(0, false);
+    const requestPayload = JSON.parse(decoder.decode(calls[0]?.payload.slice(4, 4 + requestLength))) as Record<string, unknown>;
+    expect(calls[0]).toMatchObject({
+      peer: '16Uiu2HTest',
+      protocol: FLATSQL_SYNC_PROTOCOL_ID,
+      addrs: ['/dns4/celestrak.eth/tcp/443/wss/p2p/16Uiu2HTest'],
+    });
+    expect(requestPayload).toMatchObject({
+      op: 'wire_speed_probe',
+      probe_bytes: probeBytes.byteLength,
+    });
+    expect(result).toMatchObject({
+      requestedBytes: probeBytes.byteLength,
+      payloadBytes: probeBytes.byteLength,
+      elapsedMs: 250,
+      bytesPerSecond: 16,
+      syncProtocol: FLATSQL_SYNC_PROTOCOL_ID,
+    });
+  });
+
   it('surfaces open_manifest protocol error frames', () => {
     const response = concatFrames([
       encoder.encode(JSON.stringify({
@@ -237,6 +338,15 @@ function concatFrames(frames: Uint8Array[]): Uint8Array {
     out.set(frame, offset);
     offset += frame.byteLength;
   }
+  return out;
+}
+
+function concatJsonFrameAndRawBytes(header: Record<string, unknown>, payload: Uint8Array): Uint8Array {
+  const headerBytes = encoder.encode(JSON.stringify(header));
+  const out = new Uint8Array(4 + headerBytes.byteLength + payload.byteLength);
+  new DataView(out.buffer).setUint32(0, headerBytes.byteLength, false);
+  out.set(headerBytes, 4);
+  out.set(payload, 4 + headerBytes.byteLength);
   return out;
 }
 

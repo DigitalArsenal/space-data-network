@@ -50,9 +50,12 @@ func NewDataQueryHandler(store *storage.FlatSQLStore, verifier *license.TokenVer
 func (h *DataQueryHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/data/health", h.handleHealth)
 	mux.HandleFunc("/api/v1/data/summary", h.handleSummary)
+	mux.HandleFunc("/api/v1/data/datastores", h.handleDatastores)
 	mux.HandleFunc("/api/v1/data/scan", h.handleScan)
 	mux.HandleFunc("/api/v1/data/stream", h.handleRawStream)
 	mux.HandleFunc("/api/v1/data/query", h.handleRawQuery)
+	mux.HandleFunc("/api/v1/data/epoch", h.handleEpochQuery)
+	mux.HandleFunc("/api/v1/data/local-replica-stats", h.handleLocalReplicaStats)
 	mux.HandleFunc("/api/v1/data/records/", h.handleRawRecord)
 	mux.HandleFunc("/api/v1/data/omm", h.handleOMM)
 	mux.HandleFunc("/api/v1/data/omm/bulk", h.handleOMMBulk)
@@ -99,6 +102,62 @@ func (h *DataQueryHandler) handleSummary(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func (h *DataQueryHandler) handleDatastores(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+	entries, err := h.store.ListDatastoreIdentities()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	results := make([]map[string]interface{}, 0, len(entries))
+	for _, entry := range entries {
+		results = append(results, map[string]interface{}{
+			"key":        entry.Key,
+			"identity":   entry.Identity,
+			"updated_at": entry.UpdatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"count":   len(results),
+		"results": results,
+	})
+}
+
+func (h *DataQueryHandler) handleLocalReplicaStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+
+	values := r.URL.Query()
+	stats, err := h.store.LocalReplicaStats(storage.LocalReplicaStatsQuery{
+		SchemaName:        firstNonEmptyDataString(values.Get("schema"), values.Get("schema_name"), values.Get("schemaName")),
+		ProviderPeerID:    firstNonEmptyDataString(values.Get("provider_peer_id"), values.Get("providerPeerId"), values.Get("producer_peer_id"), values.Get("producerPeerId")),
+		ProviderPublicKey: firstNonEmptyDataString(values.Get("provider_public_key"), values.Get("providerPublicKey"), values.Get("producer_public_key"), values.Get("producerPublicKey")),
+		ProviderID:        firstNonEmptyDataString(values.Get("provider_id"), values.Get("providerId")),
+		SourceName:        firstNonEmptyDataString(values.Get("source_name"), values.Get("sourceName")),
+		BatchID:           firstNonEmptyDataString(values.Get("batch_id"), values.Get("batchId")),
+		QueryProfile:      firstNonEmptyDataString(values.Get("query_profile"), values.Get("queryProfile")),
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"count":   len(stats),
+		"results": localReplicaStatsRows(stats),
+	})
+}
+
 func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -126,7 +185,14 @@ func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request
 		limit = rawDataMaxQueryLimit
 	}
 
-	records, err := h.store.QueryRawRecords(storage.RawRecordQuery{
+	queryStore, closeQueryStore, err := h.storeForDatastoreKey(req.DatastoreKey)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer closeQueryStore()
+
+	records, err := queryStore.QueryRawRecords(storage.RawRecordQuery{
 		SchemaName:        schemaName,
 		ProviderID:        firstNonEmptyDataString(req.ProviderID, req.ProviderId),
 		SourceName:        req.SourceName,
@@ -172,7 +238,14 @@ func (h *DataQueryHandler) handleScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	response, _, err := datasync.Scan(h.store, rawQueryToSyncRequest(req), rawDataMaxSyncChunkLimit)
+	queryStore, closeQueryStore, err := h.storeForDatastoreKey(req.DatastoreKey)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer closeQueryStore()
+
+	response, _, err := datasync.Scan(queryStore, rawQueryToSyncRequest(req), rawDataMaxSyncChunkLimit)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -199,7 +272,14 @@ func (h *DataQueryHandler) handleRawStream(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "schema is required")
 		return
 	}
-	computedHash, records, err := datasync.ResolveStreamRecords(h.store, rawStreamToSyncRequest(req))
+	queryStore, closeQueryStore, err := h.storeForDatastoreKey(req.DatastoreKey)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer closeQueryStore()
+
+	computedHash, records, err := datasync.ResolveStreamRecords(queryStore, rawStreamToSyncRequest(req))
 	if err != nil {
 		status := http.StatusNotFound
 		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "limit") || strings.Contains(err.Error(), "schema") {
@@ -223,7 +303,7 @@ func (h *DataQueryHandler) handleRawStream(w http.ResponseWriter, r *http.Reques
 		w.Header().Set("X-SDN-Total-Count", strconv.FormatInt(req.TotalCount, 10))
 	}
 	w.Header().Set("X-SDN-High-Water-Mark", req.HighWaterMark)
-	writeFlatBufferRecordStreamWithContentType(w, schemaName, records, rawFlatBufferStreamContentType, h.store)
+	writeFlatBufferRecordStreamWithContentType(w, schemaName, records, rawFlatBufferStreamContentType, queryStore)
 }
 
 func (h *DataQueryHandler) handleRawRecord(w http.ResponseWriter, r *http.Request) {
@@ -265,6 +345,63 @@ func (h *DataQueryHandler) handleRawRecord(w http.ResponseWriter, r *http.Reques
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(record.Data)
 	}
+}
+
+func (h *DataQueryHandler) handleEpochQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.ensureStore(w) {
+		return
+	}
+
+	query, err := epochRecordQueryFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if query.Profile == storage.EpochProfileCoverage {
+		coverage, err := h.store.QueryEpochCoverage(query)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"schema":      query.SchemaName,
+			"profile":     query.Profile,
+			"query":       epochQueryResponse(query),
+			"count":       len(coverage),
+			"total_count": len(coverage),
+			"results":     epochCoverageRows(coverage),
+		})
+		return
+	}
+
+	totalCount, err := h.store.CountEpochRecords(query)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	matches, err := h.store.QueryEpochRecords(query)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	rows := make([]map[string]interface{}, 0, len(matches))
+	includeData := parseBool(r, "include_data")
+	for _, match := range matches {
+		rows = append(rows, epochMatchRow(query.SchemaName, match, includeData))
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"schema":      query.SchemaName,
+		"profile":     query.Profile,
+		"query":       epochQueryResponse(query),
+		"count":       len(rows),
+		"total_count": totalCount,
+		"results":     rows,
+	})
 }
 
 func (h *DataQueryHandler) handleOMM(w http.ResponseWriter, r *http.Request) {
@@ -718,6 +855,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 type rawDataQueryRequest struct {
+	DatastoreKey           string `json:"datastore_key"`
 	Schema                 string `json:"schema"`
 	SchemaName             string `json:"schema_name"`
 	ProviderID             string `json:"provider_id"`
@@ -741,6 +879,7 @@ type rawDataQueryRequest struct {
 }
 
 type rawDataStreamRequest struct {
+	DatastoreKey  string                `json:"datastore_key"`
 	Schema        string                `json:"schema"`
 	SchemaName    string                `json:"schema_name"`
 	ScanHash      string                `json:"scan_hash"`
@@ -866,6 +1005,170 @@ func sourceSummaryRows(sources []storage.DataSourceSummary) []map[string]interfa
 	return rows
 }
 
+func localReplicaStatsRows(stats []storage.LocalReplicaStats) []map[string]interface{} {
+	rows := make([]map[string]interface{}, 0, len(stats))
+	for _, stat := range stats {
+		lastSyncedAt := ""
+		if !stat.LastSyncedAt.IsZero() {
+			lastSyncedAt = stat.LastSyncedAt.UTC().Format(time.RFC3339)
+		}
+		rows = append(rows, map[string]interface{}{
+			"schema_name":         stat.SchemaName,
+			"provider_peer_id":    stat.ProviderPeerID,
+			"provider_public_key": stat.ProviderPublicKey,
+			"provider_id":         stat.ProviderID,
+			"source_name":         stat.SourceName,
+			"batch_id":            stat.BatchID,
+			"query_profile":       stat.QueryProfile,
+			"local_rows":          stat.LocalRows,
+			"pinned_rows":         stat.PinnedRows,
+			"cached_bytes":        stat.CachedBytes,
+			"pinned_bytes":        stat.PinnedBytes,
+			"snapshot_id":         stat.SnapshotID,
+			"head":                stat.Head,
+			"high_water_mark":     stat.HighWaterMark,
+			"last_synced_at":      lastSyncedAt,
+		})
+	}
+	return rows
+}
+
+func epochRecordQueryFromRequest(r *http.Request) (storage.EpochRecordQuery, error) {
+	values := r.URL.Query()
+	schemaName := strings.TrimSpace(values.Get("schema"))
+	if schemaName == "" {
+		schemaName = strings.TrimSpace(values.Get("schema_name"))
+	}
+	if schemaName == "" {
+		return storage.EpochRecordQuery{}, fmt.Errorf("missing required query parameter: schema")
+	}
+	profile := strings.TrimSpace(values.Get("profile"))
+	if profile == "" {
+		profile = storage.EpochProfileDay
+	}
+	query := storage.EpochRecordQuery{
+		SchemaName: schemaName,
+		Profile:    profile,
+		Day:        strings.TrimSpace(values.Get("day")),
+		ProviderID: strings.TrimSpace(values.Get("provider_id")),
+		SourceName: strings.TrimSpace(values.Get("source_name")),
+		BatchID:    strings.TrimSpace(values.Get("batch_id")),
+		EntityID:   strings.TrimSpace(values.Get("entity_id")),
+		Limit:      parseLimit(r, 1000, 250000),
+	}
+	if raw := strings.TrimSpace(values.Get("at")); raw != "" {
+		at, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return storage.EpochRecordQuery{}, fmt.Errorf("invalid at %q (expected RFC3339)", raw)
+		}
+		query.At = at
+	}
+	if raw := strings.TrimSpace(values.Get("from")); raw != "" {
+		from, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return storage.EpochRecordQuery{}, fmt.Errorf("invalid from %q (expected RFC3339)", raw)
+		}
+		query.From = &from
+	}
+	if raw := strings.TrimSpace(values.Get("to")); raw != "" {
+		to, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return storage.EpochRecordQuery{}, fmt.Errorf("invalid to %q (expected RFC3339)", raw)
+		}
+		query.To = &to
+	}
+	if raw := strings.TrimSpace(values.Get("norad_cat_id")); raw != "" {
+		parsed, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil {
+			return storage.EpochRecordQuery{}, fmt.Errorf("invalid norad_cat_id")
+		}
+		value := uint32(parsed)
+		query.NoradCatID = &value
+	}
+	if raw := strings.TrimSpace(values.Get("max_delta_seconds")); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 0 {
+			return storage.EpochRecordQuery{}, fmt.Errorf("invalid max_delta_seconds")
+		}
+		query.MaxDeltaSeconds = parsed
+	}
+	return query, nil
+}
+
+func epochQueryResponse(query storage.EpochRecordQuery) map[string]interface{} {
+	response := map[string]interface{}{
+		"schema":      query.SchemaName,
+		"profile":     query.Profile,
+		"provider_id": query.ProviderID,
+		"source_name": query.SourceName,
+		"batch_id":    query.BatchID,
+		"limit":       query.Limit,
+	}
+	if query.Day != "" {
+		response["day"] = query.Day
+	}
+	if !query.At.IsZero() {
+		response["at"] = query.At.UTC().Format(time.RFC3339)
+	}
+	if query.From != nil {
+		response["from"] = query.From.UTC().Format(time.RFC3339)
+	}
+	if query.To != nil {
+		response["to"] = query.To.UTC().Format(time.RFC3339)
+	}
+	if query.NoradCatID != nil {
+		response["norad_cat_id"] = *query.NoradCatID
+	}
+	if query.EntityID != "" {
+		response["entity_id"] = query.EntityID
+	}
+	if query.MaxDeltaSeconds > 0 {
+		response["max_delta_seconds"] = query.MaxDeltaSeconds
+	}
+	return response
+}
+
+func epochMatchRow(schemaName string, match storage.EpochRecordMatch, includeData bool) map[string]interface{} {
+	row := rawRecordRow(schemaName, match.Record, includeData)
+	row["entity_key"] = match.EntityKey
+	row["match_quality"] = map[string]interface{}{
+		"requested_epoch": match.RequestedEpoch.UTC().Format(time.RFC3339),
+		"matched_epoch":   match.MatchedEpoch.UTC().Format(time.RFC3339),
+		"delta_seconds":   match.DeltaSeconds,
+		"match_type":      match.MatchType,
+	}
+	switch schemaName {
+	case "OMM.fbs":
+		if omm, err := decodeOMM(match.Record.Data); err == nil {
+			row["norad_cat_id"] = omm.NORAD_CAT_ID()
+			row["object_name"] = string(omm.OBJECT_NAME())
+			row["object_id"] = string(omm.OBJECT_ID())
+			row["epoch"] = string(omm.EPOCH())
+			row["mean_motion"] = omm.MEAN_MOTION()
+		}
+	case "MPE.fbs":
+		if mpe, err := decodeMPE(match.Record.Data); err == nil {
+			row["entity_id"] = strings.TrimSpace(string(mpe.ENTITY_ID()))
+			row["epoch_unix"] = int64(mpe.EPOCH())
+			row["mean_motion"] = mpe.MEAN_MOTION()
+		}
+	}
+	return row
+}
+
+func epochCoverageRows(coverage []storage.EpochCoverageBucket) []map[string]interface{} {
+	rows := make([]map[string]interface{}, 0, len(coverage))
+	for _, bucket := range coverage {
+		rows = append(rows, map[string]interface{}{
+			"day":          bucket.Day,
+			"count":        bucket.Count,
+			"oldest_epoch": bucket.OldestEpoch.UTC().Format(time.RFC3339),
+			"newest_epoch": bucket.NewestEpoch.UTC().Format(time.RFC3339),
+		})
+	}
+	return rows
+}
+
 func rawRecordRow(schemaName string, rec *storage.Record, includeData bool) map[string]interface{} {
 	row := map[string]interface{}{
 		"schema_name":    schemaName,
@@ -972,6 +1275,18 @@ func (h *DataQueryHandler) ensureStore(w http.ResponseWriter) bool {
 		return false
 	}
 	return true
+}
+
+func (h *DataQueryHandler) storeForDatastoreKey(key string) (*storage.FlatSQLStore, func(), error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return h.store, func() {}, nil
+	}
+	store, err := h.store.OpenRegisteredDatastore(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, func() { _ = store.Close() }, nil
 }
 
 func (h *DataQueryHandler) bulkRecords(schemaName, day string, limit int) ([]*storage.Record, error) {

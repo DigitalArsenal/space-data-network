@@ -275,14 +275,35 @@ func (r *Runner) Run(ctx context.Context) error {
 
 func (r *Runner) runCycle(ctx context.Context) error {
 	var errs []string
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := r.syncCelestrakGP(ctx); err != nil {
 		errs = append(errs, err.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		if len(errs) > 0 {
+			return errors.New(strings.Join(errs, "; "))
+		}
+		return err
 	}
 	if err := r.syncCelestrakSatcat(ctx); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := ctx.Err(); err != nil {
+		if len(errs) > 0 {
+			return errors.New(strings.Join(errs, "; "))
+		}
+		return err
+	}
 	if err := r.syncCelestrakSpaceWeather(ctx); err != nil {
 		errs = append(errs, err.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		if len(errs) > 0 {
+			return errors.New(strings.Join(errs, "; "))
+		}
+		return err
 	}
 	if err := r.syncSpaceTrackGapFill(ctx); err != nil {
 		errs = append(errs, err.Error())
@@ -309,6 +330,14 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 	}
 
 	tags := sourceTags(celestrakProviderID, "celestrak-gp", metadata.SourceURL, data)
+	if err := r.reconcileCelestrakSourceBatchDuplicates("OMM.fbs", "celestrak-gp", tags.BatchID); err != nil {
+		r.recordIngestFailureForReview("celestrak-gp-reconcile", err)
+		return fmt.Errorf("reconcile celestrak OMM source batch before ingest replay: %w", err)
+	}
+	if err := r.reconcileCelestrakSourceBatchDuplicates("MPE.fbs", "celestrak-gp", tags.BatchID); err != nil {
+		r.recordIngestFailureForReview("celestrak-gp-reconcile", err)
+		return fmt.Errorf("reconcile celestrak MPE source batch before ingest replay: %w", err)
+	}
 	countOMM, countMPE, normalizedHash, err := r.ingestGPData(data, "source:celestrak", tags)
 	if err != nil {
 		r.recordIngestFailureForReview("celestrak-gp", err)
@@ -320,13 +349,22 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 	}, warningsForFetch(metadata)); err != nil {
 		log.Warnf("Failed to record CelesTrak GP provenance: %v", err)
 	}
+	if err := r.reconcileCelestrakSourceBatchDuplicates("OMM.fbs", "celestrak-gp", tags.BatchID); err != nil {
+		r.recordIngestFailureForReview("celestrak-gp-reconcile", err)
+		return fmt.Errorf("reconcile celestrak OMM source batch: %w", err)
+	}
+	if err := r.reconcileCelestrakSourceBatchDuplicates("MPE.fbs", "celestrak-gp", tags.BatchID); err != nil {
+		r.recordIngestFailureForReview("celestrak-gp-reconcile", err)
+		return fmt.Errorf("reconcile celestrak MPE source batch: %w", err)
+	}
 
-	// Publish source-wide snapshots so replicas can sync the historical store,
-	// not only the latest CelesTrak fetch batch.
+	// Publish the current source batch so recurring CelesTrak updates append
+	// small immutable deltas instead of re-exporting the historical store.
 	if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
 		Schema:            "OMM.fbs",
 		ProviderID:        celestrakProviderID,
 		SourceName:        "celestrak-gp",
+		BatchID:           tags.BatchID,
 		ChunkSize:         datasetPublicationChunkSize,
 		FullCatalog:       true,
 		CombinedCelesTrak: true,
@@ -338,6 +376,7 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 		Schema:            "MPE.fbs",
 		ProviderID:        celestrakProviderID,
 		SourceName:        "celestrak-gp",
+		BatchID:           tags.BatchID,
 		ChunkSize:         datasetPublicationChunkSize,
 		FullCatalog:       true,
 		CombinedCelesTrak: true,
@@ -351,6 +390,20 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 		log.Warnf("Failed to persist checkpoints: %v", err)
 	}
 	log.Infof("CelesTrak GP sync complete: OMM=%d MPE=%d", countOMM, countMPE)
+	return nil
+}
+
+func (r *Runner) reconcileCelestrakSourceBatchDuplicates(schemaName, sourceName, batchID string) error {
+	result, err := r.store.ReconcileSourceBatchIndexedDuplicates(schemaName, celestrakProviderID, sourceName, batchID, true)
+	if err != nil {
+		return err
+	}
+	if err := r.store.RefreshSourceBatchSummary(schemaName, celestrakProviderID, sourceName, batchID); err != nil {
+		return err
+	}
+	if result.Matched > 0 || result.Deleted > 0 {
+		log.Infof("Reconciled duplicate CelesTrak source batch records: schema=%s source=%s batch=%s matched=%d deleted=%d", schemaName, sourceName, batchID, result.Matched, result.Deleted)
+	}
 	return nil
 }
 
@@ -369,6 +422,7 @@ func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
 			Schema:            "CAT.fbs",
 			ProviderID:        celestrakProviderID,
 			SourceName:        tags.SourceName,
+			BatchID:           tags.BatchID,
 			ChunkSize:         datasetPublicationChunkSize,
 			FullCatalog:       true,
 			CombinedCelesTrak: true,
@@ -454,6 +508,7 @@ func (r *Runner) syncCelestrakSpaceWeather(ctx context.Context) error {
 		Schema:            "SPW.fbs",
 		ProviderID:        celestrakProviderID,
 		SourceName:        "celestrak-space-weather",
+		BatchID:           tags.BatchID,
 		ChunkSize:         datasetPublicationChunkSize,
 		FullCatalog:       true,
 		CombinedCelesTrak: true,
@@ -677,7 +732,8 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage
 		builder := sds.NewOMMBuilder().
 			WithNoradCatID(norad).
 			WithObjectName(valueOr(getValue(row, "OBJECT_NAME", "SATNAME", "NAME"), fmt.Sprintf("SAT-%d", norad))).
-			WithObjectID(valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad)))
+			WithObjectID(valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad))).
+			WithCreationDate(deterministicOMMCreationDate(row, parsedEpoch))
 
 		if !parsedEpoch.IsZero() {
 			builder = builder.WithEpoch(parsedEpoch.UTC().Format(time.RFC3339))
@@ -734,6 +790,16 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage
 		return 0, countMPE, "", fmt.Errorf("no OMM rows parsed")
 	}
 	return countOMM, countMPE, hex.EncodeToString(normalized.Sum(nil)), nil
+}
+
+func deterministicOMMCreationDate(row map[string]string, parsedEpoch time.Time) string {
+	if creationDate := strings.TrimSpace(getValue(row, "CREATION_DATE")); creationDate != "" {
+		return creationDate
+	}
+	if !parsedEpoch.IsZero() {
+		return parsedEpoch.UTC().Format(time.RFC3339)
+	}
+	return ""
 }
 
 func (r *Runner) ingestSatcatData(content []byte, sourcePeer string, tags ...storage.SourceTags) (int, string, error) {

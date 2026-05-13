@@ -38,6 +38,7 @@ var SupportedTransports = []string{
 
 type QueryRequest struct {
 	Op                     string `json:"op,omitempty"`
+	DatastoreKey           string `json:"datastore_key,omitempty"`
 	Schema                 string `json:"schema"`
 	SchemaName             string `json:"schema_name"`
 	ProviderID             string `json:"provider_id"`
@@ -131,19 +132,22 @@ type ManifestResponse struct {
 }
 
 type ManifestSegment struct {
-	Index       int    `json:"index"`
-	Cursor      string `json:"cursor"`
-	NextCursor  string `json:"next_cursor"`
-	RowCount    int    `json:"row_count"`
-	ByteCount   int64  `json:"byte_count"`
-	ChunkHash   string `json:"chunk_hash"`
-	CID         string `json:"cid,omitempty"`
-	IndexCID    string `json:"index_cid,omitempty"`
-	ManifestCID string `json:"manifest_cid,omitempty"`
-	PNMCID      string `json:"pnm_cid,omitempty"`
-	ShardSHA256 string `json:"shard_sha256,omitempty"`
-	IndexSHA256 string `json:"index_sha256,omitempty"`
-	QuerySHA256 string `json:"query_sha256,omitempty"`
+	Index        int    `json:"index"`
+	Cursor       string `json:"cursor"`
+	NextCursor   string `json:"next_cursor"`
+	RowCount     int    `json:"row_count"`
+	ByteCount    int64  `json:"byte_count"`
+	ChunkHash    string `json:"chunk_hash"`
+	CID          string `json:"cid,omitempty"`
+	IndexCID     string `json:"index_cid,omitempty"`
+	ManifestCID  string `json:"manifest_cid,omitempty"`
+	PNMCID       string `json:"pnm_cid,omitempty"`
+	ShardSHA256  string `json:"shard_sha256,omitempty"`
+	IndexSHA256  string `json:"index_sha256,omitempty"`
+	QuerySHA256  string `json:"query_sha256,omitempty"`
+	FeedSequence int64  `json:"feed_sequence,omitempty"`
+	PreviousHead string `json:"previous_head,omitempty"`
+	FeedHead     string `json:"feed_head,omitempty"`
 }
 
 type Snapshot struct {
@@ -284,6 +288,14 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 	}
 	queryProfile := NormalizeQueryProfile(req.QueryProfile)
 	if queryProfile == storage.DatasetPublicationQueryProfile {
+		publishedManifest, err := OpenPublishedManifest(store, req, queryProfile, maxLimit)
+		if err != nil {
+			return nil, err
+		}
+		if publishedManifest != nil {
+			return publishedManifest, nil
+		}
+
 		publishedLimit, found, err := store.FindLargestDatasetShardPublicationLimit(storage.DatasetShardPublicationQuery{
 			SchemaName:   schemaName,
 			ProviderID:   FirstNonEmpty(req.ProviderID, req.ProviderId),
@@ -384,6 +396,83 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 		SnapshotID:        snapshot.SnapshotID,
 		Head:              snapshot.Head,
 		HighWaterMark:     snapshot.HighWaterMark,
+		QueryProfile:      queryProfile,
+		SyncProtocol:      ProtocolID,
+		MaxChunkSize:      maxLimit,
+		Transports:        append([]string(nil), SupportedTransports...),
+		Segments:          segments,
+	}
+	manifest.ManifestID = ManifestHash(manifest)
+	return manifest, nil
+}
+
+func OpenPublishedManifest(store *storage.FlatSQLStore, req QueryRequest, queryProfile string, maxLimit int) (*ManifestResponse, error) {
+	schemaName := NormalizeSchema(req)
+	publications, err := store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   schemaName,
+		ProviderID:   FirstNonEmpty(req.ProviderID, req.ProviderId),
+		SourceName:   req.SourceName,
+		BatchID:      FirstNonEmpty(req.BatchID, req.BatchId),
+		QueryProfile: queryProfile,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(publications) == 0 {
+		return nil, nil
+	}
+
+	var totalCount int64
+	var totalBytes int64
+	for _, publication := range publications {
+		totalCount += int64(publication.RecordCount)
+		totalBytes += publication.ByteCount
+	}
+
+	segments := make([]ManifestSegment, 0, len(publications))
+	for index, publication := range publications {
+		chunkHash := publication.ResultSHA256
+		if chunkHash == "" {
+			chunkHash = publication.ShardSHA256
+		}
+		nextCursor := ""
+		if index+1 < len(publications) {
+			nextCursor = EncodeCursor(publications[index+1].Offset)
+		}
+		segments = append(segments, ManifestSegment{
+			Index:        index,
+			Cursor:       EncodeCursor(publication.Offset),
+			NextCursor:   nextCursor,
+			RowCount:     publication.RecordCount,
+			ByteCount:    publication.ByteCount,
+			ChunkHash:    chunkHash,
+			CID:          publication.ShardCID,
+			IndexCID:     publication.IndexCID,
+			ManifestCID:  publication.ManifestCID,
+			PNMCID:       publication.PNMCID,
+			ShardSHA256:  publication.ShardSHA256,
+			IndexSHA256:  publication.IndexSHA256,
+			QuerySHA256:  publication.QuerySHA256,
+			FeedSequence: publication.FeedSequence,
+			PreviousHead: publication.PreviousHead,
+			FeedHead:     publication.FeedHead,
+		})
+	}
+
+	head := PublishedFeedHead(schemaName, FirstNonEmpty(req.ProviderID, req.ProviderId), req.SourceName, FirstNonEmpty(req.BatchID, req.BatchId), queryProfile, publications)
+	highWater := PublishedFeedHighWaterMark(publications, totalCount, totalBytes)
+	manifest := &ManifestResponse{
+		Schema:            schemaName,
+		ProviderID:        FirstNonEmpty(req.ProviderID, req.ProviderId),
+		SourceName:        req.SourceName,
+		BatchID:           FirstNonEmpty(req.BatchID, req.BatchId),
+		ProducerPeerID:    FirstNonEmpty(req.ProducerPeerID, req.ProducerPeerId),
+		ProducerPublicKey: FirstNonEmpty(req.ProducerPublicKey, req.ProducerPublicKeyCamel),
+		TotalCount:        totalCount,
+		TotalBytes:        totalBytes,
+		SnapshotID:        head,
+		Head:              head,
+		HighWaterMark:     highWater,
 		QueryProfile:      queryProfile,
 		SyncProtocol:      ProtocolID,
 		MaxChunkSize:      maxLimit,
@@ -591,6 +680,49 @@ func ManifestHash(manifest *ManifestResponse) string {
 		)
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func PublishedFeedHead(schemaName, providerID, sourceName, batchID, queryProfile string, publications []storage.DatasetShardPublication) string {
+	if len(publications) > 0 {
+		if head := strings.TrimSpace(publications[len(publications)-1].FeedHead); head != "" {
+			return head
+		}
+	}
+	hash := sha256.New()
+	_, _ = fmt.Fprintf(hash, "sdn-dataset-feed-log-v1\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\n", schemaName, providerID, sourceName, batchID, queryProfile, len(publications))
+	for _, publication := range publications {
+		_, _ = fmt.Fprintf(
+			hash,
+			"%d\x00%d\x00%d\x00%d\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%s\x00%s\x00%d\n",
+			publication.Offset,
+			publication.Limit,
+			publication.RecordCount,
+			publication.ByteCount,
+			publication.ShardCID,
+			publication.IndexCID,
+			publication.ManifestCID,
+			publication.PNMCID,
+			publication.ShardSHA256,
+			publication.IndexSHA256,
+			publication.QuerySHA256,
+			publication.ResultSHA256,
+			publication.PublishedAt.UTC().Unix(),
+			publication.PreviousHead,
+			publication.FeedHead,
+			publication.FeedSequence,
+		)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func PublishedFeedHighWaterMark(publications []storage.DatasetShardPublication, totalCount, totalBytes int64) string {
+	var newest int64
+	for _, publication := range publications {
+		if ts := publication.PublishedAt.UTC().Unix(); ts > newest {
+			newest = ts
+		}
+	}
+	return fmt.Sprintf("published-feed-v1:%d:%d:%d:%d", newest, len(publications), totalCount, totalBytes)
 }
 
 func RecordSizeBytes(rec *storage.Record) int64 {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { type FlatSqlSyncChunk, type FlatSqlSyncManifest, type FlatSqlSyncQuery } from '../../flatsql-sync';
+import {
+  type FlatSqlSyncChunk,
+  type FlatSqlSyncManifest,
+  type FlatSqlSyncQuery,
+  type FlatSqlWireSpeedProbeQuery,
+  type FlatSqlWireSpeedProbeResult,
+} from '../../flatsql-sync';
 import { withTimeout } from './async-timeout';
 import { Libp2pFlatSqlSyncBackendCache } from './libp2p-sync-backend-cache';
 import type { Libp2pFlatSqlSyncClient } from './sdn-backend-libp2p-sync';
@@ -119,6 +125,42 @@ describe('libp2p FlatSQL sync backend cache', () => {
         op: 'open_manifest',
         queryProfile: 'dataset-publication-offset-v1',
         limit: 50_000,
+      }),
+    ]);
+  });
+
+  it('lets workers measure wire speed through the cached libp2p client', async () => {
+    const calls: FlatSqlWireSpeedProbeQuery[] = [];
+    const cache = new Libp2pFlatSqlSyncBackendCache(async () => ({
+      async readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk> {
+        return headerOnlyChunk(query.schema);
+      },
+      async openFlatSqlSyncManifest(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest> {
+        return manifestFor(query.schema);
+      },
+      async measureWireSpeed(query: FlatSqlWireSpeedProbeQuery): Promise<FlatSqlWireSpeedProbeResult> {
+        calls.push(query);
+        return {
+          requestedBytes: query.probeBytes ?? 0,
+          payloadBytes: query.probeBytes ?? 0,
+          elapsedMs: 250,
+          bytesPerSecond: 4096,
+          syncProtocol: '/space-data-network/flatsql-sync/1.0.0',
+        };
+      },
+    }));
+
+    await expect(cache.measureWireSpeed(remoteConfig(), { probeBytes: 1024 })).resolves.toMatchObject({
+      requestedBytes: 1024,
+      payloadBytes: 1024,
+      bytesPerSecond: 4096,
+    });
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        targetPeerId: '16Uiu2HCelesTrak',
+        candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+        probeBytes: 1024,
       }),
     ]);
   });

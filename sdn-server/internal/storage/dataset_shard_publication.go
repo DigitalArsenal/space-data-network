@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -29,6 +31,9 @@ type DatasetShardPublication struct {
 	IndexSHA256  string
 	QuerySHA256  string
 	ResultSHA256 string
+	FeedSequence int64
+	PreviousHead string
+	FeedHead     string
 	PublishedAt  time.Time
 }
 
@@ -68,6 +73,9 @@ func (s *FlatSQLStore) initDatasetShardPublicationTable() error {
 			index_sha256 TEXT NOT NULL DEFAULT '',
 			query_sha256 TEXT NOT NULL DEFAULT '',
 			result_sha256 TEXT NOT NULL DEFAULT '',
+			feed_sequence INTEGER NOT NULL DEFAULT 0,
+			previous_head TEXT NOT NULL DEFAULT '',
+			feed_head TEXT NOT NULL DEFAULT '',
 			published_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
 			PRIMARY KEY (
@@ -78,10 +86,30 @@ func (s *FlatSQLStore) initDatasetShardPublicationTable() error {
 	`); err != nil {
 		return fmt.Errorf("failed to create dataset shard publication table: %w", err)
 	}
-	return s.createStartupIndex("sdn_dataset_shard_publications", "idx_sdn_dataset_shards_lookup", existed, `
+	for _, column := range []struct {
+		name string
+		typ  string
+	}{
+		{"feed_sequence", "INTEGER NOT NULL DEFAULT 0"},
+		{"previous_head", "TEXT NOT NULL DEFAULT ''"},
+		{"feed_head", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.ensureColumn("sdn_dataset_shard_publications", column.name, column.typ); err != nil {
+			return err
+		}
+	}
+	if err := s.createStartupIndex("sdn_dataset_shard_publications", "idx_sdn_dataset_shards_lookup", existed, `
 		CREATE INDEX IF NOT EXISTS idx_sdn_dataset_shards_lookup
 		ON sdn_dataset_shard_publications (
 			schema_name, query_profile, provider_id, source_name, batch_id, window_offset
+		)
+	`); err != nil {
+		return err
+	}
+	return s.createStartupIndex("sdn_dataset_shard_publications", "idx_sdn_dataset_shards_feed", existed, `
+		CREATE INDEX IF NOT EXISTS idx_sdn_dataset_shards_feed
+		ON sdn_dataset_shard_publications (
+			schema_name, query_profile, provider_id, source_name, batch_id, feed_sequence
 		)
 	`)
 }
@@ -118,15 +146,18 @@ func (s *FlatSQLStore) UpsertDatasetShardPublication(pub DatasetShardPublication
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.populateDatasetShardPublicationFeedMetadataLocked(&pub); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`
 		INSERT INTO sdn_dataset_shard_publications (
 			schema_name, provider_id, source_name, batch_id, query_profile,
 			window_offset, window_limit, record_count, byte_count,
 			shard_cid, index_cid, manifest_cid, pnm_cid,
 			shard_sha256, index_sha256, query_sha256, result_sha256,
-			published_at, updated_at
+			feed_sequence, previous_head, feed_head, published_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
 		ON CONFLICT(schema_name, provider_id, source_name, batch_id, query_profile, window_offset, window_limit)
 		DO UPDATE SET
 			record_count = excluded.record_count,
@@ -139,12 +170,16 @@ func (s *FlatSQLStore) UpsertDatasetShardPublication(pub DatasetShardPublication
 			index_sha256 = excluded.index_sha256,
 			query_sha256 = excluded.query_sha256,
 			result_sha256 = excluded.result_sha256,
+			feed_sequence = excluded.feed_sequence,
+			previous_head = excluded.previous_head,
+			feed_head = excluded.feed_head,
 			published_at = excluded.published_at,
 			updated_at = excluded.updated_at
 	`, pub.SchemaName, pub.ProviderID, pub.SourceName, pub.BatchID, pub.QueryProfile,
 		pub.Offset, pub.Limit, pub.RecordCount, pub.ByteCount,
 		pub.ShardCID, pub.IndexCID, pub.ManifestCID, pub.PNMCID,
 		pub.ShardSHA256, pub.IndexSHA256, pub.QuerySHA256, pub.ResultSHA256,
+		pub.FeedSequence, pub.PreviousHead, pub.FeedHead,
 		pub.PublishedAt.Unix())
 	if err != nil {
 		return fmt.Errorf("upsert dataset shard publication: %w", err)
@@ -218,10 +253,10 @@ func (s *FlatSQLStore) ListDatasetShardPublications(query DatasetShardPublicatio
 		       window_offset, window_limit, record_count, byte_count,
 		       shard_cid, index_cid, manifest_cid, pnm_cid,
 		       shard_sha256, index_sha256, query_sha256, result_sha256,
-		       published_at
+		       feed_sequence, previous_head, feed_head, published_at
 		FROM sdn_dataset_shard_publications
 		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY window_offset ASC, published_at DESC
+		ORDER BY feed_sequence ASC, window_offset ASC, published_at DESC
 	`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list dataset shard publications: %w", err)
@@ -240,6 +275,49 @@ func (s *FlatSQLStore) ListDatasetShardPublications(query DatasetShardPublicatio
 		return nil, fmt.Errorf("list dataset shard publications rows: %w", err)
 	}
 	return publications, nil
+}
+
+func (s *FlatSQLStore) DeleteDatasetShardPublicationsAtOrAfterOffset(query DatasetShardPublicationQuery, offset int) (int64, error) {
+	query = normalizeDatasetShardPublicationQuery(query)
+	if query.SchemaName == "" {
+		return 0, errors.New("schema name is required")
+	}
+	if query.QueryProfile == "" {
+		return 0, errors.New("query profile is required")
+	}
+	if offset < 0 {
+		return 0, errors.New("offset must be non-negative")
+	}
+
+	where := []string{`schema_name = ?`, `query_profile = ?`, `window_offset >= ?`}
+	args := []interface{}{query.SchemaName, query.QueryProfile, offset}
+	if query.ProviderID != "" {
+		where = append(where, `provider_id = ?`)
+		args = append(args, query.ProviderID)
+	}
+	if query.SourceName != "" {
+		where = append(where, `source_name = ?`)
+		args = append(args, query.SourceName)
+	}
+	if query.BatchID != "" {
+		where = append(where, `batch_id = ?`)
+		args = append(args, query.BatchID)
+	}
+	if query.Limit > 0 {
+		where = append(where, `window_limit = ?`)
+		args = append(args, query.Limit)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result, err := s.db.Exec(`
+		DELETE FROM sdn_dataset_shard_publications
+		WHERE `+strings.Join(where, " AND "), args...)
+	if err != nil {
+		return 0, fmt.Errorf("delete stale dataset shard publications: %w", err)
+	}
+	deleted, _ := result.RowsAffected()
+	return deleted, nil
 }
 
 // FindLargestDatasetShardPublicationLimit returns the largest published shard
@@ -313,13 +391,106 @@ func (s *FlatSQLStore) findDatasetShardPublicationLocked(query DatasetShardPubli
 		       window_offset, window_limit, record_count, byte_count,
 		       shard_cid, index_cid, manifest_cid, pnm_cid,
 		       shard_sha256, index_sha256, query_sha256, result_sha256,
-		       published_at
+		       feed_sequence, previous_head, feed_head, published_at
 		FROM sdn_dataset_shard_publications
 		WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY published_at DESC
 		LIMIT 1
 	`, args...)
 	return scanDatasetShardPublication(row)
+}
+
+func (s *FlatSQLStore) populateDatasetShardPublicationFeedMetadataLocked(pub *DatasetShardPublication) error {
+	if pub == nil {
+		return errors.New("dataset shard publication is required")
+	}
+	existing, err := s.findDatasetShardPublicationLocked(DatasetShardPublicationQuery{
+		SchemaName:   pub.SchemaName,
+		ProviderID:   pub.ProviderID,
+		SourceName:   pub.SourceName,
+		BatchID:      pub.BatchID,
+		QueryProfile: pub.QueryProfile,
+		Offset:       pub.Offset,
+		Limit:        pub.Limit,
+	})
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if pub.FeedSequence <= 0 && err == nil && existing.FeedSequence > 0 {
+		pub.FeedSequence = existing.FeedSequence
+	}
+	if pub.PreviousHead == "" && err == nil && existing.PreviousHead != "" {
+		pub.PreviousHead = existing.PreviousHead
+	}
+	if pub.FeedSequence <= 0 {
+		previousSequence, previousHead, err := s.latestDatasetShardPublicationFeedLinkLocked(*pub)
+		if err != nil {
+			return err
+		}
+		pub.FeedSequence = previousSequence + 1
+		if pub.PreviousHead == "" {
+			pub.PreviousHead = previousHead
+		}
+	}
+	pub.FeedHead = DatasetShardPublicationFeedHead(*pub)
+	return nil
+}
+
+func (s *FlatSQLStore) latestDatasetShardPublicationFeedLinkLocked(pub DatasetShardPublication) (int64, string, error) {
+	var sequence int64
+	var head string
+	err := s.db.QueryRow(`
+		SELECT feed_sequence, feed_head
+		FROM sdn_dataset_shard_publications
+		WHERE schema_name = ?
+		  AND provider_id = ?
+		  AND source_name = ?
+		  AND batch_id = ?
+		  AND query_profile = ?
+		  AND NOT (window_offset = ? AND window_limit = ?)
+		ORDER BY feed_sequence DESC, window_offset DESC, published_at DESC
+		LIMIT 1
+	`, pub.SchemaName, pub.ProviderID, pub.SourceName, pub.BatchID, pub.QueryProfile, pub.Offset, pub.Limit).Scan(&sequence, &head)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", nil
+	}
+	if err != nil {
+		return 0, "", fmt.Errorf("find previous dataset shard feed link: %w", err)
+	}
+	return sequence, head, nil
+}
+
+func DatasetShardPublicationFeedHead(pub DatasetShardPublication) string {
+	hash := sha256.New()
+	_, _ = fmt.Fprintf(
+		hash,
+		"sdn-dataset-feed-entry-v1\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%s\n",
+		pub.SchemaName,
+		pub.ProviderID,
+		pub.SourceName,
+		pub.BatchID,
+		pub.QueryProfile,
+		pub.FeedSequence,
+		pub.PreviousHead,
+	)
+	_, _ = fmt.Fprintf(
+		hash,
+		"%d\x00%d\x00%d\x00%d\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\n",
+		pub.Offset,
+		pub.Limit,
+		pub.RecordCount,
+		pub.ByteCount,
+		pub.ShardCID,
+		pub.IndexCID,
+		pub.ManifestCID,
+		pub.PNMCID,
+		pub.ShardSHA256,
+		pub.IndexSHA256,
+		pub.QuerySHA256,
+		pub.ResultSHA256,
+		pub.PublishedAt.UTC().Unix(),
+	)
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 type datasetShardPublicationScanner interface {
@@ -347,6 +518,9 @@ func scanDatasetShardPublication(scanner datasetShardPublicationScanner) (Datase
 		&pub.IndexSHA256,
 		&pub.QuerySHA256,
 		&pub.ResultSHA256,
+		&pub.FeedSequence,
+		&pub.PreviousHead,
+		&pub.FeedHead,
 		&publishedAt,
 	); err != nil {
 		return DatasetShardPublication{}, err
@@ -369,6 +543,8 @@ func normalizeDatasetShardPublication(pub DatasetShardPublication) DatasetShardP
 	pub.IndexSHA256 = strings.TrimSpace(pub.IndexSHA256)
 	pub.QuerySHA256 = strings.TrimSpace(pub.QuerySHA256)
 	pub.ResultSHA256 = strings.TrimSpace(pub.ResultSHA256)
+	pub.PreviousHead = strings.TrimSpace(pub.PreviousHead)
+	pub.FeedHead = strings.TrimSpace(pub.FeedHead)
 	return pub
 }
 

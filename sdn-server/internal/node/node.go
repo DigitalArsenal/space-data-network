@@ -1135,6 +1135,31 @@ func isDatasetPublicationSignerMismatch(err error) bool {
 		strings.Contains(msg, "no Ed25519 signing key found")
 }
 
+func isPermanentDatasetPublicationMaterializationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, marker := range []string{
+		"buffer missing identifier",
+		"does not match DPM FILE_ID",
+		"DPM missing",
+		"dataset export index",
+		"offset/length outside shard",
+		"frame length",
+		"record CID mismatch",
+		"SHA-256 does not match",
+		"replayed result bytes do not match",
+		"replayed result hash",
+		"invalid PNM signature",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 	defer n.wg.Done()
 
@@ -1185,9 +1210,21 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 		log.Debugf("Skipping dataset PNM materialization from %s on %s: FILE_ID schema is %s", from.ShortString(), schema, publicationSchema)
 		return false, nil
 	}
-	pnmKey := strings.TrimSpace(string(pnm.CID())) + "\x00" + strings.TrimSpace(string(pnm.FILE_ID()))
+	pnmCID := strings.TrimSpace(string(pnm.CID()))
+	fileID := strings.TrimSpace(string(pnm.FILE_ID()))
+	pnmKey := pnmCID + "\x00" + fileID
 	if pnmKey == "\x00" {
 		return false, nil
+	}
+	replayState, found, err := n.store.DatasetPublicationReplayState(pnmKey)
+	if err != nil {
+		return false, fmt.Errorf("read dataset publication replay state: %w", err)
+	}
+	if found {
+		switch replayState.State {
+		case storage.DatasetPublicationReplayStateMaterialized, storage.DatasetPublicationReplayStatePermanentError:
+			return false, nil
+		}
 	}
 	if n.datasetPNMAlreadyMaterialized(pnmKey) {
 		return false, nil
@@ -1210,8 +1247,30 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 		WorkDir:          workDir,
 	})
 	if err != nil {
-		n.clearDatasetPNMMaterialized(pnmKey)
+		if isPermanentDatasetPublicationMaterializationError(err) {
+			if stateErr := n.store.UpsertDatasetPublicationReplayState(storage.DatasetPublicationReplayState{
+				PNMKey:     pnmKey,
+				SchemaName: schema,
+				PNMCID:     pnmCID,
+				FileID:     fileID,
+				State:      storage.DatasetPublicationReplayStatePermanentError,
+				Error:      err.Error(),
+			}); stateErr != nil {
+				return false, fmt.Errorf("%w; record dataset publication replay state: %v", err, stateErr)
+			}
+		} else {
+			n.clearDatasetPNMMaterialized(pnmKey)
+		}
 		return false, err
+	}
+	if err := n.store.UpsertDatasetPublicationReplayState(storage.DatasetPublicationReplayState{
+		PNMKey:     pnmKey,
+		SchemaName: result.SchemaName,
+		PNMCID:     pnmCID,
+		FileID:     fileID,
+		State:      storage.DatasetPublicationReplayStateMaterialized,
+	}); err != nil {
+		log.Warnf("Failed to record dataset publication replay state for %s on %s: %v", from.ShortString(), schema, err)
 	}
 	log.Infof("Materialized trusted dataset update from %s on %s: schema=%s imported=%d manifest=%s shard=%s",
 		from.ShortString(), schema, result.SchemaName, result.Imported, result.ManifestCID, result.ShardCID)
@@ -1741,6 +1800,10 @@ func (n *Node) PublishToTopic(ctx context.Context, topicName string, data []byte
 // PNM topic and every affected dataset schema topic.
 func (n *Node) PublishDatasetUpdatePNM(ctx context.Context, ann sdnpubsub.DatasetUpdateAnnouncement) error {
 	return sdnpubsub.PublishDatasetUpdatePNM(ctx, n, ann)
+}
+
+func (n *Node) PublishDatasetFeedHead(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement) error {
+	return sdnpubsub.PublishDatasetFeedHead(ctx, n, ann)
 }
 
 // PublishCAResultSummary publishes a signed CA result summary to the private

@@ -126,7 +126,16 @@ describe('remote-sdn backend', () => {
           total_records: 1,
           total_bytes: 256,
           schemas: [{ schema_name: 'EPM.fbs', count: 1, total_bytes: 256 }],
-          sources: [{ schema_name: 'EPM.fbs', provider_id: 'local-node', source_name: 'local-epm', batch_id: 'local', count: 1, total_bytes: 256 }],
+          sources: [{
+            schema_name: 'EPM.fbs',
+            provider_id: 'local-node',
+            source_name: 'local-epm',
+            batch_id: 'local',
+            producer_peer_id: '16Uiu2HProducer',
+            producer_public_key: 'producer-public-key',
+            count: 1,
+            total_bytes: 256,
+          }],
         });
       }
       if (url === 'https://sdn.spaceaware.io/api/v1/data/query') {
@@ -145,7 +154,16 @@ describe('remote-sdn backend', () => {
     });
     const backend = createRemoteSdnBackend({ serverUrl: 'https://sdn.spaceaware.io', fetch: fetchMock });
 
-    await expect(backend.getDataSummary()).resolves.toMatchObject({ ok: true, data: { totalRecords: 1 } });
+    await expect(backend.getDataSummary()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        totalRecords: 1,
+        sources: [expect.objectContaining({
+          producerPeerId: '16Uiu2HProducer',
+          producerPublicKey: 'producer-public-key',
+        })],
+      },
+    });
     await expect(backend.queryRawData({ schema: 'EPM.fbs', providerId: 'local-node' })).resolves.toMatchObject({
       ok: true,
       data: [{ schemaName: 'EPM.fbs', cid: '16Uiu2HRemote', dataBytes: new Uint8Array([0, 1, 2, 3]) }],
@@ -158,6 +176,23 @@ describe('remote-sdn backend', () => {
     const queryCalls = calls.filter((call) => call.url === 'https://sdn.spaceaware.io/api/v1/data/query');
     const metadataQueryCall = queryCalls.find((call) => !acceptHeader(call.init).includes('application/vnd.sdn.flatbuffers.stream'));
     expect(JSON.parse(String(metadataQueryCall?.init?.body))).toMatchObject({ include_data: false });
+  });
+
+  it('does not send raw SQL to remote peers', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error('remote SQL fetch should not be called');
+    });
+    const backend = createRemoteSdnBackend({ serverUrl: 'https://sdn.spaceaware.io', fetch: fetchMock });
+
+    await expect(backend.runSqlQuery('SELECT * FROM OMM LIMIT 10')).resolves.toMatchObject({
+      ok: false,
+      capability: {
+        id: 'runSqlQuery',
+        state: 'local-only',
+      },
+      data: [],
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('scans remote raw data refs without downloading FlatBuffer bytes', async () => {
@@ -227,6 +262,62 @@ describe('remote-sdn backend', () => {
       source_name: 'celestrak-gp',
       limit: 1,
     });
+  });
+
+  it('routes remote raw scan and stream requests to an isolated datastore namespace', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === 'https://sdn.spaceaware.io/api/v1/data/scan') {
+        return jsonResponse({
+          schema: 'OMM.fbs',
+          total_count: 1,
+          count: 1,
+          limit: 1,
+          offset: 0,
+          cursor: 'MA',
+          next_cursor: '',
+          scan_hash: 'namespace-scan-hash',
+          chunk_hash: 'namespace-scan-hash',
+          results: [{
+            schema_name: 'OMM.fbs',
+            cid: 'namespace-omm-cid',
+            peer_id: 'source:namespace',
+            size_bytes: 4,
+          }],
+        });
+      }
+      if (url === 'https://sdn.spaceaware.io/api/v1/data/stream') {
+        return flatbufferStreamResponse([new Uint8Array([1, 3, 3, 7])]);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const backend = createRemoteSdnBackend({ serverUrl: 'https://sdn.spaceaware.io', fetch: fetchMock });
+
+    const scan = await backend.scanRawData({
+      schema: 'OMM.fbs',
+      datastoreKey: 'sdn-ds-v1-history',
+      limit: 1,
+    });
+    const stream = await backend.streamRawData({
+      schema: 'OMM.fbs',
+      datastoreKey: 'sdn-ds-v1-history',
+      scanHash: scan.data?.scanHash,
+      records: scan.data?.results ?? [],
+    });
+
+    expect(scan).toMatchObject({
+      ok: true,
+      data: { results: [{ cid: 'namespace-omm-cid' }] },
+    });
+    expect(stream).toMatchObject({
+      ok: true,
+      data: [{ cid: 'namespace-omm-cid', dataBytes: new Uint8Array([1, 3, 3, 7]) }],
+    });
+    expect(calls.map((call) => JSON.parse(String(call.init?.body)))).toEqual([
+      expect.objectContaining({ datastore_key: 'sdn-ds-v1-history' }),
+      expect.objectContaining({ datastore_key: 'sdn-ds-v1-history' }),
+    ]);
   });
 
   it('streams remote raw FlatBuffers for scan-bound refs', async () => {

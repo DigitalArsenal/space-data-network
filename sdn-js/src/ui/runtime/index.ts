@@ -9,6 +9,14 @@ export * from './sdn-backend-desktop';
 export * from './sdn-backend-factory';
 export * from './sdn-backend-libp2p-sync';
 export * from './sdn-backend-remote';
+export * from './sync-throughput';
+export {
+  fetchCidBytesFromGateway,
+  flatBufferStreamFromPublishedFlatSqlSegment,
+  timedFlatBufferStreamFromPublishedFlatSqlSegment,
+  type PublishedFlatSqlSegmentInput,
+  type TimedPublishedFlatSqlSegment,
+} from './published-flatbuffer-shard';
 export {
   type AdminAdapter,
   type AdminMode,

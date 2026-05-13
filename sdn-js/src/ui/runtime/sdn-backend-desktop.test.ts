@@ -235,6 +235,23 @@ describe('desktop-local SDN backend', () => {
     expect(calls.filter((call) => call.url === 'http://127.0.0.1:17890/api/v1/data/query')).toHaveLength(2);
   });
 
+  it('does not send raw SQL to the desktop or remote node HTTP APIs', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error('SQL fetch should not be called');
+    });
+    const backend = createDesktopLocalBackend({ desktopProxyUrl: 'http://127.0.0.1:17890', fetch: fetchMock });
+
+    await expect(backend.runSqlQuery('SELECT * FROM OMM LIMIT 10')).resolves.toMatchObject({
+      ok: false,
+      capability: {
+        id: 'runSqlQuery',
+        state: 'local-only',
+      },
+      data: [],
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('scans raw data refs through the local desktop data endpoint', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -302,6 +319,62 @@ describe('desktop-local SDN backend', () => {
       source_name: 'celestrak-gp',
       limit: 1,
     });
+  });
+
+  it('routes desktop raw scan and stream requests to an isolated datastore namespace', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === 'http://127.0.0.1:17890/api/v1/data/scan') {
+        return jsonResponse({
+          schema: 'OMM.fbs',
+          total_count: 1,
+          count: 1,
+          limit: 1,
+          offset: 0,
+          cursor: 'MA',
+          next_cursor: '',
+          scan_hash: 'namespace-scan-hash',
+          chunk_hash: 'namespace-scan-hash',
+          results: [{
+            schema_name: 'OMM.fbs',
+            cid: 'namespace-omm-cid',
+            peer_id: 'source:namespace',
+            size_bytes: 4,
+          }],
+        });
+      }
+      if (url === 'http://127.0.0.1:17890/api/v1/data/stream') {
+        return flatbufferStreamResponse([new Uint8Array([1, 3, 3, 7])]);
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    const backend = createDesktopLocalBackend({ desktopProxyUrl: 'http://127.0.0.1:17890', fetch: fetchMock });
+
+    const scan = await backend.scanRawData({
+      schema: 'OMM.fbs',
+      datastoreKey: 'sdn-ds-v1-history',
+      limit: 1,
+    });
+    const stream = await backend.streamRawData({
+      schema: 'OMM.fbs',
+      datastoreKey: 'sdn-ds-v1-history',
+      scanHash: scan.data?.scanHash,
+      records: scan.data?.results ?? [],
+    });
+
+    expect(scan).toMatchObject({
+      ok: true,
+      data: { results: [{ cid: 'namespace-omm-cid' }] },
+    });
+    expect(stream).toMatchObject({
+      ok: true,
+      data: [{ cid: 'namespace-omm-cid', dataBytes: new Uint8Array([1, 3, 3, 7]) }],
+    });
+    expect(calls.map((call) => JSON.parse(String(call.init?.body)))).toEqual([
+      expect.objectContaining({ datastore_key: 'sdn-ds-v1-history' }),
+      expect.objectContaining({ datastore_key: 'sdn-ds-v1-history' }),
+    ]);
   });
 
   it('streams local proxy raw FlatBuffers for scan-bound refs', async () => {

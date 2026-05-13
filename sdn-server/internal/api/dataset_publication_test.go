@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	dpm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
 	"github.com/ipfs/go-cid"
@@ -96,9 +98,37 @@ func TestDatasetPublicationHandlerPublishesLocalRequest(t *testing.T) {
 	}
 }
 
+func TestDatasetPublicationHandlerPreservesDatastoreKey(t *testing.T) {
+	service := &fakeDatasetPublicationService{
+		result: DatasetPublicationResult{
+			Schema:      "OMM.fbs",
+			RecordCount: 2,
+			ManifestCID: "bafymanifest",
+		},
+	}
+	handler := NewDatasetPublicationHandler(service)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	body := bytes.NewBufferString(`{"schema":"OMM.fbs","datastoreKey":"sdn-ds-v1-test","fullCatalog":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dataset-updates/publish", body)
+	req.RemoteAddr = "127.0.0.1:4321"
+	res := httptest.NewRecorder()
+
+	mux.ServeHTTP(res, req)
+
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", res.Code, http.StatusAccepted, res.Body.String())
+	}
+	if service.request.DatastoreKey != "sdn-ds-v1-test" {
+		t.Fatalf("DatastoreKey = %q, want sdn-ds-v1-test", service.request.DatastoreKey)
+	}
+}
+
 type fakeDatasetUpdatePublisher struct {
 	announcement  sdnpubsub.DatasetUpdateAnnouncement
 	announcements []sdnpubsub.DatasetUpdateAnnouncement
+	feedHeads     []sdnpubsub.DatasetFeedHeadAnnouncement
 	called        bool
 }
 
@@ -106,6 +136,11 @@ func (f *fakeDatasetUpdatePublisher) PublishDatasetUpdatePNM(ctx context.Context
 	f.called = true
 	f.announcement = ann
 	f.announcements = append(f.announcements, ann)
+	return nil
+}
+
+func (f *fakeDatasetUpdatePublisher) PublishDatasetFeedHead(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement) error {
+	f.feedHeads = append(f.feedHeads, ann)
 	return nil
 }
 
@@ -248,6 +283,179 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	if publishedShard.ShardCID != result.ShardCID || publishedShard.IndexCID != result.IndexCID || publishedShard.ManifestCID != result.ManifestCID || publishedShard.PNMCID != result.PNMCID {
 		t.Fatalf("published shard registry entry mismatch: %#v result=%#v", publishedShard, result)
 	}
+	if len(publisher.feedHeads) != 1 {
+		t.Fatalf("feed head announcements = %d, want 1", len(publisher.feedHeads))
+	}
+	if publisher.feedHeads[0].FeedHead != publishedShard.FeedHead || publisher.feedHeads[0].FeedSequence != publishedShard.FeedSequence {
+		t.Fatalf("feed head announcement mismatch: announcement=%#v stored=%#v", publisher.feedHeads[0], publishedShard)
+	}
+
+	ledger, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		SchemaName:     "CAT.fbs",
+		ProviderPeerID: "space-data-network-02",
+		QueryProfile:   storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		t.Fatalf("ListPinLedgerEntries failed: %v", err)
+	}
+	if len(ledger) != 4 {
+		t.Fatalf("pin ledger entries = %d, want 4: %#v", len(ledger), ledger)
+	}
+	wantPublicKey := hex.EncodeToString(signingKey.Public().(ed25519.PublicKey))
+	entriesByRole := map[string]storage.PinLedgerEntry{}
+	for _, entry := range ledger {
+		entriesByRole[entry.Role] = entry
+		if entry.ProviderPublicKey != wantPublicKey {
+			t.Fatalf("pin ledger provider public key = %q, want %q", entry.ProviderPublicKey, wantPublicKey)
+		}
+		if entry.ProviderID != "space-data-network-02" || entry.SourceName != "celestrak-satcat-csv" || entry.BatchID != "source-sha-001" {
+			t.Fatalf("pin ledger source identity mismatch: %#v", entry)
+		}
+		if entry.SnapshotID != publishedShard.FeedHead || entry.Head != publishedShard.FeedHead || entry.VerificationState != "verified" {
+			t.Fatalf("pin ledger verification/head mismatch: %#v published=%#v", entry, publishedShard)
+		}
+	}
+	if entriesByRole["shard"].CID != result.ShardCID || entriesByRole["shard"].ByteHash != publishedShard.ShardSHA256 {
+		t.Fatalf("shard pin ledger mismatch: %#v published=%#v", entriesByRole["shard"], publishedShard)
+	}
+	if entriesByRole["shard"].RowCount != int64(publishedShard.RecordCount) || entriesByRole["shard"].HighWaterMark == "" {
+		t.Fatalf("shard pin ledger row/high-water metadata missing: %#v published=%#v", entriesByRole["shard"], publishedShard)
+	}
+	if entriesByRole["index"].CID != result.IndexCID || entriesByRole["index"].ByteHash != publishedShard.IndexSHA256 {
+		t.Fatalf("index pin ledger mismatch: %#v published=%#v", entriesByRole["index"], publishedShard)
+	}
+	if entriesByRole["manifest"].CID != result.ManifestCID {
+		t.Fatalf("manifest pin ledger mismatch: %#v result=%#v", entriesByRole["manifest"], result)
+	}
+	if entriesByRole["pnm"].CID != result.PNMCID {
+		t.Fatalf("pnm pin ledger mismatch: %#v result=%#v", entriesByRole["pnm"], result)
+	}
+}
+
+func TestConcreteDatasetPublicationServicePublishesRegisteredDatastoreNamespace(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	dir := t.TempDir()
+	storeBase := filepath.Join(dir, "store")
+	rootStore, err := storage.NewFlatSQLStore(storeBase, validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer rootStore.Close()
+
+	identity := storage.DatastoreIdentity{
+		SchemaName:    "CAT.fbs",
+		SourcePeerID:  "source:legacy-sqlite",
+		ProviderID:    "space-data-network-02",
+		SourceName:    "celestrak-cat-historical",
+		BatchHead:     "historical-head",
+		QueryProfile:  storage.DatasetPublicationQueryProfile,
+		SnapshotID:    "historical-head",
+		HighWaterMark: "historical-head",
+		ArtifactHash:  "historical-head",
+	}
+	datastoreKey, err := identity.Key()
+	if err != nil {
+		t.Fatalf("identity key failed: %v", err)
+	}
+	namespaceStore, err := storage.NewFlatSQLStoreForIdentity(storeBase, validator, identity)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStoreForIdentity failed: %v", err)
+	}
+	recordA := sds.NewCATBuilder().
+		WithNoradCatID(25544).
+		WithObjectName("ISS (ZARYA)").
+		WithObjectID("1998-067A").
+		WithObjectType("PAYLOAD").
+		WithOpsStatus("OPERATIONAL").
+		Build()
+	recordB := sds.NewCATBuilder().
+		WithNoradCatID(1).
+		WithObjectName("SPUTNIK 1").
+		WithObjectID("1957-001A").
+		WithObjectType("PAYLOAD").
+		WithOpsStatus("DECAYED").
+		Build()
+	if _, err := namespaceStore.StoreBatch("CAT.fbs", [][]byte{recordA, recordB}, "source:legacy-sqlite", nil); err != nil {
+		t.Fatalf("StoreBatch failed: %v", err)
+	}
+	if err := namespaceStore.Close(); err != nil {
+		t.Fatalf("close namespace store failed: %v", err)
+	}
+
+	pinned := make(map[string][]byte)
+	kubo := newDatasetPublicationKuboTestServer(t, pinned)
+	defer kubo.Close()
+
+	_, signingKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	publisher := &fakeDatasetUpdatePublisher{}
+	service := NewConcreteDatasetPublicationService(
+		rootStore,
+		publisher,
+		signingKey,
+		"space-data-network-02",
+		"bafy-provider-epm",
+		kubo.URL,
+		filepath.Join(dir, "publications"),
+	)
+
+	result, err := service.PublishDatasetUpdate(context.Background(), DatasetPublicationRequest{
+		Schema:       "CAT.fbs",
+		DatastoreKey: datastoreKey,
+		DatasetID:    "celestrak-cat-historical",
+		Limit:        10,
+	})
+	if err != nil {
+		t.Fatalf("PublishDatasetUpdate failed: %v", err)
+	}
+	if result.Schema != "CAT.fbs" || result.RecordCount != 2 {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if len(publisher.feedHeads) != 1 {
+		t.Fatalf("feed head announcements = %d, want 1", len(publisher.feedHeads))
+	}
+	if publisher.feedHeads[0].ProviderID != "space-data-network-02" || publisher.feedHeads[0].SourceName != "celestrak-cat-historical" || publisher.feedHeads[0].BatchID != "historical-head" {
+		t.Fatalf("feed head source identity mismatch: %#v", publisher.feedHeads[0])
+	}
+
+	if rootPublications, err := rootStore.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   "CAT.fbs",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	}); err != nil {
+		t.Fatalf("root ListDatasetShardPublications failed: %v", err)
+	} else if len(rootPublications) != 0 {
+		t.Fatalf("root publication registry = %d, want 0: %#v", len(rootPublications), rootPublications)
+	}
+
+	reopenedNamespaceStore, err := rootStore.OpenRegisteredDatastore(datastoreKey)
+	if err != nil {
+		t.Fatalf("OpenRegisteredDatastore failed: %v", err)
+	}
+	defer reopenedNamespaceStore.Close()
+	publishedShard, found, err := reopenedNamespaceStore.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		SchemaName:   "CAT.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-cat-historical",
+		BatchID:      "historical-head",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        10,
+		RecordCount:  2,
+	})
+	if err != nil {
+		t.Fatalf("FindDatasetShardPublication failed: %v", err)
+	}
+	if !found {
+		t.Fatal("namespace publication registry entry was not stored")
+	}
+	if publishedShard.ShardCID != result.ShardCID || publishedShard.ManifestCID != result.ManifestCID || publishedShard.PNMCID != result.PNMCID {
+		t.Fatalf("namespace publication mismatch: published=%#v result=%#v", publishedShard, result)
+	}
 }
 
 func TestConcreteDatasetPublicationServicePublishesFullCatalogAsDPMSeries(t *testing.T) {
@@ -341,6 +549,210 @@ func TestConcreteDatasetPublicationServicePublishesFullCatalogAsDPMSeries(t *tes
 	}
 	if total != 5 {
 		t.Fatalf("series record total = %d, want 5", total)
+	}
+}
+
+func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	dir := t.TempDir()
+	store, err := storage.NewFlatSQLStore(filepath.Join(dir, "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	tags := storage.SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "source-sha-unchanged",
+		ContentKeyID: "public",
+	}
+	for i := 0; i < 3; i++ {
+		record := sds.NewCATBuilder().
+			WithNoradCatID(uint32(51000 + i)).
+			WithObjectName("UNCHANGED-FULL-CATALOG-TEST").
+			WithObjectID("2026-002A").
+			WithObjectType("PAYLOAD").
+			WithOpsStatus("OPERATIONAL").
+			Build()
+		if _, err := store.StoreWithSourceTags("CAT.fbs", record, "source:celestrak", nil, tags); err != nil {
+			t.Fatalf("store record %d failed: %v", i, err)
+		}
+	}
+
+	pinned := make(map[string][]byte)
+	kubo := newDatasetPublicationKuboTestServer(t, pinned)
+	defer kubo.Close()
+
+	_, signingKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	publisher := &fakeDatasetUpdatePublisher{}
+	service := NewConcreteDatasetPublicationService(
+		store,
+		publisher,
+		signingKey,
+		"16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4",
+		"bafy-provider-epm",
+		kubo.URL,
+		filepath.Join(dir, "publications"),
+	)
+	baseTime := time.Date(2026, 5, 12, 22, 0, 0, 0, time.UTC)
+	nowCalls := 0
+	service.now = func() time.Time {
+		nowCalls++
+		return baseTime.Add(time.Duration(nowCalls) * time.Second)
+	}
+
+	req := DatasetPublicationRequest{
+		Schema:      "CAT.fbs",
+		ProviderID:  "space-data-network-02",
+		SourceName:  "celestrak-gp",
+		DatasetID:   "celestrak-cat-full",
+		FullCatalog: true,
+		ChunkSize:   2,
+	}
+	first, err := service.PublishDatasetUpdate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first PublishDatasetUpdate failed: %v", err)
+	}
+	if len(first.Publications) != 2 {
+		t.Fatalf("first publications = %d, want 2", len(first.Publications))
+	}
+	pinnedAfterFirst := len(pinned)
+	announcementsAfterFirst := len(publisher.announcements)
+	headsAfterFirst := len(publisher.feedHeads)
+
+	second, err := service.PublishDatasetUpdate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second PublishDatasetUpdate failed: %v", err)
+	}
+	if len(second.Publications) != len(first.Publications) {
+		t.Fatalf("second publications = %d, want %d", len(second.Publications), len(first.Publications))
+	}
+	if len(pinned) != pinnedAfterFirst {
+		t.Fatalf("second publish pinned %d objects, want unchanged %d", len(pinned), pinnedAfterFirst)
+	}
+	if len(publisher.announcements) != announcementsAfterFirst+len(first.Publications) {
+		t.Fatalf("second publish announcements = %d, want %d re-announced reusable PNMs", len(publisher.announcements), announcementsAfterFirst+len(first.Publications))
+	}
+	if len(publisher.feedHeads) != headsAfterFirst+len(first.Publications) {
+		t.Fatalf("second publish feed heads = %d, want %d re-announced reusable feed heads", len(publisher.feedHeads), headsAfterFirst+len(first.Publications))
+	}
+	for i := range first.Publications {
+		if second.Publications[i].ShardCID != first.Publications[i].ShardCID ||
+			second.Publications[i].IndexCID != first.Publications[i].IndexCID ||
+			second.Publications[i].ManifestCID != first.Publications[i].ManifestCID ||
+			second.Publications[i].PNMCID != first.Publications[i].PNMCID {
+			t.Fatalf("publication %d was not reused: first=%#v second=%#v", i, first.Publications[i], second.Publications[i])
+		}
+	}
+}
+
+func TestConcreteDatasetPublicationServicePrunesStaleFullCatalogShards(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	dir := t.TempDir()
+	store, err := storage.NewFlatSQLStore(filepath.Join(dir, "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	tags := storage.SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "source-sha-shrinking",
+		ContentKeyID: "public",
+	}
+	var cids []string
+	for i := 0; i < 5; i++ {
+		record := sds.NewCATBuilder().
+			WithNoradCatID(uint32(52000 + i)).
+			WithObjectName("SHRINKING-FULL-CATALOG-TEST").
+			WithObjectID("2026-003A").
+			WithObjectType("PAYLOAD").
+			WithOpsStatus("OPERATIONAL").
+			Build()
+		cid, err := store.StoreWithSourceTags("CAT.fbs", record, "source:celestrak", nil, tags)
+		if err != nil {
+			t.Fatalf("store record %d failed: %v", i, err)
+		}
+		cids = append(cids, cid)
+	}
+
+	pinned := make(map[string][]byte)
+	kubo := newDatasetPublicationKuboTestServer(t, pinned)
+	defer kubo.Close()
+
+	_, signingKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	publisher := &fakeDatasetUpdatePublisher{}
+	service := NewConcreteDatasetPublicationService(
+		store,
+		publisher,
+		signingKey,
+		"16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4",
+		"bafy-provider-epm",
+		kubo.URL,
+		filepath.Join(dir, "publications"),
+	)
+
+	req := DatasetPublicationRequest{
+		Schema:      "CAT.fbs",
+		ProviderID:  "space-data-network-02",
+		SourceName:  "celestrak-gp",
+		BatchID:     "source-sha-shrinking",
+		DatasetID:   "celestrak-cat-full",
+		FullCatalog: true,
+		ChunkSize:   2,
+	}
+	first, err := service.PublishDatasetUpdate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first PublishDatasetUpdate failed: %v", err)
+	}
+	if len(first.Publications) != 3 {
+		t.Fatalf("first publications = %d, want 3", len(first.Publications))
+	}
+
+	for _, cid := range cids[2:] {
+		if err := store.Delete("CAT.fbs", cid); err != nil {
+			t.Fatalf("delete record %s failed: %v", cid, err)
+		}
+	}
+
+	second, err := service.PublishDatasetUpdate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second PublishDatasetUpdate failed: %v", err)
+	}
+	if len(second.Publications) != 1 {
+		t.Fatalf("second publications = %d, want 1: %#v", len(second.Publications), second.Publications)
+	}
+
+	publications, err := store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   "CAT.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "source-sha-shrinking",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Limit:        2,
+	})
+	if err != nil {
+		t.Fatalf("ListDatasetShardPublications failed: %v", err)
+	}
+	if len(publications) != 1 {
+		t.Fatalf("stored publications = %d, want 1: %#v", len(publications), publications)
+	}
+	if publications[0].Offset != 0 || publications[0].RecordCount != 2 {
+		t.Fatalf("remaining publication = %#v, want offset 0 record count 2", publications[0])
 	}
 }
 

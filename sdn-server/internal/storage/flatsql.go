@@ -38,6 +38,7 @@ const (
 	flatSQLStreamDirName         = "flatsql-streams"
 	legacyBlobMigrationBatchSize = 50000
 	localEPMStoreSalt            = "space-data-network-local-epm-store-v1"
+	sqliteBusyTimeoutMillis      = 120000
 )
 
 // FlatSQLStore provides SQLite storage with FlatBuffer virtual tables.
@@ -63,7 +64,7 @@ func NewFlatSQLStore(basePath string, validator *sds.Validator) (*FlatSQLStore, 
 
 	dbPath := filepath.Join(basePath, "sdn.db")
 
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout="+strconv.Itoa(sqliteBusyTimeoutMillis)+"&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -215,6 +216,12 @@ func (s *FlatSQLStore) initTables() error {
 	}
 	if err := s.initDatasetShardPublicationTable(); err != nil {
 		return fmt.Errorf("failed to create dataset shard publication table: %w", err)
+	}
+	if err := s.initPinLedgerTable(); err != nil {
+		return fmt.Errorf("failed to create pin ledger table: %w", err)
+	}
+	if err := s.initDatasetPublicationReplayStateTable(); err != nil {
+		return fmt.Errorf("failed to create dataset publication replay state table: %w", err)
 	}
 
 	// Directory index for node/user EPM records.
@@ -1200,6 +1207,74 @@ func (s *FlatSQLStore) rebuildSourceSummaryForSchema(schemaName, tableName strin
 	return nil
 }
 
+func (s *FlatSQLStore) rebuildSourceSummaryForSourceBatch(schemaName, tableName, providerID, sourceName, batchID string) error {
+	if _, err := s.db.Exec(`
+		DELETE FROM sdn_record_source_summary
+		WHERE schema_name = ?
+		  AND provider_id = ?
+		  AND source_name = ?
+		  AND batch_id = ?
+	`, schemaName, providerID, sourceName, batchID); err != nil {
+		return fmt.Errorf("clear source summary for %s/%s/%s/%s: %w", schemaName, providerID, sourceName, batchID, err)
+	}
+	if _, err := s.db.Exec(fmt.Sprintf(`
+		INSERT INTO sdn_record_source_summary (
+			schema_name, provider_id, source_name, batch_id, producer_peer_id,
+			producer_public_key, record_count, total_bytes, updated_at
+		)
+		SELECT
+			tags.schema_name,
+			tags.provider_id,
+			tags.source_name,
+			COALESCE(tags.batch_id, ''),
+			COALESCE(tags.producer_peer_id, ''),
+			COALESCE(tags.producer_public_key, ''),
+			COUNT(*),
+			COALESCE(SUM(records.record_length), 0),
+			strftime('%%s', 'now')
+		FROM sdn_record_source_tags tags
+		INNER JOIN %s records ON records.cid = tags.cid
+		WHERE tags.schema_name = ?
+		  AND tags.provider_id = ?
+		  AND tags.source_name = ?
+		  AND tags.batch_id = ?
+		GROUP BY tags.schema_name, tags.provider_id, tags.source_name, COALESCE(tags.batch_id, ''),
+		         COALESCE(tags.producer_peer_id, ''), COALESCE(tags.producer_public_key, '')
+	`, tableName), schemaName, providerID, sourceName, batchID); err != nil {
+		return fmt.Errorf("rebuild source summary for %s/%s/%s/%s: %w", schemaName, providerID, sourceName, batchID, err)
+	}
+	return nil
+}
+
+// RefreshSourceBatchSummary recomputes one provider/source/batch summary from
+// source tags and record metadata without scanning unrelated batches.
+func (s *FlatSQLStore) RefreshSourceBatchSummary(schemaName, providerID, sourceName, batchID string) error {
+	schemaName = strings.TrimSpace(schemaName)
+	providerID = strings.TrimSpace(providerID)
+	sourceName = strings.TrimSpace(sourceName)
+	batchID = strings.TrimSpace(batchID)
+	if schemaName == "" {
+		return errors.New("schema name is required")
+	}
+	if providerID == "" {
+		return errors.New("provider id is required")
+	}
+	if sourceName == "" {
+		return errors.New("source name is required")
+	}
+	if batchID == "" {
+		return errors.New("batch id is required")
+	}
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return fmt.Errorf("invalid schema name: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rebuildSourceSummaryForSourceBatch(schemaName, tableName, providerID, sourceName, batchID)
+}
+
 func incrementSourceSummary(tx *sql.Tx, schemaName string, tags SourceTags, recordBytes int64) error {
 	tags = normalizeSourceTags(tags)
 	_, err := tx.Exec(`
@@ -1350,6 +1425,18 @@ type SourceBatchReconcileResult struct {
 	Deleted    int64  `json:"deleted"`
 }
 
+// SourceBatchDuplicateReconcileResult summarizes duplicate logical records
+// removed from one source batch.
+type SourceBatchDuplicateReconcileResult struct {
+	SchemaName string `json:"schemaName"`
+	ProviderID string `json:"providerId"`
+	SourceName string `json:"sourceName"`
+	BatchID    string `json:"batchId"`
+	Apply      bool   `json:"apply"`
+	Matched    int64  `json:"matched"`
+	Deleted    int64  `json:"deleted"`
+}
+
 // DataSummary describes local FlatSQL record volume by schema and source.
 type DataSummary struct {
 	TotalRecords int64
@@ -1445,18 +1532,89 @@ func (s *FlatSQLStore) StoreWithSourceTags(schemaName string, data []byte, peerI
 	return cid, nil
 }
 
-// UpsertSourceTags attaches or updates source tags for an existing record.
-func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags) error {
-	tags = normalizeSourceTags(tags)
-	if err := ValidateSourceTags(tags); err != nil {
-		return err
+// StoreBatch stores FlatBuffer records under one store lock, FlatSQL stream
+// appender, and SQLite transaction without attaching per-record source tags.
+func (s *FlatSQLStore) StoreBatch(schemaName string, records [][]byte, peerID string, signature []byte) (int, error) {
+	return s.storeBatch(schemaName, records, peerID, signature, nil)
+}
+
+// StoreBatchWithSourceTags stores FlatBuffer records under one store lock,
+// FlatSQL stream appender, and SQLite transaction.
+func (s *FlatSQLStore) StoreBatchWithSourceTags(schemaName string, records [][]byte, peerID string, signature []byte, tags SourceTags) (int, error) {
+	return s.storeBatch(schemaName, records, peerID, signature, &tags)
+}
+
+func (s *FlatSQLStore) storeBatch(schemaName string, records [][]byte, peerID string, signature []byte, tags *SourceTags) (int, error) {
+	if len(records) == 0 {
+		return 0, nil
 	}
 	tableName, err := sds.SchemaNameToTable(schemaName)
 	if err != nil {
-		return fmt.Errorf("invalid schema name: %w", err)
+		return 0, fmt.Errorf("invalid schema name: %w", err)
 	}
-	if strings.TrimSpace(cid) == "" {
-		return errors.New("cid is required")
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	appender, err := s.newFlatSQLStreamAppender(schemaName)
+	if err != nil {
+		return 0, fmt.Errorf("open %s FlatSQL stream: %w", schemaName, err)
+	}
+	defer appender.Close()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin batch store: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	now := time.Now().Unix()
+	inserted := 0
+	for _, data := range records {
+		cid := computeCID(data)
+		var existing int
+		err := tx.QueryRow(fmt.Sprintf(`SELECT 1 FROM %s WHERE cid = ?`, tableName), cid).Scan(&existing)
+		switch {
+		case err == nil:
+		case errors.Is(err, sql.ErrNoRows):
+			streamPath, streamOffset, recordLength, err := appender.Append(data)
+			if err != nil {
+				return inserted, fmt.Errorf("append %s record %s to FlatSQL stream: %w", schemaName, cid, err)
+			}
+			if err := insertSchemaMetadata(tx, tableName, cid, peerID, now, streamPath, streamOffset, recordLength, signature, now); err != nil {
+				return inserted, fmt.Errorf("store %s record %s: %w", schemaName, cid, err)
+			}
+			if err := upsertRecordIndexExec(tx, schemaName, cid, now, data); err != nil {
+				log.Warnf("Failed to index batch %s record %s: %v", schemaName, cid[:16]+"...", err)
+			}
+			inserted++
+		default:
+			return inserted, fmt.Errorf("check %s record %s: %w", schemaName, cid, err)
+		}
+
+		if tags != nil {
+			if err := upsertSourceTagsTx(tx, tableName, schemaName, cid, *tags, int64(len(data))); err != nil {
+				return inserted, err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return inserted, fmt.Errorf("commit batch store: %w", err)
+	}
+	committed = true
+	return inserted, nil
+}
+
+// UpsertSourceTags attaches or updates source tags for an existing record.
+func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags) error {
+	tableName, err := sds.SchemaNameToTable(schemaName)
+	if err != nil {
+		return fmt.Errorf("invalid schema name: %w", err)
 	}
 
 	s.mu.Lock()
@@ -1468,16 +1626,27 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 	}
 	defer tx.Rollback()
 
-	var recordBytes sql.NullInt64
-	if err := tx.QueryRow(fmt.Sprintf(`SELECT record_length FROM %s WHERE cid = ?`, tableName), cid).Scan(&recordBytes); err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("lookup source-tagged record bytes: %w", err)
-		}
+	if err := upsertSourceTagsTx(tx, tableName, schemaName, cid, tags, -1); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit source tag upsert: %w", err)
+	}
+	return nil
+}
+
+func upsertSourceTagsTx(tx *sql.Tx, tableName, schemaName, cid string, tags SourceTags, recordBytes int64) error {
+	tags = normalizeSourceTags(tags)
+	if err := ValidateSourceTags(tags); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cid) == "" {
+		return errors.New("cid is required")
 	}
 
-	var existingTag int
-	err = tx.QueryRow(`
-		SELECT 1
+	var existingSourceURL string
+	err := tx.QueryRow(`
+		SELECT COALESCE(source_url, '')
 		FROM sdn_record_source_tags
 		WHERE schema_name = ?
 		  AND cid = ?
@@ -1487,11 +1656,39 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 		  AND content_key_id = ?
 		  AND producer_peer_id = ?
 		  AND producer_public_key = ?
-	`, schemaName, cid, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey).Scan(&existingTag)
-	if errors.Is(err, sql.ErrNoRows) {
-		existingTag = 0
-	} else if err != nil {
+	`, schemaName, cid, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey).Scan(&existingSourceURL)
+	if err == nil {
+		if existingSourceURL != tags.SourceURL {
+			if _, err := tx.Exec(`
+				UPDATE sdn_record_source_tags
+				SET source_url = ?
+				WHERE schema_name = ?
+				  AND cid = ?
+				  AND provider_id = ?
+				  AND source_name = ?
+				  AND batch_id = ?
+				  AND content_key_id = ?
+				  AND producer_peer_id = ?
+				  AND producer_public_key = ?
+			`, tags.SourceURL, schemaName, cid, tags.ProviderID, tags.SourceName, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey); err != nil {
+				return fmt.Errorf("update existing source tag URL: %w", err)
+			}
+		}
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("lookup existing source tags: %w", err)
+	}
+
+	bytesTotal := recordBytes
+	if bytesTotal < 0 {
+		var storedBytes sql.NullInt64
+		if err := tx.QueryRow(fmt.Sprintf(`SELECT record_length FROM %s WHERE cid = ?`, tableName), cid).Scan(&storedBytes); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("lookup source-tagged record bytes: %w", err)
+			}
+		}
+		bytesTotal = storedBytes.Int64
 	}
 
 	_, err = tx.Exec(`
@@ -1500,23 +1697,13 @@ func (s *FlatSQLStore) UpsertSourceTags(schemaName, cid string, tags SourceTags)
 			content_key_id, producer_peer_id, producer_public_key
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(schema_name, cid, provider_id, source_name, batch_id, content_key_id, producer_peer_id, producer_public_key) DO UPDATE SET
-			source_url = excluded.source_url,
-			created_at = strftime('%s', 'now')
 	`, schemaName, cid, tags.ProviderID, tags.SourceName, tags.SourceURL, tags.BatchID, tags.ContentKeyID, tags.ProducerPeerID, tags.ProducerPublicKey)
 	if err != nil {
 		return fmt.Errorf("failed to upsert source tags: %w", err)
 	}
 
-	bytesTotal := recordBytes.Int64
-	if existingTag == 0 {
-		if err := incrementSourceSummary(tx, schemaName, tags, bytesTotal); err != nil {
-			return err
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit source tag upsert: %w", err)
+	if err := incrementSourceSummary(tx, schemaName, tags, bytesTotal); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1794,6 +1981,164 @@ func (s *FlatSQLStore) ReconcileSourceBatch(schemaName, providerID, sourceName, 
 		return result, fmt.Errorf("commit source batch reconciliation: %w", err)
 	}
 	if err := s.rebuildSourceSummaryForSchema(result.SchemaName, tableName); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+// ReconcileSourceBatchIndexedDuplicates removes duplicate indexed records
+// inside a single provider/source/batch. It keeps the newest source-tagged row
+// for each logical indexed key and only deletes a record row when no source tags
+// remain for that CID.
+func (s *FlatSQLStore) ReconcileSourceBatchIndexedDuplicates(schemaName, providerID, sourceName, batchID string, apply bool) (SourceBatchDuplicateReconcileResult, error) {
+	result := SourceBatchDuplicateReconcileResult{
+		SchemaName: strings.TrimSpace(schemaName),
+		ProviderID: strings.TrimSpace(providerID),
+		SourceName: strings.TrimSpace(sourceName),
+		BatchID:    strings.TrimSpace(batchID),
+		Apply:      apply,
+	}
+	if result.SchemaName == "" {
+		return result, errors.New("schema name is required")
+	}
+	if result.ProviderID == "" {
+		return result, errors.New("provider id is required")
+	}
+	if result.SourceName == "" {
+		return result, errors.New("source name is required")
+	}
+	if result.BatchID == "" {
+		return result, errors.New("batch id is required")
+	}
+	tableName, err := sds.SchemaNameToTable(result.SchemaName)
+	if err != nil {
+		return result, fmt.Errorf("invalid schema name: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	args := []interface{}{result.SchemaName, result.ProviderID, result.SourceName, result.BatchID}
+	countSQL := fmt.Sprintf(`
+		WITH ranked AS (
+			SELECT
+				tags.cid,
+				ROW_NUMBER() OVER (
+					PARTITION BY
+						COALESCE(idx.norad_cat_id, -1),
+						COALESCE(idx.entity_id, ''),
+						COALESCE(idx.object_type, ''),
+						COALESCE(idx.ops_status_code, ''),
+						COALESCE(idx.epoch_unix, -1),
+						COALESCE(idx.epoch_day, '')
+					ORDER BY tags.created_at DESC, records.timestamp DESC, tags.cid DESC
+				) AS rn
+			FROM sdn_record_source_tags tags
+			INNER JOIN sdn_record_index idx
+			  ON idx.schema_name = tags.schema_name AND idx.cid = tags.cid
+			INNER JOIN %s records
+			  ON records.cid = tags.cid
+			WHERE tags.schema_name = ?
+			  AND tags.provider_id = ?
+			  AND tags.source_name = ?
+			  AND tags.batch_id = ?
+		)
+		SELECT COUNT(*)
+		FROM ranked
+		WHERE rn > 1
+	`, tableName)
+	if err := s.db.QueryRow(countSQL, args...).Scan(&result.Matched); err != nil {
+		return result, fmt.Errorf("count source batch duplicate records: %w", err)
+	}
+	if !apply || result.Matched == 0 {
+		return result, nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return result, fmt.Errorf("begin source batch duplicate reconciliation: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`CREATE TEMP TABLE IF NOT EXISTS temp_sdn_reconcile_duplicate_cids (cid TEXT PRIMARY KEY)`); err != nil {
+		return result, fmt.Errorf("create duplicate reconcile cid table: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM temp_sdn_reconcile_duplicate_cids`); err != nil {
+		return result, fmt.Errorf("clear duplicate reconcile cid table: %w", err)
+	}
+	stageSQL := fmt.Sprintf(`
+		INSERT OR IGNORE INTO temp_sdn_reconcile_duplicate_cids (cid)
+		WITH ranked AS (
+			SELECT
+				tags.cid,
+				ROW_NUMBER() OVER (
+					PARTITION BY
+						COALESCE(idx.norad_cat_id, -1),
+						COALESCE(idx.entity_id, ''),
+						COALESCE(idx.object_type, ''),
+						COALESCE(idx.ops_status_code, ''),
+						COALESCE(idx.epoch_unix, -1),
+						COALESCE(idx.epoch_day, '')
+					ORDER BY tags.created_at DESC, records.timestamp DESC, tags.cid DESC
+				) AS rn
+			FROM sdn_record_source_tags tags
+			INNER JOIN sdn_record_index idx
+			  ON idx.schema_name = tags.schema_name AND idx.cid = tags.cid
+			INNER JOIN %s records
+			  ON records.cid = tags.cid
+			WHERE tags.schema_name = ?
+			  AND tags.provider_id = ?
+			  AND tags.source_name = ?
+			  AND tags.batch_id = ?
+		)
+		SELECT cid
+		FROM ranked
+		WHERE rn > 1
+	`, tableName)
+	if _, err := tx.Exec(stageSQL, args...); err != nil {
+		return result, fmt.Errorf("stage source batch duplicate cids: %w", err)
+	}
+	if _, err := tx.Exec(`
+		DELETE FROM sdn_record_source_tags
+		WHERE schema_name = ?
+		  AND provider_id = ?
+		  AND source_name = ?
+		  AND batch_id = ?
+		  AND cid IN (SELECT cid FROM temp_sdn_reconcile_duplicate_cids)
+	`, args...); err != nil {
+		return result, fmt.Errorf("delete source batch duplicate tags: %w", err)
+	}
+	deleteRecordsSQL := fmt.Sprintf(`
+		DELETE FROM %s
+		WHERE cid IN (SELECT cid FROM temp_sdn_reconcile_duplicate_cids)
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM sdn_record_source_tags tags
+			WHERE tags.schema_name = ? AND tags.cid = %s.cid
+		  )
+	`, tableName, tableName)
+	recordDelete, err := tx.Exec(deleteRecordsSQL, result.SchemaName)
+	if err != nil {
+		return result, fmt.Errorf("delete orphaned duplicate records: %w", err)
+	}
+	result.Deleted, _ = recordDelete.RowsAffected()
+	if _, err := tx.Exec(`
+		DELETE FROM sdn_record_index
+		WHERE schema_name = ?
+		  AND cid IN (SELECT cid FROM temp_sdn_reconcile_duplicate_cids)
+		  AND NOT EXISTS (
+			SELECT 1
+			FROM sdn_record_source_tags tags
+			WHERE tags.schema_name = sdn_record_index.schema_name
+			  AND tags.cid = sdn_record_index.cid
+		  )
+	`, result.SchemaName); err != nil {
+		return result, fmt.Errorf("delete orphaned duplicate index rows: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return result, fmt.Errorf("commit source batch duplicate reconciliation: %w", err)
+	}
+	if err := s.rebuildSourceSummaryForSourceBatch(result.SchemaName, tableName, result.ProviderID, result.SourceName, result.BatchID); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -3994,6 +4339,10 @@ type indexedFields struct {
 }
 
 func (s *FlatSQLStore) upsertRecordIndex(schemaName, cid string, sourceTimestamp int64, data []byte) error {
+	return upsertRecordIndexExec(s.db, schemaName, cid, sourceTimestamp, data)
+}
+
+func upsertRecordIndexExec(exec sqlExecer, schemaName, cid string, sourceTimestamp int64, data []byte) error {
 	fields, err := extractIndexedFields(schemaName, data)
 	if err != nil {
 		return err
@@ -4024,7 +4373,7 @@ func (s *FlatSQLStore) upsertRecordIndex(schemaName, cid string, sourceTimestamp
 		day = fields.epochDay
 	}
 
-	_, err = s.db.Exec(`
+	_, err = exec.Exec(`
 		INSERT INTO sdn_record_index (
 			schema_name, cid, norad_cat_id, entity_id, object_type, ops_status_code, epoch_unix, epoch_day, source_timestamp
 		)

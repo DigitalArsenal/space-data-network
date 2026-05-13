@@ -1,6 +1,8 @@
 import {
   createLocalFlatSqlStore,
   type LocalFlatSqlIngestOptions,
+  type LocalFlatSqlPinLedgerEntry,
+  type LocalFlatSqlPinLedgerQuery,
   type LocalFlatSqlQueryResult,
   type LocalFlatSqlStandardStats,
   type LocalFlatSqlStatsOptions,
@@ -13,11 +15,13 @@ import type { DataScanResult, DataSummary, RawDataQuery, RawDataRecord } from '.
 export interface WorkerFlatSqlSyncBackendConfig {
   targetPeerId: string;
   candidateAddrs: string[];
+  datastoreKey?: string | null;
   providerId?: string | null;
   sourceName?: string | null;
   displayName?: string | null;
   publicKey?: string | null;
   gatewayUrl?: string | null;
+  measuredWireSpeedBytesPerSecond?: number | null;
 }
 
 export interface WorkerSchemaSyncProgress {
@@ -25,10 +29,20 @@ export interface WorkerSchemaSyncProgress {
   syncedRows: number;
   totalRows: number;
   localRows: number;
+  pinnedRows: number;
+  missingRows: number;
   cachedBytes: number;
   pinnedBytes: number;
   downloadedBytes: number;
   downloadSpeedBytesPerSecond: number;
+  measuredWireSpeedBytesPerSecond: number;
+  wireSpeedUtilization: number | null;
+  wireSpeedTarget: number;
+  wireSpeedTargetMet: boolean | null;
+  manifestDiscoveryMs: number;
+  networkTransferMs: number;
+  verificationMs: number;
+  flatSqlMaterializationMs: number;
   providerPeerId: string | null;
   providerPublicKey: string | null;
   snapshotId: string | null;
@@ -88,6 +102,8 @@ type WorkerRequest =
   | { id: number; type: 'flush'; standardId?: string }
   | { id: number; type: 'query'; sql: string; standardId?: string }
   | { id: number; type: 'getStats'; options?: LocalFlatSqlStatsOptions }
+  | { id: number; type: 'recordPinLedgerEntries'; entries: LocalFlatSqlPinLedgerEntry[] }
+  | { id: number; type: 'listPinLedgerEntries'; query?: LocalFlatSqlPinLedgerQuery }
   | { id: number; type: 'getRemoteDataSummary'; backendConfig: WorkerFlatSqlSyncBackendConfig }
   | { id: number; type: 'queryRemotePage'; request: WorkerRemotePageRequest }
   | { id: number; type: 'syncSchema'; request: WorkerSchemaSyncRequest }
@@ -189,6 +205,14 @@ class WorkerLocalFlatSqlStoreClient implements WorkerLocalFlatSqlStore {
     const stats = await this.request<LocalFlatSqlStandardStats[]>({ id: 0, type: 'getStats', options });
     this.statsCache = stats;
     return stats;
+  }
+
+  async recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[]): Promise<void> {
+    await this.request<void>({ id: 0, type: 'recordPinLedgerEntries', entries });
+  }
+
+  listPinLedgerEntries(query?: LocalFlatSqlPinLedgerQuery): Promise<LocalFlatSqlPinLedgerEntry[]> {
+    return this.request<LocalFlatSqlPinLedgerEntry[]>({ id: 0, type: 'listPinLedgerEntries', query });
   }
 
   getRemoteDataSummary(backendConfig: WorkerFlatSqlSyncBackendConfig): Promise<DataSummary | null> {

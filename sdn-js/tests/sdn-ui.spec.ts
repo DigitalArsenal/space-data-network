@@ -24,11 +24,37 @@ test('peers route renders SDN peer fixtures through the backend adapter', async 
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/peers');
 
   await expect(page.getByRole('heading', { level: 1, name: 'Peers' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Observed Peers 1/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Data Feeds 0/ })).toBeVisible();
+  await page.getByRole('button', { name: /Observed Peers 1/ }).click();
   await expect(page.getByText('CelesTrak Provider')).toBeVisible();
   await expect(page.getByText(realPeerId)).toBeVisible();
 });
 
-test('data route renders a searchable remote data source without workbench status chrome', async ({ page }) => {
+test('data route renders subscribed local datastore preview without workbench status chrome', async ({ page }) => {
+  await page.addInitScript((peerId) => {
+    window.localStorage.setItem('sdn:data-directory:v1', JSON.stringify({
+      peerTrust: { [peerId]: 'marginal' },
+      subscriptions: [{
+        id: 'local:PNM',
+        dataSourceId: 'local',
+        peerId: 'local-node',
+        standardId: 'PNM',
+        providerName: 'CelesTrak Provider',
+        providerPublicKey: peerId,
+        remoteRows: 12,
+        storageCap: 2.5,
+        storageUnit: 'MB',
+        syncFilter: '',
+        createdAt: '2026-05-12T00:00:00.000Z',
+        updatedAt: '2026-05-12T00:00:00.000Z',
+      }],
+    }));
+    window.localStorage.setItem('sdn:data-schema-sync:v1', JSON.stringify({
+      'local:PNM': { mode: 'sync', storageCap: 2.5, storageUnit: 'MB' },
+    }));
+  }, realPeerId);
+
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
 
   await expect(page.getByRole('heading', { name: 'Data' })).toBeVisible();
@@ -36,44 +62,38 @@ test('data route renders a searchable remote data source without workbench statu
   await expect(page.getByText('backend ready')).toHaveCount(0);
   await expect(page.getByText(/available .* total/)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Refresh' })).toHaveCount(0);
-
-  const dataSourceSearch = page.getByRole('searchbox', { name: 'Data source' });
-  await expect(dataSourceSearch).toBeVisible();
-  await dataSourceSearch.fill('celes');
-  const sourceTable = page.getByRole('table', { name: 'Data sources' });
-  await expect(sourceTable).toBeVisible();
-  await expect(sourceTable.getByText('CelesTrak Provider')).toBeVisible();
-  await expect(sourceTable.getByText(realPeerId)).toBeVisible();
-  await sourceTable.getByRole('button', { name: /CelesTrak Provider/ }).click();
   await expect(page.getByText('Loading')).toBeVisible();
 
-  await expect(page.getByRole('button', { name: 'Storage' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Storage' })).toHaveClass(/active/);
   await expect(page.getByLabel('Local storage state')).toBeVisible();
-  await page.getByRole('button', { name: 'Subscriptions' }).click();
-  const schemaSync = page.getByRole('table', { name: 'Schema sync' });
-  await expect(schemaSync).toBeVisible();
-  await expect(schemaSync.getByRole('row').nth(1)).toContainText('PNM');
-  await expect(schemaSync.getByRole('row').nth(1)).toContainText('12');
-  await expect(schemaSync.getByRole('combobox', { name: 'PNM sync' })).toHaveValue('preview');
-  await expect(schemaSync.getByRole('spinbutton', { name: 'PNM storage cap' })).toBeDisabled();
-  await schemaSync.getByRole('combobox', { name: 'PNM sync' }).selectOption('sync');
-  await expect(schemaSync.getByRole('spinbutton', { name: 'PNM storage cap' })).toBeEnabled();
-  await schemaSync.getByRole('spinbutton', { name: 'PNM storage cap' }).fill('2.5');
-  await schemaSync.getByRole('combobox', { name: 'PNM storage unit' }).selectOption('MB');
-  await expect(schemaSync.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2.5');
-  await expect(schemaSync.getByRole('row').nth(1)).toContainText('Syncing');
-  await expect(schemaSync.getByRole('row').nth(1)).toContainText('Synced 12/12');
+  await expect(page.getByLabel('Local storage state')).toContainText('CelesTrak Provider');
+  await expect(page.getByLabel('Local storage state')).toContainText('PNM');
+  await expect(page.getByLabel('Local storage state')).toContainText('Synced 10/12');
+  await expect(page.getByLabel('Local storage state')).toContainText('Pinned rows');
+
+  await page.getByRole('button', { name: 'Sync settings' }).click();
+  const syncSettings = page.getByLabel('Sync settings');
+  await expect(syncSettings).toBeVisible();
+  await expect(syncSettings).toContainText('PNM');
+  await expect(syncSettings).toContainText('12');
+  await expect(page.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2.5');
+  await expect(page.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
+  await page.getByRole('button', { name: 'Pause' }).click();
+  await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible();
+  await page.getByRole('button', { name: 'Resume' }).click();
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+  await page.getByRole('button', { name: 'Verify pins' }).click();
+  await expect(page.getByText(/verified pinned PNM shard artifacts|Verified .* PNM shard artifacts/i)).toBeVisible();
+  await expect(syncSettings.getByRole('button', { name: 'Query' })).toHaveCount(0);
+  await expect(syncSettings.getByRole('button', { name: 'Retry' })).toBeVisible();
+
   await page.getByRole('button', { name: 'Explorer' }).click();
-  await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('PNM');
-  await expect(page.getByRole('combobox', { name: 'Table' }).locator('option')).toHaveText([
-    'PNM (12)',
-    'OMM (2)',
-    'CAT (1)',
-    'EPM (1)',
-  ]);
+  await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('local:PNM');
   await expect(page.getByRole('combobox', { name: 'Page size' })).toHaveValue('10');
   await expect(page.getByLabel('Remote rows 12')).toBeVisible();
-  await expect(page.getByLabel('Local rows 12')).toBeVisible();
+  await expect(page.getByLabel('Local rows 10')).toBeVisible();
+  await expect(page.getByLabel(/Pinned rows/)).toBeVisible();
+  await expect(page.getByLabel(/Transport/)).toBeVisible();
   const dataRows = page.getByRole('table', { name: 'Data rows' });
   await expect(dataRows.getByRole('cell', { name: 'bafy-pnm-cid', exact: true })).toBeVisible();
   await dataRows.getByRole('cell', { name: 'bafy-pnm-cid', exact: true }).click();
@@ -98,13 +118,161 @@ test('data route renders a searchable remote data source without workbench statu
   await expect(dataRows.getByRole('cell', { name: 'bafy-pnm-cid', exact: true })).toBeVisible();
 
   await page.reload();
-  await page.getByRole('searchbox', { name: 'Data source' }).fill('celes');
-  await page.getByRole('table', { name: 'Data sources' }).getByRole('button', { name: /CelesTrak Provider/ }).click();
-  await page.getByRole('button', { name: 'Subscriptions' }).click();
-  const reloadedSchemaSync = page.getByRole('table', { name: 'Schema sync' });
-  await expect(reloadedSchemaSync.getByRole('combobox', { name: 'PNM sync' })).toHaveValue('sync');
-  await expect(reloadedSchemaSync.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2.5');
-  await expect(reloadedSchemaSync.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
+  await page.getByRole('button', { name: 'Sync settings' }).click();
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+  await expect(page.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2.5');
+  await expect(page.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
+});
+
+test('data route keeps same-schema subscriptions separated by datastore namespace', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('sdn:data-directory:v1', JSON.stringify({
+      peerTrust: { 'local-node': 'marginal' },
+      subscriptions: [
+        {
+          id: 'local:OMM:sdn-ds-history',
+          dataSourceId: 'local',
+          peerId: 'local-node',
+          datastoreKey: 'sdn-ds-history',
+          standardId: 'OMM',
+          providerName: 'CelesTrak Historical',
+          providerPublicKey: 'local-node',
+          remoteRows: 44_349_135,
+          storageCap: 5,
+          storageUnit: 'GB',
+          syncFilter: '',
+          createdAt: '2026-05-12T00:00:00.000Z',
+          updatedAt: '2026-05-12T00:00:00.000Z',
+        },
+        {
+          id: 'local:OMM:sdn-ds-live',
+          dataSourceId: 'local',
+          peerId: 'local-node',
+          datastoreKey: 'sdn-ds-live',
+          standardId: 'OMM',
+          providerName: 'CelesTrak Live',
+          providerPublicKey: 'local-node',
+          remoteRows: 2_287_018,
+          storageCap: 1,
+          storageUnit: 'GB',
+          syncFilter: '',
+          createdAt: '2026-05-12T00:00:00.000Z',
+          updatedAt: '2026-05-12T00:00:00.000Z',
+        },
+      ],
+    }));
+    window.localStorage.setItem('sdn:data-schema-sync:v1', JSON.stringify({
+      'local:OMM': { mode: 'preview', storageCap: 1, storageUnit: 'GB' },
+      'local:OMM:sdn-ds-history': { mode: 'preview', storageCap: 5, storageUnit: 'GB' },
+      'local:OMM:sdn-ds-live': { mode: 'preview', storageCap: 1, storageUnit: 'GB' },
+    }));
+  });
+
+  await page.context().unroute('**/api/v1/data/summary');
+  await page.context().unroute('**/api/v1/data/scan');
+  await page.context().unroute('**/api/v1/data/stream');
+
+  await page.context().route('**/api/v1/data/summary', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/api/v1/data/summary') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total_records: 46_636_153,
+        total_bytes: 1_337_000_000,
+        schemas: [{ schema_name: 'OMM.fbs', count: 46_636_153, total_bytes: 1_337_000_000 }],
+        sources: [
+          {
+            datastore_key: 'sdn-ds-history',
+            schema_name: 'OMM.fbs',
+            provider_id: 'local',
+            source_name: 'celestrak-gp-historical',
+            batch_id: 'history',
+            count: 44_349_135,
+            total_bytes: 1_000_000_000,
+          },
+          {
+            datastore_key: 'sdn-ds-live',
+            schema_name: 'OMM.fbs',
+            provider_id: 'local',
+            source_name: 'celestrak-gp',
+            batch_id: 'live',
+            count: 2_287_018,
+            total_bytes: 337_000_000,
+          },
+        ],
+      }),
+    });
+  });
+
+  const scanDatastoreKeys: string[] = [];
+  await page.context().route('**/api/v1/data/scan', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/api/v1/data/scan') {
+      await route.fallback();
+      return;
+    }
+    const body = route.request().postDataJSON();
+    expect(body.schema).toBe('OMM.fbs');
+    const datastoreKey = body.datastore_key ?? body.datastoreKey ?? '';
+    scanDatastoreKeys.push(datastoreKey);
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        schema: 'OMM.fbs',
+        total_count: datastoreKey === 'sdn-ds-live' ? 2_287_018 : 44_349_135,
+        count: 1,
+        limit: 10,
+        offset: 0,
+        cursor: 'MA',
+        next_cursor: '',
+        snapshot_id: `${datastoreKey}-snapshot`,
+        head: `${datastoreKey}-head`,
+        high_water_mark: `${datastoreKey}:1`,
+        scan_hash: `${datastoreKey}-scan`,
+        chunk_hash: `${datastoreKey}-scan`,
+        query_profile: 'ordered-offset-v1',
+        sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
+        max_chunk_size: 50000,
+        transports: ['http', 'libp2p-websocket', 'libp2p-webrtc'],
+        results: [{
+          schema_name: 'OMM.fbs',
+          cid: `${datastoreKey}-cid`,
+          peer_id: 'source:celestrak',
+          provider_id: 'local',
+          source_name: datastoreKey === 'sdn-ds-live' ? 'celestrak-gp' : 'celestrak-gp-historical',
+          batch_id: datastoreKey === 'sdn-ds-live' ? 'live' : 'history',
+          timestamp: '2026-05-11T04:02:25Z',
+          size_bytes: 288,
+        }],
+      }),
+    });
+  });
+  await page.context().route('**/api/v1/data/stream', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/api/v1/data/stream') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/vnd.sdn.flatbuffers.stream',
+      body: rawFlatbufferStream([STARLINK_6292_OMM_BYTES]),
+    });
+  });
+
+  await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
+  await page.getByRole('button', { name: 'Sync settings' }).click();
+  const liveRow = page.getByLabel('Sync settings').locator('article').filter({ hasText: 'CelesTrak Live' });
+  await expect(liveRow).toContainText('2,287,018 remote');
+  await expect(liveRow.getByRole('button', { name: 'Query' })).toHaveCount(0);
+  await expect(liveRow.getByRole('button', { name: 'Retry' })).toBeVisible();
+
+  scanDatastoreKeys.length = 0;
+  await page.getByRole('button', { name: 'Explorer' }).click();
+  await page.getByRole('combobox', { name: 'Table' }).selectOption('local:OMM:datastore:sdn-ds-live');
+
+  await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('local:OMM:datastore:sdn-ds-live');
+  await expect.poll(() => scanDatastoreKeys.at(-1) ?? '').toBe('sdn-ds-live');
 });
 
 test('data route keeps the shell fixed while the content pane scrolls', async ({ page }) => {
@@ -340,6 +508,43 @@ async function installSdnFixtures(page: Page): Promise<void> {
       }),
     });
   });
+  await page.context().route('**/api/v1/data/summary', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/api/v1/data/summary') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total_records: 16,
+        total_bytes: 3456,
+        schemas: [
+          { schema_name: 'CAT.fbs', count: 1, total_bytes: 144 },
+          { schema_name: 'EPM.fbs', count: 1, total_bytes: 144 },
+          { schema_name: 'OMM.fbs', count: 2, total_bytes: 576 },
+          { schema_name: 'PNM.fbs', count: 12, total_bytes: 1728 },
+        ],
+        sources: [
+          {
+            schema_name: 'PNM.fbs',
+            provider_id: 'local',
+            source_name: 'celestrak-publication-log',
+            batch_id: 'fixture-pnm-batch',
+            count: 12,
+            total_bytes: 1728,
+          },
+          {
+            schema_name: 'OMM.fbs',
+            provider_id: 'local',
+            source_name: 'celestrak-gp',
+            batch_id: 'fixture-batch',
+            count: 2,
+            total_bytes: 576,
+          },
+        ],
+      }),
+    });
+  });
   await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/scan', async (route) => {
     const body = route.request().postDataJSON();
     expect(body.schema).toBe('PNM.fbs');
@@ -388,7 +593,75 @@ async function installSdnFixtures(page: Page): Promise<void> {
       }),
     });
   });
+  await page.context().route('**/api/v1/data/scan', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/api/v1/data/scan') {
+      await route.fallback();
+      return;
+    }
+    const body = route.request().postDataJSON();
+    expect(body.schema).toBe('PNM.fbs');
+    expect(body.include_data).toBe(false);
+    const cursorOffset = typeof body.cursor === 'string' && body.cursor
+      ? Number(Buffer.from(body.cursor, 'base64url').toString('utf8'))
+      : 0;
+    const offset = Number(body.offset ?? cursorOffset);
+    const limit = Number(body.limit ?? 10);
+    const pageRefs = PNM_FIXTURE_REFS.slice(offset, offset + limit);
+    const nextOffset = offset + pageRefs.length;
+    const nextCursor = nextOffset < PNM_FIXTURE_REFS.length
+      ? Buffer.from(String(nextOffset), 'utf8').toString('base64url')
+      : '';
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        schema: 'PNM.fbs',
+        total_count: PNM_FIXTURE_REFS.length,
+        count: pageRefs.length,
+        limit,
+        offset,
+        cursor: Buffer.from(String(offset), 'utf8').toString('base64url'),
+        next_cursor: nextCursor,
+        snapshot_id: 'fixture-snapshot',
+        head: 'fixture-snapshot',
+        high_water_mark: '1:2:3:2',
+        scan_hash: 'fixture-scan-hash',
+        chunk_hash: 'fixture-scan-hash',
+        query_profile: 'ordered-offset-v1',
+        sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
+        max_chunk_size: 50000,
+        transports: ['http', 'libp2p-websocket', 'libp2p-webrtc'],
+        results: pageRefs.map(({ cid }, index) => ({
+          schema_name: 'PNM.fbs',
+          cid,
+          peer_id: 'source:celestrak',
+          provider_id: 'local',
+          source_name: 'celestrak-publication-log',
+          batch_id: 'fixture-pnm-batch',
+          timestamp: `2026-05-11T04:${String(offset + index).padStart(2, '0')}:25Z`,
+          size_bytes: 144,
+        })),
+      }),
+    });
+  });
   await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/stream', async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.schema).toBe('PNM.fbs');
+    expect(body.scan_hash).toBe('fixture-scan-hash');
+    expect(body.chunk_hash).toBe('fixture-scan-hash');
+    expect(body.snapshot_id).toBe('fixture-snapshot');
+    expect(route.request().headers().accept).toContain('application/vnd.sdn.flatbuffers.stream');
+    const records = Array.isArray(body.records) ? body.records : [];
+    const buffers = records.map((record: { cid: string }) => PNM_FIXTURE_REFS.find((fixture) => fixture.cid === record.cid)?.bytes ?? PNM_BYTES);
+    await route.fulfill({
+      contentType: 'application/vnd.sdn.flatbuffers.stream',
+      body: rawFlatbufferStream(buffers),
+    });
+  });
+  await page.context().route('**/api/v1/data/stream', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/api/v1/data/stream') {
+      await route.fallback();
+      return;
+    }
     const body = route.request().postDataJSON();
     expect(body.schema).toBe('PNM.fbs');
     expect(body.scan_hash).toBe('fixture-scan-hash');
@@ -450,6 +723,68 @@ async function installSdnFixtures(page: Page): Promise<void> {
             cid: 'celestrak-omm-1',
             peer_id: 'source:celestrak',
             provider_id: 'space-data-network-02',
+            source_name: 'celestrak-gp',
+            batch_id: 'fixture-batch',
+            timestamp: '2026-05-11T04:02:25Z',
+            size_bytes: 288,
+          },
+        ],
+      }),
+    });
+  });
+  await page.context().route('**/api/v1/data/query', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/api/v1/data/query') {
+      await route.fallback();
+      return;
+    }
+    const body = route.request().postDataJSON();
+    expect(body.query).toBeUndefined();
+    if (body.schema === 'PNM.fbs') {
+      const offset = Number(body.offset ?? 0);
+      const limit = Number(body.limit ?? 10);
+      const pageRefs = PNM_FIXTURE_REFS.slice(offset, offset + limit);
+      if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
+        await route.fulfill({
+          contentType: 'application/vnd.sdn.flatbuffers.stream',
+          body: rawFlatbufferStream(pageRefs.map((record) => record.bytes)),
+        });
+        return;
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          results: pageRefs.map(({ cid }, index) => ({
+            schema_name: 'PNM.fbs',
+            cid,
+            peer_id: 'source:celestrak',
+            provider_id: 'local',
+            source_name: 'celestrak-publication-log',
+            batch_id: 'fixture-pnm-batch',
+            timestamp: `2026-05-11T04:${String(offset + index).padStart(2, '0')}:25Z`,
+            size_bytes: 144,
+            data_base64: pageRefs[index].bytes.toString('base64'),
+          })),
+        }),
+      });
+      return;
+    }
+    expect(body).toMatchObject({ schema: 'OMM.fbs', limit: 10, offset: 0 });
+    if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
+      await route.fulfill({
+        contentType: 'application/vnd.sdn.flatbuffers.stream',
+        body: rawFlatbufferStream([STARLINK_6292_OMM_BYTES]),
+      });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        results: [
+          {
+            schema_name: 'OMM.fbs',
+            cid: 'celestrak-omm-1',
+            peer_id: 'source:celestrak',
+            provider_id: 'local',
             source_name: 'celestrak-gp',
             batch_id: 'fixture-batch',
             timestamp: '2026-05-11T04:02:25Z',

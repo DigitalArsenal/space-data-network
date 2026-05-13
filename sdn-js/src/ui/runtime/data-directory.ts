@@ -5,6 +5,7 @@ export interface DataFeedSubscription {
   id: string;
   dataSourceId: string;
   peerId: string;
+  datastoreKey: string | null;
   standardId: string;
   providerName: string;
   providerPublicKey: string | null;
@@ -19,6 +20,7 @@ export interface DataFeedSubscription {
 export interface DataFeedSubscriptionInput {
   dataSourceId: string;
   peerId: string;
+  datastoreKey?: string | null;
   standardId: string;
   providerName: string;
   providerPublicKey: string | null;
@@ -76,8 +78,10 @@ export function ownertrustForDataSourceSubscription(current: unknown): PgpOwnert
   return normalized === 'full' || normalized === 'ultimate' ? normalized : DATA_SOURCE_OWNERTRUST;
 }
 
-export function subscriptionKey(dataSourceId: string, standardId: string): string {
-  return `${dataSourceId}:${normalizeStandardId(standardId)}`;
+export function subscriptionKey(dataSourceId: string, standardId: string, datastoreKey?: string | null): string {
+  const baseKey = `${dataSourceId}:${normalizeStandardId(standardId)}`;
+  const normalizedDatastoreKey = normalizeOptionalString(datastoreKey);
+  return normalizedDatastoreKey ? `${baseKey}:datastore:${encodeURIComponent(normalizedDatastoreKey)}` : baseKey;
 }
 
 export function updatePeerOwnertrust(
@@ -101,13 +105,14 @@ export function upsertDataFeedSubscription(
   input: DataFeedSubscriptionInput,
 ): DataDirectoryState {
   const currentState = normalizeDataDirectoryState(state);
-  const id = subscriptionKey(input.dataSourceId, input.standardId);
+  const id = subscriptionKey(input.dataSourceId, input.standardId, input.datastoreKey);
   const now = new Date().toISOString();
   const existing = currentState.subscriptions.find((subscription) => subscription.id === id);
   const subscription: DataFeedSubscription = {
     id,
     dataSourceId: input.dataSourceId.trim(),
     peerId: input.peerId.trim(),
+    datastoreKey: normalizeOptionalString(input.datastoreKey),
     standardId: normalizeStandardId(input.standardId),
     providerName: input.providerName.trim() || input.peerId.trim() || input.dataSourceId.trim(),
     providerPublicKey: normalizeOptionalString(input.providerPublicKey),
@@ -235,12 +240,14 @@ function normalizeDataFeedSubscription(value: unknown): DataFeedSubscription | n
   const peerId = stringValue(candidate.peerId);
   const standardId = normalizeStandardId(candidate.standardId);
   if (!dataSourceId || !peerId || !standardId) return null;
-  const id = stringValue(candidate.id) ?? subscriptionKey(dataSourceId, standardId);
+  const datastoreKey = normalizeOptionalString(candidate.datastoreKey);
+  const id = datastoreKey ? subscriptionKey(dataSourceId, standardId, datastoreKey) : stringValue(candidate.id) ?? subscriptionKey(dataSourceId, standardId);
   const now = new Date().toISOString();
   return {
     id,
     dataSourceId,
     peerId,
+    datastoreKey,
     standardId,
     providerName: stringValue(candidate.providerName) ?? peerId,
     providerPublicKey: normalizeOptionalString(candidate.providerPublicKey),

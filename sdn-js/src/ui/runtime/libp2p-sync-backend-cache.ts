@@ -4,7 +4,13 @@ import {
   type Libp2pFlatSqlSyncBackendOptions,
   type Libp2pFlatSqlSyncClient,
 } from './sdn-backend-libp2p-sync';
-import type { FlatSqlSyncChunk, FlatSqlSyncManifest, FlatSqlSyncQuery } from '../../flatsql-sync';
+import type {
+  FlatSqlSyncChunk,
+  FlatSqlSyncManifest,
+  FlatSqlSyncQuery,
+  FlatSqlWireSpeedProbeQuery,
+  FlatSqlWireSpeedProbeResult,
+} from '../../flatsql-sync';
 import type { SdnBackend } from './sdn-backend';
 
 type Libp2pFlatSqlSyncClientFactory = (
@@ -45,6 +51,7 @@ export class Libp2pFlatSqlSyncBackendCache {
       ...query,
       targetPeerId: normalizedOptions.targetPeerId,
       candidateAddrs: normalizedOptions.candidateAddrs,
+      datastoreKey: query.datastoreKey ?? normalizedOptions.datastoreKey ?? undefined,
       providerId: query.providerId ?? normalizedOptions.providerId ?? undefined,
       sourceName: query.sourceName ?? normalizedOptions.sourceName ?? undefined,
     });
@@ -62,8 +69,23 @@ export class Libp2pFlatSqlSyncBackendCache {
       op: 'open_manifest',
       targetPeerId: normalizedOptions.targetPeerId,
       candidateAddrs: normalizedOptions.candidateAddrs,
+      datastoreKey: query.datastoreKey ?? normalizedOptions.datastoreKey ?? undefined,
       providerId: query.providerId ?? normalizedOptions.providerId ?? undefined,
       sourceName: query.sourceName ?? normalizedOptions.sourceName ?? undefined,
+    });
+  }
+
+  async measureWireSpeed(
+    options: Libp2pFlatSqlSyncBackendOptions,
+    query: Omit<FlatSqlWireSpeedProbeQuery, 'targetPeerId' | 'candidateAddrs'>,
+  ): Promise<FlatSqlWireSpeedProbeResult> {
+    const normalizedOptions = normalizeOptions(options);
+    const client = await this.clientFor(normalizedOptions);
+    if (!client.measureWireSpeed) throw new Error('remote FlatSQL sync wire-speed probe is unavailable');
+    return await client.measureWireSpeed({
+      ...query,
+      targetPeerId: normalizedOptions.targetPeerId,
+      candidateAddrs: normalizedOptions.candidateAddrs,
     });
   }
 
@@ -116,5 +138,8 @@ function cacheKeyFor(options: Libp2pFlatSqlSyncBackendOptions): string {
   return JSON.stringify({
     targetPeerId: options.targetPeerId,
     candidateAddrs: normalizeCandidateAddrs(options.candidateAddrs),
+    datastoreKey: options.datastoreKey ?? null,
+    providerId: options.providerId ?? null,
+    sourceName: options.sourceName ?? null,
   });
 }

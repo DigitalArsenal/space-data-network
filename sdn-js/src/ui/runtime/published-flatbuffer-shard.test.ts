@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { flatBufferStreamFromPublishedFlatSqlSegment, rawRecordsFromPublishedFlatSqlSegment } from './published-flatbuffer-shard';
+import {
+  flatBufferStreamFromPublishedFlatSqlSegment,
+  timedFlatBufferStreamFromPublishedFlatSqlSegment,
+  rawRecordsFromPublishedFlatSqlSegment,
+} from './published-flatbuffer-shard';
 
 const encoder = new TextEncoder();
 
@@ -21,6 +25,26 @@ describe('published FlatSQL shard reader', () => {
     });
 
     expect(stream).toEqual(shard);
+  });
+
+  it('reports published shard network and verification timing separately', async () => {
+    const shard = concatFrames([new Uint8Array([1, 2, 3])]);
+
+    const result = await timedFlatBufferStreamFromPublishedFlatSqlSegment({
+      schema: 'OMM.fbs',
+      providerPeerId: '16Uiu2HCelesTrak',
+      cid: 'bafkshard',
+      shardSha256: await sha256Hex(shard),
+      fetchCidBytes: async (cid) => {
+        if (cid !== 'bafkshard') throw new Error(`unexpected CID ${cid}`);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        return shard;
+      },
+    });
+
+    expect(result.streamBytes).toEqual(shard);
+    expect(result.networkTransferMs).toBeGreaterThanOrEqual(0);
+    expect(result.verificationMs).toBeGreaterThanOrEqual(0);
   });
 
   it('hydrates raw records from a DPM shard and its materialized index', async () => {

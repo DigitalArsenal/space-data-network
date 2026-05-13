@@ -33,15 +33,23 @@ them as OMM (and optionally MPE) FlatBuffers in the current FlatSQL storage.`,
 }
 
 var (
-	importLegacySourceDB        string
-	importLegacySourceTable     string
-	importLegacyStoragePath     string
-	importLegacySourcePeer      string
-	importLegacyBatchSize       int
-	importLegacyCheckpointPath  string
-	importLegacyResetCheckpoint bool
-	importLegacyMaxRows         int64
-	importLegacyStoreMPE        bool
+	importLegacySourceDB           string
+	importLegacySourceTable        string
+	importLegacyStoragePath        string
+	importLegacySourcePeer         string
+	importLegacyBatchSize          int
+	importLegacyCheckpointPath     string
+	importLegacyResetCheckpoint    bool
+	importLegacyMaxRows            int64
+	importLegacyStoreMPE           bool
+	importLegacyProviderID         string
+	importLegacySourceNameForTags  string
+	importLegacySourceURL          string
+	importLegacyBatchID            string
+	importLegacyContentKeyID       string
+	importLegacyProducerPeerID     string
+	importLegacyProducerPublicKey  string
+	importLegacyDatastoreNamespace bool
 )
 
 func init() {
@@ -54,6 +62,14 @@ func init() {
 	importLegacySQLiteCmd.Flags().BoolVar(&importLegacyResetCheckpoint, "reset-checkpoint", false, "start import from rowid=0 and overwrite existing checkpoint")
 	importLegacySQLiteCmd.Flags().Int64Var(&importLegacyMaxRows, "max-rows", 0, "stop after scanning this many rows (0 = unlimited)")
 	importLegacySQLiteCmd.Flags().BoolVar(&importLegacyStoreMPE, "store-mpe", false, "also store MPE records derived from legacy rows (optional)")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacyProviderID, "provider-id", "space-data-network-02", "SDN provider ID for imported source tags")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacySourceNameForTags, "source-name", "celestrak-gp-historical", "SDN source name for imported source tags")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacySourceURL, "source-url", "", "source URL for imported source tags (default: file://<absolute source-db>)")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacyBatchID, "batch-id", "", "batch ID for imported source tags (default: source DB metadata fingerprint)")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacyContentKeyID, "content-key-id", "public", "content key ID for imported source tags")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacyProducerPeerID, "producer-peer-id", "", "producer peer ID for imported source tags (default: --source-peer)")
+	importLegacySQLiteCmd.Flags().StringVar(&importLegacyProducerPublicKey, "producer-public-key", "", "producer public key for imported source tags")
+	importLegacySQLiteCmd.Flags().BoolVar(&importLegacyDatastoreNamespace, "datastore-namespace", false, "store OMM rows in an isolated SDN datastore namespace instead of adding per-record source tags")
 	_ = importLegacySQLiteCmd.MarkFlagRequired("source-db")
 
 	rootCmd.AddCommand(importLegacySQLiteCmd)
@@ -97,9 +113,28 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--batch-size must be > 0")
 	}
 
+	if importLegacyDatastoreNamespace && importLegacyStoreMPE {
+		return fmt.Errorf("--datastore-namespace currently supports OMM import only; run MPE as a separate source datastore")
+	}
+
+	sourceTags, err := legacyImportSourceTags(sourceDB, importLegacySourcePeer)
+	if err != nil {
+		return err
+	}
+
+	destinationPath := storagePath
+	var datastoreIdentity storage.DatastoreIdentity
+	if importLegacyDatastoreNamespace {
+		datastoreIdentity = legacyImportDatastoreIdentity(sourceTags)
+		destinationPath, err = storage.DatastoreIdentityPath(storagePath, datastoreIdentity)
+		if err != nil {
+			return err
+		}
+	}
+
 	checkpointPath := strings.TrimSpace(importLegacyCheckpointPath)
 	if checkpointPath == "" {
-		checkpointPath = filepath.Join(storagePath, "legacy-import-checkpoint.json")
+		checkpointPath = filepath.Join(destinationPath, "legacy-import-checkpoint.json")
 	}
 
 	if importLegacyResetCheckpoint {
@@ -118,9 +153,17 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize schema validator: %w", err)
 	}
 
-	store, err := storage.NewFlatSQLStore(storagePath, validator)
-	if err != nil {
-		return fmt.Errorf("failed to open destination storage: %w", err)
+	var store *storage.FlatSQLStore
+	if importLegacyDatastoreNamespace {
+		store, err = storage.NewFlatSQLStoreForIdentity(storagePath, validator, datastoreIdentity)
+		if err != nil {
+			return fmt.Errorf("failed to open namespaced destination storage: %w", err)
+		}
+	} else {
+		store, err = storage.NewFlatSQLStore(storagePath, validator)
+		if err != nil {
+			return fmt.Errorf("failed to open destination storage: %w", err)
+		}
 	}
 	defer store.Close()
 
@@ -135,7 +178,7 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 
 	log.Infof(
 		"Starting legacy import: source=%s table=%s storage=%s batch=%d checkpoint=%s start_rowid=%d store_mpe=%v",
-		sourceDB, tableName, storagePath, importLegacyBatchSize, checkpointPath, checkpoint.LastRowID, importLegacyStoreMPE,
+		sourceDB, tableName, destinationPath, importLegacyBatchSize, checkpointPath, checkpoint.LastRowID, importLegacyStoreMPE,
 	)
 
 	query := fmt.Sprintf(`
@@ -154,8 +197,6 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 		return saveLegacyCheckpoint(checkpointPath, checkpoint)
 	}
 
-	var storeErrors int64
-
 	for {
 		if err := ctx.Err(); err != nil {
 			if saveErr := writeCheckpoint(); saveErr != nil {
@@ -171,6 +212,8 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 
 		var batchCount int64
 		var lastRowID int64
+		ommBatch := make([][]byte, 0, importLegacyBatchSize)
+		mpeBatch := make([][]byte, 0, importLegacyBatchSize)
 
 		for rows.Next() {
 			var (
@@ -251,13 +294,7 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 			}
 
 			ommBytes := builder.Build()
-			if _, err := store.Store("OMM.fbs", ommBytes, importLegacySourcePeer, nil); err != nil {
-				storeErrors++
-				if storeErrors <= 5 || storeErrors%1000 == 0 {
-					log.Warnf("OMM store error at rowid=%d: %v (total store errors=%d)", rowID, err, storeErrors)
-				}
-				continue
-			}
+			ommBatch = append(ommBatch, ommBytes)
 			checkpoint.OMMStored++
 
 			if importLegacyStoreMPE {
@@ -276,13 +313,7 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 					valueOrZero(meanAnomaly),
 					valueOrZero(bstar),
 				)
-				if _, err := store.Store("MPE.fbs", mpeBytes, importLegacySourcePeer, nil); err != nil {
-					storeErrors++
-					if storeErrors <= 5 || storeErrors%1000 == 0 {
-						log.Warnf("MPE store error at rowid=%d: %v (total store errors=%d)", rowID, err, storeErrors)
-					}
-					continue
-				}
+				mpeBatch = append(mpeBatch, mpeBytes)
 				checkpoint.MPEStored++
 			}
 		}
@@ -292,6 +323,18 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 		}
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("source rows iteration error: %w", err)
+		}
+		if importLegacyDatastoreNamespace {
+			if _, err := store.StoreBatch("OMM.fbs", ommBatch, importLegacySourcePeer, nil); err != nil {
+				return fmt.Errorf("store OMM legacy namespace batch after rowid=%d: %w", lastRowID, err)
+			}
+		} else if _, err := store.StoreBatchWithSourceTags("OMM.fbs", ommBatch, importLegacySourcePeer, nil, sourceTags); err != nil {
+			return fmt.Errorf("store OMM legacy batch after rowid=%d: %w", lastRowID, err)
+		}
+		if importLegacyStoreMPE {
+			if _, err := store.StoreBatchWithSourceTags("MPE.fbs", mpeBatch, importLegacySourcePeer, nil, sourceTags); err != nil {
+				return fmt.Errorf("store MPE legacy batch after rowid=%d: %w", lastRowID, err)
+			}
 		}
 
 		if lastRowID > 0 {
@@ -325,15 +368,84 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if storeErrors > 0 {
-		log.Warnf("Legacy import completed with %d store errors", storeErrors)
-	}
-
 	log.Infof(
 		"Legacy import complete: scanned=%d omm=%d mpe=%d checkpoint=%s",
 		checkpoint.RowsScanned, checkpoint.OMMStored, checkpoint.MPEStored, checkpointPath,
 	)
 	return nil
+}
+
+func legacyImportSourceTags(sourceDB, sourcePeer string) (storage.SourceTags, error) {
+	sourceDB = strings.TrimSpace(sourceDB)
+	sourcePeer = strings.TrimSpace(sourcePeer)
+	if sourcePeer == "" {
+		sourcePeer = "source:legacy-sqlite"
+	}
+	providerID := strings.TrimSpace(importLegacyProviderID)
+	if providerID == "" {
+		providerID = sourcePeer
+	}
+	sourceName := strings.TrimSpace(importLegacySourceNameForTags)
+	if sourceName == "" {
+		sourceName = "celestrak-gp-historical"
+	}
+	sourceURL := strings.TrimSpace(importLegacySourceURL)
+	if sourceURL == "" {
+		absSourceDB, err := filepath.Abs(sourceDB)
+		if err != nil {
+			absSourceDB = sourceDB
+		}
+		sourceURL = "file://" + absSourceDB
+	}
+	batchID := strings.TrimSpace(importLegacyBatchID)
+	if batchID == "" {
+		var err error
+		batchID, err = legacyImportBatchID(sourceDB)
+		if err != nil {
+			return storage.SourceTags{}, err
+		}
+	}
+	contentKeyID := strings.TrimSpace(importLegacyContentKeyID)
+	if contentKeyID == "" {
+		contentKeyID = "public"
+	}
+	producerPeerID := strings.TrimSpace(importLegacyProducerPeerID)
+	if producerPeerID == "" {
+		producerPeerID = sourcePeer
+	}
+	producerPublicKey := strings.TrimSpace(importLegacyProducerPublicKey)
+	return storage.SourceTags{
+		ProviderID:        providerID,
+		SourceName:        sourceName,
+		SourceURL:         sourceURL,
+		BatchID:           batchID,
+		ContentKeyID:      contentKeyID,
+		ProducerPeerID:    producerPeerID,
+		ProducerPublicKey: producerPublicKey,
+	}, nil
+}
+
+func legacyImportDatastoreIdentity(tags storage.SourceTags) storage.DatastoreIdentity {
+	return storage.DatastoreIdentity{
+		SchemaName:      "OMM.fbs",
+		SourcePeerID:    tags.ProducerPeerID,
+		SourcePublicKey: tags.ProducerPublicKey,
+		ProviderID:      tags.ProviderID,
+		SourceName:      tags.SourceName,
+		BatchHead:       tags.BatchID,
+		QueryProfile:    storage.DatasetPublicationQueryProfile,
+		SnapshotID:      tags.BatchID,
+		HighWaterMark:   tags.BatchID,
+		ArtifactHash:    tags.BatchID,
+	}
+}
+
+func legacyImportBatchID(sourceDB string) (string, error) {
+	info, err := os.Stat(sourceDB)
+	if err != nil {
+		return "", fmt.Errorf("stat legacy source db: %w", err)
+	}
+	return fmt.Sprintf("legacy-sqlite:%s:%d:%d", filepath.Base(sourceDB), info.Size(), info.ModTime().UTC().UnixNano()), nil
 }
 
 func loadLegacyCheckpoint(path string) (*legacyImportCheckpoint, error) {

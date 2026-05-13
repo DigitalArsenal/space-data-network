@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -191,6 +195,206 @@ func TestMaterializeStoredDatasetPublicationPNMsReplaysTrustedProviderPNM(t *tes
 	}
 }
 
+func TestMaterializeStoredDatasetPublicationPNMsDoesNotRetryPermanentShardFrameErrors(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	providerStore, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "provider-db"), validator)
+	if err != nil {
+		t.Fatalf("provider store: %v", err)
+	}
+	defer providerStore.Close()
+	subscriberStore, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "subscriber-db"), validator)
+	if err != nil {
+		t.Fatalf("subscriber store: %v", err)
+	}
+	defer subscriberStore.Close()
+
+	priv, pub, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x55}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key failed: %v", err)
+	}
+	rawPriv, err := priv.Raw()
+	if err != nil {
+		t.Fatalf("raw private key: %v", err)
+	}
+	providerID, err := peer.IDFromPublicKey(pub)
+	if err != nil {
+		t.Fatalf("IDFromPublicKey failed: %v", err)
+	}
+	tags := storage.SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		BatchID:      "bad-frame-batch",
+		ContentKeyID: "public",
+	}
+	record := sds.NewOMMBuilder().
+		WithNoradCatID(25544).
+		WithObjectID("1998-067A").
+		WithObjectName("ISS").
+		Build()
+	if _, err := providerStore.StoreWithSourceTags("OMM.fbs", record, providerID.String(), nil, tags); err != nil {
+		t.Fatalf("store provider record: %v", err)
+	}
+	export, err := providerStore.ExportDatasetWindow(filepath.Join(tmpDir, "export"), storage.IndexedRecordQuery{
+		SchemaName:          "OMM.fbs",
+		ProviderID:          tags.ProviderID,
+		SourceName:          tags.SourceName,
+		BatchID:             tags.BatchID,
+		Limit:               10,
+		AllowLargeResultSet: true,
+	})
+	if err != nil {
+		t.Fatalf("ExportDatasetWindow failed: %v", err)
+	}
+
+	shardBytes := mustReadTestFile(t, export.ShardPath)
+	indexBytes := mustReadTestFile(t, export.IndexPath)
+	var index storage.DatasetExportIndex
+	if err := json.Unmarshal(indexBytes, &index); err != nil {
+		t.Fatalf("unmarshal index: %v", err)
+	}
+	for _, indexed := range index.Records {
+		if indexed.Offset < 0 || indexed.Offset+4 > int64(len(shardBytes)) {
+			t.Fatalf("bad test index offset: %+v", indexed)
+		}
+		length := binary.LittleEndian.Uint32(shardBytes[indexed.Offset : indexed.Offset+4])
+		binary.BigEndian.PutUint32(shardBytes[indexed.Offset:indexed.Offset+4], length)
+	}
+	badShardPath := filepath.Join(tmpDir, "bad-frame.fbshard")
+	if err := os.WriteFile(badShardPath, shardBytes, 0600); err != nil {
+		t.Fatalf("write bad shard: %v", err)
+	}
+	badShardSHA := sha256HexForTest(shardBytes)
+	badShardCID := "bafybadframeshard"
+	index.ShardCID = badShardCID
+	index.ShardSHA256 = badShardSHA
+	index.ResultSHA256 = badShardSHA
+	badIndexBytes, err := json.MarshalIndent(index, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal bad index: %v", err)
+	}
+	badIndexBytes = append(badIndexBytes, '\n')
+	badIndexPath := filepath.Join(tmpDir, "bad-frame.index.json")
+	if err := os.WriteFile(badIndexPath, badIndexBytes, 0600); err != nil {
+		t.Fatalf("write bad index: %v", err)
+	}
+	badIndexSHA := sha256HexForTest(badIndexBytes)
+	badIndexCID := "bafybadframeindex"
+	export.ShardPath = badShardPath
+	export.ShardSHA256 = badShardSHA
+	export.ShardCID = badShardCID
+	export.ResultSHA256 = badShardSHA
+	export.ShardBytes = int64(len(shardBytes))
+	export.IndexPath = badIndexPath
+	export.IndexSHA256 = badIndexSHA
+	export.IndexCID = badIndexCID
+	export.IndexBytes = int64(len(badIndexBytes))
+
+	publishedAt := time.Unix(1700003333, 0).UTC()
+	manifest, err := storage.BuildSignedDatasetPublicationManifest(filepath.Join(tmpDir, "publish"), storage.DatasetPublicationManifestOptions{
+		Export:         export,
+		DatasetID:      "omm-bad-frame",
+		UpdateID:       tags.BatchID,
+		ProviderPeerID: providerID.String(),
+		ProviderEPMCID: "bafy-provider-epm",
+		PublishedAt:    publishedAt,
+		SigningKey:     ed25519.PrivateKey(rawPriv),
+		SchemaHash:     "omm-schema-hash",
+	})
+	if err != nil {
+		t.Fatalf("BuildSignedDatasetPublicationManifest failed: %v", err)
+	}
+	pnmBytes, err := storage.BuildDatasetPublicationPNM(manifest, storage.DatasetPublicationPNMOptions{
+		PublishedAt: publishedAt,
+		SigningKey:  ed25519.PrivateKey(rawPriv),
+	})
+	if err != nil {
+		t.Fatalf("BuildDatasetPublicationPNM failed: %v", err)
+	}
+	objects := map[string][]byte{
+		manifest.CID: manifest.Bytes,
+		badShardCID:  shardBytes,
+		badIndexCID:  badIndexBytes,
+	}
+	ipfs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, ok := objects[r.URL.Query().Get("arg")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer ipfs.Close()
+
+	relayPriv, relayPub, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x56}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key relay failed: %v", err)
+	}
+	_ = relayPriv
+	relayID, err := peer.IDFromPublicKey(relayPub)
+	if err != nil {
+		t.Fatalf("relay IDFromPublicKey failed: %v", err)
+	}
+	if _, err := subscriberStore.Store("PNM.fbs", pnmBytes, relayID.String(), nil); err != nil {
+		t.Fatalf("store subscriber PNM: %v", err)
+	}
+	registry := peers.NewRegistry(false, nil)
+	if err := registry.AddPeer(&peers.TrustedPeer{ID: providerID, TrustLevel: peers.Trusted}); err != nil {
+		t.Fatalf("add trusted provider: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	n := &Node{
+		store:        subscriberStore,
+		peerRegistry: registry,
+		config: &config.Config{
+			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage")},
+			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
+		},
+		ctx:                     ctx,
+		datasetMaterializedPNMs: make(map[string]time.Time),
+	}
+
+	materialized, err := n.materializeStoredDatasetPublicationPNMs(ctx, 10)
+	if err == nil {
+		t.Fatal("first replay must report the permanent shard frame error")
+	}
+	if materialized != 0 {
+		t.Fatalf("materialized = %d, want 0", materialized)
+	}
+	materialized, err = n.materializeStoredDatasetPublicationPNMs(ctx, 10)
+	if err != nil {
+		t.Fatalf("second replay should skip the permanently failed PNM, got %v", err)
+	}
+	if materialized != 0 {
+		t.Fatalf("second materialized = %d, want 0", materialized)
+	}
+
+	restarted := &Node{
+		store:        subscriberStore,
+		peerRegistry: registry,
+		config: &config.Config{
+			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage-restarted")},
+			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
+		},
+		ctx:                     ctx,
+		datasetMaterializedPNMs: make(map[string]time.Time),
+	}
+	materialized, err = restarted.materializeStoredDatasetPublicationPNMs(ctx, 10)
+	if err != nil {
+		t.Fatalf("restarted node should skip the permanently failed PNM, got %v", err)
+	}
+	if materialized != 0 {
+		t.Fatalf("restarted materialized = %d, want 0", materialized)
+	}
+}
+
 func mustReadTestFile(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -198,6 +402,11 @@ func mustReadTestFile(t *testing.T, path string) []byte {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return data
+}
+
+func sha256HexForTest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func TestMaterializeStoredDatasetPublicationPNMsSkipsSelfOwnedPNM(t *testing.T) {

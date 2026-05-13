@@ -325,23 +325,8 @@ export function createRemoteSdnBackend(options: RemoteSdnBackendOptions): SdnBac
     async saveRuleset(ruleset: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>> {
       return createCapabilityResult('saveRuleset', 'local-only', `ruleset persistence must run on a local node (${Object.keys(ruleset).length} fields)`);
     },
-    async runSqlQuery(query: string): Promise<BackendResult<Array<Record<string, unknown>>>> {
-      const result = await getJson<unknown>(
-        fetchLike,
-        joinUrl(serverBase, '/api/v1/data/query'),
-        'runSqlQuery',
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ query }),
-        },
-      );
-      if (!result.ok) return result as BackendResult<Array<Record<string, unknown>>>;
-      if (Array.isArray(result.data)) return createAvailableResult('runSqlQuery', result.data.filter(isRecord));
-      if (isRecord(result.data) && Array.isArray(result.data.results)) {
-        return createAvailableResult('runSqlQuery', result.data.results.filter(isRecord));
-      }
-      return createAvailableResult('runSqlQuery', []);
+    async runSqlQuery(): Promise<BackendResult<Array<Record<string, unknown>>>> {
+      return createCapabilityResult('runSqlQuery', 'local-only', 'SQL queries run against the selected local FlatSQL datastore after preview or sync', []);
     },
     async getKuboStatus(): Promise<BackendResult<Record<string, unknown>>> {
       return createCapabilityResult('getKuboStatus', 'local-only', 'Kubo RPC status is only available for local desktop nodes');
@@ -395,6 +380,7 @@ function rawDataQueryPayload(query: RawDataQuery): Record<string, unknown> {
   return {
     schema: query.schema,
     include_data: false,
+    ...(query.datastoreKey ? { datastore_key: query.datastoreKey } : {}),
     ...(query.providerId ? { provider_id: query.providerId } : {}),
     ...(query.sourceName ? { source_name: query.sourceName } : {}),
     ...(query.batchId ? { batch_id: query.batchId } : {}),

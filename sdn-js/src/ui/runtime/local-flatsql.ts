@@ -31,6 +31,49 @@ export interface LocalFlatSqlStandardStats {
   recordCount: number;
   cachedBytes: number;
   ingestedRecordCount: number;
+  pinnedRows: number;
+  pinnedBytes: number;
+  snapshotId: string | null;
+  head: string | null;
+  highWaterMark: string | null;
+  lastSyncedAt: string | null;
+}
+
+export interface LocalFlatSqlPinLedgerEntry {
+  cid: string;
+  standardId: string;
+  schemaName: string;
+  providerPeerId?: string | null;
+  providerPublicKey?: string | null;
+  providerId?: string | null;
+  sourceName?: string | null;
+  batchId?: string | null;
+  queryProfile?: string | null;
+  snapshotId?: string | null;
+  head?: string | null;
+  highWaterMark?: string | null;
+  byteHash?: string | null;
+  role: string;
+  rowCount?: number | null;
+  byteCount?: number | null;
+  ttlSeconds?: number | null;
+  verificationState: string;
+  verifiedAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface LocalFlatSqlPinLedgerQuery {
+  cid?: string | null;
+  standardId?: string | null;
+  schemaName?: string | null;
+  providerPeerId?: string | null;
+  providerPublicKey?: string | null;
+  providerId?: string | null;
+  sourceName?: string | null;
+  batchId?: string | null;
+  queryProfile?: string | null;
+  role?: string | null;
+  verificationState?: string | null;
 }
 
 export interface LocalFlatSqlIngestOptions {
@@ -44,6 +87,7 @@ export interface LocalFlatSqlStreamIngestOptions extends LocalFlatSqlIngestOptio
   recordKeyPrefix?: string;
   recordKeyOffset?: number;
   skipRecords?: number;
+  pinLedgerEntries?: LocalFlatSqlPinLedgerEntry[];
 }
 
 export interface LocalFlatSqlStatsOptions {
@@ -54,6 +98,8 @@ export interface LocalFlatSqlStore {
   ingestRecords(standardId: string, records: RawDataRecord[], sourceOrOptions?: string | LocalFlatSqlIngestOptions | null): Promise<number>;
   ingestFlatBufferStream(standardId: string, streamBytes: Uint8Array, options?: LocalFlatSqlStreamIngestOptions | null): Promise<number>;
   flush(standardId?: string): Promise<void>;
+  recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[]): Promise<void>;
+  listPinLedgerEntries(query?: LocalFlatSqlPinLedgerQuery): Promise<LocalFlatSqlPinLedgerEntry[]>;
   query(sql: string, standardId?: string): LocalFlatSqlQueryResult | Promise<LocalFlatSqlQueryResult>;
   getStats(options?: LocalFlatSqlStatsOptions): LocalFlatSqlStandardStats[] | Promise<LocalFlatSqlStandardStats[]>;
   destroy(): void;
@@ -97,7 +143,10 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
     });
   }
 
-  return new WasmLocalFlatSqlStore(states, options.persistenceKey ?? null);
+  const pinLedger = options.persistenceKey
+    ? await readPersistedPinLedgerEntries(persistedPinLedgerKey(options.persistenceKey))
+    : new Map<string, LocalFlatSqlPinLedgerEntry>();
+  return new WasmLocalFlatSqlStore(states, options.persistenceKey ?? null, pinLedger);
 }
 
 export async function clearLocalFlatSqlStore(options: ClearLocalFlatSqlStoreOptions): Promise<void> {
@@ -112,6 +161,16 @@ export async function clearLocalFlatSqlStore(options: ClearLocalFlatSqlStoreOpti
       store.delete(persistedStandardKey(persistenceKey, standardId));
       store.delete(persistedRecordKey(persistenceKey, standardId));
     }
+    const ledgerRequest = store.get(persistedPinLedgerKey(persistenceKey));
+    ledgerRequest.onsuccess = () => {
+      const entries = normalizePersistedPinLedgerEntries(ledgerRequest.result)
+        .filter((entry) => !standardIds.includes(normalizeStandardId(entry.standardId || entry.schemaName)));
+      if (entries.length > 0) {
+        store.put(entries, persistedPinLedgerKey(persistenceKey));
+      } else {
+        store.delete(persistedPinLedgerKey(persistenceKey));
+      }
+    };
     transaction.oncomplete = () => {
       db.close();
       resolve();
@@ -142,6 +201,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   constructor(
     private readonly states: Map<string, StandardDatabaseState>,
     private readonly persistenceKey: string | null,
+    private readonly pinLedger: Map<string, LocalFlatSqlPinLedgerEntry>,
   ) {}
 
   async ingestRecords(
@@ -170,6 +230,9 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   ): Promise<number> {
     const state = this.stateForStandard(standardId);
     const streamRecords = decodeFlatSqlSizePrefixedStream(streamBytes, options?.skipRecords ?? 0);
+    if (options?.pinLedgerEntries?.length) {
+      await this.recordPinLedgerEntries(options.pinLedgerEntries);
+    }
     if (streamRecords.length === 0) return 0;
 
     const keyOffset = Math.max(0, options?.recordKeyOffset ?? options?.skipRecords ?? 0);
@@ -190,11 +253,34 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   async flush(standardId?: string): Promise<void> {
     if (standardId) {
       await this.persistStandard(this.stateForStandard(standardId));
+      await this.persistPinLedger();
       return;
     }
     for (const state of this.states.values()) {
       await this.persistStandard(state);
     }
+    await this.persistPinLedger();
+  }
+
+  async recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[]): Promise<void> {
+    for (const candidate of entries) {
+      const entry = normalizePinLedgerEntry(candidate);
+      if (!entry.cid || !entry.standardId || !entry.schemaName || !entry.role || !entry.verificationState) continue;
+      this.pinLedger.set(pinLedgerEntryKey(entry), entry);
+    }
+    await this.persistPinLedger();
+  }
+
+  async listPinLedgerEntries(query: LocalFlatSqlPinLedgerQuery = {}): Promise<LocalFlatSqlPinLedgerEntry[]> {
+    const normalizedQuery = normalizePinLedgerQuery(query);
+    return Array.from(this.pinLedger.values())
+      .filter((entry) => pinLedgerEntryMatches(entry, normalizedQuery))
+      .sort((left, right) => {
+        const byTime = (right.updatedAt ?? '').localeCompare(left.updatedAt ?? '');
+        if (byTime !== 0) return byTime;
+        return left.cid.localeCompare(right.cid);
+      })
+      .map((entry) => ({ ...entry }));
   }
 
   query(sql: string, standardId?: string): LocalFlatSqlQueryResult {
@@ -213,12 +299,14 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   getStats(options: LocalFlatSqlStatsOptions = {}): LocalFlatSqlStandardStats[] {
     return Array.from(this.states.values()).map((state) => {
       const dbStats = state.db.getStats().find((entry) => entry.tableName === state.schema.tableName);
+      const pinStats = this.pinStatsForStandard(state.schema.standardId);
       return {
         standardId: state.schema.standardId,
         tableName: state.schema.tableName,
         recordCount: Number(dbStats?.recordCount ?? 0),
         cachedBytes: this.cachedBytesForState(state, options.includeCachedBytes !== false),
         ingestedRecordCount: state.ingestedKeys.size,
+        ...pinStats,
       };
     });
   }
@@ -252,10 +340,40 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     await writePersistedRecordKeys(persistedRecordKey(this.persistenceKey, state.schema.standardId), state.ingestedKeys);
   }
 
+  private async persistPinLedger(): Promise<void> {
+    if (!this.persistenceKey) return;
+    await writePersistedPinLedgerEntries(persistedPinLedgerKey(this.persistenceKey), Array.from(this.pinLedger.values()));
+  }
+
   private cachedBytesForState(state: StandardDatabaseState, includeCachedBytes: boolean): number {
     if (!includeCachedBytes) return state.cachedBytes;
     state.cachedBytes = state.db.exportData().byteLength;
     return state.cachedBytes;
+  }
+
+  private pinStatsForStandard(standardId: string): Pick<LocalFlatSqlStandardStats, 'pinnedRows' | 'pinnedBytes' | 'snapshotId' | 'head' | 'highWaterMark' | 'lastSyncedAt'> {
+    const normalizedStandardId = normalizeStandardId(standardId);
+    let pinnedRows = 0;
+    let pinnedBytes = 0;
+    let latest: LocalFlatSqlPinLedgerEntry | null = null;
+    for (const entry of this.pinLedger.values()) {
+      if (normalizeStandardId(entry.standardId || entry.schemaName) !== normalizedStandardId) continue;
+      if ((entry.role ?? '').trim() !== 'shard') continue;
+      if ((entry.verificationState ?? '').trim() !== 'verified') continue;
+      pinnedRows += Math.max(0, entry.rowCount ?? 0);
+      pinnedBytes += Math.max(0, entry.byteCount ?? 0);
+      const entryTime = entry.verifiedAt || entry.updatedAt || '';
+      const latestTime = latest?.verifiedAt || latest?.updatedAt || '';
+      if (!latest || entryTime.localeCompare(latestTime) > 0) latest = entry;
+    }
+    return {
+      pinnedRows,
+      pinnedBytes,
+      snapshotId: latest?.snapshotId || null,
+      head: latest?.head || null,
+      highWaterMark: latest?.highWaterMark || null,
+      lastSyncedAt: latest?.verifiedAt || latest?.updatedAt || null,
+    };
   }
 }
 
@@ -378,6 +496,10 @@ function persistedRecordKey(persistenceKey: string, standardId: string): string 
   return `${persistenceKey}:${standardId}:record-keys`;
 }
 
+function persistedPinLedgerKey(persistenceKey: string): string {
+  return `${persistenceKey}:pin-ledger`;
+}
+
 function recordIngestKey(record: RawDataRecord): string {
   return [
     record.schemaName,
@@ -387,6 +509,97 @@ function recordIngestKey(record: RawDataRecord): string {
     record.batchId ?? '',
     record.timestamp ?? '',
   ].join('|');
+}
+
+function normalizePinLedgerEntry(candidate: LocalFlatSqlPinLedgerEntry): LocalFlatSqlPinLedgerEntry {
+  const standardId = normalizeStandardId(candidate.standardId || candidate.schemaName);
+  const schemaName = normalizeSchemaName(candidate.schemaName || standardId);
+  const updatedAt = trimmed(candidate.updatedAt) || new Date().toISOString();
+  return {
+    cid: trimmed(candidate.cid),
+    standardId,
+    schemaName,
+    providerPeerId: trimmed(candidate.providerPeerId),
+    providerPublicKey: trimmed(candidate.providerPublicKey),
+    providerId: trimmed(candidate.providerId),
+    sourceName: trimmed(candidate.sourceName),
+    batchId: trimmed(candidate.batchId),
+    queryProfile: trimmed(candidate.queryProfile),
+    snapshotId: trimmed(candidate.snapshotId),
+    head: trimmed(candidate.head),
+    highWaterMark: trimmed(candidate.highWaterMark),
+    byteHash: trimmed(candidate.byteHash),
+    role: trimmed(candidate.role),
+    rowCount: normalizedOptionalNumber(candidate.rowCount),
+    byteCount: normalizedOptionalNumber(candidate.byteCount),
+    ttlSeconds: normalizedOptionalNumber(candidate.ttlSeconds),
+    verificationState: trimmed(candidate.verificationState),
+    verifiedAt: trimmed(candidate.verifiedAt),
+    updatedAt,
+  };
+}
+
+function normalizePinLedgerQuery(query: LocalFlatSqlPinLedgerQuery): LocalFlatSqlPinLedgerQuery {
+  return {
+    cid: trimmed(query.cid),
+    standardId: query.standardId || query.schemaName ? normalizeStandardId(query.standardId || query.schemaName || '') : '',
+    schemaName: query.schemaName ? normalizeSchemaName(query.schemaName) : '',
+    providerPeerId: trimmed(query.providerPeerId),
+    providerPublicKey: trimmed(query.providerPublicKey),
+    providerId: trimmed(query.providerId),
+    sourceName: trimmed(query.sourceName),
+    batchId: trimmed(query.batchId),
+    queryProfile: trimmed(query.queryProfile),
+    role: trimmed(query.role),
+    verificationState: trimmed(query.verificationState),
+  };
+}
+
+function pinLedgerEntryMatches(entry: LocalFlatSqlPinLedgerEntry, query: LocalFlatSqlPinLedgerQuery): boolean {
+  return matchesOptional(entry.cid, query.cid) &&
+    matchesOptional(entry.standardId, query.standardId) &&
+    matchesOptional(entry.schemaName, query.schemaName) &&
+    matchesOptional(entry.providerPeerId, query.providerPeerId) &&
+    matchesOptional(entry.providerPublicKey, query.providerPublicKey) &&
+    matchesOptional(entry.providerId, query.providerId) &&
+    matchesOptional(entry.sourceName, query.sourceName) &&
+    matchesOptional(entry.batchId, query.batchId) &&
+    matchesOptional(entry.queryProfile, query.queryProfile) &&
+    matchesOptional(entry.role, query.role) &&
+    matchesOptional(entry.verificationState, query.verificationState);
+}
+
+function pinLedgerEntryKey(entry: LocalFlatSqlPinLedgerEntry): string {
+  return [
+    entry.cid,
+    entry.standardId,
+    entry.schemaName,
+    entry.providerPeerId ?? '',
+    entry.providerPublicKey ?? '',
+    entry.providerId ?? '',
+    entry.sourceName ?? '',
+    entry.batchId ?? '',
+    entry.queryProfile ?? '',
+    entry.role,
+  ].join('|');
+}
+
+function normalizeSchemaName(value: string): string {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) throw new Error('FlatSQL schema name is required');
+  return trimmedValue.endsWith('.fbs') ? trimmedValue : `${normalizeStandardId(trimmedValue)}.fbs`;
+}
+
+function trimmed(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizedOptionalNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function matchesOptional(value: string | null | undefined, queryValue: string | null | undefined): boolean {
+  return !queryValue || (value ?? '') === queryValue;
 }
 
 async function readPersistedFlatSqlBytes(key: string): Promise<Uint8Array | null> {
@@ -467,6 +680,59 @@ async function writePersistedRecordKeys(key: string, keys: Set<string>): Promise
       resolve();
     };
   });
+}
+
+async function readPersistedPinLedgerEntries(key: string): Promise<Map<string, LocalFlatSqlPinLedgerEntry>> {
+  const entries = new Map<string, LocalFlatSqlPinLedgerEntry>();
+  if (!hasIndexedDb()) return entries;
+  const db = await openLocalFlatSqlDb();
+  return await new Promise((resolve) => {
+    const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readonly');
+    const request = transaction.objectStore(LOCAL_FLATSQL_STORE_NAME).get(key);
+    request.onerror = () => resolve(entries);
+    request.onsuccess = () => {
+      for (const entry of normalizePersistedPinLedgerEntries(request.result)) {
+        entries.set(pinLedgerEntryKey(entry), entry);
+      }
+      resolve(entries);
+    };
+    transaction.oncomplete = () => db.close();
+    transaction.onerror = () => {
+      db.close();
+      resolve(entries);
+    };
+  });
+}
+
+async function writePersistedPinLedgerEntries(key: string, entries: LocalFlatSqlPinLedgerEntry[]): Promise<void> {
+  if (!hasIndexedDb()) return;
+  const db = await openLocalFlatSqlDb();
+  await new Promise<void>((resolve) => {
+    const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readwrite');
+    transaction.objectStore(LOCAL_FLATSQL_STORE_NAME).put(entries.map(normalizePinLedgerEntry), key);
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      resolve();
+    };
+  });
+}
+
+function normalizePersistedPinLedgerEntries(value: unknown): LocalFlatSqlPinLedgerEntry[] {
+  if (!Array.isArray(value)) return [];
+  const entries: LocalFlatSqlPinLedgerEntry[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    try {
+      entries.push(normalizePinLedgerEntry(candidate as LocalFlatSqlPinLedgerEntry));
+    } catch {
+      // Ignore malformed local cache metadata.
+    }
+  }
+  return entries;
 }
 
 function openLocalFlatSqlDb(): Promise<IDBDatabase> {

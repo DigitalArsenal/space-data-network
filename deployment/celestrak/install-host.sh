@@ -2,9 +2,13 @@
 set -euo pipefail
 
 SOURCE_ROOT="${SOURCE_ROOT:-/opt/spacedatanetwork/source}"
-ASSET_DIR="${ASSET_DIR:-${SOURCE_ROOT}/deployment/celestrak}"
-if [ ! -f "${ASSET_DIR}/config.yaml" ] && [ -f "${SOURCE_ROOT}/celestrak/config.yaml" ]; then
-  ASSET_DIR="${SOURCE_ROOT}/celestrak"
+ASSET_DIR="${ASSET_DIR:-}"
+if [ -z "${ASSET_DIR}" ]; then
+  if [ -f "${SOURCE_ROOT}/celestrak/config.yaml" ]; then
+    ASSET_DIR="${SOURCE_ROOT}/celestrak"
+  else
+    ASSET_DIR="${SOURCE_ROOT}/deployment/celestrak"
+  fi
 fi
 
 if [ "$(id -u)" -ne 0 ]; then

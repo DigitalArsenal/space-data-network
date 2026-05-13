@@ -22,6 +22,12 @@
   } from '../../../src/ui/runtime/local-flatsql-worker-client';
   import { decodeOmmFlatBuffer } from '../../../src/ui/runtime/omm-flatbuffer';
   import { decodePnmFlatBuffer } from '../../../src/ui/runtime/pnm-flatbuffer';
+  import {
+    buildEpochProfileSql,
+    EPOCH_SQL_PROFILES,
+    type EpochSqlProfile,
+  } from '../../../src/ui/runtime/epoch-query-sql';
+  import { syncRowCountSummary, syncRowCountSummaryLabel } from '../../../src/ui/runtime/sync-progress';
   import { createSchemaSyncScheduler } from '../lib/schema-sync-scheduler';
   import {
     effectiveSchemaSyncStatus,
@@ -97,10 +103,20 @@
     syncedRows: number;
     totalRows: number;
     localRows: number;
+    pinnedRows: number;
+    missingRows: number;
     cachedBytes: number;
     pinnedBytes: number;
     downloadedBytes: number;
     downloadSpeedBytesPerSecond: number;
+    measuredWireSpeedBytesPerSecond: number;
+    wireSpeedUtilization: number | null;
+    wireSpeedTarget: number;
+    wireSpeedTargetMet: boolean | null;
+    manifestDiscoveryMs: number;
+    networkTransferMs: number;
+    verificationMs: number;
+    flatSqlMaterializationMs: number;
     providerPeerId: string | null;
     providerPublicKey: string | null;
     snapshotId: string | null;
@@ -119,6 +135,7 @@
   interface SchemaSyncRow extends StandardOption {
     subscriptionId: string;
     dataSourceId: string;
+    datastoreKey: string | null;
     providerName: string;
     providerPeerId: string | null;
     providerPublicKey: string | null;
@@ -236,6 +253,8 @@
   let selectedDataSection: DataSection = 'storage';
   let selectedStandardId = DEFAULT_STANDARD_ID;
   let selectedDataSourceId = LOCAL_DATA_SOURCE_ID;
+  let selectedSubscriptionId = '';
+  let selectedDatastoreKey: string | null = null;
   let lastColumnStandardId = '';
   let columnMenuOpen = false;
   let visibleColumnKeys: string[] = [];
@@ -264,10 +283,19 @@
   let sqlRunning = false;
   let userEditedSql = false;
   let userEditedColumns = false;
+  let epochProfile: EpochSqlProfile = 'epoch.day';
+  let epochDay = defaultEpochDay();
+  let epochAt = `${epochDay}T00:00`;
+  let epochFrom = `${epochDay}T00:00`;
+  let epochTo = `${nextEpochDay(epochDay)}T00:00`;
+  let epochMaxDeltaSeconds = 86400;
+  let epochEntityId = '';
+  let epochQueryError = '';
   let dataDirectoryState: DataDirectoryState = loadDataDirectoryState();
   let schemaSyncPreferences: Record<string, SchemaSyncPreference> = loadSchemaSyncPreferences();
   let schemaSyncProgress: Record<string, SchemaSyncProgress> = loadSchemaSyncProgress();
   let activeSyncKeys = new Set<string>();
+  let pausedSyncKeys = new Set<string>();
   let selectedPnmRow: WorkbenchRow | null = null;
   let pnmFileIdQuery = '';
   let pnmQueryResult: LocalFlatSqlQueryResult | null = null;
@@ -278,15 +306,19 @@
   let resetConfirmText = '';
   let resetStatus = '';
   let resetRunning = false;
+  let pinVerifyStatus = '';
+  let pinVerifyRunning = false;
   const schemaSyncScheduler = createSchemaSyncScheduler({
-    syncSchema: (standardId, dataSourceId) => synchronizeSchema(standardId, dataSourceId),
+    syncSchema: (standardId, dataSourceId, subscriptionId) => synchronizeSchema(standardId, dataSourceId, subscriptionId),
   });
   const schemaSyncSchedulers = new Map<string, typeof schemaSyncScheduler>([[LOCAL_DATA_SOURCE_ID, schemaSyncScheduler]]);
 
   $: dataSourceOptions = buildDataSourceOptions(backend, configuredDataSources, peers);
-  $: schemaSyncRows = buildSubscribedSchemaSyncRows(dataDirectoryState.subscriptions, selectedDataSourceId, localFlatSqlStats);
+  $: schemaSyncRows = buildSubscribedSchemaSyncRows(dataDirectoryState.subscriptions, selectedDataSourceId, selectedDatastoreKey, localFlatSqlStats, schemaSyncPreferences);
   $: activeStorageRows = schemaSyncRows.filter((row) => row.preference.mode === 'sync');
-  $: selectedSchemaSyncRow = schemaSyncRows.find((row) => row.id === selectedStandardId && row.dataSourceId === selectedDataSourceId)
+  $: selectedSchemaSyncRow = schemaSyncRows.find((row) => selectedSubscriptionId && row.subscriptionId === selectedSubscriptionId)
+    ?? schemaSyncRows.find((row) => row.id === selectedStandardId && row.dataSourceId === selectedDataSourceId && (selectedDatastoreKey ? row.datastoreKey === selectedDatastoreKey : true))
+    ?? schemaSyncRows.find((row) => row.id === selectedStandardId && row.dataSourceId === selectedDataSourceId)
     ?? schemaSyncRows.find((row) => row.id === selectedStandardId)
     ?? null;
   $: selectedDataSectionMeta = DATA_SECTIONS.find((section) => section.id === selectedDataSection) ?? DATA_SECTIONS[0];
@@ -298,8 +330,8 @@
   $: filteredRows = filterRows(decodedRows, searchText);
   $: visibleRows = sortRows(filteredRows, sortColumn, sortDirection);
   $: estimatedTotalRows = scanTotalRowsForStandard(dataScan, selectedStandardId)
-    ?? totalRowsForStandardId(dataSummary, selectedStandardId)
     ?? selectedSchemaSyncRow?.remoteRows
+    ?? totalRowsForStandardId(dataSummary, selectedStandardId)
     ?? null;
   $: totalPageCount = estimatedTotalRows === null ? Math.max(1, pageIndex + (canGoNext ? 2 : 1)) : Math.max(1, Math.ceil(estimatedTotalRows / normalizedPageSize()));
   $: canGoPrevious = pageIndex > 0;
@@ -308,6 +340,15 @@
   $: selectedLocalFlatSqlStats = localFlatSqlStats.find((entry) => entry.standardId === selectedStandardId) ?? null;
   $: localRowCount = localRowsForStandard(localFlatSqlStats, selectedStandardId) || selectedSchemaSyncRow?.localRows || 0;
   $: cachedByteCount = selectedLocalFlatSqlStats?.cachedBytes ?? selectedSchemaSyncRow?.cachedBytes ?? 0;
+  $: pinnedRowCount = selectedSchemaSyncRow?.progress.pinnedRows ?? selectedLocalFlatSqlStats?.pinnedRows ?? 0;
+  $: lastSyncedLabel = selectedSchemaSyncRow?.progress.lastSyncedAt
+    ? formatDateTime(selectedSchemaSyncRow.progress.lastSyncedAt)
+    : selectedLocalFlatSqlStats?.lastSyncedAt
+      ? formatDateTime(selectedLocalFlatSqlStats.lastSyncedAt)
+      : 'Never synced';
+  $: transportStateLabel = selectedSchemaSyncRow?.progress.syncProtocol
+    ?? dataScan?.syncProtocol
+    ?? (selectedDataSourceId === LOCAL_DATA_SOURCE_ID ? 'local' : 'pending');
   $: scanHashLabel = dataScan?.scanHash ? shorten(dataScan.scanHash, 18) : 'none';
   $: sqlColumns = sqlResult?.columns ?? [];
   $: displaySqlColumns = visibleSqlColumns(sqlColumns, sqlRecords);
@@ -380,7 +421,7 @@
     const workerBackendConfig = backendConfigForDataSource(source);
     if (workerBackendConfig) {
       try {
-        const store = await ensureLocalFlatSqlStore();
+        const store = await ensureLocalFlatSqlStore(selectedDataSourceId, selectedDatastoreKey);
         dataSummary = store ? await store.getRemoteDataSummary(workerBackendConfig) : null;
         refreshSubscriptionRemoteRowsFromSummary(source?.id ?? selectedDataSourceId, dataSummary);
         const nextStandardOptions = standardIdsFromSummary(dataSummary);
@@ -422,17 +463,19 @@
 
   async function runWorkbenchQuery(targetPage = pageIndex): Promise<void> {
     const nextPage = Math.max(0, targetPage);
+    const activeSelection = selectedSchemaSyncRowForSelection();
     const query = {
       schema: schemaNameForStandardId(selectedStandardId),
+      ...(activeSelection?.datastoreKey ? { datastoreKey: activeSelection.datastoreKey } : {}),
       limit: normalizedPageSize(),
       offset: nextPage * normalizedPageSize(),
     };
     workbenchLoading = true;
     try {
       const source = currentDataSourceOption();
-      const workerBackendConfig = backendConfigForDataSource(source);
+      const workerBackendConfig = backendConfigForDataSource(source, activeSelection?.datastoreKey ?? selectedDatastoreKey);
       if (workerBackendConfig) {
-        const store = await ensureLocalFlatSqlStore();
+        const store = await ensureLocalFlatSqlStore(selectedDataSourceId, activeSelection?.datastoreKey ?? selectedDatastoreKey);
         if (!store) throw new Error('FlatSQL initialization failed');
         const result = await store.queryRemotePage({
           standardId: selectedStandardId,
@@ -469,6 +512,7 @@
       if (dataScan?.results.length) {
         const streamResult = await activeBackend.streamRawData({
           schema: dataScan.schema,
+          ...(query.datastoreKey ? { datastoreKey: query.datastoreKey } : {}),
           scanHash: dataScan.scanHash,
           chunkHash: dataScan.chunkHash || dataScan.scanHash,
           snapshotId: dataScan.snapshotId,
@@ -502,6 +546,13 @@
   }
 
   function handleTableChange(): void {
+    const selected = schemaSyncRows.find((row) => row.subscriptionId === selectedSubscriptionId);
+    if (selected) {
+      selectedStandardId = selected.id;
+      selectedDataSourceId = selected.dataSourceId;
+      selectedDatastoreKey = selected.datastoreKey;
+      resetLocalFlatSqlStore();
+    }
     userSelectedStandard = true;
     userEditedColumns = false;
     resetSqlForSelectedStandard();
@@ -516,23 +567,6 @@
     pageSize = normalizedPageSize();
     pageIndex = 0;
     void runWorkbenchQuery(0);
-  }
-
-  function selectDataSource(sourceId: string): void {
-    if (!dataSourceOptions.some((source) => source.id === sourceId)) return;
-    selectedDataSourceId = sourceId;
-    pageIndex = 0;
-    rawRecords = [];
-    dataScan = null;
-    clearPnmSelection();
-    resetLocalFlatSqlStore();
-    resetSqlForSelectedStandard();
-    columnMenuOpen = false;
-    userSelectedDataSource = true;
-    userSelectedStandard = false;
-    userEditedColumns = false;
-    resetSchemaSyncSchedulers();
-    void initializeWorkbench();
   }
 
   function goToPreviousPage(): void {
@@ -552,31 +586,45 @@
   }
 
   function syncSelectedStandardWithSubscriptions(rows: SchemaSyncRow[]): void {
-    if (userSelectedStandard || rows.length === 0) return;
-    if (rows.some((row) => row.id === selectedStandardId)) return;
-    selectedStandardId = rows[0].id;
+    if (rows.length === 0) return;
+    if (selectedSubscriptionId && rows.some((row) => row.subscriptionId === selectedSubscriptionId)) return;
+    if (userSelectedStandard && rows.some((row) => (
+      row.id === selectedStandardId
+      && row.dataSourceId === selectedDataSourceId
+      && (!selectedDatastoreKey || row.datastoreKey === selectedDatastoreKey)
+    ))) return;
+    const next = rows[0];
+    selectedSubscriptionId = next.subscriptionId;
+    selectedStandardId = next.id;
+    selectedDataSourceId = next.dataSourceId;
+    selectedDatastoreKey = next.datastoreKey;
     resetSqlForSelectedStandard();
     clearPnmSelection();
     dataScan = null;
     pageIndex = 0;
   }
 
-  function selectSubscribedRow(schema: SchemaSyncRow): void {
-    selectedStandardId = schema.id;
-    selectedDataSection = 'explorer';
-    if (selectedDataSourceId !== schema.dataSourceId) {
-      selectDataSource(schema.dataSourceId);
-      return;
-    }
-    userSelectedStandard = true;
-    resetSqlForSelectedStandard();
-    void runWorkbenchQuery(0);
+  function isSchemaRowSelected(schema: SchemaSyncRow): boolean {
+    if (selectedSubscriptionId) return schema.subscriptionId === selectedSubscriptionId;
+    return schema.id === selectedStandardId
+      && schema.dataSourceId === selectedDataSourceId
+      && (selectedDatastoreKey === null || schema.datastoreKey === selectedDatastoreKey);
+  }
+
+  function selectedSchemaSyncRowForSelection(): SchemaSyncRow | null {
+    return schemaSyncRows.find((row) => selectedSubscriptionId && row.subscriptionId === selectedSubscriptionId)
+      ?? schemaSyncRows.find((row) => (
+        row.id === selectedStandardId
+        && row.dataSourceId === selectedDataSourceId
+        && (selectedDatastoreKey === null || row.datastoreKey === selectedDatastoreKey)
+      ))
+      ?? null;
   }
 
   function handleSubscriptionStorageCapInput(schema: SchemaSyncRow, event: Event): void {
     const storageCap = normalizedStorageCap((event.currentTarget as HTMLInputElement).value);
     updateSubscription(schema.subscriptionId, { storageCap });
-    updateSchemaSyncPreference(schema.id, { mode: 'sync', storageCap }, schema.dataSourceId);
+    updateSchemaSyncPreference(schema.id, { mode: 'sync', storageCap }, schema.dataSourceId, schema.datastoreKey);
     scheduleSubscribedSchemaSyncs(schemaSyncRows);
   }
 
@@ -584,7 +632,7 @@
     const value = (event.currentTarget as HTMLSelectElement).value;
     const storageUnit = isStorageUnit(value) ? value : DEFAULT_SCHEMA_SYNC_PREFERENCE.storageUnit;
     updateSubscription(schema.subscriptionId, { storageUnit });
-    updateSchemaSyncPreference(schema.id, { mode: 'sync', storageUnit }, schema.dataSourceId);
+    updateSchemaSyncPreference(schema.id, { mode: 'sync', storageUnit }, schema.dataSourceId, schema.datastoreKey);
     scheduleSubscribedSchemaSyncs(schemaSyncRows);
   }
 
@@ -592,6 +640,79 @@
     updateSubscription(schema.subscriptionId, {
       syncFilter: (event.currentTarget as HTMLInputElement).value,
     });
+  }
+
+  function pauseSubscriptionSync(schema: SchemaSyncRow): void {
+    const key = schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey);
+    pausedSyncKeys = new Set(pausedSyncKeys).add(key);
+    updateSchemaSyncPreference(schema.id, { mode: 'preview' }, schema.dataSourceId, schema.datastoreKey);
+    schemaSyncSchedulerForDataSource(schema.dataSourceId).reset();
+    if (activeSyncKeys.has(key)) {
+      const nextActive = new Set(activeSyncKeys);
+      nextActive.delete(key);
+      activeSyncKeys = nextActive;
+      resetLocalFlatSqlStore();
+    }
+    refreshSchemaSyncProgress(schema.id, {
+      status: 'idle',
+      error: null,
+      downloadSpeedBytesPerSecond: 0,
+      wireSpeedUtilization: null,
+    }, schema.dataSourceId, schema.datastoreKey);
+  }
+
+  function resumeSubscriptionSync(schema: SchemaSyncRow): void {
+    const key = schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey);
+    const nextPaused = new Set(pausedSyncKeys);
+    nextPaused.delete(key);
+    pausedSyncKeys = nextPaused;
+    updateSchemaSyncPreference(schema.id, { mode: 'sync' }, schema.dataSourceId, schema.datastoreKey);
+    scheduleSubscribedSchemaSyncs(schemaSyncRows);
+    void synchronizeSchema(schema.id, schema.dataSourceId, schema.subscriptionId);
+  }
+
+  function retrySubscriptionSync(schema: SchemaSyncRow): void {
+    const key = schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey);
+    const nextPaused = new Set(pausedSyncKeys);
+    nextPaused.delete(key);
+    pausedSyncKeys = nextPaused;
+    const nextActive = new Set(activeSyncKeys);
+    nextActive.delete(key);
+    activeSyncKeys = nextActive;
+    updateSchemaSyncPreference(schema.id, { mode: 'sync' }, schema.dataSourceId, schema.datastoreKey);
+    refreshSchemaSyncProgress(schema.id, {
+      status: 'idle',
+      error: null,
+      downloadSpeedBytesPerSecond: 0,
+      wireSpeedUtilization: null,
+    }, schema.dataSourceId, schema.datastoreKey);
+    schemaSyncSchedulerForDataSource(schema.dataSourceId).reset();
+    void synchronizeSchema(schema.id, schema.dataSourceId, schema.subscriptionId);
+  }
+
+  async function verifyPinnedArtifacts(schema: SchemaSyncRow): Promise<void> {
+    pinVerifyRunning = true;
+    pinVerifyStatus = '';
+    try {
+      const store = await ensureLocalFlatSqlStore(schema.dataSourceId, schema.datastoreKey);
+      if (!store) throw new Error('FlatSQL initialization failed');
+      const entries = await store.listPinLedgerEntries({
+        standardId: schema.id,
+        role: 'shard',
+        verificationState: 'verified',
+      });
+      const pinnedRows = entries.reduce((total, entry) => total + Math.max(0, entry.rowCount ?? 0), 0);
+      const pinnedBytes = entries.reduce((total, entry) => total + Math.max(0, entry.byteCount ?? 0), 0);
+      if (entries.length === 0) {
+        pinVerifyStatus = `No verified pinned ${schema.id} shard artifacts for ${schema.providerName}.`;
+        return;
+      }
+      pinVerifyStatus = `Verified ${formatNumber(entries.length)} ${schema.id} shard artifacts covering ${formatNumber(pinnedRows)} rows / ${formatBytes(pinnedBytes)}.`;
+    } catch (error) {
+      pinVerifyStatus = error instanceof Error ? error.message : 'Pinned artifact verification failed';
+    } finally {
+      pinVerifyRunning = false;
+    }
   }
 
   function updateSubscription(subscriptionId: string, patch: Partial<Pick<DataFeedSubscription, 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter'>>): void {
@@ -604,7 +725,7 @@
     let nextState = dataDirectoryState;
     for (const subscription of dataDirectoryState.subscriptions) {
       if (subscription.dataSourceId !== dataSourceId) continue;
-      const remoteRows = totalRowsForStandardId(summary, subscription.standardId);
+      const remoteRows = remoteRowsForSummarySubscription(summary, subscription);
       if (remoteRows === null || remoteRows === subscription.remoteRows) continue;
       nextState = updateDataFeedSubscription(nextState, subscription.id, { remoteRows });
     }
@@ -623,7 +744,7 @@
     sqlRunning = true;
     sqlError = '';
     try {
-      const store = await ensureLocalFlatSqlStore();
+      const store = await ensureLocalFlatSqlStore(selectedDataSourceId, selectedSchemaSyncRow?.datastoreKey ?? selectedDatastoreKey);
       if (!store) return;
       sqlResult = await store.query(query, selectedStandardId);
     } catch (error) {
@@ -634,10 +755,31 @@
     }
   }
 
+  async function applyEpochProfileQuery(): Promise<void> {
+    epochQueryError = '';
+    try {
+      sqlQueryText = buildEpochProfileSql({
+        standardId: selectedStandardId,
+        profile: epochProfile,
+        day: epochDay,
+        at: epochAt,
+        from: epochFrom,
+        to: epochTo,
+        maxDeltaSeconds: epochMaxDeltaSeconds,
+        entityId: epochEntityId,
+        limit: normalizedPageSize(),
+      });
+      userEditedSql = true;
+      await runSqlQuery();
+    } catch (error) {
+      epochQueryError = error instanceof Error ? error.message : 'Epoch query failed';
+    }
+  }
+
   async function ingestDownloadedRecords(records: RawDataRecord[]): Promise<void> {
     if (records.length === 0) return;
     try {
-      const store = await ensureLocalFlatSqlStore();
+      const store = await ensureLocalFlatSqlStore(selectedDataSourceId, selectedSchemaSyncRow?.datastoreKey ?? selectedDatastoreKey);
       if (!store) return;
       const source = currentDataSourceOption();
       await store.ingestRecords(selectedStandardId, records, source?.publicKey ?? source?.peerId ?? source?.id ?? null);
@@ -662,7 +804,7 @@
     const existing = schemaSyncSchedulers.get(dataSourceId);
     if (existing) return existing;
     const scheduler = createSchemaSyncScheduler({
-      syncSchema: (standardId, sourceId) => synchronizeSchema(standardId, sourceId),
+      syncSchema: (standardId, sourceId, subscriptionId) => synchronizeSchema(standardId, sourceId, subscriptionId),
     });
     schemaSyncSchedulers.set(dataSourceId, scheduler);
     return scheduler;
@@ -673,20 +815,25 @@
     for (const scheduler of schemaSyncSchedulers.values()) scheduler.reset();
   }
 
-  async function synchronizeSchema(standardId: string, dataSourceId = selectedDataSourceId): Promise<void> {
-    const key = schemaSyncPreferenceKey(dataSourceId, standardId);
-    const preference = schemaSyncPreferenceFor(dataSourceId, standardId);
+  async function synchronizeSchema(standardId: string, dataSourceId = selectedDataSourceId, subscriptionId = ''): Promise<void> {
+    const subscription = subscriptionForSync(dataSourceId, standardId, subscriptionId);
+    const datastoreKey = subscription?.datastoreKey ?? null;
+    const key = schemaSyncPreferenceKey(dataSourceId, standardId, datastoreKey);
+    const preference = schemaSyncPreferenceFor(dataSourceId, standardId, datastoreKey);
     if (preference.mode !== 'sync' || activeSyncKeys.has(key)) return;
+    if (pausedSyncKeys.has(key)) return;
 
     const source = dataSourceOptionForId(dataSourceId);
-    const backendConfig = backendConfigForDataSource(source);
+    const backendConfig = backendConfigForDataSource(source, datastoreKey);
     if (!backendConfig) return;
-    const remoteRows = remoteRowsForSubscription(dataSourceId, standardId) ?? totalRowsForStandardId(dataSummary, standardId) ?? 0;
+    const remoteRows = subscription?.remoteRows ?? remoteRowsForSubscription(dataSourceId, standardId, datastoreKey) ?? totalRowsForStandardId(dataSummary, standardId) ?? 0;
     const initialProgress = schemaSyncProgressFor(
       dataSourceId,
       standardId,
       remoteRows,
       localFlatSqlStats,
+      selectedDataSourceId === dataSourceId && selectedDatastoreKey === datastoreKey,
+      datastoreKey,
     );
     activeSyncKeys = new Set(activeSyncKeys).add(key);
     refreshSchemaSyncProgress(standardId, {
@@ -695,11 +842,11 @@
       totalRows: remoteRows,
       providerPeerId: source?.peerId ?? null,
       providerPublicKey: source?.publicKey ?? null,
-    }, dataSourceId);
+    }, dataSourceId, datastoreKey);
 
     let store: WorkerLocalFlatSqlStore | null = null;
     try {
-      store = await ensureLocalFlatSqlStore(dataSourceId);
+      store = await ensureLocalFlatSqlStore(dataSourceId, datastoreKey);
       if (!store) throw new Error('FlatSQL initialization failed');
       const update = await store.syncSchema({
         standardId,
@@ -711,14 +858,23 @@
         pageSize: SYNC_PAGE_SIZE,
         persistRecordInterval: SYNC_PERSIST_RECORD_INTERVAL,
         source: source?.publicKey ?? source?.peerId ?? source?.id ?? null,
-        syncFilter: syncFilterForSubscription(dataSourceId, standardId),
-      }, (nextUpdate) => applyWorkerSchemaSyncUpdate(standardId, dataSourceId, nextUpdate));
-      applyWorkerSchemaSyncUpdate(standardId, dataSourceId, update);
+        syncFilter: subscription?.syncFilter ?? syncFilterForSubscription(dataSourceId, standardId, datastoreKey),
+      }, (nextUpdate) => applyWorkerSchemaSyncUpdate(standardId, dataSourceId, datastoreKey, nextUpdate));
+      applyWorkerSchemaSyncUpdate(standardId, dataSourceId, datastoreKey, update);
     } catch (error) {
+      if (pausedSyncKeys.has(key)) {
+        refreshSchemaSyncProgress(standardId, {
+          status: 'idle',
+          error: null,
+          downloadSpeedBytesPerSecond: 0,
+          wireSpeedUtilization: null,
+        }, dataSourceId, datastoreKey);
+        return;
+      }
       refreshSchemaSyncProgress(standardId, {
         status: 'error',
         error: error instanceof Error ? error.message : 'Schema sync failed',
-      }, dataSourceId);
+      }, dataSourceId, datastoreKey);
       if (store) {
         await store.flush(standardId);
         await refreshLocalFlatSqlStats();
@@ -730,31 +886,47 @@
     }
   }
 
-  function applyWorkerSchemaSyncUpdate(standardId: string, dataSourceId: string, update: WorkerSchemaSyncUpdate): void {
-    localFlatSqlStats = update.stats;
-    refreshSchemaSyncProgress(standardId, update.progress, dataSourceId);
+  function applyWorkerSchemaSyncUpdate(standardId: string, dataSourceId: string, datastoreKey: string | null, update: WorkerSchemaSyncUpdate): void {
+    if (selectedDataSourceId === dataSourceId && selectedDatastoreKey === datastoreKey) {
+      localFlatSqlStats = update.stats;
+    }
+    refreshSchemaSyncProgress(standardId, update.progress, dataSourceId, datastoreKey);
   }
 
-  function refreshSchemaSyncProgress(standardId: string, patch: Partial<SchemaSyncProgress>, dataSourceId = selectedDataSourceId): void {
-    const key = schemaSyncPreferenceKey(dataSourceId, standardId);
-    const localRows = localRowsForStandard(localFlatSqlStats, standardId);
-    const cachedBytes = cachedBytesForStandard(localFlatSqlStats, standardId);
-    const current = schemaSyncProgressFor(dataSourceId, standardId, totalRowsForStandardId(dataSummary, standardId) ?? 0, localFlatSqlStats);
+  function refreshSchemaSyncProgress(standardId: string, patch: Partial<SchemaSyncProgress>, dataSourceId = selectedDataSourceId, datastoreKey: string | null = selectedDatastoreKey): void {
+    const key = schemaSyncPreferenceKey(dataSourceId, standardId, datastoreKey);
+    const statsAreSelected = selectedDataSourceId === dataSourceId && selectedDatastoreKey === datastoreKey;
+    const persisted = schemaSyncProgress[key];
+    const localRows = statsAreSelected ? localRowsForStandard(localFlatSqlStats, standardId) : patch.localRows ?? persisted?.localRows ?? 0;
+    const cachedBytes = statsAreSelected ? cachedBytesForStandard(localFlatSqlStats, standardId) : patch.cachedBytes ?? persisted?.cachedBytes ?? 0;
+    const current = schemaSyncProgressFor(dataSourceId, standardId, totalRowsForStandardId(dataSummary, standardId) ?? 0, localFlatSqlStats, statsAreSelected, datastoreKey);
+    const nextProgress = {
+      ...current,
+      localRows,
+      cachedBytes,
+      ...patch,
+      syncedRows: Math.max(patch.syncedRows ?? current.syncedRows, localRows),
+    };
+    const rowCounts = syncRowCountSummary({
+      localRows: nextProgress.localRows,
+      syncedRows: nextProgress.syncedRows,
+      pinnedRows: nextProgress.pinnedRows,
+      remoteRows: nextProgress.totalRows,
+      totalRows: nextProgress.totalRows,
+    });
     schemaSyncProgress = {
       ...schemaSyncProgress,
       [key]: {
-        ...current,
-        localRows,
-        cachedBytes,
-        ...patch,
-        syncedRows: Math.max(patch.syncedRows ?? current.syncedRows, localRows),
+        ...nextProgress,
+        ...rowCounts,
       },
     };
+    persistMeasuredWireSpeedBytesPerSecond(dataSourceId, schemaSyncProgress[key]?.measuredWireSpeedBytesPerSecond ?? 0);
     persistSchemaSyncProgress(schemaSyncProgress);
   }
 
-  async function ensureLocalFlatSqlStore(dataSourceId = selectedDataSourceId): Promise<WorkerLocalFlatSqlStore | null> {
-    const nextKey = localFlatSqlPersistenceKey(dataSourceId);
+  async function ensureLocalFlatSqlStore(dataSourceId = selectedDataSourceId, datastoreKey: string | null = selectedDatastoreKey): Promise<WorkerLocalFlatSqlStore | null> {
+    const nextKey = localFlatSqlPersistenceKey(dataSourceId, datastoreKey);
     if (localFlatSqlStore && localFlatSqlStoreKey === nextKey) return localFlatSqlStore;
     if (localFlatSqlStorePromise && localFlatSqlStorePromiseKey === nextKey) return localFlatSqlStorePromise;
     resetLocalFlatSqlStore();
@@ -790,8 +962,8 @@
     sqlError = '';
   }
 
-  function localFlatSqlPersistenceKey(dataSourceId: string): string {
-    return `sdn-data:${dataSourceId}`;
+  function localFlatSqlPersistenceKey(dataSourceId: string, datastoreKey: string | null = null): string {
+    return datastoreKey ? `sdn-data:${dataSourceId}:${datastoreKey}` : `sdn-data:${dataSourceId}`;
   }
 
   function beginResetSubscriptionData(subscriptionId: string): void {
@@ -819,12 +991,12 @@
     try {
       resetLocalFlatSqlStore();
       await clearLocalFlatSqlStore({
-        persistenceKey: localFlatSqlPersistenceKey(dataSourceId),
+        persistenceKey: localFlatSqlPersistenceKey(dataSourceId, schema.datastoreKey),
         standardIds: [standardId],
       });
-      clearSchemaSyncProgressForSubscription(dataSourceId, standardId);
+      clearSchemaSyncProgressForSubscription(dataSourceId, standardId, schema.datastoreKey);
       const nextActive = new Set(activeSyncKeys);
-      nextActive.delete(schemaSyncPreferenceKey(dataSourceId, standardId));
+      nextActive.delete(schemaSyncPreferenceKey(dataSourceId, standardId, schema.datastoreKey));
       activeSyncKeys = nextActive;
       schemaSyncSchedulerForDataSource(dataSourceId).reset();
       rawRecords = [];
@@ -833,12 +1005,14 @@
       resetSqlForSelectedStandard();
       selectedDataSourceId = dataSourceId;
       selectedStandardId = standardId;
-      await ensureLocalFlatSqlStore(dataSourceId);
+      selectedSubscriptionId = schema.subscriptionId;
+      selectedDatastoreKey = schema.datastoreKey;
+      await ensureLocalFlatSqlStore(dataSourceId, schema.datastoreKey);
       await refreshLocalFlatSqlStats();
       resetStatus = `${standardId} row reset. Sync will restart from the first remote row.`;
       resetSubscriptionId = '';
       resetConfirmText = '';
-      void synchronizeSchema(standardId, dataSourceId);
+      void synchronizeSchema(standardId, dataSourceId, schema.subscriptionId);
     } catch (error) {
       resetStatus = error instanceof Error ? error.message : 'Row reset failed';
     } finally {
@@ -980,7 +1154,7 @@
     }
     pnmQueryError = '';
     try {
-      const store = await ensureLocalFlatSqlStore();
+      const store = await ensureLocalFlatSqlStore(selectedDataSourceId, selectedSchemaSyncRow?.datastoreKey ?? selectedDatastoreKey);
       if (!store) return;
       pnmQueryResult = await store.query(`SELECT * FROM PNM WHERE FILE_ID = '${escapeSqlString(fileId)}' LIMIT 100`, 'PNM');
     } catch (error) {
@@ -1072,24 +1246,39 @@
     return `SELECT * FROM ${standardIdFromSchema(standardId)} LIMIT ${DEFAULT_PAGE_SIZE}`;
   }
 
+  function defaultEpochDay(): string {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function nextEpochDay(day: string): string {
+    const date = new Date(`${day}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) return defaultEpochDay();
+    date.setUTCDate(date.getUTCDate() + 1);
+    return date.toISOString().slice(0, 10);
+  }
+
   function buildSubscribedSchemaSyncRows(
     subscriptions: DataFeedSubscription[],
     activeDataSourceId: string,
+    activeDatastoreKey: string | null,
     stats: LocalFlatSqlStandardStats[],
+    preferences: Record<string, SchemaSyncPreference>,
   ): SchemaSyncRow[] {
     return subscriptions.map((subscription) => {
-      const sourceStats = subscription.dataSourceId === activeDataSourceId ? stats : [];
+      const sourceStats = subscription.dataSourceId === activeDataSourceId && (subscription.datastoreKey ?? null) === activeDatastoreKey ? stats : [];
       const progress = schemaSyncProgressFor(
         subscription.dataSourceId,
         subscription.standardId,
         subscription.remoteRows,
         sourceStats,
-        subscription.dataSourceId === activeDataSourceId,
+        subscription.dataSourceId === activeDataSourceId && (subscription.datastoreKey ?? null) === activeDatastoreKey,
+        subscription.datastoreKey ?? null,
       );
       return {
         id: subscription.standardId,
         subscriptionId: subscription.id,
         dataSourceId: subscription.dataSourceId,
+        datastoreKey: subscription.datastoreKey,
         providerName: subscription.providerName,
         providerPeerId: subscription.peerId,
         providerPublicKey: subscription.providerPublicKey,
@@ -1097,7 +1286,7 @@
         remoteRows: Math.max(subscription.remoteRows, progress.totalRows),
         localRows: progress.localRows,
         cachedBytes: progress.cachedBytes,
-        preference: subscriptionSchemaSyncPreference(subscription),
+        preference: subscriptionSchemaSyncPreference(subscription, preferences),
         progress,
       };
     }).sort((left, right) => {
@@ -1115,14 +1304,24 @@
     return stats.find((entry) => entry.standardId === standardId)?.cachedBytes ?? 0;
   }
 
-  function schemaSyncPreferenceFor(dataSourceId: string, standardId: string): SchemaSyncPreference {
-    return schemaSyncPreferences[schemaSyncPreferenceKey(dataSourceId, standardId)] ?? DEFAULT_SCHEMA_SYNC_PREFERENCE;
+  function localStatsForStandard(stats: LocalFlatSqlStandardStats[], standardId: string): LocalFlatSqlStandardStats | null {
+    return stats.find((entry) => entry.standardId === standardId) ?? null;
   }
 
-  function subscriptionSchemaSyncPreference(subscription: DataFeedSubscription): SchemaSyncPreference {
-    const persisted = schemaSyncPreferences[schemaSyncPreferenceKey(subscription.dataSourceId, subscription.standardId)];
+  function schemaSyncPreferenceFor(dataSourceId: string, standardId: string, datastoreKey: string | null = null): SchemaSyncPreference {
+    return schemaSyncPreferences[schemaSyncPreferenceKey(dataSourceId, standardId, datastoreKey)]
+      ?? schemaSyncPreferences[schemaSyncPreferenceKey(dataSourceId, standardId)]
+      ?? DEFAULT_SCHEMA_SYNC_PREFERENCE;
+  }
+
+  function subscriptionSchemaSyncPreference(
+    subscription: DataFeedSubscription,
+    preferences = schemaSyncPreferences,
+  ): SchemaSyncPreference {
+    const persisted = preferences[schemaSyncPreferenceKey(subscription.dataSourceId, subscription.standardId, subscription.datastoreKey)]
+      ?? preferences[schemaSyncPreferenceKey(subscription.dataSourceId, subscription.standardId)];
     return normalizeSchemaSyncPreference({
-      mode: 'sync',
+      mode: persisted?.mode ?? 'sync',
       storageCap: persisted?.storageCap ?? subscription.storageCap,
       storageUnit: persisted?.storageUnit ?? subscription.storageUnit,
     }) ?? {
@@ -1132,16 +1331,33 @@
     };
   }
 
-  function remoteRowsForSubscription(dataSourceId: string, standardId: string): number | null {
+  function remoteRowsForSubscription(dataSourceId: string, standardId: string, datastoreKey: string | null = null): number | null {
     return dataDirectoryState.subscriptions.find((subscription) => (
-      subscription.dataSourceId === dataSourceId && subscription.standardId === standardId
+      subscription.dataSourceId === dataSourceId
+      && subscription.standardId === standardId
+      && (datastoreKey === null || subscription.datastoreKey === datastoreKey)
     ))?.remoteRows ?? null;
   }
 
-  function syncFilterForSubscription(dataSourceId: string, standardId: string): string {
+  function syncFilterForSubscription(dataSourceId: string, standardId: string, datastoreKey: string | null = null): string {
     return dataDirectoryState.subscriptions.find((subscription) => (
-      subscription.dataSourceId === dataSourceId && subscription.standardId === standardId
+      subscription.dataSourceId === dataSourceId
+      && subscription.standardId === standardId
+      && (datastoreKey === null || subscription.datastoreKey === datastoreKey)
     ))?.syncFilter ?? '';
+  }
+
+  function subscriptionForSync(dataSourceId: string, standardId: string, subscriptionId = ''): DataFeedSubscription | null {
+    return dataDirectoryState.subscriptions.find((subscription) => subscriptionId && subscription.id === subscriptionId)
+      ?? dataDirectoryState.subscriptions.find((subscription) => (
+        subscription.dataSourceId === dataSourceId
+        && subscription.standardId === standardId
+        && (selectedDatastoreKey === null || subscription.datastoreKey === selectedDatastoreKey)
+      ))
+      ?? dataDirectoryState.subscriptions.find((subscription) => (
+        subscription.dataSourceId === dataSourceId && subscription.standardId === standardId
+      ))
+      ?? null;
   }
 
   function schemaSyncProgressFor(
@@ -1150,8 +1366,10 @@
     remoteRows: number,
     stats: LocalFlatSqlStandardStats[],
     statsAreAuthoritative = true,
+    datastoreKey: string | null = null,
   ): SchemaSyncProgress {
-    const key = schemaSyncPreferenceKey(dataSourceId, standardId);
+    const key = schemaSyncPreferenceKey(dataSourceId, standardId, datastoreKey);
+    const localStats = localStatsForStandard(stats, standardId);
     const localRows = localRowsForStandard(stats, standardId);
     const cachedBytes = cachedBytesForStandard(stats, standardId);
     const persisted = schemaSyncProgress[key];
@@ -1164,34 +1382,51 @@
       complete,
       persistedStatus: activePersisted?.status,
     });
+    const rowCounts = syncRowCountSummary({
+      localRows,
+      syncedRows: Math.max(localRows, activePersisted?.syncedRows ?? 0),
+      pinnedRows: Math.max(localStats?.pinnedRows ?? 0, activePersisted?.pinnedRows ?? 0),
+      remoteRows,
+      totalRows,
+    });
     return {
       status,
-      syncedRows: Math.max(localRows, activePersisted?.syncedRows ?? 0),
-      totalRows,
+      syncedRows: rowCounts.syncedRows,
+      totalRows: rowCounts.totalRows,
       localRows,
+      pinnedRows: rowCounts.pinnedRows,
+      missingRows: rowCounts.missingRows,
       cachedBytes,
-      pinnedBytes: activePersisted?.pinnedBytes ?? cachedBytes,
+      pinnedBytes: Math.max(localStats?.pinnedBytes ?? 0, activePersisted?.pinnedBytes ?? 0),
       downloadedBytes: activePersisted?.downloadedBytes ?? 0,
       downloadSpeedBytesPerSecond: active ? activePersisted?.downloadSpeedBytesPerSecond ?? 0 : 0,
+      measuredWireSpeedBytesPerSecond: activePersisted?.measuredWireSpeedBytesPerSecond ?? measuredWireSpeedBytesPerSecondForSource(dataSourceId),
+      wireSpeedUtilization: active ? activePersisted?.wireSpeedUtilization ?? null : null,
+      wireSpeedTarget: activePersisted?.wireSpeedTarget ?? 0.8,
+      wireSpeedTargetMet: activePersisted?.wireSpeedTargetMet ?? null,
+      manifestDiscoveryMs: activePersisted?.manifestDiscoveryMs ?? 0,
+      networkTransferMs: activePersisted?.networkTransferMs ?? 0,
+      verificationMs: activePersisted?.verificationMs ?? 0,
+      flatSqlMaterializationMs: activePersisted?.flatSqlMaterializationMs ?? 0,
       providerPeerId: activePersisted?.providerPeerId ?? null,
       providerPublicKey: activePersisted?.providerPublicKey ?? null,
-      snapshotId: activePersisted?.snapshotId ?? null,
-      head: activePersisted?.head ?? null,
+      snapshotId: localStats?.snapshotId ?? activePersisted?.snapshotId ?? null,
+      head: localStats?.head ?? activePersisted?.head ?? null,
       cursor: activePersisted?.cursor ?? null,
       nextCursor: activePersisted?.nextCursor ?? null,
-      highWaterMark: activePersisted?.highWaterMark ?? null,
+      highWaterMark: localStats?.highWaterMark ?? activePersisted?.highWaterMark ?? null,
       queryProfile: activePersisted?.queryProfile ?? null,
       chunkHash: activePersisted?.chunkHash ?? null,
       syncProtocol: activePersisted?.syncProtocol ?? null,
       verifiedChunks: activePersisted?.verifiedChunks ?? [],
-      lastSyncedAt: activePersisted?.lastSyncedAt ?? null,
+      lastSyncedAt: localStats?.lastSyncedAt ?? activePersisted?.lastSyncedAt ?? null,
       error: activePersisted?.error ?? null,
     };
   }
 
-  function updateSchemaSyncPreference(standardId: string, patch: Partial<SchemaSyncPreference>, dataSourceId = selectedDataSourceId): void {
-    const key = schemaSyncPreferenceKey(dataSourceId, standardId);
-    const current = schemaSyncPreferenceFor(dataSourceId, standardId);
+  function updateSchemaSyncPreference(standardId: string, patch: Partial<SchemaSyncPreference>, dataSourceId = selectedDataSourceId, datastoreKey: string | null = selectedDatastoreKey): void {
+    const key = schemaSyncPreferenceKey(dataSourceId, standardId, datastoreKey);
+    const current = schemaSyncPreferenceFor(dataSourceId, standardId, datastoreKey);
     schemaSyncPreferences = {
       ...schemaSyncPreferences,
       [key]: normalizeSchemaSyncPreference({ ...current, ...patch }) ?? DEFAULT_SCHEMA_SYNC_PREFERENCE,
@@ -1199,8 +1434,9 @@
     persistSchemaSyncPreferences(schemaSyncPreferences);
   }
 
-  function schemaSyncPreferenceKey(dataSourceId: string, standardId: string): string {
-    return `${dataSourceId}:${standardId.trim().toUpperCase() || DEFAULT_STANDARD_ID}`;
+  function schemaSyncPreferenceKey(dataSourceId: string, standardId: string, datastoreKey: string | null = null): string {
+    const base = `${dataSourceId}:${standardId.trim().toUpperCase() || DEFAULT_STANDARD_ID}`;
+    return datastoreKey ? `${base}:${datastoreKey}` : base;
   }
 
   function loadSchemaSyncPreferences(): Record<string, SchemaSyncPreference> {
@@ -1253,8 +1489,19 @@
     }
   }
 
-  function clearSchemaSyncProgressForSubscription(dataSourceId: string, standardId: string): void {
-    const key = schemaSyncPreferenceKey(dataSourceId, standardId);
+  function persistMeasuredWireSpeedBytesPerSecond(dataSourceId: string, value: number): void {
+    if (typeof window === 'undefined') return;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) return;
+    try {
+      window.localStorage.setItem(`sdn-data-wire-speed-bytes-per-second:${dataSourceId}`, String(Math.floor(numeric)));
+    } catch {
+      // Storage quota or privacy settings should not block sync.
+    }
+  }
+
+  function clearSchemaSyncProgressForSubscription(dataSourceId: string, standardId: string, datastoreKey: string | null = null): void {
+    const key = schemaSyncPreferenceKey(dataSourceId, standardId, datastoreKey);
     schemaSyncProgress = Object.fromEntries(
       Object.entries(schemaSyncProgress).filter(([candidate]) => candidate !== key),
     );
@@ -1285,10 +1532,20 @@
       syncedRows: normalizedRowCount(candidate.syncedRows),
       totalRows: normalizedRowCount(candidate.totalRows),
       localRows: normalizedRowCount(candidate.localRows),
+      pinnedRows: normalizedRowCount(candidate.pinnedRows),
+      missingRows: normalizedRowCount(candidate.missingRows),
       cachedBytes: normalizedRowCount(candidate.cachedBytes),
       pinnedBytes: normalizedRowCount(candidate.pinnedBytes),
       downloadedBytes: normalizedRowCount(candidate.downloadedBytes),
       downloadSpeedBytesPerSecond: normalizedRowCount(candidate.downloadSpeedBytesPerSecond),
+      measuredWireSpeedBytesPerSecond: normalizedRowCount(candidate.measuredWireSpeedBytesPerSecond),
+      wireSpeedUtilization: normalizedOptionalRatio(candidate.wireSpeedUtilization),
+      wireSpeedTarget: normalizedOptionalRatio(candidate.wireSpeedTarget) ?? 0.8,
+      wireSpeedTargetMet: typeof candidate.wireSpeedTargetMet === 'boolean' ? candidate.wireSpeedTargetMet : null,
+      manifestDiscoveryMs: normalizedRowCount(candidate.manifestDiscoveryMs),
+      networkTransferMs: normalizedRowCount(candidate.networkTransferMs),
+      verificationMs: normalizedRowCount(candidate.verificationMs),
+      flatSqlMaterializationMs: normalizedRowCount(candidate.flatSqlMaterializationMs),
       providerPeerId: normalizedOptionalString(candidate.providerPeerId),
       providerPublicKey: normalizedOptionalString(candidate.providerPublicKey),
       snapshotId: normalizedOptionalString(candidate.snapshotId),
@@ -1320,6 +1577,12 @@
     const numeric = Number(value);
     if (!Number.isFinite(numeric) || numeric < 0) return 0;
     return Math.floor(numeric);
+  }
+
+  function normalizedOptionalRatio(value: unknown): number | null {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0) return null;
+    return numeric;
   }
 
   function isSchemaSyncStatus(value: unknown): value is SchemaSyncStatus {
@@ -1460,6 +1723,19 @@
     return sourceCount || null;
   }
 
+  function remoteRowsForSummarySubscription(summary: DataSummary | null, subscription: DataFeedSubscription): number | null {
+    if (!summary) return null;
+    const datastoreKey = subscription.datastoreKey ?? null;
+    if (datastoreKey) {
+      const sourceCount = summary.sources.find((source) => (
+        source.datastoreKey === datastoreKey
+        && standardIdFromSchema(source.schemaName) === subscription.standardId
+      ))?.count;
+      if (typeof sourceCount === 'number') return sourceCount;
+    }
+    return totalRowsForStandardId(summary, subscription.standardId);
+  }
+
   function scanTotalRowsForStandard(scan: DataScanResult | null, standardId: string): number | null {
     if (!scan || standardIdFromSchema(scan.schema) !== standardId) return null;
     return Number.isFinite(scan.totalCount) ? scan.totalCount : null;
@@ -1470,14 +1746,26 @@
   }
 
   function syncProgressLabel(schema: SchemaSyncRow): string {
-    const syncedRows = Math.max(schema.localRows, schema.progress.syncedRows);
-    const totalRows = Math.max(schema.remoteRows, schema.progress.totalRows);
-    if (totalRows === 0) return 'No remote rows';
-    return `Synced ${formatNumber(syncedRows)}/${formatNumber(totalRows)}`;
+    const rowCounts = syncRowCountSummary({
+      localRows: schema.localRows,
+      syncedRows: schema.progress.syncedRows,
+      pinnedRows: schema.progress.pinnedRows,
+      remoteRows: schema.remoteRows,
+      totalRows: schema.progress.totalRows,
+    });
+    if (rowCounts.totalRows === 0) return 'No remote rows';
+    return syncRowCountSummaryLabel(rowCounts);
   }
 
   function syncDownloadSpeedLabel(schema: SchemaSyncRow): string {
-    return `Download ${formatBytesPerSecond(schema.progress.downloadSpeedBytesPerSecond)}`;
+    const utilization = schema.progress.wireSpeedUtilization;
+    const utilizationLabel = utilization == null ? '' : ` (${Math.round(utilization * 100)}% wire)`;
+    return `Download ${formatBytesPerSecond(schema.progress.downloadSpeedBytesPerSecond)}${utilizationLabel}`;
+  }
+
+  function syncTimingLabel(schema: SchemaSyncRow): string {
+    const progress = schema.progress;
+    return `Timing: manifest ${formatDuration(progress.manifestDiscoveryMs)} / network ${formatDuration(progress.networkTransferMs)} / verify ${formatDuration(progress.verificationMs)} / FlatSQL ${formatDuration(progress.flatSqlMaterializationMs)}`;
   }
 
   function syncStatusLabel(schema: SchemaSyncRow): string {
@@ -1490,7 +1778,7 @@
   }
 
   function nextSyncAttemptLabel(schema: SchemaSyncRow): string {
-    const key = schemaSyncPreferenceKey(schema.dataSourceId, schema.id);
+    const key = schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey);
     if (activeSyncKeys.has(key)) return 'Syncing now';
     if (schema.progress.status === 'error') return 'On next scheduler pass';
     if (schema.preference.mode !== 'sync') return 'Not scheduled';
@@ -1526,6 +1814,16 @@
     return `${formatBytes(value)}/s`;
   }
 
+  function formatDuration(milliseconds: number): string {
+    const value = Math.max(0, Math.floor(milliseconds));
+    if (value < 1000) return `${value} ms`;
+    const seconds = value / 1000;
+    if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.round(seconds % 60);
+    return `${minutes}m ${remainingSeconds}s`;
+  }
+
   function storageCapBytes(preference: SchemaSyncPreference): number {
     const unitMultiplier = preference.storageUnit === 'TB'
       ? 1024 ** 4
@@ -1553,16 +1851,45 @@
     return null;
   }
 
-  function backendConfigForDataSource(source: DataSourceOption | null): WorkerFlatSqlSyncBackendConfig | null {
+  function backendConfigForDataSource(source: DataSourceOption | null, datastoreKey: string | null = null): WorkerFlatSqlSyncBackendConfig | null {
     if (!source || source.kind !== 'configured' || !source.peerId || !source.syncAddrs?.length) return null;
     return {
       targetPeerId: source.peerId,
       candidateAddrs: source.syncAddrs,
+      datastoreKey,
       providerId: configuredProviderIdFromSource(source),
       displayName: source.label,
       publicKey: source.publicKey,
       gatewayUrl: localGatewayUrl(),
+      measuredWireSpeedBytesPerSecond: measuredWireSpeedBytesPerSecondForSource(source.id),
     };
+  }
+
+  function measuredWireSpeedBytesPerSecondForSource(dataSourceId: string): number {
+    const local = typeof window !== 'undefined' ? window.localStorage : null;
+    const env = import.meta.env as ImportMetaEnv & {
+      readonly SDN_UI_WIRE_SPEED_BYTES_PER_SECOND?: string;
+      readonly SDN_UI_WIRE_SPEED_BPS?: string;
+    };
+    const byteCandidates = [
+      local?.getItem(`sdn-data-wire-speed-bytes-per-second:${dataSourceId}`),
+      local?.getItem('sdn-data-wire-speed-bytes-per-second'),
+      env.SDN_UI_WIRE_SPEED_BYTES_PER_SECOND,
+    ];
+    for (const candidate of byteCandidates) {
+      const numeric = Number(candidate);
+      if (Number.isFinite(numeric) && numeric > 0) return Math.floor(numeric);
+    }
+    const bitCandidates = [
+      local?.getItem(`sdn-data-wire-speed-bps:${dataSourceId}`),
+      local?.getItem('sdn-data-wire-speed-bps'),
+      env.SDN_UI_WIRE_SPEED_BPS,
+    ];
+    for (const candidate of bitCandidates) {
+      const numeric = Number(candidate);
+      if (Number.isFinite(numeric) && numeric > 0) return Math.floor(numeric / 8);
+    }
+    return 0;
   }
 
   function localGatewayUrl(): string | null {
@@ -1789,6 +2116,10 @@
               <span>Cached</span>
               <strong>{formatBytes(activeStorageRows.reduce((total, row) => total + row.cachedBytes, 0))}</strong>
             </div>
+            <div class="sdn-dataset-metric" aria-label={`Pinned rows ${formatNumber(activeStorageRows.reduce((total, row) => total + row.progress.pinnedRows, 0))}`}>
+              <span>Pinned rows</span>
+              <strong>{formatNumber(activeStorageRows.reduce((total, row) => total + row.progress.pinnedRows, 0))}</strong>
+            </div>
             <div class="sdn-dataset-metric" aria-label={`Scan ${scanHashLabel}`}>
               <span>Scan</span>
               <strong>{scanHashLabel}</strong>
@@ -1797,23 +2128,25 @@
 
           <div class="sdn-storage-grid">
             {#each activeStorageRows as schema}
-              <article class="sdn-storage-row" class:active={schema.id === selectedStandardId && schema.dataSourceId === selectedDataSourceId}>
+              <article class="sdn-storage-row" class:active={isSchemaRowSelected(schema)}>
                 <div>
                   <strong>{schema.id}</strong>
                   <span>{schema.providerName}</span>
                   <span>{formatNumber(schema.localRows)} local / {formatNumber(schema.remoteRows)} remote</span>
+                  <span>{formatNumber(schema.progress.pinnedRows)} pinned</span>
                 </div>
                 <div>
                   <strong>{formatBytes(schema.cachedBytes)}</strong>
                   <span>{syncProgressLabel(schema)}</span>
                   <span>{syncDownloadSpeedLabel(schema)}</span>
+                  <span>{syncTimingLabel(schema)}</span>
                 </div>
                 <div>
                   <strong>{syncStatusLabel(schema)}</strong>
                   <span>Next sync attempt: {nextSyncAttemptLabel(schema)}</span>
                   <span>{schema.progress.lastSyncedAt ? formatDateTime(schema.progress.lastSyncedAt) : 'Never synced'}</span>
                 </div>
-                <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => selectSubscribedRow(schema)}>Query</button>
+                <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => retrySubscriptionSync(schema)} disabled={activeSyncKeys.has(schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey))}>Retry</button>
               </article>
             {:else}
               <p class="sdn-empty-inline">No actively synced data feeds. Add a feed from Peers to start local sync.</p>
@@ -1826,7 +2159,7 @@
         <section class="sdn-storage-state" aria-label="Sync settings">
           <div class="sdn-storage-grid">
             {#each schemaSyncRows as schema}
-              <article class="sdn-storage-row sdn-subscription-row" class:active={schema.id === selectedStandardId && schema.dataSourceId === selectedDataSourceId}>
+              <article class="sdn-storage-row sdn-subscription-row" class:active={isSchemaRowSelected(schema)}>
                 <div>
                   <strong>{schema.id}</strong>
                   <span>{schema.providerName}</span>
@@ -1836,6 +2169,7 @@
                   <strong>{syncStatusLabel(schema)}</strong>
                   <span>{syncProgressLabel(schema)}</span>
                   <span>{syncDownloadSpeedLabel(schema)}</span>
+                  <span>{syncTimingLabel(schema)}</span>
                   <span>Next sync attempt: {nextSyncAttemptLabel(schema)}</span>
                 </div>
                 <label>
@@ -1873,7 +2207,13 @@
                   />
                 </label>
                 <div class="sdn-subscription-actions">
-                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => selectSubscribedRow(schema)}>Query</button>
+                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => retrySubscriptionSync(schema)} disabled={activeSyncKeys.has(schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey))}>Retry</button>
+                  {#if schema.preference.mode === 'sync'}
+                    <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => pauseSubscriptionSync(schema)}>Pause</button>
+                  {:else}
+                    <button class="sdn-button sdn-button-compact" type="button" on:click={() => resumeSubscriptionSync(schema)}>Resume</button>
+                  {/if}
+                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => void verifyPinnedArtifacts(schema)} disabled={pinVerifyRunning}>Verify pins</button>
                   {#if resetSubscriptionId === schema.subscriptionId}
                     <div class="sdn-reset-confirm sdn-reset-row-confirm" role="group" aria-label={`${schema.id} row reset confirmation`}>
                       <label>
@@ -1897,6 +2237,9 @@
           {#if resetStatus}
             <p class="sdn-empty-inline" role="status">{resetStatus}</p>
           {/if}
+          {#if pinVerifyStatus}
+            <p class="sdn-empty-inline" role="status">{pinVerifyStatus}</p>
+          {/if}
         </section>
       {/if}
 
@@ -1905,12 +2248,57 @@
           <div class="sdn-workbench-controls">
             <label>
               <span>Table</span>
-              <select class="sdn-input sdn-select" bind:value={selectedStandardId} on:change={handleTableChange}>
+              <select class="sdn-input sdn-select" bind:value={selectedSubscriptionId} on:change={handleTableChange}>
                 {#each schemaSyncRows as standard}
-                  <option value={standard.id}>{standard.id} ({formatNumber(standard.remoteRows)})</option>
+                  <option value={standard.subscriptionId}>{standard.id} - {standard.providerName} ({formatNumber(standard.remoteRows)})</option>
                 {/each}
               </select>
             </label>
+
+            {#if selectedStandardId === 'OMM'}
+              <label>
+                <span>Profile</span>
+                <select class="sdn-input sdn-select" bind:value={epochProfile}>
+                  {#each EPOCH_SQL_PROFILES as profile}
+                    <option value={profile.id}>{profile.label}</option>
+                  {/each}
+                </select>
+              </label>
+
+              {#if epochProfile === 'epoch.day'}
+                <label>
+                  <span>Day</span>
+                  <input class="sdn-input" type="date" bind:value={epochDay} />
+                </label>
+              {:else if epochProfile === 'epoch.window' || epochProfile === 'epoch.coverage'}
+                <label>
+                  <span>From</span>
+                  <input class="sdn-input" type="datetime-local" bind:value={epochFrom} />
+                </label>
+                <label>
+                  <span>To</span>
+                  <input class="sdn-input" type="datetime-local" bind:value={epochTo} />
+                </label>
+              {:else}
+                <label>
+                  <span>At</span>
+                  <input class="sdn-input" type="datetime-local" bind:value={epochAt} />
+                </label>
+                <label>
+                  <span>Max delta</span>
+                  <input class="sdn-input" type="number" min="0" step="60" bind:value={epochMaxDeltaSeconds} />
+                </label>
+              {/if}
+
+              {#if epochProfile !== 'epoch.coverage'}
+                <label>
+                  <span>Entity</span>
+                  <input class="sdn-input" inputmode="numeric" bind:value={epochEntityId} placeholder="NORAD catalog ID" />
+                </label>
+              {/if}
+
+              <button class="sdn-button sdn-button-muted" type="button" on:click={() => void applyEpochProfileQuery()} disabled={sqlRunning}>Apply</button>
+            {/if}
 
             <label class="sdn-workbench-sql">
               <span>SQL</span>
@@ -1949,6 +2337,10 @@
             <button class="sdn-button sdn-button-muted" type="button" on:click={() => void runSqlQuery()} disabled={sqlRunning}>Run SQL</button>
           </div>
 
+          {#if epochQueryError}
+            <p class="sdn-empty-inline" role="alert">{epochQueryError}</p>
+          {/if}
+
           <div class="sdn-dataset-summary" aria-label="Dataset summary">
             <div class="sdn-dataset-metric" aria-label={`Remote rows ${formatNumber(estimatedTotalRows ?? 0)}`}>
               <span>Remote rows</span>
@@ -1961,6 +2353,18 @@
             <div class="sdn-dataset-metric" aria-label={`Cached ${formatBytes(cachedByteCount)}`}>
               <span>Cached</span>
               <strong>{formatBytes(cachedByteCount)}</strong>
+            </div>
+            <div class="sdn-dataset-metric" aria-label={`Pinned rows ${formatNumber(pinnedRowCount)}`}>
+              <span>Pinned rows</span>
+              <strong>{formatNumber(pinnedRowCount)}</strong>
+            </div>
+            <div class="sdn-dataset-metric" aria-label={`Last sync ${lastSyncedLabel}`}>
+              <span>Last sync</span>
+              <strong>{lastSyncedLabel}</strong>
+            </div>
+            <div class="sdn-dataset-metric" aria-label={`Transport ${transportStateLabel}`}>
+              <span>Transport</span>
+              <strong>{transportStateLabel}</strong>
             </div>
             <div class="sdn-dataset-metric" aria-label={`Scan ${scanHashLabel}`}>
               <span>Scan</span>
