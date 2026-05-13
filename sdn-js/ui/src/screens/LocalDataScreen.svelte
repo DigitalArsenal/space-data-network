@@ -935,6 +935,7 @@
       ...patch,
       syncedRows: Math.max(patch.syncedRows ?? current.syncedRows, localRows),
     };
+    const wireSpeedUtilization = boundedWireSpeedUtilization(nextProgress.wireSpeedUtilization);
     const rowCounts = syncRowCountSummary({
       localRows: nextProgress.localRows,
       syncedRows: nextProgress.syncedRows,
@@ -947,6 +948,7 @@
       [key]: {
         ...nextProgress,
         ...rowCounts,
+        wireSpeedUtilization,
       },
     };
     persistMeasuredWireSpeedBytesPerSecond(dataSourceId, schemaSyncProgress[key]?.measuredWireSpeedBytesPerSecond ?? 0);
@@ -1800,7 +1802,7 @@
   }
 
   function syncDownloadSpeedLabel(schema: SchemaSyncRow): string {
-    const utilization = schema.progress.wireSpeedUtilization;
+    const utilization = boundedWireSpeedUtilization(schema.progress.wireSpeedUtilization);
     const utilizationLabel = utilization == null ? '' : ` (${Math.round(utilization * 100)}% wire)`;
     return `Download ${formatBytesPerSecond(schema.progress.downloadSpeedBytesPerSecond)}${utilizationLabel}`;
   }
