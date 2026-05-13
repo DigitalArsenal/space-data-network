@@ -17,6 +17,8 @@ import (
 
 	dpm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
 	"github.com/ipfs/go-cid"
+	car "github.com/ipld/go-car/v2"
+	carstorage "github.com/ipld/go-car/v2/storage"
 	mh "github.com/multiformats/go-multihash"
 	sdnpubsub "github.com/spacedatanetwork/sdn-server/internal/pubsub"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -231,8 +233,8 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	if result.ShardCID == "" || result.IndexCID == "" || result.ManifestCID == "" || result.PNMCID == "" {
 		t.Fatalf("result missing CIDs: %#v", result)
 	}
-	if len(pinned) != 3 {
-		t.Fatalf("pinned object count = %d, want 3", len(pinned))
+	if len(pinned) != 4 {
+		t.Fatalf("pinned object count = %d, want shard, index, manifest, and shard-group CAR", len(pinned))
 	}
 	if _, ok := pinned[result.ShardCID]; !ok {
 		t.Fatalf("shard CID %q was not pinned", result.ShardCID)
@@ -298,8 +300,8 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	if err != nil {
 		t.Fatalf("ListPinLedgerEntries failed: %v", err)
 	}
-	if len(ledger) != 4 {
-		t.Fatalf("pin ledger entries = %d, want 4: %#v", len(ledger), ledger)
+	if len(ledger) != 5 {
+		t.Fatalf("pin ledger entries = %d, want shard, index, manifest, pnm, and shard-group CAR: %#v", len(ledger), ledger)
 	}
 	wantPublicKey := hex.EncodeToString(signingKey.Public().(ed25519.PublicKey))
 	entriesByRole := map[string]storage.PinLedgerEntry{}
@@ -329,6 +331,9 @@ func TestConcreteDatasetPublicationServiceExportsPinsSignsAndAnnounces(t *testin
 	}
 	if entriesByRole["pnm"].CID != result.PNMCID {
 		t.Fatalf("pnm pin ledger mismatch: %#v result=%#v", entriesByRole["pnm"], result)
+	}
+	if carEntry := entriesByRole["shard-group-car"]; carEntry.CID == "" || carEntry.ByteHash == "" || carEntry.ByteCount <= 0 || carEntry.Head != publishedShard.FeedHead {
+		t.Fatalf("shard-group CAR pin ledger mismatch: %#v published=%#v", carEntry, publishedShard)
 	}
 }
 
@@ -530,8 +535,8 @@ func TestConcreteDatasetPublicationServicePublishesFullCatalogAsDPMSeries(t *tes
 	if len(publisher.announcements) != 3 {
 		t.Fatalf("announcements = %d, want 3", len(publisher.announcements))
 	}
-	if len(pinned) != 9 {
-		t.Fatalf("pinned object count = %d, want 9", len(pinned))
+	if len(pinned) != 10 {
+		t.Fatalf("pinned object count = %d, want 3 shard/index/manifest groups plus one shard-group CAR", len(pinned))
 	}
 	total := 0
 	for i, publication := range result.Publications {
@@ -827,8 +832,8 @@ func TestConcreteDatasetPublicationServiceDefaultsFullCatalogToLargeSyncChunks(t
 	if len(publisher.announcements) != 1 {
 		t.Fatalf("announcements = %d, want one large sync chunk", len(publisher.announcements))
 	}
-	if len(pinned) != 3 {
-		t.Fatalf("pinned object count = %d, want 3", len(pinned))
+	if len(pinned) != 4 {
+		t.Fatalf("pinned object count = %d, want shard, index, manifest, and shard-group CAR", len(pinned))
 	}
 	publishedShard, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
 		SchemaName:   "CAT.fbs",
@@ -879,6 +884,19 @@ func newDatasetPublicationKuboTestServer(t *testing.T, pinned map[string][]byte)
 			if r.URL.Query().Get("pin") != "true" || r.URL.Query().Get("format") != "raw" {
 				t.Fatalf("unexpected IPFS block put query: %s", r.URL.RawQuery)
 			}
+		case "/api/v0/dag/export":
+			rootCID := r.URL.Query().Get("arg")
+			body, ok := pinned[rootCID]
+			if !ok {
+				t.Fatalf("dag/export root %q was not pinned", rootCID)
+			}
+			decoded, err := cid.Decode(rootCID)
+			if err != nil {
+				t.Fatalf("decode dag/export root CID: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/vnd.ipld.car")
+			writeSingleBlockCARForTest(t, w, decoded, body)
+			return
 		default:
 			t.Fatalf("unexpected IPFS path: %s", r.URL.Path)
 		}
@@ -902,4 +920,18 @@ func newDatasetPublicationKuboTestServer(t *testing.T, pinned map[string][]byte)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"` + responseKey + `":"` + cidValue + `"}` + "\n"))
 	}))
+}
+
+func writeSingleBlockCARForTest(t *testing.T, w io.Writer, root cid.Cid, body []byte) {
+	t.Helper()
+	writer, err := carstorage.NewWritable(w, []cid.Cid{root}, car.WriteAsCarV1(true))
+	if err != nil {
+		t.Fatalf("create CAR writer: %v", err)
+	}
+	if err := writer.Put(context.Background(), root.KeyString(), body); err != nil {
+		t.Fatalf("write CAR block: %v", err)
+	}
+	if err := writer.Finalize(); err != nil {
+		t.Fatalf("finalize CAR: %v", err)
+	}
 }

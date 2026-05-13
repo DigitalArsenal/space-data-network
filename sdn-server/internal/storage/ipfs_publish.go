@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -15,6 +17,8 @@ import (
 	"strings"
 
 	"github.com/ipfs/go-cid"
+	car "github.com/ipld/go-car/v2"
+	carstorage "github.com/ipld/go-car/v2/storage"
 	mh "github.com/multiformats/go-multihash"
 )
 
@@ -23,6 +27,16 @@ type PublishedDatasetExport struct {
 	ShardCID    string
 	IndexCID    string
 	ManifestCID string
+}
+
+// PublishedShardGroupCAR records a CARv1 bundle that contains the DAG blocks
+// for one or more already-published dataset shard artifacts.
+type PublishedShardGroupCAR struct {
+	CID       string
+	Path      string
+	SHA256    string
+	ByteCount int64
+	RootCIDs  []string
 }
 
 // PublishDatasetExportToIPFS pins exported shard and index bytes through a Kubo RPC API.
@@ -98,6 +112,82 @@ func FetchIPFSBlockByCID(ctx context.Context, ipfsAPIURL, cidValue string) ([]by
 		return nil, fmt.Errorf("IPFS cat failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return body, nil
+}
+
+// PublishShardGroupCARToIPFS exports the listed root DAGs from Kubo, writes one
+// CARv1 with those roots, and pins the resulting CAR file back to IPFS. The
+// root DAGs must already exist in the local Kubo blockstore.
+func PublishShardGroupCARToIPFS(ctx context.Context, ipfsAPIURL, outputDir string, rootCIDs []string) (*PublishedShardGroupCAR, error) {
+	if strings.TrimSpace(ipfsAPIURL) == "" {
+		return nil, fmt.Errorf("ipfs api url is required")
+	}
+	outputDir = strings.TrimSpace(outputDir)
+	if outputDir == "" {
+		return nil, fmt.Errorf("car output dir is required")
+	}
+	roots, rootCIDStrings, err := normalizeCARRoots(rootCIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("at least one CAR root CID is required")
+	}
+	if err := os.MkdirAll(outputDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create CAR output dir: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(outputDir, "shard-group-*.car.tmp")
+	if err != nil {
+		return nil, fmt.Errorf("create CAR temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	carWriter, err := carstorage.NewWritable(tmp, roots, car.WriteAsCarV1(true))
+	if err != nil {
+		_ = tmp.Close()
+		return nil, fmt.Errorf("create CAR writer: %w", err)
+	}
+	for _, root := range rootCIDStrings {
+		if err := appendExportedDAGToCAR(ctx, ipfsAPIURL, root, carWriter); err != nil {
+			_ = tmp.Close()
+			return nil, err
+		}
+	}
+	if err := carWriter.Finalize(); err != nil {
+		_ = tmp.Close()
+		return nil, fmt.Errorf("finalize CAR file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, fmt.Errorf("close CAR temp file: %w", err)
+	}
+
+	sha256Value, byteCount, err := sha256HexFile(tmpPath)
+	if err != nil {
+		return nil, err
+	}
+	finalPath := filepath.Join(outputDir, "shard-group-"+sha256Value[:16]+".car")
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		return nil, fmt.Errorf("commit CAR file: %w", err)
+	}
+	committed = true
+
+	carCID, err := pinUnixFSFile(ctx, ipfsAPIURL, finalPath, "")
+	if err != nil {
+		return nil, fmt.Errorf("pin CAR bundle: %w", err)
+	}
+	return &PublishedShardGroupCAR{
+		CID:       carCID,
+		Path:      finalPath,
+		SHA256:    sha256Value,
+		ByteCount: byteCount,
+		RootCIDs:  append([]string(nil), rootCIDStrings...),
+	}, nil
 }
 
 func pinUnixFSFile(ctx context.Context, ipfsAPIURL, path, expectedRawCID string) (string, error) {
@@ -289,6 +379,95 @@ func pinRawBlock(ctx context.Context, ipfsAPIURL, path, expectedCID string) (str
 		return "", fmt.Errorf("IPFS CID %s does not match local CID %s", cidValue, localCID)
 	}
 	return cidValue, nil
+}
+
+func normalizeCARRoots(rootCIDs []string) ([]cid.Cid, []string, error) {
+	seen := map[string]bool{}
+	roots := make([]cid.Cid, 0, len(rootCIDs))
+	rootCIDStrings := make([]string, 0, len(rootCIDs))
+	for _, value := range rootCIDs {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		decoded, err := cid.Decode(value)
+		if err != nil {
+			return nil, nil, fmt.Errorf("decode CAR root CID %q: %w", value, err)
+		}
+		seen[value] = true
+		roots = append(roots, decoded)
+		rootCIDStrings = append(rootCIDStrings, value)
+	}
+	return roots, rootCIDStrings, nil
+}
+
+func appendExportedDAGToCAR(ctx context.Context, ipfsAPIURL, rootCID string, writer carstorage.WritableCar) error {
+	resp, err := exportIPFSDAG(ctx, ipfsAPIURL, rootCID)
+	if err != nil {
+		return err
+	}
+	defer resp.Close()
+
+	reader, err := car.NewBlockReader(resp)
+	if err != nil {
+		return fmt.Errorf("read exported DAG CAR for %s: %w", rootCID, err)
+	}
+	for {
+		block, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read exported DAG block for %s: %w", rootCID, err)
+		}
+		if err := writer.Put(ctx, block.Cid().KeyString(), block.RawData()); err != nil {
+			return fmt.Errorf("write CAR block %s: %w", block.Cid(), err)
+		}
+	}
+	return nil
+}
+
+func exportIPFSDAG(ctx context.Context, ipfsAPIURL, rootCID string) (io.ReadCloser, error) {
+	endpoint, err := url.JoinPath(strings.TrimRight(ipfsAPIURL, "/"), "/api/v0/dag/export")
+	if err != nil {
+		return nil, fmt.Errorf("build IPFS URL: %w", err)
+	}
+	reqURL, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("parse IPFS URL: %w", err)
+	}
+	query := reqURL.Query()
+	query.Set("arg", strings.TrimSpace(rootCID))
+	query.Set("progress", "false")
+	reqURL.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create IPFS dag/export request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("post IPFS dag/export: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("IPFS dag/export failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return resp.Body, nil
+}
+
+func sha256HexFile(path string) (string, int64, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", 0, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer file.Close()
+	hasher := sha256.New()
+	byteCount, err := io.Copy(hasher, file)
+	if err != nil {
+		return "", 0, fmt.Errorf("hash %s: %w", path, err)
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), byteCount, nil
 }
 
 func cidV1RawSHA256File(path string) (string, error) {

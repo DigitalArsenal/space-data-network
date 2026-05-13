@@ -44,7 +44,8 @@ On a measured 2 Gbps path, the target is about 1.6 Gbps, or 200 MB/s. At that ta
 - Desktop/browser sync also includes artifact seed addresses from generic trusted peer records, after the selected/configured provider addresses and without using unknown or never-trusted observed peers as trusted seeds.
 - Browser/desktop sync passes verified published shard streams directly to FlatSQL's native size-prefixed stream ingest when the payload frames are already direct FlatBuffers, with the decoder path retained for explicit-key previews, duplicate shard keys, and nested SDN-prefixed frames.
 - `open_manifest` can advertise verified shard-group CAR bundles from the pin ledger, and the browser/desktop worker imports those CARs into local Kubo before fetching the ordered shard CIDs.
+- Provider-side publication creates a CARv1 shard-group bundle for the current published feed head by exporting the shard, index, and manifest root DAGs from local Kubo, pinning the CAR back to IPFS, and registering a verified `shard-group-car` pin-ledger entry. `open_manifest` only advertises CAR bundles whose pin-ledger head matches the current feed head, so stale bundles from superseded full-catalog layouts are not offered to replicas.
 
 ## Follow-Up Work
 
-- Add provider-side CAR creation and registration for complete shard groups so providers can publish the shard-group CAR bundles that replicas already understand.
+- Run the live CelesTrak acceptance harness after the next provider publication cycle and verify the published-shard download window sustains at least 80% of the immediately measured libp2p wire-speed probe.

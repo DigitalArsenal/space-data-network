@@ -513,7 +513,7 @@ func OpenPublishedManifest(store *storage.FlatSQLStore, req QueryRequest, queryP
 
 	head := PublishedFeedHead(schemaName, FirstNonEmpty(req.ProviderID, req.ProviderId), req.SourceName, FirstNonEmpty(req.BatchID, req.BatchId), queryProfile, publications)
 	highWater := PublishedFeedHighWaterMark(publications, totalCount, totalBytes)
-	artifactBundles, err := publishedManifestArtifactBundles(store, req, queryProfile, len(segments))
+	artifactBundles, err := publishedManifestArtifactBundles(store, req, queryProfile, head, len(segments))
 	if err != nil {
 		return nil, err
 	}
@@ -540,7 +540,7 @@ func OpenPublishedManifest(store *storage.FlatSQLStore, req QueryRequest, queryP
 	return manifest, nil
 }
 
-func publishedManifestArtifactBundles(store *storage.FlatSQLStore, req QueryRequest, queryProfile string, segmentCount int) ([]ArtifactBundle, error) {
+func publishedManifestArtifactBundles(store *storage.FlatSQLStore, req QueryRequest, queryProfile, feedHead string, segmentCount int) ([]ArtifactBundle, error) {
 	entries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
 		SchemaName:        NormalizeSchema(req),
 		ProviderID:        FirstNonEmpty(req.ProviderID, req.ProviderId),
@@ -558,6 +558,9 @@ func publishedManifestArtifactBundles(store *storage.FlatSQLStore, req QueryRequ
 	for _, entry := range entries {
 		cidValue := strings.TrimSpace(entry.CID)
 		if cidValue == "" || seen[cidValue] {
+			continue
+		}
+		if feedHead != "" && entry.Head != feedHead && entry.SnapshotID != feedHead {
 			continue
 		}
 		seen[cidValue] = true
