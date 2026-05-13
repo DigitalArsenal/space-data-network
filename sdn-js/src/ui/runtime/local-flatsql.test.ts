@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildEpochProfileSql } from './epoch-query-sql';
-import { clearLocalFlatSqlStore, createLocalFlatSqlStore, decodeFlatSqlSizePrefixedStream, isReadOnlyFlatSqlQuery, stripSdnFlatBufferSizePrefix } from './local-flatsql';
+import { clearLocalFlatSqlStore, createLocalFlatSqlStore, decodeFlatSqlSizePrefixedStream, flatSqlSizePrefixedStreamInfo, isReadOnlyFlatSqlQuery, stripSdnFlatBufferSizePrefix } from './local-flatsql';
 
 const OMM_SCHEMA = readFileSync(
   new URL('../../../../../spacedatastandards.org/schema/OMM/main.fbs', import.meta.url),
@@ -236,6 +236,31 @@ describe('local FlatSQL datastore', () => {
 
     expect(records).toHaveLength(1);
     expect(records[0]?.buffer).toBe(stream.buffer);
+  });
+
+  it('scans native FlatSQL shard streams without materializing record views', () => {
+    const direct = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
+    const stream = flatSqlSizePrefixedStream([direct, direct]);
+    const firstFrameLength = 4 + direct.byteLength;
+
+    expect(flatSqlSizePrefixedStreamInfo(stream)).toEqual({
+      totalRecordCount: 2,
+      ingestRecordCount: 2,
+      ingestStartOffset: 0,
+      allFramesHaveDirectFileIdentifier: true,
+    });
+    expect(flatSqlSizePrefixedStreamInfo(stream, 1)).toEqual({
+      totalRecordCount: 2,
+      ingestRecordCount: 1,
+      ingestStartOffset: firstFrameLength,
+      allFramesHaveDirectFileIdentifier: true,
+    });
+    expect(flatSqlSizePrefixedStreamInfo(flatSqlSizePrefixedStream([STARLINK_6292_OMM_BYTES]))).toEqual({
+      totalRecordCount: 1,
+      ingestRecordCount: 1,
+      ingestStartOffset: 0,
+      allFramesHaveDirectFileIdentifier: false,
+    });
   });
 
   it('tracks downloaded FlatBuffer frames separately from materialized SQL rows', async () => {
