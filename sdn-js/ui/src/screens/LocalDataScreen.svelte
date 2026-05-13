@@ -38,6 +38,7 @@
     effectiveSchemaSyncStatus,
     schemaSyncStatusLabel as formatSchemaSyncStatusLabel,
   } from '../lib/schema-sync-labels';
+  import { loadingMetricLabel } from '../lib/data-loading-labels';
   import type {
     DataScanResult,
     DataSummary,
@@ -292,6 +293,7 @@
   let rawRecords: RawDataRecord[] = [];
   let dataScan: DataScanResult | null = null;
   let workbenchLoading = false;
+  let dataPageLoading = true;
   let lastBackend: SdnBackend | null = null;
   let configuredDataSources: ConfiguredSdnNode[] = [];
   let userSelectedDataSource = false;
@@ -349,6 +351,10 @@
   $: selectedExplorerSourceKey = subscriptionSourceKey(selectedDataSourceId, selectedDatastoreKey);
   $: subscribedStandardOptions = schemaSyncRows.filter((row) => subscriptionSourceKey(row.dataSourceId, row.datastoreKey) === subscriptionSourceKey(selectedDataSourceId, selectedDatastoreKey));
   $: activeStorageRows = schemaSyncRows.filter((row) => row.preference.mode === 'sync');
+  $: activeStorageRemoteRows = activeStorageRows.reduce((total, row) => total + row.remoteRows, 0);
+  $: activeStorageLocalRows = activeStorageRows.reduce((total, row) => total + row.localRows, 0);
+  $: activeStorageCachedBytes = activeStorageRows.reduce((total, row) => total + row.cachedBytes, 0);
+  $: activeStoragePinnedRows = activeStorageRows.reduce((total, row) => total + row.progress.pinnedRows, 0);
   $: selectedSchemaSyncRow = schemaSyncRows.find((row) => selectedSubscriptionId && row.subscriptionId === selectedSubscriptionId)
     ?? schemaSyncRows.find((row) => row.id === selectedStandardId && row.dataSourceId === selectedDataSourceId && (selectedDatastoreKey ? row.datastoreKey === selectedDatastoreKey : true))
     ?? schemaSyncRows.find((row) => row.id === selectedStandardId && row.dataSourceId === selectedDataSourceId)
@@ -383,6 +389,18 @@
     ?? dataScan?.syncProtocol
     ?? (selectedDataSourceId === LOCAL_DATA_SOURCE_ID ? 'local' : 'pending');
   $: scanHashLabel = dataScan?.scanHash ? shorten(dataScan.scanHash, 18) : 'none';
+  $: storageRemoteRowsMetric = loadingMetricLabel(dataPageLoading, formatNumber(activeStorageRemoteRows));
+  $: storageLocalRowsMetric = loadingMetricLabel(dataPageLoading, formatNumber(activeStorageLocalRows));
+  $: storageCachedMetric = loadingMetricLabel(dataPageLoading, formatBytes(activeStorageCachedBytes));
+  $: storagePinnedRowsMetric = loadingMetricLabel(dataPageLoading, formatNumber(activeStoragePinnedRows));
+  $: storageScanMetric = loadingMetricLabel(dataPageLoading, scanHashLabel);
+  $: explorerRemoteRowsMetric = loadingMetricLabel(dataPageLoading, formatNumber(estimatedTotalRows ?? 0));
+  $: explorerLocalRowsMetric = loadingMetricLabel(dataPageLoading, formatNumber(localRowCount));
+  $: explorerCachedMetric = loadingMetricLabel(dataPageLoading, formatBytes(cachedByteCount));
+  $: explorerPinnedRowsMetric = loadingMetricLabel(dataPageLoading, formatNumber(pinnedRowCount));
+  $: explorerLastSyncedMetric = loadingMetricLabel(dataPageLoading, lastSyncedLabel);
+  $: explorerTransportMetric = loadingMetricLabel(dataPageLoading, transportStateLabel);
+  $: explorerScanMetric = loadingMetricLabel(dataPageLoading, scanHashLabel);
   $: sqlColumns = sqlResult?.columns ?? [];
   $: displaySqlColumns = visibleSqlColumns(sqlColumns, sqlRecords);
   $: sqlRecords = sqlResult?.records ?? [];
@@ -404,25 +422,30 @@
   }
 
   async function initializeDataExplorer(): Promise<void> {
+    dataPageLoading = true;
     resetSchemaSyncSchedulers();
-    configuredDataSources = [];
-    dataDirectoryState = loadDataDirectoryState();
-    selectedDataSourceId = LOCAL_DATA_SOURCE_ID;
-    userSelectedDataSource = false;
-    userSelectedStandard = false;
-    await loadConfiguredDataSources();
-    dataDirectoryState = migrateSchemaSyncPreferencesToDataDirectory(
-      dataDirectoryState,
-      schemaSyncPreferences,
-      dataDirectoryMigrationSources(buildDataSourceOptions(backend, configuredDataSources, peers)),
-      schemaSyncProgress,
-    );
-    persistDataDirectoryState(dataDirectoryState);
-    if (!userSelectedDataSource) {
-      selectedDataSourceId = preferredSubscribedDataSourceId(dataDirectoryState.subscriptions)
-        ?? preferredDataSourceId(buildDataSourceOptions(backend, configuredDataSources, peers));
+    try {
+      configuredDataSources = [];
+      dataDirectoryState = loadDataDirectoryState();
+      selectedDataSourceId = LOCAL_DATA_SOURCE_ID;
+      userSelectedDataSource = false;
+      userSelectedStandard = false;
+      await loadConfiguredDataSources();
+      dataDirectoryState = migrateSchemaSyncPreferencesToDataDirectory(
+        dataDirectoryState,
+        schemaSyncPreferences,
+        dataDirectoryMigrationSources(buildDataSourceOptions(backend, configuredDataSources, peers)),
+        schemaSyncProgress,
+      );
+      persistDataDirectoryState(dataDirectoryState);
+      if (!userSelectedDataSource) {
+        selectedDataSourceId = preferredSubscribedDataSourceId(dataDirectoryState.subscriptions)
+          ?? preferredDataSourceId(buildDataSourceOptions(backend, configuredDataSources, peers));
+      }
+      await initializeWorkbench();
+    } finally {
+      dataPageLoading = false;
     }
-    await initializeWorkbench();
   }
 
   async function initializeWorkbench(): Promise<void> {
@@ -2338,25 +2361,25 @@
       {#if selectedDataSection === 'storage'}
         <section class="sdn-storage-state" aria-label="Local storage state">
           <div class="sdn-dataset-summary" aria-label="Dataset summary">
-            <div class="sdn-dataset-metric" aria-label={`Remote rows ${formatNumber(activeStorageRows.reduce((total, row) => total + row.remoteRows, 0))}`}>
+            <div class="sdn-dataset-metric" aria-label={`Remote rows ${storageRemoteRowsMetric}`}>
               <span>Remote rows</span>
-              <strong>{formatNumber(activeStorageRows.reduce((total, row) => total + row.remoteRows, 0))}</strong>
+              <strong>{storageRemoteRowsMetric}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Local rows ${formatNumber(activeStorageRows.reduce((total, row) => total + row.localRows, 0))}`}>
+            <div class="sdn-dataset-metric" aria-label={`Local rows ${storageLocalRowsMetric}`}>
               <span>Local rows</span>
-              <strong>{formatNumber(activeStorageRows.reduce((total, row) => total + row.localRows, 0))}</strong>
+              <strong>{storageLocalRowsMetric}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Cached ${formatBytes(activeStorageRows.reduce((total, row) => total + row.cachedBytes, 0))}`}>
+            <div class="sdn-dataset-metric" aria-label={`Cached ${storageCachedMetric}`}>
               <span>Cached</span>
-              <strong>{formatBytes(activeStorageRows.reduce((total, row) => total + row.cachedBytes, 0))}</strong>
+              <strong>{storageCachedMetric}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Pinned rows ${formatNumber(activeStorageRows.reduce((total, row) => total + row.progress.pinnedRows, 0))}`}>
+            <div class="sdn-dataset-metric" aria-label={`Pinned rows ${storagePinnedRowsMetric}`}>
               <span>Pinned rows</span>
-              <strong>{formatNumber(activeStorageRows.reduce((total, row) => total + row.progress.pinnedRows, 0))}</strong>
+              <strong>{storagePinnedRowsMetric}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Scan ${scanHashLabel}`}>
+            <div class="sdn-dataset-metric" aria-label={`Scan ${storageScanMetric}`}>
               <span>Scan</span>
-              <strong>{scanHashLabel}</strong>
+              <strong>{storageScanMetric}</strong>
             </div>
           </div>
 
@@ -2628,33 +2651,33 @@
           {/if}
 
           <div class="sdn-dataset-summary" aria-label="Dataset summary">
-            <div class="sdn-dataset-metric" aria-label={`Remote rows ${formatNumber(estimatedTotalRows ?? 0)}`}>
+            <div class="sdn-dataset-metric" aria-label={`Remote rows ${explorerRemoteRowsMetric}`}>
               <span>Remote rows</span>
-              <strong>{formatNumber(estimatedTotalRows ?? 0)}</strong>
+              <strong>{explorerRemoteRowsMetric}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Local rows ${formatNumber(localRowCount)}`}>
+            <div class="sdn-dataset-metric" aria-label={`Local rows ${explorerLocalRowsMetric}`}>
               <span>Local rows</span>
-              <strong>{formatNumber(localRowCount)}</strong>
+              <strong>{explorerLocalRowsMetric}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Cached ${formatBytes(cachedByteCount)}`}>
+            <div class="sdn-dataset-metric" aria-label={`Cached ${explorerCachedMetric}`}>
               <span>Cached</span>
-              <strong>{formatBytes(cachedByteCount)}</strong>
+              <strong>{explorerCachedMetric}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Pinned rows ${formatNumber(pinnedRowCount)}`}>
+            <div class="sdn-dataset-metric" aria-label={`Pinned rows ${explorerPinnedRowsMetric}`}>
               <span>Pinned rows</span>
-              <strong>{formatNumber(pinnedRowCount)}</strong>
+              <strong>{explorerPinnedRowsMetric}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Last sync ${lastSyncedLabel}`}>
+            <div class="sdn-dataset-metric" aria-label={`Last sync ${explorerLastSyncedMetric}`}>
               <span>Last sync</span>
-              <strong>{lastSyncedLabel}</strong>
+              <strong>{explorerLastSyncedMetric}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Transport ${transportStateLabel}`}>
+            <div class="sdn-dataset-metric" aria-label={`Transport ${explorerTransportMetric}`}>
               <span>Transport</span>
-              <strong>{transportStateLabel}</strong>
+              <strong>{explorerTransportMetric}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Scan ${scanHashLabel}`}>
+            <div class="sdn-dataset-metric" aria-label={`Scan ${explorerScanMetric}`}>
               <span>Scan</span>
-              <strong>{scanHashLabel}</strong>
+              <strong>{explorerScanMetric}</strong>
             </div>
           </div>
 
