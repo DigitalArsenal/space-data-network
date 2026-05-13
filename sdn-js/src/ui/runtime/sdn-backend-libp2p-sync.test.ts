@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FLATSQL_SYNC_PROTOCOL_ID, type FlatSqlSyncChunk, type FlatSqlSyncQuery } from '../../flatsql-sync';
-import { createLibp2pFlatSqlSyncBackend } from './sdn-backend-libp2p-sync';
+import { createLibp2pFlatSqlSyncBackend, exchangeFlatSqlSyncStream } from './sdn-backend-libp2p-sync';
 
 describe('libp2p FlatSQL sync backend', () => {
   it('builds data summaries by scanning configured schemas over libp2p sync', async () => {
@@ -416,6 +416,31 @@ describe('libp2p FlatSQL sync backend', () => {
         reason: 'remote FlatSQL sync returned 0/1 FlatBuffer frames',
       },
     });
+  });
+
+  it('reads response bytes while the outbound request sink is still settling', async () => {
+    let releaseSink: (() => void) | undefined;
+    const sourceStarted = new Promise<void>((resolve) => {
+      releaseSink = resolve;
+    });
+    const stream = {
+      async sink(source: AsyncIterable<Uint8Array>) {
+        const chunks: Uint8Array[] = [];
+        for await (const chunk of source) chunks.push(chunk);
+        expect(chunks.map((chunk) => Array.from(chunk))).toEqual([[1, 2, 3, 4]]);
+        await sourceStarted;
+      },
+      source: (async function* source() {
+        releaseSink?.();
+        yield new Uint8Array([9, 8, 7, 6]);
+      })(),
+      async close() {},
+    };
+
+    await expect(Promise.race([
+      exchangeFlatSqlSyncStream(stream, new Uint8Array([1, 2, 3, 4])),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('exchange deadlocked')), 25)),
+    ])).resolves.toEqual(new Uint8Array([9, 8, 7, 6]));
   });
 });
 

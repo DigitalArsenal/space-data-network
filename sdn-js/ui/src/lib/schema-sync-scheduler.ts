@@ -2,6 +2,7 @@ export interface SchemaSyncScheduleRow {
   id: string;
   subscriptionId?: string;
   datastoreKey?: string | null;
+  syncFilter?: string;
   localRows: number;
   remoteRows: number;
   preference: {
@@ -99,6 +100,7 @@ function schemaSyncScheduleSignature(rows: SchemaSyncScheduleRow[], dataSourceId
       row.id,
       row.subscriptionId ?? '',
       row.datastoreKey ?? '',
+      row.syncFilter?.trim() ?? '',
       row.localRows,
       row.remoteRows,
       row.preference.storageCap,

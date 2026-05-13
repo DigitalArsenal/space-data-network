@@ -502,23 +502,31 @@ export async function createDefaultLibp2pFlatSqlSyncClient(candidateAddrs: strin
   };
 }
 
-async function exchangeFlatSqlSyncStream(stream: unknown, payloadBytes: Uint8Array): Promise<Uint8Array> {
+export async function exchangeFlatSqlSyncStream(stream: unknown, payloadBytes: Uint8Array): Promise<Uint8Array> {
   const libp2pStream = stream as {
     sink(source: AsyncIterable<Uint8Array>): Promise<void>;
     source: AsyncIterable<unknown>;
     close(): Promise<void>;
   };
+  const sinkDone = libp2pStream.sink((async function* source() {
+    yield cloneStreamBytes(payloadBytes);
+  })());
+  let responseError: unknown;
   try {
-    await libp2pStream.sink((async function* source() {
-      yield cloneStreamBytes(payloadBytes);
-    })());
     const chunks: Uint8Array[] = [];
-    for await (const chunk of libp2pStream.source) {
-      chunks.push(cloneStreamBytes(chunk));
+    try {
+      for await (const chunk of libp2pStream.source) {
+        chunks.push(cloneStreamBytes(chunk));
+      }
+    } catch (error) {
+      responseError = error;
     }
+    if (responseError) throw responseError;
+    await sinkDone;
     return concatStreamBytes(chunks);
   } finally {
     await libp2pStream.close().catch(() => undefined);
+    if (responseError) await sinkDone.catch(() => undefined);
   }
 }
 

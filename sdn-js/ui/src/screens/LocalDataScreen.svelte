@@ -129,6 +129,7 @@
     queryProfile: string | null;
     chunkHash: string | null;
     syncProtocol: string | null;
+    syncFilter: string | null;
     verifiedChunks: string[];
     lastSyncedAt: string | null;
     error: string | null;
@@ -831,7 +832,8 @@
     const backendConfig = backendConfigForDataSource(source, datastoreKey);
     if (!backendConfig) return;
     const remoteRows = subscription?.remoteRows ?? remoteRowsForSubscription(dataSourceId, standardId, datastoreKey) ?? totalRowsForStandardId(dataSummary, standardId) ?? 0;
-    const initialProgress = schemaSyncProgressFor(
+    const syncFilter = subscription?.syncFilter ?? syncFilterForSubscription(dataSourceId, standardId, datastoreKey);
+    let initialProgress = schemaSyncProgressFor(
       dataSourceId,
       standardId,
       remoteRows,
@@ -839,6 +841,26 @@
       selectedDataSourceId === dataSourceId && selectedDatastoreKey === datastoreKey,
       datastoreKey,
     );
+    if (syncFilterChangedRequiresReset(initialProgress, syncFilter)) {
+      const persistenceKey = localFlatSqlPersistenceKey(dataSourceId, datastoreKey);
+      if (localFlatSqlStoreKey === persistenceKey) resetLocalFlatSqlStore();
+      await clearLocalFlatSqlStore({
+        persistenceKey,
+        standardIds: [standardId],
+      });
+      clearSchemaSyncProgressForSubscription(dataSourceId, standardId, datastoreKey);
+      if (selectedDataSourceId === dataSourceId && selectedDatastoreKey === datastoreKey) {
+        await refreshLocalFlatSqlStats();
+      }
+      initialProgress = schemaSyncProgressFor(
+        dataSourceId,
+        standardId,
+        remoteRows,
+        localFlatSqlStats,
+        selectedDataSourceId === dataSourceId && selectedDatastoreKey === datastoreKey,
+        datastoreKey,
+      );
+    }
     activeSyncKeys = new Set(activeSyncKeys).add(key);
     refreshSchemaSyncProgress(standardId, {
       status: 'syncing',
@@ -846,6 +868,7 @@
       totalRows: remoteRows,
       providerPeerId: source?.peerId ?? null,
       providerPublicKey: source?.publicKey ?? null,
+      syncFilter: syncFilter || null,
     }, dataSourceId, datastoreKey);
 
     let store: WorkerLocalFlatSqlStore | null = null;
@@ -862,7 +885,7 @@
         pageSize: SYNC_PAGE_SIZE,
         persistRecordInterval: SYNC_PERSIST_RECORD_INTERVAL,
         source: source?.publicKey ?? source?.peerId ?? source?.id ?? null,
-        syncFilter: subscription?.syncFilter ?? syncFilterForSubscription(dataSourceId, standardId, datastoreKey),
+        syncFilter,
       }, (nextUpdate) => applyWorkerSchemaSyncUpdate(standardId, dataSourceId, datastoreKey, nextUpdate));
       applyWorkerSchemaSyncUpdate(standardId, dataSourceId, datastoreKey, update);
     } catch (error) {
@@ -1351,6 +1374,17 @@
     ))?.syncFilter ?? '';
   }
 
+  function syncFilterChangedRequiresReset(progress: SchemaSyncProgress, nextSyncFilter: string): boolean {
+    const previous = progress.syncFilter?.trim() ?? '';
+    const next = nextSyncFilter.trim();
+    if (previous === next) return false;
+    return progress.localRows > 0
+      || progress.syncedRows > 0
+      || progress.cachedBytes > 0
+      || progress.pinnedRows > 0
+      || Boolean(progress.lastSyncedAt);
+  }
+
   function subscriptionForSync(dataSourceId: string, standardId: string, subscriptionId = ''): DataFeedSubscription | null {
     return dataDirectoryState.subscriptions.find((subscription) => subscriptionId && subscription.id === subscriptionId)
       ?? dataDirectoryState.subscriptions.find((subscription) => (
@@ -1422,6 +1456,7 @@
       queryProfile: activePersisted?.queryProfile ?? null,
       chunkHash: activePersisted?.chunkHash ?? null,
       syncProtocol: activePersisted?.syncProtocol ?? null,
+      syncFilter: activePersisted?.syncFilter ?? null,
       verifiedChunks: activePersisted?.verifiedChunks ?? [],
       lastSyncedAt: localStats?.lastSyncedAt ?? activePersisted?.lastSyncedAt ?? null,
       error: activePersisted?.error ?? null,
@@ -1560,6 +1595,7 @@
       queryProfile: normalizedOptionalString(candidate.queryProfile),
       chunkHash: normalizedOptionalString(candidate.chunkHash),
       syncProtocol: normalizedOptionalString(candidate.syncProtocol),
+      syncFilter: normalizedOptionalString(candidate.syncFilter),
       verifiedChunks: normalizedStringArray(candidate.verifiedChunks).slice(-256),
       lastSyncedAt: typeof candidate.lastSyncedAt === 'string' ? candidate.lastSyncedAt : null,
       error: typeof candidate.error === 'string' ? candidate.error : null,
@@ -2483,10 +2519,10 @@
               </div>
 
               <label class="sdn-pnm-file-query">
-                <span>FILE_ID query</span>
+                <span>FILE_ID</span>
                 <div>
                   <input class="sdn-input" bind:value={pnmFileIdQuery} />
-                  <button class="sdn-button sdn-button-muted" type="button" on:click={() => void runPnmFileIdQuery()}>Query</button>
+                  <button class="sdn-button sdn-button-muted" type="button" on:click={() => void runPnmFileIdQuery()}>Find</button>
                 </div>
               </label>
 
