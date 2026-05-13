@@ -1936,9 +1936,7 @@
   }
 
   function syncDownloadSpeedLabel(schema: SchemaSyncRow): string {
-    const utilization = boundedWireSpeedUtilization(schema.progress.wireSpeedUtilization);
-    const utilizationLabel = utilization == null ? '' : ` (${Math.round(utilization * 100)}% wire)`;
-    return `Download ${formatBytesPerSecond(schema.progress.downloadSpeedBytesPerSecond)}${utilizationLabel}`;
+    return `Download ${formatBytesPerSecond(schema.progress.downloadSpeedBytesPerSecond)}`;
   }
 
   function syncTimingLabel(schema: SchemaSyncRow): string {

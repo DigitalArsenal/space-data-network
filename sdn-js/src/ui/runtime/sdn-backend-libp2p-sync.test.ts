@@ -468,6 +468,26 @@ describe('libp2p FlatSQL sync backend', () => {
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('exchange deadlocked')), 25)),
     ])).resolves.toEqual(new Uint8Array([9, 8, 7, 6]));
   });
+
+  it('bounds stream exchanges that never close', async () => {
+    const stream = {
+      async sink(source: AsyncIterable<Uint8Array>) {
+        for await (const _chunk of source) {
+          // Drain the request payload and then leave the remote response open.
+        }
+      },
+      source: (async function* source() {
+        yield new Uint8Array([9, 8, 7, 6]);
+        await new Promise(() => undefined);
+      })(),
+      async close() {},
+    };
+
+    await expect(Promise.race([
+      exchangeFlatSqlSyncStream(stream, new Uint8Array([1, 2, 3, 4]), { timeoutMs: 1, label: 'FlatSQL sync probe' }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('exchange did not time out')), 25)),
+    ])).rejects.toThrow('FlatSQL sync probe timed out after 1 ms');
+  });
 });
 
 function headerOnlyChunk(schema: string, totalCount: number, patch: Partial<FlatSqlSyncChunk['header']> = {}): FlatSqlSyncChunk {

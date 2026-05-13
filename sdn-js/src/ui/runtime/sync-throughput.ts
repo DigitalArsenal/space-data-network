@@ -36,6 +36,7 @@ export interface ThroughputHarnessOptions {
   ipfsPeers: string[];
   ipfsProviderDiscoveryLimit: number;
   probeBytes: number;
+  requestTimeoutMs: number;
   manifestLimit: number;
   maxSegments: number | null;
   concurrency: number;
@@ -145,6 +146,7 @@ export function parseThroughputHarnessArgs(argv: string[]): ThroughputHarnessOpt
     ipfsPeers: [],
     ipfsProviderDiscoveryLimit: 16,
     probeBytes: 64 * 1024 * 1024,
+    requestTimeoutMs: 60_000,
     manifestLimit: 50_000,
     maxSegments: null,
     concurrency: 24,
@@ -192,6 +194,9 @@ export function parseThroughputHarnessArgs(argv: string[]): ThroughputHarnessOpt
         break;
       case '--probe-bytes':
         options.probeBytes = positiveIntegerArg(argv, index += 1, arg);
+        break;
+      case '--request-timeout-ms':
+        options.requestTimeoutMs = positiveIntegerArg(argv, index += 1, arg);
         break;
       case '--manifest-limit':
         options.manifestLimit = positiveIntegerArg(argv, index += 1, arg);

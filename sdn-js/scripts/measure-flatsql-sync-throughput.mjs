@@ -17,7 +17,9 @@ const QUERY_PROFILE = 'dataset-publication-offset-v1';
 
 export async function runThroughputHarness(options, now = () => Date.now()) {
   validateOptions(options);
-  const client = await createDefaultLibp2pFlatSqlSyncClient(options.addrs);
+  const client = await createDefaultLibp2pFlatSqlSyncClient(options.addrs, {
+    requestTimeoutMs: options.requestTimeoutMs,
+  });
   try {
     const probe = await client.measureWireSpeed({
       targetPeerId: options.peer,
@@ -52,6 +54,7 @@ export async function runThroughputHarness(options, now = () => Date.now()) {
       peer: options.peer,
       gateway: options.gateway,
       concurrency: options.concurrency,
+      requestTimeoutMs: options.requestTimeoutMs,
       now,
     });
     const audit = publishedShardWireSpeedAudit({
@@ -100,7 +103,9 @@ export async function downloadPublishedSegments(options) {
     while (queue.length > 0) {
       const item = queue.shift();
       if (!item) return;
-      const streamBytes = await fetchCidBytesFromGateway(options.gateway, item.segment.cid);
+      const streamBytes = await fetchCidBytesFromGateway(options.gateway, item.segment.cid, {
+        timeoutMs: options.requestTimeoutMs,
+      });
       fetchedSegments.push({
         index: item.index,
         segment: item.segment,
@@ -143,6 +148,7 @@ async function connectLocalIpfsPeers(options, selectedSegments = []) {
   const configuredPeerConnect = await connectIpfsArtifactPeers({
     ipfsApiUrl: options.ipfsApi,
     artifactPeerAddrs: options.ipfsPeers,
+    timeoutMs: options.requestTimeoutMs,
   });
   if (options.ipfsPeers.length > 0 && configuredPeerConnect.failed > 0) {
     throw new Error(
@@ -158,6 +164,7 @@ async function connectLocalIpfsPeers(options, selectedSegments = []) {
   const providerDiscovery = await connectIpfsArtifactProviders({
     ipfsApiUrl: options.ipfsApi,
     cids: providerDiscoveryCids,
+    timeoutMs: options.requestTimeoutMs,
   });
   return {
     configuredPeerCount: options.ipfsPeers.length,
@@ -187,6 +194,7 @@ function usage() {
     '  --ipfs-provider-discovery-limit <count>  Shard CIDs used for Kubo findprovs, default 16',
     '  --no-ipfs-provider-discovery             Disable automatic Kubo provider discovery',
     '  --probe-bytes <bytes>       Wire-speed probe payload, default 67108864',
+    '  --request-timeout-ms <ms>   Libp2p dial/exchange timeout, default 60000',
     '  --manifest-limit <rows>     Published manifest row limit, default 50000',
     '  --max-segments <count>      Measure only the first N published shards',
     '  --concurrency <count>       Parallel shard downloads, default 24',

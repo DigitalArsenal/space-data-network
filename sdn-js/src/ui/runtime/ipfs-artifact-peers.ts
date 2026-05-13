@@ -87,7 +87,14 @@ export async function connectIpfsArtifactPeers(options: IpfsArtifactPeerConnectO
     url.searchParams.set('arg', addr);
     url.searchParams.set('timeout', `${Math.max(1, Math.floor(options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS))}ms`);
     try {
-      const response = await fetchLike(url.toString(), { method: 'POST' });
+      const timeoutMs = Math.max(1, Math.floor(options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS));
+      const response = await fetchWithTimeout(
+        fetchLike,
+        url.toString(),
+        { method: 'POST' },
+        timeoutMs,
+        `IPFS swarm connect ${addr}`,
+      );
       if (response.ok) {
         connected += 1;
       } else {
@@ -123,9 +130,20 @@ export async function connectIpfsArtifactProviders(options: IpfsArtifactProvider
     url.searchParams.set('arg', cid);
     url.searchParams.set('num-providers', String(normalizeProviderCount(options.numProviders)));
     try {
-      const response = await fetchLike(url.toString(), { method: 'POST' });
+      const response = await fetchWithTimeout(
+        fetchLike,
+        url.toString(),
+        { method: 'POST' },
+        Math.max(1, Math.floor(options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS)),
+        `IPFS provider discovery ${cid}`,
+      );
       if (!response.ok) continue;
-      for (const addr of providerAddrsFromFindProvidersPayload(await response.text())) {
+      const payload = await readResponseTextWithTimeout(
+        response,
+        Math.max(1, Math.floor(options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS)),
+        `IPFS provider discovery ${cid}`,
+      );
+      for (const addr of providerAddrsFromFindProvidersPayload(payload)) {
         if (seen.has(addr)) continue;
         seen.add(addr);
         providerAddrs.push(addr);
@@ -145,6 +163,51 @@ export async function connectIpfsArtifactProviders(options: IpfsArtifactProvider
     ...summary,
     discovered: providerAddrs.length,
   };
+}
+
+async function readResponseTextWithTimeout(response: Response, timeoutMs: number, label: string): Promise<string> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+  const request = response.text();
+  const timer = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      reject(new Error(`${label} timed out after ${timeoutMs} ms`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([request, timer]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (timedOut) request.catch(() => undefined);
+  }
+}
+
+async function fetchWithTimeout(
+  fetchLike: typeof fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  label: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+  const request = fetchLike(url, { ...init, signal: controller.signal });
+  const timer = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      const error = new Error(`${label} timed out after ${timeoutMs} ms`);
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([request, timer]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (timedOut) request.catch(() => undefined);
+  }
 }
 
 function normalizeApiBase(value: string | null | undefined): string | null {

@@ -57,7 +57,12 @@ export interface Libp2pFlatSqlSyncBackendOptions {
   nodeFactory?: () => Promise<Libp2pFlatSqlSyncClient>;
 }
 
+export interface Libp2pFlatSqlSyncClientOptions {
+  requestTimeoutMs?: number;
+}
+
 const DEFAULT_SUMMARY_SCHEMAS = ['CAT.fbs', 'EPM.fbs', 'MPE.fbs', 'OMM.fbs', 'PNM.fbs', 'SPW.fbs'];
+export const DEFAULT_LIBP2P_FLATSQL_SYNC_REQUEST_TIMEOUT_MS = 60_000;
 
 export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackendOptions): SdnBackend {
   const targetPeerId = options.targetPeerId.trim();
@@ -421,8 +426,12 @@ function dataSourceSummaryFromDatastore(
   };
 }
 
-export async function createDefaultLibp2pFlatSqlSyncClient(candidateAddrs: string[]): Promise<Libp2pFlatSqlSyncClient> {
+export async function createDefaultLibp2pFlatSqlSyncClient(
+  candidateAddrs: string[],
+  options: Libp2pFlatSqlSyncClientOptions = {},
+): Promise<Libp2pFlatSqlSyncClient> {
   const normalizedAddrs = normalizeCandidateAddrs(candidateAddrs);
+  const requestTimeoutMs = normalizeTimeoutMs(options.requestTimeoutMs);
   const [{ createLibp2p }, { noise }, { yamux }, { multiaddr }, { peerIdFromString }] = await Promise.all([
     import('libp2p'),
     import('@chainsafe/libp2p-noise'),
@@ -471,15 +480,29 @@ export async function createDefaultLibp2pFlatSqlSyncClient(candidateAddrs: strin
     async dialProtocol(targetPeerId, protocolId, payload, requestCandidateAddrs) {
       const addrs = normalizeCandidateAddrs(requestCandidateAddrs?.length ? requestCandidateAddrs : normalizedAddrs);
       if (addrs.length === 0) {
-        const stream = await libp2p.dialProtocol(peerIdFromString(targetPeerId), protocolId);
-        return exchangeFlatSqlSyncStream(stream, payload);
+        const stream = await withAbortableTimeout(
+          `FlatSQL sync dial ${protocolId}`,
+          requestTimeoutMs,
+          (signal) => libp2p.dialProtocol(peerIdFromString(targetPeerId), protocolId, { signal }),
+        );
+        return exchangeFlatSqlSyncStream(stream, payload, {
+          timeoutMs: requestTimeoutMs,
+          label: `FlatSQL sync exchange ${protocolId}`,
+        });
       }
 
       let lastError: unknown = null;
       for (const addr of addrs) {
         try {
-          const stream = await libp2p.dialProtocol(multiaddr(normalizeDialTarget(addr, targetPeerId)), protocolId);
-          return await exchangeFlatSqlSyncStream(stream, payload);
+          const stream = await withAbortableTimeout(
+            `FlatSQL sync dial ${protocolId}`,
+            requestTimeoutMs,
+            (signal) => libp2p.dialProtocol(multiaddr(normalizeDialTarget(addr, targetPeerId)), protocolId, { signal }),
+          );
+          return await exchangeFlatSqlSyncStream(stream, payload, {
+            timeoutMs: requestTimeoutMs,
+            label: `FlatSQL sync exchange ${protocolId}`,
+          });
         } catch (error) {
           lastError = error;
         }
@@ -525,12 +548,38 @@ export function selectLibp2pFlatSqlSyncTransports(candidateAddrs: string[]): Lib
   };
 }
 
-export async function exchangeFlatSqlSyncStream(stream: unknown, payloadBytes: Uint8Array): Promise<Uint8Array> {
+export interface ExchangeFlatSqlSyncStreamOptions {
+  timeoutMs?: number;
+  label?: string;
+}
+
+export async function exchangeFlatSqlSyncStream(
+  stream: unknown,
+  payloadBytes: Uint8Array,
+  options: ExchangeFlatSqlSyncStreamOptions = {},
+): Promise<Uint8Array> {
   const libp2pStream = stream as {
     sink(source: AsyncIterable<Uint8Array>): Promise<void>;
     source: AsyncIterable<unknown>;
     close(): Promise<void>;
   };
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+  return withAbortableTimeout(
+    options.label ?? 'FlatSQL sync exchange',
+    timeoutMs,
+    () => performFlatSqlSyncStreamExchange(libp2pStream, payloadBytes),
+    () => libp2pStream.close().catch(() => undefined),
+  );
+}
+
+async function performFlatSqlSyncStreamExchange(
+  libp2pStream: {
+    sink(source: AsyncIterable<Uint8Array>): Promise<void>;
+    source: AsyncIterable<unknown>;
+    close(): Promise<void>;
+  },
+  payloadBytes: Uint8Array,
+): Promise<Uint8Array> {
   const sinkDone = libp2pStream.sink((async function* source() {
     yield cloneStreamBytes(payloadBytes);
   })());
@@ -550,6 +599,35 @@ export async function exchangeFlatSqlSyncStream(stream: unknown, payloadBytes: U
   } finally {
     await libp2pStream.close().catch(() => undefined);
     if (responseError) await sinkDone.catch(() => undefined);
+  }
+}
+
+async function withAbortableTimeout<T>(
+  label: string,
+  timeoutMs: number,
+  operation: (signal: AbortSignal) => Promise<T>,
+  onTimeout?: () => void | Promise<void>,
+): Promise<T> {
+  if (timeoutMs <= 0) return operation(new AbortController().signal);
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+  const timeoutMessage = `${label} timed out after ${timeoutMs} ms`;
+  const operationPromise = operation(controller.signal);
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new Error(timeoutMessage));
+      void Promise.resolve(onTimeout?.()).catch(() => undefined);
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([operationPromise, timeoutPromise]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (timedOut) operationPromise.catch(() => undefined);
   }
 }
 
@@ -589,6 +667,11 @@ function normalizeDialTarget(addr: string, targetPeerId: string): string {
 
 function normalizeCandidateAddrs(addrs: string[]): string[] {
   return Array.from(new Set(addrs.map((addr) => addr.trim()).filter(Boolean)));
+}
+
+function normalizeTimeoutMs(timeoutMs: number | null | undefined): number {
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs)) return DEFAULT_LIBP2P_FLATSQL_SYNC_REQUEST_TIMEOUT_MS;
+  return Math.max(0, Math.floor(timeoutMs));
 }
 
 export function dataScanResultFromChunk(chunk: FlatSqlSyncChunk): DataScanResult {

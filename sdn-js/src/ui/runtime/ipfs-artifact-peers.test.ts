@@ -144,4 +144,23 @@ describe('IPFS artifact peer routing', () => {
       'POST http://127.0.0.1:5001/api/v0/swarm/connect?arg=%2Fdns4%2Fprovider-b.example%2Ftcp%2F4001%2Fp2p%2F12D3KooWProviderB&timeout=5000ms',
     ]);
   });
+
+  it('bounds IPFS provider discovery requests', async () => {
+    const result = await Promise.race([
+      connectIpfsArtifactProviders({
+        ipfsApiUrl: 'http://127.0.0.1:5001/',
+        cids: ['bafyShardA'],
+        timeoutMs: 1,
+        fetch: async () => new Promise<Response>(() => undefined),
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('provider discovery did not time out')), 25)),
+    ]);
+
+    expect(result).toEqual({
+      attempted: 0,
+      connected: 0,
+      failed: 0,
+      discovered: 0,
+    });
+  });
 });
