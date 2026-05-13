@@ -22,7 +22,7 @@
   } from '../../../src/ui/runtime/local-flatsql-worker-client';
   import { decodeOmmFlatBuffer } from '../../../src/ui/runtime/omm-flatbuffer';
   import { decodePnmFlatBuffer } from '../../../src/ui/runtime/pnm-flatbuffer';
-  import { normalizeIpfsArtifactPeerAddrs } from '../../../src/ui/runtime/ipfs-artifact-peers';
+  import { normalizeIpfsArtifactPeerAddrs, prioritizeIpfsArtifactPeerAddrs } from '../../../src/ui/runtime/ipfs-artifact-peers';
   import {
     buildEpochProfileSql,
     EPOCH_SQL_PROFILES,
@@ -1906,7 +1906,7 @@
       publicKey: source.publicKey,
       gatewayUrl: localGatewayUrl(),
       ipfsApiUrl: localKuboApiUrl(),
-      artifactPeerAddrs: source.artifactPeerAddrs ?? [],
+      artifactPeerAddrs: artifactPeerAddrsForDataSource(source),
       measuredWireSpeedBytesPerSecond: measuredWireSpeedBytesPerSecondForSource(source.id),
     };
   }
@@ -2067,6 +2067,13 @@
         ?? metadata.artifact_addrs
         ?? metadata.artifactAddrs,
     );
+  }
+
+  function artifactPeerAddrsForDataSource(source: DataSourceOption): string[] {
+    const discoveredPeerAddrs = dataSourceOptions
+      .filter((option) => option.kind === 'configured')
+      .flatMap((option) => option.artifactPeerAddrs ?? []);
+    return prioritizeIpfsArtifactPeerAddrs(source.artifactPeerAddrs ?? [], discoveredPeerAddrs);
   }
 
   function configuredNodeLabel(node: ConfiguredSdnNode, observedNames: Map<string, string>, peerId: string | null): string {

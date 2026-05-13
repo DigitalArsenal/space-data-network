@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   connectIpfsArtifactPeers,
   normalizeIpfsArtifactPeerAddrs,
+  prioritizeIpfsArtifactPeerAddrs,
 } from './ipfs-artifact-peers';
 
 describe('IPFS artifact peer routing', () => {
@@ -43,6 +44,20 @@ describe('IPFS artifact peer routing', () => {
     expect(calls).toEqual([
       'POST http://127.0.0.1:5001/api/v0/swarm/connect?arg=%2Fip4%2F167.172.219.213%2Ftcp%2F4002%2Fp2p%2F12D3KooWCelesTrak&timeout=5000ms',
       'POST http://127.0.0.1:5001/api/v0/swarm/connect?arg=%2Fip4%2F159.203.150.8%2Ftcp%2F4002%2Fp2p%2F12D3KooWSpaceAware&timeout=5000ms',
+    ]);
+  });
+
+  it('prioritizes the selected provider while adding every discovered seed peer once', () => {
+    expect(prioritizeIpfsArtifactPeerAddrs(
+      ['/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWCelesTrak'],
+      [
+        '/ip4/159.203.150.8/tcp/4002/p2p/12D3KooWSpaceAware',
+        '/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWCelesTrak',
+        '',
+      ],
+    )).toEqual([
+      '/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWCelesTrak',
+      '/ip4/159.203.150.8/tcp/4002/p2p/12D3KooWSpaceAware',
     ]);
   });
 });

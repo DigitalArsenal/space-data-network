@@ -31,6 +31,13 @@ export function normalizeIpfsArtifactPeerAddrs(value: unknown): string[] {
   return normalized;
 }
 
+export function prioritizeIpfsArtifactPeerAddrs(primary: unknown, candidates: unknown): string[] {
+  return normalizeIpfsArtifactPeerAddrs([
+    ...normalizeIpfsArtifactPeerAddrs(primary),
+    ...normalizeIpfsArtifactPeerAddrs(candidates),
+  ]);
+}
+
 export async function connectIpfsArtifactPeers(options: IpfsArtifactPeerConnectOptions): Promise<IpfsArtifactPeerConnectSummary> {
   const apiBase = normalizeApiBase(options.ipfsApiUrl);
   const artifactPeerAddrs = normalizeIpfsArtifactPeerAddrs(options.artifactPeerAddrs);
