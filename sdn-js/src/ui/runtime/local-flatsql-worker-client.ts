@@ -55,6 +55,7 @@ export interface WorkerSchemaSyncProgress {
   queryProfile: string | null;
   chunkHash: string | null;
   syncProtocol: string | null;
+  syncFilter: string | null;
   verifiedChunks: string[];
   lastSyncedAt: string | null;
   error: string | null;

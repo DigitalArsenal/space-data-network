@@ -70,6 +70,42 @@ describe('schema sync scheduler', () => {
     await Promise.all([firstRun, secondRun]);
     expect(maxActiveCount).toBe(1);
   });
+
+  it('reschedules a subscription when its sync filter changes', async () => {
+    const calls: Array<[string, string, string | undefined]> = [];
+    const scheduler = createSchemaSyncScheduler({
+      syncSchema: (standardId, dataSourceId, subscriptionId) => {
+        calls.push([standardId, dataSourceId, subscriptionId]);
+      },
+    });
+    const baseRow = {
+      id: 'OMM',
+      subscriptionId: 'configured:celestrak.eth:OMM',
+      datastoreKey: 'sdn-ds-v1-history',
+      localRows: 0,
+      remoteRows: 10,
+      preference: {
+        mode: 'sync',
+        storageCap: 1,
+        storageUnit: 'GB',
+      },
+    } as const;
+
+    await scheduler.schedule([baseRow], 'configured:celestrak.eth');
+    await scheduler.idle();
+    await scheduler.schedule([
+      {
+        ...baseRow,
+        syncFilter: "EPOCH_DAY = '2026-05-12'",
+      },
+    ], 'configured:celestrak.eth');
+    await scheduler.idle();
+
+    expect(calls).toEqual([
+      ['OMM', 'configured:celestrak.eth', 'configured:celestrak.eth:OMM'],
+      ['OMM', 'configured:celestrak.eth', 'configured:celestrak.eth:OMM'],
+    ]);
+  });
 });
 
 function row(id: string, localRows: number, remoteRows: number) {

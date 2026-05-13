@@ -294,6 +294,8 @@ describe('SDN data Svelte source', () => {
       'Type RESET to clear',
       'Next sync attempt',
       'nextSyncAttemptLabel',
+      'retrySubscriptionSync',
+      '>Retry</button>',
       'Sync filter',
       'handleSubscriptionFilterInput',
       'handleSubscriptionStorageCapInput',
@@ -364,6 +366,7 @@ describe('SDN data Svelte source', () => {
     expect(source).not.toContain('Object inspector');
     expect(source).not.toContain('Read raw');
     expect(source).not.toContain('Test EPM query');
+    expect(source).not.toContain('>Query</button>');
     expect(source).not.toContain("label: 'Payload'");
     expect(source).not.toContain('PAYLOAD');
     expect(source).not.toContain('{pageLabel} / {filteredRows.length} visible / {selectedSchemaName}');
@@ -389,7 +392,7 @@ describe('SDN data worker source', () => {
       'syncSchemaInWorker',
       "'Remote page chunk'",
       'currentStore.ingestFlatBufferStream',
-      'flatBufferStreamFromPublishedFlatSqlSegment',
+      'timedFlatBufferStreamFromPublishedFlatSqlSegment',
       'PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE',
       'PUBLISHED_SHARD_FETCH_CONCURRENCY',
       'fetchPublishedSegmentsInOrder',
