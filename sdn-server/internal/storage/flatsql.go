@@ -1478,6 +1478,9 @@ type RawRecordQuery struct {
 	SyncFilter        string
 	Limit             int
 	Offset            int
+	UseRowIDCursor    bool
+	AfterRowID        int64
+	MaxRowID          int64
 }
 
 // RawRecordHead summarizes a raw-record result set without hydrating any
@@ -2476,6 +2479,7 @@ func (s *FlatSQLStore) Path() string {
 // Record represents a stored record with metadata.
 type Record struct {
 	CID            string
+	RowID          int64
 	PeerID         string
 	Timestamp      time.Time
 	Data           []byte
@@ -3289,6 +3293,11 @@ func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, erro
 		}
 		if ok {
 			head = summary
+			if filter.UseRowIDCursor && head.MaxRowID <= 0 {
+				head = RawRecordHead{}
+			}
+		}
+		if ok && (!filter.UseRowIDCursor || head.MaxRowID > 0) {
 			if filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) {
 				localCount, localBytes, err := s.localEPMSummaryLocked()
 				if err != nil {
@@ -3557,6 +3566,25 @@ func (s *FlatSQLStore) QueryRawRecordRefs(filter RawRecordQuery) ([]*Record, err
 	return s.queryRawRecords(filter, false)
 }
 
+func appendRawRecordRowIDCursorWhere(query string, args []interface{}, qualifier string, filter RawRecordQuery) (string, []interface{}) {
+	if !filter.UseRowIDCursor {
+		return query, args
+	}
+	prefix := strings.TrimSpace(qualifier)
+	if prefix != "" {
+		prefix += "."
+	}
+	if filter.AfterRowID > 0 {
+		query += fmt.Sprintf(` AND %srowid > ?`, prefix)
+		args = append(args, filter.AfterRowID)
+	}
+	if filter.MaxRowID > 0 {
+		query += fmt.Sprintf(` AND %srowid <= ?`, prefix)
+		args = append(args, filter.MaxRowID)
+	}
+	return query, args
+}
+
 func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -3591,7 +3619,7 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 	indexFiltered := indexFilter.active()
 
 	taggedQuery := fmt.Sprintf(`
-		SELECT records.cid, records.peer_id, records.timestamp,
+		SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
 		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
 		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
 		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
@@ -3635,13 +3663,18 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 		taggedQuery += ` AND tags.producer_public_key = ?`
 		args = append(args, producerPublicKey)
 	}
+	taggedQuery, args = appendRawRecordRowIDCursorWhere(taggedQuery, args, "records", filter)
 	taggedQuery, args = appendRawRecordSyncFilterWhere(taggedQuery, args, indexFilter)
-	if indexFiltered {
+	if filter.UseRowIDCursor {
+		taggedQuery += ` ORDER BY records.rowid ASC, records.cid ASC LIMIT ?`
+		args = append(args, filter.Limit)
+	} else if indexFiltered {
 		taggedQuery += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) ASC, records.cid ASC LIMIT ? OFFSET ?`
+		args = append(args, filter.Limit, filter.Offset)
 	} else {
 		taggedQuery += ` ORDER BY tags.created_at DESC, tags.cid ASC LIMIT ? OFFSET ?`
+		args = append(args, filter.Limit, filter.Offset)
 	}
-	args = append(args, filter.Limit, filter.Offset)
 
 	rows, err := s.db.Query(taggedQuery, args...)
 	if err != nil {
@@ -3655,7 +3688,7 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 	if !sourceFiltered && len(records) < filter.Limit {
 		untaggedLimit := filter.Limit - len(records)
 		untaggedQuery := fmt.Sprintf(`
-			SELECT records.cid, records.peer_id, records.timestamp,
+			SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
 			       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
 			       '', '', '', '', '', '', '', NULL
 			FROM %s records
@@ -3684,8 +3717,11 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 			untaggedQuery += ` AND records.cid = ?`
 			untaggedArgs = append(untaggedArgs, cid)
 		}
+		untaggedQuery, untaggedArgs = appendRawRecordRowIDCursorWhere(untaggedQuery, untaggedArgs, "records", filter)
 		untaggedQuery, untaggedArgs = appendRawRecordSyncFilterWhere(untaggedQuery, untaggedArgs, indexFilter)
-		if indexFiltered {
+		if filter.UseRowIDCursor {
+			untaggedQuery += ` ORDER BY records.rowid ASC, records.cid ASC LIMIT ?`
+		} else if indexFiltered {
 			untaggedQuery += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) ASC, records.cid ASC LIMIT ?`
 		} else {
 			untaggedQuery += ` ORDER BY records.timestamp DESC, records.cid ASC LIMIT ?`
@@ -3803,7 +3839,7 @@ func (s *FlatSQLStore) loadRawRecordRefCandidatesLocked(schemaName, tableName st
 
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(cids)), ",")
 	taggedQuery := fmt.Sprintf(`
-		SELECT records.cid, records.peer_id, records.timestamp,
+		SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
 		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
 		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
 		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
@@ -3829,7 +3865,7 @@ func (s *FlatSQLStore) loadRawRecordRefCandidatesLocked(schemaName, tableName st
 	}
 
 	untaggedQuery := fmt.Sprintf(`
-		SELECT records.cid, records.peer_id, records.timestamp,
+		SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
 		       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
 		       '', '', '', '', '', '', '', NULL
 		FROM %s records
@@ -4054,6 +4090,7 @@ func (s *FlatSQLStore) scanRawRecordRows(rows *sql.Rows, hydrate bool) ([]*Recor
 		var streamOffset, recordLength int64
 		var signatureHex sql.NullString
 		if err := rows.Scan(
+			&rec.RowID,
 			&rec.CID,
 			&rec.PeerID,
 			&ts,

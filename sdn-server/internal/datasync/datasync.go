@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -155,6 +156,7 @@ type Snapshot struct {
 	SnapshotID    string
 	Head          string
 	HighWaterMark string
+	MaxRowID      int64
 }
 
 func NormalizeSchema(req QueryRequest) string {
@@ -201,28 +203,49 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 	if limit > maxLimit {
 		limit = maxLimit
 	}
+	hasProvidedSnapshot := req.TotalCount > 0 && strings.TrimSpace(req.SnapshotID) != "" && strings.TrimSpace(req.Head) != ""
 	offset := req.Offset
+	useRowIDCursor := !hasProvidedSnapshot && req.Offset <= 0
+	var cursor rawRecordCursor
 	if strings.TrimSpace(req.Cursor) != "" {
-		parsedOffset, err := ParseCursor(req.Cursor)
+		parsedCursor, ok, err := ParseRawRecordCursor(req.Cursor)
 		if err != nil {
 			return nil, nil, err
 		}
-		offset = parsedOffset
+		if ok {
+			cursor = parsedCursor
+			useRowIDCursor = true
+		} else {
+			parsedOffset, err := ParseCursor(req.Cursor)
+			if err != nil {
+				return nil, nil, err
+			}
+			offset = parsedOffset
+			useRowIDCursor = false
+		}
 	}
 	if offset < 0 {
 		return nil, nil, fmt.Errorf("offset must be non-negative")
 	}
 
 	filter := FilterFromRequest(req, limit, offset)
+	filter.UseRowIDCursor = useRowIDCursor
+	if useRowIDCursor {
+		filter.AfterRowID = cursor.AfterRowID
+		filter.MaxRowID = cursor.MaxRowID
+	}
 	var totalCount int64
 	var snapshot Snapshot
-	hasProvidedSnapshot := req.TotalCount > 0 && strings.TrimSpace(req.SnapshotID) != "" && strings.TrimSpace(req.Head) != ""
 	if hasProvidedSnapshot {
 		totalCount = req.TotalCount
 		snapshot = Snapshot{
 			SnapshotID:    strings.TrimSpace(req.SnapshotID),
 			Head:          strings.TrimSpace(req.Head),
 			HighWaterMark: strings.TrimSpace(req.HighWaterMark),
+			MaxRowID:      cursor.MaxRowID,
+		}
+		if useRowIDCursor && filter.MaxRowID <= 0 {
+			return nil, nil, fmt.Errorf("row cursor is missing snapshot row boundary")
 		}
 	} else {
 		var err error
@@ -234,6 +257,9 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 		if err != nil {
 			return nil, nil, err
 		}
+		if useRowIDCursor {
+			filter.MaxRowID = snapshot.MaxRowID
+		}
 	}
 	records, err := store.QueryRawRecordRefs(filter)
 	if err != nil {
@@ -244,7 +270,16 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 		results = append(results, RecordRow(schemaName, rec, false))
 	}
 	nextCursor := ""
-	if int64(offset+len(records)) < totalCount {
+	responseCursor := EncodeCursor(offset)
+	if useRowIDCursor {
+		responseCursor = EncodeRawRecordCursor(filter.AfterRowID, filter.MaxRowID, snapshot.SnapshotID)
+		if len(records) > 0 {
+			lastRowID := records[len(records)-1].RowID
+			if len(records) >= limit && filter.MaxRowID > 0 && lastRowID < filter.MaxRowID {
+				nextCursor = EncodeRawRecordCursor(lastRowID, filter.MaxRowID, snapshot.SnapshotID)
+			}
+		}
+	} else if int64(offset+len(records)) < totalCount {
 		nextCursor = EncodeCursor(offset + len(records))
 	}
 	chunkHash := ScanHash(schemaName, records)
@@ -254,7 +289,7 @@ func Scan(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (*ScanRes
 		Count:         len(results),
 		Limit:         limit,
 		Offset:        offset,
-		Cursor:        EncodeCursor(offset),
+		Cursor:        responseCursor,
 		NextCursor:    nextCursor,
 		SnapshotID:    snapshot.SnapshotID,
 		Head:          snapshot.Head,
@@ -578,6 +613,7 @@ func SnapshotForFilter(store *storage.FlatSQLStore, filter storage.RawRecordQuer
 		SnapshotID:    id,
 		Head:          id,
 		HighWaterMark: highWater,
+		MaxRowID:      head.MaxRowID,
 	}, nil
 }
 
@@ -745,6 +781,57 @@ func EncodeCursor(offset int) string {
 		offset = 0
 	}
 	return base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
+}
+
+type rawRecordCursor struct {
+	Version    int    `json:"v"`
+	Mode       string `json:"mode"`
+	AfterRowID int64  `json:"after_row_id"`
+	MaxRowID   int64  `json:"max_row_id"`
+	SnapshotID string `json:"snapshot_id,omitempty"`
+}
+
+func EncodeRawRecordCursor(afterRowID, maxRowID int64, snapshotID string) string {
+	if afterRowID < 0 {
+		afterRowID = 0
+	}
+	cursor := rawRecordCursor{
+		Version:    1,
+		Mode:       "rowid-snapshot",
+		AfterRowID: afterRowID,
+		MaxRowID:   maxRowID,
+		SnapshotID: strings.TrimSpace(snapshotID),
+	}
+	raw, err := json.Marshal(cursor)
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func ParseRawRecordCursor(cursor string) (rawRecordCursor, bool, error) {
+	trimmed := strings.TrimSpace(cursor)
+	if trimmed == "" {
+		return rawRecordCursor{}, false, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(trimmed)
+	if err != nil {
+		return rawRecordCursor{}, false, nil
+	}
+	if len(raw) == 0 || raw[0] != '{' {
+		return rawRecordCursor{}, false, nil
+	}
+	var parsed rawRecordCursor
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return rawRecordCursor{}, false, fmt.Errorf("invalid cursor")
+	}
+	if parsed.Version != 1 || parsed.Mode != "rowid-snapshot" || parsed.AfterRowID < 0 || parsed.MaxRowID < 0 {
+		return rawRecordCursor{}, false, fmt.Errorf("invalid cursor")
+	}
+	if parsed.MaxRowID > 0 && parsed.AfterRowID > parsed.MaxRowID {
+		return rawRecordCursor{}, false, fmt.Errorf("invalid cursor")
+	}
+	return parsed, true, nil
 }
 
 func ParseCursor(cursor string) (int, error) {

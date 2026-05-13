@@ -145,6 +145,81 @@ func TestScanAppliesSubscriptionSyncFilterBeforeReturningRefs(t *testing.T) {
 	}
 }
 
+func TestScanUsesSnapshotRowIDCursorForProviderPagination(t *testing.T) {
+	store := newDataSyncTestStore(t)
+	tags := storage.SourceTags{
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		BatchID:           "batch-a",
+		ProducerPeerID:    "peer-celestrak",
+		ProducerPublicKey: "public-celestrak",
+	}
+	for _, norad := range []uint32{10001, 10002, 10003} {
+		omm := sds.NewOMMBuilder().
+			WithNoradCatID(norad).
+			WithObjectID("2026-001").
+			WithObjectName("SAT").
+			WithEpoch("2026-05-12T12:00:00Z").
+			Build()
+		if _, err := store.StoreWithSourceTags("OMM.fbs", omm, "source:celestrak", nil, tags); err != nil {
+			t.Fatalf("store OMM %d failed: %v", norad, err)
+		}
+	}
+
+	first, _, err := Scan(store, QueryRequest{
+		Schema:     "OMM.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-gp",
+		Limit:      2,
+	}, MaxSyncChunkLimit)
+	if err != nil {
+		t.Fatalf("first Scan failed: %v", err)
+	}
+	if first.Count != 2 || first.TotalCount != 3 {
+		t.Fatalf("first scan count = %d/%d, want 2/3", first.Count, first.TotalCount)
+	}
+	if first.NextCursor == "" {
+		t.Fatalf("first scan did not return a next cursor")
+	}
+	if first.NextCursor == EncodeCursor(2) {
+		t.Fatalf("next cursor still uses legacy offset encoding: %q", first.NextCursor)
+	}
+
+	newOMM := sds.NewOMMBuilder().
+		WithNoradCatID(99999).
+		WithObjectID("2026-NEW").
+		WithObjectName("NEW").
+		WithEpoch("2026-05-12T12:00:00Z").
+		Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", newOMM, "source:celestrak", nil, tags); err != nil {
+		t.Fatalf("store post-snapshot OMM failed: %v", err)
+	}
+
+	second, records, err := Scan(store, QueryRequest{
+		Schema:        "OMM.fbs",
+		ProviderID:    "space-data-network-02",
+		SourceName:    "celestrak-gp",
+		Limit:         2,
+		Cursor:        first.NextCursor,
+		SnapshotID:    first.SnapshotID,
+		Head:          first.Head,
+		HighWaterMark: first.HighWaterMark,
+		TotalCount:    first.TotalCount,
+	}, MaxSyncChunkLimit)
+	if err != nil {
+		t.Fatalf("second Scan failed: %v", err)
+	}
+	if second.TotalCount != 3 || second.Count != 1 || second.NextCursor != "" {
+		t.Fatalf("second scan = count %d/%d next %q, want 1/3 terminal", second.Count, second.TotalCount, second.NextCursor)
+	}
+	if len(records) != 1 {
+		t.Fatalf("second scan records = %d, want 1", len(records))
+	}
+	if records[0].SourceTags.ProviderID != "space-data-network-02" {
+		t.Fatalf("second scan returned unexpected record: %+v", records[0])
+	}
+}
+
 func newDataSyncTestStore(t *testing.T) *storage.FlatSQLStore {
 	t.Helper()
 	validator, err := sds.NewValidator(nil)
