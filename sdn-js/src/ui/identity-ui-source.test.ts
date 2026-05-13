@@ -297,6 +297,7 @@ describe('SDN data Svelte source', () => {
       'nextSyncAttemptLabel',
       'retrySubscriptionSync',
       '>Retry</button>',
+      'schema.progress.error',
       'Sync filter',
       'handleSubscriptionFilterInput',
       'handleSubscriptionStorageCapInput',

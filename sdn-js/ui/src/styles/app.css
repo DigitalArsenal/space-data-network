@@ -839,6 +839,10 @@ textarea,
   font-size: 0.72rem;
 }
 
+.sdn-storage-row .sdn-sync-error {
+  color: var(--sdn-red);
+}
+
 .sdn-schema-sync-table {
   width: 100%;
   min-width: 68rem;
