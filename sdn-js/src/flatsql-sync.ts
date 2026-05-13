@@ -33,6 +33,7 @@ export interface FlatSqlSyncQuery {
   scanHash?: string;
   chunkHash?: string;
   queryProfile?: string;
+  syncFilter?: string;
   limit?: number;
   offset?: number;
   records?: FlatSqlSyncRecordRef[];
@@ -230,6 +231,7 @@ export function encodeFlatSqlSyncRequest(query: FlatSqlSyncQuery): Uint8Array {
     ...(query.scanHash ? { scan_hash: query.scanHash } : {}),
     ...(query.chunkHash ? { chunk_hash: query.chunkHash } : {}),
     ...(query.queryProfile ? { query_profile: query.queryProfile } : {}),
+    ...(query.syncFilter ? { sync_filter: query.syncFilter } : {}),
     ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
     ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
     ...(query.records ? { records: query.records.map(flatSqlSyncRecordRefPayload) } : {}),

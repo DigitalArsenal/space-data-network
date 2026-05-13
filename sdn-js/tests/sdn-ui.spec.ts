@@ -124,6 +124,55 @@ test('data route renders subscribed local datastore preview without workbench st
   await expect(page.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
 });
 
+test('data route shows retry instead of query for sync-error subscriptions', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('sdn:data-directory:v1', JSON.stringify({
+      peerTrust: { 'local-node': 'marginal' },
+      subscriptions: [{
+        id: 'local:PNM',
+        dataSourceId: 'local',
+        peerId: 'local-node',
+        standardId: 'PNM',
+        providerName: 'CelesTrak Provider',
+        providerPublicKey: 'local-node',
+        remoteRows: 12,
+        storageCap: 1,
+        storageUnit: 'GB',
+        syncFilter: 'FILE_ID LIKE celestrak:%',
+        createdAt: '2026-05-12T00:00:00.000Z',
+        updatedAt: '2026-05-12T00:00:00.000Z',
+      }],
+    }));
+    window.localStorage.setItem('sdn:data-schema-sync:v1', JSON.stringify({
+      'local:PNM': { mode: 'sync', storageCap: 1, storageUnit: 'GB' },
+    }));
+    window.localStorage.setItem('sdn:data-schema-sync-state:v1', JSON.stringify({
+      'local:PNM': {
+        status: 'error',
+        syncedRows: 10,
+        totalRows: 12,
+        localRows: 10,
+        pinnedRows: 10,
+        cachedBytes: 4096,
+        error: 'failed to dial remote FlatSQL sync peer',
+      },
+    }));
+  });
+
+  await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
+  await page.getByRole('button', { name: 'Sync settings' }).click();
+
+  const syncSettings = page.getByLabel('Sync settings');
+  const row = syncSettings.locator('article').filter({ hasText: 'CelesTrak Provider' });
+  await expect(row).toContainText('Sync error');
+  await expect(row.getByRole('button', { name: 'Query' })).toHaveCount(0);
+  await expect(row.getByRole('button', { name: 'Retry' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'PNM sync filter' })).toHaveValue('FILE_ID LIKE celestrak:%');
+
+  await row.getByRole('button', { name: 'Retry' }).click();
+  await expect(row).toContainText('Queued');
+});
+
 test('data route keeps same-schema subscriptions separated by datastore namespace', async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem('sdn:data-directory:v1', JSON.stringify({
@@ -273,6 +322,126 @@ test('data route keeps same-schema subscriptions separated by datastore namespac
 
   await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('local:OMM:datastore:sdn-ds-live');
   await expect.poll(() => scanDatastoreKeys.at(-1) ?? '').toBe('sdn-ds-live');
+});
+
+test('data route applies OMM epoch profiles to locally synced CelesTrak rows', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('sdn:data-directory:v1', JSON.stringify({
+      peerTrust: { 'local-node': 'marginal' },
+      subscriptions: [{
+        id: 'local:OMM:sdn-ds-live',
+        dataSourceId: 'local',
+        peerId: 'local-node',
+        datastoreKey: 'sdn-ds-live',
+        standardId: 'OMM',
+        providerName: 'CelesTrak Live',
+        providerPublicKey: 'local-node',
+        remoteRows: 2_287_018,
+        storageCap: 1,
+        storageUnit: 'GB',
+        syncFilter: '',
+        createdAt: '2026-05-12T00:00:00.000Z',
+        updatedAt: '2026-05-12T00:00:00.000Z',
+      }],
+    }));
+    window.localStorage.setItem('sdn:data-schema-sync:v1', JSON.stringify({
+      'local:OMM:sdn-ds-live': { mode: 'preview', storageCap: 1, storageUnit: 'GB' },
+    }));
+  });
+
+  await page.context().unroute('**/api/v1/data/summary');
+  await page.context().unroute('**/api/v1/data/scan');
+  await page.context().unroute('**/api/v1/data/stream');
+
+  await page.context().route('**/api/v1/data/summary', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/api/v1/data/summary') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        total_records: 2_287_018,
+        total_bytes: 337_000_000,
+        schemas: [{ schema_name: 'OMM.fbs', count: 2_287_018, total_bytes: 337_000_000 }],
+        sources: [{
+          datastore_key: 'sdn-ds-live',
+          schema_name: 'OMM.fbs',
+          provider_id: 'local',
+          source_name: 'celestrak-gp',
+          batch_id: 'live',
+          count: 2_287_018,
+          total_bytes: 337_000_000,
+        }],
+      }),
+    });
+  });
+
+  await page.context().route('**/api/v1/data/scan', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/api/v1/data/scan') {
+      await route.fallback();
+      return;
+    }
+    const body = route.request().postDataJSON();
+    expect(body).toMatchObject({ schema: 'OMM.fbs', datastore_key: 'sdn-ds-live' });
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        schema: 'OMM.fbs',
+        total_count: 2_287_018,
+        count: 1,
+        limit: 10,
+        offset: 0,
+        cursor: 'MA',
+        next_cursor: '',
+        snapshot_id: 'sdn-ds-live-snapshot',
+        head: 'sdn-ds-live-head',
+        high_water_mark: 'sdn-ds-live:1',
+        scan_hash: 'sdn-ds-live-scan',
+        chunk_hash: 'sdn-ds-live-scan',
+        query_profile: 'ordered-offset-v1',
+        sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
+        max_chunk_size: 50000,
+        transports: ['libp2p-websocket', 'libp2p-webrtc'],
+        results: [{
+          schema_name: 'OMM.fbs',
+          cid: 'sdn-ds-live-cid',
+          peer_id: 'source:celestrak',
+          provider_id: 'local',
+          source_name: 'celestrak-gp',
+          batch_id: 'live',
+          timestamp: '2026-05-11T04:02:25Z',
+          size_bytes: 288,
+        }],
+      }),
+    });
+  });
+
+  await page.context().route('**/api/v1/data/stream', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/api/v1/data/stream') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/vnd.sdn.flatbuffers.stream',
+      body: rawFlatbufferStream([STARLINK_6292_OMM_BYTES]),
+    });
+  });
+
+  await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
+  await page.getByRole('button', { name: 'Explorer' }).click();
+  await page.getByRole('combobox', { name: 'Table' }).selectOption('local:OMM:datastore:sdn-ds-live');
+
+  const dataRows = page.getByRole('table', { name: 'Data rows' });
+  await expect(dataRows.getByRole('cell', { name: 'STARLINK-6292', exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Profile' })).toHaveValue('epoch.day');
+  await page.getByRole('textbox', { name: 'Day' }).fill('2026-05-10');
+  await page.getByRole('textbox', { name: 'Entity' }).fill('56775');
+  await page.getByRole('button', { name: 'Apply' }).click();
+
+  await expect(page.getByRole('textbox', { name: 'SQL' })).toHaveValue("SELECT * FROM OMM WHERE EPOCH >= '2026-05-10T00:00:00Z' AND EPOCH < '2026-05-11T00:00:00Z' AND NORAD_CAT_ID = 56775 ORDER BY EPOCH ASC, NORAD_CAT_ID ASC LIMIT 10");
+  await expect(dataRows.getByRole('cell', { name: 'STARLINK-6292', exact: true })).toBeVisible();
+  await expect(dataRows.getByRole('cell', { name: '56775', exact: true })).toBeVisible();
 });
 
 test('data route keeps the shell fixed while the content pane scrolls', async ({ page }) => {

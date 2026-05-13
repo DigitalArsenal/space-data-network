@@ -389,6 +389,7 @@ function rawDataQueryPayload(query: RawDataQuery): Record<string, unknown> {
     ...(query.snapshotId ? { snapshot_id: query.snapshotId } : {}),
     ...(query.head ? { head: query.head } : {}),
     ...(query.queryProfile ? { query_profile: query.queryProfile } : {}),
+    ...(query.syncFilter ? { sync_filter: query.syncFilter } : {}),
     ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
     ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
   };

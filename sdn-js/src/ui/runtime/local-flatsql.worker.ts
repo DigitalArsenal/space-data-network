@@ -202,6 +202,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
   let head = canResume ? request.initialProgress.head ?? '' : '';
   let highWaterMark = canResume ? request.initialProgress.highWaterMark ?? '' : '';
   let queryProfile = canResume ? request.initialProgress.queryProfile ?? 'ordered-offset-v1' : 'ordered-offset-v1';
+  const syncFilter = request.syncFilter?.trim() || undefined;
   let verifiedChunks = canResume ? request.initialProgress.verifiedChunks.slice(-256) : [];
   let snapshotVerifiedForSession = false;
   let downloadedBytes = 0;
@@ -210,7 +211,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
   let verificationMs = 0;
   let flatSqlMaterializationMs = 0;
   const manifestStartedAt = Date.now();
-  const publishedManifest = await openPublishedManifest(request.backendConfig, request.schema).catch(() => null);
+  const publishedManifest = await openPublishedManifest(request.backendConfig, request.schema, syncFilter).catch(() => null);
   manifestDiscoveryMs = Math.max(0, Date.now() - manifestStartedAt);
   const measuredWireSpeedBytesPerSecond = await measuredWireSpeedBaselineBytesPerSecond(request.backendConfig);
   const syncStartedAtMs = Date.now();
@@ -305,6 +306,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
           schema: request.schema,
           op: 'read_chunk',
           limit: request.pageSize,
+          ...(syncFilter ? { syncFilter } : {}),
           ...(nextCursor
             ? {
                 cursor: nextCursor,
@@ -341,6 +343,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
             limit: request.pageSize,
             offset,
             queryProfile,
+            ...(syncFilter ? { syncFilter } : {}),
           },
         );
         networkTransferMs += Math.max(0, Date.now() - networkStartedAt);
@@ -639,8 +642,10 @@ async function syncPublishedSegments(options: {
 async function openPublishedManifest(
   backendConfig: WorkerFlatSqlSyncBackendConfig,
   schema: string,
+  syncFilter?: string,
 ): Promise<{ manifest: FlatSqlSyncManifest; segments: FlatSqlSyncManifestSegment[] } | null> {
   if (!backendConfig.gatewayUrl?.trim()) return null;
+  if (syncFilter?.trim()) return null;
   const manifest = await withRemoteSyncManifestOperation(backendConfig, 'Remote published shard manifest', {
     targetPeerId: '',
     schema,

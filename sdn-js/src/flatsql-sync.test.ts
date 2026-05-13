@@ -27,6 +27,7 @@ describe('FlatSQL sync protocol client', () => {
       snapshotId: 'snapshot-1',
       head: 'head-1',
       queryProfile: 'ordered-offset-v1',
+      syncFilter: "EPOCH >= '2026-05-01T00:00:00Z'",
       limit: 25_000,
     });
 
@@ -42,6 +43,7 @@ describe('FlatSQL sync protocol client', () => {
       snapshot_id: 'snapshot-1',
       head: 'head-1',
       query_profile: 'ordered-offset-v1',
+      sync_filter: "EPOCH >= '2026-05-01T00:00:00Z'",
       limit: 25_000,
     });
   });

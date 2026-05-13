@@ -57,6 +57,7 @@ type QueryRequest struct {
 	Head                   string `json:"head"`
 	HighWaterMark          string `json:"high_water_mark"`
 	QueryProfile           string `json:"query_profile"`
+	SyncFilter             string `json:"sync_filter"`
 	TotalCount             int64  `json:"total_count"`
 	Limit                  int    `json:"limit"`
 	Offset                 int    `json:"offset"`

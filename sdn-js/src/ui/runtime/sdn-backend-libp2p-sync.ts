@@ -105,6 +105,7 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
       scanHash: query.scanHash,
       chunkHash: query.chunkHash,
       queryProfile: query.queryProfile,
+      syncFilter: query.syncFilter,
       limit: query.limit,
       offset: query.offset,
       records: query.records?.map(rawRecordToFlatSqlRef),
@@ -135,6 +136,7 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
         totalCount: request.totalCount,
         highWaterMark: request.highWaterMark,
         queryProfile: request.queryProfile,
+        syncFilter: request.syncFilter,
         records: request.records,
       });
       return createAvailableResult('streamRawData', rawRecordsWithDataFromFlatSqlChunk(chunk, request.records));

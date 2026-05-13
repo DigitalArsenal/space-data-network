@@ -164,7 +164,11 @@ describe('remote-sdn backend', () => {
         })],
       },
     });
-    await expect(backend.queryRawData({ schema: 'EPM.fbs', providerId: 'local-node' })).resolves.toMatchObject({
+    await expect(backend.queryRawData({
+      schema: 'EPM.fbs',
+      providerId: 'local-node',
+      syncFilter: "FILE_ID LIKE 'celestrak:%'",
+    })).resolves.toMatchObject({
       ok: true,
       data: [{ schemaName: 'EPM.fbs', cid: '16Uiu2HRemote', dataBytes: new Uint8Array([0, 1, 2, 3]) }],
     });
@@ -175,7 +179,10 @@ describe('remote-sdn backend', () => {
     expect(calls.filter((call) => call.url === 'https://sdn.spaceaware.io/api/v1/data/query')).toHaveLength(2);
     const queryCalls = calls.filter((call) => call.url === 'https://sdn.spaceaware.io/api/v1/data/query');
     const metadataQueryCall = queryCalls.find((call) => !acceptHeader(call.init).includes('application/vnd.sdn.flatbuffers.stream'));
-    expect(JSON.parse(String(metadataQueryCall?.init?.body))).toMatchObject({ include_data: false });
+    expect(JSON.parse(String(metadataQueryCall?.init?.body))).toMatchObject({ include_data: false, sync_filter: "FILE_ID LIKE 'celestrak:%'" });
+    for (const call of queryCalls) {
+      expect(JSON.parse(String(call.init?.body))).toMatchObject({ sync_filter: "FILE_ID LIKE 'celestrak:%'" });
+    }
   });
 
   it('does not send raw SQL to remote peers', async () => {
