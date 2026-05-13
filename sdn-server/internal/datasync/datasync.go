@@ -177,6 +177,7 @@ func FilterFromRequest(req QueryRequest, limit, offset int) storage.RawRecordQue
 		ProducerPeerID:    FirstNonEmpty(req.ProducerPeerID, req.ProducerPeerId),
 		ProducerPublicKey: FirstNonEmpty(req.ProducerPublicKey, req.ProducerPublicKeyCamel),
 		PeerID:            FirstNonEmpty(req.PeerID, req.PeerId),
+		SyncFilter:        req.SyncFilter,
 		Limit:             limit,
 		Offset:            offset,
 	}
@@ -288,7 +289,8 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 		segmentLimit = maxLimit
 	}
 	queryProfile := NormalizeQueryProfile(req.QueryProfile)
-	if queryProfile == storage.DatasetPublicationQueryProfile {
+	hasSyncFilter := strings.TrimSpace(req.SyncFilter) != ""
+	if queryProfile == storage.DatasetPublicationQueryProfile && !hasSyncFilter {
 		publishedManifest, err := OpenPublishedManifest(store, req, queryProfile, maxLimit)
 		if err != nil {
 			return nil, err
@@ -352,30 +354,32 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 			ByteCount:  byteCount,
 			ChunkHash:  scan.ChunkHash,
 		}
-		if publication, found, err := findDatasetShardPublicationForSegment(store, storage.DatasetShardPublicationQuery{
-			SchemaName:   schemaName,
-			ProviderID:   FirstNonEmpty(req.ProviderID, req.ProviderId),
-			SourceName:   req.SourceName,
-			BatchID:      FirstNonEmpty(req.BatchID, req.BatchId),
-			QueryProfile: queryProfile,
-			Offset:       offset,
-			Limit:        segmentLimit,
-			RecordCount:  len(records),
-		}); err != nil {
-			return nil, err
-		} else if found {
-			segment.CID = publication.ShardCID
-			segment.IndexCID = publication.IndexCID
-			segment.ManifestCID = publication.ManifestCID
-			segment.PNMCID = publication.PNMCID
-			segment.ShardSHA256 = publication.ShardSHA256
-			segment.IndexSHA256 = publication.IndexSHA256
-			segment.QuerySHA256 = publication.QuerySHA256
-			if publication.ResultSHA256 != "" {
-				segment.ChunkHash = publication.ResultSHA256
-			}
-			if publication.ByteCount > 0 {
-				segment.ByteCount = publication.ByteCount
+		if !hasSyncFilter {
+			if publication, found, err := findDatasetShardPublicationForSegment(store, storage.DatasetShardPublicationQuery{
+				SchemaName:   schemaName,
+				ProviderID:   FirstNonEmpty(req.ProviderID, req.ProviderId),
+				SourceName:   req.SourceName,
+				BatchID:      FirstNonEmpty(req.BatchID, req.BatchId),
+				QueryProfile: queryProfile,
+				Offset:       offset,
+				Limit:        segmentLimit,
+				RecordCount:  len(records),
+			}); err != nil {
+				return nil, err
+			} else if found {
+				segment.CID = publication.ShardCID
+				segment.IndexCID = publication.IndexCID
+				segment.ManifestCID = publication.ManifestCID
+				segment.PNMCID = publication.PNMCID
+				segment.ShardSHA256 = publication.ShardSHA256
+				segment.IndexSHA256 = publication.IndexSHA256
+				segment.QuerySHA256 = publication.QuerySHA256
+				if publication.ResultSHA256 != "" {
+					segment.ChunkHash = publication.ResultSHA256
+				}
+				if publication.ByteCount > 0 {
+					segment.ByteCount = publication.ByteCount
+				}
 			}
 		}
 		totalBytes += segment.ByteCount

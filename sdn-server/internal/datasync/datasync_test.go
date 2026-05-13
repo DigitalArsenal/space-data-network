@@ -95,6 +95,56 @@ func TestOpenManifestUsesPublishedFeedWithoutScanningRawRows(t *testing.T) {
 	}
 }
 
+func TestScanAppliesSubscriptionSyncFilterBeforeReturningRefs(t *testing.T) {
+	store := newDataSyncTestStore(t)
+	tags := storage.SourceTags{
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		BatchID:           "batch-a",
+		ProducerPeerID:    "peer-celestrak",
+		ProducerPublicKey: "public-celestrak",
+	}
+	oldOMM := sds.NewOMMBuilder().
+		WithNoradCatID(10001).
+		WithObjectID("2026-OLD").
+		WithObjectName("OLD").
+		WithEpoch("2026-05-10T12:00:00Z").
+		Build()
+	matchOMM := sds.NewOMMBuilder().
+		WithNoradCatID(20002).
+		WithObjectID("2026-MATCH").
+		WithObjectName("MATCH").
+		WithEpoch("2026-05-12T12:00:00Z").
+		Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", oldOMM, "source:celestrak", nil, tags); err != nil {
+		t.Fatalf("store old OMM failed: %v", err)
+	}
+	matchCID, err := store.StoreWithSourceTags("OMM.fbs", matchOMM, "source:celestrak", nil, tags)
+	if err != nil {
+		t.Fatalf("store matching OMM failed: %v", err)
+	}
+
+	scan, records, err := Scan(store, QueryRequest{
+		Schema:     "OMM.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-gp",
+		Limit:      10,
+		SyncFilter: "EPOCH_DAY = '2026-05-12'",
+	}, MaxSyncChunkLimit)
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+	if scan.TotalCount != 1 || scan.Count != 1 {
+		t.Fatalf("scan count = %d/%d, want 1/1", scan.Count, scan.TotalCount)
+	}
+	if len(records) != 1 || records[0].CID != matchCID {
+		t.Fatalf("scan records = %+v, want one CID %s", records, matchCID)
+	}
+	if len(scan.Results) != 1 || scan.Results[0]["cid"] != matchCID {
+		t.Fatalf("scan result refs = %+v, want CID %s", scan.Results, matchCID)
+	}
+}
+
 func newDataSyncTestStore(t *testing.T) *storage.FlatSQLStore {
 	t.Helper()
 	validator, err := sds.NewValidator(nil)
