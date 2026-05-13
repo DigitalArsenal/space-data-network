@@ -87,6 +87,7 @@ describe('sync throughput targets', () => {
       ipfsProviderDiscoveryLimit: 8,
       concurrency: 24,
       maxSegments: 3,
+      requestTimeoutMs: 60_000,
       target: 0.8,
     });
   });

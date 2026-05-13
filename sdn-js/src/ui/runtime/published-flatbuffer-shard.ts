@@ -23,6 +23,11 @@ export interface PublishedFlatSqlShardCarImportInput {
   importCarBytes(bytes: Uint8Array): Promise<void>;
 }
 
+export interface FetchCidBytesFromGatewayOptions {
+  timeoutMs?: number;
+  fetch?: typeof fetch;
+}
+
 export interface TimedPublishedFlatSqlShardCarImport {
   cid: string;
   byteLength: number;
@@ -159,12 +164,62 @@ export async function rawRecordsFromPublishedFlatSqlSegment(input: PublishedFlat
   return records.map((record) => rawRecordFromIndexRecord(input, schemaName, shardBytes, record));
 }
 
-export async function fetchCidBytesFromGateway(gatewayUrl: string, cid: string): Promise<Uint8Array> {
+export async function fetchCidBytesFromGateway(
+  gatewayUrl: string,
+  cid: string,
+  options: FetchCidBytesFromGatewayOptions = {},
+): Promise<Uint8Array> {
   const base = gatewayUrl.trim().replace(/\/+$/, '');
   if (!base) throw new Error('local IPFS gateway URL is required');
-  const response = await fetch(`${base}/ipfs/${encodeURIComponent(cid)}`);
-  if (!response.ok) throw new Error(`fetch CID ${cid} failed with HTTP ${response.status}`);
-  return new Uint8Array(await response.arrayBuffer());
+  const fetchLike = options.fetch ?? globalThis.fetch;
+  if (typeof fetchLike !== 'function') throw new Error('fetch is unavailable for local IPFS gateway reads');
+  const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
+  return await fetchBytesWithTimeout(
+    fetchLike,
+    `${base}/ipfs/${encodeURIComponent(cid)}`,
+    timeoutMs,
+    `fetch CID ${cid}`,
+  );
+}
+
+async function fetchBytesWithTimeout(
+  fetchLike: typeof fetch,
+  url: string,
+  timeoutMs: number,
+  label: string,
+): Promise<Uint8Array> {
+  if (timeoutMs <= 0) {
+    const response = await fetchLike(url);
+    if (!response.ok) throw new Error(`${label} failed with HTTP ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+  const timeoutMessage = `${label} timed out after ${timeoutMs} ms`;
+  const request = (async () => {
+    const response = await fetchLike(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`${label} failed with HTTP ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
+  })();
+  const timer = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new Error(timeoutMessage));
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([request, timer]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (timedOut) request.catch(() => undefined);
+  }
+}
+
+function normalizeTimeoutMs(timeoutMs: number | null | undefined): number {
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs)) return 30_000;
+  return Math.max(0, Math.floor(timeoutMs));
 }
 
 function rawRecordFromIndexRecord(

@@ -291,7 +291,7 @@ describe('SDN data Svelte source', () => {
       'syncSchema',
       'downloadSpeedBytesPerSecond',
       'formatBytesPerSecond',
-      'boundedWireSpeedUtilization(schema.progress.wireSpeedUtilization)',
+      'boundedWireSpeedUtilization(nextProgress.wireSpeedUtilization)',
       'Download',
       'backendConfigForDataSource',
       'sourceName: configuredSourceNameFromSource(source)',
@@ -406,6 +406,14 @@ describe('SDN data Svelte source', () => {
     expect(source).not.toContain('Standards type');
     expect(source).toContain("if (!value) return '';");
     expect(source).not.toContain("if (!value) return 'pending';");
+  });
+
+  it('does not present cached IPFS shard reads as a percent of wire speed', () => {
+    const source = readUiSource('screens/LocalDataScreen.svelte');
+
+    expect(source).toContain('downloadSpeedBytesPerSecond');
+    expect(source).toContain('formatBytesPerSecond');
+    expect(source).not.toContain('% wire');
   });
 });
 

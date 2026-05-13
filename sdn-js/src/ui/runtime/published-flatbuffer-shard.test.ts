@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  fetchCidBytesFromGateway,
   flatBufferStreamFromPublishedFlatSqlSegment,
   importPublishedFlatSqlShardCar,
   timedFlatBufferStreamFromPublishedFlatSqlSegment,
@@ -46,6 +47,32 @@ describe('published FlatSQL shard reader', () => {
     expect(result.streamBytes).toEqual(shard);
     expect(result.networkTransferMs).toBeGreaterThanOrEqual(0);
     expect(result.verificationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('bounds local gateway CID fetches', async () => {
+    await expect(Promise.race([
+      fetchCidBytesFromGateway('http://127.0.0.1:8081', 'bafkshard', {
+        timeoutMs: 1,
+        fetch: async () => new Promise<Response>(() => undefined),
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('gateway fetch did not time out')), 25)),
+    ])).rejects.toThrow('fetch CID bafkshard timed out after 1 ms');
+  });
+
+  it('bounds local gateway CID response bodies', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+      },
+    });
+
+    await expect(Promise.race([
+      fetchCidBytesFromGateway('http://127.0.0.1:8081', 'bafkshard', {
+        timeoutMs: 1,
+        fetch: async () => new Response(body, { status: 200 }),
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('gateway body did not time out')), 25)),
+    ])).rejects.toThrow('fetch CID bafkshard timed out after 1 ms');
   });
 
   it('verifies and imports a published shard-group CAR before shard reads', async () => {
