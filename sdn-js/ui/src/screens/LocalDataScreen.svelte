@@ -22,6 +22,7 @@
   } from '../../../src/ui/runtime/local-flatsql-worker-client';
   import { decodeOmmFlatBuffer } from '../../../src/ui/runtime/omm-flatbuffer';
   import { decodePnmFlatBuffer } from '../../../src/ui/runtime/pnm-flatbuffer';
+  import { normalizeIpfsArtifactPeerAddrs } from '../../../src/ui/runtime/ipfs-artifact-peers';
   import {
     buildEpochProfileSql,
     EPOCH_SQL_PROFILES,
@@ -84,6 +85,7 @@
     publicKey: string | null;
     kind: 'local' | 'configured';
     syncAddrs?: string[];
+    artifactPeerAddrs?: string[];
     searchText: string;
   }
 
@@ -1861,6 +1863,8 @@
       displayName: source.label,
       publicKey: source.publicKey,
       gatewayUrl: localGatewayUrl(),
+      ipfsApiUrl: localKuboApiUrl(),
+      artifactPeerAddrs: source.artifactPeerAddrs ?? [],
       measuredWireSpeedBytesPerSecond: measuredWireSpeedBytesPerSecondForSource(source.id),
     };
   }
@@ -1898,6 +1902,12 @@
     return params.get('gateway') ?? env.SDN_UI_GATEWAY_URL ?? (backend?.mode === 'desktop-local' ? 'http://127.0.0.1:8081' : null);
   }
 
+  function localKuboApiUrl(): string | null {
+    const params = new URLSearchParams(window.location.search);
+    const env = import.meta.env as ImportMetaEnv & { readonly SDN_UI_API_URL?: string };
+    return params.get('api') ?? env.SDN_UI_API_URL ?? (backend?.mode === 'desktop-local' ? 'http://127.0.0.1:5001' : null);
+  }
+
   function currentDataSourceOption(): DataSourceOption | null {
     const options = buildDataSourceOptions(backend, configuredDataSources, peers);
     return options.find((source) => source.id === selectedDataSourceId) ?? options[0] ?? null;
@@ -1931,6 +1941,7 @@
       const publicKey = configuredNodePublicKey(node) ?? peerId;
       const label = configuredNodeLabel(node, observedNames, peerId);
       const detail = [node.id, configuredNodeHostName(node)].filter(Boolean).join(' / ');
+      const artifactPeerAddrs = configuredNodeArtifactPeerAddrs(node);
       options.push({
         id: `configured:${node.id}`,
         label,
@@ -1939,7 +1950,8 @@
         publicKey,
         kind: 'configured',
         syncAddrs,
-        searchText: [label, detail, publicKey, peerId, node.trustLevel, node.trust_level, syncAddrs.join(' ')].filter(Boolean).join(' ').toLowerCase(),
+        artifactPeerAddrs,
+        searchText: [label, detail, publicKey, peerId, node.trustLevel, node.trust_level, syncAddrs.join(' '), artifactPeerAddrs.join(' ')].filter(Boolean).join(' ').toLowerCase(),
       });
     }
 
@@ -2003,6 +2015,16 @@
 
   function configuredNodePublicKey(node: ConfiguredSdnNode): string | null {
     return readRecordString(node.metadata ?? {}, 'public_key', 'publicKey', 'signing_public_key', 'signingPublicKey');
+  }
+
+  function configuredNodeArtifactPeerAddrs(node: ConfiguredSdnNode): string[] {
+    const metadata = node.metadata ?? {};
+    return normalizeIpfsArtifactPeerAddrs(
+      metadata.ipfs_artifact_addrs
+        ?? metadata.ipfsArtifactAddrs
+        ?? metadata.artifact_addrs
+        ?? metadata.artifactAddrs,
+    );
   }
 
   function configuredNodeLabel(node: ConfiguredSdnNode, observedNames: Map<string, string>, peerId: string | null): string {
