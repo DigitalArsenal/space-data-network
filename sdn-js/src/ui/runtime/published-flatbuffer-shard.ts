@@ -1,6 +1,7 @@
 import { sha256 } from '../../crypto/hd-wallet';
 import type { RawDataRecord } from './sdn-backend';
 import { normalizeHttpEndpointUrl } from './endpoint-url';
+import { isRetryableRemoteSyncError } from './remote-sync-retry';
 
 export interface PublishedFlatSqlSegmentInput {
   schema: string;
@@ -8,6 +9,8 @@ export interface PublishedFlatSqlSegmentInput {
   cid: string;
   indexCid?: string;
   shardSha256?: string;
+  fetchAttempts?: number;
+  retryDelayMs?: number;
   fetchCidBytes(cid: string): Promise<Uint8Array>;
 }
 
@@ -67,7 +70,7 @@ export async function flatBufferStreamFromPublishedFlatSqlSegment(input: Publish
 
 export async function timedFlatBufferStreamFromPublishedFlatSqlSegment(input: PublishedFlatSqlSegmentInput): Promise<TimedPublishedFlatSqlSegment> {
   const networkStartedAt = Date.now();
-  const shardBytes = await input.fetchCidBytes(input.cid);
+  const shardBytes = await fetchShardBytesWithRetry(input);
   const networkTransferMs = Math.max(0, Date.now() - networkStartedAt);
   const verificationStartedAt = Date.now();
   const expectedSha = input.shardSha256?.trim();
@@ -80,6 +83,21 @@ export async function timedFlatBufferStreamFromPublishedFlatSqlSegment(input: Pu
   assertFlatSqlSizePrefixedStream(shardBytes);
   const verificationMs = Math.max(0, Date.now() - verificationStartedAt);
   return { streamBytes: shardBytes, networkTransferMs, verificationMs };
+}
+
+async function fetchShardBytesWithRetry(input: PublishedFlatSqlSegmentInput): Promise<Uint8Array> {
+  const attempts = normalizeFetchAttempts(input.fetchAttempts);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await input.fetchCidBytes(input.cid);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !isRetryableRemoteSyncError(error)) throw error;
+      await delay(normalizeRetryDelayMs(input.retryDelayMs) * attempt);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`failed to fetch published shard ${input.cid}`);
 }
 
 export async function importPublishedFlatSqlShardCar(input: PublishedFlatSqlShardCarImportInput): Promise<TimedPublishedFlatSqlShardCarImport> {
@@ -221,6 +239,21 @@ async function fetchBytesWithTimeout(
 function normalizeTimeoutMs(timeoutMs: number | null | undefined): number {
   if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs)) return 30_000;
   return Math.max(0, Math.floor(timeoutMs));
+}
+
+function normalizeFetchAttempts(attempts: number | null | undefined): number {
+  if (typeof attempts !== 'number' || !Number.isFinite(attempts)) return 1;
+  return Math.max(1, Math.floor(attempts));
+}
+
+function normalizeRetryDelayMs(delayMs: number | null | undefined): number {
+  if (typeof delayMs !== 'number' || !Number.isFinite(delayMs)) return 0;
+  return Math.max(0, Math.floor(delayMs));
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  if (milliseconds <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function rawRecordFromIndexRecord(

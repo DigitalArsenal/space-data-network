@@ -67,6 +67,9 @@ const REMOTE_SYNC_RETRY_ATTEMPTS = 4;
 const REMOTE_SYNC_RETRY_DELAY_MS = 500;
 const PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE = 50_000;
 const PUBLISHED_SHARD_FETCH_CONCURRENCY = 24;
+const PUBLISHED_SHARD_FETCH_TIMEOUT_MS = 120_000;
+const PUBLISHED_SHARD_FETCH_ATTEMPTS = 3;
+const PUBLISHED_SHARD_FETCH_RETRY_DELAY_MS = 750;
 const PUBLISHED_SHARD_PROVIDER_DISCOVERY_CID_LIMIT = 16;
 const WIRE_SPEED_PROBE_BYTES = 64 * 1024 * 1024;
 let store: LocalFlatSqlStore | null = null;
@@ -727,6 +730,23 @@ async function* fetchPublishedSegmentsInOrder(
   networkTransferMs: number;
   verificationMs: number;
 }> {
+  type PublishedSegmentFetchSuccess = {
+    ok: true;
+    segment: FlatSqlSyncManifestSegment;
+    streamBytes: Uint8Array;
+    cumulativeRows: number;
+    segmentEnd: number;
+    networkTransferMs: number;
+    verificationMs: number;
+  };
+  type PublishedSegmentFetchFailure = {
+    ok: false;
+    segment: FlatSqlSyncManifestSegment;
+    cumulativeRows: number;
+    segmentEnd: number;
+    error: unknown;
+  };
+  type PublishedSegmentFetchResult = PublishedSegmentFetchSuccess | PublishedSegmentFetchFailure;
   const syncItems: Array<{ segment: FlatSqlSyncManifestSegment; cumulativeRows: number; segmentEnd: number }> = [];
   let cumulativeRows = 0;
   for (const segment of segments) {
@@ -738,14 +758,7 @@ async function* fetchPublishedSegmentsInOrder(
     cumulativeRows = segmentEnd;
   }
 
-  const inFlight = new Map<number, Promise<{
-    segment: FlatSqlSyncManifestSegment;
-    streamBytes: Uint8Array;
-    cumulativeRows: number;
-    segmentEnd: number;
-    networkTransferMs: number;
-    verificationMs: number;
-  }>>();
+  const inFlight = new Map<number, Promise<PublishedSegmentFetchResult>>();
   let nextToSchedule = 0;
   const schedule = (): void => {
     while (nextToSchedule < syncItems.length && inFlight.size < PUBLISHED_SHARD_FETCH_CONCURRENCY) {
@@ -758,12 +771,19 @@ async function* fetchPublishedSegmentsInOrder(
         providerPeerId: request.backendConfig.targetPeerId,
         cid: item.segment.cid as string,
         shardSha256: item.segment.shardSha256,
-        fetchCidBytes: (cid) => fetchCidBytesFromGateway(gatewayUrl, cid),
+        fetchAttempts: PUBLISHED_SHARD_FETCH_ATTEMPTS,
+        retryDelayMs: PUBLISHED_SHARD_FETCH_RETRY_DELAY_MS,
+        fetchCidBytes: (cid) => fetchCidBytesFromGateway(gatewayUrl, cid, { timeoutMs: PUBLISHED_SHARD_FETCH_TIMEOUT_MS }),
       }).then((result) => ({
+        ok: true as const,
         ...item,
         streamBytes: result.streamBytes,
         networkTransferMs: result.networkTransferMs,
         verificationMs: result.verificationMs,
+      })).catch((error: unknown) => ({
+        ok: false as const,
+        ...item,
+        error,
       })));
     }
   };
@@ -775,8 +795,15 @@ async function* fetchPublishedSegmentsInOrder(
     const fetched = await next;
     inFlight.delete(index);
     schedule();
+    if (!fetched.ok) {
+      throw new Error(`published shard fetch failed for ${fetched.segment.cid ?? `segment ${index}`}: ${formatWorkerError(fetched.error)}`);
+    }
     yield fetched;
   }
+}
+
+function formatWorkerError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function progressFor(current: WorkerSchemaSyncProgress, patch: Partial<WorkerSchemaSyncProgress>): WorkerSchemaSyncProgress {
