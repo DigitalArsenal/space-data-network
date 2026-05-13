@@ -151,6 +151,14 @@
     progress: SchemaSyncProgress;
   }
 
+  interface ExplorerSourceOption {
+    id: string;
+    dataSourceId: string;
+    datastoreKey: string | null;
+    label: string;
+    detail: string;
+  }
+
   export let backend: SdnBackend | null = null;
   export let peers: ObservedSdnPeer[] = [];
   export let route = '/data';
@@ -265,6 +273,7 @@
   let selectedDataSourceId = LOCAL_DATA_SOURCE_ID;
   let selectedSubscriptionId = '';
   let selectedDatastoreKey: string | null = null;
+  let selectedExplorerSourceKey = '';
   let lastColumnStandardId = '';
   let columnMenuOpen = false;
   let visibleColumnKeys: string[] = [];
@@ -326,6 +335,9 @@
 
   $: dataSourceOptions = buildDataSourceOptions(backend, configuredDataSources, peers);
   $: schemaSyncRows = buildSubscribedSchemaSyncRows(dataDirectoryState.subscriptions, selectedDataSourceId, selectedDatastoreKey, localFlatSqlStats, schemaSyncPreferences);
+  $: subscribedSourceOptions = buildSubscribedSourceOptions(schemaSyncRows);
+  $: selectedExplorerSourceKey = subscriptionSourceKey(selectedDataSourceId, selectedDatastoreKey);
+  $: subscribedStandardOptions = schemaSyncRows.filter((row) => subscriptionSourceKey(row.dataSourceId, row.datastoreKey) === selectedExplorerSourceKey);
   $: activeStorageRows = schemaSyncRows.filter((row) => row.preference.mode === 'sync');
   $: selectedSchemaSyncRow = schemaSyncRows.find((row) => selectedSubscriptionId && row.subscriptionId === selectedSubscriptionId)
     ?? schemaSyncRows.find((row) => row.id === selectedStandardId && row.dataSourceId === selectedDataSourceId && (selectedDatastoreKey ? row.datastoreKey === selectedDatastoreKey : true))
@@ -559,15 +571,26 @@
     }
   }
 
-  function handleTableChange(): void {
-    const selected = schemaSyncRows.find((row) => row.subscriptionId === selectedSubscriptionId);
-    if (selected) {
-      selectedStandardId = selected.id;
-      selectedDataSourceId = selected.dataSourceId;
-      selectedDatastoreKey = selected.datastoreKey;
-      selectedQueryProfile = queryProfileForSchemaSelection(selected);
-      resetLocalFlatSqlStore();
-    }
+  function handleExplorerSourceChange(event: Event): void {
+    selectedExplorerSourceKey = (event.currentTarget as HTMLSelectElement).value;
+    const sourceRows = schemaSyncRows.filter((row) => subscriptionSourceKey(row.dataSourceId, row.datastoreKey) === selectedExplorerSourceKey);
+    const selected = sourceRows.find((row) => row.id === selectedStandardId) ?? sourceRows[0] ?? null;
+    if (selected) selectExplorerSchemaRow(selected);
+  }
+
+  function handleExplorerStandardChange(event: Event): void {
+    selectedStandardId = (event.currentTarget as HTMLSelectElement).value;
+    const selected = subscribedStandardOptions.find((row) => row.id === selectedStandardId) ?? subscribedStandardOptions[0] ?? null;
+    if (selected) selectExplorerSchemaRow(selected);
+  }
+
+  function selectExplorerSchemaRow(selected: SchemaSyncRow): void {
+    selectedSubscriptionId = selected.subscriptionId;
+    selectedStandardId = selected.id;
+    selectedDataSourceId = selected.dataSourceId;
+    selectedDatastoreKey = selected.datastoreKey;
+    selectedQueryProfile = queryProfileForSchemaSelection(selected);
+    resetLocalFlatSqlStore();
     userSelectedStandard = true;
     userEditedColumns = false;
     resetSqlForSelectedStandard();
@@ -1342,6 +1365,28 @@
       const delta = right.remoteRows - left.remoteRows;
       return delta === 0 ? left.id.localeCompare(right.id) : delta;
     });
+  }
+
+  function buildSubscribedSourceOptions(rows: SchemaSyncRow[]): ExplorerSourceOption[] {
+    const options: ExplorerSourceOption[] = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const key = subscriptionSourceKey(row.dataSourceId, row.datastoreKey);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      options.push({
+        id: key,
+        dataSourceId: row.dataSourceId,
+        datastoreKey: row.datastoreKey,
+        label: row.providerName,
+        detail: row.datastoreKey ?? row.providerPeerId ?? row.providerPublicKey ?? row.dataSourceId,
+      });
+    }
+    return options.sort((left, right) => left.label.localeCompare(right.label) || left.detail.localeCompare(right.detail));
+  }
+
+  function subscriptionSourceKey(dataSourceId: string, datastoreKey: string | null = null): string {
+    return datastoreKey ? `${dataSourceId}:datastore:${datastoreKey}` : dataSourceId;
   }
 
   function localRowsForStandard(stats: LocalFlatSqlStandardStats[], standardId: string): number {
@@ -2257,7 +2302,7 @@
                     <span class="sdn-sync-error" title={schema.progress.error}>{shorten(schema.progress.error, 120)}</span>
                   {/if}
                 </div>
-                <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => retrySubscriptionSync(schema)} disabled={activeSyncKeys.has(schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey))}>Retry</button>
+                <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" aria-label={`${schema.id} retry sync`} on:click={() => retrySubscriptionSync(schema)} disabled={activeSyncKeys.has(schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey))}>Retry</button>
               </article>
             {:else}
               <p class="sdn-empty-inline">No actively synced data feeds. Add a feed from Peers to start local sync.</p>
@@ -2321,7 +2366,7 @@
                   />
                 </label>
                 <div class="sdn-subscription-actions">
-                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => retrySubscriptionSync(schema)} disabled={activeSyncKeys.has(schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey))}>Retry</button>
+                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" aria-label={`${schema.id} retry sync`} on:click={() => retrySubscriptionSync(schema)} disabled={activeSyncKeys.has(schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey))}>Retry</button>
                   {#if schema.preference.mode === 'sync'}
                     <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => pauseSubscriptionSync(schema)}>Pause</button>
                   {:else}
@@ -2361,10 +2406,19 @@
         <section class="sdn-explorer-panel" aria-label="Local SQL">
           <div class="sdn-workbench-controls">
             <label>
-              <span>Table</span>
-              <select class="sdn-input sdn-select" bind:value={selectedSubscriptionId} on:change={handleTableChange}>
-                {#each schemaSyncRows as standard}
-                  <option value={standard.subscriptionId}>{standard.id} - {standard.providerName} ({formatNumber(standard.remoteRows)})</option>
+              <span>Source</span>
+              <select class="sdn-input sdn-select" bind:value={selectedExplorerSourceKey} on:change={handleExplorerSourceChange}>
+                {#each subscribedSourceOptions as source}
+                  <option value={source.id}>{source.label}</option>
+                {/each}
+              </select>
+            </label>
+
+            <label>
+              <span>Standard</span>
+              <select class="sdn-input sdn-select" bind:value={selectedStandardId} on:change={handleExplorerStandardChange}>
+                {#each subscribedStandardOptions as standard}
+                  <option value={standard.id}>{standard.id} ({formatNumber(standard.remoteRows)})</option>
                 {/each}
               </select>
             </label>
