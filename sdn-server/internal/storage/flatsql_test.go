@@ -710,7 +710,7 @@ func TestFlatSQLStoreMaintainsSourceSummaryForMultipleProducers(t *testing.T) {
 	}
 
 	rows, err := store.db.Query(`
-		SELECT provider_id, source_name, batch_id, record_count, total_bytes
+		SELECT provider_id, source_name, batch_id, record_count, total_bytes, max_rowid
 		FROM sdn_record_source_summary
 		WHERE schema_name = 'OMM.fbs'
 		ORDER BY provider_id
@@ -726,11 +726,12 @@ func TestFlatSQLStoreMaintainsSourceSummaryForMultipleProducers(t *testing.T) {
 		batchID     string
 		recordCount int64
 		totalBytes  int64
+		maxRowID    int64
 	}
 	var got []sourceRow
 	for rows.Next() {
 		var row sourceRow
-		if err := rows.Scan(&row.providerID, &row.sourceName, &row.batchID, &row.recordCount, &row.totalBytes); err != nil {
+		if err := rows.Scan(&row.providerID, &row.sourceName, &row.batchID, &row.recordCount, &row.totalBytes, &row.maxRowID); err != nil {
 			t.Fatalf("scan source summary failed: %v", err)
 		}
 		got = append(got, row)
@@ -744,8 +745,14 @@ func TestFlatSQLStoreMaintainsSourceSummaryForMultipleProducers(t *testing.T) {
 	if got[0].providerID != "peer-alpha" || got[0].recordCount != 1 || got[0].totalBytes != int64(len(alpha)) {
 		t.Fatalf("alpha summary = %#v, want one alpha row with %d bytes", got[0], len(alpha))
 	}
+	if got[0].maxRowID <= 0 {
+		t.Fatalf("alpha summary max rowid = %d, want populated row boundary", got[0].maxRowID)
+	}
 	if got[1].providerID != "peer-bravo" || got[1].recordCount != 1 || got[1].totalBytes != int64(len(bravo)) {
 		t.Fatalf("bravo summary = %#v, want one bravo row with %d bytes", got[1], len(bravo))
+	}
+	if got[1].maxRowID <= got[0].maxRowID {
+		t.Fatalf("bravo summary max rowid = %d, want after alpha rowid %d", got[1].maxRowID, got[0].maxRowID)
 	}
 }
 
