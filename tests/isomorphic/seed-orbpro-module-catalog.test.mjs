@@ -201,7 +201,10 @@ await test("DEFAULT_ORBPRO_MODULES includes the protected wasm-engine runtime ar
     ),
     false,
   );
-  assert.equal(wasmEngineRuntime?.protectedModulePath, "packages/wasm-engine/dist/wasm-engine-encrypted.js");
+  assert.equal(
+    wasmEngineRuntime?.protectedModulePath,
+    "packages/wasm-engine/dist/wasm-engine-sdn-encrypted.js",
+  );
   assert.equal(wasmEngineRuntime?.protectedExports?.[0]?.exportName, "encryptedData");
 });
 
