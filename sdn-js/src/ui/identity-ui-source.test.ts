@@ -385,6 +385,7 @@ describe('SDN data Svelte source', () => {
 describe('SDN data worker source', () => {
   it('keeps remote sync and FlatSQL ingest off the renderer thread', () => {
     const workerSource = readRuntimeSource('local-flatsql.worker.ts');
+    const localFlatSqlSource = readRuntimeSource('local-flatsql.ts');
     const clientSource = readRuntimeSource('local-flatsql-worker-client.ts');
     const libp2pSource = readRuntimeSource('sdn-backend-libp2p-sync.ts');
 
@@ -415,6 +416,11 @@ describe('SDN data worker source', () => {
     ]);
     expect(workerSource).not.toContain('Remote page scan');
     expect(workerSource).not.toContain('Remote page stream');
+    expectSourceToContainAll(localFlatSqlSource, [
+      'flatSqlSizePrefixedStreamInfo',
+      'allFramesHaveDirectFileIdentifier',
+      'state.db.ingest(directStreamBytes)',
+    ]);
     expectSourceToContainAll(clientSource, [
       "new Worker(new URL('./local-flatsql.worker.ts', import.meta.url), { type: 'module' })",
       'syncProgressHandlers',

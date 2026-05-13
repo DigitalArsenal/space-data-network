@@ -94,6 +94,13 @@ export interface LocalFlatSqlStatsOptions {
   includeCachedBytes?: boolean;
 }
 
+export interface FlatSqlSizePrefixedStreamInfo {
+  totalRecordCount: number;
+  ingestRecordCount: number;
+  ingestStartOffset: number;
+  allFramesHaveDirectFileIdentifier: boolean;
+}
+
 export interface LocalFlatSqlStore {
   ingestRecords(standardId: string, records: RawDataRecord[], sourceOrOptions?: string | LocalFlatSqlIngestOptions | null): Promise<number>;
   ingestFlatBufferStream(standardId: string, streamBytes: Uint8Array, options?: LocalFlatSqlStreamIngestOptions | null): Promise<number>;
@@ -229,13 +236,37 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     options: LocalFlatSqlStreamIngestOptions | null = null,
   ): Promise<number> {
     const state = this.stateForStandard(standardId);
-    const streamRecords = decodeFlatSqlSizePrefixedStream(streamBytes, options?.skipRecords ?? 0);
+    const streamInfo = flatSqlSizePrefixedStreamInfo(streamBytes, options?.skipRecords ?? 0);
     if (options?.pinLedgerEntries?.length) {
       await this.recordPinLedgerEntries(options.pinLedgerEntries);
     }
-    if (streamRecords.length === 0) return 0;
+    if (streamInfo.ingestRecordCount === 0) return 0;
 
     const keyOffset = Math.max(0, options?.recordKeyOffset ?? options?.skipRecords ?? 0);
+    const directRecordKeys = directFlatSqlStreamRecordKeys(
+      standardId,
+      streamInfo.ingestRecordCount,
+      keyOffset,
+      options,
+    );
+    if (
+      directRecordKeys &&
+      streamInfo.allFramesHaveDirectFileIdentifier &&
+      directRecordKeys.every((key) => !state.ingestedKeys.has(key))
+    ) {
+      const directStreamBytes = streamInfo.ingestStartOffset === 0
+        ? streamBytes
+        : streamBytes.subarray(streamInfo.ingestStartOffset);
+      const directIngestCount = state.db.ingest(directStreamBytes);
+      for (const key of directRecordKeys.slice(0, Math.max(0, directIngestCount))) {
+        state.ingestedKeys.add(key);
+      }
+      state.dirty = true;
+      if (options?.persist !== false) await this.persistStandard(state);
+      return directIngestCount;
+    }
+
+    const streamRecords = decodeFlatSqlSizePrefixedStream(streamBytes, options?.skipRecords ?? 0);
     const candidates = streamRecords.map((buffer, index) => ({
       buffer,
       key: flatSqlStreamRecordKey(standardId, buffer, index + keyOffset, options),
@@ -433,6 +464,59 @@ export function decodeFlatSqlSizePrefixedStream(streamBytes: Uint8Array, skipRec
     index += 1;
   }
   return records;
+}
+
+export function flatSqlSizePrefixedStreamInfo(streamBytes: Uint8Array, skipRecords = 0): FlatSqlSizePrefixedStreamInfo {
+  const view = new DataView(streamBytes.buffer, streamBytes.byteOffset, streamBytes.byteLength);
+  const normalizedSkipRecords = Math.max(0, Math.floor(skipRecords));
+  let offset = 0;
+  let index = 0;
+  let ingestStartOffset = 0;
+  let sawIngestStart = normalizedSkipRecords === 0;
+  let allFramesHaveDirectFileIdentifier = true;
+  while (offset < streamBytes.byteLength) {
+    const frameStart = offset;
+    if (streamBytes.byteLength - offset < 4) {
+      throw new Error(`Invalid FlatSQL size-prefixed stream: truncated frame header at offset ${offset}`);
+    }
+    const length = view.getUint32(offset, true);
+    offset += 4;
+    const nextOffset = offset + length;
+    if (nextOffset > streamBytes.byteLength) {
+      throw new Error(`Invalid FlatSQL size-prefixed stream: truncated frame at index ${index}`);
+    }
+    if (!hasFlatBufferFileIdentifier(streamBytes, offset + 4)) {
+      allFramesHaveDirectFileIdentifier = false;
+    }
+    if (index === normalizedSkipRecords) {
+      ingestStartOffset = frameStart;
+      sawIngestStart = true;
+    }
+    offset = nextOffset;
+    index += 1;
+  }
+  if (!sawIngestStart) {
+    ingestStartOffset = streamBytes.byteLength;
+  }
+  return {
+    totalRecordCount: index,
+    ingestRecordCount: Math.max(0, index - normalizedSkipRecords),
+    ingestStartOffset,
+    allFramesHaveDirectFileIdentifier,
+  };
+}
+
+function directFlatSqlStreamRecordKeys(
+  standardId: string,
+  recordCount: number,
+  keyOffset: number,
+  options: LocalFlatSqlStreamIngestOptions | null,
+): string[] | null {
+  if (options?.recordKeys?.length) return null;
+  const prefix = options?.recordKeyPrefix?.trim();
+  if (!prefix) return null;
+  const normalizedStandardId = normalizeStandardId(standardId);
+  return Array.from({ length: recordCount }, (_, index) => `${normalizedStandardId}|${prefix}|${index + keyOffset}`);
 }
 
 function flatSqlStreamRecordKey(
