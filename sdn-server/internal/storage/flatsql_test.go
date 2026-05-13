@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
+	flatbuffers "github.com/google/flatbuffers/go"
+
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
@@ -998,6 +1001,139 @@ func TestFlatSQLStoreCountRawRecordsMatchesSourceFiltersWithoutHydratingRows(t *
 	if allCount != 4 {
 		t.Fatalf("CountRawRecords all = %d, want 4", allCount)
 	}
+}
+
+func TestFlatSQLStoreRawRecordQueriesApplySubscriptionSyncFilters(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-sync-filter-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		BatchID:           "batch-a",
+		ProducerPeerID:    "peer-celestrak",
+		ProducerPublicKey: "public-celestrak",
+	}
+	ommA := sds.NewOMMBuilder().
+		WithNoradCatID(10001).
+		WithObjectID("1998-067A").
+		WithObjectName("ISS").
+		WithEpoch("2026-05-10T12:00:00Z").
+		Build()
+	ommB := sds.NewOMMBuilder().
+		WithNoradCatID(20002).
+		WithObjectID("2024-001A").
+		WithObjectName("MATCH").
+		WithEpoch("2026-05-11T12:00:00Z").
+		Build()
+	ommC := sds.NewOMMBuilder().
+		WithNoradCatID(30003).
+		WithObjectID("2025-001A").
+		WithObjectName("EXCLUDED").
+		WithEpoch("2026-05-12T12:00:00Z").
+		Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", ommA, "source:celestrak", nil, tags); err != nil {
+		t.Fatalf("store OMM A failed: %v", err)
+	}
+	matchCID, err := store.StoreWithSourceTags("OMM.fbs", ommB, "source:celestrak", nil, tags)
+	if err != nil {
+		t.Fatalf("store OMM B failed: %v", err)
+	}
+	if _, err := store.StoreWithSourceTags("OMM.fbs", ommC, "source:celestrak", nil, tags); err != nil {
+		t.Fatalf("store OMM C failed: %v", err)
+	}
+
+	filter := RawRecordQuery{
+		SchemaName: "OMM.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-gp",
+		Limit:      10,
+		SyncFilter: "EPOCH >= '2026-05-11T00:00:00Z' AND NORAD_CAT_ID != 30003",
+	}
+	count, err := store.CountRawRecords(filter)
+	if err != nil {
+		t.Fatalf("CountRawRecords failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("CountRawRecords = %d, want 1", count)
+	}
+	records, err := store.QueryRawRecordRefs(filter)
+	if err != nil {
+		t.Fatalf("QueryRawRecordRefs failed: %v", err)
+	}
+	if len(records) != 1 || records[0].CID != matchCID {
+		t.Fatalf("filtered records = %+v, want one CID %s", records, matchCID)
+	}
+
+	pnmCID, err := store.StoreWithSourceTags("PNM.fbs", buildTestPNM("celestrak:OMM:batch-a"), "source:celestrak", nil, SourceTags{
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-publications",
+		BatchID:           "pnm-batch",
+		ProducerPeerID:    "peer-celestrak",
+		ProducerPublicKey: "public-celestrak",
+	})
+	if err != nil {
+		t.Fatalf("store CelesTrak PNM failed: %v", err)
+	}
+	if _, err := store.StoreWithSourceTags("PNM.fbs", buildTestPNM("other:OMM:batch-a"), "source:other", nil, SourceTags{
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-publications",
+		BatchID:           "pnm-batch",
+		ProducerPeerID:    "peer-celestrak",
+		ProducerPublicKey: "public-celestrak",
+	}); err != nil {
+		t.Fatalf("store other PNM failed: %v", err)
+	}
+	pnmRecords, err := store.QueryRawRecordRefs(RawRecordQuery{
+		SchemaName: "PNM.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-publications",
+		Limit:      10,
+		SyncFilter: "FILE_ID LIKE 'celestrak:%'",
+	})
+	if err != nil {
+		t.Fatalf("QueryRawRecordRefs PNM failed: %v", err)
+	}
+	if len(pnmRecords) != 1 || pnmRecords[0].CID != pnmCID {
+		t.Fatalf("filtered PNM records = %+v, want one CID %s", pnmRecords, pnmCID)
+	}
+}
+
+func buildTestPNM(fileID string) []byte {
+	builder := flatbuffers.NewBuilder(256)
+	addr := builder.CreateString("/ipfs/bafydatasetmanifest")
+	publishedAt := builder.CreateString("2026-05-13T00:00:00Z")
+	cid := builder.CreateString("bafydatasetmanifest")
+	fileName := builder.CreateString("dataset.dpm")
+	fileIDOffset := builder.CreateString(fileID)
+	signature := builder.CreateString("signature")
+	signatureType := builder.CreateString("Ed25519")
+
+	PNM.PNMStart(builder)
+	PNM.PNMAddMULTIFORMAT_ADDRESS(builder, addr)
+	PNM.PNMAddPUBLISH_TIMESTAMP(builder, publishedAt)
+	PNM.PNMAddCID(builder, cid)
+	PNM.PNMAddFILE_NAME(builder, fileName)
+	PNM.PNMAddFILE_ID(builder, fileIDOffset)
+	PNM.PNMAddSIGNATURE(builder, signature)
+	PNM.PNMAddSIGNATURE_TYPE(builder, signatureType)
+	root := PNM.PNMEnd(builder)
+	PNM.FinishSizePrefixedPNMBuffer(builder, root)
+	return builder.FinishedBytes()
 }
 
 func findSchemaCount(schemas []DataSchemaSummary, schema string) int64 {

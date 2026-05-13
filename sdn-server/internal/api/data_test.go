@@ -447,6 +447,43 @@ func TestDataQueryStreamsRawFlatBuffersWithoutBase64(t *testing.T) {
 	}
 }
 
+func TestDataQueryAppliesSubscriptionSyncFilter(t *testing.T) {
+	store := newDataAPITestStore(t)
+	storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
+	wantedPayload := storeDataAPITestOMM(t, store, 25544, "ISS (ZARYA)", "2026-05-11")
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/query", bytes.NewBufferString(`{"schema":"OMM.fbs","provider_id":"space-data-network-02","source_name":"celestrak-gp","sync_filter":"NORAD_CAT_ID = 25544","limit":10,"include_data":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Count   int `json:"count"`
+		Results []struct {
+			DataBase64 string `json:"data_base64"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("unexpected filtered query response: %+v", body)
+	}
+	raw, err := base64.StdEncoding.DecodeString(body.Results[0].DataBase64)
+	if err != nil {
+		t.Fatalf("decode data_base64 failed: %v", err)
+	}
+	if string(raw) != string(wantedPayload) {
+		t.Fatal("filtered query did not return the matching raw OMM FlatBuffer")
+	}
+}
+
 func TestDataScanReturnsFilteredTotalAndHashBoundRefs(t *testing.T) {
 	store := newDataAPITestStore(t)
 	storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
@@ -528,6 +565,37 @@ func TestDataScanReturnsFilteredTotalAndHashBoundRefs(t *testing.T) {
 	}
 	if row.DataBase64 != "" {
 		t.Fatalf("scan refs must not inline base64 payloads: %+v", row)
+	}
+}
+
+func TestDataScanAppliesSubscriptionSyncFilter(t *testing.T) {
+	store := newDataAPITestStore(t)
+	storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
+	storeDataAPITestOMM(t, store, 25544, "ISS (ZARYA)", "2026-05-11")
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/scan", bytes.NewBufferString(`{"schema":"OMM.fbs","provider_id":"space-data-network-02","source_name":"celestrak-gp","sync_filter":"NORAD_CAT_ID = 25544","limit":10}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		TotalCount int `json:"total_count"`
+		Count      int `json:"count"`
+		Results    []struct {
+			CID string `json:"cid"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if body.TotalCount != 1 || body.Count != 1 || len(body.Results) != 1 || body.Results[0].CID == "" {
+		t.Fatalf("unexpected filtered scan response: %+v", body)
 	}
 }
 

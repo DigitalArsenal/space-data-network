@@ -200,6 +200,7 @@ func (h *DataQueryHandler) handleRawQuery(w http.ResponseWriter, r *http.Request
 		ProducerPeerID:    firstNonEmptyDataString(req.ProducerPeerID, req.ProducerPeerId),
 		ProducerPublicKey: firstNonEmptyDataString(req.ProducerPublicKey, req.ProducerPublicKeyCamel),
 		PeerID:            firstNonEmptyDataString(req.PeerID, req.PeerId),
+		SyncFilter:        req.SyncFilter,
 		Limit:             limit,
 		Offset:            req.Offset,
 	})

@@ -25,6 +25,7 @@ import (
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	logging "github.com/ipfs/go-log/v2"
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 	"golang.org/x/crypto/scrypt"
@@ -1474,6 +1475,7 @@ type RawRecordQuery struct {
 	ProducerPeerID    string
 	ProducerPublicKey string
 	PeerID            string
+	SyncFilter        string
 	Limit             int
 	Offset            int
 }
@@ -3118,8 +3120,13 @@ func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
 		strings.TrimSpace(filter.BatchID) != "" ||
 		strings.TrimSpace(filter.ProducerPeerID) != "" ||
 		strings.TrimSpace(filter.ProducerPublicKey) != ""
+	indexFilter, err := compileRawRecordSyncFilter(filter)
+	if err != nil {
+		return 0, err
+	}
+	indexFiltered := indexFilter.active()
 
-	if !sourceFiltered {
+	if !sourceFiltered && !indexFiltered {
 		total, err := s.countSchemaRecordsLocked(tableName, filter)
 		if err != nil {
 			return 0, err
@@ -3134,7 +3141,7 @@ func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
 		return total, nil
 	}
 
-	if strings.TrimSpace(filter.PeerID) == "" && strings.TrimSpace(filter.CID) == "" {
+	if !indexFiltered && strings.TrimSpace(filter.PeerID) == "" && strings.TrimSpace(filter.CID) == "" {
 		total, ok, err := s.countSourceSummaryRecordsLocked(filter)
 		if err != nil {
 			return 0, err
@@ -3155,8 +3162,14 @@ func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
 		SELECT COUNT(*)
 		FROM sdn_record_source_tags tags
 		INNER JOIN %s records ON records.cid = tags.cid
-		WHERE tags.schema_name = ?
 	`, tableName)
+	if indexFiltered {
+		taggedQuery += `
+		INNER JOIN sdn_record_index idx
+		  ON idx.schema_name = tags.schema_name AND idx.cid = records.cid
+		`
+	}
+	taggedQuery += ` WHERE tags.schema_name = ?`
 	args := []interface{}{filter.SchemaName}
 
 	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
@@ -3187,6 +3200,7 @@ func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
 		taggedQuery += ` AND tags.producer_public_key = ?`
 		args = append(args, producerPublicKey)
 	}
+	taggedQuery, args = appendRawRecordSyncFilterWhere(taggedQuery, args, indexFilter)
 
 	var total int64
 	if err := s.db.QueryRow(taggedQuery, args...).Scan(&total); err != nil {
@@ -3197,13 +3211,23 @@ func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
 		untaggedQuery := fmt.Sprintf(`
 			SELECT COUNT(*)
 			FROM %s records
+		`, tableName)
+		untaggedArgs := make([]interface{}, 0, len(indexFilter.args)+3)
+		if indexFiltered {
+			untaggedQuery += `
+			INNER JOIN sdn_record_index idx
+			  ON idx.schema_name = ? AND idx.cid = records.cid
+			`
+			untaggedArgs = append(untaggedArgs, filter.SchemaName)
+		}
+		untaggedQuery += `
 			WHERE NOT EXISTS (
 				SELECT 1
 				FROM sdn_record_source_tags tags
 				WHERE tags.schema_name = ? AND tags.cid = records.cid
 			)
-		`, tableName)
-		untaggedArgs := []interface{}{filter.SchemaName}
+		`
+		untaggedArgs = append(untaggedArgs, filter.SchemaName)
 		if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
 			untaggedQuery += ` AND records.peer_id = ?`
 			untaggedArgs = append(untaggedArgs, peerID)
@@ -3212,6 +3236,7 @@ func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
 			untaggedQuery += ` AND records.cid = ?`
 			untaggedArgs = append(untaggedArgs, cid)
 		}
+		untaggedQuery, untaggedArgs = appendRawRecordSyncFilterWhere(untaggedQuery, untaggedArgs, indexFilter)
 		var untagged int64
 		if err := s.db.QueryRow(untaggedQuery, untaggedArgs...).Scan(&untagged); err != nil {
 			return 0, fmt.Errorf("raw untagged record count failed: %w", err)
@@ -3219,7 +3244,7 @@ func (s *FlatSQLStore) CountRawRecords(filter RawRecordQuery) (int64, error) {
 		total += untagged
 	}
 
-	if filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) {
+	if !indexFiltered && filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) {
 		localCount, err := s.countLocalEPMRecordsLocked(filter)
 		if err != nil {
 			return 0, err
@@ -3250,9 +3275,14 @@ func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, erro
 		strings.TrimSpace(filter.BatchID) != "" ||
 		strings.TrimSpace(filter.ProducerPeerID) != "" ||
 		strings.TrimSpace(filter.ProducerPublicKey) != ""
+	indexFilter, err := compileRawRecordSyncFilter(filter)
+	if err != nil {
+		return RawRecordHead{}, err
+	}
+	indexFiltered := indexFilter.active()
 
 	var head RawRecordHead
-	if sourceFiltered && strings.TrimSpace(filter.PeerID) == "" && strings.TrimSpace(filter.CID) == "" {
+	if sourceFiltered && !indexFiltered && strings.TrimSpace(filter.PeerID) == "" && strings.TrimSpace(filter.CID) == "" {
 		summary, ok, err := s.rawSourceSummaryHeadLocked(filter)
 		if err != nil {
 			return RawRecordHead{}, err
@@ -3284,7 +3314,7 @@ func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, erro
 		return RawRecordHead{}, err
 	}
 
-	if filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) {
+	if !indexFiltered && filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) {
 		localCount, localBytes, err := s.localEPMSummaryLocked()
 		if err != nil {
 			return RawRecordHead{}, err
@@ -3342,16 +3372,29 @@ func (s *FlatSQLStore) rawSourceSummaryHeadLocked(filter RawRecordQuery) (RawRec
 }
 
 func (s *FlatSQLStore) countSchemaRecordsLocked(tableName string, filter RawRecordQuery) (int64, error) {
-	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE 1=1`, tableName)
-	args := make([]interface{}, 0, 2)
+	indexFilter, err := compileRawRecordSyncFilter(filter)
+	if err != nil {
+		return 0, err
+	}
+	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s records`, tableName)
+	args := make([]interface{}, 0, len(indexFilter.args)+3)
+	if indexFilter.active() {
+		query += `
+		INNER JOIN sdn_record_index idx
+		  ON idx.schema_name = ? AND idx.cid = records.cid
+		`
+		args = append(args, filter.SchemaName)
+	}
+	query += ` WHERE 1=1`
 	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
-		query += ` AND peer_id = ?`
+		query += ` AND records.peer_id = ?`
 		args = append(args, peerID)
 	}
 	if cid := strings.TrimSpace(filter.CID); cid != "" {
-		query += ` AND cid = ?`
+		query += ` AND records.cid = ?`
 		args = append(args, cid)
 	}
+	query, args = appendRawRecordSyncFilterWhere(query, args, indexFilter)
 
 	var total int64
 	if err := s.db.QueryRow(query, args...).Scan(&total); err != nil {
@@ -3361,21 +3404,33 @@ func (s *FlatSQLStore) countSchemaRecordsLocked(tableName string, filter RawReco
 }
 
 func (s *FlatSQLStore) rawSchemaRecordHeadLocked(tableName string, filter RawRecordQuery) (RawRecordHead, error) {
+	indexFilter, err := compileRawRecordSyncFilter(filter)
+	if err != nil {
+		return RawRecordHead{}, err
+	}
 	query := fmt.Sprintf(`
-		SELECT COALESCE(SUM(record_length), 0), COALESCE(MAX(timestamp), 0),
-		       COALESCE(MAX(created_at), 0), COALESCE(MAX(rowid), 0)
-		FROM %s
-		WHERE 1=1
+		SELECT COALESCE(SUM(records.record_length), 0), COALESCE(MAX(records.timestamp), 0),
+		       COALESCE(MAX(records.created_at), 0), COALESCE(MAX(records.rowid), 0)
+		FROM %s records
 	`, tableName)
-	args := make([]interface{}, 0, 2)
+	args := make([]interface{}, 0, len(indexFilter.args)+3)
+	if indexFilter.active() {
+		query += `
+		INNER JOIN sdn_record_index idx
+		  ON idx.schema_name = ? AND idx.cid = records.cid
+		`
+		args = append(args, filter.SchemaName)
+	}
+	query += ` WHERE 1=1`
 	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
-		query += ` AND peer_id = ?`
+		query += ` AND records.peer_id = ?`
 		args = append(args, peerID)
 	}
 	if cid := strings.TrimSpace(filter.CID); cid != "" {
-		query += ` AND cid = ?`
+		query += ` AND records.cid = ?`
 		args = append(args, cid)
 	}
+	query, args = appendRawRecordSyncFilterWhere(query, args, indexFilter)
 
 	var head RawRecordHead
 	if err := s.db.QueryRow(query, args...).Scan(
@@ -3390,13 +3445,23 @@ func (s *FlatSQLStore) rawSchemaRecordHeadLocked(tableName string, filter RawRec
 }
 
 func (s *FlatSQLStore) rawTaggedRecordHeadLocked(tableName string, filter RawRecordQuery) (RawRecordHead, error) {
+	indexFilter, err := compileRawRecordSyncFilter(filter)
+	if err != nil {
+		return RawRecordHead{}, err
+	}
 	query := fmt.Sprintf(`
 		SELECT COALESCE(SUM(records.record_length), 0), COALESCE(MAX(records.timestamp), 0),
 		       COALESCE(MAX(tags.created_at), 0), COALESCE(MAX(records.rowid), 0)
 		FROM sdn_record_source_tags tags
 		INNER JOIN %s records ON records.cid = tags.cid
-		WHERE tags.schema_name = ?
 	`, tableName)
+	if indexFilter.active() {
+		query += `
+		INNER JOIN sdn_record_index idx
+		  ON idx.schema_name = tags.schema_name AND idx.cid = records.cid
+		`
+	}
+	query += ` WHERE tags.schema_name = ?`
 	args := []interface{}{filter.SchemaName}
 
 	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
@@ -3427,6 +3492,7 @@ func (s *FlatSQLStore) rawTaggedRecordHeadLocked(tableName string, filter RawRec
 		query += ` AND tags.producer_public_key = ?`
 		args = append(args, producerPublicKey)
 	}
+	query, args = appendRawRecordSyncFilterWhere(query, args, indexFilter)
 
 	var head RawRecordHead
 	if err := s.db.QueryRow(query, args...).Scan(
@@ -3518,6 +3584,11 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 		strings.TrimSpace(filter.BatchID) != "" ||
 		strings.TrimSpace(filter.ProducerPeerID) != "" ||
 		strings.TrimSpace(filter.ProducerPublicKey) != ""
+	indexFilter, err := compileRawRecordSyncFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+	indexFiltered := indexFilter.active()
 
 	taggedQuery := fmt.Sprintf(`
 		SELECT records.cid, records.peer_id, records.timestamp,
@@ -3526,8 +3597,14 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
 		FROM sdn_record_source_tags tags
 		INNER JOIN %s records ON records.cid = tags.cid
-		WHERE tags.schema_name = ?
 	`, tableName)
+	if indexFiltered {
+		taggedQuery += `
+		INNER JOIN sdn_record_index idx
+		  ON idx.schema_name = tags.schema_name AND idx.cid = records.cid
+		`
+	}
+	taggedQuery += ` WHERE tags.schema_name = ?`
 	args := []interface{}{filter.SchemaName}
 
 	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
@@ -3558,7 +3635,12 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 		taggedQuery += ` AND tags.producer_public_key = ?`
 		args = append(args, producerPublicKey)
 	}
-	taggedQuery += ` ORDER BY tags.created_at DESC, tags.cid ASC LIMIT ? OFFSET ?`
+	taggedQuery, args = appendRawRecordSyncFilterWhere(taggedQuery, args, indexFilter)
+	if indexFiltered {
+		taggedQuery += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) ASC, records.cid ASC LIMIT ? OFFSET ?`
+	} else {
+		taggedQuery += ` ORDER BY tags.created_at DESC, tags.cid ASC LIMIT ? OFFSET ?`
+	}
 	args = append(args, filter.Limit, filter.Offset)
 
 	rows, err := s.db.Query(taggedQuery, args...)
@@ -3577,13 +3659,23 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 			       records.stream_path, records.stream_offset, records.record_length, records.signature_hex,
 			       '', '', '', '', '', '', '', NULL
 			FROM %s records
+		`, tableName)
+		untaggedArgs := make([]interface{}, 0, len(indexFilter.args)+3)
+		if indexFiltered {
+			untaggedQuery += `
+			INNER JOIN sdn_record_index idx
+			  ON idx.schema_name = ? AND idx.cid = records.cid
+			`
+			untaggedArgs = append(untaggedArgs, filter.SchemaName)
+		}
+		untaggedQuery += `
 			WHERE NOT EXISTS (
 				SELECT 1
 				FROM sdn_record_source_tags tags
 				WHERE tags.schema_name = ? AND tags.cid = records.cid
 			)
-		`, tableName)
-		untaggedArgs := []interface{}{filter.SchemaName}
+		`
+		untaggedArgs = append(untaggedArgs, filter.SchemaName)
 		if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
 			untaggedQuery += ` AND records.peer_id = ?`
 			untaggedArgs = append(untaggedArgs, peerID)
@@ -3592,7 +3684,12 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 			untaggedQuery += ` AND records.cid = ?`
 			untaggedArgs = append(untaggedArgs, cid)
 		}
-		untaggedQuery += ` ORDER BY records.timestamp DESC, records.cid ASC LIMIT ?`
+		untaggedQuery, untaggedArgs = appendRawRecordSyncFilterWhere(untaggedQuery, untaggedArgs, indexFilter)
+		if indexFiltered {
+			untaggedQuery += ` ORDER BY COALESCE(idx.epoch_unix, idx.source_timestamp) ASC, records.cid ASC LIMIT ?`
+		} else {
+			untaggedQuery += ` ORDER BY records.timestamp DESC, records.cid ASC LIMIT ?`
+		}
 		untaggedArgs = append(untaggedArgs, untaggedLimit)
 		untaggedRows, err := s.db.Query(untaggedQuery, untaggedArgs...)
 		if err != nil {
@@ -3605,7 +3702,7 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 		records = append(records, untagged...)
 	}
 
-	if filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) && len(records) < filter.Limit {
+	if !indexFiltered && filter.SchemaName == "EPM.fbs" && localEPMFilterMatches(filter) && len(records) < filter.Limit {
 		localLimit := filter.Limit - len(records)
 		localRecords, err := s.queryLocalEPMRecordsLocked(filter, localLimit)
 		if err != nil {
@@ -4448,6 +4545,13 @@ func extractIndexedFields(schemaName string, data []byte) (*indexedFields, error
 			out.opsStatusCode = opsStatusCode
 		}
 
+	case "PNM.fbs":
+		pnm, err := parsePNM(data)
+		if err != nil {
+			return nil, err
+		}
+		out.entityID = strings.TrimSpace(string(pnm.FILE_ID()))
+
 	default:
 		// No structured extraction for this schema yet.
 	}
@@ -4478,6 +4582,22 @@ func parseOMM(data []byte) (omm *OMM.OMM, err error) {
 		return OMM.GetRootAsOMM(data, 0), nil
 	default:
 		return nil, errors.New("invalid OMM buffer")
+	}
+}
+
+func parsePNM(data []byte) (pnm *PNM.PNM, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("malformed PNM buffer: %v", r)
+		}
+	}()
+	switch {
+	case PNM.SizePrefixedPNMBufferHasIdentifier(data):
+		return PNM.GetSizePrefixedRootAsPNM(data, 0), nil
+	case PNM.PNMBufferHasIdentifier(data):
+		return PNM.GetRootAsPNM(data, 0), nil
+	default:
+		return nil, errors.New("invalid PNM buffer")
 	}
 }
 
