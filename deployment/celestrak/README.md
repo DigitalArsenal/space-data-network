@@ -33,6 +33,7 @@ the SDN admin/API listener:
 - Kubo RPC: `127.0.0.1:5002`
 - Kubo gateway: `127.0.0.1:8081`
 - Kubo swarm: TCP/UDP `4002`
+- SDN WebRTC-direct transport: UDP `4003`
 
 The SDN full node listens on:
 

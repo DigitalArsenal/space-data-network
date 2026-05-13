@@ -76,6 +76,7 @@
     "@libp2p/webtransport": "^4.0.0",
     "@multiformats/multiaddr": "^12.1.0",
     "@noble/curves": "^1.9.7",
+    "@spacedatanetwork/libp2p-webrtc-v1": "npm:@libp2p/webrtc@^4.1.10",
     "flatbuffers": "^25.9.23",
     "flatsql": "file:../../flatsql",
     "hd-wallet-ui": "^2.0.6",

@@ -432,25 +432,30 @@ export async function createDefaultLibp2pFlatSqlSyncClient(candidateAddrs: strin
   ]);
   const transports: any[] = [];
   const services: Record<string, any> = {};
-  const includeAllTransports = normalizedAddrs.length === 0;
-  if (includeAllTransports || normalizedAddrs.some((addr) => addr.includes('/ws') || addr.includes('/wss'))) {
+  const transportSelection = selectLibp2pFlatSqlSyncTransports(normalizedAddrs);
+  if (transportSelection.webSockets) {
     const [{ webSockets }, { all: wsFilters }] = await Promise.all([
       import('@libp2p/websockets'),
       import('@libp2p/websockets/filters'),
     ]);
     transports.push(webSockets({ filter: wsFilters }));
   }
-  if (includeAllTransports || normalizedAddrs.some((addr) => addr.includes('/webtransport'))) {
+  if (transportSelection.webTransport) {
     const { webTransport } = await import('@libp2p/webtransport');
     transports.push(webTransport());
   }
-  if (includeAllTransports || normalizedAddrs.some((addr) => addr.includes('/webrtc') || addr.includes('/p2p-circuit'))) {
-    const [{ webRTC }, { circuitRelayTransport }, { identify }] = await Promise.all([
-      import('@libp2p/webrtc'),
+  if (transportSelection.webRtcRelay || transportSelection.webRtcDirect) {
+    const [{ webRTC, webRTCDirect }, { circuitRelayTransport }, { identify }] = await Promise.all([
+      import('@spacedatanetwork/libp2p-webrtc-v1'),
       import('@libp2p/circuit-relay-v2'),
       import('@libp2p/identify'),
     ]);
-    transports.push(webRTC(), circuitRelayTransport({ discoverRelays: 0 }));
+    if (transportSelection.webRtcRelay) {
+      transports.push(webRTC(), circuitRelayTransport({ discoverRelays: 0 }));
+    }
+    if (transportSelection.webRtcDirect) {
+      transports.push(webRTCDirect());
+    }
     services.identify = identify();
   }
   const libp2p = await createLibp2p({
@@ -499,6 +504,24 @@ export async function createDefaultLibp2pFlatSqlSyncClient(candidateAddrs: strin
     async stop() {
       await libp2p.stop();
     },
+  };
+}
+
+export interface Libp2pFlatSqlSyncTransportSelection {
+  webSockets: boolean;
+  webTransport: boolean;
+  webRtcRelay: boolean;
+  webRtcDirect: boolean;
+}
+
+export function selectLibp2pFlatSqlSyncTransports(candidateAddrs: string[]): Libp2pFlatSqlSyncTransportSelection {
+  const addrs = normalizeCandidateAddrs(candidateAddrs);
+  const includeAll = addrs.length === 0;
+  return {
+    webSockets: includeAll || addrs.some((addr) => addr.includes('/ws') || addr.includes('/wss')),
+    webTransport: includeAll || addrs.some((addr) => addr.includes('/webtransport')),
+    webRtcRelay: includeAll || addrs.some((addr) => (addr.includes('/webrtc') && !addr.includes('/webrtc-direct')) || addr.includes('/p2p-circuit')),
+    webRtcDirect: includeAll || addrs.some((addr) => addr.includes('/webrtc-direct')),
   };
 }
 
