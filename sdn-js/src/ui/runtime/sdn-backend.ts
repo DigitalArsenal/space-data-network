@@ -1,4 +1,5 @@
 import type { HostedEpmRecord } from './identity';
+import { normalizeHttpEndpointUrl } from './endpoint-url';
 export type { LocalLlmQueryContext, LocalLlmQueryDraft, LocalLlmQueryRequest } from './llm-query-context';
 
 export const BACKEND_MODES = ['desktop-local', 'remote-sdn', 'browser-node'] as const;
@@ -286,22 +287,6 @@ export function createCapabilityResult<T>(
   return { ok: state === 'available', capability: createCapability(id, state, reason), data };
 }
 
-function trimTrailingSlash(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) return null;
-  return trimmed.replace(/\/+$/, '');
-}
-
 function normalizeEndpointUrl(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) return null;
-  return trimTrailingSlash(endpointUrlFromMultiaddr(trimmed) ?? trimmed);
-}
-
-function endpointUrlFromMultiaddr(value: string): string | null {
-  const [, hostProtocol, host, transport, port] = value.split('/');
-  if (!hostProtocol || !host || transport !== 'tcp' || !port) return null;
-  if (!['ip4', 'ip6', 'dns', 'dns4', 'dns6'].includes(hostProtocol)) return null;
-  const hostname = hostProtocol === 'ip6' ? `[${host}]` : host;
-  return `http://${hostname}:${port}`;
+  return normalizeHttpEndpointUrl(value);
 }

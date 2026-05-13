@@ -1,3 +1,5 @@
+import { normalizeHttpEndpointUrl } from './endpoint-url';
+
 export interface IpfsArtifactPeerConnectOptions {
   ipfsApiUrl?: string | null;
   artifactPeerAddrs?: unknown;
@@ -211,9 +213,7 @@ async function fetchWithTimeout(
 }
 
 function normalizeApiBase(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) return null;
-  return trimmed.replace(/\/+$/, '');
+  return normalizeHttpEndpointUrl(value);
 }
 
 function normalizeCidValues(value: unknown): string[] {

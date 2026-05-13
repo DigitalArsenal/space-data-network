@@ -49,6 +49,41 @@ describe('IPFS artifact peer routing', () => {
     ]);
   });
 
+  it('normalizes desktop Kubo API multiaddrs before constructing swarm URLs', async () => {
+    const calls: string[] = [];
+    const result = await connectIpfsArtifactPeers({
+      ipfsApiUrl: '/ip4/127.0.0.1/tcp/5001',
+      artifactPeerAddrs: ['/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWCelesTrak'],
+      fetch: async (url, init) => {
+        calls.push(`${init?.method ?? 'GET'} ${String(url)}`);
+        return new Response(JSON.stringify({ Strings: ['connect success'] }), { status: 200 });
+      },
+    });
+
+    expect(result).toEqual({
+      attempted: 1,
+      connected: 1,
+      failed: 0,
+    });
+    expect(calls).toEqual([
+      'POST http://127.0.0.1:5001/api/v0/swarm/connect?arg=%2Fip4%2F167.172.219.213%2Ftcp%2F4002%2Fp2p%2F12D3KooWCelesTrak&timeout=5000ms',
+    ]);
+  });
+
+  it('ignores malformed local Kubo API endpoints instead of throwing Invalid URL during sync', async () => {
+    await expect(connectIpfsArtifactPeers({
+      ipfsApiUrl: 'not a url',
+      artifactPeerAddrs: ['/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWCelesTrak'],
+      fetch: async () => {
+        throw new Error('fetch should not be called for malformed API endpoints');
+      },
+    })).resolves.toEqual({
+      attempted: 0,
+      connected: 0,
+      failed: 0,
+    });
+  });
+
   it('prioritizes the selected provider while adding every discovered seed peer once', () => {
     expect(prioritizeIpfsArtifactPeerAddrs(
       ['/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWCelesTrak'],

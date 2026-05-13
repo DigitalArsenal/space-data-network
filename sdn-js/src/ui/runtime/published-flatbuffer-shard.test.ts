@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   fetchCidBytesFromGateway,
   flatBufferStreamFromPublishedFlatSqlSegment,
+  importCarBytesToKubo,
   importPublishedFlatSqlShardCar,
   timedFlatBufferStreamFromPublishedFlatSqlSegment,
   rawRecordsFromPublishedFlatSqlSegment,
@@ -73,6 +74,35 @@ describe('published FlatSQL shard reader', () => {
       }),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('gateway body did not time out')), 25)),
     ])).rejects.toThrow('fetch CID bafkshard timed out after 1 ms');
+  });
+
+  it('normalizes desktop gateway multiaddrs before fetching published shards', async () => {
+    const calls: string[] = [];
+    const bytes = await fetchCidBytesFromGateway('/ip4/127.0.0.1/tcp/8081', 'bafkshard', {
+      fetch: async (url) => {
+        calls.push(String(url));
+        return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      },
+    });
+
+    expect(bytes).toEqual(new Uint8Array([1, 2, 3]));
+    expect(calls).toEqual(['http://127.0.0.1:8081/ipfs/bafkshard']);
+  });
+
+  it('normalizes desktop Kubo API multiaddrs before importing CAR bundles', async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = (async (url) => {
+      calls.push(String(url));
+      return new Response(JSON.stringify({ Root: { Cid: '/' } }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      await importCarBytesToKubo('/ip4/127.0.0.1/tcp/5001', new Uint8Array([1, 2, 3]));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(calls).toEqual(['http://127.0.0.1:5001/api/v0/dag/import?pin-roots=true&stats=false']);
   });
 
   it('verifies and imports a published shard-group CAR before shard reads', async () => {
