@@ -651,7 +651,8 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 		totalRows += int64(publication.RecordCount)
 		totalBytes += publication.ByteCount
 	}
-	publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, s.ipfsAPIURL, filepath.Join(s.outputDir, safeDatasetPathComponent(schema), "car"), rootCIDs)
+	carOutputDir := filepath.Join(s.outputDir, safeDatasetPathComponent(schema), "car")
+	publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, s.ipfsAPIURL, carOutputDir, rootCIDs)
 	if err != nil {
 		return fmt.Errorf("publish shard-group CAR bundle: %w", err)
 	}
@@ -688,6 +689,32 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 		UpdatedAt:         verifiedAt,
 	}); err != nil {
 		return fmt.Errorf("record shard-group CAR pin ledger: %w", err)
+	}
+	if err := s.retireStaleShardGroupCARBundles(ctx, existing, head, carOutputDir, publishedCAR.Path); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx context.Context, entries []storage.PinLedgerEntry, currentHead, carOutputDir, currentCARPath string) error {
+	for _, entry := range entries {
+		if entry.CID == "" {
+			continue
+		}
+		if entry.Head == currentHead || entry.SnapshotID == currentHead {
+			continue
+		}
+		if err := storage.UnpinIPFSCID(ctx, s.ipfsAPIURL, entry.CID); err != nil {
+			return fmt.Errorf("unpin stale shard-group CAR %s: %w", entry.CID, err)
+		}
+		entry.VerificationState = "stale"
+		entry.UpdatedAt = s.now()
+		if err := s.store.UpsertPinLedgerEntry(entry); err != nil {
+			return fmt.Errorf("mark stale shard-group CAR %s: %w", entry.CID, err)
+		}
+	}
+	if err := storage.RemoveStaleShardGroupCARFiles(carOutputDir, currentCARPath); err != nil {
+		return fmt.Errorf("remove stale shard-group CAR files: %w", err)
 	}
 	return nil
 }

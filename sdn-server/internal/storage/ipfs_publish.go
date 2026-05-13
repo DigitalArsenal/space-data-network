@@ -190,6 +190,89 @@ func PublishShardGroupCARToIPFS(ctx context.Context, ipfsAPIURL, outputDir strin
 	}, nil
 }
 
+// UnpinIPFSCID removes a direct recursive pin from Kubo. Missing pins are
+// treated as already-retired so cleanup can be retried safely.
+func UnpinIPFSCID(ctx context.Context, ipfsAPIURL, cidValue string) error {
+	cidValue = strings.TrimSpace(cidValue)
+	if strings.TrimSpace(ipfsAPIURL) == "" {
+		return fmt.Errorf("ipfs api url is required")
+	}
+	if cidValue == "" {
+		return fmt.Errorf("cid is required")
+	}
+	endpoint, err := url.JoinPath(strings.TrimRight(ipfsAPIURL, "/"), "/api/v0/pin/rm")
+	if err != nil {
+		return fmt.Errorf("build IPFS URL: %w", err)
+	}
+	reqURL, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("parse IPFS URL: %w", err)
+	}
+	query := reqURL.Query()
+	query.Set("arg", cidValue)
+	query.Set("recursive", "true")
+	reqURL.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), nil)
+	if err != nil {
+		return fmt.Errorf("create IPFS pin/rm request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("post IPFS pin/rm: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+	message := strings.TrimSpace(string(body))
+	if strings.Contains(strings.ToLower(message), "not pinned") {
+		return nil
+	}
+	return fmt.Errorf("IPFS pin/rm failed with status %d: %s", resp.StatusCode, message)
+}
+
+// RemoveStaleShardGroupCARFiles removes local CAR bundle files in outputDir
+// except for keepPath. Kubo pins are managed separately.
+func RemoveStaleShardGroupCARFiles(outputDir, keepPath string) error {
+	outputDir = strings.TrimSpace(outputDir)
+	if outputDir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(outputDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read CAR output dir: %w", err)
+	}
+	keepAbs := ""
+	if strings.TrimSpace(keepPath) != "" {
+		if abs, err := filepath.Abs(keepPath); err == nil {
+			keepAbs = abs
+		}
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "shard-group-") || filepath.Ext(name) != ".car" {
+			continue
+		}
+		path := filepath.Join(outputDir, name)
+		if keepAbs != "" {
+			if abs, err := filepath.Abs(path); err == nil && abs == keepAbs {
+				continue
+			}
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale CAR file %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
 func pinUnixFSFile(ctx context.Context, ipfsAPIURL, path, expectedRawCID string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", fmt.Errorf("path is required")
