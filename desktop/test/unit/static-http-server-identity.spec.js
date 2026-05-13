@@ -195,6 +195,8 @@ test.describe('desktop static identity API', () => {
       ],
       metadata: expect.objectContaining({
         peer_id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+        provider_id: 'space-data-network-02',
+        source_name: 'celestrak-gp',
         sync_protocol: '/space-data-network/flatsql-sync/1.0.0'
       })
     }))

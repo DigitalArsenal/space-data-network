@@ -175,6 +175,42 @@ EOF"
     fi
 }
 
+configure_spaceaware_public_wss_proxy() {
+    local ip=$1
+    local config_dir=$2
+
+    if [[ "$config_dir" != "/etc/space-data-network" ]]; then
+        return
+    fi
+
+    ssh_cmd "$ip" "if [ -f /etc/nginx/sites-enabled/spaceaware ]; then
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path('/etc/nginx/sites-enabled/spaceaware')
+text = path.read_text()
+next_text = text.replace(
+    'server_name spaceaware.io www.spaceaware.io;',
+    'server_name spaceaware.io www.spaceaware.io sdn.spaceaware.io;',
+)
+next_text = next_text.replace(
+    'proxy_pass http://127.0.0.1:18080;',
+    'proxy_pass http://127.0.0.1:8080;',
+)
+if next_text != text:
+    backup = path.with_suffix(path.suffix + '.pre-sdn-wss-route')
+    if not backup.exists():
+        backup.write_text(text)
+    path.write_text(next_text)
+PY
+nginx -t
+systemctl reload nginx
+fi
+if systemctl cat space-data-network-module-delivery.service >/dev/null 2>&1; then
+    systemctl restart space-data-network-module-delivery.service || true
+fi"
+}
+
 prepare_full_node_assets() {
     log_info "Building shared admin shell assets..."
     (cd "${PROJECT_ROOT}/sdn-js" && npm run build:ui)
@@ -351,6 +387,7 @@ deploy_binary() {
         configure_full_node_systemd_overrides "$ip" "$full_service" "$config_dir"
 
         ssh_cmd "$ip" "chmod 755 ${config_dir} && chown root:root ${config_dir}/config.yaml && chmod 644 ${config_dir}/config.yaml && chmod +x /opt/spacedatanetwork/scripts/install-wasmedge.sh /opt/spacedatanetwork/scripts/go-with-wasmedge.sh && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge /opt/spacedatanetwork/scripts/go-with-wasmedge.sh build -o /opt/spacedatanetwork/bin/spacedatanetwork ./cmd/spacedatanetwork && chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork && systemctl daemon-reload && systemctl enable ${full_service} && systemctl restart ${full_service} && if [ '${full_service}' = 'space-data-network' ]; then systemctl disable --now spacedatanetwork >/dev/null 2>&1 || true; fi"
+        configure_spaceaware_public_wss_proxy "$ip" "$config_dir"
 
         log_success "Deployed full node bundle to $ip"
         return

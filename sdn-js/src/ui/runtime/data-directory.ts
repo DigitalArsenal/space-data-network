@@ -13,6 +13,7 @@ export interface DataFeedSubscription {
   storageCap: number;
   storageUnit: StorageUnit;
   syncFilter: string;
+  queryProfile: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -28,6 +29,7 @@ export interface DataFeedSubscriptionInput {
   storageCap: number;
   storageUnit: StorageUnit;
   syncFilter: string;
+  queryProfile?: string | null;
 }
 
 export interface DataDirectoryState {
@@ -62,8 +64,10 @@ export const DATA_DIRECTORY_STORAGE_KEY = 'sdn:data-directory:v1';
 export const PGP_OWNERTRUST_LEVELS: PgpOwnertrust[] = ['unknown', 'never', 'marginal', 'full', 'ultimate'];
 export const DEFAULT_OWNERTRUST: PgpOwnertrust = 'unknown';
 export const DATA_SOURCE_OWNERTRUST: PgpOwnertrust = 'marginal';
+export const DEFAULT_DATA_FEED_QUERY_PROFILE = 'dataset-publication-offset-v1';
 
 const TRUSTED_DIRECTORY_LEVELS = new Set<PgpOwnertrust>(['marginal', 'full', 'ultimate']);
+const DATA_FEED_QUERY_PROFILES = new Set(['ordered-offset-v1', 'dataset-publication-offset-v1']);
 
 export function normalizeOwnertrust(value: unknown): PgpOwnertrust {
   return PGP_OWNERTRUST_LEVELS.includes(value as PgpOwnertrust) ? value as PgpOwnertrust : DEFAULT_OWNERTRUST;
@@ -120,6 +124,7 @@ export function upsertDataFeedSubscription(
     storageCap: normalizeStorageCap(input.storageCap),
     storageUnit: normalizeStorageUnit(input.storageUnit),
     syncFilter: input.syncFilter.trim(),
+    queryProfile: normalizeQueryProfile(input.queryProfile),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
@@ -140,7 +145,7 @@ export function upsertDataFeedSubscription(
 export function updateDataFeedSubscription(
   state: DataDirectoryState,
   subscriptionId: string,
-  patch: Partial<Pick<DataFeedSubscription, 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter'>>,
+  patch: Partial<Pick<DataFeedSubscription, 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter' | 'queryProfile'>>,
 ): DataDirectoryState {
   const currentState = normalizeDataDirectoryState(state);
   const subscriptions = currentState.subscriptions.map((subscription) => {
@@ -189,6 +194,7 @@ export function migrateSchemaSyncPreferencesToDataDirectory(
       storageCap: normalizeStorageCap(preference.storageCap),
       storageUnit: normalizeStorageUnit(preference.storageUnit),
       syncFilter: '',
+      queryProfile: DEFAULT_DATA_FEED_QUERY_PROFILE,
     });
   }
   return nextState;
@@ -255,6 +261,7 @@ function normalizeDataFeedSubscription(value: unknown): DataFeedSubscription | n
     storageCap: normalizeStorageCap(candidate.storageCap),
     storageUnit: normalizeStorageUnit(candidate.storageUnit),
     syncFilter: stringValue(candidate.syncFilter) ?? '',
+    queryProfile: normalizeQueryProfile(candidate.queryProfile),
     createdAt: stringValue(candidate.createdAt) ?? now,
     updatedAt: stringValue(candidate.updatedAt) ?? now,
   };
@@ -290,6 +297,11 @@ function normalizeNonNegativeInteger(value: unknown): number {
 
 function normalizeOptionalString(value: unknown): string | null {
   return stringValue(value) ?? null;
+}
+
+function normalizeQueryProfile(value: unknown): string {
+  const candidate = stringValue(value);
+  return candidate && DATA_FEED_QUERY_PROFILES.has(candidate) ? candidate : DEFAULT_DATA_FEED_QUERY_PROFILE;
 }
 
 function stringValue(value: unknown): string | null {
