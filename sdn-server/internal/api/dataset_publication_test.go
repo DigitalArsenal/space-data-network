@@ -727,6 +727,10 @@ func TestConcreteDatasetPublicationServicePrunesStaleFullCatalogShards(t *testin
 	if len(first.Publications) != 3 {
 		t.Fatalf("first publications = %d, want 3", len(first.Publications))
 	}
+	firstCAR := mustLatestShardGroupCAR(t, store, "CAT.fbs", "space-data-network-02", "celestrak-gp", "verified")
+	if _, ok := pinned[firstCAR.CID]; !ok {
+		t.Fatalf("first shard-group CAR %q was not pinned", firstCAR.CID)
+	}
 
 	for _, cid := range cids[2:] {
 		if err := store.Delete("CAT.fbs", cid); err != nil {
@@ -758,6 +762,31 @@ func TestConcreteDatasetPublicationServicePrunesStaleFullCatalogShards(t *testin
 	}
 	if publications[0].Offset != 0 || publications[0].RecordCount != 2 {
 		t.Fatalf("remaining publication = %#v, want offset 0 record count 2", publications[0])
+	}
+	currentCAR := mustLatestShardGroupCAR(t, store, "CAT.fbs", "space-data-network-02", "celestrak-gp", "verified")
+	if currentCAR.CID == firstCAR.CID {
+		t.Fatalf("current shard-group CAR reused stale CID %q", currentCAR.CID)
+	}
+	if currentCAR.Head != publications[0].FeedHead {
+		t.Fatalf("current shard-group CAR head = %q, want %q", currentCAR.Head, publications[0].FeedHead)
+	}
+	staleCARs, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		CID:               firstCAR.CID,
+		SchemaName:        "CAT.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		Role:              "shard-group-car",
+		VerificationState: "stale",
+	})
+	if err != nil {
+		t.Fatalf("ListPinLedgerEntries stale failed: %v", err)
+	}
+	if len(staleCARs) != 1 {
+		t.Fatalf("stale shard-group CAR entries = %d, want 1 for %s: %#v", len(staleCARs), firstCAR.CID, staleCARs)
+	}
+	if _, ok := pinned[firstCAR.CID]; ok {
+		t.Fatalf("stale shard-group CAR %q remained pinned", firstCAR.CID)
 	}
 }
 
@@ -866,6 +895,25 @@ func cidV1RawSHA256ForTest(t *testing.T, data []byte) string {
 	return cid.NewCidV1(cid.Raw, hash).String()
 }
 
+func mustLatestShardGroupCAR(t *testing.T, store *storage.FlatSQLStore, schema, providerID, sourceName, verificationState string) storage.PinLedgerEntry {
+	t.Helper()
+	entries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		SchemaName:        schema,
+		ProviderID:        providerID,
+		SourceName:        sourceName,
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		Role:              "shard-group-car",
+		VerificationState: verificationState,
+	})
+	if err != nil {
+		t.Fatalf("ListPinLedgerEntries failed: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatalf("no %s shard-group CAR entries found for %s/%s/%s", verificationState, schema, providerID, sourceName)
+	}
+	return entries[0]
+}
+
 func newDatasetPublicationKuboTestServer(t *testing.T, pinned map[string][]byte) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -896,6 +944,12 @@ func newDatasetPublicationKuboTestServer(t *testing.T, pinned map[string][]byte)
 			}
 			w.Header().Set("Content-Type", "application/vnd.ipld.car")
 			writeSingleBlockCARForTest(t, w, decoded, body)
+			return
+		case "/api/v0/pin/rm":
+			cidValue := r.URL.Query().Get("arg")
+			delete(pinned, cidValue)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"Pins":["` + cidValue + `"]}` + "\n"))
 			return
 		default:
 			t.Fatalf("unexpected IPFS path: %s", r.URL.Path)
