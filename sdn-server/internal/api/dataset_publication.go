@@ -202,8 +202,17 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 		limit = defaultDatasetPublicationLimit
 	}
 
-	result, err := activeService.publishDatasetUpdatePart(ctx, activeReq, schema, datasetPublicationExportFilter(activeReq, schema, limit, 0), datasetPublicationSourceIdentityFromRequest(activeReq), datasetUpdateID(activeReq, activeService.now(), 0))
+	filter := datasetPublicationExportFilter(activeReq, schema, limit, 0)
+	sourceIdentity := datasetPublicationSourceIdentityFromRequest(activeReq)
+	result, err := activeService.publishDatasetUpdatePart(ctx, activeReq, schema, filter, sourceIdentity, datasetUpdateID(activeReq, activeService.now(), 0))
 	if err != nil {
+		return nil, err
+	}
+	published, err := activeService.publishedShardFromResult(schema, filter, sourceIdentity, result)
+	if err != nil {
+		return nil, err
+	}
+	if err := activeService.recordShardGroupCARBundle(ctx, []storage.DatasetShardPublication{published}, schema); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -312,9 +321,22 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 		return nil, fmt.Errorf("export dataset window: no records match export query")
 	}
 	if pruneStale {
-		if err := s.pruneStaleDatasetShardPublications(req, schema, chunkSize, pruneOffset); err != nil {
+		if err := s.pruneStaleDatasetShardPublications(req, schema, pruneOffset); err != nil {
 			return nil, err
 		}
+	}
+	publications, err := s.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   schema,
+		ProviderID:   strings.TrimSpace(req.ProviderID),
+		SourceName:   strings.TrimSpace(req.SourceName),
+		BatchID:      strings.TrimSpace(req.BatchID),
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load dataset shard publications for CAR bundle: %w", err)
+	}
+	if err := s.recordShardGroupCARBundle(ctx, publications, schema); err != nil {
+		return nil, err
 	}
 	first := series.Publications[0]
 	series.ShardCID = first.ShardCID
@@ -324,7 +346,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdateSeries(ctx conte
 	return series, nil
 }
 
-func (s *ConcreteDatasetPublicationService) pruneStaleDatasetShardPublications(req DatasetPublicationRequest, schema string, chunkSize, staleOffset int) error {
+func (s *ConcreteDatasetPublicationService) pruneStaleDatasetShardPublications(req DatasetPublicationRequest, schema string, staleOffset int) error {
 	if staleOffset < 0 {
 		return fmt.Errorf("prune stale dataset shard publications: stale offset must be non-negative")
 	}
@@ -334,7 +356,6 @@ func (s *ConcreteDatasetPublicationService) pruneStaleDatasetShardPublications(r
 		SourceName:   strings.TrimSpace(req.SourceName),
 		BatchID:      strings.TrimSpace(req.BatchID),
 		QueryProfile: storage.DatasetPublicationQueryProfile,
-		Limit:        chunkSize,
 	}, staleOffset)
 	if err != nil {
 		return fmt.Errorf("prune stale dataset shard publications: %w", err)
@@ -465,6 +486,34 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context
 	}, nil
 }
 
+func (s *ConcreteDatasetPublicationService) publishedShardFromResult(
+	schema string,
+	filter storage.IndexedRecordQuery,
+	sourceIdentity datasetPublicationSourceIdentity,
+	result *DatasetPublicationResult,
+) (storage.DatasetShardPublication, error) {
+	if result == nil {
+		return storage.DatasetShardPublication{}, fmt.Errorf("load dataset shard publication: result is required")
+	}
+	published, found, err := s.store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		SchemaName:   schema,
+		ProviderID:   sourceIdentity.ProviderID,
+		SourceName:   sourceIdentity.SourceName,
+		BatchID:      sourceIdentity.BatchID,
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       filter.Offset,
+		Limit:        filter.Limit,
+		RecordCount:  result.RecordCount,
+	})
+	if err != nil {
+		return storage.DatasetShardPublication{}, fmt.Errorf("load dataset shard publication: %w", err)
+	}
+	if !found {
+		return storage.DatasetShardPublication{}, fmt.Errorf("load dataset shard publication: published shard was not found")
+	}
+	return published, nil
+}
+
 func (s *ConcreteDatasetPublicationService) reusableDatasetPublicationResult(
 	ctx context.Context,
 	req DatasetPublicationRequest,
@@ -554,6 +603,91 @@ func (s *ConcreteDatasetPublicationService) announceDatasetPublication(ctx conte
 		}); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx context.Context, publications []storage.DatasetShardPublication, schema string) error {
+	if len(publications) == 0 {
+		return nil
+	}
+	last := publications[len(publications)-1]
+	head := last.FeedHead
+	if head == "" {
+		head = datasync.PublishedFeedHead(schema, last.ProviderID, last.SourceName, last.BatchID, last.QueryProfile, publications)
+	}
+	existing, err := s.store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		SchemaName:        schema,
+		ProviderPeerID:    s.providerPeerID,
+		ProviderID:        last.ProviderID,
+		SourceName:        last.SourceName,
+		BatchID:           last.BatchID,
+		QueryProfile:      last.QueryProfile,
+		Role:              "shard-group-car",
+		VerificationState: "verified",
+	})
+	if err != nil {
+		return fmt.Errorf("list existing shard-group CAR bundle pins: %w", err)
+	}
+	for _, entry := range existing {
+		if entry.Head == head && entry.CID != "" && entry.ByteHash != "" && entry.ByteCount > 0 {
+			return nil
+		}
+	}
+
+	rootCIDs := make([]string, 0, len(publications)*3)
+	var totalRows int64
+	var totalBytes int64
+	for _, publication := range publications {
+		if publication.ShardCID != "" {
+			rootCIDs = append(rootCIDs, publication.ShardCID)
+		}
+		if publication.IndexCID != "" {
+			rootCIDs = append(rootCIDs, publication.IndexCID)
+		}
+		if publication.ManifestCID != "" {
+			rootCIDs = append(rootCIDs, publication.ManifestCID)
+		}
+		totalRows += int64(publication.RecordCount)
+		totalBytes += publication.ByteCount
+	}
+	publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, s.ipfsAPIURL, filepath.Join(s.outputDir, safeDatasetPathComponent(schema), "car"), rootCIDs)
+	if err != nil {
+		return fmt.Errorf("publish shard-group CAR bundle: %w", err)
+	}
+
+	providerPublicKey := ""
+	if len(s.signingKey) == ed25519.PrivateKeySize {
+		if pubKey, ok := s.signingKey.Public().(ed25519.PublicKey); ok {
+			providerPublicKey = hex.EncodeToString(pubKey)
+		}
+	}
+	verifiedAt := last.PublishedAt
+	if verifiedAt.IsZero() {
+		verifiedAt = s.now()
+	}
+	highWaterMark := datasync.PublishedFeedHighWaterMark(publications, totalRows, totalBytes)
+	if err := s.store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
+		CID:               publishedCAR.CID,
+		SchemaName:        schema,
+		ProviderPeerID:    s.providerPeerID,
+		ProviderPublicKey: providerPublicKey,
+		ProviderID:        last.ProviderID,
+		SourceName:        last.SourceName,
+		BatchID:           last.BatchID,
+		QueryProfile:      last.QueryProfile,
+		SnapshotID:        head,
+		Head:              head,
+		HighWaterMark:     highWaterMark,
+		ByteHash:          publishedCAR.SHA256,
+		Role:              "shard-group-car",
+		RowCount:          totalRows,
+		ByteCount:         publishedCAR.ByteCount,
+		VerificationState: "verified",
+		VerifiedAt:        verifiedAt,
+		UpdatedAt:         verifiedAt,
+	}); err != nil {
+		return fmt.Errorf("record shard-group CAR pin ledger: %w", err)
 	}
 	return nil
 }

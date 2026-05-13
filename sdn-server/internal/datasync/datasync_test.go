@@ -118,13 +118,28 @@ func TestOpenManifestAdvertisesPublishedShardGroupCARBundle(t *testing.T) {
 	if err := store.UpsertDatasetShardPublication(publication); err != nil {
 		t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
 	}
+	published, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		SchemaName:   publication.SchemaName,
+		ProviderID:   publication.ProviderID,
+		SourceName:   publication.SourceName,
+		QueryProfile: publication.QueryProfile,
+		Offset:       publication.Offset,
+		Limit:        publication.Limit,
+		RecordCount:  publication.RecordCount,
+	})
+	if err != nil {
+		t.Fatalf("FindDatasetShardPublication failed: %v", err)
+	}
+	if !found {
+		t.Fatal("published shard was not found")
+	}
 	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
 		CID:               "bafyshardgroupcar",
 		SchemaName:        "OMM.fbs",
 		ProviderID:        "space-data-network-02",
 		SourceName:        "celestrak-gp",
 		QueryProfile:      storage.DatasetPublicationQueryProfile,
-		Head:              publication.FeedHead,
+		Head:              published.FeedHead,
 		ByteHash:          "car-sha-256",
 		Role:              "shard-group-car",
 		RowCount:          50_000,
@@ -133,6 +148,22 @@ func TestOpenManifestAdvertisesPublishedShardGroupCARBundle(t *testing.T) {
 		VerifiedAt:        publication.PublishedAt,
 	}); err != nil {
 		t.Fatalf("UpsertPinLedgerEntry failed: %v", err)
+	}
+	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
+		CID:               "bafystaleshardgroupcar",
+		SchemaName:        "OMM.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		Head:              "stale-feed-head",
+		ByteHash:          "stale-car-sha-256",
+		Role:              "shard-group-car",
+		RowCount:          50_000,
+		ByteCount:         16_000_000,
+		VerificationState: "verified",
+		VerifiedAt:        publication.PublishedAt.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertPinLedgerEntry stale failed: %v", err)
 	}
 
 	manifest, err := OpenManifest(store, QueryRequest{
