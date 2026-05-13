@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"database/sql"
@@ -385,6 +386,158 @@ func TestImportLegacySQLiteCanPublishHistoricalOMMArtifactsWithoutMaterializingR
 	}
 }
 
+func TestImportLegacySQLitePlanOnlyCanRegisterHistoricalArtifactsWithNodeSigningKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
+	sourceDB, err := sql.Open("sqlite3", sourcePath)
+	if err != nil {
+		t.Fatalf("open source sqlite: %v", err)
+	}
+	if _, err := sourceDB.Exec(`
+		CREATE TABLE satellite_data (
+			OBJECT_ID TEXT,
+			EPOCH TEXT,
+			MEAN_MOTION REAL,
+			ECCENTRICITY REAL,
+			INCLINATION REAL,
+			RA_OF_ASC_NODE REAL,
+			ARG_OF_PERICENTER REAL,
+			MEAN_ANOMALY REAL,
+			NORAD_CAT_ID INTEGER,
+			BSTAR REAL
+		);
+		INSERT INTO satellite_data (
+			OBJECT_ID, EPOCH, MEAN_MOTION, ECCENTRICITY, INCLINATION,
+			RA_OF_ASC_NODE, ARG_OF_PERICENTER, MEAN_ANOMALY, NORAD_CAT_ID, BSTAR
+		) VALUES
+			('1957-001A', '1959-01-11T01:49:23.461536', 10.1, 0.001, 55.0, 20.0, 30.0, 40.0, 1, 0.00001),
+			('1998-067A', '2024-01-16T11:51:22.650624', 15.5, 0.0002, 51.6, 10.0, 20.0, 30.0, 25544, 0.00002),
+			('2024-001A', '2024-01-17T11:51:22.650624', 15.6, 0.0003, 52.1, 11.0, 21.0, 31.0, 60000, 0.00003);
+	`); err != nil {
+		_ = sourceDB.Close()
+		t.Fatalf("seed source sqlite: %v", err)
+	}
+	if err := sourceDB.Close(); err != nil {
+		t.Fatalf("close source sqlite: %v", err)
+	}
+
+	pinned := map[string][]byte{}
+	kubo := newImportLegacyKuboTestServer(t, pinned)
+	defer kubo.Close()
+
+	stagingStoragePath := filepath.Join(tmpDir, "staging-sdn")
+	planPath := filepath.Join(tmpDir, "historical-plan.json")
+	restore := captureImportLegacyGlobals()
+	t.Cleanup(restore)
+	configPath = filepath.Join(tmpDir, "missing-config.yaml")
+	importLegacySourceDB = sourcePath
+	importLegacySourceTable = "satellite_data"
+	importLegacyStoragePath = stagingStoragePath
+	importLegacySourcePeer = "source:legacy-sqlite"
+	importLegacyBatchSize = 2
+	importLegacyCheckpointPath = ""
+	importLegacyResetCheckpoint = true
+	importLegacyMaxRows = 0
+	importLegacyStoreMPE = false
+	importLegacyPublishArtifactsOnly = true
+	importLegacyIPFSAPIURL = kubo.URL
+	importLegacyPublicationOutputDir = filepath.Join(tmpDir, "publications")
+	importLegacyPublicationPlanOnly = true
+	importLegacyPublicationPlanOutput = planPath
+	importLegacyPublicationProviderPeerID = "16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4"
+	importLegacyPublicationProviderEPMCID = "bafy-provider-epm"
+	importLegacyPublicationDatasetID = "sdn-omm-celestrak-gp-historical"
+
+	if err := runImportLegacySQLite(nil, nil); err != nil {
+		t.Fatalf("runImportLegacySQLite plan-only failed: %v", err)
+	}
+	if _, err := os.Stat(planPath); err != nil {
+		t.Fatalf("plan output was not written: %v", err)
+	}
+
+	registeredStoragePath := filepath.Join(tmpDir, "registered-sdn")
+	registerConfigPath := filepath.Join(tmpDir, "register-config.yaml")
+	registerDataPath := filepath.Join(tmpDir, "register-data")
+	if err := os.WriteFile(registerConfigPath, []byte(fmt.Sprintf(`
+storage:
+  path: %s
+setup:
+  data_path: %s
+admin:
+  ipfs_api_url: %s
+`, registeredStoragePath, registerDataPath, kubo.URL)), 0600); err != nil {
+		t.Fatalf("write register config: %v", err)
+	}
+	configPath = registerConfigPath
+	result, err := registerLegacyPublicationPlan(context.Background(), legacyPublicationPlanRegistrationOptions{
+		PlanPath: planPath,
+	})
+	if err != nil {
+		t.Fatalf("registerLegacyPublicationPlan failed: %v", err)
+	}
+	if result.Publications != 2 || result.Records != 3 {
+		t.Fatalf("registered result = %+v, want 2 publications and 3 records", result)
+	}
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	rootStore, err := storage.NewFlatSQLStore(registeredStoragePath, validator)
+	if err != nil {
+		t.Fatalf("open registered root store: %v", err)
+	}
+	defer rootStore.Close()
+	rootCount, err := rootStore.CountRawRecords(storage.RawRecordQuery{SchemaName: "OMM.fbs"})
+	if err != nil {
+		t.Fatalf("root CountRawRecords failed: %v", err)
+	}
+	if rootCount != 0 {
+		t.Fatalf("root OMM rows = %d, want 0 after registering artifact plan", rootCount)
+	}
+	entries, err := rootStore.ListDatastoreIdentities()
+	if err != nil {
+		t.Fatalf("ListDatastoreIdentities failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("datastore registry entries = %d, want 1: %#v", len(entries), entries)
+	}
+	namespaceStore, err := rootStore.OpenRegisteredDatastore(entries[0].Key)
+	if err != nil {
+		t.Fatalf("OpenRegisteredDatastore failed: %v", err)
+	}
+	defer namespaceStore.Close()
+	namespaceCount, err := namespaceStore.CountRawRecords(storage.RawRecordQuery{SchemaName: "OMM.fbs"})
+	if err != nil {
+		t.Fatalf("namespace CountRawRecords failed: %v", err)
+	}
+	if namespaceCount != 0 {
+		t.Fatalf("namespace OMM rows = %d, want 0 after registering artifact plan", namespaceCount)
+	}
+	pnmCount, err := namespaceStore.CountRawRecords(storage.RawRecordQuery{SchemaName: "PNM.fbs"})
+	if err != nil {
+		t.Fatalf("PNM CountRawRecords failed: %v", err)
+	}
+	if pnmCount != 2 {
+		t.Fatalf("publication PNMs = %d, want 2", pnmCount)
+	}
+	publications, err := namespaceStore.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp-historical",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		t.Fatalf("ListDatasetShardPublications failed: %v", err)
+	}
+	if len(publications) != 2 || publications[0].RecordCount != 2 || publications[1].RecordCount != 1 {
+		t.Fatalf("registered publications = %#v, want two planned artifact windows", publications)
+	}
+	if len(pinned) != 6 {
+		t.Fatalf("pinned IPFS objects = %d, want shard/index locally plus signed manifests on registration", len(pinned))
+	}
+}
+
 func captureImportLegacyGlobals() func() {
 	oldConfigPath := configPath
 	oldSourceDB := importLegacySourceDB
@@ -411,6 +564,8 @@ func captureImportLegacyGlobals() func() {
 	oldPublicationProviderPeerID := importLegacyPublicationProviderPeerID
 	oldPublicationProviderEPMCID := importLegacyPublicationProviderEPMCID
 	oldPublicationDatasetID := importLegacyPublicationDatasetID
+	oldPublicationPlanOnly := importLegacyPublicationPlanOnly
+	oldPublicationPlanOutput := importLegacyPublicationPlanOutput
 	return func() {
 		configPath = oldConfigPath
 		importLegacySourceDB = oldSourceDB
@@ -437,6 +592,8 @@ func captureImportLegacyGlobals() func() {
 		importLegacyPublicationProviderPeerID = oldPublicationProviderPeerID
 		importLegacyPublicationProviderEPMCID = oldPublicationProviderEPMCID
 		importLegacyPublicationDatasetID = oldPublicationDatasetID
+		importLegacyPublicationPlanOnly = oldPublicationPlanOnly
+		importLegacyPublicationPlanOutput = oldPublicationPlanOutput
 	}
 }
 
