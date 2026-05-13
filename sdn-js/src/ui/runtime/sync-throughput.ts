@@ -224,9 +224,10 @@ export function parseThroughputHarnessArgs(argv: string[]): ThroughputHarnessOpt
 }
 
 export function throughputHarnessSummary(result: ThroughputHarnessResult): string {
-  const utilization = result.audit.wireSpeedUtilization == null
+  const boundedUtilization = boundedWireSpeedUtilization(result.audit.wireSpeedUtilization);
+  const utilization = boundedUtilization == null
     ? 'unknown'
-    : `${Math.round(result.audit.wireSpeedUtilization * 100)}% of wire`;
+    : `${Math.round(boundedUtilization * 100)}% of wire`;
   const targetStatus = result.audit.targetMet === true ? 'met' : result.audit.targetMet === false ? 'not met' : 'unknown';
   return [
     `FlatSQL sync throughput audit (${result.schema})`,
