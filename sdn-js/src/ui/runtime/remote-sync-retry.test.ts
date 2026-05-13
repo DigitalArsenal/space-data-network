@@ -45,6 +45,7 @@ describe('remote sync retry', () => {
   it('classifies dial failures and timeouts as retryable remote sync errors', () => {
     expect(isRetryableRemoteSyncError(new Error('failed to dial /space-data-network/flatsql-sync/1.0.0: Read aborted'))).toBe(true);
     expect(isRetryableRemoteSyncError(new Error('Remote sync scan timed out after 60s'))).toBe(true);
+    expect(isRetryableRemoteSyncError(new Error("Failed to construct 'URL': Invalid URL"))).toBe(true);
     expect(isRetryableRemoteSyncError(new Error('No FlatSQL schema registered for OMM'))).toBe(false);
   });
 });

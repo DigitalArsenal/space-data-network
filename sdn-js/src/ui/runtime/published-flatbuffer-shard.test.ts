@@ -50,6 +50,29 @@ describe('published FlatSQL shard reader', () => {
     expect(result.verificationMs).toBeGreaterThanOrEqual(0);
   });
 
+  it('retries transient published shard fetch timeouts before failing segment sync', async () => {
+    const shard = concatFrames([new Uint8Array([1, 2, 3])]);
+    let attempts = 0;
+
+    const result = await timedFlatBufferStreamFromPublishedFlatSqlSegment({
+      schema: 'OMM.fbs',
+      providerPeerId: '16Uiu2HCelesTrak',
+      cid: 'bafkshard',
+      shardSha256: await sha256Hex(shard),
+      fetchAttempts: 2,
+      retryDelayMs: 0,
+      fetchCidBytes: async (cid) => {
+        attempts += 1;
+        if (cid !== 'bafkshard') throw new Error(`unexpected CID ${cid}`);
+        if (attempts === 1) throw new Error('fetch CID bafkshard timed out after 30000 ms');
+        return shard;
+      },
+    });
+
+    expect(result.streamBytes).toEqual(shard);
+    expect(attempts).toBe(2);
+  });
+
   it('bounds local gateway CID fetches', async () => {
     await expect(Promise.race([
       fetchCidBytesFromGateway('http://127.0.0.1:8081', 'bafkshard', {
