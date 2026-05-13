@@ -1,5 +1,6 @@
 import { sha256 } from '../../crypto/hd-wallet';
 import type { RawDataRecord } from './sdn-backend';
+import { normalizeHttpEndpointUrl } from './endpoint-url';
 
 export interface PublishedFlatSqlSegmentInput {
   schema: string;
@@ -109,7 +110,7 @@ export async function importPublishedFlatSqlShardCar(input: PublishedFlatSqlShar
 }
 
 export async function importCarBytesToKubo(ipfsApiUrl: string, carBytes: Uint8Array): Promise<void> {
-  const base = ipfsApiUrl.trim().replace(/\/+$/, '');
+  const base = normalizeHttpEndpointUrl(ipfsApiUrl);
   if (!base) throw new Error('local IPFS API URL is required for CAR import');
   if (typeof FormData === 'undefined' || typeof Blob === 'undefined') {
     throw new Error('CAR import requires FormData and Blob support');
@@ -169,7 +170,7 @@ export async function fetchCidBytesFromGateway(
   cid: string,
   options: FetchCidBytesFromGatewayOptions = {},
 ): Promise<Uint8Array> {
-  const base = gatewayUrl.trim().replace(/\/+$/, '');
+  const base = normalizeHttpEndpointUrl(gatewayUrl);
   if (!base) throw new Error('local IPFS gateway URL is required');
   const fetchLike = options.fetch ?? globalThis.fetch;
   if (typeof fetchLike !== 'function') throw new Error('fetch is unavailable for local IPFS gateway reads');
