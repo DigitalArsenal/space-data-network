@@ -1155,6 +1155,7 @@ func (s *FlatSQLStore) hydrateRecordData(record *Record, streamPath string, stre
 }
 
 func (s *FlatSQLStore) ensureSourceSummaryForSchema(schemaName, tableName string) error {
+	_ = tableName
 	var existing int
 	if err := s.db.QueryRow(`
 		SELECT COUNT(*)
@@ -1164,35 +1165,10 @@ func (s *FlatSQLStore) ensureSourceSummaryForSchema(schemaName, tableName string
 		return fmt.Errorf("inspect source summary for %s: %w", schemaName, err)
 	}
 	if existing > 0 {
-		var stale int
-		if err := s.db.QueryRow(`
-			SELECT COUNT(*)
-			FROM sdn_record_source_summary
-			WHERE schema_name = ?
-			  AND record_count > 0
-			  AND max_rowid <= 0
-		`, schemaName).Scan(&stale); err != nil {
-			return fmt.Errorf("inspect source summary row bounds for %s: %w", schemaName, err)
-		}
-		if stale > 0 {
-			return s.rebuildSourceSummaryForSchema(schemaName, tableName)
-		}
 		return nil
 	}
 
-	var hasTag int
-	if err := s.db.QueryRow(`
-		SELECT 1
-		FROM sdn_record_source_tags
-		WHERE schema_name = ?
-		LIMIT 1
-	`, schemaName).Scan(&hasTag); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		return fmt.Errorf("inspect source tags for %s: %w", schemaName, err)
-	}
-	return s.rebuildSourceSummaryForSchema(schemaName, tableName)
+	return nil
 }
 
 func (s *FlatSQLStore) rebuildSourceSummaryForSchema(schemaName, tableName string) error {
@@ -3317,7 +3293,13 @@ func (s *FlatSQLStore) RawRecordHead(filter RawRecordQuery) (RawRecordHead, erro
 		if ok {
 			head = summary
 			if filter.UseRowIDCursor && head.MaxRowID <= 0 {
-				head = RawRecordHead{}
+				schemaHead, err := s.rawSchemaRecordHeadLocked(tableName, RawRecordQuery{
+					SchemaName: filter.SchemaName,
+				})
+				if err != nil {
+					return RawRecordHead{}, err
+				}
+				head.MaxRowID = schemaHead.MaxRowID
 			}
 		}
 		if ok && (!filter.UseRowIDCursor || head.MaxRowID > 0) {
@@ -3610,6 +3592,88 @@ func appendRawRecordRowIDCursorWhere(query string, args []interface{}, qualifier
 	return query, args
 }
 
+func appendRawRecordSourceTagFilters(query string, args []interface{}, qualifier string, filter RawRecordQuery) (string, []interface{}) {
+	prefix := strings.TrimSpace(qualifier)
+	if prefix != "" {
+		prefix += "."
+	}
+	if providerID := strings.TrimSpace(filter.ProviderID); providerID != "" {
+		query += fmt.Sprintf(` AND %sprovider_id = ?`, prefix)
+		args = append(args, providerID)
+	}
+	if sourceName := strings.TrimSpace(filter.SourceName); sourceName != "" {
+		query += fmt.Sprintf(` AND %ssource_name = ?`, prefix)
+		args = append(args, sourceName)
+	}
+	if batchID := strings.TrimSpace(filter.BatchID); batchID != "" {
+		query += fmt.Sprintf(` AND %sbatch_id = ?`, prefix)
+		args = append(args, batchID)
+	}
+	if producerPeerID := strings.TrimSpace(filter.ProducerPeerID); producerPeerID != "" {
+		query += fmt.Sprintf(` AND %sproducer_peer_id = ?`, prefix)
+		args = append(args, producerPeerID)
+	}
+	if producerPublicKey := strings.TrimSpace(filter.ProducerPublicKey); producerPublicKey != "" {
+		query += fmt.Sprintf(` AND %sproducer_public_key = ?`, prefix)
+		args = append(args, producerPublicKey)
+	}
+	return query, args
+}
+
+func (s *FlatSQLStore) queryRawRecordsWithRowIDSourceCursorLocked(tableName string, filter RawRecordQuery, hydrate bool) ([]*Record, error) {
+	query := fmt.Sprintf(`
+		WITH candidates AS (
+			SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
+			       records.stream_path, records.stream_offset, records.record_length, records.signature_hex
+			FROM %s records
+			WHERE 1 = 1
+	`, tableName)
+	args := make([]interface{}, 0, 16)
+	if peerID := strings.TrimSpace(filter.PeerID); peerID != "" {
+		query += ` AND records.peer_id = ?`
+		args = append(args, peerID)
+	}
+	if cid := strings.TrimSpace(filter.CID); cid != "" {
+		query += ` AND records.cid = ?`
+		args = append(args, cid)
+	}
+	query, args = appendRawRecordRowIDCursorWhere(query, args, "records", filter)
+	query += `
+			  AND EXISTS (
+				SELECT 1
+				FROM sdn_record_source_tags tags INDEXED BY idx_sdn_record_source_tags_source_cid
+				WHERE tags.schema_name = ? AND tags.cid = records.cid
+	`
+	args = append(args, filter.SchemaName)
+	query, args = appendRawRecordSourceTagFilters(query, args, "tags", filter)
+	query += `
+			)
+			ORDER BY records.rowid ASC, records.cid ASC
+			LIMIT ?
+		)
+		SELECT candidates.rowid, candidates.cid, candidates.peer_id, candidates.timestamp,
+		       candidates.stream_path, candidates.stream_offset, candidates.record_length, candidates.signature_hex,
+		       tags.provider_id, tags.source_name, tags.source_url, tags.batch_id,
+		       tags.content_key_id, tags.producer_peer_id, tags.producer_public_key, tags.created_at
+		FROM candidates
+		CROSS JOIN sdn_record_source_tags tags INDEXED BY idx_sdn_record_source_tags_source_cid
+		WHERE tags.schema_name = ? AND tags.cid = candidates.cid
+	`
+	args = append(args, filter.Limit, filter.SchemaName)
+	query, args = appendRawRecordSourceTagFilters(query, args, "tags", filter)
+	query += `
+		ORDER BY candidates.rowid ASC, candidates.cid ASC
+		LIMIT ?
+	`
+	args = append(args, filter.Limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("raw record rowid source query failed: %w", err)
+	}
+	return s.scanRawRecordRows(rows, hydrate)
+}
+
 func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*Record, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -3642,6 +3706,11 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 		return nil, err
 	}
 	indexFiltered := indexFilter.active()
+	rowIDSourceCursorOptimized := filter.UseRowIDCursor && sourceFiltered && !indexFiltered &&
+		(strings.TrimSpace(filter.ProviderID) != "" || strings.TrimSpace(filter.SourceName) != "")
+	if rowIDSourceCursorOptimized {
+		return s.queryRawRecordsWithRowIDSourceCursorLocked(tableName, filter, hydrate)
+	}
 
 	taggedQuery := fmt.Sprintf(`
 		SELECT records.rowid, records.cid, records.peer_id, records.timestamp,
@@ -3668,26 +3737,7 @@ func (s *FlatSQLStore) queryRawRecords(filter RawRecordQuery, hydrate bool) ([]*
 		taggedQuery += ` AND records.cid = ?`
 		args = append(args, cid)
 	}
-	if providerID := strings.TrimSpace(filter.ProviderID); providerID != "" {
-		taggedQuery += ` AND tags.provider_id = ?`
-		args = append(args, providerID)
-	}
-	if sourceName := strings.TrimSpace(filter.SourceName); sourceName != "" {
-		taggedQuery += ` AND tags.source_name = ?`
-		args = append(args, sourceName)
-	}
-	if batchID := strings.TrimSpace(filter.BatchID); batchID != "" {
-		taggedQuery += ` AND tags.batch_id = ?`
-		args = append(args, batchID)
-	}
-	if producerPeerID := strings.TrimSpace(filter.ProducerPeerID); producerPeerID != "" {
-		taggedQuery += ` AND tags.producer_peer_id = ?`
-		args = append(args, producerPeerID)
-	}
-	if producerPublicKey := strings.TrimSpace(filter.ProducerPublicKey); producerPublicKey != "" {
-		taggedQuery += ` AND tags.producer_public_key = ?`
-		args = append(args, producerPublicKey)
-	}
+	taggedQuery, args = appendRawRecordSourceTagFilters(taggedQuery, args, "tags", filter)
 	taggedQuery, args = appendRawRecordRowIDCursorWhere(taggedQuery, args, "records", filter)
 	taggedQuery, args = appendRawRecordSyncFilterWhere(taggedQuery, args, indexFilter)
 	if filter.UseRowIDCursor {

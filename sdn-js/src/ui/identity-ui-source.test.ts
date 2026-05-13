@@ -277,6 +277,7 @@ describe('SDN data Svelte source', () => {
       'syncSchema',
       'downloadSpeedBytesPerSecond',
       'formatBytesPerSecond',
+      'boundedWireSpeedUtilization(schema.progress.wireSpeedUtilization)',
       'Download',
       'backendConfigForDataSource',
       'clearLocalFlatSqlStore',

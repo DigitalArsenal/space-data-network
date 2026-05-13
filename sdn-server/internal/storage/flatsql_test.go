@@ -1010,6 +1010,113 @@ func TestFlatSQLStoreCountRawRecordsMatchesSourceFiltersWithoutHydratingRows(t *
 	}
 }
 
+func TestFlatSQLStoreQueryRawRecordRefsUsesRowIDCursorWithSourceFilters(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-rowid-source-query-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	celestrakTags := SourceTags{
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		BatchID:           "batch-a",
+		ProducerPeerID:    "peer-celestrak",
+		ProducerPublicKey: "public-celestrak",
+	}
+	otherTags := SourceTags{
+		ProviderID:        "other-provider",
+		SourceName:        "other-gp",
+		BatchID:           "batch-b",
+		ProducerPeerID:    "peer-other",
+		ProducerPublicKey: "public-other",
+	}
+	ommA := sds.NewOMMBuilder().WithNoradCatID(10001).WithObjectName("A").Build()
+	ommB := sds.NewOMMBuilder().WithNoradCatID(10002).WithObjectName("B").Build()
+	ommC := sds.NewOMMBuilder().WithNoradCatID(10003).WithObjectName("C").Build()
+	ommD := sds.NewOMMBuilder().WithNoradCatID(10004).WithObjectName("D").Build()
+	cidA, err := store.StoreWithSourceTags("OMM.fbs", ommA, "source:celestrak", nil, celestrakTags)
+	if err != nil {
+		t.Fatalf("store OMM A failed: %v", err)
+	}
+	if _, err := store.StoreWithSourceTags("OMM.fbs", ommB, "source:other", nil, otherTags); err != nil {
+		t.Fatalf("store OMM B failed: %v", err)
+	}
+	cidC, err := store.StoreWithSourceTags("OMM.fbs", ommC, "source:celestrak", nil, celestrakTags)
+	if err != nil {
+		t.Fatalf("store OMM C failed: %v", err)
+	}
+
+	firstPage, err := store.QueryRawRecordRefs(RawRecordQuery{
+		SchemaName:     "OMM.fbs",
+		ProviderID:     celestrakTags.ProviderID,
+		SourceName:     celestrakTags.SourceName,
+		UseRowIDCursor: true,
+		MaxRowID:       1_000_000,
+		Limit:          2,
+	})
+	if err != nil {
+		t.Fatalf("QueryRawRecordRefs first page failed: %v", err)
+	}
+	if len(firstPage) != 2 {
+		t.Fatalf("first page length = %d, want 2", len(firstPage))
+	}
+	if firstPage[0].CID != cidA || firstPage[1].CID != cidC {
+		t.Fatalf("first page CIDs = %s, %s; want %s, %s", firstPage[0].CID, firstPage[1].CID, cidA, cidC)
+	}
+	if firstPage[0].RowID <= 0 || firstPage[1].RowID <= firstPage[0].RowID {
+		t.Fatalf("rowids = %d, %d; want increasing source-filtered row cursor", firstPage[0].RowID, firstPage[1].RowID)
+	}
+	if firstPage[0].SourceTags.ProviderID != celestrakTags.ProviderID || firstPage[0].SourceTags.ProducerPublicKey != celestrakTags.ProducerPublicKey {
+		t.Fatalf("source tags not preserved on first page: %#v", firstPage[0].SourceTags)
+	}
+
+	if _, err := store.StoreWithSourceTags("OMM.fbs", ommD, "source:celestrak", nil, celestrakTags); err != nil {
+		t.Fatalf("store OMM D failed: %v", err)
+	}
+	snapshotPage, err := store.QueryRawRecordRefs(RawRecordQuery{
+		SchemaName:     "OMM.fbs",
+		ProviderID:     celestrakTags.ProviderID,
+		SourceName:     celestrakTags.SourceName,
+		UseRowIDCursor: true,
+		MaxRowID:       firstPage[1].RowID,
+		Limit:          10,
+	})
+	if err != nil {
+		t.Fatalf("QueryRawRecordRefs snapshot page failed: %v", err)
+	}
+	if len(snapshotPage) != 2 || snapshotPage[0].CID != cidA || snapshotPage[1].CID != cidC {
+		t.Fatalf("snapshot page = %+v, want only original celestrak rows", snapshotPage)
+	}
+
+	resumePage, err := store.QueryRawRecordRefs(RawRecordQuery{
+		SchemaName:     "OMM.fbs",
+		ProviderID:     celestrakTags.ProviderID,
+		SourceName:     celestrakTags.SourceName,
+		UseRowIDCursor: true,
+		AfterRowID:     firstPage[0].RowID,
+		MaxRowID:       firstPage[1].RowID,
+		Limit:          10,
+	})
+	if err != nil {
+		t.Fatalf("QueryRawRecordRefs resume page failed: %v", err)
+	}
+	if len(resumePage) != 1 || resumePage[0].CID != cidC {
+		t.Fatalf("resume page = %+v, want only %s", resumePage, cidC)
+	}
+}
+
 func TestFlatSQLStoreRawRecordQueriesApplySubscriptionSyncFilters(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-sync-filter-test-*")
 	if err != nil {
