@@ -360,31 +360,20 @@ func recordRegisteredShardGroupCARBundle(ctx context.Context, store *storage.Fla
 	if err != nil {
 		return fmt.Errorf("list existing registered shard-group CAR bundle pins: %w", err)
 	}
-	for _, entry := range existing {
-		if entry.Head == head && entry.CID != "" && entry.ByteHash != "" && entry.ByteCount > 0 {
-			return nil
-		}
-	}
-
-	rootCIDs := make([]string, 0, len(publications)*3)
 	var totalRows int64
 	var totalBytes int64
 	for _, publication := range publications {
-		if publication.ShardCID != "" {
-			rootCIDs = append(rootCIDs, publication.ShardCID)
-		}
-		if publication.IndexCID != "" {
-			rootCIDs = append(rootCIDs, publication.IndexCID)
-		}
-		if publication.ManifestCID != "" {
-			rootCIDs = append(rootCIDs, publication.ManifestCID)
-		}
 		totalRows += int64(publication.RecordCount)
 		totalBytes += publication.ByteCount
 	}
-	publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, ipfsAPIURL, filepath.Join(outputDir, legacyPublicationSafePathComponent(first.SchemaName), "car"), rootCIDs)
-	if err != nil {
-		return fmt.Errorf("publish registered shard-group CAR bundle: %w", err)
+	var existingHeadRows int64
+	for _, entry := range existing {
+		if entry.Head == head && entry.CID != "" && entry.ByteHash != "" && entry.ByteCount > 0 {
+			existingHeadRows += entry.RowCount
+		}
+	}
+	if totalRows > 0 && existingHeadRows >= totalRows {
+		return nil
 	}
 
 	verifiedAt := last.PublishedAt
@@ -392,27 +381,49 @@ func recordRegisteredShardGroupCARBundle(ctx context.Context, store *storage.Fla
 		verifiedAt = time.Now().UTC()
 	}
 	highWaterMark := datasync.PublishedFeedHighWaterMark(publications, totalRows, totalBytes)
-	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
-		CID:               publishedCAR.CID,
-		SchemaName:        first.SchemaName,
-		ProviderPeerID:    providerPeerID,
-		ProviderPublicKey: providerPublicKey,
-		ProviderID:        first.ProviderID,
-		SourceName:        first.SourceName,
-		BatchID:           first.BatchID,
-		QueryProfile:      first.QueryProfile,
-		SnapshotID:        head,
-		Head:              head,
-		HighWaterMark:     highWaterMark,
-		ByteHash:          publishedCAR.SHA256,
-		Role:              "shard-group-car",
-		RowCount:          totalRows,
-		ByteCount:         publishedCAR.ByteCount,
-		VerificationState: "verified",
-		VerifiedAt:        verifiedAt,
-		UpdatedAt:         verifiedAt,
-	}); err != nil {
-		return fmt.Errorf("record registered shard-group CAR pin ledger: %w", err)
+	carOutputDir := filepath.Join(outputDir, legacyPublicationSafePathComponent(first.SchemaName), "car")
+	groups := storage.DatasetShardPublicationCARGroups(publications, storage.DefaultShardGroupCARMaxSourceBytes)
+	for _, group := range groups {
+		rootCIDs := make([]string, 0, len(group)*3)
+		var groupRows int64
+		for _, publication := range group {
+			if publication.ShardCID != "" {
+				rootCIDs = append(rootCIDs, publication.ShardCID)
+			}
+			if publication.IndexCID != "" {
+				rootCIDs = append(rootCIDs, publication.IndexCID)
+			}
+			if publication.ManifestCID != "" {
+				rootCIDs = append(rootCIDs, publication.ManifestCID)
+			}
+			groupRows += int64(publication.RecordCount)
+		}
+		publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, ipfsAPIURL, carOutputDir, rootCIDs)
+		if err != nil {
+			return fmt.Errorf("publish registered shard-group CAR bundle: %w", err)
+		}
+		if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
+			CID:               publishedCAR.CID,
+			SchemaName:        first.SchemaName,
+			ProviderPeerID:    providerPeerID,
+			ProviderPublicKey: providerPublicKey,
+			ProviderID:        first.ProviderID,
+			SourceName:        first.SourceName,
+			BatchID:           first.BatchID,
+			QueryProfile:      first.QueryProfile,
+			SnapshotID:        head,
+			Head:              head,
+			HighWaterMark:     highWaterMark,
+			ByteHash:          publishedCAR.SHA256,
+			Role:              "shard-group-car",
+			RowCount:          groupRows,
+			ByteCount:         publishedCAR.ByteCount,
+			VerificationState: "verified",
+			VerifiedAt:        verifiedAt,
+			UpdatedAt:         verifiedAt,
+		}); err != nil {
+			return fmt.Errorf("record registered shard-group CAR pin ledger: %w", err)
+		}
 	}
 	return nil
 }

@@ -6,11 +6,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
 
 const DatasetPublicationQueryProfile = "dataset-publication-offset-v1"
+
+// DefaultShardGroupCARMaxSourceBytes keeps provider-side CAR staging bounded
+// for large historical feeds while preserving a small number of importable
+// bundles for normal live publications.
+const DefaultShardGroupCARMaxSourceBytes int64 = 512 << 20
 
 // DatasetShardPublication records one immutable FlatSQL/DPM shard pinned to IPFS.
 type DatasetShardPublication struct {
@@ -47,6 +53,42 @@ type DatasetShardPublicationQuery struct {
 	Offset       int
 	Limit        int
 	RecordCount  int
+}
+
+func DatasetShardPublicationCARGroups(publications []DatasetShardPublication, maxSourceBytes int64) [][]DatasetShardPublication {
+	ordered := append([]DatasetShardPublication(nil), publications...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].FeedSequence != ordered[j].FeedSequence {
+			return ordered[i].FeedSequence < ordered[j].FeedSequence
+		}
+		return ordered[i].Offset < ordered[j].Offset
+	})
+	if maxSourceBytes <= 0 {
+		if len(ordered) == 0 {
+			return nil
+		}
+		return [][]DatasetShardPublication{ordered}
+	}
+	groups := make([][]DatasetShardPublication, 0, len(ordered))
+	current := make([]DatasetShardPublication, 0)
+	var currentBytes int64
+	for _, publication := range ordered {
+		publicationBytes := publication.ByteCount
+		if publicationBytes < 1 {
+			publicationBytes = 1
+		}
+		if len(current) > 0 && currentBytes+publicationBytes > maxSourceBytes {
+			groups = append(groups, current)
+			current = nil
+			currentBytes = 0
+		}
+		current = append(current, publication)
+		currentBytes += publicationBytes
+	}
+	if len(current) > 0 {
+		groups = append(groups, current)
+	}
+	return groups
 }
 
 func (s *FlatSQLStore) initDatasetShardPublicationTable() error {

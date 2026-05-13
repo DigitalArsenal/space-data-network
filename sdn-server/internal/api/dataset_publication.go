@@ -630,36 +630,20 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 	if err != nil {
 		return fmt.Errorf("list existing shard-group CAR bundle pins: %w", err)
 	}
-	currentExists := false
-	for _, entry := range existing {
-		if entry.Head == head && entry.CID != "" && entry.ByteHash != "" && entry.ByteCount > 0 {
-			currentExists = true
-			break
-		}
-	}
-	if currentExists {
-		return s.retireStaleShardGroupCARBundles(ctx, existing, head, carOutputDir, "")
-	}
-
-	rootCIDs := make([]string, 0, len(publications)*3)
 	var totalRows int64
 	var totalBytes int64
 	for _, publication := range publications {
-		if publication.ShardCID != "" {
-			rootCIDs = append(rootCIDs, publication.ShardCID)
-		}
-		if publication.IndexCID != "" {
-			rootCIDs = append(rootCIDs, publication.IndexCID)
-		}
-		if publication.ManifestCID != "" {
-			rootCIDs = append(rootCIDs, publication.ManifestCID)
-		}
 		totalRows += int64(publication.RecordCount)
 		totalBytes += publication.ByteCount
 	}
-	publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, s.ipfsAPIURL, carOutputDir, rootCIDs)
-	if err != nil {
-		return fmt.Errorf("publish shard-group CAR bundle: %w", err)
+	var existingHeadRows int64
+	for _, entry := range existing {
+		if entry.Head == head && entry.CID != "" && entry.ByteHash != "" && entry.ByteCount > 0 {
+			existingHeadRows += entry.RowCount
+		}
+	}
+	if totalRows > 0 && existingHeadRows >= totalRows {
+		return s.retireStaleShardGroupCARBundles(ctx, existing, head, carOutputDir)
 	}
 
 	providerPublicKey := ""
@@ -673,35 +657,58 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 		verifiedAt = s.now()
 	}
 	highWaterMark := datasync.PublishedFeedHighWaterMark(publications, totalRows, totalBytes)
-	if err := s.store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
-		CID:               publishedCAR.CID,
-		SchemaName:        schema,
-		ProviderPeerID:    s.providerPeerID,
-		ProviderPublicKey: providerPublicKey,
-		ProviderID:        last.ProviderID,
-		SourceName:        last.SourceName,
-		BatchID:           last.BatchID,
-		QueryProfile:      last.QueryProfile,
-		SnapshotID:        head,
-		Head:              head,
-		HighWaterMark:     highWaterMark,
-		ByteHash:          publishedCAR.SHA256,
-		Role:              "shard-group-car",
-		RowCount:          totalRows,
-		ByteCount:         publishedCAR.ByteCount,
-		VerificationState: "verified",
-		VerifiedAt:        verifiedAt,
-		UpdatedAt:         verifiedAt,
-	}); err != nil {
-		return fmt.Errorf("record shard-group CAR pin ledger: %w", err)
+	currentCARPaths := make([]string, 0)
+	groups := storage.DatasetShardPublicationCARGroups(publications, storage.DefaultShardGroupCARMaxSourceBytes)
+	for _, group := range groups {
+		rootCIDs := make([]string, 0, len(group)*3)
+		var groupRows int64
+		for _, publication := range group {
+			if publication.ShardCID != "" {
+				rootCIDs = append(rootCIDs, publication.ShardCID)
+			}
+			if publication.IndexCID != "" {
+				rootCIDs = append(rootCIDs, publication.IndexCID)
+			}
+			if publication.ManifestCID != "" {
+				rootCIDs = append(rootCIDs, publication.ManifestCID)
+			}
+			groupRows += int64(publication.RecordCount)
+		}
+		publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, s.ipfsAPIURL, carOutputDir, rootCIDs)
+		if err != nil {
+			return fmt.Errorf("publish shard-group CAR bundle: %w", err)
+		}
+		currentCARPaths = append(currentCARPaths, publishedCAR.Path)
+		if err := s.store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
+			CID:               publishedCAR.CID,
+			SchemaName:        schema,
+			ProviderPeerID:    s.providerPeerID,
+			ProviderPublicKey: providerPublicKey,
+			ProviderID:        last.ProviderID,
+			SourceName:        last.SourceName,
+			BatchID:           last.BatchID,
+			QueryProfile:      last.QueryProfile,
+			SnapshotID:        head,
+			Head:              head,
+			HighWaterMark:     highWaterMark,
+			ByteHash:          publishedCAR.SHA256,
+			Role:              "shard-group-car",
+			RowCount:          groupRows,
+			ByteCount:         publishedCAR.ByteCount,
+			VerificationState: "verified",
+			VerifiedAt:        verifiedAt,
+			UpdatedAt:         verifiedAt,
+		}); err != nil {
+			return fmt.Errorf("record shard-group CAR pin ledger: %w", err)
+		}
 	}
-	if err := s.retireStaleShardGroupCARBundles(ctx, existing, head, carOutputDir, publishedCAR.Path); err != nil {
+	if err := s.retireStaleShardGroupCARBundles(ctx, existing, head, carOutputDir, currentCARPaths...); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx context.Context, entries []storage.PinLedgerEntry, currentHead, carOutputDir, currentCARPath string) error {
+func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx context.Context, entries []storage.PinLedgerEntry, currentHead, carOutputDir string, currentCARPaths ...string) error {
 	for _, entry := range entries {
 		if entry.CID == "" {
 			continue
@@ -718,8 +725,8 @@ func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx 
 			return fmt.Errorf("mark stale shard-group CAR %s: %w", entry.CID, err)
 		}
 	}
-	if strings.TrimSpace(currentCARPath) != "" {
-		if err := storage.RemoveStaleShardGroupCARFiles(carOutputDir, currentCARPath); err != nil {
+	if len(currentCARPaths) > 0 {
+		if err := storage.RemoveStaleShardGroupCARFiles(carOutputDir, currentCARPaths...); err != nil {
 			return fmt.Errorf("remove stale shard-group CAR files: %w", err)
 		}
 	}
