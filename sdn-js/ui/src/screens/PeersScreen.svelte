@@ -12,6 +12,15 @@
     type DataDirectoryState,
     type PgpOwnertrust,
   } from '../../../src/ui/runtime/data-directory';
+  import {
+    buildPeerDataFeeds,
+    dataSummaryListingsForSource,
+    type PeerDataFeed,
+  } from '../../../src/ui/runtime/peer-data-feeds';
+  import {
+    createDefaultLibp2pFlatSqlSyncClient,
+    createLibp2pFlatSqlSyncBackend,
+  } from '../../../src/ui/runtime/sdn-backend-libp2p-sync';
   import type { HostedEpmRecord } from '../../../src/ui/runtime/identity';
   import type { ObservedSdnPeer, SdnBackend } from '../../../src/ui/runtime/sdn-backend';
   import DirectorySearchPanel from '../components/DirectorySearchPanel.svelte';
@@ -47,17 +56,6 @@
     searchText: string;
   }
 
-  interface PeerDataFeed {
-    id: string;
-    dataSourceId: string;
-    peerId: string;
-    providerName: string;
-    providerPublicKey: string | null;
-    standardId: string;
-    remoteRows: number;
-    syncAddrs: string[];
-  }
-
   interface StorefrontModule {
     id: string;
     name: string;
@@ -72,7 +70,6 @@
   export let hostedEpms: HostedEpmRecord[] = [];
 
   const identityRuntimeModules = import.meta.glob('../../../src/ui/runtime/identity.ts');
-  const STORE_FEED_STANDARD_IDS = ['OMM', 'PNM', 'CAT', 'SPW', 'MPE', 'EPM'];
   const DEFAULT_SUBSCRIPTION_STORAGE_CAP = 1;
   const DEFAULT_SUBSCRIPTION_STORAGE_UNIT = 'GB';
 
@@ -129,18 +126,48 @@
   }
 
   async function loadStorefrontListings(): Promise<void> {
+    const listings: Array<Record<string, unknown>> = [];
+    let status = '';
     if (!backend) {
-      storefrontListings = [];
+      storefrontListings = await loadConfiguredDataFeedListings(buildDataSourceOptions(configuredDataSources, peers));
       return;
     }
     try {
       const result = await backend.searchListings('');
-      storefrontListings = result.data ?? [];
-      directoryStatus = result.ok ? '' : result.capability.reason ?? '';
+      listings.push(...(result.data ?? []));
+      status = result.ok ? '' : result.capability.reason ?? '';
     } catch (error) {
-      storefrontListings = [];
-      directoryStatus = errorMessage(error);
+      status = errorMessage(error);
     }
+    const summaryListings = await loadConfiguredDataFeedListings(buildDataSourceOptions(configuredDataSources, peers));
+    storefrontListings = [...listings, ...summaryListings];
+    directoryStatus = storefrontListings.length > 0 ? '' : status;
+  }
+
+  async function loadConfiguredDataFeedListings(sources: DataSourceOption[]): Promise<Array<Record<string, unknown>>> {
+    const listings: Array<Record<string, unknown>> = [];
+    for (const source of sources) {
+      if (!source.syncAddrs.length) continue;
+      let client: Awaited<ReturnType<typeof createDefaultLibp2pFlatSqlSyncClient>> | null = null;
+      try {
+        client = await createDefaultLibp2pFlatSqlSyncClient(source.syncAddrs);
+        const syncBackend = createLibp2pFlatSqlSyncBackend({
+          targetPeerId: source.peerId,
+          candidateAddrs: source.syncAddrs,
+          providerId: configuredProviderIdFromSource(source),
+          displayName: source.label,
+          publicKey: source.publicKey,
+          syncClient: client,
+        });
+        const result = await syncBackend.getDataSummary();
+        if (result.data) listings.push(...dataSummaryListingsForSource(source, result.data));
+      } catch {
+        // Discovery stays on libp2p; unavailable peers simply do not publish feed rows yet.
+      } finally {
+        await client?.stop?.();
+      }
+    }
+    return listings;
   }
 
   function setPeerView(view: PeerView): void {
@@ -220,6 +247,7 @@
     dataDirectoryState = upsertDataFeedSubscription(dataDirectoryState, {
       dataSourceId: feed.dataSourceId,
       peerId: feed.peerId,
+      datastoreKey: feed.datastoreKey,
       standardId: feed.standardId,
       providerName: feed.providerName,
       providerPublicKey: feed.providerPublicKey,
@@ -233,57 +261,8 @@
   }
 
   function isFeedSubscribed(feed: PeerDataFeed): boolean {
-    const key = subscriptionKey(feed.dataSourceId, feed.standardId);
+    const key = subscriptionKey(feed.dataSourceId, feed.standardId, feed.datastoreKey);
     return dataDirectoryState.subscriptions.some((subscription) => subscription.id === key);
-  }
-
-  function buildPeerDataFeeds(
-    sources: DataSourceOption[],
-    listings: Array<Record<string, unknown>>,
-    state: DataDirectoryState,
-  ): PeerDataFeed[] {
-    const feeds = new Map<string, PeerDataFeed>();
-    for (const source of sources) {
-      for (const standardId of STORE_FEED_STANDARD_IDS) {
-        const key = subscriptionKey(source.id, standardId);
-        const subscription = state.subscriptions.find((entry) => entry.id === key);
-        feeds.set(key, {
-          id: key,
-          dataSourceId: source.id,
-          peerId: source.peerId,
-          providerName: source.label,
-          providerPublicKey: source.publicKey,
-          standardId,
-          remoteRows: subscription?.remoteRows ?? 0,
-          syncAddrs: source.syncAddrs,
-        });
-      }
-    }
-
-    for (const listing of listings) {
-      if (listingKind(listing) !== 'data') continue;
-      const peerId = listingPeerId(listing);
-      if (!peerId) continue;
-      const standards = listingStandards(listing);
-      for (const standardId of standards.length ? standards : STORE_FEED_STANDARD_IDS) {
-        const dataSourceId = stringValue(listing.id) ?? stringValue(listing.listingId) ?? `listing:${peerId}:${standardId}`;
-        const key = subscriptionKey(dataSourceId, standardId);
-        if (feeds.has(key)) continue;
-        feeds.set(key, {
-          id: key,
-          dataSourceId,
-          peerId,
-          providerName: listingProviderName(listing, peerId),
-          providerPublicKey: stringValue(listing.publicKey) ?? stringValue(listing.providerPublicKey) ?? null,
-          standardId,
-          remoteRows: numberValue(listing.remoteRows) ?? numberValue(listing.recordCount) ?? 0,
-          syncAddrs: [],
-        });
-      }
-    }
-
-    return Array.from(feeds.values())
-      .sort((left, right) => left.providerName.localeCompare(right.providerName) || left.standardId.localeCompare(right.standardId));
   }
 
   function buildStorefrontModules(listings: Array<Record<string, unknown>>): StorefrontModule[] {
@@ -553,6 +532,10 @@
     return node.name ?? peerId ?? node.id;
   }
 
+  function configuredProviderIdFromSource(source: DataSourceOption): string | null {
+    return source.id.startsWith('configured:') ? source.id.slice('configured:'.length) : source.id;
+  }
+
   function dedupeDataSourceOptions(options: DataSourceOption[]): DataSourceOption[] {
     const seen = new Set<string>();
     return options.filter((source) => {
@@ -583,21 +566,6 @@
       ?? fallback;
   }
 
-  function listingStandards(listing: Record<string, unknown>): string[] {
-    const values = [
-      ...stringArrayValue(listing.standards),
-      ...stringArrayValue(listing.standardsUsed),
-      ...stringArrayValue(listing.schemas),
-      stringValue(listing.standardId),
-      stringValue(listing.schemaName),
-    ].filter((value): value is string => Boolean(value));
-    return Array.from(new Set(values.map((value) => value.split('.')[0]?.trim().toUpperCase() ?? '').filter(Boolean)));
-  }
-
-  function stringArrayValue(value: unknown): string[] {
-    return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0) : [];
-  }
-
   function recordsFromPayloadKey(payload: unknown, key: string): Array<Record<string, unknown>> {
     if (Array.isArray(payload)) return payload.filter(isRecord);
     if (!isRecord(payload)) return [];
@@ -620,11 +588,6 @@
 
   function stringValue(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-  }
-
-  function numberValue(value: unknown): number | null {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) && numeric >= 0 ? Math.floor(numeric) : null;
   }
 
   function formatNumber(value: number): string {

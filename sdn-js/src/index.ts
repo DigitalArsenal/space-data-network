@@ -14,9 +14,12 @@ export {
   FLATSQL_SYNC_PROTOCOL_ID,
   decodeFlatSqlSyncChunk,
   decodeFlatSqlSyncManifest,
+  decodeFlatSqlWireSpeedProbe,
+  encodeFlatSqlWireSpeedProbeRequest,
   encodeFlatSqlSyncRequest,
   requestFlatSqlSyncChunk,
   requestFlatSqlSyncManifest,
+  requestFlatSqlWireSpeedProbe,
 } from './flatsql-sync';
 export type {
   FlatSqlSyncChunk,
@@ -26,6 +29,8 @@ export type {
   FlatSqlSyncQuery,
   FlatSqlSyncRecordRef,
   FlatSqlSyncTransport,
+  FlatSqlWireSpeedProbeQuery,
+  FlatSqlWireSpeedProbeResult,
 } from './flatsql-sync';
 export {
   MODULE_DELIVERY_PROTOCOL_ID,

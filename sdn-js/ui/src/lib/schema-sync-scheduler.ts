@@ -1,5 +1,7 @@
 export interface SchemaSyncScheduleRow {
   id: string;
+  subscriptionId?: string;
+  datastoreKey?: string | null;
   localRows: number;
   remoteRows: number;
   preference: {
@@ -10,7 +12,7 @@ export interface SchemaSyncScheduleRow {
 }
 
 export interface SchemaSyncSchedulerOptions {
-  syncSchema: (standardId: string, dataSourceId: string) => Promise<void> | void;
+  syncSchema: (standardId: string, dataSourceId: string, subscriptionId?: string) => Promise<void> | void;
 }
 
 interface SchemaSyncScheduleSnapshot {
@@ -41,7 +43,7 @@ export function createSchemaSyncScheduler(options: SchemaSyncSchedulerOptions): 
         const rows = sortedEnabledSchemaRows(snapshot.rows);
         for (const row of rows) {
           if (!latestSnapshot) break;
-          await options.syncSchema(row.id, snapshot.dataSourceId);
+          await options.syncSchema(row.id, snapshot.dataSourceId, row.subscriptionId);
         }
       } while (rerunRequested);
     } finally {
@@ -95,6 +97,8 @@ function schemaSyncScheduleSignature(rows: SchemaSyncScheduleRow[], dataSourceId
     .map((row) => [
       dataSourceId,
       row.id,
+      row.subscriptionId ?? '',
+      row.datastoreKey ?? '',
       row.localRows,
       row.remoteRows,
       row.preference.storageCap,

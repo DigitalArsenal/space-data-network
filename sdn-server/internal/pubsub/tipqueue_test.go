@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"sync"
 	"testing"
@@ -482,6 +483,38 @@ func TestPublishDatasetUpdatePNMRejectsInvalidPNM(t *testing.T) {
 	}
 	if len(publisher.published) != 0 {
 		t.Fatalf("published invalid PNM to %#v", publisher.published)
+	}
+}
+
+func TestPublishDatasetFeedHeadPublishesSchemaScopedTopic(t *testing.T) {
+	publisher := &recordingTopicPublisher{}
+
+	err := PublishDatasetFeedHead(context.Background(), publisher, DatasetFeedHeadAnnouncement{
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		QueryProfile: "dataset-publication-offset-v1",
+		FeedSequence: 2,
+		PreviousHead: "head-1",
+		FeedHead:     "head-2",
+		ManifestCID:  "bafymanifest",
+		PNMCID:       "bafypnm",
+		PublishedAt:  time.Unix(1_778_436_060, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("PublishDatasetFeedHead failed: %v", err)
+	}
+
+	wantTopic := DatasetFeedHeadTopic("OMM.fbs")
+	if !reflect.DeepEqual(publisher.topics, []string{wantTopic}) {
+		t.Fatalf("topics = %#v, want %q", publisher.topics, wantTopic)
+	}
+	var payload DatasetFeedHeadAnnouncement
+	if err := json.Unmarshal(publisher.payloads[wantTopic], &payload); err != nil {
+		t.Fatalf("decode feed head payload: %v", err)
+	}
+	if payload.FeedSequence != 2 || payload.PreviousHead != "head-1" || payload.FeedHead != "head-2" || payload.ManifestCID != "bafymanifest" {
+		t.Fatalf("unexpected feed head payload: %+v", payload)
 	}
 }
 

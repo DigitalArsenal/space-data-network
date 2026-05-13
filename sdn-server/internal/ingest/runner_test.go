@@ -17,6 +17,7 @@ import (
 	CATFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/CAT"
 	OMMFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/OMM"
 	SPWFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
 
@@ -419,14 +420,399 @@ func TestSyncCelestrakSpaceWeatherRequestsDatasetPublication(t *testing.T) {
 		if got, want := payload["chunkSize"], float64(50000); got != want {
 			t.Fatalf("chunkSize = %v, want %v", got, want)
 		}
-		if _, ok := payload["batchId"]; ok {
-			t.Fatalf("batchId should be omitted for source-wide dataset publication: %#v", payload)
+		if got, want := payload["batchId"], sourceSHA256(fixture); got != want {
+			t.Fatalf("batchId = %v, want %s", got, want)
 		}
 		if _, ok := payload["limit"]; ok {
-			t.Fatalf("limit should be omitted for source-wide dataset publication: %#v", payload)
+			t.Fatalf("limit should be omitted for batch dataset publication: %#v", payload)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for dataset publication request")
+	}
+}
+
+func TestSyncCelestrakGPPublishesCurrentBatchDeltas(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/celestrak-gp-omm.csv")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"fixture-gp"`)
+		w.Header().Set("Content-Type", "text/csv")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(fixture); err != nil {
+			t.Fatalf("write fixture response: %v", err)
+		}
+	}))
+	defer sourceServer.Close()
+
+	publicationRequests := make(chan map[string]any, 2)
+	publicationServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode publication request: %v", err)
+		}
+		publicationRequests <- payload
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"schema":"OMM.fbs","recordCount":2,"manifestCid":"bafymanifest"}`))
+	}))
+	defer publicationServer.Close()
+
+	dir := t.TempDir()
+	runner, err := NewRunner(Config{
+		StoragePath:            filepath.Join(dir, "store"),
+		RawPath:                filepath.Join(dir, "raw"),
+		CelestrakCatalogURL:    sourceServer.URL + "/gp.csv",
+		DatasetPublishURL:      publicationServer.URL + "/api/v1/admin/dataset-updates/publish",
+		SpaceTrackPollInterval: time.Hour,
+		CelestrakInterval:      minCelestrakFetchInterval,
+		SatcatInterval:         minCelestrakFetchInterval,
+		SpaceWeatherInterval:   minCelestrakFetchInterval,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner failed: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	if err := runner.syncCelestrakGP(context.Background()); err != nil {
+		t.Fatalf("syncCelestrakGP failed: %v", err)
+	}
+
+	wantBatchID := sourceSHA256(fixture)
+	seen := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case payload := <-publicationRequests:
+			schema, _ := payload["schema"].(string)
+			seen[schema] = true
+			if got, want := payload["providerId"], celestrakProviderID; got != want {
+				t.Fatalf("%s providerId = %v, want %s", schema, got, want)
+			}
+			if got, want := payload["sourceName"], "celestrak-gp"; got != want {
+				t.Fatalf("%s sourceName = %v, want %s", schema, got, want)
+			}
+			if got := payload["batchId"]; got != wantBatchID {
+				t.Fatalf("%s batchId = %v, want %s", schema, got, wantBatchID)
+			}
+			if got, want := payload["fullCatalog"], true; got != want {
+				t.Fatalf("%s fullCatalog = %v, want %v", schema, got, want)
+			}
+			if got, want := payload["chunkSize"], float64(50000); got != want {
+				t.Fatalf("%s chunkSize = %v, want %v", schema, got, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for GP publication requests")
+		}
+	}
+	if !seen["OMM.fbs"] || !seen["MPE.fbs"] {
+		t.Fatalf("publication schemas = %#v, want OMM.fbs and MPE.fbs", seen)
+	}
+}
+
+func TestSyncCelestrakGPReconcilesDuplicateOMMBatchBeforePublication(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/celestrak-gp-omm.csv")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"fixture-gp"`)
+		w.Header().Set("Content-Type", "text/csv")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(fixture); err != nil {
+			t.Fatalf("write fixture response: %v", err)
+		}
+	}))
+	defer sourceServer.Close()
+
+	publicationRequests := make(chan map[string]any, 2)
+	publicationServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode publication request: %v", err)
+		}
+		publicationRequests <- payload
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"schema":"OMM.fbs","recordCount":2,"manifestCid":"bafymanifest"}`))
+	}))
+	defer publicationServer.Close()
+
+	dir := t.TempDir()
+	runner, err := NewRunner(Config{
+		StoragePath:            filepath.Join(dir, "store"),
+		RawPath:                filepath.Join(dir, "raw"),
+		CelestrakCatalogURL:    sourceServer.URL + "/gp.csv",
+		DatasetPublishURL:      publicationServer.URL + "/api/v1/admin/dataset-updates/publish",
+		SpaceTrackPollInterval: time.Hour,
+		CelestrakInterval:      minCelestrakFetchInterval,
+		SatcatInterval:         minCelestrakFetchInterval,
+		SpaceWeatherInterval:   minCelestrakFetchInterval,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner failed: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	tags := sourceTags(celestrakProviderID, "celestrak-gp", sourceServer.URL+"/gp.csv", fixture)
+	oldDuplicate := sds.NewOMMBuilder().
+		WithNoradCatID(25544).
+		WithObjectName("ISS (ZARYA)").
+		WithObjectID("1998-067A").
+		WithEpoch("2026-01-01T00:00:00.000000").
+		WithCreationDate("2025-12-31T23:59:59Z").
+		Build()
+	if _, err := runner.store.StoreWithSourceTags("OMM.fbs", oldDuplicate, "source:celestrak", nil, tags); err != nil {
+		t.Fatalf("store old duplicate OMM failed: %v", err)
+	}
+
+	if err := runner.syncCelestrakGP(context.Background()); err != nil {
+		t.Fatalf("syncCelestrakGP failed: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-publicationRequests:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for GP publication requests")
+		}
+	}
+
+	ommCount, err := runner.store.CountRawRecords(storage.RawRecordQuery{
+		SchemaName: "OMM.fbs",
+		ProviderID: celestrakProviderID,
+		SourceName: "celestrak-gp",
+		BatchID:    tags.BatchID,
+	})
+	if err != nil {
+		t.Fatalf("CountRawRecords OMM failed: %v", err)
+	}
+	if ommCount != 2 {
+		t.Fatalf("OMM source batch count = %d, want 2 after duplicate reconciliation", ommCount)
+	}
+}
+
+func TestIngestGPDataIsIdempotentForSameSourceBatch(t *testing.T) {
+	runner := newTestRunner(t)
+	fixture, err := os.ReadFile("testdata/celestrak-gp-omm.csv")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	tags := sourceTags(celestrakProviderID, "celestrak-gp", "https://celestrak.example/gp.csv", fixture)
+
+	countOMM, countMPE, firstHash, err := runner.ingestGPData(fixture, "source:celestrak", tags)
+	if err != nil {
+		t.Fatalf("first ingestGPData failed: %v", err)
+	}
+	if countOMM != 2 || countMPE != 2 {
+		t.Fatalf("first ingest stored OMM=%d MPE=%d, want 2 each", countOMM, countMPE)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	countOMM, countMPE, secondHash, err := runner.ingestGPData(fixture, "source:celestrak", tags)
+	if err != nil {
+		t.Fatalf("second ingestGPData failed: %v", err)
+	}
+	if countOMM != 2 || countMPE != 2 {
+		t.Fatalf("second ingest parsed OMM=%d MPE=%d, want 2 each", countOMM, countMPE)
+	}
+	if firstHash != secondHash {
+		t.Fatalf("normalized ingest hash changed across identical batch: first=%s second=%s", firstHash, secondHash)
+	}
+
+	ommCount, err := runner.store.CountRawRecords(storage.RawRecordQuery{
+		SchemaName: "OMM.fbs",
+		ProviderID: celestrakProviderID,
+		SourceName: "celestrak-gp",
+		BatchID:    tags.BatchID,
+	})
+	if err != nil {
+		t.Fatalf("CountRawRecords OMM failed: %v", err)
+	}
+	if ommCount != 2 {
+		t.Fatalf("OMM source batch count = %d, want 2 after replaying identical batch", ommCount)
+	}
+	mpeCount, err := runner.store.CountRawRecords(storage.RawRecordQuery{
+		SchemaName: "MPE.fbs",
+		ProviderID: celestrakProviderID,
+		SourceName: "celestrak-gp",
+		BatchID:    tags.BatchID,
+	})
+	if err != nil {
+		t.Fatalf("CountRawRecords MPE failed: %v", err)
+	}
+	if mpeCount != 2 {
+		t.Fatalf("MPE source batch count = %d, want 2 after replaying identical batch", mpeCount)
+	}
+}
+
+func TestSyncCelestrakSatcatPublishesCurrentBatchDeltas(t *testing.T) {
+	legacyFixture, err := os.ReadFile("testdata/celestrak-satcat.txt")
+	if err != nil {
+		t.Fatalf("read legacy fixture: %v", err)
+	}
+	csvFixture, err := os.ReadFile("testdata/celestrak-satcat.csv")
+	if err != nil {
+		t.Fatalf("read csv fixture: %v", err)
+	}
+
+	sourceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/satcat.txt":
+			w.Header().Set("ETag", `"fixture-satcat-legacy"`)
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(legacyFixture)
+		case "/satcat.csv":
+			w.Header().Set("ETag", `"fixture-satcat-csv"`)
+			w.Header().Set("Content-Type", "text/csv")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(csvFixture)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer sourceServer.Close()
+
+	publicationRequests := make(chan map[string]any, 2)
+	publicationServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode publication request: %v", err)
+		}
+		publicationRequests <- payload
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"schema":"CAT.fbs","recordCount":2,"manifestCid":"bafymanifest"}`))
+	}))
+	defer publicationServer.Close()
+
+	dir := t.TempDir()
+	runner, err := NewRunner(Config{
+		StoragePath:            filepath.Join(dir, "store"),
+		RawPath:                filepath.Join(dir, "raw"),
+		CelestrakSatcatURL:     sourceServer.URL + "/satcat.txt",
+		CelestrakSatcatCSVURL:  sourceServer.URL + "/satcat.csv",
+		DatasetPublishURL:      publicationServer.URL + "/api/v1/admin/dataset-updates/publish",
+		SpaceTrackPollInterval: time.Hour,
+		CelestrakInterval:      minCelestrakFetchInterval,
+		SatcatInterval:         minCelestrakFetchInterval,
+		SpaceWeatherInterval:   minCelestrakFetchInterval,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner failed: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	if err := runner.syncCelestrakSatcat(context.Background()); err != nil {
+		t.Fatalf("syncCelestrakSatcat failed: %v", err)
+	}
+
+	wantBatchBySource := map[string]string{
+		"celestrak-satcat":     sourceSHA256(legacyFixture),
+		"celestrak-satcat-csv": sourceSHA256(csvFixture),
+	}
+	seen := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case payload := <-publicationRequests:
+			sourceName, _ := payload["sourceName"].(string)
+			seen[sourceName] = true
+			if got, want := payload["schema"], "CAT.fbs"; got != want {
+				t.Fatalf("%s schema = %v, want %s", sourceName, got, want)
+			}
+			if got, want := payload["providerId"], celestrakProviderID; got != want {
+				t.Fatalf("%s providerId = %v, want %s", sourceName, got, want)
+			}
+			if got, want := payload["batchId"], wantBatchBySource[sourceName]; got != want {
+				t.Fatalf("%s batchId = %v, want %s", sourceName, got, want)
+			}
+			if got, want := payload["fullCatalog"], true; got != want {
+				t.Fatalf("%s fullCatalog = %v, want %v", sourceName, got, want)
+			}
+			if got, want := payload["chunkSize"], float64(50000); got != want {
+				t.Fatalf("%s chunkSize = %v, want %v", sourceName, got, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for SATCAT publication requests")
+		}
+	}
+	if !seen["celestrak-satcat"] || !seen["celestrak-satcat-csv"] {
+		t.Fatalf("publication sources = %#v, want both SATCAT feeds", seen)
+	}
+}
+
+func TestRunCycleStopsAfterContextCancellation(t *testing.T) {
+	legacyFixture, err := os.ReadFile("testdata/celestrak-satcat.txt")
+	if err != nil {
+		t.Fatalf("read legacy fixture: %v", err)
+	}
+	csvFixture, err := os.ReadFile("testdata/celestrak-satcat.csv")
+	if err != nil {
+		t.Fatalf("read csv fixture: %v", err)
+	}
+
+	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "raw", "cache")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		t.Fatalf("mkdir cache dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "celestrak-satcat.txt"), legacyFixture, 0644); err != nil {
+		t.Fatalf("write legacy cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "celestrak-satcat.csv"), csvFixture, 0644); err != nil {
+		t.Fatalf("write csv cache: %v", err)
+	}
+
+	runner, err := NewRunner(Config{
+		StoragePath:            filepath.Join(dir, "store"),
+		RawPath:                filepath.Join(dir, "raw"),
+		CelestrakCatalogURL:    "http://127.0.0.1:1/gp.csv",
+		CelestrakSatcatURL:     "http://127.0.0.1:1/satcat.txt",
+		CelestrakSatcatCSVURL:  "http://127.0.0.1:1/satcat.csv",
+		SpaceTrackPollInterval: time.Hour,
+		CelestrakInterval:      minCelestrakFetchInterval,
+		SatcatInterval:         minCelestrakFetchInterval,
+		SpaceWeatherInterval:   minCelestrakFetchInterval,
+	})
+	if err != nil {
+		t.Fatalf("NewRunner failed: %v", err)
+	}
+	defer func() {
+		if err := runner.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = runner.runCycle(ctx)
+	if err == nil {
+		t.Fatal("runCycle returned nil for canceled context")
+	}
+	if got := runner.checkpoints.getString("celestrak_satcat_last_success"); got != "" {
+		t.Fatalf("SATCAT checkpoint advanced after cancellation: %q", got)
+	}
+	catCount, countErr := runner.store.CountRawRecords(storage.RawRecordQuery{SchemaName: "CAT.fbs"})
+	if countErr != nil {
+		t.Fatalf("CountRawRecords CAT failed: %v", countErr)
+	}
+	if catCount != 0 {
+		t.Fatalf("CAT rows = %d, want 0 after canceled run cycle", catCount)
 	}
 }
 

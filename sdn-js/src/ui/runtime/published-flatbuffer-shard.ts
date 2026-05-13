@@ -10,6 +10,12 @@ export interface PublishedFlatSqlSegmentInput {
   fetchCidBytes(cid: string): Promise<Uint8Array>;
 }
 
+export interface TimedPublishedFlatSqlSegment {
+  streamBytes: Uint8Array;
+  networkTransferMs: number;
+  verificationMs: number;
+}
+
 interface DatasetExportIndex {
   version?: number;
   schemaName?: string;
@@ -35,7 +41,14 @@ interface DatasetExportIndexRecord {
 const textDecoder = new TextDecoder();
 
 export async function flatBufferStreamFromPublishedFlatSqlSegment(input: PublishedFlatSqlSegmentInput): Promise<Uint8Array> {
+  return (await timedFlatBufferStreamFromPublishedFlatSqlSegment(input)).streamBytes;
+}
+
+export async function timedFlatBufferStreamFromPublishedFlatSqlSegment(input: PublishedFlatSqlSegmentInput): Promise<TimedPublishedFlatSqlSegment> {
+  const networkStartedAt = Date.now();
   const shardBytes = await input.fetchCidBytes(input.cid);
+  const networkTransferMs = Math.max(0, Date.now() - networkStartedAt);
+  const verificationStartedAt = Date.now();
   const expectedSha = input.shardSha256?.trim();
   if (expectedSha) {
     const actualSha = await sha256Hex(shardBytes);
@@ -44,7 +57,8 @@ export async function flatBufferStreamFromPublishedFlatSqlSegment(input: Publish
     }
   }
   assertFlatSqlSizePrefixedStream(shardBytes);
-  return shardBytes;
+  const verificationMs = Math.max(0, Date.now() - verificationStartedAt);
+  return { streamBytes: shardBytes, networkTransferMs, verificationMs };
 }
 
 export async function rawRecordsFromPublishedFlatSqlSegment(input: PublishedFlatSqlSegmentInput): Promise<RawDataRecord[]> {

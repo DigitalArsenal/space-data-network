@@ -162,6 +162,92 @@ func TestSPWBulkJSONIncludesSpaceWeatherFreshness(t *testing.T) {
 	}
 }
 
+func TestDataEpochQueryReturnsMatchQuality(t *testing.T) {
+	store := newDataAPITestStore(t)
+	storeDataAPITestOMM(t, store, 25544, "ISS-BACKFILL", "2026-05-10")
+	storeDataAPITestOMM(t, store, 25544, "ISS-FORWARD", "2026-05-12")
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/epoch?schema=OMM.fbs&profile=epoch.nearest&at=2026-05-11T12:00:00Z&norad_cat_id=25544&provider_id=space-data-network-02&source_name=celestrak-gp&limit=10", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Schema  string `json:"schema"`
+		Profile string `json:"profile"`
+		Count   int    `json:"count"`
+		Results []struct {
+			EntityKey    string `json:"entity_key"`
+			NoradCatID   uint32 `json:"norad_cat_id"`
+			ObjectName   string `json:"object_name"`
+			MatchQuality struct {
+				RequestedEpoch string `json:"requested_epoch"`
+				MatchedEpoch   string `json:"matched_epoch"`
+				DeltaSeconds   int64  `json:"delta_seconds"`
+				MatchType      string `json:"match_type"`
+			} `json:"match_quality"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if body.Schema != "OMM.fbs" || body.Profile != "epoch.nearest" || body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("unexpected epoch response: %#v", body)
+	}
+	result := body.Results[0]
+	if result.EntityKey != "25544" || result.NoradCatID != 25544 || result.ObjectName != "ISS-BACKFILL" {
+		t.Fatalf("unexpected epoch result identity: %#v", result)
+	}
+	if result.MatchQuality.RequestedEpoch != "2026-05-11T12:00:00Z" ||
+		result.MatchQuality.MatchedEpoch != "2026-05-10T12:00:00Z" ||
+		result.MatchQuality.DeltaSeconds != 86400 ||
+		result.MatchQuality.MatchType != "nearest" {
+		t.Fatalf("unexpected match quality: %#v", result.MatchQuality)
+	}
+}
+
+func TestDataEpochQueryReportsTotalCountBeyondReturnedPage(t *testing.T) {
+	store := newDataAPITestStore(t)
+	storeDataAPITestOMM(t, store, 40909, "DAY-A", "2026-05-11")
+	storeDataAPITestOMM(t, store, 41000, "DAY-B", "2026-05-11")
+	storeDataAPITestOMM(t, store, 50000, "OTHER-DAY", "2026-05-12")
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/epoch?schema=OMM.fbs&profile=epoch.day&day=2026-05-11&provider_id=space-data-network-02&source_name=celestrak-gp&limit=1", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Schema     string                   `json:"schema"`
+		Profile    string                   `json:"profile"`
+		Count      int                      `json:"count"`
+		TotalCount int64                    `json:"total_count"`
+		Results    []map[string]interface{} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if body.Schema != "OMM.fbs" || body.Profile != "epoch.day" {
+		t.Fatalf("unexpected epoch response identity: %#v", body)
+	}
+	if body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("page count=%d len(results)=%d, want 1", body.Count, len(body.Results))
+	}
+	if body.TotalCount != 2 {
+		t.Fatalf("total_count = %d, want 2", body.TotalCount)
+	}
+}
+
 func TestDataSummaryGroupsBySchemaAndProducer(t *testing.T) {
 	store := newDataAPITestStore(t)
 	storeDataAPITestOMM(t, store, 25544, "ISS (ZARYA)", "2026-05-05")
@@ -206,6 +292,64 @@ func TestDataSummaryGroupsBySchemaAndProducer(t *testing.T) {
 	}
 	if got := apiSourceCount(body.Sources, "EPM.fbs", "local-node", "local-epm"); got != 1 {
 		t.Fatalf("local EPM source count = %d, want 1", got)
+	}
+}
+
+func TestDataDatastoresListsRegisteredNamespaces(t *testing.T) {
+	store, basePath, validator := newDataAPITestStoreWithBasePath(t)
+	identity := storage.DatastoreIdentity{
+		SchemaName:    "OMM.fbs",
+		SourcePeerID:  "source:legacy-sqlite",
+		ProviderID:    "space-data-network-02",
+		SourceName:    "celestrak-gp-historical",
+		BatchHead:     "historical-head",
+		QueryProfile:  storage.DatasetPublicationQueryProfile,
+		SnapshotID:    "historical-head",
+		HighWaterMark: "historical-head",
+		ArtifactHash:  "historical-head",
+	}
+	namespaceStore, err := storage.NewFlatSQLStoreForIdentity(basePath, validator, identity)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStoreForIdentity failed: %v", err)
+	}
+	if err := namespaceStore.Close(); err != nil {
+		t.Fatalf("close namespace store failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/datastores", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Count   int `json:"count"`
+		Results []struct {
+			Key      string `json:"key"`
+			Identity struct {
+				SchemaName   string `json:"schema_name"`
+				ProviderID   string `json:"provider_id"`
+				SourceName   string `json:"source_name"`
+				QueryProfile string `json:"query_profile"`
+			} `json:"identity"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("count=%d len(results)=%d, want 1", body.Count, len(body.Results))
+	}
+	got := body.Results[0]
+	if got.Key == "" {
+		t.Fatal("datastore key is empty")
+	}
+	if got.Identity.SchemaName != "OMM.fbs" || got.Identity.ProviderID != "space-data-network-02" || got.Identity.SourceName != "celestrak-gp-historical" || got.Identity.QueryProfile != storage.DatasetPublicationQueryProfile {
+		t.Fatalf("unexpected datastore identity: %#v", got.Identity)
 	}
 }
 
@@ -384,6 +528,147 @@ func TestDataScanReturnsFilteredTotalAndHashBoundRefs(t *testing.T) {
 	}
 	if row.DataBase64 != "" {
 		t.Fatalf("scan refs must not inline base64 payloads: %+v", row)
+	}
+}
+
+func TestDataScanCanReadRegisteredDatastoreNamespace(t *testing.T) {
+	store, basePath, validator := newDataAPITestStoreWithBasePath(t)
+	identity := storage.DatastoreIdentity{
+		SchemaName:    "OMM.fbs",
+		SourcePeerID:  "source:legacy-sqlite",
+		ProviderID:    "space-data-network-02",
+		SourceName:    "celestrak-gp-historical",
+		BatchHead:     "historical-head",
+		QueryProfile:  storage.DatasetPublicationQueryProfile,
+		SnapshotID:    "historical-head",
+		HighWaterMark: "historical-head",
+		ArtifactHash:  "historical-head",
+	}
+	key, err := identity.Key()
+	if err != nil {
+		t.Fatalf("identity key failed: %v", err)
+	}
+	namespaceStore, err := storage.NewFlatSQLStoreForIdentity(basePath, validator, identity)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStoreForIdentity failed: %v", err)
+	}
+	payload := sds.NewOMMBuilder().
+		WithNoradCatID(1).
+		WithObjectName("SPUTNIK 1").
+		WithEpoch("1959-01-11T01:49:23Z").
+		Build()
+	if _, err := namespaceStore.StoreBatch("OMM.fbs", [][]byte{payload}, "source:legacy-sqlite", nil); err != nil {
+		t.Fatalf("store namespace OMM failed: %v", err)
+	}
+	if err := namespaceStore.Close(); err != nil {
+		t.Fatalf("close namespace store failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/data/scan", bytes.NewBufferString(`{"schema":"OMM.fbs","datastore_key":"`+key+`","limit":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Schema     string `json:"schema"`
+		TotalCount int64  `json:"total_count"`
+		Count      int    `json:"count"`
+		Results    []struct {
+			SchemaName string `json:"schema_name"`
+			CID        string `json:"cid"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if body.Schema != "OMM.fbs" || body.TotalCount != 1 || body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("unexpected namespace scan response: %+v", body)
+	}
+}
+
+func TestDataLocalReplicaStatsReportsRowsPinsAndHead(t *testing.T) {
+	store := newDataAPITestStore(t)
+	storeDataAPITestOMM(t, store, 56775, "STARLINK-6292", "2026-05-10")
+	verifiedAt := time.Unix(1_778_436_120, 0).UTC()
+	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
+		CID:               "bafkshard-omm",
+		SchemaName:        "OMM.fbs",
+		ProviderPeerID:    "16Uiu2HCelesTrak",
+		ProviderPublicKey: "provider-public-key",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		BatchID:           "test-batch",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		SnapshotID:        "head-2",
+		Head:              "head-2",
+		HighWaterMark:     "published-feed-v1:1778436120:1:50000:8000000",
+		ByteHash:          "sha256:shard",
+		Role:              "shard",
+		RowCount:          50000,
+		ByteCount:         8_000_000,
+		VerificationState: "verified",
+		VerifiedAt:        verifiedAt,
+	}); err != nil {
+		t.Fatalf("UpsertPinLedgerEntry failed: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	NewDataQueryHandler(store, nil).RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/data/local-replica-stats?schema=OMM.fbs&provider_id=space-data-network-02&source_name=celestrak-gp&batch_id=test-batch&query_profile="+storage.DatasetPublicationQueryProfile, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Count   int `json:"count"`
+		Results []struct {
+			SchemaName        string `json:"schema_name"`
+			ProviderPeerID    string `json:"provider_peer_id"`
+			ProviderPublicKey string `json:"provider_public_key"`
+			ProviderID        string `json:"provider_id"`
+			SourceName        string `json:"source_name"`
+			BatchID           string `json:"batch_id"`
+			QueryProfile      string `json:"query_profile"`
+			LocalRows         int64  `json:"local_rows"`
+			PinnedRows        int64  `json:"pinned_rows"`
+			CachedBytes       int64  `json:"cached_bytes"`
+			PinnedBytes       int64  `json:"pinned_bytes"`
+			SnapshotID        string `json:"snapshot_id"`
+			Head              string `json:"head"`
+			HighWaterMark     string `json:"high_water_mark"`
+			LastSyncedAt      string `json:"last_synced_at"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("stats count=%d len(results)=%d body=%s", body.Count, len(body.Results), rec.Body.String())
+	}
+	got := body.Results[0]
+	if got.SchemaName != "OMM.fbs" || got.ProviderID != "space-data-network-02" || got.SourceName != "celestrak-gp" || got.BatchID != "test-batch" {
+		t.Fatalf("unexpected source identity: %#v", got)
+	}
+	if got.ProviderPeerID != "16Uiu2HCelesTrak" || got.ProviderPublicKey != "provider-public-key" {
+		t.Fatalf("unexpected producer identity: %#v", got)
+	}
+	if got.LocalRows != 1 || got.PinnedRows != 50000 || got.PinnedBytes != 8_000_000 || got.CachedBytes <= 0 {
+		t.Fatalf("unexpected local replica stats: %#v", got)
+	}
+	if got.Head != "head-2" || got.SnapshotID != "head-2" || got.HighWaterMark != "published-feed-v1:1778436120:1:50000:8000000" {
+		t.Fatalf("unexpected head stats: %#v", got)
+	}
+	if got.LastSyncedAt == "" {
+		t.Fatalf("last_synced_at is empty: %#v", got)
 	}
 }
 
@@ -658,6 +943,12 @@ func TestDataRecordEndpointReturnsRawFlatBuffer(t *testing.T) {
 
 func newDataAPITestStore(t *testing.T) *storage.FlatSQLStore {
 	t.Helper()
+	store, _, _ := newDataAPITestStoreWithBasePath(t)
+	return store
+}
+
+func newDataAPITestStoreWithBasePath(t *testing.T) (*storage.FlatSQLStore, string, *sds.Validator) {
+	t.Helper()
 
 	tmpDir, err := os.MkdirTemp("", "sdn-data-api-test-*")
 	if err != nil {
@@ -674,7 +965,7 @@ func newDataAPITestStore(t *testing.T) *storage.FlatSQLStore {
 		t.Fatalf("create store failed: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	return store
+	return store, filepath.Join(tmpDir, "db"), validator
 }
 
 type apiSchemaSummaryRow struct {

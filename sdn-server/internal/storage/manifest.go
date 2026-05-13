@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +19,8 @@ import (
 	dpm "github.com/DigitalArsenal/spacedatastandards.org/lib/go/DPM"
 	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	flatbuffers "github.com/google/flatbuffers/go"
+
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
 )
 
 // DatasetPublicationManifestOptions controls signed SDS DPM generation.
@@ -400,7 +404,33 @@ func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, provide
 		return 0, nil, fmt.Errorf("dataset export index record count = %d, want %d records", index.RecordCount, len(index.Records))
 	}
 
+	tableName, err := sds.SchemaNameToTable(index.SchemaName)
+	if err != nil {
+		return 0, nil, fmt.Errorf("invalid schema name: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	appender, err := s.newFlatSQLStreamAppender(index.SchemaName)
+	if err != nil {
+		return 0, nil, fmt.Errorf("open imported %s FlatSQL stream: %w", index.SchemaName, err)
+	}
+	defer appender.Close()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, nil, fmt.Errorf("begin dataset shard import: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
 	imported := 0
+	now := time.Now().Unix()
 	for _, record := range index.Records {
 		if record.Offset < 0 || record.Length < 0 || record.Offset+4+record.Length > int64(len(shardBytes)) {
 			return imported, nil, fmt.Errorf("record %s offset/length outside shard", record.CID)
@@ -418,15 +448,37 @@ func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, provide
 		if strings.TrimSpace(tags.ProviderID) == "" {
 			tags.ProviderID = strings.TrimSpace(providerPeerID)
 		}
+
+		var existing int
+		err := tx.QueryRow(fmt.Sprintf(`SELECT 1 FROM %s WHERE cid = ?`, tableName), record.CID).Scan(&existing)
+		switch {
+		case err == nil:
+		case errors.Is(err, sql.ErrNoRows):
+			streamPath, streamOffset, recordLength, err := appender.Append(data)
+			if err != nil {
+				return imported, nil, fmt.Errorf("append imported %s record %s to FlatSQL stream: %w", index.SchemaName, record.CID, err)
+			}
+			if err := insertSchemaMetadata(tx, tableName, record.CID, strings.TrimSpace(providerPeerID), now, streamPath, streamOffset, recordLength, nil, now); err != nil {
+				return imported, nil, fmt.Errorf("store imported %s record %s: %w", index.SchemaName, record.CID, err)
+			}
+			if err := upsertRecordIndexExec(tx, index.SchemaName, record.CID, now, data); err != nil {
+				log.Warnf("Failed to index imported %s record %s: %v", index.SchemaName, record.CID[:16]+"...", err)
+			}
+			imported++
+		default:
+			return imported, nil, fmt.Errorf("check imported %s record %s: %w", index.SchemaName, record.CID, err)
+		}
+
 		if strings.TrimSpace(tags.ProviderID) != "" && strings.TrimSpace(tags.SourceName) != "" {
-			if _, err := s.StoreWithSourceTags(index.SchemaName, data, strings.TrimSpace(providerPeerID), nil, tags); err != nil {
+			if err := upsertSourceTagsTx(tx, tableName, index.SchemaName, record.CID, tags, record.Length); err != nil {
 				return imported, nil, err
 			}
-		} else if _, err := s.Store(index.SchemaName, data, strings.TrimSpace(providerPeerID), nil); err != nil {
-			return imported, nil, err
 		}
-		imported++
 	}
+	if err := tx.Commit(); err != nil {
+		return imported, nil, fmt.Errorf("commit dataset shard import: %w", err)
+	}
+	committed = true
 	return imported, &index, nil
 }
 

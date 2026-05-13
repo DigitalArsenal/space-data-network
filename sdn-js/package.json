@@ -35,6 +35,7 @@
     "test:e2e:storefront": "playwright test --config playwright.storefront.config.ts",
     "test:e2e:sdn-ui": "playwright test --config playwright.sdn-ui.config.ts",
     "test:relay": "SDN_RUN_RELAY_TEST=1 vitest run src/spaceaware-relay.integration.test.ts",
+    "measure:flatsql-sync": "npm run build:core && node scripts/measure-flatsql-sync-throughput.mjs",
     "lint": "eslint src --ext .ts",
     "prepublishOnly": "npm run build:package"
   },

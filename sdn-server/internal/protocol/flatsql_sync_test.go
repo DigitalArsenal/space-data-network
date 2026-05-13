@@ -97,6 +97,132 @@ func TestFlatSQLSyncProtocolReadChunkReturnsSnapshotMetadataAndFrames(t *testing
 	}
 }
 
+func TestFlatSQLSyncProtocolReadChunkCanRouteRegisteredDatastoreNamespace(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "sdn-flatsql-sync-namespace-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	rootStore, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "db"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	t.Cleanup(func() { _ = rootStore.Close() })
+	storeFlatSQLSyncTestOMM(t, rootStore, 1, "ROOT-ONLY")
+
+	identity := storage.DatastoreIdentity{
+		SchemaName:      "OMM.fbs",
+		SourcePeerID:    "source:history",
+		SourcePublicKey: "history-public-key",
+		ProviderID:      "space-data-network-02",
+		SourceName:      "celestrak-gp-historical",
+	}
+	datastoreKey, err := identity.Key()
+	if err != nil {
+		t.Fatalf("identity key failed: %v", err)
+	}
+	namespaceStore, err := storage.NewFlatSQLStoreForIdentity(filepath.Join(tmpDir, "db"), validator, identity)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStoreForIdentity failed: %v", err)
+	}
+	namespacePayload := storeFlatSQLSyncTestOMM(t, namespaceStore, 56775, "NAMESPACE-ONLY")
+	if err := namespaceStore.Close(); err != nil {
+		t.Fatalf("namespace close failed: %v", err)
+	}
+
+	handler := NewFlatSQLSyncHandler(rootStore)
+	var out bytes.Buffer
+	if err := handler.handleReadChunk(&out, flatSQLSyncRequest{
+		Op:           "read_chunk",
+		DatastoreKey: datastoreKey,
+		Schema:       "OMM.fbs",
+		Limit:        1,
+	}); err != nil {
+		t.Fatalf("handleReadChunk failed: %v", err)
+	}
+
+	var header struct {
+		TotalCount int `json:"total_count"`
+		Count      int `json:"count"`
+		Results    []struct {
+			CID string `json:"cid"`
+		} `json:"results"`
+	}
+	readFlatSQLSyncTestJSONFrame(t, &out, &header)
+	if header.TotalCount != 1 || header.Count != 1 {
+		t.Fatalf("expected only namespace rows, got %+v", header)
+	}
+	records := readFlatSQLSyncTestRawFrames(t, &out)
+	if len(records) != 1 || !bytes.Equal(records[0], namespacePayload) {
+		t.Fatalf("raw frames did not come from the requested datastore namespace")
+	}
+}
+
+func TestFlatSQLSyncProtocolListDatastoresReturnsRegisteredNamespaces(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "sdn-flatsql-sync-list-datastores-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	rootStore, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "db"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	t.Cleanup(func() { _ = rootStore.Close() })
+	identity := storage.DatastoreIdentity{
+		SchemaName:      "OMM.fbs",
+		SourcePeerID:    "source:history",
+		SourcePublicKey: "history-public-key",
+		ProviderID:      "space-data-network-02",
+		SourceName:      "celestrak-gp-historical",
+	}
+	datastoreKey, err := identity.Key()
+	if err != nil {
+		t.Fatalf("identity key failed: %v", err)
+	}
+	namespaceStore, err := storage.NewFlatSQLStoreForIdentity(filepath.Join(tmpDir, "db"), validator, identity)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStoreForIdentity failed: %v", err)
+	}
+	if err := namespaceStore.Close(); err != nil {
+		t.Fatalf("namespace close failed: %v", err)
+	}
+
+	handler := NewFlatSQLSyncHandler(rootStore)
+	var out bytes.Buffer
+	if err := handler.handleListDatastores(&out); err != nil {
+		t.Fatalf("handleListDatastores failed: %v", err)
+	}
+
+	var body struct {
+		Count   int `json:"count"`
+		Results []struct {
+			Key      string `json:"key"`
+			Identity struct {
+				SchemaName      string `json:"schema_name"`
+				SourcePublicKey string `json:"source_public_key"`
+				ProviderID      string `json:"provider_id"`
+				SourceName      string `json:"source_name"`
+			} `json:"identity"`
+		} `json:"results"`
+	}
+	readFlatSQLSyncTestJSONFrame(t, &out, &body)
+	if body.Count != 1 || len(body.Results) != 1 {
+		t.Fatalf("unexpected datastore list body: %+v", body)
+	}
+	if body.Results[0].Key != datastoreKey || body.Results[0].Identity.SourceName != "celestrak-gp-historical" {
+		t.Fatalf("datastore identity not returned: %+v", body.Results[0])
+	}
+}
+
 func TestFlatSQLSyncProtocolAckProgress(t *testing.T) {
 	store := newFlatSQLSyncTestStore(t)
 	handler := NewFlatSQLSyncHandler(store)
@@ -121,6 +247,64 @@ func TestFlatSQLSyncProtocolAckProgress(t *testing.T) {
 	readFlatSQLSyncTestJSONFrame(t, &out, &body)
 	if body.Status != "acknowledged" || body.SyncProtocol != FlatSQLSyncProtocolID || body.SnapshotID != "snapshot-1" || body.NextCursor != "cursor-2" || body.LocalRows != 25000 {
 		t.Fatalf("unexpected ack body: %+v", body)
+	}
+}
+
+func TestFlatSQLSyncProtocolWireSpeedProbeStreamsRequestedBytes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	server, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("server libp2p failed: %v", err)
+	}
+	defer server.Close()
+	client, err := libp2p.New(libp2p.NoListenAddrs)
+	if err != nil {
+		t.Fatalf("client libp2p failed: %v", err)
+	}
+	defer client.Close()
+
+	server.SetStreamHandler(FlatSQLSyncProtocolID, NewFlatSQLSyncHandler(nil).HandleStream)
+	client.Peerstore().AddAddrs(server.ID(), server.Addrs(), peerstore.PermanentAddrTTL)
+	if err := client.Connect(ctx, peer.AddrInfo{ID: server.ID(), Addrs: server.Addrs()}); err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+
+	stream, err := client.NewStream(ctx, server.ID(), FlatSQLSyncProtocolID)
+	if err != nil {
+		t.Fatalf("NewStream failed: %v", err)
+	}
+	defer stream.Close()
+
+	writeFlatSQLSyncTestFrame(t, stream, map[string]interface{}{
+		"op":          "wire_speed_probe",
+		"probe_bytes": 32 * 1024,
+	})
+
+	var header struct {
+		Op           string `json:"op"`
+		Status       string `json:"status"`
+		SyncProtocol string `json:"sync_protocol"`
+		ProbeBytes   int64  `json:"probe_bytes"`
+		PayloadBytes int64  `json:"payload_bytes"`
+	}
+	readFlatSQLSyncTestJSONFrame(t, stream, &header)
+	if header.Op != "wire_speed_probe" || header.Status != "ok" || header.SyncProtocol != FlatSQLSyncProtocolID {
+		t.Fatalf("unexpected probe header: %+v", header)
+	}
+	if header.ProbeBytes != 32*1024 || header.PayloadBytes != 32*1024 {
+		t.Fatalf("probe size header = %+v, want 32768 bytes", header)
+	}
+	payload, err := io.ReadAll(stream)
+	if err != nil {
+		t.Fatalf("read probe payload failed: %v", err)
+	}
+	if len(payload) != 32*1024 {
+		t.Fatalf("probe payload length = %d, want %d", len(payload), 32*1024)
+	}
+	if bytes.Count(payload, []byte{0}) == len(payload) {
+		t.Fatalf("probe payload should be deterministic bytes, not all zeroes")
 	}
 }
 

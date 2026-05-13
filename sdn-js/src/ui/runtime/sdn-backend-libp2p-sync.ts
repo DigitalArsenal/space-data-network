@@ -1,12 +1,18 @@
 import {
   FLATSQL_SYNC_PROTOCOL_ID,
   requestFlatSqlSyncChunk,
+  requestFlatSqlSyncDatastores,
   requestFlatSqlSyncManifest,
+  requestFlatSqlWireSpeedProbe,
   type FlatSqlSyncChunk,
+  type FlatSqlSyncDatastoreEntry,
+  type FlatSqlSyncDatastoreList,
   type FlatSqlSyncManifest,
   type FlatSqlSyncTransport,
   type FlatSqlSyncQuery,
   type FlatSqlSyncRecordRef,
+  type FlatSqlWireSpeedProbeQuery,
+  type FlatSqlWireSpeedProbeResult,
 } from '../../flatsql-sync';
 import {
   createAvailableResult,
@@ -32,13 +38,16 @@ import {
 
 export interface Libp2pFlatSqlSyncClient {
   readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk>;
+  listFlatSqlSyncDatastores?(query: Pick<FlatSqlSyncQuery, 'targetPeerId' | 'candidateAddrs'>): Promise<FlatSqlSyncDatastoreList>;
   openFlatSqlSyncManifest?(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest>;
+  measureWireSpeed?(query: FlatSqlWireSpeedProbeQuery): Promise<FlatSqlWireSpeedProbeResult>;
   stop?(): Promise<void> | void;
 }
 
 export interface Libp2pFlatSqlSyncBackendOptions {
   targetPeerId: string;
   candidateAddrs: string[];
+  datastoreKey?: string | null;
   providerId?: string | null;
   sourceName?: string | null;
   displayName?: string | null;
@@ -55,6 +64,7 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
   const candidateAddrs = Array.from(new Set(options.candidateAddrs.map((addr) => addr.trim()).filter(Boolean)));
   const providerId = optionalText(options.providerId);
   const sourceName = optionalText(options.sourceName);
+  const datastoreKey = optionalText(options.datastoreKey);
   const displayName = optionalText(options.displayName) ?? providerId ?? targetPeerId;
   const summarySchemas = normalizeSummarySchemas(options.schemas);
   let clientPromise: Promise<Libp2pFlatSqlSyncClient> | null = options.syncClient ? Promise.resolve(options.syncClient) : null;
@@ -81,6 +91,7 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
       candidateAddrs,
       op: query.op,
       schema: query.schema,
+      datastoreKey: query.datastoreKey ?? datastoreKey ?? undefined,
       providerId: query.providerId ?? providerId ?? undefined,
       sourceName: query.sourceName ?? sourceName ?? undefined,
       batchId: query.batchId,
@@ -113,6 +124,7 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     try {
       const chunk = await requestChunk({
         schema: request.schema,
+        datastoreKey: request.datastoreKey,
         op: 'read_chunk',
         scanHash: request.scanHash,
         chunkHash: request.chunkHash,
@@ -245,12 +257,15 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     },
     async getDataSummary(): Promise<BackendResult<DataSummary>> {
       try {
+        const datastoreSummary = await dataSummaryFromDatastores().catch(() => null);
+        if (datastoreSummary) return createAvailableResult('getDataSummary', datastoreSummary);
         const chunks: FlatSqlSyncChunk[] = [];
         let firstError: unknown = null;
         for (const schema of summarySchemas) {
           try {
             chunks.push(await requestChunk({
               schema,
+              ...(datastoreKey ? { datastoreKey } : {}),
               op: 'scan',
               limit: 1,
               offset: 0,
@@ -279,8 +294,11 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
           sources: schemas.map((schema) => ({
             schemaName: schema.schemaName,
             providerId: providerId ?? targetPeerId,
+            ...(datastoreKey ? { datastoreKey } : {}),
             sourceName: sourceName ?? '',
             batchId: '',
+            producerPeerId: targetPeerId,
+            producerPublicKey: optionalText(options.publicKey) ?? '',
             count: schema.count,
             totalBytes: schema.totalBytes,
           })),
@@ -343,6 +361,62 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
       runtime: 'remote-sdn',
     });
   }
+
+  async function dataSummaryFromDatastores(): Promise<DataSummary | null> {
+    const client = await ensureClient();
+    if (!client.listFlatSqlSyncDatastores) return null;
+    const datastores = await client.listFlatSqlSyncDatastores({ targetPeerId, candidateAddrs });
+    if (datastores.results.length === 0) return null;
+
+    const sources: DataSummary['sources'] = [];
+    const schemasByName = new Map<string, { schemaName: string; count: number; totalBytes: number }>();
+    for (const entry of datastores.results) {
+      const schemaName = entry.identity.schemaName;
+      if (!schemaName || schemaName === 'unknown') continue;
+      const chunk = await requestChunk({
+        schema: schemaName,
+        datastoreKey: entry.key,
+        op: 'scan',
+        limit: 1,
+        offset: 0,
+      });
+      const count = Math.max(0, chunk.header.totalCount);
+      const totalBytes = estimateTotalBytes(chunk.header.results, count);
+      if (count <= 0) continue;
+      sources.push(dataSourceSummaryFromDatastore(entry, count, totalBytes));
+      const current = schemasByName.get(schemaName) ?? { schemaName, count: 0, totalBytes: 0 };
+      current.count += count;
+      current.totalBytes += totalBytes;
+      schemasByName.set(schemaName, current);
+    }
+    if (sources.length === 0) return null;
+    const schemas = Array.from(schemasByName.values())
+      .sort((left, right) => right.count - left.count || left.schemaName.localeCompare(right.schemaName));
+    return {
+      totalRecords: schemas.reduce((sum, schema) => sum + schema.count, 0),
+      totalBytes: schemas.reduce((sum, schema) => sum + schema.totalBytes, 0),
+      schemas,
+      sources: sources.sort((left, right) => right.count - left.count || left.schemaName.localeCompare(right.schemaName)),
+    };
+  }
+}
+
+function dataSourceSummaryFromDatastore(
+  entry: FlatSqlSyncDatastoreEntry,
+  count: number,
+  totalBytes: number,
+): DataSummary['sources'][number] {
+  return {
+    datastoreKey: entry.key,
+    schemaName: entry.identity.schemaName,
+    providerId: entry.identity.providerId ?? '',
+    sourceName: entry.identity.sourceName ?? '',
+    batchId: entry.identity.batchHead ?? '',
+    producerPeerId: entry.identity.sourcePeerId ?? '',
+    producerPublicKey: entry.identity.sourcePublicKey ?? '',
+    count,
+    totalBytes,
+  };
 }
 
 export async function createDefaultLibp2pFlatSqlSyncClient(candidateAddrs: string[]): Promise<Libp2pFlatSqlSyncClient> {
@@ -411,8 +485,14 @@ export async function createDefaultLibp2pFlatSqlSyncClient(candidateAddrs: strin
     readFlatSqlSyncChunk(query) {
       return requestFlatSqlSyncChunk(transport, query);
     },
+    listFlatSqlSyncDatastores(query) {
+      return requestFlatSqlSyncDatastores(transport, query);
+    },
     openFlatSqlSyncManifest(query) {
       return requestFlatSqlSyncManifest(transport, query);
+    },
+    measureWireSpeed(query) {
+      return requestFlatSqlWireSpeedProbe(transport, query);
     },
     async stop() {
       await libp2p.stop();

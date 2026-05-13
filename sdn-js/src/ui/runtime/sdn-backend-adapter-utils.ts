@@ -139,10 +139,13 @@ export function normalizeDataSummary(payload: unknown): DataSummary {
       totalBytes: readNumber(entry, 'total_bytes', 'totalBytes') ?? 0,
     })),
     sources: recordsFromValue(record.sources).map((entry) => ({
+      datastoreKey: readString(entry, 'datastore_key', 'datastoreKey') ?? undefined,
       schemaName: readString(entry, 'schema_name', 'schemaName') ?? 'unknown',
       providerId: readString(entry, 'provider_id', 'providerId') ?? '',
       sourceName: readString(entry, 'source_name', 'sourceName') ?? '',
       batchId: readString(entry, 'batch_id', 'batchId') ?? '',
+      producerPeerId: readString(entry, 'producer_peer_id', 'producerPeerId') ?? '',
+      producerPublicKey: readString(entry, 'producer_public_key', 'producerPublicKey') ?? '',
       count: readNumber(entry, 'count') ?? 0,
       totalBytes: readNumber(entry, 'total_bytes', 'totalBytes') ?? 0,
     })),
@@ -182,6 +185,8 @@ export function normalizeRawDataRecords(payload: unknown): RawDataRecord[] {
       providerId: readString(record, 'provider_id', 'providerId') ?? undefined,
       sourceName: readString(record, 'source_name', 'sourceName') ?? undefined,
       batchId: readString(record, 'batch_id', 'batchId') ?? undefined,
+      producerPeerId: readString(record, 'producer_peer_id', 'producerPeerId') ?? undefined,
+      producerPublicKey: readString(record, 'producer_public_key', 'producerPublicKey') ?? undefined,
       timestamp: readString(record, 'timestamp') ?? undefined,
       sizeBytes: readNumber(record, 'size_bytes', 'sizeBytes') ?? 0,
       ...(dataBase64 ? { dataBase64 } : {}),
@@ -215,6 +220,7 @@ export function attachRawFlatbufferStream(records: RawDataRecord[], streamBytes:
 export function rawDataStreamPayload(request: RawDataStreamRequest): Record<string, unknown> {
   return {
     schema: request.schema,
+    ...(request.datastoreKey ? { datastore_key: request.datastoreKey } : {}),
     ...(request.scanHash ? { scan_hash: request.scanHash } : {}),
     ...(request.chunkHash ? { chunk_hash: request.chunkHash } : {}),
     ...(request.snapshotId ? { snapshot_id: request.snapshotId } : {}),

@@ -15,8 +15,9 @@ export interface FlatSqlSyncTransport {
 export interface FlatSqlSyncQuery {
   targetPeerId: string;
   candidateAddrs?: string[];
-  op?: 'read_chunk' | 'scan' | 'open_snapshot' | 'open_manifest';
+  op?: 'read_chunk' | 'scan' | 'open_snapshot' | 'open_manifest' | 'list_datastores';
   schema: string;
+  datastoreKey?: string;
   providerId?: string;
   sourceName?: string;
   batchId?: string;
@@ -35,6 +36,45 @@ export interface FlatSqlSyncQuery {
   limit?: number;
   offset?: number;
   records?: FlatSqlSyncRecordRef[];
+}
+
+export interface FlatSqlWireSpeedProbeQuery {
+  targetPeerId: string;
+  candidateAddrs?: string[];
+  probeBytes?: number;
+}
+
+export interface FlatSqlWireSpeedProbeResult {
+  requestedBytes: number;
+  payloadBytes: number;
+  elapsedMs: number;
+  bytesPerSecond: number;
+  syncProtocol: string;
+}
+
+export interface FlatSqlSyncDatastoreIdentity {
+  schemaName: string;
+  sourcePeerId?: string;
+  sourcePublicKey?: string;
+  providerId?: string;
+  sourceName?: string;
+  batchHead?: string;
+  queryProfile?: string;
+  canonicalParams?: Record<string, string>;
+  snapshotId?: string;
+  highWaterMark?: string;
+  artifactHash?: string;
+}
+
+export interface FlatSqlSyncDatastoreEntry {
+  key: string;
+  identity: FlatSqlSyncDatastoreIdentity;
+  updatedAt: number;
+}
+
+export interface FlatSqlSyncDatastoreList {
+  count: number;
+  results: FlatSqlSyncDatastoreEntry[];
 }
 
 export interface FlatSqlSyncHeader {
@@ -91,6 +131,9 @@ export interface FlatSqlSyncManifestSegment {
   shardSha256?: string;
   indexSha256?: string;
   querySha256?: string;
+  feedSequence?: number;
+  previousHead?: string;
+  feedHead?: string;
 }
 
 export interface FlatSqlSyncRecordRef {
@@ -138,10 +181,40 @@ export async function requestFlatSqlSyncManifest(
   return decodeFlatSqlSyncManifest(response);
 }
 
+export async function requestFlatSqlSyncDatastores(
+  transport: FlatSqlSyncTransport,
+  query: Pick<FlatSqlSyncQuery, 'targetPeerId' | 'candidateAddrs'>,
+): Promise<FlatSqlSyncDatastoreList> {
+  const response = await transport.dialProtocol(
+    query.targetPeerId,
+    FLATSQL_SYNC_PROTOCOL_ID,
+    encodeFlatSqlSyncRequest({ ...query, op: 'list_datastores', schema: '*' }),
+    query.candidateAddrs,
+  );
+  return decodeFlatSqlSyncDatastores(response);
+}
+
+export async function requestFlatSqlWireSpeedProbe(
+  transport: FlatSqlSyncTransport,
+  query: FlatSqlWireSpeedProbeQuery,
+  now: () => number = monotonicNow,
+): Promise<FlatSqlWireSpeedProbeResult> {
+  const startedAtMs = now();
+  const response = await transport.dialProtocol(
+    query.targetPeerId,
+    FLATSQL_SYNC_PROTOCOL_ID,
+    encodeFlatSqlWireSpeedProbeRequest(query),
+    query.candidateAddrs,
+  );
+  const elapsedMs = Math.max(1, now() - startedAtMs);
+  return decodeFlatSqlWireSpeedProbe(response, elapsedMs);
+}
+
 export function encodeFlatSqlSyncRequest(query: FlatSqlSyncQuery): Uint8Array {
   return encodeJsonFrame({
     op: query.op ?? 'read_chunk',
     schema: query.schema,
+    ...(query.datastoreKey ? { datastore_key: query.datastoreKey } : {}),
     ...(query.providerId ? { provider_id: query.providerId } : {}),
     ...(query.sourceName ? { source_name: query.sourceName } : {}),
     ...(query.batchId ? { batch_id: query.batchId } : {}),
@@ -160,6 +233,13 @@ export function encodeFlatSqlSyncRequest(query: FlatSqlSyncQuery): Uint8Array {
     ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
     ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
     ...(query.records ? { records: query.records.map(flatSqlSyncRecordRefPayload) } : {}),
+  });
+}
+
+export function encodeFlatSqlWireSpeedProbeRequest(query: FlatSqlWireSpeedProbeQuery): Uint8Array {
+  return encodeJsonFrame({
+    op: 'wire_speed_probe',
+    ...(typeof query.probeBytes === 'number' ? { probe_bytes: Math.max(1, Math.floor(query.probeBytes)) } : {}),
   });
 }
 
@@ -207,6 +287,39 @@ export function decodeFlatSqlSyncManifest(bytes: Uint8Array): FlatSqlSyncManifes
     throw new Error(`unexpected FlatSQL sync protocol ${manifest.syncProtocol}`);
   }
   return manifest;
+}
+
+export function decodeFlatSqlSyncDatastores(bytes: Uint8Array): FlatSqlSyncDatastoreList {
+  const first = readFrame(bytes, 0);
+  if (!first) throw new Error('missing FlatSQL sync datastore list frame');
+  const payload = JSON.parse(textDecoder.decode(first.payload)) as unknown;
+  throwIfProtocolError(payload);
+  return normalizeFlatSqlSyncDatastores(payload);
+}
+
+export function decodeFlatSqlWireSpeedProbe(bytes: Uint8Array, elapsedMs: number): FlatSqlWireSpeedProbeResult {
+  const first = readFrame(bytes, 0);
+  if (!first) throw new Error('missing FlatSQL sync wire-speed probe header frame');
+  const payload = JSON.parse(textDecoder.decode(first.payload)) as unknown;
+  throwIfProtocolError(payload);
+  const syncProtocol = readString(payload, 'sync_protocol', 'syncProtocol') ?? '';
+  if (syncProtocol && syncProtocol !== FLATSQL_SYNC_PROTOCOL_ID) {
+    throw new Error(`unexpected FlatSQL sync protocol ${syncProtocol}`);
+  }
+  const payloadBytes = bytes.byteLength - first.nextOffset;
+  const expectedPayloadBytes = readNumber(payload, 'payload_bytes', 'payloadBytes') ?? payloadBytes;
+  if (expectedPayloadBytes !== payloadBytes) {
+    throw new Error(`wire-speed probe returned ${payloadBytes}/${expectedPayloadBytes} bytes`);
+  }
+  const requestedBytes = readNumber(payload, 'probe_bytes', 'probeBytes') ?? payloadBytes;
+  const normalizedElapsedMs = Math.max(1, elapsedMs);
+  return {
+    requestedBytes,
+    payloadBytes,
+    elapsedMs: normalizedElapsedMs,
+    bytesPerSecond: Math.floor(payloadBytes / (normalizedElapsedMs / 1000)),
+    syncProtocol,
+  };
 }
 
 function encodeJsonFrame(payload: Record<string, unknown>): Uint8Array {
@@ -297,6 +410,34 @@ function normalizeFlatSqlSyncManifest(payload: unknown): FlatSqlSyncManifest {
   };
 }
 
+function normalizeFlatSqlSyncDatastores(payload: unknown): FlatSqlSyncDatastoreList {
+  const record = isRecord(payload) ? payload : {};
+  const results = Array.isArray(record.results) ? record.results : [];
+  return {
+    count: readNumber(record, 'count') ?? results.length,
+    results: results.filter(isRecord).map((entry): FlatSqlSyncDatastoreEntry => {
+      const identity = isRecord(entry.identity) ? entry.identity : {};
+      return {
+        key: readString(entry, 'key') ?? '',
+        updatedAt: readNumber(entry, 'updated_at', 'updatedAt') ?? 0,
+        identity: {
+          schemaName: readString(identity, 'schema_name', 'schemaName') ?? 'unknown',
+          sourcePeerId: readString(identity, 'source_peer_id', 'sourcePeerId') ?? undefined,
+          sourcePublicKey: readString(identity, 'source_public_key', 'sourcePublicKey') ?? undefined,
+          providerId: readString(identity, 'provider_id', 'providerId') ?? undefined,
+          sourceName: readString(identity, 'source_name', 'sourceName') ?? undefined,
+          batchHead: readString(identity, 'batch_head', 'batchHead') ?? undefined,
+          queryProfile: readString(identity, 'query_profile', 'queryProfile') ?? undefined,
+          canonicalParams: normalizeStringRecord(identity.canonical_params ?? identity.canonicalParams),
+          snapshotId: readString(identity, 'snapshot_id', 'snapshotId') ?? undefined,
+          highWaterMark: readString(identity, 'high_water_mark', 'highWaterMark') ?? undefined,
+          artifactHash: readString(identity, 'artifact_hash', 'artifactHash') ?? undefined,
+        },
+      };
+    }).filter((entry) => entry.key && entry.identity.schemaName !== 'unknown'),
+  };
+}
+
 function normalizeFlatSqlSyncManifestSegment(record: Record<string, unknown>): FlatSqlSyncManifestSegment {
   return {
     index: readNumber(record, 'index') ?? 0,
@@ -312,6 +453,9 @@ function normalizeFlatSqlSyncManifestSegment(record: Record<string, unknown>): F
     shardSha256: readString(record, 'shard_sha256', 'shardSha256') ?? undefined,
     indexSha256: readString(record, 'index_sha256', 'indexSha256') ?? undefined,
     querySha256: readString(record, 'query_sha256', 'querySha256') ?? undefined,
+    feedSequence: readNumber(record, 'feed_sequence', 'feedSequence') ?? undefined,
+    previousHead: readString(record, 'previous_head', 'previousHead') ?? undefined,
+    feedHead: readString(record, 'feed_head', 'feedHead') ?? undefined,
   };
 }
 
@@ -341,6 +485,15 @@ function normalizeFlatSqlSyncRecordRef(record: Record<string, unknown>): FlatSql
 function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+}
+
+function normalizeStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === 'string') out[key] = entry;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function readNestedString(payload: unknown, parent: string, key: string): string | null {
@@ -373,4 +526,8 @@ function readNumber(payload: unknown, ...keys: string[]): number | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function monotonicNow(): number {
+  return globalThis.performance?.now?.() ?? Date.now();
 }

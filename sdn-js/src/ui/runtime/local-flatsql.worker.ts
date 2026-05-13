@@ -1,5 +1,7 @@
 import {
   createLocalFlatSqlStore,
+  type LocalFlatSqlPinLedgerEntry,
+  type LocalFlatSqlPinLedgerQuery,
   type LocalFlatSqlStandardStats,
   type LocalFlatSqlStatsOptions,
   type LocalFlatSqlStore,
@@ -15,12 +17,14 @@ import {
 } from './sdn-backend-libp2p-sync';
 import {
   fetchCidBytesFromGateway,
-  flatBufferStreamFromPublishedFlatSqlSegment,
+  timedFlatBufferStreamFromPublishedFlatSqlSegment,
 } from './published-flatbuffer-shard';
 import { retryRemoteSyncOperation } from './remote-sync-retry';
 import { SerialTaskQueue } from './serial-task-queue';
+import { syncRowCountSummary } from './sync-progress';
+import { DEFAULT_WIRE_SPEED_TARGET, measuredWireSpeedUtilization, meetsWireSpeedTarget } from './sync-throughput';
 import type { DataSummary, RawDataRecord, SdnBackend } from './sdn-backend';
-import type { FlatSqlSyncManifestSegment } from '../../flatsql-sync';
+import type { FlatSqlSyncManifest, FlatSqlSyncManifestSegment } from '../../flatsql-sync';
 import type {
   WorkerFlatSqlSyncBackendConfig,
   WorkerRemotePageRequest,
@@ -36,6 +40,8 @@ type WorkerRequest =
   | { id: number; type: 'flush'; standardId?: string }
   | { id: number; type: 'query'; sql: string; standardId?: string }
   | { id: number; type: 'getStats'; options?: LocalFlatSqlStatsOptions }
+  | { id: number; type: 'recordPinLedgerEntries'; entries: LocalFlatSqlPinLedgerEntry[] }
+  | { id: number; type: 'listPinLedgerEntries'; query?: LocalFlatSqlPinLedgerQuery }
   | { id: number; type: 'getRemoteDataSummary'; backendConfig: WorkerFlatSqlSyncBackendConfig }
   | { id: number; type: 'queryRemotePage'; request: WorkerRemotePageRequest }
   | { id: number; type: 'syncSchema'; request: WorkerSchemaSyncRequest }
@@ -58,7 +64,8 @@ const REMOTE_SYNC_OPERATION_TIMEOUT_MS = 60_000;
 const REMOTE_SYNC_RETRY_ATTEMPTS = 4;
 const REMOTE_SYNC_RETRY_DELAY_MS = 500;
 const PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE = 50_000;
-const PUBLISHED_SHARD_FETCH_CONCURRENCY = 6;
+const PUBLISHED_SHARD_FETCH_CONCURRENCY = 24;
+const WIRE_SPEED_PROBE_BYTES = 64 * 1024 * 1024;
 let store: LocalFlatSqlStore | null = null;
 
 workerGlobal.onmessage = (event: MessageEvent<WorkerRequest>) => {
@@ -107,6 +114,13 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
       }
       case 'getStats':
         postSuccess(request.id, await stats(request.options));
+        return;
+      case 'recordPinLedgerEntries':
+        await requireStore().recordPinLedgerEntries(request.entries);
+        postSuccess(request.id, undefined, await stats({ includeCachedBytes: true }));
+        return;
+      case 'listPinLedgerEntries':
+        postSuccess(request.id, await requireStore().listPinLedgerEntries(request.query));
         return;
       case 'getRemoteDataSummary':
         postSuccess(request.id, await getRemoteDataSummary(request.backendConfig));
@@ -189,9 +203,16 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
   let queryProfile = canResume ? request.initialProgress.queryProfile ?? 'ordered-offset-v1' : 'ordered-offset-v1';
   let verifiedChunks = canResume ? request.initialProgress.verifiedChunks.slice(-256) : [];
   let snapshotVerifiedForSession = false;
-  const syncStartedAtMs = Date.now();
   let downloadedBytes = 0;
-  const publishedSegments = await openPublishedManifestSegments(request.backendConfig, request.schema).catch(() => []);
+  let manifestDiscoveryMs = 0;
+  let networkTransferMs = 0;
+  let verificationMs = 0;
+  let flatSqlMaterializationMs = 0;
+  const manifestStartedAt = Date.now();
+  const publishedManifest = await openPublishedManifest(request.backendConfig, request.schema).catch(() => null);
+  manifestDiscoveryMs = Math.max(0, Date.now() - manifestStartedAt);
+  const measuredWireSpeedBytesPerSecond = await measuredWireSpeedBaselineBytesPerSecond(request.backendConfig);
+  const syncStartedAtMs = Date.now();
 
   const providerPeerId = request.backendConfig.targetPeerId || null;
   const providerPublicKey = request.backendConfig.publicKey || request.backendConfig.targetPeerId || null;
@@ -202,8 +223,11 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
     localRows,
     cachedBytes,
     pinnedBytes: cachedBytes,
-    downloadedBytes,
-    downloadSpeedBytesPerSecond: 0,
+    ...downloadProgressPatch(syncStartedAtMs, downloadedBytes, measuredWireSpeedBytesPerSecond),
+    manifestDiscoveryMs,
+    networkTransferMs,
+    verificationMs,
+    flatSqlMaterializationMs,
     providerPeerId,
     providerPublicKey,
     snapshotId: snapshotId || null,
@@ -217,12 +241,13 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
   postProgress(id, progress, currentStats);
 
   try {
-    if (publishedSegments.length > 0) {
+    if (publishedManifest && publishedManifest.segments.length > 0) {
       return await syncPublishedSegments({
         id,
         request,
         currentStore,
-        segments: publishedSegments,
+        manifest: publishedManifest.manifest,
+        segments: publishedManifest.segments,
         currentStats,
         progress,
         localRows,
@@ -230,7 +255,12 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
         cachedBytes,
         verifiedChunks,
         downloadedBytes,
+        manifestDiscoveryMs,
+        networkTransferMs,
+        verificationMs,
+        flatSqlMaterializationMs,
         syncStartedAtMs,
+        measuredWireSpeedBytesPerSecond,
         providerPeerId,
         providerPublicKey,
       });
@@ -247,7 +277,11 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
           localRows,
           cachedBytes,
           pinnedBytes: cachedBytes,
-          ...downloadProgressPatch(syncStartedAtMs, downloadedBytes),
+          ...downloadProgressPatch(syncStartedAtMs, downloadedBytes, measuredWireSpeedBytesPerSecond),
+          manifestDiscoveryMs,
+          networkTransferMs,
+          verificationMs,
+          flatSqlMaterializationMs,
           providerPeerId,
           providerPublicKey,
           snapshotId: snapshotId || null,
@@ -261,6 +295,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
         return { progress, stats: currentStats };
       }
 
+      let networkStartedAt = Date.now();
       let chunk = await withRemoteSyncChunkOperation(
         request.backendConfig,
         'Remote sync chunk',
@@ -285,6 +320,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
             : { offset }),
         },
       );
+      networkTransferMs += Math.max(0, Date.now() - networkStartedAt);
 
       let scan = dataScanResultFromChunk(chunk);
       downloadedBytes += chunk.recordStream.byteLength;
@@ -293,6 +329,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
         nextCursor = '';
         offset = localRows;
         snapshotVerifiedForSession = false;
+        networkStartedAt = Date.now();
         chunk = await withRemoteSyncChunkOperation(
           request.backendConfig,
           'Remote sync snapshot refresh',
@@ -305,6 +342,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
             queryProfile,
           },
         );
+        networkTransferMs += Math.max(0, Date.now() - networkStartedAt);
         scan = dataScanResultFromChunk(chunk);
         downloadedBytes += chunk.recordStream.byteLength;
       }
@@ -317,18 +355,22 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       totalRows = Math.max(totalRows, scan.totalCount ?? 0, offset + scan.results.length);
       if (scan.results.length === 0) break;
 
+      let materializationStartedAt = Date.now();
       const ingestedRows = await currentStore.ingestFlatBufferStream(request.standardId, chunk.recordStream, {
         source: request.source,
         persist: false,
         recordKeys: flatSqlRecordKeys(scan.results),
       });
+      flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
       recordsSincePersist += ingestedRows;
       const chunkHash = scan.chunkHash || scan.scanHash;
       if (chunkHash && !verifiedChunks.includes(chunkHash)) {
         verifiedChunks = [...verifiedChunks, chunkHash].slice(-256);
       }
       if (recordsSincePersist >= request.persistRecordInterval || offset + scan.results.length >= totalRows) {
+        materializationStartedAt = Date.now();
         await currentStore.flush(request.standardId);
+        flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
         recordsSincePersist = 0;
         currentStats = await currentStore.getStats({ includeCachedBytes: true });
       } else {
@@ -346,7 +388,11 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
         localRows,
         cachedBytes,
         pinnedBytes: cachedBytes,
-        ...downloadProgressPatch(syncStartedAtMs, downloadedBytes),
+        ...downloadProgressPatch(syncStartedAtMs, downloadedBytes, measuredWireSpeedBytesPerSecond),
+        manifestDiscoveryMs,
+        networkTransferMs,
+        verificationMs,
+        flatSqlMaterializationMs,
         providerPeerId,
         providerPublicKey,
         snapshotId: snapshotId || null,
@@ -366,7 +412,9 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       if (offset >= totalRows || scan.results.length === 0) break;
     }
 
+    const materializationStartedAt = Date.now();
     await currentStore.flush(request.standardId);
+    flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
     currentStats = await currentStore.getStats({ includeCachedBytes: true });
     localRows = localRowsForStandard(currentStats, request.standardId);
     cachedBytes = cachedBytesForStandard(currentStats, request.standardId);
@@ -377,7 +425,11 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
       localRows,
       cachedBytes,
       pinnedBytes: cachedBytes,
-      ...downloadProgressPatch(syncStartedAtMs, downloadedBytes),
+      ...downloadProgressPatch(syncStartedAtMs, downloadedBytes, measuredWireSpeedBytesPerSecond),
+      manifestDiscoveryMs,
+      networkTransferMs,
+      verificationMs,
+      flatSqlMaterializationMs,
       providerPeerId,
       providerPublicKey,
       snapshotId: snapshotId || null,
@@ -408,6 +460,7 @@ async function syncPublishedSegments(options: {
   id: number;
   request: WorkerSchemaSyncRequest;
   currentStore: LocalFlatSqlStore;
+  manifest: FlatSqlSyncManifest;
   segments: FlatSqlSyncManifestSegment[];
   currentStats: LocalFlatSqlStandardStats[];
   progress: WorkerSchemaSyncProgress;
@@ -416,7 +469,12 @@ async function syncPublishedSegments(options: {
   cachedBytes: number;
   verifiedChunks: string[];
   downloadedBytes: number;
+  manifestDiscoveryMs: number;
+  networkTransferMs: number;
+  verificationMs: number;
+  flatSqlMaterializationMs: number;
   syncStartedAtMs: number;
+  measuredWireSpeedBytesPerSecond: number;
   providerPeerId: string | null;
   providerPublicKey: string | null;
 }): Promise<{ progress: WorkerSchemaSyncProgress; stats: LocalFlatSqlStandardStats[] }> {
@@ -429,6 +487,9 @@ async function syncPublishedSegments(options: {
     verifiedChunks,
   } = options;
   let downloadedBytes = options.downloadedBytes;
+  let networkTransferMs = options.networkTransferMs;
+  let verificationMs = options.verificationMs;
+  let flatSqlMaterializationMs = options.flatSqlMaterializationMs;
   const gatewayUrl = options.request.backendConfig.gatewayUrl?.trim();
   if (!gatewayUrl) throw new Error('local IPFS gateway URL is required for published shard sync');
   const manifestTotalRows = options.segments.reduce((sum, segment) => sum + Math.max(0, segment.rowCount), 0);
@@ -438,8 +499,12 @@ async function syncPublishedSegments(options: {
     let recordsSincePersist = 0;
     for await (const fetched of fetchPublishedSegmentsInOrder(options.segments, options.request, gatewayUrl, localRows)) {
       const { segment, streamBytes, cumulativeRows, segmentEnd } = fetched;
+      networkTransferMs += fetched.networkTransferMs;
+      verificationMs += fetched.verificationMs;
       if (cachedBytes >= options.request.capBytes && localRows < totalRows) {
+        const materializationStartedAt = Date.now();
         await options.currentStore.flush(options.request.standardId);
+        flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
         currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
         progress = progressFor(progress, {
           status: 'capped',
@@ -448,7 +513,11 @@ async function syncPublishedSegments(options: {
           localRows,
           cachedBytes,
           pinnedBytes: cachedBytes,
-          ...downloadProgressPatch(options.syncStartedAtMs, downloadedBytes),
+          ...downloadProgressPatch(options.syncStartedAtMs, downloadedBytes, options.measuredWireSpeedBytesPerSecond),
+          manifestDiscoveryMs: options.manifestDiscoveryMs,
+          networkTransferMs,
+          verificationMs,
+          flatSqlMaterializationMs,
           providerPeerId: options.providerPeerId,
           providerPublicKey: options.providerPublicKey,
           cursor: segment.cursor || null,
@@ -463,13 +532,23 @@ async function syncPublishedSegments(options: {
 
       downloadedBytes += streamBytes.byteLength;
       const resumeRecordOffset = Math.max(0, localRows - cumulativeRows);
+      let materializationStartedAt = Date.now();
       const ingestedRows = await options.currentStore.ingestFlatBufferStream(options.request.standardId, streamBytes, {
         source: options.request.source,
         persist: false,
         skipRecords: resumeRecordOffset,
         recordKeyPrefix: `published:${segment.cid}`,
         recordKeyOffset: resumeRecordOffset,
+        pinLedgerEntries: [pinLedgerEntryForPublishedSegment({
+          request: options.request,
+          manifest: options.manifest,
+          segment,
+          streamBytes,
+          providerPeerId: options.providerPeerId,
+          providerPublicKey: options.providerPublicKey,
+        })],
       });
+      flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
       recordsSincePersist += ingestedRows;
       localRows += ingestedRows;
       const chunkHash = segment.chunkHash || segment.cid;
@@ -477,7 +556,9 @@ async function syncPublishedSegments(options: {
         verifiedChunks = [...verifiedChunks, chunkHash].slice(-256);
       }
       if (recordsSincePersist >= options.request.persistRecordInterval || segmentEnd >= totalRows) {
+        materializationStartedAt = Date.now();
         await options.currentStore.flush(options.request.standardId);
+        flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
         recordsSincePersist = 0;
         currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
         localRows = localRowsForStandard(currentStats, options.request.standardId);
@@ -490,7 +571,11 @@ async function syncPublishedSegments(options: {
         localRows,
         cachedBytes,
         pinnedBytes: cachedBytes,
-        ...downloadProgressPatch(options.syncStartedAtMs, downloadedBytes),
+        ...downloadProgressPatch(options.syncStartedAtMs, downloadedBytes, options.measuredWireSpeedBytesPerSecond),
+        manifestDiscoveryMs: options.manifestDiscoveryMs,
+        networkTransferMs,
+        verificationMs,
+        flatSqlMaterializationMs,
         providerPeerId: options.providerPeerId,
         providerPublicKey: options.providerPublicKey,
         cursor: segment.cursor || null,
@@ -505,7 +590,9 @@ async function syncPublishedSegments(options: {
       postProgress(options.id, progress, currentStats);
     }
 
+    const materializationStartedAt = Date.now();
     await options.currentStore.flush(options.request.standardId);
+    flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
     currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
     localRows = localRowsForStandard(currentStats, options.request.standardId);
     cachedBytes = cachedBytesForStandard(currentStats, options.request.standardId);
@@ -516,7 +603,11 @@ async function syncPublishedSegments(options: {
       localRows,
       cachedBytes,
       pinnedBytes: cachedBytes,
-      ...downloadProgressPatch(options.syncStartedAtMs, downloadedBytes),
+      ...downloadProgressPatch(options.syncStartedAtMs, downloadedBytes, options.measuredWireSpeedBytesPerSecond),
+      manifestDiscoveryMs: options.manifestDiscoveryMs,
+      networkTransferMs,
+      verificationMs,
+      flatSqlMaterializationMs,
       providerPeerId: options.providerPeerId,
       providerPublicKey: options.providerPublicKey,
       queryProfile: 'dataset-publication-offset-v1',
@@ -539,11 +630,11 @@ async function syncPublishedSegments(options: {
   }
 }
 
-async function openPublishedManifestSegments(
+async function openPublishedManifest(
   backendConfig: WorkerFlatSqlSyncBackendConfig,
   schema: string,
-): Promise<FlatSqlSyncManifestSegment[]> {
-  if (!backendConfig.gatewayUrl?.trim()) return [];
+): Promise<{ manifest: FlatSqlSyncManifest; segments: FlatSqlSyncManifestSegment[] } | null> {
+  if (!backendConfig.gatewayUrl?.trim()) return null;
   const manifest = await withRemoteSyncManifestOperation(backendConfig, 'Remote published shard manifest', {
     targetPeerId: '',
     schema,
@@ -551,7 +642,42 @@ async function openPublishedManifestSegments(
     queryProfile: 'dataset-publication-offset-v1',
     limit: PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE,
   });
-  return manifest.segments.filter((segment) => Boolean(segment.cid));
+  return {
+    manifest,
+    segments: manifest.segments.filter((segment) => Boolean(segment.cid)),
+  };
+}
+
+function pinLedgerEntryForPublishedSegment(options: {
+  request: WorkerSchemaSyncRequest;
+  manifest: FlatSqlSyncManifest;
+  segment: FlatSqlSyncManifestSegment;
+  streamBytes: Uint8Array;
+  providerPeerId: string | null;
+  providerPublicKey: string | null;
+}): LocalFlatSqlPinLedgerEntry {
+  const now = new Date().toISOString();
+  return {
+    cid: options.segment.cid ?? '',
+    standardId: options.request.standardId,
+    schemaName: options.manifest.schema || options.request.schema,
+    providerPeerId: options.providerPeerId,
+    providerPublicKey: options.providerPublicKey,
+    providerId: options.manifest.providerId ?? options.request.backendConfig.providerId ?? null,
+    sourceName: options.manifest.sourceName ?? options.request.backendConfig.sourceName ?? null,
+    batchId: options.manifest.batchId ?? null,
+    queryProfile: options.manifest.queryProfile || 'dataset-publication-offset-v1',
+    snapshotId: options.segment.feedHead || options.manifest.snapshotId || options.manifest.head || null,
+    head: options.segment.feedHead || options.manifest.head || null,
+    highWaterMark: options.manifest.highWaterMark || null,
+    byteHash: options.segment.shardSha256 || options.segment.chunkHash || null,
+    role: 'shard',
+    rowCount: options.segment.rowCount,
+    byteCount: options.streamBytes.byteLength,
+    verificationState: 'verified',
+    verifiedAt: now,
+    updatedAt: now,
+  };
 }
 
 async function* fetchPublishedSegmentsInOrder(
@@ -564,6 +690,8 @@ async function* fetchPublishedSegmentsInOrder(
   streamBytes: Uint8Array;
   cumulativeRows: number;
   segmentEnd: number;
+  networkTransferMs: number;
+  verificationMs: number;
 }> {
   const syncItems: Array<{ segment: FlatSqlSyncManifestSegment; cumulativeRows: number; segmentEnd: number }> = [];
   let cumulativeRows = 0;
@@ -581,6 +709,8 @@ async function* fetchPublishedSegmentsInOrder(
     streamBytes: Uint8Array;
     cumulativeRows: number;
     segmentEnd: number;
+    networkTransferMs: number;
+    verificationMs: number;
   }>>();
   let nextToSchedule = 0;
   const schedule = (): void => {
@@ -589,13 +719,18 @@ async function* fetchPublishedSegmentsInOrder(
       nextToSchedule += 1;
       const item = syncItems[index];
       if (!item) continue;
-      inFlight.set(index, flatBufferStreamFromPublishedFlatSqlSegment({
+      inFlight.set(index, timedFlatBufferStreamFromPublishedFlatSqlSegment({
         schema: request.schema,
         providerPeerId: request.backendConfig.targetPeerId,
         cid: item.segment.cid as string,
         shardSha256: item.segment.shardSha256,
         fetchCidBytes: (cid) => fetchCidBytesFromGateway(gatewayUrl, cid),
-      }).then((streamBytes) => ({ ...item, streamBytes })));
+      }).then((result) => ({
+        ...item,
+        streamBytes: result.streamBytes,
+        networkTransferMs: result.networkTransferMs,
+        verificationMs: result.verificationMs,
+      })));
     }
   };
 
@@ -611,19 +746,50 @@ async function* fetchPublishedSegmentsInOrder(
 }
 
 function progressFor(current: WorkerSchemaSyncProgress, patch: Partial<WorkerSchemaSyncProgress>): WorkerSchemaSyncProgress {
-  return {
+  const next = {
     ...current,
     ...patch,
     syncedRows: Math.max(patch.syncedRows ?? current.syncedRows, patch.localRows ?? current.localRows),
   };
+  const rowCounts = syncRowCountSummary({
+    localRows: next.localRows,
+    syncedRows: next.syncedRows,
+    pinnedRows: next.pinnedRows,
+    remoteRows: next.totalRows,
+    totalRows: next.totalRows,
+  });
+  return {
+    ...next,
+    syncedRows: rowCounts.syncedRows,
+    pinnedRows: rowCounts.pinnedRows,
+    missingRows: rowCounts.missingRows,
+    totalRows: rowCounts.totalRows,
+  };
 }
 
-function downloadProgressPatch(startedAtMs: number, downloadedBytes: number): Pick<WorkerSchemaSyncProgress, 'downloadedBytes' | 'downloadSpeedBytesPerSecond'> {
+function downloadProgressPatch(
+  startedAtMs: number,
+  downloadedBytes: number,
+  measuredWireSpeedBytesPerSecond: number,
+): Pick<WorkerSchemaSyncProgress, 'downloadedBytes' | 'downloadSpeedBytesPerSecond' | 'measuredWireSpeedBytesPerSecond' | 'wireSpeedUtilization' | 'wireSpeedTarget' | 'wireSpeedTargetMet'> {
   const elapsedSeconds = Math.max(0.001, (Date.now() - startedAtMs) / 1000);
+  const downloadSpeedBytesPerSecond = Math.max(0, Math.floor(downloadedBytes / elapsedSeconds));
+  const wireSpeedUtilization = measuredWireSpeedUtilization(downloadSpeedBytesPerSecond, measuredWireSpeedBytesPerSecond);
   return {
     downloadedBytes,
-    downloadSpeedBytesPerSecond: Math.max(0, Math.floor(downloadedBytes / elapsedSeconds)),
+    downloadSpeedBytesPerSecond,
+    measuredWireSpeedBytesPerSecond,
+    wireSpeedUtilization,
+    wireSpeedTarget: DEFAULT_WIRE_SPEED_TARGET,
+    wireSpeedTargetMet: wireSpeedUtilization == null
+      ? null
+      : meetsWireSpeedTarget(downloadSpeedBytesPerSecond, measuredWireSpeedBytesPerSecond),
   };
+}
+
+function normalizedPositiveNumber(value: unknown): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 0;
 }
 
 function localRowsForStandard(stats: LocalFlatSqlStandardStats[], standardId: string): number {
@@ -690,6 +856,22 @@ async function withRemoteSyncManifestOperation(
     reset: () => syncBackendCache.destroy(),
     run: () => withRemoteSyncTimeout(syncBackendCache.openFlatSqlSyncManifest(backendConfig, query), label),
   });
+}
+
+async function measuredWireSpeedBaselineBytesPerSecond(
+  backendConfig: WorkerFlatSqlSyncBackendConfig,
+): Promise<number> {
+  const configured = normalizedPositiveNumber(backendConfig.measuredWireSpeedBytesPerSecond);
+  if (configured > 0) return configured;
+  try {
+    const result = await withRemoteSyncTimeout(
+      syncBackendCache.measureWireSpeed(backendConfig, { probeBytes: WIRE_SPEED_PROBE_BYTES }),
+      'Remote wire-speed probe',
+    );
+    return normalizedPositiveNumber(result.bytesPerSecond);
+  } catch {
+    return 0;
+  }
 }
 
 function postRemotePageSuccess(id: number, result: WorkerRemotePageResult): void {

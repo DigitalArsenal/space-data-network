@@ -80,10 +80,13 @@ export interface DataSchemaSummary {
 }
 
 export interface DataSourceSummary {
+  datastoreKey?: string;
   schemaName: string;
   providerId: string;
   sourceName: string;
   batchId: string;
+  producerPeerId: string;
+  producerPublicKey: string;
   count: number;
   totalBytes: number;
 }
@@ -97,6 +100,7 @@ export interface DataSummary {
 
 export interface RawDataQuery {
   schema: string;
+  datastoreKey?: string;
   providerId?: string;
   sourceName?: string;
   batchId?: string;
@@ -152,6 +156,7 @@ export interface DataScanResult {
 
 export interface RawDataStreamRequest {
   schema: string;
+  datastoreKey?: string;
   scanHash?: string;
   chunkHash?: string;
   snapshotId?: string;

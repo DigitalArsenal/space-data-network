@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -745,6 +746,66 @@ func TestFlatSQLStoreMaintainsSourceSummaryForMultipleProducers(t *testing.T) {
 	}
 }
 
+func TestFlatSQLStoreStoresBatchWithSourceTags(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(t.TempDir(), "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{
+		ProviderID:   "source:legacy-sqlite",
+		SourceName:   "legacy-satellite-data",
+		SourceURL:    "file:///opt/data/satellite_data.db",
+		BatchID:      "legacy-batch",
+		ContentKeyID: "public",
+	}
+	records := [][]byte{
+		sds.NewOMMBuilder().
+			WithNoradCatID(1).
+			WithObjectID("1957-001A").
+			WithEpoch("1959-01-11T01:49:23Z").
+			Build(),
+		sds.NewOMMBuilder().
+			WithNoradCatID(25544).
+			WithObjectID("1998-067A").
+			WithEpoch("2024-01-16T11:51:22Z").
+			Build(),
+	}
+
+	inserted, err := store.StoreBatchWithSourceTags("OMM.fbs", records, "source:legacy-sqlite", nil, tags)
+	if err != nil {
+		t.Fatalf("StoreBatchWithSourceTags failed: %v", err)
+	}
+	if inserted != 2 {
+		t.Fatalf("inserted = %d, want 2", inserted)
+	}
+	inserted, err = store.StoreBatchWithSourceTags("OMM.fbs", records, "source:legacy-sqlite", nil, tags)
+	if err != nil {
+		t.Fatalf("second StoreBatchWithSourceTags failed: %v", err)
+	}
+	if inserted != 0 {
+		t.Fatalf("second inserted = %d, want 0 for content-addressed replay", inserted)
+	}
+
+	total, err := store.CountRawRecords(RawRecordQuery{
+		SchemaName: "OMM.fbs",
+		ProviderID: tags.ProviderID,
+		SourceName: tags.SourceName,
+		BatchID:    tags.BatchID,
+	})
+	if err != nil {
+		t.Fatalf("CountRawRecords failed: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("source-tagged rows = %d, want 2", total)
+	}
+}
+
 func TestFlatSQLStoreStoresSameRecordCIDForMultipleProducers(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-source-producer-test-*")
 	if err != nil {
@@ -1152,6 +1213,198 @@ func TestFlatSQLStoreStoreWithSourceTags(t *testing.T) {
 	}
 }
 
+func TestFlatSQLStoreUpsertSourceTagsLeavesExistingTagTimestampStable(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-source-tag-idempotent-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		SourceURL:    "https://celestrak.example/gp.csv",
+		BatchID:      "source-batch",
+		ContentKeyID: "public",
+	}
+	cid, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().Build(), "source:celestrak", nil, tags)
+	if err != nil {
+		t.Fatalf("StoreWithSourceTags failed: %v", err)
+	}
+	var firstCreatedAt int64
+	if err := store.db.QueryRow(`
+		SELECT created_at
+		FROM sdn_record_source_tags
+		WHERE schema_name = ? AND cid = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`, "OMM.fbs", cid, tags.ProviderID, tags.SourceName, tags.BatchID).Scan(&firstCreatedAt); err != nil {
+		t.Fatalf("query first created_at: %v", err)
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+	if err := store.UpsertSourceTags("OMM.fbs", cid, tags); err != nil {
+		t.Fatalf("UpsertSourceTags replay failed: %v", err)
+	}
+
+	var secondCreatedAt int64
+	if err := store.db.QueryRow(`
+		SELECT created_at
+		FROM sdn_record_source_tags
+		WHERE schema_name = ? AND cid = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`, "OMM.fbs", cid, tags.ProviderID, tags.SourceName, tags.BatchID).Scan(&secondCreatedAt); err != nil {
+		t.Fatalf("query second created_at: %v", err)
+	}
+	if secondCreatedAt != firstCreatedAt {
+		t.Fatalf("created_at changed on idempotent source tag replay: first=%d second=%d", firstCreatedAt, secondCreatedAt)
+	}
+}
+
+func TestFlatSQLStoreWaitsForExternalWriterLock(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-writer-lock-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	locker, err := sql.Open("sqlite3", filepath.Join(tmpDir, "sdn.db")+"?_journal_mode=WAL&_busy_timeout=1000")
+	if err != nil {
+		t.Fatalf("open lock connection: %v", err)
+	}
+	defer locker.Close()
+
+	conn, err := locker.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("open lock conn: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(context.Background(), `BEGIN IMMEDIATE`); err != nil {
+		t.Fatalf("begin external writer lock: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := store.StoreWithSourceTags("OMM.fbs", []byte("writer-lock-test-record"), "source:celestrak", nil, SourceTags{
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-gp",
+			SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+			BatchID:      "writer-lock-batch",
+			ContentKeyID: "public",
+		})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		_, _ = conn.ExecContext(context.Background(), `ROLLBACK`)
+		t.Fatalf("StoreWithSourceTags returned before external writer lock was released: %v", err)
+	case <-time.After(5500 * time.Millisecond):
+	}
+
+	if _, err := conn.ExecContext(context.Background(), `ROLLBACK`); err != nil {
+		t.Fatalf("release external writer lock: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("StoreWithSourceTags after writer lock release failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("StoreWithSourceTags did not complete after writer lock release")
+	}
+}
+
+func TestFlatSQLStoreSourceTagUpsertWaitsWhenExistingRecordReadCanProceed(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-source-tag-upgrade-lock-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	cid, err := store.Store("OMM.fbs", []byte("source-tag-upgrade-lock-test-record"), "source:celestrak", nil)
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+
+	locker, err := sql.Open("sqlite3", filepath.Join(tmpDir, "sdn.db")+"?_journal_mode=WAL&_busy_timeout=1000")
+	if err != nil {
+		t.Fatalf("open lock connection: %v", err)
+	}
+	defer locker.Close()
+
+	conn, err := locker.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("open lock conn: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(context.Background(), `BEGIN IMMEDIATE`); err != nil {
+		t.Fatalf("begin external writer lock: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- store.UpsertSourceTags("OMM.fbs", cid, SourceTags{
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-gp",
+			SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+			BatchID:      "source-tag-upgrade-lock-batch",
+			ContentKeyID: "public",
+		})
+	}()
+
+	select {
+	case err := <-done:
+		_, _ = conn.ExecContext(context.Background(), `ROLLBACK`)
+		t.Fatalf("UpsertSourceTags returned before external writer lock was released: %v", err)
+	case <-time.After(5500 * time.Millisecond):
+	}
+
+	if _, err := conn.ExecContext(context.Background(), `ROLLBACK`); err != nil {
+		t.Fatalf("release external writer lock: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("UpsertSourceTags after writer lock release failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("UpsertSourceTags did not complete after writer lock release")
+	}
+}
+
 func TestFlatSQLStoreReconcileSourceBatch(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "flatsql-reconcile-batch-test-*")
 	if err != nil {
@@ -1207,6 +1460,227 @@ func TestFlatSQLStoreReconcileSourceBatch(t *testing.T) {
 	}
 	if _, err := store.GetSourceTags("OMM.fbs", oldCID); err == nil {
 		t.Fatal("old source tags should be deleted")
+	}
+}
+
+func TestFlatSQLStoreReconcileSourceBatchIndexedDuplicates(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-reconcile-duplicates-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "current-batch"}
+	older := sds.NewOMMBuilder().
+		WithNoradCatID(25544).
+		WithObjectID("1998-067A").
+		WithEpoch("2026-05-12T00:00:00Z").
+		WithCreationDate("2026-05-12T01:00:00Z").
+		Build()
+	newer := sds.NewOMMBuilder().
+		WithNoradCatID(25544).
+		WithObjectID("1998-067A").
+		WithEpoch("2026-05-12T00:00:00Z").
+		WithCreationDate("2026-05-12T00:00:00Z").
+		Build()
+	other := sds.NewOMMBuilder().
+		WithNoradCatID(40909).
+		WithObjectID("2015-049A").
+		WithEpoch("2026-05-12T00:00:00Z").
+		WithCreationDate("2026-05-12T00:00:00Z").
+		Build()
+
+	olderCID, err := store.StoreWithSourceTags("OMM.fbs", older, "provider", nil, tags)
+	if err != nil {
+		t.Fatalf("store older duplicate: %v", err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	newerCID, err := store.StoreWithSourceTags("OMM.fbs", newer, "provider", nil, tags)
+	if err != nil {
+		t.Fatalf("store newer duplicate: %v", err)
+	}
+	otherCID, err := store.StoreWithSourceTags("OMM.fbs", other, "provider", nil, tags)
+	if err != nil {
+		t.Fatalf("store other record: %v", err)
+	}
+
+	dryRun, err := store.ReconcileSourceBatchIndexedDuplicates("OMM.fbs", "space-data-network-02", "celestrak-gp", "current-batch", false)
+	if err != nil {
+		t.Fatalf("dry-run duplicate reconcile: %v", err)
+	}
+	if dryRun.Matched != 1 || dryRun.Deleted != 0 || dryRun.Apply {
+		t.Fatalf("dry run result = %+v, want one matched and no delete", dryRun)
+	}
+	if _, err := store.Get("OMM.fbs", olderCID); err != nil {
+		t.Fatalf("dry run deleted older duplicate: %v", err)
+	}
+
+	applied, err := store.ReconcileSourceBatchIndexedDuplicates("OMM.fbs", "space-data-network-02", "celestrak-gp", "current-batch", true)
+	if err != nil {
+		t.Fatalf("apply duplicate reconcile: %v", err)
+	}
+	if applied.Matched != 1 || applied.Deleted != 1 || !applied.Apply {
+		t.Fatalf("apply result = %+v, want one deleted", applied)
+	}
+	if _, err := store.Get("OMM.fbs", olderCID); err == nil {
+		t.Fatal("older duplicate should be deleted")
+	}
+	if _, err := store.Get("OMM.fbs", newerCID); err != nil {
+		t.Fatalf("newer duplicate should remain: %v", err)
+	}
+	if _, err := store.Get("OMM.fbs", otherCID); err != nil {
+		t.Fatalf("other record should remain: %v", err)
+	}
+	count, err := store.CountRawRecords(RawRecordQuery{
+		SchemaName: "OMM.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-gp",
+		BatchID:    "current-batch",
+	})
+	if err != nil {
+		t.Fatalf("CountRawRecords failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("source batch count = %d, want two logical records after duplicate reconcile", count)
+	}
+}
+
+func TestFlatSQLStoreReconcileSourceBatchIndexedDuplicatesRefreshesOnlyAffectedBatchSummary(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-reconcile-duplicates-summary-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	currentTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "current-batch"}
+	otherTags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "other-batch"}
+	for _, data := range [][]byte{
+		sds.NewOMMBuilder().
+			WithNoradCatID(25544).
+			WithObjectID("1998-067A").
+			WithEpoch("2026-05-12T00:00:00Z").
+			WithCreationDate("2026-05-12T01:00:00Z").
+			Build(),
+		sds.NewOMMBuilder().
+			WithNoradCatID(25544).
+			WithObjectID("1998-067A").
+			WithEpoch("2026-05-12T00:00:00Z").
+			WithCreationDate("2026-05-12T00:00:00Z").
+			Build(),
+	} {
+		if _, err := store.StoreWithSourceTags("OMM.fbs", data, "provider", nil, currentTags); err != nil {
+			t.Fatalf("store current duplicate: %v", err)
+		}
+	}
+	if _, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().
+		WithNoradCatID(40909).
+		WithObjectID("2015-049A").
+		WithEpoch("2026-05-12T00:00:00Z").
+		WithCreationDate("2026-05-12T00:00:00Z").
+		Build(), "provider", nil, otherTags); err != nil {
+		t.Fatalf("store other batch: %v", err)
+	}
+
+	var otherUpdatedAtBefore int64
+	if err := store.db.QueryRow(`
+		SELECT updated_at
+		FROM sdn_record_source_summary
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`, "OMM.fbs", otherTags.ProviderID, otherTags.SourceName, otherTags.BatchID).Scan(&otherUpdatedAtBefore); err != nil {
+		t.Fatalf("query other summary before reconcile: %v", err)
+	}
+
+	time.Sleep(1100 * time.Millisecond)
+	result, err := store.ReconcileSourceBatchIndexedDuplicates("OMM.fbs", currentTags.ProviderID, currentTags.SourceName, currentTags.BatchID, true)
+	if err != nil {
+		t.Fatalf("apply duplicate reconcile: %v", err)
+	}
+	if result.Matched != 1 || result.Deleted != 1 {
+		t.Fatalf("reconcile result = %+v, want one duplicate deleted", result)
+	}
+
+	var otherUpdatedAtAfter int64
+	if err := store.db.QueryRow(`
+		SELECT updated_at
+		FROM sdn_record_source_summary
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`, "OMM.fbs", otherTags.ProviderID, otherTags.SourceName, otherTags.BatchID).Scan(&otherUpdatedAtAfter); err != nil {
+		t.Fatalf("query other summary after reconcile: %v", err)
+	}
+	if otherUpdatedAtAfter != otherUpdatedAtBefore {
+		t.Fatalf("other batch summary updated_at changed: before=%d after=%d", otherUpdatedAtBefore, otherUpdatedAtAfter)
+	}
+}
+
+func TestFlatSQLStoreRefreshSourceBatchSummaryRepairsStaleCount(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-refresh-source-summary-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+
+	store, err := NewFlatSQLStore(tmpDir, validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{ProviderID: "space-data-network-02", SourceName: "celestrak-gp", BatchID: "current-batch", ContentKeyID: "public"}
+	if _, err := store.StoreWithSourceTags("OMM.fbs", sds.NewOMMBuilder().Build(), "provider", nil, tags); err != nil {
+		t.Fatalf("store source-tagged record: %v", err)
+	}
+	if _, err := store.db.Exec(`
+		UPDATE sdn_record_source_summary
+		SET record_count = 99, total_bytes = 99999
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`, "OMM.fbs", tags.ProviderID, tags.SourceName, tags.BatchID); err != nil {
+		t.Fatalf("corrupt source summary: %v", err)
+	}
+
+	if err := store.RefreshSourceBatchSummary("OMM.fbs", tags.ProviderID, tags.SourceName, tags.BatchID); err != nil {
+		t.Fatalf("RefreshSourceBatchSummary failed: %v", err)
+	}
+
+	var count, totalBytes int64
+	if err := store.db.QueryRow(`
+		SELECT record_count, total_bytes
+		FROM sdn_record_source_summary
+		WHERE schema_name = ? AND provider_id = ? AND source_name = ? AND batch_id = ?
+	`, "OMM.fbs", tags.ProviderID, tags.SourceName, tags.BatchID).Scan(&count, &totalBytes); err != nil {
+		t.Fatalf("query source summary: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("record_count = %d, want 1", count)
+	}
+	if totalBytes <= 0 || totalBytes == 99999 {
+		t.Fatalf("total_bytes = %d, want repaired record byte count", totalBytes)
 	}
 }
 

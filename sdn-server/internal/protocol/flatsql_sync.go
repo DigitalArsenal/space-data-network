@@ -15,6 +15,12 @@ import (
 
 const FlatSQLSyncProtocolID = datasync.ProtocolID
 
+const (
+	defaultWireSpeedProbeBytes int64 = 64 * 1024 * 1024
+	maxWireSpeedProbeBytes     int64 = 512 * 1024 * 1024
+	wireSpeedProbeChunkBytes         = 256 * 1024
+)
+
 // FlatSQLSyncHandler serves chunked, resumable FlatSQL raw-record streams over
 // any libp2p stream transport, including WebSocket and WebRTC.
 type FlatSQLSyncHandler struct {
@@ -23,6 +29,7 @@ type FlatSQLSyncHandler struct {
 
 type flatSQLSyncRequest struct {
 	Op                     string               `json:"op"`
+	DatastoreKey           string               `json:"datastore_key"`
 	Schema                 string               `json:"schema"`
 	SchemaName             string               `json:"schema_name"`
 	ProviderID             string               `json:"provider_id"`
@@ -52,6 +59,7 @@ type flatSQLSyncRequest struct {
 	CachedBytes            int64                `json:"cached_bytes"`
 	PinnedBytes            int64                `json:"pinned_bytes"`
 	VerifiedChunks         []string             `json:"verified_chunks"`
+	ProbeBytes             int64                `json:"probe_bytes"`
 }
 
 // NewFlatSQLSyncHandler creates a FlatSQL sync stream handler.
@@ -84,8 +92,16 @@ func (h *FlatSQLSyncHandler) HandleStream(s network.Stream) {
 		if err := h.handleOpenManifest(s, req); err != nil {
 			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
 		}
+	case "list_datastores":
+		if err := h.handleListDatastores(s); err != nil {
+			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
+		}
 	case "ack_progress":
 		if err := h.handleAckProgress(s, req); err != nil {
+			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
+		}
+	case "wire_speed_probe":
+		if err := h.handleWireSpeedProbe(s, req); err != nil {
 			_ = writeFlatSQLSyncJSONFrame(s, flatSQLSyncErrorResponse(err))
 		}
 	default:
@@ -94,12 +110,14 @@ func (h *FlatSQLSyncHandler) HandleStream(s network.Stream) {
 }
 
 func (h *FlatSQLSyncHandler) handleReadChunk(writer io.Writer, req flatSQLSyncRequest) error {
-	if h.store == nil {
-		return fmt.Errorf("FlatSQL store is unavailable")
+	activeStore, cleanup, err := h.storeForRequest(req)
+	if err != nil {
+		return err
 	}
+	defer cleanup()
 	if len(req.Records) > 0 {
 		streamReq := req.streamRequest()
-		chunkHash, records, err := datasync.ResolveStreamRecords(h.store, streamReq)
+		chunkHash, records, err := datasync.ResolveStreamRecords(activeStore, streamReq)
 		if err != nil {
 			return err
 		}
@@ -122,24 +140,26 @@ func (h *FlatSQLSyncHandler) handleReadChunk(writer io.Writer, req flatSQLSyncRe
 		if err := writeFlatSQLSyncJSONFrame(writer, response); err != nil {
 			return err
 		}
-		return h.store.WriteRawRecordFrames(writer, records)
+		return activeStore.WriteRawRecordFrames(writer, records)
 	}
 
-	response, records, err := datasync.Scan(h.store, req.queryRequest(), datasync.MaxSyncChunkLimit)
+	response, records, err := datasync.Scan(activeStore, req.queryRequest(), datasync.MaxSyncChunkLimit)
 	if err != nil {
 		return err
 	}
 	if err := writeFlatSQLSyncJSONFrame(writer, response); err != nil {
 		return err
 	}
-	return h.store.WriteRawRecordFrames(writer, records)
+	return activeStore.WriteRawRecordFrames(writer, records)
 }
 
 func (h *FlatSQLSyncHandler) handleScan(writer io.Writer, req flatSQLSyncRequest) error {
-	if h.store == nil {
-		return fmt.Errorf("FlatSQL store is unavailable")
+	activeStore, cleanup, err := h.storeForRequest(req)
+	if err != nil {
+		return err
 	}
-	response, _, err := datasync.Scan(h.store, req.queryRequest(), datasync.MaxSyncChunkLimit)
+	defer cleanup()
+	response, _, err := datasync.Scan(activeStore, req.queryRequest(), datasync.MaxSyncChunkLimit)
 	if err != nil {
 		return err
 	}
@@ -147,14 +167,53 @@ func (h *FlatSQLSyncHandler) handleScan(writer io.Writer, req flatSQLSyncRequest
 }
 
 func (h *FlatSQLSyncHandler) handleOpenManifest(writer io.Writer, req flatSQLSyncRequest) error {
-	if h.store == nil {
-		return fmt.Errorf("FlatSQL store is unavailable")
+	activeStore, cleanup, err := h.storeForRequest(req)
+	if err != nil {
+		return err
 	}
-	response, err := datasync.OpenManifest(h.store, req.queryRequest(), datasync.MaxSyncChunkLimit)
+	defer cleanup()
+	response, err := datasync.OpenManifest(activeStore, req.queryRequest(), datasync.MaxSyncChunkLimit)
 	if err != nil {
 		return err
 	}
 	return writeFlatSQLSyncJSONFrame(writer, response)
+}
+
+func (h *FlatSQLSyncHandler) handleListDatastores(writer io.Writer) error {
+	if h.store == nil {
+		return fmt.Errorf("FlatSQL store is unavailable")
+	}
+	entries, err := h.store.ListDatastoreIdentities()
+	if err != nil {
+		return err
+	}
+	results := make([]map[string]interface{}, 0, len(entries))
+	for _, entry := range entries {
+		results = append(results, map[string]interface{}{
+			"key":        entry.Key,
+			"identity":   entry.Identity,
+			"updated_at": entry.UpdatedAt,
+		})
+	}
+	return writeFlatSQLSyncJSONFrame(writer, map[string]interface{}{
+		"count":   len(results),
+		"results": results,
+	})
+}
+
+func (h *FlatSQLSyncHandler) storeForRequest(req flatSQLSyncRequest) (*storage.FlatSQLStore, func(), error) {
+	if h.store == nil {
+		return nil, func() {}, fmt.Errorf("FlatSQL store is unavailable")
+	}
+	datastoreKey := strings.TrimSpace(req.DatastoreKey)
+	if datastoreKey == "" {
+		return h.store, func() {}, nil
+	}
+	store, err := h.store.OpenRegisteredDatastore(datastoreKey)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	return store, func() { _ = store.Close() }, nil
 }
 
 func (h *FlatSQLSyncHandler) handleAckProgress(writer io.Writer, req flatSQLSyncRequest) error {
@@ -173,9 +232,58 @@ func (h *FlatSQLSyncHandler) handleAckProgress(writer io.Writer, req flatSQLSync
 	})
 }
 
+func (h *FlatSQLSyncHandler) handleWireSpeedProbe(writer io.Writer, req flatSQLSyncRequest) error {
+	probeBytes := normalizeWireSpeedProbeBytes(req.ProbeBytes)
+	if err := writeFlatSQLSyncJSONFrame(writer, map[string]interface{}{
+		"op":              "wire_speed_probe",
+		"status":          "ok",
+		"sync_protocol":   FlatSQLSyncProtocolID,
+		"probe_bytes":     probeBytes,
+		"payload_bytes":   probeBytes,
+		"max_probe_bytes": maxWireSpeedProbeBytes,
+	}); err != nil {
+		return err
+	}
+	return writeWireSpeedProbePayload(writer, probeBytes)
+}
+
+func normalizeWireSpeedProbeBytes(requested int64) int64 {
+	if requested <= 0 {
+		return defaultWireSpeedProbeBytes
+	}
+	if requested > maxWireSpeedProbeBytes {
+		return maxWireSpeedProbeBytes
+	}
+	return requested
+}
+
+func writeWireSpeedProbePayload(writer io.Writer, totalBytes int64) error {
+	chunk := make([]byte, wireSpeedProbeChunkBytes)
+	var state uint32 = 0x9e3779b9
+	for index := range chunk {
+		state ^= state << 13
+		state ^= state >> 17
+		state ^= state << 5
+		chunk[index] = byte(state)
+	}
+	remaining := totalBytes
+	for remaining > 0 {
+		size := int64(len(chunk))
+		if remaining < size {
+			size = remaining
+		}
+		if _, err := writer.Write(chunk[:size]); err != nil {
+			return err
+		}
+		remaining -= size
+	}
+	return nil
+}
+
 func (req flatSQLSyncRequest) queryRequest() datasync.QueryRequest {
 	return datasync.QueryRequest{
 		Op:                     req.Op,
+		DatastoreKey:           req.DatastoreKey,
 		Schema:                 req.Schema,
 		SchemaName:             req.SchemaName,
 		ProviderID:             req.ProviderID,

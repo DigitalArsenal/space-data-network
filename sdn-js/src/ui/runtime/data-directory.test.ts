@@ -53,6 +53,61 @@ describe('PGP data directory ownertrust', () => {
     });
   });
 
+  it('preserves the SDN datastore namespace key on feed subscriptions', () => {
+    const next = upsertDataFeedSubscription({ peerTrust: {}, subscriptions: [] }, {
+      dataSourceId: 'configured:celestrak.eth',
+      peerId: '16Uiu2HAmCelestrak',
+      datastoreKey: 'sdn-ds-v1-history',
+      standardId: 'OMM',
+      providerName: 'CelesTrak',
+      providerPublicKey: 'ed25519:abc',
+      remoteRows: 44349135,
+      storageCap: 2,
+      storageUnit: 'TB',
+      syncFilter: '',
+    });
+
+    expect(next.subscriptions[0]).toMatchObject({
+      id: subscriptionKey('configured:celestrak.eth', 'OMM', 'sdn-ds-v1-history'),
+      datastoreKey: 'sdn-ds-v1-history',
+      remoteRows: 44349135,
+    });
+  });
+
+  it('keeps multiple datastore namespaces for the same source and schema as distinct subscriptions', () => {
+    let state = upsertDataFeedSubscription({ peerTrust: {}, subscriptions: [] }, {
+      dataSourceId: 'configured:celestrak.eth',
+      peerId: '16Uiu2HAmCelestrak',
+      datastoreKey: 'sdn-ds-v1-live',
+      standardId: 'OMM',
+      providerName: 'CelesTrak live',
+      providerPublicKey: 'ed25519:abc',
+      remoteRows: 2287018,
+      storageCap: 1,
+      storageUnit: 'GB',
+      syncFilter: '',
+    });
+
+    state = upsertDataFeedSubscription(state, {
+      dataSourceId: 'configured:celestrak.eth',
+      peerId: '16Uiu2HAmCelestrak',
+      datastoreKey: 'sdn-ds-v1-history',
+      standardId: 'OMM',
+      providerName: 'CelesTrak historical',
+      providerPublicKey: 'ed25519:abc',
+      remoteRows: 44349135,
+      storageCap: 5,
+      storageUnit: 'GB',
+      syncFilter: '',
+    });
+
+    expect(state.subscriptions).toHaveLength(2);
+    expect(state.subscriptions.map((subscription) => subscription.id).sort()).toEqual([
+      subscriptionKey('configured:celestrak.eth', 'OMM', 'sdn-ds-v1-history'),
+      subscriptionKey('configured:celestrak.eth', 'OMM', 'sdn-ds-v1-live'),
+    ]);
+  });
+
   it('keeps explicit full or ultimate trust when subscribing to a feed', () => {
     const state = updatePeerOwnertrust({ peerTrust: {}, subscriptions: [] }, '16Uiu2HAmProvider', 'full');
     const next = upsertDataFeedSubscription(state, {

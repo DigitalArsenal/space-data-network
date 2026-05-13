@@ -113,6 +113,12 @@ func (b *OMMBuilder) WithMeanAnomaly(ma float64) *OMMBuilder {
 	return b
 }
 
+// WithCreationDate sets the OMM creation date string.
+func (b *OMMBuilder) WithCreationDate(creationDate string) *OMMBuilder {
+	b.creationDate = creationDate
+	return b
+}
+
 // Build creates the OMM FlatBuffer and returns a copy of the bytes.
 func (b *OMMBuilder) Build() []byte {
 	b.builder.Reset()
