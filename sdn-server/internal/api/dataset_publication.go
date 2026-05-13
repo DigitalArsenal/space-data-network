@@ -616,6 +616,7 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 	if head == "" {
 		head = datasync.PublishedFeedHead(schema, last.ProviderID, last.SourceName, last.BatchID, last.QueryProfile, publications)
 	}
+	carOutputDir := filepath.Join(s.outputDir, safeDatasetPathComponent(schema), "car")
 	existing, err := s.store.ListPinLedgerEntries(storage.PinLedgerQuery{
 		SchemaName:        schema,
 		ProviderPeerID:    s.providerPeerID,
@@ -629,10 +630,15 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 	if err != nil {
 		return fmt.Errorf("list existing shard-group CAR bundle pins: %w", err)
 	}
+	currentExists := false
 	for _, entry := range existing {
 		if entry.Head == head && entry.CID != "" && entry.ByteHash != "" && entry.ByteCount > 0 {
-			return nil
+			currentExists = true
+			break
 		}
+	}
+	if currentExists {
+		return s.retireStaleShardGroupCARBundles(ctx, existing, head, carOutputDir, "")
 	}
 
 	rootCIDs := make([]string, 0, len(publications)*3)
@@ -651,7 +657,6 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 		totalRows += int64(publication.RecordCount)
 		totalBytes += publication.ByteCount
 	}
-	carOutputDir := filepath.Join(s.outputDir, safeDatasetPathComponent(schema), "car")
 	publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, s.ipfsAPIURL, carOutputDir, rootCIDs)
 	if err != nil {
 		return fmt.Errorf("publish shard-group CAR bundle: %w", err)
@@ -713,8 +718,10 @@ func (s *ConcreteDatasetPublicationService) retireStaleShardGroupCARBundles(ctx 
 			return fmt.Errorf("mark stale shard-group CAR %s: %w", entry.CID, err)
 		}
 	}
-	if err := storage.RemoveStaleShardGroupCARFiles(carOutputDir, currentCARPath); err != nil {
-		return fmt.Errorf("remove stale shard-group CAR files: %w", err)
+	if strings.TrimSpace(currentCARPath) != "" {
+		if err := storage.RemoveStaleShardGroupCARFiles(carOutputDir, currentCARPath); err != nil {
+			return fmt.Errorf("remove stale shard-group CAR files: %w", err)
+		}
 	}
 	return nil
 }
