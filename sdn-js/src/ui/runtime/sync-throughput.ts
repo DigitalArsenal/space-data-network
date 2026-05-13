@@ -68,6 +68,11 @@ export interface ThroughputHarnessResult {
   audit: PublishedShardWireSpeedAudit;
 }
 
+export function boundedWireSpeedUtilization(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+  return Math.min(1, value);
+}
+
 export function measuredWireSpeedUtilization(
   downloadSpeedBytesPerSecond: number,
   measuredWireSpeedBytesPerSecond: number | null | undefined,
@@ -75,7 +80,7 @@ export function measuredWireSpeedUtilization(
   const download = finitePositive(downloadSpeedBytesPerSecond);
   const baseline = finitePositive(measuredWireSpeedBytesPerSecond);
   if (download == null || baseline == null) return null;
-  return Math.min(1, download / baseline);
+  return boundedWireSpeedUtilization(download / baseline);
 }
 
 export function meetsWireSpeedTarget(

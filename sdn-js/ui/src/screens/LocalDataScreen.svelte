@@ -28,6 +28,7 @@
     EPOCH_SQL_PROFILES,
     type EpochSqlProfile,
   } from '../../../src/ui/runtime/epoch-query-sql';
+  import { boundedWireSpeedUtilization } from '../../../src/ui/runtime/sync-throughput';
   import { syncRowCountSummary, syncRowCountSummaryLabel } from '../../../src/ui/runtime/sync-progress';
   import { createSchemaSyncScheduler } from '../lib/schema-sync-scheduler';
   import {
@@ -1620,9 +1621,10 @@
   }
 
   function normalizedOptionalRatio(value: unknown): number | null {
+    if (value === null || value === undefined || value === '') return null;
     const numeric = Number(value);
     if (!Number.isFinite(numeric) || numeric < 0) return null;
-    return numeric;
+    return boundedWireSpeedUtilization(numeric);
   }
 
   function isSchemaSyncStatus(value: unknown): value is SchemaSyncStatus {
