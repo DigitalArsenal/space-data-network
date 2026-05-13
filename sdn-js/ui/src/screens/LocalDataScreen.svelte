@@ -29,6 +29,8 @@
     EPOCH_SQL_PROFILES,
     type EpochSqlProfile,
   } from '../../../src/ui/runtime/epoch-query-sql';
+  import { createDeterministicLocalLlmQueryAdapter } from '../../../src/ui/runtime/llm-query-adapter';
+  import { buildLocalLlmQueryContext } from '../../../src/ui/runtime/llm-query-context';
   import { boundedWireSpeedUtilization } from '../../../src/ui/runtime/sync-throughput';
   import { syncRowCountSummary, syncRowCountSummaryLabel } from '../../../src/ui/runtime/sync-progress';
   import { createSchemaSyncScheduler } from '../lib/schema-sync-scheduler';
@@ -306,6 +308,10 @@
   let sqlRunning = false;
   let userEditedSql = false;
   let userEditedColumns = false;
+  let llmAskText = '';
+  let llmDraftRunning = false;
+  let llmDraftError = '';
+  let llmDraftRationale = '';
   let epochProfile: EpochSqlProfile = 'epoch.day';
   let epochDay = defaultEpochDay();
   let epochAt = `${epochDay}T00:00`;
@@ -340,7 +346,7 @@
   $: schemaSyncRows = buildSubscribedSchemaSyncRows(dataDirectoryState.subscriptions, selectedDataSourceId, selectedDatastoreKey, localFlatSqlStats, schemaSyncPreferences);
   $: subscribedSourceOptions = buildSubscribedSourceOptions(schemaSyncRows);
   $: selectedExplorerSourceKey = subscriptionSourceKey(selectedDataSourceId, selectedDatastoreKey);
-  $: subscribedStandardOptions = schemaSyncRows.filter((row) => subscriptionSourceKey(row.dataSourceId, row.datastoreKey) === selectedExplorerSourceKey);
+  $: subscribedStandardOptions = schemaSyncRows.filter((row) => subscriptionSourceKey(row.dataSourceId, row.datastoreKey) === subscriptionSourceKey(selectedDataSourceId, selectedDatastoreKey));
   $: activeStorageRows = schemaSyncRows.filter((row) => row.preference.mode === 'sync');
   $: selectedSchemaSyncRow = schemaSyncRows.find((row) => selectedSubscriptionId && row.subscriptionId === selectedSubscriptionId)
     ?? schemaSyncRows.find((row) => row.id === selectedStandardId && row.dataSourceId === selectedDataSourceId && (selectedDatastoreKey ? row.datastoreKey === selectedDatastoreKey : true))
@@ -799,6 +805,47 @@
       sqlError = error instanceof Error ? error.message : 'SQL query failed';
     } finally {
       sqlRunning = false;
+    }
+  }
+
+  async function draftLocalLlmSql(): Promise<void> {
+    const ask = llmAskText.trim();
+    if (!ask || localRowCount <= 0) return;
+    llmDraftRunning = true;
+    llmDraftError = '';
+    llmDraftRationale = '';
+    try {
+      const source = currentDataSourceOption();
+      const schemaRow = selectedSchemaSyncRow;
+      const context = buildLocalLlmQueryContext({
+        standardId: selectedStandardId,
+        schemaName: schemaNameForStandardId(selectedStandardId),
+        tableName: standardIdFromSchema(selectedStandardId),
+        columns: llmSqlColumnsForStandard(selectedStandardId),
+        queryProfile: subscriptionQueryProfileFor(schemaRow),
+        source: {
+          dataSourceId: selectedDataSourceId,
+          datastoreKey: selectedDatastoreKey,
+          providerName: schemaRow?.providerName ?? source?.label ?? selectedDataSourceId,
+          providerPeerId: schemaRow?.providerPeerId ?? source?.peerId ?? null,
+          providerPublicKey: schemaRow?.providerPublicKey ?? source?.publicKey ?? null,
+          providerId: source?.providerId ?? schemaRow?.dataSourceId ?? null,
+          sourceName: source?.sourceName ?? null,
+        },
+        sampleRows: visibleRows.map((row) => row.decoded),
+        maxRows: normalizedPageSize(),
+      });
+      const adapter = createDeterministicLocalLlmQueryAdapter();
+      const draft = await adapter.draftSql({ ask, context });
+      sqlQueryText = draft.sql;
+      llmDraftRationale = draft.rationale;
+      userEditedSql = true;
+      sqlResult = null;
+      sqlError = '';
+    } catch (error) {
+      llmDraftError = error instanceof Error ? error.message : 'Plaintext query draft failed';
+    } finally {
+      llmDraftRunning = false;
     }
   }
 
@@ -1317,6 +1364,15 @@
 
   function defaultSqlQuery(standardId: string): string {
     return `SELECT * FROM ${standardIdFromSchema(standardId)} LIMIT ${DEFAULT_PAGE_SIZE}`;
+  }
+
+  function llmSqlColumnsForStandard(standardId: string): string[] {
+    const standardColumns = STANDARD_FIELD_COLUMNS[standardIdFromSchema(standardId)] ?? [];
+    if (standardColumns.length > 0) return standardColumns.map((column) => column.key);
+    return allColumns
+      .filter((column) => column.source === 'standard')
+      .map((column) => column.key)
+      .filter((key) => !INTERNAL_COLUMN_KEYS.has(key) && !isInternalSqlColumn(key));
   }
 
   function defaultEpochDay(): string {
@@ -2448,7 +2504,7 @@
             </label>
 
             <label>
-              <span>Standard</span>
+              <span>Table</span>
               <select class="sdn-input sdn-select" bind:value={selectedStandardId} on:change={handleExplorerStandardChange}>
                 {#each subscribedStandardOptions as standard}
                   <option value={standard.id}>{standard.id} ({formatNumber(standard.remoteRows)})</option>
@@ -2501,6 +2557,24 @@
               <button class="sdn-button sdn-button-muted" type="button" on:click={() => void applyEpochProfileQuery()} disabled={sqlRunning}>Apply</button>
             {/if}
 
+            <label class="sdn-workbench-ask">
+              <span>Ask</span>
+              <textarea
+                class="sdn-input sdn-ask-input"
+                bind:value={llmAskText}
+                rows="2"
+                spellcheck="true"
+                placeholder="find all OMMs for satellites that belong to former soviet block nations that have periods greater than 1 day"
+              ></textarea>
+            </label>
+
+            <button
+              class="sdn-button sdn-button-muted"
+              type="button"
+              on:click={() => void draftLocalLlmSql()}
+              disabled={llmDraftRunning || localRowCount <= 0 || !llmAskText.trim()}
+            >{llmDraftRunning ? 'Drafting' : 'Draft SQL'}</button>
+
             <label class="sdn-workbench-sql">
               <span>SQL</span>
               <textarea class="sdn-input sdn-sql-input" bind:value={sqlQueryText} on:input={handleSqlInput} rows="2" spellcheck="false"></textarea>
@@ -2540,6 +2614,12 @@
 
           {#if epochQueryError}
             <p class="sdn-empty-inline" role="alert">{epochQueryError}</p>
+          {/if}
+
+          {#if llmDraftError}
+            <p class="sdn-empty-inline" role="alert">{llmDraftError}</p>
+          {:else if llmDraftRationale}
+            <p class="sdn-empty-inline" role="status">{llmDraftRationale}</p>
           {/if}
 
           <div class="sdn-dataset-summary" aria-label="Dataset summary">

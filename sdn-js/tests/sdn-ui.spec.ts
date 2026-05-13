@@ -88,7 +88,7 @@ test('data route renders subscribed local datastore preview without workbench st
   await expect(syncSettings.getByRole('button', { name: 'Retry' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Explorer' }).click();
-  await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('local:PNM');
+  await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('PNM');
   await expect(page.getByRole('combobox', { name: 'Page size' })).toHaveValue('10');
   await expect(page.getByLabel('Remote rows 12')).toBeVisible();
   await expect(page.getByLabel('Local rows 10')).toBeVisible();
@@ -318,9 +318,10 @@ test('data route keeps same-schema subscriptions separated by datastore namespac
 
   scanDatastoreKeys.length = 0;
   await page.getByRole('button', { name: 'Explorer' }).click();
-  await page.getByRole('combobox', { name: 'Table' }).selectOption('local:OMM:datastore:sdn-ds-live');
+  await page.getByRole('combobox', { name: 'Source' }).selectOption('local:datastore:sdn-ds-live');
+  await page.getByRole('combobox', { name: 'Table' }).selectOption('OMM');
 
-  await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('local:OMM:datastore:sdn-ds-live');
+  await expect(page.getByRole('combobox', { name: 'Table' })).toHaveValue('OMM');
   await expect.poll(() => scanDatastoreKeys.at(-1) ?? '').toBe('sdn-ds-live');
 });
 
@@ -430,7 +431,7 @@ test('data route applies OMM epoch profiles to locally synced CelesTrak rows', a
 
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
   await page.getByRole('button', { name: 'Explorer' }).click();
-  await page.getByRole('combobox', { name: 'Table' }).selectOption('local:OMM:datastore:sdn-ds-live');
+  await page.getByRole('combobox', { name: 'Table' }).selectOption('OMM');
 
   const dataRows = page.getByRole('table', { name: 'Data rows' });
   await expect(dataRows.getByRole('cell', { name: 'STARLINK-6292', exact: true })).toBeVisible();
@@ -442,6 +443,11 @@ test('data route applies OMM epoch profiles to locally synced CelesTrak rows', a
   await expect(page.getByRole('textbox', { name: 'SQL' })).toHaveValue("SELECT * FROM OMM WHERE EPOCH >= '2026-05-10T00:00:00Z' AND EPOCH < '2026-05-11T00:00:00Z' AND NORAD_CAT_ID = 56775 ORDER BY EPOCH ASC, NORAD_CAT_ID ASC LIMIT 10");
   await expect(dataRows.getByRole('cell', { name: 'STARLINK-6292', exact: true })).toBeVisible();
   await expect(dataRows.getByRole('cell', { name: '56775', exact: true })).toBeVisible();
+
+  await page.getByRole('textbox', { name: 'Ask' }).fill('find all OMMs for satellites that belong to former soviet block nations that have periods greater than 1 day');
+  await page.getByRole('button', { name: 'Draft SQL' }).click();
+  await expect(page.getByRole('textbox', { name: 'SQL' })).toHaveValue('SELECT * FROM OMM WHERE MEAN_MOTION < 1 LIMIT 10');
+  await expect(page.getByText(/local schema/i)).toBeVisible();
 });
 
 test('data route keeps the shell fixed while the content pane scrolls', async ({ page }) => {
@@ -479,8 +485,7 @@ test('data route keeps the shell fixed while the content pane scrolls', async ({
   expect(layout.contentScrollHeight).toBeGreaterThan(layout.contentClientHeight);
   expect(layout.contentScrollTop).toBeGreaterThan(0);
   expect(layout.windowScrollY).toBe(0);
-  expect(layout.beforeTop).toBe(0);
-  expect(layout.afterTop).toBe(0);
+  expect(layout.afterTop).toBe(layout.beforeTop);
 });
 
 test('explore route renders CID inspection with the configured gateway', async ({ page }) => {

@@ -730,12 +730,21 @@ textarea,
   width: 100%;
 }
 
+.sdn-workbench-ask,
+.sdn-workbench-sql {
+  grid-column: span 2;
+}
+
+.sdn-ask-input,
 .sdn-sql-input {
   min-height: 3rem;
   resize: vertical;
+  line-height: 1.35;
+}
+
+.sdn-sql-input {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.8rem;
-  line-height: 1.35;
 }
 
 .sdn-dataset-summary {
