@@ -308,6 +308,16 @@ function normalizeKuboPeerAddress (address, peerId) {
   return value.includes('/p2p/') ? value : `${value}/p2p/${peerId}`
 }
 
+function multiaddrHostName (address) {
+  const parts = String(address ?? '').trim().split('/').filter(Boolean)
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    if (parts[index] === 'ip4' || parts[index] === 'ip6' || parts[index] === 'dns4' || parts[index] === 'dns6') {
+      return parts[index + 1] || ''
+    }
+  }
+  return ''
+}
+
 function kuboSwarmPeersToDesktopSdnPeers (payload) {
   return (Array.isArray(payload?.Peers) ? payload.Peers : [])
     .map(peer => {
@@ -330,6 +340,8 @@ function kuboSwarmPeersToDesktopSdnPeers (payload) {
       if (protocols.length > 0) metadata.protocols = protocols.join(',')
       if (identity?.peer_id) metadata.peer_id = identity.peer_id
       if (identity?.public_key) metadata.public_key = identity.public_key
+      const ipfsArtifactAddrs = configuredNodeIpfsArtifactAddrs(multiaddrHostName(peer?.Addr), identity)
+      if (ipfsArtifactAddrs.length > 0) metadata.ipfs_artifact_addrs = ipfsArtifactAddrs
 
       return {
         id: peerId,

@@ -39,9 +39,10 @@ On a measured 2 Gbps path, the target is about 1.6 Gbps, or 200 MB/s. At that ta
 - `npm run measure:flatsql-sync` runs the acceptance harness: it measures libp2p wire speed, opens the feed manifest over the FlatSQL sync protocol, optionally connects the local IPFS node to known shard seed peers with repeatable `--ipfs-peer` arguments, fetches immutable shard CIDs from the local IPFS gateway, and reports download utilization plus separate manifest, verification, and FlatSQL timing fields.
 - CelesTrak OMM reached the 80% target only after the 46 immutable shard CIDs were seeded by both CelesTrak and SpaceAware. A single-provider fresh-cache download topped out at 41-54% of measured wire speed; a two-seed fresh-cache run downloaded 659,703,180 bytes in a 16.45 second network window, 127% of the measured wire probe.
 - Desktop/browser sync automatically connects the local Kubo node to configured SDN artifact seed peers, selected provider first, before fetching published shard CIDs through the local gateway. With both CelesTrak and SpaceAware configured, normal app sync no longer depends on a manually supplied second seed peer.
+- Observed desktop SDN peer records that match configured provider identities also advertise the provider artifact peer address, so sync retry paths can reuse artifact seeds discovered from the local peer list.
 
 ## Follow-Up Work
 
 - Add CAR export/import for shard groups to reduce per-CID round trips when a provider or peer offers a complete dataset snapshot.
-- Extend shard seed peer discovery beyond configured SDN peers to trusted/observed peer records and IPFS provider records so every multi-peer fast path is automatic, including standalone throughput harness runs.
+- Extend shard seed peer discovery beyond configured and observed-known SDN peers to generic trusted peer records and IPFS provider records so every multi-peer fast path is automatic, including standalone throughput harness runs.
 - Move local ingestion toward direct FlatSQL stream import for shard payloads that do not contain nested FlatBuffer size prefixes.

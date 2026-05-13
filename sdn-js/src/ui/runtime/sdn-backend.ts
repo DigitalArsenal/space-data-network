@@ -54,6 +54,8 @@ export interface ObservedSdnPeer {
   trustLevel: string;
   agentVersion?: string;
   protocols?: string[];
+  artifactPeerAddrs?: string[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface StorageSummary {
