@@ -57,6 +57,7 @@
   type SchemaSyncMode = 'preview' | 'sync';
   type SchemaSyncStatus = 'idle' | 'syncing' | 'synced' | 'capped' | 'error';
   type StorageUnit = 'MB' | 'GB' | 'TB';
+  type DataQueryProfile = 'ordered-offset-v1' | 'dataset-publication-offset-v1';
 
   interface WorkbenchColumn {
     key: SortColumn;
@@ -161,6 +162,11 @@
   const SYNC_PAGE_SIZE = 50_000;
   const SYNC_PERSIST_RECORD_INTERVAL = 100_000;
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+  const DEFAULT_QUERY_PROFILE: DataQueryProfile = 'ordered-offset-v1';
+  const DATA_QUERY_PROFILES: Array<{ id: DataQueryProfile; label: string }> = [
+    { id: 'ordered-offset-v1', label: 'Ordered offset' },
+    { id: 'dataset-publication-offset-v1', label: 'Published artifacts' },
+  ];
   const DATA_SECTIONS: Array<{ id: DataSection; label: string; breadcrumb: string }> = [
     { id: 'storage', label: 'Storage', breadcrumb: 'Data / Storage' },
     { id: 'subscriptions', label: 'Sync settings', breadcrumb: 'Data / Sync Settings' },
@@ -265,6 +271,7 @@
   let searchText = '';
   let pageSize = DEFAULT_PAGE_SIZE;
   let pageIndex = 0;
+  let selectedQueryProfile: DataQueryProfile = DEFAULT_QUERY_PROFILE;
   let sortColumn: SortColumn = 'timestamp';
   let sortDirection: SortDirection = 'desc';
   let rawRecords: RawDataRecord[] = [];
@@ -472,6 +479,7 @@
       schema: schemaNameForStandardId(selectedStandardId),
       ...(activeSelection?.datastoreKey ? { datastoreKey: activeSelection.datastoreKey } : {}),
       ...(activeSelection?.syncFilter ? { syncFilter: activeSelection.syncFilter } : {}),
+      queryProfile: selectedQueryProfile,
       limit: normalizedPageSize(),
       offset: nextPage * normalizedPageSize(),
     };
@@ -557,6 +565,7 @@
       selectedStandardId = selected.id;
       selectedDataSourceId = selected.dataSourceId;
       selectedDatastoreKey = selected.datastoreKey;
+      selectedQueryProfile = queryProfileForSchemaSelection(selected);
       resetLocalFlatSqlStore();
     }
     userSelectedStandard = true;
@@ -565,6 +574,15 @@
     clearPnmSelection();
     columnMenuOpen = false;
     dataScan = null;
+    pageIndex = 0;
+    void runWorkbenchQuery(0);
+  }
+
+  function handleQueryProfileChange(): void {
+    selectedQueryProfile = normalizeDataQueryProfile(selectedQueryProfile);
+    rawRecords = [];
+    dataScan = null;
+    sqlResult = null;
     pageIndex = 0;
     void runWorkbenchQuery(0);
   }
@@ -604,6 +622,7 @@
     selectedStandardId = next.id;
     selectedDataSourceId = next.dataSourceId;
     selectedDatastoreKey = next.datastoreKey;
+    selectedQueryProfile = queryProfileForSchemaSelection(next);
     resetSqlForSelectedStandard();
     clearPnmSelection();
     dataScan = null;
@@ -1637,6 +1656,17 @@
     return typeof value === 'string' && STORAGE_CAP_UNITS.includes(value as StorageUnit);
   }
 
+  function normalizeDataQueryProfile(value: unknown): DataQueryProfile {
+    const candidate = String(value ?? '').trim();
+    return DATA_QUERY_PROFILES.some((profile) => profile.id === candidate)
+      ? candidate as DataQueryProfile
+      : DEFAULT_QUERY_PROFILE;
+  }
+
+  function queryProfileForSchemaSelection(schema: SchemaSyncRow | null): DataQueryProfile {
+    return normalizeDataQueryProfile(schema?.progress.queryProfile);
+  }
+
   function workbenchColumnsForStandard(standardId: string, rows: WorkbenchRow[]): WorkbenchColumn[] {
     const standardColumns = STANDARD_FIELD_COLUMNS[standardId] ?? [];
     const metadataColumns = standardId === 'PNM'
@@ -2335,6 +2365,15 @@
               <select class="sdn-input sdn-select" bind:value={selectedSubscriptionId} on:change={handleTableChange}>
                 {#each schemaSyncRows as standard}
                   <option value={standard.subscriptionId}>{standard.id} - {standard.providerName} ({formatNumber(standard.remoteRows)})</option>
+                {/each}
+              </select>
+            </label>
+
+            <label>
+              <span>Query profile</span>
+              <select class="sdn-input sdn-select" bind:value={selectedQueryProfile} on:change={handleQueryProfileChange}>
+                {#each DATA_QUERY_PROFILES as profile}
+                  <option value={profile.id}>{profile.label}</option>
                 {/each}
               </select>
             </label>
