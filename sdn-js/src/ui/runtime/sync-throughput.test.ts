@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  boundedWireSpeedUtilization,
   formatBytesPerSecond,
   publishedShardWireSpeedAudit,
   measuredWireSpeedUtilization,
@@ -16,6 +17,12 @@ describe('sync throughput targets', () => {
 
   it('does not report impossible utilization above measured wire speed', () => {
     expect(measuredWireSpeedUtilization(226_000_000, 200_000_000)).toBe(1);
+  });
+
+  it('bounds persisted wire speed utilization before display', () => {
+    expect(boundedWireSpeedUtilization(1.13)).toBe(1);
+    expect(boundedWireSpeedUtilization(0.8)).toBe(0.8);
+    expect(boundedWireSpeedUtilization(-0.1)).toBeNull();
   });
 
   it('requires at least 80 percent of measured wire speed by default', () => {
