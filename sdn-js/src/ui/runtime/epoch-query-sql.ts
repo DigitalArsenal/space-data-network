@@ -27,6 +27,15 @@ export const EPOCH_SQL_PROFILES: Array<{ id: EpochSqlProfile; label: string }> =
   { id: 'epoch.coverage', label: 'Coverage' },
 ];
 
+export const EPOCH_SQL_PROFILE_DESCRIPTIONS: Record<EpochSqlProfile, string> = {
+  'epoch.day': 'All records whose EPOCH falls on one UTC day.',
+  'epoch.window': 'All records whose EPOCH falls in a half-open UTC time range.',
+  'epoch.as_of': 'One latest record per NORAD_CAT_ID at or before the requested UTC time.',
+  'epoch.forward': 'One earliest record per NORAD_CAT_ID at or after the requested UTC time.',
+  'epoch.nearest': 'One nearest record per NORAD_CAT_ID on either side of the requested UTC time.',
+  'epoch.coverage': 'Per-day OMM row counts plus oldest and newest EPOCH values.',
+};
+
 export function buildEpochProfileSql(options: EpochProfileSqlOptions): string {
   const standardId = options.standardId.trim().toUpperCase();
   if (standardId !== 'OMM') {

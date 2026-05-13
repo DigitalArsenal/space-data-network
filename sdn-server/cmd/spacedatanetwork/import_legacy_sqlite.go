@@ -258,14 +258,14 @@ func runImportLegacySQLite(cmd *cobra.Command, args []string) error {
 				rowID       int64
 				objectID    sql.NullString
 				epoch       sql.NullString
-				meanMotion  sql.NullFloat64
-				ecc         sql.NullFloat64
-				incl        sql.NullFloat64
-				raan        sql.NullFloat64
-				argp        sql.NullFloat64
-				meanAnomaly sql.NullFloat64
-				noradID     sql.NullInt64
-				bstar       sql.NullFloat64
+				meanMotion  legacyNullFloat64
+				ecc         legacyNullFloat64
+				incl        legacyNullFloat64
+				raan        legacyNullFloat64
+				argp        legacyNullFloat64
+				meanAnomaly legacyNullFloat64
+				noradID     legacyNullInt64
+				bstar       legacyNullFloat64
 			)
 
 			if err := rows.Scan(
@@ -837,7 +837,101 @@ func saveLegacyCheckpoint(path string, cp *legacyImportCheckpoint) error {
 	return os.Rename(tmp, path)
 }
 
-func valueOrZero(v sql.NullFloat64) float64 {
+type legacyNullFloat64 struct {
+	Float64 float64
+	Valid   bool
+}
+
+func (v *legacyNullFloat64) Scan(value any) error {
+	switch typed := value.(type) {
+	case nil:
+		v.Float64 = 0
+		v.Valid = false
+		return nil
+	case float64:
+		v.Float64 = typed
+		v.Valid = true
+		return nil
+	case int64:
+		v.Float64 = float64(typed)
+		v.Valid = true
+		return nil
+	case []byte:
+		return v.scanString(string(typed))
+	case string:
+		return v.scanString(typed)
+	default:
+		return fmt.Errorf("unsupported legacy float value %T", value)
+	}
+}
+
+func (v *legacyNullFloat64) scanString(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		v.Float64 = 0
+		v.Valid = false
+		return nil
+	}
+	parsed, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil {
+		return err
+	}
+	v.Float64 = parsed
+	v.Valid = true
+	return nil
+}
+
+type legacyNullInt64 struct {
+	Int64 int64
+	Valid bool
+}
+
+func (v *legacyNullInt64) Scan(value any) error {
+	switch typed := value.(type) {
+	case nil:
+		v.Int64 = 0
+		v.Valid = false
+		return nil
+	case int64:
+		v.Int64 = typed
+		v.Valid = true
+		return nil
+	case float64:
+		v.Int64 = int64(typed)
+		v.Valid = true
+		return nil
+	case []byte:
+		return v.scanString(string(typed))
+	case string:
+		return v.scanString(typed)
+	default:
+		return fmt.Errorf("unsupported legacy integer value %T", value)
+	}
+}
+
+func (v *legacyNullInt64) scanString(value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		v.Int64 = 0
+		v.Valid = false
+		return nil
+	}
+	parsed, err := strconv.ParseInt(trimmed, 10, 64)
+	if err == nil {
+		v.Int64 = parsed
+		v.Valid = true
+		return nil
+	}
+	parsedFloat, floatErr := strconv.ParseFloat(trimmed, 64)
+	if floatErr != nil {
+		return err
+	}
+	v.Int64 = int64(parsedFloat)
+	v.Valid = true
+	return nil
+}
+
+func valueOrZero(v legacyNullFloat64) float64 {
 	if v.Valid {
 		return v.Float64
 	}

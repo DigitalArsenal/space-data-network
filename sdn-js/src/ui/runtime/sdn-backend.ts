@@ -1,4 +1,5 @@
 import type { HostedEpmRecord } from './identity';
+export type { LocalLlmQueryContext, LocalLlmQueryDraft, LocalLlmQueryRequest } from './llm-query-context';
 
 export const BACKEND_MODES = ['desktop-local', 'remote-sdn', 'browser-node'] as const;
 

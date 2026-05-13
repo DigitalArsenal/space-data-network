@@ -1,5 +1,6 @@
 import type { FlatSQLDatabase } from 'flatsql/wasm';
 
+import { validateReadOnlySql } from './read-only-sql-sandbox';
 import type { RawDataRecord } from './sdn-backend';
 
 export interface LocalFlatSqlSchema {
@@ -315,11 +316,12 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   }
 
   query(sql: string, standardId?: string): LocalFlatSqlQueryResult {
-    if (!isReadOnlyFlatSqlQuery(sql)) {
-      throw new Error('FlatSQL local queries must be read-only SELECT or WITH SELECT statements');
+    const validation = validateReadOnlySql(sql);
+    if (!validation.ok) {
+      throw new Error(`FlatSQL local queries must be read-only SELECT or WITH SELECT statements: ${validation.diagnostics.join(' ')}`);
     }
     const state = standardId ? this.stateForStandard(standardId) : this.firstState();
-    const result = state.db.query(sql);
+    const result = state.db.query(validation.sql);
     return {
       columns: result.columns,
       rows: result.rows,
@@ -409,19 +411,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
 }
 
 export function isReadOnlyFlatSqlQuery(sql: string): boolean {
-  const normalized = stripSqlComments(sql).trim();
-  if (!normalized) return false;
-  if (hasMultipleStatements(normalized)) return false;
-  if (!/^(select|with)\b/i.test(normalized)) return false;
-  return !/\b(attach|alter|create|delete|detach|drop|insert|pragma|reindex|replace|truncate|update|vacuum)\b/i.test(normalized);
-}
-
-function stripSqlComments(sql: string): string {
-  return sql
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .split('\n')
-    .map((line) => line.replace(/--.*$/, ''))
-    .join('\n');
+  return validateReadOnlySql(sql).ok;
 }
 
 function stripFlatBufferComments(schema: string): string {
@@ -430,12 +420,6 @@ function stripFlatBufferComments(schema: string): string {
     .split('\n')
     .map((line) => line.replace(/\/\/.*$/, ''))
     .join('\n');
-}
-
-function hasMultipleStatements(sql: string): boolean {
-  const trimmed = sql.trim();
-  if (!trimmed.includes(';')) return false;
-  return !/;\s*$/.test(trimmed);
 }
 
 function normalizeIngestOptions(sourceOrOptions?: string | LocalFlatSqlIngestOptions | null): LocalFlatSqlIngestOptions {

@@ -125,6 +125,76 @@ func TestImportLegacySQLiteStoresHistoricalOMMWithSourceProvenance(t *testing.T)
 	}
 }
 
+func TestImportLegacySQLiteToleratesBlankNumericFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
+	sourceDB, err := sql.Open("sqlite3", sourcePath)
+	if err != nil {
+		t.Fatalf("open source sqlite: %v", err)
+	}
+	if _, err := sourceDB.Exec(`
+		CREATE TABLE satellite_data (
+			OBJECT_ID TEXT,
+			EPOCH TEXT,
+			MEAN_MOTION TEXT,
+			ECCENTRICITY TEXT,
+			INCLINATION TEXT,
+			RA_OF_ASC_NODE TEXT,
+			ARG_OF_PERICENTER TEXT,
+			MEAN_ANOMALY TEXT,
+			NORAD_CAT_ID TEXT,
+			BSTAR TEXT
+		);
+		INSERT INTO satellite_data (
+			OBJECT_ID, EPOCH, MEAN_MOTION, ECCENTRICITY, INCLINATION,
+			RA_OF_ASC_NODE, ARG_OF_PERICENTER, MEAN_ANOMALY, NORAD_CAT_ID, BSTAR
+		) VALUES
+			('1957-001A', '1959-01-11T01:49:23.461536', '', '', '', '', '', '', '1', '');
+	`); err != nil {
+		_ = sourceDB.Close()
+		t.Fatalf("seed source sqlite: %v", err)
+	}
+	if err := sourceDB.Close(); err != nil {
+		t.Fatalf("close source sqlite: %v", err)
+	}
+
+	storagePath := filepath.Join(tmpDir, "sdn")
+	restore := captureImportLegacyGlobals()
+	t.Cleanup(restore)
+	configPath = filepath.Join(tmpDir, "missing-config.yaml")
+	importLegacySourceDB = sourcePath
+	importLegacySourceTable = "satellite_data"
+	importLegacyStoragePath = storagePath
+	importLegacySourcePeer = "source:legacy-sqlite"
+	importLegacyBatchSize = 10
+	importLegacyCheckpointPath = filepath.Join(storagePath, "checkpoint.json")
+	importLegacyResetCheckpoint = true
+	importLegacyMaxRows = 0
+	importLegacyStoreMPE = false
+
+	if err := runImportLegacySQLite(nil, nil); err != nil {
+		t.Fatalf("runImportLegacySQLite failed: %v", err)
+	}
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(storagePath, validator)
+	if err != nil {
+		t.Fatalf("open imported store: %v", err)
+	}
+	defer store.Close()
+
+	total, err := store.CountRawRecords(storage.RawRecordQuery{SchemaName: "OMM.fbs"})
+	if err != nil {
+		t.Fatalf("CountRawRecords total failed: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("total imported OMM rows = %d, want 1", total)
+	}
+}
+
 func TestImportLegacySQLiteCanStoreHistoricalOMMInSourceDatastoreNamespace(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
