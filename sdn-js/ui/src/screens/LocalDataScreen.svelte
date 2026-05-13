@@ -469,6 +469,7 @@
     const query = {
       schema: schemaNameForStandardId(selectedStandardId),
       ...(activeSelection?.datastoreKey ? { datastoreKey: activeSelection.datastoreKey } : {}),
+      ...(activeSelection?.syncFilter ? { syncFilter: activeSelection.syncFilter } : {}),
       limit: normalizedPageSize(),
       offset: nextPage * normalizedPageSize(),
     };
@@ -524,6 +525,7 @@
           totalCount: dataScan.totalCount,
           highWaterMark: dataScan.highWaterMark,
           queryProfile: dataScan.queryProfile,
+          ...(activeSelection?.syncFilter ? { syncFilter: activeSelection.syncFilter } : {}),
           records: dataScan.results,
         });
         nextRecords = streamResult.ok ? streamResult.data ?? [] : [];

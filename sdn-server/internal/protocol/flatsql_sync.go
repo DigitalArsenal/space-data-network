@@ -47,6 +47,7 @@ type flatSQLSyncRequest struct {
 	SnapshotID             string               `json:"snapshot_id"`
 	Head                   string               `json:"head"`
 	QueryProfile           string               `json:"query_profile"`
+	SyncFilter             string               `json:"sync_filter"`
 	Limit                  int                  `json:"limit"`
 	Offset                 int                  `json:"offset"`
 	ScanHash               string               `json:"scan_hash"`
@@ -302,6 +303,7 @@ func (req flatSQLSyncRequest) queryRequest() datasync.QueryRequest {
 		Head:                   req.Head,
 		HighWaterMark:          req.HighWaterMark,
 		QueryProfile:           req.QueryProfile,
+		SyncFilter:             req.SyncFilter,
 		TotalCount:             req.TotalCount,
 		Limit:                  req.Limit,
 		Offset:                 req.Offset,

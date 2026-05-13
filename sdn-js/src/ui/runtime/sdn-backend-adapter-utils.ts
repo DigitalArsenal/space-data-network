@@ -230,6 +230,7 @@ export function rawDataStreamPayload(request: RawDataStreamRequest): Record<stri
     ...(typeof request.totalCount === 'number' ? { total_count: request.totalCount } : {}),
     ...(request.highWaterMark ? { high_water_mark: request.highWaterMark } : {}),
     ...(request.queryProfile ? { query_profile: request.queryProfile } : {}),
+    ...(request.syncFilter ? { sync_filter: request.syncFilter } : {}),
     records: request.records.map((record) => ({
       schema_name: record.schemaName,
       cid: record.cid,

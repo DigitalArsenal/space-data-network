@@ -220,7 +220,13 @@ describe('desktop-local SDN backend', () => {
       ok: true,
       data: { totalRecords: 1, schemas: [{ schemaName: 'EPM.fbs', count: 1 }] },
     });
-    await expect(backend.queryRawData({ schema: 'EPM.fbs', providerId: 'local-node', sourceName: 'local-epm', limit: 10 })).resolves.toMatchObject({
+    await expect(backend.queryRawData({
+      schema: 'EPM.fbs',
+      providerId: 'local-node',
+      sourceName: 'local-epm',
+      syncFilter: "FILE_ID LIKE 'celestrak:%'",
+      limit: 10,
+    })).resolves.toMatchObject({
       ok: true,
       data: [{ schemaName: 'EPM.fbs', cid: '12D3KooWEPM', dataBytes: new Uint8Array([0, 1, 2, 3]) }],
     });
@@ -233,6 +239,9 @@ describe('desktop-local SDN backend', () => {
       expect.objectContaining({ url: 'http://127.0.0.1:17890/api/v1/data/query', init: expect.objectContaining({ method: 'POST', credentials: 'include' }) }),
     ]));
     expect(calls.filter((call) => call.url === 'http://127.0.0.1:17890/api/v1/data/query')).toHaveLength(2);
+    for (const call of calls.filter((entry) => entry.url === 'http://127.0.0.1:17890/api/v1/data/query')) {
+      expect(JSON.parse(String(call.init?.body))).toMatchObject({ sync_filter: "FILE_ID LIKE 'celestrak:%'" });
+    }
   });
 
   it('does not send raw SQL to the desktop or remote node HTTP APIs', async () => {

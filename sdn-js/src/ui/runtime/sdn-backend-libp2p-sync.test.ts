@@ -358,7 +358,12 @@ describe('libp2p FlatSQL sync backend', () => {
       },
     });
 
-    await expect(backend.queryRawData({ schema: 'OMM.fbs', limit: 50_000, offset: 10_000 })).resolves.toMatchObject({
+    await expect(backend.queryRawData({
+      schema: 'OMM.fbs',
+      syncFilter: "EPOCH >= '2026-05-01T00:00:00Z'",
+      limit: 50_000,
+      offset: 10_000,
+    })).resolves.toMatchObject({
       ok: true,
       data: [{ cid: 'omm-cid-1', dataBytes: rawRecord }],
     });
@@ -371,6 +376,7 @@ describe('libp2p FlatSQL sync backend', () => {
         schema: 'OMM.fbs',
         providerId: 'space-data-network-02',
         sourceName: 'celestrak-gp',
+        syncFilter: "EPOCH >= '2026-05-01T00:00:00Z'",
         limit: 50_000,
         offset: 10_000,
       }),

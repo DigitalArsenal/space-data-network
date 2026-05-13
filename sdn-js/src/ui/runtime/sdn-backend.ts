@@ -109,6 +109,7 @@ export interface RawDataQuery {
   snapshotId?: string;
   head?: string;
   queryProfile?: string;
+  syncFilter?: string;
   limit?: number;
   offset?: number;
 }
@@ -166,6 +167,7 @@ export interface RawDataStreamRequest {
   totalCount?: number;
   highWaterMark?: string;
   queryProfile?: string;
+  syncFilter?: string;
   records: RawDataRecord[];
 }
 

@@ -873,6 +873,7 @@ type rawDataQueryRequest struct {
 	SnapshotID             string `json:"snapshot_id"`
 	Head                   string `json:"head"`
 	QueryProfile           string `json:"query_profile"`
+	SyncFilter             string `json:"sync_filter"`
 	Limit                  int    `json:"limit"`
 	Offset                 int    `json:"offset"`
 	IncludeData            bool   `json:"include_data"`
@@ -891,6 +892,7 @@ type rawDataStreamRequest struct {
 	TotalCount    int64                 `json:"total_count"`
 	HighWaterMark string                `json:"high_water_mark"`
 	QueryProfile  string                `json:"query_profile"`
+	SyncFilter    string                `json:"sync_filter"`
 	Records       []rawDataStreamRecord `json:"records"`
 }
 
@@ -931,6 +933,7 @@ func rawQueryToSyncRequest(req rawDataQueryRequest) datasync.QueryRequest {
 		SnapshotID:             req.SnapshotID,
 		Head:                   req.Head,
 		QueryProfile:           req.QueryProfile,
+		SyncFilter:             req.SyncFilter,
 		Limit:                  req.Limit,
 		Offset:                 req.Offset,
 		IncludeData:            req.IncludeData,
@@ -966,6 +969,7 @@ func rawStreamToSyncRequest(req rawDataStreamRequest) datasync.StreamRequest {
 			SnapshotID:   req.SnapshotID,
 			Head:         req.Head,
 			QueryProfile: req.QueryProfile,
+			SyncFilter:   req.SyncFilter,
 		},
 		ScanHash:      req.ScanHash,
 		ChunkHash:     req.ChunkHash,
