@@ -541,11 +541,12 @@ func OpenPublishedManifest(store *storage.FlatSQLStore, req QueryRequest, queryP
 }
 
 func publishedManifestArtifactBundles(store *storage.FlatSQLStore, req QueryRequest, queryProfile, feedHead string, segmentCount int) ([]ArtifactBundle, error) {
+	requestedBatchID := FirstNonEmpty(req.BatchID, req.BatchId)
 	entries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
 		SchemaName:        NormalizeSchema(req),
 		ProviderID:        FirstNonEmpty(req.ProviderID, req.ProviderId),
 		SourceName:        req.SourceName,
-		BatchID:           FirstNonEmpty(req.BatchID, req.BatchId),
+		BatchID:           requestedBatchID,
 		QueryProfile:      queryProfile,
 		Role:              "shard-group-car",
 		VerificationState: "verified",
@@ -561,7 +562,9 @@ func publishedManifestArtifactBundles(store *storage.FlatSQLStore, req QueryRequ
 			continue
 		}
 		if feedHead != "" && entry.Head != feedHead && entry.SnapshotID != feedHead {
-			continue
+			if requestedBatchID != "" || entry.BatchID == "" {
+				continue
+			}
 		}
 		seen[cidValue] = true
 		bundles = append(bundles, ArtifactBundle{

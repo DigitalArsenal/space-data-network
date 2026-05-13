@@ -189,6 +189,122 @@ func TestOpenManifestAdvertisesPublishedShardGroupCARBundle(t *testing.T) {
 	}
 }
 
+func TestOpenManifestAdvertisesPerBatchCARBundlesForAggregateSourceManifest(t *testing.T) {
+	store := newDataSyncTestStore(t)
+	publishedAt := time.Unix(1_778_600_000, 0).UTC()
+	publications := []storage.DatasetShardPublication{
+		{
+			SchemaName:   "OMM.fbs",
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-gp",
+			BatchID:      "batch-a",
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+			Offset:       0,
+			Limit:        50_000,
+			RecordCount:  31_000,
+			ByteCount:    9_000_000,
+			ShardCID:     "bafyommsharda",
+			IndexCID:     "bafyommindexa",
+			ManifestCID:  "bafyommmanifesta",
+			ShardSHA256:  "shard-sha-a",
+			IndexSHA256:  "index-sha-a",
+			QuerySHA256:  "query-sha-a",
+			ResultSHA256: "result-sha-a",
+			PublishedAt:  publishedAt,
+		},
+		{
+			SchemaName:   "OMM.fbs",
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-gp",
+			BatchID:      "batch-b",
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+			Offset:       0,
+			Limit:        50_000,
+			RecordCount:  32_000,
+			ByteCount:    9_300_000,
+			ShardCID:     "bafyommshardb",
+			IndexCID:     "bafyommindexb",
+			ManifestCID:  "bafyommmanifestb",
+			ShardSHA256:  "shard-sha-b",
+			IndexSHA256:  "index-sha-b",
+			QuerySHA256:  "query-sha-b",
+			ResultSHA256: "result-sha-b",
+			PublishedAt:  publishedAt.Add(time.Second),
+		},
+	}
+	for _, publication := range publications {
+		if err := store.UpsertDatasetShardPublication(publication); err != nil {
+			t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+		}
+	}
+	published, err := store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		t.Fatalf("ListDatasetShardPublications failed: %v", err)
+	}
+	if len(published) != 2 {
+		t.Fatalf("published shards = %d, want 2", len(published))
+	}
+	for index, publication := range published {
+		if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
+			CID:               []string{"bafybatchacar", "bafybatchbcar"}[index],
+			SchemaName:        publication.SchemaName,
+			ProviderID:        publication.ProviderID,
+			SourceName:        publication.SourceName,
+			BatchID:           publication.BatchID,
+			QueryProfile:      publication.QueryProfile,
+			Head:              publication.FeedHead,
+			ByteHash:          []string{"car-sha-a", "car-sha-b"}[index],
+			Role:              "shard-group-car",
+			RowCount:          int64(publication.RecordCount),
+			ByteCount:         int64([]int{16_000_000, 17_000_000}[index]),
+			VerificationState: "verified",
+			VerifiedAt:        publication.PublishedAt,
+		}); err != nil {
+			t.Fatalf("UpsertPinLedgerEntry batch CAR failed: %v", err)
+		}
+	}
+	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
+		CID:               "bafystaleaggregatecar",
+		SchemaName:        "OMM.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		Head:              "stale-feed-head",
+		ByteHash:          "stale-car-sha",
+		Role:              "shard-group-car",
+		RowCount:          100,
+		ByteCount:         100,
+		VerificationState: "verified",
+		VerifiedAt:        publishedAt.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertPinLedgerEntry stale aggregate failed: %v", err)
+	}
+
+	manifest, err := OpenManifest(store, QueryRequest{
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Limit:        50_000,
+	}, MaxSyncChunkLimit)
+	if err != nil {
+		t.Fatalf("OpenManifest failed: %v", err)
+	}
+
+	if len(manifest.ArtifactBundles) != 2 {
+		t.Fatalf("artifact bundles = %d, want both per-batch CARs: %+v", len(manifest.ArtifactBundles), manifest.ArtifactBundles)
+	}
+	got := []string{manifest.ArtifactBundles[0].CID, manifest.ArtifactBundles[1].CID}
+	if got[0] != "bafybatchacar" || got[1] != "bafybatchbcar" {
+		t.Fatalf("artifact bundle CIDs = %v, want per-batch CARs only", got)
+	}
+}
+
 func TestScanAppliesSubscriptionSyncFilterBeforeReturningRefs(t *testing.T) {
 	store := newDataSyncTestStore(t)
 	tags := storage.SourceTags{
