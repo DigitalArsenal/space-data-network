@@ -424,6 +424,34 @@ describe('local FlatSQL datastore', () => {
     expect(() => store.query('DELETE FROM OMM')).toThrow(/read-only SELECT/);
   });
 
+  it('enforces local SQL byte limits after FlatSQL execution', async () => {
+    const store = await createLocalFlatSqlStore({
+      schemas: [{
+        standardId: 'OMM',
+        tableName: 'OMM',
+        fileId: '$OMM',
+        schema: OMM_SCHEMA,
+      }],
+    });
+
+    await store.ingestRecords('OMM', [{
+      cid: 'celestrak-omm-byte-limit',
+      schemaName: 'OMM.fbs',
+      peerId: 'source:celestrak',
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+      batchId: 'fixture-batch',
+      timestamp: '2026-05-11T04:02:25Z',
+      dataBytes: STARLINK_6292_OMM_BYTES,
+    }], { persist: false });
+
+    expect(() => store.query('SELECT OBJECT_NAME FROM OMM LIMIT 10', 'OMM', {
+      maxBytes: 4,
+      maxLimit: 10,
+      timeoutMs: 5000,
+    })).toThrow(/byte limit/i);
+  });
+
   it('registers SDS schemas whose comments contain URLs without exposing comment tokens as columns', async () => {
     const store = await createLocalFlatSqlStore({
       schemas: [{

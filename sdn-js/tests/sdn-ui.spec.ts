@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import * as flatbuffers from 'flatbuffers';
+import { OMM } from 'spacedatastandards.org/lib/js/OMM/OMM.js';
 import { PNM } from 'spacedatastandards.org/lib/js/PNM/PNM.js';
 
 const realPeerId = '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4';
@@ -325,7 +326,7 @@ test('data route keeps same-schema subscriptions separated by datastore namespac
   await expect.poll(() => scanDatastoreKeys.at(-1) ?? '').toBe('sdn-ds-live');
 });
 
-test('data route applies OMM epoch profiles to locally synced CelesTrak rows', async ({ page }) => {
+test('data route applies OMM epoch profiles and runs LLM local SQL against locally synced CelesTrak rows', async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem('sdn:data-directory:v1', JSON.stringify({
       peerTrust: { 'local-node': 'marginal' },
@@ -353,6 +354,13 @@ test('data route applies OMM epoch profiles to locally synced CelesTrak rows', a
   await page.context().unroute('**/api/v1/data/summary');
   await page.context().unroute('**/api/v1/data/scan');
   await page.context().unroute('**/api/v1/data/stream');
+  await page.context().unroute('**/api/v1/data/query');
+
+  const remoteQueryBodies: string[] = [];
+  await page.context().route('**/api/v1/data/query**', async (route) => {
+    remoteQueryBodies.push(route.request().postData() ?? route.request().url());
+    await route.fulfill({ status: 418, body: 'remote SQL is not allowed for local LLM queries' });
+  });
 
   await page.context().route('**/api/v1/data/summary', async (route) => {
     if (new URL(route.request().url()).pathname !== '/api/v1/data/summary') {
@@ -390,7 +398,7 @@ test('data route applies OMM epoch profiles to locally synced CelesTrak rows', a
       body: JSON.stringify({
         schema: 'OMM.fbs',
         total_count: 2_287_018,
-        count: 1,
+        count: 2,
         limit: 10,
         offset: 0,
         cursor: 'MA',
@@ -404,16 +412,28 @@ test('data route applies OMM epoch profiles to locally synced CelesTrak rows', a
         sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
         max_chunk_size: 50000,
         transports: ['libp2p-websocket', 'libp2p-webrtc'],
-        results: [{
-          schema_name: 'OMM.fbs',
-          cid: 'sdn-ds-live-cid',
-          peer_id: 'source:celestrak',
-          provider_id: 'local',
-          source_name: 'celestrak-gp',
-          batch_id: 'live',
-          timestamp: '2026-05-11T04:02:25Z',
-          size_bytes: 288,
-        }],
+        results: [
+          {
+            schema_name: 'OMM.fbs',
+            cid: 'sdn-ds-live-cid',
+            peer_id: 'source:celestrak',
+            provider_id: 'local',
+            source_name: 'celestrak-gp',
+            batch_id: 'live',
+            timestamp: '2026-05-11T04:02:25Z',
+            size_bytes: 288,
+          },
+          {
+            schema_name: 'OMM.fbs',
+            cid: 'sdn-ds-live-high-orbit-cid',
+            peer_id: 'source:celestrak',
+            provider_id: 'local',
+            source_name: 'celestrak-gp',
+            batch_id: 'live',
+            timestamp: '2026-05-11T04:02:26Z',
+            size_bytes: 288,
+          },
+        ],
       }),
     });
   });
@@ -425,7 +445,7 @@ test('data route applies OMM epoch profiles to locally synced CelesTrak rows', a
     }
     await route.fulfill({
       contentType: 'application/vnd.sdn.flatbuffers.stream',
-      body: rawFlatbufferStream([STARLINK_6292_OMM_BYTES]),
+      body: rawFlatbufferStream([STARLINK_6292_OMM_BYTES, GEO_SOVIET_TEST_OMM_BYTES]),
     });
   });
 
@@ -448,6 +468,9 @@ test('data route applies OMM epoch profiles to locally synced CelesTrak rows', a
   await page.getByRole('button', { name: 'Draft SQL' }).click();
   await expect(page.getByRole('textbox', { name: 'SQL' })).toHaveValue('SELECT * FROM OMM WHERE MEAN_MOTION < 1 LIMIT 10');
   await expect(page.getByText(/local schema/i)).toBeVisible();
+  await page.getByRole('button', { name: 'Run SQL' }).click();
+  await expect(dataRows.getByRole('cell', { name: 'GEO-SOVIET-TEST', exact: true })).toBeVisible();
+  expect(remoteQueryBodies.join('\n')).not.toContain('SELECT * FROM OMM WHERE MEAN_MOTION < 1');
 });
 
 test('data route keeps the shell fixed while the content pane scrolls', async ({ page }) => {
@@ -993,6 +1016,13 @@ async function installSdnFixtures(page: Page): Promise<void> {
 }
 
 const STARLINK_6292_OMM_BYTES = Buffer.from('HAEAAEgAAAAkT01NAAAAADwAVAAAAAwACABQAEwAEAAAAAAAAAAAAAAARAAAADwANAAsACQAHAAUAAAAAAAAAAAAAAAAAAAABABIADwAAABQAAAAVAAAAGAAAAB4AAAAxEKtad4BV0DByqFFtsBwQGZmZmZmnGJAXf5D+u1/UUCej3xvHS04P22KKnBw9y1AUAAAAMfdAABkAAAAcAAAAAEAAABVAAAACAAAAFNETi1URVNUAAAAABQAAAAyMDI2LTA1LTExVDEwOjI2OjQxWgAAAAAFAAAARUFSVEgAAAAUAAAAMjAyNi0wNS0xMFQxMDo0NTozMVoAAAAACQAAADIwMjMtMDc4SgAAAA0AAABTVEFSTElOSy02MjkyAAAA', 'base64');
+const GEO_SOVIET_TEST_OMM_BYTES = buildOmmBytes({
+  objectName: 'GEO-SOVIET-TEST',
+  objectId: '1979-001A',
+  noradCatId: 90001,
+  epoch: '2026-05-10T11:45:31Z',
+  meanMotion: 0.99,
+});
 const PNM_BYTES = buildPnmBytes('bafy-pnm-cid', 'celestrak:gp:OMM.fbs:2026-05-11T03:00:00Z');
 const PNM_FIXTURE_REFS = Array.from({ length: 12 }, (_, index) => {
   const ordinal = index + 1;
@@ -1011,6 +1041,37 @@ function rawFlatbufferStream(records: Buffer[]): Buffer {
     chunks.push(header, record);
   }
   return Buffer.concat(chunks);
+}
+
+function buildOmmBytes(fields: {
+  objectName: string;
+  objectId: string;
+  noradCatId: number;
+  epoch: string;
+  meanMotion: number;
+}): Buffer {
+  const builder = new flatbuffers.Builder(256);
+  const creationDate = builder.createString('2026-05-11T10:26:41Z');
+  const originator = builder.createString('SDN-TEST');
+  const objectName = builder.createString(fields.objectName);
+  const objectId = builder.createString(fields.objectId);
+  const centerName = builder.createString('EARTH');
+  const epoch = builder.createString(fields.epoch);
+  OMM.startOMM(builder);
+  OMM.addCcsdsOmmVers(builder, 3);
+  OMM.addCreationDate(builder, creationDate);
+  OMM.addOriginator(builder, originator);
+  OMM.addObjectName(builder, objectName);
+  OMM.addObjectId(builder, objectId);
+  OMM.addCenterName(builder, centerName);
+  OMM.addEpoch(builder, epoch);
+  OMM.addMeanMotion(builder, fields.meanMotion);
+  OMM.addEccentricity(builder, 0.0001);
+  OMM.addInclination(builder, 63.4);
+  OMM.addNoradCatId(builder, fields.noradCatId);
+  const omm = OMM.endOMM(builder);
+  OMM.finishSizePrefixedOMMBuffer(builder, omm);
+  return Buffer.from(builder.asUint8Array());
 }
 
 function buildPnmBytes(cidValue: string, fileIdValue: string): Buffer {

@@ -1,6 +1,6 @@
 import type { FlatSQLDatabase } from 'flatsql/wasm';
 
-import { validateReadOnlySql } from './read-only-sql-sandbox';
+import { validateReadOnlySql, type ReadOnlySqlValidationOptions } from './read-only-sql-sandbox';
 import type { RawDataRecord } from './sdn-backend';
 
 export interface LocalFlatSqlSchema {
@@ -25,6 +25,8 @@ export interface LocalFlatSqlQueryResult {
   rows: unknown[][];
   records: Array<Record<string, unknown>>;
 }
+
+export type LocalFlatSqlQueryOptions = ReadOnlySqlValidationOptions;
 
 export interface LocalFlatSqlStandardStats {
   standardId: string;
@@ -108,7 +110,7 @@ export interface LocalFlatSqlStore {
   flush(standardId?: string): Promise<void>;
   recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[]): Promise<void>;
   listPinLedgerEntries(query?: LocalFlatSqlPinLedgerQuery): Promise<LocalFlatSqlPinLedgerEntry[]>;
-  query(sql: string, standardId?: string): LocalFlatSqlQueryResult | Promise<LocalFlatSqlQueryResult>;
+  query(sql: string, standardId?: string, options?: LocalFlatSqlQueryOptions): LocalFlatSqlQueryResult | Promise<LocalFlatSqlQueryResult>;
   getStats(options?: LocalFlatSqlStatsOptions): LocalFlatSqlStandardStats[] | Promise<LocalFlatSqlStandardStats[]>;
   destroy(): void;
 }
@@ -315,18 +317,21 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
       .map((entry) => ({ ...entry }));
   }
 
-  query(sql: string, standardId?: string): LocalFlatSqlQueryResult {
-    const validation = validateReadOnlySql(sql);
+  query(sql: string, standardId?: string, options: LocalFlatSqlQueryOptions = {}): LocalFlatSqlQueryResult {
+    const validation = validateReadOnlySql(sql, options);
     if (!validation.ok) {
       throw new Error(`FlatSQL local queries must be read-only SELECT or WITH SELECT statements: ${validation.diagnostics.join(' ')}`);
     }
     const state = standardId ? this.stateForStandard(standardId) : this.firstState();
+    const startedAt = nowMs();
     const result = state.db.query(validation.sql);
-    return {
+    const queryResult = {
       columns: result.columns,
       rows: result.rows,
       records: result.rows.map((row) => rowToRecord(result.columns, row)),
     };
+    enforceQueryRuntimeLimits(queryResult, validation.limits?.maxBytes ?? 64_000, validation.limits?.timeoutMs ?? 5_000, nowMs() - startedAt);
+    return queryResult;
   }
 
   getStats(options: LocalFlatSqlStatsOptions = {}): LocalFlatSqlStandardStats[] {
@@ -426,6 +431,41 @@ function normalizeIngestOptions(sourceOrOptions?: string | LocalFlatSqlIngestOpt
   if (!sourceOrOptions) return {};
   if (typeof sourceOrOptions === 'string') return { source: sourceOrOptions };
   return sourceOrOptions;
+}
+
+function enforceQueryRuntimeLimits(result: LocalFlatSqlQueryResult, maxBytes: number, timeoutMs: number, elapsedMs: number): void {
+  if (elapsedMs > timeoutMs) {
+    throw new Error(`FlatSQL local query exceeded time limit of ${timeoutMs} ms.`);
+  }
+  const resultBytes = estimateQueryResultBytes(result);
+  if (resultBytes > maxBytes) {
+    throw new Error(`FlatSQL local query exceeded byte limit of ${maxBytes} bytes.`);
+  }
+}
+
+function estimateQueryResultBytes(result: LocalFlatSqlQueryResult): number {
+  let total = 0;
+  for (const row of result.records) {
+    for (const value of Object.values(row)) {
+      total += estimateValueBytes(value);
+    }
+  }
+  return total;
+}
+
+function estimateValueBytes(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === 'number') return 8;
+  if (typeof value === 'boolean') return 1;
+  if (typeof value === 'string') return value.length;
+  if (value instanceof Uint8Array || value instanceof ArrayBuffer) return value.byteLength;
+  return JSON.stringify(value)?.length ?? String(value).length;
+}
+
+function nowMs(): number {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
 }
 
 export function decodeFlatSqlSizePrefixedStream(streamBytes: Uint8Array, skipRecords = 0): Uint8Array[] {

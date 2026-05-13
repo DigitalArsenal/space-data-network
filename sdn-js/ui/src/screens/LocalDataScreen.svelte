@@ -800,7 +800,12 @@
     try {
       const store = await ensureLocalFlatSqlStore(selectedDataSourceId, selectedSchemaSyncRow?.datastoreKey ?? selectedDatastoreKey);
       if (!store) return;
-      sqlResult = await store.query(query, selectedStandardId);
+      sqlResult = await store.query(query, selectedStandardId, {
+        defaultLimit: normalizedPageSize(),
+        maxLimit: normalizedPageSize(),
+        maxBytes: 64_000,
+        timeoutMs: 5_000,
+      });
     } catch (error) {
       sqlResult = null;
       sqlError = error instanceof Error ? error.message : 'SQL query failed';
