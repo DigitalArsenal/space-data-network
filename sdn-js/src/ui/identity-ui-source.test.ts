@@ -281,6 +281,7 @@ describe('SDN data Svelte source', () => {
       'Download',
       'backendConfigForDataSource',
       'artifactPeerAddrsForDataSource(source)',
+      'artifactPeerAddrsForObservedPeers(peers)',
       'prioritizeIpfsArtifactPeerAddrs(',
       'clearLocalFlatSqlStore',
       'ingestDownloadedRecords',

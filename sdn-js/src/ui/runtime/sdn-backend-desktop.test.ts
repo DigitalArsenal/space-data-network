@@ -27,6 +27,9 @@ describe('desktop-local SDN backend', () => {
             metadata: {
               agent_version: 'spacedatanetwork/1.0.3',
               protocols: '/space-data-network/module-delivery/1.0.0',
+              ipfs_artifact_addrs: [
+                '/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWGhZfrxQVvwQHNGRkeJhGqMbkDqjktfpBXzn47N78XY9j',
+              ],
             },
           },
         ]);
@@ -47,7 +50,11 @@ describe('desktop-local SDN backend', () => {
     });
     await expect(backend.listObservedPeers()).resolves.toMatchObject({
       ok: true,
-      data: [{ id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4', trustLevel: 'observed' }],
+      data: [{
+        id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+        trustLevel: 'observed',
+        artifactPeerAddrs: ['/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWGhZfrxQVvwQHNGRkeJhGqMbkDqjktfpBXzn47N78XY9j'],
+      }],
     });
   });
 

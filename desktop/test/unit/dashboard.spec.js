@@ -208,6 +208,9 @@ test.describe('SDN dashboard window', () => {
     expect(peers).toHaveLength(1)
     expect(peers[0].id).toBe('16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
     expect(peers[0].addrs[0]).toBe('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
+    expect(peers[0].metadata.ipfs_artifact_addrs).toEqual([
+      '/ip4/159.203.150.8/tcp/4002/p2p/12D3KooWMtfuRiHtDuzMMRYB2oX8UKVqP43hZQakGBLhWsMnCd7K'
+    ])
     expect(JSON.stringify(peers)).not.toContain('/p2p/space-data-network-')
   })
 

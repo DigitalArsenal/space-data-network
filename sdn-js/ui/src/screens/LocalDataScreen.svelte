@@ -2073,7 +2073,14 @@
     const discoveredPeerAddrs = dataSourceOptions
       .filter((option) => option.kind === 'configured')
       .flatMap((option) => option.artifactPeerAddrs ?? []);
-    return prioritizeIpfsArtifactPeerAddrs(source.artifactPeerAddrs ?? [], discoveredPeerAddrs);
+    return prioritizeIpfsArtifactPeerAddrs(source.artifactPeerAddrs ?? [], [
+      ...discoveredPeerAddrs,
+      ...artifactPeerAddrsForObservedPeers(peers),
+    ]);
+  }
+
+  function artifactPeerAddrsForObservedPeers(observedPeers: ObservedSdnPeer[]): string[] {
+    return observedPeers.flatMap((peer) => peer.artifactPeerAddrs ?? []);
   }
 
   function configuredNodeLabel(node: ConfiguredSdnNode, observedNames: Map<string, string>, peerId: string | null): string {

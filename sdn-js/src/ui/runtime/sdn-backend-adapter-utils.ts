@@ -13,6 +13,7 @@ import {
   type SdnBackendMode,
   type StorageSummary,
 } from './sdn-backend';
+import { normalizeIpfsArtifactPeerAddrs } from './ipfs-artifact-peers';
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export const RAW_FLATBUFFER_STREAM_CONTENT_TYPE = 'application/vnd.sdn.flatbuffers.stream';
@@ -248,6 +249,16 @@ function normalizePeerRecord(record: Record<string, unknown>): ObservedSdnPeer |
   if (!id) return null;
   const protocols = normalizeProtocols(record.protocols ?? metadata.protocols);
   const agentVersion = readString(record, 'agent_version', 'agentVersion') ?? readString(metadata, 'agent_version', 'agentVersion');
+  const artifactPeerAddrs = normalizeIpfsArtifactPeerAddrs(
+    record.ipfs_artifact_addrs
+      ?? record.ipfsArtifactAddrs
+      ?? record.artifact_peer_addrs
+      ?? record.artifactPeerAddrs
+      ?? metadata.ipfs_artifact_addrs
+      ?? metadata.ipfsArtifactAddrs
+      ?? metadata.artifact_peer_addrs
+      ?? metadata.artifactPeerAddrs,
+  );
   if (!isLikelyLibp2pPeerId(id) || !hasSdnIdentityEvidence(record, metadata, protocols, agentVersion)) return null;
   return {
     id,
@@ -256,6 +267,8 @@ function normalizePeerRecord(record: Record<string, unknown>): ObservedSdnPeer |
     trustLevel: readString(record, 'trust_level', 'trustLevel', 'trust', 'state') ?? 'observed',
     ...(agentVersion ? { agentVersion } : {}),
     ...(protocols.length > 0 ? { protocols } : {}),
+    ...(artifactPeerAddrs.length > 0 ? { artifactPeerAddrs } : {}),
+    ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
 }
 
