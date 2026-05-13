@@ -233,8 +233,8 @@ func UnpinIPFSCID(ctx context.Context, ipfsAPIURL, cidValue string) error {
 }
 
 // RemoveStaleShardGroupCARFiles removes local CAR bundle files in outputDir
-// except for keepPath. Kubo pins are managed separately.
-func RemoveStaleShardGroupCARFiles(outputDir, keepPath string) error {
+// except for keepPaths. Kubo pins are managed separately.
+func RemoveStaleShardGroupCARFiles(outputDir string, keepPaths ...string) error {
 	outputDir = strings.TrimSpace(outputDir)
 	if outputDir == "" {
 		return nil
@@ -246,10 +246,13 @@ func RemoveStaleShardGroupCARFiles(outputDir, keepPath string) error {
 	if err != nil {
 		return fmt.Errorf("read CAR output dir: %w", err)
 	}
-	keepAbs := ""
-	if strings.TrimSpace(keepPath) != "" {
+	keepAbs := map[string]bool{}
+	for _, keepPath := range keepPaths {
+		if strings.TrimSpace(keepPath) == "" {
+			continue
+		}
 		if abs, err := filepath.Abs(keepPath); err == nil {
-			keepAbs = abs
+			keepAbs[abs] = true
 		}
 	}
 	for _, entry := range entries {
@@ -261,8 +264,8 @@ func RemoveStaleShardGroupCARFiles(outputDir, keepPath string) error {
 			continue
 		}
 		path := filepath.Join(outputDir, name)
-		if keepAbs != "" {
-			if abs, err := filepath.Abs(path); err == nil && abs == keepAbs {
+		if len(keepAbs) > 0 {
+			if abs, err := filepath.Abs(path); err == nil && keepAbs[abs] {
 				continue
 			}
 		}

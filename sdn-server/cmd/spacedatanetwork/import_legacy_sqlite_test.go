@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ipfs/go-cid"
 	car "github.com/ipld/go-car/v2"
@@ -624,6 +625,101 @@ admin:
 	}
 	if len(pinned) != 7 {
 		t.Fatalf("pinned IPFS objects = %d, want shard/index locally plus signed manifests and registered CAR on registration", len(pinned))
+	}
+}
+
+func TestRegisterLegacyPublicationPlanChunksLargeShardGroupCARBundles(t *testing.T) {
+	tmpDir := t.TempDir()
+	pinned := map[string][]byte{}
+	kubo := newImportLegacyKuboTestServer(t, pinned)
+	defer kubo.Close()
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "registered-sdn"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	publishedAt := time.Unix(1_778_666_000, 0).UTC()
+	publications := make([]storage.DatasetShardPublication, 0, 3)
+	for i := 0; i < 3; i++ {
+		shardCID := importLegacyCIDV1RawSHA256ForTest(t, []byte(fmt.Sprintf("large historical shard %d", i)))
+		indexCID := importLegacyCIDV1RawSHA256ForTest(t, []byte(fmt.Sprintf("large historical index %d", i)))
+		manifestCID := importLegacyCIDV1RawSHA256ForTest(t, []byte(fmt.Sprintf("large historical manifest %d", i)))
+		pinned[shardCID] = []byte(fmt.Sprintf("large historical shard %d", i))
+		pinned[indexCID] = []byte(fmt.Sprintf("large historical index %d", i))
+		pinned[manifestCID] = []byte(fmt.Sprintf("large historical manifest %d", i))
+		pub := storage.DatasetShardPublication{
+			SchemaName:   "OMM.fbs",
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-gp-historical",
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+			Offset:       i * 50_000,
+			Limit:        50_000,
+			RecordCount:  50_000,
+			ByteCount:    int64(700 << 20),
+			ShardCID:     shardCID,
+			IndexCID:     indexCID,
+			ManifestCID:  manifestCID,
+			FeedSequence: int64(i + 1),
+			FeedHead:     "historical-feed-head",
+			PublishedAt:  publishedAt.Add(time.Duration(i) * time.Second),
+		}
+		if err := store.UpsertDatasetShardPublication(pub); err != nil {
+			t.Fatalf("UpsertDatasetShardPublication %d failed: %v", i, err)
+		}
+		publications = append(publications, pub)
+	}
+
+	publications, err = store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp-historical",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		t.Fatalf("ListDatasetShardPublications failed: %v", err)
+	}
+	expectedHead := publications[len(publications)-1].FeedHead
+	if err := recordRegisteredShardGroupCARBundle(context.Background(), store, kubo.URL, filepath.Join(tmpDir, "registered-output"), publications, "16Uiu2HAmProvider", "provider-public-key"); err != nil {
+		t.Fatalf("recordRegisteredShardGroupCARBundle failed: %v", err)
+	}
+	entries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		SchemaName:        "OMM.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp-historical",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		Role:              "shard-group-car",
+		VerificationState: "verified",
+	})
+	if err != nil {
+		t.Fatalf("ListPinLedgerEntries failed: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("registered CAR bundles = %d, want 3 bounded bundles: %#v", len(entries), entries)
+	}
+	for _, entry := range entries {
+		if entry.Head != expectedHead || entry.RowCount != 50_000 || entry.ByteCount <= 0 {
+			t.Fatalf("unexpected bounded CAR ledger entry: %#v", entry)
+		}
+	}
+
+	manifest, err := datasync.OpenManifest(store, datasync.QueryRequest{
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp-historical",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Limit:        50_000,
+	}, datasync.MaxSyncChunkLimit)
+	if err != nil {
+		t.Fatalf("OpenManifest failed: %v", err)
+	}
+	if len(manifest.ArtifactBundles) != 3 {
+		t.Fatalf("manifest CAR bundles = %d, want 3 bounded bundles: %#v", len(manifest.ArtifactBundles), manifest.ArtifactBundles)
 	}
 }
 
