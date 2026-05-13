@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -15,9 +14,12 @@ import (
 	"testing"
 
 	"github.com/ipfs/go-cid"
+	car "github.com/ipld/go-car/v2"
+	carstorage "github.com/ipld/go-car/v2/storage"
 	_ "github.com/mattn/go-sqlite3"
 	mh "github.com/multiformats/go-multihash"
 
+	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -603,8 +605,25 @@ admin:
 	if len(publications) != 2 || publications[0].RecordCount != 2 || publications[1].RecordCount != 1 {
 		t.Fatalf("registered publications = %#v, want two planned artifact windows", publications)
 	}
-	if len(pinned) != 6 {
-		t.Fatalf("pinned IPFS objects = %d, want shard/index locally plus signed manifests on registration", len(pinned))
+	manifest, err := datasync.OpenManifest(namespaceStore, datasync.QueryRequest{
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp-historical",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Limit:        50_000,
+	}, datasync.MaxSyncChunkLimit)
+	if err != nil {
+		t.Fatalf("OpenManifest failed: %v", err)
+	}
+	if len(manifest.ArtifactBundles) != 1 {
+		t.Fatalf("artifact bundles = %d, want registered shard-group CAR: %#v", len(manifest.ArtifactBundles), manifest.ArtifactBundles)
+	}
+	bundle := manifest.ArtifactBundles[0]
+	if bundle.Role != "shard-group-car" || bundle.CID == "" || bundle.SHA256 == "" || bundle.ByteCount <= 0 || bundle.SegmentCount != 2 {
+		t.Fatalf("unexpected registered shard-group CAR bundle: %#v", bundle)
+	}
+	if len(pinned) != 7 {
+		t.Fatalf("pinned IPFS objects = %d, want shard/index locally plus signed manifests and registered CAR on registration", len(pinned))
 	}
 }
 
@@ -679,6 +698,19 @@ func newImportLegacyKuboTestServer(t *testing.T, pinned map[string][]byte) *http
 		case "/api/v0/block/put":
 			responseKey = "Key"
 			wantField = "data"
+		case "/api/v0/dag/export":
+			rootCID := r.URL.Query().Get("arg")
+			body, ok := pinned[rootCID]
+			if !ok {
+				t.Fatalf("dag/export root %q was not pinned", rootCID)
+			}
+			decoded, err := cid.Decode(rootCID)
+			if err != nil {
+				t.Fatalf("decode dag/export root CID: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/vnd.ipld.car")
+			writeImportLegacySingleBlockCARForTest(t, w, decoded, body)
+			return
 		default:
 			t.Fatalf("unexpected IPFS path: %s", r.URL.Path)
 		}
@@ -697,17 +729,32 @@ func newImportLegacyKuboTestServer(t *testing.T, pinned map[string][]byte) *http
 		if err != nil {
 			t.Fatalf("read part: %v", err)
 		}
-		sum := sha256.Sum256(body)
-		cidValue := fmt.Sprintf("bafyimportlegacy%x", sum[:8])
-		if r.URL.Path == "/api/v0/block/put" {
-			hash, err := mh.Sum(body, mh.SHA2_256, -1)
-			if err != nil {
-				t.Fatalf("multihash raw block: %v", err)
-			}
-			cidValue = cid.NewCidV1(cid.Raw, hash).String()
-		}
+		cidValue := importLegacyCIDV1RawSHA256ForTest(t, body)
 		pinned[cidValue] = body
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"` + responseKey + `":"` + cidValue + `"}` + "\n"))
 	}))
+}
+
+func importLegacyCIDV1RawSHA256ForTest(t *testing.T, data []byte) string {
+	t.Helper()
+	hash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		t.Fatalf("multihash raw block: %v", err)
+	}
+	return cid.NewCidV1(cid.Raw, hash).String()
+}
+
+func writeImportLegacySingleBlockCARForTest(t *testing.T, w io.Writer, root cid.Cid, body []byte) {
+	t.Helper()
+	writer, err := carstorage.NewWritable(w, []cid.Cid{root}, car.WriteAsCarV1(true))
+	if err != nil {
+		t.Fatalf("create CAR writer: %v", err)
+	}
+	if err := writer.Put(context.Background(), root.KeyString(), body); err != nil {
+		t.Fatalf("write CAR block: %v", err)
+	}
+	if err := writer.Finalize(); err != nil {
+		t.Fatalf("finalize CAR: %v", err)
+	}
 }

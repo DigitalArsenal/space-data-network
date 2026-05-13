@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -217,6 +218,7 @@ func registerLegacyPublicationPlan(ctx context.Context, options legacyPublicatio
 		providerPublicKey = hex.EncodeToString(pubKey)
 	}
 	result := &legacyPublicationPlanRegistrationResult{}
+	registeredGroups := map[string]storage.DatasetShardPublication{}
 	for _, entry := range plan.Entries {
 		export := compactLegacyPublicationExport(entry.Export)
 		if export.SchemaName == "" {
@@ -299,10 +301,131 @@ func registerLegacyPublicationPlan(ctx context.Context, options legacyPublicatio
 		if err := recordRegisteredPublicationPins(store, publishedShard, &export, manifest, pnmCID, pnmBytes, plan.ProviderPeerID, providerPublicKey); err != nil {
 			return nil, err
 		}
+		registeredGroups[legacyPublicationGroupKey(publishedShard)] = publishedShard
 		result.Publications++
 		result.Records += export.RecordCount
 	}
+	for _, group := range registeredGroups {
+		publications, err := store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+			SchemaName:   group.SchemaName,
+			ProviderID:   group.ProviderID,
+			SourceName:   group.SourceName,
+			BatchID:      group.BatchID,
+			QueryProfile: group.QueryProfile,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("load registered publication group: %w", err)
+		}
+		if err := recordRegisteredShardGroupCARBundle(ctx, store, ipfsAPIURL, outputDir, publications, plan.ProviderPeerID, providerPublicKey); err != nil {
+			return nil, err
+		}
+	}
 	return result, nil
+}
+
+func legacyPublicationGroupKey(pub storage.DatasetShardPublication) string {
+	return strings.Join([]string{pub.SchemaName, pub.ProviderID, pub.SourceName, pub.BatchID, pub.QueryProfile}, "\x00")
+}
+
+func recordRegisteredShardGroupCARBundle(ctx context.Context, store *storage.FlatSQLStore, ipfsAPIURL, outputDir string, publications []storage.DatasetShardPublication, providerPeerID, providerPublicKey string) error {
+	if store == nil {
+		return fmt.Errorf("publication pin registration requires store")
+	}
+	if len(publications) == 0 {
+		return nil
+	}
+	sort.Slice(publications, func(i, j int) bool {
+		if publications[i].FeedSequence != publications[j].FeedSequence {
+			return publications[i].FeedSequence < publications[j].FeedSequence
+		}
+		return publications[i].Offset < publications[j].Offset
+	})
+
+	first := publications[0]
+	last := publications[len(publications)-1]
+	head := last.FeedHead
+	if head == "" {
+		head = datasync.PublishedFeedHead(first.SchemaName, first.ProviderID, first.SourceName, first.BatchID, first.QueryProfile, publications)
+	}
+	existing, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		SchemaName:        first.SchemaName,
+		ProviderPeerID:    providerPeerID,
+		ProviderID:        first.ProviderID,
+		SourceName:        first.SourceName,
+		BatchID:           first.BatchID,
+		QueryProfile:      first.QueryProfile,
+		Role:              "shard-group-car",
+		VerificationState: "verified",
+	})
+	if err != nil {
+		return fmt.Errorf("list existing registered shard-group CAR bundle pins: %w", err)
+	}
+	for _, entry := range existing {
+		if entry.Head == head && entry.CID != "" && entry.ByteHash != "" && entry.ByteCount > 0 {
+			return nil
+		}
+	}
+
+	rootCIDs := make([]string, 0, len(publications)*3)
+	var totalRows int64
+	var totalBytes int64
+	for _, publication := range publications {
+		if publication.ShardCID != "" {
+			rootCIDs = append(rootCIDs, publication.ShardCID)
+		}
+		if publication.IndexCID != "" {
+			rootCIDs = append(rootCIDs, publication.IndexCID)
+		}
+		if publication.ManifestCID != "" {
+			rootCIDs = append(rootCIDs, publication.ManifestCID)
+		}
+		totalRows += int64(publication.RecordCount)
+		totalBytes += publication.ByteCount
+	}
+	publishedCAR, err := storage.PublishShardGroupCARToIPFS(ctx, ipfsAPIURL, filepath.Join(outputDir, legacyPublicationSafePathComponent(first.SchemaName), "car"), rootCIDs)
+	if err != nil {
+		return fmt.Errorf("publish registered shard-group CAR bundle: %w", err)
+	}
+
+	verifiedAt := last.PublishedAt
+	if verifiedAt.IsZero() {
+		verifiedAt = time.Now().UTC()
+	}
+	highWaterMark := datasync.PublishedFeedHighWaterMark(publications, totalRows, totalBytes)
+	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
+		CID:               publishedCAR.CID,
+		SchemaName:        first.SchemaName,
+		ProviderPeerID:    providerPeerID,
+		ProviderPublicKey: providerPublicKey,
+		ProviderID:        first.ProviderID,
+		SourceName:        first.SourceName,
+		BatchID:           first.BatchID,
+		QueryProfile:      first.QueryProfile,
+		SnapshotID:        head,
+		Head:              head,
+		HighWaterMark:     highWaterMark,
+		ByteHash:          publishedCAR.SHA256,
+		Role:              "shard-group-car",
+		RowCount:          totalRows,
+		ByteCount:         publishedCAR.ByteCount,
+		VerificationState: "verified",
+		VerifiedAt:        verifiedAt,
+		UpdatedAt:         verifiedAt,
+	}); err != nil {
+		return fmt.Errorf("record registered shard-group CAR pin ledger: %w", err)
+	}
+	return nil
+}
+
+func legacyPublicationSafePathComponent(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSuffix(value, ".fbs")
+	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", " ", "-")
+	value = replacer.Replace(value)
+	if value == "" {
+		return "dataset"
+	}
+	return value
 }
 
 func recordRegisteredPublicationPins(store *storage.FlatSQLStore, pub storage.DatasetShardPublication, export *storage.DatasetExport, manifest *storage.DatasetPublicationManifest, pnmCID string, pnmBytes []byte, providerPeerID, providerPublicKey string) error {
