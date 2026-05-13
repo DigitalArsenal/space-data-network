@@ -23,7 +23,7 @@ import { retryRemoteSyncOperation } from './remote-sync-retry';
 import { SerialTaskQueue } from './serial-task-queue';
 import { syncRowCountSummary } from './sync-progress';
 import { DEFAULT_WIRE_SPEED_TARGET, measuredWireSpeedUtilization, meetsWireSpeedTarget } from './sync-throughput';
-import { connectIpfsArtifactPeers } from './ipfs-artifact-peers';
+import { connectIpfsArtifactPeers, connectIpfsArtifactProviders } from './ipfs-artifact-peers';
 import type { DataSummary, RawDataRecord, SdnBackend } from './sdn-backend';
 import type { FlatSqlSyncManifest, FlatSqlSyncManifestSegment } from '../../flatsql-sync';
 import type {
@@ -66,6 +66,7 @@ const REMOTE_SYNC_RETRY_ATTEMPTS = 4;
 const REMOTE_SYNC_RETRY_DELAY_MS = 500;
 const PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE = 50_000;
 const PUBLISHED_SHARD_FETCH_CONCURRENCY = 24;
+const PUBLISHED_SHARD_PROVIDER_DISCOVERY_CID_LIMIT = 16;
 const WIRE_SPEED_PROBE_BYTES = 64 * 1024 * 1024;
 let store: LocalFlatSqlStore | null = null;
 
@@ -507,6 +508,13 @@ async function syncPublishedSegments(options: {
     await connectIpfsArtifactPeers({
       ipfsApiUrl: options.request.backendConfig.ipfsApiUrl,
       artifactPeerAddrs: options.request.backendConfig.artifactPeerAddrs,
+    });
+    await connectIpfsArtifactProviders({
+      ipfsApiUrl: options.request.backendConfig.ipfsApiUrl,
+      cids: options.segments
+        .map((segment) => segment.cid)
+        .filter((cid): cid is string => Boolean(cid))
+        .slice(0, PUBLISHED_SHARD_PROVIDER_DISCOVERY_CID_LIMIT),
     });
 
     let recordsSincePersist = 0;
