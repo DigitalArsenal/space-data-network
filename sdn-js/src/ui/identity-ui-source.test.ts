@@ -258,8 +258,6 @@ describe('SDN data Svelte source', () => {
       'activeBackend.queryRawData',
       'backendForSelectedDataSource',
       'DATA_QUERY_PROFILES',
-      'selectedQueryProfile',
-      'handleQueryProfileChange',
       'standardIdFromSchema',
       'schemaNameForStandardId',
       'runWorkbenchQuery',
@@ -289,13 +287,14 @@ describe('SDN data Svelte source', () => {
       'createWorkerLocalFlatSqlStore',
       'getRemoteDataSummary',
       'queryRemotePage',
-      'queryProfile: selectedQueryProfile',
+      'queryProfile: subscriptionQueryProfileFor(activeSelection)',
       'syncSchema',
       'downloadSpeedBytesPerSecond',
       'formatBytesPerSecond',
       'boundedWireSpeedUtilization(schema.progress.wireSpeedUtilization)',
       'Download',
       'backendConfigForDataSource',
+      'sourceName: configuredSourceNameFromSource(source)',
       'artifactPeerAddrsForDataSource(source)',
       'artifactPeerAddrsForObservedPeers(peers)',
       'prioritizeIpfsArtifactPeerAddrs(',
@@ -319,6 +318,8 @@ describe('SDN data Svelte source', () => {
       '>Retry</button>',
       'schema.progress.error',
       'Sync filter',
+      'Sync profile',
+      'handleSubscriptionQueryProfileChange',
       'handleSubscriptionFilterInput',
       'handleSubscriptionStorageCapInput',
       'handleSubscriptionStorageUnitChange',
@@ -336,7 +337,6 @@ describe('SDN data Svelte source', () => {
       'Sync settings',
       'INTERNAL_SQL_COLUMN_KEYS',
       'Page size',
-      'Query profile',
       'Previous',
       'Next',
       'Message',
@@ -390,6 +390,8 @@ describe('SDN data Svelte source', () => {
     expect(source).not.toContain('Read raw');
     expect(source).not.toContain('Test EPM query');
     expect(source).not.toContain('>Query</button>');
+    expect(source).not.toContain('handleQueryProfileChange');
+    expect(source).not.toContain('Query profile</span>');
     expect(source).not.toContain("label: 'Payload'");
     expect(source).not.toContain('PAYLOAD');
     expect(source).not.toContain('{pageLabel} / {filteredRows.length} visible / {selectedSchemaName}');

@@ -202,7 +202,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
   let snapshotId = canResume ? request.initialProgress.snapshotId ?? '' : '';
   let head = canResume ? request.initialProgress.head ?? '' : '';
   let highWaterMark = canResume ? request.initialProgress.highWaterMark ?? '' : '';
-  let queryProfile = canResume ? request.initialProgress.queryProfile ?? 'ordered-offset-v1' : 'ordered-offset-v1';
+  let queryProfile = normalizeSyncQueryProfile(request.queryProfile ?? (canResume ? request.initialProgress.queryProfile : null));
   const syncFilter = request.syncFilter?.trim() || undefined;
   let verifiedChunks = canResume ? request.initialProgress.verifiedChunks.slice(-256) : [];
   let snapshotVerifiedForSession = false;
@@ -212,7 +212,7 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
   let verificationMs = 0;
   let flatSqlMaterializationMs = 0;
   const manifestStartedAt = Date.now();
-  const publishedManifest = await openPublishedManifest(request.backendConfig, request.schema, syncFilter).catch(() => null);
+  const publishedManifest = await openPublishedManifest(request.backendConfig, request.schema, syncFilter, queryProfile).catch(() => null);
   manifestDiscoveryMs = Math.max(0, Date.now() - manifestStartedAt);
   const measuredWireSpeedBytesPerSecond = await measuredWireSpeedBaselineBytesPerSecond(request.backendConfig);
   const syncStartedAtMs = Date.now();
@@ -321,9 +321,9 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
                       highWaterMark: highWaterMark || undefined,
                     }
                   : {}),
-                queryProfile,
-              }
-            : { offset }),
+            queryProfile,
+          }
+            : { offset, queryProfile }),
         },
       );
       networkTransferMs += Math.max(0, Date.now() - networkStartedAt);
@@ -658,20 +658,28 @@ async function openPublishedManifest(
   backendConfig: WorkerFlatSqlSyncBackendConfig,
   schema: string,
   syncFilter?: string,
+  queryProfile = 'dataset-publication-offset-v1',
 ): Promise<{ manifest: FlatSqlSyncManifest; segments: FlatSqlSyncManifestSegment[] } | null> {
   if (!backendConfig.gatewayUrl?.trim()) return null;
   if (syncFilter?.trim()) return null;
+  if (queryProfile !== 'dataset-publication-offset-v1') return null;
   const manifest = await withRemoteSyncManifestOperation(backendConfig, 'Remote published shard manifest', {
     targetPeerId: '',
     schema,
     op: 'open_manifest',
-    queryProfile: 'dataset-publication-offset-v1',
+    queryProfile,
     limit: PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE,
   });
   return {
     manifest,
     segments: manifest.segments.filter((segment) => Boolean(segment.cid)),
   };
+}
+
+function normalizeSyncQueryProfile(value: unknown): string {
+  return value === 'ordered-offset-v1' || value === 'dataset-publication-offset-v1'
+    ? value
+    : 'dataset-publication-offset-v1';
 }
 
 function pinLedgerEntryForPublishedSegment(options: {

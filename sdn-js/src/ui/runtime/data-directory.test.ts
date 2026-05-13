@@ -41,6 +41,7 @@ describe('PGP data directory ownertrust', () => {
       storageCap: 1,
       storageUnit: 'GB',
       syncFilter: 'EPOCH BETWEEN 2026-05-01 AND 2026-05-12',
+      queryProfile: 'dataset-publication-offset-v1',
     });
 
     expect(next.peerTrust['16Uiu2HAmCelestrak']).toBe('marginal');
@@ -50,6 +51,27 @@ describe('PGP data directory ownertrust', () => {
       peerId: '16Uiu2HAmCelestrak',
       standardId: 'OMM',
       syncFilter: 'EPOCH BETWEEN 2026-05-01 AND 2026-05-12',
+      queryProfile: 'dataset-publication-offset-v1',
+    });
+  });
+
+  it('stores the sync query profile on the subscription', () => {
+    const initial: DataDirectoryState = { peerTrust: {}, subscriptions: [] };
+    const next = upsertDataFeedSubscription(initial, {
+      dataSourceId: 'configured:celestrak.eth',
+      peerId: '16Uiu2HAmCelestrak',
+      standardId: 'OMM',
+      providerName: 'CelesTrak',
+      providerPublicKey: 'ed25519:abc',
+      remoteRows: 2000000,
+      storageCap: 1,
+      storageUnit: 'GB',
+      syncFilter: '',
+      queryProfile: 'dataset-publication-offset-v1',
+    });
+
+    expect(next.subscriptions[0]).toMatchObject({
+      queryProfile: 'dataset-publication-offset-v1',
     });
   });
 

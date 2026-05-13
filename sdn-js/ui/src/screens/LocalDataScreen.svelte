@@ -1,6 +1,7 @@
 <script lang="ts">
   import { decodeEpmFlatBuffer } from '../../../src/ui/runtime/epm-flatbuffer';
   import {
+    DEFAULT_DATA_FEED_QUERY_PROFILE,
     loadDataDirectoryState,
     migrateSchemaSyncPreferencesToDataDirectory,
     persistDataDirectoryState,
@@ -85,6 +86,8 @@
     detail: string;
     peerId: string | null;
     publicKey: string | null;
+    providerId?: string | null;
+    sourceName?: string | null;
     kind: 'local' | 'configured';
     syncAddrs?: string[];
     artifactPeerAddrs?: string[];
@@ -145,6 +148,7 @@
     providerPeerId: string | null;
     providerPublicKey: string | null;
     syncFilter: string;
+    queryProfile: DataQueryProfile;
     localRows: number;
     cachedBytes: number;
     preference: SchemaSyncPreference;
@@ -170,7 +174,7 @@
   const SYNC_PAGE_SIZE = 50_000;
   const SYNC_PERSIST_RECORD_INTERVAL = 100_000;
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
-  const DEFAULT_QUERY_PROFILE: DataQueryProfile = 'ordered-offset-v1';
+  const DEFAULT_QUERY_PROFILE = DEFAULT_DATA_FEED_QUERY_PROFILE as DataQueryProfile;
   const DATA_QUERY_PROFILES: Array<{ id: DataQueryProfile; label: string }> = [
     { id: 'ordered-offset-v1', label: 'Ordered offset' },
     { id: 'dataset-publication-offset-v1', label: 'Published artifacts' },
@@ -280,7 +284,6 @@
   let searchText = '';
   let pageSize = DEFAULT_PAGE_SIZE;
   let pageIndex = 0;
-  let selectedQueryProfile: DataQueryProfile = DEFAULT_QUERY_PROFILE;
   let sortColumn: SortColumn = 'timestamp';
   let sortDirection: SortDirection = 'desc';
   let rawRecords: RawDataRecord[] = [];
@@ -491,7 +494,7 @@
       schema: schemaNameForStandardId(selectedStandardId),
       ...(activeSelection?.datastoreKey ? { datastoreKey: activeSelection.datastoreKey } : {}),
       ...(activeSelection?.syncFilter ? { syncFilter: activeSelection.syncFilter } : {}),
-      queryProfile: selectedQueryProfile,
+      queryProfile: subscriptionQueryProfileFor(activeSelection),
       limit: normalizedPageSize(),
       offset: nextPage * normalizedPageSize(),
     };
@@ -589,7 +592,6 @@
     selectedStandardId = selected.id;
     selectedDataSourceId = selected.dataSourceId;
     selectedDatastoreKey = selected.datastoreKey;
-    selectedQueryProfile = queryProfileForSchemaSelection(selected);
     resetLocalFlatSqlStore();
     userSelectedStandard = true;
     userEditedColumns = false;
@@ -597,15 +599,6 @@
     clearPnmSelection();
     columnMenuOpen = false;
     dataScan = null;
-    pageIndex = 0;
-    void runWorkbenchQuery(0);
-  }
-
-  function handleQueryProfileChange(): void {
-    selectedQueryProfile = normalizeDataQueryProfile(selectedQueryProfile);
-    rawRecords = [];
-    dataScan = null;
-    sqlResult = null;
     pageIndex = 0;
     void runWorkbenchQuery(0);
   }
@@ -645,7 +638,6 @@
     selectedStandardId = next.id;
     selectedDataSourceId = next.dataSourceId;
     selectedDatastoreKey = next.datastoreKey;
-    selectedQueryProfile = queryProfileForSchemaSelection(next);
     resetSqlForSelectedStandard();
     clearPnmSelection();
     dataScan = null;
@@ -688,6 +680,13 @@
     updateSubscription(schema.subscriptionId, {
       syncFilter: (event.currentTarget as HTMLInputElement).value,
     });
+  }
+
+  function handleSubscriptionQueryProfileChange(schema: SchemaSyncRow, event: Event): void {
+    updateSubscription(schema.subscriptionId, {
+      queryProfile: normalizeDataQueryProfile((event.currentTarget as HTMLSelectElement).value),
+    });
+    schemaSyncSchedulerForDataSource(schema.dataSourceId).reset();
   }
 
   function pauseSubscriptionSync(schema: SchemaSyncRow): void {
@@ -763,7 +762,7 @@
     }
   }
 
-  function updateSubscription(subscriptionId: string, patch: Partial<Pick<DataFeedSubscription, 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter'>>): void {
+  function updateSubscription(subscriptionId: string, patch: Partial<Pick<DataFeedSubscription, 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter' | 'queryProfile'>>): void {
     dataDirectoryState = updateDataFeedSubscription(dataDirectoryState, subscriptionId, patch);
     persistDataDirectoryState(dataDirectoryState);
   }
@@ -876,6 +875,7 @@
     if (!backendConfig) return;
     const remoteRows = subscription?.remoteRows ?? remoteRowsForSubscription(dataSourceId, standardId, datastoreKey) ?? totalRowsForStandardId(dataSummary, standardId) ?? 0;
     const syncFilter = subscription?.syncFilter ?? syncFilterForSubscription(dataSourceId, standardId, datastoreKey);
+    const queryProfile = subscriptionQueryProfileFor(subscription);
     let initialProgress = schemaSyncProgressFor(
       dataSourceId,
       standardId,
@@ -929,6 +929,7 @@
         persistRecordInterval: SYNC_PERSIST_RECORD_INTERVAL,
         source: source?.publicKey ?? source?.peerId ?? source?.id ?? null,
         syncFilter,
+        queryProfile,
       }, (nextUpdate) => applyWorkerSchemaSyncUpdate(standardId, dataSourceId, datastoreKey, nextUpdate));
       applyWorkerSchemaSyncUpdate(standardId, dataSourceId, datastoreKey, update);
     } catch (error) {
@@ -1355,6 +1356,7 @@
         providerPeerId: subscription.peerId,
         providerPublicKey: subscription.providerPublicKey,
         syncFilter: subscription.syncFilter,
+        queryProfile: normalizeDataQueryProfile(subscription.queryProfile),
         remoteRows: Math.max(subscription.remoteRows, progress.totalRows),
         localRows: progress.localRows,
         cachedBytes: progress.cachedBytes,
@@ -1439,6 +1441,10 @@
       && subscription.standardId === standardId
       && (datastoreKey === null || subscription.datastoreKey === datastoreKey)
     ))?.syncFilter ?? '';
+  }
+
+  function subscriptionQueryProfileFor(subscription: Pick<DataFeedSubscription, 'queryProfile'> | Pick<SchemaSyncRow, 'queryProfile'> | null | undefined): DataQueryProfile {
+    return normalizeDataQueryProfile(subscription?.queryProfile);
   }
 
   function syncFilterChangedRequiresReset(progress: SchemaSyncProgress, nextSyncFilter: string): boolean {
@@ -1708,10 +1714,6 @@
       : DEFAULT_QUERY_PROFILE;
   }
 
-  function queryProfileForSchemaSelection(schema: SchemaSyncRow | null): DataQueryProfile {
-    return normalizeDataQueryProfile(schema?.progress.queryProfile);
-  }
-
   function workbenchColumnsForStandard(standardId: string, rows: WorkbenchRow[]): WorkbenchColumn[] {
     const standardColumns = STANDARD_FIELD_COLUMNS[standardId] ?? [];
     const metadataColumns = standardId === 'PNM'
@@ -1977,6 +1979,7 @@
       candidateAddrs: source.syncAddrs,
       datastoreKey,
       providerId: configuredProviderIdFromSource(source),
+      sourceName: configuredSourceNameFromSource(source),
       displayName: source.label,
       publicKey: source.publicKey,
       gatewayUrl: localGatewayUrl(),
@@ -2056,6 +2059,8 @@
       const syncAddrs = configuredNodeSyncAddrs(node, peerId);
       if (!peerId || syncAddrs.length === 0) continue;
       const publicKey = configuredNodePublicKey(node) ?? peerId;
+      const providerId = configuredNodeProviderId(node);
+      const sourceName = configuredNodeSourceName(node);
       const label = configuredNodeLabel(node, observedNames, peerId);
       const detail = [node.id, configuredNodeHostName(node)].filter(Boolean).join(' / ');
       const artifactPeerAddrs = configuredNodeArtifactPeerAddrs(node);
@@ -2065,10 +2070,12 @@
         detail,
         peerId,
         publicKey,
+        providerId,
+        sourceName,
         kind: 'configured',
         syncAddrs,
         artifactPeerAddrs,
-        searchText: [label, detail, publicKey, peerId, node.trustLevel, node.trust_level, syncAddrs.join(' '), artifactPeerAddrs.join(' ')].filter(Boolean).join(' ').toLowerCase(),
+        searchText: [label, detail, publicKey, peerId, providerId, sourceName, node.trustLevel, node.trust_level, syncAddrs.join(' '), artifactPeerAddrs.join(' ')].filter(Boolean).join(' ').toLowerCase(),
       });
     }
 
@@ -2134,6 +2141,14 @@
     return readRecordString(node.metadata ?? {}, 'public_key', 'publicKey', 'signing_public_key', 'signingPublicKey');
   }
 
+  function configuredNodeProviderId(node: ConfiguredSdnNode): string | null {
+    return readRecordString(node.metadata ?? {}, 'provider_id', 'providerId');
+  }
+
+  function configuredNodeSourceName(node: ConfiguredSdnNode): string | null {
+    return readRecordString(node.metadata ?? {}, 'source_name', 'sourceName');
+  }
+
   function configuredNodeArtifactPeerAddrs(node: ConfiguredSdnNode): string[] {
     const metadata = node.metadata ?? {};
     return normalizeIpfsArtifactPeerAddrs(
@@ -2168,8 +2183,13 @@
   }
 
   function configuredProviderIdFromSource(source: DataSourceOption): string | null {
+    if (source.providerId) return source.providerId;
     const id = source.id.startsWith('configured:') ? source.id.slice('configured:'.length) : source.id;
     return id || source.peerId;
+  }
+
+  function configuredSourceNameFromSource(source: DataSourceOption): string | null {
+    return source.sourceName ?? null;
   }
 
   function dedupeDataSourceOptions(options: DataSourceOption[]): DataSourceOption[] {
@@ -2356,6 +2376,19 @@
                   </div>
                 </label>
                 <label>
+                  <span>Sync profile</span>
+                  <select
+                    class="sdn-input sdn-select"
+                    aria-label={`${schema.id} sync profile`}
+                    value={schema.queryProfile}
+                    on:change={(event) => handleSubscriptionQueryProfileChange(schema, event)}
+                  >
+                    {#each DATA_QUERY_PROFILES as profile}
+                      <option value={profile.id}>{profile.label}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label>
                   <span>Sync filter</span>
                   <input
                     class="sdn-input sdn-sync-filter"
@@ -2419,15 +2452,6 @@
               <select class="sdn-input sdn-select" bind:value={selectedStandardId} on:change={handleExplorerStandardChange}>
                 {#each subscribedStandardOptions as standard}
                   <option value={standard.id}>{standard.id} ({formatNumber(standard.remoteRows)})</option>
-                {/each}
-              </select>
-            </label>
-
-            <label>
-              <span>Query profile</span>
-              <select class="sdn-input sdn-select" bind:value={selectedQueryProfile} on:change={handleQueryProfileChange}>
-                {#each DATA_QUERY_PROFILES as profile}
-                  <option value={profile.id}>{profile.label}</option>
                 {/each}
               </select>
             </label>

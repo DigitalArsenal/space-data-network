@@ -175,6 +175,8 @@ const CONFIGURED_SDN_NODE_IDENTITIES = [
     name: 'CelesTrak Provider',
     peer_id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
     public_key: '90aa23ea4ff2d68cf8cb8155135fe5a25b580ec805e835aabb0e8905ffb2c3b2',
+    provider_id: 'space-data-network-02',
+    source_name: 'celestrak-gp',
     ipfs_artifact_peer_id: '12D3KooWGhZfrxQVvwQHNGRkeJhGqMbkDqjktfpBXzn47N78XY9j'
   }
 ]
@@ -208,6 +210,8 @@ function configuredSdnNodesFromSshConfig (configPath = path.join(os.homedir(), '
         ssh_aliases: current.aliases.join(','),
         ...(identity?.peer_id ? { peer_id: identity.peer_id } : {}),
         ...(identity?.public_key ? { public_key: identity.public_key } : {}),
+        ...(identity?.provider_id ? { provider_id: identity.provider_id } : {}),
+        ...(identity?.source_name ? { source_name: identity.source_name } : {}),
         ...(ipfsArtifactAddrs.length > 0 ? { ipfs_artifact_addrs: ipfsArtifactAddrs } : {}),
         ...(current.hostName ? { host_name: current.hostName } : {})
       }

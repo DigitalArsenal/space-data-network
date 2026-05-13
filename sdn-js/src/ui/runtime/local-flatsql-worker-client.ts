@@ -72,6 +72,7 @@ export interface WorkerSchemaSyncRequest {
   persistRecordInterval: number;
   source: string | null;
   syncFilter?: string;
+  queryProfile?: string;
 }
 
 export interface WorkerSchemaSyncUpdate {
