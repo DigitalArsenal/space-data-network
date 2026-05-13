@@ -312,6 +312,7 @@ func Default() *Config {
 				"/ip4/0.0.0.0/tcp/4001",
 				"/ip4/0.0.0.0/tcp/8080/ws",
 				"/ip4/0.0.0.0/udp/4001/quic-v1",
+				"/ip4/0.0.0.0/udp/4003/webrtc-direct",
 			},
 			Bootstrap:      bootstrap.DefaultBootstrapAddresses(),
 			EdgeRelays:     []string{},

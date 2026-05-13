@@ -7,7 +7,7 @@ import { serviceCapabilities } from "@libp2p/interface";
 import { webSockets } from "@libp2p/websockets";
 import { all as wsFilters } from "@libp2p/websockets/filters";
 import { webTransport } from "@libp2p/webtransport";
-import { webRTC } from "@libp2p/webrtc";
+import { webRTC } from "@spacedatanetwork/libp2p-webrtc-v1";
 import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { bootstrap } from "@libp2p/bootstrap";
 import { identify } from "@libp2p/identify";

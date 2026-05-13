@@ -1,8 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import { FLATSQL_SYNC_PROTOCOL_ID, type FlatSqlSyncChunk, type FlatSqlSyncQuery } from '../../flatsql-sync';
-import { createLibp2pFlatSqlSyncBackend, exchangeFlatSqlSyncStream } from './sdn-backend-libp2p-sync';
+import {
+  createLibp2pFlatSqlSyncBackend,
+  exchangeFlatSqlSyncStream,
+  selectLibp2pFlatSqlSyncTransports,
+} from './sdn-backend-libp2p-sync';
 
 describe('libp2p FlatSQL sync backend', () => {
+  it('selects WebRTC direct transport for direct WebRTC multiaddrs', () => {
+    expect(selectLibp2pFlatSqlSyncTransports([
+      '/ip4/167.172.219.213/udp/4003/webrtc-direct/certhash/uEiDkQCtOX-kkIk6CsI0pdCvIzTQ4IkRF1ujnZ6CSvED3cw/p2p/16Uiu2HCelesTrak',
+    ])).toEqual({
+      webSockets: false,
+      webTransport: false,
+      webRtcRelay: false,
+      webRtcDirect: true,
+    });
+  });
+
+  it('selects relay WebRTC separately from WebRTC direct', () => {
+    expect(selectLibp2pFlatSqlSyncTransports([
+      '/ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HRelay/p2p-circuit/webrtc/p2p/16Uiu2HCelesTrak',
+    ])).toEqual({
+      webSockets: true,
+      webTransport: false,
+      webRtcRelay: true,
+      webRtcDirect: false,
+    });
+  });
+
   it('builds data summaries by scanning configured schemas over libp2p sync', async () => {
     const calls: FlatSqlSyncQuery[] = [];
     const backend = createLibp2pFlatSqlSyncBackend({

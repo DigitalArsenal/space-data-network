@@ -5,6 +5,7 @@ network:
     - /ip4/0.0.0.0/tcp/4001
     - /ip4/0.0.0.0/tcp/8080/ws
     - /ip4/0.0.0.0/udp/4001/quic-v1
+    - /ip4/0.0.0.0/udp/4003/webrtc-direct
   bootstrap:
     - /ip4/104.131.11.220/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
     - /ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45
