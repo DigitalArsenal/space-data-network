@@ -150,6 +150,49 @@ describe('sync throughput targets', () => {
     expect(summary).toContain('80% target: met');
   });
 
+  it('does not render impossible utilization from persisted audit results', () => {
+    const summary = throughputHarnessSummary({
+      generatedAt: '2026-05-12T20:00:00.000Z',
+      peer: '16Uiu2HCelesTrak',
+      schema: 'OMM.fbs',
+      target: 0.8,
+      probe: {
+        requestedBytes: 64,
+        payloadBytes: 64,
+        elapsedMs: 1,
+        bytesPerSecond: 200_000_000,
+        syncProtocol: '/space-data-network/flatsql-sync/1.0.0',
+      },
+      manifest: {
+        totalCount: 2_000_000,
+        totalBytes: 550_000_000,
+        segmentCount: 11,
+        downloadedSegmentCount: 11,
+        manifestDiscoveryMs: 125,
+        head: 'feed-head',
+        snapshotId: 'snapshot',
+        highWaterMark: 'high-water',
+      },
+      audit: {
+        downloadedBytes: 550_000_000,
+        measuredWireSpeedBytesPerSecond: 200_000_000,
+        downloadBytesPerSecond: 226_000_000,
+        wireSpeedUtilization: 1.13,
+        wireSpeedTarget: 0.8,
+        targetMet: true,
+        timingsMs: {
+          manifestDiscovery: 125,
+          networkTransfer: 2_434,
+          verification: 900,
+          flatSqlMaterialization: 0,
+        },
+      },
+    });
+
+    expect(summary).toContain('Published shard download: 226.0 MB/s (100% of wire)');
+    expect(summary).not.toContain('113% of wire');
+  });
+
   it('formats byte rates for the acceptance report', () => {
     expect(formatBytesPerSecond(200_000_000)).toBe('200.0 MB/s');
   });
