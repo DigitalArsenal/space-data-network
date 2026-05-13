@@ -127,7 +127,7 @@ export async function connectIpfsArtifactProviders(options: IpfsArtifactProvider
 
   const providerAddrs: string[] = [];
   const seen = new Set<string>();
-  for (const cid of cids) {
+  const discovered = await Promise.all(cids.map(async (cid) => {
     const url = new URL(`${apiBase}/api/v0/routing/findprovs`);
     url.searchParams.set('arg', cid);
     url.searchParams.set('num-providers', String(normalizeProviderCount(options.numProviders)));
@@ -139,20 +139,22 @@ export async function connectIpfsArtifactProviders(options: IpfsArtifactProvider
         Math.max(1, Math.floor(options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS)),
         `IPFS provider discovery ${cid}`,
       );
-      if (!response.ok) continue;
+      if (!response.ok) return [];
       const payload = await readResponseTextWithTimeout(
         response,
         Math.max(1, Math.floor(options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS)),
         `IPFS provider discovery ${cid}`,
       );
-      for (const addr of providerAddrsFromFindProvidersPayload(payload)) {
-        if (seen.has(addr)) continue;
-        seen.add(addr);
-        providerAddrs.push(addr);
-      }
+      return providerAddrsFromFindProvidersPayload(payload);
     } catch {
-      continue;
+      return [];
     }
+  }));
+
+  for (const addr of discovered.flat()) {
+    if (seen.has(addr)) continue;
+    seen.add(addr);
+    providerAddrs.push(addr);
   }
 
   const summary = await connectIpfsArtifactPeers({
@@ -168,13 +170,29 @@ export async function connectIpfsArtifactProviders(options: IpfsArtifactProvider
 }
 
 async function readResponseTextWithTimeout(response: Response, timeoutMs: number, label: string): Promise<string> {
+  if (!response.body) {
+    return await response.text();
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
   let timeout: ReturnType<typeof setTimeout> | null = null;
   let timedOut = false;
-  const request = response.text();
+  const request = (async () => {
+    let text = '';
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      if (chunk.value) text += decoder.decode(chunk.value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  })();
   const timer = new Promise<never>((_, reject) => {
     timeout = setTimeout(() => {
       timedOut = true;
-      reject(new Error(`${label} timed out after ${timeoutMs} ms`));
+      const error = new Error(`${label} timed out after ${timeoutMs} ms`);
+      reader.cancel(error).catch(() => undefined);
+      reject(error);
     }, timeoutMs);
   });
   try {
@@ -182,6 +200,11 @@ async function readResponseTextWithTimeout(response: Response, timeoutMs: number
   } finally {
     if (timeout) clearTimeout(timeout);
     if (timedOut) request.catch(() => undefined);
+    try {
+      reader.releaseLock();
+    } catch {
+      // The reader may still be settling after cancellation.
+    }
   }
 }
 

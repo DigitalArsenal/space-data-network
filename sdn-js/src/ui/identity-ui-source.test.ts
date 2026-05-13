@@ -434,14 +434,12 @@ describe('SDN data worker source', () => {
       "'Remote page chunk'",
       'currentStore.ingestFlatBufferStream',
       'timedFlatBufferStreamFromPublishedFlatSqlSegment',
-      'importPublishedFlatSqlShardCar',
-      'importCarBytesToKubo',
       'PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE',
       'PUBLISHED_SHARD_FETCH_CONCURRENCY',
       'PUBLISHED_SHARD_PROVIDER_DISCOVERY_CID_LIMIT',
       'connectIpfsArtifactProviders',
+      'void connectIpfsArtifactProviders',
       'segment.cid',
-      'importPublishedShardCarBundles',
       'fetchPublishedSegmentsInOrder',
       'recordsSincePersist >= options.request.persistRecordInterval',
       'downloadedBytes += streamBytes.byteLength',
@@ -452,6 +450,10 @@ describe('SDN data worker source', () => {
       'prepareRecordsForTransfer',
       'workerGlobal.postMessage(response, transferables)',
     ]);
+    expect(workerSource).not.toContain('importPublishedShardCarBundles');
+    expect(workerSource).not.toContain('importPublishedFlatSqlShardCar');
+    expect(workerSource).not.toContain('importCarBytesToKubo');
+    expect(workerSource).not.toContain('await connectIpfsArtifactProviders');
     expect(workerSource).not.toContain('Remote page scan');
     expect(workerSource).not.toContain('Remote page stream');
     expectSourceToContainAll(localFlatSqlSource, [

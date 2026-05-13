@@ -198,4 +198,65 @@ describe('IPFS artifact peer routing', () => {
       discovered: 0,
     });
   });
+
+  it('cancels stalled provider discovery response bodies after the timeout', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([123]));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    const result = await Promise.race([
+      connectIpfsArtifactProviders({
+        ipfsApiUrl: 'http://127.0.0.1:5001/',
+        cids: ['bafyShardA'],
+        timeoutMs: 1,
+        fetch: async () => new Response(body, { status: 200 }),
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('provider discovery body did not time out')), 25)),
+    ]);
+
+    expect(result).toEqual({
+      attempted: 0,
+      connected: 0,
+      failed: 0,
+      discovered: 0,
+    });
+    expect(cancelled).toBe(true);
+  });
+
+  it('starts provider discovery for shard CIDs concurrently so sync can reach shard downloads quickly', async () => {
+    const calls: string[] = [];
+    const responses: Array<(response: Response) => void> = [];
+    const discovery = connectIpfsArtifactProviders({
+      ipfsApiUrl: 'http://127.0.0.1:5001/',
+      cids: ['bafyShardA', 'bafyShardB', 'bafyShardC'],
+      timeoutMs: 1000,
+      fetch: async (url) => {
+        calls.push(String(url));
+        return await new Promise<Response>((resolve) => responses.push(resolve));
+      },
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(calls).toEqual([
+      'http://127.0.0.1:5001/api/v0/routing/findprovs?arg=bafyShardA&num-providers=20',
+      'http://127.0.0.1:5001/api/v0/routing/findprovs?arg=bafyShardB&num-providers=20',
+      'http://127.0.0.1:5001/api/v0/routing/findprovs?arg=bafyShardC&num-providers=20',
+    ]);
+
+    for (const resolve of responses) resolve(new Response('', { status: 200 }));
+    await expect(discovery).resolves.toEqual({
+      attempted: 0,
+      connected: 0,
+      failed: 0,
+      discovered: 0,
+    });
+  });
 });
