@@ -3,6 +3,7 @@ import {
   type LocalFlatSqlIngestOptions,
   type LocalFlatSqlPinLedgerEntry,
   type LocalFlatSqlPinLedgerQuery,
+  type LocalFlatSqlQueryOptions,
   type LocalFlatSqlQueryResult,
   type LocalFlatSqlStandardStats,
   type LocalFlatSqlStatsOptions,
@@ -104,7 +105,7 @@ type WorkerRequest =
   | { id: number; type: 'ingestRecords'; standardId: string; records: RawDataRecord[]; sourceOrOptions?: string | LocalFlatSqlIngestOptions | null }
   | { id: number; type: 'ingestFlatBufferStream'; standardId: string; streamBytes: Uint8Array; options?: LocalFlatSqlStreamIngestOptions | null }
   | { id: number; type: 'flush'; standardId?: string }
-  | { id: number; type: 'query'; sql: string; standardId?: string }
+  | { id: number; type: 'query'; sql: string; standardId?: string; options?: LocalFlatSqlQueryOptions }
   | { id: number; type: 'getStats'; options?: LocalFlatSqlStatsOptions }
   | { id: number; type: 'recordPinLedgerEntries'; entries: LocalFlatSqlPinLedgerEntry[] }
   | { id: number; type: 'listPinLedgerEntries'; query?: LocalFlatSqlPinLedgerQuery }
@@ -201,8 +202,8 @@ class WorkerLocalFlatSqlStoreClient implements WorkerLocalFlatSqlStore {
     await this.request<void>({ id: 0, type: 'flush', standardId });
   }
 
-  query(sql: string, standardId?: string): Promise<LocalFlatSqlQueryResult> {
-    return this.request<LocalFlatSqlQueryResult>({ id: 0, type: 'query', sql, standardId });
+  query(sql: string, standardId?: string, options?: LocalFlatSqlQueryOptions): Promise<LocalFlatSqlQueryResult> {
+    return this.request<LocalFlatSqlQueryResult>({ id: 0, type: 'query', sql, standardId, options });
   }
 
   async getStats(options?: LocalFlatSqlStatsOptions): Promise<LocalFlatSqlStandardStats[]> {

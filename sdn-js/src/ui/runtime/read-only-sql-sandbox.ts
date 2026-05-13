@@ -1,24 +1,44 @@
 export interface ReadOnlySqlValidationOptions {
   defaultLimit?: number;
   maxLimit?: number;
+  maxBytes?: number;
+  timeoutMs?: number;
+}
+
+export interface ReadOnlySqlAst {
+  statementType: 'select' | 'with-select';
+  tokens: string[];
+}
+
+export interface ReadOnlySqlAppliedLimits {
+  maxRows: number;
+  maxBytes: number;
+  timeoutMs: number;
 }
 
 export interface ReadOnlySqlValidationResult {
   ok: boolean;
   sql: string;
   diagnostics: string[];
+  ast?: ReadOnlySqlAst;
+  limits?: ReadOnlySqlAppliedLimits;
 }
 
 const DEFAULT_LIMIT = 100;
 const DEFAULT_MAX_LIMIT = 1000;
+const DEFAULT_MAX_BYTES = 64_000;
+const DEFAULT_TIMEOUT_MS = 5_000;
 const FORBIDDEN_SQL_TOKENS = [
   'attach',
   'alter',
+  'call',
+  'copy',
   'create',
   'delete',
   'detach',
   'drop',
   'insert',
+  'into',
   'pragma',
   'reindex',
   'replace',
@@ -39,8 +59,9 @@ export function validateReadOnlySql(sql: string, options: ReadOnlySqlValidationO
   if (!normalized) diagnostics.push('SQL is required.');
 
   const masked = maskSqlCommentsAndStrings(normalized);
+  const ast = parseReadOnlyAst(masked);
   if (hasChainedStatements(masked)) diagnostics.push('Only one SQL statement is allowed.');
-  if (!/^\s*(select|with)\b/i.test(masked)) diagnostics.push('Only SELECT or WITH SELECT statements are allowed.');
+  if (!ast) diagnostics.push('Only SELECT or WITH SELECT statements are allowed.');
 
   const forbidden = firstForbiddenToken(masked);
   if (forbidden) diagnostics.push(`Forbidden SQL operation: ${forbidden}.`);
@@ -49,10 +70,13 @@ export function validateReadOnlySql(sql: string, options: ReadOnlySqlValidationO
     return { ok: false, sql: '', diagnostics };
   }
 
+  const limits = appliedLimits(masked, options);
   return {
     ok: true,
-    sql: applyReadOnlyLimit(normalized, masked, options),
+    sql: applyReadOnlyLimit(normalized, masked, limits.maxRows),
     diagnostics: [],
+    ast: ast ?? undefined,
+    limits,
   };
 }
 
@@ -60,18 +84,47 @@ export function isReadOnlySql(sql: string): boolean {
   return validateReadOnlySql(sql).ok;
 }
 
-function applyReadOnlyLimit(sql: string, masked: string, options: ReadOnlySqlValidationOptions): string {
-  const defaultLimit = normalizeLimit(options.defaultLimit, DEFAULT_LIMIT);
-  const maxLimit = normalizeLimit(options.maxLimit, DEFAULT_MAX_LIMIT);
-  const limit = Math.min(defaultLimit, maxLimit);
+function applyReadOnlyLimit(sql: string, masked: string, limit: number): string {
   const lastLimit = lastLimitMatch(masked);
   if (!lastLimit) return `${sql} LIMIT ${limit}`;
 
   const requested = Number(lastLimit.value);
-  if (Number.isFinite(requested) && requested > maxLimit) {
-    return `${sql.slice(0, lastLimit.valueStart)}${maxLimit}${sql.slice(lastLimit.valueEnd)}`;
+  if (Number.isFinite(requested) && requested > limit) {
+    return `${sql.slice(0, lastLimit.valueStart)}${limit}${sql.slice(lastLimit.valueEnd)}`;
   }
   return sql;
+}
+
+function appliedLimits(masked: string, options: ReadOnlySqlValidationOptions): ReadOnlySqlAppliedLimits {
+  const defaultLimit = normalizeLimit(options.defaultLimit, DEFAULT_LIMIT);
+  const maxLimit = normalizeLimit(options.maxLimit, DEFAULT_MAX_LIMIT);
+  const requestedLimit = Number(lastLimitMatch(masked)?.value ?? NaN);
+  const boundedLimit = Math.min(
+    Number.isFinite(requestedLimit) ? requestedLimit : defaultLimit,
+    maxLimit,
+  );
+  return {
+    maxRows: Math.max(1, Math.floor(boundedLimit)),
+    maxBytes: normalizePositiveInteger(options.maxBytes, DEFAULT_MAX_BYTES, 16 * 1024 * 1024),
+    timeoutMs: normalizePositiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS, 60_000),
+  };
+}
+
+function parseReadOnlyAst(masked: string): ReadOnlySqlAst | null {
+  const tokens = tokenizeSql(masked);
+  const first = tokens[0]?.toLowerCase();
+  if (first === 'select') return { statementType: 'select', tokens };
+  if (first !== 'with') return null;
+  return tokens.some((token, index) => index > 0 && token.toLowerCase() === 'select')
+    ? { statementType: 'with-select', tokens }
+    : null;
+}
+
+function tokenizeSql(masked: string): string[] {
+  return masked
+    .split(/[^A-Za-z0-9_]+/g)
+    .map((token) => token.trim())
+    .filter(Boolean);
 }
 
 function lastLimitMatch(masked: string): { value: string; valueStart: number; valueEnd: number } | null {
@@ -93,6 +146,12 @@ function normalizeLimit(value: number | null | undefined, fallback: number): num
   const numeric = Math.floor(Number(value));
   if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
   return Math.max(1, Math.min(10_000, numeric));
+}
+
+function normalizePositiveInteger(value: number | null | undefined, fallback: number, max: number): number {
+  const numeric = Math.floor(Number(value));
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  return Math.max(1, Math.min(max, numeric));
 }
 
 function firstForbiddenToken(masked: string): string | null {

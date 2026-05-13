@@ -2,6 +2,7 @@ import {
   createLocalFlatSqlStore,
   type LocalFlatSqlPinLedgerEntry,
   type LocalFlatSqlPinLedgerQuery,
+  type LocalFlatSqlQueryOptions,
   type LocalFlatSqlStandardStats,
   type LocalFlatSqlStatsOptions,
   type LocalFlatSqlStore,
@@ -41,7 +42,7 @@ type WorkerRequest =
   | { id: number; type: 'ingestRecords'; standardId: string; records: RawDataRecord[]; sourceOrOptions?: unknown }
   | { id: number; type: 'ingestFlatBufferStream'; standardId: string; streamBytes: Uint8Array; options?: LocalFlatSqlStreamIngestOptions | null }
   | { id: number; type: 'flush'; standardId?: string }
-  | { id: number; type: 'query'; sql: string; standardId?: string }
+  | { id: number; type: 'query'; sql: string; standardId?: string; options?: LocalFlatSqlQueryOptions }
   | { id: number; type: 'getStats'; options?: LocalFlatSqlStatsOptions }
   | { id: number; type: 'recordPinLedgerEntries'; entries: LocalFlatSqlPinLedgerEntry[] }
   | { id: number; type: 'listPinLedgerEntries'; query?: LocalFlatSqlPinLedgerQuery }
@@ -112,7 +113,7 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
         return;
       }
       case 'query': {
-        const result = await requireStore().query(request.sql, request.standardId);
+        const result = await requireStore().query(request.sql, request.standardId, request.options);
         postSuccess(request.id, result);
         return;
       }
