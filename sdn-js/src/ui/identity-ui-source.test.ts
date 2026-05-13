@@ -297,6 +297,7 @@ describe('SDN data Svelte source', () => {
       'sourceName: configuredSourceNameFromSource(source)',
       'artifactPeerAddrsForDataSource(source)',
       'artifactPeerAddrsForObservedPeers(peers)',
+      'artifactPeerAddrsForTrustedPeers(trustedPeers)',
       'prioritizeIpfsArtifactPeerAddrs(',
       'clearLocalFlatSqlStore',
       'ingestDownloadedRecords',
@@ -358,6 +359,12 @@ describe('SDN data Svelte source', () => {
       'schemaName',
       'providerId',
       'sourceName',
+    ]);
+    const appSource = readUiSource('App.svelte');
+    expectSourceToContainAll(appSource, [
+      'let trustedPeers',
+      'backend.listTrustedPeers()',
+      '{trustedPeers}',
     ]);
     expect(source).not.toContain("type DataSubview = 'storage' | 'subscriptions' | 'explorer'");
     expect(source).not.toContain('DATA_SUBVIEWS');

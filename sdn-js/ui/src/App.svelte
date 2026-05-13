@@ -21,6 +21,7 @@
   let nodeState = 'loading';
   let nodeProfile: Record<string, unknown> | null = null;
   let peers: ObservedSdnPeer[] = [];
+  let trustedPeers: ObservedSdnPeer[] = [];
   let hostedEpms: HostedEpmRecord[] = [];
   let storageLabel = 'pending';
   let primaryRoute = '/node';
@@ -53,6 +54,11 @@
       peers = result.data ?? [];
     }).catch(() => {
       peers = [];
+    });
+    backend.listTrustedPeers().then((result) => {
+      trustedPeers = result.data ?? [];
+    }).catch(() => {
+      trustedPeers = [];
     });
     loadHostedEpms();
     backend.getStorageSummary().then((result) => {
@@ -106,6 +112,7 @@
     <LocalDataScreen
       {backend}
       {peers}
+      {trustedPeers}
       route={currentRoute}
     />
   {:else}
