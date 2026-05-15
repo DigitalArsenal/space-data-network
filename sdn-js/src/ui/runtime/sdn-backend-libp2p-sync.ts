@@ -76,6 +76,7 @@ export const LIBP2P_FLATSQL_SYNC_YAMUX_OPTIONS = {
   maxStreamWindowSize: 128 * 1024 * 1024,
   maxMessageSize: 1024 * 1024,
 };
+export const LIBP2P_FLATSQL_SYNC_MAX_OUTBOUND_STREAMS = 512;
 
 export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackendOptions): SdnBackend {
   const targetPeerId = options.targetPeerId.trim();
@@ -578,7 +579,10 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
         const stream = await withAbortableTimeout(
           `FlatSQL sync dial ${protocolId}`,
           requestTimeoutMs,
-          (signal) => libp2p.dialProtocol(peerIdFromString(targetPeerId), protocolId, { signal }),
+          (signal) => libp2p.dialProtocol(peerIdFromString(targetPeerId), protocolId, {
+            signal,
+            maxOutboundStreams: LIBP2P_FLATSQL_SYNC_MAX_OUTBOUND_STREAMS,
+          }),
         );
         return exchangeFlatSqlSyncStream(stream, payload, {
           timeoutMs: requestTimeoutMs,
@@ -592,7 +596,10 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
           const stream = await withAbortableTimeout(
             `FlatSQL sync dial ${protocolId}`,
             requestTimeoutMs,
-            (signal) => libp2p.dialProtocol(multiaddr(normalizeDialTarget(addr, targetPeerId)), protocolId, { signal }),
+            (signal) => libp2p.dialProtocol(multiaddr(normalizeDialTarget(addr, targetPeerId)), protocolId, {
+              signal,
+              maxOutboundStreams: LIBP2P_FLATSQL_SYNC_MAX_OUTBOUND_STREAMS,
+            }),
           );
           return await exchangeFlatSqlSyncStream(stream, payload, {
             timeoutMs: requestTimeoutMs,
