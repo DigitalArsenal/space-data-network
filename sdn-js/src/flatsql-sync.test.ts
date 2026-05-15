@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   FLATSQL_SYNC_PROTOCOL_ID,
@@ -7,6 +8,8 @@ import {
   encodeFlatSqlSyncRequest,
   requestFlatSqlSyncDatastores,
   requestFlatSqlWireSpeedProbe,
+  requestFlatSqlPublishedShardBatch,
+  requestFlatSqlPublishedShard,
   requestFlatSqlSyncChunk,
   requestFlatSqlSyncManifest,
   type FlatSqlSyncTransport,
@@ -286,6 +289,208 @@ describe('FlatSQL sync protocol client', () => {
       })],
     });
     expect(decodeFlatSqlSyncDatastores(response).results[0]?.key).toBe('sdn-ds-v1-history');
+  });
+
+  it('dials read_published_shard and returns raw FlatSQL shard bytes without record translation', async () => {
+    const shardBytes = flatSqlSizePrefixedStream([
+      new Uint8Array([1, 2, 3]),
+      new Uint8Array([4, 5]),
+    ]);
+    const response = concatJsonFrameAndRawBytes(
+      {
+        op: 'read_published_shard',
+        status: 'ok',
+        schema: 'OMM.fbs',
+        cid: 'bafkpublishedshard',
+        row_count: 2,
+        byte_count: shardBytes.byteLength,
+        shard_sha256: 'shard-sha',
+        query_profile: 'dataset-publication-offset-v1',
+        sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
+      },
+      shardBytes,
+    );
+    const calls: Array<{ peer: string; protocol: string; payload: Uint8Array; addrs?: string[] }> = [];
+    const transport: FlatSqlSyncTransport = {
+      async dialProtocol(targetPeerId, protocolId, payload, candidateAddrs) {
+        calls.push({ peer: targetPeerId, protocol: protocolId, payload, addrs: candidateAddrs });
+        return response;
+      },
+    };
+
+    const shard = await requestFlatSqlPublishedShard(transport, {
+      targetPeerId: '16Uiu2HTest',
+      candidateAddrs: ['/dns4/celestrak.eth/tcp/443/wss/p2p/16Uiu2HTest'],
+      schema: 'OMM.fbs',
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+      queryProfile: 'dataset-publication-offset-v1',
+      cid: 'bafkpublishedshard',
+    });
+
+    const requestLength = new DataView(calls[0]?.payload.buffer ?? new ArrayBuffer(0), calls[0]?.payload.byteOffset ?? 0, 4).getUint32(0, false);
+    const requestPayload = JSON.parse(decoder.decode(calls[0]?.payload.slice(4, 4 + requestLength))) as Record<string, unknown>;
+    expect(calls[0]).toMatchObject({
+      peer: '16Uiu2HTest',
+      protocol: FLATSQL_SYNC_PROTOCOL_ID,
+      addrs: ['/dns4/celestrak.eth/tcp/443/wss/p2p/16Uiu2HTest'],
+    });
+    expect(requestPayload).toMatchObject({
+      op: 'read_published_shard',
+      schema: 'OMM.fbs',
+      provider_id: 'space-data-network-02',
+      source_name: 'celestrak-gp',
+      query_profile: 'dataset-publication-offset-v1',
+      cid: 'bafkpublishedshard',
+    });
+    expect(shard.header).toMatchObject({
+      schema: 'OMM.fbs',
+      cid: 'bafkpublishedshard',
+      rowCount: 2,
+      byteCount: shardBytes.byteLength,
+      shardSha256: 'shard-sha',
+    });
+    expect(Array.from(shard.streamBytes)).toEqual(Array.from(shardBytes));
+  });
+
+  it('dials read_published_shard byte ranges for resumable raw shard transfer', async () => {
+    const shardBytes = new Uint8Array([4, 5, 6, 7, 8, 9]);
+    const response = concatJsonFrameAndRawBytes(
+      {
+        op: 'read_published_shard',
+        status: 'ok',
+        schema: 'OMM.fbs',
+        cid: 'bafkrangedpublishedshard',
+        row_count: 2,
+        byte_offset: 1024,
+        byte_length: shardBytes.byteLength,
+        byte_count: shardBytes.byteLength,
+        total_byte_count: 16_384,
+        query_profile: 'dataset-publication-offset-v1',
+        sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
+      },
+      shardBytes,
+    );
+    const calls: Array<{ payload: Uint8Array }> = [];
+    const transport: FlatSqlSyncTransport = {
+      async dialProtocol(_targetPeerId, _protocolId, payload) {
+        calls.push({ payload });
+        return response;
+      },
+    };
+
+    const shard = await requestFlatSqlPublishedShard(transport, {
+      targetPeerId: '16Uiu2HTest',
+      schema: 'OMM.fbs',
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+      queryProfile: 'dataset-publication-offset-v1',
+      cid: 'bafkrangedpublishedshard',
+      byteOffset: 1024,
+      byteLength: shardBytes.byteLength,
+    });
+
+    const requestLength = new DataView(calls[0]?.payload.buffer ?? new ArrayBuffer(0), calls[0]?.payload.byteOffset ?? 0, 4).getUint32(0, false);
+    const requestPayload = JSON.parse(decoder.decode(calls[0]?.payload.slice(4, 4 + requestLength))) as Record<string, unknown>;
+    expect(requestPayload).toMatchObject({
+      op: 'read_published_shard',
+      cid: 'bafkrangedpublishedshard',
+      byte_offset: 1024,
+      byte_length: shardBytes.byteLength,
+    });
+    expect(shard.header).toMatchObject({
+      cid: 'bafkrangedpublishedshard',
+      byteOffset: 1024,
+      byteLength: shardBytes.byteLength,
+      byteCount: shardBytes.byteLength,
+      totalByteCount: 16_384,
+    });
+    expect(Array.from(shard.streamBytes)).toEqual(Array.from(shardBytes));
+  });
+
+  it('uses views for published shard payloads so large FlatSQL shard bytes are not copied during decode', () => {
+    const source = readFileSync(new URL('./flatsql-sync.ts', import.meta.url), 'utf8');
+
+    expect(source).toContain('const streamBytes = bytes.subarray(first.nextOffset)');
+    expect(source).toContain('streamBytes: bytes.subarray(offset, nextOffset)');
+    expect(source).not.toContain('const streamBytes = bytes.slice(first.nextOffset)');
+    expect(source).not.toContain('streamBytes: bytes.slice(offset, nextOffset)');
+  });
+
+  it('dials read_published_shard_batch and splits concatenated raw FlatSQL shard bytes', async () => {
+    const firstShardBytes = flatSqlSizePrefixedStream([new Uint8Array([1, 2, 3])]);
+    const secondShardBytes = flatSqlSizePrefixedStream([new Uint8Array([4, 5])]);
+    const responsePayload = new Uint8Array(firstShardBytes.byteLength + secondShardBytes.byteLength);
+    responsePayload.set(firstShardBytes, 0);
+    responsePayload.set(secondShardBytes, firstShardBytes.byteLength);
+    const response = concatJsonFrameAndRawBytes(
+      {
+        op: 'read_published_shard_batch',
+        status: 'ok',
+        schema: 'OMM.fbs',
+        query_profile: 'dataset-publication-offset-v1',
+        sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
+        payload_format: 'concatenated-flatsql-size-prefixed-flatbuffers',
+        shards: [
+          {
+            op: 'read_published_shard',
+            status: 'ok',
+            schema: 'OMM.fbs',
+            cid: 'bafkfirst',
+            row_count: 1,
+            byte_count: firstShardBytes.byteLength,
+            shard_sha256: 'first-sha',
+            query_profile: 'dataset-publication-offset-v1',
+            sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
+          },
+          {
+            op: 'read_published_shard',
+            status: 'ok',
+            schema: 'OMM.fbs',
+            cid: 'bafksecond',
+            row_count: 1,
+            byte_count: secondShardBytes.byteLength,
+            shard_sha256: 'second-sha',
+            query_profile: 'dataset-publication-offset-v1',
+            sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
+          },
+        ],
+      },
+      responsePayload,
+    );
+    const calls: Array<{ peer: string; protocol: string; payload: Uint8Array; addrs?: string[] }> = [];
+    const transport: FlatSqlSyncTransport = {
+      async dialProtocol(targetPeerId, protocolId, payload, candidateAddrs) {
+        calls.push({ peer: targetPeerId, protocol: protocolId, payload, addrs: candidateAddrs });
+        return response;
+      },
+    };
+
+    const batch = await requestFlatSqlPublishedShardBatch(transport, {
+      targetPeerId: '16Uiu2HTest',
+      candidateAddrs: ['/dns4/celestrak.eth/tcp/443/wss/p2p/16Uiu2HTest'],
+      schema: 'OMM.fbs',
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+      queryProfile: 'dataset-publication-offset-v1',
+      cids: ['bafkfirst', 'bafksecond'],
+    });
+
+    const requestLength = new DataView(calls[0]?.payload.buffer ?? new ArrayBuffer(0), calls[0]?.payload.byteOffset ?? 0, 4).getUint32(0, false);
+    const requestPayload = JSON.parse(decoder.decode(calls[0]?.payload.slice(4, 4 + requestLength))) as Record<string, unknown>;
+    expect(requestPayload).toMatchObject({
+      op: 'read_published_shard_batch',
+      schema: 'OMM.fbs',
+      provider_id: 'space-data-network-02',
+      source_name: 'celestrak-gp',
+      query_profile: 'dataset-publication-offset-v1',
+      cids: ['bafkfirst', 'bafksecond'],
+    });
+    expect(batch.shards).toHaveLength(2);
+    expect(batch.shards[0]?.header).toMatchObject({ cid: 'bafkfirst', byteCount: firstShardBytes.byteLength });
+    expect(batch.shards[1]?.header).toMatchObject({ cid: 'bafksecond', byteCount: secondShardBytes.byteLength });
+    expect(Array.from(batch.shards[0]?.streamBytes ?? [])).toEqual(Array.from(firstShardBytes));
+    expect(Array.from(batch.shards[1]?.streamBytes ?? [])).toEqual(Array.from(secondShardBytes));
   });
 
   it('measures wire speed with a bounded FlatSQL sync protocol probe', async () => {

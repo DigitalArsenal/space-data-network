@@ -36,6 +36,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libsqlite3-0 \
+    wget \
   && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin sdn
@@ -48,7 +49,7 @@ COPY sdn-js/ui/dist/ /app/admin-ui/
 COPY webui/build/ /app/webui/
 COPY config/full-docker.yaml /app/config/full-docker.yaml
 
-RUN mkdir -p /app/data && chown -R sdn:sdn /app
+RUN mkdir -p /app/data /app/keys && chown -R sdn:sdn /app
 
 USER sdn
 

@@ -53,6 +53,33 @@ type legacyPublicationPlanRegistrationResult struct {
 	Records      int `json:"records"`
 }
 
+type datasetPublicationCARRebuildOptions struct {
+	StoragePath       string
+	IPFSAPIURL        string
+	OutputDir         string
+	Schema            string
+	ProviderID        string
+	SourceName        string
+	BatchID           string
+	QueryProfile      string
+	ProviderPeerID    string
+	ProviderPublicKey string
+	Force             bool
+}
+
+type datasetPublicationCARRebuildResult struct {
+	Schema       string `json:"schema"`
+	ProviderID   string `json:"provider_id,omitempty"`
+	SourceName   string `json:"source_name,omitempty"`
+	BatchID      string `json:"batch_id,omitempty"`
+	QueryProfile string `json:"query_profile"`
+	Publications int    `json:"publications"`
+	Records      int    `json:"records"`
+	Bundles      int    `json:"bundles"`
+	Bytes        int64  `json:"bytes"`
+	Head         string `json:"head,omitempty"`
+}
+
 var datasetPublicationsCmd = &cobra.Command{
 	Use:   "dataset-publications",
 	Short: "Register and inspect SDN dataset publication metadata",
@@ -64,11 +91,29 @@ var datasetPublicationsRegisterPlanCmd = &cobra.Command{
 	RunE:  runDatasetPublicationsRegisterPlan,
 }
 
+var datasetPublicationsRebuildShardCARsCmd = &cobra.Command{
+	Use:   "rebuild-shard-cars",
+	Short: "Rebuild IPFS CAR bundles for stored dataset shard publications",
+	RunE:  runDatasetPublicationsRebuildShardCARs,
+}
+
 var (
 	datasetPublicationPlanFile      string
 	datasetPublicationPlanStorage   string
 	datasetPublicationPlanIPFSAPI   string
 	datasetPublicationPlanOutputDir string
+
+	datasetPublicationCARStorage           string
+	datasetPublicationCARIPFSAPI           string
+	datasetPublicationCAROutputDir         string
+	datasetPublicationCARSchema            string
+	datasetPublicationCARProviderID        string
+	datasetPublicationCARSourceName        string
+	datasetPublicationCARBatchID           string
+	datasetPublicationCARQueryProfile      string
+	datasetPublicationCARProviderPeerID    string
+	datasetPublicationCARProviderPublicKey string
+	datasetPublicationCARForce             bool
 )
 
 func init() {
@@ -78,6 +123,20 @@ func init() {
 	datasetPublicationsRegisterPlanCmd.Flags().StringVar(&datasetPublicationPlanOutputDir, "publication-output-dir", "", "signed manifest output directory (default: <storage-parent>/dataset-publications/registered-plans)")
 	_ = datasetPublicationsRegisterPlanCmd.MarkFlagRequired("plan-file")
 	datasetPublicationsCmd.AddCommand(datasetPublicationsRegisterPlanCmd)
+
+	datasetPublicationsRebuildShardCARsCmd.Flags().StringVar(&datasetPublicationCARStorage, "storage-path", "", "override SDN storage path (defaults to config.storage.path)")
+	datasetPublicationsRebuildShardCARsCmd.Flags().StringVar(&datasetPublicationCARIPFSAPI, "ipfs-api-url", "", "Kubo RPC API URL for exporting shard DAGs and publishing CAR bundles (defaults to config admin.ipfs_api_url or SDN_IPFS_API_URL)")
+	datasetPublicationsRebuildShardCARsCmd.Flags().StringVar(&datasetPublicationCAROutputDir, "publication-output-dir", "", "CAR output directory (default: <storage-parent>/dataset-publications/rebuilt-shard-cars)")
+	datasetPublicationsRebuildShardCARsCmd.Flags().StringVar(&datasetPublicationCARSchema, "schema", "", "dataset schema to rebuild, e.g. OMM.fbs")
+	datasetPublicationsRebuildShardCARsCmd.Flags().StringVar(&datasetPublicationCARProviderID, "provider-id", "", "filter by provider id")
+	datasetPublicationsRebuildShardCARsCmd.Flags().StringVar(&datasetPublicationCARSourceName, "source-name", "", "filter by source name")
+	datasetPublicationsRebuildShardCARsCmd.Flags().StringVar(&datasetPublicationCARBatchID, "batch-id", "", "filter by batch id")
+	datasetPublicationsRebuildShardCARsCmd.Flags().StringVar(&datasetPublicationCARQueryProfile, "query-profile", storage.DatasetPublicationQueryProfile, "dataset publication query profile")
+	datasetPublicationsRebuildShardCARsCmd.Flags().StringVar(&datasetPublicationCARProviderPeerID, "provider-peer-id", "", "provider peer ID to record on CAR bundle pins")
+	datasetPublicationsRebuildShardCARsCmd.Flags().StringVar(&datasetPublicationCARProviderPublicKey, "provider-public-key", "", "provider public key to record on CAR bundle pins")
+	datasetPublicationsRebuildShardCARsCmd.Flags().BoolVar(&datasetPublicationCARForce, "force", false, "mark existing verified CAR bundle pins stale before rebuilding")
+	_ = datasetPublicationsRebuildShardCARsCmd.MarkFlagRequired("schema")
+	datasetPublicationsCmd.AddCommand(datasetPublicationsRebuildShardCARsCmd)
 	rootCmd.AddCommand(datasetPublicationsCmd)
 }
 
@@ -87,6 +146,28 @@ func runDatasetPublicationsRegisterPlan(cmd *cobra.Command, args []string) error
 		StoragePath: datasetPublicationPlanStorage,
 		IPFSAPIURL:  datasetPublicationPlanIPFSAPI,
 		OutputDir:   datasetPublicationPlanOutputDir,
+	})
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
+}
+
+func runDatasetPublicationsRebuildShardCARs(cmd *cobra.Command, args []string) error {
+	result, err := rebuildDatasetPublicationShardGroupCARBundles(context.Background(), datasetPublicationCARRebuildOptions{
+		StoragePath:       datasetPublicationCARStorage,
+		IPFSAPIURL:        datasetPublicationCARIPFSAPI,
+		OutputDir:         datasetPublicationCAROutputDir,
+		Schema:            datasetPublicationCARSchema,
+		ProviderID:        datasetPublicationCARProviderID,
+		SourceName:        datasetPublicationCARSourceName,
+		BatchID:           datasetPublicationCARBatchID,
+		QueryProfile:      datasetPublicationCARQueryProfile,
+		ProviderPeerID:    datasetPublicationCARProviderPeerID,
+		ProviderPublicKey: datasetPublicationCARProviderPublicKey,
+		Force:             datasetPublicationCARForce,
 	})
 	if err != nil {
 		return err
@@ -323,6 +404,218 @@ func registerLegacyPublicationPlan(ctx context.Context, options legacyPublicatio
 	return result, nil
 }
 
+func rebuildDatasetPublicationShardGroupCARBundles(ctx context.Context, options datasetPublicationCARRebuildOptions) (*datasetPublicationCARRebuildResult, error) {
+	cfg, err := config.Load(configPath)
+	if err != nil && strings.TrimSpace(options.StoragePath) == "" {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+	storagePath := strings.TrimSpace(options.StoragePath)
+	if storagePath == "" && cfg != nil {
+		storagePath = strings.TrimSpace(cfg.Storage.Path)
+	}
+	if storagePath == "" {
+		return nil, fmt.Errorf("storage path is required")
+	}
+	ipfsAPIURL := strings.TrimSpace(options.IPFSAPIURL)
+	if ipfsAPIURL == "" && cfg != nil {
+		ipfsAPIURL = strings.TrimSpace(cfg.Admin.IPFSAPIURL)
+	}
+	if ipfsAPIURL == "" {
+		ipfsAPIURL = strings.TrimSpace(os.Getenv("SDN_IPFS_API_URL"))
+	}
+	if ipfsAPIURL == "" {
+		return nil, fmt.Errorf("ipfs api url is required")
+	}
+	outputDir := strings.TrimSpace(options.OutputDir)
+	if outputDir == "" {
+		outputDir = filepath.Join(filepath.Dir(storagePath), "dataset-publications", "rebuilt-shard-cars")
+	}
+	schema := strings.TrimSpace(options.Schema)
+	if schema == "" {
+		return nil, fmt.Errorf("schema is required")
+	}
+	queryProfile := strings.TrimSpace(options.QueryProfile)
+	if queryProfile == "" {
+		queryProfile = storage.DatasetPublicationQueryProfile
+	}
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize schema validator: %w", err)
+	}
+	store, err := storage.NewFlatSQLStore(storagePath, validator)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open storage: %w", err)
+	}
+	defer store.Close()
+
+	query := storage.DatasetShardPublicationQuery{
+		SchemaName:   schema,
+		ProviderID:   strings.TrimSpace(options.ProviderID),
+		SourceName:   strings.TrimSpace(options.SourceName),
+		BatchID:      strings.TrimSpace(options.BatchID),
+		QueryProfile: queryProfile,
+	}
+	publications, err := store.ListDatasetShardPublications(query)
+	if err != nil {
+		return nil, fmt.Errorf("load stored dataset shard publications: %w", err)
+	}
+	if len(publications) == 0 {
+		return nil, fmt.Errorf("no stored dataset shard publications found for %s", schema)
+	}
+	if options.Force {
+		if err := markShardGroupCARsStale(store, query, nil); err != nil {
+			return nil, err
+		}
+	}
+	if err := recordRegisteredShardGroupCARBundle(ctx, store, ipfsAPIURL, outputDir, publications, strings.TrimSpace(options.ProviderPeerID), strings.TrimSpace(options.ProviderPublicKey)); err != nil {
+		return nil, err
+	}
+
+	head, _, records, sourceBytes := datasetPublicationAggregate(publications)
+	current, err := currentShardGroupCARBundles(store, query, head)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyShardGroupCARCoverage(current, len(publications), records); err != nil {
+		return nil, err
+	}
+	keep := make(map[string]bool, len(current))
+	var carBytes int64
+	for _, entry := range current {
+		keep[entry.CID] = true
+		carBytes += entry.ByteCount
+	}
+	if err := markShardGroupCARsStale(store, query, keep); err != nil {
+		return nil, err
+	}
+	return &datasetPublicationCARRebuildResult{
+		Schema:       schema,
+		ProviderID:   query.ProviderID,
+		SourceName:   query.SourceName,
+		BatchID:      query.BatchID,
+		QueryProfile: query.QueryProfile,
+		Publications: len(publications),
+		Records:      int(records),
+		Bundles:      len(current),
+		Bytes:        firstPositiveInt64(carBytes, sourceBytes),
+		Head:         head,
+	}, nil
+}
+
+func datasetPublicationAggregate(publications []storage.DatasetShardPublication) (string, string, int64, int64) {
+	if len(publications) == 0 {
+		return "", "", 0, 0
+	}
+	sort.Slice(publications, func(i, j int) bool {
+		if publications[i].FeedSequence != publications[j].FeedSequence {
+			return publications[i].FeedSequence < publications[j].FeedSequence
+		}
+		return publications[i].Offset < publications[j].Offset
+	})
+	first := publications[0]
+	last := publications[len(publications)-1]
+	head := last.FeedHead
+	if head == "" {
+		head = datasync.PublishedFeedHead(first.SchemaName, first.ProviderID, first.SourceName, first.BatchID, first.QueryProfile, publications)
+	}
+	var totalRows int64
+	var totalBytes int64
+	for _, publication := range publications {
+		totalRows += int64(publication.RecordCount)
+		totalBytes += publication.ByteCount
+	}
+	return head, datasync.PublishedFeedHighWaterMark(publications, totalRows, totalBytes), totalRows, totalBytes
+}
+
+func currentShardGroupCARBundles(store *storage.FlatSQLStore, query storage.DatasetShardPublicationQuery, head string) ([]storage.PinLedgerEntry, error) {
+	entries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		SchemaName:        query.SchemaName,
+		ProviderID:        query.ProviderID,
+		SourceName:        query.SourceName,
+		BatchID:           query.BatchID,
+		QueryProfile:      query.QueryProfile,
+		Role:              "shard-group-car",
+		VerificationState: "verified",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list rebuilt shard-group CAR bundle pins: %w", err)
+	}
+	current := make([]storage.PinLedgerEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.CID == "" || entry.ByteHash == "" || entry.ByteCount <= 0 || entry.SegmentCount <= 0 {
+			continue
+		}
+		if entry.Head == head || entry.SnapshotID == head {
+			current = append(current, entry)
+		}
+	}
+	sort.Slice(current, func(i, j int) bool {
+		if current[i].SegmentStart != current[j].SegmentStart {
+			return current[i].SegmentStart < current[j].SegmentStart
+		}
+		return current[i].CID < current[j].CID
+	})
+	return current, nil
+}
+
+func verifyShardGroupCARCoverage(entries []storage.PinLedgerEntry, segmentCount int, totalRows int64) error {
+	if segmentCount <= 0 {
+		return fmt.Errorf("segment count must be positive")
+	}
+	covered := make([]bool, segmentCount)
+	var coveredRows int64
+	for _, entry := range entries {
+		if entry.SegmentStart < 0 || entry.SegmentStart >= segmentCount || entry.SegmentCount <= 0 {
+			continue
+		}
+		end := entry.SegmentStart + entry.SegmentCount
+		if end > segmentCount {
+			end = segmentCount
+		}
+		for index := entry.SegmentStart; index < end; index++ {
+			covered[index] = true
+		}
+		coveredRows += entry.RowCount
+	}
+	for index, ok := range covered {
+		if !ok {
+			return fmt.Errorf("rebuilt shard-group CAR bundles do not cover segment %d of %d", index, segmentCount)
+		}
+	}
+	if totalRows > 0 && coveredRows < totalRows {
+		return fmt.Errorf("rebuilt shard-group CAR bundles cover %d rows, want at least %d", coveredRows, totalRows)
+	}
+	return nil
+}
+
+func markShardGroupCARsStale(store *storage.FlatSQLStore, query storage.DatasetShardPublicationQuery, keep map[string]bool) error {
+	entries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		SchemaName:        query.SchemaName,
+		ProviderID:        query.ProviderID,
+		SourceName:        query.SourceName,
+		BatchID:           query.BatchID,
+		QueryProfile:      query.QueryProfile,
+		Role:              "shard-group-car",
+		VerificationState: "verified",
+	})
+	if err != nil {
+		return fmt.Errorf("list superseded shard-group CAR bundle pins: %w", err)
+	}
+	now := time.Now().UTC()
+	for _, entry := range entries {
+		if keep != nil && keep[entry.CID] {
+			continue
+		}
+		entry.VerificationState = "stale"
+		entry.UpdatedAt = now
+		if err := store.UpsertPinLedgerEntry(entry); err != nil {
+			return fmt.Errorf("mark superseded shard-group CAR %s stale: %w", entry.CID, err)
+		}
+	}
+	return nil
+}
+
 func legacyPublicationGroupKey(pub storage.DatasetShardPublication) string {
 	return strings.Join([]string{pub.SchemaName, pub.ProviderID, pub.SourceName, pub.BatchID, pub.QueryProfile}, "\x00")
 }
@@ -383,18 +676,16 @@ func recordRegisteredShardGroupCARBundle(ctx context.Context, store *storage.Fla
 	highWaterMark := datasync.PublishedFeedHighWaterMark(publications, totalRows, totalBytes)
 	carOutputDir := filepath.Join(outputDir, legacyPublicationSafePathComponent(first.SchemaName), "car")
 	groups := storage.DatasetShardPublicationCARGroups(publications, storage.DefaultShardGroupCARMaxSourceBytes)
+	segmentStart := 0
 	for _, group := range groups {
-		rootCIDs := make([]string, 0, len(group)*3)
+		groupSegmentStart := segmentStart
+		groupSegmentCount := len(group)
+		segmentStart += groupSegmentCount
+		rootCIDs := make([]string, 0, len(group))
 		var groupRows int64
 		for _, publication := range group {
 			if publication.ShardCID != "" {
 				rootCIDs = append(rootCIDs, publication.ShardCID)
-			}
-			if publication.IndexCID != "" {
-				rootCIDs = append(rootCIDs, publication.IndexCID)
-			}
-			if publication.ManifestCID != "" {
-				rootCIDs = append(rootCIDs, publication.ManifestCID)
 			}
 			groupRows += int64(publication.RecordCount)
 		}
@@ -416,6 +707,8 @@ func recordRegisteredShardGroupCARBundle(ctx context.Context, store *storage.Fla
 			HighWaterMark:     highWaterMark,
 			ByteHash:          publishedCAR.SHA256,
 			Role:              "shard-group-car",
+			SegmentStart:      groupSegmentStart,
+			SegmentCount:      groupSegmentCount,
 			RowCount:          groupRows,
 			ByteCount:         publishedCAR.ByteCount,
 			VerificationState: "verified",
@@ -532,4 +825,13 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstPositiveInt64(values ...int64) int64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }

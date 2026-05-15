@@ -11,6 +11,19 @@ test.describe('SDN dashboard window', () => {
     expect(source).toContain('loadIntroPage')
   })
 
+  test('keeps SDN desktop shell surfaces draggable', () => {
+    const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/dashboard/index.js'), 'utf8')
+    const webuiSource = fs.readFileSync(path.join(__dirname, '../../src/webui/index.js'), 'utf8')
+    const intro = fs.readFileSync(path.join(__dirname, '../../assets/pages/sdn-intro.html'), 'utf8')
+
+    expect(dashboardSource).toContain('frame: false')
+    expect(webuiSource).toContain('frame: false')
+    expect(dashboardSource).toContain("titleBarStyle: 'hiddenInset'")
+    expect(webuiSource).toContain("titleBarStyle: 'hiddenInset'")
+    expect(intro).toContain('-webkit-app-region: drag')
+    expect(intro).toContain('-webkit-app-region: no-drag')
+  })
+
   test('uses IPFS-style square, regular-weight intro buttons with the canonical SDN domain', () => {
     const intro = fs.readFileSync(path.join(__dirname, '../../assets/pages/sdn-intro.html'), 'utf8')
     const linkRule = intro.match(/\n {4}a \{[\s\S]*?\n {4}\}/)?.[0] || ''

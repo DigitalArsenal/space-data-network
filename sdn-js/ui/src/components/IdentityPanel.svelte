@@ -4,7 +4,7 @@
 
   type HostedEpmKind = 'node-self' | 'hosted';
   type CapabilityState = 'available' | 'degraded' | 'unavailable' | 'permission-required' | 'remote-only' | 'local-only';
-  type IdentityView = 'profile' | 'edit-profile' | 'hosted-epms' | 'keys-import' | 'security' | 'downloads';
+  type IdentityView = 'profile' | 'edit-profile' | 'hosted-epms' | 'keys-import' | 'security' | 'downloads' | 'settings';
 
   interface BackendCapability {
     id: string;
@@ -24,6 +24,12 @@
     agentVersion: string | null;
     online: boolean;
     runtime: string;
+  }
+
+  interface NodeIdentitySettings {
+    ttlMs: number | 'app';
+    flatbufferStoragePath?: string;
+    updatedAt?: string;
   }
 
   interface HostedEpmRecord {
@@ -47,6 +53,8 @@
     listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>>;
     exportCore(): Promise<BackendResult<Record<string, unknown>>>;
     importCore(core: Record<string, unknown>): Promise<BackendResult<Record<string, unknown>>>;
+    saveNodeIdentitySettings(settings: NodeIdentitySettings): Promise<BackendResult<NodeIdentitySettings>>;
+    selectFlatbufferStorageLocation(currentPath?: string | null): Promise<BackendResult<{ canceled: boolean; path: string | null }>>;
     saveNodeAccessUser(user: { xpub: string; name?: string; trustLevel: string; signingPubKeyHex?: string }): Promise<BackendResult<Record<string, unknown>>>;
   }
 
@@ -73,6 +81,9 @@
   export let profile: Record<string, unknown> | null = null;
   export let hostedEpms: HostedEpmRecord[] = [];
   export let onReload: () => void | Promise<void> = () => {};
+  export let nodeIdentityLocked = false;
+  export let nodeIdentitySettings: NodeIdentitySettings = { ttlMs: 3600000 };
+  export let onNodeIdentitySettingsSave: (settings: NodeIdentitySettings) => void | Promise<void> = () => {};
 
   const identityRuntimeModules = import.meta.glob('../../../src/ui/runtime/identity.ts');
   const walletRuntimeModules = import.meta.glob('../../../src/ui/runtime/wallet-ui.ts');
@@ -87,15 +98,6 @@
     { key: 'entity_type', label: 'Entity type', placeholder: 'person, organization, node' },
   ] as const;
 
-  const viewTitles: Record<IdentityView, string> = {
-    profile: 'Node Profile',
-    'edit-profile': 'Edit Profile',
-    'hosted-epms': 'Local Users',
-    'keys-import': 'Keys / Import',
-    security: 'Security',
-    downloads: 'Downloads',
-  };
-
   let view: IdentityView = 'profile';
   let selectedId = '';
   let draftId = '';
@@ -108,6 +110,7 @@
   let walletState = '';
   let coreState = '';
   let securityState = '';
+  let settingsState = '';
   let qrDataUrl = '';
   let qrState = '';
   let qrPayloadKey = '';
@@ -122,6 +125,10 @@
   let keygenPassword = '';
   let passphraseInput = '';
   let grantPublicKey = '';
+  let unlockDurationValue = '3600000';
+  let unlockDurationSourceKey = '';
+  let flatbufferStoragePathValue = '';
+  let flatbufferStoragePathSourceKey = '';
 
   $: if (!selectedId && hostedEpms.length > 0) {
     selectedId = hostedEpms[0].id;
@@ -137,6 +144,7 @@
   $: void updateVCardPayload(profileRecord);
   $: void renderQr(vcardPayload);
   $: fallbackNodeIdentity = summary?.peerId ?? stringValue(profile?.peer_id) ?? stringValue(profile?.PeerID) ?? 'pending';
+  $: syncUnlockDurationFromSettings(nodeIdentitySettings);
 
   onDestroy(() => {
     void mountedWallet?.destroy?.();
@@ -455,6 +463,76 @@
     } catch (error) {
       securityState = errorMessage(error);
     }
+  }
+
+  async function saveNodeIdentitySettings(): Promise<void> {
+    if (!backend) {
+      settingsState = 'Backend unavailable.';
+      return;
+    }
+    const ttlMs = unlockDurationValue === 'app' ? 'app' : Number(unlockDurationValue);
+    const nextSettings: NodeIdentitySettings = {
+      ttlMs: ttlMs === 'app' ? 'app' : Math.max(60_000, ttlMs),
+      flatbufferStoragePath: flatbufferStoragePathValue.trim(),
+    };
+    settingsState = 'Saving...';
+    try {
+      const result = await backend.saveNodeIdentitySettings(nextSettings);
+      if (!result.ok || !result.data) {
+        settingsState = result.capability.reason ?? 'Unlock duration save failed.';
+        return;
+      }
+      await onNodeIdentitySettingsSave(result.data);
+      settingsState = '';
+    } catch (error) {
+      settingsState = errorMessage(error);
+    }
+  }
+
+  function syncUnlockDurationFromSettings(settings: NodeIdentitySettings): void {
+    const key = String(settings.ttlMs ?? 3600000);
+    if (key === unlockDurationSourceKey) return;
+    unlockDurationSourceKey = key;
+    unlockDurationValue = key;
+  }
+
+  $: syncFlatbufferStoragePathFromSettings(nodeIdentitySettings);
+
+  function syncFlatbufferStoragePathFromSettings(settings: NodeIdentitySettings): void {
+    const key = String(settings.flatbufferStoragePath ?? '');
+    if (key === flatbufferStoragePathSourceKey) return;
+    flatbufferStoragePathSourceKey = key;
+    flatbufferStoragePathValue = key;
+  }
+
+  async function browseFlatbufferStorageLocation(): Promise<void> {
+    if (!backend) {
+      settingsState = 'Backend unavailable.';
+      return;
+    }
+    settingsState = 'Opening directory picker...';
+    try {
+      const result = await backend.selectFlatbufferStorageLocation(flatbufferStoragePathValue || nodeIdentitySettings.flatbufferStoragePath || null);
+      if (!result.ok || !result.data) {
+        settingsState = result.capability.reason ?? 'Directory picker unavailable.';
+        return;
+      }
+      if (result.data.canceled) {
+        settingsState = '';
+        return;
+      }
+      if (result.data.path) {
+        flatbufferStoragePathValue = result.data.path;
+      }
+      settingsState = '';
+    } catch (error) {
+      settingsState = errorMessage(error);
+    }
+  }
+
+  function resetFlatbufferStorageLocation(): void {
+    flatbufferStoragePathValue = '';
+    settingsState = '';
   }
 
   function securityGrantFromUploadedIdentity(filename: string, bytes: Uint8Array, text: string): { publicKey: string; name: string; signingPubKeyHex: string } {
@@ -854,18 +932,14 @@
 </script>
 
 <section class="sdn-identity-workspace">
-  <nav class="sdn-breadcrumbs" aria-label="Identity breadcrumbs">
-    <button type="button" on:click={() => setView('profile')}>Identity /</button>
-    <span>{viewTitles[view]}</span>
+  <nav class="sdn-view-nav sdn-breadcrumb-tabs" aria-label="Identity sections">
+    <button type="button" class:active={view === 'profile'} aria-current={view === 'profile' ? 'page' : undefined} on:click={() => setView('profile')}>Node Profile</button>
+    <button type="button" class:active={view === 'hosted-epms'} aria-current={view === 'hosted-epms' ? 'page' : undefined} on:click={() => setView('hosted-epms')}>Local Users</button>
+    <button type="button" class:active={view === 'keys-import'} aria-current={view === 'keys-import' ? 'page' : undefined} on:click={() => setView('keys-import')}>Keys / Import</button>
+    <button type="button" class:active={view === 'security'} aria-current={view === 'security' ? 'page' : undefined} on:click={() => setView('security')}>Security</button>
+    <button type="button" class:active={view === 'downloads'} aria-current={view === 'downloads' ? 'page' : undefined} on:click={() => setView('downloads')}>Downloads</button>
+    <button type="button" class:active={view === 'settings'} aria-current={view === 'settings' ? 'page' : undefined} on:click={() => setView('settings')}>Settings</button>
   </nav>
-
-  <div class="sdn-view-nav" aria-label="Identity sections">
-    <button type="button" class:active={view === 'profile'} on:click={() => setView('profile')}>Node Profile</button>
-    <button type="button" class:active={view === 'hosted-epms'} on:click={() => setView('hosted-epms')}>Local Users</button>
-    <button type="button" class:active={view === 'keys-import'} on:click={() => setView('keys-import')}>Keys / Import</button>
-    <button type="button" class:active={view === 'security'} on:click={() => setView('security')}>Security</button>
-    <button type="button" class:active={view === 'downloads'} on:click={() => setView('downloads')}>Downloads</button>
-  </div>
 
   {#if view === 'profile'}
     <article class="sdn-card sdn-glass sdn-profile-home">
@@ -884,11 +958,7 @@
         </dl>
 
         <div class="sdn-action-grid">
-          <button class="sdn-button" type="button" on:click={() => setView('edit-profile')}>Edit Profile</button>
-          <button class="sdn-button" type="button" on:click={() => setView('hosted-epms')}>Local Users</button>
-          <button class="sdn-button" type="button" on:click={() => setView('keys-import')}>Keys / Import</button>
-          <button class="sdn-button" type="button" on:click={() => setView('security')}>Security</button>
-          <button class="sdn-button" type="button" on:click={() => setView('downloads')}>Downloads</button>
+          <button class="sdn-button" type="button" on:click={() => setView('edit-profile')} disabled={nodeIdentityLocked || !backend}>Edit Profile</button>
         </div>
       </div>
 
@@ -933,7 +1003,7 @@
       </div>
 
       <div class="sdn-toolbar sdn-section-toolbar">
-        <button class="sdn-button" type="button" on:click={saveProfile} disabled={!backend}>Save public profile</button>
+        <button class="sdn-button" type="button" on:click={saveProfile} disabled={nodeIdentityLocked || !backend}>Save public profile</button>
         <button class="sdn-button sdn-button-muted" type="button" on:click={() => setView('profile')}>Cancel</button>
       </div>
       {#if saveState}
@@ -1077,6 +1147,46 @@
         <p class="sdn-status-line">{downloadState}</p>
       {/if}
       <pre class="sdn-public-json">{publicJson}</pre>
+    </article>
+  {:else if view === 'settings'}
+    <article class="sdn-card sdn-glass">
+      <div class="sdn-card-head">
+        <div>
+          <h2>Settings</h2>
+        </div>
+      </div>
+
+      <label class="sdn-field sdn-unlock-duration">
+        <span>Unlock duration</span>
+        <select class="sdn-input sdn-select" bind:value={unlockDurationValue}>
+          <option value="900000">15 minutes</option>
+          <option value="3600000">1 hour</option>
+          <option value="28800000">8 hours</option>
+          <option value="app">Until app closes</option>
+        </select>
+      </label>
+
+      <label class="sdn-field sdn-flatbuffer-storage-location">
+        <span>FlatBuffer data storage location</span>
+        <div class="sdn-path-input-row">
+          <input
+            class="sdn-input"
+            type="text"
+            bind:value={flatbufferStoragePathValue}
+            placeholder="Use default FlatBuffer data path"
+            autocomplete="off"
+          />
+          <button class="sdn-button" type="button" on:click={browseFlatbufferStorageLocation} disabled={nodeIdentityLocked || !backend}>Browse</button>
+          <button class="sdn-button sdn-button-muted" type="button" on:click={resetFlatbufferStorageLocation} disabled={nodeIdentityLocked}>Use default</button>
+        </div>
+      </label>
+
+      <div class="sdn-toolbar sdn-section-toolbar">
+        <button class="sdn-button" type="button" on:click={saveNodeIdentitySettings} disabled={nodeIdentityLocked || !backend}>Save settings</button>
+      </div>
+      {#if settingsState}
+        <p class="sdn-status-line">{settingsState}</p>
+      {/if}
     </article>
   {/if}
 </section>

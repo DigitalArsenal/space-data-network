@@ -580,6 +580,12 @@ func (b *CATBuilder) WithOrbitalParams(period, inclination, apogee, perigee floa
 	return b
 }
 
+// WithRCS sets the radar cross section in square meters.
+func (b *CATBuilder) WithRCS(rcs float64) *CATBuilder {
+	b.rcs = rcs
+	return b
+}
+
 // WithManeuverable sets the maneuverable flag.
 func (b *CATBuilder) WithManeuverable(m bool) *CATBuilder {
 	b.maneuverable = m

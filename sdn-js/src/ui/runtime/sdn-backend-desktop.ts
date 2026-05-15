@@ -9,9 +9,12 @@ import {
   type BackendResult,
   type DataScanResult,
   type DataSummary,
+  type FlatbufferStorageLocationSelection,
   type LocalObjectSummary,
   type NodeAccessUser,
   type NodeAccessUserInput,
+  type NodeIdentityApplyResult,
+  type NodeIdentitySettings,
   type NodeSummary,
   type ObservedSdnPeer,
   type PartialSdnBackendConfig,
@@ -21,6 +24,9 @@ import {
   type RawDataStreamRequest,
   type SdnBackend,
   type StorageSummary,
+  type WalletNodeIdentityApplyOptions,
+  type WalletNodeIdentityPayload,
+  type WalletStorageSnapshot,
 } from './sdn-backend';
 import {
   getBytes,
@@ -123,6 +129,98 @@ export function createDesktopLocalBackend(options: DesktopLocalBackendOptions = 
       } catch (error) {
         return createDegradedResult('saveNodeProfile', error instanceof Error ? error.message : String(error));
       }
+    },
+    async getNodeIdentitySettings(): Promise<BackendResult<NodeIdentitySettings>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/node/identity/settings'),
+        'getNodeIdentitySettings',
+      );
+      if (!result.ok) return result as BackendResult<NodeIdentitySettings>;
+      return createAvailableResult('getNodeIdentitySettings', normalizeNodeIdentitySettings(result.data));
+    },
+    async saveNodeIdentitySettings(settings: NodeIdentitySettings): Promise<BackendResult<NodeIdentitySettings>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/node/identity/settings'),
+        'saveNodeIdentitySettings',
+        {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(nodeIdentitySettingsPayload(settings)),
+        },
+      );
+      if (!result.ok) return result as BackendResult<NodeIdentitySettings>;
+      return createAvailableResult('saveNodeIdentitySettings', normalizeNodeIdentitySettings(result.data));
+    },
+    async selectFlatbufferStorageLocation(currentPath?: string | null): Promise<BackendResult<FlatbufferStorageLocationSelection>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/node/identity/settings/flatbuffer-storage-location'),
+        'selectFlatbufferStorageLocation',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(currentPath ? { current_path: currentPath } : {}),
+        },
+      );
+      if (!result.ok) return result as BackendResult<FlatbufferStorageLocationSelection>;
+      return createAvailableResult('selectFlatbufferStorageLocation', normalizeFlatbufferStorageLocationSelection(result.data));
+    },
+    async applyWalletNodeIdentity(
+      payload: WalletNodeIdentityPayload,
+      options: WalletNodeIdentityApplyOptions = {},
+    ): Promise<BackendResult<NodeIdentityApplyResult>> {
+      const url = joinUrl(desktopBase, '/api/node/identity/wallet');
+      try {
+        const response = await fetchLike(url, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            replace: Boolean(options.replace),
+            wallet_identity: walletNodeIdentityPayload(payload),
+          }),
+        });
+        const body = await response.json().catch(() => null);
+        if (response.ok || (response.status === 409 && isRecord(body) && body.status === 'mismatch')) {
+          return createAvailableResult('applyWalletNodeIdentity', normalizeNodeIdentityApplyResult(body));
+        }
+        return createDegradedResult('applyWalletNodeIdentity', `${url} returned HTTP ${response.status}`);
+      } catch (error) {
+        return createDegradedResult('applyWalletNodeIdentity', error instanceof Error ? error.message : String(error));
+      }
+    },
+    async logoutNodeIdentity(): Promise<BackendResult<Record<string, unknown>>> {
+      const result = await getJson<Record<string, unknown>>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/node/identity/session'),
+        'logoutNodeIdentity',
+        { method: 'DELETE' },
+      );
+      return result.ok ? createAvailableResult('logoutNodeIdentity', result.data ?? { ok: true }) : result;
+    },
+    async getWalletStorage(): Promise<BackendResult<WalletStorageSnapshot>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/node/identity/wallet-storage'),
+        'getWalletStorage',
+      );
+      if (!result.ok) return result as BackendResult<WalletStorageSnapshot>;
+      return createAvailableResult('getWalletStorage', normalizeWalletStorageSnapshot(result.data));
+    },
+    async saveWalletStorage(entries: Record<string, string | null>): Promise<BackendResult<WalletStorageSnapshot>> {
+      const result = await getJson<unknown>(
+        fetchLike,
+        joinUrl(desktopBase, '/api/node/identity/wallet-storage'),
+        'saveWalletStorage',
+        {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ entries }),
+        },
+      );
+      if (!result.ok) return result as BackendResult<WalletStorageSnapshot>;
+      return createAvailableResult('saveWalletStorage', normalizeWalletStorageSnapshot(result.data));
     },
     async listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>> {
       const epm = await getNodeProfile();
@@ -463,6 +561,99 @@ function rawDataQueryPayload(query: RawDataQuery): Record<string, unknown> {
     ...(query.syncFilter ? { sync_filter: query.syncFilter } : {}),
     ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
     ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
+  };
+}
+
+function normalizeNodeIdentitySettings(value: unknown): NodeIdentitySettings {
+  const record = isRecord(value) ? value : {};
+  const rawTtl = record.ttl_ms ?? record.ttlMs;
+  const rawFlatbufferStoragePath = record.flatbuffer_storage_path ?? record.flatbufferStoragePath;
+  const ttlMs = rawTtl === 'app'
+    ? 'app'
+    : Number.isFinite(Number(rawTtl)) && Number(rawTtl) > 0
+      ? Number(rawTtl)
+      : 3_600_000;
+  return {
+    ttlMs,
+    flatbufferStoragePath: typeof rawFlatbufferStoragePath === 'string' && rawFlatbufferStoragePath.trim()
+      ? rawFlatbufferStoragePath.trim()
+      : undefined,
+    updatedAt: typeof (record.updated_at ?? record.updatedAt) === 'string'
+      ? String(record.updated_at ?? record.updatedAt)
+      : undefined,
+    session: normalizeNodeIdentitySession(record.session),
+  };
+}
+
+function nodeIdentitySettingsPayload(settings: NodeIdentitySettings): Record<string, unknown> {
+  return {
+    ttl_ms: settings.ttlMs,
+    ...(settings.flatbufferStoragePath ? { flatbuffer_storage_path: settings.flatbufferStoragePath } : {}),
+  };
+}
+
+function normalizeFlatbufferStorageLocationSelection(value: unknown): FlatbufferStorageLocationSelection {
+  const record = isRecord(value) ? value : {};
+  const selectedPath = record.path;
+  return {
+    canceled: record.canceled === true,
+    path: typeof selectedPath === 'string' && selectedPath.trim() ? selectedPath.trim() : null,
+  };
+}
+
+function normalizeNodeIdentitySession(value: unknown) {
+  const record = isRecord(value) ? value : {};
+  return {
+    unlocked: record.unlocked === true,
+    expiresAt: typeof (record.expires_at ?? record.expiresAt) === 'string'
+      ? String(record.expires_at ?? record.expiresAt)
+      : null,
+    profile: isRecord(record.profile) ? record.profile : null,
+  };
+}
+
+function walletNodeIdentityPayload(payload: WalletNodeIdentityPayload): Record<string, unknown> {
+  return {
+    peer_id: payload.peerId,
+    ...(payload.xpub ? { xpub: payload.xpub } : {}),
+    ...(payload.walletAccountId ? { wallet_account_id: payload.walletAccountId } : {}),
+    ...(payload.walletAccountLabel ? { wallet_account_label: payload.walletAccountLabel } : {}),
+    ...(payload.identityPublicKey ? { identity_public_key: payload.identityPublicKey } : {}),
+    signing_public_key: payload.signingPublicKey,
+    ...(payload.encryptionPublicKey ? { encryption_public_key: payload.encryptionPublicKey } : {}),
+    ...(payload.signature ? { signature: payload.signature } : {}),
+    ...(payload.signaturePayload ? { signature_payload: payload.signaturePayload } : {}),
+    ...(typeof payload.signatureTimestamp === 'number' ? { signature_timestamp: payload.signatureTimestamp } : {}),
+  };
+}
+
+function normalizeNodeIdentityApplyResult(value: unknown): NodeIdentityApplyResult {
+  const record = isRecord(value) ? value : {};
+  const status = record.status === 'mismatch' || record.status === 'unchanged' ? record.status : 'updated';
+  return {
+    status,
+    profile: isRecord(record.profile) ? record.profile : undefined,
+    current: isRecord(record.current) ? record.current : undefined,
+    proposed: isRecord(record.proposed) ? record.proposed : undefined,
+  };
+}
+
+function normalizeWalletStorageSnapshot(value: unknown): WalletStorageSnapshot {
+  const record = isRecord(value) ? value : {};
+  const rawEntries = isRecord(record.entries) ? record.entries : {};
+  const entries: Record<string, string> = {};
+  for (const [key, item] of Object.entries(rawEntries)) {
+    if (typeof item === 'string') entries[key] = item;
+  }
+  return {
+    entries,
+    encryptedAtRest: record.encrypted_at_rest === true || record.encryptedAtRest === true,
+    storage: typeof (record.storage ?? record.encoding) === 'string'
+      ? String(record.storage ?? record.encoding)
+      : undefined,
+    updatedAt: typeof (record.updated_at ?? record.updatedAt) === 'string'
+      ? String(record.updated_at ?? record.updatedAt)
+      : null,
   };
 }
 

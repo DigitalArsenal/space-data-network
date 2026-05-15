@@ -1,7 +1,7 @@
 import { subscriptionKey, type DataDirectoryState } from './data-directory';
 import type { DataSummary } from './sdn-backend';
 
-interface DataSummaryFeedRow {
+export interface DataSummaryFeedRow {
   datastoreKey?: string;
   schemaName: string;
   providerId: string;
@@ -11,6 +11,13 @@ interface DataSummaryFeedRow {
   producerPublicKey: string;
   count: number;
   totalBytes: number;
+}
+
+export interface DataSummaryFeedSelection {
+  standardId: string;
+  datastoreKey?: string | null;
+  providerId?: string | null;
+  sourceName?: string | null;
 }
 
 export interface PeerDataFeedSource {
@@ -27,7 +34,9 @@ export interface PeerDataFeed {
   peerId: string;
   datastoreKey: string | null;
   providerName: string;
+  providerId: string | null;
   providerPublicKey: string | null;
+  sourceName: string | null;
   standardId: string;
   remoteRows: number;
   syncAddrs: string[];
@@ -101,7 +110,9 @@ export function buildPeerDataFeeds(
         peerId: source.peerId,
         datastoreKey: subscription?.datastoreKey ?? null,
         providerName: source.label,
+        providerId: subscription?.providerId ?? source.id,
         providerPublicKey: source.publicKey,
+        sourceName: subscription?.sourceName ?? null,
         standardId,
         remoteRows: subscription?.remoteRows ?? 0,
         syncAddrs: source.syncAddrs,
@@ -129,6 +140,8 @@ export function buildPeerDataFeeds(
       const listingDatastoreKey = stringValue(listing.datastoreKey) ?? stringValue(listing.datastore_key) ?? null;
       const key = subscriptionKey(dataSourceId, standardId, listingDatastoreKey);
       const existing = feeds.get(key);
+      const listingProviderId = stringValue(listing.providerId) ?? stringValue(listing.provider_id) ?? existing?.providerId ?? null;
+      const listingSourceName = stringValue(listing.sourceName) ?? stringValue(listing.source_name) ?? existing?.sourceName ?? null;
       const datastoreKey = listingDatastoreKey ?? existing?.datastoreKey ?? null;
       feeds.set(key, {
         id: key,
@@ -136,7 +149,9 @@ export function buildPeerDataFeeds(
         peerId: resolvedPeerId,
         datastoreKey,
         providerName: listingProviderName(listing, source?.label ?? resolvedPeerId),
+        providerId: listingProviderId,
         providerPublicKey: stringValue(listing.publicKey) ?? stringValue(listing.providerPublicKey) ?? existing?.providerPublicKey ?? null,
+        sourceName: listingSourceName,
         standardId,
         remoteRows: numberValue(listing.remoteRows) ?? numberValue(listing.recordCount) ?? existing?.remoteRows ?? 0,
         syncAddrs: source?.syncAddrs ?? existing?.syncAddrs ?? [],
@@ -147,6 +162,37 @@ export function buildPeerDataFeeds(
   return Array.from(feeds.values())
     .filter((feed) => feed.remoteRows > 0 || state.subscriptions.some((subscription) => subscription.id === feed.id))
     .sort((left, right) => left.providerName.localeCompare(right.providerName) || left.standardId.localeCompare(right.standardId));
+}
+
+export function preferredDataSummarySource(
+  rows: DataSummaryFeedRow[],
+  selection: DataSummaryFeedSelection,
+): DataSummaryFeedRow | null {
+  const standardId = standardIdFromSchema(selection.standardId);
+  const matchingSchema = rows.filter((row) => standardIdFromSchema(row.schemaName) === standardId);
+  if (matchingSchema.length === 0) return null;
+
+  const datastoreKey = stringValue(selection.datastoreKey);
+  if (datastoreKey) {
+    return matchingSchema.find((row) => stringValue(row.datastoreKey) === datastoreKey) ?? null;
+  }
+
+  const providerId = stringValue(selection.providerId);
+  const matchingProvider = providerId
+    ? matchingSchema.filter((row) => row.providerId === providerId)
+    : [];
+  const candidates = matchingProvider.length > 0 ? matchingProvider : matchingSchema;
+  const sourceName = stringValue(selection.sourceName);
+  if (sourceName) {
+    const exactSource = candidates.find((row) => row.sourceName === sourceName);
+    if (exactSource) return exactSource;
+  }
+
+  return [...candidates].sort((left, right) => (
+    right.count - left.count
+    || right.totalBytes - left.totalBytes
+    || left.sourceName.localeCompare(right.sourceName)
+  ))[0] ?? null;
 }
 
 function listingKind(listing: Record<string, unknown>): 'data' | 'module' {

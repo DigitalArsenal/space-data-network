@@ -150,7 +150,9 @@ describe('sdn-js package build', () => {
 
     expect(packageJson.scripts?.build).toContain('build:ui');
     expect(packageJson.scripts?.buildPackage ?? packageJson.scripts?.['build:package']).toContain('build:core');
-    expect(packageJson.scripts?.prepublishOnly).toBe('npm run build:package');
+    expect(packageJson.scripts?.prepublishOnly).toBe(
+      'npm --prefix .. run check:versions && npm run build:package',
+    );
   });
 
   it(

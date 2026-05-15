@@ -5,7 +5,7 @@ const http = require('http')
 const os = require('os')
 const crypto = require('crypto')
 const net = require('net')
-const { app } = require('electron')
+const { app, safeStorage, dialog } = require('electron')
 const portfinder = require('portfinder')
 const logger = require('./common/logger')
 
@@ -30,7 +30,23 @@ let serverPromise = null
 const HOSTED_EPM_STORE_VERSION = 1
 const HOSTED_EPM_STORE_FILE = 'sdn-hosted-epms.enc.json'
 const HOSTED_EPM_STORE_SALT = 'space-data-network-hosted-epm-store-v1'
+const NODE_IDENTITY_SETTINGS_FILE = 'sdn-node-identity-settings.json'
+const NODE_IDENTITY_SESSION_FILE = 'sdn-node-identity-session.json'
+const NODE_WALLET_STORAGE_FILE = 'sdn-wallet-local-storage.enc.json'
+const DEFAULT_NODE_IDENTITY_TTL_MS = 60 * 60 * 1000
+const NODE_IDENTITY_APP_RUN_ID = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')
 const SECRET_EPM_FIELD_PATTERN = /(^|[_-])(private|secret|mnemonic|seed|xpriv|core)([_-]|$)|privatekey|encryptedcore/i
+const WALLET_STORAGE_PREFIX = 'wallet_storage_'
+const WALLET_LOCAL_STORAGE_KEYS = Object.freeze(new Set([
+  'encrypted_wallet',
+  'passkey_credential',
+  'passkey_wallet',
+  'hd-wallet-wallets',
+  'hd-wallet-active-accounts',
+  'hd-wallet-vcard-identity',
+  'hd-wallet-messaging-key-config-v1',
+  'wallet-pki-keys'
+]))
 
 const contentTypes = Object.freeze({
   '.css': 'text/css; charset=utf-8',
@@ -176,7 +192,6 @@ const CONFIGURED_SDN_NODE_IDENTITIES = [
     peer_id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
     public_key: '90aa23ea4ff2d68cf8cb8155135fe5a25b580ec805e835aabb0e8905ffb2c3b2',
     provider_id: 'space-data-network-02',
-    source_name: 'celestrak-gp',
     ipfs_artifact_peer_id: '12D3KooWGhZfrxQVvwQHNGRkeJhGqMbkDqjktfpBXzn47N78XY9j'
   }
 ]
@@ -438,6 +453,292 @@ function localProfilePath () {
   return path.join(app.getPath('userData'), 'sdn-node-profile.json')
 }
 
+function nodeIdentitySettingsPath () {
+  return path.join(app.getPath('userData'), NODE_IDENTITY_SETTINGS_FILE)
+}
+
+function defaultFlatbufferStoragePath () {
+  return path.join(app.getPath('userData'), 'flatbuffers')
+}
+
+function nodeIdentitySessionPath () {
+  return path.join(app.getPath('userData'), NODE_IDENTITY_SESSION_FILE)
+}
+
+function nodeWalletStoragePath () {
+  return path.join(app.getPath('userData'), NODE_WALLET_STORAGE_FILE)
+}
+
+function normalizeFlatbufferStoragePath (value) {
+  const candidate = typeof value === 'string' ? value.trim() : ''
+  return candidate || defaultFlatbufferStoragePath()
+}
+
+function isPersistedWalletLocalStorageKey (key) {
+  const value = String(key || '')
+  return value.startsWith(WALLET_STORAGE_PREFIX) || WALLET_LOCAL_STORAGE_KEYS.has(value)
+}
+
+function emptyNodeWalletStorageSnapshot () {
+  return {
+    entries: {},
+    encrypted_at_rest: canUseSafeStorage(),
+    storage: canUseSafeStorage() ? 'electron-safe-storage' : 'plain-json',
+    updated_at: null
+  }
+}
+
+function canUseSafeStorage () {
+  try {
+    return Boolean(safeStorage && typeof safeStorage.isEncryptionAvailable === 'function' && safeStorage.isEncryptionAvailable())
+  } catch {
+    return false
+  }
+}
+
+function normalizeWalletStorageEntries (entries) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return {}
+  const normalized = {}
+  for (const [key, value] of Object.entries(entries)) {
+    if (!isPersistedWalletLocalStorageKey(key)) continue
+    if (typeof value === 'string') normalized[key] = value
+  }
+  return normalized
+}
+
+function normalizeWalletStoragePatch (entries) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return {}
+  const normalized = {}
+  for (const [key, value] of Object.entries(entries)) {
+    if (!isPersistedWalletLocalStorageKey(key)) continue
+    if (value === null) normalized[key] = null
+    if (typeof value === 'string') normalized[key] = value
+  }
+  return normalized
+}
+
+async function readNodeWalletStorage () {
+  let raw
+  try {
+    raw = await fs.promises.readFile(nodeWalletStoragePath(), 'utf8')
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      logger.warn(`[static-server] failed to read wallet storage mirror: ${err.message || err}`)
+    }
+    return emptyNodeWalletStorageSnapshot()
+  }
+
+  try {
+    const envelope = JSON.parse(raw)
+    if (envelope.encoding === 'electron-safe-storage') {
+      if (!canUseSafeStorage() || typeof safeStorage.decryptString !== 'function') {
+        throw new Error('Electron safeStorage decryption is unavailable')
+      }
+      const plaintext = safeStorage.decryptString(Buffer.from(String(envelope.ciphertext || ''), 'base64'))
+      const payload = JSON.parse(plaintext)
+      return {
+        entries: normalizeWalletStorageEntries(payload.entries),
+        encrypted_at_rest: true,
+        storage: 'electron-safe-storage',
+        updated_at: typeof envelope.updated_at === 'string' ? envelope.updated_at : null
+      }
+    }
+
+    return {
+      entries: normalizeWalletStorageEntries(envelope.entries),
+      encrypted_at_rest: false,
+      storage: 'plain-json',
+      updated_at: typeof envelope.updated_at === 'string' ? envelope.updated_at : null
+    }
+  } catch (err) {
+    logger.warn(`[static-server] failed to decode wallet storage mirror: ${err.message || err}`)
+    return emptyNodeWalletStorageSnapshot()
+  }
+}
+
+async function writeNodeWalletStorage (entries) {
+  const normalized = normalizeWalletStorageEntries(entries)
+  const updatedAt = new Date().toISOString()
+  let envelope
+  if (canUseSafeStorage() && typeof safeStorage.encryptString === 'function') {
+    envelope = {
+      version: 1,
+      encoding: 'electron-safe-storage',
+      updated_at: updatedAt,
+      ciphertext: safeStorage.encryptString(JSON.stringify({ entries: normalized })).toString('base64')
+    }
+  } else {
+    envelope = {
+      version: 1,
+      encoding: 'plain-json',
+      updated_at: updatedAt,
+      entries: normalized
+    }
+  }
+
+  await fs.promises.mkdir(path.dirname(nodeWalletStoragePath()), { recursive: true })
+  await fs.promises.writeFile(nodeWalletStoragePath(), JSON.stringify(envelope, null, 2))
+  return {
+    entries: normalized,
+    encrypted_at_rest: envelope.encoding === 'electron-safe-storage',
+    storage: envelope.encoding,
+    updated_at: updatedAt
+  }
+}
+
+async function patchNodeWalletStorage (patch) {
+  const snapshot = await readNodeWalletStorage()
+  const entries = { ...snapshot.entries }
+  for (const [key, value] of Object.entries(normalizeWalletStoragePatch(patch))) {
+    if (value === null) {
+      delete entries[key]
+    } else {
+      entries[key] = value
+    }
+  }
+  return writeNodeWalletStorage(entries)
+}
+
+async function clearNodeWalletStorage () {
+  await fs.promises.rm(nodeWalletStoragePath(), { force: true })
+  return emptyNodeWalletStorageSnapshot()
+}
+
+function defaultNodeIdentitySettings () {
+  return {
+    ttl_ms: DEFAULT_NODE_IDENTITY_TTL_MS,
+    flatbuffer_storage_path: defaultFlatbufferStoragePath(),
+    updated_at: new Date(0).toISOString()
+  }
+}
+
+async function readNodeIdentitySettingsOnly () {
+  try {
+    const raw = JSON.parse(await fs.promises.readFile(nodeIdentitySettingsPath(), 'utf8'))
+    const ttl = raw.ttl_ms === 'app' ? 'app' : Number.parseInt(String(raw.ttl_ms ?? raw.ttlMs ?? ''), 10)
+    return {
+      ttl_ms: ttl === 'app' ? 'app' : Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_NODE_IDENTITY_TTL_MS,
+      flatbuffer_storage_path: normalizeFlatbufferStoragePath(raw.flatbuffer_storage_path ?? raw.flatbufferStoragePath),
+      updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : new Date(0).toISOString()
+    }
+  } catch {
+    return defaultNodeIdentitySettings()
+  }
+}
+
+async function readNodeIdentitySettings () {
+  const settings = await readNodeIdentitySettingsOnly()
+  await fs.promises.mkdir(settings.flatbuffer_storage_path, { recursive: true }).catch(err => {
+    logger.warn(`[static-server] failed to create FlatBuffer storage directory ${settings.flatbuffer_storage_path}: ${err.message || err}`)
+  })
+  return {
+    ...settings,
+    session: await readNodeIdentitySession()
+  }
+}
+
+async function writeNodeIdentitySettings (settings) {
+  const ttl = settings && (settings.ttl_ms ?? settings.ttlMs)
+  const flatbufferStoragePath = normalizeFlatbufferStoragePath(settings && (settings.flatbuffer_storage_path ?? settings.flatbufferStoragePath))
+  const normalized = {
+    ttl_ms: ttl === 'app' ? 'app' : Math.max(60 * 1000, Number.parseInt(String(ttl || DEFAULT_NODE_IDENTITY_TTL_MS), 10) || DEFAULT_NODE_IDENTITY_TTL_MS),
+    flatbuffer_storage_path: flatbufferStoragePath,
+    updated_at: new Date().toISOString()
+  }
+  await fs.promises.mkdir(flatbufferStoragePath, { recursive: true })
+  await fs.promises.mkdir(path.dirname(nodeIdentitySettingsPath()), { recursive: true })
+  await fs.promises.writeFile(nodeIdentitySettingsPath(), JSON.stringify(normalized, null, 2))
+  const currentSession = await readNodeIdentitySession()
+  if (currentSession.unlocked && currentSession.profile) {
+    await writeNodeIdentitySession(currentSession.profile, normalized)
+  }
+  return {
+    ...normalized,
+    session: await readNodeIdentitySession()
+  }
+}
+
+function flatSqlPersistenceFilename (key) {
+  const hash = crypto.createHash('sha256').update(String(key)).digest('hex').slice(0, 16)
+  const readable = String(key)
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 96) || 'flatsql'
+  return `${readable}-${hash}.bin`
+}
+
+async function flatSqlPersistenceFilePath (key) {
+  const settings = await readNodeIdentitySettingsOnly()
+  const storagePath = normalizeFlatbufferStoragePath(settings.flatbuffer_storage_path)
+  await fs.promises.mkdir(storagePath, { recursive: true })
+  return path.join(storagePath, flatSqlPersistenceFilename(key))
+}
+
+function lockedNodeIdentitySession () {
+  return {
+    unlocked: false,
+    expires_at: null,
+    profile: null
+  }
+}
+
+async function readNodeIdentitySession () {
+  try {
+    const raw = JSON.parse(await fs.promises.readFile(nodeIdentitySessionPath(), 'utf8'))
+    const session = normalizeNodeIdentitySession(raw)
+    if (!session.unlocked) await clearNodeIdentitySession()
+    return session
+  } catch {
+    return lockedNodeIdentitySession()
+  }
+}
+
+function normalizeNodeIdentitySession (raw) {
+  if (!raw || typeof raw !== 'object' || raw.unlocked !== true) return lockedNodeIdentitySession()
+  const mode = raw.mode === 'app' ? 'app' : 'ttl'
+  if (mode === 'app' && raw.app_run_id !== NODE_IDENTITY_APP_RUN_ID) return lockedNodeIdentitySession()
+  const expiresAt = typeof raw.expires_at === 'string'
+    ? raw.expires_at
+    : typeof raw.expiresAt === 'string' ? raw.expiresAt : null
+  const expiresAtMs = expiresAt ? Date.parse(expiresAt) : NaN
+  if (mode !== 'app' && (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now())) return lockedNodeIdentitySession()
+  const profile = raw.profile && typeof raw.profile === 'object' && !Array.isArray(raw.profile)
+    ? sanitizePublicEPM(raw.profile)
+    : null
+  if (!profile) return lockedNodeIdentitySession()
+  return {
+    unlocked: true,
+    mode,
+    expires_at: mode === 'app' ? null : new Date(expiresAtMs).toISOString(),
+    profile,
+    updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : new Date(0).toISOString()
+  }
+}
+
+async function writeNodeIdentitySession (profile, settings = null) {
+  const activeSettings = settings || await readNodeIdentitySettingsOnly()
+  const ttl = activeSettings.ttl_ms === 'app'
+    ? 'app'
+    : Math.max(60 * 1000, Number.parseInt(String(activeSettings.ttl_ms || DEFAULT_NODE_IDENTITY_TTL_MS), 10) || DEFAULT_NODE_IDENTITY_TTL_MS)
+  const session = {
+    unlocked: true,
+    mode: ttl === 'app' ? 'app' : 'ttl',
+    ...(ttl === 'app' ? { app_run_id: NODE_IDENTITY_APP_RUN_ID } : {}),
+    expires_at: ttl === 'app' ? null : new Date(Date.now() + ttl).toISOString(),
+    profile: sanitizePublicEPM(profile),
+    updated_at: new Date().toISOString()
+  }
+  await fs.promises.mkdir(path.dirname(nodeIdentitySessionPath()), { recursive: true })
+  await fs.promises.writeFile(nodeIdentitySessionPath(), JSON.stringify(session, null, 2))
+  return normalizeNodeIdentitySession(session)
+}
+
+async function clearNodeIdentitySession () {
+  await fs.promises.rm(nodeIdentitySessionPath(), { force: true })
+  return lockedNodeIdentitySession()
+}
+
 async function defaultDesktopNodeProfile () {
   try {
     const identity = await requestKuboJSON('/api/v0/id')
@@ -476,8 +777,12 @@ async function buildDesktopNodeEPM (profile) {
   const givenNameOff = createStringOffset(builder, readEpmString(profile, ['given_name', 'givenName']))
   const emailOff = createStringOffset(builder, readEpmString(profile, ['email']))
   const telephoneOff = createStringOffset(builder, readEpmString(profile, ['telephone', 'phone']))
+  const keys = desktopEpmPublicKeys(profile)
+  const keysOff = createOffsetVector(builder, keys.map(key => createDesktopEpmCryptoKey(builder, key)))
   const addresses = desktopEpmAddresses(profile)
   const addressesOff = createOffsetVector(builder, addresses.map(address => builder.createString(address)))
+  const signatureOff = createStringOffset(builder, readEpmString(profile, ['signature', 'epm_signature']))
+  const signatureTimestamp = readEpmInteger(profile, ['signature_timestamp', 'signatureTimestamp', 'epm_signature_timestamp'])
 
   builder.startObject(19)
   builder.addFieldInt8(18, 1, 0) // EPM.EntityType.Node
@@ -487,7 +792,10 @@ async function buildDesktopNodeEPM (profile) {
   if (givenNameOff) builder.addFieldOffset(3, givenNameOff, 0)
   if (emailOff) builder.addFieldOffset(11, emailOff, 0)
   if (telephoneOff) builder.addFieldOffset(12, telephoneOff, 0)
+  if (keysOff) builder.addFieldOffset(13, keysOff, 0)
   if (addressesOff) builder.addFieldOffset(14, addressesOff, 0)
+  if (signatureOff) builder.addFieldOffset(15, signatureOff, 0)
+  if (signatureTimestamp > 0) builder.addFieldInt64(16, BigInt(signatureTimestamp), 0n)
   const epm = builder.endObject()
   builder.finish(epm, '$EPM', true)
   return Buffer.from(builder.asUint8Array())
@@ -507,6 +815,59 @@ function createOffsetVector (builder, offsets) {
   return builder.endVector()
 }
 
+function createDesktopEpmCryptoKey (builder, key) {
+  const publicKeyOff = createStringOffset(builder, key.publicKey)
+  const xpubOff = createStringOffset(builder, key.xpub)
+  const addressOff = createStringOffset(builder, key.keyAddress)
+  const addressTypeOff = createStringOffset(builder, key.addressType)
+
+  builder.startObject(7)
+  if (publicKeyOff) builder.addFieldOffset(0, publicKeyOff, 0)
+  if (xpubOff) builder.addFieldOffset(1, xpubOff, 0)
+  if (addressOff) builder.addFieldOffset(4, addressOff, 0)
+  if (addressTypeOff) builder.addFieldOffset(5, addressTypeOff, 0)
+  builder.addFieldInt8(6, key.keyType === 'encryption' ? 1 : 0, 0)
+  return builder.endObject()
+}
+
+function desktopEpmPublicKeys (profile) {
+  const records = []
+  const keys = Array.isArray(profile && profile.keys) ? profile.keys : []
+
+  for (const key of keys) {
+    if (!key || typeof key !== 'object') continue
+    const keyType = readEpmString(key, ['key_type', 'keyType', 'KEY_TYPE']).toLowerCase()
+    const publicKey = readEpmString(key, ['public_key', 'publicKey', 'PUBLIC_KEY'])
+    if (!publicKey) continue
+    records.push({
+      keyType: keyType.includes('encrypt') ? 'encryption' : 'signing',
+      publicKey,
+      xpub: readEpmString(key, ['xpub', 'XPUB']),
+      keyAddress: readEpmString(key, ['key_address', 'keyAddress', 'KEY_ADDRESS']),
+      addressType: readEpmString(key, ['address_type', 'addressType', 'ADDRESS_TYPE'])
+    })
+  }
+
+  const signingPublicKey = readEpmString(profile, ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex'])
+  const encryptionPublicKey = readEpmString(profile, ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex'])
+  const identityPublicKey = readEpmString(profile, ['identity_public_key', 'identityPublicKey', 'public_key', 'publicKey'])
+  const xpub = readEpmString(profile, ['xpub', 'XPUB'])
+  if (signingPublicKey && !records.some(key => key.keyType === 'signing' && key.publicKey === signingPublicKey)) {
+    records.unshift({ keyType: 'signing', publicKey: signingPublicKey, xpub, keyAddress: identityPublicKey, addressType: identityPublicKey ? 'secp256k1-identity-public-key' : '' })
+  }
+  if (encryptionPublicKey && !records.some(key => key.keyType === 'encryption' && key.publicKey === encryptionPublicKey)) {
+    records.push({ keyType: 'encryption', publicKey: encryptionPublicKey, xpub: '', keyAddress: '', addressType: 'x25519' })
+  }
+
+  return records.slice(0, 16)
+}
+
+function readEpmInteger (epm, names) {
+  const value = readEpmString(epm, names)
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
 function desktopEpmAddresses (profile) {
   const raw = profile && (profile.multiformat_address || profile.multiaddrs || profile.addresses)
   const addresses = Array.isArray(raw) ? raw.filter(value => typeof value === 'string' && value.trim()).map(value => value.trim()) : []
@@ -523,6 +884,17 @@ async function readRequestBody (req) {
     req.setEncoding('utf8')
     req.on('data', chunk => { body += chunk })
     req.on('end', () => resolve(body))
+    req.on('error', reject)
+  })
+}
+
+async function readRequestBuffer (req) {
+  return await new Promise((resolve, reject) => {
+    const chunks = []
+    req.on('data', chunk => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks)))
     req.on('error', reject)
   })
 }
@@ -884,6 +1256,233 @@ async function serveDesktopIdentityAPI (req, res) {
   return true
 }
 
+async function serveDesktopNodeIdentityAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+
+  if (parsed.pathname === '/api/node/identity/settings/flatbuffer-storage-location') {
+    if (req.method !== 'POST') {
+      sendJSON(res, 405, { error: 'method not allowed' })
+      return true
+    }
+    if (!dialog || typeof dialog.showOpenDialog !== 'function') {
+      sendJSON(res, 501, { error: 'directory picker unavailable' })
+      return true
+    }
+    let payload
+    try {
+      payload = JSON.parse(await readRequestBody(req) || '{}')
+    } catch {
+      sendJSON(res, 400, { error: 'invalid JSON settings' })
+      return true
+    }
+    const currentPath = normalizeFlatbufferStoragePath(payload && (payload.current_path ?? payload.currentPath))
+    const result = await dialog.showOpenDialog({
+      title: 'Select FlatBuffer storage location',
+      defaultPath: currentPath,
+      properties: ['openDirectory', 'createDirectory']
+    })
+    sendJSON(res, 200, {
+      canceled: Boolean(result.canceled) || !result.filePaths || !result.filePaths[0],
+      path: result.filePaths && result.filePaths[0] ? result.filePaths[0] : null
+    })
+    return true
+  }
+
+  if (parsed.pathname === '/api/node/identity/settings') {
+    if (req.method === 'GET') {
+      sendJSON(res, 200, await readNodeIdentitySettings())
+      return true
+    }
+    if (req.method === 'PUT') {
+      let payload
+      try {
+        payload = JSON.parse(await readRequestBody(req) || '{}')
+      } catch {
+        sendJSON(res, 400, { error: 'invalid JSON settings' })
+        return true
+      }
+      sendJSON(res, 200, await writeNodeIdentitySettings(payload))
+      return true
+    }
+    sendJSON(res, 405, { error: 'method not allowed' })
+    return true
+  }
+
+  if (parsed.pathname === '/api/node/identity/session') {
+    if (req.method === 'GET') {
+      sendJSON(res, 200, await readNodeIdentitySession())
+      return true
+    }
+    if (req.method === 'DELETE') {
+      sendJSON(res, 200, await clearNodeIdentitySession())
+      return true
+    }
+    sendJSON(res, 405, { error: 'method not allowed' })
+    return true
+  }
+
+  if (parsed.pathname === '/api/node/identity/wallet-storage') {
+    if (req.method === 'GET') {
+      sendJSON(res, 200, await readNodeWalletStorage())
+      return true
+    }
+    if (req.method === 'PUT') {
+      let payload
+      try {
+        payload = JSON.parse(await readRequestBody(req) || '{}')
+      } catch {
+        sendJSON(res, 400, { error: 'invalid JSON wallet storage' })
+        return true
+      }
+      sendJSON(res, 200, await patchNodeWalletStorage(payload.entries || payload))
+      return true
+    }
+    if (req.method === 'DELETE') {
+      sendJSON(res, 200, await clearNodeWalletStorage())
+      return true
+    }
+    sendJSON(res, 405, { error: 'method not allowed' })
+    return true
+  }
+
+  if (parsed.pathname !== '/api/node/identity/wallet') {
+    return false
+  }
+
+  if (req.method !== 'PUT') {
+    sendJSON(res, 405, { error: 'method not allowed' })
+    return true
+  }
+
+  let payload
+  try {
+    payload = JSON.parse(await readRequestBody(req) || '{}')
+  } catch {
+    sendJSON(res, 400, { error: 'invalid JSON wallet identity' })
+    return true
+  }
+
+  const proposed = normalizeWalletNodeIdentity(payload.wallet_identity || payload.walletIdentity || payload)
+  if (!proposed.peer_id || !proposed.signing_public_key) {
+    sendJSON(res, 400, { error: 'wallet identity requires peer_id and signing_public_key' })
+    return true
+  }
+
+  const current = await readDesktopNodeProfile()
+  const currentKeys = nodeIdentityKeySummary(current)
+  const proposedKeys = nodeIdentityKeySummary(proposed)
+  const hasCurrentKeys = Boolean(currentKeys.signing_public_key || currentKeys.encryption_public_key || currentKeys.identity_public_key)
+  const matching = !hasCurrentKeys || (
+    (!currentKeys.peer_id || currentKeys.peer_id === proposedKeys.peer_id) &&
+    (!currentKeys.identity_public_key || currentKeys.identity_public_key === proposedKeys.identity_public_key) &&
+    (!currentKeys.signing_public_key || currentKeys.signing_public_key === proposedKeys.signing_public_key) &&
+    (!currentKeys.encryption_public_key || currentKeys.encryption_public_key === proposedKeys.encryption_public_key)
+  )
+
+  if (!matching && payload.replace !== true) {
+    sendJSON(res, 409, {
+      status: 'mismatch',
+      current: currentKeys,
+      proposed: proposedKeys
+    })
+    return true
+  }
+
+  const next = {
+    ...current,
+    ...proposed,
+    entity_type: 'Node',
+    updated_at: new Date().toISOString()
+  }
+  await fs.promises.mkdir(path.dirname(localProfilePath()), { recursive: true })
+  await fs.promises.writeFile(localProfilePath(), JSON.stringify(next, null, 2))
+  const publicProfile = publicIdentityRecord('self', 'node-self', next).epmJson
+  const session = await writeNodeIdentitySession(publicProfile)
+  sendJSON(res, 200, {
+    status: matching && hasCurrentKeys ? 'unchanged' : 'updated',
+    profile: publicProfile,
+    session
+  })
+  return true
+}
+
+function normalizeWalletNodeIdentity (value) {
+  const source = value && typeof value === 'object' ? sanitizePublicEPM(value) : {}
+  const peerID = readEpmString(source, ['peer_id', 'peerId'])
+  const xpub = readEpmString(source, ['xpub', 'XPUB'])
+  const identityPublicKey = readEpmString(source, ['identity_public_key', 'identityPublicKey', 'public_key', 'publicKey'])
+  const signingPublicKey = readEpmString(source, ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex'])
+  const encryptionPublicKey = readEpmString(source, ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex'])
+  const signatureTimestamp = readEpmInteger(source, ['signature_timestamp', 'signatureTimestamp'])
+  const keys = []
+  if (signingPublicKey) {
+    keys.push({
+      key_type: 'signing',
+      public_key: signingPublicKey,
+      xpub,
+      key_address: identityPublicKey,
+      address_type: identityPublicKey ? 'secp256k1-identity-public-key' : ''
+    })
+  }
+  if (encryptionPublicKey) {
+    keys.push({
+      key_type: 'encryption',
+      public_key: encryptionPublicKey,
+      address_type: 'x25519'
+    })
+  }
+
+  return {
+    peer_id: peerID,
+    xpub,
+    wallet_account_id: readEpmString(source, ['wallet_account_id', 'walletAccountId']),
+    wallet_account_label: readEpmString(source, ['wallet_account_label', 'walletAccountLabel']),
+    identity_public_key: identityPublicKey,
+    public_key: identityPublicKey || signingPublicKey,
+    signing_public_key: signingPublicKey,
+    encryption_public_key: encryptionPublicKey,
+    signature: readEpmString(source, ['signature', 'epm_signature']),
+    signature_payload: readEpmString(source, ['signature_payload', 'signaturePayload']),
+    signature_timestamp: signatureTimestamp || Math.floor(Date.now() / 1000),
+    keys
+  }
+}
+
+function nodeIdentityKeySummary (profile) {
+  const signingKey = epmPublicKeyRecord(profile, 'signing')
+  const encryptionKey = epmPublicKeyRecord(profile, 'encryption')
+  return {
+    peer_id: readEpmString(profile, ['peer_id', 'peerId']),
+    identity_public_key: readEpmString(profile, ['identity_public_key', 'identityPublicKey', 'public_key', 'publicKey']) ||
+      readEpmString(signingKey, ['key_address', 'keyAddress', 'KEY_ADDRESS']),
+    signing_public_key: readEpmString(profile, ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex']) ||
+      readEpmString(signingKey, ['public_key', 'publicKey', 'PUBLIC_KEY']),
+    encryption_public_key: readEpmString(profile, ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex']) ||
+      readEpmString(encryptionKey, ['public_key', 'publicKey', 'PUBLIC_KEY']),
+    wallet_account_id: readEpmString(profile, ['wallet_account_id', 'walletAccountId']),
+    wallet_account_label: readEpmString(profile, ['wallet_account_label', 'walletAccountLabel'])
+  }
+}
+
+function epmPublicKeyRecord (profile, keyType) {
+  const keys = Array.isArray(profile && profile.keys)
+    ? profile.keys
+    : Array.isArray(profile && profile.KEYS)
+      ? profile.KEYS
+      : []
+  return keys.find(key => epmPublicKeyType(key) === keyType) || {}
+}
+
+function epmPublicKeyType (key) {
+  const raw = readEpmString(key, ['key_type', 'keyType', 'KEY_TYPE'])
+  const numeric = Number.parseInt(raw, 10)
+  if (Number.isFinite(numeric)) return numeric === 1 ? 'encryption' : 'signing'
+  const normalized = raw.toLowerCase()
+  if (normalized.includes('encrypt') || normalized.includes('x25519')) return 'encryption'
+  if (normalized.includes('sign') || normalized.includes('ed25519')) return 'signing'
+  return ''
+}
+
 async function serveDesktopNodeEPMAPI (req, res) {
   const parsed = new URL(req.url || '/', `http://${HOST}`)
   if (parsed.pathname !== '/api/node/epm/json' && parsed.pathname !== '/api/node/epm') {
@@ -913,6 +1512,54 @@ async function serveDesktopNodeEPMAPI (req, res) {
     await fs.promises.mkdir(path.dirname(localProfilePath()), { recursive: true })
     await fs.promises.writeFile(localProfilePath(), JSON.stringify(next, null, 2))
     sendBuffer(res, 200, 'application/x-flatbuffers', await buildDesktopNodeEPM(next))
+    return true
+  }
+
+  sendJSON(res, 405, { error: 'method not allowed' })
+  return true
+}
+
+async function serveDesktopFlatSqlPersistenceAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  const prefix = '/api/flatsql/persistence/'
+  if (!parsed.pathname.startsWith(prefix)) return false
+
+  let key
+  try {
+    key = decodeURIComponent(parsed.pathname.slice(prefix.length))
+  } catch {
+    sendJSON(res, 400, { error: 'invalid persistence key' })
+    return true
+  }
+
+  if (!key.trim()) {
+    sendJSON(res, 400, { error: 'persistence key is required' })
+    return true
+  }
+
+  const bodyPromise = req.method === 'PUT' ? readRequestBuffer(req) : null
+  const filePath = await flatSqlPersistenceFilePath(key)
+
+  if (req.method === 'GET') {
+    try {
+      sendBuffer(res, 200, 'application/octet-stream', await fs.promises.readFile(filePath))
+    } catch {
+      sendJSON(res, 404, { error: 'persistence blob not found' })
+    }
+    return true
+  }
+
+  if (req.method === 'PUT') {
+    await fs.promises.writeFile(filePath, await bodyPromise)
+    res.writeHead(204, staticAssetHeaders('application/octet-stream'))
+    res.end()
+    return true
+  }
+
+  if (req.method === 'DELETE') {
+    await fs.promises.rm(filePath, { force: true })
+    res.writeHead(204, staticAssetHeaders('application/octet-stream'))
+    res.end()
     return true
   }
 
@@ -1099,7 +1746,9 @@ async function startDesktopStaticServer () {
         .then(() => serveDesktopPeerAPI(req, res))
         .then(handled => handled || serveDesktopDirectoryAPI(req, res))
         .then(handled => handled || serveDesktopIdentityAPI(req, res))
+        .then(handled => handled || serveDesktopNodeIdentityAPI(req, res))
         .then(handled => handled || serveDesktopNodeEPMAPI(req, res))
+        .then(handled => handled || serveDesktopFlatSqlPersistenceAPI(req, res))
         .then(handled => handled || serveDesktopLocalDataAPI(req, res))
         .then(handled => {
           if (handled) return
@@ -1168,7 +1817,9 @@ module.exports = {
   serveDesktopDirectoryAPI,
   serveDesktopIdentityAPI,
   serveDesktopLocalDataAPI,
+  serveDesktopNodeIdentityAPI,
   serveDesktopNodeEPMAPI,
+  serveDesktopFlatSqlPersistenceAPI,
   staticAssetHeaders,
   startDesktopStaticServer
 }

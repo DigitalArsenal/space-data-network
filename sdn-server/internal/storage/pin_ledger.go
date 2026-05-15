@@ -22,6 +22,8 @@ type PinLedgerEntry struct {
 	HighWaterMark     string
 	ByteHash          string
 	Role              string
+	SegmentStart      int
+	SegmentCount      int
 	RowCount          int64
 	ByteCount         int64
 	TTL               time.Duration
@@ -91,6 +93,8 @@ func (s *FlatSQLStore) initPinLedgerTable() error {
 			high_water_mark TEXT NOT NULL DEFAULT '',
 			byte_hash TEXT NOT NULL DEFAULT '',
 			role TEXT NOT NULL DEFAULT '',
+			segment_start INTEGER NOT NULL DEFAULT 0,
+			segment_count INTEGER NOT NULL DEFAULT 0,
 			row_count INTEGER NOT NULL DEFAULT 0,
 			byte_count INTEGER NOT NULL DEFAULT 0,
 			ttl_seconds INTEGER NOT NULL DEFAULT 0,
@@ -109,6 +113,12 @@ func (s *FlatSQLStore) initPinLedgerTable() error {
 		return err
 	}
 	if err := s.ensureColumn("sdn_pin_ledger", "row_count", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("sdn_pin_ledger", "segment_start", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("sdn_pin_ledger", "segment_count", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	if err := s.createStartupIndex("sdn_pin_ledger", "idx_sdn_pin_ledger_source", existed, `
@@ -140,6 +150,12 @@ func (s *FlatSQLStore) UpsertPinLedgerEntry(entry PinLedgerEntry) error {
 	if entry.RowCount < 0 {
 		return errors.New("pin ledger row count must be non-negative")
 	}
+	if entry.SegmentStart < 0 {
+		return errors.New("pin ledger segment start must be non-negative")
+	}
+	if entry.SegmentCount < 0 {
+		return errors.New("pin ledger segment count must be non-negative")
+	}
 	if entry.VerificationState == "" {
 		return errors.New("pin ledger verification state is required")
 	}
@@ -153,10 +169,10 @@ func (s *FlatSQLStore) UpsertPinLedgerEntry(entry PinLedgerEntry) error {
 		INSERT INTO sdn_pin_ledger (
 			cid, schema_name, provider_peer_id, provider_public_key,
 			provider_id, source_name, batch_id, query_profile,
-			snapshot_id, head, high_water_mark, byte_hash, role, row_count, byte_count,
+			snapshot_id, head, high_water_mark, byte_hash, role, segment_start, segment_count, row_count, byte_count,
 			ttl_seconds, verification_state, verified_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(
 			cid, schema_name, provider_peer_id, provider_public_key,
 			provider_id, source_name, batch_id, query_profile, role
@@ -166,6 +182,8 @@ func (s *FlatSQLStore) UpsertPinLedgerEntry(entry PinLedgerEntry) error {
 			head = excluded.head,
 			high_water_mark = excluded.high_water_mark,
 			byte_hash = excluded.byte_hash,
+			segment_start = excluded.segment_start,
+			segment_count = excluded.segment_count,
 			row_count = excluded.row_count,
 			byte_count = excluded.byte_count,
 			ttl_seconds = excluded.ttl_seconds,
@@ -174,7 +192,7 @@ func (s *FlatSQLStore) UpsertPinLedgerEntry(entry PinLedgerEntry) error {
 			updated_at = excluded.updated_at
 	`, entry.CID, entry.SchemaName, entry.ProviderPeerID, entry.ProviderPublicKey,
 		entry.ProviderID, entry.SourceName, entry.BatchID, entry.QueryProfile,
-		entry.SnapshotID, entry.Head, entry.HighWaterMark, entry.ByteHash, entry.Role, entry.RowCount, entry.ByteCount,
+		entry.SnapshotID, entry.Head, entry.HighWaterMark, entry.ByteHash, entry.Role, entry.SegmentStart, entry.SegmentCount, entry.RowCount, entry.ByteCount,
 		int64(entry.TTL.Seconds()), entry.VerificationState, unixOrZero(entry.VerifiedAt), entry.UpdatedAt.Unix())
 	if err != nil {
 		return fmt.Errorf("upsert pin ledger entry: %w", err)
@@ -209,7 +227,7 @@ func (s *FlatSQLStore) ListPinLedgerEntries(query PinLedgerQuery) ([]PinLedgerEn
 	rows, err := s.db.Query(`
 		SELECT cid, schema_name, provider_peer_id, provider_public_key,
 		       provider_id, source_name, batch_id, query_profile,
-		       snapshot_id, head, high_water_mark, byte_hash, role, row_count, byte_count,
+		       snapshot_id, head, high_water_mark, byte_hash, role, segment_start, segment_count, row_count, byte_count,
 		       ttl_seconds, verification_state, verified_at, updated_at
 		FROM sdn_pin_ledger
 		WHERE `+strings.Join(where, " AND ")+`
@@ -330,6 +348,8 @@ func scanPinLedgerEntry(scanner pinLedgerScanner) (PinLedgerEntry, error) {
 		&entry.HighWaterMark,
 		&entry.ByteHash,
 		&entry.Role,
+		&entry.SegmentStart,
+		&entry.SegmentCount,
 		&entry.RowCount,
 		&entry.ByteCount,
 		&ttlSeconds,

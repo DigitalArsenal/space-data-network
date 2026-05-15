@@ -1,21 +1,16 @@
-export type PrimaryRoute = '/node' | '/peers' | '/data' | '/advanced';
+export type PrimaryRoute = '/node' | '/peers' | '/data';
 
 export function normalizeSdnRoute(rawPath: string): string {
   const path = normalizePath(rawPath);
   if (path === '' || path === '/' || path.startsWith('/status')) return '/node';
-  if (path.startsWith('/settings')) return '/node?panel=advanced';
+  if (path.startsWith('/settings')) return '/node';
   if (path.startsWith('/files')) return '/data';
   if (path.startsWith('/pins')) return '/data?tab=pins';
   if (path.startsWith('/modules')) return '/peers?tab=modules';
   if (path.startsWith('/marketplace')) return '/peers?tab=marketplace';
   if (path.startsWith('/explore/')) return `/data?inspect=${encodeURIComponent(path.slice('/explore/'.length))}`;
   if (path.startsWith('/local-data')) return `/data${path.slice('/local-data'.length)}`;
-  if (
-    path.startsWith('/node') ||
-    path.startsWith('/peers') ||
-    path.startsWith('/data') ||
-    path.startsWith('/advanced')
-  ) {
+  if (path.startsWith('/node') || path.startsWith('/peers') || path.startsWith('/data')) {
     return path;
   }
   return '/node';
@@ -24,7 +19,6 @@ export function normalizeSdnRoute(rawPath: string): string {
 export function primaryRouteFromNormalized(route: string): PrimaryRoute {
   if (route.startsWith('/peers')) return '/peers';
   if (route.startsWith('/data')) return '/data';
-  if (route.startsWith('/advanced')) return '/advanced';
   return '/node';
 }
 

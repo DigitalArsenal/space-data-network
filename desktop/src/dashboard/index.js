@@ -36,6 +36,7 @@ const createWindow = () => {
     title: 'Space Data Network',
     show: false,
     autoHideMenuBar: true,
+    frame: false,
     titleBarStyle: 'hiddenInset',
     width: store.get('window.width', dimensions.width < 1440 ? dimensions.width : 1440),
     height: store.get('window.height', dimensions.height < 900 ? dimensions.height : 900),

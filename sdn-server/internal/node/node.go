@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,7 @@ import (
 
 	"github.com/spacedatanetwork/sdn-server/internal/bootstrap"
 	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/datasync"
 	"github.com/spacedatanetwork/sdn-server/internal/directory"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/flowrt"
@@ -76,6 +78,7 @@ const (
 	datasetPublicationCatchupInitialDelay = 15 * time.Second
 	datasetPublicationCatchupInterval     = 5 * time.Minute
 	datasetPublicationCatchupLimit        = 5000
+	datasetShardPublicationCatchupLimit   = 5000
 )
 
 // Node represents a Space Data Network node.
@@ -966,6 +969,23 @@ func (n *Node) Start(ctx context.Context) error {
 
 		n.wg.Add(1)
 		go n.handleSubscription(sub, schema)
+
+		if n.store != nil {
+			feedTopicName := sdnpubsub.DatasetFeedHeadTopic(schema)
+			feedTopic, err := n.pubsub.Join(feedTopicName)
+			if err != nil {
+				log.Warnf("Failed to join dataset feed-head topic %s: %v", feedTopicName, err)
+				continue
+			}
+			n.topics[feedTopicName] = feedTopic
+			feedSub, err := feedTopic.Subscribe()
+			if err != nil {
+				log.Warnf("Failed to subscribe to dataset feed-head topic %s: %v", feedTopicName, err)
+				continue
+			}
+			n.wg.Add(1)
+			go n.handleDatasetFeedHeadSubscription(feedSub, schema)
+		}
 	}
 
 	// Start mDNS discovery
@@ -981,6 +1001,8 @@ func (n *Node) Start(ctx context.Context) error {
 	if n.store != nil {
 		n.wg.Add(1)
 		go n.runDatasetPublicationPNMCatchup()
+		n.wg.Add(1)
+		go n.runDatasetShardPublicationCatchup()
 	}
 
 	// Start EPM auto-publish via PubSub (every 30 minutes)
@@ -1012,6 +1034,233 @@ func (n *Node) runDatasetPublicationPNMCatchup() {
 			}
 			timer.Reset(datasetPublicationCatchupInterval)
 		}
+	}
+}
+
+func (n *Node) runDatasetShardPublicationCatchup() {
+	defer n.wg.Done()
+
+	timer := time.NewTimer(datasetPublicationCatchupInitialDelay)
+	defer timer.Stop()
+	for {
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-timer.C:
+			if materialized, err := n.catchUpDatasetShardPublicationsFromTrustedPeers(n.ctx); err != nil {
+				log.Warnf("Dataset shard publication catch-up completed with errors after materializing %d shard(s): %v", materialized, err)
+			} else if materialized > 0 {
+				log.Infof("Dataset shard publication catch-up materialized %d shard(s)", materialized)
+			}
+			timer.Reset(datasetPublicationCatchupInterval)
+		}
+	}
+}
+
+func (n *Node) catchUpDatasetShardPublicationsFromTrustedPeers(ctx context.Context) (int, error) {
+	if n == nil || n.host == nil || n.store == nil || n.peerRegistry == nil {
+		return 0, nil
+	}
+	var total int
+	var errs []error
+	for _, id := range n.host.Network().Peers() {
+		if !n.peerRegistry.IsTrusted(id) {
+			continue
+		}
+		materialized, err := n.catchUpDatasetShardPublicationsFromPeer(ctx, id)
+		total += materialized
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", id.ShortString(), err))
+		}
+	}
+	return total, errors.Join(errs...)
+}
+
+func (n *Node) catchUpDatasetShardPublicationsFromPeer(ctx context.Context, from peer.ID) (int, error) {
+	if n == nil || n.host == nil || n.store == nil || n.validator == nil || n.peerRegistry == nil {
+		return 0, nil
+	}
+	if !n.peerRegistry.IsTrusted(from) {
+		return 0, nil
+	}
+	var total int
+	var errs []error
+	for _, schema := range n.validator.Schemas() {
+		publications, err := n.listRemoteDatasetShardPublications(ctx, from, schema)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: list %s publications: %w", from.ShortString(), schema, err))
+			continue
+		}
+		for _, publication := range publications {
+			if n.datasetShardPublicationAlreadyCached(publication) {
+				continue
+			}
+			imported, err := n.materializeDatasetFeedHeadAnnouncement(ctx, datasetShardPublicationAnnouncement(publication), from)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: materialize %s %s: %w", from.ShortString(), schema, publication.ShardCID, err))
+				continue
+			}
+			if imported > 0 {
+				total++
+			}
+		}
+	}
+	return total, errors.Join(errs...)
+}
+
+func (n *Node) datasetShardPublicationAlreadyCached(publication storage.DatasetShardPublication) bool {
+	if n == nil || n.store == nil {
+		return false
+	}
+	existing, found, err := n.store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		SchemaName:   publication.SchemaName,
+		ProviderID:   publication.ProviderID,
+		SourceName:   publication.SourceName,
+		BatchID:      publication.BatchID,
+		QueryProfile: publication.QueryProfile,
+		Offset:       publication.Offset,
+		Limit:        publication.Limit,
+	})
+	return err == nil && found && existing.ShardCID == publication.ShardCID && existing.IndexCID == publication.IndexCID
+}
+
+type datasetShardPublicationListResponse struct {
+	Op                    string                               `json:"op"`
+	Status                string                               `json:"status"`
+	Schema                string                               `json:"schema"`
+	SyncProtocol          string                               `json:"sync_protocol"`
+	PublicationOffset     int                                  `json:"publication_offset"`
+	PublicationCount      int                                  `json:"publication_count"`
+	TotalPublicationCount int                                  `json:"total_publication_count"`
+	Publications          []datasetShardPublicationListItemDTO `json:"publications"`
+	Error                 *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+type datasetShardPublicationListItemDTO struct {
+	Schema       string    `json:"schema"`
+	ProviderID   string    `json:"provider_id"`
+	SourceName   string    `json:"source_name"`
+	BatchID      string    `json:"batch_id"`
+	QueryProfile string    `json:"query_profile"`
+	Offset       int       `json:"offset"`
+	Limit        int       `json:"limit"`
+	RecordCount  int       `json:"record_count"`
+	ByteCount    int64     `json:"byte_count"`
+	ShardCID     string    `json:"shard_cid"`
+	IndexCID     string    `json:"index_cid"`
+	ManifestCID  string    `json:"manifest_cid"`
+	PNMCID       string    `json:"pnm_cid"`
+	ShardSHA256  string    `json:"shard_sha256"`
+	IndexSHA256  string    `json:"index_sha256"`
+	QuerySHA256  string    `json:"query_sha256"`
+	ResultSHA256 string    `json:"result_sha256"`
+	FeedSequence int64     `json:"feed_sequence"`
+	PreviousHead string    `json:"previous_head"`
+	FeedHead     string    `json:"feed_head"`
+	PublishedAt  time.Time `json:"published_at"`
+}
+
+func (n *Node) listRemoteDatasetShardPublications(ctx context.Context, from peer.ID, schema string) ([]storage.DatasetShardPublication, error) {
+	var publications []storage.DatasetShardPublication
+	for offset := 0; ; {
+		page, err := n.listRemoteDatasetShardPublicationPage(ctx, from, schema, offset, datasetShardPublicationCatchupLimit)
+		if err != nil {
+			return publications, err
+		}
+		for _, item := range page.Publications {
+			publications = append(publications, datasetShardPublicationFromListItem(schema, item))
+		}
+		nextOffset := page.PublicationOffset + page.PublicationCount
+		if page.PublicationCount == 0 || nextOffset >= page.TotalPublicationCount {
+			return publications, nil
+		}
+		offset = nextOffset
+	}
+}
+
+func (n *Node) listRemoteDatasetShardPublicationPage(ctx context.Context, from peer.ID, schema string, offset int, limit int) (datasetShardPublicationListResponse, error) {
+	var response datasetShardPublicationListResponse
+	stream, err := n.host.NewStream(ctx, from, protocol.FlatSQLSyncProtocolID)
+	if err != nil {
+		return response, err
+	}
+	defer stream.Close()
+	if err := protocol.WriteFlatSQLSyncJSONFrame(stream, map[string]interface{}{
+		"op":                 "list_published_shards",
+		"schema":             schema,
+		"query_profile":      storage.DatasetPublicationQueryProfile,
+		"publication_offset": offset,
+		"publication_limit":  limit,
+	}); err != nil {
+		return response, err
+	}
+	if err := protocol.ReadFlatSQLSyncJSONFrame(stream, datasync.StreamRequestMaxBytes, &response); err != nil {
+		return response, err
+	}
+	if response.Status != "ok" {
+		if response.Error != nil && response.Error.Message != "" {
+			return response, errors.New(response.Error.Message)
+		}
+		return response, fmt.Errorf("list published shards returned status %q", response.Status)
+	}
+	if response.Op != "list_published_shards" || response.SyncProtocol != protocol.FlatSQLSyncProtocolID {
+		return response, fmt.Errorf("unexpected list published shards response: %+v", response)
+	}
+	return response, nil
+}
+
+func datasetShardPublicationFromListItem(schema string, item datasetShardPublicationListItemDTO) storage.DatasetShardPublication {
+	schemaName := strings.TrimSpace(item.Schema)
+	if schemaName == "" {
+		schemaName = schema
+	}
+	return storage.DatasetShardPublication{
+		SchemaName:   schemaName,
+		ProviderID:   strings.TrimSpace(item.ProviderID),
+		SourceName:   strings.TrimSpace(item.SourceName),
+		BatchID:      strings.TrimSpace(item.BatchID),
+		QueryProfile: strings.TrimSpace(item.QueryProfile),
+		Offset:       item.Offset,
+		Limit:        item.Limit,
+		RecordCount:  item.RecordCount,
+		ByteCount:    item.ByteCount,
+		ShardCID:     strings.TrimSpace(item.ShardCID),
+		IndexCID:     strings.TrimSpace(item.IndexCID),
+		ManifestCID:  strings.TrimSpace(item.ManifestCID),
+		PNMCID:       strings.TrimSpace(item.PNMCID),
+		ShardSHA256:  strings.TrimSpace(item.ShardSHA256),
+		IndexSHA256:  strings.TrimSpace(item.IndexSHA256),
+		QuerySHA256:  strings.TrimSpace(item.QuerySHA256),
+		ResultSHA256: strings.TrimSpace(item.ResultSHA256),
+		FeedSequence: item.FeedSequence,
+		PreviousHead: strings.TrimSpace(item.PreviousHead),
+		FeedHead:     strings.TrimSpace(item.FeedHead),
+		PublishedAt:  item.PublishedAt,
+	}
+}
+
+func datasetShardPublicationAnnouncement(publication storage.DatasetShardPublication) sdnpubsub.DatasetFeedHeadAnnouncement {
+	return sdnpubsub.DatasetFeedHeadAnnouncement{
+		MessageType:  sdnpubsub.DatasetFeedHeadMessageType,
+		Schema:       publication.SchemaName,
+		ProviderID:   publication.ProviderID,
+		SourceName:   publication.SourceName,
+		BatchID:      publication.BatchID,
+		QueryProfile: publication.QueryProfile,
+		Offset:       publication.Offset,
+		Limit:        publication.Limit,
+		FeedSequence: publication.FeedSequence,
+		PreviousHead: publication.PreviousHead,
+		FeedHead:     publication.FeedHead,
+		RecordCount:  publication.RecordCount,
+		ByteCount:    publication.ByteCount,
+		ShardCID:     publication.ShardCID,
+		IndexCID:     publication.IndexCID,
+		ManifestCID:  publication.ManifestCID,
+		PNMCID:       publication.PNMCID,
+		PublishedAt:  publication.PublishedAt,
 	}
 }
 
@@ -1185,9 +1434,276 @@ func (n *Node) handleSubscription(sub *pubsub.Subscription, schema string) {
 	}
 }
 
+func (n *Node) handleDatasetFeedHeadSubscription(sub *pubsub.Subscription, schema string) {
+	defer n.wg.Done()
+
+	for {
+		msg, err := sub.Next(n.ctx)
+		if err != nil {
+			if n.ctx.Err() != nil {
+				return
+			}
+			log.Warnf("Error reading dataset feed-head subscription %s: %v", schema, err)
+			continue
+		}
+		if msg.ReceivedFrom == n.host.ID() {
+			continue
+		}
+		ann, err := sdnpubsub.ParseDatasetFeedHeadAnnouncement(msg.Data)
+		if err != nil {
+			log.Warnf("Invalid dataset feed-head announcement on %s from %s: %v", schema, msg.ReceivedFrom.ShortString(), err)
+			continue
+		}
+		if ann.Schema != schema {
+			log.Debugf("Skipping dataset feed-head announcement on %s for schema %s", schema, ann.Schema)
+			continue
+		}
+		imported, err := n.materializeDatasetFeedHeadAnnouncement(n.ctx, ann, msg.ReceivedFrom)
+		if err != nil {
+			log.Warnf("Failed to materialize dataset feed head %s from %s on %s: %v", ann.FeedHead, msg.ReceivedFrom.ShortString(), schema, err)
+			continue
+		}
+		if imported > 0 {
+			log.Infof("Materialized dataset feed head %s from %s on %s: imported=%d", ann.FeedHead, msg.ReceivedFrom.ShortString(), schema, imported)
+		}
+	}
+}
+
 func (n *Node) handleDatasetPublicationPNM(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) error {
 	_, err := n.materializeDatasetPublicationPNM(ctx, schema, pnmBytes, from)
 	return err
+}
+
+func (n *Node) materializeDatasetFeedHeadAnnouncement(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement, from peer.ID) (int, error) {
+	if n == nil || n.store == nil || n.host == nil || n.peerRegistry == nil {
+		return 0, nil
+	}
+	if !n.peerRegistry.IsTrusted(from) {
+		log.Debugf("Skipping dataset feed head from non-trusted peer %s on %s", from.ShortString(), ann.Schema)
+		return 0, nil
+	}
+	if strings.TrimSpace(ann.ShardCID) == "" || strings.TrimSpace(ann.IndexCID) == "" {
+		return 0, fmt.Errorf("dataset feed head %s is missing shard or index CID", ann.FeedHead)
+	}
+	if ann.Limit <= 0 {
+		return 0, fmt.Errorf("dataset feed head %s is missing positive window limit", ann.FeedHead)
+	}
+	baseDir := strings.TrimSpace(n.config.Storage.Path)
+	if baseDir == "" {
+		baseDir = os.TempDir()
+	}
+	workRoot := filepath.Join(baseDir, "dataset-feed-head-sync")
+	if err := os.MkdirAll(workRoot, 0o700); err != nil {
+		return 0, fmt.Errorf("create feed-head work root: %w", err)
+	}
+	workDir, err := os.MkdirTemp(workRoot, "feed-head-*")
+	if err != nil {
+		return 0, fmt.Errorf("create feed-head work dir: %w", err)
+	}
+	defer os.RemoveAll(workDir)
+
+	shardPath := filepath.Join(workDir, "shard.fbshard")
+	indexPath := filepath.Join(workDir, "index.json")
+	shardHeader, err := n.fetchDatasetFeedHeadAssetToFile(ctx, ann, from, ann.ShardCID, "shard", shardPath)
+	if err != nil {
+		return 0, err
+	}
+	indexHeader, err := n.fetchDatasetFeedHeadAssetToFile(ctx, ann, from, ann.IndexCID, "index", indexPath)
+	if err != nil {
+		return 0, err
+	}
+	imported, index, err := n.store.ImportDatasetShardFromFiles(shardPath, indexPath, from.String())
+	if err != nil {
+		return 0, fmt.Errorf("import dataset feed head %s: %w", ann.FeedHead, err)
+	}
+	if index == nil {
+		return imported, fmt.Errorf("import dataset feed head %s returned no index", ann.FeedHead)
+	}
+	pub := datasetShardPublicationFromFeedHead(ann, shardHeader, indexHeader, index)
+	if err := n.cacheDatasetFeedHeadPublicationFiles(pub, shardPath, indexPath); err != nil {
+		return imported, err
+	}
+	if err := n.store.UpsertDatasetShardPublication(pub); err != nil {
+		return imported, fmt.Errorf("record replicated dataset shard publication %s: %w", ann.FeedHead, err)
+	}
+	return imported, nil
+}
+
+func datasetShardPublicationFromFeedHead(ann sdnpubsub.DatasetFeedHeadAnnouncement, shardHeader, indexHeader datasetFeedHeadAssetHeader, index *storage.DatasetExportIndex) storage.DatasetShardPublication {
+	pub := storage.DatasetShardPublication{
+		SchemaName:   ann.Schema,
+		ProviderID:   ann.ProviderID,
+		SourceName:   ann.SourceName,
+		BatchID:      ann.BatchID,
+		QueryProfile: ann.QueryProfile,
+		Offset:       ann.Offset,
+		Limit:        ann.Limit,
+		RecordCount:  ann.RecordCount,
+		ByteCount:    ann.ByteCount,
+		ShardCID:     ann.ShardCID,
+		IndexCID:     ann.IndexCID,
+		ManifestCID:  ann.ManifestCID,
+		PNMCID:       ann.PNMCID,
+		ShardSHA256:  shardHeader.SHA256,
+		IndexSHA256:  indexHeader.SHA256,
+		FeedSequence: ann.FeedSequence,
+		PreviousHead: ann.PreviousHead,
+		FeedHead:     ann.FeedHead,
+		PublishedAt:  ann.PublishedAt,
+	}
+	if index != nil {
+		if pub.ProviderID == "" {
+			pub.ProviderID = index.ProviderID
+		}
+		if pub.SourceName == "" {
+			pub.SourceName = index.SourceName
+		}
+		if pub.BatchID == "" {
+			pub.BatchID = index.BatchID
+		}
+		if pub.RecordCount <= 0 {
+			pub.RecordCount = index.RecordCount
+		}
+		if pub.ShardSHA256 == "" {
+			pub.ShardSHA256 = index.ShardSHA256
+		}
+		pub.QuerySHA256 = index.QuerySHA256
+		pub.ResultSHA256 = index.ResultSHA256
+	}
+	if pub.ByteCount <= 0 {
+		pub.ByteCount = shardHeader.ByteCount
+	}
+	if pub.PublishedAt.IsZero() {
+		pub.PublishedAt = time.Now().UTC()
+	}
+	return pub
+}
+
+func (n *Node) cacheDatasetFeedHeadPublicationFiles(pub storage.DatasetShardPublication, shardPath, indexPath string) error {
+	shardOut, err := n.store.DatasetPublicationShardPath(pub)
+	if err != nil {
+		return fmt.Errorf("resolve replicated dataset shard path: %w", err)
+	}
+	indexOut, err := n.store.DatasetPublicationIndexPath(pub)
+	if err != nil {
+		return fmt.Errorf("resolve replicated dataset index path: %w", err)
+	}
+	if err := copyDatasetFeedHeadAssetFile(shardPath, shardOut); err != nil {
+		return fmt.Errorf("cache replicated dataset shard: %w", err)
+	}
+	if err := copyDatasetFeedHeadAssetFile(indexPath, indexOut); err != nil {
+		return fmt.Errorf("cache replicated dataset index: %w", err)
+	}
+	return nil
+}
+
+func copyDatasetFeedHeadAssetFile(src, dest string) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := io.Copy(tmp, in); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, dest); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+type datasetFeedHeadAssetHeader struct {
+	Op             string `json:"op"`
+	Status         string `json:"status"`
+	Schema         string `json:"schema"`
+	Role           string `json:"role"`
+	CID            string `json:"cid"`
+	ByteCount      int64  `json:"byte_count"`
+	SHA256         string `json:"sha256"`
+	SyncProtocol   string `json:"sync_protocol"`
+	ImmutableBytes bool   `json:"immutable_bytes"`
+	Error          struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func (n *Node) fetchDatasetFeedHeadAssetToFile(ctx context.Context, ann sdnpubsub.DatasetFeedHeadAnnouncement, from peer.ID, cidValue string, role string, outputPath string) (datasetFeedHeadAssetHeader, error) {
+	var header datasetFeedHeadAssetHeader
+	stream, err := n.host.NewStream(ctx, from, protocol.FlatSQLSyncProtocolID)
+	if err != nil {
+		return header, fmt.Errorf("open FlatSQL sync stream to %s: %w", from.ShortString(), err)
+	}
+	defer stream.Close()
+	if err := protocol.WriteFlatSQLSyncJSONFrame(stream, map[string]interface{}{
+		"op":            "read_published_asset",
+		"schema":        ann.Schema,
+		"provider_id":   ann.ProviderID,
+		"source_name":   ann.SourceName,
+		"batch_id":      ann.BatchID,
+		"query_profile": ann.QueryProfile,
+		"cid":           cidValue,
+		"role":          role,
+	}); err != nil {
+		return header, fmt.Errorf("request published %s asset %s: %w", role, cidValue, err)
+	}
+	if err := protocol.ReadFlatSQLSyncJSONFrame(stream, datasync.StreamRequestMaxBytes, &header); err != nil {
+		return header, fmt.Errorf("read published %s asset header %s: %w", role, cidValue, err)
+	}
+	if header.Status == "error" {
+		return header, fmt.Errorf("provider rejected published %s asset %s: %s", role, cidValue, header.Error.Message)
+	}
+	if header.Op != "read_published_asset" || header.Status != "ok" || header.Role != role || header.CID != cidValue || header.SyncProtocol != protocol.FlatSQLSyncProtocolID || !header.ImmutableBytes {
+		return header, fmt.Errorf("published %s asset header mismatch: %+v", role, header)
+	}
+	if header.Schema != ann.Schema {
+		return header, fmt.Errorf("published %s asset schema = %q, want %q", role, header.Schema, ann.Schema)
+	}
+	if header.ByteCount <= 0 {
+		return header, fmt.Errorf("published %s asset %s has invalid byte count %d", role, cidValue, header.ByteCount)
+	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
+		return header, fmt.Errorf("create published %s asset dir: %w", role, err)
+	}
+	file, err := os.Create(outputPath)
+	if err != nil {
+		return header, fmt.Errorf("create published %s asset file: %w", role, err)
+	}
+	hash := sha256.New()
+	written, copyErr := io.CopyN(io.MultiWriter(file, hash), stream, header.ByteCount)
+	closeErr := file.Close()
+	if copyErr != nil {
+		return header, fmt.Errorf("read published %s asset %s bytes: %w", role, cidValue, copyErr)
+	}
+	if closeErr != nil {
+		return header, fmt.Errorf("close published %s asset file: %w", role, closeErr)
+	}
+	if written != header.ByteCount {
+		return header, fmt.Errorf("published %s asset %s bytes = %d, want %d", role, cidValue, written, header.ByteCount)
+	}
+	actualSHA := hex.EncodeToString(hash.Sum(nil))
+	if strings.TrimSpace(header.SHA256) != "" && actualSHA != header.SHA256 {
+		return header, fmt.Errorf("published %s asset %s SHA-256 = %s, want %s", role, cidValue, actualSHA, header.SHA256)
+	}
+	return header, nil
 }
 
 func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema string, pnmBytes []byte, from peer.ID) (bool, error) {
@@ -1242,6 +1758,9 @@ func (n *Node) materializeDatasetPublicationPNM(ctx context.Context, schema stri
 		ProviderPublicKey: providerPublicKey,
 		FetchByCID: func(ctx context.Context, cid string) ([]byte, error) {
 			return storage.FetchIPFSBlockByCID(ctx, ipfsAPIURL, cid)
+		},
+		FetchByCIDToFile: func(ctx context.Context, cid string, path string) error {
+			return storage.FetchIPFSBlockByCIDToFile(ctx, ipfsAPIURL, cid, path)
 		},
 		FetchRetryDelays: []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second},
 		WorkDir:          workDir,

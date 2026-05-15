@@ -80,6 +80,26 @@ func TestNewRunnerDefaultsToValidCelestrakSatcatCSVQuery(t *testing.T) {
 	}
 }
 
+func TestRunnerRefusesCelesTrakSyncWhenStorageDiskBelowGuardrail(t *testing.T) {
+	runner := newTestRunner(t)
+
+	oldDiskAvailableBytes := diskAvailableBytes
+	diskAvailableBytes = func(string) (uint64, error) {
+		return 1024, nil
+	}
+	t.Cleanup(func() {
+		diskAvailableBytes = oldDiskAvailableBytes
+	})
+
+	err := runner.syncCelestrakSatcat(context.Background())
+	if err == nil {
+		t.Fatal("syncCelestrakSatcat succeeded despite low free disk")
+	}
+	if !strings.Contains(err.Error(), "free disk") {
+		t.Fatalf("error = %v, want free disk guardrail", err)
+	}
+}
+
 func TestIngestSpaceWeatherDataStoresSPWFlatBuffers(t *testing.T) {
 	runner := newTestRunner(t)
 	fixture, err := os.ReadFile("testdata/celestrak-sw-all.csv")
@@ -1412,8 +1432,25 @@ func TestIngestSatcatDataStoresCATFlatBuffers(t *testing.T) {
 	if got, want := iss.Period(), 92.68; got != want {
 		t.Fatalf("PERIOD = %.2f, want %.2f", got, want)
 	}
-	if got, want := iss.Maneuverable(), true; got != want {
+	if got, want := iss.Maneuverable(), false; got != want {
 		t.Fatalf("MANEUVERABLE = %t, want %t", got, want)
+	}
+
+	starlink := byNorad[40909]
+	if starlink == nil {
+		t.Fatalf("missing CAT record for NORAD 40909")
+	}
+	if got, want := starlink.Maneuverable(), false; got != want {
+		t.Fatalf("legacy fixed-width MANEUVERABLE = %t, want %t", got, want)
+	}
+	if got, want := starlink.Mass(), 0.0; got != want {
+		t.Fatalf("legacy fixed-width MASS = %.1f, want %.1f", got, want)
+	}
+	if got, want := starlink.Size(), 0.0; got != want {
+		t.Fatalf("legacy fixed-width SIZE = %.1f, want %.1f", got, want)
+	}
+	if got, want := starlink.Rcs(), 10.5; got != want {
+		t.Fatalf("legacy fixed-width RCS = %.1f, want %.1f", got, want)
 	}
 }
 
@@ -1479,5 +1516,50 @@ func TestIngestSatcatCSVDataStoresCATFlatBuffers(t *testing.T) {
 	}
 	if got, want := starlink.OpsStatusCode().String(), "OPERATIONAL"; got != want {
 		t.Fatalf("OPS_STATUS_CODE = %q, want %q", got, want)
+	}
+}
+
+func TestIngestSatcatCSVDataDoesNotInventPhysicalFields(t *testing.T) {
+	runner := newTestRunner(t)
+	fixture := []byte(strings.Join([]string{
+		"OBJECT_NAME,OBJECT_ID,NORAD_CAT_ID,OBJECT_TYPE,OPS_STATUS_CODE,OWNER,LAUNCH_DATE,LAUNCH_SITE,DECAY_DATE,PERIOD,INCLINATION,APOGEE,PERIGEE,RCS,DATA_STATUS_CODE,ORBIT_CENTER,ORBIT_TYPE",
+		"COSMOS 2251 DEB,1993-036AAB,33757,DEB,D,CIS,1993-06-16,PKM,,94.69,74.0,807,770,0.01,,EA,ORB",
+		"",
+	}, "\n"))
+
+	count, _, err := runner.ingestSatcatData(fixture, "source:celestrak")
+	if err != nil {
+		t.Fatalf("ingestSatcatData failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("ingestSatcatData stored %d records, want 1", count)
+	}
+
+	stored, err := runner.store.QueryAll("CAT.fbs", 10)
+	if err != nil {
+		t.Fatalf("QueryAll CAT failed: %v", err)
+	}
+	if len(stored) != 1 {
+		t.Fatalf("QueryAll CAT returned %d records, want 1", len(stored))
+	}
+
+	cat := CATFB.GetSizePrefixedRootAsCAT(stored[0], 0)
+	if got, want := cat.ObjectType().String(), "DEBRIS"; got != want {
+		t.Fatalf("OBJECT_TYPE = %q, want %q", got, want)
+	}
+	if got, want := cat.OpsStatusCode().String(), "DECAYED"; got != want {
+		t.Fatalf("OPS_STATUS_CODE = %q, want %q", got, want)
+	}
+	if got, want := cat.Maneuverable(), false; got != want {
+		t.Fatalf("MANEUVERABLE = %t, want %t", got, want)
+	}
+	if got, want := cat.Mass(), 0.0; got != want {
+		t.Fatalf("MASS = %.1f, want %.1f", got, want)
+	}
+	if got, want := cat.Size(), 0.0; got != want {
+		t.Fatalf("SIZE = %.1f, want %.1f", got, want)
+	}
+	if got, want := cat.Rcs(), 0.01; got != want {
+		t.Fatalf("RCS = %.2f, want %.2f", got, want)
 	}
 }

@@ -8,7 +8,9 @@ export interface DataFeedSubscription {
   datastoreKey: string | null;
   standardId: string;
   providerName: string;
+  providerId: string | null;
   providerPublicKey: string | null;
+  sourceName: string | null;
   remoteRows: number;
   storageCap: number;
   storageUnit: StorageUnit;
@@ -24,7 +26,9 @@ export interface DataFeedSubscriptionInput {
   datastoreKey?: string | null;
   standardId: string;
   providerName: string;
+  providerId?: string | null;
   providerPublicKey: string | null;
+  sourceName?: string | null;
   remoteRows: number;
   storageCap: number;
   storageUnit: StorageUnit;
@@ -42,6 +46,7 @@ export interface DataDirectoryMigrationSource {
   peerId: string;
   providerName: string;
   providerPublicKey: string | null;
+  legacyDataSourceIds?: string[];
   remoteRowsByStandard?: Record<string, number>;
 }
 
@@ -68,6 +73,12 @@ export const DEFAULT_DATA_FEED_QUERY_PROFILE = 'dataset-publication-offset-v1';
 
 const TRUSTED_DIRECTORY_LEVELS = new Set<PgpOwnertrust>(['marginal', 'full', 'ultimate']);
 const DATA_FEED_QUERY_PROFILES = new Set(['ordered-offset-v1', 'dataset-publication-offset-v1']);
+const CELESTRAK_SOURCE_STANDARDS: Array<{ pattern: RegExp; standards: string[] }> = [
+  { pattern: /^celestrak-gp(?:$|-)/, standards: ['OMM', 'MPE'] },
+  { pattern: /^celestrak-satcat(?:$|-)|^celestrak-cat(?:$|-)/, standards: ['CAT'] },
+  { pattern: /^celestrak-space-weather(?:$|-)/, standards: ['SPW'] },
+  { pattern: /^celestrak-publication-log(?:$|-)/, standards: ['PNM'] },
+];
 
 export function normalizeOwnertrust(value: unknown): PgpOwnertrust {
   return PGP_OWNERTRUST_LEVELS.includes(value as PgpOwnertrust) ? value as PgpOwnertrust : DEFAULT_OWNERTRUST;
@@ -119,7 +130,9 @@ export function upsertDataFeedSubscription(
     datastoreKey: normalizeOptionalString(input.datastoreKey),
     standardId: normalizeStandardId(input.standardId),
     providerName: input.providerName.trim() || input.peerId.trim() || input.dataSourceId.trim(),
+    providerId: normalizeOptionalString(input.providerId),
     providerPublicKey: normalizeOptionalString(input.providerPublicKey),
+    sourceName: normalizeSubscriptionSourceName(input.standardId, input.sourceName),
     remoteRows: normalizeNonNegativeInteger(input.remoteRows),
     storageCap: normalizeStorageCap(input.storageCap),
     storageUnit: normalizeStorageUnit(input.storageUnit),
@@ -145,7 +158,7 @@ export function upsertDataFeedSubscription(
 export function updateDataFeedSubscription(
   state: DataDirectoryState,
   subscriptionId: string,
-  patch: Partial<Pick<DataFeedSubscription, 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter' | 'queryProfile'>>,
+  patch: Partial<Pick<DataFeedSubscription, 'providerId' | 'sourceName' | 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter' | 'queryProfile'>>,
 ): DataDirectoryState {
   const currentState = normalizeDataDirectoryState(state);
   const subscriptions = currentState.subscriptions.map((subscription) => {
@@ -198,6 +211,43 @@ export function migrateSchemaSyncPreferencesToDataDirectory(
     });
   }
   return nextState;
+}
+
+export function canonicalizeDataDirectorySourceIds(
+  state: DataDirectoryState,
+  sources: DataDirectoryMigrationSource[],
+): DataDirectoryState {
+  const currentState = normalizeDataDirectoryState(state);
+  const canonicalByAlias = new Map<string, string>();
+  for (const source of sources) {
+    const canonicalId = source.dataSourceId.trim();
+    if (!canonicalId) continue;
+    for (const alias of dataSourceAliasesForMigrationSource(source)) {
+      if (alias && alias !== canonicalId) canonicalByAlias.set(alias, canonicalId);
+    }
+  }
+
+  if (canonicalByAlias.size === 0) return currentState;
+
+  const subscriptions = new Map<string, DataFeedSubscription>();
+  for (const subscription of currentState.subscriptions) {
+    const canonicalDataSourceId = canonicalByAlias.get(subscription.dataSourceId) ?? subscription.dataSourceId;
+    const migrated = canonicalDataSourceId === subscription.dataSourceId
+      ? subscription
+      : {
+          ...subscription,
+          id: subscriptionKey(canonicalDataSourceId, subscription.standardId, subscription.datastoreKey),
+          dataSourceId: canonicalDataSourceId,
+        };
+    const existing = subscriptions.get(migrated.id);
+    subscriptions.set(migrated.id, existing ? mergeDataFeedSubscriptions(existing, migrated) : migrated);
+  }
+
+  return {
+    ...currentState,
+    subscriptions: Array.from(subscriptions.values())
+      .sort((left, right) => left.providerName.localeCompare(right.providerName) || left.standardId.localeCompare(right.standardId)),
+  };
 }
 
 export function normalizeDataDirectoryState(value: unknown): DataDirectoryState {
@@ -256,7 +306,9 @@ function normalizeDataFeedSubscription(value: unknown): DataFeedSubscription | n
     datastoreKey,
     standardId,
     providerName: stringValue(candidate.providerName) ?? peerId,
+    providerId: normalizeOptionalString(candidate.providerId),
     providerPublicKey: normalizeOptionalString(candidate.providerPublicKey),
+    sourceName: normalizeSubscriptionSourceName(standardId, candidate.sourceName),
     remoteRows: normalizeNonNegativeInteger(candidate.remoteRows),
     storageCap: normalizeStorageCap(candidate.storageCap),
     storageUnit: normalizeStorageUnit(candidate.storageUnit),
@@ -264,6 +316,32 @@ function normalizeDataFeedSubscription(value: unknown): DataFeedSubscription | n
     queryProfile: normalizeQueryProfile(candidate.queryProfile),
     createdAt: stringValue(candidate.createdAt) ?? now,
     updatedAt: stringValue(candidate.updatedAt) ?? now,
+  };
+}
+
+function dataSourceAliasesForMigrationSource(source: DataDirectoryMigrationSource): string[] {
+  const aliases = new Set<string>(source.legacyDataSourceIds?.map((value) => value.trim()).filter(Boolean) ?? []);
+  aliases.add(source.peerId.trim());
+  if (source.dataSourceId.startsWith('configured:')) {
+    aliases.add(source.dataSourceId.slice('configured:'.length));
+  }
+  return Array.from(aliases);
+}
+
+function mergeDataFeedSubscriptions(left: DataFeedSubscription, right: DataFeedSubscription): DataFeedSubscription {
+  return {
+    ...left,
+    providerName: right.providerName || left.providerName,
+    providerId: right.providerId ?? left.providerId,
+    providerPublicKey: right.providerPublicKey ?? left.providerPublicKey,
+    sourceName: right.sourceName ?? left.sourceName,
+    remoteRows: Math.max(left.remoteRows, right.remoteRows),
+    storageCap: right.storageCap || left.storageCap,
+    storageUnit: right.storageUnit || left.storageUnit,
+    syncFilter: right.syncFilter || left.syncFilter,
+    queryProfile: right.queryProfile || left.queryProfile,
+    createdAt: left.createdAt < right.createdAt ? left.createdAt : right.createdAt,
+    updatedAt: left.updatedAt > right.updatedAt ? left.updatedAt : right.updatedAt,
   };
 }
 
@@ -297,6 +375,17 @@ function normalizeNonNegativeInteger(value: unknown): number {
 
 function normalizeOptionalString(value: unknown): string | null {
   return stringValue(value) ?? null;
+}
+
+function normalizeSubscriptionSourceName(standardId: string, value: unknown): string | null {
+  const sourceName = normalizeOptionalString(value);
+  if (!sourceName) return null;
+  const normalizedStandardId = normalizeStandardId(standardId);
+  if (sourceName.toUpperCase() === normalizedStandardId) return null;
+  const lowerSourceName = sourceName.toLowerCase();
+  const knownSource = CELESTRAK_SOURCE_STANDARDS.find((entry) => entry.pattern.test(lowerSourceName));
+  if (knownSource && !knownSource.standards.includes(normalizedStandardId)) return null;
+  return sourceName;
 }
 
 function normalizeQueryProfile(value: unknown): string {

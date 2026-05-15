@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPeerDataFeeds, dataSummaryListingsForSource } from './peer-data-feeds';
+import { buildPeerDataFeeds, dataSummaryListingsForSource, preferredDataSummarySource } from './peer-data-feeds';
 import type { DataDirectoryState } from './data-directory';
 import type { DataSummary } from './sdn-backend';
 
@@ -41,9 +41,85 @@ describe('peer data feeds', () => {
       datastoreKey: 'sdn-ds-v1-celestrak-omm',
       providerName: 'CelesTrak Provider',
       providerPublicKey: 'producer-public-key',
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
       standardId: 'OMM',
       remoteRows: 1_999_559,
       syncAddrs: ['/dns4/celestrak.eth/tcp/443/wss/p2p/16Uiu2HCelesTrak'],
     })]);
+  });
+
+  it('uses the highest-count CelesTrak CAT source when multiple CAT sources are advertised without datastore keys', () => {
+    const summary: DataSummary = {
+      totalRecords: 533_380,
+      totalBytes: 123_456,
+      schemas: [{ schemaName: 'CAT.fbs', count: 533_380, totalBytes: 123_456 }],
+      sources: [
+        {
+          schemaName: 'CAT.fbs',
+          providerId: 'space-data-network-02',
+          sourceName: 'celestrak-satcat-csv',
+          batchId: 'csv',
+          producerPeerId: '16Uiu2HCelesTrak',
+          producerPublicKey: 'producer-public-key',
+          count: 98_123,
+          totalBytes: 10_000,
+        },
+        {
+          schemaName: 'CAT.fbs',
+          providerId: 'space-data-network-02',
+          sourceName: 'celestrak-satcat',
+          batchId: 'legacy',
+          producerPeerId: '16Uiu2HCelesTrak',
+          producerPublicKey: 'producer-public-key',
+          count: 435_257,
+          totalBytes: 113_456,
+        },
+      ],
+    };
+
+    const listings = dataSummaryListingsForSource(source, summary);
+    const feeds = buildPeerDataFeeds([source], listings, emptyDirectory);
+    const cat = feeds.find((feed) => feed.standardId === 'CAT');
+
+    expect(cat).toMatchObject({
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-satcat',
+      remoteRows: 435_257,
+    });
+  });
+
+  it('ignores stale source filters when choosing a summary source for a schema', () => {
+    const sourceRow = preferredDataSummarySource([
+      {
+        schemaName: 'CAT.fbs',
+        providerId: 'space-data-network-02',
+        sourceName: 'celestrak-satcat-csv',
+        batchId: 'csv',
+        producerPeerId: '16Uiu2HCelesTrak',
+        producerPublicKey: 'producer-public-key',
+        count: 98_123,
+        totalBytes: 10_000,
+      },
+      {
+        schemaName: 'CAT.fbs',
+        providerId: 'space-data-network-02',
+        sourceName: 'celestrak-satcat',
+        batchId: 'legacy',
+        producerPeerId: '16Uiu2HCelesTrak',
+        producerPublicKey: 'producer-public-key',
+        count: 435_257,
+        totalBytes: 113_456,
+      },
+    ], {
+      standardId: 'CAT',
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+    });
+
+    expect(sourceRow).toMatchObject({
+      sourceName: 'celestrak-satcat',
+      count: 435_257,
+    });
   });
 });

@@ -101,6 +101,7 @@ coverage/
 
 # Docker
 docker-compose.override.yml
+deployment/generated/
 
 # Dev environment data and build context artifacts
 data/

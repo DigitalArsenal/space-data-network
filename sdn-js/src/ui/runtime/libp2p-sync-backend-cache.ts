@@ -5,6 +5,8 @@ import {
   type Libp2pFlatSqlSyncClient,
 } from './sdn-backend-libp2p-sync';
 import type {
+  FlatSqlPublishedShard,
+  FlatSqlPublishedShardBatch,
   FlatSqlSyncChunk,
   FlatSqlSyncManifest,
   FlatSqlSyncQuery,
@@ -17,8 +19,12 @@ type Libp2pFlatSqlSyncClientFactory = (
   options: Libp2pFlatSqlSyncBackendOptions,
 ) => Promise<Libp2pFlatSqlSyncClient>;
 
+const PUBLISHED_SHARD_CLIENT_POOL_SIZE = 4;
+
 export class Libp2pFlatSqlSyncBackendCache {
   private readonly clientPromises = new Map<string, Promise<Libp2pFlatSqlSyncClient>>();
+  private readonly publishedShardClientPools = new Map<string, Array<Promise<Libp2pFlatSqlSyncClient>>>();
+  private readonly publishedShardClientIndexes = new Map<string, number>();
   private readonly backends = new Map<string, SdnBackend>();
 
   constructor(
@@ -47,14 +53,11 @@ export class Libp2pFlatSqlSyncBackendCache {
   ): Promise<FlatSqlSyncChunk> {
     const normalizedOptions = normalizeOptions(options);
     const client = await this.clientFor(normalizedOptions);
-    return await client.readFlatSqlSyncChunk({
+    return await client.readFlatSqlSyncChunk(withSyncDefaults({
       ...query,
       targetPeerId: normalizedOptions.targetPeerId,
       candidateAddrs: normalizedOptions.candidateAddrs,
-      datastoreKey: query.datastoreKey ?? normalizedOptions.datastoreKey ?? undefined,
-      providerId: query.providerId ?? normalizedOptions.providerId ?? undefined,
-      sourceName: query.sourceName ?? normalizedOptions.sourceName ?? undefined,
-    });
+    }, query, normalizedOptions));
   }
 
   async openFlatSqlSyncManifest(
@@ -64,15 +67,60 @@ export class Libp2pFlatSqlSyncBackendCache {
     const normalizedOptions = normalizeOptions(options);
     const client = await this.clientFor(normalizedOptions);
     if (!client.openFlatSqlSyncManifest) throw new Error('remote FlatSQL sync manifest is unavailable');
-    return await client.openFlatSqlSyncManifest({
+    return await client.openFlatSqlSyncManifest(withSyncDefaults({
       ...query,
       op: 'open_manifest',
       targetPeerId: normalizedOptions.targetPeerId,
       candidateAddrs: normalizedOptions.candidateAddrs,
-      datastoreKey: query.datastoreKey ?? normalizedOptions.datastoreKey ?? undefined,
-      providerId: query.providerId ?? normalizedOptions.providerId ?? undefined,
-      sourceName: query.sourceName ?? normalizedOptions.sourceName ?? undefined,
-    });
+    }, query, normalizedOptions));
+  }
+
+  async readFlatSqlPublishedShard(
+    options: Libp2pFlatSqlSyncBackendOptions,
+    query: FlatSqlSyncQuery & { cid: string },
+  ): Promise<FlatSqlPublishedShard> {
+    const normalizedOptions = normalizeOptions(options);
+    const client = await this.publishedShardClientFor(normalizedOptions);
+    if (!client.readFlatSqlPublishedShard) throw new Error('remote FlatSQL published shard stream is unavailable');
+    return await client.readFlatSqlPublishedShard(withSyncDefaults({
+      ...query,
+      op: 'read_published_shard',
+      targetPeerId: normalizedOptions.targetPeerId,
+      candidateAddrs: normalizedOptions.candidateAddrs,
+    }, query, normalizedOptions));
+  }
+
+  async readFlatSqlPublishedShardFromSources(
+    sources: Libp2pFlatSqlSyncBackendOptions[],
+    query: FlatSqlSyncQuery & { cid: string },
+    preferredSourceIndex = 0,
+  ): Promise<FlatSqlPublishedShard> {
+    const orderedSources = orderedPublishedShardSources(sources, preferredSourceIndex);
+    let lastError: unknown = null;
+    for (const source of orderedSources) {
+      try {
+        return await this.readFlatSqlPublishedShard(source, query);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (lastError instanceof Error) throw lastError;
+    throw new Error('remote FlatSQL published shard stream is unavailable');
+  }
+
+  async readFlatSqlPublishedShardBatch(
+    options: Libp2pFlatSqlSyncBackendOptions,
+    query: FlatSqlSyncQuery & { cids: string[] },
+  ): Promise<FlatSqlPublishedShardBatch> {
+    const normalizedOptions = normalizeOptions(options);
+    const client = await this.publishedShardClientFor(normalizedOptions);
+    if (!client.readFlatSqlPublishedShardBatch) throw new Error('remote FlatSQL published shard batch stream is unavailable');
+    return await client.readFlatSqlPublishedShardBatch(withSyncDefaults({
+      ...query,
+      op: 'read_published_shard_batch',
+      targetPeerId: normalizedOptions.targetPeerId,
+      candidateAddrs: normalizedOptions.candidateAddrs,
+    }, query, normalizedOptions));
   }
 
   async measureWireSpeed(
@@ -89,9 +137,25 @@ export class Libp2pFlatSqlSyncBackendCache {
     });
   }
 
+  async releaseControlClient(options: Libp2pFlatSqlSyncBackendOptions): Promise<void> {
+    if (options.syncClient) return;
+    const normalizedOptions = normalizeOptions(options);
+    const key = cacheKeyFor(normalizedOptions);
+    const clientPromise = this.clientPromises.get(key);
+    if (!clientPromise) return;
+    this.clientPromises.delete(key);
+    const client = await clientPromise;
+    await client.stop?.();
+  }
+
   async destroy(): Promise<void> {
-    const clientPromises = Array.from(this.clientPromises.values());
+    const clientPromises = Array.from(new Set([
+      ...this.clientPromises.values(),
+      ...Array.from(this.publishedShardClientPools.values()).flat(),
+    ]));
     this.clientPromises.clear();
+    this.publishedShardClientPools.clear();
+    this.publishedShardClientIndexes.clear();
     this.backends.clear();
     const stopPromises = clientPromises.map(async (clientPromise) => {
       const client = await clientPromise;
@@ -116,6 +180,25 @@ export class Libp2pFlatSqlSyncBackendCache {
     this.clientPromises.set(key, clientPromise);
     return clientPromise;
   }
+
+  private publishedShardClientFor(options: Libp2pFlatSqlSyncBackendOptions): Promise<Libp2pFlatSqlSyncClient> {
+    if (options.syncClient) return this.clientFor(options);
+    const key = `${cacheKeyFor(options)}:published-shards`;
+    let pool = this.publishedShardClientPools.get(key);
+    if (!pool) {
+      pool = Array.from({ length: PUBLISHED_SHARD_CLIENT_POOL_SIZE }, () => (
+        Promise.resolve(options.nodeFactory?.() ?? this.clientFactory(options)).catch((error) => {
+          this.publishedShardClientPools.delete(key);
+          this.publishedShardClientIndexes.delete(key);
+          throw error;
+        })
+      ));
+      this.publishedShardClientPools.set(key, pool);
+    }
+    const index = this.publishedShardClientIndexes.get(key) ?? 0;
+    this.publishedShardClientIndexes.set(key, (index + 1) % pool.length);
+    return pool[index] ?? this.clientFor(options);
+  }
 }
 
 async function delay(milliseconds: number): Promise<void> {
@@ -130,6 +213,39 @@ function normalizeOptions(options: Libp2pFlatSqlSyncBackendOptions): Libp2pFlatS
   };
 }
 
+function orderedPublishedShardSources(
+  sources: Libp2pFlatSqlSyncBackendOptions[],
+  preferredSourceIndex: number,
+): Libp2pFlatSqlSyncBackendOptions[] {
+  const normalizedSources = uniquePublishedShardSources(sources);
+  if (normalizedSources.length <= 1) return normalizedSources;
+  const preferredIndex = normalizePreferredSourceIndex(preferredSourceIndex, normalizedSources.length);
+  return [
+    ...normalizedSources.slice(preferredIndex),
+    ...normalizedSources.slice(0, preferredIndex),
+  ];
+}
+
+function uniquePublishedShardSources(sources: Libp2pFlatSqlSyncBackendOptions[]): Libp2pFlatSqlSyncBackendOptions[] {
+  const unique: Libp2pFlatSqlSyncBackendOptions[] = [];
+  const seen = new Set<string>();
+  for (const source of sources) {
+    const normalized = normalizeOptions(source);
+    if (!normalized.targetPeerId || normalized.candidateAddrs.length === 0) continue;
+    const key = cacheKeyFor(normalized);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(normalized);
+  }
+  return unique;
+}
+
+function normalizePreferredSourceIndex(value: number, sourceCount: number): number {
+  if (!Number.isFinite(value) || sourceCount <= 0) return 0;
+  const index = Math.floor(value) % sourceCount;
+  return index < 0 ? index + sourceCount : index;
+}
+
 function normalizeCandidateAddrs(candidateAddrs: string[]): string[] {
   return Array.from(new Set(candidateAddrs.map((addr) => addr.trim()).filter(Boolean))).sort();
 }
@@ -142,4 +258,30 @@ function cacheKeyFor(options: Libp2pFlatSqlSyncBackendOptions): string {
     providerId: options.providerId ?? null,
     sourceName: options.sourceName ?? null,
   });
+}
+
+function withSyncDefaults<T extends FlatSqlSyncQuery>(
+  request: T,
+  query: FlatSqlSyncQuery,
+  options: Libp2pFlatSqlSyncBackendOptions,
+): T {
+  const normalized = { ...request };
+  const queryHasDatastoreKey = Object.prototype.hasOwnProperty.call(query, 'datastoreKey') && query.datastoreKey !== undefined;
+  const queryHasProviderId = Object.prototype.hasOwnProperty.call(query, 'providerId') && query.providerId !== undefined;
+  const queryHasSourceName = Object.prototype.hasOwnProperty.call(query, 'sourceName') && query.sourceName !== undefined;
+  const datastoreKey = normalizeOptionalText(queryHasDatastoreKey ? query.datastoreKey : options.datastoreKey);
+  const providerId = normalizeOptionalText(queryHasProviderId ? query.providerId : options.providerId);
+  const sourceName = normalizeOptionalText(queryHasSourceName ? query.sourceName : options.sourceName);
+  delete normalized.datastoreKey;
+  delete normalized.providerId;
+  delete normalized.sourceName;
+  if (datastoreKey) normalized.datastoreKey = datastoreKey;
+  if (providerId) normalized.providerId = providerId;
+  if (sourceName) normalized.sourceName = sourceName;
+  return normalized;
+}
+
+function normalizeOptionalText(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
 }

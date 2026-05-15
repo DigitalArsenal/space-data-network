@@ -12,6 +12,7 @@ import {
   type LocalFlatSqlStreamIngestOptions,
 } from './local-flatsql';
 import type { DataScanResult, DataSummary, RawDataQuery, RawDataRecord } from './sdn-backend';
+import { decodeWorkerSchemaSyncProgressFlatBuffer } from './worker-sync-status-flatbuffer';
 
 export interface WorkerFlatSqlSyncBackendConfig {
   targetPeerId: string;
@@ -21,10 +22,8 @@ export interface WorkerFlatSqlSyncBackendConfig {
   sourceName?: string | null;
   displayName?: string | null;
   publicKey?: string | null;
-  gatewayUrl?: string | null;
-  ipfsApiUrl?: string | null;
-  artifactPeerAddrs?: string[] | null;
   measuredWireSpeedBytesPerSecond?: number | null;
+  publishedShardSources?: WorkerFlatSqlSyncBackendConfig[] | null;
 }
 
 export interface WorkerSchemaSyncProgress {
@@ -81,6 +80,11 @@ export interface WorkerSchemaSyncUpdate {
   stats: LocalFlatSqlStandardStats[];
 }
 
+interface WorkerSchemaSyncWireUpdate {
+  progressBytes: Uint8Array;
+  stats: LocalFlatSqlStandardStats[];
+}
+
 export interface WorkerRemotePageRequest {
   standardId: string;
   query: RawDataQuery;
@@ -117,7 +121,7 @@ type WorkerRequest =
 type WorkerResponse =
   | { id: number; ok: true; data?: unknown; stats?: LocalFlatSqlStandardStats[] }
   | { id: number; ok: false; error: string }
-  | { id: number; type: 'syncProgress'; progress: WorkerSchemaSyncProgress; stats: LocalFlatSqlStandardStats[] };
+  | { id: number; type: 'syncProgress'; progressBytes: Uint8Array; stats: LocalFlatSqlStandardStats[] };
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -268,7 +272,7 @@ class WorkerLocalFlatSqlStoreClient implements WorkerLocalFlatSqlStore {
   private handleResponse(response: WorkerResponse): void {
     if ('type' in response && response.type === 'syncProgress') {
       this.statsCache = response.stats;
-      this.syncProgressHandlers.get(response.id)?.({ progress: response.progress, stats: response.stats });
+      this.syncProgressHandlers.get(response.id)?.(decodeWorkerSchemaSyncWireUpdate(response));
       return;
     }
     const pending = this.pending.get(response.id);
@@ -280,13 +284,33 @@ class WorkerLocalFlatSqlStoreClient implements WorkerLocalFlatSqlStore {
       return;
     }
     if (response.stats) this.statsCache = response.stats;
-    pending.resolve(response.data ?? response.stats ?? this.statsCache);
+    pending.resolve(isWorkerSchemaSyncWireUpdate(response.data)
+      ? decodeWorkerSchemaSyncWireUpdate(response.data)
+      : response.data ?? response.stats ?? this.statsCache);
   }
 
   private rejectAll(error: Error): void {
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
   }
+}
+
+function isWorkerSchemaSyncWireUpdate(value: unknown): value is WorkerSchemaSyncWireUpdate {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && value !== null
+    && 'progressBytes' in value
+    && (value as WorkerSchemaSyncWireUpdate).progressBytes instanceof Uint8Array
+    && Array.isArray((value as WorkerSchemaSyncWireUpdate).stats),
+  );
+}
+
+function decodeWorkerSchemaSyncWireUpdate(update: WorkerSchemaSyncWireUpdate): WorkerSchemaSyncUpdate {
+  return {
+    progress: decodeWorkerSchemaSyncProgressFlatBuffer(update.progressBytes),
+    stats: update.stats,
+  };
 }
 
 function prepareRecordsForWorker(records: RawDataRecord[], transfer: boolean): { records: RawDataRecord[]; transferables: Transferable[] } {

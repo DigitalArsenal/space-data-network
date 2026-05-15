@@ -1,16 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { FLATSQL_SYNC_PROTOCOL_ID, type FlatSqlSyncChunk, type FlatSqlSyncQuery } from '../../flatsql-sync';
 import {
+  LIBP2P_FLATSQL_SYNC_YAMUX_OPTIONS,
   createLibp2pFlatSqlSyncBackend,
   exchangeFlatSqlSyncStream,
+  isLibp2pFlatSqlSyncAddrDialable,
+  orderLibp2pFlatSqlSyncDialAddrs,
   selectLibp2pFlatSqlSyncTransports,
 } from './sdn-backend-libp2p-sync';
 
 describe('libp2p FlatSQL sync backend', () => {
+  it('advertises a high-throughput yamux receive window for bulk FlatSQL shard streams', () => {
+    expect(LIBP2P_FLATSQL_SYNC_YAMUX_OPTIONS).toMatchObject({
+      initialStreamWindowSize: 16 * 1024 * 1024,
+      maxStreamWindowSize: 128 * 1024 * 1024,
+    });
+  });
+
   it('selects WebRTC direct transport for direct WebRTC multiaddrs', () => {
     expect(selectLibp2pFlatSqlSyncTransports([
       '/ip4/167.172.219.213/udp/4003/webrtc-direct/certhash/uEiDkQCtOX-kkIk6CsI0pdCvIzTQ4IkRF1ujnZ6CSvED3cw/p2p/16Uiu2HCelesTrak',
     ])).toEqual({
+      tcp: false,
       webSockets: false,
       webTransport: false,
       webRtcRelay: false,
@@ -22,11 +33,47 @@ describe('libp2p FlatSQL sync backend', () => {
     expect(selectLibp2pFlatSqlSyncTransports([
       '/ip4/104.131.11.220/tcp/8080/ws/p2p/16Uiu2HRelay/p2p-circuit/webrtc/p2p/16Uiu2HCelesTrak',
     ])).toEqual({
+      tcp: false,
       webSockets: true,
       webTransport: false,
       webRtcRelay: true,
       webRtcDirect: false,
     });
+  });
+
+  it('selects native TCP for desktop/node libp2p multiaddrs', () => {
+    expect(selectLibp2pFlatSqlSyncTransports([
+      '/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HCelesTrak',
+    ])).toEqual({
+      tcp: true,
+      webSockets: false,
+      webTransport: false,
+      webRtcRelay: false,
+      webRtcDirect: false,
+    });
+  });
+
+  it('orders native TCP before websocket for node/desktop sync clients', () => {
+    expect(orderLibp2pFlatSqlSyncDialAddrs([
+      '/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak',
+      '/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HCelesTrak',
+    ])).toEqual([
+      '/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HCelesTrak',
+      '/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak',
+    ]);
+  });
+
+  it('does not dial WebRTC direct from node when the runtime has no browser WebRTC certificate API', () => {
+    expect(isLibp2pFlatSqlSyncAddrDialable(
+      '/ip4/167.172.219.213/udp/4003/webrtc-direct/certhash/uEiDkQCtOX-kkIk6CsI0pdCvIzTQ4IkRF1ujnZ6CSvED3cw/p2p/16Uiu2HCelesTrak',
+      {
+        tcp: false,
+        webSockets: false,
+        webTransport: false,
+        webRtcRelay: false,
+        webRtcDirect: true,
+      },
+    )).toBe(false);
   });
 
   it('builds data summaries by scanning configured schemas over libp2p sync', async () => {
@@ -54,7 +101,7 @@ describe('libp2p FlatSQL sync backend', () => {
         sources: [{
           schemaName: 'OMM.fbs',
           providerId: 'space-data-network-02',
-          sourceName: 'celestrak-gp',
+          sourceName: '',
           count: 1_999_559,
         }],
       },
@@ -65,7 +112,6 @@ describe('libp2p FlatSQL sync backend', () => {
       op: 'scan',
       schema: 'CAT.fbs',
       providerId: 'space-data-network-02',
-      sourceName: 'celestrak-gp',
       limit: 1,
       offset: 0,
     });
@@ -99,6 +145,7 @@ describe('libp2p FlatSQL sync backend', () => {
     const backend = createLibp2pFlatSqlSyncBackend({
       targetPeerId: '16Uiu2HCelesTrak',
       candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+      schemas: ['OMM.fbs'],
       syncClient: {
         async listFlatSqlSyncDatastores() {
           return {
@@ -150,12 +197,80 @@ describe('libp2p FlatSQL sync backend', () => {
     ]);
   });
 
+  it('merges schema scans into partial datastore summaries without applying a node-level source name', async () => {
+    const calls: FlatSqlSyncQuery[] = [];
+    const backend = createLibp2pFlatSqlSyncBackend({
+      targetPeerId: '16Uiu2HCelesTrak',
+      candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+      schemas: ['CAT.fbs', 'OMM.fbs'],
+      syncClient: {
+        async listFlatSqlSyncDatastores() {
+          return {
+            count: 1,
+            results: [{
+              key: 'sdn-ds-v1-omm-history',
+              updatedAt: 1778712000,
+              identity: {
+                schemaName: 'OMM.fbs',
+                sourcePeerId: 'source:history',
+                sourcePublicKey: 'history-public-key',
+                providerId: 'space-data-network-02',
+                sourceName: 'celestrak-gp-historical',
+              },
+            }],
+          };
+        },
+        async readFlatSqlSyncChunk(query) {
+          calls.push(query);
+          if (query.datastoreKey) return headerOnlyChunk(query.schema, 44_349_135);
+          return headerOnlyChunk(query.schema, query.schema === 'CAT.fbs' ? 145_902 : 0);
+        },
+      },
+    });
+
+    await expect(backend.getDataSummary()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        totalRecords: 44_495_037,
+        schemas: expect.arrayContaining([
+          { schemaName: 'OMM.fbs', count: 44_349_135, totalBytes: 0 },
+          { schemaName: 'CAT.fbs', count: 145_902, totalBytes: 0 },
+        ]),
+        sources: expect.arrayContaining([
+          expect.objectContaining({
+            datastoreKey: 'sdn-ds-v1-omm-history',
+            schemaName: 'OMM.fbs',
+            sourceName: 'celestrak-gp-historical',
+          }),
+          expect.objectContaining({
+            schemaName: 'CAT.fbs',
+            providerId: 'space-data-network-02',
+            sourceName: '',
+            count: 145_902,
+          }),
+        ]),
+      },
+    });
+    const catScan = calls.find((call) => call.schema === 'CAT.fbs');
+    expect(catScan).toMatchObject({
+      op: 'scan',
+      schema: 'CAT.fbs',
+      providerId: 'space-data-network-02',
+      limit: 1,
+      offset: 0,
+    });
+    expect(catScan).not.toHaveProperty('sourceName');
+  });
+
   it('falls back to schema scans when a provider does not support datastore discovery yet', async () => {
     const calls: FlatSqlSyncQuery[] = [];
     const backend = createLibp2pFlatSqlSyncBackend({
       targetPeerId: '16Uiu2HCelesTrak',
       candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
       providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
       schemas: ['OMM.fbs'],
       syncClient: {
         async listFlatSqlSyncDatastores() {
@@ -182,6 +297,7 @@ describe('libp2p FlatSQL sync backend', () => {
         providerId: 'space-data-network-02',
       }),
     ]);
+    expect(calls[0]).not.toHaveProperty('sourceName');
   });
 
   it('loads summary schemas sequentially instead of parallel dialing every schema', async () => {
@@ -467,6 +583,13 @@ describe('libp2p FlatSQL sync backend', () => {
       exchangeFlatSqlSyncStream(stream, new Uint8Array([1, 2, 3, 4])),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('exchange deadlocked')), 25)),
     ])).resolves.toEqual(new Uint8Array([9, 8, 7, 6]));
+  });
+
+  it('does not clone every inbound response chunk before final concatenation', async () => {
+    const source = await import('node:fs').then((fs) => fs.readFileSync(new URL('./sdn-backend-libp2p-sync.ts', import.meta.url), 'utf8'));
+
+    expect(source).toContain('chunks.push(streamChunkBytes(chunk))');
+    expect(source).not.toContain('chunks.push(cloneStreamBytes(chunk))');
   });
 
   it('bounds stream exchanges that never close', async () => {

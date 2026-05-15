@@ -29,6 +29,8 @@ describe('SDN Svelte app shell', () => {
 
   it('keeps the desktop top bar draggable while controls remain interactive', () => {
     expect(appCss).toMatch(/\.sdn-top-bar\s*{[^}]*-webkit-app-region:\s*drag;/s);
+    expect(appCss).toMatch(/\.sdn-top-meta\s*{[^}]*-webkit-app-region:\s*drag;/s);
     expect(appCss).toMatch(/button,\s*a,\s*input,\s*select,\s*textarea,[^}]*\.sdn-nav-link,[^}]*\.sdn-content[^}]*{[^}]*-webkit-app-region:\s*no-drag;/s);
+    expect(appCss).not.toMatch(/button,\s*a,\s*input,\s*select,\s*textarea,[^}]*\.sdn-top-meta[^}]*{[^}]*-webkit-app-region:\s*no-drag;/s);
   });
 });

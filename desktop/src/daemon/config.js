@@ -13,6 +13,7 @@ const SDN_CUSTOM_SCHEME_ORIGINS = Object.freeze(['sdn', 'webui'].map(scheme => `
 const STALE_RANDOM_GATEWAY_WEBUI_ORIGIN = 'http://webui.ipfs.io.ipns.localhost:0'
 const DEFAULT_API_ADDR = '/ip4/127.0.0.1/tcp/5001'
 const DEFAULT_GATEWAY_ADDR = '/ip4/127.0.0.1/tcp/8080'
+const LOCAL_DAEMON_PROBE_TIMEOUT_MS = 750
 const DESKTOP_API_CORS_METHODS = Object.freeze(['PUT', 'POST'])
 const DESKTOP_BOOTSTRAP_PEERS = Object.freeze([
   'auto',
@@ -398,7 +399,7 @@ function migrateConfig (ipfsd) {
  */
 async function checkIfAddrIsDaemon (addr) {
   const options = {
-    timeout: 3000, // 3s is plenty for localhost request
+    timeout: LOCAL_DAEMON_PROBE_TIMEOUT_MS,
     method: 'POST',
     host: addr.address,
     port: addr.port,
@@ -406,12 +407,28 @@ async function checkIfAddrIsDaemon (addr) {
   }
 
   return new Promise(resolve => {
-    const req = http.request(options, function (r) {
-      resolve(r.statusCode === 200)
+    let settled = false
+    let req = null
+    const timeout = setTimeout(() => finish(false), options.timeout)
+    const finish = value => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      if (req) req.destroy()
+      resolve(value)
+    }
+
+    req = http.request(options, function (r) {
+      r.resume()
+      finish(r.statusCode === 200)
     })
 
     req.on('error', () => {
-      resolve(false)
+      finish(false)
+    })
+
+    req.on('timeout', () => {
+      finish(false)
     })
 
     req.end()
@@ -515,12 +532,18 @@ async function checkPorts (ipfsd) {
     return true
   }
 
-  // two "0" in config mean "pick free ports without any prompt"
-  let promptUser = (apiPort !== 0 || gatewayPort !== 0)
+  // SDN Desktop must not block the main process with a modal while the local
+  // static server is already accepting connections. Auto-repair by default;
+  // keep an escape hatch for upstream-style troubleshooting builds.
+  let promptUser = process.env.SDN_DESKTOP_PROMPT_FOR_BUSY_PORTS === '1' && (apiPort !== 0 || gatewayPort !== 0)
 
   if (process.env.NODE_ENV === 'test' || process.env.CI != null) {
     logger.info('[daemon] CI or TEST mode, skipping busyPortDialog')
     promptUser = false
+  }
+
+  if (!promptUser) {
+    logger.info('[daemon] local API or gateway port busy, using free alternative without blocking startup')
   }
 
   if (promptUser) {

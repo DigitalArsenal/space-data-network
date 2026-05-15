@@ -50,6 +50,8 @@ type DatasetFeedHeadAnnouncement struct {
 	SourceName   string    `json:"source_name,omitempty"`
 	BatchID      string    `json:"batch_id,omitempty"`
 	QueryProfile string    `json:"query_profile"`
+	Offset       int       `json:"offset,omitempty"`
+	Limit        int       `json:"limit,omitempty"`
 	FeedSequence int64     `json:"feed_sequence"`
 	PreviousHead string    `json:"previous_head,omitempty"`
 	FeedHead     string    `json:"feed_head"`
@@ -131,6 +133,60 @@ func PublishDatasetFeedHead(ctx context.Context, publisher TopicPublisher, ann D
 	if err := publisher.PublishToTopic(ctx, topic, payload); err != nil {
 		return fmt.Errorf("%s: %w", topic, err)
 	}
+	return nil
+}
+
+func ParseDatasetFeedHeadAnnouncement(payload []byte) (DatasetFeedHeadAnnouncement, error) {
+	var ann DatasetFeedHeadAnnouncement
+	if len(payload) == 0 {
+		return ann, errors.New("dataset feed head payload is empty")
+	}
+	if err := json.Unmarshal(payload, &ann); err != nil {
+		return ann, fmt.Errorf("decode dataset feed head: %w", err)
+	}
+	if err := validateDatasetFeedHeadAnnouncement(&ann); err != nil {
+		return DatasetFeedHeadAnnouncement{}, err
+	}
+	return ann, nil
+}
+
+func validateDatasetFeedHeadAnnouncement(ann *DatasetFeedHeadAnnouncement) error {
+	if ann == nil {
+		return errors.New("dataset feed head is required")
+	}
+	ann.MessageType = strings.TrimSpace(ann.MessageType)
+	if ann.MessageType != DatasetFeedHeadMessageType {
+		return fmt.Errorf("unsupported dataset feed head message type %q", ann.MessageType)
+	}
+	ann.Schema = normalizeDatasetUpdateSchema(ann.Schema)
+	if err := sds.ValidateSchemaName(ann.Schema); err != nil {
+		return fmt.Errorf("invalid schema: %w", err)
+	}
+	ann.QueryProfile = strings.TrimSpace(ann.QueryProfile)
+	if ann.QueryProfile == "" {
+		return errors.New("query profile is required")
+	}
+	ann.FeedHead = strings.TrimSpace(ann.FeedHead)
+	if ann.FeedHead == "" {
+		return errors.New("feed head is required")
+	}
+	if ann.FeedSequence <= 0 {
+		return errors.New("feed sequence must be positive")
+	}
+	if ann.Offset < 0 {
+		return errors.New("offset must be non-negative")
+	}
+	if ann.Limit < 0 {
+		return errors.New("limit must be non-negative")
+	}
+	ann.ProviderID = strings.TrimSpace(ann.ProviderID)
+	ann.SourceName = strings.TrimSpace(ann.SourceName)
+	ann.BatchID = strings.TrimSpace(ann.BatchID)
+	ann.PreviousHead = strings.TrimSpace(ann.PreviousHead)
+	ann.ShardCID = strings.TrimSpace(ann.ShardCID)
+	ann.IndexCID = strings.TrimSpace(ann.IndexCID)
+	ann.ManifestCID = strings.TrimSpace(ann.ManifestCID)
+	ann.PNMCID = strings.TrimSpace(ann.PNMCID)
 	return nil
 }
 

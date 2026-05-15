@@ -249,6 +249,13 @@ func TestOpenManifestAdvertisesPerBatchCARBundlesForAggregateSourceManifest(t *t
 	if len(published) != 2 {
 		t.Fatalf("published shards = %d, want 2", len(published))
 	}
+	var totalRows int64
+	var totalBytes int64
+	for _, publication := range published {
+		totalRows += int64(publication.RecordCount)
+		totalBytes += publication.ByteCount
+	}
+	highWaterMark := PublishedFeedHighWaterMark(published, totalRows, totalBytes)
 	for index, publication := range published {
 		if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
 			CID:               []string{"bafybatchacar", "bafybatchbcar"}[index],
@@ -258,8 +265,11 @@ func TestOpenManifestAdvertisesPerBatchCARBundlesForAggregateSourceManifest(t *t
 			BatchID:           publication.BatchID,
 			QueryProfile:      publication.QueryProfile,
 			Head:              publication.FeedHead,
+			HighWaterMark:     highWaterMark,
 			ByteHash:          []string{"car-sha-a", "car-sha-b"}[index],
 			Role:              "shard-group-car",
+			SegmentStart:      index,
+			SegmentCount:      1,
 			RowCount:          int64(publication.RecordCount),
 			ByteCount:         int64([]int{16_000_000, 17_000_000}[index]),
 			VerificationState: "verified",
