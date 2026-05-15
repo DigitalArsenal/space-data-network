@@ -255,6 +255,16 @@ func (n *Node) init() error {
 	if err != nil {
 		return fmt.Errorf("failed to create connection manager: %w", err)
 	}
+	resourceManager, err := newFlatSQLSyncResourceManager()
+	if err != nil {
+		return fmt.Errorf("failed to create libp2p resource manager: %w", err)
+	}
+	hostCreated := false
+	defer func() {
+		if !hostCreated {
+			_ = resourceManager.Close()
+		}
+	}()
 
 	// Create libp2p host with connection gater for trust-based filtering
 	var dhtRouting *dht.IpfsDHT
@@ -270,6 +280,7 @@ func (n *Node) init() error {
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.ConnectionManager(connMgr),
 		libp2p.ConnectionGater(n.peerGater), // Trust-based connection gating
+		libp2p.ResourceManager(resourceManager),
 		libp2p.EnableHolePunching(),
 		libp2p.EnableRelay(),
 		libp2p.EnableRelayService(),
@@ -293,6 +304,7 @@ func (n *Node) init() error {
 	if err != nil {
 		return fmt.Errorf("failed to create libp2p host: %w", err)
 	}
+	hostCreated = true
 	n.dht = dhtRouting
 	go n.feedAutoRelayCandidates(n.ctx)
 
