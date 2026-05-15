@@ -698,9 +698,11 @@ describe('SDN data worker source', () => {
     const source = readScriptSource('measure-flatsql-sync-throughput.mjs');
 
     expectSourceToContainAll(source, [
-      'direct-libp2p-published-shard-ranges',
+      'published-shard-ranges',
+      'published-shard-batches',
       'fetchPublishedShardBytesViaRanges',
       'readFlatSqlPublishedShard',
+      'readFlatSqlPublishedShardBatch',
       'shardSources',
       '...(options.shardSources ?? [])',
       '{ peer: options.peer, addrs: options.addrs }',
@@ -715,8 +717,6 @@ describe('SDN data worker source', () => {
     expect(source).not.toContain('importPublishedFlatSqlShardCar');
     expect(source).not.toContain('importCarBytesToKubo');
     expect(source).not.toContain('publishedShardGroupCarBundlesForSegments');
-    expect(source).not.toContain('readFlatSqlPublishedShardBatch');
-    expect(source).not.toContain("op: 'read_published_shard_batch'");
   });
 });
 

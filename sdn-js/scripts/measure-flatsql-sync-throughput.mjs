@@ -13,6 +13,9 @@ import {
 const QUERY_PROFILE = 'dataset-publication-offset-v1';
 const DEFAULT_PUBLISHED_SHARD_RANGE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_PUBLISHED_SHARD_RANGE_CONCURRENCY = 1;
+const DEFAULT_PUBLISHED_SHARD_BATCH_BYTES = 64 * 1024 * 1024;
+const DEFAULT_PUBLISHED_SHARD_BATCH_SEGMENTS = 8;
+const DEFAULT_PUBLISHED_SHARD_BATCH_CONCURRENCY = 4;
 
 export async function runThroughputHarness(options, now = () => Date.now()) {
   validateOptions(options);
@@ -79,8 +82,12 @@ export async function runThroughputHarness(options, now = () => Date.now()) {
          providerId: options.providerId,
          sourceName: options.sourceName,
          concurrency: options.concurrency,
+        transferMode: options.transferMode,
         rangeBytes: options.rangeBytes,
         rangeConcurrency: options.rangeConcurrency,
+        batchBytes: options.batchBytes,
+        batchSegments: options.batchSegments,
+        batchConcurrency: options.batchConcurrency,
         now,
       });
      } finally {
@@ -106,12 +113,16 @@ export async function runThroughputHarness(options, now = () => Date.now()) {
       target: options.target,
       artifactRouting: {
          protocol: '/space-data-network/flatsql-sync/1.0.0',
-         mode: shardSources.length > 1 ? 'multi-source direct libp2p published-shard-ranges' : 'direct-libp2p-published-shard-ranges',
+         mode: artifactRoutingMode(options.transferMode, shardSources.length),
          clientPoolSize: shardClients.length,
          sourceCount: shardSources.length,
          sources: download.sourceStats,
+         transferMode: options.transferMode,
          rangeBytes: options.rangeBytes,
          rangeConcurrency: options.rangeConcurrency,
+         batchBytes: options.batchBytes,
+         batchSegments: options.batchSegments,
+         batchConcurrency: options.batchConcurrency,
         remoteHttpFallback: false,
         sshFallback: false,
       },
@@ -134,6 +145,9 @@ export async function runThroughputHarness(options, now = () => Date.now()) {
 }
 
 export async function downloadPublishedSegments(options) {
+  if (options.transferMode === 'batches') {
+    return await downloadPublishedSegmentBatches(options);
+  }
   const queue = options.segments.map((segment, index) => ({ segment, index }));
   const startedAt = options.now?.() ?? Date.now();
   const now = options.now ?? (() => Date.now());
@@ -177,6 +191,85 @@ export async function downloadPublishedSegments(options) {
   const networkTransferMs = Math.max(0, now() - startedAt);
 
   return { downloadedBytes, networkTransferMs, verificationMs, sourceStats: Array.from(sourceStats.values()) };
+}
+
+async function downloadPublishedSegmentBatches(options) {
+  const now = options.now ?? (() => Date.now());
+  const startedAt = now();
+  const shardSources = normalizeDownloadShardSources(options);
+  const sourceStats = initializeSourceStats(shardSources);
+  const sourceScores = initializeSourceScores(shardSources);
+  const queue = publishedShardBatchQueue(options.segments, {
+    batchBytes: options.batchBytes,
+    batchSegments: options.batchSegments,
+  });
+  let downloadedBytes = 0;
+  let verificationMs = 0;
+
+  async function worker() {
+    while (queue.length > 0) {
+      const batch = queue.shift();
+      if (!batch) return;
+      const response = await readPublishedShardBatchFromSources(shardSources, {
+        schema: options.schema,
+        providerId: options.providerId,
+        sourceName: options.sourceName,
+        queryProfile: QUERY_PROFILE,
+        cids: batch.items.map((item) => item.segment.cid),
+      }, batch.preferredSourceIndex, sourceStats, sourceScores);
+      const shardsByCid = new Map(response.shards.map((shard) => [shard.header.cid, shard]));
+      for (const item of batch.items) {
+        const shard = shardsByCid.get(item.segment.cid);
+        if (!shard) throw new Error(`published shard batch did not return ${item.segment.cid}`);
+        if (item.segment.byteCount > 0 && shard.streamBytes.byteLength !== item.segment.byteCount) {
+          throw new Error(`published shard ${item.segment.cid} returned ${shard.streamBytes.byteLength}/${item.segment.byteCount} bytes`);
+        }
+        const verificationStartedAt = now();
+        verifyPublishedShardBytes(item.segment, shard.streamBytes);
+        verificationMs += Math.max(0, now() - verificationStartedAt);
+        downloadedBytes += shard.streamBytes.byteLength;
+      }
+    }
+  }
+
+  await Promise.all(Array.from(
+    { length: Math.max(1, Math.min(options.batchConcurrency ?? DEFAULT_PUBLISHED_SHARD_BATCH_CONCURRENCY, queue.length)) },
+    () => worker(),
+  ));
+  const networkTransferMs = Math.max(0, now() - startedAt);
+
+  return { downloadedBytes, networkTransferMs, verificationMs, sourceStats: Array.from(sourceStats.values()) };
+}
+
+function publishedShardBatchQueue(segments, options) {
+  const maxBatchBytes = Math.max(1, Math.floor(options.batchBytes ?? DEFAULT_PUBLISHED_SHARD_BATCH_BYTES));
+  const maxBatchSegments = Math.max(1, Math.floor(options.batchSegments ?? DEFAULT_PUBLISHED_SHARD_BATCH_SEGMENTS));
+  const batches = [];
+  let items = [];
+  let byteCount = 0;
+
+  const flush = () => {
+    if (items.length === 0) return;
+    batches.push({
+      items,
+      byteCount,
+      preferredSourceIndex: items[0]?.index ?? 0,
+    });
+    items = [];
+    byteCount = 0;
+  };
+
+  for (const [index, segment] of segments.entries()) {
+    const cid = String(segment.cid ?? '').trim();
+    if (!cid) throw new Error('published shard segment is missing CID');
+    const itemBytes = Math.max(0, Math.floor(segment.byteCount ?? 0));
+    if (items.length > 0 && (byteCount + itemBytes > maxBatchBytes || items.length >= maxBatchSegments)) flush();
+    items.push({ segment: { ...segment, cid }, index });
+    byteCount += itemBytes;
+    if (itemBytes >= maxBatchBytes || items.length >= maxBatchSegments) flush();
+  }
+  flush();
+  return batches;
 }
 
 async function fetchPublishedShardBytesViaRanges(options) {
@@ -260,6 +353,35 @@ async function readPublishedShardFromSources(shardSources, query, preferredSourc
     }
   }
   throw lastError ?? new Error('remote FlatSQL published shard stream is unavailable');
+}
+
+async function readPublishedShardBatchFromSources(shardSources, query, preferredSourceIndex, sourceStats, sourceScores) {
+  const orderedSources = orderedShardSources(shardSources, preferredSourceIndex, sourceScores);
+  let lastError;
+  for (const source of orderedSources) {
+    const stats = sourceStats ? sourceStatsFor(sourceStats, source) : null;
+    if (stats) stats.requests += 1;
+    const startedAt = Date.now();
+    if (sourceScores) recordSourceScoreStart(sourceScores, source);
+    try {
+      const batch = await source.client.readFlatSqlPublishedShardBatch({
+        ...query,
+        targetPeerId: source.peer,
+        candidateAddrs: source.addrs,
+      });
+      const byteCount = batch.shards.reduce((sum, shard) => sum + (shard.streamBytes?.byteLength ?? 0), 0);
+      if (stats) stats.bytes += byteCount;
+      if (sourceScores) recordSourceScoreSuccess(sourceScores, source, byteCount, Date.now() - startedAt);
+      return batch;
+    } catch (error) {
+      if (stats) stats.errors += 1;
+      if (sourceScores) recordSourceScoreFailure(sourceScores, source);
+      lastError = error;
+    } finally {
+      if (sourceScores) recordSourceScoreEnd(sourceScores, source);
+    }
+  }
+  throw lastError ?? new Error('remote FlatSQL published shard batch stream is unavailable');
 }
 
 function initializeSourceStats(shardSources) {
@@ -484,7 +606,7 @@ function usage() {
     '',
     'Measures CelesTrak published-shard download throughput against libp2p wire speed.',
     'Manifest discovery and bulk shard bytes both use /space-data-network/flatsql-sync/1.0.0 over libp2p.',
-    'Bulk shard bytes are fetched as resumable published-shard byte ranges.',
+    'Bulk shard bytes are fetched as published-shard byte ranges or bounded published-shard batches.',
     'There is no Kubo gateway, remote HTTP, or SSH data fallback in this harness.',
     '',
     'Options:',
@@ -499,12 +621,21 @@ function usage() {
      '  --client-pool-size <count>  Dedicated libp2p clients for shard ranges, default 8',
      '  --shard-source-peer <id>    Additional peer serving the same immutable published shards',
      '  --shard-source-addr <addr>  Address for the most recent --shard-source-peer',
+     '  --transfer-mode <mode>      ranges or batches, default ranges',
      '  --range-bytes <bytes>       Published shard byte range size, default 16777216',
     '  --range-concurrency <count> Parallel ranges per shard, default 1',
+    '  --batch-bytes <bytes>       Published shard batch byte cap, default 67108864',
+    '  --batch-segments <count>    Published shard batch segment cap, default 8',
+    '  --batch-concurrency <count> Parallel batch streams, default 4',
     '  --wire-speed-bps <bps>      Absolute wire-speed baseline, e.g. 2000000000 for 2 Gbps',
     '  --target <ratio>            Required wire-speed utilization, default 0.8',
     '  --json                      Print JSON only',
   ].join('\n');
+}
+
+function artifactRoutingMode(transferMode, sourceCount) {
+  const suffix = transferMode === 'batches' ? 'published-shard-batches' : 'published-shard-ranges';
+  return sourceCount > 1 ? `multi-source direct libp2p ${suffix}` : `direct-libp2p-${suffix}`;
 }
 
 async function stopClients(clients) {

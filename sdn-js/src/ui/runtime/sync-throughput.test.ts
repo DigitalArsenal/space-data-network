@@ -125,6 +125,22 @@ describe('sync throughput targets', () => {
     expect(options.rangeConcurrency).toBe(8);
   });
 
+  it('parses bounded published-shard batch tuning options', () => {
+    const options = parseThroughputHarnessArgs([
+      '--peer', '16Uiu2HCelesTrak',
+      '--addr', '/dns4/celestrak.example/tcp/443/wss/p2p/16Uiu2HCelesTrak',
+      '--transfer-mode', 'batches',
+      '--batch-bytes', '67108864',
+      '--batch-segments', '8',
+      '--batch-concurrency', '4',
+    ]);
+
+    expect(options.transferMode).toBe('batches');
+    expect(options.batchBytes).toBe(67_108_864);
+    expect(options.batchSegments).toBe(8);
+    expect(options.batchConcurrency).toBe(4);
+  });
+
   it('parses additional direct libp2p shard sources for multi-peer replication audits', () => {
     const options = parseThroughputHarnessArgs([
       '--peer', '16Uiu2HCelesTrak',

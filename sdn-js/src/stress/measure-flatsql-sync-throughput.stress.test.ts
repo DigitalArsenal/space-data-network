@@ -156,6 +156,67 @@ describe('FlatSQL sync throughput harness', () => {
 
     expect(calls).toEqual(['primary', 'mirror', 'primary', 'primary', 'primary', 'primary']);
   });
+
+  it('downloads bounded published shard batches over direct libp2p for worker-equivalent audits', async () => {
+    const { downloadPublishedSegments } = await import(scriptUrl);
+    const shardBytes = buildFlatSqlStream([8]);
+    const shardSha256 = createHash('sha256').update(shardBytes).digest('hex');
+    const calls: Array<{ source: string; cids: string[] }> = [];
+    const clients = ['primary', 'mirror'].map((source) => ({
+      peer: source,
+      addrs: [`/ip4/127.0.0.1/tcp/0/p2p/${source}`],
+      client: {
+        async readFlatSqlPublishedShard() {
+          throw new Error('range read should not be used in batch mode');
+        },
+        async readFlatSqlPublishedShardBatch(request: { cids: string[] }) {
+          calls.push({ source, cids: request.cids });
+          return {
+            header: {
+              op: 'read_published_shard_batch',
+              status: 'ok',
+              schema: 'OMM.fbs',
+              queryProfile: 'dataset-publication-offset-v1',
+              syncProtocol: '/space-data-network/flatsql-sync/1.0.0',
+              payloadFormat: 'concatenated-flatsql-size-prefixed-flatbuffers',
+              shards: request.cids.map((cid) => ({
+                cid,
+                byteCount: shardBytes.byteLength,
+              })),
+            },
+            shards: request.cids.map((cid) => ({
+              header: { cid, byteCount: shardBytes.byteLength },
+              streamBytes: shardBytes,
+            })),
+          };
+        },
+      },
+    }));
+
+    const result = await downloadPublishedSegments({
+      clients,
+      segments: Array.from({ length: 4 }, (_value, index) => ({
+        cid: `bafy-test-batch-${index}`,
+        byteCount: shardBytes.byteLength,
+        shardSha256,
+      })),
+      schema: 'OMM.fbs',
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+      concurrency: 4,
+      transferMode: 'batches',
+      batchBytes: shardBytes.byteLength * 2,
+      batchSegments: 2,
+      batchConcurrency: 2,
+    });
+
+    expect(result.downloadedBytes).toBe(shardBytes.byteLength * 4);
+    expect(calls.map((call) => call.cids)).toEqual([
+      ['bafy-test-batch-0', 'bafy-test-batch-1'],
+      ['bafy-test-batch-2', 'bafy-test-batch-3'],
+    ]);
+    expect(result.sourceStats.reduce((sum, source) => sum + source.requests, 0)).toBe(2);
+  });
 });
 
 function buildFlatSqlStream(payloadLengths: number[]): Uint8Array {
