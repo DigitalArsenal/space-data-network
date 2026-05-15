@@ -20,8 +20,6 @@ type Libp2pFlatSqlSyncClientFactory = (
 ) => Promise<Libp2pFlatSqlSyncClient>;
 
 const PUBLISHED_SHARD_CLIENT_POOL_SIZE = 8;
-const PUBLISHED_SHARD_SLOW_SOURCE_RATIO = 0.5;
-
 interface PublishedShardSourceStats {
   successes: number;
   failures: number;
@@ -242,9 +240,9 @@ function orderedPublishedShardSources(
     ...normalizedSources.slice(preferredIndex),
     ...normalizedSources.slice(0, preferredIndex),
   ];
-  if (!normalizedSources.some((source) => sourceHasStats(sourceStats, source))) return normalizedSources;
   const preferredRank = new Map(preferredOrder.map((source, index) => [cacheKeyFor(source), index]));
-  return [...preferredOrder].sort((left, right) => comparePublishedShardSources(left, right, sourceStats, preferredRank));
+  const baseRank = new Map(normalizedSources.map((source, index) => [cacheKeyFor(source), index]));
+  return [...preferredOrder].sort((left, right) => comparePublishedShardSources(left, right, sourceStats, preferredRank, baseRank));
 }
 
 function comparePublishedShardSources(
@@ -252,6 +250,7 @@ function comparePublishedShardSources(
   right: Libp2pFlatSqlSyncBackendOptions,
   sourceStats: Map<string, PublishedShardSourceStats>,
   preferredRank: Map<string, number>,
+  baseRank: Map<string, number>,
 ): number {
   const leftKey = cacheKeyFor(left);
   const rightKey = cacheKeyFor(right);
@@ -259,18 +258,22 @@ function comparePublishedShardSources(
   const rightStats = sourceStats.get(rightKey);
   const leftAttempts = publishedShardSourceAttempts(leftStats);
   const rightAttempts = publishedShardSourceAttempts(rightStats);
-  if (leftAttempts === 0 && (rightStats?.successes ?? 0) > 0) return 1;
-  if (rightAttempts === 0 && (leftStats?.successes ?? 0) > 0) return -1;
-  if (leftAttempts === 0 && rightAttempts > 0) return -1;
-  if (rightAttempts === 0 && leftAttempts > 0) return 1;
+  if (leftAttempts === 0 || rightAttempts === 0) {
+    const leftActive = Math.max(0, leftStats?.active ?? 0);
+    const rightActive = Math.max(0, rightStats?.active ?? 0);
+    if (leftAttempts === 0 && rightAttempts === 0) {
+      if (leftActive > 0 && rightActive > 0) {
+        return (baseRank.get(leftKey) ?? 0) - (baseRank.get(rightKey) ?? 0);
+      }
+      if (leftActive !== rightActive) return leftActive - rightActive;
+      return (preferredRank.get(leftKey) ?? 0) - (preferredRank.get(rightKey) ?? 0);
+    }
+    if (leftAttempts === 0 && leftActive > 0) return 1;
+    if (rightAttempts === 0 && rightActive > 0) return -1;
+    return (preferredRank.get(leftKey) ?? 0) - (preferredRank.get(rightKey) ?? 0);
+  }
   if ((leftStats?.failures ?? 0) !== (rightStats?.failures ?? 0)) {
     return (leftStats?.failures ?? 0) - (rightStats?.failures ?? 0);
-  }
-  const leftRawBytesPerMs = leftStats?.ewmaBytesPerMs ?? 0;
-  const rightRawBytesPerMs = rightStats?.ewmaBytesPerMs ?? 0;
-  if (leftAttempts > 0 && rightAttempts > 0 && leftRawBytesPerMs > 0 && rightRawBytesPerMs > 0) {
-    if (leftRawBytesPerMs < rightRawBytesPerMs * PUBLISHED_SHARD_SLOW_SOURCE_RATIO) return 1;
-    if (rightRawBytesPerMs < leftRawBytesPerMs * PUBLISHED_SHARD_SLOW_SOURCE_RATIO) return -1;
   }
   const leftEffectiveBytesPerMs = effectiveSourceBytesPerMs(leftStats);
   const rightEffectiveBytesPerMs = effectiveSourceBytesPerMs(rightStats);
@@ -278,13 +281,6 @@ function comparePublishedShardSources(
     return rightEffectiveBytesPerMs - leftEffectiveBytesPerMs;
   }
   return (preferredRank.get(leftKey) ?? 0) - (preferredRank.get(rightKey) ?? 0);
-}
-
-function sourceHasStats(
-  sourceStats: Map<string, PublishedShardSourceStats>,
-  source: Libp2pFlatSqlSyncBackendOptions,
-): boolean {
-  return publishedShardSourceAttempts(sourceStats.get(cacheKeyFor(source))) > 0;
 }
 
 function publishedShardSourceAttempts(stats: PublishedShardSourceStats | undefined): number {

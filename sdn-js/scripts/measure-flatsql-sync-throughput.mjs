@@ -13,7 +13,6 @@ import {
 const QUERY_PROFILE = 'dataset-publication-offset-v1';
 const DEFAULT_PUBLISHED_SHARD_RANGE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_PUBLISHED_SHARD_RANGE_CONCURRENCY = 1;
-const PUBLISHED_SHARD_SLOW_SOURCE_RATIO = 0.5;
 
 export async function runThroughputHarness(options, now = () => Date.now()) {
   validateOptions(options);
@@ -144,7 +143,7 @@ export async function downloadPublishedSegments(options) {
   let downloadedBytes = 0;
   let verificationMs = 0;
 
-  async function worker(workerIndex) {
+  async function worker() {
     while (queue.length > 0) {
       const item = queue.shift();
       if (!item) return;
@@ -157,7 +156,7 @@ export async function downloadPublishedSegments(options) {
         sourceName: options.sourceName,
         segment: item.segment,
         cid,
-        preferredSourceIndex: item.index + workerIndex,
+        preferredSourceIndex: item.index,
         rangeBytes: options.rangeBytes,
         rangeConcurrency: options.rangeConcurrency,
         sourceStats,
@@ -172,7 +171,7 @@ export async function downloadPublishedSegments(options) {
 
   const workers = Array.from(
     { length: Math.max(1, Math.min(options.concurrency, queue.length)) },
-    (_value, index) => worker(index),
+    () => worker(),
   );
   await Promise.all(workers);
   const networkTransferMs = Math.max(0, now() - startedAt);
@@ -298,32 +297,37 @@ function orderedShardSources(shardSources, preferredSourceIndex, sourceScores) {
     ...shardSources.slice(index),
     ...shardSources.slice(0, index),
   ];
-  if (!sourceScores || !preferredOrder.some((source) => sourceScoreAttempts(sourceScores.get(sourceScoreKey(source))) > 0)) {
-    return shardSources;
+  if (!sourceScores) {
+    return preferredOrder;
   }
   const preferredRank = new Map(preferredOrder.map((source, rank) => [sourceScoreKey(source), rank]));
-  return [...preferredOrder].sort((left, right) => compareShardSources(left, right, sourceScores, preferredRank));
+  const baseRank = new Map(shardSources.map((source, rank) => [sourceScoreKey(source), rank]));
+  return [...preferredOrder].sort((left, right) => compareShardSources(left, right, sourceScores, preferredRank, baseRank));
 }
 
-function compareShardSources(left, right, sourceScores, preferredRank) {
+function compareShardSources(left, right, sourceScores, preferredRank, baseRank) {
   const leftKey = sourceScoreKey(left);
   const rightKey = sourceScoreKey(right);
   const leftScore = sourceScores.get(leftKey);
   const rightScore = sourceScores.get(rightKey);
   const leftAttempts = sourceScoreAttempts(leftScore);
   const rightAttempts = sourceScoreAttempts(rightScore);
-  if (leftAttempts === 0 && (rightScore?.successes ?? 0) > 0) return 1;
-  if (rightAttempts === 0 && (leftScore?.successes ?? 0) > 0) return -1;
-  if (leftAttempts === 0 && rightAttempts > 0) return -1;
-  if (rightAttempts === 0 && leftAttempts > 0) return 1;
+  if (leftAttempts === 0 || rightAttempts === 0) {
+    const leftActive = Math.max(0, leftScore?.active ?? 0);
+    const rightActive = Math.max(0, rightScore?.active ?? 0);
+    if (leftAttempts === 0 && rightAttempts === 0) {
+      if (leftActive > 0 && rightActive > 0) {
+        return (baseRank.get(leftKey) ?? 0) - (baseRank.get(rightKey) ?? 0);
+      }
+      if (leftActive !== rightActive) return leftActive - rightActive;
+      return (preferredRank.get(leftKey) ?? 0) - (preferredRank.get(rightKey) ?? 0);
+    }
+    if (leftAttempts === 0 && leftActive > 0) return 1;
+    if (rightAttempts === 0 && rightActive > 0) return -1;
+    return (preferredRank.get(leftKey) ?? 0) - (preferredRank.get(rightKey) ?? 0);
+  }
   if ((leftScore?.failures ?? 0) !== (rightScore?.failures ?? 0)) {
     return (leftScore?.failures ?? 0) - (rightScore?.failures ?? 0);
-  }
-  const leftRawBytesPerMs = leftScore?.ewmaBytesPerMs ?? 0;
-  const rightRawBytesPerMs = rightScore?.ewmaBytesPerMs ?? 0;
-  if (leftAttempts > 0 && rightAttempts > 0 && leftRawBytesPerMs > 0 && rightRawBytesPerMs > 0) {
-    if (leftRawBytesPerMs < rightRawBytesPerMs * PUBLISHED_SHARD_SLOW_SOURCE_RATIO) return 1;
-    if (rightRawBytesPerMs < leftRawBytesPerMs * PUBLISHED_SHARD_SLOW_SOURCE_RATIO) return -1;
   }
   const leftEffectiveBytesPerMs = effectiveSourceBytesPerMs(leftScore);
   const rightEffectiveBytesPerMs = effectiveSourceBytesPerMs(rightScore);
