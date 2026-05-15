@@ -17,6 +17,13 @@ describe('libp2p FlatSQL sync backend', () => {
     });
   });
 
+  it('raises the outbound protocol stream ceiling for bulk FlatSQL shard ranges', async () => {
+    const source = await import('node:fs').then((fs) => fs.readFileSync(new URL('./sdn-backend-libp2p-sync.ts', import.meta.url), 'utf8'));
+
+    expect(source).toContain('export const LIBP2P_FLATSQL_SYNC_MAX_OUTBOUND_STREAMS = 512');
+    expect(source).toContain('maxOutboundStreams: LIBP2P_FLATSQL_SYNC_MAX_OUTBOUND_STREAMS');
+  });
+
   it('selects WebRTC direct transport for direct WebRTC multiaddrs', () => {
     expect(selectLibp2pFlatSqlSyncTransports([
       '/ip4/167.172.219.213/udp/4003/webrtc-direct/certhash/uEiDkQCtOX-kkIk6CsI0pdCvIzTQ4IkRF1ujnZ6CSvED3cw/p2p/16Uiu2HCelesTrak',
