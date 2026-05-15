@@ -24,6 +24,7 @@ import {
   completedPublishedRowsForSegments,
   completedPublishedSegmentCids,
   pendingPublishedSegmentItems,
+  publishedSegmentBatchItems,
   shouldPersistPublishedSegmentCheckpoint,
 } from './published-segment-sync';
 import { retryRemoteSyncOperation } from './remote-sync-retry';
@@ -76,6 +77,9 @@ const PUBLISHED_SHARD_FETCH_CONCURRENCY = 32;
 const PUBLISHED_SHARD_FETCH_ATTEMPTS = 3;
 const PUBLISHED_SHARD_FETCH_RETRY_DELAY_MS = 750;
 const PUBLISHED_SHARD_FETCH_TIMEOUT_MS = 120_000;
+const PUBLISHED_SHARD_BATCH_BYTES = 64 * 1024 * 1024;
+const PUBLISHED_SHARD_BATCH_SEGMENTS = 8;
+const PUBLISHED_SHARD_BATCH_FETCH_CONCURRENCY = Math.max(1, Math.floor(PUBLISHED_SHARD_FETCH_CONCURRENCY / PUBLISHED_SHARD_BATCH_SEGMENTS));
 const PUBLISHED_SHARD_RANGE_BYTES = 16 * 1024 * 1024;
 const PUBLISHED_SHARD_RANGE_CONCURRENCY = 1;
 const PUBLISHED_SHARD_PERSIST_CHECKPOINT_BYTES = 512 * 1024 * 1024;
@@ -786,33 +790,125 @@ async function* fetchPublishedSegmentsInOrder(
   };
   type PublishedSegmentFetchResult = PublishedSegmentFetchSuccess | PublishedSegmentFetchFailure;
   const syncItems = pendingPublishedSegmentItems(segments, completedSegmentCids);
+  const syncBatches = publishedSegmentBatchItems(syncItems, {
+    maxBatchBytes: PUBLISHED_SHARD_BATCH_BYTES,
+    maxBatchSegments: PUBLISHED_SHARD_BATCH_SEGMENTS,
+  });
 
-  const inFlight = new Map<number, Promise<PublishedSegmentFetchResult>>();
+  const inFlight = new Map<number, Promise<PublishedSegmentFetchResult[]>>();
   let nextToSchedule = 0;
   const schedule = (): void => {
-    while (nextToSchedule < syncItems.length && inFlight.size < PUBLISHED_SHARD_FETCH_CONCURRENCY) {
+    while (nextToSchedule < syncBatches.length && inFlight.size < PUBLISHED_SHARD_BATCH_FETCH_CONCURRENCY) {
       const index = nextToSchedule;
       nextToSchedule += 1;
-      const item = syncItems[index];
-      if (!item) continue;
-      inFlight.set(index, fetchPublishedSegment({
+      const batch = syncBatches[index];
+      if (!batch) continue;
+      inFlight.set(index, fetchPublishedSegmentBatch({
         request,
-        item,
+        batch,
       }));
     }
   };
 
-  for (let index = 0; index < syncItems.length; index += 1) {
+  for (let index = 0; index < syncBatches.length; index += 1) {
     schedule();
     const next = inFlight.get(index);
     if (!next) throw new Error('published shard prefetch queue lost ordering');
-    const fetched = await next;
+    const fetchedBatch = await next;
     inFlight.delete(index);
     schedule();
-    if (!fetched.ok) {
-      throw new Error(`published shard fetch failed for ${fetched.segment.cid ?? `segment ${index}`}: ${formatWorkerError(fetched.error)}`);
+    for (const fetched of fetchedBatch) {
+      if (!fetched.ok) {
+        throw new Error(`published shard fetch failed for ${fetched.segment.cid ?? `segment ${index}`}: ${formatWorkerError(fetched.error)}`);
+      }
+      yield fetched;
     }
-    yield fetched;
+  }
+}
+
+async function fetchPublishedSegmentBatch(options: {
+  request: WorkerSchemaSyncRequest;
+  batch: ReturnType<typeof publishedSegmentBatchItems<FlatSqlSyncManifestSegment>>[number];
+}): Promise<Array<
+  {
+    ok: true;
+    segment: FlatSqlSyncManifestSegment;
+    streamBytes: Uint8Array;
+    cumulativeRows: number;
+    segmentEnd: number;
+    skipRecords: 0;
+    networkTransferMs: number;
+    verificationMs: number;
+  }
+  | {
+    ok: false;
+    segment: FlatSqlSyncManifestSegment;
+    cumulativeRows: number;
+    segmentEnd: number;
+    skipRecords: 0;
+    error: unknown;
+  }
+>> {
+  const cids = options.batch.items.map((item) => item.segment.cid?.trim() ?? '').filter(Boolean);
+  if (cids.length <= 1) {
+    return await Promise.all(options.batch.items.map((item) => fetchPublishedSegment({ request: options.request, item })));
+  }
+  try {
+    const backendConfigs = publishedShardBackendConfigsFor(options.request.backendConfig);
+    const networkStartedAt = Date.now();
+    const batch = await withRemotePublishedShardBatchOperation(backendConfigs, 'Published shard batch', {
+      targetPeerId: '',
+      schema: options.request.schema,
+      op: 'read_published_shard_batch',
+      queryProfile: 'dataset-publication-offset-v1',
+      cids,
+    }, options.batch.preferredSourceIndex);
+    const networkTransferMs = Math.max(0, Date.now() - networkStartedAt);
+    const shardsByCid = new Map(batch.shards.map((shard) => [shard.header.cid, shard]));
+    return await Promise.all(options.batch.items.map(async (item, index) => {
+      const cid = item.segment.cid?.trim() ?? '';
+      const shard = shardsByCid.get(cid);
+      if (!shard) {
+        return {
+          ok: false,
+          ...item,
+          error: new Error(`published shard batch did not return ${cid}`),
+        };
+      }
+      const expectedByteCount = Math.max(0, Math.floor(item.segment.byteCount ?? 0));
+      if (expectedByteCount > 0 && shard.streamBytes.byteLength !== expectedByteCount) {
+        return {
+          ok: false,
+          ...item,
+          error: new Error(`published shard ${cid} returned ${shard.streamBytes.byteLength}/${expectedByteCount} bytes`),
+        };
+      }
+      try {
+        const result = await timedFlatBufferStreamFromPublishedFlatSqlSegment({
+          schema: options.request.schema,
+          providerPeerId: options.request.backendConfig.targetPeerId,
+          cid,
+          shardSha256: item.segment.shardSha256,
+          fetchAttempts: 1,
+          fetchCidBytes: () => Promise.resolve(shard.streamBytes),
+        });
+        return {
+          ok: true,
+          ...item,
+          streamBytes: result.streamBytes,
+          networkTransferMs: index === 0 ? networkTransferMs : 0,
+          verificationMs: result.verificationMs,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          ...item,
+          error,
+        };
+      }
+    }));
+  } catch {
+    return await Promise.all(options.batch.items.map((item) => fetchPublishedSegment({ request: options.request, item })));
   }
 }
 
@@ -1086,6 +1182,25 @@ async function withRemotePublishedShardOperation(
     reset: () => undefined,
     run: () => withTimeout(
       syncBackendCache.readFlatSqlPublishedShardFromSources(backendConfigs, query, preferredSourceIndex),
+      PUBLISHED_SHARD_FETCH_TIMEOUT_MS,
+      `${label} timed out after ${PUBLISHED_SHARD_FETCH_TIMEOUT_MS / 1000}s`,
+    ),
+  });
+}
+
+async function withRemotePublishedShardBatchOperation(
+  backendConfigs: WorkerFlatSqlSyncBackendConfig[],
+  label: string,
+  query: Parameters<Libp2pFlatSqlSyncBackendCache['readFlatSqlPublishedShardBatch']>[1],
+  preferredSourceIndex: number,
+) {
+  return await retryRemoteSyncOperation({
+    label,
+    attempts: PUBLISHED_SHARD_FETCH_ATTEMPTS,
+    retryDelayMs: PUBLISHED_SHARD_FETCH_RETRY_DELAY_MS,
+    reset: () => undefined,
+    run: () => withTimeout(
+      syncBackendCache.readFlatSqlPublishedShardBatchFromSources(backendConfigs, query, preferredSourceIndex),
       PUBLISHED_SHARD_FETCH_TIMEOUT_MS,
       `${label} timed out after ${PUBLISHED_SHARD_FETCH_TIMEOUT_MS / 1000}s`,
     ),

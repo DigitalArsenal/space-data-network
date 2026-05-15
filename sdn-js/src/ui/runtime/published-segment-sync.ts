@@ -4,6 +4,7 @@ export interface PublishedSegmentForSync {
   cid?: string | null;
   rowCount?: number | null;
   index?: number | null;
+  byteCount?: number | null;
 }
 
 export interface PublishedSegmentSyncItem<T extends PublishedSegmentForSync> {
@@ -25,6 +26,17 @@ export interface PublishedSegmentCheckpointInput {
   checkpointBytes: number;
   completedRows: number;
   totalRows: number;
+}
+
+export interface PublishedSegmentBatchOptions {
+  maxBatchBytes: number;
+  maxBatchSegments: number;
+}
+
+export interface PublishedSegmentBatchItem<T extends PublishedSegmentForSync> {
+  items: Array<PublishedSegmentSyncItem<T>>;
+  byteCount: number;
+  preferredSourceIndex: number;
 }
 
 export function pendingPublishedSegmentItems<T extends PublishedSegmentForSync>(
@@ -92,4 +104,38 @@ export function shouldPersistPublishedSegmentCheckpoint(input: PublishedSegmentC
   if (totalRows > 0 && completedRows >= totalRows) return true;
   const checkpointBytes = Math.max(1, Math.floor(input.checkpointBytes));
   return Math.max(0, Math.floor(input.unpersistedBytes)) >= checkpointBytes;
+}
+
+export function publishedSegmentBatchItems<T extends PublishedSegmentForSync>(
+  items: Array<PublishedSegmentSyncItem<T>>,
+  options: PublishedSegmentBatchOptions,
+): Array<PublishedSegmentBatchItem<T>> {
+  const maxBatchBytes = Math.max(1, Math.floor(options.maxBatchBytes));
+  const maxBatchSegments = Math.max(1, Math.floor(options.maxBatchSegments));
+  const batches: Array<PublishedSegmentBatchItem<T>> = [];
+  let current: Array<PublishedSegmentSyncItem<T>> = [];
+  let currentBytes = 0;
+
+  const flush = (): void => {
+    if (current.length === 0) return;
+    batches.push({
+      items: current,
+      byteCount: currentBytes,
+      preferredSourceIndex: Math.max(0, Math.floor(current[0]?.segment.index ?? 0)),
+    });
+    current = [];
+    currentBytes = 0;
+  };
+
+  for (const item of items) {
+    const itemBytes = Math.max(0, Math.floor(item.segment.byteCount ?? 0));
+    const wouldExceedBytes = current.length > 0 && currentBytes + itemBytes > maxBatchBytes;
+    const wouldExceedSegments = current.length >= maxBatchSegments;
+    if (wouldExceedBytes || wouldExceedSegments) flush();
+    current.push(item);
+    currentBytes += itemBytes;
+    if (itemBytes >= maxBatchBytes || current.length >= maxBatchSegments) flush();
+  }
+  flush();
+  return batches;
 }

@@ -137,6 +137,32 @@ export class Libp2pFlatSqlSyncBackendCache {
     }, query, normalizedOptions));
   }
 
+  async readFlatSqlPublishedShardBatchFromSources(
+    sources: Libp2pFlatSqlSyncBackendOptions[],
+    query: FlatSqlSyncQuery & { cids: string[] },
+    preferredSourceIndex = 0,
+  ): Promise<FlatSqlPublishedShardBatch> {
+    const orderedSources = orderedPublishedShardSources(sources, preferredSourceIndex, this.publishedShardSourceStats);
+    let lastError: unknown = null;
+    for (const source of orderedSources) {
+      const startedAt = nowMs();
+      recordPublishedShardSourceStart(this.publishedShardSourceStats, source);
+      try {
+        const batch = await this.readFlatSqlPublishedShardBatch(source, query);
+        const byteCount = batch.shards.reduce((sum, shard) => sum + shard.streamBytes.byteLength, 0);
+        recordPublishedShardSourceSuccess(this.publishedShardSourceStats, source, byteCount, nowMs() - startedAt);
+        return batch;
+      } catch (error) {
+        recordPublishedShardSourceFailure(this.publishedShardSourceStats, source);
+        lastError = error;
+      } finally {
+        recordPublishedShardSourceEnd(this.publishedShardSourceStats, source);
+      }
+    }
+    if (lastError instanceof Error) throw lastError;
+    throw new Error('remote FlatSQL published shard batch stream is unavailable');
+  }
+
   async measureWireSpeed(
     options: Libp2pFlatSqlSyncBackendOptions,
     query: Omit<FlatSqlWireSpeedProbeQuery, 'targetPeerId' | 'candidateAddrs'>,

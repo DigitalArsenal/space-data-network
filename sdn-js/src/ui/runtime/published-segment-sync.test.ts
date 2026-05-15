@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertPublishedSegmentMaterializedRowCount,
   pendingPublishedSegmentItems,
+  publishedSegmentBatchItems,
   shouldPersistPublishedSegmentCheckpoint,
 } from './published-segment-sync';
 
@@ -92,5 +93,32 @@ describe('published segment sync planning', () => {
       completedRows: 2_000_000,
       totalRows: 2_000_000,
     })).toBe(true);
+  });
+
+  it('groups pending published shards into bounded batch reads', () => {
+    const pending = pendingPublishedSegmentItems(
+      [
+        { cid: 'bafy-a', rowCount: 10, byteCount: 60, index: 0 },
+        { cid: 'bafy-b', rowCount: 10, byteCount: 50, index: 1 },
+        { cid: 'bafy-c', rowCount: 10, byteCount: 40, index: 2 },
+        { cid: 'bafy-d', rowCount: 10, byteCount: 20, index: 3 },
+      ],
+      new Set(),
+    );
+
+    const batches = publishedSegmentBatchItems(pending, {
+      maxBatchBytes: 100,
+      maxBatchSegments: 2,
+    });
+
+    expect(batches.map((batch) => ({
+      cids: batch.items.map((item) => item.segment.cid),
+      byteCount: batch.byteCount,
+      preferredSourceIndex: batch.preferredSourceIndex,
+    }))).toEqual([
+      { cids: ['bafy-a'], byteCount: 60, preferredSourceIndex: 0 },
+      { cids: ['bafy-b', 'bafy-c'], byteCount: 90, preferredSourceIndex: 1 },
+      { cids: ['bafy-d'], byteCount: 20, preferredSourceIndex: 3 },
+    ]);
   });
 });
