@@ -314,7 +314,7 @@ describe('libp2p FlatSQL sync backend cache', () => {
     ]);
   });
 
-  it('uses configured published shard source order before throughput stats exist', async () => {
+  it('uses the preferred published shard source before throughput stats exist', async () => {
     const calls: string[] = [];
     const shardBytes = new Uint8Array([1, 2, 3, 4]);
     const cache = new Libp2pFlatSqlSyncBackendCache(async (options) => ({
@@ -354,10 +354,10 @@ describe('libp2p FlatSQL sync backend cache', () => {
       cid: 'bafkordered-first-wave',
     }, 1);
 
-    expect(calls).toEqual(['16Uiu2HMirror']);
+    expect(calls).toEqual(['16Uiu2HCelesTrak']);
   });
 
-  it('does not let an unmeasured fallback source displace a measured source', async () => {
+  it('probes unmeasured configured sources before permanently favoring the first measured source', async () => {
     const calls: string[] = [];
     const shardBytes = new Uint8Array([1, 2, 3, 4]);
     const cache = new Libp2pFlatSqlSyncBackendCache(async (options) => ({
@@ -404,7 +404,56 @@ describe('libp2p FlatSQL sync backend cache', () => {
       cid: 'bafkknown-source',
     }, 1);
 
-    expect(calls).toEqual(['16Uiu2HMirror']);
+    expect(calls).toEqual(['16Uiu2HCelesTrak']);
+  });
+
+  it('limits concurrent cold-start probing to one active request per unmeasured source', async () => {
+    const calls: string[] = [];
+    const releaseReads: Array<() => void> = [];
+    const shardBytes = new Uint8Array([1, 2, 3, 4]);
+    const cache = new Libp2pFlatSqlSyncBackendCache(async (options) => ({
+      async readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk> {
+        return headerOnlyChunk(query.schema);
+      },
+      async openFlatSqlSyncManifest(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest> {
+        return manifestFor(query.schema);
+      },
+      async readFlatSqlPublishedShard(query: FlatSqlSyncQuery & { cid: string }): Promise<FlatSqlPublishedShard> {
+        calls.push(options.targetPeerId);
+        await new Promise<void>((resolve) => releaseReads.push(resolve));
+        return {
+          header: {
+            op: 'read_published_shard',
+            status: 'ok',
+            schema: query.schema,
+            queryProfile: query.queryProfile ?? 'dataset-publication-offset-v1',
+            cid: query.cid,
+            rowCount: 1,
+            byteCount: shardBytes.byteLength,
+            syncProtocol: '/space-data-network/flatsql-sync/1.0.0',
+            transports: ['libp2p-websocket'],
+          },
+          streamBytes: shardBytes,
+        };
+      },
+    }));
+    const sources = [mirrorConfig(), remoteConfig()];
+
+    const reads = Promise.all(Array.from({ length: 4 }, (_value, index) => cache.readFlatSqlPublishedShardFromSources(sources, {
+      targetPeerId: '',
+      schema: 'OMM.fbs',
+      op: 'read_published_shard',
+      queryProfile: 'dataset-publication-offset-v1',
+      cid: `bafkcold-${index}`,
+    }, index)));
+    await withTimeout(waitForCallCount(calls, 4), 100, 'cold source calls did not start');
+
+    expect(calls).toHaveLength(4);
+    expect(calls.filter((peer) => peer === '16Uiu2HCelesTrak')).toHaveLength(1);
+    expect(calls.filter((peer) => peer === '16Uiu2HMirror')).toHaveLength(3);
+
+    for (const release of releaseReads) release();
+    await reads;
   });
 
   it('falls back to the primary source when a preferred mirror lacks the shard', async () => {
@@ -868,6 +917,12 @@ function mirrorConfig() {
 
 async function sleep(milliseconds: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitForCallCount(calls: unknown[], count: number): Promise<void> {
+  while (calls.length < count) {
+    await sleep(0);
+  }
 }
 
 function headerOnlyChunk(schema: string): FlatSqlSyncChunk {

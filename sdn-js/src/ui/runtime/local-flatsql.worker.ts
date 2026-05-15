@@ -900,7 +900,7 @@ async function fetchPublishedShardBytesViaLibp2pRanges(options: {
         cid: options.cid,
         byteOffset: range.offset,
         byteLength: range.length,
-      }, range.index);
+      }, publishedShardPreferredSourceIndex(options.segment, range.index));
       const headerOffset = shard.header.byteOffset ?? range.offset;
       const headerLength = shard.header.byteLength ?? shard.header.byteCount;
       if (headerOffset !== range.offset || headerLength !== range.length || shard.streamBytes.byteLength !== range.length) {
@@ -916,6 +916,11 @@ async function fetchPublishedShardBytesViaLibp2pRanges(options: {
   );
   await Promise.all(workers);
   return concatUint8Arrays(chunks);
+}
+
+function publishedShardPreferredSourceIndex(segment: FlatSqlSyncManifestSegment, rangeIndex: number): number {
+  const segmentIndex = Number.isFinite(segment.index) ? Math.max(0, Math.floor(segment.index)) : 0;
+  return segmentIndex + Math.max(0, Math.floor(rangeIndex));
 }
 
 function concatUint8Arrays(chunks: Uint8Array[]): Uint8Array {

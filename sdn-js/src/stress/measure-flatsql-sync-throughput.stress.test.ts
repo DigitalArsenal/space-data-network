@@ -10,7 +10,7 @@ const packageRoot = path.resolve(__dirname, '../..');
 const scriptUrl = pathToFileURL(path.join(packageRoot, 'scripts/measure-flatsql-sync-throughput.mjs')).href;
 
 describe('FlatSQL sync throughput harness', () => {
-  it('splits a published shard into direct libp2p byte ranges using configured source order', async () => {
+  it('stripes cold-start published shard ranges across configured libp2p sources', async () => {
     const { downloadPublishedSegments } = await import(scriptUrl);
     const shardBytes = buildFlatSqlStream([12, 17, 9, 23]);
     const shardSha256 = createHash('sha256').update(shardBytes).digest('hex');
@@ -23,6 +23,7 @@ describe('FlatSQL sync throughput harness', () => {
           const byteOffset = request.byteOffset ?? 0;
           const byteLength = request.byteLength ?? shardBytes.byteLength - byteOffset;
           calls.push({ source, byteOffset, byteLength });
+          if (source === 'mirror') await sleep(25);
           return {
             header: {
               byteOffset,
@@ -54,27 +55,67 @@ describe('FlatSQL sync throughput harness', () => {
     expect(result.downloadedBytes).toBe(shardBytes.byteLength);
     expect(result.networkTransferMs).toBe(42);
     expect(result.sourceStats).toEqual([
-      {
+      expect.objectContaining({
         peer: 'primary',
-        addrs: ['/ip4/127.0.0.1/tcp/0/p2p/primary'],
-        bytes: 77,
-        requests: 5,
+        bytes: 61,
+        requests: 4,
         errors: 0,
-      },
-      {
+      }),
+      expect.objectContaining({
         peer: 'mirror',
-        addrs: ['/ip4/127.0.0.1/tcp/0/p2p/mirror'],
-        bytes: 0,
-        requests: 0,
+        bytes: 16,
+        requests: 1,
         errors: 0,
-      },
+      }),
     ]);
-    expect(new Set(calls.map((call) => call.source))).toEqual(new Set(['primary']));
+    expect(new Set(calls.map((call) => call.source))).toEqual(new Set(['primary', 'mirror']));
+    expect(calls.map((call) => call.source)).toEqual(['primary', 'mirror', 'primary', 'primary', 'primary']);
     expect(calls.map((call) => call.byteOffset)).toEqual([0, 16, 32, 48, 64]);
     expect(calls.every((call) => call.byteLength > 0 && call.byteLength <= 16)).toBe(true);
   });
 
-  it('does not churn onto a fallback source when the first configured source is healthy', async () => {
+  it('stripes cold-start published shard segments across configured libp2p sources', async () => {
+    const { downloadPublishedSegments } = await import(scriptUrl);
+    const shardBytes = buildFlatSqlStream([8]);
+    const shardSha256 = createHash('sha256').update(shardBytes).digest('hex');
+    const calls: string[] = [];
+    const clients = ['primary', 'mirror'].map((source) => ({
+      peer: source,
+      addrs: [`/ip4/127.0.0.1/tcp/0/p2p/${source}`],
+      client: {
+        async readFlatSqlPublishedShard() {
+          calls.push(source);
+          return {
+            header: {
+              byteOffset: 0,
+              byteLength: shardBytes.byteLength,
+              byteCount: shardBytes.byteLength,
+            },
+            streamBytes: shardBytes,
+          };
+        },
+      },
+    }));
+
+    await downloadPublishedSegments({
+      clients,
+      segments: Array.from({ length: 4 }, (_value, index) => ({
+        cid: `bafy-test-segment-${index}`,
+        byteCount: shardBytes.byteLength,
+        shardSha256,
+      })),
+      schema: 'OMM.fbs',
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+      concurrency: 4,
+      rangeBytes: shardBytes.byteLength,
+      rangeConcurrency: 1,
+    });
+
+    expect(calls).toEqual(['primary', 'mirror', 'primary', 'primary']);
+  });
+
+  it('probes a fallback source once and then returns to the faster configured source', async () => {
     const { downloadPublishedSegments } = await import(scriptUrl);
     const shardBytes = buildFlatSqlStream([8]);
     const shardSha256 = createHash('sha256').update(shardBytes).digest('hex');
@@ -113,7 +154,7 @@ describe('FlatSQL sync throughput harness', () => {
       rangeConcurrency: 1,
     });
 
-    expect(calls).toEqual(['primary', 'primary', 'primary', 'primary', 'primary', 'primary']);
+    expect(calls).toEqual(['primary', 'mirror', 'primary', 'primary', 'primary', 'primary']);
   });
 });
 

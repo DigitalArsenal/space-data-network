@@ -62,4 +62,11 @@ describe('published segment sync planning', () => {
     expect(guardIndex).toBeGreaterThan(-1);
     expect(pinIndex).toBeGreaterThan(guardIndex);
   });
+
+  it('seeds published shard range source preference with the manifest segment index', () => {
+    const source = readFileSync(new URL('./local-flatsql.worker.ts', import.meta.url), 'utf8');
+
+    expect(source).toContain('publishedShardPreferredSourceIndex(options.segment, range.index)');
+    expect(source).toContain('function publishedShardPreferredSourceIndex(');
+  });
 });
