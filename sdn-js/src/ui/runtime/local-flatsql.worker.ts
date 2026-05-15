@@ -71,11 +71,11 @@ const REMOTE_SYNC_OPERATION_TIMEOUT_MS = 60_000;
 const REMOTE_SYNC_RETRY_ATTEMPTS = 4;
 const REMOTE_SYNC_RETRY_DELAY_MS = 500;
 const PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE = 50_000;
-const PUBLISHED_SHARD_FETCH_CONCURRENCY = 16;
+const PUBLISHED_SHARD_FETCH_CONCURRENCY = 32;
 const PUBLISHED_SHARD_FETCH_ATTEMPTS = 3;
 const PUBLISHED_SHARD_FETCH_RETRY_DELAY_MS = 750;
 const PUBLISHED_SHARD_FETCH_TIMEOUT_MS = 120_000;
-const PUBLISHED_SHARD_RANGE_BYTES = 4 * 1024 * 1024;
+const PUBLISHED_SHARD_RANGE_BYTES = 16 * 1024 * 1024;
 const PUBLISHED_SHARD_RANGE_CONCURRENCY = 1;
 const WIRE_SPEED_PROBE_BYTES = 64 * 1024 * 1024;
 let store: LocalFlatSqlStore | null = null;
@@ -1071,8 +1071,8 @@ function publishedShardBackendConfigsFor(
   backendConfig: WorkerFlatSqlSyncBackendConfig,
 ): WorkerFlatSqlSyncBackendConfig[] {
   const sources = [
-    stripPublishedShardSources(backendConfig),
     ...(backendConfig.publishedShardSources ?? []).map(stripPublishedShardSources),
+    stripPublishedShardSources(backendConfig),
   ];
   const deduped: WorkerFlatSqlSyncBackendConfig[] = [];
   const seen = new Set<string>();

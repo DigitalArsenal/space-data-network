@@ -587,6 +587,7 @@ describe('SDN data worker source', () => {
     const localFlatSqlSource = readRuntimeSource('local-flatsql.ts');
     const clientSource = readRuntimeSource('local-flatsql-worker-client.ts');
     const libp2pSource = readRuntimeSource('sdn-backend-libp2p-sync.ts');
+    const libp2pCacheSource = readRuntimeSource('libp2p-sync-backend-cache.ts');
 
     expectSourceToContainAll(workerSource, [
       'Libp2pFlatSqlSyncBackendCache',
@@ -600,10 +601,15 @@ describe('SDN data worker source', () => {
       'timedFlatBufferStreamFromPublishedFlatSqlSegment',
       'PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE',
       'PUBLISHED_SHARD_FETCH_CONCURRENCY',
+      'const PUBLISHED_SHARD_FETCH_CONCURRENCY = 32',
       'PUBLISHED_SHARD_RANGE_BYTES',
+      'const PUBLISHED_SHARD_RANGE_BYTES = 16 * 1024 * 1024',
+      'const PUBLISHED_SHARD_RANGE_CONCURRENCY = 1',
       'fetchPublishedShardBytesViaLibp2pRanges',
       'readFlatSqlPublishedShardFromSources',
       'publishedShardBackendConfigsFor',
+      '...(backendConfig.publishedShardSources ?? []).map(stripPublishedShardSources)',
+      'stripPublishedShardSources(backendConfig)',
       'preferredSourceIndex',
       'totalRows = manifestTotalRows > 0 ? manifestTotalRows : Math.max(localRows, manifestTotalRows)',
       'downloadProgressPatch(downloadedBytes, networkTransferMs, measuredWireSpeedBytesPerSecond)',
@@ -623,6 +629,8 @@ describe('SDN data worker source', () => {
       'prepareRecordsForTransfer',
       'workerGlobal.postMessage(response, transferables)',
     ]);
+    expect(libp2pCacheSource).toContain('const PUBLISHED_SHARD_CLIENT_POOL_SIZE = 8');
+    expect(workerSource).toMatch(/const sources = \[\s*\.\.\.\(backendConfig\.publishedShardSources \?\? \[\]\)\.map\(stripPublishedShardSources\),\s*stripPublishedShardSources\(backendConfig\),\s*\]/s);
     expect(workerSource).not.toContain('fetchCidBytesFromGateway');
     expect(workerSource).not.toContain('connectIpfsArtifactPeers');
     expect(workerSource).not.toContain('connectIpfsArtifactProviders');
@@ -691,10 +699,13 @@ describe('SDN data worker source', () => {
       'fetchPublishedShardBytesViaRanges',
       'readFlatSqlPublishedShard',
       'shardSources',
+      '...(options.shardSources ?? [])',
+      '{ peer: options.peer, addrs: options.addrs }',
       'multi-source direct libp2p',
       'selectedSegments',
       'There is no Kubo gateway, remote HTTP, or SSH data fallback in this harness.',
     ]);
+    expect(source).toMatch(/return normalizeShardSourceEntries\(\[\s*\.\.\.\(options\.shardSources \?\? \[\]\),\s*\{ peer: options\.peer, addrs: options\.addrs \},\s*\]\)/s);
     expect(source).not.toContain('connectIpfsArtifactPeers');
     expect(source).not.toContain('connectIpfsArtifactProviders');
     expect(source).not.toContain('fetchCidBytesFromGateway');
