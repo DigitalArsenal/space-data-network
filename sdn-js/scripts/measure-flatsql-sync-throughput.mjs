@@ -11,8 +11,9 @@ import {
 } from '../dist/ui/index.mjs';
 
 const QUERY_PROFILE = 'dataset-publication-offset-v1';
-const DEFAULT_PUBLISHED_SHARD_RANGE_BYTES = 4 * 1024 * 1024;
-const DEFAULT_PUBLISHED_SHARD_RANGE_CONCURRENCY = 2;
+const DEFAULT_PUBLISHED_SHARD_RANGE_BYTES = 16 * 1024 * 1024;
+const DEFAULT_PUBLISHED_SHARD_RANGE_CONCURRENCY = 1;
+const PUBLISHED_SHARD_SLOW_SOURCE_RATIO = 0.5;
 
 export async function runThroughputHarness(options, now = () => Date.now()) {
   validateOptions(options);
@@ -139,6 +140,7 @@ export async function downloadPublishedSegments(options) {
   const now = options.now ?? (() => Date.now());
   const shardSources = normalizeDownloadShardSources(options);
   const sourceStats = initializeSourceStats(shardSources);
+  const sourceScores = initializeSourceScores(shardSources);
   let downloadedBytes = 0;
   let verificationMs = 0;
 
@@ -159,6 +161,7 @@ export async function downloadPublishedSegments(options) {
         rangeBytes: options.rangeBytes,
         rangeConcurrency: options.rangeConcurrency,
         sourceStats,
+        sourceScores,
       });
       const verificationStartedAt = now();
       verifyPublishedShardBytes(item.segment, streamBytes);
@@ -187,7 +190,7 @@ async function fetchPublishedShardBytesViaRanges(options) {
         sourceName: options.sourceName,
         queryProfile: QUERY_PROFILE,
         cid: options.cid,
-    }, options.preferredSourceIndex ?? 0, options.sourceStats);
+    }, options.preferredSourceIndex ?? 0, options.sourceStats, options.sourceScores);
     return shard.streamBytes;
   }
 
@@ -215,7 +218,7 @@ async function fetchPublishedShardBytesViaRanges(options) {
         cid: options.cid,
         byteOffset: range.offset,
         byteLength: range.length,
-      }, (options.preferredSourceIndex ?? 0) + range.index, options.sourceStats);
+      }, (options.preferredSourceIndex ?? 0) + range.index, options.sourceStats, options.sourceScores);
       const headerOffset = shard.header.byteOffset ?? range.offset;
       const headerLength = shard.header.byteLength ?? shard.header.byteCount;
       if (headerOffset !== range.offset || headerLength !== range.length || shard.streamBytes.byteLength !== range.length) {
@@ -232,12 +235,14 @@ async function fetchPublishedShardBytesViaRanges(options) {
   return concatUint8Arrays(chunks);
 }
 
-async function readPublishedShardFromSources(shardSources, query, preferredSourceIndex, sourceStats) {
-  const orderedSources = orderedShardSources(shardSources, preferredSourceIndex);
+async function readPublishedShardFromSources(shardSources, query, preferredSourceIndex, sourceStats, sourceScores) {
+  const orderedSources = orderedShardSources(shardSources, preferredSourceIndex, sourceScores);
   let lastError;
   for (const source of orderedSources) {
     const stats = sourceStats ? sourceStatsFor(sourceStats, source) : null;
     if (stats) stats.requests += 1;
+    const startedAt = Date.now();
+    if (sourceScores) recordSourceScoreStart(sourceScores, source);
     try {
       const shard = await source.client.readFlatSqlPublishedShard({
         ...query,
@@ -245,10 +250,14 @@ async function readPublishedShardFromSources(shardSources, query, preferredSourc
         candidateAddrs: source.addrs,
       });
       if (stats) stats.bytes += shard.streamBytes?.byteLength ?? 0;
+      if (sourceScores) recordSourceScoreSuccess(sourceScores, source, shard.streamBytes?.byteLength ?? 0, Date.now() - startedAt);
       return shard;
     } catch (error) {
       if (stats) stats.errors += 1;
+      if (sourceScores) recordSourceScoreFailure(sourceScores, source);
       lastError = error;
+    } finally {
+      if (sourceScores) recordSourceScoreEnd(sourceScores, source);
     }
   }
   throw lastError ?? new Error('remote FlatSQL published shard stream is unavailable');
@@ -258,6 +267,12 @@ function initializeSourceStats(shardSources) {
   const stats = new Map();
   for (const source of shardSources) sourceStatsFor(stats, source);
   return stats;
+}
+
+function initializeSourceScores(shardSources) {
+  const scores = new Map();
+  for (const source of shardSources) sourceScoreFor(scores, source);
+  return scores;
 }
 
 function sourceStatsFor(sourceStats, source) {
@@ -276,13 +291,100 @@ function sourceStatsFor(sourceStats, source) {
   return sourceStats.get(key);
 }
 
-function orderedShardSources(shardSources, preferredSourceIndex) {
+function orderedShardSources(shardSources, preferredSourceIndex, sourceScores) {
   if (shardSources.length <= 1) return shardSources;
   const index = normalizedSourceIndex(preferredSourceIndex, shardSources.length);
-  return [
+  const preferredOrder = [
     ...shardSources.slice(index),
     ...shardSources.slice(0, index),
   ];
+  if (!sourceScores || !preferredOrder.some((source) => sourceScoreAttempts(sourceScores.get(sourceScoreKey(source))) > 0)) {
+    return shardSources;
+  }
+  const preferredRank = new Map(preferredOrder.map((source, rank) => [sourceScoreKey(source), rank]));
+  return [...preferredOrder].sort((left, right) => compareShardSources(left, right, sourceScores, preferredRank));
+}
+
+function compareShardSources(left, right, sourceScores, preferredRank) {
+  const leftKey = sourceScoreKey(left);
+  const rightKey = sourceScoreKey(right);
+  const leftScore = sourceScores.get(leftKey);
+  const rightScore = sourceScores.get(rightKey);
+  const leftAttempts = sourceScoreAttempts(leftScore);
+  const rightAttempts = sourceScoreAttempts(rightScore);
+  if (leftAttempts === 0 && (rightScore?.successes ?? 0) > 0) return 1;
+  if (rightAttempts === 0 && (leftScore?.successes ?? 0) > 0) return -1;
+  if (leftAttempts === 0 && rightAttempts > 0) return -1;
+  if (rightAttempts === 0 && leftAttempts > 0) return 1;
+  if ((leftScore?.failures ?? 0) !== (rightScore?.failures ?? 0)) {
+    return (leftScore?.failures ?? 0) - (rightScore?.failures ?? 0);
+  }
+  const leftRawBytesPerMs = leftScore?.ewmaBytesPerMs ?? 0;
+  const rightRawBytesPerMs = rightScore?.ewmaBytesPerMs ?? 0;
+  if (leftAttempts > 0 && rightAttempts > 0 && leftRawBytesPerMs > 0 && rightRawBytesPerMs > 0) {
+    if (leftRawBytesPerMs < rightRawBytesPerMs * PUBLISHED_SHARD_SLOW_SOURCE_RATIO) return 1;
+    if (rightRawBytesPerMs < leftRawBytesPerMs * PUBLISHED_SHARD_SLOW_SOURCE_RATIO) return -1;
+  }
+  const leftEffectiveBytesPerMs = effectiveSourceBytesPerMs(leftScore);
+  const rightEffectiveBytesPerMs = effectiveSourceBytesPerMs(rightScore);
+  if (leftEffectiveBytesPerMs !== rightEffectiveBytesPerMs) {
+    return rightEffectiveBytesPerMs - leftEffectiveBytesPerMs;
+  }
+  return (preferredRank.get(leftKey) ?? 0) - (preferredRank.get(rightKey) ?? 0);
+}
+
+function sourceScoreFor(sourceScores, source) {
+  const key = sourceScoreKey(source);
+  if (!sourceScores.has(key)) {
+    sourceScores.set(key, {
+      successes: 0,
+      failures: 0,
+      ewmaBytesPerMs: 0,
+      active: 0,
+    });
+  }
+  return sourceScores.get(key);
+}
+
+function sourceScoreKey(source) {
+  const peer = String(source?.peer ?? '').trim() || 'unknown';
+  const addrs = Array.from(new Set((source?.addrs ?? []).map((addr) => String(addr).trim()).filter(Boolean)));
+  return JSON.stringify({ peer, addrs });
+}
+
+function sourceScoreAttempts(score) {
+  if (!score) return 0;
+  return score.successes + score.failures;
+}
+
+function effectiveSourceBytesPerMs(score) {
+  if (!score) return 0;
+  return score.ewmaBytesPerMs / Math.sqrt(1 + Math.max(0, score.active));
+}
+
+function recordSourceScoreStart(sourceScores, source) {
+  const score = sourceScoreFor(sourceScores, source);
+  score.active += 1;
+}
+
+function recordSourceScoreEnd(sourceScores, source) {
+  const score = sourceScoreFor(sourceScores, source);
+  score.active = Math.max(0, score.active - 1);
+}
+
+function recordSourceScoreSuccess(sourceScores, source, byteCount, elapsedMs) {
+  const score = sourceScoreFor(sourceScores, source);
+  const sample = Math.max(0, byteCount) / Math.max(1, elapsedMs);
+  score.ewmaBytesPerMs = score.successes === 0
+    ? sample
+    : (score.ewmaBytesPerMs * 0.7) + (sample * 0.3);
+  score.successes += 1;
+}
+
+function recordSourceScoreFailure(sourceScores, source) {
+  const score = sourceScoreFor(sourceScores, source);
+  score.failures += 1;
+  score.ewmaBytesPerMs *= 0.5;
 }
 
 function normalizedSourceIndex(value, count) {
@@ -293,8 +395,8 @@ function normalizedSourceIndex(value, count) {
 
 function publishedShardSourcesForHarness(options) {
   return normalizeShardSourceEntries([
-    { peer: options.peer, addrs: options.addrs },
     ...(options.shardSources ?? []),
+    { peer: options.peer, addrs: options.addrs },
   ]);
 }
 
@@ -389,12 +491,12 @@ function usage() {
     '  --request-timeout-ms <ms>   Libp2p dial/exchange timeout, default 60000',
     '  --manifest-limit <rows>     Published manifest row limit, default 50000',
     '  --max-segments <count>      Measure only the first N published shards',
-    '  --concurrency <count>       Parallel shard downloads, default 24',
-     '  --client-pool-size <count>  Dedicated libp2p clients for shard ranges, default 4',
+    '  --concurrency <count>       Parallel shard downloads, default 32',
+     '  --client-pool-size <count>  Dedicated libp2p clients for shard ranges, default 8',
      '  --shard-source-peer <id>    Additional peer serving the same immutable published shards',
      '  --shard-source-addr <addr>  Address for the most recent --shard-source-peer',
-     '  --range-bytes <bytes>       Published shard byte range size, default 4194304',
-    '  --range-concurrency <count> Parallel ranges per shard, default 2',
+     '  --range-bytes <bytes>       Published shard byte range size, default 16777216',
+    '  --range-concurrency <count> Parallel ranges per shard, default 1',
     '  --wire-speed-bps <bps>      Absolute wire-speed baseline, e.g. 2000000000 for 2 Gbps',
     '  --target <ratio>            Required wire-speed utilization, default 0.8',
     '  --json                      Print JSON only',

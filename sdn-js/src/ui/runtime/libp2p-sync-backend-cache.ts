@@ -19,12 +19,21 @@ type Libp2pFlatSqlSyncClientFactory = (
   options: Libp2pFlatSqlSyncBackendOptions,
 ) => Promise<Libp2pFlatSqlSyncClient>;
 
-const PUBLISHED_SHARD_CLIENT_POOL_SIZE = 4;
+const PUBLISHED_SHARD_CLIENT_POOL_SIZE = 8;
+const PUBLISHED_SHARD_SLOW_SOURCE_RATIO = 0.5;
+
+interface PublishedShardSourceStats {
+  successes: number;
+  failures: number;
+  ewmaBytesPerMs: number;
+  active: number;
+}
 
 export class Libp2pFlatSqlSyncBackendCache {
   private readonly clientPromises = new Map<string, Promise<Libp2pFlatSqlSyncClient>>();
   private readonly publishedShardClientPools = new Map<string, Array<Promise<Libp2pFlatSqlSyncClient>>>();
   private readonly publishedShardClientIndexes = new Map<string, number>();
+  private readonly publishedShardSourceStats = new Map<string, PublishedShardSourceStats>();
   private readonly backends = new Map<string, SdnBackend>();
 
   constructor(
@@ -95,13 +104,20 @@ export class Libp2pFlatSqlSyncBackendCache {
     query: FlatSqlSyncQuery & { cid: string },
     preferredSourceIndex = 0,
   ): Promise<FlatSqlPublishedShard> {
-    const orderedSources = orderedPublishedShardSources(sources, preferredSourceIndex);
+    const orderedSources = orderedPublishedShardSources(sources, preferredSourceIndex, this.publishedShardSourceStats);
     let lastError: unknown = null;
     for (const source of orderedSources) {
+      const startedAt = nowMs();
+      recordPublishedShardSourceStart(this.publishedShardSourceStats, source);
       try {
-        return await this.readFlatSqlPublishedShard(source, query);
+        const shard = await this.readFlatSqlPublishedShard(source, query);
+        recordPublishedShardSourceSuccess(this.publishedShardSourceStats, source, shard.streamBytes.byteLength, nowMs() - startedAt);
+        return shard;
       } catch (error) {
+        recordPublishedShardSourceFailure(this.publishedShardSourceStats, source);
         lastError = error;
+      } finally {
+        recordPublishedShardSourceEnd(this.publishedShardSourceStats, source);
       }
     }
     if (lastError instanceof Error) throw lastError;
@@ -156,6 +172,7 @@ export class Libp2pFlatSqlSyncBackendCache {
     this.clientPromises.clear();
     this.publishedShardClientPools.clear();
     this.publishedShardClientIndexes.clear();
+    this.publishedShardSourceStats.clear();
     this.backends.clear();
     const stopPromises = clientPromises.map(async (clientPromise) => {
       const client = await clientPromise;
@@ -216,14 +233,130 @@ function normalizeOptions(options: Libp2pFlatSqlSyncBackendOptions): Libp2pFlatS
 function orderedPublishedShardSources(
   sources: Libp2pFlatSqlSyncBackendOptions[],
   preferredSourceIndex: number,
+  sourceStats = new Map<string, PublishedShardSourceStats>(),
 ): Libp2pFlatSqlSyncBackendOptions[] {
   const normalizedSources = uniquePublishedShardSources(sources);
   if (normalizedSources.length <= 1) return normalizedSources;
   const preferredIndex = normalizePreferredSourceIndex(preferredSourceIndex, normalizedSources.length);
-  return [
+  const preferredOrder = [
     ...normalizedSources.slice(preferredIndex),
     ...normalizedSources.slice(0, preferredIndex),
   ];
+  if (!normalizedSources.some((source) => sourceHasStats(sourceStats, source))) return normalizedSources;
+  const preferredRank = new Map(preferredOrder.map((source, index) => [cacheKeyFor(source), index]));
+  return [...preferredOrder].sort((left, right) => comparePublishedShardSources(left, right, sourceStats, preferredRank));
+}
+
+function comparePublishedShardSources(
+  left: Libp2pFlatSqlSyncBackendOptions,
+  right: Libp2pFlatSqlSyncBackendOptions,
+  sourceStats: Map<string, PublishedShardSourceStats>,
+  preferredRank: Map<string, number>,
+): number {
+  const leftKey = cacheKeyFor(left);
+  const rightKey = cacheKeyFor(right);
+  const leftStats = sourceStats.get(leftKey);
+  const rightStats = sourceStats.get(rightKey);
+  const leftAttempts = publishedShardSourceAttempts(leftStats);
+  const rightAttempts = publishedShardSourceAttempts(rightStats);
+  if (leftAttempts === 0 && (rightStats?.successes ?? 0) > 0) return 1;
+  if (rightAttempts === 0 && (leftStats?.successes ?? 0) > 0) return -1;
+  if (leftAttempts === 0 && rightAttempts > 0) return -1;
+  if (rightAttempts === 0 && leftAttempts > 0) return 1;
+  if ((leftStats?.failures ?? 0) !== (rightStats?.failures ?? 0)) {
+    return (leftStats?.failures ?? 0) - (rightStats?.failures ?? 0);
+  }
+  const leftRawBytesPerMs = leftStats?.ewmaBytesPerMs ?? 0;
+  const rightRawBytesPerMs = rightStats?.ewmaBytesPerMs ?? 0;
+  if (leftAttempts > 0 && rightAttempts > 0 && leftRawBytesPerMs > 0 && rightRawBytesPerMs > 0) {
+    if (leftRawBytesPerMs < rightRawBytesPerMs * PUBLISHED_SHARD_SLOW_SOURCE_RATIO) return 1;
+    if (rightRawBytesPerMs < leftRawBytesPerMs * PUBLISHED_SHARD_SLOW_SOURCE_RATIO) return -1;
+  }
+  const leftEffectiveBytesPerMs = effectiveSourceBytesPerMs(leftStats);
+  const rightEffectiveBytesPerMs = effectiveSourceBytesPerMs(rightStats);
+  if (leftEffectiveBytesPerMs !== rightEffectiveBytesPerMs) {
+    return rightEffectiveBytesPerMs - leftEffectiveBytesPerMs;
+  }
+  return (preferredRank.get(leftKey) ?? 0) - (preferredRank.get(rightKey) ?? 0);
+}
+
+function sourceHasStats(
+  sourceStats: Map<string, PublishedShardSourceStats>,
+  source: Libp2pFlatSqlSyncBackendOptions,
+): boolean {
+  return publishedShardSourceAttempts(sourceStats.get(cacheKeyFor(source))) > 0;
+}
+
+function publishedShardSourceAttempts(stats: PublishedShardSourceStats | undefined): number {
+  if (!stats) return 0;
+  return stats.successes + stats.failures;
+}
+
+function effectiveSourceBytesPerMs(stats: PublishedShardSourceStats | undefined): number {
+  if (!stats) return 0;
+  return stats.ewmaBytesPerMs / Math.sqrt(1 + Math.max(0, stats.active));
+}
+
+function recordPublishedShardSourceStart(
+  sourceStats: Map<string, PublishedShardSourceStats>,
+  source: Libp2pFlatSqlSyncBackendOptions,
+): void {
+  const stats = publishedShardSourceStatsFor(sourceStats, source);
+  stats.active += 1;
+}
+
+function recordPublishedShardSourceEnd(
+  sourceStats: Map<string, PublishedShardSourceStats>,
+  source: Libp2pFlatSqlSyncBackendOptions,
+): void {
+  const stats = publishedShardSourceStatsFor(sourceStats, source);
+  stats.active = Math.max(0, stats.active - 1);
+}
+
+function recordPublishedShardSourceSuccess(
+  sourceStats: Map<string, PublishedShardSourceStats>,
+  source: Libp2pFlatSqlSyncBackendOptions,
+  byteCount: number,
+  elapsedMs: number,
+): void {
+  const current = publishedShardSourceStatsFor(sourceStats, source);
+  const sample = Math.max(0, byteCount) / Math.max(1, elapsedMs);
+  const ewmaBytesPerMs = current.successes === 0
+    ? sample
+    : (current.ewmaBytesPerMs * 0.7) + (sample * 0.3);
+  current.successes += 1;
+  current.ewmaBytesPerMs = ewmaBytesPerMs;
+}
+
+function recordPublishedShardSourceFailure(
+  sourceStats: Map<string, PublishedShardSourceStats>,
+  source: Libp2pFlatSqlSyncBackendOptions,
+): void {
+  const current = publishedShardSourceStatsFor(sourceStats, source);
+  current.failures += 1;
+  current.ewmaBytesPerMs *= 0.5;
+}
+
+function publishedShardSourceStatsFor(
+  sourceStats: Map<string, PublishedShardSourceStats>,
+  source: Libp2pFlatSqlSyncBackendOptions,
+): PublishedShardSourceStats {
+  const key = cacheKeyFor(normalizeOptions(source));
+  let stats = sourceStats.get(key);
+  if (!stats) {
+    stats = {
+      successes: 0,
+      failures: 0,
+      ewmaBytesPerMs: 0,
+      active: 0,
+    };
+    sourceStats.set(key, stats);
+  }
+  return stats;
+}
+
+function nowMs(): number {
+  return Date.now();
 }
 
 function uniquePublishedShardSources(sources: Libp2pFlatSqlSyncBackendOptions[]): Libp2pFlatSqlSyncBackendOptions[] {
