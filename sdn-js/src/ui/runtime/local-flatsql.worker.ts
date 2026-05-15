@@ -24,6 +24,7 @@ import {
   completedPublishedRowsForSegments,
   completedPublishedSegmentCids,
   pendingPublishedSegmentItems,
+  shouldPersistPublishedSegmentCheckpoint,
 } from './published-segment-sync';
 import { retryRemoteSyncOperation } from './remote-sync-retry';
 import { SerialTaskQueue } from './serial-task-queue';
@@ -77,6 +78,7 @@ const PUBLISHED_SHARD_FETCH_RETRY_DELAY_MS = 750;
 const PUBLISHED_SHARD_FETCH_TIMEOUT_MS = 120_000;
 const PUBLISHED_SHARD_RANGE_BYTES = 16 * 1024 * 1024;
 const PUBLISHED_SHARD_RANGE_CONCURRENCY = 1;
+const PUBLISHED_SHARD_PERSIST_CHECKPOINT_BYTES = 512 * 1024 * 1024;
 const WIRE_SPEED_PROBE_BYTES = 64 * 1024 * 1024;
 let store: LocalFlatSqlStore | null = null;
 
@@ -522,6 +524,7 @@ async function syncPublishedSegments(options: {
   });
   const completedSegmentCids = completedPublishedSegmentCids(completedEntries);
   let completedRows = completedPublishedRowsForSegments(options.segments, completedSegmentCids);
+  let unpersistedBytes = 0;
   progress = progressFor(progress, {
     syncedRows: completedRows,
     localRows: completedRows,
@@ -536,11 +539,13 @@ async function syncPublishedSegments(options: {
       networkTransferMs += fetched.networkTransferMs;
       downloadedBytes += streamBytes.byteLength;
       verificationMs += fetched.verificationMs;
-      if (cachedBytes >= options.request.capBytes && completedRows < totalRows) {
+      if (cachedBytes + unpersistedBytes >= options.request.capBytes && completedRows < totalRows) {
         const materializationStartedAt = Date.now();
         await options.currentStore.flush(options.request.standardId);
         flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
+        unpersistedBytes = 0;
         currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
+        cachedBytes = cachedBytesForStandard(currentStats, options.request.standardId);
         progress = progressFor(progress, {
           status: 'capped',
           syncedRows: completedRows,
@@ -586,9 +591,6 @@ async function syncPublishedSegments(options: {
       if (chunkHash && !verifiedChunks.includes(chunkHash)) {
         verifiedChunks = [...verifiedChunks, chunkHash].slice(-256);
       }
-      materializationStartedAt = Date.now();
-      await options.currentStore.flush(options.request.standardId);
-      flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
       await options.currentStore.recordPinLedgerEntries([pinLedgerEntryForPublishedSegment({
         request: options.request,
         manifest: options.manifest,
@@ -596,19 +598,34 @@ async function syncPublishedSegments(options: {
         streamBytes,
         providerPeerId: options.providerPeerId,
         providerPublicKey: options.providerPublicKey,
-      })]);
+      })], { persist: false });
       if (segment.cid) completedSegmentCids.add(segment.cid);
+      unpersistedBytes += streamBytes.byteLength;
       completedRows = completedPublishedRowsForSegments(options.segments, completedSegmentCids);
-      currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
+      if (shouldPersistPublishedSegmentCheckpoint({
+        unpersistedBytes,
+        checkpointBytes: PUBLISHED_SHARD_PERSIST_CHECKPOINT_BYTES,
+        completedRows,
+        totalRows,
+      })) {
+        materializationStartedAt = Date.now();
+        await options.currentStore.flush(options.request.standardId);
+        flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
+        unpersistedBytes = 0;
+        currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
+      } else {
+        currentStats = await options.currentStore.getStats({ includeCachedBytes: false });
+      }
       localRows = localRowsForStandard(currentStats, options.request.standardId);
       cachedBytes = cachedBytesForStandard(currentStats, options.request.standardId);
+      const displayedCachedBytes = cachedBytes + unpersistedBytes;
       progress = progressFor(progress, {
         status: completedRows >= totalRows ? 'synced' : 'syncing',
         syncedRows: completedRows,
         totalRows,
         localRows: completedRows,
-        cachedBytes,
-        pinnedBytes: cachedBytes,
+        cachedBytes: displayedCachedBytes,
+        pinnedBytes: displayedCachedBytes,
         pinnedRows: completedRows,
         ...downloadProgressPatch(downloadedBytes, networkTransferMs, options.measuredWireSpeedBytesPerSecond),
         manifestDiscoveryMs: options.manifestDiscoveryMs,
@@ -630,9 +647,12 @@ async function syncPublishedSegments(options: {
       postProgress(options.id, progress, currentStats);
     }
 
-    const materializationStartedAt = Date.now();
-    await options.currentStore.flush(options.request.standardId);
-    flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
+    if (unpersistedBytes > 0) {
+      const materializationStartedAt = Date.now();
+      await options.currentStore.flush(options.request.standardId);
+      flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
+      unpersistedBytes = 0;
+    }
     currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
     localRows = localRowsForStandard(currentStats, options.request.standardId);
     cachedBytes = cachedBytesForStandard(currentStats, options.request.standardId);

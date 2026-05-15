@@ -559,6 +559,66 @@ describe('local FlatSQL datastore', () => {
     loaded.destroy();
   });
 
+  it('can defer published-shard pin ledger persistence until the FlatSQL checkpoint flush', async () => {
+    const persisted = new Map<string, Uint8Array>();
+    const calls: Array<{ method: string; key: string }> = [];
+    const fetchMock = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const method = String(init?.method ?? 'GET').toUpperCase();
+      const key = decodeURIComponent(new URL(String(url)).pathname.split('/').pop() ?? '');
+      calls.push({ method, key });
+      if (method === 'GET') {
+        const bytes = persisted.get(key);
+        return bytes
+          ? new Response(bytes.slice(), { status: 200 })
+          : new Response('missing', { status: 404 });
+      }
+      if (method === 'PUT') {
+        const bytes = init?.body instanceof Uint8Array
+          ? init.body
+          : new Uint8Array(await new Response(init?.body as BodyInit).arrayBuffer());
+        persisted.set(key, bytes.slice());
+        return new Response(null, { status: 204 });
+      }
+      return new Response(null, { status: method === 'DELETE' ? 204 : 405 });
+    };
+
+    const store = await createLocalFlatSqlStore({
+      persistenceKey: 'deferred-pin-ledger',
+      desktopPersistenceBaseUrl: 'http://desktop.local',
+      fetch: fetchMock,
+      schemas: [{
+        standardId: 'OMM',
+        tableName: 'OMM',
+        fileId: '$OMM',
+        schema: OMM_SCHEMA,
+      }],
+    });
+    await store.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES)]), {
+      persist: false,
+      recordKeyPrefix: 'published:bafycheckpoint',
+    });
+    await store.recordPinLedgerEntries([{
+      cid: 'bafycheckpoint',
+      standardId: 'OMM',
+      schemaName: 'OMM.fbs',
+      role: 'shard',
+      rowCount: 1,
+      byteCount: STARLINK_6292_OMM_BYTES.byteLength,
+      verificationState: 'verified',
+      materializedAt: '2026-05-15T00:00:00.000Z',
+      verifiedAt: '2026-05-15T00:00:00.000Z',
+      updatedAt: '2026-05-15T00:00:00.000Z',
+    }], { persist: false });
+
+    await expect(store.listPinLedgerEntries({ standardId: 'OMM' })).resolves.toHaveLength(1);
+    expect(calls.some((call) => call.method === 'PUT' && call.key === 'deferred-pin-ledger:pin-ledger')).toBe(false);
+
+    await store.flush('OMM');
+
+    expect(calls.some((call) => call.method === 'PUT' && call.key === 'deferred-pin-ledger:pin-ledger')).toBe(true);
+    store.destroy();
+  });
+
   it('allows callers to clear persisted local FlatSQL data without IndexedDB support', async () => {
     await expect(clearLocalFlatSqlStore({
       persistenceKey: 'sdn-data:configured:space-data-network-02',
