@@ -647,6 +647,7 @@
   let localFlatSqlStorePromise: Promise<WorkerLocalFlatSqlStore | null> | null = null;
   let localFlatSqlStorePromiseKey = '';
   let localFlatSqlStats: LocalFlatSqlStandardStats[] = [];
+  let localFlatSqlStatsLoaded = false;
   let localExplorerResult: LocalFlatSqlQueryResult | null = null;
   let localExplorerFilteredTotalRows: number | null = null;
   let localExplorerDatasetFiltersActive = false;
@@ -684,7 +685,7 @@
   const schemaSyncSchedulers = new Map<string, typeof schemaSyncScheduler>([[LOCAL_DATA_SOURCE_ID, schemaSyncScheduler]]);
 
   $: dataSourceOptions = buildDataSourceOptions(backend, configuredDataSources, peers, trustedPeers);
-  $: schemaSyncRows = buildSubscribedSchemaSyncRows(dataDirectoryState.subscriptions, selectedDataSourceId, selectedDatastoreKey, localFlatSqlStats, schemaSyncPreferences, dataSummary, dataScan, dataPageLoading, selectedStandardId);
+  $: schemaSyncRows = buildSubscribedSchemaSyncRows(dataDirectoryState.subscriptions, selectedDataSourceId, selectedDatastoreKey, localFlatSqlStats, localFlatSqlStatsLoaded, schemaSyncPreferences, dataSummary, dataScan, dataPageLoading, selectedStandardId);
   $: messageTypeRows = sortedMessageTypeRows(schemaSyncRows);
   $: sourceProvenanceRows = buildSourceProvenanceRows(dataSourceOptions, schemaSyncRows, dataDirectoryState.peerTrust);
   $: subscribedSourceOptions = buildSubscribedSourceOptions(schemaSyncRows);
@@ -744,7 +745,7 @@
   $: canGoNext = explorerPageRowCount >= pageSize && (explorerPageTotalRows === null || ((pageIndex + 1) * pageSize) < explorerPageTotalRows);
   $: pageLabel = `${pageIndex + 1}/${totalPageCount}`;
   $: scanHashLabel = dataScan?.scanHash ? shorten(dataScan.scanHash, 18) : 'none';
-  $: storageMetricsLoading = dataPageLoading || activeStorageRows.some(isSchemaRemoteRowsLoading);
+  $: storageMetricsLoading = activeStorageRows.some(isSchemaRemoteRowsLoading);
   $: storageRemoteRowsMetric = loadingMetricLabel(storageMetricsLoading, formatNumber(activeStorageRemoteRows));
   $: storageLocalRowsMetric = loadingMetricLabel(storageMetricsLoading, formatNumber(activeStorageLocalRows));
   $: storageCachedMetric = loadingMetricLabel(storageMetricsLoading, formatBytes(activeStorageCachedBytes));
@@ -818,6 +819,7 @@
   async function initializeWorkbench(): Promise<void> {
     await refreshLocalFlatSqlStats().catch(() => {
       localFlatSqlStats = [];
+      localFlatSqlStatsLoaded = false;
     });
     await runLocalExplorerQuery(0);
     void loadDataSummary();
@@ -1032,7 +1034,12 @@
       } else {
         localExplorerFilteredTotalRows = null;
       }
-      localFlatSqlStats = await withUiTimeout(store.getStats({ includeCachedBytes: true }), UI_LOCAL_QUERY_TIMEOUT_MS, 'FlatSQL stats').catch(() => localFlatSqlStats);
+      try {
+        localFlatSqlStats = await withUiTimeout(store.getStats({ includeCachedBytes: true }), UI_LOCAL_QUERY_TIMEOUT_MS, 'FlatSQL stats');
+        localFlatSqlStatsLoaded = true;
+      } catch {
+        // Keep the cached snapshot visible if fresh stats are temporarily unavailable.
+      }
       pageIndex = nextPage;
     } catch (error) {
       localExplorerResult = null;
@@ -1994,6 +2001,7 @@
   function applyWorkerSchemaSyncUpdate(standardId: string, dataSourceId: string, datastoreKey: string | null, update: WorkerSchemaSyncUpdate): void {
     if (selectedDataSourceId === dataSourceId && selectedDatastoreKey === datastoreKey) {
       localFlatSqlStats = update.stats;
+      localFlatSqlStatsLoaded = true;
       if (selectedDataSection === 'explorer' && selectedStandardId === standardId && update.progress.status !== 'syncing') {
         scheduleLocalExplorerQuery(pageIndex);
       }
@@ -2077,6 +2085,7 @@
     localFlatSqlStorePromise = null;
     localFlatSqlStorePromiseKey = '';
     localFlatSqlStats = [];
+    localFlatSqlStatsLoaded = false;
     sqlResult = null;
     sqlError = '';
   }
@@ -2149,7 +2158,13 @@
   }
 
   async function refreshLocalFlatSqlStats(includeCachedBytes = true): Promise<void> {
-    localFlatSqlStats = localFlatSqlStore ? await localFlatSqlStore.getStats({ includeCachedBytes }) : [];
+    if (!localFlatSqlStore) {
+      localFlatSqlStats = [];
+      localFlatSqlStatsLoaded = false;
+      return;
+    }
+    localFlatSqlStats = await localFlatSqlStore.getStats({ includeCachedBytes });
+    localFlatSqlStatsLoaded = true;
   }
 
   function resetSqlForSelectedStandard(): void {
@@ -2537,6 +2552,7 @@
     activeDataSourceId: string,
     activeDatastoreKey: string | null,
     stats: LocalFlatSqlStandardStats[],
+    localStatsLoaded: boolean,
     preferences: Record<string, SchemaSyncPreference>,
     summary: DataSummary | null,
     scan: DataScanResult | null,
@@ -2545,13 +2561,15 @@
   ): SchemaSyncRow[] {
     return subscriptions.map((subscription) => {
       const datastoreKey = subscription.datastoreKey ?? null;
-      const sourceStats = subscription.dataSourceId === activeDataSourceId && datastoreKey === activeDatastoreKey ? stats : [];
+      const sourceStatsSelected = subscription.dataSourceId === activeDataSourceId && datastoreKey === activeDatastoreKey;
+      const sourceStatsAreAuthoritative = sourceStatsSelected && localStatsLoaded;
+      const sourceStats = sourceStatsAreAuthoritative ? stats : [];
       const progress = schemaSyncProgressFor(
         subscription.dataSourceId,
         subscription.standardId,
         subscription.remoteRows,
         sourceStats,
-        subscription.dataSourceId === activeDataSourceId && datastoreKey === activeDatastoreKey,
+        sourceStatsAreAuthoritative,
         datastoreKey,
       );
       const remoteRows = remoteRowsForSchemaSyncRow(subscription, progress);
@@ -3430,11 +3448,11 @@
     datastoreKey: string | null,
     activeStandardId: string,
   ): boolean {
-    if (pageLoading) return true;
     if (remoteRows > 0 || progress.totalRows > 0) return false;
     if (progress.lastSyncedAt || progress.status === 'synced') return false;
     if (summaryHasRemoteRowsForStandard(summary, standardId, datastoreKey)) return false;
     if (standardId === activeStandardId && scanTotalRowsForStandard(scan, standardId) !== null) return false;
+    if (pageLoading) return true;
     return true;
   }
 

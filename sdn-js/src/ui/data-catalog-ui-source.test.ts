@@ -96,6 +96,23 @@ describe('Data catalog UI source', () => {
     expect(overviewProductsTable).not.toContain('aria-expanded={catalogRowActionsExpanded(row)}');
   });
 
+  it('renders cached overview row counts before remote summaries and local stats finish loading', () => {
+    expect(localDataScreenSource).toContain('let localFlatSqlStatsLoaded = false;');
+    expect(localDataScreenSource).toContain('localFlatSqlStatsLoaded,');
+    expect(localDataScreenSource).toContain('const sourceStatsAreAuthoritative = sourceStatsSelected && localStatsLoaded;');
+    expect(localDataScreenSource).toContain('localFlatSqlStatsLoaded = true;');
+    expect(localDataScreenSource).not.toContain('$: storageMetricsLoading = dataPageLoading || activeStorageRows.some(isSchemaRemoteRowsLoading);');
+
+    const remoteRowsLoadingSource = sourceBetween(
+      localDataScreenSource,
+      'function remoteRowsAreLoading(',
+      'function isSchemaRemoteRowsLoading',
+    );
+    expect(remoteRowsLoadingSource.indexOf('if (remoteRows > 0 || progress.totalRows > 0) return false;')).toBeLessThan(
+      remoteRowsLoadingSource.indexOf('if (pageLoading) return true;'),
+    );
+  });
+
   it('uses record-table formatting and expandable row actions for catalog data products', () => {
     const catalogProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Catalog data products"', "{#if selectedDataSection === 'sources'}");
 
