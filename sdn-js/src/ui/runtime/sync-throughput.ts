@@ -40,8 +40,12 @@ export interface ThroughputHarnessOptions {
   maxSegments: number | null;
   concurrency: number;
   clientPoolSize: number;
+  transferMode: 'ranges' | 'batches';
   rangeBytes: number;
   rangeConcurrency: number;
+  batchBytes: number;
+  batchSegments: number;
+  batchConcurrency: number;
   wireSpeedBitsPerSecond: number | null;
   target: number;
   json: boolean;
@@ -70,8 +74,12 @@ export interface ThroughputHarnessResult {
       requests: number;
       errors: number;
     }>;
+    transferMode?: 'ranges' | 'batches';
     rangeBytes: number;
     rangeConcurrency: number;
+    batchBytes?: number;
+    batchSegments?: number;
+    batchConcurrency?: number;
     remoteHttpFallback: boolean;
     sshFallback: boolean;
   };
@@ -161,8 +169,12 @@ export function parseThroughputHarnessArgs(argv: string[]): ThroughputHarnessOpt
     maxSegments: null,
     concurrency: 32,
     clientPoolSize: 8,
+    transferMode: 'ranges',
     rangeBytes: 16 * 1024 * 1024,
     rangeConcurrency: 1,
+    batchBytes: 64 * 1024 * 1024,
+    batchSegments: 8,
+    batchConcurrency: 4,
     wireSpeedBitsPerSecond: null,
     target: DEFAULT_WIRE_SPEED_TARGET,
     json: false,
@@ -221,11 +233,26 @@ export function parseThroughputHarnessArgs(argv: string[]): ThroughputHarnessOpt
       case '--client-pool-size':
         options.clientPoolSize = positiveIntegerArg(argv, index += 1, arg);
         break;
+      case '--transfer-mode': {
+        const value = requiredArg(argv, index += 1, arg);
+        if (value !== 'ranges' && value !== 'batches') throw new Error('--transfer-mode must be ranges or batches');
+        options.transferMode = value;
+        break;
+      }
       case '--range-bytes':
         options.rangeBytes = positiveIntegerArg(argv, index += 1, arg);
         break;
       case '--range-concurrency':
         options.rangeConcurrency = positiveIntegerArg(argv, index += 1, arg);
+        break;
+      case '--batch-bytes':
+        options.batchBytes = positiveIntegerArg(argv, index += 1, arg);
+        break;
+      case '--batch-segments':
+        options.batchSegments = positiveIntegerArg(argv, index += 1, arg);
+        break;
+      case '--batch-concurrency':
+        options.batchConcurrency = positiveIntegerArg(argv, index += 1, arg);
         break;
       case '--wire-speed-bps':
         options.wireSpeedBitsPerSecond = positiveIntegerArg(argv, index += 1, arg);
@@ -320,6 +347,9 @@ function formatDuration(milliseconds: number): string {
 
 function artifactRoutingSummary(routing: NonNullable<ThroughputHarnessResult['artifactRouting']>): string {
   const fallbacks = routing.remoteHttpFallback || routing.sshFallback ? 'fallbacks enabled' : 'no HTTP/SSH fallbacks';
+  if (routing.transferMode === 'batches') {
+    return `Shard transfer: ${routing.mode} over ${routing.protocol}; ${routing.clientPoolSize} clients, ${formatByteCount(routing.batchBytes ?? 0)} batches x${routing.batchConcurrency ?? 0}; ${fallbacks}`;
+  }
   return `Shard transfer: ${routing.mode} over ${routing.protocol}; ${routing.clientPoolSize} clients, ${formatByteCount(routing.rangeBytes)} ranges x${routing.rangeConcurrency}; ${fallbacks}`;
 }
 
