@@ -98,6 +98,10 @@ temp/
 coverage/
 .nyc_output/
 *.lcov
+artifacts/
+test-results/
+sdn-js/test-results/
+sdn-server/.spacedatanetwork.build-hash
 
 # Docker
 docker-compose.override.yml
