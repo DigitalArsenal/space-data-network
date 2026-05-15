@@ -6,6 +6,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 
 const REPO_ROOT = path.resolve(__dirname, "..");
 const SUITE_MANIFEST_PATH = path.join(REPO_ROOT, "suite.versions.json");
@@ -63,6 +64,17 @@ function getPkgDepVersion(relPath, depName) {
   }
 }
 
+function getPkgRuntimeDependencies(relPath) {
+  const fullPath = path.join(REPO_ROOT, relPath);
+  if (!fs.existsSync(fullPath)) return {};
+  try {
+    const pkg = JSON.parse(fs.readFileSync(fullPath, "utf8"));
+    return pkg.dependencies || {};
+  } catch {
+    return {};
+  }
+}
+
 function getPkgVersion(relPath) {
   const fullPath = path.join(REPO_ROOT, relPath);
   if (!fs.existsSync(fullPath)) return null;
@@ -97,7 +109,189 @@ function normalizeGoVersion(v) {
 }
 
 function normalizePackageVersion(v) {
+  if (!v) return null;
   return stripRange(v).replace(/\+.*/, "");
+}
+
+function isLocalFileDependency(v) {
+  return typeof v === "string" && v.startsWith("file:");
+}
+
+function readVersionMock(envName) {
+  const raw = process.env[envName];
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    fail(`${envName} is not valid JSON: ${error.message}`);
+    return {};
+  }
+}
+
+const mockNpmVersions = readVersionMock("SDN_VERSION_CHECK_MOCK_NPM_VERSIONS");
+const mockGoVersions = readVersionMock("SDN_VERSION_CHECK_MOCK_GO_VERSIONS");
+const mockGoDirectVersions = readVersionMock("SDN_VERSION_CHECK_MOCK_GO_DIRECT_VERSIONS");
+const mockGitTags = readVersionMock("SDN_VERSION_CHECK_MOCK_GIT_TAGS");
+
+function getPublishedNpmVersion(packageName) {
+  if (Object.prototype.hasOwnProperty.call(mockNpmVersions, packageName)) {
+    return { version: String(mockNpmVersions[packageName]), error: null };
+  }
+
+  const result = spawnSync("npm", ["view", packageName, "version", "--json"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+
+  if (result.status !== 0) {
+    const error = (result.stderr || result.stdout || "unknown npm view failure").trim();
+    return { version: null, error };
+  }
+
+  try {
+    const parsed = JSON.parse(result.stdout);
+    return { version: String(parsed), error: null };
+  } catch {
+    return { version: result.stdout.trim().replace(/^"|"$/g, ""), error: null };
+  }
+}
+
+function getPublishedGoModuleVersions(modulePath, options = {}) {
+  const direct = options.direct === true;
+  const mockVersions = direct ? mockGoDirectVersions : mockGoVersions;
+  if (Object.prototype.hasOwnProperty.call(mockVersions, modulePath)) {
+    return { versions: mockVersions[modulePath].map(String), error: null };
+  }
+
+  const env = direct ? { ...process.env, GOPROXY: "direct" } : process.env;
+  const result = spawnSync("go", ["list", "-m", "-versions", modulePath], {
+    cwd: path.join(REPO_ROOT, "sdn-server"),
+    env,
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+
+  if (result.status !== 0) {
+    const error = (result.stderr || result.stdout || "unknown go list failure").trim();
+    return { versions: [], error };
+  }
+
+  const parts = result.stdout.trim().split(/\s+/).filter(Boolean);
+  return { versions: parts.slice(1), error: null };
+}
+
+function parseGitDependency(v) {
+  if (typeof v !== "string") return null;
+  let repo = null;
+  let tag = null;
+
+  const githubArchive = v.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/archive\/refs\/tags\/([^/]+)\.tar\.gz$/);
+  if (githubArchive) {
+    repo = `https://github.com/${githubArchive[1].replace(/\.git$/, "")}.git`;
+    tag = githubArchive[2];
+  } else if (v.startsWith("github:")) {
+    const spec = v.slice("github:".length);
+    const [repoSpec, fragment] = spec.split("#");
+    repo = `https://github.com/${repoSpec.replace(/\.git$/, "")}.git`;
+    tag = fragment || null;
+  } else if (v.startsWith("git+https://") || v.startsWith("https://")) {
+    const normalized = v.replace(/^git\+/, "");
+    const [repoSpec, fragment] = normalized.split("#");
+    repo = repoSpec;
+    tag = fragment || null;
+  }
+
+  if (!repo) return null;
+  return { repo, tag };
+}
+
+function getPublishedGitTag(depName, repo, tag) {
+  const mockKey = Object.prototype.hasOwnProperty.call(mockGitTags, depName) ? depName : repo;
+  if (Object.prototype.hasOwnProperty.call(mockGitTags, mockKey)) {
+    return {
+      available: mockGitTags[mockKey].map(String).includes(tag),
+      error: null,
+    };
+  }
+
+  const result = spawnSync("git", ["ls-remote", "--tags", repo, `refs/tags/${tag}`], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+
+  if (result.status !== 0) {
+    const error = (result.stderr || result.stdout || "unknown git ls-remote failure").trim();
+    return { available: false, error };
+  }
+
+  return { available: result.stdout.trim().length > 0, error: null };
+}
+
+function checkPublishedNpmVersion(packageName, expectedVersion) {
+  const { version, error } = getPublishedNpmVersion(packageName);
+  if (error) {
+    fail(`npm registry ${packageName} could not be queried: ${error}`);
+  } else if (version === expectedVersion) {
+    pass(`npm registry ${packageName} exposes production version ${expectedVersion}`);
+  } else {
+    fail(`npm registry ${packageName} latest=${version}; expected production version ${expectedVersion} is not available`);
+  }
+}
+
+function checkGitDependencyVersion(packageName, rawVersion, expectedVersion) {
+  const expectedTag = `v${expectedVersion}`;
+  const gitDependency = parseGitDependency(rawVersion);
+  if (!gitDependency) return false;
+
+  if (gitDependency.tag !== expectedTag) {
+    fail(`sdn-js ${packageName} Git dependency tag=${gitDependency.tag || "none"}; expected ${expectedTag}`);
+    return true;
+  }
+
+  pass(`sdn-js ${packageName} uses production Git tag ${expectedTag}`);
+  const { available, error } = getPublishedGitTag(packageName, gitDependency.repo, expectedTag);
+  if (error) {
+    fail(`Git dependency ${packageName} tag ${expectedTag} could not be queried: ${error}`);
+  } else if (available) {
+    pass(`Git dependency ${packageName} exposes tag ${expectedTag}`);
+  } else {
+    fail(`Git dependency ${packageName} does not expose tag ${expectedTag}`);
+  }
+  return true;
+}
+
+function checkPublishedGoModuleVersion(modulePath, expectedVersion) {
+  const expectedGoVersion = `v${expectedVersion}`;
+  const { versions, error } = getPublishedGoModuleVersions(modulePath);
+  const directResult = versions.includes(expectedGoVersion)
+    ? null
+    : getPublishedGoModuleVersions(modulePath, { direct: true });
+  if (error) {
+    if (directResult && directResult.versions.includes(expectedGoVersion)) {
+      pass(`Go module ${modulePath} exposes ${expectedGoVersion} via direct Git lookup`);
+    } else {
+      fail(`Go module ${modulePath} could not be queried: ${error}`);
+    }
+  } else if (versions.includes(expectedGoVersion)) {
+    pass(`Go module ${modulePath} exposes ${expectedGoVersion}`);
+  } else if (directResult && directResult.versions.includes(expectedGoVersion)) {
+    pass(`Go module ${modulePath} exposes ${expectedGoVersion} via direct Git lookup`);
+  } else {
+    fail(`Go module ${modulePath} does not expose ${expectedGoVersion}`);
+  }
+}
+
+function expectedPublishedVersionForPackage(name) {
+  switch (name) {
+    case "flatsql":
+      return suiteManifest.dependencies.flatsql;
+    case "spacedatastandards.org":
+      return suiteManifest.dependencies.spacedatastandards;
+    default:
+      return null;
+  }
 }
 
 const suiteManifest = readJSON("suite.versions.json");
@@ -118,15 +312,55 @@ if (webuiVersion === suiteManifest.dependencies.ipfsWebUI) {
   fail(`webui version mismatch: webui/package.json=${webuiVersion} suite.versions.json=${suiteManifest.dependencies.ipfsWebUI}`);
 }
 
+heading("release dependency guardrails");
+
+for (const p of OWNED_PACKAGE_JSON_PATHS) {
+  const dependencies = getPkgRuntimeDependencies(p);
+  for (const [name, version] of Object.entries(dependencies)) {
+    if (name === "spacedatastandards.org" || name === "flatsql") {
+      continue;
+    }
+    if (isLocalFileDependency(version)) {
+      const expectedVersion = expectedPublishedVersionForPackage(name);
+      if (expectedVersion) {
+        fail(`${p} ${name} uses local file dependency ${version}; release builds must consume published version ${expectedVersion}`);
+      } else {
+        fail(`${p} ${name} uses local file dependency ${version}; release builds must consume a published package version`);
+      }
+    }
+  }
+}
+
+heading("flatsql version consistency");
+
+const expectedFlatSQL = suiteManifest.dependencies.flatsql;
+const rawJsFlatSQL = getPkgDepVersion(SDN_JS_PACKAGE_JSON, "flatsql");
+const jsFlatSQL = stripRange(rawJsFlatSQL);
+
+if (isLocalFileDependency(rawJsFlatSQL)) {
+  fail(`sdn-js flatsql uses local file dependency ${rawJsFlatSQL}; release builds must consume published version ${expectedFlatSQL}`);
+} else if (checkGitDependencyVersion("flatsql", rawJsFlatSQL, expectedFlatSQL)) {
+} else if (jsFlatSQL === expectedFlatSQL) {
+  pass(`sdn-js flatsql matches suite manifest: ${jsFlatSQL}`);
+  checkPublishedNpmVersion("flatsql", expectedFlatSQL);
+} else {
+  fail(`sdn-js flatsql mismatch: sdn-js/package.json=${jsFlatSQL} suite.versions.json=${expectedFlatSQL}`);
+}
+
 heading("spacedatastandards.org version consistency");
 
 const expectedSDS = suiteManifest.dependencies.spacedatastandards;
-const jsSDS = stripRange(getPkgDepVersion(SDN_JS_PACKAGE_JSON, "spacedatastandards.org"));
+const rawJsSDS = getPkgDepVersion(SDN_JS_PACKAGE_JSON, "spacedatastandards.org");
+const jsSDS = stripRange(rawJsSDS);
 const goSDS = normalizeGoVersion(getGoModVersion(SDN_SERVER_GO_MOD, "github.com/DigitalArsenal/spacedatastandards.org/lib/go"));
 const submoduleSDS = normalizePackageVersion(getPkgVersion(SDS_SUBMODULE_PACKAGE_JSON));
 
-if (jsSDS === expectedSDS) {
+if (isLocalFileDependency(rawJsSDS)) {
+  fail(`sdn-js spacedatastandards.org uses local file dependency ${rawJsSDS}; release builds must consume published version ${expectedSDS}`);
+} else if (checkGitDependencyVersion("spacedatastandards.org", rawJsSDS, expectedSDS)) {
+} else if (jsSDS === expectedSDS) {
   pass(`sdn-js spacedatastandards.org matches suite manifest: ${jsSDS}`);
+  checkPublishedNpmVersion("spacedatastandards.org", expectedSDS);
 } else {
   fail(`sdn-js spacedatastandards.org mismatch: sdn-js/package.json=${jsSDS} suite.versions.json=${expectedSDS}`);
 }
@@ -137,11 +371,14 @@ if (goSDS === expectedSDS) {
   fail(`sdn-server Go spacedatastandards.org mismatch: sdn-server/go.mod=${goSDS} suite.versions.json=${expectedSDS}`);
 }
 
-if (submoduleSDS === expectedSDS) {
+if (submoduleSDS === null) {
+  skip(`schemas/sds checkout not available at ${SDS_SUBMODULE_PACKAGE_JSON}`);
+} else if (submoduleSDS === expectedSDS) {
   pass(`schemas/sds checkout matches suite manifest: ${submoduleSDS}`);
 } else {
   fail(`schemas/sds checkout mismatch: schemas/sds/package.json=${submoduleSDS} suite.versions.json=${expectedSDS}`);
 }
+checkPublishedGoModuleVersion("github.com/DigitalArsenal/spacedatastandards.org/lib/go", expectedSDS);
 
 heading("wallet version consistency");
 
