@@ -295,7 +295,7 @@ func (s *ConcreteDatasetPublicationService) ensureDatasetPublicationAssets(ctx c
 	if shardErr == nil && indexErr == nil && fileExists(shardPath) && fileExists(indexPath) {
 		return publication, nil
 	}
-	if shardErr == nil && fileExists(shardPath) {
+	if shardErr == nil {
 		export, err := s.store.RepairDatasetPublicationIndexFromShard(filepath.Join(s.outputDir, safeDatasetPathComponent(publication.SchemaName)), publication)
 		if err != nil {
 			return publication, fmt.Errorf("repair dataset publication %s index from shard: %w", publication.ShardCID, err)

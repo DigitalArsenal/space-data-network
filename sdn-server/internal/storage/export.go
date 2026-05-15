@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -155,7 +156,7 @@ func (s *FlatSQLStore) RepairDatasetPublicationIndexFromShard(outputDir string, 
 	if publication.RecordCount <= 0 {
 		return nil, fmt.Errorf("record count is required")
 	}
-	shardPath, err := s.DatasetPublicationShardPath(publication)
+	shardPath, err := s.datasetPublicationShardPathForRepair(publication)
 	if err != nil {
 		return nil, err
 	}
@@ -190,6 +191,46 @@ func (s *FlatSQLStore) RepairDatasetPublicationIndexFromShard(outputDir string, 
 		return nil, fmt.Errorf("repaired shard identity changed")
 	}
 	return export, nil
+}
+
+func (s *FlatSQLStore) datasetPublicationShardPathForRepair(publication DatasetShardPublication) (string, error) {
+	canonicalPath, err := s.DatasetPublicationShardPath(publication)
+	if err != nil {
+		return "", err
+	}
+	if info, err := os.Stat(canonicalPath); err == nil && !info.IsDir() {
+		return canonicalPath, nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat deterministic shard file: %w", err)
+	}
+
+	if len(publication.ShardSHA256) < 16 {
+		return "", fmt.Errorf("deterministic shard file is missing and shard SHA-256 is not repairable")
+	}
+	shardDir := filepath.Join(s.DatasetPublicationOutputDir(), datasetPublicationPathComponent(publication.SchemaName), "shards")
+	matches, err := filepath.Glob(filepath.Join(shardDir, "*-"+publication.ShardSHA256[:16]+".fbshard"))
+	if err != nil {
+		return "", fmt.Errorf("find legacy shard files: %w", err)
+	}
+	sort.Strings(matches)
+	var lastErr error
+	for _, candidate := range matches {
+		if info, err := os.Stat(candidate); err != nil || info.IsDir() {
+			if err != nil {
+				lastErr = err
+			}
+			continue
+		}
+		if _, _, err := verifyFileCIDAndHash("legacy shard", candidate, publication.ShardCID, publication.ShardSHA256); err != nil {
+			lastErr = err
+			continue
+		}
+		return candidate, nil
+	}
+	if lastErr != nil {
+		return "", fmt.Errorf("deterministic shard file is missing at %s and no legacy shard matched %s: %w", canonicalPath, publication.ShardSHA256[:16], lastErr)
+	}
+	return "", fmt.Errorf("deterministic shard file is missing at %s and no legacy shard matched %s", canonicalPath, publication.ShardSHA256[:16])
 }
 
 func (s *FlatSQLStore) datasetExportRecordsFromShardFile(schemaName string, shardPath string) ([]DatasetExportRecord, error) {
