@@ -102,6 +102,10 @@ export interface LocalFlatSqlStatsOptions {
   includeCachedBytes?: boolean;
 }
 
+export interface LocalFlatSqlPinLedgerWriteOptions {
+  persist?: boolean;
+}
+
 export interface FlatSqlSizePrefixedStreamInfo {
   totalRecordCount: number;
   ingestRecordCount: number;
@@ -113,7 +117,7 @@ export interface LocalFlatSqlStore {
   ingestRecords(standardId: string, records: RawDataRecord[], sourceOrOptions?: string | LocalFlatSqlIngestOptions | null): Promise<number>;
   ingestFlatBufferStream(standardId: string, streamBytes: Uint8Array, options?: LocalFlatSqlStreamIngestOptions | null): Promise<number>;
   flush(standardId?: string): Promise<void>;
-  recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[]): Promise<void>;
+  recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[], options?: LocalFlatSqlPinLedgerWriteOptions): Promise<void>;
   listPinLedgerEntries(query?: LocalFlatSqlPinLedgerQuery): Promise<LocalFlatSqlPinLedgerEntry[]>;
   query(sql: string, standardId?: string, options?: LocalFlatSqlQueryOptions): LocalFlatSqlQueryResult | Promise<LocalFlatSqlQueryResult>;
   getStats(options?: LocalFlatSqlStatsOptions): LocalFlatSqlStandardStats[] | Promise<LocalFlatSqlStandardStats[]>;
@@ -318,13 +322,13 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     await this.persistPinLedger();
   }
 
-  async recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[]): Promise<void> {
+  async recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[], options: LocalFlatSqlPinLedgerWriteOptions = {}): Promise<void> {
     for (const candidate of entries) {
       const entry = normalizePinLedgerEntry(candidate);
       if (!entry.cid || !entry.standardId || !entry.schemaName || !entry.role || !entry.verificationState) continue;
       this.pinLedger.set(pinLedgerEntryKey(entry), entry);
     }
-    await this.persistPinLedger();
+    if (options.persist !== false) await this.persistPinLedger();
   }
 
   async listPinLedgerEntries(query: LocalFlatSqlPinLedgerQuery = {}): Promise<LocalFlatSqlPinLedgerEntry[]> {

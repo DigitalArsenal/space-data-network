@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertPublishedSegmentMaterializedRowCount,
   pendingPublishedSegmentItems,
+  shouldPersistPublishedSegmentCheckpoint,
 } from './published-segment-sync';
 
 describe('published segment sync planning', () => {
@@ -68,5 +69,28 @@ describe('published segment sync planning', () => {
 
     expect(source).toContain('publishedShardPreferredSourceIndex(options.segment, range.index)');
     expect(source).toContain('function publishedShardPreferredSourceIndex(');
+  });
+
+  it('checkpoints published shard persistence by bytes or final completion instead of every shard', () => {
+    expect(shouldPersistPublishedSegmentCheckpoint({
+      unpersistedBytes: 48 * 1024 * 1024,
+      checkpointBytes: 256 * 1024 * 1024,
+      completedRows: 50_000,
+      totalRows: 2_000_000,
+    })).toBe(false);
+
+    expect(shouldPersistPublishedSegmentCheckpoint({
+      unpersistedBytes: 257 * 1024 * 1024,
+      checkpointBytes: 256 * 1024 * 1024,
+      completedRows: 500_000,
+      totalRows: 2_000_000,
+    })).toBe(true);
+
+    expect(shouldPersistPublishedSegmentCheckpoint({
+      unpersistedBytes: 16 * 1024 * 1024,
+      checkpointBytes: 256 * 1024 * 1024,
+      completedRows: 2_000_000,
+      totalRows: 2_000_000,
+    })).toBe(true);
   });
 });

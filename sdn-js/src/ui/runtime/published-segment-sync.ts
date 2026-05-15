@@ -20,6 +20,13 @@ export interface PublishedSegmentMaterializedRowCountInput {
   materializedRows: number;
 }
 
+export interface PublishedSegmentCheckpointInput {
+  unpersistedBytes: number;
+  checkpointBytes: number;
+  completedRows: number;
+  totalRows: number;
+}
+
 export function pendingPublishedSegmentItems<T extends PublishedSegmentForSync>(
   segments: T[],
   completedCids: ReadonlySet<string>,
@@ -77,4 +84,12 @@ export function assertPublishedSegmentMaterializedRowCount(input: PublishedSegme
   throw new Error(
     `published shard ${cid} materialized ${materializedRows.toLocaleString()}/${expectedRows.toLocaleString()} ${input.standardId} rows`,
   );
+}
+
+export function shouldPersistPublishedSegmentCheckpoint(input: PublishedSegmentCheckpointInput): boolean {
+  const completedRows = Math.max(0, Math.floor(input.completedRows));
+  const totalRows = Math.max(0, Math.floor(input.totalRows));
+  if (totalRows > 0 && completedRows >= totalRows) return true;
+  const checkpointBytes = Math.max(1, Math.floor(input.checkpointBytes));
+  return Math.max(0, Math.floor(input.unpersistedBytes)) >= checkpointBytes;
 }
