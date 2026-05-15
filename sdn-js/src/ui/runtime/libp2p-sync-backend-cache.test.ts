@@ -789,6 +789,71 @@ describe('libp2p FlatSQL sync backend cache', () => {
     ]);
   });
 
+  it('can prefer a mirror source for published shard batches', async () => {
+    const calls: string[] = [];
+    const shardBytes = new Uint8Array([3, 0, 0, 0, 1, 2, 3]);
+    const cache = new Libp2pFlatSqlSyncBackendCache(async (options) => ({
+      async readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk> {
+        return headerOnlyChunk(query.schema);
+      },
+      async openFlatSqlSyncManifest(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest> {
+        return manifestFor(query.schema);
+      },
+      async readFlatSqlPublishedShardBatch(query: FlatSqlSyncQuery & { cids: string[] }): Promise<FlatSqlPublishedShardBatch> {
+        calls.push(options.targetPeerId);
+        return {
+          header: {
+            op: 'read_published_shard_batch',
+            status: 'ok',
+            schema: query.schema,
+            queryProfile: query.queryProfile ?? 'dataset-publication-offset-v1',
+            syncProtocol: '/space-data-network/flatsql-sync/1.0.0',
+            transports: ['libp2p-websocket'],
+            payloadFormat: 'concatenated-flatsql-size-prefixed-flatbuffers',
+            shards: query.cids.map((cid) => ({
+              op: 'read_published_shard',
+              status: 'ok',
+              schema: query.schema,
+              queryProfile: query.queryProfile ?? 'dataset-publication-offset-v1',
+              cid,
+              rowCount: 1,
+              byteCount: shardBytes.byteLength,
+              syncProtocol: '/space-data-network/flatsql-sync/1.0.0',
+              transports: ['libp2p-websocket'],
+            })),
+          },
+          shards: query.cids.map((cid) => ({
+            header: {
+              op: 'read_published_shard',
+              status: 'ok',
+              schema: query.schema,
+              queryProfile: query.queryProfile ?? 'dataset-publication-offset-v1',
+              cid,
+              rowCount: 1,
+              byteCount: shardBytes.byteLength,
+              syncProtocol: '/space-data-network/flatsql-sync/1.0.0',
+              transports: ['libp2p-websocket'],
+            },
+            streamBytes: shardBytes,
+          })),
+        };
+      },
+    }));
+
+    await cache.readFlatSqlPublishedShardBatchFromSources([
+      remoteConfig({ targetPeerId: '16Uiu2HCelesTrak' }),
+      mirrorConfig({ targetPeerId: '16Uiu2HSpaceAware' }),
+    ], {
+      targetPeerId: '',
+      schema: 'OMM.fbs',
+      op: 'read_published_shard_batch',
+      queryProfile: 'dataset-publication-offset-v1',
+      cids: ['bafkfirst', 'bafksecond'],
+    }, 1);
+
+    expect(calls).toEqual(['16Uiu2HMirror']);
+  });
+
   it('releases the control client before opening eight dedicated published shard clients', async () => {
     const createdClients: Array<Libp2pFlatSqlSyncClient & { id: number; stop(): Promise<void> }> = [];
     const shardClientIds: number[] = [];

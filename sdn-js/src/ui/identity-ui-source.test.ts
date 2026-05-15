@@ -602,6 +602,8 @@ describe('SDN data worker source', () => {
       'PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE',
       'PUBLISHED_SHARD_FETCH_CONCURRENCY',
       'const PUBLISHED_SHARD_FETCH_CONCURRENCY = 32',
+      'PUBLISHED_SHARD_BATCH_BYTES',
+      'PUBLISHED_SHARD_BATCH_FETCH_CONCURRENCY',
       'PUBLISHED_SHARD_RANGE_BYTES',
       'const PUBLISHED_SHARD_RANGE_BYTES = 16 * 1024 * 1024',
       'const PUBLISHED_SHARD_RANGE_CONCURRENCY = 1',
@@ -617,6 +619,7 @@ describe('SDN data worker source', () => {
       'segment.cid',
       'fetchPublishedSegmentsInOrder',
       'pendingPublishedSegmentItems',
+      'publishedSegmentBatchItems',
       'completedPublishedSegmentCids',
       'completedPublishedRowsForSegments',
       'downloadedBytes += streamBytes.byteLength',
@@ -626,6 +629,7 @@ describe('SDN data worker source', () => {
       'recordKeyPrefix: `published:${segment.cid}`',
       'recordPinLedgerEntries([pinLedgerEntryForPublishedSegment',
       'materializedAt: now',
+      'withRemotePublishedShardBatchOperation',
       'prepareRecordsForTransfer',
       'workerGlobal.postMessage(response, transferables)',
     ]);
@@ -638,8 +642,7 @@ describe('SDN data worker source', () => {
     expect(workerSource).not.toContain('importPublishedShardCarBundles');
     expect(workerSource).not.toContain('importCarBytesToKubo');
     expect(workerSource).not.toContain('publishedShardGroupCarBundlesForSegments');
-    expect(workerSource).not.toContain('withRemotePublishedShardBatchOperation');
-    expect(workerSource).not.toContain('readFlatSqlPublishedShardBatch');
+    expect(workerSource).toContain('readFlatSqlPublishedShardBatchFromSources');
     expect(workerSource).not.toContain('segmentCoveredByImportedCar');
     expect(workerSource).not.toContain('Remote page scan');
     expect(workerSource).not.toContain('Remote page stream');
