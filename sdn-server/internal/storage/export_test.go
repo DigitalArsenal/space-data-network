@@ -226,6 +226,90 @@ func TestFlatSQLStoreRepairDatasetPublicationIndexFromShard(t *testing.T) {
 	}
 }
 
+func TestFlatSQLStoreRepairDatasetPublicationIndexFindsLegacyQueryShardPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(tmpDir, "db"), validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "source-sha-legacy-query",
+		ContentKeyID: "public",
+	}
+	record := sds.NewOMMBuilder().
+		WithNoradCatID(25544).
+		WithObjectID("1998-067A").
+		WithObjectName("ISS").
+		Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:celestrak", nil, tags); err != nil {
+		t.Fatalf("store OMM failed: %v", err)
+	}
+
+	outputDir := filepath.Join(store.DatasetPublicationOutputDir(), datasetPublicationPathComponent("OMM.fbs"))
+	export, err := store.ExportDatasetWindow(outputDir, IndexedRecordQuery{
+		SchemaName:          "OMM.fbs",
+		ProviderID:          "space-data-network-02",
+		SourceName:          "celestrak-gp",
+		BatchID:             "source-sha-legacy-query",
+		Limit:               10,
+		AllowLargeResultSet: true,
+		OrderByCID:          true,
+	})
+	if err != nil {
+		t.Fatalf("ExportDatasetWindow failed: %v", err)
+	}
+	publication := DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "source-sha-legacy-query",
+		QueryProfile: DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        10,
+		RecordCount:  export.RecordCount,
+		ByteCount:    export.ShardBytes,
+		ShardCID:     export.ShardCID,
+		IndexCID:     export.IndexCID,
+		ShardSHA256:  export.ShardSHA256,
+		IndexSHA256:  export.IndexSHA256,
+		QuerySHA256:  strings.Repeat("a", 64),
+		ResultSHA256: export.ResultSHA256,
+		PublishedAt:  time.Unix(1700005555, 0).UTC(),
+	}
+	canonicalPath, err := store.DatasetPublicationShardPath(publication)
+	if err != nil {
+		t.Fatalf("DatasetPublicationShardPath failed: %v", err)
+	}
+	if canonicalPath == export.ShardPath {
+		t.Fatal("test setup did not create a legacy query shard path mismatch")
+	}
+	if err := os.Remove(export.IndexPath); err != nil {
+		t.Fatalf("remove index failed: %v", err)
+	}
+
+	repaired, err := store.RepairDatasetPublicationIndexFromShard(outputDir, publication)
+	if err != nil {
+		t.Fatalf("RepairDatasetPublicationIndexFromShard failed for legacy query shard path: %v", err)
+	}
+	if repaired.ShardCID != export.ShardCID || repaired.ShardSHA256 != export.ShardSHA256 || repaired.RecordCount != export.RecordCount {
+		t.Fatalf("repaired shard identity changed: got %+v want %+v", repaired, export)
+	}
+	if repaired.QuerySHA256 == publication.QuerySHA256 {
+		t.Fatalf("repair should derive current query hash from shard records, not keep stale publication query hash")
+	}
+	if _, err := os.Stat(repaired.IndexPath); err != nil {
+		t.Fatalf("repaired index file missing: %v", err)
+	}
+}
+
 func TestFlatSQLStoreExportDatasetWindowAllowsLargePublicationWindows(t *testing.T) {
 	tmpDir := t.TempDir()
 	validator, err := sds.NewValidator(nil)

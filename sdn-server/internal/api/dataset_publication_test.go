@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -774,6 +775,7 @@ func TestConcreteDatasetPublicationServiceAnnounceExistingRepublishesRepairedInd
 	published.ShardCID = cidV1RawSHA256ForTest(t, []byte("legacy-shard-cid"))
 	published.IndexCID = cidV1RawSHA256ForTest(t, staleIndexBytes)
 	published.IndexSHA256 = hex.EncodeToString(staleIndexSHA[:])
+	published.QuerySHA256 = strings.Repeat("a", 64)
 	published.ManifestCID = ""
 	published.PNMCID = ""
 	published.PublishedAt = time.Date(2026, 5, 15, 12, 1, 0, 0, time.UTC)
