@@ -20,6 +20,7 @@ function validateManifest(manifest) {
   const requiredStrings = [
     ["suiteVersion", manifest.suiteVersion],
     ["dependencies.spacedatastandards", manifest.dependencies?.spacedatastandards],
+    ["dependencies.flatsql", manifest.dependencies?.flatsql],
     ["dependencies.hdWalletWasm", manifest.dependencies?.hdWalletWasm],
     ["dependencies.hdWalletUI", manifest.dependencies?.hdWalletUI],
     ["dependencies.ipfsWebUI", manifest.dependencies?.ipfsWebUI],
@@ -59,6 +60,7 @@ function renderTS(manifest) {
 
 export const SUITE_VERSION = ${escapeForTS(manifest.suiteVersion)};
 export const SPACEDATASTANDARDS_VERSION = ${escapeForTS(manifest.dependencies.spacedatastandards)};
+export const FLATSQL_VERSION = ${escapeForTS(manifest.dependencies.flatsql)};
 export const HD_WALLET_WASM_VERSION = ${escapeForTS(manifest.dependencies.hdWalletWasm)};
 export const HD_WALLET_UI_VERSION = ${escapeForTS(manifest.dependencies.hdWalletUI)};
 export const IPFS_WEBUI_VERSION = ${escapeForTS(manifest.dependencies.ipfsWebUI)};
@@ -71,6 +73,7 @@ ${supportedFlags}
 export const SUITE_VERSION_INFO = Object.freeze({
   suiteVersion: SUITE_VERSION,
   spacedatastandardsVersion: SPACEDATASTANDARDS_VERSION,
+  flatsqlVersion: FLATSQL_VERSION,
   hdWalletWasmVersion: HD_WALLET_WASM_VERSION,
   hdWalletUIVersion: HD_WALLET_UI_VERSION,
   ipfsWebUIVersion: IPFS_WEBUI_VERSION,
@@ -93,6 +96,7 @@ package versioninfo
 const (
 \tSuiteVersion = ${escapeForGo(manifest.suiteVersion)}
 \tSpaceDataStandardsVersion = ${escapeForGo(manifest.dependencies.spacedatastandards)}
+\tFlatSQLVersion = ${escapeForGo(manifest.dependencies.flatsql)}
 \tHDWalletWasmVersion = ${escapeForGo(manifest.dependencies.hdWalletWasm)}
 \tHDWalletUIVersion = ${escapeForGo(manifest.dependencies.hdWalletUI)}
 \tIPFSWebUIVersion = ${escapeForGo(manifest.dependencies.ipfsWebUI)}

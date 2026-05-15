@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,6 +136,100 @@ func (s *FlatSQLStore) ExportDatasetWindow(outputDir string, filter IndexedRecor
 		})
 	}
 	return ExportDatasetRecords(outputDir, filter, exportRecords)
+}
+
+// RepairDatasetPublicationIndexFromShard recreates a missing deterministic
+// index sidecar from an existing immutable FlatSQL shard file without scanning
+// the source table or querying the upstream producer.
+func (s *FlatSQLStore) RepairDatasetPublicationIndexFromShard(outputDir string, publication DatasetShardPublication) (*DatasetExport, error) {
+	if s == nil {
+		return nil, fmt.Errorf("store is required")
+	}
+	if outputDir == "" {
+		return nil, fmt.Errorf("output dir is required")
+	}
+	publication = normalizeDatasetShardPublication(publication)
+	if publication.SchemaName == "" {
+		return nil, fmt.Errorf("schema name is required")
+	}
+	if publication.RecordCount <= 0 {
+		return nil, fmt.Errorf("record count is required")
+	}
+	shardPath, err := s.DatasetPublicationShardPath(publication)
+	if err != nil {
+		return nil, err
+	}
+	shardSHA, _, err := verifyFileCIDAndHash("shard", shardPath, publication.ShardCID, publication.ShardSHA256)
+	if err != nil {
+		return nil, err
+	}
+	if publication.ResultSHA256 != "" && shardSHA != publication.ResultSHA256 {
+		return nil, fmt.Errorf("shard result SHA-256 does not match publication")
+	}
+	records, err := s.datasetExportRecordsFromShardFile(publication.SchemaName, shardPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) != publication.RecordCount {
+		return nil, fmt.Errorf("shard record count = %d, want %d", len(records), publication.RecordCount)
+	}
+	export, err := ExportDatasetRecords(outputDir, IndexedRecordQuery{
+		SchemaName:          publication.SchemaName,
+		ProviderID:          publication.ProviderID,
+		SourceName:          publication.SourceName,
+		BatchID:             publication.BatchID,
+		Limit:               publication.Limit,
+		Offset:              publication.Offset,
+		AllowLargeResultSet: true,
+		OrderByCID:          true,
+	}, records)
+	if err != nil {
+		return nil, err
+	}
+	if export.ShardSHA256 != publication.ShardSHA256 || export.ResultSHA256 != publication.ResultSHA256 {
+		return nil, fmt.Errorf("repaired shard identity changed")
+	}
+	return export, nil
+}
+
+func (s *FlatSQLStore) datasetExportRecordsFromShardFile(schemaName string, shardPath string) ([]DatasetExportRecord, error) {
+	file, err := os.Open(shardPath)
+	if err != nil {
+		return nil, fmt.Errorf("open shard file: %w", err)
+	}
+	defer file.Close()
+
+	records := make([]DatasetExportRecord, 0)
+	cids := make([]string, 0)
+	for {
+		var header [4]byte
+		_, err := io.ReadFull(file, header[:])
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read shard frame length: %w", err)
+		}
+		length := binary.LittleEndian.Uint32(header[:])
+		data := make([]byte, int(length))
+		if _, err := io.ReadFull(file, data); err != nil {
+			return nil, fmt.Errorf("read shard frame payload: %w", err)
+		}
+		recordCID := computeCID(data)
+		cids = append(cids, recordCID)
+		records = append(records, DatasetExportRecord{
+			CID:  recordCID,
+			Data: data,
+		})
+	}
+	tagsByCID, err := s.sourceTagsForCIDs(schemaName, cids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range records {
+		records[i].SourceTags = tagsByCID[records[i].CID]
+	}
+	return records, nil
 }
 
 // ExportDatasetRecords writes a native FlatSQL size-prefixed FlatBuffer shard

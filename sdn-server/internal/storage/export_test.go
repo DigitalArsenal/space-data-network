@@ -151,6 +151,81 @@ func TestFlatSQLStoreExportDatasetWindowWritesShardAndIndex(t *testing.T) {
 	}
 }
 
+func TestFlatSQLStoreRepairDatasetPublicationIndexFromShard(t *testing.T) {
+	tmpDir := t.TempDir()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("Failed to create validator: %v", err)
+	}
+	store, err := NewFlatSQLStore(filepath.Join(tmpDir, "db"), validator)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	tags := SourceTags{
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		SourceURL:         "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		BatchID:           "source-sha-001",
+		ContentKeyID:      "public",
+		ProducerPeerID:    "space-data-network-02",
+		ProducerPublicKey: "public",
+	}
+	record := sds.NewOMMBuilder().
+		WithNoradCatID(25544).
+		WithObjectID("1998-067A").
+		WithObjectName("ISS").
+		Build()
+	if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:celestrak", nil, tags); err != nil {
+		t.Fatalf("store OMM failed: %v", err)
+	}
+
+	outputDir := filepath.Join(store.DatasetPublicationOutputDir(), datasetPublicationPathComponent("OMM.fbs"))
+	export, err := store.ExportDatasetWindow(outputDir, IndexedRecordQuery{
+		SchemaName:          "OMM.fbs",
+		ProviderID:          "space-data-network-02",
+		SourceName:          "celestrak-gp",
+		Limit:               10,
+		AllowLargeResultSet: true,
+		OrderByCID:          true,
+	})
+	if err != nil {
+		t.Fatalf("ExportDatasetWindow failed: %v", err)
+	}
+	publication := DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		QueryProfile: DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        10,
+		RecordCount:  export.RecordCount,
+		ByteCount:    export.ShardBytes,
+		ShardCID:     export.ShardCID,
+		IndexCID:     export.IndexCID,
+		ShardSHA256:  export.ShardSHA256,
+		IndexSHA256:  export.IndexSHA256,
+		QuerySHA256:  export.QuerySHA256,
+		ResultSHA256: export.ResultSHA256,
+		PublishedAt:  time.Unix(1700005555, 0).UTC(),
+	}
+	if err := os.Remove(export.IndexPath); err != nil {
+		t.Fatalf("remove index failed: %v", err)
+	}
+
+	repaired, err := store.RepairDatasetPublicationIndexFromShard(outputDir, publication)
+	if err != nil {
+		t.Fatalf("RepairDatasetPublicationIndexFromShard failed: %v", err)
+	}
+	if repaired.IndexCID != export.IndexCID || repaired.IndexSHA256 != export.IndexSHA256 || repaired.QuerySHA256 != export.QuerySHA256 {
+		t.Fatalf("repaired index identity changed: got %+v want %+v", repaired, export)
+	}
+	if _, err := os.Stat(export.IndexPath); err != nil {
+		t.Fatalf("repaired index file missing: %v", err)
+	}
+}
+
 func TestFlatSQLStoreExportDatasetWindowAllowsLargePublicationWindows(t *testing.T) {
 	tmpDir := t.TempDir()
 	validator, err := sds.NewValidator(nil)
@@ -661,6 +736,7 @@ func TestMaterializeDatasetPublicationImportsAdvertisedShard(t *testing.T) {
 		export.IndexCID: indexBytes,
 	}
 	fetchAttempts := make(map[string]int)
+	fileFetchAttempts := make(map[string]int)
 	result, err := MaterializeDatasetPublication(context.Background(), subscriberStore, DatasetPublicationReplayOptions{
 		PNM:               pnmBytes,
 		ProviderPublicKey: providerPublicKey,
@@ -674,6 +750,17 @@ func TestMaterializeDatasetPublicationImportsAdvertisedShard(t *testing.T) {
 				return nil, os.ErrNotExist
 			}
 			return append([]byte(nil), data...), nil
+		},
+		FetchByCIDToFile: func(_ context.Context, cid string, path string) error {
+			fileFetchAttempts[cid]++
+			data, ok := objects[cid]
+			if !ok {
+				return os.ErrNotExist
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				return err
+			}
+			return os.WriteFile(path, data, 0o600)
 		},
 		FetchRetryDelays: []time.Duration{time.Millisecond},
 		WorkDir:          filepath.Join(tmpDir, "materialize"),
@@ -696,6 +783,48 @@ func TestMaterializeDatasetPublicationImportsAdvertisedShard(t *testing.T) {
 	}
 	if len(records) != 2 {
 		t.Fatalf("imported records = %d, want 2", len(records))
+	}
+	if fileFetchAttempts[export.ShardCID] == 0 || fileFetchAttempts[export.IndexCID] == 0 {
+		t.Fatalf("materialization did not fetch shard/index through file fetcher: %+v", fileFetchAttempts)
+	}
+}
+
+func TestFetchIPFSBlockByCIDToFileUsesCatForChunkedUnixFSFiles(t *testing.T) {
+	payload := []byte("chunked-flatbuffer-shard-to-file")
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v0/cat" {
+			t.Fatalf("path = %q, want /api/v0/cat", r.URL.Path)
+		}
+		if r.URL.Query().Get("arg") != "bafybeichunkedshardfile" {
+			t.Fatalf("arg = %q, want chunked shard CID", r.URL.Query().Get("arg"))
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	tmpDir, err := os.MkdirTemp("", "ipfs-fetch-file-test-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp failed: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	outPath := filepath.Join(tmpDir, "shard.fbshard")
+	if err := FetchIPFSBlockByCIDToFile(context.Background(), server.URL, "bafybeichunkedshardfile", outPath); err != nil {
+		t.Fatalf("FetchIPFSBlockByCIDToFile failed: %v", err)
+	}
+	fetched, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read fetched file: %v", err)
+	}
+	if !bytes.Equal(fetched, payload) {
+		t.Fatalf("fetched file payload mismatch")
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
 	}
 }
 
@@ -787,6 +916,89 @@ func TestImportDatasetShardCountsOnlyNewRowsOnReplay(t *testing.T) {
 	}
 	if len(records) != 3 {
 		t.Fatalf("imported records = %d, want 3", len(records))
+	}
+}
+
+func TestImportDatasetShardFromFilesStreamsShardIntoFlatSQL(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "flatsql-shard-file-import-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	providerStore, err := NewFlatSQLStore(filepath.Join(tmpDir, "provider-db"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore provider failed: %v", err)
+	}
+	defer providerStore.Close()
+	subscriberStore, err := NewFlatSQLStore(filepath.Join(tmpDir, "subscriber-db"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore subscriber failed: %v", err)
+	}
+	defer subscriberStore.Close()
+
+	tags := SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		BatchID:      "source-sha-file-import",
+		ContentKeyID: "public",
+	}
+	for i := 0; i < 4; i++ {
+		record := sds.NewCATBuilder().
+			WithNoradCatID(uint32(61000 + i)).
+			WithObjectName("FILE-IMPORT").
+			WithObjectType("PAYLOAD").
+			WithOpsStatus("OPERATIONAL").
+			Build()
+		if _, err := providerStore.StoreWithSourceTags("CAT.fbs", record, "celestrak.eth", nil, tags); err != nil {
+			t.Fatalf("store record %d failed: %v", i, err)
+		}
+	}
+	export, err := providerStore.ExportDatasetWindow(filepath.Join(tmpDir, "export"), IndexedRecordQuery{
+		SchemaName:          "CAT.fbs",
+		ProviderID:          tags.ProviderID,
+		SourceName:          tags.SourceName,
+		BatchID:             tags.BatchID,
+		Limit:               10,
+		AllowLargeResultSet: true,
+		OrderByCID:          true,
+	})
+	if err != nil {
+		t.Fatalf("ExportDatasetWindow failed: %v", err)
+	}
+
+	imported, index, err := subscriberStore.ImportDatasetShardFromFiles(export.ShardPath, export.IndexPath, "celestrak.eth")
+	if err != nil {
+		t.Fatalf("ImportDatasetShardFromFiles failed: %v", err)
+	}
+	if imported != 4 || index.RecordCount != 4 {
+		t.Fatalf("imported=%d recordCount=%d, want 4/4", imported, index.RecordCount)
+	}
+	imported, _, err = subscriberStore.ImportDatasetShardFromFiles(export.ShardPath, export.IndexPath, "celestrak.eth")
+	if err != nil {
+		t.Fatalf("replay ImportDatasetShardFromFiles failed: %v", err)
+	}
+	if imported != 0 {
+		t.Fatalf("replay imported=%d, want 0 for already-present immutable shard", imported)
+	}
+
+	records, err := subscriberStore.QueryIndexedRecords(IndexedRecordQuery{
+		SchemaName: "CAT.fbs",
+		ProviderID: tags.ProviderID,
+		SourceName: tags.SourceName,
+		BatchID:    tags.BatchID,
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("query imported records failed: %v", err)
+	}
+	if len(records) != 4 {
+		t.Fatalf("imported records = %d, want 4", len(records))
 	}
 }
 

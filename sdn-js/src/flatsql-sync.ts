@@ -15,7 +15,7 @@ export interface FlatSqlSyncTransport {
 export interface FlatSqlSyncQuery {
   targetPeerId: string;
   candidateAddrs?: string[];
-  op?: 'read_chunk' | 'scan' | 'open_snapshot' | 'open_manifest' | 'list_datastores';
+  op?: 'read_chunk' | 'scan' | 'open_snapshot' | 'open_manifest' | 'list_datastores' | 'read_published_shard' | 'read_published_shard_batch';
   schema: string;
   datastoreKey?: string;
   providerId?: string;
@@ -37,6 +37,10 @@ export interface FlatSqlSyncQuery {
   limit?: number;
   offset?: number;
   records?: FlatSqlSyncRecordRef[];
+  cid?: string;
+  cids?: string[];
+  byteOffset?: number;
+  byteLength?: number;
 }
 
 export interface FlatSqlWireSpeedProbeQuery {
@@ -167,6 +171,59 @@ export interface FlatSqlSyncChunk {
   recordStream: Uint8Array;
 }
 
+export interface FlatSqlPublishedShardHeader {
+  op: string;
+  status: string;
+  schema: string;
+  providerId?: string;
+  sourceName?: string;
+  batchId?: string;
+  queryProfile: string;
+  cid: string;
+  indexCid?: string;
+  manifestCid?: string;
+  pnmCid?: string;
+  rowCount: number;
+  byteOffset?: number;
+  byteLength?: number;
+  byteCount: number;
+  totalByteCount?: number;
+  shardSha256?: string;
+  indexSha256?: string;
+  querySha256?: string;
+  resultSha256?: string;
+  feedSequence?: number;
+  previousHead?: string;
+  head?: string;
+  syncProtocol: string;
+  transports: string[];
+  payloadFormat?: string;
+}
+
+export interface FlatSqlPublishedShard {
+  header: FlatSqlPublishedShardHeader;
+  streamBytes: Uint8Array;
+}
+
+export interface FlatSqlPublishedShardBatchHeader {
+  op: string;
+  status: string;
+  schema: string;
+  providerId?: string;
+  sourceName?: string;
+  batchId?: string;
+  queryProfile: string;
+  syncProtocol: string;
+  transports: string[];
+  payloadFormat?: string;
+  shards: FlatSqlPublishedShardHeader[];
+}
+
+export interface FlatSqlPublishedShardBatch {
+  header: FlatSqlPublishedShardBatchHeader;
+  shards: FlatSqlPublishedShard[];
+}
+
 export async function requestFlatSqlSyncChunk(
   transport: FlatSqlSyncTransport,
   query: FlatSqlSyncQuery,
@@ -191,6 +248,32 @@ export async function requestFlatSqlSyncManifest(
     query.candidateAddrs,
   );
   return decodeFlatSqlSyncManifest(response);
+}
+
+export async function requestFlatSqlPublishedShard(
+  transport: FlatSqlSyncTransport,
+  query: FlatSqlSyncQuery & { cid: string },
+): Promise<FlatSqlPublishedShard> {
+  const response = await transport.dialProtocol(
+    query.targetPeerId,
+    FLATSQL_SYNC_PROTOCOL_ID,
+    encodeFlatSqlSyncRequest({ ...query, op: 'read_published_shard' }),
+    query.candidateAddrs,
+  );
+  return decodeFlatSqlPublishedShard(response);
+}
+
+export async function requestFlatSqlPublishedShardBatch(
+  transport: FlatSqlSyncTransport,
+  query: FlatSqlSyncQuery & { cids: string[] },
+): Promise<FlatSqlPublishedShardBatch> {
+  const response = await transport.dialProtocol(
+    query.targetPeerId,
+    FLATSQL_SYNC_PROTOCOL_ID,
+    encodeFlatSqlSyncRequest({ ...query, op: 'read_published_shard_batch' }),
+    query.candidateAddrs,
+  );
+  return decodeFlatSqlPublishedShardBatch(response);
 }
 
 export async function requestFlatSqlSyncDatastores(
@@ -246,6 +329,10 @@ export function encodeFlatSqlSyncRequest(query: FlatSqlSyncQuery): Uint8Array {
     ...(typeof query.limit === 'number' ? { limit: query.limit } : {}),
     ...(typeof query.offset === 'number' ? { offset: query.offset } : {}),
     ...(query.records ? { records: query.records.map(flatSqlSyncRecordRefPayload) } : {}),
+    ...(query.cid ? { cid: query.cid } : {}),
+    ...(query.cids ? { cids: query.cids.filter((cid) => cid.trim().length > 0) } : {}),
+    ...(typeof query.byteOffset === 'number' ? { byte_offset: Math.max(0, Math.floor(query.byteOffset)) } : {}),
+    ...(typeof query.byteLength === 'number' ? { byte_length: Math.max(0, Math.floor(query.byteLength)) } : {}),
   });
 }
 
@@ -300,6 +387,51 @@ export function decodeFlatSqlSyncManifest(bytes: Uint8Array): FlatSqlSyncManifes
     throw new Error(`unexpected FlatSQL sync protocol ${manifest.syncProtocol}`);
   }
   return manifest;
+}
+
+export function decodeFlatSqlPublishedShard(bytes: Uint8Array): FlatSqlPublishedShard {
+  const first = readFrame(bytes, 0);
+  if (!first) throw new Error('missing FlatSQL published shard header frame');
+  const payload = JSON.parse(textDecoder.decode(first.payload)) as unknown;
+  throwIfProtocolError(payload);
+  const header = normalizeFlatSqlPublishedShardHeader(payload);
+  if (header.syncProtocol && header.syncProtocol !== FLATSQL_SYNC_PROTOCOL_ID) {
+    throw new Error(`unexpected FlatSQL sync protocol ${header.syncProtocol}`);
+  }
+  const streamBytes = bytes.subarray(first.nextOffset);
+  if (header.byteCount > 0 && streamBytes.byteLength !== header.byteCount) {
+    throw new Error(`published shard returned ${streamBytes.byteLength}/${header.byteCount} bytes`);
+  }
+  return { header, streamBytes };
+}
+
+export function decodeFlatSqlPublishedShardBatch(bytes: Uint8Array): FlatSqlPublishedShardBatch {
+  const first = readFrame(bytes, 0);
+  if (!first) throw new Error('missing FlatSQL published shard batch header frame');
+  const payload = JSON.parse(textDecoder.decode(first.payload)) as unknown;
+  throwIfProtocolError(payload);
+  const header = normalizeFlatSqlPublishedShardBatchHeader(payload);
+  if (header.syncProtocol && header.syncProtocol !== FLATSQL_SYNC_PROTOCOL_ID) {
+    throw new Error(`unexpected FlatSQL sync protocol ${header.syncProtocol}`);
+  }
+  const shards: FlatSqlPublishedShard[] = [];
+  let offset = first.nextOffset;
+  for (const shardHeader of header.shards) {
+    const byteCount = Math.max(0, shardHeader.byteCount);
+    const nextOffset = offset + byteCount;
+    if (nextOffset > bytes.byteLength) {
+      throw new Error(`published shard batch truncated ${shardHeader.cid} at ${bytes.byteLength - offset}/${byteCount} bytes`);
+    }
+    shards.push({
+      header: shardHeader,
+      streamBytes: bytes.subarray(offset, nextOffset),
+    });
+    offset = nextOffset;
+  }
+  if (offset !== bytes.byteLength) {
+    throw new Error(`published shard batch has ${bytes.byteLength - offset} trailing bytes`);
+  }
+  return { header, shards };
 }
 
 export function decodeFlatSqlSyncDatastores(bytes: Uint8Array): FlatSqlSyncDatastoreList {
@@ -438,6 +570,56 @@ function normalizeFlatSqlSyncManifestArtifactBundle(record: Record<string, unkno
     format: readString(record, 'format') ?? undefined,
     segmentStart: readNumber(record, 'segment_start', 'segmentStart') ?? 0,
     segmentCount: readNumber(record, 'segment_count', 'segmentCount') ?? 0,
+  };
+}
+
+function normalizeFlatSqlPublishedShardHeader(payload: unknown): FlatSqlPublishedShardHeader {
+  const record = isRecord(payload) ? payload : {};
+  return {
+    op: readString(record, 'op') ?? '',
+    status: readString(record, 'status') ?? '',
+    schema: readString(record, 'schema') ?? 'unknown',
+    providerId: readString(record, 'provider_id', 'providerId') ?? undefined,
+    sourceName: readString(record, 'source_name', 'sourceName') ?? undefined,
+    batchId: readString(record, 'batch_id', 'batchId') ?? undefined,
+    queryProfile: readString(record, 'query_profile', 'queryProfile') ?? '',
+    cid: readString(record, 'cid') ?? '',
+    indexCid: readString(record, 'index_cid', 'indexCid') ?? undefined,
+    manifestCid: readString(record, 'manifest_cid', 'manifestCid') ?? undefined,
+    pnmCid: readString(record, 'pnm_cid', 'pnmCid') ?? undefined,
+    rowCount: readNumber(record, 'row_count', 'rowCount') ?? 0,
+    byteOffset: readNumber(record, 'byte_offset', 'byteOffset') ?? undefined,
+    byteLength: readNumber(record, 'byte_length', 'byteLength') ?? undefined,
+    byteCount: readNumber(record, 'byte_count', 'byteCount') ?? 0,
+    totalByteCount: readNumber(record, 'total_byte_count', 'totalByteCount') ?? undefined,
+    shardSha256: readString(record, 'shard_sha256', 'shardSha256') ?? undefined,
+    indexSha256: readString(record, 'index_sha256', 'indexSha256') ?? undefined,
+    querySha256: readString(record, 'query_sha256', 'querySha256') ?? undefined,
+    resultSha256: readString(record, 'result_sha256', 'resultSha256') ?? undefined,
+    feedSequence: readNumber(record, 'feed_sequence', 'feedSequence') ?? undefined,
+    previousHead: readString(record, 'previous_head', 'previousHead') ?? undefined,
+    head: readString(record, 'head') ?? undefined,
+    syncProtocol: readString(record, 'sync_protocol', 'syncProtocol') ?? '',
+    transports: readStringArray(record.transports),
+    payloadFormat: readString(record, 'payload_format', 'payloadFormat') ?? undefined,
+  };
+}
+
+function normalizeFlatSqlPublishedShardBatchHeader(payload: unknown): FlatSqlPublishedShardBatchHeader {
+  const record = isRecord(payload) ? payload : {};
+  const shards = Array.isArray(record.shards) ? record.shards : [];
+  return {
+    op: readString(record, 'op') ?? '',
+    status: readString(record, 'status') ?? '',
+    schema: readString(record, 'schema') ?? 'unknown',
+    providerId: readString(record, 'provider_id', 'providerId') ?? undefined,
+    sourceName: readString(record, 'source_name', 'sourceName') ?? undefined,
+    batchId: readString(record, 'batch_id', 'batchId') ?? undefined,
+    queryProfile: readString(record, 'query_profile', 'queryProfile') ?? '',
+    syncProtocol: readString(record, 'sync_protocol', 'syncProtocol') ?? '',
+    transports: readStringArray(record.transports),
+    payloadFormat: readString(record, 'payload_format', 'payloadFormat') ?? undefined,
+    shards: shards.filter(isRecord).map(normalizeFlatSqlPublishedShardHeader),
   };
 }
 

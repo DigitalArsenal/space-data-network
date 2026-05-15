@@ -4,6 +4,8 @@ import {
   flatBufferStreamFromPublishedFlatSqlSegment,
   importCarBytesToKubo,
   importPublishedFlatSqlShardCar,
+  publishedSegmentIndexesCoveredByBundles,
+  publishedShardGroupCarBundlesForSegments,
   timedFlatBufferStreamFromPublishedFlatSqlSegment,
   rawRecordsFromPublishedFlatSqlSegment,
 } from './published-flatbuffer-shard';
@@ -150,6 +152,31 @@ describe('published FlatSQL shard reader', () => {
     expect(result.networkTransferMs).toBeGreaterThanOrEqual(0);
     expect(result.verificationMs).toBeGreaterThanOrEqual(0);
     expect(result.importMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('selects shard-group CAR bundles that cover pending published segments', () => {
+    const segments = [
+      { index: 0, cid: 'bafyshard0', rowCount: 50, byteCount: 500, cursor: '', nextCursor: 'NTA', chunkHash: 'h0' },
+      { index: 1, cid: 'bafyshard1', rowCount: 50, byteCount: 500, cursor: 'NTA', nextCursor: 'MTAw', chunkHash: 'h1' },
+      { index: 2, cid: 'bafyshard2', rowCount: 50, byteCount: 500, cursor: 'MTAw', nextCursor: '', chunkHash: 'h2' },
+    ];
+    const manifest = {
+      artifactBundles: [
+        { role: 'shard-group-car', cid: 'bafycar-all', byteCount: 1500, segmentStart: 0, segmentCount: 3 },
+        { role: 'shard-group-car', cid: 'bafycar-first', byteCount: 500, segmentStart: 0, segmentCount: 1 },
+        { role: 'manifest', cid: 'bafymanifest', byteCount: 100, segmentStart: 0, segmentCount: 3 },
+      ],
+    };
+
+    expect(publishedShardGroupCarBundlesForSegments(manifest, segments, 50).map((bundle) => bundle.cid)).toEqual(['bafycar-all']);
+    expect(publishedShardGroupCarBundlesForSegments(manifest, segments, 150)).toEqual([]);
+  });
+
+  it('tracks segment indexes covered by imported shard-group CAR bundles', () => {
+    expect([...publishedSegmentIndexesCoveredByBundles([
+      { role: 'shard-group-car', cid: 'bafycar-a', byteCount: 100, segmentStart: 2, segmentCount: 2 },
+      { role: 'shard-group-car', cid: 'bafycar-b', byteCount: 100, segmentStart: 5, segmentCount: 1 },
+    ])]).toEqual([2, 3, 5]);
   });
 
   it('hydrates raw records from a DPM shard and its materialized index', async () => {

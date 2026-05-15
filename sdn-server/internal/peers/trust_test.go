@@ -62,6 +62,22 @@ func TestParseTrustLevel(t *testing.T) {
 	}
 }
 
+func TestNewRegistryTreatsTypedNilPersistenceAsInMemory(t *testing.T) {
+	var persistence *SQLitePersistence
+
+	registry := NewRegistry(false, persistence)
+
+	if registry == nil {
+		t.Fatal("NewRegistry returned nil")
+	}
+	if registry.persistence != nil {
+		t.Fatal("typed nil persistence should be treated as in-memory persistence")
+	}
+	if len(registry.peers) != 0 {
+		t.Fatalf("new in-memory registry has %d peers, want 0", len(registry.peers))
+	}
+}
+
 func TestTrustLevel_JSON(t *testing.T) {
 	tests := []TrustLevel{Untrusted, Limited, Standard, Trusted, Admin}
 

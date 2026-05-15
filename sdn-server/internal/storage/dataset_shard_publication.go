@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -254,6 +255,100 @@ func (s *FlatSQLStore) FindDatasetShardPublication(query DatasetShardPublication
 		return DatasetShardPublication{}, false, err
 	}
 	return pub, true, nil
+}
+
+func (s *FlatSQLStore) FindDatasetShardPublicationByCID(query DatasetShardPublicationQuery, shardCID string) (DatasetShardPublication, bool, error) {
+	query = normalizeDatasetShardPublicationQuery(query)
+	shardCID = strings.TrimSpace(shardCID)
+	if query.SchemaName == "" {
+		return DatasetShardPublication{}, false, errors.New("schema name is required")
+	}
+	if query.QueryProfile == "" {
+		return DatasetShardPublication{}, false, errors.New("query profile is required")
+	}
+	if shardCID == "" {
+		return DatasetShardPublication{}, false, errors.New("shard cid is required")
+	}
+
+	where := []string{`schema_name = ?`, `query_profile = ?`, `shard_cid = ?`}
+	args := []interface{}{query.SchemaName, query.QueryProfile, shardCID}
+	if query.ProviderID != "" {
+		where = append(where, `provider_id = ?`)
+		args = append(args, query.ProviderID)
+	}
+	if query.SourceName != "" {
+		where = append(where, `source_name = ?`)
+		args = append(args, query.SourceName)
+	}
+	if query.BatchID != "" {
+		where = append(where, `batch_id = ?`)
+		args = append(args, query.BatchID)
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	row := s.db.QueryRow(`
+		SELECT schema_name, provider_id, source_name, batch_id, query_profile,
+		       window_offset, window_limit, record_count, byte_count,
+		       shard_cid, index_cid, manifest_cid, pnm_cid,
+		       shard_sha256, index_sha256, query_sha256, result_sha256,
+		       feed_sequence, previous_head, feed_head, published_at
+		FROM sdn_dataset_shard_publications
+		WHERE `+strings.Join(where, " AND ")+`
+		ORDER BY feed_sequence ASC, window_offset ASC, published_at DESC
+		LIMIT 1
+	`, args...)
+	pub, err := scanDatasetShardPublication(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DatasetShardPublication{}, false, nil
+	}
+	if err != nil {
+		return DatasetShardPublication{}, false, fmt.Errorf("find dataset shard publication by cid: %w", err)
+	}
+	return pub, true, nil
+}
+
+func (s *FlatSQLStore) DatasetPublicationShardPath(pub DatasetShardPublication) (string, error) {
+	if s == nil {
+		return "", errors.New("FlatSQL store is unavailable")
+	}
+	pub = normalizeDatasetShardPublication(pub)
+	if pub.SchemaName == "" {
+		return "", errors.New("schema name is required")
+	}
+	if len(pub.QuerySHA256) < 16 {
+		return "", errors.New("query sha256 is required")
+	}
+	if len(pub.ShardSHA256) < 16 {
+		return "", errors.New("shard sha256 is required")
+	}
+	fileName := fmt.Sprintf("%s-%s.fbshard", pub.QuerySHA256[:16], pub.ShardSHA256[:16])
+	return filepath.Join(s.DatasetPublicationOutputDir(), datasetPublicationPathComponent(pub.SchemaName), "shards", fileName), nil
+}
+
+func (s *FlatSQLStore) DatasetPublicationIndexPath(pub DatasetShardPublication) (string, error) {
+	if s == nil {
+		return "", errors.New("FlatSQL store is unavailable")
+	}
+	pub = normalizeDatasetShardPublication(pub)
+	if pub.SchemaName == "" {
+		return "", errors.New("schema name is required")
+	}
+	if len(pub.QuerySHA256) < 16 {
+		return "", errors.New("query sha256 is required")
+	}
+	if len(pub.IndexSHA256) < 16 {
+		return "", errors.New("index sha256 is required")
+	}
+	fileName := fmt.Sprintf("%s-%s.index.json", pub.QuerySHA256[:16], pub.IndexSHA256[:16])
+	return filepath.Join(s.DatasetPublicationOutputDir(), datasetPublicationPathComponent(pub.SchemaName), "indexes", fileName), nil
+}
+
+func (s *FlatSQLStore) DatasetPublicationOutputDir() string {
+	if s == nil {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(s.basePath), "dataset-publications")
 }
 
 func (s *FlatSQLStore) ListDatasetShardPublications(query DatasetShardPublicationQuery) ([]DatasetShardPublication, error) {
@@ -597,4 +692,15 @@ func normalizeDatasetShardPublicationQuery(query DatasetShardPublicationQuery) D
 	query.BatchID = strings.TrimSpace(query.BatchID)
 	query.QueryProfile = strings.TrimSpace(query.QueryProfile)
 	return query
+}
+
+func datasetPublicationPathComponent(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSuffix(value, ".fbs")
+	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", " ", "-")
+	value = replacer.Replace(value)
+	if value == "" {
+		return "dataset"
+	}
+	return value
 }

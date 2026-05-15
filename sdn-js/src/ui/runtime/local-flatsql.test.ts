@@ -161,6 +161,89 @@ describe('local FlatSQL datastore', () => {
     }));
   });
 
+  it('resumes native FlatSQL stream ingest from a skipped frame with a zero-offset buffer', async () => {
+    const store = await createLocalFlatSqlStore({
+      schemas: [{
+        standardId: 'OMM',
+        tableName: 'OMM',
+        fileId: '$OMM',
+        schema: OMM_SCHEMA,
+      }],
+    });
+
+    const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
+    const stream = flatSqlSizePrefixedStream([frame, frame]);
+    const ingested = await store.ingestFlatBufferStream('OMM', stream, {
+      persist: false,
+      skipRecords: 1,
+      recordKeyPrefix: 'published:bafkshard',
+      recordKeyOffset: 1,
+    });
+
+    expect(ingested).toBe(1);
+    expect(store.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 1', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
+    expect(store.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+      recordCount: 1,
+      ingestedRecordCount: 1,
+    }));
+  });
+
+  it('trusts ordered published shard offsets when stale record keys claim missing rows', async () => {
+    const restoreIndexedDb = installMemoryIndexedDb();
+    try {
+      await clearLocalFlatSqlStore({
+        persistenceKey: 'stale-published-keys',
+        standardIds: ['OMM'],
+      });
+
+      const first = await createLocalFlatSqlStore({
+        persistenceKey: 'stale-published-keys',
+        schemas: [{
+          standardId: 'OMM',
+          tableName: 'OMM',
+          fileId: '$OMM',
+          schema: OMM_SCHEMA,
+        }],
+      });
+      const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
+      await first.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame]), {
+        persist: true,
+        recordKeyPrefix: 'published:already-materialized',
+      });
+      await first.flush('OMM');
+      first.destroy();
+
+      await putLocalFlatSqlTestValue('stale-published-keys:OMM:record-keys', [
+        'OMM|published:stale-shard|1',
+      ]);
+
+      const resumed = await createLocalFlatSqlStore({
+        persistenceKey: 'stale-published-keys',
+        schemas: [{
+          standardId: 'OMM',
+          tableName: 'OMM',
+          fileId: '$OMM',
+          schema: OMM_SCHEMA,
+        }],
+      });
+      const ingested = await resumed.ingestFlatBufferStream('OMM', flatSqlSizePrefixedStream([frame, frame]), {
+        persist: false,
+        skipRecords: 1,
+        recordKeyPrefix: 'published:stale-shard',
+        recordKeyOffset: 1,
+      });
+
+      expect(ingested).toBe(1);
+      expect(resumed.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+        recordCount: 2,
+        ingestedRecordCount: 1,
+      }));
+      resumed.destroy();
+    } finally {
+      restoreIndexedDb();
+    }
+  });
+
   it('records pin ledger entries for verified published FlatSQL shards', async () => {
     const store = await createLocalFlatSqlStore({
       schemas: [{
@@ -193,6 +276,7 @@ describe('local FlatSQL datastore', () => {
         rowCount: 1,
         byteCount: stream.byteLength,
         verificationState: 'verified',
+        materializedAt: '2026-05-12T00:00:00.000Z',
         verifiedAt: '2026-05-12T00:00:00.000Z',
       }],
     });
@@ -398,11 +482,138 @@ describe('local FlatSQL datastore', () => {
     }
   });
 
+  it('persists local FlatSQL bytes through the desktop FlatBuffer storage API when configured', async () => {
+    const persisted = new Map<string, Uint8Array>();
+    const calls: Array<{ method: string; url: string }> = [];
+    const fetchMock = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const requestUrl = String(url);
+      const method = String(init?.method ?? 'GET').toUpperCase();
+      calls.push({ method, url: requestUrl });
+      const key = decodeURIComponent(new URL(requestUrl).pathname.split('/').pop() ?? '');
+      if (method === 'GET') {
+        const bytes = persisted.get(key);
+        return bytes
+          ? new Response(bytes.slice(), { status: 200 })
+          : new Response('missing', { status: 404 });
+      }
+      if (method === 'PUT') {
+        const body = init?.body;
+        const bytes = body instanceof Uint8Array
+          ? body
+          : body instanceof ArrayBuffer
+            ? new Uint8Array(body)
+            : new Uint8Array(await new Response(body as BodyInit).arrayBuffer());
+        persisted.set(key, bytes.slice());
+        return new Response(null, { status: 204 });
+      }
+      if (method === 'DELETE') {
+        persisted.delete(key);
+        return new Response(null, { status: 204 });
+      }
+      return new Response('bad method', { status: 405 });
+    };
+
+    const first = await createLocalFlatSqlStore({
+      persistenceKey: 'desktop-flatbuffer-cache',
+      desktopPersistenceBaseUrl: 'http://desktop.local',
+      fetch: fetchMock,
+      schemas: [{
+        standardId: 'OMM',
+        tableName: 'OMM',
+        fileId: '$OMM',
+        schema: OMM_SCHEMA,
+      }],
+    });
+    await first.ingestRecords('OMM', [{
+      cid: 'desktop-cache-omm',
+      schemaName: 'OMM.fbs',
+      peerId: 'source:celestrak',
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+      batchId: 'fixture-batch',
+      timestamp: '2026-05-11T04:02:25Z',
+      dataBytes: STARLINK_6292_OMM_BYTES,
+    }]);
+    await first.flush('OMM');
+    first.destroy();
+
+    const loaded = await createLocalFlatSqlStore({
+      persistenceKey: 'desktop-flatbuffer-cache',
+      desktopPersistenceBaseUrl: 'http://desktop.local',
+      fetch: fetchMock,
+      schemas: [{
+        standardId: 'OMM',
+        tableName: 'OMM',
+        fileId: '$OMM',
+        schema: OMM_SCHEMA,
+      }],
+    });
+
+    expect(loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
+    expect(persisted.has('desktop-flatbuffer-cache:OMM')).toBe(true);
+    expect(persisted.has('desktop-flatbuffer-cache:OMM:record-keys')).toBe(true);
+    expect(calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ method: 'PUT', url: 'http://desktop.local/api/flatsql/persistence/desktop-flatbuffer-cache%3AOMM' }),
+      expect.objectContaining({ method: 'GET', url: 'http://desktop.local/api/flatsql/persistence/desktop-flatbuffer-cache%3AOMM' }),
+    ]));
+    loaded.destroy();
+  });
+
   it('allows callers to clear persisted local FlatSQL data without IndexedDB support', async () => {
     await expect(clearLocalFlatSqlStore({
       persistenceKey: 'sdn-data:configured:space-data-network-02',
       standardIds: ['OMM', 'PNM'],
     })).resolves.toBeUndefined();
+  });
+
+  it('repairs persisted record-key counts that outrun rebuilt FlatSQL rows', async () => {
+    const restoreIndexedDb = installMemoryIndexedDb();
+    try {
+      await clearLocalFlatSqlStore({
+        persistenceKey: 'repair-record-keys',
+        standardIds: ['OMM'],
+      });
+
+      const first = await createLocalFlatSqlStore({
+        persistenceKey: 'repair-record-keys',
+        schemas: [{
+          standardId: 'OMM',
+          tableName: 'OMM',
+          fileId: '$OMM',
+          schema: OMM_SCHEMA,
+        }],
+      });
+      const stream = flatSqlSizePrefixedStream([stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES)]);
+      await first.ingestFlatBufferStream('OMM', stream, {
+        persist: true,
+        recordKeyPrefix: 'published:bafkshard',
+      });
+      await first.flush('OMM');
+      first.destroy();
+
+      await putLocalFlatSqlTestValue('repair-record-keys:OMM:record-keys', [
+        'OMM|published:bafkshard|0',
+        'OMM|published:bafkshard|1',
+      ]);
+
+      const repaired = await createLocalFlatSqlStore({
+        persistenceKey: 'repair-record-keys',
+        schemas: [{
+          standardId: 'OMM',
+          tableName: 'OMM',
+          fileId: '$OMM',
+          schema: OMM_SCHEMA,
+        }],
+      });
+
+      expect(repaired.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+        recordCount: 1,
+        ingestedRecordCount: 0,
+      }));
+      repaired.destroy();
+    } finally {
+      restoreIndexedDb();
+    }
   });
 
   it('rejects non-read-only SQL before it reaches FlatSQL', async () => {
@@ -483,6 +694,30 @@ function flatSqlSizePrefixedStream(records: Uint8Array[]): Uint8Array {
     offset += frame.byteLength;
   }
   return out;
+}
+
+function putLocalFlatSqlTestValue(key: string, value: unknown): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('sdn-local-flatsql', 1);
+    request.onerror = () => reject(request.error ?? new Error('IndexedDB open failed'));
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains('datastores')) db.createObjectStore('datastores');
+    };
+    request.onsuccess = () => {
+      const db = request.result;
+      const transaction = db.transaction('datastores', 'readwrite');
+      transaction.objectStore('datastores').put(value, key);
+      transaction.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      transaction.onerror = () => {
+        db.close();
+        reject(transaction.error ?? new Error('IndexedDB write failed'));
+      };
+    };
+  });
 }
 
 function installMemoryIndexedDb(): () => void {

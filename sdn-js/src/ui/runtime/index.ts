@@ -14,6 +14,10 @@ export * from './ipfs-artifact-peers';
 export {
   fetchCidBytesFromGateway,
   flatBufferStreamFromPublishedFlatSqlSegment,
+  importCarBytesToKubo,
+  importPublishedFlatSqlShardCar,
+  publishedSegmentIndexesCoveredByBundles,
+  publishedShardGroupCarBundlesForSegments,
   timedFlatBufferStreamFromPublishedFlatSqlSegment,
   type PublishedFlatSqlSegmentInput,
   type TimedPublishedFlatSqlSegment,
@@ -97,6 +101,11 @@ export {
   type MountedWalletUI,
   type WalletUIOptions,
 } from './wallet-ui';
+export {
+  installWalletStorageDiskMirror,
+  isPersistedWalletLocalStorageKey,
+  type WalletStorageDiskMirror,
+} from './wallet-storage-bridge';
 export {
   createServerAdapter,
   createServerAdminAdapter,

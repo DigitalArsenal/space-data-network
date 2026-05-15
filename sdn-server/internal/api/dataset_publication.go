@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -37,6 +38,7 @@ type DatasetPublicationRequest struct {
 	Limit             int    `json:"limit,omitempty"`
 	ChunkSize         int    `json:"chunkSize,omitempty"`
 	FullCatalog       bool   `json:"fullCatalog,omitempty"`
+	AnnounceExisting  bool   `json:"announceExisting,omitempty"`
 	CombinedCelesTrak bool   `json:"combinedCelesTrak,omitempty"`
 }
 
@@ -194,6 +196,9 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 	if err := sds.ValidateSchemaName(schema); err != nil {
 		return nil, fmt.Errorf("invalid schema: %w", err)
 	}
+	if activeReq.AnnounceExisting {
+		return activeService.announceExistingDatasetPublications(ctx, activeReq, schema)
+	}
 	if activeReq.FullCatalog || activeReq.ChunkSize > 0 {
 		return activeService.publishDatasetUpdateSeries(ctx, activeReq, schema)
 	}
@@ -216,6 +221,145 @@ func (s *ConcreteDatasetPublicationService) PublishDatasetUpdate(ctx context.Con
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *ConcreteDatasetPublicationService) announceExistingDatasetPublications(ctx context.Context, req DatasetPublicationRequest, schema string) (*DatasetPublicationResult, error) {
+	publications, err := s.store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   schema,
+		ProviderID:   strings.TrimSpace(req.ProviderID),
+		SourceName:   strings.TrimSpace(req.SourceName),
+		BatchID:      strings.TrimSpace(req.BatchID),
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load existing dataset shard publications: %w", err)
+	}
+	if len(publications) == 0 {
+		return nil, fmt.Errorf("no existing dataset shard publications match %s", schema)
+	}
+
+	result := &DatasetPublicationResult{Schema: schema}
+	rowLimit := req.Limit
+	workCtx := context.WithoutCancel(ctx)
+	for _, publication := range publications {
+		if rowLimit > 0 && result.RecordCount >= rowLimit {
+			break
+		}
+		repaired, err := s.ensureDatasetPublicationAssets(workCtx, req, publication)
+		if err != nil {
+			log.Warnf("Skipping existing dataset publication %s %s offset=%d limit=%d during announceExisting repair: %v", publication.SchemaName, publication.ShardCID, publication.Offset, publication.Limit, err)
+			continue
+		}
+		publication = repaired
+		if publication.PNMCID != "" {
+			if pnmRecord, err := s.store.GetRecord("PNM.fbs", publication.PNMCID); err == nil && len(pnmRecord.Data) > 0 {
+				if err := s.publisher.PublishDatasetUpdatePNM(workCtx, sdnpubsub.DatasetUpdateAnnouncement{
+					PNM:               pnmRecord.Data,
+					Schemas:           []string{publication.SchemaName},
+					CombinedCelesTrak: req.CombinedCelesTrak,
+				}); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if err := s.announceDatasetFeedHead(workCtx, publication); err != nil {
+			return nil, err
+		}
+		result.Publications = append(result.Publications, DatasetPublicationResult{
+			Schema:      publication.SchemaName,
+			RecordCount: publication.RecordCount,
+			ShardCID:    publication.ShardCID,
+			IndexCID:    publication.IndexCID,
+			ManifestCID: publication.ManifestCID,
+			PNMCID:      publication.PNMCID,
+		})
+		result.RecordCount += publication.RecordCount
+	}
+	if len(result.Publications) == 0 {
+		return nil, fmt.Errorf("no servable existing dataset shard publications selected for %s", schema)
+	}
+	first := result.Publications[0]
+	result.ShardCID = first.ShardCID
+	result.IndexCID = first.IndexCID
+	result.ManifestCID = first.ManifestCID
+	result.PNMCID = first.PNMCID
+	return result, nil
+}
+
+func (s *ConcreteDatasetPublicationService) ensureDatasetPublicationAssets(ctx context.Context, req DatasetPublicationRequest, publication storage.DatasetShardPublication) (storage.DatasetShardPublication, error) {
+	if s == nil || s.store == nil {
+		return publication, fmt.Errorf("dataset store is unavailable")
+	}
+	shardPath, shardErr := s.store.DatasetPublicationShardPath(publication)
+	indexPath, indexErr := s.store.DatasetPublicationIndexPath(publication)
+	if shardErr == nil && indexErr == nil && fileExists(shardPath) && fileExists(indexPath) {
+		return publication, nil
+	}
+	if shardErr == nil && fileExists(shardPath) {
+		export, err := s.store.RepairDatasetPublicationIndexFromShard(filepath.Join(s.outputDir, safeDatasetPathComponent(publication.SchemaName)), publication)
+		if err != nil {
+			return publication, fmt.Errorf("repair dataset publication %s index from shard: %w", publication.ShardCID, err)
+		}
+		if export.RecordCount != publication.RecordCount {
+			return publication, fmt.Errorf("repair dataset publication %s record count = %d, want %d", publication.ShardCID, export.RecordCount, publication.RecordCount)
+		}
+		if export.ShardSHA256 != publication.ShardSHA256 || export.ResultSHA256 != publication.ResultSHA256 {
+			return publication, fmt.Errorf("repair dataset publication %s would change shard identity", publication.ShardCID)
+		}
+		if export.ShardCID == publication.ShardCID &&
+			export.IndexCID == publication.IndexCID &&
+			export.IndexSHA256 == publication.IndexSHA256 &&
+			export.QuerySHA256 == publication.QuerySHA256 {
+			return publication, nil
+		}
+		repaired, err := s.republishRepairedDatasetPublication(ctx, req, publication, export)
+		if err != nil {
+			return publication, err
+		}
+		return repaired, nil
+	}
+	return publication, fmt.Errorf("repair dataset publication %s: deterministic shard file is missing", publication.ShardCID)
+}
+
+func (s *ConcreteDatasetPublicationService) republishRepairedDatasetPublication(ctx context.Context, req DatasetPublicationRequest, publication storage.DatasetShardPublication, export *storage.DatasetExport) (storage.DatasetShardPublication, error) {
+	if publication.Limit <= 0 {
+		return publication, fmt.Errorf("repair dataset publication %s: window limit is required", publication.ShardCID)
+	}
+	repairReq := req
+	repairReq.Schema = publication.SchemaName
+	repairReq.ProviderID = publication.ProviderID
+	repairReq.SourceName = publication.SourceName
+	repairReq.BatchID = publication.BatchID
+	sourceIdentity := datasetPublicationSourceIdentity{
+		ProviderID: publication.ProviderID,
+		SourceName: publication.SourceName,
+		BatchID:    publication.BatchID,
+	}
+	filter := storage.IndexedRecordQuery{
+		SchemaName:          publication.SchemaName,
+		ProviderID:          publication.ProviderID,
+		SourceName:          publication.SourceName,
+		BatchID:             publication.BatchID,
+		Limit:               publication.Limit,
+		Offset:              publication.Offset,
+		AllowLargeResultSet: true,
+		OrderByCID:          true,
+	}
+	part := publication.Offset/publication.Limit + 1
+	updateID := datasetUpdateID(repairReq, s.now(), part)
+	_, repaired, err := s.publishDatasetExport(ctx, repairReq, publication.SchemaName, filter, sourceIdentity, updateID, export, false)
+	if err != nil {
+		return publication, fmt.Errorf("republish repaired dataset publication %s: %w", publication.ShardCID, err)
+	}
+	return repaired, nil
+}
+
+func fileExists(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func (s *ConcreteDatasetPublicationService) publicationStoreForRequest(req DatasetPublicationRequest) (*storage.FlatSQLStore, DatasetPublicationRequest, func(), error) {
@@ -386,9 +530,26 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context
 	} else if ok {
 		return reusable, nil
 	}
+	result, _, err := s.publishDatasetExport(ctx, req, schema, filter, sourceIdentity, updateID, export, true)
+	return result, err
+}
+
+func (s *ConcreteDatasetPublicationService) publishDatasetExport(
+	ctx context.Context,
+	req DatasetPublicationRequest,
+	schema string,
+	filter storage.IndexedRecordQuery,
+	sourceIdentity datasetPublicationSourceIdentity,
+	updateID string,
+	export *storage.DatasetExport,
+	announce bool,
+) (*DatasetPublicationResult, storage.DatasetShardPublication, error) {
+	if export == nil {
+		return nil, storage.DatasetShardPublication{}, fmt.Errorf("dataset export is required")
+	}
 	published, err := storage.PublishDatasetExportToIPFS(ctx, s.ipfsAPIURL, export)
 	if err != nil {
-		return nil, err
+		return nil, storage.DatasetShardPublication{}, err
 	}
 	export.ShardCID = published.ShardCID
 	export.IndexCID = published.IndexCID
@@ -409,11 +570,11 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context
 		SchemaHash:     datasetPublicationSchemaHash(schema),
 	})
 	if err != nil {
-		return nil, err
+		return nil, storage.DatasetShardPublication{}, err
 	}
 	manifestCID, err := storage.PublishDatasetPublicationManifestToIPFS(ctx, s.ipfsAPIURL, manifest)
 	if err != nil {
-		return nil, err
+		return nil, storage.DatasetShardPublication{}, err
 	}
 	manifest.CID = manifestCID
 	pnmBytes, err := storage.BuildDatasetPublicationPNM(manifest, storage.DatasetPublicationPNMOptions{
@@ -421,14 +582,14 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context
 		SigningKey:  s.signingKey,
 	})
 	if err != nil {
-		return nil, err
+		return nil, storage.DatasetShardPublication{}, err
 	}
 	var pnmCID string
 	if s.store != nil {
 		var err error
 		pnmCID, err = s.store.Store("PNM.fbs", pnmBytes, s.providerPeerID, nil)
 		if err != nil {
-			return nil, fmt.Errorf("store dataset publication PNM: %w", err)
+			return nil, storage.DatasetShardPublication{}, fmt.Errorf("store dataset publication PNM: %w", err)
 		}
 	}
 	shardPublication := storage.DatasetShardPublication{
@@ -452,7 +613,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context
 		PublishedAt:  publishedAt,
 	}
 	if err := s.store.UpsertDatasetShardPublication(shardPublication); err != nil {
-		return nil, fmt.Errorf("record dataset shard publication: %w", err)
+		return nil, storage.DatasetShardPublication{}, fmt.Errorf("record dataset shard publication: %w", err)
 	}
 	publishedShard, found, err := s.store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
 		SchemaName:   schema,
@@ -465,16 +626,18 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context
 		RecordCount:  export.RecordCount,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("load dataset feed head: %w", err)
+		return nil, storage.DatasetShardPublication{}, fmt.Errorf("load dataset feed head: %w", err)
 	}
 	if !found {
-		return nil, fmt.Errorf("load dataset feed head: published shard was not found")
+		return nil, storage.DatasetShardPublication{}, fmt.Errorf("load dataset feed head: published shard was not found")
 	}
 	if err := s.recordDatasetPublicationPins(publishedShard, export, manifest, pnmCID, pnmBytes); err != nil {
-		return nil, err
+		return nil, storage.DatasetShardPublication{}, err
 	}
-	if err := s.announceDatasetPublication(ctx, req, publishedShard, pnmBytes); err != nil {
-		return nil, err
+	if announce {
+		if err := s.announceDatasetPublication(ctx, req, publishedShard, pnmBytes); err != nil {
+			return nil, storage.DatasetShardPublication{}, err
+		}
 	}
 	return &DatasetPublicationResult{
 		Schema:      schema,
@@ -483,7 +646,7 @@ func (s *ConcreteDatasetPublicationService) publishDatasetUpdatePart(ctx context
 		IndexCID:    export.IndexCID,
 		ManifestCID: manifest.CID,
 		PNMCID:      pnmCID,
-	}, nil
+	}, publishedShard, nil
 }
 
 func (s *ConcreteDatasetPublicationService) publishedShardFromResult(
@@ -583,6 +746,10 @@ func (s *ConcreteDatasetPublicationService) announceDatasetPublication(ctx conte
 	}); err != nil {
 		return err
 	}
+	return s.announceDatasetFeedHead(ctx, publishedShard)
+}
+
+func (s *ConcreteDatasetPublicationService) announceDatasetFeedHead(ctx context.Context, publishedShard storage.DatasetShardPublication) error {
 	if headPublisher, ok := s.publisher.(DatasetFeedHeadPublisher); ok {
 		if err := headPublisher.PublishDatasetFeedHead(ctx, sdnpubsub.DatasetFeedHeadAnnouncement{
 			Schema:       publishedShard.SchemaName,
@@ -590,6 +757,8 @@ func (s *ConcreteDatasetPublicationService) announceDatasetPublication(ctx conte
 			SourceName:   publishedShard.SourceName,
 			BatchID:      publishedShard.BatchID,
 			QueryProfile: publishedShard.QueryProfile,
+			Offset:       publishedShard.Offset,
+			Limit:        publishedShard.Limit,
 			FeedSequence: publishedShard.FeedSequence,
 			PreviousHead: publishedShard.PreviousHead,
 			FeedHead:     publishedShard.FeedHead,
@@ -659,18 +828,16 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 	highWaterMark := datasync.PublishedFeedHighWaterMark(publications, totalRows, totalBytes)
 	currentCARPaths := make([]string, 0)
 	groups := storage.DatasetShardPublicationCARGroups(publications, storage.DefaultShardGroupCARMaxSourceBytes)
+	segmentStart := 0
 	for _, group := range groups {
-		rootCIDs := make([]string, 0, len(group)*3)
+		groupSegmentStart := segmentStart
+		groupSegmentCount := len(group)
+		segmentStart += groupSegmentCount
+		rootCIDs := make([]string, 0, len(group))
 		var groupRows int64
 		for _, publication := range group {
 			if publication.ShardCID != "" {
 				rootCIDs = append(rootCIDs, publication.ShardCID)
-			}
-			if publication.IndexCID != "" {
-				rootCIDs = append(rootCIDs, publication.IndexCID)
-			}
-			if publication.ManifestCID != "" {
-				rootCIDs = append(rootCIDs, publication.ManifestCID)
 			}
 			groupRows += int64(publication.RecordCount)
 		}
@@ -693,6 +860,8 @@ func (s *ConcreteDatasetPublicationService) recordShardGroupCARBundle(ctx contex
 			HighWaterMark:     highWaterMark,
 			ByteHash:          publishedCAR.SHA256,
 			Role:              "shard-group-car",
+			SegmentStart:      groupSegmentStart,
+			SegmentCount:      groupSegmentCount,
 			RowCount:          groupRows,
 			ByteCount:         publishedCAR.ByteCount,
 			VerificationState: "verified",

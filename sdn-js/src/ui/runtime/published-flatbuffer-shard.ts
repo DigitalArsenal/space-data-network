@@ -1,4 +1,9 @@
 import { sha256 } from '../../crypto/hd-wallet';
+import type {
+  FlatSqlSyncManifest,
+  FlatSqlSyncManifestArtifactBundle,
+  FlatSqlSyncManifestSegment,
+} from '../../flatsql-sync';
 import type { RawDataRecord } from './sdn-backend';
 import { normalizeHttpEndpointUrl } from './endpoint-url';
 import { isRetryableRemoteSyncError } from './remote-sync-retry';
@@ -127,6 +132,42 @@ export async function importPublishedFlatSqlShardCar(input: PublishedFlatSqlShar
   };
 }
 
+export function publishedShardGroupCarBundlesForSegments(
+  manifest: Pick<FlatSqlSyncManifest, 'artifactBundles'>,
+  segments: FlatSqlSyncManifestSegment[],
+  localRows: number,
+): FlatSqlSyncManifestArtifactBundle[] {
+  const pendingIndexes = pendingPublishedSegmentIndexes(segments, localRows);
+  if (pendingIndexes.size === 0) return [];
+  const seen = new Set<string>();
+  return manifest.artifactBundles
+    .filter((bundle) => {
+      const cid = bundle.cid?.trim();
+      if (!cid || seen.has(cid) || bundle.role !== 'shard-group-car') return false;
+      if (!bundleCoversPendingSegment(bundle, pendingIndexes)) return false;
+      seen.add(cid);
+      return true;
+    })
+    .sort((left, right) => (
+      left.segmentStart - right.segmentStart
+      || left.cid.localeCompare(right.cid)
+    ));
+}
+
+export function publishedSegmentIndexesCoveredByBundles(
+  bundles: Pick<FlatSqlSyncManifestArtifactBundle, 'segmentStart' | 'segmentCount'>[],
+): Set<number> {
+  const covered = new Set<number>();
+  for (const bundle of bundles) {
+    const start = Math.max(0, Math.floor(bundle.segmentStart));
+    const count = Math.max(0, Math.floor(bundle.segmentCount));
+    for (let offset = 0; offset < count; offset += 1) {
+      covered.add(start + offset);
+    }
+  }
+  return covered;
+}
+
 export async function importCarBytesToKubo(ipfsApiUrl: string, carBytes: Uint8Array): Promise<void> {
   const base = normalizeHttpEndpointUrl(ipfsApiUrl);
   if (!base) throw new Error('local IPFS API URL is required for CAR import');
@@ -239,6 +280,33 @@ async function fetchBytesWithTimeout(
 function normalizeTimeoutMs(timeoutMs: number | null | undefined): number {
   if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs)) return 30_000;
   return Math.max(0, Math.floor(timeoutMs));
+}
+
+function pendingPublishedSegmentIndexes(segments: FlatSqlSyncManifestSegment[], localRows: number): Set<number> {
+  const pending = new Set<number>();
+  let cumulativeRows = 0;
+  for (const segment of segments) {
+    const segmentRows = Math.max(0, segment.rowCount);
+    const segmentEnd = cumulativeRows + segmentRows;
+    if (segment.cid && segmentEnd > localRows) {
+      pending.add(segment.index);
+    }
+    cumulativeRows = segmentEnd;
+  }
+  return pending;
+}
+
+function bundleCoversPendingSegment(
+  bundle: FlatSqlSyncManifestArtifactBundle,
+  pendingIndexes: Set<number>,
+): boolean {
+  const start = Math.max(0, Math.floor(bundle.segmentStart));
+  const count = Math.max(0, Math.floor(bundle.segmentCount));
+  const end = start + count;
+  for (const index of pendingIndexes) {
+    if (index >= start && index < end) return true;
+  }
+  return false;
 }
 
 function normalizeFetchAttempts(attempts: number | null | undefined): number {

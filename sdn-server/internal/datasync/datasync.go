@@ -513,7 +513,7 @@ func OpenPublishedManifest(store *storage.FlatSQLStore, req QueryRequest, queryP
 
 	head := PublishedFeedHead(schemaName, FirstNonEmpty(req.ProviderID, req.ProviderId), req.SourceName, FirstNonEmpty(req.BatchID, req.BatchId), queryProfile, publications)
 	highWater := PublishedFeedHighWaterMark(publications, totalCount, totalBytes)
-	artifactBundles, err := publishedManifestArtifactBundles(store, req, queryProfile, head, len(segments))
+	artifactBundles, err := publishedManifestArtifactBundles(store, req, queryProfile, head, highWater, len(segments), totalCount)
 	if err != nil {
 		return nil, err
 	}
@@ -540,7 +540,7 @@ func OpenPublishedManifest(store *storage.FlatSQLStore, req QueryRequest, queryP
 	return manifest, nil
 }
 
-func publishedManifestArtifactBundles(store *storage.FlatSQLStore, req QueryRequest, queryProfile, feedHead string, segmentCount int) ([]ArtifactBundle, error) {
+func publishedManifestArtifactBundles(store *storage.FlatSQLStore, req QueryRequest, queryProfile, feedHead, highWaterMark string, segmentCount int, totalCount int64) ([]ArtifactBundle, error) {
 	requestedBatchID := FirstNonEmpty(req.BatchID, req.BatchId)
 	entries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
 		SchemaName:        NormalizeSchema(req),
@@ -561,10 +561,24 @@ func publishedManifestArtifactBundles(store *storage.FlatSQLStore, req QueryRequ
 		if cidValue == "" || seen[cidValue] {
 			continue
 		}
-		if feedHead != "" && entry.Head != feedHead && entry.SnapshotID != feedHead {
-			if requestedBatchID != "" || entry.BatchID == "" {
+		if feedHead != "" && entry.Head != feedHead && entry.SnapshotID != feedHead &&
+			(entry.SegmentCount <= 0 || entry.HighWaterMark == "" || entry.HighWaterMark != highWaterMark) {
+			continue
+		}
+		segmentStart := entry.SegmentStart
+		bundleSegmentCount := entry.SegmentCount
+		if bundleSegmentCount <= 0 {
+			if totalCount <= 0 || entry.RowCount < totalCount {
 				continue
 			}
+			segmentStart = 0
+			bundleSegmentCount = segmentCount
+		}
+		if segmentStart < 0 || segmentStart >= segmentCount || bundleSegmentCount <= 0 {
+			continue
+		}
+		if segmentStart+bundleSegmentCount > segmentCount {
+			bundleSegmentCount = segmentCount - segmentStart
 		}
 		seen[cidValue] = true
 		bundles = append(bundles, ArtifactBundle{
@@ -573,11 +587,14 @@ func publishedManifestArtifactBundles(store *storage.FlatSQLStore, req QueryRequ
 			ByteCount:    entry.ByteCount,
 			SHA256:       entry.ByteHash,
 			Format:       "car-v1",
-			SegmentStart: 0,
-			SegmentCount: segmentCount,
+			SegmentStart: segmentStart,
+			SegmentCount: bundleSegmentCount,
 		})
 	}
 	sort.Slice(bundles, func(i, j int) bool {
+		if bundles[i].SegmentStart != bundles[j].SegmentStart {
+			return bundles[i].SegmentStart < bundles[j].SegmentStart
+		}
 		return bundles[i].CID < bundles[j].CID
 	})
 	return bundles, nil

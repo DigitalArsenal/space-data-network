@@ -1,5 +1,7 @@
 import {
   FLATSQL_SYNC_PROTOCOL_ID,
+  requestFlatSqlPublishedShard,
+  requestFlatSqlPublishedShardBatch,
   requestFlatSqlSyncChunk,
   requestFlatSqlSyncDatastores,
   requestFlatSqlSyncManifest,
@@ -8,6 +10,8 @@ import {
   type FlatSqlSyncDatastoreEntry,
   type FlatSqlSyncDatastoreList,
   type FlatSqlSyncManifest,
+  type FlatSqlPublishedShard,
+  type FlatSqlPublishedShardBatch,
   type FlatSqlSyncTransport,
   type FlatSqlSyncQuery,
   type FlatSqlSyncRecordRef,
@@ -26,6 +30,8 @@ import {
   type LocalObjectSummary,
   type NodeAccessUser,
   type NodeAccessUserInput,
+  type NodeIdentityApplyResult,
+  type NodeIdentitySettings,
   type NodeSummary,
   type ObservedSdnPeer,
   type RawDataQuery,
@@ -40,6 +46,8 @@ export interface Libp2pFlatSqlSyncClient {
   readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk>;
   listFlatSqlSyncDatastores?(query: Pick<FlatSqlSyncQuery, 'targetPeerId' | 'candidateAddrs'>): Promise<FlatSqlSyncDatastoreList>;
   openFlatSqlSyncManifest?(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest>;
+  readFlatSqlPublishedShard?(query: FlatSqlSyncQuery & { cid: string }): Promise<FlatSqlPublishedShard>;
+  readFlatSqlPublishedShardBatch?(query: FlatSqlSyncQuery & { cids: string[] }): Promise<FlatSqlPublishedShardBatch>;
   measureWireSpeed?(query: FlatSqlWireSpeedProbeQuery): Promise<FlatSqlWireSpeedProbeResult>;
   stop?(): Promise<void> | void;
 }
@@ -63,6 +71,11 @@ export interface Libp2pFlatSqlSyncClientOptions {
 
 const DEFAULT_SUMMARY_SCHEMAS = ['CAT.fbs', 'EPM.fbs', 'MPE.fbs', 'OMM.fbs', 'PNM.fbs', 'SPW.fbs'];
 export const DEFAULT_LIBP2P_FLATSQL_SYNC_REQUEST_TIMEOUT_MS = 60_000;
+export const LIBP2P_FLATSQL_SYNC_YAMUX_OPTIONS = {
+  initialStreamWindowSize: 16 * 1024 * 1024,
+  maxStreamWindowSize: 128 * 1024 * 1024,
+  maxMessageSize: 1024 * 1024,
+};
 
 export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackendOptions): SdnBackend {
   const targetPeerId = options.targetPeerId.trim();
@@ -91,14 +104,11 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     records?: RawDataRecord[];
   }): Promise<FlatSqlSyncChunk> {
     const client = await ensureClient();
-    return client.readFlatSqlSyncChunk({
+    const request: FlatSqlSyncQuery = {
       targetPeerId,
       candidateAddrs,
       op: query.op,
       schema: query.schema,
-      datastoreKey: query.datastoreKey ?? datastoreKey ?? undefined,
-      providerId: query.providerId ?? providerId ?? undefined,
-      sourceName: query.sourceName ?? sourceName ?? undefined,
       batchId: query.batchId,
       peerId: query.peerId,
       cursor: query.cursor,
@@ -114,7 +124,17 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
       limit: query.limit,
       offset: query.offset,
       records: query.records?.map(rawRecordToFlatSqlRef),
-    });
+    };
+    const queryHasDatastoreKey = Object.prototype.hasOwnProperty.call(query, 'datastoreKey') && query.datastoreKey !== undefined;
+    const queryHasProviderId = Object.prototype.hasOwnProperty.call(query, 'providerId') && query.providerId !== undefined;
+    const queryHasSourceName = Object.prototype.hasOwnProperty.call(query, 'sourceName') && query.sourceName !== undefined;
+    const resolvedDatastoreKey = queryHasDatastoreKey ? optionalText(query.datastoreKey) : datastoreKey;
+    const resolvedProviderId = queryHasProviderId ? optionalText(query.providerId) : providerId;
+    const resolvedSourceName = queryHasSourceName ? optionalText(query.sourceName) : sourceName;
+    if (resolvedDatastoreKey) request.datastoreKey = resolvedDatastoreKey;
+    if (resolvedProviderId) request.providerId = resolvedProviderId;
+    if (resolvedSourceName) request.sourceName = resolvedSourceName;
+    return client.readFlatSqlSyncChunk(request);
   }
 
   async function scanRawData(query: RawDataQuery): Promise<BackendResult<DataScanResult>> {
@@ -179,6 +199,38 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     },
     async saveNodeProfile(): Promise<BackendResult<Record<string, unknown>>> {
       return createCapabilityResult('saveNodeProfile', 'local-only', 'configured remote node profile edits are not available from the data explorer');
+    },
+    async getNodeIdentitySettings(): Promise<BackendResult<NodeIdentitySettings>> {
+      return createCapabilityResult('getNodeIdentitySettings', 'local-only', 'node identity unlock settings are local to the desktop app', { ttlMs: 3600000 });
+    },
+    async saveNodeIdentitySettings(settings: NodeIdentitySettings): Promise<BackendResult<NodeIdentitySettings>> {
+      return createCapabilityResult('saveNodeIdentitySettings', 'local-only', 'node identity unlock settings are local to the desktop app', settings);
+    },
+    async selectFlatbufferStorageLocation(): Promise<BackendResult<{ canceled: boolean; path: string | null }>> {
+      return createCapabilityResult('selectFlatbufferStorageLocation', 'local-only', 'FlatBuffer storage locations are selected on the local desktop app', {
+        canceled: true,
+        path: null,
+      });
+    },
+    async applyWalletNodeIdentity(): Promise<BackendResult<NodeIdentityApplyResult>> {
+      return createCapabilityResult('applyWalletNodeIdentity', 'local-only', 'wallet-backed node identity changes must run on the local desktop node');
+    },
+    async logoutNodeIdentity(): Promise<BackendResult<Record<string, unknown>>> {
+      return createAvailableResult('logoutNodeIdentity', { ok: true });
+    },
+    async getWalletStorage() {
+      return createCapabilityResult('getWalletStorage', 'local-only', 'wallet storage is local to the desktop app', {
+        entries: {},
+        encryptedAtRest: false,
+      });
+    },
+    async saveWalletStorage(entries: Record<string, string | null>) {
+      return createCapabilityResult('saveWalletStorage', 'local-only', 'wallet storage is local to the desktop app', {
+        entries: Object.fromEntries(
+          Object.entries(entries).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+        ),
+        encryptedAtRest: false,
+      });
     },
     async listWalletsAndEpms(): Promise<BackendResult<Array<Record<string, unknown>>>> {
       return createCapabilityResult('listWalletsAndEpms', 'local-only', 'wallet and EPM management must run on a local node', []);
@@ -265,51 +317,14 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     async getDataSummary(): Promise<BackendResult<DataSummary>> {
       try {
         const datastoreSummary = await dataSummaryFromDatastores().catch(() => null);
-        if (datastoreSummary) return createAvailableResult('getDataSummary', datastoreSummary);
-        const chunks: FlatSqlSyncChunk[] = [];
-        let firstError: unknown = null;
-        for (const schema of summarySchemas) {
-          try {
-            chunks.push(await requestChunk({
-              schema,
-              ...(datastoreKey ? { datastoreKey } : {}),
-              op: 'scan',
-              limit: 1,
-              offset: 0,
-            }));
-          } catch (error) {
-            firstError ??= error;
-          }
-        }
-        if (chunks.length === 0) {
-          return createUnavailableResult('getDataSummary', formatSyncError(firstError ?? 'remote FlatSQL sync summary unavailable'));
-        }
-        const schemas = chunks
-          .map((chunk) => ({
-            schemaName: chunk.header.schema,
-            count: chunk.header.totalCount,
-            totalBytes: estimateTotalBytes(chunk.header.results, chunk.header.totalCount),
-          }))
-          .filter((schema) => schema.count > 0)
-          .sort((left, right) => right.count - left.count || left.schemaName.localeCompare(right.schemaName));
-        const totalRecords = schemas.reduce((sum, schema) => sum + schema.count, 0);
-        const totalBytes = schemas.reduce((sum, schema) => sum + schema.totalBytes, 0);
-        return createAvailableResult('getDataSummary', {
-          totalRecords,
-          totalBytes,
-          schemas,
-          sources: schemas.map((schema) => ({
-            schemaName: schema.schemaName,
-            providerId: providerId ?? targetPeerId,
-            ...(datastoreKey ? { datastoreKey } : {}),
-            sourceName: sourceName ?? '',
-            batchId: '',
-            producerPeerId: targetPeerId,
-            producerPublicKey: optionalText(options.publicKey) ?? '',
-            count: schema.count,
-            totalBytes: schema.totalBytes,
-          })),
+        const datastoreSchemas = new Set(datastoreSummary?.schemas.map((schema) => schema.schemaName) ?? []);
+        const schemaScanSummary = await dataSummaryFromSchemaScans(datastoreSchemas).catch((error) => {
+          if (datastoreSummary) return null;
+          throw error;
         });
+        const mergedSummary = mergeDataSummaries(datastoreSummary, schemaScanSummary);
+        if (!mergedSummary) return createUnavailableResult('getDataSummary', 'remote FlatSQL sync summary unavailable');
+        return createAvailableResult('getDataSummary', mergedSummary);
       } catch (error) {
         return createUnavailableResult('getDataSummary', formatSyncError(error));
       }
@@ -406,6 +421,79 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
       sources: sources.sort((left, right) => right.count - left.count || left.schemaName.localeCompare(right.schemaName)),
     };
   }
+
+  async function dataSummaryFromSchemaScans(excludedSchemas: ReadonlySet<string> = new Set()): Promise<DataSummary | null> {
+    const chunks: FlatSqlSyncChunk[] = [];
+    let firstError: unknown = null;
+    for (const schema of summarySchemas) {
+      if (excludedSchemas.has(schema)) continue;
+      try {
+        chunks.push(await requestChunk({
+          schema,
+          ...(datastoreKey ? { datastoreKey } : {}),
+          sourceName: '',
+          op: 'scan',
+          limit: 1,
+          offset: 0,
+        }));
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    if (chunks.length === 0) {
+      if (firstError) throw firstError;
+      return null;
+    }
+    const schemas = chunks
+      .map((chunk) => ({
+        schemaName: chunk.header.schema,
+        count: chunk.header.totalCount,
+        totalBytes: estimateTotalBytes(chunk.header.results, chunk.header.totalCount),
+      }))
+      .filter((schema) => schema.count > 0)
+      .sort((left, right) => right.count - left.count || left.schemaName.localeCompare(right.schemaName));
+    if (schemas.length === 0) return null;
+    return {
+      totalRecords: schemas.reduce((sum, schema) => sum + schema.count, 0),
+      totalBytes: schemas.reduce((sum, schema) => sum + schema.totalBytes, 0),
+      schemas,
+      sources: schemas.map((schema) => ({
+        schemaName: schema.schemaName,
+        providerId: providerId ?? targetPeerId,
+        ...(datastoreKey ? { datastoreKey } : {}),
+        sourceName: '',
+        batchId: '',
+        producerPeerId: targetPeerId,
+        producerPublicKey: optionalText(options.publicKey) ?? '',
+        count: schema.count,
+        totalBytes: schema.totalBytes,
+      })),
+    };
+  }
+}
+
+function mergeDataSummaries(...summaries: Array<DataSummary | null>): DataSummary | null {
+  const activeSummaries = summaries.filter((summary): summary is DataSummary => Boolean(summary));
+  if (activeSummaries.length === 0) return null;
+  const sources = activeSummaries.flatMap((summary) => summary.sources);
+  const schemasByName = new Map<string, { schemaName: string; count: number; totalBytes: number }>();
+  for (const summary of activeSummaries) {
+    for (const schema of summary.schemas) {
+      const current = schemasByName.get(schema.schemaName) ?? { schemaName: schema.schemaName, count: 0, totalBytes: 0 };
+      current.count += schema.count;
+      current.totalBytes += schema.totalBytes;
+      schemasByName.set(schema.schemaName, current);
+    }
+  }
+  const schemas = Array.from(schemasByName.values())
+    .filter((schema) => schema.count > 0)
+    .sort((left, right) => right.count - left.count || left.schemaName.localeCompare(right.schemaName));
+  return {
+    totalRecords: schemas.reduce((sum, schema) => sum + schema.count, 0),
+    totalBytes: schemas.reduce((sum, schema) => sum + schema.totalBytes, 0),
+    schemas,
+    sources: sources.sort((left, right) => right.count - left.count || left.schemaName.localeCompare(right.schemaName)),
+  };
 }
 
 function dataSourceSummaryFromDatastore(
@@ -442,6 +530,10 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
   const transports: any[] = [];
   const services: Record<string, any> = {};
   const transportSelection = selectLibp2pFlatSqlSyncTransports(normalizedAddrs);
+  if (transportSelection.tcp && isNodeRuntime()) {
+    const { tcp } = await loadNodeTcpTransport();
+    transports.push(tcp());
+  }
   if (transportSelection.webSockets) {
     const [{ webSockets }, { all: wsFilters }] = await Promise.all([
       import('@libp2p/websockets'),
@@ -470,7 +562,7 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
   const libp2p = await createLibp2p({
     transports,
     connectionEncryption: [noise()],
-    streamMuxers: [yamux()],
+    streamMuxers: [yamux(LIBP2P_FLATSQL_SYNC_YAMUX_OPTIONS)],
     peerDiscovery: [],
     services,
   });
@@ -478,7 +570,10 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
 
   const transport: FlatSqlSyncTransport = {
     async dialProtocol(targetPeerId, protocolId, payload, requestCandidateAddrs) {
-      const addrs = normalizeCandidateAddrs(requestCandidateAddrs?.length ? requestCandidateAddrs : normalizedAddrs);
+      const addrs = orderLibp2pFlatSqlSyncDialAddrs(
+        normalizeCandidateAddrs(requestCandidateAddrs?.length ? requestCandidateAddrs : normalizedAddrs)
+          .filter((addr) => isLibp2pFlatSqlSyncAddrDialable(addr, transportSelection)),
+      );
       if (addrs.length === 0) {
         const stream = await withAbortableTimeout(
           `FlatSQL sync dial ${protocolId}`,
@@ -521,6 +616,12 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
     openFlatSqlSyncManifest(query) {
       return requestFlatSqlSyncManifest(transport, query);
     },
+    readFlatSqlPublishedShard(query) {
+      return requestFlatSqlPublishedShard(transport, query);
+    },
+    readFlatSqlPublishedShardBatch(query) {
+      return requestFlatSqlPublishedShardBatch(transport, query);
+    },
     measureWireSpeed(query) {
       return requestFlatSqlWireSpeedProbe(transport, query);
     },
@@ -531,6 +632,7 @@ export async function createDefaultLibp2pFlatSqlSyncClient(
 }
 
 export interface Libp2pFlatSqlSyncTransportSelection {
+  tcp: boolean;
   webSockets: boolean;
   webTransport: boolean;
   webRtcRelay: boolean;
@@ -541,11 +643,26 @@ export function selectLibp2pFlatSqlSyncTransports(candidateAddrs: string[]): Lib
   const addrs = normalizeCandidateAddrs(candidateAddrs);
   const includeAll = addrs.length === 0;
   return {
+    tcp: includeAll || addrs.some((addr) => addr.includes('/tcp/') && !addr.includes('/ws') && !addr.includes('/wss') && !addr.includes('/webtransport')),
     webSockets: includeAll || addrs.some((addr) => addr.includes('/ws') || addr.includes('/wss')),
     webTransport: includeAll || addrs.some((addr) => addr.includes('/webtransport')),
     webRtcRelay: includeAll || addrs.some((addr) => (addr.includes('/webrtc') && !addr.includes('/webrtc-direct')) || addr.includes('/p2p-circuit')),
     webRtcDirect: includeAll || addrs.some((addr) => addr.includes('/webrtc-direct')),
   };
+}
+
+export function isLibp2pFlatSqlSyncAddrDialable(addr: string, selection: Libp2pFlatSqlSyncTransportSelection): boolean {
+  if (addr.includes('/webtransport')) return selection.webTransport;
+  if (addr.includes('/webrtc-direct')) return selection.webRtcDirect && runtimeSupportsWebRtcDirect();
+  if (addr.includes('/webrtc') || addr.includes('/p2p-circuit')) return selection.webRtcRelay && runtimeSupportsWebRtcRelay();
+  if (addr.includes('/ws') || addr.includes('/wss')) return selection.webSockets;
+  if (addr.includes('/tcp/')) return selection.tcp && isNodeRuntime();
+  return true;
+}
+
+export function orderLibp2pFlatSqlSyncDialAddrs(addrs: string[]): string[] {
+  const nodeRuntime = isNodeRuntime();
+  return [...addrs].sort((left, right) => dialAddrPriority(left, nodeRuntime) - dialAddrPriority(right, nodeRuntime));
 }
 
 export interface ExchangeFlatSqlSyncStreamOptions {
@@ -588,7 +705,7 @@ async function performFlatSqlSyncStreamExchange(
     const chunks: Uint8Array[] = [];
     try {
       for await (const chunk of libp2pStream.source) {
-        chunks.push(cloneStreamBytes(chunk));
+        chunks.push(streamChunkBytes(chunk));
       }
     } catch (error) {
       responseError = error;
@@ -643,6 +760,22 @@ function cloneStreamBytes(chunk: unknown): Uint8Array {
   throw new Error('stream chunk must be Uint8Array-compatible bytes');
 }
 
+function streamChunkBytes(chunk: unknown): Uint8Array {
+  if (chunk instanceof Uint8Array) return chunk;
+  if (chunk instanceof ArrayBuffer) return new Uint8Array(chunk);
+  if (ArrayBuffer.isView(chunk)) {
+    return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  }
+  if (chunk && typeof chunk === 'object' && 'subarray' in chunk && typeof chunk.subarray === 'function') {
+    const view = (chunk.subarray as () => unknown).call(chunk);
+    if (view instanceof Uint8Array) return view;
+    if (view instanceof ArrayBuffer) return new Uint8Array(view);
+    if (ArrayBuffer.isView(view)) return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+    return new Uint8Array(view as ArrayLike<number>);
+  }
+  throw new Error('stream chunk must be Uint8Array-compatible bytes');
+}
+
 function concatStreamBytes(chunks: Uint8Array[]): Uint8Array {
   const length = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
   const out = new Uint8Array(length);
@@ -672,6 +805,32 @@ function normalizeCandidateAddrs(addrs: string[]): string[] {
 function normalizeTimeoutMs(timeoutMs: number | null | undefined): number {
   if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs)) return DEFAULT_LIBP2P_FLATSQL_SYNC_REQUEST_TIMEOUT_MS;
   return Math.max(0, Math.floor(timeoutMs));
+}
+
+function isNodeRuntime(): boolean {
+  return typeof process !== 'undefined' && Boolean(process.versions?.node) && typeof window === 'undefined';
+}
+
+function runtimeSupportsWebRtcDirect(): boolean {
+  return !isNodeRuntime() && typeof globalThis.RTCPeerConnection !== 'undefined';
+}
+
+function runtimeSupportsWebRtcRelay(): boolean {
+  return !isNodeRuntime() && typeof globalThis.RTCPeerConnection !== 'undefined';
+}
+
+function dialAddrPriority(addr: string, nodeRuntime: boolean): number {
+  if (nodeRuntime && addr.includes('/tcp/') && !addr.includes('/ws') && !addr.includes('/wss') && !addr.includes('/webtransport')) return 0;
+  if (!nodeRuntime && addr.includes('/webtransport')) return 0;
+  if (!nodeRuntime && addr.includes('/webrtc-direct')) return 1;
+  if (addr.includes('/ws') || addr.includes('/wss')) return nodeRuntime ? 1 : 2;
+  if (!nodeRuntime && (addr.includes('/webrtc') || addr.includes('/p2p-circuit'))) return 3;
+  return 4;
+}
+
+async function loadNodeTcpTransport(): Promise<{ tcp: () => any }> {
+  const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<{ tcp: () => any }>;
+  return dynamicImport('@libp2p/tcp');
 }
 
 export function dataScanResultFromChunk(chunk: FlatSqlSyncChunk): DataScanResult {

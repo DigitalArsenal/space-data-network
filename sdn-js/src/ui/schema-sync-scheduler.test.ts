@@ -144,6 +144,33 @@ describe('schema sync scheduler', () => {
       ['OMM', 'configured:celestrak.eth', 'configured:celestrak.eth:OMM'],
     ]);
   });
+
+  it('starts published-artifact subscriptions even before the remote row count is known', async () => {
+    const calls: Array<[string, string, string | undefined]> = [];
+    const scheduler = createSchemaSyncScheduler({
+      syncSchema: (standardId, dataSourceId, subscriptionId) => {
+        calls.push([standardId, dataSourceId, subscriptionId]);
+      },
+    });
+
+    await scheduler.schedule([{
+      id: 'OMM',
+      subscriptionId: 'configured:space-data-network-02:OMM',
+      localRows: 0,
+      remoteRows: 0,
+      queryProfile: 'dataset-publication-offset-v1',
+      preference: {
+        mode: 'sync',
+        storageCap: 10,
+        storageUnit: 'GB',
+      },
+    }], 'configured:space-data-network-02');
+    await scheduler.idle();
+
+    expect(calls).toEqual([
+      ['OMM', 'configured:space-data-network-02', 'configured:space-data-network-02:OMM'],
+    ]);
+  });
 });
 
 function row(id: string, localRows: number, remoteRows: number) {

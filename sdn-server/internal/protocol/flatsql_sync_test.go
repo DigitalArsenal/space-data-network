@@ -3,7 +3,9 @@ package protocol
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -565,6 +567,447 @@ func TestFlatSQLSyncProtocolOpenManifestUsesPublishedShardLayoutWhenRequestLimit
 	}
 	if body.Segments[0].RowCount != 4 || body.Segments[0].CID != "bafklargeshard" {
 		t.Fatalf("manifest did not use published shard layout: %+v", body.Segments[0])
+	}
+}
+
+func TestFlatSQLSyncProtocolReadPublishedShardStreamsProviderFlatSQLShardFile(t *testing.T) {
+	store := newFlatSQLSyncTestStore(t)
+	shardBytes := []byte{
+		0x05, 0x00, 0x00, 0x00, 'O', 'M', 'M', '-', '1',
+		0x05, 0x00, 0x00, 0x00, 'O', 'M', 'M', '-', '2',
+	}
+	shardSum := sha256.Sum256(shardBytes)
+	querySum := sha256.Sum256([]byte("OMM test publication query"))
+	pub := storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "test-batch",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        50000,
+		RecordCount:  2,
+		ByteCount:    int64(len(shardBytes)),
+		ShardCID:     "bafkpublishedshard",
+		IndexCID:     "bafkpublishedindex",
+		ManifestCID:  "bafkpublishedmanifest",
+		ShardSHA256:  hex.EncodeToString(shardSum[:]),
+		QuerySHA256:  hex.EncodeToString(querySum[:]),
+		ResultSHA256: hex.EncodeToString(shardSum[:]),
+	}
+	if err := store.UpsertDatasetShardPublication(pub); err != nil {
+		t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+	}
+	shardPath, err := store.DatasetPublicationShardPath(pub)
+	if err != nil {
+		t.Fatalf("DatasetPublicationShardPath failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(shardPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll shard dir failed: %v", err)
+	}
+	if err := os.WriteFile(shardPath, shardBytes, 0o600); err != nil {
+		t.Fatalf("WriteFile shard failed: %v", err)
+	}
+
+	handler := NewFlatSQLSyncHandler(store)
+	var out bytes.Buffer
+	if err := handler.handleReadPublishedShard(&out, flatSQLSyncRequest{
+		Op:           "read_published_shard",
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "test-batch",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		CID:          "bafkpublishedshard",
+	}); err != nil {
+		t.Fatalf("handleReadPublishedShard failed: %v", err)
+	}
+
+	var header struct {
+		Op           string `json:"op"`
+		Status       string `json:"status"`
+		Schema       string `json:"schema"`
+		CID          string `json:"cid"`
+		RowCount     int    `json:"row_count"`
+		ByteCount    int64  `json:"byte_count"`
+		ShardSHA256  string `json:"shard_sha256"`
+		SyncProtocol string `json:"sync_protocol"`
+	}
+	readFlatSQLSyncTestJSONFrame(t, &out, &header)
+	if header.Op != "read_published_shard" || header.Status != "ok" || header.Schema != "OMM.fbs" || header.CID != "bafkpublishedshard" {
+		t.Fatalf("unexpected published shard header: %+v", header)
+	}
+	if header.RowCount != 2 || header.ByteCount != int64(len(shardBytes)) || header.ShardSHA256 != pub.ShardSHA256 || header.SyncProtocol != FlatSQLSyncProtocolID {
+		t.Fatalf("published shard metadata mismatch: %+v", header)
+	}
+	if got := out.Bytes(); !bytes.Equal(got, shardBytes) {
+		t.Fatalf("published shard payload mismatch: got %d bytes, want %d", len(got), len(shardBytes))
+	}
+}
+
+func TestFlatSQLSyncProtocolReadPublishedShardStreamsRequestedByteRange(t *testing.T) {
+	store := newFlatSQLSyncTestStore(t)
+	shardBytes := []byte("0123456789abcdef")
+	shardSum := sha256.Sum256(shardBytes)
+	querySum := sha256.Sum256([]byte("OMM range publication query"))
+	pub := storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "test-batch",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        50000,
+		RecordCount:  2,
+		ByteCount:    int64(len(shardBytes)),
+		ShardCID:     "bafkrangedpublishedshard",
+		IndexCID:     "bafkrangedpublishedindex",
+		ManifestCID:  "bafkrangedpublishedmanifest",
+		ShardSHA256:  hex.EncodeToString(shardSum[:]),
+		QuerySHA256:  hex.EncodeToString(querySum[:]),
+		ResultSHA256: hex.EncodeToString(shardSum[:]),
+	}
+	if err := store.UpsertDatasetShardPublication(pub); err != nil {
+		t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+	}
+	shardPath, err := store.DatasetPublicationShardPath(pub)
+	if err != nil {
+		t.Fatalf("DatasetPublicationShardPath failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(shardPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll shard dir failed: %v", err)
+	}
+	if err := os.WriteFile(shardPath, shardBytes, 0o600); err != nil {
+		t.Fatalf("WriteFile shard failed: %v", err)
+	}
+
+	handler := NewFlatSQLSyncHandler(store)
+	var out bytes.Buffer
+	if err := handler.handleReadPublishedShard(&out, flatSQLSyncRequest{
+		Op:           "read_published_shard",
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "test-batch",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		CID:          "bafkrangedpublishedshard",
+		ByteOffset:   4,
+		ByteLength:   6,
+	}); err != nil {
+		t.Fatalf("handleReadPublishedShard range failed: %v", err)
+	}
+
+	var header struct {
+		Op             string `json:"op"`
+		Status         string `json:"status"`
+		CID            string `json:"cid"`
+		ByteOffset     int64  `json:"byte_offset"`
+		ByteLength     int64  `json:"byte_length"`
+		ByteCount      int64  `json:"byte_count"`
+		TotalByteCount int64  `json:"total_byte_count"`
+	}
+	readFlatSQLSyncTestJSONFrame(t, &out, &header)
+	if header.Op != "read_published_shard" || header.Status != "ok" || header.CID != "bafkrangedpublishedshard" {
+		t.Fatalf("unexpected range header: %+v", header)
+	}
+	if header.ByteOffset != 4 || header.ByteLength != 6 || header.ByteCount != 6 || header.TotalByteCount != int64(len(shardBytes)) {
+		t.Fatalf("range metadata mismatch: %+v", header)
+	}
+	if got, want := out.Bytes(), shardBytes[4:10]; !bytes.Equal(got, want) {
+		t.Fatalf("published shard range payload mismatch: got %q, want %q", got, want)
+	}
+}
+
+func TestFlatSQLSyncProtocolReadPublishedAssetStreamsIndexSidecar(t *testing.T) {
+	store := newFlatSQLSyncTestStore(t)
+	shardBytes := []byte{0x05, 0x00, 0x00, 0x00, 'O', 'M', 'M', '-', '1'}
+	indexBytes := []byte(`{"version":1,"schemaName":"OMM.fbs","recordCount":1}` + "\n")
+	shardSum := sha256.Sum256(shardBytes)
+	indexSum := sha256.Sum256(indexBytes)
+	querySum := sha256.Sum256([]byte("OMM asset publication query"))
+	pub := storage.DatasetShardPublication{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "test-batch",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        50000,
+		RecordCount:  1,
+		ByteCount:    int64(len(shardBytes)),
+		ShardCID:     "bafkassetpublishedshard",
+		IndexCID:     "bafkassetpublishedindex",
+		ManifestCID:  "bafkassetpublishedmanifest",
+		ShardSHA256:  hex.EncodeToString(shardSum[:]),
+		IndexSHA256:  hex.EncodeToString(indexSum[:]),
+		QuerySHA256:  hex.EncodeToString(querySum[:]),
+		ResultSHA256: hex.EncodeToString(shardSum[:]),
+	}
+	if err := store.UpsertDatasetShardPublication(pub); err != nil {
+		t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+	}
+	shardPath, err := store.DatasetPublicationShardPath(pub)
+	if err != nil {
+		t.Fatalf("DatasetPublicationShardPath failed: %v", err)
+	}
+	indexPath, err := store.DatasetPublicationIndexPath(pub)
+	if err != nil {
+		t.Fatalf("DatasetPublicationIndexPath failed: %v", err)
+	}
+	for path, data := range map[string][]byte{
+		shardPath: shardBytes,
+		indexPath: indexBytes,
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatalf("MkdirAll %s failed: %v", path, err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("WriteFile %s failed: %v", path, err)
+		}
+	}
+
+	handler := NewFlatSQLSyncHandler(store)
+	var out bytes.Buffer
+	if err := handler.handleReadPublishedAsset(&out, flatSQLSyncRequest{
+		Op:           "read_published_asset",
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "test-batch",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		CID:          "bafkassetpublishedindex",
+		AssetRole:    "index",
+	}); err != nil {
+		t.Fatalf("handleReadPublishedAsset failed: %v", err)
+	}
+
+	var header struct {
+		Op             string `json:"op"`
+		Status         string `json:"status"`
+		Schema         string `json:"schema"`
+		Role           string `json:"role"`
+		CID            string `json:"cid"`
+		ByteCount      int64  `json:"byte_count"`
+		SHA256         string `json:"sha256"`
+		SyncProtocol   string `json:"sync_protocol"`
+		ImmutableBytes bool   `json:"immutable_bytes"`
+	}
+	readFlatSQLSyncTestJSONFrame(t, &out, &header)
+	if header.Op != "read_published_asset" || header.Status != "ok" || header.Schema != "OMM.fbs" || header.Role != "index" || header.CID != "bafkassetpublishedindex" {
+		t.Fatalf("unexpected published asset header: %+v", header)
+	}
+	if header.ByteCount != int64(len(indexBytes)) || header.SHA256 != pub.IndexSHA256 || header.SyncProtocol != FlatSQLSyncProtocolID || !header.ImmutableBytes {
+		t.Fatalf("published asset metadata mismatch: %+v", header)
+	}
+	if got := out.Bytes(); !bytes.Equal(got, indexBytes) {
+		t.Fatalf("published asset payload mismatch: got %d bytes, want %d", len(got), len(indexBytes))
+	}
+}
+
+func TestFlatSQLSyncProtocolListPublishedShardsReturnsPublicationIndex(t *testing.T) {
+	store := newFlatSQLSyncTestStore(t)
+	for index, item := range []struct {
+		cid         string
+		indexCID    string
+		recordCount int
+	}{
+		{cid: "bafkfirstpublishedshard", indexCID: "bafkfirstpublishedindex", recordCount: 10},
+		{cid: "bafksecondpublishedshard", indexCID: "bafksecondpublishedindex", recordCount: 20},
+	} {
+		pub := storage.DatasetShardPublication{
+			SchemaName:   "OMM.fbs",
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-gp",
+			BatchID:      "test-batch",
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+			Offset:       index * 50000,
+			Limit:        50000,
+			RecordCount:  item.recordCount,
+			ByteCount:    int64(1000 + index),
+			ShardCID:     item.cid,
+			IndexCID:     item.indexCID,
+			ManifestCID:  "bafkpublishedmanifest",
+			PNMCID:       "bafkpublishedpnm",
+			ShardSHA256:  "1111111111111111111111111111111111111111111111111111111111111111",
+			IndexSHA256:  "2222222222222222222222222222222222222222222222222222222222222222",
+			QuerySHA256:  "3333333333333333333333333333333333333333333333333333333333333333",
+			ResultSHA256: "1111111111111111111111111111111111111111111111111111111111111111",
+			FeedSequence: int64(index + 1),
+			PreviousHead: "previous-head",
+			FeedHead:     "feed-head",
+			PublishedAt:  time.Unix(1700000000+int64(index), 0).UTC(),
+		}
+		if err := store.UpsertDatasetShardPublication(pub); err != nil {
+			t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+		}
+		shardPath, err := store.DatasetPublicationShardPath(pub)
+		if err != nil {
+			t.Fatalf("DatasetPublicationShardPath failed: %v", err)
+		}
+		indexPath, err := store.DatasetPublicationIndexPath(pub)
+		if err != nil {
+			t.Fatalf("DatasetPublicationIndexPath failed: %v", err)
+		}
+		for path, payload := range map[string][]byte{
+			shardPath: []byte(item.cid),
+			indexPath: []byte(item.indexCID),
+		} {
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatalf("MkdirAll %s failed: %v", path, err)
+			}
+			if err := os.WriteFile(path, payload, 0o600); err != nil {
+				t.Fatalf("WriteFile %s failed: %v", path, err)
+			}
+		}
+	}
+
+	handler := NewFlatSQLSyncHandler(store)
+	var out bytes.Buffer
+	if err := handler.handleListPublishedShards(&out, flatSQLSyncRequest{
+		Op:                "list_published_shards",
+		Schema:            "OMM.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		BatchID:           "test-batch",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		PublicationOffset: 1,
+		PublicationLimit:  1,
+	}); err != nil {
+		t.Fatalf("handleListPublishedShards failed: %v", err)
+	}
+
+	var header struct {
+		Op                    string `json:"op"`
+		Status                string `json:"status"`
+		Schema                string `json:"schema"`
+		SyncProtocol          string `json:"sync_protocol"`
+		PublicationOffset     int    `json:"publication_offset"`
+		PublicationCount      int    `json:"publication_count"`
+		TotalPublicationCount int    `json:"total_publication_count"`
+		Publications          []struct {
+			Schema       string    `json:"schema"`
+			ProviderID   string    `json:"provider_id"`
+			SourceName   string    `json:"source_name"`
+			BatchID      string    `json:"batch_id"`
+			QueryProfile string    `json:"query_profile"`
+			Offset       int       `json:"offset"`
+			Limit        int       `json:"limit"`
+			RecordCount  int       `json:"record_count"`
+			ByteCount    int64     `json:"byte_count"`
+			ShardCID     string    `json:"shard_cid"`
+			IndexCID     string    `json:"index_cid"`
+			FeedSequence int64     `json:"feed_sequence"`
+			PublishedAt  time.Time `json:"published_at"`
+		} `json:"publications"`
+	}
+	readFlatSQLSyncTestJSONFrame(t, &out, &header)
+	if header.Op != "list_published_shards" || header.Status != "ok" || header.Schema != "OMM.fbs" || header.SyncProtocol != FlatSQLSyncProtocolID {
+		t.Fatalf("unexpected publication list header: %+v", header)
+	}
+	if header.PublicationOffset != 1 || header.PublicationCount != 1 || header.TotalPublicationCount != 2 {
+		t.Fatalf("unexpected publication paging: %+v", header)
+	}
+	if len(header.Publications) != 1 {
+		t.Fatalf("publications = %d, want 1", len(header.Publications))
+	}
+	got := header.Publications[0]
+	if got.ShardCID != "bafksecondpublishedshard" || got.IndexCID != "bafksecondpublishedindex" || got.Offset != 50000 || got.RecordCount != 20 {
+		t.Fatalf("unexpected publication listing: %+v", got)
+	}
+	if got.ProviderID != "space-data-network-02" || got.SourceName != "celestrak-gp" || got.BatchID != "test-batch" || got.QueryProfile != storage.DatasetPublicationQueryProfile {
+		t.Fatalf("publication identity was not preserved: %+v", got)
+	}
+	if got.PublishedAt.IsZero() {
+		t.Fatalf("published_at was not preserved: %+v", got)
+	}
+}
+
+func TestFlatSQLSyncProtocolReadPublishedShardBatchStreamsConcatenatedFlatSQLShardFiles(t *testing.T) {
+	store := newFlatSQLSyncTestStore(t)
+	firstShardBytes := []byte{0x05, 0x00, 0x00, 0x00, 'O', 'M', 'M', '-', '1'}
+	secondShardBytes := []byte{0x05, 0x00, 0x00, 0x00, 'O', 'M', 'M', '-', '2'}
+	for index, item := range []struct {
+		cid   string
+		bytes []byte
+	}{
+		{cid: "bafkfirstpublishedshard", bytes: firstShardBytes},
+		{cid: "bafksecondpublishedshard", bytes: secondShardBytes},
+	} {
+		shardSum := sha256.Sum256(item.bytes)
+		querySum := sha256.Sum256([]byte(item.cid + " query"))
+		pub := storage.DatasetShardPublication{
+			SchemaName:   "OMM.fbs",
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-gp",
+			BatchID:      "test-batch",
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+			Offset:       index,
+			Limit:        50000,
+			RecordCount:  1,
+			ByteCount:    int64(len(item.bytes)),
+			ShardCID:     item.cid,
+			IndexCID:     item.cid + "-index",
+			ManifestCID:  "bafkpublishedmanifest",
+			ShardSHA256:  hex.EncodeToString(shardSum[:]),
+			QuerySHA256:  hex.EncodeToString(querySum[:]),
+			ResultSHA256: hex.EncodeToString(shardSum[:]),
+		}
+		if err := store.UpsertDatasetShardPublication(pub); err != nil {
+			t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+		}
+		shardPath, err := store.DatasetPublicationShardPath(pub)
+		if err != nil {
+			t.Fatalf("DatasetPublicationShardPath failed: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(shardPath), 0o700); err != nil {
+			t.Fatalf("MkdirAll shard dir failed: %v", err)
+		}
+		if err := os.WriteFile(shardPath, item.bytes, 0o600); err != nil {
+			t.Fatalf("WriteFile shard failed: %v", err)
+		}
+	}
+
+	handler := NewFlatSQLSyncHandler(store)
+	var out bytes.Buffer
+	if err := handler.handleReadPublishedShardBatch(&out, flatSQLSyncRequest{
+		Op:           "read_published_shard_batch",
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "test-batch",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		CIDs:         []string{"bafkfirstpublishedshard", "bafksecondpublishedshard"},
+	}); err != nil {
+		t.Fatalf("handleReadPublishedShardBatch failed: %v", err)
+	}
+
+	var header struct {
+		Op            string `json:"op"`
+		Status        string `json:"status"`
+		Schema        string `json:"schema"`
+		SyncProtocol  string `json:"sync_protocol"`
+		PayloadFormat string `json:"payload_format"`
+		Shards        []struct {
+			CID       string `json:"cid"`
+			ByteCount int64  `json:"byte_count"`
+		} `json:"shards"`
+	}
+	readFlatSQLSyncTestJSONFrame(t, &out, &header)
+	if header.Op != "read_published_shard_batch" || header.Status != "ok" || header.Schema != "OMM.fbs" || header.SyncProtocol != FlatSQLSyncProtocolID {
+		t.Fatalf("unexpected published shard batch header: %+v", header)
+	}
+	if header.PayloadFormat != "concatenated-flatsql-size-prefixed-flatbuffers" {
+		t.Fatalf("unexpected payload format: %q", header.PayloadFormat)
+	}
+	if len(header.Shards) != 2 || header.Shards[0].CID != "bafkfirstpublishedshard" || header.Shards[1].CID != "bafksecondpublishedshard" {
+		t.Fatalf("unexpected shard metadata: %+v", header.Shards)
+	}
+	if header.Shards[0].ByteCount != int64(len(firstShardBytes)) || header.Shards[1].ByteCount != int64(len(secondShardBytes)) {
+		t.Fatalf("unexpected shard byte counts: %+v", header.Shards)
+	}
+	wantPayload := append(append([]byte(nil), firstShardBytes...), secondShardBytes...)
+	if got := out.Bytes(); !bytes.Equal(got, wantPayload) {
+		t.Fatalf("published shard batch payload mismatch: got %d bytes, want %d", len(got), len(wantPayload))
 	}
 }
 

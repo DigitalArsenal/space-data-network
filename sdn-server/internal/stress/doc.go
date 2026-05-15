@@ -12,6 +12,8 @@
 //
 // Environment variables:
 //   - STRESS_TARGET_SIZE: Target data size in bytes (default: 10GB)
+//   - STRESS_LIVE_FLATSQL_BYTES: Target live FlatSQL replication bytes (default: 64MiB)
+//   - STRESS_LIVE_FLATSQL_RESUME_BYTES: Target range-resume replication bytes (default: 16MiB)
 //   - STRESS_NODE1_ADDR: First node multiaddr for transfer tests
 //   - STRESS_NODE2_ADDR: Second node multiaddr for transfer tests
 package stress

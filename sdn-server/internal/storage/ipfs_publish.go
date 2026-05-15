@@ -39,6 +39,10 @@ type PublishedShardGroupCAR struct {
 	RootCIDs  []string
 }
 
+type pinUnixFSFileOptions struct {
+	Chunker string
+}
+
 // PublishDatasetExportToIPFS pins exported shard and index bytes through a Kubo RPC API.
 func PublishDatasetExportToIPFS(ctx context.Context, ipfsAPIURL string, export *DatasetExport) (*PublishedDatasetExport, error) {
 	if export == nil {
@@ -114,6 +118,73 @@ func FetchIPFSBlockByCID(ctx context.Context, ipfsAPIURL, cidValue string) ([]by
 	return body, nil
 }
 
+// FetchIPFSBlockByCIDToFile streams immutable bytes from a Kubo RPC API to a
+// local file. The CID may be either a raw block CID or a chunked UnixFS file
+// root CID.
+func FetchIPFSBlockByCIDToFile(ctx context.Context, ipfsAPIURL, cidValue, outputPath string) error {
+	if strings.TrimSpace(ipfsAPIURL) == "" {
+		return fmt.Errorf("ipfs api url is required")
+	}
+	cidValue = strings.TrimSpace(cidValue)
+	if cidValue == "" {
+		return fmt.Errorf("cid is required")
+	}
+	outputPath = strings.TrimSpace(outputPath)
+	if outputPath == "" {
+		return fmt.Errorf("output path is required")
+	}
+	endpoint, err := url.JoinPath(strings.TrimRight(ipfsAPIURL, "/"), "/api/v0/cat")
+	if err != nil {
+		return fmt.Errorf("build IPFS URL: %w", err)
+	}
+	reqURL, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("parse IPFS URL: %w", err)
+	}
+	query := reqURL.Query()
+	query.Set("arg", cidValue)
+	reqURL.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), nil)
+	if err != nil {
+		return fmt.Errorf("create IPFS request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("post IPFS cat: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("IPFS cat failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
+		return fmt.Errorf("create IPFS output directory: %w", err)
+	}
+	tempFile, err := os.CreateTemp(filepath.Dir(outputPath), ".ipfs-cid-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create IPFS output file: %w", err)
+	}
+	tempPath := tempFile.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if _, err := io.Copy(tempFile, resp.Body); err != nil {
+		_ = tempFile.Close()
+		return fmt.Errorf("write IPFS CID bytes: %w", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("close IPFS output file: %w", err)
+	}
+	if err := os.Rename(tempPath, outputPath); err != nil {
+		return fmt.Errorf("commit IPFS output file: %w", err)
+	}
+	committed = true
+	return nil
+}
+
 // PublishShardGroupCARToIPFS exports the listed root DAGs from Kubo, writes one
 // CARv1 with those roots, and pins the resulting CAR file back to IPFS. The
 // root DAGs must already exist in the local Kubo blockstore.
@@ -177,7 +248,9 @@ func PublishShardGroupCARToIPFS(ctx context.Context, ipfsAPIURL, outputDir strin
 	}
 	committed = true
 
-	carCID, err := pinUnixFSFile(ctx, ipfsAPIURL, finalPath, "")
+	carCID, err := pinUnixFSFileWithOptions(ctx, ipfsAPIURL, finalPath, "", pinUnixFSFileOptions{
+		Chunker: "size-1048576",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("pin CAR bundle: %w", err)
 	}
@@ -277,15 +350,23 @@ func RemoveStaleShardGroupCARFiles(outputDir string, keepPaths ...string) error 
 }
 
 func pinUnixFSFile(ctx context.Context, ipfsAPIURL, path, expectedRawCID string) (string, error) {
+	return pinUnixFSFileWithOptions(ctx, ipfsAPIURL, path, expectedRawCID, pinUnixFSFileOptions{})
+}
+
+func pinUnixFSFileWithOptions(ctx context.Context, ipfsAPIURL, path, expectedRawCID string, options pinUnixFSFileOptions) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	localCID, err := cidV1RawSHA256File(path)
-	if err != nil {
-		return "", fmt.Errorf("compute local raw CID: %w", err)
-	}
-	if expectedRawCID != "" && localCID != expectedRawCID {
-		return "", fmt.Errorf("local raw CID %s does not match expected CID %s", localCID, expectedRawCID)
+	var localCID string
+	if expectedRawCID != "" {
+		var err error
+		localCID, err = cidV1RawSHA256File(path)
+		if err != nil {
+			return "", fmt.Errorf("compute local raw CID: %w", err)
+		}
+		if localCID != expectedRawCID {
+			return "", fmt.Errorf("local raw CID %s does not match expected CID %s", localCID, expectedRawCID)
+		}
 	}
 
 	endpoint, err := url.JoinPath(strings.TrimRight(ipfsAPIURL, "/"), "/api/v0/add")
@@ -303,6 +384,9 @@ func pinUnixFSFile(ctx context.Context, ipfsAPIURL, path, expectedRawCID string)
 	query.Set("hash", "sha2-256")
 	query.Set("wrap-with-directory", "false")
 	query.Set("progress", "false")
+	if chunker := strings.TrimSpace(options.Chunker); chunker != "" {
+		query.Set("chunker", chunker)
+	}
 	reqURL.RawQuery = query.Encode()
 
 	reader, writer := io.Pipe()
@@ -461,7 +545,7 @@ func pinRawBlock(ctx context.Context, ipfsAPIURL, path, expectedCID string) (str
 	if cidValue == "" {
 		return "", fmt.Errorf("IPFS response missing CID")
 	}
-	if cidValue != localCID {
+	if expectedCID != "" && cidValue != localCID {
 		return "", fmt.Errorf("IPFS CID %s does not match local CID %s", cidValue, localCID)
 	}
 	return cidValue, nil

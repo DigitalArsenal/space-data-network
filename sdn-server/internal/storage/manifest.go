@@ -62,6 +62,7 @@ type DatasetPublicationReplayOptions struct {
 	PNM               []byte
 	ProviderPublicKey ed25519.PublicKey
 	FetchByCID        func(context.Context, string) ([]byte, error)
+	FetchByCIDToFile  func(context.Context, string, string) error
 	FetchRetryDelays  []time.Duration
 	WorkDir           string
 }
@@ -290,6 +291,13 @@ func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opt
 	if !ok {
 		return nil, fmt.Errorf("DPM missing QUERY_INDEX asset")
 	}
+	if opts.FetchByCIDToFile != nil {
+		return materializeDatasetPublicationFromFiles(ctx, store, opts, manifest, manifestCID, shardAsset, indexAsset)
+	}
+	return materializeDatasetPublicationFromBytes(ctx, store, opts, manifest, manifestCID, shardAsset, indexAsset)
+}
+
+func materializeDatasetPublicationFromBytes(ctx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions, manifest *dpm.DPM, manifestCID string, shardAsset, indexAsset publicationAsset) (*DatasetPublicationReplayResult, error) {
 	shardBytes, err := fetchDatasetPublicationCID(ctx, opts.FetchByCID, opts.FetchRetryDelays, shardAsset.CID)
 	if err != nil {
 		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, err)
@@ -320,6 +328,57 @@ func MaterializeDatasetPublication(ctx context.Context, store *FlatSQLStore, opt
 	}, nil
 }
 
+func materializeDatasetPublicationFromFiles(ctx context.Context, store *FlatSQLStore, opts DatasetPublicationReplayOptions, manifest *dpm.DPM, manifestCID string, shardAsset, indexAsset publicationAsset) (*DatasetPublicationReplayResult, error) {
+	workDir, cleanup, err := datasetPublicationMaterializationWorkDir(opts.WorkDir)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	shardPath := filepath.Join(workDir, datasetPublicationPathComponent(shardAsset.CID)+".fbshard")
+	indexPath := filepath.Join(workDir, datasetPublicationPathComponent(indexAsset.CID)+".index.json")
+	if err := fetchDatasetPublicationCIDToFile(ctx, opts.FetchByCIDToFile, opts.FetchRetryDelays, shardAsset.CID, shardPath); err != nil {
+		return nil, fmt.Errorf("fetch shard CID %s: %w", shardAsset.CID, err)
+	}
+	if _, _, err := verifyFileCIDAndHash("shard", shardPath, shardAsset.CID, shardAsset.SHA256); err != nil {
+		return nil, err
+	}
+	if err := fetchDatasetPublicationCIDToFile(ctx, opts.FetchByCIDToFile, opts.FetchRetryDelays, indexAsset.CID, indexPath); err != nil {
+		return nil, fmt.Errorf("fetch index CID %s: %w", indexAsset.CID, err)
+	}
+	if _, _, err := verifyFileCIDAndHash("index", indexPath, indexAsset.CID, indexAsset.SHA256); err != nil {
+		return nil, err
+	}
+	imported, index, err := store.ImportDatasetShardFromFiles(shardPath, indexPath, string(manifest.PROVIDER_PEER_ID()))
+	if err != nil {
+		return nil, err
+	}
+	return &DatasetPublicationReplayResult{
+		ManifestCID:  manifestCID,
+		ShardCID:     shardAsset.CID,
+		IndexCID:     indexAsset.CID,
+		SchemaName:   index.SchemaName,
+		RecordCount:  index.RecordCount,
+		Imported:     imported,
+		QuerySHA256:  index.QuerySHA256,
+		ResultSHA256: index.ResultSHA256,
+	}, nil
+}
+
+func datasetPublicationMaterializationWorkDir(configured string) (string, func(), error) {
+	configured = strings.TrimSpace(configured)
+	if configured != "" {
+		if err := os.MkdirAll(configured, 0o700); err != nil {
+			return "", func() {}, fmt.Errorf("create dataset publication work dir: %w", err)
+		}
+		return configured, func() {}, nil
+	}
+	tmpDir, err := os.MkdirTemp("", "sdn-dataset-publication-*")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create dataset publication temp dir: %w", err)
+	}
+	return tmpDir, func() { _ = os.RemoveAll(tmpDir) }, nil
+}
+
 func fetchDatasetPublicationCID(ctx context.Context, fetch func(context.Context, string) ([]byte, error), retryDelays []time.Duration, cidValue string) ([]byte, error) {
 	var lastErr error
 	for attempt := 0; ; attempt++ {
@@ -341,6 +400,26 @@ func fetchDatasetPublicationCID(ctx context.Context, fetch func(context.Context,
 			timer.Stop()
 			return nil, ctx.Err()
 		case <-timer.C:
+		}
+	}
+}
+
+func fetchDatasetPublicationCIDToFile(ctx context.Context, fetch func(context.Context, string, string) error, retryDelays []time.Duration, cidValue, path string) error {
+	var lastErr error
+	for attempt := 0; ; attempt++ {
+		err := fetch(ctx, cidValue, path)
+		if err == nil {
+			return nil
+		}
+		_ = os.Remove(path)
+		lastErr = err
+		if attempt >= len(retryDelays) {
+			return lastErr
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(retryDelays[attempt]):
 		}
 	}
 }
@@ -384,15 +463,9 @@ func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, provide
 	if s == nil {
 		return 0, nil, fmt.Errorf("store is required")
 	}
-	var index DatasetExportIndex
-	if err := json.Unmarshal(indexBytes, &index); err != nil {
-		return 0, nil, fmt.Errorf("parse dataset export index: %w", err)
-	}
-	if index.Version != 1 {
-		return 0, nil, fmt.Errorf("dataset export index version = %d, want 1", index.Version)
-	}
-	if strings.TrimSpace(index.SchemaName) == "" {
-		return 0, nil, fmt.Errorf("dataset export index missing schema name")
+	index, err := parseDatasetExportIndexBytes(indexBytes)
+	if err != nil {
+		return 0, nil, err
 	}
 	if err := verifyBytesCIDAndHash("shard", shardBytes, index.ShardCID, index.ShardSHA256); err != nil {
 		return 0, nil, err
@@ -400,10 +473,110 @@ func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, provide
 	if index.ResultSHA256 != "" && sha256Hex(shardBytes) != index.ResultSHA256 {
 		return 0, nil, fmt.Errorf("shard result SHA-256 does not match index")
 	}
-	if index.RecordCount != len(index.Records) {
-		return 0, nil, fmt.Errorf("dataset export index record count = %d, want %d records", index.RecordCount, len(index.Records))
+	imported, importedIndex, err := s.importDatasetShardRecords(index, providerPeerID, func(record DatasetExportIndexRecord) ([]byte, error) {
+		if record.Offset < 0 || record.Length < 0 || record.Offset+4+record.Length > int64(len(shardBytes)) {
+			return nil, fmt.Errorf("record %s offset/length outside shard", record.CID)
+		}
+		frame := shardBytes[record.Offset:]
+		length := int64(binary.LittleEndian.Uint32(frame[:4]))
+		if length != record.Length {
+			return nil, fmt.Errorf("record %s frame length = %d, want %d", record.CID, length, record.Length)
+		}
+		return frame[4 : 4+length], nil
+	})
+	if err != nil {
+		return imported, nil, err
 	}
+	return imported, importedIndex, nil
+}
 
+// ImportDatasetShardFromFiles imports a native FlatSQL size-prefixed dataset
+// shard from disk using its materialized export index. The shard payload is
+// verified from the file and records are read one at a time, avoiding whole
+// shard hydration in memory.
+func (s *FlatSQLStore) ImportDatasetShardFromFiles(shardPath, indexPath, providerPeerID string) (int, *DatasetExportIndex, error) {
+	if s == nil {
+		return 0, nil, fmt.Errorf("store is required")
+	}
+	shardPath = strings.TrimSpace(shardPath)
+	indexPath = strings.TrimSpace(indexPath)
+	if shardPath == "" {
+		return 0, nil, fmt.Errorf("shard path is required")
+	}
+	if indexPath == "" {
+		return 0, nil, fmt.Errorf("index path is required")
+	}
+	indexBytes, err := os.ReadFile(indexPath)
+	if err != nil {
+		return 0, nil, fmt.Errorf("read dataset export index: %w", err)
+	}
+	index, err := parseDatasetExportIndexBytes(indexBytes)
+	if err != nil {
+		return 0, nil, err
+	}
+	shardSHA, shardSize, err := verifyFileCIDAndHash("shard", shardPath, index.ShardCID, index.ShardSHA256)
+	if err != nil {
+		return 0, nil, err
+	}
+	if index.ResultSHA256 != "" && shardSHA != index.ResultSHA256 {
+		return 0, nil, fmt.Errorf("shard result SHA-256 does not match index")
+	}
+	shardFile, err := os.Open(shardPath)
+	if err != nil {
+		return 0, nil, fmt.Errorf("open dataset shard: %w", err)
+	}
+	defer shardFile.Close()
+
+	imported, importedIndex, err := s.importDatasetShardRecords(index, providerPeerID, func(record DatasetExportIndexRecord) ([]byte, error) {
+		if record.Offset < 0 || record.Length < 0 || record.Offset+4+record.Length > shardSize {
+			return nil, fmt.Errorf("record %s offset/length outside shard", record.CID)
+		}
+		var frameLength [4]byte
+		if _, err := shardFile.ReadAt(frameLength[:], record.Offset); err != nil {
+			return nil, fmt.Errorf("read record %s frame length: %w", record.CID, err)
+		}
+		length := int64(binary.LittleEndian.Uint32(frameLength[:]))
+		if length != record.Length {
+			return nil, fmt.Errorf("record %s frame length = %d, want %d", record.CID, length, record.Length)
+		}
+		if record.Length > int64(^uint(0)>>1) {
+			return nil, fmt.Errorf("record %s length exceeds addressable memory", record.CID)
+		}
+		data := make([]byte, int(record.Length))
+		if _, err := shardFile.ReadAt(data, record.Offset+4); err != nil {
+			return nil, fmt.Errorf("read record %s payload: %w", record.CID, err)
+		}
+		return data, nil
+	})
+	if err != nil {
+		return imported, nil, err
+	}
+	return imported, importedIndex, nil
+}
+
+type datasetShardRecordReader func(record DatasetExportIndexRecord) ([]byte, error)
+
+func parseDatasetExportIndexBytes(indexBytes []byte) (*DatasetExportIndex, error) {
+	var index DatasetExportIndex
+	if err := json.Unmarshal(indexBytes, &index); err != nil {
+		return nil, fmt.Errorf("parse dataset export index: %w", err)
+	}
+	if index.Version != 1 {
+		return nil, fmt.Errorf("dataset export index version = %d, want 1", index.Version)
+	}
+	if strings.TrimSpace(index.SchemaName) == "" {
+		return nil, fmt.Errorf("dataset export index missing schema name")
+	}
+	if index.RecordCount != len(index.Records) {
+		return nil, fmt.Errorf("dataset export index record count = %d, want %d records", index.RecordCount, len(index.Records))
+	}
+	return &index, nil
+}
+
+func (s *FlatSQLStore) importDatasetShardRecords(index *DatasetExportIndex, providerPeerID string, readRecord datasetShardRecordReader) (int, *DatasetExportIndex, error) {
+	if index == nil {
+		return 0, nil, fmt.Errorf("dataset export index is required")
+	}
 	tableName, err := sds.SchemaNameToTable(index.SchemaName)
 	if err != nil {
 		return 0, nil, fmt.Errorf("invalid schema name: %w", err)
@@ -432,15 +605,10 @@ func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, provide
 	imported := 0
 	now := time.Now().Unix()
 	for _, record := range index.Records {
-		if record.Offset < 0 || record.Length < 0 || record.Offset+4+record.Length > int64(len(shardBytes)) {
-			return imported, nil, fmt.Errorf("record %s offset/length outside shard", record.CID)
+		data, err := readRecord(record)
+		if err != nil {
+			return imported, nil, err
 		}
-		frame := shardBytes[record.Offset:]
-		length := int64(binary.LittleEndian.Uint32(frame[:4]))
-		if length != record.Length {
-			return imported, nil, fmt.Errorf("record %s frame length = %d, want %d", record.CID, length, record.Length)
-		}
-		data := frame[4 : 4+length]
 		if computeCID(data) != record.CID {
 			return imported, nil, fmt.Errorf("record CID mismatch for indexed record %s", record.CID)
 		}
@@ -450,7 +618,7 @@ func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, provide
 		}
 
 		var existing int
-		err := tx.QueryRow(fmt.Sprintf(`SELECT 1 FROM %s WHERE cid = ?`, tableName), record.CID).Scan(&existing)
+		err = tx.QueryRow(fmt.Sprintf(`SELECT 1 FROM %s WHERE cid = ?`, tableName), record.CID).Scan(&existing)
 		switch {
 		case err == nil:
 		case errors.Is(err, sql.ErrNoRows):
@@ -479,7 +647,7 @@ func (s *FlatSQLStore) ImportDatasetShard(shardBytes, indexBytes []byte, provide
 		return imported, nil, fmt.Errorf("commit dataset shard import: %w", err)
 	}
 	committed = true
-	return imported, &index, nil
+	return imported, index, nil
 }
 
 // BuildSignedDatasetPublicationManifest writes a signed SDS DPM manifest that
@@ -932,6 +1100,30 @@ func verifyBytesCIDAndHash(label string, data []byte, expectedCID, expectedSHA s
 		return fmt.Errorf("%s SHA-256 does not match expected hash", label)
 	}
 	return nil
+}
+
+func verifyFileCIDAndHash(label, path, expectedCID, expectedSHA string) (string, int64, error) {
+	localCID, err := cidV1RawSHA256File(path)
+	if err != nil {
+		return "", 0, fmt.Errorf("compute %s CID: %w", label, err)
+	}
+	localSHA, byteCount, err := sha256HexFile(path)
+	if err != nil {
+		return "", 0, err
+	}
+	if localCID == expectedCID {
+		if expectedSHA != "" && localSHA != expectedSHA {
+			return "", 0, fmt.Errorf("%s SHA-256 does not match expected hash", label)
+		}
+		return localSHA, byteCount, nil
+	}
+	if expectedSHA == "" {
+		return "", 0, fmt.Errorf("%s CID %s does not match expected CID %s", label, localCID, expectedCID)
+	}
+	if localSHA != expectedSHA {
+		return "", 0, fmt.Errorf("%s SHA-256 does not match expected hash", label)
+	}
+	return localSHA, byteCount, nil
 }
 
 func indexedRecordQueryFromCanonicalJSON(data []byte) (IndexedRecordQuery, error) {

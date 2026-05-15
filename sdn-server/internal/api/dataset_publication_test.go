@@ -127,6 +127,33 @@ func TestDatasetPublicationHandlerPreservesDatastoreKey(t *testing.T) {
 	}
 }
 
+func TestDatasetPublicationHandlerParsesAnnounceExisting(t *testing.T) {
+	service := &fakeDatasetPublicationService{
+		result: DatasetPublicationResult{
+			Schema:      "OMM.fbs",
+			RecordCount: 50_000,
+			ManifestCID: "bafymanifest",
+		},
+	}
+	handler := NewDatasetPublicationHandler(service)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	body := bytes.NewBufferString(`{"schema":"OMM.fbs","providerId":"space-data-network-02","sourceName":"celestrak-gp","announceExisting":true,"limit":50000}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/dataset-updates/publish", body)
+	req.RemoteAddr = "127.0.0.1:4321"
+	res := httptest.NewRecorder()
+
+	mux.ServeHTTP(res, req)
+
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", res.Code, http.StatusAccepted, res.Body.String())
+	}
+	if !service.request.AnnounceExisting {
+		t.Fatalf("AnnounceExisting = false, want true: %#v", service.request)
+	}
+}
+
 type fakeDatasetUpdatePublisher struct {
 	announcement  sdnpubsub.DatasetUpdateAnnouncement
 	announcements []sdnpubsub.DatasetUpdateAnnouncement
@@ -655,6 +682,161 @@ func TestConcreteDatasetPublicationServiceSkipsUnchangedFullCatalogShards(t *tes
 			second.Publications[i].PNMCID != first.Publications[i].PNMCID {
 			t.Fatalf("publication %d was not reused: first=%#v second=%#v", i, first.Publications[i], second.Publications[i])
 		}
+	}
+}
+
+func TestConcreteDatasetPublicationServiceAnnounceExistingRepublishesRepairedIndexIdentity(t *testing.T) {
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	dir := t.TempDir()
+	store, err := storage.NewFlatSQLStore(filepath.Join(dir, "store"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	tags := storage.SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "source-sha-stale-index",
+		ContentKeyID: "public",
+	}
+	for i := 0; i < 2; i++ {
+		record := sds.NewOMMBuilder().
+			WithNoradCatID(uint32(70000 + i)).
+			WithObjectID(fmt.Sprintf("2026-004%c", 'A'+rune(i))).
+			WithObjectName("REPAIR-INDEX-TEST").
+			Build()
+		if _, err := store.StoreWithSourceTags("OMM.fbs", record, "source:celestrak", nil, tags); err != nil {
+			t.Fatalf("store OMM %d failed: %v", i, err)
+		}
+	}
+
+	pinned := make(map[string][]byte)
+	kubo := newDatasetPublicationKuboTestServer(t, pinned)
+	defer kubo.Close()
+
+	_, signingKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	publisher := &fakeDatasetUpdatePublisher{}
+	service := NewConcreteDatasetPublicationService(
+		store,
+		publisher,
+		signingKey,
+		"16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4",
+		"bafy-provider-epm",
+		kubo.URL,
+		store.DatasetPublicationOutputDir(),
+	)
+	service.now = func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) }
+
+	req := DatasetPublicationRequest{
+		Schema:      "OMM.fbs",
+		ProviderID:  "space-data-network-02",
+		SourceName:  "celestrak-gp",
+		BatchID:     "source-sha-stale-index",
+		DatasetID:   "celestrak-omm-full",
+		FullCatalog: true,
+		ChunkSize:   2,
+		Limit:       2,
+	}
+	first, err := service.PublishDatasetUpdate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("initial PublishDatasetUpdate failed: %v", err)
+	}
+	if len(first.Publications) != 1 {
+		t.Fatalf("initial publications = %d, want 1: %#v", len(first.Publications), first.Publications)
+	}
+	original := first.Publications[0]
+	published, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "source-sha-stale-index",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        2,
+		RecordCount:  2,
+	})
+	if err != nil {
+		t.Fatalf("FindDatasetShardPublication failed: %v", err)
+	}
+	if !found {
+		t.Fatal("initial publication was not stored")
+	}
+
+	staleIndexBytes := []byte(`{"stale":"legacy-index"}`)
+	staleIndexSHA := sha256.Sum256(staleIndexBytes)
+	published.ShardCID = cidV1RawSHA256ForTest(t, []byte("legacy-shard-cid"))
+	published.IndexCID = cidV1RawSHA256ForTest(t, staleIndexBytes)
+	published.IndexSHA256 = hex.EncodeToString(staleIndexSHA[:])
+	published.ManifestCID = ""
+	published.PNMCID = ""
+	published.PublishedAt = time.Date(2026, 5, 15, 12, 1, 0, 0, time.UTC)
+	if err := store.UpsertDatasetShardPublication(published); err != nil {
+		t.Fatalf("upsert stale publication metadata failed: %v", err)
+	}
+
+	publisher.called = false
+	publisher.announcements = nil
+	publisher.feedHeads = nil
+	service.now = func() time.Time { return time.Date(2026, 5, 15, 12, 2, 0, 0, time.UTC) }
+
+	repairCtx, cancelRepair := context.WithCancel(context.Background())
+	cancelRepair()
+	repaired, err := service.PublishDatasetUpdate(repairCtx, DatasetPublicationRequest{
+		Schema:           "OMM.fbs",
+		ProviderID:       "space-data-network-02",
+		SourceName:       "celestrak-gp",
+		BatchID:          "source-sha-stale-index",
+		DatasetID:        "celestrak-omm-full",
+		AnnounceExisting: true,
+		Limit:            2,
+	})
+	if err != nil {
+		t.Fatalf("announce existing repaired publication failed: %v", err)
+	}
+	if repaired.RecordCount != 2 || len(repaired.Publications) != 1 {
+		t.Fatalf("repaired result = %#v, want one two-record publication", repaired)
+	}
+	if repaired.Publications[0].IndexCID != original.IndexCID || repaired.Publications[0].ShardCID != original.ShardCID {
+		t.Fatalf("repaired publication identity mismatch: repaired=%#v original=%#v", repaired.Publications[0], original)
+	}
+	if repaired.Publications[0].ManifestCID == "" || repaired.Publications[0].PNMCID == "" {
+		t.Fatalf("repaired publication missing republished manifest/PNM: %#v", repaired.Publications[0])
+	}
+	if !publisher.called || len(publisher.announcements) != 1 || len(publisher.feedHeads) != 1 {
+		t.Fatalf("repair announcements = pnm:%d feed:%d called:%v", len(publisher.announcements), len(publisher.feedHeads), publisher.called)
+	}
+	if _, ok := pinned[repaired.Publications[0].ManifestCID]; !ok {
+		t.Fatalf("repaired manifest %q was not pinned", repaired.Publications[0].ManifestCID)
+	}
+
+	stored, found, err := store.FindDatasetShardPublication(storage.DatasetShardPublicationQuery{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		BatchID:      "source-sha-stale-index",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Offset:       0,
+		Limit:        2,
+		RecordCount:  2,
+	})
+	if err != nil {
+		t.Fatalf("FindDatasetShardPublication after repair failed: %v", err)
+	}
+	if !found {
+		t.Fatal("repaired publication was not stored")
+	}
+	if stored.IndexCID != original.IndexCID || stored.IndexSHA256 == hex.EncodeToString(staleIndexSHA[:]) {
+		t.Fatalf("stored publication was not repaired: stored=%#v original=%#v", stored, original)
+	}
+	if stored.ManifestCID != repaired.Publications[0].ManifestCID || stored.PNMCID != repaired.Publications[0].PNMCID {
+		t.Fatalf("stored repaired manifest/PNM mismatch: stored=%#v repaired=%#v", stored, repaired.Publications[0])
 	}
 }
 

@@ -121,6 +121,297 @@ test.describe('desktop static identity API', () => {
     expect(epm.EMAIL()).toBe('node@example.invalid')
   })
 
+  test('persists node identity settings and blocks wallet key replacement until confirmed', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-node-identity-settings-'))
+    const { serveDesktopNodeIdentityAPI } = loadStaticServer(userData)
+
+    const defaultSettings = await requestJson(serveDesktopNodeIdentityAPI, 'GET', '/api/node/identity/settings')
+    expect(defaultSettings.statusCode).toBe(200)
+    expect(defaultSettings.json.ttl_ms).toBe(3600000)
+    expect(defaultSettings.json.flatbuffer_storage_path).toBe(path.join(userData, 'flatbuffers'))
+    expect(fs.existsSync(path.join(userData, 'flatbuffers'))).toBe(true)
+
+    const savedSettings = await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/settings', {
+      ttl_ms: 900000,
+      flatbuffer_storage_path: path.join(userData, 'custom-flatbuffers')
+    })
+    expect(savedSettings.statusCode).toBe(200)
+    expect(savedSettings.json.ttl_ms).toBe(900000)
+    expect(savedSettings.json.flatbuffer_storage_path).toBe(path.join(userData, 'custom-flatbuffers'))
+
+    const first = await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/wallet', {
+      wallet_identity: {
+        peer_id: '12D3KooWFirst',
+        wallet_account_id: 'wallet-0',
+        wallet_account_label: 'Wallet 1',
+        xpub: 'xpub-first',
+        identity_public_key: '11'.repeat(33),
+        signing_public_key: 'aa'.repeat(32),
+        encryption_public_key: 'bb'.repeat(32),
+        signature: 'cc'.repeat(64),
+        signature_payload: 'payload-first',
+        signature_timestamp: 1778700000
+      }
+    })
+    expect(first.statusCode).toBe(200)
+    expect(first.json.status).toBe('updated')
+    expect(first.json.profile.peer_id).toBe('12D3KooWFirst')
+
+    const settingsWithSession = await requestJson(serveDesktopNodeIdentityAPI, 'GET', '/api/node/identity/settings')
+    expect(settingsWithSession.statusCode).toBe(200)
+    expect(settingsWithSession.json.session).toMatchObject({
+      unlocked: true,
+      profile: expect.objectContaining({
+        peer_id: '12D3KooWFirst',
+        signing_public_key: 'aa'.repeat(32)
+      })
+    })
+    expect(typeof settingsWithSession.json.session.expires_at).toBe('string')
+    expect(fs.readFileSync(path.join(userData, 'sdn-node-identity-session.json'), 'utf8')).toContain('12D3KooWFirst')
+
+    const session = await requestJson(serveDesktopNodeIdentityAPI, 'GET', '/api/node/identity/session')
+    expect(session.statusCode).toBe(200)
+    expect(session.json).toMatchObject({ unlocked: true })
+
+    const logout = await requestJson(serveDesktopNodeIdentityAPI, 'DELETE', '/api/node/identity/session')
+    expect(logout.statusCode).toBe(200)
+    expect(logout.json).toMatchObject({ unlocked: false })
+
+    const settingsAfterLogout = await requestJson(serveDesktopNodeIdentityAPI, 'GET', '/api/node/identity/settings')
+    expect(settingsAfterLogout.statusCode).toBe(200)
+    expect(settingsAfterLogout.json.session).toMatchObject({ unlocked: false })
+
+    const mismatch = await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/wallet', {
+      wallet_identity: {
+        peer_id: '12D3KooWSecond',
+        wallet_account_id: 'wallet-1',
+        wallet_account_label: 'Wallet 2',
+        xpub: 'xpub-second',
+        identity_public_key: '22'.repeat(33),
+        signing_public_key: 'dd'.repeat(32),
+        encryption_public_key: 'ee'.repeat(32),
+        signature: 'ff'.repeat(64),
+        signature_payload: 'payload-second',
+        signature_timestamp: 1778700001
+      }
+    })
+    expect(mismatch.statusCode).toBe(409)
+    expect(mismatch.json.status).toBe('mismatch')
+    expect(mismatch.json.current.peer_id).toBe('12D3KooWFirst')
+    expect(mismatch.json.proposed.peer_id).toBe('12D3KooWSecond')
+
+    const confirmed = await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/wallet', {
+      replace: true,
+      wallet_identity: {
+        peer_id: '12D3KooWSecond',
+        wallet_account_id: 'wallet-1',
+        wallet_account_label: 'Wallet 2',
+        xpub: 'xpub-second',
+        identity_public_key: '22'.repeat(33),
+        signing_public_key: 'dd'.repeat(32),
+        encryption_public_key: 'ee'.repeat(32),
+        signature: 'ff'.repeat(64),
+        signature_payload: 'payload-second',
+        signature_timestamp: 1778700001
+      }
+    })
+    expect(confirmed.statusCode).toBe(200)
+    expect(confirmed.json.status).toBe('updated')
+    expect(confirmed.json.profile.peer_id).toBe('12D3KooWSecond')
+  })
+
+  test('selects a FlatBuffer storage location through the desktop directory picker', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-flatbuffer-location-'))
+    const currentPath = path.join(userData, 'current-flatbuffers')
+    const selectedPath = path.join(userData, 'selected-flatbuffers')
+    const dialog = {
+      showOpenDialog: async (options) => {
+        expect(options).toMatchObject({
+          title: 'Select FlatBuffer storage location',
+          defaultPath: currentPath,
+          properties: ['openDirectory', 'createDirectory']
+        })
+        return { canceled: false, filePaths: [selectedPath] }
+      }
+    }
+    const { serveDesktopNodeIdentityAPI } = loadStaticServer(userData, { dialog })
+
+    const picked = await requestJson(serveDesktopNodeIdentityAPI, 'POST', '/api/node/identity/settings/flatbuffer-storage-location', {
+      current_path: currentPath
+    })
+
+    expect(picked.statusCode).toBe(200)
+    expect(picked.json).toEqual({
+      canceled: false,
+      path: selectedPath
+    })
+  })
+
+  test('stores FlatSQL persistence blobs inside the configured FlatBuffer storage directory', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-flatsql-persistence-'))
+    const storagePath = path.join(userData, 'flatbuffer-store')
+    const { serveDesktopNodeIdentityAPI, serveDesktopFlatSqlPersistenceAPI } = loadStaticServer(userData)
+
+    await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/settings', {
+      ttl_ms: 900000,
+      flatbuffer_storage_path: storagePath
+    })
+
+    const key = 'sdn-data:configured:space-data-network-02:OMM'
+    const encodedKey = encodeURIComponent(key)
+    const bytes = Buffer.from([1, 2, 3, 4, 5])
+    const saved = await requestRaw(
+      serveDesktopFlatSqlPersistenceAPI,
+      'PUT',
+      `/api/flatsql/persistence/${encodedKey}`,
+      bytes,
+      { 'content-type': 'application/octet-stream' }
+    )
+    expect(saved.statusCode).toBe(204)
+
+    const loaded = await requestRaw(serveDesktopFlatSqlPersistenceAPI, 'GET', `/api/flatsql/persistence/${encodedKey}`)
+    expect(loaded.statusCode).toBe(200)
+    expect(loaded.headers['Content-Type']).toBe('application/octet-stream')
+    expect(loaded.bodyBuffer).toEqual(bytes)
+
+    const files = fs.readdirSync(storagePath)
+    expect(files).toHaveLength(1)
+    expect(files[0]).toMatch(/^sdn-data_configured_space-data-network-02_OMM-[a-f0-9]{16}\.bin$/)
+
+    const deleted = await requestRaw(serveDesktopFlatSqlPersistenceAPI, 'DELETE', `/api/flatsql/persistence/${encodedKey}`)
+    expect(deleted.statusCode).toBe(204)
+    const missing = await requestRaw(serveDesktopFlatSqlPersistenceAPI, 'GET', `/api/flatsql/persistence/${encodedKey}`)
+    expect(missing.statusCode).toBe(404)
+  })
+
+  test('persists hd-wallet localStorage entries encrypted at rest for wallet remember flows', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-wallet-storage-'))
+    const { serveDesktopNodeIdentityAPI } = loadStaticServer(userData)
+
+    const saved = await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/wallet-storage', {
+      entries: {
+        wallet_storage_metadata: '{"method":"passkey","version":3}',
+        wallet_storage_encrypted: '{"ciphertext":"secret-wallet"}',
+        wallet_storage_passkey_credential: '{"id":"credential-id","hasPRF":true}',
+        'hd-wallet-wallets': '[{"id":0,"name":"Operations"}]',
+        'not-wallet-state': 'must-not-be-stored'
+      }
+    })
+    expect(saved.statusCode).toBe(200)
+    expect(saved.json.entries).toMatchObject({
+      wallet_storage_metadata: '{"method":"passkey","version":3}',
+      wallet_storage_encrypted: '{"ciphertext":"secret-wallet"}',
+      wallet_storage_passkey_credential: '{"id":"credential-id","hasPRF":true}',
+      'hd-wallet-wallets': '[{"id":0,"name":"Operations"}]'
+    })
+    expect(saved.json.entries['not-wallet-state']).toBeUndefined()
+    expect(saved.json.encrypted_at_rest).toBe(true)
+
+    const diskContents = fs.readdirSync(userData)
+      .map(name => fs.readFileSync(path.join(userData, name), 'utf8'))
+      .join('\n')
+    expect(diskContents).not.toContain('secret-wallet')
+    expect(diskContents).not.toContain('credential-id')
+    expect(diskContents).not.toContain('Operations')
+
+    const loaded = await requestJson(serveDesktopNodeIdentityAPI, 'GET', '/api/node/identity/wallet-storage')
+    expect(loaded.statusCode).toBe(200)
+    expect(loaded.json.entries).toMatchObject({
+      wallet_storage_metadata: '{"method":"passkey","version":3}',
+      wallet_storage_encrypted: '{"ciphertext":"secret-wallet"}',
+      wallet_storage_passkey_credential: '{"id":"credential-id","hasPRF":true}',
+      'hd-wallet-wallets': '[{"id":0,"name":"Operations"}]'
+    })
+
+    const removed = await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/wallet-storage', {
+      entries: {
+        wallet_storage_encrypted: null,
+        'hd-wallet-wallets': null
+      }
+    })
+    expect(removed.statusCode).toBe(200)
+    expect(removed.json.entries.wallet_storage_metadata).toBe('{"method":"passkey","version":3}')
+    expect(removed.json.entries.wallet_storage_encrypted).toBeUndefined()
+    expect(removed.json.entries['hd-wallet-wallets']).toBeUndefined()
+  })
+
+  test('detects wallet key replacement when the current EPM stores keys only in the EPM key vector', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-node-identity-key-vector-'))
+    const { serveDesktopNodeIdentityAPI, serveDesktopNodeEPMAPI } = loadStaticServer(userData)
+
+    const existing = await requestRaw(serveDesktopNodeEPMAPI, 'PUT', '/api/node/epm', JSON.stringify({
+      dn: 'Desktop Node',
+      peer_id: '12D3KooWCurrent',
+      keys: [
+        {
+          key_type: 'signing',
+          public_key: 'aa'.repeat(32)
+        },
+        {
+          key_type: 'encryption',
+          public_key: 'bb'.repeat(32)
+        }
+      ]
+    }))
+    expect(existing.statusCode).toBe(200)
+
+    const mismatch = await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/wallet', {
+      wallet_identity: {
+        peer_id: '12D3KooWReplacement',
+        identity_public_key: '22'.repeat(33),
+        signing_public_key: 'cc'.repeat(32),
+        encryption_public_key: 'dd'.repeat(32),
+        signature: 'ee'.repeat(64),
+        signature_payload: 'payload-replacement',
+        signature_timestamp: 1778700002
+      }
+    })
+    expect(mismatch.statusCode).toBe(409)
+    expect(mismatch.json.status).toBe('mismatch')
+    expect(mismatch.json.current.signing_public_key).toBe('aa'.repeat(32))
+    expect(mismatch.json.proposed.signing_public_key).toBe('cc'.repeat(32))
+  })
+
+  test('writes wallet public keys and signatures into the local node EPM FlatBuffer', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-node-identity-epm-'))
+    const { serveDesktopNodeIdentityAPI, serveDesktopNodeEPMAPI } = loadStaticServer(userData)
+
+    await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/wallet', {
+      wallet_identity: {
+        peer_id: '12D3KooWWalletEpm',
+        wallet_account_id: 'wallet-0',
+        wallet_account_label: 'Wallet 1',
+        xpub: 'xpub-wallet',
+        identity_public_key: '11'.repeat(33),
+        signing_public_key: 'aa'.repeat(32),
+        encryption_public_key: 'bb'.repeat(32),
+        signature: 'cc'.repeat(64),
+        signature_payload: 'payload',
+        signature_timestamp: 1778700000,
+        private_key: 'must-not-be-written',
+        xpriv: 'must-not-be-written'
+      }
+    })
+
+    const raw = await requestRaw(serveDesktopNodeEPMAPI, 'GET', '/api/node/epm')
+    expect(raw.statusCode).toBe(200)
+
+    const flatbuffers = await import('flatbuffers')
+    const { EPM } = await import('spacedatastandards.org/lib/js/EPM/EPM.js')
+    const { KeyType } = await import('spacedatastandards.org/lib/js/EPM/KeyType.js')
+    const epm = EPM.getSizePrefixedRootAsEPM(new flatbuffers.ByteBuffer(new Uint8Array(raw.bodyBuffer)))
+    expect(epm.keysLength()).toBe(2)
+    expect(epm.KEYS(0).KEY_TYPE()).toBe(KeyType.Signing)
+    expect(epm.KEYS(0).PUBLIC_KEY()).toBe('aa'.repeat(32))
+    expect(epm.KEYS(0).PRIVATE_KEY()).toBeNull()
+    expect(epm.KEYS(0).XPRIV()).toBeNull()
+    expect(epm.KEYS(1).KEY_TYPE()).toBe(KeyType.Encryption)
+    expect(epm.KEYS(1).PUBLIC_KEY()).toBe('bb'.repeat(32))
+    expect(epm.SIGNATURE()).toBe('cc'.repeat(64))
+    expect(epm.SIGNATURE_TIMESTAMP()).toBe(1778700000n)
+    expect(raw.body).not.toContain('must-not-be-written')
+  })
+
   test('serves local node EPM through desktop raw data query routes', async () => {
     const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-local-data-api-'))
     const { serveDesktopLocalDataAPI, serveDesktopNodeEPMAPI } = loadStaticServer(userData)
@@ -196,10 +487,10 @@ test.describe('desktop static identity API', () => {
       metadata: expect.objectContaining({
         peer_id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
         provider_id: 'space-data-network-02',
-        source_name: 'celestrak-gp',
         sync_protocol: '/space-data-network/flatsql-sync/1.0.0'
       })
     }))
+    expect(celestrak.metadata.source_name).toBeUndefined()
     expect(celestrak.metadata.admin_proxy_path).toBeUndefined()
   })
 
@@ -266,10 +557,9 @@ test.describe('desktop static identity API', () => {
       })
     ]))
   })
-
 })
 
-function loadStaticServer (userData) {
+function loadStaticServer (userData, overrides = {}) {
   const app = {
     getPath: (name) => {
       if (name === 'userData') return userData
@@ -277,8 +567,17 @@ function loadStaticServer (userData) {
     },
     getAppPath: () => path.join(__dirname, '../..')
   }
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => Buffer.from(`sealed:${value}`, 'utf8'),
+    decryptString: (buffer) => {
+      const value = Buffer.from(buffer).toString('utf8')
+      if (!value.startsWith('sealed:')) throw new Error('invalid safeStorage payload')
+      return value.slice('sealed:'.length)
+    }
+  }
   return proxyquire('../../src/static-http-server', {
-    electron: { app },
+    electron: { app, safeStorage, ...overrides },
     './common/logger': {
       error: () => {},
       warn: () => {},

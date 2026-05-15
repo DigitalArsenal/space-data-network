@@ -13,11 +13,15 @@ export interface LocalFlatSqlSchema {
 export interface LocalFlatSqlStoreOptions {
   schemas: LocalFlatSqlSchema[];
   persistenceKey?: string | null;
+  desktopPersistenceBaseUrl?: string | null;
+  fetch?: FetchLike | null;
 }
 
 export interface ClearLocalFlatSqlStoreOptions {
   persistenceKey: string;
   standardIds: string[];
+  desktopPersistenceBaseUrl?: string | null;
+  fetch?: FetchLike | null;
 }
 
 export interface LocalFlatSqlQueryResult {
@@ -61,6 +65,7 @@ export interface LocalFlatSqlPinLedgerEntry {
   byteCount?: number | null;
   ttlSeconds?: number | null;
   verificationState: string;
+  materializedAt?: string | null;
   verifiedAt?: string | null;
   updatedAt?: string | null;
 }
@@ -123,6 +128,17 @@ interface StandardDatabaseState {
   dirty: boolean;
 }
 
+type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+interface LocalFlatSqlPersistenceStore {
+  readonly available: boolean;
+  readBytes(key: string): Promise<Uint8Array | null>;
+  writeBytes(key: string, bytes: Uint8Array): Promise<void>;
+  readJson(key: string): Promise<unknown>;
+  writeJson(key: string, value: unknown): Promise<void>;
+  deleteKey(key: string): Promise<void>;
+}
+
 const LOCAL_FLATSQL_DB_NAME = 'sdn-local-flatsql';
 const LOCAL_FLATSQL_STORE_NAME = 'datastores';
 
@@ -130,66 +146,56 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
   const { initFlatSQL } = await import('flatsql/wasm');
   const flatsql = await initFlatSQL({ skipIntegrityCheck: true });
   const states = new Map<string, StandardDatabaseState>();
+  const persistenceStore = createLocalFlatSqlPersistenceStore(options);
 
   for (const schema of options.schemas) {
     const standardId = normalizeStandardId(schema.standardId);
     const db = flatsql.createDatabase(stripFlatBufferComments(schema.schema), `sdn-${standardId.toLowerCase()}`);
     db.registerFileId(schema.fileId, schema.tableName);
     const persisted = options.persistenceKey
-      ? await readPersistedFlatSqlBytes(persistedStandardKey(options.persistenceKey, standardId))
+      ? await readPersistedFlatSqlBytes(persistenceStore, persistedStandardKey(options.persistenceKey, standardId))
       : null;
     if (persisted && persisted.byteLength > 0) {
       db.loadAndRebuild(persisted);
     }
     const ingestedKeys = options.persistenceKey
-      ? await readPersistedRecordKeys(persistedRecordKey(options.persistenceKey, standardId))
+      ? await readPersistedRecordKeys(persistenceStore, persistedRecordKey(options.persistenceKey, standardId))
       : new Set<string>();
+    const persistedRecordCount = Number(db.getStats().find((entry) => entry.tableName === schema.tableName)?.recordCount ?? 0);
+    const repairedIngestedKeys = ingestedKeys.size > persistedRecordCount
+      ? new Set<string>()
+      : ingestedKeys;
     states.set(standardId, {
       schema: { ...schema, standardId },
       db,
-      ingestedKeys,
+      ingestedKeys: repairedIngestedKeys,
       cachedBytes: persisted?.byteLength ?? 0,
-      dirty: false,
+      dirty: repairedIngestedKeys !== ingestedKeys,
     });
   }
 
   const pinLedger = options.persistenceKey
-    ? await readPersistedPinLedgerEntries(persistedPinLedgerKey(options.persistenceKey))
+    ? await readPersistedPinLedgerEntries(persistenceStore, persistedPinLedgerKey(options.persistenceKey))
     : new Map<string, LocalFlatSqlPinLedgerEntry>();
-  return new WasmLocalFlatSqlStore(states, options.persistenceKey ?? null, pinLedger);
+  return new WasmLocalFlatSqlStore(states, options.persistenceKey ?? null, pinLedger, persistenceStore);
 }
 
 export async function clearLocalFlatSqlStore(options: ClearLocalFlatSqlStoreOptions): Promise<void> {
   const persistenceKey = options.persistenceKey.trim();
   const standardIds = Array.from(new Set(options.standardIds.map(normalizeStandardId)));
-  if (!persistenceKey || standardIds.length === 0 || !hasIndexedDb()) return;
-  const db = await openLocalFlatSqlDb();
-  await new Promise<void>((resolve) => {
-    const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readwrite');
-    const store = transaction.objectStore(LOCAL_FLATSQL_STORE_NAME);
-    for (const standardId of standardIds) {
-      store.delete(persistedStandardKey(persistenceKey, standardId));
-      store.delete(persistedRecordKey(persistenceKey, standardId));
-    }
-    const ledgerRequest = store.get(persistedPinLedgerKey(persistenceKey));
-    ledgerRequest.onsuccess = () => {
-      const entries = normalizePersistedPinLedgerEntries(ledgerRequest.result)
-        .filter((entry) => !standardIds.includes(normalizeStandardId(entry.standardId || entry.schemaName)));
-      if (entries.length > 0) {
-        store.put(entries, persistedPinLedgerKey(persistenceKey));
-      } else {
-        store.delete(persistedPinLedgerKey(persistenceKey));
-      }
-    };
-    transaction.oncomplete = () => {
-      db.close();
-      resolve();
-    };
-    transaction.onerror = () => {
-      db.close();
-      resolve();
-    };
-  });
+  const persistenceStore = createLocalFlatSqlPersistenceStore(options);
+  if (!persistenceKey || standardIds.length === 0 || !persistenceStore.available) return;
+  for (const standardId of standardIds) {
+    await persistenceStore.deleteKey(persistedStandardKey(persistenceKey, standardId));
+    await persistenceStore.deleteKey(persistedRecordKey(persistenceKey, standardId));
+  }
+  const entries = normalizePersistedPinLedgerEntries(await persistenceStore.readJson(persistedPinLedgerKey(persistenceKey)))
+    .filter((entry) => !standardIds.includes(normalizeStandardId(entry.standardId || entry.schemaName)));
+  if (entries.length > 0) {
+    await persistenceStore.writeJson(persistedPinLedgerKey(persistenceKey), entries);
+  } else {
+    await persistenceStore.deleteKey(persistedPinLedgerKey(persistenceKey));
+  }
 }
 
 export function stripSdnFlatBufferSizePrefix(bytes: Uint8Array): Uint8Array {
@@ -212,6 +218,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     private readonly states: Map<string, StandardDatabaseState>,
     private readonly persistenceKey: string | null,
     private readonly pinLedger: Map<string, LocalFlatSqlPinLedgerEntry>,
+    private readonly persistenceStore: LocalFlatSqlPersistenceStore,
   ) {}
 
   async ingestRecords(
@@ -226,8 +233,10 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     const buffers = recordsWithBytes.map((record) => stripSdnFlatBufferSizePrefix(record.dataBytes as Uint8Array));
     if (buffers.length === 0) return 0;
 
-    const count = state.db.ingestBuffers(buffers);
-    for (const record of recordsWithBytes) state.ingestedKeys.add(recordIngestKey(record));
+    const beforeRecordCount = recordCountForState(state);
+    state.db.ingestBuffers(buffers);
+    const count = Math.max(0, recordCountForState(state) - beforeRecordCount);
+    for (const record of recordsWithBytes.slice(0, count)) state.ingestedKeys.add(recordIngestKey(record));
     state.dirty = true;
     if (options.persist !== false) await this.persistStandard(state);
     return count;
@@ -240,9 +249,6 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
   ): Promise<number> {
     const state = this.stateForStandard(standardId);
     const streamInfo = flatSqlSizePrefixedStreamInfo(streamBytes, options?.skipRecords ?? 0);
-    if (options?.pinLedgerEntries?.length) {
-      await this.recordPinLedgerEntries(options.pinLedgerEntries);
-    }
     if (streamInfo.ingestRecordCount === 0) return 0;
 
     const keyOffset = Math.max(0, options?.recordKeyOffset ?? options?.skipRecords ?? 0);
@@ -252,19 +258,28 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
       keyOffset,
       options,
     );
+    const trustOrderedPublishedOffsets = isOrderedPublishedShardIngest(options);
     if (
       directRecordKeys &&
       streamInfo.allFramesHaveDirectFileIdentifier &&
-      directRecordKeys.every((key) => !state.ingestedKeys.has(key))
+      (
+        trustOrderedPublishedOffsets ||
+        directRecordKeys.every((key) => !state.ingestedKeys.has(key))
+      )
     ) {
       const directStreamBytes = streamInfo.ingestStartOffset === 0
         ? streamBytes
-        : streamBytes.subarray(streamInfo.ingestStartOffset);
-      const directIngestCount = state.db.ingest(directStreamBytes);
+        : streamBytes.slice(streamInfo.ingestStartOffset);
+      const beforeRecordCount = recordCountForState(state);
+      state.db.ingest(directStreamBytes);
+      const directIngestCount = Math.max(0, recordCountForState(state) - beforeRecordCount);
       for (const key of directRecordKeys.slice(0, Math.max(0, directIngestCount))) {
         state.ingestedKeys.add(key);
       }
       state.dirty = true;
+      if (directIngestCount > 0 && options?.pinLedgerEntries?.length) {
+        await this.recordPinLedgerEntries(options.pinLedgerEntries);
+      }
       if (options?.persist !== false) await this.persistStandard(state);
       return directIngestCount;
     }
@@ -274,14 +289,21 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
       buffer,
       key: flatSqlStreamRecordKey(standardId, buffer, index + keyOffset, options),
     }));
-    const nextRecords = candidates.filter((entry) => !state.ingestedKeys.has(entry.key));
+    const nextRecords = trustOrderedPublishedOffsets
+      ? candidates
+      : candidates.filter((entry) => !state.ingestedKeys.has(entry.key));
     if (nextRecords.length === 0) return 0;
 
+    const beforeRecordCount = recordCountForState(state);
     state.db.ingestBuffers(nextRecords.map((entry) => stripSdnFlatBufferSizePrefix(entry.buffer)));
-    for (const entry of nextRecords) state.ingestedKeys.add(entry.key);
+    const ingestedCount = Math.max(0, recordCountForState(state) - beforeRecordCount);
+    for (const entry of nextRecords.slice(0, ingestedCount)) state.ingestedKeys.add(entry.key);
     state.dirty = true;
+    if (ingestedCount > 0 && options?.pinLedgerEntries?.length) {
+      await this.recordPinLedgerEntries(options.pinLedgerEntries);
+    }
     if (options?.persist !== false) await this.persistStandard(state);
-    return nextRecords.length;
+    return ingestedCount;
   }
 
   async flush(standardId?: string): Promise<void> {
@@ -374,13 +396,13 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     state.cachedBytes = bytes.byteLength;
     state.dirty = false;
     if (!this.persistenceKey) return;
-    await writePersistedFlatSqlBytes(persistedStandardKey(this.persistenceKey, state.schema.standardId), bytes);
-    await writePersistedRecordKeys(persistedRecordKey(this.persistenceKey, state.schema.standardId), state.ingestedKeys);
+    await writePersistedFlatSqlBytes(this.persistenceStore, persistedStandardKey(this.persistenceKey, state.schema.standardId), bytes);
+    await writePersistedRecordKeys(this.persistenceStore, persistedRecordKey(this.persistenceKey, state.schema.standardId), state.ingestedKeys);
   }
 
   private async persistPinLedger(): Promise<void> {
     if (!this.persistenceKey) return;
-    await writePersistedPinLedgerEntries(persistedPinLedgerKey(this.persistenceKey), Array.from(this.pinLedger.values()));
+    await writePersistedPinLedgerEntries(this.persistenceStore, persistedPinLedgerKey(this.persistenceKey), Array.from(this.pinLedger.values()));
   }
 
   private cachedBytesForState(state: StandardDatabaseState, includeCachedBytes: boolean): number {
@@ -398,10 +420,11 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
       if (normalizeStandardId(entry.standardId || entry.schemaName) !== normalizedStandardId) continue;
       if ((entry.role ?? '').trim() !== 'shard') continue;
       if ((entry.verificationState ?? '').trim() !== 'verified') continue;
+      if (!entry.materializedAt?.trim()) continue;
       pinnedRows += Math.max(0, entry.rowCount ?? 0);
       pinnedBytes += Math.max(0, entry.byteCount ?? 0);
-      const entryTime = entry.verifiedAt || entry.updatedAt || '';
-      const latestTime = latest?.verifiedAt || latest?.updatedAt || '';
+      const entryTime = entry.materializedAt || entry.verifiedAt || entry.updatedAt || '';
+      const latestTime = latest?.materializedAt || latest?.verifiedAt || latest?.updatedAt || '';
       if (!latest || entryTime.localeCompare(latestTime) > 0) latest = entry;
     }
     return {
@@ -410,13 +433,17 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
       snapshotId: latest?.snapshotId || null,
       head: latest?.head || null,
       highWaterMark: latest?.highWaterMark || null,
-      lastSyncedAt: latest?.verifiedAt || latest?.updatedAt || null,
+      lastSyncedAt: latest?.materializedAt || latest?.verifiedAt || latest?.updatedAt || null,
     };
   }
 }
 
 export function isReadOnlyFlatSqlQuery(sql: string): boolean {
   return validateReadOnlySql(sql).ok;
+}
+
+function recordCountForState(state: StandardDatabaseState): number {
+  return Number(state.db.getStats().find((entry) => entry.tableName === state.schema.tableName)?.recordCount ?? 0);
 }
 
 function stripFlatBufferComments(schema: string): string {
@@ -543,6 +570,10 @@ function directFlatSqlStreamRecordKeys(
   return Array.from({ length: recordCount }, (_, index) => `${normalizedStandardId}|${prefix}|${index + keyOffset}`);
 }
 
+function isOrderedPublishedShardIngest(options: LocalFlatSqlStreamIngestOptions | null): boolean {
+  return Boolean(options?.recordKeyPrefix?.trim().startsWith('published:'));
+}
+
 function flatSqlStreamRecordKey(
   standardId: string,
   buffer: Uint8Array,
@@ -642,6 +673,7 @@ function normalizePinLedgerEntry(candidate: LocalFlatSqlPinLedgerEntry): LocalFl
     byteCount: normalizedOptionalNumber(candidate.byteCount),
     ttlSeconds: normalizedOptionalNumber(candidate.ttlSeconds),
     verificationState: trimmed(candidate.verificationState),
+    materializedAt: trimmed(candidate.materializedAt),
     verifiedAt: trimmed(candidate.verifiedAt),
     updatedAt,
   };
@@ -710,123 +742,179 @@ function matchesOptional(value: string | null | undefined, queryValue: string | 
   return !queryValue || (value ?? '') === queryValue;
 }
 
-async function readPersistedFlatSqlBytes(key: string): Promise<Uint8Array | null> {
-  if (!hasIndexedDb()) return null;
-  const db = await openLocalFlatSqlDb();
-  return new Promise((resolve) => {
-    const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readonly');
-    const request = transaction.objectStore(LOCAL_FLATSQL_STORE_NAME).get(key);
-    request.onerror = () => resolve(null);
-    request.onsuccess = () => {
-      const value = request.result;
-      if (value instanceof ArrayBuffer) {
-        resolve(new Uint8Array(value));
-        return;
+function createLocalFlatSqlPersistenceStore(options: Pick<LocalFlatSqlStoreOptions, 'desktopPersistenceBaseUrl' | 'fetch'>): LocalFlatSqlPersistenceStore {
+  const desktopBaseUrl = options.desktopPersistenceBaseUrl?.trim();
+  const fetchLike = options.fetch ?? (typeof fetch !== 'undefined' ? fetch.bind(globalThis) : null);
+  if (desktopBaseUrl && fetchLike) {
+    return new DesktopFlatSqlPersistenceStore(desktopBaseUrl, fetchLike);
+  }
+  return new IndexedDbFlatSqlPersistenceStore();
+}
+
+class DesktopFlatSqlPersistenceStore implements LocalFlatSqlPersistenceStore {
+  readonly available = true;
+  private readonly endpoint: string;
+
+  constructor(baseUrl: string, private readonly fetchLike: FetchLike) {
+    this.endpoint = desktopFlatSqlPersistenceEndpoint(baseUrl);
+  }
+
+  async readBytes(key: string): Promise<Uint8Array | null> {
+    const response = await this.fetchLike(this.urlFor(key), { method: 'GET' });
+    if (response.status === 404) return null;
+    if (!response.ok) return null;
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  async writeBytes(key: string, bytes: Uint8Array): Promise<void> {
+    const response = await this.fetchLike(this.urlFor(key), {
+      method: 'PUT',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: bytes.slice(),
+    });
+    if (!response.ok) throw new Error(`FlatSQL desktop persistence write failed with HTTP ${response.status}`);
+  }
+
+  async readJson(key: string): Promise<unknown> {
+    const bytes = await this.readBytes(key);
+    if (!bytes) return null;
+    try {
+      return JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      return null;
+    }
+  }
+
+  async writeJson(key: string, value: unknown): Promise<void> {
+    await this.writeBytes(key, new TextEncoder().encode(JSON.stringify(value)));
+  }
+
+  async deleteKey(key: string): Promise<void> {
+    const response = await this.fetchLike(this.urlFor(key), { method: 'DELETE' });
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`FlatSQL desktop persistence delete failed with HTTP ${response.status}`);
+    }
+  }
+
+  private urlFor(key: string): string {
+    return `${this.endpoint}/${encodeURIComponent(key)}`;
+  }
+}
+
+class IndexedDbFlatSqlPersistenceStore implements LocalFlatSqlPersistenceStore {
+  readonly available = hasIndexedDb();
+
+  async readBytes(key: string): Promise<Uint8Array | null> {
+    const value = await this.readValue(key);
+    if (value instanceof ArrayBuffer) return new Uint8Array(value);
+    if (value instanceof Uint8Array) return value;
+    return null;
+  }
+
+  async writeBytes(key: string, bytes: Uint8Array): Promise<void> {
+    await this.writeValue(key, bytes.slice().buffer);
+  }
+
+  async readJson(key: string): Promise<unknown> {
+    const value = await this.readValue(key);
+    if (value instanceof ArrayBuffer || value instanceof Uint8Array) {
+      const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+      try {
+        return JSON.parse(new TextDecoder().decode(bytes));
+      } catch {
+        return null;
       }
-      if (value instanceof Uint8Array) {
-        resolve(value);
-        return;
-      }
-      resolve(null);
-    };
-    transaction.oncomplete = () => db.close();
-    transaction.onerror = () => {
-      db.close();
-      resolve(null);
-    };
-  });
+    }
+    return value;
+  }
+
+  async writeJson(key: string, value: unknown): Promise<void> {
+    await this.writeValue(key, value);
+  }
+
+  async deleteKey(key: string): Promise<void> {
+    if (!this.available) return;
+    const db = await openLocalFlatSqlDb();
+    await new Promise<void>((resolve) => {
+      const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readwrite');
+      transaction.objectStore(LOCAL_FLATSQL_STORE_NAME).delete(key);
+      transaction.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      transaction.onerror = () => {
+        db.close();
+        resolve();
+      };
+    });
+  }
+
+  private async readValue(key: string): Promise<unknown> {
+    if (!this.available) return null;
+    const db = await openLocalFlatSqlDb();
+    return await new Promise((resolve) => {
+      const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readonly');
+      const request = transaction.objectStore(LOCAL_FLATSQL_STORE_NAME).get(key);
+      request.onerror = () => resolve(null);
+      request.onsuccess = () => resolve(request.result ?? null);
+      transaction.oncomplete = () => db.close();
+      transaction.onerror = () => {
+        db.close();
+        resolve(null);
+      };
+    });
+  }
+
+  private async writeValue(key: string, value: unknown): Promise<void> {
+    if (!this.available) return;
+    const db = await openLocalFlatSqlDb();
+    await new Promise<void>((resolve) => {
+      const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readwrite');
+      transaction.objectStore(LOCAL_FLATSQL_STORE_NAME).put(value, key);
+      transaction.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      transaction.onerror = () => {
+        db.close();
+        resolve();
+      };
+    });
+  }
 }
 
-async function writePersistedFlatSqlBytes(key: string, bytes: Uint8Array): Promise<void> {
-  if (!hasIndexedDb()) return;
-  const db = await openLocalFlatSqlDb();
-  await new Promise<void>((resolve) => {
-    const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readwrite');
-    transaction.objectStore(LOCAL_FLATSQL_STORE_NAME).put(bytes.slice().buffer, key);
-    transaction.oncomplete = () => {
-      db.close();
-      resolve();
-    };
-    transaction.onerror = () => {
-      db.close();
-      resolve();
-    };
-  });
+function desktopFlatSqlPersistenceEndpoint(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, '');
+  return trimmed.endsWith('/api/flatsql/persistence') ? trimmed : `${trimmed}/api/flatsql/persistence`;
 }
 
-async function readPersistedRecordKeys(key: string): Promise<Set<string>> {
-  if (!hasIndexedDb()) return new Set();
-  const db = await openLocalFlatSqlDb();
-  return new Promise((resolve) => {
-    const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readonly');
-    const request = transaction.objectStore(LOCAL_FLATSQL_STORE_NAME).get(key);
-    request.onerror = () => resolve(new Set());
-    request.onsuccess = () => {
-      const value = request.result;
-      resolve(new Set(Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : []));
-    };
-    transaction.oncomplete = () => db.close();
-    transaction.onerror = () => {
-      db.close();
-      resolve(new Set());
-    };
-  });
+async function readPersistedFlatSqlBytes(store: LocalFlatSqlPersistenceStore, key: string): Promise<Uint8Array | null> {
+  return store.readBytes(key);
 }
 
-async function writePersistedRecordKeys(key: string, keys: Set<string>): Promise<void> {
-  if (!hasIndexedDb()) return;
-  const db = await openLocalFlatSqlDb();
-  await new Promise<void>((resolve) => {
-    const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readwrite');
-    transaction.objectStore(LOCAL_FLATSQL_STORE_NAME).put(Array.from(keys), key);
-    transaction.oncomplete = () => {
-      db.close();
-      resolve();
-    };
-    transaction.onerror = () => {
-      db.close();
-      resolve();
-    };
-  });
+async function writePersistedFlatSqlBytes(store: LocalFlatSqlPersistenceStore, key: string, bytes: Uint8Array): Promise<void> {
+  await store.writeBytes(key, bytes);
 }
 
-async function readPersistedPinLedgerEntries(key: string): Promise<Map<string, LocalFlatSqlPinLedgerEntry>> {
+async function readPersistedRecordKeys(store: LocalFlatSqlPersistenceStore, key: string): Promise<Set<string>> {
+  const value = await store.readJson(key);
+  return new Set(Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : []);
+}
+
+async function writePersistedRecordKeys(store: LocalFlatSqlPersistenceStore, key: string, keys: Set<string>): Promise<void> {
+  await store.writeJson(key, Array.from(keys));
+}
+
+async function readPersistedPinLedgerEntries(store: LocalFlatSqlPersistenceStore, key: string): Promise<Map<string, LocalFlatSqlPinLedgerEntry>> {
   const entries = new Map<string, LocalFlatSqlPinLedgerEntry>();
-  if (!hasIndexedDb()) return entries;
-  const db = await openLocalFlatSqlDb();
-  return await new Promise((resolve) => {
-    const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readonly');
-    const request = transaction.objectStore(LOCAL_FLATSQL_STORE_NAME).get(key);
-    request.onerror = () => resolve(entries);
-    request.onsuccess = () => {
-      for (const entry of normalizePersistedPinLedgerEntries(request.result)) {
-        entries.set(pinLedgerEntryKey(entry), entry);
-      }
-      resolve(entries);
-    };
-    transaction.oncomplete = () => db.close();
-    transaction.onerror = () => {
-      db.close();
-      resolve(entries);
-    };
-  });
+  for (const entry of normalizePersistedPinLedgerEntries(await store.readJson(key))) {
+    entries.set(pinLedgerEntryKey(entry), entry);
+  }
+  return entries;
 }
 
-async function writePersistedPinLedgerEntries(key: string, entries: LocalFlatSqlPinLedgerEntry[]): Promise<void> {
-  if (!hasIndexedDb()) return;
-  const db = await openLocalFlatSqlDb();
-  await new Promise<void>((resolve) => {
-    const transaction = db.transaction(LOCAL_FLATSQL_STORE_NAME, 'readwrite');
-    transaction.objectStore(LOCAL_FLATSQL_STORE_NAME).put(entries.map(normalizePinLedgerEntry), key);
-    transaction.oncomplete = () => {
-      db.close();
-      resolve();
-    };
-    transaction.onerror = () => {
-      db.close();
-      resolve();
-    };
-  });
+async function writePersistedPinLedgerEntries(store: LocalFlatSqlPersistenceStore, key: string, entries: LocalFlatSqlPinLedgerEntry[]): Promise<void> {
+  await store.writeJson(key, entries.map(normalizePinLedgerEntry));
 }
 
 function normalizePersistedPinLedgerEntries(value: unknown): LocalFlatSqlPinLedgerEntry[] {

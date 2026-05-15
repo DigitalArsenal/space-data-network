@@ -30,11 +30,95 @@ function expectSourceToContainAll(source: string, snippets: string[]): void {
 }
 
 describe('SDN identity Svelte source', () => {
+  it('wires wallet-gated node identity through the hd-wallet-ui login callback', () => {
+    const source = readUiSource('lib/node-identity-session.ts');
+    const walletRuntimeSource = readRuntimeSource('wallet-ui.ts');
+
+    expectSourceToContainAll(source, [
+      'export function createNodeIdentitySessionController',
+      'sessionExpiresAt',
+      'setTimeout',
+      'confirmNodeIdentityReplacement',
+      'logoutNodeIdentity',
+      'onLogin',
+      'openAccountAfterLogin: false',
+      'applyWalletNodeIdentity',
+      'signaturePayload',
+      'bytesToHex',
+    ]);
+    expect(source).not.toContain('wallet-active-select');
+    expect(source).not.toContain('querySelector');
+    expect(source).not.toContain('getElementById');
+    expect(walletRuntimeSource).not.toContain('sdn-wallet-shell');
+    expect(walletRuntimeSource).not.toContain('data-wallet-action');
+    expect(walletRuntimeSource).not.toContain('Open Login');
+    expect(walletRuntimeSource).not.toContain('Open Account');
+  });
+
+  it('renders a locked node identity gate, logout confirmation, and unlock duration settings', () => {
+    const appSource = readUiSource('App.svelte');
+    const nodeSource = readUiSource('screens/NodeScreen.svelte');
+    const topBarSource = readUiSource('components/TopStatusBar.svelte');
+    const identitySource = readUiSource('components/IdentityPanel.svelte');
+
+    expectSourceToContainAll(appSource, [
+      'createNodeIdentitySessionController',
+      'let nodeIdentityReady = false;',
+      'let nodeIdentityLocked = true;',
+      'let logoutConfirmOpen = false;',
+      'nodeIdentitySession.loadSettings().finally',
+      'nodeIdentityReady = true;',
+      'confirmNodeIdentityReplacement',
+      'nodeIdentitySession.logout()',
+      "window.location.hash = '#/node'",
+      'nodeIdentityLoginPromptKey += 1;',
+      'Are you sure you want to log out?',
+    ]);
+    expectSourceToContainAll(nodeSource, [
+      "import NodeIdentityGate from '../components/NodeIdentityGate.svelte'",
+      '<NodeIdentityGate',
+      '!nodeIdentityReady',
+      'nodeIdentityLocked',
+      'nodeIdentityLoginPromptKey',
+      'onUnlock',
+    ]);
+    const gateSource = readUiSource('components/NodeIdentityGate.svelte');
+    expect(gateSource).toContain('await controller.openLogin()');
+    expect(gateSource).toContain('loginPromptKey');
+    expect(gateSource).toContain('lastLoginPromptKey');
+    expect(gateSource).not.toContain('<article');
+    expect(gateSource).not.toContain('Unlock Node');
+    expect(gateSource).not.toContain('>Login</button>');
+    expectSourceToContainAll(topBarSource, [
+      'Logout',
+      'nodeIdentityLocked',
+      'logoutClick',
+    ]);
+    expectSourceToContainAll(identitySource, [
+      "type IdentityView = 'profile' | 'edit-profile' | 'hosted-epms' | 'keys-import' | 'security' | 'downloads' | 'settings'",
+      'Settings',
+      'Unlock duration',
+      'FlatBuffer data storage location',
+      'Use default',
+      'resetFlatbufferStorageLocation',
+      'flatbufferStoragePathValue',
+      'selectFlatbufferStorageLocation',
+      'browseFlatbufferStorageLocation',
+      'saveNodeIdentitySettings',
+      'nodeIdentityLocked',
+      'disabled={nodeIdentityLocked || !backend}',
+    ]);
+  });
+
   it('mounts the local users workspace from the node screen', () => {
     const source = readUiSource('screens/NodeScreen.svelte');
 
     expect(source).toContain("import IdentityPanel from '../components/IdentityPanel.svelte'");
     expect(source).toContain('<IdentityPanel');
+    expect(source).not.toContain('AdvancedDrawer');
+    expect(source).not.toContain('advancedOpen');
+    expect(source).not.toContain('Kubo Diagnostics');
+    expect(source).not.toMatch(/>\s*Advanced\s*<\/button>/);
     expect(source).not.toContain('MetricCard');
     expect(source).not.toContain('Runtime Mode');
     expect(source).not.toContain('Node Identity');
@@ -45,11 +129,11 @@ describe('SDN identity Svelte source', () => {
 
   it('exposes a breadcrumb identity workflow instead of one crowded all-controls tab', () => {
     const source = readUiSource('components/IdentityPanel.svelte');
+    const appCss = readUiSource('styles/app.css');
 
     expectSourceToContainAll(source, [
-      "type IdentityView = 'profile' | 'edit-profile' | 'hosted-epms' | 'keys-import' | 'security' | 'downloads'",
-      'sdn-breadcrumbs',
-      'Identity /',
+      "type IdentityView = 'profile' | 'edit-profile' | 'hosted-epms' | 'keys-import' | 'security' | 'downloads' | 'settings'",
+      'sdn-breadcrumb-tabs',
       'setView(',
       'Node Profile',
       'Edit Profile',
@@ -57,6 +141,7 @@ describe('SDN identity Svelte source', () => {
       'Keys / Import',
       'Security',
       'Downloads',
+      'Settings',
       'backend.saveHostedEpm',
       'backend.saveNodeProfile',
       'backend.importHostedEpm',
@@ -78,10 +163,13 @@ describe('SDN identity Svelte source', () => {
     ]);
     expect(source).toContain('publicKeyEmailAddress');
     expect(source).toContain('spacedatanetwork.org');
-    expect(source).toContain("profile: 'Node Profile'");
-    expect(source).toContain('<button type="button" class:active={view === \'profile\'} on:click={() => setView(\'profile\')}>Node Profile</button>');
-    expect(source).toContain("'hosted-epms': 'Local Users'");
-    expect(source).toContain('<button type="button" class:active={view === \'hosted-epms\'} on:click={() => setView(\'hosted-epms\')}>Local Users</button>');
+    expect(source).toContain('<nav class="sdn-view-nav sdn-breadcrumb-tabs" aria-label="Identity sections">');
+    expect(source).toContain('<button type="button" class:active={view === \'profile\'} aria-current={view === \'profile\' ? \'page\' : undefined} on:click={() => setView(\'profile\')}>Node Profile</button>');
+    expect(source).toContain('<button type="button" class:active={view === \'hosted-epms\'} aria-current={view === \'hosted-epms\' ? \'page\' : undefined} on:click={() => setView(\'hosted-epms\')}>Local Users</button>');
+    expect(source).not.toContain('Identity /');
+    expect(source).not.toContain('aria-label="Identity breadcrumbs"');
+    expect(appCss).toMatch(/\.sdn-breadcrumb-tabs\s*{[^}]*border:\s*0/s);
+    expect(appCss).toMatch(/\.sdn-breadcrumb-tabs button\.active\s*{[^}]*color:\s*var\(--sdn-blue\)/s);
     expect(source).not.toContain('Hosted EPMs');
     expect(source).not.toMatch(/Claim EPM|Claim started|Claiming/i);
 
@@ -103,6 +191,17 @@ describe('SDN identity Svelte source', () => {
     expect(source).not.toContain("{ key: 'signing_public_key'");
     expect(source).not.toContain("{ key: 'encryption_public_key'");
     expect(source).not.toContain("{ key: 'multiformat_address'");
+  });
+
+  it('keeps only the edit action on the node profile card', () => {
+    const source = readUiSource('components/IdentityPanel.svelte');
+    const profileView = source.slice(source.indexOf("{#if view === 'profile'}"), source.indexOf("{:else if view === 'edit-profile'}"));
+
+    expect(profileView).toContain('<button class="sdn-button" type="button" on:click={() => setView(\'edit-profile\')} disabled={nodeIdentityLocked || !backend}>Edit Profile</button>');
+    expect(profileView).not.toContain("setView('hosted-epms')");
+    expect(profileView).not.toContain("setView('keys-import')");
+    expect(profileView).not.toContain("setView('security')");
+    expect(profileView).not.toContain("setView('downloads')");
   });
 
   it('does not render extraneous identity type tags', () => {
@@ -265,6 +364,23 @@ describe('SDN data Svelte source', () => {
       'subscribedStandardOptions',
       'handleExplorerSourceChange',
       'handleExplorerStandardChange',
+      'explorerSearchMode',
+      'handleExplorerSearchInput',
+      'handleExplorerSearchSubmit',
+      'localExplorerResult',
+      'localExplorerFilteredTotalRows',
+      'localExplorerDatasetQueryActive',
+      'explorerPageTotalRows = explorerSearchMode === \'plain\' && (localExplorerResult || localExplorerDatasetQueryActive) ? localExplorerTotalRows : estimatedTotalRows',
+      'runLocalExplorerQuery',
+      'scheduleLocalExplorerQuery',
+      'buildLocalDataExplorerQuery',
+      'localDataExplorerSearchColumns',
+      'localDataExplorerCountFromResult',
+      'withUiTimeout',
+      'columnFilters',
+      'handleColumnFilterInput',
+      'columnFilterPlaceholder',
+      'isNumericDataExplorerColumn',
       'sortableHeader',
       'filteredRows',
       'visibleRows',
@@ -273,17 +389,16 @@ describe('SDN data Svelte source', () => {
       'EPM_STANDARD_COLUMNS',
       'OMM_STANDARD_COLUMNS',
       'decodeWorkbenchRecord',
+      'decodeCatFlatBuffer',
       'decodeEpmFlatBuffer',
       'decodeOmmFlatBuffer',
-      'columnMenuOpen',
-      'toggleColumn',
-      'Columns',
       'sortColumn',
       'sortDirection',
       'Source',
-      'Standard',
+      'Data type',
+      'Master search',
+      'Plaintext',
       'SQL',
-      'Run SQL',
       'createWorkerLocalFlatSqlStore',
       'getRemoteDataSummary',
       'queryRemotePage',
@@ -294,11 +409,11 @@ describe('SDN data Svelte source', () => {
       'boundedWireSpeedUtilization(nextProgress.wireSpeedUtilization)',
       'Download',
       'backendConfigForDataSource',
-      'sourceName: configuredSourceNameFromSource(source)',
-      'artifactPeerAddrsForDataSource(source)',
-      'artifactPeerAddrsForObservedPeers(peers)',
-      'artifactPeerAddrsForTrustedPeers(trustedPeers)',
-      'prioritizeIpfsArtifactPeerAddrs(',
+      'publishedShardSourcesForDataSource',
+      'publishedShardSources:',
+      'const sourceName = feedIdentity?.sourceName ?? null',
+      'isFlatSqlSyncTransportAddr',
+      "'/webrtc-direct/'",
       'clearLocalFlatSqlStore',
       'ingestDownloadedRecords',
       'loadDataDirectoryState',
@@ -306,13 +421,21 @@ describe('SDN data Svelte source', () => {
       'updateDataFeedSubscription',
       'persistDataDirectoryState',
       'schemaSyncRows = buildSubscribedSchemaSyncRows',
+      'publishedSnapshotTotalRows',
+      'const rowCountRemoteRows = publishedSnapshotTotalRows ?? remoteRows',
+      'remoteRowsForSchemaSyncRow(subscription, progress)',
+      'schemaRowsCountLabel(schema)',
+      'schemaPinnedRowsLabel(schema)',
+      'schemaCachedBytesLabel(schema)',
+      'schemaProgressLabel(schema)',
+      'standardOptionLabel(standard)',
       'syncSelectedStandardWithSubscriptions(schemaSyncRows)',
       'scheduleSubscribedSchemaSyncs(schemaSyncRows)',
       'beginResetSubscriptionData',
       'confirmResetSubscriptionData',
       'Reset row',
       'Type RESET to clear',
-      'Next sync attempt',
+      'Next {nextSyncAttemptLabel(schema)}',
       'nextSyncAttemptLabel',
       'retrySubscriptionSync',
       'aria-label={`${schema.id} retry sync`}',
@@ -324,20 +447,35 @@ describe('SDN data Svelte source', () => {
       'handleSubscriptionFilterInput',
       'handleSubscriptionStorageCapInput',
       'handleSubscriptionStorageUnitChange',
-      "type DataSection = 'storage' | 'subscriptions' | 'explorer'",
+      'pinVerifyToast',
+      'showPinVerifyToast',
+      'dismissPinVerifyToast',
+      'aria-label="Dismiss verification toast"',
+      "type DataSection = 'overview' | 'catalog' | 'subscriptions' | 'sources' | 'message-types' | 'storage' | 'billing' | 'activity' | 'explorer'",
+      'buildDataCatalogRows',
+      'buildDataOverviewVisuals',
+      'overviewStorageGroup',
+      'STORAGE_GROUP_OPTIONS',
+      'Storage by',
+      'summarizeDataCatalog',
       'DATA_SECTIONS',
-      "let selectedDataSection: DataSection = 'storage'",
+      "let selectedDataSection: DataSection = 'overview'",
       'setDataSection',
       'activeStorageRows',
       'selectedSchemaSyncRow',
       'refreshSubscriptionRemoteRowsFromSummary',
       'selectedSchemaSyncRow?.remoteRows',
+      'Data / Overview',
+      'Data / Catalog',
+      'Data / My Subscriptions',
+      'Data / Sources',
+      'Data / Message Types',
       'Data / Storage',
-      'Data / Sync Settings',
+      'Data / Billing',
+      'Data / Activity',
       'Data / Explorer',
-      'Sync settings',
+      'My Subscriptions',
       'INTERNAL_SQL_COLUMN_KEYS',
-      'Page size',
       'Previous',
       'Next',
       'Message',
@@ -353,6 +491,13 @@ describe('SDN data Svelte source', () => {
       'Object name',
       'Object ID',
       'NORAD catalog ID',
+      'CAT_STANDARD_COLUMNS',
+      'Period (min)',
+      'RCS (m^2)',
+      'Size (m)',
+      'Mass (kg)',
+      'SQL_COLUMN_LABELS',
+      'OPTIONAL_DEFAULT_VALUE_COLUMNS',
       'OBJECT_NAME',
       'NORAD_CAT_ID',
       'dataBytes',
@@ -360,6 +505,9 @@ describe('SDN data Svelte source', () => {
       'providerId',
       'sourceName',
     ]);
+    expect(source).not.toContain('gatewayUrl: localGatewayUrl()');
+    expect(source).not.toContain('ipfsApiUrl: localKuboApiUrl()');
+    expect(source).not.toContain('artifactPeerAddrsForDataSource(source)');
     const appSource = readUiSource('App.svelte');
     expectSourceToContainAll(appSource, [
       'let trustedPeers',
@@ -372,10 +520,8 @@ describe('SDN data Svelte source', () => {
     expect(source).not.toContain('selectDataSubview');
     expect(source).not.toContain('sdn-source-browser');
     expect(source).not.toContain('Data source</span>');
-    expect(source).not.toContain('Data sources');
     expect(source).not.toContain('Combined Storage / Subscriptions');
     expect(source).not.toContain('aria-label="Sync subscriptions"');
-    expect(source).not.toContain('<th>Provider</th>');
     expect(source).not.toContain('Reset local cache');
     expect(source).not.toContain('confirmResetLocalData');
     expect(source).not.toContain("label: 'Bytes'");
@@ -397,6 +543,7 @@ describe('SDN data Svelte source', () => {
     expect(source).not.toContain('Read raw');
     expect(source).not.toContain('Test EPM query');
     expect(source).not.toContain('>Query</button>');
+    expect(source).not.toContain('filterSqlRecordsByText(filterSqlRecordsByColumns(localExplorerRecords');
     expect(source).not.toContain('handleQueryProfileChange');
     expect(source).not.toContain('Query profile</span>');
     expect(source).not.toContain("label: 'Payload'");
@@ -406,6 +553,23 @@ describe('SDN data Svelte source', () => {
     expect(source).not.toContain('Standards type');
     expect(source).toContain("if (!value) return '';");
     expect(source).not.toContain("if (!value) return 'pending';");
+    expect(source).toContain('void initializeWorkbench();');
+    expect(source).not.toContain('await initializeWorkbench();');
+    expect(source).not.toContain('filteredSubscribedSourceOptions');
+    expect(source).not.toContain('explorerSourceSearchText');
+    expect(source).not.toContain('handleExplorerSourceSearchInput');
+    expect(source).not.toContain('Source search');
+    expect(source).not.toContain("{#if selectedDataSection === 'explorer' && (workbenchLoading || localExplorerLoading)}");
+    const explorerSection = source.slice(source.indexOf("{#if selectedDataSection === 'explorer'}"));
+    expect(explorerSection).not.toContain('<span>Profile</span>');
+    expect(explorerSection).not.toContain('<span>Entity</span>');
+    expect(explorerSection).not.toContain('<span>Ask</span>');
+    expect(explorerSection).not.toContain('Draft SQL');
+    expect(explorerSection).not.toContain('<span>Page size</span>');
+    expect(explorerSection).not.toContain('aria-label="Dataset summary"');
+    expect(explorerSection).not.toContain('Remote rows');
+    expect(explorerSection).not.toContain('Transport');
+    expect(explorerSection).not.toContain('Scan');
   });
 
   it('does not present cached IPFS shard reads as a percent of wire speed', () => {
@@ -436,24 +600,39 @@ describe('SDN data worker source', () => {
       'timedFlatBufferStreamFromPublishedFlatSqlSegment',
       'PUBLISHED_MANIFEST_SYNC_CHUNK_SIZE',
       'PUBLISHED_SHARD_FETCH_CONCURRENCY',
-      'PUBLISHED_SHARD_PROVIDER_DISCOVERY_CID_LIMIT',
-      'connectIpfsArtifactProviders',
-      'void connectIpfsArtifactProviders',
+      'PUBLISHED_SHARD_RANGE_BYTES',
+      'fetchPublishedShardBytesViaLibp2pRanges',
+      'readFlatSqlPublishedShardFromSources',
+      'publishedShardBackendConfigsFor',
+      'preferredSourceIndex',
+      'totalRows = manifestTotalRows > 0 ? manifestTotalRows : Math.max(localRows, manifestTotalRows)',
+      'downloadProgressPatch(downloadedBytes, networkTransferMs, measuredWireSpeedBytesPerSecond)',
+      'downloadProgressPatch(downloadedBytes, networkTransferMs, options.measuredWireSpeedBytesPerSecond)',
       'segment.cid',
       'fetchPublishedSegmentsInOrder',
-      'recordsSincePersist >= options.request.persistRecordInterval',
+      'pendingPublishedSegmentItems',
+      'completedPublishedSegmentCids',
+      'completedPublishedRowsForSegments',
       'downloadedBytes += streamBytes.byteLength',
       'downloadedBytes += chunk.recordStream.byteLength',
-      'const resumeRecordOffset = Math.max(0, localRows - cumulativeRows);',
-      'skipRecords: resumeRecordOffset',
+      'skipRecords: fetched.skipRecords',
+      'recordKeyOffset: fetched.cumulativeRows + fetched.skipRecords',
       'recordKeyPrefix: `published:${segment.cid}`',
+      'recordPinLedgerEntries([pinLedgerEntryForPublishedSegment',
+      'materializedAt: now',
       'prepareRecordsForTransfer',
       'workerGlobal.postMessage(response, transferables)',
     ]);
-    expect(workerSource).not.toContain('importPublishedShardCarBundles');
+    expect(workerSource).not.toContain('fetchCidBytesFromGateway');
+    expect(workerSource).not.toContain('connectIpfsArtifactPeers');
+    expect(workerSource).not.toContain('connectIpfsArtifactProviders');
     expect(workerSource).not.toContain('importPublishedFlatSqlShardCar');
+    expect(workerSource).not.toContain('importPublishedShardCarBundles');
     expect(workerSource).not.toContain('importCarBytesToKubo');
-    expect(workerSource).not.toContain('await connectIpfsArtifactProviders');
+    expect(workerSource).not.toContain('publishedShardGroupCarBundlesForSegments');
+    expect(workerSource).not.toContain('withRemotePublishedShardBatchOperation');
+    expect(workerSource).not.toContain('readFlatSqlPublishedShardBatch');
+    expect(workerSource).not.toContain('segmentCoveredByImportedCar');
     expect(workerSource).not.toContain('Remote page scan');
     expect(workerSource).not.toContain('Remote page stream');
     expectSourceToContainAll(localFlatSqlSource, [
@@ -469,6 +648,8 @@ describe('SDN data worker source', () => {
     ]);
     expectSourceToContainAll(libp2pSource, [
       'requestFlatSqlSyncChunk',
+      'requestFlatSqlPublishedShard',
+      'requestFlatSqlPublishedShardBatch',
       'createLibp2p',
       'exchangeFlatSqlSyncStream',
     ]);
@@ -502,17 +683,26 @@ describe('SDN data worker source', () => {
     ]);
   });
 
-  it('keeps the throughput harness on automatic IPFS provider discovery for shards', () => {
+  it('keeps the throughput harness on direct libp2p published-shard ranges for bulk shard bytes', () => {
     const source = readScriptSource('measure-flatsql-sync-throughput.mjs');
 
     expectSourceToContainAll(source, [
-      'connectIpfsArtifactPeers',
-      'connectIpfsArtifactProviders',
-      'ipfsProviderDiscoveryLimit',
-      'providerDiscoveryCids',
+      'direct-libp2p-published-shard-ranges',
+      'fetchPublishedShardBytesViaRanges',
+      'readFlatSqlPublishedShard',
+      'shardSources',
+      'multi-source direct libp2p',
       'selectedSegments',
-      'artifactRouting',
+      'There is no Kubo gateway, remote HTTP, or SSH data fallback in this harness.',
     ]);
+    expect(source).not.toContain('connectIpfsArtifactPeers');
+    expect(source).not.toContain('connectIpfsArtifactProviders');
+    expect(source).not.toContain('fetchCidBytesFromGateway');
+    expect(source).not.toContain('importPublishedFlatSqlShardCar');
+    expect(source).not.toContain('importCarBytesToKubo');
+    expect(source).not.toContain('publishedShardGroupCarBundlesForSegments');
+    expect(source).not.toContain('readFlatSqlPublishedShardBatch');
+    expect(source).not.toContain("op: 'read_published_shard_batch'");
   });
 });
 
@@ -529,10 +719,13 @@ describe('SDN identity styling guardrails', () => {
 
   it('uses liquid glass panels without pill-shaped buttons', () => {
     const appCss = readUiSource('styles/app.css');
+    const appCssWithoutChartGeometry = appCss
+      .replace(/\.sdn-storage-donut\s*{[^}]*}/gs, '')
+      .replace(/\.sdn-storage-legend-row::before\s*{[^}]*}/gs, '');
 
     expect(appCss).toMatch(/\.sdn-glass\s*{[^}]*backdrop-filter:\s*blur\([^)]*\)\s*saturate\([^)]*\)/s);
     expect(appCss).toMatch(/\.sdn-button\s*{[^}]*border-radius:\s*var\(--sdn-radius-sm\)/s);
-    expect(appCss).not.toMatch(/border-radius:\s*(999|1000|50%)/);
+    expect(appCssWithoutChartGeometry).not.toMatch(/border-radius:\s*(999|1000|50%)/);
   });
 
   it('keeps edit-profile action buttons visually separated from form fields', () => {
@@ -589,12 +782,33 @@ describe('SDN identity styling guardrails', () => {
     expect(appCss).toMatch(/\.sdn-select\s*{[^}]*background-position:[^;]*center/s);
   });
 
-  it('keeps data workbench columns horizontally scrollable with compact cells', () => {
+  it('keeps data workbench columns inside the viewport with compact cells', () => {
     const appCss = readUiSource('styles/app.css');
 
-    expect(appCss).toMatch(/\.sdn-workbench-table-wrap\s*{[^}]*overflow-x:\s*auto/s);
-    expect(appCss).toMatch(/\.sdn-workbench-table\s*{[^}]*min-width:\s*max-content/s);
-    expect(appCss).toMatch(/\.sdn-workbench-table th,\s*\.sdn-workbench-table td\s*{[^}]*min-width:\s*50px/s);
+    expect(appCss).toMatch(/\.sdn-workbench-table-wrap\s*{[^}]*overflow-x:\s*hidden/s);
+    expect(appCss).toMatch(/\.sdn-workbench-table\s*{[^}]*width:\s*100%/s);
+    expect(appCss).toMatch(/\.sdn-workbench-table\s*{[^}]*table-layout:\s*fixed/s);
+    expect(appCss).toMatch(/\.sdn-workbench-table th,\s*\.sdn-workbench-table td\s*{[^}]*min-width:\s*0/s);
+  });
+
+  it('keeps explorer search controls on a common height', () => {
+    const appCss = readUiSource('styles/app.css');
+
+    expect(appCss).toMatch(/\.sdn-workbench-controls\s*{[^}]*--sdn-workbench-control-height:\s*2\.4rem/s);
+    expect(appCss).toMatch(/\.sdn-explorer-controls \.sdn-input,\s*\.sdn-explorer-controls \.sdn-button\s*{[^}]*height:\s*var\(--sdn-workbench-control-height\)/s);
+    expect(appCss).toMatch(/\.sdn-explorer-controls \.sdn-button\s*{[^}]*align-items:\s*center/s);
+    expect(appCss).toMatch(/\.sdn-sql-input\s*{[^}]*padding:\s*calc\(\(var\(--sdn-workbench-control-height\) - 1rem\) \/ 2\) 0\.8rem/s);
+  });
+
+  it('keeps storage legend markers tight to labels with percent underneath', () => {
+    const appCss = readUiSource('styles/app.css');
+
+    expect(appCss).toMatch(/\.sdn-storage-legend\s*{[^}]*justify-content:\s*end/s);
+    expect(appCss).toMatch(/\.sdn-storage-legend-row\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*max-content\) max-content/s);
+    expect(appCss).toMatch(/\.sdn-storage-legend-row\s*{[^}]*column-gap:\s*12px/s);
+    expect(appCss).toMatch(/\.sdn-storage-legend-row::before\s*{[^}]*position:\s*absolute/s);
+    expect(appCss).toMatch(/\.sdn-storage-legend-row em\s*{[^}]*grid-column:\s*2/s);
+    expect(appCss).toMatch(/\.sdn-storage-legend-row em\s*{[^}]*justify-self:\s*end/s);
   });
 
   it('keeps subscribed storage rows free of noisy mini pie backgrounds', () => {
@@ -608,14 +822,50 @@ describe('SDN identity styling guardrails', () => {
     expect(appCss).not.toContain('clip-path: circle');
   });
 
+  it('keeps subscription row actions horizontal instead of stacked in the grid', () => {
+    const appCss = readUiSource('styles/app.css');
+
+    expect(appCss).toMatch(/\.sdn-subscription-row\s*{[^}]*grid-template-columns:[^}]*max-content/s);
+    expect(appCss).toMatch(/\.sdn-subscription-row\s*>\s*\.sdn-subscription-actions\s*{[^}]*display:\s*flex/s);
+    expect(appCss).toMatch(/\.sdn-subscription-actions\s*{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/s);
+  });
+
+  it('shows pin verification feedback as a dismissible fading toast', () => {
+    const appCss = readUiSource('styles/app.css');
+
+    expect(appCss).toMatch(/\.sdn-toast-region\s*{[^}]*position:\s*fixed[^}]*right:\s*1rem/s);
+    expect(appCss).toMatch(/\.sdn-toast\s*{[^}]*animation:\s*sdn-toast-pop-fade/s);
+    expect(appCss).toMatch(/\.sdn-toast-dismiss\s*{[^}]*position:\s*absolute[^}]*right:\s*0\.45rem/s);
+    expect(appCss).toContain('@keyframes sdn-toast-pop-fade');
+  });
+
   it('keeps the app shell fixed while content panes own scrolling', () => {
     const appCss = readUiSource('styles/app.css');
 
     expect(appCss).toMatch(/html,\s*body,\s*#root\s*{[^}]*height:\s*100%[^}]*overflow:\s*hidden/s);
     expect(appCss).toMatch(/\.sdn-app\s*{[^}]*height:\s*100vh[^}]*overflow:\s*hidden/s);
     expect(appCss).toMatch(/\.sdn-main\s*{[^}]*grid-template-rows:\s*auto minmax\(0,\s*1fr\)[^}]*overflow:\s*hidden/s);
-    expect(appCss).toMatch(/\.sdn-content\s*{[^}]*overflow:\s*auto/s);
+    expect(appCss).toMatch(/\.sdn-content\s*{[^}]*align-content:\s*start[^}]*overflow:\s*auto/s);
+    expect(appCss).toMatch(/\.sdn-content\s*{[^}]*padding:\s*1rem 2rem 2rem/s);
     expect(appCss).toMatch(/\.sdn-workbench-main,\s*\.sdn-source-browser\s*{[^}]*align-content:\s*start/s);
+  });
+
+  it('centers logout and node identity replacement modals in the viewport', () => {
+    const appSource = readUiSource('App.svelte');
+    const appCss = readUiSource('styles/app.css');
+
+    expect(appSource).toContain('aria-label="Confirm logout"');
+    expect(appSource).toContain('aria-label="Confirm node identity replacement"');
+    expect(appCss).toMatch(/\.sdn-modal-backdrop\s*{[^}]*display:\s*grid[^}]*place-items:\s*center[^}]*min-height:\s*100dvh/s);
+    expect(appCss).toMatch(/\.sdn-modal\s*{[^}]*position:\s*static[^}]*inset:\s*auto[^}]*margin:\s*0[^}]*max-height:\s*calc\(100dvh - 2rem\)[^}]*overflow:\s*auto/s);
+  });
+
+  it('anchors node identity layouts to content height instead of stretching nav rows', () => {
+    const appCss = readUiSource('styles/app.css');
+
+    expect(appCss).toMatch(/\.sdn-identity-workspace\s*{[^}]*align-content:\s*start/s);
+    expect(appCss).toMatch(/\.sdn-identity-workspace\s*{[^}]*grid-auto-rows:\s*max-content/s);
+    expect(appCss).toMatch(/\.sdn-breadcrumb-tabs\s*{[^}]*align-self:\s*start/s);
   });
 
   it('does not present identity as claimed or show Core claim controls', () => {

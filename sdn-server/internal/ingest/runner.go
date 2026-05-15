@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	MPEFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
@@ -46,6 +47,7 @@ const (
 	celestrakProviderID             = "space-data-network-02"
 	datasetPublicationChunkSize     = 50000
 	fullCatalogPublicationTimeout   = 2 * time.Hour
+	defaultMinFreeDiskBytes         = 5 * 1024 * 1024 * 1024
 	publicContentKeyID              = "public"
 	parserVersionCelestrakGP        = "celestrak-gp/v1"
 	parserVersionCelestrakSatcat    = "celestrak-satcat/v1"
@@ -110,7 +112,8 @@ type Config struct {
 	SpaceTrackBatchSleep   time.Duration
 	SpaceTrackPollInterval time.Duration
 
-	HTTPTimeout time.Duration
+	HTTPTimeout      time.Duration
+	MinFreeDiskBytes int64
 
 	// DatasetPublishURL is an optional local SDN admin endpoint that exports,
 	// pins, signs, and announces dataset updates after successful CelesTrak syncs.
@@ -182,6 +185,9 @@ func NewRunner(cfg Config) (*Runner, error) {
 	}
 	if cfg.HTTPTimeout <= 0 {
 		cfg.HTTPTimeout = 90 * time.Second
+	}
+	if cfg.MinFreeDiskBytes <= 0 {
+		cfg.MinFreeDiskBytes = defaultMinFreeDiskBytes
 	}
 
 	validator, err := sds.NewValidator(nil)
@@ -315,6 +321,9 @@ func (r *Runner) runCycle(ctx context.Context) error {
 }
 
 func (r *Runner) syncCelestrakGP(ctx context.Context) error {
+	if err := r.requireFreeDisk("CelesTrak GP sync"); err != nil {
+		return err
+	}
 	data, metadata, err := r.fetchWithCache(ctx, r.cfg.CelestrakCatalogURL, "celestrak-gp.csv", minCelestrakFetchInterval)
 	if err != nil {
 		return fmt.Errorf("fetch celestrak catalog: %w", err)
@@ -408,6 +417,9 @@ func (r *Runner) reconcileCelestrakSourceBatchDuplicates(schemaName, sourceName,
 }
 
 func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
+	if err := r.requireFreeDisk("CelesTrak SATCAT sync"); err != nil {
+		return err
+	}
 	legacyCount, legacyTags, err := r.syncCelestrakSatcatSource(ctx, r.cfg.CelestrakSatcatURL, "celestrak-satcat.txt", "satcat.txt", "celestrak-satcat", parserVersionCelestrakSatcat)
 	if err != nil {
 		return err
@@ -470,6 +482,9 @@ func (r *Runner) syncCelestrakSatcatSource(ctx context.Context, sourceURL, cache
 }
 
 func (r *Runner) syncCelestrakSpaceWeather(ctx context.Context) error {
+	if err := r.requireFreeDisk("CelesTrak space weather sync"); err != nil {
+		return err
+	}
 	data, metadata, err := r.fetchWithCache(ctx, r.cfg.CelestrakSpaceWeatherURL, "celestrak-space-weather.csv", minCelestrakFetchInterval)
 	if err != nil {
 		return fmt.Errorf("fetch celestrak space weather: %w", err)
@@ -579,6 +594,9 @@ func (r *Runner) syncSpaceTrackGapFill(ctx context.Context) error {
 	if !r.cfg.SpaceTrackEnabled {
 		return nil
 	}
+	if err := r.requireFreeDisk("Space-Track gap-fill"); err != nil {
+		return err
+	}
 
 	if r.cfg.SpaceTrackIdentity == "" || r.cfg.SpaceTrackPassword == "" {
 		log.Warn("Space-Track credentials missing; skipping gap-fill")
@@ -652,6 +670,67 @@ func (r *Runner) syncSpaceTrackGapFill(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+var diskAvailableBytes = availableDiskBytes
+
+func (r *Runner) requireFreeDisk(operation string) error {
+	minFree := r.cfg.MinFreeDiskBytes
+	if minFree <= 0 {
+		minFree = defaultMinFreeDiskBytes
+	}
+	for _, candidate := range []string{r.cfg.StoragePath, r.cfg.RawPath} {
+		path := existingDiskPath(candidate)
+		freeBytes, err := diskAvailableBytes(path)
+		if err != nil {
+			return fmt.Errorf("%s free disk check failed for %s: %w", operation, path, err)
+		}
+		if int64(freeBytes) < minFree {
+			return fmt.Errorf("%s requires at least %s free disk at %s; only %s available", operation, formatByteCount(minFree), path, formatByteCount(int64(freeBytes)))
+		}
+	}
+	return nil
+}
+
+func existingDiskPath(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || path == "" {
+		path = "."
+	}
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return path
+		}
+		path = parent
+	}
+}
+
+func availableDiskBytes(path string) (uint64, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return 0, err
+	}
+	return uint64(stat.Bavail) * uint64(stat.Bsize), nil
+}
+
+func formatByteCount(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	const unit = 1024
+	value := float64(bytes)
+	units := []string{"KB", "MB", "GB", "TB"}
+	for _, suffix := range units {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.1f %s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.1f PB", value/unit)
 }
 
 func (r *Runner) resolveSpaceTrackStartDay() (time.Time, error) {
@@ -821,7 +900,11 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string, tags ...sto
 			WithObjectName(valueOr(getValue(row, "OBJECT_NAME", "SATNAME", "NAME"), fmt.Sprintf("SAT-%d", norad))).
 			WithObjectID(valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad))).
 			WithObjectType(normalizeSatcatObjectType(getValue(row, "OBJECT_TYPE"))).
-			WithOpsStatus(normalizeSatcatOpsStatus(getValue(row, "OPS_STATUS_CODE", "OPS_STATUS", "STATUS")))
+			WithOpsStatus(normalizeSatcatOpsStatus(getValue(row, "OPS_STATUS_CODE", "OPS_STATUS", "STATUS"))).
+			WithManeuverable(false).
+			WithMass(0).
+			WithSize(0).
+			WithRCS(0)
 
 		if launchDate := strings.TrimSpace(getValue(row, "LAUNCH_DATE", "LAUNCH")); launchDate != "" {
 			builder = builder.WithLaunchDate(launchDate)
@@ -838,6 +921,9 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string, tags ...sto
 		}
 		if v, ok := parseFloat(getValue(row, "SIZE", "SIZE_M")); ok {
 			builder = builder.WithSize(v)
+		}
+		if v, ok := parseFloat(getValue(row, "RCS")); ok {
+			builder = builder.WithRCS(v)
 		}
 		if v := strings.TrimSpace(getValue(row, "MANEUVERABLE", "MAN")); v != "" {
 			builder = builder.WithManeuverable(parseTruthy(v))
@@ -1504,25 +1590,21 @@ func parseSatcatFixedWidth(content []byte) ([]map[string]string, error) {
 			continue
 		}
 
-		status := satcatColumn(line, 20, 22)
 		row := map[string]string{
 			"OBJECT_ID":    satcatColumn(line, 1, 11),
-			"NORAD_CAT_ID": satcatColumn(line, 13, 18),
-			"OPS_STATUS":   status,
+			"NORAD_CAT_ID": satcatColumn(line, 14, 18),
+			"OPS_STATUS":   satcatColumn(line, 22, 22),
 			"OBJECT_NAME":  satcatColumn(line, 24, 47),
 			"LAUNCH_DATE":  satcatColumn(line, 57, 66),
 			"LAUNCH_SITE":  satcatColumn(line, 69, 73),
 			"DECAY_DATE":   satcatColumn(line, 76, 85),
 			"PERIOD":       satcatColumn(line, 88, 94),
 			"INCLINATION":  satcatColumn(line, 97, 101),
-			"APOGEE":       satcatColumn(line, 105, 109),
-			"PERIGEE":      satcatColumn(line, 113, 117),
-			"RCS":          satcatColumn(line, 121, 127),
+			"APOGEE":       satcatColumn(line, 104, 109),
+			"PERIGEE":      satcatColumn(line, 112, 117),
+			"RCS":          satcatColumn(line, 120, 127),
 		}
 
-		if parseSatcatManeuverable(status) {
-			row["MANEUVERABLE"] = "true"
-		}
 		row["OBJECT_TYPE"] = inferFixedWidthSatcatObjectType(row["OBJECT_NAME"])
 		rows = append(rows, row)
 	}
@@ -1547,11 +1629,6 @@ func satcatColumn(line string, start, end int) string {
 		end = len(line)
 	}
 	return strings.TrimSpace(line[start-1 : end])
-}
-
-func parseSatcatManeuverable(status string) bool {
-	status = strings.ToUpper(strings.TrimSpace(status))
-	return strings.HasPrefix(status, "M")
 }
 
 func normalizeSatcatObjectType(value string) string {

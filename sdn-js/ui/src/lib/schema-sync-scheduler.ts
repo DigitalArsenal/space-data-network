@@ -87,11 +87,17 @@ export function createSchemaSyncScheduler(options: SchemaSyncSchedulerOptions): 
 
 export function sortedEnabledSchemaRows(rows: SchemaSyncScheduleRow[]): SchemaSyncScheduleRow[] {
   return rows
-    .filter((row) => row.preference.mode === 'sync' && row.remoteRows > row.localRows)
+    .filter(shouldScheduleSchemaRow)
     .sort((left, right) => {
       const rowDelta = right.remoteRows - left.remoteRows;
       return rowDelta === 0 ? left.id.localeCompare(right.id) : rowDelta;
     });
+}
+
+function shouldScheduleSchemaRow(row: SchemaSyncScheduleRow): boolean {
+  if (row.preference.mode !== 'sync') return false;
+  if (row.remoteRows > row.localRows) return true;
+  return row.queryProfile === 'dataset-publication-offset-v1' && row.remoteRows === 0;
 }
 
 function schemaSyncScheduleSignature(rows: SchemaSyncScheduleRow[], dataSourceId: string): string {

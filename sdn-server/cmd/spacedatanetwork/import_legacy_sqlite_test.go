@@ -723,6 +723,121 @@ func TestRegisterLegacyPublicationPlanChunksLargeShardGroupCARBundles(t *testing
 	}
 }
 
+func TestRebuildDatasetPublicationShardGroupCARBundlesPublishesExistingShards(t *testing.T) {
+	tmpDir := t.TempDir()
+	pinned := map[string][]byte{}
+	kubo := newImportLegacyKuboTestServer(t, pinned)
+	defer kubo.Close()
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	storagePath := filepath.Join(tmpDir, "sdn")
+	store, err := storage.NewFlatSQLStore(storagePath, validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	publishedAt := time.Unix(1_778_777_000, 0).UTC()
+	for i := 0; i < 3; i++ {
+		shardBytes := []byte(fmt.Sprintf("published shard %d", i))
+		indexBytes := []byte(fmt.Sprintf("published index %d", i))
+		manifestBytes := []byte(fmt.Sprintf("published manifest %d", i))
+		shardCID := importLegacyCIDV1RawSHA256ForTest(t, shardBytes)
+		indexCID := importLegacyCIDV1RawSHA256ForTest(t, indexBytes)
+		manifestCID := importLegacyCIDV1RawSHA256ForTest(t, manifestBytes)
+		pinned[shardCID] = shardBytes
+		if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
+			SchemaName:   "OMM.fbs",
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-gp",
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+			Offset:       i * 50_000,
+			Limit:        50_000,
+			RecordCount:  50_000,
+			ByteCount:    int64(256 << 20),
+			ShardCID:     shardCID,
+			IndexCID:     indexCID,
+			ManifestCID:  manifestCID,
+			PublishedAt:  publishedAt.Add(time.Duration(i) * time.Second),
+		}); err != nil {
+			t.Fatalf("UpsertDatasetShardPublication %d failed: %v", i, err)
+		}
+	}
+	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
+		CID:               "bafy-old-partial-car",
+		SchemaName:        "OMM.fbs",
+		ProviderPeerID:    "16Uiu2HAmProvider",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		SnapshotID:        "old-partial-head",
+		Head:              "old-partial-head",
+		ByteHash:          "old-partial-hash",
+		Role:              "shard-group-car",
+		RowCount:          50_000,
+		ByteCount:         1234,
+		VerificationState: "verified",
+		VerifiedAt:        publishedAt,
+		UpdatedAt:         publishedAt,
+	}); err != nil {
+		t.Fatalf("seed partial CAR ledger entry failed: %v", err)
+	}
+
+	result, err := rebuildDatasetPublicationShardGroupCARBundles(context.Background(), datasetPublicationCARRebuildOptions{
+		StoragePath:       storagePath,
+		IPFSAPIURL:        kubo.URL,
+		OutputDir:         filepath.Join(tmpDir, "dataset-publications"),
+		Schema:            "OMM.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		ProviderPeerID:    "16Uiu2HAmProvider",
+		ProviderPublicKey: "provider-public-key",
+	})
+	if err != nil {
+		t.Fatalf("rebuildDatasetPublicationShardGroupCARBundles failed: %v", err)
+	}
+	if result.Publications != 3 || result.Records != 150_000 || result.Bundles != 2 {
+		t.Fatalf("rebuild result = %#v, want 3 publications, 150000 records, 2 bundles", result)
+	}
+
+	manifest, err := datasync.OpenManifest(store, datasync.QueryRequest{
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Limit:        50_000,
+	}, datasync.MaxSyncChunkLimit)
+	if err != nil {
+		t.Fatalf("OpenManifest failed: %v", err)
+	}
+	if len(manifest.ArtifactBundles) != 2 {
+		t.Fatalf("manifest CAR bundles = %d, want 2 rebuilt bundles: %#v", len(manifest.ArtifactBundles), manifest.ArtifactBundles)
+	}
+	if manifest.ArtifactBundles[0].SegmentStart != 0 || manifest.ArtifactBundles[0].SegmentCount != 2 ||
+		manifest.ArtifactBundles[1].SegmentStart != 2 || manifest.ArtifactBundles[1].SegmentCount != 1 {
+		t.Fatalf("rebuilt bundle coverage = %#v, want [0:2] and [2:1]", manifest.ArtifactBundles)
+	}
+	staleEntries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		CID:               "bafy-old-partial-car",
+		SchemaName:        "OMM.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		Role:              "shard-group-car",
+		VerificationState: "stale",
+	})
+	if err != nil {
+		t.Fatalf("ListPinLedgerEntries stale failed: %v", err)
+	}
+	if len(staleEntries) != 1 {
+		t.Fatalf("old partial CAR stale entries = %d, want 1: %#v", len(staleEntries), staleEntries)
+	}
+}
+
 func captureImportLegacyGlobals() func() {
 	oldConfigPath := configPath
 	oldSourceDB := importLegacySourceDB
@@ -820,6 +935,9 @@ func newImportLegacyKuboTestServer(t *testing.T, pinned map[string][]byte) *http
 		}
 		if part.FormName() != wantField {
 			t.Fatalf("multipart field = %q, want %s", part.FormName(), wantField)
+		}
+		if filepath.Ext(part.FileName()) == ".car" && r.URL.Query().Get("chunker") != "size-1048576" {
+			t.Fatalf("CAR add chunker = %q, want Kubo-compatible 1 MiB chunks", r.URL.Query().Get("chunker"))
 		}
 		body, err := io.ReadAll(part)
 		if err != nil {
