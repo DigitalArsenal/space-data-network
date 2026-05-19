@@ -1,6 +1,6 @@
 // Package modulert provides a generic module-sdk runtime that loads any
 // space-data-module-sdk WASM binary, reads its FlatBuffer manifest, and
-// provisions declared capabilities through the sdn_host hostcall bridge.
+// provisions declared capabilities through the SDK hostcall bridge.
 //
 // This replaces all plugin-type-specific Go wrappers — every module is
 // loaded and driven identically based solely on its manifest declarations.

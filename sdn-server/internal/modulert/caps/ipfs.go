@@ -1,5 +1,5 @@
 // Package caps provides CapFactory implementations for the modulert capability registry.
-// Each factory wires an SDN server subsystem to the sdn_host JSON hostcall bridge.
+// Each factory wires an SDN server subsystem to the space_data_module_host JSON hostcall bridge.
 package caps
 
 import (

@@ -150,7 +150,7 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 	// Solution: create bridge with all capabilities initially, then restrict after manifest parse.)
 	bridge := NewHostBridge(m.nodeCtx, nil)
 
-	// Build WasmEdge module with shared host functions + per-module sdn_host bridge
+	// Build WasmEdge module with shared host functions + per-module SDK hostcall bridge.
 	logFunc := func(level int32, msg string) {
 		switch {
 		case level <= 0:
@@ -172,7 +172,7 @@ func (m *Module) instantiateWASM(wasmBytes []byte) (*wasmrt.Module, *HostBridge,
 		wasmrt.WithSecureDealloc("plugin_free"),
 		wasmrt.WithHostModule("sdn", wasmrt.SharedHostFuncs("sdn", logFunc)),
 		wasmrt.WithHostModule("env", wasmrt.SharedHostFuncs("env", logFunc)),
-		wasmrt.WithHostModule("sdn_host", bridge.BuildWasmEdgeHostFuncs()),
+		wasmrt.WithHostModule(HostcallImportModule, bridge.BuildWasmEdgeHostFuncs()),
 	)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create WASM module: %w", err)

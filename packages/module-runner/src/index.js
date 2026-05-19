@@ -7,7 +7,7 @@
  * live the moment the runner starts. Async client-side transport flows such as
  * the license exchange belong in sdn-js, not in guest-side protocol hostcalls.
  *
- * Browser:  uses createBrowserModuleHarness (WASI shim + optional sdn_host)
+ * Browser:  uses createBrowserModuleHarness (WASI shim + optional space_data_module_host)
  * Node/CI:  uses WasmEdge via the isomorphic loader
  */
 
