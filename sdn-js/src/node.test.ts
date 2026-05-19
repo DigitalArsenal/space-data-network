@@ -43,6 +43,10 @@ vi.mock("@libp2p/webtransport", () => ({
   webTransport: vi.fn(() => ({ transport: "webTransport" })),
 }));
 
+vi.mock("@spacedatanetwork/libp2p-webrtc-v1", () => ({
+  webRTC: vi.fn(() => ({ transport: "webRTC" })),
+}));
+
 vi.mock("@libp2p/circuit-relay-v2", () => ({
   circuitRelayTransport: vi.fn(() => ({ transport: "relay" })),
 }));

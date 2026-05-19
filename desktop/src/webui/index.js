@@ -1,8 +1,7 @@
 // @ts-check
 const { screen, BrowserWindow, ipcMain, app, session } = require('electron')
 const { join } = require('path')
-const { URL } = require('url')
-const serve = require('electron-serve')
+const toUri = require('multiaddr-to-uri')
 const i18n = require('i18next')
 const openExternal = require('./open-external')
 const logger = require('../common/logger')
@@ -18,8 +17,9 @@ const Countly = require('countly-sdk-nodejs')
 const { analyticsKeys } = require('../analytics/keys')
 const ipcMainEvents = require('../common/ipc-main-events')
 const getCtx = require('../context')
-// Use local webui build from the webui/ directory at project root
-serve({ scheme: 'webui', directory: join(__dirname, '../../../webui/build') })
+const registerStaticScheme = require('../static-scheme')
+const { getDesktopStaticUrl } = require('../static-http-server')
+registerStaticScheme({ scheme: 'webui', directory: 'assets/webui' })
 
 /**
  *
@@ -30,9 +30,10 @@ const createWindow = () => {
   const dimensions = screen.getPrimaryDisplay()
 
   const window = new BrowserWindow({
-    title: 'IPFS Desktop',
+    title: 'Space Data Network',
     show: false,
     autoHideMenuBar: true,
+    frame: false,
     titleBarStyle: 'hiddenInset',
     width: store.get('window.width', dimensions.width < 1440 ? dimensions.width : 1440),
     height: store.get('window.height', dimensions.height < 900 ? dimensions.height : 900),
@@ -138,31 +139,40 @@ module.exports = async function () {
   const window = createWindow()
   ctx.setProp('webui', window)
   let apiAddress = null
+  let gatewayAddress = null
+  let webUiLoaded = false
 
-  const url = new URL('/', 'webui://-')
-  url.hash = '/blank'
+  const url = await getDesktopStaticUrl('webui', '/blank')
   url.searchParams.set('deviceId', await ctx.getProp('countlyDeviceId'))
+
+  async function loadWebUIApp (path = '/') {
+    url.hash = path
+    updateLanguage()
+    const addressesSynced = await syncIpfsAddresses()
+    if (!addressesSynced) window.loadURL(url.toString())
+    webUiLoaded = true
+  }
 
   ctx.setProp('launchWebUI', async (path, { focus = true, forceRefresh = false } = {}) => {
     if (window.isDestroyed()) {
       logger.error(`[web ui] window is destroyed, not launching web ui with ${path}`)
       return
     }
-    if (forceRefresh) window.webContents.reload()
     if (!path) {
       logger.info('[web ui] launching web ui', { withAnalytics: analyticsKeys.FN_LAUNCH_WEB_UI })
     } else {
       logger.info(`[web ui] navigate to ${path}`, { withAnalytics: analyticsKeys.FN_LAUNCH_WEB_UI_WITH_PATH })
-      url.hash = path
-      window.webContents.loadURL(url.toString())
+    }
+    if (!webUiLoaded || path) {
+      await loadWebUIApp(path || '/')
+    } else if (forceRefresh) {
+      window.webContents.reload()
     }
     if (focus) {
       window.show()
       window.focus()
       dock.show()
     }
-    // load again: minimize visual jitter on windows
-    if (path) window.webContents.loadURL(url.toString())
   })
 
   function updateLanguage () {
@@ -170,15 +180,42 @@ module.exports = async function () {
   }
 
   const getIpfsd = ctx.getFn('getIpfsd')
-  ipcMain.on(ipcMainEvents.IPFSD, async (status) => {
+  function gatewayUrlFromAddr (addr) {
+    if (!addr) return null
+    const ma = addr.toString().includes('/http') ? addr : addr.encapsulate('/http')
+    return toUri(ma)
+  }
+
+  async function syncIpfsAddresses () {
     const ipfsd = await getIpfsd(true)
+    let changed = false
 
     if (ipfsd && ipfsd.apiAddr !== apiAddress) {
       apiAddress = ipfsd.apiAddr
       url.searchParams.set('api', apiAddress.toString())
       updateLanguage()
-      window.loadURL(url.toString())
+      changed = true
     }
+
+    if (ipfsd && ipfsd.gatewayAddr !== gatewayAddress) {
+      gatewayAddress = ipfsd.gatewayAddr
+      const gatewayUrl = gatewayUrlFromAddr(gatewayAddress)
+      if (gatewayUrl) {
+        url.searchParams.set('gateway', gatewayUrl)
+        changed = true
+      }
+    }
+
+    if (changed) {
+      window.loadURL(url.toString())
+      return true
+    }
+
+    return false
+  }
+
+  ipcMain.on(ipcMainEvents.IPFSD, () => {
+    if (webUiLoaded) void syncIpfsAddresses()
   })
 
   // Set user agent
@@ -187,13 +224,7 @@ module.exports = async function () {
     callback({ cancel: false, requestHeaders: details.requestHeaders }) // eslint-disable-line
   })
 
-  return /** @type {Promise<void>} */(new Promise(resolve => {
-    window.once('ready-to-show', () => {
-      logger.info('[web ui] window ready')
-      resolve()
-    })
-
-    updateLanguage()
-    window.loadURL(url.toString())
-  }))
+  window.once('ready-to-show', () => {
+    logger.info('[web ui] window ready')
+  })
 }

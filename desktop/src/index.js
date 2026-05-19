@@ -3,7 +3,30 @@ const { registerAppStartTime, getSecondsSinceAppStart } = require('./metrics/app
 registerAppStartTime()
 require('v8-compile-cache')
 
-const { app, dialog } = require('electron')
+const { app, dialog, protocol } = require('electron')
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'sdn',
+    privileges: {
+      standard: true,
+      secure: true,
+      allowServiceWorkers: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
+  },
+  {
+    scheme: 'webui',
+    privileges: {
+      standard: true,
+      secure: true,
+      allowServiceWorkers: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
+  }
+])
 
 if (process.env.NODE_ENV === 'test') {
   const path = require('path')
@@ -36,11 +59,13 @@ const { analyticsKeys } = require('./analytics/keys')
 const handleError = require('./handleError')
 const createSplashScreen = require('./splash/create-splash-screen')
 
+configureWebAuthnPlatformAuthenticator()
+
 // Hide Dock
 if (app.dock) app.dock.hide()
 
 // Sets User Model Id so notifications work on Windows 10
-app.setAppUserModelId('io.ipfs.desktop')
+app.setAppUserModelId('org.spacedatanetwork.desktop')
 
 // Fixes $PATH on macOS
 fixPath()
@@ -56,6 +81,23 @@ app.on('will-finish-launching', () => {
 
 process.on('uncaughtException', handleError)
 process.on('unhandledRejection', handleError)
+
+function configureWebAuthnPlatformAuthenticator () {
+  if (typeof app.configureWebAuthn !== 'function') return
+  const keychainAccessGroup = process.env.SDN_WEBAUTHN_KEYCHAIN_ACCESS_GROUP || process.env.SDN_WEB_AUTHN_KEYCHAIN_ACCESS_GROUP || ''
+  if (!keychainAccessGroup) {
+    logger.debug('Touch ID WebAuthn platform authenticator is available but no SDN_WEBAUTHN_KEYCHAIN_ACCESS_GROUP is configured')
+    return
+  }
+  try {
+    app.configureWebAuthn({
+      touchID: { keychainAccessGroup }
+    })
+    logger.info('Touch ID WebAuthn platform authenticator enabled')
+  } catch (err) {
+    logger.warn(`failed to enable Touch ID WebAuthn platform authenticator: ${err.message || err}`)
+  }
+}
 
 async function run () {
   try {

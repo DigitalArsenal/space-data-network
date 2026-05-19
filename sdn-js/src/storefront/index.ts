@@ -46,6 +46,8 @@ export type {
   SpatialCoverage,
   TemporalCoverage,
   DataCoverage,
+  ListingKind,
+  ProtectedDelivery,
   PricingTier,
   ProviderReputation,
   Listing,
@@ -65,9 +67,15 @@ export type {
   CatalogEntry,
   CryptoPaymentRequest,
   CryptoPaymentResult,
+  CreateCryptoIntentRequest,
+  CryptoBuyerIntent,
+  SubmitCryptoPaymentRequest,
   FiatGatewayRequest,
   FiatGatewayResult,
   CreditsTransaction,
+  ManualDevPaymentConfirmation,
+  ManualDevPaymentResult,
+  PaymentAuditEvent,
   DeliveryRequest,
   DeliveryResult,
   SellerDashboard,
@@ -80,11 +88,16 @@ export type {
 export {
   StorefrontClient,
   createStorefrontClient,
+  createStorefrontLibp2pPubSubAdapter,
 } from './client';
 
 export type {
+  DeliveryTopicMessage,
+  DeliveryTopicSubscription,
   StorefrontClientConfig,
   StorefrontEvents,
+  StorefrontLibp2pPubSub,
+  StorefrontPubSub,
 } from './client';
 
 // UI Components and utilities

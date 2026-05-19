@@ -1,15 +1,19 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig, transformWithEsbuild } from 'vite';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const packageRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(packageRoot, '..');
+const stackPackagesRoot = path.resolve(repoRoot, '..');
 const upstreamWebUiRoot = path.resolve(repoRoot, 'webui');
 const sdnUpstreamWebUiRoot = path.resolve(__dirname, 'src', 'upstream-webui');
+const coiServiceWorkerPath = path.resolve(__dirname, 'src', 'lib', 'coi-serviceworker.js');
 const proxyTarget = process.env.SDN_UI_PROXY_TARGET?.trim();
+const kuboProxyTarget = process.env.SDN_UI_KUBO_PROXY_TARGET?.trim();
 const reactVirtualizedWindowScrollerOnScrollPath = path.resolve(
   upstreamWebUiRoot,
   'node_modules',
@@ -89,7 +93,9 @@ export default defineConfig({
   root: __dirname,
   publicDir: path.resolve(upstreamWebUiRoot, 'public'),
   base: './',
+  envPrefix: ['VITE_', 'SDN_UI_'],
   plugins: [
+    svelte(),
     {
       name: 'sdn-react-virtualized-window-scroller-patch',
       transform(code, id) {
@@ -151,41 +157,78 @@ export default defineConfig({
         return null;
       },
     },
+    {
+      name: 'sdn-coi-service-worker',
+      configureServer(server) {
+        server.middlewares.use('/coi-serviceworker.js', async (_req, res) => {
+          res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+          res.end(await fs.promises.readFile(coiServiceWorkerPath, 'utf8'));
+        });
+      },
+      generateBundle() {
+        this.emitFile({
+          type: 'asset',
+          fileName: 'coi-serviceworker.js',
+          source: fs.readFileSync(coiServiceWorkerPath, 'utf8'),
+        });
+      },
+    },
   ],
   server: {
     host: '127.0.0.1',
     port: Number.parseInt(process.env.SDN_ADMIN_UI_PORT ?? '5173', 10),
     fs: {
-      allow: [repoRoot],
+      allow: [repoRoot, stackPackagesRoot],
     },
-    ...(proxyTarget
+    ...(proxyTarget || kuboProxyTarget
       ? {
         proxy: {
-        '/api': {
-          target: proxyTarget,
-          changeOrigin: true,
-          secure: false,
-        },
-        '/login': {
-          target: proxyTarget,
-          changeOrigin: true,
-          secure: false,
-        },
-        '/wallet-ui': {
-          target: proxyTarget,
-          changeOrigin: true,
-          secure: false,
-        },
-        '/webui': {
-          target: proxyTarget,
-          changeOrigin: true,
-          secure: false,
-        },
-        '/ipfs': {
-          target: proxyTarget,
-          changeOrigin: true,
-          secure: false,
-        },
+          ...(kuboProxyTarget
+            ? {
+              '/kubo': {
+                target: kuboProxyTarget,
+                changeOrigin: true,
+                secure: false,
+                rewrite: (requestPath: string) => requestPath.replace(/^\/kubo(?=\/|$)/, '') || '/',
+                configure: (proxy) => {
+                  proxy.on('proxyReq', (proxyReq) => {
+                    proxyReq.removeHeader('origin');
+                    proxyReq.removeHeader('referer');
+                    proxyReq.removeHeader('user-agent');
+                  });
+                },
+              },
+            }
+            : {}),
+          ...(proxyTarget
+            ? {
+              '/api': {
+                target: proxyTarget,
+                changeOrigin: true,
+                secure: false,
+              },
+              '/login': {
+                target: proxyTarget,
+                changeOrigin: true,
+                secure: false,
+              },
+              '/wallet-ui': {
+                target: proxyTarget,
+                changeOrigin: true,
+                secure: false,
+              },
+              '/webui': {
+                target: proxyTarget,
+                changeOrigin: true,
+                secure: false,
+              },
+              '/ipfs': {
+                target: proxyTarget,
+                changeOrigin: true,
+                secure: false,
+              },
+            }
+            : {}),
         },
       }
       : {}),
@@ -356,5 +399,8 @@ export default defineConfig({
         },
       },
     },
+  },
+  worker: {
+    format: 'es',
   },
 });

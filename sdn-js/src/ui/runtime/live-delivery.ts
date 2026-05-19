@@ -24,6 +24,21 @@ export interface LoadedModuleHarnessLike {
   destroy?: () => void;
 }
 
+export interface GrantProtectedModuleBundleInput {
+  grantResponseBytes: Uint8Array;
+  encryptedBundleBytes?: Uint8Array;
+}
+
+export interface ClientDecryptLike {
+  decryptArtifact(
+    firstArg: {
+      grantResponseBytes: Uint8Array;
+      encryptedBundleBytes?: Uint8Array;
+    },
+    privateKey: Uint8Array,
+  ): Promise<Uint8Array>;
+}
+
 function cloneBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   return new Uint8Array(bytes);
 }
@@ -74,9 +89,12 @@ export async function unwrapGrantContentKey(
 export async function decryptEncryptedModuleBundle(
   encryptedBundleBytes: Uint8Array,
   contentKey: Uint8Array,
+  aadOrObserver?: Uint8Array | ModuleDeliveryObserver,
   observer?: ModuleDeliveryObserver,
 ): Promise<Uint8Array> {
-  emit(observer, {
+  const aadBytes = aadOrObserver instanceof Uint8Array ? aadOrObserver : undefined;
+  const deliveryObserver = aadOrObserver instanceof Uint8Array ? observer : aadOrObserver;
+  emit(deliveryObserver, {
     stage: 'decrypt-start',
     timestamp: Date.now(),
     bytes: encryptedBundleBytes.length,
@@ -95,6 +113,46 @@ export async function decryptEncryptedModuleBundle(
     cloneBytes(contentKey),
     cloneBytes(ciphertext),
     cloneBytes(iv),
+    aadBytes ? cloneBytes(aadBytes) : undefined,
+  );
+  emit(deliveryObserver, {
+    stage: 'decrypt-complete',
+    timestamp: Date.now(),
+    bytes: decryptedBundle.length,
+  });
+  return decryptedBundle;
+}
+
+export async function decryptGrantProtectedModuleBundle(
+  input: GrantProtectedModuleBundleInput,
+  recipientPrivateKey: Uint8Array,
+  clientDecrypt: ClientDecryptLike,
+  observer?: ModuleDeliveryObserver,
+): Promise<Uint8Array> {
+  emit(observer, {
+    stage: 'unwrap-start',
+    timestamp: Date.now(),
+  });
+  if (input.grantResponseBytes.length === 0) {
+    throw new Error('grant response bytes are required for client-decrypt');
+  }
+  if (recipientPrivateKey.length === 0) {
+    throw new Error('recipient private key is required for client-decrypt');
+  }
+
+  emit(observer, {
+    stage: 'decrypt-start',
+    timestamp: Date.now(),
+    bytes: input.encryptedBundleBytes?.length ?? input.grantResponseBytes.length,
+  });
+  const decryptedBundle = await clientDecrypt.decryptArtifact(
+    {
+      grantResponseBytes: cloneBytes(input.grantResponseBytes),
+      encryptedBundleBytes: input.encryptedBundleBytes
+        ? cloneBytes(input.encryptedBundleBytes)
+        : undefined,
+    },
+    cloneBytes(recipientPrivateKey),
   );
   emit(observer, {
     stage: 'decrypt-complete',

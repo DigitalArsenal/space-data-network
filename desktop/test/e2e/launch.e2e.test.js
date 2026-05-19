@@ -74,6 +74,38 @@ test.describe.serial('Application launch', async () => {
     return { peerId }
   }
 
+  function expectDesktopCorsOrigins (origins, extraOrigins = []) {
+    expect(origins).toEqual(expect.arrayContaining([
+      ...extraOrigins,
+      'https://webui.ipfs.io'
+    ]))
+    expect(origins.some(origin => /^http:\/\/127\.0\.0\.1:\d+$/.test(origin))).toBe(true)
+    expect(origins.some(origin => /^http:\/\/webui\.ipfs\.io\.ipns\.localhost:\d+$/.test(origin))).toBe(true)
+    for (const origin of ['sdn', 'webui'].map(scheme => `${scheme}://-`)) {
+      expect(origins).not.toContain(origin)
+    }
+  }
+
+  function expectDesktopCorsMethods (methods) {
+    expect(methods).toEqual(expect.arrayContaining(['PUT', 'POST']))
+  }
+
+  function expectDesktopBootstrapPeers (peers) {
+    expect(peers).toEqual(expect.arrayContaining([
+      'auto',
+      '/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+      '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45'
+    ]))
+  }
+
+  function getConfigHttpPort (addrs) {
+    const addr = Array.isArray(addrs)
+      ? addrs.find(addr => addr.includes('127.0.0.1'))
+      : addrs
+    const [, port] = addr.match(/\/tcp\/(\d+)/) || []
+    return Number(port)
+  }
+
   test('creates a repository on startup', async () => {
     const { app, repoPath } = await startApp({})
     const { peerId } = await daemonReady(app)
@@ -83,8 +115,10 @@ test.describe.serial('Application launch', async () => {
     expect(config).toBeDefined()
     // confirm PeerID is matching one from repoPath/config
     expect(config.Identity.PeerID).toBe(peerId)
-    // ensure strict CORS checking is enabled
-    expect(config.API.HTTPHeaders).toEqual({})
+    // ensure CORS is limited to upstream-compatible WebUI origins.
+    expectDesktopCorsOrigins(config.API.HTTPHeaders['Access-Control-Allow-Origin'])
+    expectDesktopCorsMethods(config.API.HTTPHeaders['Access-Control-Allow-Methods'])
+    expectDesktopBootstrapPeers(config.Bootstrap)
     expect(config.Discovery.MDNS.Enabled).toBeTruthy()
   })
 
@@ -131,11 +165,7 @@ test.describe.serial('Application launch', async () => {
 
     const config = fs.readJsonSync(configPath)
     // ensure app has migrated config
-    expect(config.API.HTTPHeaders['Access-Control-Allow-Origin']).toEqual([
-      'https://127.0.0.1:4040',
-      'https://webui.ipfs.io',
-      'http://webui.ipfs.io.ipns.localhost:0' // ipfsd 'test' profile uses '/ip4/127.0.0.1/tcp/0'
-    ])
+    expectDesktopCorsOrigins(config.API.HTTPHeaders['Access-Control-Allow-Origin'], ['https://127.0.0.1:4040'])
   })
 
   test('applies config migration (Web UI CORS 2)', async () => {
@@ -152,10 +182,7 @@ test.describe.serial('Application launch', async () => {
 
     const config = fs.readJsonSync(configPath)
     // ensure app has migrated config
-    expect(config.API.HTTPHeaders['Access-Control-Allow-Origin']).toEqual([
-      'https://webui.ipfs.io',
-      'http://webui.ipfs.io.ipns.localhost:0' // ipfsd 'test' profile uses '/ip4/127.0.0.1/tcp/0'
-    ])
+    expectDesktopCorsOrigins(config.API.HTTPHeaders['Access-Control-Allow-Origin'])
   })
 
   test('applies config migration (Web UI CORS 3)', async () => {
@@ -172,10 +199,7 @@ test.describe.serial('Application launch', async () => {
 
     const config = fs.readJsonSync(configPath)
     // ensure app has migrated config
-    expect(config.API.HTTPHeaders['Access-Control-Allow-Origin']).toEqual([
-      'https://webui.ipfs.io',
-      'http://webui.ipfs.io.ipns.localhost:0' // ipfsd 'test' profile uses '/ip4/127.0.0.1/tcp/0'
-    ])
+    expectDesktopCorsOrigins(config.API.HTTPHeaders['Access-Control-Allow-Origin'])
   })
 
   test('applies config migration v4 (old custom ConnMgr)', async () => {
@@ -236,6 +260,24 @@ test.describe.serial('Application launch', async () => {
     const config = fs.readJsonSync(configPath)
     // ensure ipfs-desktop migrated default Kubo config to explicitly enable AutoTLS
     expect(config.AutoTLS.Enabled).toEqual(true)
+  })
+
+  test('migrates local random API and gateway ports to stable desktop RPC ports', async () => {
+    const { repoPath, configPath, peerId: expectedId } = await makeRepository({ start: false })
+
+    const initConfig = fs.readJsonSync(configPath)
+    initConfig.Addresses.API = ['/ip4/127.0.0.1/tcp/0']
+    initConfig.Addresses.Gateway = ['/ip4/127.0.0.1/tcp/0']
+    fs.writeJsonSync(configPath, initConfig, { spaces: 2 })
+
+    const { app } = await startApp({ repoPath })
+    const { peerId } = await daemonReady(app)
+    expect(peerId).toBe(expectedId)
+
+    const config = fs.readJsonSync(configPath)
+    expect(getConfigHttpPort(config.Addresses.API)).toBe(5001)
+    expect(getConfigHttpPort(config.Addresses.Gateway)).toBeGreaterThan(0)
+    expectDesktopCorsOrigins(config.API.HTTPHeaders['Access-Control-Allow-Origin'])
   })
 
   test('starts with repository with "IPFS_PATH/api" file and no daemon running', async () => {

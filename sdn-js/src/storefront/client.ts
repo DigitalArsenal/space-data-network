@@ -28,14 +28,53 @@ import type {
   SellerDashboard,
   BuyerDashboard,
   TrustScore,
+  ManualDevPaymentConfirmation,
+  ManualDevPaymentResult,
+  PaymentAuditEvent,
+  CreateCryptoIntentRequest,
+  CryptoBuyerIntent,
+  SubmitCryptoPaymentRequest,
 } from './types';
+
+export interface DeliveryTopicSubscription {
+  unsubscribe?: () => void | Promise<void>;
+}
+
+export type DeliveryTopicMessage =
+  | Uint8Array
+  | ArrayBuffer
+  | { data?: Uint8Array | ArrayBuffer; payload?: Uint8Array | ArrayBuffer };
+
+export interface StorefrontPubSub {
+  subscribe(
+    topic: string,
+    handler: (message: DeliveryTopicMessage) => void | Promise<void>,
+  ): void | DeliveryTopicSubscription | Promise<void | DeliveryTopicSubscription>;
+}
+
+export interface StorefrontLibp2pPubSub {
+  subscribe(topic: string): void | Promise<void>;
+  unsubscribe?(topic: string): void | Promise<void>;
+  addEventListener(
+    type: 'message',
+    listener: (event: unknown) => void,
+    options?: { signal?: AbortSignal },
+  ): void;
+  removeEventListener?(type: 'message', listener: (event: unknown) => void): void;
+}
+
+export interface DeliverySubscription {
+  grantId: string;
+  topic: string;
+  unsubscribe: () => Promise<void>;
+}
 
 /** Storefront client configuration */
 export interface StorefrontClientConfig {
   /** API base URL for server-side operations */
   apiBaseUrl?: string;
   /** PubSub instance for real-time updates */
-  pubsub?: unknown; // Would be typed to actual PubSub type
+  pubsub?: StorefrontPubSub;
   /** Peer ID for this client */
   peerId: string;
   /** Signing function for requests */
@@ -53,6 +92,7 @@ export interface StorefrontEvents {
   'purchase:status': { requestId: string; status: PurchaseStatus };
   'grant:issued': AccessGrant;
   'data:received': { grantId: string; data: Uint8Array };
+  'data:subscribed': { grantId: string; topic: string };
 }
 
 /** Event handler type */
@@ -66,7 +106,10 @@ export class StorefrontClient {
   private eventHandlers: Map<string, Set<EventHandler<unknown>>> = new Map();
 
   constructor(config: StorefrontClientConfig) {
-    this.config = config;
+    this.config = {
+      ...config,
+      apiBaseUrl: normalizeStorefrontAPIBaseUrl(config.apiBaseUrl),
+    };
   }
 
   /**
@@ -177,23 +220,25 @@ export class StorefrontClient {
    * Create a purchase request
    */
   async createPurchase(request: CreatePurchaseRequest): Promise<PurchaseRequest> {
-    const purchaseRequest: Partial<PurchaseRequest> = {
-      ...request,
-      buyerPeerId: this.config.peerId,
-      buyerEncryptionPubkey: request.encryptionPubkey || this.config.encryptionPubkey,
-      keyAlgorithm: request.keyAlgorithm || this.config.keyAlgorithm,
-    };
-
     if (this.config.apiBaseUrl) {
       const response = await fetch(`${this.config.apiBaseUrl}/storefront/purchases`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(purchaseRequest),
+        body: JSON.stringify({
+          listing_id: request.listingId,
+          tier_name: request.tierName,
+          buyer_peer_id: this.config.peerId,
+          buyer_encryption_pubkey: bytesToBase64(request.encryptionPubkey || this.config.encryptionPubkey),
+          key_algorithm: request.keyAlgorithm || this.config.keyAlgorithm,
+          payment_method: request.paymentMethod,
+          preferred_delivery_method: request.preferredDeliveryMethod,
+          webhook_url: request.webhookUrl,
+        }),
       });
       if (!response.ok) {
         throw new Error(`Failed to create purchase: ${response.statusText}`);
       }
-      return response.json();
+      return normalizePurchaseRequest(await response.json());
     }
 
     throw new Error('API URL required');
@@ -219,6 +264,62 @@ export class StorefrontClient {
   }
 
   /**
+   * Create a server-authored crypto buyer intent for a purchase.
+   */
+  async createCryptoBuyerIntent(requestId: string, request: CreateCryptoIntentRequest): Promise<CryptoBuyerIntent> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(`${this.config.apiBaseUrl}/storefront/purchases/${requestId}/pay-crypto`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chain: request.chain,
+          asset: request.asset,
+          asset_contract: request.assetContract,
+          native_asset: request.nativeAsset,
+          recipient: request.recipient,
+          method: request.method,
+          expires_at: request.expiresAt?.toISOString(),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to create crypto payment intent: ${response.statusText}`);
+      }
+      return normalizeCryptoBuyerIntent(await response.json());
+    }
+
+    throw new Error('API URL required');
+  }
+
+  /**
+   * Submit a crypto transaction reference against a server-created buyer intent.
+   */
+  async submitCryptoPayment(requestId: string, request: SubmitCryptoPaymentRequest): Promise<void> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(`${this.config.apiBaseUrl}/storefront/purchases/${requestId}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          txHash: request.txHash,
+          chain: request.chain,
+          reference: request.reference,
+          recipientAddress: request.recipientAddress,
+          amount: request.amount,
+          currency: request.currency,
+          assetContract: request.assetContract,
+          nativeAsset: request.nativeAsset,
+          senderAddress: request.senderAddress,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to submit crypto payment: ${response.statusText}`);
+      }
+      return;
+    }
+
+    throw new Error('API URL required');
+  }
+
+  /**
    * Pay with SDN credits
    */
   async payWithCredits(requestId: string): Promise<AccessGrant> {
@@ -230,7 +331,7 @@ export class StorefrontClient {
       if (!response.ok) {
         throw new Error(`Failed to pay with credits: ${response.statusText}`);
       }
-      return response.json();
+      return normalizeAccessGrant(await response.json());
     }
 
     throw new Error('API URL required');
@@ -248,7 +349,7 @@ export class StorefrontClient {
       if (!response.ok) {
         throw new Error(`Failed to get purchase: ${response.statusText}`);
       }
-      return response.json();
+      return normalizePurchaseRequest(await response.json());
     }
 
     throw new Error('API URL required');
@@ -263,7 +364,8 @@ export class StorefrontClient {
       if (!response.ok) {
         throw new Error(`Failed to get grants: ${response.statusText}`);
       }
-      return response.json();
+      const payload = await response.json();
+      return Array.isArray(payload) ? payload.map(normalizeAccessGrant) : [];
     }
 
     throw new Error('API URL required');
@@ -281,7 +383,7 @@ export class StorefrontClient {
       if (!response.ok) {
         throw new Error(`Failed to get grant: ${response.statusText}`);
       }
-      return response.json();
+      return normalizeAccessGrant(await response.json());
     }
 
     throw new Error('API URL required');
@@ -422,6 +524,51 @@ export class StorefrontClient {
   }
 
   /**
+   * Complete a purchase with an explicit manual/dev paid state.
+   */
+  async completeManualDevPayment(
+    requestId: string,
+    confirmation: ManualDevPaymentConfirmation = {},
+  ): Promise<ManualDevPaymentResult> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(`${this.config.apiBaseUrl}/storefront/purchases/${requestId}/manual-dev-paid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operator_peer_id: confirmation.operatorPeerId,
+          reference: confirmation.reference,
+          note: confirmation.note,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to complete manual/dev payment: ${response.statusText}`);
+      }
+      const payload = await response.json() as { purchase?: unknown; grant?: unknown };
+      return {
+        mode: 'manual-dev',
+        purchase: normalizePurchaseRequest(payload.purchase),
+        grant: normalizeAccessGrant(payload.grant),
+      };
+    }
+    throw new Error('API URL required');
+  }
+
+  /**
+   * Get payment/grant audit history for a purchase.
+   */
+  async getPurchaseAudit(requestId: string): Promise<PaymentAuditEvent[]> {
+    if (this.config.apiBaseUrl) {
+      const response = await fetch(`${this.config.apiBaseUrl}/storefront/purchases/${requestId}/audit`);
+      if (!response.ok) {
+        throw new Error(`Failed to get purchase audit: ${response.statusText}`);
+      }
+      const payload = await response.json() as { events?: unknown[] };
+      return Array.isArray(payload.events) ? payload.events.map(normalizePaymentAuditEvent) : [];
+    }
+    throw new Error('API URL required');
+  }
+
+  /**
    * Get credits transaction history
    */
   async getCreditsTransactions(limit = 50, offset = 0): Promise<CreditsTransaction[]> {
@@ -442,17 +589,31 @@ export class StorefrontClient {
   /**
    * Subscribe to a data delivery stream for a grant
    */
-  async subscribeToDelivery(grantId: string): Promise<void> {
+  async subscribeToDelivery(grantId: string): Promise<DeliverySubscription> {
     // Connect to the PubSub topic for this grant's delivery
     // Topic format: /sdn/data/{listing_id}/{buyer_peer_id}
     const grant = await this.getGrant(grantId);
     if (!grant) {
       throw new Error('Grant not found');
     }
-    if (grant.deliveryTopic) {
-      // PubSub subscription would be established here
-      this.emit('data:subscribed', { grantId, topic: grant.deliveryTopic });
+    if (!grant.deliveryTopic) {
+      throw new Error('Grant does not include a delivery topic');
     }
+    if (!this.config.pubsub?.subscribe) {
+      throw new Error('PubSub adapter required for delivery subscription');
+    }
+    const topic = grant.deliveryTopic;
+    const subscription = await this.config.pubsub.subscribe(topic, (message) => {
+      this.emit('data:received', { grantId, data: normalizeDeliveryTopicMessage(message) });
+    });
+    this.emit('data:subscribed', { grantId, topic });
+    return {
+      grantId,
+      topic,
+      unsubscribe: async () => {
+        await subscription?.unsubscribe?.();
+      },
+    };
   }
 
   // --- 14.6 Dashboard APIs ---
@@ -563,4 +724,276 @@ export class StorefrontClient {
  */
 export function createStorefrontClient(config: StorefrontClientConfig): StorefrontClient {
   return new StorefrontClient(config);
+}
+
+export function createStorefrontLibp2pPubSubAdapter(pubsub: StorefrontLibp2pPubSub): StorefrontPubSub {
+  return {
+    async subscribe(topic: string, handler: (message: DeliveryTopicMessage) => void | Promise<void>) {
+      await pubsub.subscribe(topic);
+      const controller = new AbortController();
+      const listener = (event: unknown) => {
+        const detail = eventDetail(event);
+        if (!detail || detail.topic !== topic) {
+          return;
+        }
+        const data = deliveryDataFromEventDetail(detail);
+        if (!data) {
+          return;
+        }
+        void Promise.resolve(handler(data));
+      };
+      pubsub.addEventListener('message', listener, { signal: controller.signal });
+      return {
+        unsubscribe: async () => {
+          controller.abort();
+          pubsub.removeEventListener?.('message', listener);
+          await pubsub.unsubscribe?.(topic);
+        },
+      };
+    },
+  };
+}
+
+function normalizeStorefrontAPIBaseUrl(apiBaseUrl: string | undefined): string | undefined {
+  if (!apiBaseUrl) {
+    return undefined;
+  }
+
+  const trimmed = apiBaseUrl.replace(/\/+$/u, '');
+  if (trimmed.endsWith('/api')) {
+    return trimmed;
+  }
+  return `${trimmed}/api`;
+}
+
+function normalizeDeliveryTopicMessage(message: DeliveryTopicMessage): Uint8Array {
+  if (message instanceof Uint8Array) {
+    return message;
+  }
+  if (message instanceof ArrayBuffer) {
+    return new Uint8Array(message);
+  }
+  const payload = message?.data ?? message?.payload;
+  if (payload instanceof Uint8Array) {
+    return payload;
+  }
+  if (payload instanceof ArrayBuffer) {
+    return new Uint8Array(payload);
+  }
+  throw new TypeError('Delivery topic message must contain Uint8Array data.');
+}
+
+function eventDetail(event: unknown): { topic?: unknown; data?: unknown; payload?: unknown } | undefined {
+  if (!isRecord(event)) {
+    return undefined;
+  }
+  const detail = event.detail;
+  return isRecord(detail) ? detail : undefined;
+}
+
+function deliveryDataFromEventDetail(detail: { data?: unknown; payload?: unknown }): DeliveryTopicMessage | undefined {
+  if (isDeliveryTopicMessage(detail.data)) {
+    return detail.data;
+  }
+  if (isDeliveryTopicMessage(detail.payload)) {
+    return detail.payload;
+  }
+  return undefined;
+}
+
+function isDeliveryTopicMessage(value: unknown): value is DeliveryTopicMessage {
+  if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
+    return true;
+  }
+  return isRecord(value) && (isDeliveryTopicMessage(value.data) || isDeliveryTopicMessage(value.payload));
+}
+
+function normalizePaymentAuditEvent(value: unknown): PaymentAuditEvent {
+  const record = isRecord(value) ? value : {};
+  return {
+    eventId: stringField(record, 'event_id') || stringField(record, 'eventId') || '',
+    requestId: stringField(record, 'request_id') || stringField(record, 'requestId') || '',
+    eventType: stringField(record, 'event_type') || stringField(record, 'eventType') || '',
+    actorPeerId: stringField(record, 'actor_peer_id') || stringField(record, 'actorPeerId'),
+    reference: stringField(record, 'reference'),
+    message: stringField(record, 'message'),
+    purchaseStatus: numberField(record, 'purchase_status') ?? numberField(record, 'purchaseStatus') ?? 0,
+    createdAt: dateField(record, 'created_at') ?? dateField(record, 'createdAt'),
+  };
+}
+
+function normalizePurchaseRequest(value: unknown): PurchaseRequest {
+  const record = isRecord(value) ? value : {};
+  return {
+    requestId: stringField(record, 'request_id') || stringField(record, 'requestId') || '',
+    listingId: stringField(record, 'listing_id') || stringField(record, 'listingId') || '',
+    tierName: stringField(record, 'tier_name') || stringField(record, 'tierName') || '',
+    buyerPeerId: stringField(record, 'buyer_peer_id') || stringField(record, 'buyerPeerId') || '',
+    buyerEncryptionPubkey:
+      bytesField(record, 'buyer_encryption_pubkey') ?? bytesField(record, 'buyerEncryptionPubkey'),
+    keyAlgorithm: stringField(record, 'key_algorithm') || stringField(record, 'keyAlgorithm'),
+    buyerEmail: stringField(record, 'buyer_email') || stringField(record, 'buyerEmail'),
+    paymentMethod: (numberField(record, 'payment_method') ?? numberField(record, 'paymentMethod') ?? 0) as PaymentMethod,
+    paymentAmount: numberField(record, 'payment_amount') ?? numberField(record, 'paymentAmount') ?? 0,
+    paymentCurrency: stringField(record, 'payment_currency') || stringField(record, 'paymentCurrency') || '',
+    paymentTxHash: stringField(record, 'payment_tx_hash') || stringField(record, 'paymentTxHash'),
+    paymentChain: stringField(record, 'payment_chain') || stringField(record, 'paymentChain'),
+    senderAddress: stringField(record, 'sender_address') || stringField(record, 'senderAddress'),
+    confirmationBlock: numberField(record, 'confirmation_block') ?? numberField(record, 'confirmationBlock'),
+    paymentIntentId: stringField(record, 'payment_intent_id') || stringField(record, 'paymentIntentId'),
+    creditsTransactionId: stringField(record, 'credits_transaction_id') || stringField(record, 'creditsTransactionId'),
+    status: (numberField(record, 'status') ?? 0) as PurchaseStatus,
+    statusMessage: stringField(record, 'status_message') || stringField(record, 'statusMessage'),
+    createdAt: dateField(record, 'created_at') ?? dateField(record, 'createdAt') ?? new Date(0),
+    updatedAt: dateField(record, 'updated_at') ?? dateField(record, 'updatedAt') ?? new Date(0),
+    paymentDeadline: dateField(record, 'payment_deadline') ?? dateField(record, 'paymentDeadline'),
+    paymentConfirmedAt: dateField(record, 'payment_confirmed_at') ?? dateField(record, 'paymentConfirmedAt'),
+    grantIssuedAt: dateField(record, 'grant_issued_at') ?? dateField(record, 'grantIssuedAt'),
+    grantId: stringField(record, 'grant_id') || stringField(record, 'grantId'),
+    providerPeerId: stringField(record, 'provider_peer_id') || stringField(record, 'providerPeerId'),
+    providerAcknowledgedAt: dateField(record, 'provider_acknowledged_at') ?? dateField(record, 'providerAcknowledgedAt'),
+    preferredDeliveryMethod: (
+      stringField(record, 'preferred_delivery_method') || stringField(record, 'preferredDeliveryMethod')
+    ) as PurchaseRequest['preferredDeliveryMethod'],
+    webhookUrl: stringField(record, 'webhook_url') || stringField(record, 'webhookUrl'),
+    buyerSignature: bytesField(record, 'buyer_signature') ?? bytesField(record, 'buyerSignature'),
+    providerSignature: bytesField(record, 'provider_signature') ?? bytesField(record, 'providerSignature'),
+  };
+}
+
+function normalizeAccessGrant(value: unknown): AccessGrant {
+  const record = isRecord(value) ? value : {};
+  return {
+    grantId: stringField(record, 'grant_id') || stringField(record, 'grantId') || '',
+    listingId: stringField(record, 'listing_id') || stringField(record, 'listingId') || '',
+    tierName: stringField(record, 'tier_name') || stringField(record, 'tierName') || '',
+    buyerPeerId: stringField(record, 'buyer_peer_id') || stringField(record, 'buyerPeerId') || '',
+    buyerEncryptionPubkey:
+      bytesField(record, 'buyer_encryption_pubkey') ?? bytesField(record, 'buyerEncryptionPubkey'),
+    keyAlgorithm: stringField(record, 'key_algorithm') || stringField(record, 'keyAlgorithm'),
+    accessType: (numberField(record, 'access_type') ?? numberField(record, 'accessType') ?? 0) as AccessGrant['accessType'],
+    rateLimit: numberField(record, 'rate_limit') ?? numberField(record, 'rateLimit'),
+    maxRecordsPerRequest: numberField(record, 'max_records_per_request') ?? numberField(record, 'maxRecordsPerRequest'),
+    grantedAt: dateField(record, 'granted_at') ?? dateField(record, 'grantedAt') ?? new Date(0),
+    expiresAt: dateField(record, 'expires_at') ?? dateField(record, 'expiresAt'),
+    status: (numberField(record, 'status') ?? 0) as AccessGrant['status'],
+    paymentTxHash: stringField(record, 'payment_tx_hash') || stringField(record, 'paymentTxHash'),
+    paymentMethod: (numberField(record, 'payment_method') ?? numberField(record, 'paymentMethod') ?? 0) as PaymentMethod,
+    paymentAmount: numberField(record, 'payment_amount') ?? numberField(record, 'paymentAmount') ?? 0,
+    paymentCurrency: stringField(record, 'payment_currency') || stringField(record, 'paymentCurrency') || '',
+    paymentChain: stringField(record, 'payment_chain') || stringField(record, 'paymentChain'),
+    nextRenewal: dateField(record, 'next_renewal') ?? dateField(record, 'nextRenewal'),
+    autoRenew: booleanField(record, 'auto_renew') ?? booleanField(record, 'autoRenew') ?? false,
+    renewalCount: numberField(record, 'renewal_count') ?? numberField(record, 'renewalCount') ?? 0,
+    totalRequests: numberField(record, 'total_requests') ?? numberField(record, 'totalRequests') ?? 0,
+    totalRecords: numberField(record, 'total_records') ?? numberField(record, 'totalRecords') ?? 0,
+    lastAccess: dateField(record, 'last_access') ?? dateField(record, 'lastAccess'),
+    deliveryTopic: stringField(record, 'delivery_topic') || stringField(record, 'deliveryTopic'),
+    providerSignature: bytesField(record, 'provider_signature') ?? bytesField(record, 'providerSignature'),
+    grantResponseBase64: stringField(record, 'grant_response_base64') || stringField(record, 'grantResponseBase64'),
+    providerPeerId: stringField(record, 'provider_peer_id') || stringField(record, 'providerPeerId') || '',
+  };
+}
+
+function normalizeCryptoBuyerIntent(value: unknown): CryptoBuyerIntent {
+  const record = isRecord(value) ? value : {};
+  return {
+    reference: stringField(record, 'reference') || '',
+    requestId: stringField(record, 'request_id') || stringField(record, 'requestId') || '',
+    chain: stringField(record, 'chain') || '',
+    asset: stringField(record, 'asset') || '',
+    assetContract: stringField(record, 'asset_contract') || stringField(record, 'assetContract'),
+    nativeAsset: booleanField(record, 'native_asset') ?? booleanField(record, 'nativeAsset'),
+    amount: numberField(record, 'amount') ?? 0,
+    recipient: stringField(record, 'recipient') || '',
+    method: numberField(record, 'method') as PaymentMethod | undefined,
+    createdAt: dateField(record, 'created_at') ?? dateField(record, 'createdAt'),
+    expiresAt: dateField(record, 'expires_at') ?? dateField(record, 'expiresAt'),
+    usedAt: dateField(record, 'used_at') ?? dateField(record, 'usedAt'),
+    txHash: stringField(record, 'tx_hash') || stringField(record, 'txHash'),
+    intentDigest: stringField(record, 'intent_digest') || stringField(record, 'intentDigest'),
+    intentSignature: stringField(record, 'intent_signature') || stringField(record, 'intentSignature'),
+  };
+}
+
+function bytesToBase64(value: Uint8Array | undefined): string | undefined {
+  if (!value || value.length === 0) {
+    return undefined;
+  }
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let output = '';
+  for (let index = 0; index < value.length; index += 3) {
+    const first = value[index];
+    const second = value[index + 1];
+    const third = value[index + 2];
+    output += alphabet[first >> 2];
+    output += alphabet[((first & 0x03) << 4) | ((second ?? 0) >> 4)];
+    output += index + 1 < value.length ? alphabet[((second & 0x0f) << 2) | ((third ?? 0) >> 6)] : '=';
+    output += index + 2 < value.length ? alphabet[(third ?? 0) & 0x3f] : '=';
+  }
+  return output;
+}
+
+function base64ToBytes(value: string): Uint8Array | undefined {
+  const normalized = value.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const clean = normalized.replace(/=+$/u, '');
+  const bytes: number[] = [];
+  let buffer = 0;
+  let bits = 0;
+  for (const char of clean) {
+    const next = alphabet.indexOf(char);
+    if (next < 0) {
+      return undefined;
+    }
+    buffer = (buffer << 6) | next;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((buffer >> bits) & 0xff);
+    }
+  }
+  return new Uint8Array(bytes);
+}
+
+function bytesField(record: Record<string, unknown>, key: string): Uint8Array | undefined {
+  const value = record[key];
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return base64ToBytes(value);
+  }
+  return undefined;
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function numberField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function booleanField(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function dateField(record: Record<string, unknown>, key: string): Date | undefined {
+  const value = record[key];
+  if (typeof value !== 'string' || !value) {
+    return undefined;
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
 }

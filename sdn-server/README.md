@@ -109,14 +109,27 @@ Legacy import from `/opt/data/satellite_data.db`:
 ./spacedatanetwork import-legacy-sqlite \
   --source-db /opt/data/satellite_data.db \
   --storage-path /opt/data/sdn \
-  --batch-size 2000
+  --batch-size 50000 \
+  --provider-id space-data-network-02 \
+  --source-name celestrak-gp-historical \
+  --datastore-namespace
 ```
 
 Resume behavior is checkpointed at:
 
 ```bash
-/opt/data/sdn/legacy-import-checkpoint.json
+/opt/data/sdn/datastores/<sdn-datastore-key>/legacy-import-checkpoint.json
 ```
+
+`--datastore-namespace` writes historical `OMM.fbs` into an isolated
+SDN-managed FlatSQL datastore keyed by schema, provider/source, producer peer
+identity, batch head, query profile, snapshot, high-water marker, and artifact
+hash. That keeps source identity at the datastore boundary instead of adding a
+per-record source-tag row for the full historical archive. Omit the flag only
+when you intentionally need the older mixed-store/source-tag import path. Live
+CelesTrak CSV batches remain under `space-data-network-02 / celestrak-gp`.
+Use `--batch-id`, `--source-url`, `--producer-peer-id`, and
+`--producer-public-key` when replaying a specific archived source snapshot.
 
 ## Stripe Subscription Billing (Storefront)
 
@@ -196,12 +209,16 @@ Data API response format:
 
 - Default for `OMM`, `MPE`, `CAT` query endpoints: `application/x-flatbuffers`
 - Stream framing: `uint32be-length-prefixed` records
+- Raw FlatSQL data queries can stream record payloads directly with
+  `Accept: application/vnd.sdn.flatbuffers.stream`
 - JSON fallback for debugging: add `?format=json` (or `Accept: application/json`)
 
 Bulk FlatBuffer endpoints (globe feed):
 
+- `GET /api/v1/data/omm/bulk?day=YYYY-MM-DD&limit=50000` (FlatBuffers default)
 - `GET /api/v1/data/mpe/bulk?day=YYYY-MM-DD&limit=50000` (FlatBuffers default)
 - `GET /api/v1/data/cat/bulk?limit=50000` (FlatBuffers default)
+- `GET /api/v1/data/spw/bulk?limit=50000` (FlatBuffers default)
 
 Plugin catalog location:
 

@@ -136,10 +136,11 @@ func TestSchemaNameToTable(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"OMM.fbs", "sds_omm"},
-		{"CDM.fbs", "sds_cdm"},
-		{"EPM.fbs", "sds_epm"},
-		{"CUSTOM", "sds_custom"},
+		{"OMM.fbs", "OMM"},
+		{"CDM.fbs", "CDM"},
+		{"EPM.fbs", "EPM"},
+		{"CUSTOM", "CUSTOM"},
+		{"My_Schema_v2.fbs", "My_Schema_v2"},
 	}
 
 	for _, test := range tests {
@@ -260,7 +261,7 @@ func TestSupportedSchemas(t *testing.T) {
 		"OMM.fbs", "OSM.fbs", "PLD.fbs", "PLHD.fbs", "PLOG.fbs",
 		"PNM.fbs", "PRG.fbs",
 		"PUR.fbs", "REC.fbs", "REV.fbs", "RFM.fbs", "RHD.fbs",
-		"ROC.fbs", "SCM.fbs", "SIT.fbs", "STF.fbs", "TDM.fbs",
+		"ROC.fbs", "SCM.fbs", "SIT.fbs", "SPW.fbs", "STF.fbs", "TDM.fbs",
 		"TIM.fbs", "VCM.fbs",
 	}
 

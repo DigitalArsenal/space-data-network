@@ -2,8 +2,9 @@ import { SUPPORTED_SCHEMAS } from '../../schemas';
 import * as flatbuffers from 'flatbuffers';
 import { PLG } from 'spacedatastandards.org/lib/js/REC/PLG.js';
 import { publicationState } from 'spacedatastandards.org/lib/js/PLG/publicationState.js';
+import { purchaseTier } from 'spacedatastandards.org/lib/js/PLG/purchaseTier.js';
 
-import type { CanonicalListing, ListingStatus } from './types';
+import type { CanonicalListing, ListingPaymentModel, ListingStatus } from './types';
 
 export interface DecodeCanonicalPlgListingOptions {
   observedAt?: number;
@@ -18,6 +19,7 @@ export function decodeCanonicalPlgListing(
   const manifest = PLG.getRootAsPLG(new flatbuffers.ByteBuffer(bytes));
   const unpacked = manifest.unpack();
   const listing: CanonicalListing = {
+    listingKind: 'module',
     pluginId: normalizeRequiredString(unpacked.PLUGIN_ID, 'pluginId'),
     version: normalizeRequiredString(unpacked.VERSION, 'version'),
     observedAt: options.observedAt ?? 0,
@@ -57,6 +59,31 @@ export function decodeCanonicalPlgListing(
   const tags = normalizeStringList(unpacked.TAGS);
   if (tags) {
     listing.tags = tags;
+  }
+
+  const screenshotUrls = normalizeStringList(unpacked.SCREENSHOT_URLS);
+  if (screenshotUrls) {
+    listing.screenshotUrls = screenshotUrls;
+  }
+
+  listing.paymentModel = decodePaymentModel(unpacked.PAYMENT_MODEL);
+
+  if (unpacked.PRICE_USD_CENTS > 0) {
+    listing.priceUsdCents = unpacked.PRICE_USD_CENTS;
+  }
+
+  if (unpacked.SUBSCRIPTION_PERIOD_DAYS > 0) {
+    listing.subscriptionPeriodDays = unpacked.SUBSCRIPTION_PERIOD_DAYS;
+  }
+
+  const acceptedPaymentMethods = normalizeStringList(unpacked.ACCEPTED_PAYMENT_METHODS);
+  if (acceptedPaymentMethods) {
+    listing.acceptedPaymentMethods = acceptedPaymentMethods;
+  }
+
+  const requiredScope = normalizeOptionalString(unpacked.REQUIRED_SCOPE);
+  if (requiredScope) {
+    listing.requiredScope = requiredScope;
   }
 
   const standardsUsed = inferStandardsUsed(
@@ -128,6 +155,19 @@ function decodeListingStatus(status: publicationState): ListingStatus {
       return 'retired';
     default:
       throw new Error(`unknown PLG listing status: ${status}`);
+  }
+}
+
+function decodePaymentModel(model: purchaseTier): ListingPaymentModel {
+  switch (model) {
+    case purchaseTier.Free:
+      return 'free';
+    case purchaseTier.OneTime:
+      return 'one-time';
+    case purchaseTier.Subscription:
+      return 'subscription';
+    default:
+      throw new Error(`unknown PLG payment model: ${model}`);
   }
 }
 

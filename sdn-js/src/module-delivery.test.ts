@@ -21,12 +21,29 @@ import { keyMaterialEncoding } from 'spacedatastandards.org/lib/js/REC/keyMateri
 import { keyMaterialRole } from 'spacedatastandards.org/lib/js/REC/keyMaterialRole.js';
 import { pluginCategory as pluginType } from 'spacedatastandards.org/lib/js/PLG/pluginCategory.js';
 
+function mockProviderSignature(message: Uint8Array): Uint8Array {
+  const digest = new Uint8Array(createHash('sha256').update(message).digest());
+  const signature = new Uint8Array(64);
+  signature.set(digest, 0);
+  signature.set(digest, digest.length);
+  return signature;
+}
+
 vi.mock('./crypto/hd-wallet', () => {
   return {
     derivePeerIdFromPublicKey: vi.fn(async () => 'provider-peer-id'),
     sign: vi.fn(async () => new Uint8Array([0xaa, 0xbb, 0xcc])),
     sha256: vi.fn(async (value: Uint8Array) => {
       return new Uint8Array(createHash('sha256').update(value).digest());
+    }),
+    verify: vi.fn(async (publicKey: Uint8Array, message: Uint8Array, signature: Uint8Array) => {
+      return (
+        publicKey.length === 32 &&
+        publicKey.every((byte) => byte === 5) &&
+        message.length > 0 &&
+        signature.length === 64 &&
+        !signature.every((byte) => byte === 8)
+      );
     }),
   };
 });
@@ -511,6 +528,247 @@ describe('module-delivery', () => {
     });
   });
 
+  it('rejects grants with tampered provider signatures, stale expiry, or revoked status', async () => {
+    const makeTransport = (grantOverrides: Partial<GrantFixtureOptions>) => ({
+      async dialProtocol(
+        _targetPeerId: string,
+        _protocolId: string,
+        payload: Uint8Array,
+      ) {
+        if (isLCH(payload)) {
+          const request = decodeLCH(payload);
+          return encodeChallengeResponse({
+            reqId: request.REQUEST_ID() ?? '',
+            moduleId: request.MODULE_ID() ?? '',
+            moduleVersion: request.MODULE_VERSION() ?? undefined,
+            providerPeerId: 'provider-peer-id',
+            challengeNonce: new Uint8Array([1, 2, 3, 4]),
+            expiresAtMs: 1_700_000_900_000n,
+          });
+        }
+
+        const proof = decodeLPF(payload);
+        return encodeGrantResponse({
+          reqId: proof.REQUEST_ID() ?? '',
+          moduleId: proof.MODULE_ID() ?? '',
+          moduleVersion: proof.MODULE_VERSION() ?? undefined,
+          requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+          requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+          requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
+          requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          grantedDomain: 'app.example.com',
+          grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          expiresAtMs: 1_700_003_600_000n,
+          contentHash: new Uint8Array(32).fill(7),
+          ...grantOverrides,
+        });
+      },
+      async fetchCIDBytes() {
+        return new Uint8Array([1, 2, 3, 4]);
+      },
+    });
+    const request = {
+      serverDescriptor: {
+        publicKey: '02'.padEnd(66, '1'),
+        relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
+      },
+      requesterIdentity: {
+        peerId: 'requester-peer-id',
+        xpub: 'xpub-requester',
+        signingKey: {
+          privateKey: new Uint8Array(32).fill(5),
+          publicKey: new Uint8Array(32).fill(6),
+        },
+        encryptionKey: {
+          privateKey: new Uint8Array(32).fill(7),
+          publicKey: new Uint8Array(32).fill(8),
+        },
+      },
+      moduleId: 'com.space-data-network.fastest-path',
+      moduleVersion: '0.5.22',
+      requesterDomain: 'app.example.com',
+      requestedTimeoutMs: 30_000,
+      reqId: 'req-invalid-grant',
+      requestedAtMs: 1_700_000_000_000,
+    };
+
+    await expect(
+      requestModuleGrant(makeTransport({ providerSignature: new Uint8Array(63).fill(9) }), request),
+    ).rejects.toMatchObject({
+      code: 'invalid_grant',
+    });
+    await expect(
+      requestModuleGrant(makeTransport({ providerSignature: new Uint8Array(64) }), request),
+    ).rejects.toMatchObject({
+      code: 'invalid_grant',
+    });
+    await expect(
+      requestModuleGrant(makeTransport({ providerSignature: new Uint8Array(64).fill(8) }), request),
+    ).rejects.toMatchObject({
+      code: 'invalid_grant_signature',
+    });
+    await expect(
+      requestModuleGrant(makeTransport({ expiresAtMs: 1_699_999_999_999n }), request),
+    ).rejects.toMatchObject({
+      code: 'grant_expired',
+    });
+    await expect(
+      requestModuleGrant(makeTransport({ grantStatus: 'revoked' }), request),
+    ).rejects.toMatchObject({
+      code: 'grant_revoked',
+    });
+  });
+
+  it('rejects grants whose verifier key is not advertised by the resolved provider EPM', async () => {
+    const transport = {
+      async dialProtocol(
+        _targetPeerId: string,
+        _protocolId: string,
+        payload: Uint8Array,
+      ) {
+        if (isLCH(payload)) {
+          const request = decodeLCH(payload);
+          return encodeChallengeResponse({
+            reqId: request.REQUEST_ID() ?? '',
+            moduleId: request.MODULE_ID() ?? '',
+            moduleVersion: request.MODULE_VERSION() ?? undefined,
+            providerPeerId: 'provider-peer-id',
+            challengeNonce: new Uint8Array([1, 2, 3, 4]),
+            expiresAtMs: 1_700_000_900_000n,
+          });
+        }
+
+        const proof = decodeLPF(payload);
+        return encodeGrantResponse({
+          reqId: proof.REQUEST_ID() ?? '',
+          moduleId: proof.MODULE_ID() ?? '',
+          moduleVersion: proof.MODULE_VERSION() ?? undefined,
+          requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+          requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+          requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
+          requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          grantedDomain: 'app.example.com',
+          grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          expiresAtMs: 1_700_003_600_000n,
+          contentHash: new Uint8Array(32).fill(7),
+          grantVerifierPublicKey: new Uint8Array(32).fill(5),
+        });
+      },
+      async fetchCIDBytes() {
+        return new Uint8Array([1, 2, 3, 4]);
+      },
+    };
+
+    await expect(
+      requestModuleGrant(transport, {
+        serverDescriptor: {
+          publicKey: '02'.padEnd(66, '1'),
+          cid: 'bafyproviderdescriptor',
+          relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
+        },
+        descriptorResolver: {
+          resolveCID: async () => buildProviderEPM({
+            providerPublicKeyHex: '02'.padEnd(66, '1'),
+            grantVerifierPublicKey: new Uint8Array(32).fill(6),
+          }),
+        },
+        requesterIdentity: {
+          peerId: 'requester-peer-id',
+          xpub: 'xpub-requester',
+          signingKey: {
+            privateKey: new Uint8Array(32).fill(5),
+            publicKey: new Uint8Array(32).fill(6),
+          },
+          encryptionKey: {
+            privateKey: new Uint8Array(32).fill(7),
+            publicKey: new Uint8Array(32).fill(8),
+          },
+        },
+        moduleId: 'com.space-data-network.fastest-path',
+        moduleVersion: '0.5.22',
+        requesterDomain: 'app.example.com',
+        requestedTimeoutMs: 30_000,
+        reqId: 'req-epm-verifier',
+        requestedAtMs: 1_700_000_000_000,
+      }),
+    ).rejects.toMatchObject({
+      code: 'invalid_grant_verifier',
+    });
+  });
+
+  it('rejects signed grants with malformed wrapped content key payloads', async () => {
+    const makeTransport = (grantOverrides: Partial<GrantFixtureOptions>) => ({
+      async dialProtocol(
+        _targetPeerId: string,
+        _protocolId: string,
+        payload: Uint8Array,
+      ) {
+        if (isLCH(payload)) {
+          const request = decodeLCH(payload);
+          return encodeChallengeResponse({
+            reqId: request.REQUEST_ID() ?? '',
+            moduleId: request.MODULE_ID() ?? '',
+            moduleVersion: request.MODULE_VERSION() ?? undefined,
+            providerPeerId: 'provider-peer-id',
+            challengeNonce: new Uint8Array([1, 2, 3, 4]),
+            expiresAtMs: 1_700_000_900_000n,
+          });
+        }
+
+        const proof = decodeLPF(payload);
+        return encodeGrantResponse({
+          reqId: proof.REQUEST_ID() ?? '',
+          moduleId: proof.MODULE_ID() ?? '',
+          moduleVersion: proof.MODULE_VERSION() ?? undefined,
+          requesterPeerId: proof.REQUESTER_PEER_ID() ?? undefined,
+          requesterXpub: proof.REQUESTER_XPUB() ?? undefined,
+          requestedDomain: proof.REQUESTED_DOMAIN() ?? '',
+          requestedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          grantedDomain: 'app.example.com',
+          grantedTimeoutMs: proof.REQUESTED_TIMEOUT_MS(),
+          expiresAtMs: 1_700_003_600_000n,
+          contentHash: new Uint8Array(32).fill(7),
+          ...grantOverrides,
+        });
+      },
+      async fetchCIDBytes() {
+        return new Uint8Array([1, 2, 3, 4]);
+      },
+    });
+
+    await expect(
+      requestModuleGrant(
+        makeTransport({ wrappedContentKeyPayload: new Uint8Array([1, 2, 3, 4]) }),
+        {
+          serverDescriptor: {
+            publicKey: '02'.padEnd(66, '1'),
+            relayAddresses: ['/dns4/relay.example/tcp/443/wss/p2p/relay-peer'],
+          },
+          requesterIdentity: {
+            peerId: 'requester-peer-id',
+            xpub: 'xpub-requester',
+            signingKey: {
+              privateKey: new Uint8Array(32).fill(5),
+              publicKey: new Uint8Array(32).fill(6),
+            },
+            encryptionKey: {
+              privateKey: new Uint8Array(32).fill(7),
+              publicKey: new Uint8Array(32).fill(8),
+            },
+          },
+          moduleId: 'com.space-data-network.fastest-path',
+          moduleVersion: '0.5.22',
+          requesterDomain: 'app.example.com',
+          requestedTimeoutMs: 30_000,
+          reqId: 'req-malformed-wrap',
+          requestedAtMs: 1_700_000_000_000,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 'invalid_grant',
+    });
+  });
+
   it('keeps the relay probe example on the real module-delivery exchange path', async () => {
     const exampleSource = await fs.readFile(
       path.join(__dirname, '..', 'examples', 'ipfs-relay-id-exchange.ts'),
@@ -589,7 +847,22 @@ function encodeGrantResponse(options: {
   grantedTimeoutMs: bigint;
   expiresAtMs: bigint;
   contentHash: Uint8Array;
+  grantStatus?: string;
+  providerSignature?: Uint8Array | null;
+  grantVerifierPublicKey?: Uint8Array;
+  wrappedContentKeyPayload?: Uint8Array;
 }): Uint8Array {
+  if (options.providerSignature === undefined) {
+    const unsignedGrant = encodeGrantResponse({
+      ...options,
+      providerSignature: null,
+    });
+    return encodeGrantResponse({
+      ...options,
+      providerSignature: mockProviderSignature(unsignedGrant),
+    });
+  }
+
   const builder = new flatbuffers.Builder(1024);
   const reqIdOffset = builder.createString(options.reqId);
   const moduleIdOffset = builder.createString(options.moduleId);
@@ -599,13 +872,22 @@ function encodeGrantResponse(options: {
   const requestedDomainOffset = builder.createString(options.requestedDomain);
   const grantedDomainOffset = builder.createString(options.grantedDomain);
   const requiredScopeOffset = builder.createString('orbpro.default');
-  const grantStatusOffset = builder.createString('active');
+  const grantStatusOffset = builder.createString(options.grantStatus ?? 'active');
   const capabilityTokenOffset = LGR.createCapabilityTokenVector(builder, new Uint8Array([1, 2, 3]));
   const moduleDescriptorOffset = createModuleDescriptorOffset(builder, options.contentHash);
   const wrappedContentKeyHeaderOffset = createWrappedContentKeyHeaderOffset(builder, options);
-  const wrappedContentKeyPayloadOffset = createWrappedContentKeyPayloadOffset(builder, options);
-  const verifierPubkeyOffset = LGR.createGrantVerifierPubkeyVector(builder, new Uint8Array(32).fill(5));
-  const providerSignatureOffset = LGR.createProviderSignatureVector(builder, new Uint8Array([9, 9, 9]));
+  const wrappedContentKeyPayloadOffset = LGR.createWrappedContentKeyPayloadVector(
+    builder,
+    options.wrappedContentKeyPayload ?? createWrappedContentKeyPayload(options),
+  );
+  const verifierPubkeyOffset = LGR.createGrantVerifierPubkeyVector(
+    builder,
+    options.grantVerifierPublicKey ?? new Uint8Array(32).fill(5),
+  );
+  const providerSignatureOffset =
+    options.providerSignature === null
+      ? 0
+      : LGR.createProviderSignatureVector(builder, options.providerSignature);
 
   LGR.startLGR(builder);
   LGR.addMessageType(builder, licensingGrantMessageType.Granted);
@@ -632,10 +914,52 @@ function encodeGrantResponse(options: {
   LGR.addWrappedContentKeyHeader(builder, wrappedContentKeyHeaderOffset);
   LGR.addWrappedContentKeyPayload(builder, wrappedContentKeyPayloadOffset);
   LGR.addGrantVerifierPubkey(builder, verifierPubkeyOffset);
-  LGR.addProviderSignature(builder, providerSignatureOffset);
+  if (providerSignatureOffset !== 0) {
+    LGR.addProviderSignature(builder, providerSignatureOffset);
+  }
   const root = LGR.endLGR(builder);
   LGR.finishLGRBuffer(builder, root);
   return builder.asUint8Array();
+}
+
+type GrantFixtureOptions = Parameters<typeof encodeGrantResponse>[0];
+
+function buildProviderEPM(input: {
+  providerPublicKeyHex: string;
+  grantVerifierPublicKey: Uint8Array;
+}): Uint8Array {
+  const builder = new flatbuffers.Builder(256);
+  const providerPublicKeyOffset = builder.createString(input.providerPublicKeyHex);
+  const secpAddressTypeOffset = builder.createString('secp256k1');
+
+  builder.startObject(7);
+  builder.addFieldOffset(0, providerPublicKeyOffset, 0);
+  builder.addFieldOffset(5, secpAddressTypeOffset, 0);
+  builder.addFieldInt8(6, 0, 0);
+  const providerKeyOffset = builder.endObject();
+
+  const grantVerifierKeyOffset = builder.createString(bytesToHex(input.grantVerifierPublicKey));
+  const ed25519AddressTypeOffset = builder.createString('ed25519');
+  builder.startObject(7);
+  builder.addFieldOffset(0, grantVerifierKeyOffset, 0);
+  builder.addFieldOffset(5, ed25519AddressTypeOffset, 0);
+  builder.addFieldInt8(6, 0, 0);
+  const grantVerifierOffset = builder.endObject();
+
+  const keysOffset = createOffsetVector(builder, [providerKeyOffset, grantVerifierOffset]);
+  builder.startObject(15);
+  builder.addFieldOffset(13, keysOffset, 0);
+  const epmOffset = builder.endObject();
+  builder.finish(epmOffset, '$EPM');
+  return builder.asUint8Array();
+}
+
+function createOffsetVector(builder: flatbuffers.Builder, offsets: number[]): number {
+  builder.startVector(4, offsets.length, 4);
+  for (let index = offsets.length - 1; index >= 0; index -= 1) {
+    builder.addOffset(offsets[index]);
+  }
+  return builder.endVector();
 }
 
 function createModuleDescriptorOffset(
@@ -706,10 +1030,9 @@ function createWrappedContentKeyHeaderOffset(
   );
 }
 
-function createWrappedContentKeyPayloadOffset(
-  builder: flatbuffers.Builder,
+function createWrappedContentKeyPayload(
   options: { moduleId: string; moduleVersion?: string; expiresAtMs: bigint },
-): flatbuffers.Offset {
+): Uint8Array {
   const kmfBuilder = new flatbuffers.Builder(256);
   const keyIdOffset = kmfBuilder.createString(`${options.moduleId}:${options.moduleVersion ?? 'latest'}`);
   const keyBytesOffset = KMF.createKeyBytesVector(kmfBuilder, new Uint8Array([4, 5, 6]));
@@ -724,7 +1047,7 @@ function createWrappedContentKeyPayloadOffset(
     options.expiresAtMs,
   );
   KMF.finishKMFBuffer(kmfBuilder, kmfOffset);
-  return LGR.createWrappedContentKeyPayloadVector(builder, kmfBuilder.asUint8Array());
+  return kmfBuilder.asUint8Array();
 }
 
 function hexToBytes(hex: string): Uint8Array {
@@ -734,6 +1057,12 @@ function hexToBytes(hex: string): Uint8Array {
     bytes[index] = Number.parseInt(normalized.slice(index * 2, index * 2 + 2), 16);
   }
   return bytes;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 async function sha256(value: Uint8Array): Promise<Uint8Array> {

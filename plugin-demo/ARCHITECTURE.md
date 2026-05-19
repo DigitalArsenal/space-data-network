@@ -18,7 +18,8 @@ data flow, from publication through notification to consumption.
                           │     └── Extract index fields                │
                           │                                             │
                           │  2. Store in FlatSQL                        │
-                          │     ├── sds_{schema}(cid, data, sig)        │
+                          │     ├── {schema}.flatsql append-only bytes  │
+                          │     ├── OMM/CAT/... stream metadata rows    │
                           │     └── sdn_record_index(schema, cid, ...)  │
                           │                                             │
                           │  3. Append PLOG entry                       │
@@ -59,7 +60,8 @@ data flow, from publication through notification to consumption.
                           │     └── Verify CID matches content hash     │
                           │                                             │
                           │  9. Store locally                           │
-                          │     ├── sds_{schema}(cid, data, sig)        │
+                          │     ├── {schema}.flatsql append-only bytes  │
+                          │     ├── OMM/CAT/... stream metadata rows    │
                           │     └── sdn_record_index                    │
                           │                                             │
                           │ 10. Fire subscription handlers              │

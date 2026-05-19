@@ -24,6 +24,7 @@ vi.mock('../../crypto/hd-wallet', () => {
 });
 
 import {
+  decryptGrantProtectedModuleBundle,
   decryptEncryptedModuleBundle,
   invokeLoadedModule,
   loadDecryptedModule,
@@ -61,6 +62,7 @@ describe('live-delivery', () => {
     const decryptedBundle = await decryptEncryptedModuleBundle(
       encryptedBundleBytes,
       contentKey,
+      new TextEncoder().encode('listing=protected-od;grant=g1;epoch=e1'),
       {
         onEvent(event) {
           deliveryEvents.push(event.stage);
@@ -73,6 +75,7 @@ describe('live-delivery', () => {
       contentKey,
       new Uint8Array(20).fill(2),
       new Uint8Array(12).fill(1),
+      new TextEncoder().encode('listing=protected-od;grant=g1;epoch=e1'),
     );
 
     const harness = await loadDecryptedModule(new Uint8Array([0, 97, 115, 109]), {
@@ -122,13 +125,92 @@ describe('live-delivery', () => {
     ).rejects.toThrow(/WASM client-decrypt module/);
   });
 
+  it('routes encrypted REC/KMF grants through client-decrypt for browser artifact decryption', async () => {
+    const decryptArtifact = vi.fn(async () => new TextEncoder().encode('protected wasm'));
+    const grantResponseBytes = new Uint8Array([1, 2, 3, 4]);
+    const encryptedBundleBytes = new Uint8Array([5, 6, 7, 8]);
+    const recipientPrivateKey = new Uint8Array(32).fill(7);
+    const events: string[] = [];
+
+    const decrypted = await decryptGrantProtectedModuleBundle(
+      {
+        grantResponseBytes,
+        encryptedBundleBytes,
+      },
+      recipientPrivateKey,
+      { decryptArtifact },
+      {
+        onEvent(event) {
+          events.push(event.stage);
+        },
+      },
+    );
+
+    expect(new TextDecoder().decode(decrypted)).toBe('protected wasm');
+    expect(decryptArtifact).toHaveBeenCalledWith(
+      {
+        grantResponseBytes,
+        encryptedBundleBytes,
+      },
+      recipientPrivateKey,
+    );
+    expect(events).toEqual(['unwrap-start', 'decrypt-start', 'decrypt-complete']);
+  });
+
+  it('fails closed when client-decrypt rejects a tampered grant envelope', async () => {
+    const decryptArtifact = vi.fn(async () => {
+      throw new Error('invalid grant envelope authentication tag');
+    });
+    const events: string[] = [];
+
+    await expect(
+      decryptGrantProtectedModuleBundle(
+        {
+          grantResponseBytes: new Uint8Array([1, 2, 3, 4]),
+          encryptedBundleBytes: new Uint8Array([5, 6, 7, 8]),
+        },
+        new Uint8Array(32).fill(7),
+        { decryptArtifact },
+        {
+          onEvent(event) {
+            events.push(event.stage);
+          },
+        },
+      ),
+    ).rejects.toThrow(/invalid grant envelope authentication tag/);
+
+    expect(decryptArtifact).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(['unwrap-start', 'decrypt-start']);
+  });
+
   it('rejects undersized encrypted bundle payloads before decrypting', async () => {
     await expect(
       decryptEncryptedModuleBundle(
         new Uint8Array(28),
         new Uint8Array(32).fill(4),
+        undefined,
       ),
     ).rejects.toThrow(/iv and authentication tag/);
     expect(aesGcmDecryptWithIv).not.toHaveBeenCalled();
+  });
+
+  it('passes canonical grant AAD into AES-GCM so tampered delivery metadata fails closed', async () => {
+    const encryptedBundleBytes = new Uint8Array(12 + 4 + 16);
+    const aad = new TextEncoder().encode('listing=protected-od;grant=g1;epoch=e1');
+    aesGcmDecryptWithIv.mockRejectedValueOnce(new Error('authentication failed'));
+
+    await expect(
+      decryptEncryptedModuleBundle(
+        encryptedBundleBytes,
+        new Uint8Array(32).fill(4),
+        aad,
+      ),
+    ).rejects.toThrow(/authentication failed/);
+    expect(aesGcmDecryptWithIv).toHaveBeenCalledWith(
+      new Uint8Array(32).fill(4),
+      new Uint8Array(20),
+      new Uint8Array(12),
+      aad,
+    );
   });
 });

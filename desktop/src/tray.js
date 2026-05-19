@@ -30,6 +30,16 @@ function buildCheckbox (key, label) {
   }
 }
 
+const SDN_STATUS_MENU_ITEMS = Object.freeze([
+  ['ipfsIsStarting', 'SDN is Starting', 'yellow'],
+  ['ipfsIsRunning', 'SDN is Running', 'green'],
+  ['ipfsIsStopping', 'SDN is Stopping', 'yellow'],
+  ['ipfsIsNotRunning', 'SDN is Not Running', 'gray'],
+  ['ipfsHasErrored', 'SDN has Errored', 'red'],
+  ['runningWithGC', 'SDN is Running (GC in progress)', 'yellow'],
+  ['runningWhileCheckingForUpdate', 'SDN is Running (Checking for Updates)', 'yellow']
+])
+
 // Notes on this: we are only supporting accelerators on macOS for now because
 // they natively work as soon as the menu opens. They don't work like that on Windows
 // or other OSes and must be registered globally. They still collide with global
@@ -44,7 +54,6 @@ async function buildMenu () {
   const startIpfs = ctx.getFn('startIpfs')
   const stopIpfs = ctx.getFn('stopIpfs')
   const launchDashboard = ctx.getFn('launchDashboard')
-  const launchWebUI = ctx.getFn('launchWebUI')
   const manualCheckForUpdates = ctx.getFn('manualCheckForUpdates')
   /**
    * we need to wait for i18n to be ready before we translate the tray menu
@@ -55,17 +64,9 @@ async function buildMenu () {
   // @ts-expect-error
   return Menu.buildFromTemplate([
     // @ts-ignore
-    ...[
-      ['ipfsIsStarting', 'yellow'],
-      ['ipfsIsRunning', 'green'],
-      ['ipfsIsStopping', 'yellow'],
-      ['ipfsIsNotRunning', 'gray'],
-      ['ipfsHasErrored', 'red'],
-      ['runningWithGC', 'yellow'],
-      ['runningWhileCheckingForUpdate', 'yellow']
-    ].map(([status, color]) => ({
+    ...SDN_STATUS_MENU_ITEMS.map(([status, label, color]) => ({
       id: status,
-      label: i18n.t(status),
+      label,
       visible: false,
       enabled: false,
       icon: path.resolve(path.join(__dirname, `../assets/icons/status/${color}.png`))
@@ -96,21 +97,27 @@ async function buildMenu () {
     { type: 'separator' },
     // @ts-ignore
     {
-      id: 'webuiStatus',
-      label: i18n.t('status'),
+      id: 'sdnUiHome',
+      label: 'SDN UI',
       click: () => { launchDashboard('/') }
     },
     // @ts-ignore
     {
-      id: 'webuiFiles',
-      label: i18n.t('files'),
-      click: () => { launchWebUI('/files') }
+      id: 'sdnStatus',
+      label: i18n.t('status'),
+      click: () => { launchDashboard('/status') }
     },
     // @ts-ignore
     {
-      id: 'webuiPeers',
+      id: 'sdnFiles',
+      label: i18n.t('files'),
+      click: () => { launchDashboard('/files') }
+    },
+    // @ts-ignore
+    {
+      id: 'sdnPeers',
       label: i18n.t('peers'),
-      click: () => { launchWebUI('/peers') }
+      click: () => { launchDashboard('/peers') }
     },
     // @ts-ignore
     { type: 'separator' },
@@ -129,9 +136,9 @@ async function buildMenu () {
       label: IS_MAC ? i18n.t('settings.preferences') : i18n.t('settings.settings'),
       submenu: [
         {
-          id: 'webuiNodeSettings',
+          id: 'sdnNodeSettings',
           label: i18n.t('settings.openNodeSettings'),
-          click: () => { launchWebUI('/settings') }
+          click: () => { launchDashboard('/settings') }
         },
         { type: 'separator' },
         {
@@ -279,7 +286,7 @@ module.exports = async function () {
   const ctx = getCtx()
   logger.info('[tray] starting')
   tray = new Tray(icon(off))
-  tray.setToolTip('IPFS Desktop')
+  tray.setToolTip('Space Data Network')
 
   const launchWebUI = ctx.getFn('launchWebUI')
 
@@ -311,7 +318,7 @@ module.exports = async function () {
   }
   tray.on('right-click', popupMenu)
   const launchDashboard = ctx.getFn('launchDashboard')
-  tray.on('double-click', async () => launchDashboard('/'))
+  tray.on('double-click', async () => launchDashboard('/status'))
 
   ctx.setProp('tray.update-menu', async () => {
     logger.fileLogger.debug('[tray.update-menu] updating tray menu')
@@ -333,10 +340,11 @@ module.exports = async function () {
     menu.getMenuItemById('stopIpfs').visible = status === STATUS.STARTING_FINISHED
     menu.getMenuItemById('restartIpfs').visible = (status === STATUS.STARTING_FINISHED || errored)
 
-    menu.getMenuItemById('webuiStatus').enabled = status === STATUS.STARTING_FINISHED
-    menu.getMenuItemById('webuiFiles').enabled = status === STATUS.STARTING_FINISHED
-    menu.getMenuItemById('webuiPeers').enabled = status === STATUS.STARTING_FINISHED
-    menu.getMenuItemById('webuiNodeSettings').enabled = status === STATUS.STARTING_FINISHED
+    menu.getMenuItemById('sdnUiHome').enabled = true
+    menu.getMenuItemById('sdnStatus').enabled = status === STATUS.STARTING_FINISHED
+    menu.getMenuItemById('sdnFiles').enabled = status === STATUS.STARTING_FINISHED
+    menu.getMenuItemById('sdnPeers').enabled = status === STATUS.STARTING_FINISHED
+    menu.getMenuItemById('sdnNodeSettings').enabled = status === STATUS.STARTING_FINISHED
 
     menu.getMenuItemById('startIpfs').enabled = !gcRunning
     menu.getMenuItemById('stopIpfs').enabled = !gcRunning

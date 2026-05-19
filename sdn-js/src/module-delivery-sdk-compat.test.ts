@@ -35,6 +35,12 @@ vi.mock('./crypto/hd-wallet', async () => {
     ...actual,
     derivePeerIdFromPublicKey: vi.fn(async () => 'provider-peer-id'),
     sign: vi.fn(async () => new Uint8Array([0xaa, 0xbb, 0xcc])),
+    verify: vi.fn(async (publicKey: Uint8Array, message: Uint8Array, signature: Uint8Array) => (
+      publicKey.length === 32 &&
+      message.length > 0 &&
+      signature.length === 64 &&
+      signature.every((byte) => byte === 0x99)
+    )),
   };
 });
 
@@ -62,6 +68,7 @@ describe('module-delivery SDK compatibility', () => {
 
     expect(typeof ui.loadMarketplaceListingsFromServer).toBe('function');
     expect(typeof ui.unwrapGrantContentKey).toBe('function');
+    expect(typeof ui.decryptGrantProtectedModuleBundle).toBe('function');
     expect(typeof ui.decryptEncryptedModuleBundle).toBe('function');
     expect(typeof ui.loadDecryptedModule).toBe('function');
     expect(typeof ui.invokeLoadedModule).toBe('function');
@@ -264,7 +271,7 @@ describe('module-delivery SDK compatibility', () => {
     expect(result.grant.grantedDomain).toBe('app.example.com');
     expect(result.grant.grantedTimeoutMs).toBe(300_000);
     expect(result.grant.grantVerifierPublicKey).toEqual(new Uint8Array(32).fill(5));
-    expect(result.grant.providerSignature).toEqual(new Uint8Array([0x99, 0x98]));
+    expect(result.grant.providerSignature).toEqual(new Uint8Array(64).fill(0x99));
     expect(result.grant.wrappedContentKey.wrappingAlgorithm).toBe(
       'x25519-hkdf-sha256-aes-256-ctr-rec',
     );
@@ -360,7 +367,7 @@ function encodeGrantResponse(options: {
   const grantStatusOffset = builder.createString('granted');
   const capabilityTokenOffset = LGR.createCapabilityTokenVector(builder, new Uint8Array([0x42]));
   const grantVerifierPubkeyOffset = LGR.createGrantVerifierPubkeyVector(builder, new Uint8Array(32).fill(5));
-  const providerSignatureOffset = LGR.createProviderSignatureVector(builder, new Uint8Array([0x99, 0x98]));
+  const providerSignatureOffset = LGR.createProviderSignatureVector(builder, new Uint8Array(64).fill(0x99));
 
   const moduleDescriptorOffset = createModuleDescriptor(builder, options);
   const wrappedContentKeyHeaderOffset = createWrappedContentKeyHeader(builder);

@@ -275,6 +275,170 @@ func TestAuth_ChallengeVerify_SucceedsWithBoundKey(t *testing.T) {
 	}
 }
 
+func TestAuth_FirstAdminBootstrapCreatesAdminFromVerifiedWallet(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	pubHex := hex.EncodeToString(pub)
+
+	dir := t.TempDir()
+	userStore, err := NewUserStore(filepath.Join(dir, "users.db"), nil)
+	if err != nil {
+		t.Fatalf("NewUserStore: %v", err)
+	}
+	defer userStore.Close()
+	if userStore.HasAdmin() {
+		t.Fatal("empty user store should not have an admin")
+	}
+
+	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer sdb.Close()
+
+	sessions, err := NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+	h := NewHandler(userStore, sessions, 24*time.Hour, "", "")
+
+	challengeID, challenge := requestAuthChallenge(t, h, "xpub-first-admin", pubHex)
+	sig := ed25519.Sign(priv, challenge)
+	verifyBody, _ := json.Marshal(map[string]any{
+		"challenge_id":      challengeID,
+		"xpub":              "xpub-first-admin",
+		"client_pubkey_hex": pubHex,
+		"challenge":         base64.RawStdEncoding.EncodeToString(challenge),
+		"signature_hex":     hex.EncodeToString(sig),
+	})
+	verifyReq := httptest.NewRequest(http.MethodPost, "/api/auth/verify", bytes.NewReader(verifyBody))
+	verifyReq.RemoteAddr = "127.0.0.1:12345"
+	verifyRec := httptest.NewRecorder()
+	h.handleVerify(verifyRec, verifyReq)
+
+	if verifyRec.Code != http.StatusOK {
+		t.Fatalf("verify status = %d, want 200: %s", verifyRec.Code, verifyRec.Body.String())
+	}
+	if cookie := verifyRec.Result().Cookies(); len(cookie) == 0 {
+		t.Fatal("expected first admin bootstrap to set a session cookie")
+	}
+	user, err := userStore.GetUser("xpub-first-admin")
+	if err != nil {
+		t.Fatalf("GetUser failed: %v", err)
+	}
+	if user == nil {
+		t.Fatal("first admin user was not created")
+	}
+	if user.TrustLevel < peers.Admin {
+		t.Fatalf("first admin trust = %v, want admin", user.TrustLevel)
+	}
+	if user.SigningPubKeyHex != pubHex {
+		t.Fatalf("stored signing key = %q, want %q", user.SigningPubKeyHex, pubHex)
+	}
+}
+
+func TestAuth_FirstAdminBootstrapClosesAfterAdminExists(t *testing.T) {
+	t.Parallel()
+
+	existingPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey existing: %v", err)
+	}
+	newPub, newPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey new: %v", err)
+	}
+	newPubHex := hex.EncodeToString(newPub)
+
+	dir := t.TempDir()
+	userStore, err := NewUserStore(filepath.Join(dir, "users.db"), []config.UserEntry{
+		{
+			XPub:             "xpub-existing-admin",
+			SigningPubKeyHex: hex.EncodeToString(existingPub),
+			TrustLevel:       "admin",
+			Name:             "Existing Admin",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewUserStore: %v", err)
+	}
+	defer userStore.Close()
+	if !userStore.HasAdmin() {
+		t.Fatal("expected configured admin")
+	}
+
+	sdb, err := sql.Open("sqlite3", filepath.Join(dir, "sessions.db"))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer sdb.Close()
+
+	sessions, err := NewSessionStore(sdb)
+	if err != nil {
+		t.Fatalf("NewSessionStore: %v", err)
+	}
+	h := NewHandler(userStore, sessions, 24*time.Hour, "", "")
+
+	challengeID, challenge := requestAuthChallenge(t, h, "xpub-second-admin", newPubHex)
+	sig := ed25519.Sign(newPriv, challenge)
+	verifyBody, _ := json.Marshal(map[string]any{
+		"challenge_id":      challengeID,
+		"xpub":              "xpub-second-admin",
+		"client_pubkey_hex": newPubHex,
+		"challenge":         base64.RawStdEncoding.EncodeToString(challenge),
+		"signature_hex":     hex.EncodeToString(sig),
+	})
+	verifyReq := httptest.NewRequest(http.MethodPost, "/api/auth/verify", bytes.NewReader(verifyBody))
+	verifyReq.RemoteAddr = "127.0.0.1:12345"
+	verifyRec := httptest.NewRecorder()
+	h.handleVerify(verifyRec, verifyReq)
+
+	if verifyRec.Code != http.StatusForbidden {
+		t.Fatalf("verify status = %d, want 403 for unknown wallet after bootstrap closes: %s", verifyRec.Code, verifyRec.Body.String())
+	}
+	user, err := userStore.GetUser("xpub-second-admin")
+	if err != nil {
+		t.Fatalf("GetUser failed: %v", err)
+	}
+	if user != nil {
+		t.Fatalf("unexpected self-registered user after admin exists: %#v", user)
+	}
+}
+
+func requestAuthChallenge(t *testing.T, h *Handler, xpub string, pubHex string) (string, []byte) {
+	t.Helper()
+
+	body, _ := json.Marshal(map[string]any{
+		"xpub":              xpub,
+		"client_pubkey_hex": pubHex,
+		"ts":                time.Now().Unix(),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/challenge", bytes.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:12345"
+	rec := httptest.NewRecorder()
+	h.handleChallenge(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("challenge status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		ChallengeID string `json:"challenge_id"`
+		Challenge   string `json:"challenge"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode challenge response failed: %v", err)
+	}
+	challenge, err := base64.RawStdEncoding.DecodeString(payload.Challenge)
+	if err != nil {
+		t.Fatalf("decode challenge failed: %v", err)
+	}
+	return payload.ChallengeID, challenge
+}
+
 func TestAuth_ChallengeVerify_SucceedsWithoutXPubWhenSigningKeyIsBound(t *testing.T) {
 	t.Parallel()
 
@@ -741,6 +905,52 @@ func TestAuth_TOFU_BindsSigningKeyOnFirstLogin(t *testing.T) {
 	}
 }
 
+func TestUserStore_UpdateTrustDoesNotClaimConfigUserRevocation(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	userStore, err := NewUserStore(filepath.Join(dir, "users.db"), []config.UserEntry{
+		{
+			XPub:       "xpub-config-admin",
+			TrustLevel: "admin",
+			Name:       "Config Admin",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewUserStore: %v", err)
+	}
+	defer userStore.Close()
+
+	if err := userStore.UpdateTrust("xpub-config-admin", peers.Standard); err == nil {
+		t.Fatal("UpdateTrust(config user) succeeded; config-managed admin trust must not be revocable through the API")
+	}
+
+	user, err := userStore.GetUser("xpub-config-admin")
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if user == nil {
+		t.Fatal("config user disappeared")
+	}
+	if user.TrustLevel != peers.Admin {
+		t.Fatalf("config admin trust changed to %s", user.TrustLevel)
+	}
+
+	if err := userStore.RecordLogin("xpub-config-admin"); err != nil {
+		t.Fatalf("RecordLogin: %v", err)
+	}
+	users, err := userStore.ListUsers()
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if len(users) != 1 {
+		t.Fatalf("ListUsers length = %d, want 1", len(users))
+	}
+	if users[0].Source != "config" {
+		t.Fatalf("config-managed user source = %q, want config", users[0].Source)
+	}
+}
+
 func TestLoginPage_UsesCDNWalletUIFallbackWhenNoLocalDistIsConfigured(t *testing.T) {
 	t.Parallel()
 
@@ -809,6 +1019,12 @@ func TestLoginPage_BuildersExposeWalletAccountSurfaceForUnauthorizedUsers(t *tes
 			}
 			if !strings.Contains(page.html, "window.__sdnRefreshNodeCount") {
 				t.Fatalf("page missing node-count refresh hook: %s", page.html)
+			}
+			if !strings.Contains(page.html, "payload.configured_nodes") {
+				t.Fatalf("page missing configured-node count fallback: %s", page.html)
+			}
+			if !strings.Contains(page.html, "Math.max(connections, configuredNodes)") {
+				t.Fatalf("page should display configured nodes when live connections are lower: %s", page.html)
 			}
 			if !strings.Contains(page.html, "digitalarsenal.github.io/flatbuffers") {
 				t.Fatalf("page missing FlatBuffers technology link: %s", page.html)

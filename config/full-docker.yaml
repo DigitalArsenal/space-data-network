@@ -12,8 +12,20 @@ admin:
   session_expiry: 24h
   totp_required: false
   tls_enabled: false
+  frontend_path: /app/admin-ui
   admin_ui_path: /app/admin-ui
   webui_path: /app/webui
+
+peers:
+  registry_path: /app/data/peers.db
+
+tor:
+  enabled: false
+  hidden_service_enabled: false
+
+flows:
+  enabled: false
+  storage_path: /app/data/flows
 
 setup:
   token_expiry: 10m

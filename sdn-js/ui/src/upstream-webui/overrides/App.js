@@ -9,7 +9,7 @@ import { DropTarget } from 'react-dnd'
 import { NativeTypes } from 'react-dnd-html5-backend'
 import { appTour } from '../../../../../webui/src/lib/tours.js'
 import { getJoyrideLocales } from '../../../../../webui/src/helpers/i8n.js'
-import NavBar from '../../../../../webui/src/navigation/NavBar.js'
+import NavBar from './navigation/NavBar.js'
 import ComponentLoader from '../../../../../webui/src/loader/ComponentLoader.js'
 import Notify from '../../../../../webui/src/components/notify/Notify.js'
 import Connected from '../../../../../webui/src/components/connected/Connected.js'
@@ -116,7 +116,7 @@ export class App extends Component {
 
   render() {
     const { t, route: Page, ipfsReady, doFilesNavigateTo, routeInfo: { url }, connectDropTarget, canDrop, isOver, showTooltip } = this.props
-    const canRenderWithoutIpfs = url === '/welcome' || url.startsWith('/settings') || url === '/modules'
+    const canRenderWithoutIpfs = url === '/welcome' || url.startsWith('/settings') || url === '/modules' || url === '/marketplace'
     return connectDropTarget(
       <div className='sans-serif h-100 relative' onClick={getNavHelper(this.props.doUpdateUrl)}>
         { canDrop && isOver && <div className='h-100 top-0 right-0 fixed appOverlay' style={{ background: 'rgba(99, 202, 210, 0.2)' }} /> }

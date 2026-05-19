@@ -31,8 +31,10 @@ describe('server-descriptor.normalizeServerDescriptor', () => {
   });
 
   it('extracts the provider key and relay hints from EPM bytes', async () => {
+    const grantVerifierPublicKey = new Uint8Array(32).fill(6);
     const epmBytes = buildEPM({
       publicKeyHex: '03'.padEnd(66, 'a'),
+      grantVerifierPublicKey,
       multiformatAddresses: ['/dns4/provider.example/tcp/443/wss/p2p/provider-peer-id'],
     });
 
@@ -45,6 +47,7 @@ describe('server-descriptor.normalizeServerDescriptor', () => {
       source: 'epm',
     });
     expect(descriptor.rawEpmBytes).toEqual(epmBytes);
+    expect(descriptor.grantVerifierPublicKeys).toEqual([grantVerifierPublicKey]);
   });
 
   it('rejects descriptors that omit the provider public key', async () => {
@@ -81,6 +84,7 @@ describe('server-descriptor.normalizeServerDescriptor', () => {
 
 function buildEPM(input: {
   publicKeyHex: string;
+  grantVerifierPublicKey?: Uint8Array;
   multiformatAddresses?: string[];
 }): Uint8Array {
   const builder = new Builder(256);
@@ -94,7 +98,18 @@ function buildEPM(input: {
   builder.addFieldInt8(6, 0, 0);
   const cryptoKeyOffset = builder.endObject();
 
-  const keysOffset = createOffsetVector(builder, [cryptoKeyOffset]);
+  const keyOffsets = [cryptoKeyOffset];
+  if (input.grantVerifierPublicKey) {
+    const verifierKeyOffset = builder.createString(bytesToHex(input.grantVerifierPublicKey));
+    const verifierAddressTypeOffset = builder.createString('ed25519');
+    builder.startObject(7);
+    builder.addFieldOffset(0, verifierKeyOffset, 0);
+    builder.addFieldOffset(5, verifierAddressTypeOffset, 0);
+    builder.addFieldInt8(6, 0, 0);
+    keyOffsets.push(builder.endObject());
+  }
+
+  const keysOffset = createOffsetVector(builder, keyOffsets);
   const addressOffsets = (input.multiformatAddresses ?? []).map((value) => builder.createString(value));
   const multiformatOffset = addressOffsets.length > 0 ? createOffsetVector(builder, addressOffsets) : 0;
 
@@ -114,4 +129,10 @@ function createOffsetVector(builder: Builder, offsets: number[]): number {
     builder.addOffset(offsets[index]);
   }
   return builder.endVector();
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
 }

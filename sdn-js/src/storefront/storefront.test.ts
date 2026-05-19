@@ -2,7 +2,7 @@
  * Tests for the Storefront client
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   AccessType,
   PaymentMethod,
@@ -20,6 +20,10 @@ import {
 } from './components';
 import type { Listing, PricingTier } from './types';
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('Storefront Types', () => {
   it('should have correct enum values', () => {
     expect(AccessType.OneTime).toBe(0);
@@ -28,8 +32,12 @@ describe('Storefront Types', () => {
     expect(AccessType.Query).toBe(3);
 
     expect(PaymentMethod.CryptoETH).toBe(0);
-    expect(PaymentMethod.SDNCredits).toBe(4);
-    expect(PaymentMethod.Free).toBe(6);
+    expect(PaymentMethod.CryptoSOL).toBe(1);
+    expect(PaymentMethod.CryptoBTC).toBe(2);
+    expect(PaymentMethod.SDNCredits).toBe(3);
+    expect(PaymentMethod.FiatStripe).toBe(4);
+    expect(PaymentMethod.Free).toBe(5);
+    expect('CryptoUSDC' in PaymentMethod).toBe(false);
 
     expect(GrantStatus.Active).toBe(0);
     expect(GrantStatus.Revoked).toBe(1);
@@ -173,9 +181,13 @@ describe('Storefront Client Configuration', () => {
     const storefront = await import('@spacedatanetwork/sdn-js/storefront');
 
     expect(typeof storefront.createStorefrontClient).toBe('function');
+    expect(typeof storefront.createStorefrontLibp2pPubSubAdapter).toBe('function');
     expect(typeof storefront.StorefrontClient).toBe('function');
     expect(storefront.AccessType.Subscription).toBe(1);
-    expect(storefront.PaymentMethod.SDNCredits).toBe(4);
+    expect(storefront.PaymentMethod.SDNCredits).toBe(3);
+    expect(storefront.PaymentMethod.FiatStripe).toBe(4);
+    expect(storefront.PaymentMethod.Free).toBe(5);
+    expect('CryptoUSDC' in storefront.PaymentMethod).toBe(false);
     expect(storefront.GrantStatus.Active).toBe(0);
     expect(storefront.PurchaseStatus.Completed).toBe(3);
   });
@@ -197,6 +209,417 @@ describe('Storefront Client Configuration', () => {
       peerId: 'test-peer-id',
     });
     expect(client).toBeDefined();
+  });
+
+  it('normalizes a site root API base URL to the SDN server storefront route prefix', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ listingId: 'listing-1' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io/',
+      peerId: 'test-peer-id',
+    });
+
+    await client.getListing('listing-1');
+
+    expect(fetchMock).toHaveBeenCalledWith('https://sdn.spaceaware.io/api/storefront/listings/listing-1');
+  });
+
+  it('does not duplicate the API prefix when the API base URL already includes it', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ listingId: 'listing-1' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io/api/',
+      peerId: 'test-peer-id',
+    });
+
+    await client.getListing('listing-1');
+
+    expect(fetchMock).toHaveBeenCalledWith('https://sdn.spaceaware.io/api/storefront/listings/listing-1');
+  });
+
+  it('creates purchases with the Go storefront JSON contract and normalizes returned grant delivery state', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const encryptionPubkey = new Uint8Array([1, 2, 3, 4]);
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        request_id: 'purchase-1',
+        listing_id: 'protected-wasm-1',
+        tier_name: 'Basic',
+        buyer_peer_id: 'buyer-peer',
+        buyer_encryption_pubkey: 'AQIDBA==',
+        key_algorithm: 'x25519',
+        payment_method: PaymentMethod.SDNCredits,
+        payment_amount: 500,
+        payment_currency: 'SDN',
+        status: PurchaseStatus.Pending,
+        created_at: '2026-05-05T12:00:00Z',
+        updated_at: '2026-05-05T12:00:00Z',
+        preferred_delivery_method: 'IPFSPin',
+      }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    ).mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        grant_id: 'grant-1',
+        listing_id: 'protected-wasm-1',
+        tier_name: 'Basic',
+        buyer_peer_id: 'buyer-peer',
+        buyer_encryption_pubkey: 'AQIDBA==',
+        key_algorithm: 'x25519',
+        access_type: AccessType.Subscription,
+        granted_at: '2026-05-05T12:01:00Z',
+        status: GrantStatus.Active,
+        payment_method: PaymentMethod.SDNCredits,
+        payment_amount: 500,
+        payment_currency: 'SDN',
+        auto_renew: true,
+        renewal_count: 0,
+        total_requests: 0,
+        total_records: 0,
+        delivery_topic: '/sdn/data/protected-wasm-1/buyer-peer',
+        provider_signature: 'CQkJ',
+        grant_response_base64: 'AQIDBA==',
+        provider_peer_id: 'provider-peer',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io',
+      peerId: 'buyer-peer',
+      encryptionPubkey,
+      keyAlgorithm: 'x25519',
+    });
+
+    const purchase = await client.createPurchase({
+      listingId: 'protected-wasm-1',
+      tierName: 'Basic',
+      paymentMethod: PaymentMethod.SDNCredits,
+      preferredDeliveryMethod: 'IPFSPin',
+    });
+    const grant = await client.payWithCredits(purchase.requestId);
+
+    expect(purchase.requestId).toBe('purchase-1');
+    expect(purchase.listingId).toBe('protected-wasm-1');
+    expect(purchase.buyerEncryptionPubkey).toEqual(encryptionPubkey);
+    expect(purchase.createdAt.toISOString()).toBe('2026-05-05T12:00:00.000Z');
+    expect(grant.grantId).toBe('grant-1');
+    expect(grant.deliveryTopic).toBe('/sdn/data/protected-wasm-1/buyer-peer');
+    expect(grant.providerSignature).toEqual(new Uint8Array([9, 9, 9]));
+    expect(grant.grantResponseBase64).toBe('AQIDBA==');
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://sdn.spaceaware.io/api/storefront/purchases',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          listing_id: 'protected-wasm-1',
+          tier_name: 'Basic',
+          buyer_peer_id: 'buyer-peer',
+          buyer_encryption_pubkey: 'AQIDBA==',
+          key_algorithm: 'x25519',
+          payment_method: PaymentMethod.SDNCredits,
+          preferred_delivery_method: 'IPFSPin',
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/pay-credits',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('posts explicit manual/dev paid confirmation and returns purchase plus grant state', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        mode: 'manual-dev',
+        purchase: {
+          requestId: 'purchase-1',
+          listingId: 'protected-wasm-1',
+          tierName: 'Basic',
+          buyerPeerId: 'buyer-peer',
+          paymentMethod: PaymentMethod.FiatStripe,
+          paymentAmount: 4900,
+          paymentCurrency: 'USD',
+          status: PurchaseStatus.Completed,
+          grantId: 'grant-1',
+        },
+        grant: {
+          grantId: 'grant-1',
+          listingId: 'protected-wasm-1',
+          tierName: 'Basic',
+          buyerPeerId: 'buyer-peer',
+          accessType: AccessType.Subscription,
+          status: GrantStatus.Active,
+          paymentMethod: PaymentMethod.FiatStripe,
+          paymentAmount: 4900,
+          paymentCurrency: 'USD',
+          autoRenew: true,
+          renewalCount: 0,
+          totalRequests: 0,
+          totalRecords: 0,
+          providerPeerId: 'provider-peer',
+          provider_signature: 'CQkJ',
+          grant_response_base64: 'AQIDBA==',
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io',
+      peerId: 'buyer-peer',
+    });
+
+    const result = await client.completeManualDevPayment('purchase-1', {
+      operatorPeerId: 'provider-admin',
+      reference: 'receipt-1',
+      note: 'verified out of band',
+    });
+
+    expect(result.mode).toBe('manual-dev');
+    expect(result.grant.grantId).toBe('grant-1');
+    expect(result.grant.providerSignature).toEqual(new Uint8Array([9, 9, 9]));
+    expect(result.grant.grantResponseBase64).toBe('AQIDBA==');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/manual-dev-paid',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          operator_peer_id: 'provider-admin',
+          reference: 'receipt-1',
+          note: 'verified out of band',
+        }),
+      }),
+    );
+  });
+
+  it('subscribes paid grants to their encrypted delivery topic and emits stream data', async () => {
+    const { createStorefrontClient } = await import('./client');
+    let streamHandler: ((message: Uint8Array) => void) | undefined;
+    const unsubscribe = vi.fn();
+    const pubsub = {
+      subscribe: vi.fn(async (topic: string, handler: (message: Uint8Array) => void) => {
+        streamHandler = handler;
+        return { unsubscribe };
+      }),
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        grant_id: 'grant-1',
+        listing_id: 'protected-stream-1',
+        tier_name: 'Stream',
+        buyer_peer_id: 'buyer-peer',
+        access_type: AccessType.Streaming,
+        status: GrantStatus.Active,
+        payment_method: PaymentMethod.SDNCredits,
+        payment_amount: 500,
+        payment_currency: 'SDN',
+        auto_renew: true,
+        renewal_count: 0,
+        total_requests: 0,
+        total_records: 0,
+        delivery_topic: '/sdn/data/protected-stream-1/buyer-peer',
+        provider_peer_id: 'provider-peer',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io',
+      peerId: 'buyer-peer',
+      pubsub,
+    });
+    const received: Uint8Array[] = [];
+    client.on('data:received', (event) => received.push(event.data));
+
+    const subscription = await client.subscribeToDelivery('grant-1');
+
+    expect(fetchMock).toHaveBeenCalledWith('https://sdn.spaceaware.io/api/storefront/grants/grant-1');
+    expect(pubsub.subscribe).toHaveBeenCalledWith(
+      '/sdn/data/protected-stream-1/buyer-peer',
+      expect.any(Function),
+    );
+    expect(subscription.topic).toBe('/sdn/data/protected-stream-1/buyer-peer');
+    streamHandler?.(new Uint8Array([1, 2, 3]));
+    expect(received[0]).toEqual(new Uint8Array([1, 2, 3]));
+
+    await subscription.unsubscribe();
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  it('adapts libp2p GossipSub delivery topics for paid subscriber streams', async () => {
+    const { createStorefrontLibp2pPubSubAdapter } = await import('./client');
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const subscribe = vi.fn();
+    const unsubscribe = vi.fn();
+    const pubsub = {
+      subscribe,
+      unsubscribe,
+      addEventListener,
+      removeEventListener,
+    };
+    const adapter = createStorefrontLibp2pPubSubAdapter(pubsub);
+    const received: Uint8Array[] = [];
+
+    const subscription = await adapter.subscribe('/sdn/data/listing-1/buyer-1', (message) => {
+      received.push(message instanceof Uint8Array ? message : new Uint8Array());
+    });
+
+    expect(subscribe).toHaveBeenCalledWith('/sdn/data/listing-1/buyer-1');
+    expect(addEventListener).toHaveBeenCalledWith('message', expect.any(Function), expect.any(Object));
+    const listener = addEventListener.mock.calls[0][1] as (event: unknown) => void;
+    listener({ detail: { topic: '/sdn/data/other/buyer-1', data: new Uint8Array([9]) } });
+    listener({ detail: { topic: '/sdn/data/listing-1/buyer-1', data: new Uint8Array([1, 2, 3]) } });
+
+    expect(received).toEqual([new Uint8Array([1, 2, 3])]);
+    await subscription?.unsubscribe?.();
+    expect(removeEventListener).toHaveBeenCalledWith('message', listener);
+    expect(unsubscribe).toHaveBeenCalledWith('/sdn/data/listing-1/buyer-1');
+  });
+
+  it('loads purchase payment audit events', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        events: [
+          {
+            event_id: 'event-1',
+            request_id: 'purchase-1',
+            event_type: 'payment_confirmed',
+            actor_peer_id: 'provider-admin',
+            reference: 'receipt-1',
+            message: 'Manual/dev payment confirmed',
+            purchase_status: PurchaseStatus.PaymentConfirmed,
+            created_at: '2026-05-05T12:00:00Z',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io/api',
+      peerId: 'buyer-peer',
+    });
+
+    const events = await client.getPurchaseAudit('purchase-1');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe('payment_confirmed');
+    expect(fetchMock).toHaveBeenCalledWith('https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/audit');
+  });
+
+  it('creates a crypto buyer intent for a purchase', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({
+        reference: 'crypto:purchase-1:abc123',
+        request_id: 'purchase-1',
+        chain: 'ethereum',
+        asset: 'eth',
+        asset_contract: '',
+        native_asset: true,
+        amount: 4900,
+        recipient: '0xProviderWallet',
+        intent_digest: 'digest-1',
+        intent_signature: 'sig-1',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io',
+      peerId: 'buyer-peer',
+    });
+
+    const intent = await client.createCryptoBuyerIntent('purchase-1', {
+      chain: 'ethereum',
+      asset: 'ETH',
+      nativeAsset: true,
+      recipient: '0xProviderWallet',
+    });
+
+    expect(intent.reference).toBe('crypto:purchase-1:abc123');
+    expect(intent.nativeAsset).toBe(true);
+    expect(intent.intentDigest).toBe('digest-1');
+    expect(intent.intentSignature).toBe('sig-1');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/pay-crypto',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          chain: 'ethereum',
+          asset: 'ETH',
+          native_asset: true,
+          recipient: '0xProviderWallet',
+        }),
+      }),
+    );
+  });
+
+  it('submits crypto payment references with expected recipient and amount', async () => {
+    const { createStorefrontClient } = await import('./client');
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
+
+    const client = createStorefrontClient({
+      apiBaseUrl: 'https://sdn.spaceaware.io/api',
+      peerId: 'buyer-peer',
+    });
+
+    await client.submitCryptoPayment('purchase-1', {
+      txHash: '0xabc',
+      chain: 'ethereum',
+      reference: 'crypto:purchase-1:abc123',
+      recipientAddress: '0xProviderWallet',
+      amount: 4900,
+      currency: 'ETH',
+      nativeAsset: true,
+      senderAddress: '0xBuyerWallet',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://sdn.spaceaware.io/api/storefront/purchases/purchase-1/confirm',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          txHash: '0xabc',
+          chain: 'ethereum',
+          reference: 'crypto:purchase-1:abc123',
+          recipientAddress: '0xProviderWallet',
+          amount: 4900,
+          currency: 'ETH',
+          nativeAsset: true,
+          senderAddress: '0xBuyerWallet',
+        }),
+      }),
+    );
   });
 });
 

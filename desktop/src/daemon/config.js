@@ -8,6 +8,21 @@ const store = require('../common/store')
 const logger = require('../common/logger')
 const dialogs = require('./dialogs')
 
+const CUSTOM_SCHEME_ORIGIN_SUFFIX = '://-'
+const SDN_CUSTOM_SCHEME_ORIGINS = Object.freeze(['sdn', 'webui'].map(scheme => `${scheme}${CUSTOM_SCHEME_ORIGIN_SUFFIX}`))
+const STALE_RANDOM_GATEWAY_WEBUI_ORIGIN = 'http://webui.ipfs.io.ipns.localhost:0'
+const DEFAULT_API_ADDR = '/ip4/127.0.0.1/tcp/5001'
+const DEFAULT_GATEWAY_ADDR = '/ip4/127.0.0.1/tcp/8080'
+const LOCAL_DAEMON_PROBE_TIMEOUT_MS = 750
+const DESKTOP_API_CORS_METHODS = Object.freeze(['PUT', 'POST'])
+const DESKTOP_BOOTSTRAP_PEERS = Object.freeze([
+  'auto',
+  '/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+  '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+  '/dns4/celestrak.eth/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+  '/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4'
+])
+
 /**
  * Get repository configuration file path.
  *
@@ -102,6 +117,7 @@ function applyDefaults (ipfsd) {
 
   config.AutoTLS = config.AutoTLS ?? {}
   config.AutoTLS.Enabled = true
+  ensureDesktopBootstrapPeers(config)
 
   writeConfigFile(ipfsd, config)
 }
@@ -145,6 +161,136 @@ function getHttpPort (addrs) {
  */
 const getGatewayPort = (config) => getHttpPort(config.Addresses.Gateway)
 
+function normalizeSingleLocalRandomPortAddress (addrs, fallbackAddr) {
+  if (!Array.isArray(addrs) || addrs.length !== 1) {
+    return addrs
+  }
+
+  const ma = parseMultiaddr(addrs[0])
+  const { address, port } = ma.nodeAddress()
+
+  return address === '127.0.0.1' && port === 0
+    ? fallbackAddr
+    : addrs
+}
+
+function normalizeDesktopRandomPorts (config) {
+  const apiAddr = normalizeSingleLocalRandomPortAddress(config.Addresses.API, DEFAULT_API_ADDR)
+  const gatewayAddr = normalizeSingleLocalRandomPortAddress(config.Addresses.Gateway, DEFAULT_GATEWAY_ADDR)
+  const changed = apiAddr !== config.Addresses.API || gatewayAddr !== config.Addresses.Gateway
+
+  if (changed) {
+    config.Addresses.API = apiAddr
+    config.Addresses.Gateway = gatewayAddr
+  }
+
+  return changed
+}
+
+function normalizeCorsOrigins (origins) {
+  if (Array.isArray(origins)) {
+    return origins
+  }
+
+  return typeof origins === 'string'
+    ? [origins]
+    : []
+}
+
+function ensureCorsOriginsForConfig (config, origins) {
+  const api = config.API || {}
+  const httpHeaders = api.HTTPHeaders || {}
+  const existingOrigins = normalizeCorsOrigins(httpHeaders['Access-Control-Allow-Origin'])
+  const nextOrigins = existingOrigins.filter(origin => {
+    return !SDN_CUSTOM_SCHEME_ORIGINS.includes(origin) &&
+      origin !== STALE_RANDOM_GATEWAY_WEBUI_ORIGIN
+  })
+
+  for (const origin of origins.filter(Boolean)) {
+    if (!nextOrigins.includes(origin)) {
+      nextOrigins.push(origin)
+    }
+  }
+
+  const changed = nextOrigins.length !== existingOrigins.length ||
+    nextOrigins.some((origin, index) => origin !== existingOrigins[index])
+
+  if (changed) {
+    httpHeaders['Access-Control-Allow-Origin'] = nextOrigins
+    api.HTTPHeaders = httpHeaders
+    config.API = api
+  }
+
+  return changed
+}
+
+function ensureCorsMethodsForConfig (config, methods = DESKTOP_API_CORS_METHODS) {
+  const api = config.API || {}
+  const httpHeaders = api.HTTPHeaders || {}
+  const existingMethods = normalizeCorsOrigins(httpHeaders['Access-Control-Allow-Methods'])
+  const nextMethods = existingMethods.slice()
+
+  for (const method of methods.filter(Boolean)) {
+    if (!nextMethods.includes(method)) {
+      nextMethods.push(method)
+    }
+  }
+
+  const changed = nextMethods.length !== existingMethods.length ||
+    nextMethods.some((method, index) => method !== existingMethods[index])
+
+  if (changed) {
+    httpHeaders['Access-Control-Allow-Methods'] = nextMethods
+    api.HTTPHeaders = httpHeaders
+    config.API = api
+  }
+
+  return changed
+}
+
+function ensureDesktopBootstrapPeers (config) {
+  const existingBootstrap = Array.isArray(config.Bootstrap)
+    ? config.Bootstrap.map(entry => String(entry ?? '').trim()).filter(Boolean)
+    : []
+  const nextBootstrap = existingBootstrap.slice()
+
+  for (const peer of DESKTOP_BOOTSTRAP_PEERS) {
+    if (!nextBootstrap.includes(peer)) {
+      nextBootstrap.push(peer)
+    }
+  }
+
+  const changed = nextBootstrap.length !== existingBootstrap.length ||
+    nextBootstrap.some((peer, index) => peer !== existingBootstrap[index])
+
+  if (changed) {
+    config.Bootstrap = nextBootstrap
+  }
+
+  return changed
+}
+
+/**
+ * Keep local desktop RPC access on an upstream-compatible HTTP origin.
+ *
+ * @param {import('ipfsd-ctl').Controller} ipfsd
+ * @param {string} desktopWebOrigin
+ */
+function configureDesktopCors (ipfsd, desktopWebOrigin) {
+  const config = readConfigFile(ipfsd)
+  const originsChanged = ensureCorsOriginsForConfig(config, [
+    desktopWebOrigin,
+    'https://webui.ipfs.io',
+    `http://webui.ipfs.io.ipns.localhost:${getGatewayPort(config)}`
+  ])
+  const methodsChanged = ensureCorsMethodsForConfig(config)
+  const bootstrapChanged = ensureDesktopBootstrapPeers(config)
+
+  if (originsChanged || methodsChanged || bootstrapChanged) {
+    writeConfigFile(ipfsd, config)
+  }
+}
+
 /**
  * Apply one-time updates to the config of IPFS node. This is the place
  * where we execute fixes and performance tweaks for existing users.
@@ -153,7 +299,7 @@ const getGatewayPort = (config) => getHttpPort(config.Addresses.Gateway)
  */
 function migrateConfig (ipfsd) {
   // Bump revision number when new migration rule is added
-  const REVISION = 6
+  const REVISION = 8
   const REVISION_KEY = 'daemonConfigRevision'
   const CURRENT_REVISION = store.get(REVISION_KEY, 0)
 
@@ -180,36 +326,15 @@ function migrateConfig (ipfsd) {
     }
   }
 
+  if (CURRENT_REVISION < 8) {
+    changed = normalizeDesktopRandomPorts(config) || changed
+  }
+
   if (CURRENT_REVISION < 3) {
-    const api = config.API || {}
-    const httpHeaders = api.HTTPHeaders || {}
-    let accessControlAllowOrigin = httpHeaders['Access-Control-Allow-Origin'] || []
-
-    // Ensure accessControlAllowOrigin is an array
-    if (!Array.isArray(accessControlAllowOrigin)) {
-      // Convert string to array, or create empty array for other types
-      accessControlAllowOrigin = typeof accessControlAllowOrigin === 'string'
-        ? [accessControlAllowOrigin]
-        : []
-    }
-
-    const addURL = url => {
-      if (!accessControlAllowOrigin.includes(url)) {
-        accessControlAllowOrigin.push(url)
-        return true
-      }
-      return false
-    }
-
-    const addedWebUI = addURL('https://webui.ipfs.io')
-    const addedGw = addURL(`http://webui.ipfs.io.ipns.localhost:${getGatewayPort(config)}`)
-
-    if (addedWebUI || addedGw) {
-      httpHeaders['Access-Control-Allow-Origin'] = accessControlAllowOrigin
-      api.HTTPHeaders = httpHeaders
-      config.API = api
-      changed = true
-    }
+    changed = ensureCorsOriginsForConfig(config, [
+      'https://webui.ipfs.io',
+      `http://webui.ipfs.io.ipns.localhost:${getGatewayPort(config)}`
+    ]) || changed
   }
 
   if (CURRENT_REVISION < 4) {
@@ -274,7 +399,7 @@ function migrateConfig (ipfsd) {
  */
 async function checkIfAddrIsDaemon (addr) {
   const options = {
-    timeout: 3000, // 3s is plenty for localhost request
+    timeout: LOCAL_DAEMON_PROBE_TIMEOUT_MS,
     method: 'POST',
     host: addr.address,
     port: addr.port,
@@ -282,12 +407,28 @@ async function checkIfAddrIsDaemon (addr) {
   }
 
   return new Promise(resolve => {
-    const req = http.request(options, function (r) {
-      resolve(r.statusCode === 200)
+    let settled = false
+    let req = null
+    const timeout = setTimeout(() => finish(false), options.timeout)
+    const finish = value => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      if (req) req.destroy()
+      resolve(value)
+    }
+
+    req = http.request(options, function (r) {
+      r.resume()
+      finish(r.statusCode === 200)
     })
 
     req.on('error', () => {
-      resolve(false)
+      finish(false)
+    })
+
+    req.on('timeout', () => {
+      finish(false)
     })
 
     req.end()
@@ -391,12 +532,18 @@ async function checkPorts (ipfsd) {
     return true
   }
 
-  // two "0" in config mean "pick free ports without any prompt"
-  let promptUser = (apiPort !== 0 || gatewayPort !== 0)
+  // SDN Desktop must not block the main process with a modal while the local
+  // static server is already accepting connections. Auto-repair by default;
+  // keep an escape hatch for upstream-style troubleshooting builds.
+  let promptUser = process.env.SDN_DESKTOP_PROMPT_FOR_BUSY_PORTS === '1' && (apiPort !== 0 || gatewayPort !== 0)
 
   if (process.env.NODE_ENV === 'test' || process.env.CI != null) {
     logger.info('[daemon] CI or TEST mode, skipping busyPortDialog')
     promptUser = false
+  }
+
+  if (!promptUser) {
+    logger.info('[daemon] local API or gateway port busy, using free alternative without blocking startup')
   }
 
   if (promptUser) {
@@ -487,6 +634,7 @@ module.exports = Object.freeze({
   removeApiFile,
   applyDefaults,
   migrateConfig,
+  configureDesktopCors,
   checkPorts,
   checkRepositoryAndConfiguration
 })

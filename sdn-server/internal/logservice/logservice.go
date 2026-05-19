@@ -83,7 +83,7 @@ func (s *Service) AppendEntry(schemaType, recordCID string, entityIDs []string, 
 	// Build PLG FlatBuffer
 	plgData := buildPLGFlatBuffer(newSeq, schemaType, s.peerID, recordCID, prevEntryHash, entryHash, now, sigBytes, entityIDs, epochDay)
 
-	// Store in sds_plg via FlatSQL
+	// Store in the canonical PLG FlatSQL table.
 	plgCID, err := s.store.Store(plgSchema, plgData, s.peerID, sigBytes)
 	if err != nil {
 		return "", 0, fmt.Errorf("failed to store PLG entry: %w", err)
@@ -275,17 +275,17 @@ type PLGInfo struct {
 
 // PLHInfo holds parsed fields from a PLH FlatBuffer.
 type PLHInfo struct {
-	SchemaType       string
-	PublisherPeerID  string
-	HeadSequence     uint64
-	HeadEntryHash    string
-	RecordCount      uint64
-	MultiformatAddr  string
-	Timestamp        uint64
-	Signature        []byte
-	SignatureType    string
-	OldestEpochDay   string
-	NewestEpochDay   string
+	SchemaType      string
+	PublisherPeerID string
+	HeadSequence    uint64
+	HeadEntryHash   string
+	RecordCount     uint64
+	MultiformatAddr string
+	Timestamp       uint64
+	Signature       []byte
+	SignatureType   string
+	OldestEpochDay  string
+	NewestEpochDay  string
 }
 
 // ParsePLH extracts PLH fields from raw FlatBuffer data.
@@ -346,21 +346,21 @@ func buildPLGFlatBuffer(sequence uint64, schemaType, publisherPeerID, recordCID,
 	// RECORD_CID(3), PREVIOUS_ENTRY_HASH(4), ENTRY_HASH(5), TIMESTAMP(6),
 	// SIGNATURE(7), SIGNATURE_TYPE(8), ENTITY_IDS(9), EPOCH_DAY(10)
 	builder.StartObject(11)
-	builder.PrependUint64Slot(0, sequence, 0)           // SEQUENCE
-	builder.PrependUOffsetTSlot(1, schemaTypeOff, 0)    // SCHEMA_TYPE
-	builder.PrependUOffsetTSlot(2, publisherOff, 0)     // PUBLISHER_PEER_ID
-	builder.PrependUOffsetTSlot(3, recordCIDOff, 0)     // RECORD_CID
-	builder.PrependUOffsetTSlot(4, prevHashOff, 0)      // PREVIOUS_ENTRY_HASH
-	builder.PrependUOffsetTSlot(5, entryHashOff, 0)     // ENTRY_HASH
-	builder.PrependUint64Slot(6, timestamp, 0)          // TIMESTAMP
+	builder.PrependUint64Slot(0, sequence, 0)        // SEQUENCE
+	builder.PrependUOffsetTSlot(1, schemaTypeOff, 0) // SCHEMA_TYPE
+	builder.PrependUOffsetTSlot(2, publisherOff, 0)  // PUBLISHER_PEER_ID
+	builder.PrependUOffsetTSlot(3, recordCIDOff, 0)  // RECORD_CID
+	builder.PrependUOffsetTSlot(4, prevHashOff, 0)   // PREVIOUS_ENTRY_HASH
+	builder.PrependUOffsetTSlot(5, entryHashOff, 0)  // ENTRY_HASH
+	builder.PrependUint64Slot(6, timestamp, 0)       // TIMESTAMP
 	if len(signature) > 0 {
-		builder.PrependUOffsetTSlot(7, sigOff, 0)   // SIGNATURE
+		builder.PrependUOffsetTSlot(7, sigOff, 0) // SIGNATURE
 	}
-	builder.PrependUOffsetTSlot(8, sigTypeOff, 0)       // SIGNATURE_TYPE
+	builder.PrependUOffsetTSlot(8, sigTypeOff, 0) // SIGNATURE_TYPE
 	if len(entityIDs) > 0 {
 		builder.PrependUOffsetTSlot(9, entityIDsOff, 0) // ENTITY_IDS
 	}
-	builder.PrependUOffsetTSlot(10, epochDayOff, 0)     // EPOCH_DAY
+	builder.PrependUOffsetTSlot(10, epochDayOff, 0) // EPOCH_DAY
 	plg := builder.EndObject()
 
 	// Finish with size prefix and file identifier
@@ -392,19 +392,19 @@ func buildPLHFlatBuffer(schemaType, publisherPeerID string, headSequence uint64,
 	// HEAD_ENTRY_HASH(3), RECORD_COUNT(4), MULTIFORMAT_ADDRESS(5), TIMESTAMP(6),
 	// SIGNATURE(7), SIGNATURE_TYPE(8), OLDEST_EPOCH_DAY(9), NEWEST_EPOCH_DAY(10)
 	builder.StartObject(11)
-	builder.PrependUOffsetTSlot(0, schemaTypeOff, 0)    // SCHEMA_TYPE
-	builder.PrependUOffsetTSlot(1, publisherOff, 0)     // PUBLISHER_PEER_ID
-	builder.PrependUint64Slot(2, headSequence, 0)       // HEAD_SEQUENCE
-	builder.PrependUOffsetTSlot(3, headHashOff, 0)      // HEAD_ENTRY_HASH
-	builder.PrependUint64Slot(4, recordCount, 0)        // RECORD_COUNT
-	builder.PrependUOffsetTSlot(5, multiaddrOff, 0)     // MULTIFORMAT_ADDRESS
-	builder.PrependUint64Slot(6, timestamp, 0)          // TIMESTAMP
+	builder.PrependUOffsetTSlot(0, schemaTypeOff, 0) // SCHEMA_TYPE
+	builder.PrependUOffsetTSlot(1, publisherOff, 0)  // PUBLISHER_PEER_ID
+	builder.PrependUint64Slot(2, headSequence, 0)    // HEAD_SEQUENCE
+	builder.PrependUOffsetTSlot(3, headHashOff, 0)   // HEAD_ENTRY_HASH
+	builder.PrependUint64Slot(4, recordCount, 0)     // RECORD_COUNT
+	builder.PrependUOffsetTSlot(5, multiaddrOff, 0)  // MULTIFORMAT_ADDRESS
+	builder.PrependUint64Slot(6, timestamp, 0)       // TIMESTAMP
 	if len(signature) > 0 {
-		builder.PrependUOffsetTSlot(7, sigOff, 0)   // SIGNATURE
+		builder.PrependUOffsetTSlot(7, sigOff, 0) // SIGNATURE
 	}
-	builder.PrependUOffsetTSlot(8, sigTypeOff, 0)       // SIGNATURE_TYPE
-	builder.PrependUOffsetTSlot(9, oldestOff, 0)        // OLDEST_EPOCH_DAY
-	builder.PrependUOffsetTSlot(10, newestOff, 0)       // NEWEST_EPOCH_DAY
+	builder.PrependUOffsetTSlot(8, sigTypeOff, 0) // SIGNATURE_TYPE
+	builder.PrependUOffsetTSlot(9, oldestOff, 0)  // OLDEST_EPOCH_DAY
+	builder.PrependUOffsetTSlot(10, newestOff, 0) // NEWEST_EPOCH_DAY
 	plh := builder.EndObject()
 
 	builder.FinishSizePrefixed(plh)

@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   loadModuleRuntimeSnapshotFromServer,
+  resolveSelectedModuleId,
   runModuleRuntimeAction,
+  runModuleRuntimeScheduleNow,
+  saveModuleRuntimeInputValues,
+  saveModuleRuntimeSchedule,
   updateModuleRuntimeOption,
 } from './modules';
 
@@ -94,6 +98,37 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
                 persistence: 'live-only',
               },
             ],
+            schedules: [
+              {
+                methodId: 'sync_full_catalog',
+                description: 'Sync CelesTrak full catalog',
+                enabled: true,
+                interval: '3h0m0s',
+                cronExpression: '0 */3 * * *',
+                timezone: 'America/New_York',
+                timezoneDisplay: '2026-04-30 08:00 EDT',
+                utcDisplay: '2026-04-30 12:00 UTC',
+                jitter: '5m0s',
+                backoff: 'exponential',
+                retryBudget: 3,
+                maxRuntime: '30m0s',
+                minInterval: '3h0m0s',
+                intervalPresets: ['3h0m0s', '6h0m0s'],
+                lastRunAt: '2026-04-30T09:00:00Z',
+                nextRunAt: '2026-04-30T15:00:00Z',
+                runHistory: [
+                  {
+                    id: 'run-1',
+                    methodId: 'sync_full_catalog',
+                    trigger: 'manual',
+                    startedAt: '2026-04-30T09:00:00Z',
+                    finishedAt: '2026-04-30T09:01:00Z',
+                    status: 'ok',
+                    outputSize: 128,
+                  },
+                ],
+              },
+            ],
             actions: [
               {
                 actionId: 'clear-error',
@@ -111,6 +146,30 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
               logsUrl: '/api/v1/modules/runtime/licensing/logs',
               eventsUrl: '/api/v1/modules/runtime/licensing/events',
             },
+            inputValues: [
+              {
+                methodId: 'server_handle_message',
+                portId: 'request',
+                wireFormat: 'FLATBUFFER_JSON',
+                encoding: 'json',
+                schemaName: 'MODULE.fbs',
+                rootType: 'ModuleDeliveryRequest',
+                value: '{"reqId":"abc"}',
+                updatedAt: '2026-04-30T12:01:00Z',
+              },
+            ],
+            restartPending: true,
+            commandHistory: [
+              {
+                id: '20260430120100-000001',
+                at: '2026-04-30T12:01:00Z',
+                command: 'save-inputs',
+                status: 'updated',
+                methodId: 'server_handle_message',
+                portId: 'request',
+                summary: 'Saved 1 input value',
+              },
+            ],
           },
         ],
       });
@@ -156,6 +215,20 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
         invokeCount: 11,
         averageLatencyMs: 14.25,
       },
+      restartPending: true,
+    });
+    expect(snapshot.modules[0]?.inputValues[0]).toMatchObject({
+      methodId: 'server_handle_message',
+      portId: 'request',
+      wireFormat: 'FLATBUFFER_JSON',
+      encoding: 'json',
+      rootType: 'ModuleDeliveryRequest',
+      value: '{"reqId":"abc"}',
+    });
+    expect(snapshot.modules[0]?.commandHistory[0]).toMatchObject({
+      command: 'save-inputs',
+      status: 'updated',
+      methodId: 'server_handle_message',
     });
     expect(snapshot.modules[0]?.options[0]).toMatchObject({
       key: 'timer.refresh-grants.interval',
@@ -164,6 +237,16 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
       units: 'ms',
       defaultValue: '30000',
       persistence: 'live-only',
+    });
+    expect(snapshot.modules[0]?.schedules[0]).toMatchObject({
+      methodId: 'sync_full_catalog',
+      enabled: true,
+      interval: '3h0m0s',
+      cronExpression: '0 */3 * * *',
+      timezone: 'America/New_York',
+      minInterval: '3h0m0s',
+      intervalPresets: ['3h0m0s', '6h0m0s'],
+      runHistory: [{ trigger: 'manual', status: 'ok' }],
     });
     expect(snapshot.modules[0]?.actions[0]?.actionId).toBe('clear-error');
     expect(snapshot.modules[0]?.statusHistory[0]?.status).toBe('registered');
@@ -192,6 +275,30 @@ describe('loadModuleRuntimeSnapshotFromServer', () => {
       count: 0,
       modules: [],
     });
+  });
+});
+
+describe('resolveSelectedModuleId', () => {
+  it('keeps the selected module across refreshes when it still exists', () => {
+    expect(
+      resolveSelectedModuleId('analysis', [
+        { id: 'licensing' },
+        { id: 'analysis' },
+      ]),
+    ).toBe('analysis');
+  });
+
+  it('falls back to the first module only when the selected module is missing', () => {
+    expect(
+      resolveSelectedModuleId('missing', [
+        { id: 'licensing' },
+        { id: 'analysis' },
+      ]),
+    ).toBe('licensing');
+  });
+
+  it('returns an empty selection for an empty module list', () => {
+    expect(resolveSelectedModuleId('analysis', [])).toBe('');
   });
 });
 
@@ -254,6 +361,165 @@ describe('module runtime mutations', () => {
         fetch,
       ),
     ).resolves.toMatchObject({ ok: true, actionId: 'clear-error' });
+  });
+
+  it('saves runtime input values through the server input API', async () => {
+    const fetch = vi.fn(async (input: string, init?: RequestInit) => {
+      expect(input).toBe('https://node.example/api/v1/modules/runtime/licensing/inputs');
+      expect(init?.method).toBe('PATCH');
+      expect(init?.credentials).toBe('include');
+      expect(init?.headers).toMatchObject({
+        'content-type': 'application/json',
+        'x-requested-with': 'XMLHttpRequest',
+      });
+      expect(JSON.parse(String(init?.body))).toEqual({
+        values: [
+          {
+            methodId: 'server_configure_runtime',
+            portId: 'request',
+            wireFormat: 'FLATBUFFER_JSON',
+            encoding: 'json',
+            schemaName: 'MODULE.fbs',
+            rootType: 'ConfigureRuntimeRequest',
+            value: '{"refreshIntervalMs":45000}',
+          },
+        ],
+      });
+      return jsonResponse(200, {
+        moduleId: 'licensing',
+        restartPending: true,
+        inputValues: [
+          {
+            methodId: 'server_configure_runtime',
+            portId: 'request',
+            wireFormat: 'FLATBUFFER_JSON',
+            encoding: 'json',
+            schemaName: 'MODULE.fbs',
+            rootType: 'ConfigureRuntimeRequest',
+            value: '{"refreshIntervalMs":45000}',
+            updatedAt: '2026-05-02T12:00:00Z',
+          },
+        ],
+      });
+    });
+
+    await expect(
+      saveModuleRuntimeInputValues(
+        'https://node.example/',
+        'licensing',
+        [
+          {
+            methodId: 'server_configure_runtime',
+            portId: 'request',
+            wireFormat: 'FLATBUFFER_JSON',
+            encoding: 'json',
+            schemaName: 'MODULE.fbs',
+            rootType: 'ConfigureRuntimeRequest',
+            value: '{"refreshIntervalMs":45000}',
+          },
+        ],
+        fetch,
+      ),
+    ).resolves.toMatchObject({
+      moduleId: 'licensing',
+      restartPending: true,
+      inputValues: [
+        {
+          methodId: 'server_configure_runtime',
+          portId: 'request',
+          rootType: 'ConfigureRuntimeRequest',
+        },
+      ],
+    });
+  });
+
+  it('saves provider schedules through the server schedule API', async () => {
+    const fetch = vi.fn(async (input: string, init?: RequestInit) => {
+      expect(input).toBe(
+        'https://node.example/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog',
+      );
+      expect(init?.method).toBe('PATCH');
+      expect(init?.credentials).toBe('include');
+      expect(init?.headers).toMatchObject({
+        'content-type': 'application/json',
+        'x-requested-with': 'XMLHttpRequest',
+      });
+      expect(JSON.parse(String(init?.body))).toEqual({
+        enabled: true,
+        interval: '3h',
+        cronExpression: '0 */3 * * *',
+        timezone: 'UTC',
+        jitter: '5m',
+        backoff: 'exponential',
+        retryBudget: 3,
+        maxRuntime: '30m',
+      });
+      return jsonResponse(200, {
+        methodId: 'sync_full_catalog',
+        enabled: true,
+        interval: '3h0m0s',
+        timezone: 'UTC',
+        minInterval: '3h0m0s',
+      });
+    });
+
+    await expect(
+      saveModuleRuntimeSchedule(
+        'https://node.example/',
+        'celestrak-provider',
+        'sync_full_catalog',
+        {
+          enabled: true,
+          interval: '3h',
+          cronExpression: '0 */3 * * *',
+          timezone: 'UTC',
+          jitter: '5m',
+          backoff: 'exponential',
+          retryBudget: 3,
+          maxRuntime: '30m',
+        },
+        fetch,
+      ),
+    ).resolves.toMatchObject({
+      methodId: 'sync_full_catalog',
+      interval: '3h0m0s',
+      minInterval: '3h0m0s',
+    });
+  });
+
+  it('runs provider schedules manually through the server schedule API', async () => {
+    const fetch = vi.fn(async (input: string, init?: RequestInit) => {
+      expect(input).toBe(
+        'https://node.example/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog/run',
+      );
+      expect(init?.method).toBe('POST');
+      expect(init?.credentials).toBe('include');
+      expect(init?.headers).toMatchObject({
+        'x-requested-with': 'XMLHttpRequest',
+      });
+      return jsonResponse(200, {
+        id: 'run-1',
+        methodId: 'sync_full_catalog',
+        trigger: 'manual',
+        startedAt: '2026-04-30T09:00:00Z',
+        finishedAt: '2026-04-30T09:01:00Z',
+        status: 'ok',
+        outputSize: 128,
+      });
+    });
+
+    await expect(
+      runModuleRuntimeScheduleNow(
+        'https://node.example/',
+        'celestrak-provider',
+        'sync_full_catalog',
+        fetch,
+      ),
+    ).resolves.toMatchObject({
+      methodId: 'sync_full_catalog',
+      trigger: 'manual',
+      status: 'ok',
+    });
   });
 });
 

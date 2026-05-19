@@ -3,30 +3,42 @@ import { describe, expect, it, vi } from 'vitest';
 import { PLG } from 'spacedatastandards.org/lib/js/REC/PLG.js';
 import { publicationState as listingStatus } from 'spacedatastandards.org/lib/js/PLG/publicationState.js';
 import { pluginCategory as pluginType } from 'spacedatastandards.org/lib/js/PLG/pluginCategory.js';
+import { STF } from 'spacedatastandards.org/lib/js/REC/STF.js';
+import { accessCategory } from 'spacedatastandards.org/lib/js/STF/accessCategory.js';
+import { paymentMethod } from 'spacedatastandards.org/lib/js/STF/paymentMethod.js';
+import { PricingTier } from 'spacedatastandards.org/lib/js/STF/PricingTier.js';
 
 import { loadMarketplaceListingsFromServer } from './marketplace-source';
 
 describe('loadMarketplaceListingsFromServer', () => {
   it('prefers module-delivery PLG listings when that API is available', async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      async json() {
-        return {
-          results: [
-            {
-              data_base64: Buffer.from(createPlgBytes({
-                pluginId: 'com.space-data-network.orbital-demo',
-                version: '1.2.3',
-                name: 'Orbital Demo',
-                description: 'Canonical PLG record',
-              })).toString('base64'),
-              timestamp: '2026-04-18T15:00:00Z',
-            },
-          ],
-        };
-      },
-    }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            results: [
+              {
+                data_base64: Buffer.from(createPlgBytes({
+                  pluginId: 'com.space-data-network.orbital-demo',
+                  version: '1.2.3',
+                  name: 'Orbital Demo',
+                  description: 'Canonical PLG record',
+                })).toString('base64'),
+                timestamp: '2026-04-18T15:00:00Z',
+              },
+            ],
+          };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      });
 
     await expect(
       loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
@@ -40,7 +52,78 @@ describe('loadMarketplaceListingsFromServer', () => {
       }),
     ]);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads canonical STF data listings alongside PLG module listings', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            results: [
+              {
+                data_base64: Buffer.from(createPlgBytes({
+                  pluginId: 'com.space-data-network.conjunction',
+                  version: '3.0.0',
+                  name: 'Conjunction Assessment',
+                  description: 'Screens OMM data',
+                })).toString('base64'),
+                timestamp: '2026-04-18T15:00:00Z',
+              },
+            ],
+          };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            results: [
+              {
+                data_base64: Buffer.from(createStfBytes()).toString('base64'),
+                timestamp: '2026-04-18T16:00:00Z',
+              },
+            ],
+          };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      });
+
+    await expect(
+      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        listingKind: 'module',
+        pluginId: 'com.space-data-network.conjunction',
+        standardsUsed: ['OMM'],
+      }),
+      expect.objectContaining({
+        listingKind: 'data',
+        pluginId: 'data.celestrak.omm-full-catalog',
+        name: 'CelesTrak OMM Full Catalog',
+        publisherPeerId: '16Uiu2HAmCelestrakProvider',
+        standardsUsed: ['OMM'],
+        paymentModel: 'subscription',
+        priceUsdCents: 2500,
+        acceptedPaymentMethods: ['Fiat_Stripe', 'Free'],
+        requiredScope: 'data:data.celestrak.omm-full-catalog:query',
+        status: 'public',
+      }),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://sdn.spaceaware.io/api/v1/data/query/STF?include_data=true&format=json&limit=25',
+      { credentials: 'include' },
+    );
   });
 
   it('falls back to storefront listings when the module-delivery route is unavailable', async () => {
@@ -71,12 +154,20 @@ describe('loadMarketplaceListingsFromServer', () => {
             ],
           };
         },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
       });
 
     await expect(
       loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
     ).resolves.toEqual([
       {
+        listingKind: 'data',
         pluginId: 'com.space-data-network.orbital-demo',
         version: '7',
         name: 'Orbital Demo',
@@ -89,10 +180,97 @@ describe('loadMarketplaceListingsFromServer', () => {
       },
     ]);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it('returns an empty marketplace from a successful empty module-delivery response without probing fallback routes', async () => {
+  it('decodes protected WASM storefront listings into module marketplace entries', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            listings: [
+              {
+                listing_id: 'protected-wasm-od',
+                listing_kind: 'wasm_module',
+                provider_peer_id: '16Uiu2HProvider',
+                title: 'Protected OD Module',
+                description: 'Encrypted WASM OD workflow',
+                data_types: ['WASM', 'OMM'],
+                tags: ['wasm', 'orbit-determination'],
+                sample_cid: 'bafybeisample',
+                access_type: 1,
+                encryption_required: true,
+                pricing: [
+                  {
+                    name: 'Basic',
+                    price_amount: 9900,
+                    price_currency: 'USD',
+                    duration_days: 30,
+                  },
+                ],
+                accepted_payments: [4],
+                protected_delivery: {
+                  encrypted_cid: 'bafybeiencryptedwasm',
+                  manifest_cid: 'bafybeimanifest',
+                  content_hash: 'sha256:artifact',
+                  content_key_id: 'ck-1',
+                  license_module_id: 'licensing/core',
+                  module_id: 'com.space-data-network.protected-od',
+                  module_version: '1.2.3',
+                  required_scopes: ['module:invoke'],
+                  grant_scope: 'module:invoke:protected-od',
+                  delivery_protocol: '/space-data-network/module-delivery/1.0.0',
+                },
+                active: true,
+                updated_at: '2026-05-05T12:00:00Z',
+              },
+            ],
+          };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      });
+
+    await expect(
+      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        listingKind: 'module',
+        pluginId: 'protected-wasm-od',
+        name: 'Protected OD Module',
+        paymentModel: 'subscription',
+        priceUsdCents: 9900,
+        subscriptionPeriodDays: 30,
+        acceptedPaymentMethods: ['Fiat_Stripe'],
+        requiredScope: 'module:invoke:protected-od',
+        standardsUsed: ['OMM', 'WASM'],
+        sampleCid: 'bafybeisample',
+        accessType: 'subscription',
+        encryptionRequired: true,
+        protectedDelivery: expect.objectContaining({
+          encryptedCid: 'bafybeiencryptedwasm',
+          licenseModuleId: 'licensing/core',
+          moduleId: 'com.space-data-network.protected-od',
+        }),
+      }),
+    ]);
+  });
+
+  it('falls back to storefront listings when module-delivery is available but empty', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
@@ -103,53 +281,116 @@ describe('loadMarketplaceListingsFromServer', () => {
             count: 0,
           };
         },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            listings: [
+              {
+                listing_id: 'protected-live-daemon-e2e',
+                listing_kind: 'wasm_module',
+                provider_peer_id: '16Uiu2HAmLive',
+                title: 'Protected Live Daemon Fixture',
+                data_types: ['WASM', 'OMM'],
+                active: true,
+              },
+            ],
+          };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      });
+
+    await expect(
+      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        listingKind: 'module',
+        pluginId: 'protected-live-daemon-e2e',
+        name: 'Protected Live Daemon Fixture',
+        publisherPeerId: '16Uiu2HAmLive',
+        standardsUsed: ['OMM', 'WASM'],
+      }),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps the empty storefront state quiet when the storefront route succeeds with no listings', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            listings: [],
+            total: 0,
+          };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
       });
 
     await expect(
       loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
     ).resolves.toEqual([]);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps the empty storefront state quiet when the storefront route succeeds with no listings', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      async json() {
-        return {
-          listings: [],
-          total: 0,
-        };
-      },
-    });
-
-    await expect(
-      loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
-    ).resolves.toEqual([]);
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('ignores malformed storefront listing payloads instead of crashing or probing PLG', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      async json() {
-        return {
-          listings: {
-            unexpected: true,
-          },
-          total: 1,
-        };
-      },
-    });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            listings: {
+              unexpected: true,
+            },
+            total: 1,
+          };
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
+      });
 
     await expect(
       loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
     ).resolves.toEqual([]);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('ignores malformed PLG query payloads instead of crashing', async () => {
@@ -171,13 +412,20 @@ describe('loadMarketplaceListingsFromServer', () => {
             },
           };
         },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        async json() {
+          return {};
+        },
       });
 
     await expect(
       loadMarketplaceListingsFromServer('https://sdn.spaceaware.io', fetchMock),
     ).resolves.toEqual([]);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -242,5 +490,48 @@ function createPlgBytes(options: {
   );
 
   PLG.finishPLGBuffer(builder, root);
+  return builder.asUint8Array();
+}
+
+function createStfBytes(): Uint8Array {
+  const builder = new flatbuffers.Builder(256);
+  const listingIdOffset = builder.createString('data.celestrak.omm-full-catalog');
+  const providerPeerIdOffset = builder.createString('16Uiu2HAmCelestrakProvider');
+  const titleOffset = builder.createString('CelesTrak OMM Full Catalog');
+  const descriptionOffset = builder.createString('Full-catalog OMM data');
+  const dataTypesOffset = STF.createDataTypesVector(builder, [
+    builder.createString('OMM'),
+  ]);
+  const priceTierOffset = PricingTier.createPricingTier(
+    builder,
+    builder.createString('Monthly'),
+    2500n,
+    builder.createString('USD'),
+    30,
+    1000,
+    0,
+  );
+  const pricingOffset = STF.createPricingVector(builder, [priceTierOffset]);
+  const acceptedPaymentsOffset = STF.createAcceptedPaymentsVector(builder, [
+    paymentMethod.Fiat_Stripe,
+    paymentMethod.Free,
+  ]);
+
+  STF.startSTF(builder);
+  STF.addListingId(builder, listingIdOffset);
+  STF.addProviderPeerId(builder, providerPeerIdOffset);
+  STF.addTitle(builder, titleOffset);
+  STF.addDescription(builder, descriptionOffset);
+  STF.addDataTypes(builder, dataTypesOffset);
+  STF.addAccessType(builder, accessCategory.Subscription);
+  STF.addEncryptionRequired(builder, true);
+  STF.addPricing(builder, pricingOffset);
+  STF.addAcceptedPayments(builder, acceptedPaymentsOffset);
+  STF.addCreatedAt(builder, 1_776_523_200n);
+  STF.addUpdatedAt(builder, 1_776_526_800n);
+  STF.addActive(builder, true);
+  const root = STF.endSTF(builder);
+
+  STF.finishSTFBuffer(builder, root);
   return builder.asUint8Array();
 }

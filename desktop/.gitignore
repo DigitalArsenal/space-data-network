@@ -4,6 +4,7 @@ dist
 .env
 config.gypi
 assets/webui
+assets/sdn-ui
 *.nupkg
 *.bak
 combined.log

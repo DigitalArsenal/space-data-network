@@ -243,7 +243,7 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 	}
 	peerID := session.XPub
 
-	// Read uint32BE-length-prefixed stream.
+	// Read native FlatSQL little-endian uint32 size-prefixed stream.
 	// Total body limit: 10x single record max.
 	maxTotal := int64(h.cfg.MaxRecordBytes) * 10
 	if maxTotal <= 0 {
@@ -263,7 +263,7 @@ func (h *PublishHandler) handlePublishBatch(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		recLen := binary.BigEndian.Uint32(lenBuf[:])
+		recLen := binary.LittleEndian.Uint32(lenBuf[:])
 		if recLen == 0 || int64(recLen) > int64(h.cfg.MaxRecordBytes) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid record size: %d", recLen))
 			return
@@ -336,4 +336,3 @@ func (h *PublishHandler) isSchemaAllowed(schema string) bool {
 	}
 	return false
 }
-

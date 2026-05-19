@@ -407,7 +407,7 @@ Publisher                                      Subscriber
     │                                               │
     │  1. Build FlatBuffer (OMM, CDM, etc.)         │
     │  2. POST /api/v1/data/publish/{schema}        │
-    │     → Validate + store in FlatSQL (SQLite)    │
+    │     → Validate + append to FlatSQL stream     │
     │     → Compute SHA-256 CID                     │
     │     → Append PLOG entry (hash-chained log)    │
     │                                               │
@@ -425,7 +425,7 @@ Publisher                                      Subscriber
 
 ### FlatSQL Storage
 
-All data is stored in SQLite with per-schema tables: `sds_{schema}(cid, data, peer_id, signature)`. Records are indexed by NORAD ID, epoch day, and entity ID for fast queries. Content is addressed by SHA-256 CID — same data always produces the same hash.
+FlatBuffer bytes are stored in append-only FlatSQL stream files under the node data directory. SQLite schema tables are canonical SDS names such as `OMM`, `MPE`, `CAT`, and `SPW`, and store only metadata needed to locate the bytes: `cid`, `peer_id`, `timestamp`, `stream_path`, `stream_offset`, `record_length`, and `signature_hex`. Source/provenance rows are keyed by provider, source, batch, producer peer ID, and producer public key. Content is addressed by SHA-256 CID — the same FlatBuffer bytes always produce the same hash.
 
 ### Publication Logs (PLOG/PLHD)
 

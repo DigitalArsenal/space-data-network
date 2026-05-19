@@ -28,6 +28,7 @@ SDN Local Cluster Management
 Usage: $0 COMMAND [OPTIONS]
 
 Commands:
+    prepare     Generate local bootstrap key and config files
     up          Start the local cluster
     down        Stop and remove the cluster
     restart     Restart the cluster
@@ -46,6 +47,7 @@ Options:
 
 Examples:
     $0 up -d                    # Start cluster in background
+    $0 prepare                  # Generate deployment/generated/* and .env
     $0 logs -f full-node-1      # Follow logs for full-node-1
     $0 shell edge-relay-us      # Open shell in edge relay
     $0 test                     # Run tests against cluster
@@ -56,13 +58,28 @@ EOF
 # Change to deployment directory
 cd "$DEPLOY_DIR"
 
+compose() {
+    if [[ -f "$DEPLOY_DIR/.env" ]]; then
+        docker compose "$@"
+    else
+        SDN_LOCAL_BOOTSTRAP_PEER_ID=local-cluster-placeholder docker compose "$@"
+    fi
+}
+
 # Commands
+cmd_prepare() {
+    log_info "Preparing SDN local cluster bootstrap material..."
+    node "${SCRIPT_DIR}/prepare-local-cluster.mjs"
+    log_success "Local cluster bootstrap material ready"
+}
+
 cmd_up() {
     local detach=""
     [[ "$1" == "-d" || "$1" == "--detach" ]] && detach="-d"
 
+    cmd_prepare
     log_info "Starting SDN local cluster..."
-    docker compose up --build $detach
+    compose up --build $detach
 
     if [[ -n "$detach" ]]; then
         log_info "Waiting for services to be healthy..."
@@ -73,13 +90,14 @@ cmd_up() {
 
 cmd_down() {
     log_info "Stopping SDN local cluster..."
-    docker compose down
+    compose down
     log_success "Cluster stopped"
 }
 
 cmd_restart() {
+    cmd_prepare
     log_info "Restarting SDN local cluster..."
-    docker compose restart
+    compose restart
     log_success "Cluster restarted"
 }
 
@@ -90,9 +108,11 @@ cmd_status() {
 
     # Full Nodes
     echo -e "${BLUE}Full Nodes:${NC}"
-    for node in full-node-1 full-node-2; do
-        local status=$(docker inspect -f '{{.State.Status}}' "sdn-${node##*-}" 2>/dev/null || echo "not found")
-        local ip=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "sdn-${node##*-}" 2>/dev/null || echo "N/A")
+    for entry in "full-node-1:sdn-full-1" "full-node-2:sdn-full-2"; do
+        local node="${entry%%:*}"
+        local container="${entry##*:}"
+        local status=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo "not found")
+        local ip=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container" 2>/dev/null || echo "N/A")
         if [[ "$status" == "running" ]]; then
             echo -e "  ${GREEN}●${NC} $node (${ip}) - Running"
         else
@@ -102,13 +122,16 @@ cmd_status() {
 
     # Edge Relays
     echo -e "\n${BLUE}Edge Relays:${NC}"
-    for relay in edge-relay-us edge-relay-eu edge-relay-asia; do
-        local container="sdn-${relay##edge-relay-}"
+    for entry in "edge-relay-us:sdn-edge-us:8091" "edge-relay-eu:sdn-edge-eu:8093" "edge-relay-asia:sdn-edge-asia:8095"; do
+        local relay="${entry%%:*}"
+        local rest="${entry#*:}"
+        local container="${rest%%:*}"
+        local health_port="${rest##*:}"
         local status=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo "not found")
         local ip=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container" 2>/dev/null || echo "N/A")
         if [[ "$status" == "running" ]]; then
             # Check health endpoint
-            local health=$(curl -s "http://localhost:${relay//[^0-9]/}91/health" 2>/dev/null || echo "")
+            local health=$(curl -s "http://localhost:${health_port}/health" 2>/dev/null || echo "")
             if [[ -n "$health" ]]; then
                 echo -e "  ${GREEN}●${NC} $relay (${ip}) - Running (healthy)"
             else
@@ -134,7 +157,7 @@ cmd_status() {
 
     # Port mappings
     echo -e "\n${BLUE}Port Mappings:${NC}"
-    echo "  Full Node 1:  localhost:4001 (TCP), localhost:8080 (WS)"
+    echo "  Full Node 1:  localhost:4001 (TCP), localhost:18080 (WS)"
     echo "  Full Node 2:  localhost:4002 (TCP), localhost:8081 (WS)"
     echo "  Edge US:      localhost:8090 (WS), localhost:8091 (Health)"
     echo "  Edge EU:      localhost:8092 (WS), localhost:8093 (Health)"
@@ -155,19 +178,20 @@ cmd_logs() {
     done
 
     if [[ -n "$service" ]]; then
-        docker compose logs $follow "$service"
+        compose logs $follow "$service"
     else
-        docker compose logs $follow
+        compose logs $follow
     fi
 }
 
 cmd_ps() {
-    docker compose ps
+    compose ps
 }
 
 cmd_build() {
+    cmd_prepare
     log_info "Building Docker images..."
-    docker compose build
+    compose build
     log_success "Images built"
 }
 
@@ -177,7 +201,7 @@ cmd_clean() {
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         log_info "Cleaning up..."
-        docker compose down -v --rmi all 2>/dev/null || true
+        compose down -v --rmi all 2>/dev/null || true
         docker volume rm $(docker volume ls -q | grep sdn) 2>/dev/null || true
         log_success "Cleanup complete"
     fi
@@ -186,14 +210,15 @@ cmd_clean() {
 cmd_shell() {
     local service=$1
     [[ -z "$service" ]] && { log_error "Please specify a service"; exit 1; }
-    docker compose exec "$service" /bin/sh
+    compose exec "$service" /bin/sh
 }
 
 cmd_test() {
+    cmd_prepare
     log_info "Running integration tests against local cluster..."
 
     # Ensure cluster is running
-    if ! docker compose ps | grep -q "running"; then
+    if ! compose ps --services --filter status=running | grep -q .; then
         log_warn "Cluster not running. Starting..."
         cmd_up -d
         sleep 15
@@ -223,7 +248,7 @@ cmd_test() {
 
     # Test 3: Check WebSocket connectivity
     log_info "Test 3: Checking WebSocket endpoints..."
-    for port in 8080 8081 8090 8092 8094; do
+    for port in 18080 8081 8090 8092 8094; do
         if curl -s -o /dev/null -w "%{http_code}" "http://localhost:${port}/" | grep -q "400\|426"; then
             log_success "  WebSocket endpoint on port $port is responding"
         else
@@ -254,6 +279,7 @@ COMMAND=$1
 shift
 
 case $COMMAND in
+    prepare) cmd_prepare ;;
     up)      cmd_up "$@" ;;
     down)    cmd_down ;;
     restart) cmd_restart ;;

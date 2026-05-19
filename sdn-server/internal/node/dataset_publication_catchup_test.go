@@ -1,0 +1,553 @@
+package node
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
+	flatbuffers "github.com/google/flatbuffers/go"
+	libp2p "github.com/libp2p/go-libp2p"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/spacedatanetwork/sdn-server/internal/config"
+	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
+)
+
+func TestMaterializeStoredDatasetPublicationPNMsReplaysTrustedProviderPNM(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	providerStore, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "provider-db"), validator)
+	if err != nil {
+		t.Fatalf("provider store: %v", err)
+	}
+	defer providerStore.Close()
+	subscriberStore, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "subscriber-db"), validator)
+	if err != nil {
+		t.Fatalf("subscriber store: %v", err)
+	}
+	defer subscriberStore.Close()
+
+	priv, pub, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x44}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key failed: %v", err)
+	}
+	rawPriv, err := priv.Raw()
+	if err != nil {
+		t.Fatalf("raw private key: %v", err)
+	}
+	rawPub, err := pub.Raw()
+	if err != nil {
+		t.Fatalf("raw public key: %v", err)
+	}
+	if len(rawPriv) != ed25519.PrivateKeySize || len(rawPub) != ed25519.PublicKeySize {
+		t.Fatalf("unexpected ed25519 key sizes: private=%d public=%d", len(rawPriv), len(rawPub))
+	}
+	providerID, err := peer.IDFromPublicKey(pub)
+	if err != nil {
+		t.Fatalf("IDFromPublicKey failed: %v", err)
+	}
+
+	tags := storage.SourceTags{
+		ProviderID:   "celestrak.eth",
+		SourceName:   "celestrak-satcat-csv",
+		SourceURL:    "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV",
+		BatchID:      "batch-sha-001",
+		ContentKeyID: "public",
+	}
+	record := sds.NewCATBuilder().
+		WithNoradCatID(25544).
+		WithObjectName("ISS").
+		WithObjectType("PAYLOAD").
+		WithOpsStatus("OPERATIONAL").
+		Build()
+	if _, err := providerStore.StoreWithSourceTags("CAT.fbs", record, providerID.String(), nil, tags); err != nil {
+		t.Fatalf("store provider record: %v", err)
+	}
+	export, err := providerStore.ExportDatasetWindow(filepath.Join(tmpDir, "export"), storage.IndexedRecordQuery{
+		SchemaName:          "CAT.fbs",
+		ProviderID:          "celestrak.eth",
+		SourceName:          "celestrak-satcat-csv",
+		BatchID:             "batch-sha-001",
+		Limit:               10,
+		AllowLargeResultSet: true,
+	})
+	if err != nil {
+		t.Fatalf("ExportDatasetWindow failed: %v", err)
+	}
+	publishedAt := time.Unix(1700002222, 0).UTC()
+	manifest, err := storage.BuildSignedDatasetPublicationManifest(filepath.Join(tmpDir, "publish"), storage.DatasetPublicationManifestOptions{
+		Export:         export,
+		DatasetID:      "cat-catchup",
+		UpdateID:       "batch-sha-001",
+		ProviderPeerID: providerID.String(),
+		ProviderEPMCID: "bafy-provider-epm",
+		PublishedAt:    publishedAt,
+		SigningKey:     ed25519.PrivateKey(rawPriv),
+		SchemaHash:     "cat-schema-hash",
+	})
+	if err != nil {
+		t.Fatalf("BuildSignedDatasetPublicationManifest failed: %v", err)
+	}
+	pnmBytes, err := storage.BuildDatasetPublicationPNM(manifest, storage.DatasetPublicationPNMOptions{
+		PublishedAt: publishedAt,
+		SigningKey:  ed25519.PrivateKey(rawPriv),
+	})
+	if err != nil {
+		t.Fatalf("BuildDatasetPublicationPNM failed: %v", err)
+	}
+	shardBytes := mustReadTestFile(t, export.ShardPath)
+	indexBytes := mustReadTestFile(t, export.IndexPath)
+	objects := map[string][]byte{
+		manifest.CID:    manifest.Bytes,
+		export.ShardCID: shardBytes,
+		export.IndexCID: indexBytes,
+	}
+	ipfs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/api/v0/cat" {
+			http.Error(w, "unexpected path "+got, http.StatusNotFound)
+			return
+		}
+		cidValue := r.URL.Query().Get("arg")
+		data, ok := objects[cidValue]
+		if !ok {
+			http.Error(w, fmt.Sprintf("missing cid %s", cidValue), http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer ipfs.Close()
+
+	relayPriv, relayPub, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x45}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key relay failed: %v", err)
+	}
+	_ = relayPriv
+	relayID, err := peer.IDFromPublicKey(relayPub)
+	if err != nil {
+		t.Fatalf("relay IDFromPublicKey failed: %v", err)
+	}
+	if _, err := subscriberStore.Store("PNM.fbs", pnmBytes, relayID.String(), nil); err != nil {
+		t.Fatalf("store subscriber PNM: %v", err)
+	}
+	registry := peers.NewRegistry(false, nil)
+	if err := registry.AddPeer(&peers.TrustedPeer{ID: providerID, TrustLevel: peers.Trusted}); err != nil {
+		t.Fatalf("add trusted provider: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	n := &Node{
+		store:        subscriberStore,
+		peerRegistry: registry,
+		config: &config.Config{
+			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage")},
+			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
+		},
+		ctx:                     ctx,
+		datasetMaterializedPNMs: make(map[string]time.Time),
+	}
+
+	materialized, err := n.materializeStoredDatasetPublicationPNMs(ctx, 10)
+	if err != nil {
+		t.Fatalf("materializeStoredDatasetPublicationPNMs failed: %v", err)
+	}
+	if materialized != 1 {
+		t.Fatalf("materialized = %d, want 1", materialized)
+	}
+	materialized, err = n.materializeStoredDatasetPublicationPNMs(ctx, 10)
+	if err != nil {
+		t.Fatalf("second materializeStoredDatasetPublicationPNMs failed: %v", err)
+	}
+	if materialized != 0 {
+		t.Fatalf("second materialized = %d, want 0 for already-seen PNM", materialized)
+	}
+	records, err := subscriberStore.QueryIndexedRecords(storage.IndexedRecordQuery{
+		SchemaName: "CAT.fbs",
+		ProviderID: "celestrak.eth",
+		SourceName: "celestrak-satcat-csv",
+		BatchID:    "batch-sha-001",
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("query subscriber CAT records: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("subscriber CAT records = %d, want 1", len(records))
+	}
+}
+
+func TestMaterializeStoredDatasetPublicationPNMsDoesNotRetryPermanentShardFrameErrors(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	providerStore, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "provider-db"), validator)
+	if err != nil {
+		t.Fatalf("provider store: %v", err)
+	}
+	defer providerStore.Close()
+	subscriberStore, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "subscriber-db"), validator)
+	if err != nil {
+		t.Fatalf("subscriber store: %v", err)
+	}
+	defer subscriberStore.Close()
+
+	priv, pub, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x55}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key failed: %v", err)
+	}
+	rawPriv, err := priv.Raw()
+	if err != nil {
+		t.Fatalf("raw private key: %v", err)
+	}
+	providerID, err := peer.IDFromPublicKey(pub)
+	if err != nil {
+		t.Fatalf("IDFromPublicKey failed: %v", err)
+	}
+	tags := storage.SourceTags{
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		SourceURL:    "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv",
+		BatchID:      "bad-frame-batch",
+		ContentKeyID: "public",
+	}
+	record := sds.NewOMMBuilder().
+		WithNoradCatID(25544).
+		WithObjectID("1998-067A").
+		WithObjectName("ISS").
+		Build()
+	if _, err := providerStore.StoreWithSourceTags("OMM.fbs", record, providerID.String(), nil, tags); err != nil {
+		t.Fatalf("store provider record: %v", err)
+	}
+	export, err := providerStore.ExportDatasetWindow(filepath.Join(tmpDir, "export"), storage.IndexedRecordQuery{
+		SchemaName:          "OMM.fbs",
+		ProviderID:          tags.ProviderID,
+		SourceName:          tags.SourceName,
+		BatchID:             tags.BatchID,
+		Limit:               10,
+		AllowLargeResultSet: true,
+	})
+	if err != nil {
+		t.Fatalf("ExportDatasetWindow failed: %v", err)
+	}
+
+	shardBytes := mustReadTestFile(t, export.ShardPath)
+	indexBytes := mustReadTestFile(t, export.IndexPath)
+	var index storage.DatasetExportIndex
+	if err := json.Unmarshal(indexBytes, &index); err != nil {
+		t.Fatalf("unmarshal index: %v", err)
+	}
+	for _, indexed := range index.Records {
+		if indexed.Offset < 0 || indexed.Offset+4 > int64(len(shardBytes)) {
+			t.Fatalf("bad test index offset: %+v", indexed)
+		}
+		length := binary.LittleEndian.Uint32(shardBytes[indexed.Offset : indexed.Offset+4])
+		binary.BigEndian.PutUint32(shardBytes[indexed.Offset:indexed.Offset+4], length)
+	}
+	badShardPath := filepath.Join(tmpDir, "bad-frame.fbshard")
+	if err := os.WriteFile(badShardPath, shardBytes, 0600); err != nil {
+		t.Fatalf("write bad shard: %v", err)
+	}
+	badShardSHA := sha256HexForTest(shardBytes)
+	badShardCID := "bafybadframeshard"
+	index.ShardCID = badShardCID
+	index.ShardSHA256 = badShardSHA
+	index.ResultSHA256 = badShardSHA
+	badIndexBytes, err := json.MarshalIndent(index, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal bad index: %v", err)
+	}
+	badIndexBytes = append(badIndexBytes, '\n')
+	badIndexPath := filepath.Join(tmpDir, "bad-frame.index.json")
+	if err := os.WriteFile(badIndexPath, badIndexBytes, 0600); err != nil {
+		t.Fatalf("write bad index: %v", err)
+	}
+	badIndexSHA := sha256HexForTest(badIndexBytes)
+	badIndexCID := "bafybadframeindex"
+	export.ShardPath = badShardPath
+	export.ShardSHA256 = badShardSHA
+	export.ShardCID = badShardCID
+	export.ResultSHA256 = badShardSHA
+	export.ShardBytes = int64(len(shardBytes))
+	export.IndexPath = badIndexPath
+	export.IndexSHA256 = badIndexSHA
+	export.IndexCID = badIndexCID
+	export.IndexBytes = int64(len(badIndexBytes))
+
+	publishedAt := time.Unix(1700003333, 0).UTC()
+	manifest, err := storage.BuildSignedDatasetPublicationManifest(filepath.Join(tmpDir, "publish"), storage.DatasetPublicationManifestOptions{
+		Export:         export,
+		DatasetID:      "omm-bad-frame",
+		UpdateID:       tags.BatchID,
+		ProviderPeerID: providerID.String(),
+		ProviderEPMCID: "bafy-provider-epm",
+		PublishedAt:    publishedAt,
+		SigningKey:     ed25519.PrivateKey(rawPriv),
+		SchemaHash:     "omm-schema-hash",
+	})
+	if err != nil {
+		t.Fatalf("BuildSignedDatasetPublicationManifest failed: %v", err)
+	}
+	pnmBytes, err := storage.BuildDatasetPublicationPNM(manifest, storage.DatasetPublicationPNMOptions{
+		PublishedAt: publishedAt,
+		SigningKey:  ed25519.PrivateKey(rawPriv),
+	})
+	if err != nil {
+		t.Fatalf("BuildDatasetPublicationPNM failed: %v", err)
+	}
+	objects := map[string][]byte{
+		manifest.CID: manifest.Bytes,
+		badShardCID:  shardBytes,
+		badIndexCID:  badIndexBytes,
+	}
+	ipfs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, ok := objects[r.URL.Query().Get("arg")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer ipfs.Close()
+
+	relayPriv, relayPub, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x56}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key relay failed: %v", err)
+	}
+	_ = relayPriv
+	relayID, err := peer.IDFromPublicKey(relayPub)
+	if err != nil {
+		t.Fatalf("relay IDFromPublicKey failed: %v", err)
+	}
+	if _, err := subscriberStore.Store("PNM.fbs", pnmBytes, relayID.String(), nil); err != nil {
+		t.Fatalf("store subscriber PNM: %v", err)
+	}
+	registry := peers.NewRegistry(false, nil)
+	if err := registry.AddPeer(&peers.TrustedPeer{ID: providerID, TrustLevel: peers.Trusted}); err != nil {
+		t.Fatalf("add trusted provider: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	n := &Node{
+		store:        subscriberStore,
+		peerRegistry: registry,
+		config: &config.Config{
+			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage")},
+			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
+		},
+		ctx:                     ctx,
+		datasetMaterializedPNMs: make(map[string]time.Time),
+	}
+
+	materialized, err := n.materializeStoredDatasetPublicationPNMs(ctx, 10)
+	if err == nil {
+		t.Fatal("first replay must report the permanent shard frame error")
+	}
+	if materialized != 0 {
+		t.Fatalf("materialized = %d, want 0", materialized)
+	}
+	materialized, err = n.materializeStoredDatasetPublicationPNMs(ctx, 10)
+	if err != nil {
+		t.Fatalf("second replay should skip the permanently failed PNM, got %v", err)
+	}
+	if materialized != 0 {
+		t.Fatalf("second materialized = %d, want 0", materialized)
+	}
+
+	restarted := &Node{
+		store:        subscriberStore,
+		peerRegistry: registry,
+		config: &config.Config{
+			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "subscriber-storage-restarted")},
+			Admin:   config.AdminConfig{IPFSAPIURL: ipfs.URL},
+		},
+		ctx:                     ctx,
+		datasetMaterializedPNMs: make(map[string]time.Time),
+	}
+	materialized, err = restarted.materializeStoredDatasetPublicationPNMs(ctx, 10)
+	if err != nil {
+		t.Fatalf("restarted node should skip the permanently failed PNM, got %v", err)
+	}
+	if materialized != 0 {
+		t.Fatalf("restarted materialized = %d, want 0", materialized)
+	}
+}
+
+func mustReadTestFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return data
+}
+
+func sha256HexForTest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func TestMaterializeStoredDatasetPublicationPNMsSkipsSelfOwnedPNM(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "store"), validator)
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	defer store.Close()
+
+	hostPriv, _, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x47}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key failed: %v", err)
+	}
+	h, err := libp2p.New(libp2p.Identity(hostPriv), libp2p.NoListenAddrs)
+	if err != nil {
+		t.Fatalf("libp2p.New failed: %v", err)
+	}
+	defer h.Close()
+
+	pnmBytes := buildCatchupTestPNM(t, "bafy-self-pnm", "sdn-OMM-full:OMM.fbs:self-batch:part-000001")
+	if _, err := store.Store("PNM.fbs", pnmBytes, h.ID().String(), nil); err != nil {
+		t.Fatalf("store self PNM: %v", err)
+	}
+	registry := peers.NewRegistry(false, nil)
+	if err := registry.AddPeer(&peers.TrustedPeer{ID: h.ID(), TrustLevel: peers.Trusted}); err != nil {
+		t.Fatalf("add trusted self peer: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	n := &Node{
+		host:         h,
+		store:        store,
+		peerRegistry: registry,
+		config: &config.Config{
+			Storage: config.StorageConfig{Path: filepath.Join(tmpDir, "storage")},
+			Admin:   config.AdminConfig{IPFSAPIURL: "http://127.0.0.1:5002"},
+		},
+		ctx:                     ctx,
+		datasetMaterializedPNMs: make(map[string]time.Time),
+	}
+
+	materialized, err := n.materializeStoredDatasetPublicationPNMs(ctx, 10)
+	if err != nil {
+		t.Fatalf("self-owned stored PNM should be skipped without replay error, got %v", err)
+	}
+	if materialized != 0 {
+		t.Fatalf("materialized = %d, want 0 for self-owned PNM", materialized)
+	}
+}
+
+func TestCatchupCandidateDatasetPublicationPNMsIgnoresNewerSelfOwnedBatch(t *testing.T) {
+	t.Parallel()
+
+	hostPriv, _, err := libp2pcrypto.GenerateEd25519Key(bytes.NewReader(bytes.Repeat([]byte{0x48}, 128)))
+	if err != nil {
+		t.Fatalf("GenerateEd25519Key failed: %v", err)
+	}
+	h, err := libp2p.New(libp2p.Identity(hostPriv), libp2p.NoListenAddrs)
+	if err != nil {
+		t.Fatalf("libp2p.New failed: %v", err)
+	}
+	defer h.Close()
+
+	trustedInbound := &storage.Record{
+		PeerID:    "16Uiu2HAmTrustedProvider",
+		Data:      buildCatchupTestPNM(t, "bafy-trusted-omm", "sdn-OMM-full:OMM.fbs:trusted-batch:part-000001"),
+		Timestamp: time.Unix(200, 0).UTC(),
+	}
+	selfOwnedNewer := &storage.Record{
+		PeerID:    h.ID().String(),
+		Data:      buildCatchupTestPNM(t, "bafy-self-omm", "sdn-OMM-full:OMM.fbs:self-batch:part-000001"),
+		Timestamp: time.Unix(300, 0).UTC(),
+	}
+
+	candidates := (&Node{host: h}).catchupCandidateDatasetPublicationPNMs([]*storage.Record{selfOwnedNewer, trustedInbound})
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %d, want trusted inbound only", len(candidates))
+	}
+	if candidates[0] != trustedInbound {
+		t.Fatal("newer self-owned PNM hid the trusted inbound catch-up candidate")
+	}
+}
+
+func TestLatestDatasetPublicationPNMBatchesKeepsNewestBatchPerDatasetSchema(t *testing.T) {
+	t.Parallel()
+
+	oldRecord := &storage.Record{
+		Data:      buildCatchupTestPNM(t, "bafy-old-omm", "sdn-OMM-full:OMM.fbs:old-batch:part-000001"),
+		Timestamp: time.Unix(100, 0).UTC(),
+	}
+	newPart1 := &storage.Record{
+		Data:      buildCatchupTestPNM(t, "bafy-new-omm-1", "sdn-OMM-full:OMM.fbs:new-batch:part-000001"),
+		Timestamp: time.Unix(200, 0).UTC(),
+	}
+	newPart2 := &storage.Record{
+		Data:      buildCatchupTestPNM(t, "bafy-new-omm-2", "sdn-OMM-full:OMM.fbs:new-batch:part-000002"),
+		Timestamp: time.Unix(201, 0).UTC(),
+	}
+	latestMPE := &storage.Record{
+		Data:      buildCatchupTestPNM(t, "bafy-new-mpe", "sdn-MPE-full:MPE.fbs:mpe-batch:part-000001"),
+		Timestamp: time.Unix(150, 0).UTC(),
+	}
+	olderOneShot := &storage.Record{
+		Data:      buildCatchupTestPNM(t, "bafy-old-oneshot", "sdn-OMM:OMM.fbs:old-oneshot"),
+		Timestamp: time.Unix(300, 0).UTC(),
+	}
+
+	filtered := latestDatasetPublicationPNMBatches([]*storage.Record{newPart2, oldRecord, latestMPE, newPart1, olderOneShot})
+	if len(filtered) != 3 {
+		t.Fatalf("filtered records = %d, want 3", len(filtered))
+	}
+	for _, record := range filtered {
+		if record == oldRecord {
+			t.Fatal("old OMM batch was retained")
+		}
+		if record == olderOneShot {
+			t.Fatal("older OMM one-shot was retained despite full-catalog OMM batch")
+		}
+	}
+}
+
+func buildCatchupTestPNM(t *testing.T, cid, fileID string) []byte {
+	t.Helper()
+
+	builder := flatbuffers.NewBuilder(256)
+	cidOffset := builder.CreateString(cid)
+	fileIDOffset := builder.CreateString(fileID)
+	timestampOffset := builder.CreateString(time.Now().UTC().Format(time.RFC3339))
+
+	PNM.PNMStart(builder)
+	PNM.PNMAddCID(builder, cidOffset)
+	PNM.PNMAddFILE_ID(builder, fileIDOffset)
+	PNM.PNMAddPUBLISH_TIMESTAMP(builder, timestampOffset)
+	pnm := PNM.PNMEnd(builder)
+	PNM.FinishSizePrefixedPNMBuffer(builder, pnm)
+	return append([]byte(nil), builder.FinishedBytes()...)
+}

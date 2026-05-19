@@ -154,8 +154,26 @@ const init = () => {
  * @returns {HTTPClientOptions|string|null}
  */
 const readAPIAddressSetting = () => {
+  const apiAddressFromUrl = readAPIAddressURLParam()
+  if (apiAddressFromUrl != null) {
+    writeSetting('ipfsApi', apiAddressFromUrl)
+    return apiAddressFromUrl
+  }
+
   const setting = readSetting('ipfsApi')
   return setting == null ? null : asAPIOptions(setting)
+}
+
+/**
+ * @returns {HTTPClientOptions|string|null}
+ */
+const readAPIAddressURLParam = () => {
+  try {
+    const apiParam = new URL(window.location.href).searchParams.get('api')
+    return apiParam == null ? null : asAPIOptions(apiParam)
+  } catch (_) {
+    return null
+  }
 }
 
 /**

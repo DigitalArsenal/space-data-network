@@ -30,8 +30,11 @@ var (
 	ingestOnce                 bool
 	ingestCelestrakInterval    time.Duration
 	ingestSatcatInterval       time.Duration
+	ingestSpaceWeatherInterval time.Duration
 	ingestCatalogURL           string
 	ingestSatcatURL            string
+	ingestSatcatCSVURL         string
+	ingestSpaceWeatherURL      string
 	ingestSpaceTrackEnabled    bool
 	ingestSpaceTrackIdentity   string
 	ingestSpaceTrackPassword   string
@@ -42,6 +45,7 @@ var (
 	ingestSpaceTrackLoginURL   string
 	ingestSpaceTrackQueryTmpl  string
 	ingestHTTPTimeout          time.Duration
+	ingestDatasetPublishURL    string
 )
 
 func init() {
@@ -51,8 +55,11 @@ func init() {
 
 	ingestCmd.Flags().DurationVar(&ingestCelestrakInterval, "celestrak-interval", 3*time.Hour, "CelesTrak GP sync interval (minimum 3h)")
 	ingestCmd.Flags().DurationVar(&ingestSatcatInterval, "satcat-interval", 24*time.Hour, "CelesTrak SATCAT sync interval")
+	ingestCmd.Flags().DurationVar(&ingestSpaceWeatherInterval, "celestrak-space-weather-interval", 3*time.Hour, "CelesTrak space-weather sync interval (minimum 3h)")
 	ingestCmd.Flags().StringVar(&ingestCatalogURL, "celestrak-catalog-url", "", "override CelesTrak GP catalog CSV URL")
 	ingestCmd.Flags().StringVar(&ingestSatcatURL, "celestrak-satcat-url", "", "override CelesTrak SATCAT URL (txt or csv)")
+	ingestCmd.Flags().StringVar(&ingestSatcatCSVURL, "celestrak-satcat-csv-url", "", "override CelesTrak SATCAT CSV records URL")
+	ingestCmd.Flags().StringVar(&ingestSpaceWeatherURL, "celestrak-space-weather-url", "", "override CelesTrak space-weather CSV URL")
 
 	ingestCmd.Flags().BoolVar(&ingestSpaceTrackEnabled, "spacetrack-enabled", true, "enable Space-Track gap-fill worker")
 	ingestCmd.Flags().StringVar(&ingestSpaceTrackIdentity, "spacetrack-identity", "", "Space-Track login identity (or SPACETRACK_IDENTITY env)")
@@ -65,6 +72,7 @@ func init() {
 	ingestCmd.Flags().StringVar(&ingestSpaceTrackQueryTmpl, "spacetrack-query-template", "", "Space-Track query URL template with two %s placeholders for start/end day")
 
 	ingestCmd.Flags().DurationVar(&ingestHTTPTimeout, "http-timeout", 90*time.Second, "HTTP request timeout")
+	ingestCmd.Flags().StringVar(&ingestDatasetPublishURL, "dataset-publish-url", "", "local SDN admin dataset publication endpoint")
 
 	rootCmd.AddCommand(ingestCmd)
 }
@@ -95,6 +103,10 @@ func runIngest(cmd *cobra.Command, args []string) error {
 	password := ingestSpaceTrackPassword
 	if password == "" {
 		password = strings.TrimSpace(os.Getenv("SPACETRACK_PASSWORD"))
+	}
+	datasetPublishURL := ingestDatasetPublishURL
+	if datasetPublishURL == "" {
+		datasetPublishURL = strings.TrimSpace(os.Getenv("SDN_DATASET_PUBLISH_URL"))
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -140,10 +152,13 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		RawPath:     rawPath,
 		Once:        ingestOnce,
 
-		CelestrakCatalogURL: ingestCatalogURL,
-		CelestrakSatcatURL:  ingestSatcatURL,
-		CelestrakInterval:   ingestCelestrakInterval,
-		SatcatInterval:      ingestSatcatInterval,
+		CelestrakCatalogURL:      ingestCatalogURL,
+		CelestrakSatcatURL:       ingestSatcatURL,
+		CelestrakSatcatCSVURL:    ingestSatcatCSVURL,
+		CelestrakSpaceWeatherURL: ingestSpaceWeatherURL,
+		CelestrakInterval:        ingestCelestrakInterval,
+		SatcatInterval:           ingestSatcatInterval,
+		SpaceWeatherInterval:     ingestSpaceWeatherInterval,
 
 		SpaceTrackEnabled:      ingestSpaceTrackEnabled,
 		SpaceTrackIdentity:     identity,
@@ -156,6 +171,8 @@ func runIngest(cmd *cobra.Command, args []string) error {
 		SpaceTrackQueryTmpl:    ingestSpaceTrackQueryTmpl,
 
 		HTTPTimeout: ingestHTTPTimeout,
+
+		DatasetPublishURL: datasetPublishURL,
 	})
 	if err != nil {
 		return err

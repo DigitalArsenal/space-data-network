@@ -2,8 +2,11 @@ package epm
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +15,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
 	sdnvcard "github.com/spacedatanetwork/sdn-server/internal/vcard"
 	"github.com/spacedatanetwork/sdn-server/internal/versioninfo"
 	"github.com/spacedatanetwork/sdn-server/internal/wasm"
@@ -54,6 +59,112 @@ func TestGetNodeEPMJSONIncludesSecp256k1IdentitySigningKey(t *testing.T) {
 	}
 
 	t.Fatal("expected secp256k1 signing key in EPM keys")
+}
+
+func TestServicePersistsProfileThroughEncryptedFlatSQLStore(t *testing.T) {
+	t.Parallel()
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(t.TempDir(), "db"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	peerID, err := peer.Decode("16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4")
+	if err != nil {
+		t.Fatalf("peer.Decode failed: %v", err)
+	}
+	dataDir := t.TempDir()
+	service := NewService(nil, peers.NewRegistry(false, nil), peerID, "", dataDir)
+	service.SetProfileStore(store)
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	if err := service.UpdateProfile(&Profile{
+		DN:    "Jane Example",
+		Email: "jane@example.com",
+	}); err != nil {
+		t.Fatalf("UpdateProfile failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dataDir, "keys", profileFileName)); !os.IsNotExist(err) {
+		t.Fatalf("plaintext profile file exists after encrypted FlatSQL save: %v", err)
+	}
+
+	rawEPM, err := store.LoadLocalEPM(peerID.String())
+	if err != nil {
+		t.Fatalf("LoadLocalEPM failed: %v", err)
+	}
+	epmRecord := EPM.GetSizePrefixedRootAsEPM(rawEPM, 0)
+	if got := string(epmRecord.EMAIL()); got != "jane@example.com" {
+		t.Fatalf("stored EPM EMAIL = %q, want jane@example.com", got)
+	}
+	localRecord, err := store.GetLocalEPMRecord(peerID.String())
+	if err != nil {
+		t.Fatalf("GetLocalEPMRecord failed: %v", err)
+	}
+	if !bytes.Equal(localRecord.EPMBytes, rawEPM) {
+		t.Fatal("stored local EPM record did not return raw EPM.fbs bytes")
+	}
+
+	reloaded := NewService(nil, peers.NewRegistry(false, nil), peerID, "", dataDir)
+	reloaded.SetProfileStore(store)
+	if err := reloaded.Init(); err != nil {
+		t.Fatalf("reload Init failed: %v", err)
+	}
+	if got := reloaded.GetNodeProfile().Email; got != "jane@example.com" {
+		t.Fatalf("reloaded Email = %q, want jane@example.com", got)
+	}
+}
+
+func TestNodeEPMUsesRuntimeEd25519SigningKeyWithoutHDIdentity(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	peerID, err := peer.Decode("16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4")
+	if err != nil {
+		t.Fatalf("peer.Decode failed: %v", err)
+	}
+
+	service := NewService(nil, peers.NewRegistry(false, nil), peerID, "", t.TempDir())
+	if err := service.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	if err := service.SetRuntimeSigningKey(priv, "sdn/dataset-publication/v1"); err != nil {
+		t.Fatalf("SetRuntimeSigningKey failed: %v", err)
+	}
+
+	epmBytes := service.GetNodeEPM()
+	if err := VerifyEPMSignature(epmBytes); err != nil {
+		t.Fatalf("VerifyEPMSignature failed: %v", err)
+	}
+	info := service.GetNodeEPMJSON()
+	keys, ok := info["keys"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("keys field type = %T", info["keys"])
+	}
+
+	for _, key := range keys {
+		if key["key_type"] == "signing" && key["address_type"] == "ed25519" {
+			if got, want := key["public_key"], hex.EncodeToString(pub); got != want {
+				t.Fatalf("public_key = %v, want %q", got, want)
+			}
+			if got, want := key["key_address"], "sdn/dataset-publication/v1"; got != want {
+				t.Fatalf("key_address = %v, want %q", got, want)
+			}
+			return
+		}
+	}
+
+	t.Fatal("expected runtime Ed25519 signing key in EPM keys")
 }
 
 func TestGetNodeEPMJSONProjectsRuntimeIdentityFields(t *testing.T) {

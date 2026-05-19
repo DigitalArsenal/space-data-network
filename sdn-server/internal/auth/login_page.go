@@ -815,8 +815,11 @@ func buildWalletLoginPage(moduleURL, cssURL string, bundledAutoInit bool, host s
       });
       if (!response.ok) return;
       var payload = await response.json();
-      if (typeof payload.connections === 'number') {
-        countEl.textContent = String(payload.connections);
+      var connections = typeof payload.connections === 'number' ? payload.connections : 0;
+      var configuredNodes = typeof payload.configured_nodes === 'number' ? payload.configured_nodes : 0;
+      var detectedNodes = Math.max(connections, configuredNodes);
+      if (detectedNodes >= 0) {
+        countEl.textContent = String(detectedNodes);
       }
     } catch (err) {}
   };

@@ -74,6 +74,7 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux, authHandler *auth.Handle
 	// Dashboards — require auth
 	mux.HandleFunc("/api/storefront/dashboard/seller", requireAuth(peers.Standard, h.handleSellerDashboard))
 	mux.HandleFunc("/api/storefront/dashboard/buyer", requireAuth(peers.Standard, h.handleBuyerDashboard))
+	mux.HandleFunc("/api/storefront/dashboard/admin", requireAuth(peers.Admin, h.handleAdminDashboard))
 
 	// Stripe webhook — no auth (validated by HMAC signature)
 	mux.HandleFunc("/api/storefront/payments/stripe/webhook", h.handleStripeWebhook)
@@ -275,6 +276,15 @@ func (h *APIHandler) handlePurchaseByID(w http.ResponseWriter, r *http.Request) 
 		case "pay-fiat":
 			h.handlePayWithFiat(w, r, requestID)
 			return
+		case "pay-crypto":
+			h.handleCreateCryptoIntent(w, r, requestID)
+			return
+		case "manual-dev-paid":
+			h.handleManualDevPaid(w, r, requestID)
+			return
+		case "audit":
+			h.handlePurchaseAudit(w, r, requestID)
+			return
 		}
 	}
 
@@ -291,6 +301,52 @@ func (h *APIHandler) handlePurchaseByID(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, purchase)
 }
 
+func (h *APIHandler) handleManualDevPaid(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	var body ManualDevPaymentConfirmation
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	grant, err := h.service.CompleteManualDevPayment(r.Context(), requestID, body)
+	if err != nil {
+		http.Error(w, "failed to complete manual/dev payment", http.StatusInternalServerError)
+		return
+	}
+	purchase, err := h.service.store.GetPurchaseRequest(requestID)
+	if err != nil {
+		http.Error(w, "failed to load purchase", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"mode":     "manual-dev",
+		"purchase": purchase,
+		"grant":    grant,
+	})
+}
+
+func (h *APIHandler) handlePurchaseAudit(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	events, err := h.service.store.GetPaymentAuditEvents(requestID)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"events": events,
+	})
+}
+
 func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -299,9 +355,15 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 
 	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
 	var body struct {
-		TxHash        string `json:"txHash"`
-		Chain         string `json:"chain"`
-		SenderAddress string `json:"senderAddress"`
+		TxHash           string `json:"txHash"`
+		Chain            string `json:"chain"`
+		SenderAddress    string `json:"senderAddress"`
+		RecipientAddress string `json:"recipientAddress"`
+		Reference        string `json:"reference"`
+		Amount           uint64 `json:"amount"`
+		Currency         string `json:"currency"`
+		AssetContract    string `json:"assetContract"`
+		NativeAsset      bool   `json:"nativeAsset"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -309,18 +371,43 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 	}
 
 	if h.payment != nil {
-		result, err := h.payment.VerifyCryptoPayment(r.Context(), &CryptoPaymentRequest{
-			RequestID:     requestID,
-			TxHash:        body.TxHash,
-			Chain:         body.Chain,
-			SenderAddress: body.SenderAddress,
-		})
+		req := &CryptoPaymentRequest{
+			RequestID:        requestID,
+			TxHash:           body.TxHash,
+			Chain:            body.Chain,
+			SenderAddress:    body.SenderAddress,
+			RecipientAddress: body.RecipientAddress,
+			Reference:        body.Reference,
+			Amount:           body.Amount,
+			Currency:         body.Currency,
+			AssetContract:    body.AssetContract,
+			NativeAsset:      body.NativeAsset,
+		}
+		var result *CryptoPaymentResult
+		var err error
+		if strings.TrimSpace(body.Reference) != "" {
+			result, err = h.payment.SubmitCryptoPayment(r.Context(), req)
+		} else {
+			result, err = h.payment.VerifyCryptoPayment(r.Context(), req)
+		}
 		if err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		if !result.Verified {
 			http.Error(w, "payment not verified: "+result.Error, http.StatusPaymentRequired)
+			return
+		}
+		if strings.TrimSpace(body.Reference) != "" {
+			grant, err := h.service.CompleteCryptoPayment(r.Context(), requestID, result)
+			if err != nil {
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"payment": result,
+				"grant":   grant,
+			})
 			return
 		}
 	}
@@ -331,6 +418,32 @@ func (h *APIHandler) handleConfirmPayment(w http.ResponseWriter, r *http.Request
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *APIHandler) handleCreateCryptoIntent(w http.ResponseWriter, r *http.Request, requestID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.payment == nil {
+		http.Error(w, "crypto payments not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 8*1024)
+	var body CreateCryptoIntentRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	body.RequestID = requestID
+
+	intent, err := h.payment.CreateCryptoBuyerIntent(r.Context(), &body)
+	if err != nil {
+		http.Error(w, "failed to create crypto intent", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, intent)
 }
 
 func (h *APIHandler) handlePayWithCredits(w http.ResponseWriter, r *http.Request, requestID string) {
@@ -344,6 +457,13 @@ func (h *APIHandler) handlePayWithCredits(w http.ResponseWriter, r *http.Request
 		http.Error(w, "purchase not found", http.StatusNotFound)
 		return
 	}
+	if purchase.Status == PurchaseStatusCompleted && purchase.GrantID != "" {
+		grant, err := h.service.store.GetGrant(purchase.GrantID)
+		if err == nil && grant != nil {
+			writeJSON(w, http.StatusOK, grant)
+			return
+		}
+	}
 
 	if h.payment != nil {
 		err = h.payment.ProcessCredits(r.Context(), requestID, purchase.BuyerPeerID, purchase.PaymentAmount, purchase.ProviderPeerID)
@@ -355,8 +475,7 @@ func (h *APIHandler) handlePayWithCredits(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Issue grant
-	grant, err := h.service.IssueGrant(r.Context(), requestID)
+	grant, err := h.service.CompleteCreditsPayment(r.Context(), requestID)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -415,8 +534,8 @@ func (h *APIHandler) handleStripeWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if action != nil && action.Paid && action.RequestID != "" && h.service != nil {
-		if _, err := h.service.CompleteStripeCheckout(r.Context(), action.RequestID, action.SessionID, action.SubscriptionID, action.CustomerID); err != nil {
+	if action != nil && h.service != nil {
+		if _, err := h.service.ApplyStripeWebhookAction(r.Context(), action); err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
@@ -431,6 +550,11 @@ func (h *APIHandler) handleStripeWebhook(w http.ResponseWriter, r *http.Request)
 func (h *APIHandler) handleGrants(w http.ResponseWriter, r *http.Request) {
 	buyerID := r.URL.Query().Get("buyer")
 	if buyerID != "" {
+		var ok bool
+		buyerID, ok = authorizeStorefrontPeerQuery(w, r, buyerID, "buyer")
+		if !ok {
+			return
+		}
 		grants, err := h.service.GetBuyerGrants(r.Context(), buyerID)
 		if err != nil {
 			http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -442,6 +566,11 @@ func (h *APIHandler) handleGrants(w http.ResponseWriter, r *http.Request) {
 
 	providerID := r.URL.Query().Get("provider")
 	if providerID != "" {
+		var ok bool
+		providerID, ok = authorizeStorefrontPeerQuery(w, r, providerID, "provider")
+		if !ok {
+			return
+		}
 		limit := queryInt(r, "limit", 50)
 		offset := queryInt(r, "offset", 0)
 		grants, total, err := h.service.store.GetProviderGrants(providerID, limit, offset)
@@ -468,6 +597,11 @@ func (h *APIHandler) handleGrantByID(w http.ResponseWriter, r *http.Request) {
 
 	if len(parts) > 1 && parts[1] == "verify" {
 		buyerID := r.URL.Query().Get("buyer")
+		var ok bool
+		buyerID, ok = authorizeStorefrontPeerQuery(w, r, buyerID, "buyer")
+		if !ok {
+			return
+		}
 		grant, err := h.service.VerifyGrant(r.Context(), grantID, buyerID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
@@ -626,19 +760,23 @@ func (h *APIHandler) handleTrust(w http.ResponseWriter, r *http.Request) {
 
 // SellerDashboardResponse represents the seller dashboard data
 type SellerDashboardResponse struct {
-	Listings        []Listing          `json:"listings"`
-	TotalListings   int                `json:"total_listings"`
-	ActiveGrants    int                `json:"active_grants"`
-	TotalEarnings   uint64             `json:"total_earnings"`
-	RecentPurchases []*PurchaseRequest `json:"recent_purchases"`
-	TrustScore      *TrustScore        `json:"trust_score,omitempty"`
-	CreditsBalance  *CreditsBalance    `json:"credits_balance"`
+	Listings         []Listing                 `json:"listings"`
+	TotalListings    int                       `json:"total_listings"`
+	ActiveGrants     int                       `json:"active_grants"`
+	TotalEarnings    uint64                    `json:"total_earnings"`
+	RecentPurchases  []*PurchaseRequest        `json:"recent_purchases"`
+	Grants           []*AccessGrant            `json:"grants"`
+	Deliveries       []DashboardDeliveryRecord `json:"deliveries"`
+	DeliveryFailures []DashboardDeliveryRecord `json:"delivery_failures"`
+	TrustScore       *TrustScore               `json:"trust_score,omitempty"`
+	CreditsBalance   *CreditsBalance           `json:"credits_balance"`
 }
 
 func (h *APIHandler) handleSellerDashboard(w http.ResponseWriter, r *http.Request) {
 	providerID := r.URL.Query().Get("peerId")
-	if providerID == "" {
-		http.Error(w, "peerId required", http.StatusBadRequest)
+	var ok bool
+	providerID, ok = authorizeStorefrontPeerQuery(w, r, providerID, "peerId")
+	if !ok {
 		return
 	}
 
@@ -650,8 +788,7 @@ func (h *APIHandler) handleSellerDashboard(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Get grants
-	grants, totalGrants, _ := h.service.store.GetProviderGrants(providerID, 1, 0)
-	_ = grants
+	grants, totalGrants, _ := h.service.store.GetProviderGrants(providerID, 100, 0)
 
 	// Get earnings
 	earnings, _ := h.service.store.GetProviderEarnings(providerID)
@@ -669,28 +806,35 @@ func (h *APIHandler) handleSellerDashboard(w http.ResponseWriter, r *http.Reques
 	balance, _ := h.service.GetCreditsBalance(r.Context(), providerID)
 
 	writeJSON(w, http.StatusOK, SellerDashboardResponse{
-		Listings:        listingsResult.Listings,
-		TotalListings:   listingsResult.Total,
-		ActiveGrants:    totalGrants,
-		TotalEarnings:   earnings,
-		RecentPurchases: purchases,
-		TrustScore:      trustScore,
-		CreditsBalance:  balance,
+		Listings:         listingsResult.Listings,
+		TotalListings:    listingsResult.Total,
+		ActiveGrants:     totalGrants,
+		TotalEarnings:    earnings,
+		RecentPurchases:  purchases,
+		Grants:           grants,
+		Deliveries:       dashboardDeliveries(grants, listingsResult.Listings),
+		DeliveryFailures: dashboardDeliveryFailures(grants, listingsResult.Listings),
+		TrustScore:       trustScore,
+		CreditsBalance:   balance,
 	})
 }
 
 // BuyerDashboardResponse represents the buyer dashboard data
 type BuyerDashboardResponse struct {
-	ActiveGrants    []*AccessGrant     `json:"active_grants"`
-	TotalGrants     int                `json:"total_grants"`
-	RecentPurchases []*PurchaseRequest `json:"recent_purchases,omitempty"`
-	CreditsBalance  *CreditsBalance    `json:"credits_balance"`
+	ActiveGrants    []*AccessGrant            `json:"active_grants"`
+	Grants          []*AccessGrant            `json:"grants"`
+	TotalGrants     int                       `json:"total_grants"`
+	RecentPurchases []*PurchaseRequest        `json:"recent_purchases,omitempty"`
+	Purchases       []*PurchaseRequest        `json:"purchases,omitempty"`
+	Deliveries      []DashboardDeliveryRecord `json:"deliveries"`
+	CreditsBalance  *CreditsBalance           `json:"credits_balance"`
 }
 
 func (h *APIHandler) handleBuyerDashboard(w http.ResponseWriter, r *http.Request) {
 	buyerID := r.URL.Query().Get("peerId")
-	if buyerID == "" {
-		http.Error(w, "peerId required", http.StatusBadRequest)
+	var ok bool
+	buyerID, ok = authorizeStorefrontPeerQuery(w, r, buyerID, "peerId")
+	if !ok {
 		return
 	}
 
@@ -701,20 +845,175 @@ func (h *APIHandler) handleBuyerDashboard(w http.ResponseWriter, r *http.Request
 	}
 
 	balance, _ := h.service.GetCreditsBalance(r.Context(), buyerID)
+	purchases, _, _ := h.service.store.GetBuyerPurchases(buyerID, 50, 0)
+	listings := make([]Listing, 0, len(grants))
+	for _, grant := range grants {
+		listing, err := h.service.GetListing(r.Context(), grant.ListingID)
+		if err == nil && listing != nil {
+			listings = append(listings, *listing)
+		}
+	}
 
 	writeJSON(w, http.StatusOK, BuyerDashboardResponse{
-		ActiveGrants:   grants,
-		TotalGrants:    len(grants),
-		CreditsBalance: balance,
+		ActiveGrants:    grants,
+		Grants:          grants,
+		TotalGrants:     len(grants),
+		RecentPurchases: purchases,
+		Purchases:       purchases,
+		Deliveries:      dashboardDeliveries(grants, listings),
+		CreditsBalance:  balance,
+	})
+}
+
+// DashboardDeliveryRecord is a derived dashboard view over grant and protected delivery metadata.
+type DashboardDeliveryRecord struct {
+	ID               string `json:"id"`
+	ListingID        string `json:"listing_id"`
+	GrantID          string `json:"grant_id"`
+	BuyerPeerID      string `json:"buyer_peer_id,omitempty"`
+	ProviderPeerID   string `json:"provider_peer_id,omitempty"`
+	Status           string `json:"status"`
+	KeyWrapStatus    string `json:"key_wrap_status"`
+	EncryptedCID     string `json:"encrypted_cid,omitempty"`
+	ManifestCID      string `json:"manifest_cid,omitempty"`
+	ContentHash      string `json:"content_hash,omitempty"`
+	DeliveryTopic    string `json:"delivery_topic,omitempty"`
+	FailureReason    string `json:"reason,omitempty"`
+	DeliveryProtocol string `json:"delivery_protocol,omitempty"`
+}
+
+type AdminDashboardResponse struct {
+	Moderation     []*Review          `json:"moderation"`
+	Trust          []*TrustScore      `json:"trust"`
+	PaymentHolds   []*PurchaseRequest `json:"payment_holds"`
+	Disputes       []*Review          `json:"disputes"`
+	FailedPayments []*PurchaseRequest `json:"failed_payments"`
+}
+
+func (h *APIHandler) handleAdminDashboard(w http.ResponseWriter, r *http.Request) {
+	if session := auth.SessionFromContext(r.Context()); session != nil && session.TrustLevel < peers.Admin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	moderation, _, _ := h.service.store.GetModerationReviews(100, 0)
+	holds, _, _ := h.service.store.GetPurchasesByStatuses([]PurchaseStatus{
+		PurchaseStatusRefundRequested,
+		PurchaseStatusRefunded,
+	}, 100, 0)
+	failed, _, _ := h.service.store.GetPurchasesByStatuses([]PurchaseStatus{
+		PurchaseStatusFailed,
+		PurchaseStatusCancelled,
+		PurchaseStatusExpired,
+	}, 100, 0)
+	disputes := make([]*Review, 0)
+	for _, review := range moderation {
+		if review.FlaggedCount > 0 || review.Status == ReviewStatusFlagged {
+			disputes = append(disputes, review)
+		}
+	}
+	var trustScores []*TrustScore
+	if h.trust != nil {
+		listings, err := h.service.SearchListings(r.Context(), &SearchQuery{Limit: 100})
+		if err == nil {
+			seen := make(map[string]struct{})
+			for _, listing := range listings.Listings {
+				if _, ok := seen[listing.ProviderPeerID]; ok {
+					continue
+				}
+				seen[listing.ProviderPeerID] = struct{}{}
+				score, err := h.trust.ComputeProviderTrust(listing.ProviderPeerID)
+				if err == nil && score != nil {
+					trustScores = append(trustScores, score)
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, AdminDashboardResponse{
+		Moderation:     moderation,
+		Trust:          trustScores,
+		PaymentHolds:   holds,
+		Disputes:       disputes,
+		FailedPayments: failed,
 	})
 }
 
 // Helper functions
 
+func authorizeStorefrontPeerQuery(w http.ResponseWriter, r *http.Request, requestedPeerID string, fieldName string) (string, bool) {
+	requestedPeerID = strings.TrimSpace(requestedPeerID)
+	session := auth.SessionFromContext(r.Context())
+	if session == nil {
+		if requestedPeerID == "" {
+			http.Error(w, fieldName+" required", http.StatusBadRequest)
+			return "", false
+		}
+		return requestedPeerID, true
+	}
+	if requestedPeerID == "" {
+		requestedPeerID = session.XPub
+	}
+	if session.TrustLevel >= peers.Admin || requestedPeerID == session.XPub {
+		return requestedPeerID, true
+	}
+	http.Error(w, "forbidden: cannot access another peer's storefront data", http.StatusForbidden)
+	return "", false
+}
+
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+func dashboardDeliveries(grants []*AccessGrant, listings []Listing) []DashboardDeliveryRecord {
+	listingsByID := make(map[string]Listing, len(listings))
+	for _, listing := range listings {
+		listingsByID[listing.ListingID] = listing
+	}
+	records := make([]DashboardDeliveryRecord, 0, len(grants))
+	for _, grant := range grants {
+		if grant == nil {
+			continue
+		}
+		listing := listingsByID[grant.ListingID]
+		protected := listing.ProtectedDelivery
+		status := "grant_active"
+		if protected.EncryptedCID != "" || protected.ManifestCID != "" {
+			status = "encrypted_ready"
+		}
+		keyWrapStatus := "pending"
+		if len(grant.ProviderSignature) > 0 || grant.Status == GrantStatusActive {
+			keyWrapStatus = "issued"
+		}
+		records = append(records, DashboardDeliveryRecord{
+			ID:               "delivery:" + grant.GrantID,
+			ListingID:        grant.ListingID,
+			GrantID:          grant.GrantID,
+			BuyerPeerID:      grant.BuyerPeerID,
+			ProviderPeerID:   grant.ProviderPeerID,
+			Status:           status,
+			KeyWrapStatus:    keyWrapStatus,
+			EncryptedCID:     protected.EncryptedCID,
+			ManifestCID:      protected.ManifestCID,
+			ContentHash:      protected.ContentHash,
+			DeliveryTopic:    grant.DeliveryTopic,
+			DeliveryProtocol: protected.DeliveryProtocol,
+		})
+	}
+	return records
+}
+
+func dashboardDeliveryFailures(grants []*AccessGrant, listings []Listing) []DashboardDeliveryRecord {
+	deliveries := dashboardDeliveries(grants, listings)
+	failures := make([]DashboardDeliveryRecord, 0)
+	for _, delivery := range deliveries {
+		if delivery.Status == "encrypted_ready" && delivery.KeyWrapStatus == "issued" {
+			continue
+		}
+		delivery.FailureReason = "delivery_not_ready"
+		failures = append(failures, delivery)
+	}
+	return failures
 }
 
 func extractPathParam(path, prefix string) string {

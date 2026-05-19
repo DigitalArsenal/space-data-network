@@ -14,6 +14,7 @@ import bundleCache from '../../../../webui/src/lib/bundle-cache.js';
 import i18n from '../../../../webui/src/i18n.js';
 import DndBackend from '../../../../webui/src/lib/dnd-backend.js';
 import { ContextBridgeProvider } from '../../../../webui/src/helpers/context-bridge.jsx';
+import { syncKuboGatewaySettingFromUrl } from '../../../../webui/src/lib/kubo-gateway-settings.js';
 
 const appVersion = process.env.REACT_APP_VERSION;
 const gitRevision = process.env.REACT_APP_GIT_REV;
@@ -21,6 +22,7 @@ const gitRevision = process.env.REACT_APP_GIT_REV;
 export async function renderUpstreamWebUiBaseline() {
   console.log(`IPFS Web UI - v${appVersion} - https://github.com/ipfs-shipyard/ipfs-webui/commit/${gitRevision}`);
 
+  syncKuboGatewaySettingFromUrl();
   const initialData = await bundleCache.getAll();
   if (initialData && process.env.NODE_ENV !== 'production') {
     console.log('intialising store with data from cache', initialData);

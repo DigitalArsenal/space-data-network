@@ -3,6 +3,25 @@ export {
   addressLookupNamespace,
   normalizeAddressLookupKey,
 } from './address-lookup';
+export * from './sdn-backend';
+export * from './sdn-backend-browser';
+export * from './sdn-backend-desktop';
+export * from './sdn-backend-factory';
+export * from './sdn-backend-libp2p-sync';
+export * from './sdn-backend-remote';
+export * from './sync-throughput';
+export * from './ipfs-artifact-peers';
+export {
+  fetchCidBytesFromGateway,
+  flatBufferStreamFromPublishedFlatSqlSegment,
+  importCarBytesToKubo,
+  importPublishedFlatSqlShardCar,
+  publishedSegmentIndexesCoveredByBundles,
+  publishedShardGroupCarBundlesForSegments,
+  timedFlatBufferStreamFromPublishedFlatSqlSegment,
+  type PublishedFlatSqlSegmentInput,
+  type TimedPublishedFlatSqlSegment,
+} from './published-flatbuffer-shard';
 export {
   type AdminAdapter,
   type AdminMode,
@@ -47,13 +66,17 @@ export {
 export {
   emptyModuleRuntimeSnapshot,
   loadModuleRuntimeSnapshotFromServer,
+  resolveSelectedModuleId,
   runModuleRuntimeAction,
+  saveModuleRuntimeInputValues,
   updateModuleRuntimeOption,
   type ModuleRuntimeAcceptedTypeSet,
   type ModuleRuntimeAction,
   type ModuleRuntimeCatalog,
+  type ModuleRuntimeCommandHistoryEntry,
   type ModuleRuntimeEntry,
   type ModuleRuntimeFetchLike,
+  type ModuleRuntimeInputValue,
   type ModuleRuntimeManifest,
   type ModuleRuntimeMethod,
   type ModuleRuntimeOption,
@@ -65,6 +88,7 @@ export {
   type ModuleRuntimeStatusEvent,
   type ModuleRuntimeTimer,
   type ModuleRuntimeTypeRef,
+  type SaveModuleRuntimeInputValuesResult,
 } from './modules';
 export { loadMarketplaceListingsFromServer } from './marketplace-source';
 export {
@@ -77,6 +101,11 @@ export {
   type MountedWalletUI,
   type WalletUIOptions,
 } from './wallet-ui';
+export {
+  installWalletStorageDiskMirror,
+  isPersistedWalletLocalStorageKey,
+  type WalletStorageDiskMirror,
+} from './wallet-storage-bridge';
 export {
   createServerAdapter,
   createServerAdminAdapter,
@@ -98,10 +127,13 @@ export {
   type ServerFrontendTransportOptions,
 } from './frontend-workspace';
 export {
+  decryptGrantProtectedModuleBundle,
   decryptEncryptedModuleBundle,
   invokeLoadedModule,
   loadDecryptedModule,
   unwrapGrantContentKey,
+  type ClientDecryptLike,
+  type GrantProtectedModuleBundleInput,
   type LoadedModuleHarnessLike,
   type WrappedContentKeyLike,
 } from './live-delivery';

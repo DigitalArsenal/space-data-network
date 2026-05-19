@@ -46,19 +46,32 @@ const (
 
 // CryptoPaymentRequest represents a crypto payment verification request
 type CryptoPaymentRequest struct {
-	RequestID     string        `json:"request_id"`
-	TxHash        string        `json:"tx_hash"`
-	Chain         string        `json:"chain"` // ethereum, solana, bitcoin
-	SenderAddress string        `json:"sender_address"`
-	Amount        uint64        `json:"amount"`
-	Currency      string        `json:"currency"`
-	Method        PaymentMethod `json:"method"`
+	RequestID        string        `json:"request_id"`
+	TxHash           string        `json:"tx_hash"`
+	Chain            string        `json:"chain"` // ethereum, solana, bitcoin
+	SenderAddress    string        `json:"sender_address"`
+	RecipientAddress string        `json:"recipient_address"`
+	Reference        string        `json:"reference"`
+	Amount           uint64        `json:"amount"`
+	Currency         string        `json:"currency"`
+	AssetContract    string        `json:"asset_contract"`
+	NativeAsset      bool          `json:"native_asset"`
+	Method           PaymentMethod `json:"method"`
 }
 
 // CryptoPaymentResult represents the result of crypto payment verification
 type CryptoPaymentResult struct {
 	Verified          bool   `json:"verified"`
 	ConfirmationBlock uint64 `json:"confirmation_block"`
+	CurrentBlock      uint64 `json:"current_block,omitempty"`
+	Confirmations     uint64 `json:"confirmations,omitempty"`
+	Chain             string `json:"chain,omitempty"`
+	Asset             string `json:"asset,omitempty"`
+	AssetContract     string `json:"asset_contract,omitempty"`
+	NativeAsset       bool   `json:"native_asset,omitempty"`
+	Amount            uint64 `json:"amount,omitempty"`
+	RecipientAddress  string `json:"recipient_address,omitempty"`
+	SenderAddress     string `json:"sender_address,omitempty"`
 	Error             string `json:"error,omitempty"`
 }
 
@@ -88,8 +101,286 @@ func (pp *PaymentProcessor) VerifyCryptoPayment(ctx context.Context, req *Crypto
 	return verifier.VerifyTransaction(ctx, req)
 }
 
+// CreateCryptoBuyerIntent records the exact payment terms the buyer must use.
+func (pp *PaymentProcessor) CreateCryptoBuyerIntent(ctx context.Context, req *CreateCryptoIntentRequest) (*CryptoBuyerIntent, error) {
+	_ = ctx
+
+	purchase, _, _, err := pp.resolveCheckoutContext(req.RequestID)
+	if err != nil {
+		return nil, err
+	}
+
+	chain := normalizePaymentToken(req.Chain)
+	if chain == "" {
+		chain = defaultChainForPaymentMethod(purchase.PaymentMethod)
+	}
+	if chain == "" {
+		return nil, fmt.Errorf("chain is required for crypto payment intent")
+	}
+
+	asset := normalizePaymentToken(req.Asset)
+	if asset == "" {
+		asset = normalizePaymentToken(purchase.PaymentCurrency)
+	}
+	if asset == "" {
+		asset = defaultAssetForPaymentMethod(purchase.PaymentMethod)
+	}
+	if asset == "" {
+		return nil, fmt.Errorf("asset is required for crypto payment intent")
+	}
+	assetContract := normalizePaymentContract(req.AssetContract, chain)
+	nativeAsset := req.NativeAsset || isNativePaymentAsset(chain, asset, assetContract)
+
+	recipient := strings.TrimSpace(req.Recipient)
+	if recipient == "" {
+		recipient = strings.TrimSpace(os.Getenv("SDN_CRYPTO_" + strings.ToUpper(chain) + "_RECIPIENT"))
+	}
+	if recipient == "" {
+		return nil, fmt.Errorf("recipient is required for crypto payment intent")
+	}
+
+	expiresAt := req.ExpiresAt
+	if expiresAt.IsZero() {
+		expiresAt = purchase.PaymentDeadline
+	}
+	if expiresAt.IsZero() {
+		expiresAt = time.Now().Add(30 * time.Minute)
+	}
+
+	method := req.Method
+	if method == 0 {
+		method = purchase.PaymentMethod
+	}
+	reference := fmt.Sprintf("crypto:%s:%s", purchase.RequestID, generateToken(8))
+	intent := &CryptoBuyerIntent{
+		Reference:     reference,
+		RequestID:     purchase.RequestID,
+		Chain:         chain,
+		Asset:         asset,
+		AssetContract: assetContract,
+		NativeAsset:   nativeAsset,
+		Amount:        purchase.PaymentAmount,
+		Recipient:     recipient,
+		Method:        method,
+		CreatedAt:     time.Now(),
+		ExpiresAt:     expiresAt,
+	}
+	signCryptoBuyerIntent(intent, pp.intentSigningSecret())
+	if err := pp.store.CreateCryptoBuyerIntent(intent); err != nil {
+		return nil, err
+	}
+	if err := pp.store.UpdatePurchaseFiatIntent(purchase.RequestID, reference); err != nil {
+		log.Warnf("Failed to store crypto payment reference for %s: %v", purchase.RequestID, err)
+	}
+	return intent, nil
+}
+
+// SubmitCryptoPayment validates a buyer-submitted transaction against the
+// server-created intent before consulting a chain verifier.
+func (pp *PaymentProcessor) SubmitCryptoPayment(ctx context.Context, req *CryptoPaymentRequest) (*CryptoPaymentResult, error) {
+	if strings.TrimSpace(req.Reference) == "" {
+		return &CryptoPaymentResult{Verified: false, Error: "payment reference required"}, nil
+	}
+	if strings.TrimSpace(req.TxHash) == "" {
+		return &CryptoPaymentResult{Verified: false, Error: "tx_hash required"}, nil
+	}
+
+	intent, err := pp.store.GetCryptoBuyerIntent(req.Reference)
+	if err != nil {
+		return nil, err
+	}
+	if intent == nil {
+		return &CryptoPaymentResult{Verified: false, Error: "payment reference not found"}, nil
+	}
+	if !verifyCryptoBuyerIntentSignature(intent, pp.intentSigningSecret()) {
+		return &CryptoPaymentResult{Verified: false, Error: "payment intent signature invalid"}, nil
+	}
+	if intent.RequestID != req.RequestID {
+		return &CryptoPaymentResult{Verified: false, Error: "payment reference reused for a different purchase"}, nil
+	}
+	if !intent.UsedAt.IsZero() && intent.UsedAt.Unix() != 0 {
+		return &CryptoPaymentResult{Verified: false, Error: "payment reference reused"}, nil
+	}
+	if !intent.ExpiresAt.IsZero() && time.Now().After(intent.ExpiresAt) {
+		return &CryptoPaymentResult{Verified: false, Error: "payment reference expired"}, nil
+	}
+	if normalizePaymentToken(req.Chain) != intent.Chain {
+		return &CryptoPaymentResult{Verified: false, Error: fmt.Sprintf("wrong chain: got %s want %s", req.Chain, intent.Chain)}, nil
+	}
+	if normalizePaymentToken(req.Currency) != intent.Asset {
+		return &CryptoPaymentResult{Verified: false, Error: fmt.Sprintf("wrong asset: got %s want %s", req.Currency, intent.Asset)}, nil
+	}
+	if normalizePaymentContract(req.AssetContract, intent.Chain) != intent.AssetContract {
+		return &CryptoPaymentResult{Verified: false, Error: "wrong token contract"}, nil
+	}
+	if req.Amount != intent.Amount {
+		return &CryptoPaymentResult{Verified: false, Error: fmt.Sprintf("wrong amount: got %d want %d", req.Amount, intent.Amount)}, nil
+	}
+	if !samePaymentAddress(req.RecipientAddress, intent.Recipient, intent.Chain) {
+		return &CryptoPaymentResult{Verified: false, Error: "wrong recipient"}, nil
+	}
+
+	verifier, ok := pp.chainVerifiers[intent.Chain]
+	if !ok {
+		return &CryptoPaymentResult{Verified: false, Error: fmt.Sprintf("no verifier configured for chain: %s", intent.Chain)}, nil
+	}
+	result, err := verifier.VerifyTransaction(ctx, req)
+	if err != nil || result == nil || !result.Verified {
+		return result, err
+	}
+	if policyErr := validateVerifiedCryptoPayment(intent, req, result); policyErr != "" {
+		return &CryptoPaymentResult{Verified: false, ConfirmationBlock: result.ConfirmationBlock, CurrentBlock: result.CurrentBlock, Confirmations: result.Confirmations, Error: policyErr}, nil
+	}
+
+	if err := pp.store.MarkCryptoBuyerIntentUsed(intent.Reference, intent.RequestID, req.TxHash); err != nil {
+		return &CryptoPaymentResult{Verified: false, Error: err.Error()}, nil
+	}
+	if err := pp.store.UpdatePurchasePayment(req.RequestID, req.TxHash, intent.Chain, req.SenderAddress); err != nil {
+		return nil, err
+	}
+	if err := pp.store.UpdatePurchaseConfirmationBlock(req.RequestID, result.ConfirmationBlock); err != nil {
+		return nil, err
+	}
+	if err := pp.store.UpdatePurchaseStatus(req.RequestID, PurchaseStatusPaymentDetected, "Crypto payment detected on "+intent.Chain); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (pp *PaymentProcessor) intentSigningSecret() []byte {
+	secret := strings.TrimSpace(os.Getenv("SDN_CRYPTO_INTENT_SIGNING_SECRET"))
+	if secret == "" {
+		secret = pp.peerID
+	}
+	return []byte(secret)
+}
+
+func signCryptoBuyerIntent(intent *CryptoBuyerIntent, secret []byte) {
+	intent.IntentDigest = cryptoIntentDigest(intent)
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(intent.IntentDigest))
+	intent.IntentSig = hex.EncodeToString(mac.Sum(nil))
+}
+
+func verifyCryptoBuyerIntentSignature(intent *CryptoBuyerIntent, secret []byte) bool {
+	if intent == nil || strings.TrimSpace(intent.IntentDigest) == "" || strings.TrimSpace(intent.IntentSig) == "" {
+		return false
+	}
+	if !hmac.Equal([]byte(intent.IntentDigest), []byte(cryptoIntentDigest(intent))) {
+		return false
+	}
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(intent.IntentDigest))
+	want := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(strings.ToLower(intent.IntentSig)), []byte(want))
+}
+
+func cryptoIntentDigest(intent *CryptoBuyerIntent) string {
+	payload := strings.Join([]string{
+		intent.Reference,
+		intent.RequestID,
+		intent.Chain,
+		intent.Asset,
+		intent.AssetContract,
+		strconv.FormatBool(intent.NativeAsset),
+		strconv.FormatUint(intent.Amount, 10),
+		intent.Recipient,
+		strconv.Itoa(int(intent.Method)),
+		strconv.FormatInt(intent.CreatedAt.Unix(), 10),
+		strconv.FormatInt(intent.ExpiresAt.Unix(), 10),
+	}, "\n")
+	sum := sha256.Sum256([]byte(payload))
+	return hex.EncodeToString(sum[:])
+}
+
+func validateVerifiedCryptoPayment(intent *CryptoBuyerIntent, req *CryptoPaymentRequest, result *CryptoPaymentResult) string {
+	if result.CurrentBlock > 0 && result.ConfirmationBlock > 0 && result.CurrentBlock < result.ConfirmationBlock {
+		return "stale block height"
+	}
+	if result.Confirmations > 0 && result.CurrentBlock > 0 && result.ConfirmationBlock > 0 {
+		expected := result.CurrentBlock - result.ConfirmationBlock
+		if result.CurrentBlock < result.ConfirmationBlock || result.Confirmations > expected+1 {
+			return "stale block height"
+		}
+	}
+	if result.Chain != "" && normalizePaymentToken(result.Chain) != intent.Chain {
+		return fmt.Sprintf("wrong chain: got %s want %s", result.Chain, intent.Chain)
+	}
+	if result.Asset != "" && normalizePaymentToken(result.Asset) != intent.Asset {
+		return fmt.Sprintf("wrong asset: got %s want %s", result.Asset, intent.Asset)
+	}
+	if result.AssetContract != "" || intent.AssetContract != "" {
+		if normalizePaymentContract(result.AssetContract, intent.Chain) != intent.AssetContract {
+			return "wrong token contract"
+		}
+	}
+	if intent.NativeAsset && !result.NativeAsset && (result.Asset != "" || result.AssetContract != "") {
+		return "wrong token contract/native asset"
+	}
+	if result.Amount > 0 && result.Amount != intent.Amount {
+		return fmt.Sprintf("wrong amount: got %d want %d", result.Amount, intent.Amount)
+	}
+	if result.RecipientAddress != "" && !samePaymentAddress(result.RecipientAddress, intent.Recipient, intent.Chain) {
+		return "wrong recipient"
+	}
+	if result.SenderAddress != "" && strings.TrimSpace(req.SenderAddress) != "" &&
+		!samePaymentAddress(result.SenderAddress, req.SenderAddress, intent.Chain) {
+		return "wrong sender"
+	}
+	return ""
+}
+
+func normalizePaymentContract(value, chain string) string {
+	contract := strings.TrimSpace(value)
+	if contract == "" {
+		return ""
+	}
+	if strings.EqualFold(chain, "ethereum") {
+		return strings.ToLower(contract)
+	}
+	return contract
+}
+
+func isNativePaymentAsset(chain, asset, contract string) bool {
+	if contract != "" {
+		return false
+	}
+	switch chain {
+	case "ethereum":
+		return asset == "eth"
+	case "solana":
+		return asset == "sol" || asset == "solana"
+	case "bitcoin":
+		return asset == "btc" || asset == "bitcoin"
+	default:
+		return false
+	}
+}
+
 // ProcessCredits processes a payment using SDN credits atomically.
 func (pp *PaymentProcessor) ProcessCredits(ctx context.Context, requestID string, buyerPeerID string, amount uint64, providerPeerID string) error {
+	if purchase, err := pp.store.GetPurchaseRequest(requestID); err != nil {
+		return fmt.Errorf("failed to load purchase: %w", err)
+	} else if purchase != nil {
+		if purchase.CreditsTransactionID != "" &&
+			(purchase.Status == PurchaseStatusPaymentConfirmed || purchase.Status == PurchaseStatusCompleted) {
+			return nil
+		}
+		if purchase.BuyerPeerID != buyerPeerID {
+			return fmt.Errorf("credits buyer mismatch for purchase %s", requestID)
+		}
+		if purchase.ProviderPeerID != "" && purchase.ProviderPeerID != providerPeerID {
+			return fmt.Errorf("credits provider mismatch for purchase %s", requestID)
+		}
+		if purchase.PaymentAmount != amount {
+			return fmt.Errorf("credits amount mismatch for purchase %s: got %d want %d", requestID, amount, purchase.PaymentAmount)
+		}
+		if purchase.PaymentMethod != PaymentMethodSDNCredits {
+			return fmt.Errorf("purchase %s is not an SDN credits payment", requestID)
+		}
+	}
+
 	txID := uuid.New().String()
 
 	// Use atomic deduction to prevent double-spend race conditions.
@@ -125,6 +416,7 @@ func (pp *PaymentProcessor) ProcessCredits(ctx context.Context, requestID string
 
 	// Update purchase with credits tx ID
 	pp.store.UpdatePurchaseCreditsTransaction(requestID, txID)
+	pp.store.UpdatePurchaseStatus(requestID, PurchaseStatusPaymentConfirmed, "Credits payment confirmed")
 
 	return nil
 }
@@ -154,14 +446,19 @@ type FiatGatewayResult struct {
 // StripeWebhookAction describes what a validated webhook means for purchase flow.
 type StripeWebhookAction struct {
 	EventType      string `json:"event_type"`
+	EventID        string `json:"event_id,omitempty"`
 	RequestID      string `json:"request_id,omitempty"`
 	SessionID      string `json:"session_id,omitempty"`
 	SubscriptionID string `json:"subscription_id,omitempty"`
 	CustomerID     string `json:"customer_id,omitempty"`
 	Paid           bool   `json:"paid"`
+	Failed         bool   `json:"failed,omitempty"`
+	FailureReason  string `json:"failure_reason,omitempty"`
+	Processed      bool   `json:"processed,omitempty"`
 }
 
 type stripeEvent struct {
+	ID   string `json:"id"`
 	Type string `json:"type"`
 	Data struct {
 		Object json.RawMessage `json:"object"`
@@ -399,7 +696,7 @@ func (pp *PaymentProcessor) HandleStripeWebhook(ctx context.Context, signatureHe
 		return nil, fmt.Errorf("invalid stripe event payload: %w", err)
 	}
 
-	action := &StripeWebhookAction{EventType: evt.Type}
+	action := &StripeWebhookAction{EventID: evt.ID, EventType: evt.Type}
 
 	switch evt.Type {
 	case "checkout.session.completed", "checkout.session.async_payment_succeeded":
@@ -416,6 +713,20 @@ func (pp *PaymentProcessor) HandleStripeWebhook(ctx context.Context, signatureHe
 			action.RequestID = strings.TrimSpace(session.Metadata["request_id"])
 		}
 		action.Paid = session.PaymentStatus == "paid" || session.PaymentStatus == "no_payment_required" || session.Status == "complete"
+
+	case "checkout.session.async_payment_failed", "checkout.session.expired":
+		var session stripeCheckoutSession
+		if err := json.Unmarshal(evt.Data.Object, &session); err != nil {
+			return nil, fmt.Errorf("invalid checkout session payload: %w", err)
+		}
+
+		action.SessionID = session.ID
+		action.RequestID = strings.TrimSpace(session.ClientReferenceID)
+		if action.RequestID == "" && session.Metadata != nil {
+			action.RequestID = strings.TrimSpace(session.Metadata["request_id"])
+		}
+		action.Failed = true
+		action.FailureReason = evt.Type
 
 	default:
 		// No purchase action required for other events in this launch phase.
@@ -541,6 +852,50 @@ func asString(v interface{}) string {
 		return ""
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%v", t))
+	}
+}
+
+func normalizePaymentToken(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func defaultChainForPaymentMethod(method PaymentMethod) string {
+	switch method {
+	case PaymentMethodCryptoETH:
+		return "ethereum"
+	case PaymentMethodCryptoSOL:
+		return "solana"
+	case PaymentMethodCryptoBTC:
+		return "bitcoin"
+	default:
+		return ""
+	}
+}
+
+func defaultAssetForPaymentMethod(method PaymentMethod) string {
+	switch method {
+	case PaymentMethodCryptoETH:
+		return "eth"
+	case PaymentMethodCryptoSOL:
+		return "sol"
+	case PaymentMethodCryptoBTC:
+		return "btc"
+	default:
+		return ""
+	}
+}
+
+func samePaymentAddress(got, want, chain string) bool {
+	got = strings.TrimSpace(got)
+	want = strings.TrimSpace(want)
+	if got == "" || want == "" {
+		return false
+	}
+	switch chain {
+	case "ethereum":
+		return strings.EqualFold(got, want)
+	default:
+		return got == want
 	}
 }
 

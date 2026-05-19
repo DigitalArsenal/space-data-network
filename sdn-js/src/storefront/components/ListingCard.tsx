@@ -92,13 +92,11 @@ export function formatPaymentMethod(method: PaymentMethod): string {
       return 'SOL';
     case 2: // CryptoBTC
       return 'BTC';
-    case 3: // CryptoUSDC
-      return 'USDC';
-    case 4: // SDNCredits
+    case 3: // SDNCredits
       return 'Credits';
-    case 5: // FiatStripe
+    case 4: // FiatStripe
       return 'Card';
-    case 6: // Free
+    case 5: // Free
       return 'Free';
     default:
       return 'Unknown';

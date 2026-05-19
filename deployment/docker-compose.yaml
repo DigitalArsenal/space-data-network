@@ -1,21 +1,13 @@
 # SDN Local Cluster Simulation
-# Simulates a global network with full nodes, edge relays, and registry builder
+# Simulates a local libp2p network with full nodes, edge relays, and registry builder.
 #
-# Security Note: This configuration uses Docker's internal network for local testing.
-# For production deployments, use DNS names and proper secrets management.
+# Run deployment/scripts/local-cluster.sh prepare before using this compose file
+# directly. The script creates deployment/generated/* and deployment/.env.
 
-version: '3.8'
-
-# Define bootstrap address as a reusable variable
-# Peer ID: 12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt (from deployment/keys/node.key)
-x-bootstrap-addr: &bootstrap-addr
-  SDN_BOOTSTRAP: /ip4/172.18.0.2/tcp/8080/ws/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt
+x-bootstrap-ws-addr: &bootstrap-ws-addr "/dns4/full-node-1/tcp/8080/ws/p2p/${SDN_LOCAL_BOOTSTRAP_PEER_ID:?Run deployment/scripts/local-cluster.sh prepare first}"
+x-bootstrap-tcp-addr: &bootstrap-tcp-addr "/dns4/full-node-1/tcp/4001/p2p/${SDN_LOCAL_BOOTSTRAP_PEER_ID:?Run deployment/scripts/local-cluster.sh prepare first}"
 
 services:
-  # ============================================
-  # FULL NODES (Datacenter nodes with storage)
-  # ============================================
-
   full-node-1:
     build:
       context: ..
@@ -24,31 +16,29 @@ services:
     hostname: full-node-1
     environment:
       - SDN_MODE=full
-      - SDN_BOOTSTRAP=
       - SDN_MAX_MESSAGE_SIZE=${SDN_MAX_MESSAGE_SIZE:-10485760}
       - SDN_MAX_CONNECTIONS=${SDN_MAX_CONNECTIONS:-1000}
     ports:
-      - "15001:5001"     # Admin/API
-      - "4001:4001"      # TCP
-      - "4001:4001/udp"  # QUIC
-      - "18080:8080"     # WebSocket (host:18080 -> container:8080)
+      - "15001:5001"
+      - "4001:4001"
+      - "4001:4001/udp"
+      - "18080:8080"
     volumes:
-      - full-node-1-data:/home/sdn/.spacedatanetwork
-      - ./keys/node.key:/home/sdn/.spacedatanetwork/keys/node.key:ro
+      - full-node-1-data:/app/data
+      - ./generated/full-node-1.yaml:/app/config/full-docker.yaml:ro
+      - ./generated/node.key:/app/keys/node.key:ro
     networks:
       - sdn-network
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080"]
+      test: ["CMD", "sh", "-c", "wget -q --spider http://localhost:5001/api/v1/status || wget -q --spider http://localhost:8080"]
       interval: 30s
       timeout: 10s
       retries: 3
-    # Security hardening
     read_only: true
     tmpfs:
       - /tmp
     security_opt:
       - no-new-privileges:true
-    # Resource limits
     deploy:
       resources:
         limits:
@@ -66,8 +56,6 @@ services:
     hostname: full-node-2
     environment:
       - SDN_MODE=full
-      # Use DNS name with peer ID for secure bootstrap (Docker internal DNS)
-      - SDN_BOOTSTRAP=/ip4/172.18.0.2/tcp/8080/ws/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt
       - SDN_MAX_MESSAGE_SIZE=${SDN_MAX_MESSAGE_SIZE:-10485760}
       - SDN_MAX_CONNECTIONS=${SDN_MAX_CONNECTIONS:-1000}
     ports:
@@ -76,18 +64,23 @@ services:
       - "4002:4001/udp"
       - "8081:8080"
     volumes:
-      - full-node-2-data:/home/sdn/.spacedatanetwork
+      - full-node-2-data:/app/data
+      - full-node-2-keys:/app/keys
+      - ./generated/full-node-2.yaml:/app/config/full-docker.yaml:ro
     networks:
       - sdn-network
     depends_on:
       - full-node-1
-    # Security hardening
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -q --spider http://localhost:5001/api/v1/status || wget -q --spider http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     read_only: true
     tmpfs:
       - /tmp
     security_opt:
       - no-new-privileges:true
-    # Resource limits
     deploy:
       resources:
         limits:
@@ -96,10 +89,6 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512m
-
-  # ============================================
-  # EDGE RELAYS (Global edge locations)
-  # ============================================
 
   edge-relay-us:
     build:
@@ -111,20 +100,17 @@ services:
       - SDN_REGION=us-east
     ports:
       - "8090:8080"
-      - "8091:8081"  # Health check
+      - "8091:8081"
     networks:
       - sdn-network
-    # Use DNS name for bootstrap instead of hardcoded IP
-    command: ["--debug", "--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/ip4/172.18.0.2/tcp/4001/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--health-port", "8081"]
+    command: ["--debug", "--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", *bootstrap-tcp-addr, "--health-port", "8081"]
     depends_on:
       - full-node-1
-    # Security hardening
     read_only: true
     tmpfs:
       - /tmp
     security_opt:
       - no-new-privileges:true
-    # Resource limits for edge relays
     deploy:
       resources:
         limits:
@@ -147,10 +133,9 @@ services:
       - "8093:8081"
     networks:
       - sdn-network
-    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/ip4/172.18.0.2/tcp/8080/ws/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--health-port", "8081"]
+    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", *bootstrap-ws-addr, "--health-port", "8081"]
     depends_on:
       - full-node-1
-    # Security hardening
     read_only: true
     tmpfs:
       - /tmp
@@ -178,10 +163,9 @@ services:
       - "8095:8081"
     networks:
       - sdn-network
-    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", "/ip4/172.18.0.2/tcp/8080/ws/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--health-port", "8081"]
+    command: ["--listen", "/ip4/0.0.0.0/tcp/8080/ws", "--bootstrap", *bootstrap-ws-addr, "--health-port", "8081"]
     depends_on:
       - full-node-1
-    # Security hardening
     read_only: true
     tmpfs:
       - /tmp
@@ -196,10 +180,6 @@ services:
           cpus: '0.25'
           memory: 128m
 
-  # ============================================
-  # REGISTRY BUILDER (DHT monitor)
-  # ============================================
-
   registry-builder:
     build:
       context: ..
@@ -210,14 +190,12 @@ services:
       - registry-output:/app/output
     networks:
       - sdn-network
-    # Use DNS name for bootstrap
-    command: ["--bootstrap", "/ip4/172.18.0.2/tcp/8080/ws/p2p/12D3KooWETX4rpMhLm7UKN7ejr1ZcgF6daLqGiURkngJtFGqdTkt", "--poll", "1m", "--output", "/app/output"]
+    command: ["--bootstrap", *bootstrap-ws-addr, "--poll", "1m", "--output", "/app/output"]
     depends_on:
       - full-node-1
       - edge-relay-us
       - edge-relay-eu
       - edge-relay-asia
-    # Security hardening
     read_only: true
     tmpfs:
       - /tmp
@@ -232,35 +210,12 @@ services:
           cpus: '0.1'
           memory: 64m
 
-# ============================================
-# NETWORKS
-# ============================================
-
 networks:
   sdn-network:
     driver: bridge
-    # Note: Using Docker's internal DNS for service discovery instead of static IPs
-    # This is more flexible and doesn't require hardcoded addresses
-
-# ============================================
-# VOLUMES
-# ============================================
 
 volumes:
   full-node-1-data:
   full-node-2-data:
+  full-node-2-keys:
   registry-output:
-
-# ============================================
-# RESOURCE LIMITS (can be overridden with .env)
-# ============================================
-# Default resource limits for containers:
-# - Full nodes: 2 CPU, 4GB RAM
-# - Edge relays: 1 CPU, 512MB RAM
-# - Registry builder: 0.5 CPU, 256MB RAM
-#
-# Override with environment variables:
-# SDN_FULL_NODE_CPU_LIMIT=2
-# SDN_FULL_NODE_MEM_LIMIT=4g
-# SDN_EDGE_CPU_LIMIT=1
-# SDN_EDGE_MEM_LIMIT=512m

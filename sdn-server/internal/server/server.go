@@ -56,8 +56,8 @@ type loginRateLimiter struct {
 }
 
 type loginAttempts struct {
-	mu      sync.Mutex
-	times   []time.Time
+	mu    sync.Mutex
+	times []time.Time
 }
 
 const (
@@ -265,7 +265,7 @@ func (s *Server) Start(ctx context.Context) error {
 		Handler:           s.mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
+		WriteTimeout:      10 * time.Minute,
 		IdleTimeout:       120 * time.Second,
 	}
 

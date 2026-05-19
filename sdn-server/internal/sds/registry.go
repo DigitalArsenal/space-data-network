@@ -186,6 +186,7 @@ var schemaDescriptions = map[string]string{
 	"ROC.fbs": "Re-entry Operations Corridor - Re-entry trajectory corridors",
 	"SCM.fbs": "Spacecraft Message - Spacecraft characteristics",
 	"SIT.fbs": "Satellite Impact Table - Impact risk assessments",
+	"SPW.fbs": "Space Weather Data Record - Solar flux, geomagnetic, and space weather indices",
 	"STF.fbs": "Storefront Listing - Marketplace data listings",
 	"TDM.fbs": "Tracking Data Message - Radar/optical observations",
 	"TIM.fbs": "Time Message - Time synchronization data",

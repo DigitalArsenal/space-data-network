@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	_ "embed"
 	"encoding/base64"
@@ -190,8 +191,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if envPath := os.Getenv("SDN_FRONTEND_PATH"); envPath != "" {
 		cfg.Admin.FrontendPath = envPath
 	}
-	// Resolve empty frontend path to standard location
-	if strings.TrimSpace(cfg.Admin.FrontendPath) == "" {
+	// Resolve empty frontend path to the built SDN Svelte UI when available,
+	// then fall back to the managed frontend directory.
+	cfg.Admin.FrontendPath = resolveFrontendPath(cfg.Admin.FrontendPath)
+	if cfg.Admin.FrontendPath == "" {
 		cfg.Admin.FrontendPath = config.DefaultFrontendPath()
 	}
 	// Auto-provision frontend directory with default page if it doesn't exist
@@ -385,6 +388,44 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				logAPI.RegisterRoutes(adminMux)
 			}
 
+			// Local dataset publication route used by ingest workers after a
+			// successful provider sync.
+			if n.Store() != nil {
+				publicationSigningKey, err := datasetPublicationSigningKey(cfg, n.SigningKey())
+				if err != nil {
+					log.Warnf("Dataset publication signing unavailable: %v", err)
+				}
+				if len(publicationSigningKey) == ed25519.PrivateKeySize && n.Identity() == nil {
+					if epmSvc := n.EPMService(); epmSvc != nil {
+						if err := epmSvc.SetRuntimeSigningKey(ed25519.PrivateKey(publicationSigningKey), "sdn/dataset-publication/v1"); err != nil {
+							log.Warnf("Could not advertise dataset publication signing key in node EPM: %v", err)
+						} else if err := n.IndexLocalNodeEPM(); err != nil {
+							log.Warnf("Could not refresh local node EPM directory entry after adding dataset publication key: %v", err)
+						}
+					}
+				}
+				providerEPMCID := ""
+				if n.EPMService() != nil {
+					if epmCID, err := n.EPMService().GetNodeEPMCID(); err == nil {
+						providerEPMCID = epmCID
+					} else {
+						log.Warnf("Could not resolve node EPM CID for dataset publications: %v", err)
+					}
+				}
+				publicationDir := filepath.Join(filepath.Dir(cfg.Storage.Path), "dataset-publications")
+				publicationAPI := api.NewDatasetPublicationHandler(api.NewConcreteDatasetPublicationService(
+					n.Store(),
+					n,
+					publicationSigningKey,
+					n.PeerID().String(),
+					providerEPMCID,
+					cfg.Admin.IPFSAPIURL,
+					publicationDir,
+				))
+				publicationAPI.RegisterRoutes(adminMux)
+				log.Infof("Dataset publication API available at %s://%s/api/v1/admin/dataset-updates/publish", adminScheme, adminAddr)
+			}
+
 			// Catalog API route (public)
 			if n.Store() != nil {
 				catalogAPI := api.NewCatalogHandler(n.Store(), n.PeerID(), cfg)
@@ -460,6 +501,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						req.Header.Del("Referer")
 						req.Header.Del("User-Agent")
 					}
+					gwProxy.ModifyResponse = func(resp *http.Response) error {
+						normalizeIPFSGatewayCORSHeaders(resp.Header)
+						return nil
+					}
 					gwProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 						http.Error(w, "upstream IPFS gateway unavailable", http.StatusBadGateway)
 					}
@@ -513,7 +558,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				if err != nil {
 					log.Warnf("Failed to initialize storefront store: %v", err)
 				} else {
-					sfSvc, err := storefront.NewService(sfStore, n.PeerID().String(), nil, nil)
+					sfSigningKey, err := storefrontSigningKeyFromRaw(n.SigningKey())
+					if err != nil {
+						log.Warnf("Storefront grants will be unsigned; node signing key unavailable: %v", err)
+					}
+					sfSvc, err := storefront.NewService(sfStore, n.PeerID().String(), sfSigningKey, nil)
 					if err != nil {
 						log.Warnf("Failed to initialize storefront service: %v", err)
 						_ = sfStore.Close()
@@ -770,24 +819,25 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			// ----------------------------------------------------------------
 			// Public homepage at / — intentionally separate from /admin.
 			// ----------------------------------------------------------------
-			homepageFile := publicHomepageFile(cfg.Admin.FrontendPath, cfg.Admin.HomepageFile)
-			landingHTML := loadLandingPageFallback(homepageFile)
-			if buildAssetsDir := resolveBuildAssetsDir(homepageFile); buildAssetsDir != "" {
-				adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
-				log.Infof("Static build assets at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
+			frontendHandler, frontendErr := makeFrontendHandler(cfg.Admin.FrontendPath)
+			if frontendErr != nil {
+				log.Warnf("Could not serve frontend_path %q at /: %v", cfg.Admin.FrontendPath, frontendErr)
+				homepageFile := publicHomepageFile(cfg.Admin.FrontendPath, cfg.Admin.HomepageFile)
+				landingHTML := loadLandingPageFallback(homepageFile)
+				if buildAssetsDir := resolveBuildAssetsDir(homepageFile); buildAssetsDir != "" {
+					adminMux.Handle("/Build/", http.StripPrefix("/Build/", http.FileServer(http.Dir(buildAssetsDir))))
+					log.Infof("Static build assets at %s://%s/Build/ from %s", adminScheme, adminAddr, buildAssetsDir)
+				}
+				frontendHandler = adminLandingHandler(http.NotFoundHandler(), landingHTML)
 			}
-			adminMux.Handle("/", makeFrontendSurfaceHandler(
-				adminLandingHandler(http.NotFoundHandler(), landingHTML),
-				authHandler,
-				cfg.Admin.RequireAuth,
-			))
-			log.Infof("Public homepage at %s://%s/ (admin portal remains at /admin)", adminScheme, adminAddr)
+			adminMux.Handle("/", makeFrontendSurfaceHandler(frontendHandler, authHandler, cfg.Admin.RequireAuth))
+			log.Infof("SDN UI at %s://%s/ from %s (admin portal remains at /admin)", adminScheme, adminAddr, cfg.Admin.FrontendPath)
 
 			adminServer = &http.Server{
 				Addr:              adminAddr,
 				ReadHeaderTimeout: 10 * time.Second,
 				ReadTimeout:       30 * time.Second,
-				WriteTimeout:      60 * time.Second,
+				WriteTimeout:      10 * time.Minute,
 				IdleTimeout:       120 * time.Second,
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					// Tunnel secure websocket upgrades to the local libp2p ws listener.
@@ -807,10 +857,18 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 					}
 
+					if isPublicAPIRequest(r.Method, r.URL.Path) {
+						applyPublicAPICORSHeaders(w.Header(), r.Header.Get("Origin"))
+						if r.Method == http.MethodOptions {
+							w.WriteHeader(http.StatusNoContent)
+							return
+						}
+					}
+
 					// CSRF protection: for state-changing requests using cookie auth,
 					// require same-origin Origin/Referer, or X-Requested-With.
 					if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-						if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) && !isPublicAPIPath(r.URL.Path) {
+						if hasSessionCookie(r) && !isWebhookPath(r.URL.Path) && !isPublicAPIRequest(r.Method, r.URL.Path) {
 							origin := strings.TrimSpace(r.Header.Get("Origin"))
 							referer := strings.TrimSpace(r.Header.Get("Referer"))
 							xrw := strings.TrimSpace(r.Header.Get("X-Requested-With"))
@@ -847,7 +905,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 						isAPIOrPlugin := strings.HasPrefix(path, "/api/") ||
 							strings.HasPrefix(path, "/orbpro-key-broker/")
 
-						if isAPIOrPlugin && !isPublicAPIPath(path) {
+						if isAPIOrPlugin && !isPublicAPIRequest(r.Method, path) {
 							minTrust := peers.Standard
 							if isAdminOnlyAPIPath(path) {
 								minTrust = peers.Admin
@@ -870,7 +928,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 				log.Infof("Peer API available at %s://%s/api/peers", adminScheme, adminAddr)
 				log.Infof("Node info API available at %s://%s/api/node/info", adminScheme, adminAddr)
 				log.Infof("Module delivery provider descriptor available at %s://%s/api/module-delivery/provider", adminScheme, adminAddr)
-				log.Infof("Public data API available at %s://%s/api/v1/data/mpe/bulk", adminScheme, adminAddr)
+				log.Infof("Public data API available at %s://%s/api/v1/data/omm/bulk", adminScheme, adminAddr)
 				var err error
 				if adminTLS {
 					adminServer.TLSConfig = tlsManager.TLSConfig()
@@ -964,27 +1022,122 @@ func publicHomepageFile(frontendPath string, homepageFile string) string {
 	return strings.TrimSpace(homepageFile)
 }
 
+func storefrontSigningKeyFromRaw(raw []byte) (ed25519.PrivateKey, error) {
+	switch len(raw) {
+	case 0:
+		return nil, fmt.Errorf("empty signing key")
+	case ed25519.SeedSize:
+		return ed25519.NewKeyFromSeed(raw), nil
+	case ed25519.PrivateKeySize:
+		return append(ed25519.PrivateKey(nil), raw...), nil
+	default:
+		return nil, fmt.Errorf("unexpected signing key length %d", len(raw))
+	}
+}
+
+func datasetPublicationSigningKey(cfg *config.Config, raw []byte) ([]byte, error) {
+	if len(raw) > 0 {
+		return storefrontSigningKeyFromRaw(raw)
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("config is required")
+	}
+	basePath := strings.TrimSpace(cfg.Setup.DataPath)
+	if basePath == "" {
+		storagePath := strings.TrimSpace(cfg.Storage.Path)
+		if storagePath == "" {
+			return nil, fmt.Errorf("storage path is required")
+		}
+		basePath = filepath.Dir(storagePath)
+	}
+
+	keyMgr, err := keys.NewManager(basePath)
+	if err != nil {
+		return nil, fmt.Errorf("create publication key manager: %w", err)
+	}
+	var identity *keys.Identity
+	if keyMgr.HasIdentity() {
+		identity, err = keyMgr.LoadIdentity()
+	} else {
+		identity, err = keyMgr.GenerateIdentity()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load publication signing identity: %w", err)
+	}
+	if identity == nil || identity.SigningKey == nil || len(identity.SigningKey.PrivateKey) == 0 {
+		return nil, fmt.Errorf("publication signing identity is unavailable")
+	}
+	return storefrontSigningKeyFromRaw(identity.SigningKey.PrivateKey)
+}
+
 func isPublicAPIPath(path string) bool {
-	return strings.HasPrefix(path, "/api/v1/data/") ||
-		strings.HasPrefix(path, "/api/module-delivery/provider") ||
-		strings.HasPrefix(path, "/api/module-delivery/listings") ||
-		strings.HasPrefix(path, "/api/directory/") ||
+	return isPublicAPIRequest(http.MethodGet, path)
+}
+
+func isPublicAPIRequest(method string, path string) bool {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method == http.MethodOptions {
+		return isPublicAPIRequest(http.MethodGet, path) ||
+			isPublicAPIRequest(http.MethodPost, path)
+	}
+
+	if method == http.MethodPost {
+		switch path {
+		case "/api/auth/challenge", "/api/auth/verify", "/api/storefront/listings/search", "/api/storefront/payments/stripe/webhook":
+			return true
+		}
+		return false
+	}
+
+	if method != http.MethodGet && method != http.MethodHead {
+		return false
+	}
+
+	return isPublicReadAPIPath(path)
+}
+
+func isPublicReadAPIPath(path string) bool {
+	switch path {
+	case "/api/module-delivery/provider",
+		"/api/module-delivery/listings",
+		"/api/node/info",
+		"/api/relay/status",
+		"/api/auth/status",
+		"/api/storefront/listings",
+		"/api/v1/catalog",
+		"/api/v1/data/health",
+		"/api/v1/data/omm",
+		"/api/v1/data/omm/bulk",
+		"/api/v1/data/mpe",
+		"/api/v1/data/mpe/bulk",
+		"/api/v1/data/cat",
+		"/api/v1/data/cat/bulk",
+		"/api/v1/data/spw/bulk",
+		"/api/v1/data/secure/omm",
+		"/sdn/libp2p.js":
+		return true
+	}
+
+	return strings.HasPrefix(path, "/api/directory/") ||
 		strings.HasPrefix(path, "/api/v1/demo/") ||
-		strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook") ||
-		strings.HasPrefix(path, "/api/storefront/listings") ||
-		strings.HasPrefix(path, "/api/storefront/reviews") ||
+		strings.HasPrefix(path, "/api/storefront/listings/") ||
 		strings.HasPrefix(path, "/api/storefront/trust/") ||
-		strings.HasPrefix(path, "/api/auth/") ||
-		strings.HasPrefix(path, "/api/node/info") ||
-		strings.HasPrefix(path, "/api/relay/status") ||
-		strings.HasPrefix(path, "/api/v0/") ||
-		strings.HasPrefix(path, "/ipfs/") ||
-		path == "/api/v0" ||
-		path == "/sdn/libp2p.js"
+		strings.HasPrefix(path, "/api/v1/log/")
 }
 
 func isWebhookPath(path string) bool {
 	return strings.HasPrefix(path, "/api/storefront/payments/stripe/webhook")
+}
+
+func applyPublicAPICORSHeaders(header http.Header, origin string) {
+	allowedOrigin := strings.TrimSpace(origin)
+	if allowedOrigin == "" {
+		allowedOrigin = "*"
+	}
+	header.Set("Access-Control-Allow-Origin", allowedOrigin)
+	header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+	header.Set("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization")
+	header.Set("Vary", "Origin")
 }
 
 func hasSessionCookie(r *http.Request) bool {
@@ -1111,7 +1264,18 @@ func isAdminOnlyAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/export") ||
 		strings.HasPrefix(path, "/api/import") ||
 		strings.HasPrefix(path, "/api/admin/") ||
-		path == "/api/v1/plugins/upload"
+		strings.HasPrefix(path, "/api/auth/users") ||
+		strings.HasPrefix(path, "/api/v0") ||
+		strings.HasPrefix(path, "/api/v1/admin/") ||
+		path == "/api/v1/data/summary" ||
+		path == "/api/v1/data/query" ||
+		strings.HasPrefix(path, "/api/v1/data/records/") ||
+		strings.HasPrefix(path, "/api/v1/modules/runtime/") ||
+		strings.HasPrefix(path, "/api/v1/plugins/") ||
+		strings.HasPrefix(path, "/api/routing/") ||
+		strings.HasPrefix(path, "/api/streaming/") ||
+		strings.HasPrefix(path, "/api/relay/filters") ||
+		strings.HasPrefix(path, "/api/storefront/dashboard/admin")
 }
 
 func adminLandingHandler(next http.Handler, landingHTML []byte) http.Handler {
@@ -1156,6 +1320,13 @@ func serveFavicon(w http.ResponseWriter, r *http.Request, candidatePaths []strin
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(defaultFaviconPNG)
 	}
+}
+
+func normalizeIPFSGatewayCORSHeaders(header http.Header) {
+	header.Set("Access-Control-Allow-Origin", "*")
+	header.Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	header.Set("Access-Control-Allow-Headers", "Content-Type, Range, User-Agent, X-Requested-With")
+	header.Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, X-Chunked-Output, X-Ipfs-Path, X-Ipfs-Roots, X-Stream-Output")
 }
 
 func makeWebUIHandler(buildDir string, _ string) (http.Handler, error) {
@@ -1219,16 +1390,60 @@ func resolveAdminUIPath(configuredPath string) string {
 	return ""
 }
 
+func resolveFrontendPath(configuredPath string) string {
+	configuredPath = strings.TrimSpace(configuredPath)
+	if configuredPath != "" {
+		return configuredPath
+	}
+	if candidate := firstExistingFrontendPath(defaultFrontendCandidates()); candidate != "" {
+		return candidate
+	}
+	return config.DefaultFrontendPath()
+}
+
+func defaultFrontendCandidates() []string {
+	return []string{
+		filepath.Join("sdn-js", "ui", "dist"),
+		filepath.Join("..", "sdn-js", "ui", "dist"),
+		filepath.Join("..", "..", "sdn-js", "ui", "dist"),
+		filepath.Join("..", "..", "..", "sdn-js", "ui", "dist"),
+		"/opt/spacedatanetwork/sdn-ui",
+		"/opt/spacedatanetwork/frontend",
+		config.DefaultFrontendPath(),
+	}
+}
+
+func firstExistingFrontendPath(candidates []string) string {
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(candidate, "index.html"))
+		if err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
 // provisionFrontendDir creates the frontend directory with a default index.html
 // if it doesn't already exist.
 func provisionFrontendDir(dir string) error {
-	if _, err := os.Stat(dir); err == nil {
-		return nil // already exists
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return fmt.Errorf("frontend path is empty")
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 	indexPath := filepath.Join(dir, "index.html")
+	if st, err := os.Stat(indexPath); err == nil {
+		if st.IsDir() {
+			return fmt.Errorf("%s is a directory", indexPath)
+		}
+		return nil
+	}
 	return os.WriteFile(indexPath, []byte(defaultFrontendHTML), 0644)
 }
 
@@ -1682,6 +1897,84 @@ func handleModuleRuntimeMutation(mgr *plugins.Manager) http.HandlerFunc {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Cache-Control", "no-cache")
 			_ = json.NewEncoder(w).Encode(option)
+		case "inputs":
+			if r.Method != http.MethodPatch && r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			var payload struct {
+				Values []plugins.RuntimeModuleInputValue `json:"values"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "invalid input payload", http.StatusBadRequest)
+				return
+			}
+			values, err := mgr.SaveRuntimeModuleInputValues(r.Context(), moduleID, payload.Values)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-cache")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"moduleId":       moduleID,
+				"restartPending": true,
+				"inputValues":    values,
+			})
+		case "history":
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			history, err := mgr.RuntimeModuleCommandHistory(moduleID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-cache")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"moduleId": moduleID,
+				"history":  history,
+			})
+		case "schedules":
+			if key == "" {
+				http.NotFound(w, r)
+				return
+			}
+			if strings.HasSuffix(key, "/run") {
+				if r.Method != http.MethodPost {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+					return
+				}
+				methodID := strings.TrimSuffix(key, "/run")
+				run, err := mgr.RunRuntimeModuleScheduleNow(r.Context(), moduleID, methodID)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-cache")
+				_ = json.NewEncoder(w).Encode(run)
+				return
+			}
+			if r.Method != http.MethodPatch && r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			var payload plugins.RuntimeModuleScheduleConfig
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "invalid schedule payload", http.StatusBadRequest)
+				return
+			}
+			schedule, err := mgr.SaveRuntimeModuleSchedule(r.Context(), moduleID, key, payload)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-cache")
+			_ = json.NewEncoder(w).Encode(schedule)
 		case "actions":
 			if r.Method != http.MethodPost {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1710,22 +2003,31 @@ func parseModuleRuntimeMutationPath(pathValue string) (moduleID, kind, key strin
 		return "", "", "", false
 	}
 	parts := strings.Split(rest, "/")
-	if len(parts) < 3 {
+	if len(parts) < 2 {
 		return "", "", "", false
 	}
 	decodedModuleID, err := url.PathUnescape(parts[0])
 	if err != nil {
 		return "", "", "", false
 	}
+	kind = strings.TrimSpace(parts[1])
+	if kind != "options" && kind != "actions" && kind != "inputs" && kind != "history" && kind != "schedules" {
+		return "", "", "", false
+	}
+	moduleID = strings.TrimSpace(decodedModuleID)
+	if kind == "inputs" || kind == "history" {
+		if len(parts) != 2 || moduleID == "" {
+			return "", "", "", false
+		}
+		return moduleID, kind, "", true
+	}
+	if len(parts) < 3 {
+		return "", "", "", false
+	}
 	decodedKey, err := url.PathUnescape(strings.Join(parts[2:], "/"))
 	if err != nil {
 		return "", "", "", false
 	}
-	kind = strings.TrimSpace(parts[1])
-	if kind != "options" && kind != "actions" {
-		return "", "", "", false
-	}
-	moduleID = strings.TrimSpace(decodedModuleID)
 	key = strings.TrimSpace(decodedKey)
 	if moduleID == "" || key == "" {
 		return "", "", "", false
@@ -2021,6 +2323,7 @@ func handleRelayStatus(n *node.Node) http.HandlerFunc {
 	type relayStatusResponse struct {
 		PeerID            string  `json:"peer_id"`
 		Connections       int     `json:"connections"`
+		ConfiguredNodes   int     `json:"configured_nodes"`
 		MaxConnections    int     `json:"max_connections"`
 		Load              float64 `json:"load"`
 		Mode              string  `json:"mode"`
@@ -2060,6 +2363,7 @@ func handleRelayStatus(n *node.Node) http.HandlerFunc {
 		status := relayStatusResponse{
 			PeerID:            n.PeerID().String(),
 			Connections:       len(peers),
+			ConfiguredNodes:   configuredSDNSSHNodeCount(),
 			MaxConnections:    maxConns,
 			Load:              load,
 			Mode:              n.Config().Mode,
@@ -2074,6 +2378,48 @@ func handleRelayStatus(n *node.Node) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(status)
 	}
+}
+
+func configuredSDNSSHNodeCount() int {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return 0
+	}
+	return countConfiguredSDNSSHHostStanzas(filepath.Join(home, ".ssh", "config"))
+}
+
+func countConfiguredSDNSSHHostStanzas(configPath string) int {
+	file, err := os.Open(configPath)
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	count := 0
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 2 || !strings.EqualFold(fields[0], "host") {
+			continue
+		}
+		for _, alias := range fields[1:] {
+			if isConfiguredSDNSSHAlias(alias) {
+				count++
+				break
+			}
+		}
+	}
+	return count
+}
+
+func isConfiguredSDNSSHAlias(alias string) bool {
+	alias = strings.TrimSpace(alias)
+	if alias == "" || strings.ContainsAny(alias, "*?") {
+		return false
+	}
+	return strings.HasPrefix(alias, "space-data-network-") ||
+		alias == "sdn.spaceaware.io" ||
+		alias == "celestrak.eth"
 }
 
 // handleNodeEPMJSON returns the node's EPM as JSON.
@@ -2188,8 +2534,13 @@ func handleNodeEPM(n *node.Node) http.HandlerFunc {
 			if err := epmSvc.PublishEPM(r.Context(), n); err != nil {
 				log.Warnf("Failed to publish updated EPM PNM: %v", err)
 			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(epmSvc.GetNodeEPMJSON())
+			epmData := epmSvc.GetNodeEPM()
+			if epmData == nil {
+				http.Error(w, "no EPM available", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-flatbuffers")
+			w.Write(epmData)
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
