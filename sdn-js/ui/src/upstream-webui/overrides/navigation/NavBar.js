@@ -2,8 +2,8 @@ import React from 'react'
 import { connect } from 'redux-bundler-react'
 import { withTranslation } from 'react-i18next'
 import classnames from 'classnames'
-import sdnLogoMark from './sdn-logo-mark.svg'
 import ipfsLogoMark from '../../../../../../webui/src/navigation/ipfs-logo.svg'
+import sdnLogoMark from './sdn-logo-mark.svg'
 import StrokeMarketing from '../../../../../../webui/src/icons/StrokeMarketing.js'
 import StrokeWeb from '../../../../../../webui/src/icons/StrokeWeb.js'
 import StrokeCube from '../../../../../../webui/src/icons/StrokeCube.js'
@@ -127,6 +127,7 @@ export const NavBar = ({ t }) => {
           <NavLink to='/peers' icon={StrokeCube}>{t('peers:title')}</NavLink>
           <NavLink to='/directory' icon={StrokeWeb}>Directory</NavLink>
           <NavLink to='/modules' icon={StrokeData}>Modules</NavLink>
+          <NavLink to='/marketplace' icon={StrokeData}>Marketplace</NavLink>
           <NavLink to='/settings' icon={StrokeSettings}>{t('settings:title')}</NavLink>
           <ExternalNavLink href='/webui' iconSrc={ipfsLogoMark}>IPFS</ExternalNavLink>
         </div>

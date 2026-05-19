@@ -9,6 +9,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/DigitalArsenal/spacedatastandards.org/lib/go/PNM"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -80,6 +81,9 @@ type SyncLogHandler interface {
 	HandleSyncLog(s network.Stream)
 }
 
+// PubSubPNMHandler receives validated PNM announcements after local storage.
+type PubSubPNMHandler func(ctx context.Context, schema string, data []byte, from peer.ID) error
+
 // SDSExchangeHandler handles the SDS exchange protocol.
 type SDSExchangeHandler struct {
 	store       *storage.FlatSQLStore
@@ -87,6 +91,7 @@ type SDSExchangeHandler struct {
 	limits      MessageLimits
 	rateLimiter *PeerRateLimiter
 	syncHandler SyncLogHandler
+	pnmHandler  PubSubPNMHandler
 }
 
 // ErrRateLimited is returned when a peer exceeds the rate limit.
@@ -415,6 +420,11 @@ func (h *SDSExchangeHandler) SetSyncHandler(handler SyncLogHandler) {
 	h.syncHandler = handler
 }
 
+// SetPubSubPNMHandler registers an optional handler for validated PNM messages.
+func (h *SDSExchangeHandler) SetPubSubPNMHandler(handler PubSubPNMHandler) {
+	h.pnmHandler = handler
+}
+
 // HandlePubSubMessage processes a message received via PubSub.
 func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, from peer.ID) error {
 	// Check rate limit before processing
@@ -444,12 +454,29 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 		return fmt.Errorf("unknown schema: %s", schema)
 	}
 
-	// SDS v1 message format: [data...]
-	msgData := data
-
-	// Create context with timeout for PubSub message handling
+	// Create context with timeout for PubSub message handling.
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultValidationTimeout)
 	defer cancel()
+
+	if hasSizePrefixedPNMIdentifier(data) {
+		if err := h.validator.Validate(ctx, "PNM.fbs", data); err != nil {
+			log.Warnf("PubSub PNM rejected: validation failed from %s on %s: %v", from.ShortString(), schema, err)
+			return fmt.Errorf("PNM validation failed: %w", err)
+		}
+		if _, err := h.store.Store("PNM.fbs", data, from.String(), nil); err != nil {
+			return fmt.Errorf("failed to store PNM: %w", err)
+		}
+		if h.pnmHandler != nil {
+			if err := h.pnmHandler(ctx, schema, data, from); err != nil {
+				return fmt.Errorf("failed to handle PNM announcement: %w", err)
+			}
+		}
+		log.Debugf("PubSub PNM announcement accepted from %s on %s", from.ShortString(), schema)
+		return nil
+	}
+
+	// SDS v1 message format: [data...]
+	msgData := data
 
 	// Validate data against schema
 	if err := h.validator.Validate(ctx, schema, msgData); err != nil {
@@ -465,6 +492,18 @@ func (h *SDSExchangeHandler) HandlePubSubMessage(schema string, data []byte, fro
 
 	log.Debugf("PubSub message accepted: %s record from %s", schema, from.ShortString())
 	return nil
+}
+
+func hasSizePrefixedPNMIdentifier(data []byte) (ok bool) {
+	if len(data) < 8 {
+		return false
+	}
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	return PNM.SizePrefixedPNMBufferHasIdentifier(data)
 }
 
 // PushData sends data to a remote peer.

@@ -4,6 +4,7 @@ package peers
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"time"
 
@@ -300,6 +301,10 @@ type PersistenceProvider interface {
 
 // NewRegistry creates a new trusted peer registry.
 func NewRegistry(strictMode bool, persistence PersistenceProvider) *Registry {
+	if isNilPersistenceProvider(persistence) {
+		persistence = nil
+	}
+
 	r := &Registry{
 		peers:       make(map[peer.ID]*TrustedPeer),
 		groups:      make(map[string]*PeerGroup),
@@ -319,14 +324,27 @@ func NewRegistry(strictMode bool, persistence PersistenceProvider) *Registry {
 	return r
 }
 
+func isNilPersistenceProvider(persistence PersistenceProvider) bool {
+	if persistence == nil {
+		return true
+	}
+	value := reflect.ValueOf(persistence)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
 // Errors
 var (
-	ErrPeerNotFound      = errors.New("peer not found")
-	ErrPeerAlreadyExists = errors.New("peer already exists")
-	ErrGroupNotFound     = errors.New("group not found")
+	ErrPeerNotFound       = errors.New("peer not found")
+	ErrPeerAlreadyExists  = errors.New("peer already exists")
+	ErrGroupNotFound      = errors.New("group not found")
 	ErrGroupAlreadyExists = errors.New("group already exists")
-	ErrInvalidPeerID     = errors.New("invalid peer ID")
-	ErrInvalidTrustLevel = errors.New("invalid trust level")
+	ErrInvalidPeerID      = errors.New("invalid peer ID")
+	ErrInvalidTrustLevel  = errors.New("invalid trust level")
 )
 
 // AddPeer adds a peer to the registry.

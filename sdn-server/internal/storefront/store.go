@@ -1,7 +1,9 @@
 package storefront
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -80,6 +82,7 @@ func (s *Store) initTables() error {
 		CREATE TABLE IF NOT EXISTS storefront_listings (
 			listing_id TEXT PRIMARY KEY,
 			cid TEXT DEFAULT '',
+			listing_kind TEXT DEFAULT 'data_stream',
 			provider_peer_id TEXT NOT NULL,
 			provider_epm_cid TEXT,
 			title TEXT NOT NULL,
@@ -92,6 +95,7 @@ func (s *Store) initTables() error {
 			access_type INTEGER DEFAULT 0,
 			encryption_required INTEGER DEFAULT 1,
 			delivery_methods TEXT,
+			protected_delivery TEXT,
 			pricing TEXT,
 			accepted_payments TEXT,
 			reputation TEXT,
@@ -117,6 +121,8 @@ func (s *Store) initTables() error {
 
 	// Migration: add cid and source_peer_id columns to existing tables
 	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN cid TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN listing_kind TEXT DEFAULT 'data_stream'`)
+	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN protected_delivery TEXT`)
 	s.db.Exec(`ALTER TABLE storefront_listings ADD COLUMN source_peer_id TEXT DEFAULT ''`)
 
 	// Full-text search for listings
@@ -291,6 +297,114 @@ func (s *Store) initTables() error {
 		return fmt.Errorf("failed to create credits transactions table: %w", err)
 	}
 
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_payment_audit (
+			event_id TEXT PRIMARY KEY,
+			request_id TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			actor_peer_id TEXT,
+			reference TEXT,
+			message TEXT,
+			purchase_status INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_payment_audit_request ON storefront_payment_audit(request_id, created_at);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create payment audit table: %w", err)
+	}
+
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_group_members (
+			membership_id TEXT PRIMARY KEY,
+			group_id TEXT NOT NULL,
+			listing_id TEXT NOT NULL,
+			grant_id TEXT NOT NULL,
+			member_peer_id TEXT NOT NULL,
+			member_key_id TEXT NOT NULL,
+			grant_scope TEXT,
+			key_epoch TEXT NOT NULL,
+			wrapped_key_envelope BLOB,
+			envelope_cid TEXT DEFAULT '',
+			signer_peer_id TEXT,
+			status TEXT NOT NULL,
+			added_at INTEGER NOT NULL,
+			removed_at INTEGER DEFAULT 0,
+			removal_reason TEXT DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(group_id, member_peer_id, member_key_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_group_members_group_status ON storefront_group_members(group_id, status);
+		CREATE INDEX IF NOT EXISTS idx_group_members_member ON storefront_group_members(member_peer_id);
+		CREATE INDEX IF NOT EXISTS idx_group_members_grant ON storefront_group_members(grant_id);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create group members table: %w", err)
+	}
+
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_group_key_epochs (
+			epoch_id TEXT PRIMARY KEY,
+			group_id TEXT NOT NULL,
+			listing_id TEXT NOT NULL,
+			previous_epoch TEXT DEFAULT '',
+			policy_id TEXT DEFAULT '',
+			rotated_at INTEGER NOT NULL,
+			rotated_by TEXT,
+			reason TEXT DEFAULT '',
+			created_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_group_key_epochs_group ON storefront_group_key_epochs(group_id, rotated_at DESC);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create group key epochs table: %w", err)
+	}
+
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_payment_webhook_events (
+			event_id TEXT PRIMARY KEY,
+			provider TEXT NOT NULL,
+			request_id TEXT,
+			event_type TEXT NOT NULL,
+			processed_at INTEGER NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_payment_webhook_request ON storefront_payment_webhook_events(request_id, processed_at);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create payment webhook event table: %w", err)
+	}
+
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS storefront_crypto_intents (
+			reference TEXT PRIMARY KEY,
+			request_id TEXT NOT NULL,
+			chain TEXT NOT NULL,
+			asset TEXT NOT NULL,
+			asset_contract TEXT DEFAULT '',
+			native_asset INTEGER DEFAULT 0,
+			amount INTEGER NOT NULL,
+			recipient TEXT NOT NULL,
+			method INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL,
+			used_at INTEGER DEFAULT 0,
+			tx_hash TEXT DEFAULT '',
+			intent_digest TEXT DEFAULT '',
+			intent_signature TEXT DEFAULT '',
+			UNIQUE(request_id, reference)
+		);
+		CREATE INDEX IF NOT EXISTS idx_crypto_intents_request ON storefront_crypto_intents(request_id);
+		CREATE INDEX IF NOT EXISTS idx_crypto_intents_tx ON storefront_crypto_intents(tx_hash);
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create crypto intent table: %w", err)
+	}
+	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN asset_contract TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN native_asset INTEGER DEFAULT 0`)
+	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN intent_digest TEXT DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE storefront_crypto_intents ADD COLUMN intent_signature TEXT DEFAULT ''`)
+
 	log.Info("Storefront index tables initialized (FlatSQL-backed)")
 	return nil
 }
@@ -330,25 +444,26 @@ func (s *Store) CreateListing(listing *Listing) error {
 	tagsJSON, _ := json.Marshal(listing.Tags)
 	coverageJSON, _ := json.Marshal(listing.Coverage)
 	deliveryMethodsJSON, _ := json.Marshal(listing.DeliveryMethods)
+	protectedDeliveryJSON, _ := json.Marshal(listing.ProtectedDelivery)
 	pricingJSON, _ := json.Marshal(listing.Pricing)
 	acceptedPaymentsJSON, _ := json.Marshal(listing.AcceptedPayments)
 	reputationJSON, _ := json.Marshal(listing.Reputation)
 
 	_, err = s.db.Exec(`
 		INSERT OR REPLACE INTO storefront_listings (
-			listing_id, cid, provider_peer_id, provider_epm_cid, title, description,
+			listing_id, cid, listing_kind, provider_peer_id, provider_epm_cid, title, description,
 			data_types, tags, coverage, sample_cid, sample_record_count,
-			access_type, encryption_required, delivery_methods, pricing,
+			access_type, encryption_required, delivery_methods, protected_delivery, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
 			active, expires_at, terms_cid, license, signature, source_peer_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		listing.ListingID, cid, listing.ProviderPeerID, listing.ProviderEPMCID,
+		listing.ListingID, cid, listing.ListingKind, listing.ProviderPeerID, listing.ProviderEPMCID,
 		listing.Title, listing.Description,
 		string(dataTypesJSON), string(tagsJSON), string(coverageJSON),
 		listing.SampleCID, listing.SampleRecordCount,
 		listing.AccessType, listing.EncryptionRequired,
-		string(deliveryMethodsJSON), string(pricingJSON),
+		string(deliveryMethodsJSON), string(protectedDeliveryJSON), string(pricingJSON),
 		string(acceptedPaymentsJSON), string(reputationJSON),
 		listing.CreatedAt.Unix(), listing.UpdatedAt.Unix(),
 		listing.Version, listing.Active, listing.ExpiresAt.Unix(),
@@ -378,9 +493,9 @@ func (s *Store) GetListing(listingID string) (*Listing, error) {
 	defer s.mu.RUnlock()
 
 	row := s.db.QueryRow(`
-		SELECT listing_id, provider_peer_id, provider_epm_cid, title, description,
+		SELECT listing_id, listing_kind, provider_peer_id, provider_epm_cid, title, description,
 			data_types, tags, coverage, sample_cid, sample_record_count,
-			access_type, encryption_required, delivery_methods, pricing,
+			access_type, encryption_required, delivery_methods, protected_delivery, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
 			active, expires_at, terms_cid, license, signature
 		FROM storefront_listings WHERE listing_id = ?
@@ -392,16 +507,16 @@ func (s *Store) GetListing(listingID string) (*Listing, error) {
 func (s *Store) scanListing(row *sql.Row) (*Listing, error) {
 	var listing Listing
 	var dataTypesJSON, tagsJSON, coverageJSON, deliveryMethodsJSON string
-	var pricingJSON, acceptedPaymentsJSON, reputationJSON string
+	var protectedDeliveryJSON, pricingJSON, acceptedPaymentsJSON, reputationJSON string
 	var createdAt, updatedAt, expiresAt int64
 
 	err := row.Scan(
-		&listing.ListingID, &listing.ProviderPeerID, &listing.ProviderEPMCID,
+		&listing.ListingID, &listing.ListingKind, &listing.ProviderPeerID, &listing.ProviderEPMCID,
 		&listing.Title, &listing.Description,
 		&dataTypesJSON, &tagsJSON, &coverageJSON,
 		&listing.SampleCID, &listing.SampleRecordCount,
 		&listing.AccessType, &listing.EncryptionRequired,
-		&deliveryMethodsJSON, &pricingJSON,
+		&deliveryMethodsJSON, &protectedDeliveryJSON, &pricingJSON,
 		&acceptedPaymentsJSON, &reputationJSON,
 		&createdAt, &updatedAt, &listing.Version,
 		&listing.Active, &expiresAt,
@@ -418,12 +533,16 @@ func (s *Store) scanListing(row *sql.Row) (*Listing, error) {
 	json.Unmarshal([]byte(tagsJSON), &listing.Tags)
 	json.Unmarshal([]byte(coverageJSON), &listing.Coverage)
 	json.Unmarshal([]byte(deliveryMethodsJSON), &listing.DeliveryMethods)
+	json.Unmarshal([]byte(protectedDeliveryJSON), &listing.ProtectedDelivery)
 	json.Unmarshal([]byte(pricingJSON), &listing.Pricing)
 	json.Unmarshal([]byte(acceptedPaymentsJSON), &listing.AcceptedPayments)
 	json.Unmarshal([]byte(reputationJSON), &listing.Reputation)
 	listing.CreatedAt = time.Unix(createdAt, 0)
 	listing.UpdatedAt = time.Unix(updatedAt, 0)
 	listing.ExpiresAt = time.Unix(expiresAt, 0)
+	if listing.ListingKind == "" {
+		listing.ListingKind = ListingKindDataStream
+	}
 
 	return &listing, nil
 }
@@ -530,9 +649,9 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 	}
 
 	querySQL := fmt.Sprintf(`
-		SELECT listing_id, provider_peer_id, provider_epm_cid, title, description,
+		SELECT listing_id, listing_kind, provider_peer_id, provider_epm_cid, title, description,
 			data_types, tags, coverage, sample_cid, sample_record_count,
-			access_type, encryption_required, delivery_methods, pricing,
+			access_type, encryption_required, delivery_methods, protected_delivery, pricing,
 			accepted_payments, reputation, created_at, updated_at, version,
 			active, expires_at, terms_cid, license, signature
 		FROM storefront_listings WHERE %s ORDER BY %s LIMIT ? OFFSET ?
@@ -549,16 +668,16 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 	for rows.Next() {
 		var listing Listing
 		var dataTypesJSON, tagsJSON, coverageJSON, deliveryMethodsJSON string
-		var pricingJSON, acceptedPaymentsJSON, reputationJSON string
+		var protectedDeliveryJSON, pricingJSON, acceptedPaymentsJSON, reputationJSON string
 		var createdAt, updatedAt, expiresAt int64
 
 		err := rows.Scan(
-			&listing.ListingID, &listing.ProviderPeerID, &listing.ProviderEPMCID,
+			&listing.ListingID, &listing.ListingKind, &listing.ProviderPeerID, &listing.ProviderEPMCID,
 			&listing.Title, &listing.Description,
 			&dataTypesJSON, &tagsJSON, &coverageJSON,
 			&listing.SampleCID, &listing.SampleRecordCount,
 			&listing.AccessType, &listing.EncryptionRequired,
-			&deliveryMethodsJSON, &pricingJSON,
+			&deliveryMethodsJSON, &protectedDeliveryJSON, &pricingJSON,
 			&acceptedPaymentsJSON, &reputationJSON,
 			&createdAt, &updatedAt, &listing.Version,
 			&listing.Active, &expiresAt,
@@ -573,12 +692,16 @@ func (s *Store) SearchListings(query *SearchQuery) (*SearchResult, error) {
 		json.Unmarshal([]byte(tagsJSON), &listing.Tags)
 		json.Unmarshal([]byte(coverageJSON), &listing.Coverage)
 		json.Unmarshal([]byte(deliveryMethodsJSON), &listing.DeliveryMethods)
+		json.Unmarshal([]byte(protectedDeliveryJSON), &listing.ProtectedDelivery)
 		json.Unmarshal([]byte(pricingJSON), &listing.Pricing)
 		json.Unmarshal([]byte(acceptedPaymentsJSON), &listing.AcceptedPayments)
 		json.Unmarshal([]byte(reputationJSON), &listing.Reputation)
 		listing.CreatedAt = time.Unix(createdAt, 0)
 		listing.UpdatedAt = time.Unix(updatedAt, 0)
 		listing.ExpiresAt = time.Unix(expiresAt, 0)
+		if listing.ListingKind == "" {
+			listing.ListingKind = ListingKindDataStream
+		}
 
 		listings = append(listings, listing)
 	}
@@ -776,15 +899,182 @@ func (s *Store) UpdatePurchaseStatus(requestID string, status PurchaseStatus, me
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := time.Now().Unix()
+	if status == PurchaseStatusPaymentConfirmed || status == PurchaseStatusCompleted {
+		_, err := s.db.Exec(`
+			UPDATE storefront_purchases
+			SET status = ?, status_message = ?, payment_confirmed_at = CASE
+					WHEN payment_confirmed_at IS NULL OR payment_confirmed_at = 0 THEN ?
+					ELSE payment_confirmed_at
+				END,
+				updated_at = ?
+			WHERE request_id = ?
+		`, status, message, now, now, requestID)
+		if err != nil {
+			return fmt.Errorf("failed to update purchase status: %w", err)
+		}
+		return nil
+	}
+
 	_, err := s.db.Exec(`
 		UPDATE storefront_purchases SET status = ?, status_message = ?, updated_at = ?
 		WHERE request_id = ?
-	`, status, message, time.Now().Unix(), requestID)
+	`, status, message, now, requestID)
 	if err != nil {
 		return fmt.Errorf("failed to update purchase status: %w", err)
 	}
 
 	return nil
+}
+
+func (s *Store) CreatePaymentAuditEvent(event *PaymentAuditEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		INSERT INTO storefront_payment_audit (
+			event_id, request_id, event_type, actor_peer_id, reference,
+			message, purchase_status, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, event.EventID, event.RequestID, event.EventType, event.ActorPeerID,
+		event.Reference, event.Message, event.PurchaseStatus, event.CreatedAt.Unix())
+	if err != nil {
+		return fmt.Errorf("failed to insert payment audit event: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetPaymentAuditEvents(requestID string) ([]*PaymentAuditEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT event_id, request_id, event_type, actor_peer_id, reference,
+			message, purchase_status, created_at
+		FROM storefront_payment_audit
+		WHERE request_id = ?
+		ORDER BY created_at ASC, rowid ASC
+	`, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query payment audit events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*PaymentAuditEvent
+	for rows.Next() {
+		var event PaymentAuditEvent
+		var createdAt int64
+		if err := rows.Scan(&event.EventID, &event.RequestID, &event.EventType,
+			&event.ActorPeerID, &event.Reference, &event.Message,
+			&event.PurchaseStatus, &createdAt); err != nil {
+			return nil, fmt.Errorf("failed to scan payment audit event: %w", err)
+		}
+		event.CreatedAt = time.Unix(createdAt, 0)
+		events = append(events, &event)
+	}
+	return events, nil
+}
+
+func (s *Store) RecordPaymentWebhookEvent(provider, eventID, requestID, eventType string) (bool, error) {
+	eventID = strings.TrimSpace(eventID)
+	if eventID == "" {
+		return true, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec(`
+		INSERT OR IGNORE INTO storefront_payment_webhook_events (
+			event_id, provider, request_id, event_type, processed_at
+		) VALUES (?, ?, ?, ?, ?)
+	`, eventID, provider, requestID, eventType, time.Now().Unix())
+	if err != nil {
+		return false, fmt.Errorf("failed to record webhook event: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read webhook event insert result: %w", err)
+	}
+	return affected == 1, nil
+}
+
+func (s *Store) CreateCryptoBuyerIntent(intent *CryptoBuyerIntent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO storefront_crypto_intents (
+			reference, request_id, chain, asset, asset_contract, native_asset,
+			amount, recipient, method, created_at, expires_at, used_at, tx_hash,
+			intent_digest, intent_signature
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, intent.Reference, intent.RequestID, intent.Chain, intent.Asset, intent.AssetContract,
+		intent.NativeAsset, intent.Amount, intent.Recipient, intent.Method,
+		intent.CreatedAt.Unix(), intent.ExpiresAt.Unix(), unixOrZero(intent.UsedAt),
+		intent.TxHash, intent.IntentDigest, intent.IntentSig)
+	if err != nil {
+		return fmt.Errorf("failed to create crypto intent: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetCryptoBuyerIntent(reference string) (*CryptoBuyerIntent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var intent CryptoBuyerIntent
+	var createdAt, expiresAt, usedAt int64
+	var nativeAsset int
+	err := s.db.QueryRow(`
+		SELECT reference, request_id, chain, asset, asset_contract, native_asset,
+			amount, recipient, method, created_at, expires_at, used_at, tx_hash,
+			intent_digest, intent_signature
+		FROM storefront_crypto_intents WHERE reference = ?
+	`, reference).Scan(&intent.Reference, &intent.RequestID, &intent.Chain,
+		&intent.Asset, &intent.AssetContract, &nativeAsset, &intent.Amount,
+		&intent.Recipient, &intent.Method, &createdAt, &expiresAt, &usedAt,
+		&intent.TxHash, &intent.IntentDigest, &intent.IntentSig)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get crypto intent: %w", err)
+	}
+	intent.CreatedAt = time.Unix(createdAt, 0)
+	intent.ExpiresAt = time.Unix(expiresAt, 0)
+	intent.UsedAt = time.Unix(usedAt, 0)
+	intent.NativeAsset = nativeAsset != 0
+	return &intent, nil
+}
+
+func (s *Store) MarkCryptoBuyerIntentUsed(reference, requestID, txHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.Exec(`
+		UPDATE storefront_crypto_intents
+		SET used_at = ?, tx_hash = ?
+		WHERE reference = ? AND request_id = ? AND COALESCE(used_at, 0) = 0
+	`, time.Now().Unix(), txHash, reference, requestID)
+	if err != nil {
+		return fmt.Errorf("failed to mark crypto intent used: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to read crypto intent update result: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("crypto payment reference reused or not found")
+	}
+	return nil
+}
+
+func unixOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 // CreateReview creates a new review. Stores through FlatSQL.
@@ -893,6 +1183,35 @@ func (s *Store) GetReviewsForListing(listingID string, limit, offset int) ([]*Re
 	return reviews, stats, nil
 }
 
+// GetModerationReviews retrieves reviews needing moderation or admin attention.
+func (s *Store) GetModerationReviews(limit, offset int) ([]*Review, int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var total int
+	s.db.QueryRow(`SELECT COUNT(*) FROM storefront_reviews WHERE status != 0 OR flagged_count > 0`).Scan(&total)
+	rows, err := s.db.Query(`
+		SELECT review_id, listing_id, reviewer_peer_id, rating, title, content,
+			quality_metrics, acl_grant_id, verified_purchase, created_at,
+			updated_at, status, helpful_count, not_helpful_count,
+			provider_response, provider_response_at, flagged_count,
+			moderation_notes, reviewer_signature
+		FROM storefront_reviews
+		WHERE status != 0 OR flagged_count > 0
+		ORDER BY updated_at DESC LIMIT ? OFFSET ?
+	`, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query moderation reviews: %w", err)
+	}
+	defer rows.Close()
+
+	reviews, err := scanReviewRows(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return reviews, total, nil
+}
+
 // GetCreditsBalance retrieves the credits balance for a peer.
 func (s *Store) GetCreditsBalance(peerID string) (*CreditsBalance, error) {
 	s.mu.RLock()
@@ -972,6 +1291,10 @@ func (s *Store) GetPurchaseRequest(requestID string) (*PurchaseRequest, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	return s.getPurchaseRequestByWhereLocked("request_id = ?", requestID)
+}
+
+func (s *Store) getPurchaseRequestByWhereLocked(where string, arg interface{}) (*PurchaseRequest, error) {
 	var req PurchaseRequest
 	var createdAt, updatedAt, paymentDeadline, paymentConfirmedAt, grantIssuedAt, providerAcknowledgedAt int64
 
@@ -983,8 +1306,8 @@ func (s *Store) GetPurchaseRequest(requestID string) (*PurchaseRequest, error) {
 			created_at, updated_at, payment_deadline, payment_confirmed_at,
 			grant_issued_at, grant_id, provider_peer_id, provider_acknowledged_at,
 			preferred_delivery_method, webhook_url, buyer_signature, provider_signature
-		FROM storefront_purchases WHERE request_id = ?
-	`, requestID).Scan(
+		FROM storefront_purchases WHERE `+where+`
+	`, arg).Scan(
 		&req.RequestID, &req.ListingID, &req.TierName, &req.BuyerPeerID,
 		&req.BuyerEncryptionPubkey, &req.KeyAlgorithm, &req.BuyerEmail,
 		&req.PaymentMethod, &req.PaymentAmount, &req.PaymentCurrency,
@@ -1024,6 +1347,22 @@ func (s *Store) UpdatePurchasePayment(requestID, txHash, chain, senderAddress st
 	`, txHash, chain, senderAddress, time.Now().Unix(), requestID)
 	if err != nil {
 		return fmt.Errorf("failed to update purchase payment: %w", err)
+	}
+	return nil
+}
+
+// UpdatePurchaseConfirmationBlock records the chain block/slot at which payment settled.
+func (s *Store) UpdatePurchaseConfirmationBlock(requestID string, confirmationBlock uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		UPDATE storefront_purchases
+		SET confirmation_block = ?, updated_at = ?
+		WHERE request_id = ?
+	`, confirmationBlock, time.Now().Unix(), requestID)
+	if err != nil {
+		return fmt.Errorf("failed to update purchase confirmation block: %w", err)
 	}
 	return nil
 }
@@ -1134,6 +1473,146 @@ func (s *Store) GetProviderPurchases(providerPeerID string, limit, offset int) (
 	return purchases, total, nil
 }
 
+// GetBuyerPurchases retrieves all purchases for a buyer.
+func (s *Store) GetBuyerPurchases(buyerPeerID string, limit, offset int) ([]*PurchaseRequest, int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var total int
+	s.db.QueryRow(`SELECT COUNT(*) FROM storefront_purchases WHERE buyer_peer_id = ?`, buyerPeerID).Scan(&total)
+
+	rows, err := s.db.Query(`
+		SELECT request_id, listing_id, tier_name, buyer_peer_id, buyer_encryption_pubkey,
+			key_algorithm, buyer_email, payment_method, payment_amount, payment_currency,
+			payment_tx_hash, payment_chain, sender_address, confirmation_block,
+			payment_intent_id, credits_transaction_id, status, status_message,
+			created_at, updated_at, payment_deadline, payment_confirmed_at,
+			grant_issued_at, grant_id, provider_peer_id, provider_acknowledged_at,
+			preferred_delivery_method, webhook_url, buyer_signature, provider_signature
+		FROM storefront_purchases WHERE buyer_peer_id = ?
+		ORDER BY created_at DESC LIMIT ? OFFSET ?
+	`, buyerPeerID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query buyer purchases: %w", err)
+	}
+	defer rows.Close()
+
+	purchases, err := scanPurchaseRows(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return purchases, total, nil
+}
+
+// GetPurchasesByStatuses retrieves purchases matching any status for admin surfaces.
+func (s *Store) GetPurchasesByStatuses(statuses []PurchaseStatus, limit, offset int) ([]*PurchaseRequest, int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(statuses) == 0 {
+		return []*PurchaseRequest{}, 0, nil
+	}
+	placeholders := make([]string, len(statuses))
+	args := make([]interface{}, 0, len(statuses)+2)
+	for i, status := range statuses {
+		placeholders[i] = "?"
+		args = append(args, status)
+	}
+	where := "status IN (" + strings.Join(placeholders, ",") + ")"
+
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM storefront_purchases WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count purchases by status: %w", err)
+	}
+	args = append(args, limit, offset)
+	rows, err := s.db.Query(`
+		SELECT request_id, listing_id, tier_name, buyer_peer_id, buyer_encryption_pubkey,
+			key_algorithm, buyer_email, payment_method, payment_amount, payment_currency,
+			payment_tx_hash, payment_chain, sender_address, confirmation_block,
+			payment_intent_id, credits_transaction_id, status, status_message,
+			created_at, updated_at, payment_deadline, payment_confirmed_at,
+			grant_issued_at, grant_id, provider_peer_id, provider_acknowledged_at,
+			preferred_delivery_method, webhook_url, buyer_signature, provider_signature
+		FROM storefront_purchases WHERE `+where+`
+		ORDER BY updated_at DESC LIMIT ? OFFSET ?
+	`, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query purchases by status: %w", err)
+	}
+	defer rows.Close()
+
+	purchases, err := scanPurchaseRows(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return purchases, total, nil
+}
+
+func scanPurchaseRows(rows *sql.Rows) ([]*PurchaseRequest, error) {
+	var purchases []*PurchaseRequest
+	for rows.Next() {
+		var req PurchaseRequest
+		var createdAt, updatedAt, paymentDeadline, paymentConfirmedAt, grantIssuedAt, providerAcknowledgedAt int64
+
+		err := rows.Scan(
+			&req.RequestID, &req.ListingID, &req.TierName, &req.BuyerPeerID,
+			&req.BuyerEncryptionPubkey, &req.KeyAlgorithm, &req.BuyerEmail,
+			&req.PaymentMethod, &req.PaymentAmount, &req.PaymentCurrency,
+			&req.PaymentTxHash, &req.PaymentChain, &req.SenderAddress, &req.ConfirmationBlock,
+			&req.PaymentIntentID, &req.CreditsTransactionID, &req.Status, &req.StatusMessage,
+			&createdAt, &updatedAt, &paymentDeadline, &paymentConfirmedAt,
+			&grantIssuedAt, &req.GrantID, &req.ProviderPeerID, &providerAcknowledgedAt,
+			&req.PreferredDeliveryMethod, &req.WebhookURL,
+			&req.BuyerSignature, &req.ProviderSignature,
+		)
+		if err != nil {
+			log.Warnf("Failed to scan purchase row: %v", err)
+			continue
+		}
+
+		req.CreatedAt = time.Unix(createdAt, 0)
+		req.UpdatedAt = time.Unix(updatedAt, 0)
+		req.PaymentDeadline = time.Unix(paymentDeadline, 0)
+		req.PaymentConfirmedAt = time.Unix(paymentConfirmedAt, 0)
+		req.GrantIssuedAt = time.Unix(grantIssuedAt, 0)
+		req.ProviderAcknowledgedAt = time.Unix(providerAcknowledgedAt, 0)
+
+		purchases = append(purchases, &req)
+	}
+	return purchases, rows.Err()
+}
+
+func scanReviewRows(rows *sql.Rows) ([]*Review, error) {
+	var reviews []*Review
+	for rows.Next() {
+		var review Review
+		var qualityMetricsJSON string
+		var createdAt, updatedAt, providerResponseAt int64
+
+		err := rows.Scan(
+			&review.ReviewID, &review.ListingID, &review.ReviewerPeerID,
+			&review.Rating, &review.Title, &review.Content,
+			&qualityMetricsJSON, &review.ACLGrantID, &review.VerifiedPurchase,
+			&createdAt, &updatedAt, &review.Status, &review.HelpfulCount,
+			&review.NotHelpfulCount, &review.ProviderResponse,
+			&providerResponseAt, &review.FlaggedCount,
+			&review.ModerationNotes, &review.ReviewerSignature,
+		)
+		if err != nil {
+			log.Warnf("Failed to scan review row: %v", err)
+			continue
+		}
+
+		json.Unmarshal([]byte(qualityMetricsJSON), &review.QualityMetrics)
+		review.CreatedAt = time.Unix(createdAt, 0)
+		review.UpdatedAt = time.Unix(updatedAt, 0)
+		review.ProviderResponseAt = time.Unix(providerResponseAt, 0)
+
+		reviews = append(reviews, &review)
+	}
+	return reviews, rows.Err()
+}
+
 // CreateCreditsTransaction records a credits transaction.
 func (s *Store) CreateCreditsTransaction(tx *CreditsTransaction) error {
 	s.mu.Lock()
@@ -1199,6 +1678,280 @@ func (s *Store) UpdateGrantUsage(grantID string, requestsIncrement, recordsIncre
 		return fmt.Errorf("failed to update grant usage: %w", err)
 	}
 	return nil
+}
+
+// UpdateGrantStatus updates the lifecycle status for a grant.
+func (s *Store) UpdateGrantStatus(grantID string, status GrantStatus, note string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, err := s.db.Exec(`
+		UPDATE storefront_grants
+		SET status = ?,
+			notes = ?,
+			updated_at = ?
+		WHERE grant_id = ?
+	`, status, note, time.Now().Unix(), grantID)
+	if err != nil {
+		return fmt.Errorf("failed to update grant status: %w", err)
+	}
+	return nil
+}
+
+// GetPurchaseRequestByGrantID retrieves the purchase request that issued a grant.
+func (s *Store) GetPurchaseRequestByGrantID(grantID string) (*PurchaseRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.getPurchaseRequestByWhereLocked("grant_id = ?", grantID)
+}
+
+// UpsertGroupMember creates or reactivates a private group-member key envelope.
+func (s *Store) UpsertGroupMember(member *GroupMember) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	if member.MembershipID == "" {
+		member.MembershipID = uuidFromParts(member.GroupID, member.MemberPeerID, member.MemberKeyID)
+	}
+	if member.Status == "" {
+		member.Status = GroupMemberStatusActive
+	}
+	if member.AddedAt.IsZero() {
+		member.AddedAt = now
+	}
+	if member.CreatedAt.IsZero() {
+		member.CreatedAt = now
+	}
+	member.UpdatedAt = now
+	removedAt := int64(0)
+	if !member.RemovedAt.IsZero() {
+		removedAt = member.RemovedAt.Unix()
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO storefront_group_members (
+			membership_id, group_id, listing_id, grant_id, member_peer_id, member_key_id,
+			grant_scope, key_epoch, wrapped_key_envelope, envelope_cid, signer_peer_id,
+			status, added_at, removed_at, removal_reason, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(group_id, member_peer_id, member_key_id) DO UPDATE SET
+			listing_id = excluded.listing_id,
+			grant_id = excluded.grant_id,
+			grant_scope = excluded.grant_scope,
+			key_epoch = excluded.key_epoch,
+			wrapped_key_envelope = CASE
+				WHEN storefront_group_members.status = ? THEN excluded.wrapped_key_envelope
+				ELSE storefront_group_members.wrapped_key_envelope
+			END,
+			envelope_cid = CASE
+				WHEN storefront_group_members.status = ? THEN excluded.envelope_cid
+				ELSE storefront_group_members.envelope_cid
+			END,
+			signer_peer_id = excluded.signer_peer_id,
+			status = excluded.status,
+			added_at = CASE
+				WHEN storefront_group_members.status = ? THEN excluded.added_at
+				ELSE storefront_group_members.added_at
+			END,
+			removed_at = 0,
+			removal_reason = '',
+			updated_at = excluded.updated_at
+	`, member.MembershipID, member.GroupID, member.ListingID, member.GrantID, member.MemberPeerID,
+		member.MemberKeyID, member.GrantScope, member.KeyEpoch, member.WrappedKeyEnvelope,
+		member.EnvelopeCID, member.SignerPeerID, member.Status, member.AddedAt.Unix(),
+		removedAt, member.RemovalReason, member.CreatedAt.Unix(), member.UpdatedAt.Unix(),
+		GroupMemberStatusRemoved, GroupMemberStatusRemoved, GroupMemberStatusRemoved)
+	if err != nil {
+		return fmt.Errorf("failed to upsert group member: %w", err)
+	}
+	return nil
+}
+
+// RemoveGroupMember marks a group member removed so future wraps skip it.
+func (s *Store) RemoveGroupMember(groupID, memberPeerID, memberKeyID, reason string, removedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if removedAt.IsZero() {
+		removedAt = time.Now()
+	}
+	result, err := s.db.Exec(`
+		UPDATE storefront_group_members
+		SET status = ?,
+			removed_at = ?,
+			removal_reason = ?,
+			updated_at = ?
+		WHERE group_id = ? AND member_peer_id = ? AND member_key_id = ?
+	`, GroupMemberStatusRemoved, removedAt.Unix(), reason, removedAt.Unix(), groupID, memberPeerID, memberKeyID)
+	if err != nil {
+		return fmt.Errorf("failed to remove group member: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to read group member removal result: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("group member not found")
+	}
+	return nil
+}
+
+// GetGroupMembers retrieves group members, optionally filtered by status.
+func (s *Store) GetGroupMembers(groupID string, status GroupMemberStatus) ([]*GroupMember, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `
+		SELECT membership_id, group_id, listing_id, grant_id, member_peer_id, member_key_id,
+			grant_scope, key_epoch, wrapped_key_envelope, envelope_cid, signer_peer_id,
+			status, added_at, removed_at, removal_reason, created_at, updated_at
+		FROM storefront_group_members
+		WHERE group_id = ?
+	`
+	args := []interface{}{groupID}
+	if status != "" {
+		query += " AND status = ?"
+		args = append(args, status)
+	}
+	query += " ORDER BY member_peer_id, member_key_id"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query group members: %w", err)
+	}
+	defer rows.Close()
+
+	var members []*GroupMember
+	for rows.Next() {
+		member, err := scanGroupMember(rows)
+		if err != nil {
+			return nil, err
+		}
+		members = append(members, member)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
+// GetRequesterGroupMember returns only the requester's group envelope.
+func (s *Store) GetRequesterGroupMember(groupID, memberPeerID, memberKeyID string) (*GroupMember, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	row := s.db.QueryRow(`
+		SELECT membership_id, group_id, listing_id, grant_id, member_peer_id, member_key_id,
+			grant_scope, key_epoch, wrapped_key_envelope, envelope_cid, signer_peer_id,
+			status, added_at, removed_at, removal_reason, created_at, updated_at
+		FROM storefront_group_members
+		WHERE group_id = ? AND member_peer_id = ? AND member_key_id = ? AND status = ?
+	`, groupID, memberPeerID, memberKeyID, GroupMemberStatusActive)
+	member, err := scanGroupMember(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return member, nil
+}
+
+// CreateGroupKeyEpoch records a content-key rotation boundary for future versions/windows.
+func (s *Store) CreateGroupKeyEpoch(epoch *GroupKeyEpoch) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	if epoch.EpochID == "" {
+		epoch.EpochID = uuidFromParts(epoch.GroupID, epoch.ListingID, epoch.PreviousEpoch, epoch.RotatedAt.String(), epoch.Reason)
+	}
+	if epoch.RotatedAt.IsZero() {
+		epoch.RotatedAt = now
+	}
+	if epoch.CreatedAt.IsZero() {
+		epoch.CreatedAt = now
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO storefront_group_key_epochs (
+			epoch_id, group_id, listing_id, previous_epoch, policy_id,
+			rotated_at, rotated_by, reason, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, epoch.EpochID, epoch.GroupID, epoch.ListingID, epoch.PreviousEpoch, epoch.PolicyID,
+		epoch.RotatedAt.Unix(), epoch.RotatedBy, epoch.Reason, epoch.CreatedAt.Unix())
+	if err != nil {
+		return fmt.Errorf("failed to create group key epoch: %w", err)
+	}
+	return nil
+}
+
+// GetLatestGroupKeyEpoch retrieves the latest rotation boundary for a group.
+func (s *Store) GetLatestGroupKeyEpoch(groupID string) (*GroupKeyEpoch, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	row := s.db.QueryRow(`
+		SELECT epoch_id, group_id, listing_id, previous_epoch, policy_id,
+			rotated_at, rotated_by, reason, created_at
+		FROM storefront_group_key_epochs
+		WHERE group_id = ?
+		ORDER BY rotated_at DESC, created_at DESC
+		LIMIT 1
+	`, groupID)
+	epoch, err := scanGroupKeyEpoch(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return epoch, nil
+}
+
+type groupMemberScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanGroupMember(scanner groupMemberScanner) (*GroupMember, error) {
+	var member GroupMember
+	var addedAt, removedAt, createdAt, updatedAt int64
+	if err := scanner.Scan(
+		&member.MembershipID, &member.GroupID, &member.ListingID, &member.GrantID,
+		&member.MemberPeerID, &member.MemberKeyID, &member.GrantScope, &member.KeyEpoch,
+		&member.WrappedKeyEnvelope, &member.EnvelopeCID, &member.SignerPeerID,
+		&member.Status, &addedAt, &removedAt, &member.RemovalReason,
+		&createdAt, &updatedAt,
+	); err != nil {
+		return nil, err
+	}
+	member.AddedAt = time.Unix(addedAt, 0)
+	if removedAt > 0 {
+		member.RemovedAt = time.Unix(removedAt, 0)
+	}
+	member.CreatedAt = time.Unix(createdAt, 0)
+	member.UpdatedAt = time.Unix(updatedAt, 0)
+	return &member, nil
+}
+
+func scanGroupKeyEpoch(scanner groupMemberScanner) (*GroupKeyEpoch, error) {
+	var epoch GroupKeyEpoch
+	var rotatedAt, createdAt int64
+	if err := scanner.Scan(
+		&epoch.EpochID, &epoch.GroupID, &epoch.ListingID, &epoch.PreviousEpoch,
+		&epoch.PolicyID, &rotatedAt, &epoch.RotatedBy, &epoch.Reason, &createdAt,
+	); err != nil {
+		return nil, err
+	}
+	epoch.RotatedAt = time.Unix(rotatedAt, 0)
+	epoch.CreatedAt = time.Unix(createdAt, 0)
+	return &epoch, nil
+}
+
+func uuidFromParts(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:16])
 }
 
 // UpdateListingReputation updates the reputation snapshot on a listing.

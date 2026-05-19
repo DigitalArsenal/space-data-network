@@ -2,6 +2,8 @@ const { shell, app, BrowserWindow, Notification } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const i18n = require('i18next')
 const { ipcMain } = require('electron')
+const fs = require('fs')
+const path = require('path')
 const logger = require('../common/logger')
 const { showDialog } = require('../dialogs')
 const { IS_MAC, IS_WIN, IS_APPIMAGE } = require('../common/consts')
@@ -9,15 +11,32 @@ const ipcMainEvents = require('../common/ipc-main-events')
 const getCtx = require('../context')
 const store = require('../common/store')
 const CONFIG_KEYS = require('../common/config-keys')
+const {
+  SDN_DESKTOP_AUTO_UPDATES_ENABLED,
+  SDN_DESKTOP_RELEASES_URL,
+  sdnDesktopReleaseVersionUrl
+} = require('../sdn-updater/runtime-feeds')
 
 function isAutoUpdateSupported () {
+  if (!SDN_DESKTOP_AUTO_UPDATES_ENABLED) {
+    logger.info('[updater] SDN desktop auto updates disabled until the SDN patch/update server is available')
+    return false
+  }
   if (store.get(CONFIG_KEYS.DISABLE_AUTO_UPDATE, false)) {
     logger.info('[updater] auto update explicitly disabled, not checking for updates automatically')
+    return false
+  }
+  if (!hasPackagedUpdateConfig()) {
+    logger.info('[updater] app-update.yml missing, not checking for updates automatically')
     return false
   }
   // atm only macOS, windows and AppImage builds support autoupdate mechanism,
   // everything else needs to be updated manually or via a third-party package manager
   return IS_MAC || IS_WIN || IS_APPIMAGE
+}
+
+function hasPackagedUpdateConfig () {
+  return fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))
 }
 
 let updateNotification = null // must be a global to avoid gc
@@ -36,7 +55,14 @@ function setup () {
       logger.error(`[updater] stack: ${err.stack}`)
     }
 
-    // Show dialog for all errors (background and manual checks)
+    if (!feedback) {
+      return
+    }
+
+    feedback = false
+
+    // Show dialogs only for explicit user-requested update checks. Background
+    // updater errors must not block the main process that serves desktop UI.
     const opt = showDialog({
       title: i18n.t('autoUpdateError.title'),
       message: i18n.t('autoUpdateError.message'),
@@ -48,14 +74,8 @@ function setup () {
     })
 
     if (opt === 1) {
-      shell.openExternal('https://github.com/ipfs/ipfs-desktop/releases/latest')
+      shell.openExternal(SDN_DESKTOP_RELEASES_URL)
     }
-
-    if (!feedback) {
-      return
-    }
-
-    feedback = false
   })
 
   autoUpdater.on('update-available', async ({ version, releaseNotes }) => {
@@ -85,7 +105,7 @@ function setup () {
     })
 
     if (opt === 1) {
-      shell.openExternal(`https://github.com/ipfs-shipyard/ipfs-desktop/releases/v${version}`)
+      shell.openExternal(sdnDesktopReleaseVersionUrl(version))
     }
   })
 
@@ -199,16 +219,16 @@ module.exports = async function () {
   }
   if (!isAutoUpdateSupported()) {
     getCtx().setProp('manualCheckForUpdates', () => {
-      shell.openExternal('https://github.com/ipfs/ipfs-desktop/releases/latest')
+      shell.openExternal(SDN_DESKTOP_RELEASES_URL)
     })
     return
   }
 
   setup()
 
-  checkForUpdates() // background check
+  checkForUpdates()
 
-  setInterval(checkForUpdates, 43200000) // every 12 hours
+  setInterval(checkForUpdates, 43200000)
 
   // enable on-demand check via About submenu
   getCtx().setProp('manualCheckForUpdates', () => {

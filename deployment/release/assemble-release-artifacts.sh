@@ -39,6 +39,20 @@ cp "${root}"/dist/linux-vm/*.tar.gz "${out_dir}/"
   sha256sum * > spacedatanetwork-checksums.txt
 )
 
+if [[ -n "${SDN_UPDATE_FEED_ENTRIES:-}" ]]; then
+  feed_args=(
+    --out-dir "${SDN_UPDATE_FEED_OUT_DIR:-${out_dir}/update-feed}"
+  )
+  if [[ -n "${SDN_UPDATE_FEED_GENERATED_AT:-}" ]]; then
+    feed_args+=(--generated-at "${SDN_UPDATE_FEED_GENERATED_AT}")
+  fi
+  IFS=',' read -r -a feed_entries <<< "${SDN_UPDATE_FEED_ENTRIES}"
+  for feed_entry in "${feed_entries[@]}"; do
+    feed_args+=(--entry "${feed_entry}")
+  done
+  node "${root}/deployment/release/build-sdn-update-feed.js" "${feed_args[@]}"
+fi
+
 (
   cd "${root}/sdn-server"
   ../scripts/go-with-wasmedge.sh run ./cmd/spacedatanetwork release verify "${out_dir}"

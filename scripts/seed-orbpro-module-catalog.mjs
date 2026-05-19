@@ -26,6 +26,7 @@ const moduleIdPattern = /^[A-Za-z0-9._-]+$/;
 const staleManagedModuleIds = Object.freeze([
   "licensing",
   "conjunction-assessment",
+  "com.orbpro.wasm-engine-sdk",
 ]);
 
 const DEFAULT_ORBPRO_MODULES = Object.freeze([
@@ -115,12 +116,29 @@ const DEFAULT_ORBPRO_MODULES = Object.freeze([
     keyExport: "recipientPrivateKeyHex",
   }),
   Object.freeze({
+    slug: "wasm-engine",
+    protectedModulePath:
+      "packages/wasm-engine/dist/wasm-engine-sdn-encrypted.js",
+    protectedExports: Object.freeze([
+      Object.freeze({ exportName: "encryptedData", slug: "wasm-engine" }),
+    ]),
+    keyExport: "recipientPrivateKeyHex",
+  }),
+  Object.freeze({
     slug: "access",
     moduleId: "com.orbpro.access",
     wasmPath:
       "packages/space-data-network-modules/analysis/access/dist/isomorphic/module.wasm",
     manifestPath:
       "packages/space-data-network-modules/analysis/access/plugin-manifest.json",
+  }),
+  Object.freeze({
+    slug: "licensing",
+    moduleId: "licensing",
+    wasmPath:
+      "packages/space-data-network-modules/licensing/core/dist/isomorphic/module.wasm",
+    manifestPath:
+      "packages/space-data-network-modules/licensing/core/plugin-manifest.json",
   }),
 ]);
 
@@ -225,6 +243,8 @@ function resolveModulePath(relativeOrAbsolutePath, label = "Module path") {
   const candidatePaths = [
     path.resolve(repoRoot, rawPath),
     path.resolve(workspaceRoot, rawPath),
+    path.resolve(packageRoot, "..", rawPath.replace(/^packages[\\/]/, "")),
+    path.resolve(packageRoot, "..", "OrbPro", rawPath),
   ];
   const existingPath = candidatePaths.find((candidatePath) =>
     fsSync.existsSync(candidatePath),

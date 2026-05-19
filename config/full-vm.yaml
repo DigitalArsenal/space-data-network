@@ -19,3 +19,6 @@ admin:
 setup:
   token_expiry: 10m
   data_path: /var/lib/spacedatanetwork/data
+
+tor:
+  enabled: false

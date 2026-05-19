@@ -19,9 +19,34 @@ async function listFilesRecursively(rootPath: string, currentPath = rootPath): P
 }
 
 describe('sdn upstream webui cutover contract', () => {
-  it('keeps ui/src limited to the upstream webui entry tree', async () => {
+  it('keeps the product UI and upstream webui overlay paths explicit', async () => {
     await expect(listFilesRecursively(uiSrcPath)).resolves.toEqual([
+      'App.svelte',
+      'components/AdvancedDrawer.svelte',
+      'components/AppShell.svelte',
+      'components/DirectorySearchPanel.svelte',
+      'components/IdentityPanel.svelte',
+      'components/NodeIdentityGate.svelte',
+      'components/SideNav.svelte',
+      'components/StatusChip.svelte',
+      'components/TopStatusBar.svelte',
+      'components/cards/MetricCard.svelte',
+      'lib/backend-context.ts',
+      'lib/coi-serviceworker.js',
+      'lib/cross-origin-isolation.ts',
+      'lib/data-explorer-query.ts',
+      'lib/data-loading-labels.ts',
+      'lib/node-identity-session.ts',
+      'lib/routes.ts',
+      'lib/schema-sync-labels.ts',
+      'lib/schema-sync-scheduler.ts',
       'main.ts',
+      'screens/LocalDataScreen.svelte',
+      'screens/NodeScreen.svelte',
+      'screens/PeersScreen.svelte',
+      'styles/app.css',
+      'styles/tokens.css',
+      'svelte-check-sentinel.svelte',
       'upstream-webui/branding.js',
       'upstream-webui/bundles/index.js',
       'upstream-webui/bundles/peer-locations.js',
@@ -35,6 +60,7 @@ describe('sdn upstream webui cutover contract', () => {
       'upstream-webui/overrides/components/connected/Connected.js',
       'upstream-webui/overrides/components/is-connected/IsConnected.js',
       'upstream-webui/overrides/directory/DirectoryPage.js',
+      'upstream-webui/overrides/marketplace/MarketplacePage.js',
       'upstream-webui/overrides/modules/ModulesPage.js',
       'upstream-webui/overrides/navigation/NavBar.js',
       'upstream-webui/overrides/navigation/sdn-logo-mark.svg',
@@ -49,13 +75,16 @@ describe('sdn upstream webui cutover contract', () => {
       'upstream-webui/vendor/components/is-connected/IsConnected.js',
       'upstream-webui/vendor/navigation/NavBar.js',
       'upstream-webui/vendor/status/StatusConnected.js',
+      'vite-env.d.ts',
     ]);
   });
 
-  it('boots the root dashboard from the upstream webui baseline entrypoint', async () => {
+  it('boots the root dashboard from the Svelte SDN app entrypoint', async () => {
     const source = await fs.readFile(mainEntryPath, 'utf8');
 
-    expect(source).toContain('renderUpstreamWebUiBaseline');
+    expect(source).toContain("import App from './App.svelte'");
+    expect(source).toContain('mount(App');
+    expect(source).not.toContain('renderUpstreamWebUiBaseline');
     expect(source).not.toContain('bootstrapAdminApp');
     expect(source).not.toContain('renderAppShell');
   });

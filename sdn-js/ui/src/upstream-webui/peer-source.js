@@ -1,5 +1,7 @@
 const DEFAULT_STALE_MS = 10_000;
+const DEFAULT_KUBO_API_BASE_URL = 'http://127.0.0.1:5001';
 const SDN_PROTOCOL_PREFIXES = ['/space-data-network/', '/spacedatanetwork/'];
+const CONFIGURED_SDN_NODE_PROTOCOL = '/space-data-network/configured-node/1.0.0';
 
 /**
  * Normalize a trusted SDN peer into the minimal shape expected by the upstream
@@ -12,9 +14,10 @@ export function normalizeTrustedPeerToSwarmPeer (peer) {
   const addrs = Array.isArray(peer?.addrs) ? peer.addrs.filter(Boolean) : [];
   const protocols = splitProtocols(peer?.metadata?.protocols);
   const agentVersion = inferAgentVersion(peer?.metadata);
+  const peerId = String(peer?.id ?? '').trim();
 
   return {
-    peer: String(peer?.id ?? '').trim(),
+    peer: isResolvedPeerId(peerId, protocols) ? peerId : '',
     addr: addrs[0] ?? '',
     latency: null,
     direction: null,
@@ -155,6 +158,7 @@ export function buildObservedSdnPeers (snapshot, registryPeers = []) {
  */
 export function createHostedRegistryPeerSource (options = {}) {
   const baseUrl = normalizeBaseUrl(options.baseUrl ?? inferCurrentBaseUrl());
+  const kuboApiBaseUrl = normalizeBaseUrl(options.kuboApiBaseUrl ?? inferKuboApiBaseUrl());
   const fetchImpl = options.fetchImpl ?? globalThis.fetch?.bind(globalThis);
 
   return {
@@ -184,7 +188,17 @@ export function createHostedRegistryPeerSource (options = {}) {
         throw new Error(`failed to fetch SDN peer graph: ${graphResponse.status}`);
       }
 
-      return fetchRegistryPeers(baseUrl, fetchImpl);
+      const registryPeers = await fetchRegistryPeers(baseUrl, fetchImpl).catch((error) => {
+        if (error?.status !== 404) {
+          throw error;
+        }
+        return null;
+      });
+      if (registryPeers) {
+        return registryPeers;
+      }
+
+      return fetchKuboSdnPeers(kuboApiBaseUrl, fetchImpl);
     }
   };
 }
@@ -208,6 +222,11 @@ function inferAgentVersion (metadata) {
   }
 
   return splitProtocols(metadata?.advertisement_flags)[0] ?? null;
+}
+
+function isSdnAgentVersion (agentVersion) {
+  const value = String(agentVersion ?? '').toLowerCase();
+  return value.includes('spacedatanetwork') || value.includes('space-data-network') || value.startsWith('sdn');
 }
 
 function buildEdgeProtocolMap (edges, localPeerId) {
@@ -237,7 +256,28 @@ function isObservedSdnPeer ({ trustLevel, name, organization, protocols }) {
 }
 
 function isSdnProtocol (protocol) {
-  return SDN_PROTOCOL_PREFIXES.some((prefix) => String(protocol ?? '').startsWith(prefix));
+  const value = String(protocol ?? '');
+  return value !== CONFIGURED_SDN_NODE_PROTOCOL &&
+    SDN_PROTOCOL_PREFIXES.some((prefix) => value.startsWith(prefix));
+}
+
+function isConfiguredNodeAlias (value) {
+  return typeof value === 'string' &&
+    (value.startsWith('space-data-network-') ||
+      value === 'sdn.spaceaware.io' ||
+      value === 'celestrak.eth');
+}
+
+function isResolvedPeerId (peerId, protocols = []) {
+  if (!peerId || isConfiguredNodeAlias(peerId)) {
+    return false;
+  }
+
+  if (splitProtocols(protocols).includes(CONFIGURED_SDN_NODE_PROTOCOL)) {
+    return false;
+  }
+
+  return true;
 }
 
 function formatProtocols (streams) {
@@ -284,10 +324,96 @@ function uniqueStrings (values) {
 async function fetchRegistryPeers (baseUrl, fetchImpl) {
   const response = await fetchImpl(`${baseUrl}/api/peers`);
   if (!response.ok) {
-    throw new Error(`failed to fetch SDN peers: ${response.status}`);
+    const error = new Error(`failed to fetch SDN peers: ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   const payload = await response.json();
   return Array.isArray(payload) ? payload : [];
+}
+
+async function fetchKuboSdnPeers (baseUrl, fetchImpl) {
+  if (!baseUrl) {
+    return [];
+  }
+
+  const response = await fetchImpl(`${baseUrl}/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = await response.json();
+  return (Array.isArray(payload?.Peers) ? payload.Peers : [])
+    .map(kuboPeerToTrustedPeer)
+    .filter(Boolean);
+}
+
+async function fetchConfiguredDesktopSdnNodes (baseUrl, fetchImpl) {
+  if (!isLocalDesktopBaseUrl(baseUrl)) {
+    return [];
+  }
+
+  const response = await fetchImpl(`${baseUrl}/api/local/sdn-nodes`);
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = await response.json();
+  return Array.isArray(payload?.nodes) ? payload.nodes : [];
+}
+
+function kuboPeerToTrustedPeer (peer) {
+  const peerId = stringOrNull(peer?.Identify?.ID) ?? stringOrNull(peer?.Peer);
+  if (!peerId) {
+    return null;
+  }
+
+  const agentVersion = stringOrNull(peer?.Identify?.AgentVersion);
+  const protocols = uniqueStrings(peer?.Identify?.Protocols);
+  if (!isSdnAgentVersion(agentVersion) && !protocols.some(isSdnProtocol)) {
+    return null;
+  }
+
+  const address = normalizePeerAddress(peer?.Addr, peerId);
+  const metadata = {};
+  if (agentVersion) {
+    metadata.agent_version = agentVersion;
+  }
+  if (protocols.length > 0) {
+    metadata.protocols = protocols.join(',');
+  }
+
+  const trustedPeer = { id: peerId };
+  if (address) {
+    trustedPeer.addrs = [address];
+  }
+  if (Object.keys(metadata).length > 0) {
+    trustedPeer.metadata = metadata;
+  }
+  return trustedPeer;
+}
+
+function normalizePeerAddress (address, peerId) {
+  const normalized = stringOrNull(address);
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.includes('/p2p/')) {
+    return normalized;
+  }
+  return `${normalized}/p2p/${peerId}`;
+}
+
+function isLocalDesktopBaseUrl (baseUrl) {
+  try {
+    const parsed = new URL(baseUrl);
+    return parsed.protocol === 'http:' &&
+      ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function inferCurrentBaseUrl () {
@@ -295,6 +421,44 @@ function inferCurrentBaseUrl () {
     return null;
   }
   return window.location.origin;
+}
+
+function inferKuboApiBaseUrl () {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const storedApi = window.localStorage?.getItem('ipfsApi');
+    const fromStorage = httpUrlFromKuboApiAddress(storedApi);
+    if (fromStorage) {
+      return fromStorage;
+    }
+  } catch {
+    // Ignore inaccessible storage and fall back to the desktop default below.
+  }
+
+  const host = window.location.hostname;
+  if (host === '127.0.0.1' || host === 'localhost' || host === '::1') {
+    return DEFAULT_KUBO_API_BASE_URL;
+  }
+  return null;
+}
+
+function httpUrlFromKuboApiAddress (value) {
+  const candidate = String(value ?? '').trim();
+  if (!candidate) {
+    return null;
+  }
+  if (/^https?:\/\//i.test(candidate)) {
+    return candidate;
+  }
+
+  const match = candidate.match(/^\/ip4\/([^/]+)\/tcp\/(\d+)$/);
+  if (match) {
+    return `http://${match[1]}:${match[2]}`;
+  }
+  return null;
 }
 
 function normalizeBaseUrl (value) {

@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"bytes"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
@@ -87,4 +89,85 @@ func TestFlatSQLStore_UpsertAndQueryDirectoryRecord(t *testing.T) {
 	if got.UpdatedAt != updated.UpdatedAt {
 		t.Fatalf("UpdatedAt = %d, want %d", got.UpdatedAt, updated.UpdatedAt)
 	}
+}
+
+func TestFlatSQLStore_LocalEPMRecordsAreEncryptedAtRest(t *testing.T) {
+	store := mustNewFlatSQLStore(t)
+
+	peerID := "16Uiu2HAmLocalProfile"
+	epmBytes := []byte("$EPM binary bytes containing jane@example.com")
+
+	if err := store.SaveLocalEPM(peerID, epmBytes); err != nil {
+		t.Fatalf("SaveLocalEPM failed: %v", err)
+	}
+
+	gotBytes, err := store.LoadLocalEPM(peerID)
+	if err != nil {
+		t.Fatalf("LoadLocalEPM failed: %v", err)
+	}
+	if !bytes.Equal(gotBytes, epmBytes) {
+		t.Fatalf("EPM bytes = %q, want %q", gotBytes, epmBytes)
+	}
+
+	record, err := store.GetLocalEPMRecord(peerID)
+	if err != nil {
+		t.Fatalf("GetLocalEPMRecord failed: %v", err)
+	}
+	if !bytes.Equal(record.EPMBytes, epmBytes) {
+		t.Fatalf("EPM bytes = %q, want %q", record.EPMBytes, epmBytes)
+	}
+	columns := localEPMColumns(t, store)
+	for _, forbidden := range []string{"encrypted_profile_json", "encrypted_epm_json"} {
+		if columns[forbidden] {
+			t.Fatalf("sdn_local_epms stores JSON projection column %q; local EPM source of truth must be encrypted EPM.fbs bytes only", forbidden)
+		}
+	}
+
+	if _, err := store.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		t.Fatalf("wal checkpoint failed: %v", err)
+	}
+	rawDB, err := os.ReadFile(store.dbPath)
+	if err != nil {
+		t.Fatalf("read db failed: %v", err)
+	}
+	rawWAL, _ := os.ReadFile(store.dbPath + "-wal")
+	rawSHM, _ := os.ReadFile(store.dbPath + "-shm")
+	rawDisk := bytes.Join([][]byte{rawDB, rawWAL, rawSHM}, nil)
+	for _, forbidden := range [][]byte{
+		epmBytes,
+		[]byte("Jane Example"),
+		[]byte("jane@example.com"),
+		[]byte("$EPM binary bytes"),
+	} {
+		if bytes.Contains(rawDisk, forbidden) {
+			t.Fatalf("local EPM store leaked %q into %s", forbidden, filepath.Dir(store.dbPath))
+		}
+	}
+}
+
+func localEPMColumns(t *testing.T, store *FlatSQLStore) map[string]bool {
+	t.Helper()
+
+	rows, err := store.db.Query(`PRAGMA table_info(sdn_local_epms)`)
+	if err != nil {
+		t.Fatalf("inspect sdn_local_epms columns: %v", err)
+	}
+	defer rows.Close()
+
+	columns := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatalf("scan column metadata: %v", err)
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate column metadata: %v", err)
+	}
+	return columns
 }

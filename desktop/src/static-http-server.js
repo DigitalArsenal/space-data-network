@@ -1,0 +1,1825 @@
+// @ts-check
+const fs = require('fs')
+const path = require('path')
+const http = require('http')
+const os = require('os')
+const crypto = require('crypto')
+const net = require('net')
+const { app, safeStorage, dialog } = require('electron')
+const portfinder = require('portfinder')
+const logger = require('./common/logger')
+
+const HOST = '127.0.0.1'
+const START_PORT = 17890
+const FLATSQL_SYNC_PROTOCOL_ID = '/space-data-network/flatsql-sync/1.0.0'
+const CONFIGURED_SDN_NODE_SYNC_WS_PORT = 8080
+const CONFIGURED_SDN_NODE_ARTIFACT_PORT = 4002
+const DESKTOP_SDN_SEED_PEERS = Object.freeze([
+  '/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+  '/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+  '/dns4/celestrak.eth/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+  '/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4'
+])
+const ROUTES = Object.freeze({
+  sdn: 'assets/sdn-ui',
+  webui: 'assets/webui'
+})
+
+let serverPromise = null
+
+const HOSTED_EPM_STORE_VERSION = 1
+const HOSTED_EPM_STORE_FILE = 'sdn-hosted-epms.enc.json'
+const HOSTED_EPM_STORE_SALT = 'space-data-network-hosted-epm-store-v1'
+const NODE_IDENTITY_SETTINGS_FILE = 'sdn-node-identity-settings.json'
+const NODE_IDENTITY_SESSION_FILE = 'sdn-node-identity-session.json'
+const NODE_WALLET_STORAGE_FILE = 'sdn-wallet-local-storage.enc.json'
+const DEFAULT_NODE_IDENTITY_TTL_MS = 60 * 60 * 1000
+const NODE_IDENTITY_APP_RUN_ID = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')
+const SECRET_EPM_FIELD_PATTERN = /(^|[_-])(private|secret|mnemonic|seed|xpriv|core)([_-]|$)|privatekey|encryptedcore/i
+const WALLET_STORAGE_PREFIX = 'wallet_storage_'
+const WALLET_LOCAL_STORAGE_KEYS = Object.freeze(new Set([
+  'encrypted_wallet',
+  'passkey_credential',
+  'passkey_wallet',
+  'hd-wallet-wallets',
+  'hd-wallet-active-accounts',
+  'hd-wallet-vcard-identity',
+  'hd-wallet-messaging-key-config-v1',
+  'wallet-pki-keys'
+]))
+
+const contentTypes = Object.freeze({
+  '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml; charset=utf-8',
+  '.wasm': 'application/wasm',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2'
+})
+
+function sendJSON (res, status, payload) {
+  res.writeHead(status, staticAssetHeaders('application/json; charset=utf-8'))
+  res.end(JSON.stringify(payload))
+}
+
+function sendText (res, status, contentType, payload) {
+  res.writeHead(status, staticAssetHeaders(contentType))
+  res.end(payload)
+}
+
+function sendBuffer (res, status, contentType, payload) {
+  res.writeHead(status, staticAssetHeaders(contentType))
+  res.end(payload)
+}
+
+function staticAssetHeaders (contentType, extra = {}) {
+  return {
+    'Content-Type': contentType,
+    'Cache-Control': 'no-store',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Embedder-Policy': 'require-corp',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+    ...extra
+  }
+}
+
+function routeForUrl (requestUrl) {
+  const parsed = new URL(requestUrl, `http://${HOST}`)
+  const [, routeName, ...segments] = parsed.pathname.split('/')
+  const routeDirectory = ROUTES[routeName]
+
+  if (!routeDirectory) {
+    return null
+  }
+
+  const root = path.resolve(app.getAppPath(), routeDirectory)
+  const requestedPath = path.resolve(root, ...segments)
+
+  if (!requestedPath.startsWith(root)) {
+    return null
+  }
+
+  if (fs.existsSync(requestedPath) && fs.statSync(requestedPath).isFile()) {
+    return requestedPath
+  }
+
+  return path.join(root, 'index.html')
+}
+
+function redirectBareAppRoute (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  const [, routeName] = parsed.pathname.split('/')
+
+  if (parsed.pathname !== `/${routeName}` || !ROUTES[routeName]) {
+    return false
+  }
+
+  res.writeHead(301, staticAssetHeaders('text/plain; charset=utf-8', { Location: `/${routeName}/${parsed.search}${parsed.hash}` }))
+  res.end()
+  return true
+}
+
+function isAllowedLoopbackHostHeader (hostHeader) {
+  const host = normalizeHostHeader(hostHeader)
+  return host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '0.0.0.0' ||
+    host === '::1'
+}
+
+function normalizeHostHeader (hostHeader) {
+  if (Array.isArray(hostHeader)) {
+    hostHeader = hostHeader[0]
+  }
+  if (typeof hostHeader !== 'string') {
+    return null
+  }
+
+  const value = hostHeader.trim().toLowerCase()
+  if (!value) {
+    return null
+  }
+
+  if (value.startsWith('[')) {
+    const match = value.match(/^\[([^\]]+)\](?::\d+)?$/)
+    return match ? match[1] : null
+  }
+
+  if (value === '::1') {
+    return value
+  }
+
+  const hostPort = value.match(/^([^:]+)(?::\d+)?$/)
+  return hostPort ? hostPort[1] : null
+}
+
+function rejectNonLoopbackHostHeader (req, res) {
+  if (isAllowedLoopbackHostHeader(req.headers.host)) {
+    return false
+  }
+
+  logger.warn(`[desktop static] rejected non-loopback Host header: ${req.headers.host || 'missing'}`)
+  res.writeHead(403, staticAssetHeaders('text/plain; charset=utf-8'))
+  res.end('Forbidden')
+  return true
+}
+
+function isSdnSSHHostAlias (alias) {
+  return typeof alias === 'string' &&
+    alias.length > 0 &&
+    !alias.includes('*') &&
+    !alias.includes('?') &&
+    (alias.startsWith('space-data-network-') ||
+      alias === 'sdn.spaceaware.io' ||
+      alias === 'celestrak.eth')
+}
+
+const CONFIGURED_SDN_NODE_IDENTITIES = [
+  {
+    aliases: ['space-data-network-01', 'sdn.spaceaware.io'],
+    name: 'SpaceAware.io',
+    peer_id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+    public_key: '0257d9a39fac79d4c36e017b3b6913f60684586605ebb9370cf417ef44bf0f7cd2',
+    ipfs_artifact_peer_id: '12D3KooWMtfuRiHtDuzMMRYB2oX8UKVqP43hZQakGBLhWsMnCd7K'
+  },
+  {
+    aliases: ['space-data-network-02', 'celestrak.eth'],
+    name: 'CelesTrak Provider',
+    peer_id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+    public_key: '90aa23ea4ff2d68cf8cb8155135fe5a25b580ec805e835aabb0e8905ffb2c3b2',
+    provider_id: 'space-data-network-02',
+    ipfs_artifact_peer_id: '12D3KooWGhZfrxQVvwQHNGRkeJhGqMbkDqjktfpBXzn47N78XY9j'
+  }
+]
+
+function configuredSdnNodesFromSshConfig (configPath = path.join(os.homedir(), '.ssh', 'config')) {
+  let config
+  try {
+    config = fs.readFileSync(configPath, 'utf8')
+  } catch {
+    return []
+  }
+
+  const nodes = []
+  let current = null
+
+  const flush = () => {
+    if (!current || current.aliases.length === 0) return
+    const alias = current.aliases[0]
+    const identity = configuredNodeIdentityForSdnSSHHost(alias, current.aliases)
+    const addrs = configuredNodeLibp2pSyncAddrs(current.hostName || alias, identity)
+    const ipfsArtifactAddrs = configuredNodeIpfsArtifactAddrs(current.hostName || alias, identity)
+    nodes.push({
+      id: alias,
+      name: displayNameForSdnSSHHost(alias, current.aliases),
+      addrs,
+      trust_level: 'trusted',
+      metadata: {
+        agent_version: 'sdn-configured-node',
+        protocols: `/space-data-network/configured-node/1.0.0,${FLATSQL_SYNC_PROTOCOL_ID}`,
+        sync_protocol: FLATSQL_SYNC_PROTOCOL_ID,
+        ssh_aliases: current.aliases.join(','),
+        ...(identity?.peer_id ? { peer_id: identity.peer_id } : {}),
+        ...(identity?.public_key ? { public_key: identity.public_key } : {}),
+        ...(identity?.provider_id ? { provider_id: identity.provider_id } : {}),
+        ...(identity?.source_name ? { source_name: identity.source_name } : {}),
+        ...(ipfsArtifactAddrs.length > 0 ? { ipfs_artifact_addrs: ipfsArtifactAddrs } : {}),
+        ...(current.hostName ? { host_name: current.hostName } : {})
+      }
+    })
+  }
+
+  for (const rawLine of config.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) continue
+    const fields = line.split(/\s+/)
+    const key = fields[0].toLowerCase()
+
+    if (key === 'host') {
+      flush()
+      current = {
+        aliases: fields.slice(1).filter(isSdnSSHHostAlias),
+        hostName: ''
+      }
+      continue
+    }
+
+    if (!current) continue
+    if (key === 'hostname') current.hostName = fields[1] || ''
+  }
+
+  flush()
+  return nodes
+}
+
+function displayNameForSdnSSHHost (alias, aliases = []) {
+  return configuredNodeIdentityForSdnSSHHost(alias, aliases)?.name || alias
+}
+
+function configuredNodeLibp2pSyncAddrs (hostName, identity) {
+  const host = String(hostName || '').trim()
+  const peerId = String(identity?.peer_id || '').trim()
+  if (!host || !peerId || host.startsWith('space-data-network-')) return []
+  const hostProtocol = multiaddrHostProtocol(host)
+  if (!hostProtocol) return []
+  return [`/${hostProtocol}/${host}/tcp/${CONFIGURED_SDN_NODE_SYNC_WS_PORT}/ws/p2p/${peerId}`]
+}
+
+function configuredNodeIpfsArtifactAddrs (hostName, identity) {
+  const host = String(hostName || '').trim()
+  const peerId = String(identity?.ipfs_artifact_peer_id || '').trim()
+  if (!host || !peerId || host.startsWith('space-data-network-')) return []
+  const hostProtocol = multiaddrHostProtocol(host)
+  if (!hostProtocol) return []
+  return [`/${hostProtocol}/${host}/tcp/${CONFIGURED_SDN_NODE_ARTIFACT_PORT}/p2p/${peerId}`]
+}
+
+function multiaddrHostProtocol (hostName) {
+  const ipVersion = net.isIP(hostName)
+  if (ipVersion === 4) return 'ip4'
+  if (ipVersion === 6) return 'ip6'
+  if (/^[a-z0-9.-]+$/i.test(hostName)) return 'dns4'
+  return null
+}
+
+function configuredNodeIdentityForSdnSSHHost (alias, aliases = []) {
+  const names = new Set([alias, ...aliases].map(value => String(value || '').toLowerCase()))
+  return CONFIGURED_SDN_NODE_IDENTITIES.find(identity => (
+    identity.aliases.some(candidate => names.has(candidate.toLowerCase()))
+  )) || null
+}
+
+function configuredNodeIdentityForSdnPeerID (peerId) {
+  const normalized = String(peerId || '').trim()
+  if (!normalized) return null
+  return CONFIGURED_SDN_NODE_IDENTITIES.find(identity => identity.peer_id === normalized) || null
+}
+
+function serveConfiguredSdnNodes (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  if (parsed.pathname !== '/api/local/sdn-nodes') {
+    return false
+  }
+
+  sendJSON(res, 200, {
+    nodes: configuredSdnNodesFromSshConfig()
+  })
+  return true
+}
+
+function isSdnProtocol (protocol) {
+  const value = String(protocol ?? '')
+  return value.startsWith('/space-data-network/') || value.startsWith('/spacedatanetwork/')
+}
+
+function isSdnAgentVersion (agentVersion) {
+  const value = String(agentVersion ?? '').toLowerCase()
+  return value.includes('spacedatanetwork') || value.includes('space-data-network') || value.startsWith('sdn')
+}
+
+function normalizeKuboPeerAddress (address, peerId) {
+  const value = String(address ?? '').trim()
+  if (!value) return ''
+  return value.includes('/p2p/') ? value : `${value}/p2p/${peerId}`
+}
+
+function multiaddrHostName (address) {
+  const parts = String(address ?? '').trim().split('/').filter(Boolean)
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    if (parts[index] === 'ip4' || parts[index] === 'ip6' || parts[index] === 'dns4' || parts[index] === 'dns6') {
+      return parts[index + 1] || ''
+    }
+  }
+  return ''
+}
+
+function kuboSwarmPeersToDesktopSdnPeers (payload) {
+  return (Array.isArray(payload?.Peers) ? payload.Peers : [])
+    .map(peer => {
+      const identify = peer?.Identify || {}
+      const peerId = String(identify.ID || peer?.Peer || '').trim()
+      if (!peerId) return null
+
+      const agentVersion = String(identify.AgentVersion || '').trim()
+      const protocols = Array.isArray(identify.Protocols)
+        ? identify.Protocols.map(protocol => String(protocol ?? '').trim()).filter(Boolean)
+        : []
+
+      if (!isSdnAgentVersion(agentVersion) && !protocols.some(isSdnProtocol)) {
+        return null
+      }
+
+      const identity = configuredNodeIdentityForSdnPeerID(peerId)
+      const metadata = {}
+      if (agentVersion) metadata.agent_version = agentVersion
+      if (protocols.length > 0) metadata.protocols = protocols.join(',')
+      if (identity?.peer_id) metadata.peer_id = identity.peer_id
+      if (identity?.public_key) metadata.public_key = identity.public_key
+      const ipfsArtifactAddrs = configuredNodeIpfsArtifactAddrs(multiaddrHostName(peer?.Addr), identity)
+      if (ipfsArtifactAddrs.length > 0) metadata.ipfs_artifact_addrs = ipfsArtifactAddrs
+
+      return {
+        id: peerId,
+        name: identity?.name || peerId,
+        addrs: [normalizeKuboPeerAddress(peer?.Addr, peerId)].filter(Boolean),
+        trust_level: 'observed',
+        metadata
+      }
+    })
+    .filter(Boolean)
+}
+
+function requestKuboJSON (apiPath) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ hostname: HOST, port: 5001, path: apiPath, method: 'POST' }, response => {
+      let raw = ''
+      response.setEncoding('utf8')
+      response.on('data', chunk => { raw += chunk })
+      response.on('end', () => {
+        if (response.statusCode < 200 || response.statusCode > 299) {
+          reject(new Error(`Kubo API request failed (${response.statusCode})`))
+          return
+        }
+
+        try {
+          resolve(JSON.parse(raw))
+        } catch (err) {
+          reject(err)
+        }
+      })
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+async function connectDesktopSdnSeedPeers (requestJSON = requestKuboJSON) {
+  const results = []
+  for (const peer of DESKTOP_SDN_SEED_PEERS) {
+    try {
+      const result = await requestJSON(`/api/v0/swarm/connect?timeout=5000ms&arg=${encodeURIComponent(peer)}`)
+      results.push({ peer, ok: true, result })
+    } catch (err) {
+      results.push({ peer, ok: false, error: err })
+    }
+  }
+  return results
+}
+
+async function serveDesktopPeerAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  if (parsed.pathname !== '/api/peers/sdn' && parsed.pathname !== '/api/peers' && parsed.pathname !== '/api/peers/graph') {
+    return false
+  }
+
+  try {
+    const swarm = await requestKuboJSON('/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms')
+    let peers = kuboSwarmPeersToDesktopSdnPeers(swarm)
+
+    if (peers.length === 0) {
+      await connectDesktopSdnSeedPeers()
+      const refreshedSwarm = await requestKuboJSON('/api/v0/swarm/peers?verbose=true&identify=true&timeout=10000ms')
+      peers = kuboSwarmPeersToDesktopSdnPeers(refreshedSwarm)
+    }
+
+    if (parsed.pathname === '/api/peers/graph') {
+      sendJSON(res, 200, {
+        local_peer_id: '',
+        nodes: peers.map(peer => ({
+          peer_id: peer.id,
+          dn: peer.name,
+          trust_level: peer.trust_level,
+          multiformat_address: peer.addrs,
+          is_online: true
+        })),
+        edges: []
+      })
+      return true
+    }
+
+    sendJSON(res, 200, peers)
+  } catch (err) {
+    logger.error(`[static-server] failed to serve desktop SDN peers: ${err.message || err}`)
+    sendJSON(res, 200, [])
+  }
+  return true
+}
+
+function localProfilePath () {
+  return path.join(app.getPath('userData'), 'sdn-node-profile.json')
+}
+
+function nodeIdentitySettingsPath () {
+  return path.join(app.getPath('userData'), NODE_IDENTITY_SETTINGS_FILE)
+}
+
+function defaultFlatbufferStoragePath () {
+  return path.join(app.getPath('userData'), 'flatbuffers')
+}
+
+function nodeIdentitySessionPath () {
+  return path.join(app.getPath('userData'), NODE_IDENTITY_SESSION_FILE)
+}
+
+function nodeWalletStoragePath () {
+  return path.join(app.getPath('userData'), NODE_WALLET_STORAGE_FILE)
+}
+
+function normalizeFlatbufferStoragePath (value) {
+  const candidate = typeof value === 'string' ? value.trim() : ''
+  return candidate || defaultFlatbufferStoragePath()
+}
+
+function isPersistedWalletLocalStorageKey (key) {
+  const value = String(key || '')
+  return value.startsWith(WALLET_STORAGE_PREFIX) || WALLET_LOCAL_STORAGE_KEYS.has(value)
+}
+
+function emptyNodeWalletStorageSnapshot () {
+  return {
+    entries: {},
+    encrypted_at_rest: canUseSafeStorage(),
+    storage: canUseSafeStorage() ? 'electron-safe-storage' : 'plain-json',
+    updated_at: null
+  }
+}
+
+function canUseSafeStorage () {
+  try {
+    return Boolean(safeStorage && typeof safeStorage.isEncryptionAvailable === 'function' && safeStorage.isEncryptionAvailable())
+  } catch {
+    return false
+  }
+}
+
+function normalizeWalletStorageEntries (entries) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return {}
+  const normalized = {}
+  for (const [key, value] of Object.entries(entries)) {
+    if (!isPersistedWalletLocalStorageKey(key)) continue
+    if (typeof value === 'string') normalized[key] = value
+  }
+  return normalized
+}
+
+function normalizeWalletStoragePatch (entries) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return {}
+  const normalized = {}
+  for (const [key, value] of Object.entries(entries)) {
+    if (!isPersistedWalletLocalStorageKey(key)) continue
+    if (value === null) normalized[key] = null
+    if (typeof value === 'string') normalized[key] = value
+  }
+  return normalized
+}
+
+async function readNodeWalletStorage () {
+  let raw
+  try {
+    raw = await fs.promises.readFile(nodeWalletStoragePath(), 'utf8')
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      logger.warn(`[static-server] failed to read wallet storage mirror: ${err.message || err}`)
+    }
+    return emptyNodeWalletStorageSnapshot()
+  }
+
+  try {
+    const envelope = JSON.parse(raw)
+    if (envelope.encoding === 'electron-safe-storage') {
+      if (!canUseSafeStorage() || typeof safeStorage.decryptString !== 'function') {
+        throw new Error('Electron safeStorage decryption is unavailable')
+      }
+      const plaintext = safeStorage.decryptString(Buffer.from(String(envelope.ciphertext || ''), 'base64'))
+      const payload = JSON.parse(plaintext)
+      return {
+        entries: normalizeWalletStorageEntries(payload.entries),
+        encrypted_at_rest: true,
+        storage: 'electron-safe-storage',
+        updated_at: typeof envelope.updated_at === 'string' ? envelope.updated_at : null
+      }
+    }
+
+    return {
+      entries: normalizeWalletStorageEntries(envelope.entries),
+      encrypted_at_rest: false,
+      storage: 'plain-json',
+      updated_at: typeof envelope.updated_at === 'string' ? envelope.updated_at : null
+    }
+  } catch (err) {
+    logger.warn(`[static-server] failed to decode wallet storage mirror: ${err.message || err}`)
+    return emptyNodeWalletStorageSnapshot()
+  }
+}
+
+async function writeNodeWalletStorage (entries) {
+  const normalized = normalizeWalletStorageEntries(entries)
+  const updatedAt = new Date().toISOString()
+  let envelope
+  if (canUseSafeStorage() && typeof safeStorage.encryptString === 'function') {
+    envelope = {
+      version: 1,
+      encoding: 'electron-safe-storage',
+      updated_at: updatedAt,
+      ciphertext: safeStorage.encryptString(JSON.stringify({ entries: normalized })).toString('base64')
+    }
+  } else {
+    envelope = {
+      version: 1,
+      encoding: 'plain-json',
+      updated_at: updatedAt,
+      entries: normalized
+    }
+  }
+
+  await fs.promises.mkdir(path.dirname(nodeWalletStoragePath()), { recursive: true })
+  await fs.promises.writeFile(nodeWalletStoragePath(), JSON.stringify(envelope, null, 2))
+  return {
+    entries: normalized,
+    encrypted_at_rest: envelope.encoding === 'electron-safe-storage',
+    storage: envelope.encoding,
+    updated_at: updatedAt
+  }
+}
+
+async function patchNodeWalletStorage (patch) {
+  const snapshot = await readNodeWalletStorage()
+  const entries = { ...snapshot.entries }
+  for (const [key, value] of Object.entries(normalizeWalletStoragePatch(patch))) {
+    if (value === null) {
+      delete entries[key]
+    } else {
+      entries[key] = value
+    }
+  }
+  return writeNodeWalletStorage(entries)
+}
+
+async function clearNodeWalletStorage () {
+  await fs.promises.rm(nodeWalletStoragePath(), { force: true })
+  return emptyNodeWalletStorageSnapshot()
+}
+
+function defaultNodeIdentitySettings () {
+  return {
+    ttl_ms: DEFAULT_NODE_IDENTITY_TTL_MS,
+    flatbuffer_storage_path: defaultFlatbufferStoragePath(),
+    updated_at: new Date(0).toISOString()
+  }
+}
+
+async function readNodeIdentitySettingsOnly () {
+  try {
+    const raw = JSON.parse(await fs.promises.readFile(nodeIdentitySettingsPath(), 'utf8'))
+    const ttl = raw.ttl_ms === 'app' ? 'app' : Number.parseInt(String(raw.ttl_ms ?? raw.ttlMs ?? ''), 10)
+    return {
+      ttl_ms: ttl === 'app' ? 'app' : Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_NODE_IDENTITY_TTL_MS,
+      flatbuffer_storage_path: normalizeFlatbufferStoragePath(raw.flatbuffer_storage_path ?? raw.flatbufferStoragePath),
+      updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : new Date(0).toISOString()
+    }
+  } catch {
+    return defaultNodeIdentitySettings()
+  }
+}
+
+async function readNodeIdentitySettings () {
+  const settings = await readNodeIdentitySettingsOnly()
+  await fs.promises.mkdir(settings.flatbuffer_storage_path, { recursive: true }).catch(err => {
+    logger.warn(`[static-server] failed to create FlatBuffer storage directory ${settings.flatbuffer_storage_path}: ${err.message || err}`)
+  })
+  return {
+    ...settings,
+    session: await readNodeIdentitySession()
+  }
+}
+
+async function writeNodeIdentitySettings (settings) {
+  const ttl = settings && (settings.ttl_ms ?? settings.ttlMs)
+  const flatbufferStoragePath = normalizeFlatbufferStoragePath(settings && (settings.flatbuffer_storage_path ?? settings.flatbufferStoragePath))
+  const normalized = {
+    ttl_ms: ttl === 'app' ? 'app' : Math.max(60 * 1000, Number.parseInt(String(ttl || DEFAULT_NODE_IDENTITY_TTL_MS), 10) || DEFAULT_NODE_IDENTITY_TTL_MS),
+    flatbuffer_storage_path: flatbufferStoragePath,
+    updated_at: new Date().toISOString()
+  }
+  await fs.promises.mkdir(flatbufferStoragePath, { recursive: true })
+  await fs.promises.mkdir(path.dirname(nodeIdentitySettingsPath()), { recursive: true })
+  await fs.promises.writeFile(nodeIdentitySettingsPath(), JSON.stringify(normalized, null, 2))
+  const currentSession = await readNodeIdentitySession()
+  if (currentSession.unlocked && currentSession.profile) {
+    await writeNodeIdentitySession(currentSession.profile, normalized)
+  }
+  return {
+    ...normalized,
+    session: await readNodeIdentitySession()
+  }
+}
+
+function flatSqlPersistenceFilename (key) {
+  const hash = crypto.createHash('sha256').update(String(key)).digest('hex').slice(0, 16)
+  const readable = String(key)
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 96) || 'flatsql'
+  return `${readable}-${hash}.bin`
+}
+
+async function flatSqlPersistenceFilePath (key) {
+  const settings = await readNodeIdentitySettingsOnly()
+  const storagePath = normalizeFlatbufferStoragePath(settings.flatbuffer_storage_path)
+  await fs.promises.mkdir(storagePath, { recursive: true })
+  return path.join(storagePath, flatSqlPersistenceFilename(key))
+}
+
+function lockedNodeIdentitySession () {
+  return {
+    unlocked: false,
+    expires_at: null,
+    profile: null
+  }
+}
+
+async function readNodeIdentitySession () {
+  try {
+    const raw = JSON.parse(await fs.promises.readFile(nodeIdentitySessionPath(), 'utf8'))
+    const session = normalizeNodeIdentitySession(raw)
+    if (!session.unlocked) await clearNodeIdentitySession()
+    return session
+  } catch {
+    return lockedNodeIdentitySession()
+  }
+}
+
+function normalizeNodeIdentitySession (raw) {
+  if (!raw || typeof raw !== 'object' || raw.unlocked !== true) return lockedNodeIdentitySession()
+  const mode = raw.mode === 'app' ? 'app' : 'ttl'
+  if (mode === 'app' && raw.app_run_id !== NODE_IDENTITY_APP_RUN_ID) return lockedNodeIdentitySession()
+  const expiresAt = typeof raw.expires_at === 'string'
+    ? raw.expires_at
+    : typeof raw.expiresAt === 'string' ? raw.expiresAt : null
+  const expiresAtMs = expiresAt ? Date.parse(expiresAt) : NaN
+  if (mode !== 'app' && (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now())) return lockedNodeIdentitySession()
+  const profile = raw.profile && typeof raw.profile === 'object' && !Array.isArray(raw.profile)
+    ? sanitizePublicEPM(raw.profile)
+    : null
+  if (!profile) return lockedNodeIdentitySession()
+  return {
+    unlocked: true,
+    mode,
+    expires_at: mode === 'app' ? null : new Date(expiresAtMs).toISOString(),
+    profile,
+    updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : new Date(0).toISOString()
+  }
+}
+
+async function writeNodeIdentitySession (profile, settings = null) {
+  const activeSettings = settings || await readNodeIdentitySettingsOnly()
+  const ttl = activeSettings.ttl_ms === 'app'
+    ? 'app'
+    : Math.max(60 * 1000, Number.parseInt(String(activeSettings.ttl_ms || DEFAULT_NODE_IDENTITY_TTL_MS), 10) || DEFAULT_NODE_IDENTITY_TTL_MS)
+  const session = {
+    unlocked: true,
+    mode: ttl === 'app' ? 'app' : 'ttl',
+    ...(ttl === 'app' ? { app_run_id: NODE_IDENTITY_APP_RUN_ID } : {}),
+    expires_at: ttl === 'app' ? null : new Date(Date.now() + ttl).toISOString(),
+    profile: sanitizePublicEPM(profile),
+    updated_at: new Date().toISOString()
+  }
+  await fs.promises.mkdir(path.dirname(nodeIdentitySessionPath()), { recursive: true })
+  await fs.promises.writeFile(nodeIdentitySessionPath(), JSON.stringify(session, null, 2))
+  return normalizeNodeIdentitySession(session)
+}
+
+async function clearNodeIdentitySession () {
+  await fs.promises.rm(nodeIdentitySessionPath(), { force: true })
+  return lockedNodeIdentitySession()
+}
+
+async function defaultDesktopNodeProfile () {
+  try {
+    const identity = await requestKuboJSON('/api/v0/id')
+    return {
+      dn: 'Space Data Network Desktop',
+      entity_type: 'Node',
+      peer_id: identity.ID || '',
+      agent_version: identity.AgentVersion || '',
+      multiformat_address: Array.isArray(identity.Addresses) ? identity.Addresses : []
+    }
+  } catch {
+    return {
+      dn: 'Space Data Network Desktop',
+      entity_type: 'Node',
+      peer_id: '',
+      multiformat_address: []
+    }
+  }
+}
+
+async function readDesktopNodeProfile () {
+  try {
+    return JSON.parse(await fs.promises.readFile(localProfilePath(), 'utf8'))
+  } catch {
+    return defaultDesktopNodeProfile()
+  }
+}
+
+async function buildDesktopNodeEPM (profile) {
+  const flatbuffers = require('flatbuffers')
+  const builder = new flatbuffers.Builder(2048)
+
+  const dnOff = createStringOffset(builder, readEpmString(profile, ['dn', 'display_name', 'displayName', 'name']))
+  const legalNameOff = createStringOffset(builder, readEpmString(profile, ['legal_name', 'legalName']))
+  const familyNameOff = createStringOffset(builder, readEpmString(profile, ['family_name', 'familyName']))
+  const givenNameOff = createStringOffset(builder, readEpmString(profile, ['given_name', 'givenName']))
+  const emailOff = createStringOffset(builder, readEpmString(profile, ['email']))
+  const telephoneOff = createStringOffset(builder, readEpmString(profile, ['telephone', 'phone']))
+  const keys = desktopEpmPublicKeys(profile)
+  const keysOff = createOffsetVector(builder, keys.map(key => createDesktopEpmCryptoKey(builder, key)))
+  const addresses = desktopEpmAddresses(profile)
+  const addressesOff = createOffsetVector(builder, addresses.map(address => builder.createString(address)))
+  const signatureOff = createStringOffset(builder, readEpmString(profile, ['signature', 'epm_signature']))
+  const signatureTimestamp = readEpmInteger(profile, ['signature_timestamp', 'signatureTimestamp', 'epm_signature_timestamp'])
+
+  builder.startObject(19)
+  builder.addFieldInt8(18, 1, 0) // EPM.EntityType.Node
+  if (dnOff) builder.addFieldOffset(0, dnOff, 0)
+  if (legalNameOff) builder.addFieldOffset(1, legalNameOff, 0)
+  if (familyNameOff) builder.addFieldOffset(2, familyNameOff, 0)
+  if (givenNameOff) builder.addFieldOffset(3, givenNameOff, 0)
+  if (emailOff) builder.addFieldOffset(11, emailOff, 0)
+  if (telephoneOff) builder.addFieldOffset(12, telephoneOff, 0)
+  if (keysOff) builder.addFieldOffset(13, keysOff, 0)
+  if (addressesOff) builder.addFieldOffset(14, addressesOff, 0)
+  if (signatureOff) builder.addFieldOffset(15, signatureOff, 0)
+  if (signatureTimestamp > 0) builder.addFieldInt64(16, BigInt(signatureTimestamp), 0n)
+  const epm = builder.endObject()
+  builder.finish(epm, '$EPM', true)
+  return Buffer.from(builder.asUint8Array())
+}
+
+function createStringOffset (builder, value) {
+  const trimmed = String(value || '').trim()
+  return trimmed ? builder.createString(trimmed) : 0
+}
+
+function createOffsetVector (builder, offsets) {
+  if (offsets.length === 0) return 0
+  builder.startVector(4, offsets.length, 4)
+  for (let index = offsets.length - 1; index >= 0; index--) {
+    builder.addOffset(offsets[index])
+  }
+  return builder.endVector()
+}
+
+function createDesktopEpmCryptoKey (builder, key) {
+  const publicKeyOff = createStringOffset(builder, key.publicKey)
+  const xpubOff = createStringOffset(builder, key.xpub)
+  const addressOff = createStringOffset(builder, key.keyAddress)
+  const addressTypeOff = createStringOffset(builder, key.addressType)
+
+  builder.startObject(7)
+  if (publicKeyOff) builder.addFieldOffset(0, publicKeyOff, 0)
+  if (xpubOff) builder.addFieldOffset(1, xpubOff, 0)
+  if (addressOff) builder.addFieldOffset(4, addressOff, 0)
+  if (addressTypeOff) builder.addFieldOffset(5, addressTypeOff, 0)
+  builder.addFieldInt8(6, key.keyType === 'encryption' ? 1 : 0, 0)
+  return builder.endObject()
+}
+
+function desktopEpmPublicKeys (profile) {
+  const records = []
+  const keys = Array.isArray(profile && profile.keys) ? profile.keys : []
+
+  for (const key of keys) {
+    if (!key || typeof key !== 'object') continue
+    const keyType = readEpmString(key, ['key_type', 'keyType', 'KEY_TYPE']).toLowerCase()
+    const publicKey = readEpmString(key, ['public_key', 'publicKey', 'PUBLIC_KEY'])
+    if (!publicKey) continue
+    records.push({
+      keyType: keyType.includes('encrypt') ? 'encryption' : 'signing',
+      publicKey,
+      xpub: readEpmString(key, ['xpub', 'XPUB']),
+      keyAddress: readEpmString(key, ['key_address', 'keyAddress', 'KEY_ADDRESS']),
+      addressType: readEpmString(key, ['address_type', 'addressType', 'ADDRESS_TYPE'])
+    })
+  }
+
+  const signingPublicKey = readEpmString(profile, ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex'])
+  const encryptionPublicKey = readEpmString(profile, ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex'])
+  const identityPublicKey = readEpmString(profile, ['identity_public_key', 'identityPublicKey', 'public_key', 'publicKey'])
+  const xpub = readEpmString(profile, ['xpub', 'XPUB'])
+  if (signingPublicKey && !records.some(key => key.keyType === 'signing' && key.publicKey === signingPublicKey)) {
+    records.unshift({ keyType: 'signing', publicKey: signingPublicKey, xpub, keyAddress: identityPublicKey, addressType: identityPublicKey ? 'secp256k1-identity-public-key' : '' })
+  }
+  if (encryptionPublicKey && !records.some(key => key.keyType === 'encryption' && key.publicKey === encryptionPublicKey)) {
+    records.push({ keyType: 'encryption', publicKey: encryptionPublicKey, xpub: '', keyAddress: '', addressType: 'x25519' })
+  }
+
+  return records.slice(0, 16)
+}
+
+function readEpmInteger (epm, names) {
+  const value = readEpmString(epm, names)
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+function desktopEpmAddresses (profile) {
+  const raw = profile && (profile.multiformat_address || profile.multiaddrs || profile.addresses)
+  const addresses = Array.isArray(raw) ? raw.filter(value => typeof value === 'string' && value.trim()).map(value => value.trim()) : []
+  const peerID = readEpmString(profile, ['peer_id', 'peerId', 'PeerID', 'ID'])
+  if (peerID && !addresses.some(address => address.includes(`/p2p/${peerID}`) || address.includes(`/ipns/${peerID}`))) {
+    addresses.unshift(`/ipns/${peerID}`)
+  }
+  return addresses
+}
+
+async function readRequestBody (req) {
+  return await new Promise((resolve, reject) => {
+    let body = ''
+    req.setEncoding('utf8')
+    req.on('data', chunk => { body += chunk })
+    req.on('end', () => resolve(body))
+    req.on('error', reject)
+  })
+}
+
+async function readRequestBuffer (req) {
+  return await new Promise((resolve, reject) => {
+    const chunks = []
+    req.on('data', chunk => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('error', reject)
+  })
+}
+
+function hostedEpmStorePath () {
+  return path.join(app.getPath('userData'), HOSTED_EPM_STORE_FILE)
+}
+
+function identityStorePassword () {
+  if (process.env.SDN_KEY_PASSWORD) return process.env.SDN_KEY_PASSWORD
+  if (process.env.SDN_DESKTOP_KEY_PASSWORD) return process.env.SDN_DESKTOP_KEY_PASSWORD
+
+  return [
+    'sdn-desktop-hosted-epms',
+    os.hostname(),
+    os.platform(),
+    os.arch(),
+    os.homedir(),
+    app.getPath('userData')
+  ].join('|')
+}
+
+function hostedEpmStoreKey () {
+  return crypto.scryptSync(identityStorePassword(), HOSTED_EPM_STORE_SALT, 32)
+}
+
+function emptyHostedEpmStore () {
+  return {
+    version: HOSTED_EPM_STORE_VERSION,
+    records: {}
+  }
+}
+
+async function readHostedEpmStore () {
+  let raw
+  try {
+    raw = await fs.promises.readFile(hostedEpmStorePath(), 'utf8')
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      logger.warn(`[static-server] failed to read hosted EPM store: ${err.message || err}`)
+    }
+    return emptyHostedEpmStore()
+  }
+
+  try {
+    const envelope = JSON.parse(raw)
+    const decipher = crypto.createDecipheriv(
+      'aes-256-gcm',
+      hostedEpmStoreKey(),
+      Buffer.from(envelope.iv || '', 'base64')
+    )
+    decipher.setAuthTag(Buffer.from(envelope.tag || '', 'base64'))
+    const plaintext = Buffer.concat([
+      decipher.update(Buffer.from(envelope.ciphertext || '', 'base64')),
+      decipher.final()
+    ]).toString('utf8')
+    const store = JSON.parse(plaintext)
+    return {
+      version: HOSTED_EPM_STORE_VERSION,
+      records: store.records && typeof store.records === 'object' ? store.records : {}
+    }
+  } catch (err) {
+    logger.warn(`[static-server] failed to decrypt hosted EPM store: ${err.message || err}`)
+    return emptyHostedEpmStore()
+  }
+}
+
+async function writeHostedEpmStore (store) {
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv('aes-256-gcm', hostedEpmStoreKey(), iv)
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify({
+      version: HOSTED_EPM_STORE_VERSION,
+      records: store.records || {}
+    }), 'utf8'),
+    cipher.final()
+  ])
+
+  const envelope = {
+    version: HOSTED_EPM_STORE_VERSION,
+    algorithm: 'aes-256-gcm',
+    kdf: 'scrypt-system-derived',
+    iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
+    ciphertext: ciphertext.toString('base64')
+  }
+
+  await fs.promises.mkdir(path.dirname(hostedEpmStorePath()), { recursive: true })
+  await fs.promises.writeFile(hostedEpmStorePath(), JSON.stringify(envelope, null, 2))
+}
+
+function normalizeEpmFieldName (name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function isSecretEpmField (name) {
+  return SECRET_EPM_FIELD_PATTERN.test(String(name || '')) ||
+    SECRET_EPM_FIELD_PATTERN.test(normalizeEpmFieldName(name))
+}
+
+function sanitizePublicEPM (value) {
+  if (Array.isArray(value)) {
+    return value.map(item => sanitizePublicEPM(item))
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !isSecretEpmField(key))
+      .map(([key, item]) => [key, sanitizePublicEPM(item)])
+  )
+}
+
+function readEpmString (epm, names) {
+  if (!epm || typeof epm !== 'object') return ''
+
+  const normalizedNames = new Set(names.map(normalizeEpmFieldName))
+  for (const [key, value] of Object.entries(epm)) {
+    if (!normalizedNames.has(normalizeEpmFieldName(key))) continue
+    if (typeof value === 'string') return value.trim()
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  }
+
+  return ''
+}
+
+function publicIdentityRecord (id, kind, epmJson, updatedAt = new Date().toISOString()) {
+  const publicEpm = sanitizePublicEPM(epmJson || {})
+  const label = readEpmString(publicEpm, ['dn', 'display_name', 'displayName', 'name']) || id
+  const peerId = readEpmString(publicEpm, ['peer_id', 'peerId', 'ipfs_peer_id', 'ipfsPeerId'])
+  const epmCid = readEpmString(publicEpm, ['epm_cid', 'epmCid', 'cid'])
+
+  return {
+    id,
+    kind,
+    label,
+    peerId,
+    epmCid,
+    epmJson: publicEpm,
+    epm_json: publicEpm,
+    updatedAt,
+    updated_at: updatedAt
+  }
+}
+
+async function nodeSelfIdentityRecord () {
+  return publicIdentityRecord('self', 'node-self', await readDesktopNodeProfile())
+}
+
+function hostedIdentityRecord (id, payload, existing = {}) {
+  const epmJson = payload.epm_json || payload.epmJson || payload
+  return publicIdentityRecord(id, 'hosted', epmJson, existing.updatedAt || existing.updated_at || new Date().toISOString())
+}
+
+function escapeVCardValue (value) {
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\r?\n/g, '\\n')
+    .replace(/,/g, '\\,')
+    .replace(/;/g, '\\;')
+}
+
+function identityRecordToVCard (record) {
+  const publicKey = readEpmString(record.epmJson, [
+    'public_key',
+    'publicKey',
+    'signing_public_key',
+    'signingPublicKey',
+    'encryption_public_key',
+    'encryptionPublicKey'
+  ])
+  const signingPublicKey = readEpmString(record.epmJson, [
+    'signing_public_key',
+    'signingPublicKey',
+    'signing_pubkey_hex'
+  ])
+  const encryptionPublicKey = readEpmString(record.epmJson, [
+    'encryption_public_key',
+    'encryptionPublicKey',
+    'encryption_pubkey_hex'
+  ])
+  const lines = [
+    'BEGIN:VCARD',
+    'VERSION:4.0',
+    `FN:${escapeVCardValue(record.label)}`
+  ]
+
+  if (record.peerId) lines.push(`X-SDN-PEER-ID:${escapeVCardValue(record.peerId)}`)
+  if (record.epmCid) lines.push(`X-SDN-EPM-CID:${escapeVCardValue(record.epmCid)}`)
+  const publicKeyEmail = publicKeyEmailAddress(publicKey)
+  if (publicKeyEmail) lines.push(`EMAIL;TYPE=INTERNET:${escapeVCardValue(publicKeyEmail)}`)
+  if (publicKey) lines.push(`X-SDN-PUBLIC-KEY:${escapeVCardValue(publicKey)}`)
+  if (signingPublicKey) lines.push(`X-SDN-SIGNING-PUBLIC-KEY:${escapeVCardValue(signingPublicKey)}`)
+  if (encryptionPublicKey) lines.push(`X-SDN-ENCRYPTION-PUBLIC-KEY:${escapeVCardValue(encryptionPublicKey)}`)
+  lines.push('END:VCARD')
+
+  return `${lines.join('\r\n')}\r\n`
+}
+
+function publicKeyEmailAddress (publicKey) {
+  const localPart = String(publicKey || '').trim().replace(/\s+/g, '').replace(/[^A-Za-z0-9._%+-]/g, '')
+  return localPart ? `${localPart}@spacedatanetwork.org` : ''
+}
+
+async function readIdentityRecord (id) {
+  if (id === 'self') {
+    return nodeSelfIdentityRecord()
+  }
+
+  const store = await readHostedEpmStore()
+  const stored = store.records[id]
+  if (!stored) return null
+  return publicIdentityRecord(id, 'hosted', stored.epmJson || stored.epm_json || stored, stored.updatedAt || stored.updated_at)
+}
+
+async function listIdentityRecords () {
+  const store = await readHostedEpmStore()
+  const hosted = Object.entries(store.records)
+    .map(([id, record]) => publicIdentityRecord(id, 'hosted', record.epmJson || record.epm_json || record, record.updatedAt || record.updated_at))
+  return [
+    await nodeSelfIdentityRecord(),
+    ...hosted
+  ]
+}
+
+function directoryKindForIdentity (record) {
+  const entityType = readEpmString(record.epmJson, ['entity_type', 'entityType', 'type']).toLowerCase()
+  if (record.kind === 'node-self' || entityType.includes('node')) return 'node'
+  return 'user'
+}
+
+function identityRecordToDirectoryEntry (record) {
+  const publicKey = readEpmString(record.epmJson, [
+    'public_key',
+    'publicKey',
+    'signing_public_key',
+    'signingPublicKey',
+    'encryption_public_key',
+    'encryptionPublicKey'
+  ])
+
+  return {
+    id: record.id,
+    dn: record.label,
+    entity_type: directoryKindForIdentity(record) === 'node' ? 'Node' : readEpmString(record.epmJson, ['entity_type', 'entityType']) || 'Person',
+    peer_id: record.peerId,
+    epm_cid: record.epmCid,
+    public_key: publicKey,
+    epm_json: record.epmJson,
+    updated_at: record.updated_at
+  }
+}
+
+function matchesDirectoryQuery (entry, query) {
+  if (!query) return true
+  return JSON.stringify(entry).toLowerCase().includes(query.toLowerCase())
+}
+
+async function serveDesktopDirectoryAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  if (req.method !== 'GET' || (parsed.pathname !== '/api/directory/nodes' && parsed.pathname !== '/api/directory/users')) {
+    return false
+  }
+
+  const requestedKind = parsed.pathname.endsWith('/nodes') ? 'node' : 'user'
+  const query = parsed.searchParams.get('q') || ''
+  const limit = Math.max(1, Math.min(Number.parseInt(parsed.searchParams.get('limit') || '50', 10) || 50, 200))
+  const records = (await listIdentityRecords())
+    .filter(record => directoryKindForIdentity(record) === requestedKind)
+    .map(identityRecordToDirectoryEntry)
+    .filter(entry => matchesDirectoryQuery(entry, query))
+    .slice(0, limit)
+
+  sendJSON(res, 200, requestedKind === 'node' ? { nodes: records } : { users: records })
+  return true
+}
+
+async function serveDesktopIdentityAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  const segments = parsed.pathname.split('/').filter(Boolean)
+
+  if (segments[0] !== 'api' || segments[1] !== 'identity' || segments[2] !== 'epms') {
+    return false
+  }
+
+  if (req.method === 'GET' && segments.length === 3) {
+    sendJSON(res, 200, {
+      epms: await listIdentityRecords()
+    })
+    return true
+  }
+
+  const identityId = segments[3] ? decodeURIComponent(segments[3]) : ''
+  const suffix = segments[4] || ''
+  if (!identityId) {
+    sendJSON(res, 404, { error: 'identity not found' })
+    return true
+  }
+
+  if (req.method === 'GET' && segments.length >= 4) {
+    const record = await readIdentityRecord(identityId)
+    if (!record) {
+      sendJSON(res, 404, { error: 'identity not found' })
+      return true
+    }
+
+    if (suffix === 'vcard' || suffix === 'vcf') {
+      sendText(res, 200, 'text/vcard; charset=utf-8', identityRecordToVCard(record))
+      return true
+    }
+
+    if (suffix === 'epm') {
+      sendJSON(res, 200, record.epmJson)
+      return true
+    }
+
+    sendJSON(res, 200, record)
+    return true
+  }
+
+  if (req.method === 'PUT' && segments.length === 4) {
+    let payload
+    try {
+      payload = JSON.parse(await readRequestBody(req) || '{}')
+    } catch {
+      sendJSON(res, 400, { error: 'invalid JSON identity' })
+      return true
+    }
+
+    if (identityId === 'self') {
+      const epmJson = sanitizePublicEPM(payload.epm_json || payload.epmJson || payload)
+      const next = { ...(await readDesktopNodeProfile()), ...epmJson }
+      await fs.promises.mkdir(path.dirname(localProfilePath()), { recursive: true })
+      await fs.promises.writeFile(localProfilePath(), JSON.stringify(next, null, 2))
+      sendJSON(res, 200, publicIdentityRecord('self', 'node-self', next))
+      return true
+    }
+
+    const store = await readHostedEpmStore()
+    const record = hostedIdentityRecord(identityId, payload, store.records[identityId])
+    store.records[identityId] = record
+    await writeHostedEpmStore(store)
+    sendJSON(res, 200, record)
+    return true
+  }
+
+  if (req.method === 'DELETE' && segments.length === 4 && identityId !== 'self') {
+    const store = await readHostedEpmStore()
+    delete store.records[identityId]
+    await writeHostedEpmStore(store)
+    sendJSON(res, 200, { ok: true })
+    return true
+  }
+
+  sendJSON(res, 405, { error: 'method not allowed' })
+  return true
+}
+
+async function serveDesktopNodeIdentityAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+
+  if (parsed.pathname === '/api/node/identity/settings/flatbuffer-storage-location') {
+    if (req.method !== 'POST') {
+      sendJSON(res, 405, { error: 'method not allowed' })
+      return true
+    }
+    if (!dialog || typeof dialog.showOpenDialog !== 'function') {
+      sendJSON(res, 501, { error: 'directory picker unavailable' })
+      return true
+    }
+    let payload
+    try {
+      payload = JSON.parse(await readRequestBody(req) || '{}')
+    } catch {
+      sendJSON(res, 400, { error: 'invalid JSON settings' })
+      return true
+    }
+    const currentPath = normalizeFlatbufferStoragePath(payload && (payload.current_path ?? payload.currentPath))
+    const result = await dialog.showOpenDialog({
+      title: 'Select FlatBuffer storage location',
+      defaultPath: currentPath,
+      properties: ['openDirectory', 'createDirectory']
+    })
+    sendJSON(res, 200, {
+      canceled: Boolean(result.canceled) || !result.filePaths || !result.filePaths[0],
+      path: result.filePaths && result.filePaths[0] ? result.filePaths[0] : null
+    })
+    return true
+  }
+
+  if (parsed.pathname === '/api/node/identity/settings') {
+    if (req.method === 'GET') {
+      sendJSON(res, 200, await readNodeIdentitySettings())
+      return true
+    }
+    if (req.method === 'PUT') {
+      let payload
+      try {
+        payload = JSON.parse(await readRequestBody(req) || '{}')
+      } catch {
+        sendJSON(res, 400, { error: 'invalid JSON settings' })
+        return true
+      }
+      sendJSON(res, 200, await writeNodeIdentitySettings(payload))
+      return true
+    }
+    sendJSON(res, 405, { error: 'method not allowed' })
+    return true
+  }
+
+  if (parsed.pathname === '/api/node/identity/session') {
+    if (req.method === 'GET') {
+      sendJSON(res, 200, await readNodeIdentitySession())
+      return true
+    }
+    if (req.method === 'DELETE') {
+      sendJSON(res, 200, await clearNodeIdentitySession())
+      return true
+    }
+    sendJSON(res, 405, { error: 'method not allowed' })
+    return true
+  }
+
+  if (parsed.pathname === '/api/node/identity/wallet-storage') {
+    if (req.method === 'GET') {
+      sendJSON(res, 200, await readNodeWalletStorage())
+      return true
+    }
+    if (req.method === 'PUT') {
+      let payload
+      try {
+        payload = JSON.parse(await readRequestBody(req) || '{}')
+      } catch {
+        sendJSON(res, 400, { error: 'invalid JSON wallet storage' })
+        return true
+      }
+      sendJSON(res, 200, await patchNodeWalletStorage(payload.entries || payload))
+      return true
+    }
+    if (req.method === 'DELETE') {
+      sendJSON(res, 200, await clearNodeWalletStorage())
+      return true
+    }
+    sendJSON(res, 405, { error: 'method not allowed' })
+    return true
+  }
+
+  if (parsed.pathname !== '/api/node/identity/wallet') {
+    return false
+  }
+
+  if (req.method !== 'PUT') {
+    sendJSON(res, 405, { error: 'method not allowed' })
+    return true
+  }
+
+  let payload
+  try {
+    payload = JSON.parse(await readRequestBody(req) || '{}')
+  } catch {
+    sendJSON(res, 400, { error: 'invalid JSON wallet identity' })
+    return true
+  }
+
+  const proposed = normalizeWalletNodeIdentity(payload.wallet_identity || payload.walletIdentity || payload)
+  if (!proposed.peer_id || !proposed.signing_public_key) {
+    sendJSON(res, 400, { error: 'wallet identity requires peer_id and signing_public_key' })
+    return true
+  }
+
+  const current = await readDesktopNodeProfile()
+  const currentKeys = nodeIdentityKeySummary(current)
+  const proposedKeys = nodeIdentityKeySummary(proposed)
+  const hasCurrentKeys = Boolean(currentKeys.signing_public_key || currentKeys.encryption_public_key || currentKeys.identity_public_key)
+  const matching = !hasCurrentKeys || (
+    (!currentKeys.peer_id || currentKeys.peer_id === proposedKeys.peer_id) &&
+    (!currentKeys.identity_public_key || currentKeys.identity_public_key === proposedKeys.identity_public_key) &&
+    (!currentKeys.signing_public_key || currentKeys.signing_public_key === proposedKeys.signing_public_key) &&
+    (!currentKeys.encryption_public_key || currentKeys.encryption_public_key === proposedKeys.encryption_public_key)
+  )
+
+  if (!matching && payload.replace !== true) {
+    sendJSON(res, 409, {
+      status: 'mismatch',
+      current: currentKeys,
+      proposed: proposedKeys
+    })
+    return true
+  }
+
+  const next = {
+    ...current,
+    ...proposed,
+    entity_type: 'Node',
+    updated_at: new Date().toISOString()
+  }
+  await fs.promises.mkdir(path.dirname(localProfilePath()), { recursive: true })
+  await fs.promises.writeFile(localProfilePath(), JSON.stringify(next, null, 2))
+  const publicProfile = publicIdentityRecord('self', 'node-self', next).epmJson
+  const session = await writeNodeIdentitySession(publicProfile)
+  sendJSON(res, 200, {
+    status: matching && hasCurrentKeys ? 'unchanged' : 'updated',
+    profile: publicProfile,
+    session
+  })
+  return true
+}
+
+function normalizeWalletNodeIdentity (value) {
+  const source = value && typeof value === 'object' ? sanitizePublicEPM(value) : {}
+  const peerID = readEpmString(source, ['peer_id', 'peerId'])
+  const xpub = readEpmString(source, ['xpub', 'XPUB'])
+  const identityPublicKey = readEpmString(source, ['identity_public_key', 'identityPublicKey', 'public_key', 'publicKey'])
+  const signingPublicKey = readEpmString(source, ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex'])
+  const encryptionPublicKey = readEpmString(source, ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex'])
+  const signatureTimestamp = readEpmInteger(source, ['signature_timestamp', 'signatureTimestamp'])
+  const keys = []
+  if (signingPublicKey) {
+    keys.push({
+      key_type: 'signing',
+      public_key: signingPublicKey,
+      xpub,
+      key_address: identityPublicKey,
+      address_type: identityPublicKey ? 'secp256k1-identity-public-key' : ''
+    })
+  }
+  if (encryptionPublicKey) {
+    keys.push({
+      key_type: 'encryption',
+      public_key: encryptionPublicKey,
+      address_type: 'x25519'
+    })
+  }
+
+  return {
+    peer_id: peerID,
+    xpub,
+    wallet_account_id: readEpmString(source, ['wallet_account_id', 'walletAccountId']),
+    wallet_account_label: readEpmString(source, ['wallet_account_label', 'walletAccountLabel']),
+    identity_public_key: identityPublicKey,
+    public_key: identityPublicKey || signingPublicKey,
+    signing_public_key: signingPublicKey,
+    encryption_public_key: encryptionPublicKey,
+    signature: readEpmString(source, ['signature', 'epm_signature']),
+    signature_payload: readEpmString(source, ['signature_payload', 'signaturePayload']),
+    signature_timestamp: signatureTimestamp || Math.floor(Date.now() / 1000),
+    keys
+  }
+}
+
+function nodeIdentityKeySummary (profile) {
+  const signingKey = epmPublicKeyRecord(profile, 'signing')
+  const encryptionKey = epmPublicKeyRecord(profile, 'encryption')
+  return {
+    peer_id: readEpmString(profile, ['peer_id', 'peerId']),
+    identity_public_key: readEpmString(profile, ['identity_public_key', 'identityPublicKey', 'public_key', 'publicKey']) ||
+      readEpmString(signingKey, ['key_address', 'keyAddress', 'KEY_ADDRESS']),
+    signing_public_key: readEpmString(profile, ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex']) ||
+      readEpmString(signingKey, ['public_key', 'publicKey', 'PUBLIC_KEY']),
+    encryption_public_key: readEpmString(profile, ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex']) ||
+      readEpmString(encryptionKey, ['public_key', 'publicKey', 'PUBLIC_KEY']),
+    wallet_account_id: readEpmString(profile, ['wallet_account_id', 'walletAccountId']),
+    wallet_account_label: readEpmString(profile, ['wallet_account_label', 'walletAccountLabel'])
+  }
+}
+
+function epmPublicKeyRecord (profile, keyType) {
+  const keys = Array.isArray(profile && profile.keys)
+    ? profile.keys
+    : Array.isArray(profile && profile.KEYS)
+      ? profile.KEYS
+      : []
+  return keys.find(key => epmPublicKeyType(key) === keyType) || {}
+}
+
+function epmPublicKeyType (key) {
+  const raw = readEpmString(key, ['key_type', 'keyType', 'KEY_TYPE'])
+  const numeric = Number.parseInt(raw, 10)
+  if (Number.isFinite(numeric)) return numeric === 1 ? 'encryption' : 'signing'
+  const normalized = raw.toLowerCase()
+  if (normalized.includes('encrypt') || normalized.includes('x25519')) return 'encryption'
+  if (normalized.includes('sign') || normalized.includes('ed25519')) return 'signing'
+  return ''
+}
+
+async function serveDesktopNodeEPMAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  if (parsed.pathname !== '/api/node/epm/json' && parsed.pathname !== '/api/node/epm') {
+    return false
+  }
+
+  if (req.method === 'GET' && parsed.pathname === '/api/node/epm/json') {
+    sendJSON(res, 200, await readDesktopNodeProfile())
+    return true
+  }
+
+  if (req.method === 'GET' && parsed.pathname === '/api/node/epm') {
+    sendBuffer(res, 200, 'application/x-flatbuffers', await buildDesktopNodeEPM(await readDesktopNodeProfile()))
+    return true
+  }
+
+  if (req.method === 'PUT' && parsed.pathname === '/api/node/epm') {
+    let profile
+    try {
+      profile = JSON.parse(await readRequestBody(req) || '{}')
+    } catch {
+      sendJSON(res, 400, { error: 'invalid JSON profile' })
+      return true
+    }
+
+    const next = { ...(await readDesktopNodeProfile()), ...profile }
+    await fs.promises.mkdir(path.dirname(localProfilePath()), { recursive: true })
+    await fs.promises.writeFile(localProfilePath(), JSON.stringify(next, null, 2))
+    sendBuffer(res, 200, 'application/x-flatbuffers', await buildDesktopNodeEPM(next))
+    return true
+  }
+
+  sendJSON(res, 405, { error: 'method not allowed' })
+  return true
+}
+
+async function serveDesktopFlatSqlPersistenceAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+  const prefix = '/api/flatsql/persistence/'
+  if (!parsed.pathname.startsWith(prefix)) return false
+
+  let key
+  try {
+    key = decodeURIComponent(parsed.pathname.slice(prefix.length))
+  } catch {
+    sendJSON(res, 400, { error: 'invalid persistence key' })
+    return true
+  }
+
+  if (!key.trim()) {
+    sendJSON(res, 400, { error: 'persistence key is required' })
+    return true
+  }
+
+  const bodyPromise = req.method === 'PUT' ? readRequestBuffer(req) : null
+  const filePath = await flatSqlPersistenceFilePath(key)
+
+  if (req.method === 'GET') {
+    try {
+      sendBuffer(res, 200, 'application/octet-stream', await fs.promises.readFile(filePath))
+    } catch {
+      sendJSON(res, 404, { error: 'persistence blob not found' })
+    }
+    return true
+  }
+
+  if (req.method === 'PUT') {
+    await fs.promises.writeFile(filePath, await bodyPromise)
+    res.writeHead(204, staticAssetHeaders('application/octet-stream'))
+    res.end()
+    return true
+  }
+
+  if (req.method === 'DELETE') {
+    await fs.promises.rm(filePath, { force: true })
+    res.writeHead(204, staticAssetHeaders('application/octet-stream'))
+    res.end()
+    return true
+  }
+
+  sendJSON(res, 405, { error: 'method not allowed' })
+  return true
+}
+
+async function serveDesktopLocalDataAPI (req, res) {
+  const parsed = new URL(req.url || '/', `http://${HOST}`)
+
+  if (req.method === 'GET' && parsed.pathname === '/api/v1/data/health') {
+    sendJSON(res, 200, {
+      healthy: true,
+      details: {
+        runtime: 'desktop-local',
+        object_index: 'degraded',
+        message: 'local SQL index is not wired in desktop-local yet'
+      }
+    })
+    return true
+  }
+
+  if (req.method === 'GET' && parsed.pathname === '/api/v1/data/summary') {
+    const record = await desktopLocalEpmDataRecord()
+    sendJSON(res, 200, {
+      total_records: 1,
+      total_bytes: record.size_bytes,
+      schemas: [
+        {
+          schema_name: 'EPM.fbs',
+          count: 1,
+          total_bytes: record.size_bytes
+        }
+      ],
+      sources: [
+        {
+          schema_name: 'EPM.fbs',
+          provider_id: 'local-node',
+          source_name: 'local-epm',
+          batch_id: 'local',
+          count: 1,
+          total_bytes: record.size_bytes
+        }
+      ]
+    })
+    return true
+  }
+
+  if (req.method === 'GET' && parsed.pathname === '/api/v1/data/objects') {
+    sendJSON(res, 200, { objects: [] })
+    return true
+  }
+
+  if (req.method === 'GET' && parsed.pathname.startsWith('/api/v1/data/records/')) {
+    const segments = parsed.pathname.split('/').filter(Boolean)
+    const schemaName = decodeURIComponent(segments[4] || '')
+    const cid = decodeURIComponent(segments[5] || '')
+    const record = await desktopLocalEpmDataRecord()
+    if (schemaName !== 'EPM.fbs' || cid !== record.cid) {
+      sendJSON(res, 404, { error: 'record not found' })
+      return true
+    }
+
+    sendBuffer(res, 200, 'application/x-flatbuffers', record.bytes)
+    return true
+  }
+
+  if (req.method === 'POST' && parsed.pathname === '/api/v1/data/query') {
+    let payload = {}
+    try {
+      payload = JSON.parse(await readRequestBody(req) || '{}')
+    } catch {
+      sendJSON(res, 400, { error: 'invalid JSON query' })
+      return true
+    }
+
+    const record = await desktopLocalEpmDataRecord()
+    const schema = readEpmString(payload, ['schema', 'schema_name', 'schemaName'])
+    const provider = readEpmString(payload, ['provider_id', 'providerId'])
+    const source = readEpmString(payload, ['source_name', 'sourceName'])
+    const batch = readEpmString(payload, ['batch_id', 'batchId'])
+    const peer = readEpmString(payload, ['peer_id', 'peerId'])
+    const matches = (!schema || schema === record.schema_name) &&
+      (!provider || provider === record.provider_id) &&
+      (!source || source === record.source_name) &&
+      (!batch || batch === record.batch_id) &&
+      (!peer || peer === record.peer_id)
+
+    if (matches && acceptsRawFlatbufferStream(req.headers?.accept)) {
+      sendBuffer(res, 200, 'application/vnd.sdn.flatbuffers.stream', rawFlatbufferStream([record.bytes]))
+      return true
+    }
+
+    if (matches) {
+      sendJSON(res, 200, { records: [desktopLocalEpmDataJson(record, Boolean(payload.include_data))] })
+      return true
+    }
+
+    sendJSON(res, 200, {
+      records: []
+    })
+    return true
+  }
+
+  return false
+}
+
+async function desktopLocalEpmDataRecord () {
+  const profile = await readDesktopNodeProfile()
+  const bytes = await buildDesktopNodeEPM(profile)
+  const peerID = readEpmString(profile, ['peer_id', 'peerId', 'PeerID', 'ID']) || 'self'
+  return {
+    schema_name: 'EPM.fbs',
+    cid: peerID,
+    peer_id: peerID,
+    provider_id: 'local-node',
+    source_name: 'local-epm',
+    batch_id: 'local',
+    timestamp: new Date().toISOString(),
+    size_bytes: bytes.byteLength,
+    bytes
+  }
+}
+
+function desktopLocalEpmDataJson (record, includeData = false) {
+  const row = {
+    schema_name: record.schema_name,
+    cid: record.cid,
+    peer_id: record.peer_id,
+    provider_id: record.provider_id,
+    source_name: record.source_name,
+    batch_id: record.batch_id,
+    timestamp: record.timestamp,
+    size_bytes: record.size_bytes
+  }
+  if (includeData) row.data_base64 = record.bytes.toString('base64')
+  return row
+}
+
+function acceptsRawFlatbufferStream (value) {
+  return String(value || '').toLowerCase().includes('application/vnd.sdn.flatbuffers.stream')
+}
+
+function rawFlatbufferStream (records) {
+  const chunks = []
+  for (const record of records) {
+    const header = Buffer.alloc(4)
+    header.writeUInt32BE(record.byteLength, 0)
+    chunks.push(header, record)
+  }
+  return Buffer.concat(chunks)
+}
+
+function serveFile (res, filePath) {
+  fs.readFile(filePath, (err, body) => {
+    if (err) {
+      res.writeHead(404, staticAssetHeaders('text/plain; charset=utf-8'))
+      res.end('Not found')
+      return
+    }
+
+    res.writeHead(200, staticAssetHeaders(contentTypes[path.extname(filePath)] || 'application/octet-stream'))
+    res.end(body)
+  })
+}
+
+async function startDesktopStaticServer () {
+  if (serverPromise) {
+    return serverPromise
+  }
+
+  serverPromise = (async () => {
+    const port = await portfinder.getPortPromise({ port: START_PORT })
+    const server = http.createServer((req, res) => {
+      if (rejectNonLoopbackHostHeader(req, res)) {
+        return
+      }
+
+      if (serveConfiguredSdnNodes(req, res)) {
+        return
+      }
+
+      Promise.resolve()
+        .then(() => serveDesktopPeerAPI(req, res))
+        .then(handled => handled || serveDesktopDirectoryAPI(req, res))
+        .then(handled => handled || serveDesktopIdentityAPI(req, res))
+        .then(handled => handled || serveDesktopNodeIdentityAPI(req, res))
+        .then(handled => handled || serveDesktopNodeEPMAPI(req, res))
+        .then(handled => handled || serveDesktopFlatSqlPersistenceAPI(req, res))
+        .then(handled => handled || serveDesktopLocalDataAPI(req, res))
+        .then(handled => {
+          if (handled) return
+
+          if (redirectBareAppRoute(req, res)) {
+            return
+          }
+
+          const filePath = routeForUrl(req.url || '/')
+
+          if (!filePath) {
+            res.writeHead(404, staticAssetHeaders('text/plain; charset=utf-8'))
+            res.end('Not found')
+            return
+          }
+
+          serveFile(res, filePath)
+        })
+        .catch(err => {
+          logger.error(`[static-server] failed to serve request: ${err.message || err}`)
+          res.writeHead(500, staticAssetHeaders('text/plain; charset=utf-8'))
+          res.end('Internal server error')
+        })
+    })
+
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(port, HOST, resolve)
+    })
+
+    const origin = `http://${HOST}:${port}`
+    logger.info(`[desktop static] serving SDN and WebUI assets at ${origin}`)
+
+    app.once('before-quit', () => {
+      server.close()
+    })
+
+    return { origin, server }
+  })()
+
+  return serverPromise
+}
+
+async function getDesktopStaticOrigin () {
+  const { origin } = await startDesktopStaticServer()
+  return origin
+}
+
+async function getDesktopStaticUrl (routeName, hash = '/') {
+  const origin = await getDesktopStaticOrigin()
+  const url = new URL(`/${routeName}/`, origin)
+  url.hash = hash
+  return url
+}
+
+module.exports = {
+  connectDesktopSdnSeedPeers,
+  configuredSdnNodesFromSshConfig,
+  DESKTOP_SDN_SEED_PEERS,
+  displayNameForSdnSSHHost,
+  getDesktopStaticOrigin,
+  getDesktopStaticUrl,
+  isAllowedLoopbackHostHeader,
+  isSdnSSHHostAlias,
+  kuboSwarmPeersToDesktopSdnPeers,
+  serveDesktopDirectoryAPI,
+  serveDesktopIdentityAPI,
+  serveDesktopLocalDataAPI,
+  serveDesktopNodeIdentityAPI,
+  serveDesktopNodeEPMAPI,
+  serveDesktopFlatSqlPersistenceAPI,
+  staticAssetHeaders,
+  startDesktopStaticServer
+}

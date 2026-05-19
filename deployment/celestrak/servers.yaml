@@ -1,0 +1,13 @@
+# CelesTrak provider deployment target.
+#
+# The host value is intentionally the SSH config alias, not a raw IP address.
+# Configure celestrak.eth / space-data-network-02 in ~/.ssh/config.
+
+ssh:
+  user: root
+  port: 22
+
+full_nodes:
+  - host: celestrak.eth
+    region: sfo2
+    name: space-data-network-02

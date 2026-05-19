@@ -1,15 +1,18 @@
-// Package ingest provides data source sync workers for OMM/MPE/CAT ingestion.
+// Package ingest provides data source sync workers for OMM/MPE/CAT/SPW ingestion.
 package ingest
 
 import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -19,9 +22,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	MPEFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/MPE"
+	SPWFB "github.com/DigitalArsenal/spacedatastandards.org/lib/go/SPW"
 	flatbuffers "github.com/google/flatbuffers/go"
 	logging "github.com/ipfs/go-log/v2"
 
@@ -32,12 +37,56 @@ import (
 var log = logging.Logger("ingest")
 
 const (
-	defaultCelestrakCatalogURL = "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv"
-	defaultCelestrakSatcatURL  = "https://celestrak.org/pub/satcat.txt"
-	defaultSpaceTrackLoginURL  = "https://www.space-track.org/ajaxauth/login"
-	defaultSpaceTrackQueryTmpl = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/%s--%s/format/csv"
-	minCelestrakFetchInterval  = 3 * time.Hour
+	defaultCelestrakCatalogURL      = "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv"
+	defaultCelestrakSatcatURL       = "https://celestrak.org/pub/satcat.txt"
+	defaultCelestrakSatcatCSVURL    = "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV"
+	defaultCelestrakSpaceWeatherURL = "https://celestrak.org/SpaceData/SW-All.csv"
+	defaultSpaceTrackLoginURL       = "https://www.space-track.org/ajaxauth/login"
+	defaultSpaceTrackQueryTmpl      = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/%s--%s/format/csv"
+	minCelestrakFetchInterval       = 3 * time.Hour
+	celestrakProviderID             = "space-data-network-02"
+	datasetPublicationChunkSize     = 50000
+	fullCatalogPublicationTimeout   = 2 * time.Hour
+	defaultMinFreeDiskBytes         = 5 * 1024 * 1024 * 1024
+	publicContentKeyID              = "public"
+	parserVersionCelestrakGP        = "celestrak-gp/v1"
+	parserVersionCelestrakSatcat    = "celestrak-satcat/v1"
+	parserVersionCelestrakSatcatCSV = "celestrak-satcat-csv/v1"
+	parserVersionCelestrakSPW       = "celestrak-space-weather/v1"
+	parserVersionSpaceTrackGP       = "spacetrack-gp-history/v1"
+	fetchRetryBudget                = 3
+	fetchRetryBackoff               = 10 * time.Millisecond
+	sourceTimestampStaleThreshold   = 7 * 24 * time.Hour
 )
+
+type fetchMetadata struct {
+	SourceURL    string
+	HTTPStatus   int
+	ETag         string
+	LastModified string
+	ContentType  string
+	RetrievedAt  time.Time
+	FromCache    bool
+	CachePath    string
+}
+
+type ingestBatchProvenance struct {
+	SourceURL        string            `json:"source_url"`
+	HTTPStatus       int               `json:"http_status,omitempty"`
+	ETag             string            `json:"etag,omitempty"`
+	LastModified     string            `json:"last_modified,omitempty"`
+	ContentType      string            `json:"content_type,omitempty"`
+	RetrievedAt      string            `json:"retrieved_at"`
+	ParserVersion    string            `json:"parser_version"`
+	SourceSHA256     string            `json:"source_sha256"`
+	NormalizedSHA256 string            `json:"normalized_sha256"`
+	NormalizedCount  int               `json:"normalized_count"`
+	SchemaCounts     map[string]int    `json:"schema_counts"`
+	SchemaHashes     map[string]string `json:"schema_hashes"`
+	Warnings         []string          `json:"warnings"`
+	FromCache        bool              `json:"from_cache"`
+	CachePath        string            `json:"cache_path,omitempty"`
+}
 
 // Config controls ingestion worker behavior.
 type Config struct {
@@ -45,10 +94,13 @@ type Config struct {
 	RawPath     string
 	Once        bool
 
-	CelestrakCatalogURL string
-	CelestrakSatcatURL  string
-	CelestrakInterval   time.Duration
-	SatcatInterval      time.Duration
+	CelestrakCatalogURL      string
+	CelestrakSatcatURL       string
+	CelestrakSatcatCSVURL    string
+	CelestrakSpaceWeatherURL string
+	CelestrakInterval        time.Duration
+	SatcatInterval           time.Duration
+	SpaceWeatherInterval     time.Duration
 
 	SpaceTrackEnabled      bool
 	SpaceTrackIdentity     string
@@ -60,7 +112,12 @@ type Config struct {
 	SpaceTrackBatchSleep   time.Duration
 	SpaceTrackPollInterval time.Duration
 
-	HTTPTimeout time.Duration
+	HTTPTimeout      time.Duration
+	MinFreeDiskBytes int64
+
+	// DatasetPublishURL is an optional local SDN admin endpoint that exports,
+	// pins, signs, and announces dataset updates after successful CelesTrak syncs.
+	DatasetPublishURL string
 }
 
 // Runner executes source sync and ingestion loops.
@@ -87,6 +144,12 @@ func NewRunner(cfg Config) (*Runner, error) {
 	if cfg.CelestrakSatcatURL == "" {
 		cfg.CelestrakSatcatURL = defaultCelestrakSatcatURL
 	}
+	if cfg.CelestrakSatcatCSVURL == "" {
+		cfg.CelestrakSatcatCSVURL = defaultCelestrakSatcatCSVURL
+	}
+	if cfg.CelestrakSpaceWeatherURL == "" {
+		cfg.CelestrakSpaceWeatherURL = defaultCelestrakSpaceWeatherURL
+	}
 	if cfg.SpaceTrackLoginURL == "" {
 		cfg.SpaceTrackLoginURL = defaultSpaceTrackLoginURL
 	}
@@ -105,6 +168,12 @@ func NewRunner(cfg Config) (*Runner, error) {
 	if cfg.SatcatInterval < minCelestrakFetchInterval {
 		cfg.SatcatInterval = minCelestrakFetchInterval
 	}
+	if cfg.SpaceWeatherInterval <= 0 {
+		cfg.SpaceWeatherInterval = minCelestrakFetchInterval
+	}
+	if cfg.SpaceWeatherInterval < minCelestrakFetchInterval {
+		cfg.SpaceWeatherInterval = minCelestrakFetchInterval
+	}
 	if cfg.SpaceTrackPollInterval <= 0 {
 		cfg.SpaceTrackPollInterval = 30 * time.Minute
 	}
@@ -116,6 +185,9 @@ func NewRunner(cfg Config) (*Runner, error) {
 	}
 	if cfg.HTTPTimeout <= 0 {
 		cfg.HTTPTimeout = 90 * time.Second
+	}
+	if cfg.MinFreeDiskBytes <= 0 {
+		cfg.MinFreeDiskBytes = defaultMinFreeDiskBytes
 	}
 
 	validator, err := sds.NewValidator(nil)
@@ -146,6 +218,9 @@ func NewRunner(cfg Config) (*Runner, error) {
 		httpClient: &http.Client{
 			Timeout: cfg.HTTPTimeout,
 			Jar:     jar,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		checkpoints: cp,
 	}, nil
@@ -173,9 +248,11 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	gpTicker := time.NewTicker(r.cfg.CelestrakInterval)
 	satTicker := time.NewTicker(r.cfg.SatcatInterval)
+	spwTicker := time.NewTicker(r.cfg.SpaceWeatherInterval)
 	stTicker := time.NewTicker(r.cfg.SpaceTrackPollInterval)
 	defer gpTicker.Stop()
 	defer satTicker.Stop()
+	defer spwTicker.Stop()
 	defer stTicker.Stop()
 
 	for {
@@ -190,6 +267,10 @@ func (r *Runner) Run(ctx context.Context) error {
 			if err := r.syncCelestrakSatcat(ctx); err != nil {
 				log.Warnf("CelesTrak SATCAT sync failed: %v", err)
 			}
+		case <-spwTicker.C:
+			if err := r.syncCelestrakSpaceWeather(ctx); err != nil {
+				log.Warnf("CelesTrak space weather sync failed: %v", err)
+			}
 		case <-stTicker.C:
 			if err := r.syncSpaceTrackGapFill(ctx); err != nil {
 				log.Warnf("Space-Track gap-fill failed: %v", err)
@@ -200,11 +281,35 @@ func (r *Runner) Run(ctx context.Context) error {
 
 func (r *Runner) runCycle(ctx context.Context) error {
 	var errs []string
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := r.syncCelestrakGP(ctx); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := ctx.Err(); err != nil {
+		if len(errs) > 0 {
+			return errors.New(strings.Join(errs, "; "))
+		}
+		return err
+	}
 	if err := r.syncCelestrakSatcat(ctx); err != nil {
 		errs = append(errs, err.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		if len(errs) > 0 {
+			return errors.New(strings.Join(errs, "; "))
+		}
+		return err
+	}
+	if err := r.syncCelestrakSpaceWeather(ctx); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := ctx.Err(); err != nil {
+		if len(errs) > 0 {
+			return errors.New(strings.Join(errs, "; "))
+		}
+		return err
 	}
 	if err := r.syncSpaceTrackGapFill(ctx); err != nil {
 		errs = append(errs, err.Error())
@@ -216,12 +321,15 @@ func (r *Runner) runCycle(ctx context.Context) error {
 }
 
 func (r *Runner) syncCelestrakGP(ctx context.Context) error {
-	data, fromCache, err := r.fetchWithCache(ctx, r.cfg.CelestrakCatalogURL, "celestrak-gp.csv", minCelestrakFetchInterval)
+	if err := r.requireFreeDisk("CelesTrak GP sync"); err != nil {
+		return err
+	}
+	data, metadata, err := r.fetchWithCache(ctx, r.cfg.CelestrakCatalogURL, "celestrak-gp.csv", minCelestrakFetchInterval)
 	if err != nil {
 		return fmt.Errorf("fetch celestrak catalog: %w", err)
 	}
 
-	if !fromCache {
+	if !metadata.FromCache {
 		catalogArchiveName := archiveFilenameForURL(r.cfg.CelestrakCatalogURL, "catalog.csv")
 		if err := r.archiveRaw("celestrak", catalogArchiveName, data); err != nil {
 			log.Warnf("Failed to archive CelesTrak %s: %v", catalogArchiveName, err)
@@ -230,28 +338,128 @@ func (r *Runner) syncCelestrakGP(ctx context.Context) error {
 		log.Infof("Using cached CelesTrak GP payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
 	}
 
-	countOMM, countMPE, err := r.ingestGPData(data, "source:celestrak")
+	tags := sourceTags(celestrakProviderID, "celestrak-gp", metadata.SourceURL, data)
+	if err := r.reconcileCelestrakSourceBatchDuplicates("OMM.fbs", "celestrak-gp", tags.BatchID); err != nil {
+		r.recordIngestFailureForReview("celestrak-gp-reconcile", err)
+		return fmt.Errorf("reconcile celestrak OMM source batch before ingest replay: %w", err)
+	}
+	if err := r.reconcileCelestrakSourceBatchDuplicates("MPE.fbs", "celestrak-gp", tags.BatchID); err != nil {
+		r.recordIngestFailureForReview("celestrak-gp-reconcile", err)
+		return fmt.Errorf("reconcile celestrak MPE source batch before ingest replay: %w", err)
+	}
+	countOMM, countMPE, normalizedHash, err := r.ingestGPData(data, "source:celestrak", tags)
 	if err != nil {
+		r.recordIngestFailureForReview("celestrak-gp", err)
 		return fmt.Errorf("ingest celestrak catalog: %w", err)
+	}
+	if err := r.recordIngestBatchProvenance("celestrak-gp", data, metadata, parserVersionCelestrakGP, normalizedHash, map[string]int{
+		"OMM.fbs": countOMM,
+		"MPE.fbs": countMPE,
+	}, warningsForFetch(metadata)); err != nil {
+		log.Warnf("Failed to record CelesTrak GP provenance: %v", err)
+	}
+	if err := r.reconcileCelestrakSourceBatchDuplicates("OMM.fbs", "celestrak-gp", tags.BatchID); err != nil {
+		r.recordIngestFailureForReview("celestrak-gp-reconcile", err)
+		return fmt.Errorf("reconcile celestrak OMM source batch: %w", err)
+	}
+	if err := r.reconcileCelestrakSourceBatchDuplicates("MPE.fbs", "celestrak-gp", tags.BatchID); err != nil {
+		r.recordIngestFailureForReview("celestrak-gp-reconcile", err)
+		return fmt.Errorf("reconcile celestrak MPE source batch: %w", err)
+	}
+
+	// Publish the current source batch so recurring CelesTrak updates append
+	// small immutable deltas instead of re-exporting the historical store.
+	if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
+		Schema:            "OMM.fbs",
+		ProviderID:        celestrakProviderID,
+		SourceName:        "celestrak-gp",
+		BatchID:           tags.BatchID,
+		ChunkSize:         datasetPublicationChunkSize,
+		FullCatalog:       true,
+		CombinedCelesTrak: true,
+	}); err != nil {
+		r.recordIngestFailureForReview("celestrak-gp-publication", err)
+		return fmt.Errorf("publish celestrak OMM dataset update: %w", err)
+	}
+	if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
+		Schema:            "MPE.fbs",
+		ProviderID:        celestrakProviderID,
+		SourceName:        "celestrak-gp",
+		BatchID:           tags.BatchID,
+		ChunkSize:         datasetPublicationChunkSize,
+		FullCatalog:       true,
+		CombinedCelesTrak: true,
+	}); err != nil {
+		r.recordIngestFailureForReview("celestrak-gp-publication", err)
+		return fmt.Errorf("publish celestrak MPE dataset update: %w", err)
 	}
 
 	r.checkpoints.setString("celestrak_gp_last_success", time.Now().UTC().Format(time.RFC3339))
 	if err := r.checkpoints.save(); err != nil {
 		log.Warnf("Failed to persist checkpoints: %v", err)
 	}
-
 	log.Infof("CelesTrak GP sync complete: OMM=%d MPE=%d", countOMM, countMPE)
 	return nil
 }
 
-func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
-	data, fromCache, err := r.fetchWithCache(ctx, r.cfg.CelestrakSatcatURL, "celestrak-satcat.txt", minCelestrakFetchInterval)
+func (r *Runner) reconcileCelestrakSourceBatchDuplicates(schemaName, sourceName, batchID string) error {
+	result, err := r.store.ReconcileSourceBatchIndexedDuplicates(schemaName, celestrakProviderID, sourceName, batchID, true)
 	if err != nil {
-		return fmt.Errorf("fetch celestrak satcat: %w", err)
+		return err
+	}
+	if err := r.store.RefreshSourceBatchSummary(schemaName, celestrakProviderID, sourceName, batchID); err != nil {
+		return err
+	}
+	if result.Matched > 0 || result.Deleted > 0 {
+		log.Infof("Reconciled duplicate CelesTrak source batch records: schema=%s source=%s batch=%s matched=%d deleted=%d", schemaName, sourceName, batchID, result.Matched, result.Deleted)
+	}
+	return nil
+}
+
+func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
+	if err := r.requireFreeDisk("CelesTrak SATCAT sync"); err != nil {
+		return err
+	}
+	legacyCount, legacyTags, err := r.syncCelestrakSatcatSource(ctx, r.cfg.CelestrakSatcatURL, "celestrak-satcat.txt", "satcat.txt", "celestrak-satcat", parserVersionCelestrakSatcat)
+	if err != nil {
+		return err
+	}
+	csvCount, csvTags, err := r.syncCelestrakSatcatSource(ctx, r.cfg.CelestrakSatcatCSVURL, "celestrak-satcat.csv", "satcat.csv", "celestrak-satcat-csv", parserVersionCelestrakSatcatCSV)
+	if err != nil {
+		return err
 	}
 
-	if !fromCache {
-		satcatArchiveName := archiveFilenameForURL(r.cfg.CelestrakSatcatURL, "satcat.txt")
+	for _, tags := range []storage.SourceTags{legacyTags, csvTags} {
+		if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
+			Schema:            "CAT.fbs",
+			ProviderID:        celestrakProviderID,
+			SourceName:        tags.SourceName,
+			BatchID:           tags.BatchID,
+			ChunkSize:         datasetPublicationChunkSize,
+			FullCatalog:       true,
+			CombinedCelesTrak: true,
+		}); err != nil {
+			r.recordIngestFailureForReview("celestrak-satcat-publication", err)
+			return fmt.Errorf("publish celestrak CAT dataset update: %w", err)
+		}
+	}
+
+	r.checkpoints.setString("celestrak_satcat_last_success", time.Now().UTC().Format(time.RFC3339))
+	if err := r.checkpoints.save(); err != nil {
+		log.Warnf("Failed to persist checkpoints: %v", err)
+	}
+	log.Infof("CelesTrak SATCAT sync complete: legacy_CAT=%d csv_CAT=%d", legacyCount, csvCount)
+	return nil
+}
+
+func (r *Runner) syncCelestrakSatcatSource(ctx context.Context, sourceURL, cacheName, archiveFallback, provenanceSource, parserVersion string) (int, storage.SourceTags, error) {
+	data, metadata, err := r.fetchWithCache(ctx, sourceURL, cacheName, minCelestrakFetchInterval)
+	if err != nil {
+		return 0, storage.SourceTags{}, fmt.Errorf("fetch celestrak satcat: %w", err)
+	}
+
+	if !metadata.FromCache {
+		satcatArchiveName := archiveFilenameForURL(sourceURL, archiveFallback)
 		if err := r.archiveRaw("celestrak", satcatArchiveName, data); err != nil {
 			log.Warnf("Failed to archive CelesTrak %s: %v", satcatArchiveName, err)
 		}
@@ -259,23 +467,135 @@ func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
 		log.Infof("Using cached CelesTrak SATCAT payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
 	}
 
-	countCAT, err := r.ingestSatcatData(data, "source:celestrak")
+	tags := sourceTags(celestrakProviderID, provenanceSource, metadata.SourceURL, data)
+	countCAT, normalizedHash, err := r.ingestSatcatData(data, "source:celestrak", tags)
 	if err != nil {
-		return fmt.Errorf("ingest celestrak satcat: %w", err)
+		r.recordIngestFailureForReview(provenanceSource, err)
+		return 0, storage.SourceTags{}, fmt.Errorf("ingest celestrak satcat: %w", err)
+	}
+	if err := r.recordIngestBatchProvenance(provenanceSource, data, metadata, parserVersion, normalizedHash, map[string]int{
+		"CAT.fbs": countCAT,
+	}, warningsForFetch(metadata)); err != nil {
+		log.Warnf("Failed to record CelesTrak SATCAT provenance: %v", err)
+	}
+	return countCAT, tags, nil
+}
+
+func (r *Runner) syncCelestrakSpaceWeather(ctx context.Context) error {
+	if err := r.requireFreeDisk("CelesTrak space weather sync"); err != nil {
+		return err
+	}
+	data, metadata, err := r.fetchWithCache(ctx, r.cfg.CelestrakSpaceWeatherURL, "celestrak-space-weather.csv", minCelestrakFetchInterval)
+	if err != nil {
+		return fmt.Errorf("fetch celestrak space weather: %w", err)
 	}
 
-	r.checkpoints.setString("celestrak_satcat_last_success", time.Now().UTC().Format(time.RFC3339))
+	if !metadata.FromCache {
+		archiveName := archiveFilenameForURL(r.cfg.CelestrakSpaceWeatherURL, "SW-All.csv")
+		if err := r.archiveRaw("celestrak", archiveName, data); err != nil {
+			log.Warnf("Failed to archive CelesTrak %s: %v", archiveName, err)
+		}
+	} else {
+		log.Infof("Using cached CelesTrak space weather payload (minimum refresh interval: %s)", minCelestrakFetchInterval)
+	}
+
+	if latest, err := latestTimestampFromCSV(data, "DATE"); err != nil {
+		r.recordIngestFailureForReview("celestrak-space-weather", err)
+		return fmt.Errorf("validate celestrak space weather timestamp: %w", err)
+	} else if err := validateFreshSourceTimestamp("celestrak-space-weather", latest, sourceReferenceTime(metadata)); err != nil {
+		r.recordIngestFailureForReview("celestrak-space-weather", err)
+		return fmt.Errorf("validate celestrak space weather timestamp: %w", err)
+	}
+
+	tags := sourceTags(celestrakProviderID, "celestrak-space-weather", metadata.SourceURL, data)
+	countSPW, normalizedHash, err := r.ingestSpaceWeatherData(data, "source:celestrak", tags)
+	if err != nil {
+		r.recordIngestFailureForReview("celestrak-space-weather", err)
+		return fmt.Errorf("ingest celestrak space weather: %w", err)
+	}
+	if err := r.recordIngestBatchProvenance("celestrak-space-weather", data, metadata, parserVersionCelestrakSPW, normalizedHash, map[string]int{
+		"SPW.fbs": countSPW,
+	}, warningsForFetch(metadata)); err != nil {
+		log.Warnf("Failed to record CelesTrak space weather provenance: %v", err)
+	}
+
+	if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
+		Schema:            "SPW.fbs",
+		ProviderID:        celestrakProviderID,
+		SourceName:        "celestrak-space-weather",
+		BatchID:           tags.BatchID,
+		ChunkSize:         datasetPublicationChunkSize,
+		FullCatalog:       true,
+		CombinedCelesTrak: true,
+	}); err != nil {
+		r.recordIngestFailureForReview("celestrak-space-weather-publication", err)
+		return fmt.Errorf("publish celestrak SPW dataset update: %w", err)
+	}
+
+	r.checkpoints.setString("celestrak_space_weather_last_success", time.Now().UTC().Format(time.RFC3339))
 	if err := r.checkpoints.save(); err != nil {
 		log.Warnf("Failed to persist checkpoints: %v", err)
 	}
-
-	log.Infof("CelesTrak SATCAT sync complete: CAT=%d", countCAT)
+	log.Infof("CelesTrak space weather sync complete: SPW=%d", countSPW)
 	return nil
+}
+
+type datasetPublicationRequest struct {
+	Schema            string `json:"schema"`
+	ProviderID        string `json:"providerId,omitempty"`
+	SourceName        string `json:"sourceName,omitempty"`
+	BatchID           string `json:"batchId,omitempty"`
+	DatasetID         string `json:"datasetId,omitempty"`
+	Limit             int    `json:"limit,omitempty"`
+	ChunkSize         int    `json:"chunkSize,omitempty"`
+	FullCatalog       bool   `json:"fullCatalog,omitempty"`
+	CombinedCelesTrak bool   `json:"combinedCelesTrak,omitempty"`
+}
+
+func (r *Runner) requestDatasetPublication(ctx context.Context, req datasetPublicationRequest) error {
+	publishURL := strings.TrimSpace(r.cfg.DatasetPublishURL)
+	if publishURL == "" {
+		return nil
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("encode dataset publication request for %s: %w", req.Schema, err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, publishURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create dataset publication request for %s: %w", req.Schema, err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := r.datasetPublicationHTTPClient(req).Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("request dataset publication for %s: %w", req.Schema, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("dataset publication request for %s returned %s: %s", req.Schema, resp.Status, strings.TrimSpace(string(preview)))
+	}
+	log.Infof("Dataset publication requested for %s via %s", req.Schema, publishURL)
+	return nil
+}
+
+func (r *Runner) datasetPublicationHTTPClient(req datasetPublicationRequest) *http.Client {
+	if !req.FullCatalog && req.ChunkSize <= 0 {
+		return r.httpClient
+	}
+	client := *r.httpClient
+	if client.Timeout < fullCatalogPublicationTimeout {
+		client.Timeout = fullCatalogPublicationTimeout
+	}
+	return &client
 }
 
 func (r *Runner) syncSpaceTrackGapFill(ctx context.Context) error {
 	if !r.cfg.SpaceTrackEnabled {
 		return nil
+	}
+	if err := r.requireFreeDisk("Space-Track gap-fill"); err != nil {
+		return err
 	}
 
 	if r.cfg.SpaceTrackIdentity == "" || r.cfg.SpaceTrackPassword == "" {
@@ -310,7 +630,7 @@ func (r *Runner) syncSpaceTrackGapFill(ctx context.Context) error {
 		}
 
 		queryURL := fmt.Sprintf(r.cfg.SpaceTrackQueryTmpl, batchStart.Format("2006-01-02"), batchEnd.Format("2006-01-02"))
-		data, err := r.fetchBytes(ctx, queryURL)
+		data, metadata, err := r.fetchBytesWithMetadata(ctx, queryURL)
 		if err != nil {
 			return fmt.Errorf("fetch spacetrack range %s..%s: %w", batchStart.Format("2006-01-02"), batchEnd.Format("2006-01-02"), err)
 		}
@@ -320,9 +640,16 @@ func (r *Runner) syncSpaceTrackGapFill(ctx context.Context) error {
 			log.Warnf("Failed to archive Space-Track data %s: %v", archiveName, err)
 		}
 
-		countOMM, countMPE, err := r.ingestGPData(data, "source:spacetrack")
+		tags := sourceTags("space-track", "spacetrack-gp-history", metadata.SourceURL, data)
+		countOMM, countMPE, normalizedHash, err := r.ingestGPData(data, "source:spacetrack", tags)
 		if err != nil {
 			return fmt.Errorf("ingest spacetrack range %s..%s: %w", batchStart.Format("2006-01-02"), batchEnd.Format("2006-01-02"), err)
+		}
+		if err := r.recordIngestBatchProvenance("spacetrack-gp-history", data, metadata, parserVersionSpaceTrackGP, normalizedHash, map[string]int{
+			"OMM.fbs": countOMM,
+			"MPE.fbs": countMPE,
+		}, warningsForFetch(metadata)); err != nil {
+			log.Warnf("Failed to record Space-Track GP provenance: %v", err)
 		}
 
 		r.checkpoints.setString("spacetrack_last_day", batchEnd.Format("2006-01-02"))
@@ -343,6 +670,67 @@ func (r *Runner) syncSpaceTrackGapFill(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+var diskAvailableBytes = availableDiskBytes
+
+func (r *Runner) requireFreeDisk(operation string) error {
+	minFree := r.cfg.MinFreeDiskBytes
+	if minFree <= 0 {
+		minFree = defaultMinFreeDiskBytes
+	}
+	for _, candidate := range []string{r.cfg.StoragePath, r.cfg.RawPath} {
+		path := existingDiskPath(candidate)
+		freeBytes, err := diskAvailableBytes(path)
+		if err != nil {
+			return fmt.Errorf("%s free disk check failed for %s: %w", operation, path, err)
+		}
+		if int64(freeBytes) < minFree {
+			return fmt.Errorf("%s requires at least %s free disk at %s; only %s available", operation, formatByteCount(minFree), path, formatByteCount(int64(freeBytes)))
+		}
+	}
+	return nil
+}
+
+func existingDiskPath(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || path == "" {
+		path = "."
+	}
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return path
+		}
+		path = parent
+	}
+}
+
+func availableDiskBytes(path string) (uint64, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return 0, err
+	}
+	return uint64(stat.Bavail) * uint64(stat.Bsize), nil
+}
+
+func formatByteCount(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	const unit = 1024
+	value := float64(bytes)
+	units := []string{"KB", "MB", "GB", "TB"}
+	for _, suffix := range units {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.1f %s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.1f PB", value/unit)
 }
 
 func (r *Runner) resolveSpaceTrackStartDay() (time.Time, error) {
@@ -391,12 +779,19 @@ func (r *Runner) spaceTrackLogin(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runner) ingestGPData(content []byte, sourcePeer string) (int, int, error) {
+func (r *Runner) ingestGPData(content []byte, sourcePeer string, tags ...storage.SourceTags) (int, int, string, error) {
 	var countOMM, countMPE int
+	normalized := sha256.New()
 
 	rows, err := parseCSV(content)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, "", err
+	}
+	if err := requireCSVColumn(rows, "GP", "NORAD_CAT_ID", "NORAD_CAT_NUM"); err != nil {
+		return 0, 0, "", err
+	}
+	if err := requireCSVColumn(rows, "GP", "EPOCH", "EPOCH_UTC"); err != nil {
+		return 0, 0, "", err
 	}
 
 	for _, row := range rows {
@@ -404,14 +799,23 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string) (int, int, erro
 		if !ok || norad == 0 {
 			continue
 		}
+		var parsedEpoch time.Time
+		if rawEpoch := getValue(row, "EPOCH", "EPOCH_UTC"); strings.TrimSpace(rawEpoch) != "" {
+			var err error
+			parsedEpoch, err = parseEpoch(rawEpoch)
+			if err != nil {
+				return countOMM, countMPE, "", fmt.Errorf("malformed EPOCH for NORAD_CAT_ID=%d: %w", norad, err)
+			}
+		}
 
 		builder := sds.NewOMMBuilder().
 			WithNoradCatID(norad).
 			WithObjectName(valueOr(getValue(row, "OBJECT_NAME", "SATNAME", "NAME"), fmt.Sprintf("SAT-%d", norad))).
-			WithObjectID(valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad)))
+			WithObjectID(valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad))).
+			WithCreationDate(deterministicOMMCreationDate(row, parsedEpoch))
 
-		if epoch := normalizeEpoch(getValue(row, "EPOCH", "EPOCH_UTC")); epoch != "" {
-			builder = builder.WithEpoch(epoch)
+		if !parsedEpoch.IsZero() {
+			builder = builder.WithEpoch(parsedEpoch.UTC().Format(time.RFC3339))
 		}
 		if v, ok := parseFloat(getValue(row, "MEAN_MOTION", "N")); ok {
 			builder = builder.WithMeanMotion(v)
@@ -433,16 +837,15 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string) (int, int, erro
 		}
 
 		ommBytes := builder.Build()
-		if _, err := r.store.Store("OMM.fbs", ommBytes, sourcePeer, nil); err != nil {
-			return countOMM, countMPE, err
+		if _, err := r.storeIngestRecord("OMM.fbs", ommBytes, sourcePeer, tags...); err != nil {
+			return countOMM, countMPE, "", err
 		}
+		writeNormalizedHashRecord(normalized, "OMM.fbs", ommBytes)
 		countOMM++
 
 		epochUnix := int64(0)
-		if epoch := normalizeEpoch(getValue(row, "EPOCH", "EPOCH_UTC")); epoch != "" {
-			if t, err := parseEpoch(epoch); err == nil {
-				epochUnix = t.Unix()
-			}
+		if !parsedEpoch.IsZero() {
+			epochUnix = parsedEpoch.Unix()
 		}
 		mpeBytes := buildMPE(
 			valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad)),
@@ -455,22 +858,37 @@ func (r *Runner) ingestGPData(content []byte, sourcePeer string) (int, int, erro
 			parseFloatOrZero(getValue(row, "MEAN_ANOMALY", "MA")),
 			parseFloatOrZero(getValue(row, "BSTAR", "B_STAR")),
 		)
-		if _, err := r.store.Store("MPE.fbs", mpeBytes, sourcePeer, nil); err != nil {
-			return countOMM, countMPE, err
+		if _, err := r.storeIngestRecord("MPE.fbs", mpeBytes, sourcePeer, tags...); err != nil {
+			return countOMM, countMPE, "", err
 		}
+		writeNormalizedHashRecord(normalized, "MPE.fbs", mpeBytes)
 		countMPE++
 	}
 
-	return countOMM, countMPE, nil
+	if countOMM == 0 {
+		return 0, countMPE, "", fmt.Errorf("no OMM rows parsed")
+	}
+	return countOMM, countMPE, hex.EncodeToString(normalized.Sum(nil)), nil
 }
 
-func (r *Runner) ingestSatcatData(content []byte, sourcePeer string) (int, error) {
+func deterministicOMMCreationDate(row map[string]string, parsedEpoch time.Time) string {
+	if creationDate := strings.TrimSpace(getValue(row, "CREATION_DATE")); creationDate != "" {
+		return creationDate
+	}
+	if !parsedEpoch.IsZero() {
+		return parsedEpoch.UTC().Format(time.RFC3339)
+	}
+	return ""
+}
+
+func (r *Runner) ingestSatcatData(content []byte, sourcePeer string, tags ...storage.SourceTags) (int, string, error) {
 	rows, err := parseSatcatRows(content)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 
 	count := 0
+	normalized := sha256.New()
 	for _, row := range rows {
 		norad, ok := parseUint32(getValue(row, "NORAD_CAT_ID", "NORAD_CAT_NUM", "NORAD"))
 		if !ok || norad == 0 {
@@ -480,7 +898,13 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string) (int, error
 		builder := sds.NewCATBuilder().
 			WithNoradCatID(norad).
 			WithObjectName(valueOr(getValue(row, "OBJECT_NAME", "SATNAME", "NAME"), fmt.Sprintf("SAT-%d", norad))).
-			WithObjectID(valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad)))
+			WithObjectID(valueOr(getValue(row, "OBJECT_ID", "INTLDES", "INTERNATIONAL_DESIGNATOR"), fmt.Sprintf("NORAD-%d", norad))).
+			WithObjectType(normalizeSatcatObjectType(getValue(row, "OBJECT_TYPE"))).
+			WithOpsStatus(normalizeSatcatOpsStatus(getValue(row, "OPS_STATUS_CODE", "OPS_STATUS", "STATUS"))).
+			WithManeuverable(false).
+			WithMass(0).
+			WithSize(0).
+			WithRCS(0)
 
 		if launchDate := strings.TrimSpace(getValue(row, "LAUNCH_DATE", "LAUNCH")); launchDate != "" {
 			builder = builder.WithLaunchDate(launchDate)
@@ -498,17 +922,82 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string) (int, error
 		if v, ok := parseFloat(getValue(row, "SIZE", "SIZE_M")); ok {
 			builder = builder.WithSize(v)
 		}
+		if v, ok := parseFloat(getValue(row, "RCS")); ok {
+			builder = builder.WithRCS(v)
+		}
 		if v := strings.TrimSpace(getValue(row, "MANEUVERABLE", "MAN")); v != "" {
 			builder = builder.WithManeuverable(parseTruthy(v))
 		}
 
-		if _, err := r.store.Store("CAT.fbs", builder.Build(), sourcePeer, nil); err != nil {
-			return count, err
+		catBytes := builder.Build()
+		if _, err := r.storeIngestRecord("CAT.fbs", catBytes, sourcePeer, tags...); err != nil {
+			return count, "", err
 		}
+		writeNormalizedHashRecord(normalized, "CAT.fbs", catBytes)
 		count++
 	}
 
-	return count, nil
+	if count == 0 {
+		return 0, "", fmt.Errorf("no CAT rows parsed")
+	}
+	return count, hex.EncodeToString(normalized.Sum(nil)), nil
+}
+
+func (r *Runner) ingestSpaceWeatherData(content []byte, sourcePeer string, tags ...storage.SourceTags) (int, string, error) {
+	rows, err := parseCSV(content)
+	if err != nil {
+		return 0, "", err
+	}
+	if err := requireCSVColumn(rows, "SPW", "DATE"); err != nil {
+		return 0, "", err
+	}
+
+	count := 0
+	normalized := sha256.New()
+	for _, row := range rows {
+		rawDate := getValue(row, "DATE")
+		if strings.TrimSpace(rawDate) == "" {
+			continue
+		}
+		parsedDate, err := parseEpoch(rawDate)
+		if err != nil {
+			return count, "", fmt.Errorf("malformed DATE %q: %w", rawDate, err)
+		}
+		spwDate := parsedDate.UTC().Format("2006-01-02")
+
+		spwBytes := buildSPW(row, spwDate)
+		if _, err := r.storeIngestRecord("SPW.fbs", spwBytes, sourcePeer, tags...); err != nil {
+			return count, "", err
+		}
+		writeNormalizedHashRecord(normalized, "SPW.fbs", spwBytes)
+		count++
+	}
+	if count == 0 {
+		return 0, "", fmt.Errorf("no SPW rows parsed")
+	}
+	return count, hex.EncodeToString(normalized.Sum(nil)), nil
+}
+
+func (r *Runner) storeIngestRecord(schemaName string, data []byte, sourcePeer string, tags ...storage.SourceTags) (string, error) {
+	if len(tags) == 0 {
+		return r.store.Store(schemaName, data, sourcePeer, nil)
+	}
+	return r.store.StoreWithSourceTags(schemaName, data, sourcePeer, nil, tags[0])
+}
+
+func sourceTags(providerID, sourceName, sourceURL string, data []byte) storage.SourceTags {
+	return storage.SourceTags{
+		ProviderID:   providerID,
+		SourceName:   sourceName,
+		SourceURL:    sourceURL,
+		BatchID:      sourceSHA256(data),
+		ContentKeyID: publicContentKeyID,
+	}
+}
+
+func sourceSHA256(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func archiveFilenameForURL(rawURL, fallback string) string {
@@ -528,72 +1017,271 @@ func archiveFilenameForURL(rawURL, fallback string) string {
 }
 
 func (r *Runner) fetchBytes(ctx context.Context, sourceURL string) ([]byte, error) {
+	data, _, err := r.fetchBytesWithMetadata(ctx, sourceURL)
+	return data, err
+}
+
+func (r *Runner) fetchBytesWithMetadata(ctx context.Context, sourceURL string, validators ...fetchMetadata) ([]byte, fetchMetadata, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fetchMetadata{}, err
+	}
+	if len(validators) > 0 {
+		if etag := strings.TrimSpace(validators[0].ETag); etag != "" {
+			req.Header.Set("If-None-Match", etag)
+		}
+		if lastModified := strings.TrimSpace(validators[0].LastModified); lastModified != "" {
+			req.Header.Set("If-Modified-Since", lastModified)
+		}
 	}
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fetchMetadata{}, err
 	}
 	defer resp.Body.Close()
+	metadata := fetchMetadata{
+		SourceURL:    sourceURL,
+		HTTPStatus:   resp.StatusCode,
+		ETag:         resp.Header.Get("ETag"),
+		LastModified: resp.Header.Get("Last-Modified"),
+		ContentType:  resp.Header.Get("Content-Type"),
+		RetrievedAt:  time.Now().UTC(),
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, metadata, fmt.Errorf("status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 100*1024*1024)) // 100MB limit
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 100*1024*1024)) // 100MB limit
+	return data, metadata, err
 }
 
-func (r *Runner) fetchWithCache(ctx context.Context, sourceURL, cacheName string, minInterval time.Duration) ([]byte, bool, error) {
+func (r *Runner) fetchWithCache(ctx context.Context, sourceURL, cacheName string, minInterval time.Duration) ([]byte, fetchMetadata, error) {
 	cachePath := filepath.Join(r.cfg.RawPath, "cache", cacheName)
 
-	if data, ok, err := readCachedPayload(cachePath, minInterval); err == nil && ok {
-		return data, true, nil
+	if data, modTime, ok, err := readCachedPayload(cachePath, minInterval); err == nil && ok {
+		metadata := readCachedFetchMetadata(cachePath)
+		metadata.SourceURL = sourceURL
+		metadata.RetrievedAt = firstNonZeroTime(metadata.RetrievedAt, modTime.UTC())
+		metadata.FromCache = true
+		metadata.CachePath = cachePath
+		return data, metadata, nil
 	} else if err != nil {
 		log.Warnf("Failed reading cache %s: %v", cachePath, err)
 	}
 
-	data, err := r.fetchBytes(ctx, sourceURL)
+	validators := readCachedFetchMetadata(cachePath)
+	data, metadata, attempts, err := r.fetchBytesWithRetry(ctx, sourceURL, validators)
 	if err != nil {
-		if fallback, ok, cacheErr := readCachedPayload(cachePath, 0); cacheErr == nil && ok {
-			log.Warnf("CelesTrak fetch failed (%v); using stale cache %s", err, cachePath)
-			return fallback, true, nil
+		if metadata.HTTPStatus == http.StatusNotModified {
+			if fallback, modTime, ok, cacheErr := readCachedPayload(cachePath, 0); cacheErr == nil && ok {
+				r.clearFetchFailure(cacheName)
+				metadata.SourceURL = sourceURL
+				metadata.RetrievedAt = firstNonZeroTime(validators.RetrievedAt, modTime.UTC())
+				metadata.ETag = firstNonEmptyString(metadata.ETag, validators.ETag)
+				metadata.LastModified = firstNonEmptyString(metadata.LastModified, validators.LastModified)
+				metadata.ContentType = firstNonEmptyString(metadata.ContentType, validators.ContentType)
+				metadata.FromCache = true
+				metadata.CachePath = cachePath
+				return fallback, metadata, nil
+			}
+			return nil, metadata, err
 		}
-		return nil, false, err
+		if isFetchHardStopStatus(metadata.HTTPStatus) {
+			r.recordFetchFailureForReview(cacheName, sourceURL, metadata, attempts, err)
+			return nil, metadata, err
+		}
+		if fallback, modTime, ok, cacheErr := readCachedPayload(cachePath, 0); cacheErr == nil && ok {
+			log.Warnf("CelesTrak fetch failed (%v); using stale cache %s", err, cachePath)
+			r.recordFetchFailure(cacheName, attempts)
+			cachedMetadata := readCachedFetchMetadata(cachePath)
+			cachedMetadata.SourceURL = sourceURL
+			cachedMetadata.RetrievedAt = firstNonZeroTime(cachedMetadata.RetrievedAt, modTime.UTC())
+			cachedMetadata.FromCache = true
+			cachedMetadata.CachePath = cachePath
+			return fallback, cachedMetadata, nil
+		}
+		r.recordFetchFailureForReview(cacheName, sourceURL, metadata, attempts, err)
+		return nil, metadata, err
 	}
+	r.clearFetchFailure(cacheName)
 
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
 		log.Warnf("Failed creating cache directory for %s: %v", cachePath, err)
-		return data, false, nil
+		return data, metadata, nil
 	}
 	if err := os.WriteFile(cachePath, data, 0644); err != nil {
 		log.Warnf("Failed writing cache %s: %v", cachePath, err)
 	}
+	if err := writeCachedFetchMetadata(cachePath, metadata); err != nil {
+		log.Warnf("Failed writing cache metadata %s: %v", cacheMetadataPath(cachePath), err)
+	}
 
-	return data, false, nil
+	return data, metadata, nil
 }
 
-func readCachedPayload(path string, maxAge time.Duration) ([]byte, bool, error) {
+func (r *Runner) fetchBytesWithRetry(ctx context.Context, sourceURL string, validators fetchMetadata) ([]byte, fetchMetadata, int, error) {
+	var (
+		data     []byte
+		metadata fetchMetadata
+		err      error
+	)
+	for attempt := 1; attempt <= fetchRetryBudget; attempt++ {
+		data, metadata, err = r.fetchBytesWithMetadata(ctx, sourceURL, validators)
+		if err == nil || !shouldRetryFetch(ctx, metadata, err) || attempt == fetchRetryBudget {
+			return data, metadata, attempt, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, metadata, attempt, ctx.Err()
+		case <-time.After(fetchRetryBackoff * time.Duration(attempt)):
+		}
+	}
+	return data, metadata, fetchRetryBudget, err
+}
+
+func shouldRetryFetch(ctx context.Context, metadata fetchMetadata, err error) bool {
+	if err == nil || ctx.Err() != nil || metadata.HTTPStatus == http.StatusNotModified || isFetchHardStopStatus(metadata.HTTPStatus) {
+		return false
+	}
+	return metadata.HTTPStatus == 0 ||
+		metadata.HTTPStatus == http.StatusTooManyRequests ||
+		metadata.HTTPStatus >= http.StatusInternalServerError
+}
+
+func firstNonZeroTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value
+		}
+	}
+	return time.Now().UTC()
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func isFetchHardStopStatus(status int) bool {
+	return status == http.StatusForbidden ||
+		status == http.StatusNotFound ||
+		(status >= http.StatusMultipleChoices && status < http.StatusBadRequest && status != http.StatusNotModified)
+}
+
+func cacheMetadataPath(cachePath string) string {
+	return cachePath + ".metadata.json"
+}
+
+func readCachedFetchMetadata(cachePath string) fetchMetadata {
+	data, err := os.ReadFile(cacheMetadataPath(cachePath))
+	if err != nil || len(data) == 0 {
+		return fetchMetadata{}
+	}
+	var metadata fetchMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		log.Warnf("Failed parsing cache metadata %s: %v", cacheMetadataPath(cachePath), err)
+		return fetchMetadata{}
+	}
+	return metadata
+}
+
+func writeCachedFetchMetadata(cachePath string, metadata fetchMetadata) error {
+	metadata.FromCache = false
+	metadata.CachePath = ""
+	payload, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(cacheMetadataPath(cachePath), payload, 0644)
+}
+
+func (r *Runner) recordFetchFailure(cacheName string, attempts int) {
+	key := fetchFailureKey(cacheName)
+	r.checkpoints.setString(key, strconv.Itoa(attempts))
+	if err := r.checkpoints.save(); err != nil {
+		log.Warnf("Failed to persist fetch failure checkpoint %s: %v", key, err)
+	}
+}
+
+func (r *Runner) recordFetchFailureForReview(cacheName, sourceURL string, metadata fetchMetadata, attempts int, err error) {
+	r.recordFetchFailure(cacheName, attempts)
+	reviewKey := fetchHumanReviewKey(cacheName)
+	value := time.Now().UTC().Format(time.RFC3339)
+	r.checkpoints.setString(reviewKey, value)
+	if saveErr := r.checkpoints.save(); saveErr != nil {
+		log.Warnf("Failed to persist human-review checkpoint %s: %v", reviewKey, saveErr)
+	}
+	log.Errorf("Human review required for ingest fetch %s after %d attempt(s): url=%s status=%d error=%v",
+		cacheName, attempts, sourceURL, metadata.HTTPStatus, err)
+}
+
+func (r *Runner) recordIngestFailureForReview(source string, err error) {
+	reviewKey := ingestHumanReviewKey(source)
+	value := time.Now().UTC().Format(time.RFC3339)
+	r.checkpoints.setString(reviewKey, value)
+	if saveErr := r.checkpoints.save(); saveErr != nil {
+		log.Warnf("Failed to persist ingest human-review checkpoint %s: %v", reviewKey, saveErr)
+	}
+	log.Errorf("Human review required for ingest source %s: %v", source, err)
+}
+
+func (r *Runner) clearFetchFailure(cacheName string) {
+	r.checkpoints.delete(fetchFailureKey(cacheName))
+	r.checkpoints.delete(fetchHumanReviewKey(cacheName))
+	if err := r.checkpoints.save(); err != nil {
+		log.Warnf("Failed to clear fetch failure checkpoints for %s: %v", cacheName, err)
+	}
+}
+
+func fetchFailureKey(cacheName string) string {
+	return "fetch_failure_count_" + checkpointSafeKey(cacheName)
+}
+
+func fetchHumanReviewKey(cacheName string) string {
+	return "fetch_human_review_required_" + checkpointSafeKey(cacheName)
+}
+
+func ingestHumanReviewKey(source string) string {
+	return "ingest_human_review_required_" + checkpointSafeKey(source)
+}
+
+func checkpointSafeKey(value string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(value) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+func readCachedPayload(path string, maxAge time.Duration) ([]byte, time.Time, bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, false, nil
+			return nil, time.Time{}, false, nil
 		}
-		return nil, false, err
+		return nil, time.Time{}, false, err
 	}
 
 	if maxAge > 0 && time.Since(info.ModTime()) >= maxAge {
-		return nil, false, nil
+		return nil, time.Time{}, false, nil
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, false, err
+		return nil, time.Time{}, false, err
 	}
 	if len(data) == 0 {
-		return nil, false, nil
+		return nil, time.Time{}, false, nil
 	}
-	return data, true, nil
+	return data, info.ModTime(), true, nil
 }
 
 func (r *Runner) archiveRaw(source, filename string, data []byte) error {
@@ -603,6 +1291,79 @@ func (r *Runner) archiveRaw(source, filename string, data []byte) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, filename), data, 0644)
+}
+
+func writeNormalizedHashRecord(h interface{ Write([]byte) (int, error) }, schemaName string, data []byte) {
+	_, _ = h.Write([]byte(schemaName))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write(data)
+	_, _ = h.Write([]byte{0})
+}
+
+func (r *Runner) recordIngestBatchProvenance(source string, data []byte, metadata fetchMetadata, parserVersion, normalizedHash string, schemaCounts map[string]int, warnings []string) error {
+	if metadata.RetrievedAt.IsZero() {
+		metadata.RetrievedAt = time.Now().UTC()
+	}
+	sum := sha256.Sum256(data)
+	normalizedCount := 0
+	for _, count := range schemaCounts {
+		normalizedCount += count
+	}
+	payload := ingestBatchProvenance{
+		SourceURL:        metadata.SourceURL,
+		HTTPStatus:       metadata.HTTPStatus,
+		ETag:             metadata.ETag,
+		LastModified:     metadata.LastModified,
+		ContentType:      metadata.ContentType,
+		RetrievedAt:      metadata.RetrievedAt.UTC().Format(time.RFC3339Nano),
+		ParserVersion:    parserVersion,
+		SourceSHA256:     hex.EncodeToString(sum[:]),
+		NormalizedSHA256: normalizedHash,
+		NormalizedCount:  normalizedCount,
+		SchemaCounts:     schemaCounts,
+		SchemaHashes:     schemaHashes(schemaCounts),
+		Warnings:         warnings,
+		FromCache:        metadata.FromCache,
+		CachePath:        metadata.CachePath,
+	}
+	if payload.Warnings == nil {
+		payload.Warnings = []string{}
+	}
+
+	encoded, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(r.cfg.RawPath, "provenance", source)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	filename := time.Now().UTC().Format("20060102T150405.000000000Z") + ".json"
+	return os.WriteFile(filepath.Join(dir, filename), encoded, 0644)
+}
+
+func warningsForFetch(metadata fetchMetadata) []string {
+	if metadata.FromCache {
+		return []string{"used cached payload"}
+	}
+	return []string{}
+}
+
+func schemaHashes(schemaCounts map[string]int) map[string]string {
+	hashes := make(map[string]string, len(schemaCounts))
+	registry, err := sds.NewSchemaRegistry()
+	if err != nil {
+		return hashes
+	}
+	for schemaName := range schemaCounts {
+		content, ok := registry.Get(schemaName)
+		if !ok || len(content) == 0 {
+			continue
+		}
+		sum := sha256.Sum256(content)
+		hashes[schemaName] = hex.EncodeToString(sum[:])
+	}
+	return hashes
 }
 
 func buildMPE(entityID string, epochUnix int64, meanMotion, ecc, incl, raan, argp, meanAnomaly, bstar float64) []byte {
@@ -637,6 +1398,50 @@ func buildMPE(entityID string, epochUnix int64, meanMotion, ecc, incl, raan, arg
 	}
 	mpe := MPEFB.MPEEnd(builder)
 	MPEFB.FinishSizePrefixedMPEBuffer(builder, mpe)
+
+	out := make([]byte, len(builder.FinishedBytes()))
+	copy(out, builder.FinishedBytes())
+	return out
+}
+
+func buildSPW(row map[string]string, spwDate string) []byte {
+	builder := flatbuffers.NewBuilder(256)
+	dateOffset := builder.CreateString(spwDate)
+
+	SPWFB.SPWStart(builder)
+	SPWFB.SPWAddDATE(builder, dateOffset)
+	SPWFB.SPWAddBSRN(builder, parseInt32OrZero(getValue(row, "BSRN")))
+	SPWFB.SPWAddND(builder, parseInt32OrZero(getValue(row, "ND")))
+	SPWFB.SPWAddKP1(builder, parseKpTenthsOrZero(getValue(row, "KP1")))
+	SPWFB.SPWAddKP2(builder, parseKpTenthsOrZero(getValue(row, "KP2")))
+	SPWFB.SPWAddKP3(builder, parseKpTenthsOrZero(getValue(row, "KP3")))
+	SPWFB.SPWAddKP4(builder, parseKpTenthsOrZero(getValue(row, "KP4")))
+	SPWFB.SPWAddKP5(builder, parseKpTenthsOrZero(getValue(row, "KP5")))
+	SPWFB.SPWAddKP6(builder, parseKpTenthsOrZero(getValue(row, "KP6")))
+	SPWFB.SPWAddKP7(builder, parseKpTenthsOrZero(getValue(row, "KP7")))
+	SPWFB.SPWAddKP8(builder, parseKpTenthsOrZero(getValue(row, "KP8")))
+	SPWFB.SPWAddKP_SUM(builder, parseKpTenthsOrZero(getValue(row, "KP_SUM")))
+	SPWFB.SPWAddAP1(builder, parseInt32OrZero(getValue(row, "AP1")))
+	SPWFB.SPWAddAP2(builder, parseInt32OrZero(getValue(row, "AP2")))
+	SPWFB.SPWAddAP3(builder, parseInt32OrZero(getValue(row, "AP3")))
+	SPWFB.SPWAddAP4(builder, parseInt32OrZero(getValue(row, "AP4")))
+	SPWFB.SPWAddAP5(builder, parseInt32OrZero(getValue(row, "AP5")))
+	SPWFB.SPWAddAP6(builder, parseInt32OrZero(getValue(row, "AP6")))
+	SPWFB.SPWAddAP7(builder, parseInt32OrZero(getValue(row, "AP7")))
+	SPWFB.SPWAddAP8(builder, parseInt32OrZero(getValue(row, "AP8")))
+	SPWFB.SPWAddAP_AVG(builder, parseInt32OrZero(getValue(row, "AP_AVG")))
+	SPWFB.SPWAddCP(builder, parseFloat32OrZero(getValue(row, "CP")))
+	SPWFB.SPWAddC9(builder, parseInt32OrZero(getValue(row, "C9")))
+	SPWFB.SPWAddISN(builder, parseInt32OrZero(getValue(row, "ISN")))
+	SPWFB.SPWAddF107_OBS(builder, parseFloat32OrZero(getValue(row, "F10.7_OBS", "F107_OBS")))
+	SPWFB.SPWAddF107_ADJ(builder, parseFloat32OrZero(getValue(row, "F10.7_ADJ", "F107_ADJ")))
+	SPWFB.SPWAddF107_DATA_TYPE(builder, parseF107DataType(getValue(row, "F10.7_DATA_TYPE", "F107_DATA_TYPE")))
+	SPWFB.SPWAddF107_OBS_CENTER81(builder, parseFloat32OrZero(getValue(row, "F10.7_OBS_CENTER81", "F107_OBS_CENTER81")))
+	SPWFB.SPWAddF107_OBS_LAST81(builder, parseFloat32OrZero(getValue(row, "F10.7_OBS_LAST81", "F107_OBS_LAST81")))
+	SPWFB.SPWAddF107_ADJ_CENTER81(builder, parseFloat32OrZero(getValue(row, "F10.7_ADJ_CENTER81", "F107_ADJ_CENTER81")))
+	SPWFB.SPWAddF107_ADJ_LAST81(builder, parseFloat32OrZero(getValue(row, "F10.7_ADJ_LAST81", "F107_ADJ_LAST81")))
+	spw := SPWFB.SPWEnd(builder)
+	SPWFB.FinishSizePrefixedSPWBuffer(builder, spw)
 
 	out := make([]byte, len(builder.FinishedBytes()))
 	copy(out, builder.FinishedBytes())
@@ -684,6 +1489,67 @@ func parseCSV(content []byte) ([]map[string]string, error) {
 	return rows, nil
 }
 
+func requireCSVColumn(rows []map[string]string, source string, columns ...string) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	for _, column := range columns {
+		if _, ok := rows[0][normalizeKey(column)]; ok {
+			return nil
+		}
+	}
+	return fmt.Errorf("schema mismatch for %s: missing one of %s", source, strings.Join(columns, ", "))
+}
+
+func latestTimestampFromCSV(content []byte, column string) (time.Time, error) {
+	rows, err := parseCSV(content)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if err := requireCSVColumn(rows, "source timestamp", column); err != nil {
+		return time.Time{}, err
+	}
+
+	var latest time.Time
+	for _, row := range rows {
+		raw := getValue(row, column)
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		parsed, err := parseEpoch(raw)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("malformed %s %q: %w", column, raw, err)
+		}
+		if latest.IsZero() || parsed.After(latest) {
+			latest = parsed
+		}
+	}
+	return latest, nil
+}
+
+func sourceReferenceTime(metadata fetchMetadata) time.Time {
+	if strings.TrimSpace(metadata.LastModified) != "" {
+		if parsed, err := http.ParseTime(metadata.LastModified); err == nil {
+			return parsed.UTC()
+		}
+	}
+	return metadata.RetrievedAt.UTC()
+}
+
+func validateFreshSourceTimestamp(source string, latest, reference time.Time) error {
+	if latest.IsZero() || reference.IsZero() {
+		return nil
+	}
+	if latest.Before(reference.Add(-sourceTimestampStaleThreshold)) {
+		return fmt.Errorf("stale source timestamp for %s: latest=%s reference=%s threshold=%s",
+			source,
+			latest.UTC().Format(time.RFC3339),
+			reference.UTC().Format(time.RFC3339),
+			sourceTimestampStaleThreshold)
+	}
+	return nil
+}
+
 func parseSatcatRows(content []byte) ([]map[string]string, error) {
 	trimmed := bytes.TrimSpace(content)
 	if len(trimmed) == 0 {
@@ -724,24 +1590,22 @@ func parseSatcatFixedWidth(content []byte) ([]map[string]string, error) {
 			continue
 		}
 
-		status := satcatColumn(line, 20, 22)
 		row := map[string]string{
 			"OBJECT_ID":    satcatColumn(line, 1, 11),
-			"NORAD_CAT_ID": satcatColumn(line, 13, 18),
+			"NORAD_CAT_ID": satcatColumn(line, 14, 18),
+			"OPS_STATUS":   satcatColumn(line, 22, 22),
 			"OBJECT_NAME":  satcatColumn(line, 24, 47),
 			"LAUNCH_DATE":  satcatColumn(line, 57, 66),
 			"LAUNCH_SITE":  satcatColumn(line, 69, 73),
 			"DECAY_DATE":   satcatColumn(line, 76, 85),
 			"PERIOD":       satcatColumn(line, 88, 94),
 			"INCLINATION":  satcatColumn(line, 97, 101),
-			"APOGEE":       satcatColumn(line, 105, 109),
-			"PERIGEE":      satcatColumn(line, 113, 117),
-			"RCS":          satcatColumn(line, 121, 127),
+			"APOGEE":       satcatColumn(line, 104, 109),
+			"PERIGEE":      satcatColumn(line, 112, 117),
+			"RCS":          satcatColumn(line, 120, 127),
 		}
 
-		if parseSatcatManeuverable(status) {
-			row["MANEUVERABLE"] = "true"
-		}
+		row["OBJECT_TYPE"] = inferFixedWidthSatcatObjectType(row["OBJECT_NAME"])
 		rows = append(rows, row)
 	}
 
@@ -767,9 +1631,58 @@ func satcatColumn(line string, start, end int) string {
 	return strings.TrimSpace(line[start-1 : end])
 }
 
-func parseSatcatManeuverable(status string) bool {
-	status = strings.ToUpper(strings.TrimSpace(status))
-	return strings.HasPrefix(status, "M")
+func normalizeSatcatObjectType(value string) string {
+	switch normalizeKey(value) {
+	case "PAYLOAD", "P":
+		return "PAYLOAD"
+	case "ROCKET_BODY", "ROCKETBODY", "ROCKET", "R/B", "RB":
+		return "ROCKET_BODY"
+	case "DEBRIS", "DEB":
+		return "DEBRIS"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func inferFixedWidthSatcatObjectType(objectName string) string {
+	name := strings.ToUpper(strings.TrimSpace(objectName))
+	switch {
+	case strings.Contains(name, " DEB"), strings.HasSuffix(name, "DEB"), strings.Contains(name, "DEBRIS"):
+		return "DEBRIS"
+	case strings.Contains(name, "R/B"), strings.Contains(name, "ROCKET BODY"):
+		return "ROCKET_BODY"
+	case name != "":
+		return "PAYLOAD"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func normalizeSatcatOpsStatus(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "+":
+		return "OPERATIONAL"
+	case "-":
+		return "NONOPERATIONAL"
+	case "P":
+		return "PARTIALLY_OPERATIONAL"
+	case "B":
+		return "BACKUP_STANDBY"
+	case "S":
+		return "SPARE"
+	case "X":
+		return "EXTENDED_MISSION"
+	case "D":
+		return "DECAYED"
+	default:
+		key := normalizeKey(value)
+		switch key {
+		case "OPERATIONAL", "NONOPERATIONAL", "NON_OPERATIONAL", "PARTIALLY_OPERATIONAL", "BACKUP_STANDBY", "SPARE", "EXTENDED_MISSION", "DECAYED":
+			return key
+		default:
+			return "UNKNOWN"
+		}
+	}
 }
 
 func normalizeKey(raw string) string {
@@ -815,6 +1728,52 @@ func parseFloatOrZero(raw string) float64 {
 	return 0
 }
 
+func parseFloat32OrZero(raw string) float32 {
+	if f, ok := parseFloat(raw); ok {
+		return float32(f)
+	}
+	return 0
+}
+
+func parseInt32OrZero(raw string) int32 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	v, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return int32(v)
+}
+
+func parseKpTenthsOrZero(raw string) int32 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	if strings.Contains(raw, ".") {
+		if f, err := strconv.ParseFloat(raw, 64); err == nil {
+			return int32(math.Round(f * 10))
+		}
+		return 0
+	}
+	return parseInt32OrZero(raw)
+}
+
+func parseF107DataType(raw string) SPWFB.F107DataType {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "INT":
+		return SPWFB.F107DataTypeINT
+	case "PRD":
+		return SPWFB.F107DataTypePRD
+	case "PRM":
+		return SPWFB.F107DataTypePRM
+	default:
+		return SPWFB.F107DataTypeOBS
+	}
+}
+
 func parseUint32(raw string) (uint32, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -844,6 +1803,17 @@ func normalizeEpoch(raw string) string {
 	}
 	if t, err := parseEpoch(raw); err == nil {
 		return t.UTC().Format(time.RFC3339)
+	}
+	return raw
+}
+
+func normalizeSpaceWeatherDate(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if t, err := parseEpoch(raw); err == nil {
+		return t.UTC().Format("2006-01-02")
 	}
 	return raw
 }
@@ -944,4 +1914,10 @@ func (c *checkpointStore) setString(key, value string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.state[key] = value
+}
+
+func (c *checkpointStore) delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.state, key)
 }

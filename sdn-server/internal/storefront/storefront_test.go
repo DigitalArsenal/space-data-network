@@ -1,13 +1,16 @@
 package storefront
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"os"
 	"testing"
 	"time"
 
+	lgr "github.com/DigitalArsenal/spacedatastandards.org/lib/go/LGR"
 	"github.com/spacedatanetwork/sdn-server/internal/sds"
 	"github.com/spacedatanetwork/sdn-server/internal/storage"
 )
@@ -97,6 +100,29 @@ func testListing() *Listing {
 			ProviderSince:        uint64(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).Unix()),
 		},
 		License: "proprietary",
+	}
+}
+
+func TestPaymentMethodValuesMatchSTFSchema(t *testing.T) {
+	tests := []struct {
+		name string
+		got  PaymentMethod
+		want PaymentMethod
+	}{
+		{name: "Crypto_ETH", got: PaymentMethodCryptoETH, want: 0},
+		{name: "Crypto_SOL", got: PaymentMethodCryptoSOL, want: 1},
+		{name: "Crypto_BTC", got: PaymentMethodCryptoBTC, want: 2},
+		{name: "SDN_Credits", got: PaymentMethodSDNCredits, want: 3},
+		{name: "Fiat_Stripe", got: PaymentMethodFiatStripe, want: 4},
+		{name: "Free", got: PaymentMethodFree, want: 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Fatalf("%s = %d, want %d", tt.name, tt.got, tt.want)
+			}
+		})
 	}
 }
 
@@ -347,6 +373,393 @@ func TestPurchaseFlow(t *testing.T) {
 	}
 }
 
+func TestProtectedWASMListingRoundTrips(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	listing := testListing()
+	listing.Title = "Protected OD WASM"
+	listing.DataTypes = []string{"WASM", "OMM"}
+	listing.ListingKind = ListingKindWASMModule
+	listing.AccessType = AccessTypeSubscription
+	listing.EncryptionRequired = true
+	listing.DeliveryMethods = []string{"IPFSPin"}
+	listing.ProtectedDelivery = ProtectedDelivery{
+		EncryptedCID:     "bafybeiencryptedwasm",
+		ManifestCID:      "bafybeimanifest",
+		ContentHash:      "sha256:artifact-hash",
+		ContentKeyID:     "ck-2026-05",
+		LicenseModuleID:  "licensing/core",
+		ModuleID:         "com.space-data-network.protected-od",
+		ModuleVersion:    "1.2.3",
+		RequiredScopes:   []string{"module:invoke", "dataset:omm:read"},
+		GrantScope:       "module:invoke:protected-od",
+		DeliveryProtocol: "/space-data-network/module-delivery/1.0.0",
+	}
+
+	if err := svc.CreateListing(ctx, listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+
+	got, err := svc.GetListing(ctx, listing.ListingID)
+	if err != nil {
+		t.Fatalf("GetListing failed: %v", err)
+	}
+	if got == nil {
+		t.Fatal("listing should not be nil")
+	}
+	if got.ListingKind != ListingKindWASMModule {
+		t.Fatalf("ListingKind = %q, want %q", got.ListingKind, ListingKindWASMModule)
+	}
+	if got.ProtectedDelivery.EncryptedCID != "bafybeiencryptedwasm" {
+		t.Fatalf("EncryptedCID = %q", got.ProtectedDelivery.EncryptedCID)
+	}
+	if got.ProtectedDelivery.LicenseModuleID != "licensing/core" {
+		t.Fatalf("LicenseModuleID = %q", got.ProtectedDelivery.LicenseModuleID)
+	}
+	if len(got.ProtectedDelivery.RequiredScopes) != 2 {
+		t.Fatalf("RequiredScopes len = %d, want 2", len(got.ProtectedDelivery.RequiredScopes))
+	}
+}
+
+func TestIssueGrantRejectsPendingPaidPurchase(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	listing := testListing()
+	if err := svc.CreateListing(ctx, listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+
+	req := &PurchaseRequest{
+		ListingID:     listing.ListingID,
+		TierName:      "Basic",
+		BuyerPeerID:   "buyer-peer-123",
+		PaymentMethod: PaymentMethodFiatStripe,
+	}
+	if err := svc.CreatePurchaseRequest(ctx, req); err != nil {
+		t.Fatalf("CreatePurchaseRequest failed: %v", err)
+	}
+
+	if _, err := svc.IssueGrant(ctx, req.RequestID); err == nil {
+		t.Fatal("IssueGrant should reject pending paid purchases")
+	}
+}
+
+func TestManualDevPaymentIssuesGrantAndAudit(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	listing := testListing()
+	listing.ListingKind = ListingKindDataStream
+	listing.AccessType = AccessTypeStreaming
+	listing.EncryptionRequired = true
+	listing.ProtectedDelivery = ProtectedDelivery{
+		EncryptedCID:     "bafybeistreamwindow",
+		ContentHash:      "sha256:stream-window",
+		ContentKeyID:     "stream-window-2026-05-05T00",
+		LicenseModuleID:  "licensing/core",
+		RequiredScopes:   []string{"stream:read:omm"},
+		GrantScope:       "stream:read:omm",
+		DeliveryProtocol: "/space-data-network/module-delivery/1.0.0",
+	}
+	if err := svc.CreateListing(ctx, listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+
+	req := &PurchaseRequest{
+		ListingID:               listing.ListingID,
+		TierName:                "Basic",
+		BuyerPeerID:             "buyer-peer-123",
+		BuyerEncryptionPubkey:   []byte("buyer-public-key"),
+		KeyAlgorithm:            "x25519",
+		PaymentMethod:           PaymentMethodFiatStripe,
+		PreferredDeliveryMethod: "PubSubStream",
+	}
+	if err := svc.CreatePurchaseRequest(ctx, req); err != nil {
+		t.Fatalf("CreatePurchaseRequest failed: %v", err)
+	}
+
+	grant, err := svc.CompleteManualDevPayment(ctx, req.RequestID, ManualDevPaymentConfirmation{
+		OperatorPeerID: "provider-admin-peer",
+		Reference:      "manual-dev-receipt-1",
+		Note:           "dev checkout verified out of band",
+	})
+	if err != nil {
+		t.Fatalf("CompleteManualDevPayment failed: %v", err)
+	}
+
+	if grant.Status != GrantStatusActive {
+		t.Fatalf("Grant status = %d, want active", grant.Status)
+	}
+	if grant.BuyerPeerID != req.BuyerPeerID {
+		t.Fatalf("Grant buyer = %q, want %q", grant.BuyerPeerID, req.BuyerPeerID)
+	}
+	if grant.DeliveryTopic != "/sdn/data/"+listing.ListingID+"/"+req.BuyerPeerID {
+		t.Fatalf("DeliveryTopic = %q", grant.DeliveryTopic)
+	}
+
+	purchase, err := svc.store.GetPurchaseRequest(req.RequestID)
+	if err != nil {
+		t.Fatalf("GetPurchaseRequest failed: %v", err)
+	}
+	if purchase.Status != PurchaseStatusCompleted {
+		t.Fatalf("Purchase status = %d, want completed", purchase.Status)
+	}
+	if purchase.GrantID != grant.GrantID {
+		t.Fatalf("Purchase grant = %q, want %q", purchase.GrantID, grant.GrantID)
+	}
+	if purchase.PaymentTxHash != "manual-dev:manual-dev-receipt-1" {
+		t.Fatalf("PaymentTxHash = %q", purchase.PaymentTxHash)
+	}
+
+	events, err := svc.store.GetPaymentAuditEvents(req.RequestID)
+	if err != nil {
+		t.Fatalf("GetPaymentAuditEvents failed: %v", err)
+	}
+	if len(events) < 3 {
+		t.Fatalf("audit events len = %d, want at least 3", len(events))
+	}
+	eventTypes := map[string]bool{}
+	for _, event := range events {
+		eventTypes[event.EventType] = true
+	}
+	for _, want := range []string{PaymentAuditGrantIssued, PaymentAuditKeyWrapIssued, PaymentAuditDeliveryReady} {
+		if !eventTypes[want] {
+			t.Fatalf("audit events missing %q: %#v", want, events)
+		}
+	}
+	if events[len(events)-1].EventType != PaymentAuditDeliveryReady {
+		t.Fatalf("last audit event = %q, want %q", events[len(events)-1].EventType, PaymentAuditDeliveryReady)
+	}
+}
+
+func TestRevokeGrantRecordsAuditAndBlocksVerification(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	listing := testListing()
+	listing.AccessType = AccessTypeStreaming
+	if err := svc.CreateListing(ctx, listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+
+	req := &PurchaseRequest{
+		ListingID:               listing.ListingID,
+		TierName:                "Basic",
+		BuyerPeerID:             "buyer-peer-123",
+		BuyerEncryptionPubkey:   []byte("buyer-public-key"),
+		KeyAlgorithm:            "x25519",
+		PaymentMethod:           PaymentMethodFiatStripe,
+		PreferredDeliveryMethod: "PubSubStream",
+	}
+	if err := svc.CreatePurchaseRequest(ctx, req); err != nil {
+		t.Fatalf("CreatePurchaseRequest failed: %v", err)
+	}
+
+	grant, err := svc.CompleteManualDevPayment(ctx, req.RequestID, ManualDevPaymentConfirmation{
+		OperatorPeerID: "provider-admin-peer",
+		Reference:      "manual-dev-receipt-1",
+	})
+	if err != nil {
+		t.Fatalf("CompleteManualDevPayment failed: %v", err)
+	}
+
+	revoked, err := svc.RevokeGrant(ctx, grant.GrantID, req.BuyerPeerID, "provider-admin-peer", "buyer subscription cancelled")
+	if err != nil {
+		t.Fatalf("RevokeGrant failed: %v", err)
+	}
+	if revoked.Status != GrantStatusRevoked {
+		t.Fatalf("revoked status = %d, want %d", revoked.Status, GrantStatusRevoked)
+	}
+	if _, err := svc.VerifyGrant(ctx, grant.GrantID, req.BuyerPeerID); err == nil {
+		t.Fatal("VerifyGrant should reject revoked grant")
+	}
+
+	events, err := svc.store.GetPaymentAuditEvents(req.RequestID)
+	if err != nil {
+		t.Fatalf("GetPaymentAuditEvents failed: %v", err)
+	}
+	if events[len(events)-1].EventType != PaymentAuditGrantRevoked {
+		t.Fatalf("last audit event = %q, want %q", events[len(events)-1].EventType, PaymentAuditGrantRevoked)
+	}
+	if events[len(events)-1].Message != "buyer subscription cancelled" {
+		t.Fatalf("revocation message = %q", events[len(events)-1].Message)
+	}
+}
+
+func TestGroupMemberEnvelopeLifecycle(t *testing.T) {
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	listing := testListing()
+	listing.AccessType = AccessTypeSubscription
+	listing.ProtectedDelivery = ProtectedDelivery{
+		ContentKeyID: "dataset-window-2026-05-05",
+		GrantScope:   "stream:read:omm",
+	}
+	if err := svc.CreateListing(ctx, listing); err != nil {
+		t.Fatalf("CreateListing failed: %v", err)
+	}
+	req := &PurchaseRequest{
+		ListingID:               listing.ListingID,
+		TierName:                "Basic",
+		BuyerPeerID:             "buyer-group-admin",
+		BuyerEncryptionPubkey:   []byte("buyer-public-key"),
+		KeyAlgorithm:            "x25519",
+		PaymentMethod:           PaymentMethodFiatStripe,
+		PreferredDeliveryMethod: "PubSubStream",
+	}
+	if err := svc.CreatePurchaseRequest(ctx, req); err != nil {
+		t.Fatalf("CreatePurchaseRequest failed: %v", err)
+	}
+	grant, err := svc.CompleteManualDevPayment(ctx, req.RequestID, ManualDevPaymentConfirmation{
+		OperatorPeerID: "provider-admin-peer",
+		Reference:      "group-receipt-1",
+	})
+	if err != nil {
+		t.Fatalf("CompleteManualDevPayment failed: %v", err)
+	}
+
+	alphaEnvelope := []byte("wrapped-key-alpha")
+	alpha, err := svc.AddGroupMember(ctx, &GroupMember{
+		GroupID:            "group-celestrak-ops",
+		ListingID:          listing.ListingID,
+		GrantID:            grant.GrantID,
+		MemberPeerID:       "peer-alpha",
+		MemberKeyID:        "key-alpha",
+		GrantScope:         "stream:read:omm",
+		KeyEpoch:           "epoch-2026-05-05T00",
+		WrappedKeyEnvelope: alphaEnvelope,
+		SignerPeerID:       "provider-admin-peer",
+	})
+	if err != nil {
+		t.Fatalf("AddGroupMember alpha failed: %v", err)
+	}
+	if alpha.Status != GroupMemberStatusActive {
+		t.Fatalf("alpha status = %q", alpha.Status)
+	}
+	if !bytes.Equal(alpha.WrappedKeyEnvelope, alphaEnvelope) {
+		t.Fatalf("alpha envelope was not stored")
+	}
+
+	retried, err := svc.AddGroupMember(ctx, &GroupMember{
+		GroupID:            "group-celestrak-ops",
+		ListingID:          listing.ListingID,
+		GrantID:            grant.GrantID,
+		MemberPeerID:       "peer-alpha",
+		MemberKeyID:        "key-alpha",
+		GrantScope:         "stream:read:omm",
+		KeyEpoch:           "epoch-2026-05-05T00",
+		WrappedKeyEnvelope: []byte("replacement-should-not-be-used"),
+		SignerPeerID:       "provider-admin-peer",
+	})
+	if err != nil {
+		t.Fatalf("AddGroupMember retry failed: %v", err)
+	}
+	if !bytes.Equal(retried.WrappedKeyEnvelope, alphaEnvelope) {
+		t.Fatalf("retry minted a replacement envelope: %q", string(retried.WrappedKeyEnvelope))
+	}
+
+	if _, err := svc.AddGroupMember(ctx, &GroupMember{
+		GroupID:            "group-celestrak-ops",
+		ListingID:          listing.ListingID,
+		GrantID:            grant.GrantID,
+		MemberPeerID:       "peer-beta",
+		MemberKeyID:        "key-beta",
+		GrantScope:         "stream:read:omm",
+		KeyEpoch:           "epoch-2026-05-05T00",
+		WrappedKeyEnvelope: []byte("wrapped-key-beta"),
+		SignerPeerID:       "provider-admin-peer",
+	}); err != nil {
+		t.Fatalf("AddGroupMember beta failed: %v", err)
+	}
+
+	active, err := store.GetGroupMembers("group-celestrak-ops", GroupMemberStatusActive)
+	if err != nil {
+		t.Fatalf("GetGroupMembers active failed: %v", err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("active members = %d, want 2", len(active))
+	}
+	requesterOnly, err := svc.GetRequesterGroupEnvelope(ctx, "group-celestrak-ops", "peer-alpha", "key-alpha")
+	if err != nil {
+		t.Fatalf("GetRequesterGroupEnvelope failed: %v", err)
+	}
+	if requesterOnly == nil || requesterOnly.MemberPeerID != "peer-alpha" {
+		t.Fatalf("requester envelope = %#v", requesterOnly)
+	}
+
+	epoch, err := svc.RemoveGroupMember(ctx, "group-celestrak-ops", "peer-beta", "key-beta", "operator removed member before next key epoch")
+	if err != nil {
+		t.Fatalf("RemoveGroupMember failed: %v", err)
+	}
+	if epoch == nil || epoch.PreviousEpoch != "epoch-2026-05-05T00" || epoch.ListingID != listing.ListingID {
+		t.Fatalf("rotation epoch = %#v", epoch)
+	}
+	if epoch.PolicyID != "stream:read:omm" {
+		t.Fatalf("rotation policy = %q", epoch.PolicyID)
+	}
+	active, err = store.GetGroupMembers("group-celestrak-ops", GroupMemberStatusActive)
+	if err != nil {
+		t.Fatalf("GetGroupMembers active after remove failed: %v", err)
+	}
+	if len(active) != 1 || active[0].MemberPeerID != "peer-alpha" {
+		t.Fatalf("active after remove = %#v", active)
+	}
+	removed, err := store.GetGroupMembers("group-celestrak-ops", GroupMemberStatusRemoved)
+	if err != nil {
+		t.Fatalf("GetGroupMembers removed failed: %v", err)
+	}
+	if len(removed) != 1 || removed[0].MemberPeerID != "peer-beta" || removed[0].RemovedAt.IsZero() {
+		t.Fatalf("removed members = %#v", removed)
+	}
+	betaEnvelope, err := svc.GetRequesterGroupEnvelope(ctx, "group-celestrak-ops", "peer-beta", "key-beta")
+	if err != nil {
+		t.Fatalf("GetRequesterGroupEnvelope beta failed: %v", err)
+	}
+	if betaEnvelope != nil {
+		t.Fatalf("removed member still has active requester envelope: %#v", betaEnvelope)
+	}
+	latestEpoch, err := store.GetLatestGroupKeyEpoch("group-celestrak-ops")
+	if err != nil {
+		t.Fatalf("GetLatestGroupKeyEpoch failed: %v", err)
+	}
+	if latestEpoch == nil || latestEpoch.EpochID != epoch.EpochID {
+		t.Fatalf("latest epoch = %#v, want %s", latestEpoch, epoch.EpochID)
+	}
+	if _, err := svc.AddGroupMember(ctx, &GroupMember{
+		GroupID:            "group-celestrak-ops",
+		ListingID:          listing.ListingID,
+		GrantID:            grant.GrantID,
+		MemberPeerID:       "peer-beta",
+		MemberKeyID:        "key-beta-rotated",
+		GrantScope:         "stream:read:omm",
+		KeyEpoch:           "epoch-2026-05-05T00",
+		WrappedKeyEnvelope: []byte("stale-epoch-envelope"),
+		SignerPeerID:       "provider-admin-peer",
+	}); err == nil {
+		t.Fatal("AddGroupMember should reject envelopes for a stale group key epoch after removal")
+	}
+	rotatedBeta, err := svc.AddGroupMember(ctx, &GroupMember{
+		GroupID:            "group-celestrak-ops",
+		ListingID:          listing.ListingID,
+		GrantID:            grant.GrantID,
+		MemberPeerID:       "peer-beta",
+		MemberKeyID:        "key-beta-rotated",
+		GrantScope:         "stream:read:omm",
+		KeyEpoch:           "epoch-2026-05-05T01",
+		WrappedKeyEnvelope: []byte("rotated-epoch-envelope"),
+		SignerPeerID:       "provider-admin-peer",
+	})
+	if err != nil {
+		t.Fatalf("AddGroupMember rotated epoch failed: %v", err)
+	}
+	if rotatedBeta.KeyEpoch != "epoch-2026-05-05T01" || rotatedBeta.Status != GroupMemberStatusActive {
+		t.Fatalf("rotated beta member = %#v", rotatedBeta)
+	}
+}
+
 func TestAccessVerification(t *testing.T) {
 	svc, _ := newTestService(t)
 	ctx := context.Background()
@@ -370,6 +783,71 @@ func TestAccessVerification(t *testing.T) {
 	_, err = svc.VerifyGrant(ctx, grant.GrantID, "wrong-buyer")
 	if err == nil {
 		t.Error("VerifyGrant should fail with wrong buyer")
+	}
+}
+
+func TestIssuedGrantIncludesSignedLGRResponseBytes(t *testing.T) {
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	grant, err := svc.IssueGrant(ctx, "test-purchase-id")
+	if err != nil {
+		t.Fatalf("IssueGrant failed: %v", err)
+	}
+	if len(grant.ProviderSignature) != ed25519.SignatureSize {
+		t.Fatalf("ProviderSignature length = %d, want %d", len(grant.ProviderSignature), ed25519.SignatureSize)
+	}
+	if grant.GrantResponseBase64 == "" {
+		t.Fatal("GrantResponseBase64 is empty")
+	}
+	raw, err := base64.StdEncoding.DecodeString(grant.GrantResponseBase64)
+	if err != nil {
+		t.Fatalf("GrantResponseBase64 is invalid: %v", err)
+	}
+	if len(raw) == 0 || !lgr.LGRBufferHasIdentifier(raw) {
+		t.Fatalf("grant response is not an $LGR FlatBuffer, len=%d", len(raw))
+	}
+	root := lgr.GetRootAsLGR(raw, 0)
+	if got := string(root.REQUEST_ID()); got != grant.GrantID {
+		t.Fatalf("LGR request id = %q, want %q", got, grant.GrantID)
+	}
+	if got := root.PROVIDER_SIGNATURELength(); got != ed25519.SignatureSize {
+		t.Fatalf("LGR provider signature length = %d, want %d", got, ed25519.SignatureSize)
+	}
+	if got := root.GRANT_VERIFIER_PUBKEYLength(); got != ed25519.PublicKeySize {
+		t.Fatalf("LGR verifier pubkey length = %d, want %d", got, ed25519.PublicKeySize)
+	}
+}
+
+func TestVerifyGrantRejectsExpiredAndTamperedProviderSignature(t *testing.T) {
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	grant, err := svc.IssueGrant(ctx, "test-purchase-id")
+	if err != nil {
+		t.Fatalf("IssueGrant failed: %v", err)
+	}
+	if _, err := svc.VerifyGrant(ctx, grant.GrantID, grant.BuyerPeerID); err != nil {
+		t.Fatalf("VerifyGrant active grant failed: %v", err)
+	}
+
+	expiredAt := time.Now().Add(-time.Hour).Unix()
+	if _, err := store.db.Exec(`UPDATE storefront_grants SET expires_at = ? WHERE grant_id = ?`, expiredAt, grant.GrantID); err != nil {
+		t.Fatalf("failed to expire grant: %v", err)
+	}
+	if _, err := svc.VerifyGrant(ctx, grant.GrantID, grant.BuyerPeerID); err == nil {
+		t.Fatal("VerifyGrant should reject expired grant")
+	}
+
+	grant, err = svc.IssueGrant(ctx, "another-test-purchase-id")
+	if err != nil {
+		t.Fatalf("IssueGrant second grant failed: %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE storefront_grants SET provider_signature = ? WHERE grant_id = ?`, []byte("tampered-signature"), grant.GrantID); err != nil {
+		t.Fatalf("failed to tamper provider signature: %v", err)
+	}
+	if _, err := svc.VerifyGrant(ctx, grant.GrantID, grant.BuyerPeerID); err == nil {
+		t.Fatal("VerifyGrant should reject a tampered provider signature")
 	}
 }
 

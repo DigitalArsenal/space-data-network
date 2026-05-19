@@ -7,6 +7,7 @@ import { serviceCapabilities } from "@libp2p/interface";
 import { webSockets } from "@libp2p/websockets";
 import { all as wsFilters } from "@libp2p/websockets/filters";
 import { webTransport } from "@libp2p/webtransport";
+import { webRTC } from "@spacedatanetwork/libp2p-webrtc-v1";
 import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { bootstrap } from "@libp2p/bootstrap";
 import { identify } from "@libp2p/identify";
@@ -38,8 +39,16 @@ import {
   type EncryptedModuleBundleResult,
   MODULE_DELIVERY_PROTOCOL_ID,
 } from "./module-delivery";
+import {
+  requestFlatSqlSyncChunk,
+  requestFlatSqlSyncManifest,
+  type FlatSqlSyncChunk,
+  type FlatSqlSyncManifest,
+  type FlatSqlSyncQuery,
+} from "./flatsql-sync";
 
 const TOPIC_PREFIX = "/spacedatanetwork/sds/";
+type Libp2pCreateOptions = NonNullable<Parameters<typeof createLibp2p>[0]>;
 export const LEGACY_ID_EXCHANGE_PROTOCOL =
   "/space-data-network/id-exchange/1.0.0";
 // Public IPFS bootstrap peers + SDN relay can be combined for browser interop.
@@ -172,10 +181,11 @@ export class SDNNode {
         ? identify()
         : identifyCapabilityOnly();
 
-    const libp2pOpts: Parameters<typeof createLibp2p>[0] = {
+    const libp2pOpts: Libp2pCreateOptions = {
       transports: [
         webSockets({ filter: wsFilters }),
         webTransport(),
+        webRTC() as unknown as ReturnType<typeof webTransport>,
         circuitRelayTransport({
           discoverRelays: 100,
         }),
@@ -462,6 +472,14 @@ export class SDNNode {
     throw new Error(
       `failed to dial ${protocolId} for ${targetPeerId}: ${formatError(lastError)}`,
     );
+  }
+
+  async readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk> {
+    return requestFlatSqlSyncChunk(this, query);
+  }
+
+  async openFlatSqlSyncManifest(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest> {
+    return requestFlatSqlSyncManifest(this, query);
   }
 
   async dialProtocolThroughRelay(

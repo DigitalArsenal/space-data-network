@@ -14,6 +14,29 @@ const (
 	AccessTypeQuery
 )
 
+// ListingKind distinguishes protected data-stream listings from protected WASM module listings.
+type ListingKind string
+
+const (
+	ListingKindDataStream ListingKind = "data_stream"
+	ListingKindWASMModule ListingKind = "wasm_module"
+)
+
+// ProtectedDelivery records the immutable encrypted artifact/window metadata
+// that a grant entitles the buyer to unwrap through the existing licensing flow.
+type ProtectedDelivery struct {
+	EncryptedCID     string   `json:"encrypted_cid"`
+	ManifestCID      string   `json:"manifest_cid"`
+	ContentHash      string   `json:"content_hash"`
+	ContentKeyID     string   `json:"content_key_id"`
+	LicenseModuleID  string   `json:"license_module_id"`
+	ModuleID         string   `json:"module_id"`
+	ModuleVersion    string   `json:"module_version"`
+	RequiredScopes   []string `json:"required_scopes"`
+	GrantScope       string   `json:"grant_scope"`
+	DeliveryProtocol string   `json:"delivery_protocol"`
+}
+
 // PaymentMethod represents supported payment methods
 type PaymentMethod int
 
@@ -21,10 +44,20 @@ const (
 	PaymentMethodCryptoETH PaymentMethod = iota
 	PaymentMethodCryptoSOL
 	PaymentMethodCryptoBTC
-	PaymentMethodCryptoUSDC
 	PaymentMethodSDNCredits
 	PaymentMethodFiatStripe
 	PaymentMethodFree
+)
+
+const (
+	PaymentAuditPurchaseCreated  = "purchase_created"
+	PaymentAuditPaymentDetected  = "payment_detected"
+	PaymentAuditPaymentConfirmed = "payment_confirmed"
+	PaymentAuditPaymentFailed    = "payment_failed"
+	PaymentAuditGrantIssued      = "grant_issued"
+	PaymentAuditKeyWrapIssued    = "key_wrap_issued"
+	PaymentAuditDeliveryReady    = "delivery_ready"
+	PaymentAuditGrantRevoked     = "grant_revoked"
 )
 
 // GrantStatus represents the status of an access grant
@@ -66,19 +99,19 @@ const (
 
 // SpatialCoverage defines the spatial coverage of data
 type SpatialCoverage struct {
-	Type          string   `json:"type"`           // global, region, object_list, custom
-	Regions       []string `json:"regions"`        // LEO, MEO, GEO, HEO
-	ObjectIDs     []string `json:"object_ids"`     // NORAD catalog IDs
-	MinAltitudeKm float64  `json:"min_altitude_km"`
-	MaxAltitudeKm float64  `json:"max_altitude_km"`
+	Type          string    `json:"type"`       // global, region, object_list, custom
+	Regions       []string  `json:"regions"`    // LEO, MEO, GEO, HEO
+	ObjectIDs     []string  `json:"object_ids"` // NORAD catalog IDs
+	MinAltitudeKm float64   `json:"min_altitude_km"`
+	MaxAltitudeKm float64   `json:"max_altitude_km"`
 	GeoBounds     []float64 `json:"geo_bounds"` // [min_lat, min_lon, max_lat, max_lon]
 }
 
 // TemporalCoverage defines the temporal coverage of data
 type TemporalCoverage struct {
-	StartEpoch          string `json:"start_epoch"`           // ISO 8601
-	EndEpoch            string `json:"end_epoch"`             // ISO 8601
-	UpdateFrequency     string `json:"update_frequency"`      // realtime, hourly, daily
+	StartEpoch          string `json:"start_epoch"`      // ISO 8601
+	EndEpoch            string `json:"end_epoch"`        // ISO 8601
+	UpdateFrequency     string `json:"update_frequency"` // realtime, hourly, daily
 	HistoricalDepthDays uint32 `json:"historical_depth_days"`
 	LatencySeconds      uint32 `json:"latency_seconds"`
 }
@@ -103,109 +136,210 @@ type PricingTier struct {
 
 // ProviderReputation represents provider reputation metrics
 type ProviderReputation struct {
-	TotalSales            uint64 `json:"total_sales"`
-	AverageRatingX10      uint16 `json:"average_rating_x10"` // 42 = 4.2 stars
-	TotalRatings          uint32 `json:"total_ratings"`
-	UptimePercentageX100  uint16 `json:"uptime_percentage_x100"` // 9950 = 99.50%
-	AvgDeliveryLatencyMs  uint32 `json:"avg_delivery_latency_ms"`
-	DisputeCount          uint32 `json:"dispute_count"`
-	ProviderSince         uint64 `json:"provider_since"`
+	TotalSales           uint64 `json:"total_sales"`
+	AverageRatingX10     uint16 `json:"average_rating_x10"` // 42 = 4.2 stars
+	TotalRatings         uint32 `json:"total_ratings"`
+	UptimePercentageX100 uint16 `json:"uptime_percentage_x100"` // 9950 = 99.50%
+	AvgDeliveryLatencyMs uint32 `json:"avg_delivery_latency_ms"`
+	DisputeCount         uint32 `json:"dispute_count"`
+	ProviderSince        uint64 `json:"provider_since"`
 }
 
 // Listing represents a storefront listing (STF)
 type Listing struct {
-	ListingID         string             `json:"listing_id"`
-	ProviderPeerID    string             `json:"provider_peer_id"`
-	ProviderEPMCID    string             `json:"provider_epm_cid"`
-	Title             string             `json:"title"`
-	Description       string             `json:"description"`
-	DataTypes         []string           `json:"data_types"`
-	Tags              []string           `json:"tags"`
-	Coverage          DataCoverage       `json:"coverage"`
-	SampleCID         string             `json:"sample_cid"`
-	SampleRecordCount uint32             `json:"sample_record_count"`
-	AccessType        AccessType         `json:"access_type"`
-	EncryptionRequired bool              `json:"encryption_required"`
-	DeliveryMethods   []string           `json:"delivery_methods"`
-	Pricing           []PricingTier      `json:"pricing"`
-	AcceptedPayments  []PaymentMethod    `json:"accepted_payments"`
-	Reputation        ProviderReputation `json:"reputation"`
-	CreatedAt         time.Time          `json:"created_at"`
-	UpdatedAt         time.Time          `json:"updated_at"`
-	Version           uint32             `json:"version"`
-	Active            bool               `json:"active"`
-	ExpiresAt         time.Time          `json:"expires_at"`
-	TermsCID          string             `json:"terms_cid"`
-	License           string             `json:"license"`
-	Signature         []byte             `json:"signature"`
-	SourcePeerID      string             `json:"source_peer_id,omitempty"` // empty = local, set = discovered from remote peer
+	ListingID          string             `json:"listing_id"`
+	ListingKind        ListingKind        `json:"listing_kind"`
+	ProviderPeerID     string             `json:"provider_peer_id"`
+	ProviderEPMCID     string             `json:"provider_epm_cid"`
+	Title              string             `json:"title"`
+	Description        string             `json:"description"`
+	DataTypes          []string           `json:"data_types"`
+	Tags               []string           `json:"tags"`
+	Coverage           DataCoverage       `json:"coverage"`
+	SampleCID          string             `json:"sample_cid"`
+	SampleRecordCount  uint32             `json:"sample_record_count"`
+	AccessType         AccessType         `json:"access_type"`
+	EncryptionRequired bool               `json:"encryption_required"`
+	DeliveryMethods    []string           `json:"delivery_methods"`
+	ProtectedDelivery  ProtectedDelivery  `json:"protected_delivery"`
+	Pricing            []PricingTier      `json:"pricing"`
+	AcceptedPayments   []PaymentMethod    `json:"accepted_payments"`
+	Reputation         ProviderReputation `json:"reputation"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	Version            uint32             `json:"version"`
+	Active             bool               `json:"active"`
+	ExpiresAt          time.Time          `json:"expires_at"`
+	TermsCID           string             `json:"terms_cid"`
+	License            string             `json:"license"`
+	Signature          []byte             `json:"signature"`
+	SourcePeerID       string             `json:"source_peer_id,omitempty"` // empty = local, set = discovered from remote peer
 }
 
 // AccessGrant represents a data access grant (ACL)
 type AccessGrant struct {
-	GrantID              string        `json:"grant_id"`
-	ListingID            string        `json:"listing_id"`
-	TierName             string        `json:"tier_name"`
-	BuyerPeerID          string        `json:"buyer_peer_id"`
-	BuyerEncryptionPubkey []byte       `json:"buyer_encryption_pubkey"`
-	KeyAlgorithm         string        `json:"key_algorithm"`
-	AccessType           AccessType    `json:"access_type"`
-	RateLimit            uint32        `json:"rate_limit"`
-	MaxRecordsPerRequest uint32        `json:"max_records_per_request"`
-	GrantedAt            time.Time     `json:"granted_at"`
-	ExpiresAt            time.Time     `json:"expires_at"`
-	Status               GrantStatus   `json:"status"`
-	PaymentTxHash        string        `json:"payment_tx_hash"`
-	PaymentMethod        PaymentMethod `json:"payment_method"`
-	PaymentAmount        uint64        `json:"payment_amount"`
-	PaymentCurrency      string        `json:"payment_currency"`
-	PaymentChain         string        `json:"payment_chain"`
-	NextRenewal          time.Time     `json:"next_renewal"`
-	AutoRenew            bool          `json:"auto_renew"`
-	RenewalCount         uint32        `json:"renewal_count"`
-	TotalRequests        uint64        `json:"total_requests"`
-	TotalRecords         uint64        `json:"total_records"`
-	LastAccess           time.Time     `json:"last_access"`
-	DeliveryTopic        string        `json:"delivery_topic"`
-	CreatedAt            time.Time     `json:"created_at"`
-	UpdatedAt            time.Time     `json:"updated_at"`
-	Notes                string        `json:"notes"`
-	ProviderSignature    []byte        `json:"provider_signature"`
-	ProviderPeerID       string        `json:"provider_peer_id"`
+	GrantID               string        `json:"grant_id"`
+	ListingID             string        `json:"listing_id"`
+	TierName              string        `json:"tier_name"`
+	BuyerPeerID           string        `json:"buyer_peer_id"`
+	BuyerEncryptionPubkey []byte        `json:"buyer_encryption_pubkey"`
+	KeyAlgorithm          string        `json:"key_algorithm"`
+	AccessType            AccessType    `json:"access_type"`
+	RateLimit             uint32        `json:"rate_limit"`
+	MaxRecordsPerRequest  uint32        `json:"max_records_per_request"`
+	GrantedAt             time.Time     `json:"granted_at"`
+	ExpiresAt             time.Time     `json:"expires_at"`
+	Status                GrantStatus   `json:"status"`
+	PaymentTxHash         string        `json:"payment_tx_hash"`
+	PaymentMethod         PaymentMethod `json:"payment_method"`
+	PaymentAmount         uint64        `json:"payment_amount"`
+	PaymentCurrency       string        `json:"payment_currency"`
+	PaymentChain          string        `json:"payment_chain"`
+	NextRenewal           time.Time     `json:"next_renewal"`
+	AutoRenew             bool          `json:"auto_renew"`
+	RenewalCount          uint32        `json:"renewal_count"`
+	TotalRequests         uint64        `json:"total_requests"`
+	TotalRecords          uint64        `json:"total_records"`
+	LastAccess            time.Time     `json:"last_access"`
+	DeliveryTopic         string        `json:"delivery_topic"`
+	CreatedAt             time.Time     `json:"created_at"`
+	UpdatedAt             time.Time     `json:"updated_at"`
+	Notes                 string        `json:"notes"`
+	ProviderSignature     []byte        `json:"provider_signature"`
+	ProviderPeerID        string        `json:"provider_peer_id"`
+	GrantResponseBase64   string        `json:"grant_response_base64,omitempty"`
+}
+
+// GroupMemberStatus represents the lifecycle status for a group grant member.
+type GroupMemberStatus string
+
+const (
+	GroupMemberStatusActive  GroupMemberStatus = "active"
+	GroupMemberStatusRemoved GroupMemberStatus = "removed"
+)
+
+// GroupMember records the private, provider-side key-wrap envelope for one
+// member of a group entitlement. Online grant responses should expose only the
+// requester-specific envelope, not the full member set.
+type GroupMember struct {
+	MembershipID       string            `json:"membership_id"`
+	GroupID            string            `json:"group_id"`
+	ListingID          string            `json:"listing_id"`
+	GrantID            string            `json:"grant_id"`
+	MemberPeerID       string            `json:"member_peer_id"`
+	MemberKeyID        string            `json:"member_key_id"`
+	GrantScope         string            `json:"grant_scope"`
+	KeyEpoch           string            `json:"key_epoch"`
+	WrappedKeyEnvelope []byte            `json:"wrapped_key_envelope,omitempty"`
+	EnvelopeCID        string            `json:"envelope_cid,omitempty"`
+	SignerPeerID       string            `json:"signer_peer_id"`
+	Status             GroupMemberStatus `json:"status"`
+	AddedAt            time.Time         `json:"added_at"`
+	RemovedAt          time.Time         `json:"removed_at,omitempty"`
+	RemovalReason      string            `json:"removal_reason,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
+}
+
+// GroupKeyEpoch records a content-key rotation boundary for future group
+// artifact versions or live-feed windows after membership changes.
+type GroupKeyEpoch struct {
+	EpochID       string    `json:"epoch_id"`
+	GroupID       string    `json:"group_id"`
+	ListingID     string    `json:"listing_id"`
+	PreviousEpoch string    `json:"previous_epoch,omitempty"`
+	PolicyID      string    `json:"policy_id,omitempty"`
+	RotatedAt     time.Time `json:"rotated_at"`
+	RotatedBy     string    `json:"rotated_by"`
+	Reason        string    `json:"reason,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // PurchaseRequest represents a purchase request (PUR)
 type PurchaseRequest struct {
-	RequestID             string         `json:"request_id"`
-	ListingID             string         `json:"listing_id"`
-	TierName              string         `json:"tier_name"`
-	BuyerPeerID           string         `json:"buyer_peer_id"`
-	BuyerEncryptionPubkey []byte         `json:"buyer_encryption_pubkey"`
-	KeyAlgorithm          string         `json:"key_algorithm"`
-	BuyerEmail            string         `json:"buyer_email"`
-	PaymentMethod         PaymentMethod  `json:"payment_method"`
-	PaymentAmount         uint64         `json:"payment_amount"`
-	PaymentCurrency       string         `json:"payment_currency"`
-	PaymentTxHash         string         `json:"payment_tx_hash"`
-	PaymentChain          string         `json:"payment_chain"`
-	SenderAddress         string         `json:"sender_address"`
-	ConfirmationBlock     uint64         `json:"confirmation_block"`
-	PaymentIntentID       string         `json:"payment_intent_id"`
-	CreditsTransactionID  string         `json:"credits_transaction_id"`
-	Status                PurchaseStatus `json:"status"`
-	StatusMessage         string         `json:"status_message"`
-	CreatedAt             time.Time      `json:"created_at"`
-	UpdatedAt             time.Time      `json:"updated_at"`
-	PaymentDeadline       time.Time      `json:"payment_deadline"`
-	PaymentConfirmedAt    time.Time      `json:"payment_confirmed_at"`
-	GrantIssuedAt         time.Time      `json:"grant_issued_at"`
-	GrantID               string         `json:"grant_id"`
-	ProviderPeerID        string         `json:"provider_peer_id"`
-	ProviderAcknowledgedAt time.Time     `json:"provider_acknowledged_at"`
-	PreferredDeliveryMethod string       `json:"preferred_delivery_method"`
-	WebhookURL            string         `json:"webhook_url"`
-	BuyerSignature        []byte         `json:"buyer_signature"`
-	ProviderSignature     []byte         `json:"provider_signature"`
+	RequestID               string         `json:"request_id"`
+	ListingID               string         `json:"listing_id"`
+	TierName                string         `json:"tier_name"`
+	BuyerPeerID             string         `json:"buyer_peer_id"`
+	BuyerEncryptionPubkey   []byte         `json:"buyer_encryption_pubkey"`
+	KeyAlgorithm            string         `json:"key_algorithm"`
+	BuyerEmail              string         `json:"buyer_email"`
+	PaymentMethod           PaymentMethod  `json:"payment_method"`
+	PaymentAmount           uint64         `json:"payment_amount"`
+	PaymentCurrency         string         `json:"payment_currency"`
+	PaymentTxHash           string         `json:"payment_tx_hash"`
+	PaymentChain            string         `json:"payment_chain"`
+	SenderAddress           string         `json:"sender_address"`
+	ConfirmationBlock       uint64         `json:"confirmation_block"`
+	PaymentIntentID         string         `json:"payment_intent_id"`
+	CreditsTransactionID    string         `json:"credits_transaction_id"`
+	Status                  PurchaseStatus `json:"status"`
+	StatusMessage           string         `json:"status_message"`
+	CreatedAt               time.Time      `json:"created_at"`
+	UpdatedAt               time.Time      `json:"updated_at"`
+	PaymentDeadline         time.Time      `json:"payment_deadline"`
+	PaymentConfirmedAt      time.Time      `json:"payment_confirmed_at"`
+	GrantIssuedAt           time.Time      `json:"grant_issued_at"`
+	GrantID                 string         `json:"grant_id"`
+	ProviderPeerID          string         `json:"provider_peer_id"`
+	ProviderAcknowledgedAt  time.Time      `json:"provider_acknowledged_at"`
+	PreferredDeliveryMethod string         `json:"preferred_delivery_method"`
+	WebhookURL              string         `json:"webhook_url"`
+	BuyerSignature          []byte         `json:"buyer_signature"`
+	ProviderSignature       []byte         `json:"provider_signature"`
+}
+
+// ManualDevPaymentConfirmation records an explicit out-of-band paid state for
+// local/dev operations when production checkout providers are not configured.
+type ManualDevPaymentConfirmation struct {
+	OperatorPeerID string    `json:"operator_peer_id"`
+	Reference      string    `json:"reference"`
+	Note           string    `json:"note"`
+	PaidAt         time.Time `json:"paid_at"`
+}
+
+// PaymentAuditEvent captures payment and grant transitions for a purchase.
+type PaymentAuditEvent struct {
+	EventID        string         `json:"event_id"`
+	RequestID      string         `json:"request_id"`
+	EventType      string         `json:"event_type"`
+	ActorPeerID    string         `json:"actor_peer_id"`
+	Reference      string         `json:"reference"`
+	Message        string         `json:"message"`
+	PurchaseStatus PurchaseStatus `json:"purchase_status"`
+	CreatedAt      time.Time      `json:"created_at"`
+}
+
+// CreateCryptoIntentRequest describes the expected on-chain payment a buyer
+// must make before submitting a transaction reference.
+type CreateCryptoIntentRequest struct {
+	RequestID     string        `json:"request_id"`
+	Chain         string        `json:"chain"`
+	Asset         string        `json:"asset"`
+	AssetContract string        `json:"asset_contract"`
+	NativeAsset   bool          `json:"native_asset"`
+	Recipient     string        `json:"recipient"`
+	Method        PaymentMethod `json:"method"`
+	ExpiresAt     time.Time     `json:"expires_at"`
+}
+
+// CryptoBuyerIntent records the server-authored expected crypto payment.
+type CryptoBuyerIntent struct {
+	Reference     string        `json:"reference"`
+	RequestID     string        `json:"request_id"`
+	Chain         string        `json:"chain"`
+	Asset         string        `json:"asset"`
+	AssetContract string        `json:"asset_contract"`
+	NativeAsset   bool          `json:"native_asset"`
+	Amount        uint64        `json:"amount"`
+	Recipient     string        `json:"recipient"`
+	Method        PaymentMethod `json:"method"`
+	CreatedAt     time.Time     `json:"created_at"`
+	ExpiresAt     time.Time     `json:"expires_at"`
+	UsedAt        time.Time     `json:"used_at"`
+	TxHash        string        `json:"tx_hash"`
+	IntentDigest  string        `json:"intent_digest"`
+	IntentSig     string        `json:"intent_signature"`
 }
 
 // DataQualityMetrics represents data quality assessment
@@ -218,25 +352,25 @@ type DataQualityMetrics struct {
 
 // Review represents a listing review (REV)
 type Review struct {
-	ReviewID         string             `json:"review_id"`
-	ListingID        string             `json:"listing_id"`
-	ReviewerPeerID   string             `json:"reviewer_peer_id"`
-	Rating           uint8              `json:"rating"` // 1-5
-	Title            string             `json:"title"`
-	Content          string             `json:"content"`
-	QualityMetrics   DataQualityMetrics `json:"quality_metrics"`
-	ACLGrantID       string             `json:"acl_grant_id"`
-	VerifiedPurchase bool               `json:"verified_purchase"`
-	CreatedAt        time.Time          `json:"created_at"`
-	UpdatedAt        time.Time          `json:"updated_at"`
-	Status           ReviewStatus       `json:"status"`
-	HelpfulCount     uint32             `json:"helpful_count"`
-	NotHelpfulCount  uint32             `json:"not_helpful_count"`
-	ProviderResponse string             `json:"provider_response"`
-	ProviderResponseAt time.Time        `json:"provider_response_at"`
-	FlaggedCount     uint32             `json:"flagged_count"`
-	ModerationNotes  string             `json:"moderation_notes"`
-	ReviewerSignature []byte            `json:"reviewer_signature"`
+	ReviewID           string             `json:"review_id"`
+	ListingID          string             `json:"listing_id"`
+	ReviewerPeerID     string             `json:"reviewer_peer_id"`
+	Rating             uint8              `json:"rating"` // 1-5
+	Title              string             `json:"title"`
+	Content            string             `json:"content"`
+	QualityMetrics     DataQualityMetrics `json:"quality_metrics"`
+	ACLGrantID         string             `json:"acl_grant_id"`
+	VerifiedPurchase   bool               `json:"verified_purchase"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	Status             ReviewStatus       `json:"status"`
+	HelpfulCount       uint32             `json:"helpful_count"`
+	NotHelpfulCount    uint32             `json:"not_helpful_count"`
+	ProviderResponse   string             `json:"provider_response"`
+	ProviderResponseAt time.Time          `json:"provider_response_at"`
+	FlaggedCount       uint32             `json:"flagged_count"`
+	ModerationNotes    string             `json:"moderation_notes"`
+	ReviewerSignature  []byte             `json:"reviewer_signature"`
 }
 
 // ReviewStats represents aggregated review statistics
@@ -267,9 +401,9 @@ type SearchQuery struct {
 
 // SearchResult represents search results
 type SearchResult struct {
-	Listings []Listing           `json:"listings"`
-	Total    int                 `json:"total"`
-	Facets   SearchFacets        `json:"facets"`
+	Listings []Listing    `json:"listings"`
+	Total    int          `json:"total"`
+	Facets   SearchFacets `json:"facets"`
 }
 
 // SearchFacets represents search facets for filtering
@@ -302,12 +436,12 @@ type CreditsBalance struct {
 
 // CreditsTransaction represents a credits transaction
 type CreditsTransaction struct {
-	TransactionID string        `json:"transaction_id"`
-	FromPeerID    string        `json:"from_peer_id"`
-	ToPeerID      string        `json:"to_peer_id"`
-	Amount        uint64        `json:"amount"`
-	Type          string        `json:"type"` // purchase, refund, deposit, withdrawal
-	Reference     string        `json:"reference"` // purchase_id, etc.
-	CreatedAt     time.Time     `json:"created_at"`
-	Status        string        `json:"status"`
+	TransactionID string    `json:"transaction_id"`
+	FromPeerID    string    `json:"from_peer_id"`
+	ToPeerID      string    `json:"to_peer_id"`
+	Amount        uint64    `json:"amount"`
+	Type          string    `json:"type"`      // purchase, refund, deposit, withdrawal
+	Reference     string    `json:"reference"` // purchase_id, etc.
+	CreatedAt     time.Time `json:"created_at"`
+	Status        string    `json:"status"`
 }

@@ -6,6 +6,11 @@ import {
   generateKey,
   randomBytes,
   sha256,
+  aesGcmDecryptWithIv,
+  aesGcmEncryptWithIv,
+  decryptBytes,
+  encryptBytes,
+  x25519PublicKey,
 } from './crypto/hd-wallet';
 
 describe('crypto', () => {
@@ -162,6 +167,42 @@ describe('crypto', () => {
       corrupted[corrupted.length - 1] ^= 0xff;
 
       await expect(decrypt(key, corrupted)).rejects.toThrow();
+    });
+  });
+
+  describe('AES-GCM AAD', () => {
+    it('rejects ciphertext when authenticated associated data is tampered', async () => {
+      const key = generateKey();
+      const iv = randomBytes(12);
+      const plaintext = new TextEncoder().encode('module content key');
+      const aad = new TextEncoder().encode(
+        'module=com.space-data-network.fastest-path;version=0.5.22;cid=bafyencryptedmodule',
+      );
+      const tamperedAad = new TextEncoder().encode(
+        'module=com.space-data-network.fastest-path;version=0.5.23;cid=bafyencryptedmodule',
+      );
+
+      const ciphertext = await aesGcmEncryptWithIv(key, plaintext, iv, aad);
+      await expect(aesGcmDecryptWithIv(key, ciphertext, iv, aad)).resolves.toEqual(plaintext);
+      await expect(aesGcmDecryptWithIv(key, ciphertext, iv, tamperedAad)).rejects.toThrow();
+    });
+  });
+
+  describe('recipient key wrapping', () => {
+    it('rejects unwrap attempts with the wrong recipient private key', async () => {
+      const senderPrivateKey = generateKey();
+      const recipientPrivateKey = generateKey();
+      const wrongRecipientPrivateKey = generateKey();
+      const recipientPublicKey = await x25519PublicKey(recipientPrivateKey);
+      const senderPublicKey = await x25519PublicKey(senderPrivateKey);
+      const contentKey = generateKey();
+
+      const wrapped = await encryptBytes(contentKey, recipientPublicKey, senderPrivateKey);
+
+      await expect(decryptBytes(wrapped, senderPublicKey, recipientPrivateKey)).resolves.toEqual(
+        contentKey,
+      );
+      await expect(decryptBytes(wrapped, senderPublicKey, wrongRecipientPrivateKey)).rejects.toThrow();
     });
   });
 });

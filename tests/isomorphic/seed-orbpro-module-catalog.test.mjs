@@ -148,44 +148,110 @@ await test("seedOrbproModuleCatalog uses the shipped plugin version for built-in
   );
   const pluginRoot = path.join(tempRoot, "license", "plugins");
   await fs.mkdir(pluginRoot, { recursive: true });
+  const builtInModule = DEFAULT_ORBPRO_MODULES.find(
+    (entry) => entry.moduleId === "com.orbpro.access",
+  );
+  assert.ok(builtInModule);
 
   const summary = await seedOrbproModuleCatalog({
     pluginRoot,
-    modules: [
-      {
-        slug: "sgp4",
-        moduleId: "com.orbpro.sgp4",
-        wasmPath: "../space-data-network-plugins/packages/sgp4/dist/sgp4.wasm",
-      },
-    ],
+    modules: [builtInModule],
   });
 
   assert.equal(summary.seeded.length, 1);
-  assert.equal(summary.seeded[0].moduleId, "com.orbpro.sgp4");
+  assert.equal(summary.seeded[0].moduleId, "com.orbpro.access");
 
   const catalog = JSON.parse(
     await fs.readFile(path.join(pluginRoot, "catalog.json"), "utf8"),
   );
-  const sgp4Manifest = JSON.parse(
+  const manifest = JSON.parse(
     await fs.readFile(
       path.resolve(
-        workspaceRoot,
-        "space-data-network-plugins/packages/sgp4/dist/manifest.json",
+        repoRoot,
+        "..",
+        "OrbPro/packages/space-data-network-modules/analysis/access/plugin-manifest.json",
       ),
       "utf8",
     ),
   );
   const seededEntry = catalog.plugins.find(
-    (entry) => entry.id === "com.orbpro.sgp4",
+    (entry) => entry.id === "com.orbpro.access",
   );
 
-  assert.equal(seededEntry?.version, sgp4Manifest.version);
+  assert.equal(seededEntry?.version, manifest.version);
 });
 
 await test("DEFAULT_ORBPRO_MODULES includes the licensing runtime", async () => {
   assert.equal(
     DEFAULT_ORBPRO_MODULES.some((entry) => entry.moduleId === "licensing"),
     true,
+  );
+});
+
+await test("DEFAULT_ORBPRO_MODULES includes the protected wasm-engine runtime artifact", async () => {
+  const wasmEngineRuntime = DEFAULT_ORBPRO_MODULES.find(
+    (entry) => entry.slug === "wasm-engine",
+  );
+
+  assert.equal(
+    DEFAULT_ORBPRO_MODULES.some(
+      (entry) =>
+        entry.slug === "wasm-engine-sdk" ||
+        entry.moduleId === "com.orbpro.wasm-engine-sdk",
+    ),
+    false,
+  );
+  assert.equal(
+    wasmEngineRuntime?.protectedModulePath,
+    "packages/wasm-engine/dist/wasm-engine-sdn-encrypted.js",
+  );
+  assert.equal(wasmEngineRuntime?.protectedExports?.[0]?.exportName, "encryptedData");
+});
+
+await test("seedOrbproModuleCatalog removes the stale wasm-engine-sdk catalog entry", async () => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sdn-seed-orbpro-stale-wasm-engine-sdk-"),
+  );
+  const pluginRoot = path.join(tempRoot, "license", "plugins");
+  await fs.mkdir(pluginRoot, { recursive: true });
+
+  await fs.writeFile(
+    path.join(pluginRoot, "catalog.json"),
+    JSON.stringify(
+      {
+        plugins: [
+          {
+            id: "com.orbpro.wasm-engine-sdk",
+            version: "1.0.0",
+            encrypted_path: "wasm-engine-sdk.wasm.enc",
+            key_path: "wasm-engine-sdk.key",
+            content_type: "application/wasm+encrypted",
+          },
+          {
+            id: "existing.module",
+            version: "9.9.9",
+            encrypted_path: "existing.wasm.enc",
+            key_path: "existing.key",
+            content_type: "application/wasm+encrypted",
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
+  await seedOrbproModuleCatalog({
+    pluginRoot,
+    modules: [],
+  });
+
+  const catalog = JSON.parse(
+    await fs.readFile(path.join(pluginRoot, "catalog.json"), "utf8"),
+  );
+  assert.deepEqual(
+    catalog.plugins.map((entry) => entry.id),
+    ["existing.module"],
   );
 });
 

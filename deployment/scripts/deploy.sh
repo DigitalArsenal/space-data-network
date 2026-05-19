@@ -20,6 +20,7 @@ log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+uppercase() { printf '%s' "$1" | tr '[:lower:]' '[:upper:]'; }
 
 usage() {
     cat << EOF
@@ -82,9 +83,10 @@ parse_server_endpoint() {
 ssh_cmd() {
     local ip=$1
     shift
-    local ssh_opts=(-o StrictHostKeyChecking=no -o ConnectTimeout=10)
+    local control_path="/tmp/sdn-deploy-ssh-%r@%h:%p"
+    local ssh_opts=(-o ControlMaster=auto -o ControlPersist=120 -o ControlPath="$control_path" -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10)
     if [[ -n "${SSH_KEY:-}" && -f "$SSH_KEY" ]]; then
-        ssh_opts=(-i "$SSH_KEY" "${ssh_opts[@]}")
+        ssh_opts=(-i "$SSH_KEY" -o IdentitiesOnly=yes "${ssh_opts[@]}")
     fi
     ssh "${ssh_opts[@]}" "${SSH_USER}@${ip}" "$@"
 }
@@ -94,9 +96,10 @@ scp_cmd() {
     local src=$1
     local ip=$2
     local dest=$3
-    local ssh_opts=(-o StrictHostKeyChecking=no)
+    local control_path="/tmp/sdn-deploy-ssh-%r@%h:%p"
+    local ssh_opts=(-o ControlMaster=auto -o ControlPersist=120 -o ControlPath="$control_path" -o BatchMode=yes -o StrictHostKeyChecking=no)
     if [[ -n "${SSH_KEY:-}" && -f "$SSH_KEY" ]]; then
-        ssh_opts=(-i "$SSH_KEY" "${ssh_opts[@]}")
+        ssh_opts=(-i "$SSH_KEY" -o IdentitiesOnly=yes "${ssh_opts[@]}")
     fi
     scp "${ssh_opts[@]}" "$src" "${SSH_USER}@${ip}:${dest}"
 }
@@ -106,9 +109,10 @@ rsync_cmd() {
     local src=$1
     local ip=$2
     local dest=$3
-    local transport="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10"
+    local control_path="/tmp/sdn-deploy-ssh-%r@%h:%p"
+    local transport="ssh -o ControlMaster=auto -o ControlPersist=120 -o ControlPath=${control_path} -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10"
     if [[ -n "${SSH_KEY:-}" && -f "$SSH_KEY" ]]; then
-        transport="ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o ConnectTimeout=10"
+        transport="ssh -i ${SSH_KEY} -o IdentitiesOnly=yes -o ControlMaster=auto -o ControlPersist=120 -o ControlPath=${control_path} -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10"
     fi
     rsync -az --delete -e "$transport" "$src" "${SSH_USER}@${ip}:${dest}"
 }
@@ -128,6 +132,83 @@ full_node_service_name() {
     else
         echo "spacedatanetwork"
     fi
+}
+
+full_node_config_dir() {
+    local ip=$1
+    local service=$2
+
+    if [[ "$service" == "space-data-network" ]]; then
+        echo "/etc/space-data-network"
+        return
+    fi
+
+    if ssh_cmd "$ip" "test -f /etc/space-data-network/config.yaml" >/dev/null 2>&1; then
+        echo "/etc/space-data-network"
+        return
+    fi
+
+    echo "/etc/spacedatanetwork"
+}
+
+configure_full_node_systemd_overrides() {
+    local ip=$1
+    local service=$2
+    local config_dir=$3
+    local override_dir="/etc/systemd/system/${service}.service.d"
+
+    ssh_cmd "$ip" "mkdir -p ${override_dir}"
+
+    if [[ "$config_dir" == "/etc/space-data-network" ]]; then
+        ssh_cmd "$ip" "cat > ${override_dir}/config-path.conf <<'EOF'
+[Service]
+Environment=SDN_CONFIG=/etc/space-data-network/config.yaml
+EOF
+cat > ${override_dir}/spaceaware-runtime.conf <<'EOF'
+[Service]
+User=root
+Group=root
+ReadWritePaths=/opt/data /var/lib/spacedatanetwork
+EOF"
+    else
+        ssh_cmd "$ip" "rm -f ${override_dir}/config-path.conf ${override_dir}/spaceaware-runtime.conf"
+    fi
+}
+
+configure_spaceaware_public_wss_proxy() {
+    local ip=$1
+    local config_dir=$2
+
+    if [[ "$config_dir" != "/etc/space-data-network" ]]; then
+        return
+    fi
+
+    ssh_cmd "$ip" "if [ -f /etc/nginx/sites-enabled/spaceaware ]; then
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path('/etc/nginx/sites-enabled/spaceaware')
+text = path.read_text()
+next_text = text.replace(
+    'server_name spaceaware.io www.spaceaware.io;',
+    'server_name spaceaware.io www.spaceaware.io sdn.spaceaware.io;',
+)
+next_text = next_text.replace(
+    'proxy_pass http://127.0.0.1:18080;',
+    'proxy_pass http://127.0.0.1:8080;',
+)
+if next_text != text:
+    backup = path.with_suffix(path.suffix + '.pre-sdn-wss-route')
+    if not backup.exists():
+        backup.write_text(text)
+    path.write_text(next_text)
+PY
+nginx -t
+systemctl reload nginx
+fi
+if systemctl cat space-data-network-module-delivery.service >/dev/null 2>&1; then
+    systemctl restart space-data-network-module-delivery.service || true
+fi"
 }
 
 prepare_full_node_assets() {
@@ -286,10 +367,7 @@ deploy_binary() {
         local full_service
         local config_dir
         full_service="$(full_node_service_name "$ip")"
-        config_dir="/etc/spacedatanetwork"
-        if [[ "$full_service" == "space-data-network" ]]; then
-            config_dir="/etc/space-data-network"
-        fi
+        config_dir="$(full_node_config_dir "$ip" "$full_service")"
 
         ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/bin /opt/spacedatanetwork/admin-ui /opt/spacedatanetwork/webui /opt/spacedatanetwork/sdn-server /opt/spacedatanetwork/scripts ${config_dir} /var/lib/spacedatanetwork/frontend /var/lib/spacedatanetwork/data && id -u sdn >/dev/null 2>&1 || useradd --system --home /var/lib/spacedatanetwork --shell /usr/sbin/nologin sdn"
 
@@ -298,7 +376,7 @@ deploy_binary() {
         rsync_cmd "${PROJECT_ROOT}/sdn-js/ui/dist/" "$ip" "/opt/spacedatanetwork/admin-ui/"
         rsync_cmd "${PROJECT_ROOT}/webui/build/" "$ip" "/opt/spacedatanetwork/webui/"
         deploy_full_node_licensing_module "$ip" "$full_service"
-        if [[ "$full_service" == "spacedatanetwork" ]] || ! ssh_cmd "$ip" "test -f ${config_dir}/config.yaml" >/dev/null 2>&1; then
+        if ! ssh_cmd "$ip" "test -f ${config_dir}/config.yaml" >/dev/null 2>&1; then
             rsync_cmd "${PROJECT_ROOT}/config/full-vm.yaml" "$ip" "${config_dir}/config.yaml"
         else
             log_info "Preserving existing full-node config at ${config_dir}/config.yaml"
@@ -306,8 +384,10 @@ deploy_binary() {
         if [[ "$full_service" == "spacedatanetwork" ]]; then
             rsync_cmd "${PROJECT_ROOT}/sdn-server/deploy/spacedatanetwork.service" "$ip" "/etc/systemd/system/spacedatanetwork.service"
         fi
+        configure_full_node_systemd_overrides "$ip" "$full_service" "$config_dir"
 
         ssh_cmd "$ip" "chmod 755 ${config_dir} && chown root:root ${config_dir}/config.yaml && chmod 644 ${config_dir}/config.yaml && chmod +x /opt/spacedatanetwork/scripts/install-wasmedge.sh /opt/spacedatanetwork/scripts/go-with-wasmedge.sh && WASMEDGE_DIR=/opt/spacedatanetwork/.wasmedge /opt/spacedatanetwork/scripts/go-with-wasmedge.sh build -o /opt/spacedatanetwork/bin/spacedatanetwork ./cmd/spacedatanetwork && chown -R sdn:sdn /opt/spacedatanetwork /var/lib/spacedatanetwork && systemctl daemon-reload && systemctl enable ${full_service} && systemctl restart ${full_service} && if [ '${full_service}' = 'space-data-network' ]; then systemctl disable --now spacedatanetwork >/dev/null 2>&1 || true; fi"
+        configure_spaceaware_public_wss_proxy "$ip" "$config_dir"
 
         log_success "Deployed full node bundle to $ip"
         return
@@ -464,7 +544,7 @@ case $COMMAND in
                 registry) yaml_key="registry_builders" ;;
             esac
 
-            echo -e "\n${BLUE}=== ${t^^} NODES ===${NC}"
+            echo -e "\n${BLUE}=== $(uppercase "$t") NODES ===${NC}"
             while IFS= read -r line; do
                 endpoint="$(parse_server_endpoint "$line")"
                 if [[ -n "$endpoint" ]]; then

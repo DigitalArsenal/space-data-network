@@ -232,8 +232,10 @@ type AdminConfig struct {
 
 	// FrontendPath is the filesystem path to the public-facing frontend directory.
 	// This directory is served at "/" as a static file server with SPA fallback.
-	// Default: "" (resolved at runtime to ~/.spacedatanetwork/frontend/).
-	// The directory is created automatically with a default page if it doesn't exist.
+	// Default: "" (resolved at runtime to a built sdn-js/ui/dist when available,
+	// then ~/.spacedatanetwork/frontend/).
+	// The fallback directory is created automatically with a default page if it
+	// doesn't exist.
 	// Override with SDN_FRONTEND_PATH env var or set explicitly in config.
 	FrontendPath string `yaml:"frontend_path"`
 
@@ -310,6 +312,7 @@ func Default() *Config {
 				"/ip4/0.0.0.0/tcp/4001",
 				"/ip4/0.0.0.0/tcp/8080/ws",
 				"/ip4/0.0.0.0/udp/4001/quic-v1",
+				"/ip4/0.0.0.0/udp/4003/webrtc-direct",
 			},
 			Bootstrap:      bootstrap.DefaultBootstrapAddresses(),
 			EdgeRelays:     []string{},

@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "rootDir": "..",
+    "types": ["svelte", "vite/client"]
+  },
+  "include": ["src/**/*.svelte", "src/lib/**/*.ts", "src/vite-env.d.ts"],
+  "exclude": ["dist", "node_modules"]
+}

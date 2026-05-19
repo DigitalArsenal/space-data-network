@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/spacedatanetwork/sdn-server/internal/auth"
+	"github.com/spacedatanetwork/sdn-server/internal/config"
 	"github.com/spacedatanetwork/sdn-server/internal/epm"
 	"github.com/spacedatanetwork/sdn-server/internal/license"
 	"github.com/spacedatanetwork/sdn-server/internal/peers"
@@ -53,6 +56,203 @@ func TestIsPublicAPIPathAllowsDirectoryRoutes(t *testing.T) {
 	}
 	if !isPublicAPIPath("/api/directory/users") {
 		t.Fatal("expected directory users route to be public")
+	}
+}
+
+func TestNodeSecurityPublicAPIRequestPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		method string
+		path   string
+		public bool
+	}{
+		{http.MethodGet, "/api/node/info", true},
+		{http.MethodGet, "/api/module-delivery/provider", true},
+		{http.MethodGet, "/api/module-delivery/listings", true},
+		{http.MethodGet, "/api/directory/nodes", true},
+		{http.MethodPost, "/api/auth/challenge", true},
+		{http.MethodPost, "/api/auth/verify", true},
+		{http.MethodGet, "/api/auth/status", true},
+		{http.MethodGet, "/api/storefront/listings", true},
+		{http.MethodGet, "/api/storefront/listings/example", true},
+		{http.MethodGet, "/api/storefront/listings/example/reviews", true},
+		{http.MethodPost, "/api/storefront/listings/search", true},
+		{http.MethodPost, "/api/storefront/payments/stripe/webhook", true},
+		{http.MethodGet, "/api/v1/data/omm/bulk", true},
+		{http.MethodGet, "/api/v1/data/secure/omm", true},
+
+		{http.MethodGet, "/api/v1/data/summary", false},
+		{http.MethodPost, "/api/v1/data/query", false},
+		{http.MethodGet, "/api/v1/data/records/EPM.fbs/12D3KooW", false},
+		{http.MethodPost, "/api/storefront/listings", false},
+		{http.MethodPatch, "/api/storefront/listings/example", false},
+		{http.MethodDelete, "/api/storefront/listings/example", false},
+		{http.MethodGet, "/api/auth/users", false},
+		{http.MethodPut, "/api/auth/users/xpub-admin", false},
+		{http.MethodGet, "/api/auth/me", false},
+		{http.MethodPost, "/api/auth/logout", false},
+		{http.MethodPost, "/api/v0/id", false},
+		{http.MethodPost, "/api/v0/pin/add", false},
+		{http.MethodPost, "/api/v1/data/publish/OMM.fbs", false},
+		{http.MethodPost, "/api/v1/data/publish/batch/OMM.fbs", false},
+		{http.MethodPost, "/api/v1/modules/runtime/celestrak-provider/schedules/full/run", false},
+		{http.MethodPost, "/api/v1/admin/dataset-updates/publish", false},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			t.Parallel()
+			if got := isPublicAPIRequest(tc.method, tc.path); got != tc.public {
+				t.Fatalf("isPublicAPIRequest(%q, %q) = %v, want %v", tc.method, tc.path, got, tc.public)
+			}
+		})
+	}
+}
+
+func TestNodeSecurityAdminOnlyAPIPathPolicy(t *testing.T) {
+	t.Parallel()
+
+	adminPaths := []string{
+		"/api/auth/users",
+		"/api/auth/users/xpub-admin",
+		"/api/v0/id",
+		"/api/v0/pin/add",
+		"/api/v1/data/summary",
+		"/api/v1/data/query",
+		"/api/v1/data/records/EPM.fbs/12D3KooW",
+		"/api/v1/modules/runtime/celestrak-provider/schedules/full/run",
+		"/api/v1/admin/dataset-updates/publish",
+		"/api/admin/frontend/files",
+		"/api/v1/plugins/upload",
+		"/api/routing/config",
+		"/api/streaming/sessions",
+		"/api/relay/filters",
+	}
+	for _, path := range adminPaths {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			if !isAdminOnlyAPIPath(path) {
+				t.Fatalf("expected %q to require admin trust", path)
+			}
+		})
+	}
+
+	standardPaths := []string{
+		"/api/auth/me",
+		"/api/storefront/purchases",
+		"/api/v1/data/publish/OMM.fbs",
+	}
+	for _, path := range standardPaths {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			if isAdminOnlyAPIPath(path) {
+				t.Fatalf("expected %q to require authentication without forcing admin trust", path)
+			}
+		})
+	}
+}
+
+func TestCountConfiguredSDNSSHHostStanzasCountsDeploymentNodesOncePerHostLine(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(configPath, []byte(`
+Host space-data-network-01 sdn.spaceaware.io
+    HostName 159.203.150.8
+    User root
+
+Host space-data-network-02 celestrak.eth
+    HostName 167.172.219.213
+    User root
+
+Host github.com
+    HostName github.com
+
+Host *.example.invalid
+    HostName ignored.example.invalid
+`), 0o600); err != nil {
+		t.Fatalf("write ssh config: %v", err)
+	}
+
+	if got, want := countConfiguredSDNSSHHostStanzas(configPath), 2; got != want {
+		t.Fatalf("countConfiguredSDNSSHHostStanzas() = %d, want %d", got, want)
+	}
+}
+
+func TestCountConfiguredSDNSSHHostStanzasMissingFileIsZero(t *testing.T) {
+	t.Parallel()
+
+	if got := countConfiguredSDNSSHHostStanzas(filepath.Join(t.TempDir(), "missing")); got != 0 {
+		t.Fatalf("countConfiguredSDNSSHHostStanzas(missing) = %d, want 0", got)
+	}
+}
+
+func TestApplyPublicAPICORSHeadersUsesRequestOrigin(t *testing.T) {
+	t.Parallel()
+
+	header := http.Header{}
+	applyPublicAPICORSHeaders(header, "https://spaceaware.io")
+
+	if got := header.Get("Access-Control-Allow-Origin"); got != "https://spaceaware.io" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+	if got := header.Get("Access-Control-Allow-Methods"); got != "GET, POST, PUT, PATCH, DELETE, OPTIONS" {
+		t.Fatalf("Access-Control-Allow-Methods = %q", got)
+	}
+	if got := header.Get("Vary"); got != "Origin" {
+		t.Fatalf("Vary = %q", got)
+	}
+}
+
+func TestApplyPublicAPICORSHeadersFallsBackToWildcard(t *testing.T) {
+	t.Parallel()
+
+	header := http.Header{}
+	applyPublicAPICORSHeaders(header, "")
+
+	if got := header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+}
+
+func TestIPFSGatewayPathDoesNotUsePublicAPICORS(t *testing.T) {
+	t.Parallel()
+
+	if isPublicAPIPath("/ipfs/QmExample") {
+		t.Fatal("/ipfs gateway responses must use only the normalized gateway CORS headers")
+	}
+}
+
+func TestNormalizeIPFSGatewayCORSHeadersCollapsesDuplicateValues(t *testing.T) {
+	t.Parallel()
+
+	header := http.Header{}
+	header.Add("Access-Control-Allow-Origin", "*")
+	header.Add("Access-Control-Allow-Origin", "*")
+	header.Add("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	header.Add("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	header.Add("Access-Control-Allow-Headers", "Content-Type, Range, User-Agent, X-Requested-With")
+	header.Add("Access-Control-Allow-Headers", "Content-Type, Range, User-Agent, X-Requested-With")
+	header.Add("Access-Control-Expose-Headers", "Content-Length, Content-Range, X-Chunked-Output")
+	header.Add("Access-Control-Expose-Headers", "Content-Length, Content-Range")
+
+	normalizeIPFSGatewayCORSHeaders(header)
+
+	if got := header.Values("Access-Control-Allow-Origin"); len(got) != 1 || got[0] != "*" {
+		t.Fatalf("Access-Control-Allow-Origin values = %#v, want one wildcard", got)
+	}
+	if got := header.Values("Access-Control-Allow-Methods"); len(got) != 1 || got[0] != "GET, HEAD, OPTIONS" {
+		t.Fatalf("Access-Control-Allow-Methods values = %#v", got)
+	}
+	if got := header.Values("Access-Control-Allow-Headers"); len(got) != 1 || got[0] != "Content-Type, Range, User-Agent, X-Requested-With" {
+		t.Fatalf("Access-Control-Allow-Headers values = %#v", got)
+	}
+	if got := header.Values("Access-Control-Expose-Headers"); len(got) != 1 || got[0] != "Content-Length, Content-Range, X-Chunked-Output, X-Ipfs-Path, X-Ipfs-Roots, X-Stream-Output" {
+		t.Fatalf("Access-Control-Expose-Headers values = %#v", got)
 	}
 }
 
@@ -286,7 +486,7 @@ func TestHandleModuleRuntimeMutationUpdatesOptionsAndRunsActions(t *testing.T) {
 	if err := json.NewDecoder(optionRecorder.Body).Decode(&optionPayload); err != nil {
 		t.Fatalf("decode option payload: %v", err)
 	}
-	if optionPayload.Key != "timer.refresh-grants.interval" || optionPayload.Value != "45000" || optionPayload.Persistence != "live-only" {
+	if optionPayload.Key != "timer.refresh-grants.interval" || optionPayload.Value != "45000" || optionPayload.Persistence != "persisted" {
 		t.Fatalf("option payload = %#v", optionPayload)
 	}
 
@@ -296,6 +496,131 @@ func TestHandleModuleRuntimeMutationUpdatesOptionsAndRunsActions(t *testing.T) {
 	handleModuleRuntimeMutation(mgr)(actionRecorder, actionReq)
 	if actionRecorder.Code != http.StatusOK {
 		t.Fatalf("action status = %d, body = %s", actionRecorder.Code, actionRecorder.Body.String())
+	}
+}
+
+func TestHandleModuleRuntimeMutationSavesInputsAndReturnsHistory(t *testing.T) {
+	t.Parallel()
+
+	mgr := plugins.New()
+	plugin := &runtimeMutationTestPlugin{
+		id: "licensing",
+		descriptor: plugins.RuntimeModuleDescriptor{
+			Manifest: &plugins.RuntimeModuleManifest{
+				PluginID: "licensing",
+				Methods: []plugins.RuntimeModuleMethod{
+					{
+						MethodID: "server_configure_runtime",
+						InputPorts: []plugins.RuntimeModulePort{
+							{
+								PortID: "request",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := mgr.Register(plugin); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if err := mgr.StartAll(context.Background(), plugins.RuntimeContext{Mode: "test"}); err != nil {
+		t.Fatalf("StartAll failed: %v", err)
+	}
+
+	inputReq := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/modules/runtime/licensing/inputs",
+		bytes.NewBufferString(`{"values":[{"methodId":"server_configure_runtime","portId":"request","wireFormat":"FLATBUFFER_JSON","encoding":"json","schemaName":"MODULE.fbs","rootType":"ConfigureRuntimeRequest","value":"{\"refreshIntervalMs\":45000}"}]}`),
+	)
+	inputRecorder := httptest.NewRecorder()
+	handleModuleRuntimeMutation(mgr)(inputRecorder, inputReq)
+	if inputRecorder.Code != http.StatusOK {
+		t.Fatalf("input status = %d, body = %s", inputRecorder.Code, inputRecorder.Body.String())
+	}
+	var inputPayload struct {
+		ModuleID       string                            `json:"moduleId"`
+		RestartPending bool                              `json:"restartPending"`
+		InputValues    []plugins.RuntimeModuleInputValue `json:"inputValues"`
+	}
+	if err := json.NewDecoder(inputRecorder.Body).Decode(&inputPayload); err != nil {
+		t.Fatalf("decode input payload: %v", err)
+	}
+	if inputPayload.ModuleID != "licensing" || !inputPayload.RestartPending || len(inputPayload.InputValues) != 1 {
+		t.Fatalf("input payload = %#v", inputPayload)
+	}
+
+	historyReq := httptest.NewRequest(http.MethodGet, "/api/v1/modules/runtime/licensing/history", nil)
+	historyRecorder := httptest.NewRecorder()
+	handleModuleRuntimeMutation(mgr)(historyRecorder, historyReq)
+	if historyRecorder.Code != http.StatusOK {
+		t.Fatalf("history status = %d, body = %s", historyRecorder.Code, historyRecorder.Body.String())
+	}
+	var historyPayload struct {
+		ModuleID string                                     `json:"moduleId"`
+		History  []plugins.RuntimeModuleCommandHistoryEntry `json:"history"`
+	}
+	if err := json.NewDecoder(historyRecorder.Body).Decode(&historyPayload); err != nil {
+		t.Fatalf("decode history payload: %v", err)
+	}
+	if historyPayload.ModuleID != "licensing" || len(historyPayload.History) != 1 || historyPayload.History[0].Command != "save-inputs" {
+		t.Fatalf("history payload = %#v", historyPayload)
+	}
+}
+
+func TestHandleModuleRuntimeMutationSavesAndRunsSchedule(t *testing.T) {
+	t.Parallel()
+
+	mgr := plugins.New()
+	plugin := &runtimeMutationTestPlugin{id: "celestrak-provider"}
+	if err := mgr.Register(plugin); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if err := mgr.StartAll(context.Background(), plugins.RuntimeContext{Mode: "test"}); err != nil {
+		t.Fatalf("StartAll failed: %v", err)
+	}
+
+	scheduleReq := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog",
+		bytes.NewBufferString(`{"enabled":true,"interval":"45m","timezone":"UTC"}`),
+	)
+	scheduleRecorder := httptest.NewRecorder()
+	handleModuleRuntimeMutation(mgr)(scheduleRecorder, scheduleReq)
+	if scheduleRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("short cadence status = %d, body = %s, want 400", scheduleRecorder.Code, scheduleRecorder.Body.String())
+	}
+
+	scheduleReq = httptest.NewRequest(
+		http.MethodPatch,
+		"/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog",
+		bytes.NewBufferString(`{"enabled":true,"interval":"3h","cronExpression":"0 */3 * * *","timezone":"UTC","retryBudget":2,"maxRuntime":"30m"}`),
+	)
+	scheduleRecorder = httptest.NewRecorder()
+	handleModuleRuntimeMutation(mgr)(scheduleRecorder, scheduleReq)
+	if scheduleRecorder.Code != http.StatusOK {
+		t.Fatalf("schedule status = %d, body = %s", scheduleRecorder.Code, scheduleRecorder.Body.String())
+	}
+	var schedulePayload plugins.RuntimeModuleSchedule
+	if err := json.NewDecoder(scheduleRecorder.Body).Decode(&schedulePayload); err != nil {
+		t.Fatalf("decode schedule payload: %v", err)
+	}
+	if schedulePayload.MethodID != "sync_full_catalog" || schedulePayload.Interval != "3h0m0s" || schedulePayload.MinInterval != "3h0m0s" {
+		t.Fatalf("schedule payload = %#v", schedulePayload)
+	}
+
+	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/modules/runtime/celestrak-provider/schedules/sync_full_catalog/run", nil)
+	runRecorder := httptest.NewRecorder()
+	handleModuleRuntimeMutation(mgr)(runRecorder, runReq)
+	if runRecorder.Code != http.StatusOK {
+		t.Fatalf("run status = %d, body = %s", runRecorder.Code, runRecorder.Body.String())
+	}
+	var runPayload plugins.RuntimeModuleScheduleRun
+	if err := json.NewDecoder(runRecorder.Body).Decode(&runPayload); err != nil {
+		t.Fatalf("decode run payload: %v", err)
+	}
+	if runPayload.MethodID != "sync_full_catalog" || runPayload.Trigger != "manual" || runPayload.Status != "ok" {
+		t.Fatalf("run payload = %#v", runPayload)
 	}
 }
 
@@ -356,8 +681,8 @@ func TestDefaultFrontendHTMLIsCleanLandingPage(t *testing.T) {
 	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="/admin/"`)) {
 		t.Fatal("default frontend should link to the admin page")
 	}
-	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="https://spacedatanet.org"`)) {
-		t.Fatal("default frontend should link to spacedatanet.org documentation")
+	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`href="https://spacedatanetwork.org"`)) {
+		t.Fatal("default frontend should link to spacedatanetwork.org documentation")
 	}
 	if !bytes.Contains([]byte(defaultFrontendHTML), []byte(`class="landing-card"`)) {
 		t.Fatal("default frontend should use a single simple landing content block")
@@ -390,6 +715,70 @@ func TestPublicHomepageFileIgnoresDeprecatedHomepageWhenFrontendPathIsSet(t *tes
 
 	if got := publicHomepageFile("/var/lib/spacedatanetwork/frontend", "/opt/spacedatanetwork/spaceaware/index.html"); got != "" {
 		t.Fatalf("public homepage file = %q, want embedded default landing page", got)
+	}
+}
+
+func TestDefaultFrontendCandidatesPreferBuiltSdnUIBeforeManagedFrontend(t *testing.T) {
+	t.Parallel()
+
+	candidates := defaultFrontendCandidates()
+	sdnUIIndex := -1
+	defaultIndex := -1
+	for index, candidate := range candidates {
+		if strings.Contains(filepath.ToSlash(candidate), "sdn-js/ui/dist") && sdnUIIndex == -1 {
+			sdnUIIndex = index
+		}
+		if candidate == config.DefaultFrontendPath() {
+			defaultIndex = index
+		}
+	}
+
+	if sdnUIIndex == -1 {
+		t.Fatalf("default frontend candidates = %#v, want sdn-js/ui/dist candidate", candidates)
+	}
+	if defaultIndex == -1 {
+		t.Fatalf("default frontend candidates = %#v, want managed default frontend fallback", candidates)
+	}
+	if sdnUIIndex > defaultIndex {
+		t.Fatalf("sdn-js/ui/dist candidate index %d should precede managed fallback index %d", sdnUIIndex, defaultIndex)
+	}
+}
+
+func TestFirstExistingFrontendPathRequiresIndexHTML(t *testing.T) {
+	t.Parallel()
+
+	withoutIndex := t.TempDir()
+	withIndex := t.TempDir()
+	if err := os.WriteFile(filepath.Join(withIndex, "index.html"), []byte("<!doctype html>"), 0o644); err != nil {
+		t.Fatalf("write index.html failed: %v", err)
+	}
+
+	if got := firstExistingFrontendPath([]string{withoutIndex, withIndex}); got != withIndex {
+		t.Fatalf("first existing frontend path = %q, want %q", got, withIndex)
+	}
+}
+
+func TestResolveFrontendPathRespectsExplicitConfiguredPath(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveFrontendPath("/var/lib/sdn/custom-ui"); got != "/var/lib/sdn/custom-ui" {
+		t.Fatalf("resolved frontend path = %q, want explicit configured path", got)
+	}
+}
+
+func TestProvisionFrontendDirWritesDefaultIndexInExistingDirectory(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := provisionFrontendDir(dir); err != nil {
+		t.Fatalf("provisionFrontendDir failed: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		t.Fatalf("read provisioned index: %v", err)
+	}
+	if !bytes.Contains(body, []byte("Space Data Network")) {
+		t.Fatalf("provisioned index = %q, want default SDN frontend", string(body))
 	}
 }
 
@@ -628,6 +1017,57 @@ func TestPromoteNodeInfoKeyFieldsPromotesSigningAndEncryptionKeys(t *testing.T) 
 	}
 }
 
+func TestStorefrontSigningKeyFromRawAcceptsSeedOrPrivateKey(t *testing.T) {
+	t.Parallel()
+
+	seed := bytes.Repeat([]byte{0x51}, ed25519.SeedSize)
+	privateKey := ed25519.NewKeyFromSeed(seed)
+
+	fromSeed, err := storefrontSigningKeyFromRaw(seed)
+	if err != nil {
+		t.Fatalf("storefrontSigningKeyFromRaw(seed) failed: %v", err)
+	}
+	if !bytes.Equal(fromSeed, privateKey) {
+		t.Fatal("storefrontSigningKeyFromRaw(seed) did not expand to the expected private key")
+	}
+
+	fromPrivate, err := storefrontSigningKeyFromRaw(privateKey)
+	if err != nil {
+		t.Fatalf("storefrontSigningKeyFromRaw(privateKey) failed: %v", err)
+	}
+	if !bytes.Equal(fromPrivate, privateKey) {
+		t.Fatal("storefrontSigningKeyFromRaw(privateKey) changed key bytes")
+	}
+
+	if _, err := storefrontSigningKeyFromRaw([]byte{1, 2, 3}); err == nil {
+		t.Fatal("storefrontSigningKeyFromRaw should reject invalid key lengths")
+	}
+}
+
+func TestDatasetPublicationSigningKeyCreatesPersistentLegacyIdentity(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Storage: config.StorageConfig{Path: filepath.Join(dir, "store")},
+		Setup:   config.SetupConfig{DataPath: dir},
+	}
+
+	first, err := datasetPublicationSigningKey(cfg, nil)
+	if err != nil {
+		t.Fatalf("datasetPublicationSigningKey first call failed: %v", err)
+	}
+	if len(first) != ed25519.PrivateKeySize {
+		t.Fatalf("first key length = %d, want %d", len(first), ed25519.PrivateKeySize)
+	}
+
+	second, err := datasetPublicationSigningKey(cfg, nil)
+	if err != nil {
+		t.Fatalf("datasetPublicationSigningKey second call failed: %v", err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatal("dataset publication signing key was not persisted")
+	}
+}
+
 func writeMainTestPluginRegistry(t *testing.T, entries ...license.PluginCatalogEntry) *license.PluginRegistry {
 	t.Helper()
 
@@ -679,6 +1119,17 @@ func (p *runtimeMutationTestPlugin) RuntimeDescriptor() plugins.RuntimeModuleDes
 }
 
 func (p *runtimeMutationTestPlugin) CronMethods() []plugins.CronMethodSpec {
+	if p.id == "celestrak-provider" {
+		return []plugins.CronMethodSpec{
+			{
+				Method:          "sync_full_catalog",
+				Description:     "Sync CelesTrak full catalog",
+				DefaultInterval: "3h",
+				Input:           "json",
+				Output:          "json",
+			},
+		}
+	}
 	return []plugins.CronMethodSpec{
 		{
 			Method:          "refresh_grants",

@@ -1,15 +1,18 @@
 // @ts-check
-const { screen, BrowserWindow, app } = require('electron')
+const { screen, BrowserWindow, app, ipcMain } = require('electron')
 const { join } = require('path')
 const { URL } = require('url')
-const serve = require('electron-serve')
+const toUri = require('multiaddr-to-uri')
 const logger = require('../common/logger')
 const store = require('../common/store')
 const { OPEN_WEBUI_LAUNCH: CONFIG_KEY } = require('../common/config-keys')
 const dock = require('../utils/dock')
 const getCtx = require('../context')
+const registerStaticScheme = require('../static-scheme')
+const ipcMainEvents = require('../common/ipc-main-events')
+const { getDesktopStaticUrl } = require('../static-http-server')
 
-serve({ scheme: 'sdn', directory: join(__dirname, '../../../sdn-js/ui/dist') })
+registerStaticScheme({ scheme: 'sdn', directory: 'assets/sdn-ui' })
 const introPath = join(__dirname, '../../assets/pages/sdn-intro.html')
 
 function isIntroRoute (path) {
@@ -33,6 +36,7 @@ const createWindow = () => {
     title: 'Space Data Network',
     show: false,
     autoHideMenuBar: true,
+    frame: false,
     titleBarStyle: 'hiddenInset',
     width: store.get('window.width', dimensions.width < 1440 ? dimensions.width : 1440),
     height: store.get('window.height', dimensions.height < 900 ? dimensions.height : 900),
@@ -43,17 +47,6 @@ const createWindow = () => {
       enableRemoteModule: process.env.NODE_ENV === 'test',
       nodeIntegration: process.env.NODE_ENV === 'test'
     }
-  })
-
-  window.webContents.on('will-navigate', (event, targetUrl) => {
-    if (!isIntroAdminNavigation(targetUrl)) {
-      return
-    }
-
-    event.preventDefault()
-    const url = new URL('/', 'sdn://-')
-    url.hash = '/'
-    window.webContents.loadURL(url.toString())
   })
 
   window.on('resize', () => {
@@ -82,12 +75,65 @@ module.exports = async function () {
   const window = createWindow()
   ctx.setProp('dashboard', window)
 
-  const url = new URL('/', 'sdn://-')
+  const url = await getDesktopStaticUrl('sdn')
+  let apiAddress = null
+  let gatewayAddress = null
+  let dashboardAppLoaded = false
   const loadIntroPage = () => window.loadFile(introPath)
-  const loadDashboardApp = (path) => {
-    url.hash = path || '/'
-    window.webContents.loadURL(url.toString())
+  const getIpfsd = ctx.getFn('getIpfsd')
+
+  function gatewayUrlFromAddr (addr) {
+    if (!addr) return null
+    const ma = addr.toString().includes('/http') ? addr : addr.encapsulate('/http')
+    return toUri(ma)
   }
+
+  async function syncIpfsAddresses () {
+    const ipfsd = await getIpfsd(true)
+    let changed = false
+
+    if (ipfsd && ipfsd.apiAddr !== apiAddress) {
+      apiAddress = ipfsd.apiAddr
+      url.searchParams.set('api', apiAddress.toString())
+      changed = true
+    }
+
+    if (ipfsd && ipfsd.gatewayAddr !== gatewayAddress) {
+      gatewayAddress = ipfsd.gatewayAddr
+      const gatewayUrl = gatewayUrlFromAddr(gatewayAddress)
+      if (gatewayUrl) {
+        url.searchParams.set('gateway', gatewayUrl)
+        changed = true
+      }
+    }
+
+    if (changed) {
+      window.webContents.loadURL(url.toString())
+      return true
+    }
+
+    return false
+  }
+
+  ipcMain.on(ipcMainEvents.IPFSD, () => {
+    if (dashboardAppLoaded) void syncIpfsAddresses()
+  })
+
+  const loadDashboardApp = async (path) => {
+    url.hash = path || '/'
+    const addressesSynced = await syncIpfsAddresses()
+    if (!addressesSynced) window.webContents.loadURL(url.toString())
+    dashboardAppLoaded = true
+  }
+
+  window.webContents.on('will-navigate', (event, targetUrl) => {
+    if (!isIntroAdminNavigation(targetUrl)) {
+      return
+    }
+
+    event.preventDefault()
+    loadDashboardApp('/')
+  })
 
   ctx.setProp('launchDashboard', async (path, { focus = true, forceRefresh = false } = {}) => {
     if (window.isDestroyed()) {
@@ -102,7 +148,7 @@ module.exports = async function () {
     if (isIntroRoute(path)) {
       loadIntroPage()
     } else {
-      loadDashboardApp(path)
+      await loadDashboardApp(path)
     }
 
     if (focus) {

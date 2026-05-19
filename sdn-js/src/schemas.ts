@@ -38,6 +38,7 @@ export const SUPPORTED_SCHEMAS = [
   'ROC.fbs',   // Re-entry Operations Corridor
   'SCM.fbs',   // Spacecraft Message
   'SIT.fbs',   // Satellite Impact Table
+  'SPW.fbs',   // Space Weather Data Record
   'STF.fbs',   // Storefront Listing - Marketplace listings
   'TDM.fbs',   // Tracking Data Message
   'TIM.fbs',   // Time Message
@@ -85,6 +86,7 @@ export const SCHEMA_DESCRIPTIONS: Record<SchemaName, string> = {
   'ROC.fbs': 'Re-entry Operations Corridor - Re-entry trajectory corridors',
   'SCM.fbs': 'Spacecraft Message - Spacecraft characteristics',
   'SIT.fbs': 'Satellite Impact Table - Impact assessments',
+  'SPW.fbs': 'Space Weather Data Record - Solar flux, geomagnetic, and space weather indices',
   'STF.fbs': 'Storefront Listing - Marketplace data listings',
   'TDM.fbs': 'Tracking Data Message - Radar/optical observations',
   'TIM.fbs': 'Time Message - Time synchronization data',
@@ -130,6 +132,7 @@ export const SDS_SCHEMAS: Record<SchemaName, string> = {
   'ROC.fbs': '',
   'SCM.fbs': '',
   'SIT.fbs': '',
+  'SPW.fbs': '',
   'STF.fbs': '',
   'TDM.fbs': '',
   'TIM.fbs': '',

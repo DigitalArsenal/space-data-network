@@ -4,6 +4,7 @@ const Store = require('electron-store')
 const logger = require('./logger')
 
 const { fileLogger } = logger
+const SDN_DESKTOP_AGENT_VERSION_SUFFIX = '--agent-version-suffix=sdn-desktop'
 
 /**
  * @type {import('./types').DesktopPersistentStore}
@@ -12,7 +13,7 @@ const defaults = {
   ipfsConfig: {
     path: '',
     flags: [
-      '--agent-version-suffix=desktop',
+      SDN_DESKTOP_AGENT_VERSION_SUFFIX,
       '--migrate',
       '--enable-gc'
     ]
@@ -47,12 +48,12 @@ const migrations = {
     let flags = store.get('ipfsConfig.flags', [])
 
     // make sure version suffix is always present and normalized
-    const setVersionSuffix = '--agent-version-suffix=desktop'
+    const setVersionSuffix = SDN_DESKTOP_AGENT_VERSION_SUFFIX
     if (!flags.includes(setVersionSuffix)) {
       // remove any custom suffixes, if present
       flags = flags.filter(f => !f.startsWith('--agent-version-suffix='))
-      // set /desktop
-      flags.push('--agent-version-suffix=desktop')
+      // set /sdn-desktop so SDN full nodes can distinguish this packaged client
+      flags.push(setVersionSuffix)
       store.set('ipfsConfig.flags', flags)
     }
     // merge routing flags into one
@@ -110,5 +111,21 @@ const store = new StoreWrapper({
   defaults,
   migrations
 })
+
+function normalizeDesktopAgentVersionSuffix () {
+  let flags = store.get('ipfsConfig.flags', [])
+  if (!Array.isArray(flags)) {
+    flags = []
+  }
+
+  const nextFlags = flags.filter(f => !String(f).startsWith('--agent-version-suffix='))
+  nextFlags.push(SDN_DESKTOP_AGENT_VERSION_SUFFIX)
+
+  if (nextFlags.length !== flags.length || nextFlags.some((flag, index) => flag !== flags[index])) {
+    store.set('ipfsConfig.flags', nextFlags)
+  }
+}
+
+normalizeDesktopAgentVersionSuffix()
 
 module.exports = store

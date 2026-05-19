@@ -10,15 +10,31 @@ export enum AccessType {
   Query = 3,
 }
 
+/** Storefront listing kind */
+export type ListingKind = 'data_stream' | 'wasm_module';
+
+/** Protected delivery metadata for encrypted WASM or data stream listings */
+export interface ProtectedDelivery {
+  encryptedCid?: string;
+  manifestCid?: string;
+  contentHash?: string;
+  contentKeyId?: string;
+  licenseModuleId?: string;
+  moduleId?: string;
+  moduleVersion?: string;
+  requiredScopes?: string[];
+  grantScope?: string;
+  deliveryProtocol?: string;
+}
+
 /** Payment methods supported */
 export enum PaymentMethod {
   CryptoETH = 0,
   CryptoSOL = 1,
   CryptoBTC = 2,
-  CryptoUSDC = 3,
-  SDNCredits = 4,
-  FiatStripe = 5,
-  Free = 6,
+  SDNCredits = 3,
+  FiatStripe = 4,
+  Free = 5,
 }
 
 /** Grant status */
@@ -103,6 +119,7 @@ export interface ProviderReputation {
 /** Storefront listing (STF) */
 export interface Listing {
   listingId: string;
+  listingKind?: ListingKind;
   providerPeerId: string;
   providerEpmCid?: string;
   title: string;
@@ -115,6 +132,7 @@ export interface Listing {
   accessType: AccessType;
   encryptionRequired: boolean;
   deliveryMethods: DeliveryMethod[];
+  protectedDelivery?: ProtectedDelivery;
   pricing: PricingTier[];
   acceptedPayments: PaymentMethod[];
   reputation?: ProviderReputation;
@@ -155,6 +173,7 @@ export interface AccessGrant {
   lastAccess?: Date;
   deliveryTopic?: string;
   providerSignature?: Uint8Array;
+  grantResponseBase64?: string;
   providerPeerId: string;
 }
 
@@ -277,6 +296,7 @@ export interface CreditsBalance {
 
 /** Create listing request */
 export interface CreateListingRequest {
+  listingKind?: ListingKind;
   title: string;
   description?: string;
   dataTypes: string[];
@@ -286,6 +306,7 @@ export interface CreateListingRequest {
   accessType: AccessType;
   encryptionRequired?: boolean;
   deliveryMethods: DeliveryMethod[];
+  protectedDelivery?: ProtectedDelivery;
   pricing: PricingTier[];
   acceptedPayments: PaymentMethod[];
   termsCid?: string;
@@ -334,15 +355,71 @@ export interface CryptoPaymentRequest {
   txHash: string;
   chain: 'ethereum' | 'solana' | 'bitcoin';
   senderAddress?: string;
+  recipientAddress?: string;
+  reference?: string;
   amount: number;
   currency: string;
+  assetContract?: string;
+  nativeAsset?: boolean;
 }
 
 /** Crypto payment verification result */
 export interface CryptoPaymentResult {
   verified: boolean;
   confirmationBlock?: number;
+  currentBlock?: number;
+  confirmations?: number;
+  chain?: string;
+  asset?: string;
+  assetContract?: string;
+  nativeAsset?: boolean;
+  amount?: number;
+  recipientAddress?: string;
+  senderAddress?: string;
   error?: string;
+}
+
+/** Crypto buyer intent creation request */
+export interface CreateCryptoIntentRequest {
+  chain?: 'ethereum' | 'solana' | 'bitcoin';
+  asset?: string;
+  assetContract?: string;
+  nativeAsset?: boolean;
+  recipient?: string;
+  method?: PaymentMethod;
+  expiresAt?: Date;
+}
+
+/** Server-authored crypto payment intent */
+export interface CryptoBuyerIntent {
+  reference: string;
+  requestId: string;
+  chain: string;
+  asset: string;
+  assetContract?: string;
+  nativeAsset?: boolean;
+  amount: number;
+  recipient: string;
+  method?: PaymentMethod;
+  createdAt?: Date;
+  expiresAt?: Date;
+  usedAt?: Date;
+  txHash?: string;
+  intentDigest?: string;
+  intentSignature?: string;
+}
+
+/** Crypto transaction submission payload */
+export interface SubmitCryptoPaymentRequest {
+  txHash: string;
+  chain: 'ethereum' | 'solana' | 'bitcoin';
+  senderAddress?: string;
+  recipientAddress: string;
+  reference: string;
+  amount: number;
+  currency: string;
+  assetContract?: string;
+  nativeAsset?: boolean;
 }
 
 /** Fiat gateway request */
@@ -376,6 +453,32 @@ export interface CreditsTransaction {
   reference: string;
   createdAt: Date;
   status: string;
+}
+
+/** Manual/dev payment confirmation for out-of-band paid state */
+export interface ManualDevPaymentConfirmation {
+  operatorPeerId?: string;
+  reference?: string;
+  note?: string;
+}
+
+/** Manual/dev payment completion response */
+export interface ManualDevPaymentResult {
+  mode: 'manual-dev';
+  purchase: PurchaseRequest;
+  grant: AccessGrant;
+}
+
+/** Payment audit event */
+export interface PaymentAuditEvent {
+  eventId: string;
+  requestId: string;
+  eventType: string;
+  actorPeerId?: string;
+  reference?: string;
+  message?: string;
+  purchaseStatus: PurchaseStatus;
+  createdAt?: Date;
 }
 
 // --- 14.5 Delivery types ---

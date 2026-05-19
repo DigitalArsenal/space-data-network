@@ -23,8 +23,24 @@ export interface ObservedPeerRecord {
 }
 
 export type ListingStatus = 'public' | 'unlisted' | 'retired';
+export type ListingPaymentModel = 'free' | 'one-time' | 'subscription';
+export type CanonicalListingKind = 'module' | 'data';
+
+export interface CanonicalProtectedDelivery {
+  encryptedCid?: string;
+  manifestCid?: string;
+  contentHash?: string;
+  contentKeyId?: string;
+  licenseModuleId?: string;
+  moduleId?: string;
+  moduleVersion?: string;
+  requiredScopes?: string[];
+  grantScope?: string;
+  deliveryProtocol?: string;
+}
 
 export interface CanonicalListing {
+  listingKind?: CanonicalListingKind;
   pluginId: string;
   version: string;
   name?: string;
@@ -36,7 +52,18 @@ export interface CanonicalListing {
   observedAt?: number;
   status?: ListingStatus;
   tags?: string[];
+  screenshotUrls?: string[];
+  paymentModel?: ListingPaymentModel;
+  priceUsdCents?: number;
+  subscriptionPeriodDays?: number;
+  acceptedPaymentMethods?: string[];
+  requiredScope?: string;
   standardsUsed?: string[];
+  providerEpmCid?: string;
+  sampleCid?: string;
+  accessType?: string;
+  encryptionRequired?: boolean;
+  protectedDelivery?: CanonicalProtectedDelivery;
 }
 
 export type AddressLookupChain = 'bitcoin' | 'ethereum' | 'solana' | (string & {});

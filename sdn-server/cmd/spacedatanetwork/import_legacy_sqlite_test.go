@@ -1,0 +1,974 @@
+package main
+
+import (
+	"context"
+	"crypto/ed25519"
+	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/ipfs/go-cid"
+	car "github.com/ipld/go-car/v2"
+	carstorage "github.com/ipld/go-car/v2/storage"
+	_ "github.com/mattn/go-sqlite3"
+	mh "github.com/multiformats/go-multihash"
+
+	"github.com/spacedatanetwork/sdn-server/internal/datasync"
+	"github.com/spacedatanetwork/sdn-server/internal/sds"
+	"github.com/spacedatanetwork/sdn-server/internal/storage"
+)
+
+func TestImportLegacySQLiteStoresHistoricalOMMWithSourceProvenance(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
+	sourceDB, err := sql.Open("sqlite3", sourcePath)
+	if err != nil {
+		t.Fatalf("open source sqlite: %v", err)
+	}
+	if _, err := sourceDB.Exec(`
+		CREATE TABLE satellite_data (
+			OBJECT_ID TEXT,
+			EPOCH TEXT,
+			MEAN_MOTION REAL,
+			ECCENTRICITY REAL,
+			INCLINATION REAL,
+			RA_OF_ASC_NODE REAL,
+			ARG_OF_PERICENTER REAL,
+			MEAN_ANOMALY REAL,
+			NORAD_CAT_ID INTEGER,
+			BSTAR REAL,
+			MEAN_MOTION_DOT REAL,
+			MEAN_MOTION_DDOT REAL
+		);
+		INSERT INTO satellite_data (
+			OBJECT_ID, EPOCH, MEAN_MOTION, ECCENTRICITY, INCLINATION,
+			RA_OF_ASC_NODE, ARG_OF_PERICENTER, MEAN_ANOMALY, NORAD_CAT_ID, BSTAR
+		) VALUES
+			('1957-001A', '1959-01-11T01:49:23.461536', 10.1, 0.001, 55.0, 20.0, 30.0, 40.0, 1, 0.00001),
+			('1998-067A', '2024-01-16T11:51:22.650624', 15.5, 0.0002, 51.6, 10.0, 20.0, 30.0, 25544, 0.00002);
+	`); err != nil {
+		_ = sourceDB.Close()
+		t.Fatalf("seed source sqlite: %v", err)
+	}
+	if err := sourceDB.Close(); err != nil {
+		t.Fatalf("close source sqlite: %v", err)
+	}
+
+	storagePath := filepath.Join(tmpDir, "sdn")
+	restore := captureImportLegacyGlobals()
+	t.Cleanup(restore)
+	configPath = filepath.Join(tmpDir, "missing-config.yaml")
+	importLegacySourceDB = sourcePath
+	importLegacySourceTable = "satellite_data"
+	importLegacyStoragePath = storagePath
+	importLegacySourcePeer = "source:legacy-sqlite"
+	importLegacyBatchSize = 10
+	importLegacyCheckpointPath = filepath.Join(storagePath, "checkpoint.json")
+	importLegacyResetCheckpoint = true
+	importLegacyMaxRows = 0
+	importLegacyStoreMPE = false
+
+	if err := runImportLegacySQLite(nil, nil); err != nil {
+		t.Fatalf("runImportLegacySQLite failed: %v", err)
+	}
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(storagePath, validator)
+	if err != nil {
+		t.Fatalf("open imported store: %v", err)
+	}
+	defer store.Close()
+
+	total, err := store.CountRawRecords(storage.RawRecordQuery{SchemaName: "OMM.fbs"})
+	if err != nil {
+		t.Fatalf("CountRawRecords total failed: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("total imported OMM rows = %d, want 2", total)
+	}
+	sourceTotal, err := store.CountRawRecords(storage.RawRecordQuery{
+		SchemaName: "OMM.fbs",
+		ProviderID: "space-data-network-02",
+		SourceName: "celestrak-gp-historical",
+	})
+	if err != nil {
+		t.Fatalf("CountRawRecords source failed: %v", err)
+	}
+	if sourceTotal != 2 {
+		t.Fatalf("source-tagged historical OMM rows = %d, want 2", sourceTotal)
+	}
+	summary, err := store.DataSummary()
+	if err != nil {
+		t.Fatalf("DataSummary failed: %v", err)
+	}
+	if len(summary.Sources) != 1 {
+		t.Fatalf("source summaries = %d, want 1: %#v", len(summary.Sources), summary.Sources)
+	}
+	got := summary.Sources[0]
+	if got.ProviderID != "space-data-network-02" || got.SourceName != "celestrak-gp-historical" || got.BatchID == "" || got.ProducerPeerID != "source:legacy-sqlite" || got.Count != 2 {
+		t.Fatalf("unexpected source summary: %#v", got)
+	}
+
+	checkpointBytes, err := os.ReadFile(importLegacyCheckpointPath)
+	if err != nil {
+		t.Fatalf("read checkpoint: %v", err)
+	}
+	if len(checkpointBytes) == 0 {
+		t.Fatal("checkpoint file is empty")
+	}
+}
+
+func TestImportLegacySQLiteToleratesBlankNumericFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
+	sourceDB, err := sql.Open("sqlite3", sourcePath)
+	if err != nil {
+		t.Fatalf("open source sqlite: %v", err)
+	}
+	if _, err := sourceDB.Exec(`
+		CREATE TABLE satellite_data (
+			OBJECT_ID TEXT,
+			EPOCH TEXT,
+			MEAN_MOTION TEXT,
+			ECCENTRICITY TEXT,
+			INCLINATION TEXT,
+			RA_OF_ASC_NODE TEXT,
+			ARG_OF_PERICENTER TEXT,
+			MEAN_ANOMALY TEXT,
+			NORAD_CAT_ID TEXT,
+			BSTAR TEXT
+		);
+		INSERT INTO satellite_data (
+			OBJECT_ID, EPOCH, MEAN_MOTION, ECCENTRICITY, INCLINATION,
+			RA_OF_ASC_NODE, ARG_OF_PERICENTER, MEAN_ANOMALY, NORAD_CAT_ID, BSTAR
+		) VALUES
+			('1957-001A', '1959-01-11T01:49:23.461536', '', '', '', '', '', '', '1', '');
+	`); err != nil {
+		_ = sourceDB.Close()
+		t.Fatalf("seed source sqlite: %v", err)
+	}
+	if err := sourceDB.Close(); err != nil {
+		t.Fatalf("close source sqlite: %v", err)
+	}
+
+	storagePath := filepath.Join(tmpDir, "sdn")
+	restore := captureImportLegacyGlobals()
+	t.Cleanup(restore)
+	configPath = filepath.Join(tmpDir, "missing-config.yaml")
+	importLegacySourceDB = sourcePath
+	importLegacySourceTable = "satellite_data"
+	importLegacyStoragePath = storagePath
+	importLegacySourcePeer = "source:legacy-sqlite"
+	importLegacyBatchSize = 10
+	importLegacyCheckpointPath = filepath.Join(storagePath, "checkpoint.json")
+	importLegacyResetCheckpoint = true
+	importLegacyMaxRows = 0
+	importLegacyStoreMPE = false
+
+	if err := runImportLegacySQLite(nil, nil); err != nil {
+		t.Fatalf("runImportLegacySQLite failed: %v", err)
+	}
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(storagePath, validator)
+	if err != nil {
+		t.Fatalf("open imported store: %v", err)
+	}
+	defer store.Close()
+
+	total, err := store.CountRawRecords(storage.RawRecordQuery{SchemaName: "OMM.fbs"})
+	if err != nil {
+		t.Fatalf("CountRawRecords total failed: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("total imported OMM rows = %d, want 1", total)
+	}
+}
+
+func TestImportLegacySQLiteCanStoreHistoricalOMMInSourceDatastoreNamespace(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
+	sourceDB, err := sql.Open("sqlite3", sourcePath)
+	if err != nil {
+		t.Fatalf("open source sqlite: %v", err)
+	}
+	if _, err := sourceDB.Exec(`
+		CREATE TABLE satellite_data (
+			OBJECT_ID TEXT,
+			EPOCH TEXT,
+			MEAN_MOTION REAL,
+			ECCENTRICITY REAL,
+			INCLINATION REAL,
+			RA_OF_ASC_NODE REAL,
+			ARG_OF_PERICENTER REAL,
+			MEAN_ANOMALY REAL,
+			NORAD_CAT_ID INTEGER,
+			BSTAR REAL
+		);
+		INSERT INTO satellite_data (
+			OBJECT_ID, EPOCH, MEAN_MOTION, ECCENTRICITY, INCLINATION,
+			RA_OF_ASC_NODE, ARG_OF_PERICENTER, MEAN_ANOMALY, NORAD_CAT_ID, BSTAR
+		) VALUES
+			('1957-001A', '1959-01-11T01:49:23.461536', 10.1, 0.001, 55.0, 20.0, 30.0, 40.0, 1, 0.00001),
+			('1998-067A', '2024-01-16T11:51:22.650624', 15.5, 0.0002, 51.6, 10.0, 20.0, 30.0, 25544, 0.00002);
+	`); err != nil {
+		_ = sourceDB.Close()
+		t.Fatalf("seed source sqlite: %v", err)
+	}
+	if err := sourceDB.Close(); err != nil {
+		t.Fatalf("close source sqlite: %v", err)
+	}
+
+	storagePath := filepath.Join(tmpDir, "sdn")
+	restore := captureImportLegacyGlobals()
+	t.Cleanup(restore)
+	configPath = filepath.Join(tmpDir, "missing-config.yaml")
+	importLegacySourceDB = sourcePath
+	importLegacySourceTable = "satellite_data"
+	importLegacyStoragePath = storagePath
+	importLegacySourcePeer = "source:legacy-sqlite"
+	importLegacyBatchSize = 10
+	importLegacyCheckpointPath = ""
+	importLegacyResetCheckpoint = true
+	importLegacyMaxRows = 0
+	importLegacyStoreMPE = false
+	importLegacyDatastoreNamespace = true
+
+	if err := runImportLegacySQLite(nil, nil); err != nil {
+		t.Fatalf("runImportLegacySQLite failed: %v", err)
+	}
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	rootStore, err := storage.NewFlatSQLStore(storagePath, validator)
+	if err != nil {
+		t.Fatalf("open root store: %v", err)
+	}
+	rootCount, err := rootStore.CountRawRecords(storage.RawRecordQuery{SchemaName: "OMM.fbs"})
+	if err != nil {
+		t.Fatalf("root CountRawRecords failed: %v", err)
+	}
+	if rootCount != 0 {
+		t.Fatalf("root OMM rows = %d, want 0", rootCount)
+	}
+	if err := rootStore.Close(); err != nil {
+		t.Fatalf("close root store failed: %v", err)
+	}
+
+	batchID, err := legacyImportBatchID(sourcePath)
+	if err != nil {
+		t.Fatalf("legacyImportBatchID failed: %v", err)
+	}
+	identity := storage.DatastoreIdentity{
+		SchemaName:    "OMM.fbs",
+		SourcePeerID:  "source:legacy-sqlite",
+		ProviderID:    "space-data-network-02",
+		SourceName:    "celestrak-gp-historical",
+		BatchHead:     batchID,
+		QueryProfile:  storage.DatasetPublicationQueryProfile,
+		SnapshotID:    batchID,
+		HighWaterMark: batchID,
+		ArtifactHash:  batchID,
+	}
+	namespaceStore, err := storage.NewFlatSQLStoreForIdentity(storagePath, validator, identity)
+	if err != nil {
+		t.Fatalf("open namespace store: %v", err)
+	}
+	namespaceCount, err := namespaceStore.CountRawRecords(storage.RawRecordQuery{SchemaName: "OMM.fbs"})
+	if err != nil {
+		t.Fatalf("namespace CountRawRecords failed: %v", err)
+	}
+	if namespaceCount != 2 {
+		t.Fatalf("namespace OMM rows = %d, want 2", namespaceCount)
+	}
+	summary, err := namespaceStore.DataSummary()
+	if err != nil {
+		t.Fatalf("namespace DataSummary failed: %v", err)
+	}
+	if len(summary.Sources) != 0 {
+		t.Fatalf("namespace source tag rows = %d, want 0: %#v", len(summary.Sources), summary.Sources)
+	}
+	storedIdentity, ok, err := namespaceStore.DatastoreIdentity()
+	if err != nil {
+		t.Fatalf("DatastoreIdentity failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("namespace store did not record datastore identity")
+	}
+	if storedIdentity.ProviderID != identity.ProviderID || storedIdentity.SourceName != identity.SourceName || storedIdentity.BatchHead != identity.BatchHead {
+		t.Fatalf("stored identity = %#v, want provider/source/batch from %#v", storedIdentity, identity)
+	}
+	if err := namespaceStore.Close(); err != nil {
+		t.Fatalf("close namespace store failed: %v", err)
+	}
+}
+
+func TestImportLegacySQLiteCanPublishHistoricalOMMArtifactsWithoutMaterializingRows(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
+	sourceDB, err := sql.Open("sqlite3", sourcePath)
+	if err != nil {
+		t.Fatalf("open source sqlite: %v", err)
+	}
+	if _, err := sourceDB.Exec(`
+		CREATE TABLE satellite_data (
+			OBJECT_ID TEXT,
+			EPOCH TEXT,
+			MEAN_MOTION REAL,
+			ECCENTRICITY REAL,
+			INCLINATION REAL,
+			RA_OF_ASC_NODE REAL,
+			ARG_OF_PERICENTER REAL,
+			MEAN_ANOMALY REAL,
+			NORAD_CAT_ID INTEGER,
+			BSTAR REAL
+		);
+		INSERT INTO satellite_data (
+			OBJECT_ID, EPOCH, MEAN_MOTION, ECCENTRICITY, INCLINATION,
+			RA_OF_ASC_NODE, ARG_OF_PERICENTER, MEAN_ANOMALY, NORAD_CAT_ID, BSTAR
+		) VALUES
+			('1957-001A', '1959-01-11T01:49:23.461536', 10.1, 0.001, 55.0, 20.0, 30.0, 40.0, 1, 0.00001),
+			('1998-067A', '2024-01-16T11:51:22.650624', 15.5, 0.0002, 51.6, 10.0, 20.0, 30.0, 25544, 0.00002),
+			('2024-001A', '2024-01-17T11:51:22.650624', 15.6, 0.0003, 52.1, 11.0, 21.0, 31.0, 60000, 0.00003);
+	`); err != nil {
+		_ = sourceDB.Close()
+		t.Fatalf("seed source sqlite: %v", err)
+	}
+	if err := sourceDB.Close(); err != nil {
+		t.Fatalf("close source sqlite: %v", err)
+	}
+
+	pinned := map[string][]byte{}
+	kubo := newImportLegacyKuboTestServer(t, pinned)
+	defer kubo.Close()
+	_, signingKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+
+	storagePath := filepath.Join(tmpDir, "sdn")
+	restore := captureImportLegacyGlobals()
+	t.Cleanup(restore)
+	configPath = filepath.Join(tmpDir, "missing-config.yaml")
+	importLegacySourceDB = sourcePath
+	importLegacySourceTable = "satellite_data"
+	importLegacyStoragePath = storagePath
+	importLegacySourcePeer = "source:legacy-sqlite"
+	importLegacyBatchSize = 2
+	importLegacyCheckpointPath = ""
+	importLegacyResetCheckpoint = true
+	importLegacyMaxRows = 0
+	importLegacyStoreMPE = false
+	importLegacyPublishArtifactsOnly = true
+	importLegacyIPFSAPIURL = kubo.URL
+	importLegacyPublicationOutputDir = filepath.Join(tmpDir, "publications")
+	importLegacyPublicationSigningKeyHex = hex.EncodeToString(signingKey)
+	importLegacyPublicationProviderPeerID = "16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4"
+	importLegacyPublicationProviderEPMCID = "bafy-provider-epm"
+
+	if err := runImportLegacySQLite(nil, nil); err != nil {
+		t.Fatalf("runImportLegacySQLite failed: %v", err)
+	}
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(storagePath, validator)
+	if err != nil {
+		t.Fatalf("open root store: %v", err)
+	}
+	defer store.Close()
+
+	rootCount, err := store.CountRawRecords(storage.RawRecordQuery{SchemaName: "OMM.fbs"})
+	if err != nil {
+		t.Fatalf("root CountRawRecords failed: %v", err)
+	}
+	if rootCount != 0 {
+		t.Fatalf("root OMM rows = %d, want 0 for artifact-only publication", rootCount)
+	}
+	entries, err := store.ListDatastoreIdentities()
+	if err != nil {
+		t.Fatalf("ListDatastoreIdentities failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("datastore registry entries = %d, want 1: %#v", len(entries), entries)
+	}
+	namespaceStore, err := store.OpenRegisteredDatastore(entries[0].Key)
+	if err != nil {
+		t.Fatalf("OpenRegisteredDatastore failed: %v", err)
+	}
+	defer namespaceStore.Close()
+	namespaceCount, err := namespaceStore.CountRawRecords(storage.RawRecordQuery{SchemaName: "OMM.fbs"})
+	if err != nil {
+		t.Fatalf("namespace CountRawRecords failed: %v", err)
+	}
+	if namespaceCount != 0 {
+		t.Fatalf("namespace OMM rows = %d, want 0 for artifact-only publication", namespaceCount)
+	}
+	pnmCount, err := namespaceStore.CountRawRecords(storage.RawRecordQuery{SchemaName: "PNM.fbs"})
+	if err != nil {
+		t.Fatalf("PNM CountRawRecords failed: %v", err)
+	}
+	if pnmCount != 2 {
+		t.Fatalf("publication PNMs = %d, want 2", pnmCount)
+	}
+	batchID, err := legacyImportBatchID(sourcePath)
+	if err != nil {
+		t.Fatalf("legacyImportBatchID failed: %v", err)
+	}
+	publications, err := namespaceStore.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp-historical",
+		BatchID:      batchID,
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		t.Fatalf("ListDatasetShardPublications failed: %v", err)
+	}
+	if len(publications) != 2 {
+		t.Fatalf("publications = %d, want 2: %#v", len(publications), publications)
+	}
+	if publications[0].Offset != 0 || publications[0].Limit != 2 || publications[0].RecordCount != 2 {
+		t.Fatalf("first publication = %#v, want offset 0 limit 2 count 2", publications[0])
+	}
+	if publications[1].Offset != 2 || publications[1].Limit != 2 || publications[1].RecordCount != 1 {
+		t.Fatalf("second publication = %#v, want offset 2 limit 2 count 1", publications[1])
+	}
+	if publications[0].FeedHead == "" || publications[1].PreviousHead != publications[0].FeedHead {
+		t.Fatalf("publication feed chain not linked: first=%#v second=%#v", publications[0], publications[1])
+	}
+	if len(pinned) != 6 {
+		t.Fatalf("pinned IPFS objects = %d, want shard/index/manifest for each publication", len(pinned))
+	}
+}
+
+func TestImportLegacySQLitePlanOnlyCanRegisterHistoricalArtifactsWithNodeSigningKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "satellite_data.db")
+	sourceDB, err := sql.Open("sqlite3", sourcePath)
+	if err != nil {
+		t.Fatalf("open source sqlite: %v", err)
+	}
+	if _, err := sourceDB.Exec(`
+		CREATE TABLE satellite_data (
+			OBJECT_ID TEXT,
+			EPOCH TEXT,
+			MEAN_MOTION REAL,
+			ECCENTRICITY REAL,
+			INCLINATION REAL,
+			RA_OF_ASC_NODE REAL,
+			ARG_OF_PERICENTER REAL,
+			MEAN_ANOMALY REAL,
+			NORAD_CAT_ID INTEGER,
+			BSTAR REAL
+		);
+		INSERT INTO satellite_data (
+			OBJECT_ID, EPOCH, MEAN_MOTION, ECCENTRICITY, INCLINATION,
+			RA_OF_ASC_NODE, ARG_OF_PERICENTER, MEAN_ANOMALY, NORAD_CAT_ID, BSTAR
+		) VALUES
+			('1957-001A', '1959-01-11T01:49:23.461536', 10.1, 0.001, 55.0, 20.0, 30.0, 40.0, 1, 0.00001),
+			('1998-067A', '2024-01-16T11:51:22.650624', 15.5, 0.0002, 51.6, 10.0, 20.0, 30.0, 25544, 0.00002),
+			('2024-001A', '2024-01-17T11:51:22.650624', 15.6, 0.0003, 52.1, 11.0, 21.0, 31.0, 60000, 0.00003);
+	`); err != nil {
+		_ = sourceDB.Close()
+		t.Fatalf("seed source sqlite: %v", err)
+	}
+	if err := sourceDB.Close(); err != nil {
+		t.Fatalf("close source sqlite: %v", err)
+	}
+
+	pinned := map[string][]byte{}
+	kubo := newImportLegacyKuboTestServer(t, pinned)
+	defer kubo.Close()
+
+	stagingStoragePath := filepath.Join(tmpDir, "staging-sdn")
+	planPath := filepath.Join(tmpDir, "historical-plan.json")
+	restore := captureImportLegacyGlobals()
+	t.Cleanup(restore)
+	configPath = filepath.Join(tmpDir, "missing-config.yaml")
+	importLegacySourceDB = sourcePath
+	importLegacySourceTable = "satellite_data"
+	importLegacyStoragePath = stagingStoragePath
+	importLegacySourcePeer = "source:legacy-sqlite"
+	importLegacyBatchSize = 2
+	importLegacyCheckpointPath = ""
+	importLegacyResetCheckpoint = true
+	importLegacyMaxRows = 0
+	importLegacyStoreMPE = false
+	importLegacyPublishArtifactsOnly = true
+	importLegacyIPFSAPIURL = kubo.URL
+	importLegacyPublicationOutputDir = filepath.Join(tmpDir, "publications")
+	importLegacyPublicationPlanOnly = true
+	importLegacyPublicationPlanOutput = planPath
+	importLegacyPublicationProviderPeerID = "16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4"
+	importLegacyPublicationProviderEPMCID = "bafy-provider-epm"
+	importLegacyPublicationDatasetID = "sdn-omm-celestrak-gp-historical"
+
+	if err := runImportLegacySQLite(nil, nil); err != nil {
+		t.Fatalf("runImportLegacySQLite plan-only failed: %v", err)
+	}
+	if _, err := os.Stat(planPath); err != nil {
+		t.Fatalf("plan output was not written: %v", err)
+	}
+
+	registeredStoragePath := filepath.Join(tmpDir, "registered-sdn")
+	registerConfigPath := filepath.Join(tmpDir, "register-config.yaml")
+	registerDataPath := filepath.Join(tmpDir, "register-data")
+	if err := os.WriteFile(registerConfigPath, []byte(fmt.Sprintf(`
+storage:
+  path: %s
+setup:
+  data_path: %s
+admin:
+  ipfs_api_url: %s
+`, registeredStoragePath, registerDataPath, kubo.URL)), 0600); err != nil {
+		t.Fatalf("write register config: %v", err)
+	}
+	configPath = registerConfigPath
+	result, err := registerLegacyPublicationPlan(context.Background(), legacyPublicationPlanRegistrationOptions{
+		PlanPath: planPath,
+	})
+	if err != nil {
+		t.Fatalf("registerLegacyPublicationPlan failed: %v", err)
+	}
+	if result.Publications != 2 || result.Records != 3 {
+		t.Fatalf("registered result = %+v, want 2 publications and 3 records", result)
+	}
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	rootStore, err := storage.NewFlatSQLStore(registeredStoragePath, validator)
+	if err != nil {
+		t.Fatalf("open registered root store: %v", err)
+	}
+	defer rootStore.Close()
+	rootCount, err := rootStore.CountRawRecords(storage.RawRecordQuery{SchemaName: "OMM.fbs"})
+	if err != nil {
+		t.Fatalf("root CountRawRecords failed: %v", err)
+	}
+	if rootCount != 0 {
+		t.Fatalf("root OMM rows = %d, want 0 after registering artifact plan", rootCount)
+	}
+	entries, err := rootStore.ListDatastoreIdentities()
+	if err != nil {
+		t.Fatalf("ListDatastoreIdentities failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("datastore registry entries = %d, want 1: %#v", len(entries), entries)
+	}
+	namespaceStore, err := rootStore.OpenRegisteredDatastore(entries[0].Key)
+	if err != nil {
+		t.Fatalf("OpenRegisteredDatastore failed: %v", err)
+	}
+	defer namespaceStore.Close()
+	namespaceCount, err := namespaceStore.CountRawRecords(storage.RawRecordQuery{SchemaName: "OMM.fbs"})
+	if err != nil {
+		t.Fatalf("namespace CountRawRecords failed: %v", err)
+	}
+	if namespaceCount != 0 {
+		t.Fatalf("namespace OMM rows = %d, want 0 after registering artifact plan", namespaceCount)
+	}
+	pnmCount, err := namespaceStore.CountRawRecords(storage.RawRecordQuery{SchemaName: "PNM.fbs"})
+	if err != nil {
+		t.Fatalf("PNM CountRawRecords failed: %v", err)
+	}
+	if pnmCount != 2 {
+		t.Fatalf("publication PNMs = %d, want 2", pnmCount)
+	}
+	publications, err := namespaceStore.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp-historical",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		t.Fatalf("ListDatasetShardPublications failed: %v", err)
+	}
+	if len(publications) != 2 || publications[0].RecordCount != 2 || publications[1].RecordCount != 1 {
+		t.Fatalf("registered publications = %#v, want two planned artifact windows", publications)
+	}
+	manifest, err := datasync.OpenManifest(namespaceStore, datasync.QueryRequest{
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp-historical",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Limit:        50_000,
+	}, datasync.MaxSyncChunkLimit)
+	if err != nil {
+		t.Fatalf("OpenManifest failed: %v", err)
+	}
+	if len(manifest.ArtifactBundles) != 1 {
+		t.Fatalf("artifact bundles = %d, want registered shard-group CAR: %#v", len(manifest.ArtifactBundles), manifest.ArtifactBundles)
+	}
+	bundle := manifest.ArtifactBundles[0]
+	if bundle.Role != "shard-group-car" || bundle.CID == "" || bundle.SHA256 == "" || bundle.ByteCount <= 0 || bundle.SegmentCount != 2 {
+		t.Fatalf("unexpected registered shard-group CAR bundle: %#v", bundle)
+	}
+	if len(pinned) != 7 {
+		t.Fatalf("pinned IPFS objects = %d, want shard/index locally plus signed manifests and registered CAR on registration", len(pinned))
+	}
+}
+
+func TestRegisterLegacyPublicationPlanChunksLargeShardGroupCARBundles(t *testing.T) {
+	tmpDir := t.TempDir()
+	pinned := map[string][]byte{}
+	kubo := newImportLegacyKuboTestServer(t, pinned)
+	defer kubo.Close()
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	store, err := storage.NewFlatSQLStore(filepath.Join(tmpDir, "registered-sdn"), validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	publishedAt := time.Unix(1_778_666_000, 0).UTC()
+	publications := make([]storage.DatasetShardPublication, 0, 3)
+	for i := 0; i < 3; i++ {
+		shardCID := importLegacyCIDV1RawSHA256ForTest(t, []byte(fmt.Sprintf("large historical shard %d", i)))
+		indexCID := importLegacyCIDV1RawSHA256ForTest(t, []byte(fmt.Sprintf("large historical index %d", i)))
+		manifestCID := importLegacyCIDV1RawSHA256ForTest(t, []byte(fmt.Sprintf("large historical manifest %d", i)))
+		pinned[shardCID] = []byte(fmt.Sprintf("large historical shard %d", i))
+		pinned[indexCID] = []byte(fmt.Sprintf("large historical index %d", i))
+		pinned[manifestCID] = []byte(fmt.Sprintf("large historical manifest %d", i))
+		pub := storage.DatasetShardPublication{
+			SchemaName:   "OMM.fbs",
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-gp-historical",
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+			Offset:       i * 50_000,
+			Limit:        50_000,
+			RecordCount:  50_000,
+			ByteCount:    int64(700 << 20),
+			ShardCID:     shardCID,
+			IndexCID:     indexCID,
+			ManifestCID:  manifestCID,
+			FeedSequence: int64(i + 1),
+			FeedHead:     "historical-feed-head",
+			PublishedAt:  publishedAt.Add(time.Duration(i) * time.Second),
+		}
+		if err := store.UpsertDatasetShardPublication(pub); err != nil {
+			t.Fatalf("UpsertDatasetShardPublication %d failed: %v", i, err)
+		}
+		publications = append(publications, pub)
+	}
+
+	publications, err = store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
+		SchemaName:   "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp-historical",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+	})
+	if err != nil {
+		t.Fatalf("ListDatasetShardPublications failed: %v", err)
+	}
+	expectedHead := publications[len(publications)-1].FeedHead
+	if err := recordRegisteredShardGroupCARBundle(context.Background(), store, kubo.URL, filepath.Join(tmpDir, "registered-output"), publications, "16Uiu2HAmProvider", "provider-public-key"); err != nil {
+		t.Fatalf("recordRegisteredShardGroupCARBundle failed: %v", err)
+	}
+	entries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		SchemaName:        "OMM.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp-historical",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		Role:              "shard-group-car",
+		VerificationState: "verified",
+	})
+	if err != nil {
+		t.Fatalf("ListPinLedgerEntries failed: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("registered CAR bundles = %d, want 3 bounded bundles: %#v", len(entries), entries)
+	}
+	for _, entry := range entries {
+		if entry.Head != expectedHead || entry.RowCount != 50_000 || entry.ByteCount <= 0 {
+			t.Fatalf("unexpected bounded CAR ledger entry: %#v", entry)
+		}
+	}
+
+	manifest, err := datasync.OpenManifest(store, datasync.QueryRequest{
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp-historical",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Limit:        50_000,
+	}, datasync.MaxSyncChunkLimit)
+	if err != nil {
+		t.Fatalf("OpenManifest failed: %v", err)
+	}
+	if len(manifest.ArtifactBundles) != 3 {
+		t.Fatalf("manifest CAR bundles = %d, want 3 bounded bundles: %#v", len(manifest.ArtifactBundles), manifest.ArtifactBundles)
+	}
+}
+
+func TestRebuildDatasetPublicationShardGroupCARBundlesPublishesExistingShards(t *testing.T) {
+	tmpDir := t.TempDir()
+	pinned := map[string][]byte{}
+	kubo := newImportLegacyKuboTestServer(t, pinned)
+	defer kubo.Close()
+
+	validator, err := sds.NewValidator(nil)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+	storagePath := filepath.Join(tmpDir, "sdn")
+	store, err := storage.NewFlatSQLStore(storagePath, validator)
+	if err != nil {
+		t.Fatalf("NewFlatSQLStore failed: %v", err)
+	}
+	defer store.Close()
+
+	publishedAt := time.Unix(1_778_777_000, 0).UTC()
+	for i := 0; i < 3; i++ {
+		shardBytes := []byte(fmt.Sprintf("published shard %d", i))
+		indexBytes := []byte(fmt.Sprintf("published index %d", i))
+		manifestBytes := []byte(fmt.Sprintf("published manifest %d", i))
+		shardCID := importLegacyCIDV1RawSHA256ForTest(t, shardBytes)
+		indexCID := importLegacyCIDV1RawSHA256ForTest(t, indexBytes)
+		manifestCID := importLegacyCIDV1RawSHA256ForTest(t, manifestBytes)
+		pinned[shardCID] = shardBytes
+		if err := store.UpsertDatasetShardPublication(storage.DatasetShardPublication{
+			SchemaName:   "OMM.fbs",
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-gp",
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+			Offset:       i * 50_000,
+			Limit:        50_000,
+			RecordCount:  50_000,
+			ByteCount:    int64(256 << 20),
+			ShardCID:     shardCID,
+			IndexCID:     indexCID,
+			ManifestCID:  manifestCID,
+			PublishedAt:  publishedAt.Add(time.Duration(i) * time.Second),
+		}); err != nil {
+			t.Fatalf("UpsertDatasetShardPublication %d failed: %v", i, err)
+		}
+	}
+	if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
+		CID:               "bafy-old-partial-car",
+		SchemaName:        "OMM.fbs",
+		ProviderPeerID:    "16Uiu2HAmProvider",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		SnapshotID:        "old-partial-head",
+		Head:              "old-partial-head",
+		ByteHash:          "old-partial-hash",
+		Role:              "shard-group-car",
+		RowCount:          50_000,
+		ByteCount:         1234,
+		VerificationState: "verified",
+		VerifiedAt:        publishedAt,
+		UpdatedAt:         publishedAt,
+	}); err != nil {
+		t.Fatalf("seed partial CAR ledger entry failed: %v", err)
+	}
+
+	result, err := rebuildDatasetPublicationShardGroupCARBundles(context.Background(), datasetPublicationCARRebuildOptions{
+		StoragePath:       storagePath,
+		IPFSAPIURL:        kubo.URL,
+		OutputDir:         filepath.Join(tmpDir, "dataset-publications"),
+		Schema:            "OMM.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		ProviderPeerID:    "16Uiu2HAmProvider",
+		ProviderPublicKey: "provider-public-key",
+	})
+	if err != nil {
+		t.Fatalf("rebuildDatasetPublicationShardGroupCARBundles failed: %v", err)
+	}
+	if result.Publications != 3 || result.Records != 150_000 || result.Bundles != 2 {
+		t.Fatalf("rebuild result = %#v, want 3 publications, 150000 records, 2 bundles", result)
+	}
+
+	manifest, err := datasync.OpenManifest(store, datasync.QueryRequest{
+		Schema:       "OMM.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-gp",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Limit:        50_000,
+	}, datasync.MaxSyncChunkLimit)
+	if err != nil {
+		t.Fatalf("OpenManifest failed: %v", err)
+	}
+	if len(manifest.ArtifactBundles) != 2 {
+		t.Fatalf("manifest CAR bundles = %d, want 2 rebuilt bundles: %#v", len(manifest.ArtifactBundles), manifest.ArtifactBundles)
+	}
+	if manifest.ArtifactBundles[0].SegmentStart != 0 || manifest.ArtifactBundles[0].SegmentCount != 2 ||
+		manifest.ArtifactBundles[1].SegmentStart != 2 || manifest.ArtifactBundles[1].SegmentCount != 1 {
+		t.Fatalf("rebuilt bundle coverage = %#v, want [0:2] and [2:1]", manifest.ArtifactBundles)
+	}
+	staleEntries, err := store.ListPinLedgerEntries(storage.PinLedgerQuery{
+		CID:               "bafy-old-partial-car",
+		SchemaName:        "OMM.fbs",
+		ProviderID:        "space-data-network-02",
+		SourceName:        "celestrak-gp",
+		QueryProfile:      storage.DatasetPublicationQueryProfile,
+		Role:              "shard-group-car",
+		VerificationState: "stale",
+	})
+	if err != nil {
+		t.Fatalf("ListPinLedgerEntries stale failed: %v", err)
+	}
+	if len(staleEntries) != 1 {
+		t.Fatalf("old partial CAR stale entries = %d, want 1: %#v", len(staleEntries), staleEntries)
+	}
+}
+
+func captureImportLegacyGlobals() func() {
+	oldConfigPath := configPath
+	oldSourceDB := importLegacySourceDB
+	oldSourceTable := importLegacySourceTable
+	oldStoragePath := importLegacyStoragePath
+	oldSourcePeer := importLegacySourcePeer
+	oldBatchSize := importLegacyBatchSize
+	oldCheckpointPath := importLegacyCheckpointPath
+	oldResetCheckpoint := importLegacyResetCheckpoint
+	oldMaxRows := importLegacyMaxRows
+	oldStoreMPE := importLegacyStoreMPE
+	oldProviderID := importLegacyProviderID
+	oldSourceNameForTags := importLegacySourceNameForTags
+	oldSourceURL := importLegacySourceURL
+	oldBatchID := importLegacyBatchID
+	oldContentKeyID := importLegacyContentKeyID
+	oldProducerPeerID := importLegacyProducerPeerID
+	oldProducerPublicKey := importLegacyProducerPublicKey
+	oldDatastoreNamespace := importLegacyDatastoreNamespace
+	oldPublishArtifactsOnly := importLegacyPublishArtifactsOnly
+	oldIPFSAPIURL := importLegacyIPFSAPIURL
+	oldPublicationOutputDir := importLegacyPublicationOutputDir
+	oldPublicationSigningKeyHex := importLegacyPublicationSigningKeyHex
+	oldPublicationProviderPeerID := importLegacyPublicationProviderPeerID
+	oldPublicationProviderEPMCID := importLegacyPublicationProviderEPMCID
+	oldPublicationDatasetID := importLegacyPublicationDatasetID
+	oldPublicationPlanOnly := importLegacyPublicationPlanOnly
+	oldPublicationPlanOutput := importLegacyPublicationPlanOutput
+	return func() {
+		configPath = oldConfigPath
+		importLegacySourceDB = oldSourceDB
+		importLegacySourceTable = oldSourceTable
+		importLegacyStoragePath = oldStoragePath
+		importLegacySourcePeer = oldSourcePeer
+		importLegacyBatchSize = oldBatchSize
+		importLegacyCheckpointPath = oldCheckpointPath
+		importLegacyResetCheckpoint = oldResetCheckpoint
+		importLegacyMaxRows = oldMaxRows
+		importLegacyStoreMPE = oldStoreMPE
+		importLegacyProviderID = oldProviderID
+		importLegacySourceNameForTags = oldSourceNameForTags
+		importLegacySourceURL = oldSourceURL
+		importLegacyBatchID = oldBatchID
+		importLegacyContentKeyID = oldContentKeyID
+		importLegacyProducerPeerID = oldProducerPeerID
+		importLegacyProducerPublicKey = oldProducerPublicKey
+		importLegacyDatastoreNamespace = oldDatastoreNamespace
+		importLegacyPublishArtifactsOnly = oldPublishArtifactsOnly
+		importLegacyIPFSAPIURL = oldIPFSAPIURL
+		importLegacyPublicationOutputDir = oldPublicationOutputDir
+		importLegacyPublicationSigningKeyHex = oldPublicationSigningKeyHex
+		importLegacyPublicationProviderPeerID = oldPublicationProviderPeerID
+		importLegacyPublicationProviderEPMCID = oldPublicationProviderEPMCID
+		importLegacyPublicationDatasetID = oldPublicationDatasetID
+		importLegacyPublicationPlanOnly = oldPublicationPlanOnly
+		importLegacyPublicationPlanOutput = oldPublicationPlanOutput
+	}
+}
+
+func newImportLegacyKuboTestServer(t *testing.T, pinned map[string][]byte) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var responseKey string
+		var wantField string
+		switch r.URL.Path {
+		case "/api/v0/add":
+			responseKey = "Hash"
+			wantField = "file"
+		case "/api/v0/block/put":
+			responseKey = "Key"
+			wantField = "data"
+		case "/api/v0/dag/export":
+			rootCID := r.URL.Query().Get("arg")
+			body, ok := pinned[rootCID]
+			if !ok {
+				t.Fatalf("dag/export root %q was not pinned", rootCID)
+			}
+			decoded, err := cid.Decode(rootCID)
+			if err != nil {
+				t.Fatalf("decode dag/export root CID: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/vnd.ipld.car")
+			writeImportLegacySingleBlockCARForTest(t, w, decoded, body)
+			return
+		default:
+			t.Fatalf("unexpected IPFS path: %s", r.URL.Path)
+		}
+		reader, err := r.MultipartReader()
+		if err != nil {
+			t.Fatalf("multipart reader: %v", err)
+		}
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Fatalf("next part: %v", err)
+		}
+		if part.FormName() != wantField {
+			t.Fatalf("multipart field = %q, want %s", part.FormName(), wantField)
+		}
+		if filepath.Ext(part.FileName()) == ".car" && r.URL.Query().Get("chunker") != "size-1048576" {
+			t.Fatalf("CAR add chunker = %q, want Kubo-compatible 1 MiB chunks", r.URL.Query().Get("chunker"))
+		}
+		body, err := io.ReadAll(part)
+		if err != nil {
+			t.Fatalf("read part: %v", err)
+		}
+		cidValue := importLegacyCIDV1RawSHA256ForTest(t, body)
+		pinned[cidValue] = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"` + responseKey + `":"` + cidValue + `"}` + "\n"))
+	}))
+}
+
+func importLegacyCIDV1RawSHA256ForTest(t *testing.T, data []byte) string {
+	t.Helper()
+	hash, err := mh.Sum(data, mh.SHA2_256, -1)
+	if err != nil {
+		t.Fatalf("multihash raw block: %v", err)
+	}
+	return cid.NewCidV1(cid.Raw, hash).String()
+}
+
+func writeImportLegacySingleBlockCARForTest(t *testing.T, w io.Writer, root cid.Cid, body []byte) {
+	t.Helper()
+	writer, err := carstorage.NewWritable(w, []cid.Cid{root}, car.WriteAsCarV1(true))
+	if err != nil {
+		t.Fatalf("create CAR writer: %v", err)
+	}
+	if err := writer.Put(context.Background(), root.KeyString(), body); err != nil {
+		t.Fatalf("write CAR block: %v", err)
+	}
+	if err := writer.Finalize(); err != nil {
+		t.Fatalf("finalize CAR: %v", err)
+	}
+}

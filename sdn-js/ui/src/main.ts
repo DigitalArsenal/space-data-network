@@ -1,9 +1,16 @@
-import { renderUpstreamWebUiBaseline } from './upstream-webui/index.js';
+import { mount } from 'svelte';
+import App from './App.svelte';
+import { ensureCrossOriginIsolation } from './lib/cross-origin-isolation';
+import './styles/app.css';
 
-renderUpstreamWebUiBaseline().catch((error) => {
-  const root = document.querySelector('#root');
-  if (root instanceof HTMLElement) {
-    root.textContent = String(error);
-  }
-  console.error('[sdn-dashboard] upstream webui cutover failed', error);
-});
+const target = document.getElementById('root');
+
+if (!target) {
+  throw new Error('SDN UI root element #root was not found');
+}
+
+void ensureCrossOriginIsolation();
+
+const app = mount(App, { target });
+
+export default app;

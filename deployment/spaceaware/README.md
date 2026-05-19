@@ -17,6 +17,32 @@ From the `space-data-network` repository root:
   deploy full
 ```
 
+Before deploying from a development workstation, make sure the local desktop
+tool is running so the bundled desktop/Kubo integration is healthy in the same
+checkout:
+
+```bash
+./scripts/update-upstream-ipfs.sh --check
+test -d desktop/node_modules || npm run install:desktop
+npm --prefix desktop start
+```
+
+When a deploy touches `webui/`, `desktop/`, or `sdn-js/ui/src/upstream-webui/`,
+also rebuild/relaunch the packaged desktop app and verify Kubo RPC from the
+desktop-selected HTTP origin before production deploy. Keep the desktop process
+open while you smoke-test the deployed node. In a second terminal, verify the
+production service after deploy:
+
+```bash
+./deployment/scripts/deploy.sh \
+  -c deployment/spaceaware/servers.yaml \
+  -u root \
+  -b \
+  status
+curl -fsS https://sdn.spaceaware.io/ >/dev/null
+curl -fsS https://sdn.spaceaware.io/webui/ >/dev/null
+```
+
 The provider authorizes OrbPro module publishing with SDN wallet admin state,
 not a shared publish token. The deployment wallet that signs `plugins
 publish-orbpro` must be present as an admin in the live auth store

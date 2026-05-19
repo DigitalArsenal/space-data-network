@@ -81,6 +81,34 @@ describe('sdn upstream webui branding helper', () => {
     expect(routes).toContain("'/modules'");
   });
 
+  it('keeps the Modules dashboard selection stable across polling refreshes', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/modules/ModulesPage.js'),
+      'utf8',
+    );
+
+    expect(source).toContain('resolveSelectedModuleId');
+    expect(source).toContain('setSelectedId((previousSelectedId) =>');
+    expect(source).not.toContain('if (!selectedId && nextSnapshot.modules[0])');
+  });
+
+  it('renders Modules with fixed scrolling panels, help links, configuration, and command history', async () => {
+    const source = await fs.readFile(
+      path.join(uiSrcPath, 'overrides/modules/ModulesPage.js'),
+      'utf8',
+    );
+
+    expect(source).toContain('moduleListBodyStyle');
+    expect(source).toContain('detailPanelBodyStyle');
+    expect(source).toContain('ModulesHelp');
+    expect(source).toContain('LifecycleActionBar');
+    expect(source).toContain('ConfigureModuleButton');
+    expect(source).toContain('CommandHistory');
+    expect(source).toContain('moduleConfigureUrl(module)');
+    expect(source).toContain('https://github.com/DigitalArsenal/space-data-module-sdk/blob/main/README.md');
+    expect(source).toContain('https://github.com/DigitalArsenal/space-data-network/blob/main/docs/module-runtime-dashboard.md');
+  });
+
   it('allows the root-only modules dashboard to render before IPFS is ready', async () => {
     const app = await fs.readFile(
       path.join(uiSrcPath, 'overrides/App.js'),
@@ -105,15 +133,31 @@ describe('sdn upstream webui branding helper', () => {
     expect(source).not.toContain("href='/webui'");
   });
 
-  it('uses a standalone centered SDN logo mark asset instead of baked text logo SVGs', async () => {
+  it('uses the SDN logo in the root sidebar brand slot and the actual IPFS logo only for the IPFS escape link', async () => {
     const source = await fs.readFile(
       path.join(uiSrcPath, 'overrides/navigation/NavBar.js'),
       'utf8',
     );
 
+    expect(source).toContain("import ipfsLogoMark from '../../../../../../webui/src/navigation/ipfs-logo.svg'");
     expect(source).toContain("import sdnLogoMark from './sdn-logo-mark.svg'");
+    expect(source).toContain("src={sdnLogoMark} alt='Space Data Network'");
+    expect(source).toContain("<ExternalNavLink href='/webui' iconSrc={ipfsLogoMark}>IPFS</ExternalNavLink>");
+    expect(source).not.toContain("src={ipfsLogoMark} alt='IPFS'");
     expect(source).not.toContain('sdn-logo-text-vert.svg');
     expect(source).not.toContain('sdn-logo-text-horiz.svg');
+  });
+
+  it('lets the desktop shell seed the Kubo RPC address through the WebUI api URL parameter', async () => {
+    const source = await fs.readFile(
+      path.resolve(__dirname, '../../../../webui/src/bundles/ipfs-provider.js'),
+      'utf8',
+    );
+
+    expect(source).toContain('const readAPIAddressURLParam = () =>');
+    expect(source).toContain("new URL(window.location.href).searchParams.get('api')");
+    expect(source).toContain("writeSetting('ipfsApi', apiAddressFromUrl)");
+    expect(source).toContain('return apiAddressFromUrl');
   });
 
   it('defines the root-only directory route without a separate identity route', async () => {
@@ -377,7 +421,10 @@ describe('sdn upstream webui branding helper', () => {
     );
 
     expect(source).toContain("fetch('/api/node/info'");
+    expect(source).toContain('/api/v0/id');
+    expect(source).toContain('kuboRpcIdentityUrl');
     expect(source).toContain('peer_id');
+    expect(source).toContain('AgentVersion');
     expect(source).toContain('spacedatanetwork/');
     expect(source).not.toContain('useIdentity');
   });
