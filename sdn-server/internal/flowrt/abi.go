@@ -11,22 +11,66 @@ import (
 // InvalidIndex is the sentinel value signaling "no more ready nodes" or "no descriptor".
 const InvalidIndex = 0xFFFFFFFF
 
+const (
+	runtimeExportNodeDescriptorCount       = "space_data_module_runtime_get_node_descriptor_count"
+	runtimeExportEdgeDescriptorCount       = "space_data_module_runtime_get_edge_descriptor_count"
+	runtimeExportTriggerDescriptorCount    = "space_data_module_runtime_get_trigger_descriptor_count"
+	runtimeExportDependencyDescriptorCount = "space_data_module_runtime_get_dependency_descriptor_count"
+	runtimeExportResetState                = "space_data_module_runtime_reset_state"
+	runtimeExportReadyNode                 = "space_data_module_runtime_get_ready_node_index"
+	runtimeExportBeginInvocation           = "space_data_module_runtime_begin_node_invocation"
+	runtimeExportCurrentInvocation         = "space_data_module_runtime_get_current_invocation_descriptor"
+	runtimeExportApplyInvocationResult     = "space_data_module_runtime_apply_node_invocation_result"
+	runtimeExportCompleteInvocation        = "space_data_module_runtime_complete_node_invocation"
+	runtimeExportEnqueueTriggerFrames      = "space_data_module_runtime_enqueue_trigger_frames"
+	runtimeExportEnqueueTriggerFrame       = "space_data_module_runtime_enqueue_trigger_frame"
+	runtimeExportNodeDispatchDescriptors   = "space_data_module_runtime_get_node_dispatch_descriptors"
+	runtimeExportDependencyDescriptors     = "space_data_module_runtime_get_dependency_descriptors"
+	runtimeExportNodeStates                = "space_data_module_runtime_get_node_states"
+	runtimeExportIngressStates             = "space_data_module_runtime_get_ingress_states"
+	runtimeExportDispatchCurrentInvocation = "space_data_module_runtime_dispatch_current_invocation_direct"
+)
+
+var compiledRuntimeExportNames = []string{
+	runtimeExportNodeDescriptorCount,
+	runtimeExportEdgeDescriptorCount,
+	runtimeExportTriggerDescriptorCount,
+	runtimeExportDependencyDescriptorCount,
+	runtimeExportResetState,
+	runtimeExportReadyNode,
+	runtimeExportBeginInvocation,
+	runtimeExportCurrentInvocation,
+	runtimeExportApplyInvocationResult,
+	runtimeExportCompleteInvocation,
+	runtimeExportEnqueueTriggerFrames,
+	runtimeExportEnqueueTriggerFrame,
+	runtimeExportNodeDispatchDescriptors,
+	runtimeExportDependencyDescriptors,
+	runtimeExportNodeStates,
+	runtimeExportIngressStates,
+	runtimeExportDispatchCurrentInvocation,
+}
+
+func underscoreRuntimeExportName(name string) string {
+	return "_" + name
+}
+
 // ---------------------------------------------------------------------------
 // FlowFrameDescriptor — 48 bytes, alignment 8
 // ---------------------------------------------------------------------------
 
 type FlowFrameDescriptor struct {
-	IngressIndex       uint32
-	TypeDescriptorIdx  uint32
-	PortIDPointer      uint32
-	Alignment          uint32
-	Offset             uint32
-	Size               uint32
-	StreamID           uint32
-	Sequence           uint32
-	TraceToken         uint64
-	EndOfStream        bool
-	Occupied           bool
+	IngressIndex      uint32
+	TypeDescriptorIdx uint32
+	PortIDPointer     uint32
+	Alignment         uint32
+	Offset            uint32
+	Size              uint32
+	StreamID          uint32
+	Sequence          uint32
+	TraceToken        uint64
+	EndOfStream       bool
+	Occupied          bool
 }
 
 const flowFrameDescriptorSize = 48
@@ -76,12 +120,12 @@ func writeFrameDescriptor(mod *wasmrt.Module, ptr uint32, fd *FlowFrameDescripto
 // ---------------------------------------------------------------------------
 
 type FlowInvocationDescriptor struct {
-	NodeIndex              uint32
-	DispatchDescriptorIdx  uint32
-	PluginIDPointer        uint32
-	MethodIDPointer        uint32
-	FramesPointer          uint32
-	FrameCount             uint32
+	NodeIndex             uint32
+	DispatchDescriptorIdx uint32
+	PluginIDPointer       uint32
+	MethodIDPointer       uint32
+	FramesPointer         uint32
+	FrameCount            uint32
 }
 
 const flowInvocationDescriptorSize = 24
@@ -219,13 +263,13 @@ func readIngressRuntimeState(mod *wasmrt.Module, ptr uint32) (*FlowIngressRuntim
 // ---------------------------------------------------------------------------
 
 type FlowNodeRuntimeState struct {
-	InvocationCount uint64
-	ConsumedFrames  uint64
-	QueuedFrames    uint32
+	InvocationCount  uint64
+	ConsumedFrames   uint64
+	QueuedFrames     uint32
 	BacklogRemaining uint32
-	LastStatus      uint32
-	Ready           bool
-	Yielded         bool
+	LastStatus       uint32
+	Ready            bool
+	Yielded          bool
 }
 
 const flowNodeRuntimeStateSize = 32

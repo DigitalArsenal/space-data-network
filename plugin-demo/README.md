@@ -178,7 +178,7 @@ Your WASM module **must** export these functions:
 
 ### Host Functions Provided
 
-The SDN runtime provides these imports under the `sdn_host` namespace:
+The SDN runtime provides these imports under the `space_data_module_host` namespace:
 
 | Import | Signature | Purpose |
 |--------|-----------|---------|

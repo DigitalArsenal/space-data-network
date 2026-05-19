@@ -22,14 +22,17 @@ type NodeContext struct {
 // CapHandler is a function that handles a capability-gated hostcall operation.
 type CapHandler func(operation string, payload []byte) ([]byte, error)
 
-// HostBridge is a per-module sdn_host dispatcher. It holds the module's
+// HostcallImportModule is the SDK-owned sync hostcall import module.
+const HostcallImportModule = "space_data_module_host"
+
+// HostBridge is a per-module hostcall dispatcher. It holds the module's
 // granted capabilities and routes hostcall operations to the appropriate handler.
 type HostBridge struct {
 	granted     map[string]bool
 	capHandlers map[string]CapHandler // capability prefix → handler
 	nodeCtx     *NodeContext
 
-	// Response buffer for the sdn_host protocol
+	// Response buffer for the sync hostcall protocol.
 	lastStatus  int32
 	responseBuf []byte
 }
@@ -176,7 +179,7 @@ func (hb *HostBridge) handleRandomBytes(payload []byte) []byte {
 	})
 }
 
-// BuildWasmEdgeHostFuncs returns the sdn_host WasmEdge host functions bound to this bridge.
+// BuildWasmEdgeHostFuncs returns the WasmEdge host functions bound to this bridge.
 func (hb *HostBridge) BuildWasmEdgeHostFuncs() []wasmrt.HostFunc {
 	i32 := func() *wasmedge.ValType { return wasmedge.NewValTypeI32() }
 

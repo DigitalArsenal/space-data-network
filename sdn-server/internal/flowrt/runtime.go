@@ -48,10 +48,10 @@ func NewFlowRuntime(wasmBytes []byte, maxMemoryPages uint32) (*FlowRuntime, erro
 	rt := &FlowRuntime{mod: mod}
 
 	// Cache descriptor counts
-	rt.NodeCount = rt.callUint32("sdn_flow_get_node_descriptor_count")
-	rt.EdgeCount = rt.callUint32("sdn_flow_get_edge_descriptor_count")
-	rt.TriggerCount = rt.callUint32("sdn_flow_get_trigger_descriptor_count")
-	rt.DepCount = rt.callUint32("sdn_flow_get_dependency_descriptor_count")
+	rt.NodeCount = rt.callUint32(runtimeExportNodeDescriptorCount)
+	rt.EdgeCount = rt.callUint32(runtimeExportEdgeDescriptorCount)
+	rt.TriggerCount = rt.callUint32(runtimeExportTriggerDescriptorCount)
+	rt.DepCount = rt.callUint32(runtimeExportDependencyDescriptorCount)
 
 	log.Infof("Flow runtime loaded: %d nodes, %d edges, %d triggers, %d deps",
 		rt.NodeCount, rt.EdgeCount, rt.TriggerCount, rt.DepCount)
@@ -78,8 +78,7 @@ func (rt *FlowRuntime) Module() *wasmrt.Module { return rt.mod }
 func (rt *FlowRuntime) callUint32(name string) uint32 {
 	res, err := rt.mod.Execute(name)
 	if err != nil {
-		// Try underscore-prefixed variant
-		res, err = rt.mod.Execute("_" + name)
+		res, err = rt.mod.Execute(underscoreRuntimeExportName(name))
 		if err != nil {
 			return 0
 		}
@@ -90,7 +89,7 @@ func (rt *FlowRuntime) callUint32(name string) uint32 {
 // callVoid calls a no-arg void export.
 func (rt *FlowRuntime) callVoid(name string) {
 	if _, err := rt.mod.Execute(name); err != nil {
-		rt.mod.Execute("_" + name)
+		rt.mod.Execute(underscoreRuntimeExportName(name))
 	}
 }
 
@@ -105,21 +104,21 @@ func (rt *FlowRuntime) readCStringAt(ptr uint32) string {
 
 // ResetState resets the flow runtime state.
 func (rt *FlowRuntime) ResetState() {
-	rt.callVoid("sdn_flow_reset_state")
+	rt.callVoid(runtimeExportResetState)
 }
 
 // GetReadyNodeIndex returns the next node index ready for invocation,
 // or InvalidIndex if none are ready.
 func (rt *FlowRuntime) GetReadyNodeIndex() uint32 {
-	return rt.callUint32("sdn_flow_get_ready_node_index")
+	return rt.callUint32(runtimeExportReadyNode)
 }
 
 // BeginInvocation begins invocation for the given node with a frame budget.
 // Returns the number of consumed frames.
 func (rt *FlowRuntime) BeginInvocation(nodeIndex uint32, frameBudget int32) int32 {
-	res, err := rt.mod.Execute("sdn_flow_begin_invocation", int32(nodeIndex), frameBudget)
+	res, err := rt.mod.Execute(runtimeExportBeginInvocation, int32(nodeIndex), frameBudget)
 	if err != nil {
-		res, err = rt.mod.Execute("_sdn_flow_begin_invocation", int32(nodeIndex), frameBudget)
+		res, err = rt.mod.Execute(underscoreRuntimeExportName(runtimeExportBeginInvocation), int32(nodeIndex), frameBudget)
 		if err != nil {
 			return 0
 		}
@@ -129,7 +128,7 @@ func (rt *FlowRuntime) BeginInvocation(nodeIndex uint32, frameBudget int32) int3
 
 // GetCurrentInvocationDescriptor reads the current invocation descriptor.
 func (rt *FlowRuntime) GetCurrentInvocationDescriptor() (*FlowInvocationDescriptor, error) {
-	ptr := rt.callUint32("sdn_flow_get_current_invocation_descriptor")
+	ptr := rt.callUint32(runtimeExportCurrentInvocation)
 	if ptr == 0 || ptr == InvalidIndex {
 		return nil, errors.New("no current invocation descriptor")
 	}
@@ -143,7 +142,7 @@ func (rt *FlowRuntime) ApplyInvocationResult(nodeIndex uint32, result *Invocatio
 	if result.Yielded {
 		yielded = 1
 	}
-	res, err := rt.mod.Execute("sdn_flow_apply_node_invocation_result",
+	res, err := rt.mod.Execute(runtimeExportApplyInvocationResult,
 		int32(nodeIndex),
 		result.StatusCode,
 		int32(result.BacklogRemaining),
@@ -152,7 +151,7 @@ func (rt *FlowRuntime) ApplyInvocationResult(nodeIndex uint32, result *Invocatio
 		int32(frameCount),
 	)
 	if err != nil {
-		res, err = rt.mod.Execute("_sdn_flow_apply_node_invocation_result",
+		res, err = rt.mod.Execute(underscoreRuntimeExportName(runtimeExportApplyInvocationResult),
 			int32(nodeIndex),
 			result.StatusCode,
 			int32(result.BacklogRemaining),
@@ -169,22 +168,22 @@ func (rt *FlowRuntime) ApplyInvocationResult(nodeIndex uint32, result *Invocatio
 
 // CompleteInvocation completes the invocation for a node.
 func (rt *FlowRuntime) CompleteInvocation(nodeIndex uint32) {
-	rt.mod.Execute("sdn_flow_complete_invocation", int32(nodeIndex))
+	rt.mod.Execute(runtimeExportCompleteInvocation, int32(nodeIndex))
 }
 
 // EnqueueTrigger enqueues a trigger without frame data.
 func (rt *FlowRuntime) EnqueueTrigger(triggerIndex uint32) {
-	rt.mod.Execute("sdn_flow_enqueue_trigger", int32(triggerIndex))
+	rt.mod.Execute(runtimeExportEnqueueTriggerFrames, int32(triggerIndex))
 }
 
 // EnqueueTriggerFrame enqueues a frame to a trigger's input.
 func (rt *FlowRuntime) EnqueueTriggerFrame(triggerIndex uint32, framePtr uint32) {
-	rt.mod.Execute("sdn_flow_enqueue_trigger_frame", int32(triggerIndex), int32(framePtr))
+	rt.mod.Execute(runtimeExportEnqueueTriggerFrame, int32(triggerIndex), int32(framePtr))
 }
 
 // GetNodeDispatchDescriptor reads the dispatch descriptor at the given index.
 func (rt *FlowRuntime) GetNodeDispatchDescriptor(index uint32) (*FlowNodeDispatchDescriptor, error) {
-	basePtr := rt.callUint32("sdn_flow_get_node_dispatch_descriptors")
+	basePtr := rt.callUint32(runtimeExportNodeDispatchDescriptors)
 	if basePtr == 0 {
 		return nil, errors.New("no dispatch descriptors")
 	}
@@ -194,7 +193,7 @@ func (rt *FlowRuntime) GetNodeDispatchDescriptor(index uint32) (*FlowNodeDispatc
 
 // GetDependencyDescriptor reads the dependency descriptor at the given index.
 func (rt *FlowRuntime) GetDependencyDescriptor(index uint32) (*SignedArtifactDependencyDescriptor, error) {
-	basePtr := rt.callUint32("sdn_flow_get_dependency_descriptors")
+	basePtr := rt.callUint32(runtimeExportDependencyDescriptors)
 	if basePtr == 0 {
 		return nil, errors.New("no dependency descriptors")
 	}
@@ -204,7 +203,7 @@ func (rt *FlowRuntime) GetDependencyDescriptor(index uint32) (*SignedArtifactDep
 
 // GetNodeRuntimeState reads the runtime state for a node.
 func (rt *FlowRuntime) GetNodeRuntimeState(index uint32) (*FlowNodeRuntimeState, error) {
-	basePtr := rt.callUint32("sdn_flow_get_node_states")
+	basePtr := rt.callUint32(runtimeExportNodeStates)
 	if basePtr == 0 {
 		return nil, errors.New("no node states")
 	}
@@ -214,7 +213,7 @@ func (rt *FlowRuntime) GetNodeRuntimeState(index uint32) (*FlowNodeRuntimeState,
 
 // GetIngressRuntimeState reads the runtime state for an ingress.
 func (rt *FlowRuntime) GetIngressRuntimeState(index uint32) (*FlowIngressRuntimeState, error) {
-	basePtr := rt.callUint32("sdn_flow_get_ingress_states")
+	basePtr := rt.callUint32(runtimeExportIngressStates)
 	if basePtr == 0 {
 		return nil, errors.New("no ingress states")
 	}
@@ -437,9 +436,9 @@ func (rt *FlowRuntime) writeOutputFrames(outputs []FrameOutput) (uint32, uint32)
 
 // dispatchDirect calls the linked-direct dispatch for the current invocation.
 func (rt *FlowRuntime) dispatchDirect(nodeIndex uint32) {
-	res, err := rt.mod.Execute("sdn_flow_dispatch_current_invocation_direct", int32(64))
+	res, err := rt.mod.Execute(runtimeExportDispatchCurrentInvocation, int32(64))
 	if err != nil {
-		rt.mod.Execute("_sdn_flow_dispatch_current_invocation_direct", int32(64))
+		rt.mod.Execute(underscoreRuntimeExportName(runtimeExportDispatchCurrentInvocation), int32(64))
 	}
 	_ = res
 	rt.CompleteInvocation(nodeIndex)
