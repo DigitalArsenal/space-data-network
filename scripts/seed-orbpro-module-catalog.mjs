@@ -5,11 +5,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { protectModuleArtifact } from "space-data-module-sdk";
-import {
-  extractPublicationRecordCollection,
-  generateX25519Keypair,
-} from "space-data-module-sdk/transport";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(__dirname, "..");
@@ -28,6 +23,80 @@ const staleManagedModuleIds = Object.freeze([
   "conjunction-assessment",
   "com.orbpro.wasm-engine-sdk",
 ]);
+let sdkRuntimePromise = null;
+
+async function loadSdkRuntimeFromRoot(sdkRoot) {
+  if (!sdkRoot) {
+    return null;
+  }
+  const resolvedRoot = path.resolve(sdkRoot);
+  const indexPath = path.join(resolvedRoot, "src", "index.js");
+  const transportPath = path.join(resolvedRoot, "src", "transport", "index.js");
+  if (!fsSync.existsSync(indexPath) || !fsSync.existsSync(transportPath)) {
+    return null;
+  }
+  const [sdk, transport] = await Promise.all([
+    import(pathToFileURL(indexPath).href),
+    import(pathToFileURL(transportPath).href),
+  ]);
+  return {
+    source: resolvedRoot,
+    protectModuleArtifact: sdk.protectModuleArtifact,
+    extractPublicationRecordCollection:
+      transport.extractPublicationRecordCollection,
+    generateX25519Keypair: transport.generateX25519Keypair,
+  };
+}
+
+async function loadSdkRuntime() {
+  if (sdkRuntimePromise) {
+    return sdkRuntimePromise;
+  }
+  sdkRuntimePromise = (async () => {
+    const candidates = [
+      process.env.SPACE_DATA_MODULE_SDK_ROOT,
+      path.join(repoRoot, "ancillary-packages", "space-data-module-sdk"),
+      path.join(workspaceRoot, "repos", "ancillary-packages", "space-data-module-sdk"),
+      path.join(workspaceRoot, "..", "ancillary-packages", "space-data-module-sdk"),
+      path.join(repoRoot, "..", "..", "ancillary-packages", "space-data-module-sdk"),
+      path.join(repoRoot, "packages", "space-data-module-sdk"),
+      path.join(packageRoot, "..", "space-data-module-sdk"),
+    ].filter(Boolean);
+    for (const candidate of candidates) {
+      const runtime = await loadSdkRuntimeFromRoot(candidate);
+      if (runtime) {
+        return runtime;
+      }
+    }
+
+    const [sdk, transport] = await Promise.all([
+      import("space-data-module-sdk"),
+      import("space-data-module-sdk/transport"),
+    ]);
+    return {
+      source: "node_modules/space-data-module-sdk",
+      protectModuleArtifact: sdk.protectModuleArtifact,
+      extractPublicationRecordCollection:
+        transport.extractPublicationRecordCollection,
+      generateX25519Keypair: transport.generateX25519Keypair,
+    };
+  })();
+  return sdkRuntimePromise;
+}
+
+function assertSdkRuntime(runtime) {
+  for (const exportName of [
+    "protectModuleArtifact",
+    "extractPublicationRecordCollection",
+    "generateX25519Keypair",
+  ]) {
+    if (typeof runtime?.[exportName] !== "function") {
+      throw new Error(
+        `space-data-module-sdk runtime from ${runtime?.source || "unknown"} is missing ${exportName}().`,
+      );
+    }
+  }
+}
 
 const DEFAULT_ORBPRO_MODULES = Object.freeze([
   Object.freeze({
@@ -90,6 +159,7 @@ const DEFAULT_ORBPRO_MODULES = Object.freeze([
   }),
   Object.freeze({
     slug: "sgp4",
+    moduleId: "com.orbpro.sgp4",
     protectedModulePath:
       "packages/orbpro-integration/propagator.sgp4/dist/sgp4-encrypted.js",
     protectedExports: Object.freeze([
@@ -103,6 +173,26 @@ const DEFAULT_ORBPRO_MODULES = Object.freeze([
       "packages/orbpro-integration/analysis.fastest-path/dist/fastest-path-encrypted.js",
     protectedExports: Object.freeze([
       Object.freeze({ exportName: "encryptedData", slug: "fastest-path" }),
+    ]),
+    keyExport: "recipientPrivateKeyHex",
+  }),
+  Object.freeze({
+    slug: "orbit-determination",
+    moduleId: "com.orbpro.analysis.orbit-determination",
+    protectedModulePath:
+      "packages/orbpro-integration/analysis.od/dist/od-encrypted.js",
+    protectedExports: Object.freeze([
+      Object.freeze({ exportName: "encryptedData", slug: "orbit-determination" }),
+    ]),
+    keyExport: "recipientPrivateKeyHex",
+  }),
+  Object.freeze({
+    slug: "maneuver",
+    moduleId: "com.orbpro.maneuver",
+    protectedModulePath:
+      "packages/orbpro-integration/analysis.maneuver/dist/maneuver-encrypted.js",
+    protectedExports: Object.freeze([
+      Object.freeze({ exportName: "encryptedData", slug: "maneuver" }),
     ]),
     keyExport: "recipientPrivateKeyHex",
   }),
@@ -407,6 +497,77 @@ function normalizeRecipientPrivateKeyHex(value, context) {
   return normalized;
 }
 
+function loadRecipientPrivateKeyHexFromSecrets() {
+  const envValue = String(
+    process.env.ORBPRO_MODULE_CATALOG_RECIPIENT_PRIVATE_KEY_HEX ||
+      process.env.ORBPRO_RECIPIENT_PRIVATE_KEY_HEX ||
+      "",
+  ).trim();
+  if (envValue) {
+    return normalizeRecipientPrivateKeyHex(
+      envValue,
+      "ORBPRO_MODULE_CATALOG_RECIPIENT_PRIVATE_KEY_HEX",
+    );
+  }
+
+  const candidatePaths = [
+    path.resolve(repoRoot, "packages/orbpro-integration/.secrets.json"),
+    path.resolve(repoRoot, "OrbPro/packages/orbpro-integration/.secrets.json"),
+    path.resolve(
+      workspaceRoot,
+      "main-packages/OrbPro/packages/orbpro-integration/.secrets.json",
+    ),
+    path.resolve(
+      packageRoot,
+      "..",
+      "OrbPro/packages/orbpro-integration/.secrets.json",
+    ),
+    path.resolve(
+      process.cwd(),
+      "packages/orbpro-integration/.secrets.json",
+    ),
+  ];
+
+  for (const candidatePath of candidatePaths) {
+    try {
+      const secrets = JSON.parse(fsSync.readFileSync(candidatePath, "utf8"));
+      if (typeof secrets?.RECIPIENT_PRIVATE_KEY_HEX === "string") {
+        return normalizeRecipientPrivateKeyHex(
+          secrets.RECIPIENT_PRIVATE_KEY_HEX,
+          `${candidatePath} RECIPIENT_PRIVATE_KEY_HEX`,
+        );
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw new Error(
+          `Unable to read OrbPro recipient key secret from ${candidatePath}: ${
+            error.message || error
+          }`,
+        );
+      }
+    }
+  }
+
+  throw new Error(
+    "Protected OrbPro module exports omit recipientPrivateKeyHex, and no OrbPro recipient key secret was found. Set ORBPRO_MODULE_CATALOG_RECIPIENT_PRIVATE_KEY_HEX or provide packages/orbpro-integration/.secrets.json.",
+  );
+}
+
+function resolveProtectedRecipientPrivateKeyHex({
+  protectedModule,
+  protectedModulePath,
+  keyExport,
+}) {
+  const exportedKey = protectedModule[keyExport];
+  if (typeof exportedKey === "string" && exportedKey.trim()) {
+    return normalizeRecipientPrivateKeyHex(
+      exportedKey,
+      `${protectedModulePath} export ${keyExport}`,
+    );
+  }
+  return loadRecipientPrivateKeyHexFromSecrets();
+}
+
 function resolveProtectedExportArtifacts(exportSpec, exportedValue, moduleSpec) {
   if (Array.isArray(exportedValue)) {
     const slugPrefix = normalizeArtifactSlug(
@@ -432,7 +593,7 @@ function resolveProtectedExportArtifacts(exportSpec, exportedValue, moduleSpec) 
   ];
 }
 
-async function expandProtectedModuleSpec(rawModuleSpec) {
+async function expandProtectedModuleSpec(rawModuleSpec, sdkRuntime) {
   const slug = normalizeArtifactSlug(rawModuleSpec?.slug, "");
   const protectedModulePath = resolveModulePath(
     rawModuleSpec?.protectedModulePath,
@@ -443,10 +604,11 @@ async function expandProtectedModuleSpec(rawModuleSpec) {
   if (!keyExport) {
     throw new Error(`Protected module "${slug}" requires keyExport.`);
   }
-  const keyHex = normalizeRecipientPrivateKeyHex(
-    protectedModule[keyExport],
-    `${protectedModulePath} export ${keyExport}`,
-  );
+  const keyHex = resolveProtectedRecipientPrivateKeyHex({
+    protectedModule,
+    protectedModulePath,
+    keyExport,
+  });
   const protectedExports = Array.isArray(rawModuleSpec?.protectedExports)
     ? rawModuleSpec.protectedExports
     : [];
@@ -476,7 +638,8 @@ async function expandProtectedModuleSpec(rawModuleSpec) {
         artifact.value,
         `${protectedModulePath} export ${exportName}`,
       );
-      const publication = extractPublicationRecordCollection(encryptedBytes);
+      const publication =
+        sdkRuntime.extractPublicationRecordCollection(encryptedBytes);
       const moduleId = resolveProtectedModuleId(
         rawModuleSpec,
         exportSpec,
@@ -502,11 +665,11 @@ async function expandProtectedModuleSpec(rawModuleSpec) {
   return expanded;
 }
 
-async function expandModuleSpecs(modules) {
+async function expandModuleSpecs(modules, sdkRuntime) {
   const expanded = [];
   for (const rawModule of modules) {
     if (rawModule?.protectedModulePath) {
-      expanded.push(...(await expandProtectedModuleSpec(rawModule)));
+      expanded.push(...(await expandProtectedModuleSpec(rawModule, sdkRuntime)));
     } else {
       expanded.push({ ...normalizeModuleSpec(rawModule), kind: "raw" });
     }
@@ -546,6 +709,8 @@ export async function seedOrbproModuleCatalog({
   storagePath,
   modules = DEFAULT_ORBPRO_MODULES,
 } = {}) {
+  const sdkRuntime = await loadSdkRuntime();
+  assertSdkRuntime(sdkRuntime);
   const resolvedPluginRoot = resolvePluginRoot({ pluginRoot, storagePath });
   await fs.mkdir(resolvedPluginRoot, { recursive: true });
 
@@ -553,7 +718,7 @@ export async function seedOrbproModuleCatalog({
     resolvedPluginRoot,
   );
   const seeded = [];
-  const expandedModules = await expandModuleSpecs(modules);
+  const expandedModules = await expandModuleSpecs(modules, sdkRuntime);
   const managedModuleIds = new Set([
     ...staleManagedModuleIds,
     ...expandedModules.map((moduleSpec) => moduleSpec.moduleId),
@@ -598,7 +763,7 @@ export async function seedOrbproModuleCatalog({
     const [wasmBytes, manifest, keypair] = await Promise.all([
       fs.readFile(moduleSpec.wasmPath),
       loadModuleManifest(moduleSpec),
-      generateX25519Keypair(),
+      sdkRuntime.generateX25519Keypair(),
     ]);
     const resolvedVersion = resolveModuleVersion(moduleSpec, manifest);
     const normalizedManifest = {
@@ -606,7 +771,7 @@ export async function seedOrbproModuleCatalog({
       pluginId: moduleSpec.moduleId,
       version: resolvedVersion,
     };
-    const protectedArtifact = await protectModuleArtifact({
+    const protectedArtifact = await sdkRuntime.protectModuleArtifact({
       manifest: normalizedManifest,
       wasmBytes,
       recipientPublicKeyHex: Buffer.from(keypair.publicKey).toString("hex"),
@@ -616,7 +781,7 @@ export async function seedOrbproModuleCatalog({
     });
     const encryptedBytes = Buffer.from(protectedArtifact.protectedArtifactBytes);
     const keyHex = Buffer.from(keypair.privateKey).toString("hex");
-    const publication = extractPublicationRecordCollection(
+    const publication = sdkRuntime.extractPublicationRecordCollection(
       protectedArtifact.protectedArtifactBytes,
     );
     const entry = buildCatalogEntry({
