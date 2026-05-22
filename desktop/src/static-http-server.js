@@ -1676,12 +1676,14 @@ async function serveDesktopNodeIdentityAPI (req, res) {
   const currentKeys = nodeIdentityKeySummary(await normalizeEpmPublicIdentityKeys(current))
   const proposedKeys = nodeIdentityKeySummary(proposed)
   const hasCurrentKeys = Boolean(currentKeys.signing_public_key || currentKeys.encryption_public_key || currentKeys.identity_public_key)
-  const matching = !hasCurrentKeys || (
+  const sameNodePeer = Boolean(currentKeys.peer_id && proposedKeys.peer_id && currentKeys.peer_id === proposedKeys.peer_id)
+  const keysMatch = (
     (!currentKeys.peer_id || currentKeys.peer_id === proposedKeys.peer_id) &&
     (!currentKeys.identity_public_key || currentKeys.identity_public_key === proposedKeys.identity_public_key) &&
     (!currentKeys.signing_public_key || currentKeys.signing_public_key === proposedKeys.signing_public_key) &&
     (!currentKeys.encryption_public_key || currentKeys.encryption_public_key === proposedKeys.encryption_public_key)
   )
+  const matching = !hasCurrentKeys || sameNodePeer || keysMatch
 
   if (!matching && payload.replace !== true) {
     sendJSON(res, 409, {
@@ -1703,7 +1705,7 @@ async function serveDesktopNodeIdentityAPI (req, res) {
   const publicProfile = (await publicIdentityRecord('self', 'node-self', next)).epmJson
   const session = await writeNodeIdentitySession(publicProfile)
   sendJSON(res, 200, {
-    status: matching && hasCurrentKeys ? 'unchanged' : 'updated',
+    status: keysMatch && hasCurrentKeys ? 'unchanged' : 'updated',
     profile: publicProfile,
     session
   })
