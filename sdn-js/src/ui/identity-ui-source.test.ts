@@ -161,8 +161,8 @@ describe('SDN identity Svelte source', () => {
       'Upload EPM / .vcf',
       'Public vCard QR',
     ]);
-    expect(source).toContain('publicKeyEmailAddress');
-    expect(source).toContain('spacedatanetwork.org');
+    expect(source).toContain("createVCardQrPayload as createVCardQrPayloadLocal");
+    expect(source).toContain('../../../src/ui/runtime/identity-vcard');
     expect(source).toContain('<nav class="sdn-view-nav sdn-breadcrumb-tabs" aria-label="Identity sections">');
     expect(source).toContain('<button type="button" class:active={view === \'profile\'} aria-current={view === \'profile\' ? \'page\' : undefined} on:click={() => setView(\'profile\')}>Node Profile</button>');
     expect(source).toContain('<button type="button" class:active={view === \'hosted-epms\'} aria-current={view === \'hosted-epms\' ? \'page\' : undefined} on:click={() => setView(\'hosted-epms\')}>Local Users</button>');
@@ -191,6 +191,35 @@ describe('SDN identity Svelte source', () => {
     expect(source).not.toContain("{ key: 'signing_public_key'");
     expect(source).not.toContain("{ key: 'encryption_public_key'");
     expect(source).not.toContain("{ key: 'multiformat_address'");
+  });
+
+  it('centralizes vCard QR metadata and public key alias handling', () => {
+    const runtimeSource = readRuntimeSource('identity-vcard.ts');
+    const identitySource = readUiSource('components/IdentityPanel.svelte');
+    const directorySource = readUiSource('components/DirectorySearchPanel.svelte');
+    const peersSource = readUiSource('screens/PeersScreen.svelte');
+    const uiSources = [identitySource, directorySource, peersSource];
+
+    expectSourceToContainAll(runtimeSource, [
+      'signing.digitalarsenal.io',
+      'encryption.digitalarsenal.io',
+      'spacedatanetwork.org',
+      'ADR;TYPE=WORK',
+      'X-SDN-SIGNING-PUBLIC-KEY',
+      'X-SDN-ENCRYPTION-PUBLIC-KEY',
+      'EMAIL;type=INTERNET;type=${type}',
+      'given_name',
+      'family_name',
+      'legal_name',
+      'honorific_prefix',
+      'honorific_suffix',
+    ]);
+    for (const source of uiSources) {
+      expect(source).toContain("../../../src/ui/runtime/identity-vcard");
+      expect(source).toContain("createVCardQrPayload as createVCardQrPayloadLocal");
+      expect(source).not.toMatch(/function\s+addVCardLine/);
+      expect(source).not.toMatch(/function\s+publicKeyEmailAddress/);
+    }
   });
 
   it('keeps only the edit action on the node profile card', () => {

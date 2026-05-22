@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { decodeEpmFlatBuffer } from '../../../src/ui/runtime/epm-flatbuffer';
+  import {
+    createVCardQrPayload as createVCardQrPayloadLocal,
+    epmJsonFromVCard as parseVCardEpmJson,
+    identityPublicKeyValue,
+  } from '../../../src/ui/runtime/identity-vcard';
 
   type HostedEpmKind = 'node-self' | 'hosted';
   type CapabilityState = 'available' | 'degraded' | 'unavailable' | 'permission-required' | 'remote-only' | 'local-only';
@@ -310,7 +315,7 @@
     importState = `Importing ${file.name}...`;
     try {
       const originalText = await file.text();
-      const text = isVCardName(file.name) ? JSON.stringify(epmJsonFromVCard(originalText)) : originalText;
+      const text = isVCardName(file.name) ? JSON.stringify(parseVCardEpmJson(originalText)) : originalText;
       const bytes = new TextEncoder().encode(text);
       const result = await backend.importHostedEpm({ name: file.name, bytes, text });
       if (!result.ok || !result.data) {
@@ -612,7 +617,10 @@
     return {
       publicKey,
       name: firstString(vcardValue(lines, 'FN'), vcardValue(lines, 'ORG'), 'Imported SDN identity'),
-      signingPubKeyHex: vcardValue(lines, 'X-SDN-SIGNING-PUBLIC-KEY'),
+      signingPubKeyHex: firstString(
+        vcardValue(lines, 'X-SDN-SIGNING-PUBLIC-KEY'),
+        vcardEmailAlias(lines, 'signing.digitalarsenal.io', 'signing'),
+      ),
     };
   }
 
@@ -762,27 +770,6 @@
     return out;
   }
 
-  function createVCardQrPayloadLocal(record: Record<string, unknown> | HostedEpmRecord): string {
-    const normalized = isHostedEpmRecord(record) ? record : normalizeHostedEpmRecord(record);
-    const epm = createPublicEpmExport(normalized.epmJson);
-    const lines = ['BEGIN:VCARD', 'VERSION:3.0'];
-    addVCardLine(lines, 'FN', stringValue(epm.dn) ?? stringValue(epm.DN) ?? normalized.label);
-    addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', normalized.kind === 'node-self' ? 'node' : 'user');
-    addVCardLine(lines, 'X-SDN-PEER-ID', normalized.peerId);
-    addVCardLine(lines, 'X-SDN-EPM-CID', normalized.epmCid ?? stringValue(epm.epm_cid) ?? stringValue(epm.epmCid));
-    const publicKey = publicKeyValue(epm);
-    addVCardLine(lines, 'EMAIL;TYPE=INTERNET', publicKeyEmailAddress(publicKey));
-    addVCardLine(lines, 'X-SDN-PUBLIC-KEY', publicKey);
-    addVCardLine(lines, 'X-SDN-SIGNING-PUBLIC-KEY', stringValue(epm.signing_public_key) ?? stringValue(epm.signingPublicKey) ?? stringValue(epm.signing_pubkey_hex));
-    addVCardLine(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY', stringValue(epm.encryption_public_key) ?? stringValue(epm.encryptionPublicKey) ?? stringValue(epm.encryption_pubkey_hex));
-    lines.push('END:VCARD');
-    return lines.join('\r\n');
-  }
-
-  function addVCardLine(lines: string[], key: string, value: string | undefined): void {
-    if (value?.trim()) lines.push(`${key}:${value.replace(/\r?\n/g, ' ')}`);
-  }
-
   function readRecord(value: unknown): Record<string, unknown> {
     if (typeof value === 'string') {
       try {
@@ -795,37 +782,12 @@
     return isRecord(value) ? { ...value } : {};
   }
 
-  function isHostedEpmRecord(value: Record<string, unknown> | HostedEpmRecord): value is HostedEpmRecord {
-    return typeof value.id === 'string'
-      && (value.kind === 'node-self' || value.kind === 'hosted')
-      && typeof value.label === 'string'
-      && typeof value.peerId === 'string'
-      && isRecord(value.epmJson);
-  }
-
   function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
   }
 
   function isSecretKey(key: string): boolean {
     return /private|secret|mnemonic|xpriv|core|seed/i.test(key);
-  }
-
-  function epmJsonFromVCard(text: string): Record<string, unknown> {
-    const fields: Record<string, unknown> = {};
-    const lines = vcardLines(text);
-    fields.dn = vcardValue(lines, 'FN');
-    fields.email = vcardValue(lines, 'EMAIL');
-    fields.telephone = vcardValue(lines, 'TEL');
-    fields.peer_id = vcardValue(lines, 'X-SDN-PEER-ID');
-    fields.epm_cid = vcardValue(lines, 'X-SDN-EPM-CID');
-    fields.public_key = firstString(vcardValue(lines, 'X-SDN-PUBLIC-KEY'), vcardEmailAlias(lines, 'spacedatanetwork.org'));
-    fields.signing_public_key = vcardValue(lines, 'X-SDN-SIGNING-PUBLIC-KEY');
-    fields.encryption_public_key = vcardValue(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY');
-    for (const key of Object.keys(fields)) {
-      if (!fields[key]) delete fields[key];
-    }
-    return fields;
   }
 
   function vcardLines(vcard: string): string[] {
@@ -847,15 +809,26 @@
     return '';
   }
 
-  function vcardEmailAlias(lines: string[], domain: string): string {
+  function vcardEmailAlias(lines: string[], domain: string, type?: string): string {
     const suffix = `@${domain}`.toLowerCase();
     for (const line of lines) {
       const colon = line.indexOf(':');
       if (colon < 0 || !line.slice(0, colon).toUpperCase().startsWith('EMAIL')) continue;
+      if (type && !vcardLineHasEmailType(line.slice(0, colon), type)) continue;
       const value = unescapeVCardValue(line.slice(colon + 1));
       if (value.toLowerCase().endsWith(suffix)) return value.slice(0, -suffix.length);
     }
     return '';
+  }
+
+  function vcardLineHasEmailType(left: string, type: string): boolean {
+    const wanted = type.toLowerCase();
+    return left.split(';').slice(1).some((param) => {
+      const normalized = param.trim().toLowerCase();
+      if (normalized === wanted) return true;
+      const [, rawValue = normalized] = normalized.split('=', 2);
+      return rawValue.split(',').map((part) => part.trim()).includes(wanted);
+    });
   }
 
   function unescapeVCardValue(value: string): string {
@@ -873,23 +846,6 @@
       if (normalized) return normalized;
     }
     return '';
-  }
-
-  function publicKeyValue(epm: Record<string, unknown>): string | undefined {
-    return stringValue(epm.public_key)
-      ?? stringValue(epm.PUBLIC_KEY)
-      ?? stringValue(epm.publicKey)
-      ?? stringValue(epm.signing_public_key)
-      ?? stringValue(epm.signingPublicKey)
-      ?? stringValue(epm.signing_pubkey_hex)
-      ?? stringValue(epm.encryption_public_key)
-      ?? stringValue(epm.encryptionPublicKey)
-      ?? stringValue(epm.encryption_pubkey_hex);
-  }
-
-  function publicKeyEmailAddress(publicKey: string | undefined): string | undefined {
-    const localPart = publicKey?.trim().replace(/\s+/g, '').replace(/[^A-Za-z0-9._%+-]/g, '');
-    return localPart ? `${localPart}@spacedatanetwork.org` : undefined;
   }
 
   function slugFromDraft(): string {
@@ -955,6 +911,8 @@
           <div><dt>Agent</dt><dd>{summary?.agentVersion ?? stringValue(profileRecord.epmJson.agent_version) ?? 'pending'}</dd></div>
           <div><dt>Email</dt><dd>{stringValue(profileRecord.epmJson.email) ?? 'pending'}</dd></div>
           <div><dt>Entity</dt><dd>{stringValue(profileRecord.epmJson.entity_type) ?? 'node'}</dd></div>
+          <div><dt>Signing public key</dt><dd>{identityPublicKeyValue(profileRecord.epmJson, 'signing') ?? 'pending'}</dd></div>
+          <div><dt>Encryption public key</dt><dd>{identityPublicKeyValue(profileRecord.epmJson, 'encryption') ?? 'pending'}</dd></div>
         </dl>
 
         <div class="sdn-action-grid">

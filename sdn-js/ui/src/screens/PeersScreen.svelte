@@ -21,6 +21,10 @@
     createDefaultLibp2pFlatSqlSyncClient,
     createLibp2pFlatSqlSyncBackend,
   } from '../../../src/ui/runtime/sdn-backend-libp2p-sync';
+  import {
+    createVCardQrPayload as createVCardQrPayloadLocal,
+    identityPublicKeyValue,
+  } from '../../../src/ui/runtime/identity-vcard';
   import type { HostedEpmRecord } from '../../../src/ui/runtime/identity';
   import type { ObservedSdnPeer, SdnBackend } from '../../../src/ui/runtime/sdn-backend';
   import DirectorySearchPanel from '../components/DirectorySearchPanel.svelte';
@@ -349,8 +353,8 @@
       { label: 'PeerID', value: peer.id },
       { label: 'EPM CID', value: epm?.epmCid ?? stringValue(epmJson.epm_cid) ?? stringValue(epmJson.epmCid) ?? '' },
       { label: 'Public key', value: publicKeyValue(epmJson) ?? '' },
-      { label: 'Signing public key', value: stringValue(epmJson.signing_public_key) ?? stringValue(epmJson.signingPublicKey) ?? '' },
-      { label: 'Encryption public key', value: stringValue(epmJson.encryption_public_key) ?? stringValue(epmJson.encryptionPublicKey) ?? '' },
+      { label: 'Signing public key', value: identityPublicKeyValue(epmJson, 'signing') ?? '' },
+      { label: 'Encryption public key', value: identityPublicKeyValue(epmJson, 'encryption') ?? '' },
     ];
   }
 
@@ -437,55 +441,8 @@
     };
   }
 
-  function createVCardQrPayloadLocal(input: Record<string, unknown> | HostedEpmRecord): string {
-    const record = isHostedEpmRecord(input) ? input : {
-      id: stringValue(input.id) ?? stringValue(input.peer_id) ?? 'peer',
-      kind: 'hosted' as const,
-      label: stringValue(input.dn) ?? stringValue(input.name) ?? 'Peer',
-      peerId: stringValue(input.peer_id) ?? '',
-      epmJson: input,
-    };
-    const epm = record.epmJson;
-    const publicKey = publicKeyValue(epm);
-    const lines = ['BEGIN:VCARD', 'VERSION:3.0'];
-    addVCardLine(lines, 'FN', stringValue(epm.dn) ?? stringValue(epm.DN) ?? record.label);
-    addVCardLine(lines, 'TEL', stringValue(epm.telephone) ?? stringValue(epm.phone));
-    addVCardLine(lines, 'X-SDN-PEER-ID', record.peerId);
-    addVCardLine(lines, 'X-SDN-EPM-CID', record.epmCid ?? stringValue(epm.epm_cid) ?? stringValue(epm.epmCid));
-    addVCardLine(lines, 'EMAIL;TYPE=INTERNET', publicKeyEmailAddress(publicKey));
-    addVCardLine(lines, 'X-SDN-PUBLIC-KEY', publicKey);
-    lines.push('END:VCARD');
-    return lines.join('\r\n');
-  }
-
-  function addVCardLine(lines: string[], key: string, value: string | undefined): void {
-    if (value?.trim()) lines.push(`${key}:${value.replace(/\r?\n/g, ' ')}`);
-  }
-
   function publicKeyValue(epm: Record<string, unknown>): string | undefined {
-    return stringValue(epm.public_key)
-      ?? stringValue(epm.PUBLIC_KEY)
-      ?? stringValue(epm.publicKey)
-      ?? stringValue(epm.signing_public_key)
-      ?? stringValue(epm.signingPublicKey)
-      ?? stringValue(epm.signing_pubkey_hex)
-      ?? stringValue(epm.encryption_public_key)
-      ?? stringValue(epm.encryptionPublicKey)
-      ?? stringValue(epm.encryption_pubkey_hex);
-  }
-
-  function publicKeyEmailAddress(publicKey: string | undefined): string | undefined {
-    const localPart = publicKey?.trim().replace(/\s+/g, '').replace(/[^A-Za-z0-9._%+-]/g, '');
-    return localPart ? `${localPart}@spacedatanetwork.org` : undefined;
-  }
-
-  function isHostedEpmRecord(value: Record<string, unknown> | HostedEpmRecord): value is HostedEpmRecord {
-    return typeof value.id === 'string'
-      && (value.kind === 'node-self' || value.kind === 'hosted')
-      && typeof value.label === 'string'
-      && typeof value.peerId === 'string'
-      && typeof value.epmJson === 'object'
-      && value.epmJson !== null;
+    return identityPublicKeyValue(epm);
   }
 
   function normalizeConfiguredDataSources(payload: unknown): ConfiguredSdnNode[] {
