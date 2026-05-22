@@ -73,6 +73,7 @@
     "xvfb-maybe": "^0.2.1"
   },
   "dependencies": {
+    "@noble/curves": "^1.9.7",
     "countly-sdk-nodejs": "^20.11.0",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.6.2",

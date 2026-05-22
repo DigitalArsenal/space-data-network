@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import {
+  derivePublicIdentityKeysFromXpub,
+  deriveXPub,
+  initHDWallet,
+} from '../../crypto/hd-wallet';
 import { createVCardQrPayload } from './identity-vcard';
 import {
+  deriveHostedEpmRecordKeysFromXpub,
   hostedEpmRecordFromDirectoryRecord,
   peerDisplayName,
   peerEmail,
@@ -13,6 +19,7 @@ import type { HostedEpmRecord } from './identity';
 import type { ObservedSdnPeer } from './sdn-backend';
 
 const PEER_ID = '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45';
+const HD_TEST_SEED = Uint8Array.from({ length: 64 }, (_, index) => (index * 17 + 11) & 0xff);
 
 function observedPeer(metadata: Record<string, unknown>): ObservedSdnPeer {
   return {
@@ -136,5 +143,66 @@ describe('peer identity projection', () => {
         ],
       },
     });
+  });
+
+  it('derives missing signing and encryption public keys from an EPM xpub for vCard QR payloads', async () => {
+    await initHDWallet();
+    const xpub = await deriveXPub(HD_TEST_SEED, 0);
+    const derived = await derivePublicIdentityKeysFromXpub(xpub);
+    const record: HostedEpmRecord = {
+      id: PEER_ID,
+      kind: 'hosted',
+      label: 'Directory Node',
+      peerId: PEER_ID,
+      epmCid: 'bafy-directory-epm',
+      epmJson: {
+        dn: 'Directory Node',
+        peer_id: PEER_ID,
+        signing_public_key: 'legacy-signing-key',
+        xpub,
+        keys: [
+          {
+            key_type: 'signing',
+            address_type: 'secp256k1',
+            public_key: 'legacy-signing-key',
+            xpub,
+          },
+        ],
+      },
+    };
+
+    const enriched = await deriveHostedEpmRecordKeysFromXpub(record);
+
+    expect(enriched.epmJson).toMatchObject({
+      signing_public_key: derived.signingPublicKey,
+      encryption_public_key: derived.encryptionPublicKey,
+    });
+    expect(enriched.epmJson.keys).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        key_type: 'signing',
+        address_type: 'secp256k1',
+        public_key: derived.signingPublicKey,
+        derivation_path: derived.signingKeyPath,
+      }),
+      expect.objectContaining({
+        key_type: 'encryption',
+        address_type: 'secp256k1',
+        public_key: derived.encryptionPublicKey,
+        derivation_path: derived.encryptionKeyPath,
+      }),
+    ]));
+    expect(enriched.epmJson.keys).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        key_type: 'signing',
+        public_key: 'legacy-signing-key',
+      }),
+    ]));
+
+    const payload = createVCardQrPayload(enriched);
+    const unfoldedPayload = payload.replace(/\r\n[ \t]/g, '');
+    expect(unfoldedPayload).toContain(`X-SDN-SIGNING-PUBLIC-KEY:${derived.signingPublicKey}`);
+    expect(unfoldedPayload).toContain(`X-SDN-ENCRYPTION-PUBLIC-KEY:${derived.encryptionPublicKey}`);
+    expect(unfoldedPayload).toContain(`EMAIL;type=INTERNET;type=signing:${derived.signingPublicKey}@signing.digitalarsenal.io`);
+    expect(unfoldedPayload).toContain(`EMAIL;type=INTERNET;type=encryption:${derived.encryptionPublicKey}@encryption.digitalarsenal.io`);
   });
 });

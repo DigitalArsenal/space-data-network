@@ -5,6 +5,10 @@ const { EventEmitter } = require('events')
 const { test, expect } = require('@playwright/test')
 const proxyquire = require('proxyquire').noCallThru()
 
+const HD_TEST_XPUB = 'xpub6BpyEDT14VWygfxLMawQKhGXLCVMhJK7voSnjD7VsYYzUfQb6vbTwNhDbXwsa5KraQQgfpDzTq45TfdXQzNiFRfGoFpgbd9KymJsauL4MuT'
+const HD_TEST_SIGNING_PUBLIC_KEY = '0321fce2a66e6c1be09128b20e3f50374fa05ec1ceb84eaa78e69cf1cddc60a7a6'
+const HD_TEST_ENCRYPTION_PUBLIC_KEY = '0301f6e5f01a7765617c817568db07e81dc1b86a87575f4702f347b5897f6b1d06'
+
 test.describe('desktop static identity API', () => {
   test('stores hosted EPM records encrypted at rest and serves public exports', async () => {
     const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-identity-api-'))
@@ -445,6 +449,73 @@ test.describe('desktop static identity API', () => {
     expect(raw.body).not.toContain('must-not-be-written')
   })
 
+  test('derives wallet signing and encryption public keys from xpub for self EPM and vCard exports', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-node-identity-xpub-'))
+    const { serveDesktopIdentityAPI, serveDesktopNodeIdentityAPI, serveDesktopNodeEPMAPI } = loadStaticServer(userData)
+    const xpub = HD_TEST_XPUB
+    const signingPublicKey = HD_TEST_SIGNING_PUBLIC_KEY
+    const encryptionPublicKey = HD_TEST_ENCRYPTION_PUBLIC_KEY
+
+    const saved = await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/wallet', {
+      wallet_identity: {
+        peer_id: '12D3KooWXpubDerived',
+        wallet_account_id: 'wallet-0',
+        wallet_account_label: 'Wallet 1',
+        xpub,
+        identity_public_key: '11'.repeat(33),
+        signature: 'cc'.repeat(64),
+        signature_payload: 'payload',
+        signature_timestamp: 1778700000
+      }
+    })
+    expect(saved.statusCode).toBe(200)
+    expect(saved.json.profile).toMatchObject({
+      xpub,
+      signing_public_key: signingPublicKey,
+      encryption_public_key: encryptionPublicKey
+    })
+    expect(saved.json.profile.keys).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        key_type: 'signing',
+        public_key: signingPublicKey,
+        derivation_path: "m/44'/0'/0'/0/0"
+      }),
+      expect.objectContaining({
+        key_type: 'encryption',
+        public_key: encryptionPublicKey,
+        derivation_path: "m/44'/0'/0'/1/0"
+      })
+    ]))
+
+    const self = await requestJson(serveDesktopIdentityAPI, 'GET', '/api/identity/epms/self')
+    expect(self.statusCode).toBe(200)
+    expect(self.json.epmCid).toMatch(/^bafk/)
+    expect(self.json.epmJson.epm_cid).toBe(self.json.epmCid)
+    expect(self.json.epmJson.signing_public_key).toBe(signingPublicKey)
+    expect(self.json.epmJson.encryption_public_key).toBe(encryptionPublicKey)
+
+    const vcard = await requestRaw(serveDesktopIdentityAPI, 'GET', '/api/identity/epms/self/vcard')
+    expect(vcard.statusCode).toBe(200)
+    const unfoldedVcard = vcard.body.replace(/\r\n[ \t]/g, '')
+    expect(unfoldedVcard).toContain(`X-SDN-SIGNING-PUBLIC-KEY:${signingPublicKey}`)
+    expect(unfoldedVcard).toContain(`X-SDN-ENCRYPTION-PUBLIC-KEY:${encryptionPublicKey}`)
+    expect(unfoldedVcard).toContain(`X-SDN-EPM-CID:${self.json.epmCid}`)
+    expect(unfoldedVcard).toContain(`EMAIL;type=INTERNET;type=signing:${signingPublicKey}@signing.digitalarsenal.io`)
+    expect(unfoldedVcard).toContain(`EMAIL;type=INTERNET;type=encryption:${encryptionPublicKey}@encryption.digitalarsenal.io`)
+
+    const raw = await requestRaw(serveDesktopNodeEPMAPI, 'GET', '/api/node/epm')
+    expect(raw.statusCode).toBe(200)
+    const flatbuffers = await import('flatbuffers')
+    const { EPM } = await import('spacedatastandards.org/lib/js/EPM/EPM.js')
+    const { KeyType } = await import('spacedatastandards.org/lib/js/EPM/KeyType.js')
+    const epm = EPM.getSizePrefixedRootAsEPM(new flatbuffers.ByteBuffer(new Uint8Array(raw.bodyBuffer)))
+    expect(epm.keysLength()).toBe(2)
+    expect(epm.KEYS(0).KEY_TYPE()).toBe(KeyType.Signing)
+    expect(epm.KEYS(0).PUBLIC_KEY()).toBe(signingPublicKey)
+    expect(epm.KEYS(1).KEY_TYPE()).toBe(KeyType.Encryption)
+    expect(epm.KEYS(1).PUBLIC_KEY()).toBe(encryptionPublicKey)
+  })
+
   test('serves local node EPM through desktop raw data query routes', async () => {
     const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-local-data-api-'))
     const { serveDesktopLocalDataAPI, serveDesktopNodeEPMAPI } = loadStaticServer(userData)
@@ -475,12 +546,13 @@ test.describe('desktop static identity API', () => {
     expect(query.json.records).toEqual([
       expect.objectContaining({
         schema_name: 'EPM.fbs',
-        cid: '12D3KooWDesktopNode',
+        cid: expect.stringMatching(/^bafk/),
         peer_id: '12D3KooWDesktopNode',
         provider_id: 'local-node',
         source_name: 'local-epm'
       })
     ])
+    const epmCid = query.json.records[0].cid
     expect(query.json.records[0].data_base64).toBeUndefined()
 
     const stream = await requestRaw(serveDesktopLocalDataAPI, 'POST', '/api/v1/data/query', JSON.stringify({
@@ -493,7 +565,7 @@ test.describe('desktop static identity API', () => {
     expect(stream.headers['Content-Type']).toBe('application/vnd.sdn.flatbuffers.stream')
     expect(stream.bodyBuffer.readUInt32BE(0)).toBeGreaterThan(0)
 
-    const record = await requestRaw(serveDesktopLocalDataAPI, 'GET', '/api/v1/data/records/EPM.fbs/12D3KooWDesktopNode')
+    const record = await requestRaw(serveDesktopLocalDataAPI, 'GET', `/api/v1/data/records/EPM.fbs/${epmCid}`)
     expect(record.statusCode).toBe(200)
     expect(record.headers['Content-Type']).toBe('application/x-flatbuffers')
     expect(record.bodyBuffer.byteLength).toBeGreaterThan(0)

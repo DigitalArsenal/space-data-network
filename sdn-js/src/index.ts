@@ -96,6 +96,7 @@ export {
   deriveIdentity,
   identityFromMnemonic,
   deriveXPub,
+  derivePublicIdentityKeysFromXpub,
 
   // Signing
   sign,
@@ -130,6 +131,7 @@ export type {
   IdentityKeyPair,
   EncryptionKeyPair,
   DerivedIdentity,
+  XpubDerivedPublicIdentityKeys,
 } from './crypto/index';
 
 // Key Storage

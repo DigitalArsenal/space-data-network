@@ -22,6 +22,7 @@
     createLibp2pFlatSqlSyncBackend,
   } from '../../../src/ui/runtime/sdn-backend-libp2p-sync';
   import {
+    deriveHostedEpmRecordKeysFromXpub,
     hostedEpmRecordFromDirectoryRecord,
     peerDisplayName,
     peerEmail as peerIdentityEmail,
@@ -98,6 +99,8 @@
   let configuredDataSources: ConfiguredSdnNode[] = [];
   let dataDirectoryState: DataDirectoryState = loadDataDirectoryState();
   let storefrontListings: Array<Record<string, unknown>> = [];
+  let derivedHostedEpms: HostedEpmRecord[] = [];
+  let derivedHostedEpmsKey = '';
   let directoryPeerEpms: HostedEpmRecord[] = [];
   let directoryPeerEpmsKey = '';
   let feedStatus = '';
@@ -108,7 +111,7 @@
   $: dataSourceOptions = buildDataSourceOptions(configuredDataSources, peers);
   $: peerDataFeeds = buildPeerDataFeeds(dataSourceOptions, storefrontListings, dataDirectoryState);
   $: storefrontModules = buildStorefrontModules(storefrontListings);
-  $: peerIdentityVersion = directoryPeerEpms.map((record) => `${record.peerId}:${record.epmCid ?? ''}:${record.updatedAt ?? ''}`).join('|');
+  $: peerIdentityVersion = [...derivedHostedEpms, ...directoryPeerEpms].map(peerEpmIdentityVersion).join('|');
   $: trustedPeers = peers.filter((peer) => isTrustedDirectoryOwnertrust(ownertrustForPeer(peer.id)));
   $: filteredPeers = filterPeersForQuery(peers, peerIdentityVersion);
   $: visiblePeers = sortPeers(filteredPeers, sortColumn, sortDirection);
@@ -116,6 +119,7 @@
   $: selectedPeerFeeds = selectedPeer ? peerDataFeeds.filter((feed) => feed.peerId === selectedPeer.id) : [];
   $: selectedPeerModules = selectedPeer ? storefrontModules.filter((module) => module.peerId === selectedPeer.id) : [];
   $: selectedPeerSummary = selectedPeerSummaryFor(selectedPeer, peerIdentityVersion);
+  $: void loadDerivedHostedEpms(hostedEpms);
   $: void loadDirectoryPeerEpmsForPeers(peers, backend);
   $: void renderPeerQr(selectedPeer, peerIdentityVersion);
 
@@ -201,9 +205,25 @@
   }
 
   function getPeerEpm(peer: ObservedSdnPeer): HostedEpmRecord | null {
-    return hostedEpms.find((record) => record.peerId === peer.id || record.id === peer.id)
+    return derivedHostedEpms.find((record) => record.peerId === peer.id || record.id === peer.id)
+      ?? hostedEpms.find((record) => record.peerId === peer.id || record.id === peer.id)
       ?? directoryPeerEpms.find((record) => record.peerId === peer.id || record.id === peer.id)
       ?? null;
+  }
+
+  async function loadDerivedHostedEpms(records: HostedEpmRecord[]): Promise<void> {
+    const key = peerEpmRecordsDerivationKey(records);
+    if (derivedHostedEpmsKey === key) return;
+    derivedHostedEpmsKey = key;
+    if (records.length === 0) {
+      derivedHostedEpms = [];
+      return;
+    }
+
+    const derived = await Promise.all(records.map(deriveHostedEpmRecordKeysFromXpub));
+    if (derivedHostedEpmsKey === key) {
+      derivedHostedEpms = derived;
+    }
   }
 
   async function loadDirectoryPeerEpmsForPeers(observedPeers: ObservedSdnPeer[], activeBackend: SdnBackend | null): Promise<void> {
@@ -227,9 +247,10 @@
         }
       }
       directoryRecords.push(...await loadPublicDirectoryPeerRecords(peer.id));
-      return directoryRecords
+      const records = directoryRecords
         .map(hostedEpmRecordFromDirectoryRecord)
         .filter((record): record is HostedEpmRecord => record !== null && record.peerId === peer.id);
+      return Promise.all(records.map(deriveHostedEpmRecordKeysFromXpub));
     }))).flat();
 
     if (directoryPeerEpmsKey === key) {
@@ -491,6 +512,32 @@
 
   function publicKeyValue(epm: Record<string, unknown>): string | undefined {
     return identityPublicKeyValue(epm);
+  }
+
+  function peerEpmRecordsDerivationKey(records: HostedEpmRecord[]): string {
+    return records.map(peerEpmIdentityVersion).join('|');
+  }
+
+  function peerEpmIdentityVersion(record: HostedEpmRecord): string {
+    const epm = record.epmJson;
+    return [
+      record.id,
+      record.peerId,
+      record.epmCid ?? '',
+      record.updatedAt ?? '',
+      stringValue(epm.xpub),
+      identityPublicKeyValue(epm, 'signing') ?? '',
+      identityPublicKeyValue(epm, 'encryption') ?? '',
+      stableJson(epm),
+    ].join(':');
+  }
+
+  function stableJson(value: unknown): string {
+    try {
+      return JSON.stringify(value) ?? '';
+    } catch {
+      return '';
+    }
   }
 
   function normalizeConfiguredDataSources(payload: unknown): ConfiguredSdnNode[] {

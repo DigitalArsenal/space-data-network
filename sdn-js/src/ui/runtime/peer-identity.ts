@@ -1,4 +1,5 @@
 import type { HostedEpmRecord } from './identity';
+import { derivePublicIdentityKeysFromXpub } from '../../crypto/hd-wallet';
 import { createPublicEpmExport } from './identity-vcard';
 import type { ObservedSdnPeer } from './sdn-backend';
 
@@ -11,6 +12,52 @@ const EPM_CID_FIELDS = ['epm_cid', 'epmCid', 'public_epm_cid', 'publicEpmCid'];
 const PUBLIC_KEY_FIELDS = ['public_key', 'PUBLIC_KEY', 'publicKey'];
 const SIGNING_PUBLIC_KEY_FIELDS = ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex', 'signingPubkeyHex'];
 const ENCRYPTION_PUBLIC_KEY_FIELDS = ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex', 'encryptionPubkeyHex'];
+const XPUB_FIELDS = ['xpub', 'XPUB', 'extended_public_key', 'extendedPublicKey', 'hd_xpub', 'hdXpub'];
+
+export async function deriveHostedEpmRecordKeysFromXpub(record: HostedEpmRecord): Promise<HostedEpmRecord> {
+  const epmJson = await deriveEpmJsonKeysFromXpub(record.epmJson);
+  return {
+    ...record,
+    epmJson,
+  };
+}
+
+export async function deriveEpmJsonKeysFromXpub(input: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const epm = createPublicEpmExport(input);
+  const xpub = identityXpubValue(epm);
+  if (!xpub) return epm;
+
+  try {
+    const derived = await derivePublicIdentityKeysFromXpub(xpub);
+    const preservedKeys = (Array.isArray(epm.keys) ? epm.keys : [])
+      .filter((item) => !isIdentityKeyType(item, 'signing') && !isIdentityKeyType(item, 'encryption'))
+      .map((item) => (isRecord(item) ? { ...item } : item));
+    epm.xpub = xpub;
+    epm.signing_public_key = derived.signingPublicKey;
+    epm.encryption_public_key = derived.encryptionPublicKey;
+    epm.keys = [
+      {
+        key_type: 'signing',
+        address_type: 'secp256k1',
+        public_key: derived.signingPublicKey,
+        derivation_path: derived.signingKeyPath,
+        xpub,
+      },
+      {
+        key_type: 'encryption',
+        address_type: 'secp256k1',
+        public_key: derived.encryptionPublicKey,
+        derivation_path: derived.encryptionKeyPath,
+        xpub,
+      },
+      ...preservedKeys,
+    ];
+  } catch {
+    // Invalid or unsupported xpub values should not block peer directory rendering.
+  }
+
+  return epm;
+}
 
 export function peerDisplayName(peer: ObservedSdnPeer, hostedEpm?: HostedEpmRecord | null): string {
   const epm = peerEpmJson(peer, hostedEpm);
@@ -130,6 +177,26 @@ function pickNumber(record: Record<string, unknown>, keys: string[]): number | u
 
 function setStringIfPresent(record: Record<string, unknown>, key: string, value: string | undefined): void {
   if (value) record[key] = value;
+}
+
+function identityXpubValue(epm: Record<string, unknown>): string | undefined {
+  const direct = pickString(epm, XPUB_FIELDS);
+  if (direct) return direct;
+  const keys = Array.isArray(epm.keys) ? epm.keys : [];
+  for (const key of keys) {
+    if (!isRecord(key)) continue;
+    const xpub = pickString(key, XPUB_FIELDS);
+    if (xpub) return xpub;
+  }
+  return undefined;
+}
+
+function isIdentityKeyType(value: unknown, type: 'signing' | 'encryption'): boolean {
+  if (!isRecord(value)) return false;
+  const keyType = (pickString(value, ['key_type', 'KEY_TYPE', 'keyType']) || '').toLowerCase();
+  const addressType = (pickString(value, ['address_type', 'ADDRESS_TYPE', 'addressType']) || '').toLowerCase();
+  if (type === 'encryption') return keyType === 'encryption' || addressType === 'x25519';
+  return keyType === 'signing' || (addressType !== '' && addressType !== 'x25519');
 }
 
 function stringValue(value: unknown): string | undefined {

@@ -50,6 +50,14 @@ interface HDWalletNativeCryptoExtensions extends HDWalletModule {
   };
 }
 
+export interface XpubDerivedPublicIdentityKeys {
+  xpub: string;
+  signingPublicKey: string;
+  encryptionPublicKey: string;
+  signingKeyPath: string;
+  encryptionKeyPath: string;
+}
+
 // Module state
 let hdWalletModule: HDWalletModule | null = null;
 let moduleReady: Promise<void> | null = null;
@@ -131,6 +139,16 @@ function splitCiphertextAndTag(ciphertextAndTag: Uint8Array): {
     ciphertext: ciphertextAndTag.slice(0, ciphertextAndTag.length - 16),
     tag: ciphertextAndTag.slice(ciphertextAndTag.length - 16),
   };
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function requireNonNegativeInteger(value: number, name: string): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative integer`);
+  }
 }
 
 /**
@@ -332,6 +350,59 @@ export function derivePeerIdFromXpub(xpub: string): string {
 export function deriveIpnsHashFromXpub(xpub: string): string {
   const module = getModule();
   return module.libp2p.ipnsHashFromXpub(xpub);
+}
+
+/**
+ * Derive public signing/encryption child keys from an account xpub.
+ *
+ * The xpub is rooted at m/44'/0'/{account}'. Public child derivation then uses
+ * BIP-44 change 0 for signing (external) and change 1 for encryption (internal).
+ */
+export async function derivePublicIdentityKeysFromXpub(
+  xpub: string,
+  account: number = 0,
+  index: number = 0,
+): Promise<XpubDerivedPublicIdentityKeys> {
+  const trimmedXpub = xpub.trim();
+  if (!trimmedXpub) {
+    throw new Error('xpub is required');
+  }
+  requireNonNegativeInteger(account, 'account');
+  requireNonNegativeInteger(index, 'index');
+
+  const ready = await initHDWallet();
+  if (!ready) {
+    throw new Error('HD Wallet WASM module failed to initialize');
+  }
+
+  const module = getModule();
+  let accountKey: ReturnType<typeof module.hdkey.fromXpub> | null = null;
+  let signingChangeKey: ReturnType<typeof module.hdkey.fromXpub> | null = null;
+  let signingKey: ReturnType<typeof module.hdkey.fromXpub> | null = null;
+  let encryptionChangeKey: ReturnType<typeof module.hdkey.fromXpub> | null = null;
+  let encryptionKey: ReturnType<typeof module.hdkey.fromXpub> | null = null;
+
+  try {
+    accountKey = module.hdkey.fromXpub(trimmedXpub);
+    signingChangeKey = accountKey.deriveChild(SDNDerivation.SIGNING_PURPOSE);
+    signingKey = signingChangeKey.deriveChild(index);
+    encryptionChangeKey = accountKey.deriveChild(SDNDerivation.ENCRYPTION_PURPOSE);
+    encryptionKey = encryptionChangeKey.deriveChild(index);
+
+    return {
+      xpub: trimmedXpub,
+      signingPublicKey: bytesToHex(signingKey.publicKey()),
+      encryptionPublicKey: bytesToHex(encryptionKey.publicKey()),
+      signingKeyPath: `m/${SDNDerivation.BIP44_PURPOSE}'/${SDNDerivation.COIN_TYPE}'/${account}'/${SDNDerivation.SIGNING_PURPOSE}/${index}`,
+      encryptionKeyPath: `m/${SDNDerivation.BIP44_PURPOSE}'/${SDNDerivation.COIN_TYPE}'/${account}'/${SDNDerivation.ENCRYPTION_PURPOSE}/${index}`,
+    };
+  } finally {
+    encryptionKey?.wipe();
+    encryptionChangeKey?.wipe();
+    signingKey?.wipe();
+    signingChangeKey?.wipe();
+    accountKey?.wipe();
+  }
 }
 
 // =============================================================================
