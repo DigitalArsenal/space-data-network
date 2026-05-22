@@ -5,6 +5,10 @@ const http = require('http')
 const os = require('os')
 const crypto = require('crypto')
 const net = require('net')
+const { secp256k1 } = require('@noble/curves/secp256k1')
+const { CID } = require('multiformats/cid')
+const rawCodec = require('multiformats/codecs/raw')
+const { sha256: multiformatsSha256 } = require('multiformats/hashes/sha2')
 const { app, safeStorage, dialog } = require('electron')
 const portfinder = require('portfinder')
 const logger = require('./common/logger')
@@ -37,6 +41,13 @@ const DEFAULT_NODE_IDENTITY_TTL_MS = 60 * 60 * 1000
 const NODE_IDENTITY_APP_RUN_ID = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')
 const SECRET_EPM_FIELD_PATTERN = /(^|[_-])(private|secret|mnemonic|seed|xpriv|core)([_-]|$)|privatekey|encryptedcore/i
 const WALLET_STORAGE_PREFIX = 'wallet_storage_'
+const HD_XPUB_PURPOSE = 44
+const HD_XPUB_COIN_TYPE = 0
+const HD_XPUB_ACCOUNT = 0
+const HD_XPUB_SIGNING_CHANGE = 0
+const HD_XPUB_ENCRYPTION_CHANGE = 1
+const HD_XPUB_PUBLIC_VERSION = 0x0488b21e
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 const WALLET_LOCAL_STORAGE_KEYS = Object.freeze(new Set([
   'encrypted_wallet',
   'passkey_credential',
@@ -768,21 +779,22 @@ async function readDesktopNodeProfile () {
 }
 
 async function buildDesktopNodeEPM (profile) {
+  const publicProfile = await deriveEpmPublicKeysFromXpub(profile)
   const flatbuffers = require('flatbuffers')
   const builder = new flatbuffers.Builder(2048)
 
-  const dnOff = createStringOffset(builder, readEpmString(profile, ['dn', 'display_name', 'displayName', 'name']))
-  const legalNameOff = createStringOffset(builder, readEpmString(profile, ['legal_name', 'legalName']))
-  const familyNameOff = createStringOffset(builder, readEpmString(profile, ['family_name', 'familyName']))
-  const givenNameOff = createStringOffset(builder, readEpmString(profile, ['given_name', 'givenName']))
-  const emailOff = createStringOffset(builder, readEpmString(profile, ['email']))
-  const telephoneOff = createStringOffset(builder, readEpmString(profile, ['telephone', 'phone']))
-  const keys = desktopEpmPublicKeys(profile)
+  const dnOff = createStringOffset(builder, readEpmString(publicProfile, ['dn', 'display_name', 'displayName', 'name']))
+  const legalNameOff = createStringOffset(builder, readEpmString(publicProfile, ['legal_name', 'legalName']))
+  const familyNameOff = createStringOffset(builder, readEpmString(publicProfile, ['family_name', 'familyName']))
+  const givenNameOff = createStringOffset(builder, readEpmString(publicProfile, ['given_name', 'givenName']))
+  const emailOff = createStringOffset(builder, readEpmString(publicProfile, ['email']))
+  const telephoneOff = createStringOffset(builder, readEpmString(publicProfile, ['telephone', 'phone']))
+  const keys = desktopEpmPublicKeys(publicProfile)
   const keysOff = createOffsetVector(builder, keys.map(key => createDesktopEpmCryptoKey(builder, key)))
-  const addresses = desktopEpmAddresses(profile)
+  const addresses = desktopEpmAddresses(publicProfile)
   const addressesOff = createOffsetVector(builder, addresses.map(address => builder.createString(address)))
-  const signatureOff = createStringOffset(builder, readEpmString(profile, ['signature', 'epm_signature']))
-  const signatureTimestamp = readEpmInteger(profile, ['signature_timestamp', 'signatureTimestamp', 'epm_signature_timestamp'])
+  const signatureOff = createStringOffset(builder, readEpmString(publicProfile, ['signature', 'epm_signature']))
+  const signatureTimestamp = readEpmInteger(publicProfile, ['signature_timestamp', 'signatureTimestamp', 'epm_signature_timestamp'])
 
   builder.startObject(19)
   builder.addFieldInt8(18, 1, 0) // EPM.EntityType.Node
@@ -799,6 +811,11 @@ async function buildDesktopNodeEPM (profile) {
   const epm = builder.endObject()
   builder.finish(epm, '$EPM', true)
   return Buffer.from(builder.asUint8Array())
+}
+
+async function computeRawCid (bytes) {
+  const digest = await multiformatsSha256.digest(bytes)
+  return CID.createV1(rawCodec.code, digest).toString()
 }
 
 function createStringOffset (builder, value) {
@@ -1024,8 +1041,163 @@ function readEpmString (epm, names) {
   return ''
 }
 
-function publicIdentityRecord (id, kind, epmJson, updatedAt = new Date().toISOString()) {
+function bytesToHex (bytes) {
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function uint32BE (value) {
+  const buffer = Buffer.alloc(4)
+  buffer.writeUInt32BE(value >>> 0, 0)
+  return buffer
+}
+
+function base58CheckDecode (value) {
+  let number = 0n
+  for (const char of String(value || '')) {
+    const digit = BASE58_ALPHABET.indexOf(char)
+    if (digit < 0) throw new Error('invalid xpub base58 character')
+    number = number * 58n + BigInt(digit)
+  }
+
+  const bytes = []
+  while (number > 0n) {
+    bytes.unshift(Number(number & 0xffn))
+    number >>= 8n
+  }
+  for (const char of String(value || '')) {
+    if (char !== '1') break
+    bytes.unshift(0)
+  }
+
+  const payload = Buffer.from(bytes)
+  if (payload.length < 5) throw new Error('invalid xpub payload')
+  const body = payload.subarray(0, payload.length - 4)
+  const checksum = payload.subarray(payload.length - 4)
+  const expected = crypto.createHash('sha256').update(crypto.createHash('sha256').update(body).digest()).digest().subarray(0, 4)
+  if (!checksum.equals(expected)) throw new Error('invalid xpub checksum')
+  return body
+}
+
+function parseXpub (xpub) {
+  const payload = base58CheckDecode(xpub)
+  if (payload.length !== 78) throw new Error('invalid xpub length')
+  const version = payload.readUInt32BE(0)
+  if (version !== HD_XPUB_PUBLIC_VERSION) throw new Error('unsupported xpub version')
+  const publicKey = payload.subarray(45, 78)
+  secp256k1.ProjectivePoint.fromHex(publicKey)
+  return {
+    chainCode: payload.subarray(13, 45),
+    publicKey
+  }
+}
+
+function deriveXpubPublicChild (node, index) {
+  if (!Number.isInteger(index) || index < 0 || index >= 0x80000000) {
+    throw new Error('xpub child index must be a non-hardened integer')
+  }
+  const digest = crypto.createHmac('sha512', node.chainCode)
+    .update(Buffer.concat([node.publicKey, uint32BE(index)]))
+    .digest()
+  const tweak = BigInt(`0x${digest.subarray(0, 32).toString('hex')}`)
+  if (tweak <= 0n || tweak >= secp256k1.CURVE.n) {
+    throw new Error('invalid xpub child tweak')
+  }
+  const publicKey = secp256k1.ProjectivePoint.BASE
+    .multiply(tweak)
+    .add(secp256k1.ProjectivePoint.fromHex(node.publicKey))
+    .toRawBytes(true)
+  return {
+    chainCode: digest.subarray(32),
+    publicKey: Buffer.from(publicKey)
+  }
+}
+
+function xpubIdentityPath (account = HD_XPUB_ACCOUNT) {
+  return `m/${HD_XPUB_PURPOSE}'/${HD_XPUB_COIN_TYPE}'/${account}'`
+}
+
+function xpubSigningPath (account = HD_XPUB_ACCOUNT, index = 0) {
+  return `${xpubIdentityPath(account)}/${HD_XPUB_SIGNING_CHANGE}/${index}`
+}
+
+function xpubEncryptionPath (account = HD_XPUB_ACCOUNT, index = 0) {
+  return `${xpubIdentityPath(account)}/${HD_XPUB_ENCRYPTION_CHANGE}/${index}`
+}
+
+function readEpmXpub (epm) {
+  const direct = readEpmString(epm, ['xpub', 'XPUB', 'extended_public_key', 'extendedPublicKey', 'hd_xpub', 'hdXpub'])
+  if (direct) return direct
+  const keys = Array.isArray(epm && epm.keys) ? epm.keys : []
+  for (const key of keys) {
+    const xpub = readEpmString(key, ['xpub', 'XPUB', 'extended_public_key', 'extendedPublicKey', 'hd_xpub', 'hdXpub'])
+    if (xpub) return xpub
+  }
+  return ''
+}
+
+function derivePublicIdentityKeysFromXpub (xpub, account = HD_XPUB_ACCOUNT, index = 0) {
+  const trimmedXpub = String(xpub || '').trim()
+  if (!trimmedXpub) return null
+  const accountKey = parseXpub(trimmedXpub)
+  const signingKey = deriveXpubPublicChild(deriveXpubPublicChild(accountKey, HD_XPUB_SIGNING_CHANGE), index)
+  const encryptionKey = deriveXpubPublicChild(deriveXpubPublicChild(accountKey, HD_XPUB_ENCRYPTION_CHANGE), index)
+  return {
+    xpub: trimmedXpub,
+    signing_public_key: bytesToHex(signingKey.publicKey),
+    encryption_public_key: bytesToHex(encryptionKey.publicKey),
+    signing_key_path: xpubSigningPath(account, index),
+    encryption_key_path: xpubEncryptionPath(account, index)
+  }
+}
+
+async function deriveEpmPublicKeysFromXpub (epmJson) {
   const publicEpm = sanitizePublicEPM(epmJson || {})
+  const xpub = readEpmXpub(publicEpm)
+  if (!xpub) return publicEpm
+
+  let derived
+  try {
+    derived = await derivePublicIdentityKeysFromXpub(xpub)
+  } catch (err) {
+    logger.warn(`[static-server] failed to derive public keys from xpub: ${err.message || err}`)
+    return publicEpm
+  }
+  if (!derived) return publicEpm
+
+  const identityPublicKey = readEpmString(publicEpm, ['identity_public_key', 'identityPublicKey', 'public_key', 'publicKey'])
+  const preservedKeys = (Array.isArray(publicEpm.keys) ? publicEpm.keys : [])
+    .filter(key => {
+      const type = epmPublicKeyType(key)
+      return type !== 'signing' && type !== 'encryption'
+    })
+
+  publicEpm.xpub = derived.xpub
+  publicEpm.signing_public_key = derived.signing_public_key
+  publicEpm.encryption_public_key = derived.encryption_public_key
+  publicEpm.keys = [
+    {
+      key_type: 'signing',
+      public_key: derived.signing_public_key,
+      xpub: derived.xpub,
+      key_address: identityPublicKey,
+      address_type: 'secp256k1',
+      derivation_path: derived.signing_key_path
+    },
+    {
+      key_type: 'encryption',
+      public_key: derived.encryption_public_key,
+      xpub: derived.xpub,
+      key_address: '',
+      address_type: 'secp256k1',
+      derivation_path: derived.encryption_key_path
+    },
+    ...preservedKeys
+  ]
+  return publicEpm
+}
+
+async function publicIdentityRecord (id, kind, epmJson, updatedAt = new Date().toISOString()) {
+  const publicEpm = await deriveEpmPublicKeysFromXpub(epmJson || {})
   const label = readEpmString(publicEpm, ['dn', 'display_name', 'displayName', 'name']) || id
   const peerId = readEpmString(publicEpm, ['peer_id', 'peerId', 'ipfs_peer_id', 'ipfsPeerId'])
   const epmCid = readEpmString(publicEpm, ['epm_cid', 'epmCid', 'cid'])
@@ -1044,10 +1216,19 @@ function publicIdentityRecord (id, kind, epmJson, updatedAt = new Date().toISOSt
 }
 
 async function nodeSelfIdentityRecord () {
-  return publicIdentityRecord('self', 'node-self', await readDesktopNodeProfile())
+  const profile = await readDesktopNodeProfile()
+  const record = await publicIdentityRecord('self', 'node-self', profile)
+  if (!record.epmCid) {
+    const localRecord = await desktopLocalEpmDataRecord(profile)
+    record.epmCid = localRecord.cid
+    record.epmJson.epm_cid = localRecord.cid
+    record.epmJson.epmCid = localRecord.cid
+    record.epm_json = record.epmJson
+  }
+  return record
 }
 
-function hostedIdentityRecord (id, payload, existing = {}) {
+async function hostedIdentityRecord (id, payload, existing = {}) {
   const epmJson = payload.epm_json || payload.epmJson || payload
   return publicIdentityRecord(id, 'hosted', epmJson, existing.updatedAt || existing.updated_at || new Date().toISOString())
 }
@@ -1230,8 +1411,8 @@ async function readIdentityRecord (id) {
 
 async function listIdentityRecords () {
   const store = await readHostedEpmStore()
-  const hosted = Object.entries(store.records)
-    .map(([id, record]) => publicIdentityRecord(id, 'hosted', record.epmJson || record.epm_json || record, record.updatedAt || record.updated_at))
+  const hosted = await Promise.all(Object.entries(store.records)
+    .map(([id, record]) => publicIdentityRecord(id, 'hosted', record.epmJson || record.epm_json || record, record.updatedAt || record.updated_at)))
   return [
     await nodeSelfIdentityRecord(),
     ...hosted
@@ -1347,12 +1528,12 @@ async function serveDesktopIdentityAPI (req, res) {
       const next = { ...(await readDesktopNodeProfile()), ...epmJson }
       await fs.promises.mkdir(path.dirname(localProfilePath()), { recursive: true })
       await fs.promises.writeFile(localProfilePath(), JSON.stringify(next, null, 2))
-      sendJSON(res, 200, publicIdentityRecord('self', 'node-self', next))
+      sendJSON(res, 200, await publicIdentityRecord('self', 'node-self', next))
       return true
     }
 
     const store = await readHostedEpmStore()
-    const record = hostedIdentityRecord(identityId, payload, store.records[identityId])
+    const record = await hostedIdentityRecord(identityId, payload, store.records[identityId])
     store.records[identityId] = record
     await writeHostedEpmStore(store)
     sendJSON(res, 200, record)
@@ -1477,14 +1658,14 @@ async function serveDesktopNodeIdentityAPI (req, res) {
     return true
   }
 
-  const proposed = normalizeWalletNodeIdentity(payload.wallet_identity || payload.walletIdentity || payload)
+  const proposed = await normalizeWalletNodeIdentity(payload.wallet_identity || payload.walletIdentity || payload)
   if (!proposed.peer_id || !proposed.signing_public_key) {
     sendJSON(res, 400, { error: 'wallet identity requires peer_id and signing_public_key' })
     return true
   }
 
   const current = await readDesktopNodeProfile()
-  const currentKeys = nodeIdentityKeySummary(current)
+  const currentKeys = nodeIdentityKeySummary(await deriveEpmPublicKeysFromXpub(current))
   const proposedKeys = nodeIdentityKeySummary(proposed)
   const hasCurrentKeys = Boolean(currentKeys.signing_public_key || currentKeys.encryption_public_key || currentKeys.identity_public_key)
   const matching = !hasCurrentKeys || (
@@ -1511,7 +1692,7 @@ async function serveDesktopNodeIdentityAPI (req, res) {
   }
   await fs.promises.mkdir(path.dirname(localProfilePath()), { recursive: true })
   await fs.promises.writeFile(localProfilePath(), JSON.stringify(next, null, 2))
-  const publicProfile = publicIdentityRecord('self', 'node-self', next).epmJson
+  const publicProfile = (await publicIdentityRecord('self', 'node-self', next)).epmJson
   const session = await writeNodeIdentitySession(publicProfile)
   sendJSON(res, 200, {
     status: matching && hasCurrentKeys ? 'unchanged' : 'updated',
@@ -1521,13 +1702,21 @@ async function serveDesktopNodeIdentityAPI (req, res) {
   return true
 }
 
-function normalizeWalletNodeIdentity (value) {
+async function normalizeWalletNodeIdentity (value) {
   const source = value && typeof value === 'object' ? sanitizePublicEPM(value) : {}
   const peerID = readEpmString(source, ['peer_id', 'peerId'])
   const xpub = readEpmString(source, ['xpub', 'XPUB'])
+  let derived = null
+  if (xpub) {
+    try {
+      derived = derivePublicIdentityKeysFromXpub(xpub)
+    } catch (err) {
+      logger.warn(`[static-server] failed to derive wallet public keys from xpub: ${err.message || err}`)
+    }
+  }
   const identityPublicKey = readEpmString(source, ['identity_public_key', 'identityPublicKey', 'public_key', 'publicKey'])
-  const signingPublicKey = readEpmString(source, ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex'])
-  const encryptionPublicKey = readEpmString(source, ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex'])
+  const signingPublicKey = derived?.signing_public_key || readEpmString(source, ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex'])
+  const encryptionPublicKey = derived?.encryption_public_key || readEpmString(source, ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex'])
   const signatureTimestamp = readEpmInteger(source, ['signature_timestamp', 'signatureTimestamp'])
   const keys = []
   if (signingPublicKey) {
@@ -1536,14 +1725,17 @@ function normalizeWalletNodeIdentity (value) {
       public_key: signingPublicKey,
       xpub,
       key_address: identityPublicKey,
-      address_type: identityPublicKey ? 'secp256k1-identity-public-key' : ''
+      address_type: 'secp256k1',
+      ...(derived?.signing_key_path ? { derivation_path: derived.signing_key_path } : {})
     })
   }
   if (encryptionPublicKey) {
     keys.push({
       key_type: 'encryption',
       public_key: encryptionPublicKey,
-      address_type: 'x25519'
+      xpub,
+      address_type: 'secp256k1',
+      ...(derived?.encryption_key_path ? { derivation_path: derived.encryption_key_path } : {})
     })
   }
 
@@ -1605,7 +1797,7 @@ async function serveDesktopNodeEPMAPI (req, res) {
   }
 
   if (req.method === 'GET' && parsed.pathname === '/api/node/epm/json') {
-    sendJSON(res, 200, await readDesktopNodeProfile())
+    sendJSON(res, 200, await deriveEpmPublicKeysFromXpub(await readDesktopNodeProfile()))
     return true
   }
 
@@ -1782,13 +1974,14 @@ async function serveDesktopLocalDataAPI (req, res) {
   return false
 }
 
-async function desktopLocalEpmDataRecord () {
-  const profile = await readDesktopNodeProfile()
+async function desktopLocalEpmDataRecord (profile = null) {
+  profile = profile || await readDesktopNodeProfile()
   const bytes = await buildDesktopNodeEPM(profile)
   const peerID = readEpmString(profile, ['peer_id', 'peerId', 'PeerID', 'ID']) || 'self'
+  const cid = await computeRawCid(bytes)
   return {
     schema_name: 'EPM.fbs',
-    cid: peerID,
+    cid,
     peer_id: peerID,
     provider_id: 'local-node',
     source_name: 'local-epm',

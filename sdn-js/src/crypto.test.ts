@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
+  initHDWallet,
   isHDWalletAvailable,
+  derivePublicIdentityKeysFromXpub,
+  deriveSecp256k1Key,
+  deriveXPub,
   encrypt,
   decrypt,
   generateKey,
@@ -12,6 +16,12 @@ import {
   encryptBytes,
   x25519PublicKey,
 } from './crypto/hd-wallet';
+
+const HD_TEST_SEED = Uint8Array.from({ length: 64 }, (_, index) => (index * 17 + 11) & 0xff);
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
 
 describe('crypto', () => {
   describe('isHDWalletAvailable', () => {
@@ -32,6 +42,27 @@ describe('crypto', () => {
       const key1 = generateKey();
       const key2 = generateKey();
       expect(key1).not.toEqual(key2);
+    });
+  });
+
+  describe('xpub-derived SDN public keys', () => {
+    it('derives signing and encryption public keys from an account xpub using external/internal child paths', async () => {
+      await initHDWallet();
+
+      const xpub = await deriveXPub(HD_TEST_SEED, 0);
+      const signingKey = await deriveSecp256k1Key(HD_TEST_SEED, "m/44'/0'/0'/0/0");
+      const encryptionKey = await deriveSecp256k1Key(HD_TEST_SEED, "m/44'/0'/0'/1/0");
+
+      const derived = await derivePublicIdentityKeysFromXpub(xpub);
+
+      expect(derived).toMatchObject({
+        xpub,
+        signingKeyPath: "m/44'/0'/0'/0/0",
+        encryptionKeyPath: "m/44'/0'/0'/1/0",
+        signingPublicKey: bytesToHex(signingKey.publicKey),
+        encryptionPublicKey: bytesToHex(encryptionKey.publicKey),
+      });
+      expect(derived.signingPublicKey).not.toBe(derived.encryptionPublicKey);
     });
   });
 
