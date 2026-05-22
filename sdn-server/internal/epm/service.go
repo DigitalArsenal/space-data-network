@@ -6,12 +6,16 @@ package epm
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -52,9 +56,30 @@ const (
 	identityAttestationSolanaSigEncoding   = "raw-ed25519"
 )
 
+const (
+	hdXPubPurpose         = 44
+	hdXPubCoinType        = 0
+	hdXPubPublicVersion   = 0x0488b21e
+	hdXPubSigningChain    = uint32(0)
+	hdXPubEncryptionChain = uint32(1)
+)
+
 const bech32Alphabet = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
 var bech32Gen = []uint32{0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3}
+
+type xpubPublicNode struct {
+	chainCode []byte
+	publicKey []byte
+}
+
+type xpubDerivedPublicIdentityKeys struct {
+	XPub                string
+	SigningPublicKey    string
+	EncryptionPublicKey string
+	SigningKeyPath      string
+	EncryptionKeyPath   string
+}
 
 type IdentityAttestationChainProof struct {
 	Chain              string `json:"chain"`
@@ -1202,23 +1227,32 @@ func (s *Service) overlayRuntimeIdentityFields(result map[string]interface{}) {
 	}
 
 	info := s.identity.Info()
+	derived, hasDerived := derivePublicIdentityKeysFromXPub(s.xpub, info.Account)
 
 	if strings.TrimSpace(info.IdentityPubKeyHex) != "" && result["identity_pubkey_hex"] == nil {
 		result["identity_pubkey_hex"] = info.IdentityPubKeyHex
 	}
-	if strings.TrimSpace(info.SigningPubKeyHex) != "" && result["signing_pubkey_hex"] == nil {
+	if hasDerived && result["signing_pubkey_hex"] == nil {
+		result["signing_pubkey_hex"] = derived.SigningPublicKey
+	} else if strings.TrimSpace(info.SigningPubKeyHex) != "" && result["signing_pubkey_hex"] == nil {
 		result["signing_pubkey_hex"] = info.SigningPubKeyHex
 	}
-	if strings.TrimSpace(info.EncryptionPubHex) != "" && result["encryption_pubkey_hex"] == nil {
+	if hasDerived && result["encryption_pubkey_hex"] == nil {
+		result["encryption_pubkey_hex"] = derived.EncryptionPublicKey
+	} else if strings.TrimSpace(info.EncryptionPubHex) != "" && result["encryption_pubkey_hex"] == nil {
 		result["encryption_pubkey_hex"] = info.EncryptionPubHex
 	}
 	if strings.TrimSpace(info.IdentityKeyPath) != "" && result["identity_key_path"] == nil {
 		result["identity_key_path"] = info.IdentityKeyPath
 	}
-	if strings.TrimSpace(info.SigningKeyPath) != "" && result["signing_key_path"] == nil {
+	if hasDerived && result["signing_key_path"] == nil {
+		result["signing_key_path"] = derived.SigningKeyPath
+	} else if strings.TrimSpace(info.SigningKeyPath) != "" && result["signing_key_path"] == nil {
 		result["signing_key_path"] = info.SigningKeyPath
 	}
-	if strings.TrimSpace(info.EncryptionKeyPath) != "" && result["encryption_key_path"] == nil {
+	if hasDerived && result["encryption_key_path"] == nil {
+		result["encryption_key_path"] = derived.EncryptionKeyPath
+	} else if strings.TrimSpace(info.EncryptionKeyPath) != "" && result["encryption_key_path"] == nil {
 		result["encryption_key_path"] = info.EncryptionKeyPath
 	}
 	if strings.TrimSpace(s.xpub) != "" && result["xpub"] == nil {
@@ -1256,7 +1290,141 @@ func (s *Service) overlayRuntimeIdentityFields(result map[string]interface{}) {
 	}
 }
 
+func derivePublicIdentityKeysFromXPub(xpub string, account uint32) (*xpubDerivedPublicIdentityKeys, bool) {
+	trimmed := strings.TrimSpace(xpub)
+	if trimmed == "" {
+		return nil, false
+	}
+	accountNode, err := parseXPub(trimmed)
+	if err != nil {
+		return nil, false
+	}
+	signingChange, err := deriveXPubPublicChild(accountNode, hdXPubSigningChain)
+	if err != nil {
+		return nil, false
+	}
+	signingKey, err := deriveXPubPublicChild(signingChange, 0)
+	if err != nil {
+		return nil, false
+	}
+	encryptionChange, err := deriveXPubPublicChild(accountNode, hdXPubEncryptionChain)
+	if err != nil {
+		return nil, false
+	}
+	encryptionKey, err := deriveXPubPublicChild(encryptionChange, 0)
+	if err != nil {
+		return nil, false
+	}
+	return &xpubDerivedPublicIdentityKeys{
+		XPub:                trimmed,
+		SigningPublicKey:    hex.EncodeToString(signingKey.publicKey),
+		EncryptionPublicKey: hex.EncodeToString(encryptionKey.publicKey),
+		SigningKeyPath:      xpubSigningKeyPath(account),
+		EncryptionKeyPath:   xpubEncryptionKeyPath(account),
+	}, true
+}
+
+func parseXPub(xpub string) (*xpubPublicNode, error) {
+	decoded, err := base58.Decode(xpub)
+	if err != nil {
+		return nil, err
+	}
+	if len(decoded) != 82 {
+		return nil, fmt.Errorf("invalid xpub length")
+	}
+	body := decoded[:78]
+	checksum := decoded[78:]
+	first := sha256.Sum256(body)
+	second := sha256.Sum256(first[:])
+	if !bytes.Equal(checksum, second[:4]) {
+		return nil, fmt.Errorf("invalid xpub checksum")
+	}
+	if binary.BigEndian.Uint32(body[:4]) != hdXPubPublicVersion {
+		return nil, fmt.Errorf("unsupported xpub version")
+	}
+	publicKey := append([]byte(nil), body[45:78]...)
+	if _, err := secp256k1.ParsePubKey(publicKey); err != nil {
+		return nil, err
+	}
+	return &xpubPublicNode{
+		chainCode: append([]byte(nil), body[13:45]...),
+		publicKey: publicKey,
+	}, nil
+}
+
+func deriveXPubPublicChild(node *xpubPublicNode, index uint32) (*xpubPublicNode, error) {
+	if node == nil {
+		return nil, fmt.Errorf("missing xpub node")
+	}
+	var indexBytes [4]byte
+	binary.BigEndian.PutUint32(indexBytes[:], index)
+	mac := hmac.New(sha512.New, node.chainCode)
+	mac.Write(node.publicKey)
+	mac.Write(indexBytes[:])
+	digest := mac.Sum(nil)
+	tweak := digest[:32]
+	curve := secp256k1.S256()
+	tweakN := new(big.Int).SetBytes(tweak)
+	if tweakN.Sign() <= 0 || tweakN.Cmp(curve.Params().N) >= 0 {
+		return nil, fmt.Errorf("invalid xpub child tweak")
+	}
+	tweakX, tweakY := curve.ScalarBaseMult(tweak)
+	parent, err := secp256k1.ParsePubKey(node.publicKey)
+	if err != nil {
+		return nil, err
+	}
+	childX, childY := curve.Add(tweakX, tweakY, parent.X(), parent.Y())
+	if childX == nil || childY == nil {
+		return nil, fmt.Errorf("invalid xpub child point")
+	}
+	return &xpubPublicNode{
+		chainCode: append([]byte(nil), digest[32:]...),
+		publicKey: compressSecp256k1Point(childX, childY),
+	}, nil
+}
+
+func compressSecp256k1Point(x, y *big.Int) []byte {
+	out := make([]byte, 33)
+	if y.Bit(0) == 0 {
+		out[0] = 0x02
+	} else {
+		out[0] = 0x03
+	}
+	xBytes := x.Bytes()
+	copy(out[33-len(xBytes):], xBytes)
+	return out
+}
+
+func xpubSigningKeyPath(account uint32) string {
+	return fmt.Sprintf("m/%d'/%d'/%d'/%d/0", hdXPubPurpose, hdXPubCoinType, account, hdXPubSigningChain)
+}
+
+func xpubEncryptionKeyPath(account uint32) string {
+	return fmt.Sprintf("m/%d'/%d'/%d'/%d/0", hdXPubPurpose, hdXPubCoinType, account, hdXPubEncryptionChain)
+}
+
 func runtimeIdentityKeys(info wasm.IdentityInfo, xpub string) []map[string]interface{} {
+	if derived, ok := derivePublicIdentityKeysFromXPub(xpub, info.Account); ok {
+		return []map[string]interface{}{
+			{
+				"public_key":      derived.SigningPublicKey,
+				"address_type":    "secp256k1",
+				"key_address":     derived.SigningKeyPath,
+				"derivation_path": derived.SigningKeyPath,
+				"key_type":        "signing",
+				"xpub":            derived.XPub,
+			},
+			{
+				"public_key":      derived.EncryptionPublicKey,
+				"address_type":    "secp256k1",
+				"key_address":     derived.EncryptionKeyPath,
+				"derivation_path": derived.EncryptionKeyPath,
+				"key_type":        "encryption",
+				"xpub":            derived.XPub,
+			},
+		}
+	}
+
 	if strings.TrimSpace(info.IdentityPubKeyHex) == "" &&
 		strings.TrimSpace(info.SigningPubKeyHex) == "" &&
 		strings.TrimSpace(info.EncryptionPubHex) == "" {
@@ -1459,57 +1627,82 @@ func (s *Service) rebuildEPMLocked() error {
 	var keyOffsets []flatbuffers.UOffsetT
 
 	if s.identity != nil {
-		// Identity key (secp256k1) for provider descriptor and direct EPM parsing.
-		identityPubBytes, _ := s.identity.IdentityPubKey.Raw()
-		identityPubHex := hex.EncodeToString(identityPubBytes)
-		identityPubOff := builder.CreateString(identityPubHex)
-		identityAddrTypeOff := builder.CreateString("secp256k1")
-		identityPathOff := builder.CreateString(s.identity.IdentityKeyPath)
+		if derived, ok := derivePublicIdentityKeysFromXPub(s.xpub, s.identity.Account); ok {
+			xpubOff := builder.CreateString(derived.XPub)
+			addrTypeOff := builder.CreateString("secp256k1")
 
-		EPM.CryptoKeyStart(builder)
-		EPM.CryptoKeyAddPUBLIC_KEY(builder, identityPubOff)
-		EPM.CryptoKeyAddADDRESS_TYPE(builder, identityAddrTypeOff)
-		EPM.CryptoKeyAddKEY_ADDRESS(builder, identityPathOff)
-		EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
-		identityKeyOff := EPM.CryptoKeyEnd(builder)
-		keyOffsets = append(keyOffsets, identityKeyOff)
+			signingPubOff := builder.CreateString(derived.SigningPublicKey)
+			signingPathOff := builder.CreateString(derived.SigningKeyPath)
+			EPM.CryptoKeyStart(builder)
+			EPM.CryptoKeyAddPUBLIC_KEY(builder, signingPubOff)
+			EPM.CryptoKeyAddXPUB(builder, xpubOff)
+			EPM.CryptoKeyAddADDRESS_TYPE(builder, addrTypeOff)
+			EPM.CryptoKeyAddKEY_ADDRESS(builder, signingPathOff)
+			EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
+			keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
 
-		// Signing key (Ed25519)
-		sigPubBytes, _ := s.identity.SigningPubKey.Raw()
-		sigPubHex := hex.EncodeToString(sigPubBytes)
+			encryptionPubOff := builder.CreateString(derived.EncryptionPublicKey)
+			encryptionPathOff := builder.CreateString(derived.EncryptionKeyPath)
+			EPM.CryptoKeyStart(builder)
+			EPM.CryptoKeyAddPUBLIC_KEY(builder, encryptionPubOff)
+			EPM.CryptoKeyAddXPUB(builder, xpubOff)
+			EPM.CryptoKeyAddADDRESS_TYPE(builder, addrTypeOff)
+			EPM.CryptoKeyAddKEY_ADDRESS(builder, encryptionPathOff)
+			EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeEncryption)
+			keyOffsets = append(keyOffsets, EPM.CryptoKeyEnd(builder))
+		} else {
+			// Identity key (secp256k1) for provider descriptor and direct EPM parsing.
+			identityPubBytes, _ := s.identity.IdentityPubKey.Raw()
+			identityPubHex := hex.EncodeToString(identityPubBytes)
+			identityPubOff := builder.CreateString(identityPubHex)
+			identityAddrTypeOff := builder.CreateString("secp256k1")
+			identityPathOff := builder.CreateString(s.identity.IdentityKeyPath)
 
-		sigPubOff := builder.CreateString(sigPubHex)
-		var sigXpubOff flatbuffers.UOffsetT
-		if s.xpub != "" {
-			sigXpubOff = builder.CreateString(s.xpub)
+			EPM.CryptoKeyStart(builder)
+			EPM.CryptoKeyAddPUBLIC_KEY(builder, identityPubOff)
+			EPM.CryptoKeyAddADDRESS_TYPE(builder, identityAddrTypeOff)
+			EPM.CryptoKeyAddKEY_ADDRESS(builder, identityPathOff)
+			EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
+			identityKeyOff := EPM.CryptoKeyEnd(builder)
+			keyOffsets = append(keyOffsets, identityKeyOff)
+
+			// Signing key (Ed25519)
+			sigPubBytes, _ := s.identity.SigningPubKey.Raw()
+			sigPubHex := hex.EncodeToString(sigPubBytes)
+
+			sigPubOff := builder.CreateString(sigPubHex)
+			var sigXpubOff flatbuffers.UOffsetT
+			if s.xpub != "" {
+				sigXpubOff = builder.CreateString(s.xpub)
+			}
+			sigAddrTypeOff := builder.CreateString("ed25519")
+			sigPathOff := builder.CreateString(s.identity.SigningKeyPath)
+
+			EPM.CryptoKeyStart(builder)
+			EPM.CryptoKeyAddPUBLIC_KEY(builder, sigPubOff)
+			if sigXpubOff != 0 {
+				EPM.CryptoKeyAddXPUB(builder, sigXpubOff)
+			}
+			EPM.CryptoKeyAddADDRESS_TYPE(builder, sigAddrTypeOff)
+			EPM.CryptoKeyAddKEY_ADDRESS(builder, sigPathOff)
+			EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
+			sigKeyOff := EPM.CryptoKeyEnd(builder)
+			keyOffsets = append(keyOffsets, sigKeyOff)
+
+			// Encryption key (X25519)
+			encPubHex := hex.EncodeToString(s.identity.EncryptionPub)
+			encPubOff := builder.CreateString(encPubHex)
+			encAddrTypeOff := builder.CreateString("x25519")
+			encPathOff := builder.CreateString(s.identity.EncryptionKeyPath)
+
+			EPM.CryptoKeyStart(builder)
+			EPM.CryptoKeyAddPUBLIC_KEY(builder, encPubOff)
+			EPM.CryptoKeyAddADDRESS_TYPE(builder, encAddrTypeOff)
+			EPM.CryptoKeyAddKEY_ADDRESS(builder, encPathOff)
+			EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeEncryption)
+			encKeyOff := EPM.CryptoKeyEnd(builder)
+			keyOffsets = append(keyOffsets, encKeyOff)
 		}
-		sigAddrTypeOff := builder.CreateString("ed25519")
-		sigPathOff := builder.CreateString(s.identity.SigningKeyPath)
-
-		EPM.CryptoKeyStart(builder)
-		EPM.CryptoKeyAddPUBLIC_KEY(builder, sigPubOff)
-		if sigXpubOff != 0 {
-			EPM.CryptoKeyAddXPUB(builder, sigXpubOff)
-		}
-		EPM.CryptoKeyAddADDRESS_TYPE(builder, sigAddrTypeOff)
-		EPM.CryptoKeyAddKEY_ADDRESS(builder, sigPathOff)
-		EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeSigning)
-		sigKeyOff := EPM.CryptoKeyEnd(builder)
-		keyOffsets = append(keyOffsets, sigKeyOff)
-
-		// Encryption key (X25519)
-		encPubHex := hex.EncodeToString(s.identity.EncryptionPub)
-		encPubOff := builder.CreateString(encPubHex)
-		encAddrTypeOff := builder.CreateString("x25519")
-		encPathOff := builder.CreateString(s.identity.EncryptionKeyPath)
-
-		EPM.CryptoKeyStart(builder)
-		EPM.CryptoKeyAddPUBLIC_KEY(builder, encPubOff)
-		EPM.CryptoKeyAddADDRESS_TYPE(builder, encAddrTypeOff)
-		EPM.CryptoKeyAddKEY_ADDRESS(builder, encPathOff)
-		EPM.CryptoKeyAddKEY_TYPE(builder, EPM.KeyTypeEncryption)
-		encKeyOff := EPM.CryptoKeyEnd(builder)
-		keyOffsets = append(keyOffsets, encKeyOff)
 	}
 	if len(s.runtimeSigningKey) == ed25519.PrivateKeySize {
 		pub := s.runtimeSigningKey.Public().(ed25519.PublicKey)
@@ -1751,32 +1944,53 @@ func (s *Service) buildCanonicalSigningContent(signatureTimestamp int64) []byte 
 
 	// Keys
 	if s.identity != nil {
-		var keys []map[string]interface{}
-		identityPubBytes, _ := s.identity.IdentityPubKey.Raw()
-		keys = append(keys, map[string]interface{}{
-			"PUBLIC_KEY":   hex.EncodeToString(identityPubBytes),
-			"ADDRESS_TYPE": "secp256k1",
-			"KEY_ADDRESS":  s.identity.IdentityKeyPath,
-			"KEY_TYPE":     "Signing",
-		})
-		sigPubBytes, _ := s.identity.SigningPubKey.Raw()
-		signingKey := map[string]interface{}{
-			"PUBLIC_KEY":   hex.EncodeToString(sigPubBytes),
-			"ADDRESS_TYPE": "ed25519",
-			"KEY_ADDRESS":  s.identity.SigningKeyPath,
-			"KEY_TYPE":     "Signing",
+		if derived, ok := derivePublicIdentityKeysFromXPub(s.xpub, s.identity.Account); ok {
+			content["KEYS"] = []map[string]interface{}{
+				{
+					"PUBLIC_KEY":      derived.SigningPublicKey,
+					"ADDRESS_TYPE":    "secp256k1",
+					"KEY_ADDRESS":     derived.SigningKeyPath,
+					"DERIVATION_PATH": derived.SigningKeyPath,
+					"KEY_TYPE":        "Signing",
+					"XPUB":            derived.XPub,
+				},
+				{
+					"PUBLIC_KEY":      derived.EncryptionPublicKey,
+					"ADDRESS_TYPE":    "secp256k1",
+					"KEY_ADDRESS":     derived.EncryptionKeyPath,
+					"DERIVATION_PATH": derived.EncryptionKeyPath,
+					"KEY_TYPE":        "Encryption",
+					"XPUB":            derived.XPub,
+				},
+			}
+		} else {
+			var keys []map[string]interface{}
+			identityPubBytes, _ := s.identity.IdentityPubKey.Raw()
+			keys = append(keys, map[string]interface{}{
+				"PUBLIC_KEY":   hex.EncodeToString(identityPubBytes),
+				"ADDRESS_TYPE": "secp256k1",
+				"KEY_ADDRESS":  s.identity.IdentityKeyPath,
+				"KEY_TYPE":     "Signing",
+			})
+			sigPubBytes, _ := s.identity.SigningPubKey.Raw()
+			signingKey := map[string]interface{}{
+				"PUBLIC_KEY":   hex.EncodeToString(sigPubBytes),
+				"ADDRESS_TYPE": "ed25519",
+				"KEY_ADDRESS":  s.identity.SigningKeyPath,
+				"KEY_TYPE":     "Signing",
+			}
+			if s.xpub != "" {
+				signingKey["XPUB"] = s.xpub
+			}
+			keys = append(keys, signingKey)
+			keys = append(keys, map[string]interface{}{
+				"PUBLIC_KEY":   hex.EncodeToString(s.identity.EncryptionPub),
+				"ADDRESS_TYPE": "x25519",
+				"KEY_ADDRESS":  s.identity.EncryptionKeyPath,
+				"KEY_TYPE":     "Encryption",
+			})
+			content["KEYS"] = keys
 		}
-		if s.xpub != "" {
-			signingKey["XPUB"] = s.xpub
-		}
-		keys = append(keys, signingKey)
-		keys = append(keys, map[string]interface{}{
-			"PUBLIC_KEY":   hex.EncodeToString(s.identity.EncryptionPub),
-			"ADDRESS_TYPE": "x25519",
-			"KEY_ADDRESS":  s.identity.EncryptionKeyPath,
-			"KEY_TYPE":     "Encryption",
-		})
-		content["KEYS"] = keys
 	}
 	if len(s.runtimeSigningKey) == ed25519.PrivateKeySize {
 		keys, _ := content["KEYS"].([]map[string]interface{})

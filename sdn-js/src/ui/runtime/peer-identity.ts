@@ -13,6 +13,7 @@ const PUBLIC_KEY_FIELDS = ['public_key', 'PUBLIC_KEY', 'publicKey'];
 const SIGNING_PUBLIC_KEY_FIELDS = ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex', 'signingPubkeyHex'];
 const ENCRYPTION_PUBLIC_KEY_FIELDS = ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex', 'encryptionPubkeyHex'];
 const XPUB_FIELDS = ['xpub', 'XPUB', 'extended_public_key', 'extendedPublicKey', 'hd_xpub', 'hdXpub'];
+const DEFAULT_ACCOUNT = 0;
 
 export async function deriveHostedEpmRecordKeysFromXpub(record: HostedEpmRecord): Promise<HostedEpmRecord> {
   const epmJson = await deriveEpmJsonKeysFromXpub(record.epmJson);
@@ -27,34 +28,40 @@ export async function deriveEpmJsonKeysFromXpub(input: Record<string, unknown>):
   const xpub = identityXpubValue(epm);
   if (!xpub) return epm;
 
+  const account = identityAccount(epm);
+  epm.xpub = xpub;
+
+  let derived;
   try {
-    const derived = await derivePublicIdentityKeysFromXpub(xpub);
-    const preservedKeys = (Array.isArray(epm.keys) ? epm.keys : [])
-      .filter((item) => !isIdentityKeyType(item, 'signing') && !isIdentityKeyType(item, 'encryption'))
-      .map((item) => (isRecord(item) ? { ...item } : item));
-    epm.xpub = xpub;
-    epm.signing_public_key = derived.signingPublicKey;
-    epm.encryption_public_key = derived.encryptionPublicKey;
-    epm.keys = [
-      {
-        key_type: 'signing',
-        address_type: 'secp256k1',
-        public_key: derived.signingPublicKey,
-        derivation_path: derived.signingKeyPath,
-        xpub,
-      },
-      {
-        key_type: 'encryption',
-        address_type: 'secp256k1',
-        public_key: derived.encryptionPublicKey,
-        derivation_path: derived.encryptionKeyPath,
-        xpub,
-      },
-      ...preservedKeys,
-    ];
+    derived = await derivePublicIdentityKeysFromXpub(xpub, account);
   } catch {
-    // Invalid or unsupported xpub values should not block peer directory rendering.
+    return epm;
   }
+
+  const preservedKeys = (Array.isArray(epm.keys) ? epm.keys : [])
+    .filter((item) => !isIdentityKeyType(item, 'signing') && !isIdentityKeyType(item, 'encryption'))
+    .map((item) => (isRecord(item) ? { ...item } : item));
+
+  epm.signing_public_key = derived.signingPublicKey;
+  epm.encryption_public_key = derived.encryptionPublicKey;
+  const keys = [
+    {
+      key_type: 'signing',
+      address_type: 'secp256k1',
+      public_key: derived.signingPublicKey,
+      derivation_path: derived.signingKeyPath,
+      xpub,
+    },
+    {
+      key_type: 'encryption',
+      address_type: 'secp256k1',
+      public_key: derived.encryptionPublicKey,
+      derivation_path: derived.encryptionKeyPath,
+      xpub,
+    },
+    ...preservedKeys,
+  ];
+  epm.keys = keys;
 
   return epm;
 }
@@ -189,6 +196,12 @@ function identityXpubValue(epm: Record<string, unknown>): string | undefined {
     if (xpub) return xpub;
   }
   return undefined;
+}
+
+function identityAccount(epm: Record<string, unknown>): number {
+  const account = pickNumber(epm, ['account', 'wallet_account', 'walletAccount']);
+  if (typeof account === 'number' && Number.isInteger(account) && account >= 0) return account;
+  return DEFAULT_ACCOUNT;
 }
 
 function isIdentityKeyType(value: unknown, type: 'signing' | 'encryption'): boolean {

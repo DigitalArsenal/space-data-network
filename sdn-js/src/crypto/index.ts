@@ -15,6 +15,7 @@ export type {
   EncryptionKeyPair,
   DerivedIdentity,
 } from './types';
+
 export type { XpubDerivedPublicIdentityKeys } from './hd-wallet';
 
 export {

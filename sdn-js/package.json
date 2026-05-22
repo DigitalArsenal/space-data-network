@@ -29,6 +29,7 @@
     "build:ui": "vite build --config ui/vite.config.mts",
     "build:sdn-ui": "vite build --config ui/vite.config.mts",
     "dev:sdn-ui": "vite --config ui/vite.config.mts",
+    "postinstall": "node scripts/patch-hd-wallet-ui.mjs",
     "check:sdn-ui": "svelte-check --tsconfig ui/tsconfig.json",
     "dev": "tsc --emitDeclarationOnly --watch",
     "test": "npm run build:core && vitest run",

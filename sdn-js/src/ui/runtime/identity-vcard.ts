@@ -49,6 +49,7 @@ const PUBLIC_KEY_FIELDS = [
 ];
 const SIGNING_PUBLIC_KEY_FIELDS = ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex', 'signingPubkeyHex'];
 const ENCRYPTION_PUBLIC_KEY_FIELDS = ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex', 'encryptionPubkeyHex'];
+const XPUB_FIELDS = ['xpub', 'XPUB', 'extended_public_key', 'extendedPublicKey', 'hd_xpub', 'hdXpub'];
 const IDENTITY_EMAIL_DOMAINS = {
   signing: 'signing.digitalarsenal.io',
   encryption: 'encryption.digitalarsenal.io',
@@ -112,6 +113,7 @@ export function createVCardQrPayload(input: Record<string, unknown> | HostedEpmR
   addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', record.kind === 'node-self' ? 'node' : 'user');
   addVCardLine(lines, 'X-SDN-PEER-ID', record.peerId);
   addVCardLine(lines, 'X-SDN-EPM-CID', record.epmCid || pickString(epm, ['epm_cid', 'epmCid']));
+  addVCardLine(lines, 'X-SDN-XPUB', identityXpubValue(epm));
   addVCardLine(lines, 'EMAIL;TYPE=INTERNET', publicKeyEmailAddress(publicKey));
   addVCardIdentityEmailLines(lines, epm, signingKey, encryptionKey);
   addVCardLine(lines, 'X-SDN-PUBLIC-KEY', publicKey);
@@ -149,6 +151,7 @@ export function epmJsonFromVCard(text: string): Record<string, unknown> {
   fields.telephone = vcardValue(lines, 'TEL');
   fields.peer_id = vcardValue(lines, 'X-SDN-PEER-ID');
   fields.epm_cid = vcardValue(lines, 'X-SDN-EPM-CID');
+  fields.xpub = vcardValue(lines, 'X-SDN-XPUB');
   fields.public_key = vcardValue(lines, 'X-SDN-PUBLIC-KEY') || vcardEmailAlias(lines, 'spacedatanetwork.org');
   fields.signing_public_key = vcardValue(lines, 'X-SDN-SIGNING-PUBLIC-KEY') || vcardIdentityEmailAlias(lines, 'signing');
   fields.encryption_public_key = vcardValue(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY') || vcardIdentityEmailAlias(lines, 'encryption');
@@ -156,6 +159,18 @@ export function epmJsonFromVCard(text: string): Record<string, unknown> {
     if (!fields[key]) delete fields[key];
   }
   return fields;
+}
+
+function identityXpubValue(epm: Record<string, unknown>): string | undefined {
+  const direct = pickString(epm, XPUB_FIELDS);
+  if (direct) return direct;
+  const keys = Array.isArray(epm.keys) ? epm.keys : [];
+  for (const key of keys) {
+    if (!isRecord(key)) continue;
+    const xpub = pickString(key, XPUB_FIELDS);
+    if (xpub) return xpub;
+  }
+  return undefined;
 }
 
 function addVCardStructuredName(lines: string[], epm: Record<string, unknown>, displayName: string): void {
