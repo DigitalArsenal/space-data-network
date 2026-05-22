@@ -38,18 +38,13 @@ const PUBLIC_KEY_FIELDS = [
   'public_key',
   'PUBLIC_KEY',
   'publicKey',
-  'signing_public_key',
-  'signingPublicKey',
-  'signing_pubkey_hex',
-  'signingPubkeyHex',
-  'encryption_public_key',
-  'encryptionPublicKey',
-  'encryption_pubkey_hex',
-  'encryptionPubkeyHex',
 ];
 const SIGNING_PUBLIC_KEY_FIELDS = ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex', 'signingPubkeyHex'];
 const ENCRYPTION_PUBLIC_KEY_FIELDS = ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex', 'encryptionPubkeyHex'];
 const XPUB_FIELDS = ['xpub', 'XPUB', 'extended_public_key', 'extendedPublicKey', 'hd_xpub', 'hdXpub'];
+const KEY_DERIVATION_PATH_FIELDS = ['derivation_path', 'derivationPath', 'key_address', 'keyAddress', 'KEY_ADDRESS'];
+const SIGNING_DERIVATION_PATH_FIELDS = ['signing_derivation_path', 'signingDerivationPath', 'signing_key_path', 'signingKeyPath'];
+const ENCRYPTION_DERIVATION_PATH_FIELDS = ['encryption_derivation_path', 'encryptionDerivationPath', 'encryption_key_path', 'encryptionKeyPath'];
 const IDENTITY_EMAIL_DOMAINS = {
   signing: 'signing.digitalarsenal.io',
   encryption: 'encryption.digitalarsenal.io',
@@ -60,6 +55,11 @@ const IDENTITY_EMAIL_DOMAINS = {
 
 type IdentityAliasType = keyof typeof IDENTITY_EMAIL_DOMAINS;
 export type IdentityPublicKeyType = 'signing' | 'encryption';
+
+export interface IdentityPublicKeyDetails {
+  publicKey: string;
+  derivationPath?: string;
+}
 
 export function normalizeHostedEpmRecord(input: Record<string, unknown>): HostedEpmRecord {
   const epmJson = normalizeRecord(input.epm_json ?? input.epmJson ?? input);
@@ -95,7 +95,6 @@ export function createPublicEpmExport(input: Record<string, unknown>): Record<st
 export function createVCardQrPayload(input: Record<string, unknown> | HostedEpmRecord): string {
   const record = isHostedEpmRecord(input) ? input : normalizeHostedEpmRecord(input);
   const epm = createPublicEpmExport(record.epmJson);
-  const publicKey = identityPublicKeyValue(epm);
   const signingKey = identityPublicKeyValue(epm, 'signing');
   const encryptionKey = identityPublicKeyValue(epm, 'encryption');
   const displayName = pickString(epm, ['dn', 'DN', 'displayName', 'name']) || record.label || 'Space Data Network';
@@ -114,9 +113,7 @@ export function createVCardQrPayload(input: Record<string, unknown> | HostedEpmR
   addVCardLine(lines, 'X-SDN-PEER-ID', record.peerId);
   addVCardLine(lines, 'X-SDN-EPM-CID', record.epmCid || pickString(epm, ['epm_cid', 'epmCid']));
   addVCardLine(lines, 'X-SDN-XPUB', identityXpubValue(epm));
-  addVCardLine(lines, 'EMAIL;TYPE=INTERNET', publicKeyEmailAddress(publicKey));
   addVCardIdentityEmailLines(lines, epm, signingKey, encryptionKey);
-  addVCardLine(lines, 'X-SDN-PUBLIC-KEY', publicKey);
   addVCardLine(lines, 'X-SDN-SIGNING-PUBLIC-KEY', signingKey);
   addVCardLine(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY', encryptionKey);
   lines.push('END:VCARD');
@@ -133,14 +130,24 @@ export function identityPublicKeyValue(
   type?: IdentityPublicKeyType,
 ): string | undefined {
   if (type === 'signing') {
-    return pickString(epm, SIGNING_PUBLIC_KEY_FIELDS) || findIdentityKey(epm, 'signing');
+    return identityPublicKeyDetails(epm, 'signing')?.publicKey;
   }
   if (type === 'encryption') {
-    return pickString(epm, ENCRYPTION_PUBLIC_KEY_FIELDS) || findIdentityKey(epm, 'encryption');
+    return identityPublicKeyDetails(epm, 'encryption')?.publicKey;
   }
-  return pickString(epm, PUBLIC_KEY_FIELDS)
-    || identityPublicKeyValue(epm, 'signing')
-    || identityPublicKeyValue(epm, 'encryption');
+  return pickString(epm, PUBLIC_KEY_FIELDS);
+}
+
+export function identityPublicKeyDetails(
+  epm: Record<string, unknown>,
+  type: IdentityPublicKeyType,
+): IdentityPublicKeyDetails | undefined {
+  const directPublicKey = pickString(epm, type === 'signing' ? SIGNING_PUBLIC_KEY_FIELDS : ENCRYPTION_PUBLIC_KEY_FIELDS);
+  const keyRecord = findIdentityKeyDetails(epm, type, directPublicKey);
+  if (keyRecord) return keyRecord;
+  if (!directPublicKey) return undefined;
+  const derivationPath = pickString(epm, type === 'signing' ? SIGNING_DERIVATION_PATH_FIELDS : ENCRYPTION_DERIVATION_PATH_FIELDS);
+  return derivationPath ? { publicKey: directPublicKey, derivationPath } : { publicKey: directPublicKey };
 }
 
 export function epmJsonFromVCard(text: string): Record<string, unknown> {
@@ -161,7 +168,7 @@ export function epmJsonFromVCard(text: string): Record<string, unknown> {
   return fields;
 }
 
-function identityXpubValue(epm: Record<string, unknown>): string | undefined {
+export function identityXpubValue(epm: Record<string, unknown>): string | undefined {
   const direct = pickString(epm, XPUB_FIELDS);
   if (direct) return direct;
   const keys = Array.isArray(epm.keys) ? epm.keys : [];
@@ -224,18 +231,46 @@ function addVCardIdentityEmailLines(
   addAlias('solana', pickString(epm, ['solana_address', 'solanaAddress']) || findChainAddress(epm, 'solana'));
 }
 
-function findIdentityKey(epm: Record<string, unknown>, type: 'signing' | 'encryption'): string | undefined {
+function findIdentityKeyDetails(
+  epm: Record<string, unknown>,
+  type: IdentityPublicKeyType,
+  preferredPublicKey?: string,
+): IdentityPublicKeyDetails | undefined {
   const keys = Array.isArray(epm.keys) ? epm.keys : [];
+  let fallback: IdentityPublicKeyDetails | undefined;
   for (const key of keys) {
     if (!isRecord(key)) continue;
     const publicKey = pickString(key, ['public_key', 'PUBLIC_KEY', 'publicKey']);
     if (!publicKey) continue;
     const keyType = (pickString(key, ['key_type', 'KEY_TYPE', 'keyType']) || '').toLowerCase();
     const addressType = (pickString(key, ['address_type', 'ADDRESS_TYPE', 'addressType']) || '').toLowerCase();
-    if (type === 'encryption' && (keyType === 'encryption' || addressType === 'x25519')) return publicKey;
-    if (type === 'signing' && (keyType === 'signing' || (addressType && addressType !== 'x25519'))) return publicKey;
+    const xpub = pickString(key, XPUB_FIELDS);
+    const keyPath = pickString(key, KEY_DERIVATION_PATH_FIELDS);
+    const matches = isIdentityRoleKey(type, keyType, addressType, keyPath, xpub);
+    if (!matches) continue;
+    const details = keyPath ? { publicKey, derivationPath: keyPath } : { publicKey };
+    if (preferredPublicKey && publicKey === preferredPublicKey) return details;
+    fallback ??= details;
   }
-  return undefined;
+  return fallback;
+}
+
+function isIdentityRoleKey(
+  type: IdentityPublicKeyType,
+  keyType: string,
+  addressType: string,
+  keyPath: string | undefined,
+  xpub: string | undefined,
+): boolean {
+  if (keyType !== type && !(type === 'encryption' && addressType === 'x25519')) return false;
+  if (xpub) return true;
+  return isDocumentedIdentityPath(type, keyPath);
+}
+
+function isDocumentedIdentityPath(type: IdentityPublicKeyType, path: string | undefined): boolean {
+  const match = /^m\/44'\/0'\/\d+'\/([01])\/\d+$/.exec(path ?? '');
+  if (!match) return false;
+  return type === 'signing' ? match[1] === '0' : match[1] === '1';
 }
 
 function findChainAddress(epm: Record<string, unknown>, chain: string): string | undefined {

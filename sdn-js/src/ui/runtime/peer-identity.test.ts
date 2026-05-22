@@ -60,7 +60,7 @@ describe('peer identity projection', () => {
     const unfoldedPayload = payload.replace(/\r\n[ \t]/g, '');
     expect(payload).toContain('UID:16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45');
     expect(payload).toContain('X-SDN-EPM-CID:bafy-peer-epm');
-    expect(payload).toContain('X-SDN-PUBLIC-KEY:node-public-key');
+    expect(payload).not.toContain('X-SDN-PUBLIC-KEY:node-public-key');
     expect(payload).toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public-key');
     expect(payload).toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public-key');
     expect(unfoldedPayload).toContain('EMAIL;type=INTERNET;type=signing:signing-public-key@signing.digitalarsenal.io');

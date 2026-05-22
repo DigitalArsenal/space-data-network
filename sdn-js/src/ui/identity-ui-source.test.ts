@@ -318,8 +318,21 @@ describe('SDN identity Svelte source', () => {
     expect(source).toContain('activeBackend.searchDirectory(peer.id)');
     expect(source).toContain('/api/directory/nodes?q=');
     expect(source).toContain('EPM Fields');
+    const peerSummary = source.slice(
+      source.indexOf('function peerEpmSummary'),
+      source.indexOf('async function renderPeerQr'),
+    );
     expect(source).toContain('Email');
     expect(source).toContain('Phone');
+    expect(peerSummary).toContain("label: 'XPub'");
+    expect(peerSummary).toContain("label: 'Signing public key'");
+    expect(peerSummary).toContain("label: 'Encryption public key'");
+    expect(peerSummary).toContain('identityXpubValue(epmJson)');
+    expect(peerSummary).toContain("identityPublicKeyDetails(epmJson, 'signing')");
+    expect(peerSummary).toContain("identityPublicKeyDetails(epmJson, 'encryption')");
+    expect(source).toContain("const NOT_PUBLISHED = 'Not published';");
+    expect(source).toContain('details.derivationPath');
+    expect(peerSummary).not.toContain("label: 'Public key'");
     expect(source).not.toContain("import MetricCard from '../components/cards/MetricCard.svelte'");
     expect(source).not.toContain('MetricCard');
     expect(source).not.toContain('Mission Loadout');

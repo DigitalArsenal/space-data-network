@@ -106,12 +106,13 @@ describe('public EPM exports', () => {
         },
         peer_id: '16Uiu2Alice',
         epm_cid: 'bafyepm',
+        xpub: 'xpub-node',
         public_key: 'node-public',
         signing_public_key: 'signing-public',
         encryption_public_key: 'encryption-public',
         keys: [
-          { key_type: 'signing', public_key: 'signing-from-keys' },
-          { key_type: 'encryption', public_key: 'encryption-from-keys' },
+          { key_type: 'signing', public_key: 'signing-public', derivation_path: "m/44'/0'/0'/0/0" },
+          { key_type: 'encryption', public_key: 'encryption-public', derivation_path: "m/44'/0'/0'/1/0" },
         ],
         private_key: 'must-not-export',
       },
@@ -129,10 +130,11 @@ describe('public EPM exports', () => {
     expect(payload).toContain('ADR;TYPE=WORK:Box 42;;1 Orbit Way;Cape Canaveral;FL;32920;USA');
     expect(payload).toContain('X-SDN-PEER-ID:16Uiu2Alice');
     expect(payload).toContain('X-SDN-EPM-CID:bafyepm');
-    expect(payload).toContain('EMAIL;TYPE=INTERNET:node-public@spacedatanetwork.org');
+    expect(payload).toContain('X-SDN-XPUB:xpub-node');
     expect(payload).toContain('EMAIL;type=INTERNET;type=signing:signing-public@signing.digitalarsenal.io');
     expect(unfolded).toContain('EMAIL;type=INTERNET;type=encryption:encryption-public@encryption.digitalarsenal.io');
-    expect(payload).toContain('X-SDN-PUBLIC-KEY:node-public');
+    expect(payload).not.toContain('EMAIL;TYPE=INTERNET:node-public@spacedatanetwork.org');
+    expect(payload).not.toContain('X-SDN-PUBLIC-KEY:node-public');
     expect(payload).toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public');
     expect(payload).toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public');
     expect(payload).not.toContain('must-not-export');
@@ -146,8 +148,8 @@ describe('public EPM exports', () => {
         dn: 'Local Node',
         peer_id: '12D3KooWNode',
         keys: [
-          { key_type: 'signing', public_key: 'array-signing-key' },
-          { address_type: 'x25519', public_key: 'array-encryption-key' },
+          { key_type: 'signing', public_key: 'array-signing-key', derivation_path: "m/44'/0'/0'/0/0" },
+          { key_type: 'encryption', public_key: 'array-encryption-key', derivation_path: "m/44'/0'/0'/1/0" },
         ],
       },
     });
@@ -184,7 +186,56 @@ describe('public EPM exports', () => {
     });
   });
 
-  it('resolves display public keys from EPM key records when top-level fields are absent', async () => {
+  it('resolves role public keys and derivation paths from EPM key records when top-level fields are absent', async () => {
+    const vcardModule = await import('./identity-vcard');
+    const identityPublicKeyValue = (vcardModule as unknown as {
+      identityPublicKeyValue?: (epm: Record<string, unknown>, type?: 'signing' | 'encryption') => string | undefined;
+    }).identityPublicKeyValue;
+    const identityPublicKeyDetails = (vcardModule as unknown as {
+      identityPublicKeyDetails?: (
+        epm: Record<string, unknown>,
+        type: 'signing' | 'encryption',
+      ) => { publicKey: string; derivationPath?: string } | undefined;
+    }).identityPublicKeyDetails;
+    const identityXpubValue = (vcardModule as unknown as {
+      identityXpubValue?: (epm: Record<string, unknown>) => string | undefined;
+    }).identityXpubValue;
+    expect(identityPublicKeyValue).toBeTypeOf('function');
+    expect(identityPublicKeyDetails).toBeTypeOf('function');
+    expect(identityXpubValue).toBeTypeOf('function');
+
+    const epm = {
+      keys: [
+        {
+          key_type: 'signing',
+          public_key: 'signing-from-key-record',
+          derivation_path: "m/44'/0'/0'/0/0",
+          xpub: 'xpub-from-key-record',
+        },
+        {
+          key_type: 'encryption',
+          public_key: 'encryption-from-key-record',
+          derivation_path: "m/44'/0'/0'/1/0",
+          xpub: 'xpub-from-key-record',
+        },
+      ],
+    };
+
+    expect(identityXpubValue?.(epm)).toBe('xpub-from-key-record');
+    expect(identityPublicKeyValue?.(epm)).toBeUndefined();
+    expect(identityPublicKeyValue?.(epm, 'signing')).toBe('signing-from-key-record');
+    expect(identityPublicKeyValue?.(epm, 'encryption')).toBe('encryption-from-key-record');
+    expect(identityPublicKeyDetails?.(epm, 'signing')).toEqual({
+      publicKey: 'signing-from-key-record',
+      derivationPath: "m/44'/0'/0'/0/0",
+    });
+    expect(identityPublicKeyDetails?.(epm, 'encryption')).toEqual({
+      publicKey: 'encryption-from-key-record',
+      derivationPath: "m/44'/0'/0'/1/0",
+    });
+  });
+
+  it('does not treat a legacy account identity key as the signing or encryption public key', async () => {
     const vcardModule = await import('./identity-vcard');
     const identityPublicKeyValue = (vcardModule as unknown as {
       identityPublicKeyValue?: (epm: Record<string, unknown>, type?: 'signing' | 'encryption') => string | undefined;
@@ -192,15 +243,41 @@ describe('public EPM exports', () => {
     expect(identityPublicKeyValue).toBeTypeOf('function');
 
     const epm = {
+      public_key: 'legacy-identity-public-key',
       keys: [
-        { key_type: 'signing', public_key: 'signing-from-key-record' },
-        { address_type: 'x25519', public_key: 'encryption-from-key-record' },
+        {
+          key_type: 'signing',
+          address_type: 'secp256k1',
+          public_key: 'legacy-identity-public-key',
+          key_address: "m/44'/0'/0'",
+        },
       ],
     };
 
-    expect(identityPublicKeyValue?.(epm)).toBe('signing-from-key-record');
-    expect(identityPublicKeyValue?.(epm, 'signing')).toBe('signing-from-key-record');
-    expect(identityPublicKeyValue?.(epm, 'encryption')).toBe('encryption-from-key-record');
+    expect(identityPublicKeyValue?.(epm)).toBe('legacy-identity-public-key');
+    expect(identityPublicKeyValue?.(epm, 'signing')).toBeUndefined();
+    expect(identityPublicKeyValue?.(epm, 'encryption')).toBeUndefined();
+  });
+
+  it('does not treat non-identity signing keys as xpub-derived signing keys', async () => {
+    const vcardModule = await import('./identity-vcard');
+    const identityPublicKeyValue = (vcardModule as unknown as {
+      identityPublicKeyValue?: (epm: Record<string, unknown>, type?: 'signing' | 'encryption') => string | undefined;
+    }).identityPublicKeyValue;
+    expect(identityPublicKeyValue).toBeTypeOf('function');
+
+    const epm = {
+      public_key: 'legacy-identity-public-key',
+      keys: [
+        {
+          key_type: 'signing',
+          public_key: 'dataset-publication-signing-key',
+          key_address: 'sdn/dataset-publication/v1',
+        },
+      ],
+    };
+
+    expect(identityPublicKeyValue?.(epm, 'signing')).toBeUndefined();
   });
 });
 
