@@ -410,6 +410,38 @@ test.describe('desktop static identity API', () => {
     expect(mismatch.json.proposed.signing_public_key).toBe('cc'.repeat(32))
   })
 
+  test('does not require replacement confirmation when the selected wallet has the current node peer ID', async () => {
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-node-identity-same-peer-'))
+    const { serveDesktopNodeIdentityAPI, serveDesktopNodeEPMAPI } = loadStaticServer(userData)
+
+    const existing = await requestRaw(serveDesktopNodeEPMAPI, 'PUT', '/api/node/epm', JSON.stringify({
+      dn: 'Desktop Node',
+      peer_id: '12D3KooWSamePeer',
+      signing_public_key: 'aa'.repeat(32),
+      encryption_public_key: 'bb'.repeat(32)
+    }))
+    expect(existing.statusCode).toBe(200)
+
+    const updated = await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/wallet', {
+      wallet_identity: {
+        peer_id: '12D3KooWSamePeer',
+        xpub: 'xpub-same-peer',
+        identity_public_key: '11'.repeat(33),
+        signing_public_key: 'cc'.repeat(32),
+        encryption_public_key: 'dd'.repeat(32),
+        signature: 'ee'.repeat(64),
+        signature_payload: 'payload-same-peer',
+        signature_timestamp: 1778700003
+      }
+    })
+
+    expect(updated.statusCode).toBe(200)
+    expect(updated.json.status).toBe('updated')
+    expect(updated.json.profile.peer_id).toBe('12D3KooWSamePeer')
+    expect(updated.json.profile.signing_public_key).toBe('cc'.repeat(32))
+    expect(updated.json.profile.encryption_public_key).toBe('dd'.repeat(32))
+  })
+
   test('writes wallet public keys and signatures into the local node EPM FlatBuffer', async () => {
     const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-node-identity-epm-'))
     const { serveDesktopNodeIdentityAPI, serveDesktopNodeEPMAPI } = loadStaticServer(userData)
