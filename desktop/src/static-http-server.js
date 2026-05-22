@@ -194,6 +194,7 @@ const CONFIGURED_SDN_NODE_IDENTITIES = [
     aliases: ['space-data-network-01', 'sdn.spaceaware.io'],
     name: 'SpaceAware.io',
     peer_id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
+    epm_cid: 'bafkreiggawraezbltnl3anwmabtuhvmlhdiotx5pxuqa7zmxkfjjjq35d4',
     xpub: 'xpub6DKCyLbCHZLFR4XpFg26royZdkxExSMHTjNorEgkn1kgvQbLF5sts9RfNt3PbGhphVUh7WsFQ5H6GJBh4LhmRL27oSPt1qDkJ5mAr6FZ3Wa',
     signing_public_key: '038664c404be42123ce709e53da2b63fc24c091a968dd2200c443d7470f73fb1e6',
     signing_key_path: "m/44'/0'/0'/0/0",
@@ -206,6 +207,7 @@ const CONFIGURED_SDN_NODE_IDENTITIES = [
     aliases: ['space-data-network-02', 'celestrak.eth'],
     name: 'CelesTrak Provider',
     peer_id: '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
+    epm_cid: 'bafkreiekghfegduqfol5jemuagc7rpqnvfw5ilk67d5nybhred6ubfxwr4',
     xpub: 'xpub6D36ciSsN66eJutmvXs1VXmtqnWkcMqZEbMh4FP6bpANfJpfP6oY48P7XnCWdd4NwfpHir8bU7eo3KcC45jsuN6LXwA5SYmL6sNeQwYPJjY',
     signing_public_key: '02342309cef261ec3535b5a3e7596d5a838366697bc554e68965723584184fd57c',
     signing_key_path: "m/44'/0'/0'/0/0",
@@ -221,6 +223,7 @@ function configuredNodeIdentityMetadata (identity) {
   if (!identity) return {}
   return {
     ...(identity.peer_id ? { peer_id: identity.peer_id } : {}),
+    ...(identity.epm_cid ? { epm_cid: identity.epm_cid } : {}),
     ...(identity.public_key ? { public_key: identity.public_key } : {}),
     ...(identity.xpub ? { xpub: identity.xpub } : {}),
     ...(identity.signing_public_key ? { signing_public_key: identity.signing_public_key } : {}),
