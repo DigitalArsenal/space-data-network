@@ -20,9 +20,9 @@ describe('desktop-local SDN backend', () => {
       if (url === 'http://127.0.0.1:17890/api/peers/sdn') {
         return jsonResponse([
           {
-            id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+            id: '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
             name: 'CelesTrak Provider',
-            addrs: ['/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4'],
+            addrs: ['/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3'],
             trust_level: 'observed',
             metadata: {
               agent_version: 'spacedatanetwork/1.0.3',
@@ -51,7 +51,7 @@ describe('desktop-local SDN backend', () => {
     await expect(backend.listObservedPeers()).resolves.toMatchObject({
       ok: true,
       data: [{
-        id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+        id: '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
         trustLevel: 'observed',
         artifactPeerAddrs: ['/ip4/167.172.219.213/tcp/4002/p2p/12D3KooWGhZfrxQVvwQHNGRkeJhGqMbkDqjktfpBXzn47N78XY9j'],
       }],

@@ -127,6 +127,18 @@ describe('SDN identity Svelte source', () => {
     expect(source).not.toContain('<section class="sdn-panel-grid');
   });
 
+  it('truncates local user identifiers and spaces the identity row text', () => {
+    const source = readUiSource('components/IdentityPanel.svelte');
+    const appCss = readUiSource('styles/app.css');
+
+    expect(source).toContain("import { shortPeerId } from '../../../src/ui/runtime/peer-identity'");
+    expect(source).toContain('class="sdn-identity-row-copy"');
+    expect(source).toContain('title={record.peerId || \'no peer id\'} aria-label={record.peerId || \'no peer id\'}>{shortPeerId(record.peerId || \'no peer id\')}');
+    expect(source).toContain('title={record.epmCid} aria-label={record.epmCid}>{shortPeerId(record.epmCid)}');
+    expect(appCss).toMatch(/\.sdn-identity-row-copy\s*{[^}]*display:\s*grid[^}]*gap:\s*0\.22rem/s);
+    expect(appCss).toMatch(/\.sdn-identity-row strong,\s*\.sdn-identity-row span,\s*\.sdn-identity-row small\s*{[^}]*line-height:\s*1\.25/s);
+  });
+
   it('exposes a breadcrumb identity workflow instead of one crowded all-controls tab', () => {
     const source = readUiSource('components/IdentityPanel.svelte');
     const appCss = readUiSource('styles/app.css');
@@ -303,6 +315,8 @@ describe('SDN identity Svelte source', () => {
     expect(source).toContain('<th><button type="button" on:click={() => setSort(\'trust\')}>{sortablePeerHeader(\'trust\', \'Ownertrust\')}</button></th>');
     expect(source).toContain('<th><button type="button" on:click={() => setSort(\'ip\')}>{sortablePeerHeader(\'ip\', \'IP\')}</button></th>');
     expect(source).toContain('<th><button type="button" on:click={() => setSort(\'agent\')}>{sortablePeerHeader(\'agent\', \'Agent\')}</button></th>');
+    expect(source).toContain('shortPeerId');
+    expect(source).toContain('<td><code title={peer.id} aria-label={peer.id}>{shortPeerId(peer.id)}</code></td>');
     expect(source).toContain('selectedPeerId');
     expect(source).toContain('showPeerDetail(peer)');
     expect(source).toContain('renderPeerQr');
@@ -343,6 +357,16 @@ describe('SDN identity Svelte source', () => {
     expect(source).not.toContain('<th>EPM</th>');
     expect(source).not.toContain('downloadHostedEpm');
     expect(source).not.toContain('<th>Actions</th>');
+  });
+
+  it('prewarms and preserves the Data screen instead of remounting it on every tab click', () => {
+    const appSource = readUiSource('App.svelte');
+
+    expect(appSource).toContain('let dataScreenPrimed = false;');
+    expect(appSource).toContain("if (backend || primaryRoute === '/data') dataScreenPrimed = true;");
+    expect(appSource).toContain('{#if dataScreenPrimed}');
+    expect(appSource).toContain('<div hidden={primaryRoute !== \'/data\'} aria-hidden={primaryRoute !== \'/data\'}>');
+    expect(appSource).toContain('<LocalDataScreen');
   });
 
   it('renders debounced unified directory search with upload search and configured nodes', () => {
@@ -468,7 +492,8 @@ describe('SDN data Svelte source', () => {
       'migrateSchemaSyncPreferencesToDataDirectory',
       'updateDataFeedSubscription',
       'persistDataDirectoryState',
-      'schemaSyncRows = buildSubscribedSchemaSyncRows',
+      'liveSchemaSyncRows = buildSubscribedSchemaSyncRows',
+      'schemaSyncRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.schemaSyncRows : liveSchemaSyncRows',
       'publishedSnapshotTotalRows',
       'const rowCountRemoteRows = publishedSnapshotTotalRows ?? remoteRows',
       'remoteRowsForSchemaSyncRow(subscription, progress)',

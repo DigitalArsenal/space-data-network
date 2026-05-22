@@ -171,6 +171,34 @@ describe('schema sync scheduler', () => {
       ['OMM', 'configured:space-data-network-02', 'configured:space-data-network-02:OMM'],
     ]);
   });
+
+  it('reschedules replace-snapshot feeds when stale local rows exceed the current remote snapshot', async () => {
+    const calls: Array<[string, string, string | undefined]> = [];
+    const scheduler = createSchemaSyncScheduler({
+      syncSchema: (standardId, dataSourceId, subscriptionId) => {
+        calls.push([standardId, dataSourceId, subscriptionId]);
+      },
+    });
+
+    await scheduler.schedule([{
+      id: 'CAT',
+      subscriptionId: 'configured:space-data-network-02:CAT',
+      localRows: 802_777,
+      remoteRows: 69_050,
+      queryProfile: 'dataset-publication-offset-v1',
+      retentionPolicy: 'replace-snapshot',
+      preference: {
+        mode: 'sync',
+        storageCap: 1,
+        storageUnit: 'GB',
+      },
+    }], 'configured:space-data-network-02');
+    await scheduler.idle();
+
+    expect(calls).toEqual([
+      ['CAT', 'configured:space-data-network-02', 'configured:space-data-network-02:CAT'],
+    ]);
+  });
 });
 
 function row(id: string, localRows: number, remoteRows: number) {

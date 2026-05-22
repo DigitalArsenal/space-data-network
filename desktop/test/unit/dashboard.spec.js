@@ -73,7 +73,7 @@ test.describe('SDN dashboard window', () => {
 
   test('does not block the desktop UI with dialogs for background updater errors', () => {
     const autoUpdaterSource = fs.readFileSync(path.join(__dirname, '../../src/auto-updater/index.js'), 'utf8')
-    const errorHandler = autoUpdaterSource.match(/autoUpdater\.on\('error'[\s\S]*?\n  \}\)/)?.[0] || ''
+    const errorHandler = autoUpdaterSource.match(/autoUpdater\.on\('error'[\s\S]*?\n {2}\}\)/)?.[0] || ''
 
     expect(errorHandler).toContain('if (!feedback)')
     expect(errorHandler.indexOf('if (!feedback)')).toBeLessThan(errorHandler.indexOf('showDialog({'))
@@ -129,8 +129,8 @@ test.describe('SDN dashboard window', () => {
     const staticServerSource = fs.readFileSync(path.join(__dirname, '../../src/static-http-server.js'), 'utf8')
 
     expect(staticServerSource).toContain('redirectBareAppRoute')
-    expect(staticServerSource).toContain("parsed.pathname !== `/${routeName}`")
-    expect(staticServerSource).toContain("res.writeHead(301, staticAssetHeaders('text/plain; charset=utf-8', { Location: `/${routeName}/${parsed.search}${parsed.hash}` }))")
+    expect(staticServerSource).toContain('parsed.pathname !== `/${' + 'routeName}`')
+    expect(staticServerSource).toContain('res.writeHead(301, staticAssetHeaders(\'text/plain; charset=utf-8\', { Location: `/${' + 'routeName}/${' + 'parsed.search}${' + 'parsed.hash}` }))')
   })
 
   test('serves configured SDN node identities with libp2p websocket addresses only', () => {
@@ -168,7 +168,7 @@ test.describe('SDN dashboard window', () => {
     ])
     expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.addrs)).toEqual([
       ['/ip4/159.203.150.8/tcp/8080/ws/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45'],
-      ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4']
+      ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3']
     ])
     expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.name)).toEqual([
       'SpaceAware.io',
@@ -176,11 +176,11 @@ test.describe('SDN dashboard window', () => {
     ])
     expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.metadata.peer_id)).toEqual([
       '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
-      '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4'
+      '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3'
     ])
     expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.metadata.public_key)).toEqual([
-      '0257d9a39fac79d4c36e017b3b6913f60684586605ebb9370cf417ef44bf0f7cd2',
-      '90aa23ea4ff2d68cf8cb8155135fe5a25b580ec805e835aabb0e8905ffb2c3b2'
+      '038664c404be42123ce709e53da2b63fc24c091a968dd2200c443d7470f73fb1e6',
+      '02342309cef261ec3535b5a3e7596d5a838366697bc554e68965723584184fd57c'
     ])
     expect(configuredSdnNodesFromSshConfig(configPath).map(node => node.metadata.ipfs_artifact_addrs)).toEqual([
       ['/ip4/159.203.150.8/tcp/4002/p2p/12D3KooWMtfuRiHtDuzMMRYB2oX8UKVqP43hZQakGBLhWsMnCd7K'],
@@ -241,7 +241,7 @@ test.describe('SDN dashboard window', () => {
     expect(results.some(result => result.ok)).toBe(true)
     expect(results.some(result => !result.ok)).toBe(true)
     expect(decodeURIComponent(requestedPaths.join('\n'))).toContain('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
-    expect(decodeURIComponent(requestedPaths.join('\n'))).toContain('/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4')
+    expect(decodeURIComponent(requestedPaths.join('\n'))).toContain('/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3')
     expect(decodeURIComponent(requestedPaths.join('\n'))).not.toContain('/p2p/space-data-network-')
     expect(decodeURIComponent(requestedPaths.join('\n'))).not.toContain('/p2p/sdn.spaceaware.io')
     expect(decodeURIComponent(requestedPaths.join('\n'))).not.toContain('/p2p/celestrak.eth')
@@ -262,12 +262,12 @@ test.describe('SDN dashboard window', () => {
   test('keeps local Kubo bootstrapped to upstream defaults and SDN seed nodes', () => {
     const daemonConfigSource = fs.readFileSync(path.join(__dirname, '../../src/daemon/config.js'), 'utf8')
 
-    expect(daemonConfigSource).toContain("const DESKTOP_BOOTSTRAP_PEERS = Object.freeze([")
+    expect(daemonConfigSource).toContain('const DESKTOP_BOOTSTRAP_PEERS = Object.freeze([')
     expect(daemonConfigSource).toContain("'auto'")
     expect(daemonConfigSource).toContain('/ip4/159.203.150.8/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
     expect(daemonConfigSource).toContain('/dns4/sdn.spaceaware.io/tcp/4001/p2p/16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45')
-    expect(daemonConfigSource).toContain('/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4')
-    expect(daemonConfigSource).toContain('/dns4/celestrak.eth/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4')
+    expect(daemonConfigSource).toContain('/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3')
+    expect(daemonConfigSource).toContain('/dns4/celestrak.eth/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3')
     expect(daemonConfigSource).toContain('ensureDesktopBootstrapPeers')
     expect(daemonConfigSource).toContain('config.Bootstrap = nextBootstrap')
   })
@@ -318,7 +318,7 @@ test.describe('SDN dashboard window', () => {
     expect(webuiSource).toContain('let webUiLoaded = false')
     expect(webuiSource).toContain('async function loadWebUIApp')
     expect(webuiSource).toContain("await loadWebUIApp(path || '/')")
-    expect(webuiSource).not.toContain("return /** @type {Promise<void>} */(new Promise(resolve =>")
+    expect(webuiSource).not.toContain('return /** @type {Promise<void>} */(new Promise(resolve =>')
   })
 
   test('routes tray menu entries to SDN dashboard pages instead of IPFS Web UI pages', () => {
@@ -353,9 +353,9 @@ test.describe('SDN dashboard window', () => {
     const entrySource = fs.readFileSync(path.join(__dirname, '../../../sdn-js/ui/src/upstream-webui/index.js'), 'utf8')
 
     expect(appSource).toContain("import NavBar from './navigation/NavBar.js'")
-    expect(appSource).not.toContain("webui/src/navigation/NavBar.js")
+    expect(appSource).not.toContain('webui/src/navigation/NavBar.js')
     expect(bundleSource).toContain("import routesBundle from '../overrides/bundles/routes.js'")
-    expect(bundleSource).not.toContain("webui/src/bundles/routes.js")
+    expect(bundleSource).not.toContain('webui/src/bundles/routes.js')
     expect(entrySource).toContain('syncKuboGatewaySettingFromUrl')
     expect(routeSource).toContain("import SettingsPage from '../settings/SettingsPage.js'")
     expect(routeSource).toContain("import DirectoryPage from '../directory/DirectoryPage.js'")

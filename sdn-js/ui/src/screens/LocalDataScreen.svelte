@@ -4,14 +4,18 @@
   import { decodeEpmFlatBuffer } from '../../../src/ui/runtime/epm-flatbuffer';
   import {
     canonicalizeDataDirectorySourceIds,
+    DATA_FEED_RETENTION_POLICIES,
     DEFAULT_DATA_FEED_QUERY_PROFILE,
+    defaultDataFeedRetentionPolicy,
     loadDataDirectoryState,
     migrateSchemaSyncPreferencesToDataDirectory,
+    normalizeDataFeedRetentionPolicy,
     persistDataDirectoryState,
     updateDataFeedSubscription,
     type DataDirectoryState,
     type DataDirectoryMigrationSource,
     type DataFeedSubscription,
+    type DataFeedRetentionPolicy,
   } from '../../../src/ui/runtime/data-directory';
   import {
     buildDataBillingProviderRows,
@@ -21,12 +25,15 @@
     filterDataCatalogRows,
     summarizeDataCatalog,
     type DataCatalogAccessFilter,
+    type DataBillingProviderRow,
     type DataCatalogRow,
+    type DataCatalogSummary,
     type DataCatalogStorageFilter,
     type DataCatalogSyncFilter,
     type DataOverviewProviderBar,
     type DataOverviewStorageGroup,
     type DataOverviewStorageSegment,
+    type DataOverviewVisuals,
   } from '../../../src/ui/runtime/data-catalog';
   import {
     clearLocalFlatSqlStore,
@@ -191,6 +198,7 @@
     sourceName: string | null;
     syncFilter: string;
     queryProfile: DataQueryProfile;
+    retentionPolicy: DataFeedRetentionPolicy;
     localRows: number;
     cachedBytes: number;
     remoteRowsLoading: boolean;
@@ -229,6 +237,19 @@
     occurredAtLabel: string;
     occurredAtMs: number;
     retrySchema: SchemaSyncRow | null;
+  }
+
+  interface CachedDataPageView {
+    schemaSyncRows: SchemaSyncRow[];
+    messageTypeRows: SchemaSyncRow[];
+    sourceProvenanceRows: SourceProvenanceRow[];
+    dataCatalogRows: DataCatalogRow[];
+    dataCatalogSummary: DataCatalogSummary;
+    dataOverviewVisuals: DataOverviewVisuals;
+    billingDataRows: DataCatalogRow[];
+    billingProviderRows: DataBillingProviderRow[];
+    activityRows: DataActivityRow[];
+    cachedAt: number;
   }
 
   interface FeedIdentity {
@@ -280,6 +301,14 @@
     { id: 'ordered-offset-v1', label: 'Ordered offset' },
     { id: 'dataset-publication-offset-v1', label: 'Published artifacts' },
   ];
+  const DATA_RETENTION_POLICY_LABELS: Record<DataFeedRetentionPolicy, string> = {
+    'append-only': 'Append history',
+    'replace-snapshot': 'Update only',
+  };
+  const DATA_RETENTION_POLICIES: Array<{ id: DataFeedRetentionPolicy; label: string }> = DATA_FEED_RETENTION_POLICIES.map((id) => ({
+    id,
+    label: DATA_RETENTION_POLICY_LABELS[id],
+  }));
   const SUBSCRIPTION_FILTERS: Array<{ id: SubscriptionFilter; label: string }> = [
     { id: 'all', label: 'All' },
     { id: 'active', label: 'Active' },
@@ -312,6 +341,7 @@
   const EXPLORER_SAVED_VIEWS_STORAGE_KEY = 'sdn:data-explorer-saved-views:v1';
   const SCHEMA_SYNC_STORAGE_KEY = 'sdn:data-schema-sync:v1';
   const SCHEMA_SYNC_STATE_STORAGE_KEY = 'sdn:data-schema-sync-state:v1';
+  const DATA_PAGE_VIEW_CACHE_STORAGE_KEY = 'sdn:data-page-view-cache:v1';
   const STORAGE_CAP_UNITS: StorageUnit[] = ['MB', 'GB', 'TB'];
   const DEFAULT_SCHEMA_SYNC_PREFERENCE: SchemaSyncPreference = {
     mode: 'preview',
@@ -326,6 +356,9 @@
     { standardId: 'PNM', tableName: 'PNM', fileId: '$PNM', schema: PNM_SCHEMA },
     { standardId: 'SPW', tableName: 'SPW', fileId: '$SPW', schema: SPW_SCHEMA },
   ];
+  const REPLACE_SNAPSHOT_STANDARD_IDS = LOCAL_FLATSQL_SCHEMAS
+    .filter((schema) => defaultDataFeedRetentionPolicy(schema.standardId) === 'replace-snapshot')
+    .map((schema) => schema.standardId);
   const METADATA_COLUMNS: WorkbenchColumn[] = [
     { key: 'schemaName', label: 'Message', source: 'metadata' },
     { key: 'cid', label: 'CID', source: 'metadata' },
@@ -655,12 +688,15 @@
   let localExplorerLoading = false;
   let localExplorerError = '';
   let localExplorerQueryTimer: ReturnType<typeof setTimeout> | null = null;
+  let localExplorerQueryVersion = 0;
   let sqlQueryText = defaultSqlQuery(DEFAULT_STANDARD_ID);
   let sqlResult: LocalFlatSqlQueryResult | null = null;
   let sqlError = '';
   let sqlRunning = false;
   let userEditedSql = false;
   let dataDirectoryState: DataDirectoryState = loadDataDirectoryState();
+  let cachedDataPageView: CachedDataPageView | null = loadCachedDataPageView();
+  let cachedDataPageViewSignature = cachedDataPageView ? dataPageViewSignature(cachedDataPageView) : '';
   let schemaSyncPreferences: Record<string, SchemaSyncPreference> = loadSchemaSyncPreferences();
   let schemaSyncProgress: Record<string, SchemaSyncProgress> = loadSchemaSyncProgress();
   let activeSyncKeys = new Set<string>();
@@ -685,9 +721,11 @@
   const schemaSyncSchedulers = new Map<string, typeof schemaSyncScheduler>([[LOCAL_DATA_SOURCE_ID, schemaSyncScheduler]]);
 
   $: dataSourceOptions = buildDataSourceOptions(backend, configuredDataSources, peers, trustedPeers);
-  $: schemaSyncRows = buildSubscribedSchemaSyncRows(dataDirectoryState.subscriptions, selectedDataSourceId, selectedDatastoreKey, localFlatSqlStats, localFlatSqlStatsLoaded, schemaSyncPreferences, dataSummary, dataScan, dataPageLoading, selectedStandardId);
-  $: messageTypeRows = sortedMessageTypeRows(schemaSyncRows);
-  $: sourceProvenanceRows = buildSourceProvenanceRows(dataSourceOptions, schemaSyncRows, dataDirectoryState.peerTrust);
+  $: liveSchemaSyncRows = buildSubscribedSchemaSyncRows(dataDirectoryState.subscriptions, selectedDataSourceId, selectedDatastoreKey, localFlatSqlStats, localFlatSqlStatsLoaded, schemaSyncPreferences, dataSummary, dataScan, dataPageLoading, selectedStandardId);
+  $: dataPageCacheActive = shouldUseCachedDataPageView(cachedDataPageView, liveSchemaSyncRows, dataPageLoading);
+  $: schemaSyncRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.schemaSyncRows : liveSchemaSyncRows;
+  $: messageTypeRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.messageTypeRows : sortedMessageTypeRows(schemaSyncRows);
+  $: sourceProvenanceRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.sourceProvenanceRows : buildSourceProvenanceRows(dataSourceOptions, schemaSyncRows, dataDirectoryState.peerTrust);
   $: subscribedSourceOptions = buildSubscribedSourceOptions(schemaSyncRows);
   $: selectedExplorerSourceKey = subscriptionSourceKey(selectedDataSourceId, selectedDatastoreKey);
   $: subscribedStandardOptions = schemaSyncRows.filter((row) => subscriptionSourceKey(row.dataSourceId, row.datastoreKey) === subscriptionSourceKey(selectedDataSourceId, selectedDatastoreKey));
@@ -696,13 +734,13 @@
   $: activeStorageLocalRows = activeStorageRows.reduce((total, row) => total + row.localRows, 0);
   $: activeStorageCachedBytes = activeStorageRows.reduce((total, row) => total + row.cachedBytes, 0);
   $: activeStoragePinnedRows = activeStorageRows.reduce((total, row) => total + row.progress.pinnedRows, 0);
-  $: dataCatalogRows = buildCatalogRows(schemaSyncRows);
-  $: dataCatalogSummary = summarizeDataCatalog(dataCatalogRows);
-  $: dataOverviewVisuals = buildDataOverviewVisuals(dataCatalogRows, overviewStorageGroup);
+  $: dataCatalogRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.dataCatalogRows : buildCatalogRows(schemaSyncRows);
+  $: dataCatalogSummary = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.dataCatalogSummary : summarizeDataCatalog(dataCatalogRows);
+  $: dataOverviewVisuals = dataPageCacheActive && cachedDataPageView ? cachedOverviewVisualsForGroup(cachedDataPageView.dataOverviewVisuals, overviewStorageGroup) : buildDataOverviewVisuals(dataCatalogRows, overviewStorageGroup);
   $: filteredOverviewDataCatalogRows = filterDataCatalogRows(dataCatalogRows, { query: overviewTableSearchText });
-  $: billingDataRows = dataCatalogRows.filter(catalogRowHasBillingData);
-  $: billingProviderRows = buildDataBillingProviderRows(dataCatalogRows);
-  $: activityRows = buildDataActivityRows(schemaSyncRows, dataCatalogRows);
+  $: billingDataRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingDataRows : dataCatalogRows.filter(catalogRowHasBillingData);
+  $: billingProviderRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingProviderRows : buildDataBillingProviderRows(dataCatalogRows);
+  $: activityRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.activityRows : buildDataActivityRows(schemaSyncRows, dataCatalogRows);
   $: filteredSubscriptionRows = filterSubscriptionRows(schemaSyncRows, subscriptionFilter);
   $: selectedSubscriptionDetailSchema = selectedSubscriptionDetailId
     ? schemaSyncRows.find((schema) => schema.subscriptionId === selectedSubscriptionDetailId) ?? null
@@ -770,13 +808,25 @@
     localExplorerColumns,
     visibleColumns,
   );
+  $: rememberDataPageViewCache(
+    dataPageCacheActive,
+    schemaSyncRows,
+    messageTypeRows,
+    sourceProvenanceRows,
+    dataCatalogRows,
+    dataCatalogSummary,
+    dataOverviewVisuals,
+    billingDataRows,
+    billingProviderRows,
+    activityRows,
+  );
 
   $: if (backend && backend !== lastBackend) {
     lastBackend = backend;
     void initializeDataExplorer();
   }
 
-  $: scheduleSubscribedSchemaSyncs(schemaSyncRows);
+  $: scheduleSubscribedSchemaSyncs(schemaSyncRows, backend, dataPageLoading, dataSourceOptions);
 
   $: syncInspectRoute(route, backend);
 
@@ -806,6 +856,7 @@
         schemaSyncProgress,
       );
       persistDataDirectoryState(dataDirectoryState);
+      await pruneUnsubscribedReplaceSnapshotStores(migrationSources, dataDirectoryState.subscriptions);
       if (!userSelectedDataSource) {
         selectedDataSourceId = preferredSubscribedDataSourceId(dataDirectoryState.subscriptions)
           ?? preferredDataSourceId(buildDataSourceOptions(backend, configuredDataSources, peers, trustedPeers));
@@ -817,12 +868,12 @@
   }
 
   async function initializeWorkbench(): Promise<void> {
+    await loadDataSummary();
     await refreshLocalFlatSqlStats().catch(() => {
       localFlatSqlStats = [];
       localFlatSqlStatsLoaded = false;
     });
     await runLocalExplorerQuery(0);
-    void loadDataSummary();
     void runWorkbenchQuery(0);
   }
 
@@ -856,7 +907,7 @@
         const nextStandardOptions = standardIdsFromSummary(dataSummary);
         const previousStandardId = selectedStandardId;
         if (!userSelectedStandard || !nextStandardOptions.includes(selectedStandardId)) {
-          selectedStandardId = preferredStandardIdFromSummary(dataSummary);
+          selectedStandardId = preferredStandardIdForDataSourceSummary(source?.id ?? selectedDataSourceId, selectedDatastoreKey, dataSummary);
         }
         if (previousStandardId !== selectedStandardId && !userEditedSql) {
           resetSqlForSelectedStandard();
@@ -881,7 +932,7 @@
       const nextStandardOptions = standardIdsFromSummary(result.data);
       const previousStandardId = selectedStandardId;
       if (!userSelectedStandard || !nextStandardOptions.includes(selectedStandardId)) {
-        selectedStandardId = preferredStandardIdFromSummary(result.data);
+        selectedStandardId = preferredStandardIdForDataSourceSummary(source?.id ?? selectedDataSourceId, selectedDatastoreKey, result.data);
       }
       if (previousStandardId !== selectedStandardId && !userEditedSql) {
         resetSqlForSelectedStandard();
@@ -983,15 +1034,18 @@
 
   async function runLocalExplorerQuery(targetPage = pageIndex): Promise<void> {
     const nextPage = Math.max(0, targetPage);
+    const queryVersion = ++localExplorerQueryVersion;
     clearLocalExplorerQueryTimer();
     localExplorerLoading = true;
     localExplorerError = '';
+    const isCurrentQuery = () => queryVersion === localExplorerQueryVersion;
     try {
       const store = await withUiTimeout(
         ensureLocalFlatSqlStore(selectedDataSourceId, selectedSchemaSyncRow?.datastoreKey ?? selectedDatastoreKey),
         UI_LOCAL_QUERY_TIMEOUT_MS,
         'FlatSQL initialization',
       );
+      if (!isCurrentQuery()) return;
       if (!store) {
         localExplorerResult = null;
         localExplorerFilteredTotalRows = null;
@@ -1018,6 +1072,7 @@
         UI_LOCAL_QUERY_TIMEOUT_MS,
         'Local FlatSQL query',
       );
+      if (!isCurrentQuery()) return;
       localExplorerResult = result;
       if (explorerQuery.hasDatasetFilters) {
         const countResult = await withUiTimeout(
@@ -1030,23 +1085,27 @@
           UI_LOCAL_QUERY_TIMEOUT_MS,
           'Local FlatSQL count',
         ).catch(() => null);
+        if (!isCurrentQuery()) return;
         localExplorerFilteredTotalRows = localDataExplorerCountFromResult(countResult);
       } else {
         localExplorerFilteredTotalRows = null;
       }
       try {
-        localFlatSqlStats = await withUiTimeout(store.getStats({ includeCachedBytes: true }), UI_LOCAL_QUERY_TIMEOUT_MS, 'FlatSQL stats');
+        const nextStats = await withUiTimeout(store.getStats({ includeCachedBytes: true }), UI_LOCAL_QUERY_TIMEOUT_MS, 'FlatSQL stats');
+        if (!isCurrentQuery()) return;
+        localFlatSqlStats = nextStats;
         localFlatSqlStatsLoaded = true;
       } catch {
         // Keep the cached snapshot visible if fresh stats are temporarily unavailable.
       }
       pageIndex = nextPage;
     } catch (error) {
+      if (!isCurrentQuery()) return;
       localExplorerResult = null;
       localExplorerFilteredTotalRows = null;
       localExplorerError = error instanceof Error ? error.message : 'Local FlatSQL query failed';
     } finally {
-      localExplorerLoading = false;
+      if (isCurrentQuery()) localExplorerLoading = false;
     }
   }
 
@@ -1698,6 +1757,13 @@
     schemaSyncSchedulerForDataSource(schema.dataSourceId).reset();
   }
 
+  function handleSubscriptionRetentionPolicyChange(schema: SchemaSyncRow, event: Event): void {
+    updateSubscription(schema.subscriptionId, {
+      retentionPolicy: normalizeDataFeedRetentionPolicy((event.currentTarget as HTMLSelectElement).value, schema.id),
+    });
+    schemaSyncSchedulerForDataSource(schema.dataSourceId).reset();
+  }
+
   function pauseSubscriptionSync(schema: SchemaSyncRow): void {
     const key = schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey);
     pausedSyncKeys = new Set(pausedSyncKeys).add(key);
@@ -1811,7 +1877,7 @@
     clearLocalExplorerQueryTimer();
   });
 
-  function updateSubscription(subscriptionId: string, patch: Partial<Pick<DataFeedSubscription, 'providerId' | 'sourceName' | 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter' | 'queryProfile'>>): void {
+  function updateSubscription(subscriptionId: string, patch: Partial<Pick<DataFeedSubscription, 'providerId' | 'sourceName' | 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter' | 'queryProfile' | 'retentionPolicy'>>): void {
     dataDirectoryState = updateDataFeedSubscription(dataDirectoryState, subscriptionId, patch);
     persistDataDirectoryState(dataDirectoryState);
   }
@@ -1874,10 +1940,18 @@
     }
   }
 
-  function scheduleSubscribedSchemaSyncs(rows: SchemaSyncRow[]): void {
+  function scheduleSubscribedSchemaSyncs(
+    rows: SchemaSyncRow[],
+    activeBackend: SdnBackend | null = backend,
+    pageLoading = dataPageLoading,
+    sources: DataSourceOption[] = dataSourceOptions,
+  ): void {
+    if (!activeBackend || pageLoading) return;
+    const availableSourceIds = new Set(sources.map((source) => source.id));
     const bySource = new Map<string, SchemaSyncRow[]>();
     for (const row of rows) {
       if (row.preference.mode !== 'sync') continue;
+      if (!availableSourceIds.has(row.dataSourceId)) continue;
       bySource.set(row.dataSourceId, [...bySource.get(row.dataSourceId) ?? [], row]);
     }
     for (const [dataSourceId, sourceRows] of bySource) {
@@ -1893,6 +1967,39 @@
     });
     schemaSyncSchedulers.set(dataSourceId, scheduler);
     return scheduler;
+  }
+
+  async function pruneUnsubscribedReplaceSnapshotStores(
+    sources: DataDirectoryMigrationSource[],
+    subscriptions: DataFeedSubscription[],
+  ): Promise<void> {
+    if (REPLACE_SNAPSHOT_STANDARD_IDS.length === 0) return;
+    const subscribedSnapshotKeys = new Set(
+      subscriptions
+        .filter((subscription) => REPLACE_SNAPSHOT_STANDARD_IDS.includes(subscription.standardId))
+        .map((subscription) => snapshotStoreKey(subscription.dataSourceId, subscription.datastoreKey, subscription.standardId)),
+    );
+    const sourceIds = new Set([
+      ...sources.map((source) => source.dataSourceId.trim()).filter(Boolean),
+      ...subscriptions.map((subscription) => subscription.dataSourceId.trim()).filter(Boolean),
+    ]);
+    for (const dataSourceId of sourceIds) {
+      for (const standardId of REPLACE_SNAPSHOT_STANDARD_IDS) {
+        if (subscribedSnapshotKeys.has(snapshotStoreKey(dataSourceId, null, standardId))) continue;
+        const persistenceKey = localFlatSqlPersistenceKey(dataSourceId);
+        if (localFlatSqlStoreKey === persistenceKey) resetLocalFlatSqlStore();
+        await clearLocalFlatSqlStore({
+          persistenceKey,
+          standardIds: [standardId],
+          desktopPersistenceBaseUrl: localFlatSqlDesktopPersistenceBaseUrl(),
+        });
+        clearSchemaSyncProgressForSubscription(dataSourceId, standardId, null);
+      }
+    }
+  }
+
+  function snapshotStoreKey(dataSourceId: string, datastoreKey: string | null, standardId: string): string {
+    return `${dataSourceId}:${datastoreKey ?? ''}:${standardId}`;
   }
 
   function resetSchemaSyncSchedulers(): void {
@@ -1916,6 +2023,7 @@
     const remoteRows = subscription?.remoteRows ?? remoteRowsForSubscription(dataSourceId, standardId, datastoreKey) ?? totalRowsForStandardId(dataSummary, standardId) ?? 0;
     const syncFilter = subscription?.syncFilter ?? syncFilterForSubscription(dataSourceId, standardId, datastoreKey);
     const queryProfile = subscriptionQueryProfileFor(subscription);
+    const retentionPolicy = subscriptionRetentionPolicyFor(subscription, standardId);
     let initialProgress = schemaSyncProgressFor(
       dataSourceId,
       standardId,
@@ -1924,7 +2032,7 @@
       selectedDataSourceId === dataSourceId && selectedDatastoreKey === datastoreKey,
       datastoreKey,
     );
-    if (syncFilterChangedRequiresReset(initialProgress, syncFilter)) {
+    if (syncFilterChangedRequiresReset(initialProgress, syncFilter) || retentionPolicyRequiresReset(initialProgress, retentionPolicy)) {
       const persistenceKey = localFlatSqlPersistenceKey(dataSourceId, datastoreKey);
       if (localFlatSqlStoreKey === persistenceKey) resetLocalFlatSqlStore();
       await clearLocalFlatSqlStore({
@@ -2585,6 +2693,7 @@
         sourceName: subscription.sourceName,
         syncFilter: subscription.syncFilter,
         queryProfile: normalizeDataQueryProfile(subscription.queryProfile),
+        retentionPolicy: subscriptionRetentionPolicyFor(subscription, subscription.standardId),
         remoteRows,
         localRows: progress.localRows,
         cachedBytes: progress.cachedBytes,
@@ -2919,10 +3028,29 @@
     return normalizeDataQueryProfile(subscription?.queryProfile);
   }
 
+  function subscriptionRetentionPolicyFor(
+    subscription: Pick<DataFeedSubscription, 'retentionPolicy' | 'standardId'> | Pick<SchemaSyncRow, 'retentionPolicy' | 'id'> | null | undefined,
+    standardId = '',
+  ): DataFeedRetentionPolicy {
+    return normalizeDataFeedRetentionPolicy(
+      subscription?.retentionPolicy,
+      'standardId' in (subscription ?? {}) ? (subscription as Pick<DataFeedSubscription, 'standardId'>).standardId : standardId,
+    );
+  }
+
   function syncFilterChangedRequiresReset(progress: SchemaSyncProgress, nextSyncFilter: string): boolean {
     const previous = progress.syncFilter?.trim() ?? '';
     const next = nextSyncFilter.trim();
     if (previous === next) return false;
+    return progress.localRows > 0
+      || progress.syncedRows > 0
+      || progress.cachedBytes > 0
+      || progress.pinnedRows > 0
+      || Boolean(progress.lastSyncedAt);
+  }
+
+  function retentionPolicyRequiresReset(progress: SchemaSyncProgress, retentionPolicy: DataFeedRetentionPolicy): boolean {
+    if (retentionPolicy !== 'replace-snapshot') return false;
     return progress.localRows > 0
       || progress.syncedRows > 0
       || progress.cachedBytes > 0
@@ -3031,6 +3159,137 @@
   function schemaSyncPreferenceKey(dataSourceId: string, standardId: string, datastoreKey: string | null = null): string {
     const base = `${dataSourceId}:${standardId.trim().toUpperCase() || DEFAULT_STANDARD_ID}`;
     return datastoreKey ? `${base}:${datastoreKey}` : base;
+  }
+
+  function shouldUseCachedDataPageView(cache: CachedDataPageView | null, liveRows: SchemaSyncRow[], loading: boolean): boolean {
+    return Boolean(cache && loading && liveRows.length === 0 && cache.schemaSyncRows.length > 0);
+  }
+
+  function rememberDataPageViewCache(
+    cacheActive: boolean,
+    schemaRows: SchemaSyncRow[],
+    messageRows: SchemaSyncRow[],
+    provenanceRows: SourceProvenanceRow[],
+    catalogRows: DataCatalogRow[],
+    catalogSummary: DataCatalogSummary,
+    overviewVisuals: DataOverviewVisuals,
+    billedRows: DataCatalogRow[],
+    providerRows: DataBillingProviderRow[],
+    timelineRows: DataActivityRow[],
+  ): void {
+    if (cacheActive) return;
+    if (schemaRows.length === 0 && catalogRows.length === 0 && provenanceRows.length === 0) return;
+    const snapshot: CachedDataPageView = {
+      schemaSyncRows: schemaRows,
+      messageTypeRows: messageRows,
+      sourceProvenanceRows: provenanceRows,
+      dataCatalogRows: catalogRows,
+      dataCatalogSummary: catalogSummary,
+      dataOverviewVisuals: cacheableOverviewVisuals(overviewVisuals),
+      billingDataRows: billedRows,
+      billingProviderRows: providerRows,
+      activityRows: timelineRows,
+      cachedAt: Date.now(),
+    };
+    const signature = dataPageViewSignature(snapshot);
+    if (signature === cachedDataPageViewSignature) return;
+    cachedDataPageViewSignature = signature;
+    cachedDataPageView = snapshot;
+    persistCachedDataPageView(snapshot);
+  }
+
+  function cacheableOverviewVisuals(visuals: DataOverviewVisuals): DataOverviewVisuals {
+    const storageSegmentsByGroup = normalizedStorageSegmentsByGroup(visuals.storageSegmentsByGroup, visuals.storageSegments);
+    return {
+      ...visuals,
+      storageSegmentsByGroup,
+      storageSegments: storageSegmentsByGroup.provider,
+    };
+  }
+
+  function cachedOverviewVisualsForGroup(visuals: DataOverviewVisuals, group: DataOverviewStorageGroup): DataOverviewVisuals {
+    const storageSegmentsByGroup = normalizedStorageSegmentsByGroup(visuals.storageSegmentsByGroup, visuals.storageSegments);
+    return {
+      ...visuals,
+      storageSegmentsByGroup,
+      storageSegments: storageSegmentsByGroup[group] ?? storageSegmentsByGroup.provider,
+    };
+  }
+
+  function normalizedStorageSegmentsByGroup(
+    value: Partial<Record<DataOverviewStorageGroup, DataOverviewStorageSegment[]>> | undefined,
+    fallback: DataOverviewStorageSegment[] = [],
+  ): Record<DataOverviewStorageGroup, DataOverviewStorageSegment[]> {
+    return {
+      provider: Array.isArray(value?.provider) ? value.provider : fallback,
+      messageType: Array.isArray(value?.messageType) ? value.messageType : [],
+      access: Array.isArray(value?.access) ? value.access : [],
+    };
+  }
+
+  function loadCachedDataPageView(): CachedDataPageView | null {
+    if (typeof window === 'undefined') return null;
+    try {
+      return normalizeCachedDataPageView(JSON.parse(window.localStorage.getItem(DATA_PAGE_VIEW_CACHE_STORAGE_KEY) ?? 'null') as unknown);
+    } catch {
+      return null;
+    }
+  }
+
+  function normalizeCachedDataPageView(value: unknown): CachedDataPageView | null {
+    if (!isRecord(value)) return null;
+    const schemaSyncRows = cachedArray<SchemaSyncRow>(value.schemaSyncRows);
+    const dataCatalogRows = cachedArray<DataCatalogRow>(value.dataCatalogRows);
+    const sourceProvenanceRows = cachedArray<SourceProvenanceRow>(value.sourceProvenanceRows);
+    if (schemaSyncRows.length === 0 && dataCatalogRows.length === 0 && sourceProvenanceRows.length === 0) return null;
+    const dataCatalogSummary = isRecord(value.dataCatalogSummary)
+      ? value.dataCatalogSummary as unknown as DataCatalogSummary
+      : summarizeDataCatalog(dataCatalogRows);
+    const dataOverviewVisuals = isRecord(value.dataOverviewVisuals)
+      ? cachedOverviewVisualsForGroup(value.dataOverviewVisuals as unknown as DataOverviewVisuals, 'provider')
+      : buildDataOverviewVisuals(dataCatalogRows);
+    return {
+      schemaSyncRows,
+      messageTypeRows: cachedArray<SchemaSyncRow>(value.messageTypeRows),
+      sourceProvenanceRows,
+      dataCatalogRows,
+      dataCatalogSummary,
+      dataOverviewVisuals,
+      billingDataRows: cachedArray<DataCatalogRow>(value.billingDataRows),
+      billingProviderRows: cachedArray<DataBillingProviderRow>(value.billingProviderRows),
+      activityRows: cachedArray<DataActivityRow>(value.activityRows),
+      cachedAt: typeof value.cachedAt === 'number' ? value.cachedAt : 0,
+    };
+  }
+
+  function cachedArray<T>(value: unknown): T[] {
+    return Array.isArray(value) ? value as T[] : [];
+  }
+
+  function persistCachedDataPageView(view: CachedDataPageView): void {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(DATA_PAGE_VIEW_CACHE_STORAGE_KEY, JSON.stringify(view));
+    } catch {
+      // The cache is only for faster tab activation; storage failures must not block the page.
+    }
+  }
+
+  function dataPageViewSignature(view: CachedDataPageView): string {
+    try {
+      return JSON.stringify([
+        view.schemaSyncRows,
+        view.sourceProvenanceRows,
+        view.dataCatalogRows,
+        view.dataCatalogSummary,
+        view.dataOverviewVisuals,
+        view.billingDataRows,
+        view.billingProviderRows,
+        view.activityRows,
+      ]) ?? '';
+    } catch {
+      return String(view.cachedAt);
+    }
   }
 
   function loadSchemaSyncPreferences(): Record<string, SchemaSyncPreference> {
@@ -3378,6 +3637,22 @@
     return standardOptionsFromSummary(summary)[0]?.id ?? DEFAULT_STANDARD_ID;
   }
 
+  function preferredStandardIdForDataSourceSummary(
+    dataSourceId: string,
+    datastoreKey: string | null,
+    summary: DataSummary | null,
+  ): string {
+    const summaryStandardIds = new Set(standardIdsFromSummary(summary));
+    const subscribed = dataDirectoryState.subscriptions
+      .filter((subscription) => (
+        subscription.dataSourceId === dataSourceId
+        && (datastoreKey === null || subscription.datastoreKey === datastoreKey)
+        && summaryStandardIds.has(subscription.standardId)
+      ))
+      .sort((left, right) => right.remoteRows - left.remoteRows || left.standardId.localeCompare(right.standardId));
+    return subscribed[0]?.standardId ?? preferredStandardIdFromSummary(summary);
+  }
+
   function schemaNameForStandardId(standardId: string): string {
     const id = standardId.trim().toUpperCase() || DEFAULT_STANDARD_ID;
     const exact = dataSummary?.schemas.find((schema) => standardIdFromSchema(schema.schemaName) === id);
@@ -3534,8 +3809,9 @@
 
   function schemaRetentionPolicyLabel(schema: SchemaSyncRow): string {
     const profile = DATA_QUERY_PROFILES.find((entry) => entry.id === schema.queryProfile)?.label ?? schema.queryProfile;
+    const retention = dataRetentionPolicyLabel(schema.retentionPolicy);
     const filter = schema.syncFilter.trim() ? `Filter: ${schema.syncFilter.trim()}` : 'All records';
-    return `${profile} · ${filter}`;
+    return `${profile} · ${retention} · ${filter}`;
   }
 
   function schemaLastSyncedLabel(schema: SchemaSyncRow): string {
@@ -3590,8 +3866,13 @@
 
   function subscriptionSyncPolicyLabel(schema: SchemaSyncRow): string {
     const profile = DATA_QUERY_PROFILES.find((entry) => entry.id === schema.queryProfile)?.label ?? schema.queryProfile;
+    const retention = dataRetentionPolicyLabel(schema.retentionPolicy);
     const filter = schema.syncFilter.trim() ? 'filtered' : 'all records';
-    return `${profile} / ${filter}`;
+    return `${profile} / ${retention} / ${filter}`;
+  }
+
+  function dataRetentionPolicyLabel(policy: DataFeedRetentionPolicy): string {
+    return DATA_RETENTION_POLICIES.find((entry) => entry.id === policy)?.label ?? policy;
   }
 
   function standardOptionLabel(standard: StandardOption): string {
@@ -4003,7 +4284,7 @@
   }
 
   function configuredNodePublicKey(node: ConfiguredSdnNode): string | null {
-    return readRecordString(node.metadata ?? {}, 'public_key', 'publicKey', 'signing_public_key', 'signingPublicKey');
+    return readRecordString(node.metadata ?? {}, 'xpub', 'XPUB', 'extended_public_key', 'extendedPublicKey', 'hd_xpub', 'hdXpub', 'public_key', 'publicKey', 'signing_public_key', 'signingPublicKey');
   }
 
   function configuredNodeProviderId(node: ConfiguredSdnNode): string | null {
@@ -4872,6 +5153,19 @@
                   >
                     {#each DATA_QUERY_PROFILES as profile}
                       <option value={profile.id}>{profile.label}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label>
+                  <span>Retention</span>
+                  <select
+                    class="sdn-input sdn-select"
+                    aria-label={`${schema.id} retention policy`}
+                    value={schema.retentionPolicy}
+                    on:change={(event) => handleSubscriptionRetentionPolicyChange(schema, event)}
+                  >
+                    {#each DATA_RETENTION_POLICIES as policy}
+                      <option value={policy.id}>{policy.label}</option>
                     {/each}
                   </select>
                 </label>

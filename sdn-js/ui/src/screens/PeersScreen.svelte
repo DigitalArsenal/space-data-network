@@ -30,6 +30,7 @@
     peerEpmJson,
     peerHostedEpmRecord,
     peerPhone as peerIdentityPhone,
+    shortPeerId,
   } from '../../../src/ui/runtime/peer-identity';
   import {
     createVCardQrPayload as createVCardQrPayloadLocal,
@@ -588,7 +589,7 @@
   }
 
   function configuredNodePublicKey(node: ConfiguredSdnNode): string | null {
-    return readRecordString(node.metadata ?? {}, 'public_key', 'publicKey', 'signing_public_key', 'signingPublicKey');
+    return readRecordString(node.metadata ?? {}, 'xpub', 'XPUB', 'extended_public_key', 'extendedPublicKey', 'hd_xpub', 'hdXpub', 'public_key', 'publicKey', 'signing_public_key', 'signingPublicKey');
   }
 
   function configuredNodeLabel(node: ConfiguredSdnNode, observedNames: Map<string, string>, peerId: string | null): string {
@@ -758,7 +759,7 @@
                 on:keydown={(event) => handlePeerRowKeydown(event, peer)}
               >
                 <td>{displayNameForPeer(peer)}</td>
-                <td><code>{peer.id}</code></td>
+                <td><code title={peer.id} aria-label={peer.id}>{shortPeerId(peer.id)}</code></td>
                 <td>
                   <select
                     class="sdn-input sdn-select sdn-ownertrust-select"

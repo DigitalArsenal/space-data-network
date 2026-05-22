@@ -3,7 +3,8 @@ import * as flatbuffers from 'flatbuffers';
 import { OMM } from 'spacedatastandards.org/lib/js/OMM/OMM.js';
 import { PNM } from 'spacedatastandards.org/lib/js/PNM/PNM.js';
 
-const realPeerId = '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4';
+const realPeerId = '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3';
+const celestrakXpub = 'xpub6D36ciSsN66eJutmvXs1VXmtqnWkcMqZEbMh4FP6bpANfJpfP6oY48P7XnCWdd4NwfpHir8bU7eo3KcC45jsuN6LXwA5SYmL6sNeQwYPJjY';
 
 test.beforeEach(async ({ page }) => {
   await installSdnFixtures(page);
@@ -29,11 +30,11 @@ test('peers route renders SDN peer fixtures through the backend adapter', async 
   await expect(page.getByRole('button', { name: /Data Feeds 0/ })).toBeVisible();
   await page.getByRole('button', { name: /Observed Peers 1/ }).click();
   await expect(page.getByText('CelesTrak Provider')).toBeVisible();
-  await expect(page.getByText(realPeerId)).toBeVisible();
+  await expect(page.locator(`code[title="${realPeerId}"]`)).toHaveText('16Uiu...vpbj3');
 });
 
 test('data route renders subscribed local datastore preview without workbench status chrome', async ({ page }) => {
-  await page.addInitScript((peerId) => {
+  await page.addInitScript(({ peerId, publicKey }) => {
     window.localStorage.setItem('sdn:data-directory:v1', JSON.stringify({
       peerTrust: { [peerId]: 'marginal' },
       subscriptions: [{
@@ -42,7 +43,7 @@ test('data route renders subscribed local datastore preview without workbench st
         peerId: 'local-node',
         standardId: 'PNM',
         providerName: 'CelesTrak Provider',
-        providerPublicKey: peerId,
+        providerPublicKey: publicKey,
         remoteRows: 12,
         storageCap: 2.5,
         storageUnit: 'MB',
@@ -54,7 +55,7 @@ test('data route renders subscribed local datastore preview without workbench st
     window.localStorage.setItem('sdn:data-schema-sync:v1', JSON.stringify({
       'local:PNM': { mode: 'sync', storageCap: 2.5, storageUnit: 'MB' },
     }));
-  }, realPeerId);
+  }, { peerId: realPeerId, publicKey: celestrakXpub });
 
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
 
@@ -74,7 +75,7 @@ test('data route renders subscribed local datastore preview without workbench st
   const dataSources = page.getByRole('table', { name: 'Data sources' });
   await expect(dataSources).toContainText('CelesTrak Provider');
   await expect(dataSources).toContainText('local-node');
-  await expect(dataSources).toContainText(realPeerId.slice(0, 10));
+  await expect(dataSources).toContainText(celestrakXpub.slice(0, 10));
   await expect(dataSources).toContainText('Local node');
   await expect(dataSources).toContainText('Subscribed source');
   await expect(dataSources).toContainText('PNM');
@@ -112,9 +113,9 @@ test('data route renders subscribed local datastore preview without workbench st
   await expect(subscriptionDetails).toContainText('Storage');
   await expect(subscriptionDetails).toContainText('Pinning');
   await expect(subscriptionDetails).toContainText('Sync');
-  await page.getByRole('button', { name: 'Pause' }).click();
+  await page.getByRole('button', { name: 'Pause' }).press('Enter');
   await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible();
-  await page.getByRole('button', { name: 'Resume' }).click();
+  await page.getByRole('button', { name: 'Resume' }).press('Enter');
   await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
   await page.getByRole('button', { name: 'Verify pins' }).click();
   await expect(page.getByText(/verified pinned PNM shard artifacts|Verified .* PNM shard artifacts/i)).toBeVisible();
@@ -275,7 +276,7 @@ test('data route shows retry instead of query for sync-error subscriptions', asy
   await expect(row.getByRole('button', { name: /retry sync/i })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'PNM sync filter' })).toHaveValue('FILE_ID LIKE celestrak:%');
 
-  await row.getByRole('button', { name: /retry sync/i }).click();
+  await row.getByRole('button', { name: /retry sync/i }).press('Enter');
   await expect(row.getByLabel(/Status: Queued/)).toBeVisible();
 });
 
@@ -941,7 +942,12 @@ async function installSdnFixtures(page: Page): Promise<void> {
               admin_proxy_path: '/api/local/sdn-nodes/space-data-network-02',
               host_name: '167.172.219.213',
               peer_id: realPeerId,
-              public_key: realPeerId,
+              public_key: celestrakXpub,
+              xpub: celestrakXpub,
+              signing_public_key: '02342309cef261ec3535b5a3e7596d5a838366697bc554e68965723584184fd57c',
+              encryption_public_key: '0353b985339195a698c276925e379ba216c90dff1a9b98ec691bc466ea7176f1af',
+              signing_key_path: "m/44'/0'/0'/0/0",
+              encryption_key_path: "m/44'/0'/0'/1/0",
               protocols: '/space-data-network/configured-node/1.0.0',
             },
           },
@@ -953,10 +959,10 @@ async function installSdnFixtures(page: Page): Promise<void> {
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
-        total_records: 16,
-        total_bytes: 3456,
+        total_records: 2515,
+        total_bytes: 363_312,
         schemas: [
-          { schema_name: 'CAT.fbs', count: 1, total_bytes: 144 },
+          { schema_name: 'CAT.fbs', count: 2500, total_bytes: 360_000 },
           { schema_name: 'EPM.fbs', count: 1, total_bytes: 144 },
           { schema_name: 'OMM.fbs', count: 2, total_bytes: 576 },
           { schema_name: 'PNM.fbs', count: 12, total_bytes: 1728 },
@@ -990,10 +996,10 @@ async function installSdnFixtures(page: Page): Promise<void> {
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
-        total_records: 16,
-        total_bytes: 3456,
+        total_records: 2515,
+        total_bytes: 363_312,
         schemas: [
-          { schema_name: 'CAT.fbs', count: 1, total_bytes: 144 },
+          { schema_name: 'CAT.fbs', count: 2500, total_bytes: 360_000 },
           { schema_name: 'EPM.fbs', count: 1, total_bytes: 144 },
           { schema_name: 'OMM.fbs', count: 2, total_bytes: 576 },
           { schema_name: 'PNM.fbs', count: 12, total_bytes: 1728 },
@@ -1021,7 +1027,14 @@ async function installSdnFixtures(page: Page): Promise<void> {
   });
   await page.route('**/api/local/sdn-nodes/space-data-network-02/api/v1/data/scan', async (route) => {
     const body = route.request().postDataJSON();
-    expect(body.schema).toBe('PNM.fbs');
+    if (body.schema !== 'PNM.fbs') {
+      expect(body.include_data).toBe(false);
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify(emptyScanResult(String(body.schema ?? 'CAT.fbs'), Number(body.limit ?? 10), Number(body.offset ?? 0))),
+      });
+      return;
+    }
     expect(body.include_data).toBe(false);
     const cursorOffset = typeof body.cursor === 'string' && body.cursor
       ? Number(Buffer.from(body.cursor, 'base64url').toString('utf8'))
@@ -1073,7 +1086,14 @@ async function installSdnFixtures(page: Page): Promise<void> {
       return;
     }
     const body = route.request().postDataJSON();
-    expect(body.schema).toBe('PNM.fbs');
+    if (body.schema !== 'PNM.fbs') {
+      expect(body.include_data).toBe(false);
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify(emptyScanResult(String(body.schema ?? 'CAT.fbs'), Number(body.limit ?? 10), Number(body.offset ?? 0))),
+      });
+      return;
+    }
     expect(body.include_data).toBe(false);
     const cursorOffset = typeof body.cursor === 'string' && body.cursor
       ? Number(Buffer.from(body.cursor, 'base64url').toString('utf8'))
@@ -1180,6 +1200,20 @@ async function installSdnFixtures(page: Page): Promise<void> {
       });
       return;
     }
+    if (body.schema !== 'OMM.fbs') {
+      if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
+        await route.fulfill({
+          contentType: 'application/vnd.sdn.flatbuffers.stream',
+          body: rawFlatbufferStream([]),
+        });
+        return;
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ results: [] }),
+      });
+      return;
+    }
     expect(body).toMatchObject({ schema: 'OMM.fbs', limit: 10, offset: 0 });
     if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
       await route.fulfill({
@@ -1239,6 +1273,20 @@ async function installSdnFixtures(page: Page): Promise<void> {
             data_base64: pageRefs[index].bytes.toString('base64'),
           })),
         }),
+      });
+      return;
+    }
+    if (body.schema !== 'OMM.fbs') {
+      if (route.request().headers().accept?.includes('application/vnd.sdn.flatbuffers.stream')) {
+        await route.fulfill({
+          contentType: 'application/vnd.sdn.flatbuffers.stream',
+          body: rawFlatbufferStream([]),
+        });
+        return;
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ results: [] }),
       });
       return;
     }
@@ -1318,6 +1366,30 @@ function rawFlatbufferStream(records: Buffer[]): Buffer {
     chunks.push(header, record);
   }
   return Buffer.concat(chunks);
+}
+
+function emptyScanResult(schema: string, limit: number, offset: number): Record<string, unknown> {
+  const standardId = schema.replace(/\.fbs$/i, '').toLowerCase() || 'data';
+  const totalCount = schema === 'CAT.fbs' ? 2500 : schema === 'OMM.fbs' ? 2 : schema === 'EPM.fbs' ? 1 : 0;
+  return {
+    schema,
+    total_count: totalCount,
+    count: 0,
+    limit,
+    offset,
+    cursor: Buffer.from(String(offset), 'utf8').toString('base64url'),
+    next_cursor: '',
+    snapshot_id: `fixture-${standardId}-snapshot`,
+    head: `fixture-${standardId}-snapshot`,
+    high_water_mark: '',
+    scan_hash: `fixture-${standardId}-scan-hash`,
+    chunk_hash: `fixture-${standardId}-scan-hash`,
+    query_profile: 'dataset-publication-offset-v1',
+    sync_protocol: '/space-data-network/flatsql-sync/1.0.0',
+    max_chunk_size: 50000,
+    transports: ['http', 'libp2p-websocket', 'libp2p-webrtc'],
+    results: [],
+  };
 }
 
 function buildOmmBytes(fields: {

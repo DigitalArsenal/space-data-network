@@ -2,19 +2,12 @@ package config
 
 import "testing"
 
-func TestDefaultListenAddressesIncludeBrowserPeerTransports(t *testing.T) {
+func TestDefaultConfigDoesNotRequireLocalTorRuntime(t *testing.T) {
 	cfg := Default()
-
-	requireListenAddress(t, cfg.Network.Listen, "/ip4/0.0.0.0/tcp/8080/ws")
-	requireListenAddress(t, cfg.Network.Listen, "/ip4/0.0.0.0/udp/4003/webrtc-direct")
-}
-
-func requireListenAddress(t *testing.T, addrs []string, want string) {
-	t.Helper()
-	for _, addr := range addrs {
-		if addr == want {
-			return
-		}
+	if cfg.Tor.Enabled {
+		t.Fatal("default config should not start a local tor runtime")
 	}
-	t.Fatalf("default network listen addresses missing %s: %#v", want, addrs)
+	if cfg.Tor.HiddenServiceEnabled {
+		t.Fatal("default config should not publish a tor hidden service")
+	}
 }

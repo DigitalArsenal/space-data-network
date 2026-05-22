@@ -236,6 +236,23 @@ find_licensing_module_wasm() {
     return 1
 }
 
+find_hd_wallet_wasi_wasm() {
+    local candidates=(
+        "${PROJECT_ROOT}/sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm"
+        "${PROJECT_ROOT}/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm"
+        "${PROJECT_ROOT}/../spaceaware.io/packages/hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm"
+        "${PROJECT_ROOT}/../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm"
+    )
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 deploy_full_node_licensing_module() {
     local ip=$1
     local service=$2
@@ -253,6 +270,37 @@ deploy_full_node_licensing_module() {
 [Service]
 Environment=ORBPRO_LICENSING_WASM_PATH=/opt/spacedatanetwork/wasm/licensing-module.wasm
 EOF"
+}
+
+deploy_full_node_hd_wallet_wasm() {
+    local ip=$1
+    local service=$2
+    local wasm_path
+
+    if ! wasm_path="$(find_hd_wallet_wasi_wasm)"; then
+        log_error "hd-wallet-wasi.wasm not found; full nodes cannot publish HD xpub-backed EPMs without it."
+        exit 1
+    fi
+
+    log_info "Deploying HD wallet WASI module from ${wasm_path}..."
+    ssh_cmd "$ip" "mkdir -p /opt/spacedatanetwork/wasm /etc/systemd/system/${service}.service.d"
+    scp_cmd "$wasm_path" "$ip" "/opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm"
+    ssh_cmd "$ip" "chown sdn:sdn /opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm && chmod 644 /opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm && cat > /etc/systemd/system/${service}.service.d/hd-wallet.conf <<'EOF'
+[Service]
+Environment=HD_WALLET_WASM_PATH=/opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm
+EOF"
+    ssh_cmd "$ip" "if [ -f /etc/default/${service} ]; then
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path('/etc/default/${service}')
+text = path.read_text()
+line = 'HD_WALLET_WASM_PATH=/opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm'
+lines = [entry for entry in text.splitlines() if not entry.startswith('HD_WALLET_WASM_PATH=')]
+lines.append(line)
+path.write_text('\\n'.join(lines) + '\\n')
+PY
+fi"
 }
 
 load_tracked_dev_wallet() {
@@ -376,6 +424,7 @@ deploy_binary() {
         rsync_cmd "${PROJECT_ROOT}/sdn-js/ui/dist/" "$ip" "/opt/spacedatanetwork/admin-ui/"
         rsync_cmd "${PROJECT_ROOT}/webui/build/" "$ip" "/opt/spacedatanetwork/webui/"
         deploy_full_node_licensing_module "$ip" "$full_service"
+        deploy_full_node_hd_wallet_wasm "$ip" "$full_service"
         if ! ssh_cmd "$ip" "test -f ${config_dir}/config.yaml" >/dev/null 2>&1; then
             rsync_cmd "${PROJECT_ROOT}/config/full-vm.yaml" "$ip" "${config_dir}/config.yaml"
         else

@@ -9,6 +9,7 @@ import {
   peerEpmJson,
   peerHostedEpmRecord,
   peerPhone,
+  shortPeerId,
 } from './peer-identity';
 import type { HostedEpmRecord } from './identity';
 import type { ObservedSdnPeer } from './sdn-backend';
@@ -30,6 +31,11 @@ function observedPeer(metadata: Record<string, unknown>): ObservedSdnPeer {
 }
 
 describe('peer identity projection', () => {
+  it('shortens peer IDs to five leading and trailing characters for table display', () => {
+    expect(shortPeerId('16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4')).toBe('16Uiu...cz3y4');
+    expect(shortPeerId('short-id')).toBe('short-id');
+  });
+
   it('uses observed peer metadata for EPM display fields and vCard QR payloads', () => {
     const peer = observedPeer({
       dn: 'SpaceAware Directory',

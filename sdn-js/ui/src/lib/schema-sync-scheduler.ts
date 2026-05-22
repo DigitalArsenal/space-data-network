@@ -4,6 +4,7 @@ export interface SchemaSyncScheduleRow {
   datastoreKey?: string | null;
   syncFilter?: string;
   queryProfile?: string;
+  retentionPolicy?: string;
   localRows: number;
   remoteRows: number;
   preference: {
@@ -96,6 +97,7 @@ export function sortedEnabledSchemaRows(rows: SchemaSyncScheduleRow[]): SchemaSy
 
 function shouldScheduleSchemaRow(row: SchemaSyncScheduleRow): boolean {
   if (row.preference.mode !== 'sync') return false;
+  if (row.retentionPolicy === 'replace-snapshot' && row.remoteRows > 0 && row.localRows !== row.remoteRows) return true;
   if (row.remoteRows > row.localRows) return true;
   return row.queryProfile === 'dataset-publication-offset-v1' && row.remoteRows === 0;
 }
@@ -109,6 +111,7 @@ function schemaSyncScheduleSignature(rows: SchemaSyncScheduleRow[], dataSourceId
       row.datastoreKey ?? '',
       row.syncFilter?.trim() ?? '',
       row.queryProfile?.trim() ?? '',
+      row.retentionPolicy?.trim() ?? '',
       row.localRows,
       row.remoteRows,
       row.preference.storageCap,
