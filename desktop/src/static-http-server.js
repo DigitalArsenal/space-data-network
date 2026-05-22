@@ -779,7 +779,7 @@ async function readDesktopNodeProfile () {
 }
 
 async function buildDesktopNodeEPM (profile) {
-  const publicProfile = await deriveEpmPublicKeysFromXpub(profile)
+  const publicProfile = await normalizeEpmPublicIdentityKeys(profile)
   const flatbuffers = require('flatbuffers')
   const builder = new flatbuffers.Builder(2048)
 
@@ -870,10 +870,10 @@ function desktopEpmPublicKeys (profile) {
   const identityPublicKey = readEpmString(profile, ['identity_public_key', 'identityPublicKey', 'public_key', 'publicKey'])
   const xpub = readEpmString(profile, ['xpub', 'XPUB'])
   if (signingPublicKey && !records.some(key => key.keyType === 'signing' && key.publicKey === signingPublicKey)) {
-    records.unshift({ keyType: 'signing', publicKey: signingPublicKey, xpub, keyAddress: identityPublicKey, addressType: identityPublicKey ? 'secp256k1-identity-public-key' : '' })
+    records.unshift({ keyType: 'signing', publicKey: signingPublicKey, xpub, keyAddress: identityPublicKey, addressType: 'ed25519' })
   }
   if (encryptionPublicKey && !records.some(key => key.keyType === 'encryption' && key.publicKey === encryptionPublicKey)) {
-    records.push({ keyType: 'encryption', publicKey: encryptionPublicKey, xpub: '', keyAddress: '', addressType: 'x25519' })
+    records.push({ keyType: 'encryption', publicKey: encryptionPublicKey, xpub, keyAddress: '', addressType: 'x25519' })
   }
 
   return records.slice(0, 16)
@@ -1135,6 +1135,11 @@ function readEpmXpub (epm) {
   return ''
 }
 
+function epmAccount (epm) {
+  const parsed = Number.parseInt(readEpmString(epm, ['account', 'wallet_account', 'walletAccount']), 10)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : HD_XPUB_ACCOUNT
+}
+
 function derivePublicIdentityKeysFromXpub (xpub, account = HD_XPUB_ACCOUNT, index = 0) {
   const trimmedXpub = String(xpub || '').trim()
   if (!trimmedXpub) return null
@@ -1150,16 +1155,18 @@ function derivePublicIdentityKeysFromXpub (xpub, account = HD_XPUB_ACCOUNT, inde
   }
 }
 
-async function deriveEpmPublicKeysFromXpub (epmJson) {
+async function normalizeEpmPublicIdentityKeys (epmJson) {
   const publicEpm = sanitizePublicEPM(epmJson || {})
   const xpub = readEpmXpub(publicEpm)
   if (!xpub) return publicEpm
 
+  const account = epmAccount(publicEpm)
   let derived
   try {
-    derived = await derivePublicIdentityKeysFromXpub(xpub)
+    derived = derivePublicIdentityKeysFromXpub(xpub, account)
   } catch (err) {
     logger.warn(`[static-server] failed to derive public keys from xpub: ${err.message || err}`)
+    publicEpm.xpub = xpub
     return publicEpm
   }
   if (!derived) return publicEpm
@@ -1197,7 +1204,7 @@ async function deriveEpmPublicKeysFromXpub (epmJson) {
 }
 
 async function publicIdentityRecord (id, kind, epmJson, updatedAt = new Date().toISOString()) {
-  const publicEpm = await deriveEpmPublicKeysFromXpub(epmJson || {})
+  const publicEpm = await normalizeEpmPublicIdentityKeys(epmJson || {})
   const label = readEpmString(publicEpm, ['dn', 'display_name', 'displayName', 'name']) || id
   const peerId = readEpmString(publicEpm, ['peer_id', 'peerId', 'ipfs_peer_id', 'ipfsPeerId'])
   const epmCid = readEpmString(publicEpm, ['epm_cid', 'epmCid', 'cid'])
@@ -1293,6 +1300,7 @@ function identityRecordToVCard (record) {
   addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', record.kind === 'node-self' ? 'node' : 'user')
   addVCardLine(lines, 'X-SDN-PEER-ID', record.peerId)
   addVCardLine(lines, 'X-SDN-EPM-CID', record.epmCid)
+  addVCardLine(lines, 'X-SDN-XPUB', readEpmXpub(epm))
   const publicKeyEmail = publicKeyEmailAddress(publicKey)
   addVCardLine(lines, 'EMAIL;TYPE=INTERNET', publicKeyEmail)
   addVCardIdentityEmailLines(lines, epm, signingPublicKey, encryptionPublicKey)
@@ -1659,13 +1667,13 @@ async function serveDesktopNodeIdentityAPI (req, res) {
   }
 
   const proposed = await normalizeWalletNodeIdentity(payload.wallet_identity || payload.walletIdentity || payload)
-  if (!proposed.peer_id || !proposed.signing_public_key) {
-    sendJSON(res, 400, { error: 'wallet identity requires peer_id and signing_public_key' })
+  if (!proposed.peer_id || !proposed.xpub || !proposed.signing_public_key || !proposed.encryption_public_key) {
+    sendJSON(res, 400, { error: 'wallet identity requires peer_id and an xpub that derives signing and encryption public keys' })
     return true
   }
 
   const current = await readDesktopNodeProfile()
-  const currentKeys = nodeIdentityKeySummary(await deriveEpmPublicKeysFromXpub(current))
+  const currentKeys = nodeIdentityKeySummary(await normalizeEpmPublicIdentityKeys(current))
   const proposedKeys = nodeIdentityKeySummary(proposed)
   const hasCurrentKeys = Boolean(currentKeys.signing_public_key || currentKeys.encryption_public_key || currentKeys.identity_public_key)
   const matching = !hasCurrentKeys || (
@@ -1706,17 +1714,18 @@ async function normalizeWalletNodeIdentity (value) {
   const source = value && typeof value === 'object' ? sanitizePublicEPM(value) : {}
   const peerID = readEpmString(source, ['peer_id', 'peerId'])
   const xpub = readEpmString(source, ['xpub', 'XPUB'])
-  let derived = null
-  if (xpub) {
-    try {
-      derived = derivePublicIdentityKeysFromXpub(xpub)
-    } catch (err) {
-      logger.warn(`[static-server] failed to derive wallet public keys from xpub: ${err.message || err}`)
-    }
-  }
+  const account = epmAccount(source)
   const identityPublicKey = readEpmString(source, ['identity_public_key', 'identityPublicKey', 'public_key', 'publicKey'])
-  const signingPublicKey = derived?.signing_public_key || readEpmString(source, ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex'])
-  const encryptionPublicKey = derived?.encryption_public_key || readEpmString(source, ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex'])
+  let derived = null
+  try {
+    derived = derivePublicIdentityKeysFromXpub(xpub, account)
+  } catch {
+    derived = null
+  }
+  const signingPublicKey = derived?.signing_public_key ||
+    readEpmString(source, ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex'])
+  const encryptionPublicKey = derived?.encryption_public_key ||
+    readEpmString(source, ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex'])
   const signatureTimestamp = readEpmInteger(source, ['signature_timestamp', 'signatureTimestamp'])
   const keys = []
   if (signingPublicKey) {
@@ -1725,8 +1734,8 @@ async function normalizeWalletNodeIdentity (value) {
       public_key: signingPublicKey,
       xpub,
       key_address: identityPublicKey,
-      address_type: 'secp256k1',
-      ...(derived?.signing_key_path ? { derivation_path: derived.signing_key_path } : {})
+      address_type: derived ? 'secp256k1' : 'ed25519',
+      derivation_path: derived?.signing_key_path || xpubSigningPath(account)
     })
   }
   if (encryptionPublicKey) {
@@ -1734,8 +1743,8 @@ async function normalizeWalletNodeIdentity (value) {
       key_type: 'encryption',
       public_key: encryptionPublicKey,
       xpub,
-      address_type: 'secp256k1',
-      ...(derived?.encryption_key_path ? { derivation_path: derived.encryption_key_path } : {})
+      address_type: derived ? 'secp256k1' : 'x25519',
+      derivation_path: derived?.encryption_key_path || xpubEncryptionPath(account)
     })
   }
 
@@ -1797,7 +1806,7 @@ async function serveDesktopNodeEPMAPI (req, res) {
   }
 
   if (req.method === 'GET' && parsed.pathname === '/api/node/epm/json') {
-    sendJSON(res, 200, await deriveEpmPublicKeysFromXpub(await readDesktopNodeProfile()))
+    sendJSON(res, 200, await normalizeEpmPublicIdentityKeys(await readDesktopNodeProfile()))
     return true
   }
 

@@ -26,6 +26,14 @@ import {
   buildEncryptionPath,
 } from './types';
 
+export interface XpubDerivedPublicIdentityKeys {
+  xpub: string;
+  signingPublicKey: string;
+  encryptionPublicKey: string;
+  signingKeyPath: string;
+  encryptionKeyPath: string;
+}
+
 interface HDWalletSlip10Module extends HDWalletModule {
   slip10?: {
     deriveEd25519Path(seed: Uint8Array, path: string): DerivedKey;
@@ -48,14 +56,6 @@ interface HDWalletNativeCryptoExtensions extends HDWalletModule {
     encrypt(key: Uint8Array, plaintext: Uint8Array, iv: Uint8Array): Uint8Array;
     decrypt(key: Uint8Array, ciphertext: Uint8Array, iv: Uint8Array): Uint8Array;
   };
-}
-
-export interface XpubDerivedPublicIdentityKeys {
-  xpub: string;
-  signingPublicKey: string;
-  encryptionPublicKey: string;
-  signingKeyPath: string;
-  encryptionKeyPath: string;
 }
 
 // Module state
@@ -128,6 +128,16 @@ function concatBytes(...chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function requireNonNegativeInteger(value: number, label: string): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
+  }
+}
+
 function splitCiphertextAndTag(ciphertextAndTag: Uint8Array): {
   ciphertext: Uint8Array;
   tag: Uint8Array;
@@ -139,16 +149,6 @@ function splitCiphertextAndTag(ciphertextAndTag: Uint8Array): {
     ciphertext: ciphertextAndTag.slice(0, ciphertextAndTag.length - 16),
     tag: ciphertextAndTag.slice(ciphertextAndTag.length - 16),
   };
-}
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function requireNonNegativeInteger(value: number, name: string): void {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new Error(`${name} must be a non-negative integer`);
-  }
 }
 
 /**
@@ -353,29 +353,27 @@ export function deriveIpnsHashFromXpub(xpub: string): string {
 }
 
 /**
- * Derive public signing/encryption child keys from an account xpub.
- *
- * The xpub is rooted at m/44'/0'/{account}'. Public child derivation then uses
- * BIP-44 change 0 for signing (external) and change 1 for encryption (internal).
+ * Derive the public signing and encryption identity keys advertised by an EPM
+ * from an account xpub. These are BIP-44 public child derivations:
+ * m/44'/0'/account'/0/index and m/44'/0'/account'/1/index.
  */
 export async function derivePublicIdentityKeysFromXpub(
   xpub: string,
   account: number = 0,
   index: number = 0,
 ): Promise<XpubDerivedPublicIdentityKeys> {
-  const trimmedXpub = xpub.trim();
+  const ready = await initHDWallet();
+  if (!ready) {
+    throw new Error('HD Wallet WASM module failed to initialize');
+  }
+  const module = getModule();
+  const trimmedXpub = String(xpub || '').trim();
   if (!trimmedXpub) {
     throw new Error('xpub is required');
   }
   requireNonNegativeInteger(account, 'account');
   requireNonNegativeInteger(index, 'index');
 
-  const ready = await initHDWallet();
-  if (!ready) {
-    throw new Error('HD Wallet WASM module failed to initialize');
-  }
-
-  const module = getModule();
   let accountKey: ReturnType<typeof module.hdkey.fromXpub> | null = null;
   let signingChangeKey: ReturnType<typeof module.hdkey.fromXpub> | null = null;
   let signingKey: ReturnType<typeof module.hdkey.fromXpub> | null = null;

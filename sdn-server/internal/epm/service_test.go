@@ -36,9 +36,9 @@ func TestGetNodeEPMJSONIncludesSecp256k1IdentitySigningKey(t *testing.T) {
 	}
 
 	info := service.GetNodeEPMJSON()
-	rawIdentityPubKey, err := identity.IdentityPubKey.Raw()
-	if err != nil {
-		t.Fatalf("IdentityPubKey.Raw failed: %v", err)
+	derived, ok := derivePublicIdentityKeysFromXPub("xpub6DEcA45Z68pwH3NrnV1Tee1pLNfJYruoQkKZJxmeRdBaQAtZg9Vf5LzHVZoBR5dGpmHxWzUXTGo8w1nRS13AvmhbRcBVzduCL3TGsCsj9Mm", identity.Account)
+	if !ok {
+		t.Fatal("derivePublicIdentityKeysFromXPub failed")
 	}
 
 	keys, ok := info["keys"].([]map[string]interface{})
@@ -48,11 +48,14 @@ func TestGetNodeEPMJSONIncludesSecp256k1IdentitySigningKey(t *testing.T) {
 
 	for _, key := range keys {
 		if key["key_type"] == "signing" && key["address_type"] == "secp256k1" {
-			if got, want := key["public_key"], hex.EncodeToString(rawIdentityPubKey); got != want {
+			if got, want := key["public_key"], derived.SigningPublicKey; got != want {
 				t.Fatalf("public_key = %v, want %q", got, want)
 			}
-			if got, want := key["key_address"], identity.IdentityKeyPath; got != want {
+			if got, want := key["key_address"], derived.SigningKeyPath; got != want {
 				t.Fatalf("key_address = %v, want %q", got, want)
+			}
+			if got, want := key["xpub"], derived.XPub; got != want {
+				t.Fatalf("xpub = %v, want %q", got, want)
 			}
 			return
 		}

@@ -395,6 +395,7 @@ test.describe('desktop static identity API', () => {
     const mismatch = await requestJson(serveDesktopNodeIdentityAPI, 'PUT', '/api/node/identity/wallet', {
       wallet_identity: {
         peer_id: '12D3KooWReplacement',
+        xpub: 'xpub-replacement',
         identity_public_key: '22'.repeat(33),
         signing_public_key: 'cc'.repeat(32),
         encryption_public_key: 'dd'.repeat(32),
@@ -449,7 +450,7 @@ test.describe('desktop static identity API', () => {
     expect(raw.body).not.toContain('must-not-be-written')
   })
 
-  test('derives wallet signing and encryption public keys from xpub for self EPM and vCard exports', async () => {
+  test('publishes xpub with documented wallet signing and encryption public keys in self EPM and vCard exports', async () => {
     const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'sdn-node-identity-xpub-'))
     const { serveDesktopIdentityAPI, serveDesktopNodeIdentityAPI, serveDesktopNodeEPMAPI } = loadStaticServer(userData)
     const xpub = HD_TEST_XPUB
@@ -478,11 +479,15 @@ test.describe('desktop static identity API', () => {
       expect.objectContaining({
         key_type: 'signing',
         public_key: signingPublicKey,
+        address_type: 'secp256k1',
+        xpub,
         derivation_path: "m/44'/0'/0'/0/0"
       }),
       expect.objectContaining({
         key_type: 'encryption',
         public_key: encryptionPublicKey,
+        address_type: 'secp256k1',
+        xpub,
         derivation_path: "m/44'/0'/0'/1/0"
       })
     ]))
@@ -497,6 +502,7 @@ test.describe('desktop static identity API', () => {
     const vcard = await requestRaw(serveDesktopIdentityAPI, 'GET', '/api/identity/epms/self/vcard')
     expect(vcard.statusCode).toBe(200)
     const unfoldedVcard = vcard.body.replace(/\r\n[ \t]/g, '')
+    expect(unfoldedVcard).toContain(`X-SDN-XPUB:${xpub}`)
     expect(unfoldedVcard).toContain(`X-SDN-SIGNING-PUBLIC-KEY:${signingPublicKey}`)
     expect(unfoldedVcard).toContain(`X-SDN-ENCRYPTION-PUBLIC-KEY:${encryptionPublicKey}`)
     expect(unfoldedVcard).toContain(`X-SDN-EPM-CID:${self.json.epmCid}`)
@@ -512,8 +518,12 @@ test.describe('desktop static identity API', () => {
     expect(epm.keysLength()).toBe(2)
     expect(epm.KEYS(0).KEY_TYPE()).toBe(KeyType.Signing)
     expect(epm.KEYS(0).PUBLIC_KEY()).toBe(signingPublicKey)
+    expect(epm.KEYS(0).XPUB()).toBe(xpub)
+    expect(epm.KEYS(0).ADDRESS_TYPE()).toBe('secp256k1')
     expect(epm.KEYS(1).KEY_TYPE()).toBe(KeyType.Encryption)
     expect(epm.KEYS(1).PUBLIC_KEY()).toBe(encryptionPublicKey)
+    expect(epm.KEYS(1).XPUB()).toBe(xpub)
+    expect(epm.KEYS(1).ADDRESS_TYPE()).toBe('secp256k1')
   })
 
   test('serves local node EPM through desktop raw data query routes', async () => {

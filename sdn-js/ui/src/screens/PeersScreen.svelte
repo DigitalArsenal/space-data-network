@@ -432,6 +432,7 @@
       { label: 'Phone', value: peerPhone(peer) },
       { label: 'PeerID', value: peer.id },
       { label: 'EPM CID', value: peerEpmCid(peer, epm) ?? '' },
+      { label: 'XPub', value: stringValue(epmJson.xpub) ?? '' },
       { label: 'Public key', value: publicKeyValue(epmJson) ?? '' },
       { label: 'Signing public key', value: identityPublicKeyValue(epmJson, 'signing') ?? '' },
       { label: 'Encryption public key', value: identityPublicKeyValue(epmJson, 'encryption') ?? '' },
