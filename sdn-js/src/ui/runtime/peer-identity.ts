@@ -79,6 +79,12 @@ export function peerPhone(peer: ObservedSdnPeer, hostedEpm?: HostedEpmRecord | n
   return pickString(peerEpmJson(peer, hostedEpm), PHONE_FIELDS) || '';
 }
 
+export function shortPeerId(peerId: string | null | undefined): string {
+  const value = stringValue(peerId) ?? '';
+  if (value.length <= 13) return value;
+  return `${value.slice(0, 5)}...${value.slice(-5)}`;
+}
+
 export function peerEpmCid(peer: ObservedSdnPeer, hostedEpm?: HostedEpmRecord | null): string | undefined {
   const metadata = metadataRecord(peer);
   return stringValue(hostedEpm?.epmCid)

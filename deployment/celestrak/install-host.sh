@@ -32,7 +32,9 @@ mkdir -p \
   /opt/spacedatanetwork/bin \
   /opt/spacedatanetwork/admin-ui \
   /opt/spacedatanetwork/webui \
+  /opt/spacedatanetwork/wasm \
   /etc/spacedatanetwork \
+  /etc/systemd/system/spacedatanetwork.service.d \
   /var/lib/spacedatanetwork/data \
   /var/lib/spacedatanetwork/raw \
   /var/lib/spacedatanetwork/frontend \
@@ -42,6 +44,18 @@ install -m 0644 "${ASSET_DIR}/config.yaml" /etc/spacedatanetwork/config.yaml
 install -m 0644 "${ASSET_DIR}/kubo.service" /etc/systemd/system/kubo.service
 install -m 0644 "${SOURCE_ROOT}/sdn-server/deploy/spacedatanetwork.service" /etc/systemd/system/spacedatanetwork.service
 install -m 0644 "${ASSET_DIR}/spacedatanetwork-ingest.service" /etc/systemd/system/spacedatanetwork-ingest.service
+
+if [ -f "${SOURCE_ROOT}/sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm" ]; then
+  install -m 0644 "${SOURCE_ROOT}/sdn-js/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm" /opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm
+elif [ -f "${SOURCE_ROOT}/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm" ]; then
+  install -m 0644 "${SOURCE_ROOT}/node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm" /opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm
+fi
+if [ -f /opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm ]; then
+  cat > /etc/systemd/system/spacedatanetwork.service.d/hd-wallet.conf <<'EOF'
+[Service]
+Environment=HD_WALLET_WASM_PATH=/opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm
+EOF
+fi
 
 if [ -d "${SOURCE_ROOT}/sdn-js/ui/dist" ]; then
   rsync -a --delete "${SOURCE_ROOT}/sdn-js/ui/dist/" /opt/spacedatanetwork/admin-ui/

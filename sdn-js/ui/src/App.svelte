@@ -42,6 +42,7 @@
   let nodeIdentityMismatch: NodeIdentityApplyResult | null = null;
   let nodeIdentityLoginPromptKey = 0;
   let logoutConfirmOpen = false;
+  let dataScreenPrimed = false;
 
   const screenTitles: Record<string, string> = {
     '/node': 'Node',
@@ -101,6 +102,7 @@
 
   $: primaryRoute = primaryRouteFromNormalized(currentRoute);
   $: screenTitle = screenTitles[primaryRoute] ?? 'Node';
+  $: if (backend || primaryRoute === '/data') dataScreenPrimed = true;
 
   function updateRouteFromLocation(): void {
     const rawRoute = window.location.hash || window.location.pathname;
@@ -202,14 +204,7 @@
 >
   {#if primaryRoute === '/peers'}
     <PeersScreen {backend} {peers} {hostedEpms} />
-  {:else if primaryRoute === '/data'}
-    <LocalDataScreen
-      {backend}
-      {peers}
-      {trustedPeers}
-      route={currentRoute}
-    />
-  {:else}
+  {:else if primaryRoute !== '/data'}
     <NodeScreen
       {backend}
       summary={nodeSummary}
@@ -226,6 +221,16 @@
       onHostedEpmsReload={loadHostedEpms}
       onNodeIdentitySettingsSave={saveNodeIdentitySettings}
     />
+  {/if}
+  {#if dataScreenPrimed}
+    <div hidden={primaryRoute !== '/data'} aria-hidden={primaryRoute !== '/data'}>
+      <LocalDataScreen
+        {backend}
+        {peers}
+        {trustedPeers}
+        route={currentRoute}
+      />
+    </div>
   {/if}
 </AppShell>
 

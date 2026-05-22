@@ -416,6 +416,17 @@ func (r *Runner) reconcileCelestrakSourceBatchDuplicates(schemaName, sourceName,
 	return nil
 }
 
+func (r *Runner) reconcileCelestrakCurrentSourceBatch(schemaName, sourceName, batchID string) error {
+	batchResult, err := r.store.ReconcileSourceBatch(schemaName, celestrakProviderID, sourceName, batchID, true)
+	if err != nil {
+		return err
+	}
+	if batchResult.Matched > 0 || batchResult.Deleted > 0 {
+		log.Infof("Reconciled old CelesTrak source batches: schema=%s source=%s keep_batch=%s matched=%d deleted=%d", schemaName, sourceName, batchID, batchResult.Matched, batchResult.Deleted)
+	}
+	return r.reconcileCelestrakSourceBatchDuplicates(schemaName, sourceName, batchID)
+}
+
 func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
 	if err := r.requireFreeDisk("CelesTrak SATCAT sync"); err != nil {
 		return err
@@ -430,6 +441,10 @@ func (r *Runner) syncCelestrakSatcat(ctx context.Context) error {
 	}
 
 	for _, tags := range []storage.SourceTags{legacyTags, csvTags} {
+		if err := r.reconcileCelestrakCurrentSourceBatch("CAT.fbs", tags.SourceName, tags.BatchID); err != nil {
+			r.recordIngestFailureForReview("celestrak-satcat-reconcile", err)
+			return fmt.Errorf("reconcile celestrak CAT source batch: %w", err)
+		}
 		if err := r.requestDatasetPublication(ctx, datasetPublicationRequest{
 			Schema:            "CAT.fbs",
 			ProviderID:        celestrakProviderID,

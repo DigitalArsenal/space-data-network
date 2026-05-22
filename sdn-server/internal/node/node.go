@@ -872,6 +872,7 @@ func (n *Node) findHDWalletWasmPath() string {
 		"node_modules/hd-wallet-wasm/dist/hd-wallet-wasi.wasm",
 		"../../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
 		"../hd-wallet-wasm/build-wasi/wasm/hd-wallet-wasi.wasm",
+		"/opt/spacedatanetwork/wasm/hd-wallet-wasi.wasm",
 		"/usr/local/lib/hd-wallet-wasi.wasm",
 	}
 	for _, p := range paths {

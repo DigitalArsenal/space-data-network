@@ -737,6 +737,37 @@ func TestSyncCelestrakSatcatPublishesCurrentBatchDeltas(t *testing.T) {
 		}
 	}()
 
+	oldLegacyTags := storage.SourceTags{
+		ProviderID: celestrakProviderID,
+		SourceName: "celestrak-satcat",
+		SourceURL:  sourceServer.URL + "/satcat.txt",
+		BatchID:    "old-legacy-batch",
+	}
+	oldLegacyCID, err := runner.store.StoreWithSourceTags("CAT.fbs", sds.NewCATBuilder().
+		WithNoradCatID(25544).
+		WithObjectName("OLD LEGACY CAT").
+		WithObjectType("PAYLOAD").
+		WithOpsStatus("OPERATIONAL").
+		Build(), "source:celestrak", nil, oldLegacyTags)
+	if err != nil {
+		t.Fatalf("store old legacy CAT failed: %v", err)
+	}
+	oldCSVTags := storage.SourceTags{
+		ProviderID: celestrakProviderID,
+		SourceName: "celestrak-satcat-csv",
+		SourceURL:  sourceServer.URL + "/satcat.csv",
+		BatchID:    "old-csv-batch",
+	}
+	oldCSVCID, err := runner.store.StoreWithSourceTags("CAT.fbs", sds.NewCATBuilder().
+		WithNoradCatID(40909).
+		WithObjectName("OLD CSV CAT").
+		WithObjectType("PAYLOAD").
+		WithOpsStatus("OPERATIONAL").
+		Build(), "source:celestrak", nil, oldCSVTags)
+	if err != nil {
+		t.Fatalf("store old CSV CAT failed: %v", err)
+	}
+
 	if err := runner.syncCelestrakSatcat(context.Background()); err != nil {
 		t.Fatalf("syncCelestrakSatcat failed: %v", err)
 	}
@@ -772,6 +803,11 @@ func TestSyncCelestrakSatcatPublishesCurrentBatchDeltas(t *testing.T) {
 	}
 	if !seen["celestrak-satcat"] || !seen["celestrak-satcat-csv"] {
 		t.Fatalf("publication sources = %#v, want both SATCAT feeds", seen)
+	}
+	for _, cid := range []string{oldLegacyCID, oldCSVCID} {
+		if _, err := runner.store.Get("CAT.fbs", cid); err == nil {
+			t.Fatalf("old CAT source batch record %s should be removed before publication", cid)
+		}
 	}
 }
 

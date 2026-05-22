@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   canonicalizeDataDirectorySourceIds,
+  DEFAULT_DATA_FEED_RETENTION_POLICY,
   DATA_SOURCE_OWNERTRUST,
   DEFAULT_OWNERTRUST,
   isTrustedDirectoryOwnertrust,
@@ -10,6 +11,7 @@ import {
   ownertrustForDataSourceSubscription,
   subscriptionKey,
   upsertDataFeedSubscription,
+  updateDataFeedSubscription,
   updatePeerOwnertrust,
   type DataDirectoryState,
 } from './data-directory';
@@ -74,6 +76,61 @@ describe('PGP data directory ownertrust', () => {
     expect(next.subscriptions[0]).toMatchObject({
       queryProfile: 'dataset-publication-offset-v1',
     });
+  });
+
+  it('defaults CAT feeds to replace snapshots while other feeds append history', () => {
+    const cat = upsertDataFeedSubscription({ peerTrust: {}, subscriptions: [] }, {
+      dataSourceId: 'configured:celestrak.eth',
+      peerId: '16Uiu2HAmCelestrak',
+      datastoreKey: 'sdn-ds-v1-cat',
+      standardId: 'CAT',
+      providerName: 'CelesTrak SATCAT',
+      providerPublicKey: 'ed25519:abc',
+      remoteRows: 145902,
+      storageCap: 1,
+      storageUnit: 'GB',
+      syncFilter: '',
+    });
+    const omm = upsertDataFeedSubscription({ peerTrust: {}, subscriptions: [] }, {
+      dataSourceId: 'configured:celestrak.eth',
+      peerId: '16Uiu2HAmCelestrak',
+      datastoreKey: 'sdn-ds-v1-omm',
+      standardId: 'OMM',
+      providerName: 'CelesTrak OMM',
+      providerPublicKey: 'ed25519:abc',
+      remoteRows: 2000000,
+      storageCap: 1,
+      storageUnit: 'GB',
+      syncFilter: '',
+    });
+
+    expect(DEFAULT_DATA_FEED_RETENTION_POLICY).toBe('append-only');
+    expect(cat.subscriptions[0]).toMatchObject({ retentionPolicy: 'replace-snapshot' });
+    expect(omm.subscriptions[0]).toMatchObject({ retentionPolicy: 'append-only' });
+  });
+
+  it('stores and updates explicit feed retention policy', () => {
+    const initial = upsertDataFeedSubscription({ peerTrust: {}, subscriptions: [] }, {
+      dataSourceId: 'configured:celestrak.eth',
+      peerId: '16Uiu2HAmCelestrak',
+      datastoreKey: 'sdn-ds-v1-cat',
+      standardId: 'CAT',
+      providerName: 'CelesTrak SATCAT',
+      providerPublicKey: 'ed25519:abc',
+      remoteRows: 145902,
+      storageCap: 1,
+      storageUnit: 'GB',
+      syncFilter: '',
+      retentionPolicy: 'append-only',
+    });
+
+    expect(initial.subscriptions[0]).toMatchObject({ retentionPolicy: 'append-only' });
+
+    const updated = updateDataFeedSubscription(initial, initial.subscriptions[0].id, {
+      retentionPolicy: 'replace-snapshot',
+    });
+
+    expect(updated.subscriptions[0]).toMatchObject({ retentionPolicy: 'replace-snapshot' });
   });
 
   it('preserves the SDN datastore namespace key on feed subscriptions', () => {

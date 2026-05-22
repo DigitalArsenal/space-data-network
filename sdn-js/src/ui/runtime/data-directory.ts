@@ -1,5 +1,6 @@
 export type PgpOwnertrust = 'unknown' | 'never' | 'marginal' | 'full' | 'ultimate';
 export type StorageUnit = 'MB' | 'GB' | 'TB';
+export type DataFeedRetentionPolicy = 'append-only' | 'replace-snapshot';
 
 export interface DataFeedSubscription {
   id: string;
@@ -16,6 +17,7 @@ export interface DataFeedSubscription {
   storageUnit: StorageUnit;
   syncFilter: string;
   queryProfile: string;
+  retentionPolicy: DataFeedRetentionPolicy;
   createdAt: string;
   updatedAt: string;
 }
@@ -34,6 +36,7 @@ export interface DataFeedSubscriptionInput {
   storageUnit: StorageUnit;
   syncFilter: string;
   queryProfile?: string | null;
+  retentionPolicy?: string | null;
 }
 
 export interface DataDirectoryState {
@@ -70,6 +73,8 @@ export const PGP_OWNERTRUST_LEVELS: PgpOwnertrust[] = ['unknown', 'never', 'marg
 export const DEFAULT_OWNERTRUST: PgpOwnertrust = 'unknown';
 export const DATA_SOURCE_OWNERTRUST: PgpOwnertrust = 'marginal';
 export const DEFAULT_DATA_FEED_QUERY_PROFILE = 'dataset-publication-offset-v1';
+export const DEFAULT_DATA_FEED_RETENTION_POLICY: DataFeedRetentionPolicy = 'append-only';
+export const DATA_FEED_RETENTION_POLICIES: DataFeedRetentionPolicy[] = ['append-only', 'replace-snapshot'];
 
 const TRUSTED_DIRECTORY_LEVELS = new Set<PgpOwnertrust>(['marginal', 'full', 'ultimate']);
 const DATA_FEED_QUERY_PROFILES = new Set(['ordered-offset-v1', 'dataset-publication-offset-v1']);
@@ -138,6 +143,7 @@ export function upsertDataFeedSubscription(
     storageUnit: normalizeStorageUnit(input.storageUnit),
     syncFilter: input.syncFilter.trim(),
     queryProfile: normalizeQueryProfile(input.queryProfile),
+    retentionPolicy: normalizeRetentionPolicy(input.retentionPolicy, input.standardId),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
@@ -158,7 +164,7 @@ export function upsertDataFeedSubscription(
 export function updateDataFeedSubscription(
   state: DataDirectoryState,
   subscriptionId: string,
-  patch: Partial<Pick<DataFeedSubscription, 'providerId' | 'sourceName' | 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter' | 'queryProfile'>>,
+  patch: Partial<Pick<DataFeedSubscription, 'providerId' | 'sourceName' | 'remoteRows' | 'storageCap' | 'storageUnit' | 'syncFilter' | 'queryProfile' | 'retentionPolicy'>>,
 ): DataDirectoryState {
   const currentState = normalizeDataDirectoryState(state);
   const subscriptions = currentState.subscriptions.map((subscription) => {
@@ -314,6 +320,7 @@ function normalizeDataFeedSubscription(value: unknown): DataFeedSubscription | n
     storageUnit: normalizeStorageUnit(candidate.storageUnit),
     syncFilter: stringValue(candidate.syncFilter) ?? '',
     queryProfile: normalizeQueryProfile(candidate.queryProfile),
+    retentionPolicy: normalizeRetentionPolicy(candidate.retentionPolicy, standardId),
     createdAt: stringValue(candidate.createdAt) ?? now,
     updatedAt: stringValue(candidate.updatedAt) ?? now,
   };
@@ -340,6 +347,7 @@ function mergeDataFeedSubscriptions(left: DataFeedSubscription, right: DataFeedS
     storageUnit: right.storageUnit || left.storageUnit,
     syncFilter: right.syncFilter || left.syncFilter,
     queryProfile: right.queryProfile || left.queryProfile,
+    retentionPolicy: right.retentionPolicy || left.retentionPolicy,
     createdAt: left.createdAt < right.createdAt ? left.createdAt : right.createdAt,
     updatedAt: left.updatedAt > right.updatedAt ? left.updatedAt : right.updatedAt,
   };
@@ -391,6 +399,21 @@ function normalizeSubscriptionSourceName(standardId: string, value: unknown): st
 function normalizeQueryProfile(value: unknown): string {
   const candidate = stringValue(value);
   return candidate && DATA_FEED_QUERY_PROFILES.has(candidate) ? candidate : DEFAULT_DATA_FEED_QUERY_PROFILE;
+}
+
+export function defaultDataFeedRetentionPolicy(standardId: unknown): DataFeedRetentionPolicy {
+  return normalizeStandardId(standardId) === 'CAT' ? 'replace-snapshot' : DEFAULT_DATA_FEED_RETENTION_POLICY;
+}
+
+export function normalizeDataFeedRetentionPolicy(value: unknown, standardId: unknown): DataFeedRetentionPolicy {
+  return normalizeRetentionPolicy(value, standardId);
+}
+
+function normalizeRetentionPolicy(value: unknown, standardId: unknown): DataFeedRetentionPolicy {
+  const candidate = stringValue(value);
+  return candidate && DATA_FEED_RETENTION_POLICIES.includes(candidate as DataFeedRetentionPolicy)
+    ? candidate as DataFeedRetentionPolicy
+    : defaultDataFeedRetentionPolicy(standardId);
 }
 
 function stringValue(value: unknown): string | null {

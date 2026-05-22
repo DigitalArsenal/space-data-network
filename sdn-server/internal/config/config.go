@@ -337,12 +337,12 @@ func Default() *Config {
 		},
 		Security: SecurityConfig{},
 		Tor: TorConfig{
-			Enabled:              true,
+			Enabled:              false,
 			BinaryPath:           "tor",
 			DataDir:              "",
 			SocksAddress:         "127.0.0.1:9050",
 			StartTimeout:         "30s",
-			HiddenServiceEnabled: true,
+			HiddenServiceEnabled: false,
 			HiddenServicePort:    0, // auto: 80 (HTTP) or 443 (HTTPS)
 			HiddenServiceTarget:  "",
 			BypassLocalAddresses: true,

@@ -917,7 +917,7 @@ textarea,
 }
 
 .sdn-overview-storage-panel .sdn-storage-access-visual {
-  grid-template-columns: minmax(0, 1fr) minmax(10.75rem, 12rem) minmax(0, 1fr);
+  grid-template-columns: minmax(10.75rem, 12rem) minmax(0, 1fr);
   min-height: 12rem;
 }
 
@@ -935,14 +935,14 @@ textarea,
 }
 
 .sdn-overview-storage-panel .sdn-storage-donut {
-  grid-column: 2;
-  justify-self: center;
+  grid-column: 1;
+  justify-self: start;
   width: min(12rem, 100%);
 }
 
 .sdn-overview-storage-panel .sdn-storage-legend {
-  grid-column: 3;
-  justify-self: end;
+  grid-column: 2;
+  justify-self: stretch;
 }
 
 .sdn-storage-donut strong,
@@ -2381,10 +2381,18 @@ textarea,
   background: rgba(10, 132, 255, 0.1);
 }
 
+.sdn-identity-row-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.22rem;
+  align-content: center;
+}
+
 .sdn-identity-row strong,
 .sdn-identity-row span,
 .sdn-identity-row small {
   display: block;
+  line-height: 1.25;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -629,11 +629,16 @@ test.describe('desktop static identity API', () => {
     expect(celestrak).toEqual(expect.objectContaining({
       name: 'CelesTrak Provider',
       addrs: [
-        '/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4'
+        '/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3'
       ],
       metadata: expect.objectContaining({
-        peer_id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+        peer_id: '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
         provider_id: 'space-data-network-02',
+        xpub: 'xpub6D36ciSsN66eJutmvXs1VXmtqnWkcMqZEbMh4FP6bpANfJpfP6oY48P7XnCWdd4NwfpHir8bU7eo3KcC45jsuN6LXwA5SYmL6sNeQwYPJjY',
+        signing_public_key: '02342309cef261ec3535b5a3e7596d5a838366697bc554e68965723584184fd57c',
+        signing_key_path: "m/44'/0'/0'/0/0",
+        encryption_public_key: '0353b985339195a698c276925e379ba216c90dff1a9b98ec691bc466ea7176f1af',
+        encryption_key_path: "m/44'/0'/0'/1/0",
         sync_protocol: '/space-data-network/flatsql-sync/1.0.0'
       })
     }))
@@ -676,10 +681,10 @@ test.describe('desktop static identity API', () => {
           }
         },
         {
-          Peer: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+          Peer: '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
           Addr: '/ip4/167.172.219.213/tcp/4001',
           Identify: {
-            ID: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+            ID: '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
             AgentVersion: 'spacedatanetwork/1.0.3',
             Protocols: ['/space-data-network/module-delivery/1.0.0']
           }
@@ -692,14 +697,24 @@ test.describe('desktop static identity API', () => {
         id: '16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45',
         name: 'SpaceAware.io',
         metadata: expect.objectContaining({
-          public_key: '0257d9a39fac79d4c36e017b3b6913f60684586605ebb9370cf417ef44bf0f7cd2'
+          xpub: 'xpub6DKCyLbCHZLFR4XpFg26royZdkxExSMHTjNorEgkn1kgvQbLF5sts9RfNt3PbGhphVUh7WsFQ5H6GJBh4LhmRL27oSPt1qDkJ5mAr6FZ3Wa',
+          public_key: '038664c404be42123ce709e53da2b63fc24c091a968dd2200c443d7470f73fb1e6',
+          signing_public_key: '038664c404be42123ce709e53da2b63fc24c091a968dd2200c443d7470f73fb1e6',
+          signing_key_path: "m/44'/0'/0'/0/0",
+          encryption_public_key: '0213dc855b71c36b4a7e47b034e5f0bcce8b5fdbdae95a04b3441bc8ac2db3cb41',
+          encryption_key_path: "m/44'/0'/0'/1/0"
         })
       }),
       expect.objectContaining({
-        id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+        id: '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
         name: 'CelesTrak Provider',
         metadata: expect.objectContaining({
-          public_key: '90aa23ea4ff2d68cf8cb8155135fe5a25b580ec805e835aabb0e8905ffb2c3b2'
+          xpub: 'xpub6D36ciSsN66eJutmvXs1VXmtqnWkcMqZEbMh4FP6bpANfJpfP6oY48P7XnCWdd4NwfpHir8bU7eo3KcC45jsuN6LXwA5SYmL6sNeQwYPJjY',
+          public_key: '02342309cef261ec3535b5a3e7596d5a838366697bc554e68965723584184fd57c',
+          signing_public_key: '02342309cef261ec3535b5a3e7596d5a838366697bc554e68965723584184fd57c',
+          signing_key_path: "m/44'/0'/0'/0/0",
+          encryption_public_key: '0353b985339195a698c276925e379ba216c90dff1a9b98ec691bc466ea7176f1af',
+          encryption_key_path: "m/44'/0'/0'/1/0"
         })
       })
     ]))

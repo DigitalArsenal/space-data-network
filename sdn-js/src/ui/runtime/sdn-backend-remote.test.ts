@@ -19,9 +19,9 @@ describe('remote-sdn backend', () => {
         return jsonResponse({
           peers: [
             {
-              peer_id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4',
+              peer_id: '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3',
               display_name: 'CelesTrak Provider',
-              multiaddrs: ['/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4'],
+              multiaddrs: ['/ip4/167.172.219.213/tcp/4001/p2p/16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3'],
               trust: 'trusted',
               agent_version: 'spacedatanetwork/1.0.3',
             },
@@ -47,7 +47,7 @@ describe('remote-sdn backend', () => {
     });
     await expect(backend.listObservedPeers()).resolves.toMatchObject({
       ok: true,
-      data: [{ id: '16Uiu2HAmV963F8WEK6V1jTMNWrjFBkrKodB53RqsDA3qTsFcz3y4', name: 'CelesTrak Provider' }],
+      data: [{ id: '16Uiu2HAm9oK2jAeVC2RMESFcYfq7BKGp2K2CCDxzoKhB5s9vpbj3', name: 'CelesTrak Provider' }],
     });
   });
 

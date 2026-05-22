@@ -234,6 +234,7 @@ export default defineConfig({
       : {}),
   },
   optimizeDeps: {
+    exclude: ['flatsql', 'flatsql/wasm'],
     esbuildOptions: {
       loader: {
         '.js': 'jsx',

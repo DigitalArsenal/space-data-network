@@ -6,6 +6,7 @@
     epmJsonFromVCard as parseVCardEpmJson,
     identityPublicKeyValue,
   } from '../../../src/ui/runtime/identity-vcard';
+  import { shortPeerId } from '../../../src/ui/runtime/peer-identity';
 
   type HostedEpmKind = 'node-self' | 'hosted';
   type CapabilityState = 'available' | 'degraded' | 'unavailable' | 'permission-required' | 'remote-only' | 'local-only';
@@ -980,11 +981,11 @@
       <div class="sdn-identity-list">
         {#each hostedEpms as record}
           <section class="sdn-identity-row" class:active={record.id === profileRecord.id}>
-            <div>
+            <div class="sdn-identity-row-copy">
               <strong>{record.label || record.id}</strong>
-              <span>{record.peerId || 'no peer id'}</span>
+              <span title={record.peerId || 'no peer id'} aria-label={record.peerId || 'no peer id'}>{shortPeerId(record.peerId || 'no peer id')}</span>
               {#if record.epmCid}
-                <small>{record.epmCid}</small>
+                <small title={record.epmCid} aria-label={record.epmCid}>{shortPeerId(record.epmCid)}</small>
               {/if}
             </div>
             <div class="sdn-actions-nowrap">

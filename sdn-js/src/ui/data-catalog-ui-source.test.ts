@@ -49,9 +49,10 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).not.toContain('sdn-access-coverage-grid');
     expect(localDataScreenSource).not.toContain('selectOverviewCoverageCell');
     expect(appCssSource).toMatch(/\.sdn-overview-panel\s*{[^}]*min-height:\s*16\.25rem/s);
-    expect(appCssSource).toMatch(/\.sdn-overview-storage-panel \.sdn-storage-access-visual\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(10\.75rem,\s*12rem\)\s+minmax\(0,\s*1fr\)/s);
-    expect(appCssSource).toMatch(/\.sdn-overview-storage-panel \.sdn-storage-donut\s*{[^}]*grid-column:\s*2/s);
-    expect(appCssSource).toMatch(/\.sdn-overview-storage-panel \.sdn-storage-legend\s*{[^}]*grid-column:\s*3/s);
+    expect(appCssSource).toMatch(/\.sdn-overview-storage-panel \.sdn-storage-access-visual\s*{[^}]*grid-template-columns:\s*minmax\(10\.75rem,\s*12rem\)\s+minmax\(0,\s*1fr\)/s);
+    expect(appCssSource).toMatch(/\.sdn-overview-storage-panel \.sdn-storage-donut\s*{[^}]*grid-column:\s*1/s);
+    expect(appCssSource).toMatch(/\.sdn-overview-storage-panel \.sdn-storage-donut\s*{[^}]*justify-self:\s*start/s);
+    expect(appCssSource).toMatch(/\.sdn-overview-storage-panel \.sdn-storage-legend\s*{[^}]*grid-column:\s*2/s);
   });
 
   it('renders catalog filters for query, access, sync, and storage state', () => {
@@ -79,6 +80,14 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('desktopPersistenceBaseUrl: localFlatSqlDesktopPersistenceBaseUrl()');
   });
 
+  it('prunes unsubscribed replace-snapshot local stores so stale SATCAT caches cannot linger', () => {
+    expect(localDataScreenSource).toContain('const REPLACE_SNAPSHOT_STANDARD_IDS = LOCAL_FLATSQL_SCHEMAS');
+    expect(localDataScreenSource).toContain("defaultDataFeedRetentionPolicy(schema.standardId) === 'replace-snapshot'");
+    expect(localDataScreenSource).toContain('await pruneUnsubscribedReplaceSnapshotStores(migrationSources, dataDirectoryState.subscriptions);');
+    expect(localDataScreenSource).toContain('function snapshotStoreKey(dataSourceId: string, datastoreKey: string | null, standardId: string): string');
+    expect(localDataScreenSource).toContain('clearSchemaSyncProgressForSubscription(dataSourceId, standardId, null);');
+  });
+
   it('does not render expandable action sub-rows in the overview data products table', () => {
     const overviewSection = sourceBetween(localDataScreenSource, 'aria-label="Data overview"', "{#if selectedDataSection === 'catalog'}");
     const overviewProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Data products"', "{#if selectedDataSection === 'catalog'}");
@@ -98,7 +107,15 @@ describe('Data catalog UI source', () => {
 
   it('renders cached overview row counts before remote summaries and local stats finish loading', () => {
     expect(localDataScreenSource).toContain('let localFlatSqlStatsLoaded = false;');
+    expect(localDataScreenSource).toContain("const DATA_PAGE_VIEW_CACHE_STORAGE_KEY = 'sdn:data-page-view-cache:v1';");
+    expect(localDataScreenSource).toContain('let cachedDataPageView: CachedDataPageView | null = loadCachedDataPageView();');
+    expect(localDataScreenSource).toContain('dataPageCacheActive');
+    expect(localDataScreenSource).toContain('loadCachedDataPageView');
+    expect(localDataScreenSource).toContain('persistCachedDataPageView');
+    expect(localDataScreenSource).toContain('rememberDataPageViewCache');
     expect(localDataScreenSource).toContain('localFlatSqlStatsLoaded,');
+    expect(localDataScreenSource).toContain('schemaSyncRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.schemaSyncRows : liveSchemaSyncRows;');
+    expect(localDataScreenSource).toContain('dataCatalogRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.dataCatalogRows : buildCatalogRows(schemaSyncRows);');
     expect(localDataScreenSource).toContain('const sourceStatsAreAuthoritative = sourceStatsSelected && localStatsLoaded;');
     expect(localDataScreenSource).toContain('localFlatSqlStatsLoaded = true;');
     expect(localDataScreenSource).not.toContain('$: storageMetricsLoading = dataPageLoading || activeStorageRows.some(isSchemaRemoteRowsLoading);');
@@ -220,9 +237,9 @@ describe('Data catalog UI source', () => {
     const billingSection = sourceBetween(localDataScreenSource, 'aria-label="Billing"', "{#if selectedDataSection === 'activity'}");
 
     expect(localDataScreenSource).toContain('catalogRowHasBillingData');
-    expect(localDataScreenSource).toContain('$: billingDataRows = dataCatalogRows.filter(catalogRowHasBillingData);');
+    expect(localDataScreenSource).toContain('$: billingDataRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingDataRows : dataCatalogRows.filter(catalogRowHasBillingData);');
     expect(localDataScreenSource).toContain('buildDataBillingProviderRows');
-    expect(localDataScreenSource).toContain('$: billingProviderRows = buildDataBillingProviderRows(dataCatalogRows);');
+    expect(localDataScreenSource).toContain('$: billingProviderRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingProviderRows : buildDataBillingProviderRows(dataCatalogRows);');
     expect(overviewSection).toContain('dataCatalogSummary.billingMetricTitle');
     expect(overviewSection).toContain('dataCatalogSummary.billingMetricValue');
     expect(overviewSection).not.toContain('<span>Monthly spend</span>');
@@ -244,7 +261,7 @@ describe('Data catalog UI source', () => {
   it('renders message types as sorted schema health rows with direct manage and explorer actions', () => {
     const messageTypesTable = sourceBetween(localDataScreenSource, 'aria-label="Message types"', "{#if selectedDataSection === 'billing'}");
 
-    expect(localDataScreenSource).toContain('$: messageTypeRows = sortedMessageTypeRows(schemaSyncRows);');
+    expect(localDataScreenSource).toContain('$: messageTypeRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.messageTypeRows : sortedMessageTypeRows(schemaSyncRows);');
     expect(localDataScreenSource).toContain('function sortedMessageTypeRows(rows: SchemaSyncRow[]): SchemaSyncRow[]');
     expect(localDataScreenSource).toContain('rightRows - leftRows');
     expect(localDataScreenSource).toContain('function manageSchemaSubscription(schema: SchemaSyncRow): void');
@@ -266,7 +283,7 @@ describe('Data catalog UI source', () => {
   it('keeps data sources as read-only subscribed/configured provenance rows', () => {
     const sourcesSection = sourceBetween(localDataScreenSource, 'aria-label="Data sources"', "{#if selectedDataSection === 'message-types'}");
 
-    expect(localDataScreenSource).toContain('$: sourceProvenanceRows = buildSourceProvenanceRows(dataSourceOptions, schemaSyncRows, dataDirectoryState.peerTrust);');
+    expect(localDataScreenSource).toContain('$: sourceProvenanceRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.sourceProvenanceRows : buildSourceProvenanceRows(dataSourceOptions, schemaSyncRows, dataDirectoryState.peerTrust);');
     expect(localDataScreenSource).toContain('interface SourceProvenanceRow');
     expect(localDataScreenSource).toContain('function buildSourceProvenanceRows(');
     expect(sourcesSection).toContain('{#each sourceProvenanceRows as source (source.id)}');
@@ -359,7 +376,7 @@ describe('Data catalog UI source', () => {
     const activitySection = sourceBetween(localDataScreenSource, 'aria-label="Data activity"', "{#if selectedDataSection === 'storage'}");
 
     expect(localDataScreenSource).toContain('interface DataActivityRow');
-    expect(localDataScreenSource).toContain('$: activityRows = buildDataActivityRows(schemaSyncRows, dataCatalogRows);');
+    expect(localDataScreenSource).toContain('$: activityRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.activityRows : buildDataActivityRows(schemaSyncRows, dataCatalogRows);');
     expect(localDataScreenSource).toContain('function buildDataActivityRows(');
     expect(localDataScreenSource).toContain('activitySortTime');
     expect(localDataScreenSource).toContain("eventType: 'Sync error'");
@@ -401,5 +418,17 @@ describe('Data catalog UI source', () => {
 
     expect(syncFunction).toContain('subscriptionSchemaSyncPreference(subscription');
     expect(syncFunction).not.toContain('const preference = schemaSyncPreferenceFor(dataSourceId, standardId, datastoreKey);');
+  });
+
+  it('lets each subscription choose append-only or replace-snapshot retention', () => {
+    const syncFunction = sourceBetween(localDataScreenSource, 'async function synchronizeSchema', 'function applyWorkerSchemaSyncUpdate');
+
+    expect(localDataScreenSource).toContain('DATA_RETENTION_POLICIES');
+    expect(localDataScreenSource).toContain('handleSubscriptionRetentionPolicyChange');
+    expect(localDataScreenSource).toContain('aria-label={`${schema.id} retention policy`}');
+    expect(localDataScreenSource).toContain('value={schema.retentionPolicy}');
+    expect(syncFunction).toContain('const retentionPolicy = subscriptionRetentionPolicyFor(subscription, standardId);');
+    expect(syncFunction).toContain('retentionPolicyRequiresReset(initialProgress, retentionPolicy)');
+    expect(syncFunction).toContain('clearLocalFlatSqlStore({');
   });
 });
