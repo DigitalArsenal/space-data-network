@@ -33,7 +33,9 @@
   } from '../../../src/ui/runtime/peer-identity';
   import {
     createVCardQrPayload as createVCardQrPayloadLocal,
-    identityPublicKeyValue,
+    identityPublicKeyDetails,
+    identityXpubValue,
+    type IdentityPublicKeyDetails,
   } from '../../../src/ui/runtime/identity-vcard';
   import type { HostedEpmRecord } from '../../../src/ui/runtime/identity';
   import type { ObservedSdnPeer, SdnBackend } from '../../../src/ui/runtime/sdn-backend';
@@ -87,6 +89,7 @@
   const PUBLIC_DIRECTORY_BASE_URL = 'https://sdn.spaceaware.io';
   const DEFAULT_SUBSCRIPTION_STORAGE_CAP = 1;
   const DEFAULT_SUBSCRIPTION_STORAGE_UNIT = 'GB';
+  const NOT_PUBLISHED = 'Not published';
 
   let peerView: PeerView = 'home';
   let query = '';
@@ -426,16 +429,17 @@
   function peerEpmSummary(peer: ObservedSdnPeer): Array<{ label: string; value: string }> {
     const epm = getPeerEpm(peer);
     const epmJson = peerEpmJson(peer, epm);
+    const signingKey = identityPublicKeyDetails(epmJson, 'signing');
+    const encryptionKey = identityPublicKeyDetails(epmJson, 'encryption');
     return [
       { label: 'Display name', value: displayNameForPeer(peer) },
       { label: 'Email', value: peerEmail(peer) },
       { label: 'Phone', value: peerPhone(peer) },
       { label: 'PeerID', value: peer.id },
       { label: 'EPM CID', value: peerEpmCid(peer, epm) ?? '' },
-      { label: 'XPub', value: stringValue(epmJson.xpub) ?? '' },
-      { label: 'Public key', value: publicKeyValue(epmJson) ?? '' },
-      { label: 'Signing public key', value: identityPublicKeyValue(epmJson, 'signing') ?? '' },
-      { label: 'Encryption public key', value: identityPublicKeyValue(epmJson, 'encryption') ?? '' },
+      { label: 'XPub', value: publishedValue(identityXpubValue(epmJson)) },
+      { label: 'Signing public key', value: keyDisplayValue(signingKey) },
+      { label: 'Encryption public key', value: keyDisplayValue(encryptionKey) },
     ];
   }
 
@@ -511,8 +515,13 @@
     return peerHostedEpmRecord(peer, getPeerEpm(peer));
   }
 
-  function publicKeyValue(epm: Record<string, unknown>): string | undefined {
-    return identityPublicKeyValue(epm);
+  function publishedValue(value: string | undefined): string {
+    return value ?? NOT_PUBLISHED;
+  }
+
+  function keyDisplayValue(details: IdentityPublicKeyDetails | undefined): string {
+    if (!details) return NOT_PUBLISHED;
+    return details.derivationPath ? `${details.publicKey} (${details.derivationPath})` : details.publicKey;
   }
 
   function peerEpmRecordsDerivationKey(records: HostedEpmRecord[]): string {
@@ -521,14 +530,18 @@
 
   function peerEpmIdentityVersion(record: HostedEpmRecord): string {
     const epm = record.epmJson;
+    const signingKey = identityPublicKeyDetails(epm, 'signing');
+    const encryptionKey = identityPublicKeyDetails(epm, 'encryption');
     return [
       record.id,
       record.peerId,
       record.epmCid ?? '',
       record.updatedAt ?? '',
-      stringValue(epm.xpub),
-      identityPublicKeyValue(epm, 'signing') ?? '',
-      identityPublicKeyValue(epm, 'encryption') ?? '',
+      identityXpubValue(epm),
+      signingKey?.publicKey ?? '',
+      signingKey?.derivationPath ?? '',
+      encryptionKey?.publicKey ?? '',
+      encryptionKey?.derivationPath ?? '',
       stableJson(epm),
     ].join(':');
   }
