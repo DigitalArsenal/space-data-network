@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { decodeEpmFlatBuffer } from '../../../src/ui/runtime/epm-flatbuffer';
+  import {
+    createVCardQrPayload as createVCardQrPayloadLocal,
+    epmJsonFromVCard as parseVCardEpmJson,
+    identityPublicKeyValue,
+  } from '../../../src/ui/runtime/identity-vcard';
 
   type HostedEpmKind = 'node-self' | 'hosted';
   type DirectoryKind = 'node' | 'person';
@@ -435,55 +440,8 @@
     };
   }
 
-  function createVCardQrPayloadLocal(record: Record<string, unknown> | HostedEpmRecord): string {
-    const normalized = isHostedEpmRecord(record) ? record : toHostedRecord(record);
-    const epm = createPublicEpmExport(normalized.epmJson);
-    const lines = ['BEGIN:VCARD', 'VERSION:3.0'];
-    addVCardLine(lines, 'FN', stringValue(epm.dn) ?? stringValue(epm.DN) ?? normalized.label);
-    addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', normalized.kind === 'node-self' ? 'node' : 'user');
-    addVCardLine(lines, 'X-SDN-PEER-ID', normalized.peerId);
-    addVCardLine(lines, 'X-SDN-EPM-CID', normalized.epmCid ?? stringValue(epm.epm_cid) ?? stringValue(epm.epmCid));
-    const publicKey = publicKeyValue(epm);
-    addVCardLine(lines, 'EMAIL;TYPE=INTERNET', publicKeyEmailAddress(publicKey));
-    addVCardLine(lines, 'X-SDN-PUBLIC-KEY', publicKey);
-    lines.push('END:VCARD');
-    return lines.join('\r\n');
-  }
-
-  function createPublicEpmExport(input: Record<string, unknown>): Record<string, unknown> {
-    const out: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(input)) {
-      if (isSecretKey(key)) continue;
-      if (Array.isArray(value)) {
-        out[key] = value.map((entry) => isRecord(entry) ? createPublicEpmExport(entry) : entry);
-      } else if (isRecord(value)) {
-        out[key] = createPublicEpmExport(value);
-      } else {
-        out[key] = value;
-      }
-    }
-    return out;
-  }
-
   function publicKeyValue(epm: Record<string, unknown>): string | undefined {
-    return stringValue(epm.public_key)
-      ?? stringValue(epm.PUBLIC_KEY)
-      ?? stringValue(epm.publicKey)
-      ?? stringValue(epm.signing_public_key)
-      ?? stringValue(epm.signingPublicKey)
-      ?? stringValue(epm.signing_pubkey_hex)
-      ?? stringValue(epm.encryption_public_key)
-      ?? stringValue(epm.encryptionPublicKey)
-      ?? stringValue(epm.encryption_pubkey_hex);
-  }
-
-  function publicKeyEmailAddress(publicKey: string | undefined): string | undefined {
-    const localPart = publicKey?.trim().replace(/\s+/g, '').replace(/[^A-Za-z0-9._%+-]/g, '');
-    return localPart ? `${localPart}@spacedatanetwork.org` : undefined;
-  }
-
-  function addVCardLine(lines: string[], key: string, value: string | undefined): void {
-    if (value?.trim()) lines.push(`${key}:${value.replace(/\r?\n/g, ' ')}`);
+    return identityPublicKeyValue(epm);
   }
 
   function normalizeEpmJson(record: Record<string, unknown>): Record<string, unknown> {
@@ -566,7 +524,7 @@
   function recordFromUploadedText(text: string): Record<string, unknown> {
     const trimmed = text.trim();
     if (!trimmed) return {};
-    if (/^BEGIN:VCARD/i.test(trimmed)) return epmJsonFromVCard(trimmed);
+    if (/^BEGIN:VCARD/i.test(trimmed)) return parseVCardEpmJson(trimmed);
     try {
       const parsed = JSON.parse(trimmed);
       return isRecord(parsed) ? parsed : {};
@@ -587,43 +545,6 @@
     ].filter(Boolean).join(' ').trim();
   }
 
-  function epmJsonFromVCard(text: string): Record<string, unknown> {
-    const fields: Record<string, unknown> = {};
-    const lines = vcardLines(text);
-    fields.dn = vcardValue(lines, 'FN');
-    fields.email = vcardValue(lines, 'EMAIL');
-    fields.telephone = vcardValue(lines, 'TEL');
-    fields.peer_id = vcardValue(lines, 'X-SDN-PEER-ID');
-    fields.epm_cid = vcardValue(lines, 'X-SDN-EPM-CID');
-    fields.public_key = vcardValue(lines, 'X-SDN-PUBLIC-KEY') || vcardEmailAlias(lines, 'spacedatanetwork.org');
-    fields.signing_public_key = vcardValue(lines, 'X-SDN-SIGNING-PUBLIC-KEY');
-    fields.encryption_public_key = vcardValue(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY');
-    for (const key of Object.keys(fields)) {
-      if (!fields[key]) delete fields[key];
-    }
-    return fields;
-  }
-
-  function vcardLines(vcard: string): string[] {
-    return unfoldedVCard(vcard).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  }
-
-  function unfoldedVCard(vcard: string): string {
-    return String(vcard ?? '').replace(/\r?\n[ \t]/g, '');
-  }
-
-  function vcardValue(lines: string[], fieldName: string): string {
-    const normalized = fieldName.toUpperCase();
-    const line = lines.find((entry) => entry.split(':', 1)[0]?.split(';', 1)[0]?.toUpperCase() === normalized);
-    return line?.slice(line.indexOf(':') + 1).trim() ?? '';
-  }
-
-  function vcardEmailAlias(lines: string[], domain: string): string {
-    const email = vcardValue(lines, 'EMAIL');
-    const suffix = `@${domain}`;
-    return email.endsWith(suffix) ? email.slice(0, -suffix.length) : '';
-  }
-
   function triggerDownload(url: string, filename: string): void {
     const link = document.createElement('a');
     link.href = url;
@@ -634,20 +555,8 @@
     link.remove();
   }
 
-  function isHostedEpmRecord(value: Record<string, unknown> | HostedEpmRecord): value is HostedEpmRecord {
-    return typeof value.id === 'string'
-      && (value.kind === 'node-self' || value.kind === 'hosted')
-      && typeof value.label === 'string'
-      && typeof value.peerId === 'string'
-      && isRecord(value.epmJson);
-  }
-
   function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-  }
-
-  function isSecretKey(key: string): boolean {
-    return /private|secret|mnemonic|xpriv|core|seed/i.test(key);
   }
 
   function stringValue(value: unknown): string | undefined {

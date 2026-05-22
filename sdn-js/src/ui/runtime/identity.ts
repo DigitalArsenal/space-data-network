@@ -1,4 +1,5 @@
 import { sha256 } from '../../crypto/hd-wallet';
+import { createVCardQrPayload as createSharedVCardQrPayload } from './identity-vcard';
 
 export type HostedEpmKind = 'node-self' | 'hosted';
 
@@ -43,20 +44,6 @@ const NORMALIZED_SECRET_KEYS = new Set([
   'walletprivatekey',
   'walletprivatematerial',
 ]);
-const PUBLIC_KEY_FIELDS = [
-  'public_key',
-  'PUBLIC_KEY',
-  'publicKey',
-  'signing_public_key',
-  'signingPublicKey',
-  'signing_pubkey_hex',
-  'encryption_public_key',
-  'encryptionPublicKey',
-  'encryption_pubkey_hex',
-];
-const SIGNING_PUBLIC_KEY_FIELDS = ['signing_public_key', 'signingPublicKey', 'signing_pubkey_hex'];
-const ENCRYPTION_PUBLIC_KEY_FIELDS = ['encryption_public_key', 'encryptionPublicKey', 'encryption_pubkey_hex'];
-
 export function normalizeHostedEpmRecord(input: Record<string, unknown>): HostedEpmRecord {
   const epmJson = normalizeRecord(input.epm_json ?? input.epmJson ?? input);
   const id = pickString(input, ['id', 'epm_id', 'epmId']) || pickString(epmJson, ['peer_id', 'peerId']) || 'self';
@@ -89,20 +76,7 @@ export function createPublicEpmExport(input: Record<string, unknown>): Record<st
 }
 
 export function createVCardQrPayload(input: Record<string, unknown> | HostedEpmRecord): string {
-  const record = isHostedEpmRecord(input) ? input : normalizeHostedEpmRecord(input);
-  const epm = createPublicEpmExport(record.epmJson);
-  const publicKey = pickString(epm, PUBLIC_KEY_FIELDS);
-  const lines = ['BEGIN:VCARD', 'VERSION:3.0'];
-  addVCardLine(lines, 'FN', pickString(epm, ['dn', 'DN']) || record.label);
-  addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', record.kind === 'node-self' ? 'node' : 'user');
-  addVCardLine(lines, 'X-SDN-PEER-ID', record.peerId);
-  addVCardLine(lines, 'X-SDN-EPM-CID', record.epmCid || pickString(epm, ['epm_cid', 'epmCid']));
-  addVCardLine(lines, 'EMAIL;TYPE=INTERNET', publicKeyEmailAddress(publicKey));
-  addVCardLine(lines, 'X-SDN-PUBLIC-KEY', publicKey);
-  addVCardLine(lines, 'X-SDN-SIGNING-PUBLIC-KEY', pickString(epm, SIGNING_PUBLIC_KEY_FIELDS));
-  addVCardLine(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY', pickString(epm, ENCRYPTION_PUBLIC_KEY_FIELDS));
-  lines.push('END:VCARD');
-  return lines.join('\r\n');
+  return createSharedVCardQrPayload(input);
 }
 
 export function publicKeyEmailAddress(publicKey: string | undefined): string | undefined {
@@ -204,10 +178,6 @@ function parseChunk(value: string): ChunkedQrPayload {
   return { id: parsed.id, index, mimeType: parsed.mimeType, payload: parsed.payload, sha256: parsed.sha256, total };
 }
 
-function addVCardLine(lines: string[], key: string, value: string | undefined): void {
-  if (value?.trim()) lines.push(`${key}:${value.replace(/\r?\n/g, ' ')}`);
-}
-
 function normalizeRecord(value: unknown): Record<string, unknown> {
   if (typeof value === 'string') {
     try {
@@ -253,16 +223,6 @@ function isSecretEpmKey(key: string): boolean {
     normalized.includes('xpriv') ||
     normalized === 'seed' ||
     normalized.endsWith('seed')
-  );
-}
-
-function isHostedEpmRecord(value: Record<string, unknown> | HostedEpmRecord): value is HostedEpmRecord {
-  return (
-    isRecord(value.epmJson) &&
-    typeof value.id === 'string' &&
-    (value.kind === 'node-self' || value.kind === 'hosted') &&
-    typeof value.label === 'string' &&
-    typeof value.peerId === 'string'
   );
 }
 

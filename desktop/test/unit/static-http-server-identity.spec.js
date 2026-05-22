@@ -12,7 +12,25 @@ test.describe('desktop static identity API', () => {
 
     const put = await requestJson(serveDesktopIdentityAPI, 'PUT', '/api/identity/epms/alice', {
       epm_json: {
-        dn: 'Alice Example',
+        dn: 'Dr. Alice Q. Example',
+        legal_name: 'Example Orbital LLC',
+        given_name: 'Alice',
+        family_name: 'Example',
+        additional_name: 'Q.',
+        honorific_prefix: 'Dr.',
+        honorific_suffix: 'PhD',
+        email: 'alice@example.com',
+        telephone: '+1 555 0100',
+        job_title: 'Flight Director',
+        occupation: 'Operator',
+        address: {
+          po_box: 'Box 42',
+          street: '1 Orbit Way',
+          locality: 'Cape Canaveral',
+          region: 'FL',
+          postal_code: '32920',
+          country: 'USA'
+        },
         peer_id: '16Uiu2Alice',
         epm_cid: 'bafy-alice-epm',
         public_key: 'abcdef',
@@ -26,33 +44,43 @@ test.describe('desktop static identity API', () => {
     expect(put.json).toMatchObject({
       id: 'alice',
       kind: 'hosted',
-      label: 'Alice Example',
+      label: 'Dr. Alice Q. Example',
       peerId: '16Uiu2Alice'
     })
 
     const diskContents = fs.readdirSync(userData)
       .map(name => fs.readFileSync(path.join(userData, name), 'utf8'))
       .join('\n')
-    expect(diskContents).not.toContain('Alice Example')
+    expect(diskContents).not.toContain('Dr. Alice Q. Example')
     expect(diskContents).not.toContain('must-not-be-exported')
 
     const list = await requestJson(serveDesktopIdentityAPI, 'GET', '/api/identity/epms')
     expect(list.statusCode).toBe(200)
     expect(list.json.epms).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'self', kind: 'node-self' }),
-      expect.objectContaining({ id: 'alice', label: 'Alice Example' })
+      expect.objectContaining({ id: 'alice', label: 'Dr. Alice Q. Example' })
     ]))
 
     const read = await requestJson(serveDesktopIdentityAPI, 'GET', '/api/identity/epms/alice')
     expect(read.statusCode).toBe(200)
-    expect(read.body).toContain('Alice Example')
+    expect(read.body).toContain('Dr. Alice Q. Example')
     expect(read.body).not.toContain('must-not-be-exported')
 
     const vcard = await requestRaw(serveDesktopIdentityAPI, 'GET', '/api/identity/epms/alice/vcard')
     expect(vcard.statusCode).toBe(200)
+    const unfoldedVcard = vcard.body.replace(/\r\n[ \t]/g, '')
     expect(vcard.body).toContain('BEGIN:VCARD')
-    expect(vcard.body).toContain('FN:Alice Example')
+    expect(vcard.body).toContain('N:Example;Alice;Q.;Dr.;PhD')
+    expect(vcard.body).toContain('FN:Dr. Alice Q. Example')
+    expect(vcard.body).toContain('ORG:Example Orbital LLC')
+    expect(vcard.body).toContain('EMAIL;TYPE=INTERNET:alice@example.com')
+    expect(vcard.body).toContain('TEL:+1 555 0100')
+    expect(vcard.body).toContain('TITLE:Flight Director')
+    expect(vcard.body).toContain('ROLE:Operator')
+    expect(vcard.body).toContain('ADR;TYPE=WORK:Box 42;;1 Orbit Way;Cape Canaveral;FL;32920;USA')
     expect(vcard.body).toContain('EMAIL;TYPE=INTERNET:abcdef@spacedatanetwork.org')
+    expect(unfoldedVcard).toContain('EMAIL;type=INTERNET;type=signing:signing-public@signing.digitalarsenal.io')
+    expect(unfoldedVcard).toContain('EMAIL;type=INTERNET;type=encryption:encryption-public@encryption.digitalarsenal.io')
     expect(vcard.body).toContain('X-SDN-PEER-ID:16Uiu2Alice')
     expect(vcard.body).toContain('X-SDN-PUBLIC-KEY:abcdef')
     expect(vcard.body).toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public')
@@ -105,7 +133,9 @@ test.describe('desktop static identity API', () => {
     const put = await requestRaw(serveDesktopNodeEPMAPI, 'PUT', '/api/node/epm', JSON.stringify({
       dn: 'Desktop Node',
       email: 'node@example.invalid',
-      peer_id: '12D3KooWDesktopNode'
+      peer_id: '12D3KooWDesktopNode',
+      signing_public_key: 'ed25519-node-signing-public',
+      encryption_public_key: 'x25519-node-encryption-public'
     }))
     expect(put.statusCode).toBe(200)
     expect(put.headers['Content-Type']).toBe('application/x-flatbuffers')
@@ -119,6 +149,9 @@ test.describe('desktop static identity API', () => {
     const epm = EPM.getSizePrefixedRootAsEPM(new flatbuffers.ByteBuffer(new Uint8Array(get.bodyBuffer)))
     expect(epm.DN()).toBe('Desktop Node')
     expect(epm.EMAIL()).toBe('node@example.invalid')
+    expect(epm.keysLength()).toBe(2)
+    expect(epm.KEYS(0).PUBLIC_KEY()).toBe('ed25519-node-signing-public')
+    expect(epm.KEYS(1).PUBLIC_KEY()).toBe('x25519-node-encryption-public')
   })
 
   test('persists node identity settings and blocks wallet key replacement until confirmed', async () => {

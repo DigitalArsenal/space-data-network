@@ -1060,46 +1060,161 @@ function escapeVCardValue (value) {
     .replace(/;/g, '\\;')
 }
 
+const IDENTITY_ALIAS_DOMAINS = {
+  signing: 'signing.digitalarsenal.io',
+  encryption: 'encryption.digitalarsenal.io',
+  bitcoin: 'bitcoin.digitalarsenal.io',
+  ethereum: 'ethereum.digitalarsenal.io',
+  solana: 'solana.digitalarsenal.io'
+}
+
 function identityRecordToVCard (record) {
-  const publicKey = readEpmString(record.epmJson, [
+  const epm = sanitizePublicEPM(record.epmJson || {})
+  const publicKey = readEpmString(epm, [
     'public_key',
+    'PUBLIC_KEY',
     'publicKey',
     'signing_public_key',
     'signingPublicKey',
-    'encryption_public_key',
-    'encryptionPublicKey'
-  ])
-  const signingPublicKey = readEpmString(record.epmJson, [
-    'signing_public_key',
-    'signingPublicKey',
-    'signing_pubkey_hex'
-  ])
-  const encryptionPublicKey = readEpmString(record.epmJson, [
+    'signing_pubkey_hex',
     'encryption_public_key',
     'encryptionPublicKey',
     'encryption_pubkey_hex'
   ])
+  const signingPublicKey = readEpmString(epm, [
+    'signing_public_key',
+    'signingPublicKey',
+    'signing_pubkey_hex',
+    'signingPubkeyHex'
+  ]) || findIdentityKey(epm, 'signing')
+  const encryptionPublicKey = readEpmString(epm, [
+    'encryption_public_key',
+    'encryptionPublicKey',
+    'encryption_pubkey_hex',
+    'encryptionPubkeyHex'
+  ]) || findIdentityKey(epm, 'encryption')
+  const displayName = readEpmString(epm, ['dn', 'DN', 'display_name', 'displayName', 'name']) || record.label || 'Space Data Network'
   const lines = [
     'BEGIN:VCARD',
-    'VERSION:4.0',
-    `FN:${escapeVCardValue(record.label)}`
+    'VERSION:3.0',
+    'PRODID;VALUE=TEXT:-//Space Data Network//Desktop//EN'
   ]
 
-  if (record.peerId) lines.push(`X-SDN-PEER-ID:${escapeVCardValue(record.peerId)}`)
-  if (record.epmCid) lines.push(`X-SDN-EPM-CID:${escapeVCardValue(record.epmCid)}`)
+  addVCardStructuredName(lines, epm, displayName)
+  addVCardLine(lines, 'FN', displayName)
+  addVCardLine(lines, 'ORG', readEpmString(epm, ['legal_name', 'legalName', 'organization', 'org']))
+  addVCardLine(lines, 'EMAIL;TYPE=INTERNET', readEpmString(epm, ['email', 'email_address', 'emailAddress', 'mail']))
+  addVCardLine(lines, 'TEL', readEpmString(epm, ['telephone', 'phone', 'tel']))
+  addVCardLine(lines, 'TITLE', readEpmString(epm, ['job_title', 'jobTitle', 'title']))
+  addVCardLine(lines, 'ROLE', readEpmString(epm, ['occupation', 'role']))
+  addVCardAddressLine(lines, epm)
+  addVCardLine(lines, 'UID', record.peerId)
+  addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', record.kind === 'node-self' ? 'node' : 'user')
+  addVCardLine(lines, 'X-SDN-PEER-ID', record.peerId)
+  addVCardLine(lines, 'X-SDN-EPM-CID', record.epmCid)
   const publicKeyEmail = publicKeyEmailAddress(publicKey)
-  if (publicKeyEmail) lines.push(`EMAIL;TYPE=INTERNET:${escapeVCardValue(publicKeyEmail)}`)
-  if (publicKey) lines.push(`X-SDN-PUBLIC-KEY:${escapeVCardValue(publicKey)}`)
-  if (signingPublicKey) lines.push(`X-SDN-SIGNING-PUBLIC-KEY:${escapeVCardValue(signingPublicKey)}`)
-  if (encryptionPublicKey) lines.push(`X-SDN-ENCRYPTION-PUBLIC-KEY:${escapeVCardValue(encryptionPublicKey)}`)
+  addVCardLine(lines, 'EMAIL;TYPE=INTERNET', publicKeyEmail)
+  addVCardIdentityEmailLines(lines, epm, signingPublicKey, encryptionPublicKey)
+  addVCardLine(lines, 'X-SDN-PUBLIC-KEY', publicKey)
+  addVCardLine(lines, 'X-SDN-SIGNING-PUBLIC-KEY', signingPublicKey)
+  addVCardLine(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY', encryptionPublicKey)
   lines.push('END:VCARD')
 
-  return `${lines.join('\r\n')}\r\n`
+  return `${lines.map(foldVCardLine).join('\r\n')}\r\n`
 }
 
 function publicKeyEmailAddress (publicKey) {
   const localPart = String(publicKey || '').trim().replace(/\s+/g, '').replace(/[^A-Za-z0-9._%+-]/g, '')
   return localPart ? `${localPart}@spacedatanetwork.org` : ''
+}
+
+function addVCardStructuredName (lines, epm, displayName) {
+  const familyName = readEpmString(epm, ['family_name', 'familyName'])
+  let givenName = readEpmString(epm, ['given_name', 'givenName'])
+  const additionalName = readEpmString(epm, ['additional_name', 'additionalName'])
+  const honorificPrefix = readEpmString(epm, ['honorific_prefix', 'honorificPrefix'])
+  const honorificSuffix = readEpmString(epm, ['honorific_suffix', 'honorificSuffix'])
+  if (!familyName && !givenName && !additionalName && !honorificPrefix && !honorificSuffix) {
+    givenName = displayName
+  }
+  lines.push(`N:${[familyName, givenName, additionalName, honorificPrefix, honorificSuffix].map(escapeVCardValue).join(';')}`)
+}
+
+function addVCardAddressLine (lines, epm) {
+  const address = epm.address && typeof epm.address === 'object' && !Array.isArray(epm.address) ? epm.address : epm
+  const parts = [
+    readEpmString(address, ['po_box', 'poBox']),
+    '',
+    readEpmString(address, ['street', 'street_address', 'streetAddress']),
+    readEpmString(address, ['locality', 'city']),
+    readEpmString(address, ['region', 'state', 'province']),
+    readEpmString(address, ['postal_code', 'postalCode', 'zip']),
+    readEpmString(address, ['country', 'country_name', 'countryName'])
+  ]
+  if (parts.some(Boolean)) {
+    lines.push(`ADR;TYPE=WORK:${parts.map(escapeVCardValue).join(';')}`)
+  }
+}
+
+function addVCardIdentityEmailLines (lines, epm, signingPublicKey, encryptionPublicKey) {
+  const seen = new Set()
+  const addAlias = (type, value) => {
+    const trimmed = String(value || '').trim()
+    if (!trimmed || !IDENTITY_ALIAS_DOMAINS[type] || !isSafeEmailLocalPart(trimmed)) return
+    const line = `EMAIL;type=INTERNET;type=${type}:${trimmed}@${IDENTITY_ALIAS_DOMAINS[type]}`
+    if (seen.has(line)) return
+    seen.add(line)
+    lines.push(line)
+  }
+
+  addAlias('signing', signingPublicKey)
+  addAlias('encryption', encryptionPublicKey)
+  addAlias('bitcoin', readEpmString(epm, ['bitcoin_address', 'bitcoinAddress']) || findChainAddress(epm, 'bitcoin'))
+  addAlias('ethereum', readEpmString(epm, ['ethereum_address', 'ethereumAddress']) || findChainAddress(epm, 'ethereum'))
+  addAlias('solana', readEpmString(epm, ['solana_address', 'solanaAddress']) || findChainAddress(epm, 'solana'))
+}
+
+function findIdentityKey (epm, type) {
+  const keys = Array.isArray(epm.keys) ? epm.keys : []
+  for (const key of keys) {
+    if (!key || typeof key !== 'object') continue
+    const publicKey = readEpmString(key, ['public_key', 'PUBLIC_KEY', 'publicKey'])
+    if (!publicKey) continue
+    const keyType = readEpmString(key, ['key_type', 'KEY_TYPE', 'keyType']).toLowerCase()
+    const addressType = readEpmString(key, ['address_type', 'ADDRESS_TYPE', 'addressType']).toLowerCase()
+    if (type === 'encryption' && (keyType === 'encryption' || addressType === 'x25519')) return publicKey
+    if (type === 'signing' && (keyType === 'signing' || (addressType && addressType !== 'x25519'))) return publicKey
+  }
+  return ''
+}
+
+function findChainAddress (epm, chain) {
+  const proofs = Array.isArray(epm.chain_proofs) ? epm.chain_proofs : []
+  for (const proof of proofs) {
+    if (!proof || typeof proof !== 'object') continue
+    if (readEpmString(proof, ['chain', 'CHAIN']).toLowerCase() === chain) {
+      return readEpmString(proof, ['address', 'ADDRESS'])
+    }
+  }
+  return ''
+}
+
+function addVCardLine (lines, key, value) {
+  if (String(value || '').trim()) lines.push(`${key}:${escapeVCardValue(value)}`)
+}
+
+function foldVCardLine (line) {
+  const value = String(line)
+  if (value.length <= 74) return value
+  const chunks = []
+  for (let offset = 0; offset < value.length; offset += 74) {
+    chunks.push(value.slice(offset, offset + 74))
+  }
+  return chunks.join('\r\n ')
+}
+
+function isSafeEmailLocalPart (value) {
+  return /^[A-Za-z0-9._+-]+$/.test(String(value || '').trim())
 }
 
 async function readIdentityRecord (id) {
