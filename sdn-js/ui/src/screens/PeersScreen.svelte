@@ -22,6 +22,15 @@
     createLibp2pFlatSqlSyncBackend,
   } from '../../../src/ui/runtime/sdn-backend-libp2p-sync';
   import {
+    hostedEpmRecordFromDirectoryRecord,
+    peerDisplayName,
+    peerEmail as peerIdentityEmail,
+    peerEpmCid,
+    peerEpmJson,
+    peerHostedEpmRecord,
+    peerPhone as peerIdentityPhone,
+  } from '../../../src/ui/runtime/peer-identity';
+  import {
     createVCardQrPayload as createVCardQrPayloadLocal,
     identityPublicKeyValue,
   } from '../../../src/ui/runtime/identity-vcard';
@@ -74,6 +83,7 @@
   export let hostedEpms: HostedEpmRecord[] = [];
 
   const identityRuntimeModules = import.meta.glob('../../../src/ui/runtime/identity.ts');
+  const PUBLIC_DIRECTORY_BASE_URL = 'https://sdn.spaceaware.io';
   const DEFAULT_SUBSCRIPTION_STORAGE_CAP = 1;
   const DEFAULT_SUBSCRIPTION_STORAGE_UNIT = 'GB';
 
@@ -88,6 +98,8 @@
   let configuredDataSources: ConfiguredSdnNode[] = [];
   let dataDirectoryState: DataDirectoryState = loadDataDirectoryState();
   let storefrontListings: Array<Record<string, unknown>> = [];
+  let directoryPeerEpms: HostedEpmRecord[] = [];
+  let directoryPeerEpmsKey = '';
   let feedStatus = '';
   let directoryStatus = '';
   let identityRuntimePromise: Promise<IdentityRuntimeModule> | null = null;
@@ -96,13 +108,16 @@
   $: dataSourceOptions = buildDataSourceOptions(configuredDataSources, peers);
   $: peerDataFeeds = buildPeerDataFeeds(dataSourceOptions, storefrontListings, dataDirectoryState);
   $: storefrontModules = buildStorefrontModules(storefrontListings);
+  $: peerIdentityVersion = directoryPeerEpms.map((record) => `${record.peerId}:${record.epmCid ?? ''}:${record.updatedAt ?? ''}`).join('|');
   $: trustedPeers = peers.filter((peer) => isTrustedDirectoryOwnertrust(ownertrustForPeer(peer.id)));
-  $: filteredPeers = peers.filter(peerMatchesQuery);
+  $: filteredPeers = filterPeersForQuery(peers, peerIdentityVersion);
   $: visiblePeers = sortPeers(filteredPeers, sortColumn, sortDirection);
   $: selectedPeer = selectedPeerId ? peers.find((peer) => peer.id === selectedPeerId) ?? null : null;
   $: selectedPeerFeeds = selectedPeer ? peerDataFeeds.filter((feed) => feed.peerId === selectedPeer.id) : [];
   $: selectedPeerModules = selectedPeer ? storefrontModules.filter((module) => module.peerId === selectedPeer.id) : [];
-  $: void renderPeerQr(selectedPeer);
+  $: selectedPeerSummary = selectedPeerSummaryFor(selectedPeer, peerIdentityVersion);
+  $: void loadDirectoryPeerEpmsForPeers(peers, backend);
+  $: void renderPeerQr(selectedPeer, peerIdentityVersion);
 
   onMount(() => {
     dataDirectoryState = loadDataDirectoryState();
@@ -186,7 +201,52 @@
   }
 
   function getPeerEpm(peer: ObservedSdnPeer): HostedEpmRecord | null {
-    return hostedEpms.find((record) => record.peerId === peer.id || record.id === peer.id) ?? null;
+    return hostedEpms.find((record) => record.peerId === peer.id || record.id === peer.id)
+      ?? directoryPeerEpms.find((record) => record.peerId === peer.id || record.id === peer.id)
+      ?? null;
+  }
+
+  async function loadDirectoryPeerEpmsForPeers(observedPeers: ObservedSdnPeer[], activeBackend: SdnBackend | null): Promise<void> {
+    const peerIds = Array.from(new Set(observedPeers.map((peer) => peer.id).filter(Boolean))).sort();
+    const key = `${activeBackend?.mode ?? 'none'}:${peerIds.join(',')}`;
+    if (directoryPeerEpmsKey === key) return;
+    directoryPeerEpmsKey = key;
+    if (peerIds.length === 0) {
+      directoryPeerEpms = [];
+      return;
+    }
+
+    const records = (await Promise.all(observedPeers.map(async (peer) => {
+      const directoryRecords: Array<Record<string, unknown>> = [];
+      if (activeBackend) {
+        try {
+          const result = await activeBackend.searchDirectory(peer.id);
+          directoryRecords.push(...directoryRecordsFromPayload(result.data));
+        } catch {
+          // Public directory fallback below keeps peer identity discovery non-blocking.
+        }
+      }
+      directoryRecords.push(...await loadPublicDirectoryPeerRecords(peer.id));
+      return directoryRecords
+        .map(hostedEpmRecordFromDirectoryRecord)
+        .filter((record): record is HostedEpmRecord => record !== null && record.peerId === peer.id);
+    }))).flat();
+
+    if (directoryPeerEpmsKey === key) {
+      directoryPeerEpms = dedupePeerEpmRecords(records);
+    }
+  }
+
+  async function loadPublicDirectoryPeerRecords(peerId: string): Promise<Array<Record<string, unknown>>> {
+    if (typeof fetch !== 'function') return [];
+    try {
+      const response = await fetch(`${PUBLIC_DIRECTORY_BASE_URL}/api/directory/nodes?q=${encodeURIComponent(peerId)}`, {
+        headers: { accept: 'application/json' },
+      });
+      return response.ok ? directoryRecordsFromPayload(await response.json()) : [];
+    } catch {
+      return [];
+    }
   }
 
   function ownertrustForPeer(peerId: string): PgpOwnertrust {
@@ -224,8 +284,16 @@
       peer.agentVersion ?? '',
       peerEmail(peer),
       peerPhone(peer),
-      getPeerEpm(peer)?.epmCid ?? '',
+      peerEpmCid(peer, getPeerEpm(peer)) ?? '',
     ].some((value) => value.toLowerCase().includes(needle));
+  }
+
+  function filterPeersForQuery(items: ObservedSdnPeer[], _identityVersion: string): ObservedSdnPeer[] {
+    return items.filter(peerMatchesQuery);
+  }
+
+  function selectedPeerSummaryFor(peer: ObservedSdnPeer | null, _identityVersion: string): Array<{ label: string; value: string }> {
+    return peer ? peerEpmSummary(peer) : [];
   }
 
   function sortPeers(items: ObservedSdnPeer[], column: PeerSortColumn, direction: SortDirection): ObservedSdnPeer[] {
@@ -313,24 +381,15 @@
   }
 
   function displayNameForPeer(peer: ObservedSdnPeer): string {
-    const epm = getPeerEpm(peer)?.epmJson ?? {};
-    return stringValue(epm.dn)
-      ?? stringValue(epm.DN)
-      ?? stringValue(epm.displayName)
-      ?? stringValue(epm.legal_name)
-      ?? stringValue(epm.name)
-      ?? stringValue(peer.name)
-      ?? peer.id;
+    return peerDisplayName(peer, getPeerEpm(peer));
   }
 
   function peerEmail(peer: ObservedSdnPeer): string {
-    const epm = getPeerEpm(peer)?.epmJson ?? {};
-    return stringValue(epm.email) ?? stringValue(epm.EMAIL) ?? '';
+    return peerIdentityEmail(peer, getPeerEpm(peer));
   }
 
   function peerPhone(peer: ObservedSdnPeer): string {
-    const epm = getPeerEpm(peer)?.epmJson ?? {};
-    return stringValue(epm.telephone) ?? stringValue(epm.phone) ?? stringValue(epm.TELEPHONE) ?? '';
+    return peerIdentityPhone(peer, getPeerEpm(peer));
   }
 
   function peerIp(peer: ObservedSdnPeer): string {
@@ -345,21 +404,22 @@
 
   function peerEpmSummary(peer: ObservedSdnPeer): Array<{ label: string; value: string }> {
     const epm = getPeerEpm(peer);
-    const epmJson = epm?.epmJson ?? {};
+    const epmJson = peerEpmJson(peer, epm);
     return [
       { label: 'Display name', value: displayNameForPeer(peer) },
       { label: 'Email', value: peerEmail(peer) },
       { label: 'Phone', value: peerPhone(peer) },
       { label: 'PeerID', value: peer.id },
-      { label: 'EPM CID', value: epm?.epmCid ?? stringValue(epmJson.epm_cid) ?? stringValue(epmJson.epmCid) ?? '' },
+      { label: 'EPM CID', value: peerEpmCid(peer, epm) ?? '' },
       { label: 'Public key', value: publicKeyValue(epmJson) ?? '' },
       { label: 'Signing public key', value: identityPublicKeyValue(epmJson, 'signing') ?? '' },
       { label: 'Encryption public key', value: identityPublicKeyValue(epmJson, 'encryption') ?? '' },
     ];
   }
 
-  async function renderPeerQr(peer: ObservedSdnPeer | null): Promise<void> {
-    const key = peer ? JSON.stringify([peer.id, getPeerEpm(peer)?.id, getPeerEpm(peer)?.updatedAt, getPeerEpm(peer)?.epmCid]) : '';
+  async function renderPeerQr(peer: ObservedSdnPeer | null, identityVersion = ''): Promise<void> {
+    const epm = peer ? getPeerEpm(peer) : null;
+    const key = peer ? JSON.stringify([peer.id, epm?.id, epm?.updatedAt, peerEpmCid(peer, epm), identityVersion, peerEpmJson(peer, epm)]) : '';
     if (key === peerQrKey) return;
     peerQrKey = key;
     peerQrDataUrl = '';
@@ -426,19 +486,7 @@
   }
 
   function toHostedRecord(peer: ObservedSdnPeer): HostedEpmRecord {
-    const epm = getPeerEpm(peer);
-    if (epm) return epm;
-    return {
-      id: peer.id,
-      kind: 'hosted',
-      label: displayNameForPeer(peer),
-      peerId: peer.id,
-      epmJson: {
-        dn: displayNameForPeer(peer),
-        peer_id: peer.id,
-        agent_version: peer.agentVersion ?? '',
-      },
-    };
+    return peerHostedEpmRecord(peer, getPeerEpm(peer));
   }
 
   function publicKeyValue(epm: Record<string, unknown>): string | undefined {
@@ -531,6 +579,28 @@
     const value = payload[key];
     if (Array.isArray(value)) return value.filter(isRecord);
     return [];
+  }
+
+  function directoryRecordsFromPayload(payload: unknown): Array<Record<string, unknown>> {
+    if (Array.isArray(payload)) return payload.filter(isRecord);
+    if (!isRecord(payload)) return [];
+    return [
+      ...recordsFromPayloadKey(payload, 'results'),
+      ...recordsFromPayloadKey(payload, 'nodes'),
+      ...recordsFromPayloadKey(payload, 'users'),
+    ];
+  }
+
+  function dedupePeerEpmRecords(records: HostedEpmRecord[]): HostedEpmRecord[] {
+    const byPeer = new Map<string, HostedEpmRecord>();
+    for (const record of records) {
+      const key = record.peerId || record.id;
+      const current = byPeer.get(key);
+      if (!current || (!current.epmCid && record.epmCid)) {
+        byPeer.set(key, record);
+      }
+    }
+    return [...byPeer.values()];
   }
 
   function readRecordString(record: Record<string, unknown>, ...keys: string[]): string | null {
@@ -751,7 +821,7 @@
             <p class="sdn-status-line">{peerQrState}</p>
           {/if}
           <dl class="sdn-profile-details sdn-peer-fields">
-            {#each peerEpmSummary(selectedPeer) as field}
+            {#each selectedPeerSummary as field}
               <div>
                 <dt>{field.label}</dt>
                 <dd>{field.value}</dd>

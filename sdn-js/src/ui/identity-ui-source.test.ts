@@ -311,6 +311,12 @@ describe('SDN identity Svelte source', () => {
     expect(source).toContain('peerEmail');
     expect(source).toContain('peerPhone');
     expect(source).toContain('peerIp');
+    expect(source).toContain('hostedEpmRecordFromDirectoryRecord');
+    expect(source).toContain('loadDirectoryPeerEpmsForPeers');
+    expect(source).toContain('directoryPeerEpms');
+    expect(source).toContain('PUBLIC_DIRECTORY_BASE_URL');
+    expect(source).toContain('activeBackend.searchDirectory(peer.id)');
+    expect(source).toContain('/api/directory/nodes?q=');
     expect(source).toContain('EPM Fields');
     expect(source).toContain('Email');
     expect(source).toContain('Phone');
