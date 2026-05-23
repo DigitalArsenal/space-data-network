@@ -64,42 +64,47 @@ test('data route renders subscribed local datastore preview without workbench st
   await expect(page.getByText('backend ready')).toHaveCount(0);
   await expect(page.getByText(/available .* total/)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Refresh' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Overview' })).toHaveClass(/active/);
-  await expect(page.getByRole('table', { name: 'Data products' })).toContainText('PNM Feed');
-  await page.getByRole('textbox', { name: 'Search data products' }).fill('does-not-match');
-  await expect(page.getByRole('table', { name: 'Data products' })).toContainText('No matching data products.');
-  await page.getByRole('textbox', { name: 'Search data products' }).fill('pnm');
-  await expect(page.getByRole('table', { name: 'Data products' })).toContainText('PNM Feed');
+  await expect(page.getByRole('button', { name: 'Store' })).toHaveClass(/active/);
+  for (const retiredTab of ['Overview', 'Catalog', 'Sources', 'Message Types', 'Storage', 'Billing', 'Activity', 'My Subscriptions']) {
+    await expect(page.getByRole('button', { name: retiredTab })).toHaveCount(0);
+  }
+  const storeProducts = page.getByRole('table', { name: 'Store data products' });
+  await expect(storeProducts).toContainText('PNM Feed');
+  await page.getByRole('textbox', { name: 'Search store' }).fill('does-not-match');
+  await expect(storeProducts).toContainText('No matching data products.');
+  await page.getByRole('textbox', { name: 'Search store' }).fill('pnm');
+  await expect(storeProducts).toContainText('PNM Feed');
+  await expect(storeProducts).toContainText('CelesTrak Provider');
 
-  await page.getByRole('button', { name: 'Sources' }).click();
-  const dataSources = page.getByRole('table', { name: 'Data sources' });
-  await expect(dataSources).toContainText('CelesTrak Provider');
-  await expect(dataSources).toContainText('local-node');
-  await expect(dataSources).toContainText(celestrakXpub.slice(0, 10));
-  await expect(dataSources).toContainText('Local node');
-  await expect(dataSources).toContainText('Subscribed source');
-  await expect(dataSources).toContainText('PNM');
-  await expect(dataSources).toContainText('1 product');
-  await expect(dataSources.getByText('Search')).toHaveCount(0);
-  await expect(dataSources.getByText('Directory')).toHaveCount(0);
+  const storeRow = storeProducts.locator('tbody tr.sdn-catalog-row').filter({ hasText: 'PNM Feed' }).first();
+  await storeRow.locator('td').first().getByRole('button').click();
+  await expect(storeProducts.locator('.sdn-catalog-detail-grid')).toContainText('Provider');
+  await expect(storeProducts.locator('.sdn-catalog-detail-grid')).toContainText('Public key');
+  await expect(storeProducts.locator('.sdn-catalog-detail-grid')).toContainText(celestrakXpub.slice(0, 10));
+  await expect(storeProducts.locator('.sdn-catalog-detail-grid')).toContainText('Message types');
+  await expect(storeProducts.locator('.sdn-catalog-detail-grid')).toContainText('Storage estimate');
+  await expect(storeProducts.getByRole('button', { name: 'Manage', exact: true })).toBeVisible();
+  await expect(storeProducts.getByRole('button', { name: 'Open Explorer' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Storage' }).click();
-  await expect(page.getByLabel('Local storage state')).toBeVisible();
-  await expect(page.getByLabel('Local storage state')).toContainText('CelesTrak Provider');
-  await expect(page.getByLabel('Local storage state')).toContainText('PNM');
-  await expect(page.getByLabel('Local storage state')).toContainText('Synced 10/12');
-  await expect(page.getByLabel('Local storage state')).toContainText('Pinned rows');
-  await expect(page.getByLabel('Local storage state')).toContainText('Next');
-  await expect(page.getByLabel('Local storage state')).toContainText('Last');
-  await expect(page.getByLabel('Local storage state').getByRole('button', { name: 'Verify pins' })).toBeVisible();
-  await expect(page.getByLabel('Local storage state').getByRole('button', { name: 'Reset row' })).toBeVisible();
-
-  await page.getByRole('button', { name: 'My Subscriptions' }).click();
+  await page.getByRole('button', { name: 'Subscriptions' }).click();
   const syncSettings = page.getByLabel('Sync settings');
   await expect(syncSettings).toBeVisible();
+  await expect(page.getByLabel('Subscription storage summary')).toContainText('Remote rows');
+  await expect(page.getByLabel('Subscription storage summary')).toContainText('Pinned rows');
+  await expect(syncSettings).toContainText('CelesTrak Provider');
+  await expect(syncSettings).toContainText('PNM');
+  await expect(syncSettings).toContainText('Synced 10/12');
+  await expect(syncSettings).toContainText('Pinned rows');
+  await expect(syncSettings).toContainText('Next');
+  await expect(syncSettings).toContainText('Last');
+  await expect(syncSettings.getByRole('button', { name: 'Verify pins' })).toBeVisible();
+  await expect(syncSettings.getByRole('button', { name: 'Reset row' })).toBeVisible();
   await expect(syncSettings.getByRole('button', { name: 'Active' })).toBeVisible();
   await expect(syncSettings.getByRole('button', { name: 'Trials' })).toBeVisible();
   await expect(syncSettings.getByRole('button', { name: 'Payment issues' })).toBeVisible();
+  await syncSettings.getByRole('textbox', { name: 'Search subscriptions' }).fill('does-not-match');
+  await expect(syncSettings).toContainText('No subscribed data feeds.');
+  await syncSettings.getByRole('textbox', { name: 'Search subscriptions' }).fill('pnm');
   await syncSettings.getByRole('button', { name: 'Free' }).click();
   await expect(syncSettings).toContainText('PNM');
   await expect(syncSettings.locator('article').filter({ hasText: 'PNM Feed' })).toBeVisible();
@@ -158,7 +163,7 @@ test('data route renders subscribed local datastore preview without workbench st
   await expect(savedViews).not.toContainText('PNM ID lookup');
 
   await page.reload();
-  await page.getByRole('button', { name: 'My Subscriptions' }).click();
+  await page.getByRole('button', { name: 'Subscriptions' }).click();
   await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
   await expect(page.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2.5');
   await expect(page.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
@@ -214,20 +219,21 @@ test('data route keeps first-load counts as loading when remote counts are not k
   });
 
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
-  const overview = page.getByRole('region', { name: 'Data overview' });
-  await expect(overview).toBeVisible();
-  await expect(page.getByLabel('Data overview summary')).toContainText('Loading');
-  await expect(page.getByRole('table', { name: 'Data products' })).toContainText('Loading');
-  await expect(overview.getByText('0 local / 0 remote')).toHaveCount(0);
+  const store = page.getByRole('region', { name: 'Data store' });
+  await expect(store).toBeVisible();
+  await expect(page.getByLabel('Store summary')).toContainText('Loading');
+  await expect(page.getByRole('table', { name: 'Store data products' })).toContainText('PNM Feed');
+  await expect(page.getByRole('table', { name: 'Store data products' })).not.toContainText('0 local / 0 remote');
+  await expect(store.getByText('0 local / 0 remote')).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Storage' }).click();
-  const storageState = page.getByLabel('Local storage state');
-  await expect(storageState).toBeVisible();
-  await expect(storageState).toContainText('Loading');
-  await expect(storageState.getByLabel('Remote rows 0')).toHaveCount(0);
-  await expect(storageState.getByLabel('Local rows 0')).toHaveCount(0);
-  await expect(storageState.getByText('0 local / 0 remote')).toHaveCount(0);
-  await expect(storageState.getByText('No remote rows')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Subscriptions' }).click();
+  const syncSettings = page.getByLabel('Sync settings');
+  await expect(syncSettings).toBeVisible();
+  await expect(syncSettings).toContainText('Loading');
+  await expect(syncSettings.getByLabel('Remote rows 0')).toHaveCount(0);
+  await expect(syncSettings.getByLabel('Local rows 0')).toHaveCount(0);
+  await expect(syncSettings.getByText('0 local / 0 remote')).toHaveCount(0);
+  await expect(syncSettings.getByText('No remote rows')).toHaveCount(0);
 });
 
 test('data route shows retry instead of query for sync-error subscriptions', async ({ page }) => {
@@ -266,7 +272,7 @@ test('data route shows retry instead of query for sync-error subscriptions', asy
   });
 
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
-  await page.getByRole('button', { name: 'My Subscriptions' }).click();
+  await page.getByRole('button', { name: 'Subscriptions' }).click();
 
   const syncSettings = page.getByLabel('Sync settings');
   const row = syncSettings.locator('article').filter({ hasText: 'CelesTrak Provider' });
@@ -335,9 +341,9 @@ test('data catalog rows highlight and expand actions when clicked', async ({ pag
   });
 
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
-  await page.getByRole('button', { name: 'Catalog' }).click();
+  await page.getByRole('button', { name: 'Store' }).click();
 
-  const catalogTable = page.getByRole('table', { name: 'Catalog data products' });
+  const catalogTable = page.getByRole('table', { name: 'Store data products' });
   const row = catalogTable.locator('tbody tr.sdn-catalog-row').filter({ hasText: 'CelesTrak Provider' }).first();
   await expect(row).toBeVisible();
   await expect(row).toHaveAttribute('aria-expanded', 'false');
@@ -363,12 +369,12 @@ test('data catalog rows highlight and expand actions when clicked', async ({ pag
   await expect(catalogTable.getByRole('button', { name: 'Open Explorer' })).toBeVisible();
 
   await page.waitForTimeout(200);
-  await page.getByRole('textbox', { name: 'Search' }).click();
+  await page.getByRole('textbox', { name: 'Search store' }).click();
   await expect(row).toHaveAttribute('aria-expanded', 'false');
   await expect(catalogTable.locator('.sdn-catalog-action-panel')).toHaveCount(0);
 });
 
-test('message types sort by remote rows and expose schema health actions', async ({ page }) => {
+test('subscriptions search by message type and expose schema health actions', async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem('sdn:data-directory:v1', JSON.stringify({
       peerTrust: { 'local-node': 'marginal' },
@@ -440,19 +446,22 @@ test('message types sort by remote rows and expose schema health actions', async
   });
 
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
-  await page.getByRole('button', { name: 'Message Types' }).click();
+  await expect(page.getByRole('button', { name: 'Message Types' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Subscriptions' }).click();
 
-  const messageTypes = page.getByRole('table', { name: 'Message types' });
-  const firstRow = messageTypes.locator('tbody tr').first();
-  await expect(firstRow).toContainText('CAT');
-  await expect(firstRow).toContainText('2,500');
-  await expect(messageTypes.getByRole('columnheader', { name: 'Remote' })).toBeVisible();
-  await expect(messageTypes.getByRole('columnheader', { name: 'Local' })).toBeVisible();
-  await expect(messageTypes.getByRole('columnheader', { name: 'Pinned' })).toBeVisible();
-  await expect(messageTypes.getByRole('columnheader', { name: 'Freshness' })).toBeVisible();
-  await expect(firstRow.getByRole('button', { name: 'Explorer' })).toBeVisible();
-  await expect(firstRow.getByRole('button', { name: 'Manage' })).toBeVisible();
-  await expect(firstRow.getByRole('button', { name: 'Retry' })).toBeVisible();
+  const syncSettings = page.getByLabel('Sync settings');
+  await syncSettings.getByRole('textbox', { name: 'Search subscriptions' }).fill('CAT');
+  const catRow = syncSettings.locator('article').filter({ hasText: 'CAT Feed' });
+  await expect(catRow).toBeVisible();
+  await expect(catRow).toContainText('2,500 remote');
+  await expect(catRow).toContainText(/pinned/i);
+  await expect(catRow).toContainText('Next');
+  await expect(catRow).toContainText('Last');
+  await expect(catRow.getByRole('button', { name: 'Retry' })).toBeVisible();
+  await expect(catRow.getByRole('button', { name: 'Details' })).toBeVisible();
+  await catRow.getByRole('button', { name: 'Details' }).click();
+  await expect(page.getByLabel('CAT subscription details')).toContainText('Health');
+  await expect(page.getByLabel('CAT subscription details').getByRole('button', { name: 'Open Explorer' })).toBeVisible();
 });
 
 test('data route keeps same-schema subscriptions separated by datastore namespace', async ({ page }) => {
@@ -592,7 +601,7 @@ test('data route keeps same-schema subscriptions separated by datastore namespac
   });
 
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
-  await page.getByRole('button', { name: 'My Subscriptions' }).click();
+  await page.getByRole('button', { name: 'Subscriptions' }).click();
   const liveRow = page.getByLabel('Sync settings').locator('article').filter({ hasText: 'CelesTrak Live' });
   await expect(liveRow).toContainText('2,287,018 remote');
   await expect(liveRow.getByRole('button', { name: 'Query' })).toHaveCount(0);

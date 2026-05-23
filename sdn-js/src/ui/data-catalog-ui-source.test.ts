@@ -20,31 +20,30 @@ function sourceBetween(source: string, start: string, end: string): string {
 }
 
 describe('Data catalog UI source', () => {
-  it('exposes the paid-aware data navigation sections', () => {
-    for (const label of [
-      'Overview',
-      'Catalog',
-      'My Subscriptions',
-      'Sources',
-      'Message Types',
-      'Storage',
-      'Billing',
-      'Activity',
-      'Explorer',
-    ]) {
+  it('exposes only the consolidated data navigation sections', () => {
+    for (const label of ['Store', 'Subscriptions', 'Explorer']) {
       expect(localDataScreenSource).toContain(`label: '${label}'`);
     }
+    for (const retiredLabel of ['Overview', 'Catalog', 'My Subscriptions', 'Sources', 'Message Types', 'Storage', 'Billing', 'Activity']) {
+      expect(localDataScreenSource).not.toContain(`label: '${retiredLabel}'`);
+    }
+    for (const retiredSection of ['overview', 'catalog', 'sources', 'message-types', 'storage', 'billing', 'activity']) {
+      expect(localDataScreenSource).not.toContain(`selectedDataSection === '${retiredSection}'`);
+    }
+    expect(localDataScreenSource).toContain("let selectedDataSection: DataSection = 'store';");
   });
 
   it('does not hard-code marketplace pricing examples into the client', () => {
     expect(localDataScreenSource).not.toMatch(/\$(248|49|99)\/?(mo)?/);
   });
 
-  it('renders the paid-aware overview visualization panels', () => {
-    expect(localDataScreenSource).toContain('sdn-overview-visuals');
-    expect(localDataScreenSource).toContain('sdn-overview-storage-panel');
-    expect(localDataScreenSource).toContain('Storage by');
-    expect(localDataScreenSource).toContain('Cost and storage by provider');
+  it('renders the paid-aware store visualization panels', () => {
+    const storeSection = sourceBetween(localDataScreenSource, 'aria-label="Data store"', "{#if selectedDataSection === 'subscriptions'}");
+
+    expect(storeSection).toContain('sdn-overview-visuals');
+    expect(storeSection).toContain('sdn-overview-storage-panel');
+    expect(storeSection).toContain('Storage by');
+    expect(storeSection).toContain('Cost and storage by provider');
     expect(localDataScreenSource).not.toContain('Access coverage');
     expect(localDataScreenSource).not.toContain('sdn-access-coverage-grid');
     expect(localDataScreenSource).not.toContain('selectOverviewCoverageCell');
@@ -55,22 +54,23 @@ describe('Data catalog UI source', () => {
     expect(appCssSource).toMatch(/\.sdn-overview-storage-panel \.sdn-storage-legend\s*{[^}]*grid-column:\s*2/s);
   });
 
-  it('renders catalog filters for query, access, sync, and storage state', () => {
-    expect(localDataScreenSource).toContain('sdn-catalog-filters');
-    expect(localDataScreenSource).toContain('catalogSearchText');
-    expect(localDataScreenSource).toContain('catalogAccessFilter');
-    expect(localDataScreenSource).toContain('catalogSyncFilter');
-    expect(localDataScreenSource).toContain('catalogStorageFilter');
+  it('renders store filters for query, access, sync, and storage state', () => {
+    const storeSection = sourceBetween(localDataScreenSource, 'aria-label="Data store"', "{#if selectedDataSection === 'subscriptions'}");
+
+    expect(storeSection).toContain('sdn-catalog-filters');
+    expect(storeSection).toContain('aria-label="Store filters"');
+    expect(storeSection).toContain('catalogSearchText');
+    expect(storeSection).toContain('aria-label="Search store"');
+    expect(storeSection).toContain('catalogAccessFilter');
+    expect(storeSection).toContain('catalogSyncFilter');
+    expect(storeSection).toContain('catalogStorageFilter');
   });
 
   it('does not render separate Plan or Actions columns in data tables', () => {
-    const overviewProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Data products"', "{#if selectedDataSection === 'catalog'}");
-    const catalogProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Catalog data products"', "{#if selectedDataSection === 'sources'}");
+    const storeProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Store data products"', "{#if selectedDataSection === 'subscriptions'}");
 
-    for (const tableSource of [overviewProductsTable, catalogProductsTable]) {
-      expect(tableSource).not.toContain('<th>Plan</th>');
-      expect(tableSource).not.toContain('<th>Actions</th>');
-    }
+    expect(storeProductsTable).not.toContain('<th>Plan</th>');
+    expect(storeProductsTable).not.toContain('<th>Actions</th>');
   });
 
   it('routes desktop-local FlatSQL persistence through the configured desktop storage API', () => {
@@ -88,21 +88,18 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('clearSchemaSyncProgressForSubscription(dataSourceId, standardId, null);');
   });
 
-  it('does not render expandable action sub-rows in the overview data products table', () => {
-    const overviewSection = sourceBetween(localDataScreenSource, 'aria-label="Data overview"', "{#if selectedDataSection === 'catalog'}");
-    const overviewProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Data products"', "{#if selectedDataSection === 'catalog'}");
+  it('renders Store as a searchable product store with expandable action rows', () => {
+    const storeSection = sourceBetween(localDataScreenSource, 'aria-label="Data store"', "{#if selectedDataSection === 'subscriptions'}");
+    const storeProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Store data products"', "{#if selectedDataSection === 'subscriptions'}");
 
-    expect(localDataScreenSource).toContain("let overviewTableSearchText = '';");
-    expect(localDataScreenSource).toContain('$: filteredOverviewDataCatalogRows = filterDataCatalogRows(dataCatalogRows, { query: overviewTableSearchText });');
-    expect(overviewSection).toContain('aria-label="Search data products"');
-    expect(overviewSection).toContain('placeholder="Search"');
-    expect(overviewProductsTable).toContain('as row (catalogRowKey(row))}');
-    expect(overviewProductsTable).toContain('{#each filteredOverviewDataCatalogRows as row');
-    expect(overviewProductsTable).toContain('{#each');
-    expect(overviewProductsTable).not.toContain('on:click|stopPropagation={() => toggleCatalogRowActions(row)}');
-    expect(overviewProductsTable).not.toContain('class="sdn-catalog-action-panel"');
-    expect(overviewProductsTable).not.toContain('sdn-catalog-action-row');
-    expect(overviewProductsTable).not.toContain('aria-expanded={catalogRowActionsExpanded(row)}');
+    expect(localDataScreenSource).not.toContain("let overviewTableSearchText = '';");
+    expect(localDataScreenSource).not.toContain('filteredOverviewDataCatalogRows');
+    expect(storeSection).toContain('aria-label="Search store"');
+    expect(storeProductsTable).toContain('as row (catalogRowKey(row))}');
+    expect(storeProductsTable).toContain('{#each filteredDataCatalogRows as row');
+    expect(storeProductsTable).toContain('class="sdn-catalog-action-panel"');
+    expect(storeProductsTable).toContain('sdn-catalog-action-row');
+    expect(storeProductsTable).toContain('aria-expanded={expandedCatalogActionRowKey === catalogRowKey(row)}');
   });
 
   it('renders cached overview row counts before remote summaries and local stats finish loading', () => {
@@ -130,8 +127,8 @@ describe('Data catalog UI source', () => {
     );
   });
 
-  it('uses record-table formatting and expandable row actions for catalog data products', () => {
-    const catalogProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Catalog data products"', "{#if selectedDataSection === 'sources'}");
+  it('uses record-table formatting and expandable row actions for store data products', () => {
+    const catalogProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Store data products"', "{#if selectedDataSection === 'subscriptions'}");
 
     expect(localDataScreenSource).toContain('svelte:window on:click={handleCatalogOutsideClick}');
     expect(localDataScreenSource).toContain('<article class="sdn-card sdn-glass sdn-workbench">');
@@ -221,8 +218,8 @@ describe('Data catalog UI source', () => {
     expect(appCssSource).toContain('.sdn-saved-view-controls');
   });
 
-  it('renders catalog renewal with renewal timing and unit price instead of quota text', () => {
-    const catalogProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Catalog data products"', "{#if selectedDataSection === 'sources'}");
+  it('renders store renewal with renewal timing and unit price instead of quota text', () => {
+    const catalogProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Store data products"', "{#if selectedDataSection === 'subscriptions'}");
 
     expect(catalogProductsTable).toContain('<th>Renewal</th>');
     expect(catalogProductsTable).not.toContain('<th>Renewal / quota</th>');
@@ -232,80 +229,59 @@ describe('Data catalog UI source', () => {
     expect(catalogProductsTable).not.toContain('row.plan.quotaLabel');
   });
 
-  it('renders billing state only when backend billing facts exist', () => {
-    const overviewSection = sourceBetween(localDataScreenSource, 'aria-label="Data overview"', "{#if selectedDataSection === 'catalog'}");
-    const billingSection = sourceBetween(localDataScreenSource, 'aria-label="Billing"', "{#if selectedDataSection === 'activity'}");
+  it('renders billing state inside the Store rather than a separate billing interface', () => {
+    const storeSection = sourceBetween(localDataScreenSource, 'aria-label="Data store"', "{#if selectedDataSection === 'subscriptions'}");
 
     expect(localDataScreenSource).toContain('catalogRowHasBillingData');
     expect(localDataScreenSource).toContain('$: billingDataRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingDataRows : dataCatalogRows.filter(catalogRowHasBillingData);');
     expect(localDataScreenSource).toContain('buildDataBillingProviderRows');
     expect(localDataScreenSource).toContain('$: billingProviderRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingProviderRows : buildDataBillingProviderRows(dataCatalogRows);');
-    expect(overviewSection).toContain('dataCatalogSummary.billingMetricTitle');
-    expect(overviewSection).toContain('dataCatalogSummary.billingMetricValue');
-    expect(overviewSection).not.toContain('<span>Monthly spend</span>');
-    expect(billingSection).toContain('{#if dataCatalogSummary.hasBillingData}');
-    expect(billingSection).toContain('aria-label="Spend by provider"');
-    expect(billingSection).toContain('{#each billingProviderRows as provider}');
-    expect(billingSection).toContain('provider.priceLabel');
-    expect(billingSection).toContain('provider.renewalLabel');
-    expect(billingSection).toContain('aria-label="Usage and renewals"');
-    expect(billingSection).toContain('{#each billingDataRows as row}');
-    expect(billingSection).toContain('No paid subscriptions');
-    expect(billingSection).toContain('Billing data is not available from this backend.');
-    expect(billingSection).not.toContain('Budget');
-    expect(billingSection).not.toContain('bind:value');
-    expect(billingSection).not.toContain('<input');
-    expect(billingSection).not.toContain('Monthly spend');
+    expect(storeSection).toContain('dataCatalogSummary.billingMetricTitle');
+    expect(storeSection).toContain('dataCatalogSummary.billingMetricValue');
+    expect(storeSection).toContain('row.plan.renewalLabel');
+    expect(storeSection).toContain('row.plan.priceLabel');
+    expect(localDataScreenSource).not.toContain('aria-label="Billing"');
+    expect(localDataScreenSource).not.toContain('aria-label="Spend by provider"');
+    expect(localDataScreenSource).not.toContain('aria-label="Usage and renewals"');
   });
 
-  it('renders message types as sorted schema health rows with direct manage and explorer actions', () => {
-    const messageTypesTable = sourceBetween(localDataScreenSource, 'aria-label="Message types"', "{#if selectedDataSection === 'billing'}");
+  it('renders message type health inside Subscriptions with direct management actions', () => {
+    const subscriptionsSection = sourceBetween(localDataScreenSource, 'aria-label="Sync settings"', "{#if selectedDataSection === 'explorer'}");
 
     expect(localDataScreenSource).toContain('$: messageTypeRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.messageTypeRows : sortedMessageTypeRows(schemaSyncRows);');
     expect(localDataScreenSource).toContain('function sortedMessageTypeRows(rows: SchemaSyncRow[]): SchemaSyncRow[]');
     expect(localDataScreenSource).toContain('rightRows - leftRows');
-    expect(localDataScreenSource).toContain('function manageSchemaSubscription(schema: SchemaSyncRow): void');
-    expect(messageTypesTable).toContain('{#each messageTypeRows as schema}');
-    for (const header of ['<th>Remote</th>', '<th>Local</th>', '<th>Pinned</th>', '<th>Cached</th>', '<th>Freshness</th>', '<th>Sync</th>', '<th>Health</th>']) {
-      expect(messageTypesTable).toContain(header);
-    }
-    expect(messageTypesTable).toContain('schemaRemoteRowsLabel(schema)');
-    expect(messageTypesTable).toContain('schemaLocalRowsLabel(schema)');
-    expect(messageTypesTable).toContain('schemaPinnedRowsCountLabel(schema)');
-    expect(messageTypesTable).toContain('schemaCachedBytesLabel(schema)');
-    expect(messageTypesTable).toContain('schemaLastSyncedLabel(schema)');
-    expect(messageTypesTable).toContain('schemaHealthLabel(schema)');
-    expect(messageTypesTable).toContain('openSchemaInExplorer(schema)');
-    expect(messageTypesTable).toContain('manageSchemaSubscription(schema)');
-    expect(messageTypesTable).toContain('retrySubscriptionSync(schema)');
+    expect(subscriptionsSection).toContain('{#each filteredSubscriptionRows as schema (schema.subscriptionId)}');
+    expect(subscriptionsSection).toContain('schemaRemoteRowsLabel(schema)');
+    expect(subscriptionsSection).toContain('schemaLocalRowsLabel(schema)');
+    expect(subscriptionsSection).toContain('schemaPinnedRowsLabel(schema)');
+    expect(subscriptionsSection).toContain('schemaCachedBytesLabel');
+    expect(subscriptionsSection).toContain('schemaLastSyncedLabel');
+    expect(subscriptionsSection).toContain('schemaHealthLabel(schema)');
+    expect(subscriptionsSection).toContain('openSchemaInExplorer(selectedSubscriptionDetailSchema)');
+    expect(subscriptionsSection).toContain('retrySubscriptionSync(schema)');
   });
 
-  it('keeps data sources as read-only subscribed/configured provenance rows', () => {
-    const sourcesSection = sourceBetween(localDataScreenSource, 'aria-label="Data sources"', "{#if selectedDataSection === 'message-types'}");
+  it('keeps provider/source provenance inside Store product details', () => {
+    const storeSection = sourceBetween(localDataScreenSource, 'aria-label="Data store"', "{#if selectedDataSection === 'subscriptions'}");
 
     expect(localDataScreenSource).toContain('$: sourceProvenanceRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.sourceProvenanceRows : buildSourceProvenanceRows(dataSourceOptions, schemaSyncRows, dataDirectoryState.peerTrust);');
     expect(localDataScreenSource).toContain('interface SourceProvenanceRow');
     expect(localDataScreenSource).toContain('function buildSourceProvenanceRows(');
-    expect(sourcesSection).toContain('{#each sourceProvenanceRows as source (source.id)}');
-    expect(sourcesSection).not.toContain('{#each dataSourceOptions as source}');
-    expect(sourcesSection).not.toContain('Search');
-    expect(sourcesSection).not.toContain('Directory');
-    for (const header of ['<th>Provider</th>', '<th>Peer ID</th>', '<th>Public key</th>', '<th>Source / datastore</th>', '<th>Trust / access</th>', '<th>Products</th>']) {
-      expect(sourcesSection).toContain(header);
-    }
-    expect(sourcesSection).toContain('{source.providerName}');
-    expect(sourcesSection).toContain('{source.sourceDatastoreLabel}');
-    expect(sourcesSection).toContain('{source.trustAccessLabel}');
-    expect(sourcesSection).toContain('{source.productsLabel}');
-    expect(sourcesSection).toContain('{source.rowsLabel}');
-    expect(sourcesSection).toContain('shorten(source.peerId ??');
-    expect(sourcesSection).toContain('shorten(source.publicKey ??');
+    expect(storeSection).toContain('catalogRowProviderIdentityLabel(row)');
+    expect(storeSection).toContain('<span>Public key</span>');
+    expect(storeSection).toContain('shorten(row.providerPublicKey, 42)');
+    expect(storeSection).toContain('catalogRowSourceCountLabel(row)');
+    expect(storeSection).toContain('catalogRowTrustLabel(row)');
+    expect(storeSection).toContain('catalogRowVerificationLabel(row)');
+    expect(storeSection).toContain('shorten(row.providerPeerId ?? row.providerPublicKey ??');
+    expect(localDataScreenSource).not.toContain('aria-label="Data sources"');
   });
 
-  it('renders Storage as active feed rows with scoped reset and sync schedule state', () => {
-    const storageSection = sourceBetween(localDataScreenSource, 'aria-label="Local storage state"', "{#if selectedDataSection === 'subscriptions'}");
+  it('renders subscription storage rows with scoped reset and sync schedule state', () => {
+    const storageSection = sourceBetween(localDataScreenSource, 'aria-label="Sync settings"', "{#if selectedDataSection === 'explorer'}");
 
-    expect(storageSection).toContain('{#each activeStorageRows as schema}');
+    expect(storageSection).toContain('{#each filteredSubscriptionRows as schema (schema.subscriptionId)}');
     expect(storageSection).toContain('schemaRemoteRowsLabel(schema)');
     expect(storageSection).toContain('schemaLocalRowsLabel(schema)');
     expect(storageSection).toContain('schemaPinnedRowsLabel(schema)');
@@ -315,7 +291,7 @@ describe('Data catalog UI source', () => {
     expect(storageSection).toContain('schemaRetentionPolicyLabel(schema)');
     expect(storageSection).toContain('nextSyncAttemptLabel(schema)');
     expect(storageSection).toContain('schemaLastSyncedLabel(schema)');
-    expect(storageSection).toContain('class="sdn-storage-row-actions"');
+    expect(storageSection).toContain('class="sdn-storage-row-actions sdn-subscription-actions"');
     expect(storageSection).toContain('verifyPinnedArtifacts(schema)');
     expect(storageSection).toContain('beginResetSubscriptionData(schema.subscriptionId)');
     expect(storageSection).toContain('confirmResetSubscriptionData(schema)');
@@ -339,7 +315,7 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('if (stalled) resetLocalFlatSqlStore();');
   });
 
-  it('renders My Subscriptions as filtered access, storage, pinning, and sync management', () => {
+  it('renders Subscriptions as filtered access, storage, pinning, and sync management', () => {
     const subscriptionsSection = sourceBetween(localDataScreenSource, 'aria-label="Sync settings"', "{#if selectedDataSection === 'explorer'}");
 
     expect(localDataScreenSource).toContain("type SubscriptionFilter = 'all' | 'active' | 'trials' | 'expiring' | 'payment-issues' | 'over-quota' | 'canceled' | 'free' | 'paid' | 'usage-based' | 'enterprise'");
@@ -347,11 +323,15 @@ describe('Data catalog UI source', () => {
     for (const label of ['Active', 'Trials', 'Expiring', 'Payment issues', 'Over quota', 'Canceled', 'Free', 'Paid', 'Usage-based', 'Enterprise']) {
       expect(localDataScreenSource).toContain(`label: '${label}'`);
     }
-    expect(localDataScreenSource).toContain('$: filteredSubscriptionRows = filterSubscriptionRows(schemaSyncRows, subscriptionFilter);');
+    expect(localDataScreenSource).toContain('$: filteredSubscriptionRows = filterSubscriptionRows(schemaSyncRows, subscriptionFilter, subscriptionSearchText);');
+    expect(localDataScreenSource).toContain("let subscriptionSearchText = '';");
     expect(localDataScreenSource).toContain('function subscriptionMatchesFilter(schema: SchemaSyncRow, filter: SubscriptionFilter): boolean');
+    expect(localDataScreenSource).toContain('function subscriptionSearchTextFor(schema: SchemaSyncRow): string');
     expect(localDataScreenSource).toContain('function openSubscriptionDetails(schema: SchemaSyncRow): void');
     expect(localDataScreenSource).toContain('function closeSubscriptionDetails(): void');
+    expect(subscriptionsSection).toContain('aria-label="Subscription storage summary"');
     expect(subscriptionsSection).toContain('aria-label="Subscription filters"');
+    expect(subscriptionsSection).toContain('aria-label="Search subscriptions"');
     expect(subscriptionsSection).toContain('{#each filteredSubscriptionRows as schema (schema.subscriptionId)}');
     expect(subscriptionsSection).toContain('subscriptionProductLabel(schema)');
     expect(subscriptionsSection).toContain('subscriptionAccessLabel(schema)');
@@ -372,8 +352,8 @@ describe('Data catalog UI source', () => {
     expect(appCssSource).toContain('.sdn-subscription-detail-grid');
   });
 
-  it('renders Activity as chronological feed events with retry affordances', () => {
-    const activitySection = sourceBetween(localDataScreenSource, 'aria-label="Data activity"', "{#if selectedDataSection === 'storage'}");
+  it('keeps activity data as cached subscription/store state instead of a separate interface', () => {
+    const subscriptionsSection = sourceBetween(localDataScreenSource, 'aria-label="Sync settings"', "{#if selectedDataSection === 'explorer'}");
 
     expect(localDataScreenSource).toContain('interface DataActivityRow');
     expect(localDataScreenSource).toContain('$: activityRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.activityRows : buildDataActivityRows(schemaSyncRows, dataCatalogRows);');
@@ -384,14 +364,10 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain("eventType: 'Subscription'");
     expect(localDataScreenSource).toContain("eventType: 'Verification'");
     expect(localDataScreenSource).toContain("eventType: 'Retry'");
-    expect(activitySection).toContain('{#each activityRows as activity (activity.id)}');
-    for (const header of ['<th>Event</th>', '<th>Message type</th>', '<th>Provider</th>', '<th>Status</th>', '<th>Detail</th>', '<th>Next attempt</th>', '<th>When</th>', '<th>Action</th>']) {
-      expect(activitySection).toContain(header);
-    }
-    expect(activitySection).toContain('activity.retrySchema');
-    expect(activitySection).toContain('retryActivitySync(activity)');
-    expect(activitySection).toContain('activityRetryDisabled(activity)');
-    expect(activitySection).toContain('No activity.');
+    expect(subscriptionsSection).toContain('retrySubscriptionSync(schema)');
+    expect(subscriptionsSection).toContain('schemaRetryDisabled(schema)');
+    expect(subscriptionsSection).toContain('schema.progress.error');
+    expect(localDataScreenSource).not.toContain('aria-label="Data activity"');
   });
 
   it('uses compact sync status bubbles with hover details instead of verbose row timing text', () => {

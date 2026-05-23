@@ -49,12 +49,22 @@ describe('peer data feeds', () => {
     })]);
   });
 
-  it('uses the highest-count CelesTrak CAT source when multiple CAT sources are advertised without datastore keys', () => {
+  it('prefers the active CelesTrak SATCAT CSV source when multiple CAT sources are advertised without datastore keys', () => {
     const summary: DataSummary = {
-      totalRecords: 533_380,
+      totalRecords: 1_506_117,
       totalBytes: 123_456,
-      schemas: [{ schemaName: 'CAT.fbs', count: 533_380, totalBytes: 123_456 }],
+      schemas: [{ schemaName: 'CAT.fbs', count: 1_506_117, totalBytes: 123_456 }],
       sources: [
+        {
+          schemaName: 'CAT.fbs',
+          providerId: 'space-data-network-02',
+          sourceName: '',
+          batchId: '',
+          producerPeerId: '16Uiu2HCelesTrak',
+          producerPublicKey: 'producer-public-key',
+          count: 972_737,
+          totalBytes: 219_942_748,
+        },
         {
           schemaName: 'CAT.fbs',
           providerId: 'space-data-network-02',
@@ -84,13 +94,23 @@ describe('peer data feeds', () => {
 
     expect(cat).toMatchObject({
       providerId: 'space-data-network-02',
-      sourceName: 'celestrak-satcat',
-      remoteRows: 435_257,
+      sourceName: 'celestrak-satcat-csv',
+      remoteRows: 98_123,
     });
   });
 
-  it('ignores stale source filters when choosing a summary source for a schema', () => {
+  it('uses the active CelesTrak source when a stale source filter is stored for a schema', () => {
     const sourceRow = preferredDataSummarySource([
+      {
+        schemaName: 'CAT.fbs',
+        providerId: 'space-data-network-02',
+        sourceName: '',
+        batchId: '',
+        producerPeerId: '16Uiu2HCelesTrak',
+        producerPublicKey: 'producer-public-key',
+        count: 972_737,
+        totalBytes: 219_942_748,
+      },
       {
         schemaName: 'CAT.fbs',
         providerId: 'space-data-network-02',
@@ -118,8 +138,8 @@ describe('peer data feeds', () => {
     });
 
     expect(sourceRow).toMatchObject({
-      sourceName: 'celestrak-satcat',
-      count: 435_257,
+      sourceName: 'celestrak-satcat-csv',
+      count: 98_123,
     });
   });
 });

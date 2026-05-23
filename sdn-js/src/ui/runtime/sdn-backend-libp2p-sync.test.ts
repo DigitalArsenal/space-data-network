@@ -108,7 +108,7 @@ describe('libp2p FlatSQL sync backend', () => {
         sources: [{
           schemaName: 'OMM.fbs',
           providerId: 'space-data-network-02',
-          sourceName: '',
+          sourceName: 'celestrak-gp',
           count: 1_999_559,
         }],
       },
@@ -122,6 +122,47 @@ describe('libp2p FlatSQL sync backend', () => {
       limit: 1,
       offset: 0,
     });
+  });
+
+  it('uses the active CelesTrak SATCAT CSV source for CAT fallback summary scans', async () => {
+    const calls: FlatSqlSyncQuery[] = [];
+    const backend = createLibp2pFlatSqlSyncBackend({
+      targetPeerId: '16Uiu2HCelesTrak',
+      candidateAddrs: ['/ip4/167.172.219.213/tcp/8080/ws/p2p/16Uiu2HCelesTrak'],
+      providerId: 'space-data-network-02',
+      sourceName: 'celestrak-gp',
+      schemas: ['CAT.fbs'],
+      syncClient: {
+        async readFlatSqlSyncChunk(query) {
+          calls.push(query);
+          return headerOnlyChunk(query.schema, query.sourceName === 'celestrak-satcat-csv' ? 98_123 : 972_737);
+        },
+      },
+    });
+
+    await expect(backend.getDataSummary()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        totalRecords: 98_123,
+        schemas: [{ schemaName: 'CAT.fbs', count: 98_123 }],
+        sources: [{
+          schemaName: 'CAT.fbs',
+          providerId: 'space-data-network-02',
+          sourceName: 'celestrak-satcat-csv',
+          count: 98_123,
+        }],
+      },
+    });
+    expect(calls).toEqual([
+      expect.objectContaining({
+        op: 'scan',
+        schema: 'CAT.fbs',
+        providerId: 'space-data-network-02',
+        sourceName: 'celestrak-satcat-csv',
+        limit: 1,
+        offset: 0,
+      }),
+    ]);
   });
 
   it('keeps summary loading usable when one schema is absent on the provider', async () => {
@@ -204,7 +245,7 @@ describe('libp2p FlatSQL sync backend', () => {
     ]);
   });
 
-  it('merges schema scans into partial datastore summaries without applying a node-level source name', async () => {
+  it('merges schema scans into partial datastore summaries with schema-specific CelesTrak source names', async () => {
     const calls: FlatSqlSyncQuery[] = [];
     const backend = createLibp2pFlatSqlSyncBackend({
       targetPeerId: '16Uiu2HCelesTrak',
@@ -254,7 +295,7 @@ describe('libp2p FlatSQL sync backend', () => {
           expect.objectContaining({
             schemaName: 'CAT.fbs',
             providerId: 'space-data-network-02',
-            sourceName: '',
+            sourceName: 'celestrak-satcat-csv',
             count: 145_902,
           }),
         ]),
@@ -265,10 +306,10 @@ describe('libp2p FlatSQL sync backend', () => {
       op: 'scan',
       schema: 'CAT.fbs',
       providerId: 'space-data-network-02',
+      sourceName: 'celestrak-satcat-csv',
       limit: 1,
       offset: 0,
     });
-    expect(catScan).not.toHaveProperty('sourceName');
   });
 
   it('falls back to schema scans when a provider does not support datastore discovery yet', async () => {
@@ -302,9 +343,9 @@ describe('libp2p FlatSQL sync backend', () => {
         op: 'scan',
         schema: 'OMM.fbs',
         providerId: 'space-data-network-02',
+        sourceName: 'celestrak-gp',
       }),
     ]);
-    expect(calls[0]).not.toHaveProperty('sourceName');
   });
 
   it('loads summary schemas sequentially instead of parallel dialing every schema', async () => {

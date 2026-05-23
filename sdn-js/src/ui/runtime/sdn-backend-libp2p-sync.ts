@@ -41,6 +41,7 @@ import {
   type SdnBackend,
   type StorageSummary,
 } from './sdn-backend';
+import { flatSqlSourceNameForSchema } from './data-source-routing';
 
 export interface Libp2pFlatSqlSyncClient {
   readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk>;
@@ -131,7 +132,12 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     const queryHasSourceName = Object.prototype.hasOwnProperty.call(query, 'sourceName') && query.sourceName !== undefined;
     const resolvedDatastoreKey = queryHasDatastoreKey ? optionalText(query.datastoreKey) : datastoreKey;
     const resolvedProviderId = queryHasProviderId ? optionalText(query.providerId) : providerId;
-    const resolvedSourceName = queryHasSourceName ? optionalText(query.sourceName) : sourceName;
+    const requestedSourceName = queryHasSourceName ? optionalText(query.sourceName) : sourceName;
+    const resolvedSourceName = flatSqlSourceNameForSchema({
+      schemaName: query.schema,
+      providerId: resolvedProviderId,
+      sourceName: requestedSourceName,
+    });
     if (resolvedDatastoreKey) request.datastoreKey = resolvedDatastoreKey;
     if (resolvedProviderId) request.providerId = resolvedProviderId;
     if (resolvedSourceName) request.sourceName = resolvedSourceName;
@@ -428,11 +434,12 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
     let firstError: unknown = null;
     for (const schema of summarySchemas) {
       if (excludedSchemas.has(schema)) continue;
+      const schemaSourceName = flatSqlSourceNameForSchema({ schemaName: schema, providerId, sourceName });
       try {
         chunks.push(await requestChunk({
           schema,
           ...(datastoreKey ? { datastoreKey } : {}),
-          sourceName: '',
+          ...(schemaSourceName ? { sourceName: schemaSourceName } : { sourceName: '' }),
           op: 'scan',
           limit: 1,
           offset: 0,
@@ -462,7 +469,7 @@ export function createLibp2pFlatSqlSyncBackend(options: Libp2pFlatSqlSyncBackend
         schemaName: schema.schemaName,
         providerId: providerId ?? targetPeerId,
         ...(datastoreKey ? { datastoreKey } : {}),
-        sourceName: '',
+        sourceName: flatSqlSourceNameForSchema({ schemaName: schema.schemaName, providerId, sourceName }) ?? '',
         batchId: '',
         producerPeerId: targetPeerId,
         producerPublicKey: optionalText(options.publicKey) ?? '',

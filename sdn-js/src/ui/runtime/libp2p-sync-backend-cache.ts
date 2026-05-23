@@ -4,6 +4,7 @@ import {
   type Libp2pFlatSqlSyncBackendOptions,
   type Libp2pFlatSqlSyncClient,
 } from './sdn-backend-libp2p-sync';
+import { flatSqlSourceNameForSchema } from './data-source-routing';
 import type {
   FlatSqlPublishedShard,
   FlatSqlPublishedShardBatch,
@@ -426,7 +427,11 @@ function withSyncDefaults<T extends FlatSqlSyncQuery>(
   const queryHasSourceName = Object.prototype.hasOwnProperty.call(query, 'sourceName') && query.sourceName !== undefined;
   const datastoreKey = normalizeOptionalText(queryHasDatastoreKey ? query.datastoreKey : options.datastoreKey);
   const providerId = normalizeOptionalText(queryHasProviderId ? query.providerId : options.providerId);
-  const sourceName = normalizeOptionalText(queryHasSourceName ? query.sourceName : options.sourceName);
+  const sourceName = flatSqlSourceNameForSchema({
+    schemaName: request.schema,
+    providerId,
+    sourceName: normalizeOptionalText(queryHasSourceName ? query.sourceName : options.sourceName),
+  });
   delete normalized.datastoreKey;
   delete normalized.providerId;
   delete normalized.sourceName;
