@@ -61,9 +61,19 @@ describe('Data catalog UI source', () => {
     expect(storeSection).toContain('aria-label="Store filters"');
     expect(storeSection).toContain('catalogSearchText');
     expect(storeSection).toContain('aria-label="Search store"');
+    expect(storeSection).toContain('class="sdn-catalog-filter-menu"');
+    expect(storeSection).toContain('aria-label="Catalog filter options"');
+    expect(storeSection).toContain('type="checkbox"');
+    expect(storeSection).toContain('Clear all');
     expect(storeSection).toContain('catalogAccessFilter');
     expect(storeSection).toContain('catalogSyncFilter');
     expect(storeSection).toContain('catalogStorageFilter');
+    expect(storeSection).not.toContain('bind:value={catalogAccessFilter}');
+    expect(storeSection).not.toContain('bind:value={catalogSyncFilter}');
+    expect(storeSection).not.toContain('bind:value={catalogStorageFilter}');
+    expect(appCssSource).toMatch(/\.sdn-catalog-filters\s*{[^}]*justify-content:\s*center/s);
+    expect(appCssSource).toMatch(/\.sdn-catalog-filter-menu-button\s*{[^}]*align-self:\s*end/s);
+    expect(appCssSource).toMatch(/\.sdn-catalog-search \.sdn-input::placeholder\s*{[^}]*font-size:\s*0\.72rem/s);
   });
 
   it('does not render separate Plan or Actions columns in data tables', () => {

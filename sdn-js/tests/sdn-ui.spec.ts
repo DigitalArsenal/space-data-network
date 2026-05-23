@@ -75,6 +75,19 @@ test('data route renders subscribed local datastore preview without workbench st
   await page.getByRole('textbox', { name: 'Search store' }).fill('pnm');
   await expect(storeProducts).toContainText('PNM Feed');
   await expect(storeProducts).toContainText('CelesTrak Provider');
+  const storeFilters = page.locator('.sdn-catalog-filters');
+  await expect(storeFilters.getByRole('combobox')).toHaveCount(0);
+  const filterButton = page.getByRole('button', { name: 'Filters' });
+  await expect(filterButton).toBeVisible();
+  await filterButton.click();
+  const filterMenu = page.getByLabel('Catalog filter options');
+  await expect(filterMenu.getByRole('checkbox', { name: 'Paid', exact: true })).toBeVisible();
+  await filterMenu.getByRole('checkbox', { name: 'Paid', exact: true }).check();
+  await expect(storeProducts).toContainText('No matching data products.');
+  await expect(page.getByRole('button', { name: 'Filters (1)' })).toBeVisible();
+  await filterMenu.getByRole('button', { name: 'Clear all' }).click();
+  await expect(storeProducts).toContainText('PNM Feed');
+  await expect(page.getByRole('button', { name: 'Filters' })).toBeVisible();
 
   const storeRow = storeProducts.locator('tbody tr.sdn-catalog-row').filter({ hasText: 'PNM Feed' }).first();
   await storeRow.locator('td').first().getByRole('button').click();
