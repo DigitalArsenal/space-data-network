@@ -347,20 +347,33 @@ describe('Data catalog UI source', () => {
   it('renders Subscriptions as filtered access, storage, pinning, and sync management', () => {
     const subscriptionsSection = sourceBetween(localDataScreenSource, 'aria-label="Sync settings"', "{#if selectedDataSection === 'explorer'}");
 
-    expect(localDataScreenSource).toContain("type SubscriptionFilter = 'all' | 'active' | 'trials' | 'expiring' | 'payment-issues' | 'over-quota' | 'canceled' | 'free' | 'paid' | 'usage-based' | 'enterprise'");
-    expect(localDataScreenSource).toContain('const SUBSCRIPTION_FILTERS');
-    for (const label of ['Active', 'Trials', 'Expiring', 'Payment issues', 'Over quota', 'Canceled', 'Free', 'Paid', 'Usage-based', 'Enterprise']) {
-      expect(localDataScreenSource).toContain(`label: '${label}'`);
-    }
-    expect(localDataScreenSource).toContain('$: filteredSubscriptionRows = filterSubscriptionRows(schemaSyncRows, subscriptionFilter, subscriptionSearchText);');
+    expect(localDataScreenSource).toContain("type SubscriptionStatusFilter = 'all' | 'active' | 'expiring' | 'payment-issues' | 'over-quota' | 'canceled'");
+    expect(localDataScreenSource).toContain("type SubscriptionAccessFilter = 'all' | 'trials' | 'free' | 'paid'");
+    expect(localDataScreenSource).toContain("type SubscriptionPlanFilter = 'all' | 'usage-based' | 'enterprise'");
+    expect(localDataScreenSource).toContain('const SUBSCRIPTION_STATUS_FILTER_OPTIONS');
+    expect(localDataScreenSource).toContain('const SUBSCRIPTION_ACCESS_FILTER_OPTIONS');
+    expect(localDataScreenSource).toContain('const SUBSCRIPTION_PLAN_FILTER_OPTIONS');
+    expect(localDataScreenSource).toContain('$: filteredSubscriptionRows = filterSubscriptionRows(schemaSyncRows, subscriptionFilterState(), subscriptionSearchText);');
+    expect(localDataScreenSource).toContain('$: subscriptionFilterActiveTotal = Number(subscriptionStatusFilter !== \'all\') + Number(subscriptionAccessFilter !== \'all\') + Number(subscriptionPlanFilter !== \'all\');');
+    expect(localDataScreenSource).toContain('$: subscriptionFilterButtonText = subscriptionFilterActiveTotal > 0 ? `Filters (${subscriptionFilterActiveTotal})` : \'Filters\';');
     expect(localDataScreenSource).toContain("let subscriptionSearchText = '';");
-    expect(localDataScreenSource).toContain('function subscriptionMatchesFilter(schema: SchemaSyncRow, filter: SubscriptionFilter): boolean');
+    expect(localDataScreenSource).toContain('let subscriptionFilterMenuOpen = false;');
+    expect(localDataScreenSource).toContain('function subscriptionMatchesFilters(schema: SchemaSyncRow, filters: SubscriptionFilterState): boolean');
+    expect(localDataScreenSource).toContain('function toggleSubscriptionStatusFilter(value: Exclude<SubscriptionStatusFilter, \'all\'>): void');
+    expect(localDataScreenSource).toContain('function clearSubscriptionFilters(): void');
     expect(localDataScreenSource).toContain('function subscriptionSearchTextFor(schema: SchemaSyncRow): string');
     expect(localDataScreenSource).toContain('function openSubscriptionDetails(schema: SchemaSyncRow): void');
     expect(localDataScreenSource).toContain('function closeSubscriptionDetails(): void');
     expect(subscriptionsSection).toContain('aria-label="Subscription storage summary"');
     expect(subscriptionsSection).toContain('aria-label="Subscription filters"');
     expect(subscriptionsSection).toContain('aria-label="Search subscriptions"');
+    expect(subscriptionsSection).toContain('data-subscription-filter-menu');
+    expect(subscriptionsSection).toContain('aria-label="Subscription filter options"');
+    expect(subscriptionsSection).toContain('Clear all');
+    expect(subscriptionsSection).toContain('{subscriptionFilterButtonText}');
+    expect(subscriptionsSection).not.toContain('{#each SUBSCRIPTION_FILTERS as filter}');
+    expect(subscriptionsSection).not.toContain('class:active={subscriptionFilter === filter.id}');
+    expect(subscriptionsSection).not.toContain("subscriptionFilter = filter.id");
     expect(subscriptionsSection).toContain('{#each filteredSubscriptionRows as schema (schema.subscriptionId)}');
     expect(subscriptionsSection).toContain('subscriptionProductLabel(schema)');
     expect(subscriptionsSection).toContain('subscriptionAccessLabel(schema)');

@@ -95,7 +95,15 @@
   type PinVerifyToastTone = 'success' | 'warning' | 'error';
   type ExplorerSearchMode = 'plain' | 'sql';
   type SyncBubbleTone = 'loading' | 'ready' | 'queued' | 'syncing' | 'synced' | 'stale' | 'capped' | 'failed' | 'paused';
-  type SubscriptionFilter = 'all' | 'active' | 'trials' | 'expiring' | 'payment-issues' | 'over-quota' | 'canceled' | 'free' | 'paid' | 'usage-based' | 'enterprise';
+  type SubscriptionStatusFilter = 'all' | 'active' | 'expiring' | 'payment-issues' | 'over-quota' | 'canceled';
+  type SubscriptionAccessFilter = 'all' | 'trials' | 'free' | 'paid';
+  type SubscriptionPlanFilter = 'all' | 'usage-based' | 'enterprise';
+
+  interface SubscriptionFilterState {
+    status: SubscriptionStatusFilter;
+    access: SubscriptionAccessFilter;
+    plan: SubscriptionPlanFilter;
+  }
 
   interface WorkbenchColumn {
     key: SortColumn;
@@ -310,16 +318,19 @@
     id,
     label: DATA_RETENTION_POLICY_LABELS[id],
   }));
-  const SUBSCRIPTION_FILTERS: Array<{ id: SubscriptionFilter; label: string }> = [
-    { id: 'all', label: 'All' },
+  const SUBSCRIPTION_STATUS_FILTER_OPTIONS: Array<{ id: Exclude<SubscriptionStatusFilter, 'all'>; label: string }> = [
     { id: 'active', label: 'Active' },
-    { id: 'trials', label: 'Trials' },
     { id: 'expiring', label: 'Expiring' },
     { id: 'payment-issues', label: 'Payment issues' },
     { id: 'over-quota', label: 'Over quota' },
     { id: 'canceled', label: 'Canceled' },
+  ];
+  const SUBSCRIPTION_ACCESS_FILTER_OPTIONS: Array<{ id: Exclude<SubscriptionAccessFilter, 'all'>; label: string }> = [
+    { id: 'trials', label: 'Trials' },
     { id: 'free', label: 'Free' },
     { id: 'paid', label: 'Paid' },
+  ];
+  const SUBSCRIPTION_PLAN_FILTER_OPTIONS: Array<{ id: Exclude<SubscriptionPlanFilter, 'all'>; label: string }> = [
     { id: 'usage-based', label: 'Usage-based' },
     { id: 'enterprise', label: 'Enterprise' },
   ];
@@ -679,7 +690,12 @@
   let catalogFilterMenuOpen = false;
   let catalogFilterActiveTotal = 0;
   let catalogFilterButtonText = 'Filters';
-  let subscriptionFilter: SubscriptionFilter = 'all';
+  let subscriptionStatusFilter: SubscriptionStatusFilter = 'all';
+  let subscriptionAccessFilter: SubscriptionAccessFilter = 'all';
+  let subscriptionPlanFilter: SubscriptionPlanFilter = 'all';
+  let subscriptionFilterMenuOpen = false;
+  let subscriptionFilterActiveTotal = 0;
+  let subscriptionFilterButtonText = 'Filters';
   let subscriptionSearchText = '';
   let selectedSubscriptionDetailId = '';
   let expandedCatalogActionRowKey = '';
@@ -763,9 +779,11 @@
   $: billingDataRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingDataRows : dataCatalogRows.filter(catalogRowHasBillingData);
   $: billingProviderRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingProviderRows : buildDataBillingProviderRows(dataCatalogRows);
   $: activityRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.activityRows : buildDataActivityRows(schemaSyncRows, dataCatalogRows);
-  $: filteredSubscriptionRows = filterSubscriptionRows(schemaSyncRows, subscriptionFilter, subscriptionSearchText);
+  $: filteredSubscriptionRows = filterSubscriptionRows(schemaSyncRows, subscriptionFilterState(), subscriptionSearchText);
   $: catalogFilterActiveTotal = Number(catalogAccessFilter !== 'all') + Number(catalogSyncFilter !== 'all') + Number(catalogStorageFilter !== 'all');
   $: catalogFilterButtonText = catalogFilterActiveTotal > 0 ? `Filters (${catalogFilterActiveTotal})` : 'Filters';
+  $: subscriptionFilterActiveTotal = Number(subscriptionStatusFilter !== 'all') + Number(subscriptionAccessFilter !== 'all') + Number(subscriptionPlanFilter !== 'all');
+  $: subscriptionFilterButtonText = subscriptionFilterActiveTotal > 0 ? `Filters (${subscriptionFilterActiveTotal})` : 'Filters';
   $: selectedSubscriptionDetailSchema = selectedSubscriptionDetailId
     ? schemaSyncRows.find((schema) => schema.subscriptionId === selectedSubscriptionDetailId) ?? null
     : null;
@@ -1506,10 +1524,40 @@
     catalogStorageFilter = catalogStorageFilter === value ? 'all' : value;
   }
 
+  function subscriptionFilterState(): SubscriptionFilterState {
+    return {
+      status: subscriptionStatusFilter,
+      access: subscriptionAccessFilter,
+      plan: subscriptionPlanFilter,
+    };
+  }
+
+  function clearSubscriptionFilters(): void {
+    subscriptionStatusFilter = 'all';
+    subscriptionAccessFilter = 'all';
+    subscriptionPlanFilter = 'all';
+    subscriptionFilterMenuOpen = false;
+  }
+
+  function toggleSubscriptionStatusFilter(value: Exclude<SubscriptionStatusFilter, 'all'>): void {
+    subscriptionStatusFilter = subscriptionStatusFilter === value ? 'all' : value;
+  }
+
+  function toggleSubscriptionAccessFilter(value: Exclude<SubscriptionAccessFilter, 'all'>): void {
+    subscriptionAccessFilter = subscriptionAccessFilter === value ? 'all' : value;
+  }
+
+  function toggleSubscriptionPlanFilter(value: Exclude<SubscriptionPlanFilter, 'all'>): void {
+    subscriptionPlanFilter = subscriptionPlanFilter === value ? 'all' : value;
+  }
+
   function handleCatalogOutsideClick(event: MouseEvent): void {
     const composedPath = event.composedPath();
     if (catalogFilterMenuOpen && !composedPath.some((target) => target instanceof Element && target.closest('[data-catalog-filter-menu]'))) {
       catalogFilterMenuOpen = false;
+    }
+    if (subscriptionFilterMenuOpen && !composedPath.some((target) => target instanceof Element && target.closest('[data-subscription-filter-menu]'))) {
+      subscriptionFilterMenuOpen = false;
     }
     if (performance.now() < suppressCatalogOutsideUntil) return;
     if (!expandedCatalogActionRowKey) return;
@@ -1709,10 +1757,10 @@
     });
   }
 
-  function filterSubscriptionRows(rows: SchemaSyncRow[], filter: SubscriptionFilter, query = ''): SchemaSyncRow[] {
+  function filterSubscriptionRows(rows: SchemaSyncRow[], filters: SubscriptionFilterState, query = ''): SchemaSyncRow[] {
     const normalizedQuery = query.trim().toLowerCase();
     return rows.filter((schema) => {
-      if (filter !== 'all' && !subscriptionMatchesFilter(schema, filter)) return false;
+      if (!subscriptionMatchesFilters(schema, filters)) return false;
       if (!normalizedQuery) return true;
       return subscriptionSearchTextFor(schema).includes(normalizedQuery);
     });
@@ -1740,7 +1788,13 @@
     ].filter(Boolean).join(' ').toLowerCase();
   }
 
-  function subscriptionMatchesFilter(schema: SchemaSyncRow, filter: SubscriptionFilter): boolean {
+  function subscriptionMatchesFilters(schema: SchemaSyncRow, filters: SubscriptionFilterState): boolean {
+    return subscriptionMatchesStatusFilter(schema, filters.status)
+      && subscriptionMatchesAccessFilter(schema, filters.access)
+      && subscriptionMatchesPlanFilter(schema, filters.plan);
+  }
+
+  function subscriptionMatchesStatusFilter(schema: SchemaSyncRow, filter: SubscriptionStatusFilter): boolean {
     const row = catalogRowForSchema(schema);
     const accessState = row?.access.state ?? 'free';
     const planText = [
@@ -1756,11 +1810,21 @@
           && accessState !== 'expired'
           && accessState !== 'payment-failed'
           && accessState !== 'over-quota';
-      case 'trials': return accessState === 'trial';
       case 'expiring': return row?.plan.renewalLabel !== undefined && row.plan.renewalLabel !== 'No renewal';
       case 'payment-issues': return accessState === 'payment-failed';
       case 'over-quota': return accessState === 'over-quota' || schema.progress.status === 'capped';
       case 'canceled': return accessState === 'expired' || planText.includes('cancel');
+      case 'all':
+      default:
+        return true;
+    }
+  }
+
+  function subscriptionMatchesAccessFilter(schema: SchemaSyncRow, filter: SubscriptionAccessFilter): boolean {
+    const row = catalogRowForSchema(schema);
+    const accessState = row?.access.state ?? 'free';
+    switch (filter) {
+      case 'trials': return accessState === 'trial';
       case 'free': return accessState === 'free';
       case 'paid':
         return accessState === 'paid-active'
@@ -1769,6 +1833,21 @@
           || accessState === 'expired'
           || accessState === 'over-quota'
           || accessState === 'payment-failed';
+      case 'all':
+      default:
+        return true;
+    }
+  }
+
+  function subscriptionMatchesPlanFilter(schema: SchemaSyncRow, filter: SubscriptionPlanFilter): boolean {
+    const row = catalogRowForSchema(schema);
+    const planText = [
+      row?.plan.label,
+      row?.plan.priceLabel,
+      row?.plan.renewalLabel,
+      row?.plan.quotaLabel,
+    ].filter(Boolean).join(' ').toLowerCase();
+    switch (filter) {
       case 'usage-based': return /usage|overage|per-|per |quota/.test(planText);
       case 'enterprise': return planText.includes('enterprise');
       case 'all':
@@ -4886,20 +4965,79 @@
             </div>
           </div>
 
-          <div class="sdn-subscription-filter-bar" aria-label="Subscription filters">
+          <div class="sdn-subscription-filter-bar sdn-catalog-filters" aria-label="Subscription filters">
             <label class="sdn-catalog-search">
               <span>Search</span>
               <input class="sdn-input" bind:value={subscriptionSearchText} placeholder="Provider, product, type, status" aria-label="Search subscriptions" />
             </label>
-            {#each SUBSCRIPTION_FILTERS as filter}
+            <div class="sdn-catalog-filter-menu" data-subscription-filter-menu>
               <button
-                class="sdn-button sdn-button-muted sdn-button-compact"
-                class:active={subscriptionFilter === filter.id}
+                class="sdn-button sdn-button-muted sdn-catalog-filter-menu-button"
                 type="button"
-                on:click={() => { subscriptionFilter = filter.id; }}
-              >{filter.label}</button>
-            {/each}
-            <span>{formatNumber(filteredSubscriptionRows.length)} / {formatNumber(schemaSyncRows.length)}</span>
+                aria-haspopup="true"
+                aria-expanded={subscriptionFilterMenuOpen}
+                on:click|stopPropagation={() => {
+                  subscriptionFilterMenuOpen = !subscriptionFilterMenuOpen;
+                }}
+              >
+                {subscriptionFilterButtonText}
+              </button>
+              {#if subscriptionFilterMenuOpen}
+                <div class="sdn-catalog-filter-menu-panel" aria-label="Subscription filter options">
+                  <div class="sdn-catalog-filter-menu-head">
+                    <strong>Filters</strong>
+                    <button
+                      class="sdn-button sdn-button-muted sdn-button-compact"
+                      type="button"
+                      disabled={subscriptionFilterActiveTotal === 0}
+                      on:click={clearSubscriptionFilters}
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  <fieldset>
+                    <legend>Status</legend>
+                    {#each SUBSCRIPTION_STATUS_FILTER_OPTIONS as option}
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={subscriptionStatusFilter === option.id}
+                          on:change={() => toggleSubscriptionStatusFilter(option.id)}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    {/each}
+                  </fieldset>
+                  <fieldset>
+                    <legend>Access</legend>
+                    {#each SUBSCRIPTION_ACCESS_FILTER_OPTIONS as option}
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={subscriptionAccessFilter === option.id}
+                          on:change={() => toggleSubscriptionAccessFilter(option.id)}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    {/each}
+                  </fieldset>
+                  <fieldset>
+                    <legend>Plan</legend>
+                    {#each SUBSCRIPTION_PLAN_FILTER_OPTIONS as option}
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={subscriptionPlanFilter === option.id}
+                          on:change={() => toggleSubscriptionPlanFilter(option.id)}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    {/each}
+                  </fieldset>
+                </div>
+              {/if}
+            </div>
+            <span class="sdn-catalog-filter-count">{formatNumber(filteredSubscriptionRows.length)} / {formatNumber(schemaSyncRows.length)}</span>
           </div>
 
           <div class="sdn-storage-grid">
