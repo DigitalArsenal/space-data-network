@@ -630,6 +630,31 @@
     CAT: new Set(['MANEUVERABLE', 'SIZE', 'MASS', 'MASS_TYPE']),
     OMM: new Set(['GM', 'MASS', 'SOLAR_RAD_AREA', 'SOLAR_RAD_COEFF', 'DRAG_AREA', 'DRAG_COEFF']),
   };
+  const CATALOG_ACCESS_FILTER_OPTIONS: { value: Exclude<DataCatalogAccessFilter, 'all'>; label: string }[] = [
+    { value: 'free', label: 'Free' },
+    { value: 'paid', label: 'Paid' },
+    { value: 'paid-active', label: 'Active paid' },
+    { value: 'trial', label: 'Trial' },
+    { value: 'locked', label: 'Locked' },
+    { value: 'expired', label: 'Expired' },
+    { value: 'over-quota', label: 'Over quota' },
+    { value: 'payment-failed', label: 'Payment failed' },
+    { value: 'issues', label: 'Issues' },
+  ];
+  const CATALOG_SYNC_FILTER_OPTIONS: { value: Exclude<DataCatalogSyncFilter, 'all'>; label: string }[] = [
+    { value: 'idle', label: 'Ready' },
+    { value: 'queued', label: 'Queued' },
+    { value: 'syncing', label: 'Syncing' },
+    { value: 'synced', label: 'Synced' },
+    { value: 'stale', label: 'Stale' },
+    { value: 'failed', label: 'Failed' },
+    { value: 'capped', label: 'Capped' },
+    { value: 'issues', label: 'Issues' },
+  ];
+  const CATALOG_STORAGE_FILTER_OPTIONS: { value: Exclude<DataCatalogStorageFilter, 'all'>; label: string }[] = [
+    { value: 'stored', label: 'Stored locally' },
+    { value: 'not-stored', label: 'Not stored' },
+  ];
 
   let dataSummary: DataSummary | null = null;
   let selectedDataSection: DataSection = 'store';
@@ -650,6 +675,9 @@
   let catalogAccessFilter: DataCatalogAccessFilter = 'all';
   let catalogSyncFilter: DataCatalogSyncFilter = 'all';
   let catalogStorageFilter: DataCatalogStorageFilter = 'all';
+  let catalogFilterMenuOpen = false;
+  let catalogFilterActiveTotal = 0;
+  let catalogFilterButtonText = 'Filters';
   let subscriptionFilter: SubscriptionFilter = 'all';
   let subscriptionSearchText = '';
   let selectedSubscriptionDetailId = '';
@@ -735,6 +763,8 @@
   $: billingProviderRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingProviderRows : buildDataBillingProviderRows(dataCatalogRows);
   $: activityRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.activityRows : buildDataActivityRows(schemaSyncRows, dataCatalogRows);
   $: filteredSubscriptionRows = filterSubscriptionRows(schemaSyncRows, subscriptionFilter, subscriptionSearchText);
+  $: catalogFilterActiveTotal = Number(catalogAccessFilter !== 'all') + Number(catalogSyncFilter !== 'all') + Number(catalogStorageFilter !== 'all');
+  $: catalogFilterButtonText = catalogFilterActiveTotal > 0 ? `Filters (${catalogFilterActiveTotal})` : 'Filters';
   $: selectedSubscriptionDetailSchema = selectedSubscriptionDetailId
     ? schemaSyncRows.find((schema) => schema.subscriptionId === selectedSubscriptionDetailId) ?? null
     : null;
@@ -1429,10 +1459,33 @@
     toggleCatalogRowActions(row);
   }
 
+  function clearCatalogFilters(): void {
+    catalogAccessFilter = 'all';
+    catalogSyncFilter = 'all';
+    catalogStorageFilter = 'all';
+    catalogFilterMenuOpen = false;
+  }
+
+  function toggleCatalogAccessFilter(value: Exclude<DataCatalogAccessFilter, 'all'>): void {
+    catalogAccessFilter = catalogAccessFilter === value ? 'all' : value;
+  }
+
+  function toggleCatalogSyncFilter(value: Exclude<DataCatalogSyncFilter, 'all'>): void {
+    catalogSyncFilter = catalogSyncFilter === value ? 'all' : value;
+  }
+
+  function toggleCatalogStorageFilter(value: Exclude<DataCatalogStorageFilter, 'all'>): void {
+    catalogStorageFilter = catalogStorageFilter === value ? 'all' : value;
+  }
+
   function handleCatalogOutsideClick(event: MouseEvent): void {
+    const composedPath = event.composedPath();
+    if (catalogFilterMenuOpen && !composedPath.some((target) => target instanceof Element && target.closest('[data-catalog-filter-menu]'))) {
+      catalogFilterMenuOpen = false;
+    }
     if (performance.now() < suppressCatalogOutsideUntil) return;
     if (!expandedCatalogActionRowKey) return;
-    if (event.composedPath().some((target) => target instanceof Element && target.closest('[data-catalog-row-key]'))) return;
+    if (composedPath.some((target) => target instanceof Element && target.closest('[data-catalog-row-key]'))) return;
     expandedCatalogActionRowKey = '';
   }
 
@@ -4545,43 +4598,73 @@
               <span>Search</span>
               <input class="sdn-input" bind:value={catalogSearchText} placeholder="Providers, products, message types" aria-label="Search store" />
             </label>
-            <label>
-              <span>Access</span>
-              <select class="sdn-input sdn-select" bind:value={catalogAccessFilter}>
-                <option value="all">All access</option>
-                <option value="free">Free</option>
-                <option value="paid">Paid</option>
-                <option value="paid-active">Active paid</option>
-                <option value="trial">Trial</option>
-                <option value="locked">Locked</option>
-                <option value="expired">Expired</option>
-                <option value="over-quota">Over quota</option>
-                <option value="payment-failed">Payment failed</option>
-                <option value="issues">Issues</option>
-              </select>
-            </label>
-            <label>
-              <span>Sync</span>
-              <select class="sdn-input sdn-select" bind:value={catalogSyncFilter}>
-                <option value="all">All sync</option>
-                <option value="idle">Ready</option>
-                <option value="queued">Queued</option>
-                <option value="syncing">Syncing</option>
-                <option value="synced">Synced</option>
-                <option value="stale">Stale</option>
-                <option value="failed">Failed</option>
-                <option value="capped">Capped</option>
-                <option value="issues">Issues</option>
-              </select>
-            </label>
-            <label>
-              <span>Storage</span>
-              <select class="sdn-input sdn-select" bind:value={catalogStorageFilter}>
-                <option value="all">All storage</option>
-                <option value="stored">Stored locally</option>
-                <option value="not-stored">Not stored</option>
-              </select>
-            </label>
+            <div class="sdn-catalog-filter-menu" data-catalog-filter-menu>
+              <button
+                class="sdn-button sdn-button-muted sdn-catalog-filter-menu-button"
+                type="button"
+                aria-haspopup="true"
+                aria-expanded={catalogFilterMenuOpen}
+                on:click|stopPropagation={() => {
+                  catalogFilterMenuOpen = !catalogFilterMenuOpen;
+                }}
+              >
+                {catalogFilterButtonText}
+              </button>
+              {#if catalogFilterMenuOpen}
+                <div class="sdn-catalog-filter-menu-panel" aria-label="Catalog filter options">
+                  <div class="sdn-catalog-filter-menu-head">
+                    <strong>Filters</strong>
+                    <button
+                      class="sdn-button sdn-button-muted sdn-button-compact"
+                      type="button"
+                      disabled={catalogFilterActiveTotal === 0}
+                      on:click={clearCatalogFilters}
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  <fieldset>
+                    <legend>Access</legend>
+                    {#each CATALOG_ACCESS_FILTER_OPTIONS as option}
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={catalogAccessFilter === option.value}
+                          on:change={() => toggleCatalogAccessFilter(option.value)}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    {/each}
+                  </fieldset>
+                  <fieldset>
+                    <legend>Sync</legend>
+                    {#each CATALOG_SYNC_FILTER_OPTIONS as option}
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={catalogSyncFilter === option.value}
+                          on:change={() => toggleCatalogSyncFilter(option.value)}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    {/each}
+                  </fieldset>
+                  <fieldset>
+                    <legend>Storage</legend>
+                    {#each CATALOG_STORAGE_FILTER_OPTIONS as option}
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={catalogStorageFilter === option.value}
+                          on:change={() => toggleCatalogStorageFilter(option.value)}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    {/each}
+                  </fieldset>
+                </div>
+              {/if}
+            </div>
             <span class="sdn-catalog-filter-count">{formatNumber(filteredDataCatalogRows.length)} / {formatNumber(dataCatalogRows.length)}</span>
           </div>
 
