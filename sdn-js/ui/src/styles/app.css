@@ -1423,21 +1423,11 @@ textarea,
 }
 
 .sdn-subscription-filter-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  min-width: 0;
+  grid-template-columns: minmax(min(100%, 24rem), 24rem) auto;
 }
 
-.sdn-subscription-filter-bar .sdn-button.active {
-  border-color: var(--sdn-green);
-  background: rgba(48, 209, 88, 0.1);
-  color: var(--sdn-green);
-}
-
-.sdn-subscription-filter-bar span {
-  margin-left: auto;
+.sdn-subscription-filter-bar > .sdn-catalog-filter-count {
+  margin-left: 0;
   color: var(--sdn-text-muted);
   font-size: 0.78rem;
   font-weight: 700;
@@ -3019,7 +3009,7 @@ pre {
 	    grid-template-columns: 1fr;
 	  }
 
-	  .sdn-subscription-filter-bar span {
+	  .sdn-subscription-filter-bar > .sdn-catalog-filter-count {
 	    flex-basis: 100%;
 	    margin-left: 0;
 	  }
