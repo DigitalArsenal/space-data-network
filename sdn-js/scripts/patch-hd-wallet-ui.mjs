@@ -104,8 +104,8 @@ const newBlock = `      const sdnAccount = 0;
             : message;
           const signing = getSigningKey(state.hdRoot, 0, sdnAccount, sdnIndex);
           try {
-            const digest = await crypto.subtle.digest('SHA-256', msgBytes);
-            return hdWallet().curves.secp256k1.sign(new Uint8Array(digest), signing.privateKey);
+            const digest = hdWallet().utils.sha256(msgBytes);
+            return hdWallet().curves.secp256k1.sign(digest, signing.privateKey);
           } finally {
             if (signing?.privateKey instanceof Uint8Array) signing.privateKey.fill(0);
           }
