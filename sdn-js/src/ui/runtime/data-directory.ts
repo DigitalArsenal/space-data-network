@@ -224,6 +224,7 @@ export function canonicalizeDataDirectorySourceIds(
   sources: DataDirectoryMigrationSource[],
 ): DataDirectoryState {
   const currentState = normalizeDataDirectoryState(state);
+  const sourcesById = new Map(sources.map((source) => [source.dataSourceId.trim(), source]));
   const canonicalByAlias = new Map<string, string>();
   for (const source of sources) {
     const canonicalId = source.dataSourceId.trim();
@@ -233,26 +234,32 @@ export function canonicalizeDataDirectorySourceIds(
     }
   }
 
-  if (canonicalByAlias.size === 0) return currentState;
-
   const subscriptions = new Map<string, DataFeedSubscription>();
   for (const subscription of currentState.subscriptions) {
     const canonicalDataSourceId = canonicalByAlias.get(subscription.dataSourceId) ?? subscription.dataSourceId;
-    const migrated = canonicalDataSourceId === subscription.dataSourceId
-      ? subscription
-      : {
-          ...subscription,
-          id: subscriptionKey(canonicalDataSourceId, subscription.standardId, subscription.datastoreKey),
-          dataSourceId: canonicalDataSourceId,
-        };
+    const source = sourcesById.get(canonicalDataSourceId);
+    const migrated = {
+      ...subscription,
+      id: subscriptionKey(canonicalDataSourceId, subscription.standardId, subscription.datastoreKey),
+      dataSourceId: canonicalDataSourceId,
+      peerId: source?.peerId.trim() || subscription.peerId,
+      providerName: source?.providerName.trim() || subscription.providerName,
+      providerPublicKey: normalizeOptionalString(source?.providerPublicKey) ?? subscription.providerPublicKey,
+    };
     const existing = subscriptions.get(migrated.id);
     subscriptions.set(migrated.id, existing ? mergeDataFeedSubscriptions(existing, migrated) : migrated);
+  }
+  const canonicalSubscriptions = Array.from(subscriptions.values())
+    .sort((left, right) => left.providerName.localeCompare(right.providerName) || left.standardId.localeCompare(right.standardId));
+  const peerTrust = { ...currentState.peerTrust };
+  for (const subscription of canonicalSubscriptions) {
+    peerTrust[subscription.peerId] = ownertrustForDataSourceSubscription(peerTrust[subscription.peerId]);
   }
 
   return {
     ...currentState,
-    subscriptions: Array.from(subscriptions.values())
-      .sort((left, right) => left.providerName.localeCompare(right.providerName) || left.standardId.localeCompare(right.standardId)),
+    peerTrust,
+    subscriptions: canonicalSubscriptions,
   };
 }
 

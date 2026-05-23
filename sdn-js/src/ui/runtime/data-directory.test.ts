@@ -337,4 +337,44 @@ describe('PGP data directory ownertrust', () => {
       remoteRows: 2409549,
     });
   });
+
+  it('refreshes configured subscription peer and xpub identity when a source changes', () => {
+    const next = canonicalizeDataDirectorySourceIds({
+      peerTrust: {
+        '16Uiu2HAmOldProvider': 'marginal',
+      },
+      subscriptions: [{
+        id: 'configured:space-data-network-02:OMM',
+        dataSourceId: 'configured:space-data-network-02',
+        peerId: '16Uiu2HAmOldProvider',
+        datastoreKey: null,
+        standardId: 'OMM',
+        providerName: 'Old CelesTrak Provider',
+        providerId: 'space-data-network-02',
+        providerPublicKey: '90aa23ea4ff2d68cf8cb8155135fe5a25b580ec805e835aabb0e8905ffb2c3b2',
+        sourceName: 'OMM',
+        remoteRows: 2203117,
+        storageCap: 1,
+        storageUnit: 'GB',
+        syncFilter: '',
+        queryProfile: 'dataset-publication-offset-v1',
+        retentionPolicy: 'append-only',
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      }],
+    }, [{
+      dataSourceId: 'configured:space-data-network-02',
+      peerId: '16Uiu2HAmCurrentProvider',
+      providerName: 'CelesTrak Provider',
+      providerPublicKey: 'xpub6D36ciSsN66eJutmvXs1VXmtqnWkcMqZEbMh4FP6bpANfJpfP6oY48P7XnCWdd4NwfpHir8bU7eo3KcC45jsuN6LXwA5SYmL6sNeQwYPJjY',
+    }]);
+
+    expect(next.peerTrust['16Uiu2HAmCurrentProvider']).toBe('marginal');
+    expect(next.subscriptions[0]).toMatchObject({
+      id: subscriptionKey('configured:space-data-network-02', 'OMM'),
+      peerId: '16Uiu2HAmCurrentProvider',
+      providerName: 'CelesTrak Provider',
+      providerPublicKey: 'xpub6D36ciSsN66eJutmvXs1VXmtqnWkcMqZEbMh4FP6bpANfJpfP6oY48P7XnCWdd4NwfpHir8bU7eo3KcC45jsuN6LXwA5SYmL6sNeQwYPJjY',
+    });
+  });
 });

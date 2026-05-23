@@ -550,6 +550,7 @@ textarea,
   display: grid;
   gap: 1rem;
   min-width: 0;
+  max-width: 100%;
 }
 
 .sdn-reset-panel,
@@ -718,9 +719,12 @@ textarea,
 .sdn-workbench-controls {
   --sdn-workbench-control-height: 2.4rem;
   display: grid;
-  grid-template-columns: minmax(12rem, 16rem) minmax(12rem, 1fr) auto minmax(18rem, 2fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
   gap: 0.85rem;
   align-items: end;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .sdn-workbench-controls label {
@@ -751,12 +755,13 @@ textarea,
 .sdn-search-mode {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.35rem;
-  min-width: max-content;
+  min-width: 0;
 }
 
 .sdn-master-search {
-  min-width: 16rem;
+  min-width: 0;
 }
 
 .sdn-sql-input {
@@ -773,10 +778,12 @@ textarea,
 
 .sdn-saved-view-controls {
   display: grid;
-  grid-template-columns: minmax(12rem, 20rem) minmax(12rem, 1fr) repeat(3, auto);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr));
   gap: 0.65rem;
   align-items: end;
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
 }
 
 .sdn-saved-view-controls label {
@@ -1339,8 +1346,8 @@ textarea,
 }
 
 .sdn-subscription-row {
-  grid-template-columns: minmax(10rem, 1.05fr) minmax(8rem, 0.75fr) minmax(11rem, 1fr) minmax(10rem, 0.9fr) minmax(8rem, 0.85fr) minmax(10rem, 0.95fr) minmax(10rem, 0.95fr) max-content;
-  align-items: start;
+  grid-template-columns: minmax(0, 1.35fr) minmax(6rem, 0.65fr) minmax(7.5rem, 0.8fr) minmax(9rem, 0.9fr) minmax(0, auto);
+  align-items: center;
 }
 
 .sdn-storage-row > div {
@@ -1355,12 +1362,6 @@ textarea,
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 0.36rem;
-  min-width: 0;
-}
-
-.sdn-subscription-row label {
-  display: grid;
-  gap: 0.24rem;
   min-width: 0;
 }
 
@@ -1384,6 +1385,17 @@ textarea,
 
 .sdn-storage-row .sdn-sync-error {
   color: var(--sdn-red);
+}
+
+.sdn-subscription-sync-summary {
+  align-content: center;
+}
+
+.sdn-subscription-sync-summary > div {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-width: 0;
 }
 
 .sdn-sync-cell {
@@ -1563,12 +1575,12 @@ textarea,
 .sdn-subscription-actions {
   display: flex;
   align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.45rem;
   grid-column: auto;
   min-width: 0;
-  overflow-x: auto;
+  overflow: visible;
 }
 
 .sdn-subscription-row > .sdn-subscription-actions {
@@ -1602,6 +1614,30 @@ textarea,
   padding: 0.58rem;
 }
 
+.sdn-subscription-detail-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.sdn-subscription-detail-controls label {
+  display: grid;
+  gap: 0.24rem;
+  min-width: 0;
+}
+
+.sdn-subscription-detail-controls label > span {
+  color: var(--sdn-text-subtle);
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.sdn-subscription-detail-actions {
+  justify-content: flex-start;
+}
+
 .sdn-subscription-detail-grid span,
 .sdn-subscription-detail-grid strong,
 .sdn-subscription-detail-grid em {
@@ -1627,6 +1663,21 @@ textarea,
   color: var(--sdn-text-muted);
   font-size: 0.7rem;
   font-style: normal;
+}
+
+@media (max-width: 1120px) {
+  .sdn-subscription-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sdn-subscription-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .sdn-subscription-detail-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .sdn-toast-region {
@@ -1767,7 +1818,15 @@ textarea,
 }
 
 .sdn-workbench-table-wrap {
+  --sdn-explorer-table-font-size: clamp(5px, 1.15cqw, 12px);
+  --sdn-explorer-cell-pad-x: clamp(0.12rem, 0.75cqw, 0.45rem);
+  --sdn-explorer-cell-pad-y: clamp(0.1rem, 0.45cqw, 0.35rem);
+  --sdn-explorer-header-height: clamp(1.05rem, 3.2cqw, 2.15rem);
+  --sdn-explorer-filter-height: clamp(1rem, 3cqw, 2rem);
+  container-type: inline-size;
   max-height: 32rem;
+  width: 100%;
+  max-width: 100%;
   overflow: auto;
   overflow-x: hidden;
   border: 1px solid var(--sdn-border);
@@ -1783,7 +1842,12 @@ textarea,
 
 .sdn-workbench-table th,
 .sdn-workbench-table td {
+  padding: var(--sdn-explorer-cell-pad-y) var(--sdn-explorer-cell-pad-x);
+  overflow: hidden;
+  font-size: var(--sdn-explorer-table-font-size);
+  line-height: 1.18;
   min-width: 0;
+  text-overflow: ellipsis;
 }
 
 .sdn-workbench-table th {
@@ -1791,19 +1855,18 @@ textarea,
   top: 0;
   z-index: 2;
   background: rgba(10, 10, 12, 0.96);
-  padding: 0.35rem 0.55rem;
 }
 
 .sdn-column-filter-row th {
-  top: 2.15rem;
+  top: var(--sdn-explorer-header-height);
   z-index: 1;
-  padding-block: 0.28rem;
+  padding-block: var(--sdn-explorer-cell-pad-y);
 }
 
 .sdn-column-header-control {
   display: flex;
   align-items: center;
-  gap: 0.28rem;
+  gap: clamp(0.08rem, 0.45cqw, 0.28rem);
   min-width: 0;
 }
 
@@ -1815,13 +1878,16 @@ textarea,
 .sdn-column-filter {
   width: 100%;
   min-width: 0;
-  height: 2rem;
-  font-size: 0.76rem;
+  height: var(--sdn-explorer-filter-height);
+  min-height: var(--sdn-explorer-filter-height);
+  padding: 0 var(--sdn-explorer-cell-pad-x);
+  font-size: var(--sdn-explorer-table-font-size);
 }
 
-.sdn-workbench-table td {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.sdn-workbench-table .sdn-sort-button {
+  min-height: var(--sdn-explorer-header-height);
+  padding: 0 clamp(0.02rem, 0.18cqw, 0.2rem);
+  font-size: inherit;
 }
 
 .sdn-column-key {
@@ -2788,6 +2854,7 @@ pre {
 	  .sdn-overview-storage-panel .sdn-storage-access-visual,
 	  .sdn-catalog-detail-grid,
 	  .sdn-subscription-detail-grid,
+	  .sdn-subscription-detail-controls,
 	  .sdn-qr-layout,
 	  .sdn-directory-preview,
 	  .sdn-storefront-stats,

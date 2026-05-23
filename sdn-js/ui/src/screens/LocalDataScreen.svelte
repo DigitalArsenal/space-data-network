@@ -836,10 +836,12 @@
       userSelectedStandard = false;
       await loadConfiguredDataSources();
       const migrationSources = dataDirectoryMigrationSources(buildDataSourceOptions(backend, configuredDataSources, peers, trustedPeers));
+      const previousSubscriptions = dataDirectoryState.subscriptions;
       dataDirectoryState = canonicalizeDataDirectorySourceIds(
         dataDirectoryState,
         migrationSources,
       );
+      await pruneChangedProviderIdentityPublishedStores(previousSubscriptions, dataDirectoryState.subscriptions);
       dataDirectoryState = migrateSchemaSyncPreferencesToDataDirectory(
         dataDirectoryState,
         schemaSyncPreferences,
@@ -1988,6 +1990,50 @@
         clearSchemaSyncProgressForSubscription(dataSourceId, standardId, null);
       }
     }
+  }
+
+  async function pruneChangedProviderIdentityPublishedStores(
+    previousSubscriptions: DataFeedSubscription[],
+    nextSubscriptions: DataFeedSubscription[],
+  ): Promise<void> {
+    const changedSubscriptions = changedProviderIdentityPublishedSubscriptions(previousSubscriptions, nextSubscriptions);
+    const clearedKeys = new Set<string>();
+    for (const subscription of changedSubscriptions) {
+      const storeKey = snapshotStoreKey(subscription.dataSourceId, subscription.datastoreKey, subscription.standardId);
+      if (clearedKeys.has(storeKey)) continue;
+      clearedKeys.add(storeKey);
+      const persistenceKey = localFlatSqlPersistenceKey(subscription.dataSourceId, subscription.datastoreKey);
+      if (localFlatSqlStoreKey === persistenceKey) resetLocalFlatSqlStore();
+      await clearLocalFlatSqlStore({
+        persistenceKey,
+        standardIds: [subscription.standardId],
+        desktopPersistenceBaseUrl: localFlatSqlDesktopPersistenceBaseUrl(),
+      });
+      clearSchemaSyncProgressForSubscription(subscription.dataSourceId, subscription.standardId, subscription.datastoreKey);
+    }
+  }
+
+  function changedProviderIdentityPublishedSubscriptions(
+    previousSubscriptions: DataFeedSubscription[],
+    nextSubscriptions: DataFeedSubscription[],
+  ): DataFeedSubscription[] {
+    const previousById = new Map(previousSubscriptions.map((subscription) => [subscription.id, subscription]));
+    const previousByProduct = new Map(previousSubscriptions.map((subscription) => [providerIdentityProductKey(subscription), subscription]));
+    return nextSubscriptions.filter((next) => {
+      if (normalizeDataQueryProfile(next.queryProfile) !== 'dataset-publication-offset-v1') return false;
+      const previous = previousById.get(next.id) ?? previousByProduct.get(providerIdentityProductKey(next));
+      if (!previous) return false;
+      return previous.peerId !== next.peerId || previous.providerPublicKey !== next.providerPublicKey;
+    });
+  }
+
+  function providerIdentityProductKey(subscription: DataFeedSubscription): string {
+    return [
+      subscription.providerId ?? subscription.dataSourceId,
+      subscription.standardId,
+      subscription.datastoreKey ?? '',
+      subscription.sourceName ?? '',
+    ].join('\n');
   }
 
   function snapshotStoreKey(dataSourceId: string, datastoreKey: string | null, standardId: string): string {
@@ -3759,8 +3805,9 @@
     return loadingMetricLabel(isSchemaRemoteRowsLoading(schema), formattedValue);
   }
 
-  function schemaRowsCountLabel(schema: SchemaSyncRow): string {
-    return loadingSchemaDataLabel(schema, `${formatNumber(schema.localRows)} local / ${formatNumber(schema.remoteRows)} remote`);
+  function schemaCompactRowsLabel(schema: SchemaSyncRow): string {
+    const rows = Math.max(schema.localRows, schema.remoteRows, schema.progress.totalRows);
+    return loadingSchemaDataLabel(schema, `${formatNumber(rows)} rows`);
   }
 
   function schemaRemoteRowsLabel(schema: SchemaSyncRow): string {
@@ -3844,12 +3891,29 @@
     return catalogRowForSchema(schema)?.plan.priceLabel ?? 'Free';
   }
 
+  function subscriptionAccessDetailLabel(schema: SchemaSyncRow): string {
+    const plan = subscriptionPlanLabel(schema);
+    const cost = subscriptionCostLabel(schema);
+    if (plan === 'No paid plan' && cost === 'Free') return 'Free feed';
+    if (plan === cost) return plan;
+    return `${plan} · ${cost}`;
+  }
+
   function subscriptionRenewalLabel(schema: SchemaSyncRow): string {
     return catalogRowForSchema(schema)?.plan.renewalLabel ?? 'No renewal';
   }
 
   function subscriptionStorageStateLabel(schema: SchemaSyncRow): string {
     return `${schemaCachedBytesLabel(schema)} cached / ${schemaPinnedRowsLabel(schema)}`;
+  }
+
+  function schemaCompactSyncDetailLabel(schema: SchemaSyncRow): string {
+    if (isSchemaRemoteRowsLoading(schema)) return 'Loading';
+    if (schema.progress.error) return shorten(schema.progress.error, 56);
+    if (schemaSyncStalled(schema)) return schemaSyncStalledLabel(schema);
+    if (schema.remoteRows > schema.localRows) return `${formatNumber(schema.remoteRows - schema.localRows)} missing`;
+    if (schema.progress.status === 'syncing') return schemaDownloadSpeedLabel(schema);
+    return schemaLastSyncedLabel(schema);
   }
 
   function subscriptionSyncPolicyLabel(schema: SchemaSyncRow): string {
@@ -4705,102 +4769,32 @@
           <div class="sdn-storage-grid">
             {#each filteredSubscriptionRows as schema (schema.subscriptionId)}
               <article class="sdn-storage-row sdn-subscription-row" class:active={isSchemaRowSelected(schema)}>
-                <div>
+                <div class="sdn-subscription-primary">
                   <strong>{subscriptionProductLabel(schema)}</strong>
                   <span>{schema.providerName}</span>
-                  <span>{schemaRowsCountLabel(schema)}</span>
+                  <span>{schemaCompactRowsLabel(schema)}</span>
                 </div>
-                <div>
+                <div class="sdn-subscription-access">
                   <strong>{subscriptionAccessLabel(schema)}</strong>
-                  <span>{subscriptionPlanLabel(schema)}</span>
-                  <span>{subscriptionCostLabel(schema)}</span>
+                  <span>{subscriptionAccessDetailLabel(schema)}</span>
                 </div>
-                <div>
-                  <strong>{subscriptionStorageStateLabel(schema)}</strong>
-                  <span>Local {schemaLocalRowsLabel(schema)} / remote {schemaRemoteRowsLabel(schema)}</span>
+                <div class="sdn-subscription-storage-summary">
+                  <strong>{schemaCachedBytesLabel(schema)}</strong>
                   <span>{schemaPinnedRowsLabel(schema)}</span>
-                  <span>{schemaCachedBytesLabel(schema)}</span>
-                  <span>{schemaStoragePressureLabel(schema)}</span>
-                  <span>{schemaRetentionPolicyLabel(schema)}</span>
-                  <span>{schema.preference.storageCap} {schema.preference.storageUnit} cap</span>
                 </div>
-                <div>
-                  <span
-                    class="sdn-sync-bubble"
-                    data-tone={syncBubbleTone(schema)}
-                    data-tooltip={syncBubbleTooltip(schema)}
-                    title={syncBubbleTooltip(schema)}
-                    aria-label={syncBubbleTooltip(schema)}
-                  >{syncBubbleLetter(schema)}</span>
-                  <span>{schemaProgressLabel(schema)}</span>
-                  <span>{schemaDownloadSpeedLabel(schema)}</span>
-                  <span>{schemaHealthLabel(schema)}</span>
-                  <span>Next {nextSyncAttemptLabel(schema)}</span>
-                  <span>Last {schemaLastSyncedLabel(schema)}</span>
-                  {#if schema.progress.error}
-                    <span class="sdn-sync-error" title={schema.progress.error}>{shorten(schema.progress.error, 120)}</span>
-                  {/if}
-                </div>
-                <label>
-                  <span>Storage cap</span>
-                  <div class="sdn-storage-cap-controls">
-                    <input
-                      class="sdn-input"
-                      type="number"
-                      min="0.1"
-                      step="0.1"
-                      aria-label={`${schema.id} storage cap`}
-                      value={schema.preference.storageCap}
-                      on:input={(event) => handleSubscriptionStorageCapInput(schema, event)}
-                    />
-                    <select
-                      class="sdn-input sdn-select"
-                      aria-label={`${schema.id} storage unit`}
-                      value={schema.preference.storageUnit}
-                      on:change={(event) => handleSubscriptionStorageUnitChange(schema, event)}
-                    >
-                      {#each STORAGE_CAP_UNITS as unit}
-                        <option value={unit}>{unit}</option>
-                      {/each}
-                    </select>
+                <div class="sdn-subscription-sync-summary">
+                  <div>
+                    <span
+                      class="sdn-sync-bubble"
+                      data-tone={syncBubbleTone(schema)}
+                      data-tooltip={syncBubbleTooltip(schema)}
+                      title={syncBubbleTooltip(schema)}
+                      aria-label={syncBubbleTooltip(schema)}
+                    >{syncBubbleLetter(schema)}</span>
+                    <strong>{syncStatusLabel(schema)}</strong>
                   </div>
-                </label>
-                <label>
-                  <span>Sync profile</span>
-                  <select
-                    class="sdn-input sdn-select"
-                    aria-label={`${schema.id} sync profile`}
-                    value={schema.queryProfile}
-                    on:change={(event) => handleSubscriptionQueryProfileChange(schema, event)}
-                  >
-                    {#each DATA_QUERY_PROFILES as profile}
-                      <option value={profile.id}>{profile.label}</option>
-                    {/each}
-                  </select>
-                </label>
-                <label>
-                  <span>Retention</span>
-                  <select
-                    class="sdn-input sdn-select"
-                    aria-label={`${schema.id} retention policy`}
-                    value={schema.retentionPolicy}
-                    on:change={(event) => handleSubscriptionRetentionPolicyChange(schema, event)}
-                  >
-                    {#each DATA_RETENTION_POLICIES as policy}
-                      <option value={policy.id}>{policy.label}</option>
-                    {/each}
-                  </select>
-                </label>
-                <label>
-                  <span>Sync filter</span>
-                  <input
-                    class="sdn-input sdn-sync-filter"
-                    aria-label={`${schema.id} sync filter`}
-                    value={schema.syncFilter}
-                    placeholder="Sync filter"
-                    on:input={(event) => handleSubscriptionFilterInput(schema, event)}
-                  />
-                </label>
+                  <span class:sdn-sync-error={Boolean(schema.progress.error)} title={schema.progress.error || schemaCompactSyncDetailLabel(schema)}>{schemaCompactSyncDetailLabel(schema)}</span>
+                </div>
                 <div class="sdn-storage-row-actions sdn-subscription-actions">
                   <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" aria-label={`${schema.id} retry sync`} on:click={() => retrySubscriptionSync(schema)} disabled={schemaRetryDisabled(schema)}>Retry</button>
                   {#if schema.preference.mode === 'sync'}
@@ -4808,21 +4802,6 @@
                   {:else}
                     <button class="sdn-button sdn-button-compact" type="button" on:click={() => resumeSubscriptionSync(schema)}>Resume</button>
                   {/if}
-                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => void verifyPinnedArtifacts(schema)} disabled={pinVerifyRunning}>Verify pins</button>
-	                  {#if resetSubscriptionId === schema.subscriptionId}
-	                    <div class="sdn-reset-confirm sdn-reset-row-confirm" role="group" aria-label={`${schema.id} row reset confirmation`}>
-	                      <label>
-	                        <span>Type RESET to clear this row.</span>
-                        <input class="sdn-input" bind:value={resetConfirmText} autocomplete="off" />
-                      </label>
-                      <div class="sdn-toolbar">
-                        <button class="sdn-button sdn-button-compact" type="button" on:click={() => void confirmResetSubscriptionData(schema)} disabled={resetRunning || resetConfirmText.trim() !== 'RESET'}>Clear</button>
-                        <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={cancelResetSubscriptionData} disabled={resetRunning}>Cancel</button>
-                      </div>
-	                    </div>
-	                  {:else}
-	                    <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => beginResetSubscriptionData(schema.subscriptionId)} disabled={resetRunning}>Reset row</button>
-	                  {/if}
                   <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => openSubscriptionDetails(schema)}>Details</button>
                 </div>
               </article>
@@ -4855,17 +4834,17 @@
                 <div>
                   <span>Storage</span>
                   <strong>{schemaCachedBytesLabel(selectedSubscriptionDetailSchema)}</strong>
-                  <em>{schemaRowsCountLabel(selectedSubscriptionDetailSchema)}</em>
+                  <em>Local {schemaLocalRowsLabel(selectedSubscriptionDetailSchema)} / remote {schemaRemoteRowsLabel(selectedSubscriptionDetailSchema)}</em>
                 </div>
                 <div>
                   <span>Pinning</span>
                   <strong>{schemaPinnedRowsLabel(selectedSubscriptionDetailSchema)}</strong>
-                  <em>{selectedSubscriptionDetailSchema.preference.storageCap} {selectedSubscriptionDetailSchema.preference.storageUnit} cap</em>
+                  <em>{schemaStoragePressureLabel(selectedSubscriptionDetailSchema)}</em>
                 </div>
                 <div>
                   <span>Sync</span>
                   <strong>{syncStatusLabel(selectedSubscriptionDetailSchema)}</strong>
-                  <em>{subscriptionSyncPolicyLabel(selectedSubscriptionDetailSchema)}</em>
+                  <em>{subscriptionSyncPolicyLabel(selectedSubscriptionDetailSchema)} · {schemaDownloadSpeedLabel(selectedSubscriptionDetailSchema)}</em>
                 </div>
                 <div>
                   <span>Freshness</span>
@@ -4875,8 +4854,87 @@
                 <div>
                   <span>Health</span>
                   <strong>{schemaHealthLabel(selectedSubscriptionDetailSchema)}</strong>
-                  <em>{subscriptionRenewalLabel(selectedSubscriptionDetailSchema)}</em>
+                  <em>{subscriptionRenewalLabel(selectedSubscriptionDetailSchema)} · {schemaRetentionPolicyLabel(selectedSubscriptionDetailSchema)}</em>
                 </div>
+              </div>
+              <div class="sdn-subscription-detail-controls">
+                <label>
+                  <span>Storage cap</span>
+                  <div class="sdn-storage-cap-controls">
+                    <input
+                      class="sdn-input"
+                      type="number"
+                      min="0.1"
+                      step="0.1"
+                      aria-label={`${selectedSubscriptionDetailSchema.id} storage cap`}
+                      value={selectedSubscriptionDetailSchema.preference.storageCap}
+                      on:input={(event) => handleSubscriptionStorageCapInput(selectedSubscriptionDetailSchema, event)}
+                    />
+                    <select
+                      class="sdn-input sdn-select"
+                      aria-label={`${selectedSubscriptionDetailSchema.id} storage unit`}
+                      value={selectedSubscriptionDetailSchema.preference.storageUnit}
+                      on:change={(event) => handleSubscriptionStorageUnitChange(selectedSubscriptionDetailSchema, event)}
+                    >
+                      {#each STORAGE_CAP_UNITS as unit}
+                        <option value={unit}>{unit}</option>
+                      {/each}
+                    </select>
+                  </div>
+                </label>
+                <label>
+                  <span>Sync profile</span>
+                  <select
+                    class="sdn-input sdn-select"
+                    aria-label={`${selectedSubscriptionDetailSchema.id} sync profile`}
+                    value={selectedSubscriptionDetailSchema.queryProfile}
+                    on:change={(event) => handleSubscriptionQueryProfileChange(selectedSubscriptionDetailSchema, event)}
+                  >
+                    {#each DATA_QUERY_PROFILES as profile}
+                      <option value={profile.id}>{profile.label}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label>
+                  <span>Retention</span>
+                  <select
+                    class="sdn-input sdn-select"
+                    aria-label={`${selectedSubscriptionDetailSchema.id} retention policy`}
+                    value={selectedSubscriptionDetailSchema.retentionPolicy}
+                    on:change={(event) => handleSubscriptionRetentionPolicyChange(selectedSubscriptionDetailSchema, event)}
+                  >
+                    {#each DATA_RETENTION_POLICIES as policy}
+                      <option value={policy.id}>{policy.label}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label>
+                  <span>Sync filter</span>
+                  <input
+                    class="sdn-input sdn-sync-filter"
+                    aria-label={`${selectedSubscriptionDetailSchema.id} sync filter`}
+                    value={selectedSubscriptionDetailSchema.syncFilter}
+                    placeholder="Sync filter"
+                    on:input={(event) => handleSubscriptionFilterInput(selectedSubscriptionDetailSchema, event)}
+                  />
+                </label>
+              </div>
+              <div class="sdn-storage-row-actions sdn-subscription-detail-actions">
+                <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => void verifyPinnedArtifacts(selectedSubscriptionDetailSchema)} disabled={pinVerifyRunning}>Verify pins</button>
+                {#if resetSubscriptionId === selectedSubscriptionDetailSchema.subscriptionId}
+                  <div class="sdn-reset-confirm sdn-reset-row-confirm" role="group" aria-label={`${selectedSubscriptionDetailSchema.id} row reset confirmation`}>
+                    <label>
+                      <span>Type RESET to clear this row.</span>
+                      <input class="sdn-input" bind:value={resetConfirmText} autocomplete="off" />
+                    </label>
+                    <div class="sdn-toolbar">
+                      <button class="sdn-button sdn-button-compact" type="button" on:click={() => void confirmResetSubscriptionData(selectedSubscriptionDetailSchema)} disabled={resetRunning || resetConfirmText.trim() !== 'RESET'}>Clear</button>
+                      <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={cancelResetSubscriptionData} disabled={resetRunning}>Cancel</button>
+                    </div>
+                  </div>
+                {:else}
+                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => beginResetSubscriptionData(selectedSubscriptionDetailSchema.subscriptionId)} disabled={resetRunning}>Reset row</button>
+                {/if}
               </div>
             </aside>
           {/if}
