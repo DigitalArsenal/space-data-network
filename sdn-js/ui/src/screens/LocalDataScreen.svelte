@@ -64,6 +64,7 @@
   import { loadingMetricLabel } from '../lib/data-loading-labels';
   import {
     buildLocalDataExplorerQuery,
+    isEpochDataExplorerColumn,
     isNumericDataExplorerColumn,
     localDataExplorerSearchColumns,
     localDataExplorerCountFromResult,
@@ -1350,6 +1351,33 @@
     if (explorerSearchMode === 'plain') scheduleLocalExplorerQuery(0);
   }
 
+  function isEpochColumn(column: string): boolean {
+    return isEpochDataExplorerColumn(column);
+  }
+
+  function epochColumnFilterValue(column: string, boundary: 'start' | 'stop'): string {
+    const range = parseEpochColumnFilterValue(columnFilters[column] ?? '');
+    return dateTimeLocalInputValue(boundary === 'start' ? range.start : range.stop);
+  }
+
+  function handleEpochColumnFilterInput(column: string, boundary: 'start' | 'stop', event: Event): void {
+    const value = isoDateTimeFilterValue((event.currentTarget as HTMLInputElement).value);
+    const current = parseEpochColumnFilterValue(columnFilters[column] ?? '');
+    const nextRange = {
+      start: boundary === 'start' ? value : current.start,
+      stop: boundary === 'stop' ? value : current.stop,
+    };
+    const nextFilters = { ...columnFilters };
+    if (nextRange.start || nextRange.stop) {
+      nextFilters[column] = `${nextRange.start}..${nextRange.stop}`;
+    } else {
+      delete nextFilters[column];
+    }
+    columnFilters = nextFilters;
+    pageIndex = 0;
+    if (explorerSearchMode === 'plain') scheduleLocalExplorerQuery(0);
+  }
+
   function setDataSection(section: DataSection): void {
     selectedDataSection = section;
     if (section !== 'store') expandedCatalogActionRowKey = '';
@@ -2401,7 +2429,7 @@
   function filterRowsByColumns(rows: WorkbenchRow[], columns: WorkbenchColumn[], filters: Record<string, string>): WorkbenchRow[] {
     const activeFilters = activeColumnFilters(columns.map((column) => column.key), filters);
     if (activeFilters.length === 0) return rows;
-    return rows.filter((row) => activeFilters.every(([column, query]) => tableValue(row, column).toLowerCase().includes(query)));
+    return rows.filter((row) => activeFilters.every(([column, query]) => columnFilterMatchesValue(tableValue(row, column), column, query)));
   }
 
   function sortRows(rows: WorkbenchRow[], column: SortColumn, direction: SortDirection): WorkbenchRow[] {
@@ -2447,7 +2475,7 @@
   function filterSqlRecordsByColumns(records: Array<Record<string, unknown>>, columns: string[], filters: Record<string, string>): Array<Record<string, unknown>> {
     const activeFilters = activeColumnFilters(columns, filters);
     if (activeFilters.length === 0) return records;
-    return records.filter((row) => activeFilters.every(([column, query]) => sqlCellValue(row, column).toLowerCase().includes(query)));
+    return records.filter((row) => activeFilters.every(([column, query]) => columnFilterMatchesValue(sqlCellValue(row, column), column, query)));
   }
 
   function sortSqlRecords(records: Array<Record<string, unknown>>, column: SortColumn, direction: SortDirection): Array<Record<string, unknown>> {
@@ -2459,8 +2487,25 @@
   function activeColumnFilters(columns: string[], filters: Record<string, string>): Array<[string, string]> {
     const validColumns = new Set(columns);
     return Object.entries(filters)
-      .map(([column, value]) => [column, value.trim().toLowerCase()] as [string, string])
+      .map(([column, value]) => [column, value.trim()] as [string, string])
       .filter(([column, value]) => validColumns.has(column) && value.length > 0);
+  }
+
+  function columnFilterMatchesValue(value: string, column: string, query: string): boolean {
+    if (isEpochColumn(column)) return epochFilterMatchesValue(value, query);
+    return value.toLowerCase().includes(query.toLowerCase());
+  }
+
+  function epochFilterMatchesValue(value: string, query: string): boolean {
+    const cellValue = normalizeEpochFilterLiteral(value);
+    const range = parseEpochColumnFilterValue(query);
+    const start = normalizeEpochFilterLiteral(range.start);
+    const stop = normalizeEpochFilterLiteral(range.stop);
+    if (!start && !stop) return value.toLowerCase().includes(query.toLowerCase());
+    if (!cellValue) return false;
+    if (start && cellValue < start) return false;
+    if (stop && cellValue >= stop) return false;
+    return true;
   }
 
   function columnFilterValue(column: string): string {
@@ -2469,6 +2514,28 @@
 
   function columnFilterPlaceholder(column: string): string {
     return isNumericDataExplorerColumn(column) ? '>= 0, 1..10' : 'Filter';
+  }
+
+  function parseEpochColumnFilterValue(value: string): { start: string; stop: string } {
+    const [start = '', stop = ''] = value.split('..', 2);
+    return { start, stop };
+  }
+
+  function dateTimeLocalInputValue(value: string): string {
+    const normalized = normalizeEpochFilterLiteral(value);
+    return normalized ? normalized.slice(0, 16) : '';
+  }
+
+  function isoDateTimeFilterValue(value: string): string {
+    return normalizeEpochFilterLiteral(value);
+  }
+
+  function normalizeEpochFilterLiteral(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::(\d{2})(?:\.\d{1,3})?)?Z?$/);
+    if (!match) return '';
+    return `${match[1]}T${match[2]}:${match[3] ?? '00'}.000Z`;
   }
 
   function handleWorkbenchRowClick(row: WorkbenchRow): void {
@@ -4678,7 +4745,6 @@
                   <th>Access</th>
                   <th>Storage</th>
                   <th>Sync</th>
-                  <th>Renewal</th>
                 </tr>
               </thead>
               <tbody>
@@ -4723,18 +4789,10 @@
                         >{catalogRowSyncBubbleLetter(row)}</span>
                       </button>
                     </td>
-                    <td>
-                      <button class="sdn-catalog-cell-trigger" type="button" on:click={(event) => handleCatalogCellButtonClick(row, event)}>
-                        <span class="sdn-cell-stack">
-                          <strong>{row.plan.renewalLabel}</strong>
-                          <span>{row.plan.priceLabel}</span>
-                        </span>
-                      </button>
-                    </td>
                   </tr>
 	                  {#if expandedCatalogActionRowKey === catalogRowKey(row)}
 	                    <tr class="sdn-catalog-action-row" data-catalog-row-key={catalogRowKey(row)}>
-	                      <td colspan="7">
+	                      <td colspan="6">
 	                        <div class="sdn-catalog-action-panel">
 	                          <div class="sdn-catalog-product-summary">
 	                            <div class="sdn-cell-stack">
@@ -4781,11 +4839,6 @@
 	                              <em>{catalogRowCountsLabel(row)}</em>
 	                            </div>
 	                            <div>
-	                              <span>Renewal</span>
-	                              <strong>{row.plan.renewalLabel}</strong>
-	                              <em>{row.storage.filterLabel}</em>
-	                            </div>
-	                            <div>
 	                              <span>Sync</span>
 	                              <strong>{catalogRowSyncLabel(row)}</strong>
 	                              <em>{catalogRowUpdateCadenceLabel(row)}</em>
@@ -4802,7 +4855,7 @@
 	                  {/if}
                 {:else}
                   <tr>
-                    <td colspan="7">{dataPageLoading ? 'Loading' : 'No matching data products.'}</td>
+                    <td colspan="6">{dataPageLoading ? 'Loading' : 'No matching data products.'}</td>
                   </tr>
                 {/each}
               </tbody>
@@ -5149,13 +5202,32 @@
                   <tr class="sdn-column-filter-row">
                     {#each displaySqlColumns as column}
                       <th>
-                        <input
-                          class="sdn-input sdn-column-filter"
-                          value={columnFilterValue(column)}
-                          placeholder={columnFilterPlaceholder(column)}
-                          aria-label={`Filter ${columnHeaderKeyLabel(column)}`}
-                          on:input={(event) => handleColumnFilterInput(column, event)}
-                        />
+                        {#if isEpochColumn(column)}
+                          <div class="sdn-epoch-filter-range">
+                            <input
+                              class="sdn-input sdn-column-filter"
+                              type="datetime-local"
+                              value={epochColumnFilterValue(column, 'start')}
+                              aria-label={`Filter ${columnHeaderKeyLabel(column)} start`}
+                              on:input={(event) => handleEpochColumnFilterInput(column, 'start', event)}
+                            />
+                            <input
+                              class="sdn-input sdn-column-filter"
+                              type="datetime-local"
+                              value={epochColumnFilterValue(column, 'stop')}
+                              aria-label={`Filter ${columnHeaderKeyLabel(column)} stop`}
+                              on:input={(event) => handleEpochColumnFilterInput(column, 'stop', event)}
+                            />
+                          </div>
+                        {:else}
+                          <input
+                            class="sdn-input sdn-column-filter"
+                            value={columnFilterValue(column)}
+                            placeholder={columnFilterPlaceholder(column)}
+                            aria-label={`Filter ${columnHeaderKeyLabel(column)}`}
+                            on:input={(event) => handleColumnFilterInput(column, event)}
+                          />
+                        {/if}
                       </th>
                     {/each}
                   </tr>
@@ -5189,13 +5261,32 @@
                   <tr class="sdn-column-filter-row">
                     {#each localExplorerColumns as column}
                       <th>
-                        <input
-                          class="sdn-input sdn-column-filter"
-                          value={columnFilterValue(column)}
-                          placeholder={columnFilterPlaceholder(column)}
-                          aria-label={`Filter ${columnHeaderKeyLabel(column)}`}
-                          on:input={(event) => handleColumnFilterInput(column, event)}
-                        />
+                        {#if isEpochColumn(column)}
+                          <div class="sdn-epoch-filter-range">
+                            <input
+                              class="sdn-input sdn-column-filter"
+                              type="datetime-local"
+                              value={epochColumnFilterValue(column, 'start')}
+                              aria-label={`Filter ${columnHeaderKeyLabel(column)} start`}
+                              on:input={(event) => handleEpochColumnFilterInput(column, 'start', event)}
+                            />
+                            <input
+                              class="sdn-input sdn-column-filter"
+                              type="datetime-local"
+                              value={epochColumnFilterValue(column, 'stop')}
+                              aria-label={`Filter ${columnHeaderKeyLabel(column)} stop`}
+                              on:input={(event) => handleEpochColumnFilterInput(column, 'stop', event)}
+                            />
+                          </div>
+                        {:else}
+                          <input
+                            class="sdn-input sdn-column-filter"
+                            value={columnFilterValue(column)}
+                            placeholder={columnFilterPlaceholder(column)}
+                            aria-label={`Filter ${columnHeaderKeyLabel(column)}`}
+                            on:input={(event) => handleColumnFilterInput(column, event)}
+                          />
+                        {/if}
                       </th>
                     {/each}
                   </tr>
@@ -5236,13 +5327,32 @@
                   <tr class="sdn-column-filter-row">
                     {#each visibleColumns as column}
                       <th>
-                        <input
-                          class="sdn-input sdn-column-filter"
-                          value={columnFilterValue(column.key)}
-                          placeholder={columnFilterPlaceholder(column.key)}
-                          aria-label={`Filter ${columnHeaderKeyLabel(column.key, column.label)}`}
-                          on:input={(event) => handleColumnFilterInput(column.key, event)}
-                        />
+                        {#if isEpochColumn(column.key)}
+                          <div class="sdn-epoch-filter-range">
+                            <input
+                              class="sdn-input sdn-column-filter"
+                              type="datetime-local"
+                              value={epochColumnFilterValue(column.key, 'start')}
+                              aria-label={`Filter ${columnHeaderKeyLabel(column.key, column.label)} start`}
+                              on:input={(event) => handleEpochColumnFilterInput(column.key, 'start', event)}
+                            />
+                            <input
+                              class="sdn-input sdn-column-filter"
+                              type="datetime-local"
+                              value={epochColumnFilterValue(column.key, 'stop')}
+                              aria-label={`Filter ${columnHeaderKeyLabel(column.key, column.label)} stop`}
+                              on:input={(event) => handleEpochColumnFilterInput(column.key, 'stop', event)}
+                            />
+                          </div>
+                        {:else}
+                          <input
+                            class="sdn-input sdn-column-filter"
+                            value={columnFilterValue(column.key)}
+                            placeholder={columnFilterPlaceholder(column.key)}
+                            aria-label={`Filter ${columnHeaderKeyLabel(column.key, column.label)}`}
+                            on:input={(event) => handleColumnFilterInput(column.key, event)}
+                          />
+                        {/if}
                       </th>
                     {/each}
                   </tr>

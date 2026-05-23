@@ -1314,10 +1314,12 @@ textarea,
 }
 
 .sdn-catalog-sync-trigger {
-  display: inline-flex;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  width: auto;
-  min-width: calc(100% + 1.6rem);
+  width: calc(100% + 1.6rem);
+  min-width: 0;
+  text-align: center;
 }
 
 .sdn-catalog-row.sdn-catalog-expanded td {
@@ -1978,6 +1980,17 @@ textarea,
   min-height: var(--sdn-explorer-filter-height);
   padding: 0 var(--sdn-explorer-cell-pad-x);
   font-size: var(--sdn-explorer-table-font-size);
+}
+
+.sdn-epoch-filter-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(0.08rem, 0.35cqw, 0.18rem);
+  min-width: 0;
+}
+
+.sdn-epoch-filter-range .sdn-column-filter {
+  padding-inline: clamp(0.02rem, 0.18cqw, 0.18rem);
 }
 
 .sdn-workbench-table .sdn-sort-button {

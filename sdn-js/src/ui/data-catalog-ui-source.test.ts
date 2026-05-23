@@ -81,6 +81,9 @@ describe('Data catalog UI source', () => {
 
     expect(storeProductsTable).not.toContain('<th>Plan</th>');
     expect(storeProductsTable).not.toContain('<th>Actions</th>');
+    expect(storeProductsTable).not.toContain('<th>Renewal</th>');
+    expect(storeProductsTable).not.toContain('<span>Renewal</span>');
+    expect(storeProductsTable).not.toContain('<strong>{row.plan.renewalLabel}</strong>');
   });
 
   it('routes desktop-local FlatSQL persistence through the configured desktop storage API', () => {
@@ -158,7 +161,8 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('class="sdn-table-wrap sdn-workbench-table-wrap sdn-catalog-table-wrap"');
     expect(localDataScreenSource).toContain('class="sdn-table sdn-workbench-table sdn-catalog-table"');
     expect(localDataScreenSource).toContain('sdn-catalog-action-panel');
-    expect(catalogProductsTable).toContain('colspan="7"');
+    expect(catalogProductsTable).toContain('colspan="6"');
+    expect(catalogProductsTable).not.toContain('colspan="7"');
 
     expect(catalogProductsTable).toContain('{#each');
     expect(catalogProductsTable).toContain('as row (catalogRowKey(row))}');
@@ -184,6 +188,7 @@ describe('Data catalog UI source', () => {
     expect(catalogProductsTable).toContain('<span>Provider</span>');
     expect(catalogProductsTable).toContain('<span>Message types</span>');
     expect(catalogProductsTable).toContain('<span>Storage estimate</span>');
+    expect(catalogProductsTable).not.toContain('<span>Renewal</span>');
     expect(catalogProductsTable).not.toContain('class="sdn-catalog-action-panel" on:click');
     expect(appCssSource).toMatch(/\.sdn-catalog-row\.sdn-catalog-expanded td\s*{[^}]*background:\s*rgba\(10,\s*132,\s*255,\s*0\.18\)/s);
     expect(appCssSource).toContain('.sdn-catalog-product-summary');
@@ -217,6 +222,13 @@ describe('Data catalog UI source', () => {
     expect(appCssSource).toContain('.sdn-column-header-control');
     expect(appCssSource).toContain('.sdn-column-key');
     expect(appCssSource).not.toContain('.sdn-filter-toggle');
+    expect(localDataScreenSource).toContain('function isEpochColumn(column: string): boolean');
+    expect(explorerTable).toContain('type="datetime-local"');
+    expect(explorerTable).toContain("handleEpochColumnFilterInput(column, 'start', event)");
+    expect(explorerTable).toContain("handleEpochColumnFilterInput(column, 'stop', event)");
+    expect(explorerTable).toContain('aria-label={`Filter ${columnHeaderKeyLabel(column)} start`}');
+    expect(explorerTable).toContain('aria-label={`Filter ${columnHeaderKeyLabel(column)} stop`}');
+    expect(appCssSource).toContain('.sdn-epoch-filter-range');
   });
 
   it('renders saved Explorer SQL/dashboard views with local persistence controls', () => {
@@ -237,14 +249,13 @@ describe('Data catalog UI source', () => {
     expect(appCssSource).toContain('.sdn-saved-view-controls');
   });
 
-  it('renders store renewal with renewal timing and unit price instead of quota text', () => {
+  it('keeps store renewal metadata out of the compact product table', () => {
     const catalogProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Store data products"', "{#if selectedDataSection === 'subscriptions'}");
 
-    expect(catalogProductsTable).toContain('<th>Renewal</th>');
+    expect(catalogProductsTable).not.toContain('<th>Renewal</th>');
     expect(catalogProductsTable).not.toContain('<th>Renewal / quota</th>');
     expect(catalogProductsTable).not.toContain('<th>Price / usage</th>');
-    expect(catalogProductsTable).toContain('<strong>{row.plan.renewalLabel}</strong>');
-    expect(catalogProductsTable).toContain('<span>{row.plan.priceLabel}</span>');
+    expect(catalogProductsTable).not.toContain('<strong>{row.plan.renewalLabel}</strong>');
     expect(catalogProductsTable).not.toContain('row.plan.quotaLabel');
   });
 
@@ -257,7 +268,6 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('$: billingProviderRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingProviderRows : buildDataBillingProviderRows(dataCatalogRows);');
     expect(storeSection).toContain('dataCatalogSummary.billingMetricTitle');
     expect(storeSection).toContain('dataCatalogSummary.billingMetricValue');
-    expect(storeSection).toContain('row.plan.renewalLabel');
     expect(storeSection).toContain('row.plan.priceLabel');
     expect(localDataScreenSource).not.toContain('aria-label="Billing"');
     expect(localDataScreenSource).not.toContain('aria-label="Spend by provider"');
@@ -408,6 +418,9 @@ describe('Data catalog UI source', () => {
     expect(appCssSource).not.toContain('top: calc(100% + 0.45rem)');
     expect(appCssSource).toMatch(/\.sdn-sync-bubble\s*{[^}]*border-radius:\s*var\(--sdn-radius-sm\)/s);
     expect(appCssSource).not.toMatch(/\.sdn-sync-bubble\s*{[^}]*border-radius:\s*50%/s);
+    expect(appCssSource).toMatch(/\.sdn-catalog-sync-trigger\s*{[^}]*align-items:\s*center/s);
+    expect(appCssSource).toMatch(/\.sdn-catalog-sync-trigger\s*{[^}]*justify-content:\s*center/s);
+    expect(appCssSource).toMatch(/\.sdn-catalog-sync-trigger\s*{[^}]*text-align:\s*center/s);
   });
 
   it('uses subscription sync preferences when the scheduler starts a data feed', () => {
