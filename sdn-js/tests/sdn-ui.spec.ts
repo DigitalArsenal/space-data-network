@@ -70,6 +70,7 @@ test('data route renders subscribed local datastore preview without workbench st
   }
   const storeProducts = page.getByRole('table', { name: 'Store data products' });
   await expect(storeProducts).toContainText('PNM Feed');
+  await expect(storeProducts.getByRole('columnheader', { name: 'Renewal' })).toHaveCount(0);
   await page.getByRole('textbox', { name: 'Search store' }).fill('does-not-match');
   await expect(storeProducts).toContainText('No matching data products.');
   await page.getByRole('textbox', { name: 'Search store' }).fill('pnm');
@@ -88,6 +89,16 @@ test('data route renders subscribed local datastore preview without workbench st
   await filterMenu.getByRole('button', { name: 'Clear all' }).click();
   await expect(storeProducts).toContainText('PNM Feed');
   await expect(page.getByRole('button', { name: 'Filters' })).toBeVisible();
+  const syncCentering = await storeProducts.locator('td.sdn-sync-cell').first().evaluate((cell) => {
+    const bubble = cell.querySelector<HTMLElement>('.sdn-sync-bubble');
+    if (!bubble) return Number.POSITIVE_INFINITY;
+    const cellBox = cell.getBoundingClientRect();
+    const bubbleBox = bubble.getBoundingClientRect();
+    const cellCenter = cellBox.left + (cellBox.width / 2);
+    const bubbleCenter = bubbleBox.left + (bubbleBox.width / 2);
+    return Math.abs(cellCenter - bubbleCenter);
+  });
+  expect(syncCentering).toBeLessThanOrEqual(1);
 
   const storeRow = storeProducts.locator('tbody tr.sdn-catalog-row').filter({ hasText: 'PNM Feed' }).first();
   await storeRow.locator('td').first().getByRole('button').click();
@@ -823,6 +834,13 @@ test('data route runs local SQL against locally synced CelesTrak rows without re
   await page.setViewportSize({ width: 900, height: 720 });
 
   const dataRows = page.getByRole('table', { name: 'Data rows' });
+  await expect(dataRows.getByRole('cell', { name: 'STARLINK-6292', exact: true })).toBeVisible();
+  const epochStartFilter = dataRows.locator('input[type="datetime-local"][aria-label="Filter Epoch start"]');
+  const epochStopFilter = dataRows.locator('input[type="datetime-local"][aria-label="Filter Epoch stop"]');
+  await expect(epochStartFilter).toBeVisible();
+  await expect(epochStopFilter).toBeVisible();
+  await epochStartFilter.fill('2026-05-10T00:00');
+  await epochStopFilter.fill('2026-05-11T00:00');
   await expect(dataRows.getByRole('cell', { name: 'STARLINK-6292', exact: true })).toBeVisible();
   const desktopExplorerMetrics = await page.evaluate(() => {
     const explorer = document.querySelector<HTMLElement>('[aria-label="Data explorer"]');

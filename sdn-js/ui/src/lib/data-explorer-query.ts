@@ -30,6 +30,8 @@ const NUMERIC_PATTERN = String.raw`[+-]?(?:(?:\d+(?:\.\d+)?)|(?:\.\d+))(?:[eE][+
 const NUMERIC_VALUE_REGEX = new RegExp(`^${NUMERIC_PATTERN}$`);
 const NUMERIC_COMPARISON_REGEX = new RegExp(`^(<=|>=|!=|<>|=|<|>)\\s*(${NUMERIC_PATTERN})$`, 'i');
 const NUMERIC_RANGE_REGEX = new RegExp(`^(${NUMERIC_PATTERN})\\s*(?:\\.\\.|\\.\\.\\.|to)\\s*(${NUMERIC_PATTERN})$`, 'i');
+const DATE_TIME_RANGE_SEPARATOR = '..';
+const DATE_TIME_FILTER_REGEX = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::(\d{2})(?:\.\d{1,3})?)?Z?$/;
 
 const NUMERIC_DATA_EXPLORER_COLUMNS = new Set([
   'AP1',
@@ -190,6 +192,10 @@ export function isNumericDataExplorerColumn(column: string): boolean {
   return NUMERIC_DATA_EXPLORER_COLUMNS.has(column.trim().toUpperCase());
 }
 
+export function isEpochDataExplorerColumn(column: string): boolean {
+  return column.trim().toUpperCase() === 'EPOCH';
+}
+
 export function localDataExplorerSearchColumns(standardId: string, availableColumns: string[] = []): string[] {
   const standardColumns = DEFAULT_TEXT_SEARCH_COLUMNS[standardTableName(standardId)] ?? [];
   const available = uniqueStrings(availableColumns);
@@ -256,6 +262,10 @@ function plaintextSearchSql(value: string, columns: string[]): string | null {
 }
 
 function columnFilterSql(column: string, value: string): string {
+  if (isEpochDataExplorerColumn(column)) {
+    const epochSql = epochColumnFilterSql(column, value);
+    if (epochSql) return epochSql;
+  }
   if (isNumericDataExplorerColumn(column)) {
     const numericSql = numericColumnFilterSql(column, value);
     if (numericSql) return numericSql;
@@ -271,6 +281,18 @@ function numericColumnFilterSql(column: string, value: string): string | null {
     return `${expression} BETWEEN ${formatSqlNumber(filter.min)} AND ${formatSqlNumber(filter.max)}`;
   }
   return `${expression} ${filter.operator} ${formatSqlNumber(filter.value)}`;
+}
+
+function epochColumnFilterSql(column: string, value: string): string | null {
+  const [rawStart = '', rawStop = ''] = value.split(DATE_TIME_RANGE_SEPARATOR);
+  const start = normalizeDateTimeFilterLiteral(rawStart);
+  const stop = normalizeDateTimeFilterLiteral(rawStop);
+  const expression = textColumnExpression(column);
+  const conditions: string[] = [];
+  if (start) conditions.push(`${expression} >= '${start}'`);
+  if (stop) conditions.push(`${expression} < '${stop}'`);
+  if (conditions.length === 0) return null;
+  return conditions.length === 1 ? conditions[0] : `(${conditions.join(' AND ')})`;
 }
 
 function textColumnExpression(column: string): string {
@@ -294,6 +316,14 @@ function escapeSqlLikePattern(value: string): string {
     .replace(/%/g, '\\%')
     .replace(/_/g, '\\_')
     .replace(/'/g, "''");
+}
+
+function normalizeDateTimeFilterLiteral(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  const match = trimmed.match(DATE_TIME_FILTER_REGEX);
+  if (!match) return '';
+  return `${match[1]}T${match[2]}:${match[3] ?? '00'}.000Z`;
 }
 
 function standardTableName(standardId: string): string {
