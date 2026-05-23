@@ -88,6 +88,15 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('clearSchemaSyncProgressForSubscription(dataSourceId, standardId, null);');
   });
 
+  it('clears published-shard stores after configured provider peer or xpub identity changes', () => {
+    expect(localDataScreenSource).toContain('await pruneChangedProviderIdentityPublishedStores(previousSubscriptions, dataDirectoryState.subscriptions);');
+    expect(localDataScreenSource).toContain('function changedProviderIdentityPublishedSubscriptions(');
+    expect(localDataScreenSource).toContain("normalizeDataQueryProfile(next.queryProfile) !== 'dataset-publication-offset-v1'");
+    expect(localDataScreenSource).toContain('previous.peerId !== next.peerId');
+    expect(localDataScreenSource).toContain('previous.providerPublicKey !== next.providerPublicKey');
+    expect(localDataScreenSource).toContain('clearSchemaSyncProgressForSubscription(subscription.dataSourceId, subscription.standardId, subscription.datastoreKey);');
+  });
+
   it('renders Store as a searchable product store with expandable action rows', () => {
     const storeSection = sourceBetween(localDataScreenSource, 'aria-label="Data store"', "{#if selectedDataSection === 'subscriptions'}");
     const storeProductsTable = sourceBetween(localDataScreenSource, 'aria-label="Store data products"', "{#if selectedDataSection === 'subscriptions'}");
@@ -252,12 +261,12 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('function sortedMessageTypeRows(rows: SchemaSyncRow[]): SchemaSyncRow[]');
     expect(localDataScreenSource).toContain('rightRows - leftRows');
     expect(subscriptionsSection).toContain('{#each filteredSubscriptionRows as schema (schema.subscriptionId)}');
-    expect(subscriptionsSection).toContain('schemaRemoteRowsLabel(schema)');
-    expect(subscriptionsSection).toContain('schemaLocalRowsLabel(schema)');
+    expect(subscriptionsSection).toContain('schemaRemoteRowsLabel(selectedSubscriptionDetailSchema)');
+    expect(subscriptionsSection).toContain('schemaLocalRowsLabel(selectedSubscriptionDetailSchema)');
     expect(subscriptionsSection).toContain('schemaPinnedRowsLabel(schema)');
     expect(subscriptionsSection).toContain('schemaCachedBytesLabel');
     expect(subscriptionsSection).toContain('schemaLastSyncedLabel');
-    expect(subscriptionsSection).toContain('schemaHealthLabel(schema)');
+    expect(subscriptionsSection).toContain('schemaCompactSyncDetailLabel(schema)');
     expect(subscriptionsSection).toContain('openSchemaInExplorer(selectedSubscriptionDetailSchema)');
     expect(subscriptionsSection).toContain('retrySubscriptionSync(schema)');
   });
@@ -282,19 +291,19 @@ describe('Data catalog UI source', () => {
     const storageSection = sourceBetween(localDataScreenSource, 'aria-label="Sync settings"', "{#if selectedDataSection === 'explorer'}");
 
     expect(storageSection).toContain('{#each filteredSubscriptionRows as schema (schema.subscriptionId)}');
-    expect(storageSection).toContain('schemaRemoteRowsLabel(schema)');
-    expect(storageSection).toContain('schemaLocalRowsLabel(schema)');
+    expect(storageSection).toContain('schemaRemoteRowsLabel(selectedSubscriptionDetailSchema)');
+    expect(storageSection).toContain('schemaLocalRowsLabel(selectedSubscriptionDetailSchema)');
     expect(storageSection).toContain('schemaPinnedRowsLabel(schema)');
     expect(storageSection).toContain('schemaCachedBytesLabel(schema)');
-    expect(storageSection).toContain('schemaDownloadSpeedLabel(schema)');
-    expect(storageSection).toContain('schemaStoragePressureLabel(schema)');
-    expect(storageSection).toContain('schemaRetentionPolicyLabel(schema)');
-    expect(storageSection).toContain('nextSyncAttemptLabel(schema)');
-    expect(storageSection).toContain('schemaLastSyncedLabel(schema)');
+    expect(storageSection).toContain('schemaDownloadSpeedLabel(selectedSubscriptionDetailSchema)');
+    expect(storageSection).toContain('schemaStoragePressureLabel(selectedSubscriptionDetailSchema)');
+    expect(storageSection).toContain('schemaRetentionPolicyLabel(selectedSubscriptionDetailSchema)');
+    expect(storageSection).toContain('nextSyncAttemptLabel(selectedSubscriptionDetailSchema)');
+    expect(storageSection).toContain('schemaLastSyncedLabel(selectedSubscriptionDetailSchema)');
     expect(storageSection).toContain('class="sdn-storage-row-actions sdn-subscription-actions"');
-    expect(storageSection).toContain('verifyPinnedArtifacts(schema)');
-    expect(storageSection).toContain('beginResetSubscriptionData(schema.subscriptionId)');
-    expect(storageSection).toContain('confirmResetSubscriptionData(schema)');
+    expect(storageSection).toContain('verifyPinnedArtifacts(selectedSubscriptionDetailSchema)');
+    expect(storageSection).toContain('beginResetSubscriptionData(selectedSubscriptionDetailSchema.subscriptionId)');
+    expect(storageSection).toContain('confirmResetSubscriptionData(selectedSubscriptionDetailSchema)');
     expect(storageSection).not.toContain('Reset local cache');
     expect(appCssSource).toContain('.sdn-storage-row-actions');
   });
@@ -335,13 +344,15 @@ describe('Data catalog UI source', () => {
     expect(subscriptionsSection).toContain('{#each filteredSubscriptionRows as schema (schema.subscriptionId)}');
     expect(subscriptionsSection).toContain('subscriptionProductLabel(schema)');
     expect(subscriptionsSection).toContain('subscriptionAccessLabel(schema)');
-    expect(subscriptionsSection).toContain('subscriptionPlanLabel(schema)');
-    expect(subscriptionsSection).toContain('subscriptionCostLabel(schema)');
-    expect(subscriptionsSection).toContain('subscriptionStorageStateLabel(schema)');
-    expect(subscriptionsSection).toContain('schemaHealthLabel(schema)');
-    expect(subscriptionsSection).toContain('handleSubscriptionStorageCapInput(schema, event)');
-    expect(subscriptionsSection).toContain('handleSubscriptionQueryProfileChange(schema, event)');
-    expect(subscriptionsSection).toContain('handleSubscriptionFilterInput(schema, event)');
+    expect(subscriptionsSection).toContain('schemaCompactRowsLabel(schema)');
+    expect(subscriptionsSection).toContain('subscriptionAccessDetailLabel(schema)');
+    expect(subscriptionsSection).toContain('schemaCachedBytesLabel(schema)');
+    expect(subscriptionsSection).toContain('schemaPinnedRowsLabel(schema)');
+    expect(subscriptionsSection).toContain('syncStatusLabel(schema)');
+    expect(subscriptionsSection).toContain('schemaCompactSyncDetailLabel(schema)');
+    expect(subscriptionsSection).toContain('handleSubscriptionStorageCapInput(selectedSubscriptionDetailSchema, event)');
+    expect(subscriptionsSection).toContain('handleSubscriptionQueryProfileChange(selectedSubscriptionDetailSchema, event)');
+    expect(subscriptionsSection).toContain('handleSubscriptionFilterInput(selectedSubscriptionDetailSchema, event)');
     expect(subscriptionsSection).toContain('class="sdn-subscription-detail-drawer"');
     expect(subscriptionsSection).toContain('class="sdn-subscription-detail-grid"');
     for (const label of ['Access', 'Storage', 'Pinning', 'Sync', 'Freshness', 'Health']) {
@@ -401,8 +412,8 @@ describe('Data catalog UI source', () => {
 
     expect(localDataScreenSource).toContain('DATA_RETENTION_POLICIES');
     expect(localDataScreenSource).toContain('handleSubscriptionRetentionPolicyChange');
-    expect(localDataScreenSource).toContain('aria-label={`${schema.id} retention policy`}');
-    expect(localDataScreenSource).toContain('value={schema.retentionPolicy}');
+    expect(localDataScreenSource).toContain('aria-label={`${selectedSubscriptionDetailSchema.id} retention policy`}');
+    expect(localDataScreenSource).toContain('value={selectedSubscriptionDetailSchema.retentionPolicy}');
     expect(syncFunction).toContain('const retentionPolicy = subscriptionRetentionPolicyFor(subscription, standardId);');
     expect(syncFunction).toContain('retentionPolicyRequiresReset(initialProgress, retentionPolicy)');
     expect(syncFunction).toContain('clearLocalFlatSqlStore({');

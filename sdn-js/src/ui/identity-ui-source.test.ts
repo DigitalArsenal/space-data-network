@@ -497,7 +497,7 @@ describe('SDN data Svelte source', () => {
       'publishedSnapshotTotalRows',
       'const rowCountRemoteRows = publishedSnapshotTotalRows ?? remoteRows',
       'remoteRowsForSchemaSyncRow(subscription, progress)',
-      'schemaRowsCountLabel(schema)',
+      'schemaCompactRowsLabel(schema)',
       'schemaPinnedRowsLabel(schema)',
       'schemaCachedBytesLabel(schema)',
       'schemaProgressLabel(schema)',
@@ -508,7 +508,7 @@ describe('SDN data Svelte source', () => {
       'confirmResetSubscriptionData',
       'Reset row',
       'Type RESET to clear',
-      'Next {nextSyncAttemptLabel(schema)}',
+      'nextSyncAttemptLabel(selectedSubscriptionDetailSchema)',
       'nextSyncAttemptLabel',
       'retrySubscriptionSync',
       'aria-label={`${schema.id} retry sync`}',
@@ -524,7 +524,7 @@ describe('SDN data Svelte source', () => {
       'showPinVerifyToast',
       'dismissPinVerifyToast',
       'aria-label="Dismiss verification toast"',
-      "type DataSection = 'overview' | 'catalog' | 'subscriptions' | 'sources' | 'message-types' | 'storage' | 'billing' | 'activity' | 'explorer'",
+      "type DataSection = 'store' | 'subscriptions' | 'explorer'",
       'buildDataCatalogRows',
       'buildDataOverviewVisuals',
       'overviewStorageGroup',
@@ -532,22 +532,15 @@ describe('SDN data Svelte source', () => {
       'Storage by',
       'summarizeDataCatalog',
       'DATA_SECTIONS',
-      "let selectedDataSection: DataSection = 'overview'",
+      "let selectedDataSection: DataSection = 'store'",
       'setDataSection',
       'activeStorageRows',
       'selectedSchemaSyncRow',
       'refreshSubscriptionRemoteRowsFromSummary',
       'selectedSchemaSyncRow?.remoteRows',
-      'Data / Overview',
-      'Data / Catalog',
-      'Data / My Subscriptions',
-      'Data / Sources',
-      'Data / Message Types',
-      'Data / Storage',
-      'Data / Billing',
-      'Data / Activity',
+      'Data / Store',
+      'Data / Subscriptions',
       'Data / Explorer',
-      'My Subscriptions',
       'INTERNAL_SQL_COLUMN_KEYS',
       'Previous',
       'Next',
@@ -873,8 +866,11 @@ describe('SDN identity styling guardrails', () => {
     const appCss = readUiSource('styles/app.css');
 
     expect(appCss).toMatch(/\.sdn-workbench-table-wrap\s*{[^}]*overflow-x:\s*hidden/s);
+    expect(appCss).toMatch(/\.sdn-workbench-table-wrap\s*{[^}]*container-type:\s*inline-size/s);
+    expect(appCss).toMatch(/--sdn-explorer-table-font-size:\s*clamp\(5px,[^;]*12px\)/s);
     expect(appCss).toMatch(/\.sdn-workbench-table\s*{[^}]*width:\s*100%/s);
     expect(appCss).toMatch(/\.sdn-workbench-table\s*{[^}]*table-layout:\s*fixed/s);
+    expect(appCss).toMatch(/\.sdn-workbench-table th,\s*\.sdn-workbench-table td\s*{[^}]*font-size:\s*var\(--sdn-explorer-table-font-size\)/s);
     expect(appCss).toMatch(/\.sdn-workbench-table th,\s*\.sdn-workbench-table td\s*{[^}]*min-width:\s*0/s);
   });
 
@@ -909,12 +905,13 @@ describe('SDN identity styling guardrails', () => {
     expect(appCss).not.toContain('clip-path: circle');
   });
 
-  it('keeps subscription row actions horizontal instead of stacked in the grid', () => {
+  it('keeps subscription rows responsive and lets actions wrap inside the grid', () => {
     const appCss = readUiSource('styles/app.css');
 
-    expect(appCss).toMatch(/\.sdn-subscription-row\s*{[^}]*grid-template-columns:[^}]*max-content/s);
+    expect(appCss).toMatch(/\.sdn-subscription-row\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1\.35fr\)/s);
     expect(appCss).toMatch(/\.sdn-subscription-row\s*>\s*\.sdn-subscription-actions\s*{[^}]*display:\s*flex/s);
-    expect(appCss).toMatch(/\.sdn-subscription-actions\s*{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/s);
+    expect(appCss).toMatch(/\.sdn-subscription-actions\s*{[^}]*flex-wrap:\s*wrap[^}]*overflow:\s*visible/s);
+    expect(appCss).toMatch(/@media\s*\(max-width:\s*1120px\)\s*{[^}]*\.sdn-subscription-row\s*{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);
   });
 
   it('shows pin verification feedback as a dismissible fading toast', () => {

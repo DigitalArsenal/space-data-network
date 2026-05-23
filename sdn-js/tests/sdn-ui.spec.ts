@@ -93,12 +93,9 @@ test('data route renders subscribed local datastore preview without workbench st
   await expect(page.getByLabel('Subscription storage summary')).toContainText('Pinned rows');
   await expect(syncSettings).toContainText('CelesTrak Provider');
   await expect(syncSettings).toContainText('PNM');
-  await expect(syncSettings).toContainText('Synced 10/12');
+  await expect(syncSettings).toContainText('12 rows');
+  await expect(syncSettings).toContainText('2 missing');
   await expect(syncSettings).toContainText('Pinned rows');
-  await expect(syncSettings).toContainText('Next');
-  await expect(syncSettings).toContainText('Last');
-  await expect(syncSettings.getByRole('button', { name: 'Verify pins' })).toBeVisible();
-  await expect(syncSettings.getByRole('button', { name: 'Reset row' })).toBeVisible();
   await expect(syncSettings.getByRole('button', { name: 'Active' })).toBeVisible();
   await expect(syncSettings.getByRole('button', { name: 'Trials' })).toBeVisible();
   await expect(syncSettings.getByRole('button', { name: 'Payment issues' })).toBeVisible();
@@ -110,14 +107,17 @@ test('data route renders subscribed local datastore preview without workbench st
   await expect(syncSettings.locator('article').filter({ hasText: 'PNM Feed' })).toBeVisible();
   await syncSettings.getByRole('button', { name: 'All' }).click();
   await expect(syncSettings).toContainText('12');
-  await expect(page.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2.5');
-  await expect(page.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
   await syncSettings.locator('article').filter({ hasText: 'PNM Feed' }).getByRole('button', { name: 'Details' }).click();
   const subscriptionDetails = page.getByLabel('PNM subscription details');
   await expect(subscriptionDetails).toContainText('Access');
   await expect(subscriptionDetails).toContainText('Storage');
   await expect(subscriptionDetails).toContainText('Pinning');
   await expect(subscriptionDetails).toContainText('Sync');
+  await expect(subscriptionDetails).toContainText('Freshness');
+  await expect(subscriptionDetails.getByRole('button', { name: 'Verify pins' })).toBeVisible();
+  await expect(subscriptionDetails.getByRole('button', { name: 'Reset row' })).toBeVisible();
+  await expect(page.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2.5');
+  await expect(page.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
   await page.getByRole('button', { name: 'Pause' }).press('Enter');
   await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible();
   await page.getByRole('button', { name: 'Resume' }).press('Enter');
@@ -165,6 +165,7 @@ test('data route renders subscribed local datastore preview without workbench st
   await page.reload();
   await page.getByRole('button', { name: 'Subscriptions' }).click();
   await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+  await page.locator('article').filter({ hasText: 'PNM Feed' }).getByRole('button', { name: 'Details' }).click();
   await expect(page.getByRole('spinbutton', { name: 'PNM storage cap' })).toHaveValue('2.5');
   await expect(page.getByRole('combobox', { name: 'PNM storage unit' })).toHaveValue('MB');
 });
@@ -280,6 +281,7 @@ test('data route shows retry instead of query for sync-error subscriptions', asy
   await expect(row).toContainText('failed to dial remote FlatSQL sync peer');
   await expect(row.getByRole('button', { name: 'Query' })).toHaveCount(0);
   await expect(row.getByRole('button', { name: /retry sync/i })).toBeVisible();
+  await row.getByRole('button', { name: 'Details' }).click();
   await expect(page.getByRole('textbox', { name: 'PNM sync filter' })).toHaveValue('FILE_ID LIKE celestrak:%');
 
   await row.getByRole('button', { name: /retry sync/i }).press('Enter');
@@ -453,15 +455,78 @@ test('subscriptions search by message type and expose schema health actions', as
   await syncSettings.getByRole('textbox', { name: 'Search subscriptions' }).fill('CAT');
   const catRow = syncSettings.locator('article').filter({ hasText: 'CAT Feed' });
   await expect(catRow).toBeVisible();
-  await expect(catRow).toContainText('2,500 remote');
+  await expect(catRow).toContainText('2,500 rows');
   await expect(catRow).toContainText(/pinned/i);
-  await expect(catRow).toContainText('Next');
-  await expect(catRow).toContainText('Last');
   await expect(catRow.getByRole('button', { name: 'Retry' })).toBeVisible();
   await expect(catRow.getByRole('button', { name: 'Details' })).toBeVisible();
   await catRow.getByRole('button', { name: 'Details' }).click();
   await expect(page.getByLabel('CAT subscription details')).toContainText('Health');
+  await expect(page.getByLabel('CAT subscription details')).toContainText('Freshness');
   await expect(page.getByLabel('CAT subscription details').getByRole('button', { name: 'Open Explorer' })).toBeVisible();
+});
+
+test('subscription rows stay responsive without horizontal overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 920, height: 720 });
+  await page.addInitScript(() => {
+    window.localStorage.setItem('sdn:data-directory:v1', JSON.stringify({
+      peerTrust: { 'local-node': 'marginal' },
+      subscriptions: [{
+        id: 'local:OMM',
+        dataSourceId: 'local',
+        peerId: 'local-node',
+        standardId: 'OMM',
+        providerName: 'CelesTrak Provider With A Long Operational Name',
+        providerPublicKey: 'xpub6D36ciSsN66eJutmvXs1VXmtqnWkcMqZEbMh4FP6bpANfJpfP6oY48P7XnCWdd4NwfpHir8bU7eo3KcC45jsuN6LXwA5SYmL6sNeQwYPJjY',
+        remoteRows: 2203117,
+        storageCap: 1,
+        storageUnit: 'GB',
+        syncFilter: 'OBJECT_NAME LIKE STARLINK AND EPOCH >= 2026-05-01',
+        createdAt: '2026-05-12T00:00:00.000Z',
+        updatedAt: '2026-05-12T00:00:00.000Z',
+      }],
+    }));
+    window.localStorage.setItem('sdn:data-schema-sync:v1', JSON.stringify({
+      'local:OMM': { mode: 'sync', storageCap: 1, storageUnit: 'GB' },
+    }));
+    window.localStorage.setItem('sdn:data-schema-sync-state:v1', JSON.stringify({
+      'local:OMM': {
+        status: 'error',
+        syncedRows: 1105675,
+        totalRows: 2659160,
+        localRows: 1105675,
+        pinnedRows: 1105675,
+        cachedBytes: 1073741800,
+        pinnedBytes: 323683556,
+        error: 'Published shard sync failed while resuming a long OMM publication from a provider identity migration',
+      },
+    }));
+  });
+
+  await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
+  await page.getByRole('button', { name: 'Subscriptions' }).click();
+
+  const syncSettings = page.getByLabel('Sync settings');
+  await expect(syncSettings.locator('article.sdn-subscription-row')).toBeVisible();
+  const rowText = await syncSettings.locator('article.sdn-subscription-row').innerText();
+  expect(rowText).toContain('Free feed');
+  expect(rowText).not.toContain('1 GB cap');
+  expect(rowText).not.toContain('Synced 1,105,675/2,659,160');
+  expect(rowText).not.toContain('Timing:');
+
+  const metrics = await page.evaluate(() => {
+    const content = document.querySelector<HTMLElement>('.sdn-content');
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('.sdn-subscription-row'));
+    return {
+      viewportWidth: window.innerWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      contentClientWidth: content?.clientWidth ?? 0,
+      contentScrollWidth: content?.scrollWidth ?? 0,
+      overflowingRows: rows.filter((row) => row.scrollWidth > row.clientWidth + 1).length,
+    };
+  });
+  expect(metrics.documentScrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1);
+  expect(metrics.contentScrollWidth).toBeLessThanOrEqual(metrics.contentClientWidth + 1);
+  expect(metrics.overflowingRows).toBe(0);
 });
 
 test('data route keeps same-schema subscriptions separated by datastore namespace', async ({ page }) => {
@@ -603,7 +668,7 @@ test('data route keeps same-schema subscriptions separated by datastore namespac
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
   await page.getByRole('button', { name: 'Subscriptions' }).click();
   const liveRow = page.getByLabel('Sync settings').locator('article').filter({ hasText: 'CelesTrak Live' });
-  await expect(liveRow).toContainText('2,287,018 remote');
+  await expect(liveRow).toContainText('2,287,018 rows');
   await expect(liveRow.getByRole('button', { name: 'Query' })).toHaveCount(0);
   await expect(liveRow.getByRole('button', { name: /retry sync/i })).toBeVisible();
 
@@ -742,9 +807,49 @@ test('data route runs local SQL against locally synced CelesTrak rows without re
   await page.goto('/?api=http://127.0.0.1:5174&gateway=http%3A%2F%2F127.0.0.1%3A8081#/data');
   await page.getByRole('button', { name: 'Explorer' }).click();
   await page.getByRole('combobox', { name: 'Data type' }).selectOption('OMM');
+  await page.setViewportSize({ width: 900, height: 720 });
 
   const dataRows = page.getByRole('table', { name: 'Data rows' });
   await expect(dataRows.getByRole('cell', { name: 'STARLINK-6292', exact: true })).toBeVisible();
+  const desktopExplorerMetrics = await page.evaluate(() => {
+    const explorer = document.querySelector<HTMLElement>('[aria-label="Data explorer"]');
+    const controls = document.querySelector<HTMLElement>('.sdn-explorer-controls');
+    const savedControls = document.querySelector<HTMLElement>('.sdn-saved-view-controls');
+    const table = document.querySelector<HTMLElement>('.sdn-workbench-table');
+    const cell = table?.querySelector<HTMLElement>('tbody td');
+    return {
+      explorerScrollWidth: explorer?.scrollWidth ?? 0,
+      explorerClientWidth: explorer?.clientWidth ?? 0,
+      controlsScrollWidth: controls?.scrollWidth ?? 0,
+      controlsClientWidth: controls?.clientWidth ?? 0,
+      savedControlsScrollWidth: savedControls?.scrollWidth ?? 0,
+      savedControlsClientWidth: savedControls?.clientWidth ?? 0,
+      tableScrollWidth: table?.scrollWidth ?? 0,
+      tableClientWidth: table?.clientWidth ?? 0,
+      fontSize: cell ? Number.parseFloat(getComputedStyle(cell).fontSize) : 0,
+    };
+  });
+  expect(desktopExplorerMetrics.fontSize).toBeGreaterThanOrEqual(5);
+  expect(desktopExplorerMetrics.fontSize).toBeLessThanOrEqual(12);
+  expect(desktopExplorerMetrics.explorerScrollWidth).toBeLessThanOrEqual(desktopExplorerMetrics.explorerClientWidth + 1);
+  expect(desktopExplorerMetrics.controlsScrollWidth).toBeLessThanOrEqual(desktopExplorerMetrics.controlsClientWidth + 1);
+  expect(desktopExplorerMetrics.savedControlsScrollWidth).toBeLessThanOrEqual(desktopExplorerMetrics.savedControlsClientWidth + 1);
+  expect(desktopExplorerMetrics.tableScrollWidth).toBeLessThanOrEqual(desktopExplorerMetrics.tableClientWidth + 1);
+
+  await page.setViewportSize({ width: 430, height: 720 });
+  const compactExplorerMetrics = await page.evaluate(() => {
+    const table = document.querySelector<HTMLElement>('.sdn-workbench-table');
+    const cell = table?.querySelector<HTMLElement>('tbody td');
+    return {
+      tableScrollWidth: table?.scrollWidth ?? 0,
+      tableClientWidth: table?.clientWidth ?? 0,
+      fontSize: cell ? Number.parseFloat(getComputedStyle(cell).fontSize) : 0,
+    };
+  });
+  expect(compactExplorerMetrics.fontSize).toBeGreaterThanOrEqual(5);
+  expect(compactExplorerMetrics.fontSize).toBeLessThanOrEqual(12);
+  expect(compactExplorerMetrics.tableScrollWidth).toBeLessThanOrEqual(compactExplorerMetrics.tableClientWidth + 1);
+  await page.setViewportSize({ width: 1280, height: 720 });
 
   await page.getByRole('button', { name: 'SQL' }).click();
   const masterSearch = page.getByRole('textbox', { name: 'Master search' });
