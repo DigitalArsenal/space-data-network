@@ -1,4 +1,5 @@
 import { subscriptionKey, type DataDirectoryState } from './data-directory';
+import { celestrakSourcePriorityForStandard, flatSqlSourceNameForSchema, standardIdFromSchemaName } from './data-source-routing';
 import type { DataSummary } from './sdn-backend';
 
 export interface DataSummaryFeedRow {
@@ -54,14 +55,14 @@ export function dataSummaryListingsForSource(
     : summary.schemas.map((schema) => ({
       schemaName: schema.schemaName,
       providerId: source.id,
-      sourceName: '',
+      sourceName: flatSqlSourceNameForSchema({ schemaName: schema.schemaName, providerId: source.id }) ?? '',
       batchId: '',
       producerPeerId: source.peerId,
       producerPublicKey: source.publicKey ?? '',
       count: schema.count,
       totalBytes: schema.totalBytes,
     }));
-  return rows
+  return preferredSummaryRows(rows)
     .filter((row) => row.count > 0)
     .map((row) => {
       const standardId = standardIdFromSchema(row.schemaName);
@@ -188,11 +189,45 @@ export function preferredDataSummarySource(
     if (exactSource) return exactSource;
   }
 
-  return [...candidates].sort((left, right) => (
-    right.count - left.count
+  return [...candidates].sort((left, right) => compareSummaryRows(standardId, left, right))[0] ?? null;
+}
+
+function preferredSummaryRows(rows: DataSummaryFeedRow[]): DataSummaryFeedRow[] {
+  const selectedRows: DataSummaryFeedRow[] = [];
+  const groupedRows = new Map<string, DataSummaryFeedRow[]>();
+  for (const row of rows) {
+    const datastoreKey = stringValue(row.datastoreKey);
+    if (datastoreKey) {
+      selectedRows.push(row);
+      continue;
+    }
+    const standardId = standardIdFromSchema(row.schemaName);
+    const key = [row.providerId, standardId].join(':');
+    groupedRows.set(key, [...(groupedRows.get(key) ?? []), row]);
+  }
+  for (const group of groupedRows.values()) {
+    const first = group[0];
+    if (!first) continue;
+    selectedRows.push(preferredDataSummarySource(group, {
+      standardId: standardIdFromSchema(first.schemaName),
+      providerId: first.providerId,
+    }) ?? first);
+  }
+  return selectedRows;
+}
+
+function compareSummaryRows(standardId: string, left: DataSummaryFeedRow, right: DataSummaryFeedRow): number {
+  const leftPriority = celestrakSourcePriorityForStandard(standardId, left.sourceName);
+  const rightPriority = celestrakSourcePriorityForStandard(standardId, right.sourceName);
+  if (leftPriority !== null || rightPriority !== null) {
+    return (leftPriority ?? Number.MAX_SAFE_INTEGER) - (rightPriority ?? Number.MAX_SAFE_INTEGER)
+      || right.count - left.count
+      || right.totalBytes - left.totalBytes
+      || left.sourceName.localeCompare(right.sourceName);
+  }
+  return right.count - left.count
     || right.totalBytes - left.totalBytes
-    || left.sourceName.localeCompare(right.sourceName)
-  ))[0] ?? null;
+    || left.sourceName.localeCompare(right.sourceName);
 }
 
 function listingKind(listing: Record<string, unknown>): 'data' | 'module' {
@@ -227,7 +262,7 @@ function listingStandards(listing: Record<string, unknown>): string[] {
 }
 
 function standardIdFromSchema(schemaName: string): string {
-  return schemaName.split('.')[0]?.trim().toUpperCase() ?? '';
+  return standardIdFromSchemaName(schemaName);
 }
 
 function stringArrayValue(value: unknown): string[] {

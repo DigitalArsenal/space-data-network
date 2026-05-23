@@ -86,7 +86,7 @@
   type SortColumn = string;
   type SortDirection = 'asc' | 'desc';
   type ColumnSource = 'metadata' | 'standard';
-  type DataSection = 'overview' | 'catalog' | 'subscriptions' | 'sources' | 'message-types' | 'storage' | 'billing' | 'activity' | 'explorer';
+  type DataSection = 'store' | 'subscriptions' | 'explorer';
   type SchemaSyncMode = 'preview' | 'sync';
   type SchemaSyncStatus = 'idle' | 'syncing' | 'synced' | 'capped' | 'error';
   type StorageUnit = 'MB' | 'GB' | 'TB';
@@ -323,14 +323,8 @@
     { id: 'enterprise', label: 'Enterprise' },
   ];
   const DATA_SECTIONS: Array<{ id: DataSection; label: string; breadcrumb: string }> = [
-    { id: 'overview', label: 'Overview', breadcrumb: 'Data / Overview' },
-    { id: 'catalog', label: 'Catalog', breadcrumb: 'Data / Catalog' },
-    { id: 'subscriptions', label: 'My Subscriptions', breadcrumb: 'Data / My Subscriptions' },
-    { id: 'sources', label: 'Sources', breadcrumb: 'Data / Sources' },
-    { id: 'message-types', label: 'Message Types', breadcrumb: 'Data / Message Types' },
-    { id: 'storage', label: 'Storage', breadcrumb: 'Data / Storage' },
-    { id: 'billing', label: 'Billing', breadcrumb: 'Data / Billing' },
-    { id: 'activity', label: 'Activity', breadcrumb: 'Data / Activity' },
+    { id: 'store', label: 'Store', breadcrumb: 'Data / Store' },
+    { id: 'subscriptions', label: 'Subscriptions', breadcrumb: 'Data / Subscriptions' },
     { id: 'explorer', label: 'Explorer', breadcrumb: 'Data / Explorer' },
   ];
   const STORAGE_GROUP_OPTIONS: Array<{ id: DataOverviewStorageGroup; label: string }> = [
@@ -638,7 +632,7 @@
   };
 
   let dataSummary: DataSummary | null = null;
-  let selectedDataSection: DataSection = 'overview';
+  let selectedDataSection: DataSection = 'store';
   let selectedStandardId = DEFAULT_STANDARD_ID;
   let selectedDataSourceId = LOCAL_DATA_SOURCE_ID;
   let selectedSubscriptionId = '';
@@ -652,12 +646,12 @@
   let columnFilters: Record<string, string> = {};
   let visibleColumnKeys: string[] = [];
   let searchText = '';
-  let overviewTableSearchText = '';
   let catalogSearchText = '';
   let catalogAccessFilter: DataCatalogAccessFilter = 'all';
   let catalogSyncFilter: DataCatalogSyncFilter = 'all';
   let catalogStorageFilter: DataCatalogStorageFilter = 'all';
   let subscriptionFilter: SubscriptionFilter = 'all';
+  let subscriptionSearchText = '';
   let selectedSubscriptionDetailId = '';
   let expandedCatalogActionRowKey = '';
   let suppressCatalogOutsideUntil = 0;
@@ -737,11 +731,10 @@
   $: dataCatalogRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.dataCatalogRows : buildCatalogRows(schemaSyncRows);
   $: dataCatalogSummary = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.dataCatalogSummary : summarizeDataCatalog(dataCatalogRows);
   $: dataOverviewVisuals = dataPageCacheActive && cachedDataPageView ? cachedOverviewVisualsForGroup(cachedDataPageView.dataOverviewVisuals, overviewStorageGroup) : buildDataOverviewVisuals(dataCatalogRows, overviewStorageGroup);
-  $: filteredOverviewDataCatalogRows = filterDataCatalogRows(dataCatalogRows, { query: overviewTableSearchText });
   $: billingDataRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingDataRows : dataCatalogRows.filter(catalogRowHasBillingData);
   $: billingProviderRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingProviderRows : buildDataBillingProviderRows(dataCatalogRows);
   $: activityRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.activityRows : buildDataActivityRows(schemaSyncRows, dataCatalogRows);
-  $: filteredSubscriptionRows = filterSubscriptionRows(schemaSyncRows, subscriptionFilter);
+  $: filteredSubscriptionRows = filterSubscriptionRows(schemaSyncRows, subscriptionFilter, subscriptionSearchText);
   $: selectedSubscriptionDetailSchema = selectedSubscriptionDetailId
     ? schemaSyncRows.find((schema) => schema.subscriptionId === selectedSubscriptionDetailId) ?? null
     : null;
@@ -782,13 +775,11 @@
   $: canGoPrevious = pageIndex > 0;
   $: canGoNext = explorerPageRowCount >= pageSize && (explorerPageTotalRows === null || ((pageIndex + 1) * pageSize) < explorerPageTotalRows);
   $: pageLabel = `${pageIndex + 1}/${totalPageCount}`;
-  $: scanHashLabel = dataScan?.scanHash ? shorten(dataScan.scanHash, 18) : 'none';
   $: storageMetricsLoading = activeStorageRows.some(isSchemaRemoteRowsLoading);
   $: storageRemoteRowsMetric = loadingMetricLabel(storageMetricsLoading, formatNumber(activeStorageRemoteRows));
   $: storageLocalRowsMetric = loadingMetricLabel(storageMetricsLoading, formatNumber(activeStorageLocalRows));
   $: storageCachedMetric = loadingMetricLabel(storageMetricsLoading, formatBytes(activeStorageCachedBytes));
   $: storagePinnedRowsMetric = loadingMetricLabel(storageMetricsLoading, formatNumber(activeStoragePinnedRows));
-  $: storageScanMetric = loadingMetricLabel(storageMetricsLoading, scanHashLabel);
   $: overviewLocalStorageMetric = loadingMetricLabel(storageMetricsLoading, formatBytes(dataCatalogSummary.localStorageBytes));
   $: overviewDataHealthMetric = loadingMetricLabel(storageMetricsLoading, dataCatalogSummary.dataHealthLabel);
   $: overviewStorageTotalMetric = loadingMetricLabel(storageMetricsLoading, formatBytes(dataOverviewVisuals.storageTotalBytes));
@@ -1329,6 +1320,7 @@
 
   function setDataSection(section: DataSection): void {
     selectedDataSection = section;
+    if (section !== 'store') expandedCatalogActionRowKey = '';
     if (section === 'explorer') {
       void runLocalExplorerQuery(0);
     }
@@ -1452,10 +1444,6 @@
     return formatBytes(row.storage.cachedBytes);
   }
 
-  function catalogRowPinnedLabel(row: DataCatalogRow): string {
-    return `${formatNumber(row.storage.pinnedRows)} rows`;
-  }
-
   function catalogRowFreshnessLabel(row: DataCatalogRow): string {
     return row.sync.lastSyncedAt ? formatDateTime(row.sync.lastSyncedAt) : 'Never synced';
   }
@@ -1546,10 +1534,6 @@
       retrySubscriptionSync(schema);
       return;
     }
-    if (row.access.state === 'payment-failed' || row.access.state === 'over-quota') {
-      selectCatalogRow(row, 'billing');
-      return;
-    }
     selectCatalogRow(row, 'subscriptions');
   }
 
@@ -1580,7 +1564,7 @@
       candidate.provider === bar.provider
       && candidate.providerPeerId === bar.providerPeerId
     )) ?? dataCatalogRows.find((candidate) => candidate.provider === bar.provider);
-    if (row) selectCatalogRow(row, 'catalog');
+    if (row) selectCatalogRow(row, 'store');
   }
 
   function accessStateColor(state: string): string {
@@ -1620,15 +1604,6 @@
     selectExplorerSchemaRow(schema);
   }
 
-  function manageSchemaSubscription(schema: SchemaSyncRow): void {
-    selectedSubscriptionId = schema.subscriptionId;
-    selectedStandardId = schema.id;
-    selectedDataSourceId = schema.dataSourceId;
-    selectedDatastoreKey = schema.datastoreKey;
-    selectedDataSection = 'subscriptions';
-    selectedSubscriptionDetailId = schema.subscriptionId;
-  }
-
   function openSubscriptionDetails(schema: SchemaSyncRow): void {
     selectedSubscriptionId = schema.subscriptionId;
     selectedStandardId = schema.id;
@@ -1651,9 +1626,35 @@
     });
   }
 
-  function filterSubscriptionRows(rows: SchemaSyncRow[], filter: SubscriptionFilter): SchemaSyncRow[] {
-    if (filter === 'all') return rows;
-    return rows.filter((schema) => subscriptionMatchesFilter(schema, filter));
+  function filterSubscriptionRows(rows: SchemaSyncRow[], filter: SubscriptionFilter, query = ''): SchemaSyncRow[] {
+    const normalizedQuery = query.trim().toLowerCase();
+    return rows.filter((schema) => {
+      if (filter !== 'all' && !subscriptionMatchesFilter(schema, filter)) return false;
+      if (!normalizedQuery) return true;
+      return subscriptionSearchTextFor(schema).includes(normalizedQuery);
+    });
+  }
+
+  function subscriptionSearchTextFor(schema: SchemaSyncRow): string {
+    return [
+      schema.id,
+      schema.providerName,
+      schema.providerId,
+      schema.providerPeerId,
+      schema.providerPublicKey,
+      schema.sourceName,
+      schema.datastoreKey,
+      schema.queryProfile,
+      schema.retentionPolicy,
+      subscriptionProductLabel(schema),
+      subscriptionAccessLabel(schema),
+      subscriptionPlanLabel(schema),
+      subscriptionCostLabel(schema),
+      subscriptionStorageStateLabel(schema),
+      schemaHealthLabel(schema),
+      syncStatusLabel(schema),
+      schema.progress.error,
+    ].filter(Boolean).join(' ').toLowerCase();
   }
 
   function subscriptionMatchesFilter(schema: SchemaSyncRow, filter: SubscriptionFilter): boolean {
@@ -1812,15 +1813,6 @@
     }, schema.dataSourceId, schema.datastoreKey);
     schemaSyncSchedulerForDataSource(schema.dataSourceId).reset();
     void synchronizeSchema(schema.id, schema.dataSourceId, schema.subscriptionId);
-  }
-
-  function retryActivitySync(activity: DataActivityRow): void {
-    if (!activity.retrySchema) return;
-    retrySubscriptionSync(activity.retrySchema);
-  }
-
-  function activityRetryDisabled(activity: DataActivityRow): boolean {
-    return !activity.retrySchema || schemaRetryDisabled(activity.retrySchema);
   }
 
   function clearPinVerifyToastTimer(): void {
@@ -3783,10 +3775,6 @@
     return loadingSchemaDataLabel(schema, `${formatNumber(schema.progress.pinnedRows)} pinned`);
   }
 
-  function schemaPinnedRowsCountLabel(schema: SchemaSyncRow): string {
-    return loadingSchemaDataLabel(schema, formatNumber(schema.progress.pinnedRows));
-  }
-
   function schemaCachedBytesLabel(schema: SchemaSyncRow): string {
     return loadingSchemaDataLabel(schema, formatBytes(schema.cachedBytes));
   }
@@ -4400,16 +4388,17 @@
         </div>
       </nav>
 
-      {#if selectedDataSection === 'overview'}
-        <section class="sdn-catalog-panel" aria-label="Data overview">
-          <div class="sdn-dataset-summary" aria-label="Data overview summary">
+
+      {#if selectedDataSection === 'store'}
+        <section class="sdn-catalog-panel" aria-label="Data store">
+          <div class="sdn-dataset-summary" aria-label="Store summary">
             <div class="sdn-dataset-metric" aria-label={`Local storage ${overviewLocalStorageMetric}`}>
               <span>Local storage</span>
               <strong>{overviewLocalStorageMetric}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Subscription access ${formatNumber(dataCatalogSummary.activePaidSubscriptions)} active paid`}>
-              <span>Subscription access</span>
-              <strong>{formatNumber(dataCatalogSummary.activePaidSubscriptions)} active paid</strong>
+            <div class="sdn-dataset-metric" aria-label={`Subscriptions ${formatNumber(schemaSyncRows.length)} feeds`}>
+              <span>Subscriptions</span>
+              <strong>{formatNumber(schemaSyncRows.length)} feeds</strong>
             </div>
             <div class="sdn-dataset-metric" aria-label={`${dataCatalogSummary.billingMetricTitle} ${dataCatalogSummary.billingMetricValue}`}>
               <span>{dataCatalogSummary.billingMetricTitle}</span>
@@ -4421,7 +4410,7 @@
             </div>
           </div>
 
-          <div class="sdn-overview-visuals" aria-label="Data overview visualizations">
+          <div class="sdn-overview-visuals" aria-label="Store provider overview">
             <section class="sdn-overview-panel sdn-overview-storage-panel" aria-label="Storage by">
               <div class="sdn-overview-panel-head">
                 <label class="sdn-overview-storage-group">
@@ -4487,78 +4476,10 @@
             </section>
           </div>
 
-          <div class="sdn-table-toolbar" aria-label="Data products controls">
-            <input
-              class="sdn-input"
-              bind:value={overviewTableSearchText}
-              placeholder="Search"
-              aria-label="Search data products"
-            />
-          </div>
-
-          <div class="sdn-table-wrap sdn-workbench-table-wrap sdn-catalog-table-wrap">
-            <table class="sdn-table sdn-workbench-table sdn-catalog-table" aria-label="Data products">
-              <thead>
-                <tr>
-                  <th>Provider</th>
-                  <th>Data product</th>
-                  <th>Message types</th>
-                  <th>Access</th>
-                  <th>Local storage</th>
-                  <th>Pinned</th>
-                  <th>Freshness</th>
-                  <th>Sync status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each filteredOverviewDataCatalogRows as row (catalogRowKey(row))}
-                  <tr
-                    class="sdn-catalog-row"
-                  >
-                    <td>
-                      <div class="sdn-cell-stack">
-                        <strong>{row.provider}</strong>
-                        <span>{shorten(row.providerPeerId ?? row.providerPublicKey ?? '', 34)}</span>
-                      </div>
-                    </td>
-                    <td>{row.product}</td>
-                    <td>{row.messageTypes.join(', ')}</td>
-                    <td>{row.access.label}</td>
-                    <td>
-                      <div class="sdn-cell-stack">
-                        <strong>{catalogRowStorageLabel(row)}</strong>
-                        <span>{catalogRowCountsLabel(row)}</span>
-                      </div>
-                    </td>
-                    <td>{catalogRowPinnedLabel(row)}</td>
-                    <td>{catalogRowFreshnessLabel(row)}</td>
-                    <td class="sdn-sync-cell">
-                      <span
-                        class="sdn-sync-bubble"
-                        data-tone={catalogRowSyncBubbleTone(row)}
-                        data-tooltip={catalogRowSyncBubbleTooltip(row)}
-                        title={catalogRowSyncBubbleTooltip(row)}
-                        aria-label={catalogRowSyncBubbleTooltip(row)}
-                      >{catalogRowSyncBubbleLetter(row)}</span>
-                    </td>
-                  </tr>
-                {:else}
-                  <tr>
-                    <td colspan="8">{dataPageLoading ? 'Loading' : 'No matching data products.'}</td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      {/if}
-
-      {#if selectedDataSection === 'catalog'}
-        <section class="sdn-catalog-panel" aria-label="Data catalog">
-          <div class="sdn-catalog-filters" aria-label="Catalog filters">
+          <div class="sdn-catalog-filters" aria-label="Store filters">
             <label class="sdn-catalog-search">
               <span>Search</span>
-              <input class="sdn-input" bind:value={catalogSearchText} placeholder="Providers, products, message types" />
+              <input class="sdn-input" bind:value={catalogSearchText} placeholder="Providers, products, message types" aria-label="Search store" />
             </label>
             <label>
               <span>Access</span>
@@ -4601,7 +4522,7 @@
           </div>
 
           <div class="sdn-table-wrap sdn-workbench-table-wrap sdn-catalog-table-wrap">
-            <table class="sdn-table sdn-workbench-table sdn-catalog-table" aria-label="Catalog data products">
+            <table class="sdn-table sdn-workbench-table sdn-catalog-table" aria-label="Store data products">
               <thead>
                 <tr>
                   <th>Provider</th>
@@ -4688,6 +4609,11 @@
 	                              <em>{catalogRowProviderIdentityLabel(row)}</em>
 	                            </div>
 	                            <div>
+	                              <span>Public key</span>
+	                              <strong>{row.providerPublicKey ? shorten(row.providerPublicKey, 42) : 'Unavailable'}</strong>
+	                              <em>{row.providerPeerId ? shorten(row.providerPeerId, 42) : 'Peer ID unavailable'}</em>
+	                            </div>
+	                            <div>
 	                              <span>Message types</span>
 	                              <strong>{row.messageTypes.join(', ')}</strong>
 	                              <em>{catalogRowSourceCountLabel(row)}</em>
@@ -4738,253 +4664,10 @@
         </section>
       {/if}
 
-      {#if selectedDataSection === 'sources'}
-        <section class="sdn-catalog-panel" aria-label="Data sources">
-          <div class="sdn-table-wrap sdn-catalog-table-wrap">
-            <table class="sdn-table sdn-catalog-table" aria-label="Data sources">
-              <thead>
-                <tr>
-                  <th>Provider</th>
-                  <th>Peer ID</th>
-                  <th>Public key</th>
-                  <th>Source / datastore</th>
-                  <th>Trust / access</th>
-                  <th>Products</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each sourceProvenanceRows as source (source.id)}
-                  <tr>
-                    <td>
-                      <div class="sdn-cell-stack">
-                        <strong>{source.providerName}</strong>
-                        <span>{source.detail}</span>
-                      </div>
-                    </td>
-                    <td><code>{shorten(source.peerId ?? '', 34)}</code></td>
-                    <td><code>{shorten(source.publicKey ?? '', 34)}</code></td>
-                    <td>{source.sourceDatastoreLabel}</td>
-                    <td>{source.trustAccessLabel}</td>
-                    <td>
-                      <div class="sdn-cell-stack">
-                        <strong>{source.productsLabel}</strong>
-                        <span>{source.rowsLabel}</span>
-                      </div>
-                    </td>
-                  </tr>
-                {:else}
-                  <tr>
-                    <td colspan="6">{dataPageLoading ? 'Loading' : ''}</td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      {/if}
 
-      {#if selectedDataSection === 'message-types'}
-        <section class="sdn-catalog-panel" aria-label="Message types">
-          <div class="sdn-table-wrap sdn-catalog-table-wrap">
-            <table class="sdn-table sdn-catalog-table" aria-label="Message types">
-              <thead>
-	                <tr>
-	                  <th>Message type</th>
-	                  <th>Provider</th>
-	                  <th>Remote</th>
-	                  <th>Local</th>
-	                  <th>Pinned</th>
-	                  <th>Cached</th>
-	                  <th>Freshness</th>
-	                  <th>Sync</th>
-	                  <th>Health</th>
-	                  <th>Actions</th>
-	                </tr>
-	              </thead>
-	              <tbody>
-	                {#each messageTypeRows as schema}
-	                  <tr class:active={isSchemaRowSelected(schema)}>
-	                    <td>
-	                      <div class="sdn-cell-stack">
-	                        <strong>{schema.id}</strong>
-	                        <span>{schema.sourceName ?? schema.datastoreKey ?? schema.queryProfile}</span>
-	                      </div>
-	                    </td>
-	                    <td>
-	                      <div class="sdn-cell-stack">
-	                        <strong>{schema.providerName}</strong>
-	                        <span>{shorten(schema.providerPeerId ?? schema.providerPublicKey ?? '', 28)}</span>
-	                      </div>
-	                    </td>
-	                    <td>{schemaRemoteRowsLabel(schema)}</td>
-	                    <td>{schemaLocalRowsLabel(schema)}</td>
-	                    <td>{schemaPinnedRowsCountLabel(schema)}</td>
-	                    <td>{schemaCachedBytesLabel(schema)}</td>
-	                    <td>{schemaLastSyncedLabel(schema)}</td>
-	                    <td class="sdn-sync-cell">
-	                      <span
-	                        class="sdn-sync-bubble"
-                        data-tone={syncBubbleTone(schema)}
-                        data-tooltip={syncBubbleTooltip(schema)}
-                        title={syncBubbleTooltip(schema)}
-	                        aria-label={syncBubbleTooltip(schema)}
-	                      >{syncBubbleLetter(schema)}</span>
-	                    </td>
-	                    <td>{schemaHealthLabel(schema)}</td>
-	                    <td>
-	                      <div class="sdn-catalog-row-actions">
-	                        <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => openSchemaInExplorer(schema)}>Explorer</button>
-	                        <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => manageSchemaSubscription(schema)}>Manage</button>
-	                        <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => retrySubscriptionSync(schema)} disabled={schemaRetryDisabled(schema)}>Retry</button>
-	                      </div>
-	                    </td>
-	                  </tr>
-	                {:else}
-	                  <tr>
-	                    <td colspan="10">{dataPageLoading ? 'Loading' : 'No message types.'}</td>
-	                  </tr>
-	                {/each}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      {/if}
-
-      {#if selectedDataSection === 'billing'}
-        <section class="sdn-catalog-panel" aria-label="Billing">
-          <div class="sdn-dataset-summary" aria-label="Billing summary">
-            <div class="sdn-dataset-metric" aria-label={`${dataCatalogSummary.billingMetricTitle} ${dataCatalogSummary.billingMetricValue}`}>
-              <span>{dataCatalogSummary.billingMetricTitle}</span>
-              <strong>{dataCatalogSummary.billingMetricValue}</strong>
-            </div>
-            <div class="sdn-dataset-metric" aria-label={`Paid access ${formatNumber(dataCatalogSummary.activePaidSubscriptions)} active`}>
-              <span>Paid access</span>
-              <strong>{formatNumber(dataCatalogSummary.activePaidSubscriptions)} active</strong>
-            </div>
-            <div class="sdn-dataset-metric" aria-label={`Trials ${formatNumber(dataCatalogSummary.trialSubscriptions)}`}>
-              <span>Trials</span>
-              <strong>{formatNumber(dataCatalogSummary.trialSubscriptions)}</strong>
-            </div>
-            <div class="sdn-dataset-metric" aria-label={`Attention ${formatNumber(dataCatalogSummary.issueCount)}`}>
-              <span>Attention</span>
-              <strong>{formatNumber(dataCatalogSummary.issueCount)}</strong>
-            </div>
-          </div>
-
-          {#if dataCatalogSummary.hasBillingData}
-            <div class="sdn-table-wrap sdn-catalog-table-wrap">
-              <table class="sdn-table sdn-catalog-table" aria-label="Spend by provider">
-                <thead>
-                  <tr>
-                    <th>Provider</th>
-                    <th>Products</th>
-                    <th>Price / usage</th>
-                    <th>Renewal</th>
-                    <th>Quota</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each billingProviderRows as provider}
-                    <tr>
-                      <td>{provider.provider}</td>
-                      <td>{provider.productLabel}</td>
-                      <td>{provider.priceLabel}</td>
-                      <td>{provider.renewalLabel}</td>
-                      <td>{provider.quotaLabel}</td>
-                    </tr>
-                  {:else}
-                    <tr>
-                      <td colspan="5">{dataPageLoading ? 'Loading' : 'Billing data is not available from this backend.'}</td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-
-            <div class="sdn-table-wrap sdn-catalog-table-wrap">
-              <table class="sdn-table sdn-catalog-table" aria-label="Usage and renewals">
-                <thead>
-                  <tr>
-                    <th>Provider</th>
-                    <th>Product</th>
-                    <th>Access</th>
-                    <th>Price / usage</th>
-                    <th>Renewal</th>
-                    <th>Quota</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each billingDataRows as row}
-                    <tr>
-                      <td>{row.provider}</td>
-                      <td>{row.product}</td>
-                      <td>{row.access.label}</td>
-                      <td>{row.plan.priceLabel}</td>
-                      <td>{row.plan.renewalLabel}</td>
-                      <td>{row.plan.quotaLabel}</td>
-                    </tr>
-                  {:else}
-                    <tr>
-                      <td colspan="6">{dataPageLoading ? 'Loading' : 'Billing data is not available from this backend.'}</td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          {:else}
-            <p class="sdn-empty-inline">
-              {dataCatalogSummary.activePaidSubscriptions > 0 ? 'Billing data is not available from this backend.' : 'No paid subscriptions'}
-            </p>
-          {/if}
-        </section>
-      {/if}
-
-      {#if selectedDataSection === 'activity'}
-        <section class="sdn-catalog-panel" aria-label="Data activity">
-          <div class="sdn-table-wrap sdn-catalog-table-wrap">
-            <table class="sdn-table sdn-catalog-table" aria-label="Data activity">
-              <thead>
-                <tr>
-                  <th>Event</th>
-                  <th>Message type</th>
-                  <th>Provider</th>
-                  <th>Status</th>
-                  <th>Detail</th>
-                  <th>Next attempt</th>
-                  <th>When</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each activityRows as activity (activity.id)}
-                  <tr>
-                    <td>{activity.eventType}</td>
-                    <td>{activity.standardId}</td>
-                    <td>{activity.providerName}</td>
-                    <td>{activity.statusLabel}</td>
-                    <td>{activity.detailLabel}</td>
-                    <td>{activity.nextAttemptLabel}</td>
-                    <td>{activity.occurredAtLabel}</td>
-                    <td>
-                      {#if activity.retrySchema}
-                        <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => retryActivitySync(activity)} disabled={activityRetryDisabled(activity)}>Retry</button>
-                      {/if}
-                    </td>
-                  </tr>
-                {:else}
-                  <tr>
-                    <td colspan="8">{dataPageLoading ? 'Loading' : 'No activity.'}</td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      {/if}
-
-      {#if selectedDataSection === 'storage'}
-        <section class="sdn-storage-state" aria-label="Local storage state">
-          <div class="sdn-dataset-summary" aria-label="Dataset summary">
+      {#if selectedDataSection === 'subscriptions'}
+        <section class="sdn-storage-state" aria-label="Sync settings">
+          <div class="sdn-dataset-summary" aria-label="Subscription storage summary">
             <div class="sdn-dataset-metric" aria-label={`Remote rows ${storageRemoteRowsMetric}`}>
               <span>Remote rows</span>
               <strong>{storageRemoteRowsMetric}</strong>
@@ -5001,80 +4684,13 @@
               <span>Pinned rows</span>
               <strong>{storagePinnedRowsMetric}</strong>
             </div>
-            <div class="sdn-dataset-metric" aria-label={`Scan ${storageScanMetric}`}>
-              <span>Scan</span>
-              <strong>{storageScanMetric}</strong>
-            </div>
           </div>
 
-          <div class="sdn-storage-grid">
-            {#each activeStorageRows as schema}
-              <article class="sdn-storage-row" class:active={isSchemaRowSelected(schema)}>
-                <div>
-                  <strong>{schema.id}</strong>
-                  <span>{schema.providerName}</span>
-                  <span>{schema.sourceName ?? schema.datastoreKey ?? schema.queryProfile}</span>
-                </div>
-                <div>
-                  <strong>Local {schemaLocalRowsLabel(schema)}</strong>
-                  <span>Remote {schemaRemoteRowsLabel(schema)}</span>
-                  <span>{schemaPinnedRowsLabel(schema)}</span>
-                </div>
-                <div>
-                  <strong>{schemaCachedBytesLabel(schema)}</strong>
-                  <span>{schemaDownloadSpeedLabel(schema)}</span>
-                  <span>{schemaProgressLabel(schema)}</span>
-                  <span>{schemaStoragePressureLabel(schema)}</span>
-                  <span>{schemaRetentionPolicyLabel(schema)}</span>
-                </div>
-                <div>
-                  <span
-                    class="sdn-sync-bubble"
-                    data-tone={syncBubbleTone(schema)}
-                    data-tooltip={syncBubbleTooltip(schema)}
-                    title={syncBubbleTooltip(schema)}
-                    aria-label={syncBubbleTooltip(schema)}
-                  >{syncBubbleLetter(schema)}</span>
-                  <span>Next {nextSyncAttemptLabel(schema)}</span>
-                  <span>Last {schemaLastSyncedLabel(schema)}</span>
-                  {#if schema.progress.error}
-                    <span class="sdn-sync-error" title={schema.progress.error}>{shorten(schema.progress.error, 120)}</span>
-                  {/if}
-                </div>
-                <div class="sdn-storage-row-actions">
-                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" aria-label={`${schema.id} retry sync`} on:click={() => retrySubscriptionSync(schema)} disabled={schemaRetryDisabled(schema)}>Retry</button>
-                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => void verifyPinnedArtifacts(schema)} disabled={pinVerifyRunning}>Verify pins</button>
-                  {#if resetSubscriptionId === schema.subscriptionId}
-                    <div class="sdn-reset-confirm" role="group" aria-label={`${schema.id} reset confirmation`}>
-                      <input
-                        class="sdn-input"
-                        value={resetConfirmText}
-                        placeholder="Type RESET"
-                        aria-label={`${schema.id} reset confirmation text`}
-                        on:input={(event) => { resetConfirmText = (event.currentTarget as HTMLInputElement).value; }}
-                      />
-                      <button class="sdn-button sdn-button-compact" type="button" on:click={() => void confirmResetSubscriptionData(schema)} disabled={resetRunning || resetConfirmText.trim() !== 'RESET'}>Clear</button>
-                      <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={cancelResetSubscriptionData} disabled={resetRunning}>Cancel</button>
-                    </div>
-                  {:else}
-                    <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => beginResetSubscriptionData(schema.subscriptionId)} disabled={resetRunning}>Reset row</button>
-                  {/if}
-                </div>
-              </article>
-            {:else}
-              {#if dataPageLoading}
-                <p class="sdn-loading-inline" role="status">Loading</p>
-              {:else}
-                <p class="sdn-empty-inline">No actively synced data feeds. Add a feed from Peers to start local sync.</p>
-              {/if}
-            {/each}
-          </div>
-        </section>
-      {/if}
-
-      {#if selectedDataSection === 'subscriptions'}
-        <section class="sdn-storage-state" aria-label="Sync settings">
           <div class="sdn-subscription-filter-bar" aria-label="Subscription filters">
+            <label class="sdn-catalog-search">
+              <span>Search</span>
+              <input class="sdn-input" bind:value={subscriptionSearchText} placeholder="Provider, product, type, status" aria-label="Search subscriptions" />
+            </label>
             {#each SUBSCRIPTION_FILTERS as filter}
               <button
                 class="sdn-button sdn-button-muted sdn-button-compact"
@@ -5102,6 +4718,10 @@
                 <div>
                   <strong>{subscriptionStorageStateLabel(schema)}</strong>
                   <span>Local {schemaLocalRowsLabel(schema)} / remote {schemaRemoteRowsLabel(schema)}</span>
+                  <span>{schemaPinnedRowsLabel(schema)}</span>
+                  <span>{schemaCachedBytesLabel(schema)}</span>
+                  <span>{schemaStoragePressureLabel(schema)}</span>
+                  <span>{schemaRetentionPolicyLabel(schema)}</span>
                   <span>{schema.preference.storageCap} {schema.preference.storageUnit} cap</span>
                 </div>
                 <div>
@@ -5115,6 +4735,8 @@
                   <span>{schemaProgressLabel(schema)}</span>
                   <span>{schemaDownloadSpeedLabel(schema)}</span>
                   <span>{schemaHealthLabel(schema)}</span>
+                  <span>Next {nextSyncAttemptLabel(schema)}</span>
+                  <span>Last {schemaLastSyncedLabel(schema)}</span>
                   {#if schema.progress.error}
                     <span class="sdn-sync-error" title={schema.progress.error}>{shorten(schema.progress.error, 120)}</span>
                   {/if}
@@ -5179,7 +4801,7 @@
                     on:input={(event) => handleSubscriptionFilterInput(schema, event)}
                   />
                 </label>
-                <div class="sdn-subscription-actions">
+                <div class="sdn-storage-row-actions sdn-subscription-actions">
                   <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" aria-label={`${schema.id} retry sync`} on:click={() => retrySubscriptionSync(schema)} disabled={schemaRetryDisabled(schema)}>Retry</button>
                   {#if schema.preference.mode === 'sync'}
                     <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => pauseSubscriptionSync(schema)}>Pause</button>

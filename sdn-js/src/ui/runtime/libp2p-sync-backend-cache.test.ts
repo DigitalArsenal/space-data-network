@@ -131,6 +131,37 @@ describe('libp2p FlatSQL sync backend cache', () => {
     ]);
   });
 
+  it('uses the active CelesTrak SATCAT CSV source for CAT published shard manifests', async () => {
+    const calls: FlatSqlSyncQuery[] = [];
+    const cache = new Libp2pFlatSqlSyncBackendCache(async () => ({
+      async readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk> {
+        return headerOnlyChunk(query.schema);
+      },
+      async openFlatSqlSyncManifest(query: FlatSqlSyncQuery): Promise<FlatSqlSyncManifest> {
+        calls.push(query);
+        return manifestFor(query.schema);
+      },
+    }));
+
+    await cache.openFlatSqlSyncManifest(remoteConfig(), {
+      targetPeerId: '',
+      schema: 'CAT.fbs',
+      op: 'open_manifest',
+      queryProfile: 'dataset-publication-offset-v1',
+      limit: 50_000,
+    });
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        targetPeerId: '16Uiu2HCelesTrak',
+        providerId: 'space-data-network-02',
+        schema: 'CAT.fbs',
+        op: 'open_manifest',
+        sourceName: 'celestrak-satcat-csv',
+      }),
+    ]);
+  });
+
   it('lets workers stream published shard bytes through the cached libp2p client', async () => {
     const calls: FlatSqlSyncQuery[] = [];
     const shardBytes = new Uint8Array([3, 0, 0, 0, 1, 2, 3]);
