@@ -7,6 +7,7 @@
     DATA_FEED_RETENTION_POLICIES,
     DEFAULT_DATA_FEED_QUERY_PROFILE,
     defaultDataFeedRetentionPolicy,
+    ensureReplaceSnapshotDataFeedSubscriptions,
     loadDataDirectoryState,
     migrateSchemaSyncPreferencesToDataDirectory,
     normalizeDataFeedRetentionPolicy,
@@ -683,6 +684,7 @@
   let selectedSavedExplorerViewId = '';
   let savedExplorerViewName = '';
   let columnFilters: Record<string, string> = {};
+  let epochFilterMenuColumn = '';
   let visibleColumnKeys: string[] = [];
   let explorerColumnMenuOpen = false;
   let searchText = '';
@@ -903,6 +905,10 @@
         schemaSyncPreferences,
         migrationSources,
         schemaSyncProgress,
+      );
+      dataDirectoryState = ensureReplaceSnapshotDataFeedSubscriptions(
+        dataDirectoryState,
+        migrationSources,
       );
       persistDataDirectoryState(dataDirectoryState);
       await pruneUnsubscribedReplaceSnapshotStores(migrationSources, dataDirectoryState.subscriptions);
@@ -1197,6 +1203,7 @@
     resetSqlForSelectedStandard();
     clearPnmSelection();
     columnFilters = {};
+    epochFilterMenuColumn = '';
     searchText = '';
     explorerSearchText = explorerSearchMode === 'sql' ? sqlQueryText : '';
     dataScan = null;
@@ -1230,6 +1237,7 @@
   function handleExplorerSearchModeChange(mode: ExplorerSearchMode): void {
     explorerSearchMode = mode;
     columnFilters = {};
+    epochFilterMenuColumn = '';
     if (mode === 'sql') {
       sqlQueryText = sqlQueryText.trim() || defaultSqlQuery(selectedStandardId);
       explorerSearchText = sqlQueryText;
@@ -1328,6 +1336,7 @@
     sortColumn = view.sortColumn;
     sortDirection = view.sortDirection;
     columnFilters = { ...view.columnFilters };
+    epochFilterMenuColumn = '';
     visibleColumnKeys = view.visibleColumnKeys.slice(0, EXPLORER_COLUMN_LIMIT);
     selectedSavedExplorerViewId = view.id;
     savedExplorerViewName = view.name;
@@ -1404,6 +1413,40 @@
     if (explorerSearchMode === 'plain') scheduleLocalExplorerQuery(0);
   }
 
+  function toggleEpochFilterMenu(column: string): void {
+    epochFilterMenuColumn = epochFilterMenuColumn === column ? '' : column;
+  }
+
+  function clearEpochColumnFilter(column: string): void {
+    const nextFilters = { ...columnFilters };
+    delete nextFilters[column];
+    columnFilters = nextFilters;
+    epochFilterMenuColumn = '';
+    pageIndex = 0;
+    if (explorerSearchMode === 'plain') scheduleLocalExplorerQuery(0);
+  }
+
+  function hasEpochColumnFilter(column: string): boolean {
+    const range = parseEpochColumnFilterValue(columnFilters[column] ?? '');
+    return Boolean(range.start || range.stop);
+  }
+
+  function epochColumnFilterButtonLabel(column: string): string {
+    const range = parseEpochColumnFilterValue(columnFilters[column] ?? '');
+    if (range.start && range.stop) return 'Range';
+    if (range.start) return 'From';
+    if (range.stop) return 'To';
+    return 'Range';
+  }
+
+  function epochColumnFilterSummary(column: string): string {
+    const range = parseEpochColumnFilterValue(columnFilters[column] ?? '');
+    if (range.start && range.stop) return `${range.start} through ${range.stop}`;
+    if (range.start) return `From ${range.start}`;
+    if (range.stop) return `Through ${range.stop}`;
+    return `Filter ${columnHeaderKeyLabel(column)} by date and time`;
+  }
+
   function setDataSection(section: DataSection): void {
     selectedDataSection = section;
     if (section !== 'store') expandedCatalogActionRowKey = '';
@@ -1471,6 +1514,7 @@
     selectedDatastoreKey = schema.datastoreKey;
     userSelectedStandard = true;
     columnFilters = {};
+    epochFilterMenuColumn = '';
     clearPnmSelection();
     dataScan = null;
     pageIndex = 0;
@@ -1569,6 +1613,9 @@
     }
     if (explorerColumnMenuOpen && !composedPath.some((target) => target instanceof Element && target.closest('[data-explorer-column-menu]'))) {
       explorerColumnMenuOpen = false;
+    }
+    if (epochFilterMenuColumn && !composedPath.some((target) => target instanceof Element && target.closest('[data-epoch-filter-menu]'))) {
+      epochFilterMenuColumn = '';
     }
     if (performance.now() < suppressCatalogOutsideUntil) return;
     if (!expandedCatalogActionRowKey) return;
@@ -2057,7 +2104,20 @@
   function refreshSubscriptionRemoteRowsFromSummary(dataSourceId: string, summary: DataSummary | null): void {
     if (!summary) return;
     let nextState = dataDirectoryState;
-    for (const subscription of dataDirectoryState.subscriptions) {
+    const source = dataSourceOptionForId(dataSourceId);
+    if (source?.kind === 'configured') {
+      nextState = ensureReplaceSnapshotDataFeedSubscriptions(nextState, [{
+        dataSourceId: source.id,
+        peerId: source.peerId ?? source.id,
+        providerName: source.label,
+        providerId: source.providerId,
+        providerPublicKey: source.publicKey,
+        sourceName: source.sourceName,
+        defaultStandardIds: defaultReplaceSnapshotStandardIdsForDataSource(source),
+        remoteRowsByStandard: remoteRowsByStandardFromSummary(summary),
+      }]);
+    }
+    for (const subscription of nextState.subscriptions) {
       if (subscription.dataSourceId !== dataSourceId) continue;
       const remoteRows = remoteRowsForSummarySubscription(summary, subscription);
       const identity = feedIdentityForSummarySubscription(summary, subscription);
@@ -3928,6 +3988,10 @@
     return standardOptionsFromSummary(summary).map((option) => option.id);
   }
 
+  function remoteRowsByStandardFromSummary(summary: DataSummary | null): Record<string, number> {
+    return Object.fromEntries(standardOptionsFromSummary(summary).map((option) => [option.id, option.remoteRows]));
+  }
+
   function preferredStandardIdFromSummary(summary: DataSummary | null): string {
     return standardOptionsFromSummary(summary)[0]?.id ?? DEFAULT_STANDARD_ID;
   }
@@ -4532,13 +4596,27 @@
         dataSourceId: source.id,
         peerId: source.peerId ?? source.id,
         providerName: source.label,
+        providerId: source.providerId,
         providerPublicKey: source.publicKey,
+        sourceName: source.sourceName,
+        defaultStandardIds: defaultReplaceSnapshotStandardIdsForDataSource(source),
         legacyDataSourceIds: [
           source.id.startsWith('configured:') ? source.id.slice('configured:'.length) : '',
           source.peerId ?? '',
           source.providerId ?? '',
         ].filter(Boolean),
       }));
+  }
+
+  function defaultReplaceSnapshotStandardIdsForDataSource(source: DataSourceOption): string[] {
+    if (source.kind !== 'configured') return [];
+    if (
+      source.id.includes('space-data-network-02')
+      || source.id.toLowerCase().includes('celestrak')
+      || (source.providerId ?? '').includes('space-data-network-02')
+      || source.searchText.includes('celestrak')
+    ) return ['CAT'];
+    return [];
   }
 
   function preferredDataSourceId(options: DataSourceOption[]): string {
@@ -5435,21 +5513,43 @@
                     {#each displaySqlColumns as column}
                       <th>
                         {#if isEpochColumn(column)}
-                          <div class="sdn-epoch-filter-range">
-                            <input
-                              class="sdn-input sdn-column-filter"
-                              type="datetime-local"
-                              value={epochColumnFilterValue(column, 'start')}
-                              aria-label={`Filter ${columnHeaderKeyLabel(column)} start`}
-                              on:input={(event) => handleEpochColumnFilterInput(column, 'start', event)}
-                            />
-                            <input
-                              class="sdn-input sdn-column-filter"
-                              type="datetime-local"
-                              value={epochColumnFilterValue(column, 'stop')}
-                              aria-label={`Filter ${columnHeaderKeyLabel(column)} stop`}
-                              on:input={(event) => handleEpochColumnFilterInput(column, 'stop', event)}
-                            />
+                          <div class="sdn-epoch-filter-menu" data-epoch-filter-menu>
+                            <button
+                              class="sdn-epoch-filter-button"
+                              class:active={hasEpochColumnFilter(column)}
+                              type="button"
+                              aria-haspopup="true"
+                              aria-expanded={epochFilterMenuColumn === column}
+                              title={epochColumnFilterSummary(column)}
+                              on:click={() => toggleEpochFilterMenu(column)}
+                            >
+                              {epochColumnFilterButtonLabel(column)}
+                            </button>
+                            {#if epochFilterMenuColumn === column}
+                              <div class="sdn-epoch-filter-panel" aria-label={`Filter ${columnHeaderKeyLabel(column)} range`}>
+                                <label>
+                                  <span>From</span>
+                                  <input
+                                    class="sdn-input sdn-column-filter"
+                                    type="datetime-local"
+                                    value={epochColumnFilterValue(column, 'start')}
+                                    aria-label={`Filter ${columnHeaderKeyLabel(column)} start`}
+                                    on:input={(event) => handleEpochColumnFilterInput(column, 'start', event)}
+                                  />
+                                </label>
+                                <label>
+                                  <span>To</span>
+                                  <input
+                                    class="sdn-input sdn-column-filter"
+                                    type="datetime-local"
+                                    value={epochColumnFilterValue(column, 'stop')}
+                                    aria-label={`Filter ${columnHeaderKeyLabel(column)} stop`}
+                                    on:input={(event) => handleEpochColumnFilterInput(column, 'stop', event)}
+                                  />
+                                </label>
+                                <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => clearEpochColumnFilter(column)}>Clear</button>
+                              </div>
+                            {/if}
                           </div>
                         {:else}
                           <input
@@ -5494,21 +5594,43 @@
                     {#each localExplorerColumns as column}
                       <th>
                         {#if isEpochColumn(column)}
-                          <div class="sdn-epoch-filter-range">
-                            <input
-                              class="sdn-input sdn-column-filter"
-                              type="datetime-local"
-                              value={epochColumnFilterValue(column, 'start')}
-                              aria-label={`Filter ${columnHeaderKeyLabel(column)} start`}
-                              on:input={(event) => handleEpochColumnFilterInput(column, 'start', event)}
-                            />
-                            <input
-                              class="sdn-input sdn-column-filter"
-                              type="datetime-local"
-                              value={epochColumnFilterValue(column, 'stop')}
-                              aria-label={`Filter ${columnHeaderKeyLabel(column)} stop`}
-                              on:input={(event) => handleEpochColumnFilterInput(column, 'stop', event)}
-                            />
+                          <div class="sdn-epoch-filter-menu" data-epoch-filter-menu>
+                            <button
+                              class="sdn-epoch-filter-button"
+                              class:active={hasEpochColumnFilter(column)}
+                              type="button"
+                              aria-haspopup="true"
+                              aria-expanded={epochFilterMenuColumn === column}
+                              title={epochColumnFilterSummary(column)}
+                              on:click={() => toggleEpochFilterMenu(column)}
+                            >
+                              {epochColumnFilterButtonLabel(column)}
+                            </button>
+                            {#if epochFilterMenuColumn === column}
+                              <div class="sdn-epoch-filter-panel" aria-label={`Filter ${columnHeaderKeyLabel(column)} range`}>
+                                <label>
+                                  <span>From</span>
+                                  <input
+                                    class="sdn-input sdn-column-filter"
+                                    type="datetime-local"
+                                    value={epochColumnFilterValue(column, 'start')}
+                                    aria-label={`Filter ${columnHeaderKeyLabel(column)} start`}
+                                    on:input={(event) => handleEpochColumnFilterInput(column, 'start', event)}
+                                  />
+                                </label>
+                                <label>
+                                  <span>To</span>
+                                  <input
+                                    class="sdn-input sdn-column-filter"
+                                    type="datetime-local"
+                                    value={epochColumnFilterValue(column, 'stop')}
+                                    aria-label={`Filter ${columnHeaderKeyLabel(column)} stop`}
+                                    on:input={(event) => handleEpochColumnFilterInput(column, 'stop', event)}
+                                  />
+                                </label>
+                                <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => clearEpochColumnFilter(column)}>Clear</button>
+                              </div>
+                            {/if}
                           </div>
                         {:else}
                           <input
@@ -5560,21 +5682,43 @@
                     {#each visibleColumns as column}
                       <th>
                         {#if isEpochColumn(column.key)}
-                          <div class="sdn-epoch-filter-range">
-                            <input
-                              class="sdn-input sdn-column-filter"
-                              type="datetime-local"
-                              value={epochColumnFilterValue(column.key, 'start')}
-                              aria-label={`Filter ${columnHeaderKeyLabel(column.key, column.label)} start`}
-                              on:input={(event) => handleEpochColumnFilterInput(column.key, 'start', event)}
-                            />
-                            <input
-                              class="sdn-input sdn-column-filter"
-                              type="datetime-local"
-                              value={epochColumnFilterValue(column.key, 'stop')}
-                              aria-label={`Filter ${columnHeaderKeyLabel(column.key, column.label)} stop`}
-                              on:input={(event) => handleEpochColumnFilterInput(column.key, 'stop', event)}
-                            />
+                          <div class="sdn-epoch-filter-menu" data-epoch-filter-menu>
+                            <button
+                              class="sdn-epoch-filter-button"
+                              class:active={hasEpochColumnFilter(column.key)}
+                              type="button"
+                              aria-haspopup="true"
+                              aria-expanded={epochFilterMenuColumn === column.key}
+                              title={epochColumnFilterSummary(column.key)}
+                              on:click={() => toggleEpochFilterMenu(column.key)}
+                            >
+                              {epochColumnFilterButtonLabel(column.key)}
+                            </button>
+                            {#if epochFilterMenuColumn === column.key}
+                              <div class="sdn-epoch-filter-panel" aria-label={`Filter ${columnHeaderKeyLabel(column.key, column.label)} range`}>
+                                <label>
+                                  <span>From</span>
+                                  <input
+                                    class="sdn-input sdn-column-filter"
+                                    type="datetime-local"
+                                    value={epochColumnFilterValue(column.key, 'start')}
+                                    aria-label={`Filter ${columnHeaderKeyLabel(column.key, column.label)} start`}
+                                    on:input={(event) => handleEpochColumnFilterInput(column.key, 'start', event)}
+                                  />
+                                </label>
+                                <label>
+                                  <span>To</span>
+                                  <input
+                                    class="sdn-input sdn-column-filter"
+                                    type="datetime-local"
+                                    value={epochColumnFilterValue(column.key, 'stop')}
+                                    aria-label={`Filter ${columnHeaderKeyLabel(column.key, column.label)} stop`}
+                                    on:input={(event) => handleEpochColumnFilterInput(column.key, 'stop', event)}
+                                  />
+                                </label>
+                                <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => clearEpochColumnFilter(column.key)}>Clear</button>
+                              </div>
+                            {/if}
                           </div>
                         {:else}
                           <input

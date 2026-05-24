@@ -5,6 +5,7 @@ import {
   DEFAULT_DATA_FEED_RETENTION_POLICY,
   DATA_SOURCE_OWNERTRUST,
   DEFAULT_OWNERTRUST,
+  ensureReplaceSnapshotDataFeedSubscriptions,
   isTrustedDirectoryOwnertrust,
   migrateSchemaSyncPreferencesToDataDirectory,
   normalizeOwnertrust,
@@ -107,6 +108,38 @@ describe('PGP data directory ownertrust', () => {
     expect(DEFAULT_DATA_FEED_RETENTION_POLICY).toBe('append-only');
     expect(cat.subscriptions[0]).toMatchObject({ retentionPolicy: 'replace-snapshot' });
     expect(omm.subscriptions[0]).toMatchObject({ retentionPolicy: 'append-only' });
+  });
+
+  it('adds required advertised replace-snapshot feeds before pruning local stores', () => {
+    const next = ensureReplaceSnapshotDataFeedSubscriptions({
+      peerTrust: {},
+      subscriptions: [],
+    }, [{
+      dataSourceId: 'configured:space-data-network-02',
+      peerId: '16Uiu2HAmCelestrak',
+      providerName: 'CelesTrak Provider',
+      providerPublicKey: 'xpub6Celestrak',
+      providerId: 'space-data-network-02',
+      defaultStandardIds: ['CAT', 'OMM'],
+      remoteRowsByStandard: { CAT: 98_123, OMM: 2_409_549 },
+    }]);
+
+    expect(next.peerTrust['16Uiu2HAmCelestrak']).toBe('marginal');
+    expect(next.subscriptions).toHaveLength(1);
+    expect(next.subscriptions[0]).toMatchObject({
+      id: subscriptionKey('configured:space-data-network-02', 'CAT'),
+      dataSourceId: 'configured:space-data-network-02',
+      peerId: '16Uiu2HAmCelestrak',
+      standardId: 'CAT',
+      providerName: 'CelesTrak Provider',
+      providerId: 'space-data-network-02',
+      providerPublicKey: 'xpub6Celestrak',
+      remoteRows: 98_123,
+      storageCap: 1,
+      storageUnit: 'GB',
+      queryProfile: 'dataset-publication-offset-v1',
+      retentionPolicy: 'replace-snapshot',
+    });
   });
 
   it('stores and updates explicit feed retention policy', () => {

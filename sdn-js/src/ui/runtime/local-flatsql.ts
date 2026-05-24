@@ -1,4 +1,6 @@
+import * as flatbuffers from 'flatbuffers';
 import type { FlatSQL, FlatSQLDatabase } from 'flatsql/wasm';
+import { CAT } from 'spacedatastandards.org/lib/js/CAT/CAT.js';
 
 import { validateReadOnlySql, type ReadOnlySqlValidationOptions } from './read-only-sql-sandbox';
 import type { RawDataRecord } from './sdn-backend';
@@ -301,9 +303,9 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
       buffer,
       key: flatSqlStreamRecordKey(standardId, buffer, index + keyOffset, options),
     }));
-    const nextRecords = trustOrderedPublishedOffsets
+    const nextRecords = trustOrderedPublishedOffsets && !usesUniqueFlatSqlRecordKeys(standardId)
       ? candidates
-      : candidates.filter((entry) => !state.ingestedKeys.has(entry.key));
+      : filterNewFlatSqlRecordCandidates(candidates, state.ingestedKeys);
     if (nextRecords.length === 0) return 0;
 
     const beforeRecordCount = recordCountForState(state);
@@ -658,6 +660,7 @@ function directFlatSqlStreamRecordKeys(
   keyOffset: number,
   options: LocalFlatSqlStreamIngestOptions | null,
 ): string[] | null {
+  if (usesUniqueFlatSqlRecordKeys(standardId)) return null;
   if (options?.recordKeys?.length) return null;
   const prefix = options?.recordKeyPrefix?.trim();
   if (!prefix) return null;
@@ -675,11 +678,45 @@ function flatSqlStreamRecordKey(
   index: number,
   options: LocalFlatSqlStreamIngestOptions | null,
 ): string {
+  const uniqueKey = uniqueFlatSqlRecordKey(standardId, buffer);
+  if (uniqueKey) return uniqueKey;
   const explicitKey = options?.recordKeys?.[index - Math.max(0, options.recordKeyOffset ?? options.skipRecords ?? 0)]?.trim();
   if (explicitKey) return explicitKey;
   const prefix = options?.recordKeyPrefix?.trim();
   if (prefix) return `${normalizeStandardId(standardId)}|${prefix}|${index}`;
   return `${normalizeStandardId(standardId)}|stream|${buffer.byteLength}|${fnv1a32(buffer).toString(16).padStart(8, '0')}`;
+}
+
+function usesUniqueFlatSqlRecordKeys(standardId: string): boolean {
+  return normalizeStandardId(standardId) === 'CAT';
+}
+
+function uniqueFlatSqlRecordKey(standardId: string, buffer: Uint8Array): string | null {
+  if (normalizeStandardId(standardId) !== 'CAT') return null;
+  try {
+    const cat = CAT.getRootAsCAT(new flatbuffers.ByteBuffer(stripSdnFlatBufferSizePrefix(buffer)));
+    const noradCatId = Number(cat.NORAD_CAT_ID());
+    if (Number.isFinite(noradCatId) && noradCatId > 0) {
+      return `CAT|NORAD_CAT_ID|${Math.floor(noradCatId)}`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function filterNewFlatSqlRecordCandidates<T extends { key: string }>(
+  candidates: T[],
+  ingestedKeys: ReadonlySet<string>,
+): T[] {
+  const seen = new Set(ingestedKeys);
+  const next: T[] = [];
+  for (const candidate of candidates) {
+    if (seen.has(candidate.key)) continue;
+    seen.add(candidate.key);
+    next.push(candidate);
+  }
+  return next;
 }
 
 function fnv1a32(bytes: Uint8Array): number {

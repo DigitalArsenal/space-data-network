@@ -19,6 +19,7 @@ export interface PublishedSegmentMaterializedRowCountInput {
   standardId: string;
   expectedRows?: number | null;
   materializedRows: number;
+  allowFewerRows?: boolean;
 }
 
 export interface PublishedSegmentCheckpointInput {
@@ -33,6 +34,12 @@ export interface PublishedSnapshotResetInput {
   localRows: number;
   completedRows: number;
   totalRows: number;
+  requiresMaterializedKeyRepair?: boolean;
+}
+
+export interface PublishedSnapshotProbeStartStatusInput {
+  hasPublishedManifest: boolean;
+  currentStatus?: string | null;
 }
 
 export interface PublishedSegmentBatchOptions {
@@ -44,6 +51,11 @@ export interface PublishedSegmentBatchItem<T extends PublishedSegmentForSync> {
   items: Array<PublishedSegmentSyncItem<T>>;
   byteCount: number;
   preferredSourceIndex: number;
+}
+
+export interface PublishedSegmentRetentionOptions {
+  retentionPolicy?: string | null;
+  manifestHead?: string | null;
 }
 
 export function pendingPublishedSegmentItems<T extends PublishedSegmentForSync>(
@@ -85,18 +97,30 @@ export function completedPublishedSegmentCids(entries: LocalFlatSqlPinLedgerEntr
 export function completedPublishedRowsForSegments<T extends PublishedSegmentForSync>(
   segments: T[],
   completedCids: ReadonlySet<string>,
+  completedRowsByCid: ReadonlyMap<string, number> = new Map(),
 ): number {
   return segments.reduce((sum, segment) => {
     const cid = segment.cid?.trim() ?? '';
     return cid && completedCids.has(cid)
-      ? sum + Math.max(0, Math.floor(segment.rowCount ?? 0))
+      ? sum + Math.max(0, Math.floor(completedRowsByCid.get(cid) ?? segment.rowCount ?? 0))
       : sum;
   }, 0);
+}
+
+export function completedPublishedSegmentRowCounts(entries: LocalFlatSqlPinLedgerEntry[]): Map<string, number> {
+  const rows = new Map<string, number>();
+  for (const entry of entries) {
+    const cid = entry.cid?.trim();
+    if (!cid) continue;
+    rows.set(cid, Math.max(0, Math.floor(entry.rowCount ?? 0)));
+  }
+  return rows;
 }
 
 export function assertPublishedSegmentMaterializedRowCount(input: PublishedSegmentMaterializedRowCountInput): void {
   const expectedRows = Math.max(0, Math.floor(input.expectedRows ?? 0));
   const materializedRows = Math.max(0, Math.floor(input.materializedRows));
+  if (input.allowFewerRows && materializedRows > 0 && materializedRows <= expectedRows) return;
   if (expectedRows <= 0 && materializedRows > 0) return;
   if (expectedRows > 0 && materializedRows === expectedRows) return;
   const cid = input.cid?.trim() || 'unknown';
@@ -115,6 +139,7 @@ export function shouldPersistPublishedSegmentCheckpoint(input: PublishedSegmentC
 
 export function shouldResetPublishedSnapshotStore(input: PublishedSnapshotResetInput): boolean {
   if ((input.retentionPolicy ?? '').trim() !== 'replace-snapshot') return false;
+  if (input.requiresMaterializedKeyRepair) return true;
   const localRows = Math.max(0, Math.floor(input.localRows));
   const completedRows = Math.max(0, Math.floor(input.completedRows));
   const totalRows = Math.max(0, Math.floor(input.totalRows));
@@ -123,6 +148,83 @@ export function shouldResetPublishedSnapshotStore(input: PublishedSnapshotResetI
   }
   if (completedRows === 0) return localRows > 0;
   return localRows !== completedRows;
+}
+
+export function publishedSnapshotProbeStartStatus(input: PublishedSnapshotProbeStartStatusInput): 'synced' | 'syncing' {
+  return input.hasPublishedManifest && input.currentStatus === 'synced' ? 'synced' : 'syncing';
+}
+
+export function publishedSegmentsForRetention<T extends PublishedSegmentForSync & {
+  cursor?: string | null;
+  nextCursor?: string | null;
+  feedHead?: string | null;
+}>(
+  segments: T[],
+  options: PublishedSegmentRetentionOptions,
+): T[] {
+  if ((options.retentionPolicy ?? '').trim() !== 'replace-snapshot') return segments;
+  const manifestHead = options.manifestHead?.trim();
+  const cursorChainSegments = latestReplaceSnapshotCursorChain(segments, manifestHead);
+  if (cursorChainSegments.length > 0) return cursorChainSegments;
+  if (!manifestHead) return segments;
+  const currentHeadSegments = segments.filter((segment) => segment.feedHead?.trim() === manifestHead);
+  return currentHeadSegments.length > 0 ? currentHeadSegments : segments;
+}
+
+export function allowsPublishedSegmentMaterializedRowDedup(standardId: string): boolean {
+  return standardId.trim().toUpperCase() === 'CAT';
+}
+
+function latestReplaceSnapshotCursorChain<T extends PublishedSegmentForSync & {
+  cursor?: string | null;
+  nextCursor?: string | null;
+  feedHead?: string | null;
+}>(
+  segments: T[],
+  manifestHead?: string | null,
+): T[] {
+  const orderedSegments = segments
+    .filter((segment) => Boolean(segment.cid?.trim()))
+    .slice()
+    .sort((left, right) => (
+      Math.max(0, Math.floor(left.index ?? 0)) - Math.max(0, Math.floor(right.index ?? 0))
+    ));
+  const tailCandidates = orderedSegments.filter((segment) => (
+    isEndCursor(segment.nextCursor)
+    && (!manifestHead || segment.feedHead?.trim() === manifestHead)
+  ));
+  const tailSegment = tailCandidates.at(-1) ?? orderedSegments.filter((segment) => isEndCursor(segment.nextCursor)).at(-1);
+  if (!tailSegment) return [];
+
+  const chain: T[] = [tailSegment];
+  const usedCids = new Set([tailSegment.cid?.trim() ?? '']);
+  let cursor = tailSegment.cursor?.trim() ?? '';
+  while (cursor && !isStartCursor(cursor)) {
+    const firstChainIndex = Math.max(0, Math.floor(chain[0]?.index ?? 0));
+    const previousSegment = orderedSegments
+      .filter((segment) => {
+        const cid = segment.cid?.trim() ?? '';
+        return cid
+          && !usedCids.has(cid)
+          && Math.max(0, Math.floor(segment.index ?? 0)) < firstChainIndex
+          && segment.nextCursor?.trim() === cursor;
+      })
+      .at(-1);
+    if (!previousSegment) return [];
+    chain.unshift(previousSegment);
+    usedCids.add(previousSegment.cid?.trim() ?? '');
+    cursor = previousSegment.cursor?.trim() ?? '';
+  }
+  return chain;
+}
+
+function isEndCursor(value?: string | null): boolean {
+  return !value?.trim();
+}
+
+function isStartCursor(value?: string | null): boolean {
+  const cursor = value?.trim() ?? '';
+  return cursor === '' || cursor === '0' || cursor === 'MA' || cursor === 'MA==';
 }
 
 export function publishedSegmentBatchItems<T extends PublishedSegmentForSync>(

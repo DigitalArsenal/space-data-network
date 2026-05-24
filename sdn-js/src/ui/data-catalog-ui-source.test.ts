@@ -96,7 +96,11 @@ describe('Data catalog UI source', () => {
   it('prunes unsubscribed replace-snapshot local stores so stale SATCAT caches cannot linger', () => {
     expect(localDataScreenSource).toContain('const REPLACE_SNAPSHOT_STANDARD_IDS = LOCAL_FLATSQL_SCHEMAS');
     expect(localDataScreenSource).toContain("defaultDataFeedRetentionPolicy(schema.standardId) === 'replace-snapshot'");
+    expect(localDataScreenSource).toContain('dataDirectoryState = ensureReplaceSnapshotDataFeedSubscriptions(');
     expect(localDataScreenSource).toContain('await pruneUnsubscribedReplaceSnapshotStores(migrationSources, dataDirectoryState.subscriptions);');
+    expect(localDataScreenSource.indexOf('dataDirectoryState = ensureReplaceSnapshotDataFeedSubscriptions(')).toBeLessThan(
+      localDataScreenSource.indexOf('await pruneUnsubscribedReplaceSnapshotStores(migrationSources, dataDirectoryState.subscriptions);'),
+    );
     expect(localDataScreenSource).toContain('function snapshotStoreKey(dataSourceId: string, datastoreKey: string | null, standardId: string): string');
     expect(localDataScreenSource).toContain('clearSchemaSyncProgressForSubscription(dataSourceId, standardId, null);');
   });
@@ -228,7 +232,14 @@ describe('Data catalog UI source', () => {
     expect(explorerTable).toContain("handleEpochColumnFilterInput(column, 'stop', event)");
     expect(explorerTable).toContain('aria-label={`Filter ${columnHeaderKeyLabel(column)} start`}');
     expect(explorerTable).toContain('aria-label={`Filter ${columnHeaderKeyLabel(column)} stop`}');
-    expect(appCssSource).toContain('.sdn-epoch-filter-range');
+    expect(explorerTable).toContain('sdn-epoch-filter-menu');
+    expect(explorerTable).toContain('sdn-epoch-filter-button');
+    expect(explorerTable).toContain('sdn-epoch-filter-panel');
+    expect(explorerTable).toContain('clearEpochColumnFilter(column)');
+    expect(appCssSource).toContain('.sdn-epoch-filter-menu');
+    expect(appCssSource).toContain('.sdn-epoch-filter-button');
+    expect(appCssSource).toContain('.sdn-epoch-filter-panel');
+    expect(appCssSource).not.toContain('.sdn-epoch-filter-range');
   });
 
   it('renders an explorer column dropdown and caps selected columns at ten', () => {

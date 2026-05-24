@@ -22,9 +22,13 @@ import {
 } from './published-flatbuffer-shard';
 import {
   assertPublishedSegmentMaterializedRowCount,
+  allowsPublishedSegmentMaterializedRowDedup,
   completedPublishedRowsForSegments,
   completedPublishedSegmentCids,
+  completedPublishedSegmentRowCounts,
   pendingPublishedSegmentItems,
+  publishedSnapshotProbeStartStatus,
+  publishedSegmentsForRetention,
   publishedSegmentBatchItems,
   shouldResetPublishedSnapshotStore,
   shouldPersistPublishedSegmentCheckpoint,
@@ -244,7 +248,10 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
   const providerPeerId = request.backendConfig.targetPeerId || null;
   const providerPublicKey = request.backendConfig.publicKey || request.backendConfig.targetPeerId || null;
   let progress = progressFor(request.initialProgress, {
-    status: 'syncing',
+    status: publishedSnapshotProbeStartStatus({
+      hasPublishedManifest: Boolean(publishedManifest?.segments.length),
+      currentStatus: request.initialProgress.status,
+    }),
     syncedRows: localRows,
     totalRows,
     localRows,
@@ -270,13 +277,17 @@ async function syncSchemaInWorker(id: number, request: WorkerSchemaSyncRequest):
 
   try {
     if (publishedManifest && publishedManifest.segments.length > 0) {
+      const publishedSegments = publishedSegmentsForRetention(publishedManifest.segments, {
+        retentionPolicy: request.retentionPolicy,
+        manifestHead: publishedManifest.manifest.head,
+      });
       await syncBackendCache.releaseControlClient(request.backendConfig);
       return await syncPublishedSegments({
         id,
         request,
         currentStore,
         manifest: publishedManifest.manifest,
-        segments: publishedManifest.segments,
+        segments: publishedSegments,
         currentStats,
         progress,
         localRows,
@@ -536,13 +547,18 @@ async function syncPublishedSegments(options: {
     verificationState: 'verified',
   });
   let completedSegmentCids = completedPublishedSegmentCids(completedEntries);
-  let completedRows = completedPublishedRowsForSegments(options.segments, completedSegmentCids);
+  const completedSegmentRows = completedPublishedSegmentRowCounts(completedEntries);
+  let completedRows = completedPublishedRowsForSegments(options.segments, completedSegmentCids, completedSegmentRows);
   let unpersistedBytes = 0;
+  const requiresMaterializedKeyRepair = localRows === completedRows
+    ? await requiresPublishedMaterializedKeyRepair(options.currentStore, options.request.standardId)
+    : false;
   const useReplacementStore = shouldResetPublishedSnapshotStore({
     retentionPolicy: options.request.retentionPolicy,
     localRows,
     completedRows,
     totalRows,
+    requiresMaterializedKeyRepair,
   });
   const replacementStore = useReplacementStore
     ? await options.currentStore.createStandardReplacementStore(options.request.standardId)
@@ -553,6 +569,7 @@ async function syncPublishedSegments(options: {
     const materializationStartedAt = Date.now();
     flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
     completedSegmentCids = new Set<string>();
+    completedSegmentRows.clear();
     completedRows = 0;
     verifiedChunks = [];
     progress = progressFor(progress, {
@@ -637,6 +654,7 @@ async function syncPublishedSegments(options: {
         standardId: options.request.standardId,
         expectedRows: segment.rowCount,
         materializedRows: ingestedRows,
+        allowFewerRows: allowsPublishedSegmentMaterializedRowDedup(options.request.standardId),
       });
       const chunkHash = segment.chunkHash || segment.cid;
       if (chunkHash && !verifiedChunks.includes(chunkHash)) {
@@ -647,6 +665,7 @@ async function syncPublishedSegments(options: {
         manifest: options.manifest,
         segment,
         streamBytes,
+        materializedRows: ingestedRows,
         providerPeerId: options.providerPeerId,
         providerPublicKey: options.providerPublicKey,
       });
@@ -656,8 +675,11 @@ async function syncPublishedSegments(options: {
         await options.currentStore.recordPinLedgerEntries([ledgerEntry], { persist: false });
       }
       if (segment.cid) completedSegmentCids.add(segment.cid);
+      if (segment.cid) completedSegmentRows.set(segment.cid, ingestedRows);
       unpersistedBytes += streamBytes.byteLength;
-      completedRows = completedPublishedRowsForSegments(options.segments, completedSegmentCids);
+      completedRows = completedPublishedRowsForSegments(options.segments, completedSegmentCids, completedSegmentRows);
+      const allSegmentsComplete = pendingPublishedSegmentItems(options.segments, completedSegmentCids).length === 0;
+      const progressTotalRows = allSegmentsComplete ? completedRows : totalRows;
       if (shouldPersistPublishedSegmentCheckpoint({
         unpersistedBytes,
         checkpointBytes: PUBLISHED_SHARD_PERSIST_CHECKPOINT_BYTES,
@@ -676,9 +698,9 @@ async function syncPublishedSegments(options: {
       cachedBytes = cachedBytesForStandard(currentStats, options.request.standardId);
       const displayedCachedBytes = cachedBytes + unpersistedBytes;
       progress = progressFor(progress, {
-        status: completedRows >= totalRows ? 'synced' : 'syncing',
+        status: allSegmentsComplete ? 'synced' : 'syncing',
         syncedRows: completedRows,
-        totalRows,
+        totalRows: progressTotalRows,
         localRows: completedRows,
         cachedBytes: displayedCachedBytes,
         pinnedBytes: displayedCachedBytes,
@@ -703,7 +725,8 @@ async function syncPublishedSegments(options: {
       postProgress(options.id, progress, currentStats);
     }
 
-    if (replacementStore && completedRows >= totalRows) {
+    const replacementComplete = pendingPublishedSegmentItems(options.segments, completedSegmentCids).length === 0;
+    if (replacementStore && replacementComplete) {
       const materializationStartedAt = Date.now();
       await options.currentStore.replaceStandardFrom(options.request.standardId, replacementStore, replacementLedgerEntries);
       flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
@@ -722,11 +745,13 @@ async function syncPublishedSegments(options: {
     currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
     localRows = localRowsForStandard(currentStats, options.request.standardId);
     cachedBytes = cachedBytesForStandard(currentStats, options.request.standardId);
-    completedRows = completedPublishedRowsForSegments(options.segments, completedSegmentCids);
+    completedRows = completedPublishedRowsForSegments(options.segments, completedSegmentCids, completedSegmentRows);
+    const allSegmentsComplete = pendingPublishedSegmentItems(options.segments, completedSegmentCids).length === 0;
+    const finalTotalRows = allSegmentsComplete ? completedRows : totalRows;
     progress = progressFor(progress, {
-      status: completedRows >= totalRows ? 'synced' : 'idle',
+      status: allSegmentsComplete ? 'synced' : 'idle',
       syncedRows: completedRows,
-      totalRows,
+      totalRows: finalTotalRows,
       localRows: completedRows,
       cachedBytes,
       pinnedBytes: cachedBytes,
@@ -792,6 +817,7 @@ function pinLedgerEntryForPublishedSegment(options: {
   manifest: FlatSqlSyncManifest;
   segment: FlatSqlSyncManifestSegment;
   streamBytes: Uint8Array;
+  materializedRows?: number;
   providerPeerId: string | null;
   providerPublicKey: string | null;
 }): LocalFlatSqlPinLedgerEntry {
@@ -811,13 +837,38 @@ function pinLedgerEntryForPublishedSegment(options: {
     highWaterMark: options.manifest.highWaterMark || null,
     byteHash: options.segment.shardSha256 || options.segment.chunkHash || null,
     role: 'shard',
-    rowCount: options.segment.rowCount,
+    rowCount: Math.max(0, Math.floor(options.materializedRows ?? options.segment.rowCount)),
     byteCount: options.streamBytes.byteLength,
     verificationState: 'verified',
     materializedAt: now,
     verifiedAt: now,
     updatedAt: now,
   };
+}
+
+async function requiresPublishedMaterializedKeyRepair(
+  store: LocalFlatSqlStore,
+  standardId: string,
+): Promise<boolean> {
+  if (!allowsPublishedSegmentMaterializedRowDedup(standardId)) return false;
+  try {
+    const result = await store.query(
+      'SELECT COUNT(*) AS row_count, COUNT(DISTINCT NORAD_CAT_ID) AS unique_count FROM CAT',
+      'CAT',
+      { maxBytes: 16 * 1024, timeoutMs: 10_000 },
+    );
+    const record = result.records[0] ?? {};
+    const rowCount = numberRecordValue(record, 'row_count');
+    const uniqueCount = numberRecordValue(record, 'unique_count');
+    return rowCount > uniqueCount;
+  } catch {
+    return false;
+  }
+}
+
+function numberRecordValue(record: Record<string, unknown>, key: string): number {
+  const value = record[key] ?? record[key.toUpperCase()];
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 async function* fetchPublishedSegmentsInOrder(

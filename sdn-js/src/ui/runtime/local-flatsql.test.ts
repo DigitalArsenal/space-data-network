@@ -1,9 +1,18 @@
 import { readFileSync } from 'node:fs';
+import * as flatbuffers from 'flatbuffers';
 import { describe, expect, it } from 'vitest';
+
+import { CAT } from 'spacedatastandards.org/lib/js/CAT/CAT.js';
+import { operationalState } from 'spacedatastandards.org/lib/js/CAT/operationalState.js';
+import { spaceObjectClass } from 'spacedatastandards.org/lib/js/CAT/spaceObjectClass.js';
 
 import { buildEpochProfileSql } from './epoch-query-sql';
 import { clearLocalFlatSqlStore, createLocalFlatSqlStore, decodeFlatSqlSizePrefixedStream, flatSqlSizePrefixedStreamInfo, isReadOnlyFlatSqlQuery, stripSdnFlatBufferSizePrefix } from './local-flatsql';
 
+const CAT_SCHEMA = readFileSync(
+  new URL('../../../../../spacedatastandards.org/schema/CAT/main.fbs', import.meta.url),
+  'utf8',
+);
 const OMM_SCHEMA = readFileSync(
   new URL('../../../../../spacedatastandards.org/schema/OMM/main.fbs', import.meta.url),
   'utf8',
@@ -159,6 +168,53 @@ describe('local FlatSQL datastore', () => {
       recordCount: 1,
       ingestedRecordCount: 1,
     }));
+  });
+
+  it('dedupes CAT replacement streams by NORAD catalog ID', async () => {
+    const store = await createLocalFlatSqlStore({
+      schemas: [{
+        standardId: 'CAT',
+        tableName: 'CAT',
+        fileId: '$CAT',
+        schema: CAT_SCHEMA,
+      }],
+    });
+
+    const firstIss = stripSdnFlatBufferSizePrefix(buildCatFixture({
+      objectName: 'ISS (ZARYA)',
+      objectId: '1998-067A',
+      noradCatId: 25544,
+    }));
+    const duplicateIss = stripSdnFlatBufferSizePrefix(buildCatFixture({
+      objectName: 'ISS (ZARYA) DUPLICATE',
+      objectId: '1998-067A',
+      noradCatId: 25544,
+    }));
+    const hubble = stripSdnFlatBufferSizePrefix(buildCatFixture({
+      objectName: 'HST',
+      objectId: '1990-037B',
+      noradCatId: 20580,
+    }));
+
+    const ingested = await store.ingestFlatBufferStream('CAT', flatSqlSizePrefixedStream([
+      firstIss,
+      duplicateIss,
+      hubble,
+    ]), {
+      recordKeyPrefix: 'published:cat-snapshot',
+      persist: false,
+    });
+
+    expect(ingested).toBe(2);
+    expect(store.query('SELECT OBJECT_NAME, NORAD_CAT_ID FROM CAT ORDER BY NORAD_CAT_ID DESC LIMIT 10', 'CAT').records).toEqual([
+      { OBJECT_NAME: 'ISS (ZARYA)', NORAD_CAT_ID: 25544 },
+      { OBJECT_NAME: 'HST', NORAD_CAT_ID: 20580 },
+    ]);
+    expect(store.query(
+      'SELECT NORAD_CAT_ID, COUNT(*) AS c FROM CAT WHERE NORAD_CAT_ID = 25544 GROUP BY NORAD_CAT_ID',
+      'CAT',
+    ).records).toEqual([{ NORAD_CAT_ID: 25544, c: 1 }]);
+    store.destroy();
   });
 
   it('resumes native FlatSQL stream ingest from a skipped frame with a zero-offset buffer', async () => {
@@ -932,6 +988,21 @@ function flatSqlSizePrefixedStream(records: Uint8Array[]): Uint8Array {
     offset += frame.byteLength;
   }
   return out;
+}
+
+function buildCatFixture(options: { objectName: string; objectId: string; noradCatId: number }): Uint8Array {
+  const builder = new flatbuffers.Builder(256);
+  const objectName = builder.createString(options.objectName);
+  const objectId = builder.createString(options.objectId);
+  CAT.startCAT(builder);
+  CAT.addObjectName(builder, objectName);
+  CAT.addObjectId(builder, objectId);
+  CAT.addNoradCatId(builder, options.noradCatId);
+  CAT.addObjectType(builder, spaceObjectClass.PAYLOAD);
+  CAT.addOpsStatusCode(builder, operationalState.OPERATIONAL);
+  const cat = CAT.endCAT(builder);
+  CAT.finishSizePrefixedCATBuffer(builder, cat);
+  return builder.asUint8Array();
 }
 
 function putLocalFlatSqlTestValue(key: string, value: unknown): Promise<void> {
