@@ -14,6 +14,7 @@ describe('data explorer query builder', () => {
       standardId: 'OMM',
       page: 2,
       pageSize: 10,
+      selectColumns: ['OBJECT_NAME', 'NORAD_CAT_ID'],
       searchText: 'sputnik',
       searchColumns: ['OBJECT_NAME', 'OBJECT_ID'],
       columnFilters: { OBJECT_NAME: 'vanguard' },
@@ -21,11 +22,33 @@ describe('data explorer query builder', () => {
     });
 
     expect(query.hasDatasetFilters).toBe(true);
-    expect(query.rowsSql).toContain('FROM "OMM" WHERE');
+    expect(query.rowsSql).toContain('SELECT "OBJECT_NAME", "NORAD_CAT_ID" FROM "OMM" WHERE');
     expect(query.rowsSql).toContain('CAST("OBJECT_NAME" AS TEXT) LIKE');
     expect(query.rowsSql).toContain('CAST("OBJECT_ID" AS TEXT) LIKE');
     expect(query.rowsSql).toContain('LIMIT 10 OFFSET 20');
     expect(query.countSql).toContain('SELECT COUNT(*) AS __total FROM "OMM" WHERE');
+  });
+
+  it('limits projected local explorer rows to requested columns', () => {
+    const query = buildLocalDataExplorerQuery({
+      standardId: 'CAT',
+      page: 0,
+      pageSize: 10,
+      selectColumns: [
+        'OBJECT_NAME',
+        'OBJECT_ID',
+        'NORAD_CAT_ID',
+        'OBJECT_TYPE',
+        'OPS_STATUS_CODE',
+        'OWNER',
+        'LAUNCH_SITE',
+        'LAUNCH_DATE',
+        'DECAY_DATE',
+        'PERIOD',
+      ],
+    });
+
+    expect(query.rowsSql).toBe('SELECT "OBJECT_NAME", "OBJECT_ID", "NORAD_CAT_ID", "OBJECT_TYPE", "OPS_STATUS_CODE", "OWNER", "LAUNCH_SITE", "LAUNCH_DATE", "DECAY_DATE", "PERIOD" FROM "CAT" LIMIT 10 OFFSET 0');
   });
 
   it('builds numeric comparison filters for numeric columns', () => {

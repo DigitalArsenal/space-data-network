@@ -538,28 +538,30 @@ async function syncPublishedSegments(options: {
   let completedSegmentCids = completedPublishedSegmentCids(completedEntries);
   let completedRows = completedPublishedRowsForSegments(options.segments, completedSegmentCids);
   let unpersistedBytes = 0;
-  if (shouldResetPublishedSnapshotStore({
+  const useReplacementStore = shouldResetPublishedSnapshotStore({
     retentionPolicy: options.request.retentionPolicy,
     localRows,
     completedRows,
     totalRows,
-  })) {
+  });
+  const replacementStore = useReplacementStore
+    ? await options.currentStore.createStandardReplacementStore(options.request.standardId)
+    : null;
+  let materializationStore = replacementStore ?? options.currentStore;
+  const replacementLedgerEntries: LocalFlatSqlPinLedgerEntry[] = [];
+  if (replacementStore) {
     const materializationStartedAt = Date.now();
-    await options.currentStore.clearStandard(options.request.standardId);
     flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
-    currentStats = await options.currentStore.getStats({ includeCachedBytes: false });
-    localRows = 0;
-    cachedBytes = 0;
     completedSegmentCids = new Set<string>();
     completedRows = 0;
     verifiedChunks = [];
     progress = progressFor(progress, {
       status: 'syncing',
       syncedRows: 0,
-      localRows: 0,
+      localRows,
       pinnedRows: 0,
-      cachedBytes: 0,
-      pinnedBytes: 0,
+      cachedBytes,
+      pinnedBytes: cachedBytes,
       totalRows,
       manifestDiscoveryMs: options.manifestDiscoveryMs,
       flatSqlMaterializationMs,
@@ -586,9 +588,10 @@ async function syncPublishedSegments(options: {
       networkTransferMs += fetched.networkTransferMs;
       downloadedBytes += streamBytes.byteLength;
       verificationMs += fetched.verificationMs;
-      if (cachedBytes + unpersistedBytes >= options.request.capBytes && completedRows < totalRows) {
+      const replacementBytes = replacementStore ? unpersistedBytes : cachedBytes + unpersistedBytes;
+      if (replacementBytes >= options.request.capBytes && completedRows < totalRows) {
         const materializationStartedAt = Date.now();
-        await options.currentStore.flush(options.request.standardId);
+        if (!replacementStore) await options.currentStore.flush(options.request.standardId);
         flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
         unpersistedBytes = 0;
         currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
@@ -616,11 +619,12 @@ async function syncPublishedSegments(options: {
           error: `Storage cap reached at ${options.request.capBytes} bytes`,
         });
         postProgress(options.id, progress, currentStats);
+        replacementStore?.destroy();
         return { progress, stats: currentStats };
       }
 
       let materializationStartedAt = Date.now();
-      const ingestedRows = await options.currentStore.ingestFlatBufferStream(options.request.standardId, streamBytes, {
+      const ingestedRows = await materializationStore.ingestFlatBufferStream(options.request.standardId, streamBytes, {
         source: options.request.source,
         persist: false,
         skipRecords: fetched.skipRecords,
@@ -638,14 +642,19 @@ async function syncPublishedSegments(options: {
       if (chunkHash && !verifiedChunks.includes(chunkHash)) {
         verifiedChunks = [...verifiedChunks, chunkHash].slice(-256);
       }
-      await options.currentStore.recordPinLedgerEntries([pinLedgerEntryForPublishedSegment({
+      const ledgerEntry = pinLedgerEntryForPublishedSegment({
         request: options.request,
         manifest: options.manifest,
         segment,
         streamBytes,
         providerPeerId: options.providerPeerId,
         providerPublicKey: options.providerPublicKey,
-      })], { persist: false });
+      });
+      if (replacementStore) {
+        replacementLedgerEntries.push(ledgerEntry);
+      } else {
+        await options.currentStore.recordPinLedgerEntries([ledgerEntry], { persist: false });
+      }
       if (segment.cid) completedSegmentCids.add(segment.cid);
       unpersistedBytes += streamBytes.byteLength;
       completedRows = completedPublishedRowsForSegments(options.segments, completedSegmentCids);
@@ -656,9 +665,9 @@ async function syncPublishedSegments(options: {
         totalRows,
       })) {
         materializationStartedAt = Date.now();
-        await options.currentStore.flush(options.request.standardId);
+        if (!replacementStore) await options.currentStore.flush(options.request.standardId);
         flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
-        unpersistedBytes = 0;
+        if (!replacementStore) unpersistedBytes = 0;
         currentStats = await options.currentStore.getStats({ includeCachedBytes: true });
       } else {
         currentStats = await options.currentStore.getStats({ includeCachedBytes: false });
@@ -694,7 +703,17 @@ async function syncPublishedSegments(options: {
       postProgress(options.id, progress, currentStats);
     }
 
-    if (unpersistedBytes > 0) {
+    if (replacementStore && completedRows >= totalRows) {
+      const materializationStartedAt = Date.now();
+      await options.currentStore.replaceStandardFrom(options.request.standardId, replacementStore, replacementLedgerEntries);
+      flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
+      unpersistedBytes = 0;
+      materializationStore = options.currentStore;
+      replacementStore.destroy();
+    } else if (replacementStore) {
+      replacementStore.destroy();
+      unpersistedBytes = 0;
+    } else if (unpersistedBytes > 0) {
       const materializationStartedAt = Date.now();
       await options.currentStore.flush(options.request.standardId);
       flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
@@ -728,6 +747,7 @@ async function syncPublishedSegments(options: {
     postProgress(options.id, progress, currentStats);
     return { progress, stats: currentStats };
   } catch (error) {
+    replacementStore?.destroy();
     await options.currentStore.flush(options.request.standardId).catch(() => undefined);
     currentStats = await Promise.resolve(options.currentStore.getStats({ includeCachedBytes: true })).catch(() => currentStats);
     progress = progressFor(progress, {

@@ -121,6 +121,8 @@ export interface LocalFlatSqlStore {
   ingestRecords(standardId: string, records: RawDataRecord[], sourceOrOptions?: string | LocalFlatSqlIngestOptions | null): Promise<number>;
   ingestFlatBufferStream(standardId: string, streamBytes: Uint8Array, options?: LocalFlatSqlStreamIngestOptions | null): Promise<number>;
   clearStandard(standardId: string, options?: LocalFlatSqlClearOptions): Promise<void>;
+  createStandardReplacementStore(standardId: string): Promise<LocalFlatSqlStore>;
+  replaceStandardFrom(standardId: string, replacementStore: LocalFlatSqlStore, entries: LocalFlatSqlPinLedgerEntry[], options?: LocalFlatSqlPinLedgerWriteOptions): Promise<void>;
   flush(standardId?: string): Promise<void>;
   recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[], options?: LocalFlatSqlPinLedgerWriteOptions): Promise<void>;
   listPinLedgerEntries(query?: LocalFlatSqlPinLedgerQuery): Promise<LocalFlatSqlPinLedgerEntry[]>;
@@ -325,6 +327,52 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     state.dirty = false;
     this.deletePinLedgerEntriesForStandard(state.schema.standardId);
     if (options.persist !== false) await this.deletePersistedStandard(state.schema.standardId);
+  }
+
+  async createStandardReplacementStore(standardId: string): Promise<LocalFlatSqlStore> {
+    const state = this.stateForStandard(standardId);
+    const replacementState: StandardDatabaseState = {
+      schema: { ...state.schema },
+      db: this.createDatabaseForSchema(state.schema),
+      ingestedKeys: new Set<string>(),
+      cachedBytes: 0,
+      dirty: false,
+    };
+    return new WasmLocalFlatSqlStore(
+      new Map([[state.schema.standardId, replacementState]]),
+      null,
+      new Map<string, LocalFlatSqlPinLedgerEntry>(),
+      this.persistenceStore,
+      this.flatsql,
+    );
+  }
+
+  async replaceStandardFrom(
+    standardId: string,
+    replacementStore: LocalFlatSqlStore,
+    entries: LocalFlatSqlPinLedgerEntry[],
+    options: LocalFlatSqlPinLedgerWriteOptions = {},
+  ): Promise<void> {
+    if (!(replacementStore instanceof WasmLocalFlatSqlStore)) {
+      throw new Error('FlatSQL replacement store must use the local WASM implementation');
+    }
+    const activeState = this.stateForStandard(standardId);
+    const replacementState = replacementStore.stateForStandard(standardId);
+    activeState.db.destroy();
+    activeState.db = replacementState.db;
+    activeState.ingestedKeys = new Set(replacementState.ingestedKeys);
+    activeState.cachedBytes = replacementState.db.exportData().byteLength;
+    activeState.dirty = false;
+    replacementState.db = replacementStore.createDatabaseForSchema(replacementState.schema);
+    replacementState.ingestedKeys.clear();
+    replacementState.cachedBytes = 0;
+    replacementState.dirty = false;
+    this.deletePinLedgerEntriesForStandard(activeState.schema.standardId);
+    await this.recordPinLedgerEntries(entries, { persist: false });
+    if (options.persist !== false) {
+      await this.persistStandard(activeState);
+      await this.persistPinLedger();
+    }
   }
 
   async flush(standardId?: string): Promise<void> {

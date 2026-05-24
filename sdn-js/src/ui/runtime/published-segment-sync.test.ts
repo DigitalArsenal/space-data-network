@@ -60,10 +60,12 @@ describe('published segment sync planning', () => {
   it('guards the worker pin-ledger write with the materialized row-count check', () => {
     const source = readFileSync(new URL('./local-flatsql.worker.ts', import.meta.url), 'utf8');
     const guardIndex = source.indexOf('assertPublishedSegmentMaterializedRowCount({');
-    const pinIndex = source.indexOf('recordPinLedgerEntries([pinLedgerEntryForPublishedSegment');
+    const ledgerEntryIndex = source.indexOf('const ledgerEntry = pinLedgerEntryForPublishedSegment');
+    const pinIndex = source.indexOf('recordPinLedgerEntries([ledgerEntry]');
 
     expect(guardIndex).toBeGreaterThan(-1);
-    expect(pinIndex).toBeGreaterThan(guardIndex);
+    expect(ledgerEntryIndex).toBeGreaterThan(guardIndex);
+    expect(pinIndex).toBeGreaterThan(ledgerEntryIndex);
   });
 
   it('requires active store replacement for changed published replace-snapshot manifests', () => {
@@ -90,7 +92,7 @@ describe('published segment sync planning', () => {
       localRows: 0,
       completedRows: 69_050,
       totalRows: 69_050,
-    })).toBe(true);
+    })).toBe(false);
     expect(shouldResetPublishedSnapshotStore({
       retentionPolicy: 'replace-snapshot',
       localRows: 69_050,
@@ -105,15 +107,17 @@ describe('published segment sync planning', () => {
     })).toBe(false);
   });
 
-  it('clears replace-snapshot published stores before fetching replacement shards', () => {
+  it('stages replace-snapshot published stores and commits only after replacement shards are fetched', () => {
     const source = readFileSync(new URL('./local-flatsql.worker.ts', import.meta.url), 'utf8');
     const resetIndex = source.indexOf('shouldResetPublishedSnapshotStore({');
-    const clearIndex = source.indexOf('await options.currentStore.clearStandard(options.request.standardId');
+    const stageIndex = source.indexOf('await options.currentStore.createStandardReplacementStore(options.request.standardId');
     const fetchIndex = source.indexOf('fetchPublishedSegmentsInOrder(options.segments');
+    const swapIndex = source.indexOf('await options.currentStore.replaceStandardFrom(options.request.standardId');
 
     expect(resetIndex).toBeGreaterThan(-1);
-    expect(clearIndex).toBeGreaterThan(resetIndex);
-    expect(fetchIndex).toBeGreaterThan(clearIndex);
+    expect(stageIndex).toBeGreaterThan(resetIndex);
+    expect(fetchIndex).toBeGreaterThan(stageIndex);
+    expect(swapIndex).toBeGreaterThan(fetchIndex);
   });
 
   it('seeds published shard range source preference with the manifest segment index', () => {

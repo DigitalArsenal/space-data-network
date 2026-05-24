@@ -117,9 +117,11 @@ export function shouldResetPublishedSnapshotStore(input: PublishedSnapshotResetI
   if ((input.retentionPolicy ?? '').trim() !== 'replace-snapshot') return false;
   const localRows = Math.max(0, Math.floor(input.localRows));
   const completedRows = Math.max(0, Math.floor(input.completedRows));
-  if (completedRows === 0) return localRows > 0;
   const totalRows = Math.max(0, Math.floor(input.totalRows));
-  if (totalRows > 0 && completedRows >= totalRows && localRows === completedRows) return false;
+  if (totalRows > 0 && completedRows >= totalRows) {
+    return localRows > completedRows;
+  }
+  if (completedRows === 0) return localRows > 0;
   return localRows !== completedRows;
 }
 
