@@ -454,5 +454,8 @@ describe('Data catalog UI source', () => {
     expect(syncFunction).toContain('retentionPolicyRequiresReset(initialProgress, retentionPolicy)');
     expect(syncFunction).toContain('retentionPolicy,');
     expect(syncFunction).toContain('clearLocalFlatSqlStore({');
+    expect(localDataScreenSource).toContain('PUBLISHED_SNAPSHOT_RECHECK_INTERVAL_MS');
+    expect(localDataScreenSource).toContain('publishedSnapshotCheckPulse += 1');
+    expect(localDataScreenSource).toContain('scheduleRowWithSnapshotPulse(row, snapshotCheckPulse)');
   });
 });
