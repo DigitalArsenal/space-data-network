@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertPublishedSegmentMaterializedRowCount,
+  completedPublishedRowsForSegments,
+  completedPublishedSegmentRowCounts,
   pendingPublishedSegmentItems,
+  publishedSnapshotProbeStartStatus,
+  publishedSegmentsForRetention,
   publishedSegmentBatchItems,
   shouldResetPublishedSnapshotStore,
   shouldPersistPublishedSegmentCheckpoint,
@@ -55,6 +59,14 @@ describe('published segment sync planning', () => {
       expectedRows: 50_000,
       materializedRows: 50_000,
     })).not.toThrow();
+
+    expect(() => assertPublishedSegmentMaterializedRowCount({
+      cid: 'bafy-cat-deduped',
+      standardId: 'CAT',
+      expectedRows: 50_000,
+      materializedRows: 15_900,
+      allowFewerRows: true,
+    })).not.toThrow();
   });
 
   it('guards the worker pin-ledger write with the materialized row-count check', () => {
@@ -100,6 +112,13 @@ describe('published segment sync planning', () => {
       totalRows: 69_050,
     })).toBe(false);
     expect(shouldResetPublishedSnapshotStore({
+      retentionPolicy: 'replace-snapshot',
+      localRows: 69_050,
+      completedRows: 69_050,
+      totalRows: 69_050,
+      requiresMaterializedKeyRepair: true,
+    })).toBe(true);
+    expect(shouldResetPublishedSnapshotStore({
       retentionPolicy: 'append-only',
       localRows: 972_000,
       completedRows: 0,
@@ -107,17 +126,90 @@ describe('published segment sync planning', () => {
     })).toBe(false);
   });
 
+  it('keeps completed published snapshot manifest checks visually stable', () => {
+    expect(publishedSnapshotProbeStartStatus({
+      hasPublishedManifest: true,
+      currentStatus: 'synced',
+    })).toBe('synced');
+    expect(publishedSnapshotProbeStartStatus({
+      hasPublishedManifest: true,
+      currentStatus: 'syncing',
+    })).toBe('syncing');
+    expect(publishedSnapshotProbeStartStatus({
+      hasPublishedManifest: false,
+      currentStatus: 'synced',
+    })).toBe('syncing');
+  });
+
+  it('uses only the current manifest head for replace-snapshot feeds', () => {
+    const segments = publishedSegmentsForRetention([
+      { index: 0, cid: 'bafy-old-a', rowCount: 15_000, feedHead: 'head-old-a' },
+      { index: 1, cid: 'bafy-old-b', rowCount: 15_100, feedHead: 'head-old-b' },
+      { index: 2, cid: 'bafy-current', rowCount: 15_900, feedHead: 'head-current' },
+    ], {
+      retentionPolicy: 'replace-snapshot',
+      manifestHead: 'head-current',
+    });
+
+    expect(segments).toEqual([
+      expect.objectContaining({ cid: 'bafy-current', rowCount: 15_900 }),
+    ]);
+    expect(publishedSegmentsForRetention(segments, {
+      retentionPolicy: 'append-only',
+      manifestHead: 'head-current',
+    })).toHaveLength(1);
+  });
+
+  it('uses the latest complete cursor chain for replace-snapshot manifests with retained history', () => {
+    const segments = publishedSegmentsForRetention([
+      { index: 0, cid: 'bafy-old-0', rowCount: 15_855, cursor: 'MA', nextCursor: 'MA', feedHead: 'old-0' },
+      { index: 1, cid: 'bafy-old-1', rowCount: 15_856, cursor: 'MA', nextCursor: 'MA', feedHead: 'old-1' },
+      { index: 2, cid: 'bafy-old-2', rowCount: 15_858, cursor: 'MA', nextCursor: 'MA', feedHead: 'old-2' },
+      { index: 7, cid: 'bafy-current-a', rowCount: 15_762, cursor: 'MA', nextCursor: 'NTAwMDA', feedHead: 'older-head' },
+      { index: 8, cid: 'bafy-current-b', rowCount: 32_315, cursor: 'NTAwMDA', nextCursor: '', feedHead: 'current-head' },
+    ], {
+      retentionPolicy: 'replace-snapshot',
+      manifestHead: 'current-head',
+    });
+
+    expect(segments.map((segment) => segment.cid)).toEqual([
+      'bafy-current-a',
+      'bafy-current-b',
+    ]);
+  });
+
+  it('counts completed replacement rows from the materialized pin ledger row counts', () => {
+    const rows = completedPublishedSegmentRowCounts([{
+      cid: 'bafy-current',
+      standardId: 'CAT',
+      schemaName: 'CAT.fbs',
+      role: 'shard',
+      rowCount: 15_900,
+      byteCount: 1,
+      verificationState: 'verified',
+      materializedAt: '2026-05-24T00:00:00.000Z',
+    }]);
+
+    expect(completedPublishedRowsForSegments(
+      [{ cid: 'bafy-current', rowCount: 32_315 }],
+      new Set(['bafy-current']),
+      rows,
+    )).toBe(15_900);
+  });
+
   it('stages replace-snapshot published stores and commits only after replacement shards are fetched', () => {
     const source = readFileSync(new URL('./local-flatsql.worker.ts', import.meta.url), 'utf8');
     const resetIndex = source.indexOf('shouldResetPublishedSnapshotStore({');
     const stageIndex = source.indexOf('await options.currentStore.createStandardReplacementStore(options.request.standardId');
     const fetchIndex = source.indexOf('fetchPublishedSegmentsInOrder(options.segments');
+    const completeIndex = source.indexOf('const replacementComplete = pendingPublishedSegmentItems(options.segments, completedSegmentCids).length === 0');
     const swapIndex = source.indexOf('await options.currentStore.replaceStandardFrom(options.request.standardId');
 
     expect(resetIndex).toBeGreaterThan(-1);
     expect(stageIndex).toBeGreaterThan(resetIndex);
     expect(fetchIndex).toBeGreaterThan(stageIndex);
-    expect(swapIndex).toBeGreaterThan(fetchIndex);
+    expect(completeIndex).toBeGreaterThan(fetchIndex);
+    expect(swapIndex).toBeGreaterThan(completeIndex);
   });
 
   it('seeds published shard range source preference with the manifest segment index', () => {

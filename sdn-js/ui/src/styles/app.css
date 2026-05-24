@@ -1949,6 +1949,7 @@ textarea,
   top: var(--sdn-explorer-header-height);
   z-index: 1;
   padding-block: var(--sdn-explorer-cell-pad-y);
+  overflow: visible;
 }
 
 .sdn-column-header-control {
@@ -1972,15 +1973,76 @@ textarea,
   font-size: var(--sdn-explorer-table-font-size);
 }
 
-.sdn-epoch-filter-range {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: clamp(0.08rem, 0.35cqw, 0.18rem);
+.sdn-epoch-filter-menu {
+  position: relative;
   min-width: 0;
 }
 
-.sdn-epoch-filter-range .sdn-column-filter {
-  padding-inline: clamp(0.02rem, 0.18cqw, 0.18rem);
+.sdn-epoch-filter-button {
+  width: 100%;
+  min-width: 0;
+  height: var(--sdn-explorer-filter-height);
+  min-height: var(--sdn-explorer-filter-height);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: var(--sdn-radius-sm);
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--sdn-text-muted);
+  font-size: var(--sdn-explorer-table-font-size);
+  font-weight: 750;
+  line-height: 1;
+  text-align: center;
+  cursor: pointer;
+}
+
+.sdn-epoch-filter-button.active,
+.sdn-epoch-filter-button:hover {
+  border-color: rgba(10, 132, 255, 0.75);
+  color: var(--sdn-text);
+  background: rgba(10, 132, 255, 0.16);
+}
+
+.sdn-epoch-filter-panel {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  z-index: 12;
+  width: min(18rem, calc(100vw - 2rem));
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  padding: 0.65rem;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: var(--sdn-radius-md);
+  background: rgba(17, 24, 39, 0.98);
+  box-shadow: 0 1rem 2.25rem rgba(0, 0, 0, 0.36);
+  color: var(--sdn-text);
+  text-transform: none;
+}
+
+.sdn-epoch-filter-panel label {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.sdn-epoch-filter-panel span {
+  color: var(--sdn-text-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.sdn-epoch-filter-panel .sdn-column-filter {
+  height: 2rem;
+  min-height: 2rem;
+  font-size: 0.76rem;
+  padding-inline: 0.35rem;
+}
+
+.sdn-epoch-filter-panel .sdn-button {
+  grid-column: 1 / -1;
+  justify-self: end;
+  height: 1.9rem;
 }
 
 .sdn-workbench-table .sdn-sort-button {

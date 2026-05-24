@@ -48,8 +48,11 @@ export interface DataDirectoryMigrationSource {
   dataSourceId: string;
   peerId: string;
   providerName: string;
+  providerId?: string | null;
   providerPublicKey: string | null;
+  sourceName?: string | null;
   legacyDataSourceIds?: string[];
+  defaultStandardIds?: string[];
   remoteRowsByStandard?: Record<string, number>;
 }
 
@@ -215,6 +218,56 @@ export function migrateSchemaSyncPreferencesToDataDirectory(
       syncFilter: '',
       queryProfile: DEFAULT_DATA_FEED_QUERY_PROFILE,
     });
+  }
+  return nextState;
+}
+
+export function ensureReplaceSnapshotDataFeedSubscriptions(
+  state: DataDirectoryState,
+  sources: DataDirectoryMigrationSource[],
+): DataDirectoryState {
+  let nextState = normalizeDataDirectoryState(state);
+  for (const source of sources) {
+    const dataSourceId = source.dataSourceId.trim();
+    const peerId = source.peerId.trim();
+    if (!dataSourceId || !peerId) continue;
+    const remoteRowsByStandard = new Map<string, number>();
+    for (const [standardId, rows] of Object.entries(source.remoteRowsByStandard ?? {})) {
+      const normalizedStandardId = normalizeStandardId(standardId);
+      if (!normalizedStandardId) continue;
+      remoteRowsByStandard.set(normalizedStandardId, Math.max(
+        remoteRowsByStandard.get(normalizedStandardId) ?? 0,
+        normalizeNonNegativeInteger(rows),
+      ));
+    }
+    const standardIds = new Set<string>();
+    for (const standardId of source.defaultStandardIds ?? []) standardIds.add(normalizeStandardId(standardId));
+    for (const [standardId, rows] of remoteRowsByStandard) {
+      if (rows > 0) standardIds.add(standardId);
+    }
+    for (const standardId of Array.from(standardIds).filter(Boolean).sort()) {
+      if (defaultDataFeedRetentionPolicy(standardId) !== 'replace-snapshot') continue;
+      if (nextState.subscriptions.some((subscription) => (
+        subscription.dataSourceId === dataSourceId
+        && subscription.standardId === standardId
+        && subscription.datastoreKey === null
+      ))) continue;
+      nextState = upsertDataFeedSubscription(nextState, {
+        dataSourceId,
+        peerId,
+        standardId,
+        providerName: source.providerName,
+        providerId: source.providerId,
+        providerPublicKey: source.providerPublicKey,
+        sourceName: source.sourceName,
+        remoteRows: remoteRowsByStandard.get(standardId) ?? 0,
+        storageCap: 1,
+        storageUnit: 'GB',
+        syncFilter: '',
+        queryProfile: DEFAULT_DATA_FEED_QUERY_PROFILE,
+        retentionPolicy: 'replace-snapshot',
+      });
+    }
   }
   return nextState;
 }
