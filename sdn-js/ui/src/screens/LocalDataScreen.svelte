@@ -2277,6 +2277,7 @@
         source: source?.publicKey ?? source?.peerId ?? source?.id ?? null,
         syncFilter,
         queryProfile,
+        retentionPolicy,
       }, (nextUpdate) => applyWorkerSchemaSyncUpdate(standardId, dataSourceId, datastoreKey, nextUpdate));
       applyWorkerSchemaSyncUpdate(standardId, dataSourceId, datastoreKey, update);
     } catch (error) {

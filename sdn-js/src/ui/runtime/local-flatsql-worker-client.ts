@@ -1,5 +1,6 @@
 import {
   createLocalFlatSqlStore,
+  type LocalFlatSqlClearOptions,
   type LocalFlatSqlIngestOptions,
   type LocalFlatSqlPinLedgerEntry,
   type LocalFlatSqlPinLedgerQuery,
@@ -73,6 +74,7 @@ export interface WorkerSchemaSyncRequest {
   source: string | null;
   syncFilter?: string;
   queryProfile?: string;
+  retentionPolicy?: string;
 }
 
 export interface WorkerSchemaSyncUpdate {
@@ -108,6 +110,7 @@ type WorkerRequest =
   | { id: number; type: 'init'; options: LocalFlatSqlStoreOptions }
   | { id: number; type: 'ingestRecords'; standardId: string; records: RawDataRecord[]; sourceOrOptions?: string | LocalFlatSqlIngestOptions | null }
   | { id: number; type: 'ingestFlatBufferStream'; standardId: string; streamBytes: Uint8Array; options?: LocalFlatSqlStreamIngestOptions | null }
+  | { id: number; type: 'clearStandard'; standardId: string; options?: LocalFlatSqlClearOptions }
   | { id: number; type: 'flush'; standardId?: string }
   | { id: number; type: 'query'; sql: string; standardId?: string; options?: LocalFlatSqlQueryOptions }
   | { id: number; type: 'getStats'; options?: LocalFlatSqlStatsOptions }
@@ -204,6 +207,10 @@ class WorkerLocalFlatSqlStoreClient implements WorkerLocalFlatSqlStore {
 
   async flush(standardId?: string): Promise<void> {
     await this.request<void>({ id: 0, type: 'flush', standardId });
+  }
+
+  async clearStandard(standardId: string, options?: LocalFlatSqlClearOptions): Promise<void> {
+    await this.request<void>({ id: 0, type: 'clearStandard', standardId, options });
   }
 
   query(sql: string, standardId?: string, options?: LocalFlatSqlQueryOptions): Promise<LocalFlatSqlQueryResult> {

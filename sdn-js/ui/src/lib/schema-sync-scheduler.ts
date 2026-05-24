@@ -97,7 +97,10 @@ export function sortedEnabledSchemaRows(rows: SchemaSyncScheduleRow[]): SchemaSy
 
 function shouldScheduleSchemaRow(row: SchemaSyncScheduleRow): boolean {
   if (row.preference.mode !== 'sync') return false;
-  if (row.retentionPolicy === 'replace-snapshot' && row.remoteRows > 0 && row.localRows !== row.remoteRows) return true;
+  if (row.retentionPolicy === 'replace-snapshot' && row.remoteRows > 0) {
+    if (row.queryProfile === 'dataset-publication-offset-v1') return true;
+    return row.localRows !== row.remoteRows;
+  }
   if (row.remoteRows > row.localRows) return true;
   return row.queryProfile === 'dataset-publication-offset-v1' && row.remoteRows === 0;
 }

@@ -1,4 +1,4 @@
-import type { FlatSQLDatabase } from 'flatsql/wasm';
+import type { FlatSQL, FlatSQLDatabase } from 'flatsql/wasm';
 
 import { validateReadOnlySql, type ReadOnlySqlValidationOptions } from './read-only-sql-sandbox';
 import type { RawDataRecord } from './sdn-backend';
@@ -106,6 +106,10 @@ export interface LocalFlatSqlPinLedgerWriteOptions {
   persist?: boolean;
 }
 
+export interface LocalFlatSqlClearOptions {
+  persist?: boolean;
+}
+
 export interface FlatSqlSizePrefixedStreamInfo {
   totalRecordCount: number;
   ingestRecordCount: number;
@@ -116,6 +120,7 @@ export interface FlatSqlSizePrefixedStreamInfo {
 export interface LocalFlatSqlStore {
   ingestRecords(standardId: string, records: RawDataRecord[], sourceOrOptions?: string | LocalFlatSqlIngestOptions | null): Promise<number>;
   ingestFlatBufferStream(standardId: string, streamBytes: Uint8Array, options?: LocalFlatSqlStreamIngestOptions | null): Promise<number>;
+  clearStandard(standardId: string, options?: LocalFlatSqlClearOptions): Promise<void>;
   flush(standardId?: string): Promise<void>;
   recordPinLedgerEntries(entries: LocalFlatSqlPinLedgerEntry[], options?: LocalFlatSqlPinLedgerWriteOptions): Promise<void>;
   listPinLedgerEntries(query?: LocalFlatSqlPinLedgerQuery): Promise<LocalFlatSqlPinLedgerEntry[]>;
@@ -181,7 +186,7 @@ export async function createLocalFlatSqlStore(options: LocalFlatSqlStoreOptions)
   const pinLedger = options.persistenceKey
     ? await readPersistedPinLedgerEntries(persistenceStore, persistedPinLedgerKey(options.persistenceKey))
     : new Map<string, LocalFlatSqlPinLedgerEntry>();
-  return new WasmLocalFlatSqlStore(states, options.persistenceKey ?? null, pinLedger, persistenceStore);
+  return new WasmLocalFlatSqlStore(states, options.persistenceKey ?? null, pinLedger, persistenceStore, flatsql);
 }
 
 export async function clearLocalFlatSqlStore(options: ClearLocalFlatSqlStoreOptions): Promise<void> {
@@ -223,6 +228,7 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     private readonly persistenceKey: string | null,
     private readonly pinLedger: Map<string, LocalFlatSqlPinLedgerEntry>,
     private readonly persistenceStore: LocalFlatSqlPersistenceStore,
+    private readonly flatsql: FlatSQL,
   ) {}
 
   async ingestRecords(
@@ -310,6 +316,17 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     return ingestedCount;
   }
 
+  async clearStandard(standardId: string, options: LocalFlatSqlClearOptions = {}): Promise<void> {
+    const state = this.stateForStandard(standardId);
+    state.db.destroy();
+    state.db = this.createDatabaseForSchema(state.schema);
+    state.ingestedKeys.clear();
+    state.cachedBytes = 0;
+    state.dirty = false;
+    this.deletePinLedgerEntriesForStandard(state.schema.standardId);
+    if (options.persist !== false) await this.deletePersistedStandard(state.schema.standardId);
+  }
+
   async flush(standardId?: string): Promise<void> {
     if (standardId) {
       await this.persistStandard(this.stateForStandard(standardId));
@@ -395,6 +412,12 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
     return state;
   }
 
+  private createDatabaseForSchema(schema: LocalFlatSqlSchema): FlatSQLDatabase {
+    const db = this.flatsql.createDatabase(stripFlatBufferComments(schema.schema), `sdn-${schema.standardId.toLowerCase()}`);
+    db.registerFileId(schema.fileId, schema.tableName);
+    return db;
+  }
+
   private async persistStandard(state: StandardDatabaseState): Promise<void> {
     const bytes = state.db.exportData();
     state.cachedBytes = bytes.byteLength;
@@ -406,7 +429,27 @@ class WasmLocalFlatSqlStore implements LocalFlatSqlStore {
 
   private async persistPinLedger(): Promise<void> {
     if (!this.persistenceKey) return;
+    if (this.pinLedger.size === 0) {
+      await this.persistenceStore.deleteKey(persistedPinLedgerKey(this.persistenceKey));
+      return;
+    }
     await writePersistedPinLedgerEntries(this.persistenceStore, persistedPinLedgerKey(this.persistenceKey), Array.from(this.pinLedger.values()));
+  }
+
+  private async deletePersistedStandard(standardId: string): Promise<void> {
+    if (!this.persistenceKey) return;
+    await this.persistenceStore.deleteKey(persistedStandardKey(this.persistenceKey, standardId));
+    await this.persistenceStore.deleteKey(persistedRecordKey(this.persistenceKey, standardId));
+    await this.persistPinLedger();
+  }
+
+  private deletePinLedgerEntriesForStandard(standardId: string): void {
+    const normalizedStandardId = normalizeStandardId(standardId);
+    for (const [key, entry] of this.pinLedger.entries()) {
+      if (normalizeStandardId(entry.standardId || entry.schemaName) === normalizedStandardId) {
+        this.pinLedger.delete(key);
+      }
+    }
   }
 
   private cachedBytesForState(state: StandardDatabaseState, includeCachedBytes: boolean): number {

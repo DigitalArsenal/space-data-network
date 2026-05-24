@@ -452,6 +452,7 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('value={selectedSubscriptionDetailSchema.retentionPolicy}');
     expect(syncFunction).toContain('const retentionPolicy = subscriptionRetentionPolicyFor(subscription, standardId);');
     expect(syncFunction).toContain('retentionPolicyRequiresReset(initialProgress, retentionPolicy)');
+    expect(syncFunction).toContain('retentionPolicy,');
     expect(syncFunction).toContain('clearLocalFlatSqlStore({');
   });
 });

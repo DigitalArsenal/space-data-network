@@ -1,5 +1,6 @@
 import {
   createLocalFlatSqlStore,
+  type LocalFlatSqlClearOptions,
   type LocalFlatSqlPinLedgerEntry,
   type LocalFlatSqlPinLedgerQuery,
   type LocalFlatSqlQueryOptions,
@@ -25,6 +26,7 @@ import {
   completedPublishedSegmentCids,
   pendingPublishedSegmentItems,
   publishedSegmentBatchItems,
+  shouldResetPublishedSnapshotStore,
   shouldPersistPublishedSegmentCheckpoint,
 } from './published-segment-sync';
 import { retryRemoteSyncOperation } from './remote-sync-retry';
@@ -46,6 +48,7 @@ type WorkerRequest =
   | { id: number; type: 'init'; options: LocalFlatSqlStoreOptions }
   | { id: number; type: 'ingestRecords'; standardId: string; records: RawDataRecord[]; sourceOrOptions?: unknown }
   | { id: number; type: 'ingestFlatBufferStream'; standardId: string; streamBytes: Uint8Array; options?: LocalFlatSqlStreamIngestOptions | null }
+  | { id: number; type: 'clearStandard'; standardId: string; options?: LocalFlatSqlClearOptions }
   | { id: number; type: 'flush'; standardId?: string }
   | { id: number; type: 'query'; sql: string; standardId?: string; options?: LocalFlatSqlQueryOptions }
   | { id: number; type: 'getStats'; options?: LocalFlatSqlStatsOptions }
@@ -117,6 +120,12 @@ async function handleRequest(request: WorkerRequest): Promise<void> {
           request.options,
         );
         postSuccess(request.id, ingested, await stats({ includeCachedBytes: false }));
+        return;
+      }
+      case 'clearStandard': {
+        const currentStore = requireStore();
+        await currentStore.clearStandard(request.standardId, request.options);
+        postSuccess(request.id, undefined, await stats({ includeCachedBytes: false }));
         return;
       }
       case 'flush': {
@@ -526,9 +535,43 @@ async function syncPublishedSegments(options: {
     role: 'shard',
     verificationState: 'verified',
   });
-  const completedSegmentCids = completedPublishedSegmentCids(completedEntries);
+  let completedSegmentCids = completedPublishedSegmentCids(completedEntries);
   let completedRows = completedPublishedRowsForSegments(options.segments, completedSegmentCids);
   let unpersistedBytes = 0;
+  if (shouldResetPublishedSnapshotStore({
+    retentionPolicy: options.request.retentionPolicy,
+    localRows,
+    completedRows,
+    totalRows,
+  })) {
+    const materializationStartedAt = Date.now();
+    await options.currentStore.clearStandard(options.request.standardId);
+    flatSqlMaterializationMs += Math.max(0, Date.now() - materializationStartedAt);
+    currentStats = await options.currentStore.getStats({ includeCachedBytes: false });
+    localRows = 0;
+    cachedBytes = 0;
+    completedSegmentCids = new Set<string>();
+    completedRows = 0;
+    verifiedChunks = [];
+    progress = progressFor(progress, {
+      status: 'syncing',
+      syncedRows: 0,
+      localRows: 0,
+      pinnedRows: 0,
+      cachedBytes: 0,
+      pinnedBytes: 0,
+      totalRows,
+      manifestDiscoveryMs: options.manifestDiscoveryMs,
+      flatSqlMaterializationMs,
+      providerPeerId: options.providerPeerId,
+      providerPublicKey: options.providerPublicKey,
+      queryProfile: 'dataset-publication-offset-v1',
+      syncFilter: options.request.syncFilter?.trim() || null,
+      verifiedChunks,
+      error: null,
+    });
+    postProgress(options.id, progress, currentStats);
+  }
   progress = progressFor(progress, {
     syncedRows: completedRows,
     localRows: completedRows,

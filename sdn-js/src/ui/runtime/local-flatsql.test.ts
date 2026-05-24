@@ -312,6 +312,85 @@ describe('local FlatSQL datastore', () => {
     ]);
   });
 
+  it('clears an active standard store and pin ledger before replacing a full snapshot', async () => {
+    const restoreIndexedDb = installMemoryIndexedDb();
+    try {
+      await clearLocalFlatSqlStore({
+        persistenceKey: 'replace-active-store',
+        standardIds: ['OMM'],
+      });
+
+      const first = await createLocalFlatSqlStore({
+        persistenceKey: 'replace-active-store',
+        schemas: [{
+          standardId: 'OMM',
+          tableName: 'OMM',
+          fileId: '$OMM',
+          schema: OMM_SCHEMA,
+        }],
+      });
+      const stream = flatSqlSizePrefixedStream([stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES)]);
+      await first.ingestFlatBufferStream('OMM', stream, {
+        persist: false,
+        recordKeyPrefix: 'published:bafyold',
+      });
+      await first.recordPinLedgerEntries([{
+        cid: 'bafyold',
+        standardId: 'OMM',
+        schemaName: 'OMM.fbs',
+        providerPeerId: '16Uiu2HCelesTrak',
+        providerPublicKey: 'provider-public-key',
+        providerId: 'space-data-network-02',
+        sourceName: 'celestrak-gp',
+        batchId: 'old-source-sha',
+        queryProfile: 'dataset-publication-offset-v1',
+        snapshotId: 'old-head',
+        head: 'old-head',
+        highWaterMark: 'old-head:1',
+        role: 'shard',
+        rowCount: 1,
+        byteCount: stream.byteLength,
+        verificationState: 'verified',
+        materializedAt: '2026-05-12T00:00:00.000Z',
+        verifiedAt: '2026-05-12T00:00:00.000Z',
+        updatedAt: '2026-05-12T00:00:00.000Z',
+      }], { persist: false });
+
+      await first.clearStandard('OMM');
+
+      expect(first.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([]);
+      expect(first.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+        recordCount: 0,
+        ingestedRecordCount: 0,
+        pinnedRows: 0,
+        pinnedBytes: 0,
+        cachedBytes: 0,
+      }));
+      await expect(first.listPinLedgerEntries({ standardId: 'OMM' })).resolves.toEqual([]);
+
+      await first.ingestFlatBufferStream('OMM', stream, {
+        recordKeyPrefix: 'published:bafynew',
+      });
+      await first.flush('OMM');
+      first.destroy();
+
+      const loaded = await createLocalFlatSqlStore({
+        persistenceKey: 'replace-active-store',
+        schemas: [{
+          standardId: 'OMM',
+          tableName: 'OMM',
+          fileId: '$OMM',
+          schema: OMM_SCHEMA,
+        }],
+      });
+      expect(loaded.query('SELECT NORAD_CAT_ID FROM OMM LIMIT 10', 'OMM').records).toEqual([{ NORAD_CAT_ID: 56775 }]);
+      await expect(loaded.listPinLedgerEntries({ standardId: 'OMM' })).resolves.toEqual([]);
+      loaded.destroy();
+    } finally {
+      restoreIndexedDb();
+    }
+  });
+
   it('decodes FlatSQL sync streams with zero-copy record views', () => {
     const first = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
     const stream = flatSqlSizePrefixedStream([first]);
