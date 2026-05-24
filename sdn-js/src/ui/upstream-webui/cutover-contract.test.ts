@@ -38,6 +38,7 @@ describe('sdn upstream webui cutover contract', () => {
       'lib/data-loading-labels.ts',
       'lib/node-identity-session.ts',
       'lib/routes.ts',
+      'lib/schema-sync-activity.ts',
       'lib/schema-sync-labels.ts',
       'lib/schema-sync-scheduler.ts',
       'main.ts',
