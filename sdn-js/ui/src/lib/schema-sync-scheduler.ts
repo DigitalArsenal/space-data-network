@@ -5,6 +5,7 @@ export interface SchemaSyncScheduleRow {
   syncFilter?: string;
   queryProfile?: string;
   retentionPolicy?: string;
+  snapshotCheckPulse?: number;
   localRows: number;
   remoteRows: number;
   preference: {
@@ -115,6 +116,7 @@ function schemaSyncScheduleSignature(rows: SchemaSyncScheduleRow[], dataSourceId
       row.syncFilter?.trim() ?? '',
       row.queryProfile?.trim() ?? '',
       row.retentionPolicy?.trim() ?? '',
+      row.snapshotCheckPulse ?? '',
       row.localRows,
       row.remoteRows,
       row.preference.storageCap,

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { decodeCatFlatBuffer } from '../../../src/ui/runtime/cat-flatbuffer';
   import { decodeEpmFlatBuffer } from '../../../src/ui/runtime/epm-flatbuffer';
   import {
@@ -302,6 +302,7 @@
   const DEFAULT_PAGE_SIZE = 10;
   const SYNC_PAGE_SIZE = 50_000;
   const SYNC_PERSIST_RECORD_INTERVAL = 100_000;
+  const PUBLISHED_SNAPSHOT_RECHECK_INTERVAL_MS = 60_000;
   const UI_REMOTE_TIMEOUT_MS = 8_000;
   const UI_LOCAL_QUERY_TIMEOUT_MS = 5_000;
   const LOCAL_EXPLORER_FILTER_DEBOUNCE_MS = 180;
@@ -738,6 +739,7 @@
   let cachedDataPageViewSignature = cachedDataPageView ? dataPageViewSignature(cachedDataPageView) : '';
   let schemaSyncPreferences: Record<string, SchemaSyncPreference> = loadSchemaSyncPreferences();
   let schemaSyncProgress: Record<string, SchemaSyncProgress> = loadSchemaSyncProgress();
+  let publishedSnapshotCheckPulse = 0;
   let activeSyncKeys = new Set<string>();
   let pausedSyncKeys = new Set<string>();
   let selectedPnmRow: WorkbenchRow | null = null;
@@ -866,7 +868,7 @@
     void initializeDataExplorer();
   }
 
-  $: scheduleSubscribedSchemaSyncs(schemaSyncRows, backend, dataPageLoading, dataSourceOptions);
+  $: scheduleSubscribedSchemaSyncs(schemaSyncRows, backend, dataPageLoading, dataSourceOptions, publishedSnapshotCheckPulse);
 
   $: syncInspectRoute(route, backend);
 
@@ -2026,6 +2028,13 @@
     }
   }
 
+  onMount(() => {
+    const timer = setInterval(() => {
+      publishedSnapshotCheckPulse += 1;
+    }, PUBLISHED_SNAPSHOT_RECHECK_INTERVAL_MS);
+    return () => clearInterval(timer);
+  });
+
   onDestroy(() => {
     clearPinVerifyToastTimer();
     clearLocalExplorerQueryTimer();
@@ -2099,6 +2108,7 @@
     activeBackend: SdnBackend | null = backend,
     pageLoading = dataPageLoading,
     sources: DataSourceOption[] = dataSourceOptions,
+    snapshotCheckPulse = publishedSnapshotCheckPulse,
   ): void {
     if (!activeBackend || pageLoading) return;
     const availableSourceIds = new Set(sources.map((source) => source.id));
@@ -2109,8 +2119,16 @@
       bySource.set(row.dataSourceId, [...bySource.get(row.dataSourceId) ?? [], row]);
     }
     for (const [dataSourceId, sourceRows] of bySource) {
-      void schemaSyncSchedulerForDataSource(dataSourceId).schedule(sourceRows, dataSourceId);
+      void schemaSyncSchedulerForDataSource(dataSourceId).schedule(
+        sourceRows.map((row) => scheduleRowWithSnapshotPulse(row, snapshotCheckPulse)),
+        dataSourceId,
+      );
     }
+  }
+
+  function scheduleRowWithSnapshotPulse(row: SchemaSyncRow, snapshotCheckPulse: number): SchemaSyncRow & { snapshotCheckPulse?: number } {
+    if (row.retentionPolicy !== 'replace-snapshot' || row.queryProfile !== 'dataset-publication-offset-v1') return row;
+    return { ...row, snapshotCheckPulse };
   }
 
   function schemaSyncSchedulerForDataSource(dataSourceId: string): typeof schemaSyncScheduler {

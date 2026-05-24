@@ -227,6 +227,40 @@ describe('schema sync scheduler', () => {
       ['CAT', 'configured:space-data-network-02', 'configured:space-data-network-02:CAT'],
     ]);
   });
+
+  it('reschedules published replace-snapshot feeds when their manifest check pulse changes', async () => {
+    const calls: Array<[string, string, string | undefined]> = [];
+    const scheduler = createSchemaSyncScheduler({
+      syncSchema: (standardId, dataSourceId, subscriptionId) => {
+        calls.push([standardId, dataSourceId, subscriptionId]);
+      },
+    });
+    const baseRow = {
+      id: 'CAT',
+      subscriptionId: 'configured:space-data-network-02:CAT',
+      localRows: 69_050,
+      remoteRows: 69_050,
+      queryProfile: 'dataset-publication-offset-v1',
+      retentionPolicy: 'replace-snapshot',
+      preference: {
+        mode: 'sync' as const,
+        storageCap: 1,
+        storageUnit: 'GB',
+      },
+    };
+
+    await scheduler.schedule([{ ...baseRow, snapshotCheckPulse: 0 }], 'configured:space-data-network-02');
+    await scheduler.idle();
+    await scheduler.schedule([{ ...baseRow, snapshotCheckPulse: 0 }], 'configured:space-data-network-02');
+    await scheduler.idle();
+    await scheduler.schedule([{ ...baseRow, snapshotCheckPulse: 1 }], 'configured:space-data-network-02');
+    await scheduler.idle();
+
+    expect(calls).toEqual([
+      ['CAT', 'configured:space-data-network-02', 'configured:space-data-network-02:CAT'],
+      ['CAT', 'configured:space-data-network-02', 'configured:space-data-network-02:CAT'],
+    ]);
+  });
 });
 
 function row(id: string, localRows: number, remoteRows: number) {
