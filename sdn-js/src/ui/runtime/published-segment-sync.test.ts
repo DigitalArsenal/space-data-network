@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 import {
   assertPublishedSegmentMaterializedRowCount,
   completedPublishedRowsForSegments,
-  completedPublishedSegmentRowCounts,
   pendingPublishedSegmentItems,
   publishedSnapshotProbeStartStatus,
   publishedSegmentsForRetention,
@@ -61,12 +60,11 @@ describe('published segment sync planning', () => {
     })).not.toThrow();
 
     expect(() => assertPublishedSegmentMaterializedRowCount({
-      cid: 'bafy-cat-deduped',
+      cid: 'bafy-cat-short',
       standardId: 'CAT',
       expectedRows: 50_000,
       materializedRows: 15_900,
-      allowFewerRows: true,
-    })).not.toThrow();
+    })).toThrow('published shard bafy-cat-short materialized 15,900/50,000 CAT rows');
   });
 
   it('guards the worker pin-ledger write with the materialized row-count check', () => {
@@ -111,13 +109,6 @@ describe('published segment sync planning', () => {
       completedRows: 69_050,
       totalRows: 69_050,
     })).toBe(false);
-    expect(shouldResetPublishedSnapshotStore({
-      retentionPolicy: 'replace-snapshot',
-      localRows: 69_050,
-      completedRows: 69_050,
-      totalRows: 69_050,
-      requiresMaterializedKeyRepair: true,
-    })).toBe(true);
     expect(shouldResetPublishedSnapshotStore({
       retentionPolicy: 'append-only',
       localRows: 972_000,
@@ -178,23 +169,11 @@ describe('published segment sync planning', () => {
     ]);
   });
 
-  it('counts completed replacement rows from the materialized pin ledger row counts', () => {
-    const rows = completedPublishedSegmentRowCounts([{
-      cid: 'bafy-current',
-      standardId: 'CAT',
-      schemaName: 'CAT.fbs',
-      role: 'shard',
-      rowCount: 15_900,
-      byteCount: 1,
-      verificationState: 'verified',
-      materializedAt: '2026-05-24T00:00:00.000Z',
-    }]);
-
+  it('counts completed replacement rows from the published segment manifest', () => {
     expect(completedPublishedRowsForSegments(
       [{ cid: 'bafy-current', rowCount: 32_315 }],
       new Set(['bafy-current']),
-      rows,
-    )).toBe(15_900);
+    )).toBe(32_315);
   });
 
   it('stages replace-snapshot published stores and commits only after replacement shards are fetched', () => {

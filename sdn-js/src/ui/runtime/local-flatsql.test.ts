@@ -170,7 +170,7 @@ describe('local FlatSQL datastore', () => {
     }));
   });
 
-  it('dedupes CAT replacement streams by NORAD catalog ID', async () => {
+  it('preserves CAT replacement stream rows exactly as published', async () => {
     const store = await createLocalFlatSqlStore({
       schemas: [{
         standardId: 'CAT',
@@ -205,15 +205,16 @@ describe('local FlatSQL datastore', () => {
       persist: false,
     });
 
-    expect(ingested).toBe(2);
+    expect(ingested).toBe(3);
     expect(store.query('SELECT OBJECT_NAME, NORAD_CAT_ID FROM CAT ORDER BY NORAD_CAT_ID DESC LIMIT 10', 'CAT').records).toEqual([
       { OBJECT_NAME: 'ISS (ZARYA)', NORAD_CAT_ID: 25544 },
+      { OBJECT_NAME: 'ISS (ZARYA) DUPLICATE', NORAD_CAT_ID: 25544 },
       { OBJECT_NAME: 'HST', NORAD_CAT_ID: 20580 },
     ]);
     expect(store.query(
       'SELECT NORAD_CAT_ID, COUNT(*) AS c FROM CAT WHERE NORAD_CAT_ID = 25544 GROUP BY NORAD_CAT_ID',
       'CAT',
-    ).records).toEqual([{ NORAD_CAT_ID: 25544, c: 1 }]);
+    ).records).toEqual([{ NORAD_CAT_ID: 25544, c: 2 }]);
     store.destroy();
   });
 
