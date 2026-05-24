@@ -56,8 +56,12 @@
     nextSchemaSyncStallState,
   } from '../../../src/ui/runtime/schema-sync-stall';
   import { preferredDataSummarySource } from '../../../src/ui/runtime/peer-data-feeds';
-  import { syncRowCountSummary, syncRowCountSummaryLabel } from '../../../src/ui/runtime/sync-progress';
+  import { syncRowCountSummary, syncRowCountSummaryLabel, type SyncRowCountSummary } from '../../../src/ui/runtime/sync-progress';
   import { createSchemaSyncScheduler } from '../lib/schema-sync-scheduler';
+  import {
+    effectivePublishedRemoteRows,
+    shouldRunPublishedSnapshotProbe,
+  } from '../lib/schema-sync-activity';
   import {
     effectiveSchemaSyncStatus,
     schemaSyncStatusLabel as formatSchemaSyncStatusLabel,
@@ -745,6 +749,7 @@
   let schemaSyncProgress: Record<string, SchemaSyncProgress> = loadSchemaSyncProgress();
   let publishedSnapshotCheckPulse = 0;
   let activeSyncKeys = new Set<string>();
+  let activeSnapshotProbeKeys = new Set<string>();
   let pausedSyncKeys = new Set<string>();
   let selectedPnmRow: WorkbenchRow | null = null;
   let pnmFileIdQuery = '';
@@ -769,22 +774,22 @@
   $: liveSchemaSyncRows = buildSubscribedSchemaSyncRows(dataDirectoryState.subscriptions, selectedDataSourceId, selectedDatastoreKey, localFlatSqlStats, localFlatSqlStatsLoaded, schemaSyncPreferences, dataSummary, dataScan, dataPageLoading, selectedStandardId);
   $: dataPageCacheActive = shouldUseCachedDataPageView(cachedDataPageView, liveSchemaSyncRows, dataPageLoading);
   $: schemaSyncRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.schemaSyncRows : liveSchemaSyncRows;
-  $: messageTypeRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.messageTypeRows : sortedMessageTypeRows(schemaSyncRows);
-  $: sourceProvenanceRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.sourceProvenanceRows : buildSourceProvenanceRows(dataSourceOptions, schemaSyncRows, dataDirectoryState.peerTrust);
+  $: messageTypeRows = sortedMessageTypeRows(schemaSyncRows);
+  $: sourceProvenanceRows = buildSourceProvenanceRows(dataSourceOptions, schemaSyncRows, dataDirectoryState.peerTrust);
   $: subscribedSourceOptions = buildSubscribedSourceOptions(schemaSyncRows);
   $: selectedExplorerSourceKey = subscriptionSourceKey(selectedDataSourceId, selectedDatastoreKey);
   $: subscribedStandardOptions = schemaSyncRows.filter((row) => subscriptionSourceKey(row.dataSourceId, row.datastoreKey) === subscriptionSourceKey(selectedDataSourceId, selectedDatastoreKey));
   $: activeStorageRows = schemaSyncRows.filter((row) => row.preference.mode === 'sync');
   $: activeStorageRemoteRows = activeStorageRows.reduce((total, row) => total + row.remoteRows, 0);
-  $: activeStorageLocalRows = activeStorageRows.reduce((total, row) => total + row.localRows, 0);
+  $: activeStorageLocalRows = activeStorageRows.reduce((total, row) => total + schemaEffectiveLocalRows(row), 0);
   $: activeStorageCachedBytes = activeStorageRows.reduce((total, row) => total + row.cachedBytes, 0);
   $: activeStoragePinnedRows = activeStorageRows.reduce((total, row) => total + row.progress.pinnedRows, 0);
-  $: dataCatalogRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.dataCatalogRows : buildCatalogRows(schemaSyncRows);
-  $: dataCatalogSummary = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.dataCatalogSummary : summarizeDataCatalog(dataCatalogRows);
-  $: dataOverviewVisuals = dataPageCacheActive && cachedDataPageView ? cachedOverviewVisualsForGroup(cachedDataPageView.dataOverviewVisuals, overviewStorageGroup) : buildDataOverviewVisuals(dataCatalogRows, overviewStorageGroup);
-  $: billingDataRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingDataRows : dataCatalogRows.filter(catalogRowHasBillingData);
-  $: billingProviderRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingProviderRows : buildDataBillingProviderRows(dataCatalogRows);
-  $: activityRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.activityRows : buildDataActivityRows(schemaSyncRows, dataCatalogRows);
+  $: dataCatalogRows = buildCatalogRows(schemaSyncRows);
+  $: dataCatalogSummary = summarizeDataCatalog(dataCatalogRows);
+  $: dataOverviewVisuals = buildDataOverviewVisuals(dataCatalogRows, overviewStorageGroup);
+  $: billingDataRows = dataCatalogRows.filter(catalogRowHasBillingData);
+  $: billingProviderRows = buildDataBillingProviderRows(dataCatalogRows);
+  $: activityRows = buildDataActivityRows(schemaSyncRows, dataCatalogRows);
   $: filteredSubscriptionRows = filterSubscriptionRows(schemaSyncRows, subscriptionFilterState(), subscriptionSearchText);
   $: catalogFilterActiveTotal = Number(catalogAccessFilter !== 'all') + Number(catalogSyncFilter !== 'all') + Number(catalogStorageFilter !== 'all');
   $: catalogFilterButtonText = catalogFilterActiveTotal > 0 ? `Filters (${catalogFilterActiveTotal})` : 'Filters';
@@ -1456,25 +1461,28 @@
   }
 
   function buildCatalogRows(rows: SchemaSyncRow[]): DataCatalogRow[] {
-    return buildDataCatalogRows(rows.map((row) => ({
-      subscriptionId: row.subscriptionId,
-      dataSourceId: row.dataSourceId,
-      datastoreKey: row.datastoreKey,
-      standardId: row.id,
-      providerName: row.providerName,
-      providerPeerId: row.providerPeerId,
-      providerPublicKey: row.providerPublicKey,
-      remoteRows: row.remoteRows,
-      localRows: row.localRows,
-      pinnedRows: row.progress.pinnedRows,
-      cachedBytes: row.cachedBytes,
-      storageCap: row.preference.storageCap,
-      storageUnit: row.preference.storageUnit,
-      syncStatus: row.progress.status,
-      nextSyncAttempt: nextSyncAttemptLabel(row),
-      lastSyncedAt: row.progress.lastSyncedAt,
-      syncFilter: row.syncFilter,
-    })));
+    return buildDataCatalogRows(rows.map((row) => {
+      const rowCounts = schemaEffectiveRowCounts(row);
+      return {
+        subscriptionId: row.subscriptionId,
+        dataSourceId: row.dataSourceId,
+        datastoreKey: row.datastoreKey,
+        standardId: row.id,
+        providerName: row.providerName,
+        providerPeerId: row.providerPeerId,
+        providerPublicKey: row.providerPublicKey,
+        remoteRows: rowCounts.totalRows,
+        localRows: rowCounts.syncedRows,
+        pinnedRows: rowCounts.pinnedRows,
+        cachedBytes: row.cachedBytes,
+        storageCap: row.preference.storageCap,
+        storageUnit: row.preference.storageUnit,
+        syncStatus: row.progress.status,
+        nextSyncAttempt: nextSyncAttemptLabel(row),
+        lastSyncedAt: row.progress.lastSyncedAt,
+        syncFilter: row.syncFilter,
+      };
+    }));
   }
 
   function schemaForCatalogRow(row: DataCatalogRow): SchemaSyncRow | null {
@@ -1990,10 +1998,8 @@
     pausedSyncKeys = new Set(pausedSyncKeys).add(key);
     updateSchemaSyncPreference(schema.id, { mode: 'preview' }, schema.dataSourceId, schema.datastoreKey);
     schemaSyncSchedulerForDataSource(schema.dataSourceId).reset();
-    if (activeSyncKeys.has(key)) {
-      const nextActive = new Set(activeSyncKeys);
-      nextActive.delete(key);
-      activeSyncKeys = nextActive;
+    if (schemaSyncKeyRunning(key)) {
+      clearSchemaSyncActiveState(key);
       resetLocalFlatSqlStore();
     }
     refreshSchemaSyncProgress(schema.id, {
@@ -2020,9 +2026,7 @@
     const nextPaused = new Set(pausedSyncKeys);
     nextPaused.delete(key);
     pausedSyncKeys = nextPaused;
-    const nextActive = new Set(activeSyncKeys);
-    nextActive.delete(key);
-    activeSyncKeys = nextActive;
+    clearSchemaSyncActiveState(key);
     if (stalled) resetLocalFlatSqlStore();
     updateSchemaSyncPreference(schema.id, { mode: 'sync' }, schema.dataSourceId, schema.datastoreKey);
     refreshSchemaSyncProgress(schema.id, {
@@ -2200,6 +2204,35 @@
     return { ...row, snapshotCheckPulse };
   }
 
+  function schemaSyncKeyRunning(key: string): boolean {
+    return activeSyncKeys.has(key) || activeSnapshotProbeKeys.has(key);
+  }
+
+  function setSchemaSyncActive(key: string): void {
+    activeSyncKeys = new Set(activeSyncKeys).add(key);
+    const nextProbe = new Set(activeSnapshotProbeKeys);
+    nextProbe.delete(key);
+    activeSnapshotProbeKeys = nextProbe;
+  }
+
+  function setSchemaSyncProbeActive(key: string): void {
+    activeSnapshotProbeKeys = new Set(activeSnapshotProbeKeys).add(key);
+  }
+
+  function clearSchemaSyncActiveState(key: string): void {
+    const nextActive = new Set(activeSyncKeys);
+    nextActive.delete(key);
+    activeSyncKeys = nextActive;
+    const nextProbe = new Set(activeSnapshotProbeKeys);
+    nextProbe.delete(key);
+    activeSnapshotProbeKeys = nextProbe;
+  }
+
+  function promoteSnapshotProbeToVisibleSync(key: string): void {
+    if (!activeSnapshotProbeKeys.has(key)) return;
+    setSchemaSyncActive(key);
+  }
+
   function schemaSyncSchedulerForDataSource(dataSourceId: string): typeof schemaSyncScheduler {
     const existing = schemaSyncSchedulers.get(dataSourceId);
     if (existing) return existing;
@@ -2299,20 +2332,20 @@
     const preference = subscription
       ? subscriptionSchemaSyncPreference(subscription)
       : schemaSyncPreferenceFor(dataSourceId, standardId, datastoreKey);
-    if (preference.mode !== 'sync' || activeSyncKeys.has(key)) return;
+    if (preference.mode !== 'sync' || schemaSyncKeyRunning(key)) return;
     if (pausedSyncKeys.has(key)) return;
 
     const source = dataSourceOptionForId(dataSourceId);
     const backendConfig = backendConfigForDataSource(source, datastoreKey, subscription);
     if (!backendConfig) return;
-    const remoteRows = subscription?.remoteRows ?? remoteRowsForSubscription(dataSourceId, standardId, datastoreKey) ?? totalRowsForStandardId(dataSummary, standardId) ?? 0;
+    const advertisedRemoteRows = subscription?.remoteRows ?? remoteRowsForSubscription(dataSourceId, standardId, datastoreKey) ?? totalRowsForStandardId(dataSummary, standardId) ?? 0;
     const syncFilter = subscription?.syncFilter ?? syncFilterForSubscription(dataSourceId, standardId, datastoreKey);
     const queryProfile = subscriptionQueryProfileFor(subscription);
     const retentionPolicy = subscriptionRetentionPolicyFor(subscription, standardId);
     let initialProgress = schemaSyncProgressFor(
       dataSourceId,
       standardId,
-      remoteRows,
+      advertisedRemoteRows,
       localFlatSqlStats,
       selectedDataSourceId === dataSourceId && selectedDatastoreKey === datastoreKey,
       datastoreKey,
@@ -2332,26 +2365,45 @@
       initialProgress = schemaSyncProgressFor(
         dataSourceId,
         standardId,
-        remoteRows,
+        advertisedRemoteRows,
         localFlatSqlStats,
         selectedDataSourceId === dataSourceId && selectedDatastoreKey === datastoreKey,
         datastoreKey,
       );
     }
-    activeSyncKeys = new Set(activeSyncKeys).add(key);
-    refreshSchemaSyncProgress(standardId, {
-      status: 'syncing',
-      error: null,
-      totalRows: remoteRows,
-      providerPeerId: source?.peerId ?? null,
-      providerPublicKey: source?.publicKey ?? null,
-      syncFilter: syncFilter || null,
-    }, dataSourceId, datastoreKey);
+    const remoteRows = remoteRowsForActiveSchemaSync(subscription, initialProgress, advertisedRemoteRows);
+    const snapshotProbe = shouldRunPublishedSnapshotProbe({
+      queryProfile,
+      retentionPolicy,
+      progressQueryProfile: initialProgress.queryProfile,
+      progressStatus: initialProgress.status,
+      localRows: initialProgress.localRows,
+      totalRows: initialProgress.totalRows,
+    });
+    if (snapshotProbe) {
+      setSchemaSyncProbeActive(key);
+    } else {
+      setSchemaSyncActive(key);
+      refreshSchemaSyncProgress(standardId, {
+        status: 'syncing',
+        error: null,
+        totalRows: remoteRows,
+        providerPeerId: source?.peerId ?? null,
+        providerPublicKey: source?.publicKey ?? null,
+        syncFilter: syncFilter || null,
+      }, dataSourceId, datastoreKey);
+    }
 
     let store: WorkerLocalFlatSqlStore | null = null;
     try {
       store = await ensureLocalFlatSqlStore(dataSourceId, datastoreKey);
       if (!store) throw new Error('FlatSQL initialization failed');
+      const handleWorkerSchemaSyncUpdate = (nextUpdate: WorkerSchemaSyncUpdate) => {
+        if (snapshotProbe && nextUpdate.progress.status === 'syncing') {
+          promoteSnapshotProbeToVisibleSync(key);
+        }
+        applyWorkerSchemaSyncUpdate(standardId, dataSourceId, datastoreKey, nextUpdate);
+      };
       const update = await store.syncSchema({
         standardId,
         schema: schemaNameForStandardId(standardId),
@@ -2365,10 +2417,11 @@
         syncFilter,
         queryProfile,
         retentionPolicy,
-      }, (nextUpdate) => applyWorkerSchemaSyncUpdate(standardId, dataSourceId, datastoreKey, nextUpdate));
-      applyWorkerSchemaSyncUpdate(standardId, dataSourceId, datastoreKey, update);
+      }, handleWorkerSchemaSyncUpdate);
+      handleWorkerSchemaSyncUpdate(update);
     } catch (error) {
       if (pausedSyncKeys.has(key)) {
+        clearSchemaSyncActiveState(key);
         refreshSchemaSyncProgress(standardId, {
           status: 'idle',
           error: null,
@@ -2386,9 +2439,7 @@
         await refreshLocalFlatSqlStats();
       }
     } finally {
-      const nextActive = new Set(activeSyncKeys);
-      nextActive.delete(key);
-      activeSyncKeys = nextActive;
+      clearSchemaSyncActiveState(key);
     }
   }
 
@@ -2526,9 +2577,7 @@
         desktopPersistenceBaseUrl: localFlatSqlDesktopPersistenceBaseUrl(),
       });
       clearSchemaSyncProgressForSubscription(dataSourceId, standardId, schema.datastoreKey);
-      const nextActive = new Set(activeSyncKeys);
-      nextActive.delete(schemaSyncPreferenceKey(dataSourceId, standardId, schema.datastoreKey));
-      activeSyncKeys = nextActive;
+      clearSchemaSyncActiveState(schemaSyncPreferenceKey(dataSourceId, standardId, schema.datastoreKey));
       schemaSyncSchedulerForDataSource(dataSourceId).reset();
       rawRecords = [];
       dataScan = null;
@@ -3042,14 +3091,25 @@
   }
 
   function remoteRowsForSchemaSyncRow(subscription: DataFeedSubscription, progress: SchemaSyncProgress): number {
-    if (
-      normalizeDataQueryProfile(subscription.queryProfile) === 'dataset-publication-offset-v1'
-      && progress.queryProfile === 'dataset-publication-offset-v1'
-      && progress.totalRows > 0
-    ) {
-      return progress.totalRows;
-    }
-    return Math.max(subscription.remoteRows, progress.totalRows);
+    return effectivePublishedRemoteRows({
+      queryProfile: normalizeDataQueryProfile(subscription.queryProfile),
+      progressQueryProfile: progress.queryProfile,
+      advertisedRemoteRows: subscription.remoteRows,
+      progressTotalRows: progress.totalRows,
+    });
+  }
+
+  function remoteRowsForActiveSchemaSync(
+    subscription: DataFeedSubscription | null,
+    progress: SchemaSyncProgress,
+    advertisedRemoteRows: number,
+  ): number {
+    return effectivePublishedRemoteRows({
+      queryProfile: subscription ? normalizeDataQueryProfile(subscription.queryProfile) : progress.queryProfile,
+      progressQueryProfile: progress.queryProfile,
+      advertisedRemoteRows,
+      progressTotalRows: progress.totalRows,
+    });
   }
 
   function buildSubscribedSourceOptions(rows: SchemaSyncRow[]): ExplorerSourceOption[] {
@@ -3125,7 +3185,7 @@
       row.publicKey = row.publicKey ?? schema.providerPublicKey;
       row.products.add(schema.id);
       row.remoteRows += Math.max(schema.remoteRows, 0);
-      row.localRows += Math.max(schema.localRows, 0);
+      row.localRows += schemaEffectiveLocalRows(schema);
       row.subscribed = true;
       if (schema.sourceName) row.sourceDatastores.add(schema.sourceName);
       if (schema.datastoreKey) row.sourceDatastores.add(schema.datastoreKey);
@@ -4111,15 +4171,23 @@
 
   function syncProgressLabel(schema: SchemaSyncRow): string {
     if (isSchemaRemoteRowsLoading(schema)) return 'Loading';
-    const rowCounts = syncRowCountSummary({
+    const rowCounts = schemaEffectiveRowCounts(schema);
+    if (rowCounts.totalRows === 0) return 'No remote rows';
+    return syncRowCountSummaryLabel(rowCounts);
+  }
+
+  function schemaEffectiveRowCounts(schema: SchemaSyncRow): SyncRowCountSummary {
+    return syncRowCountSummary({
       localRows: schema.localRows,
       syncedRows: schema.progress.syncedRows,
       pinnedRows: schema.progress.pinnedRows,
       remoteRows: schema.remoteRows,
       totalRows: schema.progress.totalRows,
     });
-    if (rowCounts.totalRows === 0) return 'No remote rows';
-    return syncRowCountSummaryLabel(rowCounts);
+  }
+
+  function schemaEffectiveLocalRows(schema: SchemaSyncRow): number {
+    return schemaEffectiveRowCounts(schema).syncedRows;
   }
 
   function loadingSchemaDataLabel(schema: SchemaSyncRow, formattedValue: string): string {
@@ -4127,7 +4195,7 @@
   }
 
   function schemaCompactRowsLabel(schema: SchemaSyncRow): string {
-    const rows = Math.max(schema.localRows, schema.remoteRows, schema.progress.totalRows);
+    const rows = schemaEffectiveRowCounts(schema).totalRows;
     return loadingSchemaDataLabel(schema, `${formatNumber(rows)} rows`);
   }
 
@@ -4136,7 +4204,7 @@
   }
 
   function schemaLocalRowsLabel(schema: SchemaSyncRow): string {
-    return formatNumber(schema.localRows);
+    return formatNumber(schemaEffectiveLocalRows(schema));
   }
 
   function schemaPinnedRowsLabel(schema: SchemaSyncRow): string {
@@ -4184,7 +4252,7 @@
   }
 
   function schemaRetryDisabled(schema: SchemaSyncRow): boolean {
-    const active = activeSyncKeys.has(schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey));
+    const active = schemaSyncKeyRunning(schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey));
     return active && !schemaSyncStalled(schema);
   }
 
@@ -4192,7 +4260,8 @@
     if (isSchemaRemoteRowsLoading(schema)) return 'Loading';
     if (schema.progress.error) return schema.progress.error;
     if (schemaSyncStalled(schema)) return schemaSyncStalledLabel(schema);
-    if (schema.remoteRows > schema.localRows) return `${formatNumber(schema.remoteRows - schema.localRows)} missing`;
+    const rowCounts = schemaEffectiveRowCounts(schema);
+    if (rowCounts.missingRows > 0) return `${formatNumber(rowCounts.missingRows)} missing`;
     return schemaProgressLabel(schema);
   }
 
@@ -4232,7 +4301,8 @@
     if (isSchemaRemoteRowsLoading(schema)) return 'Loading';
     if (schema.progress.error) return shorten(schema.progress.error, 56);
     if (schemaSyncStalled(schema)) return schemaSyncStalledLabel(schema);
-    if (schema.remoteRows > schema.localRows) return `${formatNumber(schema.remoteRows - schema.localRows)} missing`;
+    const rowCounts = schemaEffectiveRowCounts(schema);
+    if (rowCounts.missingRows > 0) return `${formatNumber(rowCounts.missingRows)} missing`;
     if (schema.progress.status === 'syncing') return schemaDownloadSpeedLabel(schema);
     return schemaLastSyncedLabel(schema);
   }
@@ -4273,7 +4343,7 @@
     return formatSchemaSyncStatusLabel({
       preferenceMode: schema.preference.mode,
       progressStatus: schema.progress.status,
-      localRows: schema.localRows,
+      localRows: schemaEffectiveLocalRows(schema),
       remoteRows: schema.remoteRows,
     });
   }
@@ -4285,8 +4355,9 @@
     if (schemaSyncStalled(schema)) return 'stale';
     if (schema.progress.status === 'capped') return 'capped';
     if (schema.progress.status === 'syncing') return 'syncing';
-    if (schema.progress.status === 'synced' || (schema.remoteRows > 0 && schema.localRows >= schema.remoteRows)) return 'synced';
-    if (schema.remoteRows > schema.localRows) return 'queued';
+    const rowCounts = schemaEffectiveRowCounts(schema);
+    if (schema.progress.status === 'synced' || (rowCounts.totalRows > 0 && rowCounts.missingRows === 0)) return 'synced';
+    if (rowCounts.missingRows > 0) return 'queued';
     return 'ready';
   }
 
@@ -4359,9 +4430,10 @@
     if (schemaSyncStalled(schema)) return 'Stalled; retry recommended';
     const key = schemaSyncPreferenceKey(schema.dataSourceId, schema.id, schema.datastoreKey);
     if (activeSyncKeys.has(key)) return 'Syncing now';
+    if (activeSnapshotProbeKeys.has(key)) return 'Checking manifest';
     if (schema.progress.status === 'error') return 'On next scheduler pass';
     if (schema.preference.mode !== 'sync') return 'Not scheduled';
-    if (schema.remoteRows > schema.localRows) return 'Queued';
+    if (schemaEffectiveRowCounts(schema).missingRows > 0) return 'Queued';
     return 'When remote rows advance';
   }
 

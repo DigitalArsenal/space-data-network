@@ -138,7 +138,11 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('rememberDataPageViewCache');
     expect(localDataScreenSource).toContain('localFlatSqlStatsLoaded,');
     expect(localDataScreenSource).toContain('schemaSyncRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.schemaSyncRows : liveSchemaSyncRows;');
-    expect(localDataScreenSource).toContain('dataCatalogRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.dataCatalogRows : buildCatalogRows(schemaSyncRows);');
+    expect(localDataScreenSource).toContain('$: dataCatalogRows = buildCatalogRows(schemaSyncRows);');
+    expect(localDataScreenSource).toContain('const rowCounts = schemaEffectiveRowCounts(row);');
+    expect(localDataScreenSource).toContain('remoteRows: rowCounts.totalRows,');
+    expect(localDataScreenSource).toContain('localRows: rowCounts.syncedRows,');
+    expect(localDataScreenSource).not.toContain('cachedDataPageView.dataCatalogRows : buildCatalogRows(schemaSyncRows)');
     expect(localDataScreenSource).toContain('const sourceStatsAreAuthoritative = sourceStatsSelected && localStatsLoaded;');
     expect(localDataScreenSource).toContain('localFlatSqlStatsLoaded = true;');
     expect(localDataScreenSource).not.toContain('$: storageMetricsLoading = dataPageLoading || activeStorageRows.some(isSchemaRemoteRowsLoading);');
@@ -286,9 +290,9 @@ describe('Data catalog UI source', () => {
     const storeSection = sourceBetween(localDataScreenSource, 'aria-label="Data store"', "{#if selectedDataSection === 'subscriptions'}");
 
     expect(localDataScreenSource).toContain('catalogRowHasBillingData');
-    expect(localDataScreenSource).toContain('$: billingDataRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingDataRows : dataCatalogRows.filter(catalogRowHasBillingData);');
+    expect(localDataScreenSource).toContain('$: billingDataRows = dataCatalogRows.filter(catalogRowHasBillingData);');
     expect(localDataScreenSource).toContain('buildDataBillingProviderRows');
-    expect(localDataScreenSource).toContain('$: billingProviderRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.billingProviderRows : buildDataBillingProviderRows(dataCatalogRows);');
+    expect(localDataScreenSource).toContain('$: billingProviderRows = buildDataBillingProviderRows(dataCatalogRows);');
     expect(storeSection).toContain('dataCatalogSummary.billingMetricTitle');
     expect(storeSection).toContain('dataCatalogSummary.billingMetricValue');
     expect(storeSection).toContain('row.plan.priceLabel');
@@ -300,7 +304,7 @@ describe('Data catalog UI source', () => {
   it('renders message type health inside Subscriptions with direct management actions', () => {
     const subscriptionsSection = sourceBetween(localDataScreenSource, 'aria-label="Sync settings"', "{#if selectedDataSection === 'explorer'}");
 
-    expect(localDataScreenSource).toContain('$: messageTypeRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.messageTypeRows : sortedMessageTypeRows(schemaSyncRows);');
+    expect(localDataScreenSource).toContain('$: messageTypeRows = sortedMessageTypeRows(schemaSyncRows);');
     expect(localDataScreenSource).toContain('function sortedMessageTypeRows(rows: SchemaSyncRow[]): SchemaSyncRow[]');
     expect(localDataScreenSource).toContain('rightRows - leftRows');
     expect(subscriptionsSection).toContain('{#each filteredSubscriptionRows as schema (schema.subscriptionId)}');
@@ -317,7 +321,7 @@ describe('Data catalog UI source', () => {
   it('keeps provider/source provenance inside Store product details', () => {
     const storeSection = sourceBetween(localDataScreenSource, 'aria-label="Data store"', "{#if selectedDataSection === 'subscriptions'}");
 
-    expect(localDataScreenSource).toContain('$: sourceProvenanceRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.sourceProvenanceRows : buildSourceProvenanceRows(dataSourceOptions, schemaSyncRows, dataDirectoryState.peerTrust);');
+    expect(localDataScreenSource).toContain('$: sourceProvenanceRows = buildSourceProvenanceRows(dataSourceOptions, schemaSyncRows, dataDirectoryState.peerTrust);');
     expect(localDataScreenSource).toContain('interface SourceProvenanceRow');
     expect(localDataScreenSource).toContain('function buildSourceProvenanceRows(');
     expect(storeSection).toContain('catalogRowProviderIdentityLabel(row)');
@@ -423,7 +427,7 @@ describe('Data catalog UI source', () => {
     const subscriptionsSection = sourceBetween(localDataScreenSource, 'aria-label="Sync settings"', "{#if selectedDataSection === 'explorer'}");
 
     expect(localDataScreenSource).toContain('interface DataActivityRow');
-    expect(localDataScreenSource).toContain('$: activityRows = dataPageCacheActive && cachedDataPageView ? cachedDataPageView.activityRows : buildDataActivityRows(schemaSyncRows, dataCatalogRows);');
+    expect(localDataScreenSource).toContain('$: activityRows = buildDataActivityRows(schemaSyncRows, dataCatalogRows);');
     expect(localDataScreenSource).toContain('function buildDataActivityRows(');
     expect(localDataScreenSource).toContain('activitySortTime');
     expect(localDataScreenSource).toContain("eventType: 'Sync error'");
@@ -480,5 +484,25 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('PUBLISHED_SNAPSHOT_RECHECK_INTERVAL_MS');
     expect(localDataScreenSource).toContain('publishedSnapshotCheckPulse += 1');
     expect(localDataScreenSource).toContain('scheduleRowWithSnapshotPulse(row, snapshotCheckPulse)');
+  });
+
+  it('keeps completed published snapshot manifest probes out of the visible syncing state', () => {
+    const syncFunction = sourceBetween(localDataScreenSource, 'async function synchronizeSchema', 'function applyWorkerSchemaSyncUpdate');
+
+    expect(localDataScreenSource).toContain('let activeSnapshotProbeKeys = new Set<string>();');
+    expect(localDataScreenSource).toContain('function schemaSyncKeyRunning(key: string): boolean');
+    expect(localDataScreenSource).toContain('function promoteSnapshotProbeToVisibleSync(key: string): void');
+    expect(localDataScreenSource).toContain('function remoteRowsForActiveSchemaSync(');
+    expect(syncFunction).toContain('const snapshotProbe = shouldRunPublishedSnapshotProbe({');
+    expect(syncFunction).toContain('const remoteRows = remoteRowsForActiveSchemaSync(subscription, initialProgress, advertisedRemoteRows);');
+    expect(syncFunction).toContain('setSchemaSyncProbeActive(key);');
+    expect(syncFunction).toContain("if (snapshotProbe && nextUpdate.progress.status === 'syncing')");
+    expect(syncFunction).toContain('promoteSnapshotProbeToVisibleSync(key);');
+  });
+
+  it('uses normalized sync row counts for queued and missing labels', () => {
+    expect(localDataScreenSource).toContain('function schemaEffectiveRowCounts(schema: SchemaSyncRow)');
+    expect(localDataScreenSource).toContain('function schemaEffectiveLocalRows(schema: SchemaSyncRow): number');
+    expect(localDataScreenSource).not.toContain('schema.remoteRows > schema.localRows');
   });
 });
