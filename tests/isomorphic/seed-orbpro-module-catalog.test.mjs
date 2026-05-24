@@ -208,6 +208,68 @@ await test("DEFAULT_ORBPRO_MODULES includes the protected wasm-engine runtime ar
   assert.equal(wasmEngineRuntime?.protectedExports?.[0]?.exportName, "encryptedData");
 });
 
+await test("seedOrbproModuleCatalog resolves relative artifacts from ORBPRO_ROOT first", async () => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sdn-seed-orbpro-root-"),
+  );
+  const pluginRoot = path.join(tempRoot, "license", "plugins");
+  const orbproRoot = path.join(tempRoot, "active-orbpro");
+  const fixtureModule = path.join(
+    orbproRoot,
+    "packages",
+    "fixture",
+    "dist",
+    "fixture-encrypted.js",
+  );
+  await fs.mkdir(path.dirname(fixtureModule), { recursive: true });
+  await fs.mkdir(pluginRoot, { recursive: true });
+  await fs.writeFile(
+    fixtureModule,
+    [
+      `export const encryptedData = ${JSON.stringify(
+        Buffer.from("fixture-from-active-orbpro-root").toString("base64"),
+      )};`,
+      'export const recipientPrivateKeyHex = "00".repeat(32);',
+      "",
+    ].join("\n"),
+  );
+
+  const previousOrbproRoot = process.env.ORBPRO_ROOT;
+  process.env.ORBPRO_ROOT = orbproRoot;
+  try {
+    const summary = await seedOrbproModuleCatalog({
+      pluginRoot,
+      modules: [
+        {
+          slug: "fixture-root",
+          moduleId: "com.orbpro.fixture-root",
+          version: "root-test",
+          protectedModulePath: "packages/fixture/dist/fixture-encrypted.js",
+          protectedExports: [
+            { exportName: "encryptedData", slug: "fixture-root" },
+          ],
+          keyExport: "recipientPrivateKeyHex",
+        },
+      ],
+    });
+
+    assert.equal(summary.seeded.length, 1);
+    assert.equal(summary.seeded[0].protectedModulePath, fixtureModule);
+    assert.equal(
+      (await fs.readFile(path.join(pluginRoot, "fixture-root.wasm.enc"))).toString(
+        "utf8",
+      ),
+      "fixture-from-active-orbpro-root",
+    );
+  } finally {
+    if (previousOrbproRoot === undefined) {
+      delete process.env.ORBPRO_ROOT;
+    } else {
+      process.env.ORBPRO_ROOT = previousOrbproRoot;
+    }
+  }
+});
+
 await test("seedOrbproModuleCatalog removes the stale wasm-engine-sdk catalog entry", async () => {
   const tempRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), "sdn-seed-orbpro-stale-wasm-engine-sdk-"),

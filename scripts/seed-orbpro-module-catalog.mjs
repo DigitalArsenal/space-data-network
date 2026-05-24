@@ -330,12 +330,14 @@ function resolveModulePath(relativeOrAbsolutePath, label = "Module path") {
   if (path.isAbsolute(rawPath)) {
     return rawPath;
   }
+  const explicitOrbproRoot = String(process.env.ORBPRO_ROOT || "").trim();
   const candidatePaths = [
+    explicitOrbproRoot ? path.resolve(explicitOrbproRoot, rawPath) : "",
     path.resolve(repoRoot, rawPath),
     path.resolve(workspaceRoot, rawPath),
     path.resolve(packageRoot, "..", rawPath.replace(/^packages[\\/]/, "")),
     path.resolve(packageRoot, "..", "OrbPro", rawPath),
-  ];
+  ].filter(Boolean);
   const existingPath = candidatePaths.find((candidatePath) =>
     fsSync.existsSync(candidatePath),
   );
