@@ -28,6 +28,13 @@ export interface PublishedSegmentCheckpointInput {
   totalRows: number;
 }
 
+export interface PublishedSnapshotResetInput {
+  retentionPolicy?: string | null;
+  localRows: number;
+  completedRows: number;
+  totalRows: number;
+}
+
 export interface PublishedSegmentBatchOptions {
   maxBatchBytes: number;
   maxBatchSegments: number;
@@ -104,6 +111,16 @@ export function shouldPersistPublishedSegmentCheckpoint(input: PublishedSegmentC
   if (totalRows > 0 && completedRows >= totalRows) return true;
   const checkpointBytes = Math.max(1, Math.floor(input.checkpointBytes));
   return Math.max(0, Math.floor(input.unpersistedBytes)) >= checkpointBytes;
+}
+
+export function shouldResetPublishedSnapshotStore(input: PublishedSnapshotResetInput): boolean {
+  if ((input.retentionPolicy ?? '').trim() !== 'replace-snapshot') return false;
+  const localRows = Math.max(0, Math.floor(input.localRows));
+  const completedRows = Math.max(0, Math.floor(input.completedRows));
+  if (completedRows === 0) return localRows > 0;
+  const totalRows = Math.max(0, Math.floor(input.totalRows));
+  if (totalRows > 0 && completedRows >= totalRows && localRows === completedRows) return false;
+  return localRows !== completedRows;
 }
 
 export function publishedSegmentBatchItems<T extends PublishedSegmentForSync>(

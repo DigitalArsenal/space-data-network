@@ -5,6 +5,7 @@ import {
   assertPublishedSegmentMaterializedRowCount,
   pendingPublishedSegmentItems,
   publishedSegmentBatchItems,
+  shouldResetPublishedSnapshotStore,
   shouldPersistPublishedSegmentCheckpoint,
 } from './published-segment-sync';
 
@@ -63,6 +64,56 @@ describe('published segment sync planning', () => {
 
     expect(guardIndex).toBeGreaterThan(-1);
     expect(pinIndex).toBeGreaterThan(guardIndex);
+  });
+
+  it('requires active store replacement for changed published replace-snapshot manifests', () => {
+    expect(shouldResetPublishedSnapshotStore({
+      retentionPolicy: 'replace-snapshot',
+      localRows: 972_000,
+      completedRows: 0,
+      totalRows: 69_050,
+    })).toBe(true);
+    expect(shouldResetPublishedSnapshotStore({
+      retentionPolicy: 'replace-snapshot',
+      localRows: 972_000,
+      completedRows: 69_050,
+      totalRows: 69_050,
+    })).toBe(true);
+    expect(shouldResetPublishedSnapshotStore({
+      retentionPolicy: 'replace-snapshot',
+      localRows: 50_000,
+      completedRows: 50_000,
+      totalRows: 69_050,
+    })).toBe(false);
+    expect(shouldResetPublishedSnapshotStore({
+      retentionPolicy: 'replace-snapshot',
+      localRows: 0,
+      completedRows: 69_050,
+      totalRows: 69_050,
+    })).toBe(true);
+    expect(shouldResetPublishedSnapshotStore({
+      retentionPolicy: 'replace-snapshot',
+      localRows: 69_050,
+      completedRows: 69_050,
+      totalRows: 69_050,
+    })).toBe(false);
+    expect(shouldResetPublishedSnapshotStore({
+      retentionPolicy: 'append-only',
+      localRows: 972_000,
+      completedRows: 0,
+      totalRows: 69_050,
+    })).toBe(false);
+  });
+
+  it('clears replace-snapshot published stores before fetching replacement shards', () => {
+    const source = readFileSync(new URL('./local-flatsql.worker.ts', import.meta.url), 'utf8');
+    const resetIndex = source.indexOf('shouldResetPublishedSnapshotStore({');
+    const clearIndex = source.indexOf('await options.currentStore.clearStandard(options.request.standardId');
+    const fetchIndex = source.indexOf('fetchPublishedSegmentsInOrder(options.segments');
+
+    expect(resetIndex).toBeGreaterThan(-1);
+    expect(clearIndex).toBeGreaterThan(resetIndex);
+    expect(fetchIndex).toBeGreaterThan(clearIndex);
   });
 
   it('seeds published shard range source preference with the manifest segment index', () => {
