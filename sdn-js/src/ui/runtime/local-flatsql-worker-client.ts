@@ -213,6 +213,18 @@ class WorkerLocalFlatSqlStoreClient implements WorkerLocalFlatSqlStore {
     await this.request<void>({ id: 0, type: 'clearStandard', standardId, options });
   }
 
+  createStandardReplacementStore(_standardId: string): Promise<LocalFlatSqlStore> {
+    return Promise.reject(new Error('FlatSQL replacement stores are only available inside the sync worker'));
+  }
+
+  replaceStandardFrom(
+    _standardId: string,
+    _replacementStore: LocalFlatSqlStore,
+    _entries: LocalFlatSqlPinLedgerEntry[],
+  ): Promise<void> {
+    return Promise.reject(new Error('FlatSQL replacement commits are only available inside the sync worker'));
+  }
+
   query(sql: string, standardId?: string, options?: LocalFlatSqlQueryOptions): Promise<LocalFlatSqlQueryResult> {
     return this.request<LocalFlatSqlQueryResult>({ id: 0, type: 'query', sql, standardId, options });
   }

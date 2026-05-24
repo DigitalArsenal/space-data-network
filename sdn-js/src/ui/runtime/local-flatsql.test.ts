@@ -391,6 +391,105 @@ describe('local FlatSQL datastore', () => {
     }
   });
 
+  it('stages a full snapshot replacement and swaps it into the active store on commit', async () => {
+    const restoreIndexedDb = installMemoryIndexedDb();
+    try {
+      await clearLocalFlatSqlStore({
+        persistenceKey: 'staged-replacement-store',
+        standardIds: ['OMM'],
+      });
+
+      const active = await createLocalFlatSqlStore({
+        persistenceKey: 'staged-replacement-store',
+        schemas: [{
+          standardId: 'OMM',
+          tableName: 'OMM',
+          fileId: '$OMM',
+          schema: OMM_SCHEMA,
+        }],
+      });
+      const frame = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
+      const oldStream = flatSqlSizePrefixedStream([frame, frame]);
+      const newStream = flatSqlSizePrefixedStream([frame]);
+      await active.ingestFlatBufferStream('OMM', oldStream, {
+        recordKeyPrefix: 'published:old',
+      });
+      await active.recordPinLedgerEntries([{
+        cid: 'old',
+        standardId: 'OMM',
+        schemaName: 'OMM.fbs',
+        batchId: 'old-batch',
+        queryProfile: 'dataset-publication-offset-v1',
+        role: 'shard',
+        rowCount: 2,
+        byteCount: oldStream.byteLength,
+        verificationState: 'verified',
+        materializedAt: '2026-05-12T00:00:00.000Z',
+        verifiedAt: '2026-05-12T00:00:00.000Z',
+        updatedAt: '2026-05-12T00:00:00.000Z',
+      }]);
+      expect(active.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+        recordCount: 2,
+        pinnedRows: 2,
+      }));
+
+      const replacement = await active.createStandardReplacementStore('OMM');
+      await replacement.ingestFlatBufferStream('OMM', newStream, {
+        persist: false,
+        recordKeyPrefix: 'published:new',
+      });
+      expect(active.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+        recordCount: 2,
+        pinnedRows: 2,
+      }));
+
+      await active.replaceStandardFrom('OMM', replacement, [{
+        cid: 'new',
+        standardId: 'OMM',
+        schemaName: 'OMM.fbs',
+        batchId: 'new-batch',
+        queryProfile: 'dataset-publication-offset-v1',
+        role: 'shard',
+        rowCount: 1,
+        byteCount: newStream.byteLength,
+        verificationState: 'verified',
+        materializedAt: '2026-05-13T00:00:00.000Z',
+        verifiedAt: '2026-05-13T00:00:00.000Z',
+        updatedAt: '2026-05-13T00:00:00.000Z',
+      }]);
+
+      expect(active.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+        recordCount: 1,
+        ingestedRecordCount: 1,
+        pinnedRows: 1,
+      }));
+      await expect(active.listPinLedgerEntries({ standardId: 'OMM' })).resolves.toEqual([
+        expect.objectContaining({ cid: 'new', batchId: 'new-batch' }),
+      ]);
+      active.destroy();
+
+      const loaded = await createLocalFlatSqlStore({
+        persistenceKey: 'staged-replacement-store',
+        schemas: [{
+          standardId: 'OMM',
+          tableName: 'OMM',
+          fileId: '$OMM',
+          schema: OMM_SCHEMA,
+        }],
+      });
+      expect(loaded.getStats({ includeCachedBytes: false })[0]).toEqual(expect.objectContaining({
+        recordCount: 1,
+        pinnedRows: 1,
+      }));
+      await expect(loaded.listPinLedgerEntries({ standardId: 'OMM' })).resolves.toEqual([
+        expect.objectContaining({ cid: 'new', batchId: 'new-batch' }),
+      ]);
+      loaded.destroy();
+    } finally {
+      restoreIndexedDb();
+    }
+  });
+
   it('decodes FlatSQL sync streams with zero-copy record views', () => {
     const first = stripSdnFlatBufferSizePrefix(STARLINK_6292_OMM_BYTES);
     const stream = flatSqlSizePrefixedStream([first]);

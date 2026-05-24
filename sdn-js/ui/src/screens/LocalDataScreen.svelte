@@ -302,6 +302,7 @@
   const DEFAULT_PAGE_SIZE = 10;
   const SYNC_PAGE_SIZE = 50_000;
   const SYNC_PERSIST_RECORD_INTERVAL = 100_000;
+  const EXPLORER_COLUMN_LIMIT = 10;
   const PUBLISHED_SNAPSHOT_RECHECK_INTERVAL_MS = 60_000;
   const UI_REMOTE_TIMEOUT_MS = 8_000;
   const UI_LOCAL_QUERY_TIMEOUT_MS = 5_000;
@@ -683,6 +684,7 @@
   let savedExplorerViewName = '';
   let columnFilters: Record<string, string> = {};
   let visibleColumnKeys: string[] = [];
+  let explorerColumnMenuOpen = false;
   let searchText = '';
   let catalogSearchText = '';
   let catalogAccessFilter: DataCatalogAccessFilter = 'all';
@@ -805,11 +807,14 @@
   $: decodedRows = rawRecords.map(decodeWorkbenchRecord);
   $: allColumns = workbenchColumnsForStandard(selectedStandardId, decodedRows);
   $: syncVisibleColumnKeys(allColumns);
+  $: explorerColumnOptions = explorerSelectableColumns(allColumns);
+  $: selectedLocalExplorerColumnKeys = limitedExplorerColumnKeys(visibleColumnKeys, explorerColumnOptions);
   $: visibleColumns = allColumns.filter((column) => visibleColumnKeys.includes(column.key));
   $: filteredRows = filterRowsByColumns(filterRows(decodedRows, searchText), visibleColumns, columnFilters);
   $: visibleRows = sortRows(filteredRows, sortColumn, sortDirection);
   $: localExplorerRecords = localExplorerResult?.records ?? [];
-  $: localExplorerColumns = visibleSqlColumns(localExplorerResult?.columns ?? [], localExplorerRecords, selectedStandardId);
+  $: localExplorerColumns = visibleSqlColumns(localExplorerResult?.columns ?? [], localExplorerRecords, selectedStandardId)
+    .filter((column) => selectedLocalExplorerColumnKeys.includes(column));
   $: visibleLocalExplorerRecords = sortSqlRecords(localExplorerRecords, sortColumn, sortDirection);
   $: estimatedTotalRows = scanTotalRowsForStandard(dataScan, selectedStandardId)
     ?? selectedSchemaSyncRow?.remoteRows
@@ -1101,9 +1106,10 @@
         page: nextPage,
         pageSize: normalizedPageSize(),
         searchText,
-        searchColumns: localExplorerQueryColumns(selectedStandardId, localExplorerColumns),
+        searchColumns: localExplorerQueryColumns(selectedStandardId, selectedLocalExplorerColumnKeys),
         columnFilters,
-        filterColumns: localExplorerColumns,
+        filterColumns: selectedLocalExplorerColumnKeys,
+        selectColumns: selectedLocalExplorerColumnKeys,
       });
       localExplorerDatasetFiltersActive = explorerQuery.hasDatasetFilters;
       const result = await withUiTimeout(
@@ -1281,7 +1287,7 @@
       searchText: explorerSearchMode === 'plain' ? explorerSearchText.trim() : searchText.trim(),
       sqlText: explorerSearchMode === 'sql' ? (explorerSearchText.trim() || sqlQueryText.trim() || defaultSqlQuery(selectedStandardId)) : sqlQueryText.trim(),
       columnFilters: { ...columnFilters },
-      visibleColumnKeys: [...visibleColumnKeys],
+      visibleColumnKeys: [...selectedLocalExplorerColumnKeys],
       pageSize: normalizedPageSize(),
       sortColumn,
       sortDirection,
@@ -1322,7 +1328,7 @@
     sortColumn = view.sortColumn;
     sortDirection = view.sortDirection;
     columnFilters = { ...view.columnFilters };
-    visibleColumnKeys = [...view.visibleColumnKeys];
+    visibleColumnKeys = view.visibleColumnKeys.slice(0, EXPLORER_COLUMN_LIMIT);
     selectedSavedExplorerViewId = view.id;
     savedExplorerViewName = view.name;
     explorerSearchMode = view.searchMode;
@@ -1560,6 +1566,9 @@
     }
     if (subscriptionFilterMenuOpen && !composedPath.some((target) => target instanceof Element && target.closest('[data-subscription-filter-menu]'))) {
       subscriptionFilterMenuOpen = false;
+    }
+    if (explorerColumnMenuOpen && !composedPath.some((target) => target instanceof Element && target.closest('[data-explorer-column-menu]'))) {
+      explorerColumnMenuOpen = false;
     }
     if (performance.now() < suppressCatalogOutsideUntil) return;
     if (!expandedCatalogActionRowKey) return;
@@ -2248,7 +2257,7 @@
       selectedDataSourceId === dataSourceId && selectedDatastoreKey === datastoreKey,
       datastoreKey,
     );
-    if (syncFilterChangedRequiresReset(initialProgress, syncFilter) || retentionPolicyRequiresReset(initialProgress, retentionPolicy)) {
+    if (syncFilterChangedRequiresReset(initialProgress, syncFilter)) {
       const persistenceKey = localFlatSqlPersistenceKey(dataSourceId, datastoreKey);
       if (localFlatSqlStoreKey === persistenceKey) resetLocalFlatSqlStore();
       await clearLocalFlatSqlStore({
@@ -3305,15 +3314,6 @@
       || Boolean(progress.lastSyncedAt);
   }
 
-  function retentionPolicyRequiresReset(progress: SchemaSyncProgress, retentionPolicy: DataFeedRetentionPolicy): boolean {
-    if (retentionPolicy !== 'replace-snapshot') return false;
-    return progress.localRows > 0
-      || progress.syncedRows > 0
-      || progress.cachedBytes > 0
-      || progress.pinnedRows > 0
-      || Boolean(progress.lastSyncedAt);
-  }
-
   function subscriptionForSync(dataSourceId: string, standardId: string, subscriptionId = ''): DataFeedSubscription | null {
     return dataDirectoryState.subscriptions.find((subscription) => subscriptionId && subscription.id === subscriptionId)
       ?? dataDirectoryState.subscriptions.find((subscription) => (
@@ -3614,7 +3614,7 @@
       searchText: normalizedString(candidate.searchText),
       sqlText: normalizedString(candidate.sqlText) || defaultSqlQuery(standardId),
       columnFilters: normalizeStringRecord(candidate.columnFilters),
-      visibleColumnKeys: normalizedStringArray(candidate.visibleColumnKeys),
+      visibleColumnKeys: normalizedStringArray(candidate.visibleColumnKeys).slice(0, EXPLORER_COLUMN_LIMIT),
       pageSize: normalizedPageSizeValue(candidate.pageSize),
       sortColumn: normalizedOptionalString(candidate.sortColumn) ?? 'timestamp',
       sortDirection: candidate.sortDirection === 'asc' ? 'asc' : 'desc',
@@ -3810,9 +3810,48 @@
   }
 
   function syncVisibleColumnKeys(columns: WorkbenchColumn[]): void {
-    const columnKeys = columns.map((column) => column.key);
-    const defaultKeys = dataAwareDefaultColumnKeys(columns, decodedRows);
-    updateVisibleColumnKeys(defaultKeys.length > 0 ? defaultKeys : columnKeys);
+    const columnOptions = explorerSelectableColumns(columns);
+    const columnKeys = columnOptions.map((column) => column.key);
+    const currentKeys = limitedExplorerColumnKeys(visibleColumnKeys, columnOptions);
+    if (currentKeys.length > 0) {
+      updateVisibleColumnKeys(currentKeys);
+      return;
+    }
+    const defaultKeys = limitedExplorerColumnKeys(dataAwareDefaultColumnKeys(columnOptions, decodedRows), columnOptions);
+    updateVisibleColumnKeys(defaultKeys.length > 0 ? defaultKeys : columnKeys.slice(0, EXPLORER_COLUMN_LIMIT));
+  }
+
+  function explorerSelectableColumns(columns: WorkbenchColumn[]): WorkbenchColumn[] {
+    return columns.filter((column) => column.source === 'standard' && !INTERNAL_COLUMN_KEYS.has(column.key));
+  }
+
+  function limitedExplorerColumnKeys(keys: string[], columns: WorkbenchColumn[]): string[] {
+    const availableKeys = new Set(columns.map((column) => column.key));
+    return Array.from(new Set(keys))
+      .filter((key) => availableKeys.has(key))
+      .slice(0, EXPLORER_COLUMN_LIMIT);
+  }
+
+  function toggleExplorerColumn(key: string, event: Event): void {
+    const checked = (event.currentTarget as HTMLInputElement).checked;
+    const currentKeys = limitedExplorerColumnKeys(visibleColumnKeys, explorerColumnOptions);
+    const nextKeys = checked
+      ? limitedExplorerColumnKeys([...currentKeys, key], explorerColumnOptions)
+      : currentKeys.filter((columnKey) => columnKey !== key);
+    if (nextKeys.length === 0) {
+      (event.currentTarget as HTMLInputElement).checked = true;
+      return;
+    }
+    updateVisibleColumnKeys(nextKeys);
+    columnFilters = Object.fromEntries(Object.entries(columnFilters).filter(([column]) => nextKeys.includes(column)));
+    pageIndex = 0;
+    if (explorerSearchMode === 'plain') scheduleLocalExplorerQuery(0);
+  }
+
+  function resetExplorerColumnsToFirstTen(): void {
+    updateVisibleColumnKeys(explorerColumnOptions.map((column) => column.key).slice(0, EXPLORER_COLUMN_LIMIT));
+    pageIndex = 0;
+    if (explorerSearchMode === 'plain') scheduleLocalExplorerQuery(0);
   }
 
   function dataAwareDefaultColumnKeys(columns: WorkbenchColumn[], rows: WorkbenchRow[]): string[] {
@@ -5301,6 +5340,42 @@
 	              <button class="sdn-button sdn-button-muted" type="button" on:click={() => void handleExplorerSearchSubmit()} disabled={sqlRunning}>{sqlRunning ? 'Running' : 'Run'}</button>
 	            {/if}
 	          </div>
+
+            {#if explorerSearchMode === 'plain' && explorerColumnOptions.length > 0}
+              <div class="sdn-catalog-filter-menu sdn-explorer-column-menu" data-explorer-column-menu>
+                <button
+                  class="sdn-button sdn-button-muted"
+                  type="button"
+                  aria-haspopup="true"
+                  aria-expanded={explorerColumnMenuOpen}
+                  on:click={() => {
+                    explorerColumnMenuOpen = !explorerColumnMenuOpen;
+                  }}
+                >Columns ({visibleColumnKeys.length}/10)</button>
+                {#if explorerColumnMenuOpen}
+                  <div class="sdn-catalog-filter-menu-panel sdn-explorer-column-menu-panel" aria-label="Explorer column options">
+                    <div class="sdn-catalog-filter-menu-head">
+                      <strong>Columns</strong>
+                      <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={resetExplorerColumnsToFirstTen}>First 10</button>
+                    </div>
+                    <fieldset>
+                      <legend>{selectedStandardId}</legend>
+                      {#each explorerColumnOptions as column}
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={visibleColumnKeys.includes(column.key)}
+                            disabled={!visibleColumnKeys.includes(column.key) && visibleColumnKeys.length >= EXPLORER_COLUMN_LIMIT}
+                            on:change={(event) => toggleExplorerColumn(column.key, event)}
+                          />
+                          <span>{columnHeaderKeyLabel(column.key, column.label)}</span>
+                        </label>
+                      {/each}
+                    </fieldset>
+                  </div>
+                {/if}
+              </div>
+            {/if}
 
 	          <div class="sdn-saved-view-controls" aria-label="Saved Explorer views">
 	            <label>

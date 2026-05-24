@@ -231,6 +231,18 @@ describe('Data catalog UI source', () => {
     expect(appCssSource).toContain('.sdn-epoch-filter-range');
   });
 
+  it('renders an explorer column dropdown and caps selected columns at ten', () => {
+    const explorerSection = sourceBetween(localDataScreenSource, 'aria-label="Data explorer"', '</section>');
+
+    expect(localDataScreenSource).toContain('const EXPLORER_COLUMN_LIMIT = 10;');
+    expect(localDataScreenSource).toContain('limitedExplorerColumnKeys');
+    expect(localDataScreenSource).toContain('toggleExplorerColumn');
+    expect(explorerSection).toContain('data-explorer-column-menu');
+    expect(explorerSection).toContain('aria-label="Explorer column options"');
+    expect(explorerSection).toContain('type="checkbox"');
+    expect(explorerSection).toContain('Columns ({visibleColumnKeys.length}/10)');
+  });
+
   it('renders saved Explorer SQL/dashboard views with local persistence controls', () => {
     const explorerSection = sourceBetween(localDataScreenSource, 'aria-label="Data explorer"', '</section>');
 
@@ -451,9 +463,9 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('aria-label={`${selectedSubscriptionDetailSchema.id} retention policy`}');
     expect(localDataScreenSource).toContain('value={selectedSubscriptionDetailSchema.retentionPolicy}');
     expect(syncFunction).toContain('const retentionPolicy = subscriptionRetentionPolicyFor(subscription, standardId);');
-    expect(syncFunction).toContain('retentionPolicyRequiresReset(initialProgress, retentionPolicy)');
     expect(syncFunction).toContain('retentionPolicy,');
     expect(syncFunction).toContain('clearLocalFlatSqlStore({');
+    expect(syncFunction).not.toContain('retentionPolicyRequiresReset(initialProgress, retentionPolicy)');
     expect(localDataScreenSource).toContain('PUBLISHED_SNAPSHOT_RECHECK_INTERVAL_MS');
     expect(localDataScreenSource).toContain('publishedSnapshotCheckPulse += 1');
     expect(localDataScreenSource).toContain('scheduleRowWithSnapshotPulse(row, snapshotCheckPulse)');

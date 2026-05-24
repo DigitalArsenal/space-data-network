@@ -12,6 +12,7 @@ export interface LocalDataExplorerQueryRequest {
   searchColumns?: string[];
   columnFilters?: Record<string, string>;
   filterColumns?: string[];
+  selectColumns?: string[];
 }
 
 export interface LocalDataExplorerQuery {
@@ -158,9 +159,10 @@ export function buildLocalDataExplorerQuery(request: LocalDataExplorerQueryReque
   const page = normalizeNonNegativeInteger(request.page);
   const filters = buildDatasetFilterSql(request);
   const whereSql = filters.length > 0 ? ` WHERE ${filters.join(' AND ')}` : '';
+  const selectSql = selectColumnsSql(request.selectColumns ?? []);
 
   return {
-    rowsSql: `SELECT * FROM ${tableName}${whereSql} LIMIT ${pageSize} OFFSET ${page * pageSize}`,
+    rowsSql: `SELECT ${selectSql} FROM ${tableName}${whereSql} LIMIT ${pageSize} OFFSET ${page * pageSize}`,
     countSql: `SELECT COUNT(*) AS __total FROM ${tableName}${whereSql}`,
     hasDatasetFilters: filters.length > 0,
   };
@@ -249,6 +251,12 @@ function buildDatasetFilterSql(request: LocalDataExplorerQueryRequest): string[]
     filters.push(columnFilterSql(column, trimmed));
   }
   return filters;
+}
+
+function selectColumnsSql(columns: string[]): string {
+  const selected = uniqueStrings(columns).filter(Boolean);
+  if (selected.length === 0) return '*';
+  return selected.map(quoteSqlIdentifier).join(', ');
 }
 
 function plaintextSearchSql(value: string, columns: string[]): string | null {
