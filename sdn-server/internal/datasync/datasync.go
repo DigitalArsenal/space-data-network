@@ -460,19 +460,22 @@ func OpenManifest(store *storage.FlatSQLStore, req QueryRequest, maxLimit int) (
 
 func OpenPublishedManifest(store *storage.FlatSQLStore, req QueryRequest, queryProfile string, maxLimit int) (*ManifestResponse, error) {
 	schemaName := NormalizeSchema(req)
+	requestedBatchID := FirstNonEmpty(req.BatchID, req.BatchId)
 	publications, err := store.ListDatasetShardPublications(storage.DatasetShardPublicationQuery{
 		SchemaName:   schemaName,
 		ProviderID:   FirstNonEmpty(req.ProviderID, req.ProviderId),
 		SourceName:   req.SourceName,
-		BatchID:      FirstNonEmpty(req.BatchID, req.BatchId),
+		BatchID:      requestedBatchID,
 		QueryProfile: queryProfile,
 	})
 	if err != nil {
 		return nil, err
 	}
+	publications = publishedManifestPublicationsForRequest(publications, requestedBatchID)
 	if len(publications) == 0 {
 		return nil, nil
 	}
+	manifestBatchID := publications[0].BatchID
 
 	var totalCount int64
 	var totalBytes int64
@@ -511,9 +514,12 @@ func OpenPublishedManifest(store *storage.FlatSQLStore, req QueryRequest, queryP
 		})
 	}
 
-	head := PublishedFeedHead(schemaName, FirstNonEmpty(req.ProviderID, req.ProviderId), req.SourceName, FirstNonEmpty(req.BatchID, req.BatchId), queryProfile, publications)
+	head := PublishedFeedHead(schemaName, FirstNonEmpty(req.ProviderID, req.ProviderId), req.SourceName, manifestBatchID, queryProfile, publications)
 	highWater := PublishedFeedHighWaterMark(publications, totalCount, totalBytes)
-	artifactBundles, err := publishedManifestArtifactBundles(store, req, queryProfile, head, highWater, len(segments), totalCount)
+	manifestReq := req
+	manifestReq.BatchID = manifestBatchID
+	manifestReq.BatchId = manifestBatchID
+	artifactBundles, err := publishedManifestArtifactBundles(store, manifestReq, queryProfile, head, highWater, len(segments), totalCount)
 	if err != nil {
 		return nil, err
 	}
@@ -521,7 +527,7 @@ func OpenPublishedManifest(store *storage.FlatSQLStore, req QueryRequest, queryP
 		Schema:            schemaName,
 		ProviderID:        FirstNonEmpty(req.ProviderID, req.ProviderId),
 		SourceName:        req.SourceName,
-		BatchID:           FirstNonEmpty(req.BatchID, req.BatchId),
+		BatchID:           manifestBatchID,
 		ProducerPeerID:    FirstNonEmpty(req.ProducerPeerID, req.ProducerPeerId),
 		ProducerPublicKey: FirstNonEmpty(req.ProducerPublicKey, req.ProducerPublicKeyCamel),
 		TotalCount:        totalCount,
@@ -538,6 +544,30 @@ func OpenPublishedManifest(store *storage.FlatSQLStore, req QueryRequest, queryP
 	}
 	manifest.ManifestID = ManifestHash(manifest)
 	return manifest, nil
+}
+
+func publishedManifestPublicationsForRequest(publications []storage.DatasetShardPublication, requestedBatchID string) []storage.DatasetShardPublication {
+	if strings.TrimSpace(requestedBatchID) != "" || len(publications) == 0 {
+		return publications
+	}
+	latestBatchID := publications[0].BatchID
+	latestPublishedAt := publications[0].PublishedAt
+	latestSequence := publications[0].FeedSequence
+	for _, publication := range publications[1:] {
+		if publication.PublishedAt.After(latestPublishedAt) ||
+			(publication.PublishedAt.Equal(latestPublishedAt) && publication.FeedSequence > latestSequence) {
+			latestBatchID = publication.BatchID
+			latestPublishedAt = publication.PublishedAt
+			latestSequence = publication.FeedSequence
+		}
+	}
+	selected := publications[:0]
+	for _, publication := range publications {
+		if publication.BatchID == latestBatchID {
+			selected = append(selected, publication)
+		}
+	}
+	return selected
 }
 
 func publishedManifestArtifactBundles(store *storage.FlatSQLStore, req QueryRequest, queryProfile, feedHead, highWaterMark string, segmentCount int, totalCount int64) ([]ArtifactBundle, error) {

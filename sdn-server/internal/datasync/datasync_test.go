@@ -189,7 +189,7 @@ func TestOpenManifestAdvertisesPublishedShardGroupCARBundle(t *testing.T) {
 	}
 }
 
-func TestOpenManifestAdvertisesPerBatchCARBundlesForAggregateSourceManifest(t *testing.T) {
+func TestOpenManifestUsesLatestBatchForUnqualifiedPublishedSourceManifest(t *testing.T) {
 	store := newDataSyncTestStore(t)
 	publishedAt := time.Unix(1_778_600_000, 0).UTC()
 	publications := []storage.DatasetShardPublication{
@@ -257,8 +257,16 @@ func TestOpenManifestAdvertisesPerBatchCARBundlesForAggregateSourceManifest(t *t
 	}
 	highWaterMark := PublishedFeedHighWaterMark(published, totalRows, totalBytes)
 	for index, publication := range published {
+		cid := map[string]string{
+			"batch-a": "bafybatchacar",
+			"batch-b": "bafybatchbcar",
+		}[publication.BatchID]
+		byteHash := map[string]string{
+			"batch-a": "car-sha-a",
+			"batch-b": "car-sha-b",
+		}[publication.BatchID]
 		if err := store.UpsertPinLedgerEntry(storage.PinLedgerEntry{
-			CID:               []string{"bafybatchacar", "bafybatchbcar"}[index],
+			CID:               cid,
 			SchemaName:        publication.SchemaName,
 			ProviderID:        publication.ProviderID,
 			SourceName:        publication.SourceName,
@@ -266,7 +274,7 @@ func TestOpenManifestAdvertisesPerBatchCARBundlesForAggregateSourceManifest(t *t
 			QueryProfile:      publication.QueryProfile,
 			Head:              publication.FeedHead,
 			HighWaterMark:     highWaterMark,
-			ByteHash:          []string{"car-sha-a", "car-sha-b"}[index],
+			ByteHash:          byteHash,
 			Role:              "shard-group-car",
 			SegmentStart:      index,
 			SegmentCount:      1,
@@ -306,12 +314,123 @@ func TestOpenManifestAdvertisesPerBatchCARBundlesForAggregateSourceManifest(t *t
 		t.Fatalf("OpenManifest failed: %v", err)
 	}
 
-	if len(manifest.ArtifactBundles) != 2 {
-		t.Fatalf("artifact bundles = %d, want both per-batch CARs: %+v", len(manifest.ArtifactBundles), manifest.ArtifactBundles)
+	if manifest.BatchID != "batch-b" || manifest.TotalCount != 32_000 {
+		t.Fatalf("manifest batch/count = %q/%d, want latest batch-b/32000", manifest.BatchID, manifest.TotalCount)
 	}
-	got := []string{manifest.ArtifactBundles[0].CID, manifest.ArtifactBundles[1].CID}
-	if got[0] != "bafybatchacar" || got[1] != "bafybatchbcar" {
-		t.Fatalf("artifact bundle CIDs = %v, want per-batch CARs only", got)
+	if len(manifest.Segments) != 1 || manifest.Segments[0].CID != "bafyommshardb" {
+		t.Fatalf("segments = %+v, want only latest batch shard", manifest.Segments)
+	}
+	if len(manifest.ArtifactBundles) != 1 {
+		t.Fatalf("artifact bundles = %d, want only latest batch CAR: %+v", len(manifest.ArtifactBundles), manifest.ArtifactBundles)
+	}
+	if manifest.ArtifactBundles[0].CID != "bafybatchbcar" {
+		t.Fatalf("artifact bundle CID = %q, want latest batch CAR", manifest.ArtifactBundles[0].CID)
+	}
+}
+
+func TestOpenManifestDoesNotSpliceCelestrakReplacementBatches(t *testing.T) {
+	store := newDataSyncTestStore(t)
+	oldPublishedAt := time.Unix(1_778_825_090, 0).UTC()
+	for _, publication := range []storage.DatasetShardPublication{
+		{
+			SchemaName:   "CAT.fbs",
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-satcat-csv",
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+			Offset:       0,
+			Limit:        50_000,
+			RecordCount:  50_000,
+			ByteCount:    10_000_000,
+			ShardCID:     "bafy-old-cat-000",
+			IndexCID:     "bafy-old-index-000",
+			ManifestCID:  "bafy-old-manifest-000",
+			ShardSHA256:  "old-shard-sha-000",
+			IndexSHA256:  "old-index-sha-000",
+			QuerySHA256:  "old-query-sha-000",
+			ResultSHA256: "old-result-sha-000",
+			PublishedAt:  oldPublishedAt,
+		},
+		{
+			SchemaName:   "CAT.fbs",
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-satcat-csv",
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+			Offset:       50_000,
+			Limit:        50_000,
+			RecordCount:  32_315,
+			ByteCount:    6_000_000,
+			ShardCID:     "bafy-old-cat-001",
+			IndexCID:     "bafy-old-index-001",
+			ManifestCID:  "bafy-old-manifest-001",
+			ShardSHA256:  "old-shard-sha-001",
+			IndexSHA256:  "old-index-sha-001",
+			QuerySHA256:  "old-query-sha-001",
+			ResultSHA256: "old-result-sha-001",
+			PublishedAt:  oldPublishedAt.Add(time.Second),
+		},
+		{
+			SchemaName:   "CAT.fbs",
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-satcat-csv",
+			BatchID:      "latest-raw-satcat",
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+			Offset:       0,
+			Limit:        50_000,
+			RecordCount:  50_000,
+			ByteCount:    12_000_000,
+			ShardCID:     "bafy-current-cat-000",
+			IndexCID:     "bafy-current-index-000",
+			ManifestCID:  "bafy-current-manifest-000",
+			ShardSHA256:  "current-shard-sha-000",
+			IndexSHA256:  "current-index-sha-000",
+			QuerySHA256:  "current-query-sha-000",
+			ResultSHA256: "current-result-sha-000",
+			PublishedAt:  oldPublishedAt.Add(24 * time.Hour),
+		},
+		{
+			SchemaName:   "CAT.fbs",
+			ProviderID:   "space-data-network-02",
+			SourceName:   "celestrak-satcat-csv",
+			BatchID:      "latest-raw-satcat",
+			QueryProfile: storage.DatasetPublicationQueryProfile,
+			Offset:       50_000,
+			Limit:        50_000,
+			RecordCount:  19_045,
+			ByteCount:    4_000_000,
+			ShardCID:     "bafy-current-cat-001",
+			IndexCID:     "bafy-current-index-001",
+			ManifestCID:  "bafy-current-manifest-001",
+			ShardSHA256:  "current-shard-sha-001",
+			IndexSHA256:  "current-index-sha-001",
+			QuerySHA256:  "current-query-sha-001",
+			ResultSHA256: "current-result-sha-001",
+			PublishedAt:  oldPublishedAt.Add(24*time.Hour + time.Second),
+		},
+	} {
+		if err := store.UpsertDatasetShardPublication(publication); err != nil {
+			t.Fatalf("UpsertDatasetShardPublication failed: %v", err)
+		}
+	}
+
+	manifest, err := OpenManifest(store, QueryRequest{
+		Schema:       "CAT.fbs",
+		ProviderID:   "space-data-network-02",
+		SourceName:   "celestrak-satcat-csv",
+		QueryProfile: storage.DatasetPublicationQueryProfile,
+		Limit:        50_000,
+	}, MaxSyncChunkLimit)
+	if err != nil {
+		t.Fatalf("OpenManifest failed: %v", err)
+	}
+
+	if manifest.BatchID != "latest-raw-satcat" || manifest.TotalCount != 69_045 {
+		t.Fatalf("manifest batch/count = %q/%d, want latest raw SATCAT batch/69045", manifest.BatchID, manifest.TotalCount)
+	}
+	if len(manifest.Segments) != 2 {
+		t.Fatalf("segments = %d, want 2: %+v", len(manifest.Segments), manifest.Segments)
+	}
+	if manifest.Segments[0].CID != "bafy-current-cat-000" || manifest.Segments[1].CID != "bafy-current-cat-001" {
+		t.Fatalf("segments = %+v, want only current CAT batch", manifest.Segments)
 	}
 }
 
