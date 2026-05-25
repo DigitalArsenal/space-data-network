@@ -122,25 +122,27 @@ describe('public EPM exports', () => {
     expect(payload).toContain('BEGIN:VCARD');
     expect(payload).toContain('N:Example;Alice;Q.;Dr.;PhD');
     expect(payload).toContain('FN:Dr. Alice Q. Example');
-    expect(payload).toContain('ORG:Example Orbital LLC');
-    expect(payload).toContain('EMAIL;TYPE=INTERNET:alice@example.com');
+    expect(payload).not.toContain('ORG:Example Orbital LLC');
+    expect(payload).not.toContain('EMAIL;TYPE=INTERNET:alice@example.com');
     expect(payload).toContain('TEL:+1 555 0100');
-    expect(payload).toContain('TITLE:Flight Director');
-    expect(payload).toContain('ROLE:Operator');
+    expect(payload).not.toContain('TITLE:Flight Director');
+    expect(payload).not.toContain('ROLE:Operator');
     expect(payload).toContain('ADR;TYPE=WORK:Box 42;;1 Orbit Way;Cape Canaveral;FL;32920;USA');
-    expect(payload).toContain('X-SDN-PEER-ID:16Uiu2Alice');
-    expect(payload).toContain('X-SDN-EPM-CID:bafyepm');
-    expect(payload).toContain('X-SDN-XPUB:xpub-node');
-    expect(payload).toContain('EMAIL;type=INTERNET;type=signing:signing-public@signing.digitalarsenal.io');
-    expect(unfolded).toContain('EMAIL;type=INTERNET;type=encryption:encryption-public@encryption.digitalarsenal.io');
+    expect(payload).not.toContain('X-SDN-PEER-ID:16Uiu2Alice');
+    expect(payload).not.toContain('X-SDN-EPM-CID:bafyepm');
+    expect(payload).not.toContain('X-SDN-XPUB:xpub-node');
+    expect(unfolded).toContain('EMAIL;TYPE=INTERNET;TYPE=peerid:16Uiu2Alice@peerid.digitalarsenal.io');
+    expect(unfolded).toContain('EMAIL;TYPE=INTERNET;TYPE=xpub:xpub-node@xpub.digitalarsenal.io');
+    expect(payload).not.toContain('EMAIL;type=INTERNET;type=signing:signing-public@signing.digitalarsenal.io');
+    expect(unfolded).not.toContain('EMAIL;type=INTERNET;type=encryption:encryption-public@encryption.digitalarsenal.io');
     expect(payload).not.toContain('EMAIL;TYPE=INTERNET:node-public@spacedatanetwork.org');
     expect(payload).not.toContain('X-SDN-PUBLIC-KEY:node-public');
-    expect(payload).toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public');
-    expect(payload).toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public');
+    expect(payload).not.toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public');
+    expect(payload).not.toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public');
     expect(payload).not.toContain('must-not-export');
   });
 
-  it('falls back to typed key arrays for signing and encryption email aliases', () => {
+  it('omits signing and encryption key arrays from compact QR aliases', () => {
     const payload = createVCardQrPayload({
       id: 'node',
       kind: 'node-self',
@@ -155,8 +157,9 @@ describe('public EPM exports', () => {
     });
     const unfolded = payload.replace(/\r\n[ \t]/g, '');
 
-    expect(unfolded).toContain('EMAIL;type=INTERNET;type=signing:array-signing-key@signing.digitalarsenal.io');
-    expect(unfolded).toContain('EMAIL;type=INTERNET;type=encryption:array-encryption-key@encryption.digitalarsenal.io');
+    expect(unfolded).toContain('EMAIL;TYPE=INTERNET;TYPE=peerid:12D3KooWNode@peerid.digitalarsenal.io');
+    expect(unfolded).not.toContain('array-signing-key@signing.digitalarsenal.io');
+    expect(unfolded).not.toContain('array-encryption-key@encryption.digitalarsenal.io');
   });
 
   it('imports signing and encryption public keys from typed vCard email aliases into EPM JSON', async () => {
@@ -184,6 +187,30 @@ describe('public EPM exports', () => {
       signing_public_key: 'ed25519-signing-public',
       encryption_public_key: 'x25519-encryption-public',
     });
+  });
+
+  it('imports PeerID and xpub from compact QR vCard email aliases', async () => {
+    const vcardModule = await import('./identity-vcard');
+    const fromVCard = (vcardModule as unknown as {
+      epmJsonFromVCard?: (payload: string) => Record<string, unknown>;
+    }).epmJsonFromVCard;
+    expect(fromVCard).toBeTypeOf('function');
+
+    const epm = fromVCard?.([
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'FN:CelesTrak Provider',
+      'EMAIL;TYPE=INTERNET;TYPE=peerid:16Uiu2Peer@peerid.digitalarsenal.io',
+      'EMAIL;TYPE=INTERNET;TYPE=xpub:xpub6Provider@xpub.digitalarsenal.io',
+      'END:VCARD',
+    ].join('\r\n'));
+
+    expect(epm).toMatchObject({
+      dn: 'CelesTrak Provider',
+      peer_id: '16Uiu2Peer',
+      xpub: 'xpub6Provider',
+    });
+    expect(epm).not.toHaveProperty('email');
   });
 
   it('resolves role public keys and derivation paths from EPM key records when top-level fields are absent', async () => {

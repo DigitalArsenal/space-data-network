@@ -64,13 +64,14 @@ describe('peer identity projection', () => {
 
     const payload = createVCardQrPayload(peerHostedEpmRecord(peer));
     const unfoldedPayload = payload.replace(/\r\n[ \t]/g, '');
-    expect(payload).toContain('UID:16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45');
-    expect(payload).toContain('X-SDN-EPM-CID:bafy-peer-epm');
+    expect(payload).not.toContain('UID:16Uiu2HAm1LbvwjEHW2GDP2ZQZvwHLZrz2jbYoRLQmJEQ3wZ5Fm45');
+    expect(payload).not.toContain('X-SDN-EPM-CID:bafy-peer-epm');
     expect(payload).not.toContain('X-SDN-PUBLIC-KEY:node-public-key');
-    expect(payload).toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public-key');
-    expect(payload).toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public-key');
-    expect(unfoldedPayload).toContain('EMAIL;type=INTERNET;type=signing:signing-public-key@signing.digitalarsenal.io');
-    expect(unfoldedPayload).toContain('EMAIL;type=INTERNET;type=encryption:encryption-public-key@encryption.digitalarsenal.io');
+    expect(payload).not.toContain('X-SDN-SIGNING-PUBLIC-KEY:signing-public-key');
+    expect(payload).not.toContain('X-SDN-ENCRYPTION-PUBLIC-KEY:encryption-public-key');
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=peerid:${PEER_ID}@peerid.digitalarsenal.io`);
+    expect(unfoldedPayload).not.toContain('signing-public-key@signing.digitalarsenal.io');
+    expect(unfoldedPayload).not.toContain('encryption-public-key@encryption.digitalarsenal.io');
   });
 
   it('lets hosted EPM values override metadata while preserving missing metadata keys', () => {
@@ -195,11 +196,40 @@ describe('peer identity projection', () => {
 
     const payload = createVCardQrPayload(enriched);
     const unfoldedPayload = payload.replace(/\r\n[ \t]/g, '');
-    expect(unfoldedPayload).toContain(`X-SDN-XPUB:${HD_TEST_XPUB}`);
-    expect(unfoldedPayload).toContain(`X-SDN-SIGNING-PUBLIC-KEY:${HD_TEST_SIGNING_PUBLIC_KEY}`);
-    expect(unfoldedPayload).toContain(`X-SDN-ENCRYPTION-PUBLIC-KEY:${HD_TEST_ENCRYPTION_PUBLIC_KEY}`);
-    expect(unfoldedPayload).toContain(`EMAIL;type=INTERNET;type=signing:${HD_TEST_SIGNING_PUBLIC_KEY}@signing.digitalarsenal.io`);
-    expect(unfoldedPayload).toContain(`EMAIL;type=INTERNET;type=encryption:${HD_TEST_ENCRYPTION_PUBLIC_KEY}@encryption.digitalarsenal.io`);
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=peerid:${PEER_ID}@peerid.digitalarsenal.io`);
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${HD_TEST_XPUB}@xpub.digitalarsenal.io`);
+    expect(unfoldedPayload).not.toContain(`X-SDN-XPUB:${HD_TEST_XPUB}`);
+    expect(unfoldedPayload).not.toContain(`X-SDN-SIGNING-PUBLIC-KEY:${HD_TEST_SIGNING_PUBLIC_KEY}`);
+    expect(unfoldedPayload).not.toContain(`X-SDN-ENCRYPTION-PUBLIC-KEY:${HD_TEST_ENCRYPTION_PUBLIC_KEY}`);
+    expect(unfoldedPayload).not.toContain('signing.digitalarsenal.io');
+    expect(unfoldedPayload).not.toContain('encryption.digitalarsenal.io');
+  });
+
+  it('renders provider QR vCards as compact iPhone-readable contact cards', async () => {
+    const peer = observedPeer({
+      dn: 'CelesTrak Provider',
+      peer_id: PEER_ID,
+      epm_cid: 'bafkreiekghfegduqfol5jemuagc7rpqnvfw4',
+      xpub: HD_TEST_XPUB,
+      signing_public_key: HD_TEST_SIGNING_PUBLIC_KEY,
+      signing_key_path: "m/44'/0'/0'/0/0",
+      encryption_public_key: HD_TEST_ENCRYPTION_PUBLIC_KEY,
+      encryption_key_path: "m/44'/0'/0'/1/0",
+    });
+
+    const payload = createVCardQrPayload(peerHostedEpmRecord(peer));
+    const unfoldedPayload = payload.replace(/\r\n[ \t]/g, '');
+
+    expect(unfoldedPayload).toContain('PRODID;VALUE=TEXT:-//Space Data Network//Compact QR//EN');
+    expect(unfoldedPayload).toContain('FN:CelesTrak Provider');
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=peerid:${PEER_ID}@peerid.digitalarsenal.io`);
+    expect(unfoldedPayload).toContain(`EMAIL;TYPE=INTERNET;TYPE=xpub:${HD_TEST_XPUB}@xpub.digitalarsenal.io`);
+    expect(unfoldedPayload).not.toContain('UID:');
+    expect(unfoldedPayload).not.toContain('X-SDN-PEER-ID');
+    expect(unfoldedPayload).not.toContain('X-SDN-EPM-CID');
+    expect(unfoldedPayload).not.toContain('X-SDN-XPUB');
+    expect(unfoldedPayload).not.toContain('SIGNING-PUBLIC-KEY');
+    expect(unfoldedPayload).not.toContain('ENCRYPTION-PUBLIC-KEY');
   });
 
   it('derives signing and encryption keys from an xpub-only EPM', async () => {

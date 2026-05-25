@@ -899,7 +899,7 @@
   </nav>
 
   {#if view === 'profile'}
-    <article class="sdn-card sdn-glass sdn-profile-home">
+    <article class="sdn-card sdn-glass sdn-readable-panel sdn-profile-home">
       <div class="sdn-profile-summary">
         <div class="sdn-card-head">
           <div>
@@ -933,7 +933,7 @@
       </div>
     </article>
   {:else if view === 'edit-profile'}
-    <article class="sdn-card sdn-glass">
+    <article class="sdn-card sdn-glass sdn-readable-panel">
       <div class="sdn-card-head">
         <div>
           <h2>Edit Profile</h2>
@@ -970,7 +970,7 @@
       {/if}
     </article>
   {:else if view === 'hosted-epms'}
-    <article class="sdn-card sdn-glass">
+    <article class="sdn-card sdn-glass sdn-readable-panel">
       <div class="sdn-card-head">
         <div>
           <h2>Local Users</h2>
@@ -1009,7 +1009,7 @@
       {/if}
     </article>
   {:else if view === 'keys-import'}
-    <article class="sdn-card sdn-glass">
+    <article class="sdn-card sdn-glass sdn-readable-panel">
       <div class="sdn-card-head">
         <div>
           <h2>Keys / Import</h2>
@@ -1059,7 +1059,7 @@
       {/if}
     </article>
   {:else if view === 'security'}
-    <article class="sdn-card sdn-glass">
+    <article class="sdn-card sdn-glass sdn-readable-panel">
       <div class="sdn-card-head">
         <div>
           <h2>Security</h2>
@@ -1089,7 +1089,7 @@
       {/if}
     </article>
   {:else if view === 'downloads'}
-    <article class="sdn-card sdn-glass">
+    <article class="sdn-card sdn-glass sdn-readable-panel">
       <div class="sdn-card-head">
         <div>
           <h2>Downloads</h2>
@@ -1108,7 +1108,7 @@
       <pre class="sdn-public-json">{publicJson}</pre>
     </article>
   {:else if view === 'settings'}
-    <article class="sdn-card sdn-glass">
+    <article class="sdn-card sdn-glass sdn-readable-panel">
       <div class="sdn-card-head">
         <div>
           <h2>Settings</h2>
