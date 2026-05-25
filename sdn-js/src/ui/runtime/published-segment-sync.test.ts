@@ -163,7 +163,7 @@ describe('published segment sync planning', () => {
       { index: 1, cid: 'bafy-old-1', rowCount: 15_856, cursor: 'MA', nextCursor: 'MA', feedHead: 'old-1' },
       { index: 2, cid: 'bafy-old-2', rowCount: 15_858, cursor: 'MA', nextCursor: 'MA', feedHead: 'old-2' },
       { index: 7, cid: 'bafy-current-a', rowCount: 15_762, cursor: 'MA', nextCursor: 'NTAwMDA', feedHead: 'older-head' },
-      { index: 8, cid: 'bafy-current-b', rowCount: 32_315, cursor: 'NTAwMDA', nextCursor: '', feedHead: 'current-head' },
+      { index: 8, cid: 'bafy-current-b', rowCount: 32_315, cursor: 'NTAwMDA', nextCursor: '', previousHead: 'older-head', feedHead: 'current-head' },
     ], {
       retentionPolicy: 'replace-snapshot',
       manifestHead: 'current-head',
@@ -172,6 +172,22 @@ describe('published segment sync planning', () => {
     expect(segments.map((segment) => segment.cid)).toEqual([
       'bafy-current-a',
       'bafy-current-b',
+    ]);
+  });
+
+  it('does not splice a current replacement tail onto an older first shard with the same cursor boundary', () => {
+    const segments = publishedSegmentsForRetention([
+      { index: 0, cid: 'bafy-current-a', rowCount: 50_000, cursor: 'MA', nextCursor: 'NTAwMDA', feedHead: 'head-current-a' },
+      { index: 1, cid: 'bafy-old-a', rowCount: 48_077, cursor: 'MA', nextCursor: 'NTAwMDA', feedHead: 'head-old-a' },
+      { index: 2, cid: 'bafy-current-b', rowCount: 19_045, cursor: 'NTAwMDA', nextCursor: '', previousHead: 'head-current-a', feedHead: 'head-current-b' },
+    ], {
+      retentionPolicy: 'replace-snapshot',
+      manifestHead: 'head-current-b',
+    });
+
+    expect(segments.map((segment) => [segment.cid, segment.rowCount])).toEqual([
+      ['bafy-current-a', 50_000],
+      ['bafy-current-b', 19_045],
     ]);
   });
 

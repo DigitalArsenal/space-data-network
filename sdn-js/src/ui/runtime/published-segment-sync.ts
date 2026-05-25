@@ -140,6 +140,7 @@ export function publishedSnapshotProbeStartStatus(input: PublishedSnapshotProbeS
 export function publishedSegmentsForRetention<T extends PublishedSegmentForSync & {
   cursor?: string | null;
   nextCursor?: string | null;
+  previousHead?: string | null;
   feedHead?: string | null;
 }>(
   segments: T[],
@@ -157,6 +158,7 @@ export function publishedSegmentsForRetention<T extends PublishedSegmentForSync 
 function latestReplaceSnapshotCursorChain<T extends PublishedSegmentForSync & {
   cursor?: string | null;
   nextCursor?: string | null;
+  previousHead?: string | null;
   feedHead?: string | null;
 }>(
   segments: T[],
@@ -180,13 +182,16 @@ function latestReplaceSnapshotCursorChain<T extends PublishedSegmentForSync & {
   let cursor = tailSegment.cursor?.trim() ?? '';
   while (cursor && !isStartCursor(cursor)) {
     const firstChainIndex = Math.max(0, Math.floor(chain[0]?.index ?? 0));
+    const expectedPreviousHead = chain[0]?.previousHead?.trim() ?? '';
     const previousSegment = orderedSegments
       .filter((segment) => {
         const cid = segment.cid?.trim() ?? '';
+        const feedHead = segment.feedHead?.trim() ?? '';
         return cid
           && !usedCids.has(cid)
           && Math.max(0, Math.floor(segment.index ?? 0)) < firstChainIndex
-          && segment.nextCursor?.trim() === cursor;
+          && segment.nextCursor?.trim() === cursor
+          && (!expectedPreviousHead || feedHead === expectedPreviousHead);
       })
       .at(-1);
     if (!previousSegment) return [];
