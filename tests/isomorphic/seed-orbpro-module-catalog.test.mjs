@@ -270,6 +270,95 @@ await test("seedOrbproModuleCatalog resolves relative artifacts from ORBPRO_ROOT
   }
 });
 
+await test("seedOrbproModuleCatalog resolves recipient secrets from ORBPRO_ROOT first", async () => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sdn-seed-orbpro-root-secret-"),
+  );
+  const pluginRoot = path.join(tempRoot, "license", "plugins");
+  const orbproRoot = path.join(tempRoot, "active-orbpro");
+  const fixtureModule = path.join(
+    orbproRoot,
+    "packages",
+    "fixture",
+    "dist",
+    "fixture-encrypted.js",
+  );
+  const secretsPath = path.join(
+    orbproRoot,
+    "packages",
+    "orbpro-integration",
+    ".secrets.json",
+  );
+  const activeKey = "11".repeat(32);
+
+  await fs.mkdir(path.dirname(fixtureModule), { recursive: true });
+  await fs.mkdir(path.dirname(secretsPath), { recursive: true });
+  await fs.mkdir(pluginRoot, { recursive: true });
+  await fs.writeFile(
+    fixtureModule,
+    [
+      `export const encryptedData = ${JSON.stringify(
+        Buffer.from("fixture-with-root-secret").toString("base64"),
+      )};`,
+      "",
+    ].join("\n"),
+  );
+  await fs.writeFile(
+    secretsPath,
+    JSON.stringify({ RECIPIENT_PRIVATE_KEY_HEX: activeKey }, null, 2),
+  );
+
+  const previousOrbproRoot = process.env.ORBPRO_ROOT;
+  const previousCatalogKey =
+    process.env.ORBPRO_MODULE_CATALOG_RECIPIENT_PRIVATE_KEY_HEX;
+  const previousRecipientKey = process.env.ORBPRO_RECIPIENT_PRIVATE_KEY_HEX;
+  process.env.ORBPRO_ROOT = orbproRoot;
+  delete process.env.ORBPRO_MODULE_CATALOG_RECIPIENT_PRIVATE_KEY_HEX;
+  delete process.env.ORBPRO_RECIPIENT_PRIVATE_KEY_HEX;
+  try {
+    const summary = await seedOrbproModuleCatalog({
+      pluginRoot,
+      modules: [
+        {
+          slug: "fixture-root-secret",
+          moduleId: "com.orbpro.fixture-root-secret",
+          version: "root-secret-test",
+          protectedModulePath: "packages/fixture/dist/fixture-encrypted.js",
+          protectedExports: [
+            { exportName: "encryptedData", slug: "fixture-root-secret" },
+          ],
+          keyExport: "recipientPrivateKeyHex",
+        },
+      ],
+    });
+
+    assert.equal(summary.seeded.length, 1);
+    assert.equal(summary.seeded[0].protectedModulePath, fixtureModule);
+    assert.equal(
+      (await fs.readFile(path.join(pluginRoot, "fixture-root-secret.key"), "utf8"))
+        .trim(),
+      activeKey,
+    );
+  } finally {
+    if (previousOrbproRoot === undefined) {
+      delete process.env.ORBPRO_ROOT;
+    } else {
+      process.env.ORBPRO_ROOT = previousOrbproRoot;
+    }
+    if (previousCatalogKey === undefined) {
+      delete process.env.ORBPRO_MODULE_CATALOG_RECIPIENT_PRIVATE_KEY_HEX;
+    } else {
+      process.env.ORBPRO_MODULE_CATALOG_RECIPIENT_PRIVATE_KEY_HEX =
+        previousCatalogKey;
+    }
+    if (previousRecipientKey === undefined) {
+      delete process.env.ORBPRO_RECIPIENT_PRIVATE_KEY_HEX;
+    } else {
+      process.env.ORBPRO_RECIPIENT_PRIVATE_KEY_HEX = previousRecipientKey;
+    }
+  }
+});
+
 await test("seedOrbproModuleCatalog removes the stale wasm-engine-sdk catalog entry", async () => {
   const tempRoot = await fs.mkdtemp(
     path.join(os.tmpdir(), "sdn-seed-orbpro-stale-wasm-engine-sdk-"),

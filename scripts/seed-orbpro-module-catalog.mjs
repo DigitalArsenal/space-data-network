@@ -512,7 +512,14 @@ function loadRecipientPrivateKeyHexFromSecrets() {
     );
   }
 
+  const explicitOrbproRoot = String(process.env.ORBPRO_ROOT || "").trim();
   const candidatePaths = [
+    explicitOrbproRoot
+      ? path.resolve(
+          explicitOrbproRoot,
+          "packages/orbpro-integration/.secrets.json",
+        )
+      : "",
     path.resolve(repoRoot, "packages/orbpro-integration/.secrets.json"),
     path.resolve(repoRoot, "OrbPro/packages/orbpro-integration/.secrets.json"),
     path.resolve(
@@ -528,7 +535,7 @@ function loadRecipientPrivateKeyHexFromSecrets() {
       process.cwd(),
       "packages/orbpro-integration/.secrets.json",
     ),
-  ];
+  ].filter(Boolean);
 
   for (const candidatePath of candidatePaths) {
     try {
