@@ -52,6 +52,8 @@ const IDENTITY_EMAIL_DOMAINS = {
   ethereum: 'ethereum.digitalarsenal.io',
   solana: 'solana.digitalarsenal.io',
 } as const;
+const PEER_ID_ALIAS_DOMAIN = 'peerid.digitalarsenal.io';
+const XPUB_ALIAS_DOMAIN = 'xpub.digitalarsenal.io';
 
 type IdentityAliasType = keyof typeof IDENTITY_EMAIL_DOMAINS;
 export type IdentityPublicKeyType = 'signing' | 'encryption';
@@ -95,27 +97,19 @@ export function createPublicEpmExport(input: Record<string, unknown>): Record<st
 export function createVCardQrPayload(input: Record<string, unknown> | HostedEpmRecord): string {
   const record = isHostedEpmRecord(input) ? input : normalizeHostedEpmRecord(input);
   const epm = createPublicEpmExport(record.epmJson);
-  const signingKey = identityPublicKeyValue(epm, 'signing');
-  const encryptionKey = identityPublicKeyValue(epm, 'encryption');
-  const displayName = pickString(epm, ['dn', 'DN', 'displayName', 'name']) || record.label || 'Space Data Network';
-  const lines = ['BEGIN:VCARD', 'VERSION:3.0', 'PRODID;VALUE=TEXT:-//Space Data Network//SDN UI//EN'];
+  const displayName = pickString(epm, ['dn', 'DN', 'displayName', 'name', 'legal_name', 'legalName', 'organization', 'org'])
+    || record.label
+    || 'Space Data Network';
+  const peerId = record.peerId || pickString(epm, ['peer_id', 'peerId', 'PeerID']) || '';
+  const xpub = identityXpubValue(epm);
+  const lines = ['BEGIN:VCARD', 'VERSION:3.0', 'PRODID;VALUE=TEXT:-//Space Data Network//Compact QR//EN'];
 
   addVCardStructuredName(lines, epm, displayName);
   addVCardLine(lines, 'FN', displayName);
-  addVCardLine(lines, 'ORG', pickString(epm, ['legal_name', 'legalName', 'organization', 'org']));
-  addVCardLine(lines, 'EMAIL;TYPE=INTERNET', pickString(epm, ['email', 'email_address', 'emailAddress', 'mail']));
   addVCardLine(lines, 'TEL', pickString(epm, ['telephone', 'phone', 'tel']));
-  addVCardLine(lines, 'TITLE', pickString(epm, ['job_title', 'jobTitle', 'title']));
-  addVCardLine(lines, 'ROLE', pickString(epm, ['occupation', 'role']));
   addVCardAddressLine(lines, epm);
-  addVCardLine(lines, 'UID', record.peerId);
-  addVCardLine(lines, 'X-SDN-DIRECTORY-KIND', record.kind === 'node-self' ? 'node' : 'user');
-  addVCardLine(lines, 'X-SDN-PEER-ID', record.peerId);
-  addVCardLine(lines, 'X-SDN-EPM-CID', record.epmCid || pickString(epm, ['epm_cid', 'epmCid']));
-  addVCardLine(lines, 'X-SDN-XPUB', identityXpubValue(epm));
-  addVCardIdentityEmailLines(lines, epm, signingKey, encryptionKey);
-  addVCardLine(lines, 'X-SDN-SIGNING-PUBLIC-KEY', signingKey);
-  addVCardLine(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY', encryptionKey);
+  addCompactIdentityEmailLine(lines, 'peerid', peerId, PEER_ID_ALIAS_DOMAIN);
+  addCompactIdentityEmailLine(lines, 'xpub', xpub, XPUB_ALIAS_DOMAIN);
   lines.push('END:VCARD');
   return `${lines.map(foldVCardLine).join('\r\n')}\r\n`;
 }
@@ -156,9 +150,9 @@ export function epmJsonFromVCard(text: string): Record<string, unknown> {
   fields.dn = vcardValue(lines, 'FN');
   fields.email = vcardContactEmail(lines);
   fields.telephone = vcardValue(lines, 'TEL');
-  fields.peer_id = vcardValue(lines, 'X-SDN-PEER-ID');
+  fields.peer_id = vcardValue(lines, 'X-SDN-PEER-ID') || vcardEmailAlias(lines, PEER_ID_ALIAS_DOMAIN, 'peerid');
   fields.epm_cid = vcardValue(lines, 'X-SDN-EPM-CID');
-  fields.xpub = vcardValue(lines, 'X-SDN-XPUB');
+  fields.xpub = vcardValue(lines, 'X-SDN-XPUB') || vcardEmailAlias(lines, XPUB_ALIAS_DOMAIN, 'xpub');
   fields.public_key = vcardValue(lines, 'X-SDN-PUBLIC-KEY') || vcardEmailAlias(lines, 'spacedatanetwork.org');
   fields.signing_public_key = vcardValue(lines, 'X-SDN-SIGNING-PUBLIC-KEY') || vcardIdentityEmailAlias(lines, 'signing');
   fields.encryption_public_key = vcardValue(lines, 'X-SDN-ENCRYPTION-PUBLIC-KEY') || vcardIdentityEmailAlias(lines, 'encryption');
@@ -178,6 +172,17 @@ export function identityXpubValue(epm: Record<string, unknown>): string | undefi
     if (xpub) return xpub;
   }
   return undefined;
+}
+
+function addCompactIdentityEmailLine(
+  lines: string[],
+  type: 'peerid' | 'xpub',
+  value: string | undefined,
+  domain: string,
+): void {
+  const trimmed = value?.trim();
+  if (!trimmed || !isSafeEmailLocalPart(trimmed)) return;
+  lines.push(`EMAIL;TYPE=INTERNET;TYPE=${type}:${trimmed}@${domain}`);
 }
 
 function addVCardStructuredName(lines: string[], epm: Record<string, unknown>, displayName: string): void {
@@ -206,29 +211,6 @@ function addVCardAddressLine(lines: string[], epm: Record<string, unknown>): voi
   if (parts.some(Boolean)) {
     lines.push(`ADR;TYPE=WORK:${parts.map(escapeVCardValue).join(';')}`);
   }
-}
-
-function addVCardIdentityEmailLines(
-  lines: string[],
-  epm: Record<string, unknown>,
-  signingKey: string | undefined,
-  encryptionKey: string | undefined,
-): void {
-  const seen = new Set<string>();
-  const addAlias = (type: IdentityAliasType, value: string | undefined) => {
-    const trimmed = value?.trim();
-    if (!trimmed || !isSafeEmailLocalPart(trimmed)) return;
-    const line = `EMAIL;type=INTERNET;type=${type}:${trimmed}@${IDENTITY_EMAIL_DOMAINS[type]}`;
-    if (seen.has(line)) return;
-    seen.add(line);
-    lines.push(line);
-  };
-
-  addAlias('signing', signingKey);
-  addAlias('encryption', encryptionKey);
-  addAlias('bitcoin', pickString(epm, ['bitcoin_address', 'bitcoinAddress']) || findChainAddress(epm, 'bitcoin'));
-  addAlias('ethereum', pickString(epm, ['ethereum_address', 'ethereumAddress']) || findChainAddress(epm, 'ethereum'));
-  addAlias('solana', pickString(epm, ['solana_address', 'solanaAddress']) || findChainAddress(epm, 'solana'));
 }
 
 function findIdentityKeyDetails(
@@ -271,17 +253,6 @@ function isDocumentedIdentityPath(type: IdentityPublicKeyType, path: string | un
   const match = /^m\/44'\/0'\/\d+'\/([01])\/\d+$/.exec(path ?? '');
   if (!match) return false;
   return type === 'signing' ? match[1] === '0' : match[1] === '1';
-}
-
-function findChainAddress(epm: Record<string, unknown>, chain: string): string | undefined {
-  const proofs = Array.isArray(epm.chain_proofs) ? epm.chain_proofs : [];
-  for (const proof of proofs) {
-    if (!isRecord(proof)) continue;
-    if ((pickString(proof, ['chain', 'CHAIN']) || '').toLowerCase() === chain) {
-      return pickString(proof, ['address', 'ADDRESS']);
-    }
-  }
-  return undefined;
 }
 
 function addVCardLine(lines: string[], key: string, value: string | undefined): void {
@@ -346,10 +317,11 @@ function vcardIdentityEmailAlias(lines: string[], type: IdentityAliasType): stri
   return '';
 }
 
-function vcardEmailAlias(lines: string[], domain: string): string {
+function vcardEmailAlias(lines: string[], domain: string, type?: string): string {
   const suffix = `@${domain}`.toLowerCase();
   for (const email of vcardEmailEntries(lines)) {
     const value = unescapeVCardValue(email.value);
+    if (type && !vcardEmailHasType(email.params, type)) continue;
     if (value.toLowerCase().endsWith(suffix)) return value.slice(0, -suffix.length);
   }
   return '';
@@ -386,6 +358,8 @@ function vcardEmailHasType(params: string[], type: string): boolean {
 function isSdnAliasEmail(value: string, params: string[]): boolean {
   const normalized = unescapeVCardValue(value).toLowerCase();
   if (normalized.endsWith('@spacedatanetwork.org')) return true;
+  if (normalized.endsWith(`@${PEER_ID_ALIAS_DOMAIN}`)) return true;
+  if (normalized.endsWith(`@${XPUB_ALIAS_DOMAIN}`)) return true;
   if (Object.values(IDENTITY_EMAIL_DOMAINS).some((domain) => normalized.endsWith(`@${domain}`))) return true;
   return Object.keys(IDENTITY_EMAIL_DOMAINS).some((type) => vcardEmailHasType(params, type));
 }

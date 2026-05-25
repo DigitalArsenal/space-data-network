@@ -33,6 +33,7 @@ const NUMERIC_COMPARISON_REGEX = new RegExp(`^(<=|>=|!=|<>|=|<|>)\\s*(${NUMERIC_
 const NUMERIC_RANGE_REGEX = new RegExp(`^(${NUMERIC_PATTERN})\\s*(?:\\.\\.|\\.\\.\\.|to)\\s*(${NUMERIC_PATTERN})$`, 'i');
 const DATE_TIME_RANGE_SEPARATOR = '..';
 const DATE_TIME_FILTER_REGEX = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::(\d{2})(?:\.\d{1,3})?)?Z?$/;
+const DATE_ONLY_FILTER_REGEX = /^(\d{4}-\d{2}-\d{2})$/;
 
 const NUMERIC_DATA_EXPLORER_COLUMNS = new Set([
   'AP1',
@@ -92,6 +93,13 @@ const NUMERIC_DATA_EXPLORER_COLUMNS = new Set([
   'USER_DEFINED_BIP_0044_TYPE',
   'USER_DEFINED_EPOCH_TIMESTAMP',
   'USER_DEFINED_MICROSECONDS',
+]);
+
+const DATE_ONLY_DATA_EXPLORER_COLUMNS = new Set([
+  'CREATION_DATE',
+  'DECAY_DATE',
+  'DEPLOYMENT_DATE',
+  'LAUNCH_DATE',
 ]);
 
 const DEFAULT_TEXT_SEARCH_COLUMNS: Record<string, string[]> = {
@@ -198,6 +206,10 @@ export function isEpochDataExplorerColumn(column: string): boolean {
   return column.trim().toUpperCase() === 'EPOCH';
 }
 
+export function isDateOnlyDataExplorerColumn(column: string): boolean {
+  return DATE_ONLY_DATA_EXPLORER_COLUMNS.has(column.trim().toUpperCase());
+}
+
 export function localDataExplorerSearchColumns(standardId: string, availableColumns: string[] = []): string[] {
   const standardColumns = DEFAULT_TEXT_SEARCH_COLUMNS[standardTableName(standardId)] ?? [];
   const available = uniqueStrings(availableColumns);
@@ -270,9 +282,9 @@ function plaintextSearchSql(value: string, columns: string[]): string | null {
 }
 
 function columnFilterSql(column: string, value: string): string {
-  if (isEpochDataExplorerColumn(column)) {
-    const epochSql = epochColumnFilterSql(column, value);
-    if (epochSql) return epochSql;
+  if (isEpochDataExplorerColumn(column) || isDateOnlyDataExplorerColumn(column)) {
+    const dateSql = dateColumnFilterSql(column, value, isDateOnlyDataExplorerColumn(column));
+    if (dateSql) return dateSql;
   }
   if (isNumericDataExplorerColumn(column)) {
     const numericSql = numericColumnFilterSql(column, value);
@@ -291,10 +303,10 @@ function numericColumnFilterSql(column: string, value: string): string | null {
   return `${expression} ${filter.operator} ${formatSqlNumber(filter.value)}`;
 }
 
-function epochColumnFilterSql(column: string, value: string): string | null {
+function dateColumnFilterSql(column: string, value: string, dateOnly: boolean): string | null {
   const [rawStart = '', rawStop = ''] = value.split(DATE_TIME_RANGE_SEPARATOR);
-  const start = normalizeDateTimeFilterLiteral(rawStart);
-  const stop = normalizeDateTimeFilterLiteral(rawStop);
+  const start = dateOnly ? normalizeDateOnlyFilterLiteral(rawStart) : normalizeDateTimeFilterLiteral(rawStart);
+  const stop = dateOnly ? normalizeDateOnlyFilterLiteral(rawStop) : normalizeDateTimeFilterLiteral(rawStop);
   const expression = textColumnExpression(column);
   const conditions: string[] = [];
   if (start) conditions.push(`${expression} >= '${start}'`);
@@ -332,6 +344,13 @@ function normalizeDateTimeFilterLiteral(value: string): string {
   const match = trimmed.match(DATE_TIME_FILTER_REGEX);
   if (!match) return '';
   return `${match[1]}T${match[2]}:${match[3] ?? '00'}.000Z`;
+}
+
+function normalizeDateOnlyFilterLiteral(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  const match = trimmed.match(DATE_ONLY_FILTER_REGEX);
+  return match ? match[1] : '';
 }
 
 function standardTableName(standardId: string): string {

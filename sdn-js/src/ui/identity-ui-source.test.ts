@@ -205,7 +205,7 @@ describe('SDN identity Svelte source', () => {
     expect(source).not.toContain("{ key: 'multiformat_address'");
   });
 
-  it('centralizes vCard QR metadata and public key alias handling', () => {
+  it('centralizes compact vCard QR metadata and identity alias handling', () => {
     const runtimeSource = readRuntimeSource('identity-vcard.ts');
     const identitySource = readUiSource('components/IdentityPanel.svelte');
     const directorySource = readUiSource('components/DirectorySearchPanel.svelte');
@@ -215,17 +215,21 @@ describe('SDN identity Svelte source', () => {
     expectSourceToContainAll(runtimeSource, [
       'signing.digitalarsenal.io',
       'encryption.digitalarsenal.io',
+      'peerid.digitalarsenal.io',
+      'xpub.digitalarsenal.io',
       'spacedatanetwork.org',
+      'Compact QR',
       'ADR;TYPE=WORK',
       'X-SDN-SIGNING-PUBLIC-KEY',
       'X-SDN-ENCRYPTION-PUBLIC-KEY',
-      'EMAIL;type=INTERNET;type=${type}',
+      'EMAIL;TYPE=INTERNET;TYPE=${type}',
       'given_name',
       'family_name',
       'legal_name',
       'honorific_prefix',
       'honorific_suffix',
     ]);
+    expect(runtimeSource).not.toContain('addVCardIdentityEmailLines');
     for (const source of uiSources) {
       expect(source).toContain("../../../src/ui/runtime/identity-vcard");
       expect(source).toContain("createVCardQrPayload as createVCardQrPayloadLocal");
@@ -909,10 +913,10 @@ describe('SDN identity styling guardrails', () => {
   it('keeps subscription rows responsive and lets actions wrap inside the grid', () => {
     const appCss = readUiSource('styles/app.css');
 
-    expect(appCss).toMatch(/\.sdn-subscription-row\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1\.35fr\)/s);
+    expect(appCss).toMatch(/\.sdn-subscription-row\s*{[^}]*grid-template-columns:\s*2\.5rem minmax\(0,\s*1\.35fr\)/s);
     expect(appCss).toMatch(/\.sdn-subscription-row\s*>\s*\.sdn-subscription-actions\s*{[^}]*display:\s*flex/s);
     expect(appCss).toMatch(/\.sdn-subscription-actions\s*{[^}]*flex-wrap:\s*wrap[^}]*overflow:\s*visible/s);
-    expect(appCss).toMatch(/@media\s*\(max-width:\s*1120px\)\s*{[^}]*\.sdn-subscription-row\s*{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);
+    expect(appCss).toMatch(/@media\s*\(max-width:\s*1120px\)\s*{[^}]*\.sdn-subscription-row\s*{[^}]*grid-template-columns:\s*2\.5rem minmax\(0,\s*1fr\)/s);
   });
 
   it('shows pin verification feedback as a dismissible fading toast', () => {
@@ -951,6 +955,19 @@ describe('SDN identity styling guardrails', () => {
     expect(appCss).toMatch(/\.sdn-identity-workspace\s*{[^}]*align-content:\s*start/s);
     expect(appCss).toMatch(/\.sdn-identity-workspace\s*{[^}]*grid-auto-rows:\s*max-content/s);
     expect(appCss).toMatch(/\.sdn-breadcrumb-tabs\s*{[^}]*align-self:\s*start/s);
+  });
+
+  it('caps node subpanels to a readable responsive width on wide screens', () => {
+    const identitySource = readUiSource('components/IdentityPanel.svelte');
+    const localDataSource = readUiSource('screens/LocalDataScreen.svelte');
+    const appCss = readUiSource('styles/app.css');
+
+    expect(identitySource).toContain('sdn-readable-panel');
+    expect(localDataSource).not.toContain('sdn-readable-panel');
+    expect(appCss).toMatch(/\.sdn-readable-panel\s*{[^}]*width:\s*min\(100%,\s*var\(--sdn-readable-panel-width\)\)/s);
+    expect(appCss).toMatch(/\.sdn-readable-panel\s*{[^}]*justify-self:\s*start/s);
+    expect(appCss).toMatch(/@media\s*\(min-width:\s*1600px\)\s*{[^}]*\.sdn-readable-panel\s*{[^}]*--sdn-readable-panel-width:\s*min\(64rem,\s*50vw\)/s);
+    expect(appCss).toMatch(/\.sdn-path-input-row,\s*\.sdn-storage-row\s*{\s*grid-template-columns:\s*1fr/s);
   });
 
   it('does not present identity as claimed or show Core claim controls', () => {

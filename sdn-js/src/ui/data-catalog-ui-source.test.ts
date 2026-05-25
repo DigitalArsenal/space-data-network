@@ -169,8 +169,11 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('class="sdn-table-wrap sdn-workbench-table-wrap sdn-catalog-table-wrap"');
     expect(localDataScreenSource).toContain('class="sdn-table sdn-workbench-table sdn-catalog-table"');
     expect(localDataScreenSource).toContain('sdn-catalog-action-panel');
-    expect(catalogProductsTable).toContain('colspan="6"');
-    expect(catalogProductsTable).not.toContain('colspan="7"');
+    expect(catalogProductsTable).toContain('<th class="sdn-row-expander-heading" aria-label="Expand row"></th>');
+    expect(catalogProductsTable).toContain('class="sdn-row-expander-cell"');
+    expect(catalogProductsTable).toContain('class="sdn-row-chevron"');
+    expect(catalogProductsTable).toContain('colspan="7"');
+    expect(catalogProductsTable).not.toContain('colspan="6"');
 
     expect(catalogProductsTable).toContain('{#each');
     expect(catalogProductsTable).toContain('as row (catalogRowKey(row))}');
@@ -202,6 +205,8 @@ describe('Data catalog UI source', () => {
     expect(appCssSource).toContain('.sdn-catalog-product-summary');
     expect(appCssSource).toContain('.sdn-catalog-detail-grid');
     expect(appCssSource).toMatch(/\.sdn-catalog-detail-grid\s*{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/s);
+    expect(appCssSource).toContain('.sdn-row-expander-heading');
+    expect(appCssSource).toContain('.sdn-row-chevron');
   });
 
   it('keeps locked catalog products metadata-only until entitlement exists', () => {
@@ -221,17 +226,19 @@ describe('Data catalog UI source', () => {
     expect(explorerTable).toContain('class="sdn-input sdn-column-filter"');
     expect(explorerTable).not.toContain('sdn-filter-toggle');
     expect(explorerTable).not.toContain('columnFilterOpen');
-    expect(localDataScreenSource).toContain('sdn-column-key');
-    expect(localDataScreenSource).toContain('explorerColumnKeyEntries');
+    expect(localDataScreenSource).not.toContain('class="sdn-column-key"');
+    expect(localDataScreenSource).not.toContain('explorerColumnKeyEntries');
     expect(localDataScreenSource).toContain("RA_OF_ASC_NODE: 'RAAN'");
     expect(localDataScreenSource).toContain("NORAD_CAT_ID: 'NORAD'");
     expect(localDataScreenSource).toContain('MPE_STANDARD_COLUMNS');
     expect(localDataScreenSource).toContain('SPW_STANDARD_COLUMNS');
     expect(appCssSource).toContain('.sdn-column-header-control');
-    expect(appCssSource).toContain('.sdn-column-key');
+    expect(appCssSource).not.toContain('.sdn-column-key');
     expect(appCssSource).not.toContain('.sdn-filter-toggle');
     expect(localDataScreenSource).toContain('function isEpochColumn(column: string): boolean');
-    expect(explorerTable).toContain('type="datetime-local"');
+    expect(localDataScreenSource).toContain('function isDateOnlyColumn(column: string): boolean');
+    expect(explorerTable).toContain('type={dateFilterInputType(column)}');
+    expect(explorerTable).toContain('type={dateFilterInputType(column.key)}');
     expect(explorerTable).toContain("handleEpochColumnFilterInput(column, 'start', event)");
     expect(explorerTable).toContain("handleEpochColumnFilterInput(column, 'stop', event)");
     expect(explorerTable).toContain('aria-label={`Filter ${columnHeaderKeyLabel(column)} start`}');
@@ -254,8 +261,10 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('toggleExplorerColumn');
     expect(explorerSection).toContain('data-explorer-column-menu');
     expect(explorerSection).toContain('aria-label="Explorer column options"');
+    expect(explorerSection).toContain('class="sdn-catalog-filter-menu-panel sdn-explorer-column-menu-panel"');
     expect(explorerSection).toContain('type="checkbox"');
     expect(explorerSection).toContain('Columns ({visibleColumnKeys.length}/10)');
+    expect(appCssSource).toContain('.sdn-explorer-column-menu-panel');
   });
 
   it('renders saved Explorer SQL/dashboard views with local persistence controls', () => {
@@ -268,12 +277,23 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('function applySavedExplorerView');
     expect(localDataScreenSource).toContain('function deleteSelectedExplorerView(): void');
     expect(localDataScreenSource).toContain('persistSavedExplorerViews(savedExplorerViews)');
+    expect(explorerSection).toContain('class="sdn-explorer-topline"');
+    expect(explorerSection).toContain('class="sdn-explorer-saved-view-compact"');
+    expect(explorerSection).toContain('class="sdn-explorer-table-search"');
+    expect(explorerSection.indexOf('class="sdn-explorer-table-search"')).toBeLessThan(
+      explorerSection.indexOf('aria-label="Data rows"'),
+    );
     expect(explorerSection).toContain('aria-label="Saved Explorer views"');
     expect(explorerSection).toContain('bind:value={selectedSavedExplorerViewId}');
     expect(explorerSection).toContain('placeholder="View name"');
     expect(explorerSection).toContain('Save view');
     expect(explorerSection).toContain('Delete view');
-    expect(appCssSource).toContain('.sdn-saved-view-controls');
+    expect(appCssSource).toContain('.sdn-explorer-saved-view-compact');
+    expect(appCssSource).toContain('.sdn-explorer-table-search');
+    expect(localDataScreenSource).toContain('function explorerNoRowsLabel(standardId = selectedStandardId): string');
+    expect(explorerSection).toContain('explorerNoRowsLabel');
+    expect(appCssSource).toContain('.sdn-workbench-table tbody tr:nth-child(even)');
+    expect(appCssSource).toContain('.sdn-workbench-table tbody tr:nth-child(odd)');
   });
 
   it('keeps store renewal metadata out of the compact product table', () => {
@@ -389,8 +409,10 @@ describe('Data catalog UI source', () => {
     expect(localDataScreenSource).toContain('function toggleSubscriptionStatusFilter(value: Exclude<SubscriptionStatusFilter, \'all\'>): void');
     expect(localDataScreenSource).toContain('function clearSubscriptionFilters(): void');
     expect(localDataScreenSource).toContain('function subscriptionSearchTextFor(schema: SchemaSyncRow): string');
-    expect(localDataScreenSource).toContain('function openSubscriptionDetails(schema: SchemaSyncRow): void');
-    expect(localDataScreenSource).toContain('function closeSubscriptionDetails(): void');
+    expect(localDataScreenSource).toContain('let expandedSubscriptionRowKey');
+    expect(localDataScreenSource).toContain('function toggleSubscriptionRowDetails(schema: SchemaSyncRow): void');
+    expect(localDataScreenSource).not.toContain('function openSubscriptionDetails(schema: SchemaSyncRow): void');
+    expect(localDataScreenSource).not.toContain('function closeSubscriptionDetails(): void');
     expect(subscriptionsSection).toContain('aria-label="Subscription storage summary"');
     expect(subscriptionsSection).toContain('aria-label="Subscription filters"');
     expect(subscriptionsSection).toContain('aria-label="Search subscriptions"');
@@ -410,16 +432,24 @@ describe('Data catalog UI source', () => {
     expect(subscriptionsSection).toContain('schemaPinnedRowsLabel(schema)');
     expect(subscriptionsSection).toContain('syncStatusLabel(schema)');
     expect(subscriptionsSection).toContain('schemaCompactSyncDetailLabel(schema)');
+    expect(subscriptionsSection).toContain('class="sdn-row-expander-cell"');
+    expect(subscriptionsSection).toContain('class="sdn-row-chevron"');
+    expect(localDataScreenSource).toContain('toggleSubscriptionRowDetails(schema)');
+    expect(subscriptionsSection).toContain('handleSubscriptionRowClick(schema, event)');
+    expect(subscriptionsSection).toContain('handleSubscriptionRowKeydown(schema, event)');
+    expect(subscriptionsSection).toContain('class="sdn-subscription-detail-row"');
     expect(subscriptionsSection).toContain('handleSubscriptionStorageCapInput(selectedSubscriptionDetailSchema, event)');
     expect(subscriptionsSection).toContain('handleSubscriptionQueryProfileChange(selectedSubscriptionDetailSchema, event)');
     expect(subscriptionsSection).toContain('handleSubscriptionFilterInput(selectedSubscriptionDetailSchema, event)');
-    expect(subscriptionsSection).toContain('class="sdn-subscription-detail-drawer"');
+    expect(subscriptionsSection).not.toContain('class="sdn-subscription-detail-drawer"');
+    expect(subscriptionsSection).not.toContain('>Details</button>');
     expect(subscriptionsSection).toContain('class="sdn-subscription-detail-grid"');
     for (const label of ['Access', 'Storage', 'Pinning', 'Sync', 'Freshness', 'Health']) {
       expect(subscriptionsSection).toContain(`<span>${label}</span>`);
     }
     expect(appCssSource).toContain('.sdn-subscription-filter-bar');
-    expect(appCssSource).toContain('.sdn-subscription-detail-drawer');
+    expect(appCssSource).not.toContain('.sdn-subscription-detail-drawer');
+    expect(appCssSource).toContain('.sdn-subscription-detail-row');
     expect(appCssSource).toContain('.sdn-subscription-detail-grid');
   });
 

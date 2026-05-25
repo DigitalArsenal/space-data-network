@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildLocalDataExplorerQuery,
+  isDateOnlyDataExplorerColumn,
   isEpochDataExplorerColumn,
   isNumericDataExplorerColumn,
   localDataExplorerSearchColumns,
@@ -106,6 +107,23 @@ describe('data explorer query builder', () => {
     expect(startOnly.rowsSql).not.toContain('LIKE');
     expect(stopOnly.rowsSql).toContain('CAST("EPOCH" AS TEXT) < \'2026-05-11T00:00:00.000Z\'');
     expect(stopOnly.rowsSql).not.toContain('LIKE');
+  });
+
+  it('builds date-only range filters from date picker values', () => {
+    const query = buildLocalDataExplorerQuery({
+      standardId: 'CAT',
+      page: 0,
+      pageSize: 10,
+      columnFilters: {
+        LAUNCH_DATE: '2026-05-01..2026-05-31',
+      },
+      filterColumns: ['LAUNCH_DATE'],
+    });
+
+    expect(isDateOnlyDataExplorerColumn('LAUNCH_DATE')).toBe(true);
+    expect(query.rowsSql).toContain('CAST("LAUNCH_DATE" AS TEXT) >= \'2026-05-01\'');
+    expect(query.rowsSql).toContain('CAST("LAUNCH_DATE" AS TEXT) < \'2026-05-31\'');
+    expect(query.rowsSql).not.toContain('CAST("LAUNCH_DATE" AS TEXT) LIKE');
   });
 
   it('keeps plaintext search focused on meaningful text and ID columns', () => {

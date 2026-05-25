@@ -69,6 +69,7 @@
   import { loadingMetricLabel } from '../lib/data-loading-labels';
   import {
     buildLocalDataExplorerQuery,
+    isDateOnlyDataExplorerColumn,
     isEpochDataExplorerColumn,
     isNumericDataExplorerColumn,
     localDataExplorerSearchColumns,
@@ -114,12 +115,6 @@
     key: SortColumn;
     label: string;
     source: ColumnSource;
-  }
-
-  interface ColumnKeyEntry {
-    key: string;
-    abbreviation: string;
-    label: string;
   }
 
   interface WorkbenchRow {
@@ -706,8 +701,8 @@
   let subscriptionFilterActiveTotal = 0;
   let subscriptionFilterButtonText = 'Filters';
   let subscriptionSearchText = '';
-  let selectedSubscriptionDetailId = '';
   let expandedCatalogActionRowKey = '';
+  let expandedSubscriptionRowKey = '';
   let suppressCatalogOutsideUntil = 0;
   let overviewStorageGroup: DataOverviewStorageGroup = 'provider';
   let pageSize = DEFAULT_PAGE_SIZE;
@@ -795,8 +790,8 @@
   $: catalogFilterButtonText = catalogFilterActiveTotal > 0 ? `Filters (${catalogFilterActiveTotal})` : 'Filters';
   $: subscriptionFilterActiveTotal = Number(subscriptionStatusFilter !== 'all') + Number(subscriptionAccessFilter !== 'all') + Number(subscriptionPlanFilter !== 'all');
   $: subscriptionFilterButtonText = subscriptionFilterActiveTotal > 0 ? `Filters (${subscriptionFilterActiveTotal})` : 'Filters';
-  $: selectedSubscriptionDetailSchema = selectedSubscriptionDetailId
-    ? schemaSyncRows.find((schema) => schema.subscriptionId === selectedSubscriptionDetailId) ?? null
+  $: selectedSubscriptionDetailSchema = expandedSubscriptionRowKey
+    ? schemaSyncRows.find((schema) => subscriptionRowKey(schema) === expandedSubscriptionRowKey) ?? null
     : null;
   $: filteredDataCatalogRows = filterDataCatalogRows(dataCatalogRows, {
     query: catalogSearchText,
@@ -854,14 +849,6 @@
   $: pnmQueryColumns = visibleSqlColumns(pnmQueryResult?.columns ?? [], pnmQueryRows, 'PNM');
   $: pnmQueryRows = pnmQueryResult?.records ?? [];
   $: selectedPnmDetails = selectedPnmRow?.decoded ?? {};
-  $: explorerColumnKeyEntries = buildExplorerColumnKeyEntries(
-    explorerSearchMode,
-    Boolean(sqlResult),
-    displaySqlColumns,
-    Boolean(localExplorerResult),
-    localExplorerColumns,
-    visibleColumns,
-  );
   $: rememberDataPageViewCache(
     dataPageCacheActive,
     schemaSyncRows,
@@ -1395,13 +1382,27 @@
     return isEpochDataExplorerColumn(column);
   }
 
+  function isDateOnlyColumn(column: string): boolean {
+    return isDateOnlyDataExplorerColumn(column);
+  }
+
+  function isDateFilterColumn(column: string): boolean {
+    return isEpochColumn(column) || isDateOnlyColumn(column);
+  }
+
+  function dateFilterInputType(column: string): 'date' | 'datetime-local' {
+    return isDateOnlyColumn(column) ? 'date' : 'datetime-local';
+  }
+
   function epochColumnFilterValue(column: string, boundary: 'start' | 'stop'): string {
     const range = parseEpochColumnFilterValue(columnFilters[column] ?? '');
-    return dateTimeLocalInputValue(boundary === 'start' ? range.start : range.stop);
+    const value = boundary === 'start' ? range.start : range.stop;
+    return isDateOnlyColumn(column) ? dateOnlyInputValue(value) : dateTimeLocalInputValue(value);
   }
 
   function handleEpochColumnFilterInput(column: string, boundary: 'start' | 'stop', event: Event): void {
-    const value = isoDateTimeFilterValue((event.currentTarget as HTMLInputElement).value);
+    const rawValue = (event.currentTarget as HTMLInputElement).value;
+    const value = isDateOnlyColumn(column) ? dateOnlyFilterValue(rawValue) : isoDateTimeFilterValue(rawValue);
     const current = parseEpochColumnFilterValue(columnFilters[column] ?? '');
     const nextRange = {
       start: boundary === 'start' ? value : current.start,
@@ -1455,6 +1456,7 @@
   function setDataSection(section: DataSection): void {
     selectedDataSection = section;
     if (section !== 'store') expandedCatalogActionRowKey = '';
+    if (section !== 'subscriptions') expandedSubscriptionRowKey = '';
     if (section === 'explorer') {
       void runLocalExplorerQuery(0);
     }
@@ -1511,11 +1513,25 @@
     const schema = schemaForCatalogRow(row);
     selectedDataSection = section;
     expandedCatalogActionRowKey = '';
+    if (section !== 'subscriptions') expandedSubscriptionRowKey = '';
     if (!schema) return;
     if (section === 'explorer') {
       selectExplorerSchemaRow(schema);
       return;
     }
+    selectedSubscriptionId = schema.subscriptionId;
+    selectedStandardId = schema.id;
+    selectedDataSourceId = schema.dataSourceId;
+    selectedDatastoreKey = schema.datastoreKey;
+    userSelectedStandard = true;
+    columnFilters = {};
+    epochFilterMenuColumn = '';
+    clearPnmSelection();
+    dataScan = null;
+    pageIndex = 0;
+  }
+
+  function selectSubscriptionRow(schema: SchemaSyncRow): void {
     selectedSubscriptionId = schema.subscriptionId;
     selectedStandardId = schema.id;
     selectedDataSourceId = schema.dataSourceId;
@@ -1545,6 +1561,34 @@
 
   function toggleCatalogRowActions(row: DataCatalogRow): void {
     toggleCatalogRowActionsByKey(catalogRowKey(row));
+  }
+
+  function subscriptionRowKey(schema: SchemaSyncRow): string {
+    return schema.subscriptionId || [
+      schema.dataSourceId,
+      schema.datastoreKey ?? '',
+      schema.id,
+      schema.providerName,
+      schema.providerPeerId ?? schema.providerPublicKey ?? '',
+    ].join('|');
+  }
+
+  function toggleSubscriptionRowDetails(schema: SchemaSyncRow): void {
+    const key = subscriptionRowKey(schema);
+    expandedSubscriptionRowKey = expandedSubscriptionRowKey === key ? '' : key;
+    selectSubscriptionRow(schema);
+  }
+
+  function handleSubscriptionRowClick(schema: SchemaSyncRow, event: MouseEvent): void {
+    if (event.target instanceof Element && event.target.closest('button, input, select, textarea, a, label')) return;
+    toggleSubscriptionRowDetails(schema);
+  }
+
+  function handleSubscriptionRowKeydown(schema: SchemaSyncRow, event: KeyboardEvent): void {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    event.stopPropagation();
+    toggleSubscriptionRowDetails(schema);
   }
 
   function suppressCatalogOutsideClearOnce(): void {
@@ -1626,9 +1670,12 @@
       epochFilterMenuColumn = '';
     }
     if (performance.now() < suppressCatalogOutsideUntil) return;
-    if (!expandedCatalogActionRowKey) return;
-    if (composedPath.some((target) => target instanceof Element && target.closest('[data-catalog-row-key]'))) return;
-    expandedCatalogActionRowKey = '';
+    if (expandedCatalogActionRowKey && !composedPath.some((target) => target instanceof Element && target.closest('[data-catalog-row-key]'))) {
+      expandedCatalogActionRowKey = '';
+    }
+    if (expandedSubscriptionRowKey && !composedPath.some((target) => target instanceof Element && target.closest('[data-subscription-row-key]'))) {
+      expandedSubscriptionRowKey = '';
+    }
   }
 
   function catalogRowCountsLabel(row: DataCatalogRow): string {
@@ -1799,18 +1846,6 @@
   function openSchemaInExplorer(schema: SchemaSyncRow): void {
     selectedDataSection = 'explorer';
     selectExplorerSchemaRow(schema);
-  }
-
-  function openSubscriptionDetails(schema: SchemaSyncRow): void {
-    selectedSubscriptionId = schema.subscriptionId;
-    selectedStandardId = schema.id;
-    selectedDataSourceId = schema.dataSourceId;
-    selectedDatastoreKey = schema.datastoreKey;
-    selectedSubscriptionDetailId = schema.subscriptionId;
-  }
-
-  function closeSubscriptionDetails(): void {
-    selectedSubscriptionDetailId = '';
   }
 
   function sortedMessageTypeRows(rows: SchemaSyncRow[]): SchemaSyncRow[] {
@@ -2708,7 +2743,7 @@
   }
 
   function columnFilterMatchesValue(value: string, column: string, query: string): boolean {
-    if (isEpochColumn(column)) return epochFilterMatchesValue(value, query);
+    if (isDateFilterColumn(column)) return epochFilterMatchesValue(value, query);
     return value.toLowerCase().includes(query.toLowerCase());
   }
 
@@ -2742,8 +2777,17 @@
     return normalized ? normalized.slice(0, 16) : '';
   }
 
+  function dateOnlyInputValue(value: string): string {
+    const normalized = normalizeDateOnlyFilterLiteral(value);
+    return normalized;
+  }
+
   function isoDateTimeFilterValue(value: string): string {
     return normalizeEpochFilterLiteral(value);
+  }
+
+  function dateOnlyFilterValue(value: string): string {
+    return normalizeDateOnlyFilterLiteral(value);
   }
 
   function normalizeEpochFilterLiteral(value: string): string {
@@ -2752,6 +2796,15 @@
     const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::(\d{2})(?:\.\d{1,3})?)?Z?$/);
     if (!match) return '';
     return `${match[1]}T${match[2]}:${match[3] ?? '00'}.000Z`;
+  }
+
+  function normalizeDateOnlyFilterLiteral(value: string): string {
+    const trimmed = value.trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : '';
+  }
+
+  function explorerNoRowsLabel(standardId = selectedStandardId): string {
+    return localExplorerLoading ? 'Loading' : `No rows loaded for ${standardId}.`;
   }
 
   function handleWorkbenchRowClick(row: WorkbenchRow): void {
@@ -2965,31 +3018,6 @@
     if (tokens.length === 0) return normalizedColumnLookupKey(column).slice(0, 8);
     if (tokens.length === 1) return tokens[0].slice(0, 8).toUpperCase();
     return tokens.map((token) => token.slice(0, 1).toUpperCase()).join('').slice(0, 8);
-  }
-
-  function buildExplorerColumnKeyEntries(
-    mode: ExplorerSearchMode,
-    hasSqlResult: boolean,
-    sqlColumnsForKey: string[],
-    hasLocalResult: boolean,
-    localColumnsForKey: string[],
-    rawColumnsForKey: WorkbenchColumn[],
-  ): ColumnKeyEntry[] {
-    if (mode === 'sql' && hasSqlResult) return columnKeyEntriesFromSqlColumns(sqlColumnsForKey);
-    if (hasLocalResult) return columnKeyEntriesFromSqlColumns(localColumnsForKey);
-    return rawColumnsForKey.map((column) => columnKeyEntry(column.key, column.label));
-  }
-
-  function columnKeyEntriesFromSqlColumns(columns: string[]): ColumnKeyEntry[] {
-    return columns.map((column) => columnKeyEntry(column));
-  }
-
-  function columnKeyEntry(column: string, fallbackLabel?: string): ColumnKeyEntry {
-    return {
-      key: column,
-      abbreviation: columnHeaderAbbreviation(column, fallbackLabel),
-      label: columnHeaderKeyLabel(column, fallbackLabel),
-    };
   }
 
   function isInternalSqlColumn(column: string): boolean {
@@ -5029,6 +5057,7 @@
             <table class="sdn-table sdn-workbench-table sdn-catalog-table" aria-label="Store data products">
               <thead>
                 <tr>
+                  <th class="sdn-row-expander-heading" aria-label="Expand row"></th>
                   <th>Provider</th>
                   <th>Product</th>
                   <th>Types</th>
@@ -5047,8 +5076,12 @@
                     role="button"
                     tabindex="0"
                     aria-expanded={expandedCatalogActionRowKey === catalogRowKey(row)}
+                    on:click={() => toggleCatalogRowActions(row)}
                     on:keydown={(event) => handleCatalogRowKeydown(row, event)}
                   >
+                    <td class="sdn-row-expander-cell">
+                      <span class="sdn-row-chevron" aria-hidden="true">⌄</span>
+                    </td>
                     <td>
                       <button class="sdn-catalog-cell-trigger" type="button" on:click={(event) => handleCatalogCellButtonClick(row, event)}>
                         <span class="sdn-cell-stack">
@@ -5082,7 +5115,7 @@
                   </tr>
 	                  {#if expandedCatalogActionRowKey === catalogRowKey(row)}
 	                    <tr class="sdn-catalog-action-row" data-catalog-row-key={catalogRowKey(row)}>
-	                      <td colspan="6">
+	                      <td colspan="7">
 	                        <div class="sdn-catalog-action-panel">
 	                          <div class="sdn-catalog-product-summary">
 	                            <div class="sdn-cell-stack">
@@ -5145,7 +5178,7 @@
 	                  {/if}
                 {:else}
                   <tr>
-                    <td colspan="6">{dataPageLoading ? 'Loading' : 'No matching data products.'}</td>
+                    <td colspan="7">{dataPageLoading ? 'Loading' : 'No matching data products.'}</td>
                   </tr>
                 {/each}
               </tbody>
@@ -5253,7 +5286,19 @@
 
           <div class="sdn-storage-grid">
             {#each filteredSubscriptionRows as schema (schema.subscriptionId)}
-              <article class="sdn-storage-row sdn-subscription-row" class:active={isSchemaRowSelected(schema)}>
+              <div
+                class="sdn-storage-row sdn-subscription-row"
+                class:active={isSchemaRowSelected(schema) || expandedSubscriptionRowKey === subscriptionRowKey(schema)}
+                data-subscription-row-key={subscriptionRowKey(schema)}
+                role="button"
+                tabindex="0"
+                aria-expanded={expandedSubscriptionRowKey === subscriptionRowKey(schema)}
+                on:click={(event) => handleSubscriptionRowClick(schema, event)}
+                on:keydown={(event) => handleSubscriptionRowKeydown(schema, event)}
+              >
+                <div class="sdn-row-expander-cell">
+                  <span class="sdn-row-chevron" aria-hidden="true">⌄</span>
+                </div>
                 <div class="sdn-subscription-primary">
                   <strong>{subscriptionProductLabel(schema)}</strong>
                   <span>{schema.providerName}</span>
@@ -5287,9 +5332,132 @@
                   {:else}
                     <button class="sdn-button sdn-button-compact" type="button" on:click={() => resumeSubscriptionSync(schema)}>Resume</button>
                   {/if}
-                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => openSubscriptionDetails(schema)}>Details</button>
                 </div>
-              </article>
+              </div>
+              {#if expandedSubscriptionRowKey === subscriptionRowKey(schema) && selectedSubscriptionDetailSchema}
+                <article class="sdn-subscription-detail-row" data-subscription-row-key={subscriptionRowKey(schema)} aria-label={`${selectedSubscriptionDetailSchema.id} subscription details`}>
+                  <div class="sdn-catalog-product-summary">
+                    <div class="sdn-cell-stack">
+                      <strong>{subscriptionProductLabel(selectedSubscriptionDetailSchema)}</strong>
+                      <span>{selectedSubscriptionDetailSchema.providerName} · {selectedSubscriptionDetailSchema.id}</span>
+                    </div>
+                    <div class="sdn-catalog-row-actions">
+                      <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => openSchemaInExplorer(selectedSubscriptionDetailSchema)}>Open Explorer</button>
+                    </div>
+                  </div>
+                  <div class="sdn-subscription-detail-grid">
+                    <div>
+                      <span>Access</span>
+                      <strong>{subscriptionAccessLabel(selectedSubscriptionDetailSchema)}</strong>
+                      <em>{subscriptionPlanLabel(selectedSubscriptionDetailSchema)} · {subscriptionCostLabel(selectedSubscriptionDetailSchema)}</em>
+                    </div>
+                    <div>
+                      <span>Storage</span>
+                      <strong>{schemaCachedBytesLabel(selectedSubscriptionDetailSchema)}</strong>
+                      <em>Local {schemaLocalRowsLabel(selectedSubscriptionDetailSchema)} / remote {schemaRemoteRowsLabel(selectedSubscriptionDetailSchema)}</em>
+                    </div>
+                    <div>
+                      <span>Pinning</span>
+                      <strong>{schemaPinnedRowsLabel(selectedSubscriptionDetailSchema)}</strong>
+                      <em>{schemaStoragePressureLabel(selectedSubscriptionDetailSchema)}</em>
+                    </div>
+                    <div>
+                      <span>Sync</span>
+                      <strong>{syncStatusLabel(selectedSubscriptionDetailSchema)}</strong>
+                      <em>{subscriptionSyncPolicyLabel(selectedSubscriptionDetailSchema)} · {schemaDownloadSpeedLabel(selectedSubscriptionDetailSchema)}</em>
+                    </div>
+                    <div>
+                      <span>Freshness</span>
+                      <strong>{schemaLastSyncedLabel(selectedSubscriptionDetailSchema)}</strong>
+                      <em>{nextSyncAttemptLabel(selectedSubscriptionDetailSchema)}</em>
+                    </div>
+                    <div>
+                      <span>Health</span>
+                      <strong>{schemaHealthLabel(selectedSubscriptionDetailSchema)}</strong>
+                      <em>{subscriptionRenewalLabel(selectedSubscriptionDetailSchema)} · {schemaRetentionPolicyLabel(selectedSubscriptionDetailSchema)}</em>
+                    </div>
+                  </div>
+                  <div class="sdn-subscription-detail-controls">
+                    <label>
+                      <span>Storage cap</span>
+                      <div class="sdn-storage-cap-controls">
+                        <input
+                          class="sdn-input"
+                          type="number"
+                          min="0.1"
+                          step="0.1"
+                          aria-label={`${selectedSubscriptionDetailSchema.id} storage cap`}
+                          value={selectedSubscriptionDetailSchema.preference.storageCap}
+                          on:input={(event) => handleSubscriptionStorageCapInput(selectedSubscriptionDetailSchema, event)}
+                        />
+                        <select
+                          class="sdn-input sdn-select"
+                          aria-label={`${selectedSubscriptionDetailSchema.id} storage unit`}
+                          value={selectedSubscriptionDetailSchema.preference.storageUnit}
+                          on:change={(event) => handleSubscriptionStorageUnitChange(selectedSubscriptionDetailSchema, event)}
+                        >
+                          {#each STORAGE_CAP_UNITS as unit}
+                            <option value={unit}>{unit}</option>
+                          {/each}
+                        </select>
+                      </div>
+                    </label>
+                    <label>
+                      <span>Sync profile</span>
+                      <select
+                        class="sdn-input sdn-select"
+                        aria-label={`${selectedSubscriptionDetailSchema.id} sync profile`}
+                        value={selectedSubscriptionDetailSchema.queryProfile}
+                        on:change={(event) => handleSubscriptionQueryProfileChange(selectedSubscriptionDetailSchema, event)}
+                      >
+                        {#each DATA_QUERY_PROFILES as profile}
+                          <option value={profile.id}>{profile.label}</option>
+                        {/each}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Retention</span>
+                      <select
+                        class="sdn-input sdn-select"
+                        aria-label={`${selectedSubscriptionDetailSchema.id} retention policy`}
+                        value={selectedSubscriptionDetailSchema.retentionPolicy}
+                        on:change={(event) => handleSubscriptionRetentionPolicyChange(selectedSubscriptionDetailSchema, event)}
+                      >
+                        {#each DATA_RETENTION_POLICIES as policy}
+                          <option value={policy.id}>{policy.label}</option>
+                        {/each}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Sync filter</span>
+                      <input
+                        class="sdn-input sdn-sync-filter"
+                        aria-label={`${selectedSubscriptionDetailSchema.id} sync filter`}
+                        value={selectedSubscriptionDetailSchema.syncFilter}
+                        placeholder="Sync filter"
+                        on:input={(event) => handleSubscriptionFilterInput(selectedSubscriptionDetailSchema, event)}
+                      />
+                    </label>
+                  </div>
+                  <div class="sdn-storage-row-actions sdn-subscription-detail-actions">
+                    <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => void verifyPinnedArtifacts(selectedSubscriptionDetailSchema)} disabled={pinVerifyRunning}>Verify pins</button>
+                    {#if resetSubscriptionId === selectedSubscriptionDetailSchema.subscriptionId}
+                      <div class="sdn-reset-confirm sdn-reset-row-confirm" role="group" aria-label={`${selectedSubscriptionDetailSchema.id} row reset confirmation`}>
+                        <label>
+                          <span>Type RESET to clear this row.</span>
+                          <input class="sdn-input" bind:value={resetConfirmText} autocomplete="off" />
+                        </label>
+                        <div class="sdn-toolbar">
+                          <button class="sdn-button sdn-button-compact" type="button" on:click={() => void confirmResetSubscriptionData(selectedSubscriptionDetailSchema)} disabled={resetRunning || resetConfirmText.trim() !== 'RESET'}>Clear</button>
+                          <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={cancelResetSubscriptionData} disabled={resetRunning}>Cancel</button>
+                        </div>
+                      </div>
+                    {:else}
+                      <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => beginResetSubscriptionData(selectedSubscriptionDetailSchema.subscriptionId)} disabled={resetRunning}>Reset row</button>
+                    {/if}
+                  </div>
+                </article>
+              {/if}
             {:else}
               {#if dataPageLoading}
                 <p class="sdn-loading-inline" role="status">Loading</p>
@@ -5298,131 +5466,6 @@
               {/if}
             {/each}
           </div>
-          {#if selectedSubscriptionDetailSchema}
-            <aside class="sdn-subscription-detail-drawer" aria-label={`${selectedSubscriptionDetailSchema.id} subscription details`}>
-              <div class="sdn-catalog-product-summary">
-                <div class="sdn-cell-stack">
-                  <strong>{subscriptionProductLabel(selectedSubscriptionDetailSchema)}</strong>
-                  <span>{selectedSubscriptionDetailSchema.providerName} · {selectedSubscriptionDetailSchema.id}</span>
-                </div>
-                <div class="sdn-catalog-row-actions">
-                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => openSchemaInExplorer(selectedSubscriptionDetailSchema)}>Open Explorer</button>
-                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={closeSubscriptionDetails}>Close</button>
-                </div>
-              </div>
-              <div class="sdn-subscription-detail-grid">
-                <div>
-                  <span>Access</span>
-                  <strong>{subscriptionAccessLabel(selectedSubscriptionDetailSchema)}</strong>
-                  <em>{subscriptionPlanLabel(selectedSubscriptionDetailSchema)} · {subscriptionCostLabel(selectedSubscriptionDetailSchema)}</em>
-                </div>
-                <div>
-                  <span>Storage</span>
-                  <strong>{schemaCachedBytesLabel(selectedSubscriptionDetailSchema)}</strong>
-                  <em>Local {schemaLocalRowsLabel(selectedSubscriptionDetailSchema)} / remote {schemaRemoteRowsLabel(selectedSubscriptionDetailSchema)}</em>
-                </div>
-                <div>
-                  <span>Pinning</span>
-                  <strong>{schemaPinnedRowsLabel(selectedSubscriptionDetailSchema)}</strong>
-                  <em>{schemaStoragePressureLabel(selectedSubscriptionDetailSchema)}</em>
-                </div>
-                <div>
-                  <span>Sync</span>
-                  <strong>{syncStatusLabel(selectedSubscriptionDetailSchema)}</strong>
-                  <em>{subscriptionSyncPolicyLabel(selectedSubscriptionDetailSchema)} · {schemaDownloadSpeedLabel(selectedSubscriptionDetailSchema)}</em>
-                </div>
-                <div>
-                  <span>Freshness</span>
-                  <strong>{schemaLastSyncedLabel(selectedSubscriptionDetailSchema)}</strong>
-                  <em>{nextSyncAttemptLabel(selectedSubscriptionDetailSchema)}</em>
-                </div>
-                <div>
-                  <span>Health</span>
-                  <strong>{schemaHealthLabel(selectedSubscriptionDetailSchema)}</strong>
-                  <em>{subscriptionRenewalLabel(selectedSubscriptionDetailSchema)} · {schemaRetentionPolicyLabel(selectedSubscriptionDetailSchema)}</em>
-                </div>
-              </div>
-              <div class="sdn-subscription-detail-controls">
-                <label>
-                  <span>Storage cap</span>
-                  <div class="sdn-storage-cap-controls">
-                    <input
-                      class="sdn-input"
-                      type="number"
-                      min="0.1"
-                      step="0.1"
-                      aria-label={`${selectedSubscriptionDetailSchema.id} storage cap`}
-                      value={selectedSubscriptionDetailSchema.preference.storageCap}
-                      on:input={(event) => handleSubscriptionStorageCapInput(selectedSubscriptionDetailSchema, event)}
-                    />
-                    <select
-                      class="sdn-input sdn-select"
-                      aria-label={`${selectedSubscriptionDetailSchema.id} storage unit`}
-                      value={selectedSubscriptionDetailSchema.preference.storageUnit}
-                      on:change={(event) => handleSubscriptionStorageUnitChange(selectedSubscriptionDetailSchema, event)}
-                    >
-                      {#each STORAGE_CAP_UNITS as unit}
-                        <option value={unit}>{unit}</option>
-                      {/each}
-                    </select>
-                  </div>
-                </label>
-                <label>
-                  <span>Sync profile</span>
-                  <select
-                    class="sdn-input sdn-select"
-                    aria-label={`${selectedSubscriptionDetailSchema.id} sync profile`}
-                    value={selectedSubscriptionDetailSchema.queryProfile}
-                    on:change={(event) => handleSubscriptionQueryProfileChange(selectedSubscriptionDetailSchema, event)}
-                  >
-                    {#each DATA_QUERY_PROFILES as profile}
-                      <option value={profile.id}>{profile.label}</option>
-                    {/each}
-                  </select>
-                </label>
-                <label>
-                  <span>Retention</span>
-                  <select
-                    class="sdn-input sdn-select"
-                    aria-label={`${selectedSubscriptionDetailSchema.id} retention policy`}
-                    value={selectedSubscriptionDetailSchema.retentionPolicy}
-                    on:change={(event) => handleSubscriptionRetentionPolicyChange(selectedSubscriptionDetailSchema, event)}
-                  >
-                    {#each DATA_RETENTION_POLICIES as policy}
-                      <option value={policy.id}>{policy.label}</option>
-                    {/each}
-                  </select>
-                </label>
-                <label>
-                  <span>Sync filter</span>
-                  <input
-                    class="sdn-input sdn-sync-filter"
-                    aria-label={`${selectedSubscriptionDetailSchema.id} sync filter`}
-                    value={selectedSubscriptionDetailSchema.syncFilter}
-                    placeholder="Sync filter"
-                    on:input={(event) => handleSubscriptionFilterInput(selectedSubscriptionDetailSchema, event)}
-                  />
-                </label>
-              </div>
-              <div class="sdn-storage-row-actions sdn-subscription-detail-actions">
-                <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => void verifyPinnedArtifacts(selectedSubscriptionDetailSchema)} disabled={pinVerifyRunning}>Verify pins</button>
-                {#if resetSubscriptionId === selectedSubscriptionDetailSchema.subscriptionId}
-                  <div class="sdn-reset-confirm sdn-reset-row-confirm" role="group" aria-label={`${selectedSubscriptionDetailSchema.id} row reset confirmation`}>
-                    <label>
-                      <span>Type RESET to clear this row.</span>
-                      <input class="sdn-input" bind:value={resetConfirmText} autocomplete="off" />
-                    </label>
-                    <div class="sdn-toolbar">
-                      <button class="sdn-button sdn-button-compact" type="button" on:click={() => void confirmResetSubscriptionData(selectedSubscriptionDetailSchema)} disabled={resetRunning || resetConfirmText.trim() !== 'RESET'}>Clear</button>
-                      <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={cancelResetSubscriptionData} disabled={resetRunning}>Cancel</button>
-                    </div>
-                  </div>
-                {:else}
-                  <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => beginResetSubscriptionData(selectedSubscriptionDetailSchema.subscriptionId)} disabled={resetRunning}>Reset row</button>
-                {/if}
-              </div>
-            </aside>
-          {/if}
           {#if resetStatus}
             <p class="sdn-empty-inline" role="status">{resetStatus}</p>
           {/if}
@@ -5431,42 +5474,69 @@
 
       {#if selectedDataSection === 'explorer'}
         <section class="sdn-explorer-panel" aria-label="Data explorer">
-          <div class="sdn-workbench-controls sdn-explorer-controls">
-            <label>
-              <span>Source</span>
-              <select class="sdn-input sdn-select" bind:value={selectedExplorerSourceKey} on:change={handleExplorerSourceChange}>
-                {#each subscribedSourceOptions as source}
-                  <option value={source.id}>{source.label}</option>
-                {/each}
-              </select>
-            </label>
+          <div class="sdn-explorer-topline">
+            <div class="sdn-workbench-controls sdn-explorer-controls">
+              <label>
+                <span>Source</span>
+                <select class="sdn-input sdn-select" bind:value={selectedExplorerSourceKey} on:change={handleExplorerSourceChange}>
+                  {#each subscribedSourceOptions as source}
+                    <option value={source.id}>{source.label}</option>
+                  {/each}
+                </select>
+              </label>
 
-            <label>
-              <span>Data type</span>
-              <select class="sdn-input sdn-select" bind:value={selectedStandardId} on:change={handleExplorerStandardChange}>
-                {#each subscribedStandardOptions as standard}
-                  <option value={standard.id}>{standardOptionLabel(standard)}</option>
-                {/each}
-              </select>
-            </label>
+              <label>
+                <span>Data type</span>
+                <select class="sdn-input sdn-select" bind:value={selectedStandardId} on:change={handleExplorerStandardChange}>
+                  {#each subscribedStandardOptions as standard}
+                    <option value={standard.id}>{standardOptionLabel(standard)}</option>
+                  {/each}
+                </select>
+              </label>
 
-            <div class="sdn-search-mode" aria-label="Search mode">
-              <button
-                class="sdn-button sdn-button-muted sdn-button-compact"
-                class:active={explorerSearchMode === 'plain'}
-                type="button"
-                aria-pressed={explorerSearchMode === 'plain'}
-                on:click={() => handleExplorerSearchModeChange('plain')}
-              >Plaintext</button>
-              <button
-                class="sdn-button sdn-button-muted sdn-button-compact"
-                class:active={explorerSearchMode === 'sql'}
-                type="button"
-                aria-pressed={explorerSearchMode === 'sql'}
-                on:click={() => handleExplorerSearchModeChange('sql')}
-              >SQL</button>
+              <div class="sdn-search-mode" aria-label="Search mode">
+                <button
+                  class="sdn-button sdn-button-muted sdn-button-compact"
+                  class:active={explorerSearchMode === 'plain'}
+                  type="button"
+                  aria-pressed={explorerSearchMode === 'plain'}
+                  on:click={() => handleExplorerSearchModeChange('plain')}
+                >Plaintext</button>
+                <button
+                  class="sdn-button sdn-button-muted sdn-button-compact"
+                  class:active={explorerSearchMode === 'sql'}
+                  type="button"
+                  aria-pressed={explorerSearchMode === 'sql'}
+                  on:click={() => handleExplorerSearchModeChange('sql')}
+                >SQL</button>
+              </div>
             </div>
 
+            <div class="sdn-explorer-saved-view-compact" aria-label="Saved Explorer views">
+              <select
+                class="sdn-input sdn-select"
+                aria-label="Saved views"
+                bind:value={selectedSavedExplorerViewId}
+                on:change={handleSavedExplorerViewSelect}
+              >
+                <option value="">Saved views</option>
+                {#each savedExplorerViews as view (view.id)}
+                  <option value={view.id}>{savedExplorerViewOptionLabel(view)}</option>
+                {/each}
+              </select>
+              <input
+                class="sdn-input"
+                bind:value={savedExplorerViewName}
+                placeholder="View name"
+                aria-label="Saved view name"
+              />
+              <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={saveCurrentExplorerView}>Save view</button>
+              <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={() => applySavedExplorerView()} disabled={!selectedSavedExplorerViewId}>Apply view</button>
+              <button class="sdn-button sdn-button-muted sdn-button-compact" type="button" on:click={deleteSelectedExplorerView} disabled={!selectedSavedExplorerViewId}>Delete view</button>
+            </div>
+          </div>
+
+          <div class="sdn-explorer-table-search">
             <label class="sdn-master-search" class:sdn-master-search-sql={explorerSearchMode === 'sql'}>
               <span>Master search</span>
               {#if explorerSearchMode === 'sql'}
@@ -5489,10 +5559,9 @@
               {/if}
             </label>
 
-	            {#if explorerSearchMode === 'sql'}
-	              <button class="sdn-button sdn-button-muted" type="button" on:click={() => void handleExplorerSearchSubmit()} disabled={sqlRunning}>{sqlRunning ? 'Running' : 'Run'}</button>
-	            {/if}
-	          </div>
+            {#if explorerSearchMode === 'sql'}
+              <button class="sdn-button sdn-button-muted" type="button" on:click={() => void handleExplorerSearchSubmit()} disabled={sqlRunning}>{sqlRunning ? 'Running' : 'Run'}</button>
+            {/if}
 
             {#if explorerSearchMode === 'plain' && explorerColumnOptions.length > 0}
               <div class="sdn-catalog-filter-menu sdn-explorer-column-menu" data-explorer-column-menu>
@@ -5529,45 +5598,7 @@
                 {/if}
               </div>
             {/if}
-
-	          <div class="sdn-saved-view-controls" aria-label="Saved Explorer views">
-	            <label>
-	              <span>Saved views</span>
-	              <select
-	                class="sdn-input sdn-select"
-	                bind:value={selectedSavedExplorerViewId}
-	                on:change={handleSavedExplorerViewSelect}
-	              >
-	                <option value="">Saved views</option>
-	                {#each savedExplorerViews as view (view.id)}
-	                  <option value={view.id}>{savedExplorerViewOptionLabel(view)}</option>
-	                {/each}
-	              </select>
-	            </label>
-	            <label>
-	              <span>Name</span>
-	              <input
-	                class="sdn-input"
-	                bind:value={savedExplorerViewName}
-	                placeholder="View name"
-	              />
-	            </label>
-	            <button class="sdn-button sdn-button-muted" type="button" on:click={saveCurrentExplorerView}>Save view</button>
-	            <button class="sdn-button sdn-button-muted" type="button" on:click={() => applySavedExplorerView()} disabled={!selectedSavedExplorerViewId}>Apply view</button>
-	            <button class="sdn-button sdn-button-muted" type="button" on:click={deleteSelectedExplorerView} disabled={!selectedSavedExplorerViewId}>Delete view</button>
-	          </div>
-
-	          {#if explorerColumnKeyEntries.length > 0}
-	            <div class="sdn-column-key" aria-label="Column abbreviation key">
-              <strong>Key</strong>
-              {#each explorerColumnKeyEntries as entry}
-                <span title={entry.key}>
-                  <b>{entry.abbreviation}</b>
-                  <em>{entry.label}</em>
-                </span>
-              {/each}
-            </div>
-          {/if}
+          </div>
 
           <div class="sdn-table-wrap sdn-workbench-table-wrap">
             <table class="sdn-table sdn-workbench-table" aria-label="Data rows">
@@ -5587,7 +5618,7 @@
                   <tr class="sdn-column-filter-row">
                     {#each displaySqlColumns as column}
                       <th>
-                        {#if isEpochColumn(column)}
+                        {#if isDateFilterColumn(column)}
                           <div class="sdn-epoch-filter-menu" data-epoch-filter-menu>
                             <button
                               class="sdn-epoch-filter-button"
@@ -5606,7 +5637,7 @@
                                   <span>From</span>
                                   <input
                                     class="sdn-input sdn-column-filter"
-                                    type="datetime-local"
+                                    type={dateFilterInputType(column)}
                                     value={epochColumnFilterValue(column, 'start')}
                                     aria-label={`Filter ${columnHeaderKeyLabel(column)} start`}
                                     on:input={(event) => handleEpochColumnFilterInput(column, 'start', event)}
@@ -5616,7 +5647,7 @@
                                   <span>To</span>
                                   <input
                                     class="sdn-input sdn-column-filter"
-                                    type="datetime-local"
+                                    type={dateFilterInputType(column)}
                                     value={epochColumnFilterValue(column, 'stop')}
                                     aria-label={`Filter ${columnHeaderKeyLabel(column)} stop`}
                                     on:input={(event) => handleEpochColumnFilterInput(column, 'stop', event)}
@@ -5648,7 +5679,7 @@
                     </tr>
                   {:else}
                     <tr>
-                      <td colspan={Math.max(1, displaySqlColumns.length)}>No rows loaded for {selectedStandardId}.</td>
+                      <td colspan={Math.max(1, displaySqlColumns.length)}>{explorerNoRowsLabel()}</td>
                     </tr>
                   {/each}
                 </tbody>
@@ -5668,7 +5699,7 @@
                   <tr class="sdn-column-filter-row">
                     {#each localExplorerColumns as column}
                       <th>
-                        {#if isEpochColumn(column)}
+                        {#if isDateFilterColumn(column)}
                           <div class="sdn-epoch-filter-menu" data-epoch-filter-menu>
                             <button
                               class="sdn-epoch-filter-button"
@@ -5687,7 +5718,7 @@
                                   <span>From</span>
                                   <input
                                     class="sdn-input sdn-column-filter"
-                                    type="datetime-local"
+                                    type={dateFilterInputType(column)}
                                     value={epochColumnFilterValue(column, 'start')}
                                     aria-label={`Filter ${columnHeaderKeyLabel(column)} start`}
                                     on:input={(event) => handleEpochColumnFilterInput(column, 'start', event)}
@@ -5697,7 +5728,7 @@
                                   <span>To</span>
                                   <input
                                     class="sdn-input sdn-column-filter"
-                                    type="datetime-local"
+                                    type={dateFilterInputType(column)}
                                     value={epochColumnFilterValue(column, 'stop')}
                                     aria-label={`Filter ${columnHeaderKeyLabel(column)} stop`}
                                     on:input={(event) => handleEpochColumnFilterInput(column, 'stop', event)}
@@ -5736,7 +5767,7 @@
                     </tr>
                   {:else}
                     <tr>
-                      <td colspan={Math.max(1, localExplorerColumns.length)}>{localExplorerLoading ? 'Loading' : `No rows loaded for ${selectedStandardId}.`}</td>
+                      <td colspan={Math.max(1, localExplorerColumns.length)}>{explorerNoRowsLabel()}</td>
                     </tr>
                   {/each}
                 </tbody>
@@ -5756,7 +5787,7 @@
                   <tr class="sdn-column-filter-row">
                     {#each visibleColumns as column}
                       <th>
-                        {#if isEpochColumn(column.key)}
+                        {#if isDateFilterColumn(column.key)}
                           <div class="sdn-epoch-filter-menu" data-epoch-filter-menu>
                             <button
                               class="sdn-epoch-filter-button"
@@ -5775,7 +5806,7 @@
                                   <span>From</span>
                                   <input
                                     class="sdn-input sdn-column-filter"
-                                    type="datetime-local"
+                                    type={dateFilterInputType(column.key)}
                                     value={epochColumnFilterValue(column.key, 'start')}
                                     aria-label={`Filter ${columnHeaderKeyLabel(column.key, column.label)} start`}
                                     on:input={(event) => handleEpochColumnFilterInput(column.key, 'start', event)}
@@ -5785,7 +5816,7 @@
                                   <span>To</span>
                                   <input
                                     class="sdn-input sdn-column-filter"
-                                    type="datetime-local"
+                                    type={dateFilterInputType(column.key)}
                                     value={epochColumnFilterValue(column.key, 'stop')}
                                     aria-label={`Filter ${columnHeaderKeyLabel(column.key, column.label)} stop`}
                                     on:input={(event) => handleEpochColumnFilterInput(column.key, 'stop', event)}
@@ -5824,7 +5855,7 @@
                     </tr>
                   {:else}
                     <tr>
-                      <td colspan={Math.max(1, visibleColumns.length)}>No rows loaded for {selectedStandardId}.</td>
+                      <td colspan={Math.max(1, visibleColumns.length)}>{explorerNoRowsLabel()}</td>
                     </tr>
                   {/each}
                 </tbody>
