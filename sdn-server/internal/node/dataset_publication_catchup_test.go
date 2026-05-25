@@ -70,7 +70,7 @@ func TestMaterializeStoredDatasetPublicationPNMsReplaysTrustedProviderPNM(t *tes
 	tags := storage.SourceTags{
 		ProviderID:   "celestrak.eth",
 		SourceName:   "celestrak-satcat-csv",
-		SourceURL:    "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV",
+		SourceURL:    "https://celestrak.org/pub/satcat.csv",
 		BatchID:      "batch-sha-001",
 		ContentKeyID: "public",
 	}

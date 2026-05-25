@@ -43,7 +43,7 @@ func TestFlatSQLStoreExportDatasetWindowWritesShardAndIndex(t *testing.T) {
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
 		SourceName:   "celestrak-satcat-csv",
-		SourceURL:    "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV",
+		SourceURL:    "https://celestrak.org/pub/satcat.csv",
 		BatchID:      "source-sha-001",
 		ContentKeyID: "public",
 	}
@@ -325,7 +325,7 @@ func TestFlatSQLStoreExportDatasetWindowAllowsLargePublicationWindows(t *testing
 	tags := SourceTags{
 		ProviderID: "space-data-network-02",
 		SourceName: "celestrak-satcat-csv",
-		SourceURL:  "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV",
+		SourceURL:  "https://celestrak.org/pub/satcat.csv",
 		BatchID:    "source-sha-large",
 	}
 	for i := 0; i < 1005; i++ {
@@ -613,7 +613,7 @@ func TestVerifyDatasetPublicationReplayVerifiesPNMManifestAssetsAndQuery(t *test
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
 		SourceName:   "celestrak-satcat-csv",
-		SourceURL:    "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV",
+		SourceURL:    "https://celestrak.org/pub/satcat.csv",
 		BatchID:      "source-sha-001",
 		ContentKeyID: "public",
 	}
@@ -761,7 +761,7 @@ func TestMaterializeDatasetPublicationImportsAdvertisedShard(t *testing.T) {
 	tags := SourceTags{
 		ProviderID:   "celestrak.eth",
 		SourceName:   "celestrak-satcat-csv",
-		SourceURL:    "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV",
+		SourceURL:    "https://celestrak.org/pub/satcat.csv",
 		BatchID:      "source-sha-002",
 		ContentKeyID: "public",
 	}

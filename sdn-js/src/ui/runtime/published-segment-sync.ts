@@ -127,7 +127,7 @@ export function shouldResetPublishedSnapshotStore(input: PublishedSnapshotResetI
   const completedRows = Math.max(0, Math.floor(input.completedRows));
   const totalRows = Math.max(0, Math.floor(input.totalRows));
   if (totalRows > 0 && completedRows >= totalRows) {
-    return localRows > completedRows;
+    return localRows !== completedRows;
   }
   if (completedRows === 0) return localRows > 0;
   return localRows !== completedRows;
