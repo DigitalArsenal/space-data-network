@@ -124,7 +124,7 @@ describe('libp2p FlatSQL sync backend', () => {
     });
   });
 
-  it('uses the active CelesTrak SATCAT CSV source for CAT fallback summary scans', async () => {
+  it('uses the raw CelesTrak SATCAT CSV source for CAT fallback summary scans', async () => {
     const calls: FlatSqlSyncQuery[] = [];
     const backend = createLibp2pFlatSqlSyncBackend({
       targetPeerId: '16Uiu2HCelesTrak',

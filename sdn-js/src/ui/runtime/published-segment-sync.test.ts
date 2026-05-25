@@ -102,7 +102,13 @@ describe('published segment sync planning', () => {
       localRows: 0,
       completedRows: 69_050,
       totalRows: 69_050,
-    })).toBe(false);
+    })).toBe(true);
+    expect(shouldResetPublishedSnapshotStore({
+      retentionPolicy: 'replace-snapshot',
+      localRows: 41_830,
+      completedRows: 48_077,
+      totalRows: 48_077,
+    })).toBe(true);
     expect(shouldResetPublishedSnapshotStore({
       retentionPolicy: 'replace-snapshot',
       localRows: 69_050,
@@ -189,6 +195,21 @@ describe('published segment sync planning', () => {
     expect(fetchIndex).toBeGreaterThan(stageIndex);
     expect(completeIndex).toBeGreaterThan(fetchIndex);
     expect(swapIndex).toBeGreaterThan(completeIndex);
+  });
+
+  it('reports final published sync progress from actual FlatSQL rows', () => {
+    const source = readFileSync(new URL('./local-flatsql.worker.ts', import.meta.url), 'utf8');
+    const finalProgress = source.slice(
+      source.indexOf('const finalTotalRows = allSegmentsComplete ? completedRows : totalRows;'),
+      source.indexOf('postProgress(options.id, progress, currentStats);', source.indexOf('const finalTotalRows = allSegmentsComplete ? completedRows : totalRows;')),
+    );
+
+    expect(finalProgress).toContain("status: allSegmentsComplete && localRows >= finalTotalRows ? 'synced' : 'idle'");
+    expect(finalProgress).toContain("const finalSyncedRows = allSegmentsComplete && localRows >= finalTotalRows ? completedRows : localRows;");
+    expect(finalProgress).toContain('syncedRows: finalSyncedRows');
+    expect(finalProgress).toContain('localRows,');
+    expect(finalProgress).toContain('pinnedRows: finalSyncedRows');
+    expect(finalProgress).not.toContain('localRows: completedRows');
   });
 
   it('seeds published shard range source preference with the manifest segment index', () => {

@@ -165,8 +165,8 @@ private credentials:
   `https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv`
 - SATCAT legacy text:
   `https://celestrak.org/pub/satcat.txt`
-- SATCAT CSV production records:
-  `https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV`
+- SATCAT raw CSV:
+  `https://celestrak.org/pub/satcat.csv`
 - Space weather:
   `https://celestrak.org/SpaceData/SW-All.csv`
 

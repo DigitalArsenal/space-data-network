@@ -39,7 +39,7 @@ var log = logging.Logger("ingest")
 const (
 	defaultCelestrakCatalogURL      = "https://celestrak.org/NORAD/elements/gp.php?SPECIAL=full-catalog&FORMAT=csv"
 	defaultCelestrakSatcatURL       = "https://celestrak.org/pub/satcat.txt"
-	defaultCelestrakSatcatCSVURL    = "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV"
+	defaultCelestrakSatcatCSVURL    = "https://celestrak.org/pub/satcat.csv"
 	defaultCelestrakSpaceWeatherURL = "https://celestrak.org/SpaceData/SW-All.csv"
 	defaultSpaceTrackLoginURL       = "https://www.space-track.org/ajaxauth/login"
 	defaultSpaceTrackQueryTmpl      = "https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/%s--%s/format/csv"
@@ -904,11 +904,16 @@ func (r *Runner) ingestSatcatData(content []byte, sourcePeer string, tags ...sto
 
 	count := 0
 	normalized := sha256.New()
+	seenNORAD := make(map[uint32]struct{}, len(rows))
 	for _, row := range rows {
 		norad, ok := parseUint32(getValue(row, "NORAD_CAT_ID", "NORAD_CAT_NUM", "NORAD"))
 		if !ok || norad == 0 {
 			continue
 		}
+		if _, exists := seenNORAD[norad]; exists {
+			return count, "", fmt.Errorf("duplicate SATCAT NORAD_CAT_ID %d", norad)
+		}
+		seenNORAD[norad] = struct{}{}
 
 		builder := sds.NewCATBuilder().
 			WithNoradCatID(norad).

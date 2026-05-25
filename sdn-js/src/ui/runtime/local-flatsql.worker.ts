@@ -737,14 +737,15 @@ async function syncPublishedSegments(options: {
     completedRows = completedPublishedRowsForSegments(options.segments, completedSegmentCids);
     const allSegmentsComplete = pendingPublishedSegmentItems(options.segments, completedSegmentCids).length === 0;
     const finalTotalRows = allSegmentsComplete ? completedRows : totalRows;
+    const finalSyncedRows = allSegmentsComplete && localRows >= finalTotalRows ? completedRows : localRows;
     progress = progressFor(progress, {
-      status: allSegmentsComplete ? 'synced' : 'idle',
-      syncedRows: completedRows,
+      status: allSegmentsComplete && localRows >= finalTotalRows ? 'synced' : 'idle',
+      syncedRows: finalSyncedRows,
       totalRows: finalTotalRows,
-      localRows: completedRows,
+      localRows,
       cachedBytes,
       pinnedBytes: cachedBytes,
-      pinnedRows: completedRows,
+      pinnedRows: finalSyncedRows,
       ...downloadProgressPatch(downloadedBytes, networkTransferMs, options.measuredWireSpeedBytesPerSecond),
       manifestDiscoveryMs: options.manifestDiscoveryMs,
       networkTransferMs,

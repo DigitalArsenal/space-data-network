@@ -17,7 +17,8 @@ export interface EffectiveSchemaSyncStatusInput {
 export function effectiveSchemaSyncStatus(input: EffectiveSchemaSyncStatusInput): SchemaSyncStatus {
   if (input.active) return 'syncing';
   if (input.complete) return 'synced';
-  return input.persistedStatus === 'syncing' ? 'idle' : input.persistedStatus ?? 'idle';
+  if (input.persistedStatus === 'syncing' || input.persistedStatus === 'synced') return 'idle';
+  return input.persistedStatus ?? 'idle';
 }
 
 export function schemaSyncStatusLabel(input: SchemaSyncStatusLabelInput): string {

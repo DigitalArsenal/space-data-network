@@ -131,7 +131,7 @@ describe('libp2p FlatSQL sync backend cache', () => {
     ]);
   });
 
-  it('uses the active CelesTrak SATCAT CSV source for CAT published shard manifests', async () => {
+  it('uses the raw CelesTrak SATCAT CSV source for CAT published shard manifests', async () => {
     const calls: FlatSqlSyncQuery[] = [];
     const cache = new Libp2pFlatSqlSyncBackendCache(async () => ({
       async readFlatSqlSyncChunk(query: FlatSqlSyncQuery): Promise<FlatSqlSyncChunk> {

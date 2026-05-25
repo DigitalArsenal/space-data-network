@@ -69,14 +69,11 @@ func TestNewRunnerEnforcesCelesTrakMinimumCadence(t *testing.T) {
 	}
 }
 
-func TestNewRunnerDefaultsToValidCelestrakSatcatCSVQuery(t *testing.T) {
+func TestNewRunnerDefaultsToRawCelestrakSatcatCSV(t *testing.T) {
 	runner := newTestRunner(t)
 
-	if !strings.Contains(runner.cfg.CelestrakSatcatCSVURL, "GROUP=active") {
-		t.Fatalf("CelestrakSatcatCSVURL = %q, want GROUP=active query", runner.cfg.CelestrakSatcatCSVURL)
-	}
-	if !strings.Contains(runner.cfg.CelestrakSatcatCSVURL, "FORMAT=CSV") {
-		t.Fatalf("CelestrakSatcatCSVURL = %q, want FORMAT=CSV query", runner.cfg.CelestrakSatcatCSVURL)
+	if got, want := runner.cfg.CelestrakSatcatCSVURL, "https://celestrak.org/pub/satcat.csv"; got != want {
+		t.Fatalf("CelestrakSatcatCSVURL = %q, want %q", got, want)
 	}
 }
 
@@ -1081,13 +1078,10 @@ func TestSyncCelestrakSatcatFetchesLegacyAndCSV(t *testing.T) {
 			if _, err := w.Write(legacyFixture); err != nil {
 				t.Fatalf("write legacy fixture response: %v", err)
 			}
-		case "/satcat/records.php":
+		case "/pub/satcat.csv":
 			csvRequests++
-			if got, want := r.URL.Query().Get("GROUP"), "active"; got != want {
-				t.Fatalf("GROUP query = %q, want %q", got, want)
-			}
-			if got, want := r.URL.Query().Get("FORMAT"), "CSV"; got != want {
-				t.Fatalf("FORMAT query = %q, want %q", got, want)
+			if got := r.URL.RawQuery; got != "" {
+				t.Fatalf("SATCAT CSV query = %q, want empty raw CSV request", got)
 			}
 			w.Header().Set("Content-Type", "text/csv")
 			w.WriteHeader(http.StatusOK)
@@ -1105,7 +1099,7 @@ func TestSyncCelestrakSatcatFetchesLegacyAndCSV(t *testing.T) {
 		StoragePath:            filepath.Join(dir, "store"),
 		RawPath:                filepath.Join(dir, "raw"),
 		CelestrakSatcatURL:     server.URL + "/pub/satcat.txt",
-		CelestrakSatcatCSVURL:  server.URL + "/satcat/records.php?GROUP=active&FORMAT=CSV",
+		CelestrakSatcatCSVURL:  server.URL + "/pub/satcat.csv",
 		SatcatInterval:         minCelestrakFetchInterval,
 		SpaceTrackPollInterval: time.Hour,
 	})
@@ -1500,6 +1494,24 @@ func TestIngestSatcatDataRejectsParseCountAnomaly(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no CAT rows parsed") {
 		t.Fatalf("error = %v, want no CAT rows parsed", err)
+	}
+}
+
+func TestIngestSatcatDataRejectsDuplicateCatalogIDs(t *testing.T) {
+	runner := newTestRunner(t)
+	fixture := []byte(strings.Join([]string{
+		"NORAD_CAT_ID,OBJECT_NAME,OBJECT_ID,OBJECT_TYPE,OPS_STATUS_CODE",
+		"25544,ISS (ZARYA),1998-067A,PAYLOAD,+",
+		"25544,ISS (ZARYA) DUPLICATE,1998-067A,PAYLOAD,+",
+		"",
+	}, "\n"))
+
+	count, _, err := runner.ingestSatcatData(fixture, "source:celestrak")
+	if err == nil {
+		t.Fatalf("ingestSatcatData returned nil error with CAT=%d", count)
+	}
+	if !strings.Contains(err.Error(), "duplicate SATCAT NORAD_CAT_ID 25544") {
+		t.Fatalf("error = %v, want duplicate SATCAT NORAD_CAT_ID 25544", err)
 	}
 }
 

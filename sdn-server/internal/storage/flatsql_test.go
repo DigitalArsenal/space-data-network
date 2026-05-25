@@ -401,7 +401,7 @@ func TestFlatSQLStoreQueryIndexedRecordsCommonCatalogFilters(t *testing.T) {
 	tags := SourceTags{
 		ProviderID:   "space-data-network-02",
 		SourceName:   "celestrak-satcat-csv",
-		SourceURL:    "https://celestrak.org/satcat/records.php?GROUP=active&FORMAT=CSV",
+		SourceURL:    "https://celestrak.org/pub/satcat.csv",
 		BatchID:      "batch-001",
 		ContentKeyID: "public",
 	}

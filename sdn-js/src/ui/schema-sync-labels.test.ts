@@ -50,6 +50,11 @@ describe('schema sync status labels', () => {
       complete: false,
       persistedStatus: 'syncing',
     })).toBe('idle');
+    expect(effectiveSchemaSyncStatus({
+      active: false,
+      complete: false,
+      persistedStatus: 'synced',
+    })).toBe('idle');
   });
 
   it('keeps active and complete states authoritative', () => {

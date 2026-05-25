@@ -49,7 +49,7 @@ describe('peer data feeds', () => {
     })]);
   });
 
-  it('prefers the active CelesTrak SATCAT CSV source when multiple CAT sources are advertised without datastore keys', () => {
+  it('prefers the raw CelesTrak SATCAT CSV source when multiple CAT sources are advertised without datastore keys', () => {
     const summary: DataSummary = {
       totalRecords: 1_506_117,
       totalBytes: 123_456,

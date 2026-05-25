@@ -3474,9 +3474,12 @@
       complete,
       persistedStatus: activePersisted?.status,
     });
+    const syncedRowsForDisplay = statsAreAuthoritative && localRows < totalRows
+      ? localRows
+      : Math.max(localRows, activePersisted?.syncedRows ?? 0);
     const rowCounts = syncRowCountSummary({
       localRows,
-      syncedRows: Math.max(localRows, activePersisted?.syncedRows ?? 0),
+      syncedRows: syncedRowsForDisplay,
       pinnedRows: Math.max(localStats?.pinnedRows ?? 0, activePersisted?.pinnedRows ?? 0),
       remoteRows: rowCountRemoteRows,
       totalRows,
