@@ -221,7 +221,14 @@ await test("seedOrbproModuleCatalog resolves relative artifacts from ORBPRO_ROOT
     "dist",
     "fixture-encrypted.js",
   );
+  const secretsPath = path.join(
+    orbproRoot,
+    "packages",
+    "orbpro-integration",
+    ".secrets.json",
+  );
   await fs.mkdir(path.dirname(fixtureModule), { recursive: true });
+  await fs.mkdir(path.dirname(secretsPath), { recursive: true });
   await fs.mkdir(pluginRoot, { recursive: true });
   await fs.writeFile(
     fixtureModule,
@@ -229,9 +236,13 @@ await test("seedOrbproModuleCatalog resolves relative artifacts from ORBPRO_ROOT
       `export const encryptedData = ${JSON.stringify(
         Buffer.from("fixture-from-active-orbpro-root").toString("base64"),
       )};`,
-      'export const recipientPrivateKeyHex = "00".repeat(32);',
+      "export const recipientPrivateKeyHex = undefined;",
       "",
     ].join("\n"),
+  );
+  await fs.writeFile(
+    secretsPath,
+    JSON.stringify({ RECIPIENT_PRIVATE_KEY_HEX: "11".repeat(32) }),
   );
 
   const previousOrbproRoot = process.env.ORBPRO_ROOT;
@@ -255,6 +266,7 @@ await test("seedOrbproModuleCatalog resolves relative artifacts from ORBPRO_ROOT
 
     assert.equal(summary.seeded.length, 1);
     assert.equal(summary.seeded[0].protectedModulePath, fixtureModule);
+    assert.equal(summary.seeded[0].contentKeyHex, "11".repeat(32));
     assert.equal(
       (await fs.readFile(path.join(pluginRoot, "fixture-root.wasm.enc"))).toString(
         "utf8",
