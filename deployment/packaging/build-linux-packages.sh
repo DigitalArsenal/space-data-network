@@ -7,6 +7,8 @@ out_dir="${OUT_DIR:-${root}/dist/packages}"
 work_dir="${WORK_DIR:-${root}/dist/package-root}"
 version="${VERSION:-$(git -C "${root}" describe --tags --always --dirty)}"
 arch="${ARCH:-amd64}"
+wasmedge_dir="${WASMEDGE_DIR:-${HOME}/.wasmedge}"
+export WASMEDGE_DIR="${wasmedge_dir}"
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "RPM/DEB packages must be built on Linux" >&2
@@ -17,6 +19,19 @@ if ! command -v nfpm >/dev/null 2>&1; then
   echo "nfpm is required to build RPM/DEB packages" >&2
   exit 69
 fi
+
+copy_wasmedge_runtime() {
+  local target="$1"
+
+  if [[ ! -x "${wasmedge_dir}/bin/wasmedge" || ! -d "${wasmedge_dir}/lib" ]]; then
+    echo "WasmEdge runtime is missing at ${wasmedge_dir}; run scripts/install-wasmedge.sh before packaging" >&2
+    exit 1
+  fi
+
+  rm -rf "${target}"
+  mkdir -p "$(dirname "${target}")"
+  cp -R "${wasmedge_dir}" "${target}"
+}
 
 rm -rf "${work_dir}" "${out_dir}"
 mkdir -p \
@@ -35,6 +50,7 @@ mkdir -p \
   ../scripts/go-with-wasmedge.sh build -tags edge -o "${work_dir}/edge/opt/spacedatanetwork/bin/spacedatanetwork-edge" ./cmd/spacedatanetwork-edge
 )
 
+copy_wasmedge_runtime "${work_dir}/full/opt/spacedatanetwork/.wasmedge"
 cp -R "${root}/sdn-js/ui/dist/." "${work_dir}/full/opt/spacedatanetwork/admin-ui/"
 cp -R "${root}/webui/build/." "${work_dir}/full/opt/spacedatanetwork/webui/"
 cp "${root}/config/full-vm.yaml" "${work_dir}/full/etc/spacedatanetwork/config.yaml"

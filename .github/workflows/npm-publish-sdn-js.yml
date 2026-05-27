@@ -71,11 +71,20 @@ jobs:
             echo "tag=${{ inputs.tag || 'latest' }}" >> $GITHUB_OUTPUT
           elif [ "${{ github.event_name }}" = "release" ]; then
             TAG_NAME="${{ github.event.release.tag_name }}"
-            if echo "$TAG_NAME" | grep -qE '(alpha|beta|rc|next)'; then
-              echo "tag=next" >> $GITHUB_OUTPUT
-            else
-              echo "tag=latest" >> $GITHUB_OUTPUT
-            fi
+            case "$TAG_NAME" in
+              *beta*)
+                echo "tag=beta" >> $GITHUB_OUTPUT
+                ;;
+              *alpha*)
+                echo "tag=alpha" >> $GITHUB_OUTPUT
+                ;;
+              *rc*|*next*)
+                echo "tag=next" >> $GITHUB_OUTPUT
+                ;;
+              *)
+                echo "tag=latest" >> $GITHUB_OUTPUT
+                ;;
+            esac
           fi
 
       - name: Publish to npm

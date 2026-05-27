@@ -161,30 +161,39 @@ SKIP_LOCAL_CI=1 git push
 
 ## Downloads
 
-### Full Node
+### Beta channel
 
-| Platform | Architecture | Download |
-|----------|--------------|----------|
-| Linux | amd64 | [spacedatanetwork-linux-amd64](https://github.com/DigitalArsenal/space-data-network/releases/latest/download/spacedatanetwork-linux-amd64) |
-| Linux | arm64 | [spacedatanetwork-linux-arm64](https://github.com/DigitalArsenal/space-data-network/releases/latest/download/spacedatanetwork-linux-arm64) |
-| macOS | amd64 | [spacedatanetwork-darwin-amd64](https://github.com/DigitalArsenal/space-data-network/releases/latest/download/spacedatanetwork-darwin-amd64) |
-| macOS | arm64 | [spacedatanetwork-darwin-arm64](https://github.com/DigitalArsenal/space-data-network/releases/latest/download/spacedatanetwork-darwin-arm64) |
-| Windows | amd64 | [spacedatanetwork-windows-amd64.exe](https://github.com/DigitalArsenal/space-data-network/releases/latest/download/spacedatanetwork-windows-amd64.exe) |
+Beta channel builds are published as GitHub releases with beta release numbers like
+`v1.0.3-beta.1`: [Space Data Network beta release](https://github.com/DigitalArsenal/space-data-network/releases/tag/v1.0.3-beta.1).
+Use the newest beta release number as `<beta-version>` when downloading assets.
 
-### Edge Relay
+| Artifact | Use |
+|----------|-----|
+| `spacedatanetwork-full_<native-package-version>_amd64.deb` / `.rpm` | Linux full-node packages |
+| `spacedatanetwork-edge_<native-package-version>_amd64.deb` / `.rpm` | Linux edge-relay packages |
+| `spacedatanetwork-linux-vm-<native-package-version>.tar.gz` | Linux VM/full-node bundle |
+| `spacedatanetwork-darwin-arm64.tar.gz` | macOS Apple Silicon full-node bundle |
+| `spacedatanetwork-sdn-js-<sdk-version>.tgz` | Browser and Node JavaScript SDK package tarball |
+| `spacedatanetwork-sbom.cdx.json` | CycloneDX SBOM |
+| `spacedatanetwork-checksums.txt` | SHA-256 checksums for release files |
 
-| Platform | Architecture | Download |
-|----------|--------------|----------|
-| Linux | amd64 | [spacedatanetwork-edge-linux-amd64](https://github.com/DigitalArsenal/space-data-network/releases/latest/download/spacedatanetwork-edge-linux-amd64) |
-| Linux | arm64 | [spacedatanetwork-edge-linux-arm64](https://github.com/DigitalArsenal/space-data-network/releases/latest/download/spacedatanetwork-edge-linux-arm64) |
+Native Linux download names use `<native-package-version>` such as `1.0.3.beta.1`
+because GitHub release asset names avoid the release tag's SemVer hyphen.
 
-### Desktop Application
+Beta container images are tagged by release number and by the moving `beta` tag:
 
-| Platform | Download |
-|----------|----------|
-| macOS | [SpaceDataNetwork.dmg](https://github.com/DigitalArsenal/space-data-network/releases/latest/download/SpaceDataNetwork.dmg) |
-| Windows | [SpaceDataNetwork-Setup.exe](https://github.com/DigitalArsenal/space-data-network/releases/latest/download/SpaceDataNetwork-Setup.exe) |
-| Linux | [SpaceDataNetwork.AppImage](https://github.com/DigitalArsenal/space-data-network/releases/latest/download/SpaceDataNetwork.AppImage) |
+- `ghcr.io/digitalarsenal/space-data-network-full:<beta-version>`
+- `ghcr.io/digitalarsenal/space-data-network-edge:<beta-version>`
+
+### Native releases
+
+Native artifacts live under versioned SDN release tags, not SDK-only tags such
+as `sdn-js-v...`. The beta channel currently publishes Linux amd64 full-node and
+edge-relay packages, the Linux VM bundle, and a macOS ARM64 full-node bundle.
+Windows native installers are not published in the beta artifact lane yet.
+
+macOS ARM64 direct download:
+[spacedatanetwork-darwin-arm64.tar.gz](https://github.com/DigitalArsenal/space-data-network/releases/download/v1.0.3-beta.1/spacedatanetwork-darwin-arm64.tar.gz)
 
 ### JavaScript SDK
 

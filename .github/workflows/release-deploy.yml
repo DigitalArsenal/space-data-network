@@ -20,6 +20,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
   VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+  NFPM_VERSION: v2.42.0
 
 jobs:
   preflight:
@@ -159,8 +160,12 @@ jobs:
           cache-dependency-path: sdn-server/go.sum
       - name: Install nfpm and syft
         run: |
-          curl -sSfL https://raw.githubusercontent.com/goreleaser/nfpm/main/www/docs/install.sh | sudo sh -s -- -b /usr/local/bin
+          mkdir -p "${RUNNER_TEMP}/bin"
+          GOBIN="${RUNNER_TEMP}/bin" go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_VERSION}"
+          echo "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sudo sh -s -- -b /usr/local/bin
+          "${RUNNER_TEMP}/bin/nfpm" --version
+          syft version
       - name: Build RPM and DEB artifacts
         run: deployment/packaging/build-linux-packages.sh
       - name: Build Linux VM tarball
