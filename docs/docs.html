@@ -1069,7 +1069,7 @@ npm --prefix sdn-js install
 npm --prefix sdn-js install</code></pre>
 
         <h3>Native Releases</h3>
-        <p>Native artifacts are attached to versioned SDN release tags, not SDK-only tags such as <code>sdn-js-v...</code>. The beta channel currently publishes Linux amd64 full-node and edge-relay packages, a Linux VM bundle, and a macOS ARM64 full-node bundle.</p>
+        <p>Native artifacts are attached to versioned SDN release tags, not SDK-only tags such as <code>sdn-js-v...</code>. The beta channel currently publishes Linux amd64 full-node and edge-relay packages, Docker image tarballs, a Linux VM bundle, and a macOS ARM64 full-node bundle.</p>
 
         <h3>Beta channel</h3>
         <p>Beta builds are GitHub releases. Pick the newest numbered beta from <a href="https://github.com/DigitalArsenal/space-data-network/releases/tag/v1.0.3-beta.1" target="_blank">Space Data Network beta release</a>, then use that release number for package and SDK downloads.</p>
@@ -1079,12 +1079,20 @@ SDN_NATIVE_PACKAGE_VERSION=${SDN_NATIVE_PACKAGE_VERSION/-beta/.beta}
 
 # Full node package
 curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-full_${SDN_NATIVE_PACKAGE_VERSION}_amd64.deb"
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-full-${SDN_NATIVE_PACKAGE_VERSION}-1.x86_64.rpm"
 
 # Edge relay package
 curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-edge_${SDN_NATIVE_PACKAGE_VERSION}_amd64.deb"
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-edge-${SDN_NATIVE_PACKAGE_VERSION}-1.x86_64.rpm"
 
 # Linux VM bundle
 curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-linux-vm-${SDN_NATIVE_PACKAGE_VERSION}.tar.gz"
+
+# Docker image tarballs
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-container-full-${SDN_NATIVE_PACKAGE_VERSION}-linux-amd64.tar.gz"
+curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-container-edge-${SDN_NATIVE_PACKAGE_VERSION}-linux-amd64.tar.gz"
+docker load --input "spacedatanetwork-container-full-${SDN_NATIVE_PACKAGE_VERSION}-linux-amd64.tar.gz"
+docker load --input "spacedatanetwork-container-edge-${SDN_NATIVE_PACKAGE_VERSION}-linux-amd64.tar.gz"
 
 # macOS ARM64 full-node bundle
 curl -LO "https://github.com/DigitalArsenal/space-data-network/releases/download/${SDN_BETA_VERSION}/spacedatanetwork-darwin-arm64.tar.gz"
@@ -1306,8 +1314,9 @@ await node.start();</code></pre>
   --name spacedatanetwork \
   -p 4001:4001 \
   -p 4001:4001/udp \
-  -v sdn-data:/root/.spacedatanetwork \
-  ghcr.io/digitalarsenal/spacedatanetwork:latest</code></pre>
+  -p 5001:5001 \
+  -v sdn-data:/app/data \
+  ghcr.io/digitalarsenal/space-data-network-full:v1.0.3-beta.1</code></pre>
 
         <h3>Edge Relay (Kubernetes)</h3>
         <pre><code>apiVersion: apps/v1
@@ -1323,7 +1332,7 @@ spec:
     spec:
       containers:
       - name: edge
-        image: ghcr.io/digitalarsenal/spacedatanetwork-edge:latest
+        image: ghcr.io/digitalarsenal/space-data-network-edge:v1.0.3-beta.1
         ports:
         - containerPort: 8080
         resources:

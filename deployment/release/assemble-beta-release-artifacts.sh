@@ -29,6 +29,7 @@ copy_matches() {
 
 copy_matches "${dist_dir}/packages/*"
 copy_matches "${dist_dir}/linux-vm/*.tar.gz"
+copy_matches "${dist_dir}/container-images/*.tar.gz"
 copy_matches "${dist_dir}/sdn-js/*.tgz"
 copy_matches "${dist_dir}/sbom/*.json"
 
@@ -60,6 +61,9 @@ cat >> "${release_dir}/SDN-BETA-RELEASE.md" <<'EOF'
 
 - `ghcr.io/digitalarsenal/space-data-network-full:<beta-version>`
 - `ghcr.io/digitalarsenal/space-data-network-edge:<beta-version>`
+
+Downloadable Docker image tarballs are also included as `spacedatanetwork-container-*-linux-amd64.tar.gz`.
+Load them with `docker load --input <file>`.
 
 Verify downloaded files with `spacedatanetwork-checksums.txt`.
 EOF
