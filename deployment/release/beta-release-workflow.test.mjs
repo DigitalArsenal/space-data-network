@@ -51,3 +51,15 @@ test('release workflows install nFPM from a pinned Go module version', () => {
     assert.doesNotMatch(workflow, /goreleaser\/nfpm\/main\/www\/docs\/install\.sh/);
   }
 });
+
+test('push packaging workflows build IPFS WebUI before packaging full-node assets', () => {
+  for (const workflowPath of [
+    '.github/workflows/docker-publish.yml',
+    '.github/workflows/linux-vm-bundle.yml'
+  ]) {
+    const workflow = readRepoFile(workflowPath);
+
+    assert.match(workflow, /working-directory:\s*webui/, `${workflowPath} must install and build webui assets`);
+    assert.match(workflow, /npm ci[\s\S]*npm run build/, `${workflowPath} must build webui/build before packaging`);
+  }
+});
