@@ -23,6 +23,8 @@ anchor records. It does publish usable artifacts for testers:
 - full-node RPM and DEB packages named with `spacedatanetwork-full`
 - edge-relay RPM and DEB packages named with `spacedatanetwork-edge`
 - Linux VM tarball named with `spacedatanetwork-linux-vm-`
+- downloadable Docker image tarballs named with `spacedatanetwork-container-full-`
+  and `spacedatanetwork-container-edge-`
 - macOS ARM64 bundle named `spacedatanetwork-darwin-arm64.tar.gz`
 - browser and Node SDK tarball named with `spacedatanetwork-sdn-js-`
 - CycloneDX SBOM: `spacedatanetwork-sbom.cdx.json`
@@ -49,6 +51,7 @@ anchor records. It does publish usable artifacts for testers:
 - full-node RPM and DEB
 - edge-relay RPM and DEB
 - Linux VM tarball
+- downloadable Docker image tarballs
 - CycloneDX SBOM: `spacedatanetwork-sbom.cdx.json`
 - `ipfs-deployment.json`
 - `container-digests.json`
@@ -65,7 +68,8 @@ cd sdn-server
 ```
 
 The Docker artifact harness installs every release artifact in clean containers
-and starts a small SDN network from the installed binaries:
+loads downloadable Docker image tarballs, smoke-tests their entrypoints, and
+starts a small SDN network from the installed native binaries:
 
 ```sh
 npm run test:release-artifacts:docker -- --release-dir dist/release

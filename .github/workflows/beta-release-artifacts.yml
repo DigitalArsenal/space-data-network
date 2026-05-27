@@ -96,6 +96,9 @@ jobs:
     name: Build beta container images
     runs-on: ubuntu-latest
     needs: [beta-version, ipfs]
+    env:
+      RELEASE_TAG: ${{ needs.beta-version.outputs.release_tag }}
+      NATIVE_PACKAGE_VERSION: ${{ needs.beta-version.outputs.native_package_version }}
     strategy:
       fail-fast: false
       matrix:
@@ -138,6 +141,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -155,10 +159,28 @@ jobs:
           cosign sign --yes ${images}
           mkdir -p dist/container-digests
           printf '{"name":"%s","digest":"%s"}\n' "${{ steps.image.outputs.name }}" "${DIGEST}" > "dist/container-digests/${{ matrix.suffix }}.json"
+      - name: Export downloadable Docker image
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+        run: |
+          mkdir -p dist/container-images
+          image_ref="${IMAGE_NAME}:${RELEASE_TAG}"
+          docker buildx build \
+            --platform linux/amd64 \
+            --load \
+            -t "${image_ref}" \
+            -f "${{ matrix.dockerfile }}" \
+            .
+          docker run --rm "${image_ref}" --help >/tmp/spacedatanetwork-container-${{ matrix.suffix }}-help.txt
+          docker save "${image_ref}" | gzip -n > "dist/container-images/spacedatanetwork-container-${{ matrix.suffix }}-${NATIVE_PACKAGE_VERSION}-linux-amd64.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
           name: container-digest-${{ matrix.suffix }}
           path: dist/container-digests/${{ matrix.suffix }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: container-image-${{ matrix.suffix }}
+          path: dist/container-images/spacedatanetwork-container-${{ matrix.suffix }}-${{ needs.beta-version.outputs.native_package_version }}-linux-amd64.tar.gz
 
   packages:
     name: Build beta native packages and SBOM
@@ -243,7 +265,7 @@ jobs:
   artifact-docker-test:
     name: Install and network-test release artifacts
     runs-on: ubuntu-latest
-    needs: [beta-version, ipfs, packages, sdn-js-package]
+    needs: [beta-version, ipfs, docker, packages, sdn-js-package]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -258,6 +280,11 @@ jobs:
         with:
           name: sdn-js-package
           path: dist/sdn-js
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: container-image-*
+          path: dist
+          merge-multiple: true
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -282,6 +309,11 @@ jobs:
         with:
           name: sdn-js-package
           path: dist/sdn-js
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: container-image-*
+          path: dist/container-images
+          merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
           pattern: container-digest-*

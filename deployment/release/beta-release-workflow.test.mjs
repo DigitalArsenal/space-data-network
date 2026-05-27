@@ -21,6 +21,9 @@ test('beta release workflow publishes public beta artifacts', () => {
   assert.match(workflow, /npm pack --pack-destination/);
   assert.match(workflow, /artifact-docker-test:/);
   assert.match(workflow, /test:release-artifacts:docker/);
+  assert.match(workflow, /container-image-\*/);
+  assert.match(workflow, /docker save/);
+  assert.match(workflow, /spacedatanetwork-container-\$\{\{ matrix\.suffix \}\}-\$\{NATIVE_PACKAGE_VERSION\}-linux-amd64\.tar\.gz/);
   assert.match(workflow, /prerelease:\s*false/);
   assert.match(workflow, /make_latest:\s*true/);
   assert.match(workflow, /release_name/);

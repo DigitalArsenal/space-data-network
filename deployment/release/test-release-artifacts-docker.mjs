@@ -97,10 +97,24 @@ export function discoverArtifacts(releaseRoot) {
     fullRpm: pickArtifact(files, 'fullRpm', /^spacedatanetwork-full-.*\.x86_64\.rpm$/),
     edgeRpm: pickArtifact(files, 'edgeRpm', /^spacedatanetwork-edge-.*\.x86_64\.rpm$/),
     linuxVm: pickArtifact(files, 'linuxVm', /^spacedatanetwork-linux-vm-.*\.tar\.gz$/),
+    containerFull: pickArtifact(files, 'containerFull', /^spacedatanetwork-container-full-.*-linux-amd64\.tar\.gz$/),
+    containerEdge: pickArtifact(files, 'containerEdge', /^spacedatanetwork-container-edge-.*-linux-amd64\.tar\.gz$/),
     sdnJs: pickArtifact(files, 'sdnJs', /^spacedatanetwork-sdn-js-.*\.tgz$/),
     sbom: pickArtifact(files, 'sbom', /^spacedatanetwork-sbom\.cdx\.json$/),
     ipfsDeployment: pickArtifact(files, 'ipfsDeployment', /^ipfs-deployment\.json$/)
   };
+}
+
+export function parseDockerLoadImage(output) {
+  const loadedImage = output.match(/Loaded image:\s*(\S+)/);
+  if (loadedImage) {
+    return loadedImage[1];
+  }
+  const loadedImageId = output.match(/Loaded image ID:\s*(\S+)/);
+  if (loadedImageId) {
+    return loadedImageId[1];
+  }
+  throw new Error(`Unable to determine loaded Docker image from docker load output: ${output}`);
 }
 
 export function generateInstallDockerfile({ artifactName, artifactType }) {
@@ -390,6 +404,32 @@ function buildImages({ artifacts, workDir, platform, prefix, keep }) {
   return imageSpecs;
 }
 
+function loadContainerImage({ artifact, label, platform }) {
+  log(`loading downloadable Docker image ${artifact.name}`);
+  const loaded = runDocker(['load', '--input', artifact.path]);
+  const imageName = parseDockerLoadImage(`${loaded.stdout}\n${loaded.stderr}`);
+  log(`smoke-testing ${label} image ${imageName}`);
+  runDocker(['run', '--rm', '--platform', platform, imageName, '--help'], { stdio: 'inherit' });
+  return {
+    imageName
+  };
+}
+
+function loadContainerImages({ artifacts, platform }) {
+  return {
+    containerFull: loadContainerImage({
+      artifact: artifacts.containerFull,
+      label: 'full-node',
+      platform
+    }),
+    containerEdge: loadContainerImage({
+      artifact: artifacts.containerEdge,
+      label: 'edge-relay',
+      platform
+    })
+  };
+}
+
 function writeFullConfig(workDir, name, bootstrapPeers) {
   const configPath = join(workDir, 'configs', `${name}.yaml`);
   mkdirSync(dirname(configPath), { recursive: true });
@@ -662,6 +702,13 @@ export async function runHarness(options) {
       prefix,
       keep: options.keep
     });
+    images = {
+      ...images,
+      ...loadContainerImages({
+        artifacts,
+        platform: options.platform ?? defaultPlatform
+      })
+    };
 
     if (!options.skipNetwork) {
       networkResult = await runNetworkTest({

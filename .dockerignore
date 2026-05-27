@@ -10,6 +10,7 @@
 *.swo
 
 # Build artifacts
+dist/
 sdn-server/spacedatanetwork
 sdn-server/spacedatanetwork-edge
 sdn-server/registry-builder
