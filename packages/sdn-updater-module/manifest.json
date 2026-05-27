@@ -1,0 +1,129 @@
+{
+  "pluginId": "org.spacedatanetwork.updater",
+  "name": "SDN Updater",
+  "version": "0.1.0",
+  "pluginFamily": "infrastructure",
+  "description": "Orchestrates updates of kubo, helia, sdn-server, desktop app, and plugins across SDN clients. Same artifact runs in publisher mode on sdn.spaceaware.io (granted wallet_sign + ipfs add/pin + pubsub publish) and in consumer mode everywhere else.",
+  "runtimeTargets": ["WASMEDGE", "BROWSER", "WASI"],
+  "invokeSurfaces": ["direct", "command"],
+
+  "capabilities": [
+    { "capability": "clock",         "required": false },
+    { "capability": "logging",       "required": false },
+    { "capability": "schedule_cron", "required": false },
+    { "capability": "http",          "required": false },
+    { "capability": "ipfs",          "required": false },
+    { "capability": "pubsub",        "required": false },
+    { "capability": "crypto_hash",   "required": false },
+    { "capability": "crypto_verify", "required": false },
+    { "capability": "crypto_sign",   "required": false },
+    { "capability": "wallet_sign",   "required": false },
+    { "capability": "storage_write", "required": false },
+    { "capability": "storage_query", "required": false }
+  ],
+
+  "externalInterfaces": [],
+
+  "methods": [
+    {
+      "methodId": "checkForUpdates",
+      "displayName": "Check for updates",
+      "description": "Consumer: fetch latest signed manifest (pubsub → IPNS → GitHub Releases), verify signature, return delta against currentVersions.",
+      "inputPorts": [
+        {
+          "portId": "request",
+          "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }],
+          "minStreams": 0, "maxStreams": 1, "required": false
+        }
+      ],
+      "outputPorts": [
+        {
+          "portId": "result",
+          "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }],
+          "minStreams": 1, "maxStreams": 1, "required": true
+        }
+      ],
+      "maxBatch": 1, "drainPolicy": "single-shot"
+    },
+    {
+      "methodId": "planUpdate",
+      "displayName": "Plan update",
+      "description": "Consumer: dependency-order the artifacts to apply from a manifest (kubo → helia → sdn-server → desktop → plugins) and return the step list.",
+      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "maxBatch": 1, "drainPolicy": "single-shot"
+    },
+    {
+      "methodId": "fetchArtifact",
+      "displayName": "Fetch artifact",
+      "description": "Consumer: fetch artifact bytes by CID (preferred, via ipfs cap) or URL (fallback, via http cap).",
+      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "outputPorts": [{ "portId": "bytes",   "acceptedTypeSets": [{ "setId": "bin",  "allowedTypes": [{ "schemaName": "raw.bin",  "fileIdentifier": "RBIN" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "maxBatch": 1, "drainPolicy": "single-shot"
+    },
+    {
+      "methodId": "verifyArtifact",
+      "displayName": "Verify artifact",
+      "description": "Consumer: verify sha256 + Ed25519 manifest signature using crypto_hash + crypto_verify.",
+      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "maxBatch": 1, "drainPolicy": "single-shot"
+    },
+    {
+      "methodId": "stageArtifact",
+      "displayName": "Stage artifact",
+      "description": "Consumer: write verified bytes to host staging area via storage_write.",
+      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "maxBatch": 1, "drainPolicy": "single-shot"
+    },
+    {
+      "methodId": "applyStaged",
+      "displayName": "Apply staged update",
+      "description": "Consumer: tell host to atomically swap staged → live and restart / reimport. Requires host_control capability (TBD: SDK addition).",
+      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "maxBatch": 1, "drainPolicy": "single-shot"
+    },
+    {
+      "methodId": "selfUpgrade",
+      "displayName": "Self-upgrade updater wasm",
+      "description": "Both: detect own wasm is stale relative to manifest.updaterWasm.sha256 and trigger host re-import (browser) / restart-with-new (server, desktop).",
+      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 0, "maxStreams": 1, "required": false }],
+      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "maxBatch": 1, "drainPolicy": "single-shot"
+    },
+    {
+      "methodId": "pollUpstream",
+      "displayName": "Poll upstream releases",
+      "description": "Publisher: check kubo dist, helia npm, github releases for new versions. Requires http capability.",
+      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "maxBatch": 1, "drainPolicy": "single-shot"
+    },
+    {
+      "methodId": "buildManifest",
+      "displayName": "Build update manifest",
+      "description": "Publisher: assemble org.spacedatanetwork.update.v1 manifest from gathered artifacts.",
+      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "maxBatch": 1, "drainPolicy": "single-shot"
+    },
+    {
+      "methodId": "signManifest",
+      "displayName": "Sign update manifest",
+      "description": "Publisher: sign canonicalized manifest bytes with the admin Ed25519 key via wallet_sign capability.",
+      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "maxBatch": 1, "drainPolicy": "single-shot"
+    },
+    {
+      "methodId": "publishManifest",
+      "displayName": "Publish update manifest",
+      "description": "Publisher: ipfs.add + pin manifest and artifacts, broadcast on /sdn/updates/v1/<channel> pubsub.",
+      "inputPorts":  [{ "portId": "request", "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "outputPorts": [{ "portId": "result",  "acceptedTypeSets": [{ "setId": "json", "allowedTypes": [{ "schemaName": "raw.json", "fileIdentifier": "JSON" }] }], "minStreams": 1, "maxStreams": 1, "required": true }],
+      "maxBatch": 1, "drainPolicy": "single-shot"
+    }
+  ]
+}
